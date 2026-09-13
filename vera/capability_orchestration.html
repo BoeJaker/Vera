@@ -2000,10 +2000,36 @@ function _tabSavePrefs(){
 }
 
 // Switch to a single tab (default click)
+// Top-level tabs folded into a broader tab: Estate, Capabilities, Agents and
+// Image Studio (ui.panels marks them retired_into). They get no tab button;
+// opening one opens that pane of the host tab instead. The host panel
+// confirms with vera:estate:opened, so the request repeats only while its
+// iframe is still loading.
+var _tabRedirects = {};
+var _estateAcks = new Set();
+window.addEventListener('message', e => {
+  if (e.data && e.data.type === 'vera:estate:opened' && e.data.rid) _estateAcks.add(e.data.rid);
+});
+function _estateOpen(pid, pane, sub){
+  const rid = 'eo-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  let tries = 0;
+  (function send(){
+    if (_estateAcks.delete(rid)) return;
+    const f = _panelFrame(pid);
+    if (f && f.contentWindow) f.contentWindow.postMessage({type:'vera:estate:open', pane, sub: sub || '', rid}, '*');
+    if (++tries < 25) setTimeout(send, 400);
+  })();
+}
 function switchTab(name){
+  const r = _tabRedirects[name];
+  if (r) {
+    name = 'auto-' + r.panel;
+    _estateOpen(name, r.pane, r.sub);
+  }
   _openTabs.clear();
   _openTabs.add(name);
   _tabRender();
+  if (r) _tabFireLoader(name);
 }
 
 // Open a tab alongside existing ones (Ctrl+click / middle-click)
@@ -4865,6 +4891,7 @@ async function loadAllPanels() {
   for (const p of sorted) {
     const mode = _panelMode(p);
     if (mode === 'tab') {
+      if (p.retired_into) { _tabRedirects['auto-' + p.id] = p.retired_into; continue; }
       _createAutoTab(p);
       autoTabCount++;
     } else if (mode === 'mount') {
@@ -4971,7 +4998,7 @@ function _customTabsSave(ids){
 function _customTabsRestore(panels){
   for (const id of _customTabsGet()) {
     const p = (panels || []).find(x => x.id === id);
-    if (p && !_autoTabsCreated.has(p.id)) _createAutoTab(p, {custom: true});
+    if (p && !p.retired_into && !_autoTabsCreated.has(p.id)) _createAutoTab(p, {custom: true});
   }
 }
 async function customTabAdd(panelId){

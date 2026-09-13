@@ -59,6 +59,9 @@ log = logging.getLogger("vera.provisioning")
 _HERE = Path(__file__).parent
 KEY_STATE = "vera:provisioning:state"
 _STATE_FIELD = "main"
+# Certificate records live under vera/, the only KV prefix Vera's scoped OpenBao
+# token may read (secret_service_core.policy_hcl); a bare pki/ path is denied.
+PKI_KV_PREFIX = "vera/pki"
 
 # Sealed (Fernet) before storage, redacted to has_* on read.
 _SECRET_FIELDS = ("openbao_token", "openbao_unseal", "stepca_provisioner_password")
@@ -542,7 +545,7 @@ def _issue_script(st: Dict, fqdn: str, out_dir: str) -> str:
                 "run bootstrap+issue commands; if an SSH target is given "
                 "(ssh_host_id, or host/user/...), runs them on the target via "
                 "exec.ssh.run, reads back the cert, and stores cert metadata in "
-                "OpenBao under pki/<fqdn>. Inputs: fqdn (str!), ssh_host_id (str), "
+                "OpenBao under vera/pki/<fqdn>. Inputs: fqdn (str!), ssh_host_id (str), "
                 "out_dir (str='/etc/vera/certs'), install (bool=true when a target "
                 "is given). Output: {ok, commands, ran, stdout, stored}.",
 )
@@ -573,7 +576,7 @@ async def cap_cert_issue(fqdn: str = "", ssh_host_id: str = "",
         # Record an inventory entry (cert PEM is non-secret; the key stays on host).
         meta = {"fqdn": fqdn, "issued_at": now_iso(), "host_id": host_id,
                 "cert_pem": cert_pem, "method": "step-cli"}
-        kv = await cap_kv_put(path=f"pki/{fqdn}", data=meta)
+        kv = await cap_kv_put(path=f"{PKI_KV_PREFIX}/{fqdn}", data=meta)
         out["stored"] = bool(kv.get("ok"))
         await emit_event({"type": "provisioning.cert.issued", "fqdn": fqdn,
                           "host_id": host_id, "ok": bool(cert_pem)})
@@ -584,14 +587,14 @@ async def cap_cert_issue(fqdn: str = "", ssh_host_id: str = "",
     "pki.cert.list",
     http_method="GET", http_path="/provisioning/pki/cert/list",
     http_tags=["provisioning"], memory="off",
-    description="List certs Vera has issued/recorded (from OpenBao pki/). "
+    description="List certs Vera has issued/recorded (from OpenBao vera/pki/). "
                 "Output: {certs:[{fqdn, issued_at, host_id}]}.",
 )
 async def cap_cert_list(trace_id=None) -> Dict:
-    listing = await cap_kv_list(path="pki")
+    listing = await cap_kv_list(path=PKI_KV_PREFIX)
     certs = []
     for name in listing.get("keys", []):
-        g = await cap_kv_get(path=f"pki/{name.rstrip('/')}")
+        g = await cap_kv_get(path=f"{PKI_KV_PREFIX}/{name.rstrip('/')}")
         if g.get("ok"):
             d = g["data"]
             certs.append({"fqdn": d.get("fqdn", name), "issued_at": d.get("issued_at"),

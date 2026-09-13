@@ -44,6 +44,35 @@ This is intentionally a compatibility facade. Workflow IR and
 runtime-adapter work can emit the same contract without requiring Vera to replace
 LangGraph, external runtimes, or its own established DAG execution paths.
 
+## Agent-loop engine ownership
+
+Vera exposes eight named capability-stepping loop modes, `v1` through `v8`.
+Here `v` is part of the mode identifier; it does not mean version, generation,
+or lifecycle order. Modes `v1`–`v5` have independent step executors with
+different planning and verification strategies. Mode `v6` adds an adaptive
+controller over `v5` step machinery, `v7` delegates to `v6` with long-horizon
+policy, and `v8` orchestrates programs made from `v5`–`v7`.
+
+All eight numbered modes are retained with their callable identities and
+distinct behavior. The Workshop exposes `v1`–`v4`, including its editable flow
+builder, while profiles and internal callers actively reference `v5`–`v8`.
+That consumer evidence describes active integration; it is not a deprecation
+or migration signal. `loops.run`, the Workshop stream endpoint, and Dream are
+adapters or routers around the selected mode, not additional generic step
+implementations. The browser Operator is a domain-specific
+observe/think/act loop with browser safety and progress semantics and should not
+be collapsed into a generic capability loop merely because both iterate.
+
+The convergence target is a shared step kernel for invocation, cancellation,
+timeouts, retries, Run events, artifact references, and result normalization.
+Planning, triage, adaptive control, verification, and long-horizon behavior
+remain strategy policies above that kernel. This permits gradual shadow and
+compatibility work without collapsing the numbered modes or changing their
+public identities and behavior. The current source review is non-executing and
+its consumer scan is explicitly partial: stored workflows, runtime calls, and
+external consumers remain additional evidence sources for interoperability
+work, not grounds for removing a numbered mode.
+
 ### Runtime-neutral durability fixture
 
 A static conformance fixture in

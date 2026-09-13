@@ -466,7 +466,7 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
         "caps": ["mesh.nodes", "mesh.activity", "mesh.settings.get", "mesh.boards.list", "mesh.app.list", "mesh.wifi.scan", "mesh.ble.scan", "mesh.node.position.list"],
         "skills": "",
         "panels": True,
-        "defaults": {"enable_phases": true},
+        "defaults": {"enable_phases": True},
     },
     {
         "id": "foundry-provisioning",
@@ -479,7 +479,7 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
         "caps": ["foundry.node.list", "foundry.image.list", "foundry.blueprint.list", "foundry.cluster.list", "foundry.cluster.ps", "foundry.features", "foundry.pxe.status", "foundry.salvage.list", "nodes.list", "proxmox.status", "docker.ps"],
         "skills": "",
         "panels": True,
-        "defaults": {"long_running_force_hitl": true},
+        "defaults": {"long_running_force_hitl": True},
     },
     {
         "id": "model-catalog",
@@ -531,7 +531,7 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
         "caps": ["research.run", "research.job.status", "research.job.result", "research.history", "web.search", "web.fetch", "nlp.rerank", "nlp.ner", "prose.author"],
         "skills": "",
         "panels": True,
-        "defaults": {"enable_tiering": true},
+        "defaults": {"enable_tiering": True},
     },
 ]
 

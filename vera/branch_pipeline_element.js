@@ -33,6 +33,37 @@
  * Events dispatched: branchpipe:openpipeline {detail:{id,branch}}
  */
 (function () {
+
+  /* ONE event socket per page. Every element used to open its own /ws
+     (seven on the Loop Lab panel, 2026-09-10) and reconnect on its own clock.
+     Now: the page's own bus if it has one (window._veraSubscribe, which the
+     panel exposes), else the parent frame's, else one shared socket on
+     window.__veraEventsBus that every element subscribes to. Returns an
+     unsubscribe function. */
+  function veraSharedEvents(base, fn) {
+    try {
+      if (typeof window._veraSubscribe === 'function') { const off = window._veraSubscribe(fn); return typeof off === 'function' ? off : () => {}; }
+      const par = window.parent;
+      if (par && par !== window && typeof par._veraSubscribe === 'function') { par._veraSubscribe(fn); return () => {}; }
+    } catch (_) {}
+    const w = window;
+    if (!w.__veraEventsBus) {
+      const bus = { subs: new Set(), ws: null, base: base };
+      const connect = () => {
+        try {
+          const ws = new WebSocket(bus.base.replace(/^http/, 'ws') + '/ws');
+          ws.onopen = () => { try { ws.send(JSON.stringify({ action: 'subscribe', stream: 'vera:events' })); } catch (_) {} };
+          ws.onmessage = e => { let ev; try { ev = JSON.parse(e.data); } catch (_) { return; } bus.subs.forEach(s => { try { s(ev); } catch (_) {} }); };
+          ws.onclose = () => { bus.ws = null; setTimeout(connect, 3000); };
+          ws.onerror = () => { try { ws.close(); } catch (_) {} };
+          bus.ws = ws;
+        } catch (_) { setTimeout(connect, 5000); }
+      };
+      bus.subscribe = s => { bus.subs.add(s); if (!bus.ws) connect(); return () => bus.subs.delete(s); };
+      w.__veraEventsBus = bus;
+    }
+    return w.__veraEventsBus.subscribe(fn);
+  }
   if (customElements.get('vera-branch-pipeline')) return;
 
   const STAGES = [
@@ -134,14 +165,22 @@
       this._branch = this.getAttribute('branch') || '';
       this._pipelineId = this.getAttribute('pipeline-id') || '';
       this._connectWs();
-      this.refresh();
-      this._pollTimer = setInterval(() => this.refresh(), 10000);
+      if (this._onScreen()) this.refresh();
+      this._pollTimer = setInterval(() => { if (this._onScreen()) this.refresh(); }, 10000);
     }
 
+    /* Poll only while on screen. offsetParent is null inside a hidden
+       section (display:none), so an element on a page that is not showing
+       costs nothing; the panel's nav() refreshes it when its page opens. */
+    // offsetParent alone misses a closed <details>: Chromium keeps its contents
+    // laid out (content-visibility: hidden) for find-in-page, so an element
+    // in a folded card kept polling (found 2026-09-10 on Mission control).
+    // checkVisibility() sees content-visibility; older browsers fall back.
+    _onScreen() { return this.offsetParent !== null && (typeof this.checkVisibility !== 'function' || this.checkVisibility()); }
     disconnectedCallback() {
       if (this._pollTimer) clearInterval(this._pollTimer);
       if (this._playRaf) cancelAnimationFrame(this._playRaf);
-      try { this._ws && this._ws.close(); } catch (_) {}
+      try { this._unsubEvents && this._unsubEvents(); this._unsubEvents = null; } catch (_) {}
     }
 
     setApiBase(url) { this._base = (url || '').replace(/\/$/, ''); }
@@ -151,18 +190,17 @@
     }
 
     setMode(m) { this._mode = m; this.refresh(); }
-    setBranch(name) { this._branch = name; this._pipelineId = ''; this.refresh(); }
-    setPipelineId(id) { this._pipelineId = id; this.refresh(); }
+    // Called every 4 s by the Loop Lab's active-run refresh with the same
+    // branch; an unchanged branch must not start another fetch (2026-09-10).
+    setBranch(name) {
+      if ((name || '') === (this._branch || '') && !this._pipelineId) return;
+      this._branch = name; this._pipelineId = ''; this.refresh();
+    }
+    setPipelineId(id) { if (id === this._pipelineId) return; this._pipelineId = id; this.refresh(); }
 
     _connectWs() {
-      try {
-        const wsUrl = this._getBase().replace(/^http/, 'ws') + '/ws';
-        this._ws = new WebSocket(wsUrl);
-        this._ws.onopen = () => { try { this._ws.send(JSON.stringify({ action: 'subscribe', stream: 'vera:events' })); } catch (_) {} };
-        this._ws.onmessage = e => { try { this._onEvent(JSON.parse(e.data)); } catch (_) {} };
-        this._ws.onclose = () => { setTimeout(() => this._connectWs(), 3000); };
-        this._ws.onerror = () => { try { this._ws.close(); } catch (_) {} };
-      } catch (_) { setTimeout(() => this._connectWs(), 5000); }
+      if (this._unsubEvents) return;
+      this._unsubEvents = veraSharedEvents(this._getBase(), ev => { try { this._onEvent(ev); } catch (_) {} });
     }
 
     _onEvent(ev) {
@@ -180,8 +218,12 @@
     }
 
     async refresh(fromLiveEvent) {
-      if (this._mode === 'detail') await this._refreshDetail(fromLiveEvent);
-      else await this._refreshLanes(fromLiveEvent);
+      if (this._inflight) return;            // never stack a refresh on a slower one
+      this._inflight = true;
+      try {
+        if (this._mode === 'detail') await this._refreshDetail(fromLiveEvent);
+        else await this._refreshLanes(fromLiveEvent);
+      } finally { this._inflight = false; }
     }
 
     // ── detail mode ──────────────────────────────────────────────────────
@@ -312,21 +354,16 @@
 
     // ── lanes mode ───────────────────────────────────────────────────────
     async _refreshLanes() {
+      // ide.git.branches is a POST capability: ask it that way the first time.
+      // (A GET first, "falling back" to POST, was a 405 in the console and a
+      // wasted request on every 10s tick.)
       const [branchesD, pipesD] = await Promise.all([
-        this._fetchJson('/ide/git/branches').then(d => d), // GET-ish but capability is POST; fall back below
+        fetch(this._getBase() + '/ide/git/branches', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+        }).then(r => r.json()).catch(() => null),
         this._fetchJson('/evolve/pipeline/list?limit=100'),
       ]);
       let branches = (branchesD && branchesD.branches) || [];
-      if (!branches.length) {
-        // ide.git.branches is a POST capability — retry properly if the GET above 404'd.
-        try {
-          const r = await fetch(this._getBase() + '/ide/git/branches', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
-          });
-          const d = await r.json();
-          branches = (d && d.branches) || [];
-        } catch (_) {}
-      }
       const pipelines = (pipesD && pipesD.pipelines) || [];
       const byBranch = {};
       pipelines.forEach(p => { (byBranch[p.branch] = byBranch[p.branch] || []).unshift(p); }); // chronological

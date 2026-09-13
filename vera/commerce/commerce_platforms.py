@@ -30,6 +30,8 @@ import uuid
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
+from Vera.vera.commerce.commerce_effects import observe_marketplace_listing_effect
+
 log = logging.getLogger("vera.commerce.platforms")
 
 try:
@@ -741,13 +743,19 @@ if _CAP_AVAILABLE:
     @capability(
         "business.platform.listing.push", http_method="POST",
         http_path="/business/platform/listing/push", http_tags=["commerce"],
+        redact_args=["account_id", "product_id", "idempotency_key",
+                     "approval_receipt_ref"], redact_result=True,
         description="Create or update a listing on a platform from a local product. "
-                    "Input: account_id (str!), product_id (str! — local product id or sku). "
-                    "Output: connector result {ok, sku, note} or {error}.")
-    async def cap_listing_push(account_id: str = "", product_id: str = "", trace_id=None):
+                    "Optional idempotency, approval, and retry inputs are observe-only "
+                    "policy evidence and are not forwarded to the provider. Output includes "
+                    "effect_shadow.")
+    async def cap_listing_push(account_id: str = "", product_id: str = "",
+                               idempotency_key: str = "",
+                               approval_receipt_ref: str = "", retry: bool = False,
+                               trace_id=None):
         await _ensure_schema()
-        acct = await _run(_db_get_account, account_id, True)
-        if not acct:
+        acct_ref = await _run(_db_get_account, account_id, False)
+        if not acct_ref:
             return {"error": "account not found"}
         core = _core()
         if not core:
@@ -755,13 +763,21 @@ if _CAP_AVAILABLE:
         product = await _run(core._db_get_product, product_id)
         if not product:
             return {"error": "product not found"}
-        conn = CONNECTORS.get(acct["connector"])
+        provider = acct_ref.get("connector") or ""
+        conn = CONNECTORS.get(provider)
         if not conn:
-            return {"error": f"no connector for '{acct['connector']}'"}
+            return {"error": f"no connector for '{provider}'"}
+        shadow = observe_marketplace_listing_effect(
+            account_ref=acct_ref["id"], listing_ref=product_id,
+            provider=provider, mode="push", idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
+        acct = await _run(_db_get_account, acct_ref["id"], True)
+        if not acct:
+            return {"error": "account unavailable", "effect_shadow": shadow}
         res = await conn.push_listing(acct, product)
         await emit_event({"type": "commerce.progress", "stage": "listing.push",
                           "message": f"{acct['connector']}: pushed {product.get('sku')}"})
-        return res
+        return {**res, "effect_shadow": shadow}
 
     @capability(
         "business.platform.orders.sync", http_method="POST",

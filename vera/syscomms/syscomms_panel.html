@@ -141,7 +141,11 @@ $('#sevchip').addEventListener('click', () => {
 });
 
 load();
-setInterval(load, 45000);
+// Poll only while this pane is actually showing: a hidden iframe has no box, and
+// every reload runs memory.seek, which embeds the query on the CPU nodes.
+function _onScreen() { return document.visibilityState === 'visible' && document.body.offsetWidth > 0; }
+setInterval(() => { if (_onScreen()) load(); }, 45000);
+document.addEventListener('visibilitychange', () => { if (_onScreen()) load(); });
 </script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>

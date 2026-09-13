@@ -200,6 +200,29 @@ queued. The security posture follows DuckDB's
 and recommendation to use independent package connections rather than the
 [shared Python connection](https://duckdb.org/docs/stable/clients/python/overview).
 
+### Comparable retrieval evidence
+
+`vera.fabric.retrieval_comparison` provides a deterministic evidence boundary
+for comparing retrieval implementations without calling them. Every provider
+must report against the same immutable `DatasetSnapshot`, the same
+content-identified query cases, the same relevance citations, and the exact
+record revisions returned. Query text is represented only by a SHA-256 digest.
+
+The report keeps different operational questions separate: recall, precision,
+mean reciprocal rank, citation-revision accuracy, p50/p95 latency, failures,
+index/update/rebuild/deletion time, and storage. An unmeasured lifecycle value
+remains `null` rather than being confused with zero. The comparator does not
+construct a composite score, choose a winner, invoke a backend, or authorize a
+deployment.
+
+Supported evidence profiles distinguish Fabric graph/vector retrieval, Qdrant,
+GraphRAG, analytical retrieval, and **JEPA Worldview evidence**. “Worldview” is
+not accepted as an ambiguous provider kind: the older non-JEPA Worldview and
+Godseye product lineage is distinct from the JEPA model. Data exported from that
+lineage can still participate by first becoming canonical Fabric records and an
+immutable `DatasetSnapshot`; the comparison layer never reads its database or UI
+state directly.
+
 The LIB-21 follow-on adds an inspect-only bridge from one local DVC-tracked file
 to Vera's artifact contract. `DVCArtifactAdapter` requires an explicit stable
 repository identity, full Git commit and relative standalone `.dvc` descriptor.

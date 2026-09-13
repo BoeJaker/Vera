@@ -52,7 +52,11 @@ Plus three convenience caps:
 
 ## 4. Container lifecycle
 
-These shell out to the Docker CLI and are **gated by the exec sandbox** (`exec_capabilities._sandbox_check`) — the same `<vera-sandbox-controls>` policy that governs Exec and IDE Run. Streaming actions return SSE:
+These shell out to the Docker CLI. `docker.exec` and `docker.run` are **gated by
+the exec sandbox** (`exec_capabilities._sandbox_check`) — the same
+`<vera-sandbox-controls>` policy that governs Exec and IDE Run. `docker.stop`
+and `docker.rm` validate their target but remain direct lifecycle mutations;
+callers must authorize them explicitly. Streaming actions return SSE:
 
 | Cap | Streaming | Purpose |
 |---|---|---|
@@ -62,6 +66,24 @@ These shell out to the Docker CLI and are **gated by the exec sandbox** (`exec_c
 | `docker.exec` | — | Exec a command in a running container |
 | `docker.stop` | — | Stop a container |
 | `docker.rm` | — | Remove a container |
+
+The non-streaming `docker.exec`, `docker.stop`, `docker.rm`, and `docker.run`
+capability, plus `docker.worker.stop`, emit a payload-free external-effect
+projection immediately before invoking Docker. `docker.image.ensure` does the
+same only when it will build or transfer an image; an already-present image is a
+read-only short circuit. `docker.worker.spawn` separately observes the worker
+creation after any required image preparation succeeds. The projection hashes
+host, resource, and operation identity; command text, environment values,
+target names, connection URLs, and raw approval/idempotency references are not
+retained. It is observe-only and cannot block, retry, or claim completion.
+`docker.stack.deploy` and its canonical `provision.store.deploy` path emit one
+logical deployment observation rather than a second nested `docker.run`
+observation. An already-running store is a read-only short circuit; restarting a
+stopped store, writing Garage configuration, creating a store container, and
+removing or purging a store are observed immediately before their first Docker
+mutation. Streaming routes and the remaining managed-host provisioning families
+are not yet fully covered, so
+Infrastructure evidence in the Integrations UI is labelled partial.
 
 ---
 
@@ -104,6 +126,12 @@ the **Provision → Docker** pane):
 | `provision.store.remove` | Remove the container (volumes kept unless `purge_volumes`) |
 | `provision.store.garage.bootstrap` | Layout / key import / bucket+grant via the garage **admin API** — idempotent; also repairs a local stack whose `garage-init` never completed (`fabric.objects.status` → AccessDenied) |
 
+Deploy and remove calls accept optional idempotency, approval-receipt, and retry
+references for observe-only policy projection. Those values, store environment
+settings, generated Garage secrets, and target identities are never retained in
+effect evidence or forwarded as Docker flags. The projection does not yet govern
+execution or record completion receipts.
+
 ---
 
 ## 6. Build service — `vera-builder`
@@ -139,7 +167,16 @@ Bring it up whichever way suits the deployment:
 docker compose up -d --build vera-builder     # in-stack
 ```
 
-`build.builder.up` does the same thing for a native orchestrator (and is what the Mesh panel's **Start build service** button calls): it builds `vera/build/Dockerfile` if the image is missing, runs the container with `$BUILDER_PORT` published, and waits for `/health`. It's idempotent — a reachable builder returns immediately; `rebuild: true` forces a fresh image.
+`build.builder.up` does the same thing for a native orchestrator (and is what the Mesh panel's **Start build service** button calls): it builds `vera/build/Dockerfile` if the image is missing, runs the container with `$BUILDER_PORT` published, and waits for `/health`. It's idempotent — a reachable builder returns immediately and emits no mutation observation; `rebuild: true` forces a fresh image. When startup does mutate infrastructure, its background job records one payload-free builder-service observation before the first build/container action; `build.progress` exposes that shadow with the completed job result.
+
+The remote compiler capabilities—`build.arduino`, `build.platformio`,
+`build.run`, and `build.python`—also project a payload-free Infrastructure
+effect immediately before their builder POST. Source files, commands,
+environment variables, dependency lists, artifacts, builder URLs, and raw
+approval/idempotency references are represented only through stable digests and
+are not retained in the evidence ledger. Optional control references are not
+sent to the builder. These projections observe existing execution; they do not
+block it, introduce retries, or claim completion receipts.
 
 ### Progress on long builds
 

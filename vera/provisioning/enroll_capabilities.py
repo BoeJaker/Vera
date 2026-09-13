@@ -18,7 +18,9 @@ module's state (`vera:provisioning:state`).
 
 Capabilities
 ────────────
-  ssh.host.save / .list / .delete / .test   — per-host SSH credential store
+  ssh.host.save / .list / .delete / .test   — per-host SSH credential store; saves also
+                                              reach the exec store, lists read it through
+  ssh.stores.merge                          — fold enrolment records into the exec store
   enroll.discover                           — guests + their enrolment state
   enroll.guest                              — the agentless SSH-push enrolment
   enroll.script                             — preview the enrolment script only
@@ -49,6 +51,8 @@ from Vera.vera.security import secrets as vsecrets
 # pure SSH-enrol wrapping lives in an app-free core module so it's unit-testable
 # without booting the orchestrator (see enroll_core.py header).
 from Vera.vera.provisioning.enroll_core import _ssh_enrol_cmd
+# One SSH host store: the enrolment store folds into the exec store.
+from Vera.vera.provisioning import ssh_store_merge_core as _merge
 
 log = logging.getLogger("vera.enroll")
 _HERE = Path(__file__).parent
@@ -187,6 +191,60 @@ async def _get_host(host_id: str, opened: bool = False) -> Optional[Dict]:
     return _open(rec) if opened else rec
 
 
+async def _exec_hosts() -> List[Dict]:
+    """The exec store's logins (redacted), or [] when exec is not loaded."""
+    fn = _cap("exec.ssh.hosts.list")
+    if not fn:
+        return []
+    try:
+        return list((await fn() or {}).get("hosts") or [])
+    except Exception as e:
+        log.debug("exec host list: %s", e)
+        return []
+
+
+async def _ensure_exec_twin(rec: Dict, *, password: str = "", key_path: str = "",
+                            extra_tags: Optional[List[str]] = None) -> Dict:
+    """Make sure the exec store holds this login once. The exec store is the one
+    every remote command, terminal and mesh join resolves. Its twin (same host,
+    port and user) gets the enrolment record's guest and id tags; with no twin a
+    login is created for cert (Vera's key), key-file and password logins. A
+    private key sealed in the enrolment store cannot be carried over.
+    Returns {exec_id, created} or {error}."""
+    save = _cap("exec.ssh.hosts.save")
+    if not save:
+        return {"error": "exec store not loaded"}
+    twin = _merge.find_twin(rec, await _exec_hosts())
+    tags: List[str] = list((twin or {}).get("tags") or [])
+    for t in list(extra_tags or []) + _merge.wanted_tags(rec):
+        if t and t not in tags:
+            tags.append(t)
+    login = {"host": rec.get("host"), "user": rec.get("user"),
+             "port": int(rec.get("port") or 22), "label": rec.get("label", "")}
+    auth = rec.get("auth", "password")
+    if twin is not None:
+        kw = {"id": twin["id"], "host": twin.get("host"), "user": twin.get("user"),
+              "port": int(twin.get("port") or 22), "label": twin.get("label") or login["label"],
+              "auth": twin.get("auth") or "password", "key_path": twin.get("key_path") or ""}
+        if password and kw["auth"] == "password":
+            kw["password"] = password
+    elif key_path:
+        kw = dict(login, auth="key", key_path=key_path)
+    elif auth == "cert":
+        kw = dict(login, auth="key", key_path=_vera_key_path())
+    elif auth == "password" and password:
+        kw = dict(login, auth="password", password=password)
+    else:
+        return {"error": "this login cannot be carried into the exec store automatically"}
+    try:
+        res = await save(tags=",".join(tags), **kw) or {}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+    if not res.get("ok"):
+        return {"error": res.get("error") or "exec store save failed"}
+    return {"exec_id": (res.get("host") or {}).get("id") or kw.get("id", ""), "created": twin is None}
+
+
 @capability(
     "ssh.host.save",
     http_method="POST", http_path="/enroll/ssh/host/save", http_tags=["enroll"],
@@ -195,13 +253,15 @@ async def _get_host(host_id: str, opened: bool = False) -> Optional[Dict]:
                 "private_key) are SEALED (Fernet); blank keeps existing. Inputs: "
                 "id (str — omit to create), label, host (str!), port (int 22), "
                 "user (str!), auth ('cert'|'key'|'password'), password, "
-                "private_key, public_key, guest_ref (str — 'cluster:vmid' link). "
-                "Output: {ok, host(redacted)}.",
+                "private_key, public_key, guest_ref (str — 'cluster:vmid' link), tags "
+                "(comma-sep, added to the exec-store login). The login is also kept in "
+                "the exec store (its twin updated, or created for cert/password logins). "
+                "Output: {ok, host(redacted), exec_host_id, exec_error}.",
 )
 async def cap_host_save(
     id: str = "", label: str = "", host: str = "", port: int = 22, user: str = "",
     auth: str = "password", password: str = "", private_key: str = "",
-    public_key: str = "", guest_ref: str = "", trace_id=None,
+    public_key: str = "", guest_ref: str = "", tags: str = "", trace_id=None,
 ) -> Dict:
     r = _redis()
     if not r:
@@ -224,18 +284,24 @@ async def cap_host_save(
         return {"error": str(e)}
     rec["updated"] = now_iso()
     await r.hset(KEY_HOSTS, rec["id"], json.dumps(rec))
-    return {"ok": True, "host": _redact(rec)}
+    twin = await _ensure_exec_twin(rec, password=password,
+                                   extra_tags=[t.strip() for t in (tags or "").split(",") if t.strip()])
+    return {"ok": True, "host": _redact(rec), "exec_host_id": twin.get("exec_id", ""),
+            "exec_error": twin.get("error", "")}
 
 
 @capability(
     "ssh.host.list",
     http_method="GET", http_path="/enroll/ssh/host/list", http_tags=["enroll"],
     memory="off", silent=True,
-    description="List per-host SSH credentials (REDACTED — has_password / "
-                "has_private_key). Output: {hosts:[...]}.",
+    description="List SSH logins: the enrolment store's own (REDACTED — has_password / "
+                "has_private_key) plus every exec-store login with no enrolment record. "
+                "Each row carries source (enrol|exec) and exec_id, the exec-store login "
+                "that exec, terminals and the mesh use. Output: {hosts:[...]}.",
 )
 async def cap_host_list(trace_id=None) -> Dict:
-    return {"hosts": [_redact(h) for h in await _hosts_raw()]}
+    enrol = [_redact(h) for h in await _hosts_raw()]
+    return {"hosts": _merge.read_through(enrol, await _exec_hosts())}
 
 
 @capability(
@@ -247,6 +313,11 @@ async def cap_host_delete(id: str = "", trace_id=None) -> Dict:
     r = _redis()
     if not r or not id:
         return {"error": "id required"}
+    if not await r.hexists(KEY_HOSTS, id):
+        if any(h.get("id") == id for h in await _exec_hosts()):
+            return {"error": "this login lives in the exec store; remove it in Estate > "
+                             "Machines > Connections"}
+        return {"error": "host not found"}
     await r.hdel(KEY_HOSTS, id)
     return {"ok": True}
 
@@ -274,6 +345,12 @@ async def cap_host_test(id: str = "", host: str = "", user: str = "",
     if id:
         rec = await _get_host(id, opened=True)
         if not rec:
+            # A login that lives only in the exec store (listed through ssh.host.list).
+            ssh = _cap("exec.ssh.run")
+            if ssh and any(h.get("id") == id for h in await _exec_hosts()):
+                res = await ssh(command="echo vera-ok && hostname", host_id=id, timeout=20) or {}
+                return {"ok": bool(res.get("ok")), "via": "exec", "stdout": res.get("stdout", ""),
+                        "error": res.get("error") or res.get("stderr", "")}
             return {"ok": False, "error": "host not found"}
         host, user, port = rec.get("host", ""), rec.get("user", ""), rec.get("port", 22)
         password, key_path, tmp = await _auth_for(rec)
@@ -291,6 +368,47 @@ async def cap_host_test(id: str = "", host: str = "", user: str = "",
     return {"ok": bool(res.get("ok")), "via": "cert" if (key_path == _vera_key_path()) else None,
             "stdout": res.get("stdout", ""),
             "error": res.get("error") or res.get("stderr", "")}
+
+
+@capability(
+    "ssh.stores.merge",
+    http_method="POST", http_path="/enroll/ssh/stores/merge", http_tags=["enroll", "exec"],
+    memory="off",
+    description="Fold the enrolment SSH store into the exec store, the one every remote "
+                "command, terminal and mesh join uses. Dry run by default: the plan per "
+                "enrolment record is link (add guest:<cluster>:<vmid> and enrol:<id> tags to "
+                "its exec twin, same host/port/user), linked (already done), copy (no twin: "
+                "create an exec login; cert logins use Vera's key, password logins their "
+                "sealed password) or attention (a sealed private key the exec store cannot "
+                "hold). Nothing is deleted; enrolment records stay. Input: apply (bool, "
+                "default false). Output: {dry_run, steps, counts, exec_records_changed, "
+                "exec_records_created, applied?:[{enrol_id, action, ok, exec_id, error}]}.",
+)
+async def cap_stores_merge(apply: bool = False, trace_id=None) -> Dict:
+    if isinstance(apply, str):
+        apply = apply.strip().lower() in ("1", "true", "yes", "on")
+    enrol = await _hosts_raw()
+    plan = _merge.plan_merge([_redact(h) for h in enrol], await _exec_hosts(), _vera_key_path())
+    if not apply:
+        return dict(plan, dry_run=True)
+    by_id = {h.get("id"): h for h in enrol}
+    applied = []
+    for step in plan["steps"]:
+        if step["action"] not in ("link", "copy"):
+            continue
+        rec = by_id.get(step["enrol_id"]) or {}
+        password = ""
+        if step["action"] == "copy" and step.get("exec_auth") == "password":
+            password = vsecrets.open_secret(rec.get("password", ""))
+        res = await _ensure_exec_twin(rec, password=password)
+        applied.append({"enrol_id": step["enrol_id"], "action": step["action"],
+                        "ok": not res.get("error"), "exec_id": res.get("exec_id", ""),
+                        "error": res.get("error", "")})
+    await emit_event({"type": "ssh.stores.merged",
+                      "linked": sum(1 for a in applied if a["ok"] and a["action"] == "link"),
+                      "created": sum(1 for a in applied if a["ok"] and a["action"] == "copy"),
+                      "failed": sum(1 for a in applied if not a["ok"])})
+    return dict(plan, dry_run=False, applied=applied)
 
 
 @capability(
@@ -464,7 +582,9 @@ async def cap_enroll_script(fqdn: str = "", trace_id=None) -> Dict:
     memory="off", silent=True,
     description="List a cluster's guests annotated with enrolment state (whether "
                 "Vera holds SSH creds / a cert for them). Input: cluster_id (str). "
-                "Output: {guests:[{vmid,name,type,node,status,enrolled,host_id}]}.",
+                "A guest counts as enrolled when the enrolment store or the exec store holds "
+                "its login; exec_id is the exec-store login. "
+                "Output: {guests:[{vmid,name,type,node,status,ip,enrolled,host_id,exec_id,auth}]}.",
 )
 async def cap_discover(cluster_id: str = "", trace_id=None) -> Dict:
     status = _cap("proxmox.status")
@@ -479,14 +599,19 @@ async def cap_discover(cluster_id: str = "", trace_id=None) -> Dict:
     snap = await status(cluster_id=cluster_id)
     hosts = await _hosts_raw()
     by_ref = {h.get("guest_ref"): h for h in hosts if h.get("guest_ref")}
+    exec_logins = await _exec_hosts()
     gip = _cap("proxmox.guest.ip")
 
     async def _row(g: Dict) -> Dict:
         ref = f"{cluster_id}:{g['vmid']}"
         h = by_ref.get(ref)
+        # The exec login is what exec, terminals and the mesh use: the enrolment
+        # record's twin, else a login saved for this guest (proxmox.guest.enroll).
+        x = (_merge.find_twin(h, exec_logins) if h else None) or \
+            _merge.login_for_guest(exec_logins, cluster_id, g["vmid"])
         # Auto-detect the IP so the enrol form pre-fills it: use the saved SSH
         # host's address if enrolled, else resolve from Proxmox (LXC config / agent).
-        ip = (h.get("host") if h else "") or ""
+        ip = (h.get("host") if h else "") or (x or {}).get("host", "") or ""
         if not ip and g.get("status") == "running" and gip:
             try:
                 ip = ((await gip(cluster_id=cluster_id, node=g["node"],
@@ -495,8 +620,9 @@ async def cap_discover(cluster_id: str = "", trace_id=None) -> Dict:
                 ip = ""
         return {"vmid": g["vmid"], "name": g.get("name", ""), "type": g["type"],
                 "node": g["node"], "status": g["status"], "ip": ip,
-                "enrolled": bool(h), "host_id": h.get("id", "") if h else "",
-                "auth": h.get("auth", "") if h else ""}
+                "enrolled": bool(h or x), "host_id": (h or x or {}).get("id", ""),
+                "exec_id": (x or {}).get("id", ""),
+                "auth": (h or x or {}).get("auth", "")}
 
     guests = list(await asyncio.gather(
         *[_row(g) for g in snap.get("guests", []) if not g.get("template")]))
@@ -613,25 +739,18 @@ async def cap_enroll_guest(
         label=fqdn, host=ip, port=ssh_port, user=ssh_user, auth=auth,
         password=save_pw,
         guest_ref=f"{cluster_id}:{vmid}" if cluster_id and vmid else "",
+        tags=(f"enrolled,{guest_type}" if guest_type else "enrolled"),
     )
     host_id = (save.get("host") or {}).get("id", "")
 
-    # 2b. Also register in the EXEC host store (canonical for mesh / terminal /
-    #     exec) — Vera's key gives it passwordless access there too, and mesh-join
-    #     resolves hosts from THIS store.
-    exec_host_id = ""
-    exec_save = _cap("exec.ssh.hosts.save")
-    if exec_save:
-        try:
-            er = await exec_save(
-                host=ip, user=ssh_user, port=int(ssh_port or 22), label=fqdn,
-                auth="key" if (use_proxmox or ssh_key_path) else "password",
-                key_path=_vera_key_path() if use_proxmox else ssh_key_path,
-                password="" if use_proxmox else save_pw,
-                tags=(f"enrolled,{guest_type}" if guest_type else "enrolled"))
-            exec_host_id = (er.get("host") or {}).get("id", "") if isinstance(er, dict) else ""
-        except Exception as e:
-            log.debug("exec host save: %s", e)
+    # 2b. The exec store is the one exec, terminals and the mesh resolve.
+    #     ssh.host.save above already put this login there (its twin is updated,
+    #     never duplicated); a key-file login is carried over here.
+    exec_host_id = save.get("exec_host_id", "")
+    if not exec_host_id and ssh_key_path and host_id:
+        twin = await _ensure_exec_twin(await _get_host(host_id) or {}, key_path=ssh_key_path,
+                                       extra_tags=["enrolled"] + ([guest_type] if guest_type else []))
+        exec_host_id = twin.get("exec_id", "")
 
     # 3. Register in the directory — FreeIPA-first via the resolver (best-effort).
     reg = _cap("identity.resolve.host") or _cap("identity.host.register")

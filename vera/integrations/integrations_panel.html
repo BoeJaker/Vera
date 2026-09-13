@@ -70,6 +70,11 @@
     background:var(--bg1);color:var(--t2);font-size:11px;flex-wrap:wrap}
   #intake.on{display:flex} #intake .arr{color:var(--t3)}
   #intake .queued{color:var(--warn)} #intake .ready{color:var(--run)}
+  .metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+  .metric{background:var(--bg0);border:1px solid var(--line);border-radius:8px;padding:10px}
+  .metric b{display:block;font-size:18px}.metric span{color:var(--t3);font-size:10px;text-transform:uppercase}
+  .receipt{padding:9px 0;border-bottom:1px solid var(--line)}.receipt:last-child{border-bottom:none}
+  .receipt code{font-size:10px;color:var(--t2)}
 </style>
 </head>
 <body>
@@ -81,10 +86,26 @@
     <button class="btn sm" onclick="load()">↻</button>
     <button class="btn sm" onclick="openNew()">+ Add</button>
     <button class="btn sm" onclick="openDiscover()">⌕ Discover</button>
+    <button class="btn sm" onclick="openEffects()">Effect evidence</button>
     <button class="btn sm pri" onclick="openRegister()">⚿ Register &amp; secure</button>
   </header>
   <div id="intake" role="status" aria-live="polite"></div>
   <div id="grid"></div>
+</div>
+
+<!-- payload-free external-effect evidence -->
+<div class="ov" id="effectOv" onclick="if(event.target===this)closeEffects()">
+  <div class="drw" style="width:620px">
+    <h3>External-effect evidence<span class="sp" style="flex:1"></span>
+      <button class="btn sm" onclick="closeEffects()">✕</button></h3>
+    <div class="bd" id="effectBody">
+      <div class="hint">Loading durable receipt evidence…</div>
+    </div>
+    <div class="ft"><span class="hint">Inspection only — no retries or external calls</span>
+      <span class="sp" style="flex:1"></span>
+      <button class="btn" onclick="loadEffects()">↻ Refresh</button>
+      <button class="btn" onclick="closeEffects()">Close</button></div>
+  </div>
 </div>
 
 <!-- detail / edit drawer -->
@@ -147,10 +168,117 @@
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let ITEMS=[], CUR=null;
+let EFFECT_FAMILY='integration_api';
 const MODES=['embed','interact','api','mcp','ssh'];
 function toast(m,e){const t=$('#toast');t.textContent=m;t.className='on'+(e?' err':'');clearTimeout(t._h);t._h=setTimeout(()=>t.className='',2600);}
 async function api(path,method='GET',body){const o={method,headers:{'Content-Type':'application/json'}};if(body)o.body=JSON.stringify(body);
   const r=await fetch(path,o);let j={};try{j=await r.json();}catch(e){} if(!r.ok&&!j.error)j.error='HTTP '+r.status; return j;}
+
+function closeEffects(){$('#effectOv').classList.remove('on');}
+function shortHash(value){const s=String(value||'');return s?s.slice(0,10)+'…':'—';}
+async function openEffects(){$('#effectOv').classList.add('on');await loadEffects();}
+async function loadEffects(){
+  const el=$('#effectBody');el.innerHTML='<div class="hint">Loading durable receipt evidence…</div>';
+  const [r,policy,shadow,readiness,decision,activation,inventory]=await Promise.all([api('/integrations/effect/receipts?limit=50'),
+    api('/integrations/effect/retry/policy'),
+    api('/integrations/effect/shadow/evidence?limit=50&family='+encodeURIComponent(EFFECT_FAMILY)),
+    api('/integrations/effect/enforcement/readiness'),
+    api('/integrations/effect/enforcement/decision'),
+    api('/integrations/effect/enforcement/activation'),
+    api('/integrations/effect/inventory')]);
+  if(r.error){el.innerHTML='<div class="hint">'+esc(r.error)+'</div>';return;}
+  const t=r.totals||{}, recent=r.recent||[], outcomes=r.outcomes||{};
+  const outcome=Object.entries(outcomes).filter(([,v])=>v&&v.receipts)
+    .map(([k,v])=>'<span class="bdg '+(k==='succeeded'?'ok':k==='failed'?'warn':'')+'">'
+      +esc(k)+' '+esc(v.receipts)+'</span>').join(' ');
+  const rows=recent.map(x=>'<div class="receipt"><div><b>'+esc(x.outcome||'unknown')+'</b> · '
+      +esc(x.effect_classification||'effect')+' · '+esc(x.method||'')+'</div>'
+      +'<div class="sub">'+esc(x.connection&&x.connection.id||'unknown connection')
+      +' · '+esc(x.operation||'unknown operation')+'</div>'
+      +'<code>plan '+esc(shortHash(x.plan_id))+' · receipt '+esc(shortHash(x.receipt_id))
+      +' · observations '+esc(x.observation_count||0)+'</code></div>').join('');
+  const reasons=Object.entries(policy.reason_descriptions||{})
+    .map(([k,v])=>'<div class="receipt"><code>'+esc(k)+'</code><div class="sub">'+esc(v)+'</div></div>').join('');
+  const bounds=policy.bounds||{};
+  const retryInfo=policy.error?'<div class="hint">Retry policy unavailable: '+esc(policy.error)+'</div>':
+    '<div class="sec">Retry decision policy</div><div class="hint">Planning only — Vera does not automatically retry, sleep, or choose a delay. A retry requires the original admitted plan, remaining attempt budget, a transient outcome, explicit retry intent, and no durable success receipt.</div>'
+    +'<div class="badges"><span class="bdg">HTTP '+esc((policy.retryable_http_statuses||[]).join(', '))+'</span> '
+    +'<span class="bdg">errors '+esc((policy.retryable_error_codes||[]).join(', '))+'</span> '
+    +'<span class="bdg">max '+esc(bounds.maximum_attempts||0)+' attempts</span></div>'+reasons;
+  const st=shadow.totals||{}, shadowReasons=Object.entries(shadow.reasons_in_window||{})
+    .map(([k,v])=>'<span class="bdg">'+esc(k)+' '+esc(v)+'</span>').join(' ');
+  const familyLabel={integration_api:'Generic API',telegram:'Telegram',email:'Email',commerce:'Commerce',infrastructure:'Infrastructure'}[EFFECT_FAMILY]||EFFECT_FAMILY;
+  const familySwitch='<div class="sec">Effect family</div><div class="badges">'+
+    ['integration_api','telegram','email','commerce','infrastructure'].map(f=>'<button class="btn '+(f===EFFECT_FAMILY?'pri':'')+'" onclick="setEffectFamily(\''+f+'\')">'+
+      esc({integration_api:'Generic API',telegram:'Telegram',email:'Email',commerce:'Commerce',infrastructure:'Infrastructure'}[f])+'</button>').join(' ')+'</div>';
+  const isGeneric=EFFECT_FAMILY==='integration_api';
+  const shadowInfo=shadow.error?'<div class="hint">Decision evidence unavailable: '+esc(shadow.error)+'</div>':
+    '<div class="sec">'+esc(familyLabel)+' policy decisions</div><div class="hint">Payload-free decisions for this isolated effect family. '+
+    (isGeneric&&activation.enforcement_enabled?'Enforcement is active; rejected mutations are blocked before credentials or HTTP.':'This family is observe-only here; these counts describe what policy would do, not proof of safety.')+'</div>'
+    +'<div class="metrics"><div class="metric"><b>'+esc(st.observations||0)+'</b><span>observed</span></div>'
+    +'<div class="metric"><b>'+esc(st.would_admit||0)+'</b><span>would admit</span></div>'
+    +'<div class="metric"><b>'+esc(st.would_suppress||0)+'</b><span>would suppress</span></div></div>'
+    +'<div class="badges">'+shadowReasons+'</div>';
+  const readinessChecks=Object.entries(readiness.checks||{}).map(([k,v])=>
+    '<div class="receipt"><b>'+esc(k.replace(/^minimum_/,'').replaceAll('_',' '))+'</b> '
+    +'<span class="bdg '+(v.passed?'ok':'warn')+'">'+esc(v.observed)+' / '+esc(v.required)+'</span></div>').join('');
+  const readinessInfo=!isGeneric?'':readiness.error?'<div class="hint">Readiness unavailable: '+esc(readiness.error)+'</div>':
+    '<div class="sec">Enforcement review readiness</div><div class="hint">'+
+    (readiness.eligible_for_operator_review?'Evidence thresholds met. An operator review is still required; enforcement remains off.':'More representative evidence is required. Enforcement remains off.')+
+    ' Passing these checks measures coverage, not safety or authorization.</div>'+readinessChecks;
+  const decisionInfo=!isGeneric?'':decision.error?'<div class="hint">Decision record unavailable: '+esc(decision.error)+'</div>':
+    '<div class="sec">Operator decision</div><div class="hint">Requested: <b>'+esc(decision.requested_mode)+
+    '</b> · effective: <b>'+esc(decision.effective_mode)+'</b> · revision '+esc(decision.revision)+
+    '. Recording approval does not activate enforcement.</div><div style="display:flex;gap:8px;margin-top:8px">'
+    +'<button class="btn" onclick="recordEffectDecision(\'continue_observing\','+Number(decision.revision||0)+')">Continue observing</button>'
+    +'<button class="btn" '+(readiness.eligible_for_operator_review?'':'disabled')+' onclick="recordEffectDecision(\'approve_future_enforcement\','+Number(decision.revision||0)+')">Approve future rollout</button></div>';
+  const activationInfo=!isGeneric?'':activation.error?'<div class="hint">Activation state unavailable: '+esc(activation.error)+'</div>':
+    '<div class="sec">Runtime enforcement</div><div class="hint">Deployment gate: <b>'+(activation.runtime_gate?'enabled':'disabled')+
+    '</b> · requested: <b>'+(activation.requested_active?'active':'inactive')+'</b> · effective: <b>'+esc(activation.effective_mode)+
+    '</b> · revision '+esc(activation.revision)+'. Activation is bound to the current approval and enforcement contract. A changed approval or contract disables it automatically.</div>'+
+    '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn" '+((activation.runtime_gate&&decision.decision==='approve_future_enforcement')?'':'disabled')+
+    ' onclick="recordEffectActivation(\'activate\','+Number(activation.revision||0)+')">Activate enforcement</button>'+
+    '<button class="btn" onclick="recordEffectActivation(\'deactivate\','+Number(activation.revision||0)+')">Deactivate</button></div>';
+  const boundaries=(inventory.domains||[]).map(d=>{
+    const ops=d.operations||{}, writes=(ops.remote_mutations||[]).length;
+    return '<div class="receipt"><b>'+esc(d.label||d.id)+'</b> <span class="bdg '+(writes?'warn':'ok')+'">'+
+      (writes?esc(writes)+' remote write boundaries':'local/simulated')+'</span><div class="sub">'+
+      esc(String(d.boundary||'').replaceAll('_',' '))+' · shared effect contract '+
+      (d.effect_contract_applied?'applied':'not yet applied')+'</div></div>';
+  }).join('');
+  const next=inventory.next_adapter||{};
+  const inventoryInfo=inventory.error?'<div class="hint">Provider boundary inventory unavailable: '+esc(inventory.error)+'</div>':
+    '<div class="sec">Provider boundaries</div><div class="hint">Static inventory only — these labels do not probe providers or claim enforcement. The next bounded migration candidate is '+
+    esc((next.providers||[]).join(' / ')||'not selected')+' commerce writes; credentialed validation remains separate.</div>'+boundaries;
+  el.innerHTML='<div class="hint">Durable outcomes and replay evidence. Request/response bodies, credentials, and raw approval or idempotency references are never shown.</div>'
+    +'<div class="metrics"><div class="metric"><b>'+esc(t.plans||0)+'</b><span>effect plans</span></div>'
+    +'<div class="metric"><b>'+esc(t.receipts||0)+'</b><span>receipts</span></div>'
+    +'<div class="metric"><b>'+esc(t.observations||0)+'</b><span>observations</span></div></div>'
+    +'<div class="badges">'+outcome+'</div><div class="sec">Recent evidence</div>'
+    +(rows||'<div class="hint">No external-effect receipts have been recorded yet.</div>')+familySwitch+shadowInfo+readinessInfo+decisionInfo+activationInfo+inventoryInfo+retryInfo;
+}
+function setEffectFamily(family){EFFECT_FAMILY=family;loadEffects();}
+async function recordEffectActivation(action,revision){
+  const actor=prompt('Operator reference (stored only as a digest):'); if(!actor)return;
+  let receipt='';
+  if(action==='activate'){
+    receipt=prompt('Activation receipt reference (stored only as a digest):'); if(!receipt)return;
+  }
+  const r=await api('/integrations/effect/enforcement/activation','POST',{
+    action,expected_revision:revision,actor_ref:actor,activation_receipt_ref:receipt});
+  if(r.error){toast(r.error,true);return;}
+  toast(action==='activate'?'Enforcement activation recorded':'Enforcement deactivated');loadEffects();
+}
+async function recordEffectDecision(decision,revision){
+  const actor=prompt('Operator reference (stored only as a digest):'); if(!actor)return;
+  let approval='';
+  if(decision==='approve_future_enforcement'){
+    approval=prompt('Approval receipt reference (stored only as a digest):'); if(!approval)return;
+  }
+  const r=await api('/integrations/effect/enforcement/decision','POST',{
+    decision,expected_revision:revision,actor_ref:actor,approval_receipt_ref:approval});
+  if(r.error){toast(r.error,true);return;} toast('Decision recorded; runtime remains observe-only');loadEffects();
+}
 
 async function load(){
   const [r,life,build]=await Promise.all([

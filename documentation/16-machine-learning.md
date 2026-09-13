@@ -35,6 +35,69 @@ canonical `EvaluationReport`. Its fixed arithmetic-mean aggregation and
 case-level failure count are reproducible and perform no model, judge, trainer,
 network, or external-provider call.
 
+Case-level and incremental evidence uses the compatible contracts in
+`vera/models/evaluation_evidence.py`. An `EvaluationCaseIdentity` binds a case
+key to its exact dataset revision plus input and expected-output SHA-256
+digests; raw inputs and answers never enter the evidence envelope.
+`CaseEvaluationEvidence` records thresholded metrics, integer token/cost/latency
+accounting, and explicit deterministic, model, or human judge provenance. Model
+judges must identify the provider, ModelPackage, and PromptPackage together.
+
+`PartialEvaluationReport` can preserve a non-empty subset after interruption
+without claiming terminal success. Completion requires every expected
+content-bound case, and strict reconstruction recomputes case/report IDs,
+coverage, usage totals, and pass flags. `evaluate_ci_policy` is a pure,
+effect-free decision over terminal state, coverage, failed cases, judge kind,
+cost, and latency; it never calls a provider or activates the evaluated model,
+prompt, capability, or run. This makes incomplete and forged evidence visible
+while keeping optimization and activation as later, separately reviewed
+decisions.
+
+`DeterministicEvidenceEvalProvider` is the reference replay adapter for this
+richer envelope. It accepts only a frozen request, its exact case identities,
+and already-observed evidence, rejects dataset, membership, and metric drift,
+and emits either an honest partial report or a complete one. Importing or
+calling it performs no judge, model, network, filesystem, or activation effect.
+
+Evidence-producing providers run through `execute_evaluation` under an explicit
+`EvaluationExecutionPolicy`. The default admits only providers declaring
+offline operation and deterministic judges, passes no case payloads, limits the
+case set and total integer cost, and keeps timeout/cancellation ownership in
+Vera. The wrapper cancels a timed-out provider, preserves a bounded failed
+report, rejects provider/request/case/provenance drift, and converts a cost
+overrun into non-passing evidence. Enabling a model judge or an external
+provider requires a deliberate policy change. External providers must also
+declare enforceable cost-budget and cancellation support; a local task cancel
+or post-hoc cost observation is not treated as proof of either. This contract
+does not expose such an activation through a capability or UI.
+
+Already-produced DeepEval and Promptfoo results can enter through a strict
+frozen-projection importer. It accepts a bounded Vera-owned envelope containing
+the native evaluation request, content-bound expected cases, threshold metrics,
+judge provenance, and integer usage. Full third-party exports are deliberately
+not accepted: prompt/configuration, input, expected and actual output, response,
+reason, environment, variable, message, stack, and traceback fields fail closed
+at any nesting depth. The resulting receipt pins the source/version and export
+digest and states that no provider was invoked and no payload was retained.
+Incomplete result sets become partial evidence rather than an apparent pass.
+
+Prompt optimizers use a proposal-only boundary. An `OptimizationRequest` pins
+the source PromptPackage, distinct training and held-out dataset revisions,
+objective metrics, candidate count, integer cost, and duration budgets.
+Candidates contain immutable PromptPackages plus exact optimizer name/version,
+trace digest, parent prompt, and usage provenance. Proposal reconstruction
+recomputes request, candidate, PromptPackage, and proposal identities and rejects
+forged activation/effect claims.
+
+Selection is a separate pure decision over complete held-out evidence. It first
+requires the baseline and every candidate report to match the requested prompt,
+dataset, metrics, and CI policy, then recommends the best reproducible
+improvement or declines all candidates. Ties resolve by stable candidate ID.
+Neither the proposal nor selection contract has an operation for prompt
+registration, alias mutation, deployment, or activation. DSPy and other
+optimizer execution remains an optional provider concern and is not enabled by
+these records.
+
 The current ML Workshop remains unchanged. DeepEval/Promptfoo adapters,
 Accelerate, PEFT, MLflow, DSPy, live judges, and training execution are
 subsequent gated slices.

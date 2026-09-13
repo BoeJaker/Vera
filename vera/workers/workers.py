@@ -491,12 +491,12 @@ _WOL_MOUNT_JS = r"""
 
 register_ui(
     "workers-ollama",
-    "Workers & Ollama",
+    "Estate",
     "",
     '<div id="panel-wol" style="height:100%;overflow:hidden;background:var(--bg0)"></div>',
     _WOL_MOUNT_JS,
     ui_caps=[
-        "obs.cluster", "ollama.instances", "ollama.ping",
+        "estate.health", "estate.machines", "obs.cluster", "ollama.instances", "ollama.ping",
         "ollama.pull", "ollama.generate", "cluster.nodes",
         "cluster.jobs", "worker.init", "worker.sync", "worker.drain",
         "cluster.job.stop",
@@ -511,6 +511,30 @@ register_ui(
     tab_order=1,
     specialist_agent="infra-operator",
     specialist_loop_profile="devops",
+)
+
+# ── Models — model backends, routing, the mimic proxy, API providers, the
+# catalog and benchmarks. The same panel as Estate opened with ?view=models,
+# so the model panes keep one implementation while the two tabs stay apart.
+# Where model files are stored remains in Estate > Storage.
+_MODELS_MOUNT_JS = (_WOL_MOUNT_JS
+                    .replace("getElementById('panel-wol')", "getElementById('panel-models')")
+                    .replace("'/ui/panels/workers-ollama'", "'/ui/panels/workers-ollama?view=models'")
+                    .replace("auto-workers-ollama", "auto-models"))
+
+register_ui(
+    "models",
+    "Models",
+    "",
+    '<div id="panel-models" style="height:100%;overflow:hidden;background:var(--bg0)"></div>',
+    _MODELS_MOUNT_JS,
+    ui_caps=[
+        "ollama.instances", "ollama.ping", "ollama.pull", "ollama.generate",
+        "ollama.routing.get", "ollama.routing.save", "ollama.role_profiles.get",
+        "ollama.role_profiles.save", "llm.route.resolve",
+    ],
+    mode="tab",
+    tab_order=2,
 )
 
 log.info("vera_workers loaded")

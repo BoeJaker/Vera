@@ -66,20 +66,20 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, schedule,
 )
+from Vera.vera.workers.docker_effects import observe_docker_effect
 
 log = logging.getLogger("vera.docker")
 
 _LOCAL_SOCK = os.getenv("DOCKER_SOCK", "/var/run/docker.sock")
 
-# CPython's subprocess fast-path (os.posix_spawn, no fork/GIL-holding page-table
-# copy — see exec_capabilities._run_local's VERA_FAST_SPAWN comment) only
-# engages when argv[0] has a directory component (os.path.dirname(executable)
-# must be truthy — see cpython subprocess.Popen._execute_child). A bare
-# "docker" resolved via PATH fails that check silently, so every docker CLI
-# spawn in Vera was taking the slow fork() path regardless of close_fds=False
-# — confirmed live via perf.stalls (a 1.26s create_subprocess_exec hang during
-# sandbox archiving). Resolve the absolute path once so the fast path actually
-# applies; fall back to the bare name (old behavior) if docker isn't on PATH.
+# Every docker CLI call goes through exec_capabilities._run_local, which spawns
+# via subprocess.Popen on a worker thread (execution/spawn_core.py explains why
+# the event loop's own subprocess_exec — a full fork() under uvloop — is avoided).
+# Popen's posix_spawn fast path only engages when argv[0] has a directory
+# component (os.path.dirname(executable) must be truthy — see cpython
+# subprocess.Popen._execute_child); a bare "docker" resolved via PATH takes its
+# vfork path instead. Resolve the absolute path once so the fastest path
+# applies; fall back to the bare name if docker isn't on PATH.
 _DOCKER_BIN = shutil.which("docker") or "docker"
 
 
@@ -536,6 +536,15 @@ DOCKER_STATS_SEC = 30.0
 DOCKER_STATS_TOP_N = 12          # shown/kept per host — dashboard tile space, not a hard API limit
 DOCKER_STATS_HISTORY_MAX = 20    # ~10min of trend at the 30s sample cadence, per container
 _DOCKER_STATS_SAMPLE_CAP = 60    # max containers actually queried per host per tick, busiest-first by definition impossible to know in advance, so just capped by list order
+# How many /stats requests are in flight at once per host. dockerd answers
+# each stream=false stats call by sampling cgroups twice ~1 s apart, so 60
+# concurrent ones make it (and the containerd shims) spike together on a host
+# that already runs 80+ containers. Observed 2026-09-12 (perf.stalls, load
+# avg 26 on 12 cores): every dumped hang in a 50 s window sat in
+# _docker_container_stat and the three worst loop stalls of the quarter hour
+# (7.2 s, 5.7 s, 3.5 s) fell inside that burst. 8 keeps the tick well inside
+# its 30 s cadence (60 containers ≈ 8 rounds ≈ 8–10 s) without the spike.
+_DOCKER_STATS_CONCURRENCY = int(os.getenv("VERA_DOCKER_STATS_CONCURRENCY", "8") or 8)
 _DOCKER_STATS_CACHE: Dict[str, dict] = {}   # host_id -> {containers:[...], updated_at, error}
 try:
     from Vera.vera.workers import image_drift as _image_drift
@@ -596,8 +605,14 @@ async def _docker_stats_tick_host(host_id: str, rec: dict) -> None:
         if not isinstance(rows, list):
             rows = []
         rows = rows[:_DOCKER_STATS_SAMPLE_CAP]
+        gate = asyncio.Semaphore(max(1, _DOCKER_STATS_CONCURRENCY))
+
+        async def _one(cid: str):
+            async with gate:
+                return await _docker_container_stat(rec, cid)
+
         stats = await asyncio.gather(
-            *(_docker_container_stat(rec, c.get("Id", "")) for c in rows), return_exceptions=True)
+            *(_one(c.get("Id", "")) for c in rows), return_exceptions=True)
         out = []
         now = time.time()
         for c, st in zip(rows, stats):
@@ -890,13 +905,20 @@ async def docker_logs_stream(request: Request):
 @capability(
     "docker.exec",
     http_method="POST", http_path="/workers/docker/exec", http_tags=["docker"],
+    redact_args=["host_id", "container", "command", "workdir",
+                 "idempotency_key", "approval_receipt_ref"], redact_result=True,
     description="Run a command inside a running container (sandboxed execution "
                 "environment). Gated by the exec sandbox. "
                 "Input: host_id (str), container (str!), command (str!), "
-                "workdir (str), timeout (int=120). Output: {ok, rc, stdout, stderr}.",
+                "workdir (str), timeout (int=120). Optional idempotency, approval, "
+                "and retry inputs are observe-only and never sent to Docker. "
+                "Output includes payload-free effect_shadow evidence.",
 )
 async def cap_docker_exec(host_id: str = "", container: str = "", command: str = "",
-                          workdir: str = "", timeout: int = 120, trace_id=None) -> Dict:
+                          workdir: str = "", timeout: int = 120,
+                          idempotency_key: str = "",
+                          approval_receipt_ref: str = "", retry: bool = False,
+                          trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
         return {"ok": False, "error": f"unknown host: {host_id}"}
@@ -906,6 +928,11 @@ async def cap_docker_exec(host_id: str = "", container: str = "", command: str =
     if not ok:
         await emit_event({"type": "exec.sandbox.blocked", "shell": "docker.exec", "reason": reason})
         return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+    shadow = observe_docker_effect(
+        host_ref=rec["id"], resource_ref=container,
+        operation_ref=f"{workdir}\0{command}", mode="exec",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     args = ["exec"]
     if workdir:
         args += ["-w", workdir]
@@ -913,44 +940,71 @@ async def cap_docker_exec(host_id: str = "", container: str = "", command: str =
     argv = await _docker_argv(rec, args)
     res = await _run_local(argv, timeout=int(timeout))
     res["container"] = container
+    res["effect_shadow"] = shadow
     return res
 
 
 @capability(
     "docker.stop",
     http_method="POST", http_path="/workers/docker/stop", http_tags=["docker"],
-    description="Stop a container. Input: host_id (str), container (str!), timeout (int=10). Output: {ok}.",
+    redact_args=["host_id", "container", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
+    description="Stop a container. Input: host_id (str), container (str!), timeout "
+                "(int=10). Optional idempotency, approval, and retry inputs are "
+                "observe-only and never sent to Docker. Output includes effect_shadow.",
 )
-async def cap_docker_stop(host_id: str = "", container: str = "", timeout: int = 10, trace_id=None) -> Dict:
+async def cap_docker_stop(host_id: str = "", container: str = "", timeout: int = 10,
+                          idempotency_key: str = "",
+                          approval_receipt_ref: str = "", retry: bool = False,
+                          trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
         return {"ok": False, "error": f"unknown host: {host_id}"}
     if not container:
         return {"ok": False, "error": "container required"}
+    shadow = observe_docker_effect(
+        host_ref=rec["id"], resource_ref=container,
+        operation_ref=f"timeout:{int(timeout)}", mode="stop",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     argv = await _docker_argv(rec, ["stop", "-t", str(int(timeout)), container])
     res = await _run_local(argv, timeout=int(timeout) + 20)
     await emit_event({"type": "docker.container.stopped", "container": container, "host_id": rec["id"]})
     return {"ok": res.get("ok", False), "rc": res.get("rc"),
-            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", "")}
+            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", ""),
+            "effect_shadow": shadow}
 
 
 @capability(
     "docker.rm",
     http_method="POST", http_path="/workers/docker/rm", http_tags=["docker"],
-    description="Remove a container. Input: host_id (str), container (str!), force (bool=false). Output: {ok}.",
+    redact_args=["host_id", "container", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
+    description="Remove a container. Input: host_id (str), container (str!), force "
+                "(bool=false). Optional idempotency, approval, and retry inputs are "
+                "observe-only and never sent to Docker. Output includes effect_shadow.",
 )
-async def cap_docker_rm(host_id: str = "", container: str = "", force: bool = False, trace_id=None) -> Dict:
+async def cap_docker_rm(host_id: str = "", container: str = "", force: bool = False,
+                        idempotency_key: str = "",
+                        approval_receipt_ref: str = "", retry: bool = False,
+                        trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
         return {"ok": False, "error": f"unknown host: {host_id}"}
     if not container:
         return {"ok": False, "error": "container required"}
+    shadow = observe_docker_effect(
+        host_ref=rec["id"], resource_ref=container,
+        operation_ref=f"force:{bool(force)}", mode="remove",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     args = ["rm"] + (["-f"] if force else []) + [container]
     argv = await _docker_argv(rec, args)
     res = await _run_local(argv, timeout=40)
     await emit_event({"type": "docker.container.removed", "container": container, "host_id": rec["id"]})
     return {"ok": res.get("ok", False), "rc": res.get("rc"),
-            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", "")}
+            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", ""),
+            "effect_shadow": shadow}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -974,6 +1028,8 @@ async def _image_present(rec: dict, image: str) -> bool:
     "docker.image.ensure",
     http_method="POST", http_path="/workers/docker/image/ensure", http_tags=["docker"],
     memory="off",
+    redact_args=["host_id", "image", "context", "dockerfile",
+                 "idempotency_key", "approval_receipt_ref"], redact_result=True,
     description="Make sure an image exists on a Docker host WITHOUT pulling from "
                 "a registry — for local-only images like the Vera one "
                 "('vera:latest' does not exist on Docker Hub; a docker run there "
@@ -991,12 +1047,15 @@ async def _image_present(rec: dict, image: str) -> bool:
                 "force (bool=false — REBUILD from source even if the image already "
                 "exists; use to refresh a stale image, e.g. a dev sandbox running "
                 "an old vera:latest), timeout (int=1800). "
-                "Output: {ok, present, action, image, host_id, log}.",
+                "Optional idempotency, approval, and retry inputs are observe-only "
+                "and never sent to Docker. Output includes effect_shadow only when "
+                "a build or transfer was attempted.",
 )
 async def cap_docker_image_ensure(host_id: str = "", image: str = "",
                                   strategy: str = "auto", context: str = "",
                                   dockerfile: str = "", timeout: int = 1800,
-                                  force: bool = False,
+                                  force: bool = False, idempotency_key: str = "",
+                                  approval_receipt_ref: str = "", retry: bool = False,
                                   trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
@@ -1040,6 +1099,9 @@ async def cap_docker_image_ensure(host_id: str = "", image: str = "",
             strategy = "build_transfer"
         else:
             strategy = "build"
+    if strategy not in {"build", "transfer", "build_transfer"}:
+        return {"ok": False, "error": "strategy must be auto, build, transfer, or build_transfer",
+                "image": image, "host_id": rec["id"]}
     if strategy == "transfer" and not local_has:
         return {"ok": False, "error": f"transfer requested but the local daemon "
                                       f"does not have {image} — build it first "
@@ -1047,6 +1109,11 @@ async def cap_docker_image_ensure(host_id: str = "", image: str = "",
                 "image": image, "host_id": rec["id"]}
 
     log_tail = ""
+    shadow = None
+    effect_operation = json.dumps({
+        "strategy": strategy, "image": image, "context": context or str(_REPO_ROOT),
+        "dockerfile": dockerfile, "force": bool(force),
+    }, sort_keys=True, separators=(",", ":"))
     if strategy in ("build", "build_transfer"):
         build_rec = local_rec if strategy == "build_transfer" else rec
         ctx = context or str(_REPO_ROOT)
@@ -1060,6 +1127,11 @@ async def cap_docker_image_ensure(host_id: str = "", image: str = "",
             await emit_event({"type": "exec.sandbox.blocked",
                               "shell": "docker.image.ensure", "reason": reason})
             return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+        shadow = observe_docker_effect(
+            host_ref=rec["id"], resource_ref=image,
+            operation_ref=effect_operation, mode="image_ensure",
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
         await emit_event({"type": "docker.image.build", "image": image,
                           "host_id": build_rec["id"], "context": ctx})
         res = await _run_local(argv, timeout=int(timeout))
@@ -1068,7 +1140,8 @@ async def cap_docker_image_ensure(host_id: str = "", image: str = "",
         if not res.get("ok"):
             return {"ok": False, "action": strategy, "image": image,
                     "host_id": rec["id"], "log": log_tail,
-                    "error": (res.get("stderr") or "docker build failed")[-800:]}
+                    "error": (res.get("stderr") or "docker build failed")[-800:],
+                    "effect_shadow": shadow}
 
     if strategy in ("transfer", "build_transfer"):
         # Two-step save/load through a temp tar — portable (no shell pipe),
@@ -1082,20 +1155,31 @@ async def cap_docker_image_ensure(host_id: str = "", image: str = "",
                 if not ok:
                     await emit_event({"type": "exec.sandbox.blocked",
                                       "shell": "docker.image.ensure", "reason": reason})
-                    return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+                    out = {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+                    if shadow is not None:
+                        out["effect_shadow"] = shadow
+                    return out
+            if shadow is None:
+                shadow = observe_docker_effect(
+                    host_ref=rec["id"], resource_ref=image,
+                    operation_ref=effect_operation, mode="image_ensure",
+                    idempotency_key=idempotency_key,
+                    approval_receipt_ref=approval_receipt_ref, retry=retry)
             res = await _run_local(save_argv, timeout=int(timeout))
             log_tail += ("\n" + (res.get("stderr", "") or ""))[-1500:]
             if not res.get("ok"):
                 return {"ok": False, "action": strategy, "image": image,
                         "host_id": rec["id"], "log": log_tail,
-                        "error": res.get("stderr") or "docker save failed"}
+                        "error": res.get("stderr") or "docker save failed",
+                        "effect_shadow": shadow}
             res = await _run_local(load_argv, timeout=int(timeout))
             log_tail += ("\n" + (res.get("stdout", "") or "") +
                          (res.get("stderr", "") or ""))[-1500:]
             if not res.get("ok"):
                 return {"ok": False, "action": strategy, "image": image,
                         "host_id": rec["id"], "log": log_tail,
-                        "error": res.get("stderr") or "docker load failed"}
+                        "error": res.get("stderr") or "docker load failed",
+                        "effect_shadow": shadow}
         finally:
             try: tmp.unlink()
             except Exception: pass
@@ -1103,8 +1187,11 @@ async def cap_docker_image_ensure(host_id: str = "", image: str = "",
     present = await _image_present(rec, image)
     await emit_event({"type": "docker.image.ensured", "image": image,
                       "host_id": rec["id"], "action": strategy, "ok": present})
-    return {"ok": present, "present": present, "action": strategy,
-            "image": image, "host_id": rec["id"], "log": log_tail}
+    out = {"ok": present, "present": present, "action": strategy,
+           "image": image, "host_id": rec["id"], "log": log_tail}
+    if shadow is not None:
+        out["effect_shadow"] = shadow
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1127,6 +1214,9 @@ _DEFAULT_BACKEND_ENV = (
 @capability(
     "docker.worker.spawn",
     http_method="POST", http_path="/workers/docker/worker/spawn", http_tags=["docker", "workers"],
+    redact_args=["host_id", "name", "image", "redis_url", "network", "env",
+                 "extra_args", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Spin up a Vera worker container that joins the cluster. Runs the "
                 "Vera image (VERA_WORKER_IMAGE, default 'vera:latest') detached, "
                 "wired to the shared REDIS_URL so it auto-registers in WORKER_REGISTRY "
@@ -1139,13 +1229,16 @@ _DEFAULT_BACKEND_ENV = (
                 "gpus (str — e.g. 'all'), env (dict — extra -e vars), "
                 "inherit_backends (bool=true — copy POSTGRES/NEO4J/OLLAMA env), "
                 "ensure_image (bool=true — build/transfer the image if absent), "
-                "extra_args (str). Output: {ok, container_id, name, image, host_id}.",
+                "extra_args (str). Optional idempotency, approval, and retry inputs "
+                "are observe-only and never sent to Docker. Output includes "
+                "payload-free effect_shadow evidence.",
 )
 async def cap_docker_worker_spawn(
     host_id: str = "", name: str = "", image: str = "", redis_url: str = "",
     network: str = "", gpus: str = "", env: Optional[Dict[str, str]] = None,
     inherit_backends: bool = True, ensure_image: bool = True,
-    extra_args: str = "", trace_id=None,
+    extra_args: str = "", idempotency_key: str = "",
+    approval_receipt_ref: str = "", retry: bool = False, trace_id=None,
 ) -> Dict:
     rec = _get_host(host_id)
     if not rec:
@@ -1189,34 +1282,45 @@ async def cap_docker_worker_spawn(
         await emit_event({"type": "exec.sandbox.blocked", "shell": "docker.worker.spawn", "reason": reason})
         return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
 
+    shadow = observe_docker_effect(
+        host_ref=rec["id"], resource_ref=name,
+        operation_ref=json.dumps({"name": name, "image": image,
+                                  "redis_url": redis_url, "network": network,
+                                  "gpus": gpus, "env": env or {},
+                                  "inherit_backends": bool(inherit_backends),
+                                  "ensure_image": bool(ensure_image),
+                                  "extra_args": extra_args},
+                                 sort_keys=True, separators=(",", ":")),
+        mode="worker_spawn", idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
+
     res = await _run_local(argv, timeout=180)
     if not res.get("ok"):
         return {"ok": False, "error": res.get("stderr") or res.get("error") or "docker run failed",
-                "rc": res.get("rc"), "host_id": rec["id"]}
+                "rc": res.get("rc"), "host_id": rec["id"],
+                "effect_shadow": shadow}
     cid = (res.get("stdout", "") or "").strip().splitlines()[-1] if res.get("stdout") else ""
     await emit_event({"type": "docker.worker.spawned", "name": name, "image": image,
                       "container_id": cid[:12], "host_id": rec["id"]})
     return {"ok": True, "container_id": cid, "name": name, "image": image,
-            "host_id": rec["id"], "redis_url": redis_url}
+            "host_id": rec["id"], "redis_url": redis_url,
+            "effect_shadow": shadow}
 
 
-@capability(
-    "docker.run",
-    http_method="POST", http_path="/workers/docker/run", http_tags=["docker"],
-    description="Deploy (docker run -d) an arbitrary container on a registered "
-                "Docker host. Sandbox-gated. Inputs: host_id (str!), image (str!), "
-                "name (str), ports (str — 'host:container,…' comma-sep), env (dict), "
-                "volumes (str — 'src:dst,…' comma-sep), network (str), restart "
-                "(str='unless-stopped'), extra_args (str), command (str — container "
-                "command/args appended AFTER the image), pull (bool=False — pull "
-                "the image first). Output: {ok, container_id, name, image, host_id}.",
-)
-async def cap_docker_run(
+async def _run_container_native(
     host_id: str = "", image: str = "", name: str = "", ports: str = "",
     env: Optional[Dict[str, str]] = None, volumes: str = "", network: str = "",
     restart: str = "unless-stopped", extra_args: str = "", command: str = "",
-    pull: bool = False, trace_id=None,
+    pull: bool = False, idempotency_key: str = "",
+    approval_receipt_ref: str = "", retry: bool = False, trace_id=None,
+    *, effect_mode: str = "run", effect_shadow: Optional[Dict] = None,
 ) -> Dict:
+    """Shared native container-create path with one caller-selected observation.
+
+    This is deliberately private: public capabilities cannot choose or suppress
+    their evidence family.  Higher-level stack/store operations use it so their
+    one logical mutation is not also counted as a nested ``docker.run`` effect.
+    """
     rec = _get_host(host_id)
     if not rec:
         return {"ok": False, "error": f"unknown host: {host_id}"}
@@ -1246,17 +1350,63 @@ async def cap_docker_run(
     if not ok:
         await emit_event({"type": "exec.sandbox.blocked", "shell": "docker.run", "reason": reason})
         return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+    shadow = effect_shadow
+    if shadow is None:
+        shadow = observe_docker_effect(
+            host_ref=rec["id"], resource_ref=name or image,
+            operation_ref=json.dumps({"image": image, "name": name, "ports": ports,
+                                      "env": env or {}, "volumes": volumes,
+                                      "network": network, "restart": restart,
+                                      "extra_args": extra_args, "command": command,
+                                      "pull": bool(pull)}, sort_keys=True,
+                                     separators=(",", ":")),
+            mode=effect_mode, idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
 
     if pull:
         await _run_local(await _docker_argv(rec, ["pull", image]), timeout=300)
     res = await _run_local(argv, timeout=180)
     if not res.get("ok"):
         return {"ok": False, "error": res.get("stderr") or res.get("error") or "docker run failed",
-                "rc": res.get("rc"), "host_id": rec["id"]}
+                "rc": res.get("rc"), "host_id": rec["id"],
+                "effect_shadow": shadow}
     cid = (res.get("stdout", "") or "").strip().splitlines()[-1] if res.get("stdout") else ""
     await emit_event({"type": "docker.container.run", "name": name, "image": image,
                       "container_id": cid[:12], "host_id": rec["id"]})
-    return {"ok": True, "container_id": cid, "name": name, "image": image, "host_id": rec["id"]}
+    return {"ok": True, "container_id": cid, "name": name, "image": image,
+            "host_id": rec["id"], "effect_shadow": shadow}
+
+
+@capability(
+    "docker.run",
+    http_method="POST", http_path="/workers/docker/run", http_tags=["docker"],
+    redact_args=["host_id", "image", "name", "ports", "env", "volumes", "network",
+                 "extra_args", "command", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
+    description="Deploy (docker run -d) an arbitrary container on a registered "
+                "Docker host. Sandbox-gated. Inputs: host_id (str!), image (str!), "
+                "name (str), ports (str — 'host:container,…' comma-sep), env (dict), "
+                "volumes (str — 'src:dst,…' comma-sep), network (str), restart "
+                "(str='unless-stopped'), extra_args (str), command (str — container "
+                "command/args appended AFTER the image), pull (bool=False — pull "
+                "the image first). Optional idempotency, approval, and retry inputs "
+                "are observe-only and never sent to Docker. Output includes "
+                "payload-free effect_shadow evidence.",
+)
+async def cap_docker_run(
+    host_id: str = "", image: str = "", name: str = "", ports: str = "",
+    env: Optional[Dict[str, str]] = None, volumes: str = "", network: str = "",
+    restart: str = "unless-stopped", extra_args: str = "", command: str = "",
+    pull: bool = False, idempotency_key: str = "",
+    approval_receipt_ref: str = "", retry: bool = False, trace_id=None,
+) -> Dict:
+    return await _run_container_native(
+        host_id=host_id, image=image, name=name, ports=ports, env=env,
+        volumes=volumes, network=network, restart=restart,
+        extra_args=extra_args, command=command, pull=pull,
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry,
+        trace_id=trace_id, effect_mode="run")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1393,6 +1543,9 @@ def _stores_mod():
 @capability(
     "docker.stack.deploy",
     http_method="POST", http_path="/workers/docker/stack/deploy", http_tags=["docker"],
+    redact_args=["host_id", "service", "gpus", "env", "network",
+                 "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Provision one Vera backing service (from docker.stack.catalog) "
                 "onto a Docker host. Delegates to provision.store.deploy — the "
                 "canonical path that also generates garage config + bootstraps "
@@ -1401,11 +1554,15 @@ def _stores_mod():
                 "started, not recreated. Inputs: host_id (str!), service (str! — "
                 "redis|postgres|chromadb|neo4j|garage|ollama), gpus (str — e.g. "
                 "'all', ollama only), env (dict), network (str, legacy path only). "
-                "Output: {ok, container_id|started|already, name, host_id}.",
+                "Optional idempotency, approval, and retry inputs are observe-only "
+                "and never sent to Docker. Output: {ok, container_id|started|"
+                "already, name, host_id, effect_shadow?}.",
 )
 async def cap_docker_stack_deploy(host_id: str = "", service: str = "",
-                                  gpus: str = "", env: Optional[Dict[str, str]] = None,
-                                  network: str = "", trace_id=None) -> Dict:
+                                   gpus: str = "", env: Optional[Dict[str, str]] = None,
+                                   network: str = "", idempotency_key: str = "",
+                                   approval_receipt_ref: str = "", retry: bool = False,
+                                   trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
         return {"ok": False, "error": f"unknown host: {host_id}"}
@@ -1416,22 +1573,32 @@ async def cap_docker_stack_deploy(host_id: str = "", service: str = "",
     sm = _stores_mod()
     if sm is not None and svc_key in getattr(sm, "_STORES", {}):
         res = await sm.cap_store_deploy(host_id=rec["id"], store=svc_key,
-                                        env=env or None, gpus=gpus)
+                                         env=env or None, gpus=gpus,
+                                         idempotency_key=idempotency_key,
+                                         approval_receipt_ref=approval_receipt_ref,
+                                         retry=retry)
         st = (res.get("stores") or {}).get(svc_key, {}) if isinstance(res, dict) else {}
         if res.get("error"):
             return {"ok": False, "error": res["error"], "host_id": rec["id"]}
         return {"ok": bool(st.get("ok", res.get("ok"))),
                 "name": st.get("container", f"vera-{svc_key}"),
-                "container_id": st.get("container_id", ""),
-                "already": st.get("already", False),
-                "bootstrap": st.get("bootstrap"), "secrets": st.get("secrets"),
-                "host_id": rec["id"]}
+                  "container_id": st.get("container_id", ""),
+                  "already": st.get("already", False),
+                  "bootstrap": st.get("bootstrap"), "secrets": st.get("secrets"),
+                  "effect_shadow": st.get("effect_shadow"),
+                  "host_id": rec["id"]}
 
     # Legacy fallback (stores module not loaded) — original inline logic.
     svc = _stack_catalog().get(svc_key)
     if not svc:
         return {"ok": False, "error": f"unknown service: {service} — see docker.stack.catalog"}
     cname = svc["container_name"]
+    effect_operation = json.dumps({
+        "service": svc_key, "image": svc["image"], "ports": svc["ports"],
+        "volumes": svc["volumes"], "env": {**(svc.get("env") or {}), **(env or {})},
+        "network": network, "gpus": gpus if svc.get("gpus_hint") else "",
+    }, sort_keys=True, separators=(",", ":"))
+    shadow = None
 
     # Already there? Start it rather than failing on the name collision.
     try:
@@ -1440,9 +1607,21 @@ async def cap_docker_stack_deploy(host_id: str = "", service: str = "",
             info = json.loads(body or b"{}")
             if (info.get("State") or {}).get("Running"):
                 return {"ok": True, "already": True, "name": cname, "host_id": rec["id"]}
-            st2, _, _ = await _engine_request(rec, "POST", f"/containers/{cname}/start", timeout=30)
+            start_argv = await _docker_argv(rec, ["start", cname])
+            allowed, reason = _sandbox_gate(" ".join(start_argv))
+            if not allowed:
+                return {"ok": False, "blocked": True,
+                        "error": f"sandbox: {reason}", "name": cname,
+                        "host_id": rec["id"]}
+            shadow = observe_docker_effect(
+                host_ref=rec["id"], resource_ref=cname,
+                operation_ref="restart_existing:true", mode="stack_deploy",
+                idempotency_key=idempotency_key,
+                approval_receipt_ref=approval_receipt_ref, retry=retry)
+            st2, _, _ = await _engine_request(
+                rec, "POST", f"/containers/{cname}/start", timeout=30)
             return {"ok": st2 in (204, 304), "started": True, "name": cname,
-                    "host_id": rec["id"]}
+                    "host_id": rec["id"], "effect_shadow": shadow}
     except Exception:
         pass
 
@@ -1456,22 +1635,34 @@ async def cap_docker_stack_deploy(host_id: str = "", service: str = "",
             writer = await _docker_argv(rec, [
                 "run", "--rm", "-v", f"{vol}:/cfg", "busybox", "sh", "-c",
                 f"echo {b64} | base64 -d > /cfg/garage.toml"])
+            allowed, reason = _sandbox_gate(" ".join(writer))
+            if not allowed:
+                return {"ok": False, "blocked": True, "name": cname,
+                        "host_id": rec["id"], "error": f"sandbox: {reason}"}
+            shadow = observe_docker_effect(
+                host_ref=rec["id"], resource_ref=cname,
+                operation_ref=effect_operation, mode="stack_deploy",
+                idempotency_key=idempotency_key,
+                approval_receipt_ref=approval_receipt_ref, retry=retry)
             wres = await _run_local(writer, timeout=120)
             if not wres.get("ok"):
                 return {"ok": False, "name": cname, "host_id": rec["id"],
                         "error": "config write failed: " +
-                                 (wres.get("stderr") or "")[-300:]}
+                                 (wres.get("stderr") or "")[-300:],
+                        "effect_shadow": shadow}
         else:
             return {"ok": False, "error": f"config file missing: {svc['config_file']}"}
 
     merged_env = dict(svc.get("env") or {})
     merged_env.update(env or {})
     extra = f"--gpus {shlex.quote(gpus)}" if (gpus and svc.get("gpus_hint")) else ""
-    res = await cap_docker_run(
+    res = await _run_container_native(
         host_id=rec["id"], image=svc["image"], name=cname,
         ports=svc["ports"], env=merged_env, volumes=svc["volumes"],
         network=network, extra_args=extra, command=svc.get("command", ""),
-        pull=True)
+        pull=True, idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry,
+        effect_mode="stack_deploy", effect_shadow=shadow)
     if res.get("ok"):
         await emit_event({"type": "docker.stack.deployed", "service": service,
                           "name": cname, "host_id": rec["id"]})
@@ -1517,20 +1708,33 @@ async def cap_docker_worker_list(host_id: str = "", trace_id=None) -> Dict:
 @capability(
     "docker.worker.stop",
     http_method="POST", http_path="/workers/docker/worker/stop", http_tags=["docker", "workers"],
+    redact_args=["host_id", "container", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Stop and remove a Vera worker container. "
-                "Input: host_id (str), container (str!). Output: {ok}.",
+                "Input: host_id (str), container (str!). Optional idempotency, "
+                "approval, and retry inputs are observe-only and never sent to "
+                "Docker. Output includes effect_shadow.",
 )
-async def cap_docker_worker_stop(host_id: str = "", container: str = "", trace_id=None) -> Dict:
+async def cap_docker_worker_stop(host_id: str = "", container: str = "",
+                                 idempotency_key: str = "",
+                                 approval_receipt_ref: str = "", retry: bool = False,
+                                 trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
         return {"ok": False, "error": f"unknown host: {host_id}"}
     if not container:
         return {"ok": False, "error": "container required"}
+    shadow = observe_docker_effect(
+        host_ref=rec["id"], resource_ref=container,
+        operation_ref="force:true", mode="worker_stop",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     argv = await _docker_argv(rec, ["rm", "-f", container])
     res = await _run_local(argv, timeout=40)
     await emit_event({"type": "docker.worker.stopped", "container": container, "host_id": rec["id"]})
     return {"ok": res.get("ok", False), "rc": res.get("rc"),
-            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", "")}
+            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", ""),
+            "effect_shadow": shadow}
 
 
 @APP.post("/workers/docker/worker/logs", include_in_schema=False)

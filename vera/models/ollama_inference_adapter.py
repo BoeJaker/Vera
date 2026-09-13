@@ -133,6 +133,9 @@ class LegacyOllamaInferenceProvider:
             if not isinstance(text, str):
                 yield self._failed(request, sequence, "invalid_response")
                 return
+            if not text:
+                yield self._failed(request, sequence, "empty_response")
+                return
             if not request.stream or not chunks:
                 try:
                     output = self._output(text)

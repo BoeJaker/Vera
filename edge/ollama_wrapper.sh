@@ -1,4 +1,16 @@
 #!/usr/bin/env bash
+# RETIRED 2026-09-11 — not deployable, kept for reference only.
+#
+# This proxied :11435 in front of Ollama so requests could be seen. It was
+# never actually deployed to any node; it collides with the ollama-vera unit
+# that owns :11435; its watchdog falls back to `pkill -f ollama`, which kills
+# the server and every other caller's work; its reaper would kill legitimate
+# CPU inference; and enforce_limits injects num_predict=256 plus stop tokens
+# including "###" and "User:", which would truncate Vera's markdown. The
+# dashboard it serves is /api/status, while the panel polled /api/report.
+#
+# What replaced it: bench.node_requests reads each node's own Ollama access
+# log over SSH — same visibility, nothing in the request path.
 # ─────────────────────────────────────────────────────────────────────────────
 # ollama_wrapper.sh  v3 (hardened)
 #

@@ -77,12 +77,39 @@ class MemoryRecord:
     updated_at:    str
 ```
 
-Records are stored in two places by default:
+Records are fanned out to three backends by default:
 
+- **Postgres**, as the native durable record archive and first exact-read source.
 - **Neo4j**, as `(m:Memory {...})` nodes with all fields as properties.
-- **Vector store** (Chroma), with `text` (or `full_text` truncated) embedded for semantic search.
+- **Chroma**, with `text` (or `full_text` truncated) embedded for semantic search.
 
 Session nodes are stored as `(s:Session {session_id, agent_name, created_at, ...})`. The Neo4j backend creates a `(:Session)-[:CONTAINS]->(:Memory)` edge automatically for every record with a `session_id`, so the harness can scope queries to a single session without joining anything explicitly.
+
+### Record authority and projections
+
+The current native runtime has one logical `MemoryRecord`, but it writes that
+shape to three independently readable backends. Postgres is the native durable
+content-authority claim and is registered first. Chroma is the rebuildable
+vector projection, while Neo4j is the graph and relationship projection. The
+`HybridMemoryStore` coordinates best-effort fan-out; it is not a database or a
+transaction boundary. Its exact-record read returns the first backend result in
+registration order, so a successful read does not by itself prove that all
+three copies agree. Reconciliation and repair must therefore be explicit.
+
+The longer-term canonical authority is an immutable Fabric `RecordRevision`.
+A `MemoryProjection` is retrieval state bound to that exact record and revision
+through a citation; it is never a competing source of original content. The
+native adapter is deliberately read-only and converts a trusted legacy snapshot
+into that projection contract. `MemoryRecord` remains the compatibility ingress
+until runtime traffic is migrated.
+
+Moving authority requires more than changing which backend is queried. A safe
+cutover needs receipts for both sides of every dual write, complete
+reconciliation, stable identity mappings, and success, failure, timeout,
+cancellation, restart and recovery parity. Direct writers and stored/external
+consumers must also be inventoried. Until that evidence exists, native records
+remain operational and no stored memory or backend copy is eligible for
+automatic deletion.
 
 ### Portable MemoryProvider migration
 

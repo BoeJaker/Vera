@@ -53,6 +53,9 @@ from Vera.vera.capability_orchestration import (
     register_ui,
     schedule,
 )
+from Vera.vera.email.email_effects import apply_replay_evidence, plan_email_send_effect
+from Vera.vera.integrations.effect_receipts import default_external_effect_receipt_ledger
+from Vera.vera.integrations.effect_shadow_evidence import default_external_effect_shadow_evidence
 from Vera.vera.security import secrets as vsecrets
 from Vera.vera.email import transport as mail_transport
 
@@ -266,7 +269,7 @@ async def cap_accounts_list(trace_id=None):
 async def cap_test(account: str = "", trace_id=None):
     t, acct = await _transport(account)
     if not t:
-        return _NO_ACCOUNT
+        return {**_NO_ACCOUNT, "effect_shadow": shadow}
     try:
         return await t.test()
     except Exception as e:
@@ -363,22 +366,60 @@ def _with_signature(body: str, signature: str) -> str:
     return body
 
 
+def _observe_email_effect(*, account_ref: str = "", destination_ref: str,
+                          mode: str, idempotency_key: str = "",
+                          approval_receipt_ref: str = "",
+                          retry: bool = False) -> Dict[str, Any]:
+    try:
+        shadow = plan_email_send_effect(
+            account_ref=account_ref, destination_ref=destination_ref, mode=mode,
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
+        if shadow["plan"]["admission"]["allowed"]:
+            replay = default_external_effect_receipt_ledger().replay_status(shadow["plan"])
+            shadow = apply_replay_evidence(shadow, replay)
+    except Exception:
+        shadow = {"schema": "vera.email-send-effect-shadow/v1",
+                  "enforcement": "observe_only", "error": "shadow_unavailable",
+                  "decision": {"would_admit": False, "would_execute": False,
+                               "reasons": ["invalid_policy_evidence"]},
+                  "blocks_current_call": False,
+                  "forwards_control_references": False,
+                  "records_completion": False, "executes": False,
+                  "retains_payload": False}
+    try:
+        default_external_effect_shadow_evidence(family="email").record(shadow)
+    except Exception:
+        log.exception("Email effect shadow evidence record failed")
+    return shadow
+
+
 @capability(
     "mail.send", http_method="POST", http_path="/mail/send",
     http_tags=["email"], memory="on",
+    redact_args=["to", "subject", "body", "account", "cc", "bcc",
+                 "idempotency_key", "approval_receipt_ref"], redact_result=True,
     description="Send a new email via SMTP. Input: account (id — default if "
                 "blank), to (str!), subject (str!), body (str!), cc (str), "
-                "bcc (str), html (bool). Output: {ok, to, message_id}.",
+                "bcc (str), html (bool), and optional idempotency_key, "
+                "approval_receipt_ref, retry policy evidence. Control references "
+                "are not sent to SMTP. Output includes effect_shadow.",
 )
 async def cap_send(to: str = "", subject: str = "", body: str = "", account: str = "",
-                   cc: str = "", bcc: str = "", html: bool = False, trace_id=None):
+                   cc: str = "", bcc: str = "", html: bool = False,
+                   idempotency_key: str = "", approval_receipt_ref: str = "",
+                   retry: bool = False, trace_id=None):
     if not to:
         return {"error": "to is required"}
     if not (subject or body):
         return {"error": "subject or body is required"}
+    shadow = _observe_email_effect(
+        account_ref=account, destination_ref="\n".join((to, cc, bcc)), mode="send",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     t, acct = await _transport(account)
     if not t:
-        return _NO_ACCOUNT
+        return {**_NO_ACCOUNT, "effect_shadow": shadow}
     s = await _get_settings()
     try:
         res = await t.send(to, subject, _with_signature(body, s.get("signature", "")),
@@ -386,24 +427,34 @@ async def cap_send(to: str = "", subject: str = "", body: str = "", account: str
         await emit_event({"type": "mail.sent", "stage": "send",
                           "message": f"sent to {to}", "subject": subject,
                           "account": acct.get("email", "")})
-        return res
+        return {**res, "effect_shadow": shadow}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "effect_shadow": shadow}
 
 
 @capability(
     "mail.reply", http_method="POST", http_path="/mail/reply",
     http_tags=["email"], memory="on",
+    redact_args=["uid", "body", "account", "idempotency_key",
+                 "approval_receipt_ref"], redact_result=True,
     description="Reply to a message by uid (threaded). Input: account (id), "
                 "uid (str!), body (str!), reply_all (bool), html (bool). "
-                "Output: {ok, to, message_id}.",
+                "Optional idempotency_key, approval_receipt_ref, and retry are "
+                "observe-only policy evidence and are not sent to SMTP. Output "
+                "includes effect_shadow.",
 )
 async def cap_reply(uid: str = "", body: str = "", account: str = "",
-                    reply_all: bool = False, html: bool = False, trace_id=None):
+                    reply_all: bool = False, html: bool = False,
+                    idempotency_key: str = "", approval_receipt_ref: str = "",
+                    retry: bool = False, trace_id=None):
     if not uid:
         return {"error": "uid is required"}
     if not body:
         return {"error": "body is required"}
+    shadow = _observe_email_effect(
+        account_ref=account, destination_ref=f"thread:{uid}", mode="reply",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     t, acct = await _transport(account)
     if not t:
         return _NO_ACCOUNT
@@ -411,7 +462,8 @@ async def cap_reply(uid: str = "", body: str = "", account: str = "",
     try:
         orig = await t.get_message(uid)
         if orig.get("error"):
-            return {"error": f"could not load original: {orig['error']}"}
+            return {"error": f"could not load original: {orig['error']}",
+                    "effect_shadow": shadow}
         from email.utils import parseaddr
         to_addr = parseaddr(orig.get("from", ""))[1]
         cc = orig.get("cc", "") if reply_all else ""
@@ -424,9 +476,9 @@ async def cap_reply(uid: str = "", body: str = "", account: str = "",
                                                  "references": refs}, html=html)
         await emit_event({"type": "mail.sent", "stage": "reply",
                           "message": f"replied to {to_addr}", "subject": subj})
-        return res
+        return {**res, "effect_shadow": shadow}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "effect_shadow": shadow}
 
 
 @capability(
@@ -562,6 +614,8 @@ async def _event_bridge_loop():
             body = (f"Event: {etype}\n\n"
                     f"{json.dumps({k: v for k, v in ev.items() if k != 'type'}, default=str, indent=2)[:1500]}")
             try:
+                _observe_email_effect(
+                    account_ref="default", destination_ref=to_addr, mode="event")
                 t, _acct = await _transport()      # default account
                 if t:
                     await t.send(to_addr, f"[Vera] {etype}: {str(preview)[:80]}", body)

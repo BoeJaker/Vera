@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<title>Vera · Home</title>
+<style>
+:root {
+  --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --bg3:#20262e;
+  --border:#232a33; --border2:#2e3742;
+  --fg:#d8dde3; --fg2:#9aa3ad; --dim:#5f6975;
+  --acc:#4a9eff; --acc2:#28c28a; --warn:#f5b341; --err:#ef5b5b; --purple:#a78bfa;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+* { box-sizing:border-box; }
+html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
+  font:12px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif;height:100%;overflow:hidden; }
+#root{ display:flex;flex-direction:column;height:100vh;min-height:0; }
+#topbar{ height:46px;flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg1);
+  padding:0 18px;display:flex;align-items:center;gap:10px; }
+#topbar .ico{ width:24px;height:24px;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:14px; }
+#topbar h1{ margin:0;font-size:13px;font-weight:600; }
+#topbar .sub{ font-size:10px;color:var(--dim); }
+#topbar .right{ margin-left:auto;display:flex;gap:8px;align-items:center; }
+#content{ flex:1;overflow-y:auto;padding:16px 20px;min-height:0; }
+.wrap{ max-width:1040px;margin:0 auto; }
+
+.btn{ background:var(--bg2);border:1px solid var(--border2);color:var(--fg);border-radius:5px;
+  padding:7px 13px;font:inherit;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.12s;white-space:nowrap; }
+.btn:hover{ background:var(--bg3);border-color:var(--acc); }
+.btn.primary{ background:var(--acc);border-color:var(--acc);color:var(--on-acc,#04121f);font-weight:600; }
+.btn.ok{ background:var(--acc2);border-color:var(--acc2);color:var(--on-acc,#04121f);font-weight:600; }
+.btn.sm{ padding:4px 9px;font-size:10px; }
+.btn:disabled{ opacity:.5;cursor:not-allowed; }
+
+.card{ background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:14px; }
+.card h2{ margin:0 0 10px;font-size:12px;font-weight:600;letter-spacing:.3px;
+  display:flex;align-items:center;gap:8px; }
+.card h2 .hint{ font-weight:400;color:var(--dim);font-size:10px; }
+.grid{ display:grid;grid-template-columns:150px 1fr;gap:8px 12px;align-items:center; }
+label{ font-size:11px;color:var(--fg2); }
+input[type=text],input[type=password],select{
+  background:var(--bg);border:1px solid var(--border2);color:var(--fg);border-radius:5px;
+  padding:6px 9px;font:inherit;font-size:11px;width:100%; }
+input:focus,select:focus{ outline:none;border-color:var(--acc); }
+
+.tabs{ display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--border); }
+.tab{ padding:7px 14px;font-size:11px;color:var(--fg2);cursor:pointer;border-bottom:2px solid transparent; }
+.tab:hover{ color:var(--fg); }
+.tab.on{ color:var(--acc);border-bottom-color:var(--acc); }
+
+table{ width:100%;border-collapse:collapse;font-size:11px; }
+th{ text-align:left;color:var(--dim);font-weight:500;font-size:10px;text-transform:uppercase;
+  letter-spacing:.4px;padding:5px 8px;border-bottom:1px solid var(--border); }
+td{ padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:middle; }
+tr:hover td{ background:var(--bg2); }
+.eid{ font-family:var(--mono);font-size:10px;color:var(--fg2); }
+
+.pill{ display:inline-block;padding:1px 7px;border-radius:9px;font-size:9.5px;
+  border:1px solid var(--border2);color:var(--fg2); }
+.pill.on{ color:var(--acc2);border-color:var(--acc2); }
+.pill.off{ color:var(--dim); }
+.pill.dead{ color:var(--err);border-color:var(--err); }
+
+.chips{ display:flex;flex-wrap:wrap;gap:6px; }
+.chip{ background:var(--bg2);border:1px solid var(--border2);border-radius:14px;padding:5px 12px;
+  font-size:11px;cursor:pointer;transition:.12s; }
+.chip:hover{ border-color:var(--acc);color:var(--acc); }
+
+#toast{ position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+  background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:9px 16px;
+  font-size:11px;opacity:0;pointer-events:none;transition:.2s;max-width:70vw; }
+#toast.show{ opacity:1; }
+#toast.err{ border-color:var(--err);color:var(--err); }
+#toast.ok{ border-color:var(--acc2);color:var(--acc2); }
+.empty{ color:var(--dim);text-align:center;padding:26px;font-size:11px; }
+.row{ display:flex;gap:8px;align-items:center;flex-wrap:wrap; }
+.muted{ color:var(--dim);font-size:10px; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="topbar">
+    <div class="ico">&#127968;</div>
+    <div>
+      <h1>Home Assistant</h1>
+      <div class="sub" id="status">checking…</div>
+    </div>
+    <div class="right">
+      <button class="btn sm" onclick="refresh()">Refresh</button>
+    </div>
+  </div>
+  <div id="content"><div class="wrap">
+
+    <div class="tabs">
+      <div class="tab on" data-t="control" onclick="tab('control')">Control</div>
+      <div class="tab" data-t="entities" onclick="tab('entities')">Entities</div>
+      <div class="tab" data-t="notify" onclick="tab('notify')">Notify</div>
+      <div class="tab" data-t="config" onclick="tab('config')">Connection</div>
+    </div>
+
+    <!-- ── CONTROL ─────────────────────────────────────────────────────── -->
+    <div class="pane" id="pane-control">
+      <div class="card">
+        <h2>Say what you want <span class="hint">names are matched the way you'd say them — "bedside lamp"</span></h2>
+        <div class="row">
+          <input type="text" id="q" placeholder="bedside lamp" style="flex:1;min-width:200px"
+                 onkeydown="if(event.key==='Enter')act('toggle')">
+          <button class="btn ok" onclick="act('on')">On</button>
+          <button class="btn" onclick="act('off')">Off</button>
+          <button class="btn" onclick="act('toggle')">Toggle</button>
+          <button class="btn sm" onclick="preview()">What matches?</button>
+        </div>
+        <div id="matchbox" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card">
+        <h2>Scenes <span class="hint" id="scenecount"></span></h2>
+        <div class="chips" id="scenes"><div class="empty">loading…</div></div>
+      </div>
+
+      <div class="card">
+        <h2>Lights &amp; switches</h2>
+        <div id="switches"><div class="empty">loading…</div></div>
+      </div>
+    </div>
+
+    <!-- ── ENTITIES ────────────────────────────────────────────────────── -->
+    <div class="pane" id="pane-entities" style="display:none">
+      <div class="card">
+        <h2>Everything Home Assistant knows about</h2>
+        <div class="row" style="margin-bottom:10px">
+          <select id="domsel" style="width:180px" onchange="loadEntities()"></select>
+          <label class="row" style="gap:5px"><input type="checkbox" id="availonly" onchange="loadEntities()"> reachable only</label>
+          <span class="muted" id="entsum"></span>
+        </div>
+        <div id="entities"><div class="empty">loading…</div></div>
+      </div>
+    </div>
+
+    <!-- ── NOTIFY ──────────────────────────────────────────────────────── -->
+    <div class="pane" id="pane-notify" style="display:none">
+      <div class="card">
+        <h2>Push a notification <span class="hint">goes to a paired phone</span></h2>
+        <div class="grid">
+          <label>Target</label><select id="ntarget"></select>
+          <label>Title</label><input type="text" id="ntitle" placeholder="Vera">
+          <label>Message</label><input type="text" id="nmsg" placeholder="Bins go out tonight">
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn primary" onclick="doNotify()">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CONFIG ──────────────────────────────────────────────────────── -->
+    <div class="pane" id="pane-config" style="display:none">
+      <div class="card">
+        <h2>Connection</h2>
+        <div class="grid">
+          <label>Base URL</label><input type="text" id="base_url" placeholder="http://192.168.0.96:8123">
+          <label>Token</label><input type="password" id="token" placeholder="long-lived access token">
+          <label>Verify TLS</label><div><input type="checkbox" id="verify_tls"></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn primary" onclick="saveCfg()">Save</button>
+          <button class="btn" onclick="testCfg()">Test</button>
+          <span class="muted">A long-lived token is made in Home Assistant under your profile → Security.</span>
+        </div>
+        <div id="cfgout" class="muted" style="margin-top:10px"></div>
+      </div>
+      <div class="card">
+        <h2>Health <span class="hint">what is configured but unreachable</span></h2>
+        <div id="health"><div class="empty">loading…</div></div>
+      </div>
+    </div>
+
+  </div></div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let STATES = [];
+
+// Every panel action goes through Vera's capability call surface, so the panel
+// has no privileged path of its own.
+async function cap(name, args){
+  const r = await fetch('/mcp/call', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, arguments: args || {}})
+  });
+  const j = await r.json();
+  return (j && j.content !== undefined) ? j.content : j;
+}
+
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"]/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+let _tt;
+function toast(msg, kind){
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'show' + (kind ? ' ' + kind : '');
+  clearTimeout(_tt);
+  _tt = setTimeout(() => { t.className = ''; }, 3200);
+}
+
+function tab(name){
+  document.querySelectorAll('.tab').forEach(e =>
+    e.classList.toggle('on', e.dataset.t === name));
+  document.querySelectorAll('.pane').forEach(e =>
+    e.style.display = (e.id === 'pane-' + name) ? '' : 'none');
+  if (name === 'entities') loadEntities();
+  if (name === 'config') loadHealth();
+}
+
+// ── control ────────────────────────────────────────────────────────────────
+async function act(action){
+  const q = $('q').value.trim();
+  if (!q) { toast('name something first', 'err'); return; }
+  const r = await cap('ha.set', {entity:q, action:action});
+  if (r.error){
+    // An ambiguous phrase comes back with its candidates rather than being
+    // guessed at, so show them instead of a bare failure.
+    if (r.candidates && r.candidates.length){
+      $('matchbox').innerHTML = '<div class="muted">' + esc(r.error)
+        + ' — pick one:</div><div class="chips" style="margin-top:6px">'
+        + r.candidates.map(c => '<div class="chip" onclick="$(\'q\').value='
+            + JSON.stringify(c).replace(/"/g,'&quot;') + '">' + esc(c) + '</div>').join('')
+        + '</div>';
+    }
+    toast(r.error, 'err');
+    return;
+  }
+  const name = (r.resolved && r.resolved.name) || q;
+  toast(name + ' → ' + action + (r.warning ? ' (device unreachable)' : ''),
+        r.warning ? 'err' : 'ok');
+  $('matchbox').innerHTML = '';
+  setTimeout(refresh, 600);
+}
+
+async function preview(){
+  const q = $('q').value.trim();
+  if (!q) return;
+  const r = await cap('ha.find', {query:q, limit:8});
+  const m = (r && r.matches) || [];
+  if (!m.length){ $('matchbox').innerHTML = '<div class="muted">nothing matches</div>'; return; }
+  $('matchbox').innerHTML = '<table><tr><th>Entity</th><th>Name</th><th>State</th><th></th></tr>'
+    + m.map(e => '<tr><td class="eid">' + esc(e.entity_id) + '</td><td>' + esc(e.name)
+        + '</td><td>' + statePill(e) + '</td><td style="text-align:right">'
+        + '<button class="btn sm" onclick="quick(' + JSON.stringify(e.entity_id).replace(/"/g,'&quot;')
+        + ',\'toggle\')">toggle</button></td></tr>').join('')
+    + '</table>';
+}
+
+async function quick(eid, action){
+  const r = await cap('ha.set', {entity:eid, action:action});
+  if (r.error){ toast(r.error, 'err'); return; }
+  toast(eid + ' → ' + action, 'ok');
+  setTimeout(refresh, 600);
+}
+
+async function runScene(eid, name){
+  const r = await cap('ha.scene', {scene:eid});
+  toast(r.error ? r.error : ('scene: ' + name), r.error ? 'err' : 'ok');
+}
+
+function statePill(e){
+  if (!e.available) return '<span class="pill dead">unavailable</span>';
+  const s = String(e.state || '');
+  const cls = (s === 'on' || s === 'home' || s === 'playing') ? 'on' : 'off';
+  return '<span class="pill ' + cls + '">' + esc(s) + '</span>';
+}
+
+function renderScenes(){
+  const sc = STATES.filter(e => e.domain === 'scene');
+  $('scenecount').textContent = sc.length ? (sc.length + ' defined') : '';
+  $('scenes').innerHTML = sc.length
+    ? sc.map(e => '<div class="chip" onclick="runScene('
+        + JSON.stringify(e.entity_id).replace(/"/g,'&quot;') + ','
+        + JSON.stringify(e.name).replace(/"/g,'&quot;') + ')">' + esc(e.name) + '</div>').join('')
+    : '<div class="empty">no scenes</div>';
+}
+
+function renderSwitches(){
+  const rows = STATES.filter(e => ['light','switch','media_player','fan','cover']
+    .indexOf(e.domain) >= 0);
+  if (!rows.length){ $('switches').innerHTML = '<div class="empty">nothing switchable</div>'; return; }
+  $('switches').innerHTML = '<table><tr><th>Name</th><th>Entity</th><th>State</th><th></th></tr>'
+    + rows.map(e =>
+        '<tr><td>' + esc(e.name) + '</td><td class="eid">' + esc(e.entity_id) + '</td><td>'
+        + statePill(e) + '</td><td style="text-align:right">'
+        + '<button class="btn sm" ' + (e.available ? '' : 'disabled title="unreachable"')
+        + ' onclick="quick(' + JSON.stringify(e.entity_id).replace(/"/g,'&quot;')
+        + ',\'toggle\')">toggle</button></td></tr>').join('')
+    + '</table>';
+}
+
+// ── entities ───────────────────────────────────────────────────────────────
+async function loadEntities(){
+  const r = await cap('ha.states', {domain: $('domsel').value,
+                                    available_only: $('availonly').checked,
+                                    limit: 500});
+  if (r.error){ $('entities').innerHTML = '<div class="empty">' + esc(r.error) + '</div>'; return; }
+  const rows = r.entities || [];
+  $('entsum').textContent = rows.length + ' of ' + (r.total || 0);
+  $('entities').innerHTML = rows.length
+    ? '<table><tr><th>Name</th><th>Entity</th><th>State</th></tr>'
+      + rows.map(e => '<tr><td>' + esc(e.name) + '</td><td class="eid">' + esc(e.entity_id)
+          + '</td><td>' + statePill(e) + '</td></tr>').join('') + '</table>'
+    : '<div class="empty">nothing here</div>';
+}
+
+// ── notify ─────────────────────────────────────────────────────────────────
+async function loadNotifyTargets(){
+  const r = await cap('ha.services', {domain:'notify'});
+  const sel = $('ntarget');
+  const svcs = (r.services && r.services[0] && r.services[0].services) || [];
+  sel.innerHTML = svcs.length
+    ? svcs.map(s => '<option value="' + esc(s) + '">' + esc(s) + '</option>').join('')
+    : '<option value="">no notify targets</option>';
+}
+
+async function doNotify(){
+  const msg = $('nmsg').value.trim();
+  if (!msg){ toast('message is required', 'err'); return; }
+  const r = await cap('ha.notify', {message:msg, title:$('ntitle').value.trim(),
+                                    target:$('ntarget').value});
+  toast(r.error ? r.error : 'sent', r.error ? 'err' : 'ok');
+}
+
+// ── config ─────────────────────────────────────────────────────────────────
+async function loadCfg(){
+  const c = await cap('ha.config.get');
+  if (!c || c.error){ toast('config: ' + ((c||{}).error || 'failed'), 'err'); return; }
+  $('base_url').value = c.base_url || '';
+  $('verify_tls').checked = !!c.verify_tls;
+  $('token').placeholder = c.token ? '(stored — leave blank to keep)' : 'not set';
+}
+
+async function saveCfg(){
+  const r = await cap('ha.config.set', {
+    base_url: $('base_url').value.trim(),
+    token: $('token').value,
+    verify_tls: $('verify_tls').checked
+  });
+  if (r.error){ toast(r.error, 'err'); return; }
+  $('token').value = '';
+  toast('saved', 'ok');
+  loadCfg(); refresh();
+}
+
+async function testCfg(){
+  $('cfgout').textContent = 'testing…';
+  const h = await cap('ha.health');
+  $('cfgout').innerHTML = h.ok
+    ? '<span style="color:var(--acc2)">connected — ' + esc(h.message || 'ok') + ', '
+      + (h.entities || 0) + ' entities</span>'
+    : '<span style="color:var(--err)">' + esc(h.error || 'failed') + '</span>';
+}
+
+async function loadHealth(){
+  const s = await cap('ha.summary');
+  if (s.error){ $('health').innerHTML = '<div class="empty">' + esc(s.error) + '</div>'; return; }
+  const doms = Object.entries(s.domains || {});
+  $('health').innerHTML =
+    '<div class="muted" style="margin-bottom:8px">' + s.total + ' entities · '
+    + s.unavailable_count + ' unreachable</div>'
+    + '<div class="chips">' + doms.map(([d,n]) =>
+        '<span class="pill">' + esc(d) + ' ' + n + '</span>').join('') + '</div>'
+    + (s.unavailable_count
+        ? '<div style="margin-top:10px"><div class="muted">Unreachable — these accept a '
+          + 'call and do nothing:</div><div class="chips" style="margin-top:6px">'
+          + (s.unavailable || []).map(e => '<span class="pill dead">' + esc(e) + '</span>').join('')
+          + '</div></div>'
+        : '');
+}
+
+// ── boot ───────────────────────────────────────────────────────────────────
+async function refresh(){
+  const h = await cap('ha.health');
+  if (!h.ok){
+    $('status').innerHTML = '<span style="color:var(--err)">'
+      + esc(h.error || 'not configured') + '</span>';
+    $('scenes').innerHTML = $('switches').innerHTML =
+      '<div class="empty">connect Home Assistant under Connection</div>';
+    return;
+  }
+  $('status').textContent = h.base_url + ' · ' + h.entities + ' entities';
+
+  const r = await cap('ha.states', {limit: 1000});
+  STATES = (r && r.entities) || [];
+  renderScenes();
+  renderSwitches();
+
+  const doms = [...new Set(STATES.map(e => e.domain))].sort();
+  const sel = $('domsel'), cur = sel.value;
+  sel.innerHTML = '<option value="">all domains</option>'
+    + doms.map(d => '<option value="' + esc(d) + '">' + esc(d) + '</option>').join('');
+  sel.value = cur;
+}
+
+(async function(){
+  await loadCfg();
+  await refresh();
+  loadNotifyTargets();
+})();
+</script>
+</body>
+</html>

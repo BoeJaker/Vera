@@ -80,6 +80,10 @@ try:
     from Vera.vera.execution import missing_path_hint as _missing_path_hint
 except ImportError:                                        # pragma: no cover
     from vera.execution import missing_path_hint as _missing_path_hint
+try:
+    from Vera.vera.execution import spawn_core as _spawn_core
+except ImportError:                                        # pragma: no cover
+    from vera.execution import spawn_core as _spawn_core
 import os
 import re
 import shlex
@@ -476,11 +480,12 @@ _EXEC_DEFAULT_TIMEOUT = int(os.getenv("VERA_EXEC_TIMEOUT", "600") or 600)   # 10
 _MAX_OUTPUT     = 1_000_000    # 1 MB captured output per stream
 
 # A few call sites below build ["bash", "-lc", cmd] argv for _run_local with a
-# bare executable name. CPython's posix_spawn fast path (the whole point of
-# _run_local's close_fds=False below) only engages when argv[0] has a
-# directory component (os.path.dirname(executable) must be truthy) — a bare
-# "bash" silently falls back to the slow GIL-holding fork() path. Use the
-# same absolute default the rest of this file already resolves per-call.
+# bare executable name. _run_local spawns through subprocess.Popen on a worker
+# thread (spawn_core), whose posix_spawn fast path only engages when
+# argv[0] has a directory component (os.path.dirname(executable) must be
+# truthy); a bare "bash" takes Popen's vfork path instead — still no page-table
+# copy, just marginally slower. Use the same absolute default the rest of this
+# file already resolves per-call.
 _BASH_BIN = os.getenv("VERA_BASH_BIN", "/bin/bash")
 
 
@@ -614,63 +619,21 @@ async def _route_session_code_argv(session_id: str, language: str, code: str,
         return None
 
 
+# Subprocess spawns run through spawn_core (subprocess.Popen on a dedicated
+# worker pool), NOT the event loop's subprocess_exec: under uvloop that is a
+# real fork() of this 11 GB server with the GIL held — 1–2 s of frozen loop per
+# `docker exec/stop/cp`. spawn_core's module docstring carries the evidence and
+# why the two earlier fixes here (close_fds=False, an absolute docker path,
+# both aimed at CPython's posix_spawn path uvloop never enters) were inert.
 async def _run_local(argv: List[str], stdin_data: str = "",
                      timeout: int = _DEFAULT_TIMEOUT,
                      cwd: Optional[str] = None,
                      env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    t0 = time.monotonic()
-    # Spawning from this large-RSS server via the default fork() path copies the
-    # parent's page tables while holding the GIL — so the loop freezes for the
-    # whole copy and NO thread offload can help (fork holds the GIL). A caught
-    # stall was 1.16s just to spawn `docker exec` for a workspace dirty-check.
-    # close_fds=False lets CPython take the posix_spawn (vfork) path instead,
-    # which shares the address space and never copies page tables, so spawn cost
-    # stops scaling with process size. Safe: since PEP 446 (3.4+) every fd Python
-    # opens is non-inheritable (O_CLOEXEC) by default, so no server socket / DB
-    # handle leaks into the child. (posix_spawn is skipped when cwd is set on
-    # Python <3.13; those callers keep the old path.) Opt out with VERA_FAST_SPAWN=0.
-    _spawn_kw: Dict[str, Any] = {}
-    if os.getenv("VERA_FAST_SPAWN", "1") != "0":
-        _spawn_kw["close_fds"] = False
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.PIPE if stdin_data else None,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
-            env={**os.environ, **(env or {})} if env else None,
-            **_spawn_kw,
-        )
-    except FileNotFoundError as e:
-        return {"ok": False, "error": f"executable not found: {e}",
-                "rc": -1, "stdout": "", "stderr": str(e),
-                "elapsed_ms": 0}
-
-    try:
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(stdin_data.encode("utf-8") if stdin_data else None),
-            timeout=timeout,
-        )
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        return {"ok": False, "error": f"timeout after {timeout}s",
-                "rc": -1, "stdout": "", "stderr": "",
-                "elapsed_ms": round((time.monotonic() - t0) * 1000)}
-
-    so = stdout_b.decode("utf-8", errors="replace")[:_MAX_OUTPUT]
-    se = stderr_b.decode("utf-8", errors="replace")[:_MAX_OUTPUT]
-    return _exec_result_note.annotate({
-        "ok":         proc.returncode == 0,
-        "rc":         proc.returncode,
-        "stdout":     so,
-        "stderr":     se,
-        "elapsed_ms": round((time.monotonic() - t0) * 1000),
-    }, command=" ".join(argv))
-
+    res = await _spawn_core.run_argv(argv, stdin_data=stdin_data, timeout=timeout,
+                                     cwd=cwd, env=env, max_output=_MAX_OUTPUT)
+    if res.get("error"):
+        return res
+    return _exec_result_note.annotate(res, command=" ".join(argv))
 
 @capability(
     "exec.bash.run",

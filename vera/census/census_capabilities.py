@@ -15,10 +15,17 @@ READ-ONLY BY DESIGN. Nothing here starts, stops or edits a census run. The
 harness owns the runs; this owns reading them. That matters because the census
 is the measuring instrument — a UI that could quietly perturb it would make
 every number it displays suspect.
+
+The one deliberate exception is `census.control.set` (2026-09-10): it writes a
+REQUEST — pause, resume or drop — that the harness polls and acts on itself,
+so a prod restart no longer costs a census. It never touches a run file. See
+`control.py` for the contract and why the default on restart is resume.
 """
 import asyncio
+import sys
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -48,10 +55,12 @@ CENSUS_WALL_CAP_S = int(os.getenv("VERA_CENSUS_WALL_CAP_S", "1800") or 1800)
 
 # Parsed runs, keyed by (path, mtime_ns, size). An ARCHIVED run never changes,
 # so re-parsing every file on every panel refresh is pure waste; only the live
-# census.jsonl moves, and its stat changes when it does. Bounded because the
-# census dir only ever holds a few dozen files.
+# census.jsonl moves, and its stat changes when it does. Bounded, and evicted
+# one entry at a time: it used to hold 64 and CLEAR itself when full, and the
+# archive passed 64 files on 2026-09-10 - so every panel poll re-parsed every
+# run, which is what "the census is very slow to update" was.
 _CACHE: Dict[str, Tuple[Tuple[int, int], List[Dict[str, Any]]]] = {}
-_CACHE_MAX = 64
+_CACHE_MAX = 512
 
 
 def _stat_key(path: Path) -> Optional[Tuple[int, int]]:
@@ -93,8 +102,8 @@ def _read_run_sync(path: Path) -> List[Dict[str, Any]]:
         log.warning("census: reading %s failed: %s", path, e)
         return out
     if key is not None:
-        if len(_CACHE) >= _CACHE_MAX:
-            _CACHE.clear()
+        while len(_CACHE) >= _CACHE_MAX:
+            _CACHE.pop(next(iter(_CACHE)), None)   # oldest insertion first
         _CACHE[str(path)] = (key, out)
     return out
 
@@ -147,8 +156,10 @@ async def _loop_events(session_id: str) -> List[Dict[str, Any]]:
 
 try:
     from Vera.vera.census import landed as _landed
+    from Vera.vera.census import control as _ctl
 except ImportError:                                   # pragma: no cover
     from vera.census import landed as _landed
+    from vera.census import control as _ctl
 
 
 def _run_files() -> Dict[str, Path]:
@@ -212,6 +223,28 @@ async def cap_census_runs(include_partial: bool = False, trace_id=None) -> Dict[
     # touches every run, so serialising the reads is the whole latency.
     records = await asyncio.gather(*(_read_run(p) for p in files.values()))
     summaries = [cc.summarise_run(rid, recs) for rid, recs in zip(files, records)]
+    for s, recs in zip(summaries, records):
+        # Which node and model served the run, and whether that changed mid-run
+        # (two instruments in one file). Rows from before routing was recorded
+        # report recorded_goals=0 rather than zeros that look like an answer.
+        s["routing"] = _ctl.routing_rollup(recs)
+        s["reruns"] = sum(len(r.get("reruns") or []) for r in recs if isinstance(r, dict))
+        try:
+            # When the run ended: the harness's .log beside the archive is
+            # written as the run goes and never rewritten; the .jsonl is
+            # rewritten by the backfill tools (code_version, reroutes) and its
+            # mtime is whenever that last happened. Rows carry ended_at
+            # themselves since 2026-09-10; the newest such row wins outright.
+            p = files[s["run_id"]]
+            lg = p.with_suffix(".log")
+            ended = max((str(r.get("ended_at") or "") for r in recs if isinstance(r, dict)), default="")
+            if ended:
+                import calendar as _cal
+                s["ended_at"] = float(_cal.timegm(time.strptime(ended[:19], "%Y-%m-%dT%H:%M:%S")))
+            else:
+                s["ended_at"] = (lg.stat() if lg.exists() else p.stat()).st_mtime
+        except Exception:
+            s["ended_at"] = None
     hist = cc.history(summaries)
     # The counts and both trends are computed over EVERY run and stay as they
     # were, so filtering the rows can never move a number. Only the rows the
@@ -243,8 +276,18 @@ async def cap_census_run(run: str = "", trace_id=None) -> Dict[str, Any]:
     if rid not in files:
         return {"error": f"unknown run '{rid}'", "available": sorted(files)}
     records = await _read_run(files[rid])
-    return {"run_id": rid, "summary": cc.summarise_run(rid, records),
-            "records": records}
+    summary = cc.summarise_run(rid, records)
+    summary["routing"] = _ctl.routing_rollup(records)
+    boundary = {c.get("goal"): c for c in (summary.get("code") or {}).get("changes") or []}
+    for r in records:
+        if isinstance(r, dict):
+            r["routing_summary"] = _ctl.routing_of(r)
+            r["code_summary"] = cc.code_of(r)
+            # The goal at which the code changed, so a row can be marked as the
+            # boundary between two instruments without re-deriving it.
+            if r.get("id") in boundary:
+                r["code_summary"]["boundary"] = boundary[r.get("id")]
+    return {"run_id": rid, "summary": summary, "records": records}
 
 
 @capability(
@@ -312,17 +355,36 @@ async def _is_stale(r, sid: str, run: Dict[str, Any]) -> bool:
         return True
 
 
-async def _running_loop() -> Dict[str, Any]:
+async def _running_loop(named_sid: str = "") -> Dict[str, Any]:
     """The loop session GENUINELY running, if any.
 
     /workshop/agent_loop/sessions is a plain route rather than a capability, so
     this reads the same Redis keys it does — including the same durable-history
     index with the resume index as fallback — instead of reaching over HTTP to
     our own process.
+
+    `named_sid` is the session the harness says it is running (census.active
+    .json). While the harness is live that name is the fact: the loop's own
+    staleness rule hesitates during a long generation (no event for a while),
+    and on 2026-09-10 that blink read as "no goal in flight" to a helper that
+    then restarted prod mid-goal and cost a 17-minute run. A named session
+    that still says running is returned without the staleness test.
     """
     r = _redis()
     if not r:
         return {}
+    if named_sid:
+        try:
+            raw_run = await r.hgetall(_RUN_KEY % named_sid)
+            if not raw_run:
+                raw_run = await r.hgetall("vera:loop:history:run:%s" % named_sid)
+            run = {_rd(k): _rd(v) for k, v in (raw_run or {}).items()}
+            if run and run.get("status") == "running":
+                run["session_id"] = named_sid
+                run["named_by_harness"] = True
+                return run
+        except Exception as e:
+            log.info("census.live: the harness's session %s unreadable: %s", named_sid[:12], e)
     sids: List[Any] = []
     try:
         sids = await r.zrevrange("vera:loop:history:index", 0, 40) or []
@@ -373,8 +435,14 @@ def _goal_ids_sync() -> List[str]:
 async def cap_census_live(trace_id=None) -> Dict[str, Any]:
     files = _run_files()
     done = await _read_run(files[cc.CURRENT]) if cc.CURRENT in files else []
-    goal_ids = await asyncio.to_thread(_goal_ids_sync)
-    run = await _running_loop()
+    # The harness says exactly which template and goal it is on; goals.json is
+    # the fallback for a harness from before it wrote the active file.
+    harness = await asyncio.to_thread(_read_active_sync)
+    control = await asyncio.to_thread(_read_control_sync)
+    goal_ids = list(harness.get("goal_ids") or []) if harness.get("live") else []
+    if not goal_ids:
+        goal_ids = await asyncio.to_thread(_goal_ids_sync)
+    run = await _running_loop(str(harness.get("session_id") or "") if harness.get("live") else "")
 
     counters: Dict[str, Any] = {}
     steps: List[Dict[str, Any]] = []
@@ -391,10 +459,13 @@ async def cap_census_live(trace_id=None) -> Dict[str, Any]:
                                   "ok": s.get("ok"), "cycles": len(s.get("calls") or [])})
         except Exception as e:
             log.info("census.live: trace for %s unavailable: %s", sid, e)
-    # Match the running loop back to a census goal by its goal text, since the
-    # harness does not stamp the goal id onto the loop session.
+    # The harness names the goal in flight; before it did, the running loop was
+    # matched back to a goal by its goal text against goals.json.
     gtext = str(run.get("goal") or "")
-    if gtext:
+    if harness.get("live") and harness.get("current_goal") and (
+            not sid or harness.get("session_id") in ("", sid)):
+        active_goal = str(harness.get("current_goal"))
+    elif gtext:
         try:
             with (CENSUS_DIR / "goals.json").open(encoding="utf-8") as fh:
                 for g in json.load(fh):
@@ -413,6 +484,19 @@ async def cap_census_live(trace_id=None) -> Dict[str, Any]:
     except Exception:
         pass
 
+    # The goal's own LLM calls so far, for the live dash: from the in-process
+    # request log, since the loop started (the census holds the box alone).
+    routing: Dict[str, Any] = {}
+    if sid:
+        try:
+            fn = (CAPABILITY_REGISTRY.get("ollama.request_log") or {}).get("func")
+            if fn is not None:
+                d = await fn(limit=600) or {}
+                routing = _ctl.live_routing(d.get("entries") or [], str(run.get("started_at") or ""),
+                                            session_id=sid)
+        except Exception as e:
+            log.info("census.live: request log unavailable: %s", e)
+
     return {
         "active": ({"session_id": sid, "goal": gtext, "goal_id": active_goal,
                     "started_at": run.get("started_at"), "elapsed_s": elapsed}
@@ -420,17 +504,35 @@ async def cap_census_live(trace_id=None) -> Dict[str, Any]:
         "progress": cc.live_progress(goal_ids, done, active_goal),
         "counters": counters,
         "steps": steps,
+        "routing": routing,
         # Every goal this run has finished, not the last six: a 12-goal census
         # was showing half its own progress, which is why the only way to see
         # how a run was going was to load it into the Compare table.
         "recent": [{"id": r.get("id"), "status": r.get("status"),
-                    "wall_s": r.get("wall_s")} for r in done],
+                    "wall_s": r.get("wall_s"), "wall_cap_s": r.get("wall_cap_s"),
+                    "quality": _q_brief(r.get("quality")),
+                    "routing": _ctl.routing_of(r),
+                    "code": cc.code_of(r),
+                    "reruns": len(r.get("reruns") or [])} for r in done],
         # The ceiling the harness cancels at. Returned so the UI can mark a
         # goal that ran up against it instead of assuming a number — half the
         # default goal set finishes within a minute of the cap, so "did it hit
         # the wall" is the difference between a pass and a timeout.
-        "wall_cap_s": CENSUS_WALL_CAP_S,
+        "wall_cap_s": CENSUS_WALL_CAP_S if not harness.get("wall_cap_s")
+                      else int(harness["wall_cap_s"]),
+        # What the harness itself reports (template, goal, paused, done/total,
+        # liveness) and what it is currently being asked (run / pause / drop).
+        "harness": harness,
+        "control": {"state": _ctl.control_state(control), "reason": control.get("reason") or "",
+                    "by": control.get("by") or "", "ts": control.get("ts") or ""},
     }
+
+
+def _q_brief(q: Any) -> Dict[str, Any]:
+    if not isinstance(q, dict):
+        return {}
+    return {"passed": q.get("passed"), "total": q.get("total"),
+            "files_missing": q.get("files_missing") or []}
 
 
 @capability(
@@ -638,4 +740,225 @@ async def cap_census_landed(repo: str = "vera", limit: int = 300,
     return {"by_run": by_run,
             "runs": sorted((r["run_id"] for r in runs)),
             "repo": repo, "commits_scanned": len(commits)}
+
+
+# ── control across restarts, and what the harness is doing right now ─────────
+
+def _control_path() -> str:
+    return str(CENSUS_DIR / _ctl.CONTROL_NAME)
+
+
+def _active_path() -> str:
+    return str(CENSUS_DIR / _ctl.ACTIVE_NAME)
+
+
+def _read_control_sync() -> Dict[str, Any]:
+    return _ctl.read_json(_control_path())
+
+
+def _read_active_sync() -> Dict[str, Any]:
+    return _ctl.active_view(_ctl.read_json(_active_path()))
+
+
+async def census_control_view() -> Dict[str, Any]:
+    control, active = await asyncio.gather(asyncio.to_thread(_read_control_sync),
+                                           asyncio.to_thread(_read_active_sync))
+    return {"control": control, "state": _ctl.control_state(control),
+            "active": active, "dir": str(CENSUS_DIR)}
+
+
+@capability(
+    "census.control", memory="off", silent=True,
+    http_method="GET", http_path="/census/control", http_tags=["census", "workshop"],
+    description=(
+        "The census control state and what the harness reports it is doing. "
+        "`state` is run / pause / drop (what census.control.json currently asks "
+        "of the harness); `active` is the harness's own report — template, goal "
+        "in flight, goals done/total, running/paused/done/dropped — with `live` "
+        "false when that report is stale (a harness that died without saying "
+        "so). Safe to poll. Output: {control, state, active, dir}."),
+)
+async def cap_census_control(trace_id=None) -> Dict[str, Any]:
+    return await census_control_view()
+
+
+@capability(
+    "census.control.set", memory="off",
+    http_method="POST", http_path="/census/control/set", http_tags=["census", "workshop"],
+    description=(
+        "ASK the running census to pause, resume or drop. The harness polls the "
+        "control file every 15 s and acts on it: pause cancels the goal in flight "
+        "and, once resumed and prod is healthy, RE-RUNS that goal from scratch "
+        "(the abandoned attempt is noted on the row, never recorded as a result); "
+        "drop cancels the goal and ends the whole set, archived as -dropped. "
+        "sys.dev.restart writes a pause itself (default) or a drop "
+        "(resume_census=false) before it re-execs. Inputs: action (str! — pause|"
+        "resume|drop), reason (str), by (str). Output: {ok, wrote, state, active}."),
+)
+async def cap_census_control_set(action: str = "", reason: str = "", by: str = "",
+                                 trace_id=None) -> Dict[str, Any]:
+    try:
+        data = _ctl.make_control(action, reason=reason, by=by or "census.control.set")
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    ok = await asyncio.to_thread(_ctl.write_json, _control_path(), data)
+    if not ok:
+        return {"ok": False, "error": "could not write %s" % _control_path()}
+    view = await census_control_view()
+    log.warning("census.control: %s (%s) by %s", data.get("pause") and "PAUSE"
+                or data.get("drop") and "DROP" or "RESUME", reason or "-", by or "-")
+    return {"ok": True, "wrote": data, **view}
+
+
+async def census_before_restart(resume: bool, by: str = "sys.dev.restart") -> Dict[str, Any]:
+    """Called by sys.dev.restart before it re-execs. Writes a pause (to be lifted
+    on the way back up) or a drop, but ONLY when a census is genuinely live —
+    a pause left on file with nothing running would stop the next census cold."""
+    active = await asyncio.to_thread(lambda: _ctl.read_json(_active_path()))
+    control = await asyncio.to_thread(lambda: _ctl.read_json(_control_path()))
+    plan = _ctl.restart_plan(active, resume, control)
+    if plan["action"] == "none":
+        if plan.get("kept"):
+            log.warning("census: a person's pause is on file (%s) - the restart leaves it; "
+                        "the harness stays paused after the restart", plan["why"])
+        return plan
+    data = _ctl.make_control(plan["action"], reason=_ctl.RESTART_REASON, by=by,
+                             resume_on_start=(plan["action"] == "pause"))
+    plan["wrote"] = await asyncio.to_thread(_ctl.write_json, _control_path(), data)
+    plan["written_at"] = str(data.get("ts") or "")
+    plan["ack_wait_max_s"] = _ctl.PAUSE_ACK_MAX_S
+    log.warning("census: %s written before restart (%s)", plan["action"].upper(), plan["why"])
+    return plan
+
+
+def _seeded_census_session_sync() -> str:
+    """The loop session of a SEEDED census task in flight (the suite path,
+    census posture) - `evolve:<run_id>` - or ''."""
+    ev = sys.modules.get("evolve_capabilities")
+    live = getattr(ev, "_RUN_LIVE", None) if ev is not None else None
+    if isinstance(live, dict) and live.get("run_id") and str(live.get("posture") or "") == "census":
+        return "evolve:%s" % live["run_id"]
+    return ""
+
+
+def census_owned_sessions_sync() -> List[str]:
+    """Every loop session the census owns right now: the goal the harness is
+    running (census.active.json, while the harness is live) and a seeded
+    census task in flight. These are measurements, not work to keep: a
+    restart cancels them (a cancelled run is not resumed), and none of them
+    may escalate into a V8 program."""
+    out: List[str] = []
+    try:
+        active = _ctl.read_json(_active_path())
+        v = _ctl.active_view(active)
+        sid = str((active or {}).get("session_id") or "")
+        if v.get("live") and sid:
+            out.append(sid)
+    except Exception:
+        pass
+    seeded = _seeded_census_session_sync()
+    if seeded:
+        out.append(seeded)
+    return out
+
+
+def census_owns_session_sync(session_id: str) -> bool:
+    """Is this loop session a census measurement (the harness's goal or a
+    seeded census task)? Read by the v7 engine before it escalates a
+    strategic goal into a V8 program: a census must never spawn one. On
+    2026-09-11 markets-symbol-series escalated into a program that held the
+    GPU for 5 hours and cost the set four templates."""
+    sid = str(session_id or "")
+    return bool(sid) and sid in census_owned_sessions_sync()
+
+
+async def census_cancel_owned_loops(why: str = "restart") -> Dict[str, Any]:
+    """Cancel every loop the census owns, the way the Stop button does: the
+    cooperative cancel flag on the run record (so a resumed or orphaned
+    coroutine self-terminates) and the live runner task when this process
+    holds it. Loops survive a restart by design (Redis-backed resume); a
+    cancelled run is not resumed - so this is what a restart must do BEFORE
+    it re-execs, or the census's loop comes back under nobody (the 16:00Z
+    research loop came back at 17:07Z on 2026-09-11 for exactly that)."""
+    sids = await asyncio.to_thread(census_owned_sessions_sync)
+    cancelled: List[str] = []
+    r = _redis()
+    dw = sys.modules.get("dag_workshop_capabilities")
+    for sid in sids:
+        try:
+            if r is not None:
+                raw = await r.hgetall(_RUN_KEY % sid)
+                run = {_rd(k): _rd(v) for k, v in (raw or {}).items()}
+                if run and run.get("status") not in ("running", ""):
+                    continue
+                await r.hset(_RUN_KEY % sid, mapping={"status": "cancelled", "updated_at": _now_iso_z()})
+            tasks = getattr(dw, "_AGENT_LOOP_TASKS", None) if dw is not None else None
+            if isinstance(tasks, dict):
+                t = tasks.pop(sid, None)
+                if t is not None and not t.done():
+                    t.cancel()
+            cancelled.append(sid)
+            log.warning("census: cancelled loop %s before %s (a cancelled run is not resumed)", sid[:12], why)
+        except Exception as e:
+            log.info("census: could not cancel %s: %s", sid[:12], e)
+    return {"owned": sids, "cancelled": cancelled}
+
+
+def _now_iso_z() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+async def census_restart_gate(plan: Dict[str, Any], max_wait_s: float = 0.0) -> Dict[str, Any]:
+    """What a restart does for the census before it re-execs: wait for the
+    harness to acknowledge the pause it was written (bounded), then cancel
+    every loop the census still owns so none is resumed under nobody."""
+    ack = await census_wait_acked(plan, max_wait_s)
+    cancelled = await census_cancel_owned_loops("restart")
+    return {"ack": ack, **cancelled}
+
+
+async def census_wait_acked(plan: Dict[str, Any], max_wait_s: float = 0.0) -> Dict[str, Any]:
+    """Wait (bounded) for the harness to act on what census_before_restart
+    wrote, so the re-exec happens AFTER the loop is cancelled and the harness
+    is parked, not under it. Returns {acked, waited_s}."""
+    action = str((plan or {}).get("action") or "none")
+    since = str((plan or {}).get("written_at") or "")
+    if action == "none" or not (plan or {}).get("wrote"):
+        return {"acked": False, "waited_s": 0.0, "why": "nothing written"}
+    limit = float(max_wait_s or _ctl.PAUSE_ACK_MAX_S)
+    t0 = time.time()
+    while time.time() - t0 < limit:
+        active = await asyncio.to_thread(lambda: _ctl.read_json(_active_path()))
+        if _ctl.pause_acked(active, since, action):
+            waited = round(time.time() - t0, 1)
+            log.warning("census: harness acknowledged the %s after %ss", action, waited)
+            return {"acked": True, "waited_s": waited}
+        await asyncio.sleep(1.0)
+    waited = round(time.time() - t0, 1)
+    log.warning("census: harness did not acknowledge the %s within %ss; restarting anyway",
+                action, waited)
+    return {"acked": False, "waited_s": waited, "why": "timeout"}
+
+
+def _lift_restart_pause_sync() -> Dict[str, Any]:
+    """On startup: lift a pause that a restart wrote asking to resume. A pause a
+    person wrote is left alone. Idempotent — the module body runs more than
+    once per process and a second lift finds nothing to do."""
+    path = _control_path()
+    control = _ctl.read_json(path)
+    if not _ctl.should_lift_on_start(control):
+        return {"lifted": False, "state": _ctl.control_state(control)}
+    data = _ctl.make_control("resume", reason="lifted on startup after restart",
+                             by="census startup")
+    ok = _ctl.write_json(path, data)
+    return {"lifted": bool(ok), "state": "run" if ok else _ctl.control_state(control)}
+
+
+try:
+    _lift = _lift_restart_pause_sync()
+    if _lift.get("lifted"):
+        log.warning("census: restart pause LIFTED on startup — the harness will resume "
+                    "and re-run the goal it was on")
+except Exception as _e:                                  # pragma: no cover
+    log.info("census: startup pause check skipped: %s", _e)
 

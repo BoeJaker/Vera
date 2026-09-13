@@ -59,6 +59,12 @@ KIND_EMBED_SOURCES = "embed.sources"
 #: dict assignment, so a second producer claiming the same kind would silently
 #: replace the first and its jobs would run the wrong work.
 KIND_EMBED_FABRIC = "embed.fabric"
+#: A v8 loop-program run. One of these held the GPU for 18,535s (5.1h) on
+#: 2026-09-11 because its only gate was checked BEFORE it started - and a
+#: census leaves 30-60s gaps between goals, which that gate reads as quiet.
+#: Going through the queue gives it the same 600s-quiet start rule as
+#: everything else, the panel row, and a way to be stopped.
+KIND_LOOP_PROGRAM = "loop.program"
 KIND_DREAM = "dream"
 KIND_NARRATOR = "narrator"
 
@@ -67,6 +73,10 @@ KIND_NARRATOR = "narrator"
 KIND_PRIORITY = {
     KIND_NARRATOR: 10,
     KIND_DREAM: 20,
+    # After dream, before any embedding: a loop-program run is hours of GPU,
+    # so it must not queue ahead of a narration, but it IS the work the
+    # program exists to do, so it goes before the bulk embedders.
+    KIND_LOOP_PROGRAM: 30,
     KIND_EMBED_SOURCES: 80,
     # Between the agent sweep and the transcript backfill: a fabric backfill is
     # usually larger than the former and smaller than the latter, and the queue
@@ -89,8 +99,13 @@ DEFAULT_PRIORITY = 50
 #: runs on the CPU nodes, starts no loop, takes no GPU gate slot, and yields
 #: between records. Nothing it does can be mistaken for foreign activity, so it
 #: can be stopped the instant Vera is used again.
+#: Loop programs are pre-emptible too, by a different mechanism: the runner
+#: sets the loop's cooperative cancel flag (the same one the Stop button
+#: sets), and the v7 engine self-terminates at its next generation. The v8
+#: program records the run as yielded and the loop stays due, so it is tried
+#: again in the next quiet window rather than lost.
 PREEMPTIBLE_KINDS = (KIND_EMBED_SESSIONS, KIND_EMBED_SOURCES,
-                     KIND_EMBED_FABRIC)
+                     KIND_EMBED_FABRIC, KIND_LOOP_PROGRAM)
 
 
 def is_preemptible(kind: Any) -> bool:

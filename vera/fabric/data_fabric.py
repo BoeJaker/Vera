@@ -916,6 +916,13 @@ class DataRecord:
 _embed_failed     = False   # tripped flag — external callers reset it (worldview does)
 _embed_failed_at  = 0.0     # monotonic ts when tripped; cooldown re-opens the gate
 _EMBED_RETRY_SECS = 300.0
+# Same wait budget + slow-cooldown as memory.embed_text (see there): an
+# ingest or fabric.query embed that does not come back promptly is left to
+# finish on its own (its vector lands in ollama_embed's cache) while the
+# record/query carries on without one.
+_EMBED_WAIT_S          = float(os.getenv("VERA_EMBED_WAIT_S", "5") or 5)
+_EMBED_SLOW_COOLDOWN_S = float(os.getenv("VERA_EMBED_SLOW_COOLDOWN_S", "30") or 30)
+_embed_slow_until      = 0.0
 
 async def _embed(text: str) -> Optional[List[float]]:
     """Generate embedding via the centralized ollama_embed (logged to Jobs).
@@ -927,19 +934,32 @@ async def _embed(text: str) -> Optional[List[float]]:
     that is how fabric_records got tens of thousands of rows with no Chroma
     vector. L2-normalisation behaviour preserved.
     """
-    global _embed_failed, _embed_failed_at
+    global _embed_failed, _embed_failed_at, _embed_slow_until
     if not text.strip():
         return None
     if _embed_failed and (time.monotonic() - _embed_failed_at) < _EMBED_RETRY_SECS:
+        return None
+    if _embed_slow_until and time.monotonic() < _embed_slow_until:
         return None
     try:
         # De-duplication + short-TTL caching now live inside ollama_embed (the
         # single chokepoint shared with memory.embed_text and every other
         # caller), so identical/concurrent embeds collapse to one request.
         from Vera.vera.capability_orchestration import ollama_embed
-        vec = await ollama_embed(
-            text, model=OLLAMA_EMBED_MODEL, normalize=HAS_NUMPY,
-        )
+        from Vera.vera.dag.query_embed_core import bounded_embed_result
+        vec, timed_out = await bounded_embed_result(
+            lambda: ollama_embed(text, model=OLLAMA_EMBED_MODEL, normalize=HAS_NUMPY),
+            _EMBED_WAIT_S)
+        if timed_out:
+            first = not _embed_slow_until or time.monotonic() >= _embed_slow_until
+            _embed_slow_until = time.monotonic() + _EMBED_SLOW_COOLDOWN_S
+            if first:
+                log.warning("fabric embed: no vector within %.1fs (embed node backed "
+                            "up) — skipping embeds for %ds; records keep their text, "
+                            "backfill later with fabric.backfill_vectors",
+                            _EMBED_WAIT_S, int(_EMBED_SLOW_COOLDOWN_S))
+            return None
+        _embed_slow_until = 0.0
         if vec is None:
             if not _embed_failed:
                 log.warning("fabric embed unavailable — model '%s' unreachable; "
@@ -2571,6 +2591,7 @@ async def ingest_dataset(
     tags:       List[str] = None,
     source_id:  str = "",
     defer_embedding: bool = False,
+    queue_backfill: bool = True,
 ) -> Dict:
     recs: List[DataRecord] = []
     for item in (data if isinstance(data, list) else [data]):
@@ -2610,7 +2631,13 @@ async def ingest_dataset(
     # storing records that nothing will ever come back for. Deciding here and
     # not after the pipeline matters - by then the rows are already written
     # without vectors and the choice cannot be taken back.
-    if defer_embedding:
+    if defer_embedding and not queue_backfill:
+        # Store without a vector and queue NOTHING: the caller has said this
+        # dataset's embedding is switched off (see EMBED_EXCLUDED_DATASETS).
+        # The rows stay searchable by text and readable by the UI; they get
+        # vectors only if someone turns embedding on and runs a backfill.
+        pass
+    elif defer_embedding:
         queued = False
         if _IDLE_SVC is not None and _IDLE_IQ is not None:
             try:
@@ -5827,11 +5854,19 @@ async def cap_fabric_backfill_vectors(confirm: bool = False, dataset_id: str = "
 
     # The scan query binds $1=last_id, so the dataset filter is $2 there but $1
     # in the standalone COUNT.
-    cond, args = ("dataset_id=$2", [dataset_id]) if dataset_id else ("TRUE", [])
+    excluded = sorted(EMBED_EXCLUDED_DATASETS) if not dataset_id else []
+    if dataset_id:
+        cond, args = ("dataset_id=$2", [dataset_id])
+    elif excluded:
+        # "all" means all datasets whose embedding is ON.
+        cond, args = ("dataset_id <> ALL($2::text[])", [excluded])
+    else:
+        cond, args = ("TRUE", [])
+    count_cond = ("dataset_id=$1" if dataset_id
+                  else ("dataset_id <> ALL($1::text[])" if excluded else "TRUE"))
     async with pool.acquire() as conn:
         pg_total = await conn.fetchval(
-            "SELECT COUNT(*) FROM fabric_records WHERE "
-            + ("dataset_id=$1" if dataset_id else "TRUE"), *args)
+            "SELECT COUNT(*) FROM fabric_records WHERE " + count_cond, *args)
     try:
         chroma_count = col.count()
     except Exception as e:
@@ -5920,6 +5955,19 @@ async def cap_fabric_backfill_vectors(confirm: bool = False, dataset_id: str = "
         vecs = await _embed_many([(r["text"] or "").strip() for r in rows])
         loop = asyncio.get_running_loop()
         for row, vec in zip(rows, vecs):
+            # Yield check PER RECORD, not per batch. At 5-10s per CPU embed a
+            # batch of 64 is 5-10 minutes, and on 2026-09-12 the queue had to
+            # hard-cancel this job because it could not reach the between-
+            # batch check inside its 60s grace. The vectors for this batch are
+            # already computed; stopping here loses only their upserts.
+            if should_continue is not None and not yielded:
+                _busy = await should_continue()
+                if _busy:
+                    yielded = _busy
+                    log.info("fabric backfill yielding mid-batch after %d record(s) - %s",
+                             done, _busy)
+            if yielded:
+                break
             text = (row["text"] or "").strip()
             if not text:
                 continue
@@ -10332,6 +10380,13 @@ except Exception:                                          # pragma: no cover
         from vera import idle_queue_service as _IDLE_SVC
     except Exception:
         _IDLE_IQ = _IDLE_SVC = None                        # type: ignore
+
+
+#: Datasets whose embedding is SWITCHED OFF. A backfill over "all" skips them;
+#: a backfill that names one of them explicitly still runs (that is how you
+#: catch up deliberately). Producers add and remove their own dataset here -
+#: ide.claude_sessions registers itself according to its toggle.
+EMBED_EXCLUDED_DATASETS: set = set()
 
 
 async def _fabric_backfill_job(job=None, should_continue=None):

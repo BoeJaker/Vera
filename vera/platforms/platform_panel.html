@@ -72,7 +72,7 @@ pre{background:var(--bg2);border:1px solid var(--border);border-radius:6px;paddi
     <div class="ico">🎛</div>
     <div>
       <h1>Platforms</h1>
-      <div class="sub">set a fact once — push it everywhere</div>
+      <div class="sub">set a fact once — push it everywhere · Estate › Integrations</div>
     </div>
     <div class="right">
       <button class="btn" onclick="seed()">Add missing platforms</button>
@@ -97,8 +97,8 @@ pre{background:var(--bg2);border:1px solid var(--border);border-radius:6px;paddi
 
     <div class="card">
       <h2>Shared credentials</h2>
-      <p class="why">Sealed at rest and never shown again. Reference with
-        <code>@secret:key</code>. Platforms can share one record or hold separate ones.</p>
+      <p class="why">Kept in Vera's secrets service (OpenBao, under <code>platform/key</code>) and never
+        shown again. Reference with <code>@secret:key</code>. Platforms can share one record or hold separate ones.</p>
       <div id="secrets"><div class="empty">loading…</div></div>
       <div class="grid2" style="margin-top:12px">
         <label>Key</label><input type="text" id="skey" placeholder="ha_token">
@@ -265,7 +265,7 @@ async function setSecret(){
   const r = await cap('platform.secrets.set', {key, value});
   if (r.error) return toast(r.error, 'err');
   $('skey').value=''; $('sval').value='';
-  toast('sealed ' + r.key, 'ok'); loadAll();
+  toast('stored ' + r.key + (r.store ? ' in the ' + r.store : ''), 'ok'); loadAll();
 }
 async function delSecret(key){
   const r = await cap('platform.secrets.delete', {key});

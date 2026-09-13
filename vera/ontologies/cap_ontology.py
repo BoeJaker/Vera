@@ -51,6 +51,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import sqlite3
 import time
@@ -68,8 +69,29 @@ from Vera.vera.capability_orchestration import (
     ollama_generate,
     register_ui,
 )
+from Vera.vera.ontologies.capability_ontology_snapshot import (
+    auto_generation_status,
+    build_capability_ontology_snapshot,
+    generated_relation_consumption_status,
+)
 
 log = logging.getLogger("vera.cap_ontology")
+
+
+def _auto_generation_gate(operation: str) -> Optional[dict]:
+    status = auto_generation_status(os.environ)
+    if status["enabled"]:
+        return None
+    reason = ("configuration_invalid" if not status["config_valid"]
+              else "generated_relations_disabled")
+    return {
+        "error": "persistent capability-ontology generation is disabled",
+        "code": reason,
+        "operation": operation,
+        "generation": status,
+        "relations_changed": False,
+        "model_called": False,
+    }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SQLITE STORE
@@ -683,7 +705,13 @@ async def co_context_for(
         allowed_set = set(allowed)
         wildcard = False
 
-    rels = _db_all()
+    all_rels = _db_all()
+    generated_relations = generated_relation_consumption_status(os.environ)
+    if generated_relations["enabled"]:
+        rels = all_rels
+    else:
+        rels = [relation for relation in all_rels if not relation.get("auto", False)]
+    excluded_generated_count = len(all_rels) - len(rels)
     visible_pair = []   # both ends visible
     edge_to_hidden = []  # one end is hidden — describe by relation only
     for r in rels:
@@ -725,6 +753,8 @@ async def co_context_for(
         "snippet": snippet,
         "allowed_count": len(visible_pair),
         "hidden_referenced_count": len(edge_to_hidden),
+        "generated_relations": generated_relations,
+        "excluded_generated_count": excluded_generated_count,
     }
 
 
@@ -1032,6 +1062,9 @@ async def _auto_pair(from_cap: str, to_cap: str, prefer_gpu: bool = True,
 )
 async def co_auto_pair(from_cap: str, to_cap: str, save: bool = True,
                        prefer_gpu: bool = True, trace_id=None):
+    blocked = _auto_generation_gate("auto_pair")
+    if blocked is not None:
+        return blocked
     if from_cap == to_cap:
         return {"error": "self-loops not allowed"}
     if from_cap not in CAPABILITY_REGISTRY:
@@ -1170,6 +1203,9 @@ async def co_auto_group(
     prefer_gpu:   bool  = True,
     trace_id=None,
 ):
+    blocked = _auto_generation_gate("auto_group")
+    if blocked is not None:
+        return blocked
     a_caps = [c for c in _all_cap_names() if c.split(".")[0] == group_a]
     b_caps = [c for c in _all_cap_names() if c.split(".")[0] == (group_b or group_a)]
     if not a_caps:
@@ -1210,6 +1246,9 @@ async def co_auto_grid(
     max_pairs:    int   = 1000,
     trace_id=None,
 ):
+    blocked = _auto_generation_gate("auto_grid")
+    if blocked is not None:
+        return blocked
     caps = _all_cap_names()
     pairs: List[Tuple[str, str]] = []
     for f in caps:
@@ -1274,7 +1313,37 @@ async def co_stats(trace_id=None):
         "covered_caps": len(nodes),
         "total_caps":   len(CAPABILITY_REGISTRY),
         "by_group":     groups,
+        "auto_generation": auto_generation_status(os.environ),
+        "generated_relation_consumption": generated_relation_consumption_status(
+            os.environ),
     }
+
+
+@capability(
+    "cap_ontology.snapshot", memory="off", silent=True,
+    http_method="GET", http_path="/cap_ontology/snapshot",
+    http_tags=["cap_ontology"],
+    description="Export every stored capability relation as a deterministic, "
+                "content-addressed and restorable snapshot before migration or "
+                "removal. Performs no generation and changes no relation.",
+    contract={
+        "canonical_task": "capability.ontology.snapshot", "effects": ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "local_persistence"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "not_required"},
+        "network": {"status": "not_required"},
+        "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"},
+        "cancellation": {"status": "not_required"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+        "owner": "vera.ontologies",
+    },
+)
+async def co_snapshot(trace_id=None):
+    return build_capability_ontology_snapshot(_db_all()).to_dict()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1377,7 +1446,27 @@ register_ui(
     ],
 )
 
-log.info("cap_ontology: registered (%d existing relations)", _db_count())
+def _registration_relation_count() -> int | None:
+    """Best-effort relation count for startup logging.
+
+    Registration must not depend on the ontology store being writable or even
+    present.  Capability handlers can report database errors when they are
+    actually called; an informational log line must never make importing the
+    module fail.
+    """
+    try:
+        return _db_count()
+    except (OSError, sqlite3.Error) as exc:
+        log.warning("cap_ontology: relation count unavailable during registration: %s", exc)
+        return None
+
+
+_registered_relation_count = _registration_relation_count()
+if _registered_relation_count is None:
+    log.info("cap_ontology: registered (existing relation count unavailable)")
+else:
+    log.info("cap_ontology: registered (%d existing relations)",
+             _registered_relation_count)
 
 """
 cap_ontology_agent_integration.py  —  Inject ontology context into agent calls

@@ -260,6 +260,14 @@ function go(id){
   if(id==='gallery') loadGallery();
   if(id==='loras'){ loadLoras(); }
 }
+// Companion no longer has a top-level tab: the shell opens it here instead,
+// and repeats the request until this panel acknowledges it.
+window.addEventListener('message',e=>{
+  const d=e.data;
+  if(!d||d.type!=='vera:estate:open'||!$('pane-'+d.pane)) return;
+  go(d.pane);
+  if(d.rid){ try{ (e.source||window.parent).postMessage({type:'vera:estate:opened',rid:d.rid},'*'); }catch(_){} }
+});
 
 async function init(){
   CAPS=await api('/image/sd_capabilities'); renderCaps();

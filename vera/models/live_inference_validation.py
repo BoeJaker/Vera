@@ -22,7 +22,7 @@ from .model_package import ModelArtifact, ModelCompatibility, ModelPackage
 from .ollama_inference_adapter import LegacyOllamaInferenceProvider
 
 
-LIVE_INFERENCE_REPORT_SCHEMA = "vera.live-inference-validation/v1"
+LIVE_INFERENCE_REPORT_SCHEMA = "vera.live-inference-validation/v2"
 _IDENT = re.compile(r"[^A-Za-z0-9._:+/-]+")
 Runner = Callable[..., Awaitable[str]]
 
@@ -32,7 +32,7 @@ def _identifier(value: str, fallback: str) -> str:
     return (cleaned or fallback)[:128]
 
 
-def _output_evidence(result: Any) -> dict[str, Any]:
+def _output_evidence(result: Any, expected_sha256: str) -> dict[str, Any]:
     chunks: list[str] = []
     for value in result.outputs:
         decoded = json.loads(value.json_data)
@@ -40,24 +40,67 @@ def _output_evidence(result: Any) -> dict[str, Any]:
             raise ValueError("portable Ollama output was not text")
         chunks.append(decoded)
     text = "".join(chunks)
+    output_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    transport_passed = bool(result.status == "completed" and text)
     return {
         "status": result.status,
         "error_code": result.error_code,
         "output_chunks": len(chunks),
         "output_bytes": len(text.encode("utf-8")),
-        "output_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "output_sha256": output_sha256,
+        "expected_output_sha256": expected_sha256,
+        "transport_passed": transport_passed,
+        "content_conformant": bool(transport_passed and output_sha256 == expected_sha256),
         "usage": dict(result.usage),
     }
+
+
+def require_shared_gate(gate: Any, instance_id: str) -> str:
+    """Require authoritative coordination for the exact inference node.
+
+    The transport may be a local coordinator or the sandbox's restricted
+    controller broker. Callers must not infer connectivity from Redis access.
+    """
+    if not isinstance(gate, dict) or not gate.get("enabled") \
+            or not gate.get("coord_connected"):
+        raise RuntimeError(
+            "shared Ollama coordination gate unavailable; live validation refused")
+    nodes = gate.get("nodes")
+    selected = next((node for node in nodes if isinstance(node, dict)
+                     and node.get("node") == instance_id), None) \
+        if isinstance(nodes, list) else None
+    capacity = (selected or {}).get("capacity")
+    if not selected or not selected.get("gated") \
+            or isinstance(capacity, bool) or not isinstance(capacity, int) \
+            or capacity < 1:
+        raise RuntimeError(
+            "selected Ollama node is not shared-gated; live validation refused")
+    raw_mode = gate.get("coordination_mode")
+    mode = "direct" if raw_mode is None else str(raw_mode).strip()
+    if mode not in {"direct", "controller_broker"}:
+        raise RuntimeError(
+            "unknown Ollama coordination mode; live validation refused")
+    return mode
 
 
 async def validate_ollama_provider(*, model: str, instance_id: str,
                                    artifact_sha256: str, artifact_size: int,
                                    runner: Runner, prompt: str = "Reply with VERA_OK only.",
-                                   case_timeout_seconds: float = 60
+                                   expected_output: str = "VERA_OK",
+                                   case_timeout_seconds: float = 60,
+                                   validate_cancellation: bool = False,
+                                   cancellation_delay_seconds: float = 0.1,
                                    ) -> dict[str, Any]:
     """Run bounded non-stream and stream cases through one portable binding."""
     if isinstance(case_timeout_seconds, bool) or not 0 < case_timeout_seconds <= 120:
         raise ValueError("case timeout must be within 120 seconds")
+    if not isinstance(expected_output, str) or not expected_output \
+            or len(expected_output.encode("utf-8")) > 16_384:
+        raise ValueError("expected output must be non-empty and at most 16384 bytes")
+    if (isinstance(cancellation_delay_seconds, bool) or
+            not 0 < cancellation_delay_seconds <= 5):
+        raise ValueError("cancellation delay must be within 5 seconds")
+    expected_sha256 = hashlib.sha256(expected_output.encode("utf-8")).hexdigest()
     package = ModelPackage(
         _identifier(model, "ollama-model"), artifact_sha256[:12], "transformer", "gguf",
         (ModelArtifact("registry_manifest", f"ollama://{instance_id}/{model}",
@@ -82,16 +125,52 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
         except asyncio.TimeoutError:
             cases.append({"case": "stream" if stream else "non_stream",
                           "status": "failed", "error_code": "case_timeout",
-                          "passed": False,
+                          "transport_passed": False, "content_conformant": False,
+                          "passed": False, "expected_output_sha256": expected_sha256,
                           "elapsed_ms": round((time.monotonic() - started) * 1000)})
             break
-        evidence = _output_evidence(result)
+        evidence = _output_evidence(result, expected_sha256)
         evidence.update({"case": "stream" if stream else "non_stream",
                          "elapsed_ms": round((time.monotonic() - started) * 1000)})
-        evidence["passed"] = bool(
-            result.status == "completed" and evidence["output_bytes"] > 0)
+        evidence["passed"] = bool(evidence["transport_passed"]
+                                  and evidence["content_conformant"])
         cases.append(evidence)
-    return {
+    cancellation = None
+    if validate_cancellation:
+        request = InferenceRequest(
+            package.package_id, "generate", "prompt/v1", "text/v1",
+            (InferenceValue.from_json("prompt", prompt),),
+            parameters=(("max_tokens", 32), ("temperature", 0), ("think", False)),
+            stream=True, max_output_bytes=16_384)
+        started = time.monotonic()
+        task = asyncio.create_task(consume_inference(provider, request))
+        await asyncio.sleep(cancellation_delay_seconds)
+        completed_before_cancel = task.done()
+        if not completed_before_cancel:
+            task.cancel()
+        cancellation_observed = False
+        try:
+            await asyncio.wait_for(task, timeout=case_timeout_seconds)
+        except asyncio.CancelledError:
+            cancellation_observed = True
+        except asyncio.TimeoutError:
+            task.cancel()
+            try:
+                await task
+            except BaseException:
+                pass
+        cancellation = {
+            "case": "cancellation",
+            "status": ("completed_before_cancel" if completed_before_cancel else
+                       "cancelled" if cancellation_observed else "failed"),
+            "cancellation_observed": cancellation_observed,
+            "task_reaped": task.done(),
+            "passed": bool(not completed_before_cancel and
+                           cancellation_observed and task.done()),
+            "elapsed_ms": round((time.monotonic() - started) * 1000),
+        }
+
+    report = {
         "schema": LIVE_INFERENCE_REPORT_SCHEMA,
         "provider": provider.profile().provider_id,
         "model_package_id": package.package_id,
@@ -100,9 +179,15 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
         "artifact_sha256": artifact_sha256,
         "artifact_size": artifact_size,
         "cases": cases,
+        "transport_passed": all(case["transport_passed"] for case in cases),
+        "content_conformant": all(case["content_conformant"] for case in cases),
         "passed": all(case["passed"] for case in cases),
         "privacy": "prompt_and_output_omitted",
     }
+    if cancellation is not None:
+        report["cancellation"] = cancellation
+        report["passed"] = bool(report["passed"] and cancellation["passed"])
+    return report
 
 
 async def discover_ollama_artifact(instance_id: str, model: str) -> dict[str, Any]:
@@ -133,22 +218,16 @@ async def discover_ollama_artifact(instance_id: str, model: str) -> dict[str, An
 
 
 async def _run(model: str, instance_id: str) -> dict[str, Any]:
-    from ..capability_orchestration import (
-        _ensure_coord_redis, ollama_generate, ollama_gate_status)
-
-    if await _ensure_coord_redis() is None:
-        raise RuntimeError(
-            "shared Ollama coordination gate unavailable; live validation refused")
+    from ..capability_orchestration import ollama_generate, ollama_gate_status
 
     gate = await ollama_gate_status()
-    if not gate.get("enabled") or not gate.get("coord_connected"):
-        raise RuntimeError("shared Ollama coordination gate unavailable; live validation refused")
+    require_shared_gate(gate, instance_id)
 
     artifact = await discover_ollama_artifact(instance_id, model)
     return await validate_ollama_provider(
         model=model, instance_id=instance_id,
         artifact_sha256=artifact["sha256"], artifact_size=artifact["size_bytes"],
-        runner=ollama_generate)
+        runner=ollama_generate, validate_cancellation=True)
 
 
 def main() -> int:

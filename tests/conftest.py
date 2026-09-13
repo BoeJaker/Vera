@@ -13,6 +13,8 @@ known set of modules, so the tier is defined in one place.
 import pytest
 
 _CRITICAL_MODULES = {
+    "test_sandbox_idle_plan",  # sleep the container you judged, never an alias's target (2026-09-12)
+    "test_spawn_off_loop",  # a docker call must not fork the server on the loop (2026-09-12)
     "test_editor_reply",  # an editor that declines has told you something (2026-08-31)
     "test_editor_output_bound",  # bound the editor by the file it edits (2026-08-31)
     "test_edit_tag_balance",  # name the edit that unbalanced the markup (2026-08-31)
@@ -60,6 +62,35 @@ _CRITICAL_MODULES = {
     "test_gate_politeness",  # the suite must yield the box like the census (2026-09-07)
     "test_engine_params",  # a dropped model override is worse than an error (2026-09-07)
     "test_census_seed",  # a template must not silently rebase the timeline (2026-09-07)
+    "test_census_control",  # a prod restart must not cost a census; a row must name its node and model (2026-09-10)
+    "test_census_control_boot",  # the control caps must load with the app (2026-09-10)
+    "test_census_single_table_ui",  # one table: expand a run, click a goal (2026-09-10)
+    "test_ttl_cache",  # a polled 30s endpoint must not be recomputed per poll (2026-09-10)
+    "test_census_code_version",  # a row must say which code it ran on; a restart mid-run names its goal (2026-09-10)
+    "test_task_history_core",  # a census goal is a task; one task through time (2026-09-10)
+    "test_task_history_boot",  # the history caps must load with the app and read the archive (2026-09-10)
+    "test_result_ingest_core",  # a census goal is a run record; the archive row still wins (2026-09-10)
+    "test_result_ingest_boot",  # evolve.result.ingest must load, store, and read back through every view (2026-09-10)
+    "test_census_results_ingest_ui",  # the Runs view shows a census goal as what it is (2026-09-10)
+    "test_census_ingest_timestamps",  # a row without a time takes its archive's END time; old rows stay out of the run list (2026-09-10)
+    "test_work_core",  # one Work table: every driver run in one shape, the live one first (2026-09-10)
+    "test_work_page_boot",  # the Work caps must load with the app; an edit keeps what the form does not show (2026-09-10)
+    "test_work_page_ui",  # the Work page is the home and one table; the absorbed pages are gone (2026-09-10)
+    "test_pollers_follow_their_page",  # an element polls only while its page is on screen; one socket per panel (2026-09-10)
+    "test_census_live_dash_ui",  # a running census has a live dash: the loop's own output and its numbers (2026-09-10)
+    "test_loop_profiles_imports",  # a JS literal in a Python module took loops.run off prod for a day (2026-09-10)
+    "test_cross_page_ids_ui",  # every id is a link to one record, and a deep link (2026-09-10)
+    "test_ship_core",  # the Ship table: a row per branch from five stores; a stale pending is superseded (2026-09-10)
+    "test_ship_page_boot",  # evolve.ship.branches must load with the app and read the five stores in one call (2026-09-10)
+    "test_ship_page_ui",  # CI/CD, Review, Sources, Sandbox, Unit tests are one page; the infographics survived (2026-09-10)
+    "test_reaper_follows_the_sidecar",  # a redis sidecar is frozen with its app, never on its own (2026-09-10)
+    "test_agents_core",  # the Agents table: a row per agent session from five stores; recency decides active (2026-09-10)
+    "test_agents_page_boot",  # evolve.agents.rows must load with the app and read the five stores in one call (2026-09-10)
+    "test_agents_page_ui",  # Sessions, Board, Notes, Capacity, Swarm are one page (2026-09-10)
+    "test_mission_core",  # Mission control: a row per event - action, error, gate; open errors lead (2026-09-10)
+    "test_mission_page_boot",  # evolve.mission.events must load with the app and read its stores in one call (2026-09-10)
+    "test_mission_page_ui",  # Master, Activity, Errors are one page; the theatres are its folds; Loop Lab is five pages (2026-09-10)
+    "test_census_posture_boot",  # a seeded census runs on prod's own loop, whatever sandbox_mode says (2026-09-10)
     "test_census_template_store",  # a dropped goal must lose its task (2026-09-07)
     "test_unittest_history",  # green on fewer tests is not a pass (2026-09-07)
     "test_race_to_green_ui",  # the strip must show a race, not one cell per pipeline (2026-09-07)
@@ -167,6 +198,8 @@ _CRITICAL_MODULES = {
     "test_census34_failures",
     "test_edit_already_applied",
     "test_printer_wrap",  # paper does not re-flow: an unwrapped line is SILENTLY clipped off the page (2026-09-07)
+    "test_missing_module_import",  # a name resolved only at CALL time: agentbridge.catalog 500'd for a day (2026-09-12)
+    "test_automations_hub",  # a pane swapped in after load can never be switched off again (2026-09-12)
 }
 
 

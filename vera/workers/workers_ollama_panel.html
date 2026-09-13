@@ -7,7 +7,7 @@
   var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
   if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
-<title>Vera — Workers · Ollama · Jobs</title>
+<title>Vera — Estate</title>
 <!-- Proxmox console: xterm.js (terminal) + noVNC (remote desktop), loaded on demand -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
@@ -66,6 +66,7 @@ html.vpb-nav-hosted #secNav{display:none}
 }
 .snav:hover{color:var(--text)}
 .snav.on{border-color:var(--border);background:var(--bg2)}
+.snav[data-pane="overview"].on{color:var(--ok)}
 .snav[data-pane="workers"].on{color:var(--acc)}
 .snav[data-pane="nodes"].on{color:#6fd68b}
 .snav[data-pane="ollama"].on{color:var(--gpu)}
@@ -79,9 +80,23 @@ html.vpb-nav-hosted #secNav{display:none}
 .snav[data-pane="mimic"].on{color:var(--gpu)}
 .snav[data-pane="vllm"].on{color:var(--acc2)}
 .snav[data-pane="catalog"].on{color:#e6b800}
-.snav[data-pane="openclaw"].on{color:#b07ad6}
 .snav[data-pane="api"].on{color:var(--acc4)}
 .snav[data-pane="provision"].on{color:var(--acc3)}
+.snav[data-pane="remote"].on{color:#9c8cf0}
+.snav[data-pane="software"].on{color:var(--acc3)}
+.snav[data-pane="integrations"].on{color:#e6b800}
+.snav[data-pane="platforms"].on{color:#e6b800}
+.snav[data-pane="machines"].on{color:#6fd68b}
+.mc-kind{font-family:var(--mono);font-size:8.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--dim2);white-space:nowrap}
+.mc-state{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--dim2)}
+.mc-state.running{color:var(--ok)}.mc-state.unknown{color:var(--warn)}.mc-state.template{color:var(--acc4)}
+.mc-note{display:block;margin-top:1px;font-size:8.5px;color:var(--dim)}
+.mc-acts{display:flex;flex-wrap:wrap;gap:3px}
+.mc-acts .btn{font-size:8px;padding:1px 6px}
+.nsec{writing-mode:vertical-rl;transform:rotate(180deg);flex-shrink:0;width:34px;padding:8px 0 3px;text-align:center;font-family:var(--mono);font-size:7.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--dim);user-select:none}
+#secNav [data-view="models"]{display:none}
+html.view-models #secNav [data-view="estate"]{display:none}
+html.view-models #secNav [data-view="models"]{display:block}
 .navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
 #panes{flex:1;overflow:hidden;position:relative}
 .pane{position:absolute;inset:0;display:none;overflow-y:auto;padding:12px}
@@ -174,6 +189,29 @@ html.vpb-nav-hosted #secNav{display:none}
 
 /* ── Pane toolbar ── */
 .pane-tb{display:flex;align-items:center;gap:7px;margin-bottom:10px;flex-wrap:wrap}
+/* ── Overview (estate.health) ── */
+.ov-summary{display:flex;align-items:center;gap:10px;padding:9px 12px;margin-bottom:14px;max-width:980px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg1);font-size:11px;color:var(--text)}
+.ov-level{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;padding:2px 8px;border-radius:var(--radius-sm);border:1px solid currentColor;color:var(--dim2)}
+.ov-level.ok{color:var(--ok)}.ov-level.warn{color:var(--warn)}.ov-level.error{color:var(--err)}
+.ov-sec{margin-bottom:16px;max-width:980px}
+.ov-sec-h{display:flex;align-items:baseline;gap:8px;margin-bottom:4px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim2)}
+.ov-time{margin-left:auto;font-weight:400;letter-spacing:0;text-transform:none;color:var(--dim);font-variant-numeric:tabular-nums}
+.ov-facts{margin-bottom:6px;font-family:var(--mono);font-size:9.5px;color:var(--dim);overflow-wrap:anywhere}
+.ov-list{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg1)}
+.ov-list>*+*{border-top:1px solid var(--border)}
+.bld-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.bld{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg1);color:var(--text);text-decoration:none;font-size:11px}
+.bld:hover{border-color:var(--acc3)}
+.bld b{font-size:12px}
+.bld span{color:var(--muted,var(--fg2))}
+.bld em{font-style:normal;color:var(--acc3);font-size:10px;margin-top:4px}
+.ov-row{display:grid;grid-template-columns:48px 1fr;gap:10px;padding:6px 10px;font-size:11px;color:var(--text)}
+.ov-sev{padding-top:1px;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase}
+.ov-sev.error{color:var(--err)}.ov-sev.warn{color:var(--warn)}.ov-sev.info{color:var(--dim2)}
+.ov-detail{display:block;margin-top:2px;font-size:10px;color:var(--dim2);overflow-wrap:anywhere}
+.ov-clear{padding:6px 10px;font-size:11px;color:var(--ok)}
+.ov-more{padding:5px 10px;font-size:10px;color:var(--dim2);cursor:pointer}
+.ov-more:hover{color:var(--text)}
 .pane-tb-title{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:2px}
 .tb-sep{width:1px;height:15px;background:var(--border2);flex-shrink:0}
 .pane-tb .status-hint{font-size:9px;color:var(--dim2);font-family:var(--mono);margin-left:auto}
@@ -263,6 +301,7 @@ html.vpb-nav-hosted #secNav{display:none}
 .j-badge{font-size:7.5px;padding:2px 6px;border-radius:7px;font-family:var(--mono);font-weight:600}
 .j-pending{background:rgba(90,158,143,.1);color:var(--acc);border:1px solid rgba(90,158,143,.2)}
 .j-queued{background:rgba(122,140,201,.1);color:var(--acc2);border:1px solid rgba(122,140,201,.25)}
+.j-origin{display:inline-block;font-size:8px;padding:0 5px;border-radius:8px;margin-right:4px;background:rgba(201,149,90,.14);color:var(--acc3);border:1px solid rgba(201,149,90,.35);font-family:var(--mono);vertical-align:middle}
 .j-running{background:rgba(201,163,90,.1);color:var(--warn);border:1px solid rgba(201,163,90,.2)}
 .j-done{background:rgba(109,184,122,.1);color:var(--ok);border:1px solid rgba(109,184,122,.22)}
 .job-tbl tr.clk:hover td{background:var(--bg2)}
@@ -369,30 +408,44 @@ html.vpb-nav-hosted #secNav{display:none}
 <div id="shell">
   <!-- Side navigation -->
   <div id="secNav">
-    <div class="snav on" data-pane="workers" onclick="P.show('workers',this)">Workers</div>
-    <div class="snav" data-pane="nodes" onclick="P.show('nodes',this)">Nodes</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="ollama" onclick="P.show('ollama',this)">Ollama</div>
-    <div class="snav" data-pane="modelrouting" onclick="P.show('modelrouting',this)">Model Routing</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="observe" onclick="P.show('observe',this)">Observe</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="proxmox" onclick="P.show('proxmox',this)">Proxmox</div>
-    <div class="snav" data-pane="storage" onclick="P.show('storage',this)">Storage</div>
-    <div class="snav" data-pane="estate" onclick="P.show('estate',this)">Estate</div>
-    <div class="snav" data-pane="foundry" onclick="P.show('foundry',this)">Foundry</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="docker" onclick="P.show('docker',this)">Docker</div>
-    <div class="snav" data-pane="sandbox" onclick="P.show('sandbox',this)">Sandbox</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="network" onclick="P.show('network',this)">Network</div>
-    <div class="snav" data-pane="connections" onclick="P.show('connections',this)">Connections</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="mimic" onclick="P.show('mimic',this)">Mimic</div>
-    <div class="snav" data-pane="vllm" onclick="P.show('vllm',this)">vLLM</div>
-    <div class="snav" data-pane="openclaw" onclick="P.show('openclaw',this)">OpenClaw</div>
-    <div class="snav" data-pane="api" onclick="P.show('api',this)">API</div>
-    <div class="snav" data-pane="provision" onclick="P.show('provision',this)">Provision</div>
+    <!-- Estate: one list, grouped by the question each section answers. The
+         Models tab opens this same panel with ?view=models and lists only the
+         model panes. -->
+    <div class="nsec" data-view="estate">Overview</div>
+    <div class="snav on" data-pane="overview" data-view="estate" onclick="P.show('overview',this)">Overview</div>
+    <div class="snav" data-pane="estate" data-view="estate" onclick="P.show('estate',this)">Map</div>
+    <div class="snav" data-pane="observe" data-view="estate" onclick="P.show('observe',this)">Observe</div>
+    <div class="navdiv" data-view="estate"></div>
+    <div class="nsec" data-view="estate">Machines</div>
+    <div class="snav" data-pane="machines" data-view="estate" onclick="P.show('machines',this)">All</div>
+    <div class="snav" data-pane="workers" data-view="estate" onclick="P.show('workers',this)">Workers</div>
+    <div class="snav" data-pane="nodes" data-view="estate" onclick="P.show('nodes',this)">Nodes</div>
+    <div class="snav" data-pane="proxmox" data-view="estate" onclick="P.show('proxmox',this)">Proxmox</div>
+    <div class="snav" data-pane="docker" data-view="estate" onclick="P.show('docker',this)">Docker</div>
+    <div class="snav" data-pane="sandbox" data-view="estate" onclick="P.show('sandbox',this)">Sandbox</div>
+    <div class="snav" data-pane="connections" data-view="estate" onclick="P.show('connections',this)">Connections</div>
+    <div class="snav" data-pane="remote" data-view="estate" onclick="P.show('remote',this)">Remote</div>
+    <div class="navdiv" data-view="estate"></div>
+    <div class="snav" data-pane="storage" data-view="estate" onclick="P.show('storage',this)">Storage</div>
+    <div class="navdiv" data-view="estate"></div>
+    <div class="snav" data-pane="network" data-view="estate" onclick="P.show('network',this)">Network</div>
+    <div class="navdiv" data-view="estate"></div>
+    <div class="snav" data-pane="provision" data-view="estate" onclick="P.show('provision',this)">Trust</div>
+    <div class="navdiv" data-view="estate"></div>
+    <div class="nsec" data-view="estate">Build</div>
+    <div class="snav" data-pane="build" data-view="estate" onclick="P.show('build',this)">New</div>
+    <div class="snav" data-pane="foundry" data-view="estate" onclick="P.show('foundry',this)">Foundry</div>
+    <div class="snav" data-pane="software" data-view="estate" onclick="P.show('software',this)">Provision</div>
+    <div class="navdiv" data-view="estate"></div>
+    <div class="nsec" data-view="estate">Integrations</div>
+    <div class="snav" data-pane="integrations" data-view="estate" onclick="P.show('integrations',this)">Services</div>
+    <div class="snav" data-pane="platforms" data-view="estate" onclick="P.show('platforms',this)">Platforms</div>
+    <div class="snav" data-pane="ollama" data-view="models" onclick="P.show('ollama',this)">Ollama</div>
+    <div class="snav" data-pane="modelrouting" data-view="models" onclick="P.show('modelrouting',this)">Model Routing</div>
+    <div class="navdiv" data-view="models"></div>
+    <div class="snav" data-pane="mimic" data-view="models" onclick="P.show('mimic',this)">Mimic</div>
+    <div class="snav" data-pane="vllm" data-view="models" onclick="P.show('vllm',this)">vLLM</div>
+    <div class="snav" data-pane="api" data-view="models" onclick="P.show('api',this)">API</div>
   </div>
 
   <div id="panes">
@@ -400,7 +453,21 @@ html.vpb-nav-hosted #secNav{display:none}
     <!-- ════════════════════════════════════════════════════════════════════
          WORKERS PANE
          ════════════════════════════════════════════════════════════════════ -->
-    <div class="pane on" id="pane-workers">
+    <!-- OVERVIEW PANE — is the estate's infrastructure up? (estate.health): the
+         state store, stopped infrastructure containers on the Vera host, and
+         running Proxmox guests that will not start after a reboot. -->
+    <div class="pane on" id="pane-overview">
+      <div class="pane-tb">
+        <span class="pane-tb-title" style="color:var(--ok)">OVERVIEW</span>
+        <span class="tb-sep"></span>
+        <button class="btn sm" onclick="P.ovRefresh()">↻ Check now</button>
+        <span class="status-hint" id="ov-ts"></span>
+      </div>
+      <div class="ov-summary" id="ov-summary"><span class="ov-level">Checking</span><span>Checking the estate…</span></div>
+      <div id="ov-sections"></div>
+    </div>
+
+    <div class="pane" id="pane-workers">
       <div class="pane-tb">
         <span class="pane-tb-title" style="color:var(--acc)">WORKERS</span>
         <span class="tb-sep"></span>
@@ -577,13 +644,13 @@ html.vpb-nav-hosted #secNav{display:none}
       <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px">
         <span class="pane-tb-title" style="color:var(--gpu)">OLLAMA CLUSTER</span>
         <span class="tb-sep"></span>
-        <!-- Sub-tabs: Nodes / Jobs / Catalog / Benchmark / Wrapper -->
+        <!-- Sub-tabs: Nodes / Jobs / Catalog / Benchmark / Traffic -->
         <div style="display:flex;gap:1px;margin-right:8px">
           <button class="btn sm ol-sub active" data-olsub="nodes" onclick="P.olSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
           <button class="btn sm ol-sub" data-olsub="jobs" onclick="P.olSubTab('jobs',this)" style="border-radius:0">Jobs</button>
           <button class="btn sm ol-sub" data-olsub="catalog" onclick="P.olSubTab('catalog',this)" style="border-radius:0">Catalog<span id="ol-dl-badge" style="display:none;margin-left:4px;font-size:8px;padding:0 4px;border-radius:7px;background:#e6b800;color:#111;font-weight:700">0</span></button>
           <button class="btn sm ol-sub" data-olsub="benchmark" onclick="P.olSubTab('benchmark',this)" style="border-radius:0">Benchmark</button>
-          <button class="btn sm ol-sub" data-olsub="wrapper" onclick="P.olSubTab('wrapper',this)" style="border-radius:0 3px 3px 0">Wrapper</button>
+          <button class="btn sm ol-sub" data-olsub="wrapper" onclick="P.olSubTab('wrapper',this)" style="border-radius:0 3px 3px 0" title="Who is calling each node, and what else runs on it — read from the node's own access log">Traffic</button>
         </div>
         <span class="tb-sep"></span>
         <button class="btn sm" onclick="P.refresh()">↻ Refresh</button>
@@ -602,12 +669,12 @@ html.vpb-nav-hosted #secNav{display:none}
       <div id="ol-sub-nodes" style="flex:1;overflow-y:auto;padding:12px;min-height:0">
 
       <div class="dash-grid" id="ol-grid">
-        <!-- Model tags (routing CONTROLS moved to the top-level Model Routing tab) -->
+        <!-- Model tags (routing CONTROLS live in the Model Routing pane of the Models view) -->
         <div class="widget w-w6 w-h3" data-wid="ol-routing">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Model Tags &amp; Routing</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-routing')">×</button></span></div>
           <div class="w-body">
             <div style="font-size:9.5px;color:var(--dim2);line-height:1.7;border:1px dashed var(--border);border-radius:5px;padding:8px 10px;margin-bottom:8px">
-              ⇶ Routing configuration has moved to the top-level <b style="color:var(--text)">Model Routing</b> tab —
+              ⇶ Routing configuration lives in the <b style="color:var(--text)">Model Routing</b> pane of this Models view —
               job-type profiles, per-capability rules, role profiles (research / IDE),
               media routing (STT · TTS · image-gen) and vLLM pins all live there.
               <a href="/ui/panels/model-routing" target="_blank" style="color:var(--acc)">Open standalone ↗</a>
@@ -616,8 +683,8 @@ html.vpb-nav-hosted #secNav{display:none}
                  summarise, fast, big-context…). Shown in the model pickers. -->
             <div style="display:flex;gap:5px;align-items:center">
               <span style="font-size:9px;font-weight:600;color:var(--gpu)" title="Tag models by purpose — tags show in the model pickers and are readable via ollama.model_tags.get">🏷 Model tags</span>
-              <input id="mt-model" list="rr-model-list" placeholder="model" style="font-size:8.5px;width:130px">
-              <input id="mt-tags" placeholder="planning,code,fast" style="font-size:8.5px;flex:1;min-width:80px">
+              <input id="mt-model" list="rr-model-list" placeholder="model" style="font-size:8.5px;width:130px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px">
+              <input id="mt-tags" placeholder="planning,code,fast" style="font-size:8.5px;flex:1;min-width:80px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px">
               <button class="btn sm" onclick="P.modelTagSave()">Save</button>
               <span id="mt-status" style="font-size:8px;color:var(--dim2);font-family:var(--mono)"></span>
             </div>
@@ -663,17 +730,6 @@ html.vpb-nav-hosted #secNav{display:none}
         </div>
 
         <!-- Embedding Configuration -->
-        <!-- Background queue: work waiting for an idle box. Producers (session
-             + source embedding, dream, narrator) enqueue here instead of
-             running themselves, so this is where you see what ambient load is
-             pending and WHY it has not run. -->
-        <div class="widget w-w6 w-h3" data-wid="ol-bgqueue">
-          <div class="w-head"><span class="w-grip">&#10303;</span><span class="w-dot"></span><span class="w-title">Background Queue <span style="font-weight:400;color:var(--dim2)">&mdash; waiting for an idle box</span></span><span class="w-actions"><button class="w-iconbtn" onclick="P.bgqRefresh()" title="Refresh">&#8635;</button><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-bgqueue')">&times;</button></span></div>
-          <div class="w-body">
-            <div id="ol-bgq-head" style="font-size:10px;color:var(--dim2);margin-bottom:6px">&hellip;</div>
-            <div id="ol-bgq-body"></div>
-          </div>
-        </div>
 
         <div class="widget w-w6 w-h3" data-wid="ol-embed-cfg">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Embedding Config</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-embed-cfg')">×</button></span></div>
@@ -822,6 +878,10 @@ html.vpb-nav-hosted #secNav{display:none}
               <button class="btn sm" onclick="P.jRecoverOrphans()" style="font-size:8.5px;margin:2px 0">Recover Orphans</button>
               <button class="btn sm err-btn" onclick="P.jPurgePending()" style="font-size:8.5px;margin:2px 0" id="j-purge-toolbar-btn">Purge Stuck</button>
             </div>
+            <!-- The idle queue's own state - how much quiet it has seen, what is
+                 blocking it, projected order. Queued tab only: these jobs are
+                 rows in the table below, this is the queue they are in. -->
+            <div id="j-bgq-head" style="display:none;font-size:10px;color:var(--dim2);padding:4px 0 6px"></div>
             <div id="j-empty" class="j-empty">No jobs</div>
             <div id="j-live-wrap" style="overflow-y:auto;max-height:400px">
               <table class="job-tbl" id="j-table" style="display:none">
@@ -1030,6 +1090,52 @@ html.vpb-nav-hosted #secNav{display:none}
             <div id="bench-last" style="margin-top:9px;font-size:11px;color:var(--dim)">Pick a node and model, then run a benchmark. Results are scored programmatically (temperature 0, fixed seed) so they are repeatable.</div>
           </div>
 
+          <!-- ── CONTEXT × QUANTISATION ───────────────────────────────── -->
+          <div style="border:1px solid var(--border);border-radius:6px;background:var(--bg1);padding:9px 11px">
+            <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:7px;flex-wrap:wrap">
+              <span style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Context × quantisation</span>
+              <span style="font-size:9px;color:var(--dim);max-width:640px">Sweep window sizes across models or quantisations on the node picked above. Each cell records its load cost, warm speed, how much of the model stayed on the GPU, and the hardware trace. Waits for the node's GPU slot, so it queues behind live work instead of competing with it.</span>
+            </div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">
+              <div style="flex:1 1 280px;min-width:240px">
+                <div style="font-size:9px;color:var(--dim2);margin-bottom:3px">Models — quantisations of the same model are grouped</div>
+                <div id="bm-variants" style="max-height:176px;overflow:auto;border:1px solid var(--border);border-radius:4px;background:var(--bg0);padding:5px 7px;font-size:10px"><span style="color:var(--dim)">Pick a node above.</span></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px;flex:0 1 340px">
+                <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px" title="Comma-separated context windows, in tokens">Windows (tokens)
+                  <input id="bm-ctxs" value="2048,4096,8192,16384,32768" style="font-size:10.5px;padding:3px 5px;font-family:var(--mono)">
+                </label>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+                  <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px" title="Tokens generated per call">Output tokens
+                    <input type="number" id="bm-predict" value="192" min="16" max="2048" step="16" style="font-size:10.5px;padding:3px 4px;width:64px">
+                  </label>
+                  <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px" title="Timed calls per cell, after the call that loads the window">Warm calls
+                    <input type="number" id="bm-repeats" value="3" min="1" max="5" step="1" style="font-size:10.5px;padding:3px 4px;width:48px">
+                  </label>
+                  <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px" title="Pad each prompt to this share of the window. Empty measures memory and generation speed; a fill measures long-context prefill. Fills are slow on CPU nodes — every call re-reads the whole prompt.">Prompt fill
+                    <select id="bm-fill" style="font-size:10.5px;padding:3px 4px">
+                      <option value="0">empty</option><option value="0.25">25%</option><option value="0.5">50%</option><option value="0.75">75%</option>
+                    </select>
+                  </label>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                  <label style="font-size:9.5px;color:var(--dim2);display:flex;align-items:center;gap:4px" title="Sample GPU clocks and throttling, or CPU and memory, during each cell's warm calls"><input type="checkbox" id="bm-trace" checked> hardware trace</label>
+                  <label style="font-size:9.5px;color:var(--dim2);display:flex;align-items:center;gap:4px" title="Unload each model before its first window, so that cell shows a true cold load"><input type="checkbox" id="bm-cold"> cold first load</label>
+                  <label style="font-size:9.5px;color:var(--dim2);display:flex;align-items:center;gap:4px" title="How long each cell keeps waiting for a busy node before giving up. A sweep never measures on top of live work.">wait for a busy node
+                    <select id="bm-wait" style="font-size:10px;padding:2px 4px"><option value="10">10 min</option><option value="30" selected>30 min</option><option value="120">2 h</option></select></label>
+                  <button class="btn sm" style="border-color:var(--gpu);color:var(--gpu)" onclick="P.benchMatrixStart()">▶ Run sweep</button>
+                  <button class="btn sm" id="bm-cancel" style="display:none;border-color:var(--err);color:var(--err)" onclick="P.benchMatrixCancel()" title="Stop the sweep: the cell in flight is abandoned, finished cells are kept">■ Stop</button>
+                  <span id="bm-status" style="font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:9px">
+              <span style="font-size:9px;color:var(--dim2)">Past sweeps</span>
+              <select id="bm-history" style="font-size:10px;padding:2px 4px;min-width:280px" onchange="P.benchMatrixOpen(this.value)"></select>
+            </div>
+            <div id="bm-result" style="margin-top:8px"></div>
+          </div>
+
           <!-- ── NODE MONITOR (live per-node performance) ──────────────── -->
           <div>
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
@@ -1100,20 +1206,24 @@ html.vpb-nav-hosted #secNav{display:none}
         </div>
       </div><!-- /ol-sub-benchmark -->
 
-      <!-- Sub-pane: Wrapper -->
+      <!-- Sub-pane: Traffic — who calls each node, read from its own Ollama access log.
+           Replaces the iframe onto edge/ollama_wrapper.sh's :11436 dashboard, which
+           was never deployed and polled an endpoint the script did not serve. -->
       <div id="ol-sub-wrapper" style="display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden">
         <div style="display:flex;gap:1px;background:var(--border);border-bottom:1px solid var(--border);flex-shrink:0">
-          <div style="flex:1;background:var(--bg1);padding:5px 8px"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Active</div><div id="owb-active" style="font-size:14px;font-weight:700;color:var(--warn)">—</div></div>
-          <div style="flex:1;background:var(--bg1);padding:5px 8px"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Total</div><div id="owb-total" style="font-size:14px;font-weight:700;color:var(--acc)">—</div></div>
-          <div style="flex:1;background:var(--bg1);padding:5px 8px"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Kills</div><div id="owb-kills" style="font-size:14px;font-weight:700;color:var(--err)">—</div></div>
-          <div style="flex:1;background:var(--bg1);padding:5px 8px"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Watchdog</div><div id="owb-wd" style="font-size:10px;font-weight:600;color:var(--dim2)">—</div></div>
-          <div style="flex:1;background:var(--bg1);padding:5px 8px;display:flex;align-items:center;gap:4px">
+          <div style="flex:1;background:var(--bg1);padding:5px 8px" title="Generate, chat and embed calls in the window"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Inference calls</div><div id="owb-active" style="font-size:14px;font-weight:700;color:var(--acc)">—</div></div>
+          <div style="flex:1;background:var(--bg1);padding:5px 8px" title="Every request the node logged, including status polls"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">All requests</div><div id="owb-total" style="font-size:14px;font-weight:700;color:var(--dim2)">—</div></div>
+          <div style="flex:1;background:var(--bg1);padding:5px 8px" title="Clients other than Vera — load Vera's router does not count"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Other clients</div><div id="owb-kills" style="font-size:14px;font-weight:700;color:var(--warn)">—</div></div>
+          <div style="flex:1;background:var(--bg1);padding:5px 8px" title="CPU used right now by processes that are not Ollama"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Non-Ollama CPU</div><div id="owb-wd" style="font-size:10px;font-weight:600;color:var(--dim2)">—</div></div>
+          <div style="flex:1.4;background:var(--bg1);padding:5px 8px;display:flex;align-items:center;gap:4px">
             <select id="obs-wrapper-sel" style="font-size:8px;padding:2px 4px;background:var(--bg0);border:1px solid var(--border);color:var(--text);border-radius:3px;flex:1" onchange="P.wrapperSwitchNode(this.value)"></select>
-            <button class="btn sm" onclick="P.wrapperRefresh()" style="font-size:8px;padding:2px 6px">↻</button>
+            <select id="obs-traffic-window" style="font-size:8px;padding:2px 4px;background:var(--bg0);border:1px solid var(--border);color:var(--text);border-radius:3px" onchange="P.wrapperRefresh()" title="How far back to read the access log">
+              <option value="15">15 min</option><option value="60" selected>1 h</option><option value="240">4 h</option><option value="1440">24 h</option>
+            </select>
+            <button class="btn sm" onclick="P.wrapperRefresh()" style="font-size:8px;padding:2px 6px" title="Read the log again">↻</button>
           </div>
         </div>
-        <div id="obs-wrapper-kills" style="flex-shrink:0;max-height:120px;overflow-y:auto;border-bottom:1px solid var(--border);display:none"></div>
-        <iframe id="obs-wrapper-iframe" style="flex:1;border:none;min-height:0;background:var(--bg0)" src="about:blank"></iframe>
+        <div id="obs-traffic-body" style="flex:1;overflow:auto;min-height:0;padding:8px 12px"></div>
       </div><!-- /ol-sub-wrapper -->
 
       </div><!-- /inner flex wrapper -->
@@ -1646,6 +1756,72 @@ html.vpb-nav-hosted #secNav{display:none}
       <iframe id="estate-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
 
+    <!-- MACHINES PANE — every machine in one list (estate.machines): Proxmox
+         nodes, guests (running, stopped, never enrolled), SSH hosts and Docker
+         hosts, each with the actions that apply to it. -->
+    <div class="pane" id="pane-machines" style="padding:0;overflow:hidden">
+      <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
+        <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px;gap:6px;flex-wrap:wrap">
+          <span class="pane-tb-title" style="color:#6fd68b">MACHINES</span>
+          <span class="tb-sep"></span>
+          <div style="display:flex;gap:2px" id="mc-kinds">
+            <span class="j-tab active" onclick="P.mcKind('',this)" style="padding:3px 9px;font-size:9px">All</span>
+            <span class="j-tab" onclick="P.mcKind('proxmox-node',this)" style="padding:3px 9px;font-size:9px">Proxmox</span>
+            <span class="j-tab" onclick="P.mcKind('guest',this)" style="padding:3px 9px;font-size:9px">Guests</span>
+            <span class="j-tab" onclick="P.mcKind('host',this)" style="padding:3px 9px;font-size:9px">Hosts</span>
+            <span class="j-tab" onclick="P.mcKind('docker-host',this)" style="padding:3px 9px;font-size:9px">Docker</span>
+          </div>
+          <input id="mc-filter" placeholder="filter…" oninput="P.mcRender()" style="font-size:9px;width:130px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:3px 7px;border-radius:3px">
+          <button class="btn sm" onclick="P.mcLoad()">↻ Refresh</button>
+          <span class="status-hint" id="mc-status"></span>
+        </div>
+        <div style="flex:1;overflow:auto;padding:10px 12px;min-height:0">
+          <table class="job-tbl" id="mc-tbl">
+            <thead><tr><th>Machine</th><th>Kind</th><th>State</th><th>Address</th><th>Hardware</th><th>Runs</th><th>Actions</th></tr></thead>
+            <tbody id="mc-tbody"></tbody>
+          </table>
+          <div id="mc-empty" class="j-empty" style="display:none">No machines match.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- REMOTE, INTEGRATIONS and PROVISION (software) PANES — the standalone
+         panels of top-level tabs retired into Estate (see ui.tabs.retired), each
+         a lazy iframe so nothing they did loses its home. -->
+    <div class="pane" id="pane-remote" style="padding:0;overflow:hidden">
+      <iframe id="remote-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+    <div class="pane" id="pane-integrations" style="padding:0;overflow:hidden">
+      <iframe id="integrations-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+    <!-- Platforms: values set once and pushed into Home Assistant, n8n and the
+         like; its credentials live in the secrets service. Was a top-level tab. -->
+    <div class="pane" id="pane-platforms" style="padding:0;overflow:hidden">
+      <iframe id="platforms-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+    <div class="pane" id="pane-software" style="padding:0;overflow:hidden">
+      <iframe id="software-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+
+    <!-- BUILD PANE — one entry: pick what to make, land on the pane that makes it -->
+    <div class="pane" id="pane-build">
+      <div class="ov-wrap" style="max-width:920px">
+        <h2 style="margin:0 0 4px">Make something new</h2>
+        <div class="muted" style="font-size:11px;margin-bottom:14px">Pick the target; each opens the page that builds it. Everything here runs through the existing Foundry and Provision pages.</div>
+        <div class="bld-grid">
+          <a class="bld" href="#" onclick="P.buildGo('foundry','sec-provision');return false"><b>Container or VM on Proxmox</b><span>An OS image with features baked in: SSH certificate, directory join, mesh. Enrols itself when it comes up.</span><em>Foundry</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('software','proxmox');return false"><b>Plain container or VM</b><span>A bare LXC or VM from a Proxmox template, no features, enrolled on creation.</span><em>Provision › Create CT/VM</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('software','install');return false"><b>Runtime on a machine you have</b><span>Ollama, vLLM, Docker or a worker onto an enrolled host over SSH.</span><em>Provision › Install</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('software','docker');return false"><b>Docker service</b><span>A container or stack on one of the Docker hosts.</span><em>Provision › Docker</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('software','deploy');return false"><b>Backing store for Vera</b><span>Redis, Postgres, Garage and the other stores Vera itself depends on.</span><em>Provision › Deploy</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('foundry','sec-images');return false"><b>OS image or template</b><span>Add an image to the catalogue or build a Proxmox template from it.</span><em>Foundry › Image catalog</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('foundry','sec-blueprints');return false"><b>Same machine again</b><span>Apply a saved blueprint, or export one to reproduce what exists.</span><em>Foundry › Blueprints</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('foundry','sec-pxe');return false"><b>Physical machine</b><span>Netboot a bare-metal box or an ISO install from the same images and features.</span><em>Foundry › PXE</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('foundry','sec-sdcard');return false"><b>Raspberry Pi card</b><span>Adapt an SD card in place, keeping its display and escape hatch.</span><em>Foundry › SD card</em></a>
+        </div>
+      </div>
+    </div>
+
     <!-- FOUNDRY PANE — OS provisioning (catalog × target × features), lazy iframe -->
     <div class="pane" id="pane-foundry" style="padding:0;overflow:hidden">
       <iframe id="foundry-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
@@ -1663,10 +1839,12 @@ html.vpb-nav-hosted #secNav{display:none}
           <div style="display:flex;gap:2px">
             <span class="j-tab active" id="nets-graph" onclick="P.netSub('graph')" style="padding:3px 9px;font-size:9px">Graph &amp; Firewall</span>
             <span class="j-tab" id="nets-ops" onclick="P.netSub('ops')" style="padding:3px 9px;font-size:9px">Traffic (NWM-01)</span>
+            <span class="j-tab" id="nets-netctl" onclick="P.netSub('netctl')" style="padding:3px 9px;font-size:9px" title="netctl's own pages, behind its own sign-in">netctl</span>
           </div>
         </div>
         <iframe id="net-sub-graph" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
         <iframe id="net-sub-ops" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+        <iframe id="net-sub-netctl" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
       </div>
     </div>
 
@@ -1759,10 +1937,10 @@ html.vpb-nav-hosted #secNav{display:none}
     </div>
 
     <!-- ════════════════════════════════════════════════════════════════════
-         MIMIC / vLLM / OPENCLAW / API panes — standalone pages in iframes.
+         MIMIC / vLLM / API panes — standalone pages in iframes.
          Each loads lazily (src set on first activation in showPane) so the
-         backend isn't hit until the tab is opened. vLLM and OpenClaw moved
-         here from their old top-level harness tabs; the iframe pattern also
+         backend isn't hit until the tab is opened. vLLM moved
+         here from its old top-level harness tab; the iframe pattern also
          fixes the vLLM "nothing is clickable" bug (its scripts now run in
          their own window instead of being dropped by innerHTML injection).
          ════════════════════════════════════════════════════════════════════ -->
@@ -1776,9 +1954,6 @@ html.vpb-nav-hosted #secNav{display:none}
       <iframe id="vllm-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
 
-    <div class="pane" id="pane-openclaw" style="padding:0;overflow:hidden">
-      <iframe id="openclaw-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
-    </div>
     <div class="pane" id="pane-api" style="padding:0;overflow:hidden">
       <iframe id="api-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
@@ -1789,12 +1964,14 @@ html.vpb-nav-hosted #secNav{display:none}
     <div class="pane" id="pane-provision" style="padding:0;overflow:hidden">
       <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
         <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px;gap:6px">
-          <span class="pane-tb-title" style="color:var(--acc3)">PROVISION</span>
+          <span class="pane-tb-title" style="color:var(--acc3)">IDENTITY &amp; TRUST</span>
           <span class="tb-sep"></span>
           <div style="display:flex;gap:2px">
             <!-- Software tab removed: runtime/component installs live in the
                  Nodes pane; docker host mgmt in Docker; CT creation in Proxmox. -->
             <span class="j-tab active" id="prvs-security" onclick="P.provSub('security')" style="padding:3px 9px;font-size:9px">Security</span>
+            <span class="j-tab" id="prvs-secrets" onclick="P.provSub('secrets')" style="padding:3px 9px;font-size:9px">Secrets</span>
+            <span class="j-tab" id="prvs-certs" onclick="P.provSub('certs')" style="padding:3px 9px;font-size:9px">Certificates</span>
             <span class="j-tab" id="prvs-identity" onclick="P.provSub('identity')" style="padding:3px 9px;font-size:9px">Identity</span>
             <span class="j-tab" id="prvs-enroll" onclick="P.provSub('enroll')" style="padding:3px 9px;font-size:9px">Enroll</span>
             <span class="j-tab" id="prvs-mesh" onclick="P.provSub('mesh')" style="padding:3px 9px;font-size:9px">Mesh</span>
@@ -1802,6 +1979,8 @@ html.vpb-nav-hosted #secNav{display:none}
           <span class="status-hint" style="margin-left:8px">Net policy (graph &amp; firewall) lives in Network → Graph; deploy its OPA engine from Security</span>
         </div>
         <iframe id="prv-sub-security" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
+        <iframe id="prv-sub-secrets" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
+        <iframe id="prv-sub-certs" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-identity" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-enroll" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-mesh" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
@@ -1929,6 +2108,7 @@ const P = (function(){
 const BASE = window.location.origin || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
 let _cluster = null;
 let _jobs = {pending:[],queued:[],running:[],done:[],failed:[]};
+let _bgq=null, _bgqRows=[];   // the idle queue's jobs, shown as rows in the Queued tab
 let _selWorker = null;
 let _wkFilter = 'all';
 let _jTab = 'pending';
@@ -1983,6 +2163,9 @@ function _ingestCapEventAsJob(ev){
     j.ts=ev.ts||new Date().toISOString();
     j.model=ev.model||j.model||'';
     j.instance_id=ev.instance_id||j.instance_id||'';
+    // Which Vera PROCESS submitted it. Sandboxes share this Redis, so their
+    // jobs arrive here indistinguishable from prod's own unless we keep this.
+    if(ev.origin) j.origin=ev.origin;
     j.caller_file=ev.caller_file||j.caller_file||'';
     j.caller_func=ev.caller_func||j.caller_func||'';
     j.prompt_preview=ev.prompt_preview||j.prompt_preview||'';
@@ -2473,90 +2656,57 @@ async function wkRemoveStale(){
 // Reads /background/status (capability background.status). Two structures come
 // back: the quiet CLOCK (how long the box has been continuously idle, and why
 // it is not) and the QUEUE itself.
+// The background (idle) queue is NOT its own widget: its jobs are rows in the
+// Jobs table's Queued tab, beside the live ollama jobs waiting for a node slot.
+// They are the same thing from the operator's side - work that is waiting -
+// and one table says so; two widgets made it look like two systems.
+const _etaTxt = v => { if(v==null) return ''; v=Math.round(v);
+  if(v<90) return v+'s'; if(v<5400) return Math.round(v/60)+'m'; return (v/3600).toFixed(1)+'h'; };
+
 async function renderBgQueue(){
-  const head=$('ol-bgq-head'), body=$('ol-bgq-body');
-  if(!head||!body) return;
   const r = await api('/background/status');
-  if(!r || r.error){ head.textContent = r&&r.error ? ('\u2717 '+r.error) : 'unavailable'; body.innerHTML=''; return; }
+  const head=$('j-bgq-head');
+  if(!r || r.error){ _bgq=null; _bgqRows=[]; if(head) head.textContent = r&&r.error ? ('✗ '+r.error) : ''; renderJobs(); return; }
+  _bgq=r;
   const q = r.queue || {depth:0, note:'no queue'};
   const blocked = q.blocked_reason || r.busy_reason || '';
   const quiet = Math.max(0, parseInt(r.quiet_for_s||0,10));
   const need  = Math.max(1, parseInt(r.min_quiet_s||600,10));
-  setDot('ol-bgqueue', q.running ? 'ok' : (blocked ? 'warn' : (q.depth ? 'warn' : 'ok')));
-
-  const pct = Math.min(100, Math.round(quiet*100/need));
-  head.innerHTML =
-    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<b style="color:var(--text)">'+q.depth+'</b> waiting'
-    + (q.running ? ' &middot; <span style="color:var(--gpu)">running '+esc(q.running.title||q.running.kind||'')+'</span>' : '')
-    + '<span style="flex:1"></span>'
-    + (r.eta_total_s!=null
-        ? ' &middot; <span title="Total, from rates measured on completed runs">~'+etaTxt(r.eta_total_s)+' of work</span>'
-        : ((r.timeline||[]).length ? ' &middot; <span style="color:var(--dim)" title="At least one queued kind has never completed, so nothing has been measured for it and a total would be a guess.">part-estimated</span>' : ''))
-    + '<span title="The queue only starts work after this much CONTINUOUSLY OBSERVED quiet. A census leaves 30-60s gaps between goals, which is why a snapshot check is not enough.">idle '+quiet+'s / '+need+'s</span>'
-    + '</div>'
-    + '<div style="height:3px;background:var(--border);border-radius:2px;margin-top:4px;overflow:hidden">'
-    +   '<div style="height:100%;width:'+pct+'%;background:'+(pct>=100?'var(--ok,#6fd68b)':'var(--acc)')+'"></div>'
-    + '</div>'
-    + (blocked ? '<div style="margin-top:4px;color:var(--warn,#dec37e)">\u23f8 '+esc(blocked)+'</div>' : '');
-
-  // Estimates come from rates LEARNED FROM COMPLETED RUNS. A kind that has
-  // never finished has no rate, so it gets no bar and says so - a guessed
-  // duration would be indistinguishable from a measured one here.
   const eta = {}; (r.timeline||[]).forEach(t=>{ eta[t.id]=t; });
-  const etaTxt = v => { if(v==null) return ''; v=Math.round(v);
-    if(v<90) return v+'s'; if(v<5400) return Math.round(v/60)+'m';
-    return (v/3600).toFixed(1)+'h'; };
-  const rows = (q.waiting||[]);
-  if(!rows.length && !q.running){
-    body.innerHTML='<div style="font-size:9.5px;color:var(--dim)">'+esc(q.note||'nothing queued')+'</div>';
-    return;
+  // Rows for the table. `_bg` marks them so the row renderer knows.
+  _bgqRows = (q.running?[Object.assign({},q.running,{_run:true})]:[]).concat(q.waiting||[])
+    .map(j=>({ _bg:true, id:j.id, kind:j.kind, title:j.title||j.id, state:j._run?'running':'queued',
+               ts:j.enqueued_iso||j.ts||'', waiting_for_s:j.waiting_for_s||0, preempts:j.preempts||0,
+               stranded:j.stranded||0, progress:j.progress||{}, remaining:j.remaining, eta:eta[j.id]||null }));
+  if(head){
+    const pct = Math.min(100, Math.round(quiet*100/need));
+    const tl=(r.timeline||[]).filter(t=>t.seconds!=null);
+    const tlSpan=tl.length?tl[tl.length-1].ends_in_s:0;
+    head.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+      + '<span style="font-size:8px;padding:1px 5px;border-radius:7px;background:var(--bg2);color:var(--dim2)">background queue</span>'
+      + '<b style="color:var(--text)">'+q.depth+'</b> waiting for an idle box'
+      + (q.running ? ' &middot; <span style="color:var(--gpu)">running '+esc(q.running.title||q.running.kind||'')+'</span>' : '')
+      + '<span style="flex:1"></span>'
+      + (r.eta_total_s!=null
+          ? '<span title="Total, from rates measured on completed runs">~'+_etaTxt(r.eta_total_s)+' of work</span> &middot; '
+          : ((r.timeline||[]).length ? '<span style="color:var(--dim)" title="At least one queued kind has never completed, so nothing has been measured for it and a total would be a guess.">part-estimated</span> &middot; ' : ''))
+      + '<span title="The queue only starts work after this much CONTINUOUSLY OBSERVED quiet. A census leaves 30-60s gaps between goals, which is why a snapshot check is not enough.">idle '+quiet+'s / '+need+'s</span>'
+      + '</div>'
+      + '<div style="height:3px;background:var(--border);border-radius:2px;margin-top:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+(pct>=100?'var(--ok,#6fd68b)':'var(--acc)')+'"></div></div>'
+      + (blocked ? '<div style="margin-top:4px;color:var(--warn,#dec37e)">⏸ '+esc(blocked)+'</div>' : '')
+      + ((tl.length && tlSpan>0)
+          ? '<div style="margin-top:5px"><div style="font-size:8.5px;color:var(--dim2);margin-bottom:2px">projected order &mdash; one at a time'
+            + ((r.timeline||[]).some(t=>t.seconds==null) ? ', truncated where nothing has been measured' : '')+'</div>'
+            + '<div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:var(--border)">'
+            + tl.map((t,i)=>'<div title="'+esc((t.title||t.id)+' - '+_etaTxt(t.seconds)+' ('+(t.basis||'')+')')+'" style="width:'+Math.max(2,Math.round(t.seconds*100/tlSpan))+'%;background:'+(i%2?'var(--acc)':'var(--gpu,#7fb4e0)')+';opacity:'+(t.provisional?0.55:1)+'"></div>').join('')
+            + '</div></div>'
+          : '')
+      + ((q.struggling||[]).length
+          ? '<div style="margin-top:4px;font-size:9px;color:var(--warn,#dec37e)" title="Pre-empted repeatedly - it may never finish in the gaps, and the answer is to split it.">⚠ '+(q.struggling||[]).length+' job(s) keep getting pre-empted</div>'
+          : '');
   }
-  const one=(j,isRun)=>{
-    const kind=esc(j.kind||'?'), title=esc(j.title||j.id||'');
-    const waited=parseInt(j.waiting_for_s||0,10);
-    const pre=parseInt(j.preempts||0,10);
-    return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--border)">'
-      + '<span style="font-size:8px;padding:1px 5px;border-radius:7px;background:var(--bg2);color:var(--dim2)">'+kind+'</span>'
-      + '<span style="flex:1;font-size:9.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+title+'</span>'
-      + (pre>0 ? '<span title="times this job was stopped to give the box back" style="font-size:8px;color:var(--warn,#dec37e)">\u21ba'+pre+'</span>' : '')
-      + (parseInt(j.stranded||0,10)>0 ? '<span title="times this job was found marked running with nothing running it - a restart, or a runner that died. Counted apart from pre-emptions: that means the box was busy, this means runners are dying." style="font-size:8px;color:var(--bad,#e08585)">!'+j.stranded+'</span>' : '')
-      + (eta[j.id] && eta[j.id].seconds!=null
-          ? '<span title="'+esc(eta[j.id].basis||'')+(eta[j.id].provisional?' (provisional - too few samples yet)':'')+'" style="font-size:8.5px;color:'+(eta[j.id].provisional?'var(--dim2)':'var(--acc)')+'">~'+etaTxt(eta[j.id].seconds)+'</span>'
-          : (eta[j.id] ? '<span title="no completed run of this kind yet, so nothing has been measured" style="font-size:8.5px;color:var(--dim)">no est.</span>' : ''))
-      + (function(){
-          // done/total, when the producer declared a size. A job 900 of 1000
-          // through is a different thing to schedule from one not started.
-          const pr=j.progress||{}, tot=parseInt(pr.total||0,10), dn=parseInt(pr.done||0,10);
-          if(!tot) return '';
-          const pc=Math.min(100,Math.round(dn*100/tot));
-          return '<span title="'+dn+' of '+tot+' done'+(j.remaining!=null?(' - '+j.remaining+' left'):'')+'" style="display:inline-flex;align-items:center;gap:3px">'
-            + '<span style="width:26px;height:3px;background:var(--border);border-radius:2px;overflow:hidden;display:inline-block">'
-            +   '<span style="display:block;height:100%;width:'+pc+'%;background:var(--acc)"></span>'
-            + '</span><span style="font-size:8px;color:var(--dim2)">'+pc+'%</span></span>';
-        })()
-      + (isRun ? '<span style="font-size:8.5px;color:var(--gpu)">running</span>'
-               : '<span style="font-size:8.5px;color:var(--dim)">'+(waited?age(Date.now()/1000-waited):'queued')+'</span>')
-      + (isRun ? '' : '<button class="w-iconbtn" title="Remove from the queue" onclick="P.bgqCancel('+sq(j.id)+')">&times;</button>')
-      + '</div>';
-  };
-  // The queue runs ONE job at a time, so the timeline is a running sum rather
-  // than a packing problem - and it stops where the measurements stop.
-  const tl=(r.timeline||[]).filter(t=>t.seconds!=null);
-  const tlSpan=tl.length?tl[tl.length-1].ends_in_s:0;
-  const tlBar = (tl.length && tlSpan>0)
-    ? '<div style="margin-top:6px">'
-      + '<div style="font-size:8.5px;color:var(--dim2);margin-bottom:2px">projected order &mdash; one at a time'
-      + ((r.timeline||[]).some(t=>t.seconds==null) ? ', truncated where nothing has been measured' : '')+'</div>'
-      + '<div style="display:flex;height:8px;border-radius:3px;overflow:hidden;background:var(--border)">'
-      + tl.map((t,i)=>'<div title="'+esc((t.title||t.id)+' - '+etaTxt(t.seconds)+' ('+(t.basis||'')+')')+'" style="width:'+Math.max(2,Math.round(t.seconds*100/tlSpan))+'%;background:'+(i%2?'var(--acc)':'var(--gpu,#7fb4e0)')+';opacity:'+(t.provisional?0.55:1)+'"></div>').join('')
-      + '</div></div>'
-    : '';
-  body.innerHTML = (q.running?one(q.running,true):'') + rows.map(j=>one(j,false)).join('') + tlBar
-    + ((q.struggling||[]).length
-        ? '<div style="margin-top:6px;font-size:9px;color:var(--warn,#dec37e)" title="Pre-empted repeatedly - it may never finish in the gaps, and the answer is to split it.">\u26a0 '
-          + (q.struggling||[]).length+' job(s) keep getting pre-empted</div>'
-        : '');
+  renderJobs();
 }
 
 async function bgqCancel(id){
@@ -3125,6 +3275,7 @@ function jTab(t){
   if(histWrap)   histWrap.style.display    = t==='history'?'':'none';
   if(ollaWrap)   ollaWrap.style.display    = t==='ollama'?'':'none';
   if(streamWrap) streamWrap.style.display  = t==='stream'?'':'none';
+  const bgqHead=$('j-bgq-head'); if(bgqHead) bgqHead.style.display = t==='queued'?'':'none';
   if(_liveTabs.includes(t)) renderJobList();
   else if(t==='history') renderHistory();
   else if(t==='ollama') renderOllamaLog();
@@ -3136,12 +3287,25 @@ function renderJobs(){
     txt('jc-'+k,(_jobs[k]||[]).length);
   });
   txt('k-j-pend', _pendingTotal || (_jobs.pending||[]).length);
-  txt('k-j-queued',(_jobs.queued||[]).length);
+  // The Queued figures count BOTH queues: ollama calls waiting for a node
+  // slot, and background jobs waiting for an idle box. The tab lists both.
+  const _bgWaiting=_bgqRows.filter(x=>x.state==='queued').length;
+  txt('jc-queued',(_jobs.queued||[]).length+_bgWaiting);
+  txt('k-j-queued',(_jobs.queued||[]).length+_bgWaiting);
+  // Say when the queue is not ours. A queue full of a sandbox's jobs reads as
+  // prod being busy unless it says so - and say how much of it is background.
+  (function(){
+    const foreign=(_jobs.queued||[]).concat(_jobs.running||[]).filter(j=>j.origin&&j.origin.kind&&j.origin.kind!=='prod');
+    const el=document.querySelector('#j-queued-kpi .kpi-sub');
+    if(el) el.textContent = 'waiting for a node slot'
+      + (_bgWaiting ? (' \u00b7 '+_bgWaiting+' background') : '')
+      + (foreign.length ? (' \u00b7 '+foreign.length+' from sandboxes') : '');
+  })();
   txt('k-j-run',(_jobs.running||[]).length);
   txt('k-j-done', _doneTotal || (_jobs.done||[]).length);
   txt('k-j-fail',(_jobs.failed||[]).length);
   setDot('j-pending',(_pendingTotal||(_jobs.pending||[]).length)>0?'warn':'ok');
-  setDot('j-queued-kpi',(_jobs.queued||[]).length>0?'warn':'ok');
+  setDot('j-queued-kpi',((_jobs.queued||[]).length+_bgWaiting)>0?'warn':'ok');
   setDot('j-running',(_jobs.running||[]).length>0?'warn':'ok');
   setDot('j-done-kpi',(_doneTotal||(_jobs.done||[]).length)>0?'ok':'');
   setDot('j-failed-kpi',(_jobs.failed||[]).length>0?'err':'ok');
@@ -3157,7 +3321,7 @@ let _pageOllamaRef=[];
 const _expandedOllama=new Set();
 
 function renderJobList(){
-  const jobs = _jobs[_jTab]||[];
+  const jobs = (_jTab==='queued') ? (_jobs.queued||[]).concat(_bgqRows) : (_jobs[_jTab]||[]);
   const tbody=$('j-tbody');
   const empty=$('j-empty');
   const tbl=$('j-table');
@@ -3187,9 +3351,38 @@ function renderJobList(){
   const pageJobs = jobs.slice(start, start + pageSize);
   _pageJobsRef=pageJobs;
   tbody.innerHTML = pageJobs.map((j,idx)=>{
+    if(j._bg){
+      // An idle-queue job. Same columns, read for what it is: no model or
+      // instance yet (it has not been given a box), progress where the
+      // producer declared a size, an estimate only where one was MEASURED.
+      const pr=j.progress||{}, tot=parseInt(pr.total||0,10), dn=parseInt(pr.done||0,10);
+      const prog = tot ? (Math.min(100,Math.round(dn*100/tot))+'% <span style="color:var(--dim)">'+dn+'/'+tot+'</span>') : '—';
+      const et = j.eta && j.eta.seconds!=null
+        ? '<span title="'+esc(j.eta.basis||'')+(j.eta.provisional?' (provisional)':'')+'" style="color:'+(j.eta.provisional?'var(--dim2)':'var(--acc)')+'">~'+_etaTxt(j.eta.seconds)+'</span>'
+        : (j.eta ? '<span title="no completed run of this kind yet" style="color:var(--dim)">no est.</span>' : '');
+      const marks = (j.preempts>0?'<span title="times stopped to give the box back" style="color:var(--warn,#dec37e);margin-left:4px">↺'+j.preempts+'</span>':'')
+                  + (j.stranded>0?'<span title="times found marked running with nothing running it" style="color:var(--bad,#e08585);margin-left:4px">!'+j.stranded+'</span>':'');
+      const waited = j.state==='queued' && j.waiting_for_s ? age(Date.now()/1000-j.waiting_for_s) : '—';
+      return '<tr>'
+        +'<td style="font-size:8px;color:var(--dim2)">'+esc(String(j.id||'').slice(-12))+'</td>'
+        +'<td><span style="display:inline-block;font-size:8px;padding:0 5px;border-radius:8px;margin-right:4px;background:var(--bg2);color:var(--dim2);border:1px solid var(--border);font-family:var(--mono)">background</span>'+esc(j.kind||'?')+'</td>'
+        +'<td style="font-size:9px;color:var(--dim)">—</td>'
+        +'<td style="font-size:9px;color:var(--dim)">'+(j.state==='running'?'<span class="j-hist-instance gpu">idle box</span>':'—')+'</td>'
+        +'<td style="font-size:8.5px;color:var(--text)">'+esc(j.title||'')+marks+'</td>'
+        +'<td>'+waited+'</td>'
+        +'<td style="font-size:9px">'+prog+'</td>'
+        +'<td style="font-size:8px;color:var(--dim2);white-space:nowrap">'+_fmtDateTime(j.ts)+'</td>'
+        +'<td><span class="j-badge '+(j.state==='running'?'j-running':'j-queued')+'">'+esc(j.state)+'</span> '+et+'</td>'
+        +'<td>'+(j.state==='queued'?'<button class="btn sm" onclick="event.stopPropagation();P.bgqCancel('+sq(j.id)+')" style="font-size:7px;padding:1px 5px;color:var(--err)" title="Remove from the queue">remove</button>':'')+'</td>'
+        +'</tr>';
+    }
     const state = j.state==='failed'||j.success===false||j.error?'failed':(_jTab==='failed'?'failed':_jTab);
     const bc = state==='failed'?'j-failed':(badgeCls[_jTab]||'j-pending');
     const callerInfo = j.caller_file ? esc(j.caller_file)+':'+esc(j.caller_func||'?') : '—';
+    const org = j.origin||{};
+    const orgBadge = (org.kind && org.kind!=='prod')
+      ? '<span class="j-origin" title="submitted by another Vera process: '+esc(org.node||org.kind)+'">'+esc(org.kind)+' &middot; '+esc(String(org.node||'').replace(/^vera-dev-/,'').slice(0,28))+'</span> '
+      : '';
     const modelStr = j.model ? esc(j.model) : '—';
     const instId = j.instance_id||j.worker_id||j.worker||'';
     const isGpu = instId.includes('gpu')||instId.includes('250');
@@ -3209,7 +3402,7 @@ function renderJobList(){
       +'<td>'+esc(j.cap_name||j.capability||'?')+'</td>'
       +'<td style="font-size:9px;color:var(--acc3)">'+modelStr+'</td>'
       +'<td>'+instLabel+'</td>'
-      +'<td style="font-size:8.5px;color:var(--acc2)">'+callerInfo+'</td>'
+      +'<td style="font-size:8.5px;color:var(--acc2)">'+orgBadge+callerInfo+'</td>'
       +'<td>'+elStr+'</td>'
       +'<td>'+tokStr+'</td>'
       +'<td style="font-size:8px;color:var(--dim2);white-space:nowrap">'+tsDisplay+'</td>'
@@ -4567,7 +4760,7 @@ async function deleteModelGo(){
 }
 
 // ── Wrapper integration ─────────────────────────────────────────────────────
-let _wrapperUrl='';
+let _trafficNode='';
 let _wrapperPollTimer=null;
 let _olSubCurrent='nodes';
 
@@ -4593,51 +4786,34 @@ function olSubTab(name,btn){
   if(name==='jobs') oljRender();
   if(name==='catalog') catInit();
   if(name==='benchmark') benchInit();
-  // When switching to wrapper, init the selector and connect if needed
+  // Traffic re-reads the node's access log on entry.
   if(name==='wrapper'){
     wrapperInit();
-    // If already have a URL (from prior selection), ensure iframe is loaded
-    if(_wrapperUrl){
-      const iframe=$('obs-wrapper-iframe');
-      if(iframe && (!iframe.src||iframe.src==='about:blank'||iframe.src==='')) iframe.src=_wrapperUrl;
-      wrapperRefreshStats();
-    }
+    if(_trafficNode) wrapperRefreshStats();
   }
 }
 
 function wrapperInit(){
-  // Build node selector from known cluster instances
+  // The Traffic sub-pane (element ids keep their historical "wrapper" names).
   const sel=$('obs-wrapper-sel');
   if(!sel) return;
-  const prev=sel.value;
-  sel.innerHTML='<option value="">Select node...</option>';
-  // Derive wrapper URLs from cluster data — wrapper runs on STATUS_PORT (11436) on same host
+  const prev=sel.value||_trafficNode;
+  const opts=['<option value="">Select node…</option>'];
   if(_cluster && _cluster.ollama){
     for(const [id,n] of Object.entries(_cluster.ollama)){
-      if(!n.url) continue;
-      try{
-        const u=new URL(n.url);
-        const wrapperUrl=u.protocol+'//'+u.hostname+':11436';
-        const label=(n.label||id)+(n.has_gpu?' (GPU)':' (CPU)');
-        sel.innerHTML+='<option value="'+esc(wrapperUrl)+'">'+esc(label)+'</option>';
-      }catch(_){}
+      opts.push('<option value="'+esc(id)+'">'+esc((n.label||id)+(n.has_gpu?' (GPU)':' (CPU)'))+'</option>');
     }
   }
-  // Restore previous selection if still valid
-  if(prev){
-    for(const o of sel.options){ if(o.value===prev){sel.value=prev;break;} }
-  }
-  // Auto-select first option only if wrapper sub-pane is active and no URL set
-  if(_olSubCurrent==='wrapper' && !_wrapperUrl && sel.options.length===2){
+  sel.innerHTML=opts.join('');
+  if(prev && [...sel.options].some(o=>o.value===prev)) sel.value=prev;
+  if(_olSubCurrent==='wrapper' && !_trafficNode && sel.options.length>1){
     sel.selectedIndex=1;
     wrapperSwitchNode(sel.value);
-  } else if(_olSubCurrent==='wrapper' && _wrapperUrl && sel.value===_wrapperUrl){
-    // Already connected — just refresh stats, don't reload iframe
-    wrapperRefreshStats();
   }
 }
 
-// Re-init wrapper selector whenever cluster data refreshes
+// Keep the node list current as cluster data refreshes (selector only — the
+// access log is read on demand, never on every refresh).
 function _hookWrapperRefresh(){
   const origRenderOllama=renderOllama;
   renderOllama=function(){
@@ -4647,63 +4823,102 @@ function _hookWrapperRefresh(){
 }
 setTimeout(_hookWrapperRefresh,100);
 
-function wrapperSwitchNode(url){
-  const prev=_wrapperUrl;
-  _wrapperUrl=url;
-  if(!url){
-    const iframe=$('obs-wrapper-iframe');
-    if(iframe) iframe.src='about:blank';
-    if(_wrapperPollTimer){clearInterval(_wrapperPollTimer);_wrapperPollTimer=null;}
-    txt('owb-active','—');txt('owb-total','—');txt('owb-kills','—');txt('owb-wd','—');
+function trafficOpen(iid){
+  olSubTab('wrapper');
+  wrapperInit();
+  const sel=$('obs-wrapper-sel');
+  if(sel) sel.value=iid;
+  wrapperSwitchNode(iid);
+}
+
+function wrapperSwitchNode(iid){
+  _trafficNode=iid||'';
+  if(_wrapperPollTimer){ clearInterval(_wrapperPollTimer); _wrapperPollTimer=null; }
+  const body=$('obs-traffic-body');
+  if(!_trafficNode){
+    ['owb-active','owb-total','owb-kills','owb-wd'].forEach(k=>txt(k,'—'));
+    if(body) body.innerHTML='';
     return;
   }
-  // Only reload iframe if URL actually changed
-  const iframe=$('obs-wrapper-iframe');
-  if(iframe && iframe.src!==url){
-    iframe.src=url;
-  }
-  // Start stats polling
+  if(body) body.innerHTML='';
   wrapperRefreshStats();
-  if(_wrapperPollTimer) clearInterval(_wrapperPollTimer);
-  _wrapperPollTimer=setInterval(wrapperRefreshStats,5000);
+  // Reading the log costs an SSH round-trip, so refresh once a minute, and only
+  // while the pane is open.
+  _wrapperPollTimer=setInterval(()=>{ if(_olSubCurrent==='wrapper') wrapperRefreshStats(); },60000);
 }
 
 async function wrapperRefreshStats(){
-  if(!_wrapperUrl) return;
-  try{
-    const r=await fetch(_wrapperUrl.replace(/\/$/, '')+'/api/report',{signal:AbortSignal.timeout(4000)});
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    const d=await r.json();
-    txt('owb-active',d.active_count??'—');
-    txt('owb-total',d.total_requests??'—');
-    txt('owb-kills',d.kill_count??'—');
-    const wd=d.watchdog||{};
-    txt('owb-wd',wd.soft_limit!=null?'soft '+wd.soft_limit+'s / hard '+wd.hard_limit+'s':'—');
-    // Show kills if any
-    const killsEl=$('obs-wrapper-kills');
-    if(killsEl && d.recent_kills && d.recent_kills.length){
-      killsEl.style.display='block';
-      killsEl.innerHTML=d.recent_kills.map(k=>{
-        const ts=(k.ts_iso||'').replace('T',' ').slice(0,19);
-        return '<div style="padding:3px 6px;font-size:8.5px;font-family:var(--mono);border-left:3px solid var(--err);color:var(--err);background:rgba(201,107,107,.04);margin:2px 6px;border-radius:2px">'
-          +'<span style="color:var(--dim);margin-right:4px">'+esc(ts)+'</span>'
-          +'<span style="font-weight:700;margin-right:4px">'+esc(k.source)+'</span>'
-          +esc(k.reason)
-          +(k.model?' <span style="color:var(--acc3)">'+esc(k.model)+'</span>':'')
-          +(k.req_id?' <span style="color:var(--dim2)">'+esc(k.req_id)+'</span>':'')
-          +'</div>';
-      }).join('');
-    } else if(killsEl){
-      killsEl.style.display='none';
-    }
-  }catch(e){
-    txt('owb-active','err');
-    txt('owb-wd',String(e).slice(0,40));
+  if(!_trafficNode) return;
+  const node=_trafficNode;
+  const minutes=parseInt(($('obs-traffic-window')||{}).value)||60;
+  const body=$('obs-traffic-body');
+  if(body && !body.innerHTML) body.innerHTML='<div style="padding:10px;color:var(--dim)">Reading the node\'s access log…</div>';
+  const r=await api('/bench/node_requests','POST',{instance_id:node,minutes});
+  if(node!==_trafficNode) return;
+  if(!r||r.error){
+    txt('owb-wd','—');
+    if(body) body.innerHTML='<div style="padding:10px;color:var(--err)">'+esc((r&&r.error)||'No response from the node.')+'</div>';
+    return;
   }
+  txt('owb-active', r.inference_calls??'—');
+  txt('owb-total', r.total_requests??'—');
+  txt('owb-kills', r.external_clients??'—');
+  const p=r.processes||{};
+  txt('owb-wd', p.other_cores!=null?(p.other_cores+' cores'):'—');
+  if(body) body.innerHTML=_trafficHtml(r);
 }
 
-// Keep old name as alias for public API
 function wrapperRefresh(){ wrapperRefreshStats(); }
+
+function _trafficDur(v){
+  if(v==null) return '—';
+  return v>=60?(v/60).toFixed(1)+'m':v>=1?v.toFixed(1)+'s':Math.round(v*1000)+'ms';
+}
+
+function _trafficHtml(r){
+  const th='style="text-align:left;padding:3px 10px 3px 0;font-weight:600;color:var(--dim);font-size:8.5px;border-bottom:1px solid var(--border);white-space:nowrap"';
+  const td='style="padding:3px 10px 3px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:9.5px;white-space:nowrap"';
+  const sec=(title,inner)=>'<div style="margin-bottom:12px"><div style="font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin-bottom:4px">'+title+'</div><div style="overflow-x:auto">'+inner+'</div></div>';
+  const ext=(r.external_clients||0)>0;
+  let h='<div style="padding:6px 9px;margin-bottom:12px;border-left:3px solid '+(ext?'var(--warn)':'#6fd68b')+';background:var(--bg1);font-size:10.5px">'+esc(r.verdict||'')
+    +'<div style="font-size:8.5px;color:var(--dim);margin-top:3px">'+esc(r.unit||'service not found')+' · last '+esc(String(r.minutes))+' min · '+(r.polls||0)+' status polls counted, not listed'
+    +(r.truncated?' · showing the latest '+r.rows_returned+' of '+r.work_requests+' requests':'')+'</div></div>';
+
+  const clients=r.by_client||[];
+  h+=sec('Clients', clients.length
+    ? '<table style="border-collapse:collapse"><tr><th '+th+'>Client</th><th '+th+'>Who</th><th '+th+'>Inference</th><th '+th+'>Other</th><th '+th+'>Polls</th><th '+th+'>Errors</th><th '+th+'>p50</th><th '+th+'>p95</th></tr>'
+      + clients.map(c=>'<tr><td '+td+'>'+esc(c.client)+'</td>'
+        +'<td '+td+'><span style="color:'+(c.is_vera?'var(--dim2)':'var(--warn)')+'">'+(c.is_vera?'Vera':'other')+'</span></td>'
+        +'<td '+td+'>'+c.inference+'</td><td '+td+'>'+(c.requests-c.inference)+'</td><td '+td+'>'+c.polls+'</td>'
+        +'<td '+td+'><span style="color:'+(c.errors?'var(--err)':'inherit')+'">'+c.errors+'</span></td>'
+        +'<td '+td+'>'+_trafficDur(c.p50_s)+'</td><td '+td+'>'+_trafficDur(c.p95_s)+'</td></tr>').join('')
+      + '</table>'
+    : '<span style="color:var(--dim)">No requests in this window.</span>');
+
+  const eps=r.by_endpoint||[];
+  if(eps.length) h+=sec('Endpoints', '<table style="border-collapse:collapse"><tr><th '+th+'>Path</th><th '+th+'>Calls</th><th '+th+'>Errors</th><th '+th+'>p50</th><th '+th+'>p95</th><th '+th+'>Slowest</th></tr>'
+    + eps.map(e=>'<tr><td '+td+'>'+esc(e.path)+'</td><td '+td+'>'+e.count+'</td><td '+td+'><span style="color:'+(e.errors?'var(--err)':'inherit')+'" title="'+esc(Object.entries(e.statuses||{}).map(([k,v])=>'HTTP '+k+' ×'+v).join(', '))+'">'+e.errors+(e.errors?' <span style="color:var(--dim2)">('+esc(Object.entries(e.statuses||{}).filter(([k])=>+k>=400).map(([k,v])=>k+' ×'+v).join(', '))+')</span>':'')+'</span></td>'
+      +'<td '+td+'>'+_trafficDur(e.p50_s)+'</td><td '+td+'>'+_trafficDur(e.p95_s)+'</td><td '+td+'>'+_trafficDur(e.max_s)+'</td></tr>').join('') + '</table>');
+
+  const p=r.processes||{};
+  if(p.ollama_cores!=null){
+    let inner='<div style="font-family:var(--mono);font-size:9.5px">Ollama '+p.ollama_cores+' cores · everything else '+p.other_cores+' cores'+(p.ncpu?' · '+p.ncpu+' CPUs':'')+'</div>';
+    if(p.verdict) inner+='<div style="color:var(--warn);font-size:10px;margin-top:2px">'+esc(p.verdict)+'</div>';
+    if((p.top_other||[]).length) inner+='<table style="border-collapse:collapse;margin-top:4px"><tr><th '+th+'>Process</th><th '+th+'>PID</th><th '+th+'>User</th><th '+th+'>CPU</th><th '+th+'>Mem</th></tr>'
+      + p.top_other.map(x=>'<tr><td '+td+'>'+esc(x.command)+'</td><td '+td+'>'+x.pid+'</td><td '+td+'>'+esc(x.user)+'</td><td '+td+'>'+x.cpu_pct+'%</td><td '+td+'>'+(x.mem_pct??'—')+'%</td></tr>').join('') + '</table>';
+    h+=sec('Running now', inner);
+  }
+
+  const longs=r.long_requests||[];
+  if(longs.length) h+=sec('Long requests (over a minute)', '<table style="border-collapse:collapse"><tr><th '+th+'>Time</th><th '+th+'>Client</th><th '+th+'>Path</th><th '+th+'>Took</th></tr>'
+    + longs.map(x=>'<tr><td '+td+'>'+esc(x.ts)+'</td><td '+td+'>'+esc(x.client)+'</td><td '+td+'>'+esc(x.path)+'</td><td '+td+'>'+_trafficDur(x.latency_s)+'</td></tr>').join('') + '</table>');
+
+  const recent=(r.recent||[]).slice(0,25);
+  if(recent.length) h+=sec('Recent requests (polls excluded)', '<table style="border-collapse:collapse"><tr><th '+th+'>Time</th><th '+th+'>Client</th><th '+th+'>Request</th><th '+th+'>Status</th><th '+th+'>Took</th></tr>'
+    + recent.map(x=>'<tr><td '+td+'>'+esc(x.ts)+'</td><td '+td+'>'+esc(x.client)+'</td><td '+td+'>'+esc(x.method+' '+x.path)+'</td>'
+      +'<td '+td+'><span style="color:'+(x.status>=400?'var(--err)':'inherit')+'">'+x.status+'</span></td><td '+td+'>'+_trafficDur(x.latency_s)+'</td></tr>').join('') + '</table>');
+  return h;
+}
 
 // ── Shared tracker-table detail rows (Jobs by Worker + Ollama All Jobs) ─────
 // One expandable detail row per job showing the full error, capability
@@ -5278,24 +5493,24 @@ function pmxRenderVms(){
 // ── SSH into a guest — full in-Vera terminal via the remote-connections layer.
 // First use enrolls the guest (registers an SSH host + saved connection); after
 // that the button drops straight into a shell. Replaces the old Remote tab.
-async function pmxSsh(node,type,vmid,name){
+async function pmxSsh(node,type,vmid,name,cid){
   try{
-    const r=await api('/remote/conn/open','POST',{kind:'proxmox',cluster_id:_pmxCur,node:node,guest_type:type,vmid:parseInt(vmid)});
+    const r=await api('/remote/conn/open','POST',{kind:'proxmox',cluster_id:cid||_pmxCur,node:node,guest_type:type,vmid:parseInt(vmid)});
     if(r&&r.ok&&r.ws_path){ termOpen(r.ws_path,'🖧 '+name+' — SSH'); return; }
-    if(confirm('This guest is not enrolled for SSH yet.\nEnroll now? (the guest needs a reachable SSH server)')) await pmxEnrollSsh(node,type,vmid,name);
+    if(confirm('This guest is not enrolled for SSH yet.\nEnroll now? (the guest needs a reachable SSH server)')) await pmxEnrollSsh(node,type,vmid,name,cid);
   }catch(e){ alert('SSH open failed: '+e.message); }
 }
-async function pmxEnrollSsh(node,type,vmid,name){
+async function pmxEnrollSsh(node,type,vmid,name,cid){
   const user=prompt('SSH user for '+name+':','root'); if(!user) return;
   const pass=prompt('Password (leave blank to use a key path on the Vera host):','');
   if(pass===null) return;
   const key=pass?'':(prompt('Key path on the Vera host (blank = none):','')||'');
   const ip=prompt('Guest IP (blank = auto-detect):','')||'';
   const port=parseInt(prompt('SSH port:','22')||'22')||22;
-  const r=await api('/proxmox/guest/enroll','POST',{cluster_id:_pmxCur,node:node,guest_type:type,vmid:parseInt(vmid),user:user,password:pass||'',key_path:key,ip:ip,port:port,label:name});
+  const r=await api('/proxmox/guest/enroll','POST',{cluster_id:cid||_pmxCur,node:node,guest_type:type,vmid:parseInt(vmid),user:user,password:pass||'',key_path:key,ip:ip,port:port,label:name});
   if(!(r&&r.ok)) return alert('Enroll failed: '+((r&&r.error)||'unknown'));
-  await api('/remote/conn/save','POST',{kind:'proxmox',cluster_id:_pmxCur,node:node,guest_type:type,vmid:parseInt(vmid),ssh_host_id:r.ssh_host_id,label:name});
-  pmxSsh(node,type,vmid,name);
+  await api('/remote/conn/save','POST',{kind:'proxmox',cluster_id:cid||_pmxCur,node:node,guest_type:type,vmid:parseInt(vmid),ssh_host_id:r.ssh_host_id,label:name});
+  pmxSsh(node,type,vmid,name,cid);
 }
 
 async function pmxStartVm(node,vmid,type){
@@ -5320,13 +5535,13 @@ async function pmxStopVm(node,vmid,type){
 
 // ── Console: terminal (xterm) + remote desktop (noVNC) ────────────────────
 let _pmxCon={term:null,fit:null,ws:null,rfb:null,deeplink:'',sendResize:null};
-async function pmxConsole(node,type,vmid,mode,name){
+async function pmxConsole(node,type,vmid,mode,name,cid){
   $('pmx-con-ttl').textContent=(mode==='vnc'?'Desktop · ':'Terminal · ')+name+' ('+vmid+')';
   $('pmx-con').style.display='flex';
   $('pmx-con-term').innerHTML=''; $('pmx-con-vnc').innerHTML='';
   $('pmx-con-msg').style.display='none'; $('pmx-con-deep').style.display='none';
   let info;
-  try{ info=await _pmxApi('/proxmox/console/ticket','POST',{cluster_id:_pmxCur,node,guest_type:type,vmid:parseInt(vmid),mode}); }
+  try{ info=await _pmxApi('/proxmox/console/ticket','POST',{cluster_id:cid||_pmxCur,node,guest_type:type,vmid:parseInt(vmid),mode}); }
   catch(e){ return pmxConMsg('Could not reach console endpoint: '+e.message,false); }
   if(info.error){ return pmxConMsg(info.error,false); }
   _pmxCon.deeplink=info.deeplink_url||'';
@@ -5976,6 +6191,185 @@ function _mountFrame(id, url){
   const f=$(id);
   if(f && (!f.src || f.src==='about:blank' || f.src==='')) f.src=url;
 }
+// The Build entry: open a pane at one of its sections. The hash reaches the
+// iframe's page as a fragment change (no reload); a fresh mount carries it.
+const _buildFrames={foundry:['foundry-frame','/foundry/panel'],software:['software-frame','/provision/panel']};
+function buildGo(pane, section){
+  const nav=document.querySelector('.snav[data-pane="'+pane+'"]');
+  const [fid,path]=_buildFrames[pane]||[];
+  const f=fid&&$(fid);
+  if(f&&(!f.src||f.src==='about:blank')) f.src=BASE+path+'#'+section;
+  show(pane, nav);
+  if(f&&f.src&&f.src!=='about:blank'){ try{ f.contentWindow.location.hash=section; }catch(e){ f.src=BASE+path+'#'+section; } }
+}
+
+// ── Overview: estate.health ─────────────────────────────────────────────────
+// One findings list: the state store, stopped infrastructure containers on the
+// Vera host, running Proxmox guests without autostart. Re-checks every 60 s
+// while the pane is open and the page is visible.
+let _ovBusy=false, _ovLast=null;
+const _ovNotesOpen={};
+const _OV_SEV={error:'Error',warn:'Check',info:'Note'};
+function _ovFacts(key,f){
+  f=f||{};
+  if(key==='state_store'){
+    return [f.url, f.version&&('redis '+f.version), f.executable,
+      f.keys!=null&&(Number(f.keys).toLocaleString()+' keys'),
+      f.expected_total&&(f.expected_present+' of '+f.expected_total+' estate keys')].filter(Boolean).join(' · ');
+  }
+  if(key==='containers'&&f.listed!=null){
+    return f.listed+' containers · '+f.not_running+' infrastructure not running · '+f.sandboxes_ignored+' sandboxes ignored';
+  }
+  if(key==='guests'&&f.records!=null){
+    return f.running_checked+' running guests checked · '+f.clusters+' cluster'+(f.clusters===1?'':'s')+' · '+f.records+' record'+(f.records===1?'':'s');
+  }
+  if(key==='backups'&&f.nodes!=null){
+    return f.enabled_jobs+' enabled job'+(f.enabled_jobs===1?'':'s')+' · '+f.guests_ok+' guest backups ok'
+      +(f.guests_failed?(' · '+f.guests_failed+' failed'):'')
+      +(f.latest_run_at?(' · latest '+_fmtDateTime(f.latest_run_at)):'');
+  }
+  if(key==='storage'&&f.disks!=null){
+    return f.disks+' disks · '+f.in_use+' in use'
+      +(f.docker_disk_used_pct!=null?(' · Docker data disk '+f.docker_disk_used_pct+'% used'):'');
+  }
+  if(key==='services'&&f.file_fabric){
+    return 'file server '+f.file_fabric+(f.estate_mounts!=null?(' · '+f.estate_mounts+' estate mounts'):'')
+      +' · directory '+f.directory;
+  }
+  if(key==='certificates'&&f.certificates!=null){
+    const so=f.soonest;
+    return f.certificates+' certificate'+(f.certificates===1?'':'s')
+      +(f.expired?(' · '+f.expired+' expired'):'')+(f.expiring?(' · '+f.expiring+' expiring'):'')
+      +(so?(' · soonest '+so.name+' in '+so.days_left+' day'+(so.days_left===1?'':'s')):'');
+  }
+  return '';
+}
+function _ovRow(f){
+  return '<div class="ov-row"><span class="ov-sev '+esc(f.severity)+'">'+esc(_OV_SEV[f.severity]||f.severity)+'</span>'
+    +'<span>'+esc(f.message)+(f.detail?'<span class="ov-detail">'+esc(f.detail)+'</span>':'')+'</span></div>';
+}
+function ovRender(r){
+  const sum=$('ov-summary'), box=$('ov-sections'); if(!sum||!box) return;
+  if(!r||r.error||!r.sections){
+    sum.innerHTML='<span class="ov-level error">Unavailable</span><span>'+esc((r&&r.error)||'The estate health check did not answer.')+'</span>';
+    txt('ov-ts','');
+    return;
+  }
+  _ovLast=r;
+  const c=r.counts||{}, need=(c.error||0)+(c.warn||0);
+  const words={ok:'All clear',warn:'Needs a look',error:'Something is down'};
+  sum.innerHTML='<span class="ov-level '+esc(r.level)+'">'+esc(words[r.level]||r.level)+'</span><span>'
+    +(need?(need+' finding'+(need===1?' needs':'s need')+' attention'):'Nothing checked needs attention')
+    +(c.info?(' · '+c.info+' note'+(c.info===1?'':'s')):'')+'</span>';
+  let h='';
+  for(const key of Object.keys(r.sections)){
+    const s=r.sections[key]; if(!s) continue;
+    const all=s.findings||[], loud=all.filter(f=>f.severity!=='info'), notes=all.filter(f=>f.severity==='info');
+    const ms=s.elapsed_ms;
+    h+='<section class="ov-sec"><div class="ov-sec-h"><span>'+esc(s.label)+'</span><span class="ov-time">'
+      +(ms==null?'':(ms<1000?ms+' ms':(ms/1000).toFixed(1)+' s'))+'</span></div>';
+    const facts=_ovFacts(key,s.facts);
+    if(facts) h+='<div class="ov-facts">'+esc(facts)+'</div>';
+    h+='<div class="ov-list">'+(loud.length?loud.map(_ovRow).join(''):'<div class="ov-clear">No problems found.</div>');
+    if(notes.length){
+      h+=(_ovNotesOpen[key]?notes.map(_ovRow).join(''):'')
+        +'<div class="ov-more" onclick="P.ovNotes(\''+key+'\')">'
+        +(_ovNotesOpen[key]?'Hide notes':('Show '+notes.length+' note'+(notes.length===1?'':'s')))+'</div>';
+    }
+    h+='</div></section>';
+  }
+  box.innerHTML=h;
+  txt('ov-ts','checked '+_fmtDateTime(r.checked_at)+(r.cached?' · cached':''));
+}
+async function ovLoad(refresh){
+  if(_ovBusy) return;
+  _ovBusy=true;
+  if(refresh) txt('ov-ts','checking…');
+  try{ ovRender(await api('/estate/health'+(refresh?'?refresh=true':''))); }
+  finally{ _ovBusy=false; }
+}
+function ovNotes(key){ _ovNotesOpen[key]=!_ovNotesOpen[key]; if(_ovLast) ovRender(_ovLast); }
+setInterval(()=>{ const p=$('pane-overview'); if(p&&p.classList.contains('on')&&document.visibilityState==='visible') ovLoad(false); }, 60000);
+setTimeout(()=>{ const p=$('pane-overview'); if(_VIEW==='estate'&&p&&p.classList.contains('on')) ovLoad(false); }, 0);
+
+// ── Machines: every machine in one list (estate.machines) ────────────────────
+// Actions use the same endpoints as the Proxmox, Nodes and Docker panes, but
+// each row carries its own cluster, so nothing depends on which cluster the
+// Proxmox pane has selected.
+let _mcRows=[], _mcKind='', _mcBusy=false;
+const _MC_KIND={'proxmox-node':'Proxmox node',guest:'Guest',host:'Host','docker-host':'Docker host'};
+function mcInit(){ if(_mcRows.length) mcRender(); else mcLoad(); }
+async function mcLoad(){
+  if(_mcBusy) return;
+  _mcBusy=true;
+  txt('mc-status','loading…');
+  try{
+    const r=await api('/estate/machines');
+    _mcRows=(r&&r.machines)||[];
+    const c=(r&&r.counts)||{}, errs=(r&&r.errors)||[];
+    txt('mc-status', r ? ((c.machines||0)+' machines · '+(c.running_guests||0)+' guests running'
+      +(errs.length?(' · '+errs.join('; ')):'')) : 'The machine list did not answer.');
+  } finally { _mcBusy=false; }
+  mcRender();
+}
+function mcKind(kind, el){
+  _mcKind=kind||'';
+  document.querySelectorAll('#mc-kinds .j-tab').forEach(t=>t.classList.toggle('active', t===el));
+  mcRender();
+}
+function mcRender(){
+  const tb=$('mc-tbody'); if(!tb) return;
+  const q=(($('mc-filter')||{}).value||'').trim().toLowerCase();
+  const rows=_mcRows.filter(r=>(!_mcKind||r.kind===_mcKind)
+    &&(!q||[r.label,r.addr,r.node,r.vmid,(r.runs||[]).join(' ')].join(' ').toLowerCase().includes(q)));
+  tb.innerHTML=rows.map(r=>{
+    const idx=_mcRows.indexOf(r);
+    const where=(r.kind==='guest'&&r.vmid)?((r.type==='qemu'?'VM ':'CT ')+r.vmid+(r.node?' on '+r.node:'')):'';
+    const acts=(r.actions||[]).map(a=>'<button class="btn sm'+(a.id==='shutdown'?' err-btn':'')
+      +'" onclick="P.mcAct('+idx+','+sq(a.id)+')">'+esc(a.label)+'</button>').join('');
+    return '<tr><td><b>'+esc(r.label)+'</b>'+(where?'<span class="mc-note">'+esc(where)+'</span>':'')
+      +(r.note?'<span class="mc-note">'+esc(r.note)+'</span>':'')+'</td>'
+      +'<td class="mc-kind">'+esc(_MC_KIND[r.kind]||r.kind)+'</td>'
+      +'<td><span class="mc-state '+esc(r.status||'')+'">'+esc(r.status||'—')+'</span></td>'
+      +'<td style="font-family:var(--mono);font-size:9px">'+esc(r.addr||'')+'</td>'
+      +'<td style="font-size:9px">'+esc((r.hardware||[]).join(' · '))+'</td>'
+      +'<td style="font-size:9px">'+esc((r.runs||[]).join(', '))+'</td>'
+      +'<td><div class="mc-acts">'+acts+'</div></td></tr>';
+  }).join('');
+  const empty=$('mc-empty'); if(empty) empty.style.display=rows.length?'none':'block';
+}
+// The console overlay lives inside the Proxmox pane, which is hidden while
+// another pane is open; lift it to the page before opening it from here.
+function _mcFloat(id){ const el=$(id); if(el&&el.parentElement!==document.body) document.body.appendChild(el); }
+async function mcAct(idx, action){
+  const r=_mcRows[idx]; if(!r) return;
+  const what=(r.type==='qemu'?'VM ':'CT ')+r.vmid+' ('+r.label+')';
+  if(action==='start'||action==='shutdown'||action==='reboot'){
+    const verb={start:'Start',shutdown:'Shut down',reboot:'Reboot'}[action];
+    if(!confirm(verb+' '+what+'?')) return;
+    const res=await api('/proxmox/guest/action','POST',{cluster_id:r.cluster_id,node:r.node,guest_type:r.type,vmid:parseInt(r.vmid),action});
+    if(!res||res.error){ alert(verb+' failed: '+((res&&res.error)||'no answer')); return; }
+    txt('mc-status', verb+' sent to '+what);
+    setTimeout(mcLoad,2500); setTimeout(mcLoad,7000);
+    return;
+  }
+  if(action==='console'){
+    const a=(r.actions||[]).find(x=>x.id==='console')||{};
+    _mcFloat('pmx-con');
+    return pmxConsole(r.node,r.type,String(r.vmid),a.mode||'term',r.label,r.cluster_id);
+  }
+  if(action==='ssh'){
+    if(r.ssh_host_id){
+      const res=await api('/remote/conn/open','POST',{kind:'ssh',ssh_host_id:r.ssh_host_id});
+      if(res&&res.ok&&res.ws_path) return termOpen(res.ws_path,'🖧 '+r.label+' — SSH');
+      return alert('Terminal failed: '+((res&&res.error)||'no answer'));
+    }
+    return pmxSsh(r.node,r.type,String(r.vmid),r.label,r.cluster_id);
+  }
+  if(action==='cpu'){ estateOpen('proxmox',''); return pmxSub('cpu'); }
+  if(action==='detect'){ txt('mc-status','detecting '+r.label+'…'); await ndDetect(r.ssh_host_id); return mcLoad(); }
+  if(action==='containers'){ estateOpen('docker',''); return dkrSelectHost(r.docker_host_id); }
+}
 
 function showPane(name, el){
   if(name==='perf'){ // legacy alias — Perf now lives as a sub-tab of Observe
@@ -5993,6 +6387,7 @@ function showPane(name, el){
   document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
   const pane=$('pane-'+name);
   if(pane) pane.classList.add('on');
+  if(name==='overview'){ ovLoad(false); }
   if(name==='ollama'){ loadEmbedCfg(); }
   if(name==='docker'){ if(!Object.keys(_dkrHosts||{}).length) _dkrInitHosts(); dkrWorkerList(); sbxRefresh(); stkRefresh(); if(_dkrHostId) dkrRefresh(); }
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
@@ -6000,15 +6395,20 @@ function showPane(name, el){
   if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
-  if(name==='openclaw'){ _mountFrame('openclaw-frame', BASE+'/openclaw/panel'); }
   if(name==='api'){ _mountFrame('api-frame', BASE+'/providers/panel'); }
   if(name==='provision'){ provSub(_prvSub); }
   if(name==='storage'){ _mountFrame('storage-frame', BASE+'/pxstore/panel'); }
   if(name==='estate'){ _mountFrame('estate-frame', BASE+'/interaction/panel'); }
   if(name==='foundry'){ _mountFrame('foundry-frame', BASE+'/foundry/panel'); }
+  if(name==='build'){ /* static: the Build entry */ }
   if(name==='network'){ netSub(_netSub); }
   if(name==='connections'){ connLoad(); }
   if(name==='nodes'){ ndInit(); }
+  if(name==='machines'){ mcInit(); }
+  if(name==='remote'){ _mountFrame('remote-frame', BASE+'/remote/panel'); }
+  if(name==='integrations'){ _mountFrame('integrations-frame', BASE+'/integrations/panel'); }
+  if(name==='platforms'){ _mountFrame('platforms-frame', BASE+'/platform/panel'); }
+  if(name==='software'){ _mountFrame('software-frame', BASE+'/provision/panel'); }
   // Keep the outer shell's injected top-level sub-menu in sync when this
   // panel changes pane on its own (a direct click here, not one relayed
   // from an injected item) — see registerNav() below. The 'perf'/'catalog'
@@ -6021,15 +6421,27 @@ function showPane(name, el){
 // nav_select fallback matches directly, so no selectFn is needed here
 // either. Excludes the 'perf'/'catalog' legacy aliases (they're sub-tabs
 // of Observe/Ollama, not real top-level panes of their own).
-if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
-  {id:'workers', label:'Workers'}, {id:'nodes', label:'Nodes'}, {id:'ollama', label:'Ollama'},
-  {id:'modelrouting', label:'Model Routing'},
-  {id:'observe', label:'Observe'}, {id:'proxmox', label:'Proxmox'}, {id:'storage', label:'Storage'},
-  {id:'estate', label:'Estate'}, {id:'foundry', label:'Foundry'},
-  {id:'docker', label:'Docker'}, {id:'sandbox', label:'Sandbox'}, {id:'network', label:'Network'},
-  {id:'connections', label:'Connections'}, {id:'mimic', label:'Mimic'}, {id:'vllm', label:'vLLM'},
-  {id:'openclaw', label:'OpenClaw'}, {id:'api', label:'API'}, {id:'provision', label:'Provision'},
-]);
+// This panel serves two top-level tabs: Estate, and Models (?view=models).
+// Each lists only its own panes; ?pane=<id>&sub=<id> opens a pane directly,
+// and the shell sends vera:estate:open for a retired tab.
+const _VIEW=(new URLSearchParams(location.search).get('view')==='models')?'models':'estate';
+if(_VIEW==='models') document.documentElement.classList.add('view-models');
+if(window.VeraPanelBridge) VeraPanelBridge.registerNav(
+  [...document.querySelectorAll('#secNav .snav[data-view="'+_VIEW+'"]')]
+    .map(el=>({id:el.dataset.pane, label:el.textContent.trim()})));
+function estateOpen(pane, sub){
+  if(!$('pane-'+pane)) return false;
+  showPane(pane, document.querySelector('.snav[data-pane="'+pane+'"]'));
+  if(sub&&pane==='provision') provSub(sub);
+  if(sub&&pane==='network') netSub(sub);
+  return true;
+}
+// After the whole script has run: provSub/netSub read state declared below.
+setTimeout(()=>{
+  const q=new URLSearchParams(location.search);
+  if(q.get('pane')) estateOpen(q.get('pane'), q.get('sub')||'');
+  else if(_VIEW==='models') estateOpen('ollama','');
+}, 0);
 
 // ── Proxmox sub-tabs — Dashboard (native) / CPU-NUMA (pxstore solo iframe) ───
 function pmxSub(name){
@@ -6060,7 +6472,7 @@ function obsSub(name){
 }
 
 // ── Network sub-tabs (graph+firewall / live traffic) ─────────────────────────
-const _netSubSrc={graph:'/netgraph/panel', ops:'/pxstore/netops-panel'};
+const _netSubSrc={graph:'/netgraph/panel', ops:'/pxstore/netops-panel', netctl:'/estate/netctl'};
 let _netSub='graph';
 function netSub(name){
   if(!_netSubSrc[name]) name='graph';
@@ -6205,7 +6617,7 @@ async function connProbeRow(id){
 // ── Provision sub-tabs — every provisioning surface consolidated in one pane ──
 // (netpolicy was dropped: it just duplicated Network → Graph & Firewall.
 //  The OPA policy engine deploys from the Security sub-tab's services card.)
-const _prvSubSrc={security:'/provisioning/panel',identity:'/identity/panel',enroll:'/enroll/panel',mesh:'/netsec/panel'};
+const _prvSubSrc={security:'/provisioning/panel',secrets:'/secrets/panel',certs:'/certs/panel',identity:'/identity/panel',enroll:'/enroll/panel',mesh:'/netsec/panel'};
 let _prvSub='security';
 function provSub(name){
   if(!_prvSubSrc[name]) name='security';
@@ -6221,6 +6633,10 @@ function provSub(name){
 // ── Theme relay ──────────────────────────────────────────────────────────────
 window.addEventListener('message', e=>{
   if(e.data?.type==='vera:base'){/* could update BASE */}
+  if(e.data?.type==='vera:estate:open'&&e.data.pane){
+    const ok=estateOpen(String(e.data.pane), String(e.data.sub||''));
+    try{ if(e.source) e.source.postMessage({type:'vera:estate:opened', rid:e.data.rid, ok}, '*'); }catch(_){}
+  }
   if(e.data?.type==='vera:theme'&&e.data.vars){
     const root=document.documentElement;
     const map={'--bg':'--bg0','--s1':'--bg1','--s2':'--bg2','--s3':'--bg3',
@@ -7186,6 +7602,7 @@ async function ndSwitch(nodeId,backend){
 // deterministic accuracy packs), with a role leaderboard. Sub-tab of Ollama.
 // ═══════════════════════════════════════════════════════════════════════════
 let _benchNodes=[], _benchInited=false, _benchBusy=false, _benchRoles=[], _benchMonTimer=null;
+let _benchMonNodes=[], _bmPoll=null, _bmRun='';
 
 function benchStatus(s){ const e=$('bench-status'); if(e) e.textContent=s||''; }
 function _benchMs(v){ return (v==null)?'—':(v>=1000?(v/1000).toFixed(1)+'s':Math.round(v)+'ms'); }
@@ -7228,6 +7645,7 @@ async function benchInit(force){
 }
 
 function benchNodeChanged(){
+  benchMatrixVariants();
   const nid=$('bench-node').value;
   const n=_benchNodes.find(x=>x.id===nid);
   const msel=$('bench-model'); if(!msel) return;
@@ -7505,6 +7923,7 @@ async function benchMon(){
 }
 
 function benchMonRender(nodes, series){
+  _benchMonNodes=nodes||[];
   const el=$('bench-nodes'); if(!el) return;
   if(!nodes.length){ el.innerHTML='<span style="color:var(--dim);font-size:10px">No Ollama nodes.</span>'; return; }
   el.innerHTML=nodes.map(n=>{
@@ -7547,9 +7966,12 @@ function benchMonRender(nodes, series){
       </div>
       ${jobs?`<div style="font-size:8px;color:var(--dim);margin-top:3px">jobs: ${esc(jobs)}</div>`:''}
       ${tops?`<div style="margin-top:4px">${tops}</div>`:''}
-      <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
-        <button class="btn sm" onclick="P.benchNodeGpu(${sq(n.id)})" title="Sample live GPU utilisation over SSH (nvidia-smi)">GPU util</button>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">
+        ${n.has_gpu?`<button class="btn sm" onclick="P.benchNodeGpu(${sq(n.id)})" title="Sample live GPU utilisation over SSH (nvidia-smi)">GPU util</button>`:''}
+        <button class="btn sm" onclick="P.benchNodeTrace(${sq(n.id)})" title="Run a real generation and sample ${n.has_gpu?'GPU clocks, temperature and throttling':'CPU and memory'} while it runs">Trace load</button>
+        <button class="btn sm" onclick="P.trafficOpen(${sq(n.id)})" title="Who is calling this node, and what else is running on it">Traffic</button>
         <span id="bench-gpu-${_benchIdSafe(n.id)}" style="font-size:8.5px;color:var(--dim2);font-family:var(--mono)"></span>
+        <div id="bench-trace-${_benchIdSafe(n.id)}" style="flex-basis:100%;font-size:9px"></div>
       </div>
     </div>`;
   }).join('');
@@ -7591,9 +8013,193 @@ async function benchClear(){
   $('bench-last').innerHTML='<span style="color:var(--dim)">Results cleared.</span>';
 }
 
+// ── Load trace (GPU clocks / throttling, or CPU and memory) ─────────────────
+async function benchNodeTrace(iid){
+  const slot=$('bench-trace-'+_benchIdSafe(iid)); if(!slot) return;
+  const node=(_benchMonNodes||[]).find(n=>n.id===iid)||{};
+  let model=(($('bench-node')||{}).value===iid)?(($('bench-model')||{}).value||''):'';
+  if(!model && (node.loaded||[]).length) model=node.loaded[0].model;
+  if(!model){
+    slot.innerHTML='<span style="color:var(--dim)">Pick this node and a model in the run panel above, or load a model on it first.</span>';
+    return;
+  }
+  slot.innerHTML='<span style="color:var(--gpu)">Generating with '+esc(model)+' and sampling '+(node.has_gpu?'the GPU':'CPU and memory')+'… about a minute.</span>';
+  const r=await api('/bench/node_trace','POST',{instance_id:iid,model,num_predict:node.has_gpu?512:192});
+  slot.innerHTML=_benchTraceHtml(r);
+}
+
+function _benchTraceHtml(r){
+  if(!r) return '<span style="color:var(--err)">No response.</span>';
+  if(r.error) return '<span style="color:var(--err)">'+esc(r.error)+'</span>';
+  let hw='';
+  if(r.kind==='cpu'){
+    const c=r.cpu_pct||{}, m=r.mem_used_gb||{};
+    hw='CPU '+(c.mean??'—')+'% mean / '+(c.peak??'—')+'% peak of '+(r.ncpu??'?')+' · memory '+(m.peak??'—')+' of '+(r.mem_total_gb??'—')+' GB';
+  } else if(r.clock){
+    hw='clock '+Math.round(r.clock.start_mhz)+'→'+Math.round(r.clock.min_mhz)+' MHz ('+r.clock.droop_pct+'% droop) · '+(r.peak_temp_c??'—')+'°C · '+(r.peak_power_w!=null?Math.round(r.peak_power_w)+' W':'—');
+  }
+  const bad=(r.throttle_reasons||[]).length>0||r.status==='cpu_bound'||r.status==='memory_pressure';
+  return '<div style="font-family:var(--mono);color:var(--text)"><b>'+(r.tokens_per_s??'—')+'</b> tok/s · prefill '+(r.prefill_tokens_per_s??'—')+'/s · load '+(r.load_s??'—')+'s</div>'
+    +(hw?'<div style="font-family:var(--mono);color:var(--dim2)">'+esc(hw)+'</div>':'')
+    +(r.verdict?'<div style="color:'+(bad?'#e0603a':'#6fd68b')+';margin-top:2px">'+esc(r.verdict)+'</div>':'')
+    +(r.trace_error?'<div style="color:var(--err)">'+esc(r.trace_error)+'</div>':'');
+}
+
+// ── Context × quantisation sweep ─────────────────────────────────────────────
+async function benchMatrixVariants(){
+  const box=$('bm-variants'); if(!box) return;
+  const iid=($('bench-node')||{}).value;
+  if(!iid){ box.innerHTML='<span style="color:var(--dim)">Pick a node above.</span>'; return; }
+  box.innerHTML='<span style="color:var(--dim)">Loading models…</span>';
+  const r=await api('/bench/matrix/variants?instance_id='+encodeURIComponent(iid));
+  if(iid!==($('bench-node')||{}).value) return;
+  if(!r||r.error){ box.innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'Could not list this node\'s models.')+'</span>'; return; }
+  const groups=r.groups||[];
+  box.innerHTML=groups.length ? groups.map(g=>
+    '<div style="margin-bottom:5px"><div style="font-size:8.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px">'
+      +esc((g.family||'unknown')+' '+(g.params||''))+(g.variants.length>1?' · '+g.variants.length+' quantisations':'')+'</div>'
+      + g.variants.map(v=>'<label style="display:flex;align-items:center;gap:5px;padding:1px 0;cursor:pointer">'
+          +'<input type="checkbox" class="bm-model" value="'+esc(v.name)+'">'
+          +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(v.name+((v.aliases||[]).length?' — same weights as '+v.aliases.join(', '):''))+'">'+esc(v.name)+((v.aliases||[]).length?' <span style="color:var(--dim)">+'+v.aliases.length+' alias'+(v.aliases.length>1?'es':'')+'</span>':'')+'</span>'
+          +'<span style="font-family:var(--mono);color:var(--acc3)">'+esc(v.quant||'')+'</span>'
+          +'<span style="font-family:var(--mono);color:var(--dim2);width:46px;text-align:right">'+v.size_gb+' G</span></label>').join('')
+    +'</div>').join('')
+    : '<span style="color:var(--dim)">No text-generation models are installed on this node.</span>';
+  benchMatrixHistory();
+}
+
+async function benchMatrixStart(){
+  const iid=($('bench-node')||{}).value;
+  const models=[...document.querySelectorAll('.bm-model:checked')].map(x=>x.value);
+  if(!iid||!models.length){ alert('Pick a node above and tick at least one model.'); return; }
+  const body={instance_id:iid, models, ctxs:$('bm-ctxs').value,
+    num_predict:parseInt($('bm-predict').value)||192,
+    repeats:parseInt($('bm-repeats').value)||3,
+    prompt_fill:parseFloat($('bm-fill').value)||0,
+    trace:$('bm-trace').checked, cold:$('bm-cold').checked,
+    max_wait_minutes:parseInt(($('bm-wait')||{}).value)||30};
+  txt('bm-status','starting…');
+  const st=await api('/bench/matrix/start','POST',body);
+  if(!st||!st.run_id){
+    txt('bm-status','');
+    $('bm-result').innerHTML='<span style="color:var(--err)">Could not start the sweep: '+esc((st&&st.error)||'no response')+'</span>';
+    return;
+  }
+  txt('bm-status','running · 0/'+st.cells+' cells'+((st.dropped_models||[]).length?' · '+st.dropped_models.length+' model(s) left out to stay under the cell limit':''));
+  $('bm-result').innerHTML='';
+  if(_bmPoll) clearInterval(_bmPoll);
+  _bmRun=st.run_id;
+  const stop=$('bm-cancel'); if(stop) stop.style.display='';
+  _bmPoll=setInterval(()=>benchMatrixPoll(st.run_id),3000);
+}
+
+async function benchMatrixPoll(rid){
+  const s=await api('/bench/matrix/status?run_id='+encodeURIComponent(rid));
+  if(!s||s.error) return;
+  const cur=s.current?' · '+_benchTrunc(s.current.model,24)+' @ '+s.current.num_ctx:'';
+  txt('bm-status',s.state+' · '+(s.done||0)+'/'+(s.total||0)+' cells'+cur+(s.waiting_for_slot?' · waiting for the node to be free'+(s.slot_waited_s?' ('+Math.round(s.slot_waited_s/60)+' min)':''):''));
+  if((s.cells||[]).length) _bmRender(s);
+  if(s.state!=='running'){
+    clearInterval(_bmPoll); _bmPoll=null; _bmRun='';
+    const stop=$('bm-cancel'); if(stop) stop.style.display='none';
+    if(s.error) txt('bm-status','failed · '+s.error);
+    benchMatrixOpen(rid);
+    benchMatrixHistory();
+  }
+}
+
+async function benchMatrixApply(id){
+  if(!id) return;
+  if(!confirm('Use these measured windows as this node\'s learned safe windows? Vera prefers a learned window over its own estimate; a later CPU spill can still lower it.')) return;
+  const r=await api('/bench/matrix/apply','POST',{id:id});
+  if(!r||r.error){ txt('bm-status','could not apply: '+((r&&r.error)||'no response')); return; }
+  const set=(r.changes||[]).filter(c=>c.action==='set');
+  txt('bm-status','applied '+set.length+' window'+(set.length===1?'':'s'));
+  benchMatrixOpen(id);
+}
+
+async function benchMatrixCancel(){
+  if(!_bmRun) return;
+  if(!confirm('Stop this sweep? The cell in progress is abandoned; finished cells are kept.')) return;
+  const r=await api('/bench/matrix/cancel','POST',{run_id:_bmRun});
+  if(!r||r.error) txt('bm-status','could not stop: '+((r&&r.error)||'no response'));
+  else txt('bm-status','stopping…');
+}
+
+async function benchMatrixHistory(){
+  const sel=$('bm-history'); if(!sel) return;
+  const iid=($('bench-node')||{}).value||'';
+  const r=await api('/bench/matrix/results?limit=20&instance_id='+encodeURIComponent(iid));
+  const rows=(r&&r.rows)||[];
+  sel.innerHTML='<option value="">'+(rows.length?'Open a past sweep…':'No sweeps on this node yet')+'</option>'
+    + rows.map(x=>'<option value="'+esc(x.id)+'">'+esc(String(x.created_at||'').replace('T',' ').slice(0,16))+' · '+x.models.length+' model'+(x.models.length===1?'':'s')+' · '+x.cells_total+' cells</option>').join('');
+}
+
+async function benchMatrixOpen(id){
+  if(!id) return;
+  const r=await api('/bench/matrix/get?id='+encodeURIComponent(id));
+  if(r&&r.record) _bmRender(r.record);
+  else if(r&&r.error) $('bm-result').innerHTML='<span style="color:var(--err)">'+esc(r.error)+'</span>';
+}
+
+function _bmRender(rec){
+  const box=$('bm-result'); if(!box) return;
+  const cells=rec.cells||[];
+  if(!cells.length){ box.innerHTML='<span style="color:var(--dim)">No finished cells yet.</span>'; return; }
+  const ctxs=[...new Set(cells.map(c=>c.num_ctx))].sort((a,b)=>a-b);
+  const models=[...new Set(cells.map(c=>c.model))];
+  const fastest=Math.max(1,...cells.map(c=>c.gen_tps||0));
+  const kfmt=x=>(x>=1024&&x%1024===0)?(x/1024)+'k':String(x);
+  const tint={ok:'57,135,229', cpu_bound:'57,135,229', throttled:'230,184,0', spill:'224,96,58', error:'128,128,128'};
+  const td=(c)=>{
+    if(!c) return '<td style="padding:4px 6px;border:1px solid var(--border);color:var(--dim);text-align:center">·</td>';
+    const alpha=(c.status==='ok'||c.status==='cpu_bound')?(0.08+0.32*((c.gen_tps||0)/fastest)):0.22;
+    const bg='rgba('+(tint[c.status]||tint.error)+','+alpha.toFixed(2)+')';
+    const tr=c.trace||{};
+    const hw=tr.clock?((tr.peak_temp_c??'—')+'°C · '+tr.clock.droop_pct+'% clock droop'):(tr.cpu_pct?('CPU '+tr.cpu_pct.peak+'% peak'):'');
+    const tip=[c.status+(c.note?': '+c.note:''),'load '+_benchMs(c.load_ms),'prefill '+(c.prompt_tps??'—')+' tok/s','first token '+_benchMs(c.ttft_ms),
+      'spread '+(c.gen_spread_pct??'—')+'%', c.effective_ctx&&c.effective_ctx!==c.num_ctx?'Ollama capped the window at '+c.effective_ctx:'', hw].filter(Boolean).join('\n');
+    return '<td title="'+esc(tip)+'" style="padding:4px 7px;background:'+bg+';border:1px solid var(--border);text-align:right;font-family:var(--mono);min-width:78px;vertical-align:top">'
+      +'<div style="font-size:11.5px;font-weight:600;color:var(--text)">'+(c.status==='error'?'✗':(c.gen_tps??'—'))+'</div>'
+      +'<div style="font-size:8px;color:var(--dim2)">pf '+(c.prompt_tps??'—')+' · load '+_benchMs(c.load_ms)+'</div>'
+      +((rec.has_gpu&&c.resident_pct!=null)?'<div style="font-size:8px;color:'+(c.status==='spill'?'#e0603a':'var(--dim2)')+'">'+c.resident_pct+'% on GPU</div>':'')
+      +(hw?'<div style="font-size:8px;color:var(--dim2)">'+esc(hw)+'</div>':'')+'</td>';
+  };
+  const set=rec.settings||{};
+  let h='<div style="font-size:9px;color:var(--dim2);margin-bottom:4px">'+esc(rec.node_label||rec.instance_id||'')
+    +' · '+(set.num_predict??'—')+' output tokens · '+(set.repeats??'—')+' warm calls · prompt fill '+Math.round((set.prompt_fill||0)*100)+'%'
+    +' · cells show generation tok/s (pf = prefill tok/s)'+(rec.state==='running'?' · <span style="color:var(--gpu)">in progress</span>':'')+'</div>';
+  h+='<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:10px"><tr><th style="text-align:left;padding:3px 8px 3px 0;color:var(--dim);font-size:8.5px">Model</th>'
+    + ctxs.map(x=>'<th style="padding:3px 7px;color:var(--dim);font-size:8.5px;text-align:right" title="'+x+' tokens">'+kfmt(x)+'</th>').join('') + '</tr>'
+    + models.map(m=>{
+        const first=cells.find(c=>c.model===m)||{};
+        const meta=[first.quant, first.size_gb!=null?first.size_gb+' G':''].filter(Boolean).join(' · ');
+        return '<tr><td style="padding:4px 10px 4px 0;vertical-align:top;white-space:nowrap"><div title="'+esc(m)+'">'+esc(_benchTrunc(m,34))+'</div>'
+          +(meta?'<div style="font-size:8.5px;color:var(--acc3);font-family:var(--mono)">'+esc(meta)+'</div>':'')+'</td>'
+          + ctxs.map(x=>td(cells.find(c=>c.model===m&&c.num_ctx===x))).join('') + '</tr>';
+      }).join('')
+    + '</table></div>';
+  h+='<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:8.5px;color:var(--dim2);margin:5px 0 8px">'
+    + [['ok','clean — deeper blue is faster'],['throttled','clock throttled'],['spill','part of the model on CPU — never recommended'],['error','failed']]
+      .map(([k,l])=>'<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;display:inline-block;background:rgba('+tint[k]+',.45);border:1px solid var(--border)"></span>'+l+'</span>').join('')
+    + '</div>';
+  const recs=rec.recommendations||[];
+  const sweepId=rec.id||rec.run_id||'';
+  const canApply=sweepId&&recs.some(x=>x.num_ctx);
+  if(recs.length) h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">'
+    +'<span style="font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Recommended window</span>'
+    +(canApply?'<button class="btn sm" onclick="P.benchMatrixApply('+sq(sweepId)+')" title="Use these measured windows as the learned safe window for this node, instead of Vera\'s pre-load estimate">Apply to this node</button>':'')
+    +'</div>'
+    + recs.map(x=>'<div style="font-size:10px;padding:2px 0"><b>'+esc(x.model)+'</b> → '
+        +(x.num_ctx?'<span style="font-family:var(--mono);color:var(--gpu)">'+x.num_ctx+'</span> tokens at '+x.gen_tps+' tok/s':'<span style="color:#e0603a">none</span>')
+        +' <span style="color:var(--dim2)">— '+esc(x.reason||'')+'</span></div>').join('');
+  (rec.notes||[]).forEach(n=>{ h+='<div style="font-size:9px;color:var(--warn);margin-top:3px">'+esc(n)+'</div>'; });
+  box.innerHTML=h;
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 return {
-  show: showPane, refresh, autoToggle,
+  show: showPane, ovRefresh: ()=>ovLoad(true), ovNotes, mcLoad, mcRender, mcKind, mcAct, refresh, autoToggle,
   wkFilter, wkSel, wkDrain, wkRemoveStale,
   wkSubTab, wkjTab, wkjFilter, oljTab, oljFilter,
   setStrat, olPing, olPingAll, olTogglePin, olTestGenerate,
@@ -7627,7 +8233,7 @@ return {
   dkrSpawnWorker, dkrWorkerList, dkrWorkerStop, dkrTerm,
   stkRefresh, stkDeploy, pmxSsh, pmxEnrollSsh,
   sbxRefresh, sbxNew, sbxStop, sbxTerm, sbxSync, sbxRestore, sbxSnaps, sbxContext, sbxDetail, sbxCloseDetail, sbxConfig, sbxConfigSave,
-  termOpen, termClose, provSub,
+  termOpen, termClose, provSub, buildGo,
   netSub, pmxSub, obsSub,
   connLoad, connRender, connEdit, connMgrClose, connAuthToggle,
   connSave, connDelete, connProbe, connProbeRow,
@@ -7642,7 +8248,9 @@ return {
   catSuggest, catApply, catAutoSave,
   benchInit, benchNodeChanged, benchRun, benchRunAll, benchLeaderboard,
   benchOpen, benchLoop, benchClear, benchTempChanged, benchPassive,
-  benchMon, benchMonAuto, benchNodeGpu,
+  benchMon, benchMonAuto, benchNodeGpu, benchNodeTrace,
+  benchMatrixVariants, benchMatrixStart, benchMatrixOpen, benchMatrixHistory, trafficOpen,
+  benchMatrixCancel, benchMatrixApply,
   ndLoad, ndDetect, ndDetectAll, ndProv, ndProvClose, ndCompToggle,
   ndModelSearch, ndModelPick, ndPlan, ndRun, ndSwitch,
 };
