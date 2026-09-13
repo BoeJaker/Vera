@@ -25,6 +25,17 @@ def test_theme_picker_is_injected_once_the_card_is_in_the_document():
     assert build.index("cn.appendChild(sec); });") < build.index("injectPicker('spThemePick')") < build.index("_spShow('variant');")
 
 
+def test_header_folds_its_secondary_groups_into_the_tools_sheet():
+    # a frame too narrow for every control (the harness with the menu grown gives the chat 734 px): pages · explode views ·
+    # density move into the ⋯ sheet as the same elements, and come back when the room does
+    src = HTML
+    assert "const _FOLD_ORDER=[['pages','.pseg','Pages'],['xpl','#xplSeg','Explode views'],['den','#denGroup','Density']];" in src
+    assert "for(const [k,sel,label] of _FOLD_ORDER){ if(!over()) break; if(_folded.some(f=>f.k===k)) continue; fold(k,sel,label); }" in src
+    assert "const unfold=(f)=>{ if(f.hold.parentNode) f.hold.parentNode.insertBefore(f.el, f.hold); f.hold.remove(); f.row.remove();" in src
+    assert "_chromeFoldMount(bar, sheet);" in src and "new ResizeObserver(run).observe(bar);" in src
+    assert "body.hdr-folded #hdrMore::after{content:'';" in src
+
+
 def test_header_tightens_in_a_narrow_frame():
     # the harness's chat frame is 1122–1178 px at 1440: the header must not overflow (⋯ and Aa fell off the edge)
     src = _read("vera", "chat", "chat_panel.html")
