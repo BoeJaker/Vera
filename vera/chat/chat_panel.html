@@ -6164,7 +6164,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const msig=(SID||'')+':'+_memAllNodes.length+':'+_memAllEdges.length+':'+_memEdgeHideTypes.size;
     if(msig!==_ctxColMemSig){ _ctxColMemSig=msig; _ctxCol.setMemory(_memAllNodes, _memAllEdges, {color:_nodeColorByType, edgeColor:r=>_edgeStyle(r||'').c, hide:_memEdgeHideTypes}); }
     const dsig=_lastDagNodes.map(n=>n.cap+':'+n.status).join('|');
-    if(dsig!==_ctxColDagSig){ _ctxColDagSig=dsig; _ctxCol.setDag(_lastDagNodes); }
+    if(dsig!==_ctxColDagSig){ _ctxColDagSig=dsig; _ctxCol.setDag(_lastDagNodes, _lastDagEdges); }
     if(Date.now()-_ctxColPlanT>60000){ _ctxColPlanT=Date.now(); fetch(BASE+'/dream/goals/list').then(r=>r.json()).then(r=>{ try{ _ctxCol&&_ctxCol.setPlan((r&&r.goals)||[]); }catch(_){} }).catch(()=>{}); }
     _ctxColRuns();
     _ctxColEstate();
@@ -15497,7 +15497,12 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
      the template counts an "iso plate" placement) — and lands in the station's session-canvas layer tagged ⧉. ── */
   let _xplPlaceMid='', _xplPlaceRows=null;
   async function _xplPlaceOpen(mid){
-    _xplPlaceMid=mid||_grFocusMid||''; let pop=document.getElementById('xplPlace');
+    _xplPlaceMid=mid||_grFocusMid||'';
+    // the one sheet (widget_element.js): catalogue · record · live preview; the record lands on the station's plate
+    const S=(function(){ try{ if(window.VeraWidgetConfig&&window.VeraWidgetConfig.open) return window.VeraWidgetConfig; }catch(_){} try{ const p=window.parent; if(p&&p!==window&&p.VeraWidgetConfig&&p.VeraWidgetConfig.open) return p.VeraWidgetConfig; }catch(_){} return null; })();
+    if(S){ const pm=_xplPlaceMid; let rec=null; try{ rec=await S.open({ mode:'add', into:'canvas', title:'Place on the plate'+(pm?' · turn '+pm:''), templates:true, sizes:['s','m','l'] }); }catch(_){ rec=null; }
+      if(rec) await _xplPlaceRecord(rec, pm); return; }
+    let pop=document.getElementById('xplPlace');
     if(!pop){ pop=document.createElement('div'); pop.id='xplPlace'; pop.innerHTML='<div class="hd"><input type="search" placeholder="Place a widget · templates, then every form" id="xplPlaceQ"><button class="btn xs" onclick="CH._xplPlaceClose()" title="Close">✕</button></div><div class="list" id="xplPlaceList"></div>';
       document.getElementById('xplHost').appendChild(pop); pop.querySelector('#xplPlaceQ').addEventListener('input', ()=>_xplPlaceRender()); }
     pop.classList.add('on');
@@ -15508,6 +15513,20 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _xplPlaceRender(); try{ pop.querySelector('#xplPlaceQ').focus(); }catch(_){}
   }
   function _xplPlaceClose(){ const pop=document.getElementById('xplPlace'); if(pop) pop.classList.remove('on'); }
+  // a record from the sheet onto the plate: the same content shape as the canvas add bar's (form · size · record), placed
+  // on the station's turn — a relation the user makes by hand
+  async function _xplPlaceRecord(rec, mid){
+    const form=String(rec.form||(rec.draw&&rec.draw.form)||'widget'), size=String((rec.frame&&rec.frame.size)||(rec.draw&&rec.draw.size)||'m');
+    const content=Object.assign({}, rec, { widget:form, form, title:rec.title||form, draw:Object.assign({}, rec.draw||{}, { form, size }), record:rec, placed:{ where:'iso plate', turn:mid } });
+    const key='widget:'+form.replace(/[^a-zA-Z0-9_-]/g,'')+':'+(mid||'scene')+'-'+Date.now().toString(36);
+    try{
+      const res=await _capCall('canvas.add',{ session_id:SID||'', kind:'widget', content, key, at:'now', size, anchor:{ mid, turn:mid } });
+      if(!(res&&res.ok)) throw new Error((res&&res.error)||'canvas.add failed');
+      if(mid){ (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({ n:rec.title||form, d:'canvas · placed on the plate', col:'var(--acc2)', kind:'widget', key, form, record:rec }); }
+      if(rec.template){ try{ await _capCall('widget.template.instantiate',{ id:rec.template, where:'iso plate', host:'chat', session_id:SID||'', config:{ turn:mid } }); }catch(_){} }
+      _xplRefresh(); try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){}
+    }catch(e){ appendSys('Place failed: '+esc(String(e&&e.message||e))); }
+  }
   function _xplPlaceRender(){
     const list=document.getElementById('xplPlaceList'), q=String((document.getElementById('xplPlaceQ')||{}).value||'').toLowerCase(); if(!list) return;
     const rows=(_xplPlaceRows||[]).filter(r=>!q||(r.n+' '+r.form+' '+(r.panel||'')).toLowerCase().indexOf(q)>=0);
