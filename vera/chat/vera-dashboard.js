@@ -48,6 +48,25 @@
  * shape. Saved layouts (vera.dash.<key>.layouts), a Layouts menu and Arrange
  * (dense flow) sit beside the Configure button. Every tile gets its grip
  * and its resize handle by construction. Every mechanic above is kept.
+ *
+ * WIDGET CONFIG (the WidgetConfig · Dashboard · WidgetSpec boards): "+ Add
+ * Widget" opens the widget surface — window.VeraWidgetConfig: the catalogue,
+ * the record editor, a LIVE preview — and places the record it resolves as a
+ * record tile at the span its size asks for (a panel record is the loader's
+ * iframe tile, as before). ⚙ on every tile opens the same surface on the
+ * tile's record; Save writes the record back into the layout (a page or file
+ * tile's edit rides inline, flagged `edited`) and the tile follows it. A tile
+ * draws through <vera-widget> whenever its record has a form and its body is
+ * not the page's (draw.body != "page"); a page tile that converts retires its
+ * hand-drawn markup under the drawing — kept, hidden, ids intact, so the
+ * page's own updaters go on writing into it — and comes back when the record
+ * returns to the page body. A record whose source cannot be read draws the
+ * form's sample (window.VeraWidget.sample, else the shape's own here), marked
+ * "sample", so nothing is ever blank. Edit mode carries the Dashboard board's
+ * cues — the grid lines, a ring on every tile, the accent corner, the moving
+ * label — and a tile can be dropped on the grid itself, not only on another
+ * tile. Without the surface loaded the panel picker is the loader, as before
+ * (and always reachable as openPanels), and ⚙ opens the record itself.
  * ========================================================================== */
 (function () {
   'use strict';
@@ -156,6 +175,41 @@
       '.vd-rec{font-family:var(--mono);font-size:8px;color:var(--dim2);opacity:.55;white-space:nowrap;overflow:hidden;',
       'text-overflow:ellipsis;max-width:38%;flex-shrink:1;margin-left:6px;letter-spacing:0;text-transform:none;font-weight:400}',
       '.dash-grid.editing .vd-rec{opacity:1;color:var(--acc)}',
+      '.vd-rec.sample{font-style:italic}',
+      // Edit mode as the Dashboard board draws it: the grid's own columns and rows under the tiles, a ring on every
+      // tile, the accent corner handle always showing, the moving tile lifted with its label, a dashed frame while a
+      // tile can be dropped on the grid itself — the cues that say "this is arrangeable now". The vars come from
+      // the grid's geometry (gridVars) so the lines sit on the real columns whatever the host page's gap.
+      '.dash-grid.editing{background-image:linear-gradient(var(--border,rgba(255,255,255,.09)) 1px,transparent 1px),',
+      'linear-gradient(90deg,var(--border,rgba(255,255,255,.09)) 1px,transparent 1px);',
+      'background-size:calc((100% + var(--vd-gap,10px)) / var(--vd-cols,12)) calc(var(--vd-row,58px) + var(--vd-gap,10px));',
+      'background-origin:content-box;background-position:-1px -1px}',
+      '.dash-grid.editing > .widget{box-shadow:0 0 0 1px color-mix(in srgb,var(--acc,#5a9e8f) 30%,transparent),var(--card,var(--shadow,none));cursor:grab}',
+      '.dash-grid.editing > .widget > .w-resize{display:flex;opacity:.85}',
+      '.dash-grid.editing > .widget > .w-resize::before{border-right-color:var(--acc,#5a9e8f);border-bottom-color:var(--acc,#5a9e8f);width:10px;height:10px}',
+      '.dash-grid.editing > .widget:hover > .w-resize{opacity:1}',
+      '.dash-grid.editing > .widget.dragging{opacity:.94;transform:rotate(-1deg) scale(1.02);',
+      'box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 24px 50px -16px #000;z-index:6;cursor:grabbing}',
+      '.dash-grid.editing > .widget.dragging::before{content:"moving · drop on the grid";position:absolute;left:8px;bottom:6px;z-index:2;',
+      'font-family:var(--mono);font-size:8px;color:var(--acc,#5a9e8f);pointer-events:none}',
+      '.dash-grid.editing.vd-drop-here{outline:2px dashed var(--acc,#5a9e8f);outline-offset:6px}',
+      // the tile that was just placed shows where it landed
+      '@keyframes vdLanded{0%{box-shadow:0 0 0 2px var(--acc,#5a9e8f),0 0 24px color-mix(in srgb,var(--acc,#5a9e8f) 45%,transparent)}100%{box-shadow:none}}',
+      '.widget.vd-landed{animation:vdLanded 1.6s ease-out}',
+      // ⚙ — the record's editor on every tile; lit while the grid is being edited
+      '.w-iconbtn.vd-cfg{font-size:12px}',
+      '.dash-grid.editing .w-iconbtn.vd-cfg{color:var(--acc,#5a9e8f)}',
+      // the retired hand-drawn body of a tile the record now draws (kept for the page's updaters)
+      '.w-body > .w-page[hidden]{display:none!important}',
+      '.w-body > vera-widget.vd-draw{display:block;flex:1;min-height:0;padding:8px}',
+      // the record sheet (⚙ without the widget surface loaded): the record itself, editable
+      '.vd-sheet textarea{width:100%;min-height:220px;background:var(--bg0);border:1px solid var(--border2);color:var(--text);',
+      'font-family:var(--mono);font-size:10px;padding:8px;border-radius:3px;resize:vertical;box-sizing:border-box}',
+      '.vd-sheet .vd-note{font-size:9.5px;color:var(--dim2);font-family:var(--mono);padding:0 0 6px;line-height:1.5}',
+      '.vd-sheet .vd-err{font-size:9.5px;color:var(--err,#c96b6b);font-family:var(--mono);min-height:12px;padding-top:4px}',
+      '.vd-sheet .vd-lm-save button{width:auto;padding:0 10px;height:24px}',
+      '.vd-wl-list .wl-item.wl-records{border-color:var(--border);margin-bottom:4px}',
+      '.vd-wl-list .wl-item.wl-records .wl-item-label{color:var(--acc)}',
       // The Layouts menu (saved arrangements, per user, per dashboard) and Arrange, beside Configure.
       '.vd-lm-list .lm-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:3px;border:1px solid transparent}',
       '.vd-lm-list .lm-row:hover{background:var(--bg2);border-color:var(--border)}',
@@ -267,12 +321,16 @@
         (p.label || '').toLowerCase().indexOf(q) < 0) return false;
       return true;
     }).sort(function (a, b) { return (a.tab_order || 100) - (b.tab_order || 100); });
-    if (!f.length) {
+    if (!f.length && (q || !(window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function'))) {
       list.innerHTML = '<div style="font-size:10px;color:var(--dim);padding:10px">' +
         (q ? 'No panels match "' + esc(q) + '"' : 'No panels registered') + '</div>';
       return;
     }
-    list.innerHTML = f.map(function (p) {
+    // the picker's way to the widget surface (forms · sources · live preview) when it is on the page
+    var toRecords = (!q && window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function')
+      ? '<div class="wl-item wl-records" data-records><span class="wl-item-icon">▣</span><span class="wl-item-label">A widget record…</span>' +
+        '<span class="wl-item-id">forms · sources · live preview</span><span class="wl-item-mode">record</span></div>' : '';
+    list.innerHTML = toRecords + f.map(function (p) {
       return '<div class="wl-item" data-id="' + esc(p.id) + '">' +
         '<span class="wl-item-icon">' + (p.icon || '▣') + '</span>' +
         '<span class="wl-item-label">' + esc(p.label || p.id) + '</span>' +
@@ -280,6 +338,7 @@
         '<span class="wl-item-mode">' + esc(p.mode || 'tab') + '</span></div>';
     }).join('');
     list.querySelectorAll('.wl-item').forEach(function (it) {
+      if (it.hasAttribute('data-records')) { it.onclick = function () { closeModal(); if (_modalCtl) _modalCtl.openLoader(); }; return; }
       it.onclick = function () { var id = it.dataset.id; closeModal(); if (_modalCtl) _modalCtl.addWidget(id); };
     });
   }
@@ -325,7 +384,66 @@
     if (Array.isArray(fr.span) && fr.span.length === 2 && +fr.span[0]) return [+fr.span[0], +fr.span[1] || 1];
     if (record && record.form === 'panel') return [6, 3];
     var size = String(fr.size || (record && record.size) || (record && record.draw && record.draw.size) || 'm').toLowerCase();
-    return { xs: [2, 1], s: [2, 1], m: [4, 2], l: [6, 3], xl: [8, 4] }[size] || [4, 2];
+    return { xs: [2, 1], s: [2, 1], m: [4, 2], l: [6, 2], xl: [8, 4] }[size] || [4, 2];   // l = 6 × 2: three rows on a 6-wide read as XL (sizeForSpan)
+  }
+  // The Sizes board's ladder on this grid — the sizes a tile can be placed at (2 wide is already S; XS is inline
+  // text) with the span each lands at; the editor is handed the size names (VeraWidgetConfig's sizes).
+  function sizeLadder() {
+    return ['s', 'm', 'l', 'xl'].map(function (s) { return { size: s, span: spanFor({ frame: { size: s } }) }; });
+  }
+  function ladderSizes() { return sizeLadder().map(function (s) { return s.size; }); }
+  /* ── the form's sample ──
+     A record with no source, or one the element will not read on its own (a name that is not read-shaped), still
+     draws: window.VeraWidget.sample(form) when the element offers it, else enough of the form's SHAPE to draw it here.
+     The tile says "sample" in its chip. Nothing on a dashboard is ever blank. */
+  var SHAPE_OF = { counter: 'level', hero: 'level', level: 'level', meter: 'level', gauge: 'level', radial: 'level', ring: 'level', rate: 'level', bar: 'level', tank: 'level', turbine: 'level',
+    trace: 'series', sparkline: 'series', line: 'series', area: 'series', step: 'series', chart: 'series', horizon: 'series', candles: 'series',
+    bars: 'values', thermo: 'values', heat: 'values', pills: 'values', kv: 'values', column: 'values', ranked: 'values', histogram: 'values', 'meter-panel': 'values', form: 'values',
+    donut: 'parts', stack: 'parts', parts: 'parts', matrix: 'matrix',
+    log: 'events', lane: 'events', feed: 'events', timeline: 'events', pulse: 'events',
+    table: 'items', list: 'items', cards: 'items', rows: 'items', files: 'items', checklist: 'items', tree: 'items', gallery: 'items', people: 'items', node: 'items',
+    stepper: 'stages', pipeline: 'stages', stages: 'stages', program: 'stages', calendar: 'calendar', agenda: 'calendar',
+    string: 'string', terminal: 'string', announcement: 'string', ask: 'string',
+    graph: 'graph', pipes: 'graph', topology: 'graph', flow: 'graph', minigraph: 'graph', context_graph: 'graph', scatter: 'points', globe: 'points' };
+  var SAMPLE = {
+    series: [12, 18, 15, 22, 27, 24, 31, 36, 33, 41, 38, 44, 47, 43, 52, 49, 55, 58, 54, 62, 60, 66, 63, 62],
+    level: { value: 62, min: 0, max: 100, unit: '%', delta: 4 },
+    values: { ct126: 71, ct121: 54, pxstore: 42, ct130: 33 },
+    parts: { running: 26, paused: 3, stopped: 4 },
+    matrix: { ct126: { cpu: 'ok', mem: 'ok', disk: 'warn' }, ct121: { cpu: 'ok', mem: 'warn', disk: 'ok' }, ct130: { cpu: 'down', mem: 'down', disk: 'down' } },
+    events: [{ t: '2026-09-13T14:38:00', kind: 'memory', text: 'memory.select · 2 injected' }, { t: '2026-09-13T14:39:00', kind: 'err', text: 'ct130 connect timeout' },
+      { t: '2026-09-13T14:40:00', kind: 'cap', text: 'code.author wrote 2 files' }, { t: '2026-09-13T14:41:00', kind: 'loop', text: 'loop v7 · step 5 · waiting on you' }],
+    items: [{ name: 'ct126', status: 'ok', value: '18 ms' }, { name: 'ct121', status: 'ok', value: '22 ms' }, { name: 'pxstore', status: 'ok', value: '31 ms' }, { name: 'ct130', status: 'down', value: 'timeout' }],
+    stages: { stages: [{ name: 'recall', done: true }, { name: 'read', done: true }, { name: 'author', current: true }, { name: 'verify' }, { name: 'land' }] },
+    calendar: [{ when: '2026-09-13T09:00', title: 'heartbeat' }, { when: '2026-09-13T12:00', title: 'model sync' }, { when: '2026-09-14T03:00', title: 'dream cycle' }],
+    string: 'sample — the record has no readable source yet',
+    points: [{ x: 1, y: 3 }, { x: 2, y: 5 }, { x: 3, y: 4 }, { x: 4, y: 8 }, { x: 5, y: 7 }, { x: 6, y: 9 }, { x: 7, y: 8 }],
+    // the context galaxy's shape: every family of an assembled context, a record's relevance, the edges it cites
+    graph: { nodes: [{ id: 'q1', label: 'the question', family: 'context', score: 0.95 }, { id: 'm1', label: 'memory · boot path', family: 'memory', score: 0.82 },
+      { id: 'm2', label: 'memory · re-embed', family: 'memory', score: 0.61 }, { id: 'v1', label: 'vector · fabric', family: 'vector', score: 0.7 }, { id: 'v2', label: 'vector · sandbox', family: 'vector', score: 0.42, included: false },
+      { id: 'g1', label: 'graph · ct126', family: 'graph', score: 0.55 }, { id: 'c1', label: 'cap · code.read', family: 'cap', score: 0.74 }, { id: 'r1', label: 'run · loop v7', family: 'run', score: 0.48 },
+      { id: 's1', label: 'skill · fixer', family: 'skill', score: 0.66 }],
+      rels: [{ from: 'm1', to: 'q1', kind: 'cite' }, { from: 'v1', to: 'q1', kind: 'cite' }, { from: 'c1', to: 'r1', kind: 'ran' }, { from: 'g1', to: 'm1', kind: 'links' }],
+      links: [{ source: 'm1', target: 'q1' }, { source: 'v1', target: 'q1' }, { source: 'c1', target: 'r1' }, { source: 'g1', target: 'm1' }] }
+  };
+  function sampleFor(form) {
+    if (window.VeraWidget && typeof window.VeraWidget.sample === 'function') { try { var s = window.VeraWidget.sample(form); if (s != null) return s; } catch (e) { /* the shape's own below */ } }
+    var f = String(form || '').toLowerCase(), shape = '';
+    if (window.VeraWidget && typeof window.VeraWidget.forms === 'function') { var x = window.VeraWidget.forms().filter(function (y) { return y.id === f; })[0]; shape = (x && x.shape) || ''; }
+    if (!shape) shape = SHAPE_OF[f] || '';
+    return SAMPLE[shape];
+  }
+  // the record as the element is handed it: with the form's sample when it cannot read, marked sample
+  function withSample(rec) {
+    if (!rec || typeof rec !== 'object' || rec.data !== undefined || rec.form === 'panel' || rec.form === 'composite') return rec;
+    var src = typeof rec.source === 'string' ? rec.source : '';
+    var readable = src ? (window.VeraWidget && typeof window.VeraWidget.readable === 'function' ? window.VeraWidget.readable(src) : true) : false;
+    if (readable) return rec;
+    var o = {}; Object.keys(rec).forEach(function (k) { o[k] = rec[k]; }); o.sample = true;
+    // an element with a sample of its own draws its sample face itself (marked, with the Read button for a source
+    // that waits for a click) — it is only handed the shape's sample as data when it has none
+    if (!(window.VeraWidget && typeof window.VeraWidget.sample === 'function')) { var s = sampleFor(rec.form); if (s !== undefined) o.data = s; }
+    return o;
   }
   function panelRecord(panelId, wid, label) {
     panelId = String(panelId || '');
@@ -409,7 +527,9 @@
     var state = { order: [], hidden: new Set(), sizes: {}, dynamic: {}, editing: false,
       // the record side: the layout file's records by wid, per-tile meta {at, refresh, floated}, which wids the
       // persisted layout named (so a file's default hidden applies to new tiles only), the layout's name and grid
-      records: {}, meta: {}, seen: {}, name: 'default', user: '', file: null,
+      // and the records the user EDITED through ⚙ on tiles that are not theirs (page tiles, the file's) — persisted
+      // inline in the layout, flagged edited, so the file's record is what reset() returns to
+      records: {}, edits: {}, meta: {}, seen: {}, name: 'default', user: '', file: null,
       grid: { cols: GRID.cols, row: GRID.row, gap: GRID.gap, widths: GRID.widths.slice() } };
     var dragSrc = null, fdrag = null;
     var LKEY = SKEY + '.layouts';     // the saved arrangements of this dashboard, by name
@@ -424,11 +544,16 @@
     }
     function setSpan(w, span) {
       if (!span || !+span[0]) return;
+      // a width the grid's CSS knows (a 5 persisted by another build would fall to one column) and a row 1–6
+      var cw = snapWidth(+span[0]), ch = Math.max(1, Math.min(6, Math.round(+span[1] || 1)));
       [2, 3, 4, 6, 8, 12].forEach(function (n) { w.classList.remove('w-w' + n); });
       [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); });
-      w.classList.add('w-w' + span[0]); w.classList.add('w-h' + (span[1] || 1));
+      w.classList.add('w-w' + cw); w.classList.add('w-h' + ch);
     }
-    function recordOf(wid) { return state.records[wid] || (state.dynamic[wid] && state.dynamic[wid].record) || null; }
+    function snapWidth(n) { var near = GRID.widths[0], best = Infinity; GRID.widths.forEach(function (a) { var dd = Math.abs(a - n); if (dd < best) { best = dd; near = a; } }); return near; }
+    // the tile's record: the user's edit first, then the file's, then the one a user tile carries
+    function recordOf(wid) { return state.edits[wid] || state.records[wid] || (state.dynamic[wid] && state.dynamic[wid].record) || null; }
+    function withId(r, wid) { var o = {}; Object.keys(r || {}).forEach(function (k) { o[k] = r[k]; }); o.id = wid; return o; }
     // the span picks the size a record tile draws at; the tile says its size either way
     function syncSize(w) {
       var sp = spanOf(w), size = sizeForSpan(sp[0], sp[1]);
@@ -452,14 +577,17 @@
         if (!w || !w.dataset.wid) return;
         var wid = w.dataset.wid, dyn = state.dynamic[wid], m = state.meta[wid] || {};
         var sp = state.sizes[wid] && +state.sizes[wid].w ? [+state.sizes[wid].w, +state.sizes[wid].h || 1] : spanOf(w);
-        tiles.push({ record: dyn ? (dyn.record || panelRecord(dyn.panelId, wid)) : wid, at: null, span: sp,
-          hidden: state.hidden.has(wid), refresh: m.refresh || '', floated: !!floated });
+        var ed = state.edits[wid];
+        var t = { record: ed ? ed : (dyn ? (dyn.record || panelRecord(dyn.panelId, wid)) : wid), at: null, span: sp,
+          hidden: state.hidden.has(wid), refresh: m.refresh || '', floated: !!floated };
+        if (ed) t.edited = true;   // a page or file tile whose record the user changed: the edit rides inline
+        tiles.push(t);
       });
       return { v: 2, dashboard: (state.file && state.file.dashboard) || key, layout: state.name || 'default', key: key,
         user: state.user || '', grid: state.grid, widgets: flow(tiles, state.grid.cols) };
     }
     function unpack(rec) {
-      state.order = []; state.hidden = new Set(); state.sizes = {}; state.dynamic = {}; state.meta = {}; state.seen = {};
+      state.order = []; state.hidden = new Set(); state.sizes = {}; state.dynamic = {}; state.edits = {}; state.meta = {}; state.seen = {};
       state.name = rec.layout || 'default'; state.user = rec.user || '';
       if (rec.grid && +rec.grid.cols) state.grid = rec.grid;
       (rec.widgets || []).forEach(function (t) {
@@ -471,7 +599,8 @@
         if (t.hidden) state.hidden.add(wid);
         if (Array.isArray(t.span) && +t.span[0]) state.sizes[wid] = { w: +t.span[0], h: +t.span[1] || 1 };
         state.meta[wid] = { at: Array.isArray(t.at) ? t.at : null, refresh: t.refresh || '', floated: !!t.floated };
-        if (r) state.dynamic[wid] = (r.form === 'panel' && r.panel) ? { panelId: r.panel, wid: wid, record: r } : { record: r, wid: wid };
+        if (r && t.edited) state.edits[wid] = r;
+        else if (r) state.dynamic[wid] = (r.form === 'panel' && r.panel) ? { panelId: r.panel, wid: wid, record: r } : { record: r, wid: wid };
       });
     }
     function save() {
@@ -545,7 +674,38 @@
     function onDragEnd() {
       if (dragSrc) dragSrc.classList.remove('dragging');
       grid.querySelectorAll('.widget.drag-over').forEach(function (x) { x.classList.remove('drag-over'); });
+      grid.classList.remove('vd-drop-here');
       dragSrc = null;
+    }
+    // Drop on the grid itself (the Dashboard board's "drop on the grid"): a tile let go over a gap, the padding or
+    // past the last tile takes the place the pointer names — before the first tile that follows it in reading
+    // order, else the end. Dropping on another tile stays that tile's own (onDrop above).
+    function onGridDragOver(e) {
+      if (!state.editing || !dragSrc) return;
+      var over = e.target.closest('.widget');
+      if (over && over.parentNode === grid && over !== dragSrc) return;
+      e.preventDefault(); grid.classList.add('vd-drop-here');
+    }
+    function onGridDrop(e) {
+      if (!state.editing || !dragSrc) return;
+      var over = e.target.closest('.widget');
+      if (over && over.parentNode === grid && over !== dragSrc) return;
+      e.preventDefault(); grid.classList.remove('vd-drop-here');
+      var x = e.clientX, y = e.clientY, next = null;
+      widgets().forEach(function (w) {
+        if (next || w === dragSrc || w.classList.contains('hidden')) return;
+        var r = w.getBoundingClientRect();
+        if (r.top > y || (y >= r.top && y <= r.bottom && r.left > x)) next = w;
+      });
+      grid.insertBefore(dragSrc, next);
+      state.order = widgets().map(function (w) { return w.dataset.wid; }); save(); applyLayout();
+    }
+    // the edit-mode grid lines follow the grid's own geometry: its columns, its gap, the layout record's row
+    function gridVars() {
+      var cs = getComputedStyle(grid);
+      grid.style.setProperty('--vd-cols', String(state.grid.cols || GRID.cols));
+      grid.style.setProperty('--vd-gap', (parseFloat(cs.columnGap || cs.gap) || GRID.gap) + 'px');
+      grid.style.setProperty('--vd-row', (state.grid.row || GRID.row) + 'px');
     }
 
     /* resize (edit mode only) — snap width/height to allowed spans.
@@ -754,6 +914,7 @@
     function toggleEdit() {
       state.editing = !state.editing;
       grid.classList.toggle('editing', state.editing);
+      if (state.editing) gridVars();
       widgets().forEach(function (w) { w.setAttribute('draggable', state.editing ? 'true' : 'false'); });
       var b = $(opts.editBtn);
       if (b) {
@@ -766,8 +927,9 @@
     function reset() {
       if (!confirm('Reset dashboard layout to defaults?')) return;
       try { localStorage.removeItem(SKEY); } catch (e) {}
-      state.order = []; state.hidden = new Set(); state.sizes = {}; state.meta = {}; state.seen = {}; state.name = 'default';
+      state.order = []; state.hidden = new Set(); state.sizes = {}; state.edits = {}; state.meta = {}; state.seen = {}; state.name = 'default';
       widgets().forEach(function (w) { if (w.dataset.record && !w.dataset.fromFile) { w.remove(); delete state.dynamic[w.dataset.wid]; } });
+      widgets().forEach(function (w) { var r = recordOf(w.dataset.wid); if (r) { drawTile(w, r); recordChip(w); } });   // an edited tile back to its record
       if (state.file) applyFile(state.file); else applyLayout();
     }
 
@@ -939,7 +1101,8 @@
     function recordChip(w) {
       var head = w.querySelector(':scope > .w-head'); if (!head) return;
       var r = recordOf(w.dataset.wid);
-      var text = r ? (String(r.form || '') + (r.source ? ' · ' + r.source : (r.panel ? ' · panel:' + r.panel : ''))) : '';
+      var src = r ? (typeof r.source === 'string' ? r.source : ((r.reads && typeof r.reads.cap === 'string') ? r.reads.cap : '')) : '';
+      var text = r ? (String((r.draw && r.draw.form) || r.form || '') + (src ? ' · ' + src : (r.panel ? ' · panel:' + r.panel : ''))) : '';
       var chip = head.querySelector('.vd-rec');
       if (!text) { if (chip) chip.remove(); return; }
       if (!chip) {
@@ -947,19 +1110,168 @@
         var act = head.querySelector('.w-actions');
         if (act) head.insertBefore(chip, act); else head.appendChild(chip);
       }
-      chip.textContent = text; chip.title = 'record ' + (r.id || w.dataset.wid) + ' · ' + text;
+      chip.textContent = text + (w.dataset.sample ? ' · sample' : ''); chip.classList.toggle('sample', !!w.dataset.sample);
+      chip.title = 'record ' + (r.id || w.dataset.wid) + ' · ' + text + (w.dataset.sample ? ' · drawn from the form\'s sample: the source cannot be read' : '');
+      ensureCfg(w);
       if (r.form) w.dataset.form = r.form;
-      if (r.source) w.dataset.source = r.source; else if (r.panel) w.dataset.source = 'panel:' + r.panel;
+      if (src) w.dataset.source = src; else if (r.panel) w.dataset.source = 'panel:' + r.panel;
       var mb = r.frame && r.frame.max_body, body = w.querySelector(':scope > .w-body');
       if (mb && body) { body.style.maxHeight = mb + 'px'; if (!body.style.overflowY) body.style.overflowY = 'auto'; }
     }
+    // ⚙ — the record's editor (the WidgetConfig board) on every tile that has a record; first in the actions so the
+    // head's own × stays last (the float's close hook counts on that)
+    function ensureCfg(w) {
+      var act = w.querySelector(':scope > .w-head .w-actions'); if (!act || act.querySelector('.vd-cfg')) return;
+      var b = document.createElement('button'); b.className = 'w-iconbtn vd-cfg'; b.textContent = '⚙';
+      b.title = 'Configure this widget — its record: source · form · size · options';
+      b.onclick = function (e) { e.stopPropagation(); configure(w.dataset.wid, b); };
+      act.insertBefore(b, act.firstChild);
+    }
 
-    /* widget loader (+ Add Widget) + dynamic widgets */
+    /* ── the record draws the tile ──
+       A record tile's <vera-widget> takes the record (with the form's sample when its source cannot be read). A page
+       tile keeps its hand-drawn body while its record says draw.body = "page"; once the record says otherwise the
+       page's markup is retired under the drawing — moved into a hidden holder, ids intact, so the page's updaters go
+       on writing into it — and the element draws the record at the size the span picks; a record that returns to
+       the page body brings the markup back. */
+    function drawTile(w, rec) {
+      if (!w || !rec || typeof rec !== 'object') return;
+      var body = w.querySelector(':scope > .w-body'); if (!body) return;
+      var shown = withSample(rec);
+      if (shown.sample) w.dataset.sample = '1'; else delete w.dataset.sample;
+      var el = body.querySelector(':scope > vera-widget');
+      if (w.dataset.record) {                       // a record tile: the element is the body
+        if (rec.form === 'context_graph') ensureContextGraph();
+        if (el) el.setAttribute('record', JSON.stringify(shown));
+        return;
+      }
+      var holder = body.querySelector(':scope > .w-page');
+      var pageBody = !rec.form || (rec.draw && rec.draw.body === 'page');
+      if (pageBody) {
+        if (holder) { while (holder.firstChild) body.insertBefore(holder.firstChild, holder); holder.remove(); }
+        if (el) el.remove();
+        delete w.dataset.converted; delete w.dataset.sample;
+        return;
+      }
+      ensureElement(); if (rec.form === 'context_graph') ensureContextGraph();
+      if (!holder) {
+        holder = document.createElement('div'); holder.className = 'w-page'; holder.hidden = true;
+        while (body.firstChild) holder.appendChild(body.firstChild);
+        body.appendChild(holder);
+      }
+      if (!el) { el = document.createElement('vera-widget'); el.className = 'vd-draw'; body.appendChild(el); }
+      var sp = spanOf(w); el.setAttribute('size', sizeForSpan(sp[0], sp[1]));
+      el.setAttribute('record', JSON.stringify(shown));
+      w.dataset.converted = '1';
+    }
+
+    /* ── ⚙: the record editor on a tile ──
+       The widget surface (VeraWidgetConfig — the WidgetConfig board) opens on the tile's record; while it is open
+       the tile itself previews the edit (onChange); Save writes the record back (applyRecord), Cancel leaves the
+       tile as it was. Without the surface on this page the record sheet opens instead: the record as the layout
+       keeps it, editable, saved through the same path. */
+    function configure(wid, anchor) {
+      var rec = recordOf(wid), w = byIdAnywhere(wid); if (!rec || !w) return Promise.resolve(null);
+      var was = withId(rec, wid);
+      var back = function () { drawTile(w, was); recordChip(w); return null; };
+      if (window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') {
+        var p;
+        try {
+          p = window.VeraWidgetConfig.open({ mode: 'edit', record: was, into: 'dashboard', title: was.title || wid, anchor: anchor || w, sizes: ladderSizes(), templates: true,
+            onChange: function (r) { if (r && typeof r === 'object') { drawTile(w, withId(r, wid)); recordChip(w); } } });
+        } catch (e) { p = Promise.reject(e); }
+        return Promise.resolve(p).then(function (r) { return (r && typeof r === 'object') ? applyRecord(wid, r) : back(); }, back);
+      }
+      return openSheet(wid, was);
+    }
+    /* Save: the record goes back into the layout — a user tile's in place, a page or file tile's as its edit — and
+       the tile follows it: the title (when the head's title is plain text — a page head with its own spans inside is
+       the page's), the span its size asks for when the size or span changed (a hand resize stays), the refresh, the
+       chip, the body. */
+    function applyRecord(wid, r) {
+      var w = byIdAnywhere(wid), old = recordOf(wid); if (!w || !r || typeof r !== 'object') return null;
+      var rec = withId(r, wid);
+      if (state.dynamic[wid] && !state.records[wid]) {
+        state.dynamic[wid].record = rec;
+        if (rec.form === 'panel') state.dynamic[wid].panelId = rec.panel || String(rec.source || '').replace(/^panel:/, '');
+      } else state.edits[wid] = rec;
+      var t = w.querySelector(':scope > .w-head .w-title');
+      if (t && !t.children.length && (rec.title || rec.name)) t.textContent = rec.title || rec.name;
+      var fo = (old && old.frame) || {}, fn = rec.frame || {};
+      if ((fn.span && JSON.stringify(fn.span) !== JSON.stringify(fo.span)) || (fn.size && fn.size !== fo.size)) {
+        setSpan(w, spanFor(rec)); var sp = spanOf(w); state.sizes[wid] = { w: sp[0], h: sp[1] };
+      }
+      state.meta[wid] = state.meta[wid] || { at: null, refresh: '', floated: false };
+      state.meta[wid].refresh = (rec.read && rec.read.refresh) || rec.refresh || '';
+      drawTile(w, rec); recordChip(w); syncSize(w); save(); applyLayout();
+      return rec;
+    }
+    var _sheet = null;
+    function openSheet(wid, rec) {
+      injectCSS();
+      return new Promise(function (resolve) {
+        if (!_sheet) {
+          _sheet = document.createElement('div'); _sheet.className = 'vd-wl-overlay vd-sheet';
+          _sheet.innerHTML =
+            '<div class="vd-wl-box" style="width:520px"><div class="vd-wl-head">' +
+            '<span style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--acc);letter-spacing:1px">WIDGET RECORD</span>' +
+            '<span class="vd-sheet-title" style="flex:1;font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>' +
+            '<button class="w-iconbtn vd-wl-close" style="cursor:pointer">✕</button></div>' +
+            '<div class="vd-wl-list"><div class="vd-note">The widget editor (the WidgetConfig surface) is not loaded on this page — this is the record itself, as the layout keeps it: form · source · title · read · frame · draw · actions.</div>' +
+            '<textarea spellcheck="false"></textarea><div class="vd-err"></div></div>' +
+            '<div class="vd-lm-save"><span style="flex:1"></span><button class="w-iconbtn" data-sheet-cancel style="cursor:pointer">Cancel</button>' +
+            '<button class="w-iconbtn" data-sheet-save style="cursor:pointer;color:var(--acc)">Save</button></div></div>';
+          document.body.appendChild(_sheet);
+        }
+        var ta = _sheet.querySelector('textarea'), err = _sheet.querySelector('.vd-err');
+        _sheet.querySelector('.vd-sheet-title').textContent = wid + ' · ' + (rec.form || '') + (rec.source ? ' · ' + rec.source : '');
+        ta.value = JSON.stringify(rec, null, 2); err.textContent = '';
+        var done = function (v) { _sheet.style.display = 'none'; resolve(v); };
+        _sheet.onclick = function (e) { if (e.target === _sheet) done(null); };
+        _sheet.querySelector('.vd-wl-close').onclick = function () { done(null); };
+        _sheet.querySelector('[data-sheet-cancel]').onclick = function () { done(null); };
+        _sheet.querySelector('[data-sheet-save]').onclick = function () {
+          var j; try { j = JSON.parse(ta.value); } catch (e) { err.textContent = 'not JSON: ' + e.message; return; }
+          if (!j || typeof j !== 'object' || !j.form) { err.textContent = 'a record needs a form'; return; }
+          done(applyRecord(wid, j));
+        };
+        _sheet.style.display = 'flex'; ta.focus();
+      });
+    }
+
+    /* widget loader (+ Add Widget) + dynamic widgets
+       The widget surface when it is loaded — the catalogue, the record editor, the live preview (the WidgetConfig
+       board) — and the record it resolves lands on the grid (placeRecord); the panel picker otherwise, and always
+       through openPanels(): every registered panel as an iframe tile, as before. */
     function openLoader() {
+      if (!withLoader) return;
+      if (window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') {
+        var p;
+        try { p = window.VeraWidgetConfig.open({ mode: 'add', into: 'dashboard', title: 'Add a widget', sizes: ladderSizes(), templates: true }); }
+        catch (e) { p = Promise.reject(e); }
+        return Promise.resolve(p).then(function (rec) { return rec ? placeRecord(rec) : null; }, function () { return null; });
+      }
+      return openPanels();
+    }
+    function openPanels() {
       if (!withLoader) return;
       ensureModal(); _modalCtl = ctl; _modal.style.display = 'flex';
       var inp = _modal.querySelector('.vd-wl-search'); inp.value = ''; inp.focus();
       fetchPanels().then(function () { renderLoader(''); });
+    }
+    // a record from the picker lands as the tile its form asks for: a panel record is the loader's iframe tile, any
+    // other a record tile at the span its size picks; the new tile lights up and scrolls into view
+    function placeRecord(rec) {
+      if (!rec || typeof rec !== 'object') return null;
+      var pid = rec.panel || (typeof rec.source === 'string' && /^panel:/.test(rec.source) ? rec.source.slice(6) : '');
+      if (rec.form === 'panel' && pid) return addWidget(pid).then(function () { return landed(byId('dyn-' + String(pid).replace(/[^a-zA-Z0-9_-]/g, ''))); });
+      return landed(addRecord(rec, {}));
+    }
+    function landed(w) {
+      if (!w) return null;
+      w.classList.add('vd-landed'); setTimeout(function () { w.classList.remove('vd-landed'); }, 1800);
+      try { w.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) { /* an old host */ }
+      return w;
     }
     /* a RECORD tile (UI redesign M2): the same grid mechanics — grip, resize ghost, snap, hide, float, solo —
        around a <vera-widget> drawing the record at the size its span picks (the element watches its own width).
@@ -969,13 +1281,22 @@
       var s = document.createElement('script'); s.src = '/ui/widgets/widget_element.js'; s.setAttribute('data-vera-widget-el', '1');
       document.head.appendChild(s);
     }
+    // The context graph form draws its galaxy itself up to L; at XL the element hands the data to the chat's own
+    // <vera-context-graph> (widget_element hydrate), which only the chat page loads — so a dashboard that draws a
+    // context_graph record fetches that script once and re-renders the tiles that were waiting for it.
+    function ensureContextGraph() {
+      if ((window.customElements && customElements.get('vera-context-graph')) || document.querySelector('script[data-vera-context-graph]')) return;
+      var s = document.createElement('script'); s.src = '/ui/context_graph_element.js'; s.setAttribute('data-vera-context-graph', '1');
+      s.onload = function () { grid.querySelectorAll('vera-widget').forEach(function (el) { try { if (el.record && el.record.form === 'context_graph' && el.render) el.render(); } catch (e) { /* the element draws again on its own read */ } }); };
+      document.head.appendChild(s);
+    }
     function spanClass(record) {
       var size = String((record && ((record.frame && record.frame.size) || record.size || (record.draw && record.draw.size))) || 'm').toLowerCase();
-      return { xs: 'w-w2 w-h1', s: 'w-w2 w-h1', m: 'w-w4 w-h2', l: 'w-w6 w-h3', xl: 'w-w8 w-h4' }[size] || 'w-w4 w-h2';
+      return { xs: 'w-w2 w-h1', s: 'w-w2 w-h1', m: 'w-w4 w-h2', l: 'w-w6 w-h2', xl: 'w-w8 w-h4' }[size] || 'w-w4 w-h2';
     }
     function addRecord(record, o2) {
       if (!record || typeof record !== 'object') return null;
-      ensureElement();
+      ensureElement(); if (record.form === 'context_graph') ensureContextGraph();
       var rid = String(record.id || record.title || record.name || record.form || 'widget').replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48);
       var wid = (o2 && o2.wid) || ('rec-' + rid + '-' + Math.random().toString(36).slice(2, 6));
       if (grid.querySelector(':scope > [data-wid="' + wid + '"]')) return null;
@@ -997,7 +1318,8 @@
       var el = document.createElement('vera-widget');
       var sp0 = spanOf(widget);
       el.setAttribute('size', sizeForSpan(sp0[0], sp0[1]));   // the span picks the size (the Sizes board), not the pixels
-      el.setAttribute('record', JSON.stringify(record));
+      var shown = withSample(record); if (shown.sample) widget.dataset.sample = '1';   // no readable source: the form's sample, said so
+      el.setAttribute('record', JSON.stringify(shown));
       widget.querySelector('.w-body').appendChild(el);
       widget.querySelector('[data-vd-hide]').onclick = function () { hide(wid); };
       var rm = widget.querySelector('[data-vd-remove]'); if (rm) rm.onclick = function () { removeDynamic(wid); };
@@ -1072,6 +1394,8 @@
     load();
     widgets().forEach(wireWidget);
     grid.addEventListener('mousedown', onResizeDown);
+    grid.addEventListener('dragover', onGridDragOver); grid.addEventListener('drop', onGridDrop);
+    grid.addEventListener('dragleave', function (e) { if (e.target === grid) grid.classList.remove('vd-drop-here'); });
     applyLayout();
     if (withLoader) restoreDynamic();
 
@@ -1091,8 +1415,9 @@
         if (!wid) return;
         fileOrder.push(wid);
         if (r) state.records[wid] = r;
+        var eff = state.edits[wid] || r;   // the user's edit of this tile, else the file's record
         var w = byIdAnywhere(wid);
-        var span = Array.isArray(t.span) && +t.span[0] ? t.span : (r ? spanFor(r) : null);
+        var span = Array.isArray(t.span) && +t.span[0] ? t.span : (eff ? spanFor(eff) : null);
         if (w) {
           if (!state.seen[wid]) {          // the file's defaults, for a tile the user has not arranged
             if (span && !(state.sizes[wid] && +state.sizes[wid].w)) setSpan(w, span);
@@ -1100,14 +1425,14 @@
           }
           state.meta[wid] = state.meta[wid] || { at: null, refresh: '', floated: false };
           if (!state.meta[wid].refresh && t.refresh) state.meta[wid].refresh = t.refresh;
-          if (r && !(r.draw && r.draw.body === 'page')) w.dataset.fromFile = '1';
-          if (w.dataset.record) { var el = w.querySelector(':scope > .w-body > vera-widget'); if (el && r) { el.setAttribute('record', JSON.stringify(r)); } }
+          if (r && !(r.draw && r.draw.body === 'page') && w.dataset.record) w.dataset.fromFile = '1';
+          if (eff) drawTile(w, eff);   // the record draws the body it owns; a page body stays the page's
           recordChip(w);
-        } else if (r && r.form && !(r.draw && r.draw.body === 'page')) {
+        } else if (eff && eff.form && !(eff.draw && eff.draw.body === 'page')) {
           // a record the page does not draw by hand: the element draws it
           if (!state.meta[wid]) state.meta[wid] = { at: null, refresh: t.refresh || '', floated: false };
           if (t.hidden && !state.seen[wid]) state.hidden.add(wid);
-          addRecord(r, { silent: true, wid: wid, fromFile: true, span: span, refresh: t.refresh || '' });
+          addRecord(eff, { silent: true, wid: wid, fromFile: true, span: span, refresh: t.refresh || '' });
         }
       });
       if (fresh) state.order = fileOrder;
@@ -1143,7 +1468,8 @@
       // the user's tiles go; the record's come back through the same paths a boot uses
       widgets().forEach(function (w) { if (w.dataset.record && !w.dataset.fromFile) w.remove(); });
       widgets().forEach(function (w) { if (w.dataset.panel && state.dynamic[w.dataset.wid]) w.remove(); });
-      if (rec) unpack(rec); else { state.order = []; state.hidden = new Set(); state.sizes = {}; state.dynamic = {}; state.meta = {}; state.seen = {}; state.name = 'default'; }
+      if (rec) unpack(rec); else { state.order = []; state.hidden = new Set(); state.sizes = {}; state.dynamic = {}; state.edits = {}; state.meta = {}; state.seen = {}; state.name = 'default'; }
+      widgets().forEach(function (w) { var r = recordOf(w.dataset.wid); if (r) { drawTile(w, r); recordChip(w); } });   // the tiles follow the layout's records
       widgets().forEach(function (w) { if (!state.sizes[w.dataset.wid]) { var r = recordOf(w.dataset.wid), t = state.file && state.file.widgets.filter(function (x) { return x && (x.record === w.dataset.wid || (x.record && x.record.id === w.dataset.wid)); })[0]; if (t && Array.isArray(t.span)) setSpan(w, t.span); else if (r) setSpan(w, spanFor(r)); } });
       applyLayout();
       if (withLoader) restoreDynamic();
@@ -1215,6 +1541,10 @@
       key: key, grid: grid,
       toggleEdit: toggleEdit, reset: reset, openLoader: openLoader,
       hide: hide, show: show, addWidget: addWidget, addRecord: addRecord, refresh: applyLayout,
+      // the widget surface's paths: the picker of panels, a record placed, a tile's ⚙, a record saved, a tile drawn
+      openPanels: openPanels, placeRecord: placeRecord, configure: configure, applyRecord: applyRecord,
+      drawTile: function (wid, rec) { var w = byIdAnywhere(wid); if (w) drawTile(w, rec || recordOf(wid)); recordChip(w); return w; },
+      recordOf: recordOf, editing: function () { return state.editing; },
       // the record side
       layout: layoutRecord, records: function () { var o = {}; widgets().forEach(function (w) { var r = recordOf(w.dataset.wid); if (r) o[w.dataset.wid] = r; }); return o; },
       applyFile: applyFile, file: function () { return state.file; }, arrange: doArrange,
@@ -1227,5 +1557,6 @@
     return ctl;
   }
 
-  window.VeraDash = { init: init, migrate: migrate, flow: flow, arrange: arrange, sizeForSpan: sizeForSpan, spanFor: spanFor, panelRecord: panelRecord, GRID: GRID };
+  window.VeraDash = { init: init, migrate: migrate, flow: flow, arrange: arrange, sizeForSpan: sizeForSpan, spanFor: spanFor, panelRecord: panelRecord, GRID: GRID,
+    sizeLadder: sizeLadder, ladderSizes: ladderSizes, sample: sampleFor, withSample: withSample };
 })();
