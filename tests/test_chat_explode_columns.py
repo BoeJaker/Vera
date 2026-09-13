@@ -13,6 +13,14 @@ def _read(*parts):
         return fh.read()
 
 
+def test_the_scene_gets_the_window_meter_when_it_mounts():
+    # the board's ctxbar ends in the budget; the element is made when Explode opens, after the turn's updateCtxMeter
+    src = _read("vera", "chat", "chat_panel.html")
+    assert "let _ctxMeterLast={used:0,max:0};" in src
+    assert "_ctxMeterLast={used:+used||0,max:+max||0}; try{ if(_xplEl&&typeof _xplEl.setBudget==='function') _xplEl.setBudget(used,max); }catch(_){}" in src
+    assert "if(_ctxMeterLast.max>0&&typeof _xplEl.setBudget==='function') _xplEl.setBudget(_ctxMeterLast.used,_ctxMeterLast.max); }catch(_){}" in src
+
+
 def test_explode_folds_the_columns_and_restores_them():
     src = _read("vera", "chat", "chat_panel.html")
     assert "let _xplHid=null;" in src

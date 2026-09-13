@@ -1347,7 +1347,7 @@ html[data-blocks="off"] .pa-att{background:transparent}
 #topBar .agent select#agentBarSel{height:28px!important;border:none;background:transparent;color:var(--t1,var(--text,#d8dce4));font:inherit;font-size:11.5px;font-weight:600;max-width:150px;padding:0;appearance:none;-webkit-appearance:none;cursor:pointer}
 #topBar .agent #agentMeta{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t2,var(--dim2,#8a92a0));max-width:160px}
 #topBar .agent #capBadge .tool-badge{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8.5px}
-#topBar .sess{display:flex;flex-direction:column;gap:1px;min-width:0;flex-shrink:1}
+#topBar .sess{display:flex;flex-direction:column;gap:1px;min-width:0;flex-shrink:0}   /* its content's width: a frame too narrow folds the header's groups instead (w79) */
 #topBar .sess #sessionName{font-size:12.5px;font-weight:600;white-space:nowrap;letter-spacing:-.01em;color:var(--t1,var(--text,#d8dce4));overflow:hidden;text-overflow:ellipsis;max-width:260px;cursor:pointer}
 #topBar .sess .sess-m{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;display:flex;gap:6px;align-items:center}
 #topBar .sess .sess-m .btn.xs{height:14px;padding:0 5px;font-size:8.5px;border:none;background:var(--surf2);color:var(--t2,var(--dim2,#8a92a0));border-radius:var(--r-pill,999px)}
@@ -4125,9 +4125,10 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   async function checkConn(){const dot=document.getElementById('connDot');if(!dot)return;const r=await api('/health');dot.className='conn-dot '+(r?'ok':'warn');}
 
   /* ── Context window meter ── */
+  let _ctxMeterLast={used:0,max:0};   // the last reading, for a scene that mounts after the turn
   function updateCtxMeter(used,max){
     const fill=document.getElementById('ctxMeterFill');
-    const lbl=document.getElementById('ctxMeterLabel'); try{ if(_xplEl&&typeof _xplEl.setBudget==='function') _xplEl.setBudget(used,max); }catch(_){}
+    const lbl=document.getElementById('ctxMeterLabel'); _ctxMeterLast={used:+used||0,max:+max||0}; try{ if(_xplEl&&typeof _xplEl.setBudget==='function') _xplEl.setBudget(used,max); }catch(_){}
     if(!fill||!max)return;
     const pct=Math.min(100,Math.round(used/max*100));
     fill.style.width=pct+'%';
@@ -15665,6 +15666,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     if(!(window.customElements&&customElements.get('vera-exploded'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The exploded scene is loading…</div>'; setTimeout(()=>{ if(_xpl.on) _xplMount(); }, 600); return; }
     if(_xplEl&&host.contains(_xplEl)) return;
     host.innerHTML=''; _xplEl=document.createElement('vera-exploded'); _xplEl.setAttribute('mode', _xpl.mode); host.appendChild(_xplEl);
+      try{ if(_ctxMeterLast.max>0&&typeof _xplEl.setBudget==='function') _xplEl.setBudget(_ctxMeterLast.used,_ctxMeterLast.max); }catch(_){}   // the chip bar's window meter from the turn before the scene opened
     document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===_xpl.mode));
     _ctxRunsFollowScene(); _xplEl.addEventListener('vera:xpl:close', ()=>_xplClose());
     _xplEl.addEventListener('vera:xpl:place', ev=>_xplPlaceOpen((ev.detail||{}).mid||''));
@@ -17769,9 +17771,9 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     cmdOpen,cmdClose,
     toggleViewMode,setViewMode,
     setDensity,toggleBlocks,
-    _uiAskAnswer,_uiAskPick,_uiDirectiveApply,_cvLandReply,_studioHint,_cvDirectiveShape,
+    _uiAskAnswer,_uiAskPick,_uiDirectiveApply,_cvLandReply,_studioHint,_cvDirectiveShape,_chromeFold,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_chromeFold,_runsToggle,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},

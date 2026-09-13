@@ -42,6 +42,8 @@ def test_header_tightens_in_a_narrow_frame():
     assert "@media (max-width:1300px){" in src and "#topBar{gap:6px;padding:0 10px}" in src
     assert "#topBar .agent #agentMeta,#topBar .agent #capBadge{display:none}" in src
     assert "#topBar #ctxMeterBar{width:56px}" in src
+    # the session block keeps its content width (at 1440 the Name chip ran under the meter); narrowness folds the groups
+    assert "#topBar .sess{display:flex;flex-direction:column;gap:1px;min-width:0;flex-shrink:0}" in src
 
 
 def test_the_page_and_its_index():
