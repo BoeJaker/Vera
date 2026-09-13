@@ -2,11 +2,15 @@
 cap_hub_capabilities.py  —  Unified Capability Hub Panel
 =========================================================
 Registers:
-  1. cap-hub         — full tab panel (mode="tab") combining:
-                         • Capability list + search + call
-                         • Activity/tracking config (groups, per-cap overrides, limits)
-                         • MCP server management
-                         • Job / task output streaming
+  1. cap-hub         — the Capabilities tab (mode="tab"), one page per concern:
+                         • Browse: capability list + search + call + job stream
+                         • Tracking: groups, per-cap overrides, limits
+                         • Ontology: the relation matrix (/cap_ontology/panel)
+                         • MCP Servers: the catalog (/mcp/catalog/panel) and
+                           the connected proxy servers
+                         • Modules: what loaded at startup
+                       The Cap Ontology and MCP Servers tabs open these pages
+                       instead (vera/estate/estate_nav_core.py).
 
   2. Inject elements (mode="inject") — reusable fragments embeddable
      anywhere in the Vera UI system.  Each is both a named inject panel
@@ -57,10 +61,12 @@ _HERE = Path(__file__).parent
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _panel_html() -> str:
-    path = _HERE / "cap_hub_panel.html"
-    if path.exists():
-        return path.read_text(encoding="utf-8")
-    return "<p style='color:red'>cap_hub_panel.html not found</p>"
+    # The panel file is cap_hub.html (the routes below serve the same file),
+    # so /cap_hub/elements.js hands out the components the page itself runs.
+    for path in (_HERE / "cap_hub.html", _HERE.parent / "cap_hub.html"):
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+    return "<p style='color:red'>cap_hub.html not found</p>"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,13 +90,13 @@ async def cap_hub_panel(trace_id=None):
 # <vera-*> custom elements without loading the whole panel.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_ELEMENTS_MARKER_START = "<!-- ═══ INJECT ELEMENTS"
+_ELEMENTS_MARKER_START = "INJECT ELEMENTS"   # heads the web-component script
 _ELEMENTS_MARKER_END   = "</script>\n\n</body>"
 
 def _elements_js() -> str:
     """
     Extract just the <script> blocks that define the web components from
-    cap_hub_panel.html so they can be served as a standalone JS include.
+    cap_hub.html so they can be served as a standalone JS include.
     """
     html = _panel_html()
     start = html.find(_ELEMENTS_MARKER_START)
@@ -155,7 +161,7 @@ async def serve_chat_panel():
 
 register_ui(
     panel_id        = "cap-hub",
-    label     = "Cap Hub",
+    label     = "Capabilities",
     icon      = "⬡",
     mode      = "tab",
     tab_order = 12,
