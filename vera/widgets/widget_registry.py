@@ -431,6 +431,22 @@ async def _widget_registry_page():
                         else "<p style='color:#c96b6b'>widget_registry_panel.html not found</p>")
 
 
+@APP.get("/ui/widgets/gallery", include_in_schema=False)
+async def _widget_gallery_page():
+    """The gallery view of the same document: every form of the catalogue drawn from its sample at the size picked
+    (the Widgets, WidgetsMotion and WidgetsIso boards as one gallery). The page reads its path and opens on the gallery."""
+    from fastapi.responses import HTMLResponse
+    p = Path(__file__).parent / "widget_registry_panel.html"
+    return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
+                        else "<p style='color:#c96b6b'>widget_registry_panel.html not found</p>")
+
+
+_GALLERY_HTML = """
+<div style="height:100%;display:flex;flex-direction:column">
+  <iframe src="/ui/widgets/gallery" style="flex:1;border:none;width:100%;background:transparent"></iframe>
+</div>
+"""
+
 # mode="element": registered and listed (the picker, the chat's Panels list, a beside-panel) but not a tab by
 # itself - it is one registry among the others, opened where it is needed.
 register_ui("widget-registry", "Widgets", "⧉", _PANEL_HTML, js="",
@@ -438,3 +454,7 @@ register_ui("widget-registry", "Widgets", "⧉", _PANEL_HTML, js="",
                      "widget.template.delete", "widget.template.instantiate",
                      "widget.instance.list", "widget.instance.remove"],
             mode="element", tab_order=63)
+# the gallery: every form of the catalogue at its sizes, drawn from its sample - how a form is judged before it is placed
+register_ui("widget-gallery", "Widget gallery", "▦", _GALLERY_HTML, js="",
+            ui_caps=["widget.forms", "widget.sources", "widget.validate", "widget.template.save"],
+            mode="element", tab_order=64)

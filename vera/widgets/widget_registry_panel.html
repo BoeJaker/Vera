@@ -7,7 +7,7 @@ var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
 var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
 if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
-<title>Vera - Widget Registry</title>
+<title>Vera - Widgets</title>
 <style>
 :root{
   --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
@@ -121,13 +121,41 @@ html[data-blocks="off"] .card,html[data-blocks="off"] .rows,html[data-blocks="of
 #detail #newForm{margin:10px 14px}
 .insp-ft{margin-top:auto;padding:12px 14px;font-size:10px;color:var(--dim2);line-height:1.5;border-top:1px solid var(--border)}
 .insp-ft b{color:var(--text);font-weight:600}
+/* ═══ the GALLERY view: the Widgets · WidgetsMotion · WidgetsIso boards as one gallery — every form of the catalogue in
+   the board's cell (the name, the id · shape chip, the form drawn from its sample by the real renderer) at the size picked;
+   a board filter, a projection switch, a search; + Add on a cell opens the config sheet on that form ═══ */
+header .seg{display:flex;gap:2px;background:var(--bg2);border-radius:var(--r-sm,6px);padding:2px;border:1px solid var(--border)}
+header .seg button{height:22px;padding:0 10px;font-size:10.5px;color:var(--dim2);border:none;background:none;border-radius:calc(var(--r-sm,6px) - 2px)}
+header .seg button.on{background:var(--pri-bg,var(--acc));color:var(--pri-fg,var(--bg0));font-weight:600}
+#gallery{flex:1;display:none;flex-direction:column;min-height:0;padding:10px 12px;gap:10px}
+#gallery.on{display:flex}#wrap.off{display:none}
+.gal-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0}
+.gal-bar .sub{font-size:11px;color:var(--dim2);line-height:1.45;max-width:760px}
+.gal-bar .seg{display:flex;gap:2px;background:var(--bg2);border-radius:var(--r-sm,6px);padding:2px;border:1px solid var(--border)}
+.gal-bar .seg button{height:20px;padding:0 9px;font-size:10px;color:var(--dim2);border:none;background:none;border-radius:calc(var(--r-sm,6px) - 2px)}
+.gal-bar .seg button.on{background:var(--pri-bg,var(--acc));color:var(--pri-fg,var(--bg0));font-weight:600}
+.gal-bar input{width:200px}
+.gal-grid{flex:1;min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(228px,1fr));grid-auto-rows:246px;gap:13px;align-content:start;padding-bottom:12px;scrollbar-width:thin}
+.gal-grid.xs,.gal-grid.s{grid-auto-rows:auto;grid-template-columns:repeat(auto-fill,minmax(228px,1fr))}
+.gal-grid.l{grid-template-columns:repeat(auto-fill,minmax(460px,1fr))}.gal-grid.xl{grid-template-columns:repeat(auto-fill,minmax(680px,1fr));grid-auto-rows:400px}
+.gw{background:var(--surf,var(--bg1));border-radius:var(--ui-radius,12px);box-shadow:var(--elev,0 0 0 1px var(--border));display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0;transition:transform .2s ease,box-shadow .2s ease}
+.gw:hover{transform:translateY(-2px);box-shadow:var(--elev,0 0 0 1px var(--border)),0 0 0 1px color-mix(in srgb,var(--acc) 38%,transparent)}
+.gw.w2{grid-column:span 2}
+.gw-hd{flex-shrink:0;display:flex;align-items:baseline;gap:7px;padding:11px var(--pad,13px) 2px}
+.gw-hd .t{font-size:var(--label-size,10px);text-transform:var(--label-case,none);letter-spacing:var(--label-track,.01em);font-weight:600;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gw-hd .ty{margin-left:auto;font-family:var(--mono);font-size:8px;color:var(--dim);background:var(--bg2);border-radius:var(--r-pill,999px);padding:1px 6px;flex-shrink:0}
+.gw-hd .dv{font-size:10px;color:var(--dim);border:none;background:none;padding:0 2px;opacity:.35;transition:opacity .15s;line-height:1}.gw:hover .gw-hd .dv{opacity:1;color:var(--text)}
+.gw-bd{flex:1;min-height:0;padding:6px var(--pad,13px) var(--pad,13px);display:flex;flex-direction:column}
+.gw-bd vera-widget{display:block;flex:1;min-height:0}
+.gal-grid.xs .gw-bd,.gal-grid.s .gw-bd{font-size:12.5px;line-height:1.75;color:var(--dim2)}.gal-grid.xs .gw-bd b,.gal-grid.s .gw-bd b{color:var(--text)}
+.gw-cap{font-size:9.5px;color:var(--dim2);line-height:1.4;padding-top:4px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #pmenu{position:fixed;z-index:50;display:none;flex-direction:column;gap:2px;padding:6px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r-sm,6px);box-shadow:0 12px 30px -12px rgba(0,0,0,.8)}
 #pmenu.on{display:flex}#pmenu button{text-align:left;font-size:10.5px;border:none;background:transparent;padding:4px 8px;border-radius:4px}#pmenu button:hover{background:var(--bg3)}
 </style>
 </head>
 <body>
 <header>
-  <h1>Widgets</h1><span class="sub" id="count">…</span>
+  <h1>Widgets</h1><span class="seg" id="view"><button class="on" onclick="wrView('templates')" title="Your saved records">Templates</button><button onclick="wrView('gallery')" title="Every form of the catalogue, drawn from its sample — the Widgets boards as one gallery">Gallery</button></span><span class="sub" id="count">…</span>
   <input id="q" placeholder="search name · reads · frame" oninput="wrLoad()" style="width:220px">
   <span class="sp"></span>
   <button class="primary" onclick="wrNew()" title="A new widget record through the widget config sheet (catalogue · record · live preview)">+ New widget…</button>
@@ -137,6 +165,16 @@ html[data-blocks="off"] .card,html[data-blocks="off"] .rows,html[data-blocks="of
 <div class="filters" hidden>
   <div class="frow"><span class="lbl">form</span><span id="kinds"></span></div>
   <div class="frow"><span class="lbl">placed</span><span id="wheres"></span></div>
+</div>
+<div id="gallery">
+  <div class="gal-bar">
+    <span class="seg" id="galBoards"></span>
+    <span class="seg" id="galSizes"></span>
+    <span class="seg" id="galProj"></span>
+    <input id="galQ" placeholder="find a form" oninput="wrGalleryDraw()">
+    <span class="sub" id="galSub">loading the catalogue…</span>
+  </div>
+  <div class="gal-grid" id="galGrid"></div>
 </div>
 <div id="wrap">
   <div id="fil">
@@ -200,6 +238,41 @@ async function wrLoad(){
   if(sel) wrOpen(sel, true);
 }
 function wrKind(k){ kind = k; wrLoad(); }
+/* ── the gallery view: every form of the catalogue drawn from its sample by the real renderer (widget_element.js) ── */
+let GAL = { view: 'templates', board: 'all', size: 'm', proj: 'board' };
+try{ const u = new URL(location.href); if(u.searchParams.get('view') === 'gallery' || /\/gallery\/?$/.test(u.pathname)) GAL.view = 'gallery'; if(u.searchParams.get('board')) GAL.board = u.searchParams.get('board'); if(u.searchParams.get('size')) GAL.size = u.searchParams.get('size'); }catch(e){}
+const GAL_BOARDS = [['all', 'All'], ['widgets', 'Still'], ['motion', 'Motion'], ['iso', 'Iso'], ['spec', 'Spec'], ['reply', 'Reply']];
+const GAL_WIDE = new Set(['board', 'area', 'heat', 'topology', 'lane', 'timeline', 'stepper', 'carousel', 'tabs', 'pipeline', 'compare', 'graph', 'terminal', 'rail', 'city', 'kanban']);
+function wrView(v){ GAL.view = v === 'gallery' ? 'gallery' : 'templates'; document.getElementById('gallery').classList.toggle('on', GAL.view === 'gallery'); document.getElementById('wrap').classList.toggle('off', GAL.view === 'gallery'); document.querySelectorAll('#view button').forEach(b => b.classList.toggle('on', b.textContent.toLowerCase() === GAL.view)); if(GAL.view === 'gallery') wrGallery(); }
+async function wrGallery(){
+  if(CATALOG === null) await wrCatalog(document.getElementById('nForm'));
+  const seg = (id, list, cur, key) => { const el = document.getElementById(id); el.innerHTML = list.map(x => '<button class="' + (x[0] === cur ? 'on' : '') + '" onclick="wrGalSet(\'' + key + '\',\'' + x[0] + '\')">' + x[1] + '</button>').join(''); };
+  const counts = {}; (CATALOG || []).forEach(f => (f.boards || []).forEach(b => { counts[b] = (counts[b] || 0) + 1; }));
+  seg('galBoards', GAL_BOARDS.filter(b => b[0] === 'all' || counts[b[0]]).map(b => [b[0], b[1] + (b[0] === 'all' ? '' : ' · ' + counts[b[0]])]), GAL.board, 'board');
+  seg('galSizes', [['xs', 'XS'], ['s', 'S'], ['m', 'M'], ['l', 'L'], ['xl', 'XL']], GAL.size, 'size');
+  seg('galProj', [['board', "the board's"], ['flat', 'flat'], ['iso', 'iso']], GAL.proj, 'proj');
+  wrGalleryDraw();
+}
+function wrGalSet(k, v){ GAL[k] = v; wrGallery(); }
+function wrGalleryDraw(){
+  const grid = document.getElementById('galGrid'); const q = String((document.getElementById('galQ') || {}).value || '').trim().toLowerCase();
+  const forms = (CATALOG || []).filter(f => (GAL.board === 'all' || (f.boards || []).includes(GAL.board)) && (!q || (f.id + ' ' + (f.name || '') + ' ' + f.shape).toLowerCase().includes(q)));
+  grid.className = 'gal-grid ' + GAL.size; grid.innerHTML = '';
+  const live = forms.filter(f => !window.VeraWidget || (window.VeraWidget.forms().some(x => x.id === f.id && !x.as))).length;
+  document.getElementById('galSub').textContent = forms.length + ' forms · ' + live + ' with a live build · ' + GAL.size.toUpperCase() + ' — a size is a composition, not a scale: XS a glyph and a figure in a line, S a chip, M the face, L the face with its detail list, XL the face with its table';
+  if(!(window.customElements && customElements.get('vera-widget'))){ grid.innerHTML = '<div class="empty">the widget renderer is not loaded</div>'; return; }
+  forms.forEach(f => {
+    const proj = GAL.proj === 'board' ? ((f.proj || ['flat']).length === 1 ? f.proj[0] : ((f.boards || []).includes('widgets') && GAL.board !== 'motion' && GAL.board !== 'iso' ? 'flat' : 'iso')) : GAL.proj;
+    const rec = { form: f.id, title: f.name || f.id, frame: { size: GAL.size }, projection: (f.proj || []).includes(proj) ? proj : (f.proj || ['flat'])[0] };
+    const w = document.createElement('div'); w.className = 'gw' + (GAL_WIDE.has(f.id) && (GAL.size === 'm' || GAL.size === 'l') ? ' w2' : '');
+    w.innerHTML = '<div class="gw-hd"><span class="t">' + esc(f.name || f.id) + '</span><span class="ty">' + esc(f.id + ' · ' + f.shape + (f.motion ? ' · moves' : '') + (rec.projection === 'iso' ? ' · iso' : '')) + '</span><button class="dv" title="Add a widget of this form (the config sheet)">⤢</button></div><div class="gw-bd"></div>';
+    const bd = w.querySelector('.gw-bd'); const el = document.createElement('vera-widget'); el.setAttribute('size', GAL.size); el.setAttribute('base', BASE); el.record = rec;
+    if(GAL.size === 'xs'){ bd.appendChild(document.createTextNode('ct126 is serving qwen3:30b at ')); bd.appendChild(el); bd.appendChild(document.createTextNode(' with 4 in flight.')); } else bd.appendChild(el);
+    const cap = document.createElement('div'); cap.className = 'gw-cap'; cap.textContent = (f.options || []).length ? 'options · ' + f.options.join(' · ') : 'no options of its own'; bd.appendChild(cap);
+    w.querySelector('.dv').addEventListener('click', async () => { const S = surface(); if(!S){ status('the config sheet is not loaded', 'err'); return; } const out = await S.open({ mode: 'add', into: 'dashboard', title: 'Add · ' + (f.name || f.id), templates: true, ok: 'Save', base: BASE, record: rec }); if(!out) return; const t = Object.assign({}, out, { name: out.title || out.form, source: { origin: 'you', from: 'the gallery', panel: out.panel || '' } }); const r = await api('/ui/widgets/templates/save', { method: 'POST', body: JSON.stringify({ template: t, force: true }) }); if(r && r.ok){ status('saved ' + r.template.id, 'ok'); sel = r.template.id; wrLoad(); } else status((r && (r.error || (r.problems || []).join('; '))) || 'save failed', 'err'); });
+    grid.appendChild(w);
+  });
+}
 function wrWhere(w){ where = w; wrLoad(); }
 function wrOrigin(o){ origin = o; wrLoad(); }
 function wrSort(s){ sort = s; wrLoad(); }
@@ -350,6 +423,7 @@ async function wrNewSave(){
   if(r && r.ok){ status('saved ' + r.template.id, 'ok'); wrNewToggle(false); sel = r.template.id; wrLoad(); } else status((r && (r.error || (r.problems || []).join('; '))) || 'save failed', 'err');
 }
 wrLoad();
+if(GAL.view === 'gallery') wrView('gallery');
 </script>
 <script src="/ui/vera-ui.js"></script>
 </body>
