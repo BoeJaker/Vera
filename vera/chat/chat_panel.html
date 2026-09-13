@@ -802,7 +802,15 @@ body.has-panel #chatPanelHost{
    columns want an ultrawide, so below 1920 the graph column takes a fixed
    strip. Nothing here changes #chatPanelHost or the panel it holds. */
 body.has-cols #chatColumn{flex-direction:row;gap:0}
-body.has-cols #chatStack{flex:1 1 0;min-width:0}
+body.has-cols #chatStack{flex:1 1 0;min-width:360px}
+/* the measure is the column's: never wider than the space the chat has (the columns, the grown graph, the harness frame) */
+#chatColumn{--measure:min(736px, calc(100% - 32px))}
+body.ctx-grown #chatColumn,body.ctx-remote #chatColumn{--measure:min(736px, calc(100% - var(--ctx-gutter,16px) - 32px))}
+/* the canvas column's handle: dragged, the canvas keeps its width; the chat flows into the rest */
+#cvResize{display:none;width:5px;flex:0 0 5px;cursor:col-resize;background:transparent;transition:background .15s;z-index:10;align-self:stretch}
+#cvResize:hover,#cvResize.drag{background:var(--acc)!important}
+body[data-cols~="canvas"] #cvResize{display:block}
+#canvasColumn.sized{flex:0 0 var(--cv-w,520px)!important;width:var(--cv-w,520px)}
 .tri-col{display:none;flex-direction:column;flex:1 1 0;min-width:0;min-height:0;background:var(--bg0);border-left:1px solid var(--border);overflow:hidden}
 body[data-cols~="canvas"] #canvasColumn,body[data-cols~="graph"] #graphColumn{display:flex}
 @media (max-width:1919px){ body[data-cols~="canvas"][data-cols~="graph"] #graphColumn{flex:0 0 min(340px,28%)} }
@@ -5822,6 +5830,7 @@ IMPORTANT:
     on=(on==null)?!_ctxGrown:!!on; if(on===_ctxGrown && document.getElementById('rightRail').classList.contains('lhm-grown')===on) return _ctxGrown;
     _ctxGrown=on; const host=document.getElementById('rightRail');
     if(host) host.classList.toggle('lhm-grown', on); document.body.classList.toggle('ctx-grown', on);
+    try{ const det=host&&host.querySelector(':scope > .lhm-det'); if(det){ const kept=parseInt(localStorage.getItem('vera_ctx_grown_w')||'0',10); if(on&&kept>=420){ det.style.width=kept+'px'; det.style.flex='0 0 '+kept+'px'; } else if(!on){ det.style.width=''; det.style.flex=''; } } }catch(_){}   // the grown width you set, kept
     try{ const gb=document.getElementById('colGraphBtn'); if(gb) gb.classList.toggle('col-on', on); }catch(_){}
     if(on){ _pages.add('graph'); try{ if(window.VeraLHM){ VeraLHM.deep(false); VeraLHM.pick('context'); if(host&&host.classList.contains('slim')) toggleRight(); } }catch(_){} }
     else { _pages.delete('graph'); _ctxRunsDraw(); }
@@ -5837,6 +5846,7 @@ IMPORTANT:
     _PAGE_NAMES.forEach(n=>{ const b=document.getElementById(n==='canvas'?'colCanvasBtn':'colGraphBtn'); if(b) b.classList.toggle('col-on', _pages.has(n)); });
     try{ localStorage.setItem(_PAGES_KEY, JSON.stringify(_pagesOpen())); }catch(_){}
     if(_pages.has('canvas')) _canvasColumnMount(); else _canvasColumnIdle();
+    _cvResizeMount();
     if(_pages.has('graph')) _graphColumnMount();
     try{ window.dispatchEvent(new CustomEvent('vera:panel-mounted',{detail:{placement:'column', pages:_pagesOpen()}})); }catch(_){}
     try{ _uiEvent('pages',{pages:_pagesOpen()}); }catch(_){}
@@ -6044,6 +6054,17 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       el.addEventListener('vera:canvas:rendered', ev=>{ const d=ev.detail||{}; const n=document.getElementById('cvColNow'); if(n) n.textContent=String(d.now||0); const s=document.getElementById('cvColSub'); if(s) s.textContent=(d.pinned?d.pinned+' pinned · ':'')+(d.parked?d.parked+' parked · ':'')+'rev '+(d.revision||0); _cvStageSync(true); }); }
     if(el.getAttribute('canvas-id')!==cid) el.setAttribute('canvas-id', cid);
     try{ window._veraBase=BASE; }catch(_){}
+  }
+  // the handle between the chat and the canvas column: dragged, the canvas keeps its width (localStorage); the chat flows
+  function _cvResizeMount(){
+    const col=document.getElementById('canvasColumn'); if(!col||col.parentNode!==document.getElementById('chatColumn')) return;
+    let h=document.getElementById('cvResize');
+    if(!h){ h=document.createElement('div'); h.id='cvResize'; h.title='Drag to set the canvas width'; h.setAttribute('data-w','canvas handle · resize'); col.parentNode.insertBefore(h, col);
+      let sx=0, sw=0, on=false;
+      h.addEventListener('mousedown', e=>{ sx=e.clientX; sw=col.offsetWidth; on=true; h.classList.add('drag'); document.body.classList.add('dragging-split'); document.body.style.cursor='col-resize'; document.body.style.userSelect='none'; e.preventDefault(); });
+      window.addEventListener('mousemove', e=>{ if(!on) return; const nw=Math.max(300, Math.min(Math.round(window.innerWidth*0.7), sw-(e.clientX-sx))); col.style.setProperty('--cv-w', nw+'px'); col.classList.add('sized'); try{ _cvRunsDraw(); _ctxRunsDraw(); }catch(_){} });
+      window.addEventListener('mouseup', ()=>{ if(!on) return; on=false; h.classList.remove('drag'); document.body.classList.remove('dragging-split'); document.body.style.cursor=''; document.body.style.userSelect=''; try{ localStorage.setItem('vera_canvas_col_w', col.style.getPropertyValue('--cv-w')); }catch(_){} try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); cv&&cv._placeNow&&cv._placeNow(); }catch(_){} }); }
+    try{ const kept=localStorage.getItem('vera_canvas_col_w'); if(kept&&parseInt(kept,10)>=300&&!col.classList.contains('sized')){ col.style.setProperty('--cv-w', kept); col.classList.add('sized'); } }catch(_){}
   }
   function _canvasColumnIdle(){ if(_cvColTimer&&!_pages.has('canvas')){ clearInterval(_cvColTimer); _cvColTimer=null; } if(_cvStageTimer&&!_pages.has('canvas')){ clearInterval(_cvStageTimer); _cvStageTimer=null; _cvRunsDraw(); } }
   /* ── the stage's placer input and the router (Notes/38 §3.5; the Canvas board's canvas column) ──
@@ -12805,9 +12826,11 @@ Your task: decide what to do next to advance toward the goal.
 
   function setupResize(){
     const rail=document.getElementById('rightRail');const handle=document.getElementById('rResize');let startX=0,startW=0;
-    handle.addEventListener('mousedown',e=>{startX=e.clientX;startW=rail.offsetWidth;handle.classList.add('rResize-drag');document.body.classList.add('dragging-split');document.body.style.cursor='col-resize';document.body.style.userSelect='none';});
+    handle.addEventListener('mousedown',e=>{startX=e.clientX;startW=rail.offsetWidth;const det0=rail.querySelector(':scope > .lhm-det'); if(det0) det0.dataset.startW=String(det0.offsetWidth);handle.classList.add('rResize-drag');document.body.classList.add('dragging-split');document.body.style.cursor='col-resize';document.body.style.userSelect='none';});
     // Rail sits LEFT of the chat now — dragging right grows it.
-    window.addEventListener('mousemove',e=>{if(!handle.classList.contains('rResize-drag'))return;const newW=Math.max(180,Math.min(700,startW+(e.clientX-startX)));rail.style.width=newW+'px';setTimeout(renderCtxGraph,10);});
+    window.addEventListener('mousemove',e=>{if(!handle.classList.contains('rResize-drag'))return;
+      if(rail.classList.contains('lhm-grown')){ const det=rail.querySelector(':scope > .lhm-det'); if(det){ const w0=parseInt(det.dataset.startW||det.offsetWidth,10); const nw=Math.max(420,Math.min(Math.round(window.innerWidth*0.7),w0+(e.clientX-startX))); det.style.width=nw+'px'; det.style.flex='0 0 '+nw+'px'; try{ localStorage.setItem('vera_ctx_grown_w', String(nw)); }catch(_){} try{ _ctxRunsDraw(); }catch(_){} } return; }   // the grown graph: its own width, kept
+      const newW=Math.max(180,Math.min(700,startW+(e.clientX-startX)));rail.style.width=newW+'px';setTimeout(renderCtxGraph,10);});
     window.addEventListener('mouseup',()=>{handle.classList.remove('rResize-drag');document.body.classList.remove('dragging-split');document.body.style.cursor='';document.body.style.userSelect='';});
 
     // ── Chat / panel-host split resize ──
