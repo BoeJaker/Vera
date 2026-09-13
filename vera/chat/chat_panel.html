@@ -1311,6 +1311,8 @@ html[data-blocks="off"] .cmp-strip{background:transparent;border-color:transpare
 .pa-att .ft button:hover{color:var(--acc);border-color:var(--acc)}
 html[data-blocks="off"] .pa-att{background:transparent}
 </style>
+<script>/* the chat embedded in parts (the Canvas board): ?only=menu is the rail + quick menus alone (a host's LHM slot); ?only=chat is everything but them; harness=yes = the host's ☰ above the rail does the top-level menu */
+(function(){ try{ var q=new URLSearchParams(location.search); var o=q.get('only')||''; if(o==='menu'||o==='chat') document.documentElement.setAttribute('data-only', o); if(q.get('harness')==='yes') document.documentElement.setAttribute('data-harness','yes'); }catch(e){} })();</script>
 <style id="designChrome">
 /* ═══ THE CHAT'S CHROME AS THE CANVAS BOARD DRAWS IT (the design landing) ═══════════════════════════════════════
    The board's own rules ([data-board="main"] …) on this page's markup: the theme carries the tokens (--t1..3, --s1..3,
@@ -1550,6 +1552,18 @@ body .lhm-prow{background:var(--surf2,var(--bg2,#1a1c20));box-shadow:var(--elev-
 body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri-fg,var(--on-acc,#fff))}
 #rightRail.lhm-host .lhm-quick .wid.lhm-added{background:var(--surf2,var(--bg2,#1a1c20));box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
 @keyframes xbl{50%{opacity:.35}}
+/* ── embedded in parts: only=menu · only=chat · harness=yes ── */
+html[data-only="menu"] body > :not(:has(#rightRail)){display:none!important}
+html[data-only="menu"] :has(> #rightRail) > :not(#rightRail){display:none!important}
+html[data-only="menu"] #rightRail,html[data-only="menu"] #rightRail.lhm-host{display:flex!important;width:100%!important;flex:1 1 auto;min-height:0;height:100vh;border:none}
+html[data-only="menu"] #rightRail.lhm-host .lhm-det{flex:1 1 auto;width:auto!important;min-width:0}
+html[data-only="menu"] #rightRail.slim{width:100%!important}
+html[data-only="menu"] #rightRail .lhm-det{display:flex!important}   /* the panel is always open: this frame IS the menu */
+html[data-only="menu"] .lhm-pick{left:8px!important;right:8px;width:auto!important}
+html[data-only="chat"] #rightRail{display:none!important}
+html[data-only="chat"] body.ctx-grown #rightRail{display:flex!important}
+html[data-only="chat"] body.ctx-grown #rightRail .lhm-rail{display:none!important}
+html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!important}   /* the host's ☰ above the rail does the top-level menu */
 </style>
 </head>
 <body data-view="minimal">
@@ -3955,6 +3969,7 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     window._chatSessionId = SID;
     try{
       localStorage.setItem('vera_session_id', SID);
+      if(_EMBED.only!=='menu') _lhmPost('session',{ sid:SID });   // the menu instance follows
       localStorage.setItem('vera_session_id_ts', String(Date.now()));
     }catch(e){}
     setName('New session');
@@ -5717,6 +5732,7 @@ IMPORTANT:
   // the graph "page" is the Context menu grown in place, never a column: the body's columns leave it out
   let _ctxGrown=false;
   function _ctxGrow(on){
+    if(_EMBED.only==='menu'){ _lhmPost('grow',{ on:(on==null)?true:!!on }); return _ctxGrown; }   // the menu instance asks the chat instance
     on=(on==null)?!_ctxGrown:!!on; if(on===_ctxGrown && document.getElementById('rightRail').classList.contains('lhm-grown')===on) return _ctxGrown;
     _ctxGrown=on; const host=document.getElementById('rightRail');
     if(host) host.classList.toggle('lhm-grown', on); document.body.classList.toggle('ctx-grown', on);
@@ -5738,7 +5754,7 @@ IMPORTANT:
     try{ window.dispatchEvent(new CustomEvent('vera:panel-mounted',{detail:{placement:'column', pages:_pagesOpen()}})); }catch(_){}
     try{ _uiEvent('pages',{pages:_pagesOpen()}); }catch(_){}
   }
-  function togglePage(name){ if(!_PAGE_NAMES.includes(name)) return false; if(name==='graph') return _ctxGrow(); if(_pages.has(name)) _pages.delete(name); else _pages.add(name); _pagesApply(); return _pages.has(name); }
+  function togglePage(name){ if(!_PAGE_NAMES.includes(name)) return false; if(_EMBED.only==='menu'&&name!=='graph'){ _lhmPost('page',{ name }); return true; } if(name==='graph') return _ctxGrow(); if(_pages.has(name)) _pages.delete(name); else _pages.add(name); _pagesApply(); return _pages.has(name); }
   // a rail icon while the graph column is open: fold the graph back into the quick menu (the pick itself opens it)
   document.addEventListener('click', ev=>{ try{ if(!_ctxGrown) return; const ico=ev.target&&ev.target.closest&&ev.target.closest('#rightRail .lhm-rail .lhm-ico'); if(ico&&!ico.classList.contains('top')&&ico.getAttribute('data-menu')!=='context') _ctxGrow(false); }catch(_){} }, true);
   function openPage(name){ if(!_PAGE_NAMES.includes(name)||_pages.has(name)) return false; _pages.add(name); _pagesApply(); return true; }
@@ -6179,7 +6195,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      doc chips, the mic conversation, council, diffuse) — same handlers, same state, one more place to see and reach
      them. The council and diffuse panels are the chat's own, moved above the composer and given the board's strip. */
   let _cmpTimer=null, _micLevel=0, _micTx=0, _micHist=[];
-  try{ document.addEventListener('DOMContentLoaded', ()=>{ try{ _chromeMount(); }catch(e){ console.warn('chrome', e); } }); if(document.readyState!=='loading') setTimeout(()=>{ try{ _chromeMount(); }catch(e){ console.warn('chrome', e); } },0); }catch(_){}
+  try{ document.addEventListener('DOMContentLoaded', ()=>{ try{ _chromeMount(); }catch(e){ console.warn('chrome', e); } try{ _embedMount(); }catch(e){ console.warn('embed', e); } }); if(document.readyState!=='loading') setTimeout(()=>{ try{ _chromeMount(); }catch(e){ console.warn('chrome', e); } },0); }catch(_){}
   function _cmpMount(){
     try{ _paDropInit(); }catch(_){}
     const box=document.getElementById('cmpStrips'), voice=document.getElementById('cmpVoice');
@@ -12694,6 +12710,24 @@ Your task: decide what to do next to advance toward the goal.
     settings:'<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 5h9M14 5h1.5M2.5 13h4M9 13h6.5"/><circle cx="12.6" cy="5" r="1.7"/><circle cx="7.6" cy="13" r="1.7"/></svg>'};
   function _toolsSheet(on){ const s=document.getElementById('toolsSheet'), b=document.getElementById('hdrMore'); if(!s) return; const v=on==null?!s.classList.contains('on'):!!on; s.classList.toggle('on', v); if(b) b.classList.toggle('on', v); }
   function _appearanceSheet(ev){ try{ if(window.veraUI&&typeof veraUI.openAppearance==='function'){ veraUI.openAppearance(ev); return; } }catch(_){} try{ if(typeof openThemeMenu==='function'){ openThemeMenu(ev); return; } }catch(_){} try{ VeraLHM.pick('settings'); }catch(_){} }
+  /* ── the chat embedded in parts (the Canvas board): the two instances the harness hosts — the MENU instance (only=menu)
+   and the CHAT instance (only=chat) — are one chat: the session follows localStorage (the same origin), and the actions
+   that belong to the chat (grow the graph, a page, explode, a new session) travel from the menu to the chat over a
+   BroadcastChannel. Standalone, nothing changes. ── */
+const _EMBED=(function(){ try{ const q=new URLSearchParams(location.search); return { only:q.get('only')||'', harness:q.get('harness')==='yes' }; }catch(_){ return { only:'', harness:false }; } })();
+const _LHMBC=(function(){ try{ return new BroadcastChannel('vera:chat:lhm'); }catch(_){ return null; } })();
+function _lhmPost(act, args){ try{ if(_LHMBC) _LHMBC.postMessage({ act, args:args||{}, sid:SID||'', from:_EMBED.only||'full', t:Date.now() }); }catch(_){} }
+function _embedMount(){
+  if(_EMBED.only==='menu'){
+    try{ const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); }catch(_){}
+    window.addEventListener('storage', ev=>{ if(ev.key==='vera_session_id'&&ev.newValue&&ev.newValue!==SID){ try{ loadSession(ev.newValue); }catch(_){} } });
+    if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from==='menu') return; if(m.act==='session'&&m.args&&m.args.sid&&m.args.sid!==SID){ try{ loadSession(m.args.sid); }catch(_){} } };
+  }
+  if(_EMBED.only==='chat'){
+    if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from!=='menu') return; const a=m.args||{};
+      try{ if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='page') togglePage(a.name); else if(m.act==='explode') explode(a.on); else if(m.act==='explodeMode') explodeMode(a.m); else if(m.act==='session'&&a.sid&&a.sid!==SID) loadSession(a.sid); else if(m.act==='newSession') newSession(); }catch(_){} };
+  }
+}
   function _chromeMount(){
     const bar=document.getElementById('topBar'), sheet=document.getElementById('toolsSheet'); if(!bar||!sheet||sheet.dataset.mounted) return; sheet.dataset.mounted='1';
     // the groups the board keeps off the header, moved as they are (the mode button — Ask first / Act — stays)
@@ -13158,6 +13192,7 @@ Your task: decide what to do next to advance toward the goal.
   }
 
   function newSession(){
+    if(_EMBED.only==='menu'){ _lhmPost('newSession',{}); return; }
     HISTORY=[];CTX_FRAMES=[];CTX_NODES=[];CTX_EDGES=[];
     // Force-fresh: skip the localStorage restore path in initSid by
     // passing a freshly-generated id. Without this, "+ New" would
@@ -15075,6 +15110,7 @@ Your task: decide what to do next to advance toward the goal.
   let _xpl={on:false, mode:'cards'}, _xplEl=null, _xplMo=null, _xplT=null;
   const _TURN_READS={}, _TURN_LAND={}, _TURN_RELS={};
   function explode(on){
+    if(_EMBED.only==='menu'){ _lhmPost('explode',{ on }); return; }
     on=(on==null)?!_xpl.on:!!on; _xpl.on=on;
     document.body.classList.toggle('exploded', on);
     if(on) document.body.classList.add('has-msgs');   // the composer docks at the bottom under the scene, never centred over it
@@ -15087,7 +15123,7 @@ Your task: decide what to do next to advance toward the goal.
   // the 3D → 2D close: the scene flattens, then the transcript is back
   function _xplToggle(){ if(_xpl.on) _xplClose(); else explode(true); }
   function _xplClose(){ if(!_xpl.on) return; if(_xplEl&&typeof _xplEl.flatten==='function'){ _xplEl.flatten(()=>explode(false)); } else explode(false); }
-  function explodeMode(m){ if(!/^(cards|front|iso)$/.test(m)) return; _xpl.mode=m; document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===m)); if(!_xpl.on) explode(true); else if(_xplEl&&typeof _xplEl.mode==='function') _xplEl.mode(m); }
+  function explodeMode(m){ if(!/^(cards|front|iso)$/.test(m)) return; if(_EMBED.only==='menu'){ _lhmPost('explodeMode',{ m }); return; } _xpl.mode=m; document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===m)); if(!_xpl.on) explode(true); else if(_xplEl&&typeof _xplEl.mode==='function') _xplEl.mode(m); }
   function _xplMount(){
     const host=document.getElementById('xplHost'); if(!host) return;
     if(!(window.customElements&&customElements.get('vera-exploded'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The exploded scene is loading…</div>'; setTimeout(()=>{ if(_xpl.on) _xplMount(); }, 600); return; }
