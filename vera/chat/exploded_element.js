@@ -13,16 +13,19 @@
 
    The iso's items are drawn the way the Canvas board draws its exploded iso (Canvas.dc.html, the .xit / .xig / .xnd
    vocabulary): every item is the board's CARD standing on a stem at its pin — name · value · meta · a small body by
-   kind (a score bar, chart bars, a diff, table rows, the loop's steps, a line of code or terminal); a widget (placed
-   from the registry, or one the reply carried) is an ISO WIDGET GROUP — a dial, bars or a block built through the
-   ISO lib's box/face/scene — with a frameless caption beneath it (the card is only its label); the records in the
+   kind (a score bar, chart bars, a diff, table rows, the loop's steps, a line of code or terminal, a diagram drawn by
+   the estate's mermaid element); a widget (placed from the registry through the WidgetConfig sheet, or one the reply
+   carried) is drawn as ITS OWN FORM — the registry's renderer (VeraWidget.draw, the one drawer every placement uses)
+   at the scene's widget size, the form's own sample face until it reads — standing on its stem as the board's card;
+   without the widget element on the page it is the ISO WIDGET GROUP — a dial, bars or a block built through the ISO
+   lib's box/face/scene — with a frameless caption beneath it (the card is only its label); the records in the
    context-graph band are typed ICON NODES lying on the plate about the prompt line, the galaxy sheet past them.
    The items counter-scale by the FIT only (1:1 text when the scene is fitted, capped as the board's embed is), so
    the wheel / ± zoom grows and shrinks them WITH the scene.
 
    <vera-exploded>  API: setScene({turns:[{mid, who, t, text, reply, read:[card], say:[card], made:[card],
                     land:[card]}], sel}) · mode(name) · select(mid) · fit() · state()
-   card = {n, d, col, kind, body?, score?, p?, m?, rows?}
+   card = {n, d, col, kind, body?, score?, p?, m?, rows?, form?, data?, record? (a placed widget's record: form · source · frame · draw · data), mermaid? (a diagram's source)}
    events: vera:xpl:pick {mid, layer, card} · vera:xpl:turn {mid} · vera:xpl:rendered {mode, stations} · vera:xpl:place {mid}
    window.VeraExploded = { layout, frontRuns, LAYERS, version } — layout() and frontRuns() are pure (node-testable). */
 (function (root) {
@@ -199,7 +202,7 @@
     const proj = (u, v, z) => { const p = P(u, v, z || 0); return { x: p[0], y: p[1] }; };
     const yPerV = Math.max(0.05, Math.abs(proj(0, 100, 0).y - proj(0, 0, 0).y) / 100);   // screen px down per v unit, through P
     out.bands = []; out.widgets = []; out.stack = STK; out.wsz = WSZ;
-    const isWidget = (c) => !!(c && (c.tpl || c.form || String(c.kind || '').toLowerCase() === 'widget'));
+    const isWidget = (c) => !!(c && (c.tpl || c.form || (c.record && typeof c.record === 'object') || String(c.kind || '').toLowerCase() === 'widget'));
     const shownOf = (t, L) => cardsOf(t, L.key).slice(0, CAP);
     const colsOf = (n) => Math.max(1, Math.ceil(n / ROWMAX)), rowsOf = (n) => Math.max(1, Math.min(ROWMAX, n));
     // the bands are as deep as their fullest station needs, so the plates stay identical and the bands line up across them
@@ -288,10 +291,18 @@
   /* ── an item as a WIDGET: the form and the data a widget of this kind reads ─────────────────────────────── */
   const SAMPLE = { series: [3, 5, 4, 7, 6, 8, 7], level: { value: 62, max: 100 }, values: { a: 4, b: 7, c: 5, d: 6 }, items: [{ name: 'no reading yet', value: '' }], events: [{ t: '', text: 'no reading yet' }], stages: { steps: [{ label: 'no steps yet', status: '' }] }, string: 'no reading yet', points: [[1, 2], [2, 3], [3, 2]], graph: { nodes: [], links: [] } };
   const SHAPE = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'values', matrix: 'values', donut: 'values', stack: 'values', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages', calendar: 'items', string: 'string', kv: 'values', pipes: 'graph', context_graph: 'graph', scatter: 'points' };
+  // the form's own sample face (the widget element's, per form — a radial's, a table's) when the element is on the page;
+  // the shape's local sample otherwise. This is what made every placed widget look the same: one sample per SHAPE, so
+  // every level was the same dial and every set the same bars, and a form outside SHAPE fell to the one block.
+  const sampleOf = (form) => { try { if (root.VeraWidget && typeof root.VeraWidget.sample === 'function') { const s = root.VeraWidget.sample(form); if (s != null) return s; } } catch (_) {} return SAMPLE[SHAPE[form] || 'string'] || SAMPLE.string; };
   function widgetOf(c) {
     c = c || {}; const k = String(c.kind || '').toLowerCase();
-    if (c.form) return { form: c.form, data: c.data != null ? c.data : (SAMPLE[SHAPE[c.form] || 'string'] || SAMPLE.string), sample: c.data == null };
-    if (k === 'widget') { const f = String(c.d || '').replace(/^widget\s*·\s*/, '').trim() || 'kv'; return { form: f, data: c.data != null ? c.data : (SAMPLE[SHAPE[f] || 'string'] || SAMPLE.string), sample: c.data == null }; }
+    // a placed record (the WidgetConfig sheet's, carried on the card as `record`) says its own form, size and data first
+    const rec = c.record && typeof c.record === 'object' ? c.record : null;
+    if (rec) { const form = String(rec.form || (rec.draw && rec.draw.form) || c.form || 'kv'); const data = rec.data != null ? rec.data : (c.data != null ? c.data : null);
+      return { form, data: data != null ? data : sampleOf(form), sample: data == null, size: String((rec.frame && rec.frame.size) || (rec.draw && rec.draw.size) || ''), record: rec }; }
+    if (c.form) return { form: c.form, data: c.data != null ? c.data : sampleOf(c.form), sample: c.data == null };
+    if (k === 'widget') { const f = String(c.d || '').replace(/^widget\s*·\s*/, '').trim() || 'kv'; return { form: f, data: c.data != null ? c.data : sampleOf(f), sample: c.data == null }; }
     if (Array.isArray(c.steps) && c.steps.length) return { form: 'stepper', data: { steps: c.steps.map((s) => ({ label: s.label || s.n || '', status: s.status || '' })) } };
     if (Array.isArray(c.rows) && c.rows.length) return { form: 'kv', data: Object.fromEntries(c.rows.slice(0, 8).map((r) => [String(r.k), r.v])) };
     if (Array.isArray(c.bars) && c.bars.length) return { form: 'bars', data: Object.fromEntries(c.bars.map((b, i) => [String(i + 1), typeof b === 'number' ? b : parseFloat(b) || 0])) };
@@ -316,6 +327,23 @@
     if (s === 'values' && d && typeof d === 'object' && !Array.isArray(d)) { const ks = Object.keys(d).filter((k) => isFinite(+d[k])); if (!ks.length) return ''; const top = ks.reduce((a, b) => (+d[b] > +d[a] ? b : a)); return top + ' ' + d[top]; }
     if (s === 'items' && Array.isArray(d)) return d.length + ' rows'; if (s === 'events' && Array.isArray(d)) return d.length + ' lines'; if (s === 'stages' && d && Array.isArray(d.steps)) return d.steps.length + ' steps';
     return ''; }
+  /* ── a widget's OWN face: the registry's renderer (VeraWidget.draw — the one drawer every placement uses) at the
+     scene's widget size (S · M · L, else the record's own size), its sample face until it has read — so a radial is a
+     radial and a table a table, on the plate, in the cards and in the carousel alike. '' without the widget element on
+     the page (the iso group / the widget card stand in). ── */
+  function faceHtml(c, wd, wsz) {
+    if (!(root.VeraWidget && typeof root.VeraWidget.draw === 'function') || !wd || !wd.form) return '';
+    const own = wd.size === 'xs' || wd.size === 's' ? 's' : wd.size === 'l' || wd.size === 'xl' ? 'l' : 'm';
+    const sz = wsz === 's' || wsz === 'l' ? wsz : (wsz === 'm' ? 'm' : own);
+    const H = { s: 24, m: 70, l: 110 }[sz]; let rec = wd.record || null;
+    try { if (rec && typeof root.VeraWidget.normalise === 'function') rec = root.VeraWidget.normalise(rec); } catch (_) {}
+    let html = ''; try { html = root.VeraWidget.draw(wd.form, wd.data, sz, { bare: true, height: H, title: (c && c.n) || wd.form, record: rec, draw: rec && rec.draw, proj: 'iso' }); } catch (_) { html = ''; }
+    if (!html) return '';
+    return '<div class="xit-face' + (wd.sample ? ' sample' : '') + '" data-form="' + esc(wd.form) + '" data-size="' + sz + '" style="--fh:' + H + 'px">' + html + '</div>';
+  }
+  // a diagram card's body: its mermaid drawn by the estate's own element (loaded once from the page when a scene needs it)
+  const diagramHtml = (c) => { const src = String((c && (c.mermaid || (String(c.kind || '').toLowerCase() === 'diagram' && c.body))) || '').trim(); return src ? '<span class="xf-diag"><vera-mermaid bare title="diagram">' + esc(src) + '</vera-mermaid></span>' : ''; };
+  function ensureMermaid(doc) { doc = doc || document; if ((root.customElements && root.customElements.get('vera-mermaid')) || doc.getElementById('vera-mermaid-js')) return; const s = doc.createElement('script'); s.id = 'vera-mermaid-js'; s.src = '/ui/elements/vera_mermaid.js'; s.async = true; (doc.head || doc.documentElement).appendChild(s); }
   /* ── an ISO WIDGET GROUP: the widget as an object on the plate — a dial for a level, bars for a set or a series, a
      block for anything else — built through the ISO lib's box/face/scene about (0,0), the item's pin. Pure: the lib
      is handed in (window.VeraISO in the page), so a node test can build one too. Returns null without the lib. ─── */
@@ -530,6 +558,14 @@ vera-exploded .xit.tight{height:var(--ih);min-height:0;overflow:hidden}vera-expl
 vera-exploded .xit.tight .xit-body{display:none}vera-exploded .xit.tight.open .xit-body,vera-exploded .xit.tight:hover .xit-body{display:flex}
 vera-exploded .xit-d{font-family:var(--xp-mono);font-size:10px;color:var(--xp-t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0}
 vera-exploded .xit-cv{display:none}
+/* a widget's own face on the card (defect 37): the registry's drawing at the scene's size; the sample face a little quieter */
+vera-exploded .xit-face{display:block;margin-top:4px;min-height:var(--fh,70px);overflow:hidden;border-radius:4px;flex-shrink:0}vera-exploded .xit-face[data-size="s"]{min-height:0}vera-exploded .xit-face.sample{opacity:.82}
+vera-exploded .xit-face .vw-sampled,vera-exploded .xit-face .vw-form,vera-exploded .xit-face .vw-body{display:block}
+vera-exploded .xit.tight .xit-face{display:none}vera-exploded .xit.tight.open .xit-face,vera-exploded .xit.tight:hover .xit-face{display:block}
+vera-exploded .xp-rc .xit-face{margin-top:6px}
+/* a diagram card: the estate's mermaid element on the card, sized for a card */
+vera-exploded .xf-diag{display:block;margin-top:3px}vera-exploded .xf-diag vera-mermaid{display:block;width:100%;height:110px;min-height:0}vera-exploded .xit.ct .xf-diag vera-mermaid{height:150px}
+vera-exploded .xp-rc .b .xf-diag vera-mermaid,vera-exploded .xp-it .b .xf-diag vera-mermaid{height:130px}
 vera-exploded .xit-body{display:flex;flex-direction:column;gap:3px;margin-top:4px}
 vera-exploded .xit-x{display:none;flex-direction:column;gap:2px;margin-top:5px;padding-top:5px;box-shadow:inset 0 1px 0 0 var(--xp-bd);max-height:170px;overflow:auto}vera-exploded .xit.open .xit-x{display:flex}
 vera-exploded .xit-x pre{margin:0;font-family:var(--xp-mono);font-size:9px;white-space:pre-wrap;color:var(--xp-t2);line-height:1.45}
@@ -619,6 +655,7 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
     if (k === 'diff' && (c.p != null || c.m != null)) h += '<div class="pm"><b class="p">+' + esc(c.p || 0) + '</b><b class="m">−' + esc(c.m || 0) + '</b></div>';
     if (Array.isArray(c.rows) && c.rows.length) h += '<div class="kv">' + c.rows.slice(0, 8).map((r) => '<b>' + esc(r.k) + '</b><span>' + esc(r.v) + '</span>').join('') + '</div>';
     if (Array.isArray(c.steps) && c.steps.length) h += '<div class="steps">' + c.steps.slice(0, 12).map((s) => '<span class="' + esc(s.status || '') + '"><i></i>' + esc(s.label || s.n || '') + (s.cap ? ' · ' + esc(s.cap) : '') + '</span>').join('') + '</div>';
+    if (String(k).toLowerCase() === 'diagram') { const d = diagramHtml(c); if (d) { h += d; return h; } }
     if (c.body) h += '<pre>' + esc(String(c.body).slice(0, 600)) + '</pre>';
     return h;
   }
@@ -634,6 +671,7 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
     if (wd && (k === 'widget' || c.form || c.tpl)) { // a widget without the iso lib: the board's widget card — the reading, its source, a sparkline
       const vs = seriesOf(wd), mx = Math.max.apply(null, vs.map((v) => Math.abs(v))) || 1; on += '<span class="xf-w"><b>' + esc(valueOf(wd) || (wd.sample ? '—' : '')) + '</b><span class="xf-wd">' + esc(wd.form) + (wd.sample ? ' · no reading yet' : '') + '</span></span>' + (vs.length > 1 ? '<span class="xf-ws">' + vs.map((v) => '<i style="height:' + Math.max(8, Math.round(Math.abs(v) / mx * 100)) + '%"></i>').join('') + '</span>' : ''); }
     if (codeish && lines.length) { on += '<span class="' + (k === 'code' ? 'xf-code' : 'xf-term') + '">' + esc(lines[0].slice(0, 80)) + '</span>'; if (lines.length > 1) x += '<pre>' + esc(String(c.body).slice(0, 600)) + '</pre>'; }
+    else if (k === 'diagram' && diagramHtml(c)) { on += diagramHtml(c); x += '<pre>' + esc(String(c.mermaid || c.body || '').slice(0, 600)) + '</pre>'; }   // the diagram on the card, its source behind the click
     else if (c.body && !c.rows) x += '<pre>' + esc(String(c.body).slice(0, 600)) + '</pre>';
     return { on, x };
   }
@@ -689,7 +727,8 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
          keyframe until the panels land. A new station (or a new room) rebuilds, and the panels swing in from flat. ── */
       _renderFront(o) {
         const S = this._S, view = this._r.view, P = o.panels; const PW = o.panel ? o.panel.w : 400, PH = o.panel ? o.panel.h : 472;
-        const rcHtml = (c) => '<div class="xp-rc' + (S.open === c.id ? ' open' : '') + '" data-id="' + esc(c.id) + '" data-ci="' + c.ci + '" style="--cc:' + esc(c.col) + '" title="' + esc(c.card.n || '') + (c.card.d ? ' — ' + esc(c.card.d) : '') + ' · click for the record"><span class="n">' + (c.card.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.card.tpl) + '">⧉</i> ' : '') + esc(c.card.n || '') + '</span><span class="d">' + esc(c.card.d || '') + '</span><div class="b">' + cardBody(c.card) + '</div></div>';
+        const rcFace = (c) => (c.card && (c.card.form || c.card.record || String(c.card.kind || '').toLowerCase() === 'widget') ? faceHtml(c.card, widgetOf(c.card), S.wsz) : '');   // a widget's own face on the carousel card
+        const rcHtml = (c) => '<div class="xp-rc' + (S.open === c.id ? ' open' : '') + '" data-id="' + esc(c.id) + '" data-ci="' + c.ci + '" style="--cc:' + esc(c.col) + '" title="' + esc(c.card.n || '') + (c.card.d ? ' — ' + esc(c.card.d) : '') + ' · click for the record"><span class="n">' + (c.card.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.card.tpl) + '">⧉</i> ' : '') + esc(c.card.n || '') + '</span><span class="d">' + esc(c.card.d || '') + '</span>' + rcFace(c) + '<div class="b">' + cardBody(c.card) + '</div></div>';
         const bodyHtml = (p) => (p.graph && p.graph.nodes.length ? '<div class="xp-gp">' + graphHtml(p.graph, 200) + '</div>' : '') + p.cards.map(rcHtml).join('') + (p.cards.length || (p.graph && p.graph.nodes.length) ? '' : '<div class="d" style="color:var(--xp-t3);font-family:var(--xp-mono);font-size:9px">nothing here for this turn</div>');
         const key = (o.station ? o.station.mid : '') + '|' + P.map((p) => p.n).join(',') + '|' + PW + 'x' + PH;
         let car = view.querySelector('.xp-car');
@@ -698,7 +737,7 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
           view.innerHTML = '<div class="xp-car"><div class="xp-track"><span class="xp-spine"><i></i></span>' + o.leaders.map((l, i) => '<div class="xp-lead ' + l.cls + '" data-i="' + i + '" style="transform:' + l.tf + ';width:' + l.w + '"></div>').join('') + '<div class="xp-runs" data-r="runs"></div>'
             + P.map((p) => '<div class="xp-cp ' + p.cls + '" data-li="' + p.li + '" style="--pc:' + esc(p.col) + ';--d:' + p.d + ';--el:' + p.el + ';left:' + (-PW / 2) + 'px;top:' + (-PH / 2) + 'px;width:' + PW + 'px;height:' + PH + 'px;transform:' + p.tf + '"><div class="xp-cp-h"><i></i>' + esc(p.name) + '<span class="sub"> · ' + esc(p.sub) + '</span><b>' + p.n + '</b><span class="fx2">' + p.focL + '</span></div><div class="xp-cp-b" data-cards="' + esc(p.cards.map((c) => c.id).join(',')) + '">' + bodyHtml(p) + '</div></div>').join('')
             + '</div><button class="xp-nav l" data-a="prev" title="Previous layer">‹</button><button class="xp-nav r" data-a="next" title="Next layer">›</button></div>';
-          car = view.querySelector('.xp-car');
+          car = view.querySelector('.xp-car'); if (view.innerHTML.indexOf('<vera-mermaid') >= 0) ensureMermaid(this.ownerDocument);
         } else {
           P.forEach((p) => { const el = car.querySelector('.xp-cp[data-li="' + p.li + '"]'); if (!el) return; el.className = 'xp-cp ' + p.cls; el.style.transform = p.tf;
             const hb = el.querySelector('.xp-cp-h b'); if (hb) hb.textContent = p.n; const fx = el.querySelector('.xp-cp-h .fx2'); if (fx) fx.textContent = p.focL;
@@ -739,11 +778,14 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
         if (o.mode === 'front') { this._renderFront(o); return; }
         // ISO: the board's card on its stem; a widget as an iso widget group with its frameless caption; a context record as a typed node
         const tplTag = (c) => (c.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.tpl) + '">⧉</i> ' : '');
-        const xitHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const wd = { form: wg.form, data: wg.data, sample: wg.sample }; const b = isoBody(c, wd);
-          return '<div class="xit bb' + (wg.tight ? ' tight' : '') + (open ? ' open' : '') + (c.src ? ' has-img' : '') + '" data-id="' + esc(wg.id) + '" title="' + esc(c.n || '') + (c.d ? ' — ' + esc(c.d) : '') + ' · click for the record" style="left:' + (wg.x - wg.cw / 2).toFixed(1) + 'px;top:' + (wg.y - wg.stem).toFixed(1) + 'px;width:' + wg.cw + 'px;--ih:' + wg.ch + 'px;--cc:' + esc(wg.col) + '">'
-            + '<span class="xit-n">' + tplTag(c) + esc(c.n || '') + '</span><span class="xit-d">' + esc(c.d || '') + '</span>'
+        const xitHtml = (wg, face) => { const c = wg.card, open = S.open === wg.id; const wd = { form: wg.form, data: wg.data, sample: wg.sample }; const b = isoBody(c, face ? null : wd);   // the face says it all: no reading line beside it
+          return '<div class="xit bb' + (wg.tight ? ' tight' : '') + (open ? ' open' : '') + (c.src ? ' has-img' : '') + (face ? ' face' : '') + '" data-id="' + esc(wg.id) + '" title="' + esc(c.n || '') + (c.d ? ' — ' + esc(c.d) : '') + ' · click for the record" style="left:' + (wg.x - wg.cw / 2).toFixed(1) + 'px;top:' + (wg.y - wg.stem).toFixed(1) + 'px;width:' + wg.cw + 'px;--ih:' + wg.ch + 'px;--cc:' + esc(wg.col) + '">'
+            + '<span class="xit-n">' + tplTag(c) + esc(c.n || '') + '</span><span class="xit-d">' + esc(c.d || '') + '</span>' + (face || '')
             + (b.on ? '<span class="xit-body">' + b.on + '</span>' : '') + (c.src ? '<img class="xp-img" src="' + esc(c.src) + '" alt="" loading="lazy">' : '') + (b.x ? '<div class="xit-x">' + b.x + '</div>' : '') + '</div>'; };
-        const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const g = groupOf(wg, ISO, { tilt: 30, azim: 45 }); const b = isoBody(c, null);
+        // a widget on the plate: ITS OWN FORM's face on the board's card (the widget element draws it — defect 37: the
+        // record's form, not one object per shape); the iso group only when the element is not on the page
+        const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const face = faceHtml(c, widgetOf(c), S.wsz); if (face) return xitHtml(wg, face);
+          const g = groupOf(wg, ISO, { tilt: 30, azim: 45 }); const b = isoBody(c, null);
           const cap = '<div class="xit frameless' + (open ? ' open' : '') + '" data-id="' + esc(wg.id) + '" title="' + esc(c.n || '') + (c.d ? ' — ' + esc(c.d) : '') + ' · click for the detail" style="left:' + (wg.x - wg.cw / 2).toFixed(1) + 'px;top:' + (wg.y + 6).toFixed(1) + 'px;width:' + wg.cw + 'px;--cc:' + esc(wg.col) + '"><span class="xit-n">' + tplTag(c) + esc(c.n || '') + '</span>' + (wg.value ? '<span class="xit-cv">' + esc(wg.value) + '</span>' : '') + '<span class="xit-d">' + esc(c.d || '') + '</span>'
             + '<div class="xit-x"><b style="color:var(--xp-t1)">' + esc(c.n || '') + '</b><br><span style="font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3)">' + esc(wg.form) + (wg.sample ? ' · no reading yet' : wg.value ? ' · ' + esc(wg.value) : '') + (c.tpl ? ' · ⧉ ' + esc(c.tpl) : '') + '</span>' + (b.on || b.x ? '<div class="xit-body" style="display:flex">' + b.on + b.x + '</div>' : '') + '</div></div>';
           if (!g) return xitHtml(wg);   // no iso lib on the page: the widget is the board's flat widget card
@@ -752,9 +794,9 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
             + (g.needle ? '<span class="xiw-n" style="left:' + g.needle.x + ';top:' + g.needle.y + ';width:' + g.needle.len + ';transform:rotate(' + g.needle.deg + ')"></span>' : '')
             + (g.big ? '<span class="xiw-b" style="left:' + g.big.x + ';top:' + g.big.y + '">' + esc(g.big.n) + '</span>' : '') + '</div>' + cap; };
         // CARDS: the same card, top-anchored on its row line — name · meta · the body by kind · its chips; the record (the rest of the body, the layer, the turn) behind a click
-        const ctHtml = (c) => { const card = c.card, open = S.open === c.id; const b = isoBody(card, widgetOf(card));
-          return '<div class="xit ct' + (open ? ' open' : '') + (card.src ? ' has-img' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(card.n || '') + (card.d ? ' — ' + esc(card.d) : '') + ' · click for the record" style="' + st(c.x, c.y) + 'width:' + c.w + 'px;--ih:' + c.ih + 'px;--cc:' + esc(c.col) + '">'
-            + '<span class="xit-n">' + tplTag(card) + esc(card.n || '') + '</span><span class="xit-d">' + esc(card.d || '') + '</span>'
+        const ctHtml = (c) => { const card = c.card, open = S.open === c.id; const wd = widgetOf(card); const face = (card.form || card.record || String(card.kind || '').toLowerCase() === 'widget') ? faceHtml(card, wd, S.wsz) : ''; const b = isoBody(card, face ? null : wd);
+          return '<div class="xit ct' + (open ? ' open' : '') + (card.src ? ' has-img' : '') + (face ? ' face' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(card.n || '') + (card.d ? ' — ' + esc(card.d) : '') + ' · click for the record" style="' + st(c.x, c.y) + 'width:' + c.w + 'px;--ih:' + c.ih + 'px;--cc:' + esc(c.col) + '">'
+            + '<span class="xit-n">' + tplTag(card) + esc(card.n || '') + '</span><span class="xit-d">' + esc(card.d || '') + '</span>' + face
             + (b.on ? '<span class="xit-body">' + b.on + '</span>' : '') + (card.src ? '<img class="xp-img" src="' + esc(card.src) + '" alt="" loading="lazy">' : '')
             + '<span class="xit-m">' + (c.badge ? '<span class="xit-b">' + esc(c.badge) + '</span>' : '') + '<span class="xit-c">' + esc(c.chip) + '</span></span>'
             + '<div class="xit-x">' + b.x + '<span class="xit-xr">layer<b>' + esc(c.layer) + '</b></span><span class="xit-xr">turn<b>' + esc(c.turn) + '</b></span>' + (card.kind ? '<span class="xit-xr">kind<b>' + esc(card.kind) + '</b></span>' : '') + '</div></div>'; };
@@ -778,6 +820,7 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
         (o.widgets || []).slice().sort((a, b) => a.y - b.y).forEach((wg) => { h += wg.draw === 'group' ? xigHtml(wg) : xitHtml(wg); });
         if (o.mode === 'cards') h = '<div style="position:relative;width:' + o.size.w + 'px;height:' + o.size.h + 'px">' + h + '</div>';
         const sx = view.scrollLeft, sy = view.scrollTop; view.innerHTML = h; this._applyPan();   // the stage is rebuilt; where it was scrolled to is kept
+        if (h.indexOf('<vera-mermaid') >= 0) ensureMermaid(this.ownerDocument);
         if (o.mode === 'cards' && (sx || sy)) { view.scrollLeft = sx; view.scrollTop = sy; }
         // CARDS: measure every card's height (a tall one pushes the rows under it down) and lay out once more when one
         // changed — twice at most per render, so a hover that grows a card can never chase itself; then, on a new
@@ -791,7 +834,7 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
     }
     root.customElements.define('vera-exploded', VeraExploded);
   }
-  const api = { layout, frontRuns, LAYERS, ensureCss, ensureIso, graphData, widgetOf, groupOf, valueOf, isoBody, ICON, version: 5 };
+  const api = { layout, frontRuns, LAYERS, ensureCss, ensureIso, graphData, widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 6 };
   root.VeraExploded = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
