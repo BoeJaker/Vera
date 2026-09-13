@@ -21,6 +21,15 @@ def test_the_scene_gets_the_window_meter_when_it_mounts():
     assert "if(_ctxMeterLast.max>0&&typeof _xplEl.setBudget==='function') _xplEl.setBudget(_ctxMeterLast.used,_ctxMeterLast.max); }catch(_){}" in src
 
 
+def test_the_card_text_is_the_words_and_the_element_script_is_retried():
+    src = _read("vera", "chat", "chat_panel.html")
+    # the exchange card carried the widget block's chrome ("chosen by aide · form: gauge · Pin to canvas…")
+    assert "c.querySelectorAll('.think-throb,.think-box,.cap-dot,.wblk,.cap-inline,.mm-slot,.mermaid,vera-mermaid,vera-widget,pre,table,figure,.msg-actions,.pa-atts').forEach(x=>x.remove());" in src
+    # a failed static load of the element's script left the scene "loading" for good
+    assert "_xpl.loadTries=(_xpl.loadTries||0)+1;" in src and "s.src='/ui/exploded_element.js?r='+Date.now();" in src
+    assert "could not load its element (/ui/exploded_element.js)" in src
+
+
 def test_explode_folds_the_columns_and_restores_them():
     src = _read("vera", "chat", "chat_panel.html")
     assert "let _xplHid=null;" in src

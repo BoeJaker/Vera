@@ -15666,7 +15666,14 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
   function explodeMode(m){ if(!/^(cards|front|iso)$/.test(m)) return; if(_EMBED.only==='menu'){ _lhmPost('explodeMode',{ m }); return; } _xpl.mode=m; document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===m)); if(!_xpl.on) explode(true); else if(_xplEl&&typeof _xplEl.mode==='function') _xplEl.mode(m); }
   function _xplMount(){
     const host=document.getElementById('xplHost'); if(!host) return;
-    if(!(window.customElements&&customElements.get('vera-exploded'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The exploded scene is loading…</div>'; setTimeout(()=>{ if(_xpl.on) _xplMount(); }, 600); return; }
+    if(!(window.customElements&&customElements.get('vera-exploded'))){
+      // the element's script is a static <script src>: a load that failed (the server warming after a restart) would leave
+      // the scene "loading" for good — ask for it again, three times at most, then say so
+      _xpl.loadTries=(_xpl.loadTries||0)+1;
+      if(_xpl.loadTries>1&&_xpl.loadTries%4===0&&_xpl.loadTries<=12){ try{ const s=document.createElement('script'); s.src='/ui/exploded_element.js?r='+Date.now(); s.async=true; document.head.appendChild(s); }catch(_){} }
+      if(_xpl.loadTries>14){ host.innerHTML='<div class="sys-msg" style="padding:12px">The exploded scene could not load its element (/ui/exploded_element.js) — the server may be restarting; close Explode and try again.</div>'; return; }
+      if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The exploded scene is loading…</div>'; setTimeout(()=>{ if(_xpl.on) _xplMount(); }, 600); return; }
+    _xpl.loadTries=0;
     if(_xplEl&&host.contains(_xplEl)) return;
     host.innerHTML=''; _xplEl=document.createElement('vera-exploded'); _xplEl.setAttribute('mode', _xpl.mode); host.appendChild(_xplEl);
       try{ if(_ctxMeterLast.max>0&&typeof _xplEl.setBudget==='function') _xplEl.setBudget(_ctxMeterLast.used,_ctxMeterLast.max); }catch(_){}   // the chip bar's window meter from the turn before the scene opened
@@ -15748,7 +15755,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
   function _xplScene(){
     const wraps=[...document.querySelectorAll('#msgs .mwrap[data-mid]')]; const turns=[]; let cur=null;
     // the words of a message — never the thinking throbber's phrase, the think box or the streaming dot
-    const txt=(w)=>{ const b=w.querySelector('.msg-body'); if(!b) return ''; if(b.querySelector('.think-throb')) return ''; const c=b.cloneNode(true); c.querySelectorAll('.think-throb,.think-box,.cap-dot').forEach(x=>x.remove()); return String(c.textContent||'').replace(/\s+/g,' ').trim(); };
+    const txt=(w)=>{ const b=w.querySelector('.msg-body'); if(!b) return ''; if(b.querySelector('.think-throb')) return ''; const c=b.cloneNode(true); c.querySelectorAll('.think-throb,.think-box,.cap-dot,.wblk,.cap-inline,.mm-slot,.mermaid,vera-mermaid,vera-widget,pre,table,figure,.msg-actions,.pa-atts').forEach(x=>x.remove()); return String(c.textContent||'').replace(/\s+/g,' ').trim(); };   // the words — the figures are the turn's made/landed items
     const tm=(w)=>{ const t=w.querySelector('.mtime'); return t?String(t.textContent||'').trim():''; };
     wraps.forEach(w=>{ const mid=w.dataset.mid; const isU=w.classList.contains('u');
       if(isU){ cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), readAll:(_TURN_READS[mid]||[]).slice(0,40), rel:(_TURN_RELS[mid]||[]).slice(0,80), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)};
