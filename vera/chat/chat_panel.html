@@ -5817,6 +5817,7 @@ IMPORTANT:
   // the graph "page" is the Context menu grown in place, never a column: the body's columns leave it out
   let _ctxGrown=false;
   function _ctxGrow(on){
+    if(_EMBED.only==='chat'&&_EMBED.harness&&!_ctxGrown){ on=(on==null)?!_ctxRemote.on:!!on; _lhmPost('grow-set',{ on:on }); return _ctxRemote.on; }   // the harness: the LHM slot holds the one large graph — never a second one here
     if(_EMBED.only==='menu'){ on=(on==null)?!_ctxGrown:!!on; try{ window.parent.postMessage({ type:'vera:lhm:grow', on:on, width:on?706:318 }, '*'); }catch(_){} _lhmPost('grown',{ on:on }); }   // the menu instance grows IN PLACE: the harness widens the slot, the chat instance draws the seam runs
     on=(on==null)?!_ctxGrown:!!on; if(on===_ctxGrown && document.getElementById('rightRail').classList.contains('lhm-grown')===on) return _ctxGrown;
     _ctxGrown=on; const host=document.getElementById('rightRail');
@@ -6146,6 +6147,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(!_ctxCol||!host.contains(_ctxCol)){
       if(!(window.customElements&&window.customElements.get('vera-context-graph'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The context graph is loading…</div>'; if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800); return; }
       host.innerHTML=''; _ctxCol=document.createElement('vera-context-graph'); host.appendChild(_ctxCol);
+      _ctxColSig=''; _ctxColMemSig=''; _ctxColDagSig='';   // a fresh element knows nothing yet: every sync feeds it again (the graph was empty after Explode closed)
       // a fresh column shows this session's run again (replayed from its persisted events) and refreshes the runs list
       _ctxRunSid=''; _ctxRunFor=''; _ctxRunPicked=false; _ctxRunsT=0; _ctxEstT=0;
       _ctxCol.addEventListener('vera:ctx:run', ev=>{ const sid=(ev.detail||{}).session_id||SID||''; _ctxRunPicked=sid!==(SID||''); _ctxColShowRun(sid); });
@@ -13274,6 +13276,7 @@ function _embedMount(){
       // every pane is a widget with a record in the registry (widget.template.get lhm:…); ⚙ in edit mode opens it
       panes:[{id:'rpHist',w:'sessions · list',tpl:'lhm:sessions'},{id:'rpCfg',w:'settings · form'},{id:'rpCaps',w:'capabilities · list'},{id:'rpPanels',w:'panels · list'},{id:'rpLoop',w:'loop program · form',tpl:'lhm:loop-graph'},{id:'ctxCanvas',w:'context galaxy · graph',tpl:'lhm:ctx-galaxy'},{id:'ctxMeter',w:'budget bar · meter',tpl:'lhm:ctx-budget'},{id:'paneLoopGraph',w:'loop graph · graph',tpl:'lhm:loop-graph'},{id:'paneMemGraph',w:'memory graph · graph',tpl:'lhm:memory-graph'},{id:'paneCode',w:'file tree · tree',tpl:'lhm:file-tree'},{id:'sbxSessionTools',w:'sandbox actions · controls',tpl:'lhm:actions'},{id:'paneBrowser',w:'browser · panel'},{id:'paneMonitor',w:'monitor · log'}],
       onPick:()=>{ if(host.classList.contains('slim')) toggleRight(); },
+      onCollapse:()=>{ if(!host.classList.contains('slim')) toggleRight(); },   // the active rail icon, or ‹ in the header, folds the menu to the rail
       // "Save as menu…" (the ChatMenu board's edit mode): the composed menu becomes a record of yours through lhm.menu.save
       // the picker's registry groups: every drawable form, then the user's templates (the same reads + Place makes)
       // the ☰ top-level list (the board: Vera · 86 panels · ⌘K): every registered panel, a row opens it beside the chat
@@ -15505,7 +15508,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
   function _frameTop(){ try{ const f=window.frameElement; return f?f.getBoundingClientRect().top:0; }catch(_){ return 0; } }
   function _ctxBroadcast(){ if(_EMBED.only==='menu') return; try{ _lhmPost('ctx',{ nodes:CTX_NODES, edges:CTX_EDGES, query:_ctxQuery, mid:_grFocusMid }); }catch(_){} }
   function _ctxRemoteInfo(){ return { on:_ctxRemote.on, lanes:_ctxRemote.lanes.slice(), block:_ctxRemoteBlock, ctx:CTX_NODES.length, focus:_grFocusMid }; }
-  function _ctxRemoteSet(on){ _ctxRemote.on=!!on; if(!on) _ctxRemote.lanes=[]; document.body.classList.toggle('ctx-remote', !!on); try{ _ctxRunsDraw(); }catch(_){} }
+  function _ctxRemoteSet(on){ _ctxRemote.on=!!on; if(!on) _ctxRemote.lanes=[]; document.body.classList.toggle('ctx-remote', !!on); try{ const gb=document.getElementById('colGraphBtn'); if(gb) gb.classList.toggle('col-on', !!on); }catch(_){} try{ _ctxRunsDraw(); }catch(_){} }
   function explode(on){
     if(_EMBED.only==='menu'){ _lhmPost('explode',{ on }); return; }
     on=(on==null)?!_xpl.on:!!on; _xpl.on=on;
@@ -15547,7 +15550,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
   async function _xplPlaceOpen(mid){
     _xplPlaceMid=mid||_grFocusMid||'';
     // the one sheet (widget_element.js): catalogue · record · live preview; the record lands on the station's plate
-    const S=(function(){ try{ if(window.VeraWidgetConfig&&window.VeraWidgetConfig.open) return window.VeraWidgetConfig; }catch(_){} try{ const p=window.parent; if(p&&p!==window&&p.VeraWidgetConfig&&p.VeraWidgetConfig.open) return p.VeraWidgetConfig; }catch(_){} return null; })();
+    const S=(function(){ try{ const p=window.parent; if(window.frameElement&&p&&p!==window&&p.VeraWidgetConfig&&p.VeraWidgetConfig.open) return p.VeraWidgetConfig; }catch(_){} try{ if(window.VeraWidgetConfig&&window.VeraWidgetConfig.open) return window.VeraWidgetConfig; }catch(_){} return null; })();   // framed (the harness): the host's sheet, over the whole page
     if(S){ const pm=_xplPlaceMid; let rec=null; try{ rec=await S.open({ mode:'add', into:'canvas', title:'Place on the plate'+(pm?' · turn '+pm:''), templates:true, sizes:['s','m','l'] }); }catch(_){ rec=null; }
       if(rec) await _xplPlaceRecord(rec, pm); return; }
     let pop=document.getElementById('xplPlace');
@@ -15617,6 +15620,8 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
         turns.push(cur); return; }
       if(!cur){ cur={mid, who:'aide', t:tm(w), text:'', read:[], say:[], made:[], land:[]}; turns.push(cur); }
       if(!cur.reply){ cur.reply=txt(w).slice(0,160); cur.rt=tm(w); cur.amid=mid; }
+      // a reply still streaming: the turn is PENDING — the scene draws the generating state, never a card of the placeholder
+      { const th=w.querySelector('.think-throb'); if(th){ cur.pending=true; const ph=th.querySelector('.phrase'); cur.phrase=String((ph?ph.textContent:th.textContent)||'').replace(/\s+/g,' ').trim().slice(0,80); } }
       const body=w.querySelector('.msg-body'); if(!body||body.querySelector('.think-throb')) return; const made=cur.made;   // a reply still streaming has made nothing yet
       body.querySelectorAll('.cap-inline').forEach(el=>{ const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:el.textContent)||'').replace(/\s+/g,' ').trim().slice(0,60); if(n) made.push({n, d:'capability · '+(el.classList.contains('error')?'failed':el.classList.contains('done')?'done':'ran'), col:'var(--acc2)', kind:'cap', body:String((el.querySelector('.cap-result,.cap-peek')||{}).textContent||'').slice(0,400)}); });
       body.querySelectorAll('.art-card').forEach(el=>{ const n=String(((el.querySelector('.art-hd .t')||{}).textContent)||'artifact').trim().slice(0,60); made.push({n, d:'artifact', col:'#c9955a', kind:'artifact'}); });
