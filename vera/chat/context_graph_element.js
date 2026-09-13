@@ -116,7 +116,7 @@
     const turnKeys = Object.keys(reads);
     const firstRead = (id) => { const ks = readBy(id); return ks.length ? Math.min.apply(null, ks.map((k) => turnKeys.indexOf(k) + 1)) : 0; };
     const isoP = S.isoProj || ((x, y, z) => { const u = x - cxp, v = y - cyp; return { x: cxp + (u - v) * 0.78, y: cyp + 40 + (u + v) * 0.39 - (z || 0) }; });
-    const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], cedges: [], sedges: [], stems: [], plate: null, regions: [], loopNodes: [], loopStems: [], planNodes: [], estNodes: [], estLabels: [], pos: {}, tokens: 0, lit: 0, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' } };
+    const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], cedges: [], sedges: [], stems: [], plate: null, regions: [], loopNodes: [], loopStems: [], planNodes: [], estNodes: [], estLabels: [], pos: {}, tokens: 0, lit: 0, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' }, discs: [] };
     // the plot's pan/zoom, for what is drawn OUTSIDE it (the lanes) but joins a record inside it
     const GZ = (S.pan && S.pan.z) || 1, GX = (S.pan && S.pan.x) || 0, GY = (S.pan && S.pan.y) || 0;
     const atP = (p) => ({ x: PW / 2 + (p.x - PW / 2) * GZ + GX, y: PHfull / 2 + (p.y - PHfull / 2) * GZ + GY });
@@ -136,7 +136,12 @@
     };
     if (view === 'galaxy') [0.90, 0.75, 0.60].forEach((sc) => { const r = Math.min(RMAX, 52 + (1 - sc) * (RMAX - 52) / 0.4); out.rings.push({ cx: px(cxp), cy: px(cyp), d: px(r * 2) }); });
     if (view === 'time') { const cols = Math.max(turnKeys.length, 1) + 1, cw = (PW - LANE_L - 60) / cols; for (let k = 1; k <= cols; k++) out.sectorLabels.push({ name: k < cols ? (turnKeys[k - 1] || 'm' + k) : 'never', col: 'var(--cg-t3)', x: px(LANE_L + 30 + cw * (k - 0.5)), y: px(LANE_T + 12) }); }
-    if (view === 'iso') { const s = RMAX + 40; const c = isoP(cxp, cyp, 0); out.plate = { x: px(c.x - s * 0.78 * 1.05), y: px(c.y - s * 0.39 * 2 * 1.05), w: px(s * 0.78 * 2.1), h: px(s * 0.39 * 4.2) }; }
+    if (view === 'iso') { const s = RMAX + 40; const c = isoP(cxp, cyp, 0); out.plate = { x: px(c.x - s * 0.78 * 1.05), y: px(c.y - s * 0.39 * 2 * 1.05), w: px(s * 0.78 * 2.1), h: px(s * 0.39 * 4.2) };
+      // the sector discs (the board's annular wedges on the floor): one per family, over the family's sector and the
+      // relevance radii its nodes can take; a ground circle under this projection is the ellipse 1.103 × 0.5515 about
+      // the hub, its parameter phased by 45° — so the wedge is a conic gradient in a circle, then that scale
+      const r0 = 44, r1 = RMAX + 6, kx = 0.78 * Math.SQRT2, ky = 0.39 * Math.SQRT2;
+      srcs.forEach((s2, si) => { const mid = -90 + si * step, half = step / 2 - 5; const a0 = mid - half + 90 + 45; out.discs.push({ x: px(c.x - r1), y: px(c.y - r1), d: px(r1 * 2), col: color(s2), a0: a0.toFixed(1) + 'deg', a1: (half * 2).toFixed(1) + 'deg', m0: (r0 / r1 * 50).toFixed(1) + '%', m1: (r0 / r1 * 50 + 0.6).toFixed(1) + '%', tf: 'scale(' + kx.toFixed(3) + ',' + ky.toFixed(3) + ')', name: s2 }); }); }
     srcs.forEach((s, si) => {
       const list = ctx.filter((n) => (n.source || '?') === s).sort((a, b) => (b.score || 0) - (a.score || 0));
       const mid = -90 + si * step, col = color(s);
@@ -328,6 +333,7 @@ vera-context-graph .cg-btn.on{color:var(--cg-t1);border-color:var(--cg-ac)}
 vera-context-graph .cg-mem.lit,vera-context-graph .cg-mem.on{box-shadow:0 0 0 2px var(--cg-bg),0 0 0 4px var(--cg-t1)}
 vera-context-graph .cg-plate{position:absolute;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:linear-gradient(180deg,color-mix(in srgb,var(--cg-ac) 9%,transparent),color-mix(in srgb,var(--cg-ac) 3%,transparent));pointer-events:none}
 vera-context-graph .cg-stem{position:absolute;width:1px;background:color-mix(in srgb,var(--cg-t3) 60%,transparent);transform:translate(-50%,0);pointer-events:none}
+vera-context-graph .cg-disc{position:absolute;border-radius:50%;pointer-events:none;transform-origin:50% 50%;background:conic-gradient(from var(--a0),color-mix(in srgb,var(--c) 14%,transparent) 0 var(--a1),transparent var(--a1));-webkit-mask:radial-gradient(circle,transparent var(--m0),#000 var(--m1));mask:radial-gradient(circle,transparent var(--m0),#000 var(--m1))}
 vera-context-graph .cg-region{position:absolute;font-size:8.5px;letter-spacing:.13em;text-transform:uppercase;font-weight:600;pointer-events:none}
 vera-context-graph .cg-hub{position:absolute;transform:translate(-50%,-50%);width:52px;height:52px;border-radius:50%;background:var(--cg-s1);box-shadow:0 0 0 1.5px var(--cg-ac);display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
 vera-context-graph .cg-hub b{font-size:11px;font-weight:600;color:var(--cg-ac)}vera-context-graph .cg-hub span{font-family:var(--cg-mono);font-size:8px;color:var(--cg-t2)}
@@ -454,6 +460,7 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
         o.rings.forEach((r) => { h += '<div class="cg-ring" style="' + st(r.cx, r.cy) + 'width:' + r.d + 'px;height:' + r.d + 'px"></div>'; });
         o.spokes.forEach((s) => { h += '<div class="cg-spoke" style="' + st(s.x, s.y) + 'width:' + s.len + 'px;transform:rotate(' + s.deg + 'deg)"></div>'; });
         if (o.plate) h += '<div class="cg-plate" style="' + st(o.plate.x, o.plate.y) + 'width:' + o.plate.w + 'px;height:' + o.plate.h + 'px"></div>';
+        (o.discs || []).forEach((d) => { h += '<div class="cg-disc" data-fam="' + esc(d.name) + '" style="' + st(d.x, d.y) + 'width:' + d.d + 'px;height:' + d.d + 'px;--c:' + esc(d.col) + ';--a0:' + d.a0 + ';--a1:' + d.a1 + ';--m0:' + d.m0 + ';--m1:' + d.m1 + ';transform:' + d.tf + '"></div>'; });
         o.stems.forEach((s) => { h += '<div class="cg-stem" style="' + st(s.x, s.y) + 'height:' + s.h + 'px"></div>'; });
         o.sectorLabels.forEach((s) => { h += '<div class="cg-slbl' + (s.lane ? ' lane' : '') + '" style="' + st(s.x, s.y) + 'color:' + esc(s.col) + '">' + esc(s.name) + '</div>'; });
         o.cedges.forEach((e) => { h += '<div class="cg-edge ' + e.cls + '" title="' + esc(e.title) + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;background:' + esc(e.col) + ';transform:rotate(' + e.deg + 'deg)"></div>'; });
