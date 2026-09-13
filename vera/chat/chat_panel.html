@@ -5800,6 +5800,7 @@ IMPORTANT:
     on=(on==null)?!_ctxGrown:!!on; if(on===_ctxGrown && document.getElementById('rightRail').classList.contains('lhm-grown')===on) return _ctxGrown;
     _ctxGrown=on; const host=document.getElementById('rightRail');
     if(host) host.classList.toggle('lhm-grown', on); document.body.classList.toggle('ctx-grown', on);
+    try{ const gb=document.getElementById('colGraphBtn'); if(gb) gb.classList.toggle('col-on', on); }catch(_){}
     if(on){ _pages.add('graph'); try{ if(window.VeraLHM){ VeraLHM.deep(false); VeraLHM.pick('context'); if(host&&host.classList.contains('slim')) toggleRight(); } }catch(_){} }
     else { _pages.delete('graph'); _ctxRunsDraw(); }
     try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}
@@ -6059,6 +6060,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      a hand-added item has none and gets no run. Exploded, a run leaves the item's station instead of the block. */
   function _cvRunsDraw(){
     const svg=document.getElementById('cvRunsOverlay'); if(!svg) return;
+    if(_runsOff.cv){ svg.innerHTML=''; _cvLastCheck=null; return; }
     const cv=document.querySelector('#canvasColumnBody vera-canvas'); const col=document.getElementById('chatColumn'), ccol=document.getElementById('canvasColumn'), msgs=document.getElementById('msgs');
     if(!_pages.has('canvas')||!cv||!cv.itemRects||!col||!ccol||!msgs){ svg.innerHTML=''; _cvLastCheck=null; return; }
     const den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase();
@@ -6302,8 +6304,12 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      the station in focus stands where the transcript stood and the runs enter its left edge, in the one screen space
      the records are measured in. Never across a node: a branch leaves its rim level, or up or down first when another
      node is in the way. */
+  // the relation runs can be switched off — context → chat, chat ↔ canvas — from the ⋯ tools sheet (persisted)
+  const _runsOff=(function(){ try{ const j=JSON.parse(localStorage.getItem('vera_runs_off')||'{}'); return { ctx:!!j.ctx, cv:!!j.cv }; }catch(_){ return { ctx:false, cv:false }; } })();
+  function _runsToggle(which, on){ if(!(which in _runsOff)) return; _runsOff[which]=(on==null)?!_runsOff[which]:!on; try{ localStorage.setItem('vera_runs_off', JSON.stringify(_runsOff)); }catch(_){} document.querySelectorAll('[data-runs="'+which+'"]').forEach(b=>b.classList.toggle('on', !_runsOff[which])); try{ _ctxRunsDraw(); _cvRunsDraw(); }catch(_){} return !_runsOff[which]; }
   function _ctxRunsDraw(){
     const svg=document.getElementById('ctxRunsOverlay'); if(!svg) return;
+    if(_runsOff.ctx){ svg.innerHTML=''; return; }
     if(Date.now()-_ctxTypingT<900){ svg.innerHTML=''; if(!_ctxTypingTimer) _ctxTypingTimer=setTimeout(()=>{ _ctxTypingTimer=null; _ctxRunsDraw(); }, 950); return; }
     const col=document.getElementById('chatColumn'), gcol=_ctxGrown?document.querySelector('#rightRail.lhm-host > .lhm-det'):document.getElementById('graphColumn');
     if(!_pages.has('graph')||!_ctxCol||!col||!gcol){ svg.innerHTML=''; return; }
@@ -13006,6 +13012,11 @@ function _embedMount(){
     rows.forEach(([k,title])=>{ const g=bar.querySelector('.tb-group[title="'+title+'"]'); if(!g) return;
       if(title==='Execution behaviour'){ const act=document.getElementById('autoActBtn'); if(act) bar.insertBefore(act, g); if(!g.querySelector('.tb-btn')) { g.remove(); return; } }
       const row=document.createElement('div'); row.className='ts-row'; const kk=document.createElement('span'); kk.className='ts-k'; kk.textContent=k; row.appendChild(kk); row.appendChild(g); sheet.appendChild(row); });
+    // the relation runs: two switches (context → chat, chat ↔ canvas), on unless you turn them off
+    { const row=document.createElement('div'); row.className='ts-row'; const kk=document.createElement('span'); kk.className='ts-k'; kk.textContent='Runs'; row.appendChild(kk);
+      const g=document.createElement('div'); g.className='tb-group'; g.title='Relation runs — the lines from the context records to the message, and between the turns and the canvas items';
+      [['ctx','Context → chat','The runs from the context records (the quick menu or the grown graph) to the message in focus'],['cv','Chat ↔ canvas','The runs between the turns and the items they made or read']].forEach(([k,label,title])=>{ const b=document.createElement('button'); b.className='tb-btn'+(_runsOff[k]?'':' on'); b.type='button'; b.dataset.runs=k; b.textContent=label; b.title=title; b.addEventListener('click',()=>_runsToggle(k)); g.appendChild(b); });
+      row.appendChild(g); sheet.appendChild(row); }
     document.addEventListener('click', ev=>{ if(!sheet.classList.contains('on')) return; if(sheet.contains(ev.target)||(ev.target.closest&&ev.target.closest('#hdrMore'))) return; _toolsSheet(false); });
     // the meter opens the Context menu (the board: the budget bar is the way into the context rail)
     const m=document.getElementById('ctxMeter'); if(m&&!m.onclick) m.onclick=()=>{ try{ VeraLHM.pick('context'); const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); }catch(_){} };
@@ -15408,9 +15419,14 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
      what a turn pinned to the canvas, and harvests what the reply produced from the reply itself. ═══ */
   let _xpl={on:false, mode:'cards'}, _xplEl=null, _xplMo=null, _xplT=null;
   const _TURN_READS={}, _TURN_LAND={}, _TURN_RELS={};
+  let _xplHid=null;   // what Explode folded away: { canvas, graph } — restored when the scene closes
   function explode(on){
     if(_EMBED.only==='menu'){ _lhmPost('explode',{ on }); return; }
     on=(on==null)?!_xpl.on:!!on; _xpl.on=on;
+    // the scene has the canvas and the context graph built in (the Canvas board): the columns fold away while it is
+    // open and come back as they were when it closes — + Canvas / + Graph by hand still open one over the scene
+    if(on){ _xplHid={ canvas:_pages.has('canvas'), graph:_ctxGrown }; if(_xplHid.graph) _ctxGrow(false); if(_xplHid.canvas){ _pages.delete('canvas'); _pagesApply(); } }
+    else if(_xplHid){ const hid=_xplHid; _xplHid=null; if(hid.graph) _ctxGrow(true); if(hid.canvas){ _pages.add('canvas'); _pagesApply(); } }
     document.body.classList.toggle('exploded', on);
     if(on) document.body.classList.add('has-msgs');   // the composer docks at the bottom under the scene, never centred over it
     const b=document.getElementById('xplBtn'); if(b) b.classList.toggle('col-on', on);
@@ -17514,7 +17530,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
