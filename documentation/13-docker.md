@@ -76,7 +76,13 @@ creation after any required image preparation succeeds. The projection hashes
 host, resource, and operation identity; command text, environment values,
 target names, connection URLs, and raw approval/idempotency references are not
 retained. It is observe-only and cannot block, retry, or claim completion.
-Streaming routes and stack/store orchestration are not yet fully covered, so
+`docker.stack.deploy` and its canonical `provision.store.deploy` path emit one
+logical deployment observation rather than a second nested `docker.run`
+observation. An already-running store is a read-only short circuit; restarting a
+stopped store, writing Garage configuration, creating a store container, and
+removing or purging a store are observed immediately before their first Docker
+mutation. Streaming routes and the remaining provisioning/build families are
+not yet fully covered, so
 Infrastructure evidence in the Integrations UI is labelled partial.
 
 ---
@@ -119,6 +125,12 @@ the **Provision → Docker** pane):
 | `provision.store.status` | Container state + reachability probe per store |
 | `provision.store.remove` | Remove the container (volumes kept unless `purge_volumes`) |
 | `provision.store.garage.bootstrap` | Layout / key import / bucket+grant via the garage **admin API** — idempotent; also repairs a local stack whose `garage-init` never completed (`fabric.objects.status` → AccessDenied) |
+
+Deploy and remove calls accept optional idempotency, approval-receipt, and retry
+references for observe-only policy projection. Those values, store environment
+settings, generated Garage secrets, and target identities are never retained in
+effect evidence or forwarded as Docker flags. The projection does not yet govern
+execution or record completion receipts.
 
 ---
 

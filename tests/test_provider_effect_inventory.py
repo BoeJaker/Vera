@@ -50,7 +50,13 @@ def test_inventory_does_not_claim_unmigrated_enforcement_or_retry():
     assert infrastructure["effect_observation"] == "partial"
     assert infrastructure["observed_mutations"] == [
         "docker.exec", "docker.stop", "docker.rm", "docker.run",
-        "docker.worker.stop", "docker.image.ensure", "docker.worker.spawn"]
+        "docker.worker.stop", "docker.image.ensure", "docker.worker.spawn",
+        "docker.stack.deploy"]
+    provisioning = _domain(result, "proxmox_and_provisioning")
+    assert provisioning["effect_contract_applied"] is False
+    assert provisioning["effect_observation"] == "partial"
+    assert provisioning["observed_mutations"] == [
+        "provision.store.deploy", "provision.store.remove"]
     assert "infrastructure" in EVIDENCE_FAMILIES
 
 
@@ -87,6 +93,10 @@ def test_inventory_matches_current_infrastructure_mutation_surface():
     for name in ("proxmox.guest.action", "proxmox.guest.clone", "proxmox.vm.create",
                  "proxmox.lxc.create", "proxmox.guest.destroy", "proxmox.fw.rule.add"):
         assert f'"{name}"' in proxmox
+    inventory = {row["id"]: row for row in provider_effect_inventory()["domains"]}
+    assert "docker.stack.deploy" in inventory["container_and_build"]["observed_mutations"]
+    assert inventory["proxmox_and_provisioning"]["observed_mutations"] == [
+        "provision.store.deploy", "provision.store.remove"]
 
 
 def test_integrations_ui_exposes_inventory_without_rollout_controls():

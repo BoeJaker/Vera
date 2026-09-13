@@ -351,6 +351,16 @@ methods, and timestamps—not paths, queries, bodies, headers, credentials, or r
 approval/idempotency references. These measurements do not block current calls
 and are not themselves sufficient evidence to enable enforcement.
 
+Infrastructure observations use the same drawer and evidence schema. Direct
+container lifecycle, image preparation, worker creation, and stack/store
+deployment or removal are represented by hashed host, resource, and operation
+identity. Canonical store deployment deliberately suppresses a second nested
+`docker.run` identity, so one requested deployment produces one logical
+observation. Already-running stores produce none. Environment values, generated
+store secrets, Docker arguments, and raw approval/idempotency references are not
+retained. This infrastructure path remains observe-only and partial while build
+and managed-host provisioning families are still being instrumented.
+
 Vera also applies fixed, fail-closed coverage thresholds before describing the
 evidence as ready for operator review: total observations, read and mutation
 coverage, admitted and denied decisions, and at least one replay-suppression

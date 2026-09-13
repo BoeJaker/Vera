@@ -98,6 +98,7 @@ _DOMAINS: tuple[dict[str, Any], ...] = (
         "observed_mutations": [
             "docker.exec", "docker.stop", "docker.rm", "docker.run",
             "docker.worker.stop", "docker.image.ensure", "docker.worker.spawn",
+            "docker.stack.deploy",
         ],
         "automatic_retries": False,
         "source_modules": [
@@ -134,6 +135,10 @@ _DOMAINS: tuple[dict[str, Any], ...] = (
         "external_mutation": True,
         "effect_family": "infrastructure",
         "effect_contract_applied": False,
+        "effect_observation": "partial",
+        "observed_mutations": [
+            "provision.store.deploy", "provision.store.remove",
+        ],
         "automatic_retries": False,
         "source_modules": [
             "vera/proxmox/proxmox_capabilities.py",
