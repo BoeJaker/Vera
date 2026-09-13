@@ -96,6 +96,12 @@
 '.lhm-quick .wid.lhm-added{background:var(--bg2);border-radius:var(--r-sm,6px);padding:8px 10px;display:flex;flex-direction:column;gap:6px}',
 '.lhm-quick .lhm-added-cap{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--text)}.lhm-quick .lhm-added-cap b{font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.lhm-quick .lhm-added-cap .mono{font-family:var(--mono);font-size:9px;color:var(--dim2)}',
 '.lhm-wedit{display:flex;flex-direction:column;gap:5px;margin-top:10px;flex-shrink:0}',
+'.lhm-ebar{display:none;align-items:center;gap:6px;flex-shrink:0;margin:0 0 8px;padding:5px 6px 5px 9px;border-radius:var(--r-sm,6px);background:color-mix(in srgb,var(--acc) 12%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--acc) 45%,transparent);font-size:10.5px;color:var(--text)}',
+'.lhm-editing .lhm-ebar,.lhm-editing > .lhm-side > .lhm-ebar{display:flex}',
+'.lhm-ebar .lbl{flex:1;min-width:0;color:var(--dim2);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.lhm-ebar .lbl b{color:var(--acc);font-weight:600}',
+'.lhm-ebar button{height:24px;border:1px solid var(--border);border-radius:var(--r-sm,6px);background:var(--bg1);color:var(--text);font:inherit;font-size:10.5px;padding:0 9px;cursor:pointer;white-space:nowrap}',
+'.lhm-ebar button:hover{border-color:var(--acc);color:var(--acc)}.lhm-ebar button.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff)}.lhm-ebar button.pri:hover{filter:brightness(1.08);color:var(--on-acc,#fff)}',
+'.lhm-s-w.lhm-s-added .lhm-s-wbody vera-widget{display:block;width:100%}',
 '.lhm-tsearch{display:flex;align-items:center;gap:6px;margin:6px 8px 4px;height:28px;padding:0 9px;border-radius:var(--r-sm,6px);background:var(--bg,var(--bg0,#0e0f12));box-shadow:inset 0 0 0 1px var(--border);color:var(--dim)}',
     '.lhm-tsearch input{flex:1;min-width:0;border:none;background:transparent;font:inherit;font-size:10.5px;color:var(--text);outline:none}',
     '.lhm-wadd{height:30px;border:none;border-radius:var(--r-sm,6px);font:inherit;font-size:10.5px;color:var(--dim2);text-align:left;padding:0 10px;background:transparent;outline:1px dashed color-mix(in srgb,var(--dim) 60%,transparent);outline-offset:-1px;cursor:pointer}',
@@ -285,7 +291,7 @@
   function _qparts(m){ if(m._parts && m._parts.length) return m._parts; if(typeof m.quick !== 'function') return []; var tmp = _el('div'); try{ m.quick(tmp, { menu:m, render:function(){}, pick:function(){}, deep:function(){} }); }catch(e){} m._parts = Array.prototype.map.call(tmp.querySelectorAll('.wid[data-w]'), function(w){ var k = _qkey(w); return { key:k, label:k.split(' · ')[0], tag:(k.split(' · ')[1] || ''), tpl:_tplOf(w) }; }); return m._parts; }
   function _quickCompose(m){
     var qs = _qspec(m);
-    Array.prototype.forEach.call(_quick.querySelectorAll('.lhm-wedit, .lhm-added-grp, .wid[data-added], .lhm-wbar.lhm-qbar'), function(x){ if(x.parentNode) x.parentNode.removeChild(x); });
+    Array.prototype.forEach.call(_quick.querySelectorAll('.lhm-ebar, .lhm-wedit, .lhm-added-grp, .wid[data-added], .lhm-wbar.lhm-qbar'), function(x){ if(x.parentNode) x.parentNode.removeChild(x); });
     var wids = Array.prototype.slice.call(_quick.querySelectorAll('.wid[data-w]'));
     m._parts = wids.map(function(w){ var k = _qkey(w); return { key:k, label:k.split(' · ')[0], tag:(k.split(' · ')[1] || ''), tpl:_tplOf(w) }; });
     // removed widgets stay out (edit mode shows them dimmed so ✕ can be undone)
@@ -295,8 +301,17 @@
     // what the picker added: another menu's widget, a widget form, a template of yours
     if(qs.added.length){ var grp = _el('div', 'grp lhm-added-grp', 'Added'); grp.setAttribute('data-w', 'added · group'); _quick.appendChild(grp);
       qs.added.forEach(function(a, i){ var w = _addedWidget(m, a, i); if(w) _quick.appendChild(w); }); }
-    if(_editing){ _quickBars(m); _quickFoot(m); }
+    if(_editing){ _quickEbar(m); _quickBars(m); _quickFoot(m); }
   }
+  // the edit bar (the top of the menu while editing): what you are doing, the way in, the way out
+  function _ebar(title, onAdd, onDone){
+    var bar = _el('div', 'lhm-ebar');   // the editor's own, not a part of the menu (no tag, no bar)
+    var lbl = _el('span', 'lbl'); lbl.innerHTML = '<b>✎ Editing</b> ' + _escH(title || 'this menu') + ' — every part is a widget'; bar.appendChild(lbl);
+    var add = _el('button', 'pri', '+ Add widget'); add.type = 'button'; add.title = 'Any widget form, another menu\'s element, a template of yours — with a preview'; add.addEventListener('click', function(ev){ ev.stopPropagation(); onAdd(); }); bar.appendChild(add);
+    var done = _el('button', '', '✓ Done'); done.type = 'button'; done.title = 'Leave edit mode (what you changed stays)'; done.addEventListener('click', function(ev){ ev.stopPropagation(); onDone(); }); bar.appendChild(done);
+    return bar;
+  }
+  function _quickEbar(m){ var bar = _ebar(m.title || m.label, function(){ openPicker(); }, function(){ toggleEdit(false); }); _quick.insertBefore(bar, _quick.firstChild); }
   function _addedWidget(m, a, i){
     var w = null;
     if(a.from){ var src = _menu(a.from); if(src && typeof src.quick === 'function'){ var tmp = _el('div'); try{ src.quick(tmp, { menu:src, render:render, pick:pick, deep:deep }); }catch(e){} var found = Array.prototype.filter.call(tmp.querySelectorAll('.wid[data-w]'), function(x){ return _qkey(x) === a.key; })[0]; if(found){ w = found; w.setAttribute('data-from', a.from); } } }
@@ -319,7 +334,10 @@
     Array.prototype.forEach.call(_quick.querySelectorAll('.wid[data-w]'), function(el){
       var bar = _el('div', 'lhm-wbar lhm-qbar'); var key = _qkey(el);
       var grip = _el('b', '', '⋮⋮'); grip.title = 'Drag to reorder'; bar.appendChild(grip);
-      var cfgB = _el('button', '', '⚙'); cfgB.title = 'This widget\'s record'; cfgB.addEventListener('click', function(ev){ ev.stopPropagation(); openRecord(_tplOf(el), key); }); bar.appendChild(cfgB);
+      var cfgB = _el('button', '', '⚙'); cfgB.title = 'This widget\'s record'; cfgB.addEventListener('click', function(ev){ ev.stopPropagation();
+        var ai = el.hasAttribute('data-added') ? qs.added[+el.getAttribute('data-added')] : null; var S = _surface();
+        if(ai && ai.record && S){ try{ Promise.resolve(S.open({ mode:'edit', into:'lhm', record:ai.record, title:'Edit · ' + (ai.label || ai.record.form || 'widget'), anchor:el })).then(function(rec){ if(!rec) return; ai.record = rec; ai.label = rec.title || rec.form || ai.label; ai.c = rec.source || rec.form || ''; ai.form = rec.form; _qsave(m); render(); }).catch(function(){}); return; }catch(e){} }
+        openRecord(_tplOf(el), key); }); bar.appendChild(cfgB);
       var saveB = _el('button', '', '⧉'); saveB.title = 'Save this configuration as a template'; saveB.addEventListener('click', function(ev){ ev.stopPropagation(); saveAsTemplate(_tplOf(el), key); saveB.classList.add('saved'); }); bar.appendChild(saveB);
       var rmB = _el('button', '', qs.removed[key] ? '↩' : '✕'); rmB.title = qs.removed[key] ? 'Put it back' : 'Remove from this menu';
       rmB.addEventListener('click', function(ev){ ev.stopPropagation(); if(el.hasAttribute('data-added')){ qs.added.splice(+el.getAttribute('data-added'), 1); } else { if(qs.removed[key]) delete qs.removed[key]; else qs.removed[key] = true; } _qsave(m); render(); }); bar.appendChild(rmB);
@@ -530,10 +548,14 @@
       if(el.querySelector(':scope > .lhm-wbar')) return;
       var bar = _el('div', 'lhm-wbar');
       var cfgB = _el('button', '', '⚙'); cfgB.title = 'This widget\'s record';
-      cfgB.addEventListener('click', function(ev){ ev.stopPropagation(); openRecord(_tplOf(el), el.getAttribute('data-w')); });
+      cfgB.addEventListener('click', function(ev){ ev.stopPropagation();
+        var S = _surface(); var box = el.classList.contains('lhm-s-added') ? el : null; var hostEl = _sideHost;
+        if(box && S && hostEl){ var list = _sideAddedOf(hostEl), i = +box.getAttribute('data-added'); var rec = list[i]; if(rec){ try{ Promise.resolve(S.open({ mode:'edit', into:'side', record:rec, title:'Edit · ' + (rec.title || rec.form || 'widget'), anchor:box })).then(function(out){ if(!out) return; list[i] = out; _sideAddedSave(hostEl, list); _sideRedraw(hostEl); }).catch(function(){}); return; }catch(e){} } }
+        openRecord(_tplOf(el), el.getAttribute('data-w')); });
       var saveB = _el('button', '', '⧉'); saveB.title = 'Save as a template of your own';
       saveB.addEventListener('click', function(ev){ ev.stopPropagation(); saveAsTemplate(_tplOf(el), el.getAttribute('data-w')); });
       bar.appendChild(cfgB); bar.appendChild(saveB);
+      if(el.classList.contains('lhm-s-added')){ var rmB = _el('button', '', '✕'); rmB.title = 'Take it out of this menu'; rmB.addEventListener('click', function(ev){ ev.stopPropagation(); var hostEl = _sideHost; if(!hostEl) return; var list = _sideAddedOf(hostEl); list.splice(+el.getAttribute('data-added'), 1); _sideAddedSave(hostEl, list); _sideRedraw(hostEl); }); bar.appendChild(rmB); }
       if(getComputedStyle(el).position === 'static') el.style.position = 'relative';
       el.appendChild(bar);
     });
@@ -569,6 +591,15 @@
   function closeRecord(){ _wcfgOpen = false; if(_host) _host.classList.remove('lhm-wcfgmode'); if(_sideHost) _sideHost.classList.remove('lhm-wcfgmode'); }
   // ── a side menu's edit mode (the Harness board's ✎): every part outlined and named, ⚙ its record, ⧉ a template ──
   var _sideEditOn = {};   // by menu id: a host re-made on every sync keeps its edit mode
+  // the records added to a side menu, by menu id (the host is re-made on every sync; the records live in storage)
+  function _sideAddedOf(host){ var key = host && host._lhmEditKey || ''; try{ var j = localStorage.getItem('vera.lhm.side.added.' + key); var a = j ? JSON.parse(j) : []; return Array.isArray(a) ? a : []; }catch(e){ return []; } }
+  function _sideAddedSave(host, list){ var key = host && host._lhmEditKey || ''; try{ localStorage.setItem('vera.lhm.side.added.' + key, JSON.stringify(list || [])); }catch(e){} }
+  function _sideRedraw(host){ if(host && host._lhmSideCfg) side(host, host._lhmSideCfg); }
+  // + Add widget on a side menu: the WidgetConfig sheet into 'side'; the record is kept and drawn in the Widgets group
+  function sideAdd(host, cfg){
+    var S = _surface(); if(!S){ openRecord('', 'this menu'); return; }
+    try{ Promise.resolve(S.open({ mode:'add', into:'side', title:'Add to ' + ((cfg && cfg.top && cfg.top.title) || 'this menu'), templates:true, sizes:['xs','s','m'] })).then(function(rec){ if(!rec) return; var list = _sideAddedOf(host); list.push(rec); _sideAddedSave(host, list); _sideRedraw(host); }).catch(function(){}); }catch(e){}
+  }
   function sideEdit(host, on){
     if(!host) return false;
     var key = host._lhmEditKey || '';
@@ -713,7 +744,7 @@
     if(!host) return null; cfg = cfg || {}; _css(host.ownerDocument);
     host.innerHTML = '';
     var wrap = _el('div', 'lhm-side');
-    host._lhmEditKey = cfg.id || ''; if(_sideEditOn[host._lhmEditKey]) host._lhmEditing = true;
+    host._lhmEditKey = cfg.id || ''; host._lhmSideCfg = cfg; if(_sideEditOn[host._lhmEditKey]) host._lhmEditing = true;
     // the top row (the Harness board): ☰ swaps this list for the open UI's own menu (or the tabs), the title, the count
     if(cfg.top){ var top = _el('div', 'lhm-s-top'); top.setAttribute('data-w', 'top row · header');
       var tb = _el('button', 'lhm-s-tb' + (cfg.top.on ? ' on' : ''), '☰'); tb.type = 'button'; tb.title = cfg.top.toggleTitle || 'Swap this menu'; tb.addEventListener('click', function(ev){ ev.stopPropagation(); if(cfg.top.toggle) cfg.top.toggle(ev); }); top.appendChild(tb);
@@ -730,6 +761,7 @@
     // ✎ — this menu's edit mode: every part is a widget (its record behind ⚙, ⧉ saves it as a template)
     if(cfg.edit !== false){ var ed = _el('button', 'lhm-s-edit' + (host._lhmEditing ? ' on' : ''), '✎'); ed.type = 'button'; ed.title = 'Edit this menu — every part is a widget: ⚙ its record, ⧉ save it as a template'; ed.addEventListener('click', function(){ sideEdit(host); }); hd.appendChild(ed); }
     if(hd.childNodes.length) wrap.appendChild(hd);
+    if(cfg.edit !== false) wrap.appendChild(_ebar((cfg.top && cfg.top.title) || 'this menu', function(){ sideAdd(host, cfg); }, function(){ sideEdit(host, false); }));
     var bd = _el('div', 'lhm-s-bd');
     // ONE set of open panels: opened by you or by the aide, wherever they sit
     var open = cfg.open || [];
@@ -777,6 +809,14 @@
       if(w.el){ var body = _el('div', 'lhm-s-wbody'); body.appendChild(w.el); box.appendChild(body); }
       bd.appendChild(box);
     });
+    // the records you added to this menu (the sheet's), drawn live; kept per menu
+    var added = _sideAddedOf(host);
+    if(added.length){ if(!ws.length){ var g4 = _el('div', 'lhm-s-grp', 'Widgets'); g4.setAttribute('data-w', 'widgets · host'); bd.appendChild(g4); }
+      added.forEach(function(rec, i){ var box = _el('div', 'lhm-s-w lhm-s-added'); box.setAttribute('data-w', (rec.title || rec.form || 'widget') + ' · ' + (rec.form || 'widget')); box.setAttribute('data-added', String(i));
+        var h = _el('div', 'lhm-s-wh'); h.appendChild(_el('span', '', rec.title || rec.form || 'widget')); h.appendChild(_el('b', 'mono', rec.source || 'sample')); box.appendChild(h);
+        var body = _el('div', 'lhm-s-wbody'); if(window.customElements && customElements.get('vera-widget')){ var vw = document.createElement('vera-widget'); try{ vw.setAttribute('record', JSON.stringify(rec)); }catch(e){} vw.setAttribute('size', (rec.frame && rec.frame.size) || 's'); body.appendChild(vw); }
+        else { var drawn = ''; try{ if(window.VeraWidget && rec.form) drawn = window.VeraWidget.draw(rec.form, _sample(rec.form), 's', { bare:true, title:rec.title }); }catch(e){} body.innerHTML = drawn || _escH(rec.form || 'widget'); }
+        box.appendChild(body); bd.appendChild(box); }); }
     wrap.appendChild(bd);
     if(cfg.note) wrap.appendChild(_el('div', 'lhm-s-note', cfg.note));
     if(cfg.edit !== false) wrap.appendChild(_el('div', 'lhm-wcfg'));   // the record sheet, opened by ⚙ in edit mode
@@ -800,7 +840,7 @@
     return row;
   }
 
-  window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, absorb: absorb, side: side, sideEdit: sideEdit, strips: strips, css: _css,
+  window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, absorb: absorb, side: side, sideEdit: sideEdit, sideAdd: sideAdd, strips: strips, css: _css,
     openRecord: openRecord, closeRecord: closeRecord, saveAsTemplate: saveAsTemplate, placeInto: placeInto,
     compose: compose, composeUndo: composeUndo, saveAsMenu: saveAsMenu, addMenus: addMenus, deep: deep, openPicker: openPicker, closePicker: closePicker,
     get active(){ return { menu: _active, tab: _activeTab, top: _topMode, editing: _editing, hosted: _hosted, embedded: _embedded }; } };
