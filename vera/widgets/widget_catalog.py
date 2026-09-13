@@ -4,7 +4,7 @@ The widget catalogue (UI redesign, Notes/40 section 3; the WidgetSpec board §3)
 the registries every widget record points into - SHAPES, FORMS and SOURCES -
 and the capabilities a renderer or an editor asks before drawing.
 
-  widget.forms(shape?, q?)        the forms, each {id, shape, proj, sizes, options, glyph, motion}
+  widget.forms(shape?, q?, board?)  the forms, each {id, name, boards, shape, proj, sizes, options, glyph, motion}
   widget.sources(shape?, q?)      the sources: one per capability of a known shape (the catalogue is
                                   built from the live capability registry at call time, with a hand
                                   list for the streams and the well-known reads) - {id, shape, cap,
@@ -197,14 +197,21 @@ def source(id_: str) -> Optional[Dict[str, Any]]:
     "widget.forms", memory="off", silent=True,
     http_method="GET", http_path="/ui/widgets/forms", http_tags=["ui", "widgets"],
     description="The widget catalogue's FORMS (the Widgets, WidgetsMotion and WidgetsIso galleries + the three the spec "
-                "adds: panel, form, scatter). Inputs: shape (str - level, series, values, events, graph, items, stages, "
-                "rate, parts, ohlcv, matrix, calendar, string, points, panel, composite), q (str). Output: {ok, forms:"
-                "[{id, shape, proj[], sizes[], options[], glyph, motion}], shapes[], sizes:{size: composition}, count}.")
-async def widget_forms(shape: str = "", q: str = "", trace_id=None):
-    s, qq = str(shape or "").strip().lower(), str(q or "").strip().lower()
-    out = [dict(f) for f in FORMS if (not s or s == "all" or f["shape"] == s) and (not qq or qq in (f["id"] + " " + f["glyph"]))]
+                "adds: panel, form, scatter), each under the board's own name. Inputs: shape (str - level, series, values, "
+                "events, graph, items, stages, rate, parts, ohlcv, matrix, calendar, string, points, panel, composite), "
+                "q (str - matches the id, the name, the glyph), board (str - widgets, motion, iso, spec, reply). Output: "
+                "{ok, forms:[{id, name, boards[], shape, proj[], sizes[], options[], glyph, motion}], shapes[], "
+                "sizes:{size: composition}, boards:{board: count}, count}.")
+async def widget_forms(shape: str = "", q: str = "", board: str = "", trace_id=None):
+    s, qq, b = str(shape or "").strip().lower(), str(q or "").strip().lower(), str(board or "").strip().lower()
+    out = [dict(f) for f in FORMS if (not s or s == "all" or f["shape"] == s) and (not b or b == "all" or b in f["boards"])
+           and (not qq or qq in (f["id"] + " " + f["glyph"] + " " + f["name"].lower()))]
+    boards = {}
+    for f in FORMS:
+        for bb in f["boards"]:
+            boards[bb] = boards.get(bb, 0) + 1
     return {"ok": True, "forms": out, "count": len(out), "shapes": list(SHAPES), "sizes": dict(_rec.COMPOSITIONS),
-            "aliases": dict(_rec.FORM_ALIASES)}
+            "boards": boards, "aliases": dict(_rec.FORM_ALIASES)}
 
 
 @capability(

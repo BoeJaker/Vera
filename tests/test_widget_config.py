@@ -36,7 +36,7 @@ R = _load_record()
 # ── the surface, in the element file ─────────────────────────────────────────
 def test_the_surface_is_exported_from_the_element_file_with_its_contract():
     assert "window.VeraWidgetConfig = { open: cfgOpen, close:" in EL
-    assert "version: 1 }" in EL
+    assert "packs: PACKS.slice(), version: 2 }" in EL
     for key in ("mode", "record", "into", "title", "anchor", "sizes", "shape", "menuItems", "templates", "onChange", "ok"):
         assert re.search(r"opts\.%s\b" % re.escape(key), EL), key
     assert "Promise<record | null>" in EL
@@ -59,6 +59,20 @@ def test_the_catalogue_has_the_context_graph_entries_the_panels_and_the_template
     assert "group('Context graph'" in EL
     # the badges: projection · motion · live
     assert "'moves' : 'still'" in EL and "live ? 'live' : 'record'" in EL
+
+
+def test_the_sheets_polish_names_counts_highlight_packs_range():
+    # catalogue rows carry the BOARD's name with the id as the mono sub-label; the counts line; the highlight follows
+    # every edit; the pack segment previews the skin on the sheet; Range is editable and rides in read.range
+    assert "n: nm || f.id, sub: nm ? f.id : ''" in EL and "' forms · ' + live + ' with a live build'" in EL
+    assert "if (rerender) { renderRec(); renderCat(); renderPacks(); }" in EL
+    assert "const PACKS = [['inherit', 'Page'], ['standard', 'Standard'], ['newspaper', 'News'], ['terminal', 'Term'], ['pixel', 'Pixel']]" in EL
+    assert "S.el.setAttribute('data-style', S.rec.skin)" in EL and "hd.appendChild(h('span', 'vwc-seg vwc-packs'))" in EL
+    assert "rec.read.range = m ? [Number(m[1]), Number(m[2])] : null" in EL and "range: out.read.range || null" in EL
+    # the element itself wears the record's skin and holds still on motion:false
+    assert "if (skin) this.setAttribute('data-style', skin)" in EL and "data-motion=\"0\"" in EL
+    # the composite reads its children (each a record; $subject bound to the composite's read) and draws per slot
+    assert "async _readKids()" in EL and "$subject" in EL and "kids: this._kids || {}" in EL and "vw-slot-h" in EL
 
 
 def test_the_sources_come_per_shape_and_fill_the_record_with_a_mapping():

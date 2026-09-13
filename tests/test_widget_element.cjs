@@ -12,7 +12,7 @@ vm.runInNewContext(src, ctx);
 const W = ctx.window.VeraWidget;
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 
-t('api', ['draw', 'forms', 'normalise', 'formByShape', 'dataFor', 'formFor', 'readable', 'key', 'hydrate', 'css', 'ensureCss', 'sample', 'call'].every((k) => typeof W[k] === 'function') && W.version === 1);
+t('api', ['draw', 'forms', 'normalise', 'formByShape', 'dataFor', 'applyMap', 'pick', 'mapped', 'formFor', 'readable', 'key', 'hydrate', 'css', 'ensureCss', 'sample', 'call'].every((k) => typeof W[k] === 'function') && W.version === 2);
 t('the element is defined', !!defined['vera-widget']);
 const series = [{ t: 1, v: 40 }, { t: 2, v: 48 }, { t: 3, v: 62 }, { t: 4, v: 55 }];
 const fix = {
@@ -74,7 +74,26 @@ t('different forms draw DIFFERENT faces (defect 18: not one placeholder for ever
 t('a placeholder string handed to a numeric form draws the sample, not the complaint', /data-sample="1"/.test(W.draw('meter', 'no reading yet', 'm')) && /vw-meter/.test(W.draw('meter', 'no reading yet', 'm')) && /vw-str">hello/.test(W.draw('string', 'hello', 'm')));
 t('the sample face at XS and S is marked with a class', /vw-xs vw-sampled" data-sample="1"/.test(W.draw('radial', null, 'xs')) && /vw-chip vw-sampled"/.test(W.draw('radial', null, 's')) && /62%/.test(W.draw('radial', null, 's')));
 t('an empty result is no data: the sample face', /data-sample="1"/.test(W.draw('thermo', {}, 'm')) && /data-sample="1"/.test(W.draw('table', [], 'm')) && /data-sample="1"/.test(W.draw('trace', { ok: true, history: [] }, 'm')));
-t('a composite without children draws the sample composite (four children)', (W.draw('composite', null, 'm', { record: { form: 'composite' } }).match(/vw-slot/g) || []).length === 4 && /data-sample="1"/.test(W.draw('composite', null, 'm')));
+t('a composite without children draws the sample composite (four children)', (W.draw('composite', null, 'm', { record: { form: 'composite' } }).match(/class="vw-slot" data-slot/g) || []).length === 4 && /data-sample="1"/.test(W.draw('composite', null, 'm')));
+// ── read.map: the source's envelope through the record's field mapping; read.range: the level's lo – hi ──
+t('pick walks a dotted path with indices', W.pick({ a: { b: [1, { c: 7 }] } }, 'a.b[1].c') === 7 && W.pick({ h: [1, 2, 3] }, 'h[-1]') === 3 && W.pick({ x: 1 }, '$') && W.pick({ x: 1 }, 'nope.deeper') === undefined);
+const env = { ok: true, gpu: { util: 71, cap: 100 }, data: { nodes: [{ hostname: 'ct126', load: 0.6, temp: 71 }, { hostname: 'ct121', load: 0.2, temp: 54 }] }, history: series };
+t('applyMap: a level picks value/max by path', W.applyMap(env, { value: 'gpu.util', max: 'gpu.cap' }, 'level').value === 71 && W.applyMap(env, { value: 'gpu.util', max: 'gpu.cap' }, 'level').max === 100);
+const rowsM = W.applyMap(env, { rows: 'data.nodes', name: 'hostname', value: 'load' }, 'items');
+t('applyMap: items pick the rows and rename their fields', Array.isArray(rowsM) && rowsM.length === 2 && rowsM[0].name === 'ct126' && rowsM[0].value === 0.6 && rowsM[0].hostname === 'ct126');
+t('applyMap: a series picks its list; values from rows become keyed', W.applyMap(env, { series: 'history' }, 'series') === series && /<rect[\s\S]*ct126/.test(W.draw('bars', env, 'm', { map: { values: 'data.nodes', name: 'hostname', value: 'temp' } })));
+t('applyMap: a path that resolves to nothing leaves the data alone (the sample face survives a stale map)', W.applyMap(env, { value: 'nope.x' }, 'level') === env && /data-sample="1"/.test(W.draw('radial', undefined, 'm', { record: { form: 'radial', read: { map: { value: 'gpu.util' } } } })));
+t('draw() honours the record\'s read.map', /71%<\/text>/.test(W.draw('radial', env, 'm', { record: { form: 'radial', read: { map: { value: 'gpu.util', max: 'gpu.cap' } } } })) && /<polyline/.test(W.draw('trace', { ok: true, samples: series }, 'm', { record: { form: 'trace', read: { map: { series: 'samples' } } } })));
+t('draw() honours the record\'s read.range (the record\'s wins over the source\'s)', /width:50\.0%/.test(W.draw('bar', { value: 5, min: 0, max: 100 }, 'm', { record: { form: 'bar', read: { range: [0, 10] } } })));
+const nm = W.normalise({ form: 'radial', source: 'obs.pending', read: { map: { value: 'v' }, range: [0, 20] }, frame: { size: 'm', motion: false, legend: true }, skin: 'pixel', subject: 'nodes.ct126' });
+t('normalise carries read.map · read.range · frame.motion/legend · skin · subject', nm.read.map.value === 'v' && nm.read.range[1] === 20 && nm.frame.motion === false && nm.frame.legend === true && nm.skin === 'pixel' && nm.subject === 'nodes.ct126' && W.normalise({ form: 'radial' }).frame.motion === null && W.normalise({ form: 'radial' }).skin === 'inherit');
+// ── the composite: every child an ordinary widget with its own record and its own read (opts.kids per slot) ──
+const crec = { form: 'composite', layout: '2x2', children: [{ slot: 'a', record: { form: 'radial', title: 'Gate', source: 'obs.pending' } }, { slot: 'b', record: { form: 'trace', title: 'Latency', source: 'sysmon.history', read: { map: { series: 'history' } } } }] };
+const ch = W.draw('composite', undefined, 'm', { record: crec, kids: { a: { value: 3, min: 0, max: 20 }, b: { ok: true, history: series } } });
+t('a composite draws its children from what the element read per slot, through each child\'s own map', (ch.match(/class="vw-slot" data-slot/g) || []).length === 2 && /vw-slot-h">Gate<b>3<\/b>/.test(ch) && /<polyline/.test(ch) && !/data-sample/.test(ch) && /vw-comp-2x2/.test(ch));
+t('a child with nothing read yet draws its sample face, marked', /data-sample="1"/.test(W.draw('composite', undefined, 'm', { record: crec, kids: {} })));
+const rl = W.draw('composite', undefined, 'm', { record: Object.assign({}, crec, { layout: 'report' }), kids: { a: { value: 3, min: 0, max: 20 } } });
+t('a report / rail composite draws its children as chips in rows', /vw-slot-row[\s\S]*class="k">Gate<\/span><span class="vw-chip"/.test(rl) && /vw-comp-report/.test(rl));
 t('css names the sample tag', /\.vw-sampletag/.test(W.css()) && /\.vw-sampled/.test(W.css()));
 // ── the one /mcp/call helper opens prod's envelope and a stand-in's ──
 (async () => {
@@ -84,13 +103,13 @@ t('css names the sample tag', /\.vw-sampletag/.test(W.css()) && /\.vw-sampled/.t
   t('call() opens {type:tool_result, content}, {result} and the bare object', r[0].a === 1 && r[1].b === 2 && r[2].c === 3);
   // ── the surface (window.VeraWidgetConfig): the API, its record shapes, the two context-graph entries ──
   const C = ctx.window.VeraWidgetConfig;
-  t('VeraWidgetConfig: open/close, version 1, the two context-graph entries', C && typeof C.open === 'function' && typeof C.close === 'function' && C.version === 1 && C.entries.length === 2 && C.entries[0].id === 'context_graph' && C.entries[0].size === 'm' && C.entries[1].size === 'xl' && /mini/.test(C.entries[0].n) && /full/.test(C.entries[1].n));
+  t('VeraWidgetConfig: open/close, version 2, the packs, the two context-graph entries', C && typeof C.open === 'function' && typeof C.close === 'function' && C.version === 2 && C.packs.length === 5 && C.packs[0][0] === 'inherit' && C.packs[4][0] === 'pixel' && C.entries.length === 2 && C.entries[0].id === 'context_graph' && C.entries[0].size === 'm' && C.entries[1].size === 'xl' && /mini/.test(C.entries[0].n) && /full/.test(C.entries[1].n));
   const rf = C.recordFrom({ name: 'GPU + queue', form: 'meter', reads: { cap: 'sysmon.status', args: { node: 'ct126' }, every: '10s' }, draw: { form: 'meter', size: 'S' }, placed: ['LHM · Ops glance', 'dashboard'] }, 'lhm');
   t('recordFrom: a template becomes the sheet\'s record (source · read · frame · placement)', rf.form === 'meter' && rf.source === 'sysmon.status' && rf.read.args.node === 'ct126' && rf.read.refresh === '10s' && rf.frame.size === 's' && rf.frame.dive === true && rf.placement.join(',') === 'rail,dashboard' && rf.title === 'GPU + queue');
   const rf2 = C.recordFrom({ form: 'radial' }, 'canvas');
   t('recordFrom: into sets the placement default', rf2.placement.join(',') === 'canvas' && C.recordFrom({ form: 'radial' }, 'reply').placement[0] === 'chat' && C.recordFrom({ form: 'radial' }, 'lhm').placement[0] === 'rail');
-  const ro = C.recordOut(Object.assign(rf2, { projection: 'iso', frame: Object.assign(rf2.frame, { dive: false }) }));
-  t('recordOut: the full shape both readers take (deep_dive + dive, place + placement, draw.proj)', ro.frame.deep_dive === false && ro.frame.dive === false && ro.place === 'canvas' && ro.placement[0] === 'canvas' && ro.draw.proj === 'iso' && Array.isArray(ro.actions) && ro.read && ro.read.args);
+  const ro = C.recordOut(Object.assign(rf2, { projection: 'iso', frame: Object.assign(rf2.frame, { dive: false }), read: Object.assign(rf2.read, { range: [0, 8] }) }));
+  t('recordOut: the full shape both readers take (deep_dive + dive, place + placement, draw.proj, read.range)', ro.frame.deep_dive === false && ro.frame.dive === false && ro.place === 'canvas' && ro.placement[0] === 'canvas' && ro.draw.proj === 'iso' && Array.isArray(ro.actions) && ro.read && ro.read.args && ro.read.range[1] === 8 && !('range' in C.recordOut(C.recordFrom({ form: 'radial' })).read));
   const comp = C.recordFrom({ form: 'composite', layout: '2x2', children: [{ slot: 'a', form: 'radial', source: 'obs.pending', size: 's' }, { slot: 'b', record: { form: 'trace', source: 'sysmon.history' } }] });
   t('recordFrom: a composite\'s children are records', comp.children.length === 2 && comp.children[0].record.form === 'radial' && comp.children[0].record.source === 'obs.pending' && comp.children[1].record.form === 'trace' && comp.layout === '2x2');
   console.log(fails ? fails + ' FAILED' : 'all passed');
