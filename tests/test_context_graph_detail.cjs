@@ -85,7 +85,7 @@ t('miniList: the compact rows, the search applied', /cg-list compact/.test(ml) &
 const mh = G.miniHtml(G.stateFrom({ nodes, rels: edges }), 262, 196, { detail: 'g1', list: true });
 t('miniHtml with detail + list: the box carries the list and the card', /cg-mini listing/.test(mh) && /cg-list compact/.test(mh) && /cg-rec compact" data-id="g1"/.test(mh));
 t('miniHtml without opts: no card, no list', !/cg-rec/.test(G.miniHtml(G.stateFrom({ nodes, rels: edges }), 262, 196)) && !/cg-list/.test(G.miniHtml(G.stateFrom({ nodes, rels: edges }), 262, 196)));
-t('the API exposes the detail functions', typeof G.miniDetail === 'function' && typeof G.miniList === 'function' && typeof G.recordCard === 'function' && typeof G.listHtml === 'function' && G.version === 5);
+t('the API exposes the detail functions', typeof G.miniDetail === 'function' && typeof G.miniList === 'function' && typeof G.recordCard === 'function' && typeof G.listHtml === 'function' && G.version === 6);
 // the list carries the session's memory records too (hollow, no toggle — not prompt records), after the context's
 const sess = [{ id: 'ss1', record_type: 'session', summary: 'the session', created_at: '2026-09-11T09:59:00Z', importance: 0.9 }, { id: 'sf1', record_type: 'fact', text: 'a digest fact', created_at: '2026-09-11T10:02:00Z', importance: 0.3 }];
 const ls = G.compute(Object.assign({}, base, { memory: sess, memEdges: [] }), W, H);
@@ -118,5 +118,16 @@ t('a run node: Activity evidence ↗ and Memory graph ↗ links, on the run root
 t('the links are anchors in the card (the mini\'s too)', (G.recordCard(pr.rec, {}).match(/class="lnk"/g) || []).length === 2 && (G.recordCard(pr.rec, { compact: true }).match(/class="lnk"/g) || []).length === 2 && !/class="lnk"/.test(G.recordCard(p1.rec, {})));
 t('the list head offers Incl all · Excl all when there are prompt records', /data-a="incl-all"/.test(G.listHtml(l0)) && /data-a="excl-all"/.test(G.listHtml(l0)) && /data-a="incl-all"[^>]*>incl</.test(G.listHtml(l0, { compact: true })));
 t('no Incl / Excl all over session records alone', !/data-a="incl-all"/.test(G.listHtml(G.compute(Object.assign({}, base, { nodes: [], memory: sess, memEdges: [] }), W, H))));
+// ── a frame is a turn: its prompt is the focus, read by the question (by 'u') or the response (by 'a'); the turn under the hub ──
+const fTurn = { id: 7001, label: 'Turn 3', ts: '10:03', mid: 'm5', amid: 'm6', turn: 'turn m5', nodes: [Object.assign({}, nodes[0], { by: 'u' }), Object.assign({}, nodes[2], { by: 'u' }), Object.assign({}, nodes[3], { by: 'a', included: true }), Object.assign({}, nodes[1], { included: false })], edges: edges.slice(0, 2) };
+const ft = G.compute(Object.assign({}, base, { focus: [], reads: {}, frames: [fTurn], frame: 7001 }), W, H);
+t('a frame in view: its included records are the focus (lit), not the host\'s', ft.lit === 3 && ft.cnodes.filter((n) => /\blit\b/.test(n.cls)).map((n) => n.id).sort().join(',') === 'g1,v1,w1', String(ft.lit));
+t('read by the question (mid) or the response (amid) as `by` says', JSON.stringify(G.frameReads(fTurn, fTurn.nodes)) === JSON.stringify({ m5: ['v1', 'g1'], m6: ['w1'] }));
+t('the panel says which read it', G.compute(Object.assign({}, base, { focus: [], reads: {}, frames: [fTurn], frame: 7001, sel: 'w1' }), W, H).rec.rows.find((x) => x.k === 'read by').v === 'm6' && G.compute(Object.assign({}, base, { focus: [], reads: {}, frames: [fTurn], frame: 7001, sel: 'v1' }), W, H).rec.rows.find((x) => x.k === 'read by').v === 'm5');
+t('the turn stands under the hub; the live set carries the host\'s label', ft.turn === 'turn m5' && /cg-hubt[^>]*>turn m5</.test(G.drawPlot(ft)) && G.compute(Object.assign({}, base, { turn: 'turn m9' }), W, H).turn === 'turn m9' && !/cg-hubt/.test(G.drawPlot(G.compute(base, W, H))));
+t('a frame without mid falls back to its label', G.compute(Object.assign({}, base, { frames: [{ id: 1, label: 'm2', nodes: nodes.slice(0, 2), edges: [] }], frame: 1 }), W, H).turn === 'turn m2');
+t('the positions carry by (the runs land on the question or the response)', ft.pos.w1.by === 'a' && ft.pos.v1.by === 'u' && G.compute(base, W, H).pos.v1.by === 'u');
+t('no caption in flow/time (the hub is hidden) nor in the quad', !/cg-hubt/.test(G.drawPlot(G.compute(Object.assign({}, base, { view: 'flow', turn: 'turn m9' }), W, H))) && !/cg-hubt/.test(G.drawPlot(G.compute(Object.assign({}, base, { view: 'quad', turn: 'turn m9' }), W, H))));
+t('the mini draws the frame in view and its caption', /cg-hubt[^>]*>turn m5</.test(G.miniHtml(G.stateFrom({ nodes, rels: edges, frames: [fTurn], frame: 7001 }), 262, 196)) && (G.miniHtml(G.stateFrom({ nodes, rels: edges, frames: [fTurn], frame: 7001 }), 262, 196).match(/cg-node /g) || []).length === 4);
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
