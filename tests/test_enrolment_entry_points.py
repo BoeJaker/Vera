@@ -99,7 +99,9 @@ def lxc_create_ns(registry):
 
     return load(PMX_SRC, {"cap_lxc_create"}, {
         "_get_cluster": get_cluster, "_pve": pve, "_guest_ip": guest_ip, "emit_event": _emit,
-        "_cap": registry.get, "asyncio": types.SimpleNamespace(sleep=_no_sleep)})
+        "_cap": registry.get, "asyncio": types.SimpleNamespace(sleep=_no_sleep),
+        "_observe_proxmox_effect": lambda **kw: {
+            "enforcement": "observe_only", "delivery": {"mode": kw["mode"]}}})
 
 
 def test_lxc_create_auto_enrol_goes_through_the_pipeline():

@@ -80,7 +80,8 @@ def proxmox(records, pxstore=None, exec_hosts=EXEC):
           "Optional": Optional, "Tuple": Tuple, "_node_hosts": node_hosts,
           "KEY_CLUSTERS": "vera:proxmox:clusters", "_SECRET_FIELDS": ("token", "console_password"),
           "_redis": lambda: redis, "_cap": registry.get, "now_iso": lambda: "2026-09-13T10:00:00Z",
-          "emit_event": emit,
+          "emit_event": emit, "_observe_proxmox_effect": lambda **kw: {
+              "enforcement": "observe_only", "delivery": {"mode": kw["mode"]}},
           "vsecrets": types.SimpleNamespace(seal=lambda s: "sealed:" + s, open_secret=lambda s: s)}
     exec(compile(functions(PMX_SRC, PMX_WANTED), PMX_SRC, "exec"), ns)
     return ns, redis, runs, events

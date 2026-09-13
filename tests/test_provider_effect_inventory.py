@@ -57,6 +57,11 @@ def test_inventory_does_not_claim_unmigrated_enforcement_or_retry():
     assert provisioning["effect_contract_applied"] is False
     assert provisioning["effect_observation"] == "partial"
     assert provisioning["observed_mutations"] == [
+        "proxmox.guest.action", "proxmox.guest.exec",
+        "proxmox.node.exec", "proxmox.guest.clone",
+        "proxmox.vm.create", "proxmox.lxc.create",
+        "proxmox.guest.destroy", "proxmox.fw.rule.add",
+        "proxmox.fw.rule.delete",
         "provision.store.deploy", "provision.store.remove"]
     assert "infrastructure" in EVIDENCE_FAMILIES
 
@@ -96,8 +101,25 @@ def test_inventory_matches_current_infrastructure_mutation_surface():
         assert f'"{name}"' in proxmox
     inventory = {row["id"]: row for row in provider_effect_inventory()["domains"]}
     assert "docker.stack.deploy" in inventory["container_and_build"]["observed_mutations"]
-    assert inventory["proxmox_and_provisioning"]["observed_mutations"] == [
-        "provision.store.deploy", "provision.store.remove"]
+    provisioning = inventory["proxmox_and_provisioning"]
+    for name in (
+        "proxmox.guest.action", "proxmox.guest.exec", "proxmox.node.exec",
+        "proxmox.guest.clone", "proxmox.vm.create", "proxmox.lxc.create",
+        "proxmox.guest.destroy", "proxmox.fw.rule.add",
+        "proxmox.fw.rule.delete",
+    ):
+        assert name in provisioning["observed_mutations"]
+    assert provider_effect_inventory()["next_adapter"] == {
+        "domain": "proxmox_and_provisioning",
+        "providers": ["provisioning"],
+        "reason": "managed_host_provisioning_write_operations_remain_unobserved",
+        "required_before_enforcement": [
+            "payload_free_shadow_evidence",
+            "operation_specific_approval",
+            "provider_idempotency_and_receipt_analysis",
+            "credentialed_live_validation_separately_authorized",
+        ],
+    }
 
 
 def test_integrations_ui_exposes_inventory_without_rollout_controls():
