@@ -843,7 +843,7 @@ body[data-cols~="graph"] #graphColumn{order:-1;border-left:none;border-right:1px
 #rightRail.lhm-host.lhm-grown .lhm-quick #ctxGrown{flex:1;min-height:0;display:flex;flex-direction:column}
 #rightRail.lhm-host.lhm-grown .lhm-quick #ctxGrown vera-context-graph{flex:1;min-height:0}
 #rightRail.lhm-host.lhm-grown .lhm-quick .wid.ctx-grown-bar{padding:6px 9px 0}
-body.ctx-grown #ctxRunsOverlay{display:block;position:fixed;inset:0;width:100vw;height:100vh;z-index:5}
+body.ctx-grown #ctxRunsOverlay,body.ctx-remote #ctxRunsOverlay{display:block;position:fixed;inset:0;width:100vw;height:100vh;z-index:5}
 .tb-btn.col-on{color:var(--acc);border-color:var(--acc)}
 /* Explode: the one scene in the transcript's place, the composer docked under it; the mode segment shows while exploded */
 #xplHost{display:none;flex:1;min-height:0;position:relative}
@@ -1611,6 +1611,8 @@ body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri
 /* ── embedded in parts: only=menu · only=chat · harness=yes ── */
 html[data-only="menu"] body > :not(:has(#rightRail)){display:none!important}
 html[data-only="menu"] :has(> #rightRail) > :not(#rightRail){display:none!important}
+html[data-only="menu"] body > #ctxRunsOverlay{display:none!important}
+html[data-only="menu"] body.ctx-grown > #ctxRunsOverlay{display:block!important;position:fixed;inset:0;width:100vw;height:100vh;z-index:5}   /* the seam runs, over the grown graph */
 html[data-only="menu"] #rightRail,html[data-only="menu"] #rightRail.lhm-host{display:flex!important;width:100%!important;flex:1 1 auto;min-height:0;height:100vh;border:none}
 html[data-only="menu"] #rightRail.lhm-host .lhm-det{flex:1 1 auto;width:auto!important;min-width:0}
 html[data-only="menu"] #rightRail.slim{width:100%!important}
@@ -13020,6 +13022,7 @@ function _lhmPost(act, args){ try{ if(_LHMBC) _LHMBC.postMessage({ act, args:arg
 function _embedMount(){
   if(_EMBED.only==='menu'){
     try{ const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); }catch(_){}
+    try{ const ov=document.getElementById('ctxRunsOverlay'); if(ov&&ov.parentNode!==document.body) document.body.appendChild(ov); }catch(_){}   // the runs overlay out of the hidden column, over the menu's viewport
     window.addEventListener('storage', ev=>{ if(ev.key==='vera_session_id'&&ev.newValue&&ev.newValue!==SID){ try{ loadSession(ev.newValue); }catch(_){} } });
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from==='menu') return; const a=m.args||{};
       if(m.act==='session'&&a.sid&&a.sid!==SID){ try{ loadSession(a.sid); }catch(_){} }
