@@ -42,6 +42,39 @@ def test_a_slow_embed_gives_up_waiting_but_is_not_cancelled():
     assert asyncio.run(scenario()) == [True]
 
 
+def test_bounded_embed_result_tells_a_timeout_from_a_failure():
+    """memory.embed_text / data_fabric._embed keep two breakers — a short
+    slow-cooldown for a backed-up node, the long one for an unreachable node —
+    so they need to know WHICH kind of miss this was."""
+    async def slow():
+        await asyncio.sleep(0.2)
+        return [1.0]
+
+    async def broken():
+        raise RuntimeError("embed node unreachable")
+
+    async def scenario():
+        return (await qec.bounded_embed_result(slow, 0.05),
+                await qec.bounded_embed_result(broken, 1.0))
+
+    assert asyncio.run(scenario()) == ((None, True), (None, False))
+
+
+def test_memory_and_fabric_embeds_wait_bounded_and_do_not_cancel():
+    """The chat page's memory chip waited 10-135 s per embed behind fabric-
+    ingest traffic on 2026-09-13; both embed entry points now go through
+    bounded_embed_result and neither cuts the embed with wait_for."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for rel, fn in (("vera/fabric/memory.py", "embed_text"),
+                    ("vera/fabric/data_fabric.py", "_embed")):
+        src = open(os.path.join(root, *rel.split("/")), encoding="utf-8").read()
+        body = src.split(f"async def {fn}(")[1]
+        body = body[:min(i for i in (body.find("\nasync def "), body.find("\nclass "), body.find("\ndef ")) if i > 0)]
+        assert "bounded_embed_result(" in body, f"{rel}:{fn} must use bounded_embed_result"
+        assert "asyncio.wait_for(" not in body, f"{rel}:{fn} must not cancel the embed"
+        assert "_EMBED_WAIT_S" in body and "SLOW" in body.upper(), f"{rel}:{fn} wait budget + slow-cooldown"
+
+
 def test_a_failing_embed_is_a_miss_not_an_error():
     async def embed():
         raise RuntimeError("embed node unreachable")
