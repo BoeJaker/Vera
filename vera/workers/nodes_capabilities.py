@@ -2092,9 +2092,12 @@ async def cap_provision_node_new(cluster_id: str = "", node: str = "",
     out: Dict[str, Any] = {"ok": True, "vmid": vmid}
     if not enroll:
         return out
-    enr = _rawcap("proxmox.guest.enroll")
+    # One enrolment pipeline: auto-enrol saves the login (register_only runs
+    # proxmox.guest.enroll as its login step).
+    pipeline = _rawcap("autoenroll.enrol")
+    enr = pipeline or _rawcap("proxmox.guest.enroll")
     if not enr:
-        out["enroll_error"] = "proxmox.guest.enroll unavailable"
+        out["enroll_error"] = "autoenroll.enrol / proxmox.guest.enroll unavailable"
         return out
     # The CT needs to boot and pull a DHCP lease before its IP is detectable —
     # retry the enroll until the deadline instead of failing on the first probe.
@@ -2103,10 +2106,16 @@ async def cap_provision_node_new(cluster_id: str = "", node: str = "",
     while time.time() < deadline:
         await asyncio.sleep(6)
         try:
-            last = await enr(cluster_id=cluster_id, node=node, guest_type="lxc",
-                             vmid=vmid, user=user or "root", password=password,
-                             key_path=key_path,
-                             label=hostname or f"ct-{vmid}") or {}
+            if pipeline:
+                last = await enr(cluster_id=cluster_id, node=node, guest_type="lxc",
+                                 vmid=vmid, ssh_user=user or "root", ssh_password=password,
+                                 ssh_key_path=key_path, label=hostname or f"ct-{vmid}",
+                                 steps="enroll_guest", register_only=True) or {}
+            else:
+                last = await enr(cluster_id=cluster_id, node=node, guest_type="lxc",
+                                 vmid=vmid, user=user or "root", password=password,
+                                 key_path=key_path,
+                                 label=hostname or f"ct-{vmid}") or {}
         except Exception as e:
             last = {"error": str(e)}
         if last.get("ok"):

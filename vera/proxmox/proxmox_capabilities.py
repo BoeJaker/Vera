@@ -895,14 +895,17 @@ async def cap_lxc_create(cluster_id: str = "", node: str = "", vmid: int = 0,
             ip = await _guest_ip(rec, node, "lxc", int(vmid))
             if ip:
                 break
-        enrol = _cap("enroll.guest")
+        # One enrolment pipeline: auto-enrol, whose login step is enroll.guest.
+        pipeline = _cap("autoenroll.enrol")
+        enrol = pipeline or _cap("enroll.guest")
         if enrol:
             fqdn = (enroll_fqdn or (hostname if hostname and "." in hostname
                     else (f"{hostname}.local" if hostname else f"ct{vmid}.local")))
+            extra = {"steps": "enroll_guest"} if pipeline else {}
             try:
                 out["enrol"] = await enrol(cluster_id=cluster_id, vmid=int(vmid),
                                            guest_type="lxc", node=node, fqdn=fqdn,
-                                           ip=ip, via_proxmox=True)
+                                           ip=ip, via_proxmox=True, **extra)
             except Exception as e:
                 out["enrol"] = {"error": str(e)}
         else:
@@ -947,7 +950,10 @@ async def cap_guest_destroy(cluster_id: str = "", node: str = "",
                 "when possible. Inputs: cluster_id (str!), node (str!), guest_type "
                 "('qemu'|'lxc'), vmid (int!), user (str='root'), password (str), "
                 "key_path (str), ip (str — override auto-detect), port (int=22), "
-                "label (str). Output: {ok, ssh_host_id, ip, host}.",
+                "label (str). The login is labelled pve:<vmid>@<node> and tagged "
+                "guest:<cluster_id>:<vmid>; auto-enrol runs this as its login step "
+                "for register_only callers (autoenroll.enrol). "
+                "Output: {ok, ssh_host_id, ip, host}.",
 )
 async def cap_guest_enroll(cluster_id: str = "", node: str = "",
                            guest_type: str = "", vmid: int = 0, user: str = "root",
@@ -968,7 +974,7 @@ async def cap_guest_enroll(cluster_id: str = "", node: str = "",
         label=label or f"pve:{vmid}@{node}",
         auth="key" if key_path else "password",
         password=password, key_path=key_path,
-        tags=f"proxmox,{guest_type},{node}", trace_id=None,
+        tags=f"proxmox,{guest_type},{node},guest:{cluster_id}:{int(vmid)}", trace_id=None,
     )
     if not res.get("ok"):
         return {"error": res.get("error", "save failed")}

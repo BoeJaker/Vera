@@ -83,6 +83,8 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, register_ui,
 )
+# A guest's exec login: its pve:<vmid>@ label, else its guest tag (one SSH store).
+from Vera.vera.provisioning import ssh_store_merge_core as _ssh_store
 from Vera.vera.proxmox.pxstore_attach_core import (
     DEFAULT_CT_PATH as _ATTACH_CT_PATH,
     is_token_bindmount_refusal as _is_token_refusal,
@@ -715,12 +717,11 @@ async def cap_fs_sync(cluster_id: str = "", node: str = "",
                 hosts = {}
         for g in vm_targets:
             name = _safe(g["name"], g["vmid"])
-            hrec = next((h for h in hosts.values()
-                         if re.match(rf"^pve:{g['vmid']}@", h.get("label", ""))), None)
+            hrec = _ssh_store.login_for_guest(hosts.values(), cluster_id, g["vmid"])
             if not hrec:
                 skipped.append({"name": name,
                                 "reason": "no enrolled SSH credential (use "
-                                          "proxmox.guest.enroll)"})
+                                          "autoenroll.enrol)"})
                 continue
             ip = hrec.get("host", "")
             usr = hrec.get("user", "root")
@@ -942,8 +943,7 @@ async def cap_disk_resize(cluster_id: str = "", node: str = "",
         if grow_in_guest:
             ex = sys.modules.get("exec_capabilities")
             hosts = await ex._load_hosts() if ex else {}
-            hrec = next((h for h in hosts.values()
-                         if re.match(rf"^pve:{vmid}@", h.get("label", ""))), None)
+            hrec = _ssh_store.login_for_guest(hosts.values(), cluster_id, vmid)
             if not hrec:
                 out["guest_grow"] = "skipped: no enrolled SSH credential for this VM"
             else:
@@ -1879,8 +1879,7 @@ async def cap_vscode_targets(cluster_id: str = "", node: str = "", trace_id=None
         vmid = int(g.get("vmid", 0))
         name = _safe(g.get("name", ""), vmid)
         gnode = g.get("node", "")
-        hrec = next((h for h in hosts.values()
-                     if re.match(rf"^pve:{vmid}@", h.get("label", ""))), None)
+        hrec = _ssh_store.login_for_guest(hosts.values(), cluster_id, vmid)
         smb = f"\\\\{gnode}\\{cfg['smb_share']}\\{name}"
         if hrec:
             alias = f"vera-{name}"
