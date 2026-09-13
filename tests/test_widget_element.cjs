@@ -172,6 +172,9 @@ t('css names the sample tag', /\.vw-sampletag/.test(W.css()) && /\.vw-sampled/.t
   t('recordOut: the full shape both readers take (deep_dive + dive, place + placement, draw.proj, read.range)', ro.frame.deep_dive === false && ro.frame.dive === false && ro.place === 'canvas' && ro.placement[0] === 'canvas' && ro.draw.proj === 'iso' && Array.isArray(ro.actions) && ro.read && ro.read.args && ro.read.range[1] === 8 && !('range' in C.recordOut(C.recordFrom({ form: 'radial' })).read));
   const comp = C.recordFrom({ form: 'composite', layout: '2x2', children: [{ slot: 'a', form: 'radial', source: 'obs.pending', size: 's' }, { slot: 'b', record: { form: 'trace', source: 'sysmon.history' } }] });
   t('recordFrom: a composite\'s children are records', comp.children.length === 2 && comp.children[0].record.form === 'radial' && comp.children[0].record.source === 'obs.pending' && comp.children[1].record.form === 'trace' && comp.layout === '2x2');
+  const g1 = W.draw('gauge', { value: 62, min: 0, max: 100, unit: '%' }, 'm', { title: 'GPU' });
+  t('gauge: a level-shaped object is ONE gauge (not value · min · max)', (g1.match(/class="vb-gg"/g) || []).length === 1 && /62/.test(g1), g1.slice(0, 200));
+  t('gauge: a { name: number } object is still one gauge per name', (W.draw('gauge', { cpu: 40, mem: 71 }, 'm').match(/class="vb-gg"/g) || []).length === 2);
   console.log(fails ? fails + ' FAILED' : 'all passed');
   process.exit(fails ? 1 : 0);
 })();

@@ -44,7 +44,7 @@ def test_exploded_the_runs_end_on_the_station_in_the_one_screen_space():
 
 
 def test_the_channels_are_the_geometrys_own_insets():
-    assert "body.ctx-grown #chatColumn{padding-left:var(--ctx-gutter,16px)}" in HTML
+    assert "body.ctx-grown #chatColumn,body.ctx-remote #chatColumn{padding-left:var(--ctx-gutter,16px)}" in HTML   # the gutter is the same whether the graph grew here or in the harness's menu
     assert 'body[data-cols~="canvas"] #canvasColumnBody{padding-left:var(--cv-gutter,18px)}' in HTML
     assert "const px=Math.min(44, 16+18*Math.max(0, rn-1));" in HTML, "the design's graph|chat channel, 44 px at most"
     assert "const px=Math.min(76, 18+18*Math.max(0, n-1));" in HTML, "the design's chat|canvas channel, 76 px at most"
@@ -61,7 +61,7 @@ def test_the_canvas_runs_take_ordered_lanes_from_the_blocks_clipped_edge():
 def test_a_hand_added_item_relates_to_no_turn():
     # the add bar and the panel picker: yours, beside the turn in view, no turn anchor — so no run
     assert "args.anchor = { origin: 'you', beside: focusMid };" in EL
-    assert EL.count("origin: 'you', beside: focusMid") == 2, "the add bar and the panel picker"
+    assert EL.count("origin: 'you', beside: focusMid") == 4, "the add bar, the terminal picker, the widget sheet and the panel picker"
     assert "if (focusMid) args.anchor = { turn: focusMid, mid: focusMid };" not in EL
     # the placer levels it with the turn it was added beside; the head says whose it is
     assert "const levelOf = (it) => it.mid || it.beside || '';" in EL and "beside: c.dataset.beside || ''" in EL

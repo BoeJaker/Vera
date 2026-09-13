@@ -5438,11 +5438,15 @@ IMPORTANT:
     const reads=(o.reads&&typeof o.reads==='object')?o.reads:{};
     const cap=String(reads.cap||o.source||o.cap||'');
     const args=Object.assign({}, (reads.args&&typeof reads.args==='object')?reads.args:{}, (o.args&&typeof o.args==='object')?o.args:{}, o.window?{window:o.window}:{});
-    return { name:String(o.name||o.title||cap||draw), form:_W_KIND[draw]||'panel', draw:{form:_W_DRAWS.includes(draw)?draw:'table', size:_W_SIZE[size]?size:'m', motion:String(o.motion||(o.draw&&o.draw.motion)||'')},
+    const known=_W_DRAWS.includes(draw)||_widgetFormKnown(draw);   // every form the registry draws is a form the model may name
+    return { name:String(o.name||o.title||cap||draw), title:String(o.title||o.name||''), form:_W_KIND[draw]||'panel', draw:{form:known?draw:'table', size:_W_SIZE[size]?size:'m', motion:String(o.motion||(o.draw&&o.draw.motion)||'')},
              reads:{cap, args, every:String(o.refresh||reads.every||''), note:String(reads.note||'')}, placed:['reply'],
              source:{origin:by==='rule'?'rule':'aide', from:String(o.from||cap||'')}, data:o.data!==undefined?o.data:undefined };
   }
   function _widgetKey(rec){ return rec.draw.form+' '+rec.reads.cap+' '+JSON.stringify(rec.reads.args||{}); }
+  // the registry's forms (widget_element.js), for the record builder and the model's hint; the nine chat drawers without it
+  function _widgetForms(){ try{ if(window.VeraWidget&&typeof VeraWidget.forms==='function'){ const ids=VeraWidget.forms().map(f=>f.id).filter(Boolean); if(ids.length) return ids; } }catch(_){} return _W_DRAWS.slice(); }
+  function _widgetFormKnown(f){ return _widgetForms().includes(String(f||'').toLowerCase()); }
   // may the block read its source on its own? only quiet, read-shaped capabilities; anything else waits for a click
   function _widgetReadable(cap){ return /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs)|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.)/.test(cap)&&!/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert)\b/.test(cap); }
   function _widgetBlock(rec, by, data){
@@ -5739,6 +5743,7 @@ IMPORTANT:
       // the session canvas: one implementation (the caps) whoever asks — the model, the column, the pin button
       case 'canvas.add': case 'canvas.show': case 'canvas.pin': case 'canvas.park': case 'canvas.size': {
         const args=Object.assign({}, a, {session_id:SID||''}); if(name==='canvas.show') args.kind=args.kind||'note';
+        if(name==='canvas.add') _cvDirectiveShape(args);   // the model's content, shaped the way the canvas draws it
         const r=await _capCall(name==='canvas.show'?'canvas.add':name, args);
         if(!(r&&r.ok)) return {ok:false,outcome:'failed',note:String((r&&r.error)||'the canvas refused')};
         openPage('canvas');
@@ -5765,6 +5770,32 @@ IMPORTANT:
         return later('the canvas column ('+name+')');
       default: return {ok:false,outcome:'unsupported',note:'the chat has no surface for '+name};
     }
+  }
+  // ⟦canvas.add …⟧ from the model: a widget's content becomes a record (the fence's builder — any registry form, inline data
+  // or a source), a diagram/table/markdown given as a string is shaped, and an item without a key gets one from its title
+  function _cvDirectiveShape(args){
+    const kind=String(args.kind||'note').toLowerCase(); args.kind=kind; let c=args.content;
+    const slug=(s)=>String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,48)||'item';
+    if(kind==='widget'){
+      const src=(c&&typeof c==='object')?(c.record&&typeof c.record==='object'?Object.assign({}, c.record, c.title?{title:c.title}:{}):c):{};
+      const rec=_widgetRecord(src,'aide'); const form=rec.draw.form; const title=String(src.title||rec.name||form);
+      if(args.size&&_W_SIZE[String(args.size)]) rec.draw.size=String(args.size); else if(!args.size) args.size=rec.draw.size;
+      c=Object.assign({}, rec, {widget:form, form, title, record:rec});
+    } else if(kind==='diagram'){ if(typeof c==='string') c={mermaid:c}; c=Object.assign({title:'Diagram'}, c||{}); if(!c.mermaid&&(c.code||c.source)) c.mermaid=c.code||c.source; }
+    else if(kind==='table'){ if(typeof c==='string') c=_cvTableFromMd(c); else if(c&&typeof c==='object'&&!Array.isArray(c.rows)&&typeof (c.md||c.markdown)==='string') c=Object.assign(_cvTableFromMd(c.md||c.markdown), c.caption?{caption:c.caption}:{}); c=Object.assign({columns:[],rows:[]}, c||{}); }
+    else if(kind==='markdown'){ if(typeof c==='string') c={md:c}; }
+    else if(kind==='note'){ if(typeof c==='string') c={text:c}; }
+    else if(kind==='code'){ if(typeof c==='string') c={code:c}; }
+    args.content=c;
+    if(!args.key){ const t=(c&&typeof c==='object')?(c.title||c.caption||c.name||(c.text||c.md||c.code||'').slice(0,40)):''; args.key=kind+':'+slug(t||Date.now()); }
+    return args;
+  }
+  // a markdown table → {columns, rows}
+  function _cvTableFromMd(md){
+    const lines=String(md||'').split(/\r?\n/).map(l=>l.trim()).filter(l=>/^\|.*\|$/.test(l)); const cells=(l)=>l.replace(/^\|/,'').replace(/\|$/,'').split('|').map(x=>x.trim());
+    if(!lines.length) return {columns:[], rows:[]};
+    const columns=cells(lines[0]); const rows=lines.slice(1).filter(l=>!/^\|?\s*:?-{2,}/.test(l)).map(cells).slice(0,60);
+    return {columns, rows};
   }
   // the ask chip: a directive the policy held — allow once · allow always · refuse (ui.directive.answer)
   function _uiAskChip(row){
@@ -5892,8 +5923,11 @@ IMPORTANT:
     body.querySelectorAll('.mm-slot[data-mm]').forEach((el,i)=>{ const s=String(_MM_BLOCKS[el.dataset.mm]||'').trim(); if(!s) return; out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{title:'Diagram', mermaid:s.slice(0,8000), caption:''}, col:'#c58bd6', k:'diagram'}); });
     body.querySelectorAll('table').forEach((el,i)=>{ const columns=[...el.querySelectorAll('thead th, tr:first-child th')].map(x=>String(x.textContent||'').trim()); const rows=[...el.querySelectorAll('tbody tr, tr')].filter(tr=>tr.querySelector('td')).map(tr=>[...tr.querySelectorAll('td')].map(td=>String(td.textContent||'').trim())).slice(0,60); if(!rows.length) return;
       out.push({kind:'table', n:(columns[0]||'Table')+' · '+rows.length+' rows', d:'table · '+rows.length+' rows', content:{columns, rows, caption:''}, col:'#38bdf8', k:'table'}); });
+    body.querySelectorAll('.wblk[id^="w"]').forEach((el,i)=>{ const w=_W_STORE[el.id]; if(!w||!w.rec||el.closest('vera-widget')) return; const rec=Object.assign({}, w.rec, w.data!==undefined?{data:w.data}:{}); const form=rec.draw.form; const title=rec.title||rec.name||form;
+      out.push({kind:'widget', n:title, d:'widget · '+form, content:Object.assign({}, rec, {widget:form, form, title, record:rec}), col:'#a78bfa', k:'widget'}); });
     body.querySelectorAll('vera-widget').forEach((el,i)=>{ let rec=null; try{ rec=el.record||JSON.parse(el.getAttribute('record')||'null'); }catch(_){} const form=(rec&&rec.form)||el.getAttribute('form')||''; if(!form) return;
-      out.push({kind:'widget', n:(rec&&rec.title)||el.getAttribute('title')||form, d:'widget · '+form, content:{widget:form, args:(rec&&(rec.source||rec.args))||{}, title:(rec&&rec.title)||form, record:rec||undefined}, col:'#a78bfa', k:'widget'}); });
+      const title=(rec&&(rec.title||rec.name))||el.getAttribute('title')||form;
+      out.push({kind:'widget', n:title, d:'widget · '+form, content:Object.assign({}, rec&&rec.draw?rec:{}, {widget:form, form, title, args:(rec&&(rec.source||rec.args))||{}, record:rec||undefined}), col:'#a78bfa', k:'widget'}); });
     body.querySelectorAll('img').forEach((el,i)=>{ if(el.closest('.msg-actions,.cap-inline-header,.pa-att')||/\b(ico|icon|avatar)\b/.test(String(el.className||''))) return; const src=el.currentSrc||el.getAttribute('src')||''; if(!src||src.length>200000) return;
       out.push({kind:'image', n:el.getAttribute('alt')||'image', d:el.closest('.sd-img,.cap-imgs')?'image · diffusion':'image', content:{url:src, alt:el.getAttribute('alt')||''}, col:'#e879f9', k:'image'}); });
     return out.slice(0,12);
@@ -6182,6 +6216,11 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       if(inp&&!inp._ctxColBound){ inp._ctxColBound=true; inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxRunsDraw(); }); }
       _ctxCol.addEventListener('vera:ctx:pick', ev=>{ const d=ev.detail||{}; if(!(d.open&&d.id)) return; if(d.family==='memory'&&d.rec){ try{ _memNodeClick(d.id, d.rec); }catch(_){} } else { try{ nodeClick(d.id); }catch(_){} } });
       _ctxCol.addEventListener('vera:ctx:toggle', ev=>{ const id=(ev.detail||{}).id; const n=CTX_NODES.find(x=>x.id===id); if(!n) return; n.included=n.included===false; try{ renderCtxList(); }catch(_){} _ctxColSig=''; _ctxColumnSync(_grFocusMid||''); });
+    // the grown graph's All edges is the mini's (one state); Incl all / Excl all set every record; Preview page opens the browser pane
+    _ctxCol.addEventListener('vera:ctx:alledges', ev=>{ _qGalAll=!!(ev.detail||{}).on; try{ VeraLHM.render(); }catch(_){} });
+    _ctxCol.addEventListener('vera:ctx:toggle-all', ev=>{ const on=!!(ev.detail||{}).included; CTX_NODES.forEach(n=>{ n.included=on; }); try{ renderCtxList(); }catch(_){} _ctxColSig=''; _ctxColumnSync(_grFocusMid||''); try{ VeraLHM.render(); }catch(_){} });
+    _ctxCol.addEventListener('vera:ctx:preview', ev=>{ const u=String((ev.detail||{}).url||''); if(u) try{ _browserNavigate(u); }catch(_){} });
+    try{ if(typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(!!_qGalAll); }catch(_){}   // a fresh element takes the mini's All edges
       _ctxCol.addEventListener('vera:ctx:focus-turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid) return; _grFocusMid=mid; const w=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); try{ w&&w.scrollIntoView({block:'center',behavior:'smooth'}); }catch(_){} _graphAnchorPost(true); });
       const msgs=document.getElementById('msgs');
       if(msgs&&!msgs._ctxColBound){ msgs._ctxColBound=true; msgs.addEventListener('scroll', ()=>_graphAnchorPost(), {passive:true}); msgs.addEventListener('click', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap'); if(w){ _grFocusMid=w.dataset.mid||''; _graphAnchorPost(true); } }); }
@@ -6605,14 +6644,15 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(ren){
       L.push('- Diagrams (ONLY for flows, architectures, processes, sequences, state machines or proportions — never for depicting a scene/place/object, that is an image): emit a ```mermaid fenced block (graph TD/LR, sequenceDiagram, stateDiagram, pie). It renders as an interactive diagram inline — no cap call, and do NOT also narrate the raw code.');
       L.push('- Quick charts: [[cap:render.chart {'+sidArg+'"spec":{"type":"bar","labels":["a","b"],"series":[{"name":"x","values":[1,2]}]}}]].');
-      L.push('- Widgets IN the reply (a live figure as part of the message): emit a ```widget fenced block holding one JSON record — { "form": "trace|radial|thermo|heat|log|lane|pipes|table|files", "source": "<a read-only capability, e.g. obs.health>", "args": {…}, "window": "1h", "refresh": 30, "size": "xs|s|m|l", "title": "…" } — the chat reads the source and draws it (and re-reads every "refresh" seconds); or give the data inline instead of a source: "data": [{"t":…,"v":…},…] for trace, {"value":62,"min":0,"max":100} for radial, {"name":number,…} for thermo. Say what the figure shows in one line; do not narrate the record.');
+      L.push('- Widgets IN the reply (a live figure as part of the message): emit a ```widget fenced block holding one JSON record — { "form": "<one of: '+_widgetForms().join('|')+'>", "title": "…", "size": "xs|s|m|l", and EITHER "source": "<a read-only capability, e.g. obs.health>", "args": {…}, "window": "1h", "refresh": 30 (the chat reads the source and draws it, re-reading every "refresh" seconds) OR the data inline: "data": {"value":62,"min":0,"max":100,"unit":"%"} for gauge|radial|dial|meter|counter|level|tank, {"name":number,…} for thermo|bars|donut|ring|pills, [{"t":…,"v":…},…] for trace|area|sparkline, [{"col":"val",…},…] rows for table|rows|cards|list|ranked|kv }. One fence per figure (three figures = three fences). Say what each shows in one line; do not narrate the record.');
       L.push('- Live HTML: a self-contained widget/mini-UI/animation: [[cap:render.html {'+sidArg+'"title":"…","html":"<!doctype html>…","popout":false}]] (popout:true floats it over the UI). After building a panel with ui.panel.create, show it with [[cap:render.screen {'+sidArg+'"panel_id":"…"}]].');
-      L.push('- CANVAS — for work that BUILDS UP over the conversation (a research board, a plan, a running summary) rather than a one-off visual: create with [[cap:canvas.create {"title":"…"}]], add structured blocks with [[cap:canvas.append {"id":"cv_…","type":"markdown|code|diagram|image|note|table","content":{…}}]], then SHOW it to the user with [[cap:canvas.show {'+sidArg+'"id":"cv_…","pinned":true}]] — pinned:true floats it in a fixed window that stays visible while you both keep talking. It updates LIVE, so keep appending to the same canvas instead of re-posting the whole thing.');
+      L.push('- THE SESSION CANVAS (the column beside this chat; "the canvas", "my canvas", "put it on the canvas"): everything visual in your reply is lifted onto it automatically — each ```widget fence, each ```mermaid fence, each markdown table, code block and image becomes an item anchored to this turn. So to put a widget, a chart or a table on the canvas, WRITE IT IN THE REPLY as that fence/table — never only describe it, and do not use canvas.create/append/show for it. To place or update an item without showing it in the reply, write one directive per item: ⟦canvas.add {"kind":"widget","key":"widget:gpu","content":{"form":"gauge","title":"GPU","data":{"value":62,"min":0,"max":100,"unit":"%"}}}⟧ (content = the same record a widget fence holds) · ⟦canvas.add {"kind":"table","key":"table:hosts","content":{"columns":["host","cpu %"],"rows":[["a",12],["b",40]],"caption":"…"}}⟧ · ⟦canvas.add {"kind":"diagram","key":"diagram:boot","content":{"title":"Boot","mermaid":"graph LR\\n start-->load-->embed-->done"}}⟧ · kinds note {"text"} · markdown {"md"} · code {"code","lang"}. The same key updates the item in place; ⟦canvas.show {"key":"…"}⟧ brings it back into view, ⟦canvas.pin {"key"}⟧ / ⟦canvas.park {"key"}⟧ hold or shelve it, ⟦canvas.size {"key","size":"s|m|l"}⟧ resizes it.');
+      L.push('- A pinned canvas DOCUMENT (a board that outlives this session — a research board, a plan kept over days): create with [[cap:canvas.create {"title":"…"}]], add blocks with [[cap:canvas.append {"id":"cv_…","type":"markdown|code|diagram|image|note|table","content":{…}}]], show it with [[cap:canvas.show {'+sidArg+'"id":"cv_…","pinned":true}]] — it opens in the Canvas panel and updates live; keep appending to the same document instead of re-posting it. Only when the user asks for such a board; the session canvas is the default.');
     }
     if(run){
       L.push('- Run your own code: after writing a snippet you may execute it IN THIS TURN with [[cap:exec.code.run {"language":"python","code":"…"}]] — the output returns to you automatically next turn; interpret it for the user. For write→test→fix loops use [[cap:exec.code.iterate {"language":"python","code":"…","goal":"…","expect":"substring of correct stdout","max_iterations":3}]].');
     }
-    L.push('- Driving the UI inline: a directive of the control plane may be written in the reply as ⟦name {"arg":…}⟧ — e.g. ⟦panel.open {"id":"exec-panel"}⟧, ⟦lhm.focus {"menu":"loop"}⟧, ⟦canvas.add {"kind":"note","key":"note:plan","content":{"text":"…"}}⟧ — the same policy, log and undo as [[cap:ui.directive …]]; the room you changed shows on the next turn.');
+    L.push('- Driving the UI inline: a directive of the control plane may be written in the reply as ⟦name {"arg":…}⟧ — e.g. ⟦panel.open {"id":"exec-panel"}⟧, ⟦lhm.focus {"menu":"loop"}⟧, ⟦canvas.add {"kind":"note","key":"note:plan","content":{"text":"…"}}⟧ — the same policy, log and undo as [[cap:ui.directive …]]; the room you changed shows on the next turn. Write the directive on its own line, args as strict JSON.');
     L.push('- These run under the user\'s explicit settings — do not ask permission again, but only use them when they add real value.');
     return L.join('\n');
   }
@@ -13186,13 +13226,16 @@ function _embedMount(){
       +(S.rows.length?S.rows.map(r=>'<div class="lrow'+(r.f===_qSrcOn?' on':'')+'" data-fam="'+esc(r.f)+'" title="'+esc(r.label+' — '+r.n+' record'+(r.n===1?'':'s')+' · '+_kfmt(r.tok)+' tokens')+'"><span class="tick" style="background:'+r.col+'"></span><span class="nm">'+esc(r.label)+'</span><span class="wbar"><i style="width:'+r.pct.toFixed(0)+'%;background:'+r.col+'"></i></span><span class="rt-n">'+_kfmt(r.tok)+'</span></div>').join('')
         :'<div class="lhm-empty">Nothing assembled yet — the context is gathered as you type, and shown here by source.</div>')+'</div>';
     el.querySelectorAll('.vseg button').forEach(b=>b.addEventListener('click',()=>{ _qGalView=b.dataset.view; VeraLHM.render(); }));
-    el.querySelector('.gal-all').addEventListener('click',()=>{ _qGalAll=!_qGalAll; VeraLHM.render(); });
+    el.querySelector('.gal-all').addEventListener('click',()=>{ _qGalAll=!_qGalAll; try{ if(_ctxCol&&typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(_qGalAll); }catch(_){} VeraLHM.render(); });   // the grown graph follows
     const lb=el.querySelector('.gal-list'); if(lb) lb.addEventListener('click',()=>{ _qGalList=!_qGalList; if(!_qGalList) _qGalQ=''; VeraLHM.render(); });
     const sq=el.querySelector('.gal-srch input'); if(sq){ sq.addEventListener('input',()=>{ _qGalQ=sq.value; VeraLHM.render(); setTimeout(()=>{ try{ const i=el.querySelector('.gal-srch input'); if(i){ i.focus(); i.setSelectionRange(i.value.length,i.value.length); } }catch(_){} },0); }); }
     // the element's mini: a record picked opens its card; the card's include/exclude toggles the record; close puts the card away
     el.querySelectorAll('.cg-mini .cg-node[data-id], .cg-mini .cg-row[data-id]').forEach(d=>d.addEventListener('click',ev=>{ if(ev.target.closest&&ev.target.closest('[data-a]')) return; _qGalSel=(_qGalSel===d.dataset.id?'':d.dataset.id); VeraLHM.render(); }));
     el.querySelectorAll('.cg-mini [data-a="toggle"][data-id]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); const n=CTX_NODES.find(x=>x.id===b.dataset.id); if(n){ n.included=n.included===false; try{ renderCtxList(); }catch(_){} _ctxColSig=''; try{ _ctxColumnSync(_grFocusMid); }catch(_){} } VeraLHM.render(); }));
     el.querySelectorAll('.cg-mini [data-a="close"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); _qGalSel=''; VeraLHM.render(); }));
+    // the mini's list head: Incl all · Excl all; a record's page preview opens the browser pane (the element's hooks)
+    el.querySelectorAll('.cg-mini [data-a="incl-all"], .cg-mini [data-a="excl-all"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); const on=b.dataset.a==='incl-all'; CTX_NODES.forEach(n=>{ n.included=on; }); try{ renderCtxList(); }catch(_){} _ctxColSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} VeraLHM.render(); }));
+    el.querySelectorAll('.cg-mini [data-a="preview"][data-url]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ _browserNavigate(b.dataset.url); }catch(_){} }));
     el.querySelectorAll('.cg-mini [data-a="open"][data-id]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ nodeClick(b.dataset.id); }catch(_){} }));
     el.querySelectorAll('.gm').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; VeraLHM.render(); }));
     el.querySelector('.grp-act').addEventListener('click',()=>{ try{ _ctxFcRefresh(); }catch(_){} });
@@ -17682,7 +17725,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     cmdOpen,cmdClose,
     toggleViewMode,setViewMode,
     setDensity,toggleBlocks,
-    _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
+    _uiAskAnswer,_uiAskPick,_uiDirectiveApply,_cvLandReply,_studioHint,_cvDirectiveShape,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
     _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
