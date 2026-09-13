@@ -126,9 +126,12 @@ build or transfer is required, and worker spawn records its distinct container
 creation after preparation succeeds. Commands, environments, connection URLs,
 host/container/image identifiers, and raw approval/idempotency references are
 not retained. The projection does not block, retry, or record completion.
-Stack/store deployment, build jobs, and Proxmox/provisioning remain outside this
-claim; nested code that reaches an instrumented Docker operation is observed at
-that actual Docker boundary.
+Stack/store deployment and build jobs use the same projection. Proxmox guest
+lifecycle, guest/node execution, clone/create/destroy, and firewall mutations
+also observe one logical operation before the first provider call. General
+managed-host provisioning remains incomplete; only its store deployment and
+removal paths are covered. Nested implementations suppress duplicate identities
+where a public deployment delegates to Docker.
 
 ---
 
@@ -363,7 +366,12 @@ isolated-Python compiler paths use the same provider-neutral Infrastructure
 projection before their first local or remote mutation. Builder source,
 commands, dependencies, environment values, logs, and artifacts never enter the
 ledger. This infrastructure path remains observe-only and partial while
-managed-host provisioning families are still being instrumented.
+managed-host provisioning families are still being instrumented. Proxmox guest
+actions, guest and node commands, cloning, VM/LXC creation, destruction, and
+firewall add/delete now contribute one payload-free observation per public
+operation. The observation records only digests and never retains commands,
+cloud-init material, passwords, SSH keys, addresses, firewall content, provider
+responses, or raw control references.
 
 Vera also applies fixed, fail-closed coverage thresholds before describing the
 evidence as ready for operator review: total observations, read and mutation

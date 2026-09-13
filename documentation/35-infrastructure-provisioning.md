@@ -41,8 +41,21 @@ firewall edits, host commands, package installation, and service deployment are
 real mutations on the selected engine, cluster, or managed host.
 
 `integration.effect.inventory` publishes this distinction without contacting a
-target. These infrastructure paths have not yet adopted the shared external-
-effect contract and must not borrow Generic API, Email, or Telegram evidence.
+target. Docker, builder, store-deployment, and Proxmox mutation paths now create
+provider-neutral, payload-free observations immediately before their first
+external mutation. Proxmox guest actions, guest and node commands, cloning, VM
+and LXC creation, destruction, and firewall edits each produce one logical
+observation containing only digests of the cluster, resource, and operation.
+Commands, guest configuration, credentials, addresses, comments, and raw
+approval or idempotency references are not retained. The observation is not an
+authorization decision: it does not block, retry, open credentials, or record
+provider completion, and it is isolated from existing execution failures.
+
+General managed-host provisioning remains only partly observed: store deploy and
+remove are covered, while package installation, command execution, service
+deployment, and security rollout still require their own boundary migration.
+Infrastructure evidence remains separate and must not borrow Generic API, Email,
+Telegram, or Commerce authority.
 No automatic retry is added: repeating a partially completed provision, guest
 creation, firewall edit, image build, or destructive action without provider
 state and an operation-specific idempotency design can amplify damage.
