@@ -24,6 +24,6 @@ def test_the_graph_page_grows_the_context_menu_in_place():
     assert "function _ctxGraphHost(){ return document.getElementById('ctxGrown') || document.getElementById('graphColumnBody'); }" in HTML
     assert "cta:{get label(){ return _ctxGrown?'Fold back to the quick menu ←':'Expand to the full graph →'; }, run:()=>_ctxGrow()}}," in HTML
     assert "_ctxCol.addEventListener('vera:ctx:collapse', ()=>{ _ctxGrow(false);" in HTML
-    assert "#rightRail.lhm-host.lhm-grown > .lhm-det{width:min(46vw,680px)" in HTML and "body.ctx-grown #ctxRunsOverlay{display:block;position:fixed" in HTML
+    assert "#rightRail.lhm-host.lhm-grown > .lhm-det{width:min(46vw,680px)" in HTML and "body.ctx-grown #ctxRunsOverlay,body.ctx-remote #ctxRunsOverlay{display:block;position:fixed" in HTML
     assert "gcol=_ctxGrown?document.querySelector('#rightRail.lhm-host > .lhm-det'):document.getElementById('graphColumn')" in HTML, "the runs start at the grown panel"
     assert 'id="graphColumn"' in HTML and 'id="graphColumnBody"' in HTML, "the old column stays as a mount host"
