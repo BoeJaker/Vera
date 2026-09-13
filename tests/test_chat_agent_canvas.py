@@ -31,7 +31,7 @@ def test_hint_lists_every_registry_form():
     assert "\"form\": \"<one of: '+_widgetForms().join('|')+'>\"" in src
     assert "function _widgetForms(){ try{ if(window.VeraWidget&&typeof VeraWidget.forms==='function')" in src
     assert "const known=_W_DRAWS.includes(draw)||_widgetFormKnown(draw);" in src
-    assert "draw:{form:known?draw:'table'" in src
+    assert "const form=known?draw:'table';" in src and "draw:{form:form, size:" in src
 
 
 def test_directive_shapes_its_content():
@@ -60,6 +60,18 @@ def test_grown_graph_events_reach_the_chat():
     assert ".cg-mini [data-a=\"incl-all\"], .cg-mini [data-a=\"excl-all\"]" in src
     assert ".cg-mini [data-a=\"preview\"][data-url]" in src
     assert "_qGalAll=!_qGalAll; try{ if(_ctxCol&&typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(_qGalAll); }catch(_){} VeraLHM.render(); });" in src
+
+
+def test_the_reply_record_says_its_renderer_form():
+    # the iso plate drew a lifted gauge as "a panel widget…": the chat's record kept form = the KIND; form is the renderer everywhere else
+    src = _read("vera", "chat", "chat_panel.html")
+    assert "const form=known?draw:'table';" in src
+    assert "form, kind:_W_KIND[form]||'panel', draw:{form:form, size:_W_SIZE[size]?size:'m'" in src
+    assert "w.rec.form=w.rec.draw.form; w.rec.kind=_W_KIND[w.rec.draw.form]||'panel';" in src
+    assert "if(w.rec.reads&&w.rec.reads.cap) delete content.data;" in src
+    assert "kind:'widget', key, form:w.rec.draw.form, record:w.rec}); if(_xpl.on) _xplRefresh();" in src
+    # Pin anchors to the turn (the question's mid): a reply row's pin used to key the landed layer by the reply's own mid
+    assert "function _turnMidOf(wrap){" in src and "const mid=_turnMidOf(btn&&btn.closest('.mwrap'));" in src
 
 
 def test_canvas_draws_a_record_carried_in_the_content():
