@@ -64,3 +64,22 @@ def test_dag_store_query_embeds_wait_without_cancelling():
     assert src.count("_query_embed.bounded_embed(") == 2
     assert "timeout=10)" not in src
     assert "timeout=15," not in src
+
+
+def test_memory_seek_waits_for_its_query_vector_without_cancelling_it():
+    """memory_retrieval cut the seek embed at 10 s with wait_for, which cancelled
+    it: cpu-246 takes ~9.6 s per embed, so the System Comms feed's 45 s poll of
+    memory.seek("daily brief report digest") failed 136 of 167 times in three
+    hours and re-sent the same text every time (2026-09-11)."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, "vera", "fabric", "memory_retrieval.py"), encoding="utf-8").read()
+    assert "asyncio.wait_for(df._embed(query), timeout=10)" not in src
+    assert "_bounded_embed(lambda: df._embed(query), _SEEK_EMBED_WAIT_S)" in src
+
+
+def test_syscomms_panel_polls_only_while_on_screen():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, "vera", "syscomms", "syscomms_panel.html"), encoding="utf-8").read()
+    assert "setInterval(load, 45000);" not in src, "an unguarded 45 s tick remains"
+    assert "setInterval(() => { if (_onScreen()) load(); }, 45000);" in src
+    assert "document.body.offsetWidth > 0" in src

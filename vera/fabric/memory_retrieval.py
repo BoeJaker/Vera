@@ -40,6 +40,13 @@ empty set, i.e. full tooling.
 from __future__ import annotations
 
 import asyncio
+import os as _os_seek
+try:
+    from Vera.vera.dag.query_embed_core import bounded_embed as _bounded_embed
+except Exception:                                    # worktree / app-free import
+    from vera.dag.query_embed_core import bounded_embed as _bounded_embed
+# How long a seek waits for its query vector before ranking by keywords alone.
+_SEEK_EMBED_WAIT_S = float(_os_seek.environ.get("MEMORY_SEEK_EMBED_WAIT_S", "10") or 10)
 import json
 import logging
 import math
@@ -277,9 +284,12 @@ async def _gather_ranked_lists(df, query: str, scope: str, pool: int):
         for rid, sim in res:
             vec_sims[rid] = max(vec_sims.get(rid, 0.0), float(sim))
 
+    # Wait for the query vector, but never cancel the embed: cancelling threw the
+    # node's work away and left nothing in ollama_embed's cache, so a poller that
+    # asked the same question every 45 s re-embedded it every time (2026-09-11).
     embedding = None
     try:
-        embedding = await asyncio.wait_for(df._embed(query), timeout=10)
+        embedding = await _bounded_embed(lambda: df._embed(query), _SEEK_EMBED_WAIT_S)
     except Exception as e:
         log.debug("seek embed: %s", e)
 

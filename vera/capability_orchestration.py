@@ -2321,6 +2321,10 @@ async def ollama_model_disk_size(iid: str, model: str) -> int:
 
 _NODE_USABLE_VRAM: Dict[str, int] = {}           # iid -> usable VRAM bytes MEASURED from a spill
 _MODEL_KV_CACHE: Dict[str, float] = {}           # "iid::model" -> KV bytes/token (fp16)
+try:
+    from Vera.vera import ollama_kv_core as _kv_core
+except Exception:                                    # worktree / app-free import
+    from vera import ollama_kv_core as _kv_core
 
 
 async def ollama_model_kv_per_token(iid: str, model: str) -> float:
@@ -2335,22 +2339,12 @@ async def ollama_model_kv_per_token(iid: str, model: str) -> float:
         return 0.0
     try:
         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=8) as c:
-            r = await c.post(f"{inst['url']}/api/show", json={"name": model})
+            r = await c.post(f"{inst['url']}/api/show", json={"model": model})
             mi = (r.json() or {}).get("model_info") or {}
-        arch = str(mi.get("general.architecture") or "")
-
-        def _g(suffix):
-            return mi.get(f"{arch}.{suffix}")
-
-        n_layers = int(_g("block_count") or 0)
-        n_kv = int(_g("attention.head_count_kv") or _g("attention.head_count") or 0)
-        head_dim = int(_g("attention.key_length") or 0)
-        if not head_dim:
-            emb = int(_g("embedding_length") or 0)
-            n_head = int(_g("attention.head_count") or 0)
-            head_dim = (emb // n_head) if (emb and n_head) else 0
-        if n_layers and n_kv and head_dim:
-            kv = float(n_layers * 2 * n_kv * head_dim * 2)
+        # Hybrid models (qwen3.5: full_attention_interval=4) hold KV in a quarter of
+        # their layers; counting all of them offered the GPU a window 4x too small.
+        kv = _kv_core.kv_bytes_per_token(mi)
+        if kv > 0:
             _MODEL_KV_CACHE[key] = kv
             return kv
     except Exception:
