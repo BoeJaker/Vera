@@ -22,9 +22,9 @@ def test_the_element_draws_bands_and_the_boards_items_and_carries_stack_size_and
     # the iso's items are the Canvas board's: a card (.xit) on a stem, an iso widget group (.xig) with a frameless caption,
     # a typed icon node (.xnd) — no terminal-style frame; the layout is tested by tests/test_exploded_iso_labels.cjs
     for s in ("out.bands = []; out.widgets = []; out.stack = STK; out.wsz = WSZ;", "function widgetOf(c) {", "function groupOf(wg, ISO, o) {", "function isoBody(c, wd) {",
-              "const xitHtml = (wg) =>", "const xigHtml = (wg) =>", '<span class="xstem"', '<div class="xit bb', '<div class="xit frameless', '<div class="xig', '<span class="xnd',
+              "const xitHtml = (wg, face) =>", "const xigHtml = (wg) =>", '<span class="xstem"', '<div class="xit bb', '<div class="xit frameless', '<div class="xig', '<span class="xnd',
               "stack(on) {", "widgetSize(s) {", "tipIn() {", "flatten(done) {", "function ensureIso(doc, onload) {",
-              "view: 'iso', full: false", 'data-a="stack"', 'data-a="wsz"', "widgetOf, groupOf, valueOf, isoBody, ICON, version: 5"):
+              "view: 'iso', full: false", 'data-a="stack"', 'data-a="wsz"', "widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 6"):
         assert s in EL, s
     for css in ("vera-exploded .xit{", "vera-exploded .xig{", "vera-exploded .xnd{", "vera-exploded .xstem{", "vera-exploded .xit.frameless{", "vera-exploded .xf-score{", "vera-exploded .xf-chart{", "vera-exploded .xf-diff{", "vera-exploded .xf-tab{",
                 "vera-exploded .xp-band{", "vera-exploded .xp-band.empty{", ':root[data-blocks="off"] vera-exploded .xp-pl,', "vera-exploded.opening .xp-view{animation:xp-tip", "vera-exploded.closing .xp-view{animation:xp-flat",
