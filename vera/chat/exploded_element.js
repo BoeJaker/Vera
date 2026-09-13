@@ -26,6 +26,9 @@
    <vera-exploded>  API: setScene({turns:[{mid, who, t, text, reply, read:[card], say:[card], made:[card],
                     land:[card]}], sel}) · mode(name) · select(mid) · fit() · state()
    card = {n, d, col, kind, body?, score?, p?, m?, rows?, form?, data?, record? (a placed widget's record: form · source · frame · draw · data), mermaid? (a diagram's source)}
+   a turn IN PROGRESS: turn.pending:true (+ turn.phrase, the thinking phrase the chat rolls) — or a card of kind 'pending'
+   (its n / phrase the phrase) — draws the GENERATING state on the exchange in every mode and never a card; the chat's
+   streaming placeholder text ("Generating…", "Thinking…", an ellipsis) is dropped as a card too. It clears when the reply lands.
    events: vera:xpl:pick {mid, layer, card} · vera:xpl:turn {mid} · vera:xpl:rendered {mode, stations} · vera:xpl:place {mid}
    window.VeraExploded = { layout, frontRuns, LAYERS, version } — layout() and frontRuns() are pure (node-testable). */
 (function (root) {
@@ -79,7 +82,16 @@
     const den = o.den === 'hover' || o.den === 'zen' ? o.den : 'full';
     // an image travels with its card: Full gives it room on the card; Hover and Zen show it over the card instead
     const chOf = (c, CH) => (c && c.src && den === 'full') ? CH + 62 : CH;
-    const cardsOf = (t, k) => (k === 'say' ? (t.say && t.say.length ? t.say : [{ n: t.text || '', d: (t.who || 'you') + (t.t ? ' · ' + t.t : ''), col: 'var(--xp-ac)', kind: 'note' }].concat(t.reply ? [{ n: t.reply, d: 'aide' + (t.rt ? ' · ' + t.rt : ''), col: 'var(--xp-ac)', kind: 'note' }] : [])) : (t[k] || []));
+    // a turn in progress: the feed says so (turn.pending + turn.phrase), or a card of kind 'pending' does; the chat's
+    // streaming placeholder is never a card (the reply text is dropped while it is only the placeholder)
+    const PLACEHOLDER = /^(generating|thinking|working|streaming|writing)?\s*(…|\.\.\.)?\s*$/i;
+    const isPend = (c) => !!c && /^(pending|gen)$/i.test(String(c.kind || ''));
+    const pendOf = (t) => { const pc = [].concat(t.say || [], t.made || []).find(isPend); if (!t.pending && !pc) return null; return { mid: t.mid, phrase: String(t.phrase || (pc && (pc.phrase || pc.n)) || '').replace(PLACEHOLDER, (m) => m ? '' : m).trim() || 'Generating…' }; };
+    const genCard = (t) => { const p = pendOf(t); return p ? [{ n: p.phrase, d: 'aide · generating', col: 'var(--xp-ac2)', kind: 'gen' }] : []; };
+    const cardsOf = (t, k) => { if (k === 'say') { const own = (t.say || []).filter((c) => !isPend(c) && !PLACEHOLDER.test(String(c.n || ''))); const reply = t.reply && !PLACEHOLDER.test(String(t.reply)) && !t.pending ? [{ n: t.reply, d: 'aide' + (t.rt ? ' · ' + t.rt : ''), col: 'var(--xp-ac)', kind: 'note' }] : [];
+        return (own.length ? own : [{ n: t.text || '', d: (t.who || 'you') + (t.t ? ' · ' + t.t : ''), col: 'var(--xp-ac)', kind: 'note' }].concat(reply)).concat(genCard(t)); }
+      return (t[k] || []).filter((c) => !isPend(c)); };
+    out.pending = turns.map(pendOf).filter(Boolean);
     const edge = (a, b, col, cls, title) => { const dx = b.x - a.x, dy = b.y - a.y; out.edges.push({ x: px(a.x), y: px(a.y), len: px(Math.sqrt(dx * dx + dy * dy)), deg: +(Math.atan2(dy, dx) * 180 / Math.PI).toFixed(2), col, cls: cls || '', title: title || '' }); };
     if (!turns.length) return out;
     // the chip bar's filters over the context graph: a lane the user hid, and the related-but-not-injected records
@@ -119,7 +131,7 @@
         const rowH = Math.max.apply(null, cols.map((c) => c.h));
         out.labels.push({ si, mid: t.mid, x: px(PADX), y: px(rowTop), n: (t.who || 'you') + ' · ' + (t.t || ''), k: String(t.text || '').slice(0, 60), cls: 'station' + (lit ? ' on' : ''), col: 'var(--xp-t2)' });
         cols.forEach((c) => { const x = xU(c.i);
-          out.plates.push({ si, mid: t.mid, st: c.i, layer: c.L.key, x: px(x - 16), y: px(rowTop + 22), w: SWD, h: px(c.h), col: c.L.col, cls: 'rect' + (lit ? ' on' : '') });
+          out.plates.push({ si, mid: t.mid, st: c.i, layer: c.L.key, x: px(x - 16), y: px(rowTop + 22), w: SWD, h: px(c.h), col: c.L.col, cls: 'rect' + (lit ? ' on' : '') + (c.L.key === 'say' && pendOf(t) ? ' gen' : '') });
           out.labels.push({ si, mid: t.mid, st: c.i, x: px(x - 4), y: px(rowTop + 22 + 15), n: c.L.name, k: c.L.sub, cls: 'layer hit ' + c.L.key + (lit ? ' on' : ''), col: c.L.col }); });
         // the cards: from the plate's head down on the row pitch; the rows under a tall one move down by its excess
         cols.forEach((c) => { if (c.L.kind === 'graph') return; const x = xU(c.i); let voff = 0;
@@ -178,7 +190,7 @@
       const lanes = LANES.filter((l) => g.laneList.indexOf(l) >= 0);
       const laneCards = lanes.map((l) => { const ms = g.nodes.filter((n) => n.lane === l).sort((a, b) => b.score - a.score); return { n: l, d: ms.length + ' · top ' + ms[0].score.toFixed(2), col: ms[0].col || LAYERS[0].col, kind: 'panel', lane: l, rows: ms.slice(0, 6).map((m) => ({ k: m.label, v: m.score.toFixed(2) })) }; });
       LAYERS.forEach((L, li) => { const off = CAX[li] - CAX[li0], a = Math.abs(li - li0); const list = L.kind === 'graph' ? laneCards : cardsOf(t, L.key);
-        out.panels.push({ layer: L.key, name: L.name, sub: L.sub, col: L.col, li, n: list.length, w: PW, h: PH, px: off * PDX, pz: -Math.abs(off) * PDZ,
+        out.panels.push({ layer: L.key, name: L.name, sub: L.sub, col: L.col, li, n: list.length, w: PW, h: PH, px: off * PDX, pz: -Math.abs(off) * PDZ, gen: L.key === 'say' && !!pendOf(t),
           tf: foc === li ? 'translateX(0px) translateZ(24px) rotateY(0deg)' : 'translateX(' + (off * PDX).toFixed(0) + 'px) translateZ(' + (-Math.abs(off) * PDZ).toFixed(0) + 'px) rotateY(26deg)',
           cls: (foc === li ? 'focus ' : foc != null ? 'hushed ' : '') + (a === 0 ? 'on' : a === 1 ? 'near' : a >= 3 ? 'gone' : 'far') + (list.length > 5 ? ' many' : ''), d: (a * 0.07).toFixed(2) + 's', el: 1 + li, focL: foc === li ? 'back' : 'focus',
           cards: (a > 2 ? [] : list).map((c, ci) => ({ id: t.mid + ':' + L.key + ':' + (L.kind === 'graph' ? c.lane : ci), mid: t.mid, layer: L.key, ci, card: c, col: c.col || L.col })), graph: L.kind === 'graph' ? g : null }); });
@@ -257,7 +269,7 @@
           const c = proj(u0 + PW / 2, v0 + GNODES + GALV / 2, z); pts.push(c); out.graphs.push({ id: t.mid + ':graph', mid: t.mid, si, x: c.x, y: c.y, w: GAL.w, h: GAL.h, data: g, iso: true });
           return; }
         out.labels.push({ si, x: ll.x, y: ll.y, n: L.name, k: String(list.length), cls: 'layer sm ' + L.key, col: L.col });
-        out.bands.push({ si, mid: t.mid, layer: L.key, poly: bc.map((c) => ({ x: c.x, y: c.y })), col: L.col, empty: !list.length, cls: si === sel ? 'on' : '' });
+        out.bands.push({ si, mid: t.mid, layer: L.key, poly: bc.map((c) => ({ x: c.x, y: c.y })), col: L.col, empty: !list.length, cls: (si === sel ? 'on' : '') + (L.key === 'say' && pendOf(t) ? ' gen' : '') });
         if (!list.length) { const e = proj(u0 + PW / 2, v0 + VB / 2, z); out.labels.push({ si, x: e.x, y: e.y, n: L.key === 'say' ? 'no reply yet' : L.key === 'read' ? 'nothing read' : L.key === 'made' ? 'nothing produced' : 'nothing landed', k: '', cls: 'layer sm empty', col: 'var(--xp-t3)' }); return; }
         // every item on its pin: the band fills down its rows first, then a column to the right (the board: the plate grows along u)
         const shown = list.slice(0, CAP), more = list.length - shown.length; const cols = colsOf(shown.length);
@@ -665,13 +677,32 @@ vera-exploded.closing .xp-view{animation:xp-flat .24s ease-in both}
 @keyframes xp-tip{from{opacity:0;transform:rotateX(-26deg) scale(.94)}to{opacity:1;transform:none}}
 @keyframes xp-flat{from{opacity:1;transform:none}to{opacity:0;transform:rotateX(-26deg) scale(.96)}}
 vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--xp-t3);text-align:center;padding:20px;line-height:1.5}
+/* GENERATING: the chat's throbber on the exchange while the reply is on its way — a breathing orbit and the rolling phrase
+   (chat_panel.html .think-throb, the same idiom). Held back, then attached: the card arrives after the scene has settled and
+   breathes until the reply lands; the exchange's plate, panel and band carry a soft pulsing ring meanwhile */
+@keyframes xp-orbit{to{transform:rotate(360deg)}}@keyframes xp-breathe{0%,100%{opacity:.45;transform:scale(.88)}50%{opacity:1;transform:scale(1)}}@keyframes xp-phrase-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+@keyframes xp-gen-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}@keyframes xp-gen-ring{0%,100%{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--xp-ac2) 30%,transparent)}50%{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--xp-ac2) 70%,transparent)}}
+vera-exploded .xp-throb{display:inline-flex;align-items:center;gap:7px;color:var(--xp-ac2);font-size:10px;min-height:16px;max-width:100%}
+vera-exploded .xp-throb .orb{position:relative;width:14px;height:14px;flex-shrink:0;animation:xp-breathe 2.4s ease-in-out infinite}
+vera-exploded .xp-throb .orb::before{content:'';position:absolute;inset:0;border-radius:50%;border:1.5px solid var(--xp-ac2);border-top-color:transparent;border-left-color:transparent;animation:xp-orbit 1.1s linear infinite}
+vera-exploded .xp-throb .orb::after{content:'';position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px 0 0 -2px;border-radius:50%;background:var(--xp-ac)}
+vera-exploded .xp-throb .phrase{font-style:italic;opacity:.95;color:var(--xp-t1);animation:xp-phrase-in .5s ease;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+vera-exploded .xit.gen,vera-exploded .xp-rc.gen{animation:xp-gen-in .5s ease backwards;animation-delay:.45s;border:1px dashed color-mix(in srgb,var(--xp-ac2) 55%,transparent);box-shadow:inset 3px 0 0 0 var(--cc)}vera-exploded .xit.gen .xit-n,vera-exploded .xp-rc.gen .n{display:none}vera-exploded .xit.gen .xit-d,vera-exploded .xp-rc.gen .d{color:var(--xp-ac2);opacity:.8}
+vera-exploded .xit.gen .xit-body,vera-exploded .xp-rc.gen .b{display:flex!important;max-height:none;opacity:1;margin-top:4px}vera-exploded .xit.gen.bb{animation-name:xp-gen-in}
+vera-exploded .xp-pl.gen,vera-exploded .xp-cp.gen{animation:xp-gen-ring 2.2s ease-in-out infinite}vera-exploded .xp-pl.rect.gen{background:color-mix(in srgb,var(--xp-ac2) 5%,var(--xp-s1))}
+vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transparent);animation:xp-breathe 2.4s ease-in-out infinite}
+:root[data-blocks="off"] vera-exploded .xp-pl.rect.gen,:root[data-blocks="off"] vera-exploded .xp-band.gen{background:none!important}
 `;
   function ensureCss(doc) { doc = doc || document; if (doc.getElementById('vera-exploded-css')) return; const s = doc.createElement('style'); s.id = 'vera-exploded-css'; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s); }
   // the shared ISO projection (/ui/iso.js, window.VeraISO) draws the widget groups; a page that has not loaded it gets it
   // once, here, and the scene redraws when it lands — without it the widgets stay flat cards (the board's widget card)
   function ensureIso(doc, onload) { doc = doc || document; if (root.VeraISO || doc.getElementById('vera-iso-lib')) return; const s = doc.createElement('script'); s.id = 'vera-iso-lib'; s.src = '/ui/iso.js'; s.async = true; s.onload = () => { try { onload && onload(); } catch (_) {} }; (doc.head || doc.documentElement).appendChild(s); }
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  // GENERATING — the same throbber the chat draws while a reply is on its way (its .think-throb: a breathing orbit
+  // spinner and the rolling thinking phrase), on the exchange's card in every mode
+  const throbHtml = (c) => '<span class="xp-throb" role="status"><span class="orb"></span><span class="phrase">' + esc((c && c.n) || 'Generating…') + '</span></span>';
   function cardBody(c) {
+    if (String((c && c.kind) || '').toLowerCase() === 'gen') return throbHtml(c);
     const k = c.kind || ''; let h = '';
     if (c.src) h += '<img class="xp-img" src="' + esc(c.src) + '" alt="" loading="lazy">';
     if (c.score != null) h += '<div class="bar"><i style="width:' + Math.round(Math.max(0, Math.min(1, +c.score)) * 100) + '%"></i></div>';
@@ -685,6 +716,7 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
   /* ── the ISO card's body, the board's vocabulary by kind: what shows on the card, and what waits behind a click ── */
   function isoBody(c, wd) {
     c = c || {}; const k = String(c.kind || '').toLowerCase(); let on = '', x = '';
+    if (k === 'gen') return { on: throbHtml(c), x: '' };   // the generating state: the throbber, nothing behind a click
     const codeish = /^(code|term|terminal|cap|capability|log)$/.test(k); const lines = String(c.body || '').split('\n').filter((l) => l.trim());
     if (c.score != null && !codeish && !/^(image|widget|artifact|note|loop|diff)$/.test(k)) on += '<span class="xf-score"><span class="xf-bar"><i style="width:' + Math.round(Math.max(0, Math.min(1, +c.score)) * 100) + '%"></i></span><b>' + (+c.score).toFixed(2) + '</b></span>';
     if (k === 'diff' && (c.p != null || c.m != null)) on += '<span class="xf-diff"><b class="p">+' + esc(c.p || 0) + '</b><b class="m">−' + esc(c.m || 0) + '</b></span>';
@@ -756,20 +788,20 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
       _renderFront(o) {
         const S = this._S, view = this._r.view, P = o.panels; const PW = o.panel ? o.panel.w : 400, PH = o.panel ? o.panel.h : 472;
         const rcFace = (c) => (c.card && (c.card.form || c.card.record || String(c.card.kind || '').toLowerCase() === 'widget') ? faceHtml(c.card, widgetOf(c.card), S.wsz) : '');   // a widget's own face on the carousel card
-        const rcHtml = (c) => '<div class="xp-rc' + (S.open === c.id ? ' open' : '') + '" data-id="' + esc(c.id) + '" data-ci="' + c.ci + '" style="--cc:' + esc(c.col) + '" title="' + esc(c.card.n || '') + (c.card.d ? ' — ' + esc(c.card.d) : '') + ' · click for the record"><span class="n">' + (c.card.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.card.tpl) + '">⧉</i> ' : '') + esc(c.card.n || '') + '</span><span class="d">' + esc(c.card.d || '') + '</span>' + rcFace(c) + '<div class="b">' + cardBody(c.card) + '</div></div>';
+        const rcHtml = (c) => '<div class="xp-rc' + (S.open === c.id ? ' open' : '') + (String(c.card.kind || '') === 'gen' ? ' gen' : '') + '" data-id="' + esc(c.id) + '" data-ci="' + c.ci + '" style="--cc:' + esc(c.col) + '" title="' + esc(c.card.n || '') + (c.card.d ? ' — ' + esc(c.card.d) : '') + ' · click for the record"><span class="n">' + (c.card.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.card.tpl) + '">⧉</i> ' : '') + esc(c.card.n || '') + '</span><span class="d">' + esc(c.card.d || '') + '</span>' + rcFace(c) + '<div class="b">' + cardBody(c.card) + '</div></div>';
         const bodyHtml = (p) => (p.graph && p.graph.nodes.length ? '<div class="xp-gp">' + graphHtml(p.graph, 200) + '</div>' : '') + p.cards.map(rcHtml).join('') + (p.cards.length || (p.graph && p.graph.nodes.length) ? '' : '<div class="d" style="color:var(--xp-t3);font-family:var(--xp-mono);font-size:9px">nothing here for this turn</div>');
         const key = (o.station ? o.station.mid : '') + '|' + P.map((p) => p.n).join(',') + '|' + PW + 'x' + PH;
         let car = view.querySelector('.xp-car');
         if (!car || this._frontKey !== key) {
           this._frontKey = key;
           view.innerHTML = '<div class="xp-car"><div class="xp-track"><span class="xp-spine"><i></i></span>' + o.leaders.map((l, i) => '<div class="xp-lead ' + l.cls + '" data-i="' + i + '" style="transform:' + l.tf + ';width:' + l.w + '"></div>').join('') + '<div class="xp-runs" data-r="runs"></div>'
-            + P.map((p) => '<div class="xp-cp ' + p.cls + '" data-li="' + p.li + '" style="--pc:' + esc(p.col) + ';--d:' + p.d + ';--el:' + p.el + ';left:' + (-PW / 2) + 'px;top:' + (-PH / 2) + 'px;width:' + PW + 'px;height:' + PH + 'px;transform:' + p.tf + '"><div class="xp-cp-h"><i></i>' + esc(p.name) + '<span class="sub"> · ' + esc(p.sub) + '</span><b>' + p.n + '</b><span class="fx2">' + p.focL + '</span></div><div class="xp-cp-b" data-cards="' + esc(p.cards.map((c) => c.id).join(',')) + '">' + bodyHtml(p) + '</div></div>').join('')
+            + P.map((p) => '<div class="xp-cp ' + p.cls + (p.gen ? ' gen' : '') + '" data-li="' + p.li + '" style="--pc:' + esc(p.col) + ';--d:' + p.d + ';--el:' + p.el + ';left:' + (-PW / 2) + 'px;top:' + (-PH / 2) + 'px;width:' + PW + 'px;height:' + PH + 'px;transform:' + p.tf + '"><div class="xp-cp-h"><i></i>' + esc(p.name) + '<span class="sub"> · ' + esc(p.sub) + '</span><b>' + p.n + '</b><span class="fx2">' + p.focL + '</span></div><div class="xp-cp-b" data-cards="' + esc(p.cards.map((c) => c.id + ':' + (c.card.kind || '') + ':' + String(c.card.n || '').length).join(',')) + '">' + bodyHtml(p) + '</div></div>').join('')
             + '</div><button class="xp-nav l" data-a="prev" title="Previous layer">‹</button><button class="xp-nav r" data-a="next" title="Next layer">›</button></div>';
           car = view.querySelector('.xp-car'); if (view.innerHTML.indexOf('<vera-mermaid') >= 0) ensureMermaid(this.ownerDocument);
         } else {
-          P.forEach((p) => { const el = car.querySelector('.xp-cp[data-li="' + p.li + '"]'); if (!el) return; el.className = 'xp-cp ' + p.cls; el.style.transform = p.tf;
+          P.forEach((p) => { const el = car.querySelector('.xp-cp[data-li="' + p.li + '"]'); if (!el) return; el.className = 'xp-cp ' + p.cls + (p.gen ? ' gen' : ''); el.style.transform = p.tf;
             const hb = el.querySelector('.xp-cp-h b'); if (hb) hb.textContent = p.n; const fx = el.querySelector('.xp-cp-h .fx2'); if (fx) fx.textContent = p.focL;
-            const body = el.querySelector('.xp-cp-b'), want = p.cards.map((c) => c.id).join(','); if (body && body.dataset.cards !== want) { body.innerHTML = bodyHtml(p); body.dataset.cards = want; } });
+            const body = el.querySelector('.xp-cp-b'), want = p.cards.map((c) => c.id + ':' + (c.card.kind || '') + ':' + String(c.card.n || '').length).join(','); if (body && body.dataset.cards !== want) { body.innerHTML = bodyHtml(p); body.dataset.cards = want; } });
           o.leaders.forEach((l, i) => { const el = car.querySelector('.xp-lead[data-i="' + i + '"]'); if (el) { el.style.transform = l.tf; el.style.width = l.w; } });
           car.querySelectorAll('.xp-rc[data-id]').forEach((el) => el.classList.toggle('open', S.open === el.dataset.id));
         }
@@ -813,7 +845,7 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
         // ISO: the board's card on its stem; a widget as an iso widget group with its frameless caption; a context record as a typed node
         const tplTag = (c) => (c.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.tpl) + '">⧉</i> ' : '');
         const xitHtml = (wg, face) => { const c = wg.card, open = S.open === wg.id; const wd = { form: wg.form, data: wg.data, sample: wg.sample }; const b = isoBody(c, face ? null : wd);   // the face says it all: no reading line beside it
-          return '<div class="xit bb' + (wg.tight ? ' tight' : '') + (open ? ' open' : '') + (c.src ? ' has-img' : '') + (face ? ' face' : '') + '" data-id="' + esc(wg.id) + '" title="' + esc(c.n || '') + (c.d ? ' — ' + esc(c.d) : '') + ' · click for the record" style="left:' + (wg.x - wg.cw / 2).toFixed(1) + 'px;top:' + (wg.y - wg.stem).toFixed(1) + 'px;width:' + wg.cw + 'px;--ih:' + wg.ch + 'px;--cc:' + esc(wg.col) + '">'
+          return '<div class="xit bb' + (wg.tight ? ' tight' : '') + (open ? ' open' : '') + (c.src ? ' has-img' : '') + (face ? ' face' : '') + (String(c.kind || '') === 'gen' ? ' gen' : '') + '" data-id="' + esc(wg.id) + '" title="' + esc(c.n || '') + (c.d ? ' — ' + esc(c.d) : '') + ' · click for the record" style="left:' + (wg.x - wg.cw / 2).toFixed(1) + 'px;top:' + (wg.y - wg.stem).toFixed(1) + 'px;width:' + wg.cw + 'px;--ih:' + wg.ch + 'px;--cc:' + esc(wg.col) + '">'
             + '<span class="xit-n">' + tplTag(c) + esc(c.n || '') + '</span><span class="xit-d">' + esc(c.d || '') + '</span>' + (face || '')
             + (b.on ? '<span class="xit-body">' + b.on + '</span>' : '') + (c.src ? '<img class="xp-img" src="' + esc(c.src) + '" alt="" loading="lazy">' : '') + (b.x ? '<div class="xit-x">' + b.x + '</div>' : '') + '</div>'; };
         // a widget on the plate: ITS OWN FORM's face on the board's card (the widget element draws it — defect 37: the
@@ -830,7 +862,7 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
         // CARDS: the same card, top-anchored on its row line — name · meta · the body by kind · its chips; the record (the rest of the body, the layer, the turn) behind a click
         const ctHtml = (c) => { const card = c.card, open = S.open === c.id; const wd = widgetOf(card); const face = (card.form || card.record || String(card.kind || '').toLowerCase() === 'widget') ? faceHtml(card, wd, S.wsz) : ''; const b0 = isoBody(card, face ? null : wd); const relOn = card.score != null && /xf-score/.test(b0.on); const b = { on: relOn ? b0.on.replace(/<span class="xf-score">[\s\S]*?<\/b><\/span>/, '') : b0.on, x: b0.x };
           const rel = relOn ? '<span class="xf-rel"><i><b style="width:' + Math.round(Math.max(0, Math.min(1, +card.score)) * 100) + '%"></b></i>' + (/\d\.\d\d\s*$/.test(String(card.d || '')) ? '' : '<em>' + (+card.score).toFixed(2) + '</em>') + '</span>' : '';   // the number only when the meta does not already end with it
-          return '<div class="xit ct' + (open ? ' open' : '') + (card.src ? ' has-img' : '') + (face ? ' face' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(card.n || '') + (card.d ? ' — ' + esc(card.d) : '') + ' · click for the record" style="' + st(c.x, c.y) + 'width:' + c.w + 'px;--ih:' + c.ih + 'px;--cc:' + esc(c.col) + '">'
+          return '<div class="xit ct' + (open ? ' open' : '') + (card.src ? ' has-img' : '') + (face ? ' face' : '') + (String(card.kind || '') === 'gen' ? ' gen' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(card.n || '') + (card.d ? ' — ' + esc(card.d) : '') + ' · click for the record" style="' + st(c.x, c.y) + 'width:' + c.w + 'px;--ih:' + c.ih + 'px;--cc:' + esc(c.col) + '">'
             + '<span class="xit-n">' + tplTag(card) + esc(card.n || '') + '</span><span class="xit-d">' + esc(card.d || '') + rel + '</span>' + face
             + (b.on ? '<span class="xit-body">' + b.on + '</span>' : '') + (card.src ? '<img class="xp-img" src="' + esc(card.src) + '" alt="" loading="lazy">' : '')
             + (c.badge ? '<span class="xit-m"><span class="xit-b">' + esc(c.badge) + '</span></span>' : '')
@@ -865,11 +897,11 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
           this._measureN = 0; if (this._rowSel !== o.sel + ':' + (o.station ? '' : S.scene.sel)) { this._rowSel = o.sel + ':' + S.scene.sel; const row = (o.rows || [])[o.sel]; if (row && (row.y < view.scrollTop || row.y + Math.min(row.h, view.clientHeight - 60) > view.scrollTop + view.clientHeight)) view.scrollTop = Math.max(0, (row.y - 92) * (S.pan.z || 1)); } }   // the row's caption lands under the chip bar, not behind it
         this._emit(o);
       }
-      _emit(o) { const R = o.mode === 'front' ? (this._frontRuns || { n: 0 }) : null; this.dispatchEvent(new CustomEvent('vera:xpl:rendered', { detail: { mode: o.mode, stations: o.stations, cards: o.cards.length, panels: o.panels.length, graphs: (o.graphs || []).length, gnodes: (o.gnodes || []).length, edges: (o.edges || []).length, runs: R ? R.n : (o.runs || 0), outline: (o.outline || []).length, focus: o.focus == null ? null : o.focus, inv: o.inv || 1 }, bubbles: true })); }
+      _emit(o) { const R = o.mode === 'front' ? (this._frontRuns || { n: 0 }) : null; this.dispatchEvent(new CustomEvent('vera:xpl:rendered', { detail: { mode: o.mode, stations: o.stations, cards: o.cards.length, panels: o.panels.length, graphs: (o.graphs || []).length, gnodes: (o.gnodes || []).length, edges: (o.edges || []).length, runs: R ? R.n : (o.runs || 0), outline: (o.outline || []).length, focus: o.focus == null ? null : o.focus, pending: (o.pending || []).length, inv: o.inv || 1 }, bubbles: true })); }
     }
     root.customElements.define('vera-exploded', VeraExploded);
   }
-  const api = { layout, frontRuns, LAYERS, ensureCss, ensureIso, graphData, widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 7 };
+  const api = { layout, frontRuns, LAYERS, ensureCss, ensureIso, graphData, widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 8 };
   root.VeraExploded = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
