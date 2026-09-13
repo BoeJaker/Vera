@@ -234,7 +234,9 @@
       '.dash-grid.editing .w-iconbtn.vd-cfg{color:var(--acc,#5a9e8f)}',
       // the retired hand-drawn body of a tile the record now draws (kept for the page's updaters)
       '.w-body > .w-page[hidden]{display:none!important}',
-      '.w-body > vera-widget.vd-draw{display:block;flex:1;min-height:0;padding:8px}',
+      // the drawing keeps its own height inside the tile's scrolling body: a composite taller than the tile scrolls, it is
+      // never shrunk to the box and clipped top and bottom (the element centres its body in whatever height it is given)
+      '.w-body > vera-widget.vd-draw{display:block;flex:1 0 auto;min-height:0;padding:8px}',
       // the record sheet (⚙ without the widget surface loaded): the record itself, editable
       '.vd-sheet textarea{width:100%;min-height:220px;background:var(--bg0);border:1px solid var(--border2);color:var(--text);',
       'font-family:var(--mono);font-size:10px;padding:8px;border-radius:3px;resize:vertical;box-sizing:border-box}',
