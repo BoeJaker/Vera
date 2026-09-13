@@ -58,7 +58,7 @@ t('mixOf: an explicit level wins, layersOff reads as off, else all', G.mixOf({ m
 // ── the iso view fills its column (defect 29) ──
 const tall = G.compute(Object.assign({}, base, { view: 'iso', mix: { loop: 'off', plan: 'off' } }), 640, 700);
 const wide = G.compute(Object.assign({}, base, { view: 'iso', mix: { loop: 'off', plan: 'off' } }), 900, 300);
-t('a tall column steepens the tilt (up to 58°) and the plate fills the width', tall.iso.tilt > 50 && tall.iso.tilt < 59 && +tall.plate.w > 640 * 0.85 && +tall.plate.x < 0, JSON.stringify([tall.iso, tall.plate]));
+t('a tall column steepens the tilt (up to 58°) and the plate fills the width INSIDE the plot (its clearance either side)', tall.iso.tilt > 50 && tall.iso.tilt < 59 && +tall.plate.w >= (640 - 2 * tall.iso.pad) * 0.99 && +tall.plate.x >= tall.iso.pad - 1 && +tall.plate.x + +tall.plate.w <= 640 - tall.iso.pad + 1, JSON.stringify([tall.iso, tall.plate]));
 const spanY = (o) => { const ys = o.cnodes.map((n) => +n.y).concat(o.memNodes.map((n) => +n.y)); return Math.max.apply(null, ys) - Math.min.apply(null, ys); };
 t('… the galaxy uses the column\'s height: the nodes span more than half of it (the old tilt spanned a quarter)', spanY(tall) > 700 * 0.5, spanY(tall));
 t('a wide, low plot keeps the 30° tilt and is bound by its height', Math.abs(wide.iso.tilt - 30) < 1e-6 && spanY(wide) < 300);
@@ -99,5 +99,13 @@ t('miniHtml draws the layout with the element\'s classes', /class="cg-mini"/.tes
 t('families.js names the memory kinds, groups a record by kind, classes an edge', F.MEM_KINDS.indexOf('message') >= 0 && F.memGroup('dag_step') === 'dag' && F.memGroup('weird') === 'memory' && F.memEdgeClass('FOLLOWED_BY') === 'spine' && F.memEdgeClass('CAUSES') === 'structural' && F.memEdgeClass('SESSION_CONTENT') === 'hub' && F.memEdgeClass('SIMILAR') === 'inferred');
 const md = F.toDoc('memory', { nodes: [{ id: 'a', record_type: 'message' }, { id: 'b', record_type: 'fact' }], edges: [{ from_id: 'a', to_id: 'b', relation: 'SESSION_CONTENT' }, { from_id: 'b', to_id: 'a', relation: 'CAUSES' }] });
 t('the memory adapter carries the group and the edge class (a hub edge is not structural, a cause is)', md.nodes[0].group === 'message' && md.edges[0].cls === 'hub' && md.edges[0].structural === false && md.edges[1].structural === true);
+// the family chips: none until the family has nodes (a fresh session shows only the context's sources), then the chip
+// is there as soon as setMemory / setLoopEvents / setPlan / setEstate deliver — it is drawn from out.families each render
+const fresh = G.compute(Object.assign({}, base, { nodes: nodes.filter((n) => n.source !== 'memory'), memory: [], memEdges: [], loop: [], runPlan: [], run: null, stepReads: [], plan: [], estate: { nodes: [], edges: [] } }), W, H);
+t('a fresh session: no family chip until a family has nodes (the memory chip counts the prompt\'s own recall too)', (fresh.families || []).length === 0, (fresh.families || []).map((x) => x.name).join(','));
+const fed = G.compute(Object.assign({}, base, { estate: { nodes: SNAP.nodes, edges: SNAP.edges } }), W, H);
+t('fed: the chips memory · loop · plan · estate, from out.families each render', (fed.families || []).map((x) => x.name).join(',') === 'memory,loop,plan,estate', (fed.families || []).map((x) => x.name + ':' + x.n + ':' + x.level).join(' '));
+const memOnly = G.compute(Object.assign({}, base, { loop: [], runPlan: [], run: null, stepReads: [], plan: [] }), W, H);
+t('setMemory alone: the memory chip appears, at all by default', (memOnly.families || []).map((x) => x.name + ':' + x.level).join(',') === 'memory:all', (memOnly.families || []).map((x) => x.name).join(','));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
