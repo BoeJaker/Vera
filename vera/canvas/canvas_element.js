@@ -581,7 +581,7 @@
       const br = body.getBoundingClientRect();
       // an item at stage y = its turn's top lands at the turn's own client top
       body.scrollTop = Math.max(0, Math.round(msgsScrollTop + st.offsetTop - (msgsTopClient - br.top)));
-      const first = this._view == null; this._view = body.scrollTop;   // where you are looking, in stage y — the placer's floor for a turn-less item
+      const first = this._view == null; this._view = Math.max(0, body.scrollTop - st.offsetTop);   // where you are looking, in STAGE y (the stage sits below the heads in flow) — the placer's floor for a turn-less item
       // the first sync: an item with nothing to stand beside was placed before the view was known — once, it moves into view
       if (first && this._placed && this._placed.placements.some((p) => !p.mid && !p.level)) this._placeNow();
     }
