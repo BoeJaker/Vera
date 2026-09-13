@@ -61,6 +61,8 @@ def test_every_form_carries_the_boards_name_and_the_boards_it_is_on():
     # the boards' names resolve as aliases, and the WidgetConfig board's own ids
     assert R.form("Thermometers")["id"] == "thermo" and R.form("coin stacks")["id"] == "stacks" and R.form("Hero + trend")["id"] == "hero"
     assert R.form("battery")["id"] == "level" and R.form("tablei")["id"] == "table" and R.form("logi")["id"] == "log"
+    # the table family (defect 50): rows · cards · temps are forms of their own with the table's options
+    assert R.form("temps")["shape"] == "values" and R.form("temps")["name"] == "Temp list" and R.form("rows")["options"] == ["columns", "sort", "limit", "lit"] and "search" in R.form("table")["options"]
     # the motion board's forms move; the iso board's are iso-only; the sheet's three still there
     for fid in ("dial", "tank", "turbine", "scope", "pulse", "conveyor", "orbit", "comet", "split-flap", "pipes", "city", "sweep"):
         assert R.form(fid)["motion"] is True, fid
