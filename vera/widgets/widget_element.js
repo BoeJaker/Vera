@@ -631,7 +631,7 @@
     let all = rows(d); if (!all.length) return EMPTY('no rows');
     const size = (o && o.size) || 'm'; const cols = tableCols(all, o, size === 'xl' ? 8 : 6); const lit = o && o.draw && o.draw.lit != null ? o.draw.lit : null;
     const q = String(ui(o, 'q', '')).trim().toLowerCase(); if (q) all = all.filter((r) => cols.some((c) => String(r[c] ?? '').toLowerCase().includes(q)));
-    const lim = (o && o.draw && o.draw.limit) || fitRows(o, size, 18, 48 + (size === 'xl' ? 30 : 0)); const { rw, sortBy, dir } = tableSort(all, cols, o);
+    const lim = (o && o.draw && o.draw.limit) || fitRows(o, size, 17, 40 + (size === 'xl' ? 24 : 0)); const { rw, sortBy, dir } = tableSort(all, cols, o);
     const page = Math.max(0, +ui(o, 'page', 0) || 0), pages = Math.max(1, Math.ceil(rw.length / lim)), pg = Math.min(page, pages - 1), shown = rw.slice(pg * lim, pg * lim + lim);
     const head = '<div class="vb-dgr h" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => '<button class="' + (sortBy === c ? 'on' : '') + '"' + set('sort', c) + (sortBy === c ? ' data-vb-set2="dir:' + (-dir) + '"' : ' data-vb-set2="dir:-1"') + '>' + esc(c.replace(/_/g, ' ')) + '<span>' + (sortBy === c ? (dir < 0 ? '↓' : '↑') : '') + '</span></button>').join('') + '</div>';
     const body = shown.map((r) => '<div class="vb-dgr" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('');
