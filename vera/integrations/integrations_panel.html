@@ -207,10 +207,10 @@ async function loadEffects(){
     +'<span class="bdg">max '+esc(bounds.maximum_attempts||0)+' attempts</span></div>'+reasons;
   const st=shadow.totals||{}, shadowReasons=Object.entries(shadow.reasons_in_window||{})
     .map(([k,v])=>'<span class="bdg">'+esc(k)+' '+esc(v)+'</span>').join(' ');
-  const familyLabel={integration_api:'Generic API',telegram:'Telegram',email:'Email'}[EFFECT_FAMILY]||EFFECT_FAMILY;
+  const familyLabel={integration_api:'Generic API',telegram:'Telegram',email:'Email',commerce:'Commerce'}[EFFECT_FAMILY]||EFFECT_FAMILY;
   const familySwitch='<div class="sec">Effect family</div><div class="badges">'+
-    ['integration_api','telegram','email'].map(f=>'<button class="btn '+(f===EFFECT_FAMILY?'pri':'')+'" onclick="setEffectFamily(\''+f+'\')">'+
-      esc({integration_api:'Generic API',telegram:'Telegram',email:'Email'}[f])+'</button>').join(' ')+'</div>';
+    ['integration_api','telegram','email','commerce'].map(f=>'<button class="btn '+(f===EFFECT_FAMILY?'pri':'')+'" onclick="setEffectFamily(\''+f+'\')">'+
+      esc({integration_api:'Generic API',telegram:'Telegram',email:'Email',commerce:'Commerce'}[f])+'</button>').join(' ')+'</div>';
   const isGeneric=EFFECT_FAMILY==='integration_api';
   const shadowInfo=shadow.error?'<div class="hint">Decision evidence unavailable: '+esc(shadow.error)+'</div>':
     '<div class="sec">'+esc(familyLabel)+' policy decisions</div><div class="hint">Payload-free decisions for this isolated effect family. '+
