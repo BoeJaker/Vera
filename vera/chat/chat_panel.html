@@ -1601,6 +1601,25 @@ body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri
 #settingsPage .sp-sec-h .sp{flex:1}
 #settingsPage .sp-sec-h .lbl{font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0))}
 #settingsPage .sp-sec-b{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px 22px;align-items:start}
+#settingsPage .sp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;align-items:start;padding-bottom:12px}
+#settingsPage .sp-card{background:var(--s2,var(--bg2,#15181d));border-radius:var(--ui-radius,10px);box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.18));padding:10px 12px 12px;display:flex;flex-direction:column;gap:6px;min-width:0;font-size:11.5px;position:relative}
+#settingsPage .sp-card.on{box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.18)),0 0 0 1.5px var(--ac,var(--acc,#5a9e8f))}
+#settingsPage .sp-card > .sec .sec-caret{display:none}#settingsPage .sp-card > .sec{font-size:var(--label-size,9.5px);text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t2,var(--dim2,#8a92a0));padding:0 0 6px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));margin-bottom:4px}
+#settingsPage .sp-card .row{display:flex;align-items:center;gap:8px;min-height:26px;flex-wrap:wrap}
+#settingsPage .sp-card select,#settingsPage .sp-card input[type="text"],#settingsPage .sp-card input[type="number"],#settingsPage .sp-card textarea{font:inherit;font-size:11px;color:var(--t1,var(--text,#d8dce4));background:var(--bg,var(--bg0,#0e0f12));border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,6px);padding:3px 7px}
+#settingsPage .sp-card input[type="number"]{width:64px;text-align:right;font-family:var(--f-mono,var(--mono,ui-monospace,monospace))}
+#settingsPage .sp-card .numrow{display:flex;align-items:center;gap:9px}#settingsPage .sp-card .nlbl{color:var(--t2,var(--dim2,#8a92a0))}
+#settingsPage .sp-card details{border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,6px);padding:4px 8px}
+/* the pane's checkbox cards read as the board's switches */
+#settingsPage .sp-card .opt{display:flex;align-items:flex-start;gap:10px;padding:4px 0;margin:0;background:transparent;border:0;box-shadow:none;border-radius:0;cursor:pointer}
+#settingsPage .sp-card .opt .opt-tick{display:none}
+#settingsPage .sp-card .opt>input[type="checkbox"]{position:static;opacity:1;pointer-events:auto;appearance:none;-webkit-appearance:none;width:30px;height:16px;border-radius:99px;background:var(--s3,var(--bg3,#1f2228));box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));position:relative;flex:0 0 auto;margin:2px 0 0;cursor:pointer;transition:background .15s}
+#settingsPage .sp-card .opt input[type="checkbox"]::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--t3,var(--dim,#6b7280));transition:left .15s,background .15s}
+#settingsPage .sp-card .opt input[type="checkbox"]:checked{background:color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 45%,transparent)}
+#settingsPage .sp-card .opt input[type="checkbox"]:checked::after{left:16px;background:var(--ac,var(--acc,#5a9e8f))}
+#settingsPage .sp-card .opt .opt-main{display:flex;flex-direction:column;gap:1px;min-width:0}#settingsPage .sp-card .opt .opt-name{font-size:11.5px;color:var(--t1,var(--text,#d8dce4))}#settingsPage .sp-card .opt .opt-desc{font-size:10px;color:var(--t3,var(--dim,#6b7280))}
+#settingsPage .sp-hd .sp-hd-pack{display:inline-flex;align-items:center}#settingsPage .sp-hd .sp-hd-pack .seg,#settingsPage .sp-hd .sp-hd-pack [class*="style"]{font-size:10.5px}
+#settingsPage .sp-look-pack,#settingsPage .sp-look-theme{display:flex;align-items:center;gap:8px;min-height:30px;flex-wrap:wrap}
 #settingsPage .sp-block{display:flex;flex-direction:column;gap:5px;font-size:11.5px;min-width:0}
 #settingsPage .sp-block > .sec{font-size:var(--label-size,9.5px);text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t2,var(--dim2,#8a92a0));padding:6px 0 2px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));margin-bottom:2px}
 #settingsPage .sp-block .row{display:flex;align-items:center;gap:8px;min-height:26px}
@@ -4075,7 +4094,7 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   /* ── Context window meter ── */
   function updateCtxMeter(used,max){
     const fill=document.getElementById('ctxMeterFill');
-    const lbl=document.getElementById('ctxMeterLabel');
+    const lbl=document.getElementById('ctxMeterLabel'); try{ if(_xplEl&&typeof _xplEl.setBudget==='function') _xplEl.setBudget(used,max); }catch(_){}
     if(!fill||!max)return;
     const pct=Math.min(100,Math.round(used/max*100));
     fill.style.width=pct+'%';
@@ -12987,25 +13006,51 @@ Your task: decide what to do next to advance toward the goal.
     const sec=secs.find(s=>norm(s.textContent)===norm(title)); if(!sec) return [];
     const out=[sec]; let n=sec.nextElementSibling; while(n&&!(n.classList&&n.classList.contains('sec'))){ out.push(n); n=n.nextElementSibling; } return out;
   }
+  const _SP_ROWGRP={};
   function _spBuild(){
     if(_spBuilt) return; _spBuilt=true;
     const page=document.getElementById('settingsPage'); if(!page) return;
     const idx=page.querySelector('.sp-idx-bd'), cn=page.querySelector('.sp-secs'); if(!idx||!cn) return;
     let n=0; const moved={};
-    _SP_MAP.forEach(g=>{ const gh=document.createElement('div'); gh.className='sp-grp'; gh.innerHTML='<span>'+esc(g.grp)+'</span><b>'+g.rows.length+'</b>'; idx.appendChild(gh);
-      g.rows.forEach(r=>{ const row=document.createElement('div'); row.className='sp-irow'; row.dataset.sec=r.id; row.innerHTML='<span class="nm">'+esc(r.n)+'</span>'+(r.ct?'<span class="ct mono"></span>':''); row.addEventListener('click',()=>_spShow(r.id)); idx.appendChild(row);
-        const sec=document.createElement('section'); sec.className='sp-sec wid'; sec.dataset.sec=r.id; sec.setAttribute('data-w', r.n.toLowerCase()+' · settings'); sec.innerHTML='<div class="sp-sec-h"><h3>'+esc(r.n)+'</h3><span class="crumb mono">'+esc(g.grp)+' · '+esc(r.n)+'</span><span class="sp"></span><span class="lbl">'+esc(r.note||'')+'</span></div><div class="sp-sec-b"></div>';
-        const body=sec.querySelector('.sp-sec-b');
-        (r.from||[]).forEach(([pane,title])=>{ const els=_spTake(pane,title); if(!els.length) return; const block=document.createElement('div'); block.className='sp-block'; block.dataset.from=pane; els.forEach(el=>block.appendChild(el)); block.querySelectorAll('.collapsed').forEach(x=>x.classList.remove('collapsed')); body.appendChild(block); n++; moved[pane]=(moved[pane]||0)+1; });   // the page shows its rows open (the pane's fold stays a click)
-        if(r.look){ const b=document.createElement('div'); b.className='sp-block'; b.innerHTML='<div class="row"><button class="btn" id="spOpenAppearance">Aa · Style pack &amp; theme…</button><span class="lbl">the same sheet as the header\'s Aa — the pack sets form, the theme sets colour</span></div>'; body.appendChild(b); b.querySelector('#spOpenAppearance').addEventListener('click',ev=>{ try{ _appearanceSheet(ev); }catch(_){} }); }
-        if(!body.children.length) body.innerHTML='<div class="lbl">nothing to move here yet</div>';
-        cn.appendChild(sec); }); });
+    _SP_MAP.forEach(g=>{ const gid=g.grp.toLowerCase().replace(/[^a-z0-9]+/g,'-');
+      // the index: the group's heading (its section count follows once the cards are made), then its rows
+      const gh=document.createElement('div'); gh.className='sp-grp'; gh.innerHTML='<span>'+esc(g.grp)+'</span><b class="sp-grp-ct"></b>'; idx.appendChild(gh);
+      // the group's page: one section, its cards in a grid (the board: "Agent loop · settings › agent loop · 14 sections")
+      const sec=document.createElement('section'); sec.className='sp-sec wid'; sec.dataset.sec=gid; sec.setAttribute('data-w', g.grp.toLowerCase()+' · settings'); sec.innerHTML='<div class="sp-sec-h"><h3>'+esc(g.grp)+'</h3><span class="crumb mono">settings › '+esc(g.grp.toLowerCase())+'</span><span class="sp"></span><span class="lbl sp-sec-ct"></span></div><div class="sp-grid"></div>';
+      const grid=sec.querySelector('.sp-grid'); let gn=0;
+      g.rows.forEach(r=>{ _SP_ROWGRP[r.id]=gid;
+        const row=document.createElement('div'); row.className='sp-irow'; row.dataset.sec=r.id; row.innerHTML='<span class="nm">'+esc(r.n)+'</span>'+(r.ct?'<span class="ct mono"></span>':''); row.addEventListener('click',()=>_spShow(r.id)); idx.appendChild(row);
+        (r.from||[]).forEach(([pane,title])=>{ const els=_spTake(pane,title); if(!els.length) return;
+          const card=document.createElement('div'); card.className='sp-card'; card.dataset.row=r.id; card.dataset.from=pane; card.setAttribute('data-w', title.toLowerCase()+' · card');
+          els.forEach(el=>card.appendChild(el)); card.querySelectorAll('.collapsed').forEach(x=>x.classList.remove('collapsed'));   // the page shows its rows open (the pane's fold stays a click)
+          const sc=card.querySelector(':scope > .sec'); if(sc){ Array.from(sc.childNodes).forEach(nd=>{ if(nd.nodeType===3) nd.textContent=nd.textContent.replace(/^[s▸▾▶▼›»]+/,''); }); }   // the card's title, not the pane's fold glyph
+          grid.appendChild(card); n++; gn++; moved[pane]=(moved[pane]||0)+1; });
+        if(r.look){
+          // Appearance IN PLACE: the style pack segment and the theme picker are the same controls the Aa sheet uses
+          const c1=document.createElement('div'); c1.className='sp-card'; c1.dataset.row=r.id; c1.setAttribute('data-w','style pack · card'); c1.innerHTML='<div class="sec">Style pack</div><div class="sp-look-pack"></div><div class="lbl">the pack sets form — type, radii, depth; the same segment as the header\'s</div>';
+          try{ if(window.veraUI&&typeof veraUI.makeStyleControl==='function') c1.querySelector('.sp-look-pack').appendChild(veraUI.makeStyleControl()); else c1.querySelector('.sp-look-pack').innerHTML='<button class="btn" id="spOpenAppearance">Aa · Style pack &amp; theme…</button>'; }catch(_){}
+          grid.appendChild(c1); n++; gn++;
+          const c2=document.createElement('div'); c2.className='sp-card'; c2.dataset.row=r.id; c2.setAttribute('data-w','theme · card'); c2.innerHTML='<div class="sec">Theme</div><div class="sp-look-theme" id="spThemePick"></div><div class="lbl">the theme sets colour — every panel follows</div>';
+          try{ if(window.veraUI&&typeof veraUI.injectPicker==='function') veraUI.injectPicker('spThemePick'); }catch(_){}
+          const ob=c1.querySelector('#spOpenAppearance'); if(ob) ob.addEventListener('click',ev=>{ try{ _appearanceSheet(ev); }catch(_){} });
+          grid.appendChild(c2); n++; gn++;
+        }
+      });
+      if(!grid.children.length){ const e=document.createElement('div'); e.className='lbl'; e.textContent='nothing to move here yet'; grid.appendChild(e); }
+      sec.querySelector('.sp-sec-ct').textContent=gn+' section'+(gn===1?'':'s'); gh.querySelector('.sp-grp-ct').textContent=String(gn);
+      cn.appendChild(sec); });
     // the panes keep a line saying where their fields went (nothing vanishes; the page is where it lives now)
     Object.keys(moved).forEach(pid=>{ const pane=document.getElementById(pid); if(!pane) return; const l=document.createElement('div'); l.className='sp-gone'; l.innerHTML='<span>'+moved[pid]+' section'+(moved[pid]>1?'s':'')+' moved to <b>Settings</b> — ⌘,</span><button class="btn xs" type="button">Open Settings</button>'; l.querySelector('button').addEventListener('click',()=>_settingsPage(true)); pane.insertBefore(l, pane.firstChild); });
     page.querySelector('.sp-count').textContent=n+' sections · every field keeps its id and handler';
+    // the pack segment in the page header (the board)
+    try{ const hd=page.querySelector('.sp-hd'), k=hd&&hd.querySelector('.kbd'); if(hd&&k&&window.veraUI&&typeof veraUI.makeStyleControl==='function'&&!hd.querySelector('.sp-hd-pack')){ const w=document.createElement('span'); w.className='sp-hd-pack'; w.appendChild(veraUI.makeStyleControl()); hd.insertBefore(w, k); } }catch(_){}
     _spShow('variant');
   }
-  function _spShow(id){ _spCur=id; const page=document.getElementById('settingsPage'); if(!page) return; page.querySelectorAll('.sp-irow').forEach(r=>r.classList.toggle('on', r.dataset.sec===id)); page.querySelectorAll('.sp-sec').forEach(s=>{ s.classList.toggle('on', s.dataset.sec===id); }); const s=page.querySelector('.sp-sec.on'); if(s) s.scrollIntoView({block:'start'}); _spCounts(); }
+  function _spShow(id){ _spCur=id; const page=document.getElementById('settingsPage'); if(!page) return; const gid=_SP_ROWGRP[id]||id;
+    page.querySelectorAll('.sp-irow').forEach(r=>r.classList.toggle('on', r.dataset.sec===id)); page.querySelectorAll('.sp-sec').forEach(s=>{ s.classList.toggle('on', s.dataset.sec===gid); });
+    page.querySelectorAll('.sp-card').forEach(c=>c.classList.toggle('on', c.dataset.row===id));
+    const cn=page.querySelector('.sp-cn'); const first=page.querySelector('.sp-sec.on .sp-card.on'); if(first&&cn){ try{ cn.scrollTo({ top: Math.max(0, first.offsetTop-12), behavior:'smooth' }); }catch(_){ first.scrollIntoView({block:'start'}); } } else if(cn) cn.scrollTop=0;
+    _spCounts(); }
   function _spCounts(){ const page=document.getElementById('settingsPage'); if(!page) return; _SP_MAP.forEach(g=>g.rows.forEach(r=>{ if(!r.ct) return; const el=page.querySelector('.sp-irow[data-sec="'+r.id+'"] .ct'); if(el) el.textContent=r.ct()||''; })); }
   function _spFilter(q){ q=String(q||'').toLowerCase(); const page=document.getElementById('settingsPage'); if(!page) return; page.querySelectorAll('.sp-irow').forEach(r=>{ const sec=page.querySelector('.sp-sec[data-sec="'+r.dataset.sec+'"]'); const hit=!q||(r.textContent+' '+(sec?sec.textContent:'')).toLowerCase().indexOf(q)>=0; r.style.display=hit?'':'none'; }); }
   function _settingsPage(on, sec){
