@@ -79,6 +79,8 @@
     '.lhm-cta{flex-shrink:0;margin:6px 7px 7px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--r-sm,6px);background:var(--bg2);color:var(--text);font-family:var(--sans);font-size:10.5px;text-align:left;cursor:pointer}',
     '.lhm-cta:hover{border-color:var(--acc);color:var(--acc)}',
     '.lhm-topmode .lhm-cta{display:none!important}',
+'.lhm-hd .lhm-fold{flex:0 0 auto;width:22px;height:22px;border:1px solid transparent;border-radius:var(--r-sm,6px);background:transparent;color:var(--dim2);font:inherit;font-size:14px;line-height:1;cursor:pointer;padding:0}',
+'.lhm-hd .lhm-fold:hover{color:var(--text);border-color:var(--border);background:var(--bg2)}',
     /* every part is a widget: edit mode outlines and names them; ⚙ opens the part's record, ⧉ saves it as a template */
     '.lhm-wbar{display:none;position:absolute;top:2px;right:4px;z-index:6;gap:2px}',
 /* the quick body in edit mode (the ChatMenu board): outline + name on every widget, the bar ⋮⋮ ⚙ ⧉ ✕, the foot, the picker */
@@ -250,7 +252,7 @@
       ico.setAttribute('data-menu', m.id);
       var badge = 0; try{ badge = m.badge ? +m.badge() : 0; }catch(e){}
       if(badge){ ico.appendChild(_el('span', 'lhm-badge', String(badge))); }
-      ico.addEventListener('click', function(){ pick(m.id); });
+      ico.addEventListener('click', function(){ if(m.id === _active && !_topMode && _cfg.onCollapse && _det && _det.getClientRects().length){ try{ _cfg.onCollapse(); }catch(e){} return; } pick(m.id); });   // the active icon folds the menu to the rail
       _rail.appendChild(ico);
     });
     _rail.appendChild(_el('div', 'lhm-sp'));
@@ -372,7 +374,8 @@
   // the other menus' elements, as the picker's first group
   function _pickOthers(m){ var others = []; (_cfg.menus || []).forEach(function(o){ if(o.id === m.id || typeof o.quick !== 'function') return; _qparts(o).forEach(function(p){ others.push({ g:'≡', n:p.label, c:o.label, add:{ from:o.id, key:p.key, label:p.label } }); }); }); return others; }
   // the shared widget surface (WidgetConfig board), here or in the host that embeds this menu
-  function _surface(){ try{ if(window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') return window.VeraWidgetConfig; }catch(e){} try{ var p = window.parent; if(p && p !== window && p.VeraWidgetConfig && typeof p.VeraWidgetConfig.open === 'function') return p.VeraWidgetConfig; }catch(e){} return null; }
+  // the widget sheet: the HOST's when this page is framed (the harness slot is a menu's width — a sheet inside it is clipped to nothing), else this page's
+  function _surface(){ try{ var p = window.parent; if(window.frameElement && p && p !== window && p.VeraWidgetConfig && typeof p.VeraWidgetConfig.open === 'function') return p.VeraWidgetConfig; }catch(e){} try{ if(window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') return window.VeraWidgetConfig; }catch(e){} return null; }
   function openPicker(){
     var m = _menu(_active); if(!m || !_host) return; closePicker();
     var S = _surface();
@@ -678,6 +681,7 @@
     _hd = _el('div', 'lhm-hd'); _hd.setAttribute('data-w', 'menu header · header'); _hd.setAttribute('data-tpl', 'lhm:header');
     _hd.appendChild(_el('h2', '', '')); _hd.appendChild(_el('span', 'lhm-meta mono', ''));
     var dp = _el('button', 'lhm-deep', 'Full ▸'); dp.type = 'button'; dp.addEventListener('click', function(){ deep(); }); _hd.appendChild(dp);
+    var cl = _el('button', 'lhm-fold', '‹'); cl.type = 'button'; cl.title = 'Fold the menu to the rail'; cl.addEventListener('click', function(){ if(_cfg.onCollapse){ try{ _cfg.onCollapse(); }catch(e){} } }); _hd.appendChild(cl);
     var ed = _el('button', 'lhm-edit', '✎'); ed.title = 'Edit this menu — every part is a widget'; ed.addEventListener('click', function(){ toggleEdit(); }); _hd.appendChild(ed);
     _det.insertBefore(_hd, _det.firstChild);
     var strip = cfg.tabBar ? _det.querySelector(cfg.tabBar) : null;
