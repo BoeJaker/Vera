@@ -16,8 +16,8 @@ def _read(*parts):
 def test_explode_folds_the_columns_and_restores_them():
     src = _read("vera", "chat", "chat_panel.html")
     assert "let _xplHid=null;" in src
-    assert "if(on){ _xplHid={ canvas:_pages.has('canvas'), graph:_ctxGrown }; if(_xplHid.graph) _ctxGrow(false); if(_xplHid.canvas){ _pages.delete('canvas'); _pagesApply(); } }" in src
-    assert "else if(_xplHid){ const hid=_xplHid; _xplHid=null; if(hid.graph) _ctxGrow(true); if(hid.canvas){ _pages.add('canvas'); _pagesApply(); } }" in src
+    assert "if(on){ _xplHid={ canvas:_pages.has('canvas'), graph:_ctxGrown, remote:_ctxRemote.on }; if(_xplHid.graph) _ctxGrow(false); if(_xplHid.remote) _lhmPost('grow-set',{ on:false }); if(_xplHid.canvas){ _pages.delete('canvas'); _pagesApply(); } }" in src
+    assert "else if(_xplHid){ const hid=_xplHid; _xplHid=null; if(hid.graph) _ctxGrow(true); if(hid.remote) _lhmPost('grow-set',{ on:true }); if(hid.canvas){ _pages.add('canvas'); _pagesApply(); } }" in src
     # the + Graph button follows the grown state
     assert "const gb=document.getElementById('colGraphBtn'); if(gb) gb.classList.toggle('col-on', on);" in src
 
