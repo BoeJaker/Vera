@@ -17,16 +17,28 @@
    dataset drawn four ways inside the tracks). Pan/zoom, Fit, a record panel for any node — a record, a memory, an
    estate node, a loop step.
 
+   What the rail's old context graph had lives here too (Notes/42 defect 48): the record panel shows the record's
+   TEXT (the node's `text`, else `snippet` · `summary` · `content` · `preview`), its URL, tags, type and dataset beside
+   relevance · tokens · who read it, with Focus turn · Include/Exclude · Open; the LIST drawer beside the plot lists
+   the records as rows (source dot · label · relevance bar · tokens · included), the search box filters the list AND
+   dims what does not match in the plot (n hits); the edge-type chips fold a relation type away (the old graph's edge
+   classes); the frames scrubber walks the turns' snapshots the chat keeps (setFrames) without touching the live set.
+
    <vera-context-graph>  API:
      setContext(nodes, edges, {focus:[ids], reads:{mid:[ids]}, stepReads:[[ids]], color:(source)=>css, turn})
      setMemory(nodes, edges, {color, edgeColor, hide}) · setDag(nodes, edges) · appendLoopEvent(ev) · setLoopEvents(evs)
      setPlan(goals) · setRuns(list, {current}) · setEstate(snapshot) · mix(family, level) · allEdges(on) · view(name)
+     setFrames([{id, label, ts, nodes, edges}], {active}) · frame(id | null) · search(q) · list(on) · edgeType(name, on)
      fit() · select(id) · positions() · state()
    events: vera:ctx:rendered {view, tokens, lit} · vera:ctx:pick {id} · vera:ctx:toggle {id} · vera:ctx:focus-turn {mid}
-           · vera:ctx:run {session_id} · vera:ctx:collapse
-   window.VeraContextGraph = { compute, mini, miniHtml, stateFrom, drawPlot, drawLanes, VIEWS, FAMS, … } — compute()
-   is pure (node-testable); mini(state, w, h) is the same layout in miniature (the tracks scaled to the box) and
-   miniHtml(state, w, h) draws it with the element's own classes — the `context_graph` widget form's M face.   */
+           · vera:ctx:run {session_id} · vera:ctx:collapse · vera:ctx:frame {id | null}
+   window.VeraContextGraph = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawLanes, recordCard,
+   listHtml, VIEWS, FAMS, … } — compute() is pure (node-testable); mini(state, w, h) is the same layout in miniature
+   (the tracks scaled to the box) and miniHtml(state, w, h, {detail, list, q}) draws it with the element's own classes —
+   the `context_graph` widget form's M face; miniDetail(state, id, w) is the compact record card for one record (the
+   overlay the form shows on a click) and miniList(state, {q, w, h}) the rows — the form's renderer handles the clicks:
+   `.cg-node[data-id]` / `.cg-row[data-id]` → miniDetail(state, id) · `[data-a="toggle"][data-id]` → the include /
+   exclude · `[data-a="list"]` → the list · `[data-a="close"]` → hide the card.   */
 (function (root) {
   'use strict';
   // exposed for the host and the tests: what a record is
@@ -39,6 +51,9 @@
   const ORDER = ['vector', 'graph', 'fabric', 'web', 'news', 'ontology', 'cap', 'skill', 'run', 'related_qa', 'worldview', 'agent', 'entities', 'urls', 'both'];
   const DEF_COL = { vector: '#a78bfa', graph: '#fb923c', both: '#8fb87a', fabric: '#38bdf8', memory: '#5a9e8f', web: '#f59e0b', news: '#e879f9', cap: '#ec4899', run: '#60a5fa', skill: '#5a9e8f', ontology: '#c9955a', related_qa: '#e8a44c', worldview: '#2dd4bf', agent: '#888' };
   const tokOf = (n) => n.tok != null ? +n.tok : n.tokens != null ? +n.tokens : Math.max(12, Math.round(String(n.text || n.label || '').length / 4));
+  // the record's text, as the chat feeds it: `text` (the rail's own field), else snippet · summary · content · preview
+  const textOf = (n) => { if (!n) return ''; const v = [n.text, n.snippet, n.summary, n.content, n.preview].find((x) => x != null && String(x).trim() !== ''); return v == null ? '' : String(v); };
+  const edgeTypeOf = (e) => String(e.label || e.type || e.relation || '').trim().toUpperCase() || 'RELATED';
   // the typed icons (the Canvas board's node icons, 16-unit paths): a record wears the icon of what it is
   const ICON = {
     person: 'M8 8.4a2.8 2.8 0 1 0 0-5.6 2.8 2.8 0 0 0 0 5.6Zm-4.9 5.2a4.9 4.9 0 0 1 9.8 0',
@@ -108,7 +123,17 @@
     const tracks = S.tracks !== false;                          // a quad's cells draw no tracks of their own
     const k = S.mini ? (S.miniK || 0.3) : 1;                    // the mini: the same layout, the tracks scaled to the box
     const color = (s) => (S.color && S.color(s)) || DEF_COL[s] || '#8a7e70';
-    const nodes = (S.nodes || []).filter((n) => n && n.id);
+    // the frame in view: a turn's snapshot (the chat's CTX_FRAMES) stands in for the live records while it is picked
+    const frames = S.frames || [];
+    const frame = S.frame != null ? frames.find((f) => f && String(f.id) === String(S.frame)) : null;
+    const nodes = ((frame ? frame.nodes : S.nodes) || []).filter((n) => n && n.id);
+    // the relations by type (the old graph's edge classes: CITES · SIMILAR · HAS_SKILL · RELATED …), the folded types away
+    const eOff = S.edgesOff || new Set();
+    const edgesAll = ((frame ? frame.edges : S.edges) || []).filter((e0) => e0 && e0.from != null && e0.to != null).map((e0) => ({ from: e0.from, to: e0.to, label: String(e0.label || e0.type || e0.relation || '') }));
+    const EDGES = edgesAll.filter((e0) => !eOff.has(edgeTypeOf(e0)));
+    // the search: a record matches on its label, id, text, source, type or tags; what does not match dims in the plot
+    const QS = String(S.q || '').trim().toLowerCase();
+    const matchQ = (n) => !QS || [n.label, n.id, textOf(n), n.source, n.type, n.dataset, n.url].concat(n.tags || []).some((v) => v && String(v).toLowerCase().indexOf(QS) >= 0);
     const off = S.layersOff || new Set();
     const ghosts = S.related !== false;
     const lvl = {}; FAMS.forEach((f) => { lvl[f] = mixOf(S, f); });
@@ -137,7 +162,7 @@
     const ctxIds = new Set(nodes.map((n) => n.id));
     const memCtx = nodes.filter((n) => n.source === 'memory').map((n) => Object.assign({}, n, { _fam: 'memory', _injected: n.included !== false }));
     const litIds = new Set(nodes.filter((n) => focus.has(n.id) && n.included !== false).map((n) => n.id));
-    const memTouch = new Set(); (S.memEdges || []).concat(S.edges || []).forEach((e) => { const a = String(e.from_id || e.from || ''), b = String(e.to_id || e.to || ''); if (litIds.has(a)) memTouch.add(b); if (litIds.has(b)) memTouch.add(a); });
+    const memTouch = new Set(); (S.memEdges || []).concat(EDGES).forEach((e) => { const a = String(e.from_id || e.from || ''), b = String(e.to_id || e.to || ''); if (litIds.has(a)) memTouch.add(b); if (litIds.has(b)) memTouch.add(a); });
     const memSessAll = lvl.memory === 'off' ? [] : (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).map((m) => ({ id: m.id, label: (m.text || m.summary || m.capability || m.category || m.id || '').slice(0, 60), source: 'memory', type: m.record_type || m.type || 'memory', score: m.importance == null ? 0.5 : +m.importance, text: m.text || m.summary || '', included: false, rec: m, _fam: 'memory', _injected: false, _sess: true, created_at: m.created_at || '' }));
     const memSess = lvl.memory === 'focus' ? memSessAll.filter((m) => memTouch.has(m.id)) : memSessAll;
     const mem = memCtx.concat(memSess);
@@ -191,7 +216,7 @@
         : (x, y, z) => { const u = x - cxp, v = y - cyp; return { x: cxp + (u - v) * kx, y: cyp + Y0 + (u + v) * ky - (z || 0) }; };
       ISO = { kx, ky, sinT, tilt, y0: Y0, k: K0, pad: PAD, box, fit: Math.max(box.w / (PW - LANE_L), box.h / (PH - LANE_T)) };
     } else RMAX = Math.max(60 * k, Math.min(PW - LANE_L, PH - LANE_T) / 2 - memMargin);
-    const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], memLabels: [], cedges: [], sedges: [], stems: [], pins: [], plate: null, regions: [], loopNodes: [], loopStems: [], planNodes: [], stepNodes: [], planPlot: [], estNodes: [], estLabels: [], dividers: [], pos: {}, tokens: 0, lit: 0, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' || quad }, discs: [], iso: ISO, k };
+    const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], memLabels: [], cedges: [], sedges: [], stems: [], pins: [], plate: null, regions: [], loopNodes: [], loopStems: [], planNodes: [], stepNodes: [], planPlot: [], estNodes: [], estLabels: [], dividers: [], pos: {}, tokens: 0, lit: 0, hits: 0, q: QS, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' || quad }, discs: [], iso: ISO, k };
     // the plot's pan/zoom, for what is drawn OUTSIDE it (the lanes) but joins a record inside it
     const GZ = (S.pan && S.pan.z) || 1, GX = (S.pan && S.pan.x) || 0, GY = (S.pan && S.pan.y) || 0;
     const atP = (p) => ({ x: PW / 2 + (p.x - PW / 2) * GZ + GX, y: PHfull / 2 + (p.y - PHfull / 2) * GZ + GY });
@@ -260,8 +285,9 @@
         if (inFocus) { out.tokens += tok; out.lit++; }
         const d = Math.max(17 * k, (7 + Math.sqrt(tok) / 2.7 + 8) * k);
         const kind = kindOf(n, s);
-        out.pos[n.id] = { x: q.x, y: q.y, col, source: s, label: n.label || n.id, lit: inFocus, rim: d / 2, ghost, score, tok, kind: n.type || s, icon: kind };
-        out.cnodes.push({ id: n.id, x: px(q.x), y: px(q.y), d: px(d), col, kind, cls: (inFocus ? 'lit ' : everRead ? '' : 'dim ') + (ghost ? 'ghost ' : '') + (n.type === 'dataset' ? 'sq ' : '') + (S.sel === n.id ? 'on' : ''),
+        const hit = matchQ(n); if (QS && hit) out.hits++;
+        out.pos[n.id] = { x: q.x, y: q.y, col, source: s, label: n.label || n.id, lit: inFocus, rim: d / 2, ghost, score, tok, kind: n.type || s, icon: kind, rec: n, hit };
+        out.cnodes.push({ id: n.id, x: px(q.x), y: px(q.y), d: px(d), col, kind, cls: (inFocus ? 'lit ' : everRead ? '' : 'dim ') + (ghost ? 'ghost ' : '') + (n.type === 'dataset' ? 'sq ' : '') + (QS && !hit ? 'miss ' : '') + (S.sel === n.id ? 'on' : ''),
           op: (inFocus ? 1 : everRead ? 0.55 + score * 0.3 : ghost ? 0.4 : 0.55).toFixed(2),
           title: (n.label || n.id) + ' · ' + s + (n.type ? ' · ' + n.type : '') + ' · relevance ' + score.toFixed(2) + ' · ' + tok + ' tokens' + (ghost ? ' · related, not injected' : inFocus ? ' · in this prompt' : everRead ? ' · read by ' + by.join(', ') : '') });
       });
@@ -311,7 +337,8 @@
       const shape = (n) => n.type === 'message' ? 'msg' : n.type === 'session' ? 'sess' : /^dag/.test(n.type || '') ? 'dag' : '';
       const put = (n, a, R, row, ghost) => { const q = memAt(a, R, row); const lit = !ghost && focus.has(n.id); const imp = Math.max(0, Math.min(1, +n.score || 0));
         out.pos[n.id] = { x: q.x, y: q.y, col: memCol(n), source: 'memory', label: n.label || n.id, lit, rim: 6 * k, ghost, score: imp, tok: tokOf(n), kind: n.type || 'memory', rec: n.rec || n, sess: !!n._sess }; if (lit) { out.tokens += tokOf(n); out.lit++; }
-        out.memNodes.push({ id: n.id, x: px(q.x), y: px(q.y), col: memCol(n), kind: memKind(n.type), op: ghost ? (0.45 + imp * 0.45).toFixed(2) : '1', cls: shape(n) + ' ' + (ghost ? 'ghost ' : lit ? 'lit ' : '') + (S.sel === n.id ? 'on' : ''), title: (n.label || n.id) + ' · ' + (n.type || 'memory') + (ghost ? ' · in the session, not injected' : lit ? ' · in this prompt' : ' · injected') + (n._sess ? ' · importance ' + imp.toFixed(2) : '') }); };
+        const hit = matchQ(n); if (QS && hit) out.hits++; out.pos[n.id].hit = hit;
+        out.memNodes.push({ id: n.id, x: px(q.x), y: px(q.y), col: memCol(n), kind: memKind(n.type), op: ghost ? (0.45 + imp * 0.45).toFixed(2) : '1', cls: shape(n) + ' ' + (ghost ? 'ghost ' : lit ? 'lit ' : '') + (QS && !hit ? 'miss ' : '') + (S.sel === n.id ? 'on' : ''), title: (n.label || n.id) + ' · ' + (n.type || 'memory') + (ghost ? ' · in the session, not injected' : lit ? ' · in this prompt' : ' · injected') + (n._sess ? ' · importance ' + imp.toFixed(2) : '') }); };
       // the injected arc: evenly along the arm
       inj.forEach((n, i) => { const a = inj.length === 1 ? MEM_A0 + MEM_AW / 2 : MEM_A0 + i * (MEM_AW / (inj.length - 1)); put(n, a, R1, 0, false); });
       // the session's records: kind groups along the arm, each group's share by its count (a slot between groups); a row
@@ -360,7 +387,7 @@
       out.regions.push({ x: px(LANE_L + 20 * k), y: px(1), col: 'var(--cg-t2)', t: (planIsRun ? 'plan · ' : 'goals · ') + plan.length + (planIsRun ? ' steps · ' : ' · ') + plan.filter((p) => /^(done|complete|completed|ok)$/.test(p.status || '')).length + ' done' });
     }
     // relations INSIDE the graph: what cites what (the context's own edges; a quad's cells drew their own)
-    if (!quad) (S.edges || []).forEach((e2) => { const a = out.pos[e2.from], b = out.pos[e2.to]; if (!a || !b) return; const lit = a.lit && b.lit; const memRel = a.source === 'memory' || b.source === 'memory';
+    if (!quad) EDGES.forEach((e2) => { const a = out.pos[e2.from], b = out.pos[e2.to]; if (!a || !b) return; const lit = a.lit && b.lit; const memRel = a.source === 'memory' || b.source === 'memory';
       edge(out.cedges, a, b, memRel ? 'var(--cg-ac2)' : lit ? a.col : 'var(--cg-bd2)', memRel ? 'mem' : lit ? 'rel lit' : 'rel', a.label + ' → ' + b.label + (e2.label ? ' · ' + String(e2.label).replace(/_/g, ' ').toLowerCase() : '')); });
     // the step in focus (or the one running), wired to the records it read — from the fixed lane into the moving plot,
     // and from the plot's own step where the layer draws it
@@ -392,10 +419,11 @@
     // the record open in the panel: a record, a memory, an estate node — or the loop step in focus
     out.rec = null;
     if (S.sel && out.pos[S.sel]) { const r = out.pos[S.sel]; const by = readBy(S.sel), steps = readBySteps(S.sel);
-      const rels = (S.edges || []).filter((e2) => e2.from === S.sel || e2.to === S.sel).map((e2) => { const o = out.pos[e2.from === S.sel ? e2.to : e2.from]; return (o ? o.label : '?') + (e2.label ? ' — ' + String(e2.label).replace(/_/g, ' ').toLowerCase() : ''); }).slice(0, 4);
-      out.rec = { id: S.sel, name: r.label, kind: r.source + ' · ' + r.kind, col: r.col, turn: by[0] || null, ghost: r.ghost, family: r.source === 'estate' ? 'estate' : r.source === 'memory' ? 'memory' : 'context', rec: r.rec || null,
+      const rels = EDGES.filter((e2) => e2.from === S.sel || e2.to === S.sel).map((e2) => { const o = out.pos[e2.from === S.sel ? e2.to : e2.from]; return (o ? o.label : '?') + (e2.label ? ' — ' + String(e2.label).replace(/_/g, ' ').toLowerCase() : ''); }).slice(0, 4);
+      const rr = r.rec || {}; const detail = r.source === 'estate' ? [] : [].concat(rr.type || rr.dataset ? [{ k: 'type', v: [rr.type, rr.dataset ? 'dataset ' + rr.dataset : ''].filter(Boolean).join(' · ') }] : [], rr.url ? [{ k: 'url', v: String(rr.url).slice(0, 80), url: String(rr.url) }] : [], (rr.tags || []).length ? [{ k: 'tags', v: rr.tags.slice(0, 8).join(', ') }] : []);
+      out.rec = { id: S.sel, name: r.label, kind: r.source + ' · ' + r.kind, col: r.col, turn: by[0] || null, ghost: r.ghost, family: r.source === 'estate' ? 'estate' : r.source === 'memory' ? 'memory' : 'context', rec: r.rec || null, text: r.source === 'estate' ? '' : textOf(rr).slice(0, 600), url: rr.url || '',
         rows: r.source === 'estate' ? [{ k: 'kind', v: r.kind }, { k: 'status', v: (r.rec && r.rec.status) || 'unknown' }, { k: 'detail', v: (r.rec && r.rec.detail) || '—' }, { k: 'temperature', v: r.rec && r.rec.temp_c != null ? r.rec.temp_c + ' °C' : '—' }] : r.sess ? [{ k: 'kind', v: r.kind + (r.rec && r.rec.source_type ? ' · ' + r.rec.source_type : '') }, { k: 'recalled', v: r.ghost ? 'in the session, never injected' : 'injected' + (by.length ? ' · ' + by.join(', ') : '') }, { k: 'created', v: String((r.rec && r.rec.created_at) || '').replace('T', ' ').slice(0, 16) || '—' }, { k: 'importance', v: r.score.toFixed(2) }]
-          : [{ k: 'relevance', v: r.score.toFixed(2) + (r.ghost ? ' · related, not injected' : r.lit ? ' · in this prompt' : by.length ? ' · in the prompt of ' + by.join(', ') : ' · not read') }, { k: 'tokens', v: String(r.tok) }, { k: 'read by', v: by.length ? by.join(' · ') : '—' }, { k: 'loop steps', v: steps.length ? steps.map((s) => 'step ' + s).join(' · ') : '—' }, { k: 'source', v: r.source + ' · ' + r.kind }], rels }; }
+          : [{ k: 'relevance', v: r.score.toFixed(2) + (r.ghost ? ' · related, not injected' : r.lit ? ' · in this prompt' : by.length ? ' · in the prompt of ' + by.join(', ') : ' · not read') }, { k: 'tokens', v: String(r.tok) }, { k: 'read by', v: by.length ? by.join(' · ') : '—' }, { k: 'loop steps', v: steps.length ? steps.map((s) => 'step ' + s).join(' · ') : '—' }, { k: 'source', v: r.source + ' · ' + r.kind }].concat(detail), rels }; }
     else if (S.lsel != null && loop[S.lsel]) { const s = loop[S.lsel]; const rd = (stepReads[S.lsel] || []).map((id) => out.pos[id]).filter(Boolean);
       const pl = planIsRun ? plan.findIndex((p) => (p.steps || []).indexOf(S.lsel) >= 0) : -1;
       out.rec = { id: s.id, name: (S.lsel + 1) + ' · ' + (s.label || s.id), kind: (isDag ? 'dag' : 'loop') + ' · step', col: 'var(--cg-ac)', turn: null, ghost: false, family: 'loop', rec: s,
@@ -414,6 +442,18 @@
     if (runPlan.length || (S.plan || []).length) out.families.push({ name: 'plan', fam: 'plan', col: 'var(--cg-t2)', n: runPlan.length || S.plan.length, on: lvl.plan !== 'off', level: lvl.plan });
     if (estAll.length) out.families.push({ name: 'estate', fam: 'estate', col: 'var(--cg-est)', n: estAll.length, on: lvl.estate !== 'off', level: lvl.estate });
     out.ghosts = nodes.filter((n) => n.included === false).length + memSess.filter((n) => !n._injected).length;
+    // the LIST: the records as rows (the old renderCtxList's: source dot · label · relevance bar · tokens · included),
+    // the most relevant first, the search's hits only while a search is on; every row knows its record for the panel
+    out.list = ctx.concat(mem).filter((n) => matchQ(n)).map((n) => { const p = out.pos[n.id] || {}; const sc = Math.max(0, Math.min(1, n.score == null ? 0.5 : +n.score));
+      return { id: n.id, label: n.label || n.id, source: n.source || '?', col: p.col || color(n.source), score: sc, tok: tokOf(n), included: n._sess ? !!p.lit : n.included !== false, sess: !!n._sess, lit: !!p.lit, sel: S.sel === n.id, text: textOf(n).replace(/\s+/g, ' ').slice(0, 140), url: n.url || '', kind: p.icon || kindOf(n, n.source || '?') }; })
+      .sort((a, b) => (a.sess === b.sess ? b.score - a.score : a.sess ? 1 : -1));
+    out.listTotal = ctx.length + mem.length;
+    // the edge types drawn (and the folded ones), with counts — the chip row's second group
+    const etc = {}; edgesAll.forEach((e0) => { const t = edgeTypeOf(e0); etc[t] = (etc[t] || 0) + 1; });
+    out.edgeTypes = Object.keys(etc).sort((a, b) => etc[b] - etc[a]).map((t) => ({ name: t, n: etc[t], on: !eOff.has(t) }));
+    // the frames scrubber: the turns' snapshots, the one in view marked; "live" is the current set
+    out.frames = frames.filter((f) => f && f.id != null).map((f) => ({ id: f.id, label: f.label || String(f.id), ts: f.ts || '', n: (f.nodes || []).length, on: frame != null && String(f.id) === String(frame.id) }));
+    out.frame = frame ? { id: frame.id, label: frame.label || String(frame.id) } : null;
     out.lanes = { l: LANE_L, t: LANE_T, b: LANE_B, hasLanes };
     out.mix = lvl;
     return out;
@@ -422,7 +462,8 @@
   function mini(S, w, h) { const v = (S && S.view) || 'galaxy'; return compute(Object.assign({}, S || {}, { mini: true, view: v === 'quad' ? 'galaxy' : v, pan: null }), w || 262, h || 196); }
   // a state from a widget record's data ({nodes, rels|edges, focus, memory, memEdges, loop, plan, estate, view, mix})
   function stateFrom(d) { d = d || {}; const edges = (d.edges || d.rels || d.links || []).map((e) => ({ from: e.from != null ? e.from : e.source, to: e.to != null ? e.to : e.target, label: e.label || e.kind || e.type || '' }));
-    return { view: d.view || 'galaxy', nodes: d.nodes || [], edges, focus: d.focus || (d.nodes || []).filter((n) => n && n.included !== false).map((n) => n.id), reads: d.reads || {}, stepReads: d.stepReads || [], loop: d.loop || [], runPlan: d.runPlan || [], run: d.run || null, dag: d.dag || [], dagEdges: d.dagEdges || [], plan: d.plan || [], estate: d.estate || { nodes: [], edges: [] }, memory: d.memory || [], memEdges: d.memEdges || [], mix: d.mix || {}, layersOff: new Set(d.off || []), related: d.related !== false, allEdges: !!d.allEdges, sel: d.sel || null, lsel: d.lsel == null ? null : d.lsel, pan: { x: 0, y: 0, z: 1 }, color: d.color || null, memColor: d.memColor || null, edgeColor: d.edgeColor || null, turn: d.turn || '' }; }
+    return { view: d.view || 'galaxy', nodes: d.nodes || [], edges, focus: d.focus || (d.nodes || []).filter((n) => n && n.included !== false).map((n) => n.id), reads: d.reads || {}, stepReads: d.stepReads || [], loop: d.loop || [], runPlan: d.runPlan || [], run: d.run || null, dag: d.dag || [], dagEdges: d.dagEdges || [], plan: d.plan || [], estate: d.estate || { nodes: [], edges: [] }, memory: d.memory || [], memEdges: d.memEdges || [], mix: d.mix || {}, layersOff: new Set(d.off || []), related: d.related !== false, allEdges: !!d.allEdges, sel: d.sel || null, lsel: d.lsel == null ? null : d.lsel, pan: { x: 0, y: 0, z: 1 }, color: d.color || null, memColor: d.memColor || null, edgeColor: d.edgeColor || null, turn: d.turn || '',
+      q: d.q || '', list: !!d.list, frames: d.frames || [], frame: d.frame == null ? null : d.frame, edgesOff: new Set(d.edgesOff || []) }; }
 
   /* ── the drawing, shared by the element and the mini: the layout → markup in the element's own classes ── */
   const stAt = (x, y) => 'left:' + x + 'px;top:' + y + 'px;';
@@ -461,16 +502,45 @@
     o.loopStems.forEach((s) => { l += '<div class="cg-lstem" style="' + stAt(s.x, s.y) + 'height:' + s.h + 'px"></div>'; });
     o.loopNodes.forEach((n) => { l += '<div class="cg-loop ' + n.cls + '" data-i="' + n.i + '" title="' + esc(n.title) + '" style="' + stAt(n.x, n.y) + '"><b>' + esc(n.label.slice(0, 16)) + '</b><span class="c">' + esc(n.cap) + '</span><span class="t">' + esc(n.ms) + '</span>'
       + (n.marks && n.marks.length ? '<span class="m">' + n.marks.map((m) => '<i class="' + esc(m.status) + ' ' + esc(m.kind) + '" title="' + esc(m.kind + ' · ' + m.status + ' · ' + m.label) + '">' + esc(m.g) + '</i>').join('') + '</span>' : '') + '</div>'; });
-    if (o.rec && !opts.noRecord) { const r = o.rec; l += '<div class="cg-rec" style="--gc:' + esc(r.col) + (o.lanes.b ? ';bottom:' + (o.lanes.b + 6) + 'px' : '') + '"><span class="cg-rec-h"><i class="' + (r.ghost ? 'ghost' : '') + '"></i><b>' + esc(r.name) + '</b><span class="mono">' + esc(r.kind) + '</span><span class="x" data-a="close">✕</span></span>'
-      + r.rows.map((x) => '<span class="cg-rec-r"><span class="k">' + esc(x.k) + '</span><span class="v">' + esc(x.v) + '</span></span>').join('') + r.rels.map((x) => '<span class="cg-rec-l"><i></i>' + esc(x) + '</span>').join('')
-      + '<span class="cg-rec-a">' + (r.turn ? '<button class="pri" data-a="turn" data-mid="' + esc(r.turn) + '">Focus turn</button>' : '') + (r.family === 'estate' || r.family === 'loop' ? '' : '<button data-a="toggle" data-id="' + esc(r.id) + '">' + (r.ghost ? 'Include in the prompt' : 'Exclude from the prompt') + '</button><button data-a="open" data-id="' + esc(r.id) + '">Open</button>') + '</span></div>'; }
+    if (o.rec && !opts.noRecord) l += recordCard(o.rec, { bottom: o.lanes.b ? o.lanes.b + 6 : 0 });
     return l;
   }
-  // the mini's face: the whole layout in one box (no chips, no header) — the widget form calls this with the state
-  function miniHtml(S, w, h) {
-    w = w || 262; h = h || 196; const o = mini(S, w, h);
-    return '<div class="cg-mini" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div><div class="cg-lanes">' + drawLanes(o, { noRecord: true }) + '</div></div>';
+  // the record card — the panel in the element, the overlay in the mini: the record's name and kind, its rows (relevance ·
+  // tokens · read by · loop steps · source · type · url · tags), its TEXT, its relations, the actions
+  function recordCard(r, opts) {
+    opts = opts || {};
+    const rows = opts.compact ? r.rows.slice(0, 3) : r.rows;
+    return '<div class="cg-rec' + (opts.compact ? ' compact' : '') + '" data-id="' + esc(r.id) + '" style="--gc:' + esc(r.col) + (opts.bottom ? ';bottom:' + opts.bottom + 'px' : '') + '"><span class="cg-rec-h"><i class="' + (r.ghost ? 'ghost' : '') + '"></i><b>' + esc(r.name) + '</b><span class="mono">' + esc(r.kind) + '</span><span class="x" data-a="close">✕</span></span>'
+      + rows.map((x) => '<span class="cg-rec-r"><span class="k">' + esc(x.k) + '</span>' + (x.url ? '<a class="v" href="' + esc(x.url) + '" target="_blank" rel="noopener">' + esc(x.v) + '</a>' : '<span class="v">' + esc(x.v) + '</span>') + '</span>').join('')
+      + (r.text ? '<div class="cg-rec-t">' + esc(opts.compact ? r.text.slice(0, 160) : r.text) + '</div>' : '')
+      + (opts.compact ? '' : (r.rels || []).map((x) => '<span class="cg-rec-l"><i></i>' + esc(x) + '</span>').join(''))
+      + '<span class="cg-rec-a">' + (r.turn ? '<button class="pri" data-a="turn" data-mid="' + esc(r.turn) + '">Focus turn</button>' : '') + (r.family === 'estate' || r.family === 'loop' ? '' : '<button data-a="toggle" data-id="' + esc(r.id) + '">' + (r.ghost ? (opts.compact ? 'Include' : 'Include in the prompt') : (opts.compact ? 'Exclude' : 'Exclude from the prompt')) + '</button><button data-a="open" data-id="' + esc(r.id) + '">Open</button>') + '</span></div>';
   }
+  // the LIST drawer: the rows from compute() — a row is the record (click → the panel), its dot, label, relevance bar,
+  // tokens and the include / exclude mark (data-a="toggle"); the head says how many, and how many the search hit
+  function listHtml(o, opts) {
+    opts = opts || {};
+    const rows = opts.limit ? o.list.slice(0, opts.limit) : o.list;
+    const head = (o.q ? rows.length + ' of ' + o.listTotal + ' match “' + o.q + '”' : o.listTotal + ' record' + (o.listTotal === 1 ? '' : 's')) + (o.frame ? ' · frame ' + o.frame.label : '');
+    return '<div class="cg-list' + (opts.compact ? ' compact' : '') + '"><div class="cg-list-h"><span>' + esc(head) + '</span>' + (opts.closable === false ? '' : '<span class="x" data-a="list" title="Close the list">✕</span>') + '</div><div class="cg-list-b">'
+      + (rows.length ? rows.map((r) => '<div class="cg-row' + (r.included ? '' : ' excl') + (r.lit ? ' lit' : '') + (r.sel ? ' on' : '') + '" data-id="' + esc(r.id) + '" title="' + esc(r.label + ' · ' + r.source + ' · ' + (r.sess ? 'importance ' : 'relevance ') + r.score.toFixed(2) + ' · ' + r.tok + ' tokens' + (r.sess ? (r.included ? ' · in the prompt' : ' · in the session, not injected') : r.included ? '' : ' · excluded from the prompt')) + '" style="--rc:' + esc(r.col) + '">'
+        + '<i class="dot"></i><b>' + esc(r.label) + '</b><span class="bar"><i style="width:' + Math.round(r.score * 100) + '%"></i></span><span class="tok">' + r.tok + '</span>'
+        + (r.sess ? '<span></span>' : '<button data-a="toggle" data-id="' + esc(r.id) + '" title="' + (r.included ? 'Exclude from the prompt' : 'Include in the prompt') + '">' + (r.included ? '✕' : '＋') + '</button>')
+        + (r.text && !opts.compact ? '<small>' + esc(r.text) + '</small>' : '') + '</div>').join('') : '<div class="cg-list-e">' + (o.q ? 'nothing matches' : 'no records yet') + '</div>')
+      + '</div></div>';
+  }
+  // the mini's face: the whole layout in one box (no chips, no header) — the widget form calls this with the state
+  function miniHtml(S, w, h, opts) {
+    w = w || 262; h = h || 196; opts = opts || {}; S = S || {};
+    const detail = opts.detail !== undefined ? opts.detail : S.sel, list = opts.list !== undefined ? !!opts.list : !!S.list, q = opts.q !== undefined ? opts.q : S.q;
+    const o = mini(Object.assign({}, S, { sel: detail || null, q: q || '' }), w, h);
+    return '<div class="cg-mini' + (list ? ' listing' : '') + '" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div><div class="cg-lanes">' + drawLanes(o, { noRecord: true }) + '</div>'
+      + (list ? listHtml(o, { compact: true, limit: 40 }) : '') + (o.rec ? recordCard(o.rec, { compact: true }) : '') + '</div>';
+  }
+  // the mini's detail: the compact record card for one record, over the box (the widget form shows it on a click)
+  function miniDetail(S, id, w, h) { const o = mini(Object.assign({}, S || {}, { sel: id || null, lsel: null }), w || 262, h || 196); return o.rec ? recordCard(o.rec, { compact: true }) : ''; }
+  // the mini's list: the rows for the box, the search applied
+  function miniList(S, opts) { opts = opts || {}; const o = mini(Object.assign({}, S || {}, { q: opts.q !== undefined ? opts.q : (S && S.q) || '' }), opts.w || 262, opts.h || 196); return listHtml(o, { compact: true, limit: opts.limit || 40, closable: opts.closable }); }
 
   /* ── the loop lane from the loop's events (the same stream <vera-loop-graph> reads), through families.js ── */
   function loopFromEvents(evs) {
@@ -584,6 +654,30 @@ vera-context-graph .cg-rec-h .mono{font-family:var(--cg-mono);font-size:9px;colo
 vera-context-graph .cg-rec-h .x{margin-left:auto;flex:none;width:18px;height:18px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--cg-t3);cursor:pointer}vera-context-graph .cg-rec-h .x:hover{color:var(--cg-t1);background:var(--cg-s1)}
 vera-context-graph .cg-rec-r{display:flex;gap:8px;align-items:baseline;font-family:var(--cg-mono);font-size:9.5px}vera-context-graph .cg-rec-r .k{width:66px;flex:none;color:var(--cg-t3)}vera-context-graph .cg-rec-r .v{color:var(--cg-t1);min-width:0}
 vera-context-graph .cg-rec-l{display:flex;gap:6px;align-items:center;font-family:var(--cg-mono);font-size:9px;color:var(--cg-t2)}vera-context-graph .cg-rec-l i{width:12px;height:1.5px;background:var(--gc);flex:none}
+vera-context-graph .cg-rec-t{font-size:10px;line-height:1.45;color:var(--cg-t2);white-space:pre-wrap;word-break:break-word;max-height:112px;overflow-y:auto;margin-top:4px;padding-top:5px;border-top:1px solid var(--cg-bd)}
+vera-context-graph .cg-rec-r a.v{color:var(--cg-ac);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}vera-context-graph .cg-rec-r a.v:hover{text-decoration:underline}
+vera-context-graph .cg-rec.compact{left:6px;right:6px;bottom:6px;padding:7px 8px;gap:2px;font-size:8px;max-height:70%;overflow:hidden}vera-context-graph .cg-rec.compact .cg-rec-h{font-size:9.5px}vera-context-graph .cg-rec.compact .cg-rec-r{font-size:8px}vera-context-graph .cg-rec.compact .cg-rec-r .k{width:52px}vera-context-graph .cg-rec.compact .cg-rec-t{font-size:8px;max-height:44px;margin-top:2px;padding-top:3px}vera-context-graph .cg-rec.compact .cg-rec-a button{font-size:8px;padding:2px 6px}
+vera-context-graph .cg-node.miss,vera-context-graph .cg-mem.miss{opacity:.12!important;filter:saturate(.2)}
+vera-context-graph .cg-body{flex:1;min-height:0;min-width:0;display:flex}vera-context-graph .cg-body .cg-plot{flex:1;min-width:0}
+vera-context-graph .cg-list-box{flex:none;width:236px;min-height:0;display:flex;margin:6px 10px 10px 0}vera-context-graph .cg-list-box[hidden]{display:none}
+vera-context-graph .cg-list{position:absolute;top:0;right:0;bottom:0;width:236px;z-index:7;display:flex;flex-direction:column;background:color-mix(in srgb,var(--cg-s1) 92%,transparent);border-left:1px solid var(--cg-bd);backdrop-filter:blur(3px)}
+vera-context-graph .cg-list-box .cg-list{position:relative;inset:auto;width:100%;border:1px solid var(--cg-bd);border-radius:8px;background:var(--cg-s1);backdrop-filter:none}
+vera-context-graph .cg-list-h{flex:none;display:flex;align-items:center;gap:6px;padding:7px 9px;font-family:var(--cg-mono);font-size:9px;color:var(--cg-t3);border-bottom:1px solid var(--cg-bd)}vera-context-graph .cg-list-h span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}vera-context-graph .cg-list-h .x{cursor:pointer;color:var(--cg-t3)}vera-context-graph .cg-list-h .x:hover{color:var(--cg-t1)}
+vera-context-graph .cg-list-b{flex:1;min-height:0;overflow-y:auto;padding:4px 0}
+vera-context-graph .cg-row{display:grid;grid-template-columns:8px minmax(0,1fr) 44px 30px 16px;grid-template-areas:"d l b t x" ". s s s s";align-items:center;gap:2px 6px;padding:5px 9px;cursor:pointer;font-size:10px;color:var(--cg-t1);border-left:2px solid transparent}
+vera-context-graph .cg-row:hover{background:var(--cg-s2)}vera-context-graph .cg-row.on{border-left-color:var(--rc);background:var(--cg-s2)}vera-context-graph .cg-row.excl{opacity:.5}vera-context-graph .cg-row.lit b{color:var(--cg-t1)}
+vera-context-graph .cg-row .dot{grid-area:d;width:8px;height:8px;border-radius:50%;background:var(--rc)}vera-context-graph .cg-row.excl .dot{background:transparent;box-shadow:inset 0 0 0 1.5px var(--rc)}
+vera-context-graph .cg-row b{grid-area:l;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cg-t2)}
+vera-context-graph .cg-row .bar{grid-area:b;height:4px;border-radius:2px;background:var(--cg-bd);overflow:hidden}vera-context-graph .cg-row .bar i{display:block;height:100%;background:var(--rc);border-radius:2px}
+vera-context-graph .cg-row .tok{grid-area:t;font-family:var(--cg-mono);font-size:8.5px;color:var(--cg-t3);text-align:right}
+vera-context-graph .cg-row button{grid-area:x;font:inherit;font-size:9px;line-height:1;width:16px;height:16px;padding:0;border:none;border-radius:3px;background:transparent;color:var(--cg-t3);cursor:pointer}vera-context-graph .cg-row button:hover{background:var(--cg-bd);color:var(--cg-t1)}
+vera-context-graph .cg-row small{grid-area:s;font-size:9px;line-height:1.35;color:var(--cg-t3);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+vera-context-graph .cg-list-e{padding:14px 10px;font-size:10px;color:var(--cg-t3);text-align:center}
+vera-context-graph .cg-srch{font:inherit;font-size:9.5px;height:20px;width:118px;padding:0 7px;border:1px solid var(--cg-bd);border-radius:5px;background:var(--cg-s2);color:var(--cg-t1);outline:none}vera-context-graph .cg-srch:focus{border-color:var(--cg-ac)}vera-context-graph .cg-srch::placeholder{color:var(--cg-t3)}
+vera-context-graph .cg-lay.et{height:18px;font-size:8.5px;padding:0 7px;text-transform:lowercase;color:var(--cg-t2)}vera-context-graph .cg-lay.et i{width:10px;height:1.5px;border-radius:0;background:currentColor}vera-context-graph .cg-lay.et:not(.on){opacity:.45;text-decoration:line-through}vera-context-graph .cg-lay.et.on{box-shadow:inset 0 0 0 1px var(--cg-bd)}
+vera-context-graph .cg-layers .sep{width:1px;height:14px;background:var(--cg-bd);margin:0 4px}
+vera-context-graph .cg-frames{flex-shrink:0;display:flex;align-items:center;gap:4px;padding:6px 10px 0;overflow-x:auto;font-family:var(--cg-mono);font-size:9px;color:var(--cg-t3)}vera-context-graph .cg-frames[hidden]{display:none}
+vera-context-graph .cg-frame{flex:none;display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 8px;border-radius:999px;border:1px solid var(--cg-bd);background:var(--cg-s2);color:var(--cg-t2);font:inherit;cursor:pointer}vera-context-graph .cg-frame b{font-weight:400;color:var(--cg-t3)}vera-context-graph .cg-frame.on{color:var(--cg-t1);border-color:var(--cg-ac);box-shadow:inset 0 0 0 1px var(--cg-ac)}vera-context-graph .cg-frame.live i{width:6px;height:6px;border-radius:50%;background:var(--cg-ac2)}
 vera-context-graph .cg-rec-a{display:flex;gap:6px;margin-top:5px}
 vera-context-graph .cg-rec-a button{font:inherit;font-size:10px;color:var(--cg-t2);background:var(--cg-s1);border:none;border-radius:4px;padding:4px 8px;cursor:pointer;box-shadow:0 0 0 1px var(--cg-bd)}
 vera-context-graph .cg-rec-a button.pri{color:var(--cg-bg);background:var(--cg-ac);box-shadow:none}
@@ -631,6 +725,8 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
 .cg-mini .cg-plan{width:5px;height:5px}.cg-mini .cg-planl,.cg-mini .cg-estl,.cg-mini .cg-estg,.cg-mini .cg-region,.cg-mini .cg-slbl,.cg-mini .cg-memg,.cg-mini .cg-stepl{font-size:5.5px;letter-spacing:.04em}
 .cg-mini .cg-step{width:7px;height:7px}.cg-mini .cg-step svg{width:4px;height:4px}.cg-mini .cg-pnode{width:5px;height:5px}
 .cg-mini .cg-node svg{display:none}.cg-mini .cg-node span{display:none}.cg-mini .cg-lstem{display:none}
+.cg-mini .cg-list{width:100%;left:0;border-left:none;font-size:8px}.cg-mini .cg-list-h{padding:4px 7px;font-size:7.5px}.cg-mini .cg-row{padding:2px 7px;font-size:8px;grid-template-columns:6px minmax(0,1fr) 30px 22px 12px;gap:1px 4px}.cg-mini .cg-row .dot{width:6px;height:6px}.cg-mini .cg-row .tok{font-size:7px}.cg-mini .cg-row button{width:12px;height:12px;font-size:8px}
+.cg-mini .cg-rec{pointer-events:auto}
 `.replace(/vera-context-graph(?=[ {.])/g, ':is(vera-context-graph,.cg-mini)');
   function ensureCss(doc) { doc = doc || document; if (doc.getElementById('vera-context-graph-css')) return; const s = doc.createElement('style'); s.id = 'vera-context-graph-css'; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s); }
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -638,20 +734,22 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
   /* ── the element ─────────────────────────────────────────────────────────────────────────────────── */
   if (typeof HTMLElement !== 'undefined' && root.customElements && !root.customElements.get('vera-context-graph')) {
     class VeraContextGraph extends HTMLElement {
-      constructor() { super(); this._S = { view: 'galaxy', nodes: [], edges: [], focus: [], reads: {}, stepReads: [], loop: [], plan: [], runPlan: [], run: null, runs: [], runSel: '', dag: [], estate: { nodes: [], edges: [] }, memory: [], memEdges: [], memHide: null, memColor: null, edgeColor: null, allEdges: false, layersOff: new Set(['estate']), mix: { loop: 'focus', plan: 'focus' }, related: true, sel: null, lsel: null, pan: { x: 0, y: 0, z: 1 }, color: null, turn: '' }; this._evs = []; this._raf = 0; this._drag = null; }
+      constructor() { super(); this._S = { view: 'galaxy', nodes: [], edges: [], focus: [], reads: {}, stepReads: [], loop: [], plan: [], runPlan: [], run: null, runs: [], runSel: '', dag: [], estate: { nodes: [], edges: [] }, memory: [], memEdges: [], memHide: null, memColor: null, edgeColor: null, allEdges: false, layersOff: new Set(['estate']), mix: { loop: 'focus', plan: 'focus' }, related: true, sel: null, lsel: null, pan: { x: 0, y: 0, z: 1 }, color: null, turn: '', q: '', list: false, frames: [], frame: null, edgesOff: new Set() }; this._evs = []; this._raf = 0; this._drag = null; }
       connectedCallback() {
         ensureCss(this.ownerDocument); if (this._built) { this._schedule(); return; } this._built = true;
         const a = this.getAttribute('view'); if (a) this._S.view = a;
-        this.innerHTML = '<div class="cg-hd"><h2>Context graph</h2><span class="lbl" data-r="tok"></span><select class="cg-sel" data-r="runs" hidden title="The run in the lane — this session\'s, or any recorded run"></select><span class="sp"></span><span class="cg-seg" data-r="views" title="The unified graph\'s layouts, here"></span><button class="cg-btn" data-a="alledges" data-r="alledges" title="Draw every relation, not only the ones that touch the prompt">All edges</button><span class="lbl" data-r="zoom">100%</span><button class="cg-btn" data-a="fit" title="Back to the whole graph">Fit</button><button class="cg-btn" data-a="collapse" title="Fold the graph back into the quick menu">Collapse</button></div>'
+        this.innerHTML = '<div class="cg-hd"><h2>Context graph</h2><span class="lbl" data-r="tok"></span><select class="cg-sel" data-r="runs" hidden title="The run in the lane — this session\'s, or any recorded run"></select><span class="sp"></span><span class="cg-seg" data-r="views" title="The unified graph\'s layouts, here"></span><button class="cg-btn" data-a="alledges" data-r="alledges" title="Draw every relation, not only the ones that touch the prompt">All edges</button><input class="cg-srch" data-r="q" type="search" placeholder="⌕ find a record" title="Filter the list and dim what does not match in the plot — label, text, source, type, tags"><span class="lbl" data-r="hits"></span><button class="cg-btn" data-a="list" data-r="list" title="The records as a list beside the plot">List</button><span class="lbl" data-r="zoom">100%</span><button class="cg-btn" data-a="fit" title="Back to the whole graph">Fit</button><button class="cg-btn" data-a="collapse" title="Fold the graph back into the quick menu">Collapse</button></div>'
           + '<div class="cg-key"><span><b>angle</b> = source</span><span><b>distance</b> = lower relevance</span><span><b>area</b> = tokens</span><span><b>hollow</b> = related, not injected</span></div>'
-          + '<div class="cg-layers" data-r="layers"></div><div class="cg-plot" data-r="plot"><div class="cg-in" data-r="in"></div><div data-r="lanes"></div></div>';
+          + '<div class="cg-layers" data-r="layers"></div><div class="cg-frames" data-r="frames" hidden></div><div class="cg-body"><div class="cg-plot" data-r="plot"><div class="cg-in" data-r="in"></div><div data-r="lanes"></div></div><div class="cg-list-box" data-r="listbox" hidden></div></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
         this._r.views.innerHTML = VIEWS.map((v) => '<button data-v="' + v[0] + '" title="' + esc(v[2]) + '">' + v[1] + '</button>').join('');
         this.addEventListener('click', (e) => this._click(e));
+        this._r.q.addEventListener('input', () => { this._S.q = this._r.q.value; this._schedule(); });
+        this._r.q.addEventListener('keydown', (e) => { if (e.key === 'Escape') { this._r.q.value = ''; this._S.q = ''; this._schedule(); } e.stopPropagation(); });
         this.addEventListener('change', (e) => { const s = e.target && e.target.closest && e.target.closest('select[data-r="runs"]'); if (s) this.dispatchEvent(new CustomEvent('vera:ctx:run', { detail: { session_id: s.value }, bubbles: true })); });
         const plot = this._r.plot;
         plot.addEventListener('wheel', (e) => { e.preventDefault(); const r = plot.getBoundingClientRect(); const qx = e.clientX - (r.left + r.width / 2), qy = e.clientY - (r.top + r.height / 2); const p = this._S.pan; const nz = Math.max(0.5, Math.min(4, p.z * (e.deltaY > 0 ? 0.88 : 1.14))), k = nz / p.z; this._S.pan = { z: nz, x: qx - (qx - p.x) * k, y: qy - (qy - p.y) * k }; this._schedule(); }, { passive: false });
-        plot.addEventListener('pointerdown', (e) => { if (e.button || (e.target.closest && e.target.closest('.cg-rec,.cg-node,.cg-mem,.cg-loop,button'))) return; e.preventDefault(); this._drag = { x0: e.clientX, y0: e.clientY, px: this._S.pan.x, py: this._S.pan.y, id: e.pointerId, moved: false }; });
+        plot.addEventListener('pointerdown', (e) => { if (e.button || (e.target.closest && e.target.closest('.cg-rec,.cg-list,.cg-node,.cg-mem,.cg-loop,button'))) return; e.preventDefault(); this._drag = { x0: e.clientX, y0: e.clientY, px: this._S.pan.x, py: this._S.pan.y, id: e.pointerId, moved: false }; });
         plot.addEventListener('pointermove', (e) => { const g = this._drag; if (!g) return; const dx = e.clientX - g.x0, dy = e.clientY - g.y0; if (!g.moved && Math.abs(dx) + Math.abs(dy) > 4) { g.moved = true; plot.classList.add('drag'); try { plot.setPointerCapture(g.id); } catch (_) {} } if (g.moved) { this._S.pan.x = g.px + dx; this._S.pan.y = g.py + dy; this._schedule(); } });
         const up = () => { if (this._drag) { plot.classList.remove('drag'); this._drag = null; } }; plot.addEventListener('pointerup', up); plot.addEventListener('pointercancel', up);
         if (root.ResizeObserver) { this._ro = new ResizeObserver(() => this._schedule()); this._ro.observe(plot); }
@@ -675,6 +773,12 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
       // the mixer: a family's level — off · focus · all (layersOff mirrors "off", so the host's reads of it still hold)
       mix(fam, level) { const S = this._S; if (fam && level) { S.mix[fam] = level; if (level === 'off') S.layersOff.add(fam); else S.layersOff.delete(fam); this._schedule(); } return fam ? mixOf(S, fam) : Object.assign({}, S.mix); }
       allEdges(on) { if (on != null) { this._S.allEdges = !!on; this._schedule(); } return this._S.allEdges; }
+      // the turns' snapshots (the chat's CTX_FRAMES: [{id, label, ts, nodes, edges}]); active picks one to view, null = live
+      setFrames(list, o) { o = o || {}; this._S.frames = (Array.isArray(list) ? list : []).filter((f) => f && f.id != null); if (o.active !== undefined) this._S.frame = o.active == null ? null : o.active; if (this._S.frame != null && !this._S.frames.some((f) => String(f.id) === String(this._S.frame))) this._S.frame = null; this._schedule(); }
+      frame(id) { if (id !== undefined) { this._S.frame = id == null ? null : id; this._S.sel = null; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:frame', { detail: { id: this._S.frame }, bubbles: true })); } return this._S.frame; }
+      search(q) { if (q !== undefined) { this._S.q = String(q || ''); if (this._r && this._r.q) this._r.q.value = this._S.q; this._schedule(); } return this._S.q; }
+      list(on) { if (on !== undefined) { this._S.list = !!on; this._schedule(); } return this._S.list; }
+      edgeType(name, on) { const S = this._S; if (name && on !== undefined) { if (on) S.edgesOff.delete(name); else S.edgesOff.add(name); this._schedule(); } return name ? !S.edgesOff.has(name) : [...S.edgesOff]; }
       view(name) { if (name && VIEWS.some((v) => v[0] === name)) { this._S.view = name; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); } return this._S.view; }
       fit() { this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); }
       select(id) { this._S.sel = id || null; this._schedule(); }
@@ -688,10 +792,12 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
         const a = t.closest && t.closest('[data-a]'); if (a) { const S = this._S; const k = a.dataset.a;
           if (k === 'fit') this.fit(); else if (k === 'collapse') { this.dispatchEvent(new CustomEvent('vera:ctx:collapse', { bubbles: true })); } else if (k === 'alledges') { S.allEdges = !S.allEdges; this._schedule(); } else if (k === 'layer') { const s = a.dataset.s; if (FAMS.indexOf(s) >= 0) { const cur = mixOf(S, s); this.mix(s, cur === 'off' ? 'focus' : cur === 'focus' ? 'all' : 'off'); } else { if (S.layersOff.has(s)) S.layersOff.delete(s); else S.layersOff.add(s); this._schedule(); } }
           else if (k === 'related') { S.related = !S.related; this._schedule(); } else if (k === 'close') { S.sel = null; this._schedule(); }
+          else if (k === 'list') { this.list(!S.list); } else if (k === 'etype') { this.edgeType(a.dataset.t, !!a.dataset.off); } else if (k === 'frame') { this.frame(a.dataset.id === '' ? null : a.dataset.id); }
           else if (k === 'toggle') { this.dispatchEvent(new CustomEvent('vera:ctx:toggle', { detail: { id: a.dataset.id }, bubbles: true })); }
           else if (k === 'open') { const r = this._last && this._last.rec; this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: a.dataset.id, open: true, family: r && r.id === a.dataset.id ? r.family : 'context', rec: r && r.id === a.dataset.id ? r.rec : null }, bubbles: true })); }
           else if (k === 'turn') { this.dispatchEvent(new CustomEvent('vera:ctx:focus-turn', { detail: { mid: a.dataset.mid }, bubbles: true })); }
           return; }
+        const row = t.closest && t.closest('.cg-row'); if (row) { const S = this._S; S.sel = S.sel === row.dataset.id ? null : row.dataset.id; S.lsel = null; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: row.dataset.id }, bubbles: true })); return; }
         const n = t.closest && t.closest('.cg-node,.cg-mem,.cg-est'); if (n) { const S = this._S; S.sel = S.sel === n.dataset.id ? null : n.dataset.id; S.lsel = null; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: n.dataset.id }, bubbles: true })); return; }
         const l = t.closest && t.closest('.cg-loop,.cg-step'); if (l) { const i = +l.dataset.i; const S = this._S; S.lsel = S.lsel === i ? null : i; S.sel = null; this._schedule(); }
       }
@@ -706,6 +812,11 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
         this._r.tok.textContent = (o.tokens ? o.tokens.toLocaleString() + ' tokens in the prompt' : '') + (S.turn ? (o.tokens ? ' · ' : '') + S.turn : '');
         this._r.views.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === o.view));
         if (this._r.alledges) this._r.alledges.classList.toggle('on', !!S.allEdges);
+        if (this._r.list) this._r.list.classList.toggle('on', !!S.list);
+        if (this._r.hits) this._r.hits.textContent = o.q ? o.hits + ' hit' + (o.hits === 1 ? '' : 's') : '';
+        // the frames scrubber: the turns' snapshots, the live set first
+        if (this._r.frames) { const fr = o.frames || []; this._r.frames.hidden = !fr.length;
+          if (fr.length) this._r.frames.innerHTML = '<span>frames</span><button class="cg-frame live ' + (o.frame ? '' : 'on') + '" data-a="frame" data-id="" title="The live records"><i></i>live</button>' + fr.slice(-12).map((f) => '<button class="cg-frame ' + (f.on ? 'on' : '') + '" data-a="frame" data-id="' + esc(f.id) + '" title="' + esc(f.label + (f.ts ? ' · ' + f.ts : '') + ' · ' + f.n + ' records · click to view this turn\'s context') + '">' + esc(f.label) + '<b>' + f.n + '</b></button>').join(''); }
         if (this._r.runs) { const runs = S.runs || []; const cur = S.runSel || ''; const others = runs.filter((r) => r.session_id !== cur);
           const sig = cur + '|' + (S.run ? S.run.label + ':' + S.run.status : '') + '|' + others.map((r) => r.session_id + ':' + r.status).join(',');
           if (sig !== this._runsSig) { this._runsSig = sig; const glyph = (st) => st === 'running' ? '● ' : /error|fail|interrupted/.test(st || '') ? '✕ ' : '✓ ';
@@ -717,9 +828,11 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
         const famChip = (f) => '<button class="cg-lay fam ' + (f.on ? 'on' : '') + '" data-a="layer" data-s="' + esc(f.fam) + '" data-level="' + esc(f.level) + '" style="color:' + esc(f.col) + '" title="' + esc(f.name) + ' · ' + f.n + ' · the ' + esc(f.name) + ' graph as a family of this one — ' + (f.level === 'off' ? 'off' : f.level === 'focus' ? 'in focus: what touches the prompt' : 'everything') + ' · click to cycle off · focus · all"><i class="' + (f.name === 'plan' ? 'd' : f.name === 'estate' ? 'h' : f.name === 'memory' ? '' : 'p') + '" style="background:' + esc(f.col) + '"></i>' + esc(f.name) + '<b>' + f.n + '</b><span class="lv"><b class="' + (LV[f.level] >= 1 ? 'on' : '') + '"></b><b class="' + (LV[f.level] >= 2 ? 'on' : '') + '"></b></span></button>';
         this._r.layers.innerHTML = o.srcs.concat(o.offSrcs).map((s) => '<button class="cg-lay ' + (S.layersOff.has(s.name) ? '' : 'on') + '" data-a="layer" data-s="' + esc(s.name) + '" style="color:' + esc(s.col) + '" title="' + esc(s.name) + ' · ' + s.n + ' records · click to fold this layer out of the graph"><i style="background:' + esc(s.col) + '"></i>' + esc(s.name) + '<b>' + s.n + '</b></button>').join('')
           + (o.families || []).map(famChip).join('')
+          + ((o.edgeTypes || []).length ? '<span class="sep"></span>' + o.edgeTypes.slice(0, 10).map((t) => '<button class="cg-lay et ' + (t.on ? 'on' : '') + '" data-a="etype" data-t="' + esc(t.name) + '"' + (t.on ? '' : ' data-off="1"') + ' title="' + esc(t.name.replace(/_/g, ' ').toLowerCase()) + ' · ' + t.n + ' relation' + (t.n === 1 ? '' : 's') + ' · click to ' + (t.on ? 'fold this type away' : 'draw it again') + '"><i></i>' + esc(t.name.replace(/_/g, ' ')) + '<b>' + t.n + '</b></button>').join('') : '')
           + (o.ghosts ? '<span style="flex:1"></span><button class="cg-lay ' + (S.related ? 'on' : '') + '" data-a="related" style="color:var(--cg-ac2)" title="Records related to this question that were not injected"><i class="s"></i>related<b>+' + o.ghosts + '</b></button>' : '');
         this._r.in.innerHTML = drawPlot(o);
         // the lanes stay put while the plot pans and zooms
+        if (this._r.listbox) { this._r.listbox.hidden = !S.list; this._r.listbox.innerHTML = S.list ? listHtml(o) : ''; }
         let l = drawLanes(o);
         if (!o.cnodes.length && !o.memNodes.length) l += '<div class="cg-empty">' + (S.nodes.length ? 'Every layer is folded away — turn one back on above.' : 'The records the aide assembles for a turn appear here — send a message with context injection on.') + '</div>';
         this._r.lanes.innerHTML = l;
@@ -728,7 +841,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
     }
     root.customElements.define('vera-context-graph', VeraContextGraph);
   }
-  const api = { compute, mini, miniHtml, stateFrom, drawPlot, drawLanes, loopFromEvents, planFromGoals, dagSteps, mixOf, VIEWS, FAMS, ensureCss, kindOf, ICON, version: 3 };
+  const api = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawLanes, recordCard, listHtml, textOf, edgeTypeOf, loopFromEvents, planFromGoals, dagSteps, mixOf, VIEWS, FAMS, ensureCss, kindOf, ICON, version: 4 };
   root.VeraContextGraph = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
