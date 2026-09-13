@@ -1166,7 +1166,8 @@ _DEFAULT_BACKUP = {
     "nodes.backup.get",
     http_method="GET", http_path="/nodes/backup", http_tags=["nodes"],
     memory="off", silent=True,
-    description="Get the estate backup config + recent run log. Output: "
+    description="Get the estate backup config + recent run log. Every schedule "
+                "and each guest's latest backup together: backup.status. Output: "
                 "{config, log:[…]}.",
 )
 async def cap_backup_get(trace_id=None) -> Dict:
@@ -1315,8 +1316,8 @@ async def _backup_docker(dcfg: Dict) -> List[Dict]:
                 "guests (VMs + CTs) to the dedicated backup storage, and tar "
                 "matching docker named volumes into the per-host backup dir "
                 "(rotated, keep-N). Uses the saved config (nodes.backup.set); "
-                "pass proxmox/docker dicts to override one-off. Output: {ok, "
-                "proxmox:[…], docker:[…]}.",
+                "pass proxmox/docker dicts to override one-off. One guest now: "
+                "backup.run. Output: {ok, proxmox:[…], docker:[…]}.",
 )
 async def cap_backup_run(proxmox: Optional[Dict] = None,
                          docker: Optional[Dict] = None, trace_id=None) -> Dict:
