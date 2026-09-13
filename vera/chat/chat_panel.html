@@ -6563,6 +6563,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const msgs=document.getElementById('msgs'); if(!msgs) return null;
     if(_grFocusMid){ const w=msgs.querySelector('.mwrap[data-mid="'+_grFocusMid+'"]'); if(w) return w; }
     const wraps=msgs.querySelectorAll('.mwrap'); if(!wraps.length) return null;
+    // at the end of the transcript (or when it all fits) the newest turn is the one in view; scrolled up, the turn
+    // under the top third
+    if(msgs.scrollTop+msgs.clientHeight>=msgs.scrollHeight-8) return wraps[wraps.length-1];
     const box=msgs.getBoundingClientRect(), line=box.top+box.height*0.33;
     for(const w of wraps){ const r=w.getBoundingClientRect(); if(r.bottom>=line) return w; }
     return wraps[wraps.length-1];
@@ -9730,7 +9733,7 @@ Your task: decide what to do next to advance toward the goal.
     // Recompute injection now that context is guaranteed to match this msg,
     // then reconcile the "+N ctx" pill on the already-painted user message.
     ctxInj=buildCtxInj(msg);
-    _ctxTurnSend={ mid:uMsg.mid, amid:aMsg.mid, ids:new Set(CTX_NODES.map(n=>n.id)), query:_ctxQuery };   // this turn's frame, saved when the reply lands
+    _ctxTurnSend={ mid:uMsg.mid, amid:aMsg.mid, ids:new Set(CTX_NODES.map(n=>n.id)), query:_ctxQuery }; _ctxTypingT=0;   // this turn's frame, saved when the reply lands; the composer is sent, not typed
     try{
       const _mS=parseFloat(document.getElementById('ctxSim')?.value||'0.55');
       const _kK=parseInt(document.getElementById('ctxK')?.value||'8');
@@ -11306,6 +11309,7 @@ Your task: decide what to do next to advance toward the goal.
     const _flush=()=>{
       if(stale())return;
       CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query;
+      if(_ctxTurnSend) _ctxTurnSend.ids=new Set(nodes.map(n=>n.id));   // the turn in flight: this is its prompt's context
       renderCtxGraph();renderCtxList();renderFabPane(); _ctxBroadcast();
       const cc=document.getElementById('ctxCount');if(cc)cc.textContent=nodes.length+' ctx';
       const empty=document.getElementById('ctxEmpty');if(empty)empty.style.display=nodes.length?'none':'flex';
@@ -11603,7 +11607,7 @@ Your task: decide what to do next to advance toward the goal.
     if(stale()){if(sp)sp.classList.add('hidden');return;}
 
     _ctxAbort=null;
-    CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query; _ctxBroadcast();
+    CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query; if(_ctxTurnSend) _ctxTurnSend.ids=new Set(nodes.map(n=>n.id)); _ctxBroadcast();
     if(sp)sp.classList.add('hidden');
     const vec=nodes.filter(n=>n.source==='vector'||n.source==='both').length;
     const grp=nodes.filter(n=>n.source==='graph').length;
@@ -12403,9 +12407,13 @@ Your task: decide what to do next to advance toward the goal.
     const nodes=JSON.parse(JSON.stringify(CTX_NODES)).map(n=>Object.assign(n,{ by:(n.source==='run'||(sent&&!sent.has(n.id)))?'a':'u' }));
     const f={id:Date.now(),label:label||('Frame '+(CTX_FRAMES.length+1)),nodes,edges:JSON.parse(JSON.stringify(CTX_EDGES)),ts:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),mid:x.mid||'',amid:x.amid||'',turn:x.mid?'turn '+x.mid:'',query:x.query||_ctxQuery||''};CTX_FRAMES.push(f);CTX_ACTIVE=f.id;_ctxBroadcastFrames();return f;}
   // which frame is the turn in view: the one whose question or response is that message — unless it is the newest turn
-  // and the live context has moved on (the user is typing the next question: the live set is what the graph shows)
+  // and the next question is being typed (the live set is what the graphs show then)
   let _ctxTurnSend=null, _ctxActiveFrame=null;
-  function _ctxFrameInView(mid){ if(!mid||!CTX_FRAMES.length) return null; const f=CTX_FRAMES.find(x=>x.mid===mid||x.amid===mid); if(!f) return null; if(f===CTX_FRAMES[CTX_FRAMES.length-1]&&_ctxQuery&&f.query&&_ctxQuery!==f.query) return null; return f; }
+  function _ctxFrameInView(mid){ if(!mid||!CTX_FRAMES.length) return null; const f=CTX_FRAMES.find(x=>x.mid===mid||x.amid===mid); if(!f) return null;
+    // the newest turn's frame gives way to the live set while the next question is being typed (its context is what
+    // the graphs then show — the old graph's "start typing to load context")
+    if(f===CTX_FRAMES[CTX_FRAMES.length-1]){ const inp=document.getElementById('chatInput'); if(inp&&inp.value.trim()&&Date.now()-_ctxTypingT<90000) return null; }
+    return f; }
   function _ctxBroadcastFrames(){ if(_EMBED.only==='menu') return; try{ _lhmPost('frames',{ frames:CTX_FRAMES }); }catch(_){} }
   function saveFrame(){const l=prompt('Frame name:','Frame '+(CTX_FRAMES.length+1));if(l===null)return;_saveFrame(l);updateFrameUI();appendSys('Frame saved: <b>'+esc(l)+'</b>');}
 
