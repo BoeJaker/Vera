@@ -581,6 +581,7 @@
       const br = body.getBoundingClientRect();
       // an item at stage y = its turn's top lands at the turn's own client top
       body.scrollTop = Math.max(0, Math.round(msgsScrollTop + st.offsetTop - (msgsTopClient - br.top)));
+      this._view = body.scrollTop;                           // where you are looking, in stage y — the placer's floor for a turn-less item
     }
     itemRects() {
       const out = []; const F = this._focus;
@@ -595,7 +596,7 @@
       const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);   // the sticky heads overlay the stage's top: nothing is placed under them
       const body = this.shadowRoot.getElementById('body');
-      const P = place(items, this._turns || {}, { columns: cols, gap, colWidth: w, pad, view: body ? body.scrollTop : 0 });
+      const P = place(items, this._turns || {}, { columns: cols, gap, colWidth: w, pad, view: this._view != null ? this._view : (body ? body.scrollTop : 0) });
       P.placements.forEach((p) => { const c = cards.find((x) => x.dataset.key === p.key); if (!c) return; c.style.left = p.x + 'px'; c.style.top = p.y + 'px'; c.dataset.col = String(p.col); c.classList.toggle('level', !!p.level); });
       // the stage is at least as tall as the transcript's scroll height, so the column can scroll in step with it
       st.style.height = Math.max(P.height, (this._turnsH || 0) + 40) + 'px'; this._placed = P;
