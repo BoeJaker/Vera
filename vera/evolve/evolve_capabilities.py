@@ -7341,7 +7341,7 @@ def _redis_url_with_db(url: str, db: int) -> str:
 
 
 def _dev_compose_yaml(worktree_rel: str, name: str = "vera-dev",
-                      port: int = None, db: int = None,
+                      port: int = None, db: int = None, branch: str = "",
                       gate_token: str = "") -> str:
     """A compose override defining a dev-sandbox container. Parameterized per
     branch (name/port/db) so MANY can run concurrently; the defaults reproduce
@@ -7361,6 +7361,10 @@ def _dev_compose_yaml(worktree_rel: str, name: str = "vera-dev",
         port = _DEV_PORT_ACTIVE
     if db is None:
         db = DEV_REDIS_DB
+    recovery_labels = _registry_rebuild.compose_recovery_labels(branch, db)
+    role_label = json.dumps(recovery_labels["vera.loop-lab.role"])
+    branch_label = json.dumps(recovery_labels["vera.loop-lab.branch"])
+    redis_slot_label = json.dumps(recovery_labels["vera.loop-lab.redis-db"])
     c = getattr(_orch, "cfg", None)
     # A PRIVATE redis sidecar, not prod's server on another DB number. The old
     # arrangement never connected at all (redis-server binds 127.0.0.1; the
@@ -7410,6 +7414,10 @@ services:
     image: {DEV_IMAGE}
     pull_policy: never
     container_name: {name}
+    labels:
+      vera.loop-lab.role: {role_label}
+      vera.loop-lab.branch: {branch_label}
+      vera.loop-lab.redis-db: {redis_slot_label}
     command: ["python", "-m", "Vera.vera.capability_orchestration"]
     ports:
       - "{port}:8999"
@@ -7522,6 +7530,8 @@ from Vera.vera.evolve.sandbox_pool import (          # noqa: E402
     capacity_snapshot as _pool_capacity_snapshot,
 )
 from Vera.vera.evolve import sandbox_pool_reconcile as _pool_reconcile  # noqa: E402
+from Vera.vera.evolve import sandbox_registry_reconstruction as _registry_rebuild  # noqa: E402
+from Vera.vera.evolve.singleflight import SingleFlight as _SingleFlight  # noqa: E402
 from Vera.vera.evolve.sandbox_reap import (          # noqa: E402
     plan_reap as _plan_reap,
     orphan_composes as _orphan_composes,
@@ -7739,7 +7749,7 @@ async def evolve_sandbox_spawn(branch: str = "", rebuild_image: bool = False,
     gate_token = secrets.token_urlsafe(32)
     try:
         (_repo_root() / compose_file).write_text(
-            _dev_compose_yaml(wt_rel, name=name, port=port, db=db,
+            _dev_compose_yaml(wt_rel, name=name, port=port, db=db, branch=branch,
                               gate_token=gate_token), encoding="utf-8")
     except Exception as e:
         return {"error": f"could not write {compose_file}: {e}"}
@@ -8389,6 +8399,8 @@ from Vera.vera.evolve.evolve_unittest_core import (   # noqa: E402
     format_failure_details as _ut_format_failures,
 )
 
+_UNITTEST_SINGLEFLIGHT = _SingleFlight(retention_seconds=600, maximum=64)
+
 
 @capability("evolve.unittest.run", memory="off",
             http_method="POST", http_path="/evolve/unittest/run", http_tags=["evolve"],
@@ -8445,7 +8457,11 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
     inner = _ut_inner(tokens)
     argv = _ut_argv(DEV_IMAGE, str(Path(wt).resolve()), inner)
     timeout = max(30, min(1800, int(timeout)))
-    res = await _sh(argv, timeout=timeout)
+    run_key = hashlib.sha256(json.dumps({
+        "worktree": str(Path(wt).resolve()), "tokens": tokens,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    res, shared_execution = await _UNITTEST_SINGLEFLIGHT.run(
+        run_key, lambda: _sh(argv, timeout=timeout))
     combined = ((res.get("out") or "") + "\n" + (res.get("err") or "")).strip()
     if res.get("code") == -1 and "not found" in (res.get("err") or "").lower():
         return {"error": "docker not available here — evolve.unittest.run must run on the "
@@ -8465,7 +8481,8 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
                       "ok": parsed["ok"], "passed": parsed["passed"],
                       "failed": parsed["failed"], "errors": parsed["errors"]})
     return {**parsed, "code": parsed["rc"], "image": DEV_IMAGE,
-            "branch": branch or label, "out": combined[-8000:], "repo": DEFAULT_REPO_ID}
+            "branch": branch or label, "out": combined[-8000:], "repo": DEFAULT_REPO_ID,
+            "shared_execution": shared_execution}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -9868,6 +9885,135 @@ async def evolve_sandbox_list(detail: bool = False, trace_id=None):
         capacity["warning"] = ("isolated sandbox Redis cannot see controller pool occupancy; "
                                "query production evolve.sandbox.list before allocation")
     return {"sandboxes": out, "count": len(out), "capacity": capacity}
+
+
+async def _sandbox_registry_reconstruction_plan() -> Dict[str, Any]:
+    """Observe the host and build a pure, content-addressed restore plan."""
+    listed = await _sh(["docker", "ps", "-a", "--format", "{{.Names}}"], timeout=15)
+    if not listed.get("ok"):
+        return {"ok": False, "error": "docker state unavailable",
+                "refused": "docker_unknown", "mutated": False}
+    names = sorted({line.strip() for line in (listed.get("out") or "").splitlines()
+                    if line.strip().startswith("vera-dev-")})
+    observations: List[Dict[str, Any]] = []
+    for name in names:
+        inspected = await _sh(["docker", "inspect", name], timeout=15)
+        if not inspected.get("ok"):
+            return {"ok": False, "error": f"container state unavailable: {name}",
+                    "refused": "docker_unknown", "mutated": False}
+        try:
+            raw = json.loads(inspected.get("out") or "[]")[0]
+        except (IndexError, TypeError, ValueError):
+            return {"ok": False, "error": f"invalid container evidence: {name}",
+                    "refused": "docker_unknown", "mutated": False}
+        config = raw.get("Config") if isinstance(raw.get("Config"), dict) else {}
+        labels = config.get("Labels") if isinstance(config.get("Labels"), dict) else {}
+        env: Dict[str, str] = {}
+        for entry in config.get("Env") or []:
+            key, separator, value = str(entry).partition("=")
+            if separator:
+                env[key] = value
+        mounts = {str(item.get("Destination") or ""): str(item.get("Source") or "")
+                  for item in (raw.get("Mounts") or []) if isinstance(item, dict)}
+        published = []
+        ports = ((raw.get("NetworkSettings") or {}).get("Ports") or {})
+        for binding in ports.get("8999/tcp") or []:
+            try:
+                published.append(int(binding.get("HostPort")))
+            except (TypeError, ValueError, AttributeError):
+                pass
+        # Ignore compose sidecars. Anything exhibiting one app marker is in
+        # scope and must satisfy every other marker in the pure planner.
+        if not (env.get("VERA_IS_DEV_SANDBOX") == "1"
+                or "/app/Vera" in mounts or published):
+            continue
+        gate_token = env.get("VERA_GATE_BROKER_TOKEN", "")
+        observations.append({
+            "name": name,
+            "status": str((raw.get("State") or {}).get("Status") or ""),
+            "labels": labels,
+            "env": {key: env.get(key, "") for key in ("VERA_IS_DEV_SANDBOX", "REDIS_URL")},
+            "mounts": {"/app/Vera": mounts.get("/app/Vera", "")},
+            "published_ports": published,
+            "gate_token_sha256": _gate_token_digest(gate_token) if gate_token else "",
+        })
+    worktrees = await _list_worktrees()
+    if not worktrees:
+        return {"ok": False, "error": "Git worktree state unavailable",
+                "refused": "git_unknown", "mutated": False}
+    try:
+        compose_files = [path.name for path in
+                         _repo_root().glob("docker-compose.dev-*.yml")]
+    except OSError:
+        return {"ok": False, "error": "compose file state unavailable",
+                "refused": "filesystem_unknown", "mutated": False}
+    plan = _registry_rebuild.plan_registry_reconstruction(
+        observations, worktrees=worktrees, existing_pool=await _sandbox_pool(),
+        repo_root=str(_repo_root()), existing_compose_files=compose_files)
+    return {"ok": True, **plan}
+
+
+@capability("evolve.sandbox.registry.reconstruct", memory="on",
+            http_method="POST", http_path="/evolve/sandbox/registry/reconstruct",
+            http_tags=["evolve"],
+            description="Reconstruct missing spawned-sandbox pool descriptors from exact "
+                        "Docker compose, port, source-mount, Git worktree, Redis DB and "
+                        "broker-identity evidence. Dry-run is the default. Apply requires "
+                        "the exact reviewed plan digest and atomically refuses existing "
+                        "entries or changed observations. It never starts, stops, restarts "
+                        "or removes a container or worktree. Inputs: dry_run (bool=True), "
+                        "expected_digest (required only for apply).")
+async def evolve_sandbox_registry_reconstruct(dry_run: bool = True,
+                                              expected_digest: str = "",
+                                              trace_id=None):
+    plan = await _sandbox_registry_reconstruction_plan()
+    if not plan.get("ok") or dry_run:
+        return plan
+    try:
+        descriptors = _registry_rebuild.descriptors_for_apply(plan, expected_digest)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "mutated": False,
+                "digest": plan.get("digest", "")}
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "controller registry unavailable",
+                "refused": "redis_unknown", "mutated": False}
+    slugs = sorted(descriptors)
+    try:
+        async with r.pipeline(transaction=True) as transaction:
+            await transaction.watch(KEY_SANDBOX_POOL)
+            raw_pool = await transaction.hgetall(KEY_SANDBOX_POOL)
+            current_pool = {}
+            for key, value in (raw_pool or {}).items():
+                key = key.decode() if isinstance(key, (bytes, bytearray)) else key
+                value = value.decode() if isinstance(value, (bytes, bytearray)) else value
+                current_pool[key] = json.loads(value)
+            if _registry_rebuild.pool_digest(current_pool) != plan["existing_pool_digest"]:
+                await transaction.reset()
+                return {"ok": False, "error": "registry changed; review a new dry run",
+                        "refused": "registry_changed", "mutated": False}
+            occupied = [raw_pool.get(slug) or raw_pool.get(slug.encode()) for slug in slugs]
+            if any(value is not None for value in occupied):
+                await transaction.reset()
+                return {"ok": False, "error": "registry changed; review a new dry run",
+                        "refused": "registry_changed", "mutated": False}
+            transaction.multi()
+            transaction.hset(KEY_SANDBOX_POOL, mapping={
+                slug: json.dumps(descriptors[slug], sort_keys=True)
+                for slug in slugs
+            })
+            await transaction.execute()
+    except Exception as exc:
+        log.warning("sandbox registry reconstruction refused: %s", exc)
+        return {"ok": False, "error": "registry update failed",
+                "refused": "registry_changed", "mutated": False}
+    await _audit("sandbox.registry.reconstruct",
+                 f"restored {len(slugs)} descriptor(s): {', '.join(slugs)}")
+    await emit_event({"type": "evolve.sandbox.registry.reconstructed",
+                      "count": len(slugs), "slugs": slugs})
+    return {"ok": True, "schema": plan["schema"], "digest": plan["digest"],
+            "restored": slugs, "count": len(slugs), "mutated": True,
+            "containers_changed": False, "worktrees_changed": False}
 
 
 def _sandbox_workplan_target(primary: dict, pool: dict, *, name: str, branch: str) -> dict:
