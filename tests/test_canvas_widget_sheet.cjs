@@ -11,13 +11,16 @@ t('the widget body is exported', !!B && typeof B.widget === 'function');
 const rec = { form: 'gauge', title: 'GPU load', source: 'obs.health', draw: { palette: 'load' }, frame: { size: 'm' }, record: { form: 'gauge' } };
 const html = B.widget(rec, 'm', 'widget:gauge-1');
 t('a record without the element still says what it is', /gauge/.test(html) && !/vc-live/.test(html), html.slice(0, 120));
-t('a record\'s form is read from the record, not only draw.form', /const form = rec \? String\(rec\.form \|\| rec\.draw\.form \|\| ''\)/.test(SRC));
+t('a record\'s form is read from the record, not only draw.form', /const form = rec \? String\(rec\.form \|\| \(rec\.draw && rec\.draw\.form\) \|\| ''\)/.test(SRC));
+// canvas.append's content { form, title, data } is a record too (the model's path to the session canvas): no draw block needed
+t('a content with a form and no draw block still says what it is', /gauge/.test(B.widget({ form: 'gauge', title: 'Disk', data: { value: 41 } }, 'm', '')) && !/vc-stub/.test(B.widget({ form: 'gauge', title: 'Disk', data: { value: 41 } }, 'm', '')));
 // with the element registered: the live slot
 global.customElements = { get: (n) => n === 'vera-widget' ? function () {} : undefined };
 const live = B.widget(rec, 'l', 'widget:gauge-1');
 t('with <vera-widget> on the page a record is a live slot keyed by the item, at its size', /class="vc-live" data-live="widget" data-key="widget:gauge-1" data-size="l"/.test(live), live);
 t('the caption says form · source', /vc-cap mono">gauge · obs\.health</.test(live), live);
 t('no source → the caption says sample', /gauge · sample</.test(B.widget({ form: 'gauge', draw: {} }, 'm', 'k')));
+t('a form-only record is a live slot too', /vc-live" data-live="widget" data-key="k2" data-size="m"/.test(B.widget({ form: 'gauge', title: 'Disk', data: { value: 41 } }, '', 'k2')));
 t('no key (a preview) → the static path, not a live slot', !/vc-live/.test(B.widget(rec, 'm', '')));
 // the harvest's shape (a reply's widget lifted onto the canvas): the record inside the content is the widget
 const lifted = B.widget({ widget: 'gauge', title: 'GPU', args: {}, record: { form: 'gauge', title: 'GPU', draw: { form: 'gauge', size: 's' }, reads: { cap: '' }, data: { value: 62 } } }, 's', 'turn:m1:widget:0');

@@ -110,17 +110,20 @@
     widget: (c, size, key) => {
       // a widget RECORD (name · draw · reads · source) draws through the one shared drawer when the page
       // has it; otherwise its record card, so the item still says what it is
-      const rec = c && c.draw ? c : (c && c.record && c.record.draw ? Object.assign({}, c.record, c.title ? { title: c.title } : {}) : null);   // the harvest's shape carries the record
-      const form = rec ? String(rec.form || rec.draw.form || '') : '';
+      // a content with a form (or a draw block) IS a record — canvas.append's { form, title, data } as much as the sheet's
+      // full record; the harvest's shape carries the record inside; the draw block is optional
+      const isRec = (x) => !!(x && typeof x === 'object' && (x.draw || (typeof x.form === 'string' && x.form)));
+      const rec = isRec(c) ? c : (c && isRec(c.record) ? Object.assign({}, c.record, c.title ? { title: c.title } : {}) : null);
+      const form = rec ? String(rec.form || (rec.draw && rec.draw.form) || '') : '';
       // a record with a form is the live element (it reads its source itself, the sample face until it has one),
       // in the column's live layer over this slot — never re-created by a render
       if (rec && form && key && typeof customElements !== 'undefined' && customElements.get('vera-widget')) {
         const src = typeof rec.source === 'string' ? rec.source : ((rec.source && (rec.source.origin || rec.source.from)) || (rec.reads && rec.reads.cap) || '');
-        return `<div class="vc-wid" data-w="canvas.widget"><div class="vc-live" data-live="widget" data-key="${esc(key)}" data-size="${esc(size || rec.draw.size || 'm')}"><span class="vc-dim">${esc(form)}…</span></div><div class="vc-cap mono">${esc(form)}${src ? ' · ' + esc(src) : ' · sample'}</div></div>`;
+        return `<div class="vc-wid" data-w="canvas.widget"><div class="vc-live" data-live="widget" data-key="${esc(key)}" data-size="${esc(size || (rec.draw && rec.draw.size) || 'm')}"><span class="vc-dim">${esc(form)}…</span></div><div class="vc-cap mono">${esc(form)}${src ? ' · ' + esc(src) : ' · sample'}</div></div>`;
       }
       if (rec && window.VeraWidget && typeof window.VeraWidget.draw === 'function') {
         try {
-          const out = window.VeraWidget.draw(form, rec.data, size || rec.draw.size || 'm');
+          const out = window.VeraWidget.draw(form, rec.data, size || (rec.draw && rec.draw.size) || 'm');
           if (out != null) return typeof out === 'string' ? out : (out.outerHTML || '');
         } catch (e) { /* fall through to the record card */ }
       }
