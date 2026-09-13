@@ -63,7 +63,9 @@ This pushes an entry into `UI_PANELS`, which is exposed via `GET /ui/panels`. Th
 
 ### `mode="tab"`
 
-Creates a top-level tab in the tab bar. The panel HTML is injected when the tab is first activated, and an inline JS snippet (if any) runs once after injection. Used for full-screen sub-applications: Chat, IDE, Research, Fabric, Memory Graph, Galaxy, NLP, Notebook, Cap Hub.
+Creates a top-level tab in the tab bar. The panel HTML is injected when the tab is first activated, and an inline JS snippet (if any) runs once after injection. Used for full-screen sub-applications: Chat, IDE, Research, Fabric, Memory Graph, Galaxy, NLP, Notebook, Capabilities.
+
+Some registered tabs are folded into a broader tab and get no tab button of their own. Estate covers Proxmox, Remote, Net Policy, Security, Identity, Provision and Integrations. Capabilities covers Cap Ontology and MCP Servers. Agents covers Agent Bridges, and Image Studio covers Companion. `vera/estate/estate_nav_core.py` holds the map. `GET /ui/panels` marks each folded tab with `retired_into: {panel, pane, sub, section}`, and opening one opens that pane of the host tab instead. The host panel acknowledges the shell's `vera:estate:open` message with `vera:estate:opened`. Routes and capabilities are unchanged. `ui.tabs.retired.set enabled=false` brings the old tabs back on the next page load.
 
 `tab_order` controls left-to-right ordering — lower numbers are further left. Standard ranges:
 

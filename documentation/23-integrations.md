@@ -103,9 +103,9 @@ arguments and results; the existing mail event stream remains a separate legacy
 surface pending its own privacy migration.
 
 The Integrations **Effect evidence** drawer can switch among Generic API,
-Telegram, Email, and Commerce observations. Enforcement readiness, approval, and
-activation controls appear only for the Generic API contract; the other family
-views do not borrow or imply that authority.
+Telegram, Email, Commerce, and Infrastructure observations. Enforcement
+readiness, approval, and activation controls appear only for the Generic API
+contract; the other family views do not borrow or imply that authority.
 
 The same drawer also exposes a static **Provider boundaries** inventory from
 `integration.effect.inventory`. It separates local business records and
@@ -117,6 +117,18 @@ observe-only projections before marketplace credentials are opened. This does
 not block provider calls, add retries, forward control references, or claim that
 eBay or Vinted idempotency has been validated. Credentialed validation remains a
 separate, explicitly authorized activity.
+
+Infrastructure observation is deliberately partial. Direct `docker.exec`,
+`docker.stop`, `docker.rm`, `docker.run`, and `docker.worker.stop` calls project
+their host, resource, and operation as digests after local argument/sandbox
+checks and before Docker execution. Image ensure adds an observation only when a
+build or transfer is required, and worker spawn records its distinct container
+creation after preparation succeeds. Commands, environments, connection URLs,
+host/container/image identifiers, and raw approval/idempotency references are
+not retained. The projection does not block, retry, or record completion.
+Stack/store deployment, build jobs, and Proxmox/provisioning remain outside this
+claim; nested code that reaches an instrumented Docker operation is observed at
+that actual Docker boundary.
 
 ---
 

@@ -1,11 +1,16 @@
-"""Which top-level tabs the Estate tab replaces, where each one now opens, and
-the one setting that brings them back.
+"""Which top-level tabs now open inside a broader tab, where each one opens,
+and the one setting that brings them back.
+
+Estate covers seven machine, network and identity tabs; Capabilities covers
+Cap Ontology and MCP Servers; Agents covers Agent Bridges; Image Studio covers
+Companion.
 
 Pure data plus two functions, so it tests without booting Vera
 (tests/test_estate_nav_core.py). ui.panels annotates the registry with it, and
-the shell hides a tab that carries `retired_into`, opening that Estate pane
-instead. Routes and capabilities are untouched: turning the setting off
-restores the old tab bar on the next page load.
+the shell hides a tab that carries `retired_into`, opening that pane of the
+host tab instead (the host panel answers `vera:estate:open` with
+`vera:estate:opened`). Routes and capabilities are untouched: turning the
+setting off restores the old tab bar on the next page load.
 """
 from __future__ import annotations
 
@@ -13,8 +18,9 @@ from typing import Any, Dict, Iterable, List, Mapping
 
 RETIRE_SETTING_KEY = "vera:ui:retire_overlap_tabs"
 
-# panel id -> the Estate pane (and sub-tab) that now covers it
+# panel id -> the host panel's pane (and sub-tab) that now covers it
 RETIRED_TABS: Dict[str, Dict[str, str]] = {
+    # Estate
     "proxmox-panel":      {"panel": "workers-ollama", "pane": "proxmox",      "sub": "",         "section": "Machines"},
     "remote-connections": {"panel": "workers-ollama", "pane": "remote",       "sub": "",         "section": "Machines"},
     "netgraph-panel":     {"panel": "workers-ollama", "pane": "network",      "sub": "graph",    "section": "Network & Access"},
@@ -22,6 +28,13 @@ RETIRED_TABS: Dict[str, Dict[str, str]] = {
     "identity-panel":     {"panel": "workers-ollama", "pane": "provision",    "sub": "identity", "section": "Identity & Trust"},
     "provision-panel":    {"panel": "workers-ollama", "pane": "software",     "sub": "",         "section": "Build"},
     "integrations":       {"panel": "workers-ollama", "pane": "integrations", "sub": "",         "section": "Integrations"},
+    # Capabilities
+    "cap-ontology":       {"panel": "cap-hub", "pane": "ontology", "sub": "",        "section": "Capabilities"},
+    "mcp-catalog-panel":  {"panel": "cap-hub", "pane": "mcp",      "sub": "catalog", "section": "Capabilities"},
+    # Agents
+    "agentbridge-catalog-panel": {"panel": "agents-skills-ontologies", "pane": "bridges", "sub": "", "section": "Agents"},
+    # Image Studio
+    "character-studio":   {"panel": "image-studio", "pane": "companion", "sub": "", "section": "Image Studio"},
 }
 
 _OFF = ("0", "false", "off", "no")
