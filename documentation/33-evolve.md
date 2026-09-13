@@ -480,8 +480,9 @@ running-and-reloaded before they reach main:
   prod's working tree stays on main;
 - a generated `docker-compose.dev.yml` runs `vera-dev` from the `vera:latest`
   image with the worktree **bind-mounted** over `/app/Vera`, on the dev port and
-  an **isolated Redis DB** (`VERA_DEV_REDIS_DB`, default 3) so it can't corrupt
-  prod state. `vera:latest` is **local-only** (not on any registry), so
+  a **private Redis sidecar** so it cannot address production Redis. The
+  descriptor retains a bounded Redis slot identifier for pool allocation; it is
+  not the sidecar's database number. `vera:latest` is **local-only** (not on any registry), so
   `sandbox.up` first calls `docker.image.ensure` to **build it from the repo
   Dockerfile** if it's missing (and the compose sets `pull_policy: never`) —
   docker never attempts the doomed `pull access denied for vera` that used to
@@ -506,6 +507,7 @@ sandbox → the code pipeline holds for manual review instead of failing.
 | `evolve.sandbox.code.detach` | Remove the sidecar (worktree untouched) |
 | `evolve.sandbox.exec` | **Terminal** — run a command inside the `vera-dev` container (`docker exec`) or the branch worktree; never the real tree |
 | `evolve.sandbox.fs.list/read/write` | **File explorer** — browse/read/edit the worktree (path-jailed); writes land on the branch and reach main only via promote |
+| `evolve.sandbox.registry.reconstruct` | Dry-run and explicitly restore missing spawned-sandbox descriptors from matching Docker, Compose, port, mount, Git, Redis-slot, and broker-identity evidence; never changes containers or worktrees |
 
 The Sandbox tab surfaces all of it: a **Changes on the branch** card (file list
 + coloured unified diff), a **VS Code on the branch** card embedding the
@@ -530,6 +532,29 @@ links and visible notes references.
 Lifecycle safety still outranks the plan. A plan cannot make a dirty, unknown,
 protected, or Git-severed sandbox safe to restart or reap; preflight remains the
 authority for lifecycle mutations.
+
+### Recovering a lost controller registry
+
+Spawned sandbox compose definitions carry controller-owned labels for their
+role, exact branch, and allocated Redis slot. If the out-of-tree controller
+registry is lost, `evolve.sandbox.registry.reconstruct(dry_run=true)` compares
+those labels with Docker's compose project and service metadata, the single
+published Vera port, the `/app/Vera` source mount, Git's exact worktree branch,
+the generated compose file, and the hashed broker identity. An absent,
+ambiguous, duplicated, or unreadable source blocks that candidate.
+
+Applying the plan requires `dry_run=false` and the exact digest returned by the
+latest dry run. The registry is watched and written transactionally; any
+concurrent registry change requires a new review. Restoration records the owner
+as unknown and the source as recovered evidence. It does not start, stop,
+restart, pause, remove, or recreate any container, worktree, branch, or compose
+file. Sandboxes created before the recovery labels existed remain visible as
+blocked evidence rather than being guessed into the registry.
+
+Critical and targeted test runs are single-flight by worktree and normalized
+pytest arguments. Concurrent retries share one ephemeral runner, and losing an
+HTTP response does not abandon the in-flight identity or start another Docker
+test container. A later caller can receive the completed shared result.
 
 ### Repository-shared private planning
 
