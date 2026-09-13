@@ -15774,7 +15774,13 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===_xpl.mode));
     _ctxRunsFollowScene(); _xplEl.addEventListener('vera:xpl:close', ()=>_xplClose());
     _xplEl.addEventListener('vera:xpl:place', ev=>_xplPlaceOpen((ev.detail||{}).mid||''));
-    _xplEl.addEventListener('vera:xpl:turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(mid){ _grFocusMid=mid; try{ _graphAnchorPost(true); }catch(_){} } });
+    // a turn selected in the exploded scene (the turn dots, the scrubber, ← →, a station caption, the exchange) is the focused turn
+    // everywhere: the grown context graph at that turn's frame, the mini graph re-drawn, the canvas with that turn's items in focus
+    _xplEl.addEventListener('vera:xpl:turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid) return; _grFocusMid=mid;
+      try{ _ctxColSig=''; _ctxColumnSync(mid); }catch(_){}   // the grown graph for the turn, at the turn's frame (the sync activates the frame in view)
+      try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}
+      try{ const t=(_xplEl.state().scene.turns||[]).find(x=>x.mid===mid); _cvRelevance(mid, (t&&t.text)||'', {apply:false}); const cv=document.querySelector('#canvasColumn vera-canvas'); if(cv) cv.dataset.focusMid=mid; }catch(_){}
+      try{ _graphAnchorPost(true); }catch(_){} });
     _xplEl.addEventListener('vera:xpl:rendered', ev=>{ const d=ev.detail||{}; if(d.mode){ _xpl.mode=d.mode; document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===d.mode)); } });
     const msgs=document.getElementById('msgs');
     if(msgs&&window.MutationObserver){ _xplMo=new MutationObserver(()=>{ if(!_xpl.on) return; clearTimeout(_xplT); _xplT=setTimeout(_xplRefresh, 400); }); _xplMo.observe(msgs,{childList:true,subtree:true,characterData:true}); }

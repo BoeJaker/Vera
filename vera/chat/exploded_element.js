@@ -24,7 +24,7 @@
    the wheel / ± zoom grows and shrinks them WITH the scene.
 
    <vera-exploded>  API: setScene({turns:[{mid, who, t, text, reply, read:[card], say:[card], made:[card],
-                    land:[card]}], sel}) · mode(name) · select(mid) · fit() · state()
+                    land:[card]}], sel}) · mode(name) · select(mid) · fit() · state() · solo(on) · stack(on) · tilt(deg) · swing(deg) · pan(dx, dy)
    card = {n, d, col, kind, body?, score?, p?, m?, rows?, form?, data?, record? (a placed widget's record: form · source · frame · draw · data), mermaid? (a diagram's source)}
    a turn IN PROGRESS: turn.pending:true (+ turn.phrase, the thinking phrase the chat rolls) — or a card of kind 'pending'
    (its n / phrase the phrase) — draws the GENERATING state on the exchange in every mode and never a card; the chat's
@@ -76,8 +76,8 @@
 
   /* ── the layout, pure ─────────────────────────────────────────────────────────────────────────────── */
   function layout(scene, mode, W, H, o) {
-    o = o || {}; const turns = (scene && scene.turns) || []; mode = mode === 'front' || mode === 'iso' ? mode : 'cards';
-    const selIdx = Math.max(0, turns.findIndex((t) => t.mid === (scene && scene.sel))); const sel = turns.length ? Math.max(0, selIdx) : 0;
+    o = o || {}; let turns = (scene && scene.turns) || []; mode = mode === 'front' || mode === 'iso' ? mode : 'cards';
+    const selIdx = Math.max(0, turns.findIndex((t) => t.mid === (scene && scene.sel))); let sel = turns.length ? Math.max(0, selIdx) : 0;
     const out = { mode, stations: turns.length, sel, plates: [], labels: [], cards: [], edges: [], panels: [], leaders: [], graphs: [], gnodes: [], size: { w: W, h: H }, fit: { s: 1, x: 0, y: 0 }, inv: 1 };
     const den = o.den === 'hover' || o.den === 'zen' ? o.den : 'full';
     // an image travels with its card: Full gives it room on the card; Hover and Zen show it over the card instead
@@ -216,8 +216,13 @@
     // iso: u = station, v = the layer bands; the plates identical parallelograms in a row (Stack: the stations on
     // floors, one above the other). Every band is drawn; every item is the board's card on a stem at its pin, a widget
     // an iso widget group with its caption, the context records icon nodes about the prompt line, the galaxy past them.
-    const P = o.proj || isoP(30, 45);   // the classic isometric the whole design draws with
+    // the view's tilt and swing (the board's PTZ: 30°/45° is the classic isometric; a tilt down flattens the plane, a swing turns it)
+    const TILT = o.tilt == null ? 30 : Math.max(12, Math.min(60, +o.tilt)), AZIM = o.azim == null ? 45 : Math.max(25, Math.min(65, +o.azim));
+    const P = o.proj || isoP(TILT, AZIM);   // the classic isometric the whole design draws with, unless the view was tilted or swung
     const STK = !!o.stack, WSZ = o.wsz === 's' || o.wsz === 'l' ? o.wsz : 'm';
+    // the board's single-turn iso (its `turn` beside `stacked`): only the selected turn's plate; Stack shows every turn on floors
+    const SOLO = !!o.solo && !STK && turns.length > 1; if (SOLO) { turns = [turns[sel]]; sel = 0; }
+    out.solo = SOLO; out.tilt = TILT; out.azim = AZIM;
     const FW = { s: 60, m: 78, l: 108 }[WSZ], FH = Math.round(FW * 0.56);   // the iso widgets' footprint — S · M · L
     const CW = STK ? 172 : 200, CH = STK ? 47 : 54, RAISE = STK ? 10 : 14;   // the board's card (tighter on a stack), standing on its stem
     const RV = STK ? 200 : 300, CU = STK ? 340 : 420, ROWMAX = 3, CAP = 6;  // the lattice (the board's pitches: a row clears a card, a column clears its width); six per band, the rest a count
@@ -525,7 +530,7 @@ vera-exploded .xp-dots{position:absolute;right:12px;top:10px;z-index:32;display:
 vera-exploded .xp-dots:hover{background:color-mix(in srgb,var(--xp-s1) 92%,transparent);box-shadow:0 0 0 1px var(--xp-bd)}
 vera-exploded .xp-dot{display:flex;align-items:center;gap:8px;cursor:pointer;height:12px}vera-exploded .xp-dot i{width:6px;height:6px;border-radius:2px;background:var(--xp-t3);opacity:.5;flex-shrink:0;order:2}vera-exploded .xp-dot:hover i{opacity:1}vera-exploded .xp-dot.on i{opacity:1;background:var(--xp-ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--xp-ac) 22%,transparent)}
 vera-exploded .xp-dot .l{order:1;display:none;font-family:var(--xp-mono);font-size:9px;color:var(--xp-t2);white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}vera-exploded .xp-dots:hover .xp-dot .l{display:block}
-vera-exploded .xp-pz{position:absolute;left:14px;bottom:12px;z-index:34;display:flex;align-items:center;gap:3px;padding:4px 6px;border-radius:8px;background:color-mix(in srgb,var(--xp-s1) 90%,transparent);box-shadow:0 0 0 1px var(--xp-bd);opacity:.6}vera-exploded .xp-pz:hover{opacity:1}
+vera-exploded .xp-pz{position:absolute;left:14px;bottom:12px;z-index:34;display:flex;align-items:center;gap:3px;padding:4px 6px;border-radius:8px;background:color-mix(in srgb,var(--xp-s1) 90%,transparent);box-shadow:0 0 0 1px var(--xp-bd);opacity:.6}vera-exploded .xp-pz:hover{opacity:1}vera-exploded .xp-pz .sp{width:1px;height:14px;background:var(--xp-bd);margin:0 3px}vera-exploded .xp-pz .tl{display:flex;align-items:center;gap:3px}vera-exploded .xp-ctl .iso-c{margin-left:2px}
 vera-exploded .xp-pz button{font:inherit;font-family:var(--xp-mono);font-size:11px;color:var(--xp-t2);background:none;border:0;cursor:pointer;padding:3px 7px;border-radius:4px}vera-exploded .xp-pz button:hover{background:var(--xp-s2);color:var(--xp-t1)}vera-exploded .xp-pz .z{font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3);min-width:34px;text-align:center}
 /* FRONT: the carousel — the chat UI's own construction, ported rather than imitated: the layers pulled apart along one
    axis, the one you are on nearest and centred, the rest receding either side, every face turned the same little way
@@ -733,11 +738,11 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
 
   if (typeof HTMLElement !== 'undefined' && root.customElements && !root.customElements.get('vera-exploded')) {
     class VeraExploded extends HTMLElement {
-      constructor() { super(); this._S = { scene: { turns: [], sel: '' }, mode: 'cards', layer: 2, open: null, focus: null, heights: {}, related: true, lanesOff: {}, budget: null, pan: { x: 0, y: 0, z: 1 } }; this._raf = 0; }
+      constructor() { super(); this._S = { scene: { turns: [], sel: '' }, mode: 'cards', layer: 2, open: null, focus: null, heights: {}, related: true, lanesOff: {}, budget: null, solo: false, tilt: 30, azim: 45, pan: { x: 0, y: 0, z: 1 } }; this._raf = 0; }
       connectedCallback() {
         ensureCss(this.ownerDocument); ensureIso(this.ownerDocument, () => this._schedule()); if (this._built) { this._schedule(); return; } this._built = true;
         const m = this.getAttribute('mode'); if (m) this._S.mode = m;
-        this.innerHTML = '<div class="xp-ctl"><span class="c">explode</span><button data-m="cards">Cards</button><button data-m="front">Front</button><button data-m="iso">Iso</button><span class="sep"></span><button data-a="fit" title="Back to the whole scene">Fit</button><button data-a="close" title="Back to the flat transcript">Flatten</button><span class="sep"></span><button data-a="stack" title="Stack — the stations on floors, one above the other">Stack</button><button data-a="wsz" title="The iso widgets\' size — S · M · L">M</button><span class="sep"></span><button data-a="place" title="Place a widget from the registry onto this station\'s plate — it becomes one of the turn\'s items, tagged ⧉ with its template">+ Place</button><span class="sep"></span><input type="range" class="xp-scrub" data-r="scrub" min="0" max="0" value="0" title="Scrub through the session\'s turns (← → too)"></div><div class="xp-ctx" data-r="ctx"></div><div class="xp-dots" data-r="dots"></div><div class="xp-wrap" data-r="wrap"><div class="xp-view" data-r="view"></div></div><div class="xp-pz"><button data-a="zout">−</button><span class="z" data-r="zoom">100%</span><button data-a="zin">+</button></div>';
+        this.innerHTML = '<div class="xp-ctl"><span class="c">explode</span><button data-m="cards">Cards</button><button data-m="front">Front</button><button data-m="iso">Iso</button><span class="sep"></span><button data-a="fit" title="Back to the whole scene">Fit</button><button data-a="close" title="Back to the flat transcript">Flatten</button><span class="sep"></span><span class="c iso-c" data-r="isoc">iso</span><button data-a="solo" title="Only this turn — the selected turn\'s plate alone (the board\'s single-layer iso)">Turn</button><button data-a="all" title="Every turn — the plates in a row">All</button><button data-a="stack" title="Stack — the stations on floors, one above the other">Stack</button><button data-a="wsz" title="The iso widgets\' size — S · M · L">M</button><span class="sep"></span><button data-a="place" title="Place a widget from the registry onto this station\'s plate — it becomes one of the turn\'s items, tagged ⧉ with its template">+ Place</button><span class="sep"></span><input type="range" class="xp-scrub" data-r="scrub" min="0" max="0" value="0" title="Scrub through the session\'s turns (← → too)"></div><div class="xp-ctx" data-r="ctx"></div><div class="xp-dots" data-r="dots"></div><div class="xp-wrap" data-r="wrap"><div class="xp-view" data-r="view"></div></div><div class="xp-pz"><button data-a="zout" title="Zoom out">−</button><span class="z" data-r="zoom">100%</span><button data-a="zin" title="Zoom in">+</button><span class="sp"></span><button data-a="panl" title="Pan left">←</button><button data-a="panu" title="Pan up">↑</button><button data-a="pand" title="Pan down">↓</button><button data-a="panr" title="Pan right">→</button><span class="tl" data-r="tl"><span class="sp"></span><button data-a="tiltu" title="Tilt the view up — look down on the plane">⌃</button><span class="z" data-r="ang">30°</span><button data-a="tiltd" title="Tilt the view down — flatten the plane">⌄</button><button data-a="swl" title="Swing the view left">↺</button><button data-a="swr" title="Swing the view right">↻</button></span><span class="sp"></span><button data-a="fit" title="Back to fit">fit</button></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
         this.addEventListener('click', (e) => this._click(e));
         // the timeline: the slider and ← → walk the session's turns
@@ -757,7 +762,14 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
       tipIn() { this.classList.remove('closing'); this.classList.add('opening'); clearTimeout(this._tipT); this._tipT = setTimeout(() => this.classList.remove('opening'), 600); }
       flatten(done) { this.classList.remove('opening'); this.classList.add('closing'); clearTimeout(this._tipT); this._tipT = setTimeout(() => { this.classList.remove('closing'); if (done) { try { done(); } catch (_) {} } }, 260); }
       setScene(scene) { this._S.scene = scene && scene.turns ? scene : { turns: [], sel: '' }; if (!this._S.scene.sel && this._S.scene.turns.length) this._S.scene.sel = this._S.scene.turns[this._S.scene.turns.length - 1].mid; this._schedule(); }
-      stack(on) { this._S.stack = on == null ? !this._S.stack : !!on; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); return this._S.stack; }
+      stack(on) { this._S.stack = on == null ? !this._S.stack : !!on; if (this._S.stack) this._S.solo = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); return this._S.stack; }
+      // the board's single-turn iso: only the selected turn's plate (Stack and Turn are the board's `stacked` and `turn`)
+      solo(on) { this._S.solo = on == null ? !this._S.solo : !!on; if (this._S.solo) this._S.stack = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); return this._S.solo; }
+      // PTZ: the pan is the view's transform (a drag does the same); the tilt and the swing change the projection every plate,
+      // band, stem, node and widget group is drawn through — the scene re-fits to the frame at the new angles
+      pan(dx, dy) { const p = this._S.pan; if (this._S.mode === 'cards') { const v = this._r.view; if (v) v.scrollBy({ left: -dx, top: -dy, behavior: 'smooth' }); return; } p.x += dx; p.y += dy; this._applyPan(); }
+      tilt(deg) { this._S.tilt = Math.max(12, Math.min(60, deg == null ? 30 : +deg)); this._schedule(); return this._S.tilt; }
+      swing(deg) { this._S.azim = Math.max(25, Math.min(65, deg == null ? 45 : +deg)); this._schedule(); return this._S.azim; }
       widgetSize(s) { const L = ['s', 'm', 'l']; this._S.wsz = L.includes(s) ? s : L[(L.indexOf(this._S.wsz || 'm') + 1) % L.length]; this._schedule(); return this._S.wsz; }
       mode(name) { if (name && /^(cards|front|iso)$/.test(name)) { this._S.mode = name; this._S.pan = { x: 0, y: 0, z: 1, auto: true }; this._S.open = null; this._S.focus = null; this._frontKey = null; this._schedule(); } return this._S.mode; }
       select(mid) { this._S.scene.sel = mid; this._schedule(); this.dispatchEvent(new CustomEvent('vera:xpl:turn', { detail: { mid }, bubbles: true })); }
@@ -772,7 +784,7 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
         if (this._S.mode === 'cards' && this._r.view) { const st = this._r.view.querySelector('.xp-stage'), w = this._r.view.querySelector('.xp-stage-w'); if (st && w) { st.style.transform = 'scale(' + p.z + ')'; w.style.width = Math.round(parseFloat(st.style.width) * p.z) + 'px'; w.style.height = Math.round(parseFloat(st.style.height) * p.z) + 'px'; } } }
       _click(e) {
         const t = e.target; const mb = t.closest && t.closest('button[data-m]'); if (mb) { this.mode(mb.dataset.m); return; }
-        const ab = t.closest && t.closest('[data-a]'); if (ab) { const k = ab.dataset.a; if (k === 'fit') this.fit(); else if (k === 'stack') this.stack(); else if (k === 'wsz') this.widgetSize(); else if (k === 'place') { const ts = this._S.scene.turns || []; const t = ts.find((x) => x.mid === this._S.scene.sel) || ts[ts.length - 1]; this.dispatchEvent(new CustomEvent('vera:xpl:place', { detail: { mid: t ? t.mid : '' }, bubbles: true })); } else if (k === 'close') this.dispatchEvent(new CustomEvent('vera:xpl:close', { bubbles: true })); else if (k === 'zin' || k === 'zout') { const p = this._S.pan; p.auto = false; p.z = Math.max(0.4, Math.min(3, p.z * (k === 'zin' ? 1.2 : 0.83))); this._applyPan(); } else if (k === 'prev' || k === 'next') { this._S.layer = Math.max(0, Math.min(LAYERS.length - 1, this._S.layer + (k === 'next' ? 1 : -1))); this._schedule(); } return; }
+        const ab = t.closest && t.closest('[data-a]'); if (ab) { const k = ab.dataset.a; if (k === 'fit') this.fit(); else if (k === 'stack') this.stack(); else if (k === 'wsz') this.widgetSize(); else if (k === 'place') { const ts = this._S.scene.turns || []; const t = ts.find((x) => x.mid === this._S.scene.sel) || ts[ts.length - 1]; this.dispatchEvent(new CustomEvent('vera:xpl:place', { detail: { mid: t ? t.mid : '' }, bubbles: true })); } else if (k === 'close') this.dispatchEvent(new CustomEvent('vera:xpl:close', { bubbles: true })); else if (k === 'solo') this.solo(true); else if (k === 'all') { this._S.solo = false; this._S.stack = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); } else if (k === 'panl' || k === 'panr' || k === 'panu' || k === 'pand') this.pan(k === 'panl' ? 80 : k === 'panr' ? -80 : 0, k === 'panu' ? 80 : k === 'pand' ? -80 : 0); else if (k === 'tiltu' || k === 'tiltd') this.tilt(this._S.tilt + (k === 'tiltu' ? 6 : -6)); else if (k === 'swl' || k === 'swr') this.swing(this._S.azim + (k === 'swl' ? -5 : 5)); else if (k === 'zin' || k === 'zout') { const p = this._S.pan; p.auto = false; p.z = Math.max(0.4, Math.min(3, p.z * (k === 'zin' ? 1.2 : 0.83))); this._applyPan(); } else if (k === 'prev' || k === 'next') { this._S.layer = Math.max(0, Math.min(LAYERS.length - 1, this._S.layer + (k === 'next' ? 1 : -1))); this._schedule(); } return; }
         const cb = t.closest && t.closest('.xp-cb'); if (cb) { if (cb.dataset.rel) this._S.related = !this._S.related; else if (cb.dataset.lane) { this._S.lanesOff = Object.assign({}, this._S.lanesOff); this._S.lanesOff[cb.dataset.lane] = !this._S.lanesOff[cb.dataset.lane]; } this._schedule(); return; }
         const dot = t.closest && t.closest('.xp-dot'); if (dot) { this.select(dot.dataset.mid); return; }
         const st = t.closest && t.closest('.xp-lb.station'); if (st) { this.select(st.dataset.mid); return; }
@@ -821,9 +833,9 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
       _render() {
         const S = this._S, wrap = this._r.wrap, view = this._r.view; const W = wrap.clientWidth || 800, H = wrap.clientHeight || 600;
         const ISO = root.VeraISO && typeof root.VeraISO.proj === 'function' ? root.VeraISO : null;
-        const proj = ISO ? root.VeraISO.proj(30, 45, 1, true) : null;   // the shared projection when it is there; z in px, as the floors are measured
+        const proj = ISO ? root.VeraISO.proj(S.tilt || 30, S.azim || 45, 1, true) : null;   // the shared projection when it is there, at the view's tilt and swing; z in px, as the floors are measured
         const den = (this.ownerDocument && this.ownerDocument.documentElement.getAttribute('data-den') || 'full').toLowerCase(); this.dataset.den = den;
-        const o = layout(S.scene, S.mode, W, H, { layer: S.layer, proj, den, stack: S.stack, wsz: S.wsz, focus: S.focus, heights: S.heights, related: S.related, lanesOff: S.lanesOff }); this._last = o;
+        const o = layout(S.scene, S.mode, W, H, { layer: S.layer, proj, den, stack: S.stack, solo: S.solo, tilt: S.tilt, azim: S.azim, wsz: S.wsz, focus: S.focus, heights: S.heights, related: S.related, lanesOff: S.lanesOff }); this._last = o;
         // the chip bar: the selected turn's layers with their counts (each a toggle), related, the window's meter — over the stage in cards and iso
         if (this._r.ctx) { const bud = S.budget || (S.scene && S.scene.budget) || null, kf = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
           const bar = (o.ctx && o.mode !== 'front' && (S.scene.turns || []).length) ? '<span class="c">context</span>' + o.ctx.lanes.map((l) => '<button class="xp-cb' + (l.off ? '' : ' on') + '" data-lane="' + esc(l.lane) + '" style="--lc:' + esc(l.col) + '" title="' + l.n + ' ' + esc(l.lane) + ' record' + (l.n === 1 ? '' : 's') + ' in this turn\u2019s context \u2014 click to hide or show the lane"><i></i>' + esc(l.lane) + '<b>' + l.n + '</b></button>').join('')
@@ -831,6 +843,10 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
             + (bud && bud.max ? '<span class="xp-cbb" title="the context window: used / max">' + kf(bud.used) + ' / ' + kf(bud.max) + '<i style="width:' + Math.min(100, Math.round(bud.used / bud.max * 100)) + '%"></i></span>' : '') : '';
           this._r.ctx.innerHTML = bar; this._r.ctx.style.display = bar ? '' : 'none'; }
         this.querySelectorAll('.xp-ctl button[data-a="stack"]').forEach((b) => { b.classList.toggle('on', !!S.stack && o.mode === 'iso'); b.style.display = o.mode === 'iso' ? '' : 'none'; });
+        this.querySelectorAll('.xp-ctl button[data-a="solo"]').forEach((b) => { b.classList.toggle('on', !!S.solo && !S.stack && o.mode === 'iso'); b.style.display = o.mode === 'iso' ? '' : 'none'; });
+        this.querySelectorAll('.xp-ctl button[data-a="all"]').forEach((b) => { b.classList.toggle('on', !S.solo && !S.stack && o.mode === 'iso'); b.style.display = o.mode === 'iso' ? '' : 'none'; });
+        if (this._r.isoc) this._r.isoc.style.display = o.mode === 'iso' ? '' : 'none';
+        if (this._r.tl) this._r.tl.style.display = o.mode === 'iso' ? '' : 'none'; if (this._r.ang) this._r.ang.textContent = Math.round(S.tilt || 30) + '° · ' + Math.round(S.azim || 45) + '°';
         this.querySelectorAll('.xp-ctl button[data-a="wsz"]').forEach((b) => { b.textContent = (S.wsz || 'm').toUpperCase(); b.style.display = o.mode === 'iso' ? '' : 'none'; });
         if (this._r.scrub) { this._r.scrub.max = String(Math.max(0, (S.scene.turns || []).length - 1)); this._r.scrub.value = String(o.sel); }
         this.querySelectorAll('.xp-ctl button[data-m]').forEach((b) => b.classList.toggle('on', b.dataset.m === o.mode));
@@ -851,7 +867,7 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
         // a widget on the plate: ITS OWN FORM's face on the board's card (the widget element draws it — defect 37: the
         // record's form, not one object per shape); the iso group only when the element is not on the page
         const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const face = faceHtml(c, widgetOf(c), S.wsz); if (face) return xitHtml(wg, face);
-          const g = groupOf(wg, ISO, { tilt: 30, azim: 45 }); const b = isoBody(c, null);
+          const g = groupOf(wg, ISO, { tilt: S.tilt || 30, azim: S.azim || 45 }); const b = isoBody(c, null);
           const cap = '<div class="xit frameless' + (open ? ' open' : '') + '" data-id="' + esc(wg.id) + '" title="' + esc(c.n || '') + (c.d ? ' — ' + esc(c.d) : '') + ' · click for the detail" style="left:' + (wg.x - wg.cw / 2).toFixed(1) + 'px;top:' + (wg.y + 6).toFixed(1) + 'px;width:' + wg.cw + 'px;--cc:' + esc(wg.col) + '"><span class="xit-n">' + tplTag(c) + esc(c.n || '') + '</span>' + (wg.value ? '<span class="xit-cv">' + esc(wg.value) + '</span>' : '') + '<span class="xit-d">' + esc(c.d || '') + '</span>'
             + '<div class="xit-x"><b style="color:var(--xp-t1)">' + esc(c.n || '') + '</b><br><span style="font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3)">' + esc(wg.form) + (wg.sample ? ' · no reading yet' : wg.value ? ' · ' + esc(wg.value) : '') + (c.tpl ? ' · ⧉ ' + esc(c.tpl) : '') + '</span>' + (b.on || b.x ? '<div class="xit-body" style="display:flex">' + b.on + b.x + '</div>' : '') + '</div></div>';
           if (!g) return xitHtml(wg);   // no iso lib on the page: the widget is the board's flat widget card
@@ -897,11 +913,11 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
           this._measureN = 0; if (this._rowSel !== o.sel + ':' + (o.station ? '' : S.scene.sel)) { this._rowSel = o.sel + ':' + S.scene.sel; const row = (o.rows || [])[o.sel]; if (row && (row.y < view.scrollTop || row.y + Math.min(row.h, view.clientHeight - 60) > view.scrollTop + view.clientHeight)) view.scrollTop = Math.max(0, (row.y - 92) * (S.pan.z || 1)); } }   // the row's caption lands under the chip bar, not behind it
         this._emit(o);
       }
-      _emit(o) { const R = o.mode === 'front' ? (this._frontRuns || { n: 0 }) : null; this.dispatchEvent(new CustomEvent('vera:xpl:rendered', { detail: { mode: o.mode, stations: o.stations, cards: o.cards.length, panels: o.panels.length, graphs: (o.graphs || []).length, gnodes: (o.gnodes || []).length, edges: (o.edges || []).length, runs: R ? R.n : (o.runs || 0), outline: (o.outline || []).length, focus: o.focus == null ? null : o.focus, pending: (o.pending || []).length, inv: o.inv || 1 }, bubbles: true })); }
+      _emit(o) { const R = o.mode === 'front' ? (this._frontRuns || { n: 0 }) : null; this.dispatchEvent(new CustomEvent('vera:xpl:rendered', { detail: { mode: o.mode, stations: o.stations, cards: o.cards.length, panels: o.panels.length, graphs: (o.graphs || []).length, gnodes: (o.gnodes || []).length, edges: (o.edges || []).length, runs: R ? R.n : (o.runs || 0), outline: (o.outline || []).length, focus: o.focus == null ? null : o.focus, pending: (o.pending || []).length, solo: !!o.solo, stack: !!o.stack, tilt: o.tilt, azim: o.azim, inv: o.inv || 1 }, bubbles: true })); }
     }
     root.customElements.define('vera-exploded', VeraExploded);
   }
-  const api = { layout, frontRuns, LAYERS, ensureCss, ensureIso, graphData, widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 8 };
+  const api = { layout, frontRuns, LAYERS, ensureCss, ensureIso, graphData, widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 9 };
   root.VeraExploded = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
