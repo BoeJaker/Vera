@@ -90,7 +90,7 @@ def test_the_preview_is_a_live_widget_at_the_chosen_size_with_the_json_under_it(
 
 def test_keyboard_and_resolution():
     assert "ev.key === 'Escape'" in EL and "ev.key === 'Enter'" in EL
-    assert "cfgClose(null)" in EL and "cfgClose(fin)" in EL
+    assert "cfgClose(null)" in EL and "cfgClose(finalise(out, st.validated))" in EL and "validateDetached(st, out); cfgClose(out); return;" in EL   # OK never waits on widget.validate
     assert "' anyway'" in EL                  # a record with problems: shown, then added on a second press
 
 

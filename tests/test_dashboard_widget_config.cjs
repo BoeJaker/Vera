@@ -63,7 +63,7 @@ T('a record is handed to the element with its sample only when its source cannot
 });
 T('the behaviour the browser smoke drives is in the text', () => {
   for (const s of [
-    "window.VeraWidgetConfig.open({ mode: 'add', into: 'dashboard', title: 'Add a widget', sizes: ladderSizes(), templates: true })",
+    "window.VeraWidgetConfig.open({ mode: 'add', into: 'dashboard', title: 'Add a widget', sizes: ladderSizes(), templates: true, onValidating: st.onValidating, onValidated: st.onValidated })",
     "window.VeraWidgetConfig.open({ mode: 'edit', record: was, into: 'dashboard', title: was.title || wid, anchor: anchor || w, sizes: ladderSizes(), templates: true,",
     'function placeRecord(rec)', "if (rec.form === 'panel' && pid) return addWidget(pid)", 'return landed(addRecord(rec, {}));',
     'function openPanels()', 'function ensureCfg(w)', "b.className = 'w-iconbtn vd-cfg'", 'function configure(wid, anchor)', 'function applyRecord(wid, r)',
@@ -74,7 +74,7 @@ T('the behaviour the browser smoke drives is in the text', () => {
     "openPanels: openPanels, placeRecord: placeRecord, configure: configure, applyRecord: applyRecord,",
     'function snapWidth(n)', '"moving · drop on the grid"', 'function ensureContextGraph()', 'function ladderSizes()', "s.src = '/ui/context_graph_element.js'"
   ]) assert(src.includes(s), s);
-  assert(src.includes("if (window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') {\n        var p;\n        try { p = window.VeraWidgetConfig.open({ mode: 'add'"), 'the surface is the loader when it is loaded');
+  assert(src.includes("if (window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') {\n        var p, st = stager();\n        try { p = window.VeraWidgetConfig.open({ mode: 'add'"), 'the surface is the loader when it is loaded (staged around widget.validate)');
   assert(src.includes('return openPanels();'), 'and the panel picker otherwise');
 });
 console.log(n + ' passed' + (process.exitCode ? ', some failed' : ''));
