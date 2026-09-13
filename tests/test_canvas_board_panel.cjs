@@ -1,0 +1,53 @@
+// The Canvas board is ONE system (Notes/42 defect 43): the Canvas panel is <vera-canvas> with its rail, an agent's
+// canvas (keyless blocks) is drawn through the same cards with edit · ↑↓ · size · drop, the canvases are listed, made
+// and deleted from the element. The add bar offers options (defect 44): the note a menu, the chart the WidgetConfig
+// sheet on the series forms, every kind saying what it adds before it adds it. The pure parts and the source strings.
+//   node tests/test_canvas_board_panel.cjs
+const path = require('node:path'); const fs = require('node:fs');
+const FILE = path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.js');
+const V = require(FILE); const SRC = fs.readFileSync(FILE, 'utf8');
+const PANEL = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_panel.html'), 'utf8');
+let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
+
+t('the menus and the clipboard reader are exported (version 5)', Array.isArray(V.NOTE_MENU) && typeof V.fromClipboard === 'function' && V.ADD_WHAT && V.version === 5);
+
+// ── 44: no kind adds on the add bar's click alone ──
+t('every add-bar kind opens something first — a picker, a menu or the sheet — none seeds a blank box', V.ADD_KINDS.every((k) => k.hosts || k.pick || k.sheet || k.menu) && V.ADD_KINDS.length === 5);
+t('every kind says what it adds', V.ADD_KINDS.every((k) => typeof V.ADD_WHAT[k.n] === 'string' && V.ADD_WHAT[k.n].startsWith('adds a')));
+const chart = V.ADD_KINDS.find((k) => k.n === 'chart'); const note = V.ADD_KINDS.find((k) => k.n === 'note');
+t('the chart is the WidgetConfig sheet on the series forms', chart && chart.sheet === true && chart.shape === 'series' && SRC.includes("shape: k.shape || ''"));
+t('the note is a menu: a blank note · a checklist · a decision · a link · from the clipboard', note && note.menu === true && V.NOTE_MENU.map((m) => m.id).join(',') === 'blank,checklist,decision,link,clipboard' && V.NOTE_MENU.every((m) => m.n && m.what));
+t('the decision row is a question with its answers the NOW band reads', (() => { const d = V.NOTE_MENU.find((m) => m.id === 'decision'); const dec = V.decisionOf({ key: 'note:x', type: d.kind, content: d.content }); return dec && dec.question === 'Which way?' && dec.options.length === 2 && !dec.answer; })());
+t('the checklist is markdown with boxes; the link markdown with an address', V.NOTE_MENU.find((m) => m.id === 'checklist').content.md.split('- [ ]').length === 4 && /\[title\]\(https:\/\/\)/.test(V.NOTE_MENU.find((m) => m.id === 'link').content.md));
+t('the menu, the listed seed and the sheet-less fallback are drawn under the add bar, one popover at a time', SRC.includes("if (k.menu) return this._noteMenu(btn, k);") && SRC.includes("if (k.sheet) return this._widgetSurface() ? this._widgetPick(btn, k) : this._sheetless(btn, k);") && SRC.includes("return this._listed(btn, k);") && SRC.includes("_pop(btn, w) {") && !SRC.includes("return this._addSeed(k);\n      }"));
+t('the pickers open with the line saying what they add', SRC.includes("pop.innerHTML = what + (rows.length ? panelListHtml(rows)") && SRC.includes("pop.innerHTML = what + hostListHtml(rows) + typed;"));
+t("a decision's editor edits its question, and the save writes it back", SRC.includes("const f = ask ? 'ask.question' : textFieldOf(b.type);") && SRC.includes("if (fld === 'ask.question') content.ask = Object.assign({}, content.ask || {}, { question: ta.value }); else content[fld] = ta.value;"));
+
+// the clipboard, by what it holds
+const C = V.fromClipboard;
+t('nothing → null; a URL → a link (markdown)', C('') === null && C('  ') === null && (() => { const r = C('https://llm.int:8994/chat_panel'); return r.kind === 'markdown' && r.n === 'link' && r.content.md === '[llm.int:8994](https://llm.int:8994/chat_panel)' && r.content.title === 'llm.int:8994'; })());
+t('mermaid → a diagram', (() => { const r = C('graph TD\n  a --> b'); return r.kind === 'diagram' && r.content.mermaid.startsWith('graph TD'); })() && C('sequenceDiagram\n A->>B: hi').kind === 'diagram');
+t('JSON rows → a table (objects by their keys; arrays by their first row); other JSON → code', (() => { const r = C('[{"name":"ct126","state":"ok"},{"name":"pxstore","state":"idle"}]'); return r.kind === 'table' && r.content.columns.join(',') === 'name,state' && r.content.rows[1][1] === 'idle'; })()
+  && (() => { const r = C('[["a","b"],[1,2]]'); return r.kind === 'table' && r.content.rows[0][1] === '2'; })() && C('{"ok":true}').kind === 'code' && C('{"ok":true}').content.lang === 'json');
+t('code by its shape, with its language', (() => { const r = C('def boot():\n    ensure()\n    return digest()'); return r.kind === 'code' && r.content.lang === 'python'; })() && C('const a = 1;\nexport const b = 2;').content.lang === 'javascript' && C('$ ls\n$ pwd').content.lang === 'sh' && C('SELECT 1\nFROM t;').content.lang === 'sql');
+t('a longer text → markdown; a line → a note titled by it', C('# Plan\n- one\n- two').kind === 'markdown' && C('a\nb\nc\nd\ne').kind === 'markdown' && (() => { const r = C('call pxstore about the ring'); return r.kind === 'note' && r.content.text === 'call pxstore about the ring' && r.content.title === 'call pxstore about the ring'; })());
+t('the clipboard row reads the clipboard, the others seed at once', SRC.includes("if (act === 'nmenu') {") && SRC.includes("navigator.clipboard.readText().then(paste") && SRC.includes("if (!m.clipboard) { if (pop) pop.remove(); return this._addSeed(Object.assign({}, m, { n: m.id })); }   // the key names the row (note:decision-…)"));
+
+// ── 43: an agent's canvas through the same projection ──
+t("every canvas renders through the one projection (the plain path is gone)", SRC.includes("this.renderSession(doc, blocks, body);\n      if (this.hasAttribute('rail')) this._railMark();") && !SRC.includes("This canvas is empty — blocks appear here as they are added."));
+t('a keyless block is a card under a view key, in the document\'s order, its size from its meta', SRC.includes("const plainDoc = doc.mode !== 'session' && !doc.session;") && SRC.includes("Object.assign({}, b, { key: 'blk:' + b.id, _bid: true, state: 'now', size: b.size || (b.meta && b.meta.size) || 'm' })") && SRC.includes("const newest = arr => plainDoc ? byOrder(arr) :"));
+t("its rail: edit · ↑ ↓ · size · drop; pin · park · in context are the keyed items'", SRC.includes("${plainDoc ? '<button data-act=\"up\" title=\"Move it up — canvas.move\">↑</button><button data-act=\"down\"") && SRC.includes("${bid ? '' : `<button data-act=\"pin\"") && SRC.includes("${bid ? '' : `<button data-act=\"ctx\""));
+t('the writes name the block by its id when it has no key — update, remove, move, size', SRC.includes("_ref(key) { const bid = this._bidOf(key); return bid ? { block_id: bid } : { key }; }") && (SRC.match(/this\.call\('canvas\.update', Object\.assign\(this\._ref\(key\), \{ content/g) || []).length === 4 && SRC.includes("this.call('canvas.remove', this._ref(key))") && SRC.includes("return this.call('canvas.move', { block_id: String(b.id), order: j });") && SRC.includes("return bid ? this.call('canvas.update', { block_id: bid, meta: { size } }) : this.call('canvas.size', { key, size });"));
+t('the band reads BLOCKS · n · mode on a plain canvas, the head its mode and topic', SRC.includes("<b>${plainDoc ? 'BLOCKS' : 'NOW'}</b>") && SRC.includes("modeEl.textContent = String(doc.mode || 'static') + (doc.topic ? ' · ' + doc.topic : '')"));
+
+// the rail
+t('the rail lists the canvases, the session\'s first and marked; + New makes one (title · mode · topic); a delete sits behind a confirm', SRC.includes("this.callResult('canvas.list', { limit: 40 })") && SRC.includes("this.callResult('canvas.session.resolve', { session_id: sid })") && SRC.includes("this.callResult('canvas.create', { title, mode, topic })") && SRC.includes("this.callResult('canvas.delete', { id })") && SRC.includes("data-ract=\"delyes\"") && SRC.includes("rows.unshift({ id: sessId, title: S.title || 'Session canvas', mode: 'session'"));
+t('a row switches the canvas-id (the poll follows); rail and session-id are observed', SRC.includes("_switch(id) {") && SRC.includes("this.setAttribute('canvas-id', id);") && SRC.includes("return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id'];"));
+
+// ── the panel page is the element ──
+t('canvas_panel.html is <vera-canvas rail fill> and loads the element (and the widget sheet) — nothing is rendered by the page', /<vera-canvas id="cv" rail fill><\/vera-canvas>/.test(PANEL) && PANEL.includes('<script src="/ui/elements/canvas_element.js"></script>') && PANEL.includes('<script src="/ui/widgets/widget_element.js"></script>') && !/renderBlock|marked\.parse|hljs|mermaid\.min\.js|cdn\.jsdelivr|cdnjs/.test(PANEL));
+t('the route: ?canvas=<id>, ?session=<sid> (canvas.session.resolve), else the most recent; postMessage {canvas} and vera:panel:init keep working', PANEL.includes("if (q.get('canvas')) show(q.get('canvas'));") && PANEL.includes("call('canvas.session.resolve', { session_id: s })") && PANEL.includes("call('canvas.list', { limit: 1 })") && PANEL.includes("if (d.canvas) return show(d.canvas);") && PANEL.includes("d.type === 'vera:panel:init' && d.session_id"));
+t("the page wears the estate's theme, and names the session whenever it has one", PANEL.includes('<link rel="stylesheet" href="/ui/theme/css"/>') && PANEL.includes("if (sid) el.setAttribute('session-id', sid);"));
+t("a keyless block is titled by what it says, not its id", V.blockTitle({ _bid: true, id: 'bk_1', type: 'markdown', content: { md: '## Why the fabric re-embeds\nbody' } }) === 'Why the fabric re-embeds' && V.blockTitle({ _bid: true, id: 'bk_4', type: 'diagram', content: { mermaid: 'graph LR\n a-->b' } }) === 'Diagram' && V.blockTitle({ _bid: true, type: 'table', content: { rows: [] } }) === 'Table' && V.blockTitle({ key: 'note:plan', type: 'note', content: {} }) === 'plan' && V.blockTitle({ type: 'code', content: { filename: 'x.py' } }) === 'x.py');
+
+console.log(fails ? fails + ' failed' : 'passed all checks'); process.exit(fails ? 1 : 0);

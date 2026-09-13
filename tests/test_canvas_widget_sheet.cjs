@@ -21,7 +21,7 @@ t('no source → the caption says sample', /gauge · sample</.test(B.widget({ fo
 t('no key (a preview) → the static path, not a live slot', !/vc-live/.test(B.widget(rec, 'm', '')));
 delete global.customElements;
 // the add bar
-t('the add bar\'s widget opens the sheet when the page has it', /n: 'widget', ik: 'WG', kind: 'widget'[^\n]*sheet: true/.test(SRC) && /if \(k\.sheet && this\._widgetSurface\(\)\) return this\._widgetPick\(btn, k\);/.test(SRC));
+t('the add bar\'s widget opens the sheet when the page has it', /n: 'widget', ik: 'WG', kind: 'widget'[^\n]*sheet: true/.test(SRC) && /if \(k\.sheet\) return this\._widgetSurface\(\) \? this\._widgetPick\(btn, k\) : this\._sheetless\(btn, k\);/.test(SRC));
 t('the surface is this window\'s or the host\'s VeraWidgetConfig', /_widgetSurface\(\) \{[^\n]*window\.VeraWidgetConfig[^\n]*window\.parent/.test(SRC));
 t('the sheet opens into the canvas, beside the add button, with templates', /S\.open\(\{ mode: 'add', into: 'canvas', anchor: btn, templates: true/.test(SRC));
 t('the record lands yours — beside the turn in view, related to no turn', /anchor: \{ origin: 'you', beside: focusMid \} \};\s*\n\s*this\._open\.add\(nk\);\s*\n[^\n]*vera:canvas:add/.test(SRC));

@@ -4,10 +4,18 @@
  *   <vera-canvas canvas-id="cv_abc123"></vera-canvas>
  *   <vera-canvas canvas-id="cv_abc123" compact rows="6"></vera-canvas>
  *
- * The Canvas TAB is the full editor; this is the read-and-watch view that sits
- * in the conversation, so a canvas an agent is filling in updates in place
- * while you talk about it. It polls /canvas/get and repaints only when the
- * document's revision actually changes.
+ * This element IS the Canvas board, wherever a canvas shows: the chat's canvas column (the session canvas), the
+ * card canvas.show puts in the conversation, and the Canvas panel (/canvas/panel — this element with its rail, the
+ * canvas from the route: ?canvas=<id>, ?session=<sid>, else the most recent). It polls /canvas/get and repaints
+ * only when the document's revision actually changes.
+ *
+ *   <vera-canvas rail fill canvas-id="cv_abc123" session-id="…"></vera-canvas>   — the panel: the canvases on the
+ *   left (the session's first, marked), + New (title · mode · topic), a delete behind a confirm; a row switches.
+ *
+ * An agent's canvas (canvas.create · canvas.append — keyless blocks) is drawn through the same projection as the
+ * session canvas: every block a card with the same rail — edit · ↑ ↓ (canvas.move) · size · drop — the add bar at
+ * the top adding through canvas.add on that canvas; the resolver's states (pin · park · in context) are the keyed
+ * items'.
  *
  * On a SESSION canvas (the chat's canvas column) it is the Canvas board's column: the add bar at the top,
  * the NOW band (what this turn is waiting on — a decision with its answers, and what Vera can also do),
@@ -209,6 +217,33 @@
   :host([fill]){height:100%}
   :host([fill]) .wrap{height:100%;display:flex;flex-direction:column}
   :host([fill]) .body{flex:1;min-height:0}
+  /* the shell: the rail (the Canvas panel's canvases) beside the wrap */
+  .shell{display:flex;align-items:stretch;min-height:0}:host([fill]) .shell{height:100%}
+  .shell>.wrap{flex:1 1 auto;min-width:0}
+  .rail{flex:0 0 clamp(150px,30%,210px);display:flex;flex-direction:column;min-height:0;border:1px solid var(--border,#2a2f37);border-right:0;border-radius:10px 0 0 10px;background:var(--bg2,#1c2026)}
+  .rail[hidden]{display:none}
+  :host([rail]) .shell>.wrap{border-radius:0 10px 10px 0}
+  :host([rail]) a.open{display:none}
+  .rail h2{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);margin:0;padding:8px 10px 6px;display:flex;align-items:center;gap:6px;font-weight:600}
+  .rail h2 .ib{margin-left:auto}
+  .rail .nf{display:flex;flex-direction:column;gap:5px;padding:4px 8px 8px;border-bottom:1px solid var(--border,#2a2f37);margin:0}
+  .rail .nf[hidden]{display:none}.rail .nf .row{display:flex;gap:6px}
+  .seg{display:inline-flex;border:1px solid var(--border,#2a2f37);border-radius:11px;overflow:hidden;align-self:flex-start}
+  .seg button{font:inherit;font-size:10px;height:20px;padding:0 9px;border:0;background:none;color:var(--dim,#6b7480);cursor:pointer}
+  .seg button.on{background:var(--acc,#5a9e8f);color:#06120f}
+  .rail .list{flex:1 1 auto;overflow:auto;padding:4px 6px 8px;display:flex;flex-direction:column;gap:2px}
+  .rail .cv{display:flex;flex-direction:column;gap:1px;padding:5px 8px;border-radius:7px;border:1px solid transparent;cursor:pointer;text-align:left;background:none;color:var(--fg,#dce1e8);font:inherit;width:100%}
+  .rail .cv:hover{background:var(--bg1,#15181d)}.rail .cv.on{background:var(--bg1,#15181d);border-color:var(--border,#2a2f37)}
+  .rail .cv b{font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+  .rail .cv span{display:flex;align-items:center;gap:6px;font-size:9.5px;color:var(--dim,#6b7480);font-family:ui-monospace,Consolas,monospace}
+  .rail .cv span i{font-style:normal}.rail .cv span em{font-style:normal}
+  .rail .cv .x{margin-left:auto;opacity:0;cursor:pointer;padding:0 3px}.rail .cv:hover .x{opacity:1}.rail .cv .x:hover{color:var(--err,#f7768e)}
+  .rail .cv.confirm{cursor:default;border-color:var(--err,#f7768e)}.rail .cv.confirm span{gap:4px;margin-top:3px}
+  .mode-dynamic{color:var(--acc3,#c79a5a)}.mode-static{color:var(--acc4,#a07ec1)}.mode-session{color:var(--acc,#5a9e8f)}
+  .pill.mode-dynamic{border-color:var(--acc3,#c79a5a)}
+  /* the add bar's popovers open with what they add (defect 44) */
+  .addpop .what{display:block;padding:2px 8px 6px;font-size:10px;border-bottom:1px solid var(--bd,var(--border,#2a2f37));margin-bottom:4px}
+  .it-a button[data-act="up"],.it-a button[data-act="down"]{padding:0 4px}
   .blk{padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)}
   .blk:last-child{border-bottom:none}
   .vc-md h1,.vc-md h2,.vc-md h3{margin:.3em 0;line-height:1.25;text-wrap:balance}
@@ -531,12 +566,45 @@
   /* the add bar: "+ note · terminal · panel · widget · chart" — each a real block type with its seed content; every
      one goes through canvas.add, the resolver's path, like anything an agent puts on the canvas */
   const ADD_KINDS = [
-    { n: 'note', ik: '✎', kind: 'note', content: { title: 'Note', text: '' }, edit: true },
+    { n: 'note', ik: '✎', kind: 'note', content: { title: 'Note', text: '' }, edit: true, menu: true },   // a menu: a blank note · a checklist · a decision · a link · from the clipboard
     { n: 'terminal', ik: '>_', kind: 'session', content: { title: 'Terminal', host_id: '', container: '', shell: '' }, hosts: true },   // the estate's known hosts pick the host (a blank terminal, a typed id too)
     { n: 'panel', ik: '▤', kind: 'panel', content: { panel: '', title: 'Panel' }, pick: true },
     { n: 'widget', ik: 'WG', kind: 'widget', content: { widget: '', title: 'Widget' }, sheet: true },   // the WidgetConfig sheet picks the record
-    { n: 'chart', ik: 'CH', kind: 'widget', content: { name: 'chart', title: 'Chart', draw: { form: 'trace', size: 'm' }, data: [], source: { origin: 'you' } } },
+    { n: 'chart', ik: 'CH', kind: 'widget', content: { name: 'chart', title: 'Chart', draw: { form: 'trace', size: 'm' }, data: [], source: { origin: 'you' } }, sheet: true, shape: 'series' },   // the WidgetConfig sheet on the series forms
   ];
+  /* the note's menu (defect 44): no blank box on a click — each row says what it adds, and adds that */
+  const NOTE_MENU = [
+    { id: 'blank', n: 'a blank note', what: 'a note item, yours, open for typing', kind: 'note', content: { title: 'Note', text: '' }, edit: true },
+    { id: 'checklist', n: 'a checklist', what: 'a markdown item with three boxes to tick', kind: 'markdown', content: { title: 'Checklist', md: '- [ ] first\n- [ ] second\n- [ ] third' }, edit: true },
+    { id: 'decision', n: 'a decision', what: 'a question with its answers — the NOW band waits on it until one is picked', kind: 'note', content: { title: 'Decision', text: '', ask: { question: 'Which way?', options: ['yes', 'no'], why: 'you asked' } }, edit: true },
+    { id: 'link', n: 'a link', what: 'a markdown item — its title and address', kind: 'markdown', content: { title: 'Link', md: '[title](https://)' }, edit: true },
+    { id: 'clipboard', n: 'from the clipboard', what: 'a link, a diagram, code, a table or a note — by what the clipboard holds', clipboard: true },
+  ];
+  /* what the clipboard holds, as the item it becomes (pure): a URL is a link, mermaid its diagram, JSON rows a table,
+     code by its shape, a longer text markdown, anything else a note */
+  function fromClipboard(text) {
+    const s = String(text == null ? '' : text).replace(/\r\n/g, '\n').trim();
+    if (!s) return null;
+    const first = s.split('\n')[0].trim();
+    if (/^https?:\/\/\S+$/i.test(s)) { let host = s; try { host = new URL(s).host; } catch (e) {} return { kind: 'markdown', n: 'link', content: { title: host, md: '[' + host + '](' + s + ')' } }; }
+    if (/^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(-v2)?|erDiagram|gantt|pie|journey|gitGraph|mindmap|timeline)\b/.test(first)) return { kind: 'diagram', n: 'diagram', content: { title: 'Diagram', mermaid: s } };
+    if (/^[\[{]/.test(s)) {
+      try { const j = JSON.parse(s); const rows = Array.isArray(j) ? j : (j && Array.isArray(j.rows) ? j.rows : null);
+        if (rows && rows.length && rows.every((r) => r && typeof r === 'object' && !Array.isArray(r))) { const cols = Object.keys(rows[0]); return { kind: 'table', n: 'table', content: { title: 'Table', columns: cols, rows: rows.map((r) => cols.map((k) => r[k] == null ? '' : (typeof r[k] === 'object' ? JSON.stringify(r[k]) : String(r[k])))) } }; }
+        if (rows && rows.length > 1 && rows.every(Array.isArray)) return { kind: 'table', n: 'table', content: { title: 'Table', columns: rows[0].map(String), rows: rows.slice(1).map((r) => r.map((x) => x == null ? '' : String(x))) } };
+        return { kind: 'code', n: 'code', content: { title: 'JSON', lang: 'json', code: JSON.stringify(j, null, 2) } };
+      } catch (e) { /* not JSON — on to code or a note */ }
+    }
+    const lines = s.split('\n');
+    const codeish = lines.length > 1 && (/[{};]\s*$/m.test(s) || /^\s*(def|class|function|const|let|var|import|from|#include|SELECT|async|export|return|if|for|while)\b/m.test(s) || /^\$ /m.test(s));
+    if (codeish) { const lang = /^\s*(def |class \w+:|import \w|from \w+ import)/m.test(s) ? 'python' : /^\s*(const|let|var|function|export|import .* from)\b/m.test(s) ? 'javascript' : /^\s*SELECT\b/im.test(s) ? 'sql' : /^\$ /m.test(s) ? 'sh' : ''; return { kind: 'code', n: 'code', content: { title: lang ? lang + ' snippet' : 'Snippet', lang, code: s } }; }
+    if (lines.length > 3 || /^#{1,6} |^[-*] |\*\*/m.test(s)) return { kind: 'markdown', n: 'markdown', content: { title: first.replace(/^#+\s*/, '').slice(0, 60) || 'Pasted', md: s } };
+    return { kind: 'note', n: 'note', content: { title: first.slice(0, 60) || 'Note', text: s } };
+  }
+  /* what each kind's popover opens with — the item it adds, before it adds it */
+  const ADD_WHAT = { note: 'adds a note item — pick its shape', terminal: 'adds a terminal item — a live shell on the host you pick; a typed id or a blank one connects later', panel: 'adds a panel item — the panel\'s page in its frame, driven over the bridge', widget: 'adds a widget item — its form, source and size from the WidgetConfig sheet', chart: 'adds a chart — a series form (trace · bars · sparkline…) from the WidgetConfig sheet' };
+  const seedName = (k) => k.n === 'chart' ? 'a trace chart' : k.n === 'widget' ? 'a widget frame' : 'a ' + k.n;
+  const seedWhat = (k) => k.kind + ' item · ' + Object.keys(k.content || {}).filter((x) => x !== 'title').join(' · ');
   const KIND_GLYPH = { note: '✎', markdown: 'MD', code: '{}', session: '>_', table: 'TB', widget: 'WG', loop: '⟳', diagram: '◇', image: '▣', schedule: '⏰', html: '<>', suggest: '✦', notebook: 'NB', panel: '▥' };
   const glyphOf = t => KIND_GLYPH[t] || String(t || '?').slice(0, 2).toUpperCase();
   const hhmm = ts => { if (!ts) return ''; const d = new Date(ts); if (isNaN(d.getTime())) return String(ts).slice(0, 5); const p = n => (n < 10 ? '0' : '') + n; return p(d.getHours()) + ':' + p(d.getMinutes()); };
@@ -589,10 +657,17 @@
      items (the decision, the suggestions) and a hovered one never fold */
   function foldOf(o) { o = o || {}; if (o.now || o.open || o.hovered) return false; return !!(o.aged || (o.tier && o.tier !== 'full')); }
   const textFieldOf = t => t === 'markdown' ? 'md' : t === 'code' ? 'code' : t === 'html' ? 'html' : 'text';
+  /* a block's title (pure): the content's own, else — a keyless block of an agent's canvas — its first line, else its kind */
+  function blockTitle(b) {
+    const c = (b && b.content) || {}; const own = c.title || c.name || c.goal || c.filename || c.caption || c.widget || c.panel;
+    if (own) return String(own);
+    if (b && b._bid) { const first = String(c[textFieldOf(b.type)] || '').split('\n').map(s => s.trim()).find(Boolean) || ''; const line = first.replace(/^#+\s*|^[-*]\s+\[.\]\s*|^[-*]\s+|\*\*/g, '').slice(0, 60); return line || ({ diagram: 'Diagram', table: 'Table', image: 'Image', code: 'Code', markdown: 'Text', note: 'Note', html: 'HTML' }[b.type] || String(b.type || 'block')); }
+    return String(b && b.key ? String(b.key).split(':').slice(1).join(':') : '') || String((b && b.type) || 'block');
+  }
   const EDITABLE = ['note', 'markdown', 'code', 'html'];
 
   class VeraCanvas extends (typeof HTMLElement !== 'undefined' ? HTMLElement : class {}) {
-    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns']; }
+    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id']; }
 
     constructor() {
       super();
@@ -607,15 +682,18 @@
 
     connectedCallback() {
       this.shadowRoot.innerHTML = `<style>${CSS}</style>
+        <div class="shell"><aside class="rail" id="rail" data-w="canvas.rail" hidden></aside>
         <div class="wrap">
           <div class="head">
-            <span class="live"></span>
+            <span class="live" title="live — it follows the document"></span>
             <span class="title" id="title">Canvas</span>
+            <span class="pill" id="mode" hidden></span>
             <span class="pill" id="count"></span>
             <a class="open" id="open" target="_blank" rel="noopener">open ↗</a>
           </div>
           <div class="body" id="body"><div class="empty">Loading…</div></div>
-        </div>`;
+        </div></div>`;
+      if (this.hasAttribute('rail')) this._railMount();
       if (this.hasAttribute('rows')) {
         const r = parseInt(this.getAttribute('rows'), 10);
         if (r > 0) this.style.setProperty('--vc-max', (r * 62) + 'px');
@@ -629,6 +707,7 @@
     disconnectedCallback() {
       if (this._timer) clearInterval(this._timer);
       this._timer = null;
+      if (this._railTimer) { clearInterval(this._railTimer); this._railTimer = null; }
       if (this._liveTick) { clearInterval(this._liveTick); this._liveTick = null; }
     }
 
@@ -638,6 +717,8 @@
         this.refresh();
       }
       if (name === 'columns' && this._doc) this.render(this._doc);
+      if (name === 'rail' && this.shadowRoot.childElementCount) { if (this.hasAttribute('rail')) this._railMount(); else { const r = this.shadowRoot.getElementById('rail'); if (r) r.hidden = true; if (this._railTimer) { clearInterval(this._railTimer); this._railTimer = null; } } }
+      if (name === 'session-id' && this._railTimer) this._railRefresh();
     }
     /* ── the stage (the column's split projection): the host hands the transcript's turn tops ({mid:{top,height}} in
        the transcript's scroll frame) and keeps the column's scroll in step; the element places and reports. ── */
@@ -685,7 +766,7 @@
       const id = this.canvasId;
       const body = this.shadowRoot.getElementById('body');
       if (!body) return;
-      if (!id) { body.innerHTML = '<div class="err">No canvas-id given.</div>'; return; }
+      if (!id) { body.innerHTML = this.hasAttribute('rail') ? '<div class="empty">Pick a canvas on the left, or make one — the session\'s is the chat\'s own.</div>' : '<div class="err">No canvas-id given.</div>'; return; }
       let doc;
       try {
         const r = await fetch(`/canvas/get?id=${encodeURIComponent(id)}`,
@@ -719,24 +800,10 @@
       if (link) link.href = `/canvas/panel?canvas=${encodeURIComponent(this.canvasId)}`;
 
       const body = root.getElementById('body');
-      if (doc.mode === 'session' || blocks.some(b => b && b.key)) { this.renderSession(doc, blocks, body); return; }
-      if (!blocks.length) {
-        body.innerHTML = '<div class="empty">This canvas is empty — blocks appear here as they are added.</div>';
-        return;
-      }
-      body.innerHTML = blocks.map(b => {
-        const fn = BLOCK[b.type] || BLOCK.note;
-        let inner;
-        try { inner = fn(b.content || {}); }
-        catch (e) { inner = `<div class="err">Could not render a ${esc(b.type)} block.</div>`; }
-        return `<div class="blk" data-type="${esc(b.type)}">${inner}</div>`;
-      }).join('');
-
-      if (body.querySelector('vera-mermaid')) ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid');
-      if (window.mermaid && body.querySelector('.mermaid')) {
-        try { window.mermaid.run({ nodes: body.querySelectorAll('.mermaid') }); }
-        catch (e) { /* leave the source visible */ }
-      }
+      // one projection for every canvas: the session canvas as the board's column, an agent's canvas as the same
+      // cards in the document's order (the Canvas panel, the card canvas.show puts in the chat)
+      this.renderSession(doc, blocks, body);
+      if (this.hasAttribute('rail')) this._railMark();
     }
 
     /* The relevance engine's answer (Notes/38 §3.3, P2): the keys in focus now, with their scores. The tier decides
@@ -753,13 +820,19 @@
        context); parked items a chip line (a click brings one back through the resolver), hidden items a popover on
        the add bar. Keyless blocks on a session canvas still render, as plain blocks after the bands. */
     renderSession(doc, blocks, body) {
-      const keyed = blocks.filter(b => b && b.key);
-      const plain = blocks.filter(b => !(b && b.key));
+      // an agent's or the panel's canvas (no session): every block a card in the document's order — a keyless block
+      // under a view key (blk:<id>) so the same cards, rails and live layer serve it
+      const plainDoc = doc.mode !== 'session' && !doc.session;
+      const byOrder = arr => arr.slice().sort((a, b) => ((a.layout && a.layout.order) || 0) - ((b.layout && b.layout.order) || 0));
+      const view = plainDoc ? byOrder(blocks.filter(Boolean)).map(b => b.key ? b : Object.assign({}, b, { key: 'blk:' + b.id, _bid: true, state: 'now', size: b.size || (b.meta && b.meta.size) || 'm' })) : blocks;
+      const keyed = view.filter(b => b && b.key);
+      const plain = view.filter(b => !(b && b.key));
       const by = st => keyed.filter(b => (b.state || 'now') === st);
-      const newest = arr => arr.slice().sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
+      const newest = arr => plainDoc ? byOrder(arr) : arr.slice().sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
       const pinned = by('pinned'), now = newest(by('now')), parked = by('parked'), hidden = by('hidden');
       const head = this.shadowRoot.getElementById('count');
-      if (head) head.textContent = now.length + ' now · ' + pinned.length + ' pinned · ' + parked.length + ' parked';
+      if (head) head.textContent = plainDoc ? keyed.length + (keyed.length === 1 ? ' block' : ' blocks') : now.length + ' now · ' + pinned.length + ' pinned · ' + parked.length + ' parked';
+      const modeEl = this.shadowRoot.getElementById('mode'); if (modeEl) { modeEl.hidden = !plainDoc; modeEl.textContent = String(doc.mode || 'static') + (doc.topic ? ' · ' + doc.topic : ''); modeEl.className = 'pill mode-' + esc(doc.mode || 'static'); modeEl.title = doc.mode === 'dynamic' ? 'dynamic — it tracks its topic; agents fill it in' : 'static — a working area'; }
       const tier = this.tier(), F = this._focus;
       const focusMid = this.dataset.focusMid || ''; this._focusMid = focusMid;
       const order = turnOrder(this._turns || {});
@@ -770,15 +843,15 @@
       const decision = (decisions.find(x => !x.d.answer) || decisions[0] || {}).d || null;
       const suggs = suggestionsOf(doc, keyed, focusMid); this._suggs = suggs;
       const inFocusN = F ? keyed.filter(b => F.has(String(b.key))).length : null;
-      const nowTxt = nowText(now, decision, suggs, inFocusN);
-      const titleOf = b => { const c = b.content || {}; return c.title || c.name || c.goal || c.filename || c.caption || (c.widget) || String(b.key).split(':').slice(1).join(':') || b.type; };
+      const nowTxt = plainDoc ? (now.length ? now.length + (now.length === 1 ? ' block' : ' blocks') : 'nothing yet') + ' · ' + (doc.mode || 'static') + (decision && !decision.answer ? ' · waiting on you' : '') : nowText(now, decision, suggs, inFocusN);
+      const titleOf = b => blockTitle(b);
       const askHtml = d => `<div class="askb" data-w="canvas.decision">
             <span class="why">surfaced because <b>${esc(d.why)}</b></span>
             <span class="q">${esc(d.question)}</span>
             <div class="opts">${d.options.map(o => `<button data-act="answer" data-ans="${esc(o.v)}" class="${d.answer === o.v ? 'on' : ''}" title="Answer — it goes to the run">${esc(o.n)}</button>`).join('')}${d.answer ? '' : '<span class="or">or type below — it goes to the run, not into a new turn</span>'}</div>
             <span class="st">${d.answer ? 'answered' + (hhmm(d.answered) ? ' ' + hhmm(d.answered) : '') + ' · "' + esc(d.answer) + '" sent to the run' : 'waiting' + (hhmm(d.since) ? ' since ' + hhmm(d.since) : '') + ' · the composer answers this too'}</span></div>`;
-      const editHtml = b => { const c = b.content || {}; const f = textFieldOf(b.type);
-        return `<div class="edit" data-w="canvas.update"><textarea class="ta${b.type === 'code' || b.type === 'html' ? ' code' : ''}" data-field="${f}" spellcheck="false">${esc(c[f] || '')}</textarea>
+      const editHtml = b => { const c = b.content || {}; const ask = c.ask && typeof c.ask === 'object' && !c[textFieldOf(b.type)]; const f = ask ? 'ask.question' : textFieldOf(b.type); const v = ask ? (c.ask.question || '') : (c[f] || '');   // a decision's editor edits its question
+        return `<div class="edit" data-w="canvas.update"><textarea class="ta${b.type === 'code' || b.type === 'html' ? ' code' : ''}" data-field="${f}" spellcheck="false">${esc(v)}</textarea>
           <div class="edit-a"><button class="ib" data-act="save">Done</button><button class="ib" data-act="cancel">Cancel</button><span class="vc-dim">${esc(b.type)} · ${f}</span></div></div>`; };
       const card = b => {
         // out of focus: greyed in Full, revealed on hover in Hover, gone in Zen; a pinned item is never out
@@ -799,7 +872,7 @@
           // a decision draws its ask above its own body; a bare question (a note that is only its question) is the ask alone
           if (dec) inner = askHtml(dec) + (b.type === 'loop' || c[textFieldOf(b.type)] ? inner : '');
         }
-        const title = c.title || c.name || c.goal || c.filename || c.caption || (c.widget) || String(b.key).split(':').slice(1).join(':') || b.type;
+        const title = blockTitle(b);
         const size = ITEM_SIZES.includes(b.size) ? b.size : 'm';
         const a = b.anchor && typeof b.anchor === 'object' ? b.anchor : null; const mid = a ? String(a.turn || a.mid || '') : '';
         // an item added by hand: yours, level with the turn it was added beside, related to no turn (no run, never aged)
@@ -811,19 +884,21 @@
         const compact = wouldFold && !hovered;
         const px = this._px[key];
         const editable = EDITABLE.includes(b.type);
+        const bid = b._bid ? String(b.id) : '';   // a keyless block: addressed by its id (canvas.update · canvas.remove · canvas.move)
         const cls = 'it ' + esc(b.state || 'now') + fcls + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${mid ? ' data-mid="' + esc(mid) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}>
           <div class="it-hd"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
-            ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(b.key)}</span>
+            ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
             <span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>
           <div class="it-bd">${inner}</div>
           <div class="it-ft" data-w="canvas.item.rail"><span class="it-a">
               ${editable ? `<button data-act="edit" class="${editing ? 'on' : ''}" title="Edit its text — saved through canvas.update">${editing ? 'Editing' : 'Edit'}</button>` : ''}
-              <button data-act="pin" class="${b.state === 'pinned' ? 'on' : ''}" title="${b.state === 'pinned' ? 'Unpin — back into the flow' : 'Pin above the flow'}">${b.state === 'pinned' ? 'unpin' : 'pin'}</button>
-              <button data-act="park" title="Park it below the flow">park</button>
+              ${plainDoc ? '<button data-act="up" title="Move it up — canvas.move">↑</button><button data-act="down" title="Move it down — canvas.move">↓</button>' : ''}
+              ${bid ? '' : `<button data-act="pin" class="${b.state === 'pinned' ? 'on' : ''}" title="${b.state === 'pinned' ? 'Unpin — back into the flow' : 'Pin above the flow'}">${b.state === 'pinned' ? 'unpin' : 'pin'}</button>
+              <button data-act="park" title="Park it below the flow">park</button>`}
               <button data-act="size" title="Size: ${size} — click for the next">${size}</button>
               <button data-act="remove" title="Take it off the canvas">drop</button>
-              <button data-act="ctx" class="ctx ${inF && (F || b.state === 'pinned') ? 'on' : ''}" title="${b.state === 'pinned' ? 'Pinned — always in context; click to release it' : inF && F ? 'In focus now — pin it to keep it in context' : 'Put it in context — pins it, so it never leaves focus'}">${inF && (F || b.state === 'pinned') ? '✓ In context' : 'In context'}</button>
+              ${bid ? '' : `<button data-act="ctx" class="ctx ${inF && (F || b.state === 'pinned') ? 'on' : ''}" title="${b.state === 'pinned' ? 'Pinned — always in context; click to release it' : inF && F ? 'In focus now — pin it to keep it in context' : 'Put it in context — pins it, so it never leaves focus'}">${inF && (F || b.state === 'pinned') ? '✓ In context' : 'In context'}</button>`}
             </span></div>
           <div class="rz" data-w="canvas.size" title="Drag to resize — it is saved as the item's size"></div></div>`;
       };
@@ -847,8 +922,8 @@
       // first; on the stage they are placed level with their turns (absolute, after a measure); in the flow they stack
       const nowOrder = now.slice().sort((x, y) => { const dx = decisionOf(x), dy = decisionOf(y); const wx = dx && !dx.answer ? 0 : dx ? 1 : 2, wy = dy && !dy.answer ? 0 : dy ? 1 : 2; return wx - wy; });
       const nowCards = (nowOrder.length ? nowOrder.slice(0, 1).map(card).join('') : '') + ghost + nowOrder.slice(1).map(card).join('');
-      html += `<div class="band now"><div class="band-h"><span class="nowbar ${decision && !decision.answer ? 'wait' : 'ok'}" data-w="canvas.now" title="What this turn is waiting on"><i></i><b>NOW</b> ${esc(nowTxt)}</span></div>` +
-        (nowCards ? (stage ? '<div class="stage" id="stage">' + nowCards + '</div>' : nowCards) : '<div class="empty">Nothing in the NOW band — nothing is waiting on you; items land here as the conversation uses them.</div>') + '</div>';
+      html += `<div class="band now"><div class="band-h"><span class="nowbar ${decision && !decision.answer ? 'wait' : 'ok'}" data-w="canvas.now" title="${plainDoc ? 'The canvas, in its order' : 'What this turn is waiting on'}"><i></i><b>${plainDoc ? 'BLOCKS' : 'NOW'}</b> ${esc(nowTxt)}</span></div>` +
+        (nowCards ? (stage ? '<div class="stage" id="stage">' + nowCards + '</div>' : nowCards) : plainDoc ? '<div class="empty">Nothing on this canvas — add a block above, or let an agent fill it.</div>' : '<div class="empty">Nothing in the NOW band — nothing is waiting on you; items land here as the conversation uses them.</div>') + '</div>';
       if (parked.length) html += `<div class="band parked"><div class="band-h">parked · ${parked.length}</div><div class="chips">${parked.map(chip).join('')}</div></div>`;
       if (plain.length) html += plain.map(b => {
         const fn = BLOCK[b.type] || BLOCK.note; let inner;
@@ -896,7 +971,7 @@
         const key = r.key; this._px[key] = r.h; this._open.add(key);
         const size = sizeOfHeight(r.h);
         try { this.dispatchEvent(new CustomEvent('vera:canvas:resized', { bubbles: true, detail: { key, height: r.h, size } })); } catch (e) {}
-        if (size !== r.el.dataset.size) this.call('canvas.size', { key, size }); else if (this.hasAttribute('stage')) this._placeNow(); });
+        if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage')) this._placeNow(); });
       // a picker's search box: the rows that do not carry the words are hidden, a group with none left with them
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.classList || !q.classList.contains('pk-q')) return; const s = String(q.value || '').toLowerCase().trim(); const list = q.closest('.pk') && q.closest('.pk').querySelector('.pk-list'); if (!list) return;
         let grp = null, any = false; [...list.children].forEach((n) => { if (n.classList.contains('grp')) { if (grp) grp.hidden = !any; grp = n; any = false; return; } const on = !s || (n.dataset.q || '').includes(s); n.hidden = !on; any = any || on; }); if (grp) grp.hidden = !any; });
@@ -918,7 +993,10 @@
       try { this.dispatchEvent(new CustomEvent('vera:canvas:open', { bubbles: true, detail: { key, open: this._open.has(key) } })); } catch (e) {}
       if (this._doc) this.render(this._doc);
     }
-    _blockOf(key) { const bl = (this._doc && this._doc.blocks) || []; return bl.find(b => b && String(b.key) === String(key)) || null; }
+    _blockOf(key) { const bl = (this._doc && this._doc.blocks) || []; key = String(key); return bl.find(b => b && b.key != null && String(b.key) === key) || (key.startsWith('blk:') ? bl.find(b => b && !b.key && String(b.id) === key.slice(4)) : null) || null; }
+    /* how a write names the block: the resolver's key, or — a keyless block of an agent's canvas — its block_id */
+    _bidOf(key) { const b = this._blockOf(key); return b && !b.key ? String(b.id) : ''; }
+    _ref(key) { const bid = this._bidOf(key); return bid ? { block_id: bid } : { key }; }
     /* every action on the column — the old per-item controls (pin · park · size · remove) and the board's new ones
        (add · open · edit · answer · take · in context) — one dispatcher */
     _act(btn, ev) {
@@ -926,18 +1004,24 @@
       const focusMid = this.dataset.focusMid || '';
       if (act === 'pin' || act === 'ctx') return this.call(it && it.classList.contains('pinned') ? 'canvas.add' : 'canvas.pin', { key });
       if (act === 'park') return this.call('canvas.park', { key });
-      if (act === 'remove') return this.call('canvas.remove', { key });
-      if (act === 'size') { const i = ITEM_SIZES.indexOf(it.dataset.size); delete this._px[key]; return this.call('canvas.size', { key, size: ITEM_SIZES[(i + 1) % ITEM_SIZES.length] }); }
+      if (act === 'remove') return this.call('canvas.remove', this._ref(key));
+      if (act === 'size') { const i = ITEM_SIZES.indexOf(it.dataset.size); delete this._px[key]; return this._setSize(key, ITEM_SIZES[(i + 1) % ITEM_SIZES.length]); }
+      if (act === 'up' || act === 'down') {   // a plain canvas keeps the document's order: canvas.move by block id
+        const b = this._blockOf(key); if (!b) return; const bl = ((this._doc && this._doc.blocks) || []).filter(Boolean).slice().sort((x, y) => ((x.layout && x.layout.order) || 0) - ((y.layout && y.layout.order) || 0));
+        const i = bl.indexOf(b), j = act === 'up' ? i - 1 : i + 1; if (i < 0 || j < 0 || j >= bl.length) return;
+        return this.call('canvas.move', { block_id: String(b.id), order: j });
+      }
       if (act === 'open') return this._toggleOpen(key);
       if (act === 'hid') { const pop = btn.parentElement && btn.parentElement.querySelector('.hidpop'); if (pop) pop.hidden = !pop.hidden; return; }
       if (act === 'edit') { this._editKey = this._editKey === key ? null : key; this._editFocused = false; if (this._doc) this.render(this._doc); return; }
       if (act === 'cancel') { this._editKey = null; this._editFocused = false; if (this._doc) this.render(this._doc); return; }
       if (act === 'save') {
         const ta = it && it.querySelector('textarea'); const b = this._blockOf(key); if (!ta || !b) return;
-        const content = Object.assign({}, b.content || {}); content[ta.dataset.field || 'text'] = ta.value;
+        const content = Object.assign({}, b.content || {}); const fld = ta.dataset.field || 'text';
+        if (fld === 'ask.question') content.ask = Object.assign({}, content.ask || {}, { question: ta.value }); else content[fld] = ta.value;
         this._editKey = null; this._editFocused = false;
         try { this.dispatchEvent(new CustomEvent('vera:canvas:edited', { bubbles: true, detail: { key, field: ta.dataset.field || 'text' } })); } catch (e) {}
-        return this.call('canvas.update', { key, content });
+        return this.call('canvas.update', Object.assign(this._ref(key), { content }));
       }
       /* ── the live items' own actions (A16): the terminal, the cell, the panel over the bridge ── */
       if (act === 'tconnect' || act === 'tattach' || act === 'tdetach') {
@@ -947,7 +1031,7 @@
         else { c.attached = false; if (this._live && this._live[key]) { try { this._live[key].remove(); } catch (e) {} delete this._live[key]; } }
         this._open.add(key);
         try { this.dispatchEvent(new CustomEvent('vera:canvas:terminal', { bubbles: true, detail: { key, host_id: c.host_id || '', container: c.container || '', attached: !!c.attached } })); } catch (e) {}
-        return this.call('canvas.update', { key, content: c });
+        return this.call('canvas.update', Object.assign(this._ref(key), { content: c }));
       }
       /* the terminal's known hosts (defect 32): the list under the connect row; a pick fills the row and connects */
       if (act === 'thosts') { this._hostsOpen = this._hostsOpen || {}; this._hostsOpen[key] = !this._hostsOpen[key]; this._open.add(key); if (this._doc) this.render(this._doc); if (this._hostsOpen[key]) this._hostRows().then(() => { if (this._doc) this.render(this._doc); }); return; }
@@ -957,7 +1041,7 @@
         const c = this._contentOf(key); if (!c) return; Object.assign(c, { host_id: row.host_id, container: row.container, shell: row.shell, attached: true }); if (!c.title || c.title === 'Terminal') c.title = row.n || row.host_id;
         if (this._hostsOpen) delete this._hostsOpen[key]; this._open.add(key);
         try { this.dispatchEvent(new CustomEvent('vera:canvas:terminal', { bubbles: true, detail: { key, host_id: c.host_id, container: c.container || '', attached: true } })); } catch (e) {}
-        return this.call('canvas.update', { key, content: c });
+        return this.call('canvas.update', Object.assign(this._ref(key), { content: c }));
       }
       if (act === 'taddid') { const box = btn.closest('.row'); const rdf = (f) => { const i = box && box.querySelector('[data-f="' + f + '"]'); return i ? String(i.value || '').trim() : ''; }; const hid = rdf('hid'); if (!hid) { const i = box && box.querySelector('[data-f="hid"]'); if (i) i.focus(); return; } return this._hostAdd({ host_id: hid, container: rdf('hcont'), shell: '', n: hid }); }
       if (act === 'tblank') { const pop = btn.closest('.addpop'); if (pop) pop.remove(); const k = ADD_KINDS.find(x => x.n === 'terminal'); return k ? this._addSeed(k) : undefined; }
@@ -989,9 +1073,17 @@
         const k = ADD_KINDS.find(x => x.n === btn.dataset.kind); if (!k) return;
         if (k.hosts) return this._hostPick(btn);
         if (k.pick) return this._panelPick(btn);
-        if (k.sheet && this._widgetSurface()) return this._widgetPick(btn, k);
-        return this._addSeed(k);
+        if (k.menu) return this._noteMenu(btn, k);
+        if (k.sheet) return this._widgetSurface() ? this._widgetPick(btn, k) : this._sheetless(btn, k);
+        return this._listed(btn, k);   // no kind adds on a click alone: it says what it adds, then adds it
       }
+      if (act === 'nmenu') {
+        const m = NOTE_MENU.find(x => x.id === btn.dataset.m); const pop = btn.closest('.addpop'); if (!m) return;
+        if (!m.clipboard) { if (pop) pop.remove(); return this._addSeed(Object.assign({}, m, { n: m.id })); }   // the key names the row (note:decision-…)
+        const paste = (text) => { const r = fromClipboard(text); if (!r) { if (pop) { const w = pop.querySelector('.what'); if (w) w.textContent = 'the clipboard holds no text — copy something first'; } return; } if (pop) pop.remove(); return this._addSeed({ n: r.n, kind: r.kind, content: r.content }); };
+        try { return navigator.clipboard.readText().then(paste, () => { if (pop) { const w = pop.querySelector('.what'); if (w) w.textContent = 'the clipboard could not be read — paste into a blank note instead'; } }); } catch (e) { return paste(''); }
+      }
+      if (act === 'seedgo') { const k = ADD_KINDS.find(x => x.n === btn.dataset.kind); const pop = btn.closest('.addpop'); if (pop) pop.remove(); return k ? this._addSeed(k) : undefined; }
       if (act === 'answer') {
         const b = this._blockOf(key); const d = decisionOf(b); if (!b || !d) return;
         const ans = String(btn.dataset.ans || ''); const when = new Date().toISOString();
@@ -999,7 +1091,7 @@
         if (content.ask && typeof content.ask === 'object') content.ask = Object.assign({}, content.ask, { answer: ans, answered: when }); else { content.answer = ans; content.answered = when; }
         // the answer goes to the run: the host routes it (vera:canvas:answer); the item records it, so the band reads answered
         try { this.dispatchEvent(new CustomEvent('vera:canvas:answer', { bubbles: true, detail: { key, answer: ans, question: d.question, run: d.run } })); } catch (e) {}
-        return this.call('canvas.update', { key, content });
+        return this.call('canvas.update', Object.assign(this._ref(key), { content }));
       }
       if (act === 'take') {
         const s = (this._suggs || [])[+btn.dataset.i]; if (!s) return;
@@ -1100,10 +1192,10 @@
     /* the add bar's panel: EVERY registered panel by name (ui.panel.list — the registry the harness draws its tabs from),
        the ones open for this session (ui.panels.open) first and marked, a search, and any id typed */
     async _panelPick(btn) {
-      const bar = btn.closest('.addbar'); if (!bar) return; let pop = bar.querySelector('.addpop'); if (pop) { pop.remove(); return; }
-      pop = document.createElement('div'); pop.className = 'addpop pk'; pop.setAttribute('data-w', 'canvas.add.panel'); pop.innerHTML = '<span class="vc-dim">every panel — asking the registry…</span>'; bar.appendChild(pop);
-      const rows = await this._panelRows();
-      pop.innerHTML = (rows.length ? panelListHtml(rows) : '<span class="vc-dim">the registry answered no panel — any panel by its id:</span>')
+      const pop = this._pop(btn, 'canvas.add.panel'); if (!pop) return; const what = `<span class="vc-dim what">${esc(ADD_WHAT.panel)}</span>`;
+      pop.innerHTML = what + '<span class="vc-dim">every panel — asking the registry…</span>';
+      const rows = await this._panelRows(); if (!pop.isConnected) return;
+      pop.innerHTML = what + (rows.length ? panelListHtml(rows) : '<span class="vc-dim">the registry answered no panel — any panel by its id:</span>')
         + '<div class="row"><input class="ti" data-f="pid" placeholder="panel id" spellcheck="false"><button class="ib on" data-act="paddid">Add</button></div>';
       try { const q = pop.querySelector('.pk-q'); if (q) q.focus(); } catch (e) {}
     }
@@ -1117,11 +1209,11 @@
     }
     /* the add bar's terminal: the estate's known hosts (the picker), a typed host id, or a blank terminal */
     async _hostPick(btn) {
-      const bar = btn.closest('.addbar'); if (!bar) return; let pop = bar.querySelector('.addpop'); if (pop) { pop.remove(); return; }
+      const pop = this._pop(btn, 'canvas.add.terminal'); if (!pop) return; const what = `<span class="vc-dim what">${esc(ADD_WHAT.terminal)}</span>`;
       const typed = '<div class="row"><input class="ti" data-f="hid" placeholder="host id — an SSH host of the Exec panel" spellcheck="false"><input class="ti sm" data-f="hcont" placeholder="container" spellcheck="false"><button class="ib on" data-act="taddid">Add</button><button class="ib" data-act="tblank" title="A blank terminal — connect from the item">blank</button></div>';
-      pop = document.createElement('div'); pop.className = 'addpop pk'; pop.setAttribute('data-w', 'canvas.add.terminal'); pop.innerHTML = '<span class="vc-dim">known hosts — asking the estate…</span>' + typed; bar.appendChild(pop);
+      pop.innerHTML = what + '<span class="vc-dim">known hosts — asking the estate…</span>' + typed;
       const rows = await this._hostRows(); if (!pop.isConnected) return;
-      pop.innerHTML = hostListHtml(rows) + typed;
+      pop.innerHTML = what + hostListHtml(rows) + typed;
       try { const q = pop.querySelector('.pk-q'); if (q) q.focus(); } catch (e) {}
     }
     /* the known hosts, asked once and kept a while: conn.targets (the SSH hosts of the Exec panel, the running containers
@@ -1142,12 +1234,33 @@
       try { this.dispatchEvent(new CustomEvent('vera:canvas:terminal', { bubbles: true, detail: { key, host_id: hid, container: content.container, attached: true } })); } catch (e) {}
       return this.call('canvas.add', args);
     }
+    /* one popover under the add bar at a time; the same button again closes it */
+    _pop(btn, w) {
+      const bar = btn.closest('.addbar'); if (!bar) return null; const old = bar.querySelector('.addpop');
+      if (old) { const same = old.dataset.for === (btn.dataset.kind || ''); old.remove(); if (same) return null; }
+      const pop = document.createElement('div'); pop.className = 'addpop pk'; pop.setAttribute('data-w', w); pop.dataset.for = btn.dataset.kind || ''; bar.appendChild(pop); return pop;
+    }
+    /* the note's menu (defect 44): a blank note · a checklist · a decision · a link · from the clipboard — each row
+       says what it adds */
+    _noteMenu(btn, k) {
+      const pop = this._pop(btn, 'canvas.add.note'); if (!pop) return;
+      pop.innerHTML = `<span class="vc-dim what">${esc(ADD_WHAT[k.n] || '')}</span>` + NOTE_MENU.map((m) => `<button class="pp" data-act="nmenu" data-m="${esc(m.id)}" title="${esc(m.what)}"><b>${esc(m.n)}</b><span>${esc(m.what)}</span></button>`).join('');
+    }
+    /* a kind with one option (its seed): listed, added on the click that reads it — never on the add bar's click alone */
+    _listed(btn, k, note) {
+      const pop = this._pop(btn, 'canvas.add.' + k.n); if (!pop) return;
+      pop.innerHTML = `<span class="vc-dim what">${esc(ADD_WHAT[k.n] || 'adds a ' + k.n)}</span>` + (note ? `<span class="vc-dim">${esc(note)}</span>` : '') + `<button class="pp" data-act="seedgo" data-kind="${esc(k.n)}"><b>${esc(seedName(k))}</b><span>${esc(seedWhat(k))}</span></button>`;
+    }
+    _sheetless(btn, k) { return this._listed(btn, k, 'the WidgetConfig sheet is not on this page — the form is set from the item afterwards'); }
+    /* a size: the resolver's canvas.size for a keyed item; a keyless block keeps it in its meta */
+    _setSize(key, size) { const bid = this._bidOf(key); return bid ? this.call('canvas.update', { block_id: bid, meta: { size } }) : this.call('canvas.size', { key, size }); }
     /* the add bar's widget: the WidgetConfig sheet (widget_element.js — this window's, or the host's when the column is
        embedded); the record it resolves is the item's content, keyed by its form, yours (beside the turn, no run) */
     _widgetSurface() { try { if (window.VeraWidgetConfig && window.VeraWidgetConfig.open) return window.VeraWidgetConfig; } catch (e) {} try { const p = window.parent; if (p && p !== window && p.VeraWidgetConfig && p.VeraWidgetConfig.open) return p.VeraWidgetConfig; } catch (e) {} return null; }
     async _widgetPick(btn, k) {
       const S = this._widgetSurface(); if (!S) return; const focusMid = this.dataset.focusMid || '';
-      let rec = null; try { rec = await S.open({ mode: 'add', into: 'canvas', anchor: btn, templates: true, title: 'Add a widget to the canvas', sizes: ['s', 'm', 'l', 'xl'] }); } catch (e) { rec = null; }
+      // the chart is the sheet on the series forms (defect 44): the shape filter is the sheet's own
+      let rec = null; try { rec = await S.open({ mode: 'add', into: 'canvas', anchor: btn, templates: true, title: k.shape === 'series' ? 'Add a chart — a series form' : 'Add a widget to the canvas', shape: k.shape || '', record: k.shape === 'series' ? { form: 'trace', title: 'Chart' } : undefined, sizes: ['s', 'm', 'l', 'xl'] }); } catch (e) { rec = null; }
       if (!rec) return;
       const form = String(rec.form || (rec.draw && rec.draw.form) || 'widget'); const size = String((rec.frame && rec.frame.size) || (rec.draw && rec.draw.size) || 'm');
       const nk = 'widget:' + form.replace(/[^a-zA-Z0-9_-]/g, '') + '-' + Date.now().toString(36);
@@ -1155,7 +1268,7 @@
       const content = Object.assign({}, rec, { widget: form, form, title: rec.title || form, draw: Object.assign({}, rec.draw || {}, { form, size }), record: rec });
       const args = { kind: 'widget', key: nk, content, at: 'now', size, anchor: { origin: 'you', beside: focusMid } };
       this._open.add(nk);
-      try { this.dispatchEvent(new CustomEvent('vera:canvas:add', { bubbles: true, detail: { key: nk, kind: 'widget', add: 'widget', form } })); } catch (e) {}
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:add', { bubbles: true, detail: { key: nk, kind: 'widget', add: k.n, form } })); } catch (e) {}
       return this.call('canvas.add', args);
     }
     _panelAdd(id, label) {
@@ -1187,6 +1300,64 @@
       try { this.dispatchEvent(new CustomEvent('vera:canvas:cell', { bubbles: true, detail: { key, state: 'done', output: text } })); } catch (e) {}
       return this.call('canvas.update', { key, content: Object.assign(c, { generated: text }) });
     }
+    /* ── the rail (the Canvas panel's left column, defect 43): every canvas (canvas.list), the session's first and
+       marked (canvas.session.resolve), + New (title · mode · topic → canvas.create), a delete behind a confirm
+       (canvas.delete); a row switches the canvas-id. The old panel page's sidebar, as part of the element. ── */
+    _railMount() {
+      const r = this.shadowRoot.getElementById('rail'); if (!r) return; r.hidden = false;
+      if (!r.childElementCount) {
+        r.innerHTML = `<h2>Canvases <button class="ib on" data-ract="new" title="A new canvas — its title, mode and topic">+ New</button></h2>
+          <form class="nf" data-w="canvas.create" hidden><input class="ti" data-f="title" placeholder="title" spellcheck="false">
+            <span class="seg" data-f="mode"><button type="button" class="on" data-mode="static" title="a working area">static</button><button type="button" data-mode="dynamic" title="tracks a live topic — agents fill it in">dynamic</button></span>
+            <input class="ti" data-f="topic" placeholder="topic it tracks" spellcheck="false" hidden>
+            <span class="row"><button type="submit" class="ib on">Create</button><button type="button" class="ib" data-ract="newx">Cancel</button></span></form>
+          <div class="list" id="raillist"><span class="vc-dim">asking…</span></div>`;
+        r.addEventListener('click', (ev) => this._railAct(ev));
+        r.addEventListener('submit', (ev) => { ev.preventDefault(); this._railCreate(); });
+      }
+      this._railRefresh();
+      if (!this._railTimer) this._railTimer = setInterval(() => this._railRefresh(), 10000);
+    }
+    async _railRefresh() {
+      const list = this.shadowRoot.getElementById('raillist'); if (!list) return;
+      const sid = this.getAttribute('session-id') || '';
+      const [L, S] = await Promise.all([this.callResult('canvas.list', { limit: 40 }), sid ? this.callResult('canvas.session.resolve', { session_id: sid }) : Promise.resolve(null)]);
+      const rows = L && Array.isArray(L.canvases) ? L.canvases.slice() : [];
+      const sessId = S && S.id ? String(S.id) : '';
+      if (sessId && !rows.some((c) => c.id === sessId)) rows.unshift({ id: sessId, title: S.title || 'Session canvas', mode: 'session', blocks: S.count || 0 });
+      this._rail = rows.map((c) => Object.assign({}, c, { session: c.id === sessId || c.mode === 'session' }));
+      this._rail.sort((a, b) => (a.id === sessId ? -1 : b.id === sessId ? 1 : 0));
+      this._railDraw();
+    }
+    _railDraw() {
+      const list = this.shadowRoot.getElementById('raillist'); if (!list) return; const cur = this.canvasId; const rows = this._rail || [];
+      list.innerHTML = rows.length ? rows.map((c) => this._railDel === c.id
+          ? `<div class="cv confirm"><b>delete “${esc(c.title || 'Untitled')}”?</b><span><button class="ib" data-ract="delyes" data-cid="${esc(c.id)}">yes, delete</button><button class="ib" data-ract="delno">no</button></span></div>`
+          : `<button class="cv${c.id === cur ? ' on' : ''}" data-ract="show" data-cid="${esc(c.id)}" title="${esc(c.id)}"><b>${esc(c.title || 'Untitled')}</b><span><em class="mode-${esc(c.session ? 'session' : c.mode || 'static')}">${esc(c.session ? 'this session' : c.mode || 'static')}</em>${c.blocks != null ? '<i>' + esc(c.blocks) + ' blk</i>' : ''}${c.updated ? '<i>' + esc(hhmm(c.updated)) + '</i>' : ''}${c.session ? '' : '<i class="x" data-ract="del" data-cid="' + esc(c.id) + '" title="Delete this canvas">✕</i>'}</span></button>`).join('')
+        : '<span class="vc-dim">no canvas yet — + New makes one; an agent\'s canvas.create lands here too</span>';
+    }
+    _railMark() { const list = this.shadowRoot.getElementById('raillist'); if (!list) return; const cur = this.canvasId; list.querySelectorAll('.cv[data-cid]').forEach((b) => b.classList.toggle('on', b.dataset.cid === cur)); }
+    _railAct(ev) {
+      const form = this.shadowRoot.querySelector('.rail .nf');
+      const seg = ev.target.closest && ev.target.closest('.nf [data-mode]');
+      if (seg && form) { ev.stopPropagation(); form.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('on', b === seg)); const tp = form.querySelector('[data-f="topic"]'); if (tp) { tp.hidden = seg.dataset.mode !== 'dynamic'; if (!tp.hidden) { try { tp.focus(); } catch (e) {} } } return; }
+      const t = ev.target.closest && ev.target.closest('[data-ract]'); if (!t) return; const a = t.dataset.ract; ev.stopPropagation();
+      if (a === 'new' || a === 'newx') { if (form) { form.hidden = a === 'newx' ? true : !form.hidden; if (!form.hidden) { try { form.querySelector('[data-f="title"]').focus(); } catch (e) {} } } return; }
+      if (a === 'show') { this._switch(t.dataset.cid); return; }
+      if (a === 'del') { this._railDel = t.dataset.cid; this._railDraw(); return; }
+      if (a === 'delno') { this._railDel = null; this._railDraw(); return; }
+      if (a === 'delyes') { const id = t.dataset.cid; this._railDel = null; this.callResult('canvas.delete', { id }).then(() => { try { this.dispatchEvent(new CustomEvent('vera:canvas:deleted', { bubbles: true, detail: { id } })); } catch (e) {} if (id === this.canvasId) { const next = (this._rail || []).find((c) => c.id !== id); if (next) this._switch(next.id); else { this.removeAttribute('canvas-id'); this._rev = null; this.refresh(); } } return this._railRefresh(); }); return; }
+    }
+    async _railCreate() {
+      const form = this.shadowRoot.querySelector('.rail .nf'); if (!form) return;
+      const rd = (f) => { const i = form.querySelector('[data-f="' + f + '"]'); return i ? String(i.value || '').trim() : ''; }; const modeB = form.querySelector('[data-mode].on'); const mode = modeB ? modeB.dataset.mode : 'static';
+      const title = rd('title') || 'Untitled canvas'; const topic = mode === 'dynamic' ? rd('topic') : '';
+      const r = await this.callResult('canvas.create', { title, mode, topic }); if (!r || !r.id) return;
+      form.hidden = true; try { form.querySelector('[data-f="title"]').value = ''; form.querySelector('[data-f="topic"]').value = ''; } catch (e) {}
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:created', { bubbles: true, detail: { id: r.id, title, mode, topic } })); } catch (e) {}
+      this._switch(r.id); return this._railRefresh();
+    }
+    _switch(id) { id = String(id || ''); if (!id) return; this._open = new Set(); this._px = {}; this._editKey = null; this.setAttribute('canvas-id', id); this._railMark(); try { this.dispatchEvent(new CustomEvent('vera:canvas:switch', { bubbles: true, detail: { id } })); } catch (e) {} }
     /* Every per-item action is the capability the chat and the model use — one implementation — through the
        same /mcp/call the chat uses; the element only asks for a repaint afterwards. */
     async call(name, args) {
@@ -1200,7 +1371,7 @@
     }
   }
 
-  const api = { place, checkRoutes, decisionOf, suggestionsOf, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 4 };
+  const api = { place, checkRoutes, decisionOf, suggestionsOf, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 5 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {

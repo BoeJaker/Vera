@@ -9,7 +9,7 @@ const FILE = path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.js');
 const V = require(FILE); const SRC = fs.readFileSync(FILE, 'utf8');
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 const B = V.BLOCK;
-t('the pure rows and the picker are exported (version 4)', typeof V.hostRowsOf === 'function' && typeof V.panelRowsOf === 'function' && typeof V.pickerHtml === 'function' && V.version === 4);
+t('the pure rows and the picker are exported (version 4 — the board-panel slice, test_canvas_board_panel.cjs, followed as 5)', typeof V.hostRowsOf === 'function' && typeof V.panelRowsOf === 'function' && typeof V.pickerHtml === 'function' && V.version >= 4);
 
 // ── the known hosts, as the remote subsystem answers them (conn.targets · conn.list, prod-shaped) ──
 const targets = { docker: [{ docker_host_id: 'local', host_label: 'llm.int', id: 'abc123', container: 'vera-mirror', image: 'vera:latest', state: 'running' }, { docker_host_id: 'ct126', host_label: 'ct126 · gpu', container: 'ollama', image: 'ollama/ollama', state: 'running' }],
