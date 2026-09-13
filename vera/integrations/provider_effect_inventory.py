@@ -97,7 +97,7 @@ _DOMAINS: tuple[dict[str, Any], ...] = (
         "effect_observation": "partial",
         "observed_mutations": [
             "docker.exec", "docker.stop", "docker.rm", "docker.run",
-            "docker.worker.stop",
+            "docker.worker.stop", "docker.image.ensure", "docker.worker.spawn",
         ],
         "automatic_retries": False,
         "source_modules": [

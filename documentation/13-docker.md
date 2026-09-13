@@ -69,12 +69,15 @@ callers must authorize them explicitly. Streaming actions return SSE:
 
 The non-streaming `docker.exec`, `docker.stop`, `docker.rm`, and `docker.run`
 capability, plus `docker.worker.stop`, emit a payload-free external-effect
-projection immediately before invoking Docker. The projection hashes host,
-resource, and operation identity; command text, environment values, target
-names, and raw approval/idempotency references are not retained. It is
-observe-only and cannot block, retry, or claim completion. Image builds,
-streaming routes, worker spawn, and stack/store orchestration are not yet fully
-covered, so Infrastructure evidence in the Integrations UI is labelled partial.
+projection immediately before invoking Docker. `docker.image.ensure` does the
+same only when it will build or transfer an image; an already-present image is a
+read-only short circuit. `docker.worker.spawn` separately observes the worker
+creation after any required image preparation succeeds. The projection hashes
+host, resource, and operation identity; command text, environment values,
+target names, connection URLs, and raw approval/idempotency references are not
+retained. It is observe-only and cannot block, retry, or claim completion.
+Streaming routes and stack/store orchestration are not yet fully covered, so
+Infrastructure evidence in the Integrations UI is labelled partial.
 
 ---
 

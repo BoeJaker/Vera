@@ -56,6 +56,11 @@ def test_docker_plan_rejects_unknown_mode():
         _plan(mode="prune")
 
 
+@pytest.mark.parametrize("mode", ["image_ensure", "worker_spawn"])
+def test_image_and_worker_modes_use_distinct_effect_identities(mode):
+    assert _plan(mode=mode)["delivery"]["mode"] == mode
+
+
 def test_evidence_failure_is_isolated(monkeypatch):
     class BrokenEvidence:
         def record(self, _shadow):
@@ -146,3 +151,95 @@ async def test_blocked_exec_neither_observes_nor_calls_docker(monkeypatch):
     result = await docker.cap_docker_exec.__wrapped__(
         host_id="host:1", container="c1", command="denied")
     assert result["blocked"] is True
+
+
+@pytest.mark.asyncio
+async def test_present_image_short_circuits_without_mutation_observation(monkeypatch):
+    monkeypatch.setattr(docker, "_get_host", lambda _host: {"id": "local"})
+
+    async def present(_rec, _image):
+        return True
+
+    monkeypatch.setattr(docker, "_image_present", present)
+    monkeypatch.setattr(docker, "observe_docker_effect",
+                        lambda **_kwargs: pytest.fail("no mutation was attempted"))
+    result = await docker.cap_docker_image_ensure.__wrapped__(image="vera:test")
+    assert result["action"] == "none"
+    assert "effect_shadow" not in result
+
+
+@pytest.mark.asyncio
+async def test_image_build_observes_after_gate_before_docker(monkeypatch):
+    order = []
+    checks = iter((False, True))
+    monkeypatch.setattr(docker, "_get_host", lambda _host: {"id": "local"})
+
+    async def present(_rec, _image):
+        return next(checks)
+
+    async def argv(_rec, args):
+        order.append("argv")
+        return ["docker", *args]
+
+    def observe(**kwargs):
+        order.append("observe")
+        assert kwargs["idempotency_key"] == "key:private"
+        assert kwargs["approval_receipt_ref"] == "approval:private"
+        return {"enforcement": "observe_only"}
+
+    async def run(args, timeout):
+        order.append("run")
+        assert "key:private" not in args
+        assert "approval:private" not in args
+        return {"ok": True, "stdout": "built", "stderr": ""}
+
+    async def emit(_event):
+        return None
+
+    monkeypatch.setattr(docker, "_image_present", present)
+    monkeypatch.setattr(docker, "_docker_argv", argv)
+    monkeypatch.setattr(docker, "_sandbox_gate", lambda *_args: (True, ""))
+    monkeypatch.setattr(docker, "observe_docker_effect", observe)
+    monkeypatch.setattr(docker, "_run_local", run)
+    monkeypatch.setattr(docker, "emit_event", emit)
+    result = await docker.cap_docker_image_ensure.__wrapped__(
+        image="vera:test", strategy="build", context="/workspace",
+        idempotency_key="key:private", approval_receipt_ref="approval:private")
+    assert order == ["argv", "observe", "run"]
+    assert result["effect_shadow"] == {"enforcement": "observe_only"}
+
+
+@pytest.mark.asyncio
+async def test_worker_spawn_observes_once_before_docker_without_forwarding_controls(monkeypatch):
+    order = []
+    monkeypatch.setattr(docker, "_get_host", lambda _host: {"id": "local"})
+
+    async def argv(_rec, args):
+        order.append("argv")
+        return ["docker", *args]
+
+    def observe(**kwargs):
+        order.append("observe")
+        assert kwargs["mode"] == "worker_spawn"
+        return {"enforcement": "observe_only"}
+
+    async def run(args, timeout):
+        order.append("run")
+        assert "key:private" not in args
+        assert "approval:private" not in args
+        return {"ok": True, "stdout": "container-id", "stderr": ""}
+
+    async def emit(_event):
+        return None
+
+    monkeypatch.setattr(docker, "_docker_argv", argv)
+    monkeypatch.setattr(docker, "_sandbox_gate", lambda *_args: (True, ""))
+    monkeypatch.setattr(docker, "observe_docker_effect", observe)
+    monkeypatch.setattr(docker, "_run_local", run)
+    monkeypatch.setattr(docker, "emit_event", emit)
+    result = await docker.cap_docker_worker_spawn.__wrapped__(
+        image="vera:test", name="worker-test", redis_url="redis://private",
+        ensure_image=False, inherit_backends=False,
+        idempotency_key="key:private", approval_receipt_ref="approval:private")
+    assert order == ["argv", "observe", "run"]
+    assert result["effect_shadow"] == {"enforcement": "observe_only"}
