@@ -34,6 +34,16 @@ def test_hint_lists_every_registry_form():
     assert "const form=known?draw:'table';" in src and "draw:{form:form, size:" in src
 
 
+def test_a_vocabulary_call_is_lifted_into_ui_directive():
+    # the Control board: one vocabulary, one dispatcher — a model's [[canvas.add {…}]] ran as a bare cap and left no log row
+    src = _read("vera", "chat", "chat_panel.html")
+    assert "let _DIR_VOCAB=new Set(['panel.open','panel.dispatch','panel.query','panel.close','canvas.show','canvas.add'" in src
+    assert "async function _dirVocabLoad(){ try{ const r=await _capCall('ui.directive.vocab',{});" in src
+    scan = src[src.index("function _findAllPlaceholders(text){"):src.index("function hasCapPlaceholders(text){")]
+    assert "const liftDirectives=()=>{ matches.forEach(mt=>{ if(mt.type!=='cap'||!mt.groups||mt.groups[0]==='ui.directive'||!_isDirective(mt.groups[0])) return;" in scan
+    assert "matches.length=0; deduped.forEach(x=>matches.push(x)); liftDirectives();" in scan
+
+
 def test_a_canvas_calls_receipt_is_not_harvested_as_an_item():
     # mirror a42g.png: the model's canvas.append put its items on the canvas AND the harvest lifted each receipt card too
     src = _read("vera", "chat", "chat_panel.html")

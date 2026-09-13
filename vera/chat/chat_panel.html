@@ -4142,7 +4142,13 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   let _capsRetryCount=0;
   const _CAPS_MAX_RETRIES=5;
   const _CAPS_RETRY_DELAYS=[2000,4000,8000,15000,30000];
+  // the control plane's vocabulary (ui.directive.vocab): a model-issued call with one of these names is a DIRECTIVE —
+  // lifted into ui.directive so it meets the same policy, log and undo as the ⟦…⟧ shorthand; the edge's list until fetched
+  let _DIR_VOCAB=new Set(['panel.open','panel.dispatch','panel.query','panel.close','canvas.show','canvas.add','canvas.pin','canvas.park','canvas.size','canvas.ask','lhm.focus','lhm.compose','widget.place','widget.update','widget.template.save','chat.card','chat.mode','graph.focus','graph.view','ui.script.run','ui.script.save']);
+  async function _dirVocabLoad(){ try{ const r=await _capCall('ui.directive.vocab',{}); const list=(r&&r.directives)||[]; if(list.length) _DIR_VOCAB=new Set(list.map(d=>String(d.name||'')).filter(Boolean)); }catch(_){} }
+  function _isDirective(name){ return !!(name&&_DIR_VOCAB.has(String(name))); }
   async function loadAllCaps(){
+    _dirVocabLoad();
     const res=await api('/mcp/tools');
     ALL_CAPS=Array.isArray(res)?res:(res?.tools||[]);
     const cnt=ALL_CAPS.length;
@@ -7846,6 +7852,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       if(matches.find(x=>x.idx===m.index)) continue;
       matches.push({idx:m.index,end:m.index+m[0].length,type:'panel',groups:[m[1],m[2]||'']});
     }
+    // the vocabulary spoken as a bare capability ([[canvas.add {…}]], [[cap:panel.open {…}]]) is the same directive: lifted
+    // into ui.directive so it meets the same policy, log and undo (the Control board: one vocabulary, one dispatcher)
+    const liftDirectives=()=>{ matches.forEach(mt=>{ if(mt.type!=='cap'||!mt.groups||mt.groups[0]==='ui.directive'||!_isDirective(mt.groups[0])) return; let a={}; try{ a=mt.groups[1]?JSON.parse(mt.groups[1]):{}; }catch(_){ a={}; } if(a&&typeof a==='object'&&!Array.isArray(a)){ mt.groups=['ui.directive', JSON.stringify({name:mt.groups[0], args:a})]; } }); };
     // ⟦name {args}⟧ → a cap match of ui.directive (the dispatcher applies policy, logs, and answers with the outcome)
     const reDir=new RegExp(DIRECTIVE_INLINE_RE.source,'g');
     while((m=reDir.exec(text))!==null){
@@ -7997,6 +8006,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     for(const match of matches){
       if(match.idx>=lastEnd){deduped.push(match);lastEnd=match.end;}
     }
+    matches.length=0; deduped.forEach(x=>matches.push(x)); liftDirectives();
     return deduped;
   }
 
