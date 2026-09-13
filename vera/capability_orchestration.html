@@ -963,7 +963,7 @@ header .hdr-right{margin-left:0;gap:6px}
           <button class="btn sm"      onclick="loadDiagnostics()">Diagnostics</button>
           <button class="btn sm"      onclick="dashToggleEdit()" id="dashEditBtn" title="Configure dashboard layout">⚙ Configure</button>
           <button class="btn sm"      onclick="dashResetLayout()" title="Reset to defaults">Reset</button>
-          <button class="btn sm"      onclick="dashOpenWidgetLoader()" title="Add a registered panel or element as a widget">+ Add Widget</button>
+          <button class="btn sm"      onclick="dashOpenWidgetLoader()" title="Add a widget — any form of the catalogue, a panel, a template, with a live preview">+ Add Widget</button>
         </div>
 
         <!-- Subsystem health strip — always-on, distinct from the opt-in header meter bar -->
@@ -7700,7 +7700,7 @@ function _dashOnResizeMouseDown(e){
 let _dashCtl=null;
 function dashToggleEdit(){ _dashCtl && _dashCtl.toggleEdit(); }
 function dashResetLayout(){ _dashCtl && _dashCtl.reset(); }
-function dashOpenWidgetLoader(){ _dashCtl && _dashCtl.openLoader(); }
+function dashOpenWidgetLoader(){ return _dashCtl && _dashCtl.openLoader(); }
 function dashHideWidget(wid){ _dashCtl && _dashCtl.hide(wid); }
 function dashShowWidget(wid){ _dashCtl && _dashCtl.show(wid); }
 // ── The widget registry's placements (UI redesign) — a widget placed on this dashboard through
@@ -7724,8 +7724,9 @@ async function _dashPlacedSync(){
       try{ await _dashCtl.addWidget(inst.panel); }catch(_){}
       const w=document.querySelector('#dashGrid > [data-wid="'+wid+'"]'); if(w) w.dataset.instance=inst.id;
     } else {
-      _dashPlaced[inst.id]='';
-      console.info('widget registry: '+inst.name+' ('+inst.form+') is placed on this dashboard but has no renderer yet');
+      // a registry placement without a panel is a record: the dashboard draws it as a record tile (vera-dashboard.js placeRecord)
+      const rw=_dashCtl.placeRecord?_dashCtl.placeRecord(inst):null; _dashPlaced[inst.id]=rw?rw.dataset.wid:''; if(rw) rw.dataset.instance=inst.id;
+      if(!rw) console.info('widget registry: '+inst.name+' ('+inst.form+') is placed on this dashboard but has no renderer yet');
     }
   }
   for(const iid of Object.keys(_dashPlaced)){
