@@ -30,16 +30,18 @@
   if (sid) el.setAttribute('session-id', sid);   // the rail marks the session's canvas whichever canvas the route names
   // the session's canvas — the one the chat's column shows — made on demand, as the column makes it
   const bySession = async (s) => { if (!s) return ''; el.setAttribute('session-id', s); const r = await call('canvas.session.resolve', { session_id: s }); return (r && r.id) ? String(r.id) : ''; };
+  // the host harness / the chat: postMessage {canvas:'<id>'} focuses a canvas; the chat's panelOpen posts
+  // {type:'vera:panel:init', session_id} on the frame's load — the session's canvas, unless the route named one.
+  // Registered before the route is asked: the init arrives while the route's answers are still in flight.
+  let named = false;   // a canvas the host or the route named — the fallback never replaces it
+  window.addEventListener('message', async (e) => { const d = e.data || {};
+    if (d.canvas) { named = true; return show(d.canvas); }
+    if (d.type === 'vera:panel:init' && d.session_id && d.session_id !== sid) { sid = String(d.session_id); const id = await bySession(sid); if (id && !q.get('canvas')) { named = true; show(id); } } });
   // the route: ?canvas=<id> opens that canvas (an agent hands the user a link straight to the whiteboard it built);
   // ?session=<sid>, or the session the host names, opens the session's canvas; else the most recent
-  if (q.get('canvas')) show(q.get('canvas'));
-  else if (sid) show(await bySession(sid));
-  if (!el.getAttribute('canvas-id')) { const r = await call('canvas.list', { limit: 1 }); const first = r && Array.isArray(r.canvases) && r.canvases[0]; if (first) show(first.id); }
-  // the host harness / the chat: postMessage {canvas:'<id>'} focuses a canvas; the chat's panelOpen posts
-  // {type:'vera:panel:init', session_id} — the session's canvas, unless the route named one
-  window.addEventListener('message', async (e) => { const d = e.data || {};
-    if (d.canvas) return show(d.canvas);
-    if (d.type === 'vera:panel:init' && d.session_id && d.session_id !== sid) { sid = String(d.session_id); const id = await bySession(sid); if (id && !q.get('canvas')) show(id); } });
+  if (q.get('canvas')) { named = true; show(q.get('canvas')); }
+  else if (sid) { const id = await bySession(sid); if (id) { named = true; show(id); } }
+  if (!named && !el.getAttribute('canvas-id')) { const r = await call('canvas.list', { limit: 1 }); const first = r && Array.isArray(r.canvases) && r.canvases[0]; if (first && !named) show(first.id); }
 })();
 </script>
 </body>
