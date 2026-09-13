@@ -408,11 +408,12 @@
      lets it sit highest. ── */
   function place(items, turns, o) {
     o = o || {}; const cols = Math.max(1, Math.min(4, o.columns || 1)), gap = o.gap == null ? 10 : o.gap, cw = o.colWidth || 300, pad = o.pad || 0;
+    const view = Math.max(0, o.view || 0);   // the top of the window in view (stage y): an item with nothing to stand beside sits where you are looking
     const T = turns || {}; const levelOf = (it) => it.mid || it.beside || ''; const known = (it) => { const m = levelOf(it); return !!(m && T[m] && typeof T[m].top === 'number'); };
     const order = (items || []).map((it, i) => ({ it, i })).sort((a, b) => { const ka = known(a.it), kb = known(b.it); if (ka && kb) return (T[levelOf(a.it)].top - T[levelOf(b.it)].top) || (a.i - b.i); if (ka) return -1; if (kb) return 1; return a.i - b.i; });
     const bottoms = new Array(cols).fill(pad), used = new Array(cols).fill(false); const out = []; let maxB = pad;
     order.forEach(({ it }) => { const ideal = known(it) ? Math.max(pad, T[levelOf(it)].top) : null; let best = 0, bestY = Infinity;
-      for (let c = 0; c < cols; c++) { const floor = used[c] ? bottoms[c] + gap : bottoms[c]; const y = ideal == null ? floor : Math.max(ideal, floor); if (y < bestY) { bestY = y; best = c; } }
+      for (let c = 0; c < cols; c++) { const floor = used[c] ? bottoms[c] + gap : bottoms[c]; const y = ideal == null ? Math.max(floor, view + pad) : Math.max(ideal, floor); if (y < bestY) { bestY = y; best = c; } }
       const h = Math.max(1, it.h || 1);
       out.push({ key: it.key, mid: it.mid || '', col: best, x: best * (cw + gap), y: bestY, h, level: ideal != null && bestY === ideal });
       bottoms[best] = bestY + h; used[best] = true; maxB = Math.max(maxB, bottoms[best]); });
@@ -593,7 +594,8 @@
       const items = cards.map((c) => ({ key: c.dataset.key, h: c.offsetHeight, mid: c.dataset.mid || '', beside: c.dataset.beside || '' }));
       const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);   // the sticky heads overlay the stage's top: nothing is placed under them
-      const P = place(items, this._turns || {}, { columns: cols, gap, colWidth: w, pad });
+      const body = this.shadowRoot.getElementById('body');
+      const P = place(items, this._turns || {}, { columns: cols, gap, colWidth: w, pad, view: body ? body.scrollTop : 0 });
       P.placements.forEach((p) => { const c = cards.find((x) => x.dataset.key === p.key); if (!c) return; c.style.left = p.x + 'px'; c.style.top = p.y + 'px'; c.dataset.col = String(p.col); c.classList.toggle('level', !!p.level); });
       // the stage is at least as tall as the transcript's scroll height, so the column can scroll in step with it
       st.style.height = Math.max(P.height, (this._turnsH || 0) + 40) + 'px'; this._placed = P;
