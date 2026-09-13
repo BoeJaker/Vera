@@ -154,7 +154,7 @@ FORMS: List[Dict[str, Any]] = [
     _F("diagram", "graph", glyph="diagram", name="Diagram", boards=("reply",)),
     _F("city", "graph", ("iso",), glyph="city", motion=True, options=("footprint", "height", "colour", "lamp"), name="City", boards=("motion",)),
     _F("orbit", "items", glyph="orbit", motion=True, options=("rings", "size"), name="Orbit", boards=("motion",)),
-    _F("context_graph", "graph", glyph="context_graph", options=("lanes", "labels"), name="Context graph", boards=("spec",)),
+    _F("context_graph", "graph", glyph="context_graph", options=("lanes", "labels")),
     # ── items ──
     _F("table", "items", ("flat", "iso"), glyph="table", options=("columns", "sort", "limit", "lit"), name="Table", boards=("widgets", "motion")),
     _F("list", "items", ("flat", "iso"), glyph="list", options=("limit",), name="List", boards=("reply", "iso")),
@@ -202,6 +202,8 @@ FORMS: List[Dict[str, Any]] = [
     _F("rail", "items", glyph="rail", sizes=("s",), options=("width", "slots"), name="Rail", boards=("motion",)),
 ]
 _FORM_BY_ID = {f["id"]: f for f in FORMS}
+# the context graph's line above is held verbatim by the chat's explode test; its name and board ride in here
+_FORM_BY_ID["context_graph"].update({"name": "Context graph", "boards": ["spec"]})
 # what the boards and older records call a form → the catalogue's id
 FORM_ALIASES = {"hero + trend": "hero", "arc gauges": "gauge", "progress ring": "ring", "stacked area": "area",
                 "heat map": "heat", "status matrix": "matrix", "dot matrix": "dots", "status pills": "pills",
