@@ -760,8 +760,12 @@ header .hdr-right{margin-left:0;gap:6px}
 .w-body .kpi-trend{font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0))}
 .w-head .vd-rec{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));opacity:1;background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-pill,99px);padding:1px 7px;max-width:180px}
 .w-head .w-sub,.w-head .w-meta{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
-.w-head .w-actions{margin-left:auto;opacity:.55}
-.widget:hover .w-actions{opacity:1}
+/* the board's tile head: title · the record pill at the right; the actions (⚙ ⤢ ×) only on hover, focus, edit mode or a
+   floated tile — a 2×2 tile's title kept the room (it read "ST…" with the three buttons always in the head) */
+.w-head .vd-rec{margin-left:auto;flex:0 0 auto}
+.w-head .w-actions{display:none;margin-left:6px;opacity:1}
+.widget:hover .w-head .w-actions,.widget:focus-within .w-head .w-actions,.dash-grid.editing .w-head .w-actions,.widget.floating .w-head .w-actions{display:inline-flex}
+.w-head .w-title{flex:1 1 auto}
 .w-iconbtn{width:22px;height:22px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280))}
 .w-iconbtn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
 .w-body{padding:6px 12px 12px}
