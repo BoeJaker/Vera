@@ -26,5 +26,9 @@ const bad = { key: 'b', pts: [{ x: 300, y: 20 }, { x: 400, y: 20 }, { x: 400, y:
 const missed = { key: 'b', pts: [{ x: 290, y: 20 }, { x: 310, y: 20 }, { x: 310, y: 114 }, { x: 330, y: 114 }], from: turn, to: other };
 t('the checker: 0 · 0 for the gutter route', JSON.stringify(V.checkRoutes([good], [turn, card, other])) === JSON.stringify({ crossings: 0, missedJoins: 0, n: 1 }));
 t('the checker counts a run through a card, and ends that miss their edges', V.checkRoutes([bad], [turn, card, other]).crossings >= 1 && V.checkRoutes([missed], [turn, card, other]).missedJoins === 1);
+// the view: an item with nothing to stand beside sits where you are looking, not under the heads at the stage's top
+{ const P = V.place([{ key: 'yours', h: 100 }], {}, { pad: 40, view: 300 }); t('a turn-less item floors at the window in view + the heads', P.placements[0].y === 340, JSON.stringify(P.placements[0]));
+  const Q = V.place([{ key: 'yours', h: 100 }], {}, { pad: 40 }); t('no view given → the stage top as before', Q.placements[0].y === 40, JSON.stringify(Q.placements[0]));
+  const R = V.place([{ key: 'k', mid: 'm1', h: 100 }], { m1: { top: 120 } }, { pad: 40, view: 300 }); t('an item with a turn stays level with it whatever the view', R.placements[0].y === 120 && R.placements[0].level, JSON.stringify(R.placements[0])); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
