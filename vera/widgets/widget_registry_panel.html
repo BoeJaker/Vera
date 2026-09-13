@@ -77,6 +77,52 @@ button.danger{color:var(--err)}
 #newForm label{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:1px;color:var(--dim)}
 #newForm input,#newForm select,#newForm textarea{width:100%}
 html[data-blocks="off"] .card,html[data-blocks="off"] .rows,html[data-blocks="off"] #newForm,html[data-blocks="off"] header,html[data-blocks="off"] .filters{background:transparent;border-color:transparent}
+/* ═══ the WidgetRegistry board: filters · a grid of template cards · the inspector (UI redesign; the same
+   VeraWidgetConfig surface behind Edit and + New widget) ═══ */
+.filters[hidden]{display:none}   /* the old chip rows stay in the document (the same chips, in the filter column) */
+#wrap{gap:12px;padding:10px 12px}
+#fil{width:212px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;border:1px solid var(--border);border-radius:var(--ui-radius,8px);background:var(--bg1);overflow:auto;min-height:0}
+#fil .fil-s{margin:10px 10px 4px;height:28px;display:flex;align-items:center;gap:7px;padding:0 8px;border-radius:var(--r-sm,6px);background:var(--bg0);color:var(--dim2);font-size:10.5px;border:1px solid var(--border)}
+#fil .fil-s input{flex:1;border:none;background:transparent;padding:0;font-size:10.5px;min-width:0}
+#fil .fil-g{padding:8px 10px 2px}#fil .fil-g .lbl{display:block;font-family:var(--mono);font-size:8px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-bottom:6px}
+#fil .chips{display:flex;flex-wrap:wrap;gap:4px}
+#fil .fil-ft{margin-top:auto;padding:10px;font-size:10px;color:var(--dim2);line-height:1.5;border-top:1px solid var(--border)}
+#list{width:auto;flex:1;border-right:none;padding:2px;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;align-content:start;min-height:0}
+#list .card{display:flex;flex-direction:column;gap:7px;padding:11px 12px 10px;margin:0;border-radius:var(--ui-radius,8px)}
+#list .card.dim{opacity:.32}
+.c-h{display:flex;align-items:center;gap:8px}
+.wg{width:26px;height:24px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;color:var(--acc);background:color-mix(in srgb,var(--acc) 14%,transparent);flex-shrink:0}
+.c-h b{font-size:12px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.c-h .mono{font-family:var(--mono);font-size:9px;color:var(--dim2)}
+.c-cfg{font-family:var(--mono);font-size:9.5px;color:var(--dim2);line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.c-pl{display:flex;flex-wrap:wrap;gap:4px}
+.pl{height:18px;padding:0 7px;border-radius:var(--r-pill,10px);font-size:9px;color:var(--dim2);background:var(--bg2);display:inline-flex;align-items:center;gap:4px}
+.pl b{font-family:var(--mono);font-weight:400;color:var(--dim)}
+.c-ft{display:flex;align-items:center;gap:5px;margin-top:auto;padding-top:4px}
+.c-ft .who{font-size:9px;color:var(--dim);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.c-ft button{height:20px;padding:0 7px;border-radius:var(--r-sm,4px);font-size:9.5px}
+.c-ft button.primary{height:20px}
+#detail{width:356px;flex:none;border:1px solid var(--border);border-radius:var(--ui-radius,8px);background:var(--bg1);padding:0;display:flex;flex-direction:column;min-height:0}
+#detail > div{flex-shrink:0}
+.insp-h{display:flex;align-items:center;gap:8px;padding:12px 14px 8px}
+.insp-h b{font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.insp-h .mono{font-family:var(--mono);font-size:9.5px;color:var(--dim2);white-space:nowrap}
+.rec{margin:0 14px;border-radius:var(--r-sm,6px);background:var(--bg0);border:1px solid var(--border);padding:9px 11px;display:flex;flex-direction:column;gap:4px}
+.rr{display:grid;grid-template-columns:62px 1fr;gap:8px;font-family:var(--mono);font-size:10px;line-height:1.55}
+.rr .k{color:var(--acc4,#9e8fa0)}.rr .v{color:var(--text);word-break:break-word}.rr .v i{font-style:normal;color:var(--dim2)}
+#detail .grp{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);padding:12px 14px 5px}
+#detail .place{padding:0 14px}
+#detail .place button{height:24px;padding:0 10px;border-radius:var(--r-pill,12px);font-size:10px}
+#detail .cap{margin:0 14px;display:flex;flex-direction:column;gap:3px}
+#detail .cap .r{display:grid;grid-template-columns:1fr auto;gap:8px;font-family:var(--mono);font-size:9.5px;line-height:1.5;padding:3px 0;border-bottom:1px solid var(--border)}
+#detail .cap .r .n{color:var(--acc)}#detail .cap .r .a{color:var(--dim);text-align:right}#detail .cap .r .d{grid-column:1/-1;color:var(--dim2);font-family:var(--sans);font-size:10px}
+#detail #insts{padding:0 14px}#detail .acts{padding:0 14px 14px}
+#detail #prev{margin:4px 14px 8px}
+#detail #newForm{margin:10px 14px}
+.insp-ft{margin-top:auto;padding:12px 14px;font-size:10px;color:var(--dim2);line-height:1.5;border-top:1px solid var(--border)}
+.insp-ft b{color:var(--text);font-weight:600}
+#pmenu{position:fixed;z-index:50;display:none;flex-direction:column;gap:2px;padding:6px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r-sm,6px);box-shadow:0 12px 30px -12px rgba(0,0,0,.8)}
+#pmenu.on{display:flex}#pmenu button{text-align:left;font-size:10.5px;border:none;background:transparent;padding:4px 8px;border-radius:4px}#pmenu button:hover{background:var(--bg3)}
 </style>
 </head>
 <body>
@@ -84,15 +130,25 @@ html[data-blocks="off"] .card,html[data-blocks="off"] .rows,html[data-blocks="of
   <h1>Widgets</h1><span class="sub" id="count">…</span>
   <input id="q" placeholder="search name · reads · frame" oninput="wrLoad()" style="width:220px">
   <span class="sp"></span>
-  <button onclick="wrNewToggle()">+ New template</button>
+  <button class="primary" onclick="wrNew()" title="A new widget record through the widget config sheet (catalogue · record · live preview)">+ New widget…</button>
+  <button onclick="wrNewToggle()" title="The quick form">+ New template</button>
   <span id="status"></span>
 </header>
-<div class="filters">
+<div class="filters" hidden>
   <div class="frow"><span class="lbl">form</span><span id="kinds"></span></div>
   <div class="frow"><span class="lbl">placed</span><span id="wheres"></span></div>
 </div>
 <div id="wrap">
+  <div id="fil">
+    <div class="fil-s"><span>⌕</span><input id="q2" placeholder="search templates" oninput="wrQ2(this.value)"><span class="sub" id="count2"></span></div>
+    <div class="fil-g"><span class="lbl">Form</span><div class="chips" id="kinds2"></div></div>
+    <div class="fil-g"><span class="lbl">Placed in</span><div class="chips" id="wheres2"></div></div>
+    <div class="fil-g"><span class="lbl">Source</span><div class="chips" id="origins"></div></div>
+    <div class="fil-g"><span class="lbl">Sort</span><div class="chips" id="sorts"></div></div>
+    <div class="fil-ft">A template is not a copy of a widget — it is the record that made it. Place it and the new widget reads live, in the envelope of wherever it landed. Edit the template and the placements that follow it change; the ones you detached keep their own record.</div>
+  </div>
   <div id="list"></div>
+  <div id="pmenu"></div>
   <div id="detail">
     <div id="newForm">
       <div class="grid">
@@ -115,14 +171,16 @@ html[data-blocks="off"] .card,html[data-blocks="off"] .rows,html[data-blocks="of
 <script src="/ui/widgets/widget_element.js"></script>
 <script>
 const BASE = window.location.origin;
-const G = {counter:'◔',meter:'▬',sparkline:'∿',node:'●',chart:'▥',graph:'◎',terminal:'>_',table:'▦',program:'⋮',iso:'⬡',ask:'?',panel:'▭',list:'≡',tree:'⊞',controls:'⌘',button:'→',header:'▬',rail:'▥'};
-let ALL = [], KINDS = {}, WHERES = {}, FORMS = [], PLACES = [], sel = '', kind = 'all', where = 'all';
+const G = {counter:'◔',meter:'▬',sparkline:'∿',node:'●',chart:'▥',graph:'◎',terminal:'>_',table:'▦',program:'⋮',iso:'⬡',ask:'?',panel:'▭',list:'≡',tree:'⊞',controls:'⌘',button:'→',header:'▬',rail:'▥',context_graph:'◎',trace:'∿',radial:'◔',bar:'▬',bars:'▥',thermo:'≣',heat:'▦',matrix:'▦',donut:'◑',stack:'▤',pills:'◦',log:'≡',lane:'≡',files:'⊞',checklist:'☑',stepper:'⋮',calendar:'▤',string:'¶',kv:'≔',pipes:'⌥',scatter:'⁘',composite:'⊞'};
+let ALL = [], KINDS = {}, WHERES = {}, FORMS = [], PLACES = [], sel = '', kind = 'all', where = 'all', origin = 'all', sort = 'recent';
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function api(p, o){ try{ const r = await fetch(BASE + p, Object.assign({headers:{'Content-Type':'application/json'}}, o || {})); return await r.json(); }catch(e){ return {ok:false, error:String(e)}; } }
 function status(msg, cls){ const s = document.getElementById('status'); s.textContent = msg || ''; s.className = cls || ''; if(msg) setTimeout(()=>{ if(s.textContent === msg){ s.textContent=''; s.className=''; } }, 4000); }
+// the surface every Edit and + New widget… goes through (widget_element.js), here or in the host that embeds this page
+function surface(){ try{ if(window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') return window.VeraWidgetConfig; }catch(e){} try{ const p = window.parent; if(p && p !== window && p.VeraWidgetConfig) return p.VeraWidgetConfig; }catch(e){} return null; }
 
 async function wrLoad(){
-  const q = document.getElementById('q').value.trim();
+  const q = String(((document.getElementById('q2') || {}).value) || document.getElementById('q').value || '').trim();
   const r = await api('/ui/widgets/templates?limit=500&q=' + encodeURIComponent(q));
   if(!r || !r.ok){ document.getElementById('list').innerHTML = '<div class="empty">' + esc((r && r.error) || 'registry unavailable') + '</div>'; return; }
   ALL = r.templates || []; KINDS = r.kinds || {}; WHERES = r.wheres || {}; FORMS = r.forms || []; PLACES = r.places || [];
@@ -131,6 +189,11 @@ async function wrLoad(){
   kEl.innerHTML = ['all'].concat(Object.keys(KINDS).sort()).map(k => '<span class="chip' + (kind === k ? ' on' : '') + '" onclick="wrKind(\'' + esc(k) + '\')">' + esc(k) + '<b>' + (k === 'all' ? r.total : KINDS[k]) + '</b></span>').join(' ');
   const wEl = document.getElementById('wheres');
   wEl.innerHTML = ['all'].concat(PLACES).map(w => '<span class="chip' + (where === w ? ' on' : '') + '" onclick="wrWhere(\'' + esc(w) + '\')">' + esc(w) + '<b>' + (w === 'all' ? r.total : (WHERES[w] || 0)) + '</b></span>').join(' ');
+  // the board's filter column: the same chips, plus the source and the sort
+  const k2 = document.getElementById('kinds2'); if(k2) k2.innerHTML = kEl.innerHTML;
+  const w2 = document.getElementById('wheres2'); if(w2) w2.innerHTML = wEl.innerHTML;
+  const oEl = document.getElementById('origins'); if(oEl){ const by = {}; ALL.forEach(t => { const o = (t.source || {}).origin || 'you'; by[o] = (by[o] || 0) + 1; }); oEl.innerHTML = ['all'].concat(Object.keys(by).sort()).map(o => '<span class="chip' + (origin === o ? ' on' : '') + '" onclick="wrOrigin(\'' + esc(o) + '\')">' + esc(o === 'you' ? 'yours' : o) + '<b>' + (o === 'all' ? r.total : by[o]) + '</b></span>').join(' '); }
+  const sEl = document.getElementById('sorts'); if(sEl) sEl.innerHTML = [['recent','recent'],['placed','most placed'],['name','name']].map(s => '<span class="chip' + (sort === s[0] ? ' on' : '') + '" onclick="wrSort(\'' + s[0] + '\')">' + s[1] + '</span>').join(' ');
   const nf = document.getElementById('nForm'); if(!nf.options.length) nf.innerHTML = FORMS.map(f => '<option' + (f === 'counter' ? ' selected' : '') + '>' + esc(f) + '</option>').join('');
   wrCatalog(nf);
   wrList();
@@ -138,20 +201,30 @@ async function wrLoad(){
 }
 function wrKind(k){ kind = k; wrLoad(); }
 function wrWhere(w){ where = w; wrLoad(); }
-function shown(t){ return (kind === 'all' || t.form === kind) && (where === 'all' || (t.placements || []).some(p => p.where.toLowerCase().startsWith(where.toLowerCase()))); }
+function wrOrigin(o){ origin = o; wrLoad(); }
+function wrSort(s){ sort = s; wrLoad(); }
+let _q2T = null; function wrQ2(v){ const q = document.getElementById('q'); if(q) q.value = v; clearTimeout(_q2T); _q2T = setTimeout(wrLoad, 200); }
+function shown(t){ return (kind === 'all' || t.form === kind) && (where === 'all' || (t.placements || []).some(p => p.where.toLowerCase().startsWith(where.toLowerCase()))) && (origin === 'all' || ((t.source || {}).origin || 'you') === origin); }
+function sorted(rows){ const r = rows.slice(); if(sort === 'name') r.sort((a, b) => String(a.name).localeCompare(String(b.name))); else if(sort === 'placed') r.sort((a, b) => ((b.instances || 0) + (b.placements || []).length) - ((a.instances || 0) + (a.placements || []).length)); else r.sort((a, b) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || ''))); return r; }
+// the card's config lines: what it reads and how it is framed (the board's c-cfg)
+function cfgLines(t){ const reads = t.reads || {}; const a = reads.args && Object.keys(reads.args).length ? ' · ' + Object.keys(reads.args).map(k => k + ' ' + JSON.stringify(reads.args[k])).join(' · ') : ''; const l1 = 'reads ' + (reads.cap || '—') + a + (reads.every ? ' · every ' + reads.every : ''); const l2 = (t.frame ? 'frame ' + t.frame : '') + (t.draw ? (t.frame ? ' · ' : '') + esc((t.draw.form || t.form) + ' · ' + (t.draw.size || 'M')) : ''); return esc(l1) + (l2 ? '\n' + l2 : ''); }
 function wrList(){
   const el = document.getElementById('list');
-  const rows = ALL.filter(shown);
+  const rows = sorted(ALL.filter(shown));
+  const c2 = document.getElementById('count2'); if(c2) c2.textContent = rows.length + ' of ' + ALL.length;
   if(!rows.length){ el.innerHTML = '<div class="empty">No template matches.</div>'; return; }
   el.innerHTML = rows.map(t => {
     const src = t.source || {};
-    const who = (src.origin || 'you') + (src.from ? ' · ' + src.from : '');
-    return '<div class="card' + (t.id === sel ? ' on' : '') + '" onclick="wrOpen(\'' + esc(t.id) + '\')">' +
-      '<span class="g">' + (G[t.form] || '▢') + '</span><span class="n">' + esc(t.name) + '</span><span class="f">' + esc(t.form) + ' · v' + (t.version || 1) + '</span>' +
-      '<span class="r">reads ' + esc(t.reads && t.reads.cap || '—') + (t.reads && t.reads.every ? ' · every ' + esc(t.reads.every) : '') + (t.frame ? ' · ' + esc(t.frame) : '') + '</span>' +
-      '<span class="p">' + (t.placements || []).map(p => '<span class="k">' + esc(p.where) + (p.count > 1 ? ' ×' + p.count : '') + '</span>').join('') + '<span class="who">' + esc(who) + '</span></span></div>';
+    const who = (src.origin === 'you' ? 'yours' : (src.origin || 'yours')) + (src.from ? ' · ' + src.from : '') + (t.updated_at ? ' · ' + esc(String(t.updated_at).slice(11, 16)) : '');
+    return '<div class="card' + (t.id === sel ? ' on' : '') + '" data-id="' + esc(t.id) + '" onclick="wrOpen(\'' + esc(t.id) + '\')">' +
+      '<div class="c-h"><span class="wg">' + (G[(t.draw || {}).form] || G[t.form] || '▢') + '</span><b>' + esc(t.name) + '</b><span class="mono">' + esc(t.form) + ' · v' + (t.version || 1) + '</span></div>' +
+      '<div class="c-cfg">' + cfgLines(t) + '</div>' +
+      '<div class="c-pl">' + (t.placements || []).map(p => '<span class="pl">' + esc(p.where) + (p.count > 1 ? '<b>×' + p.count + '</b>' : '') + '</span>').join('') + '</div>' +
+      '<div class="c-ft"><span class="who">' + esc(who) + '</span><button class="primary" onclick="wrPlaceMenu(event,\'' + esc(t.id) + '\')" title="Place this template — pick where">Place ▾</button><button onclick="event.stopPropagation();wrEdit(\'' + esc(t.id) + '\')" title="Edit the record">Edit</button><button onclick="event.stopPropagation();wrSaveCopy(\'' + esc(t.id) + '\')" title="Duplicate — save as my template">⧉</button><button class="danger" onclick="event.stopPropagation();wrDelete(\'' + esc(t.id) + '\')" title="Delete">✕</button></div></div>';
   }).join('');
 }
+// Place ▾ — the placements the registry knows, as a small menu by the button
+function wrPlaceMenu(ev, id){ ev.stopPropagation(); const m = document.getElementById('pmenu'); if(!m) return; m.innerHTML = PLACES.map(w => '<button onclick="wrPlace(\'' + esc(id) + '\',\'' + esc(w) + '\');document.getElementById(\'pmenu\').classList.remove(\'on\')">' + esc(w) + '</button>').join(''); const r = ev.currentTarget.getBoundingClientRect(); m.style.left = Math.min(r.left, window.innerWidth - 170) + 'px'; m.style.top = (r.bottom + 4) + 'px'; m.classList.add('on'); const off = (e) => { if(!m.contains(e.target)){ m.classList.remove('on'); document.removeEventListener('click', off, true); } }; setTimeout(() => document.addEventListener('click', off, true), 0); }
 async function wrOpen(id, quiet){
   sel = id; if(!quiet) wrList();
   const r = await api('/ui/widgets/template?id=' + encodeURIComponent(id));
@@ -160,21 +233,48 @@ async function wrOpen(id, quiet){
   const t = r.template, src = t.source || {}, saved = src.origin !== 'built-in';
   const reads = t.reads || {};
   const argTxt = reads.args && Object.keys(reads.args).length ? ' ' + esc(JSON.stringify(reads.args)) : '';
-  el.innerHTML = '<h2><span class="g">' + (G[t.form] || '▢') + '</span>' + esc(t.name) + '<span class="id">' + esc(t.id) + ' · v' + (t.version || 1) + '</span></h2>' +
-    '<div class="rows">' +
-    '<div class="row"><span class="k">form</span><span class="v">' + esc(t.form) + '</span></div>' +
-    '<div class="row"><span class="k">reads</span><span class="v">' + (reads.cap ? '<code>' + esc(reads.cap) + '</code>' + argTxt : '—') + (reads.every ? ' · every ' + esc(reads.every) : '') + (reads.note ? ' <span style="color:var(--dim2)">' + esc(reads.note) + '</span>' : '') + '</span></div>' +
-    '<div class="row"><span class="k">frame</span><span class="v">' + esc(t.frame || '—') + '</span></div>' +
-    '<div class="row"><span class="k">draw</span><span class="v">' + esc((t.draw || {}).form || t.form) + ' · size ' + esc((t.draw || {}).size || 'M') + ((t.draw || {}).motion ? ' · ' + esc(t.draw.motion) : '') + '</span></div>' +
-    '<div class="row"><span class="k">can</span><span class="v">' + esc((t.can || []).join(' · ') || '—') + '</span></div>' +
-    '<div class="row"><span class="k">placed</span><span class="v">' + ((t.placements || []).map(p => esc(p.where) + (p.count ? ' ×' + p.count : '')).join(' · ') || '—') + '</span></div>' +
-    '<div class="row"><span class="k">source</span><span class="v">' + esc(src.origin || 'you') + (src.from ? ' · ' + esc(src.from) : '') + (src.panel ? ' · panel <code>' + esc(src.panel) + '</code>' : '') + (src.from_builtin ? ' · from ' + esc(src.from_builtin) : '') + '</span></div>' +
+  const rr = (k, v) => '<div class="rr"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>';
+  el.innerHTML = '<div class="insp-h"><span class="wg">' + (G[(t.draw || {}).form] || G[t.form] || '▢') + '</span><b>' + esc(t.name) + '</b><span class="mono">' + esc(t.id) + ' · v' + (t.version || 1) + '</span></div>' +
+    '<div class="rec">' +
+    rr('template', esc(t.id) + ' · v' + (t.version || 1)) +
+    rr('form', esc(t.form)) +
+    rr('reads', (reads.cap ? '<code>' + esc(reads.cap) + '</code>' + argTxt : '—') + (reads.every ? ' · every ' + esc(reads.every) : '') + (reads.note ? ' <i>' + esc(reads.note) + '</i>' : '')) +
+    rr('frame', esc(t.frame || '—')) +
+    rr('draw', esc((t.draw || {}).form || t.form) + ' · size ' + esc((t.draw || {}).size || 'M') + ((t.draw || {}).motion ? ' · ' + esc(t.draw.motion) : '')) +
+    rr('can', esc((t.can || []).join(' · ') || '—')) +
+    rr('placed', ((t.placements || []).map(p => esc(p.where) + (p.count ? ' ×' + p.count : '')).join(' · ') || '—')) +
+    rr('source', esc(src.origin || 'you') + (src.from ? ' · ' + esc(src.from) : '') + (src.panel ? ' · panel <code>' + esc(src.panel) + '</code>' : '') + (src.from_builtin ? ' · from ' + esc(src.from_builtin) : '')) +
     '</div>' +
-    '<div class="sec">Preview <small id="prevSz" style="font-family:var(--mono);font-size:9px;color:var(--dim2)"></small></div><div id="prev" class="prev" style="padding:8px;border:1px solid var(--border);border-radius:6px;margin:4px 0 8px;min-height:90px"></div>' +
-    '<div class="sec">Place into</div><div class="place">' + PLACES.map(w => '<button onclick="wrPlace(\'' + esc(t.id) + '\',\'' + esc(w) + '\')">' + esc(w) + '</button>').join('') + '<input id="host" placeholder="host (dashboard: main)" value="main"></div>' +
-    '<div class="sec">Instances · ' + (r.instances || []).length + '</div><div id="insts">' + ((r.instances || []).map(i => '<div class="inst"><span>' + esc(i.where) + (i.host ? ' · ' + esc(i.host) : '') + '</span><span class="m">' + esc(i.id) + ' · ' + esc((i.created_at || '').slice(0, 16)) + (i.session_id ? ' · ' + esc(i.session_id.slice(-10)) : '') + '</span><button onclick="wrRemove(\'' + esc(i.id) + '\')">remove</button></div>').join('') || '<div class="empty">Not placed anywhere yet.</div>') + '</div>' +
-    '<div class="acts"><button onclick="wrSaveCopy(\'' + esc(t.id) + '\')">⧉ Save as my template</button>' + (saved ? '<button class="danger" onclick="wrDelete(\'' + esc(t.id) + '\')">Delete</button>' : '<span style="font-family:var(--mono);font-size:9px;color:var(--dim)">built in — save a copy to change it</span>') + '</div>';
+    '<div class="grp">Preview <small id="prevSz" style="font-family:var(--mono);font-size:9px;color:var(--dim2)"></small></div><div id="prev" class="prev" style="padding:8px;border:1px solid var(--border);border-radius:6px;min-height:90px"></div>' +
+    '<div class="grp">Place into</div><div class="place">' + PLACES.map(w => '<button onclick="wrPlace(\'' + esc(t.id) + '\',\'' + esc(w) + '\')">' + esc(w) + '</button>').join('') + '<input id="host" placeholder="host (dashboard: main)" value="main"></div>' +
+    '<div class="grp">Instances · ' + (r.instances || []).length + '</div><div id="insts">' + ((r.instances || []).map(i => '<div class="inst"><span>' + esc(i.where) + (i.host ? ' · ' + esc(i.host) : '') + '</span><span class="m">' + esc(i.id) + ' · ' + esc((i.created_at || '').slice(0, 16)) + (i.session_id ? ' · ' + esc(i.session_id.slice(-10)) : '') + '</span><button onclick="wrRemove(\'' + esc(i.id) + '\')">remove</button></div>').join('') || '<div class="empty">Not placed anywhere yet.</div>') + '</div>' +
+    '<div class="grp">The capability · widget.template.*</div><div class="cap">' +
+    '<div class="r"><span class="n">list</span><span class="a">{kind, where, q}</span><span class="d">the registry, filtered as this panel filters it</span></div>' +
+    '<div class="r"><span class="n">get</span><span class="a">{id}</span><span class="d">one template: form, config, provenance, placements</span></div>' +
+    '<div class="r"><span class="n">save</span><span class="a">{template}</span><span class="d">⧉ anywhere — from a widget\'s sheet, a menu row, a canvas item</span></div>' +
+    '<div class="r"><span class="n">instantiate</span><span class="a">{id, where, host}</span><span class="d">one placement of a template in an envelope</span></div>' +
+    '<div class="r"><span class="n">delete</span><span class="a">{id}</span><span class="d">placements keep their own records</span></div></div>' +
+    '<div class="acts"><button class="primary" onclick="wrEdit(\'' + esc(t.id) + '\')">Edit</button><button onclick="wrSaveCopy(\'' + esc(t.id) + '\')">⧉ Save as my template</button>' + (saved ? '<button class="danger" onclick="wrDelete(\'' + esc(t.id) + '\')">Delete</button>' : '<span style="font-family:var(--mono);font-size:9px;color:var(--dim)">built in — save a copy to change it</span>') + '</div>';
   wrPreview(t, document.getElementById('prev'), document.getElementById('prevSz'));
+}
+/* ── Edit / + New widget…: the WidgetConfig surface (catalogue · record · live preview); the result is saved as the template ── */
+async function wrEdit(id){
+  const t = ALL.find(x => x.id === id); if(!t) return; const S = surface();
+  if(!S){ wrOpen(id); status('the widget surface is not on this page — use ⧉ Save as my template', 'err'); return; }
+  const rec = await S.open({ mode:'edit', record:t, into:'dashboard', title:'Edit · ' + (t.name || t.id), templates:false, ok:'Save', base:BASE });
+  if(!rec) return;
+  const src = t.source || {}; const built = src.origin === 'built-in';
+  const out = Object.assign({}, rec, { id: built ? '' : t.id, name: rec.title || t.name, source:{ origin:'you', from: built ? 'the registry' : (src.from || 'the registry'), from_builtin: built ? t.id : (src.from_builtin || ''), panel: src.panel || rec.panel || '' }, version: t.version || 1 });
+  const r = await api('/ui/widgets/templates/save', {method:'POST', body:JSON.stringify({template:out, force:true})});
+  if(r && r.ok){ status('saved ' + r.template.id, 'ok'); sel = r.template.id; wrLoad(); } else status((r && (r.error || (r.problems || []).join('; '))) || 'save failed', 'err');
+}
+async function wrNew(){
+  const S = surface(); if(!S){ wrNewToggle(true); return; }
+  const rec = await S.open({ mode:'add', into:'dashboard', title:'New widget', templates:true, ok:'Save', base:BASE });
+  if(!rec) return;
+  const out = Object.assign({}, rec, { name: rec.title || rec.form, source:{ origin:'you', from:'the registry', panel: rec.panel || '' } });
+  const r = await api('/ui/widgets/templates/save', {method:'POST', body:JSON.stringify({template:out, force:true})});
+  if(r && r.ok){ status('saved ' + r.template.id, 'ok'); sel = r.template.id; wrLoad(); } else status((r && (r.error || (r.problems || []).join('; '))) || 'save failed', 'err');
 }
 /* ── the live preview (UI redesign M2): the record bound to the REAL renderer, at the record's size ── */
 let CATALOG = null;

@@ -23,6 +23,10 @@
      window.VeraWidget.readable(cap)                   → may a block read this capability on its own?
      window.VeraWidget.key(record)                     → the record's identity: form · source · args
      window.VeraWidget.hydrate(root)                   → mounts <vera-mermaid> into the pipes form's slots when it is defined
+     window.VeraWidget.sample(formOrShape)             → realistic sample data for a form (or a shape): the face a widget has
+                                                          before it has read anything — draw() and the element use it, marked
+     window.VeraWidgetConfig.open(opts)                → the WidgetConfig board as a sheet (catalogue · record · live preview);
+                                                          Promise<record | null> — every picker and every ⚙ goes through it
      <vera-widget record='{…json…}' size="m|auto" base="">   .record (property) · .refresh() · .read()
        events (bubbling, composed): widget:open · widget:pin · widget:ask · widget:ops · widget:print · widget:mute ·
                                     widget:refresh · widget:resize · widget:rendered
@@ -46,7 +50,10 @@
                   links: 'list', board: 'checklist', tree: 'files', feed: 'log', timeline: 'log', pulse: 'log', comet: 'log',
                   pipeline: 'stepper', stages: 'stepper', conveyor: 'stepper', program: 'stepper', gantt: 'stepper', agenda: 'calendar',
                   announcement: 'string', 'split-flap': 'string', ask: 'string', graph: 'pipes', minigraph: 'pipes', flow: 'pipes', topology: 'pipes',
-                  node: 'kv', form: 'kv', tank: 'radial', turbine: 'counter', rate: 'counter', candles: 'trace', orbit: 'list', shelf: 'list', stack: 'list', city: 'table', iso: 'table', globe: 'scatter' };
+                  node: 'kv', form: 'kv', tank: 'radial', turbine: 'counter', rate: 'counter', candles: 'trace', orbit: 'list', shelf: 'list', stack: 'list', city: 'table', iso: 'table', globe: 'scatter',
+                  // the rest of the catalogue (widget_record.py's FORMS): every form id resolves to a renderer, so a pick never
+                  // lands as "no drawing yet" — the board's names too (dial, galaxy)
+                  threshold: 'bar', 'small-multiples': 'trace', box: 'bars', radar: 'bars', carousel: 'list', terminal: 'log', controls: 'pills', button: 'string', header: 'string', rail: 'list', dial: 'radial', galaxy: 'context_graph' };
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
   const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'values', matrix: 'matrix', donut: 'parts',
                   stack: 'parts', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages',
@@ -90,6 +97,7 @@
       if (form === 'stepper' && (Array.isArray(x.stages) || Array.isArray(x.steps))) return x;
       const ks = Object.keys(x); if ((form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'stack') && ks.length >= 2 && ks.every((k) => typeof x[k] === 'number')) return x;
       for (const k of ['data', 'result', 'items', 'rows', 'points', 'series', 'history', 'values', 'entries', 'results']) if (x[k] != null) { const f = formByShape(x[k], depth + 1); if (f) return dataFor(x[k], form, depth + 1); }
+      for (const k of ['data', 'result', 'items', 'rows', 'points', 'series', 'history', 'values', 'entries', 'results']) if (Array.isArray(x[k]) && !x[k].length) return x[k];   // an empty read is empty, not an envelope to list
     }
     return x;
   }
@@ -97,6 +105,51 @@
   const keyed = (d) => (d && typeof d === 'object' && !Array.isArray(d)) ? Object.keys(d).filter((k) => typeof d[k] === 'number').map((k) => [k, d[k]]) : (Array.isArray(d) ? d.filter((r) => r && typeof r === 'object' && ['v', 'value', 'n', 'count'].some((k) => typeof r[k] === 'number')).map((r) => [String(r.name ?? r.k ?? r.key ?? r.label ?? ''), num(r.v ?? r.value ?? r.n ?? r.count)]).filter((kv) => kv[0]) : []);
   const rows = (d) => (Array.isArray(d) ? d : []).filter((r) => r && typeof r === 'object');
   const level = (d) => (d && typeof d === 'object' && !Array.isArray(d)) ? { v: num(d.value), lo: num(d.min ?? 0), hi: num(d.max ?? 100), unit: typeof d.unit === 'string' ? d.unit : '', delta: d.delta } : (typeof d === 'number' ? { v: d, lo: 0, hi: 100, unit: '' } : null);
+  // nothing to draw: no result, an empty list or object, an empty string
+  const isEmpty = (d) => d == null || d === '' || (Array.isArray(d) && !d.length) || (typeof d === 'object' && !Array.isArray(d) && !Object.keys(d).length);
+
+  /* ── the SAMPLE face: realistic data per shape, so every form has a face before it has read anything (the pickers'
+     previews, a record placed without a source, a source that failed) — deterministic, marked "sample" when drawn ── */
+  const wave = (n, base, amp) => Array.from({ length: n }, (_, i) => ({ t: i, v: Math.round((base + Math.sin(i / 2.1) * amp + Math.cos(i / 3.7) * amp * 0.5) * 10) / 10 }));
+  const T0 = '2026-09-13T14:';
+  const SAMPLE = {
+    level: () => ({ value: 62, min: 0, max: 100, unit: '%', delta: 4 }),
+    rate: () => ({ value: 41, unit: 'tok/s', delta: 3 }),
+    series: () => wave(24, 48, 22),
+    values: () => ({ ct126: 62, ct121: 41, ct118: 18, ct130: 74, gate: 55, embed: 33 }),
+    parts: () => ({ llm: 46, embed: 22, tools: 18, idle: 14 }),
+    events: () => [['41:02', 'INFO', 'value 0.62 · gate lease held'], ['38:40', 'INFO', 'pull skipped · resident'], ['36:11', 'WARN', 'ct130 over 70° · throttle line'], ['31:05', 'INFO', 'source attached · sysmon.status'], ['28:52', 'LOOP', 'step 5 waiting on you'], ['22:19', 'INFO', 'digest 4 of 4 boots']].map((r) => ({ t: T0 + r[0], kind: r[1], text: r[2] })),
+    items: () => [['ct126', 'serving', 62, '14:41'], ['ct121', 'ok', 41, '14:38'], ['ct118', 'idle', 18, '14:31'], ['ct130', 'down', 0, '13:52'], ['ct122', 'ok', 55, '14:40']].map((r) => ({ name: r[0], status: r[1], value: r[2], when: r[3] })),
+    stages: () => ({ stages: [{ name: 'plan', done: true }, { name: 'gather', done: true }, { name: 'act', current: true }, { name: 'verify' }, { name: 'land' }] }),
+    graph: () => ({ nodes: [['ct126', 'ct126', 'run', 0.92], ['fabric', 'fabric.py', 'vector', 0.84], ['recall', 'lease recall', 'memory', 0.61], ['gate', 'gate.load', 'cap', 0.72], ['digest', 'digest note', 'fabric', 0.48], ['plan', 'plan · step 5', 'plan', 0.55], ['web', 'ollama docs', 'web', 0.31]].map((n) => ({ id: n[0], label: n[1], family: n[2], source: n[2], score: n[3], included: n[3] > 0.4 })),
+      links: [['ct126', 'gate', 'cite'], ['fabric', 'digest', 'cite'], ['recall', 'fabric', 'mem'], ['plan', 'ct126', 'read'], ['gate', 'plan', 'cite']].map((l) => ({ source: l[0], target: l[1], from: l[0], to: l[1], kind: l[2], label: l[2] })) }),
+    ohlcv: () => Array.from({ length: 12 }, (_, i) => { const o = 100 + Math.sin(i / 1.7) * 6, c = o + Math.cos(i / 1.3) * 4; return { t: i, open: Math.round(o * 10) / 10, high: Math.round((Math.max(o, c) + 2) * 10) / 10, low: Math.round((Math.min(o, c) - 2) * 10) / 10, close: Math.round(c * 10) / 10, volume: 40 + i * 7 }; }),
+    matrix: () => ({ ct126: { api: 'ok', db: 'ok', gpu: 'warn', disk: 'ok' }, ct121: { api: 'ok', db: 'ok', gpu: 'ok', disk: 'ok' }, ct118: { api: 'ok', db: 'down', gpu: 'ok', disk: 'warn' }, ct130: { api: 'down', db: 'down', gpu: 'down', disk: 'ok' } }),
+    calendar: () => [['13T09:00', 'digest'], ['13T11:30', 'sweep · fabric'], ['13T14:00', 'loop v7 · step 5'], ['14T09:00', 'digest'], ['14T16:00', 'benchmark'], ['15T10:00', 'review']].map((r) => ({ when: '2026-09-' + r[0], title: r[1] })),
+    string: () => 'ct126 is serving qwen3:30b · 4 in flight · step 5 waiting on you',
+    points: () => Array.from({ length: 14 }, (_, i) => ({ x: 10 + i * 6 + (i % 3) * 2, y: 20 + Math.sin(i / 2) * 14 + i * 2, label: 'm' + i })),
+    panel: () => ({ panel: 'system-monitor' }),
+    composite: () => ({ layout: '2x2', children: [{ slot: 'a', record: { form: 'radial', title: 'Gate', data: SAMPLE.level() } }, { slot: 'b', record: { form: 'trace', title: 'Latency', data: SAMPLE.series() } }, { slot: 'c', record: { form: 'log', title: 'Events', data: SAMPLE.events() } }, { slot: 'd', record: { form: 'thermo', title: 'Temperature', data: SAMPLE.values() } }] }),
+  };
+  // a form whose face wants more than its shape's sample gives
+  const FORM_SAMPLE = {
+    files: () => [['/srv/vera/fabric.py', '12 KB', '14:41'], ['/srv/vera/gate.py', '4 KB', '14:38'], ['/notes/42-plan.md', '9 KB', '13:02'], ['/out/report.html', '31 KB', '12:48']].map((r) => ({ path: r[0], size: r[1], changed: r[2] })),
+    checklist: () => [{ text: 'gate passed', done: true }, { text: 'sweep the estate', done: true }, { text: 'verify on the mirror' }, { text: 'land', due: 'today' }],
+    kv: () => ({ status: 'serving', node: 'ct126', model: 'qwen3:30b', in_flight: 4, waiting: 'step 5' }),
+    pills: () => [['redis', 'ok'], ['neo4j', 'ok'], ['ollama', 'running'], ['ct130', 'down'], ['gate', 'ok']].map((r) => ({ name: r[0], status: r[1] })),
+    heat: () => ({ ct126: 62, ct121: 41, ct118: 18, ct130: 74, ct122: 55, ct119: 33, ct127: 48, ct131: 27, ct120: 66, ct123: 12 }),
+    context_graph: () => { const g = SAMPLE.graph(); return { nodes: g.nodes, rels: g.links.map((l) => ({ from: l.from, to: l.to, kind: l.kind })) }; },
+    lane: () => SAMPLE.events(),
+  };
+  // sample(formOrShape): the sample a form draws — a shape name gives the shape's, a form id its own (or its shape's)
+  function sample(x) {
+    const k = String(x || '').toLowerCase();
+    if (SAMPLE[k] && !DRAWN[k]) return SAMPLE[k]();
+    const f = canon(k); if (FORM_SAMPLE[f]) return FORM_SAMPLE[f]();
+    const sh = DRAWN[f] || k; return (SAMPLE[sh] || SAMPLE.string)();
+  }
+  // the sample face, marked — a class on the inline sizes, a tag on the cell sizes
+  const sampleFace = (html, size) => (size === 'xs' || size === 's') ? html.replace(/^<span class="(vw-xs|vw-chip)"/, '<span class="$1 vw-sampled" data-sample="1"') : '<div class="vw-sampled" data-sample="1">' + html + '<i class="vw-sampletag" title="sample data — nothing read yet">sample</i></div>';
   // the one figure a size below M shows
   function figure(form, data) {
     form = canon(form); const d = dataFor(data, form);
@@ -334,9 +387,18 @@
     const H = opts.height || HEIGHT[size] || 70;
     if (!R[f]) return EMPTY('form ' + f0 + ' · no drawing yet');
     const d = dataFor(data, f);
+    // nothing to draw yet (no result, an empty one, or a placeholder string handed to a form that draws numbers): the
+    // form's SAMPLE face, marked — never "no data yet" (opts.sample === false keeps the bare answer for a caller that asks)
+    if (f !== 'panel' && f !== 'composite' && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
+      if (opts.sample === false) return EMPTY('no data yet');
+      return sampleFace(draw(f0, sample(f), size, Object.assign({}, opts, { sample: false })), size);
+    }
+    if (f === 'composite' && !(opts.record && Array.isArray(opts.record.children) && opts.record.children.length)) {
+      if (opts.sample === false) return EMPTY('a composite needs children');
+      return sampleFace(draw(f0, data, size, Object.assign({}, opts, { sample: false, record: Object.assign({}, opts.record || {}, sample('composite')) })), size);
+    }
     if (size === 'xs') return '<span class="vw-xs" title="' + esc(opts.title || f0) + '"><i>' + (GLYPH[f] || '▢') + '</i>' + (figure(f, data) || '—') + '</span>';
     if (size === 's') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i>' + (GLYPH[f] || '▢') + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
-    if (d == null && f !== 'panel' && f !== 'composite') return EMPTY('no data yet');
     let body; try { body = R[f](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
     if (size === 'm' || opts.bare) return body;
     // L: the form plus its detail list beside it; XL: the form, its table, its log
@@ -385,7 +447,7 @@
     const cgs = R0.querySelectorAll ? R0.querySelectorAll('.vw-cgfull[data-cg]:not([data-live])') : [];
     if (cgs.length && window.customElements && customElements.get('vera-context-graph')) cgs.forEach((slot) => { slot.dataset.live = '1'; let d = {}; try { d = JSON.parse(slot.dataset.cg || '{}'); } catch (_) {}
       const el = document.createElement('vera-context-graph'); el.style.cssText = 'position:absolute;inset:0'; slot.innerHTML = ''; slot.appendChild(el);
-      try { el.setContext((d.nodes || []).map((x) => Object.assign({ source: x.source || x.lane || 'context' }, x)), (d.rels || d.edges || []).map((e) => ({ from: e.from, to: e.to, label: e.kind || e.label || '' })), { focus: (d.nodes || []).filter((x) => x.included !== false).map((x) => x.id) }); } catch (_) {} n++; });
+      try { el.setContext((d.nodes || []).map((x) => Object.assign({ source: x.source || x.family || x.lane || 'context' }, x)), (d.rels || d.edges || []).map((e) => ({ from: e.from, to: e.to, label: e.kind || e.label || '' })), { focus: (d.nodes || []).filter((x) => x.included !== false).map((x) => x.id) }); } catch (_) {} n++; });
     const slots = R0.querySelectorAll ? R0.querySelectorAll('.vw-mm[data-mm-code]:not([data-live])') : [];
     if (!slots.length || !(window.customElements && customElements.get('vera-mermaid'))) return n;
     slots.forEach((slot) => { slot.dataset.live = '1'; const el = document.createElement('vera-mermaid'); el.setAttribute('bare', ''); el.setAttribute('fill', ''); slot.innerHTML = ''; slot.appendChild(el); try { el.render(slot.dataset.mmCode); } catch (_) {} n++; });
@@ -395,6 +457,8 @@
   /* ── the styles (host-injected once; the element carries them in its shadow) ── */
   const CSS = `
 .wempty{color:var(--dim2,#8a92a0);font-size:9.5px;font-family:var(--mono,ui-monospace,monospace)}
+.vw-sampled{position:relative;width:100%;min-width:0}.vw-sampled > .vw-sampletag{position:absolute;right:0;top:-2px;font-style:normal;font-family:var(--mono,ui-monospace,monospace);font-size:7.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--acc3,#d4a96a);opacity:.85;pointer-events:none}
+span.vw-sampled{opacity:.85}
 .vw-svg{display:block;width:100%}
 .vw-gal{border-radius:8px;background:radial-gradient(circle at 50% 52%,rgba(110,168,216,.08),transparent 60%)}
 .vw-gd{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--surf2,var(--bg2,#1a1c20));box-shadow:0 0 0 1.2px var(--c);transform:translate(-50%,-50%);cursor:pointer}
@@ -452,6 +516,12 @@
 :host([size="xs"]) .vw-root,:host([size="s"]) .vw-root{display:inline-flex}:host([size="xs"]),:host([size="s"]){display:inline-block}`;
   const ACTIONS = { dive: 'Deep dive', pin: 'Pin to canvas', ask: 'Ask Vera', ops: 'Open in Ops', print: 'Print card', mute: 'Mute' };
   const REFRESH_FLOOR = 10;
+  // one capability call for the element and the surface: prod's envelope is {type:'tool_result', tool_name, content};
+  // a stand-in may answer {result} or the bare object — every one is opened
+  async function call(base, name, args) {
+    const r = await fetch((base || '') + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) });
+    const j = await r.json(); return (j && j.type === 'tool_result') ? j.content : (j && j.result !== undefined ? j.result : (j && j.content !== undefined ? j.content : j));
+  }
   const parseRefresh = (s) => { const m = String(s || '').match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/); if (!m) return 0; const n = parseFloat(m[1]); return m[2] === 'ms' ? n / 1000 : m[2] === 'm' ? n * 60 : m[2] === 'h' ? n * 3600 : n; };
   const sizeForWidth = (w) => w <= 120 ? 'xs' : w <= 220 ? 's' : w <= 380 ? 'm' : w <= 620 ? 'l' : 'xl';
 
@@ -476,10 +546,7 @@
     async _fromTemplate(id) {
       try { const r = await this._call('widget.template.get', { id }); if (r && r.template) { this.record = r.template; } } catch (_) {}
     }
-    async _call(name, args) {
-      const r = await fetch(this.base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) });
-      const j = await r.json(); return (j && j.type === 'tool_result') ? j.content : (j && j.content !== undefined ? j.content : j);
-    }
+    _call(name, args) { return call(this.base, name, args); }
     _boot() {
       if (!this._rec) { this._rec = normalise({}); }
       this.render();
@@ -502,25 +569,457 @@
     render() {
       const rec = this._rec || normalise({}); const size = this.size; const form = this._drawn || rec.form;
       const opts = { record: rec, draw: rec.draw, title: rec.title, panel: rec.panel, base: this.base };   // L and XL compose around the form
-      let body;
-      if (this._data === undefined && rec.source && !readable(rec.source)) body = '<button class="vw-read" data-read>Read ' + esc(rec.source) + '</button>';
-      else if (this._err) body = EMPTY(rec.source + ': ' + this._err);
-      else if (this._data === undefined && rec.source && rec.form !== 'panel' && rec.form !== 'composite') body = EMPTY('reading ' + rec.source + '…');
-      else body = draw(form, this._data, size, opts);
+      // nothing read yet — no source, a source that waits for a click, a read in flight, a read that failed — draws the
+      // form's SAMPLE face, marked, and says why in the caption; the widget always has a face (never "no data yet")
+      const noData = this._data === undefined || isEmpty(this._data);
+      const sampled = noData && form !== 'panel' && form !== 'composite';
+      let why = '';
+      if (this._err) why = esc(rec.source + ': ' + this._err);
+      else if (this._data === undefined && rec.source && !readable(rec.source)) why = '<button class="vw-read" data-read>Read ' + esc(rec.source) + '</button>';
+      else if (this._data === undefined && rec.source) why = 'reading ' + esc(rec.source) + '…';
+      const body = draw(form, noData ? undefined : this._data, size, opts);
       const small = size === 'xs' || size === 's';
-      const figureTxt = figure(form, this._data);
-      const cap = rec.read.window ? 'window ' + esc(rec.read.window) : (rec.source ? esc(rec.source) : (rec.panel ? 'panel ' + esc(rec.panel) : ''));
+      const figureTxt = figure(form, sampled ? sample(form) : this._data);
+      const cap = (why ? why + ' · ' : '') + (rec.read.window ? 'window ' + esc(rec.read.window) : (rec.source ? esc(rec.source) : (rec.panel ? 'panel ' + esc(rec.panel) : (sampled ? 'sample · no source' : ''))));
       const acts = size === 'xl' ? '<div class="vw-acts">' + rec.actions.filter((a) => ACTIONS[a]).map((a) => '<button data-act="' + a + '">' + ACTIONS[a] + '</button>').join('') + '</div>' : '';
-      this._sh.innerHTML = '<style>' + ELEMENT_CSS + CSS + '</style><div class="vw-root" data-form="' + esc(form) + '" data-size="' + size + '">'
+      this._sh.innerHTML = '<style>' + ELEMENT_CSS + CSS + '</style><div class="vw-root" data-form="' + esc(form) + '" data-size="' + size + '"' + (sampled ? ' data-sample="1"' : '') + '>'
         + (small ? body : '<div class="vw-hd"><i></i>' + esc(rec.title) + (figureTxt && (form === 'radial' || form === 'counter' || form === 'bar' || form === 'trace') ? '<b>' + figureTxt + '</b>' : '') + '</div><div class="vw-body">' + body + '</div>'
           + '<div class="vw-cap">' + cap + '<span class="sp"></span>' + (this._drawn && this._drawn !== rec.form ? 'drawn as ' + esc(this._drawn) + ' · ' : '') + esc(rec.form) + ' · ' + size + '</div>' + acts)
         + '</div>';
       const rb = this._sh.querySelector('[data-read]'); if (rb) rb.addEventListener('click', () => this.read(true));
       this._sh.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => this._act(b.dataset.act)));
       hydrate(this._sh);
-      this.dispatchEvent(new CustomEvent('widget:rendered', { bubbles: true, composed: true, detail: { form, size } }));
+      this.dispatchEvent(new CustomEvent('widget:rendered', { bubbles: true, composed: true, detail: { form, size, sample: sampled } }));
     }
   }
   if (window.customElements && !customElements.get('vera-widget')) customElements.define('vera-widget', VeraWidgetEl);
-  window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, formFor, readable, key, hydrate, css: () => CSS, ensureCss, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, version: 1 };
+  window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, version: 1 };
+
+  /* ── THE WIDGET SURFACE — window.VeraWidgetConfig (the WidgetConfig board; the pickers of the Canvas, Harness and
+     Dashboard boards) ─────────────────────────────────────────────────────────────────────────────────────────────
+     One sheet behind every "+ Add a widget" and every ⚙, wherever a widget can go: the CATALOGUE on the left (the
+     host's other menus, the two context-graph entries, every form by shape with its projection · motion · live
+     badges, the panels, your templates; one search across all of them), the RECORD in the middle (identity ·
+     source · frame · drawing · children · actions · placement — everything the form can be told), the PREVIEW on the
+     right (a live <vera-widget> of the record at the chosen size — its own source read, the sample face until
+     then — with the record's JSON under it). Resolves with the record widget.validate accepted, or null.
+       VeraWidgetConfig.open({mode, record, into, title, anchor, sizes, shape, menuItems, templates, onChange, ok, base})
+       → Promise<record | null>;  VeraWidgetConfig.close();  VeraWidgetConfig.version                                  */
+  const CFG_CSS = `
+.vwc-scrim{position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.42)}
+.vwc{position:fixed;z-index:9001;display:flex;flex-direction:column;width:min(1380px,calc(100vw - 24px));height:min(900px,calc(100vh - 24px));left:50%;top:50%;transform:translate(-50%,-50%);
+  background:var(--s1,var(--bg1,#15171c));color:var(--t1,var(--text,#d8dce4));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px;border-radius:var(--ui-radius,10px);
+  box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.2),0 24px 60px -20px rgba(0,0,0,.7),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09))));overflow:hidden;font-variant-numeric:tabular-nums}
+.vwc.anchored{transform:none}
+.vwc *,.vwc *::before,.vwc *::after{box-sizing:border-box}
+.vwc button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+.vwc input{font:inherit;color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20));border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,6px);padding:2px 7px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10px;min-width:0}
+.vwc input:focus{outline:none;border-color:var(--ac,var(--acc,#5a9e8f))}
+.vwc .mono{font-family:var(--f-mono,var(--mono,ui-monospace,monospace))}
+.vwc .sp{flex:1}
+.vwc-hd{display:flex;align-items:baseline;gap:12px;padding:12px 18px 10px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));flex-shrink:0}
+.vwc-hd h3{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.vwc-hd .sub{font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0));max-width:760px;line-height:1.45}
+.vwc-hd .x{color:var(--t3,var(--dim,#6b7280));font-size:14px;align-self:center;padding:0 4px}
+.vwc-hd .x:hover{color:var(--t1,var(--text,#d8dce4))}
+.vwc-3{flex:1;min-height:0;display:grid;grid-template-columns:292px 1fr 470px;gap:12px;padding:12px 18px 0}
+@media (max-width:1100px){.vwc-3{grid-template-columns:220px 1fr 320px}}
+.vwc-cat,.vwc-rec,.vwc-pvw{background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--ui-radius,10px);box-shadow:0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.vwc-cs{display:flex;align-items:center;gap:8px;padding:9px 12px;font-size:10.5px;color:var(--t3,var(--dim,#6b7280));border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));flex-shrink:0}
+.vwc-cs input{flex:1;background:var(--bg,var(--bg0,#0e0f12));border-radius:var(--r-sm,6px);padding:4px 8px}
+.vwc-cl{flex:1;min-height:0;overflow:auto;padding:4px 6px 10px;scrollbar-width:thin}
+.vwc-g{padding:6px 0 2px}
+.vwc-gh{display:flex;align-items:baseline;gap:8px;padding:4px 6px 3px;font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t3,var(--dim,#6b7280))}
+.vwc-gh em{font-style:normal;text-transform:none;letter-spacing:0;font-weight:400;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vwc-r{display:grid;grid-template-columns:1fr auto auto auto;gap:4px;align-items:center;min-height:22px;padding:0 6px;border-radius:var(--r-sm,6px);font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0));cursor:pointer}
+.vwc-r:hover{background:var(--s3,var(--bg3,#232732));color:var(--t1,var(--text,#d8dce4))}
+.vwc-r.on{background:var(--pri-bg,var(--ac,var(--acc,#5a9e8f)));color:var(--pri-fg,var(--on-ac,#0b1119))}
+.vwc-r .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vwc-r .n small{color:inherit;opacity:.65;margin-left:5px;font-size:9px}
+.vwc-r .bd{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8px;color:var(--t3,var(--dim,#6b7280));background:var(--s3,var(--bg3,#232732));border-radius:var(--r-pill,999px);padding:1px 5px;white-space:nowrap}
+.vwc-r.on .bd{background:rgba(255,255,255,.18);color:inherit}
+.vwc-r .bd.live{color:var(--ac2,var(--acc2,#8fb87a))}.vwc-r .bd.mot{color:var(--ac3,var(--acc3,#d4a96a))}.vwc-r .bd.none{opacity:.5}
+.vwc-r .padd{font-size:9px;padding:1px 7px;border-radius:var(--r-pill,999px);background:var(--pri-bg,var(--ac,var(--acc,#5a9e8f)));color:var(--pri-fg,var(--on-ac,#0b1119));font-weight:600}
+.vwc-rh{display:flex;align-items:baseline;gap:9px;padding:11px 16px 8px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));flex-shrink:0;min-width:0}
+.vwc-rh .fn{font-size:15px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+.vwc-rh .ty{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));background:var(--s3,var(--bg3,#232732));border-radius:var(--r-pill,999px);padding:2px 7px;white-space:nowrap}
+.vwc-rh .note{font-size:10px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vwc-rb{flex:1;min-height:0;overflow:auto;padding:4px 16px 14px;display:grid;grid-template-columns:1fr 1fr;gap:2px 22px;align-content:start;scrollbar-width:thin}
+.vwc-sec{padding:8px 0 6px;min-width:0}.vwc-sec.wide{grid-column:1/-1}
+.vwc-sh{font-size:8.5px;text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280));padding-bottom:5px;display:flex;gap:8px;align-items:baseline}
+.vwc-sh em{font-style:normal;text-transform:none;letter-spacing:0;font-weight:400;font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vwc-sh em b{color:var(--t2,var(--dim2,#8a92a0));font-weight:500}
+.vwc-row{display:grid;grid-template-columns:76px 1fr;align-items:center;gap:8px;min-height:24px;font-size:10px}
+.vwc-row > .k{color:var(--t3,var(--dim,#6b7280));text-transform:uppercase;letter-spacing:.07em;font-size:8.5px;font-weight:600}
+.vwc-row .val{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10px;color:var(--t1,var(--text,#d8dce4));background:var(--s3,var(--bg3,#232732));border-radius:var(--r-sm,6px);padding:3px 8px;justify-self:start;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vwc-row .val.dim{color:var(--t3,var(--dim,#6b7280));font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
+.vwc-row input.val{background:var(--s3,var(--bg3,#232732));border:none;box-shadow:inset 0 -1px 0 var(--ac,var(--acc,#5a9e8f));justify-self:stretch;width:100%}
+.vwc-seg{display:flex;gap:2px;background:var(--s3,var(--bg3,#232732));border-radius:var(--r-sm,6px);padding:2px;justify-self:start;flex-wrap:wrap}
+.vwc-seg button{height:17px;padding:0 8px;font-size:9px;color:var(--t2,var(--dim2,#8a92a0));border-radius:calc(var(--r-sm,6px) - 2px);white-space:nowrap}
+.vwc-seg button.on{background:var(--pri-bg,var(--ac,var(--acc,#5a9e8f)));color:var(--pri-fg,var(--on-ac,#0b1119));font-weight:600}
+.vwc-seg button.off{opacity:.35;cursor:default}
+.vwc-sw{width:26px;height:15px;border-radius:9px;background:var(--s3,var(--bg3,#232732));position:relative;justify-self:start;cursor:pointer;flex-shrink:0}
+.vwc-sw.on{background:var(--ac2,var(--acc2,#8fb87a))}
+.vwc-sw i{position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;background:var(--s1,var(--bg1,#15171c));transition:left .16s}
+.vwc-sw.on i{left:13px}
+.vwc-row .swl{display:flex;align-items:center;gap:8px;min-width:0}.vwc-row .swl .dim{font-size:9px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vwc-srcl{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0 6px;max-height:96px;overflow:auto;scrollbar-width:thin}
+.vwc-src{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));background:var(--s3,var(--bg3,#232732));border-radius:var(--r-pill,999px);padding:2px 8px;cursor:pointer;white-space:nowrap}
+.vwc-src:hover{color:var(--t1,var(--text,#d8dce4))}
+.vwc-src.on{background:var(--pri-bg,var(--ac,var(--acc,#5a9e8f)));color:var(--pri-fg,var(--on-ac,#0b1119))}
+.vwc-chips{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0 4px}
+.vwc-chip{font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));background:var(--s3,var(--bg3,#232732));border-radius:var(--r-pill,999px);padding:3px 9px;cursor:pointer}
+.vwc-chip.on{background:color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 26%,var(--s3,var(--bg3,#232732)));color:var(--t1,var(--text,#d8dce4));box-shadow:0 0 0 1px color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 50%,transparent)}
+.vwc-chip.warn{color:var(--warn,#c9a35a);box-shadow:0 0 0 1px color-mix(in srgb,var(--warn,#c9a35a) 50%,transparent)}
+.vwc-chip.bad{color:var(--err,#c96b6b);box-shadow:0 0 0 1px color-mix(in srgb,var(--err,#c96b6b) 55%,transparent)}
+.vwc-chip.ok{color:var(--ac2,var(--acc2,#8fb87a))}
+.vwc-dim{font-size:9.5px;color:var(--t3,var(--dim,#6b7280));line-height:1.45;padding-top:2px}
+.vwc-kids{display:flex;flex-direction:column;gap:3px;padding:2px 0 4px}
+.vwc-kid{display:grid;grid-template-columns:8px 90px 1fr 26px 48px 18px;gap:8px;align-items:center;height:24px;padding:0 8px;border-radius:var(--r-sm,6px);background:var(--s3,var(--bg3,#232732));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0))}
+.vwc-kid i{width:8px;height:8px;border-radius:2px;display:block}.vwc-kid .mono{color:var(--t1,var(--text,#d8dce4))}.vwc-kid .src{font-size:9px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vwc-kid .sz{font-size:8.5px;color:var(--ac2,var(--acc2,#8fb87a))}.vwc-kid .slot{font-size:8.5px;color:var(--t3,var(--dim,#6b7280))}.vwc-kid button{font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+.vwc-kadd{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding-top:3px}
+.vwc-kadd .k{font-size:8.5px;color:var(--t3,var(--dim,#6b7280));text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin-right:4px}
+.vwc-chipb{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t2,var(--dim2,#8a92a0));background:var(--s3,var(--bg3,#232732));border-radius:var(--r-pill,999px);padding:2px 8px}
+.vwc-chipb:hover{color:var(--t1,var(--text,#d8dce4))}
+.vwc-ph{display:flex;align-items:baseline;gap:9px;padding:11px 16px 8px;font-size:8.5px;text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280));border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));flex-shrink:0}
+.vwc-ph .dim{text-transform:none;letter-spacing:0;font-weight:400;font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vwc-ph .dim.sample{color:var(--ac3,var(--acc3,#d4a96a))}.vwc-ph .dim.live{color:var(--ac2,var(--acc2,#8fb87a))}
+.vwc-stage{flex:0 0 auto;display:flex;align-items:center;justify-content:center;padding:16px;min-height:290px;max-height:52%;overflow:auto;scrollbar-width:thin;
+  background:radial-gradient(70% 90% at 50% 40%,color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 7%,transparent),transparent 70%)}
+.vwc-pvf{flex:none;background:var(--s1,var(--bg1,#15171c));border-radius:var(--ui-radius,10px);box-shadow:0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09))),0 10px 30px -16px rgba(0,0,0,.6);padding:10px 12px;min-width:0}
+.vwc-pvf.xs,.vwc-pvf.s{background:transparent;box-shadow:none;padding:0;font-size:12.5px;line-height:1.75;color:var(--t2,var(--dim2,#8a92a0));max-width:380px}
+.vwc-pvf.xs b,.vwc-pvf.s b{color:var(--t1,var(--text,#d8dce4))}
+.vwc-pvf.m{width:302px;min-height:200px}.vwc-pvf.l{width:100%;min-height:200px}.vwc-pvf.xl{width:100%;min-height:300px}
+.vwc-pvf vera-widget{display:block;width:100%}
+.vwc-pvn{color:var(--t3,var(--dim,#6b7280));font-size:10px;text-align:center;padding:14px;line-height:1.5}.vwc-pvn .big{display:block;font-size:15px;font-weight:600;color:var(--t2,var(--dim2,#8a92a0));padding-bottom:4px}
+.vwc-pj{flex:1;min-height:0;display:flex;flex-direction:column;padding:6px 16px 0}
+.vwc-pjh{font-size:8.5px;text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280));padding-bottom:5px}
+.vwc-pj pre{flex:1;min-height:0;overflow:auto;margin:0;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;line-height:1.55;color:var(--t2,var(--dim2,#8a92a0));background:var(--bg,var(--bg0,#0e0f12));border-radius:var(--r-sm,6px);padding:9px 11px;white-space:pre-wrap;word-break:break-all;scrollbar-width:thin}
+.vwc-ft{display:flex;align-items:center;gap:6px;padding:10px 18px 12px;flex-shrink:0;flex-wrap:wrap}
+.vwc-ft .msgs{flex:1;display:flex;gap:4px;flex-wrap:wrap;min-width:0}
+.vwc-ft button{height:26px;padding:0 11px;font-size:10px;color:var(--t2,var(--dim2,#8a92a0));background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);box-shadow:0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+.vwc-ft button:hover{color:var(--t1,var(--text,#d8dce4))}
+.vwc-ft button.pri{background:var(--pri-bg,var(--ac,var(--acc,#5a9e8f)));color:var(--pri-fg,var(--on-ac,#0b1119));font-weight:600;box-shadow:none}
+.vwc-ft .st{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+.vwc-empty{color:var(--t3,var(--dim,#6b7280));font-size:10px;padding:10px 8px}`;
+  // what each SHAPE is (the board's SHAPES table) and the fields a form of it draws (the mapping rows)
+  const SHAPE_DESC = { level: 'one number in a range', series: 'numbers over time', values: 'a set of labelled numbers', events: 'things that happened, with a time', graph: 'nodes and the links between them',
+    items: 'a list of things with fields', stages: 'an ordered sequence with a position', rate: 'a number per second', parts: 'shares of a whole', ohlcv: 'open, high, low, close, volume', matrix: 'rows by columns',
+    calendar: 'a value per day', string: 'text', points: 'pairs of numbers', panel: 'a registered panel id', composite: 'a frame of other widgets' };
+  const SHAPE_FIELDS = { level: ['value', 'min', 'max', 'unit'], series: ['series'], values: ['values'], events: ['events'], graph: ['nodes', 'links'], items: ['rows'], stages: ['stages'], rate: ['rate', 'unit'],
+    parts: ['parts'], ohlcv: ['bars'], matrix: ['cells'], calendar: ['days'], string: ['text'], points: ['points'], panel: ['panel'], composite: ['children'] };
+  const SHAPE_ORDER = ['level', 'series', 'values', 'events', 'graph', 'items', 'stages', 'rate', 'parts', 'ohlcv', 'matrix', 'calendar', 'string', 'points', 'panel', 'composite'];
+  const SHAPE_NAME = { level: 'Level', series: 'Series', values: 'Named values', events: 'Events', graph: 'Graph', items: 'Items', stages: 'Stages', rate: 'Rate', parts: 'Parts', ohlcv: 'OHLCV', matrix: 'Matrix', calendar: 'Calendar', string: 'String', points: 'XY points', panel: 'Panel', composite: 'Composite' };
+  const RANGE_OF = { level: '0 – max · clamp', values: '0 – max · clamp', rate: '0 – auto' };
+  // where a record can go (the board's Placement chips) and what each host asks for
+  const PLACES = [['canvas', 'Canvas item'], ['dashboard', 'Dashboard'], ['rail', 'LHM rail'], ['notebook', 'Notebook cell'], ['chat', 'Chat message'], ['ops', 'Ops node box']];
+  const INTO = { lhm: { place: 'rail', sizes: ['xs', 's', 'm', 'l'] }, side: { place: 'rail', sizes: ['xs', 's', 'm', 'l'] }, dashboard: { place: 'dashboard', sizes: ['s', 'm', 'l', 'xl'] },
+    canvas: { place: 'canvas', sizes: ['s', 'm', 'l', 'xl'] }, reply: { place: 'chat', sizes: ['xs', 's', 'm', 'l'] }, notebook: { place: 'notebook', sizes: ['m', 'l', 'xl'] } };
+  const ACTS = [['dive', 'Deep dive'], ['pin', 'Pin to canvas'], ['ask', 'Ask Vera'], ['ops', 'Open in Ops'], ['print', 'Print card'], ['mute', 'Mute alerts']];
+  const PALS = ['load', 'kind', 'status', 'accent', 'mono'];
+  const BANDS_OF = { load: '60% · 85% → ac2 · ac3 · ac4', status: 'ok · warn · fail', kind: 'dv1 … dv7 by kind' };
+  const SIZE_NAME = { xs: 'XS · inline · in a sentence', s: 'S · chip · a row on a node', m: 'M · cell · the form drawn', l: 'L · wide · the cell and its detail list', xl: 'XL · panel · table, log, actions' };
+  const LAYOUTS = [['2x2', '2 × 2'], ['rows', 'rows'], ['report', 'report'], ['rail', 'rail'], ['grid', 'grid']];
+  const KCOL = { radial: 'var(--ac,var(--acc,#5a9e8f))', trace: 'var(--ac2,var(--acc2,#8fb87a))', log: 'var(--ac3,var(--acc3,#d4a96a))', thermo: 'var(--err,#c96b6b)', bars: 'var(--dv2,#5ec9a0)', table: 'var(--dv3,#38bdf8)', counter: 'var(--dv1,#a78bfa)' };
+  // the two context-graph entries of the catalogue: the same form at two sizes (the Context menu's mini galaxy; the full graph)
+  const CG_ENTRIES = [{ id: 'context_graph', size: 'm', n: 'Context galaxy · mini', c: 'the Context menu\'s galaxy · every family on a ring' },
+    { id: 'context_graph', size: 'xl', n: 'Context graph · full', c: 'the chat\'s own <vera-context-graph>, in a widget' }];
+  const dbg = (fn, ms) => { let t = null; return function () { const a = arguments; clearTimeout(t); t = setTimeout(() => fn.apply(null, a), ms); }; };
+  const clone = (o) => JSON.parse(JSON.stringify(o == null ? null : o));
+
+  // the working record: any accepted shape → the full shape the sheet edits (widget_record.py's, with the board's
+  // frame.dive and placement[] carried alongside deep_dive and place)
+  function recFrom(src, into) {
+    const o = (src && typeof src === 'object') ? src : {};
+    const n = normalise(o);
+    const frame = (o.frame && typeof o.frame === 'object') ? o.frame : {};
+    const drawIn = (o.draw && typeof o.draw === 'object') ? o.draw : {};
+    const placement = Array.isArray(o.placement) ? o.placement.slice() : (Array.isArray(o.placed) ? o.placed.map((p) => String(p).toLowerCase().replace(/^lhm.*$/, 'rail').replace(/^reply.*$/, 'chat')) : (o.place ? [o.place] : []));
+    const draw = Object.assign({}, n.draw); delete draw.proj;
+    const rec = { id: n.id || '', form: n.form, shape: String(o.shape || ''), projection: String(o.projection || drawIn.proj || ''), source: n.source || (n.panel ? 'panel:' + n.panel : ''),
+      title: String(o.title || o.name || ''), read: { refresh: n.read.refresh, window: n.read.window, args: Object.assign({}, n.read.args), map: (o.read && o.read.map && typeof o.read.map === 'object') ? Object.assign({}, o.read.map) : {} },
+      frame: { size: n.frame.size, caption: frame.caption !== false, legend: !!frame.legend, motion: frame.motion == null ? null : !!frame.motion, dive: frame.dive != null ? !!frame.dive : (frame.deep_dive != null ? !!frame.deep_dive : true) },
+      draw, skin: String(o.skin || 'inherit'), actions: Array.isArray(o.actions) ? o.actions.slice() : (Array.isArray(o.can) && o.can.length ? o.can.filter((a) => ACTS.some((x) => x[0] === a)) : ['dive', 'pin', 'ask']),
+      placement: placement.filter((p) => PLACES.some((x) => x[0] === p)), panel: n.panel || '' };
+    if (into && !rec.placement.length && INTO[into]) rec.placement = [INTO[into].place];
+    if (n.form === 'composite' || Array.isArray(o.children)) { rec.form = rec.form || 'composite'; rec.layout = String(o.layout || 'grid'); rec.subject = String(o.subject || '');
+      rec.children = (Array.isArray(o.children) ? o.children : []).map((c, i) => ({ slot: String((c && c.slot) || String.fromCharCode(97 + i)), record: (c && typeof c.record === 'object') ? recFrom(c.record) : { form: String((c && (c.form || c.record)) || 'radial'), source: String((c && c.source) || ''), title: '', frame: { size: String((c && c.size) || 's') } } })); }
+    if (o.template) rec.template = String(o.template);
+    if (o.data !== undefined) rec.data = o.data;
+    return rec;
+  }
+  // the record as it leaves the sheet: deep_dive and place beside dive and placement (both shapes read it)
+  function recOut(rec) {
+    const r = clone(rec); r.frame.deep_dive = r.frame.dive; r.place = r.placement[0] || ''; if (r.frame.motion == null) delete r.frame.motion;
+    if (r.projection) r.draw.proj = r.projection;
+    if (Array.isArray(r.children)) r.children = r.children.map((c) => ({ slot: c.slot, record: recOut(c.record) }));
+    return r;
+  }
+  const isLive = (form) => !!R[canon(form)];
+
+  let S = null;   // the one open sheet's state
+  function cfgCss() { if (document.head && !document.head.querySelector('style[data-vera-widget-config-css]')) { const st = document.createElement('style'); st.setAttribute('data-vera-widget-config-css', '1'); st.textContent = CFG_CSS; document.head.appendChild(st); } }
+  const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  function cfgOpen(opts) {
+    opts = opts || {};
+    if (S) cfgClose(null);
+    cfgCss();
+    const base = opts.base || window._veraBase || '';
+    const into = INTO[opts.into] ? opts.into : '';
+    const sizes = (Array.isArray(opts.sizes) && opts.sizes.length ? opts.sizes : (into ? INTO[into].sizes : SIZES)).filter((s) => SIZES.includes(s));
+    const rec = recFrom(opts.record || { form: 'radial' }, into);
+    if (!rec.form) rec.form = 'radial';
+    if (!sizes.includes(rec.frame.size)) rec.frame.size = sizes.includes('m') ? 'm' : sizes[sizes.length - 1];
+    return new Promise((resolve) => {
+      S = { opts, base, into, sizes, rec, mode: opts.mode === 'edit' ? 'edit' : 'add', q: '', cat: null, sources: null, tpls: null, menu: Array.isArray(opts.menuItems) ? opts.menuItems : [],
+        picked: null, problems: [], warnings: [], titleTouched: !!(opts.record && (opts.record.title || opts.record.name)), armed: false, status: '', resolve, el: null, pv: null, lastPv: '' };
+      build(); place(opts.anchor); loadCatalogue();
+      document.addEventListener('keydown', onKey, true);
+    });
+  }
+  function cfgClose(result) {
+    if (!S) return; const st = S; S = null;
+    document.removeEventListener('keydown', onKey, true);
+    if (st.el && st.el.parentNode) st.el.parentNode.removeChild(st.el);
+    if (st.scrim && st.scrim.parentNode) st.scrim.parentNode.removeChild(st.scrim);
+    try { st.resolve(result === undefined ? null : result); } catch (_) {}
+  }
+  function onKey(ev) {
+    if (!S) return;
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cfgClose(null); }
+    else if (ev.key === 'Enter' && !(ev.target && ev.target.classList && ev.target.classList.contains('vwc-q'))) { ev.preventDefault(); ev.stopPropagation(); ok(); }
+  }
+  function place(anchor) {
+    const el = S.el; if (!el) return;
+    let r = null;
+    try { if (anchor && anchor.getBoundingClientRect) r = anchor.getBoundingClientRect(); else if (anchor && typeof anchor.x === 'number') r = { left: anchor.x, right: anchor.x, top: anchor.y, bottom: anchor.y }; } catch (_) { r = null; }
+    if (!r) return;
+    const W = el.offsetWidth || 1380, H = el.offsetHeight || 900, vw = window.innerWidth, vh = window.innerHeight;
+    let left = r.right + 12, top = Math.max(8, Math.min(r.top, vh - H - 8));
+    if (left + W > vw - 8) left = r.left - W - 12;
+    if (left < 8) return;   // no room beside it: centred (the default)
+    el.classList.add('anchored'); el.style.left = left + 'px'; el.style.top = top + 'px';
+  }
+
+  /* ── the sheet's DOM, built once; the three columns render on their own ── */
+  function build() {
+    const scrim = h('div', 'vwc-scrim'); scrim.addEventListener('click', () => cfgClose(null)); document.body.appendChild(scrim); S.scrim = scrim;
+    const el = h('div', 'vwc'); el.setAttribute('role', 'dialog'); el.setAttribute('data-w', 'widget config · sheet'); el.setAttribute('data-mode', S.mode);
+    const hd = h('div', 'vwc-hd'); hd.appendChild(h('h3', '', S.opts.title || (S.mode === 'edit' ? 'Widget config' : 'Add a widget')));
+    hd.appendChild(h('span', 'sub', 'One record makes any widget. Pick a form on the left; the record in the middle is everything that form can be told — what it reads, how it is framed, how it is drawn, what it can do, where it can go; the preview on the right is the widget those values produce.'));
+    hd.appendChild(h('span', 'sp')); const x = h('button', 'x', '✕'); x.type = 'button'; x.title = 'Cancel (Esc)'; x.addEventListener('click', () => cfgClose(null)); hd.appendChild(x); el.appendChild(hd);
+    const cols = h('div', 'vwc-3');
+    const cat = h('div', 'vwc-cat'); const cs = h('div', 'vwc-cs'); cs.appendChild(h('span', '', '⌕')); const q = h('input', 'vwc-q'); q.type = 'search'; q.placeholder = 'find a form, a source, a template…'; q.addEventListener('input', () => { S.q = q.value; renderCat(); renderRec(); }); cs.appendChild(q); cat.appendChild(cs); cat.appendChild(h('div', 'vwc-cl')); cols.appendChild(cat);
+    const rc = h('div', 'vwc-rec'); rc.appendChild(h('div', 'vwc-rh')); rc.appendChild(h('div', 'vwc-rb')); cols.appendChild(rc);
+    const pv = h('div', 'vwc-pvw'); pv.appendChild(h('div', 'vwc-ph')); pv.appendChild(h('div', 'vwc-stage')); const pj = h('div', 'vwc-pj'); pj.appendChild(h('div', 'vwc-pjh', 'The record')); pj.appendChild(h('pre')); pv.appendChild(pj); cols.appendChild(pv);
+    el.appendChild(cols); el.appendChild(h('div', 'vwc-ft'));
+    document.body.appendChild(el); S.el = el;
+    renderCat(); renderRec(); renderPvw(); renderFoot();
+    setTimeout(() => { try { q.focus(); } catch (_) {} }, 0);
+  }
+  async function loadCatalogue() {
+    const st = S;
+    try { const r = await call(st.base, 'widget.forms', {}); if (st !== S) return; st.cat = (r && Array.isArray(r.forms) && r.forms.length) ? r : null; } catch (_) { if (st !== S) return; st.cat = null; }
+    if (!st.cat) st.cat = { forms: forms().filter((f) => !f.as).map((f) => ({ id: f.id, shape: f.shape, proj: ['flat'], sizes: SIZES.slice(), options: [], glyph: f.id, motion: false })), local: true };
+    // the record's derived keys need the catalogue: its shape, its projection; the first validation runs now
+    st.rec.shape = shapeOf(st.rec); const fe = formEntry(st.rec.form); if (!st.rec.projection) st.rec.projection = (fe && fe.proj && fe.proj[0]) || 'flat';
+    renderCat(); renderRec(); renderPvw(); validateLater();
+    try { const r = await call(st.base, 'widget.sources', { limit: 400 }); if (st !== S) return; st.sources = (r && Array.isArray(r.sources)) ? r.sources : []; } catch (_) { if (st !== S) return; st.sources = []; }
+    renderCat(); renderRec();
+    if (st.opts.templates) { try { const r = await call(st.base, 'widget.template.list', { limit: 300 }); if (st !== S) return; st.tpls = (r && Array.isArray(r.templates)) ? r.templates : []; } catch (_) { if (st !== S) return; st.tpls = []; } renderCat(); }
+  }
+  const formEntry = (id) => { const f = String(id || '').toLowerCase(); const cat = (S && S.cat && S.cat.forms) || []; return cat.find((x) => x.id === f) || cat.find((x) => x.id === canon(f)) || null; };
+  const shapeOf = (rec) => { const f = formEntry(rec.form); return (f && f.shape) || DRAWN[canon(rec.form)] || rec.shape || ''; };
+  const matches = (s) => !S.q || String(s || '').toLowerCase().indexOf(S.q.toLowerCase()) >= 0;
+
+  /* ── the catalogue column ── */
+  function renderCat() {
+    if (!S) return; const list = S.el.querySelector('.vwc-cl'); list.innerHTML = '';
+    const rec = S.rec, cat = S.cat, q = S.q.toLowerCase();
+    const group = (n, d) => { const g = h('div', 'vwc-g'); const gh = h('div', 'vwc-gh'); gh.appendChild(h('span', '', n)); if (d) gh.appendChild(h('em', '', d)); g.appendChild(gh); list.appendChild(g); return g; };
+    const row = (g, o) => { const r = h('div', 'vwc-r' + (o.on ? ' on' : '')); r.setAttribute('data-w', o.n + ' · catalogue row'); const n = h('span', 'n', o.n); if (o.sub) n.appendChild(h('small', '', o.sub)); r.appendChild(n);
+      (o.bd || []).forEach((b) => r.appendChild(h('span', 'bd' + (b[1] ? ' ' + b[1] : ''), b[0])));
+      if (o.add) { const b = h('button', 'padd', '+ Add'); b.type = 'button'; b.addEventListener('click', (ev) => { ev.stopPropagation(); o.add(); }); r.appendChild(b); }
+      r.addEventListener('click', o.pick); r.addEventListener('dblclick', () => ok()); g.appendChild(r); return r; };
+    let any = false;
+    // the host's other menus' elements (the LHM's "From the other menus"): picked as they are
+    const menu = S.menu.filter((it) => matches(it.n + ' ' + (it.c || '') + ' ' + (it.g || '')));
+    if (menu.length) { any = true; const g = group('From the other menus', 'an element of another menu, placed as it is');
+      menu.forEach((it) => row(g, { n: it.n, sub: it.c, bd: [[it.g || '≡', 'none']], on: S.picked && S.picked.kind === 'menu' && S.picked.item === it, pick: () => { S.picked = { kind: 'menu', item: it }; renderCat(); renderRec(); renderPvw(); renderFoot(); }, add: () => cfgClose(it.record) })); }
+    // the two context-graph entries: the same form at two sizes
+    const cg = CG_ENTRIES.filter((e) => matches(e.n + ' ' + e.id + ' context graph galaxy'));
+    if (cg.length && (!S.opts.shape || S.opts.shape === 'graph')) { any = true; const g = group('Context graph', 'the chat\'s context, as a widget · mini at M, the full graph at XL');
+      cg.forEach((e) => row(g, { n: e.n, sub: e.c, bd: [[e.size.toUpperCase(), 'none'], ['live', 'live']], on: !S.picked && rec.form === 'context_graph' && rec.frame.size === e.size,
+        pick: () => { S.picked = null; pickForm('context_graph', { size: S.sizes.includes(e.size) ? e.size : S.sizes[S.sizes.length - 1] }); } })); }
+    // every form, by shape, with its badges
+    if (!cat) { list.appendChild(h('div', 'vwc-empty', 'Loading the catalogue…')); }
+    else { const shapes = SHAPE_ORDER.filter((s) => !S.opts.shape || S.opts.shape === s);
+      shapes.forEach((sh) => { const fs = cat.forms.filter((f) => f.shape === sh && f.id !== 'context_graph' && matches(f.id + ' ' + (f.glyph || '') + ' ' + sh)); if (!fs.length) return; any = true;
+        const g = group(SHAPE_NAME[sh] || sh, SHAPE_DESC[sh] || '');
+        fs.forEach((f) => { const proj = (f.proj || ['flat']); const live = isLive(f.id);
+          row(g, { n: f.id, bd: [[proj.length > 1 ? 'both' : proj[0], 'none'], [f.motion ? 'moves' : 'still', f.motion ? 'mot' : 'none'], [live ? 'live' : 'record', live ? 'live' : 'none']],
+            on: !S.picked && rec.form === f.id && !(f.id === 'context_graph'), pick: () => { S.picked = null; pickForm(f.id, {}); } }); }); }); }
+    // the registry: the panels (the old panel-as-widget entries, kept as a group) and your templates
+    if (S.opts.templates) { const tp = S.tpls;
+      if (!tp) list.appendChild(h('div', 'vwc-empty', 'Loading your templates…'));
+      else { const panels = tp.filter((t) => /^panel:/.test(t.id) && matches(t.name + ' ' + t.id)), mine = tp.filter((t) => !/^panel:/.test(t.id) && matches(t.name + ' ' + t.id + ' ' + t.form + ' ' + ((t.reads || {}).cap || '')));
+        if (mine.length) { any = true; const g = group('Your templates', 'saved records — placeable anywhere');
+          mine.forEach((t) => row(g, { n: t.name || t.id, sub: t.form + ((t.reads || {}).cap ? ' · ' + t.reads.cap : ''), bd: [['⧉', 'none'], [((t.source || {}).origin === 'built-in') ? 'built-in' : 'yours', 'none']], on: S.picked && S.picked.kind === 'tpl' && S.picked.id === t.id, pick: () => pickTemplate(t) })); }
+        if (panels.length) { any = true; const g = group('Panels', 'every registered panel, as a widget');
+          panels.forEach((t) => row(g, { n: t.name || t.id, sub: t.id.slice(6), bd: [['panel', 'none']], on: S.picked && S.picked.kind === 'tpl' && S.picked.id === t.id, pick: () => pickTemplate(t) })); } } }
+    if (!any) list.appendChild(h('div', 'vwc-empty', 'Nothing matches "' + S.q + '".'));
+    const ph = S.el.querySelector('.vwc-cs'); ph.title = cat ? (cat.forms.length + ' forms · ' + cat.forms.filter((f) => isLive(f.id)).length + ' drawn live') : '';
+  }
+  function pickForm(id, o) {
+    const rec = S.rec; const was = rec.form; rec.form = id; rec.shape = shapeOf(rec);
+    const f = formEntry(id); if (f) { if (!(f.proj || []).includes(rec.projection)) rec.projection = (f.proj || ['flat'])[0]; if (!(f.sizes || SIZES).includes(rec.frame.size)) rec.frame.size = f.sizes[f.sizes.length - 1]; }
+    if (o && o.size) rec.frame.size = o.size;
+    if (was !== id) { rec.draw = {}; rec.read.map = {}; if (rec.source && S.sources) { const s = S.sources.find((x) => x.id === rec.source); if (s && s.shape !== rec.shape) rec.source = ''; } }
+    if (id === 'composite' && !Array.isArray(rec.children)) { rec.layout = '2x2'; rec.children = []; }
+    if (!S.titleTouched) rec.title = '';
+    changed(true);
+  }
+  function pickTemplate(t) { S.picked = { kind: 'tpl', id: t.id }; const keep = S.rec.placement; S.rec = recFrom(Object.assign({}, t, { template: t.id }), S.into); if (!S.rec.placement.length) S.rec.placement = keep; S.rec.shape = shapeOf(S.rec); S.titleTouched = true; if (!S.sizes.includes(S.rec.frame.size)) S.rec.frame.size = S.sizes.includes('m') ? 'm' : S.sizes[0]; changed(true); }
+  function pickSource(src) { const rec = S.rec; rec.source = src ? src.id : ''; rec.read.map = {}; rec.read.args = {}; if (src) { (src.args || []).forEach((a) => { rec.read.args[a] = ''; }); if (!rec.read.refresh && src.refresh_min && src.refresh_min !== 'live' && src.refresh_min !== 'event') rec.read.refresh = src.refresh_min; if (!rec.draw.unit && src.unit) rec.draw.unit = src.unit; } if (!S.titleTouched) rec.title = ''; changed(true); }
+
+  /* ── every edit lands here: the record column re-renders (unless typing), the preview, the JSON, the host, the validator ── */
+  const validateLater = dbg(() => validate(), 350);
+  function changed(rerender) {
+    if (!S) return; S.armed = false; S.rec.shape = shapeOf(S.rec);
+    if (rerender) renderRec();
+    renderPvw(); renderFoot(); validateLater();
+    try { if (typeof S.opts.onChange === 'function') S.opts.onChange(recOut(S.rec)); } catch (_) {}
+  }
+  async function validate() {
+    const st = S; if (!st) return; const seq = (st.vseq = (st.vseq || 0) + 1);   // an older answer never overwrites a newer record's
+    try { const r = await call(st.base, 'widget.validate', { record: recOut(st.rec) }); if (st !== S || seq !== st.vseq) return; const probs = (r && Array.isArray(r.problems)) ? r.problems : [];
+      // a record with no source draws its sample face and stays editable (widget_record.validate's own rule): a warning here, not a bar
+      st.problems = probs.filter((p) => p !== 'no source'); st.warnings = ((r && Array.isArray(r.warnings)) ? r.warnings : []).concat(probs.filter((p) => p === 'no source').map(() => 'no source · the sample face until one is picked')); st.validated = (r && r.record && typeof r.record === 'object') ? r.record : null; }
+    catch (_) { if (st !== S || seq !== st.vseq) return; st.problems = []; st.warnings = []; st.validated = null; }
+    renderFoot();
+  }
+  const titleOf = (rec) => rec.title || ((rec.form || 'widget') + (rec.source ? ' · ' + rec.source : ''));
+
+  /* ── the record column ── */
+  function renderRec() {
+    if (!S) return; const rec = S.rec, hd = S.el.querySelector('.vwc-rh'), bd = S.el.querySelector('.vwc-rb'); hd.innerHTML = ''; bd.innerHTML = '';
+    if (S.picked && S.picked.kind === 'menu') { const it = S.picked.item; hd.appendChild(h('span', 'fn', it.n)); hd.appendChild(h('span', 'ty', it.c || 'menu element')); bd.appendChild(h('div', 'vwc-dim', 'An element of another menu, placed as it is — its record is the menu\'s own. Add puts it in this menu.')); return; }
+    const f = formEntry(rec.form), shape = shapeOf(rec); const projs = (f && f.proj && f.proj.length) ? f.proj : ['flat'];
+    hd.appendChild(h('span', 'fn', rec.form || 'widget')); hd.appendChild(h('span', 'ty', shape + ' · ' + (rec.projection || projs[0]))); hd.appendChild(h('span', 'sp')); hd.appendChild(h('span', 'note', SHAPE_DESC[shape] || (f ? '' : 'not in the catalogue')));
+    const sec = (title, em, wide) => { const s = h('div', 'vwc-sec' + (wide ? ' wide' : '')); const sh = h('div', 'vwc-sh'); sh.appendChild(h('span', '', title)); if (em) { const e = h('em'); e.innerHTML = em; sh.appendChild(e); } s.appendChild(sh); bd.appendChild(s); return s; };
+    const row = (s, k, node) => { const r = h('div', 'vwc-row'); r.appendChild(h('span', 'k', k)); r.appendChild(node); s.appendChild(r); return r; };
+    const val = (t, dim) => h('span', 'val' + (dim ? ' dim' : ''), t);
+    const seg = (list, cur, on) => { const g = h('span', 'vwc-seg'); list.forEach((x) => { const b = h('button', (x[0] === cur ? 'on' : '') + (x[2] === false ? ' off' : ''), x[1] || x[0]); b.type = 'button'; if (x[3]) b.title = x[3]; b.addEventListener('click', () => { if (x[2] === false) return; on(x[0]); }); g.appendChild(b); }); return g; };
+    const sw = (cur, on, note) => { const w = h('span', 'swl'); const b = h('span', 'vwc-sw' + (cur ? ' on' : '')); b.setAttribute('role', 'switch'); b.setAttribute('aria-checked', cur ? 'true' : 'false'); b.appendChild(h('i')); b.addEventListener('click', () => on(!cur)); w.appendChild(b); if (note) w.appendChild(h('span', 'dim', note)); return w; };
+    const inp = (v, on, ph) => { const i = h('input', 'val'); i.type = 'text'; i.value = v == null ? '' : String(v); if (ph) i.placeholder = ph; i.addEventListener('input', () => on(i.value)); return i; };
+    // Identity
+    const id = sec('Identity');
+    row(id, 'Title', inp(rec.title, (v) => { rec.title = v; S.titleTouched = !!v; changed(false); }, titleOf(rec)));
+    row(id, 'Form', val(rec.form));
+    row(id, 'Shape', val(shape + ' · derived from the form', true));
+    row(id, 'Projection', seg(projs.map((p) => [p, p]), rec.projection || projs[0], (p) => { rec.projection = p; changed(true); }));
+    row(id, 'Skin', seg([['inherit', 'inherit'], ['standard', 'std'], ['newspaper', 'news'], ['terminal', 'term'], ['pixel', 'pixel']], rec.skin || 'inherit', (p) => { rec.skin = p; changed(true); }));
+    // Source
+    const needsNone = rec.form === 'panel' || rec.form === 'composite';
+    const so = sec('Source', 'anything of shape <b>' + esc(shape) + '</b>' + (S.sources ? '' : ' · loading…'));
+    if (rec.form === 'panel') { row(so, 'Panel', inp(rec.panel || rec.source.replace(/^panel:/, ''), (v) => { rec.panel = v; rec.source = v ? 'panel:' + v : ''; changed(false); }, 'a registered panel id')); }
+    else if (!needsNone) {
+      const srcs = (S.sources || []).filter((s) => s.shape === shape && matches(s.id + ' ' + (s.note || '')));
+      const chips = h('div', 'vwc-srcl'); const none = h('span', 'vwc-src' + (rec.source ? '' : ' on'), 'none · sample'); none.title = 'no source: the widget draws its sample face'; none.addEventListener('click', () => pickSource(null)); chips.appendChild(none);
+      srcs.slice(0, 80).forEach((s) => { const c = h('span', 'vwc-src' + (rec.source === s.id ? ' on' : ''), s.id); c.title = (s.note || '') + (s.refresh_min ? ' · refresh ≥ ' + s.refresh_min : '') + (s.unit ? ' · ' + s.unit : ''); c.addEventListener('click', () => pickSource(s)); chips.appendChild(c); });
+      if (rec.source && !srcs.some((s) => s.id === rec.source)) { const c = h('span', 'vwc-src on', rec.source); c.title = 'the record\'s source (not in the catalogue for this shape)'; chips.appendChild(c); }
+      if (S.sources && !srcs.length) chips.appendChild(h('span', 'vwc-dim', 'no ' + shape + ' source registered · type one:'));
+      so.appendChild(chips);
+      if (S.sources && !srcs.length) row(so, 'Source', inp(rec.source, (v) => { rec.source = v; changed(false); }, 'capability id'));
+      const src = (S.sources || []).find((s) => s.id === rec.source);
+      if (src && (src.args || []).length) { src.args.forEach((a) => row(so, a, inp(rec.read.args[a], (v) => { rec.read.args[a] = v; changed(false); }, 'arg'))); }
+      if (rec.source) (SHAPE_FIELDS[shape] || []).forEach((k) => { const r = row(so, k, inp(rec.read.map[k], (v) => { if (v) rec.read.map[k] = v; else delete rec.read.map[k]; changed(false); }, '← ' + k)); r.title = 'the source\'s field that feeds ' + k; });
+      row(so, 'Refresh', seg([['live', 'live'], ['5s', '5s'], ['10s', '10s'], ['1m', '1m'], ['event', 'on event'], ['', 'once']], rec.read.refresh || '', (v) => { rec.read.refresh = v; changed(true); }));
+      row(so, 'Window', seg([['1h', '1h'], ['24h', '24h'], ['7d', '7d'], ['', 'all']], rec.read.window || '', (v) => { rec.read.window = v; changed(true); }));
+      row(so, 'Range', val(RANGE_OF[shape] || 'auto'));
+    } else so.appendChild(h('div', 'vwc-dim', 'a ' + rec.form + ' reads nothing of its own'));
+    // Frame
+    const fr = sec('Frame');
+    const fsizes = (f && f.sizes) || SIZES;
+    row(fr, 'Size', seg(SIZES.map((s) => [s, s.toUpperCase(), S.sizes.includes(s) && fsizes.includes(s), S.sizes.includes(s) && fsizes.includes(s) ? SIZE_NAME[s] : 'not at this size here']), rec.frame.size, (s) => { rec.frame.size = s; changed(true); }));
+    row(fr, 'Caption', sw(rec.frame.caption, (v) => { rec.frame.caption = v; changed(true); }));
+    row(fr, 'Legend', sw(rec.frame.legend, (v) => { rec.frame.legend = v; changed(true); }));
+    const canMove = !!(f && f.motion); const motion = rec.frame.motion == null ? canMove : rec.frame.motion;
+    row(fr, 'Motion', sw(motion, (v) => { rec.frame.motion = v; changed(true); }, canMove ? (motion ? 'this form moves' : 'held still') : 'this form has nothing to move'));
+    row(fr, 'Deep dive', sw(rec.frame.dive, (v) => { rec.frame.dive = v; changed(true); }, '⤢ in the header opens the sheet'));
+    // Drawing
+    const dr = sec('Drawing', 'options this form has');
+    const opts = (f && f.options) || [];
+    if (!opts.length) dr.appendChild(h('div', 'vwc-dim', 'no options of its own'));
+    opts.forEach((o) => row(dr, o, inp(rec.draw[o], (v) => { if (v === '') delete rec.draw[o]; else rec.draw[o] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v; changed(false); }, o)));
+    row(dr, 'Palette', seg(PALS.map((p) => [p, p]), rec.draw.palette || 'load', (p) => { rec.draw.palette = p; changed(true); }));
+    row(dr, 'Bands', inp(Array.isArray(rec.draw.bands) ? rec.draw.bands.join(', ') : '', (v) => { const b = v.split(/[,\s·]+/).map(Number).filter((n) => isFinite(n)); if (b.length) rec.draw.bands = b; else delete rec.draw.bands; changed(false); }, BANDS_OF[rec.draw.palette || 'load'] || '—'));
+    // Children (composite)
+    if (rec.form === 'composite') { const ch = sec('Children', 'a composite is a frame, a layout and these records', true);
+      row(ch, 'Layout', seg(LAYOUTS, rec.layout || 'grid', (l) => { rec.layout = l; changed(true); }));
+      const kids = h('div', 'vwc-kids'); (rec.children || []).forEach((c, i) => { const k = h('div', 'vwc-kid'); const dot = h('i'); dot.style.background = KCOL[c.record.form] || 'var(--t3,#6b7280)'; k.appendChild(dot); k.appendChild(h('span', 'mono', c.record.form)); k.appendChild(h('span', 'src', c.record.source || '—')); k.appendChild(h('span', 'sz', String(c.record.frame.size || 's').toUpperCase())); k.appendChild(h('span', 'slot', 'slot ' + c.slot)); const x = h('button', '', '✕'); x.type = 'button'; x.title = 'Remove'; x.addEventListener('click', () => { rec.children.splice(i, 1); changed(true); }); k.appendChild(x); kids.appendChild(k); });
+      const kadd = h('div', 'vwc-kadd'); kadd.appendChild(h('span', 'k', '+ add')); ['radial', 'trace', 'bars', 'table', 'log', 'counter'].forEach((fm) => { const b = h('button', 'vwc-chipb', '+ ' + fm); b.type = 'button'; b.addEventListener('click', () => { rec.children = rec.children || []; rec.children.push({ slot: String.fromCharCode(97 + rec.children.length), record: recFrom({ form: fm, size: 's' }) }); changed(true); }); kadd.appendChild(b); }); kids.appendChild(kadd); ch.appendChild(kids);
+      ch.appendChild(h('div', 'vwc-dim', 'each child is a full record of its own — the composite only says where it sits and at what size')); }
+    // Actions
+    const ac = sec('Actions', 'on the widget\'s menu'); const chips = h('div', 'vwc-chips'); ACTS.forEach((a) => { const c = h('span', 'vwc-chip' + (rec.actions.includes(a[0]) ? ' on' : ''), a[1]); c.addEventListener('click', () => { rec.actions = rec.actions.includes(a[0]) ? rec.actions.filter((x) => x !== a[0]) : rec.actions.concat([a[0]]); changed(true); }); chips.appendChild(c); }); ac.appendChild(chips);
+    // Placement
+    const pl = sec('Placement', 'where this record can be dropped'); const pchips = h('div', 'vwc-chips'); PLACES.forEach((p) => { const c = h('span', 'vwc-chip' + (rec.placement.includes(p[0]) ? ' on' : ''), p[1]); c.addEventListener('click', () => { rec.placement = rec.placement.includes(p[0]) ? rec.placement.filter((x) => x !== p[0]) : rec.placement.concat([p[0]]); changed(true); }); pchips.appendChild(c); }); pl.appendChild(pchips);
+    pl.appendChild(h('div', 'vwc-dim', 'the same record everywhere · placement only sets the frame the widget is dropped into'));
+  }
+
+  /* ── the preview column: a live <vera-widget> of the record, at the chosen size ── */
+  function pvRecord(rec) {
+    const r = recOut(rec); r.title = titleOf(rec);
+    if (r.form === 'composite' && Array.isArray(r.children)) r.children = r.children.map((c) => ({ slot: c.slot, record: Object.assign({}, c.record, { data: c.record.data !== undefined ? c.record.data : (c.record.source ? undefined : sample(c.record.form)) }) }));
+    return r;
+  }
+  function renderPvw() {
+    if (!S) return; const rec = S.rec, ph = S.el.querySelector('.vwc-ph'), stage = S.el.querySelector('.vwc-stage'), pre = S.el.querySelector('.vwc-pj pre');
+    ph.innerHTML = '';
+    if (S.picked && S.picked.kind === 'menu') { ph.appendChild(h('span', '', 'Preview')); stage.innerHTML = ''; const n = h('div', 'vwc-pvn'); n.appendChild(h('span', 'big', S.picked.item.n)); n.appendChild(document.createTextNode('an element of the ' + (S.picked.item.c || 'other') + ' menu · drawn by that menu when placed')); stage.appendChild(n); pre.textContent = JSON.stringify(S.picked.item.record || {}, null, 1); S.lastPv = ''; return; }
+    const size = rec.frame.size; ph.appendChild(h('span', '', 'Preview')); ph.appendChild(h('span', 'dim', SIZE_NAME[size] || size)); ph.appendChild(h('span', 'sp')); const note = h('span', 'dim', ''); ph.appendChild(note);
+    const out = pvRecord(rec); const j = JSON.stringify(out, null, 1).replace(/\n\s+(?=[\]}])/g, ' ').replace(/\[\n\s+/g, '[').replace(/,\n\s+(?=[^"{ ])/g, ', '); pre.textContent = j;
+    const keyNow = JSON.stringify([out.form, out.source, out.read, out.frame.size, out.draw, out.projection, out.children, out.panel, out.title]);
+    let vw = S.pv;
+    if (!vw || !vw.isConnected || keyNow !== S.lastPv) {
+      stage.innerHTML = ''; const fr = h('div', 'vwc-pvf ' + size); fr.setAttribute('data-w', 'preview · ' + size);
+      if (window.customElements && customElements.get('vera-widget')) { vw = document.createElement('vera-widget'); vw.setAttribute('size', size); if (S.base) vw.setAttribute('base', S.base); vw.record = out;
+        vw.addEventListener('widget:rendered', (ev) => { const d = (ev && ev.detail) || {}; note.textContent = d.sample ? 'sample · no source read' : (rec.source ? 'live · ' + rec.source : 'record only'); note.className = 'dim ' + (d.sample ? 'sample' : 'live'); });
+        if (size === 'xs') { fr.appendChild(document.createTextNode('ct126 is serving qwen3:30b at ')); fr.appendChild(vw); fr.appendChild(document.createTextNode(' with 4 in flight and step 5 waiting on you.')); }
+        else fr.appendChild(vw); }
+      else { const n = h('div', 'vwc-pvn'); n.appendChild(h('span', 'big', rec.form)); n.appendChild(document.createTextNode('the widget renderer is not on this page')); fr.appendChild(n); vw = null; }
+      stage.appendChild(fr); S.pv = vw; S.lastPv = keyNow;
+    }
+  }
+  /* ── the foot: the validator's problems and warnings, ⧉ Save as template, Cancel, Add / Save ── */
+  function renderFoot() {
+    if (!S) return; const ft = S.el.querySelector('.vwc-ft'); ft.innerHTML = '';
+    const msgs = h('div', 'msgs'); S.problems.forEach((p) => { const c = h('span', 'vwc-chip bad', p); c.title = 'widget.validate: a problem'; msgs.appendChild(c); }); S.warnings.forEach((w) => { const c = h('span', 'vwc-chip warn', w); c.title = 'widget.validate: a warning'; msgs.appendChild(c); });
+    if (S.status) msgs.appendChild(h('span', 'st', S.status)); ft.appendChild(msgs);
+    const menuPick = S.picked && S.picked.kind === 'menu';
+    if (S.opts.templates && !menuPick) { const sv = h('button', '', '⧉ Save as template'); sv.type = 'button'; sv.title = 'Save this record to the widget registry — placeable anywhere, from any picker'; sv.addEventListener('click', saveTemplate); ft.appendChild(sv); }
+    const cp = h('button', '', 'Copy record'); cp.type = 'button'; cp.addEventListener('click', () => { try { navigator.clipboard.writeText(JSON.stringify(recOut(S.rec), null, 1)); S.status = 'copied'; renderFoot(); } catch (_) {} }); ft.appendChild(cp);
+    const cx = h('button', '', 'Cancel'); cx.type = 'button'; cx.addEventListener('click', () => cfgClose(null)); ft.appendChild(cx);
+    const okB = h('button', 'pri', S.armed && S.problems.length ? (S.opts.ok || (S.mode === 'edit' ? 'Save' : 'Add')) + ' anyway' : (S.opts.ok || (S.mode === 'edit' ? 'Save' : 'Add'))); okB.type = 'button'; okB.setAttribute('data-ok', '1'); okB.addEventListener('click', ok); ft.appendChild(okB);
+  }
+  async function saveTemplate() {
+    const st = S; if (!st) return; const rec = recOut(st.rec); if (!rec.title) rec.title = titleOf(st.rec);
+    st.status = 'saving…'; renderFoot();
+    try { const r = await call(st.base, 'widget.template.save', { template: rec, force: true }); if (st !== S) return; st.status = (r && r.ok) ? 'saved ⧉ ' + ((r.template && r.template.id) || '') : ('save failed: ' + ((r && (r.error || (r.problems || []).join('; '))) || '')); if (r && r.ok && Array.isArray(st.tpls)) { st.tpls = st.tpls.filter((t) => t.id !== r.template.id).concat([r.template]); renderCat(); } }
+    catch (e) { if (st !== S) return; st.status = 'save failed: ' + String(e && e.message || e); }
+    renderFoot();
+  }
+  async function ok() {
+    const st = S; if (!st) return;
+    if (st.picked && st.picked.kind === 'menu') { cfgClose(st.picked.item.record); return; }
+    await validate(); if (st !== S) return;
+    if (st.problems.length && !st.armed) { st.armed = true; renderFoot(); return; }
+    const out = recOut(st.rec); if (!out.title) out.title = titleOf(st.rec);
+    // what widget.validate normalised, with the sheet's own keys kept beside it
+    const v = st.validated; const fin = v ? Object.assign({}, v, { title: out.title || v.title, read: Object.assign({}, v.read, { map: out.read.map, args: out.read.args }), frame: Object.assign({}, v.frame, { dive: out.frame.dive, caption: out.frame.caption, legend: out.frame.legend, motion: out.frame.motion != null ? out.frame.motion : v.frame.motion }),
+      draw: Object.assign({}, out.draw, v.draw), actions: out.actions, placement: out.placement, place: out.place, template: out.template, panel: v.panel || out.panel, projection: v.projection || out.projection, children: out.children || v.children }) : out;
+    if (fin.data === undefined && out.data !== undefined) fin.data = out.data;
+    cfgClose(fin);
+  }
+  window.VeraWidgetConfig = { open: cfgOpen, close: () => cfgClose(null), recordFrom: recFrom, recordOut: recOut, entries: CG_ENTRIES.slice(), version: 1 };
 })();

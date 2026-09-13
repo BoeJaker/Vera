@@ -37,6 +37,10 @@ SIZES = ("xs", "s", "m", "l", "xl")
 PROJECTIONS = ("flat", "iso")
 LAYOUTS = ("2x2", "rows", "report", "rail", "grid")
 PLACES = ("dashboard", "canvas", "rail", "notebook", "chat", "ops")
+# what a host calls its envelope (the surface's into:) → the record's placement name
+PLACE_ALIASES = {"lhm": "rail", "side": "rail", "reply": "chat", "dash": "dashboard", "ops map": "ops", "iso plate": "canvas", "harness": "rail"}
+# draw keys every form has (the WidgetConfig board's Drawing section), beside the form's own options
+DRAW_COMMON = ("palette", "bands")
 POLICIES = ("drive", "ask", "never")
 ACTIONS = ("dive", "pin", "ask", "ops", "print", "mute")
 REFRESH_RE = re.compile(r"^(live|event|\d+(\.\d+)?(ms|s|m|h))$")
@@ -213,6 +217,13 @@ def _slug(s: str) -> str:
     return s[:64] or "widget"
 
 
+def _place(v: Any) -> str:
+    """A placement name the record knows, from any host's word for it ('' when it is none)."""
+    s = str(v or "").strip().lower()
+    s = PLACE_ALIASES.get(s, s)
+    return s if s in PLACES else ""
+
+
 def _size(v: Any, default: str = "m") -> str:
     s = str(v or "").strip().lower()
     return s if s in SIZES else default
@@ -292,10 +303,15 @@ def normalise(record: Any) -> Dict[str, Any]:
     span = frame_in.get("span") if isinstance(frame_in.get("span"), list) and len(frame_in.get("span")) == 2 else None
     if span and not (frame_in.get("size") or r.get("size")):
         size = size_for_span(span[0], span[1])
-    draw = {k: v for k, v in draw_in.items() if k not in ("form", "size", "motion")}
+    draw = {k: v for k, v in draw_in.items() if k not in ("form", "size", "motion", "proj")}
     if isinstance(r.get("data"), (list, dict)):
         pass  # inline data rides beside the record (a fence with its own numbers); it is not part of the schema
-    proj = str(r.get("projection") or draw_in.get("projection") or "").strip().lower()
+    # the board's draw.proj is the projection; frame.dive is deep_dive; placement[] lists every envelope (place = the first)
+    proj = str(r.get("projection") or draw_in.get("projection") or draw_in.get("proj") or "").strip().lower()
+    placement = [_place(x) for x in (r.get("placement") if isinstance(r.get("placement"), list) else [])]
+    placement = [x for x in placement if x]
+    place = _place(r.get("place") or (placement[0] if placement else ""))
+    dive = frame_in.get("deep_dive", frame_in.get("dive", True))
     if proj not in PROJECTIONS:
         proj = "iso" if (f and f["proj"] == ["iso"]) else "flat"
     actions = r.get("actions") if isinstance(r.get("actions"), list) else (["dive", "pin", "ask"] if not legacy else [])
@@ -311,13 +327,13 @@ def normalise(record: Any) -> Dict[str, Any]:
                  "map": read_in.get("map") if isinstance(read_in.get("map"), dict) else {}, "args": args},
         "frame": {"size": size, "span": span, "caption": bool(frame_in.get("caption", True)),
                   "legend": bool(frame_in.get("legend", False)), "motion": bool(motion),
-                  "deep_dive": bool(frame_in.get("deep_dive", True)),
+                  "deep_dive": bool(dive), "dive": bool(dive),
                   "max_body": int(frame_in.get("max_body") or 0) or None,
                   "note": str(r.get("frame") if isinstance(r.get("frame"), str) else frame_in.get("note") or "")[:300]},
         "draw": draw,
         "skin": str(r.get("skin") or "inherit")[:32],
         "actions": [str(a)[:24] for a in actions if str(a) in ACTIONS][:8],
-        "place": str(r.get("place") or "")[:16] if str(r.get("place") or "") in PLACES else "",
+        "place": place, "placement": placement[:8],
         "panel": str(r.get("panel") or (r.get("source", {}) or {}).get("panel") if isinstance(r.get("source"), dict) else r.get("panel") or "")[:64],
         "policy": {"agent": str(policy.get("agent") or "ask") if str(policy.get("agent") or "ask") in POLICIES else "ask"},
     }
@@ -361,7 +377,7 @@ def to_template(record: Dict[str, Any]) -> Dict[str, Any]:
         "frame": r["frame"].get("note") or "",
         "draw": {"form": r["form"], "size": r["frame"]["size"].upper(), "motion": "motion" if r["frame"]["motion"] else ""},
         "can": r.get("can") if isinstance(r.get("can"), list) else list(r.get("actions") or []),
-        "placed": r.get("placed") if isinstance(r.get("placed"), list) else ([r["place"]] if r.get("place") else []),
+        "placed": r.get("placed") if isinstance(r.get("placed"), list) else (list(r.get("placement") or []) or ([r["place"]] if r.get("place") else [])),
         "source": origin, "version": r.get("version") or 1, "tags": r.get("tags") or [],
         "created_at": r.get("created_at") or "", "updated_at": r.get("updated_at") or "",
     })
@@ -390,7 +406,7 @@ def validate(record: Any, source_shape: Optional[str] = None) -> Tuple[Dict[str,
         if r["frame"]["size"] not in f["sizes"]:
             warnings.append("form %s has no %s size; drawn %s" % (f["id"], r["frame"]["size"], f["sizes"][-1]))
             r["frame"]["size"] = f["sizes"][-1]
-        known = set(f["options"])
+        known = set(f["options"]) | set(DRAW_COMMON)
         dropped = [k for k in r["draw"] if k not in known]
         if dropped:
             warnings.append("draw options %s are not %s's (%s); dropped" % (", ".join(sorted(dropped)), f["id"], ", ".join(f["options"]) or "none"))
