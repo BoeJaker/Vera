@@ -358,8 +358,12 @@ identity. Canonical store deployment deliberately suppresses a second nested
 `docker.run` identity, so one requested deployment produces one logical
 observation. Already-running stores produce none. Environment values, generated
 store secrets, Docker arguments, and raw approval/idempotency references are not
-retained. This infrastructure path remains observe-only and partial while build
-and managed-host provisioning families are still being instrumented.
+retained. Builder startup and the Arduino, PlatformIO, arbitrary-command, and
+isolated-Python compiler paths use the same provider-neutral Infrastructure
+projection before their first local or remote mutation. Builder source,
+commands, dependencies, environment values, logs, and artifacts never enter the
+ledger. This infrastructure path remains observe-only and partial while
+managed-host provisioning families are still being instrumented.
 
 Vera also applies fixed, fail-closed coverage thresholds before describing the
 evidence as ready for operator review: total observations, read and mutation
