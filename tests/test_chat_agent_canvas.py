@@ -34,6 +34,15 @@ def test_hint_lists_every_registry_form():
     assert "const form=known?draw:'table';" in src and "draw:{form:form, size:" in src
 
 
+def test_a_bare_cap_call_with_json_runs():
+    # mirror a42f.png: [[canvas.add {"kind":…}]] — no cap: prefix, no parentheses — rendered as raw text
+    src = _read("vera", "chat", "chat_panel.html")
+    assert "const CAP_BARE_SPACE_RE=/\\[\\[([a-z][a-z0-9_]*(?:\\.[a-z0-9_.]+)+)\\s+(\\{[\\s\\S]*?\\})\\s*\\]\\]/gi;" in src
+    assert "const reBs=new RegExp(CAP_BARE_SPACE_RE.source,'gi');" in src
+    gate = src[src.index("function hasCapPlaceholders(text){"):src.index("function _stripPanelMarkup(text){")]
+    assert "|[a-z][a-z0-9_]*\\.[a-z0-9_.]+\\s+\\{)/.test(t)" in gate
+
+
 def test_a_reply_of_directives_alone_runs():
     # mirror a42d.png: the model wrote two ⟦canvas.add …⟧ and they sat in the reply as raw text — the gate only knew [[…]]
     src = _read("vera", "chat", "chat_panel.html")

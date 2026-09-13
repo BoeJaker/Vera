@@ -7795,6 +7795,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   // LLM variant: [[capname({"k":"v"})]] or [[capname(k:v,...)]] — no 'cap:' prefix
   // Also catches [[exec.bash.run({"cmd":"...","timeout":"300"})]] etc.
   const CAP_BARE_RE=/\[\[([a-z][a-z0-9_]*(?:\.[a-z0-9_.]+)+)\((\{[\s\S]*?\}|[^[\]]*?)\)\]\]/gi;
+  // LLM variant: [[capname {"k":"v"}]] — the dotted name and a JSON object, no cap: prefix, no parentheses
+  const CAP_BARE_SPACE_RE=/\[\[([a-z][a-z0-9_]*(?:\.[a-z0-9_.]+)+)\s+(\{[\s\S]*?\})\s*\]\]/gi;
   // [[loop]] or [[loop: <refined goal>]] — the LLM DEFERS the whole request to the
   // agentic loop (v7) when it needs more than one capability / multiple steps.
   const LOOP_PLACEHOLDER_RE=/\[\[loop(?::\s*([\s\S]*?))?\s*\]\]/gi;
@@ -7938,6 +7940,13 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     }
 
     // [[capname({...})]] or [[capname(k:v,...)]] — LLM variant with parens, no 'cap:' prefix
+    // [[capname {json}]] — no cap: prefix, no parentheses (the model's third spelling, seen live)
+    const reBs=new RegExp(CAP_BARE_SPACE_RE.source,'gi');
+    while((m=reBs.exec(text))!==null){
+      if(matches.find(x=>x.idx===m.index)) continue;
+      if(/^(panel|dag|suggest|cap|loop)$/.test(m[1].split('.')[0])) continue;   // the namespaced forms are theirs
+      matches.push({idx:m.index,end:m.index+m[0].length,type:'cap',groups:[m[1],m[2]]});
+    }
     const re5=new RegExp(CAP_BARE_RE.source,'gi');
     while((m=re5.exec(text))!==null){
       if(!matches.find(x=>x.idx===m.index)){
@@ -7993,7 +8002,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   function hasCapPlaceholders(text){
     const t=_stripMdLinksFromCap(text);
     // …or the control plane's inline shorthand ⟦name {args}⟧ (a reply of directives alone must run, not read as prose)
-    return /\[\[(?:cap:|dag:|panel:|loop\b|suggest:(?:cap\s+|[a-z][a-z0-9_]*\.[a-z0-9_.]+|dag\s+)|[a-z][a-z0-9_]*\.[a-z0-9_.]+\()/.test(t) || /\u27e6\s*[a-z][a-z0-9_.]+/.test(t);
+    return /\[\[(?:cap:|dag:|panel:|loop\b|suggest:(?:cap\s+|[a-z][a-z0-9_]*\.[a-z0-9_.]+|dag\s+)|[a-z][a-z0-9_]*\.[a-z0-9_.]+\(|[a-z][a-z0-9_]*\.[a-z0-9_.]+\s+\{)/.test(t) || /\u27e6\s*[a-z][a-z0-9_.]+/.test(t);
   }
 
   // Remove [[panel:...]] placeholders from text destined for the model's
