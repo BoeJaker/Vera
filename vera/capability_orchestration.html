@@ -40,6 +40,7 @@
 <script src="/ui/pwa/pwa.js" defer></script>
 <script src="/ui/vera-ui.js?v=scale2"></script>
 <script src="/ui/vera-lhm.js"></script>
+<script src="/ui/widgets/widget_element.js"></script>
 <!-- Fonts loaded non-render-blocking: the shell paints immediately with the
      system fallbacks in the CSS var stacks, then swaps in the web fonts if/when
      they arrive. On a LAN box with slow/no route to Google, this avoids the
@@ -282,6 +283,14 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .lhm-nav .lhm-topbar .lhm-tb.on{color:var(--acc);border-color:var(--acc)}
 .lhm-nav .lhm-topbar .lhm-tt{flex:1;min-width:0;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lhm-nav .lhm-abs{flex:1;display:flex;min-height:0;overflow:hidden}
+/* the chat open: its MENU instance is the LHM (one persistent frame, the board's 318 px) */
+#lhmNav.lhm-nav.absorbed.chatmenu{width:318px!important}
+.body-wrap.lhm .main.autohide-reserve-v.absorbed.chatmenu{padding-left:318px}
+.lhm-nav #lhmMenuHost{display:none;flex:1;min-height:0}
+.lhm-nav #lhmMenuHost.on{display:flex}
+.lhm-nav #lhmMenuHost > iframe{flex:1;width:100%;height:100%;border:0;background:transparent}
+#lhmNav.chatmenu #lhmNavTabs{flex:0 0 auto!important;min-height:0}
+#lhmNav.chatmenu #lhmMenuHost.on{flex:1 1 auto}
 
 /* ── Panels area: multi-tab split ── */
 .panels{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:row}
@@ -2362,6 +2371,19 @@ function _lhmAbsorbedFor(){
   const nav = first ? _panelNavCache[first] : null;
   return (nav && nav.lhm && window.VeraLHM) ? { pid: first, nav } : null;
 }
+// the chat's own frame for a tab, when that tab is the chat (the frame that owns an LHM and a chat session)
+function _chatFrameFor(pid){ try{ return _chatFrames().find(f => { const p = f.closest('.panel'); return p && _panelIdFromEl(p) === pid; }) || null; }catch(_){ return null; } }
+// the chat panel's frame loads CHAT-ONLY inside the harness (its menu is the LHM beside it; the harness's ☰ above the rail is its ☰)
+function _hostFrameSrc(src){ try{ const s = String(src || ''); if(/\/chat_panel(\?|#|$)/.test(s) && !/[?&]only=/.test(s)) return s + (s.indexOf('?') >= 0 ? '&' : '?') + 'only=chat&harness=yes'; }catch(_){} return src; }
+// the chat's MENU instance as the LHM: one persistent frame (never rebuilt with the list), shown while the chat is the open UI
+function _lhmMenuFrame(nav, src){
+  let hostEl = document.getElementById('lhmMenuHost');
+  if(!hostEl){ hostEl = document.createElement('div'); hostEl.id = 'lhmMenuHost'; hostEl.setAttribute('data-w', 'the chat\'s menu · lhm'); const tabs = document.getElementById('lhmNavTabs'); if(tabs && tabs.parentNode) tabs.parentNode.insertBefore(hostEl, tabs.nextSibling); else nav.appendChild(hostEl); }
+  const want = String(src || '').split('?')[0] + '?only=menu&harness=yes';
+  let fr = hostEl.querySelector('iframe');
+  if(!fr || fr.getAttribute('src') !== want){ if(fr) fr.remove(); fr = document.createElement('iframe'); fr.className = 'lhm-abs-frame'; fr.setAttribute('title', 'the chat\'s menu'); fr.setAttribute('src', want); hostEl.appendChild(fr); }
+  hostEl.classList.add('on'); return hostEl;
+}
 function _lhmRenderAbsorbed(host, pid, nav){
   const bar = document.createElement('div'); bar.className = 'lhm-topbar';
   const tb = document.createElement('div'); tb.className = 'lhm-tb' + (_lhmAbsorbTop ? ' on' : ''); tb.textContent = '☰';
@@ -2371,6 +2393,9 @@ function _lhmRenderAbsorbed(host, pid, nav){
   tt.textContent = _lhmAbsorbTop ? 'Vera · every tab' : ((nav.lhm.title || 'panel') + ' · menu');
   bar.appendChild(tb); bar.appendChild(tt); host.appendChild(bar);
   if(_lhmAbsorbTop) return false;           // the caller draws the ordinary tab list under the bar
+  // the chat: its menu IS this menu — the chat board embedded menu-only; nothing here is a copy
+  const chatFrame = _chatFrameFor(pid);
+  if(chatFrame){ const navEl = document.getElementById('lhmNav'); if(navEl) navEl.classList.add('chatmenu'); tt.textContent = 'Chat · menu'; _lhmMenuFrame(navEl, chatFrame.getAttribute('src') || chatFrame.getAttribute('data-lazy-src') || '/chat_panel'); return true; }
   const abs = document.createElement('div'); abs.className = 'lhm-abs';
   VeraLHM.absorb(abs, nav.lhm, id => {
     _lhmNavSelect(pid, id);
@@ -2448,6 +2473,11 @@ function _lhmNavSync(){
   if(!absorbed) _lhmAbsorbPid = '';
   document.getElementById('lhmNav')?.classList.toggle('absorbed', !!absorbed && !_lhmAbsorbTop);
   document.querySelector('.main')?.classList.toggle('absorbed', !!absorbed && !_lhmAbsorbTop);
+  // the chat's menu frame shows only while the chat is the open UI and the top-level list is not swapped in
+  const chatOpen = !!(absorbed && !_lhmAbsorbTop && _chatFrameFor(absorbed.pid));
+  document.getElementById('lhmNav')?.classList.toggle('chatmenu', chatOpen);
+  document.querySelector('.main')?.classList.toggle('chatmenu', chatOpen);
+  document.getElementById('lhmMenuHost')?.classList.toggle('on', chatOpen);
   if(absorbed && _lhmRenderAbsorbed(host, absorbed.pid, absorbed.nav)) return;
 
   _tabStripsRender();
@@ -4636,7 +4666,7 @@ function _ensurePanelLoaded(panelEl) {
     // render an error page (which still fires 'load'), so the timeout below is
     // the real backstop for "took too long / no response".
     f.addEventListener('error', fail, { once: true });
-    f.setAttribute('src', src);
+    f.setAttribute('src', _hostFrameSrc(src));
   });
   // The iframe 'load' event waits for EVERY subresource of the inner page, so a
   // panel that is rendered and interactive but keeps one request hanging (or a

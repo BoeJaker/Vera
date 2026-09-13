@@ -298,6 +298,11 @@
   function _addedWidget(m, a, i){
     var w = null;
     if(a.from){ var src = _menu(a.from); if(src && typeof src.quick === 'function'){ var tmp = _el('div'); try{ src.quick(tmp, { menu:src, render:render, pick:pick, deep:deep }); }catch(e){} var found = Array.prototype.filter.call(tmp.querySelectorAll('.wid[data-w]'), function(x){ return _qkey(x) === a.key; })[0]; if(found){ w = found; w.setAttribute('data-from', a.from); } } }
+    // a widget RECORD (from the surface): its live face — the one renderer, reading its own source
+    if(!w && a.record && typeof a.record === 'object' && window.customElements && customElements.get('vera-widget')){
+      w = _el('div', 'wid lhm-added lhm-live'); w.setAttribute('data-w', (a.label || a.record.title || a.record.form || 'widget') + ' · ' + (a.record.form || 'widget'));
+      var vw = document.createElement('vera-widget'); try{ vw.setAttribute('record', JSON.stringify(a.record)); }catch(e){} vw.setAttribute('size', (a.record.frame && a.record.frame.size) || a.record.size || 's'); w.appendChild(vw);
+      var cap2 = _el('div', 'lhm-added-cap'); cap2.appendChild(_el('b', '', a.label || a.record.title || a.record.form || 'widget')); cap2.appendChild(_el('span', 'mono', a.c || a.record.source || a.record.form || '')); w.appendChild(cap2); }
     if(!w){ w = _el('div', 'wid lhm-added'); w.setAttribute('data-w', (a.label || a.form || 'widget') + ' · ' + (a.tpl ? 'template' : (a.form || 'widget'))); if(a.tpl) w.setAttribute('data-tpl', a.tpl);
       var body = _el('div', 'lhm-added-body'); var drawn = ''; try{ if(window.VeraWidget && a.form) drawn = window.VeraWidget.draw(a.form, a.data != null ? a.data : _sample(a.form), 'm', { bare:true, title:a.label }); }catch(e){}
       body.innerHTML = drawn || ('<span class="lhm-empty">' + _escH(a.label || a.form || 'widget') + '</span>'); w.appendChild(body);
@@ -330,7 +335,7 @@
   var _dragKey = '';
   // the foot: + Add a widget, the note, Reset, Save as menu…
   function _quickFoot(m){
-    var qs = _qspec(m); var foot = _el('div', 'lhm-wedit'); foot.setAttribute('data-w', 'edit foot · controls');
+    var qs = _qspec(m); var foot = _el('div', 'lhm-wedit');   // the foot is the editor's, not a widget of the menu (no tag over its button)
     var add = _el('button', 'lhm-wadd', '+ Add a widget — from any menu, any widget form, or your templates'); add.type = 'button'; add.addEventListener('click', function(ev){ ev.stopPropagation(); openPicker(); }); foot.appendChild(add);
     var n = Object.keys(qs.removed).length, a = qs.added.length;
     foot.appendChild(_el('div', 'lhm-wnote-s', (a ? a + ' added' : 'nothing added') + ' · ' + (n ? n + ' removed' : 'nothing removed') + (qs.order.length ? ' · reordered' : '') + ' — every part is a widget: ⚙ its record, ⧉ a template, ✕ takes it out, ⋮⋮ moves it'));
@@ -344,8 +349,21 @@
   }
   // ── THE PICKER: everything a menu can be made of — the other menus' widgets, every widget form, your templates ──
   var _pick = null, _pickQ = '';
+  // the other menus' elements, as the picker's first group
+  function _pickOthers(m){ var others = []; (_cfg.menus || []).forEach(function(o){ if(o.id === m.id || typeof o.quick !== 'function') return; _qparts(o).forEach(function(p){ others.push({ g:'≡', n:p.label, c:o.label, add:{ from:o.id, key:p.key, label:p.label } }); }); }); return others; }
+  // the shared widget surface (WidgetConfig board), here or in the host that embeds this menu
+  function _surface(){ try{ if(window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') return window.VeraWidgetConfig; }catch(e){} try{ var p = window.parent; if(p && p !== window && p.VeraWidgetConfig && typeof p.VeraWidgetConfig.open === 'function') return p.VeraWidgetConfig; }catch(e){} return null; }
   function openPicker(){
     var m = _menu(_active); if(!m || !_host) return; closePicker();
+    var S = _surface();
+    if(S){ var qs0 = _qspec(m);
+      var items = _pickOthers(m).map(function(o){ return { g:o.g, n:o.n, c:o.c, record:{ _menuItem:true, from:o.add.from, key:o.add.key, label:o.add.label, c:o.c } }; });
+      try{ Promise.resolve(S.open({ mode:'add', into:'lhm', title:'Add to ' + (m.title || m.label), templates:true, menuItems:items })).then(function(rec){
+        if(!rec) return;
+        if(rec._menuItem){ qs0.added.push({ label:rec.label, c:rec.c, from:rec.from, key:rec.key }); }
+        else { qs0.added.push({ label:rec.title || rec.form || 'widget', c:rec.source || rec.form || '', form:rec.form, record:rec }); }
+        _qsave(m); render(); }).catch(function(){}); return; }catch(e){}
+    }
     _pick = _el('div', 'lhm-pick'); _pick.setAttribute('data-w', 'widget picker · sheet');
     var hd = _el('div', 'lhm-pick-hd'); hd.appendChild(_el('h3', '', 'Add to ' + (m.title || m.label))); hd.appendChild(_el('span', 'sp')); hd.appendChild(_el('span', 'lbl mono', 'everything is a widget')); var x = _el('button', 'x', '✕'); x.type = 'button'; x.addEventListener('click', closePicker); hd.appendChild(x); _pick.appendChild(hd);
     var s = _el('label', 'lhm-pick-s'); s.appendChild(_el('span', '', '⌕')); var q = _el('input'); q.type = 'search'; q.placeholder = 'search widgets, menus, templates…'; q.value = _pickQ; q.addEventListener('input', function(){ _pickQ = q.value; _pickRender(m); }); s.appendChild(q); _pick.appendChild(s);
