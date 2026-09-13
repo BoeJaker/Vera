@@ -11,7 +11,10 @@ from Vera.vera.integrations.external_effects import plan_external_effect
 
 log = logging.getLogger("vera.docker.effects")
 SCHEMA = "vera.docker-effect-shadow/v1"
-MODES = frozenset({"exec", "stop", "remove", "run", "worker_stop"})
+MODES = frozenset({
+    "exec", "stop", "remove", "run", "worker_stop", "image_ensure",
+    "worker_spawn",
+})
 
 
 def _digest(value: str) -> str:

@@ -1028,6 +1028,8 @@ async def _image_present(rec: dict, image: str) -> bool:
     "docker.image.ensure",
     http_method="POST", http_path="/workers/docker/image/ensure", http_tags=["docker"],
     memory="off",
+    redact_args=["host_id", "image", "context", "dockerfile",
+                 "idempotency_key", "approval_receipt_ref"], redact_result=True,
     description="Make sure an image exists on a Docker host WITHOUT pulling from "
                 "a registry — for local-only images like the Vera one "
                 "('vera:latest' does not exist on Docker Hub; a docker run there "
@@ -1045,12 +1047,15 @@ async def _image_present(rec: dict, image: str) -> bool:
                 "force (bool=false — REBUILD from source even if the image already "
                 "exists; use to refresh a stale image, e.g. a dev sandbox running "
                 "an old vera:latest), timeout (int=1800). "
-                "Output: {ok, present, action, image, host_id, log}.",
+                "Optional idempotency, approval, and retry inputs are observe-only "
+                "and never sent to Docker. Output includes effect_shadow only when "
+                "a build or transfer was attempted.",
 )
 async def cap_docker_image_ensure(host_id: str = "", image: str = "",
                                   strategy: str = "auto", context: str = "",
                                   dockerfile: str = "", timeout: int = 1800,
-                                  force: bool = False,
+                                  force: bool = False, idempotency_key: str = "",
+                                  approval_receipt_ref: str = "", retry: bool = False,
                                   trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
@@ -1094,6 +1099,9 @@ async def cap_docker_image_ensure(host_id: str = "", image: str = "",
             strategy = "build_transfer"
         else:
             strategy = "build"
+    if strategy not in {"build", "transfer", "build_transfer"}:
+        return {"ok": False, "error": "strategy must be auto, build, transfer, or build_transfer",
+                "image": image, "host_id": rec["id"]}
     if strategy == "transfer" and not local_has:
         return {"ok": False, "error": f"transfer requested but the local daemon "
                                       f"does not have {image} — build it first "
@@ -1101,6 +1109,11 @@ async def cap_docker_image_ensure(host_id: str = "", image: str = "",
                 "image": image, "host_id": rec["id"]}
 
     log_tail = ""
+    shadow = None
+    effect_operation = json.dumps({
+        "strategy": strategy, "image": image, "context": context or str(_REPO_ROOT),
+        "dockerfile": dockerfile, "force": bool(force),
+    }, sort_keys=True, separators=(",", ":"))
     if strategy in ("build", "build_transfer"):
         build_rec = local_rec if strategy == "build_transfer" else rec
         ctx = context or str(_REPO_ROOT)
@@ -1114,6 +1127,11 @@ async def cap_docker_image_ensure(host_id: str = "", image: str = "",
             await emit_event({"type": "exec.sandbox.blocked",
                               "shell": "docker.image.ensure", "reason": reason})
             return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+        shadow = observe_docker_effect(
+            host_ref=rec["id"], resource_ref=image,
+            operation_ref=effect_operation, mode="image_ensure",
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
         await emit_event({"type": "docker.image.build", "image": image,
                           "host_id": build_rec["id"], "context": ctx})
         res = await _run_local(argv, timeout=int(timeout))
@@ -1122,7 +1140,8 @@ async def cap_docker_image_ensure(host_id: str = "", image: str = "",
         if not res.get("ok"):
             return {"ok": False, "action": strategy, "image": image,
                     "host_id": rec["id"], "log": log_tail,
-                    "error": (res.get("stderr") or "docker build failed")[-800:]}
+                    "error": (res.get("stderr") or "docker build failed")[-800:],
+                    "effect_shadow": shadow}
 
     if strategy in ("transfer", "build_transfer"):
         # Two-step save/load through a temp tar — portable (no shell pipe),
@@ -1136,20 +1155,31 @@ async def cap_docker_image_ensure(host_id: str = "", image: str = "",
                 if not ok:
                     await emit_event({"type": "exec.sandbox.blocked",
                                       "shell": "docker.image.ensure", "reason": reason})
-                    return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+                    out = {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+                    if shadow is not None:
+                        out["effect_shadow"] = shadow
+                    return out
+            if shadow is None:
+                shadow = observe_docker_effect(
+                    host_ref=rec["id"], resource_ref=image,
+                    operation_ref=effect_operation, mode="image_ensure",
+                    idempotency_key=idempotency_key,
+                    approval_receipt_ref=approval_receipt_ref, retry=retry)
             res = await _run_local(save_argv, timeout=int(timeout))
             log_tail += ("\n" + (res.get("stderr", "") or ""))[-1500:]
             if not res.get("ok"):
                 return {"ok": False, "action": strategy, "image": image,
                         "host_id": rec["id"], "log": log_tail,
-                        "error": res.get("stderr") or "docker save failed"}
+                        "error": res.get("stderr") or "docker save failed",
+                        "effect_shadow": shadow}
             res = await _run_local(load_argv, timeout=int(timeout))
             log_tail += ("\n" + (res.get("stdout", "") or "") +
                          (res.get("stderr", "") or ""))[-1500:]
             if not res.get("ok"):
                 return {"ok": False, "action": strategy, "image": image,
                         "host_id": rec["id"], "log": log_tail,
-                        "error": res.get("stderr") or "docker load failed"}
+                        "error": res.get("stderr") or "docker load failed",
+                        "effect_shadow": shadow}
         finally:
             try: tmp.unlink()
             except Exception: pass
@@ -1157,8 +1187,11 @@ async def cap_docker_image_ensure(host_id: str = "", image: str = "",
     present = await _image_present(rec, image)
     await emit_event({"type": "docker.image.ensured", "image": image,
                       "host_id": rec["id"], "action": strategy, "ok": present})
-    return {"ok": present, "present": present, "action": strategy,
-            "image": image, "host_id": rec["id"], "log": log_tail}
+    out = {"ok": present, "present": present, "action": strategy,
+           "image": image, "host_id": rec["id"], "log": log_tail}
+    if shadow is not None:
+        out["effect_shadow"] = shadow
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1181,6 +1214,9 @@ _DEFAULT_BACKEND_ENV = (
 @capability(
     "docker.worker.spawn",
     http_method="POST", http_path="/workers/docker/worker/spawn", http_tags=["docker", "workers"],
+    redact_args=["host_id", "name", "image", "redis_url", "network", "env",
+                 "extra_args", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Spin up a Vera worker container that joins the cluster. Runs the "
                 "Vera image (VERA_WORKER_IMAGE, default 'vera:latest') detached, "
                 "wired to the shared REDIS_URL so it auto-registers in WORKER_REGISTRY "
@@ -1193,13 +1229,16 @@ _DEFAULT_BACKEND_ENV = (
                 "gpus (str — e.g. 'all'), env (dict — extra -e vars), "
                 "inherit_backends (bool=true — copy POSTGRES/NEO4J/OLLAMA env), "
                 "ensure_image (bool=true — build/transfer the image if absent), "
-                "extra_args (str). Output: {ok, container_id, name, image, host_id}.",
+                "extra_args (str). Optional idempotency, approval, and retry inputs "
+                "are observe-only and never sent to Docker. Output includes "
+                "payload-free effect_shadow evidence.",
 )
 async def cap_docker_worker_spawn(
     host_id: str = "", name: str = "", image: str = "", redis_url: str = "",
     network: str = "", gpus: str = "", env: Optional[Dict[str, str]] = None,
     inherit_backends: bool = True, ensure_image: bool = True,
-    extra_args: str = "", trace_id=None,
+    extra_args: str = "", idempotency_key: str = "",
+    approval_receipt_ref: str = "", retry: bool = False, trace_id=None,
 ) -> Dict:
     rec = _get_host(host_id)
     if not rec:
@@ -1243,15 +1282,29 @@ async def cap_docker_worker_spawn(
         await emit_event({"type": "exec.sandbox.blocked", "shell": "docker.worker.spawn", "reason": reason})
         return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
 
+    shadow = observe_docker_effect(
+        host_ref=rec["id"], resource_ref=name,
+        operation_ref=json.dumps({"name": name, "image": image,
+                                  "redis_url": redis_url, "network": network,
+                                  "gpus": gpus, "env": env or {},
+                                  "inherit_backends": bool(inherit_backends),
+                                  "ensure_image": bool(ensure_image),
+                                  "extra_args": extra_args},
+                                 sort_keys=True, separators=(",", ":")),
+        mode="worker_spawn", idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
+
     res = await _run_local(argv, timeout=180)
     if not res.get("ok"):
         return {"ok": False, "error": res.get("stderr") or res.get("error") or "docker run failed",
-                "rc": res.get("rc"), "host_id": rec["id"]}
+                "rc": res.get("rc"), "host_id": rec["id"],
+                "effect_shadow": shadow}
     cid = (res.get("stdout", "") or "").strip().splitlines()[-1] if res.get("stdout") else ""
     await emit_event({"type": "docker.worker.spawned", "name": name, "image": image,
                       "container_id": cid[:12], "host_id": rec["id"]})
     return {"ok": True, "container_id": cid, "name": name, "image": image,
-            "host_id": rec["id"], "redis_url": redis_url}
+            "host_id": rec["id"], "redis_url": redis_url,
+            "effect_shadow": shadow}
 
 
 @capability(

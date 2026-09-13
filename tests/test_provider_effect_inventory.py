@@ -50,7 +50,7 @@ def test_inventory_does_not_claim_unmigrated_enforcement_or_retry():
     assert infrastructure["effect_observation"] == "partial"
     assert infrastructure["observed_mutations"] == [
         "docker.exec", "docker.stop", "docker.rm", "docker.run",
-        "docker.worker.stop"]
+        "docker.worker.stop", "docker.image.ensure", "docker.worker.spawn"]
     assert "infrastructure" in EVIDENCE_FAMILIES
 
 
