@@ -90,19 +90,26 @@
         + (c.caption ? `<div class="vc-cap">${esc(c.caption)}</div>` : '');
     },
 
-    widget: (c, size) => {
+    widget: (c, size, key) => {
       // a widget RECORD (name · draw · reads · source) draws through the one shared drawer when the page
       // has it; otherwise its record card, so the item still says what it is
       const rec = c && c.draw ? c : null;
+      const form = rec ? String(rec.form || rec.draw.form || '') : '';
+      // a record with a form is the live element (it reads its source itself, the sample face until it has one),
+      // in the column's live layer over this slot — never re-created by a render
+      if (rec && form && key && typeof customElements !== 'undefined' && customElements.get('vera-widget')) {
+        const src = typeof rec.source === 'string' ? rec.source : ((rec.source && (rec.source.origin || rec.source.from)) || (rec.reads && rec.reads.cap) || '');
+        return `<div class="vc-wid" data-w="canvas.widget"><div class="vc-live" data-live="widget" data-key="${esc(key)}" data-size="${esc(size || rec.draw.size || 'm')}"><span class="vc-dim">${esc(form)}…</span></div><div class="vc-cap mono">${esc(form)}${src ? ' · ' + esc(src) : ' · sample'}</div></div>`;
+      }
       if (rec && window.VeraWidget && typeof window.VeraWidget.draw === 'function') {
         try {
-          const out = window.VeraWidget.draw(rec.draw.form, rec.data, size || rec.draw.size || 'm');
+          const out = window.VeraWidget.draw(form, rec.data, size || rec.draw.size || 'm');
           if (out != null) return typeof out === 'string' ? out : (out.outerHTML || '');
         } catch (e) { /* fall through to the record card */ }
       }
-      if (rec) return `<div class="vc-rec"><b>${esc(rec.name || rec.reads && rec.reads.cap || 'widget')}</b>
-        <span class="vc-badge">${esc(rec.draw.form || '')}</span>
-        <span class="vc-dim">${esc((rec.source && (rec.source.origin || rec.source.from)) || (rec.reads && rec.reads.cap) || '')}</span></div>`;
+      if (rec) return `<div class="vc-rec"><b>${esc(rec.title || rec.name || (rec.reads && rec.reads.cap) || form || 'widget')}</b>
+        <span class="vc-badge">${esc(form)}</span>
+        <span class="vc-dim">${esc(typeof rec.source === 'string' ? rec.source : ((rec.source && (rec.source.origin || rec.source.from)) || (rec.reads && rec.reads.cap) || ''))}</span></div>`;
       return `<div class="vc-stub"><span class="vc-badge">widget</span>
         ${esc(c.title || c.widget || '')}</div>`;
     },
@@ -367,6 +374,8 @@
   #live .lv{position:absolute;box-sizing:border-box;border-radius:6px;overflow:hidden;background:#000}
   #live .lv > *{display:block;width:100%;height:100%}
   #live iframe.vc-pframe{border:0;background:var(--s1,var(--bg1,#15181d))}
+#live .lv[data-kind="widget"]{background:transparent}#live .lv vera-widget{display:block;width:100%;height:100%}
+.vc-wid{display:flex;flex-direction:column;gap:4px}.vc-wid .vc-cap{font-size:9.5px;color:var(--t3,var(--dim,#6b7480))}
   .vc-th{display:flex;align-items:center;gap:8px;min-height:24px;padding:2px 0 6px;font-size:11px;color:var(--t1,var(--fg,#dce1e8))}
   .vc-th b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   .vc-th .mono{font-family:var(--f-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:9.5px;color:var(--t3,var(--dim,#6b7480));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -451,7 +460,7 @@
     { n: 'note', ik: '✎', kind: 'note', content: { title: 'Note', text: '' }, edit: true },
     { n: 'terminal', ik: '>_', kind: 'session', content: { title: 'Terminal', host_id: '', container: '', shell: '' } },
     { n: 'panel', ik: '▤', kind: 'panel', content: { panel: '', title: 'Panel' }, pick: true },
-    { n: 'widget', ik: 'WG', kind: 'widget', content: { widget: '', title: 'Widget' } },
+    { n: 'widget', ik: 'WG', kind: 'widget', content: { widget: '', title: 'Widget' }, sheet: true },   // the WidgetConfig sheet picks the record
     { n: 'chart', ik: 'CH', kind: 'widget', content: { name: 'chart', title: 'Chart', draw: { form: 'trace', size: 'm' }, data: [], source: { origin: 'you' } } },
   ];
   const KIND_GLYPH = { note: '✎', markdown: 'MD', code: '{}', session: '>_', table: 'TB', widget: 'WG', loop: '⟳', diagram: '◇', image: '▣', schedule: '⏰', html: '<>', suggest: '✦', notebook: 'NB', panel: '▥' };
@@ -878,6 +887,7 @@
       if (act === 'add') {
         const k = ADD_KINDS.find(x => x.n === btn.dataset.kind); if (!k) return;
         if (k.pick) return this._panelPick(btn);
+        if (k.sheet && this._widgetSurface()) return this._widgetPick(btn, k);
         const nk = k.kind + ':' + k.n + '-' + Date.now().toString(36);
         const args = { kind: k.kind, key: nk, content: JSON.parse(JSON.stringify(k.content)), at: 'now', size: 'm' };
         // yours, not the turn's: it sits beside the turn in view and relates to no turn — no run is drawn to it
@@ -924,9 +934,11 @@
           // the wrapper is the column's (placed, sized, hidden); the element inside is the estate's own and keeps its styles
           let inner;
           if (kind === 'term') { inner = document.createElement('vera-terminal'); inner.setAttribute('ws', h.dataset.ws || ''); ensureLib('/ui/vera-terminal.js', 'vera-terminal'); }
+          else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = ''; }
           else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
           el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);
           try { this.dispatchEvent(new CustomEvent('vera:canvas:live', { bubbles: true, detail: { key, kind, ws: h.dataset.ws || '', src: h.dataset.src || '' } })); } catch (e) {}
+        } else if (kind === 'widget') { const inner = el.firstChild, rc = this._contentOf(key); const sz = h.dataset.size || 'm'; if (h.textContent) h.textContent = ''; if (inner && inner.getAttribute('size') !== sz) inner.setAttribute('size', sz); try { const j = JSON.stringify((rc && (rc.record || rc)) || null); if (inner && j && inner._recJson !== j) { inner._recJson = j; inner.record = rc.record || rc; } } catch (e) {}
         } else if (kind === 'term' && h.dataset.ws) { const t = el.firstChild; if (t && t.getAttribute('ws') !== h.dataset.ws) { t.setAttribute('ws', h.dataset.ws); try { t.destroy && t.destroy(); t.connect(h.dataset.ws); } catch (e) {} } }
       });
       Object.keys(L).forEach((k) => { if (!body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]')) { try { L[k].remove(); } catch (e) {} delete L[k]; } });
@@ -971,6 +983,22 @@
       const r = await this.callResult('ui.panels.open', { session_id: this._sid() }); const rows = (r && Array.isArray(r.panels)) ? r.panels : [];
       pop.innerHTML = (rows.length ? rows.map((p) => `<button class="pp" data-act="padd" data-pid="${esc(p.id)}" data-plabel="${esc(p.label || p.id)}"><b>${esc(p.label || p.id)}</b><span>${esc(p.host || '')}${p.origin ? ' · ' + esc(p.origin) : ''}</span></button>`).join('') : '<span class="vc-dim">no panel open for this session — any panel by its id:</span>')
         + '<div class="row"><input class="ti" data-f="pid" placeholder="panel id" spellcheck="false"><button class="ib on" data-act="paddid">Add</button></div>';
+    }
+    /* the add bar's widget: the WidgetConfig sheet (widget_element.js — this window's, or the host's when the column is
+       embedded); the record it resolves is the item's content, keyed by its form, yours (beside the turn, no run) */
+    _widgetSurface() { try { if (window.VeraWidgetConfig && window.VeraWidgetConfig.open) return window.VeraWidgetConfig; } catch (e) {} try { const p = window.parent; if (p && p !== window && p.VeraWidgetConfig && p.VeraWidgetConfig.open) return p.VeraWidgetConfig; } catch (e) {} return null; }
+    async _widgetPick(btn, k) {
+      const S = this._widgetSurface(); if (!S) return; const focusMid = this.dataset.focusMid || '';
+      let rec = null; try { rec = await S.open({ mode: 'add', into: 'canvas', anchor: btn, templates: true, title: 'Add a widget to the canvas', sizes: ['s', 'm', 'l', 'xl'] }); } catch (e) { rec = null; }
+      if (!rec) return;
+      const form = String(rec.form || (rec.draw && rec.draw.form) || 'widget'); const size = String((rec.frame && rec.frame.size) || (rec.draw && rec.draw.size) || 'm');
+      const nk = 'widget:' + form.replace(/[^a-zA-Z0-9_-]/g, '') + '-' + Date.now().toString(36);
+      // the record as the item's content: the form and the size where the column's renderers read them too
+      const content = Object.assign({}, rec, { widget: form, form, title: rec.title || form, draw: Object.assign({}, rec.draw || {}, { form, size }), record: rec });
+      const args = { kind: 'widget', key: nk, content, at: 'now', size, anchor: { origin: 'you', beside: focusMid } };
+      this._open.add(nk);
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:add', { bubbles: true, detail: { key: nk, kind: 'widget', add: 'widget', form } })); } catch (e) {}
+      return this.call('canvas.add', args);
     }
     _panelAdd(id, label) {
       id = String(id || '').trim(); if (!id) return; const key = 'panel:' + id; const focusMid = this.dataset.focusMid || '';
