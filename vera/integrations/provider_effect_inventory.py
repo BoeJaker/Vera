@@ -99,6 +99,8 @@ _DOMAINS: tuple[dict[str, Any], ...] = (
             "docker.exec", "docker.stop", "docker.rm", "docker.run",
             "docker.worker.stop", "docker.image.ensure", "docker.worker.spawn",
             "docker.stack.deploy",
+            "build.builder.up", "build.arduino", "build.platformio",
+            "build.run", "build.python",
         ],
         "automatic_retries": False,
         "source_modules": [

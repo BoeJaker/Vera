@@ -81,8 +81,8 @@ logical deployment observation rather than a second nested `docker.run`
 observation. An already-running store is a read-only short circuit; restarting a
 stopped store, writing Garage configuration, creating a store container, and
 removing or purging a store are observed immediately before their first Docker
-mutation. Streaming routes and the remaining provisioning/build families are
-not yet fully covered, so
+mutation. Streaming routes and the remaining managed-host provisioning families
+are not yet fully covered, so
 Infrastructure evidence in the Integrations UI is labelled partial.
 
 ---
@@ -167,7 +167,16 @@ Bring it up whichever way suits the deployment:
 docker compose up -d --build vera-builder     # in-stack
 ```
 
-`build.builder.up` does the same thing for a native orchestrator (and is what the Mesh panel's **Start build service** button calls): it builds `vera/build/Dockerfile` if the image is missing, runs the container with `$BUILDER_PORT` published, and waits for `/health`. It's idempotent — a reachable builder returns immediately; `rebuild: true` forces a fresh image.
+`build.builder.up` does the same thing for a native orchestrator (and is what the Mesh panel's **Start build service** button calls): it builds `vera/build/Dockerfile` if the image is missing, runs the container with `$BUILDER_PORT` published, and waits for `/health`. It's idempotent — a reachable builder returns immediately and emits no mutation observation; `rebuild: true` forces a fresh image. When startup does mutate infrastructure, its background job records one payload-free builder-service observation before the first build/container action; `build.progress` exposes that shadow with the completed job result.
+
+The remote compiler capabilities—`build.arduino`, `build.platformio`,
+`build.run`, and `build.python`—also project a payload-free Infrastructure
+effect immediately before their builder POST. Source files, commands,
+environment variables, dependency lists, artifacts, builder URLs, and raw
+approval/idempotency references are represented only through stable digests and
+are not retained in the evidence ledger. Optional control references are not
+sent to the builder. These projections observe existing execution; they do not
+block it, introduce retries, or claim completion receipts.
 
 ### Progress on long builds
 

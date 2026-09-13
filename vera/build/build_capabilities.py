@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import re
@@ -28,6 +29,7 @@ from typing import Any, Dict, Optional
 
 from Vera.vera.capability_orchestration import APP, capability
 from Vera.vera import state_paths
+from Vera.vera.integrations.infrastructure_effects import observe_infrastructure_effect
 
 log = logging.getLogger("vera.build")
 
@@ -120,6 +122,32 @@ async def builder_get(path: str, timeout: float = 15.0) -> dict:
 
 def _safe_name(name: str) -> str:
     return os.path.basename(name or "").replace("\\", "").strip() or "artifact.bin"
+
+
+def _observe_build_effect(*, mode: str, resource_ref: str, operation: Dict[str, Any],
+                          idempotency_key: str = "",
+                          approval_receipt_ref: str = "", retry: bool = False) -> dict:
+    """Project one build mutation without retaining source, commands, or env."""
+    return observe_infrastructure_effect(
+        provider="builder", target_ref=builder_url(), resource_ref=resource_ref,
+        operation_ref=json.dumps(operation, sort_keys=True, separators=(",", ":")),
+        mode=mode, idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
+
+
+async def _observed_builder_post(*, path: str, payload: Dict[str, Any], mode: str,
+                                 resource_ref: str, timeout: float = 1200.0,
+                                 idempotency_key: str = "",
+                                 approval_receipt_ref: str = "",
+                                 retry: bool = False) -> dict:
+    """Observe once immediately before the remote builder POST."""
+    shadow = _observe_build_effect(
+        mode=mode, resource_ref=resource_ref, operation=payload,
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
+    result = await builder_post(path, payload, timeout=timeout)
+    result["effect_shadow"] = shadow
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -246,6 +274,8 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
     @capability(
         "build.builder.up", http_method="POST", http_path="/build/builder/up",
         http_tags=["build"], memory="on",
+        redact_args=["network", "idempotency_key", "approval_receipt_ref"],
+        redact_result=True,
         description="Bring the vera-builder compile service up on the local Docker host — builds the "
                     "image from vera/build/Dockerfile if it is missing (SLOW the first time: the ESP32 "
                     "Arduino core pulls ~2 GB of toolchains) and starts the container with its port "
@@ -255,10 +285,14 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
                     "streams `Step n/m`). Input: port (int=8785 — host port), rebuild (bool=False — "
                     "force a fresh image build), network (str — extra docker network to join), "
                     "background (bool=True), timeout (int=2400). Output: {ok, job_id} when "
-                    "backgrounded, else {ok, url, tools, image, container}.",
+                    "backgrounded, else {ok, url, tools, image, container, "
+                    "effect_shadow?}. Optional idempotency, approval, and retry "
+                    "inputs are observe-only and never sent to Docker.",
     )
     async def cap_build_builder_up(port: int = 0, rebuild: bool = False, network: str = "",
                                    background: bool = True, timeout: int = 2400,
+                                   idempotency_key: str = "",
+                                   approval_receipt_ref: str = "", retry: bool = False,
                                    trace_id=None) -> dict:
         import asyncio as _aio
 
@@ -271,13 +305,19 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
 
         jid = job_start("builder-up", "start build service")
         if not background:
-            return await _builder_up_job(jid, port, rebuild, network, timeout)
-        _aio.create_task(_builder_up_job(jid, port, rebuild, network, timeout))
+            return await _builder_up_job(
+                jid, port, rebuild, network, timeout, idempotency_key,
+                approval_receipt_ref, retry)
+        _aio.create_task(_builder_up_job(
+            jid, port, rebuild, network, timeout, idempotency_key,
+            approval_receipt_ref, retry))
         return {"ok": True, "job_id": jid, "background": True,
                 "note": "poll build.progress for phase/pct/log"}
 
     async def _builder_up_job(jid: str, port: int, rebuild: bool, network: str,
-                              timeout: int) -> dict:
+                              timeout: int, idempotency_key: str = "",
+                              approval_receipt_ref: str = "",
+                              retry: bool = False) -> dict:
         """The actual bring-up, reporting into the job record as it goes."""
         from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
         import asyncio as _aio
@@ -292,6 +332,10 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
 
         image, container = "vera-builder:latest", "vera-builder"
         ctx = Path(__file__).resolve().parent
+        shadow = None
+        effect_operation = {"port": int(port), "rebuild": bool(rebuild),
+                            "network": network, "image": image,
+                            "container": container}
         try:
             # 1) Image. Streamed rather than delegated to docker.image.ensure so the
             # ~10-minute first build reports `Step n/m` instead of sitting silent.
@@ -307,18 +351,30 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
             else:
                 job_phase(jid, "building image (first run pulls ~2 GB of toolchains)", 3)
                 job_log(jid, f"docker build -t {image} {ctx}")
+                shadow = _observe_build_effect(
+                    mode="builder_up", resource_ref=container,
+                    operation=effect_operation, idempotency_key=idempotency_key,
+                    approval_receipt_ref=approval_receipt_ref, retry=retry)
                 rc = await run_streaming(jid, ["docker", "build", "-t", image,
                                                "-f", str(ctx / "Dockerfile"), str(ctx)],
                                          timeout=int(timeout))
                 if rc != 0:
                     job_done(jid, False, error=f"docker build failed (rc={rc})")
                     return {"ok": False, "stage": "image", "image": image,
-                            "error": f"docker build failed (rc={rc})"}
+                            "error": f"docker build failed (rc={rc})",
+                            "effect_shadow": shadow}
                 job_phase(jid, "image built", 60)
 
             # 2) Container.
             job_phase(jid, "starting container", 70)
-            await _cap("docker.rm", host_id="local", container=container, force=True)
+            if shadow is None:
+                shadow = _observe_build_effect(
+                    mode="builder_up", resource_ref=container,
+                    operation=effect_operation, idempotency_key=idempotency_key,
+                    approval_receipt_ref=approval_receipt_ref, retry=retry)
+            await _cap("docker.rm", host_id="local", container=container, force=True,
+                       idempotency_key=idempotency_key,
+                       approval_receipt_ref=approval_receipt_ref, retry=retry)
 
             async def _run(cname: str):
                 return await _cap("docker.run", host_id="local", image=image, name=cname,
@@ -326,7 +382,10 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
                                   volumes="vera-builder-cache:/opt/arduino,"
                                           "vera-builder-pio:/opt/platformio",
                                   env={"BUILDER_DEFAULT_FQBN": os.environ.get(
-                                      "BUILDER_DEFAULT_FQBN", "esp32:esp32:esp32")})
+                                      "BUILDER_DEFAULT_FQBN", "esp32:esp32:esp32")},
+                                  idempotency_key=idempotency_key,
+                                  approval_receipt_ref=approval_receipt_ref,
+                                  retry=retry)
 
             run = await _run(container)
             # An interrupted `docker create` can leave the daemon holding the NAME
@@ -342,7 +401,8 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
                 err = (run or {}).get("error", "docker run failed")
                 job_log(jid, err)
                 job_done(jid, False, error=err)
-                return {"ok": False, "stage": "run", "image": image, "error": err}
+                return {"ok": False, "stage": "run", "image": image,
+                        "error": err, "effect_shadow": shadow}
 
             # 3) Health — uvicorn needs a moment after the container starts.
             job_phase(jid, "waiting for the build service to answer", 85)
@@ -352,7 +412,7 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
                 if url:
                     h = await builder_get("/health")
                     res = {"ok": True, "url": url, "image": image, "container": container,
-                           "tools": h.get("tools")}
+                           "tools": h.get("tools"), "effect_shadow": shadow}
                     job_log(jid, f"build service healthy at {url}")
                     job_done(jid, True, result=res)
                     return res
@@ -361,11 +421,14 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
             err = f"container started but /health never answered on port {port}"
             job_done(jid, False, error=err)
             return {"ok": False, "stage": "health", "container": container, "error": err,
-                    "hint": "check `docker logs vera-builder`"}
+                    "hint": "check `docker logs vera-builder`", "effect_shadow": shadow}
         except Exception as e:
             log.warning("builder up job %s: %s", jid, e)
             job_done(jid, False, error=str(e))
-            return {"ok": False, "error": str(e)}
+            out = {"ok": False, "error": str(e)}
+            if shadow is not None:
+                out["effect_shadow"] = shadow
+            return out
 
     @capability(
         "build.progress", http_method="GET", http_path="/build/progress",
@@ -382,18 +445,26 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
     @capability(
         "build.arduino", http_method="POST", http_path="/build/arduino",
         http_tags=["build"], memory="on",
+        redact_args=["source", "files", "main", "fqbn", "libraries", "board_urls",
+                     "build_properties", "name", "idempotency_key",
+                     "approval_receipt_ref"],
+        redact_result=True,
         description="Compile an Arduino sketch in the builder and drop a flashable (merged, 0x0) .bin "
                     "into the mesh firmware catalog so the panel flasher can pick it up. Input: "
                     "source (str — the .ino) OR files (dict {name:content}), main (str='sketch.ino'), "
                     "fqbn (str — e.g. esp32:esp32:esp32s3:CDCOnBoot=default), libraries (list — extra), "
                     "auto_libs (bool=True — auto-install libs from the sketch's #includes), board_urls "
                     "(list — extra board-manager index URLs for third-party cores), build_properties "
-                    "(list), name (str — output .bin name). Output: {ok, name, url, size, deps, log}.",
+                    "(list), name (str — output .bin name). Optional idempotency, "
+                    "approval, and retry inputs are observe-only and are not sent "
+                    "to the builder. Output includes payload-free effect_shadow.",
     )
     async def cap_build_arduino(source: str = "", files=None, main: str = "sketch.ino",
                                 fqbn: str = "", libraries=None, auto_libs: bool = True,
                                 board_urls=None, build_properties=None,
-                                name: str = "", trace_id=None) -> dict:
+                                name: str = "", idempotency_key: str = "",
+                                approval_receipt_ref: str = "", retry: bool = False,
+                                trace_id=None) -> dict:
         payload: Dict[str, Any] = {"main": main, "auto_libs": bool(auto_libs)}
         if source:
             payload["source"] = source
@@ -407,7 +478,11 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
             payload["board_urls"] = board_urls
         if build_properties:
             payload["build_properties"] = build_properties
-        res = await builder_post("/build/arduino", payload)
+        res = await _observed_builder_post(
+            path="/build/arduino", payload=payload, mode="arduino",
+            resource_ref=name or main or "arduino.bin",
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
         if not res.get("ok"):
             return res
         out_name = _safe_name(name or res.get("name") or "arduino.bin")
@@ -415,20 +490,30 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
             _MESH_BIN_DIR.mkdir(parents=True, exist_ok=True)
             (_MESH_BIN_DIR / out_name).write_bytes(base64.b64decode(res["bin_b64"]))
         except Exception as e:
-            return {"ok": False, "error": f"could not save bin: {e}", "log": res.get("log", "")}
+            return {"ok": False, "error": f"could not save bin: {e}",
+                    "log": res.get("log", ""),
+                    "effect_shadow": res.get("effect_shadow")}
         return {"ok": True, "name": out_name, "url": f"/mesh/firmware/bin/{out_name}",
                 "chip": res.get("chip"), "merged": res.get("merged"), "size": res.get("size"),
-                "deps": res.get("deps"), "log": (res.get("log") or "")[-1500:]}
+                "deps": res.get("deps"), "log": (res.get("log") or "")[-1500:],
+                "effect_shadow": res.get("effect_shadow")}
 
     @capability(
         "build.platformio", http_method="POST", http_path="/build/platformio",
         http_tags=["build"], memory="on",
+        redact_args=["platformio_ini", "files", "environment", "name",
+                     "idempotency_key", "approval_receipt_ref"],
+        redact_result=True,
         description="Build a PlatformIO project in the builder (any supported board/framework). Input: "
                     "platformio_ini (str) OR files (dict incl. platformio.ini + src/*), environment "
-                    "(str — a [env:] name), name (str — output .bin name). Output: {ok, name, url, size, log}.",
+                    "(str — a [env:] name), name (str — output .bin name). Optional "
+                    "idempotency, approval, and retry inputs are observe-only and "
+                    "are not sent to the builder. Output includes effect_shadow.",
     )
     async def cap_build_platformio(platformio_ini: str = "", files=None, environment: str = "",
-                                   name: str = "", trace_id=None) -> dict:
+                                   name: str = "", idempotency_key: str = "",
+                                   approval_receipt_ref: str = "", retry: bool = False,
+                                   trace_id=None) -> dict:
         payload: Dict[str, Any] = {}
         if platformio_ini:
             payload["platformio_ini"] = platformio_ini
@@ -436,7 +521,11 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
             payload["files"] = files
         if environment:
             payload["environment"] = environment
-        res = await builder_post("/build/platformio", payload)
+        res = await _observed_builder_post(
+            path="/build/platformio", payload=payload, mode="platformio",
+            resource_ref=name or environment or "firmware.bin",
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
         if not res.get("ok"):
             return res
         out_name = _safe_name(name or res.get("name") or "firmware.bin")
@@ -444,28 +533,44 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
             _OUT_DIR.mkdir(parents=True, exist_ok=True)
             (_OUT_DIR / out_name).write_bytes(base64.b64decode(res["bin_b64"]))
         except Exception as e:
-            return {"ok": False, "error": f"could not save bin: {e}", "log": res.get("log", "")}
+            return {"ok": False, "error": f"could not save bin: {e}",
+                    "log": res.get("log", ""),
+                    "effect_shadow": res.get("effect_shadow")}
         return {"ok": True, "name": out_name, "url": f"/build/output/{out_name}",
-                "size": res.get("size"), "log": (res.get("log") or "")[-1500:]}
+                "size": res.get("size"), "log": (res.get("log") or "")[-1500:],
+                "effect_shadow": res.get("effect_shadow")}
 
     @capability(
         "build.run", http_method="POST", http_path="/build/run",
         http_tags=["build"], memory="on",
+        redact_args=["command", "files", "artifacts", "apt", "pip", "env",
+                     "idempotency_key", "approval_receipt_ref"],
+        redact_result=True,
         description="Run an arbitrary build/compile command in the builder sandbox (make, cmake, gcc, "
                     "cargo, go, tsc, …) and collect artifacts, auto-managing dependencies. Input: "
                     "command (str!), files (dict {path:content}), artifacts (list of globs), apt (list "
                     "— system packages to install), pip (list — Python packages, installed into an "
                     "isolated venv), venv (bool — force a venv even with no pip), env (dict — extra env "
-                    "vars), timeout (int). Output: {ok, returncode, stdout, stderr, setup_log, artifacts}.",
+                    "vars), timeout (int). Optional idempotency, approval, and "
+                    "retry inputs are observe-only and are not sent to the builder. "
+                    "Output includes payload-free effect_shadow.",
     )
     async def cap_build_run(command: str = "", files=None, artifacts=None, apt=None, pip=None,
-                            venv: bool = False, env=None, timeout: int = 900, trace_id=None) -> dict:
+                            venv: bool = False, env=None, timeout: int = 900,
+                            idempotency_key: str = "",
+                            approval_receipt_ref: str = "", retry: bool = False,
+                            trace_id=None) -> dict:
         if not command:
             return {"error": "command required"}
-        res = await builder_post("/build/exec", {
+        payload = {
             "command": command, "files": files or {}, "artifacts": artifacts or [],
             "apt": apt or [], "pip": pip or [], "venv": bool(venv), "env": env or {},
-            "timeout": int(timeout)}, timeout=float(timeout) + 120)
+            "timeout": int(timeout)}
+        res = await _observed_builder_post(
+            path="/build/exec", payload=payload, mode="run",
+            resource_ref="build-command", timeout=float(timeout) + 120,
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
         saved: Dict[str, str] = {}
         for rel, b64 in (res.get("artifacts") or {}).items():
             try:
@@ -479,23 +584,37 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
                 "stdout": (res.get("stdout") or "")[-3000:],
                 "stderr": (res.get("stderr") or "")[-3000:],
                 "setup_log": (res.get("setup_log") or "")[-2000:],
-                "artifacts": saved, "error": res.get("error")}
+                "artifacts": saved, "error": res.get("error"),
+                "effect_shadow": res.get("effect_shadow")}
 
     @capability(
         "build.python", http_method="POST", http_path="/build/python",
         http_tags=["build"], memory="on",
+        redact_args=["files", "requirements", "command", "artifacts", "env",
+                     "idempotency_key", "approval_receipt_ref"],
+        redact_result=True,
         description="Run Python in a fresh, isolated virtualenv the builder creates per call — installs "
                     "your deps, runs, then discards the env. Input: files (dict {path:content}), "
                     "requirements (list|str — pip deps; a requirements.txt in files also works), command "
                     "(str='python3 main.py'), artifacts (list of globs), env (dict), timeout (int). "
-                    "Output: {ok, returncode, stdout, stderr, setup_log, artifacts:{name:url}}.",
+                    "Optional idempotency, approval, and retry inputs are "
+                    "observe-only and are not sent to the builder. Output includes "
+                    "payload-free effect_shadow.",
     )
     async def cap_build_python(files=None, requirements=None, command: str = "",
-                               artifacts=None, env=None, timeout: int = 900, trace_id=None) -> dict:
-        res = await builder_post("/build/python", {
+                               artifacts=None, env=None, timeout: int = 900,
+                               idempotency_key: str = "",
+                               approval_receipt_ref: str = "", retry: bool = False,
+                               trace_id=None) -> dict:
+        payload = {
             "files": files or {}, "requirements": requirements or [],
             "command": command or "python3 main.py", "artifacts": artifacts or [],
-            "env": env or {}, "timeout": int(timeout)}, timeout=float(timeout) + 120)
+            "env": env or {}, "timeout": int(timeout)}
+        res = await _observed_builder_post(
+            path="/build/python", payload=payload, mode="python",
+            resource_ref="python-build", timeout=float(timeout) + 120,
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
         saved: Dict[str, str] = {}
         for rel, b64 in (res.get("artifacts") or {}).items():
             try:
@@ -509,7 +628,8 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
                 "stdout": (res.get("stdout") or "")[-3000:],
                 "stderr": (res.get("stderr") or "")[-3000:],
                 "setup_log": (res.get("setup_log") or "")[-2000:],
-                "artifacts": saved, "error": res.get("error")}
+                "artifacts": saved, "error": res.get("error"),
+                "effect_shadow": res.get("effect_shadow")}
 
     # Serve generic build artifacts (firmware .bins live under the mesh route).
     try:

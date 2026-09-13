@@ -51,7 +51,8 @@ def test_inventory_does_not_claim_unmigrated_enforcement_or_retry():
     assert infrastructure["observed_mutations"] == [
         "docker.exec", "docker.stop", "docker.rm", "docker.run",
         "docker.worker.stop", "docker.image.ensure", "docker.worker.spawn",
-        "docker.stack.deploy"]
+        "docker.stack.deploy", "build.builder.up", "build.arduino",
+        "build.platformio", "build.run", "build.python"]
     provisioning = _domain(result, "proxmox_and_provisioning")
     assert provisioning["effect_contract_applied"] is False
     assert provisioning["effect_observation"] == "partial"
