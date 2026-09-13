@@ -23,6 +23,11 @@
    the records as rows (source dot · label · relevance bar · tokens · included), the search box filters the list AND
    dims what does not match in the plot (n hits); the edge-type chips fold a relation type away (the old graph's edge
    classes); the frames scrubber walks the turns' snapshots the chat keeps (setFrames) without touching the live set.
+   A frame is a TURN: {id, label, ts, mid, amid, turn, query, nodes, edges} — the context assembled for the question
+   `mid` and what the response `amid` added (a node's `by`: 'u' in the prompt, 'a' read by the response). While a
+   frame is active (setFrames(list, {active}) — the chat makes the turn in view the active one as the transcript
+   scrolls; frame(id) — the scrubber, which the chat answers by scrolling to that turn), its included records are the
+   focus, read by its mid / amid, and "turn m12" stands under the hub; the live set is what the host feeds setContext.
 
    <vera-context-graph>  API:
      setContext(nodes, edges, {focus:[ids], reads:{mid:[ids]}, stepReads:[[ids]], color:(source)=>css, turn})
@@ -61,6 +66,8 @@
   // the record's text, as the chat feeds it: `text` (the rail's own field), else snippet · summary · content · preview
   const textOf = (n) => { if (!n) return ''; const v = [n.text, n.snippet, n.summary, n.content, n.preview].find((x) => x != null && String(x).trim() !== ''); return v == null ? '' : String(v); };
   const edgeTypeOf = (e) => String(e.label || e.type || e.relation || '').trim().toUpperCase() || 'RELATED';
+  // a frame's reads: its included records, by the question (mid) or by the response (amid) as each node's `by` says
+  const frameReads = (f, ns) => { const r = {}; const um = f.mid || f.label || '', am = f.amid || ''; ns.forEach((n) => { if (n.included === false) return; const key = n.by === 'a' && am ? am : um; if (!key) return; (r[key] = r[key] || []).push(n.id); }); return r; };
   // the typed icons (the Canvas board's node icons, 16-unit paths): a record wears the icon of what it is
   const ICON = {
     person: 'M8 8.4a2.8 2.8 0 1 0 0-5.6 2.8 2.8 0 0 0 0 5.6Zm-4.9 5.2a4.9 4.9 0 0 1 9.8 0',
@@ -162,7 +169,10 @@
     const PW = Math.max(quad ? 240 : 200 * k, W), PHfull = Math.max(quad ? 200 : 160 * k, H), PH = PHfull - LANE_B;
     // the plot proper: right of the loop lane, below the plan row
     const cxp = LANE_L + (PW - LANE_L) / 2, cyp = LANE_T + (PH - LANE_T) / 2;
-    const focus = new Set(S.focus || []);
+    // in a frame the turn's prompt is the focus (its included records), read by the question or the response; the
+    // live set keeps the host's focus and reads
+    const focus = new Set(frame ? nodes.filter((n) => n.included !== false).map((n) => n.id) : (S.focus || []));
+    const turnLabel = frame ? (frame.turn || 'turn ' + (frame.mid || frame.label || frame.id)) : (S.turn || '');
     // memory: the context's own memory records (injected) plus the session's memory graph (the rail's Memory tab) —
     // a session record already in the prompt is drawn once, filled; one never injected is hollow. In focus, only the
     // session records that touch something in the prompt stay on the arc
@@ -175,7 +185,7 @@
     const mem = memCtx.concat(memSess);
     const ctx = nodes.filter((n) => n.source !== 'memory' && !off.has(n.source) && (ghosts || n.included !== false));
     const srcs = [...new Set(ctx.map((n) => n.source || '?'))].sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99));
-    const reads = S.reads || {};
+    const reads = frame ? (frame.reads || frameReads(frame, nodes)) : (S.reads || {});
     const readBy = (id) => Object.keys(reads).filter((k2) => (reads[k2] || []).indexOf(id) >= 0);
     const stepReads = S.stepReads || [];
     const readBySteps = (id) => stepReads.map((r, i) => (r || []).indexOf(id) >= 0 ? i + 1 : 0).filter(Boolean);
@@ -223,7 +233,7 @@
         : (x, y, z) => { const u = x - cxp, v = y - cyp; return { x: cxp + (u - v) * kx, y: cyp + Y0 + (u + v) * ky - (z || 0) }; };
       ISO = { kx, ky, sinT, tilt, y0: Y0, k: K0, pad: PAD, box, fit: Math.max(box.w / (PW - LANE_L), box.h / (PH - LANE_T)) };
     } else RMAX = Math.max(60 * k, Math.min(PW - LANE_L, PH - LANE_T) / 2 - memMargin);
-    const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], memLabels: [], cedges: [], sedges: [], stems: [], pins: [], plate: null, regions: [], loopNodes: [], loopStems: [], planNodes: [], stepNodes: [], planPlot: [], estNodes: [], estLabels: [], dividers: [], pos: {}, tokens: 0, lit: 0, hits: 0, q: QS, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' || quad }, discs: [], iso: ISO, k };
+    const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], memLabels: [], cedges: [], sedges: [], stems: [], pins: [], plate: null, regions: [], loopNodes: [], loopStems: [], planNodes: [], stepNodes: [], planPlot: [], estNodes: [], estLabels: [], dividers: [], pos: {}, tokens: 0, lit: 0, hits: 0, q: QS, turn: turnLabel, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' || quad }, discs: [], iso: ISO, k };
     // the plot's pan/zoom, for what is drawn OUTSIDE it (the lanes) but joins a record inside it
     const GZ = (S.pan && S.pan.z) || 1, GX = (S.pan && S.pan.x) || 0, GY = (S.pan && S.pan.y) || 0;
     const atP = (p) => ({ x: PW / 2 + (p.x - PW / 2) * GZ + GX, y: PHfull / 2 + (p.y - PHfull / 2) * GZ + GY });
@@ -293,7 +303,7 @@
         const d = Math.max(17 * k, (7 + Math.sqrt(tok) / 2.7 + 8) * k);
         const kind = kindOf(n, s);
         const hit = matchQ(n); if (QS && hit) out.hits++;
-        out.pos[n.id] = { x: q.x, y: q.y, col, source: s, label: n.label || n.id, lit: inFocus, rim: d / 2, ghost, score, tok, kind: n.type || s, icon: kind, rec: n, hit };
+        out.pos[n.id] = { x: q.x, y: q.y, col, source: s, label: n.label || n.id, lit: inFocus, rim: d / 2, ghost, score, tok, kind: n.type || s, icon: kind, rec: n, hit, by: n.by === 'a' ? 'a' : 'u' };
         out.cnodes.push({ id: n.id, x: px(q.x), y: px(q.y), d: px(d), col, kind, cls: (inFocus ? 'lit ' : everRead ? '' : 'dim ') + (ghost ? 'ghost ' : '') + (n.type === 'dataset' ? 'sq ' : '') + (QS && !hit ? 'miss ' : '') + (S.sel === n.id ? 'on' : ''),
           op: (inFocus ? 1 : everRead ? 0.55 + score * 0.3 : ghost ? 0.4 : 0.55).toFixed(2),
           title: (n.label || n.id) + ' · ' + s + (n.type ? ' · ' + n.type : '') + ' · relevance ' + score.toFixed(2) + ' · ' + tok + ' tokens' + (ghost ? ' · related, not injected' : inFocus ? ' · in this prompt' : everRead ? ' · read by ' + by.join(', ') : '') });
@@ -343,7 +353,7 @@
       const memCol = (n) => (n._sess && S.memColor && S.memColor(n.type)) || color('memory');
       const shape = (n) => n.type === 'message' ? 'msg' : n.type === 'session' ? 'sess' : /^dag/.test(n.type || '') ? 'dag' : '';
       const put = (n, a, R, row, ghost) => { const q = memAt(a, R, row); const lit = !ghost && focus.has(n.id); const imp = Math.max(0, Math.min(1, +n.score || 0));
-        out.pos[n.id] = { x: q.x, y: q.y, col: memCol(n), source: 'memory', label: n.label || n.id, lit, rim: 6 * k, ghost, score: imp, tok: tokOf(n), kind: n.type || 'memory', rec: n.rec || n, sess: !!n._sess }; if (lit) { out.tokens += tokOf(n); out.lit++; }
+        out.pos[n.id] = { x: q.x, y: q.y, col: memCol(n), source: 'memory', label: n.label || n.id, lit, rim: 6 * k, ghost, score: imp, tok: tokOf(n), kind: n.type || 'memory', rec: n.rec || n, sess: !!n._sess, by: 'u' }; if (lit) { out.tokens += tokOf(n); out.lit++; }
         const hit = matchQ(n); if (QS && hit) out.hits++; out.pos[n.id].hit = hit;
         out.memNodes.push({ id: n.id, x: px(q.x), y: px(q.y), col: memCol(n), kind: memKind(n.type), op: ghost ? (0.45 + imp * 0.45).toFixed(2) : '1', cls: shape(n) + ' ' + (ghost ? 'ghost ' : lit ? 'lit ' : '') + (QS && !hit ? 'miss ' : '') + (S.sel === n.id ? 'on' : ''), title: (n.label || n.id) + ' · ' + (n.type || 'memory') + (ghost ? ' · in the session, not injected' : lit ? ' · in this prompt' : ' · injected') + (n._sess ? ' · importance ' + imp.toFixed(2) : '') }); };
       // the injected arc: evenly along the arm
@@ -506,6 +516,8 @@
     const tok = o.tokens >= 1000 ? (o.tokens / 1000).toFixed(1) + 'k' : o.tokens;
     if (o.hubs) o.hubs.forEach((hb) => { h += '<div class="cg-hub cell' + (hb.hid ? ' hid' : '') + '" style="' + stAt(hb.x, hb.y) + '"><b>aide</b><span>' + tok + '</span></div>'; });
     else h += '<div class="cg-hub' + (o.hub.hid ? ' hid' : '') + '" style="' + stAt(o.hub.x, o.hub.y) + '"><b>aide</b><span>' + tok + '</span></div>';
+    // the turn under the hub — the frame in view (the transcript's scroll), or the host's turn label for the live set
+    if (o.turn && !o.hub.hid && !o.hubs) h += '<div class="cg-hubt" style="' + stAt(o.hub.x, o.hub.y + 34 * (o.k || 1)) + '">' + esc(o.turn) + '</div>';
     return h;
   }
   // what stays put: the tracks (the loop lane, the plan row, the estate strip), their relations into the plot, the record
@@ -729,6 +741,8 @@ vera-context-graph .cg-edge.read{height:1.5px;opacity:.85}vera-context-graph .cg
 vera-context-graph .cg-edge.exec.lit{opacity:.9;height:1.5px}
 vera-context-graph .cg-edge.mem.spine{border-top-style:solid;opacity:.85}vera-context-graph .cg-edge.mem.hub{opacity:.35}
 vera-context-graph .cg-edge.same{height:0;border-top:1px dotted var(--cg-bd2);background:none!important;opacity:.6}
+vera-context-graph .cg-hubt{position:absolute;transform:translate(-50%,0);font-family:var(--cg-mono);font-size:9px;color:var(--cg-t3);white-space:nowrap;pointer-events:none;letter-spacing:.02em}
+.cg-mini .cg-hubt{font-size:6.5px}
 vera-context-graph .cg-edge.spoke{height:1px;opacity:.28}vera-context-graph .cg-edge.spoke.lit{height:1px;opacity:.55}
 vera-context-graph .cg-list-h .all{font:inherit;font-size:8.5px;height:16px;padding:0 6px;border:1px solid var(--cg-bd);border-radius:4px;background:var(--cg-s2);color:var(--cg-t2);cursor:pointer;flex:none}vera-context-graph .cg-list-h .all:hover{color:var(--cg-t1)}
 vera-context-graph .cg-rec-a a.lnk{font-size:10px;color:var(--cg-ac);text-decoration:none;padding:4px 6px;border-radius:4px;box-shadow:0 0 0 1px var(--cg-bd);background:var(--cg-s1)}vera-context-graph .cg-rec-a a.lnk:hover{text-decoration:underline}
@@ -811,7 +825,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
       zoomTo(id, z) { const p = this._last && this._last.pos[id]; if (!p) return false; const plot = this._r.plot; const W = Math.max(200, plot.clientWidth || 600), H = Math.max(160, plot.clientHeight || 500); this._S.pan = panTo(p, W, H, z || Math.max(this._S.pan.z || 1, 1.6)); this._schedule(); return true; }
       state() { return this._S; }
       // screen positions of the drawn records (for the runs to the message the host draws)
-      positions() { const out = []; this.querySelectorAll('.cg-node:not(.dup),.cg-mem:not(.dup)').forEach((el) => { const r = el.getBoundingClientRect(); const id = el.dataset.id; const p = this._last && this._last.pos[id]; if (!p) return; out.push({ id, x: r.left + r.width / 2, y: r.top + r.height / 2, rim: r.width / 2, col: p.col, source: p.source, lit: p.lit, ghost: p.ghost, label: p.label }); }); return out; }
+      positions() { const out = []; this.querySelectorAll('.cg-node:not(.dup),.cg-mem:not(.dup)').forEach((el) => { const r = el.getBoundingClientRect(); const id = el.dataset.id; const p = this._last && this._last.pos[id]; if (!p) return; out.push({ id, x: r.left + r.width / 2, y: r.top + r.height / 2, rim: r.width / 2, col: p.col, source: p.source, lit: p.lit, ghost: p.ghost, label: p.label, by: p.by || 'u' }); }); return out; }
       // ── render ──
       _schedule() { if (this._raf || !this._built) return; this._raf = (root.requestAnimationFrame || setTimeout)(() => { this._raf = 0; this._render(); }); }
       _click(e) {
@@ -838,7 +852,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
         const o = compute(Object.assign({}, S, { isoMake }), W, H); this._last = o;
         const p = S.pan; this._r.in.style.transform = 'translate(' + p.x + 'px,' + p.y + 'px) scale(' + p.z + ')';
         this._r.zoom.textContent = Math.round(p.z * 100) + '%';
-        this._r.tok.textContent = (o.tokens ? o.tokens.toLocaleString() + ' tokens in the prompt' : '') + (S.turn ? (o.tokens ? ' · ' : '') + S.turn : '');
+        this._r.tok.textContent = (o.tokens ? o.tokens.toLocaleString() + ' tokens in the prompt' : '') + (o.turn ? (o.tokens ? ' · ' : '') + o.turn : '');
         this._r.views.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === o.view));
         if (this._r.alledges) this._r.alledges.classList.toggle('on', !!S.allEdges);
         if (this._r.list) this._r.list.classList.toggle('on', !!S.list);
@@ -870,7 +884,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
     }
     root.customElements.define('vera-context-graph', VeraContextGraph);
   }
-  const api = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawLanes, recordCard, listHtml, panTo, textOf, edgeTypeOf, loopFromEvents, planFromGoals, dagSteps, mixOf, VIEWS, FAMS, ensureCss, kindOf, ICON, version: 5 };
+  const api = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawLanes, recordCard, listHtml, panTo, textOf, edgeTypeOf, loopFromEvents, planFromGoals, dagSteps, mixOf, VIEWS, FAMS, frameReads, ensureCss, kindOf, ICON, version: 6 };
   root.VeraContextGraph = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

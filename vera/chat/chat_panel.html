@@ -6259,9 +6259,12 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     _ctxCol.addEventListener('vera:ctx:toggle-all', ev=>{ const on=!!(ev.detail||{}).included; CTX_NODES.forEach(n=>{ n.included=on; }); try{ renderCtxList(); }catch(_){} _ctxColSig=''; _ctxColumnSync(_grFocusMid||''); try{ VeraLHM.render(); }catch(_){} });
     _ctxCol.addEventListener('vera:ctx:preview', ev=>{ const u=String((ev.detail||{}).url||''); if(u) try{ _browserNavigate(u); }catch(_){} });
     try{ if(typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(!!_qGalAll); }catch(_){}   // a fresh element takes the mini's All edges
-      _ctxCol.addEventListener('vera:ctx:focus-turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid) return; _grFocusMid=mid; const w=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); try{ w&&w.scrollIntoView({block:'center',behavior:'smooth'}); }catch(_){} _graphAnchorPost(true); });
+      _ctxCol.addEventListener('vera:ctx:focus-turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid) return; _ctxScrollTo(mid); });
+      // the scrubber: a frame picked scrolls the chat to that turn (the scroll then makes it the active frame); live = the end
+      _ctxCol.addEventListener('vera:ctx:frame', ev=>{ const id=(ev.detail||{}).id; if(id==null){ _grFocusMid=''; _grScrollProg=Date.now(); const m=document.getElementById('msgs'); try{ m&&m.scrollTo({top:m.scrollHeight, behavior:'smooth'}); }catch(_){} _graphAnchorPost(true); return; } const f=CTX_FRAMES.find(x=>String(x.id)===String(id)); if(f&&f.mid) _ctxScrollTo(f.mid); });
       const msgs=document.getElementById('msgs');
-      if(msgs&&!msgs._ctxColBound){ msgs._ctxColBound=true; msgs.addEventListener('scroll', ()=>_graphAnchorPost(), {passive:true}); msgs.addEventListener('click', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap'); if(w){ _grFocusMid=w.dataset.mid||''; _graphAnchorPost(true); } }); }
+      // a scroll by the user releases the pinned turn: the turn in view is the one the graphs show
+      if(msgs&&!msgs._ctxColBound){ msgs._ctxColBound=true; msgs.addEventListener('scroll', ()=>{ if(Date.now()-_grScrollProg>900) _grFocusMid=''; _graphAnchorPost(); }, {passive:true}); msgs.addEventListener('click', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap'); if(w){ _grFocusMid=w.dataset.mid||''; _graphAnchorPost(true); } }); }
       window.addEventListener('resize', ()=>_ctxRunsDraw());
     }
     if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800);
@@ -6282,7 +6285,12 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const sig=nodesAll.length+':'+edgesAll.length+':'+incl.length+':'+(nodesAll[0]&&nodesAll[0].id)+':'+mid+':'+_ctxQuery;
     if(sig!==_ctxColSig){ _ctxColSig=sig; const reads={}; if(mid) reads[mid]=incl;
       _ctxCol.setContext(nodesAll, edgesAll.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''})), {focus:incl, reads, color:srcCol, turn:mid?'turn '+mid:''}); }
-    try{ const fsig=CTX_FRAMES.length+':'+(CTX_FRAMES.length?CTX_FRAMES[CTX_FRAMES.length-1].id:''); if(fsig!==_ctxColFrameSig&&typeof _ctxCol.setFrames==='function'){ _ctxColFrameSig=fsig; _ctxCol.setFrames(CTX_FRAMES, {active:null}); } }catch(_){}   // the turns' frames, scrubbed in the element without touching the live set
+    // the turns' frames: the frame of the turn in view is the ACTIVE one (the graph scrolls with the chat); none when the
+    // live set is what to show (the newest turn while the next question is being assembled, or no turn in view)
+    try{ const fr=_ctxFrameInView(mid); const active=fr?fr.id:null;
+      const fsig=CTX_FRAMES.length+':'+(CTX_FRAMES.length?CTX_FRAMES[CTX_FRAMES.length-1].id:'')+':'+active;
+      if(fsig!==_ctxColFrameSig&&typeof _ctxCol.setFrames==='function'){ _ctxColFrameSig=fsig; _ctxCol.setFrames(CTX_FRAMES, {active}); }
+      if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){} try{ _ctxRunsDraw(); }catch(_){} } }catch(_){}
     // the rail's other graphs, in the same column: the session's memory graph (loaded once per session, the rail's
     // own loader) and the run's DAG — fed when they changed
     if(SID&&!_memAllNodes.length&&Date.now()-_ctxColMemT>30000){ _ctxColMemT=Date.now(); try{ memGraphLoad(); }catch(_){} }
@@ -6396,6 +6404,21 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   // where the focused turn's runs END: the exchange block (its surface; the arrival is the content edge past the gutter
   // tag), or — exploded — the station in focus, whose left edge is the arrival, measured in the same screen space as
   // the records. null when nothing is on screen to end on
+  // the two blocks a turn's runs can land on: the question (u — the records in its prompt) and the response (a — what the
+  // response read: the observed runs, the pages it fetched); each is the block itself, clipped to the transcript, or null
+  // when it is scrolled out of view. In the harness the chat instance posts both to the menu instance.
+  function _ctxRunsTargets(){
+    if(_EMBED.only==='menu'){ const b=_ctxRemoteBlock; const mkT=(q)=>{ if(!q||!(q.bottom>q.top)) return null; const ft=_frameTop(), W=window.innerWidth; return {kind:'seam', mid:q.mid||'', left:W, right:W+1, content:W-1, top:q.top-ft, bottom:q.bottom-ft}; }; return { u:mkT(b), a:mkT(b&&b.a) }; }
+    if(_xpl.on&&_xplEl&&document.body.classList.contains('exploded')){ const s=_ctxRunsTarget(); return { u:s, a:s }; }
+    const w=_focusedTurn(); if(!w) return { u:null, a:null }; const fr=_ctxFrameInView(w.dataset.mid||'');
+    const blk=(mid)=>{ const el=mid?document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'):null; return el?_ctxBlockTarget(el):null; };
+    if(fr) return { u:blk(fr.mid)||(fr.amid?null:_ctxBlockTarget(w)), a:blk(fr.amid) };
+    return { u:_ctxBlockTarget(w), a:null };
+  }
+  function _ctxBlockTarget(w){ const msgs=document.getElementById('msgs'); const MB=msgs.getBoundingClientRect();
+    const surf=w.querySelector('.msg-user-line')||w.querySelector('.msg-body')||w; const body=w.querySelector('.msg-body');
+    const M=surf.getBoundingClientRect(); if(!(M.height>0)||M.bottom<MB.top||M.top>MB.bottom) return null;
+    return {kind:'message', mid:w.dataset.mid||'', left:M.left, right:M.right, content:body?body.getBoundingClientRect().left:M.left, top:Math.max(M.top,MB.top), bottom:Math.min(M.bottom,MB.bottom)}; }
   function _ctxRunsTarget(){
     if(_EMBED.only==='menu'){ const b=_ctxRemoteBlock; if(!b||!(b.bottom>b.top)) return null; const ft=_frameTop(), W=window.innerWidth; return {kind:'seam', mid:b.mid||'', left:W, right:W+1, content:W-1, top:b.top-ft, bottom:b.bottom-ft}; }
     if(_xpl.on&&_xplEl&&document.body.classList.contains('exploded')){
@@ -6444,16 +6467,16 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(_EMBED.only==='chat'&&_ctxRemote.on&&!_ctxGrown){
       // the graph is the menu instance's: it posts one connector height per type; this side draws the channel lanes in
       // the column's gutter and one arrival per type on the block, in from the frame's left edge (the seam)
-      const T=_ctxRunsTarget(); if(!T){ svg.innerHTML=''; return; }
-      const ft=_frameTop(); const b={ top:T.top+ft, bottom:T.bottom+ft, mid:T.mid||'' };
-      if(!_ctxRemoteSent||_ctxRemoteSent.top!==b.top||_ctxRemoteSent.bottom!==b.bottom||_ctxRemoteSent.mid!==b.mid){ _ctxRemoteSent=b; _lhmPost('block', b); }
+      const TT=_ctxRunsTargets(); const T=TT.u||TT.a; if(!T){ svg.innerHTML=''; return; }
+      const ft=_frameTop(); const b={ top:T.top+ft, bottom:T.bottom+ft, mid:T.mid||'', a:TT.a&&TT.u?{ top:TT.a.top+ft, bottom:TT.a.bottom+ft, mid:TT.a.mid||'' }:null };
+      const bsig=JSON.stringify(b); if(_ctxRemoteSent!==bsig){ _ctxRemoteSent=bsig; _lhmPost('block', b); }
       const lanes=_ctxRemote.lanes||[]; const rn=lanes.length; const gut=_ctxRunsGutter(rn);
       const R={left:0,top:0,width:window.innerWidth,height:window.innerHeight}; svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
       // the channel is the column's gutter at the frame's edge (the lanes it holds), never the whole margin
-      const col0=document.getElementById('chatColumn').getBoundingClientRect().left; const chan0=col0, chan1=Math.min(T.content, col0+gut), G0=(chan0+chan1)/2, HWG=Math.max(1, Math.abs(chan1-chan0)/2-4); const edgeAt=(y)=>(T.edgeAt?T.edgeAt(y):T.content)-2;
+      const col0=document.getElementById('chatColumn').getBoundingClientRect().left; const chan0=col0, chan1=Math.min(T.content, col0+gut), G0=(chan0+chan1)/2, HWG=Math.max(1, Math.abs(chan1-chan0)/2-4); const edgeAt=(y,side)=>{ const Tq=(side==='a'&&TT.a)?TT.a:T; return (Tq.edgeAt?Tq.edgeAt(y):Tq.content)-2; };
       let out=''; lanes.forEach((l,i)=>{ const ye=l.ye-ft, ty=l.ty-ft; const u=rn>1?(l.lane-(rn-1)/2)/((rn-1)/2):0; const lx=G0+u*Math.min(HWG, 9*(rn-1));
         const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(l.src)+'" data-lane="'+l.lane+'" x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+y2.toFixed(1)+'" stroke="'+l.col+'"><title>'+esc(l.src)+'</title></line>';
-        out+=L(0, ye, lx, ye, 'tr'); if(Math.abs(ty-ye)>0.5) out+=L(lx, ye, lx, ty, 'tr'); out+=L(lx, ty, edgeAt(ty), ty, 'tr'); });
+        out+=L(0, ye, lx, ye, 'tr'); if(Math.abs(ty-ye)>0.5) out+=L(lx, ye, lx, ty, 'tr'); out+=L(lx, ty, edgeAt(ty, l.side), ty, 'tr'); });
       svg.innerHTML='<g fill="none" stroke-linecap="round">'+out+'</g>'; svg.dataset.target=T.kind; return;
     }
     if(Date.now()-_ctxTypingT<900){ svg.innerHTML=''; if(!_ctxTypingTimer) _ctxTypingTimer=setTimeout(()=>{ _ctxTypingTimer=null; _ctxRunsDraw(); }, 950); return; }
@@ -6463,11 +6486,16 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     // the types in this turn's context decide the channel's width; the channel is set first, everything measured after
     const gc0=gcol.getBoundingClientRect();
     const all=_ctxCol.positions().filter(p=>p.y>gc0.top+40&&p.y<gc0.bottom&&p.x>gc0.left&&p.x<gc0.right);
-    const bySrc={}; all.filter(p=>p.lit).forEach(p=>{ (bySrc[p.source]=bySrc[p.source]||{src:p.source, col:p.col, nodes:[]}).nodes.push(p); });
-    const G=Object.keys(bySrc).map(k=>bySrc[k]); const rn=G.length; _ctxRunsGutter(rn);
-    const T=_ctxRunsTarget(); if(!T||!rn){ svg.innerHTML=''; svg.removeAttribute('data-lit'); return; }
+    // a type's records in the prompt run to the QUESTION; what the response read (by 'a') runs to the RESPONSE — one
+    // lane per type and side, so a type read by both has two runs, each to its own block
+    const TT=_ctxRunsTargets();
+    // lane per type and side, so a type read by both has two runs, each to its own block; a block scrolled out of view
+    // lends its runs to the other
+    const bySrc={}; all.filter(p=>p.lit).forEach(p=>{ const side=(p.by==='a'&&TT.a)?'a':(TT.u?'u':(TT.a?'a':'u')); const k=p.source+'|'+side; (bySrc[k]=bySrc[k]||{src:p.source, side, col:p.col, nodes:[]}).nodes.push(p); });
+    const G=Object.keys(bySrc).map(k=>bySrc[k]).filter(g=>TT[g.side]); const rn=G.length; _ctxRunsGutter(rn);
+    const T=TT.u||TT.a; if(!T||!rn){ svg.innerHTML=''; svg.removeAttribute('data-lit'); return; }
     const R=_ctxGrown?{left:0,top:0,width:window.innerWidth,height:window.innerHeight}:col.getBoundingClientRect(), gc=gcol.getBoundingClientRect();
-    const M={left:T.left, right:T.right, top:T.top, bottom:T.bottom};
+    const M={left:Math.min.apply(null,[TT.u,TT.a].filter(Boolean).map(q=>q.left)), right:Math.max.apply(null,[TT.u,TT.a].filter(Boolean).map(q=>q.right)), top:T.top, bottom:T.bottom};
     svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
     // the graph on the left (the design) runs rightwards into the message's left edge; on the right, leftwards
     const leftSide=gc.left<M.left;
@@ -6479,13 +6507,14 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const G0=(chan0+chan1)/2, HWG=Math.max(1, Math.abs(chan1-chan0)/2-8);
     // the arrival ends on the block's content edge — on a station, on the plate's own edge at that height (Iso's plates
     // are parallelograms: the run terminates exactly on the slanted edge, not beside it)
-    const edgeAt=(y)=>{ const x=T.edgeAt?T.edgeAt(y):T.content; return leftSide?x-2:x+2; }, mTop=M.top, mH=Math.max(24, M.bottom-M.top);
+    const edgeAt=(y,side)=>{ const Tq=TT[side||'u']||T; const x=Tq.edgeAt?Tq.edgeAt(y):Tq.content; return leftSide?x-2:x+2; };
     G.forEach(g=>{ g.my=g.nodes.reduce((s,q)=>s+q.y,0)/g.nodes.length; g.nodes.sort((a,b)=>a.y-b.y); });
     G.sort((a,b)=>a.my-b.my);
-    // one arrival per type, fanned down the block's height in the order the types sit on the plot — as far apart as
+    // one arrival per type, fanned down ITS block's height in the order the types sit on the plot — as far apart as
     // there is room for and never past the block's edges: a fan that overhangs the block it enters stops reading as its
-    let fan=Math.min(15, Math.max(8, (mH-18)/Math.max(1,rn-1))); if(fan*(rn-1)>mH-8) fan=Math.max(4, (mH-8)/Math.max(1,rn-1));
-    G.forEach((g,j)=>{ g.ty=mTop+mH/2+(j-(rn-1)/2)*fan; });
+    ['u','a'].forEach(side=>{ const Tq=TT[side]; if(!Tq) return; const Gs=G.filter(g=>g.side===side); const n=Gs.length; if(!n) return; const mTop=Tq.top, mH=Math.max(24, Tq.bottom-Tq.top);
+      let fan=Math.min(15, Math.max(8, (mH-18)/Math.max(1,n-1))); if(fan*(n-1)>mH-8) fan=Math.max(4, (mH-8)/Math.max(1,n-1));
+      Gs.forEach((g,j)=>{ g.ty=mTop+mH/2+(j-(n-1)/2)*fan; }); });
     // lanes in the channel: the type whose records sit nearer the block takes the lane nearer the graph
     const dn=G.filter(g=>g.my<=g.ty).sort((a,b)=>b.my-a.my), up=G.filter(g=>g.my>g.ty).sort((a,b)=>a.my-b.my);
     dn.concat(up).forEach((g,li)=>{ g.lane=li; });
@@ -6494,7 +6523,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     let out='';
     G.forEach(g=>{
       const u=rn>1?(g.lane-(rn-1)/2)/((rn-1)/2):0; const lx=G0+(leftSide?1:-1)*u*Math.min(HWG, 9*(rn-1)); const c=g.col;
-      const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(g.src)+'" data-lane="'+g.lane+'" x1="'+(x1-R.left).toFixed(1)+'" y1="'+(y1-R.top).toFixed(1)+'" x2="'+(x2-R.left).toFixed(1)+'" y2="'+(y2-R.top).toFixed(1)+'" stroke="'+c+'"><title>'+esc(g.src)+' · '+g.nodes.length+' in this prompt</title></line>';
+      const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(g.src)+'" data-side="'+g.side+'" data-lane="'+g.lane+'" x1="'+(x1-R.left).toFixed(1)+'" y1="'+(y1-R.top).toFixed(1)+'" x2="'+(x2-R.left).toFixed(1)+'" y2="'+(y2-R.top).toFixed(1)+'" stroke="'+c+'"><title>'+esc(g.src)+' · '+g.nodes.length+(g.side==='a'?' read by the response':' in this prompt')+'</title></line>';
       // the type's COLLECTOR: a short vertical just past its cluster where the branches meet; from it ONE connector
       // crosses the rest of the plot to the channel, so a type crosses the plot once, not once per record
       const cx=leftSide?Math.min(gc.right-4, Math.max.apply(null, g.nodes.map(q=>q.x+q.rim))+12):Math.max(gc.left+4, Math.min.apply(null, g.nodes.map(q=>q.x-q.rim))-12);
@@ -6515,18 +6544,20 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       if(ye==null){ ye=ys[0]; for(let dd=6; dd<=200; dd+=6){ if(cc(ys[0]-dd)){ ye=ys[0]-dd; break; } if(cc(ys[0]+dd)){ ye=ys[0]+dd; break; } } }
       yMin=Math.min(yMin, ye); yMax=Math.max(yMax, ye);
       if(yMax-yMin>1) out+=L(cx, yMin, cx, yMax, 'tr');      // the collector
-      if(seam){ out+=L(cx, ye, seamX, ye, 'tr'); lanesOut.push({ src:g.src, col:g.col, lane:g.lane, ye:ye+_frameTop(), ty:g.ty+_frameTop() }); }   // to the seam; the chat instance draws the rest
+      if(seam){ out+=L(cx, ye, seamX, ye, 'tr'); lanesOut.push({ src:g.src, side:g.side, col:g.col, lane:g.lane, ye:ye+_frameTop(), ty:g.ty+_frameTop() }); }   // to the seam; the chat instance draws the rest
       else {
       out+=L(cx, ye, lx, ye, 'tr');                          // one connector per type, across the plot
       if(Math.abs(g.ty-ye)>0.5) out+=L(lx, ye, lx, g.ty, 'tr');   // along the channel, in its own lane, to the arrival
-      out+=L(lx, g.ty, edgeAt(g.ty), g.ty, 'tr');            // one arrival per type, on the block's edge
+      out+=L(lx, g.ty, edgeAt(g.ty, g.side), g.ty, 'tr');    // one arrival per type, on ITS block's edge (the question or the response)
       }
     });
     if(seam) _lhmPost('lanes',{ lanes:lanesOut });
     svg.innerHTML='<g fill="none" stroke-linecap="round">'+out+'</g>';
     svg.dataset.target=T.kind; _ctxRunsHover(svg.getAttribute('data-lit')?Object.keys(_ctxRunsIdSrc).find(id=>_ctxRunsIdSrc[id]===svg.getAttribute('data-lit'))||'':'');
   }
-  let _grFocusMid='';
+  let _grFocusMid='', _grScrollProg=0;
+  // scroll the transcript to a turn and pin it (the scroll this causes keeps the pin; the user's own scroll releases it)
+  function _ctxScrollTo(mid){ _grFocusMid=mid; _grScrollProg=Date.now(); const w=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); try{ w&&w.scrollIntoView({block:'center',behavior:'smooth'}); }catch(_){} _graphAnchorPost(true); }
   // which turn is in focus: the one the user picked, else the turn under the top third of the transcript, else the newest
   function _focusedTurn(){
     const msgs=document.getElementById('msgs'); if(!msgs) return null;
@@ -9699,6 +9730,7 @@ Your task: decide what to do next to advance toward the goal.
     // Recompute injection now that context is guaranteed to match this msg,
     // then reconcile the "+N ctx" pill on the already-painted user message.
     ctxInj=buildCtxInj(msg);
+    _ctxTurnSend={ mid:uMsg.mid, amid:aMsg.mid, ids:new Set(CTX_NODES.map(n=>n.id)), query:_ctxQuery };   // this turn's frame, saved when the reply lands
     try{
       const _mS=parseFloat(document.getElementById('ctxSim')?.value||'0.55');
       const _kK=parseInt(document.getElementById('ctxK')?.value||'8');
@@ -10003,7 +10035,7 @@ Your task: decide what to do next to advance toward the goal.
 
     // NOTE: NO /memory/record/turn call here — handled server-side by agents.py
 
-    if(CTX_NODES.length){_saveFrame('Turn '+HISTORY.filter(h=>h.role==='user').length,true);updateFrameUI();}
+    if(CTX_NODES.length){const _ts=_ctxTurnSend||{}; _saveFrame('Turn '+HISTORY.filter(h=>h.role==='user').length,true,{ mid:_ts.mid||_cvRelMid||'', amid:_ts.amid||(aMsg&&aMsg.mid)||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery });updateFrameUI();_ctxTurnSend=null; _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} }
     // Re-fetch context after send if "ctxOnSend" is enabled. Use the USER's
     // last message — never the LLM response — so the search query reflects
     // what the user actually asked for. The previous version passed
@@ -12365,7 +12397,16 @@ Your task: decide what to do next to advance toward the goal.
   }
 
   /* ═══ FRAMES ═══ */
-  function _saveFrame(label,quiet=false){const f={id:Date.now(),label:label||('Frame '+(CTX_FRAMES.length+1)),nodes:JSON.parse(JSON.stringify(CTX_NODES)),edges:JSON.parse(JSON.stringify(CTX_EDGES)),ts:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};CTX_FRAMES.push(f);CTX_ACTIVE=f.id;return f;}
+  // a frame is a TURN's context: extra = {mid, amid, sentIds, query} — the question's and the response's message ids, the
+  // records that were in the prompt when it was sent (the rest, and the observed runs, were read by the response: by 'a')
+  function _saveFrame(label,quiet=false,extra){const x=extra||{};const sent=x.sentIds instanceof Set?x.sentIds:null;
+    const nodes=JSON.parse(JSON.stringify(CTX_NODES)).map(n=>Object.assign(n,{ by:(n.source==='run'||(sent&&!sent.has(n.id)))?'a':'u' }));
+    const f={id:Date.now(),label:label||('Frame '+(CTX_FRAMES.length+1)),nodes,edges:JSON.parse(JSON.stringify(CTX_EDGES)),ts:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),mid:x.mid||'',amid:x.amid||'',turn:x.mid?'turn '+x.mid:'',query:x.query||_ctxQuery||''};CTX_FRAMES.push(f);CTX_ACTIVE=f.id;_ctxBroadcastFrames();return f;}
+  // which frame is the turn in view: the one whose question or response is that message — unless it is the newest turn
+  // and the live context has moved on (the user is typing the next question: the live set is what the graph shows)
+  let _ctxTurnSend=null, _ctxActiveFrame=null;
+  function _ctxFrameInView(mid){ if(!mid||!CTX_FRAMES.length) return null; const f=CTX_FRAMES.find(x=>x.mid===mid||x.amid===mid); if(!f) return null; if(f===CTX_FRAMES[CTX_FRAMES.length-1]&&_ctxQuery&&f.query&&_ctxQuery!==f.query) return null; return f; }
+  function _ctxBroadcastFrames(){ if(_EMBED.only==='menu') return; try{ _lhmPost('frames',{ frames:CTX_FRAMES }); }catch(_){} }
   function saveFrame(){const l=prompt('Frame name:','Frame '+(CTX_FRAMES.length+1));if(l===null)return;_saveFrame(l);updateFrameUI();appendSys('Frame saved: <b>'+esc(l)+'</b>');}
 
   function updateFrameUI(){
@@ -13209,7 +13250,8 @@ function _embedMount(){
       else if(m.act==='ctx'){ CTX_NODES=Array.isArray(a.nodes)?a.nodes:[]; CTX_EDGES=Array.isArray(a.edges)?a.edges:[]; _ctxQuery=a.query||''; if(a.mid) _grFocusMid=a.mid; try{ renderCtxGraph(); renderCtxList(); renderFabPane(); }catch(_){} const cc=document.getElementById('ctxCount'); if(cc) cc.textContent=CTX_NODES.length+' ctx'; const empty=document.getElementById('ctxEmpty'); if(empty) empty.style.display=CTX_NODES.length?'none':'flex'; if(_ctxGrown){ _ctxColSig=''; try{ _ctxColumnSync(a.mid||''); }catch(_){} } }
       else if(m.act==='focus'&&a.mid){ _grFocusMid=a.mid; if(_ctxGrown){ try{ _ctxColumnSync(a.mid); }catch(_){} } try{ renderCtxGraph(); }catch(_){} }
       else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }
-      else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} } };
+      else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} }
+      else if(m.act==='frames'){ CTX_FRAMES=Array.isArray(a.frames)?a.frames:[]; _ctxColFrameSig=''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} } try{ VeraLHM.render(); }catch(_){} } };
   }
   if(_EMBED.only==='chat'){
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from!=='menu') return; const a=m.args||{};
@@ -13287,7 +13329,7 @@ function _embedMount(){
       const bar=el.querySelector('.ctx-grown-bar'); if(bar) bar.innerHTML='<span class="comp" title="'+esc(_lhmTxt('ctxMeterLabel'))+'">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span>';
       _graphColumnMount(); return; }
     const views=[['galaxy','galaxy'],['iso','iso'],['flow','flow'],['timeline','time']];
-    const sig=S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'')+'#'+_qGalSel+(_qGalList?'L':'')+_qGalQ+':'+_memAllNodes.length+':'+_lastDagNodes.length+':'+S.nodes.filter(n=>n.included===false).length;
+    const sig=S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'')+'#'+_qGalSel+(_qGalList?'L':'')+_qGalQ+':'+_memAllNodes.length+':'+_lastDagNodes.length+':'+S.nodes.filter(n=>n.included===false).length+':'+CTX_FRAMES.length+':'+_ctxActiveFrame;
     if(el.dataset.sig===sig) return; el.dataset.sig=sig;
     const data={nodes:S.nodes.map(n=>({id:n.id,label:n.label,family:String(n.source||'context').toLowerCase(),score:n.score,included:n.included})), rels:CTX_EDGES.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''}))};
     // the mini graph is the element's: the same state the grown graph holds, in miniature — records with their text, the
@@ -13295,7 +13337,7 @@ function _embedMount(){
     let gal='', miniH=_qGalList?300:196;
     if(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'){
       try{ VeraContextGraph.ensureCss();
-        const st=VeraContextGraph.stateFrom({ nodes:S.nodes, rels:data.rels, memory:_memAllNodes, memEdges:_memAllEdges, dag:_lastDagNodes, dagEdges:_lastDagEdges, view:(_qGalView==='timeline'?'time':_qGalView), allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k]), color:srcCol, sel:_qGalSel||null, list:_qGalList, q:_qGalQ, turn:_grFocusMid?'turn '+_grFocusMid:'' });
+        const st=VeraContextGraph.stateFrom({ nodes:S.nodes, rels:data.rels, memory:_memAllNodes, memEdges:_memAllEdges, dag:_lastDagNodes, dagEdges:_lastDagEdges, view:(_qGalView==='timeline'?'time':_qGalView), allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k]), color:srcCol, sel:_qGalSel||null, list:_qGalList, q:_qGalQ, turn:_grFocusMid?'turn '+_grFocusMid:'', frames:CTX_FRAMES, frame:_ctxActiveFrame });   // the frame of the turn in view, as the grown graph shows it
         gal=VeraContextGraph.miniHtml(st, 262, miniH); }catch(e){ gal=''; }
     }
     if(!gal) gal=window.VeraWidget?VeraWidget.draw('context_graph',data,'m',{height:196,bare:true,view:_qGalView,allEdges:_qGalAll,off:_qGalOff,color:srcCol,hub:'aide',hubMeta:_kfmt(S.total)}):'';
