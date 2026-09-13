@@ -5463,7 +5463,8 @@ IMPORTANT:
     const cap=String(reads.cap||o.source||o.cap||'');
     const args=Object.assign({}, (reads.args&&typeof reads.args==='object')?reads.args:{}, (o.args&&typeof o.args==='object')?o.args:{}, o.window?{window:o.window}:{});
     const known=_W_DRAWS.includes(draw)||_widgetFormKnown(draw);   // every form the registry draws is a form the model may name
-    return { name:String(o.name||o.title||cap||draw), title:String(o.title||o.name||''), form:_W_KIND[draw]||'panel', draw:{form:known?draw:'table', size:_W_SIZE[size]?size:'m', motion:String(o.motion||(o.draw&&o.draw.motion)||'')},
+    const form=known?draw:'table';   // the record's form IS the renderer (as the registry, the canvas and the exploded element read it); the kind is the family
+    return { name:String(o.name||o.title||cap||draw), title:String(o.title||o.name||''), form, kind:_W_KIND[form]||'panel', draw:{form:form, size:_W_SIZE[size]?size:'m', motion:String(o.motion||(o.draw&&o.draw.motion)||'')},
              reads:{cap, args, every:String(o.refresh||reads.every||''), note:String(reads.note||'')}, placed:['reply'],
              source:{origin:by==='rule'?'rule':'aide', from:String(o.from||cap||'')}, data:o.data!==undefined?o.data:undefined };
   }
@@ -5525,12 +5526,14 @@ IMPORTANT:
       let ok=false; try{ ok=data===undefined||!/class="wempty"/.test(_wDraw(f,_widgetData(data,f),70)); }catch(_){ ok=false; }
       if(ok){ w.rec.draw.form=f; break; }
     }
-    w.rec.form=_W_KIND[w.rec.draw.form]||'panel'; w.by=w.by==='rule'?'you':w.by; _wRepaint(id);
+    w.rec.form=w.rec.draw.form; w.rec.kind=_W_KIND[w.rec.draw.form]||'panel'; w.by=w.by==='rule'?'you':w.by; _wRepaint(id);
     const el=document.getElementById(id); const r=el&&el.querySelector('.wr .rec'); if(r) r.textContent=r.textContent.replace(/form: ?"?[a-z]+"?/,'form: "'+w.rec.draw.form+'"');
   }
   // Pin to canvas: a copy of the record (canvas.append type "widget"); the same key brings the first item back
   // Pin = put the widget's record on the SESSION canvas through the resolver: the same record is one item, so a
   // second pin shows it again rather than adding a twin; the canvas column opens to show where it landed.
+  // the turn a message row belongs to: a question's own mid; a reply's is the question before it
+  function _turnMidOf(wrap){ if(!wrap) return ''; if(wrap.classList.contains('u')) return wrap.dataset.mid||''; let p=wrap.previousElementSibling; while(p&&!(p.classList&&p.classList.contains('mwrap')&&p.classList.contains('u'))) p=p.previousElementSibling; return (p&&p.dataset.mid)||wrap.dataset.mid||''; }
   async function _wPin(id, btn){
     const w=_W_STORE[id]; if(!w) return;
     if(btn){ btn.disabled=true; btn.textContent='Pinning…'; }
@@ -5538,11 +5541,11 @@ IMPORTANT:
       const key='widget:'+_widgetKey(w.rec);
       const cv=await _capCall('canvas.session.resolve',{session_id:SID||''});
       const cid=cv&&cv.id; if(!cid) throw new Error((cv&&cv.error)||'no session canvas');
-      const content=Object.assign({},w.rec); delete content.data;
-      const mid=(btn&&btn.closest('.mwrap')&&btn.closest('.mwrap').dataset.mid)||'';
+      const content=Object.assign({},w.rec); if(w.rec.reads&&w.rec.reads.cap) delete content.data;   // a record with a source re-reads it; inline data is the record's own
+      const mid=_turnMidOf(btn&&btn.closest('.mwrap'));   // the turn's mid (the question), as the harvest and the scene key it
       const r=await _capCall('canvas.add',{id:cid,session_id:SID||'',kind:'widget',content,key,size:(w.rec.draw&&w.rec.draw.size)||'m',anchor:{mid,turn:mid}});
       if(!(r&&r.ok)) throw new Error((r&&r.error)||'canvas.add failed');
-      try{ if(mid){ (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:String(w.rec.title||w.rec.form||key).slice(0,60), d:'canvas · '+(r.resolved==='shown'?'already there':'pinned'), col:'var(--acc2)', kind:'widget'}); if(_xpl.on) _xplRefresh(); } }catch(_){}
+      try{ if(mid){ (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:String(w.rec.title||w.rec.form||key).slice(0,60), d:'canvas · '+(r.resolved==='shown'?'already there':'pinned'), col:'var(--acc2)', kind:'widget', key, form:w.rec.draw.form, record:w.rec}); if(_xpl.on) _xplRefresh(); } }catch(_){}   // the scene draws the pinned widget's own face
       if(btn){ btn.textContent=r.resolved==='shown'?'Already on the canvas · shown':'On the canvas'; }
       openPage('canvas');
     }catch(e){ if(btn) btn.textContent='Pin failed'; console.warn('pin to canvas', e); }
