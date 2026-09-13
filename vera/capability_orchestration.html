@@ -1954,7 +1954,7 @@ function _harnessChromeMount(){
   const evBtn=document.getElementById('tabEvBtn'); const syncEv=()=>{ if(evBtn) evBtn.classList.toggle('active', !_evSidebarCollapsed); try{ localStorage.setItem('vera:harness:events', _evSidebarCollapsed?'off':'on'); }catch(_){} };
   syncEv(); const sb=document.getElementById('evSidebar'); if(sb&&window.MutationObserver) new MutationObserver(syncEv).observe(sb,{attributes:true,attributeFilter:['style']});
   // the ticker follows the feed
-  _hdrStyleSync(); _hdrSwatches(); _tabsMoreChip(); _dashRecLabel();
+  _hdrStyleSync(); _hdrSwatches(); _tabsMoreChip(); _dashRecLabel(); try{ _hostFramesWatch(); }catch(_){}
   // counts on tabs with live work (the board): Activity carries the feed's count, Workers & Ollama the busy instances
   _tabCounts(); setInterval(_tabCounts, 5000);
   const grid=document.getElementById('dashGrid'); if(grid&&window.MutationObserver){ let t2=0; new MutationObserver(()=>{ clearTimeout(t2); t2=setTimeout(_dashRecLabel,200); }).observe(grid,{childList:true,attributes:true,attributeFilter:['class']}); }
@@ -2374,6 +2374,13 @@ function _lhmAbsorbedFor(){
 // the chat's own frame for a tab, when that tab is the chat (the frame that owns an LHM and a chat session)
 function _chatFrameFor(pid){ try{ return _chatFrames().find(f => { const p = f.closest('.panel'); return p && _panelIdFromEl(p) === pid; }) || null; }catch(_){ return null; } }
 // the chat panel's frame loads CHAT-ONLY inside the harness (its menu is the LHM beside it; the harness's ☰ above the rail is its ☰)
+// a chat frame a panel's own mount script creates (not the lazy loader) is loaded chat-only too, as it appears
+function _hostFramesWatch(){
+  const fix = (f) => { try{ const s = f.getAttribute('src'); if(s){ const t = _hostFrameSrc(s); if(t !== s) f.setAttribute('src', t); } const l = f.getAttribute('data-lazy-src'); if(l){ const t = _hostFrameSrc(l); if(t !== l) f.setAttribute('data-lazy-src', t); } }catch(_){} };
+  const root = document.querySelector('.panels') || document.body;
+  try{ root.querySelectorAll('iframe').forEach(fix); }catch(_){}
+  try{ new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if(!n || n.nodeType !== 1) return; if(n.tagName === 'IFRAME') fix(n); else if(n.querySelectorAll) n.querySelectorAll('iframe').forEach(fix); }))).observe(root, { childList:true, subtree:true }); }catch(_){}
+}
 function _hostFrameSrc(src){ try{ const s = String(src || ''); if(/\/chat_panel(\?|#|$)/.test(s) && !/[?&]only=/.test(s)) return s + (s.indexOf('?') >= 0 ? '&' : '?') + 'only=chat&harness=yes'; }catch(_){} return src; }
 // the chat's MENU instance as the LHM: one persistent frame (never rebuilt with the list), shown while the chat is the open UI
 function _lhmMenuFrame(nav, src){
