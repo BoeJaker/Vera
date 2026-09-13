@@ -9229,9 +9229,10 @@ async def _health(trace_id=None):
 @capability("ui.panels", memory="off", silent=True,
             http_method="GET", http_path="/ui/panels", http_tags=["ui"],
             description="List all registered built-in UI panels injected by capability modules. "
-                        "A top-level tab the Estate tab replaced carries retired_into "
-                        "{panel, pane, sub, section} while ui.tabs.retired is on; the "
-                        "shell then opens that Estate pane instead of the tab.")
+                        "A top-level tab folded into a broader tab (Estate, Capabilities, "
+                        "Agents, Image Studio) carries retired_into {panel, pane, sub, "
+                        "section} while ui.tabs.retired is on; the shell then opens that "
+                        "pane of the host tab instead of the tab.")
 async def _ui_panels(trace_id=None):
     panels = list(UI_PANELS.values())
     try:

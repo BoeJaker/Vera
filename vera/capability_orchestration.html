@@ -1665,8 +1665,9 @@ function _tabSavePrefs(){
 }
 
 // Switch to a single tab (default click)
-// Top-level tabs the Estate tab replaced (ui.panels marks them retired_into)
-// get no tab button; opening one opens its Estate pane instead. The panel
+// Top-level tabs folded into a broader tab: Estate, Capabilities, Agents and
+// Image Studio (ui.panels marks them retired_into). They get no tab button;
+// opening one opens that pane of the host tab instead. The host panel
 // confirms with vera:estate:opened, so the request repeats only while its
 // iframe is still loading.
 var _tabRedirects = {};

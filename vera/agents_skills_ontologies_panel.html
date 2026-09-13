@@ -42,12 +42,13 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 .snav[data-pane="skills"].on{color:var(--acc)}
 .snav[data-pane="ontologies"].on{color:var(--acc2)}
 .snav[data-pane="registry"].on{color:var(--acc4)}
+.snav[data-pane="bridges"].on{color:var(--acc)}
 .navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
 #panes{flex:1;overflow:hidden;position:relative}
 .pane{position:absolute;inset:0;display:none}
 .pane.on{display:block}
 .pane iframe{width:100%;height:100%;border:none;display:block;background:var(--bg0)}
-/* Hidden once the host shell confirms it's rendering these same 3 sections
+/* Hidden once the host shell confirms it's rendering these same sections
    as injected sub-menu items itself (VeraPanelBridge's registerNav() +
    vpb-nav-hosted — see vera-panel-bridge.js). #panes already carries
    flex:1 in the #shell flex row above. Confirmation-driven, not assumed. */
@@ -67,6 +68,10 @@ html.vpb-nav-hosted #secNav{display:none}
          here rather than in a tab of its own because it is a skills surface -
          it projects into and out of the two stores either side of it. -->
     <div class="snav"    data-pane="registry"   onclick="show('registry',this)">Registry</div>
+    <div class="navdiv"></div>
+    <!-- Agent bridges: the external agent runtimes Vera can drive. Formerly a
+         top-level tab; the shell now opens it here. -->
+    <div class="snav"    data-pane="bridges"    onclick="show('bridges',this)">Bridges</div>
   </div>
   <div id="panes">
     <div class="pane on" id="pane-agents">
@@ -81,6 +86,9 @@ html.vpb-nav-hosted #secNav{display:none}
     <div class="pane" id="pane-registry">
       <iframe id="frame-registry"   src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
     </div>
+    <div class="pane" id="pane-bridges">
+      <iframe id="frame-bridges"    src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
   </div>
 </div>
 <script src="/ui/vera-panel-bridge.js"></script>
@@ -88,7 +96,7 @@ html.vpb-nav-hosted #secNav{display:none}
 'use strict';
 // KEY FIX: base URL is always the origin of THIS page since it's served by the backend
 const BASE = window.location.origin || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
-const LOADED = { agents:false, skills:false, ontologies:false, registry:false };
+const LOADED = { agents:false, skills:false, ontologies:false, registry:false, bridges:false };
 let _lastThemeVars = null;
 
 const PATHS = {
@@ -96,6 +104,7 @@ const PATHS = {
   skills:     '/ui/panels/skills-panel',
   ontologies: '/ui/panels/ontologies-panel',
   registry:   '/ui/panels/registry-panel',
+  bridges:    '/agentbridge/panel',
 };
 
 function loadFrame(name) {
@@ -129,6 +138,7 @@ function show(name, el) {
 if (window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'agents', label:'Agents'}, {id:'skills', label:'Skills'},
   {id:'ontologies', label:'Ontologies'}, {id:'registry', label:'Registry'},
+  {id:'bridges', label:'Agent Bridges'},
 ]);
 
 function broadcast(msg) {
@@ -151,6 +161,12 @@ window.addEventListener('message', e => {
       for (const [k,v] of Object.entries(map)) { if (e.data.vars[k]) root.style.setProperty(v, e.data.vars[k]); }
     }
     broadcast(e.data);
+  }
+  // A tab folded in here (Agent Bridges) is opened on its pane by the shell,
+  // which repeats the request until this panel acknowledges it.
+  if (e.data?.type === 'vera:estate:open' && Object.prototype.hasOwnProperty.call(PATHS, e.data.pane)) {
+    show(e.data.pane, document.querySelector('.snav[data-pane="' + e.data.pane + '"]'));
+    try { if (e.source) e.source.postMessage({ type:'vera:estate:opened', rid:e.data.rid, ok:true }, '*'); } catch(_){}
   }
 });
 

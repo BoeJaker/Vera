@@ -137,7 +137,7 @@ until then, absence of activation is not evidence that the stored data is dead.
 |---|---|---|
 | **Skills** | `skills/skills_panel.html` | Skill editor |
 | **Ontologies** | `skills/ontologies_panel.html` + `ontologies_owl_panel.js` | Domain ontology + OWL browser |
-| **Cap Hub** | `ontologies/cap_ontology_panel.html` | The cap×cap matrix editor, auto-pair/auto-grid runners, coverage stats |
+| **Capabilities › Ontology** | `ontologies/cap_ontology_panel.html` | The cap×cap matrix editor, auto-pair/auto-grid runners, coverage stats |
 
 ---
 
