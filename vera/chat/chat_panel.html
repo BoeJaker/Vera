@@ -5942,6 +5942,7 @@ IMPORTANT:
   function _cvHarvest(body){
     const out=[]; if(!body) return out;
     body.querySelectorAll('.cap-inline').forEach((el,i)=>{ const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:'')||'').replace(/\s+/g,' ').trim().slice(0,80); const res=String((el.querySelector('.cap-result,.cap-peek,.cap-md')||{}).textContent||'').trim().slice(0,2000); if(!n) return;
+      if(/^(canvas\.|ui\.directive\s+canvas\.)/.test(n)&&!el.classList.contains('error')) return;   // a canvas call put its item there itself — its receipt is not a second item (a failed one still lands, where the item would have been)
       out.push({kind:'markdown', n:n.split(' ')[0]||'capability', d:'capability · '+(el.classList.contains('error')?'failed':'done'), content:{md:'**'+n+'**\n\n'+(res?'```\n'+res+'\n```':'')}, col:'var(--acc2)', k:'cap'}); });
     body.querySelectorAll('pre code').forEach((el,i)=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; const s=String(el.textContent||''); if(!s.trim()) return;
       if(lang==='mermaid'){ out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{mermaid:s.slice(0,8000)}, col:'#a78bfa', k:'diagram'}); return; }
