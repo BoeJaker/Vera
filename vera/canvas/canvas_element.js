@@ -110,7 +110,7 @@
     widget: (c, size, key) => {
       // a widget RECORD (name · draw · reads · source) draws through the one shared drawer when the page
       // has it; otherwise its record card, so the item still says what it is
-      const rec = c && c.draw ? c : null;
+      const rec = c && c.draw ? c : (c && c.record && c.record.draw ? Object.assign({}, c.record, c.title ? { title: c.title } : {}) : null);   // the harvest's shape carries the record
       const form = rec ? String(rec.form || rec.draw.form || '') : '';
       // a record with a form is the live element (it reads its source itself, the sample face until it has one),
       // in the column's live layer over this slot — never re-created by a render

@@ -62,7 +62,7 @@ def test_pages_come_from_the_url_then_localstorage():
     _once(HTML, "const _PAGES_KEY='vera.chat.pages';")
     assert "new URLSearchParams(location.search).get('pages')" in HTML
     assert "localStorage.setItem(_PAGES_KEY, JSON.stringify(_pagesOpen()))" in HTML
-    assert "body.dataset.cols=_pagesOpen().join(' ')" in HTML and "body.classList.toggle('has-cols', _pages.size>0)" in HTML
+    assert "body.dataset.cols=_pagesOpen().filter(n=>n!=='graph').join(' ');" in HTML and "body.classList.toggle('has-cols', _pagesOpen().some(n=>n!=='graph'));" in HTML   # the graph page is the LHM grown, not a column
     _once(HTML, "try{ _pagesMount(); }catch(e){ console.warn('tri-page columns: mount failed', e); }")
     i = HTML.index("try{ _cmpMount(); }")
     assert HTML.index("try{ _pagesMount(); }") > i, "after the composer's modes, in init"
@@ -95,12 +95,12 @@ def test_the_graph_column_is_the_chats_own_context_graph_and_hears_the_focused_t
     # the chat's other graphs, in the same column: the rail's Memory graph and the DAG graph, from the state the chat keeps
     assert "_ctxCol.setMemory(_memAllNodes, _memAllEdges, {color:_nodeColorByType, edgeColor:r=>_edgeStyle(r||'').c, hide:_memEdgeHideTypes})" in HTML
     assert "try{ memGraphLoad(); }catch(_){}" in HTML, "the rail's own loader"
-    assert "_ctxCol.setDag(_lastDagNodes)" in HTML
+    assert "_ctxCol.setDag(_lastDagNodes, _lastDagEdges);" in HTML   # the DAG's edges reach the element too
     assert "if(d.family==='memory'&&d.rec){ try{ _memNodeClick(d.id, d.rec); }catch(_){} }" in HTML, "Open on a memory record opens the rail's memory detail"
     # the user's notes: two menus on the left (rail | graph), no runs while typing, the assembled context in the column
-    assert 'body[data-cols~="graph"] #rightRail.lhm-host > .lhm-det{display:none}' in HTML, "the quick menu folds while the graph column is open"
-    assert "if(ico&&!ico.classList.contains('top')) togglePage('graph'); }catch(_){} }, true);" in HTML, "a rail icon folds the graph back"
-    assert "_ctxCol.addEventListener('vera:ctx:collapse', ()=>{ togglePage('graph');" in HTML
+    assert "#rightRail.lhm-host.lhm-grown > .lhm-det{width:min(46vw,680px);flex:0 0 min(46vw,680px)}" in HTML, "the graph grows the menu in place (no second column)"
+    assert "if(ico&&!ico.classList.contains('top')&&ico.getAttribute('data-menu')!=='context') _ctxGrow(false); }catch(_){} }, true);" in HTML, "another rail icon folds the graph back"
+    assert "_ctxCol.addEventListener('vera:ctx:collapse', ()=>{ _ctxGrow(false);" in HTML
     assert "if(Date.now()-_ctxTypingT<900){ svg.innerHTML='';" in HTML and "inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxRunsDraw(); });" in HTML
     assert "function _ctxAssembledExtra(layers, present){" in HTML and "const extra=_ctxAssembledExtra(_CTX_ALL_LAYERS, CTX_NODES);" in HTML
     assert "const _ex=_ctxAssembledExtra(_ctxLayers, vis); const extraNodes=_ex.nodes, extraEdges=_ex.edges;" in HTML, "the rail's graph draws from the same function"
@@ -160,15 +160,15 @@ def test_the_element_renders_the_session_projection():
     for s in ('class="band pinned"', 'class="band now"', "<b>${plainDoc ? 'BLOCKS' : 'NOW'}</b>", 'class="band parked"', 'class="chips"', 'data-key="${esc(b.key)}" data-size="${size}"',
               'data-act="pin"', 'data-act="park"', 'data-act="size"', 'data-act="remove"'):
         assert s in EL, s
-    assert "window.VeraWidget && typeof window.VeraWidget.draw === 'function'" in EL and "window.VeraWidget.draw(rec.draw.form, rec.data, size" in EL
+    assert "window.VeraWidget && typeof window.VeraWidget.draw === 'function'" in EL and "window.VeraWidget.draw(form, rec.data, size" in EL   # the form is the record's (rec.form or draw.form)
     assert '<div class="vc-rec"><b>' in EL, "the record card when there is no drawer"
     assert "fetch(base + '/mcp/call'" in EL and "Object.assign({ id: this.canvasId }, args || {})" in EL
     assert "const rev = doc.revision != null ? doc.revision : doc.rev != null ? doc.rev" in EL
-    assert "static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns']; }" in EL
+    assert "static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id']; }" in EL   # the rail and the session (agent V)
     assert "if (this.hasAttribute('compact')) this.style.setProperty('--vc-max', '240px');" in EL
     assert "this._timer = setInterval(() => this.refresh(), 3000);" in EL
     # the plain projection is what it was
-    assert "body.innerHTML = '<div class=\"empty\">This canvas is empty — blocks appear here as they are added.</div>';" in EL
+    assert "'<div class=\"empty\">Nothing on this canvas — add a block above, or let an agent fill it.</div>'" in EL   # an agent's empty document, in the one projection (agent V)
 
 
 def test_the_relevance_engine_drives_the_canvas_columns_focus_set():

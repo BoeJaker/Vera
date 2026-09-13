@@ -19,6 +19,9 @@ t('with <vera-widget> on the page a record is a live slot keyed by the item, at 
 t('the caption says form · source', /vc-cap mono">gauge · obs\.health</.test(live), live);
 t('no source → the caption says sample', /gauge · sample</.test(B.widget({ form: 'gauge', draw: {} }, 'm', 'k')));
 t('no key (a preview) → the static path, not a live slot', !/vc-live/.test(B.widget(rec, 'm', '')));
+// the harvest's shape (a reply's widget lifted onto the canvas): the record inside the content is the widget
+const lifted = B.widget({ widget: 'gauge', title: 'GPU', args: {}, record: { form: 'gauge', title: 'GPU', draw: { form: 'gauge', size: 's' }, reads: { cap: '' }, data: { value: 62 } } }, 's', 'turn:m1:widget:0');
+t('content carrying a record is a live slot, not a stub', /vc-live" data-live="widget" data-key="turn:m1:widget:0" data-size="s"/.test(lifted) && !/vc-stub/.test(lifted), lifted);
 delete global.customElements;
 // the add bar
 t('the add bar\'s widget opens the sheet when the page has it', /n: 'widget', ik: 'WG', kind: 'widget'[^\n]*sheet: true/.test(SRC) && /if \(k\.sheet\) return this\._widgetSurface\(\) \? this\._widgetPick\(btn, k\) : this\._sheetless\(btn, k\);/.test(SRC));

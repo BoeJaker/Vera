@@ -696,7 +696,8 @@
     return wrap('hero', '<div class="vb-hero"><b>' + esc(fmt(l.v)) + '</b><span class="u">' + esc(unit) + '</span>' + dl + '</div>' + chart + cap(note));
   };
   R.gauge = (d, H, o) => {
-    const l = level(d); const kv = l && !keyed(d).length ? [[(o && o.title) || 'value', l.v, l.hi, l.unit]] : keyed(d).map((x) => [x[0], x[1], (o && o.draw && o.draw.max) || 100, '']); if (!kv.length) return EMPTY('gauges need values');
+    const l = level(d); const isLevel = !!(d && typeof d === 'object' && !Array.isArray(d) && typeof d.value === 'number');   // { value, min, max, unit } is one gauge, not value · min · max
+    const kv = l && (isLevel || !keyed(d).length) ? [[(o && o.title) || 'value', l.v, l.hi, l.unit]] : keyed(d).map((x) => [x[0], x[1], (o && o.draw && o.draw.max) || 100, '']); if (!kv.length) return EMPTY('gauges need values');
     const arc = Math.PI * 24, pal = palOf(o, 'load'); const rw = rows(d); const meta = (k) => rw.find((r) => nameOf(r) === k) || {};
     return wrap('gauge', '<div class="vb-row">' + kv.slice(0, 4).map((g, i) => { const m = meta(g[0]); const hi = num(m.max ?? g[2]) || 100, f = Math.max(0, Math.min(1, g[1] / hi)); const col = pal(i, g[1], hi); return '<span class="vb-gg"><svg width="62" height="40" viewBox="0 0 62 40"><path d="M7 36 A24 24 0 0 1 55 36" fill="none" stroke="' + B.s3 + '" stroke-width="6" stroke-linecap="round"/><path d="M7 36 A24 24 0 0 1 55 36" fill="none" stroke="' + col + '" stroke-width="6" stroke-linecap="round" stroke-dasharray="' + (arc * f).toFixed(1) + ' ' + arc.toFixed(1) + '"/></svg><b style="color:' + col + '">' + esc(String(m.text ?? (fmt(g[1]) + (m.unit ?? g[3] ?? '')))) + '</b><span class="vb-lbl">' + esc(g[0]) + '</span></span>'; }).join('') + '</div>');
   };
