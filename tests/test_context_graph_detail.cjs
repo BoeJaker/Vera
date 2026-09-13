@@ -85,12 +85,38 @@ t('miniList: the compact rows, the search applied', /cg-list compact/.test(ml) &
 const mh = G.miniHtml(G.stateFrom({ nodes, rels: edges }), 262, 196, { detail: 'g1', list: true });
 t('miniHtml with detail + list: the box carries the list and the card', /cg-mini listing/.test(mh) && /cg-list compact/.test(mh) && /cg-rec compact" data-id="g1"/.test(mh));
 t('miniHtml without opts: no card, no list', !/cg-rec/.test(G.miniHtml(G.stateFrom({ nodes, rels: edges }), 262, 196)) && !/cg-list/.test(G.miniHtml(G.stateFrom({ nodes, rels: edges }), 262, 196)));
-t('the API exposes the detail functions', typeof G.miniDetail === 'function' && typeof G.miniList === 'function' && typeof G.recordCard === 'function' && typeof G.listHtml === 'function' && G.version === 4);
+t('the API exposes the detail functions', typeof G.miniDetail === 'function' && typeof G.miniList === 'function' && typeof G.recordCard === 'function' && typeof G.listHtml === 'function' && G.version === 5);
 // the list carries the session's memory records too (hollow, no toggle — not prompt records), after the context's
 const sess = [{ id: 'ss1', record_type: 'session', summary: 'the session', created_at: '2026-09-11T09:59:00Z', importance: 0.9 }, { id: 'sf1', record_type: 'fact', text: 'a digest fact', created_at: '2026-09-11T10:02:00Z', importance: 0.3 }];
 const ls = G.compute(Object.assign({}, base, { memory: sess, memEdges: [] }), W, H);
 t('the session records are rows after the context\'s, hollow, without a toggle', ls.list.length === 8 && ls.list.slice(-2).every((r) => r.sess && !r.included) && !/data-a="toggle" data-id="sf1"/.test(G.listHtml(ls)) && /data-a="toggle" data-id="v1"/.test(G.listHtml(ls)));
 const lq = G.compute(Object.assign({}, base, { memory: sess, memEdges: [], q: 'digest' }), W, H);
 t('the search counts what the list shows: hits = rows', lq.hits === lq.list.length && lq.list.some((r) => r.id === 'sf1'), lq.hits + ' vs ' + lq.list.length);
+
+// ── All edges: on draws every record's spoke to the hub (lit for the prompt's), the mini alike; off draws none ──
+const spokes = (o) => o.cedges.filter((e) => /^spoke/.test(e.cls));
+const aOn = G.compute(Object.assign({}, base, { allEdges: true }), W, H), aOff = G.compute(Object.assign({}, base, { allEdges: false }), W, H);
+t('All edges on: a spoke from the hub to every record drawn — the context\'s memory recall too, never the session\'s records', spokes(aOn).length === aOn.cnodes.length + 1 && aOn.cnodes.length === 5, spokes(aOn).length + ' vs ' + aOn.cnodes.length);
+t('the prompt\'s records get a lit spoke, the rest a dim one', spokes(aOn).filter((e) => /lit/.test(e.cls)).length === 4 && spokes(aOn).filter((e) => !/lit/.test(e.cls)).length === 2);
+t('All edges off: no spokes, the dim relations folded', spokes(aOff).length === 0 && !aOff.cedges.some((e) => e.cls === 'rel'));
+t('the mini honours All edges the same way', spokes(G.mini(Object.assign({}, base, { allEdges: true }), 262, 196)).length === 6 && spokes(G.mini(Object.assign({}, base, { allEdges: false }), 262, 196)).length === 0);
+t('miniHtml draws the spokes when the state says so', (G.miniHtml(G.stateFrom({ nodes, rels: edges, allEdges: true }), 262, 196).match(/cg-edge spoke/g) || []).length === 6 && !/cg-edge spoke/.test(G.miniHtml(G.stateFrom({ nodes, rels: edges, allEdges: false }), 262, 196)));
+t('no spokes where the hub is hidden (flow · time)', spokes(G.compute(Object.assign({}, base, { allEdges: true, view: 'flow' }), W, H)).length === 0 && spokes(G.compute(Object.assign({}, base, { allEdges: true, view: 'time' }), W, H)).length === 0);
+t('iso: the spokes rise from the hub on its pin', spokes(G.compute(Object.assign({}, base, { allEdges: true, view: 'iso' }), W, H)).length === 6);
+
+// ── zoom-to: the pan that centres a record ──
+const pz = G.panTo({ x: 100, y: 80 }, 600, 400, 2);
+t('panTo puts the record at the plot\'s centre at zoom z (the inverse of atP)', pz.z === 2 && 300 + (100 - 300) * 2 + pz.x === 300 && 200 + (80 - 200) * 2 + pz.y === 200);
+t('the element\'s panel offers Zoom to; the mini\'s card does not (it has no pan)', /data-a="zoom" data-id="v1"/.test(G.recordCard(p1.rec, { zoom: true })) && !/data-a="zoom"/.test(G.recordCard(p1.rec, { compact: true })) && /data-a="zoom"/.test(G.drawLanes(p1)));
+
+// ── the page preview, the run node's evidence links, Incl all / Excl all ──
+t('a record with a URL offers Preview page in the panel and ◫ on its row', /data-a="preview" data-id="w1" data-url="https:\/\/example\.test\/issues\/41"/.test(G.recordCard(pw.rec, {})) && /class="pv" data-a="preview" data-id="w1"/.test(G.listHtml(l0)) && !/data-a="preview"/.test(G.recordCard(p1.rec, {})));
+const runN = nodes.concat([{ id: 'r1', label: 'obs.health · run', source: 'run', type: 'run', score: 0.55, status: 'running', attempt: 2, progress: 0.4, run_id: 'run-77', session_id: 'sess-9', included: true }]);
+const pr = G.compute(Object.assign({}, base, { nodes: runN, sel: 'r1' }), W, H);
+t('a run node: status · attempt · progress rows', keys(pr.rec).indexOf('status,attempt,progress') > 0 && pr.rec.rows.find((x) => x.k === 'progress').v === '40%', keys(pr.rec));
+t('a run node: Activity evidence ↗ and Memory graph ↗ links, on the run root and the session', pr.rec.links.length === 2 && pr.rec.links[0].href === '/activity/panel#run%3Arun-77' && pr.rec.links[1].href === '/memgraph/panel?run_id=run-77&session_id=sess-9');
+t('the links are anchors in the card (the mini\'s too)', (G.recordCard(pr.rec, {}).match(/class="lnk"/g) || []).length === 2 && (G.recordCard(pr.rec, { compact: true }).match(/class="lnk"/g) || []).length === 2 && !/class="lnk"/.test(G.recordCard(p1.rec, {})));
+t('the list head offers Incl all · Excl all when there are prompt records', /data-a="incl-all"/.test(G.listHtml(l0)) && /data-a="excl-all"/.test(G.listHtml(l0)) && /data-a="incl-all"[^>]*>incl</.test(G.listHtml(l0, { compact: true })));
+t('no Incl / Excl all over session records alone', !/data-a="incl-all"/.test(G.listHtml(G.compute(Object.assign({}, base, { nodes: [], memory: sess, memEdges: [] }), W, H))));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

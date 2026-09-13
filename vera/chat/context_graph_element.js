@@ -29,9 +29,16 @@
      setMemory(nodes, edges, {color, edgeColor, hide}) · setDag(nodes, edges) · appendLoopEvent(ev) · setLoopEvents(evs)
      setPlan(goals) · setRuns(list, {current}) · setEstate(snapshot) · mix(family, level) · allEdges(on) · view(name)
      setFrames([{id, label, ts, nodes, edges}], {active}) · frame(id | null) · search(q) · list(on) · edgeType(name, on)
-     fit() · select(id) · positions() · state()
+     fit() · select(id) · zoomTo(id, z) · positions() · state()
    events: vera:ctx:rendered {view, tokens, lit} · vera:ctx:pick {id} · vera:ctx:toggle {id} · vera:ctx:focus-turn {mid}
-           · vera:ctx:run {session_id} · vera:ctx:collapse · vera:ctx:frame {id | null}
+           · vera:ctx:run {session_id} · vera:ctx:collapse · vera:ctx:frame {id | null} · vera:ctx:alledges {on}
+           · vera:ctx:toggle-all {included} · vera:ctx:preview {id, url}
+   All edges: off draws only the relations that touch the prompt; on draws every relation AND every record's spoke to
+   the hub (the aide retrieved each for the turn — the old graph's spokes), in the mini as in the element. The record
+   panel: Zoom to (the plot pans to the record; a list row does it too), Preview page for a record with a URL
+   (vera:ctx:preview — the host opens its browser pane), Activity evidence ↗ · Memory graph ↗ on a run node; the list's
+   head: Incl all · Excl all (vera:ctx:toggle-all). The mini's card and rows carry the same data-a hooks:
+   `[data-a="preview"][data-url]` · `[data-a="incl-all"]` · `[data-a="excl-all"]` · `a.lnk` (the run links).
    window.VeraContextGraph = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawLanes, recordCard,
    listHtml, VIEWS, FAMS, … } — compute() is pure (node-testable); mini(state, w, h) is the same layout in miniature
    (the tracks scaled to the box) and miniHtml(state, w, h, {detail, list, q}) draws it with the element's own classes —
@@ -389,6 +396,9 @@
     // relations INSIDE the graph: what cites what (the context's own edges; a quad's cells drew their own)
     if (!quad) EDGES.forEach((e2) => { const a = out.pos[e2.from], b = out.pos[e2.to]; if (!a || !b) return; const lit = a.lit && b.lit; const memRel = a.source === 'memory' || b.source === 'memory';
       edge(out.cedges, a, b, memRel ? 'var(--cg-ac2)' : lit ? a.col : 'var(--cg-bd2)', memRel ? 'mem' : lit ? 'rel lit' : 'rel', a.label + ' → ' + b.label + (e2.label ? ' · ' + String(e2.label).replace(/_/g, ' ').toLowerCase() : '')); });
+    // All edges on: every record's spoke to the hub — the aide retrieved each for the turn (the old rail graph's edges
+    // from the agent), lit when the record is in the prompt; none where the hub is hidden (flow · time)
+    if (!quad && S.allEdges && out.hub && !out.hub.hid) { const hp = { x: out.hub.x, y: out.hub.y }; out.cnodes.concat(out.memNodes.filter((n) => ctxIds.has(n.id))).forEach((n) => { const p = out.pos[n.id]; if (p) edge(out.cedges, hp, p, p.lit ? p.col : 'var(--cg-bd2)', 'spoke' + (p.lit ? ' lit' : ''), 'aide → ' + p.label + ' · retrieved for the turn'); }); }
     // the step in focus (or the one running), wired to the records it read — from the fixed lane into the moving plot,
     // and from the plot's own step where the layer draws it
     stepReads.forEach((ids, si) => { const a = lpos[si], s2 = spos[si]; if (!a && !s2) return; const lit = S.lsel != null ? S.lsel === si : (loop[si] && loop[si].status === 'running'); if (!lit && S.lsel != null) return;
@@ -420,8 +430,12 @@
     out.rec = null;
     if (S.sel && out.pos[S.sel]) { const r = out.pos[S.sel]; const by = readBy(S.sel), steps = readBySteps(S.sel);
       const rels = EDGES.filter((e2) => e2.from === S.sel || e2.to === S.sel).map((e2) => { const o = out.pos[e2.from === S.sel ? e2.to : e2.from]; return (o ? o.label : '?') + (e2.label ? ' — ' + String(e2.label).replace(/_/g, ' ').toLowerCase() : ''); }).slice(0, 4);
-      const rr = r.rec || {}; const detail = r.source === 'estate' ? [] : [].concat(rr.type || rr.dataset ? [{ k: 'type', v: [rr.type, rr.dataset ? 'dataset ' + rr.dataset : ''].filter(Boolean).join(' · ') }] : [], rr.url ? [{ k: 'url', v: String(rr.url).slice(0, 80), url: String(rr.url) }] : [], (rr.tags || []).length ? [{ k: 'tags', v: rr.tags.slice(0, 8).join(', ') }] : []);
-      out.rec = { id: S.sel, name: r.label, kind: r.source + ' · ' + r.kind, col: r.col, turn: by[0] || null, ghost: r.ghost, family: r.source === 'estate' ? 'estate' : r.source === 'memory' ? 'memory' : 'context', rec: r.rec || null, text: r.source === 'estate' ? '' : textOf(rr).slice(0, 600), url: rr.url || '',
+      const rr = r.rec || {}; const detail = r.source === 'estate' ? [] : [].concat(rr.type || rr.dataset ? [{ k: 'type', v: [rr.type, rr.dataset ? 'dataset ' + rr.dataset : ''].filter(Boolean).join(' · ') }] : [], rr.url ? [{ k: 'url', v: String(rr.url).slice(0, 80), url: String(rr.url) }] : [], (rr.tags || []).length ? [{ k: 'tags', v: rr.tags.slice(0, 8).join(', ') }] : [],
+        // a run node (an observed capability run): its status · attempt · progress, and the old graph's evidence links
+        r.source === 'run' ? [{ k: 'status', v: rr.status || 'created' }].concat(rr.attempt ? [{ k: 'attempt', v: String(rr.attempt) }] : [], rr.progress != null ? [{ k: 'progress', v: Math.round(Number(rr.progress) * 100) + '%' }] : []) : []);
+      const runRoot = r.source === 'run' ? String(rr.parent_run_id || rr.run_id || rr.id || '') : '';
+      const links = runRoot ? [{ label: 'Activity evidence ↗', href: '/activity/panel#' + encodeURIComponent('run:' + runRoot) }, { label: 'Memory graph ↗', href: '/memgraph/panel?run_id=' + encodeURIComponent(runRoot) + (rr.session_id ? '&session_id=' + encodeURIComponent(rr.session_id) : '') }] : [];
+      out.rec = { id: S.sel, name: r.label, kind: r.source + ' · ' + r.kind, col: r.col, turn: by[0] || null, ghost: r.ghost, family: r.source === 'estate' ? 'estate' : r.source === 'memory' ? 'memory' : 'context', rec: r.rec || null, text: r.source === 'estate' ? '' : textOf(rr).slice(0, 600), url: rr.url || '', links,
         rows: r.source === 'estate' ? [{ k: 'kind', v: r.kind }, { k: 'status', v: (r.rec && r.rec.status) || 'unknown' }, { k: 'detail', v: (r.rec && r.rec.detail) || '—' }, { k: 'temperature', v: r.rec && r.rec.temp_c != null ? r.rec.temp_c + ' °C' : '—' }] : r.sess ? [{ k: 'kind', v: r.kind + (r.rec && r.rec.source_type ? ' · ' + r.rec.source_type : '') }, { k: 'recalled', v: r.ghost ? 'in the session, never injected' : 'injected' + (by.length ? ' · ' + by.join(', ') : '') }, { k: 'created', v: String((r.rec && r.rec.created_at) || '').replace('T', ' ').slice(0, 16) || '—' }, { k: 'importance', v: r.score.toFixed(2) }]
           : [{ k: 'relevance', v: r.score.toFixed(2) + (r.ghost ? ' · related, not injected' : r.lit ? ' · in this prompt' : by.length ? ' · in the prompt of ' + by.join(', ') : ' · not read') }, { k: 'tokens', v: String(r.tok) }, { k: 'read by', v: by.length ? by.join(' · ') : '—' }, { k: 'loop steps', v: steps.length ? steps.map((s) => 'step ' + s).join(' · ') : '—' }, { k: 'source', v: r.source + ' · ' + r.kind }].concat(detail), rels }; }
     else if (S.lsel != null && loop[S.lsel]) { const s = loop[S.lsel]; const rd = (stepReads[S.lsel] || []).map((id) => out.pos[id]).filter(Boolean);
@@ -465,6 +479,8 @@
     return { view: d.view || 'galaxy', nodes: d.nodes || [], edges, focus: d.focus || (d.nodes || []).filter((n) => n && n.included !== false).map((n) => n.id), reads: d.reads || {}, stepReads: d.stepReads || [], loop: d.loop || [], runPlan: d.runPlan || [], run: d.run || null, dag: d.dag || [], dagEdges: d.dagEdges || [], plan: d.plan || [], estate: d.estate || { nodes: [], edges: [] }, memory: d.memory || [], memEdges: d.memEdges || [], mix: d.mix || {}, layersOff: new Set(d.off || []), related: d.related !== false, allEdges: !!d.allEdges, sel: d.sel || null, lsel: d.lsel == null ? null : d.lsel, pan: { x: 0, y: 0, z: 1 }, color: d.color || null, memColor: d.memColor || null, edgeColor: d.edgeColor || null, turn: d.turn || '',
       q: d.q || '', list: !!d.list, frames: d.frames || [], frame: d.frame == null ? null : d.frame, edgesOff: new Set(d.edgesOff || []) }; }
 
+  // the pan/zoom that puts a record (its layout position) at the plot's centre at zoom z — the inverse of compute()'s atP
+  function panTo(p, PW, PH, z) { z = z || 1; return { z, x: -(p.x - PW / 2) * z, y: -(p.y - PH / 2) * z }; }
   /* ── the drawing, shared by the element and the mini: the layout → markup in the element's own classes ── */
   const stAt = (x, y) => 'left:' + x + 'px;top:' + y + 'px;';
   const edgeHtml = (e) => '<div class="cg-edge ' + e.cls + '" title="' + esc(e.title) + '" style="' + stAt(e.x, e.y) + 'width:' + e.len + 'px;background:' + esc(e.col) + ';transform:rotate(' + e.deg + 'deg)"></div>';
@@ -502,7 +518,7 @@
     o.loopStems.forEach((s) => { l += '<div class="cg-lstem" style="' + stAt(s.x, s.y) + 'height:' + s.h + 'px"></div>'; });
     o.loopNodes.forEach((n) => { l += '<div class="cg-loop ' + n.cls + '" data-i="' + n.i + '" title="' + esc(n.title) + '" style="' + stAt(n.x, n.y) + '"><b>' + esc(n.label.slice(0, 16)) + '</b><span class="c">' + esc(n.cap) + '</span><span class="t">' + esc(n.ms) + '</span>'
       + (n.marks && n.marks.length ? '<span class="m">' + n.marks.map((m) => '<i class="' + esc(m.status) + ' ' + esc(m.kind) + '" title="' + esc(m.kind + ' · ' + m.status + ' · ' + m.label) + '">' + esc(m.g) + '</i>').join('') + '</span>' : '') + '</div>'; });
-    if (o.rec && !opts.noRecord) l += recordCard(o.rec, { bottom: o.lanes.b ? o.lanes.b + 6 : 0 });
+    if (o.rec && !opts.noRecord) l += recordCard(o.rec, { bottom: o.lanes.b ? o.lanes.b + 6 : 0, zoom: true });
     return l;
   }
   // the record card — the panel in the element, the overlay in the mini: the record's name and kind, its rows (relevance ·
@@ -514,7 +530,10 @@
       + rows.map((x) => '<span class="cg-rec-r"><span class="k">' + esc(x.k) + '</span>' + (x.url ? '<a class="v" href="' + esc(x.url) + '" target="_blank" rel="noopener">' + esc(x.v) + '</a>' : '<span class="v">' + esc(x.v) + '</span>') + '</span>').join('')
       + (r.text ? '<div class="cg-rec-t">' + esc(opts.compact ? r.text.slice(0, 160) : r.text) + '</div>' : '')
       + (opts.compact ? '' : (r.rels || []).map((x) => '<span class="cg-rec-l"><i></i>' + esc(x) + '</span>').join(''))
-      + '<span class="cg-rec-a">' + (r.turn ? '<button class="pri" data-a="turn" data-mid="' + esc(r.turn) + '">Focus turn</button>' : '') + (r.family === 'estate' || r.family === 'loop' ? '' : '<button data-a="toggle" data-id="' + esc(r.id) + '">' + (r.ghost ? (opts.compact ? 'Include' : 'Include in the prompt') : (opts.compact ? 'Exclude' : 'Exclude from the prompt')) + '</button><button data-a="open" data-id="' + esc(r.id) + '">Open</button>') + '</span></div>';
+      + '<span class="cg-rec-a">' + (r.turn ? '<button class="pri" data-a="turn" data-mid="' + esc(r.turn) + '">Focus turn</button>' : '') + (r.family === 'estate' || r.family === 'loop' ? '' : '<button data-a="toggle" data-id="' + esc(r.id) + '">' + (r.ghost ? (opts.compact ? 'Include' : 'Include in the prompt') : (opts.compact ? 'Exclude' : 'Exclude from the prompt')) + '</button><button data-a="open" data-id="' + esc(r.id) + '">Open</button>')
+      + (opts.zoom && r.family !== 'loop' ? '<button data-a="zoom" data-id="' + esc(r.id) + '" title="Pan the plot to this record">Zoom to</button>' : '')
+      + (r.url ? '<button data-a="preview" data-id="' + esc(r.id) + '" data-url="' + esc(r.url) + '" title="Open the page in the browser pane">' + (opts.compact ? 'Preview' : 'Preview page') + '</button>' : '')
+      + (r.links || []).map((l) => '<a class="lnk" href="' + esc(l.href) + '" target="_blank" rel="noopener">' + esc(l.label) + '</a>').join('') + '</span></div>';
   }
   // the LIST drawer: the rows from compute() — a row is the record (click → the panel), its dot, label, relevance bar,
   // tokens and the include / exclude mark (data-a="toggle"); the head says how many, and how many the search hit
@@ -522,9 +541,11 @@
     opts = opts || {};
     const rows = opts.limit ? o.list.slice(0, opts.limit) : o.list;
     const head = (o.q ? rows.length + ' of ' + o.listTotal + ' match “' + o.q + '”' : o.listTotal + ' record' + (o.listTotal === 1 ? '' : 's')) + (o.frame ? ' · frame ' + o.frame.label : '');
-    return '<div class="cg-list' + (opts.compact ? ' compact' : '') + '"><div class="cg-list-h"><span>' + esc(head) + '</span>' + (opts.closable === false ? '' : '<span class="x" data-a="list" title="Close the list">✕</span>') + '</div><div class="cg-list-b">'
+    const anyPrompt = o.list.some((r) => !r.sess);
+    return '<div class="cg-list' + (opts.compact ? ' compact' : '') + '"><div class="cg-list-h"><span>' + esc(head) + '</span>' + (anyPrompt ? '<button class="all" data-a="incl-all" title="Include every record in the prompt">' + (opts.compact ? 'incl' : 'Incl all') + '</button><button class="all" data-a="excl-all" title="Exclude every record from the prompt">' + (opts.compact ? 'excl' : 'Excl all') + '</button>' : '') + (opts.closable === false ? '' : '<span class="x" data-a="list" title="Close the list">✕</span>') + '</div><div class="cg-list-b">'
       + (rows.length ? rows.map((r) => '<div class="cg-row' + (r.included ? '' : ' excl') + (r.lit ? ' lit' : '') + (r.sel ? ' on' : '') + '" data-id="' + esc(r.id) + '" title="' + esc(r.label + ' · ' + r.source + ' · ' + (r.sess ? 'importance ' : 'relevance ') + r.score.toFixed(2) + ' · ' + r.tok + ' tokens' + (r.sess ? (r.included ? ' · in the prompt' : ' · in the session, not injected') : r.included ? '' : ' · excluded from the prompt')) + '" style="--rc:' + esc(r.col) + '">'
         + '<i class="dot"></i><b>' + esc(r.label) + '</b><span class="bar"><i style="width:' + Math.round(r.score * 100) + '%"></i></span><span class="tok">' + r.tok + '</span>'
+        + (r.url ? '<button class="pv" data-a="preview" data-id="' + esc(r.id) + '" data-url="' + esc(r.url) + '" title="Open the page in the browser pane">◫</button>' : '<span class="pv"></span>')
         + (r.sess ? '<span></span>' : '<button data-a="toggle" data-id="' + esc(r.id) + '" title="' + (r.included ? 'Exclude from the prompt' : 'Include in the prompt') + '">' + (r.included ? '✕' : '＋') + '</button>')
         + (r.text && !opts.compact ? '<small>' + esc(r.text) + '</small>' : '') + '</div>').join('') : '<div class="cg-list-e">' + (o.q ? 'nothing matches' : 'no records yet') + '</div>')
       + '</div></div>';
@@ -664,13 +685,13 @@ vera-context-graph .cg-list{position:absolute;top:0;right:0;bottom:0;width:236px
 vera-context-graph .cg-list-box .cg-list{position:relative;inset:auto;width:100%;border:1px solid var(--cg-bd);border-radius:8px;background:var(--cg-s1);backdrop-filter:none}
 vera-context-graph .cg-list-h{flex:none;display:flex;align-items:center;gap:6px;padding:7px 9px;font-family:var(--cg-mono);font-size:9px;color:var(--cg-t3);border-bottom:1px solid var(--cg-bd)}vera-context-graph .cg-list-h span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}vera-context-graph .cg-list-h .x{cursor:pointer;color:var(--cg-t3)}vera-context-graph .cg-list-h .x:hover{color:var(--cg-t1)}
 vera-context-graph .cg-list-b{flex:1;min-height:0;overflow-y:auto;padding:4px 0}
-vera-context-graph .cg-row{display:grid;grid-template-columns:8px minmax(0,1fr) 44px 30px 16px;grid-template-areas:"d l b t x" ". s s s s";align-items:center;gap:2px 6px;padding:5px 9px;cursor:pointer;font-size:10px;color:var(--cg-t1);border-left:2px solid transparent}
+vera-context-graph .cg-row{display:grid;grid-template-columns:8px minmax(0,1fr) 44px 30px 16px 16px;grid-template-areas:"d l b t p x" ". s s s s s";align-items:center;gap:2px 6px;padding:5px 9px;cursor:pointer;font-size:10px;color:var(--cg-t1);border-left:2px solid transparent}
 vera-context-graph .cg-row:hover{background:var(--cg-s2)}vera-context-graph .cg-row.on{border-left-color:var(--rc);background:var(--cg-s2)}vera-context-graph .cg-row.excl{opacity:.5}vera-context-graph .cg-row.lit b{color:var(--cg-t1)}
 vera-context-graph .cg-row .dot{grid-area:d;width:8px;height:8px;border-radius:50%;background:var(--rc)}vera-context-graph .cg-row.excl .dot{background:transparent;box-shadow:inset 0 0 0 1.5px var(--rc)}
 vera-context-graph .cg-row b{grid-area:l;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cg-t2)}
 vera-context-graph .cg-row .bar{grid-area:b;height:4px;border-radius:2px;background:var(--cg-bd);overflow:hidden}vera-context-graph .cg-row .bar i{display:block;height:100%;background:var(--rc);border-radius:2px}
 vera-context-graph .cg-row .tok{grid-area:t;font-family:var(--cg-mono);font-size:8.5px;color:var(--cg-t3);text-align:right}
-vera-context-graph .cg-row button{grid-area:x;font:inherit;font-size:9px;line-height:1;width:16px;height:16px;padding:0;border:none;border-radius:3px;background:transparent;color:var(--cg-t3);cursor:pointer}vera-context-graph .cg-row button:hover{background:var(--cg-bd);color:var(--cg-t1)}
+vera-context-graph .cg-row .pv{grid-area:p}vera-context-graph .cg-row button{grid-area:x;font:inherit;font-size:9px;line-height:1;width:16px;height:16px;padding:0;border:none;border-radius:3px;background:transparent;color:var(--cg-t3);cursor:pointer}vera-context-graph .cg-row button:hover{background:var(--cg-bd);color:var(--cg-t1)}
 vera-context-graph .cg-row small{grid-area:s;font-size:9px;line-height:1.35;color:var(--cg-t3);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 vera-context-graph .cg-list-e{padding:14px 10px;font-size:10px;color:var(--cg-t3);text-align:center}
 vera-context-graph .cg-srch{font:inherit;font-size:9.5px;height:20px;width:118px;padding:0 7px;border:1px solid var(--cg-bd);border-radius:5px;background:var(--cg-s2);color:var(--cg-t1);outline:none}vera-context-graph .cg-srch:focus{border-color:var(--cg-ac)}vera-context-graph .cg-srch::placeholder{color:var(--cg-t3)}
@@ -708,6 +729,10 @@ vera-context-graph .cg-edge.read{height:1.5px;opacity:.85}vera-context-graph .cg
 vera-context-graph .cg-edge.exec.lit{opacity:.9;height:1.5px}
 vera-context-graph .cg-edge.mem.spine{border-top-style:solid;opacity:.85}vera-context-graph .cg-edge.mem.hub{opacity:.35}
 vera-context-graph .cg-edge.same{height:0;border-top:1px dotted var(--cg-bd2);background:none!important;opacity:.6}
+vera-context-graph .cg-edge.spoke{height:1px;opacity:.28}vera-context-graph .cg-edge.spoke.lit{height:1px;opacity:.55}
+vera-context-graph .cg-list-h .all{font:inherit;font-size:8.5px;height:16px;padding:0 6px;border:1px solid var(--cg-bd);border-radius:4px;background:var(--cg-s2);color:var(--cg-t2);cursor:pointer;flex:none}vera-context-graph .cg-list-h .all:hover{color:var(--cg-t1)}
+vera-context-graph .cg-rec-a a.lnk{font-size:10px;color:var(--cg-ac);text-decoration:none;padding:4px 6px;border-radius:4px;box-shadow:0 0 0 1px var(--cg-bd);background:var(--cg-s1)}vera-context-graph .cg-rec-a a.lnk:hover{text-decoration:underline}
+vera-context-graph .cg-rec-a{flex-wrap:wrap}
 /* the quad view: four cells inside the tracks, a hairline between them, a caption in each */
 vera-context-graph .cg-div{position:absolute;background:var(--cg-bd);pointer-events:none}
 vera-context-graph .cg-region.cell{font-size:8px;opacity:.8}
@@ -725,7 +750,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
 .cg-mini .cg-plan{width:5px;height:5px}.cg-mini .cg-planl,.cg-mini .cg-estl,.cg-mini .cg-estg,.cg-mini .cg-region,.cg-mini .cg-slbl,.cg-mini .cg-memg,.cg-mini .cg-stepl{font-size:5.5px;letter-spacing:.04em}
 .cg-mini .cg-step{width:7px;height:7px}.cg-mini .cg-step svg{width:4px;height:4px}.cg-mini .cg-pnode{width:5px;height:5px}
 .cg-mini .cg-node svg{display:none}.cg-mini .cg-node span{display:none}.cg-mini .cg-lstem{display:none}
-.cg-mini .cg-list{width:100%;left:0;border-left:none;font-size:8px}.cg-mini .cg-list-h{padding:4px 7px;font-size:7.5px}.cg-mini .cg-row{padding:2px 7px;font-size:8px;grid-template-columns:6px minmax(0,1fr) 30px 22px 12px;gap:1px 4px}.cg-mini .cg-row .dot{width:6px;height:6px}.cg-mini .cg-row .tok{font-size:7px}.cg-mini .cg-row button{width:12px;height:12px;font-size:8px}
+.cg-mini .cg-list{width:100%;left:0;border-left:none;font-size:8px}.cg-mini .cg-list-h{padding:4px 7px;font-size:7.5px}.cg-mini .cg-row{padding:2px 7px;font-size:8.5px;grid-template-columns:6px minmax(0,1fr) 30px 22px 12px 12px;gap:1px 4px}.cg-mini .cg-list-h .all{font-size:7.5px;height:13px;padding:0 4px}.cg-mini .cg-rec-a a.lnk{font-size:8px;padding:2px 4px}.cg-mini .cg-row .dot{width:6px;height:6px}.cg-mini .cg-row .tok{font-size:7px}.cg-mini .cg-row button{width:12px;height:12px;font-size:8px}
 .cg-mini .cg-rec{pointer-events:auto}
 `.replace(/vera-context-graph(?=[ {.])/g, ':is(vera-context-graph,.cg-mini)');
   function ensureCss(doc) { doc = doc || document; if (doc.getElementById('vera-context-graph-css')) return; const s = doc.createElement('style'); s.id = 'vera-context-graph-css'; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s); }
@@ -782,6 +807,8 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
       view(name) { if (name && VIEWS.some((v) => v[0] === name)) { this._S.view = name; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); } return this._S.view; }
       fit() { this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); }
       select(id) { this._S.sel = id || null; this._schedule(); }
+      // pan the plot so the record sits at its centre, at zoom z (at least 1.6, or the current zoom if larger)
+      zoomTo(id, z) { const p = this._last && this._last.pos[id]; if (!p) return false; const plot = this._r.plot; const W = Math.max(200, plot.clientWidth || 600), H = Math.max(160, plot.clientHeight || 500); this._S.pan = panTo(p, W, H, z || Math.max(this._S.pan.z || 1, 1.6)); this._schedule(); return true; }
       state() { return this._S; }
       // screen positions of the drawn records (for the runs to the message the host draws)
       positions() { const out = []; this.querySelectorAll('.cg-node:not(.dup),.cg-mem:not(.dup)').forEach((el) => { const r = el.getBoundingClientRect(); const id = el.dataset.id; const p = this._last && this._last.pos[id]; if (!p) return; out.push({ id, x: r.left + r.width / 2, y: r.top + r.height / 2, rim: r.width / 2, col: p.col, source: p.source, lit: p.lit, ghost: p.ghost, label: p.label }); }); return out; }
@@ -790,14 +817,16 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
       _click(e) {
         const t = e.target; const b = t.closest && t.closest('button[data-v]'); if (b) { this.view(b.dataset.v); return; }
         const a = t.closest && t.closest('[data-a]'); if (a) { const S = this._S; const k = a.dataset.a;
-          if (k === 'fit') this.fit(); else if (k === 'collapse') { this.dispatchEvent(new CustomEvent('vera:ctx:collapse', { bubbles: true })); } else if (k === 'alledges') { S.allEdges = !S.allEdges; this._schedule(); } else if (k === 'layer') { const s = a.dataset.s; if (FAMS.indexOf(s) >= 0) { const cur = mixOf(S, s); this.mix(s, cur === 'off' ? 'focus' : cur === 'focus' ? 'all' : 'off'); } else { if (S.layersOff.has(s)) S.layersOff.delete(s); else S.layersOff.add(s); this._schedule(); } }
+          if (k === 'fit') this.fit(); else if (k === 'collapse') { this.dispatchEvent(new CustomEvent('vera:ctx:collapse', { bubbles: true })); } else if (k === 'alledges') { S.allEdges = !S.allEdges; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:alledges', { detail: { on: S.allEdges }, bubbles: true })); } else if (k === 'layer') { const s = a.dataset.s; if (FAMS.indexOf(s) >= 0) { const cur = mixOf(S, s); this.mix(s, cur === 'off' ? 'focus' : cur === 'focus' ? 'all' : 'off'); } else { if (S.layersOff.has(s)) S.layersOff.delete(s); else S.layersOff.add(s); this._schedule(); } }
           else if (k === 'related') { S.related = !S.related; this._schedule(); } else if (k === 'close') { S.sel = null; this._schedule(); }
+          else if (k === 'zoom') { this.zoomTo(a.dataset.id); } else if (k === 'preview') { this.dispatchEvent(new CustomEvent('vera:ctx:preview', { detail: { id: a.dataset.id, url: a.dataset.url }, bubbles: true })); }
+          else if (k === 'incl-all' || k === 'excl-all') { this.dispatchEvent(new CustomEvent('vera:ctx:toggle-all', { detail: { included: k === 'incl-all' }, bubbles: true })); }
           else if (k === 'list') { this.list(!S.list); } else if (k === 'etype') { this.edgeType(a.dataset.t, !!a.dataset.off); } else if (k === 'frame') { this.frame(a.dataset.id === '' ? null : a.dataset.id); }
           else if (k === 'toggle') { this.dispatchEvent(new CustomEvent('vera:ctx:toggle', { detail: { id: a.dataset.id }, bubbles: true })); }
           else if (k === 'open') { const r = this._last && this._last.rec; this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: a.dataset.id, open: true, family: r && r.id === a.dataset.id ? r.family : 'context', rec: r && r.id === a.dataset.id ? r.rec : null }, bubbles: true })); }
           else if (k === 'turn') { this.dispatchEvent(new CustomEvent('vera:ctx:focus-turn', { detail: { mid: a.dataset.mid }, bubbles: true })); }
           return; }
-        const row = t.closest && t.closest('.cg-row'); if (row) { const S = this._S; S.sel = S.sel === row.dataset.id ? null : row.dataset.id; S.lsel = null; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: row.dataset.id }, bubbles: true })); return; }
+        const row = t.closest && t.closest('.cg-row'); if (row) { const S = this._S; S.sel = S.sel === row.dataset.id ? null : row.dataset.id; S.lsel = null; if (S.sel) this.zoomTo(S.sel); else this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: row.dataset.id } , bubbles: true })); return; }
         const n = t.closest && t.closest('.cg-node,.cg-mem,.cg-est'); if (n) { const S = this._S; S.sel = S.sel === n.dataset.id ? null : n.dataset.id; S.lsel = null; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: n.dataset.id }, bubbles: true })); return; }
         const l = t.closest && t.closest('.cg-loop,.cg-step'); if (l) { const i = +l.dataset.i; const S = this._S; S.lsel = S.lsel === i ? null : i; S.sel = null; this._schedule(); }
       }
@@ -841,7 +870,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
     }
     root.customElements.define('vera-context-graph', VeraContextGraph);
   }
-  const api = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawLanes, recordCard, listHtml, textOf, edgeTypeOf, loopFromEvents, planFromGoals, dagSteps, mixOf, VIEWS, FAMS, ensureCss, kindOf, ICON, version: 4 };
+  const api = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawLanes, recordCard, listHtml, panTo, textOf, edgeTypeOf, loopFromEvents, planFromGoals, dagSteps, mixOf, VIEWS, FAMS, ensureCss, kindOf, ICON, version: 5 };
   root.VeraContextGraph = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
