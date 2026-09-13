@@ -34,6 +34,12 @@ def test_hint_lists_every_registry_form():
     assert "const form=known?draw:'table';" in src and "draw:{form:form, size:" in src
 
 
+def test_a_canvas_calls_receipt_is_not_harvested_as_an_item():
+    # mirror a42g.png: the model's canvas.append put its items on the canvas AND the harvest lifted each receipt card too
+    src = _read("vera", "chat", "chat_panel.html")
+    assert "if(/^(canvas\\.|ui\\.directive\\s+canvas\\.)/.test(n)&&!el.classList.contains('error')) return;" in src
+
+
 def test_a_bare_cap_call_with_json_runs():
     # mirror a42f.png: [[canvas.add {"kind":…}]] — no cap: prefix, no parentheses — rendered as raw text
     src = _read("vera", "chat", "chat_panel.html")
