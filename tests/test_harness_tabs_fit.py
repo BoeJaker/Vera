@@ -19,7 +19,7 @@ HTML = _read("vera", "capability_orchestration.html")
 
 def test_the_tab_bar_fits_and_never_scrolls():
     assert "function _tabsFit(){" in HTML
-    assert ".tabs{overflow-x:hidden}" in HTML and ".tabs .tab.folded{display:none}" in HTML
+    assert ".tabs{overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;scrollbar-width:none}" in HTML and ".tabs .tab.folded{display:none}" in HTML, "overflow folds behind the chip; the rest scrolls sideways on one line (the board)"
     assert ".tabs .tab-controls{margin-left:auto;flex:0 0 auto;order:10}" in HTML, "tabs · chip · controls, in that order"
     assert "tabs.filter(open).forEach(t=>{ keep.add(t); avail-=w.get(t); });" in HTML, "open tabs are never folded"
     assert "tabs.filter(t=>!keep.has(t)).forEach(t=>{ if(avail-w.get(t)>=0){ keep.add(t); avail-=w.get(t); } });" in HTML, "then the rest, in order, while they fit"
