@@ -12,7 +12,7 @@
    The relations cross the families: what cites what, which step read which record, which memory still relates,
    which plan step ran as which loop steps, which node a step ran on.
 
-   The views: galaxy · iso (the same galaxy at a tilt chosen so the plate fills the column; rings and sector discs
+   The views: galaxy · iso (the same galaxy at a tilt chosen so the plate fills the column and never exceeds it; rings and sector discs
    lie on the floor, the hub and the loop column stand on pins) · flow · time · QUAD (the four at once, the one
    dataset drawn four ways inside the tracks). Pan/zoom, Fit, a record panel for any node — a record, a memory, an
    estate node, a loop step.
@@ -167,21 +167,29 @@
     const midOf = (si) => famPlot ? CTX0 + (si + 0.5) * step : -90 + si * step;
     const MEM_A0 = famPlot ? -195 : -150, MEM_AW = famPlot ? 180 : 300;
     const PLAN_A = [-10, 40], LOOP_A = [40, 160];
-    // the iso view: the galaxy at a tilt, sized from the column — the projected ring (kx · R wide, ky · R tall) plus its
-    // labels, memory arm and stems must fit the plot, so the tilt steepens on a tall column and the radius follows
+    // the iso view: the galaxy at a tilt, sized from the column. The plate is the ground square [-s, s]² about the hub
+    // (s = RMAX + 40·k, drawn 5% larger), which the projection turns into a rhombus 2·PL·kx·s wide and 2·PL·ky·s tall,
+    // centred Y0 below the hub; it is the widest thing on the floor — the memory ring (RMAX + 44·k, inscribed), the
+    // discs and the sector labels all lie inside it — so it is the PLATE's bounding box that must fit the plot, a
+    // clearance from the plot's edge in place of the galaxy's label padding (which the plate encloses here): the tilt
+    // is that box's aspect (steeper on a tall column, 30° on a wide one, so the rhombus fills the box) and the size
+    // follows from whichever side binds; the stems and the hub's pin rise above the floor inside the rhombus, the 2·Y0
+    // the centre's offset leaves above the plate keeps the stand from crowding the plan row
     let RMAX, isoP = null, ISO = null;
     const memMargin = (mem.length ? 96 : 62) * k;
     if (view === 'iso') {
-      const availX = PW - LANE_L, availY = PH - LANE_T, K0 = 0.78 * Math.SQRT2, AZ = Math.SQRT1_2;      // k = 1.103 at azimuth 45° is the plate's 0.78 / 0.39 at a 30° tilt
-      const sinT = Math.max(0.5, Math.min(0.85, (availY / 2 - 48 * k) / Math.max(1, availX / 2 - 12 * k)));
-      const kx = K0 * AZ, ky = K0 * AZ * sinT, Y0 = 40 * k, tilt = Math.asin(sinT) * 180 / Math.PI;
-      // a ground circle of radius R is the ellipse R·kx·√2 wide and R·ky·√2 tall about the hub: the outer radius that fits
-      const Router = Math.min((availX / 2 - 12 * k) / (kx * Math.SQRT2), (availY / 2 - 48 * k) / (ky * Math.SQRT2));
-      RMAX = Math.max(60 * k, Router - (mem.length ? 80 : 30) * k);
+      const K0 = 0.78 * Math.SQRT2, AZ = Math.SQRT1_2, Y0 = 40 * k, PL = 2 * 1.05;      // k = 1.103 at azimuth 45° is the plate's 0.78 / 0.39 at a 30° tilt
+      const PAD = 20 * k;                                                                 // the plate's clearance from the plot's edge
+      const halfX = Math.max(1, (PW - LANE_L) / 2 - PAD), halfY = Math.max(1, (PH - LANE_T) / 2 - PAD - Y0);
+      const sinT = Math.max(0.5, Math.min(0.85, halfY / halfX));
+      const kx = K0 * AZ, ky = K0 * AZ * sinT, tilt = Math.asin(sinT) * 180 / Math.PI;
+      const s = Math.min(halfX / (PL * kx), halfY / (PL * ky));                          // the plate's half-side that fits both ways
+      RMAX = Math.max(60 * k, s - 40 * k);
+      const S1 = RMAX + 40 * k, box = { w: 2 * PL * kx * S1, h: 2 * PL * ky * S1 };       // the plate's projected bounding box (RMAX may have hit its floor)
       const P = typeof S.isoMake === 'function' ? S.isoMake(tilt, K0) : null;
       isoP = P ? (x, y, z) => { const p = P(x - cxp, y - cyp, z || 0); return { x: cxp + p[0], y: cyp + Y0 + p[1] }; }
         : (x, y, z) => { const u = x - cxp, v = y - cyp; return { x: cxp + (u - v) * kx, y: cyp + Y0 + (u + v) * ky - (z || 0) }; };
-      ISO = { kx, ky, sinT, tilt, y0: Y0, k: K0 };
+      ISO = { kx, ky, sinT, tilt, y0: Y0, k: K0, pad: PAD, box, fit: Math.max(box.w / (PW - LANE_L), box.h / (PH - LANE_T)) };
     } else RMAX = Math.max(60 * k, Math.min(PW - LANE_L, PH - LANE_T) / 2 - memMargin);
     const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], memLabels: [], cedges: [], sedges: [], stems: [], pins: [], plate: null, regions: [], loopNodes: [], loopStems: [], planNodes: [], stepNodes: [], planPlot: [], estNodes: [], estLabels: [], dividers: [], pos: {}, tokens: 0, lit: 0, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' || quad }, discs: [], iso: ISO, k };
     // the plot's pan/zoom, for what is drawn OUTSIDE it (the lanes) but joins a record inside it
@@ -226,7 +234,7 @@
     if (!quad) {
     if (view === 'galaxy') [0.90, 0.75, 0.60].forEach((sc) => { const r = Math.min(RMAX, 52 * k + (1 - sc) * (RMAX - 52 * k) / 0.4); out.rings.push({ cx: px(cxp), cy: px(cyp), d: px(r * 2) }); });
     if (view === 'time') { const cols = Math.max(turnKeys.length, 1) + 1, cw = (PW - LANE_L - 60 * k) / cols; for (let c = 1; c <= cols; c++) out.sectorLabels.push({ name: c < cols ? (turnKeys[c - 1] || 'm' + c) : 'never', col: 'var(--cg-t3)', x: px(LANE_L + 30 * k + cw * (c - 0.5)), y: px(LANE_T + 12 * k) }); }
-    if (view === 'iso') { const s = RMAX + 40 * k; const c = isoP(cxp, cyp, 0); out.plate = { x: px(c.x - 2 * s * ISO.kx * 1.05), y: px(c.y - 2 * s * ISO.ky * 1.05), w: px(4 * s * ISO.kx * 1.05), h: px(4 * s * ISO.ky * 1.05) };
+    if (view === 'iso') { const c = isoP(cxp, cyp, 0); out.plate = { x: px(c.x - ISO.box.w / 2), y: px(c.y - ISO.box.h / 2), w: px(ISO.box.w), h: px(ISO.box.h) };
       // the sector discs (the board's annular wedges on the floor): one per family, over the family's sector and the
       // relevance radii its nodes can take; a ground circle under this projection is the axis-aligned ellipse
       // kx·√2 × ky·√2 about the hub, its parameter phased by 45° — so the wedge is a conic gradient in a circle, then that scale
