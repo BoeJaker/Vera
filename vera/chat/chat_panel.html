@@ -1559,6 +1559,44 @@ body .lhm-prow{background:var(--surf2,var(--bg2,#1a1c20));box-shadow:var(--elev-
 body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri-fg,var(--on-acc,#fff))}
 #rightRail.lhm-host .lhm-quick .wid.lhm-added{background:var(--surf2,var(--bg2,#1a1c20));box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
 @keyframes xbl{50%{opacity:.35}}
+/* ── the Settings page (the Settings board) ── */
+#settingsPage{position:fixed;top:52px;right:0;bottom:0;left:0;z-index:5200;display:flex;flex-direction:column;background:var(--bg,var(--bg0,#0e0f12));color:var(--t1,var(--text,#d8dce4));font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
+#settingsPage[hidden]{display:none}
+#settingsPage .sp-hd{display:flex;align-items:center;gap:14px;height:52px;padding:0 22px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));flex-shrink:0}
+#settingsPage .sp-hd h1{margin:0;font-size:19px;font-weight:600;letter-spacing:-.01em}
+#settingsPage .sp-hd .kbd{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10px;color:var(--t3,var(--dim,#6b7280));border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,6px);padding:2px 7px}
+#settingsPage .sp-hd .x{width:28px;height:28px;border:none;border-radius:var(--r-sm,6px);background:transparent;color:var(--t3,var(--dim,#6b7280));font:inherit;font-size:13px;cursor:pointer}
+#settingsPage .sp-hd .x:hover{color:var(--t1,var(--text,#d8dce4));background:var(--surf2)}
+#settingsPage .sp-hd .sp{flex:1}
+#settingsPage .sp-bd{flex:1;min-height:0;display:grid;grid-template-columns:232px 1fr;gap:14px;padding:14px 22px 18px}
+#settingsPage .sp-idx{background:var(--surf);border-radius:var(--ui-radius,10px);box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.18));display:flex;flex-direction:column;min-height:0;overflow:hidden}
+#settingsPage .sp-idx-hd{padding:12px 12px 6px}
+#settingsPage .sp-srch{display:flex;align-items:center;gap:7px;height:28px;padding:0 10px;border-radius:var(--r-sm,6px);background:var(--bg,var(--bg0,#0e0f12));box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));color:var(--t3,var(--dim,#6b7280));font-size:10.5px}
+#settingsPage .sp-srch input{flex:1;min-width:0;border:none;background:transparent;font:inherit;color:var(--t1,var(--text,#d8dce4));outline:none}
+#settingsPage .sp-idx-bd{overflow:auto;padding:4px 8px 12px}
+#settingsPage .sp-grp{display:flex;align-items:center;gap:6px;padding:10px 6px 4px;font-size:var(--label-size,9.5px);text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t2,var(--dim2,#8a92a0))}
+#settingsPage .sp-grp b{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-weight:400;color:var(--t3,var(--dim,#6b7280))}
+#settingsPage .sp-irow{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:var(--r-sm,6px);font-size:11.5px;color:var(--t2,var(--dim2,#8a92a0));cursor:pointer}
+#settingsPage .sp-irow:hover{color:var(--t1,var(--text,#d8dce4));background:var(--surf2)}
+#settingsPage .sp-irow.on{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent));box-shadow:inset 2px 0 0 var(--ac,var(--acc,#5a9e8f))}
+#settingsPage .sp-irow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#settingsPage .sp-irow .ct{font-size:9px;color:var(--t3,var(--dim,#6b7280));background:var(--s3,var(--bg3,#1f2228));border-radius:var(--r-pill,999px);padding:1px 6px}
+#settingsPage .sp-cn{min-height:0;overflow:auto;background:var(--surf);border-radius:var(--ui-radius,10px);box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.18));padding:6px 18px 18px}
+#settingsPage .sp-sec{display:none;padding:12px 0 6px}
+#settingsPage .sp-sec.on{display:block}
+#settingsPage .sp-sec-h{display:flex;align-items:baseline;gap:12px;padding:6px 0 10px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));margin-bottom:10px}
+#settingsPage .sp-sec-h h3{margin:0;font-size:15px;font-weight:600}
+#settingsPage .sp-sec-h .crumb{font-size:9.5px;color:var(--t3,var(--dim,#6b7280))}
+#settingsPage .sp-sec-h .sp{flex:1}
+#settingsPage .sp-sec-h .lbl{font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0))}
+#settingsPage .sp-sec-b{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px 22px;align-items:start}
+#settingsPage .sp-block{display:flex;flex-direction:column;gap:5px;font-size:11.5px;min-width:0}
+#settingsPage .sp-block > .sec{font-size:var(--label-size,9.5px);text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t2,var(--dim2,#8a92a0));padding:6px 0 2px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));margin-bottom:2px}
+#settingsPage .sp-block .row{display:flex;align-items:center;gap:8px;min-height:26px}
+#settingsPage .sp-block select,#settingsPage .sp-block input[type="text"],#settingsPage .sp-block input[type="number"],#settingsPage .sp-block textarea{font:inherit;font-size:11px;color:var(--t1,var(--text,#d8dce4));background:var(--bg,var(--bg0,#0e0f12));border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,6px);padding:3px 7px}
+#settingsPage .sp-block details{border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,6px);padding:4px 8px}
+.rpane .sp-gone{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--t2,var(--dim2,#8a92a0));padding:6px 8px;border:1px dashed var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,6px);margin-bottom:6px}
+.rpane .sp-gone b{color:var(--t1,var(--text,#d8dce4))}
 /* ── embedded in parts: only=menu · only=chat · harness=yes ── */
 html[data-only="menu"] body > :not(:has(#rightRail)){display:none!important}
 html[data-only="menu"] :has(> #rightRail) > :not(#rightRail){display:none!important}
@@ -2522,7 +2560,15 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
           <button class="btn xs vstop" onclick="CH.toggleMic()" title="End the conversation">Stop</button>
         </div>
       </div>
-      <div id="inputBar">
+      <!-- the Settings page (the Settings board): the index beside the content; the panes' fields move in here -->
+<div id="settingsPage" class="spage" hidden data-w="settings · page">
+  <header class="sp-hd"><h1>Settings</h1><span class="sp-count lbl mono">every field keeps its id and handler</span><div class="sp"></div><span class="kbd">⌘,</span><button class="x" type="button" onclick="CH._settingsPage(false)" title="Close (Esc)">✕</button></header>
+  <div class="sp-bd">
+    <nav class="sp-idx"><div class="sp-idx-hd"><label class="sp-srch">⌕<input type="search" placeholder="Find a setting" oninput="CH._spFilter(this.value)"></label></div><div class="sp-idx-bd"></div></nav>
+    <main class="sp-cn"><div class="sp-secs"></div></main>
+  </div>
+</div>
+<div id="inputBar">
         <div id="slashMenu" class="slash-menu"></div>
         <div id="micDot"></div>
         <textarea id="chatInput" placeholder="Type a message…  (/ for commands)" onkeydown="return CH.onKD(event)" oninput="CH.onInput()" onpaste="CH._onPaste(event)" onblur="CH._slashBlur()"></textarea>
@@ -2823,7 +2869,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
       <span style="font-size:9px;color:var(--dim2)">Live loop activity</span>
       <div style="flex:1"></div>
-      <button class="btn xs" id="loopCfgBtn" onclick="CH._loopCfgToggle()" title="Loop settings — variant, budgets, triage, HITL">⚙ Config</button>
+      <button class="btn xs" id="loopCfgBtn" onclick="CH._settingsPage(true,'variant')" title="Loop settings — variant, budgets, triage, HITL (the Settings page, ⌘,)">⚙ Config</button>
     </div>
     <script id="vera-loop-graph-js-include" src="/ui/elements/loop_graph.js"></script>
     <vera-loop-graph id="loopGraphEl" style="flex:1;min-height:0"></vera-loop-graph>
@@ -12656,7 +12702,7 @@ Your task: decide what to do next to advance toward the goal.
     {id:'activity', icon:'∿', label:'Activity',  tabs:[{id:'dag',label:'DAG'},{id:'monitor',label:'Monitor'}],
      meta:()=>{ const n=(document.getElementById('monitorStream')||{children:[]}).children.length; return n?n+' monitor lines':''; }, cta:{label:'Clear the monitor', run:()=>_monitorClear()}},
     {id:'loop',     icon:'⟳', label:'Loop',      tabs:[{id:'loop',label:'Loop'},{id:'loops',label:'Loops'},{id:'goals',label:'Goals'}],
-     meta:()=>_lhmTxt('loopVariantDesc').slice(0,48), cta:{label:'Loop settings ⚙', run:()=>_loopCfgToggle()}},
+     meta:()=>_lhmTxt('loopVariantDesc').slice(0,48), cta:{label:'Loop settings ⚙', run:()=>_settingsPage(true,'variant')}},
     {id:'workspace',icon:'⊞', label:'Workspace', tabs:[{id:'Panels',label:'Panels'},{id:'browser',label:'Browser'}],
      meta:()=>_activePanelId?('open · '+_lhmTxt('chatPanelTitle')):'nothing open beside the chat', cta:{label:'Open a panel beside the chat →', run:()=>railTab('Panels')}},
     {id:'sandbox',  icon:'⌨', label:'Sandbox',   tabs:[{id:'code',label:'Code'}],
@@ -12664,7 +12710,7 @@ Your task: decide what to do next to advance toward the goal.
     {id:'ops',      icon:'✦', label:'Ops glance', tabs:[{id:'Caps',label:'Caps'}],
      meta:()=>_lhmTxt('capBadge'), cta:{label:'Reload capabilities', run:()=>_capsReload()}},
     {id:'settings', icon:'⚙', label:'Settings',  tabs:[{id:'Cfg',label:'Config'}],
-     meta:()=>{ const s=document.getElementById('cfgAgent'); return s&&s.selectedOptions&&s.selectedOptions[0]?('agent · '+s.selectedOptions[0].textContent.trim()):''; }, cta:{label:'Full settings →', run:()=>railTab('Cfg')}},
+     meta:()=>{ const s=document.getElementById('cfgAgent'); return s&&s.selectedOptions&&s.selectedOptions[0]?('agent · '+s.selectedOptions[0].textContent.trim()):''; }, cta:{label:'Open Settings ⌘,', run:()=>_settingsPage(true)}},
   ];
   const _lhmTabEl=(id)=>document.querySelector('#rightRail .ctx-tab-bar .ctab[onclick*="(\''+id+'\'"]');
   const _lhmTabIdOf=(el)=>{ const m=(el.getAttribute('onclick')||'').match(/CH\.(?:railTab|ctxTab)\('([^']+)'/); return m?m[1]:''; };
@@ -12717,6 +12763,68 @@ Your task: decide what to do next to advance toward the goal.
     settings:'<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 5h9M14 5h1.5M2.5 13h4M9 13h6.5"/><circle cx="12.6" cy="5" r="1.7"/><circle cx="7.6" cy="13" r="1.7"/></svg>'};
   function _toolsSheet(on){ const s=document.getElementById('toolsSheet'), b=document.getElementById('hdrMore'); if(!s) return; const v=on==null?!s.classList.contains('on'):!!on; s.classList.toggle('on', v); if(b) b.classList.toggle('on', v); }
   function _appearanceSheet(ev){ try{ if(window.veraUI&&typeof veraUI.openAppearance==='function'){ veraUI.openAppearance(ev); return; } }catch(_){} try{ if(typeof openThemeMenu==='function'){ openThemeMenu(ev); return; } }catch(_){} try{ VeraLHM.pick('settings'); }catch(_){} }
+  /* ── THE SETTINGS PAGE (the Settings board): ⌘, — an index (Agent loop · Chat · Context · Appearance) beside the
+     content; every field of the Config pane (rpCfg), the Loop pane (rpLoop) and the Context pane (rpCtx) MOVES into its
+     section the first time the page opens — the same elements, their ids and handlers untouched — and the panes keep a
+     line saying where their fields went. Nothing is copied, nothing removed. ── */
+  const _SP_MAP=[
+    {grp:'Agent loop', rows:[
+      {id:'variant', n:'Variant & limits', ct:()=>{ try{ const v=document.getElementById('loopVariant'); return v&&v.value?String(v.value).replace(/^dag\.agent_loop_?/,'v')||'':''; }catch(_){ return ''; } }, from:[['rpLoop','Agent loop variant'],['rpLoop','Limits (synced with Config pane)'],['rpLoop','Server-loop options']], note:'which loop drives the chat, and how far it may go'},
+      {id:'triage', n:'Triage & toolkit', from:[['rpLoop','Triage / Toolkit'],['rpLoop','Base toolkit (always-available caps)']], note:'how the loop picks its capabilities'},
+      {id:'long', n:'Long-running jobs', from:[['rpLoop','Long-running jobs']], note:'what waits, for how long'},
+      {id:'hitl', n:'HITL & escalation', from:[['rpLoop','HITL'],['rpCfg','Stepwise Agentic'],['rpCfg','Telegram HITL']], note:'when the loop asks you, and where'},
+      {id:'prompt', n:'Prompt template', from:[['rpLoop','Prompt template'],['rpLoop','Planning & execution'],['rpLoop','Context fidelity'],['rpLoop','Piecewise planning (strategic goals)']], note:'what each step is told'}]},
+    {grp:'Chat', rows:[
+      {id:'agent', n:'Agent & model', from:[['rpCfg','Execution modes'],['rpCfg','Agent'],['rpCfg','Model override'],['rpLoop','Model override'],['rpCfg','Agent capabilities'],['rpCfg','DAG']], note:'who answers, on what, with which capabilities'},
+      {id:'format', n:'Output format', from:[['rpCfg','Output format']], note:'markdown · thinking · the throbber'},
+      {id:'media', n:'Media & rendering', from:[['rpCfg','Media & rendering'],['rpCfg','Output']], note:'images · artifacts · live render · speech'},
+      {id:'web', n:'Web search', from:[['rpCfg','Web Search']], note:'search before answering'},
+      {id:'research', n:'Research streaming', from:[['rpCfg','Research Streaming']], note:'the researcher API'},
+      {id:'sandbox', n:'Session container', from:[['rpCfg','Session container'],['rpCfg','Session']], note:'where this session runs'}]},
+    {grp:'Context', rows:[
+      {id:'sources', n:'Sources', from:[['rpCtx','Sources']], note:'what goes into the prompt'},
+      {id:'injection', n:'Injection', from:[['rpCtx','Context Injection']], note:'skills · ontologies · caps'},
+      {id:'memory', n:'Session memory', from:[['rpCtx','Session Memory']], note:'recall'},
+      {id:'params', n:'Parameters', from:[['rpCtx','Parameters'],['rpCtx','Behaviour']], note:'k · similarity · limits · when'},
+      {id:'fabric', n:'Fabric dataset', from:[['rpCtx','Fabric dataset']], note:'the curated dataset'}]},
+    {grp:'Appearance', rows:[
+      {id:'look', n:'Style pack & theme', from:[], note:'the same Aa sheet', look:true}]}];
+  let _spBuilt=false, _spOpen=false, _spCur='';
+  // a .sec of a pane and everything after it up to the next .sec — the section's own rows
+  function _spTake(paneId, title){
+    const pane=document.getElementById(paneId); if(!pane) return [];
+    const secs=[...pane.querySelectorAll(':scope > .sec')]; const norm=s=>String(s||'').replace(/^[\s▸▾▶▼›»]+/,'').replace(/\s+/g,' ').replace(/&amp;/g,'&').trim().toLowerCase();   // the pane's fold glyph is not the title
+    const sec=secs.find(s=>norm(s.textContent)===norm(title)); if(!sec) return [];
+    const out=[sec]; let n=sec.nextElementSibling; while(n&&!(n.classList&&n.classList.contains('sec'))){ out.push(n); n=n.nextElementSibling; } return out;
+  }
+  function _spBuild(){
+    if(_spBuilt) return; _spBuilt=true;
+    const page=document.getElementById('settingsPage'); if(!page) return;
+    const idx=page.querySelector('.sp-idx-bd'), cn=page.querySelector('.sp-secs'); if(!idx||!cn) return;
+    let n=0; const moved={};
+    _SP_MAP.forEach(g=>{ const gh=document.createElement('div'); gh.className='sp-grp'; gh.innerHTML='<span>'+esc(g.grp)+'</span><b>'+g.rows.length+'</b>'; idx.appendChild(gh);
+      g.rows.forEach(r=>{ const row=document.createElement('div'); row.className='sp-irow'; row.dataset.sec=r.id; row.innerHTML='<span class="nm">'+esc(r.n)+'</span>'+(r.ct?'<span class="ct mono"></span>':''); row.addEventListener('click',()=>_spShow(r.id)); idx.appendChild(row);
+        const sec=document.createElement('section'); sec.className='sp-sec wid'; sec.dataset.sec=r.id; sec.setAttribute('data-w', r.n.toLowerCase()+' · settings'); sec.innerHTML='<div class="sp-sec-h"><h3>'+esc(r.n)+'</h3><span class="crumb mono">'+esc(g.grp)+' · '+esc(r.n)+'</span><span class="sp"></span><span class="lbl">'+esc(r.note||'')+'</span></div><div class="sp-sec-b"></div>';
+        const body=sec.querySelector('.sp-sec-b');
+        (r.from||[]).forEach(([pane,title])=>{ const els=_spTake(pane,title); if(!els.length) return; const block=document.createElement('div'); block.className='sp-block'; block.dataset.from=pane; els.forEach(el=>block.appendChild(el)); block.querySelectorAll('.collapsed').forEach(x=>x.classList.remove('collapsed')); body.appendChild(block); n++; moved[pane]=(moved[pane]||0)+1; });   // the page shows its rows open (the pane's fold stays a click)
+        if(r.look){ const b=document.createElement('div'); b.className='sp-block'; b.innerHTML='<div class="row"><button class="btn" id="spOpenAppearance">Aa · Style pack &amp; theme…</button><span class="lbl">the same sheet as the header\'s Aa — the pack sets form, the theme sets colour</span></div>'; body.appendChild(b); b.querySelector('#spOpenAppearance').addEventListener('click',ev=>{ try{ _appearanceSheet(ev); }catch(_){} }); }
+        if(!body.children.length) body.innerHTML='<div class="lbl">nothing to move here yet</div>';
+        cn.appendChild(sec); }); });
+    // the panes keep a line saying where their fields went (nothing vanishes; the page is where it lives now)
+    Object.keys(moved).forEach(pid=>{ const pane=document.getElementById(pid); if(!pane) return; const l=document.createElement('div'); l.className='sp-gone'; l.innerHTML='<span>'+moved[pid]+' section'+(moved[pid]>1?'s':'')+' moved to <b>Settings</b> — ⌘,</span><button class="btn xs" type="button">Open Settings</button>'; l.querySelector('button').addEventListener('click',()=>_settingsPage(true)); pane.insertBefore(l, pane.firstChild); });
+    page.querySelector('.sp-count').textContent=n+' sections · every field keeps its id and handler';
+    _spShow('variant');
+  }
+  function _spShow(id){ _spCur=id; const page=document.getElementById('settingsPage'); if(!page) return; page.querySelectorAll('.sp-irow').forEach(r=>r.classList.toggle('on', r.dataset.sec===id)); page.querySelectorAll('.sp-sec').forEach(s=>{ s.classList.toggle('on', s.dataset.sec===id); }); const s=page.querySelector('.sp-sec.on'); if(s) s.scrollIntoView({block:'start'}); _spCounts(); }
+  function _spCounts(){ const page=document.getElementById('settingsPage'); if(!page) return; _SP_MAP.forEach(g=>g.rows.forEach(r=>{ if(!r.ct) return; const el=page.querySelector('.sp-irow[data-sec="'+r.id+'"] .ct'); if(el) el.textContent=r.ct()||''; })); }
+  function _spFilter(q){ q=String(q||'').toLowerCase(); const page=document.getElementById('settingsPage'); if(!page) return; page.querySelectorAll('.sp-irow').forEach(r=>{ const sec=page.querySelector('.sp-sec[data-sec="'+r.dataset.sec+'"]'); const hit=!q||(r.textContent+' '+(sec?sec.textContent:'')).toLowerCase().indexOf(q)>=0; r.style.display=hit?'':'none'; }); }
+  function _settingsPage(on, sec){
+    on=(on==null)?!_spOpen:!!on; const page=document.getElementById('settingsPage'); if(!page) return false;
+    if(on){ _spBuild(); page.hidden=false; _spOpen=true; document.body.classList.add('settings-open'); if(sec) _spShow(sec); else _spCounts(); try{ const q=page.querySelector('.sp-srch input'); q&&q.focus(); }catch(_){} }
+    else { page.hidden=true; _spOpen=false; document.body.classList.remove('settings-open'); }
+    return _spOpen;
+  }
+  document.addEventListener('keydown', ev=>{ if((ev.metaKey||ev.ctrlKey)&&ev.key===','){ ev.preventDefault(); _settingsPage(); } if(ev.key==='Escape'&&_spOpen){ _settingsPage(false); } });
   /* ── the chat embedded in parts (the Canvas board): the two instances the harness hosts — the MENU instance (only=menu)
    and the CHAT instance (only=chat) — are one chat: the session follows localStorage (the same origin), and the actions
    that belong to the chat (grow the graph, a page, explode, a new session) travel from the menu to the chat over a
@@ -12899,7 +13007,7 @@ function _embedMount(){
     const sig=rows.map(r=>r[2]).join('|'); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
     el.innerHTML='<div class="wid" data-w="frequent settings · list"><div class="grp">Frequent</div>'+rows.map(r=>'<div class="lrow" data-for="'+r[1]+'" title="Change '+esc(r[0])+' in the full settings"><span class="nm">'+esc(r[0])+'</span><span class="rt-n">'+esc(String(r[2]||'—').slice(0,22))+'</span></div>').join('')+'</div>'
       +'<div class="wid" data-w="appearance · controls"><div class="grp">Appearance</div><div class="sbx-act"><button data-act="aa" title="Theme, style pack and density">Aa Appearance</button><button data-act="tools" title="Every chat tool the header keeps behind ⋯">⋯ Tools</button></div></div>';
-    el.querySelectorAll('.lrow[data-for]').forEach(r=>r.addEventListener('click',()=>{ VeraLHM.deep(true); VeraLHM.pick('settings/Cfg'); setTimeout(()=>{ const e=document.getElementById(r.dataset.for); if(!e) return; try{ e.scrollIntoView({block:'center'}); e.focus(); }catch(_){} },50); }));
+    el.querySelectorAll('.lrow[data-for]').forEach(r=>r.addEventListener('click',()=>{ _settingsPage(true); setTimeout(()=>{ const e=document.getElementById(r.dataset.for); if(!e) return; const sec=e.closest('.sp-sec'); if(sec) _spShow(sec.dataset.sec); try{ e.scrollIntoView({block:'center'}); e.focus(); }catch(_){} },60); }));
     el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',ev=>{ try{ if(b.dataset.act==='aa') _appearanceSheet(ev); else _toolsSheet(true); }catch(_){} }));
   }
   const _QUICK={context:_quickContext, sessions:_quickSessions, activity:_quickActivity, loop:_quickLoop, workspace:_quickWorkspace, sandbox:_quickSandbox, ops:_quickOps, settings:_quickSettings};
@@ -17249,7 +17357,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
