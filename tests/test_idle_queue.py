@@ -351,3 +351,43 @@ def test_every_declared_kind_has_a_priority():
     for kind in (Q.KIND_EMBED_SESSIONS, Q.KIND_EMBED_SOURCES,
                  Q.KIND_EMBED_FABRIC, Q.KIND_DREAM, Q.KIND_NARRATOR):
         assert kind in Q.KIND_PRIORITY, kind
+
+
+# ── v8 loop programs are background work like any other ─────────────────────
+# One run held the GPU for 18,535s (5.1h) on 2026-09-11: its only gate was
+# checked once before launch, and a census's 30-60s inter-goal gaps satisfy
+# that gate. Through the queue it gets the 600s-quiet start rule and can be
+# stopped.
+def test_a_loop_program_run_is_a_queue_kind_with_a_priority():
+    assert Q.KIND_LOOP_PROGRAM == "loop.program"
+    assert Q.KIND_LOOP_PROGRAM in Q.KIND_PRIORITY
+
+
+def test_it_never_queues_ahead_of_a_narration_or_a_dream():
+    """Hours of GPU must not go before a short, visible narration."""
+    assert Q.KIND_PRIORITY[Q.KIND_DREAM] < Q.KIND_PRIORITY[Q.KIND_LOOP_PROGRAM]
+    assert Q.KIND_PRIORITY[Q.KIND_NARRATOR] < Q.KIND_PRIORITY[Q.KIND_LOOP_PROGRAM]
+
+
+def test_but_it_goes_before_the_bulk_embedders():
+    """It is the work the program exists to do; a backfill can wait."""
+    for k in (Q.KIND_EMBED_SOURCES, Q.KIND_EMBED_FABRIC, Q.KIND_EMBED_SESSIONS):
+        assert Q.KIND_PRIORITY[Q.KIND_LOOP_PROGRAM] < Q.KIND_PRIORITY[k], k
+
+
+def test_it_is_preemptible_so_a_person_gets_the_box_back():
+    """The whole point. A 5-hour run that cannot be interrupted is the bug."""
+    assert Q.is_preemptible(Q.KIND_LOOP_PROGRAM)
+
+
+def test_a_dream_is_still_not_preemptible():
+    """Unchanged: a dream is short and holds the box to completion."""
+    assert not Q.is_preemptible(Q.KIND_DREAM)
+
+
+def test_a_narration_waiting_is_offered_the_box_before_a_loop_program():
+    jobs = [{"id": "l", "kind": Q.KIND_LOOP_PROGRAM, "state": Q.WAITING,
+             "enqueued_at": 0, "priority": Q.KIND_PRIORITY[Q.KIND_LOOP_PROGRAM]},
+            {"id": "n", "kind": Q.KIND_NARRATOR, "state": Q.WAITING,
+             "enqueued_at": 5, "priority": Q.KIND_PRIORITY[Q.KIND_NARRATOR]}]
+    assert Q.next_job(jobs, "")["id"] == "n"

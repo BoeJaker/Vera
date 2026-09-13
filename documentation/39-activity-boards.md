@@ -92,6 +92,12 @@ These distinctions are deliberate:
   endpoint and authorization-header values are never shown. When automatic
   export is explicitly enabled, the same card reports queue depth, drops,
   deduplication, retries and terminal trace failures.
+- Backend comparison remains an offline evidence operation. Langfuse and
+  Phoenix observations must refer to the identical redacted portable trace and
+  OTLP export digests. Fidelity, query/UI value, evaluation linkage,
+  governance, resource use, portability, outage isolation, and teardown remain
+  separate; the comparison neither selects a backend nor changes Activity's
+  exporter configuration.
 - Free-text failure/control reasons and result bodies are excluded from Activity
   evidence.
 

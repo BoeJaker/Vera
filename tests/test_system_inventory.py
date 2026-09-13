@@ -30,7 +30,12 @@ async def alpha():
 def _inputs(tmp_path):
     return {
         "capabilities": {
-            "task.run": {"raw": alpha, "schema": {"type": "object"}, "tags": ["task"]},
+            "task.run": {
+                "raw": alpha,
+                "schema": {"type": "object"},
+                "tags": ["task"],
+                "compatibility_alias_for": "task.execute",
+            },
             "internal.health": {"raw": alpha, "mcp_expose": False, "tags": ["internal"]},
         },
         "loaded_modules": [
@@ -62,6 +67,7 @@ def test_inventory_fingerprint_is_order_and_time_stable(tmp_path):
     assert first["fingerprint_sha256"] == second["fingerprint_sha256"]
     assert first["captured_at"] != second["captured_at"]
     assert [cap["name"] for cap in first["capabilities"]] == ["internal.health", "task.run"]
+    assert first["capabilities"][1]["compatibility_alias_for"] == "task.execute"
     assert [route["path"] for route in first["http_routes"]] == ["/a", "/z"]
     assert "runs" not in first["schedules"][0]["metadata"]
 

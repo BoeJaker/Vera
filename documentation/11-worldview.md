@@ -8,6 +8,15 @@ prediction, counterfactual exploration, anomaly detection, and visualization.
 Worldview is optional. Missing Torch, FAISS, weights, or backend services
 degrade its capabilities rather than preventing Vera from starting.
 
+## Naming and product boundary
+
+This guide describes **JEPA Worldview**, the predictive representation system in
+`vera/worldview/worldview_jepa.py`. Vera also contains an older non-JEPA
+Worldview product lineage. Godseye is the integrated successor intended to
+converge with that non-JEPA experience; it does not supersede JEPA Worldview.
+Keeping those lineages explicit prevents model evidence, geospatial/visual
+product state, and UI ownership from being treated as interchangeable.
+
 ## Architecture
 
 | Layer | Responsibility | Boundary |
@@ -35,7 +44,7 @@ authorize tools, or prove causality.
 
 ## Projection-backed migration boundary
 
-The W2 projection path creates an offline seam between Fabric projections and
+The projection path creates an offline seam between Fabric projections and
 JEPA training. A frozen manifest pins graph/vector specification IDs and
 generations, the embedding package/dimension/preprocessing/metric, exact active
 record/revision pairs, tombstone count, and hashes of both snapshots.
@@ -48,6 +57,52 @@ manifest contains no source content, embeddings, graph payload, or result.
 This path is not wired into `worldview.train`: it performs no backend read or
 model work. The existing loader/trainer remains authoritative until live shadow
 evidence supports a deliberate migration.
+
+## Portable JEPA evidence
+
+`vera.worldview.evidence_provider` defines an offline contract for the six JEPA
+signal families: concepts, predictions, anomalies, counterfactuals, drift, and
+reranking. Every evidence envelope binds an exact immutable `DatasetSnapshot`, a
+compatible JEPA Worldview `ModelPackage` checkpoint, a provider revision, a
+zoned observation time, and cited record revisions. Its identity changes when
+any authority input or observation changes.
+
+The contract carries bounded scores and non-payload attributes. It rejects raw
+text, prompts, vectors, embeddings, payloads, credential-like fields, non-finite
+scores, duplicate observation identities, uncited observations, incompatible
+checkpoints, and evidence predating its input snapshot. Counterfactuals and
+predictions remain derived evidence—not causal facts or execution authority.
+
+`FrozenEvidenceProvider` is a deterministic conformance/reference store. It can
+filter exact evidence identities but cannot load Torch, inspect Fabric, generate
+a signal, rank context, fall back to a stale revision, or activate a checkpoint.
+Exact snapshot and ModelPackage matching is required before evidence is marked
+usable; missing evidence is unavailable and mismatched evidence is stale.
+
+`JepaResultProjector` is the pure compatibility seam for current operational
+result shapes. It accepts already-produced concept lists, next-concept/rollout
+predictions, anomalies, counterfactual paths, drift reports, or latent-query
+ranking results. The caller must supply the authoritative record-to-revision
+mapping and explicit support records because the legacy JEPA responses do not
+carry sufficient revision evidence. Missing citations fail closed.
+
+The projector copies only identifiers, bounded labels, ranks/positions, scores,
+concept numbers, and aggregate drift/counterfactual fields. Source/query text,
+member text, reconstruction details, embeddings, vectors, prompts, and other
+payloads are discarded. It does not call an operational capability, load a
+checkpoint, query Fabric, run inference, alter result ordering, or attach the
+evidence to a consumer. That last activation step requires the exact-identity
+availability check plus separately measured quality and latency evidence.
+
+`vera.worldview.reranking_shadow` provides the intervening, non-authoritative
+comparison seam. It accepts only a reranking envelope whose dataset snapshot and
+ModelPackage identities match exactly. Every evidence score must cite one
+existing context candidate at its exact source-record revision; unknown,
+ambiguous, duplicated, or mismatched identities fail closed. The resulting
+payload-free report shows baseline and hypothetical ranks, but it does not
+mutate candidates, register a ranker, invoke JEPA, or change context selection.
+Stale and unavailable evidence is explicitly ineligible. Activation remains
+blocked on the separate cited quality and latency evaluation.
 
 ## Snapshot, parity, and evidence
 
@@ -79,6 +134,25 @@ through provenance-pinned projections:
 This prevents prompts and tool telemetry becoming an uncontrolled training
 feedback loop.
 
+The lineages can nevertheless exchange data through the same controlled
+boundary. Non-JEPA Worldview and Godseye datasets may be normalized into
+canonical Fabric records, explicit record revisions, and an immutable
+`DatasetSnapshot`. JEPA Worldview may then consume that snapshot as training or
+retrieval evidence while retaining its own model-package provenance. This
+allows their datasets to complement the JEPA implementation without coupling
+JEPA to Godseye storage, UI state, or product-specific schemas.
+
+Context's current optional `worldview.query` and `worldview.rollout` lookups
+refer specifically to the JEPA Worldview capability surface. Their historical
+names do not make non-JEPA Worldview or Godseye implementations of JEPA, and
+those other lineages must not be substituted behind the names implicitly.
+
+Offline retrieval comparisons name JEPA explicitly as
+`jepa_worldview_evidence` and measure it against other providers on identical
+snapshot and citation fixtures. They report quality, latency, failures, storage,
+and lifecycle costs separately. Comparison evidence cannot activate JEPA as a
+ranker or imply that the non-JEPA/Godseye product is a JEPA implementation.
+
 ## Operational checks
 
 Before training, verify optional dependencies/device, bounded Fabric inputs,
@@ -109,6 +183,7 @@ dangling edges merely to obtain a green report.
 - `vera/worldview/worldview_shadow_snapshot.py` — bounded legacy snapshot.
 - `vera/worldview/worldview_shadow_parity.py` — parity report.
 - `vera/worldview/worldview_shadow_evidence.py` — evidence window.
+- `vera/worldview/reranking_shadow.py` — exact-identity context comparison only.
 
 ## Related guides
 

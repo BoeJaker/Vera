@@ -51,6 +51,20 @@ A personal scheduler/diary: events, todos, and notes stored in Redis (with a sor
 
 Cloud credentials (Google OAuth secret + refresh token, CalDAV app-password) are sealed before they touch Redis and never returned to the UI.
 
+`cal.effects.status` makes the execution boundary explicit. Event, todo, note,
+and brain-dump commits currently mutate only Vera's local Redis diary. ICS fetch,
+CalDAV `REPORT`, and Google event listing are inbound remote reads. Google OAuth
+exchange and refresh belong to credential lifecycle rather than calendar-event
+mutation. Vera does not currently implement a remote event create/update/delete
+adapter, so Calendar truthfully reports no external mutation evidence,
+enforcement, receipts, or retry behavior instead of borrowing another family's
+readiness.
+
+The Calendar sidebar shows **local edits · remote sync read-only** alongside sync
+state. When a real remote-write adapter is introduced, it must first adopt the
+shared effect contract and Calendar-specific evidence ledger before this status
+can claim instrumentation.
+
 ---
 
 ## 3. Email (`email/`)
@@ -72,6 +86,52 @@ Multi-account IMAP/SMTP backed by the Accounts registry, with AI assistance.
 | Panel | `mail.panel.html` |
 
 Email keeps only global settings + the notification bridge config in Redis; credentials live (sealed) in Accounts.
+
+SMTP sends, replies, and event-bridge deliveries project into the shared
+external-effect contract before account transport resolution. Plans identify the
+account and destination only by digests and exclude recipients, thread IDs,
+subjects, bodies, credentials, and raw approval/idempotency references. Optional
+control evidence is never passed to SMTP. When a durable success receipt exists,
+the projection reports that policy would suppress the replay.
+
+The Email migration remains observe-only. It records bounded policy evidence but
+does not block delivery, retry a send, manufacture a completion receipt, or turn
+an evidence failure into a mail failure. Email, Telegram, and generic API
+observations use separate ledgers so one family cannot satisfy another family's
+enforcement-readiness thresholds. Capability activity also redacts Email
+arguments and results; the existing mail event stream remains a separate legacy
+surface pending its own privacy migration.
+
+The Integrations **Effect evidence** drawer can switch among Generic API,
+Telegram, Email, Commerce, and Infrastructure observations. Enforcement
+readiness, approval, and activation controls appear only for the Generic API
+contract; the other family views do not borrow or imply that authority.
+
+The same drawer also exposes a static **Provider boundaries** inventory from
+`integration.effect.inventory`. It separates local business records and
+simulations from marketplace reads, OAuth lifecycle, marketplace writes,
+container/build mutations, and Proxmox/provisioning mutations. This inventory is
+descriptive: it performs no probe and does not add Infrastructure to the evidence
+families. Commerce listing push, publish, and archive now produce payload-free,
+observe-only projections before marketplace credentials are opened. This does
+not block provider calls, add retries, forward control references, or claim that
+eBay or Vinted idempotency has been validated. Credentialed validation remains a
+separate, explicitly authorized activity.
+
+Infrastructure observation is deliberately partial. Direct `docker.exec`,
+`docker.stop`, `docker.rm`, `docker.run`, and `docker.worker.stop` calls project
+their host, resource, and operation as digests after local argument/sandbox
+checks and before Docker execution. Image ensure adds an observation only when a
+build or transfer is required, and worker spawn records its distinct container
+creation after preparation succeeds. Commands, environments, connection URLs,
+host/container/image identifiers, and raw approval/idempotency references are
+not retained. The projection does not block, retry, or record completion.
+Stack/store deployment and build jobs use the same projection. Proxmox guest
+lifecycle, guest/node execution, clone/create/destroy, and firewall mutations
+also observe one logical operation before the first provider call. General
+managed-host provisioning remains incomplete; only its store deployment and
+removal paths are covered. Nested implementations suppress duplicate identities
+where a public deployment delegates to Docker.
 
 ---
 
@@ -96,6 +156,21 @@ A bidirectional bot that brings the capability framework into Telegram.
 | Panel | `tg.panel.html` |
 
 The bot token is sealed via the shared secrets helper; config persists in `vera:tg:*` and auto-resumes on restart.
+
+Outbound `tg.send`, `tg.send_markdown`, `tg.notify`, and `tg.broadcast` operations
+also project into the shared external-effect contract. Each recipient becomes a
+separate non-executing plan identified only by a digest; message bodies, raw chat
+identifiers, credentials, and raw approval/idempotency references are excluded.
+Optional approval, idempotency, and retry intent is evaluated but never forwarded
+to Telegram. Durable success evidence is consulted to report whether a replay
+would be suppressed, and a Telegram-specific bounded ledger receives the policy
+observation through the shared inspection surface.
+
+This Telegram migration is deliberately observe-only: existing delivery behavior
+is preserved if planning or evidence storage fails, no send is blocked, no
+completion receipt is manufactured, and Vera adds no retry. Broadcast records one
+observation for each allowed recipient and returns only aggregate evidence rather
+than a recipient list.
 
 ---
 
@@ -192,9 +267,138 @@ Real materialisation, scans, builders, approval consumption, activation, and
 rollback evidence remain `queued_live`; this contract does not call Vera's
 existing image builders or repository tooling.
 
+## 7. External-effect admission
+
+`integration.effect.plan` is the non-executing policy boundary for outbound
+operations. It classifies HTTP-shaped operations as reads, idempotent writes,
+or non-idempotent writes and produces a stable `vera.external-effect-plan/v1`
+record. Mutations require an opaque approval-receipt reference; POST and PATCH
+also require an idempotency key. A retry is admitted only when those conditions
+remain satisfied.
+
+The plan contains connection and operation identity plus SHA-256 digests of the
+opaque references. It never contains request payloads, credential values, raw
+receipt references, or raw idempotency keys, and it neither resolves secrets nor
+executes the operation. This is a shared contract for gradual adoption by Email,
+Telegram, Calendar, commerce, generic API/MCP connectors, provisioning, and
+other external-effect adapters; those existing paths are not silently treated
+as migrated until they enforce and retain corresponding receipts.
+
+Completed adapters can record each attempt in the durable, out-of-tree
+`ExternalEffectReceiptLedger`. Attempt identities are hashed; response evidence
+is accepted only as a SHA-256 digest; provider receipt references are hashed;
+and request/response payloads are never accepted. Re-observing the same attempt
+is idempotent, while different evidence for that attempt fails as a conflict.
+`integration.effect.replay.status` validates the complete plan and reports
+`do_not_repeat` after any matching successful receipt. The inspection surface
+cannot execute or retry an operation, and there is intentionally no general
+capability that lets an untrusted caller manufacture completion receipts.
+
+`integration.connections.project` provides a separate, deterministic read model
+over Integration, Account, and model-provider records. Every projected
+connection retains its source system and record identity; explicit references
+are resolved only when unique, and shared endpoint origins are reported as
+collisions rather than automatically merged. Endpoint userinfo, path, query,
+and fragment data are discarded, which prevents private calendar URLs and API
+credentials from entering the projection. Credential state is presence-only.
+
+The projection reports unavailable source registries and malformed endpoints as
+gaps. It never opens a secret, probes a service, changes access, establishes a
+connection, or becomes the authority for the underlying records. This gives UI
+and tool-using models one bounded inventory while preserving the existing
+registries as owners during migration.
+
+The generic `integration.api.call` boundary emits the same policy decision as
+`effect_shadow`. It remains in `observe_only` mode unless three independent
+conditions agree: the deployment gate is enabled, the current operator decision
+approves enforcement, and a fresh activation is bound to that exact decision
+revision and enforcement contract. Optional idempotency and approval
+references are evaluated but never forwarded to the remote API; the request
+path is represented only by an operation digest in audit events. If a durable
+success receipt already exists, telemetry reports that enforcement would
+suppress the replay. When enforcement is active, a denied or already-completed
+mutation is rejected before credentials are opened or an HTTP request is made.
+Vera does not add automatic retries.
+
+`integration.effect.retry.plan` turns a validated effect plan plus bounded
+outcome evidence into a non-executing retry decision. It recognizes a small,
+stable set of transient HTTP statuses and transport error codes, enforces a
+maximum attempt budget, refuses retries after a durable success, and requires
+the original plan to have explicitly requested and admitted retry behavior.
+Provider `Retry-After` or exhausted-rate-limit reset evidence becomes a minimum
+delay that local backoff cannot shorten. Vera returns a jitter window for a
+scheduler to use later; the capability itself never sleeps, chooses random
+timing, executes the operation, opens credentials, or records a receipt.
+
+The Integrations header includes an **Effect evidence** drawer backed by
+`integration.effect.receipts`. It shows aggregate plan, receipt, observation,
+and outcome counts plus a bounded recent window. Entries contain effect
+classification, method, connection/operation identity, shortened plan/receipt
+digests, and observation counts. Request and response bodies, credentials, raw
+approval receipts, raw idempotency keys, and mutation controls are absent. An
+empty view means no migrated adapter has recorded durable evidence yet; it is
+not presented as proof that external effects did not occur.
+
+The same drawer reads `integration.effect.retry.policy` to explain the exact
+transient HTTP/error vocabulary, refusal reasons, hard attempt/delay bounds, and
+the evidence required before a scheduler may consider another attempt. This is
+a policy legend, not a retry control: receipt rows alone do not contain enough
+context to authorize a retry, and the view cannot execute, sleep, select jitter,
+open a secret, replay an operation, or record evidence.
+
+Observe-only decisions are accumulated separately as bounded, payload-free
+evidence. The drawer reports how many generic API calls policy would admit,
+execute, or suppress as replays, alongside refusal-reason counts from the recent
+window. Stored observations contain only policy fields, digests, classifications,
+methods, and timestamps—not paths, queries, bodies, headers, credentials, or raw
+approval/idempotency references. These measurements do not block current calls
+and are not themselves sufficient evidence to enable enforcement.
+
+Infrastructure observations use the same drawer and evidence schema. Direct
+container lifecycle, image preparation, worker creation, and stack/store
+deployment or removal are represented by hashed host, resource, and operation
+identity. Canonical store deployment deliberately suppresses a second nested
+`docker.run` identity, so one requested deployment produces one logical
+observation. Already-running stores produce none. Environment values, generated
+store secrets, Docker arguments, and raw approval/idempotency references are not
+retained. Builder startup and the Arduino, PlatformIO, arbitrary-command, and
+isolated-Python compiler paths use the same provider-neutral Infrastructure
+projection before their first local or remote mutation. Builder source,
+commands, dependencies, environment values, logs, and artifacts never enter the
+ledger. This infrastructure path remains observe-only and partial while
+managed-host provisioning families are still being instrumented. Proxmox guest
+actions, guest and node commands, cloning, VM/LXC creation, destruction, and
+firewall add/delete now contribute one payload-free observation per public
+operation. The observation records only digests and never retains commands,
+cloud-init material, passwords, SSH keys, addresses, firewall content, provider
+responses, or raw control references.
+
+Vera also applies fixed, fail-closed coverage thresholds before describing the
+evidence as ready for operator review: total observations, read and mutation
+coverage, admitted and denied decisions, and at least one replay-suppression
+example. Passing every check means only that the shadow sample is representative
+enough to review. It does not prove safety, authorize a rollout, or enable
+enforcement; the generic API remains observe-only.
+
+An operator may record either `continue_observing` or an approval for a future
+rollout. Decisions use optimistic revisions so a stale browser cannot overwrite
+a newer choice, preserve bounded immutable history, and store operator and
+approval references only as digests. Future-rollout approval is rejected until
+the readiness checks pass and an approval receipt is supplied. Requested and
+effective modes remain separate: recording approval changes the requested mode,
+but the effective generic API mode remains `observe_only` until the deployment
+gate is enabled and an operator records a separate activation receipt. Activation
+is revision-guarded, reversible, stored as immutable history, and automatically
+invalidated by a changed approval or enforcement contract. Operator and receipt
+references are stored only as digests. If the deployment gate is enabled but
+activation state cannot be read, mutations fail closed; reads and deployments
+with the gate disabled retain compatibility behavior. Recording
+`continue_observing` or deactivating reverses the effective mode without deleting
+its audit history.
+
 ---
 
-## 7. Common threads
+## 8. Common threads
 
 - **Sealed secrets** — every credential is Fernet-sealed at rest and redacted from the UI ([Security & Secrets](./29-security.md)).
 - **Event bridges** — Email and Telegram can both forward `vera:events` outward, turning Vera's internal stream into notifications.

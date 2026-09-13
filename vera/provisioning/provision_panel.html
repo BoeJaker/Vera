@@ -225,7 +225,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </div></div>
 
     <!-- (Backends tab removed — ollama ⇄ vLLM switching now lives in
-         Workers & Ollama → Nodes; the idle-worker policy was retired.) -->
+         Estate → Nodes; the idle-worker policy was retired.) -->
 
     <!-- ══ DOCKER ═════════════════════════════════════════════════════════ -->
     <div class="pane" id="pane-docker"><div class="wrap">
@@ -590,10 +590,10 @@ async function pxEnrollGo(node,type,vmid){
   gmClose(); out('px-out','enrolling…');
   const r=await api('/proxmox/guest/enroll','POST',body);
   if(r.error) return out('px-out','✗ '+r.error);
-  out('px-out','✓ enrolled '+r.ip+' (host '+r.ssh_host_id+') — manage creds in Workers & Ollama → Connections'); toast('Enrolled '+r.ip,'ok'); credLoad();
+  out('px-out','✓ enrolled '+r.ip+' (host '+r.ssh_host_id+') — manage creds in Estate → Connections'); toast('Enrolled '+r.ip,'ok'); credLoad();
 }
 
-// ── CREDENTIALS — managed centrally in Workers & Ollama → Connections ────────
+// ── CREDENTIALS — managed centrally in Estate → Connections ────────
 // The duplicated Credentials tab was removed; this just refreshes the cached
 // host list used by the docker-connection picker + enroll flows.
 async function credLoad(){
@@ -601,7 +601,7 @@ async function credLoad(){
 }
 
 // (Backends + idle-worker JS removed — ollama ⇄ vLLM switching lives in
-//  Workers & Ollama → Nodes now, and the idle-worker policy was retired.)
+//  Estate → Nodes now, and the idle-worker policy was retired.)
 
 // ── DOCKER ───────────────────────────────────────────────────────────────────
 async function dkLoad(){
@@ -861,7 +861,12 @@ async function dpApply(){
   if(r.ok) dpLoad();   // refresh targets — new nodes/engines may exist now
 }
 
+// The Estate tab's Build entry opens this page at one tab (#install, #proxmox,
+// #docker); the hash changes without a reload.
+function tabFromHash(){const t=location.hash.slice(1);if(['deploy','install','proxmox','docker'].includes(t))showTab(t);}
+window.addEventListener('hashchange',tabFromHash);
 refresh();
+tabFromHash();
 dpLoad();
 </script>
 <script src="/ui/vera-panel-bridge.js"></script>

@@ -318,7 +318,9 @@ At startup, `capability_orchestration.py` loads companion modules from an **expl
 
 The list is order-sensitive — modules that others depend on (the fabric, memory, the cluster) load first. A `sys.modules` guard means each module loads at most once. The `VERA_MODULES` env var appends extra comma-separated paths to the end of the list, so you can add a module without editing the core.
 
-Some modules ship **commented out** in the list — they're opt-in (e.g. `vllm/vllm_capabilities.py` and `openclaw/openclaw_capabilities.py`). Enable one by uncommenting it or naming it in `VERA_MODULES`.
+The default ordered loader includes the vLLM and OpenClaw capability modules.
+Additional local modules can be appended with `VERA_MODULES` without editing
+the core loader.
 
 If a module isn't found or fails to import, the orchestrator logs the error and continues. Each successful load logs `✓ <module>  caps=<n> ui_panels=<n>`, and the harness UI's "Loaded modules" panel shows the status of every attempted import, with the failure reason for any that crashed.
 
@@ -345,11 +347,65 @@ an unavailable resolution preserves the planner's existing scope. Resolution
 does not grant authority or execute anything; normal session and capability
 policy still govern the eventual call.
 
+Generation availability and default discovery are deliberately separate.
+`code.author` and `prose.author` are task-facing loop defaults because they bind
+generation to a concrete source-file or document contract. `llm.generate` is a
+backend-routing broker and the raw `llm.*` family is excluded from loop tool
+discovery by default, while remaining callable by explicit workflows and
+internal subsystems. Direct backend and configured-provider entry points such as
+`ollama.generate_raw`, `vllm.generate`, `vllm.chat`, and `providers.chat` remain
+explicitly callable too. Their availability does not automatically make them
+equivalent default tools: one shared discovery policy must classify these direct
+entry points before changing their default visibility. Provider identity is a
+routing constraint; canonical task and effects are the tool-selection contract.
+The direct vLLM generation/chat entry points and configured-provider chat entry
+point still need those explicit task/effect contracts before a resolver can
+safely treat them as interchangeable candidates.
+
 An inspection capability can expose a plan, contract, runtime mapping, or health
 assessment without performing the operation it describes. See
 [capability contracts](43-capability-contracts.md),
 [capability policy](45-capability-policy.md), and
 [interoperability foundations](46-interoperability-foundations.md).
+
+Compatibility names should be declared with
+`compatibility_alias_for="canonical.capability"` on the `@capability`
+decorator. This makes the replacement machine-readable in discovery and the
+system inventory. Calls through the HTTP and MCP transports contribute
+payload-free usage evidence; internal Python calls are established through
+code-reference scans instead of being guessed from request attribution.
+Declaring an alias does not deprecate or remove it, and telemetry failure cannot
+make the compatibility call fail.
+
+### Removal eligibility
+
+A compatibility path can become eligible for a separately executed removal
+only through the fail-closed evidence gate. The submission is bound to one
+candidate, its named replacement and owner, and an independent review that
+already recommends removal candidacy. It requires digest-backed semantic,
+caller, state and configuration inventories; success, error, timeout,
+cancellation, restart and recovery fixtures; a shadow or safety assessment;
+full conformance; quality and reliability evidence; verified state-export and
+rollback receipts; migrated documentation; and explicit, candidate-scoped,
+timestamped approval.
+
+Zero use is an observed result, not a default. At least two distinct,
+non-overlapping normal-operation cycles must each have complete telemetry and
+zero non-probe calls. Missing telemetry, an un-migrated stored definition, an
+overlapping or abnormal observation window, or a surviving consumer blocks the
+gate. Candidate p95 may be at most 10% above baseline unless a separately
+digested gain justifies the exception. The resulting receipt is payload-free
+and non-executing: even a passing receipt does not delete code, data, aliases,
+routes, configuration, or stored definitions.
+
+Three older Memory hook functions are deliberate import shims:
+`record_cap_interaction`, `patch_capability_for_memory`, and `patch_new_cap`.
+Activity capture now belongs to the capability wrapper, so all three are no-ops
+and must not wrap a capability again. That does not make their import names safe
+to delete: external-import coverage has not yet been established, and startup
+still calls `patch_capability_for_memory`. The internal startup call should be
+migrated first; the shims remain until stored, configured, runtime, and external
+consumer evidence satisfies the independent removal gate.
 
 - **`interval=0` in the scheduler** fires every second. Don't pass 0 expecting "off" — pass a very large number like 999999, or simply don't call `schedule()`.
 - **`memory="auto"`** is a legacy value, accepted for compatibility, treated as `"on"`.

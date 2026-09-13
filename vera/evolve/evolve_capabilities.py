@@ -61,12 +61,15 @@ from __future__ import annotations
 import asyncio
 import calendar
 import contextlib
+import hashlib
+import hmac
 import json
 import logging
 import os
 import re
 import shlex
 import shutil
+import secrets
 import sqlite3
 import subprocess
 import sys
@@ -82,6 +85,7 @@ from Vera.vera.capability_orchestration import (
     BACKGROUND_LLM,
     CALLER_KIND,
     CAPABILITY_REGISTRY,
+    SANDBOX_GATE_TOKEN,
     capability,
     emit_event,
     enum_schema,
@@ -1237,25 +1241,40 @@ async def evolve_tasks(tag: str = "", trace_id=None):
 
 @capability("evolve.task.upsert", memory="off",
             http_method="POST", http_path="/evolve/task/upsert", http_tags=["evolve"],
-            description="Create/update a benchmark task. Pass the full task record "
+            description="Create/update a benchmark task. Pass the task record "
                         "(id!, label, type: loop|cap, goal/profile/allowed_caps or "
                         "cap/args, checks:[{type,value}], rubric, tags, max_steps, "
-                        "timeout_s, enabled).")
-async def evolve_task_upsert(task: Optional[Dict[str, Any]] = None, trace_id=None):
+                        "timeout_s, enabled). By default the record is MERGED over "
+                        "the stored one, so a field you do not send is kept (a seeded "
+                        "census goal keeps its census{} link, overrides{model}, "
+                        "scenario/seed/agent_name, target); send merge=false with the "
+                        "full record to replace it outright. A field sent as null is "
+                        "removed.")
+async def evolve_task_upsert(task: Optional[Dict[str, Any]] = None, merge: bool = True,
+                             trace_id=None):
     # The full task record arrives via `task` (both the evolve panel and the
     # markets seeder call with task=<dict>). A previous `**fields` catch-all was
     # mis-rendered by the MCP bridge as a spurious REQUIRED `fields` string,
     # which then leaked a junk "fields" key into the saved task and mangled
     # non-ASCII labels (em-dash → mojibake). Take only the task dict.
-    rec = dict(task or {})
-    if not rec.get("id"):
+    incoming = dict(task or {})
+    if not incoming.get("id"):
         return {"error": "task id required"}
+    # Merge over what is stored: the Tasks editor rebuilds a record from its
+    # form fields, and a full replace silently dropped everything the form did
+    # not show - a seeded census task lost its template link and model override
+    # on its first edit (found 2026-09-10, Loop Lab flattening 6a).
+    _merge = str(merge).strip().lower() not in ("0", "false", "no", "off")
+    existing = await _get_task(str(incoming["id"])) if _merge else None
+    rec = dict(existing or {})
+    rec.update(incoming)
+    rec = {k: v for k, v in rec.items() if v is not None}
     rec.setdefault("type", "loop")
     rec.setdefault("enabled", True)
     rec.setdefault("tags", [])
     rec.setdefault("checks", [])
     await _save_task(rec)
-    return {"ok": True, "task": rec}
+    return {"ok": True, "task": rec, "merged": bool(existing)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2168,20 +2187,40 @@ async def _sandbox_mirror(run_id: str, use_sandbox: bool):
                 task.cancel()
 
 
+def _is_census_posture(task: Dict[str, Any]) -> bool:
+    """A seeded census task runs the way the harness ran every archived goal
+    (census_seed.CENSUS_POSTURE): prod's own loop, no sandbox, no test
+    denylist, the engine's own defaults. The archived series is the
+    instrument; this posture keeps a seeded run a point on its timeline."""
+    return bool(_census_seed is not None and _census_seed.is_census_task(task))
+
+
 async def _run_loop_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]],
                          run_id: str, timeout: int) -> Dict[str, Any]:
     kw = dict(task.get("overrides") or {})
     kw.update(_variant_call_overrides(variant))
-    # A Loop Lab test runs HEADLESS — never let the loop pause for a human
-    # (enable_step_questions/HITL) or it hangs until the 300s timeout with no
-    # visible progress. The caller/variant can still override.
-    kw.setdefault("enable_step_questions", False)
+    census = _is_census_posture(task)
+    if not census:
+        # A Loop Lab test runs HEADLESS — never let the loop pause for a human
+        # (enable_step_questions/HITL) or it hangs until the 300s timeout with no
+        # visible progress. The caller/variant can still override.
+        kw.setdefault("enable_step_questions", False)
+    else:
+        # A census run is a measurement, not a goal to keep: it must not persist
+        # a strategic plan as a dream project nor escalate into a V8 program (one
+        # did on 2026-09-11 and held the GPU for five hours). The engine refuses
+        # the escalation for a census-owned session too; this is the first wall.
+        kw["enable_dream_persistence"] = False
+    # A census task passes what the harness passed - the goal, a model pin -
+    # and leaves the engine its own defaults (step questions included: the
+    # archived series ran with them on). Its step ceiling is the engine's, set
+    # on the task by the seeder; the suite's own default of 6 is two short.
     args = dict(profile=task.get("profile", "planning"),
                 goal=task.get("goal", ""),
                 allowed_caps=_deny_filter(task.get("allowed_caps", ""),
                                           task.get("_denylist") or []),
                 session_id=f"evolve:{run_id}",
-                max_steps=int(task.get("max_steps", 6) or 6), **kw)
+                max_steps=int(task.get("max_steps") or (8 if census else 6)), **kw)
     use_sandbox = task.get("_sandbox", False)
     if not task.get("_indefinite"):
         # bounded run (suite / benchmark / improve variant test). Mirror the
@@ -2377,16 +2416,26 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
     timeout = max(20, int(task.get("timeout_s", default_to) or default_to))
     error, final, steps, raw_keys = "", "", [], []
     sim_score = None
+    capped = False        # the run hit its timeout_s - the census's wall-cap, not a failure of the goal
     extra: Dict[str, Any] = {}
 
     # ── Sandbox-first: decide where this runs (loop/cap in the dev sandbox when
     # active; sim uses the business-sim's own isolation). Denylist strips
     # external-effect caps from test loops as defence in depth.
     cfg = task.get("_cfg") or await _get_config()
-    sb = await _resolve_sandbox(cfg, ttype)
+    census = _is_census_posture(task)
+    if census:
+        # The census posture: prod's own loop, whatever sandbox_mode says, and
+        # no test denylist - the harness restricted nothing. Under require every
+        # seeded task was refused in 0.1 s (loop-o50); under prefer it would
+        # have measured the primary sandbox's branch instead of prod.
+        sb = {"use": False, "blocked": False,
+              "reason": "census posture: prod's own loop, the archived series' instrument"}
+    else:
+        sb = await _resolve_sandbox(cfg, ttype)
     task = dict(task)
     task["_sandbox"] = sb["use"]
-    task["_denylist"] = cfg.get("test_denylist") or []
+    task["_denylist"] = [] if census else (cfg.get("test_denylist") or [])
     # Interactive tests (run.start) AND manual one-at-a-time task runs
     # (evolve.task.run) are ACTIVITY-watched, not clock-killed — the loop
     # under test may take an indefinite amount of time, and a run that's
@@ -2402,7 +2451,7 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
         task["_indefinite"] = True
         task["_idle_s"] = cfg.get("run_idle_timeout_s", 300)
         task["_max_s"] = cfg.get("run_max_s", 7200)
-    where = "sandbox" if sb["use"] else "in-process"
+    where = "prod" if census else ("sandbox" if sb["use"] else "in-process")
 
     _RUN_LIVE.update({"run_id": run_id, "task": task.get("id"),
                       "type": ttype, "started_at": now_iso(), "t0": t0,
@@ -2453,6 +2502,7 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
             raw_keys = list(res.keys())[:20]
     except asyncio.TimeoutError:
         error = f"timeout after {timeout}s"
+        capped = True
     except Exception as e:
         error = str(e)
     finally:
@@ -2510,6 +2560,7 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
         "variant": (variant or {}).get("id", ""), "source": source,
         "session": session_id, "error": error[:200], "where": where,
         "triggered_by": _triggered_by(),
+        "capped": capped, "posture": ("census" if census else ""),
     }
     detail = dict(compact)
     detail.update({
@@ -2634,7 +2685,27 @@ async def _runs_window_commits_batch(recs: List[Dict[str, Any]]) -> None:
                         "overlapped that commit's timestamp — never guessed. "
                         "Query: hours (int, default 72), branch (str, optional — "
                         "log this branch instead of the checked-out HEAD).")
-async def evolve_authors(hours: int = 72, branch: str = "", trace_id=None):
+async def evolve_authors(hours: int = 72, branch: str = "", fresh: bool = False,
+                         trace_id=None):
+    # Polled by the author-map element every 20 s and by the Loop Lab's
+    # active-run refresh every 4 s, at 20-35 s a call: the calls overlapped,
+    # filled the browser's connection pool, and every other fetch on the page
+    # waited behind them (census table 36 s after the click, 2026-09-10).
+    # Cached for a minute and coalesced, so pollers share one computation.
+    key = (int(hours), str(branch or ""))
+    _fresh = str(fresh).strip().lower() in ("1", "true", "yes", "on")
+    return await _AUTHORS_CACHE.get(
+        key, lambda: _evolve_authors_uncached(int(hours), str(branch or "")), fresh=_fresh)
+
+
+try:
+    from Vera.vera.evolve.ttl_cache import TTLCache as _TTLCache
+except Exception:                                          # pragma: no cover
+    from vera.evolve.ttl_cache import TTLCache as _TTLCache
+_AUTHORS_CACHE = _TTLCache(60.0)
+
+
+async def _evolve_authors_uncached(hours: int, branch: str):
     from datetime import datetime, timedelta, timezone
     since_dt = datetime.now(timezone.utc) - timedelta(hours=max(1, int(hours)))
     since = since_dt.isoformat()
@@ -2718,9 +2789,12 @@ async def evolve_authors(hours: int = 72, branch: str = "", trace_id=None):
                         "message}]) — the same join key Dispatch's chat-session "
                         "list uses, for connecting a run back to whatever "
                         "session (Claude Code or otherwise) produced it. "
-                        "Query: limit, task, session.")
+                        "Query: limit, task, session (a suite id, an improve "
+                        "session, or a census run such as run52), source "
+                        "(suite | run | manual | improve | census | goal | "
+                        "captest | ide).")
 async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
-                      trace_id=None):
+                      source: str = "", trace_id=None):
     r = _redis()
     out: List[Dict[str, Any]] = []
     if r:
@@ -2734,6 +2808,8 @@ async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
                 if task and rec.get("task") != task:
                     continue
                 if session and rec.get("session") != session:
+                    continue
+                if source and str(rec.get("source") or "") != source:
                     continue
                 out.append(rec)
                 if len(out) >= int(limit):
@@ -5489,6 +5565,13 @@ async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
     return {"ok": True, "id": rec["id"]}
 
 
+# Wall-clock budget for the critical tier, shared by pipeline.adopt and
+# pipeline.test. It was 300 s. By 2026-09-11 the tier (about 4,070 tests) took
+# 260-300 s on a quiet box and longer while other gates ran, so green branches
+# failed with "ephemeral test container failed to run pytest" - what the runner
+# says when pytest is killed before it prints its exit code.
+_CRITICAL_TIER_TIMEOUT_S = 500
+
 @capability("evolve.pipeline.adopt", memory="on",
             http_method="POST", http_path="/evolve/pipeline/adopt", http_tags=["evolve"],
             description="Register an ALREADY-edited branch as a code pipeline run — for a "
@@ -5610,6 +5693,36 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
         _pstep(rec, "gate", True,
                "no .py changes — compile gate n/a; promote with force for docs/infra")
 
+    # The UI half of the same gate: panel HTML and JS. On 2026-09-11 an adopt
+    # passed with git conflict markers inside an inline <script> - the .py check
+    # above never looks at a panel, and a panel that does not parse ships as a
+    # page that silently stops rendering. Same contract as the .py check: the
+    # file PARSES, nothing about behaviour. If node is missing the scripts are
+    # reported as NOT CHECKED rather than passed.
+    try:
+        from Vera.vera.evolve import panel_check as _pc
+    except Exception:                                      # pragma: no cover
+        from vera.evolve import panel_check as _pc         # type: ignore
+    ui = [f for f in changed if _pc.is_ui_file(f)]
+    ui_bad: List[str] = []
+    ui_skipped = ""
+    for f in ui:
+        show = await _git("show", f"{branch}:{f}", repo_root=root)
+        if not show["ok"]:
+            continue  # deleted/renamed on the branch
+        res = await asyncio.to_thread(_pc.check_file, f, show.get("out", "") or "")
+        for prob in res.get("problems") or []:
+            ui_bad.append(f"{f}: {prob}")
+        if res.get("skipped") and not ui_skipped:
+            ui_skipped = str(res["skipped"])
+    if ui:
+        ui_ok = not ui_bad
+        compile_ok = compile_ok and ui_ok
+        _pstep(rec, "gate-ui", ui_ok,
+               f"panel-check {len(ui)} html/js file(s): "
+               + ("PASS" if ui_ok else "FAIL — " + "; ".join(ui_bad[:3]))
+               + (f" ({ui_skipped})" if ui_skipped else ""))
+
     # Critical-system regression gate (dev-lifecycle §6 / route-forward M3) — the
     # compile check above never behaviourally exercised anything, so a fix could
     # parse clean and still be wrong; every fix landed by hand this session had to
@@ -5632,13 +5745,24 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
         if wt:
             try:
                 crit = await evolve_unittest_run(branch=branch, paths="tests",
-                                                 markers="critical", timeout=300,
+                                                 markers="critical", timeout=_CRITICAL_TIER_TIMEOUT_S,
                                                  pipeline_id=rec["id"])
             except Exception as e:
                 crit = {"error": str(e)}
             if crit.get("error"):
+                # A tier that was ATTEMPTED and could not execute is a failed
+                # gate, not an absent one. It used to stay None ("infra hiccup,
+                # not counted") - and on 2026-09-11 that let a branch with four
+                # red critical tests onto bleeding-edge and main with
+                # gate_passed=True, because the container failed to start
+                # pytest that once. If the box is genuinely broken, the
+                # promoter verifies by hand and uses force; the gate must not
+                # say PASS for tests that never ran.
+                critical_ok = False
                 _pstep(rec, "critical-tests", False,
-                       f"could not run critical-tier tests: {crit['error']}")
+                       f"could not run critical-tier tests: {crit['error']} "
+                       "- counted as FAILED (re-adopt, or promote with force "
+                       "after verifying by hand)")
             else:
                 critical_ok = bool(crit.get("ok"))
                 _pstep(rec, "critical-tests", critical_ok,
@@ -5887,7 +6011,7 @@ async def evolve_pipeline_test(id: str = "", trace_id=None):
                f"compile-check {len(py_files)} .py file(s): " +
                ("PASS" if compile_ok else "FAIL — " + "; ".join(parse_errors[:3])))
         critical = await evolve_unittest_run(branch=branch, paths="tests",
-                                             markers="critical", timeout=300,
+                                             markers="critical", timeout=_CRITICAL_TIER_TIMEOUT_S,
                                              pipeline_id=rec["id"])
         critical_ok = bool(critical.get("ok")) and not critical.get("error")
         failures = critical.get("failure_details") or []
@@ -7217,7 +7341,8 @@ def _redis_url_with_db(url: str, db: int) -> str:
 
 
 def _dev_compose_yaml(worktree_rel: str, name: str = "vera-dev",
-                      port: int = None, db: int = None) -> str:
+                      port: int = None, db: int = None, branch: str = "",
+                      gate_token: str = "") -> str:
     """A compose override defining a dev-sandbox container. Parameterized per
     branch (name/port/db) so MANY can run concurrently; the defaults reproduce
     the original single `vera-dev` on the active port + DEV_REDIS_DB, so existing
@@ -7236,6 +7361,10 @@ def _dev_compose_yaml(worktree_rel: str, name: str = "vera-dev",
         port = _DEV_PORT_ACTIVE
     if db is None:
         db = DEV_REDIS_DB
+    recovery_labels = _registry_rebuild.compose_recovery_labels(branch, db)
+    role_label = json.dumps(recovery_labels["vera.loop-lab.role"])
+    branch_label = json.dumps(recovery_labels["vera.loop-lab.branch"])
+    redis_slot_label = json.dumps(recovery_labels["vera.loop-lab.redis-db"])
     c = getattr(_orch, "cfg", None)
     # A PRIVATE redis sidecar, not prod's server on another DB number. The old
     # arrangement never connected at all (redis-server binds 127.0.0.1; the
@@ -7272,14 +7401,23 @@ def _dev_compose_yaml(worktree_rel: str, name: str = "vera-dev",
     if _sbx_redis is not None:
         _redis_sidecar = _sbx_redis.sidecar_service_yaml(name, "vera-net")
         _coord_setting = _sbx_redis.coord_setting()
+        # The app depends on its sidecar so `compose up <app>` brings the
+        # sidecar up too. Found 2026-09-10: `up` named only the app service,
+        # the sidecar was never created, and the app looped on "Name or
+        # service not known" - Redis-less, the state this sidecar exists to end.
+        _depends = "    depends_on:\n      - %s\n" % _sbx_redis.sidecar_name(name)
     else:                                                  # pragma: no cover
-        _redis_sidecar, _coord_setting = "", ""
+        _redis_sidecar, _coord_setting, _depends = "", "", ""
     return f"""# Auto-generated by Loop Lab (evolve.sandbox.up). Safe to delete.
 services:
   {name}:
     image: {DEV_IMAGE}
     pull_policy: never
     container_name: {name}
+    labels:
+      vera.loop-lab.role: {role_label}
+      vera.loop-lab.branch: {branch_label}
+      vera.loop-lab.redis-db: {redis_slot_label}
     command: ["python", "-m", "Vera.vera.capability_orchestration"]
     ports:
       - "{port}:8999"
@@ -7327,6 +7465,11 @@ services:
       # so this keeps that behaviour and makes it explicit. A genuinely shared
       # coordination endpoint would go here instead.
       VERA_COORD_REDIS_URL: "{_coord_setting}"
+      # The controller brokers only opaque acquire/renew/release operations.
+      # The raw production Redis endpoint never enters the sandbox.
+      VERA_GATE_BROKER_URL: "{'https://host.docker.internal:8999/mcp/call' if gate_token else ''}"
+      VERA_GATE_BROKER_SANDBOX: "{name if gate_token else ''}"
+      VERA_GATE_BROKER_TOKEN: "{gate_token}"
     volumes:
       - ./{worktree_rel}:/app/Vera:rw
       - {_tls_dir}:/certs:ro
@@ -7341,7 +7484,7 @@ services:
     restart: "no"
     networks:
       - vera-net
-{_redis_sidecar}networks:
+{_depends}{_redis_sidecar}networks:
   vera-net:
     external: true
     name: vera_vera-net
@@ -7387,6 +7530,8 @@ from Vera.vera.evolve.sandbox_pool import (          # noqa: E402
     capacity_snapshot as _pool_capacity_snapshot,
 )
 from Vera.vera.evolve import sandbox_pool_reconcile as _pool_reconcile  # noqa: E402
+from Vera.vera.evolve import sandbox_registry_reconstruction as _registry_rebuild  # noqa: E402
+from Vera.vera.evolve.singleflight import SingleFlight as _SingleFlight  # noqa: E402
 from Vera.vera.evolve.sandbox_reap import (          # noqa: E402
     plan_reap as _plan_reap,
     orphan_composes as _orphan_composes,
@@ -7423,6 +7568,142 @@ async def _sandbox_pool() -> Dict[str, Dict[str, Any]]:
     except Exception:
         pass
     return out
+
+
+def _gate_token_digest(token: str) -> str:
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
+async def _gate_broker_authorized(sandbox: str) -> bool:
+    """Authenticate a spawned sandbox without returning its descriptor."""
+    token = SANDBOX_GATE_TOKEN.get()
+    if not sandbox or not token or CALLER_KIND.get() != "sandbox_gate":
+        return False
+    descriptor = next((item for item in (await _sandbox_pool()).values()
+                       if item.get("name") == sandbox), None)
+    if descriptor is None:
+        primary = await _get_sandbox()
+        if primary.get("name", _SANDBOX_CONTAINER) == sandbox:
+            descriptor = primary
+    expected = str((descriptor or {}).get("gate_token_sha256") or "")
+    return bool(expected and hmac.compare_digest(expected, _gate_token_digest(token)))
+
+
+_BROKER_LEASES: Dict[str, Dict[str, Any]] = {}
+
+
+async def _gate_broker_auth_or_error(sandbox: str) -> Optional[dict]:
+    if not await _gate_broker_authorized(sandbox):
+        return {"ok": False, "error": "unauthorized"}
+    return None
+
+
+@capability("ollama.gate.lease.status", memory="off", silent=True, mcp_expose=False,
+            description="Report sanitized shared-gate availability to one authenticated sandbox.")
+async def ollama_gate_lease_status(sandbox: str = "", trace_id=None):
+    denied = await _gate_broker_auth_or_error(sandbox)
+    if denied:
+        return denied
+    await _orch._ensure_coord_redis()
+    nodes = []
+    for node, inst in _orch.OLLAMA_INSTANCES.items():
+        capacity = _orch._gate.capacity_for(bool(inst.get("has_gpu")))
+        if capacity <= 0:
+            nodes.append({"node": node, "gated": False, "capacity": 0})
+            continue
+        occupancy = await _orch._gate.occupancy(_orch.COORD_REDIS, node, capacity)
+        nodes.append({key: value for key, value in {
+            "node": node, "gated": True, "capacity": capacity,
+            "held": occupancy.get("held"), "free": occupancy.get("free")}.items()})
+    return {"ok": True, "coord_connected": _orch.COORD_REDIS is not None,
+            "mode": "controller_broker", "nodes": nodes}
+
+
+@capability("ollama.gate.lease.acquire", memory="off", silent=True, mcp_expose=False,
+            description="Acquire one opaque, controller-owned inference lease for an "
+                        "authenticated Loop Lab sandbox. This deliberately exposes no "
+                        "Redis address, key, command, owner token, or estate mutation.")
+async def ollama_gate_lease_acquire(sandbox: str = "", node: str = "",
+                                    wait_s: float = 120,
+                                    trace_id=None):
+    denied = await _gate_broker_auth_or_error(sandbox)
+    if denied:
+        return denied
+    inst = _orch.OLLAMA_INSTANCES.get(node)
+    capacity = _orch._gate.capacity_for(bool((inst or {}).get("has_gpu")))
+    if not inst or capacity <= 0:
+        return {"ok": False, "error": "node_not_brokered"}
+    await _orch._ensure_coord_redis()
+    if _orch.COORD_REDIS is None:
+        return {"ok": False, "error": "coordination_unavailable"}
+    wait = max(0.0, min(float(wait_s or 0), 120.0))
+    owner = f"broker:{sandbox}:{secrets.token_urlsafe(18)}"
+    try:
+        lease = await _orch._gate.acquire(
+            _orch.COORD_REDIS, node, capacity, _orch._gate.lease_ttl_ms(),
+            wait, owner=owner, required=True)
+    except _orch._gate.GateAcquisitionError as exc:
+        return {"ok": False, "error": exc.reason}
+    lease_id = secrets.token_urlsafe(24)
+    _BROKER_LEASES[lease_id] = {"sandbox": sandbox, "lease": lease,
+                                "created": time.monotonic()}
+    # Bound stale opaque handles. The underlying Redis lease remains protected
+    # by its short TTL even if the controller restarts and forgets this map.
+    if len(_BROKER_LEASES) > 1024:
+        oldest = min(_BROKER_LEASES, key=lambda key: _BROKER_LEASES[key]["created"])
+        if oldest != lease_id:
+            _BROKER_LEASES.pop(oldest, None)
+    return {"ok": True, "lease_id": lease_id,
+            "waited_s": float(lease.get("waited_s") or 0)}
+
+
+async def _gate_broker_lease(sandbox: str,
+                             lease_id: str) -> tuple[Optional[dict], Optional[dict]]:
+    denied = await _gate_broker_auth_or_error(sandbox)
+    if denied:
+        return None, denied
+    record = _BROKER_LEASES.get(str(lease_id or ""))
+    if not record or record.get("sandbox") != sandbox:
+        return None, {"ok": False, "error": "unknown_lease"}
+    return record, None
+
+
+@capability("ollama.gate.lease.renew", memory="off", silent=True, mcp_expose=False,
+            description="Renew an authenticated sandbox's opaque inference lease.")
+async def ollama_gate_lease_renew(sandbox: str = "", lease_id: str = "",
+                                  trace_id=None):
+    record, denied = await _gate_broker_lease(sandbox, lease_id)
+    if denied:
+        return denied
+    renewed = await _orch._gate.renew(
+        _orch.COORD_REDIS, record["lease"], _orch._gate.lease_ttl_ms())
+    if not renewed:
+        _BROKER_LEASES.pop(lease_id, None)
+    return {"ok": True, "renewed": bool(renewed)}
+
+
+@capability("ollama.gate.lease.release", memory="off", silent=True, mcp_expose=False,
+            description="Release only the authenticated sandbox's opaque inference lease.")
+async def ollama_gate_lease_release(sandbox: str = "", lease_id: str = "",
+                                    trace_id=None):
+    record, denied = await _gate_broker_lease(sandbox, lease_id)
+    if denied:
+        return denied
+    released = await _orch._gate.release(_orch.COORD_REDIS, record["lease"])
+    _BROKER_LEASES.pop(lease_id, None)
+    return {"ok": True, "released": bool(released)}
+
+
+async def _gate_broker_release_sandbox(sandbox: str) -> int:
+    """Release only opaque leases issued to one exact sandbox descriptor."""
+    released = 0
+    for lease_id, record in list(_BROKER_LEASES.items()):
+        if record.get("sandbox") != sandbox:
+            continue
+        if await _orch._gate.release(_orch.COORD_REDIS, record.get("lease")):
+            released += 1
+        _BROKER_LEASES.pop(lease_id, None)
+    return released
 
 
 @capability("evolve.sandbox.spawn", memory="on",
@@ -7465,13 +7746,18 @@ async def evolve_sandbox_spawn(branch: str = "", rebuild_image: bool = False,
     if not (isinstance(ens, dict) and ens.get("ok")):
         return {"error": f"{DEV_IMAGE} unavailable: {(ens or {}).get('error', ens)}"}
     compose_file = f"docker-compose.dev-{safe}.yml"
+    gate_token = secrets.token_urlsafe(32)
     try:
         (_repo_root() / compose_file).write_text(
-            _dev_compose_yaml(wt_rel, name=name, port=port, db=db), encoding="utf-8")
+            _dev_compose_yaml(wt_rel, name=name, port=port, db=db, branch=branch,
+                              gate_token=gate_token), encoding="utf-8")
     except Exception as e:
         return {"error": f"could not write {compose_file}: {e}"}
+    # Both services by name: the app and its private Redis (depends_on covers
+    # it too; naming it is what a compose that pre-dates depends_on needs).
+    _services = [name] + ([_sbx_redis.sidecar_name(name)] if _sbx_redis is not None else [])
     up = await _sh(["docker", "compose", "-f", "docker-compose.yml", "-f", compose_file,
-                    "-p", name, "up", "-d", "--no-build", "--force-recreate", name], timeout=300)
+                    "-p", name, "up", "-d", "--no-build", "--force-recreate"] + _services, timeout=300)
     if not up["ok"]:
         return {"error": f"docker compose up failed: {up['err'] or up['out']}",
                 "hint": "requires docker + the vera:latest image on this host"}
@@ -7480,7 +7766,8 @@ async def evolve_sandbox_spawn(branch: str = "", rebuild_image: bool = False,
             "compose": compose_file, "worktree": str(wt_abs), "started_at": created,
             "created_at": created, "last_activity": created,
             "owner": (owner or _triggered_by()).strip(),
-            "session_id": (session_id or "").strip()}
+            "session_id": (session_id or "").strip(),
+            "gate_token_sha256": _gate_token_digest(gate_token)}
     r = _redis()
     if r:
         try:
@@ -7564,6 +7851,9 @@ async def _refresh_standing_bleeding_edge_container(edge: str = "") -> Dict[str,
     if not entry or not entry.get("name"):
         return {"ok": True, "action": "mirror refreshed; standing container not up"}
     name = entry["name"]
+    # Its redis sidecar may have been frozen (an idle sweep before this fix);
+    # a restarted app must find its store, or it comes up Redis-less.
+    await _sidecar_set_paused(name, False)
     r = await _sh(["docker", "restart", name])
     if not r.get("ok"):
         return {"ok": False, "error": f"container restart failed: {r.get('err') or r.get('out')}"}
@@ -7729,18 +8019,19 @@ async def _release_container_gate_leases(name: str) -> int:
     idle container running. Returns how many slots were handed back.
     """
     try:
+        n = await _gate_broker_release_sandbox(name)
         insp = await _sh(["docker", "inspect", "-f", "{{.Config.Hostname}}", name],
                          timeout=10)
         host = (insp.get("out") or "").strip()
         if not host:
-            return 0
+            return n
         from Vera.vera import capability_orchestration as _orch
         from Vera.vera import ollama_gate as _gate
         r = getattr(_orch, "COORD_REDIS", None)
         if r is None:
-            return 0
+            return n
         res = await _gate.release_leases_for_host(r, host)
-        n = int(res.get("count") or 0)
+        n += int(res.get("count") or 0)
         if n:
             log.info("evolve: released %d GPU gate slot(s) held by %s (%s) before pause",
                      n, name, host)
@@ -7751,13 +8042,34 @@ async def _release_container_gate_leases(name: str) -> int:
         return 0
 
 
+async def _sidecar_set_paused(name: str, paused: bool) -> bool:
+    """Pause / unpause the redis sidecar paired with a sandbox container, when
+    it exists and is in the other state. The sidecar follows its app: frozen
+    with it, woken with it, never on its own - a sidecar frozen alone leaves a
+    running sandbox Redis-less (its app loops on 'Timeout connecting to
+    server'; seen on the pinned standing mirror 2026-09-10). Returns whether
+    the sidecar's state changed."""
+    if _sbx_redis is None or not name:
+        return False
+    sc = _sbx_redis.sidecar_name(name)
+    st = await _sh(["docker", "inspect", "-f", "{{.State.Status}}", sc], timeout=10)
+    cur = (st.get("out") or "").strip() if st.get("ok") else ""
+    if paused and cur == "running":
+        return bool((await _sh(["docker", "pause", sc], timeout=15)).get("ok"))
+    if not paused and cur == "paused":
+        return bool((await _sh(["docker", "unpause", sc], timeout=15)).get("ok"))
+    return False
+
+
 async def _sandbox_unpause_if_paused(name: str) -> bool:
     """Auto-resume a paused container before docker-exec'ing into it. The idle
     reaper may have frozen it; this makes over-pausing HARMLESS — the next real
     use transparently wakes it. (fs/diff read the host worktree and never need
-    the container running, so exec is the only path that must unpause.)"""
+    the container running, so exec is the only path that must unpause.) Its
+    redis sidecar wakes first, so the app finds its store the moment it runs."""
     if not name:
         return False
+    await _sidecar_set_paused(name, False)
     st = await _sh(["docker", "inspect", "-f", "{{.State.Status}}", name], timeout=10)
     if (st.get("out") or "").strip() == "paused":
         await _sh(["docker", "unpause", name], timeout=15)
@@ -7793,6 +8105,7 @@ async def _sandbox_ensure_unpaused() -> bool:
     to resume serving before the caller's own health probe runs. No-op (True)
     if it's already running or doesn't exist — the normal up/down paths handle
     those. Returns False only on a genuine unpause failure."""
+    await _sidecar_set_paused(_SANDBOX_CONTAINER, False)
     if await _sandbox_container_status() != "paused":
         return True
     r = await _sh(["docker", "unpause", _SANDBOX_CONTAINER], timeout=15)
@@ -8086,6 +8399,8 @@ from Vera.vera.evolve.evolve_unittest_core import (   # noqa: E402
     format_failure_details as _ut_format_failures,
 )
 
+_UNITTEST_SINGLEFLIGHT = _SingleFlight(retention_seconds=600, maximum=64)
+
 
 @capability("evolve.unittest.run", memory="off",
             http_method="POST", http_path="/evolve/unittest/run", http_tags=["evolve"],
@@ -8142,7 +8457,11 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
     inner = _ut_inner(tokens)
     argv = _ut_argv(DEV_IMAGE, str(Path(wt).resolve()), inner)
     timeout = max(30, min(1800, int(timeout)))
-    res = await _sh(argv, timeout=timeout)
+    run_key = hashlib.sha256(json.dumps({
+        "worktree": str(Path(wt).resolve()), "tokens": tokens,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    res, shared_execution = await _UNITTEST_SINGLEFLIGHT.run(
+        run_key, lambda: _sh(argv, timeout=timeout))
     combined = ((res.get("out") or "") + "\n" + (res.get("err") or "")).strip()
     if res.get("code") == -1 and "not found" in (res.get("err") or "").lower():
         return {"error": "docker not available here — evolve.unittest.run must run on the "
@@ -8162,7 +8481,8 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
                       "ok": parsed["ok"], "passed": parsed["passed"],
                       "failed": parsed["failed"], "errors": parsed["errors"]})
     return {**parsed, "code": parsed["rc"], "image": DEV_IMAGE,
-            "branch": branch or label, "out": combined[-8000:], "repo": DEFAULT_REPO_ID}
+            "branch": branch or label, "out": combined[-8000:], "repo": DEFAULT_REPO_ID,
+            "shared_execution": shared_execution}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -8657,6 +8977,11 @@ async def _sandbox_reap(dry_run: bool = False) -> Dict[str, Any]:
     for name in names:
         if name == primary or name in _SANDBOX_KEEP_ALWAYS or name in pinned:
             continue
+        # A redis sidecar is not a sandbox: it follows its app (paused with it
+        # below, woken with it in _sandbox_unpause_if_paused). Picked on its own
+        # it left the PINNED standing mirror running Redis-less (2026-09-10).
+        if _sbx_redis is not None and _sbx_redis.is_sidecar(name):
+            continue
         insp = await _sh(["docker", "inspect", "-f",
                           "{{.State.Status}}|{{.State.StartedAt}}", name], timeout=10)
         status, _sep, started = (insp.get("out") or "").strip().partition("|")
@@ -8686,6 +9011,7 @@ async def _sandbox_reap(dry_run: bool = False) -> Dict[str, Any]:
             rr = await _sh(["docker", "pause", p["name"]], timeout=15)
             p["paused"] = bool(rr["ok"])
             if rr["ok"]:
+                p["sidecar_paused"] = await _sidecar_set_paused(p["name"], True)
                 await _audit("sandbox.reap", f"idle-paused {p['name']} ({p['idle_s']}s idle)")
         n = sum(1 for p in plan if p.get("paused"))
         if n:
@@ -9234,8 +9560,10 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
                 "ensure": ens if isinstance(ens, dict) else {"raw": str(ens)}}
 
     # 3. compose override
+    gate_token = secrets.token_urlsafe(32)
     try:
-        (_repo_root() / _DEV_COMPOSE).write_text(_dev_compose_yaml(wt_rel),
+        (_repo_root() / _DEV_COMPOSE).write_text(
+            _dev_compose_yaml(wt_rel, gate_token=gate_token),
                                                  encoding="utf-8")
     except Exception as e:
         return {"error": f"could not write {_DEV_COMPOSE}: {e}"}
@@ -9250,7 +9578,8 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
     #    rebuild) and is the only reliable way `up` picks up new source.
     up_argv = ["docker", "compose", "-f", "docker-compose.yml",
                "-f", _DEV_COMPOSE, "up", "-d", "--no-build",
-               "--force-recreate", "vera-dev"]
+               "--force-recreate", "vera-dev"] + (
+        [_sbx_redis.sidecar_name("vera-dev")] if _sbx_redis is not None else [])
     up = await _sh(up_argv, timeout=300)
     if not up["ok"]:
         return {"error": f"docker compose up failed: {up['err'] or up['out']}",
@@ -9260,7 +9589,9 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
     sb = {"branch": branch, "worktree": str(wt_abs), "port": port,
           "redis_db": DEV_REDIS_DB, "compose": _DEV_COMPOSE,
           "started_at": created, "created_at": created,
-          "last_activity": created, "owner": _triggered_by(), "session_id": ""}
+          "last_activity": created, "owner": _triggered_by(), "session_id": "",
+          "name": _SANDBOX_CONTAINER,
+          "gate_token_sha256": _gate_token_digest(gate_token)}
     r = _redis()
     if r:
         await r.set(KEY_SANDBOX, json.dumps(sb, default=str))
@@ -9554,6 +9885,135 @@ async def evolve_sandbox_list(detail: bool = False, trace_id=None):
         capacity["warning"] = ("isolated sandbox Redis cannot see controller pool occupancy; "
                                "query production evolve.sandbox.list before allocation")
     return {"sandboxes": out, "count": len(out), "capacity": capacity}
+
+
+async def _sandbox_registry_reconstruction_plan() -> Dict[str, Any]:
+    """Observe the host and build a pure, content-addressed restore plan."""
+    listed = await _sh(["docker", "ps", "-a", "--format", "{{.Names}}"], timeout=15)
+    if not listed.get("ok"):
+        return {"ok": False, "error": "docker state unavailable",
+                "refused": "docker_unknown", "mutated": False}
+    names = sorted({line.strip() for line in (listed.get("out") or "").splitlines()
+                    if line.strip().startswith("vera-dev-")})
+    observations: List[Dict[str, Any]] = []
+    for name in names:
+        inspected = await _sh(["docker", "inspect", name], timeout=15)
+        if not inspected.get("ok"):
+            return {"ok": False, "error": f"container state unavailable: {name}",
+                    "refused": "docker_unknown", "mutated": False}
+        try:
+            raw = json.loads(inspected.get("out") or "[]")[0]
+        except (IndexError, TypeError, ValueError):
+            return {"ok": False, "error": f"invalid container evidence: {name}",
+                    "refused": "docker_unknown", "mutated": False}
+        config = raw.get("Config") if isinstance(raw.get("Config"), dict) else {}
+        labels = config.get("Labels") if isinstance(config.get("Labels"), dict) else {}
+        env: Dict[str, str] = {}
+        for entry in config.get("Env") or []:
+            key, separator, value = str(entry).partition("=")
+            if separator:
+                env[key] = value
+        mounts = {str(item.get("Destination") or ""): str(item.get("Source") or "")
+                  for item in (raw.get("Mounts") or []) if isinstance(item, dict)}
+        published = []
+        ports = ((raw.get("NetworkSettings") or {}).get("Ports") or {})
+        for binding in ports.get("8999/tcp") or []:
+            try:
+                published.append(int(binding.get("HostPort")))
+            except (TypeError, ValueError, AttributeError):
+                pass
+        # Ignore compose sidecars. Anything exhibiting one app marker is in
+        # scope and must satisfy every other marker in the pure planner.
+        if not (env.get("VERA_IS_DEV_SANDBOX") == "1"
+                or "/app/Vera" in mounts or published):
+            continue
+        gate_token = env.get("VERA_GATE_BROKER_TOKEN", "")
+        observations.append({
+            "name": name,
+            "status": str((raw.get("State") or {}).get("Status") or ""),
+            "labels": labels,
+            "env": {key: env.get(key, "") for key in ("VERA_IS_DEV_SANDBOX", "REDIS_URL")},
+            "mounts": {"/app/Vera": mounts.get("/app/Vera", "")},
+            "published_ports": published,
+            "gate_token_sha256": _gate_token_digest(gate_token) if gate_token else "",
+        })
+    worktrees = await _list_worktrees()
+    if not worktrees:
+        return {"ok": False, "error": "Git worktree state unavailable",
+                "refused": "git_unknown", "mutated": False}
+    try:
+        compose_files = [path.name for path in
+                         _repo_root().glob("docker-compose.dev-*.yml")]
+    except OSError:
+        return {"ok": False, "error": "compose file state unavailable",
+                "refused": "filesystem_unknown", "mutated": False}
+    plan = _registry_rebuild.plan_registry_reconstruction(
+        observations, worktrees=worktrees, existing_pool=await _sandbox_pool(),
+        repo_root=str(_repo_root()), existing_compose_files=compose_files)
+    return {"ok": True, **plan}
+
+
+@capability("evolve.sandbox.registry.reconstruct", memory="on",
+            http_method="POST", http_path="/evolve/sandbox/registry/reconstruct",
+            http_tags=["evolve"],
+            description="Reconstruct missing spawned-sandbox pool descriptors from exact "
+                        "Docker compose, port, source-mount, Git worktree, Redis DB and "
+                        "broker-identity evidence. Dry-run is the default. Apply requires "
+                        "the exact reviewed plan digest and atomically refuses existing "
+                        "entries or changed observations. It never starts, stops, restarts "
+                        "or removes a container or worktree. Inputs: dry_run (bool=True), "
+                        "expected_digest (required only for apply).")
+async def evolve_sandbox_registry_reconstruct(dry_run: bool = True,
+                                              expected_digest: str = "",
+                                              trace_id=None):
+    plan = await _sandbox_registry_reconstruction_plan()
+    if not plan.get("ok") or dry_run:
+        return plan
+    try:
+        descriptors = _registry_rebuild.descriptors_for_apply(plan, expected_digest)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "mutated": False,
+                "digest": plan.get("digest", "")}
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "controller registry unavailable",
+                "refused": "redis_unknown", "mutated": False}
+    slugs = sorted(descriptors)
+    try:
+        async with r.pipeline(transaction=True) as transaction:
+            await transaction.watch(KEY_SANDBOX_POOL)
+            raw_pool = await transaction.hgetall(KEY_SANDBOX_POOL)
+            current_pool = {}
+            for key, value in (raw_pool or {}).items():
+                key = key.decode() if isinstance(key, (bytes, bytearray)) else key
+                value = value.decode() if isinstance(value, (bytes, bytearray)) else value
+                current_pool[key] = json.loads(value)
+            if _registry_rebuild.pool_digest(current_pool) != plan["existing_pool_digest"]:
+                await transaction.reset()
+                return {"ok": False, "error": "registry changed; review a new dry run",
+                        "refused": "registry_changed", "mutated": False}
+            occupied = [raw_pool.get(slug) or raw_pool.get(slug.encode()) for slug in slugs]
+            if any(value is not None for value in occupied):
+                await transaction.reset()
+                return {"ok": False, "error": "registry changed; review a new dry run",
+                        "refused": "registry_changed", "mutated": False}
+            transaction.multi()
+            transaction.hset(KEY_SANDBOX_POOL, mapping={
+                slug: json.dumps(descriptors[slug], sort_keys=True)
+                for slug in slugs
+            })
+            await transaction.execute()
+    except Exception as exc:
+        log.warning("sandbox registry reconstruction refused: %s", exc)
+        return {"ok": False, "error": "registry update failed",
+                "refused": "registry_changed", "mutated": False}
+    await _audit("sandbox.registry.reconstruct",
+                 f"restored {len(slugs)} descriptor(s): {', '.join(slugs)}")
+    await emit_event({"type": "evolve.sandbox.registry.reconstructed",
+                      "count": len(slugs), "slugs": slugs})
+    return {"ok": True, "schema": plan["schema"], "digest": plan["digest"],
+            "restored": slugs, "count": len(slugs), "mutated": True,
+            "containers_changed": False, "worktrees_changed": False}
 
 
 def _sandbox_workplan_target(primary: dict, pool: dict, *, name: str, branch: str) -> dict:

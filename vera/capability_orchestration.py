@@ -23,7 +23,7 @@ Endpoints:
   Postgres: postgresql://postgres:password@<BACKEND_HOST>:5432/llm
 """
 
-import asyncio, contextvars, copy, functools, hashlib, inspect, json, logging, os, sys, time, uuid
+import asyncio, contextvars, copy, functools, hashlib, inspect, json, logging, os, re, sys, time, uuid
 import logging.handlers  # noqa: E402  (submodule; `import logging` alone won't load it)
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -189,6 +189,15 @@ BACKGROUND_LLM: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 # triggered_by field (codex / claude_code / autonomous via BACKGROUND_LLM / user).
 CALLER_KIND: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "vera_caller_kind", default="")
+# Set only by the dedicated MCP envelope handler. Unlike caller_kind, this is a
+# server-owned transport fact and cannot be forged by request data.
+MCP_CALL_ACTIVE: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "vera_mcp_call_active", default=False)
+# Credential for the three narrow sandbox gate operations. It is sourced only
+# from an HTTP header by /mcp/call, never from capability arguments, so generic
+# capability telemetry and argument capture cannot persist it.
+SANDBOX_GATE_TOKEN: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "vera_sandbox_gate_token", default="")
 
 # Set to True by the agentic loop (cap_dag_agent_loop_v6, which powers v5-v8)
 # for the duration of its run, same propagation idiom as BACKGROUND_LLM above
@@ -1269,7 +1278,16 @@ OLLAMA_QUEUE_TIMEOUT = float(os.environ.get("OLLAMA_QUEUE_TIMEOUT", "0") or 0)
 # a no-op until enabled AND a coordination Redis is connected, so it deploys
 # dark and can never wedge generation. See vera/ollama_gate.py.
 from Vera.vera import ollama_gate as _gate   # noqa: E402
+from Vera.vera.ollama_gate_broker_client import (  # noqa: E402
+    BrokerError as _GateBrokerError, from_environment as _gate_broker_from_env)
 _GATE_ON = _gate.gate_enabled()
+_GATE_BROKER_CONFIGURED = bool(os.getenv("VERA_GATE_BROKER_URL", "").strip())
+try:
+    _GATE_BROKER = _gate_broker_from_env()
+    _GATE_BROKER_ERROR = ""
+except _GateBrokerError as _broker_error:
+    _GATE_BROKER = None
+    _GATE_BROKER_ERROR = str(_broker_error)
 # Dev-sandbox write guard (strict no-op in prod). See vera/sandbox_guard.py.
 from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked   # noqa: E402
 
@@ -1443,7 +1461,8 @@ async def _run_is_cancelled(session_id: str) -> bool:
 
 
 async def _gate_heartbeat(lease: dict, session_id: str = "",
-                          activity: Optional[dict] = None) -> None:
+                          activity: Optional[dict] = None,
+                          holder_task: Optional[asyncio.Task] = None) -> None:
     """Hold a live generation's GPU-gate slot by renewing its short lease — and
     make a WEDGED slot impossible by giving the heartbeat its OWN way to let go.
     A slot stops being held the instant ANY of these is true:
@@ -1469,7 +1488,10 @@ async def _gate_heartbeat(lease: dict, session_id: str = "",
 
     async def _free():
         try:
-            await _gate.release(COORD_REDIS, lease)
+            if lease.get("broker_lease_id") and _GATE_BROKER is not None:
+                await _GATE_BROKER.release(lease)
+            else:
+                await _gate.release(COORD_REDIS, lease)
         except Exception:
             pass
 
@@ -1504,9 +1526,23 @@ async def _gate_heartbeat(lease: dict, session_id: str = "",
             if since_renew >= renew_every:
                 since_renew = 0.0
                 try:
-                    await _gate.renew(COORD_REDIS, lease, ttl)
+                    if lease.get("broker_lease_id") and _GATE_BROKER is not None:
+                        renewed = await _GATE_BROKER.renew(lease, ttl)
+                        if not renewed:
+                            if activity is not None:
+                                activity["gate_lost"] = True
+                            if holder_task is not None and not holder_task.done():
+                                holder_task.cancel()
+                            return
+                    else:
+                        await _gate.renew(COORD_REDIS, lease, ttl)
                 except Exception:
-                    pass
+                    if lease.get("broker_lease_id"):
+                        if activity is not None:
+                            activity["gate_lost"] = True
+                        if holder_task is not None and not holder_task.done():
+                            holder_task.cancel()
+                        return
     except asyncio.CancelledError:
         pass
 
@@ -1549,38 +1585,46 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None):
         # that ignore the yielded marker fall back to the heartbeat's hard cap.
         _activity = {"t": time.monotonic(), "beats": 0}
         if _GATE_ON:
-            try:
-                if COORD_REDIS is None:
-                    await _ensure_coord_redis()
-                _cap = _gate.capacity_for(bool(OLLAMA_INSTANCES.get(iid, {}).get("has_gpu")))
-                if _cap > 0 and COORD_REDIS is not None:
-                    # SHORT lease + heartbeat (not the 30-min hard TTL). If this
-                    # generation is cancelled/crashed and its heartbeat stops, the
-                    # slot expires within lease_ttl_ms and the node self-heals —
-                    # instead of a wedged slot blocking every later loop-planner call
-                    # for the full TTL (the recurring GPU hang, 2026-08-18).
-                    _lease = await _gate.acquire(
-                        COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gate.wait_s())
-                    if _lease is not None:
-                        # Capture the driving run's session so the heartbeat can free
-                        # the slot the instant that run is cancelled, and the activity
-                        # marker so it can free a slot whose generation went silent.
-                        _hb_task = asyncio.ensure_future(
-                            _gate_heartbeat(_lease, _current_run_session(), _activity))
-            except Exception as _ge:
-                log.debug("ollama gate acquire skipped for %s: %s", iid, _ge)
+            _cap = _gate.capacity_for(bool(OLLAMA_INSTANCES.get(iid, {}).get("has_gpu")))
+            # A configured broker is a security boundary for sandboxes: it must
+            # produce a real shared lease or inference is refused. Never fall
+            # through to the local/private Redis gate under a broker failure.
+            if _cap > 0 and _GATE_BROKER_CONFIGURED:
+                if _GATE_BROKER is None:
+                    raise _GateBrokerError(_GATE_BROKER_ERROR or "invalid_broker_configuration")
+                _lease = await _GATE_BROKER.acquire(iid, min(float(wait), _gate.wait_s()))
+                _hb_task = asyncio.ensure_future(
+                    _gate_heartbeat(_lease, _current_run_session(), _activity,
+                                    asyncio.current_task()))
+            else:
+                # Existing production/local behavior remains deliberately
+                # fail-open until it is separately migrated to strict mode.
+                try:
+                    if COORD_REDIS is None:
+                        await _ensure_coord_redis()
+                    if _cap > 0 and COORD_REDIS is not None:
+                        _lease = await _gate.acquire(
+                            COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gate.wait_s())
+                        if _lease is not None:
+                            _hb_task = asyncio.ensure_future(
+                                _gate_heartbeat(_lease, _current_run_session(), _activity))
+                except Exception as _ge:
+                    log.debug("ollama gate acquire skipped for %s: %s", iid, _ge)
         yield _activity
     finally:
         if _hb_task is not None:
             _hb_task.cancel()   # stop renewing; the slot may now expire on its own
-        if _lease is not None and COORD_REDIS is not None:
+        if _lease is not None:
             # Fire the release as an INDEPENDENT task, not `await`ed here: if THIS
             # coroutine is being cancelled, an awaited release in the finally gets
             # interrupted mid-flight and the slot is orphaned (exactly how the
             # gate kept wedging). A detached task completes regardless; the short
             # lease TTL above is the backstop if even it can't run.
             try:
-                asyncio.ensure_future(_gate.release(COORD_REDIS, _lease))
+                if _lease.get("broker_lease_id") and _GATE_BROKER is not None:
+                    asyncio.ensure_future(_GATE_BROKER.release(_lease))
+                elif COORD_REDIS is not None:
+                    asyncio.ensure_future(_gate.release(COORD_REDIS, _lease))
             except Exception:
                 pass
         sem.release()
@@ -2286,6 +2330,10 @@ async def ollama_model_disk_size(iid: str, model: str) -> int:
 
 _NODE_USABLE_VRAM: Dict[str, int] = {}           # iid -> usable VRAM bytes MEASURED from a spill
 _MODEL_KV_CACHE: Dict[str, float] = {}           # "iid::model" -> KV bytes/token (fp16)
+try:
+    from Vera.vera import ollama_kv_core as _kv_core
+except Exception:                                    # worktree / app-free import
+    from vera import ollama_kv_core as _kv_core
 
 
 async def ollama_model_kv_per_token(iid: str, model: str) -> float:
@@ -2300,22 +2348,12 @@ async def ollama_model_kv_per_token(iid: str, model: str) -> float:
         return 0.0
     try:
         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=8) as c:
-            r = await c.post(f"{inst['url']}/api/show", json={"name": model})
+            r = await c.post(f"{inst['url']}/api/show", json={"model": model})
             mi = (r.json() or {}).get("model_info") or {}
-        arch = str(mi.get("general.architecture") or "")
-
-        def _g(suffix):
-            return mi.get(f"{arch}.{suffix}")
-
-        n_layers = int(_g("block_count") or 0)
-        n_kv = int(_g("attention.head_count_kv") or _g("attention.head_count") or 0)
-        head_dim = int(_g("attention.key_length") or 0)
-        if not head_dim:
-            emb = int(_g("embedding_length") or 0)
-            n_head = int(_g("attention.head_count") or 0)
-            head_dim = (emb // n_head) if (emb and n_head) else 0
-        if n_layers and n_kv and head_dim:
-            kv = float(n_layers * 2 * n_kv * head_dim * 2)
+        # Hybrid models (qwen3.5: full_attention_interval=4) hold KV in a quarter of
+        # their layers; counting all of them offered the GPU a window 4x too small.
+        kv = _kv_core.kv_bytes_per_token(mi)
+        if kv > 0:
             _MODEL_KV_CACHE[key] = kv
             return kv
     except Exception:
@@ -2490,7 +2528,10 @@ def _ollama_caller_info(depth: int = 3) -> dict:
 
 # ── Ollama request log (in-process ring buffer + structured event emission) ──
 _OLLAMA_REQUEST_LOG: List[dict] = []      # ring buffer, max 500
-_OLLAMA_REQUEST_LOG_MAX = 500
+# Raised from 500 (2026-09-10): a census goal makes up to ~100 LLM calls and the
+# harness reads them back after the goal; 500 was enough for one goal but not
+# for a reader arriving late. Entries are small dicts.
+_OLLAMA_REQUEST_LOG_MAX = 2000
 
 
 def _err_text(e: Exception, limit: int = 300) -> str:
@@ -2518,7 +2559,7 @@ def _err_text(e: Exception, limit: int = 300) -> str:
 _ARGS_SECRET_RE = None  # compiled lazily
 
 
-def _args_preview(kw: dict, limit: int = 600) -> str:
+def _args_preview(kw: dict, limit: int = 600, *, redact=()) -> str:
     """Compact single-line `k=v` preview of a capability's arguments for the
     jobs/observe panels. Values are truncated per-key, secrets masked, and the
     whole string capped so events stay small."""
@@ -2528,10 +2569,11 @@ def _args_preview(kw: dict, limit: int = 600) -> str:
         _ARGS_SECRET_RE = _re.compile(r"(pass(word)?|token|secret|api_?key|credential|auth)", _re.I)
     try:
         parts = []
+        redacted = {str(key) for key in (redact or ())}
         for k, v in kw.items():
             if k in ("trace_id",):
                 continue
-            if _ARGS_SECRET_RE.search(str(k)):
+            if str(k) in redacted or _ARGS_SECRET_RE.search(str(k)):
                 parts.append(f"{k}=***")
                 continue
             try:
@@ -2548,7 +2590,7 @@ def _args_preview(kw: dict, limit: int = 600) -> str:
         return ""
 
 
-def _args_compact(kw: dict, max_keys: int = 10, max_val: int = 160) -> dict:
+def _args_compact(kw: dict, max_keys: int = 10, max_val: int = 160, *, redact=()) -> dict:
     """Structured (masked, truncated) argument snapshot of a capability call.
     Same masking rules as _args_preview but returned as a dict so panel-side
     consumers (the live cap-activity mirror) can map args onto UI fields."""
@@ -2557,12 +2599,13 @@ def _args_compact(kw: dict, max_keys: int = 10, max_val: int = 160) -> dict:
         _args_preview({})  # compiles the shared secret-mask regex
     out: dict = {}
     try:
+        redacted = {str(key) for key in (redact or ())}
         for k, v in kw.items():
             if k in ("trace_id",):
                 continue
             if len(out) >= max_keys:
                 break
-            if _ARGS_SECRET_RE.search(str(k)):
+            if str(k) in redacted or _ARGS_SECRET_RE.search(str(k)):
                 out[k] = "***"
                 continue
             try:
@@ -2820,6 +2863,12 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     inst["in_use"] = inst.get("in_use", 0) + 1
     _inflight_hold(inst, _req_slot_id)
     mdl    = eff_model or OLLAMA_MODEL
+    # Record what actually serves the request. A caller that passes no model
+    # (llm.generate with only a job_type) cannot know the rule's model or the
+    # node picked, and used to report OLLAMA_MODEL - a naming call running
+    # qwen2.5:7b on a CPU node read as the 9B on that CPU.
+    if meta_out is not None:
+        meta_out.update({"model": mdl, "instance": chosen})
     body   = {"model":mdl,"prompt":prompt,"stream":stream_cb is not None}
     if system:    body["system"]  = system
     if json_mode: body["format"]  = "json"
@@ -2921,6 +2970,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         "caller_file": caller["caller_file"], "caller_func": caller["caller_func"],
         "prompt_preview": prompt_preview, "ts": now_iso(),
         "status": "running",
+        # The loop's session, so a census (or anyone) can pull exactly the calls
+        # one run made out of the ring buffer instead of a time window.
+        "session_id": OLLAMA_EVENT_SESSION.get(""),
         "job_type": eff_job_type, "rule_source": rule_source,
         "profile": str(profile or "")[:64],
         "role": str(role or "")[:64],
@@ -3291,6 +3343,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                         req_entry.update({"status": "done_fallback",
                                           "fallback_instance": fb_id,
                                           "elapsed_s": fb_elapsed})
+                        if meta_out is not None:
+                            meta_out["instance"] = fb_id
                         return "".join(fbuf) or "".join(ftbuf)
                 finally:
                     fb_inst["in_use"] = max(0, fb_inst.get("in_use", 1) - 1)
@@ -4266,6 +4320,43 @@ except Exception:                       # provenance must never break event emit
         return None
 
 
+def _origin_node() -> dict:
+    """Which VERA PROCESS this is - prod, or a dev sandbox and which one.
+
+    Sandboxes share prod's Redis, so their ollama jobs land in prod's event
+    stream and in prod's Jobs widget looking exactly like prod's own. `instance_id`
+    on those events is the OLLAMA NODE that served the call, not the Vera
+    process that submitted it, so nothing distinguished them. Sandbox containers
+    are started with VERA_IS_DEV_SANDBOX=1 and VERA_GATE_BROKER_SANDBOX=<their
+    container name>; prod has neither.
+    """
+    try:
+        import socket as _sock
+        host = _sock.gethostname()
+    except Exception:
+        host = ""
+    sbx = os.environ.get("VERA_GATE_BROKER_SANDBOX", "").strip()
+    if os.environ.get("VERA_IS_DEV_SANDBOX", "").strip() in ("1", "true", "yes") or sbx:
+        return {"kind": "sandbox", "node": sbx or host or "sandbox", "host": host}
+    return {"kind": "prod", "node": os.environ.get("VERA_NODE_ID", "").strip() or host or "prod",
+            "host": host}
+
+
+_ORIGIN_NODE = _origin_node()
+
+
+def _origin_stamp(event: dict) -> None:
+    """Stamp the submitting Vera process onto ollama.* events. One place rather
+    than eight emit sites, and any future ollama.* event gets it for free.
+    setdefault semantics: an event that already says where it came from is
+    left alone."""
+    try:
+        if str(event.get("type") or "").startswith("ollama.") and "origin" not in event:
+            event["origin"] = _ORIGIN_NODE
+    except Exception:
+        pass
+
+
 def _session_stamp(event: dict) -> None:
     """Stamp the session + caller that TRIGGERED this event (§5.1 provenance) —
     the 'which session' hop, so any event/error ties back not just to the commit
@@ -4295,6 +4386,7 @@ async def emit_event(event: dict):
     event.setdefault("ts", now_iso())
     _prov_stamp(event)     # compact git {ver, br, dirty} → correlate any event to code
     _session_stamp(event)  # {sid, via} → correlate any event to the session that triggered it
+    _origin_stamp(event)   # {kind, node} → which Vera PROCESS (prod / which sandbox) submitted it
     try:
         import asyncio as _asyncio
         from Vera.vera.execution.agent_loop_run_projection import observe_agent_loop_event
@@ -4869,7 +4961,7 @@ _ACT_RESULT_MAX_BYTES   = 8192    # serialised result cap
 _ACT_PREVIEW_MAX_CHARS  = 400     # human-readable preview line
 
 
-def _act_safe_params(kw: dict) -> dict:
+def _act_safe_params(kw: dict, *, redact=()) -> dict:
     """
     Return a sanitised copy of cap params suitable for storage.
 
@@ -4880,11 +4972,12 @@ def _act_safe_params(kw: dict) -> dict:
     SECRETY = ("password", "secret", "token", "api_key", "apikey",
                "auth", "credential", "ssh_key", "private_key")
     out: dict = {}
+    redacted = {str(key) for key in (redact or ())}
     for k, v in kw.items():
         if k == "trace_id":
             continue
         kl = k.lower()
-        if any(s in kl for s in SECRETY):
+        if str(k) in redacted or any(s in kl for s in SECRETY):
             out[k] = "[redacted]"
             continue
         if isinstance(v, str):
@@ -4923,7 +5016,8 @@ def _act_extract_text(result):
 def _act_enqueue(cap_name: str, group: str, session_id: str,
                  trace_id: str, kw: dict, result: object,
                  elapsed_ms: int,
-                 trigger_id: str = "", trigger_cap: str = ""):
+                 trigger_id: str = "", trigger_cap: str = "",
+                 redact_args=(), redact_result: bool = False):
     """
     Non-blocking enqueue of a capability call for background recording.
 
@@ -4970,7 +5064,7 @@ def _act_enqueue(cap_name: str, group: str, session_id: str,
             except RuntimeError:
                 return  # no running loop yet — skip
 
-        safe_params = _act_safe_params(kw or {})
+        safe_params = _act_safe_params(kw or {}, redact=redact_args)
         # Truncate the JSON repr to keep the queue item compact even for
         # chatty caps. We store both a human preview and the full structured
         # result so downstream queries can drill in.
@@ -4979,14 +5073,17 @@ def _act_enqueue(cap_name: str, group: str, session_id: str,
         except Exception:
             params_json = str(safe_params)[:_ACT_PARAMS_MAX_BYTES]
         try:
-            if isinstance(result, (dict, list)):
+            if redact_result:
+                result_json = json.dumps({"redacted": True})
+            elif isinstance(result, (dict, list)):
                 result_json = json.dumps(result, default=str)[:_ACT_RESULT_MAX_BYTES]
             else:
                 result_json = str(result)[:_ACT_RESULT_MAX_BYTES]
         except Exception:
             result_json = str(result)[:_ACT_RESULT_MAX_BYTES]
 
-        preview_text = _act_extract_text(result)[:_ACT_PREVIEW_MAX_CHARS]
+        preview_text = ("[redacted]" if redact_result else
+                        _act_extract_text(result)[:_ACT_PREVIEW_MAX_CHARS])
 
         _ACT_QUEUE.put_nowait({
             "cap_name":    cap_name,
@@ -5366,6 +5463,11 @@ def capability(
     # The legacy "auto" value is accepted for compatibility and treated as "on".
     memory:      str            = "on",
     silent:      bool           = False,   # suppress cap.call/cap.ok events (polling caps)
+    # Explicit activity/event redaction for capabilities whose ordinary field
+    # names are sensitive (for example API paths, request bodies, and returned
+    # payloads). This is enforced before data reaches events, Redis, or memory.
+    redact_args: List[str]      = None,
+    redact_result: bool         = False,
     # ── Schema override ─────────────────────────────────────────────────────
     # Optional JSON-Schema fragment to enrich the auto-generated schema.
     # The decorator always runs generate_schema(func) to derive types and the
@@ -5387,6 +5489,10 @@ def capability(
     # shadow policy decision from this metadata while enforcement and trusted
     # approval receipts migrate incrementally.
     contract:    Optional[dict] = None,
+    # A callable compatibility surface that projects to another capability.
+    # The replacement is registry metadata and enables conservative usage
+    # evidence; it does not redirect, disable, or remove the capability.
+    compatibility_alias_for: Optional[str] = None,
 ):
     """
     Unified registration decorator.
@@ -5412,6 +5518,11 @@ def capability(
         _auto_schema   = generate_schema(func)
         _final_schema  = _merge_schema(_auto_schema, schema) if schema else _auto_schema
         group  = name.split(".")[0]
+        _redact_args = frozenset(str(key) for key in (redact_args or ()))
+        _alias_for = str(compatibility_alias_for or "").strip()
+        if _alias_for and (_alias_for == name or not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", _alias_for)):
+            raise ValueError("compatibility alias replacement must be a different capability")
 
         @functools.wraps(func)
         async def wrap(**kw):
@@ -5431,6 +5542,20 @@ def capability(
                 except Exception as _eg:              # pragma: no cover
                     log.debug("estate guard skipped for %s: %s", name, _eg)
             tid     = kw.pop("trace_id",None) or new_id()
+            if _alias_for:
+                _surface = ("http_caller" if CURRENT_HTTP_CAP.get("") == name
+                            else "mcp_caller" if MCP_CALL_ACTIVE.get(False)
+                            else "")
+                if _surface:
+                    try:
+                        from .inventory.deprecation_inventory import record_alias_usage
+                        await record_alias_usage(
+                            REDIS, candidate_name=name, replacement=_alias_for,
+                            source_kind=_surface, observed_at=now_iso())
+                    except Exception as _alias_error:
+                        # Evidence collection cannot make a compatibility call fail.
+                        log.debug("compatibility usage evidence failed for %s: %s",
+                                  name, _alias_error)
             attempt = 0; last_err = None
             # Pull trigger chain from context vars (set by vera_syslog patcher)
             _vera_syslog = sys.modules.get("syslog")
@@ -5467,11 +5592,11 @@ def capability(
                             "trigger_id":  chain.get("trigger_id",""),
                             "trigger_cap": chain.get("trigger_cap",""),
                             "group":       group,
-                            "args_preview": _args_preview(kw),
+                            "args_preview": _args_preview(kw, redact=_redact_args),
                             "policy":      _policy_shadow,
                         })
                         await _mirror_cap_activity("call", name, _sid, tid, group,
-                                                   args=_args_compact(kw))
+                                                   args=_args_compact(kw, redact=_redact_args))
                         if _enforcement["blocked"]:
                             await emit_event({
                                 "type": "cap.denied", "name": name,
@@ -5506,8 +5631,8 @@ def capability(
                         await emit_stream(s,tid,result,name)
                     _elapsed_ms = round((time.monotonic()-_t0)*1000)
                     # Build result preview regardless of silent
-                    _preview = ""
-                    if isinstance(result, dict):
+                    _preview = "[redacted]" if redact_result else ""
+                    if not redact_result and isinstance(result, dict):
                         for _k in ("text","response","content","summary","result",
                                    "status","job_id","error","path","name"):
                             _v = result.get(_k)
@@ -5520,8 +5645,11 @@ def capability(
                             _cache = {"name": name, "trace_id": tid,
                                       "session_id": _sid, "elapsed_ms": _elapsed_ms,
                                       "ts": now_iso(), "preview": _preview,
-                                      "result": json.dumps(result)[:4096]
-                                               if isinstance(result, (dict,list)) else str(result)[:4096]}
+                                      "result": (json.dumps({"redacted": True})
+                                                 if redact_result else
+                                                 (json.dumps(result)[:4096]
+                                                  if isinstance(result, (dict,list))
+                                                  else str(result)[:4096]))}
                             await REDIS.setex(
                                 f"vera:cap:result:{name}",
                                 300,  # 5 min TTL — recent state always inspectable
@@ -5567,6 +5695,8 @@ def capability(
                             elapsed_ms=_elapsed_ms,
                             trigger_id=chain.get("trigger_id", ""),
                             trigger_cap=chain.get("trigger_cap", ""),
+                            redact_args=_redact_args,
+                            redact_result=redact_result,
                         )
                     return result
                 except PolicyEnforcementDenied:
@@ -5601,7 +5731,7 @@ def capability(
                         "name":        name,
                         "error":       _err_str,
                         "error_type":  type(e).__name__,
-                        "args_preview": _args_preview(kw),
+                        "args_preview": _args_preview(kw, redact=_redact_args),
                         "traceback":   _err_tb,
                         "attempt":     attempt,
                         "trace_id":    tid,
@@ -5627,10 +5757,13 @@ def capability(
             "mode":        mode,
             "retries":     retries,
             "tags":        tags or [group],
-            "source":      "local",
+            "source":      "alias" if _alias_for else "local",
+            "compatibility_alias_for": _alias_for,
             "mcp_expose":  mcp_expose,
             "memory":      memory,
             "silent":      silent,
+            "redact_args": sorted(_redact_args),
+            "redact_result": bool(redact_result),
             "contract":    copy.deepcopy(contract) if isinstance(contract, dict) else {},
             # HTTP route metadata — used at lifespan mount time
             "http_method": http_method,
@@ -6619,6 +6752,57 @@ async def eval_resolver_shadow(detail: bool = False, limit: int = 50, trace_id=N
 
 
 @capability(
+    "eval.ontology.decision", memory="off", silent=True,
+    http_method="GET", http_path="/eval/ontology/decision",
+    http_tags=["eval", "caps", "ontology"],
+    description="Compare the resolver baseline with curated and generated capability-"
+                "ontology preference hints on a frozen synthetic corpus. Reports "
+                "selection, unsafe-choice, ambiguity, hint-size, relation-precision, "
+                "and local timing evidence without invoking a model, capability, or "
+                "activating ontology influence.",
+    contract={
+        "canonical_task": "evaluation.ontology.decision",
+        "effects": ["read", "filesystem"], "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "repository_fixture"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "read_repository_fixture"},
+        "network": {"status": "not_required"},
+        "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"},
+        "cancellation": {"status": "not_required"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+        "owner": "vera.ontologies",
+    },
+)
+async def eval_ontology_decision(detail: bool = False, limit: int = 50,
+                                 timing_repetitions: int = 20, trace_id=None):
+    from pathlib import Path
+    from Vera.vera.ontologies.capability_ontology_evaluation import (
+        evaluate_ontology_decision_corpus,
+        load_ontology_decision_corpus,
+    )
+    path = (Path(__file__).resolve().parent.parent / "evaluations" /
+            "capability-ontology-decision-v1.json")
+    report = evaluate_ontology_decision_corpus(
+        load_ontology_decision_corpus(path),
+        timing_repetitions=timing_repetitions)
+    bounded = max(1, min(int(limit or 50), 200))
+    variants = {}
+    for name, variant in report.get("variants", {}).items():
+        value = dict(variant)
+        cases = value.pop("cases", [])
+        if detail:
+            value.update({"matched": len(cases),
+                          "returned": min(len(cases), bounded),
+                          "truncated": len(cases) > bounded,
+                          "cases": cases[:bounded]})
+        variants[name] = value
+    return {**report, "variants": variants}
+
+
+@capability(
     "eval.policy.boundary", memory="off", silent=True,
     http_method="GET", http_path="/eval/policy/boundary", http_tags=["eval", "cap"],
     description="Run the frozen deterministic W1-05 adversarial policy corpus. Covers "
@@ -6802,6 +6986,9 @@ def _make_mcp_call_handler():
 
         caller_kind = str(body.get("caller_kind") or "").strip()
         _ck_token = CALLER_KIND.set(caller_kind) if caller_kind else None
+        _mcp_token = MCP_CALL_ACTIVE.set(True)
+        gate_credential = str(request.headers.get("x-vera-sandbox-gate") or "").strip()
+        _gate_token = SANDBOX_GATE_TOKEN.set(gate_credential) if gate_credential else None
         try:
             result = await cap["func"](**args, trace_id=tid)
             return await _json_response(
@@ -6818,6 +7005,9 @@ def _make_mcp_call_handler():
             log.error("mcp/call cap %s: %s", name, e)
             raise HTTPException(500, str(e))
         finally:
+            MCP_CALL_ACTIVE.reset(_mcp_token)
+            if _gate_token is not None:
+                SANDBOX_GATE_TOKEN.reset(_gate_token)
             if _ck_token is not None:
                 CALLER_KIND.reset(_ck_token)
 
@@ -6872,7 +7062,7 @@ def _relaunch_argv() -> List[str]:
     return [sys.executable, "-m", "Vera.vera.capability_orchestration"]
 
 
-async def _do_restart(delay: float) -> None:
+async def _do_restart(delay: float, gate=None) -> None:
     """Re-exec Vera in place after `delay` seconds.
 
     os.execv REPLACES this process image: same PID, same parent, same cwd and
@@ -6881,9 +7071,19 @@ async def _do_restart(delay: float) -> None:
     exiting would take Vera down with nothing to bring it back. execv also fails
     SAFE: on error the current process keeps running rather than dying.
 
+    `gate`, when given, is awaited BEFORE the delay: a bounded wait for
+    something outside this process to get out of the way (the census harness
+    acknowledging its pause, so the re-exec does not land on a loop it would
+    kill unannounced). A gate that raises does not stop the restart.
+
     Shutdown hooks run first so anything holding external state (e.g. the Loop
     Lab sandbox in follow-host mode) is released before the swap.
     """
+    if gate is not None:
+        try:
+            await gate()
+        except Exception as e:
+            log.warning("restart: gate failed, restarting anyway: %s", e)
     await asyncio.sleep(max(0.2, delay))
     log.warning("DEV RESTART: re-exec %s", " ".join(_relaunch_argv()))
     for _hook in list(SHUTDOWN_HOOKS):
@@ -6917,11 +7117,15 @@ async def _do_restart(delay: float) -> None:
                         "first; `build.sh run` does not respawn, so this re-exec — not an exit — "
                         "is what makes it safe. Requires VERA_DEV_MODE=1 and confirm=True. "
                         "In-flight work IS lost: agentic loops, chat streams and queued jobs are "
-                        "killed mid-execution. Inputs: confirm (bool!), delay_s (float, default "
-                        "1.5 — time to return this response before the swap), reason (str). "
-                        "Output: {ok, restarting, pid, argv}.")
+                        "killed mid-execution. A CENSUS in flight is paused first and resumes "
+                        "on the way back up (it re-runs the goal it was on); pass "
+                        "resume_census=false to drop it instead. Inputs: confirm (bool!), "
+                        "delay_s (float, default 1.5 — time to return this response before "
+                        "the swap), reason (str), resume_census (bool=true). "
+                        "Output: {ok, restarting, pid, argv, census}.")
 async def cap_sys_dev_restart(confirm: bool = False, delay_s: float = 1.5,
-                              reason: str = "", trace_id=None):
+                              reason: str = "", resume_census: bool = True,
+                              trace_id=None):
     if not dev_mode_on():
         return {"ok": False, "error": "dev mode is off — set VERA_DEV_MODE=1 to enable "
                                       "sys.dev.restart", "dev_mode": False}
@@ -6930,18 +7134,54 @@ async def cap_sys_dev_restart(confirm: bool = False, delay_s: float = 1.5,
                                       "work (agentic loops, chat streams, queued jobs)",
                 "dev_mode": True}
     log.warning("sys.dev.restart requested%s", f" — {reason}" if reason else "")
+    # A census in flight would otherwise record the restart as its goal's result
+    # and move on — which is why prod could not be restarted for the hours a set
+    # takes. Ask the harness to pause (resume) or stop (drop) BEFORE re-exec.
+    # A query parameter arrives as a STRING, so truthiness is judged, not typed.
+    _resume = str(resume_census).strip().lower() not in ("0", "false", "no", "off", "")
+    census: Dict[str, Any] = {"action": "none"}
+    try:
+        # The loader registers the module under its bare filename; importing it
+        # by package path here would execute its body a second time.
+        _cc = sys.modules.get("census_capabilities")
+        if _cc is None or not hasattr(_cc, "census_before_restart"):
+            raise RuntimeError("census_capabilities not loaded")
+        census = await _cc.census_before_restart(_resume)
+    except Exception as _ce:
+        census = {"action": "none", "why": f"census module unavailable: {_ce}"}
     try:
         await emit_event({"type": "sys.dev.restart", "reason": reason,
-                          "pid": os.getpid(), "delay_s": delay_s})
+                          "pid": os.getpid(), "delay_s": delay_s,
+                          "census": census.get("action")})
     except Exception:
         pass
+    # The harness reads the control file on its own clock; if the re-exec came
+    # first, the new process lifted the pause before the harness ever saw it
+    # (twice on 2026-09-10) and the harness sat on a loop the restart had
+    # killed. So the re-exec waits, bounded, for the harness to say it has
+    # paused (or dropped) - census_wait_acked - and only then swaps the image.
+    # ...and then CANCELS every loop the census still owns (its goal, a seeded
+    # census task): loops survive a restart by design and a cancelled run is
+    # the one thing not resumed. The gate runs on every restart - a person's
+    # pause on file still has a loop parked under it (2026-09-11).
+    _gate = None
+    _cc_mod = sys.modules.get("census_capabilities")
+    if _cc_mod is not None and hasattr(_cc_mod, "census_restart_gate"):
+        async def _gate(_plan=census, _mod=_cc_mod):
+            census["gate"] = await _mod.census_restart_gate(_plan)
+    if census.get("wrote") and census.get("action") in ("pause", "drop"):
+        census["ack"] = "the re-exec waits up to %ss for the harness to acknowledge" % (
+            census.get("ack_wait_max_s") or "?")
     # Detached so THIS request can return before the process image is replaced —
     # otherwise the caller only ever sees a dropped connection.
-    asyncio.create_task(_do_restart(float(delay_s or 1.5)))
+    asyncio.create_task(_do_restart(float(delay_s or 1.5), gate=_gate))
     return {"ok": True, "restarting": True, "pid": os.getpid(),
             "argv": _relaunch_argv(), "delay_s": float(delay_s or 1.5),
+            "census": {k: v for k, v in census.items() if k != "active"},
             "note": "Vera is re-execing; it should answer again within a few seconds. "
-                    "In-flight loops/streams are gone."}
+                    "In-flight loops/streams are gone."
+                    + (" A census was paused and will resume." if census.get("action") == "pause"
+                       else " The census was dropped." if census.get("action") == "drop" else "")}
 
 
 async def _do_stop(delay: float) -> None:
@@ -7211,6 +7451,22 @@ async def obs_neo4j_diag(trace_id=None):
                         "slot capacity / held / free (live occupancy shared across prod + "
                         "every dev sandbox). Output: {enabled, coord_db, nodes:[...]}.")
 async def ollama_gate_status(trace_id=None):
+    if _GATE_BROKER_CONFIGURED:
+        if _GATE_BROKER is None:
+            return {"enabled": _GATE_ON, "coord_connected": False,
+                    "coordination_mode": "controller_broker",
+                    "error": _GATE_BROKER_ERROR or "invalid_broker_configuration",
+                    "nodes": []}
+        try:
+            status = await _GATE_BROKER.status()
+            return {"enabled": _GATE_ON,
+                    "coord_connected": bool(status.get("coord_connected")),
+                    "coordination_mode": "controller_broker",
+                    "nodes": status.get("nodes") or []}
+        except Exception:
+            return {"enabled": _GATE_ON, "coord_connected": False,
+                    "coordination_mode": "controller_broker",
+                    "error": "broker_unreachable", "nodes": []}
     await _ensure_coord_redis()
     nodes = []
     for iid, inst in OLLAMA_INSTANCES.items():
@@ -8975,9 +9231,24 @@ async def _health(trace_id=None):
 # even when vera_capabilities.py hasn't loaded yet.
 @capability("ui.panels", memory="off", silent=True,
             http_method="GET", http_path="/ui/panels", http_tags=["ui"],
-            description="List all registered built-in UI panels injected by capability modules.")
+            description="List all registered built-in UI panels injected by capability modules. "
+                        "A top-level tab folded into a broader tab (Estate, Capabilities, "
+                        "Agents, Image Studio) carries retired_into {panel, pane, sub, "
+                        "section} while ui.tabs.retired is on; the shell then opens that "
+                        "pane of the host tab instead of the tab.")
 async def _ui_panels(trace_id=None):
-    return list(UI_PANELS.values())
+    panels = list(UI_PANELS.values())
+    try:
+        from Vera.vera.estate import estate_nav_core as _estate_nav
+    except Exception:                                  # pragma: no cover
+        return panels
+    raw = None
+    if REDIS:
+        try:
+            raw = await REDIS.get(_estate_nav.RETIRE_SETTING_KEY)
+        except Exception:
+            raw = None
+    return _estate_nav.annotate_panels(panels, _estate_nav.setting_enabled(raw))
 
 @capability("ui.panel.specialist", memory="off", silent=True,
             http_method="GET", http_path="/ui/panel/specialist", http_tags=["ui"],
@@ -9535,6 +9806,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "execution/exec_capabilities.py"),
         os.path.join(_here, "proxmox/proxmox_capabilities.py"),
         os.path.join(_here, "proxmox/pxstore_capabilities.py"),
+        os.path.join(_here, "vfs/vfs_capabilities.py"),
         os.path.join(_here, "monitor/monitor_capabilities.py"),
         os.path.join(_here, "monitor/perf_capabilities.py"),
         os.path.join(_here, "babblefish/babblefish_capabilities.py"),
@@ -9558,6 +9830,13 @@ async def lifespan(app: FastAPI):
         # printer/printer_capabilities.py retired -> converged into business/thermal_printer_capabilities.py
         os.path.join(_here, "workers/docker_capabilities.py"),
         os.path.join(_here, "workers/workers.py"),
+        os.path.join(_here, "estate/estate_health_capabilities.py"),
+        os.path.join(_here, "estate/estate_nav_capabilities.py"),
+        os.path.join(_here, "estate/estate_machines_capabilities.py"),
+        os.path.join(_here, "estate/backup_capabilities.py"),
+        os.path.join(_here, "security/secrets_capabilities.py"),
+        os.path.join(_here, "security/certs_capabilities.py"),
+        os.path.join(_here, "execution/ssh_cleanup_capabilities.py"),
         os.path.join(_here, "workers/nodes_capabilities.py"),
         os.path.join(_here, "remote/remote_capabilities.py"),
         os.path.join(_here, "remote/workspace_capabilities.py"),
@@ -9666,6 +9945,10 @@ async def lifespan(app: FastAPI):
         # Server Trigger consumed through the real MCP client in vera/mcp/ —
         # after the catalog, whose connect path reuses that same client.
         os.path.join(_here, "n8n/n8n_capabilities.py"),
+        # Home Assistant, natively: read entities and call services over
+        # HA's own REST API, rather than through an n8n webhook that only
+        # works while a second container is up.
+        os.path.join(_here, "homeassistant/ha_capabilities.py"),
         # Platform configuration controller: one place to set shared
         # facts (coordinates, timezone) and credentials, and push them
         # into n8n / Home Assistant. After n8n so both are registered.
@@ -9677,6 +9960,18 @@ async def lifespan(app: FastAPI):
         # action list. After the surfaces it aggregates.
         os.path.join(_here, "automations/automations_capabilities.py"),
         os.path.join(_here, "evolve/evolve_capabilities.py"),
+        # One task through time: reads the census archive AND the suite's run
+        # records, so it must come after both census/ and evolve/ above.
+        os.path.join(_here, "evolve/task_history_capabilities.py"),
+        # The Ship page's one table: a row per branch from the pipeline list,
+        # the sandbox registry, the test history and the edges - after evolve/.
+        os.path.join(_here, "evolve/ship_capabilities.py"),
+        # The Agents page's one table: a row per agent session from the session
+        # watch, the board, the pipelines and the sandboxes - after evolve/.
+        os.path.join(_here, "evolve/agents_capabilities.py"),
+        # Mission control's one table: a row per event from the audit log, the
+        # errors queue and the gates, with the live strip - after task_history/.
+        os.path.join(_here, "evolve/mission_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),
         # Operator: general observe→think→act web/computer operator (drives any

@@ -5008,7 +5008,7 @@ _ASO_MOUNT_JS = r"""
 
 register_ui(
     "agents-skills-ontologies",
-    "Agents / Skills / Ontologies",
+    "Agents",
     "",
     """
     <div id="panel-aso" style="height:100%;overflow:hidden;background:#181614">

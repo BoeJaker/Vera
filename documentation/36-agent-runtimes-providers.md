@@ -234,6 +234,21 @@ starting the image; missing labels and drift remain visibly distinct from a
 matching self-declaration. This is version evidence, not a signature or
 independent supply-chain attestation.
 
+The other shipped container bridges already share the hardened low-level
+container runner, but they do not yet use the complete adapter facade.
+PydanticAI and Smolagents still repeat Docker health checks, image build
+wrappers, run preconditions, and request assembly; the aggregate catalog also
+checks image presence directly. A safe consolidation seam is therefore the
+existing RuntimeAdapter and ContainerRunRequest, not a new agent loop.
+Static descriptors can centralize common health, image, cancellation, teardown,
+and run lifecycle behavior while preserving each bridge's capability names,
+event prefix, opt-in setting, image and Dockerfile, command arguments, progress
+kinds, and runtime-specific errors. Catalog health can use registered adapters
+with an explicit legacy fallback while migration is incomplete. No wrapper may
+be removed until stored and external callers are inventoried and deterministic
+success, error, timeout, cancellation, teardown, and resource-gate parity is
+proven; live image builds and bridge runs remain separate validation gates.
+
 Agent Bridges also exposes an interoperability summary in its UI. The summary
 shows the A2A mapping and inert client/server plans, runtime candidate and
 dimension counts, migrated adapter contracts with their explicit gaps, queued
@@ -260,9 +275,20 @@ failure; an empty result alone does not identify its cause.
 The opt-in `vera.models.live_inference_validation` module exercises the portable
 Ollama adapter with sequential streaming and non-streaming requests. It requires
 shared coordination, caps each case at 60 seconds, and records output hashes and
-metrics. The registry manifest digest identifies the selected model declaration;
+metrics. Transport success (completed, non-empty output) is separate from exact
+expected-output conformance; a non-empty but incorrect answer cannot pass the
+case. Prompt, output, and expected text remain omitted while their digests make
+the verdict reproducible. The registry manifest digest identifies the selected
+model declaration;
 it is not an independent checksum of downloaded weights. These smoke checks do
-not establish model quality, load tolerance, recovery, or cross-runtime parity.
+not establish broader model quality, load tolerance, recovery, or cross-runtime parity.
+
+Loop Lab sandboxes join the same GPU capacity queue through a narrow controller
+broker. Each sandbox receives a rotated credential and can request, renew, or
+release only opaque leases; it never receives the production Redis address,
+lease key, or owner token. Missing authentication, an unavailable controller,
+queue timeout, or renewal loss stops sandbox inference instead of silently
+bypassing the shared limit. Production's existing gate behavior is unchanged.
 
 Separate dependency/image failure, provider authentication, model lookup,
 framework initialization, tool-schema incompatibility, runtime exception, and

@@ -529,6 +529,11 @@ FEATURES: List[Dict[str, Any]] = [
     {"id": "file-client", "label": "File-server client", "default": False,
      "targets": ["ct", "vm", "physical"], "status": "ready",
      "desc": "Mount the shared SMB/NFS drives."},
+    {"id": "vfs-client", "label": "Vera File Fabric client", "default": False,
+     "targets": ["ct", "vm", "physical"], "status": "ready",
+     "desc": "Mount the VFS-02 shares (NFSv4.2 by default, or SMB3.1.1 with "
+             "sealing). Knows where the fabric is; ctx: vfs_host, shares, "
+             "transport, smb_user, smb_pass, mount_base."},
     {"id": "file-server", "label": "File server", "default": False,
      "targets": ["ct", "vm", "physical"], "status": "ready",
      "desc": "Host Samba (SMB) + NFS exports (default /srv/foundry)."},
@@ -852,6 +857,15 @@ def _vera_key_path() -> str:
     return str(Path.home() / ".vera" / "ssh" / "id_vera")
 
 
+async def _enrol_guest(**kw) -> Dict:
+    """Enrol a guest Foundry has just built through the one enrolment pipeline
+    (autoenroll.enrol, whose login step is enroll.guest); enroll.guest itself when
+    auto-enrol is not loaded."""
+    if CAPABILITY_REGISTRY.get("autoenroll.enrol"):
+        return await _call("autoenroll.enrol", steps="enroll_guest", **kw)
+    return await _call("enroll.guest", **kw)
+
+
 async def _wait_ssh(cluster_id, ip, port: int = 22, timeout: int = 180) -> bool:
     """Poll (from the PVE node, via bash /dev/tcp — no nc needed) until the guest's
     SSH port is open. Cloud-init needs ~a minute to boot + install Vera's key."""
@@ -879,9 +893,9 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             if want_enrol:
                 try:
                     res = await asyncio.wait_for(
-                        _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
-                              guest_type="lxc", node=node, fqdn=fqdn or "", via_proxmox=True,
-                              skip_mesh=("mesh" in feats)),
+                        _enrol_guest(cluster_id=cluster_id, vmid=vmid,
+                                     guest_type="lxc", node=node, fqdn=fqdn or "", via_proxmox=True,
+                                     skip_mesh=("mesh" in feats)),
                         timeout=90)
                 except asyncio.TimeoutError:
                     res = {"error": "enrol timed out (90s) -- continuing to features"}
@@ -896,7 +910,7 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             # enrol/mesh/hardening are handled above for CTs; apply the additional
             # portable features here (file-client now; more migrate here as we fan out).
             _fctx = await _features_ctx(shares)
-            for _f in ("mesh", "file-client", "file-server", "security-monitoring", "vera-worker"):
+            for _f in ("mesh", "file-client", "vfs-client", "file-server", "security-monitoring", "vera-worker"):
                 if _f in feats:
                     _sc = _feature_script(_f, _fctx)
                     if _sc:
@@ -909,10 +923,10 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
                 if ready:
                     try:
                         res = await asyncio.wait_for(
-                            _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
-                                  guest_type="qemu", node=node, fqdn=fqdn or "", ip=ip,
-                                  ssh_user="vera", ssh_key_path=_vera_key_path(),
-                                  skip_mesh=("mesh" in feats)),
+                            _enrol_guest(cluster_id=cluster_id, vmid=vmid,
+                                         guest_type="qemu", node=node, fqdn=fqdn or "", ip=ip,
+                                         ssh_user="vera", ssh_key_path=_vera_key_path(),
+                                         skip_mesh=("mesh" in feats)),
                             timeout=90)
                     except asyncio.TimeoutError:
                         res = {"error": "enrol timed out (90s) -- continuing to features"}
@@ -928,7 +942,7 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             # OS-agnostic feature bundles over SSH (features_core): hardening + portable features.
             if ip:
                 _fctx = await _features_ctx(shares)
-                for _f in ("hardening", "mesh", "file-client", "file-server", "security-monitoring", "vera-worker"):
+                for _f in ("hardening", "mesh", "file-client", "vfs-client", "file-server", "security-monitoring", "vera-worker"):
                     if _f in feats:
                         _sc = _feature_script(_f, {} if _f == "hardening" else _fctx)
                         if _sc:
@@ -983,7 +997,7 @@ async def _post_provision_docker(container, feats, job_id="", shares=None):
     HOST_ONLY = ("hardening", "mesh", "security-monitoring")
     try:
         _fctx = await _features_ctx(shares)
-        for _f in ("file-client", "file-server", "vera-worker", "distributed-compute"):
+        for _f in ("file-client", "vfs-client", "file-server", "vera-worker", "distributed-compute"):
             if _f in feats:
                 _sc = _feature_script(_f, _fctx)
                 if _sc:
@@ -1117,7 +1131,7 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
             job["status"] = "ok"
             for f in feats:
                 if f in ("file-server", "security-monitoring", "docker-swarm",
-                         "distributed-compute", "file-client"):
+                         "distributed-compute", "file-client", "vfs-client"):
                     step(f, {"status": "pending", "note": "bundle script lands next"})
             step("post", {"status": "applying",
                           "note": "start + enrol + hardening running in background — watch events / jobs"})
@@ -1128,7 +1142,7 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
         # file-* features mount inside the container -> need SYS_ADMIN; host network
         # so the container can reach Vera + the stack. host_id="" = default engine.
         _extra = []
-        if any(_x in feats for _x in ("file-client", "file-server")):
+        if any(_x in feats for _x in ("file-client", "vfs-client", "file-server")):
             _extra += ["--cap-add", "SYS_ADMIN"]
         # a base-OS image (debian:12 etc.) exits immediately; keep it alive so features
         # can be applied via docker exec and it persists as a lightweight feature-host.
@@ -1688,7 +1702,7 @@ async def cap_pxe_render(profile_id: str = "", trace_id=None) -> Dict:
     _pf = prof.get("features") or []
     _pfctx = await _features_ctx()
     _fscripts = [_feature_script(_x, {} if _x == "hardening" else _pfctx)
-                 for _x in ("hardening", "mesh", "file-client", "vera-worker") if _x in _pf]
+                 for _x in ("hardening", "mesh", "file-client", "vfs-client", "vera-worker") if _x in _pf]
     _fscripts = [x for x in _fscripts if x]
     return {"ok": True, **_render_boot(prof, cfg, img, cscripts, _fscripts)}
 

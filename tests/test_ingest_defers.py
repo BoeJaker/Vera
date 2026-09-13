@@ -1,12 +1,20 @@
-"""The transcript ingest itself must defer and yield - not just the queue.
+"""The transcript IMPORT runs now; the EMBEDDING defers and yields.
 
-The queue being correct is not the fix; the fix is the ingest going THROUGH it.
-`_scheduled_ingest_all` previously called `cap_claude_sessions_ingest_all`
-unconditionally every 300 seconds, which is how a backfill ran straight through
-two censuses and cost census 44 three of its first four goals.
+The original contract was "the ingest goes through the queue", because an
+ingest that embedded each turn inline ran straight through two censuses and
+cost census 44 three of its first four goals. What was dangerous was the
+embedding, not the import: with embedding deferred, an import is file reads
+and row writes, and the rows are what the UI shows. So since 2026-09-11:
+
+  - the tick runs the import DIRECTLY, always with defer_embedding=True, as a
+    single in-flight task (never a herd);
+  - the fabric queues one embed.fabric backfill for the rows it stored without
+    vectors, and THAT waits for the idle box;
+  - the embed.sessions handler still exists and still yields, for an explicit
+    embedding run.
 
 These exercise the real wired functions with a fake busy signal, so they fail
-if someone unhooks the queue - which is the regression that matters.
+if someone makes the tick embed inline again - the regression that matters.
 """
 import asyncio
 import os
@@ -85,22 +93,41 @@ def _witnessed_quiet(q, seconds=700.0, step=60.0):
     return now
 
 
-def _never_called(**kw):
-    raise AssertionError("the ingest ran while the system was busy")
-
-
 async def _empty():
     return []
 
 
+async def _tick_and_wait():
+    """Run the tick, then await the import task it may have kicked off."""
+    await CS._scheduled_ingest_all()
+    t = getattr(CS, "_IMPORT_TASK", None)
+    if t is not None and not t.done():
+        await t
+
+
+def _capturing_ingest(calls):
+    async def fake(instance_id="", should_continue=None, **kw):
+        calls.append({"instance_id": instance_id, "cb": should_continue, **kw})
+        return {"ok": True, "files_scanned": 3, "files_updated": 3}
+    return fake
+
+
 # ── it must not start while busy ────────────────────────────────────────────
-def test_the_ingest_does_not_run_during_a_census(monkeypatch, fresh_queue, idle_store):
+def test_during_a_census_the_import_runs_but_never_embeds(monkeypatch, fresh_queue, idle_store):
+    """The rows land (visible), the vectors wait. An inline embed here is the
+    exact regression that cost census 44 three goals."""
+    calls = []
+
     async def busy():
         return "a census is running"
 
     monkeypatch.setattr(CS, "_system_is_busy", busy)
-    monkeypatch.setattr(CS, "cap_claude_sessions_ingest_all", _never_called)
-    run(CS._scheduled_ingest_all())
+    monkeypatch.setattr(CS, "cap_claude_sessions_ingest_all", _capturing_ingest(calls))
+    monkeypatch.setattr(CS, "_load_instances", lambda: _empty())
+    monkeypatch.setattr(CS, "_IMPORT_TASK", None)
+    run(_tick_and_wait())
+    assert calls, "the import did not run - a new session would stay invisible until the box was idle"
+    assert all(c.get("defer_embedding") is True for c in calls), calls
     assert fresh_queue.jobs[CS._JOB]["defers"] == 1
     assert "census" in fresh_queue.jobs[CS._JOB]["last_defer"]
 
@@ -110,10 +137,14 @@ def test_the_ingest_does_not_run_in_a_gap_between_goals(monkeypatch, fresh_queue
     async def free():
         return ""
 
+    calls = []
     monkeypatch.setattr(CS, "_system_is_busy", free)
-    monkeypatch.setattr(CS, "cap_claude_sessions_ingest_all", _never_called)
+    monkeypatch.setattr(CS, "cap_claude_sessions_ingest_all", _capturing_ingest(calls))
+    monkeypatch.setattr(CS, "_load_instances", lambda: _empty())
+    monkeypatch.setattr(CS, "_IMPORT_TASK", None)
     fresh_queue.observe(time.time() - 30, "an agent loop is running")
-    run(CS._scheduled_ingest_all())
+    run(_tick_and_wait())
+    assert all(c.get("defer_embedding") is True for c in calls), calls
     assert fresh_queue.jobs[CS._JOB]["defers"] == 1
     assert "quiet" in fresh_queue.jobs[CS._JOB]["last_defer"]
 
@@ -123,77 +154,81 @@ def test_the_ingest_does_not_run_in_a_gap_between_goals(monkeypatch, fresh_queue
 # That indirection is the point - a queued job can be STOPPED, an inline call
 # cannot.
 
-def test_the_tick_queues_the_backfill_and_runs_it_when_quiet(
+def test_the_tick_imports_directly_and_queues_no_backfill_of_its_own(
         monkeypatch, fresh_queue, idle_store):
-    calls = {"n": 0}
+    """Embedding flows through the FABRIC's own embed.fabric backfill (queued
+    inside ingest_dataset, out of scope here). The tick queues nothing."""
+    calls = []
 
     async def free():
         return ""
 
-    async def fake_ingest(instance_id="", should_continue=None, **kw):
-        calls["n"] += 1
-        return {"ok": True, "files_scanned": 3, "files_updated": 3}
-
     monkeypatch.setattr(CS, "_system_is_busy", free)
-    monkeypatch.setattr(CS, "cap_claude_sessions_ingest_all", fake_ingest)
+    monkeypatch.setattr(CS, "cap_claude_sessions_ingest_all", _capturing_ingest(calls))
     monkeypatch.setattr(CS, "_load_instances", lambda: _empty())
+    monkeypatch.setattr(CS, "_IMPORT_TASK", None)
 
     async def go():
         _witnessed_quiet(fresh_queue)
-        await CS._scheduled_ingest_all()
-        task = SVC._RUNNING.get("task")
-        if task:
-            await task
+        await _tick_and_wait()
 
     run(go())
-    assert calls["n"] == 1, "the queued backfill never ran"
-    assert idle_store == {}, "a finished job was left on the queue"
+    assert len(calls) == 1, "the import ran %d times for one tick" % len(calls)
+    assert calls[0].get("defer_embedding") is True
+    assert idle_store == {}, "the tick queued a job of its own: %s" % idle_store
 
 
-def test_the_tick_does_not_queue_a_duplicate_each_interval(
-        monkeypatch, fresh_queue, idle_store):
-    """Producers are on a timer. An hour of a busy box must not build a herd
-    that all lands the moment it goes quiet."""
+def test_five_ticks_start_one_import_not_five(monkeypatch, fresh_queue, idle_store):
+    """Producers are on a timer. A slow import must not be joined by four
+    more of itself, and nothing may be queued behind it."""
+    calls = []
+    gate = asyncio.Event()
+
     async def busy():
         return "a census is running"
 
+    async def slow_ingest(instance_id="", should_continue=None, **kw):
+        calls.append(kw)
+        await gate.wait()
+        return {"ok": True}
+
     monkeypatch.setattr(CS, "_system_is_busy", busy)
-    monkeypatch.setattr(CS, "cap_claude_sessions_ingest_all", _never_called)
+    monkeypatch.setattr(CS, "cap_claude_sessions_ingest_all", slow_ingest)
+    monkeypatch.setattr(CS, "_load_instances", lambda: _empty())
+    monkeypatch.setattr(CS, "_IMPORT_TASK", None)
 
     async def go():
         for _ in range(5):
             await CS._scheduled_ingest_all()
+            await asyncio.sleep(0)
+        gate.set()
+        t = getattr(CS, "_IMPORT_TASK", None)
+        if t is not None:
+            await t
 
     run(go())
-    assert len(idle_store) == 1, \
-        "queued %d copies of the same backfill" % len(idle_store)
+    assert len(calls) == 1, "started %d imports for five ticks" % len(calls)
+    assert idle_store == {}, "queued %d job(s)" % len(idle_store)
 
 
-def test_the_queued_backfill_is_given_a_should_continue_callback(
-        monkeypatch, fresh_queue, idle_store):
-    """Quiet at the start does not mean quiet throughout."""
+def test_an_explicit_embedding_run_is_given_a_should_continue_callback(monkeypatch):
+    """The embed.sessions handler is what an explicit (non-deferred) run goes
+    through, and quiet at the start does not mean quiet throughout."""
     seen = {}
+
+    async def fake_ingest(instance_id="", should_continue=None, **kw):
+        seen["cb"] = should_continue
+        seen["kw"] = kw
+        return {"ok": True}
 
     async def free():
         return ""
 
-    async def fake_ingest(instance_id="", should_continue=None, **kw):
-        seen["cb"] = should_continue
-        return {"ok": True}
-
-    monkeypatch.setattr(CS, "_system_is_busy", free)
     monkeypatch.setattr(CS, "cap_claude_sessions_ingest_all", fake_ingest)
     monkeypatch.setattr(CS, "_load_instances", lambda: _empty())
-
-    async def go():
-        _witnessed_quiet(fresh_queue)
-        await CS._scheduled_ingest_all()
-        task = SVC._RUNNING.get("task")
-        if task:
-            await task
-
-    run(go())
+    run(CS._ingest_job({"id": "embed.sessions:x", "kind": IQ.KIND_EMBED_SESSIONS}, free))
     assert callable(seen.get("cb")), "the ingest was given no way to yield"
+    assert not seen["kw"].get("defer_embedding"), "an explicit embedding run must embed"
 
 
 def test_a_failed_backfill_frees_the_queue(monkeypatch, fresh_queue, idle_store):
@@ -235,7 +270,7 @@ def test_a_running_ingest_stops_when_the_box_gets_busy(monkeypatch):
     async def fake_scan(instance_id=""):
         return {"files": files}
 
-    async def fake_ingest_file(instance_id, rel, state):
+    async def fake_ingest_file(instance_id, rel, state, **kw):
         done["n"] += 1
         return 1
 
@@ -264,7 +299,7 @@ def test_an_ingest_with_no_callback_still_completes(monkeypatch):
     async def fake_scan(instance_id=""):
         return {"files": files}
 
-    async def fake_ingest_file(instance_id, rel, state):
+    async def fake_ingest_file(instance_id, rel, state, **kw):
         done["n"] += 1
         return 1
 
@@ -292,3 +327,102 @@ def test_a_handler_is_registered_for_the_backfill():
     """Without this the runner drops the job as 'no handler' and the backfill
     silently never happens."""
     assert SVC.has_handler(IQ.KIND_EMBED_SESSIONS)
+
+
+# ── embedding of Claude-session turns is a switch, OFF by default ────────────
+# 61,365 rows without vectors, 1,000-6,000 new turns a day, ~350 embeds an hour
+# across both CPU nodes: the backlog is a week of continuous embedding that the
+# queue can never give it. Off unless asked for; import and visibility unchanged.
+def test_embedding_is_off_by_default(monkeypatch):
+    class _NoRedis:
+        async def get(self, k): return None
+    monkeypatch.setattr(CS._orch, "REDIS", _NoRedis())
+    monkeypatch.delenv(CS._EMBED_ENV, raising=False)
+    assert run(CS._embed_enabled()) is False
+
+
+def test_the_redis_flag_wins_over_the_env_default(monkeypatch):
+    class _R:
+        def __init__(self, v): self.v = v
+        async def get(self, k): return self.v
+    monkeypatch.setenv(CS._EMBED_ENV, "1")
+    monkeypatch.setattr(CS._orch, "REDIS", _R(b"0"))
+    assert run(CS._embed_enabled()) is False
+    monkeypatch.setattr(CS._orch, "REDIS", _R(b"1"))
+    assert run(CS._embed_enabled()) is True
+
+
+def test_an_ingest_pass_passes_the_switch_to_every_file(monkeypatch):
+    seen = []
+
+    async def fake_scan(instance_id=""):
+        return {"files": [{"rel": "home::p/%d.jsonl" % i, "size": 100} for i in range(3)]}
+
+    async def fake_ingest_file(instance_id, rel, state, **kw):
+        seen.append(kw.get("embed"))
+        return 1
+
+    async def off():
+        return False
+
+    monkeypatch.setattr(CS, "cap_claude_sessions_scan", fake_scan)
+    monkeypatch.setattr(CS, "_ingest_file", fake_ingest_file)
+    monkeypatch.setattr(CS, "_load_state", lambda: {})
+    monkeypatch.setattr(CS, "_save_state", lambda s: None)
+    monkeypatch.setattr(CS, "_embed_enabled", off)
+    run(CS.cap_claude_sessions_ingest_all(instance_id=""))
+    assert seen == [False, False, False], seen
+
+
+def test_a_turn_recorded_without_embedding_writes_no_memory_node_and_queues_nothing(monkeypatch):
+    """The two embed paths: memory.py (per turn, inline) and the fabric
+    backfill (queued). Off must close BOTH, and still store the fabric row."""
+    from vera.ide import ide_capabilities as IC
+    calls = {}
+
+    class _Fabric:
+        async def ingest_dataset(self, dataset_id, data, source, source_id, tags,
+                                 defer_embedding=False, queue_backfill=True):
+            calls["fabric"] = {"defer": defer_embedding, "queue": queue_backfill}
+            return {"ok": True}
+
+    class _Memory:
+        class MemoryRecord:
+            def __init__(self, **kw): calls["memory_record"] = True
+        class MEMORY:
+            @staticmethod
+            async def store(rec): calls["memory_store"] = True
+
+    monkeypatch.setitem(sys.modules, "data_fabric", _Fabric())
+    monkeypatch.setitem(sys.modules, "memory", _Memory())
+    IC._FABRIC_DEDUP.clear()
+
+    async def no_emit(ev): calls["broadcast"] = ev.get("type")
+    monkeypatch.setattr(IC, "emit_event", no_emit)
+
+    run(IC._record(session_id="claude-cc:x", category="ide.claude_session_user",
+                   text="hello", full_text="hello", tags=["claude"],
+                   fabric_dataset="ide.claude_sessions", embed=False))
+    assert "memory_store" not in calls, "a memory node was written (and embedded) with embedding off"
+    assert calls["fabric"] == {"defer": True, "queue": False}, calls
+    assert calls.get("broadcast"), "the live turn broadcast must still happen"
+
+
+# ── a person using Vera counts as busy, even with no GPU lease held ──────────
+def test_interactive_use_on_a_cpu_node_reads_as_busy(monkeypatch):
+    """For 12 hours on 2026-09-12 an embed run shared both CPU nodes with a
+    person waiting on chat replies, because the only busy signals were the
+    GPU gate and running loops. The chat path stamps interactive_recent();
+    the probe must honour it."""
+    async def free_gate():
+        return {"nodes": []}
+
+    monkeypatch.setattr(CS, "_running_loop_count", lambda: _zero())
+    monkeypatch.setattr(CS, "CAPABILITY_REGISTRY", {})       # no gate/census/dream caps
+    monkeypatch.setattr(CS._orch, "interactive_recent", lambda *a, **k: True)
+    why = run(CS._system_is_busy())
+    assert "interactive" in why, why
+
+
+async def _zero():
+    return 0

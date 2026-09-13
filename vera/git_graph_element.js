@@ -27,6 +27,37 @@
  * Public API: setApiBase(url), setRepo(id), refresh()
  */
 (function () {
+
+  /* ONE event socket per page. Every element used to open its own /ws
+     (seven on the Loop Lab panel, 2026-09-10) and reconnect on its own clock.
+     Now: the page's own bus if it has one (window._veraSubscribe, which the
+     panel exposes), else the parent frame's, else one shared socket on
+     window.__veraEventsBus that every element subscribes to. Returns an
+     unsubscribe function. */
+  function veraSharedEvents(base, fn) {
+    try {
+      if (typeof window._veraSubscribe === 'function') { const off = window._veraSubscribe(fn); return typeof off === 'function' ? off : () => {}; }
+      const par = window.parent;
+      if (par && par !== window && typeof par._veraSubscribe === 'function') { par._veraSubscribe(fn); return () => {}; }
+    } catch (_) {}
+    const w = window;
+    if (!w.__veraEventsBus) {
+      const bus = { subs: new Set(), ws: null, base: base };
+      const connect = () => {
+        try {
+          const ws = new WebSocket(bus.base.replace(/^http/, 'ws') + '/ws');
+          ws.onopen = () => { try { ws.send(JSON.stringify({ action: 'subscribe', stream: 'vera:events' })); } catch (_) {} };
+          ws.onmessage = e => { let ev; try { ev = JSON.parse(e.data); } catch (_) { return; } bus.subs.forEach(s => { try { s(ev); } catch (_) {} }); };
+          ws.onclose = () => { bus.ws = null; setTimeout(connect, 3000); };
+          ws.onerror = () => { try { ws.close(); } catch (_) {} };
+          bus.ws = ws;
+        } catch (_) { setTimeout(connect, 5000); }
+      };
+      bus.subscribe = s => { bus.subs.add(s); if (!bus.ws) connect(); return () => bus.subs.delete(s); };
+      w.__veraEventsBus = bus;
+    }
+    return w.__veraEventsBus.subscribe(fn);
+  }
   if (customElements.get('vera-git-graph')) return;
 
   const LANE_W = 16;
@@ -81,13 +112,21 @@
       this._repo = this.getAttribute('repo') || 'vera';
       this._limit = parseInt(this.getAttribute('limit') || '150', 10);
       this._connectWs();
-      this.refresh();
-      this._pollTimer = setInterval(() => this.refresh(), 20000);
+      if (this._onScreen()) this.refresh();
+      this._pollTimer = setInterval(() => { if (this._onScreen()) this.refresh(); }, 20000);
     }
 
+    /* Poll only while on screen. offsetParent is null inside a hidden
+       section (display:none), so an element on a page that is not showing
+       costs nothing; the panel's nav() refreshes it when its page opens. */
+    // offsetParent alone misses a closed <details>: Chromium keeps its contents
+    // laid out (content-visibility: hidden) for find-in-page, so an element
+    // in a folded card kept polling (found 2026-09-10 on Mission control).
+    // checkVisibility() sees content-visibility; older browsers fall back.
+    _onScreen() { return this.offsetParent !== null && (typeof this.checkVisibility !== 'function' || this.checkVisibility()); }
     disconnectedCallback() {
       if (this._pollTimer) clearInterval(this._pollTimer);
-      try { this._ws && this._ws.close(); } catch (_) {}
+      try { this._unsubEvents && this._unsubEvents(); this._unsubEvents = null; } catch (_) {}
     }
 
     setApiBase(url) { this._base = (url || '').replace(/\/$/, ''); }
@@ -98,21 +137,8 @@
     setRepo(id) { this._repo = id || 'vera'; this.refresh(); }
 
     _connectWs() {
-      try {
-        const wsUrl = this._getBase().replace(/^http/, 'ws') + '/ws';
-        this._ws = new WebSocket(wsUrl);
-        this._ws.onopen = () => { try { this._ws.send(JSON.stringify({ action: 'subscribe', stream: 'vera:events' })); } catch (_) {} };
-        this._ws.onmessage = e => {
-          try {
-            const ev = JSON.parse(e.data);
-            const t = (ev && ev.type) || '';
-            if (t === 'evolve.pipeline.promoted' || t === 'evolve.branch.created' ||
-                t === 'evolve.branch.deleted') this.refresh();
-          } catch (_) {}
-        };
-        this._ws.onclose = () => { setTimeout(() => this._connectWs(), 3000); };
-        this._ws.onerror = () => { try { this._ws.close(); } catch (_) {} };
-      } catch (_) { setTimeout(() => this._connectWs(), 5000); }
+      if (this._unsubEvents) return;
+      this._unsubEvents = veraSharedEvents(this._getBase(), ev => { try { const t = (ev && ev.type) || ''; if (t === 'evolve.pipeline.promoted' || t === 'evolve.branch.created' || t === 'evolve.branch.deleted') this.refresh(); } catch (_) {} });
     }
 
     async refresh() {

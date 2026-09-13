@@ -65,6 +65,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import re
 import sqlite3
 import time
@@ -353,7 +354,114 @@ async def _read_new_bytes(instance_id: str, rel: str, offset: int) -> Optional[s
     return (out.get("result") or {}).get("content", "")
 
 
-async def _ingest_file(instance_id: str, rel: str, state: dict) -> int:
+# ── embedding of Claude-session turns: a switch, OFF by default ──────────────
+# Every Claude Code transcript turn used to be embedded twice - once as a
+# memory-graph node (memory.py:embed_text, inline, per turn) and once as a
+# fabric row - on the CPU nodes, at roughly 350 embeds an hour across both. On
+# 2026-09-12 the backlog stood at 61,365 rows without vectors, chats arrive at
+# 1,000-6,000 turns a day, and the backfill ran 12 hours overnight sharing both
+# CPU nodes with a person. At that rate the backlog is ~7 days of continuous
+# embedding, which the queue can never give it. So: off unless asked for. The
+# transcripts are still imported, still visible, still text-searchable; they
+# just carry no vector and the memory graph gets no node for them.
+_EMBED_FLAG_KEY = "vera:claude_sessions:embed_enabled"
+_EMBED_ENV = "VERA_EMBED_CLAUDE_SESSIONS"
+_EMBED_DATASET = "ide.claude_sessions"
+
+
+async def _embed_enabled() -> bool:
+    """Redis flag if set (the UI/cap toggle), else the env default, else OFF."""
+    try:
+        r = _orch.REDIS
+        if r is not None:
+            v = await r.get(_EMBED_FLAG_KEY)
+            if v is not None:
+                v = v.decode() if isinstance(v, bytes) else str(v)
+                return v.strip().lower() in ("1", "true", "yes", "on")
+    except Exception as e:
+        log.debug("claude_sessions: embed flag read: %s", e)
+    return os.environ.get(_EMBED_ENV, "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _sync_fabric_exclusion(enabled: bool) -> None:
+    """Tell the fabric whether an 'all datasets' backfill may touch ours."""
+    try:
+        fabric = sys.modules.get("data_fabric")
+        ex = getattr(fabric, "EMBED_EXCLUDED_DATASETS", None)
+        if ex is None:
+            return
+        (ex.discard if enabled else ex.add)(_EMBED_DATASET)
+    except Exception as e:
+        log.debug("claude_sessions: fabric exclusion sync: %s", e)
+
+
+@capability("ide.claude_sessions.embed", memory="off", silent=True,
+            http_method="POST", http_path="/ide/claude_sessions/embed",
+            http_tags=["ide", "embed"],
+            description="Get or set whether Claude-session transcript turns are "
+                        "EMBEDDED (vectors + memory-graph nodes). OFF by default: "
+                        "they are still imported, visible and text-searchable. "
+                        "Inputs: enabled (bool, optional - omit to read), "
+                        "count (bool - also count rows still without a vector; a "
+                        "few seconds). Output: {enabled, source, missing?, "
+                        "created_24h?, rate_per_item_s?, eta_s?, eta_basis}.")
+async def cap_claude_sessions_embed(enabled: Optional[bool] = None,
+                                    count: bool = False, trace_id=None) -> dict:
+    if enabled is not None:
+        try:
+            r = _orch.REDIS
+            if r is not None:
+                await r.set(_EMBED_FLAG_KEY, "1" if enabled else "0")
+        except Exception as e:
+            return {"error": f"could not persist the flag: {e}"}
+        _sync_fabric_exclusion(bool(enabled))
+        await emit_event({"type": "ide.claude_sessions.embed_toggled",
+                          "enabled": bool(enabled)})
+    on = await _embed_enabled()
+    _sync_fabric_exclusion(on)
+    out: dict = {"enabled": on,
+                 "source": "redis flag" if enabled is not None else "redis flag or env default",
+                 "note": ("" if on else "transcripts are imported and visible; vectors and "
+                          "memory-graph nodes are not written while this is off")}
+    # An estimate only from a MEASURED rate: the queue learns embed.fabric's
+    # per-record cost from completed runs. Nothing completed -> no ETA.
+    rate = None
+    try:
+        if _svc is not None and hasattr(_svc, "load_rates"):
+            rates = await _svc.load_rates()
+            rate = ((rates or {}).get("embed.fabric") or {}).get("per_item_s")
+    except Exception as e:
+        log.debug("claude_sessions: rate read: %s", e)
+    out["rate_per_item_s"] = rate
+    if count:
+        try:
+            fabric = sys.modules.get("data_fabric")
+            fn = (CAPABILITY_REGISTRY.get("fabric.backfill_vectors") or {}).get("func")
+            if fn:
+                dry = await fn(confirm=False, dataset_id=_EMBED_DATASET)
+                out["missing"] = dry.get("missing")
+                out["rows_total"] = dry.get("pg_total")
+            pool = getattr(getattr(fabric, "FABRIC_PG", None), "_pool", None)
+            if pool is not None:
+                async with pool.acquire() as conn:
+                    out["created_24h"] = await conn.fetchval(
+                        "SELECT COUNT(*) FROM fabric_records WHERE dataset_id=$1 "
+                        "AND created_at > now() - interval '24 hours'", _EMBED_DATASET)
+        except Exception as e:
+            out["count_error"] = str(e)[:200]
+    missing = out.get("missing")
+    if rate and missing:
+        out["eta_s"] = round(float(rate) * int(missing))
+        out["eta_basis"] = "missing rows x per-record cost learned from completed embed.fabric runs"
+    else:
+        out["eta_s"] = None
+        out["eta_basis"] = ("no completed embed.fabric run has been measured yet"
+                            if not rate else "pass count=true to count the rows")
+    return out
+
+
+async def _ingest_file(instance_id: str, rel: str, state: dict,
+                       defer_embedding: bool = False, embed: bool = True) -> int:
     """Ingest new lines from one transcript. Returns count of new turns recorded."""
     key = _source_key(instance_id)
     src_state = state.setdefault(key, {})
@@ -424,6 +532,8 @@ async def _ingest_file(instance_id: str, rel: str, state: dict) -> int:
             },
             dedup_key=f"ccsess:{rel}:{turn.get('uuid') or new_offset}",
             bulk=_bulk,
+            defer_embedding=defer_embedding,
+            embed=embed,
         )
         recorded += 1
 
@@ -553,7 +663,8 @@ async def cap_claude_sessions_ingest(rel: str = "", instance_id: str = "", trace
         return {"error": "rel is required"}
     state = _load_state()
     try:
-        n = await _ingest_file(instance_id, rel, state)
+        n = await _ingest_file(instance_id, rel, state, defer_embedding=defer_embedding,
+                               embed=_embed_on)
     finally:
         _save_state(state)
     return {"ok": True, "turns_recorded": n}
@@ -570,7 +681,12 @@ async def cap_claude_sessions_ingest(rel: str = "", instance_id: str = "", trace
 )
 async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
                                          should_continue=None,
-                                         on_progress=None) -> dict:
+                                         on_progress=None,
+                                         defer_embedding: bool = False) -> dict:
+    # One read per pass. OFF means every turn is stored without a vector and
+    # without a memory node, and nothing is queued to embed it later.
+    _embed_on = await _embed_enabled()
+    _sync_fabric_exclusion(_embed_on)
     """`should_continue` is an async callable returning a busy REASON (or "").
     Polled between files so a long backfill yields the moment the box gets
     busy — see vera/background_work.py rule 2.
@@ -628,7 +744,8 @@ async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
             known = src_state.get(rel, {})
             if "offset" in known and f.get("size", 0) <= known["offset"]:
                 continue  # nothing new
-            n = await _ingest_file(instance_id, rel, state)
+            n = await _ingest_file(instance_id, rel, state,
+                                   defer_embedding=defer_embedding, embed=_embed_on)
             _save_state(state)  # persist per-file so a restart/crash mid-pass loses at most one file's progress
             if n:
                 updated += 1
@@ -781,9 +898,28 @@ async def _query_records_for_recent_sessions(max_sessions: int, per_session_limi
                 "last_preview, commits: [{hash, author, date, ts, message}]}]}.",
 )
 async def cap_claude_sessions_list_sessions(scan_limit: int = 3000, max_sessions: int = 60,
-                                            trace_id=None) -> dict:
-    scan_limit = max(1, min(20000, scan_limit))
-    max_sessions = max(1, min(500, max_sessions))
+                                            fresh: bool = False, trace_id=None) -> dict:
+    scan_limit = max(1, min(20000, int(scan_limit)))
+    max_sessions = max(1, min(500, int(max_sessions)))
+    # 20-40 s a call (a SQLite scan of every ingested turn plus a git log over
+    # the union window), and polled: by the sessions watch, by evolve.authors,
+    # by the Dispatch panel. Cached for 45 s and coalesced so overlapping
+    # callers share one scan instead of each starting their own. `fresh=true`
+    # bypasses it. (Measured 2026-09-10: 36-42 s per call, three callers.)
+    _fresh = str(fresh).strip().lower() in ("1", "true", "yes", "on")
+    return await _LIST_SESSIONS_CACHE.get(
+        (scan_limit, max_sessions),
+        lambda: _list_sessions_uncached(scan_limit, max_sessions), fresh=_fresh)
+
+
+try:
+    from Vera.vera.evolve.ttl_cache import TTLCache as _TTLCache
+except Exception:                                          # pragma: no cover
+    from vera.evolve.ttl_cache import TTLCache as _TTLCache
+_LIST_SESSIONS_CACHE = _TTLCache(45.0)
+
+
+async def _list_sessions_uncached(scan_limit: int, max_sessions: int) -> dict:
     rows = await _query_records_for_recent_sessions(max_sessions, scan_limit)
     if rows is None:
         # JSON1 not available on this SQLite build — fall back to the old
@@ -1101,6 +1237,17 @@ async def _system_is_busy() -> str:
                 return "a dream cycle is running"
     except Exception as e:
         log.debug("ingest dream probe: %s", e)
+    # A PERSON is using Vera. The gate only covers the GPU node; a chat or code
+    # call routed to a CPU node holds no lease, so for 12 hours on 2026-09-12
+    # an embed run read the box as idle while it was sharing both CPU nodes
+    # with someone waiting on a reply. interactive_recent() is the signal the
+    # chat path already stamps on every interactive generation.
+    try:
+        if _orch.interactive_recent():
+            w = int((_orch.INTERACTIVE_PRIORITY or {}).get("window_s", 180) or 180)
+            return "interactive use in the last %ds" % w
+    except Exception as e:
+        log.debug("ingest interactive probe: %s", e)
     reason = _bg.defer_reason(gate, loops)
     if reason:
         return reason
@@ -1155,6 +1302,34 @@ if _svc is not None and _iq is not None:
     _svc.register_handler(_iq.KIND_EMBED_SESSIONS, _ingest_job)
 
 
+_IMPORT_TASK: Optional[asyncio.Task] = None
+
+
+def _kick_deferred_import() -> None:
+    """Start an import pass as a task if one is not already in flight, so the
+    tick keeps its 60s cadence for the queue it also drains. The ingest lock
+    inside ingest_all makes a second concurrent pass a no-op anyway."""
+    global _IMPORT_TASK
+    if _IMPORT_TASK is not None and not _IMPORT_TASK.done():
+        return
+
+    async def _run():
+        try:
+            await cap_claude_sessions_ingest_all(instance_id="", defer_embedding=True)
+            for inst in await _load_instances():
+                iid = inst.get("id", "")
+                if inst.get("kind") == "vscode-client" and _client_alive(iid):
+                    try:
+                        await cap_claude_sessions_ingest_all(instance_id=iid,
+                                                             defer_embedding=True)
+                    except Exception as e:
+                        log.warning("claude_sessions: deferred import failed for %s: %s", iid, e)
+        except Exception as e:
+            log.warning("claude_sessions: deferred import: %s", e)
+
+    _IMPORT_TASK = asyncio.create_task(_run())
+
+
 async def _idle_queue_tick():
     """The queue's TICK - and the transcript backfill's producer.
 
@@ -1177,11 +1352,16 @@ async def _idle_queue_tick():
     _QUEUE.observe(now, busy)
     blocked = _bg.quiet_gate(busy, _QUEUE.last_busy, now, _QUEUE.min_quiet_s)
 
-    try:
-        await _svc.submit(_iq.KIND_EMBED_SESSIONS, "Claude transcript backfill",
-                          dedupe_key="ingest:local")
-    except Exception as e:
-        log.warning("claude_sessions: could not queue the backfill: %s", e)
+    # IMPORT NOW, EMBED LATER. The import used to be the queued job, so a new
+    # session was not VISIBLE until the box had been quiet for 600s and the
+    # queue got round to it - and then each turn waited ~4s for its vector
+    # before the next was stored. What made the backfill dangerous was the
+    # embedding, not the import: with embedding deferred, an import is file
+    # reads and row writes, the same class of work as every other sampler, and
+    # the rows are readable by the UI (it reads fabric_records) the moment they
+    # land. The fabric queues ONE embed.fabric backfill for the rows it left
+    # without vectors, and THAT waits for the idle box.
+    _kick_deferred_import()
 
     try:
         res = await _svc.drain_once(blocked, _system_is_busy, now)

@@ -632,7 +632,12 @@ register_ui(
              "n8n.workflow.get", "n8n.workflow.activate", "n8n.mcp.probe",
              "n8n.mcp.connect", "n8n.mcp.disconnect", "n8n.dag.node",
              "n8n.execution.list"],
-    mode="tab",
+    # "element", not "tab": n8n is reached through the Automations hub, which
+    # embeds /n8n/panel as its own sub-tab. Registering it here as a top-level
+    # tab as well put the same panel in two places. Still registered (so the
+    # dashboard-widget loader, custom tabs and solo popout can find it) —
+    # just not auto-rendered as a tab of its own.
+    mode="element",
     tab_order=73,
 )
 

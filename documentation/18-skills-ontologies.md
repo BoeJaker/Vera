@@ -81,6 +81,50 @@ Relations can be inferred by the LLM from each cap's name, description, and JSON
 | `cap_ontology.auto_grid` | Infer the full grid (long-running) |
 | `cap_ontology.auto_group` / `auto_grid` | …with `cap_ontology.suggest` for quick editor hints |
 
+Generated relations are not trusted routing authority. A frozen, synthetic
+comparison exposed by `eval.ontology.decision` runs the resolver unchanged,
+then with typed curated `preferred_over` hints, then with generated hints. It
+reports exact selection, unsafe choices, unresolved ambiguity, relation
+precision, serialized hint size/token estimate, and observed local latency. The
+fixture makes no model or network calls and executes no capability.
+
+The current fixture records an evidence-backed recommendation to disable
+generated routing relations: curated hints improve its exact selection while
+the generated set reduces it and includes a cycle. Resolver eligibility still
+rejects a generated preference for a disallowed-effect capability. This report
+does not itself activate curated hints, disable generation, or delete stored
+relations; an exact export must be preserved before a later runtime change.
+
+Persistent LLM generation through `cap_ontology.auto_pair`, `auto_group`, and
+`auto_grid` is now disabled by default. An operator can temporarily restore the
+legacy behavior with `VERA_CAP_ONTOLOGY_AUTO_GENERATION=enabled`; clearing it or
+setting it to `disabled` is the rollback. Invalid values fail closed. The
+non-saving editor suggestion remains available for explicit human review.
+
+`cap_ontology.snapshot` exports every stored manual and generated relation in a
+canonical, content-addressed, restorable envelope. It preserves relation type,
+description, direction, strength, confidence, wiring, tags, provenance, and
+update time; duplicate pairs, malformed values, or oversized exports fail
+closed. Disabling generation does not remove existing relations. Take and retain
+this snapshot before any later deletion or migration.
+
+Existing LLM-generated rows are also excluded from planner and agent prompt
+context by default. They remain visible through list, matrix, neighbourhood,
+statistics, and snapshot operations, so evidence and human review are preserved.
+`VERA_CAP_ONTOLOGY_GENERATED_RELATIONS=enabled` temporarily restores their
+legacy prompt-context use; clearing it or setting `disabled` rolls back. The
+context response reports the active mode and number of generated rows excluded.
+Manual relations continue to be available, but this does not grant them resolver
+authority—the separate evaluation and activation decision still applies.
+
+The current evidence supports adapting generated ontology relations rather than
+deleting them. Persistent bulk generation and generated-relation prompt
+consumption remain independently disabled by default. Existing rows stay
+visible and restorable, while the non-saving suggestion path remains available
+for human review. Before either feature is enabled more broadly, a bounded
+quality evaluation must show a repeatable routing or tool-selection benefit;
+until then, absence of activation is not evidence that the stored data is dead.
+
 ### Planner integration & the "adjacent hidden cap" trick
 
 `cap_ontology.context_for` returns a snippet for a planner system-prompt. When an agent has a restricted `domain_caps` allowlist, this returns relations *between an allowed cap and a hidden cap* — described **by the relation only**. The planner thus learns that an adjacent capability exists (and how it relates) without being able to call it directly: situational awareness without privilege escalation.
@@ -93,7 +137,7 @@ Relations can be inferred by the LLM from each cap's name, description, and JSON
 |---|---|---|
 | **Skills** | `skills/skills_panel.html` | Skill editor |
 | **Ontologies** | `skills/ontologies_panel.html` + `ontologies_owl_panel.js` | Domain ontology + OWL browser |
-| **Cap Hub** | `ontologies/cap_ontology_panel.html` | The cap×cap matrix editor, auto-pair/auto-grid runners, coverage stats |
+| **Capabilities › Ontology** | `ontologies/cap_ontology_panel.html` | The cap×cap matrix editor, auto-pair/auto-grid runners, coverage stats |
 
 ---
 

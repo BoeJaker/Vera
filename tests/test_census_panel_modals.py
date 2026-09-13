@@ -96,7 +96,7 @@ def test_the_poller_uses_the_index_exact_endpoint(src):
 
 def test_the_poller_stops_when_the_run_is_terminal(src):
     body = _fn(src, "cenAloPoll")
-    assert "setTimeout(cenAloPoll" in body
+    assert "setTimeout(()=>cenAloPoll(id)" in body, "the follow is keyed by element (modal and live dash coexist)"
     assert "return" in body.split("!=='running'")[1][:200], (
         "a finished run must stop polling, not tick forever")
 
@@ -109,7 +109,8 @@ def test_closing_the_modal_stops_the_poller(src):
 
 def test_the_poller_gives_up_if_the_element_is_gone(src):
     body = _fn(src, "cenAloPoll")
-    assert "cen-alo" in body and "cenAloStop()" in body
+    assert "document.getElementById(id)" in body and "cenAloStop(id)" in body
+    assert "id=id||'cen-alo'" in body, "the modal is the default follow"
 
 
 # ── a compare row describes two runs ────────────────────────────────────────

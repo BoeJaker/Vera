@@ -291,6 +291,16 @@ async def _build_nodes() -> List[Dict]:
     for cid, cfg in px.items():
         for pve_node, hid in (cfg.get("node_hosts") or {}).items():
             host_to_pve[hid] = {"kind": "node", "cluster_id": cid, "node": pve_node}
+    # The Proxmox cluster record's node map is the one every caller shares; it wins.
+    pm = sys.modules.get("proxmox_capabilities")
+    if pm is not None and hasattr(pm, "_all_raw"):
+        try:
+            for crec in await pm._all_raw():
+                for pve_node, hid in (crec.get("node_hosts") or {}).items():
+                    host_to_pve[str(hid)] = {"kind": "node", "cluster_id": crec.get("id", ""),
+                                             "node": pve_node}
+        except Exception as e:
+            log.debug("cluster record node_hosts: %s", e)
     px_ids = list(px.keys())
     for n in nodes.values():
         hid = n.get("ssh_host_id", "")
@@ -751,12 +761,10 @@ async def cap_nodes_provision_plan(node_id: str = "",
 # ─────────────────────────────────────────────────────────────────────────────
 # PROVISION EXECUTION
 # ─────────────────────────────────────────────────────────────────────────────
-_OLLAMA_CT_INSTALL = (
-    "command -v ollama >/dev/null 2>&1 || "
-    "(command -v curl >/dev/null 2>&1 || (apt-get -qq update && apt-get -qq -y install curl); "
-    "curl -fsSL https://ollama.com/install.sh | sh); "
-    "systemctl enable --now ollama && sleep 2 && systemctl is-active ollama"
-)
+try:
+    from Vera.vera.provisioning import ollama_node_core as _ollama_core
+except Exception:                                    # worktree / app-free import
+    from vera.provisioning import ollama_node_core as _ollama_core
 
 
 async def _ensure_docker_host(node: Dict) -> Dict:
@@ -793,11 +801,17 @@ async def _register_ollama(node: Dict, port: int, has_gpu: bool) -> Dict:
     if not add:
         return {"error": "ollama.add_instance unavailable"}
     addr = node.get("addr") or "localhost"
-    iid = f"node-{re.sub(r'[^a-zA-Z0-9]+', '-', addr)}-{port}"
-    url = f"http://{addr}:{port}"
-    res = await add(id=iid, url=url, has_gpu=has_gpu,
+    # Reuse the id already serving this URL. ollama.add_instance keys on the id
+    # alone, so a second id for one Ollama lets the GPU gate — whose capacity is
+    # counted per instance id — hand the same card to two callers at once.
+    plan = _ollama_core.registration_plan(
+        getattr(_orch, "OLLAMA_INSTANCES", {}) or {}, addr, port, has_gpu,
+        preferred_id=f"node-{re.sub(r'[^a-zA-Z0-9]+', '-', addr)}-{port}")
+    res = await add(id=plan["instance_id"], url=plan["url"], has_gpu=has_gpu,
                     label=f"{node.get('label', addr)} (ollama)")
-    return {"ok": True, "instance_id": iid, "url": url, "result": res}
+    return {"ok": True, "instance_id": plan["instance_id"], "url": plan["url"],
+            "reused": plan["action"] == "reuse", "reason": plan["reason"],
+            "result": res}
 
 
 async def _register_vllm(node: Dict, port: int, api_key: str = "") -> Dict:
@@ -923,11 +937,14 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
             pxm = _mod("pxstore_capabilities")
             if not pxm:
                 return {"error": "pxstore module not loaded"}
+            # The recipe binds 0.0.0.0:port and proves the node ANSWERS there.
+            # The stock unit binds loopback, so `systemctl is-active` passed for a
+            # node Vera could never reach.
             r = await pxm._node_ssh(pmx.get("cluster_id", ""), pve_node,
                                     pxm._sh(pxm._pct_exec(int(pmx.get("vmid") or 0),
-                                                          _OLLAMA_CT_INSTALL)),
+                                                          _ollama_core.ct_install_script(port))),
                                     timeout=900)
-            active = "active" in (r.get("stdout", "") or "")
+            active = _ollama_core.install_succeeded(r.get("stdout", ""))
             out = {"ok": active, "log": (r.get("stdout", "") or "")[-800:]}
             if active:
                 out["register"] = await _register_ollama(node, port, bool(gpus))
@@ -935,7 +952,10 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
         inst = _rawcap("provision.install")
         if not inst:
             return {"error": "provision.install unavailable"}
-        ires = await inst(host_id=hid, target="ollama", sudo=True, timeout=900)
+        # Without `port`, Ollama installs on 11434 while the node is registered
+        # on the port that was asked for.
+        ires = await inst(host_id=hid, target="ollama", sudo=True, port=port,
+                          timeout=900)
         out = {"ok": bool(ires.get("ok")), "install": ires}
         if ires.get("ok"):
             out["register"] = await _register_ollama(node, port, bool(gpus))
@@ -1146,7 +1166,8 @@ _DEFAULT_BACKUP = {
     "nodes.backup.get",
     http_method="GET", http_path="/nodes/backup", http_tags=["nodes"],
     memory="off", silent=True,
-    description="Get the estate backup config + recent run log. Output: "
+    description="Get the estate backup config + recent run log. Every schedule "
+                "and each guest's latest backup together: backup.status. Output: "
                 "{config, log:[…]}.",
 )
 async def cap_backup_get(trace_id=None) -> Dict:
@@ -1295,8 +1316,8 @@ async def _backup_docker(dcfg: Dict) -> List[Dict]:
                 "guests (VMs + CTs) to the dedicated backup storage, and tar "
                 "matching docker named volumes into the per-host backup dir "
                 "(rotated, keep-N). Uses the saved config (nodes.backup.set); "
-                "pass proxmox/docker dicts to override one-off. Output: {ok, "
-                "proxmox:[…], docker:[…]}.",
+                "pass proxmox/docker dicts to override one-off. One guest now: "
+                "backup.run. Output: {ok, proxmox:[…], docker:[…]}.",
 )
 async def cap_backup_run(proxmox: Optional[Dict] = None,
                          docker: Optional[Dict] = None, trace_id=None) -> Dict:
@@ -1333,6 +1354,7 @@ _DEFAULT_SYNC = {
     "interval_hours": 24,          # "daily at the least" — configurable
     "last_run": 0,
     "clusters": {},                # cluster_id -> [pve node names] ([] = all mapped)
+    "legacy_share": False,         # also rebuild the hypervisor Samba tree (pxstore.fs.sync)
 }
 
 
@@ -1340,8 +1362,10 @@ _DEFAULT_SYNC = {
     "nodes.sync.get",
     http_method="GET", http_path="/nodes/sync", http_tags=["nodes"],
     memory="off", silent=True,
-    description="Get the share-tree auto-sync schedule (pxstore.fs.sync on a "
-                "timer). Output: {config}.",
+    description="Get the estate-tree sync schedule. VFS-02 rebuilds its own "
+                "estate tree every 5 minutes; this is the extra trigger from "
+                "Vera, plus whether the legacy hypervisor share is rebuilt too. "
+                "Output: {config}.",
 )
 async def cap_sync_get(trace_id=None) -> Dict:
     return {"config": await _json_cfg(KEY_SYNC, _DEFAULT_SYNC)}
@@ -1355,11 +1379,13 @@ async def cap_sync_get(trace_id=None) -> Dict:
                 "interval_hours (int=24 — daily default, any interval), "
                 "clusters (dict — {cluster_id:[pve nodes]} ; empty node list = "
                 "every node mapped in that cluster's pxstore settings; omit to "
-                "keep). Output: {ok, config}.",
+                "keep), legacy_share (bool — also rebuild the legacy hypervisor "
+                "share). Output: {ok, config}.",
 )
 async def cap_sync_set(enabled: Optional[bool] = None,
                        interval_hours: Optional[int] = None,
-                       clusters: Optional[Dict] = None, trace_id=None) -> Dict:
+                       clusters: Optional[Dict] = None,
+                       legacy_share: Optional[bool] = None, trace_id=None) -> Dict:
     cfg = await _json_cfg(KEY_SYNC, _DEFAULT_SYNC)
     if enabled is not None:
         cfg["enabled"] = bool(enabled)
@@ -1368,6 +1394,8 @@ async def cap_sync_set(enabled: Optional[bool] = None,
     if isinstance(clusters, dict):
         cfg["clusters"] = {str(k): [str(n) for n in (v or [])]
                            for k, v in clusters.items()}
+    if legacy_share is not None:
+        cfg["legacy_share"] = bool(legacy_share)
     await _json_cfg_put(KEY_SYNC, cfg)
     return {"ok": True, "config": cfg}
 
@@ -1376,39 +1404,51 @@ async def cap_sync_set(enabled: Optional[bool] = None,
     "nodes.sync.run",
     http_method="POST", http_path="/nodes/sync/run", http_tags=["nodes"],
     memory="off",
-    description="Rebuild the share tree now on every configured node "
-                "(pxstore.fs.sync per cluster/node; falls back to every "
-                "cluster with a node→SSH mapping when nothing is configured). "
-                "Output: {ok, results:[{cluster_id,node,ok,error}]}.",
+    description="Rebuild the estate tree now. The file fabric (VFS-02) is "
+                "the estate's file server: this triggers vfs.estate.sync, which "
+                "VFS-02 otherwise runs every 5 minutes on its own timer. The "
+                "legacy hypervisor share (pxstore.fs.sync per mapped node) is "
+                "rebuilt too only when legacy_share is on (nodes.sync.set). "
+                "Output: {ok, results:[{target,cluster_id,node,ok,linked,error}]}.",
 )
 async def cap_sync_run(trace_id=None) -> Dict:
     cfg = await _json_cfg(KEY_SYNC, _DEFAULT_SYNC)
-    fs_sync = _rawcap("pxstore.fs.sync")
-    if not fs_sync:
-        return {"error": "pxstore.fs.sync unavailable"}
-    px = await _pxstore_cfgs()
-    plan: List[tuple] = []
-    wanted = cfg.get("clusters") or {}
-    for cid, pcfg in px.items():
-        if wanted and cid not in wanted:
-            continue
-        nodes = wanted.get(cid) or list((pcfg.get("node_hosts") or {}).keys())
-        for n in nodes:
-            plan.append((cid, n))
-    results = []
-    for cid, n in plan:
+    results: List[Dict] = []
+    vfs_sync = _rawcap("vfs.estate.sync")
+    if vfs_sync:
         try:
-            r = await fs_sync(cluster_id=cid, node=n)
-            results.append({"cluster_id": cid, "node": n,
-                            "ok": bool(r.get("ok")),
-                            "linked": len(r.get("linked") or []),
+            r = await vfs_sync()
+            results.append({"target": "vfs-02", "cluster_id": "", "node": "VFS-02",
+                            "ok": bool(r.get("ok")) and not r.get("error"),
+                            "linked": int(r.get("mounted") or 0),
+                            "failed": len(r.get("failed") or []),
                             "error": str(r.get("error", ""))[:300]})
         except Exception as e:
-            results.append({"cluster_id": cid, "node": n, "ok": False,
-                            "error": str(e)[:300]})
+            results.append({"target": "vfs-02", "cluster_id": "", "node": "VFS-02",
+                            "ok": False, "linked": 0, "error": str(e)[:300]})
+    fs_sync = _rawcap("pxstore.fs.sync") if cfg.get("legacy_share") else None
+    if fs_sync:
+        wanted = cfg.get("clusters") or {}
+        for cid, pcfg in (await _pxstore_cfgs()).items():
+            if wanted and cid not in wanted:
+                continue
+            for n in wanted.get(cid) or list((pcfg.get("node_hosts") or {}).keys()):
+                try:
+                    r = await fs_sync(cluster_id=cid, node=n)
+                    results.append({"target": "legacy", "cluster_id": cid, "node": n,
+                                    "ok": bool(r.get("ok")),
+                                    "linked": len(r.get("linked") or []),
+                                    "error": str(r.get("error", ""))[:300]})
+                except Exception as e:
+                    results.append({"target": "legacy", "cluster_id": cid, "node": n,
+                                    "ok": False, "linked": 0, "error": str(e)[:300]})
+    if not results:
+        return {"ok": False, "results": [],
+                "error": "nothing to sync — the file fabric capabilities (vfs.*) "
+                         "are not loaded and the legacy share is off"}
     cfg["last_run"] = time.time()
     await _json_cfg_put(KEY_SYNC, cfg)
-    ok = bool(results) and all(r["ok"] for r in results)
+    ok = all(r["ok"] for r in results)
     await emit_event({"type": "nodes.sync.done", "ok": ok, "results": results})
     return {"ok": ok, "results": results}
 
@@ -2053,9 +2093,12 @@ async def cap_provision_node_new(cluster_id: str = "", node: str = "",
     out: Dict[str, Any] = {"ok": True, "vmid": vmid}
     if not enroll:
         return out
-    enr = _rawcap("proxmox.guest.enroll")
+    # One enrolment pipeline: auto-enrol saves the login (register_only runs
+    # proxmox.guest.enroll as its login step).
+    pipeline = _rawcap("autoenroll.enrol")
+    enr = pipeline or _rawcap("proxmox.guest.enroll")
     if not enr:
-        out["enroll_error"] = "proxmox.guest.enroll unavailable"
+        out["enroll_error"] = "autoenroll.enrol / proxmox.guest.enroll unavailable"
         return out
     # The CT needs to boot and pull a DHCP lease before its IP is detectable —
     # retry the enroll until the deadline instead of failing on the first probe.
@@ -2064,10 +2107,16 @@ async def cap_provision_node_new(cluster_id: str = "", node: str = "",
     while time.time() < deadline:
         await asyncio.sleep(6)
         try:
-            last = await enr(cluster_id=cluster_id, node=node, guest_type="lxc",
-                             vmid=vmid, user=user or "root", password=password,
-                             key_path=key_path,
-                             label=hostname or f"ct-{vmid}") or {}
+            if pipeline:
+                last = await enr(cluster_id=cluster_id, node=node, guest_type="lxc",
+                                 vmid=vmid, ssh_user=user or "root", ssh_password=password,
+                                 ssh_key_path=key_path, label=hostname or f"ct-{vmid}",
+                                 steps="enroll_guest", register_only=True) or {}
+            else:
+                last = await enr(cluster_id=cluster_id, node=node, guest_type="lxc",
+                                 vmid=vmid, user=user or "root", password=password,
+                                 key_path=key_path,
+                                 label=hostname or f"ct-{vmid}") or {}
         except Exception as e:
             last = {"error": str(e)}
         if last.get("ok"):

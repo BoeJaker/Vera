@@ -97,10 +97,18 @@
       const sel = this.shadowRoot.getElementById('hoursSel');
       sel.value = String(this._hours);
       sel.addEventListener('change', () => { this._hours = parseInt(sel.value, 10); this.refresh(); });
-      this.refresh();
-      this._pollTimer = setInterval(() => this.refresh(), 20000);
+      if (this._onScreen()) this.refresh();
+      this._pollTimer = setInterval(() => { if (this._onScreen()) this.refresh(); }, 20000);
     }
 
+    /* Poll only while on screen. offsetParent is null inside a hidden
+       section (display:none), so an element on a page that is not showing
+       costs nothing; the panel's nav() refreshes it when its page opens. */
+    // offsetParent alone misses a closed <details>: Chromium keeps its contents
+    // laid out (content-visibility: hidden) for find-in-page, so an element
+    // in a folded card kept polling (found 2026-09-10 on Mission control).
+    // checkVisibility() sees content-visibility; older browsers fall back.
+    _onScreen() { return this.offsetParent !== null && (typeof this.checkVisibility !== 'function' || this.checkVisibility()); }
     disconnectedCallback() { if (this._pollTimer) clearInterval(this._pollTimer); }
 
     setApiBase(url) { this._base = (url || '').replace(/\/$/, ''); }
@@ -108,9 +116,19 @@
       return this._base || window._veraBase || window.location.origin ||
         (window.__VERA_BASE__ || ('http://' + location.hostname + ':8999'));
     }
-    setBranch(b) { this._branch = b || ''; this.refresh(); }
+    // The Loop Lab calls this every 4 s from its active-run refresh with the
+    // SAME branch; each call used to start a 20-35 s /evolve/authors fetch, so
+    // they piled up and filled the browser's connection pool (2026-09-10).
+    // A branch that has not changed is not a reason to fetch.
+    setBranch(b) {
+      const nb = b || '';
+      if (nb === this._branch) return;
+      this._branch = nb; this.refresh();
+    }
 
     async refresh() {
+      if (this._inflight) return;            // one fetch at a time, ever
+      this._inflight = true;
       const qs = new URLSearchParams({ hours: this._hours });
       if (this._branch) qs.set('branch', this._branch);
       let d;
@@ -118,6 +136,7 @@
         const r = await fetch(this._getBase() + '/evolve/authors?' + qs.toString());
         d = await r.json();
       } catch (_) { d = null; }
+      finally { this._inflight = false; }
       const commits = (d && d.commits) || [];
       this._render(commits);
     }

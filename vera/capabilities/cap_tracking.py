@@ -288,7 +288,8 @@ def install(orch_module):
     _orig = orch_module._act_enqueue
 
     def _gated(cap_name, group, session_id, trace_id, kw, result,
-               elapsed_ms, trigger_id="", trigger_cap=""):
+               elapsed_ms, trigger_id="", trigger_cap="",
+               redact_args=(), redact_result=False):
         # Signature mirrors the new rich _act_enqueue. is_tracked() is the
         # cheap synchronous gate — if the cap fails the gate we drop it
         # without enqueueing (the recording cost lives downstream in
@@ -296,7 +297,8 @@ def install(orch_module):
         # function which builds the queue item with the full payload.
         if is_tracked(cap_name, group, session_id):
             _orig(cap_name, group, session_id, trace_id, kw, result,
-                  elapsed_ms, trigger_id=trigger_id, trigger_cap=trigger_cap)
+                  elapsed_ms, trigger_id=trigger_id, trigger_cap=trigger_cap,
+                  redact_args=redact_args, redact_result=redact_result)
 
     orch_module._act_enqueue = _gated
 

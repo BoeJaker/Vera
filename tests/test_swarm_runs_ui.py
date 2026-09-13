@@ -21,11 +21,14 @@ line saying so it reads as redundant with Suite.
 import os
 import re
 import shutil
+import sys
 import subprocess
 
 import pytest
 
 pytestmark = pytest.mark.critical
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 PANEL = os.path.join(os.path.dirname(__file__), "..", "vera", "evolve", "evolve_panel.html")
 
@@ -42,28 +45,22 @@ def _fn(src, name):
 
 
 # ── the swarm can actually show a session ───────────────────────────────────
-def _live_sess_filter(src):
-    """Just the expression that decides which sessions the card shows.
-
-    Scoped deliberately: asserting `age_s` appears anywhere in loadSwarm passed
-    against the BROKEN version too, because the function already rendered
-    `_csessAge(s.age_s)` in a row. A test that passes before the fix guards
-    nothing.
-    """
-    i = src.index("const liveSess=")
-    return src[i:src.index(";", src.index("filter(", i))]
-
-
+# Since flattening slice 6 the Swarm is the Agents page: its session list is
+# the table (rows from evolve.agents.rows; recency is decided server-side in
+# agents_core - test_agents_core pins it) and its counts are the strip above.
+# The same things must still be true.
 def test_an_untracked_session_is_not_excluded(src):
     """`untracked` means no board claim — not "not running". Excluding it
-    emptied the list on an instance where all 90 sessions are untracked."""
-    f = _live_sess_filter(src)
-    assert "age_s" in f, "the FILTER still tests state alone"
+    emptied the list on an instance where all 90 sessions are untracked. The
+    page shows every session and says so; the strip counts the recent ones."""
+    assert "untracked" in src[src.index('id="sec-agents"'):src.index("\n</div>\n", src.index('id="sec-agents"'))]
+    assert "'active agent sessions'" in _fn(src, "renderAgentsHead")
 
 
-def test_recency_decides_what_counts_as_active(src):
-    assert "stalled_after_s" in _fn(src, "loadSwarm")
-    assert "_stale" in _live_sess_filter(src)
+def test_recency_decides_what_counts_as_active():
+    from vera.evolve import agents_core as ac
+    fresh = ac.session_rows([{"claude_session_id": "f", "state": "untracked", "age_s": 60.0}], [], [], [], recent_s=2700)
+    assert fresh[0]["state"] == "recent" and ac.swarm_counts(fresh, [], [], [])["sessions_active"] == 1
 
 
 def test_the_swarm_asks_for_more_than_forty_sessions(src):
@@ -72,71 +69,80 @@ def test_the_swarm_asks_for_more_than_forty_sessions(src):
 
 def test_each_session_row_names_its_agent(src):
     """"whose session is this" was the question the card could not answer."""
-    body = _fn(src, "loadSwarm")
-    assert "s.agent" in body
-    assert "codex" in body
+    body = _fn(src, "_agRow")
+    assert "_agAgent(r.agent)" in body
+    assert "codex" in src[src.index("const _AG_AGENT="):src.index("const _AG_AGENT=") + 200]
 
 
 def test_the_section_is_no_longer_claude_only_by_name(src):
-    assert "Active agent sessions" in src
+    assert "active agent sessions" in src
     assert "Active Claude sessions" not in src
 
 
-# ── the swarm's follow cannot die ───────────────────────────────────────────
+# ── the page's follow cannot die ────────────────────────────────────────────
 def test_the_swarm_timer_is_rearmed_in_a_finally(src):
-    body = _fn(src, "swarmPoll")
-    assert "finally" in body and "_swArm()" in body
+    body = _fn(src, "agentsPoll")
+    assert "finally" in body and "_agArm()" in body
 
 
 def test_the_swarm_render_no_longer_arms_its_own_timer(src):
-    assert "setTimeout(loadSwarm" not in src
+    assert "setTimeout(loadAgents" not in src and "setTimeout(loadSwarm" not in src
 
 
 def test_swarm_ticks_do_not_stack(src):
-    assert "_swBusy" in _fn(src, "swarmPoll")
+    assert "_agBusy" in _fn(src, "agentsPoll")
 
 
 def test_navigating_to_swarm_starts_the_poller(src):
-    assert "swarm:swarmPoll" in src
+    assert "agents:agentsPoll" in src and "swarm:()=>nav('agents')" in src
 
 
 # ── runs says what it is, and can be sifted ─────────────────────────────────
+# Since flattening slice 3 the Runs page is the runs view of Work: every
+# driver run (census, suite, improvement session, single run) in one table,
+# rendered by renderCensusTable. The same things must still be possible.
 def test_runs_explains_what_it_holds(src):
-    assert "Every task execution" in src
-    assert "census-" in src, "a census goal shows up here; say so"
+    assert "a row is one driver run" in src
+    assert "census" in src and "single run" in src, "say what kinds of run share the table"
 
 
 def test_runs_can_be_filtered_by_source(src):
-    body = _fn(src, "_runsRender")
-    assert "runs-src" in body
+    body = _fn(src, "renderCensusTable")
+    assert "setWorkKind" in body and "setWorkSrc" in body
+    for src_name in ("manual", "goal", "captest", "ide"):
+        assert src_name in body
 
 
 def test_runs_can_be_filtered_by_task(src):
-    assert "runs-q" in _fn(src, "_runsRender")
+    body = _fn(src, "renderCensusTable")
+    assert "cen-text" in body and "x.task" in body, "the text filter reaches a single run's task"
 
 
 def test_runs_can_show_problems_only(src):
     """A run that returned cleanly having failed half its checks is exactly
     what this view is for finding — so 'problems' is not just `error`."""
-    body = _fn(src, "_runsRender")
-    assert "runs-bad" in body
-    assert "checks_ok" in body and "checks_n" in body
+    body = _fn(src, "renderCensusTable")
+    assert "'problems'" in body
+    assert "x.failed" in body and "x.capped" in body and "s.wall_capped" in body
 
 
 def test_filtering_does_not_refetch(src):
     """A round trip per keystroke would make sifting unpleasant."""
-    assert "_runsAll" in _fn(src, "_runsRender")
-    assert "await api" not in _fn(src, "_runsRender")
+    body = _fn(src, "renderCensusTable")
+    assert "_workRows" in body and "_cenRunsAll" in body
+    assert "await api" not in body
 
 
 def test_the_count_shows_the_denominator(src):
     """"12 runs" after filtering must not read as "12 runs exist"."""
-    assert "_runsAll.length" in _fn(src, "_runsRender")
+    assert "_workMeta.total" in _fn(src, "renderCensusTable")
 
 
 def test_the_commit_filter_still_works(src):
-    """It was the one thing this view already did; do not lose it."""
-    assert "filterCommit" in _fn(src, "_runsRender")
+    """The git graph's "runs of this commit" link; census runs on that code
+    count too."""
+    body = _fn(src, "renderCensusTable")
+    assert "filterCommit" in body and "x.commits" in body and "s.code" in body
 
 
 # ── logs belong with the sandboxes they came from ───────────────────────────
@@ -147,30 +153,27 @@ def test_logs_is_not_its_own_rail_entry(src):
     assert 'data-sec="logs"' not in src
 
 
-def test_every_logs_element_survived_the_move(src):
-    """A flatten must not cost an element. Each control is still declared."""
-    ids = set(re.findall(r'id="([a-z0-9-]+)"', src))
-    for want in ("logs-body", "logs-status", "logs-container", "logs-follow",
-                 "logs-perf"):
-        assert want in ids, "lost #%s in the move" % want
-
-
-def test_the_logs_card_is_inside_the_sandbox_section(src):
-    start = src.index('id="sec-sandbox"')
-    end = src.index('<div class="sec" id=', start + 10)
-    for want in ("logs-body", "logs-status", "logs-container"):
-        assert start < src.index('id="%s"' % want) < end
-
-
-def test_opening_sandbox_loads_the_logs(src):
-    assert "loadLogs()" in src
-    assert "sandbox:()=>{loadSandbox();loadLogs()}" in src
+def test_a_containers_log_is_inside_its_branchs_row(src):
+    """A container's output belongs next to the container it came from: the
+    page-wide tail of every sandbox is gone; a branch's row shows its own
+    sandbox's last lines (with its cpu / mem sample) when expanded."""
+    for gone in ("logs-body", "logs-container", "logs-follow", "logs-perf", "ship-logs"):
+        assert 'id="%s"' % gone not in src, gone
+    assert "function loadLogs(" not in src and "_logsTimer" not in src
+    det = src[src.index("function _shipDetail(r){"):]
+    det = det[:det.index("\n}\n")]
+    assert "shipLoadLogs(r.sandbox.name,'ship-log-'+_shipId(r.branch))" in det
+    ll = src[src.index("async function shipLoadLogs(name,elId){"):]
+    ll = ll[:ll.index("\n}\n")]
+    assert "'/evolve/sandbox/logs?limit=80&container='+encodeURIComponent(name)" in ll
+    assert "'/evolve/sandbox/metrics?limit=1&container='+encodeURIComponent(name)" in ll
+    assert "renderLogs((r&&r.logs)||[],el,perf)" in ll
 
 
 def test_an_old_logs_deeplink_still_lands_somewhere_real(src):
     """Injected nav items and bookmarks still say 'logs'; they must not open a
     blank panel."""
-    assert "logs:()=>nav('sandbox')" in src
+    assert "logs:()=>nav('ship')" in src
 
 
 def test_the_logs_follow_timer_follows_its_new_section(src):

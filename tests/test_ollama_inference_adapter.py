@@ -150,6 +150,7 @@ async def test_inputs_and_parameters_are_validated_before_runner(
 @pytest.mark.parametrize("runner,error_code", [
     (Runner(error=RuntimeError("sensitive backend detail")), "backend_error"),
     (Runner(result=3), "invalid_response"),
+    (Runner(result=""), "empty_response"),
     (Runner(meta={"eval_count": -1}), "invalid_usage"),
 ])
 async def test_legacy_failures_are_reduced_to_stable_codes(runner, error_code):

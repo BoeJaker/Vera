@@ -40,6 +40,25 @@ def test_nothing_restricts_the_toolkit():
     assert CS.goal_to_task(GOAL, "default")["allowed_caps"] == ""
 
 
+def test_a_seeded_task_runs_under_the_census_posture():
+    """loop-o50 (2026-09-10): under sandbox_mode=require every seeded task was
+    refused in 0.1 s ("no dev sandbox is up"), and under prefer it would have
+    measured the primary sandbox's branch - a different instrument from the
+    archived series either way. The posture says: prod's own loop, no
+    sandbox, no test denylist, the engine's own defaults - the harness's way."""
+    t = CS.goal_to_task(GOAL, "default")
+    assert t["posture"] == CS.CENSUS_POSTURE == "census"
+    assert CS.is_census_task(t) and not CS.is_census_task(dict(t, posture="")) and not CS.is_census_task(None)
+
+
+def test_the_step_ceiling_is_the_engines_own():
+    """The harness's bare v7 call got the engine default (8 steps); the suite
+    runner's default for a task that says nothing is 6 - two short, on every
+    goal, without a word."""
+    assert CS.ENGINE_MAX_STEPS == 8
+    assert CS.goal_to_task(GOAL, "default")["max_steps"] == 8
+
+
 def test_the_wall_cap_is_the_harness_ceiling():
     assert CS.DEFAULT_WALL_CAP_S == 1800
     assert CS.goal_to_task(GOAL, "default")["timeout_s"] == 1800

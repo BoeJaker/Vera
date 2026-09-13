@@ -60,6 +60,9 @@ from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, register_ui,
 )
 from Vera.vera.security import secrets as vsecrets
+from Vera.vera.integrations.infrastructure_effects import observe_infrastructure_effect
+# which SSH login reaches a Proxmox node: one map, on the cluster record
+from Vera.vera.proxmox import node_hosts_core as _node_hosts
 
 log = logging.getLogger("vera.proxmox")
 
@@ -198,6 +201,19 @@ async def _pve(rec: Dict, method: str, path: str,
         return None, f"{type(e).__name__}: {e}"
 
 
+def _observe_proxmox_effect(*, rec: Dict, mode: str, resource_ref: str,
+                            operation: Dict[str, Any], idempotency_key: str = "",
+                            approval_receipt_ref: str = "",
+                            retry: bool = False) -> Dict[str, Any]:
+    """Project one public Proxmox mutation without retaining API or guest data."""
+    return observe_infrastructure_effect(
+        provider="proxmox", target_ref=rec.get("id") or _api_base(rec),
+        resource_ref=resource_ref,
+        operation_ref=json.dumps(operation, sort_keys=True, separators=(",", ":")),
+        mode=mode, idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  CAPABILITIES — credential store
 # ═════════════════════════════════════════════════════════════════════════════
@@ -212,12 +228,15 @@ async def _pve(rec: Dict, method: str, path: str,
                 "optional — omit to create), label, api_url "
                 "('https://host:8006' or full /api2/json), token, verify_tls "
                 "(bool=false), console_user ('root@pam' — enables the in-Vera "
-                "console proxy), console_password. Output: {ok, cluster(redacted)}.",
+                "console proxy), console_password, node_hosts (dict node -> exec SSH "
+                "host_id: the login that reaches each Proxmox node; replaces the map). "
+                "Output: {ok, cluster(redacted)}.",
 )
 async def cap_cluster_save(
     id: str = "", label: str = "", api_url: str = "", token: str = "",
     verify_tls: bool = False, console_user: str = "",
-    console_password: str = "", trace_id=None,
+    console_password: str = "", node_hosts: Optional[Dict[str, str]] = None,
+    trace_id=None,
 ) -> Dict:
     r = _redis()
     if not r:
@@ -233,6 +252,14 @@ async def cap_cluster_save(
                  ("verify_tls", bool(verify_tls)), ("console_user", console_user)):
         if v != "" or k not in rec:
             rec[k] = v
+    if node_hosts is not None:
+        if isinstance(node_hosts, str):
+            try:
+                node_hosts = json.loads(node_hosts) if node_hosts.strip() else {}
+            except Exception:
+                return {"error": "node_hosts must be an object {node: exec SSH host_id}"}
+        rec["node_hosts"] = {str(k): str(v) for k, v in (node_hosts or {}).items()
+                             if str(v or "").strip()}
     if not rec.get("label"):
         rec["label"] = (api_url or "Proxmox").split("//", 1)[-1].split("/")[0]
     # Seal secrets only when a (truthy) new value is provided; else keep existing.
@@ -349,14 +376,19 @@ _GUEST_ACTIONS = {"start", "stop", "shutdown", "reboot", "suspend", "resume"}
     "proxmox.guest.action",
     http_method="POST", http_path="/proxmox/guest/action", http_tags=["proxmox"],
     memory="off",
+    redact_args=["cluster_id", "node", "guest_type", "vmid", "action",
+                 "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Lifecycle action on a guest. Inputs: cluster_id (str!), node "
                 "(str!), guest_type ('qemu'|'lxc'), vmid (int!), action "
                 "(start|stop|shutdown|reboot|suspend|resume). Output: {ok, upid} "
-                "or {error}.",
+                "or {error}. Optional idempotency, approval, and retry inputs are "
+                "observe-only and never sent to Proxmox.",
 )
 async def cap_guest_action(
     cluster_id: str = "", node: str = "", guest_type: str = "",
-    vmid: int = 0, action: str = "", trace_id=None,
+    vmid: int = 0, action: str = "", idempotency_key: str = "",
+    approval_receipt_ref: str = "", retry: bool = False, trace_id=None,
 ) -> Dict:
     if action not in _GUEST_ACTIONS:
         return {"error": f"action must be one of {sorted(_GUEST_ACTIONS)}"}
@@ -365,13 +397,17 @@ async def cap_guest_action(
     rec = await _get_cluster(cluster_id, opened=True)
     if not rec:
         return {"error": "cluster not found"}
+    shadow = _observe_proxmox_effect(
+        rec=rec, mode="guest_action", resource_ref=f"{node}:{guest_type}:{vmid}",
+        operation={"action": action}, idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     upid, err = await _pve(
         rec, "POST", f"/nodes/{node}/{guest_type}/{vmid}/status/{action}")
     if err:
-        return {"error": err}
+        return {"error": err, "effect_shadow": shadow}
     await emit_event({"type": "proxmox.guest.action", "cluster": cluster_id,
                       "node": node, "vmid": vmid, "action": action})
-    return {"ok": True, "upid": upid}
+    return {"ok": True, "upid": upid, "effect_shadow": shadow}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -471,17 +507,24 @@ async def cap_guest_ip(cluster_id: str = "", node: str = "", guest_type: str = "
     "proxmox.guest.exec",
     http_method="POST", http_path="/proxmox/guest/exec", http_tags=["proxmox"],
     memory="off",
+    redact_args=["cluster_id", "node", "guest_type", "vmid", "command",
+                 "pve_ssh_host_id", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Run a bash script INSIDE a guest via Proxmox — no guest SSH "
                 "needed. LXC: `pct exec` on the node (needs the node registered as "
                 "an SSH host). QEMU: the guest agent (must be installed). Inputs: "
                 "cluster_id (str!), node (str!), guest_type ('qemu'|'lxc'), vmid "
                 "(int!), command (str! — bash script), timeout (int=120), "
                 "pve_ssh_host_id (str — override the node's SSH host). Output: "
-                "{ok, stdout, stderr, exit_code, via}.",
+                "{ok, stdout, stderr, exit_code, via, effect_shadow}. Optional "
+                "idempotency, approval, and retry inputs are observe-only and "
+                "never sent to Proxmox or SSH.",
 )
 async def cap_guest_exec(cluster_id: str = "", node: str = "", guest_type: str = "",
                          vmid: int = 0, command: str = "", timeout: int = 120,
-                         pve_ssh_host_id: str = "", trace_id=None) -> Dict:
+                         pve_ssh_host_id: str = "", idempotency_key: str = "",
+                         approval_receipt_ref: str = "", retry: bool = False,
+                         trace_id=None) -> Dict:
     if not command:
         return {"error": "command required"}
     rec = await _get_cluster(cluster_id, opened=True)
@@ -510,42 +553,113 @@ async def cap_guest_exec(cluster_id: str = "", node: str = "", guest_type: str =
             return {"error": "exec.ssh.run unavailable"}
         b64 = _b64.b64encode(command.encode()).decode()
         cmd = f"pct exec {int(vmid)} -- bash -c 'echo {b64} | base64 -d | bash'"
+        shadow = _observe_proxmox_effect(
+            rec=rec, mode="guest_exec", resource_ref=f"{node}:lxc:{vmid}",
+            operation={"command": command, "timeout": int(timeout), "via": "pct"},
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
         res = await run(host_id=hid, command=cmd, timeout=int(timeout)) or {}
         return {"ok": bool(res.get("ok")) or res.get("rc") == 0, "via": "pct",
                 "stdout": res.get("stdout", ""), "stderr": res.get("stderr", ""),
-                "exit_code": res.get("rc", res.get("exit_code"))}
+                "exit_code": res.get("rc", res.get("exit_code")),
+                "effect_shadow": shadow}
     # QEMU guest agent
+    shadow = _observe_proxmox_effect(
+        rec=rec, mode="guest_exec", resource_ref=f"{node}:qemu:{vmid}",
+        operation={"command": command, "timeout": int(timeout), "via": "qm-agent"},
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     pid_data, err = await _pve(rec, "POST", f"/nodes/{node}/qemu/{vmid}/agent/exec",
                                {"command": ["bash", "-c", command]})
     pid = (pid_data or {}).get("pid") if isinstance(pid_data, dict) else None
     if err or pid is None:
         return {"error": f"agent exec failed ({err or 'no pid'}) — is the QEMU guest "
-                         "agent installed + running?"}
+                         "agent installed + running?", "effect_shadow": shadow}
     for _ in range(max(1, int(timeout) // 2)):
         st, err2 = await _pve(rec, "GET",
                               f"/nodes/{node}/qemu/{vmid}/agent/exec-status?pid={pid}")
         if err2:
-            return {"error": err2}
+            return {"error": err2, "effect_shadow": shadow}
         if isinstance(st, dict) and st.get("exited"):
             return {"ok": st.get("exitcode", 0) == 0, "via": "qm-agent",
                     "stdout": st.get("out-data", ""), "stderr": st.get("err-data", ""),
-                    "exit_code": st.get("exitcode")}
+                    "exit_code": st.get("exitcode"), "effect_shadow": shadow}
         await asyncio.sleep(2)
-    return {"error": "agent exec timed out", "via": "qm-agent"}
+    return {"error": "agent exec timed out", "via": "qm-agent",
+            "effect_shadow": shadow}
+
+
+async def set_node_hosts(cluster_id: str, node_hosts: Dict[str, str],
+                         merge: bool = False) -> Optional[Dict]:
+    """Write a cluster record's node -> SSH login map without touching any other
+    field (proxmox.cluster.save rewrites verify_tls from its own default)."""
+    r = _redis()
+    if not r or not cluster_id:
+        return None
+    raw = await r.hget(KEY_CLUSTERS, cluster_id)
+    if not raw:
+        return None
+    rec = json.loads(raw)
+    clean = {str(k): str(v) for k, v in (node_hosts or {}).items() if str(v or "").strip()}
+    rec["node_hosts"] = dict(rec.get("node_hosts") or {}, **clean) if merge else clean
+    rec["updated"] = now_iso()
+    await r.hset(KEY_CLUSTERS, rec["id"], json.dumps(rec))
+    return rec
+
+
+async def _exec_logins() -> List[Dict]:
+    lst = _cap("exec.ssh.hosts.list")
+    if not lst:
+        return []
+    try:
+        return list((await lst() or {}).get("hosts") or [])
+    except Exception:
+        return []
+
+
+async def _pxstore_cfg_raw(cluster_id: str) -> Dict:
+    """The storage fabric's own settings for a cluster, as stored (its older
+    node_hosts map lives there)."""
+    r = _redis()
+    if not r or not cluster_id:
+        return {}
+    try:
+        raw = await r.hget("vera:pxstore:cfg", cluster_id)
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+async def _resolve_node_login(cluster_id: str, rec: Dict, node: str = "") -> Dict[str, str]:
+    """The SSH login for a node of this cluster: the record's node_hosts, then
+    the storage fabric's older map, then a login named after the node, then the
+    login at the API host (node_hosts_core.resolve_node_host)."""
+    return _node_hosts.resolve_node_host(node, rec, await _pxstore_cfg_raw(cluster_id),
+                                         await _exec_logins())
 
 
 @capability(
     "proxmox.node.exec",
     http_method="POST", http_path="/proxmox/node/exec", http_tags=["proxmox"],
     memory="off",
+    redact_args=["cluster_id", "command", "pve_ssh_host_id", "node",
+                 "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Run a shell command ON the Proxmox NODE itself (not inside a guest) "
                 "— for qm / pvesm / pveam / wget when building templates or importing "
                 "images. Needs the node registered as an SSH host. Inputs: cluster_id "
                 "(str!), command (str!), timeout (int=300), pve_ssh_host_id (str — "
-                "override). Output: {ok, stdout, stderr, exit_code}.",
+                "override), node (str — which node; blank = the cluster's only mapped "
+                "node). The login comes from the cluster record's node_hosts, then the "
+                "storage fabric's map, then a login named after the node, then the login "
+                "at the API host. Output: {ok, stdout, stderr, exit_code, "
+                "effect_shadow}. Optional idempotency, approval, and retry inputs "
+                "are observe-only and never sent to SSH.",
 )
 async def cap_node_exec(cluster_id: str = "", command: str = "", timeout: int = 300,
-                        pve_ssh_host_id: str = "", trace_id=None) -> Dict:
+                        pve_ssh_host_id: str = "", node: str = "",
+                        idempotency_key: str = "", approval_receipt_ref: str = "",
+                        retry: bool = False, trace_id=None) -> Dict:
     if not command:
         return {"error": "command required"}
     rec = await _get_cluster(cluster_id, opened=True)
@@ -554,24 +668,59 @@ async def cap_node_exec(cluster_id: str = "", command: str = "", timeout: int = 
     host = _host_port(rec)[0]
     hid = pve_ssh_host_id
     if not hid:
-        lst = _cap("exec.ssh.hosts.list")
-        if lst:
-            try:
-                for h in (await lst() or {}).get("hosts", []):
-                    if h.get("host") == host:
-                        hid = h.get("id")
-                        break
-            except Exception:
-                pass
+        hid = (await _resolve_node_login(cluster_id, rec, node))["host_id"]
     if not hid:
-        return {"error": f"the Proxmox node ({host}) isn't a registered SSH host — add it"}
+        return {"error": f"no SSH login is mapped for the Proxmox node {node or host} — set "
+                         "node_hosts on the cluster or register the node as an SSH host"}
     run = _cap("exec.ssh.run")
     if not run:
         return {"error": "exec.ssh.run unavailable"}
+    shadow = _observe_proxmox_effect(
+        rec=rec, mode="node_exec", resource_ref=node or host,
+        operation={"command": command, "timeout": int(timeout)},
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     res = await run(host_id=hid, command=command, timeout=int(timeout)) or {}
     return {"ok": bool(res.get("ok")) or res.get("rc") == 0,
             "stdout": res.get("stdout", ""), "stderr": res.get("stderr", ""),
-            "exit_code": res.get("rc", res.get("exit_code"))}
+            "exit_code": res.get("rc", res.get("exit_code")),
+            "effect_shadow": shadow}
+
+
+@capability(
+    "proxmox.node_hosts.merge",
+    http_method="POST", http_path="/proxmox/node_hosts/merge", http_tags=["proxmox"],
+    memory="off",
+    description="Copy the storage fabric's node -> SSH login map (pxstore settings "
+                "node_hosts) onto each Proxmox cluster record, where proxmox.node.exec, "
+                "the storage fabric and nodes.list now read it. Dry run by default: per "
+                "record the nodes to add, conflicts (both maps name different logins; the "
+                "record's is kept) and stale logins the exec store no longer has. Only adds "
+                "map entries; nothing else on the record changes. Input: apply (bool, "
+                "default false). Output: {dry_run, steps, counts, clusters_changed, "
+                "applied?:[{cluster_id, ok, node_hosts|error}]}.",
+)
+async def cap_node_hosts_merge(apply: bool = False, trace_id=None) -> Dict:
+    if isinstance(apply, str):
+        apply = apply.strip().lower() in ("1", "true", "yes", "on")
+    records = await _all_raw()
+    cfgs = {c.get("id"): await _pxstore_cfg_raw(c.get("id", "")) for c in records}
+    plan = _node_hosts.plan_merge([_redact(c) for c in records], cfgs, await _exec_logins())
+    if not apply:
+        return dict(plan, dry_run=True)
+    applied = []
+    for step in plan["steps"]:
+        if not step["add"]:
+            continue
+        rec = await set_node_hosts(step["cluster_id"], step["add"], merge=True)
+        if rec is None:
+            applied.append({"cluster_id": step["cluster_id"], "ok": False,
+                            "error": "cluster record not found"})
+        else:
+            applied.append({"cluster_id": rec["id"], "ok": True, "node_hosts": rec["node_hosts"]})
+    await emit_event({"type": "proxmox.node_hosts.merged",
+                      "clusters": sum(1 for a in applied if a["ok"])})
+    return dict(plan, dry_run=False, applied=applied)
 
 
 @capability(
@@ -620,16 +769,22 @@ async def cap_storage_content(cluster_id: str = "", node: str = "",
     "proxmox.guest.clone",
     http_method="POST", http_path="/proxmox/guest/clone", http_tags=["proxmox"],
     memory="off",
+    redact_args=["cluster_id", "node", "guest_type", "vmid", "newid", "name",
+                 "storage", "target", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Clone an existing guest or template to a new VMID. Inputs: "
                 "cluster_id (str!), node (str!), guest_type ('qemu'|'lxc'), vmid "
                 "(int! source), newid (int! — blank/0 = auto), name (str), full "
                 "(bool=True), storage (str), target (str — target node). "
-                "Output: {ok, newid, upid}.",
+                "Output: {ok, newid, upid, effect_shadow}. Optional idempotency, "
+                "approval, and retry inputs are observe-only and never sent to Proxmox.",
 )
 async def cap_guest_clone(cluster_id: str = "", node: str = "",
                           guest_type: str = "", vmid: int = 0, newid: int = 0,
                           name: str = "", full: bool = True, storage: str = "",
-                          target: str = "", trace_id=None) -> Dict:
+                          target: str = "", idempotency_key: str = "",
+                          approval_receipt_ref: str = "", retry: bool = False,
+                          trace_id=None) -> Dict:
     if guest_type not in ("qemu", "lxc"):
         return {"error": "guest_type must be 'qemu' or 'lxc'"}
     rec = await _get_cluster(cluster_id, opened=True)
@@ -647,13 +802,18 @@ async def cap_guest_clone(cluster_id: str = "", node: str = "",
         data["storage"] = storage
     if target:
         data["target"] = target
+    shadow = _observe_proxmox_effect(
+        rec=rec, mode="guest_clone", resource_ref=f"{node}:{guest_type}:{vmid}:{newid}",
+        operation=data, idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     upid, err = await _pve(
         rec, "POST", f"/nodes/{node}/{guest_type}/{vmid}/clone", data)
     if err:
-        return {"error": err}
+        return {"error": err, "effect_shadow": shadow}
     await emit_event({"type": "proxmox.guest.clone", "cluster": cluster_id,
                       "node": node, "source": vmid, "newid": newid})
-    return {"ok": True, "newid": int(newid), "upid": upid}
+    return {"ok": True, "newid": int(newid), "upid": upid,
+            "effect_shadow": shadow}
 
 
 async def _wait_pve_task(rec, node: str, upid: str, timeout: int = 240):
@@ -676,6 +836,10 @@ async def _wait_pve_task(rec, node: str, upid: str, timeout: int = 240):
     "proxmox.vm.create",
     http_method="POST", http_path="/proxmox/vm/create", http_tags=["proxmox"],
     memory="off",
+    redact_args=["cluster_id", "node", "template_vmid", "newid", "name",
+                 "ciuser", "cipassword", "sshkeys", "ipconfig", "storage",
+                 "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Create a cloud-init VM by cloning a prepared cloud-image TEMPLATE "
                 "and injecting cloud-init (user, SSH keys, network) via the API. "
                 "Inputs: cluster_id (str!), node (str!), template_vmid (int! — a "
@@ -684,14 +848,17 @@ async def _wait_pve_task(rec, node: str, upid: str, timeout: int = 240):
                 "(int=2048 MB), disk (int=0 — GB to grow scsi0 to; 0=leave), ciuser "
                 "(str='vera'), cipassword (str), sshkeys (str — authorized keys), "
                 "ipconfig (str='ip=dhcp'), storage (str), start (bool=True). "
-                "Output: {ok, vmid, upid}.",
+                "Output: {ok, vmid, upid, effect_shadow}. Optional idempotency, "
+                "approval, and retry inputs are observe-only and never sent to Proxmox.",
 )
 async def cap_vm_create(cluster_id: str = "", node: str = "", template_vmid: int = 0,
                         newid: int = 0, name: str = "", cores: int = 2,
                         memory: int = 2048, disk: int = 0, ciuser: str = "vera",
                         cipassword: str = "", sshkeys: str = "",
                         ipconfig: str = "ip=dhcp", storage: str = "",
-                        start: bool = True, trace_id=None) -> Dict:
+                        start: bool = True, idempotency_key: str = "",
+                        approval_receipt_ref: str = "", retry: bool = False,
+                        trace_id=None) -> Dict:
     if not template_vmid:
         return {"error": "template_vmid required — a prepared cloud-init template to "
                          "clone (build one from a catalog cloudimg; the image-import "
@@ -709,13 +876,21 @@ async def cap_vm_create(cluster_id: str = "", node: str = "", template_vmid: int
         cdata["name"] = name
     if storage:
         cdata["storage"] = storage
+    shadow = _observe_proxmox_effect(
+        rec=rec, mode="vm_create", resource_ref=f"{node}:qemu:{newid}",
+        operation={"clone": cdata, "cores": int(cores), "memory": int(memory),
+                   "disk": int(disk), "ciuser": ciuser, "cipassword": cipassword,
+                   "sshkeys": sshkeys, "ipconfig": ipconfig, "start": bool(start)},
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     upid, err = await _pve(rec, "POST", f"/nodes/{node}/qemu/{template_vmid}/clone", cdata)
     if err:
-        return {"error": f"clone: {err}"}
+        return {"error": f"clone: {err}", "effect_shadow": shadow}
     # the clone is an async task — wait for it before configuring / starting
     terr = await _wait_pve_task(rec, node, upid)
     if terr:
-        return {"error": f"clone task: {terr}", "vmid": int(newid)}
+        return {"error": f"clone task: {terr}", "vmid": int(newid),
+                "effect_shadow": shadow}
     cfg: Dict = {"cores": int(cores), "memory": int(memory), "agent": "enabled=1",
                  "ciuser": ciuser or "vera", "ipconfig0": ipconfig or "ip=dhcp"}
     if name:
@@ -734,13 +909,18 @@ async def cap_vm_create(cluster_id: str = "", node: str = "", template_vmid: int
     await emit_event({"type": "proxmox.vm.create", "cluster": cluster_id,
                       "node": node, "vmid": newid, "template": template_vmid})
     return {"ok": True, "vmid": int(newid), "upid": upid,
-            "note": f"config warning: {cerr}" if cerr else ""}
+            "note": f"config warning: {cerr}" if cerr else "",
+            "effect_shadow": shadow}
 
 
 @capability(
     "proxmox.lxc.create",
     http_method="POST", http_path="/proxmox/lxc/create", http_tags=["proxmox"],
     memory="off",
+    redact_args=["cluster_id", "node", "vmid", "ostemplate", "hostname",
+                 "storage", "password", "ssh_public_keys", "net0", "features",
+                 "enroll_fqdn", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Create a new LXC container from an OS template. Inputs: "
                 "cluster_id (str!), node (str!), vmid (int — blank/0 = auto), "
                 "ostemplate (str! volid, e.g. 'local:vztmpl/debian-12.tar.zst'), "
@@ -748,7 +928,9 @@ async def cap_vm_create(cluster_id: str = "", node: str = "", template_vmid: int
                 "(int=512 MB), disk (int=8 GB), password (str), ssh_public_keys "
                 "(str), net0 (str — default DHCP on vmbr0), unprivileged (bool=True), "
                 "features (str — e.g. 'nesting=1,keyctl=1', required for Docker "
-                "inside the CT), start (bool=True). Output: {ok, vmid, upid}.",
+                "inside the CT), start (bool=True). Output: {ok, vmid, upid, "
+                "effect_shadow}. Optional idempotency, approval, and retry inputs "
+                "are observe-only and never sent to Proxmox.",
 )
 async def cap_lxc_create(cluster_id: str = "", node: str = "", vmid: int = 0,
                          ostemplate: str = "", hostname: str = "",
@@ -757,7 +939,9 @@ async def cap_lxc_create(cluster_id: str = "", node: str = "", vmid: int = 0,
                          ssh_public_keys: str = "", net0: str = "",
                          unprivileged: bool = True, features: str = "",
                          start: bool = True, auto_enroll: bool = False,
-                         enroll_fqdn: str = "", trace_id=None) -> Dict:
+                         enroll_fqdn: str = "", idempotency_key: str = "",
+                         approval_receipt_ref: str = "", retry: bool = False,
+                         trace_id=None) -> Dict:
     if not ostemplate:
         return {"error": "ostemplate required (a vztmpl volid)"}
     rec = await _get_cluster(cluster_id, opened=True)
@@ -784,12 +968,17 @@ async def cap_lxc_create(cluster_id: str = "", node: str = "", vmid: int = 0,
         data["ssh-public-keys"] = ssh_public_keys
     if features:
         data["features"] = features
+    shadow = _observe_proxmox_effect(
+        rec=rec, mode="lxc_create", resource_ref=f"{node}:lxc:{vmid}",
+        operation=data, idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     upid, err = await _pve(rec, "POST", f"/nodes/{node}/lxc", data)
     if err:
-        return {"error": err}
+        return {"error": err, "effect_shadow": shadow}
     await emit_event({"type": "proxmox.lxc.create", "cluster": cluster_id,
                       "node": node, "vmid": vmid})
-    out = {"ok": True, "vmid": int(vmid), "upid": upid}
+    out = {"ok": True, "vmid": int(vmid), "upid": upid,
+           "effect_shadow": shadow}
 
     # Closed loop: create → auto-enrol via Proxmox (no guest creds needed —
     # enroll.guest runs `pct exec` and installs Vera's key), so a freshly-spun
@@ -801,14 +990,17 @@ async def cap_lxc_create(cluster_id: str = "", node: str = "", vmid: int = 0,
             ip = await _guest_ip(rec, node, "lxc", int(vmid))
             if ip:
                 break
-        enrol = _cap("enroll.guest")
+        # One enrolment pipeline: auto-enrol, whose login step is enroll.guest.
+        pipeline = _cap("autoenroll.enrol")
+        enrol = pipeline or _cap("enroll.guest")
         if enrol:
             fqdn = (enroll_fqdn or (hostname if hostname and "." in hostname
                     else (f"{hostname}.local" if hostname else f"ct{vmid}.local")))
+            extra = {"steps": "enroll_guest"} if pipeline else {}
             try:
                 out["enrol"] = await enrol(cluster_id=cluster_id, vmid=int(vmid),
                                            guest_type="lxc", node=node, fqdn=fqdn,
-                                           ip=ip, via_proxmox=True)
+                                           ip=ip, via_proxmox=True, **extra)
             except Exception as e:
                 out["enrol"] = {"error": str(e)}
         else:
@@ -820,14 +1012,21 @@ async def cap_lxc_create(cluster_id: str = "", node: str = "", vmid: int = 0,
     "proxmox.guest.destroy",
     http_method="POST", http_path="/proxmox/guest/destroy", http_tags=["proxmox"],
     memory="off",
+    redact_args=["cluster_id", "node", "guest_type", "vmid",
+                 "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Destroy (permanently delete) a guest. Inputs: cluster_id (str!), "
                 "node (str!), guest_type ('qemu'|'lxc'), vmid (int!), purge "
                 "(bool=True — also remove from backup/HA configs). The guest "
-                "should be stopped first. Output: {ok, upid}.",
+                "should be stopped first. Output: {ok, upid, effect_shadow}. "
+                "Optional idempotency, approval, and retry inputs are observe-only "
+                "and never sent to Proxmox.",
 )
 async def cap_guest_destroy(cluster_id: str = "", node: str = "",
                             guest_type: str = "", vmid: int = 0,
-                            purge: bool = True, trace_id=None) -> Dict:
+                            purge: bool = True, idempotency_key: str = "",
+                            approval_receipt_ref: str = "", retry: bool = False,
+                            trace_id=None) -> Dict:
     if guest_type not in ("qemu", "lxc"):
         return {"error": "guest_type must be 'qemu' or 'lxc'"}
     rec = await _get_cluster(cluster_id, opened=True)
@@ -836,12 +1035,16 @@ async def cap_guest_destroy(cluster_id: str = "", node: str = "",
     path = f"/nodes/{node}/{guest_type}/{vmid}"
     if purge:
         path += "?purge=1&destroy-unreferenced-disks=1"
+    shadow = _observe_proxmox_effect(
+        rec=rec, mode="guest_destroy", resource_ref=f"{node}:{guest_type}:{vmid}",
+        operation={"purge": bool(purge)}, idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     upid, err = await _pve(rec, "DELETE", path)
     if err:
-        return {"error": err}
+        return {"error": err, "effect_shadow": shadow}
     await emit_event({"type": "proxmox.guest.destroy", "cluster": cluster_id,
                       "node": node, "vmid": vmid})
-    return {"ok": True, "upid": upid}
+    return {"ok": True, "upid": upid, "effect_shadow": shadow}
 
 
 @capability(
@@ -853,7 +1056,10 @@ async def cap_guest_destroy(cluster_id: str = "", node: str = "",
                 "when possible. Inputs: cluster_id (str!), node (str!), guest_type "
                 "('qemu'|'lxc'), vmid (int!), user (str='root'), password (str), "
                 "key_path (str), ip (str — override auto-detect), port (int=22), "
-                "label (str). Output: {ok, ssh_host_id, ip, host}.",
+                "label (str). The login is labelled pve:<vmid>@<node> and tagged "
+                "guest:<cluster_id>:<vmid>; auto-enrol runs this as its login step "
+                "for register_only callers (autoenroll.enrol). "
+                "Output: {ok, ssh_host_id, ip, host}.",
 )
 async def cap_guest_enroll(cluster_id: str = "", node: str = "",
                            guest_type: str = "", vmid: int = 0, user: str = "root",
@@ -874,7 +1080,7 @@ async def cap_guest_enroll(cluster_id: str = "", node: str = "",
         label=label or f"pve:{vmid}@{node}",
         auth="key" if key_path else "password",
         password=password, key_path=key_path,
-        tags=f"proxmox,{guest_type},{node}", trace_id=None,
+        tags=f"proxmox,{guest_type},{node},guest:{cluster_id}:{int(vmid)}", trace_id=None,
     )
     if not res.get("ok"):
         return {"error": res.get("error", "save failed")}
@@ -1136,18 +1342,26 @@ async def cap_fw_rules_list(cluster_id: str = "", scope: str = "guest",
     "proxmox.fw.rule.add",
     http_method="POST", http_path="/proxmox/fw/rule/add", http_tags=["proxmox"],
     memory="off",
+    redact_args=["cluster_id", "scope", "node", "guest_type", "vmid",
+                 "source", "dest", "dport", "comment", "idempotency_key",
+                 "approval_receipt_ref"],
+    redact_result=True,
     description="Add a firewall rule (e.g. to ALLOW or DROP a connection). Inputs: "
                 "cluster_id (str!), scope ('cluster'|'node'|'guest'), node, "
                 "guest_type, vmid, action ('ACCEPT'|'DROP'|'REJECT'), type "
                 "('in'|'out', default 'in'), source (CIDR/IP/ipset), dest, proto "
                 "('tcp'|'udp'…), dport (str), comment, enable (bool=true). "
-                "Output: {ok} or {error}.",
+                "Output: {ok, effect_shadow} or {error, effect_shadow}. Optional "
+                "idempotency, approval, and retry inputs are observe-only and "
+                "never sent to Proxmox.",
 )
 async def cap_fw_rule_add(cluster_id: str = "", scope: str = "guest",
                           node: str = "", guest_type: str = "", vmid: int = 0,
                           action: str = "ACCEPT", type: str = "in",
                           source: str = "", dest: str = "", proto: str = "",
                           dport: str = "", comment: str = "", enable: bool = True,
+                          idempotency_key: str = "",
+                          approval_receipt_ref: str = "", retry: bool = False,
                           trace_id=None) -> Dict:
     rec = await _get_cluster(cluster_id, opened=True)
     if not rec:
@@ -1160,24 +1374,36 @@ async def cap_fw_rule_add(cluster_id: str = "", scope: str = "guest",
                  ("dport", dport), ("comment", comment)):
         if v:
             body[k] = v
+    shadow = _observe_proxmox_effect(
+        rec=rec, mode="firewall_rule_add",
+        resource_ref=f"{scope}:{node}:{guest_type}:{vmid}", operation=body,
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     _, err = await _pve(rec, "POST", base + "/rules", data=body)
     if err:
-        return {"error": err}
+        return {"error": err, "effect_shadow": shadow}
     await emit_event({"type": "proxmox.fw.rule.added", "cluster": cluster_id,
                       "scope": scope, "action": action})
-    return {"ok": True}
+    return {"ok": True, "effect_shadow": shadow}
 
 
 @capability(
     "proxmox.fw.rule.delete",
     http_method="POST", http_path="/proxmox/fw/rule/delete", http_tags=["proxmox"],
     memory="off",
+    redact_args=["cluster_id", "scope", "node", "guest_type", "vmid", "pos",
+                 "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Delete a firewall rule by position. Inputs: cluster_id (str!), "
-                "scope, node, guest_type, vmid, pos (int!). Output: {ok} or {error}.",
+                "scope, node, guest_type, vmid, pos (int!). Output: "
+                "{ok, effect_shadow} or {error, effect_shadow}. Optional idempotency, "
+                "approval, and retry inputs are observe-only and never sent to Proxmox.",
 )
 async def cap_fw_rule_delete(cluster_id: str = "", scope: str = "guest",
                              node: str = "", guest_type: str = "", vmid: int = 0,
-                             pos: int = -1, trace_id=None) -> Dict:
+                             pos: int = -1, idempotency_key: str = "",
+                             approval_receipt_ref: str = "", retry: bool = False,
+                             trace_id=None) -> Dict:
     if pos < 0:
         return {"error": "pos required"}
     rec = await _get_cluster(cluster_id, opened=True)
@@ -1186,10 +1412,15 @@ async def cap_fw_rule_delete(cluster_id: str = "", scope: str = "guest",
     base = _fw_base(scope, node, guest_type, vmid)
     if not base:
         return {"error": "missing node/guest_type/vmid for scope"}
+    shadow = _observe_proxmox_effect(
+        rec=rec, mode="firewall_rule_delete",
+        resource_ref=f"{scope}:{node}:{guest_type}:{vmid}:{pos}",
+        operation={"position": int(pos)}, idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     _, err = await _pve(rec, "DELETE", f"{base}/rules/{pos}")
     if err:
-        return {"error": err}
-    return {"ok": True}
+        return {"error": err, "effect_shadow": shadow}
+    return {"ok": True, "effect_shadow": shadow}
 
 
 # ═════════════════════════════════════════════════════════════════════════════

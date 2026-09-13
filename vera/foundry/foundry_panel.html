@@ -62,7 +62,7 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
   <p class="lead">Provision an OS onto a target — <b>image × features</b>, with SSH-cert + FreeIPA + mesh baked in. (CT, VM &amp; Docker all live; bare-metal via PXE/netboot.)</p>
   <div class="grid">
     <!-- Provision wizard -->
-    <div class="card">
+    <div class="card" id="sec-provision">
       <h2>Provision</h2>
       <div class="row">
         <div><label>Target</label>
@@ -91,7 +91,7 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 
     <div>
       <!-- Catalog -->
-      <div class="card" style="margin-bottom:14px">
+      <div class="card" id="sec-images" style="margin-bottom:14px">
         <h2>Image catalog <span class="r"><a href="#" onclick="seed();return false" style="color:var(--acc)">seed defaults</a> · <span id="imgCount">0</span></span></h2>
         <div style="max-height:260px;overflow:auto">
           <table><thead><tr><th>OS</th><th>Ver</th><th>Type</th><th>Source</th><th></th></tr></thead>
@@ -99,7 +99,7 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
         </div>
       </div>
       <!-- Blueprints (IaC) -->
-      <div class="card" style="margin-bottom:14px">
+      <div class="card" id="sec-blueprints" style="margin-bottom:14px">
         <h2>Blueprints <span class="r"><a href="#" onclick="saveAsBlueprint();return false" style="color:var(--acc)">save current</a> · <a href="#" onclick="importBp();return false" style="color:var(--acc)">import</a></span></h2>
         <div id="bpList" style="max-height:210px;overflow:auto"><span class="muted">none yet</span></div>
         <div class="muted" style="font-size:10px;margin-top:6px">Versioned, reusable Infrastructure-as-Code — define an estate once, then <b>apply</b> / <b>export</b> it as a YAML manifest you can commit to git/Gitea.</div>
@@ -113,7 +113,7 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
   </div>
 
   <!-- Physical / PXE -->
-  <div class="card" style="margin-top:14px">
+  <div class="card" id="sec-pxe" style="margin-top:14px">
     <h2>Physical / PXE <span class="r"><span id="pxeStatus" class="muted">—</span> · <a href="#" onclick="pxeDeploy();return false" style="color:var(--acc)">deploy netboot server</a></span></h2>
     <div class="muted" style="font-size:11px;margin:-4px 0 10px">Bare-metal &amp; ISO installs use the <b>same catalogue images and feature bundles</b> as CT/VM — a PXE <b>profile</b> = image × features. Runs on a dedicated provisioning bridge/VLAN, isolated from the main LAN.</div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
@@ -145,7 +145,7 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
   </div>
 
   <!-- SD cards / Raspberry Pi -->
-  <div class="card" style="margin-top:14px">
+  <div class="card" id="sec-sdcard" style="margin-top:14px">
     <h2>SD card / Raspberry Pi <span class="r"><a href="#" onclick="sdDetect();return false" style="color:var(--acc)">detect cards</a></span></h2>
     <div class="muted" style="font-size:11px;margin:-4px 0 10px">Provisions a Pi from its card: SPI <b>TFT + XPT2046 touch</b>, SSH, wifi, and a first-boot join to Vera. <b>Adapts in place</b> — existing data is kept, <code>config.txt</code> is merged not replaced, and HDMI stays on so a wrong panel guess is recoverable. Services inherited from the card's previous life (DHCP, access points, cluster daemons) are masked before they can disrupt the LAN.</div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
@@ -437,7 +437,11 @@ async function loadJobs(){
       <div style="font-size:10px;color:var(--dim2);margin-top:2px">feats: ${(job.features||[]).join(', ')}</div></div>`;
   }).join('')||'<span class="muted">none yet</span>';
 }
-boot();
+// The Estate tab's Build entry opens this page at one section (#sec-images,
+// #sec-blueprints, #sec-pxe, #sec-sdcard); the hash changes without a reload.
+function jumpTo(){const el=location.hash&&document.getElementById(location.hash.slice(1));if(el)el.scrollIntoView({block:'start'});}
+window.addEventListener('hashchange',jumpTo);
+boot().then(jumpTo);
 </script>
 </body>
 </html>

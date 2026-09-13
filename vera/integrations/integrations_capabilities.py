@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -63,6 +64,19 @@ from Vera.vera.integrations.source_build_plan import (
     build_plan_contract as _source_build_plan_contract,
     plan_source_build as _plan_source_build,
 )
+from Vera.vera.integrations.external_effects import (
+    plan_api_effect_shadow as _plan_api_effect_shadow,
+    plan_external_effect as _plan_external_effect,
+)
+from Vera.vera.integrations.effect_receipts import default_external_effect_receipt_ledger
+from Vera.vera.integrations.effect_shadow_evidence import default_external_effect_shadow_evidence
+from Vera.vera.integrations.effect_enforcement_decision import (
+    DecisionConflict, default_external_effect_enforcement_decisions)
+from Vera.vera.integrations.effect_enforcement_activation import (
+    ActivationConflict, default_external_effect_enforcement_activations)
+from Vera.vera.integrations.effect_retry import plan_effect_retry as _plan_effect_retry
+from Vera.vera.integrations.connection_projection import project_connections
+from Vera.vera.integrations.provider_effect_inventory import provider_effect_inventory
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -73,6 +87,11 @@ log = logging.getLogger("vera.integrations")
 
 _HERE = Path(__file__).parent
 KEY_INTEGRATIONS = "vera:integrations"
+
+
+def _effect_enforcement_runtime_gate() -> bool:
+    return os.getenv("VERA_INTEGRATION_API_EFFECT_ENFORCEMENT", "").strip().lower() \
+        in {"1", "true", "yes", "on"}
 
 # Aliases onto the pure policy module (single source of truth, shared with tests).
 ACCESS_MODES = _policy.ACCESS_MODES
@@ -403,18 +422,27 @@ async def cap_operate(id: str = "", goal: str = "", max_steps: int = 15,
     "integration.api.call",
     http_method="POST", http_path="/integrations/api/call", http_tags=["integration"],
     memory="on",
+    redact_args=["path", "query", "body", "headers", "idempotency_key",
+                 "approval_receipt_ref"],
+    redact_result=True,
     description="Call an integration's HTTP API through an authenticated "
                 "passthrough (the sealed token is injected server-side and never "
                 "reaches the browser). REQUIRES access.api. Inputs: id (str!), "
                 "method (GET|POST|PUT|DELETE|PATCH), path (str — appended to the "
                 "kind's api_base, e.g. '/repos'), query (dict), body (dict/str), "
-                "headers (dict — extra). Output: {ok, status, body, json?} or "
+                "headers (dict — extra), idempotency_key, approval_receipt_ref, "
+                "retry (policy evidence only; not forwarded). Mutating calls are "
+                "blocked only when the deployment gate, current approval, and "
+                "contract-bound activation all agree. Output: "
+                "{ok, status, body, json?, effect_shadow, effect_enforcement} or "
                 "{error, code:403}.",
     schema={"properties": {"method": {"enum": ["GET", "POST", "PUT", "DELETE", "PATCH"]}}},
 )
 async def cap_api_call(id: str = "", method: str = "GET", path: str = "",
                        query: Optional[Dict] = None, body: Any = None,
-                       headers: Optional[Dict] = None, trace_id=None) -> Dict:
+                       headers: Optional[Dict] = None, idempotency_key: str = "",
+                       approval_receipt_ref: str = "", retry: bool = False,
+                       trace_id=None) -> Dict:
     rec = await _get(id)
     gate = _require_access(rec, "api")
     if gate:
@@ -422,13 +450,59 @@ async def cap_api_call(id: str = "", method: str = "GET", path: str = "",
     base = _base_url(rec)
     if not base:
         return {"error": "integration has no resolvable URL"}
+    try:
+        shadow = _plan_api_effect_shadow(
+            integration_id=id, method=method, path=path,
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
+        if (shadow["plan"]["mutating"] and
+                shadow["plan"]["admission"]["allowed"]):
+            replay = default_external_effect_receipt_ledger().replay_status(shadow["plan"])
+            already = bool(replay["already_succeeded"])
+            shadow["replay"] = {
+                "already_succeeded": already, "would_suppress": already,
+                "successful_receipt_id": replay["successful_receipt_id"]}
+            shadow["decision"]["would_execute"] = not already
+    except Exception:
+        shadow = {"schema": "vera.external-effect-shadow/v1",
+                  "enforcement": "observe_only", "error": "shadow_unavailable",
+                  "decision": {"would_admit": False, "would_execute": False,
+                               "reasons": ["invalid_policy_evidence"]},
+                  "blocks_current_call": False, "forwards_control_references": False,
+                  "records_completion": False, "executes": False}
+    try:
+        default_external_effect_shadow_evidence().record(shadow)
+    except Exception:
+        log.exception("external-effect shadow evidence record failed")
+    runtime_gate = _effect_enforcement_runtime_gate()
+    try:
+        operator_decision = default_external_effect_enforcement_decisions().current()
+        activation = default_external_effect_enforcement_activations().current(
+            operator_decision, runtime_gate=runtime_gate)
+    except Exception:
+        activation = {"enforcement_enabled": False, "effective_mode": "observe_only",
+                      "error": "activation_state_unavailable"}
+        if runtime_gate and (shadow.get("plan") or {}).get("mutating"):
+            return {"error": "effect enforcement state unavailable", "code": 503,
+                    "effect_shadow": shadow, "effect_enforcement": activation}
+    shadow["enforcement"] = activation["effective_mode"]
+    if activation["enforcement_enabled"] and not shadow["decision"]["would_execute"]:
+        await _audit("api_call_blocked", rec, method=method,
+                     effect_plan_id=(shadow.get("plan") or {}).get("plan_id", ""),
+                     effect_reasons=shadow["decision"]["reasons"])
+        return {"error": "external effect rejected by policy", "code": 403,
+                "effect_shadow": shadow, "effect_enforcement": activation}
     spec = KIND_SPECS.get(rec.get("kind", "generic"), {})
     api_base = (rec.get("api") or {}).get("api_base", spec.get("api_base", ""))
     url = base + api_base + ("/" + path.lstrip("/") if path else "")
     hdrs = dict(headers or {})
     _apply_api_auth(rec, hdrs)
     verify = rec.get("scheme") == "https" and rec.get("verify_tls", False)
-    await _audit("api_call", rec, method=method, path=path)
+    await _audit("api_call", rec, method=method,
+                 effect_plan_id=(shadow.get("plan") or {}).get("plan_id", ""),
+                 effect_would_admit=shadow["decision"]["would_admit"],
+                 effect_would_execute=shadow["decision"]["would_execute"],
+                 effect_reasons=shadow["decision"]["reasons"])
     try:
         async with httpx.AsyncClient(timeout=30, verify=verify,
                                      follow_redirects=True) as c:
@@ -437,13 +511,16 @@ async def cap_api_call(id: str = "", method: str = "GET", path: str = "",
                                 content=body if isinstance(body, str) else None,
                                 headers=hdrs)
     except Exception as e:
-        return {"error": f"upstream {type(e).__name__}: {e}"}
+        return {"error": f"upstream {type(e).__name__}: {e}",
+                "effect_shadow": shadow, "effect_enforcement": activation}
     out: Dict[str, Any] = {"ok": r.status_code < 400, "status": r.status_code,
                            "url": url}
     try:
         out["json"] = r.json()
     except Exception:
         out["body"] = r.text[:20000]
+    out["effect_shadow"] = shadow
+    out["effect_enforcement"] = activation
     return out
 
 
@@ -538,6 +615,43 @@ async def cap_connections(id: str = "", trace_id=None) -> Dict:
             if c["enabled"]:
                 edges.append({"from": "vera", "to": rec["id"], "protocol": c["type"]})
     return {"graph": {"nodes": nodes, "edges": edges}, "count": len(recs)}
+
+
+@capability(
+    "integration.connections.project", http_method="GET",
+    http_path="/integrations/connections/project",
+    http_tags=["integration", "accounts", "providers"], memory="off", silent=True,
+    description="Build a deterministic read-only connection projection across "
+                "the integration, account, and model-provider registries. Reports "
+                "source authority, sanitized endpoint origins, credential presence, "
+                "explicit references, unresolved links, and collisions. It never "
+                "opens secrets, probes endpoints, merges records, grants access, or "
+                "activates a connection.",
+)
+async def cap_connections_project(trace_id=None) -> Dict:
+    available_sources = {"integration"}
+    integrations = [_redact(record) for record in await _all()]
+    accounts: List[Dict] = []
+    providers: List[Dict] = []
+    account_list = _cap_raw("acct.list")
+    if account_list:
+        try:
+            result = await account_list()
+            accounts = list((result or {}).get("accounts") or [])
+            available_sources.add("account")
+        except Exception:
+            pass
+    provider_list = _cap_raw("providers.list")
+    if provider_list:
+        try:
+            result = await provider_list()
+            providers = list((result or {}).get("providers") or [])
+            available_sources.add("provider")
+        except Exception:
+            pass
+    return project_connections(
+        integrations=integrations, accounts=accounts, providers=providers,
+        available_sources=available_sources)
 
 
 async def _connections_for(rec: Dict) -> List[Dict]:
@@ -830,6 +944,301 @@ async def integration_embed_proxy(iid: str, request: Request, path: str = ""):
 #  PANEL
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
+    "integration.effect.plan", http_method="POST",
+    http_path="/integrations/effect/plan", http_tags=["integration", "policy"],
+    memory="off",
+    description="Plan admission for one outbound integration operation without "
+                "executing it. Classifies reads, idempotent writes, and non-idempotent "
+                "writes; requires opaque approval-receipt and idempotency references "
+                "where appropriate and returns only their SHA-256 digests. Inputs: "
+                "connection_id, operation, method, idempotency_key, "
+                "approval_receipt_ref, retry.",
+)
+async def integration_effect_plan(connection_id: str = "", operation: str = "",
+                                  method: str = "GET", idempotency_key: str = "",
+                                  approval_receipt_ref: str = "", retry: bool = False,
+                                  trace_id=None):
+    try:
+        return _plan_external_effect(
+            connection_id=connection_id, operation=operation, method=method,
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-plan/v1", "error": str(exc),
+                "admission": {"allowed": False, "reasons": ["invalid_request"]},
+                "executes": False, "resolves_secrets": False,
+                "retains_payload": False}
+
+
+@capability(
+    "integration.effect.replay.status", http_method="POST",
+    http_path="/integrations/effect/replay/status",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Inspect durable replay evidence for one previously generated "
+                "external-effect plan without performing or retrying it. Input: plan "
+                "(the complete vera.external-effect-plan/v1 object). Returns whether "
+                "a matching successful receipt already exists; payloads and raw opaque "
+                "references are never stored or returned.",
+)
+async def integration_effect_replay_status(plan: Optional[Dict] = None, trace_id=None):
+    try:
+        return default_external_effect_receipt_ledger().replay_status(plan or {})
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-replay-status/v1",
+                "error": str(exc), "already_succeeded": False,
+                "decision": "invalid_plan", "executes": False,
+                "retries": False, "retains_payload": False}
+
+
+@capability(
+    "integration.effect.enforcement.activation", http_method="GET",
+    http_path="/integrations/effect/enforcement/activation",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Read contract-bound generic API enforcement activation and bounded history. "
+                "Effective enforcement requires the deployment gate, a matching current "
+                "operator approval, and a fresh activation record.",
+)
+async def integration_effect_enforcement_activation(history_limit: int = 20, trace_id=None):
+    try:
+        decision = default_external_effect_enforcement_decisions().current()
+        return default_external_effect_enforcement_activations().current(
+            decision, runtime_gate=_effect_enforcement_runtime_gate(),
+            history_limit=history_limit)
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-enforcement-activation/v1",
+                "error": str(exc), "code": "invalid_request",
+                "effective_mode": "observe_only", "enforcement_enabled": False}
+    except Exception:
+        log.exception("effect enforcement activation read failed")
+        return {"schema": "vera.external-effect-enforcement-activation/v1",
+                "error": "activation_state_unavailable",
+                "code": "activation_state_unavailable",
+                "effective_mode": "observe_only", "enforcement_enabled": False}
+
+
+@capability(
+    "integration.effect.enforcement.activate", http_method="POST",
+    http_path="/integrations/effect/enforcement/activation",
+    http_tags=["integration", "policy"], memory="on",
+    redact_args=["actor_ref", "activation_receipt_ref"],
+    description="Activate or deactivate generic Integration API effect enforcement. Inputs: "
+                "action, expected_revision, actor_ref, and activation_receipt_ref for activation. "
+                "Activation requires the deployment gate and matching current approval; "
+                "deactivation is always available. It never retries an operation.",
+)
+async def integration_effect_enforcement_activate(
+        action: str = "deactivate", expected_revision: int = 0,
+        actor_ref: str = "", activation_receipt_ref: str = "", trace_id=None):
+    try:
+        decision = default_external_effect_enforcement_decisions().current()
+        ledger = default_external_effect_enforcement_activations()
+    except Exception:
+        log.exception("effect enforcement activation state unavailable")
+        return {"error": "activation_state_unavailable",
+                "code": "activation_state_unavailable",
+                "effective_mode": "observe_only", "enforcement_enabled": False}
+    try:
+        return ledger.apply(action=action, expected_revision=expected_revision,
+                            decision=decision, actor_ref=actor_ref,
+                            activation_receipt_ref=activation_receipt_ref,
+                            runtime_gate=_effect_enforcement_runtime_gate())
+    except ActivationConflict as exc:
+        return {"error": str(exc), "code": "revision_conflict",
+                "current": ledger.current(decision, runtime_gate=_effect_enforcement_runtime_gate())}
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "code": "invalid_activation",
+                "current": ledger.current(decision, runtime_gate=_effect_enforcement_runtime_gate())}
+
+
+@capability(
+    "integration.effect.enforcement.decision", http_method="GET",
+    http_path="/integrations/effect/enforcement/decision",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Read the current revision-guarded operator decision and bounded history "
+                "for future external-effect enforcement. Effective runtime mode remains "
+                "observe-only; no payloads or raw identities are returned.",
+)
+async def integration_effect_enforcement_decision(history_limit: int = 20, trace_id=None):
+    try:
+        return default_external_effect_enforcement_decisions().current(
+            history_limit=history_limit)
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-enforcement-decision/v1",
+                "error": str(exc), "revision": 0,
+                "decision": "continue_observing", "requested_mode": "observe_only",
+                "effective_mode": "observe_only", "enforcement_enabled": False,
+                "history": [], "executes": False, "changes_runtime_policy": False,
+                "retains_payload": False}
+
+
+@capability(
+    "integration.effect.enforcement.decide", http_method="POST",
+    http_path="/integrations/effect/enforcement/decision",
+    http_tags=["integration", "policy"], memory="on",
+    redact_args=["actor_ref", "approval_receipt_ref"],
+    description="Record a reversible operator decision to continue observation or approve "
+                "a future enforcement rollout. Inputs: decision, expected_revision, actor_ref, "
+                "and approval_receipt_ref for approval. Approval requires current readiness. "
+                "This records hashed intent only; effective runtime mode remains observe-only.",
+)
+async def integration_effect_enforcement_decide(
+        decision: str = "continue_observing", expected_revision: int = 0,
+        actor_ref: str = "", approval_receipt_ref: str = "", trace_id=None):
+    from Vera.vera.integrations.effect_shadow_evidence import evaluate_enforcement_readiness
+    try:
+        readiness = evaluate_enforcement_readiness(
+            default_external_effect_shadow_evidence().summary(limit=200))
+    except Exception:
+        return {"error": "evidence_unavailable", "code": "evidence_unavailable",
+                "effective_mode": "observe_only", "enforcement_enabled": False}
+    try:
+        return default_external_effect_enforcement_decisions().decide(
+            decision=decision, expected_revision=expected_revision,
+            actor_ref=actor_ref, approval_receipt_ref=approval_receipt_ref,
+            readiness=readiness)
+    except DecisionConflict as exc:
+        return {"error": str(exc), "code": "revision_conflict",
+                "current": default_external_effect_enforcement_decisions().current()}
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "code": "invalid_decision",
+                "current": default_external_effect_enforcement_decisions().current()}
+
+
+@capability(
+    "integration.effect.enforcement.readiness", http_method="GET",
+    http_path="/integrations/effect/enforcement/readiness",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Assess whether observe-only external-effect evidence is sufficiently "
+                "representative for operator review. This fail-closed assessment does not "
+                "prove safety, authorize enforcement, change policy, execute, or retain payloads.",
+)
+async def integration_effect_enforcement_readiness(trace_id=None):
+    from Vera.vera.integrations.effect_shadow_evidence import evaluate_enforcement_readiness
+    try:
+        evidence = default_external_effect_shadow_evidence().summary(limit=200)
+        return evaluate_enforcement_readiness(evidence)
+    except Exception:
+        result = evaluate_enforcement_readiness({"totals": {}, "classifications": {}})
+        result["error"] = "evidence_unavailable"
+        return result
+
+
+@capability(
+    "integration.effect.shadow.evidence", http_method="GET",
+    http_path="/integrations/effect/shadow/evidence",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Inspect bounded payload-free aggregates of observe-only external-effect "
+                "decisions. Returns admission, execution and replay-suppression counts plus "
+                "reason codes for one isolated family: integration_api, telegram, email, "
+                "commerce, or infrastructure. "
+                "It cannot enforce, execute, retry, open secrets, or retain payloads.",
+)
+async def integration_effect_shadow_evidence(
+        limit: int = 50, family: str = "integration_api", trace_id=None):
+    try:
+        result = default_external_effect_shadow_evidence(family=family).summary(limit=limit)
+        result["family"] = family
+        return result
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-shadow-evidence/v1", "error": str(exc),
+                "totals": {"observations": 0, "would_admit": 0,
+                           "would_execute": 0, "would_suppress": 0},
+                "classifications": {}, "reasons_in_window": {}, "recent": [],
+                "family": family, "window": {"requested": limit, "returned": 0},
+                "enforcement": "observe_only", "executes": False,
+                "retries": False, "retains_payload": False}
+
+
+@capability(
+    "integration.effect.inventory", http_method="GET",
+    http_path="/integrations/effect/inventory",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Inspect the deterministic boundary inventory for business, commerce, "
+                "container/build, Proxmox, and provisioning operations. It separates "
+                "local state, simulation, reads, credential lifecycle, real provider "
+                "mutations, and unimplemented connectors without probing, executing, "
+                "opening credentials, recording receipts, or changing enforcement.",
+)
+async def integration_effect_inventory(trace_id=None):
+    return provider_effect_inventory()
+
+
+@capability(
+    "integration.effect.receipts", http_method="GET",
+    http_path="/integrations/effect/receipts",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Inspect a bounded payload-free summary of durable external-effect "
+                "receipts. Inputs: limit and optional SHA-256 plan_id. Returns "
+                "counts plus recent hashed identities and outcome evidence; it "
+                "cannot execute, retry, open secrets, or record a receipt.",
+)
+async def integration_effect_receipts(limit: int = 50, plan_id: str = "",
+                                      trace_id=None):
+    try:
+        return default_external_effect_receipt_ledger().summary(
+            limit=limit, plan_id=plan_id)
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-receipt-summary/v1",
+                "error": str(exc), "totals": {"plans": 0, "receipts": 0,
+                                               "observations": 0},
+                "outcomes": {}, "recent": [],
+                "window": {"requested": 0, "returned": 0},
+                "executes": False, "retries": False, "retains_payload": False}
+
+
+@capability(
+    "integration.effect.retry.policy", http_method="GET",
+    http_path="/integrations/effect/retry/policy",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Describe the bounded retry decision vocabulary used for external "
+                "effects. Returns transient outcome classes, refusal explanations, "
+                "requirements, and hard bounds; it never executes, sleeps, retries, "
+                "opens secrets, records receipts, or retains payloads.",
+)
+async def integration_effect_retry_policy(trace_id=None):
+    from Vera.vera.integrations.effect_retry import describe_retry_policy
+    return describe_retry_policy()
+
+
+@capability(
+    "integration.effect.retry.plan", http_method="POST",
+    http_path="/integrations/effect/retry/plan",
+    http_tags=["integration", "policy"], memory="off",
+    description="Plan whether and when a failed or rate-limited external-effect "
+                "attempt may be retried. Inputs: plan, attempts_completed, "
+                "max_attempts, status_code or a stable error_code, optional "
+                "retry/rate-limit timing, successful_receipt, and bounded "
+                "backoff settings. Returns a delay window and reason codes; it "
+                "never sleeps, retries, executes, resolves secrets, or records a receipt.",
+)
+async def integration_effect_retry_plan(
+        plan: Optional[Dict] = None, attempts_completed: int = 1,
+        max_attempts: int = 3, status_code: int = 0, error_code: str = "",
+        retry_after_ms: Optional[int] = None, rate_limit: Optional[int] = None,
+        rate_remaining: Optional[int] = None,
+        rate_reset_after_ms: Optional[int] = None,
+        successful_receipt: bool = False, base_delay_ms: int = 250,
+        backoff_cap_ms: int = 30_000, trace_id=None):
+    try:
+        return _plan_effect_retry(
+            plan or {}, attempts_completed=attempts_completed,
+            max_attempts=max_attempts, status_code=status_code,
+            error_code=error_code, retry_after_ms=retry_after_ms,
+            rate_limit=rate_limit, rate_remaining=rate_remaining,
+            rate_reset_after_ms=rate_reset_after_ms,
+            successful_receipt=successful_receipt,
+            base_delay_ms=base_delay_ms, backoff_cap_ms=backoff_cap_ms)
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-retry-plan/v1",
+                "error": str(exc),
+                "schedule": {"allowed": False, "reasons": ["invalid_request"],
+                             "earliest_delay_ms": 0, "latest_delay_ms": 0,
+                             "selection": "none"},
+                "executes": False, "sleeps": False, "records_receipt": False,
+                "resolves_secrets": False, "retains_payload": False}
+
+
+@capability(
     "integration.source.lifecycle", http_method="GET",
     http_path="/integrations/source/lifecycle", http_tags=["integration", "intake"],
     memory="off", silent=True,
@@ -938,11 +1347,22 @@ register_ui(
         "integration.list", "integration.get", "integration.save",
         "integration.delete", "integration.access.set", "integration.operate",
         "integration.api.call", "integration.mcp.call", "integration.connections",
+        "integration.connections.project",
         "integration.discover", "integration.identity.register",
         "integration.import_apps", "identity.resolve.status",
         "integration.source.lifecycle", "integration.source.inspect",
         "integration.source.transition.plan",
         "integration.source.build.status", "integration.source.build.plan",
+        "integration.effect.plan", "integration.effect.replay.status",
+        "integration.effect.retry.plan", "integration.effect.retry.policy",
+        "integration.effect.enforcement.readiness",
+        "integration.effect.enforcement.decision",
+        "integration.effect.enforcement.decide",
+        "integration.effect.enforcement.activation",
+        "integration.effect.enforcement.activate",
+        "integration.effect.shadow.evidence",
+        "integration.effect.receipts",
+        "integration.effect.inventory",
         # the one-click "register & secure everything" button drives autoenroll
         "autoenroll.scan", "autoenroll.run", "autoenroll.pending",
     ],

@@ -40,11 +40,23 @@ html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);
 .subtab .badge.warn{color:var(--warn)}
 
 #frames{flex:1;position:relative;min-height:0}
-#frames iframe,#frames .native{position:absolute;inset:0;width:100%;height:100%;border:none;
+/* Direct children only. A pane may contain an iframe of its own (the n8n
+   editor does); without the `>` these rules reached inside and held that
+   nested frame at opacity:0 forever. */
+#frames > iframe,#frames > .native{position:absolute;inset:0;width:100%;height:100%;border:none;
   background:var(--bg);opacity:0;pointer-events:none;overflow:auto}
-#frames iframe.active,#frames .native.active{opacity:1;pointer-events:auto}
+#frames > iframe.active,#frames > .native.active{opacity:1;pointer-events:auto}
 .native{padding:18px 22px}
 .wrap{max-width:900px}
+
+/* n8n editor pane — a fixed frame around the embed, so the "open it directly"
+   way out has somewhere stable to live and no node ever has to be replaced. */
+.native.editor{padding:0;display:flex;flex-direction:column;overflow:hidden}
+.editor-bar{display:flex;align-items:center;gap:10px;flex-shrink:0;
+  padding:8px 12px;background:var(--bg1);border-bottom:1px solid var(--border)}
+.editor-bar .muted{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.editor-body{flex:1;position:relative;min-height:0}
+.editor-body iframe{position:absolute;inset:0;width:100%;height:100%;border:none;background:var(--bg)}
 
 h2{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
   margin:0 0 12px;font-weight:600}
@@ -90,6 +102,8 @@ tr:last-child td{border-bottom:none}
       <div class="subtab" data-k="n8n"><span class="gl">⬡</span> n8n</div>
       <div class="subtab" data-k="editor"><span class="gl">✎</span> n8n editor</div>
       <div class="subtab" data-k="openclaw"><span class="gl">◎</span> OpenClaw</div>
+      <div class="subtab" data-k="operator"><span class="gl">▷</span> Operator</div>
+      <div class="subtab" data-k="home"><span class="gl">⌂</span> Home</div>
       <div class="subtab" data-k="actions"><span class="gl">☑</span> Actions
         <span class="badge" id="actBadge"></span></div>
     </nav>
@@ -112,11 +126,33 @@ tr:last-child td{border-bottom:none}
       <div id="actList"><div class="empty">loading…</div></div>
     </div></div>
 
-    <!-- Embedded surfaces, lazy-loaded on first view. -->
+    <!-- Embedded surfaces, lazy-loaded on first view. Each of these is the
+         panel's only home: the DAG workshop, n8n, the Operator and Home
+         Assistant are registered mode="element" so they appear here rather
+         than claiming a top-level tab of their own as well. -->
     <iframe data-k="flows"    data-src="/workshop/panel" allow="clipboard-read; clipboard-write"></iframe>
     <iframe data-k="n8n"      data-src="/n8n/panel"      allow="clipboard-read; clipboard-write"></iframe>
     <iframe data-k="openclaw" data-src="/openclaw/panel" allow="clipboard-read; clipboard-write"></iframe>
-    <iframe data-k="editor"   data-src="" allow="clipboard-read; clipboard-write"></iframe>
+    <iframe data-k="operator" data-src="/operator/panel" allow="clipboard-read; clipboard-write"></iframe>
+    <iframe data-k="home"     data-src="/ha/panel"       allow="clipboard-read; clipboard-write"></iframe>
+
+    <!-- The n8n editor is a CONTAINER pane, not a bare iframe: n8n serves
+         X-Frame-Options and may refuse to be embedded, so the way out has to
+         live somewhere permanent. Nothing in here is ever replaced or removed.
+         An earlier version swapped this iframe for a message div carrying a
+         literal class="native active"; `panes` is captured once at load, so
+         show() never knew about that node, and it sat opaque and clickable on
+         top of every other pane for the rest of the session. -->
+    <div class="native editor" data-k="editor">
+      <div class="editor-bar">
+        <span class="muted" id="edNote">Embedded n8n editor</span>
+        <a class="btn" id="edOpen" href="#" target="_blank" rel="noopener" hidden>Open n8n in a new tab</a>
+      </div>
+      <div class="editor-body">
+        <div class="blocked" id="edBlocked" hidden></div>
+        <iframe id="edFrame" title="n8n editor" allow="clipboard-read; clipboard-write" hidden></iframe>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -124,7 +160,10 @@ tr:last-child td{border-bottom:none}
 const LS='vera.automations.tab';
 const $=s=>document.querySelector(s);
 const tabs=[...document.querySelectorAll('.subtab')];
-const panes=[...document.querySelectorAll('#frames iframe,#frames .native')];
+// Direct children only, to match the CSS. Without the `>` this also collects
+// the editor pane's OWN nested iframe, which has no data-k and would be
+// toggled as if it were a pane in its own right.
+const panes=[...document.querySelectorAll('#frames > iframe,#frames > .native')];
 
 // n8n lives on its own origin and sends X-Frame-Options: SAMEORIGIN, so the
 // browser refuses to embed it unless that host explicitly allows this origin.
@@ -155,36 +194,32 @@ function show(k){
   if(k==='editor')openEditor();
 }
 
+// Point the editor pane at n8n. Idempotent, and it MUST NOT replace or remove
+// any node: `panes` is captured once at load, so a node swapped in afterwards
+// is invisible to show() and — carrying .active — would stay lit on top of
+// every other pane, taking their clicks with it. That is what used to happen
+// the moment this tab was opened, which read as the whole panel seizing up.
 function openEditor(){
-  const f=document.querySelector('iframe[data-k="editor"]');
-  if(f.dataset.done)return;
-  f.dataset.done='1';
+  const frame=$('#edFrame'), note=$('#edNote'),
+        open=$('#edOpen'), blocked=$('#edBlocked');
+  if(!frame)return;
   if(!N8N_BASE){
-    f.outerHTML='<div class="native active" data-k="editor"><div class="blocked">'
-      +'<h3>n8n base URL not configured</h3>'
-      +'<p class="muted">Set it in the n8n panel, then reopen this tab.</p></div></div>';
+    blocked.innerHTML='<h3>n8n base URL not configured</h3>'
+      +'<p class="muted">Set a base URL in the n8n tab, then come back here.</p>';
+    blocked.hidden=false; frame.hidden=true; open.hidden=true;
+    note.textContent='n8n editor — no base URL configured';
     return;
   }
-  f.src=N8N_BASE;
-  // If the host still refuses to be framed the iframe stays blank with no
-  // error event, so offer the way out rather than leaving a dead panel.
-  setTimeout(()=>{
-    let blank=false;
-    try{ blank=!f.contentWindow || f.contentWindow.length===0 &&
-                !f.contentDocument?.body?.childElementCount; }catch(_){ blank=false; }
-    if(blank){
-      const host=esc(N8N_BASE);
-      f.insertAdjacentHTML('afterend',
-        '<div class="native active" data-k="editor"><div class="blocked">'
-        +'<h3>n8n would not embed</h3>'
-        +'<p class="muted">n8n sends <code>X-Frame-Options: SAMEORIGIN</code>, which '
-        +'tells the browser to refuse embedding from another origin. Allow this '
-        +'origin in n8n\'s reverse proxy, or open it directly.</p>'
-        +'<p><a class="btn" href="'+host+'" target="_blank" rel="noopener">Open n8n in a new tab</a></p>'
-        +'</div></div>');
-      f.remove();
-    }
-  },2500);
+  note.textContent='n8n editor — '+N8N_BASE;
+  open.href=N8N_BASE; open.hidden=false;
+  blocked.hidden=true; frame.hidden=false;
+  // Whether a cross-origin embed actually painted is NOT observable from here:
+  // contentDocument is null for a refused frame and for a perfectly good one
+  // alike. So this makes no guess. The old blank-detector guessed, got it
+  // backwards on the happy path, and tore down a working iframe to say so; the
+  // "Open n8n in a new tab" control above is permanent instead, which is the
+  // only thing that detection was ever there to offer.
+  if(!frame.src) frame.src=N8N_BASE;
 }
 
 async function loadOverview(){

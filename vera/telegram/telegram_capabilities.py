@@ -70,6 +70,10 @@ from Vera.vera.capability_orchestration import (
     schedule,
 )
 from Vera.vera.security import secrets as vsecrets
+from Vera.vera.integrations.effect_receipts import default_external_effect_receipt_ledger
+from Vera.vera.integrations.effect_shadow_evidence import default_external_effect_shadow_evidence
+from Vera.vera.telegram.telegram_effects import (
+    apply_replay_evidence, plan_telegram_send_effect)
 
 log = logging.getLogger("vera.telegram")
 
@@ -330,11 +334,17 @@ def _split_long(text: str, limit: int) -> List[str]:
 
 
 async def _send_message(chat_id: str, text: str, parse_mode: str = None,
-                        disable_preview: bool = True) -> Dict[str, Any]:
+                        disable_preview: bool = True, effect_mode: str = "plain",
+                        idempotency_key: str = "",
+                        approval_receipt_ref: str = "",
+                        retry: bool = False) -> Dict[str, Any]:
+    shadow = _observe_send_effect(
+        str(chat_id), mode=effect_mode, idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     cfg_data = await _get_config()
     token    = cfg_data.get("token", "")
     if not token:
-        return {"ok": False, "error": "no token"}
+        return {"ok": False, "error": "no token", "effect_shadow": shadow}
     limit  = int(cfg_data.get("max_reply_chars", 3800))
     chunks = _split_long(text or "", limit)
     last: Dict[str, Any] = {"ok": True}
@@ -354,7 +364,36 @@ async def _send_message(chat_id: str, text: str, parse_mode: str = None,
                 last = await _tg_api(token, "sendMessage", params)
             if not last.get("ok"):
                 break
+    last["effect_shadow"] = shadow
     return last
+
+
+def _observe_send_effect(chat_id: str, *, mode: str,
+                         idempotency_key: str = "",
+                         approval_receipt_ref: str = "",
+                         retry: bool = False) -> Dict[str, Any]:
+    """Record policy evidence without blocking, retrying, or opening a secret."""
+    try:
+        shadow = plan_telegram_send_effect(
+            chat_id=chat_id, mode=mode, idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
+        if shadow["plan"]["admission"]["allowed"]:
+            replay = default_external_effect_receipt_ledger().replay_status(shadow["plan"])
+            shadow = apply_replay_evidence(shadow, replay)
+    except Exception:
+        shadow = {"schema": "vera.telegram-send-effect-shadow/v1",
+                  "enforcement": "observe_only", "error": "shadow_unavailable",
+                  "decision": {"would_admit": False, "would_execute": False,
+                               "reasons": ["invalid_policy_evidence"]},
+                  "blocks_current_call": False,
+                  "forwards_control_references": False,
+                  "records_completion": False, "executes": False,
+                  "retains_payload": False}
+    try:
+        default_external_effect_shadow_evidence(family="telegram").record(shadow)
+    except Exception:
+        log.exception("Telegram effect shadow evidence record failed")
+    return shadow
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1002,67 +1041,103 @@ async def tg_bot_status(trace_id=None):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @capability(
-    "tg.send", memory="off",
+    "tg.send", memory="off", redact_args=["chat_id", "text", "idempotency_key",
+                                            "approval_receipt_ref"], redact_result=True,
     http_method="POST", http_path="/tg/send", http_tags=["telegram"],
     description="Send a plain text message to a specific Telegram chat. "
                 "WHEN TO USE: notify a user, send results, or communicate via Telegram. "
                 "Requires a configured bot token (tg.config.set). "
                 "Input: chat_id (str! — Telegram chat/user ID), text (str! — message content). "
-                "Output: {ok, result}. Use tg.notify to send to the admin chat without needing chat_id.",
+                "Optional idempotency_key, approval_receipt_ref, and retry inputs are "
+                "evaluated as observe-only effect evidence and never sent to Telegram. "
+                "Output: {ok, result, effect_shadow}. Use tg.notify for the admin chat.",
 )
-async def tg_send(chat_id: str, text: str, trace_id=None):
+async def tg_send(chat_id: str, text: str, idempotency_key: str = "",
+                  approval_receipt_ref: str = "", retry: bool = False, trace_id=None):
     if not chat_id:
         return {"ok": False, "error": "chat_id required"}
-    res = await _send_message(str(chat_id), text or "")
-    return {"ok": bool(res.get("ok")), "result": res}
+    res = await _send_message(
+        str(chat_id), text or "", effect_mode="plain",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
+    shadow = res.pop("effect_shadow")
+    return {"ok": bool(res.get("ok")), "result": res, "effect_shadow": shadow}
 
 
 @capability(
-    "tg.send_markdown", memory="off",
+    "tg.send_markdown", memory="off", redact_args=["chat_id", "text", "idempotency_key",
+                                                     "approval_receipt_ref"], redact_result=True,
     http_method="POST", http_path="/tg/send_markdown", http_tags=["telegram"],
-    description="Send a MarkdownV2-formatted message. Falls back to plain text on parse error.",
+    description="Send a MarkdownV2-formatted message. Falls back to plain text on parse "
+                "error and returns payload-free observe-only effect evidence.",
 )
-async def tg_send_markdown(chat_id: str, text: str, trace_id=None):
+async def tg_send_markdown(chat_id: str, text: str, idempotency_key: str = "",
+                           approval_receipt_ref: str = "", retry: bool = False,
+                           trace_id=None):
     if not chat_id:
         return {"ok": False, "error": "chat_id required"}
-    res = await _send_message(str(chat_id), text or "", parse_mode="Markdown")
-    return {"ok": bool(res.get("ok")), "result": res}
+    res = await _send_message(
+        str(chat_id), text or "", parse_mode="Markdown", effect_mode="markdown",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
+    shadow = res.pop("effect_shadow")
+    return {"ok": bool(res.get("ok")), "result": res, "effect_shadow": shadow}
 
 
 @capability(
-    "tg.notify", memory="off",
+    "tg.notify", memory="off", redact_args=["text", "idempotency_key",
+                                              "approval_receipt_ref"], redact_result=True,
     http_method="POST", http_path="/tg/notify", http_tags=["telegram"],
     description="Send a message to the configured Telegram admin chat (no chat_id needed). "
                 "WHEN TO USE: alert the operator, report completion, send task results — the easiest way to send "
                 "a Telegram message when you don't have a specific chat_id. Requires admin_chat_id in bot config. "
-                "Input: text (str!). Output: {ok, result}.",
+                "Optional policy references are evaluated but not forwarded. Input: text "
+                "(str!). Output: {ok, result, effect_shadow}.",
 )
-async def tg_notify(text: str, trace_id=None):
+async def tg_notify(text: str, idempotency_key: str = "",
+                    approval_receipt_ref: str = "", retry: bool = False, trace_id=None):
     cfg_data = await _get_config()
     admin = cfg_data.get("admin_chat_id", "")
     if not admin:
         return {"ok": False, "error": "no admin_chat_id configured"}
-    res = await _send_message(str(admin), text or "")
-    return {"ok": bool(res.get("ok")), "result": res}
+    res = await _send_message(
+        str(admin), text or "", effect_mode="notification",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
+    shadow = res.pop("effect_shadow")
+    return {"ok": bool(res.get("ok")), "result": res, "effect_shadow": shadow}
 
 
 @capability(
-    "tg.broadcast", memory="off",
+    "tg.broadcast", memory="off", redact_args=["text", "idempotency_key",
+                                                 "approval_receipt_ref"], redact_result=True,
     http_method="POST", http_path="/tg/broadcast", http_tags=["telegram"],
     description="Send a message to every allow-listed Telegram chat. "
                 "WHEN TO USE: broadcast announcements or results to all registered users at once. "
-                "Input: text (str!). Output: {ok, sent, failed, results}.",
+                "Optional policy references are evaluated but not forwarded. Input: text "
+                "(str!). Output: {ok, sent, failed, effect_evidence}.",
 )
-async def tg_broadcast(text: str, trace_id=None):
+async def tg_broadcast(text: str, idempotency_key: str = "",
+                       approval_receipt_ref: str = "", retry: bool = False,
+                       trace_id=None):
     chats = await _list_chats()
-    sent = failed = 0
+    sent = failed = observed = would_execute = 0
     for c in chats:
         if not c.get("allowed"):
             continue
-        res = await _send_message(c["chat_id"], text or "")
+        res = await _send_message(
+            c["chat_id"], text or "", effect_mode="broadcast",
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
+        shadow = res.pop("effect_shadow")
+        observed += 1
+        would_execute += int(bool((shadow.get("decision") or {}).get("would_execute")))
         if res.get("ok"): sent += 1
         else:             failed += 1
-    return {"ok": True, "sent": sent, "failed": failed}
+    return {"ok": True, "sent": sent, "failed": failed,
+            "effect_evidence": {"observed": observed,
+                                "would_execute": would_execute,
+                                "enforcement": "observe_only"}}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

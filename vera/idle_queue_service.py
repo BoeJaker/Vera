@@ -257,9 +257,16 @@ async def report_progress(job_id: str, done: Optional[int] = None,
     Best-effort: a failed progress write must never take down the work it was
     describing.
     """
+    # Only the job that is CURRENTLY running may report. A report from a job
+    # that has just been pre-empted would re-save it from a copy loaded before
+    # the pre-emption and resurrect `running` with nobody running it.
+    if _RUNNING.get("id") != job_id:
+        return False
     try:
         for j in await load_jobs():
             if j.get("id") == job_id:
+                if _RUNNING.get("id") != job_id:          # pre-empted mid-load
+                    return False
                 await save_job(_iq.with_progress(j, done=done, total=total))
                 return True
     except Exception as e:                                 # pragma: no cover
@@ -291,13 +298,23 @@ async def _stop_running(reason: str, now: float) -> Optional[Dict[str, Any]]:
         task.cancel()
         log.warning("idle queue: cancelled %s after %.0fs - %s",
                     job_id, now - float(asked), reason)
+        # WAIT for it to actually stop before re-queuing. On 2026-09-12 a
+        # cancelled embed.fabric job stayed marked RUNNING for four hours:
+        # the re-queue below wrote `waiting`, then a handler write that was
+        # already in flight (a progress report between its load and its save)
+        # landed on top and put `running` back, with no runner behind it. The
+        # slot stayed held until reconciliation noticed. Nothing the handler
+        # does can land after this point once we have joined it.
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=15)
+        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+            pass
+    _RUNNING.clear()          # before the save: report_progress checks this
     for j in await load_jobs():
         if j.get("id") == job_id:
             back = _iq.preempt(j, reason, now)
             await save_job(back)
-            _RUNNING.clear()
             return back
-    _RUNNING.clear()
     return None
 
 

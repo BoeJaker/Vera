@@ -1,0 +1,504 @@
+"""Portable, authority-preserving evidence contracts for JEPA Worldview.
+
+The module is deliberately independent of the operational JEPA runtime.  It
+validates already-produced observations against immutable DatasetSnapshot and
+ModelPackage identities; it never loads a checkpoint, imports a model framework,
+queries a dataset, ranks context, or executes a prediction.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+import hashlib
+import json
+import math
+import re
+from typing import Any, Mapping, Protocol, Sequence
+
+from vera.fabric.dataset_provider import DatasetSnapshot
+from vera.models.model_package import ModelPackage
+
+
+EVIDENCE_SCHEMA = "vera.worldview-evidence/v1"
+EVIDENCE_KINDS = frozenset({
+    "concept", "prediction", "anomaly", "counterfactual", "drift", "reranking",
+})
+MAX_OBSERVATIONS = 1000
+MAX_CITATIONS = 64
+MAX_ATTRIBUTES = 32
+MAX_ATTRIBUTES_BYTES = 16_384
+MAX_CITATION_REVISIONS = 10_000
+_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
+_SHA_ID = re.compile(r"^wve_[0-9a-f]{64}$")
+_FORBIDDEN_ATTRIBUTE_KEYS = frozenset({
+    "body", "content", "credential", "embedding", "password", "payload",
+    "prompt", "secret", "text", "token", "vector",
+})
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, allow_nan=False)
+
+
+def _hash(value: Any) -> str:
+    return hashlib.sha256(_canonical(value).encode()).hexdigest()
+
+
+def _identifier(value: Any, field_name: str) -> str:
+    value = str(value or "").strip()
+    if not _ID.fullmatch(value):
+        raise ValueError(f"{field_name} must be a bounded identifier")
+    return value
+
+
+def _timestamp(value: Any, field_name: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an RFC3339 timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{field_name} must include a timezone")
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _integer(value: Any, field_name: str, *, minimum: int = 0,
+             maximum: int = 1_000_000_000) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise ValueError(f"{field_name} must be a bounded integer")
+    return value
+
+
+def _reject_sensitive_keys(value: Any, field_name: str, *, depth: int = 0) -> None:
+    if depth > 8:
+        raise ValueError(f"{field_name} exceeds the nesting limit")
+    if isinstance(value, Mapping):
+        for raw_key, child in value.items():
+            key = _identifier(raw_key, f"{field_name} key")
+            if key.casefold() in _FORBIDDEN_ATTRIBUTE_KEYS:
+                raise ValueError(
+                    f"{field_name} contains a payload-bearing or secret-like key")
+            _reject_sensitive_keys(child, field_name, depth=depth + 1)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            _reject_sensitive_keys(child, field_name, depth=depth + 1)
+
+
+def _json_object(value: Mapping[str, Any], field_name: str) -> tuple[tuple[str, Any], ...]:
+    if not isinstance(value, Mapping) or len(value) > MAX_ATTRIBUTES:
+        raise ValueError(f"{field_name} must be a bounded JSON object")
+    frozen: list[tuple[str, Any]] = []
+    _reject_sensitive_keys(value, field_name)
+    try:
+        encoded = _canonical(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must contain canonical JSON") from exc
+    if len(encoded.encode("utf-8")) > MAX_ATTRIBUTES_BYTES:
+        raise ValueError(f"{field_name} exceeds the encoded size limit")
+    for raw_key, raw_value in value.items():
+        key = _identifier(raw_key, f"{field_name} key")
+        try:
+            copied = json.loads(_canonical(raw_value))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field_name} must contain canonical JSON") from exc
+        frozen.append((key, copied))
+    return tuple(sorted(frozen))
+
+
+@dataclass(frozen=True)
+class EvidenceCitation:
+    record_id: str
+    revision_id: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "record_id", _identifier(self.record_id, "record_id"))
+        object.__setattr__(self, "revision_id", _identifier(self.revision_id, "revision_id"))
+
+    def to_dict(self) -> dict[str, str]:
+        return {"record_id": self.record_id, "revision_id": self.revision_id}
+
+
+@dataclass(frozen=True, init=False)
+class EvidenceObservation:
+    observation_id: str
+    subject_id: str
+    score: float | None
+    citations: tuple[EvidenceCitation, ...]
+    _attributes: tuple[tuple[str, Any], ...] = field(repr=False)
+
+    def __init__(self, *, observation_id: str, subject_id: str,
+                 citations: Sequence[EvidenceCitation], score: float | None = None,
+                 attributes: Mapping[str, Any] | None = None):
+        object.__setattr__(self, "observation_id", _identifier(
+            observation_id, "observation_id"))
+        object.__setattr__(self, "subject_id", _identifier(subject_id, "subject_id"))
+        if score is not None and (isinstance(score, bool) or
+                                  not isinstance(score, (int, float)) or
+                                  not math.isfinite(score) or not 0 <= score <= 1):
+            raise ValueError("score must be null or between zero and one")
+        object.__setattr__(self, "score", None if score is None else float(score))
+        try:
+            frozen_citations = tuple(citations)
+        except TypeError as exc:
+            raise ValueError("citations must be a sequence") from exc
+        if (not frozen_citations or len(frozen_citations) > MAX_CITATIONS or
+                not all(isinstance(item, EvidenceCitation) for item in frozen_citations)):
+            raise ValueError("observations require 1..64 valid citations")
+        if len(set(frozen_citations)) != len(frozen_citations):
+            raise ValueError("observation citations must be unique")
+        object.__setattr__(self, "citations", tuple(sorted(
+            frozen_citations, key=lambda item: (item.record_id, item.revision_id))))
+        object.__setattr__(self, "_attributes", _json_object(
+            attributes or {}, "attributes"))
+
+    @property
+    def attributes(self) -> dict[str, Any]:
+        return json.loads(_canonical(dict(self._attributes)))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "observation_id": self.observation_id,
+            "subject_id": self.subject_id,
+            "score": self.score,
+            "citations": [item.to_dict() for item in self.citations],
+            "attributes": self.attributes,
+        }
+
+
+@dataclass(frozen=True, init=False)
+class WorldviewEvidence:
+    kind: str
+    dataset_id: str
+    snapshot_id: str
+    model_package_id: str
+    provider_revision: str
+    observed_at: str
+    observations: tuple[EvidenceObservation, ...]
+    evidence_id: str = field(init=False)
+    schema: str = EVIDENCE_SCHEMA
+
+    def __init__(self, *, kind: str, snapshot: DatasetSnapshot,
+                 checkpoint: ModelPackage, provider_revision: str,
+                 observed_at: str, observations: Sequence[EvidenceObservation]):
+        kind = str(kind or "").strip().casefold()
+        if kind not in EVIDENCE_KINDS:
+            raise ValueError("unsupported Worldview evidence kind")
+        if not isinstance(snapshot, DatasetSnapshot):
+            raise TypeError("snapshot must be DatasetSnapshot")
+        if not isinstance(checkpoint, ModelPackage):
+            raise TypeError("checkpoint must be ModelPackage")
+        architecture = checkpoint.architecture.casefold()
+        if "jepa" not in architecture or "worldview" not in architecture:
+            raise ValueError("checkpoint must identify the JEPA Worldview architecture")
+        compatibility = checkpoint.compatibility
+        if ("worldview.evidence" not in compatibility.tasks or
+                compatibility.input_contract != "vera.dataset-snapshot/v1" or
+                compatibility.output_contract != EVIDENCE_SCHEMA):
+            raise ValueError("checkpoint is not compatible with Worldview evidence")
+        provider_revision = _identifier(provider_revision, "provider_revision")
+        observed_at = _timestamp(observed_at, "observed_at")
+        if datetime.fromisoformat(observed_at.replace("Z", "+00:00")) < datetime.fromisoformat(
+                snapshot.created_at.replace("Z", "+00:00")):
+            raise ValueError("evidence cannot predate its dataset snapshot")
+        try:
+            frozen = tuple(observations)
+        except TypeError as exc:
+            raise ValueError("observations must be a sequence") from exc
+        if len(frozen) > MAX_OBSERVATIONS or not all(
+                isinstance(item, EvidenceObservation) for item in frozen):
+            raise ValueError("observations must contain at most 1000 valid items")
+        if len({item.observation_id for item in frozen}) != len(frozen):
+            raise ValueError("observation_id must be unique within evidence")
+        def observation_order(item: EvidenceObservation) -> tuple[int, int, str]:
+            attributes = item.attributes
+            position = attributes.get("position")
+            rank = attributes.get("rank")
+            if isinstance(position, int) and not isinstance(position, bool):
+                return (0, position, item.observation_id)
+            if isinstance(rank, int) and not isinstance(rank, bool):
+                return (1, rank, item.observation_id)
+            return (2, 0, item.observation_id)
+
+        frozen = tuple(sorted(frozen, key=observation_order))
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "dataset_id", snapshot.dataset_id)
+        object.__setattr__(self, "snapshot_id", snapshot.snapshot_id)
+        object.__setattr__(self, "model_package_id", checkpoint.package_id)
+        object.__setattr__(self, "provider_revision", provider_revision)
+        object.__setattr__(self, "observed_at", observed_at)
+        object.__setattr__(self, "observations", frozen)
+        object.__setattr__(self, "schema", EVIDENCE_SCHEMA)
+        object.__setattr__(self, "evidence_id", "wve_" + _hash(self.identity_dict()))
+
+    def identity_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema, "kind": self.kind,
+            "dataset_id": self.dataset_id, "snapshot_id": self.snapshot_id,
+            "model_package_id": self.model_package_id,
+            "provider_revision": self.provider_revision,
+            "observed_at": self.observed_at,
+            "observations": [item.to_dict() for item in self.observations],
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"evidence_id": self.evidence_id, **self.identity_dict(),
+                "authority": "derived_evidence_only", "executes": False}
+
+
+class EvidenceProvider(Protocol):
+    provider_id: str
+
+    def get(self, evidence_id: str) -> WorldviewEvidence | None: ...
+
+    def list(self, *, kind: str = "", snapshot_id: str = "",
+             model_package_id: str = "") -> tuple[WorldviewEvidence, ...]: ...
+
+
+class FrozenEvidenceProvider:
+    """Deterministic reference store for conformance and offline composition."""
+
+    provider_id = "worldview.frozen"
+
+    def __init__(self, evidence: Sequence[WorldviewEvidence] = ()):
+        self._items: dict[str, WorldviewEvidence] = {}
+        for item in evidence:
+            self.add(item)
+
+    def add(self, evidence: WorldviewEvidence) -> WorldviewEvidence:
+        if not isinstance(evidence, WorldviewEvidence):
+            raise TypeError("evidence must be WorldviewEvidence")
+        current = self._items.get(evidence.evidence_id)
+        if current is not None and current != evidence:
+            raise ValueError("Worldview evidence identity collision")
+        self._items[evidence.evidence_id] = evidence
+        return evidence
+
+    def get(self, evidence_id: str) -> WorldviewEvidence | None:
+        if not _SHA_ID.fullmatch(str(evidence_id or "")):
+            raise ValueError("invalid evidence_id")
+        return self._items.get(evidence_id)
+
+    def list(self, *, kind: str = "", snapshot_id: str = "",
+             model_package_id: str = "") -> tuple[WorldviewEvidence, ...]:
+        if kind and kind not in EVIDENCE_KINDS:
+            raise ValueError("unsupported Worldview evidence kind")
+        items = self._items.values()
+        return tuple(sorted((item for item in items
+                             if (not kind or item.kind == kind)
+                             and (not snapshot_id or item.snapshot_id == snapshot_id)
+                             and (not model_package_id or
+                                  item.model_package_id == model_package_id)),
+                            key=lambda item: item.evidence_id))
+
+
+def evidence_availability(evidence: WorldviewEvidence | None, *,
+                          expected_snapshot_id: str,
+                          expected_model_package_id: str) -> dict[str, Any]:
+    """Classify availability without falling back to another revision."""
+    if evidence is None:
+        return {"status": "unavailable", "usable": False,
+                "reason": "evidence_not_available"}
+    if not isinstance(evidence, WorldviewEvidence):
+        raise TypeError("evidence must be WorldviewEvidence or None")
+    if evidence.snapshot_id != expected_snapshot_id:
+        return {"status": "stale", "usable": False,
+                "reason": "dataset_snapshot_mismatch",
+                "evidence_id": evidence.evidence_id}
+    if evidence.model_package_id != expected_model_package_id:
+        return {"status": "stale", "usable": False,
+                "reason": "model_package_mismatch",
+                "evidence_id": evidence.evidence_id}
+    return {"status": "ready", "usable": True, "reason": "exact_identity_match",
+            "evidence_id": evidence.evidence_id}
+
+
+class JepaResultProjector:
+    """Strip current operational JEPA result dictionaries into portable evidence.
+
+    Record revisions are supplied by the authoritative snapshot adapter because
+    the legacy JEPA responses do not carry them. Missing support therefore fails
+    closed instead of being inferred from mutable runtime state.
+    """
+
+    provider_id = "worldview.jepa.result-projector"
+
+    def project(self, *, kind: str, result: Mapping[str, Any],
+                snapshot: DatasetSnapshot, checkpoint: ModelPackage,
+                provider_revision: str, observed_at: str,
+                citation_revisions: Mapping[str, str],
+                support_record_ids: Sequence[str] = ()) -> WorldviewEvidence:
+        if not isinstance(result, Mapping) or result.get("error"):
+            raise ValueError("a successful JEPA result object is required")
+        if not isinstance(citation_revisions, Mapping):
+            raise TypeError("citation_revisions must be a mapping")
+        if len(citation_revisions) > MAX_CITATION_REVISIONS:
+            raise ValueError("citation_revisions exceeds the supported limit")
+        citations = {
+            _identifier(record_id, "citation record_id"): EvidenceCitation(
+                record_id, revision_id)
+            for record_id, revision_id in citation_revisions.items()
+        }
+        support = self._citations(support_record_ids, citations)
+        kind = str(kind or "").strip().casefold()
+        dispatch = {
+            "concept": self._concepts,
+            "prediction": self._predictions,
+            "anomaly": self._anomalies,
+            "counterfactual": self._counterfactual,
+            "drift": self._drift,
+            "reranking": self._reranking,
+        }
+        if kind not in dispatch:
+            raise ValueError("unsupported Worldview evidence kind")
+        try:
+            observations = dispatch[kind](result, citations, support)
+        except (KeyError, TypeError) as exc:
+            raise ValueError(f"malformed JEPA {kind} result") from exc
+        return WorldviewEvidence(
+            kind=kind, snapshot=snapshot, checkpoint=checkpoint,
+            provider_revision=provider_revision, observed_at=observed_at,
+            observations=observations)
+
+    @staticmethod
+    def _items(value: Any, field_name: str) -> tuple[Mapping[str, Any], ...]:
+        if not isinstance(value, (list, tuple)) or len(value) > MAX_OBSERVATIONS:
+            raise ValueError(f"{field_name} must be a bounded sequence")
+        items = tuple(value)
+        if not all(isinstance(item, Mapping) for item in items):
+            raise ValueError(f"{field_name} entries must be objects")
+        return items
+
+    @staticmethod
+    def _citations(record_ids: Sequence[Any], available: Mapping[str, EvidenceCitation]
+                   ) -> tuple[EvidenceCitation, ...]:
+        if isinstance(record_ids, (str, bytes)):
+            raise ValueError("support record IDs must be a sequence")
+        result = []
+        for raw_id in record_ids:
+            record_id = _identifier(raw_id, "support record_id")
+            if record_id not in available:
+                raise ValueError(f"missing authoritative revision for record: {record_id}")
+            result.append(available[record_id])
+        if len(result) > MAX_CITATIONS:
+            raise ValueError("support record citation limit exceeded")
+        return tuple(sorted(set(result), key=lambda item: (item.record_id, item.revision_id)))
+
+    @staticmethod
+    def _oid(kind: str, subject_id: str, attributes: Mapping[str, Any],
+             citations: Sequence[EvidenceCitation]) -> str:
+        return f"{kind}:" + _hash({
+            "subject_id": subject_id, "attributes": attributes,
+            "citations": [item.to_dict() for item in citations],
+        })
+
+    def _make(self, kind: str, subject_id: str, *, score: Any = None,
+              attributes: Mapping[str, Any], citations: Sequence[EvidenceCitation]
+              ) -> EvidenceObservation:
+        if not citations:
+            raise ValueError(f"{kind} observation has no authoritative record citations")
+        return EvidenceObservation(
+            observation_id=self._oid(kind, subject_id, attributes, citations),
+            subject_id=subject_id, score=score, attributes=attributes,
+            citations=citations)
+
+    def _concepts(self, result, available, support):
+        observations = []
+        for item in self._items(result.get("concepts"), "concepts"):
+            concept = _integer(item["idx"], "concept index")
+            members = item.get("members_sample") or []
+            member_ids = [entry.get("id") for entry in self._items(
+                members, "members_sample")]
+            citations = self._citations(member_ids, available) or support
+            attributes = {"concept": concept, "label": str(item.get("label") or "")[:256],
+                          "population": _integer(item.get("population", 0),
+                                                 "concept population")}
+            observations.append(self._make(
+                "concept", f"concept:{concept}", attributes=attributes,
+                citations=citations))
+        return tuple(observations)
+
+    def _predictions(self, result, available, support):
+        if not support:
+            raise ValueError("prediction projection requires explicit support records")
+        raw_items = result.get("next_concepts")
+        shape = "next_concepts"
+        if raw_items is None:
+            raw_items, shape = result.get("trajectory"), "trajectory"
+        observations = []
+        for index, item in enumerate(self._items(raw_items, shape)):
+            concept = _integer(item["concept"], "predicted concept")
+            probability = item.get("prob")
+            attributes = {"concept": concept, "label": str(item.get("label") or "")[:256],
+                          "position": _integer(item.get("step", index),
+                                               "prediction position"), "shape": shape}
+            observations.append(self._make(
+                "prediction", f"concept:{concept}:position:{index}",
+                score=probability, attributes=attributes, citations=support))
+        return tuple(observations)
+
+    def _anomalies(self, result, available, support):
+        observations = []
+        for item in self._items(result.get("anomalies"), "anomalies"):
+            record_id = _identifier(item.get("id"), "anomaly record_id")
+            citations = self._citations((record_id,), available)
+            attributes = {"concept": _integer(item.get("concept"), "anomaly concept"),
+                          "label": str(item.get("concept_label") or "")[:256]}
+            observations.append(self._make(
+                "anomaly", f"record:{record_id}", score=item.get("anomaly_score"),
+                attributes=attributes, citations=citations))
+        return tuple(observations)
+
+    def _counterfactual(self, result, available, support):
+        if not support:
+            raise ValueError("counterfactual projection requires explicit support records")
+        baseline = self._items(result.get("baseline"), "baseline")
+        counterfactual = self._items(result.get("counterfactual"), "counterfactual")
+        if len(baseline) != len(counterfactual):
+            raise ValueError("counterfactual paths must have equal length")
+        observations = []
+        for index, (base, changed) in enumerate(zip(baseline, counterfactual)):
+            base_concept = _integer(base["concept"], "baseline concept")
+            changed_concept = _integer(changed["concept"], "counterfactual concept")
+            attributes = {"position": index, "baseline_concept": base_concept,
+                          "counterfactual_concept": changed_concept,
+                          "diverged": base_concept != changed_concept}
+            observations.append(self._make(
+                "counterfactual", f"position:{index}", attributes=attributes,
+                citations=support))
+        return tuple(observations)
+
+    def _drift(self, result, available, support):
+        if not support:
+            raise ValueError("drift projection requires explicit support records")
+        observations = []
+        for item in self._items(result.get("drifted_concepts"), "drifted_concepts"):
+            concept = _integer(item["concept"], "drift concept")
+            ratio = item.get("ratio")
+            direction = str(item.get("direction") or "")
+            if direction not in {"over", "under"}:
+                raise ValueError("drift direction must be over or under")
+            attributes = {"concept": concept, "label": str(item.get("label") or "")[:256],
+                          "direction": direction, "ratio": ratio,
+                          "dataset_fraction": item.get("dataset_frac"),
+                          "global_fraction": item.get("global_frac")}
+            observations.append(self._make(
+                "drift", f"concept:{concept}", attributes=attributes,
+                citations=support))
+        return tuple(observations)
+
+    def _reranking(self, result, available, support):
+        observations = []
+        for index, item in enumerate(self._items(result.get("results"), "results")):
+            record_id = _identifier(item.get("id"), "reranking record_id")
+            citations = self._citations((record_id,), available)
+            raw_score = item.get("score")
+            if (isinstance(raw_score, bool) or not isinstance(raw_score, (int, float)) or
+                    not math.isfinite(raw_score) or not -1 <= raw_score <= 1):
+                raise ValueError("reranking cosine score must be between minus one and one")
+            attributes = {"rank": index + 1,
+                          "concept": _integer(item.get("concept"), "reranking concept"),
+                          "label": str(item.get("concept_label") or "")[:256]}
+            observations.append(self._make(
+                "reranking", f"record:{record_id}", score=(float(raw_score) + 1) / 2,
+                attributes=attributes, citations=citations))
+        return tuple(observations)

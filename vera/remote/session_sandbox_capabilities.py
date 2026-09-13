@@ -48,12 +48,18 @@ import tarfile
 import tempfile
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, enum_schema, schedule,
 )
+# Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
+# have a new sibling module until it lands there.
+try:
+    from Vera.vera.remote import sandbox_idle_core as _idle_core
+except ImportError:                                        # pragma: no cover
+    from vera.remote import sandbox_idle_core as _idle_core
 
 log = logging.getLogger("vera.remote.sandbox")
 KEY_SBX = "vera:remote:sandboxes"
@@ -500,14 +506,14 @@ async def _save_rec(rec: Dict) -> None:
 
 
 def _cname(session_id: str) -> str:
-    # container names allow [a-zA-Z0-9_.-]; sanitise the session id.
-    safe = "".join(c if (c.isalnum() or c in "_.-") else "-" for c in session_id)[:48]
-    return f"vera-sbx-{safe}"
+    # container names allow [a-zA-Z0-9_.-]; sanitise the session id. Long ids
+    # end in a hash of the full id — see sandbox_idle_core.container_name for
+    # the two goals that used to collide on one container.
+    return _idle_core.container_name(session_id)
 
 
 def _volname(session_id: str) -> str:
-    safe = "".join(c if (c.isalnum() or c in "_.-") else "-" for c in session_id)[:48]
-    return f"vera-sbx-{safe}-ws"
+    return _idle_core.container_name(session_id, suffix="-ws")
 
 
 async def _container_running(dk, rec_host: Dict, cname: str) -> Optional[str]:
@@ -805,8 +811,15 @@ async def cap_sbx_start(session_id: str = "", base_image: str = "",
         return {"ok": False, "error": f"unknown docker host: {host_id}"}
 
     rec = await _get_rec(session_id) or {"session_id": session_id, "created": now_iso()}
-    cname = _cname(session_id)
-    vol = _volname(session_id)
+    # A record that already owns a docker container keeps ITS name (and the
+    # volume derived from it): the naming rule for long ids changed once, and
+    # recomputing it here would make such a session look container-less and
+    # mint a fresh one beside its own workspace.
+    prior = str(rec.get("container") or "")
+    if prior and not prior.startswith("local:"):
+        cname, vol = prior, prior + "-ws"
+    else:
+        cname, vol = _cname(session_id), _volname(session_id)
     committed = rec.get("committed_image", "")
     image = base_image or committed or rec.get("base_image") or scfg.get("base_image") or _DEFAULT_BASE
     restored = bool(committed and not base_image)
@@ -1543,16 +1556,24 @@ async def cap_sbx_sleep(session_id: str = "", sync: Optional[bool] = None,
         return {"ok": False, "error": "docker host unavailable"}
     if sync is None:
         sync = bool((await _get_cfg()).get("archive_on_stop", True))
+    # Packaging context is a file WRITE into the container, and a write into a
+    # stopped container wakes it (docker start) — so sleeping an already-asleep
+    # sandbox used to start it, snapshot it and stop it again. Only package
+    # while it is actually running; a snapshot (docker cp) works either way.
+    running = await _container_running(dk, host, rec["container"]) == "running"
     synced = None
     if sync:
-        try:
-            await cap_sbx_context(session_id=sid, package=True)
-        except Exception:
-            pass
+        if running:
+            try:
+                await cap_sbx_context(session_id=sid, package=True)
+            except Exception:
+                pass
         try:
             synced = await _sync_session(sid, message="sleep")
         except Exception as e:
             synced = {"ok": False, "error": str(e)}
+    if not running:
+        return {"ok": True, "slept": True, "already": True, "synced": synced}
     res = await dk._run_local(await dk._docker_argv(
         host, ["stop", rec["container"]]), timeout=90)
     if not res.get("ok"):
@@ -1588,6 +1609,17 @@ async def cap_sbx_link(session_id: str = "", target: str = "",
             await r.hdel(KEY_ALIAS, session_id)
         except Exception as e:
             return {"ok": False, "error": str(e)}
+        # A container retired by the link (stopped, record marked inactive)
+        # becomes this session's own again: re-activate the record so the next
+        # exec/file-IO wakes it, rather than reading active=false as the
+        # explicit host-only opt-out and never touching it.
+        own = await _get_rec(session_id)
+        if own and own.get("container") and not own.get("active") \
+                and str(own.get("retired_reason", "")).startswith("linked to "):
+            own["active"] = True
+            own.pop("retired_reason", None)
+            own["updated"] = now_iso()
+            await _save_rec(own)
         return {"ok": True, "session_id": session_id, "target": ""}
     if not target or target == session_id:
         return {"ok": False, "error": "target required (and must differ from session_id)"}
@@ -1604,9 +1636,46 @@ async def cap_sbx_link(session_id: str = "", target: str = "",
                 "directly to the container-owning id"}
     await r.hset(KEY_ALIAS, session_id, target)
     await _note_session(target, session_id)
+    # Everything for this session now lands in the target's container, so a
+    # container it owned before the link is unreachable from here on: retire
+    # it (stop, keep the /workspace volume) instead of leaving it running.
+    retired = await _retire_own_container(session_id, target)
     await emit_event({"type": "remote.sandbox.linked", "session_id": session_id,
-                      "target": target})
-    return {"ok": True, "session_id": session_id, "target": target}
+                      "target": target, "retired_container": retired or ""})
+    return {"ok": True, "session_id": session_id, "target": target,
+            "retired_container": retired or ""}
+
+
+async def _retire_own_container(session_id: str, target: str) -> str:
+    """Stop the docker container a session owned before it was linked (or that
+    a link left behind), mark its record inactive with the reason, and return
+    the container name ("" when there was nothing to retire). The volume is
+    kept — the idle-archive tier reclaims it on its own schedule. Never raises."""
+    try:
+        own = await _get_rec(session_id)
+        cname = _idle_core.own_container_to_retire(own, await _get_rec(target))
+        if not cname:
+            return ""
+        dk = _dk()
+        host = await _docker_host(dk, own.get("docker_host_id", "local")) if dk else None
+        if host:
+            state = await _container_running(dk, host, cname)
+            if state == "running":
+                await dk._run_local(await dk._docker_argv(host, ["stop", cname]),
+                                    timeout=90)
+        own["active"] = False
+        own["retired_at"] = now_iso()
+        own["retired_reason"] = f"linked to {target}"
+        own["updated"] = now_iso()
+        await _save_rec(own)
+        await emit_event({"type": "remote.sandbox.retired", "session_id": session_id,
+                          "container": cname, "target": target})
+        log.info("sandbox %s linked to %s — retired its own container %s",
+                 session_id, target, cname)
+        return cname
+    except Exception as e:
+        log.debug("retire own container for %s failed: %s", session_id, e)
+        return ""
 
 
 @capability(
@@ -3792,17 +3861,33 @@ async def _sbx_host_any(session_id: str):
     return dk, host, rec
 
 
+async def _rmtree_bg(path: str) -> None:
+    """Remove a snapshot/restore temp tree off the event loop. A workspace copy
+    can hold thousands of files (node_modules, a venv), and shutil.rmtree on the
+    loop was one of the idle-sleep tick's stalls (1.0–1.3 s samples in
+    perf.stalls, at _sync_session's finally)."""
+    if path:
+        await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
+
+
+def _unlink_quiet(path: str) -> None:
+    try:
+        os.unlink(path)
+    except Exception:
+        pass
+
+
 async def _collect_workspace(session_id: str) -> Optional[str]:
     """`docker cp` the container's /workspace into a fresh host temp dir. Returns
-    the temp dir (caller MUST rmtree) or None."""
+    the temp dir (caller MUST remove it — `_rmtree_bg`) or None."""
     dk, host, rec = await _sbx_host_any(session_id)
     if dk is None:
         return None
-    tmp = tempfile.mkdtemp(prefix="vera-sbx-snap-")
+    tmp = await asyncio.to_thread(tempfile.mkdtemp, prefix="vera-sbx-snap-")
     src = f"{rec['container']}:{_WORKDIR}/."
     cp = await dk._run_local(await dk._docker_argv(host, ["cp", src, tmp]), timeout=600)
     if not cp.get("ok"):
-        shutil.rmtree(tmp, ignore_errors=True)
+        await _rmtree_bg(tmp)
         log.warning("sandbox snapshot cp failed for %s: %s", session_id, cp.get("stderr"))
         return None
     return tmp
@@ -3922,10 +4007,13 @@ def _extract_tar(tarpath: str, dest: str) -> None:
             tf.extractall(dest)
 
 
-def _iter_files(src_dir: str, *, max_files: int = 500, max_bytes: int = 2_000_000):
-    """Yield (posix_relpath, bytes) for files under src_dir, bounded, skipping
-    .git and oversized blobs — for the Gitea mirror."""
-    n = 0
+def _list_files(src_dir: str, *, max_files: int = 500,
+                max_bytes: int = 2_000_000) -> List[Tuple[str, str]]:
+    """(posix_relpath, abs_path) for files under src_dir, bounded, skipping .git
+    and oversized blobs — for the Gitea mirror. Pure filesystem walk: run it in
+    a worker thread (a workspace can hold thousands of entries); the caller
+    reads each file the same way so no disk I/O lands on the event loop."""
+    out: List[Tuple[str, str]] = []
     for root, dirs, files in os.walk(src_dir):
         dirs[:] = [d for d in dirs if d != ".git"]
         for fn in files:
@@ -3935,14 +4023,12 @@ def _iter_files(src_dir: str, *, max_files: int = 500, max_bytes: int = 2_000_00
             try:
                 if os.path.getsize(fp) > max_bytes:
                     continue
-                data = _read_bytes(fp)
             except Exception:
                 continue
-            rel = os.path.relpath(fp, src_dir).replace("\\", "/")
-            yield rel, data
-            n += 1
-            if n >= max_files:
-                return
+            out.append((os.path.relpath(fp, src_dir).replace("\\", "/"), fp))
+            if len(out) >= max_files:
+                return out
+    return out
 
 
 async def _gitea_reachable(base: str, headers: dict) -> bool:
@@ -3979,7 +4065,11 @@ async def _gitea_sync_tree(session_id: str, src_dir: str, *, message: str = "",
                          json={"name": repo, "auto_init": True, "private": True})
             await c.post(f"{base}/api/v1/user/repos", headers=headers,
                          json={"name": repo, "auto_init": True, "private": True})
-            for rel, data in _iter_files(src_dir):
+            for rel, fp in await asyncio.to_thread(_list_files, src_dir):
+                try:
+                    data = await asyncio.to_thread(_read_bytes, fp)
+                except Exception:
+                    continue
                 url = f"{base}/api/v1/repos/{owner}/{repo}/contents/{rel}"
                 payload = {"content": base64.b64encode(data).decode(),
                            "message": message or f"sync v{version}: {rel}"}
@@ -4027,8 +4117,7 @@ async def _sync_session(session_id: str, *, message: str = "") -> Dict:
                     await asyncio.to_thread(
                         store.upload_file, latest, tarpath, "application/gzip")
             finally:
-                try: os.unlink(tarpath)
-                except Exception: pass
+                await asyncio.to_thread(_unlink_quiet, tarpath)
         gitea = await _gitea_sync_tree(session_id, tmp, message=message, version=version)
         if garage_ok:
             rec["store_version"] = version
@@ -4050,7 +4139,7 @@ async def _sync_session(session_id: str, *, message: str = "") -> Dict:
                 "version": rec.get("store_version", 0), "garage": garage_ok,
                 "gitea": gitea, "gitea_pending": rec["gitea_pending"]}
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        await _rmtree_bg(tmp)
 
 
 async def _restore_session(session_id: str) -> Dict:
@@ -4065,14 +4154,14 @@ async def _restore_session(session_id: str) -> Dict:
     latest = _store_key(session_id, "workspace-latest.tar.gz")
     if await asyncio.to_thread(store.stat, latest) is None:
         return {"ok": False, "error": "no snapshot in store"}
-    tmp = tempfile.mkdtemp(prefix="vera-sbx-rst-")
+    tmp = await asyncio.to_thread(tempfile.mkdtemp, prefix="vera-sbx-rst-")
     try:
         tarpath = os.path.join(tmp, "ws.tar.gz")
         # Stream the snapshot to disk (download_file) rather than into memory.
         if not await asyncio.to_thread(store.download_file, latest, tarpath):
             return {"ok": False, "error": "download failed"}
         extract = os.path.join(tmp, "x")
-        os.makedirs(extract, exist_ok=True)
+        await asyncio.to_thread(os.makedirs, extract, exist_ok=True)
         await asyncio.to_thread(_extract_tar, tarpath, extract)
         cp = await dk._run_local(await dk._docker_argv(
             host, ["cp", extract + "/.", f"{rec['container']}:{_WORKDIR}"]), timeout=600)
@@ -4083,7 +4172,7 @@ async def _restore_session(session_id: str) -> Dict:
                           "bytes": size})
         return {"ok": True, "restored_bytes": size}
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        await _rmtree_bg(tmp)
 
 
 async def _workspace_is_empty(session_id: str) -> bool:
@@ -4380,7 +4469,13 @@ async def _idle_sleep_tick() -> None:
     """Scheduler tick: docker-stop ACTIVE containers that have been idle for
     idle_sleep_minutes (0 = disabled). They wake automatically on next use via
     _ensure_routable. Containers with no last_used stamp get one now (grace
-    period) instead of being stopped immediately."""
+    period) instead of being stopped immediately.
+
+    The decision is sandbox_idle_core.idle_plan: an ALIAS record (a session
+    linked into someone else's container) is never a target — cap_sbx_sleep
+    resolves the alias, so judging the alias's own stale record used to sleep
+    the target's container every tick while the alias's own leftover container
+    kept running (2026-09-12). Such leftovers are retired here instead."""
     try:
         cfg = await _get_cfg()
         idle_min = int(cfg.get("idle_sleep_minutes", _IDLE_SLEEP_DEFAULT) or 0)
@@ -4391,23 +4486,26 @@ async def _idle_sleep_tick() -> None:
         if not r or dk is None:
             return
         items = await r.hgetall(KEY_SBX)
-        now = time.time()
-        due = []
+        aliases_raw = await r.hgetall(KEY_ALIAS)
+        aliases: Dict[str, str] = {}
+        for k, v in (aliases_raw or {}).items():
+            k = k.decode() if isinstance(k, bytes) else k
+            v = v.decode() if isinstance(v, bytes) else v
+            aliases[str(k)] = str(v)
+        records = []
         for v in (items or {}).values():
             try:
-                rec = json.loads(v)
+                records.append(json.loads(v))
             except Exception:
                 continue
-            if not rec.get("active") or not rec.get("container"):
-                continue
-            last = float(rec.get("last_used") or 0)
-            if not last:
-                rec["last_used"] = now
-                await _save_rec(rec)
-                continue
-            if now - last < idle_min * 60:
-                continue
-            due.append(rec)
+        now = time.time()
+        plan = _idle_core.idle_plan(records, aliases, now=now, idle_s=idle_min * 60)
+        for rec in plan.unstamped:
+            rec["last_used"] = now
+            await _save_rec(rec)
+        for rec in plan.orphans:
+            await _retire_own_container(rec["session_id"], aliases[rec["session_id"]])
+        due = plan.due
         if not due:
             return
         # One bulk docker call (cached, see `_containers_state_map`) per DISTINCT
