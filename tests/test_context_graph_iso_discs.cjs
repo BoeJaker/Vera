@@ -14,7 +14,10 @@ ok(fams.includes('vector') && fams.includes('cap') && fams.includes('skill'), 't
 const d0 = (iso.discs || [])[0] || {};
 ok(/^-?[\d.]+deg$/.test(d0.a0) && /^[\d.]+deg$/.test(d0.a1) && parseFloat(d0.a1) > 0, 'a wedge spans its sector (' + d0.a0 + ' → ' + d0.a1 + ')');
 ok(/^[\d.]+%$/.test(d0.m0) && /^[\d.]+%$/.test(d0.m1) && parseFloat(d0.m1) > parseFloat(d0.m0) && parseFloat(d0.m0) > 0, 'a wedge is annular (the radial mask starts off the hub)');
-ok(d0.tf === 'scale(1.103,0.552)', 'the disc lies on the floor under the plate\'s projection (' + d0.tf + ')');
+ok(/^scale\(1\.103,0\.\d{3}\)$/.test(d0.tf) && d0.tf === 'scale(' + (iso.iso.kx * Math.SQRT2).toFixed(3) + ',' + (iso.iso.ky * Math.SQRT2).toFixed(3) + ')', 'the disc lies on the floor under the plate\'s projection — the tilt compute() chose for this column (' + d0.tf + ' · tilt ' + iso.iso.tilt.toFixed(1) + ')');
+ok(iso.iso.tilt > 30 && iso.iso.tilt <= 58.3, 'a plot taller than it is wide steepens the tilt so the plate fills it');
+const flat = G.compute(Object.assign({ view: 'iso' }, data), 900, 300);
+ok(Math.abs(flat.iso.tilt - 30) < 1e-6 && /^scale\(1\.103,0\.552\)$/.test(flat.discs[0].tf), 'a wide, low plot keeps the 30° tilt — the plate\'s 1.103 × 0.552');
 ok(typeof d0.col === 'string' && d0.col.length > 0 && d0.d > 0, 'a disc has its family colour and a diameter');
 ok(iso.plate && typeof iso.plate.w === 'number', 'the plate stays');
 const set = new Set((iso.discs || []).map((d) => d.a0)); ok(set.size === 3, 'the sectors differ family to family');
