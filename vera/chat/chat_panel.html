@@ -5856,6 +5856,8 @@ IMPORTANT:
       if(lang==='mermaid'){ out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{mermaid:s.slice(0,8000)}, col:'#a78bfa', k:'diagram'}); return; }
       if(lang==='widget') return;
       out.push({kind:'code', n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', content:{code:s.slice(0,12000), lang}, col:'#fb923c', k:'code'}); });
+    // a mermaid fence is a slot the mermaid element fills (renderMd keeps its source in _MM_BLOCKS): it lands as a diagram item
+    body.querySelectorAll('.mm-slot[data-mm]').forEach((el,i)=>{ const s=String(_MM_BLOCKS[el.dataset.mm]||'').trim(); if(!s) return; out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{title:'Diagram', mermaid:s.slice(0,8000), caption:''}, col:'#c58bd6', k:'diagram'}); });
     body.querySelectorAll('table').forEach((el,i)=>{ const columns=[...el.querySelectorAll('thead th, tr:first-child th')].map(x=>String(x.textContent||'').trim()); const rows=[...el.querySelectorAll('tbody tr, tr')].filter(tr=>tr.querySelector('td')).map(tr=>[...tr.querySelectorAll('td')].map(td=>String(td.textContent||'').trim())).slice(0,60); if(!rows.length) return;
       out.push({kind:'table', n:(columns[0]||'Table')+' · '+rows.length+' rows', d:'table · '+rows.length+' rows', content:{columns, rows, caption:''}, col:'#38bdf8', k:'table'}); });
     body.querySelectorAll('vera-widget').forEach((el,i)=>{ let rec=null; try{ rec=el.record||JSON.parse(el.getAttribute('record')||'null'); }catch(_){} const form=(rec&&rec.form)||el.getAttribute('form')||''; if(!form) return;
@@ -5872,7 +5874,7 @@ IMPORTANT:
     for(let i=0;i<made.length;i++){ const m=made[i]; const key='turn:'+mid+':'+m.k+':'+i; if(_CV_LANDED[key]) continue;
       try{ const r=await _capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:'s', anchor:{mid, turn:mid}});
         if(!(r&&r.ok)) continue; _CV_LANDED[key]=true; n++;
-        (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:m.n, d:'canvas · '+(r.resolved==='shown'?'already there':'lifted out of the reply'), col:m.col, kind:m.k, key, form:m.kind==='widget'?(m.content.widget||''):undefined});
+        (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:m.n, d:'canvas · '+(r.resolved==='shown'?'already there':'lifted out of the reply'), col:m.col, kind:m.k, key, form:m.kind==='widget'?(m.content.widget||''):undefined, mermaid:m.kind==='diagram'?m.content.mermaid:undefined, record:m.kind==='widget'?(m.content.record||undefined):undefined});
       }catch(_){}
     }
     if(n){ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} try{ _cvRunsDraw(); }catch(_){} try{ if(_xpl.on) _xplRefresh(); }catch(_){} }
@@ -15574,7 +15576,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       body.querySelectorAll('.cap-inline').forEach(el=>{ const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:el.textContent)||'').replace(/\s+/g,' ').trim().slice(0,60); if(n) made.push({n, d:'capability · '+(el.classList.contains('error')?'failed':el.classList.contains('done')?'done':'ran'), col:'var(--acc2)', kind:'cap', body:String((el.querySelector('.cap-result,.cap-peek')||{}).textContent||'').slice(0,400)}); });
       body.querySelectorAll('.art-card').forEach(el=>{ const n=String(((el.querySelector('.art-hd .t')||{}).textContent)||'artifact').trim().slice(0,60); made.push({n, d:'artifact', col:'#c9955a', kind:'artifact'}); });
       body.querySelectorAll('vera-widget').forEach(el=>{ let form=el.getAttribute('form')||'', data=null; try{ const rec=el.record||JSON.parse(el.getAttribute('record')||'null'); if(rec){ form=form||rec.form||''; data=rec.data!=null?rec.data:(el._data!=null?el._data:null); } }catch(_){} made.push({n:el.getAttribute('title')||form||'widget', d:'widget · '+form, col:'#a78bfa', kind:'widget', form:form||'kv', data}); });
-      body.querySelectorAll('vera-mermaid,.mermaid,pre.mermaid').forEach(()=>{ made.push({n:'Diagram', d:'mermaid', col:'#a78bfa', kind:'diagram'}); });
+      body.querySelectorAll('vera-mermaid,.mermaid,pre.mermaid').forEach(el=>{ const src=String((el._code!=null?el._code:el.textContent)||'').trim(); made.push({n:'Diagram', d:'mermaid', col:'#a78bfa', kind:'diagram', mermaid:src.slice(0,8000)}); });
       body.querySelectorAll('pre code').forEach(el=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; if(lang==='mermaid'||lang==='widget') return; const s=String(el.textContent||''); made.push({n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', col:'#fb923c', kind:'code', body:s.slice(0,400)}); });
       body.querySelectorAll('vera-agent-loop-output').forEach(el=>{ let steps=[]; try{ steps=[...el.querySelectorAll('[data-step],.step,.alo-step')].slice(0,12).map(s=>({label:String(s.textContent||'').trim().slice(0,40), status:/done|ok/.test(s.className)?'ok':/run|active/.test(s.className)?'run':/err|fail/.test(s.className)?'fail':''})); }catch(_){} made.push({n:'Agentic loop', d:'loop · '+(steps.length?steps.length+' steps':'running'), col:'var(--acc)', kind:'loop', steps}); });
       // every image the reply carries — a diffusion render, an artifact's picture, a capability's screenshot — with its source, so the scene can show it per tier
