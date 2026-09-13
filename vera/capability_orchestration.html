@@ -710,8 +710,9 @@ header .hdr-right{margin-left:0;gap:6px}
 #rowModal .mrow .out{color:var(--t2,var(--dim2,#8a92a0));white-space:pre-wrap;word-break:break-word;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px}
 #rowModal .mnote{font-size:9.5px;color:var(--t3,var(--dim,#6b7280))}
 #dashGrid .w-body tr,#dashGrid .w-body [class$="-row"],#dashGrid .w-body [class*="-row "],#dashGrid .w-body .inst-card{cursor:pointer}
-/* the tab bar fits: what does not fit folds into the "+N ⌘K" chip; the bar never scrolls */
-.tabs{overflow-x:hidden}
+/* the tab bar fits: what does not fit folds into the "+N ⌘K" chip (the board: overflow behind a chip); what is still wider — the open tabs alone — scrolls sideways, one line always, never wrapping (the board''s .tabs) */
+.tabs{overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
 .tabs .tab.folded{display:none}
 .tabs .tab-controls{margin-left:auto;flex:0 0 auto;order:10}
 /* the strips under the tabs: the active panel's own menu */
