@@ -297,7 +297,8 @@ async def _discover() -> List[Dict[str, Any]]:
         if lst:
             try:
                 for h in (await lst() or {}).get("hosts", []):
-                    hid = h.get("id", "")
+                    # the exec-store login: what the mesh and exec resolve
+                    hid = h.get("exec_id") or h.get("id", "")
                     assets.append({
                         "key": f"ssh:{hid}", "name": h.get("label") or h.get("host"),
                         "kind": "host", "ip": h.get("host", ""), "host_id": hid,
