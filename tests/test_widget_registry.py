@@ -226,6 +226,22 @@ def test_the_lhm_library_opens_and_saves_a_parts_record():
     assert "if(_editing) _wireBars();" in lib
 
 
+def test_the_gallery_view_shows_every_form_at_its_sizes():
+    # the registry panel carries the Gallery view (the Widgets boards as one gallery): a board filter, the five sizes,
+    # the projection switch, a cell per form drawn by <vera-widget> from its sample, + Add on a cell → the config sheet
+    PANEL = _read("vera", "widgets", "widget_registry_panel.html"); REG = _read("vera", "widgets", "widget_registry.py")
+    assert 'onclick="wrView(\'gallery\')"' in PANEL and 'id="galGrid"' in PANEL and "function wrGalleryDraw()" in PANEL
+    assert "GAL_BOARDS = [['all', 'All'], ['widgets', 'Still'], ['motion', 'Motion'], ['iso', 'Iso']" in PANEL
+    assert "[['xs', 'XS'], ['s', 'S'], ['m', 'M'], ['l', 'L'], ['xl', 'XL']]" in PANEL and "[['board', \"the board's\"], ['flat', 'flat'], ['iso', 'iso']]" in PANEL
+    assert "el.record = rec" in PANEL and "projection: (f.proj || []).includes(proj)" in PANEL
+    assert "' with a live build · '" in PANEL and "a size is a composition, not a scale" in PANEL
+    assert "S.open({ mode: 'add', into: 'dashboard', title: 'Add · ' + (f.name || f.id), templates: true, ok: 'Save', base: BASE, record: rec })" in PANEL
+    # its own page and a registered panel
+    assert '@APP.get("/ui/widgets/gallery", include_in_schema=False)' in REG and 'register_ui("widget-gallery", "Widget gallery", "▦", _GALLERY_HTML' in REG
+    gal = ORCH.UI["widget-gallery"]; assert gal["args"][1] == "Widget gallery" and gal["kw"]["mode"] == "element" and "widget.forms" in gal["kw"]["ui_caps"]
+    assert "u.searchParams.get('view') === 'gallery' || /\\/gallery\\/?$/.test(u.pathname)" in PANEL
+
+
 def test_the_chat_names_its_panes_templates():
     chat = _read("vera", "chat", "chat_panel.html")
     for tpl in ("lhm:sessions", "lhm:ctx-galaxy", "lhm:ctx-budget", "lhm:memory-graph", "lhm:loop-graph", "lhm:file-tree", "lhm:actions"):
