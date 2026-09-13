@@ -44,7 +44,7 @@ log = logging.getLogger("vera.estate")
 # The backup and disk readers run a script on each Proxmox node over SSH (60 s
 # limit of their own), so they get longer than the local checks.
 SOURCE_TIMEOUTS_S = {"state_store": 10.0, "containers": 25.0, "guests": 25.0,
-                     "backups": 75.0, "storage": 75.0, "services": 30.0}
+                     "backups": 75.0, "storage": 75.0, "services": 30.0, "certificates": 50.0}
 CACHE_TTL_S = 120.0
 # docker.disk.status also sweeps every exited session sandbox (~122 s on prod);
 # only its fallback path waits on it, and never for longer than this.
@@ -249,6 +249,10 @@ async def _services() -> Dict[str, Any]:
     return core.services_section(vfs, identity)
 
 
+async def _certificates() -> Dict[str, Any]:
+    return core.certificates_section(await _call("certs.list"))
+
+
 @capability(
     "estate.health",
     http_method="GET", http_path="/estate/health", http_tags=["estate", "obs"],
@@ -261,11 +265,13 @@ async def _services() -> Dict[str, Any]:
                 "after a host reboot and duplicate cluster records, backups (pxstore.backup."
                 "status warnings, failed guest backups, no backup in 36 h), disks (damaged, "
                 "importable or unused disks, Docker data disk filling up) and services (VFS-02 "
-                "services, estate mounts, FreeIPA reachability). Read-only, cached 120 s. "
+                "services, estate mounts, FreeIPA reachability) and certificates (certs.list: "
+                "expired or expiring certificates, unreadable sources). Read-only, cached 120 s. "
                 "Input: refresh (bool - skip the cache). Output: {level: ok|warn|error, "
                 "counts:{error,warn,info}, findings:[{severity, section, subject, message, "
                 "detail}], sections:{state_store, containers, guests, backups, storage, "
-                "services: {label, facts, elapsed_ms, error, findings}}, checked_at, cached}.",
+                "services, certificates: {label, facts, elapsed_ms, error, findings}}, "
+                "checked_at, cached}.",
 )
 async def cap_estate_health(refresh: bool = False, trace_id=None) -> Dict[str, Any]:
     if not refresh and _CACHE["result"] and time.monotonic() - _CACHE["at"] < CACHE_TTL_S:
@@ -285,8 +291,41 @@ async def cap_estate_health(refresh: bool = False, trace_id=None) -> Dict[str, A
         return name, out
 
     sources = (("state_store", _state_store), ("containers", _containers), ("guests", _guests),
-               ("backups", _backups), ("storage", _storage), ("services", _services))
+               ("backups", _backups), ("storage", _storage), ("services", _services),
+               ("certificates", _certificates))
     result = core.summarize(dict(await asyncio.gather(*(run(n, s) for n, s in sources))))
     result["checked_at"] = now_iso()
     _CACHE.update(at=time.monotonic(), result=result)
     return {**result, "cached": False}
+
+
+# ── startup check: the right Redis? ──────────────────────────────────────────
+# At the 2 Sep 2026 boot Vera connected to the host's own redis-server and ran
+# ten days without its estate settings; nothing said so until someone opened
+# the Overview. This runs the state-store check once, soon after boot, and
+# warns in the log. It only warns: which Redis to use is an operator decision.
+STARTUP_CHECK_WAIT_S = 90.0
+
+
+async def _startup_state_store_check() -> None:
+    deadline = time.monotonic() + STARTUP_CHECK_WAIT_S
+    while getattr(_orch, "REDIS", None) is None and time.monotonic() < deadline:
+        await asyncio.sleep(2)
+    try:
+        out = await asyncio.wait_for(_state_store(), SOURCE_TIMEOUTS_S["state_store"])
+    except asyncio.TimeoutError:
+        log.warning("state store check: Redis did not answer within %d s",
+                    int(SOURCE_TIMEOUTS_S["state_store"]))
+        return
+    for line in core.startup_lines(out):
+        log.warning("state store check: %s", line)
+    if not out.get("error") and not out.get("findings"):
+        log.info("state store check: connected to the estate's Redis (%s keys of %s expected)",
+                 out["facts"].get("expected_present"), out["facts"].get("expected_total"))
+
+
+try:
+    _orch.schedule(_startup_state_store_check, interval=10 ** 9,
+                   name="estate_state_store_startup_check", skip_in_sandbox=True)
+except Exception as _e:                                            # pragma: no cover
+    log.debug("estate: startup state-store check not scheduled: %s", _e)

@@ -26,6 +26,7 @@ SECTIONS = {
     "backups": "Backups",
     "storage": "Disks and storage",
     "services": "File fabric and directory",
+    "certificates": "Certificates",
 }
 _SECTION_NOUN = {
     "state_store": "the state store",
@@ -34,6 +35,7 @@ _SECTION_NOUN = {
     "backups": "the backup system",
     "storage": "the disks",
     "services": "the file fabric and directory",
+    "certificates": "the certificates",
 }
 
 # Keys only the estate store holds: each is written the first time its feature
@@ -96,6 +98,15 @@ def state_store_section(info: Mapping[str, Any], present: Mapping[str, bool],
              "expected_present": len(EXPECTED_STATE_KEYS) - len(missing),
              "expected_total": len(EXPECTED_STATE_KEYS)}
     return {"facts": facts, "findings": findings}
+
+
+def startup_lines(section: Mapping[str, Any]) -> List[str]:
+    """What the boot log should say about the state store: one line per
+    finding, with its detail, or the reason the check could not run."""
+    if section.get("error"):
+        return [f"could not check the state store: {section['error']}"]
+    return [f"{f['message']} {f['detail']}".strip() if f.get("detail") else f["message"]
+            for f in section.get("findings") or []]
 
 
 # ── containers ───────────────────────────────────────────────────────────────
@@ -374,6 +385,23 @@ def services_section(vfs: Optional[Mapping[str, Any]] = None,
             directory = f"FreeIPA {identity.get('version') or ''}".strip()
     facts = {"file_fabric": fabric, "estate_mounts": (vfs or {}).get("estate_mounts"),
              "directory": directory}
+    return {"facts": facts, "findings": findings}
+
+
+# ── certificates ─────────────────────────────────────────────────────────────
+
+def certificates_section(certs: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """certs: certs.list's output or {error}. Its findings already say what has
+    expired or is about to; only expiry and unreadable sources reach the Overview,
+    the informational rows (self-signed, superseded) stay on the Certificates view."""
+    if certs is None or certs.get("error"):
+        return {"error": str((certs or {}).get("error") or "certs.list did not answer")}
+    findings = [finding(f["severity"], "certificates", f.get("subject", ""), f["message"], f.get("detail", ""))
+                for f in certs.get("findings") or [] if f.get("severity") in (ERROR, WARN)]
+    counts = certs.get("counts") or {}
+    facts = {"certificates": len(certs.get("certs") or []),
+             "expired": counts.get("expired", 0), "expiring": counts.get("expiring", 0),
+             "soonest": certs.get("soonest")}
     return {"facts": facts, "findings": findings}
 
 

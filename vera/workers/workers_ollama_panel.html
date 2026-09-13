@@ -199,6 +199,12 @@ html.view-models #secNav [data-view="models"]{display:block}
 .ov-facts{margin-bottom:6px;font-family:var(--mono);font-size:9.5px;color:var(--dim);overflow-wrap:anywhere}
 .ov-list{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg1)}
 .ov-list>*+*{border-top:1px solid var(--border)}
+.bld-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.bld{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg1);color:var(--text);text-decoration:none;font-size:11px}
+.bld:hover{border-color:var(--acc3)}
+.bld b{font-size:12px}
+.bld span{color:var(--muted,var(--fg2))}
+.bld em{font-style:normal;color:var(--acc3);font-size:10px;margin-top:4px}
 .ov-row{display:grid;grid-template-columns:48px 1fr;gap:10px;padding:6px 10px;font-size:11px;color:var(--text)}
 .ov-sev{padding-top:1px;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase}
 .ov-sev.error{color:var(--err)}.ov-sev.warn{color:var(--warn)}.ov-sev.info{color:var(--dim2)}
@@ -427,6 +433,7 @@ html.view-models #secNav [data-view="models"]{display:block}
     <div class="snav" data-pane="provision" data-view="estate" onclick="P.show('provision',this)">Trust</div>
     <div class="navdiv" data-view="estate"></div>
     <div class="nsec" data-view="estate">Build</div>
+    <div class="snav" data-pane="build" data-view="estate" onclick="P.show('build',this)">New</div>
     <div class="snav" data-pane="foundry" data-view="estate" onclick="P.show('foundry',this)">Foundry</div>
     <div class="snav" data-pane="software" data-view="estate" onclick="P.show('software',this)">Provision</div>
     <div class="navdiv" data-view="estate"></div>
@@ -1782,6 +1789,25 @@ html.view-models #secNav [data-view="models"]{display:block}
       <iframe id="software-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
 
+    <!-- BUILD PANE — one entry: pick what to make, land on the pane that makes it -->
+    <div class="pane" id="pane-build">
+      <div class="ov-wrap" style="max-width:920px">
+        <h2 style="margin:0 0 4px">Make something new</h2>
+        <div class="muted" style="font-size:11px;margin-bottom:14px">Pick the target; each opens the page that builds it. Everything here runs through the existing Foundry and Provision pages.</div>
+        <div class="bld-grid">
+          <a class="bld" href="#" onclick="P.buildGo('foundry','sec-provision');return false"><b>Container or VM on Proxmox</b><span>An OS image with features baked in: SSH certificate, directory join, mesh. Enrols itself when it comes up.</span><em>Foundry</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('software','proxmox');return false"><b>Plain container or VM</b><span>A bare LXC or VM from a Proxmox template, no features, enrolled on creation.</span><em>Provision › Create CT/VM</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('software','install');return false"><b>Runtime on a machine you have</b><span>Ollama, vLLM, Docker or a worker onto an enrolled host over SSH.</span><em>Provision › Install</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('software','docker');return false"><b>Docker service</b><span>A container or stack on one of the Docker hosts.</span><em>Provision › Docker</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('software','deploy');return false"><b>Backing store for Vera</b><span>Redis, Postgres, Garage and the other stores Vera itself depends on.</span><em>Provision › Deploy</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('foundry','sec-images');return false"><b>OS image or template</b><span>Add an image to the catalogue or build a Proxmox template from it.</span><em>Foundry › Image catalog</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('foundry','sec-blueprints');return false"><b>Same machine again</b><span>Apply a saved blueprint, or export one to reproduce what exists.</span><em>Foundry › Blueprints</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('foundry','sec-pxe');return false"><b>Physical machine</b><span>Netboot a bare-metal box or an ISO install from the same images and features.</span><em>Foundry › PXE</em></a>
+          <a class="bld" href="#" onclick="P.buildGo('foundry','sec-sdcard');return false"><b>Raspberry Pi card</b><span>Adapt an SD card in place, keeping its display and escape hatch.</span><em>Foundry › SD card</em></a>
+        </div>
+      </div>
+    </div>
+
     <!-- FOUNDRY PANE — OS provisioning (catalog × target × features), lazy iframe -->
     <div class="pane" id="pane-foundry" style="padding:0;overflow:hidden">
       <iframe id="foundry-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
@@ -1931,6 +1957,7 @@ html.view-models #secNav [data-view="models"]{display:block}
                  Nodes pane; docker host mgmt in Docker; CT creation in Proxmox. -->
             <span class="j-tab active" id="prvs-security" onclick="P.provSub('security')" style="padding:3px 9px;font-size:9px">Security</span>
             <span class="j-tab" id="prvs-secrets" onclick="P.provSub('secrets')" style="padding:3px 9px;font-size:9px">Secrets</span>
+            <span class="j-tab" id="prvs-certs" onclick="P.provSub('certs')" style="padding:3px 9px;font-size:9px">Certificates</span>
             <span class="j-tab" id="prvs-identity" onclick="P.provSub('identity')" style="padding:3px 9px;font-size:9px">Identity</span>
             <span class="j-tab" id="prvs-enroll" onclick="P.provSub('enroll')" style="padding:3px 9px;font-size:9px">Enroll</span>
             <span class="j-tab" id="prvs-mesh" onclick="P.provSub('mesh')" style="padding:3px 9px;font-size:9px">Mesh</span>
@@ -1939,6 +1966,7 @@ html.view-models #secNav [data-view="models"]{display:block}
         </div>
         <iframe id="prv-sub-security" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-secrets" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
+        <iframe id="prv-sub-certs" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-identity" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-enroll" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-mesh" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
@@ -6143,6 +6171,17 @@ function _mountFrame(id, url){
   const f=$(id);
   if(f && (!f.src || f.src==='about:blank' || f.src==='')) f.src=url;
 }
+// The Build entry: open a pane at one of its sections. The hash reaches the
+// iframe's page as a fragment change (no reload); a fresh mount carries it.
+const _buildFrames={foundry:['foundry-frame','/foundry/panel'],software:['software-frame','/provision/panel']};
+function buildGo(pane, section){
+  const nav=document.querySelector('.snav[data-pane="'+pane+'"]');
+  const [fid,path]=_buildFrames[pane]||[];
+  const f=fid&&$(fid);
+  if(f&&(!f.src||f.src==='about:blank')) f.src=BASE+path+'#'+section;
+  show(pane, nav);
+  if(f&&f.src&&f.src!=='about:blank'){ try{ f.contentWindow.location.hash=section; }catch(e){ f.src=BASE+path+'#'+section; } }
+}
 
 // ── Overview: estate.health ─────────────────────────────────────────────────
 // One findings list: the state store, stopped infrastructure containers on the
@@ -6176,6 +6215,12 @@ function _ovFacts(key,f){
   if(key==='services'&&f.file_fabric){
     return 'file server '+f.file_fabric+(f.estate_mounts!=null?(' · '+f.estate_mounts+' estate mounts'):'')
       +' · directory '+f.directory;
+  }
+  if(key==='certificates'&&f.certificates!=null){
+    const so=f.soonest;
+    return f.certificates+' certificate'+(f.certificates===1?'':'s')
+      +(f.expired?(' · '+f.expired+' expired'):'')+(f.expiring?(' · '+f.expiring+' expiring'):'')
+      +(so?(' · soonest '+so.name+' in '+so.days_left+' day'+(so.days_left===1?'':'s')):'');
   }
   return '';
 }
@@ -6335,6 +6380,7 @@ function showPane(name, el){
   if(name==='storage'){ _mountFrame('storage-frame', BASE+'/pxstore/panel'); }
   if(name==='estate'){ _mountFrame('estate-frame', BASE+'/interaction/panel'); }
   if(name==='foundry'){ _mountFrame('foundry-frame', BASE+'/foundry/panel'); }
+  if(name==='build'){ /* static: the Build entry */ }
   if(name==='network'){ netSub(_netSub); }
   if(name==='connections'){ connLoad(); }
   if(name==='nodes'){ ndInit(); }
@@ -6551,7 +6597,7 @@ async function connProbeRow(id){
 // ── Provision sub-tabs — every provisioning surface consolidated in one pane ──
 // (netpolicy was dropped: it just duplicated Network → Graph & Firewall.
 //  The OPA policy engine deploys from the Security sub-tab's services card.)
-const _prvSubSrc={security:'/provisioning/panel',secrets:'/secrets/panel',identity:'/identity/panel',enroll:'/enroll/panel',mesh:'/netsec/panel'};
+const _prvSubSrc={security:'/provisioning/panel',secrets:'/secrets/panel',certs:'/certs/panel',identity:'/identity/panel',enroll:'/enroll/panel',mesh:'/netsec/panel'};
 let _prvSub='security';
 function provSub(name){
   if(!_prvSubSrc[name]) name='security';
@@ -8164,7 +8210,7 @@ return {
   dkrSpawnWorker, dkrWorkerList, dkrWorkerStop, dkrTerm,
   stkRefresh, stkDeploy, pmxSsh, pmxEnrollSsh,
   sbxRefresh, sbxNew, sbxStop, sbxTerm, sbxSync, sbxRestore, sbxSnaps, sbxContext, sbxDetail, sbxCloseDetail, sbxConfig, sbxConfigSave,
-  termOpen, termClose, provSub,
+  termOpen, termClose, provSub, buildGo,
   netSub, pmxSub, obsSub,
   connLoad, connRender, connEdit, connMgrClose, connAuthToggle,
   connSave, connDelete, connProbe, connProbeRow,

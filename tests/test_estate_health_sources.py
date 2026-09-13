@@ -122,3 +122,21 @@ def test_missing_capabilities_are_reported_as_not_loaded():
     ns = sources({})
     assert "not loaded" in asyncio.run(ns["_containers"]())["error"]
     assert "not loaded" in asyncio.run(ns["_guests"]())["error"]
+
+
+def test_the_startup_check_is_a_one_shot_scheduled_job_that_only_logs():
+    """It registers through schedule() with a never-repeating interval, waits for
+    the Redis connection, and reaches the log - never the Redis config."""
+    import ast
+    src = os.path.join(ROOT, "vera", "estate", "estate_health_capabilities.py")
+    text = open(src, encoding="utf-8").read()
+    tree = ast.parse(text)
+    fn = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "_startup_state_store_check")
+    calls = {getattr(c.func, "attr", getattr(c.func, "id", "")) for c in ast.walk(fn) if isinstance(c, ast.Call)}
+    assert {"warning", "info", "_state_store", "startup_lines"} <= calls
+    assert not any(a in calls for a in ("hset", "set", "delete", "config_set"))
+    sched = next(c for c in ast.walk(tree) if isinstance(c, ast.Call) and getattr(c.func, "attr", "") == "schedule")
+    kw = {k.arg: k.value for k in sched.keywords}
+    assert kw["name"].value == "estate_state_store_startup_check"
+    assert kw["skip_in_sandbox"].value is True
+    assert eval(compile(ast.Expression(kw["interval"]), "<interval>", "eval")) >= 10 ** 6
