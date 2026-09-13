@@ -43,6 +43,7 @@ import httpx
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability, emit_event, now_iso
 from Vera.vera.security import secrets as vsecrets
+from Vera.vera.workers.docker_effects import observe_docker_effect
 
 log = logging.getLogger("vera.provision.stores")
 
@@ -173,7 +174,8 @@ admin_token   = "{admin_token}"
 
 
 async def _write_volume_file(dk, rec: Dict, volume: str, path_in_vol: str,
-                             content: str, timeout: int = 120) -> Dict:
+                             content: str, timeout: int = 120,
+                             effect_arguments: Optional[Dict[str, Any]] = None) -> Dict:
     """Write a file into a named volume on the target daemon via a one-shot
     alpine container (portable — no bind mounts, works on remote daemons)."""
     b64 = base64.b64encode(content.encode("utf-8")).decode()
@@ -183,11 +185,18 @@ async def _write_volume_file(dk, rec: Dict, volume: str, path_in_vol: str,
     ok, reason = dk._sandbox_gate(" ".join(argv))
     if not ok:
         return {"ok": False, "error": f"sandbox: {reason}"}
+    shadow = observe_docker_effect(**effect_arguments) if effect_arguments else None
     res = await dk._run_local(argv, timeout=timeout)
     if not res.get("ok"):
-        return {"ok": False, "error": res.get("stderr") or res.get("error")
-                or "config write failed"}
-    return {"ok": True}
+        out = {"ok": False, "error": res.get("stderr") or res.get("error")
+               or "config write failed"}
+        if shadow is not None:
+            out["effect_shadow"] = shadow
+        return out
+    out = {"ok": True}
+    if shadow is not None:
+        out["effect_shadow"] = shadow
+    return out
 
 
 async def _container_state(dk, rec: Dict, name: str) -> Optional[Dict]:
@@ -259,6 +268,10 @@ async def cap_stores(trace_id=None) -> Dict:
     "provision.store.deploy",
     http_method="POST", http_path="/provision/store/deploy", http_tags=["provision"],
     memory="off",
+    redact_args=["host_id", "store", "env", "ports", "s3_access", "s3_secret",
+                 "s3_bucket", "admin_token", "gpus", "idempotency_key",
+                 "approval_receipt_ref"],
+    redact_result=True,
     description="Deploy a backing store (or 'all' of them) onto a registered "
                 "Docker host as a named container (vera-<store>, label "
                 "vera.store). Data lives in named volumes so redeploys keep it. "
@@ -272,7 +285,9 @@ async def cap_stores(trace_id=None) -> Dict:
                 "bucket; default FABRIC_S3_* env), admin_token (str — garage "
                 "admin token; default generated), bootstrap (bool=true — run the "
                 "garage bootstrap after start). Output: per-store {ok, container_"
-                "id|already, endpoint, bootstrap?, secrets?}.",
+                "id|already, endpoint, bootstrap?, secrets?, effect_shadow?}. "
+                "Optional idempotency, approval, and retry inputs are observe-only "
+                "and never sent to Docker.",
 )
 async def cap_store_deploy(host_id: str = "local", store: str = "",
                            env: Optional[Dict[str, str]] = None,
@@ -280,6 +295,8 @@ async def cap_store_deploy(host_id: str = "local", store: str = "",
                            s3_access: str = "", s3_secret: str = "",
                            s3_bucket: str = "", admin_token: str = "",
                            gpus: str = "", bootstrap: bool = True,
+                           idempotency_key: str = "",
+                           approval_receipt_ref: str = "", retry: bool = False,
                            trace_id=None) -> Dict:
     dk = _dk()
     if dk is None:
@@ -308,8 +325,21 @@ async def cap_store_deploy(host_id: str = "local", store: str = "",
             # A stopped previous deployment is restarted rather than recreated.
             if existing.get("State") != "running":
                 argv = await dk._docker_argv(rec, ["start", cname])
+                allowed, reason = dk._sandbox_gate(" ".join(argv))
+                if not allowed:
+                    out.update({"ok": False, "blocked": True,
+                                "error": f"sandbox: {reason}"})
+                    results[name] = out
+                    continue
+                shadow = observe_docker_effect(
+                    host_ref=rec["id"], resource_ref=cname,
+                    operation_ref="restart_existing:true", mode="store_deploy",
+                    idempotency_key=idempotency_key,
+                    approval_receipt_ref=approval_receipt_ref, retry=retry)
                 res = await dk._run_local(argv, timeout=60)
                 out["restarted"] = bool(res.get("ok"))
+                out["ok"] = bool(res.get("ok"))
+                out["effect_shadow"] = shadow
             results[name] = out
             continue
 
@@ -317,6 +347,18 @@ async def cap_store_deploy(host_id: str = "local", store: str = "",
                     **{str(k): v for k, v in (ports or {}).items()}}
         env_map = {**(spec.get("env") or {}), **(env or {})}
         secrets_out: Dict[str, str] = {}
+        shadow: Optional[Dict[str, Any]] = None
+        effect_arguments = {
+            "host_ref": rec["id"], "resource_ref": cname,
+            "operation_ref": json.dumps({
+                "store": name, "image": spec["image"], "ports": port_map,
+                "env": env_map, "volumes": spec["volumes"],
+                "gpus": gpus if spec.get("gpus_hint") else "",
+                "bootstrap": bool(bootstrap),
+            }, sort_keys=True, separators=(",", ":")),
+            "mode": "store_deploy", "idempotency_key": idempotency_key,
+            "approval_receipt_ref": approval_receipt_ref, "retry": retry,
+        }
 
         # ── garage: generate config into its config volume first ─────────────
         if spec.get("special") == "garage":
@@ -326,38 +368,39 @@ async def cap_store_deploy(host_id: str = "local", store: str = "",
             region = os.getenv("FABRIC_S3_REGION", "garage")
             w = await _write_volume_file(
                 dk, rec, "vera-garage-etc", "garage.toml",
-                _garage_toml(rpc_secret, adm, region))
+                _garage_toml(rpc_secret, adm, region),
+                effect_arguments=effect_arguments)
+            shadow = w.get("effect_shadow")
             if not w.get("ok"):
                 out.update({"ok": False, "error": w.get("error")})
+                if shadow is not None:
+                    out["effect_shadow"] = shadow
                 results[name] = out
                 continue
             secrets_out = {"admin_token": adm, "rpc_secret": rpc_secret}
 
         vols = ",".join(f"{v}:{p}" for v, p in spec["volumes"].items())
         prts = ",".join(f"{h}:{c}" for h, c in port_map.items())
-        if spec.get("cmd"):
-            # stores with a custom container command (redis flags, garage -c) —
-            # cap_docker_run has no cmd parameter, so use the gated CLI directly.
-            await dk._run_local(await dk._docker_argv(rec, ["pull", spec["image"]]),
-                                timeout=600)
-            run = await _run_with_cmd(dk, rec, name, spec, cname, prts,
-                                      env_map, vols)
-        else:
-            extra = f"--label {_STORE_LABEL}={name}"
-            if gpus and spec.get("gpus_hint"):
-                extra += f" --gpus {gpus}"
-            run = await dk.cap_docker_run(
-                host_id=rec["id"], image=spec["image"], name=cname,
-                ports=prts, env=env_map, volumes=vols,
-                restart="unless-stopped",
-                extra_args=extra,
-                pull=True,
-            )
+        extra = f"--label {_STORE_LABEL}={name}"
+        if gpus and spec.get("gpus_hint"):
+            extra += f" --gpus {gpus}"
+        run = await dk._run_container_native(
+            host_id=rec["id"], image=spec["image"], name=cname,
+            ports=prts, env=env_map, volumes=vols,
+            restart="unless-stopped", extra_args=extra,
+            command=spec.get("cmd", ""), pull=True,
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry,
+            effect_mode="store_deploy", effect_shadow=shadow,
+        )
+        shadow = run.get("effect_shadow")
 
         out["ok"] = bool(run.get("ok"))
         out["container_id"] = (run.get("container_id") or "")[:12]
         if not out["ok"]:
             out["error"] = run.get("error", "docker run failed")
+            if shadow is not None:
+                out["effect_shadow"] = shadow
             results[name] = out
             continue
 
@@ -380,39 +423,15 @@ async def cap_store_deploy(host_id: str = "local", store: str = "",
                 wait_secs=60)
             out["bootstrap"] = bs
 
+        if shadow is not None:
+            out["effect_shadow"] = shadow
+
         await emit_event({"type": "provision.store.deployed", "store": name,
                           "host_id": rec["id"], "ok": out["ok"]})
         results[name] = out
 
     return {"ok": all(v.get("ok") for v in results.values()), "host_id": rec["id"],
             "addr": addr, "stores": results}
-
-
-async def _run_with_cmd(dk, rec: Dict, store: str, spec: Dict, cname: str,
-                        ports: str, env_map: Dict[str, str], vols: str) -> Dict:
-    """docker run -d with a custom container command (cap_docker_run has no cmd
-    parameter). Same sandbox gate + labels as the capability path."""
-    import shlex
-    args = ["run", "-d", "--name", cname, "--restart", "unless-stopped",
-            "--label", f"{_STORE_LABEL}={store}"]
-    for p in [x for x in ports.split(",") if x]:
-        args += ["-p", p]
-    for v in [x for x in vols.split(",") if x]:
-        args += ["-v", v]
-    for k, val in env_map.items():
-        args += ["-e", f"{k}={val}"]
-    args += [spec["image"]] + shlex.split(spec["cmd"])
-    argv = await dk._docker_argv(rec, args)
-    ok, reason = dk._sandbox_gate(" ".join(argv))
-    if not ok:
-        return {"ok": False, "error": f"sandbox: {reason}"}
-    res = await dk._run_local(argv, timeout=300)
-    if not res.get("ok"):
-        return {"ok": False, "error": res.get("stderr") or res.get("error")
-                or "docker run failed"}
-    cid = (res.get("stdout", "") or "").strip().splitlines()[-1] \
-        if res.get("stdout") else ""
-    return {"ok": True, "container_id": cid}
 
 
 @capability(
@@ -478,13 +497,19 @@ async def cap_store_status(host_id: str = "local", trace_id=None) -> Dict:
     "provision.store.remove",
     http_method="POST", http_path="/provision/store/remove", http_tags=["provision"],
     memory="off",
+    redact_args=["host_id", "store", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Stop and remove a provisioned store container. Named data "
                 "volumes are KEPT unless purge_volumes=true (DESTROYS the "
                 "store's data). Inputs: host_id (str='local'), store (str!), "
-                "purge_volumes (bool=false). Output: {ok, removed, purged}.",
+                "purge_volumes (bool=false). Optional idempotency, approval, and "
+                "retry inputs are observe-only and never sent to Docker. Output: "
+                "{ok, removed, purged, effect_shadow}.",
 )
 async def cap_store_remove(host_id: str = "local", store: str = "",
-                           purge_volumes: bool = False, trace_id=None) -> Dict:
+                           purge_volumes: bool = False, idempotency_key: str = "",
+                           approval_receipt_ref: str = "", retry: bool = False,
+                           trace_id=None) -> Dict:
     dk = _dk()
     if dk is None:
         return {"error": "docker module not loaded"}
@@ -496,6 +521,16 @@ async def cap_store_remove(host_id: str = "local", store: str = "",
         return {"error": f"unknown docker host: {host_id}"}
     cname = f"vera-{store.strip().lower()}"
     argv = await dk._docker_argv(rec, ["rm", "-f", cname])
+    allowed, reason = dk._sandbox_gate(" ".join(argv))
+    if not allowed:
+        return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+    shadow = observe_docker_effect(
+        host_ref=rec["id"], resource_ref=cname,
+        operation_ref=json.dumps({"purge_volumes": bool(purge_volumes),
+                                  "volumes": sorted(spec["volumes"])},
+                                 sort_keys=True, separators=(",", ":")),
+        mode="store_remove", idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     res = await dk._run_local(argv, timeout=60)
     purged: List[str] = []
     if purge_volumes:
@@ -513,7 +548,8 @@ async def cap_store_remove(host_id: str = "local", store: str = "",
     await emit_event({"type": "provision.store.removed", "store": store,
                       "host_id": rec["id"], "purged": purged})
     return {"ok": res.get("ok", False), "removed": cname, "purged": purged,
-            "detail": (res.get("stderr") or "").strip()}
+            "detail": (res.get("stderr") or "").strip(),
+            "effect_shadow": shadow}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1307,29 +1307,20 @@ async def cap_docker_worker_spawn(
             "effect_shadow": shadow}
 
 
-@capability(
-    "docker.run",
-    http_method="POST", http_path="/workers/docker/run", http_tags=["docker"],
-    redact_args=["host_id", "image", "name", "ports", "env", "volumes", "network",
-                 "extra_args", "command", "idempotency_key", "approval_receipt_ref"],
-    redact_result=True,
-    description="Deploy (docker run -d) an arbitrary container on a registered "
-                "Docker host. Sandbox-gated. Inputs: host_id (str!), image (str!), "
-                "name (str), ports (str — 'host:container,…' comma-sep), env (dict), "
-                "volumes (str — 'src:dst,…' comma-sep), network (str), restart "
-                "(str='unless-stopped'), extra_args (str), command (str — container "
-                "command/args appended AFTER the image), pull (bool=False — pull "
-                "the image first). Optional idempotency, approval, and retry inputs "
-                "are observe-only and never sent to Docker. Output includes "
-                "payload-free effect_shadow evidence.",
-)
-async def cap_docker_run(
+async def _run_container_native(
     host_id: str = "", image: str = "", name: str = "", ports: str = "",
     env: Optional[Dict[str, str]] = None, volumes: str = "", network: str = "",
     restart: str = "unless-stopped", extra_args: str = "", command: str = "",
     pull: bool = False, idempotency_key: str = "",
     approval_receipt_ref: str = "", retry: bool = False, trace_id=None,
+    *, effect_mode: str = "run", effect_shadow: Optional[Dict] = None,
 ) -> Dict:
+    """Shared native container-create path with one caller-selected observation.
+
+    This is deliberately private: public capabilities cannot choose or suppress
+    their evidence family.  Higher-level stack/store operations use it so their
+    one logical mutation is not also counted as a nested ``docker.run`` effect.
+    """
     rec = _get_host(host_id)
     if not rec:
         return {"ok": False, "error": f"unknown host: {host_id}"}
@@ -1359,15 +1350,18 @@ async def cap_docker_run(
     if not ok:
         await emit_event({"type": "exec.sandbox.blocked", "shell": "docker.run", "reason": reason})
         return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
-    shadow = observe_docker_effect(
-        host_ref=rec["id"], resource_ref=name or image,
-        operation_ref=json.dumps({"image": image, "name": name, "ports": ports,
-                                  "env": env or {}, "volumes": volumes,
-                                  "network": network, "restart": restart,
-                                  "extra_args": extra_args, "command": command,
-                                  "pull": bool(pull)}, sort_keys=True, separators=(",", ":")),
-        mode="run", idempotency_key=idempotency_key,
-        approval_receipt_ref=approval_receipt_ref, retry=retry)
+    shadow = effect_shadow
+    if shadow is None:
+        shadow = observe_docker_effect(
+            host_ref=rec["id"], resource_ref=name or image,
+            operation_ref=json.dumps({"image": image, "name": name, "ports": ports,
+                                      "env": env or {}, "volumes": volumes,
+                                      "network": network, "restart": restart,
+                                      "extra_args": extra_args, "command": command,
+                                      "pull": bool(pull)}, sort_keys=True,
+                                     separators=(",", ":")),
+            mode=effect_mode, idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
 
     if pull:
         await _run_local(await _docker_argv(rec, ["pull", image]), timeout=300)
@@ -1381,6 +1375,38 @@ async def cap_docker_run(
                       "container_id": cid[:12], "host_id": rec["id"]})
     return {"ok": True, "container_id": cid, "name": name, "image": image,
             "host_id": rec["id"], "effect_shadow": shadow}
+
+
+@capability(
+    "docker.run",
+    http_method="POST", http_path="/workers/docker/run", http_tags=["docker"],
+    redact_args=["host_id", "image", "name", "ports", "env", "volumes", "network",
+                 "extra_args", "command", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
+    description="Deploy (docker run -d) an arbitrary container on a registered "
+                "Docker host. Sandbox-gated. Inputs: host_id (str!), image (str!), "
+                "name (str), ports (str — 'host:container,…' comma-sep), env (dict), "
+                "volumes (str — 'src:dst,…' comma-sep), network (str), restart "
+                "(str='unless-stopped'), extra_args (str), command (str — container "
+                "command/args appended AFTER the image), pull (bool=False — pull "
+                "the image first). Optional idempotency, approval, and retry inputs "
+                "are observe-only and never sent to Docker. Output includes "
+                "payload-free effect_shadow evidence.",
+)
+async def cap_docker_run(
+    host_id: str = "", image: str = "", name: str = "", ports: str = "",
+    env: Optional[Dict[str, str]] = None, volumes: str = "", network: str = "",
+    restart: str = "unless-stopped", extra_args: str = "", command: str = "",
+    pull: bool = False, idempotency_key: str = "",
+    approval_receipt_ref: str = "", retry: bool = False, trace_id=None,
+) -> Dict:
+    return await _run_container_native(
+        host_id=host_id, image=image, name=name, ports=ports, env=env,
+        volumes=volumes, network=network, restart=restart,
+        extra_args=extra_args, command=command, pull=pull,
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry,
+        trace_id=trace_id, effect_mode="run")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1517,6 +1543,9 @@ def _stores_mod():
 @capability(
     "docker.stack.deploy",
     http_method="POST", http_path="/workers/docker/stack/deploy", http_tags=["docker"],
+    redact_args=["host_id", "service", "gpus", "env", "network",
+                 "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Provision one Vera backing service (from docker.stack.catalog) "
                 "onto a Docker host. Delegates to provision.store.deploy — the "
                 "canonical path that also generates garage config + bootstraps "
@@ -1525,11 +1554,15 @@ def _stores_mod():
                 "started, not recreated. Inputs: host_id (str!), service (str! — "
                 "redis|postgres|chromadb|neo4j|garage|ollama), gpus (str — e.g. "
                 "'all', ollama only), env (dict), network (str, legacy path only). "
-                "Output: {ok, container_id|started|already, name, host_id}.",
+                "Optional idempotency, approval, and retry inputs are observe-only "
+                "and never sent to Docker. Output: {ok, container_id|started|"
+                "already, name, host_id, effect_shadow?}.",
 )
 async def cap_docker_stack_deploy(host_id: str = "", service: str = "",
-                                  gpus: str = "", env: Optional[Dict[str, str]] = None,
-                                  network: str = "", trace_id=None) -> Dict:
+                                   gpus: str = "", env: Optional[Dict[str, str]] = None,
+                                   network: str = "", idempotency_key: str = "",
+                                   approval_receipt_ref: str = "", retry: bool = False,
+                                   trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
         return {"ok": False, "error": f"unknown host: {host_id}"}
@@ -1540,22 +1573,32 @@ async def cap_docker_stack_deploy(host_id: str = "", service: str = "",
     sm = _stores_mod()
     if sm is not None and svc_key in getattr(sm, "_STORES", {}):
         res = await sm.cap_store_deploy(host_id=rec["id"], store=svc_key,
-                                        env=env or None, gpus=gpus)
+                                         env=env or None, gpus=gpus,
+                                         idempotency_key=idempotency_key,
+                                         approval_receipt_ref=approval_receipt_ref,
+                                         retry=retry)
         st = (res.get("stores") or {}).get(svc_key, {}) if isinstance(res, dict) else {}
         if res.get("error"):
             return {"ok": False, "error": res["error"], "host_id": rec["id"]}
         return {"ok": bool(st.get("ok", res.get("ok"))),
                 "name": st.get("container", f"vera-{svc_key}"),
-                "container_id": st.get("container_id", ""),
-                "already": st.get("already", False),
-                "bootstrap": st.get("bootstrap"), "secrets": st.get("secrets"),
-                "host_id": rec["id"]}
+                  "container_id": st.get("container_id", ""),
+                  "already": st.get("already", False),
+                  "bootstrap": st.get("bootstrap"), "secrets": st.get("secrets"),
+                  "effect_shadow": st.get("effect_shadow"),
+                  "host_id": rec["id"]}
 
     # Legacy fallback (stores module not loaded) — original inline logic.
     svc = _stack_catalog().get(svc_key)
     if not svc:
         return {"ok": False, "error": f"unknown service: {service} — see docker.stack.catalog"}
     cname = svc["container_name"]
+    effect_operation = json.dumps({
+        "service": svc_key, "image": svc["image"], "ports": svc["ports"],
+        "volumes": svc["volumes"], "env": {**(svc.get("env") or {}), **(env or {})},
+        "network": network, "gpus": gpus if svc.get("gpus_hint") else "",
+    }, sort_keys=True, separators=(",", ":"))
+    shadow = None
 
     # Already there? Start it rather than failing on the name collision.
     try:
@@ -1564,9 +1607,21 @@ async def cap_docker_stack_deploy(host_id: str = "", service: str = "",
             info = json.loads(body or b"{}")
             if (info.get("State") or {}).get("Running"):
                 return {"ok": True, "already": True, "name": cname, "host_id": rec["id"]}
-            st2, _, _ = await _engine_request(rec, "POST", f"/containers/{cname}/start", timeout=30)
+            start_argv = await _docker_argv(rec, ["start", cname])
+            allowed, reason = _sandbox_gate(" ".join(start_argv))
+            if not allowed:
+                return {"ok": False, "blocked": True,
+                        "error": f"sandbox: {reason}", "name": cname,
+                        "host_id": rec["id"]}
+            shadow = observe_docker_effect(
+                host_ref=rec["id"], resource_ref=cname,
+                operation_ref="restart_existing:true", mode="stack_deploy",
+                idempotency_key=idempotency_key,
+                approval_receipt_ref=approval_receipt_ref, retry=retry)
+            st2, _, _ = await _engine_request(
+                rec, "POST", f"/containers/{cname}/start", timeout=30)
             return {"ok": st2 in (204, 304), "started": True, "name": cname,
-                    "host_id": rec["id"]}
+                    "host_id": rec["id"], "effect_shadow": shadow}
     except Exception:
         pass
 
@@ -1580,22 +1635,34 @@ async def cap_docker_stack_deploy(host_id: str = "", service: str = "",
             writer = await _docker_argv(rec, [
                 "run", "--rm", "-v", f"{vol}:/cfg", "busybox", "sh", "-c",
                 f"echo {b64} | base64 -d > /cfg/garage.toml"])
+            allowed, reason = _sandbox_gate(" ".join(writer))
+            if not allowed:
+                return {"ok": False, "blocked": True, "name": cname,
+                        "host_id": rec["id"], "error": f"sandbox: {reason}"}
+            shadow = observe_docker_effect(
+                host_ref=rec["id"], resource_ref=cname,
+                operation_ref=effect_operation, mode="stack_deploy",
+                idempotency_key=idempotency_key,
+                approval_receipt_ref=approval_receipt_ref, retry=retry)
             wres = await _run_local(writer, timeout=120)
             if not wres.get("ok"):
                 return {"ok": False, "name": cname, "host_id": rec["id"],
                         "error": "config write failed: " +
-                                 (wres.get("stderr") or "")[-300:]}
+                                 (wres.get("stderr") or "")[-300:],
+                        "effect_shadow": shadow}
         else:
             return {"ok": False, "error": f"config file missing: {svc['config_file']}"}
 
     merged_env = dict(svc.get("env") or {})
     merged_env.update(env or {})
     extra = f"--gpus {shlex.quote(gpus)}" if (gpus and svc.get("gpus_hint")) else ""
-    res = await cap_docker_run(
+    res = await _run_container_native(
         host_id=rec["id"], image=svc["image"], name=cname,
         ports=svc["ports"], env=merged_env, volumes=svc["volumes"],
         network=network, extra_args=extra, command=svc.get("command", ""),
-        pull=True)
+        pull=True, idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry,
+        effect_mode="stack_deploy", effect_shadow=shadow)
     if res.get("ok"):
         await emit_event({"type": "docker.stack.deployed", "service": service,
                           "name": cname, "host_id": rec["id"]})

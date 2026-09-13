@@ -13,7 +13,7 @@ log = logging.getLogger("vera.docker.effects")
 SCHEMA = "vera.docker-effect-shadow/v1"
 MODES = frozenset({
     "exec", "stop", "remove", "run", "worker_stop", "image_ensure",
-    "worker_spawn",
+    "worker_spawn", "stack_deploy", "store_deploy", "store_remove",
 })
 
 
