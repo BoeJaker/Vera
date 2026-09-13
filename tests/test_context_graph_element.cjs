@@ -19,8 +19,8 @@ const nodes = [
 const edges = [{ from: 'v1', to: 'g1', label: 'CITES' }, { from: 'm2', to: 'v1', label: 'RELATED' }];
 const base = { view: 'galaxy', nodes, edges, focus: ['v1', 'g1', 'm1'], reads: { m4: ['v1', 'g1', 'm1'], m2: ['v2'] }, layersOff: new Set(), related: true, loop: [], plan: [], stepReads: [], pan: { x: 0, y: 0, z: 1 } };
 const g = G.compute(base, 660, 600);
-t('four views', G.VIEWS.map((v) => v[0]).join(',') === 'galaxy,iso,flow,time');
-t('galaxy: rings, a spoke and a label per source, in the fixed order', g.rings.length === 3 && g.spokes.length === 4 && g.sectorLabels.map((s) => s.name).join(',') === 'vector,graph,web,cap');
+t('the four views, and the four at once', G.VIEWS.map((v) => v[0]).join(',') === 'galaxy,iso,flow,time,quad');
+t('galaxy: the relevance rings and the memory ring, a spoke and a label per source, in the fixed order', g.rings.length === 4 && g.rings.filter((r) => r.cls === 'mem').length === 1 && g.spokes.length === 4 && g.sectorLabels.map((s) => s.name).join(',') === 'vector,graph,web,cap');
 t('context records placed, memory on the arc', g.cnodes.length === 5 && g.memNodes.length === 2 && g.cnodes.every((n) => n.x > 0 && n.y > 0));
 const v1 = g.cnodes.find((n) => n.id === 'v1'), v2 = g.cnodes.find((n) => n.id === 'v2'), w1 = g.cnodes.find((n) => n.id === 'w1');
 const cx = 330, cy = 300; const dist = (n) => Math.hypot(n.x - cx, n.y - cy);
@@ -37,7 +37,7 @@ const g2 = G.compute(Object.assign({}, base, { layersOff: new Set(['vector']), r
 t('a folded layer leaves the plot but stays a chip; related hidden', !g2.cnodes.some((n) => n.id === 'v1') && g2.offSrcs.some((s) => s.name === 'vector') && !g2.cnodes.some((n) => n.id === 'w1') && g2.memNodes.length === 1);
 // the views
 const iso = G.compute(Object.assign({}, base, { view: 'iso' }), 660, 600), flow = G.compute(Object.assign({}, base, { view: 'flow' }), 660, 600), time = G.compute(Object.assign({}, base, { view: 'time' }), 660, 600);
-t('iso: a plate and a stem per record, no rings', iso.plate && iso.stems.length === 5 && iso.rings.length === 0);
+t('iso: a plate and a stem per record, only the memory ring (on the floor), the hub on a pin', iso.plate && iso.stems.length === 5 && iso.rings.every((r) => /mem/.test(r.cls) && r.tf) && iso.pins.some((p) => p.cls === 'hub') && iso.iso && iso.iso.tilt >= 30);
 t('flow: a column per source, the most relevant on top, hub hidden', flow.cnodes.find((n) => n.id === 'v1').y < flow.cnodes.find((n) => n.id === 'v2').y && flow.hub.hid && flow.spokes.length === 0);
 t('time: a column per turn that first read it, never at the far right', time.sectorLabels.some((s) => s.name === 'm4') && time.sectorLabels.some((s) => s.name === 'never') && time.cnodes.find((n) => n.id === 'w1').x > time.cnodes.find((n) => n.id === 'v1').x);
 t('the views differ', JSON.stringify(iso.cnodes.map((n) => [n.x, n.y])) !== JSON.stringify(g.cnodes.map((n) => [n.x, n.y])) && JSON.stringify(flow.cnodes.map((n) => [n.x, n.y])) !== JSON.stringify(g.cnodes.map((n) => [n.x, n.y])));
@@ -77,7 +77,7 @@ t('a live loop takes the lane over the DAG; a loop chip', g10.loopNodes.length =
 t('the loop chip folds the lane away', G.compute(Object.assign({}, base, { dag, layersOff: new Set(['loop']) }), 660, 600).loopNodes.length === 0);
 // All edges
 const gA = G.compute(Object.assign({}, base, { loop: L.steps, stepReads: L.stepReads }), 660, 600), gB = G.compute(Object.assign({}, base, { loop: L.steps, stepReads: L.stepReads, allEdges: true }), 660, 600);
-t('All edges off keeps what touches the prompt; on draws every relation', gA.sedges.filter((e) => e.cls === 'rel').length === 0 && gB.sedges.filter((e) => e.cls === 'rel').length === 2 && gA.cedges.length === gB.cedges.length);
+t('All edges off keeps what touches the prompt; on draws every relation (the lanes and the plots reads alike)', gA.sedges.filter((e) => e.cls === 'rel').length === 0 && gB.sedges.filter((e) => e.cls === 'rel').length === 2 && gA.cedges.filter((e) => e.cls === 'rel').length === 0 && gB.cedges.filter((e) => e.cls === 'rel').length === 2 && gA.cedges.filter((e) => e.cls !== 'rel').length === gB.cedges.filter((e) => e.cls !== 'rel').length);
 // pass B: the lane and the plan row from the run's own events; the runs picker
 const R = G.loopFromEvents([{ type: 'agent_loop_v7.triage_start', goal: 'fix boot' }, { type: 'agent_loop_v7.plan', steps: [{ id: 1, title: 'recon' }, { id: 2, title: 'author' }, { id: 3, title: 'test' }] },
   { type: 'agent_loop_v7.step_start', step_id: 1, title: 'recon' }, { type: 'cap.ok', step_id: 1, tool: 'memory.select', wires: ['v1'] }, { type: 'agent_loop_v7.step_done', step_id: 1, ms: 300 }, { type: 'agent_loop_v6.assess', step_id: 1, ok: true },

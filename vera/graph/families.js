@@ -45,13 +45,22 @@
 
   /* ── the adapters ────────────────────────────────────────────────────── */
   const A = {};
-  // MEMORY — /memory/graph/full: records with record_type · importance · created_at · source_type; edges {from_id,to_id,relation}
+  // the memory family's structure, as the memory graph panel and the chat's rail know it: the record kinds in the order
+  // the memory ring groups them (a session, its messages on the FOLLOWS spine, the dag steps, then what hangs off the
+  // chain); the edge classes — the spine (FOLLOWS · NEXT · THEN, the rail's most important chain), the hub edges
+  // (SESSION_CONTENT · CONTAINS · TRIGGERED_BY · STARTS · CAP_RESULT, the ones the panel hides to untangle the graph),
+  // and the inferred rest
+  const MEM_KINDS = ['session', 'message', 'dag', 'dag_step', 'run', 'run_node', 'event', 'observation', 'fact', 'summary', 'entity'];
+  const memGroup = (t) => { t = String(t || '').toLowerCase(); return t === 'dag_step' ? 'dag' : t === 'run_node' ? 'run' : (MEM_KINDS.indexOf(t) >= 0 ? t : 'memory'); };
+  const memEdgeClass = (rel) => { const r = String(rel || '').toUpperCase(); return /^(FOLLOWED_BY|FOLLOWS_ACTIVITY|NEXT_IN_SESSION|THEN|RESPONDS_TO|CAUSES|CAUSED_BY|DERIVED_FROM)$/.test(r) ? (/^(FOLLOWED_BY|FOLLOWS_ACTIVITY|NEXT_IN_SESSION|THEN)$/.test(r) ? 'spine' : 'structural') : /^(SESSION_CONTENT|CONTAINS|TRIGGERED_BY|TRIGGERED_BY_MSG|STARTS|CAP_RESULT)$/.test(r) ? 'hub' : 'inferred'; };
+  // MEMORY — /memory/graph/full: records with record_type · importance · created_at · source_type; edges {from_id,to_id,relation};
+  // a node's group is its kind group, an edge carries its class
   A.memory = (p) => {
     const recs = (p && (p.nodes || p.records)) || [];
     const nodes = recs.filter((r) => r && r.id).map((r) => node({ id: r.id, family: 'memory', kind: r.record_type || '_unknown', layer: r.source_type || 'memory',
       label: r.summary || r.text || r.capability || r.id, status: r.status || '', weight: r.importance == null ? 0.5 : r.importance, time: r.created_at,
-      real: !r._synthetic, nonAuthoritative: !!r.non_authoritative, group: r.run_id || '', parents: r.parent_run_id ? [r.parent_run_id] : [], rec: r }));
-    const edges = ((p && p.edges) || []).filter((e) => e && (e.from_id || e.from) && (e.to_id || e.to)).map((e) => edge(e.from_id || e.from, e.to_id || e.to, e.relation || e.label, 'memory', { real: !e.inferred }));
+      real: !r._synthetic, nonAuthoritative: !!r.non_authoritative, group: r.run_id || memGroup(r.record_type), parents: r.parent_run_id ? [r.parent_run_id] : [], rec: r }));
+    const edges = ((p && p.edges) || []).filter((e) => e && (e.from_id || e.from) && (e.to_id || e.to)).map((e) => { const rel = e.relation || e.label; const cls = memEdgeClass(rel); return edge(e.from_id || e.from, e.to_id || e.to, rel, 'memory', { real: !e.inferred, structural: cls === 'spine' || cls === 'structural', cls }); });
     return { family: 'memory', nodes, edges };
   };
   // CONTEXT — the chat's assembled context (CTX_NODES / CTX_EDGES): {id, label, source, type, score, text, included}
@@ -73,8 +82,14 @@
     for (let i = 1; i < nodes.length; i++) edges.push(edge(nodes[i - 1].id, nodes[i].id, 'NEXT_IN_SESSION', 'turns'));
     return { family: 'turns', nodes, edges };
   };
-  // DAG — the run shadow (/run/shadow/graph): non-authoritative projections of a run's steps
+  // DAG — the run shadow (/run/shadow/graph): non-authoritative projections of a run's steps; or the chat's own planned
+  // cap chain ({nodes:[{id, cap, out, status}], edges:[{from, to}]} — the rail's DAG graph), when that is what is handed in
   A.dag = (p) => {
+    if (p && Array.isArray(p.nodes) && p.nodes.length && p.nodes.every((n) => n && n.cap != null && n.record_type == null)) {
+      const nodes = p.nodes.map((n, i) => node({ id: 'dag:' + (n.id != null ? n.id : i), family: 'dag', kind: /^\[parallel/.test(String(n.cap)) ? 'parallel' : 'step', layer: 'dag', label: String(n.cap || n.label || n.id), status: n.status === 'done' ? 'ok' : n.status === 'running' ? 'running' : /^err/.test(String(n.status || '')) ? 'fail' : 'pending', weight: 0.6, nonAuthoritative: true, wires: n.out ? [String(n.out)] : [], rec: n }));
+      const edges = (Array.isArray(p.edges) ? p.edges : []).filter((e) => e && e.from != null && e.to != null).map((e) => edge('dag:' + e.from, 'dag:' + e.to, e.label || 'THEN', 'dag'));
+      return { family: 'dag', nodes, edges };
+    }
     const d = A.memory(p); d.family = 'dag';
     d.nodes.forEach((n) => { n.family = 'dag'; n.nonAuthoritative = true; n.layer = 'dag'; }); d.edges.forEach((e) => { e.family = 'dag'; });
     return d;
@@ -165,7 +180,7 @@
     return { nodes, edges };
   }
   function sector(family) { const i = Math.max(0, IDS.indexOf(family)); const w = (Math.PI * 2) / IDS.length; return [-Math.PI / 2 + i * w, -Math.PI / 2 + (i + 1) * w]; }
-  const api = { FAMILIES, toDoc, merge, counts, mix, sector, adapters: A, version: 1 };
+  const api = { FAMILIES, toDoc, merge, counts, mix, sector, adapters: A, MEM_KINDS, memGroup, memEdgeClass, version: 2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.VeraGraphFamilies = api;
 })(typeof window !== 'undefined' ? window : null);
