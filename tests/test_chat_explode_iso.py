@@ -24,7 +24,7 @@ def test_the_element_draws_bands_and_the_boards_items_and_carries_stack_size_and
     for s in ("out.bands = []; out.widgets = []; out.stack = STK; out.wsz = WSZ;", "function widgetOf(c) {", "function groupOf(wg, ISO, o) {", "function isoBody(c, wd) {",
               "const xitHtml = (wg, face) =>", "const xigHtml = (wg) =>", '<span class="xstem"', '<div class="xit bb', '<div class="xit frameless', '<div class="xig', '<span class="xnd',
               "stack(on) {", "widgetSize(s) {", "tipIn() {", "flatten(done) {", "function ensureIso(doc, onload) {",
-              "view: 'iso', full: false", 'data-a="stack"', 'data-a="wsz"', "widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 8"):
+              "view: 'iso', full: false", 'data-a="stack"', 'data-a="wsz"', "widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 9"):
         assert s in EL, s
     for css in ("vera-exploded .xit{", "vera-exploded .xig{", "vera-exploded .xnd{", "vera-exploded .xstem{", "vera-exploded .xit.frameless{", "vera-exploded .xf-score{", "vera-exploded .xf-chart{", "vera-exploded .xf-diff{", "vera-exploded .xf-tab{",
                 "vera-exploded .xp-band{", "vera-exploded .xp-band.empty{", ':root[data-blocks="off"] vera-exploded .xp-pl,', "vera-exploded.opening .xp-view{animation:xp-tip", "vera-exploded.closing .xp-view{animation:xp-flat",
@@ -46,3 +46,13 @@ def test_the_host_tips_the_scene_in_flattens_it_and_lands_a_placed_widget_with_i
     assert "kind:'widget', tpl:tplName, key, form:r.form}" in HTML, "a placed widget carries its form"
     assert "made.push({n:el.getAttribute('title')||form||'widget', d:'widget · '+form, col:'#a78bfa', kind:'widget', form:form||'kv', data});" in HTML
     assert "_xplToggle,_xplClose," in HTML
+
+def test_a_turn_selected_in_the_scene_drives_the_context_graphs_and_the_canvas():
+    # Notes/42 defect 55: the chat's vera:xpl:turn hook syncs the grown graph at the turn's frame, re-draws the mini graph and
+    # puts the turn's items in focus on the canvas; a turn's frame remembers its turn
+    assert "_ctxColSig=''; _ctxColumnSync(mid); }catch(_){}" in HTML
+    assert "try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}\n      try{ const t=(_xplEl.state().scene.turns||[]).find(x=>x.mid===mid); _cvRelevance(mid, (t&&t.text)||'', {apply:false});" in HTML
+    assert "_saveFrame('Turn '+HISTORY.filter(h=>h.role==='user').length,true,{ mid:" in HTML   # a turn's frame carries its mid (the ctx-graph slice), so the sync can activate it
+    # the element emits the turn for every selection path through select(mid)
+    assert "select(mid) { this._S.scene.sel = mid; this._schedule(); this.dispatchEvent(new CustomEvent('vera:xpl:turn'" in EL
+    assert "solo(on) {" in EL and "tilt(deg) {" in EL and "swing(deg) {" in EL and 'data-a="tiltu"' in EL and 'data-a="solo"' in EL
