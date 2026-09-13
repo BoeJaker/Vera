@@ -34,6 +34,16 @@ def test_hint_lists_every_registry_form():
     assert "const form=known?draw:'table';" in src and "draw:{form:form, size:" in src
 
 
+def test_a_directive_lands_as_the_boards_chip_with_undo():
+    # mirror a42h.png: each ui.directive landed as a JSON dump; the items landed PARKED; the receipts were harvested
+    src = _read("vera", "chat", "chat_panel.html")
+    assert "if(capName==='ui.directive'&&content&&typeof content==='object'&&content.row){ try{ el.innerHTML=_drvChipHtml(content, resultId, previewClean); el.classList.add('drv'); }catch(_){} }" in src
+    assert "function _drvChipHtml(res, resultId, raw){" in src and "async function _drvUndoRow(rowId, btn){" in src
+    assert "args.content=c; if(!args.at) args.at='now';" in src
+    assert "if((/^canvas\\./.test(n)||(/^(driven\\s*)?ui\\.directive\\b/.test(n)&&/canvas\\./.test(n)))&&!el.classList.contains('error')) return;" in src
+    assert ".cap-inline.drv{padding:4px 8px;border-left:2px solid var(--acc3,#d4a96a)}" in src
+
+
 def test_a_vocabulary_call_is_lifted_into_ui_directive():
     # the Control board: one vocabulary, one dispatcher — a model's [[canvas.add {…}]] ran as a bare cap and left no log row
     src = _read("vera", "chat", "chat_panel.html")
@@ -47,7 +57,7 @@ def test_a_vocabulary_call_is_lifted_into_ui_directive():
 def test_a_canvas_calls_receipt_is_not_harvested_as_an_item():
     # mirror a42g.png: the model's canvas.append put its items on the canvas AND the harvest lifted each receipt card too
     src = _read("vera", "chat", "chat_panel.html")
-    assert "if(/^(canvas\\.|ui\\.directive\\s+canvas\\.)/.test(n)&&!el.classList.contains('error')) return;" in src
+    assert "/canvas\\./.test(n)))&&!el.classList.contains('error')) return;" in src
 
 
 def test_a_bare_cap_call_with_json_runs():
