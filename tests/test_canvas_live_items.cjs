@@ -55,5 +55,10 @@ t('the host is asked for the panel\'s page after the item exists', SRC.includes(
 t('nothing is placed under the sticky heads: the placement floors at the add bar + NOW head', SRC.includes("const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);") && SRC.includes("{ columns: cols, gap, colWidth: w, pad });"));
 t('the host hears the live items', ['vera:canvas:live', 'vera:canvas:terminal', 'vera:canvas:cell', 'vera:canvas:panel', 'vera:canvas:panel-src', 'vera:canvas:open-notebook'].every(ev => SRC.includes(ev)));
 
+// ── a hand-added item is yours (live defect 11): the add bar and the panel picker anchor no turn, so no run is drawn ──
+t('the add bar and the panel picker anchor { origin: you, beside: the turn in view } — never the turn', SRC.split("args.anchor = { origin: 'you', beside: focusMid };").length === 3 && !SRC.includes("if (focusMid) args.anchor = { turn: focusMid, mid: focusMid };"));
+t('the item carries where it sits (data-beside) and says it is yours; the placer levels it there', SRC.includes("data-beside=") && SRC.includes("added by you — it relates to no turn") && SRC.includes("const levelOf = (it) => it.mid || it.beside || '';"));
+t('a taken suggestion keeps its turn (it is the reply\'s), a re-shown item its own anchors', SRC.includes("const mid = s.mid || focusMid; if (mid) args.anchor = { turn: mid, mid };") && SRC.includes("if (s.taken) return this.call('canvas.add', { key: s.key });"));
+
 console.log((fails ? 'FAILED ' : 'passed ') + (fails ? fails + ' check(s)' : 'all checks'));
 process.exit(fails ? 1 : 0);
