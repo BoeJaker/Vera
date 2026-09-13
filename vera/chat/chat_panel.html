@@ -6322,9 +6322,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       const T=_ctxRunsTarget(); if(!T){ svg.innerHTML=''; return; }
       const ft=_frameTop(); const b={ top:T.top+ft, bottom:T.bottom+ft, mid:T.mid||'' };
       if(!_ctxRemoteSent||_ctxRemoteSent.top!==b.top||_ctxRemoteSent.bottom!==b.bottom||_ctxRemoteSent.mid!==b.mid){ _ctxRemoteSent=b; _lhmPost('block', b); }
-      const lanes=_ctxRemote.lanes||[]; const rn=lanes.length; _ctxRunsGutter(rn);
+      const lanes=_ctxRemote.lanes||[]; const rn=lanes.length; const gut=_ctxRunsGutter(rn);
       const R={left:0,top:0,width:window.innerWidth,height:window.innerHeight}; svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
-      const chan0=0, chan1=T.content, G0=(chan0+chan1)/2, HWG=Math.max(1, Math.abs(chan1-chan0)/2-8); const edgeAt=(y)=>(T.edgeAt?T.edgeAt(y):T.content)-2;
+      // the channel is the column's gutter at the frame's edge (the lanes it holds), never the whole margin
+      const col0=document.getElementById('chatColumn').getBoundingClientRect().left; const chan0=col0, chan1=Math.min(T.content, col0+gut), G0=(chan0+chan1)/2, HWG=Math.max(1, Math.abs(chan1-chan0)/2-4); const edgeAt=(y)=>(T.edgeAt?T.edgeAt(y):T.content)-2;
       let out=''; lanes.forEach((l,i)=>{ const ye=l.ye-ft, ty=l.ty-ft; const u=rn>1?(l.lane-(rn-1)/2)/((rn-1)/2):0; const lx=G0+u*Math.min(HWG, 9*(rn-1));
         const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(l.src)+'" data-lane="'+l.lane+'" x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+y2.toFixed(1)+'" stroke="'+l.col+'"><title>'+esc(l.src)+'</title></line>';
         out+=L(0, ye, lx, ye, 'tr'); if(Math.abs(ty-ye)>0.5) out+=L(lx, ye, lx, ty, 'tr'); out+=L(lx, ty, edgeAt(ty), ty, 'tr'); });
