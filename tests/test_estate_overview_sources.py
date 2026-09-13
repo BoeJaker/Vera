@@ -20,14 +20,16 @@ from vera.estate import estate_health_core as core  # noqa: E402
 pytestmark = pytest.mark.critical
 
 SRC = os.path.join(ROOT, "vera", "estate", "estate_health_capabilities.py")
-WANTED = {"_module_of", "_call", "_proxmox_nodes", "_per_node", "_backups", "_storage", "_services"}
+WANTED = {"_module_of", "_call", "_proxmox_nodes", "_per_node", "_backups", "_storage", "_services",
+          "_docker_disk"}
 
 
 def sources(registry):
     tree = ast.parse(open(SRC, encoding="utf-8").read())
     keep = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in WANTED]
     ns = {"asyncio": asyncio, "inspect": inspect, "core": core, "Any": Any, "Dict": Dict,
-          "List": List, "Optional": Optional,
+          "List": List, "Optional": Optional, "DOCKER_DISK_TIMEOUT_S": 2.0,
+          "log": types.SimpleNamespace(debug=lambda *a, **k: None),
           "_orch": types.SimpleNamespace(CAPABILITY_REGISTRY=registry)}
     exec(compile(ast.Module(body=keep, type_ignores=[]), SRC, "exec"), ns)
     return ns
