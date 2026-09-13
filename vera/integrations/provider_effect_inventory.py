@@ -94,6 +94,11 @@ _DOMAINS: tuple[dict[str, Any], ...] = (
         "external_mutation": True,
         "effect_family": "infrastructure",
         "effect_contract_applied": False,
+        "effect_observation": "partial",
+        "observed_mutations": [
+            "docker.exec", "docker.stop", "docker.rm", "docker.run",
+            "docker.worker.stop",
+        ],
         "automatic_retries": False,
         "source_modules": [
             "vera/workers/docker_capabilities.py",

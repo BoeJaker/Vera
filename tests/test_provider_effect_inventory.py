@@ -45,7 +45,13 @@ def test_inventory_does_not_claim_unmigrated_enforcement_or_retry():
     assert commerce["effect_contract_applied"] is True
     assert commerce["effect_enforcement"] == "observe_only"
     assert "commerce" in EVIDENCE_FAMILIES
-    assert "infrastructure" not in EVIDENCE_FAMILIES
+    infrastructure = _domain(result, "container_and_build")
+    assert infrastructure["effect_contract_applied"] is False
+    assert infrastructure["effect_observation"] == "partial"
+    assert infrastructure["observed_mutations"] == [
+        "docker.exec", "docker.stop", "docker.rm", "docker.run",
+        "docker.worker.stop"]
+    assert "infrastructure" in EVIDENCE_FAMILIES
 
 
 def test_inventory_returns_an_independent_snapshot():
@@ -89,3 +95,4 @@ def test_integrations_ui_exposes_inventory_without_rollout_controls():
     assert "Provider boundaries" in source
     assert "Static inventory only" in source
     assert "commerce:'Commerce'" in source
+    assert "infrastructure:'Infrastructure'" in source

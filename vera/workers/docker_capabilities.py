@@ -66,6 +66,7 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, schedule,
 )
+from Vera.vera.workers.docker_effects import observe_docker_effect
 
 log = logging.getLogger("vera.docker")
 
@@ -904,13 +905,20 @@ async def docker_logs_stream(request: Request):
 @capability(
     "docker.exec",
     http_method="POST", http_path="/workers/docker/exec", http_tags=["docker"],
+    redact_args=["host_id", "container", "command", "workdir",
+                 "idempotency_key", "approval_receipt_ref"], redact_result=True,
     description="Run a command inside a running container (sandboxed execution "
                 "environment). Gated by the exec sandbox. "
                 "Input: host_id (str), container (str!), command (str!), "
-                "workdir (str), timeout (int=120). Output: {ok, rc, stdout, stderr}.",
+                "workdir (str), timeout (int=120). Optional idempotency, approval, "
+                "and retry inputs are observe-only and never sent to Docker. "
+                "Output includes payload-free effect_shadow evidence.",
 )
 async def cap_docker_exec(host_id: str = "", container: str = "", command: str = "",
-                          workdir: str = "", timeout: int = 120, trace_id=None) -> Dict:
+                          workdir: str = "", timeout: int = 120,
+                          idempotency_key: str = "",
+                          approval_receipt_ref: str = "", retry: bool = False,
+                          trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
         return {"ok": False, "error": f"unknown host: {host_id}"}
@@ -920,6 +928,11 @@ async def cap_docker_exec(host_id: str = "", container: str = "", command: str =
     if not ok:
         await emit_event({"type": "exec.sandbox.blocked", "shell": "docker.exec", "reason": reason})
         return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+    shadow = observe_docker_effect(
+        host_ref=rec["id"], resource_ref=container,
+        operation_ref=f"{workdir}\0{command}", mode="exec",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     args = ["exec"]
     if workdir:
         args += ["-w", workdir]
@@ -927,44 +940,71 @@ async def cap_docker_exec(host_id: str = "", container: str = "", command: str =
     argv = await _docker_argv(rec, args)
     res = await _run_local(argv, timeout=int(timeout))
     res["container"] = container
+    res["effect_shadow"] = shadow
     return res
 
 
 @capability(
     "docker.stop",
     http_method="POST", http_path="/workers/docker/stop", http_tags=["docker"],
-    description="Stop a container. Input: host_id (str), container (str!), timeout (int=10). Output: {ok}.",
+    redact_args=["host_id", "container", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
+    description="Stop a container. Input: host_id (str), container (str!), timeout "
+                "(int=10). Optional idempotency, approval, and retry inputs are "
+                "observe-only and never sent to Docker. Output includes effect_shadow.",
 )
-async def cap_docker_stop(host_id: str = "", container: str = "", timeout: int = 10, trace_id=None) -> Dict:
+async def cap_docker_stop(host_id: str = "", container: str = "", timeout: int = 10,
+                          idempotency_key: str = "",
+                          approval_receipt_ref: str = "", retry: bool = False,
+                          trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
         return {"ok": False, "error": f"unknown host: {host_id}"}
     if not container:
         return {"ok": False, "error": "container required"}
+    shadow = observe_docker_effect(
+        host_ref=rec["id"], resource_ref=container,
+        operation_ref=f"timeout:{int(timeout)}", mode="stop",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     argv = await _docker_argv(rec, ["stop", "-t", str(int(timeout)), container])
     res = await _run_local(argv, timeout=int(timeout) + 20)
     await emit_event({"type": "docker.container.stopped", "container": container, "host_id": rec["id"]})
     return {"ok": res.get("ok", False), "rc": res.get("rc"),
-            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", "")}
+            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", ""),
+            "effect_shadow": shadow}
 
 
 @capability(
     "docker.rm",
     http_method="POST", http_path="/workers/docker/rm", http_tags=["docker"],
-    description="Remove a container. Input: host_id (str), container (str!), force (bool=false). Output: {ok}.",
+    redact_args=["host_id", "container", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
+    description="Remove a container. Input: host_id (str), container (str!), force "
+                "(bool=false). Optional idempotency, approval, and retry inputs are "
+                "observe-only and never sent to Docker. Output includes effect_shadow.",
 )
-async def cap_docker_rm(host_id: str = "", container: str = "", force: bool = False, trace_id=None) -> Dict:
+async def cap_docker_rm(host_id: str = "", container: str = "", force: bool = False,
+                        idempotency_key: str = "",
+                        approval_receipt_ref: str = "", retry: bool = False,
+                        trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
         return {"ok": False, "error": f"unknown host: {host_id}"}
     if not container:
         return {"ok": False, "error": "container required"}
+    shadow = observe_docker_effect(
+        host_ref=rec["id"], resource_ref=container,
+        operation_ref=f"force:{bool(force)}", mode="remove",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     args = ["rm"] + (["-f"] if force else []) + [container]
     argv = await _docker_argv(rec, args)
     res = await _run_local(argv, timeout=40)
     await emit_event({"type": "docker.container.removed", "container": container, "host_id": rec["id"]})
     return {"ok": res.get("ok", False), "rc": res.get("rc"),
-            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", "")}
+            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", ""),
+            "effect_shadow": shadow}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1217,19 +1257,25 @@ async def cap_docker_worker_spawn(
 @capability(
     "docker.run",
     http_method="POST", http_path="/workers/docker/run", http_tags=["docker"],
+    redact_args=["host_id", "image", "name", "ports", "env", "volumes", "network",
+                 "extra_args", "command", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Deploy (docker run -d) an arbitrary container on a registered "
                 "Docker host. Sandbox-gated. Inputs: host_id (str!), image (str!), "
                 "name (str), ports (str — 'host:container,…' comma-sep), env (dict), "
                 "volumes (str — 'src:dst,…' comma-sep), network (str), restart "
                 "(str='unless-stopped'), extra_args (str), command (str — container "
                 "command/args appended AFTER the image), pull (bool=False — pull "
-                "the image first). Output: {ok, container_id, name, image, host_id}.",
+                "the image first). Optional idempotency, approval, and retry inputs "
+                "are observe-only and never sent to Docker. Output includes "
+                "payload-free effect_shadow evidence.",
 )
 async def cap_docker_run(
     host_id: str = "", image: str = "", name: str = "", ports: str = "",
     env: Optional[Dict[str, str]] = None, volumes: str = "", network: str = "",
     restart: str = "unless-stopped", extra_args: str = "", command: str = "",
-    pull: bool = False, trace_id=None,
+    pull: bool = False, idempotency_key: str = "",
+    approval_receipt_ref: str = "", retry: bool = False, trace_id=None,
 ) -> Dict:
     rec = _get_host(host_id)
     if not rec:
@@ -1260,17 +1306,28 @@ async def cap_docker_run(
     if not ok:
         await emit_event({"type": "exec.sandbox.blocked", "shell": "docker.run", "reason": reason})
         return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+    shadow = observe_docker_effect(
+        host_ref=rec["id"], resource_ref=name or image,
+        operation_ref=json.dumps({"image": image, "name": name, "ports": ports,
+                                  "env": env or {}, "volumes": volumes,
+                                  "network": network, "restart": restart,
+                                  "extra_args": extra_args, "command": command,
+                                  "pull": bool(pull)}, sort_keys=True, separators=(",", ":")),
+        mode="run", idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
 
     if pull:
         await _run_local(await _docker_argv(rec, ["pull", image]), timeout=300)
     res = await _run_local(argv, timeout=180)
     if not res.get("ok"):
         return {"ok": False, "error": res.get("stderr") or res.get("error") or "docker run failed",
-                "rc": res.get("rc"), "host_id": rec["id"]}
+                "rc": res.get("rc"), "host_id": rec["id"],
+                "effect_shadow": shadow}
     cid = (res.get("stdout", "") or "").strip().splitlines()[-1] if res.get("stdout") else ""
     await emit_event({"type": "docker.container.run", "name": name, "image": image,
                       "container_id": cid[:12], "host_id": rec["id"]})
-    return {"ok": True, "container_id": cid, "name": name, "image": image, "host_id": rec["id"]}
+    return {"ok": True, "container_id": cid, "name": name, "image": image,
+            "host_id": rec["id"], "effect_shadow": shadow}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1531,20 +1588,33 @@ async def cap_docker_worker_list(host_id: str = "", trace_id=None) -> Dict:
 @capability(
     "docker.worker.stop",
     http_method="POST", http_path="/workers/docker/worker/stop", http_tags=["docker", "workers"],
+    redact_args=["host_id", "container", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Stop and remove a Vera worker container. "
-                "Input: host_id (str), container (str!). Output: {ok}.",
+                "Input: host_id (str), container (str!). Optional idempotency, "
+                "approval, and retry inputs are observe-only and never sent to "
+                "Docker. Output includes effect_shadow.",
 )
-async def cap_docker_worker_stop(host_id: str = "", container: str = "", trace_id=None) -> Dict:
+async def cap_docker_worker_stop(host_id: str = "", container: str = "",
+                                 idempotency_key: str = "",
+                                 approval_receipt_ref: str = "", retry: bool = False,
+                                 trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
         return {"ok": False, "error": f"unknown host: {host_id}"}
     if not container:
         return {"ok": False, "error": "container required"}
+    shadow = observe_docker_effect(
+        host_ref=rec["id"], resource_ref=container,
+        operation_ref="force:true", mode="worker_stop",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     argv = await _docker_argv(rec, ["rm", "-f", container])
     res = await _run_local(argv, timeout=40)
     await emit_event({"type": "docker.worker.stopped", "container": container, "host_id": rec["id"]})
     return {"ok": res.get("ok", False), "rc": res.get("rc"),
-            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", "")}
+            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", ""),
+            "effect_shadow": shadow}
 
 
 @APP.post("/workers/docker/worker/logs", include_in_schema=False)

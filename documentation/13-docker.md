@@ -52,7 +52,11 @@ Plus three convenience caps:
 
 ## 4. Container lifecycle
 
-These shell out to the Docker CLI and are **gated by the exec sandbox** (`exec_capabilities._sandbox_check`) — the same `<vera-sandbox-controls>` policy that governs Exec and IDE Run. Streaming actions return SSE:
+These shell out to the Docker CLI. `docker.exec` and `docker.run` are **gated by
+the exec sandbox** (`exec_capabilities._sandbox_check`) — the same
+`<vera-sandbox-controls>` policy that governs Exec and IDE Run. `docker.stop`
+and `docker.rm` validate their target but remain direct lifecycle mutations;
+callers must authorize them explicitly. Streaming actions return SSE:
 
 | Cap | Streaming | Purpose |
 |---|---|---|
@@ -62,6 +66,15 @@ These shell out to the Docker CLI and are **gated by the exec sandbox** (`exec_c
 | `docker.exec` | — | Exec a command in a running container |
 | `docker.stop` | — | Stop a container |
 | `docker.rm` | — | Remove a container |
+
+The non-streaming `docker.exec`, `docker.stop`, `docker.rm`, and `docker.run`
+capability, plus `docker.worker.stop`, emit a payload-free external-effect
+projection immediately before invoking Docker. The projection hashes host,
+resource, and operation identity; command text, environment values, target
+names, and raw approval/idempotency references are not retained. It is
+observe-only and cannot block, retry, or claim completion. Image builds,
+streaming routes, worker spawn, and stack/store orchestration are not yet fully
+covered, so Infrastructure evidence in the Integrations UI is labelled partial.
 
 ---
 

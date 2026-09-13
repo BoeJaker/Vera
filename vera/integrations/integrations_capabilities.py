@@ -1129,7 +1129,8 @@ async def integration_effect_enforcement_readiness(trace_id=None):
     http_tags=["integration", "policy"], memory="off", silent=True,
     description="Inspect bounded payload-free aggregates of observe-only external-effect "
                 "decisions. Returns admission, execution and replay-suppression counts plus "
-                "reason codes for one isolated family: integration_api, telegram, or email. "
+                "reason codes for one isolated family: integration_api, telegram, email, "
+                "commerce, or infrastructure. "
                 "It cannot enforce, execute, retry, open secrets, or retain payloads.",
 )
 async def integration_effect_shadow_evidence(
