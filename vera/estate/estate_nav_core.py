@@ -1,7 +1,7 @@
 """Which top-level tabs now open inside a broader tab, where each one opens,
 and the one setting that brings them back.
 
-Estate covers seven machine, network and identity tabs; Capabilities covers
+Estate covers eight machine, network, identity and platform tabs; Capabilities covers
 Cap Ontology and MCP Servers; Agents covers Agent Bridges; Image Studio covers
 Companion.
 
@@ -28,6 +28,7 @@ RETIRED_TABS: Dict[str, Dict[str, str]] = {
     "identity-panel":     {"panel": "workers-ollama", "pane": "provision",    "sub": "identity", "section": "Identity & Trust"},
     "provision-panel":    {"panel": "workers-ollama", "pane": "software",     "sub": "",         "section": "Build"},
     "integrations":       {"panel": "workers-ollama", "pane": "integrations", "sub": "",         "section": "Integrations"},
+    "platform-config":    {"panel": "workers-ollama", "pane": "platforms",    "sub": "",         "section": "Integrations"},
     # Capabilities
     "cap-ontology":       {"panel": "cap-hub", "pane": "ontology", "sub": "",        "section": "Capabilities"},
     "mcp-catalog-panel":  {"panel": "cap-hub", "pane": "mcp",      "sub": "catalog", "section": "Capabilities"},
@@ -38,6 +39,18 @@ RETIRED_TABS: Dict[str, Dict[str, str]] = {
 }
 
 _OFF = ("0", "false", "off", "no")
+
+
+NETCTL_LABEL = "netctl"
+
+
+def netctl_record(integrations: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    """The Integrations record that fronts netctl's own pages: its label starts
+    with 'netctl'. NWM-02, the node with the access tab, comes first."""
+    rows = [dict(i) for i in integrations
+            if str(i.get("label") or "").strip().lower().startswith(NETCTL_LABEL)]
+    rows.sort(key=lambda i: ("nwm-02" not in str(i.get("label") or "").lower(), str(i.get("label") or "")))
+    return rows[0] if rows else {}
 
 
 def setting_enabled(raw: Any) -> bool:

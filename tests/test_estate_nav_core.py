@@ -32,10 +32,10 @@ def _read(path):
         return f.read()
 
 
-def test_the_seven_overlapping_tabs_open_inside_estate():
+def test_the_overlapping_tabs_open_inside_estate():
     assert set(ESTATE) == {
         "proxmox-panel", "provision-panel", "provisioning-panel", "remote-connections",
-        "identity-panel", "integrations", "netgraph-panel"}
+        "identity-panel", "integrations", "netgraph-panel", "platform-config"}
 
 
 def test_capabilities_agents_and_image_studio_take_in_their_tabs():

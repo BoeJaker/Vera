@@ -85,6 +85,7 @@ html.vpb-nav-hosted #secNav{display:none}
 .snav[data-pane="remote"].on{color:#9c8cf0}
 .snav[data-pane="software"].on{color:var(--acc3)}
 .snav[data-pane="integrations"].on{color:#e6b800}
+.snav[data-pane="platforms"].on{color:#e6b800}
 .snav[data-pane="machines"].on{color:#6fd68b}
 .mc-kind{font-family:var(--mono);font-size:8.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--dim2);white-space:nowrap}
 .mc-state{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--dim2)}
@@ -429,7 +430,9 @@ html.view-models #secNav [data-view="models"]{display:block}
     <div class="snav" data-pane="foundry" data-view="estate" onclick="P.show('foundry',this)">Foundry</div>
     <div class="snav" data-pane="software" data-view="estate" onclick="P.show('software',this)">Provision</div>
     <div class="navdiv" data-view="estate"></div>
-    <div class="snav" data-pane="integrations" data-view="estate" onclick="P.show('integrations',this)">Integrations</div>
+    <div class="nsec" data-view="estate">Integrations</div>
+    <div class="snav" data-pane="integrations" data-view="estate" onclick="P.show('integrations',this)">Services</div>
+    <div class="snav" data-pane="platforms" data-view="estate" onclick="P.show('platforms',this)">Platforms</div>
     <div class="snav" data-pane="ollama" data-view="models" onclick="P.show('ollama',this)">Ollama</div>
     <div class="snav" data-pane="modelrouting" data-view="models" onclick="P.show('modelrouting',this)">Model Routing</div>
     <div class="navdiv" data-view="models"></div>
@@ -1770,6 +1773,11 @@ html.view-models #secNav [data-view="models"]{display:block}
     <div class="pane" id="pane-integrations" style="padding:0;overflow:hidden">
       <iframe id="integrations-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
+    <!-- Platforms: values set once and pushed into Home Assistant, n8n and the
+         like; its credentials live in the secrets service. Was a top-level tab. -->
+    <div class="pane" id="pane-platforms" style="padding:0;overflow:hidden">
+      <iframe id="platforms-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
     <div class="pane" id="pane-software" style="padding:0;overflow:hidden">
       <iframe id="software-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
@@ -1791,10 +1799,12 @@ html.view-models #secNav [data-view="models"]{display:block}
           <div style="display:flex;gap:2px">
             <span class="j-tab active" id="nets-graph" onclick="P.netSub('graph')" style="padding:3px 9px;font-size:9px">Graph &amp; Firewall</span>
             <span class="j-tab" id="nets-ops" onclick="P.netSub('ops')" style="padding:3px 9px;font-size:9px">Traffic (NWM-01)</span>
+            <span class="j-tab" id="nets-netctl" onclick="P.netSub('netctl')" style="padding:3px 9px;font-size:9px" title="netctl's own pages, behind its own sign-in">netctl</span>
           </div>
         </div>
         <iframe id="net-sub-graph" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
         <iframe id="net-sub-ops" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+        <iframe id="net-sub-netctl" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
       </div>
     </div>
 
@@ -1920,6 +1930,7 @@ html.view-models #secNav [data-view="models"]{display:block}
             <!-- Software tab removed: runtime/component installs live in the
                  Nodes pane; docker host mgmt in Docker; CT creation in Proxmox. -->
             <span class="j-tab active" id="prvs-security" onclick="P.provSub('security')" style="padding:3px 9px;font-size:9px">Security</span>
+            <span class="j-tab" id="prvs-secrets" onclick="P.provSub('secrets')" style="padding:3px 9px;font-size:9px">Secrets</span>
             <span class="j-tab" id="prvs-identity" onclick="P.provSub('identity')" style="padding:3px 9px;font-size:9px">Identity</span>
             <span class="j-tab" id="prvs-enroll" onclick="P.provSub('enroll')" style="padding:3px 9px;font-size:9px">Enroll</span>
             <span class="j-tab" id="prvs-mesh" onclick="P.provSub('mesh')" style="padding:3px 9px;font-size:9px">Mesh</span>
@@ -1927,6 +1938,7 @@ html.view-models #secNav [data-view="models"]{display:block}
           <span class="status-hint" style="margin-left:8px">Net policy (graph &amp; firewall) lives in Network → Graph; deploy its OPA engine from Security</span>
         </div>
         <iframe id="prv-sub-security" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
+        <iframe id="prv-sub-secrets" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-identity" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-enroll" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-mesh" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
@@ -6329,6 +6341,7 @@ function showPane(name, el){
   if(name==='machines'){ mcInit(); }
   if(name==='remote'){ _mountFrame('remote-frame', BASE+'/remote/panel'); }
   if(name==='integrations'){ _mountFrame('integrations-frame', BASE+'/integrations/panel'); }
+  if(name==='platforms'){ _mountFrame('platforms-frame', BASE+'/platform/panel'); }
   if(name==='software'){ _mountFrame('software-frame', BASE+'/provision/panel'); }
   // Keep the outer shell's injected top-level sub-menu in sync when this
   // panel changes pane on its own (a direct click here, not one relayed
@@ -6393,7 +6406,7 @@ function obsSub(name){
 }
 
 // ── Network sub-tabs (graph+firewall / live traffic) ─────────────────────────
-const _netSubSrc={graph:'/netgraph/panel', ops:'/pxstore/netops-panel'};
+const _netSubSrc={graph:'/netgraph/panel', ops:'/pxstore/netops-panel', netctl:'/estate/netctl'};
 let _netSub='graph';
 function netSub(name){
   if(!_netSubSrc[name]) name='graph';
@@ -6538,7 +6551,7 @@ async function connProbeRow(id){
 // ── Provision sub-tabs — every provisioning surface consolidated in one pane ──
 // (netpolicy was dropped: it just duplicated Network → Graph & Firewall.
 //  The OPA policy engine deploys from the Security sub-tab's services card.)
-const _prvSubSrc={security:'/provisioning/panel',identity:'/identity/panel',enroll:'/enroll/panel',mesh:'/netsec/panel'};
+const _prvSubSrc={security:'/provisioning/panel',secrets:'/secrets/panel',identity:'/identity/panel',enroll:'/enroll/panel',mesh:'/netsec/panel'};
 let _prvSub='security';
 function provSub(name){
   if(!_prvSubSrc[name]) name='security';
