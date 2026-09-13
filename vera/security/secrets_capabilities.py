@@ -33,9 +33,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
+from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
-from Vera.vera.capability_orchestration import capability, emit_event, now_iso
+from Vera.vera.capability_orchestration import APP, capability, emit_event, now_iso
 from Vera.vera.security import secrets as vsecrets
 from Vera.vera.security import secret_service_core as core
 
@@ -193,6 +194,21 @@ async def get_named(path: str) -> Optional[Dict[str, Any]]:
     if code != 200:
         return None
     return ((body or {}).get("data") or {}).get("data") or None
+
+
+async def delete_named(path: str) -> Dict[str, Any]:
+    """Remove a named secret and all its versions."""
+    try:
+        p = core.check_path(path)
+    except ValueError as e:
+        return {"error": str(e)}
+    cfg = _cfg()
+    if not (cfg and vsecrets._bao_active()):
+        return {"error": "OpenBao is not active for Vera; see secrets.status"}
+    code, _b, err = await _bao("DELETE", core.named_metadata(cfg["mount"], p))
+    if code not in (200, 204):
+        return {"error": err or f"OpenBao refused the delete (HTTP {code})"}
+    return {"ok": True, "path": p}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -498,9 +514,9 @@ async def cap_secrets_delete(path: str = "", confirm: bool = False, trace_id=Non
         return {"error": "OpenBao is not active for Vera; see secrets.status"}
     if not _flag(confirm):
         return {"ok": True, "dry_run": True, "path": p, "note": "nothing deleted; pass confirm=true"}
-    code, _b, err = await _bao("DELETE", core.named_metadata(cfg["mount"], p))
-    if code not in (200, 204):
-        return {"error": err or f"OpenBao refused the delete (HTTP {code})"}
+    res = await delete_named(p)
+    if res.get("error"):
+        return res
     await emit_event({"type": "secrets.delete", "path": p})
     return {"ok": True, "dry_run": False, "path": p}
 
@@ -623,6 +639,17 @@ async def cap_secrets_renew(trace_id=None) -> Dict[str, Any]:
     if tok.get("root"):
         return {"error": "Vera is using the root token, which does not expire; run secrets.setup"}
     return await _renew()
+
+
+_PANEL = Path(__file__).parent / "secrets_panel.html"
+
+
+@APP.get("/secrets/panel", include_in_schema=False)
+async def _secrets_panel():
+    """Estate > Trust > Secrets: the service's state, what is still on the file key,
+    named secrets (never values), and the SSH login cleanup."""
+    return HTMLResponse(_PANEL.read_text(encoding="utf-8") if _PANEL.exists()
+                        else "<p style='color:red'>secrets_panel.html not found</p>")
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -24,7 +24,7 @@ pytestmark = pytest.mark.critical
 
 SRC = os.path.join(ROOT, "vera", "security", "secrets_capabilities.py")
 WANTED = {"_text", "_flag", "_thread", "_cfg", "_bao", "_prov_state", "_openbao", "_token", "_renew",
-          "put_named", "get_named", "_redis_entries", "_exec_store", "_ssh_records", "_counts",
+          "put_named", "get_named", "delete_named", "_redis_entries", "_exec_store", "_ssh_records", "_counts",
           "cap_secrets_status", "cap_secrets_setup", "cap_secrets_put", "cap_secrets_list",
           "cap_secrets_delete", "cap_secrets_handoff", "cap_secrets_migrate", "cap_secrets_renew",
           "_watch_tick"}

@@ -1,7 +1,7 @@
 """Which top-level tabs now open inside a broader tab, where each one opens,
 and the one setting that brings them back.
 
-Estate covers seven machine, network and identity tabs; Capabilities covers
+Estate covers eight machine, network, identity and platform tabs; Capabilities covers
 Cap Ontology and MCP Servers; Agents covers Agent Bridges; Image Studio covers
 Companion.
 
@@ -28,6 +28,7 @@ RETIRED_TABS: Dict[str, Dict[str, str]] = {
     "identity-panel":     {"panel": "workers-ollama", "pane": "provision",    "sub": "identity", "section": "Identity & Trust"},
     "provision-panel":    {"panel": "workers-ollama", "pane": "software",     "sub": "",         "section": "Build"},
     "integrations":       {"panel": "workers-ollama", "pane": "integrations", "sub": "",         "section": "Integrations"},
+    "platform-config":    {"panel": "workers-ollama", "pane": "platforms",    "sub": "",         "section": "Integrations"},
     # Capabilities
     "cap-ontology":       {"panel": "cap-hub", "pane": "ontology", "sub": "",        "section": "Capabilities"},
     "mcp-catalog-panel":  {"panel": "cap-hub", "pane": "mcp",      "sub": "catalog", "section": "Capabilities"},

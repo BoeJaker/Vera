@@ -8,7 +8,8 @@ holds a *reference* rather than a copy, so changing it in one place changes it
 everywhere.
 
   platform.values.*   shared non-secret facts (home_coords, work_coords, …)
-  platform.secrets.*  reusable credentials, sealed at rest, redacted on output
+  platform.secrets.*  reusable credentials, kept in Vera's secrets service
+                      (OpenBao, named secret platform/<key>), redacted on output
   platform.*          the targets themselves (Home Assistant, n8n, …)
   platform.apply      push resolved config INTO the target platform
 
@@ -93,9 +94,31 @@ async def _values_plain() -> Dict[str, Any]:
     return {k: v.get("value", "") for k, v in (await _hgetall(KEY_VALUES)).items()}
 
 
+def _secrets_service() -> Optional[Dict[str, Any]]:
+    """The secrets service (named secrets in OpenBao), when it is loaded."""
+    import inspect
+    fn = (_orch.CAPABILITY_REGISTRY.get("secrets.status") or {}).get("func")
+    return getattr(inspect.unwrap(fn), "__globals__", None) if fn is not None else None
+
+
+def _secret_path(key: str) -> str:
+    return f"platform/{key}"
+
+
 async def _secrets_plain() -> Dict[str, Any]:
+    """Every credential's value, for resolving references. A record with a
+    `path` lives in the secrets service; an older record carries its own
+    sealed value."""
     out = {}
+    svc = None
     for k, rec in (await _hgetall(KEY_SECRETS)).items():
+        if rec.get("path"):
+            svc = svc or _secrets_service()
+            got = (await svc["get_named"](rec["path"])) if svc and svc.get("get_named") else None
+            out[k] = (got or {}).get("value", "") or ""
+            if not out[k]:
+                log.warning("platform: credential %s could not be read from the secrets service", k)
+            continue
         raw = rec.get("value", "")
         try:
             out[k] = vsecrets.open_secret(raw) if raw else ""
@@ -202,7 +225,9 @@ async def cap_secrets_list(trace_id=None):
     out = []
     for k, rec in sorted(secs.items()):
         out.append({"key": k, "label": rec.get("label", k),
-                    "set": bool(rec.get("value")),
+                    "set": bool(rec.get("path") or rec.get("value")),
+                    "store": rec.get("store") or ("secrets service" if rec.get("path") else "sealed inline"),
+                    "path": rec.get("path", ""),
                     "updated": rec.get("updated", ""),
                     "used_by": pc.referencing_platforms(targets, "secret", k),
                     "ref": pc.SECRET_REF + k})
@@ -213,7 +238,9 @@ async def cap_secrets_list(trace_id=None):
 @capability(
     "platform.secrets.set", http_method="POST",
     http_path="/platform/secrets/set", http_tags=["platform"], memory="on",
-    description="Create or update a reusable credential. Sealed at rest and "
+    description="Create or update a reusable credential. Kept in Vera's secrets service (OpenBao, "
+                "named secret platform/<key>; sealed inline only when that service is not "
+                "available) and "
                 "never echoed back. One record can be referenced by several "
                 "platforms with @secret:<key>, or each can hold its own. "
                 "Input: key (str!), value (str!), label (str). Output: {ok, key}.",
@@ -227,11 +254,21 @@ async def cap_secrets_set(key: str = "", value: str = "", label: str = "",
         return {"error": "key must be lowercase letters, digits or underscores"}
     if not value:
         return {"error": "value is required"}
-    rec = {"key": k, "label": label or k.replace("_", " ").title(),
-           "value": vsecrets.seal(value), "updated": now_iso()}
+    rec = {"key": k, "label": label or k.replace("_", " ").title(), "updated": now_iso()}
+    svc = _secrets_service()
+    stored = {}
+    if svc and svc.get("put_named"):
+        stored = await svc["put_named"](_secret_path(k), {"value": value, "notes": f"Platforms credential: {rec['label']}"})
+    if stored.get("ok"):
+        rec.update(path=stored["path"], store="secrets service")
+    else:
+        # No secrets service here (a sandbox, or OpenBao down): seal it inline so
+        # saving still works, and say where it went.
+        rec.update(value=vsecrets.seal(value), store="sealed inline")
     await _hset(KEY_SECRETS, k, rec)
     targets = list((await _hgetall(KEY_TARGETS)).values())
-    return {"ok": True, "key": k, "ref": pc.SECRET_REF + k,
+    return {"ok": True, "key": k, "ref": pc.SECRET_REF + k, "store": rec["store"],
+            "note": stored.get("error", "") if not stored.get("ok") else "",
             "used_by": pc.referencing_platforms(targets, "secret", k)}
 
 
@@ -251,10 +288,20 @@ async def cap_secrets_delete(key: str = "", force: bool = False, trace_id=None):
         return {"error": f"still referenced by: {', '.join(used)}. "
                          "Repoint those fields first, or pass force=true.",
                 "used_by": used}
+    rec = (await _hgetall(KEY_SECRETS)).get(k) or {}
+    removed_from_service = False
+    if rec.get("path"):
+        svc = _secrets_service()
+        if svc and svc.get("delete_named"):
+            res = await svc["delete_named"](rec["path"])
+            if res.get("error"):
+                return {"error": f"the secrets service did not delete {rec['path']}: {res['error']}"}
+            removed_from_service = True
     r = _redis()
     if r:
         await r.hdel(KEY_SECRETS, k)
-    return {"ok": True, "deleted": k, "orphaned": used if force else []}
+    return {"ok": True, "deleted": k, "orphaned": used if force else [],
+            "removed_from_secrets_service": removed_from_service}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
