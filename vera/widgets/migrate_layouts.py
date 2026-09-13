@@ -47,12 +47,13 @@ SPAN_BY_SIZE = {"xs": [2, 1], "s": [2, 1], "m": [4, 2], "l": [6, 3], "xl": [8, 4
 
 
 def size_for_span(w: int, h: int = 1) -> str:
-    """The Sizes board's rule (widget_record.size_for_span, repeated here so this module stays import-free)."""
+    """The Sizes board's rule (widget_record.size_for_span, repeated here so this module stays import-free):
+    a 2-3 wide tile one row tall is a row (S); two rows or more is a cell (M)."""
     w = int(w or 0)
     if w <= 1:
         return "xs"
     if w <= 3:
-        return "s"
+        return "s" if int(h or 1) < 2 else "m"
     if w <= 4:
         return "m"
     if w <= 6:

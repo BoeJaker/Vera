@@ -412,11 +412,12 @@
   // The grid the Dashboard board draws — the units VeraDash has always used, so a layout migrates one to one.
   var GRID = { cols: 12, row: 58, gap: 10, widths: [2, 3, 4, 6, 8, 12] };
   // The span → size rule (the Sizes board; widget_record.size_for_span is the same rule): 2–3 wide S, 4 M, 6 L,
-  // 8–12 XL; extra rows on a 6-wide add the detail, then the table.
+  // 8–12 XL; extra rows on a 6-wide add the detail, then the table. A 2–3 wide tile one row tall is a row (S); two
+  // rows or more is a cell (M) — the figure and its sub line, as the Dashboard board's stat tiles draw.
   function sizeForSpan(w, h) {
     w = +w || 0; h = +h || 1;
     if (w <= 1) return 'xs';
-    if (w <= 3) return 's';
+    if (w <= 3) return h < 2 ? 's' : 'm';
     if (w <= 4) return 'm';
     if (w <= 6) return h < 3 ? 'l' : 'xl';
     return 'xl';

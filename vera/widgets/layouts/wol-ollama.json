@@ -289,6 +289,7 @@
     "source": "background.status",
     "shape": "items",
     "title": "Background Queue — waiting for an idle box",
+    "note": "the ollama page folded this into its Jobs head (bleeding-edge 53043a9); the element draws it from the file",
     "read": {
      "refresh": "5s"
     },
@@ -301,7 +302,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
