@@ -1349,6 +1349,18 @@ class Neo4jBackend(MemoryBackend):
 
 _EMBED_FAILED_AT  = 0.0     # monotonic ts of the last hard failure (0 = healthy)
 _EMBED_RETRY_SECS = 300.0   # circuit-breaker cooldown before probing the cluster again
+# Wait budget for ONE embed. A search or store must not sit behind a busy
+# embed node: past this the embed is abandoned (the request is cancelled, so
+# the node drops it too) and the caller carries on without a vector — the
+# search answers from Postgres + Neo4j, the store skips the Chroma write
+# (backfill later with memory.backfill_vectors). Live on prod 2026-09-13:
+# the chat page's memory chip waited 10-135 s per embed behind Vera's own
+# fabric-ingest traffic, which is what made chat "slow with memory on".
+_EMBED_WAIT_S = float(os.getenv("VERA_EMBED_WAIT_S", "5") or 5)
+# After a timeout, skip embeds outright for this long rather than making
+# every caller pay the full wait again while the node is still backed up.
+_EMBED_SLOW_COOLDOWN_S = float(os.getenv("VERA_EMBED_SLOW_COOLDOWN_S", "30") or 30)
+_EMBED_SLOW_UNTIL = 0.0     # monotonic deadline of the current slow-cooldown (0 = none)
 
 async def embed_text(text: str) -> Optional[List[float]]:
     """Generate a text embedding via the centralized ollama_embed (logged to Jobs).
@@ -1359,15 +1371,30 @@ async def embed_text(text: str) -> Optional[List[float]]:
     marks nodes online) silently disabled vectors for the whole process lifetime
     — records piled up in Postgres with no Chroma vector.
     """
-    global _EMBED_FAILED_AT
+    global _EMBED_FAILED_AT, _EMBED_SLOW_UNTIL
     if not MEMORY_AUTO_EMBED or not text.strip():
         return None
     if _EMBED_FAILED_AT and (time.monotonic() - _EMBED_FAILED_AT) < _EMBED_RETRY_SECS:
         return None
+    if _EMBED_SLOW_UNTIL and time.monotonic() < _EMBED_SLOW_UNTIL:
+        return None
     try:
         from Vera.vera.capability_orchestration import ollama_embed
-        vec = await ollama_embed(text, model=OLLAMA_EMBED_MODEL,
-                                 normalize=_EMBED_NORMALIZE)
+        try:
+            vec = await asyncio.wait_for(
+                ollama_embed(text, model=OLLAMA_EMBED_MODEL, normalize=_EMBED_NORMALIZE),
+                timeout=_EMBED_WAIT_S)
+        except asyncio.TimeoutError:
+            first = not _EMBED_SLOW_UNTIL or time.monotonic() >= _EMBED_SLOW_UNTIL
+            _EMBED_SLOW_UNTIL = time.monotonic() + _EMBED_SLOW_COOLDOWN_S
+            if first:
+                log.warning(
+                    "embed_text: no vector within %.1fs (embed node backed up) — "
+                    "carrying on without embeddings for %ds; searches use "
+                    "Postgres + Neo4j, stores skip Chroma (memory.backfill_vectors "
+                    "fills them in later)", _EMBED_WAIT_S, int(_EMBED_SLOW_COOLDOWN_S))
+            return None
+        _EMBED_SLOW_UNTIL = 0.0
         if vec is None:
             first = not _EMBED_FAILED_AT
             _EMBED_FAILED_AT = time.monotonic()
