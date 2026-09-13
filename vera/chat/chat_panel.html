@@ -5951,7 +5951,7 @@ IMPORTANT:
   function _cvHarvest(body){
     const out=[]; if(!body) return out;
     body.querySelectorAll('.cap-inline').forEach((el,i)=>{ const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:'')||'').replace(/\s+/g,' ').trim().slice(0,80); const res=String((el.querySelector('.cap-result,.cap-peek,.cap-md')||{}).textContent||'').trim().slice(0,2000); if(!n) return;
-      if((/^canvas\./.test(n)||(/^(driven\s*)?ui\.directive\b/.test(n)&&/canvas\./.test(n)))&&!el.classList.contains('error')) return;   // a canvas call put its item there itself — its receipt is not a second item (a failed one still lands, where the item would have been)
+      if((el.classList.contains('drv')||/^canvas\./i.test(n)||(/^(driven\s*)?ui\.directive\b/i.test(n)&&/canvas\./.test(n)))&&!el.classList.contains('error')) return;   // a directive's chip is never an item   // a canvas call put its item there itself — its receipt is not a second item (a failed one still lands, where the item would have been)
       out.push({kind:'markdown', n:n.split(' ')[0]||'capability', d:'capability · '+(el.classList.contains('error')?'failed':'done'), content:{md:'**'+n+'**\n\n'+(res?'```\n'+res+'\n```':'')}, col:'var(--acc2)', k:'cap'}); });
     body.querySelectorAll('pre code').forEach((el,i)=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; const s=String(el.textContent||''); if(!s.trim()) return;
       if(lang==='mermaid'){ out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{mermaid:s.slice(0,8000)}, col:'#a78bfa', k:'diagram'}); return; }
@@ -7857,12 +7857,18 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     }
     // the vocabulary spoken as a bare capability ([[canvas.add {…}]], [[cap:panel.open {…}]]) is the same directive: lifted
     // into ui.directive so it meets the same policy, log and undo (the Control board: one vocabulary, one dispatcher)
-    const liftDirectives=()=>{ matches.forEach(mt=>{ if(mt.type!=='cap'||!mt.groups||mt.groups[0]==='ui.directive'||!_isDirective(mt.groups[0])) return; let a={}; try{ a=mt.groups[1]?JSON.parse(mt.groups[1]):{}; }catch(_){ a={}; } if(a&&typeof a==='object'&&!Array.isArray(a)){ mt.groups=['ui.directive', JSON.stringify({name:mt.groups[0], args:a})]; } }); };
+    const liftDirectives=()=>{ matches.forEach(mt=>{ if(mt.type!=='cap'||!mt.groups||mt.groups[0]==='ui.directive'||!_isDirective(mt.groups[0])) return; let a={}; try{ a=mt.groups[1]?JSON.parse(mt.groups[1]):{}; }catch(_){ a={}; } if(a&&typeof a==='object'&&!Array.isArray(a)){
+        // a canvas directive is shaped as the chat shapes its own (at now · a kind-prefixed key · a record from a widget's
+        // content) and anchored to the turn being answered — the relevance pass keeps the turn's items in NOW
+        _shapeCanvasDirective(mt.groups[0], a);
+        mt.groups=['ui.directive', JSON.stringify({name:mt.groups[0], args:a})]; } }); };
+    const _shapeCanvasDirective=(name,a)=>{ if(/^canvas\.(add|show)$/.test(name)&&a&&typeof a==='object'){ try{ if(name==='canvas.add') _cvDirectiveShape(a); if(!a.anchor&&_cvRelMid) a.anchor={mid:_cvRelMid, turn:_cvRelMid}; }catch(_){} } };
     // ⟦name {args}⟧ → a cap match of ui.directive (the dispatcher applies policy, logs, and answers with the outcome)
     const reDir=new RegExp(DIRECTIVE_INLINE_RE.source,'g');
     while((m=reDir.exec(text))!==null){
       if(matches.find(x=>x.idx===m.index)) continue;
       let args={}; try{ args=m[2]?JSON.parse(m[2]):{}; }catch(_){ args={}; }
+      _shapeCanvasDirective(m[1], args);
       matches.push({idx:m.index,end:m.index+m[0].length,type:'cap',groups:['ui.directive',JSON.stringify({name:m[1],args})]});
     }
 

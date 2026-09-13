@@ -34,13 +34,21 @@ def test_hint_lists_every_registry_form():
     assert "const form=known?draw:'table';" in src and "draw:{form:form, size:" in src
 
 
+def test_a_lifted_canvas_directive_is_shaped_and_anchored_to_the_turn():
+    # mirror a42i.png: the items the model placed landed PARKED (no anchor → the relevance pass parked them); the chips were harvested
+    src = _read("vera", "chat", "chat_panel.html")
+    assert "const _shapeCanvasDirective=(name,a)=>{ if(/^canvas\\.(add|show)$/.test(name)&&a&&typeof a==='object'){ try{ if(name==='canvas.add') _cvDirectiveShape(a); if(!a.anchor&&_cvRelMid) a.anchor={mid:_cvRelMid, turn:_cvRelMid}; }catch(_){} } };" in src
+    assert src.count("_shapeCanvasDirective(") == 2, "the lift and the shorthand both shape"
+    assert "if((el.classList.contains('drv')||/^canvas\\./i.test(n)||" in src
+
+
 def test_a_directive_lands_as_the_boards_chip_with_undo():
     # mirror a42h.png: each ui.directive landed as a JSON dump; the items landed PARKED; the receipts were harvested
     src = _read("vera", "chat", "chat_panel.html")
     assert "if(capName==='ui.directive'&&content&&typeof content==='object'&&content.row){ try{ el.innerHTML=_drvChipHtml(content, resultId, previewClean); el.classList.add('drv'); }catch(_){} }" in src
     assert "function _drvChipHtml(res, resultId, raw){" in src and "async function _drvUndoRow(rowId, btn){" in src
     assert "args.content=c; if(!args.at) args.at='now';" in src
-    assert "if((/^canvas\\./.test(n)||(/^(driven\\s*)?ui\\.directive\\b/.test(n)&&/canvas\\./.test(n)))&&!el.classList.contains('error')) return;" in src
+    assert "/canvas\\./.test(n)))&&!el.classList.contains('error')) return;" in src
     assert ".cap-inline.drv{padding:4px 8px;border-left:2px solid var(--acc3,#d4a96a)}" in src
 
 
