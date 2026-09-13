@@ -291,6 +291,16 @@ async def _build_nodes() -> List[Dict]:
     for cid, cfg in px.items():
         for pve_node, hid in (cfg.get("node_hosts") or {}).items():
             host_to_pve[hid] = {"kind": "node", "cluster_id": cid, "node": pve_node}
+    # The Proxmox cluster record's node map is the one every caller shares; it wins.
+    pm = sys.modules.get("proxmox_capabilities")
+    if pm is not None and hasattr(pm, "_all_raw"):
+        try:
+            for crec in await pm._all_raw():
+                for pve_node, hid in (crec.get("node_hosts") or {}).items():
+                    host_to_pve[str(hid)] = {"kind": "node", "cluster_id": crec.get("id", ""),
+                                             "node": pve_node}
+        except Exception as e:
+            log.debug("cluster record node_hosts: %s", e)
     px_ids = list(px.keys())
     for n in nodes.values():
         hid = n.get("ssh_host_id", "")
