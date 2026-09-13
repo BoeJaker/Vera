@@ -51,6 +51,7 @@ def test_the_harness_hosts_the_chats_menu_instance():
     assert "document.getElementById('lhmMenuHost')?.classList.toggle('on', chatOpen);" in HARNESS, "one persistent frame, shown while the chat is the open UI"
     assert '<script src="/ui/widgets/widget_element.js"></script>' in HARNESS, "the widget surface opens at harness level for the menu instance"
     assert "VeraLHM.absorb(abs, nav.lhm, id => {" in HARNESS, "the spec-absorb for other panels stays"
+    assert "function _hostFramesWatch(){" in HARNESS and "try{ _hostFramesWatch(); }catch(_){}" in HARNESS, "a chat frame a panel's own script creates is loaded chat-only too"
 
 
 def test_the_lhm_adds_widgets_through_the_shared_surface():
