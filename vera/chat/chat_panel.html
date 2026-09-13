@@ -1502,6 +1502,13 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .lps-x{grid-column:3 / span 2;grid-row:2;font-size:10px;color:var(--t3,var(--dim,#6b7280));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #rightRail.lhm-host .lhm-quick .lpp-ft{padding:10px 0 4px;font-size:9.5px;color:var(--t3,var(--dim,#6b7280));line-height:1.5}
 #rightRail.lhm-host .lhm-quick .sbx-act{display:flex;gap:6px;flex-wrap:wrap}
+#rightRail.lhm-host .lhm-quick .sbx-tree{max-height:190px;overflow:auto;font-size:10.5px}
+#rightRail.lhm-host .lhm-quick .sbx-tree table{width:100%}
+#rightRail.lhm-host .lhm-quick .sbx-term{height:150px;border-radius:var(--r-sm,6px);overflow:hidden;background:#000;display:flex}
+#rightRail.lhm-host .lhm-quick .sbx-term vera-terminal{flex:1;width:100%;height:100%;display:block}
+#rightRail.lhm-host .lhm-quick .grp .sp{flex:1}
+#rightRail.lhm-host .lhm-quick .grp .lhm-x{border:none;background:transparent;color:var(--t3,var(--dim,#6b7280));font:inherit;font-size:11px;cursor:pointer;padding:0 4px}
+#rightRail.lhm-host .lhm-quick .grp .lhm-x:hover{color:var(--t1,var(--text,#d8dce4))}
 #rightRail.lhm-host .lhm-quick .sbx-act button{height:26px;padding:0 10px;border-radius:var(--r-sm,6px);font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0));background:var(--surf2,var(--bg2,#1a1c20));border:0;cursor:pointer}
 #rightRail.lhm-host .lhm-quick .sbx-act button:hover{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
 #rightRail.lhm-host .lhm-quick .sbx-st{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));line-height:1.5;padding:2px 0}
@@ -12843,13 +12850,38 @@ function _embedMount(){
   }
   // Sandbox: the session container's state and the actions (each a capability call); the file tree and the terminal
   // live in the full pane (Code) one press away
+  // Sandbox: the session container (status), its FILE TREE (the files widget form, fs.list inside the container), its
+  // TERMINAL (the estate's <vera-terminal> over sandbox.session.terminal's descriptor — kept alive across renders), the
+  // actions. The board's Sandbox menu: sbx-tree · sbx-term · sbx-act.
+  const _sbxQ={ sid:'', term:null, files:null, busy:false, el:null };
+  async function _sbxQuickLoad(){
+    if(!SID||_sbxQ.busy) return; _sbxQ.busy=true; const sid=SID;
+    try{
+      const r=await _capCall('sandbox.session.terminal',{session_id:sid, shell:'bash'});
+      if(sid!==SID) return;
+      _sbxQ.sid=sid; _sbxQ.term=(r&&r.ok&&r.ws_path)?{ws:r.ws_path, page:r.page_url||'', container:r.container||'', host:r.docker_host_id||'local', shell:r.shell||'bash'}:null; _sbxQ.files=null;
+      if(_sbxQ.term){ try{ const l=await _capCall('fs.list',{kind:'docker', docker_host_id:_sbxQ.term.host, container:_sbxQ.term.container, path:'/workspace'}); if(sid===SID) _sbxQ.files=(l&&Array.isArray(l.entries))?l.entries.filter(e=>e&&e.name&&e.name!=='.'&&e.name!=='..').map(e=>({path:e.name, type:e.type||e.kind||'', size:e.size!=null?e.size:''})).slice(0,80):[]; }catch(_){ _sbxQ.files=[]; } }
+    }catch(_){ _sbxQ.term=null; _sbxQ.files=null; }
+    finally{ _sbxQ.busy=false; try{ const q=document.querySelector('#rightRail .lhm-quick'); if(q) delete q.dataset.sig; VeraLHM.render(); }catch(_){} }
+  }
   function _quickSandbox(el){
     const st=_lhmTxt('sbxSessionStatus'); const cb=document.getElementById('cfgSessionSbx'); const on=!!(cb&&cb.checked);
-    const sig=st+':'+on+':'+SID; if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    if(on&&SID&&_sbxQ.sid!==SID&&!_sbxQ.busy) _sbxQuickLoad();
+    const term=(on&&_sbxQ.sid===SID)?_sbxQ.term:null, files=(on&&_sbxQ.sid===SID)?_sbxQ.files:null;
+    const sig=st+':'+on+':'+SID+':'+(term?term.ws:'')+':'+(files?files.length:'-'); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    let tree='';
+    if(on){ if(files===null) tree='<div class="lhm-empty">reading /workspace…</div>';
+      else { let drawn=''; try{ if(window.VeraWidget&&files.length) drawn=window.VeraWidget.draw('files', files, 'm', {bare:true}); }catch(_){} tree=drawn||('<div class="lhm-empty">'+(files.length?'':'nothing in /workspace yet')+'</div>'); } }
+    else tree='<div class="lhm-empty">no container for this session yet</div>';
     el.innerHTML='<div class="wid" data-w="session container · status"><div class="grp">Session container</div><div class="sbx-st">'+esc(st||(on?'routing into the session container':'no container for this session yet'))+'</div></div>'
-      +'<div class="wid" data-w="actions · controls" data-tpl="lhm:actions"><div class="sbx-act">'+(on?'':'<button data-act="on" title="Create the container and route this session into it">Start container</button>')+'<button data-act="term" title="Open an interactive terminal into this session\'s container">Terminal</button><button data-act="vscode" title="Open VS Code on the workspace">VS Code</button><button data-act="code" title="The file tree and the editor, in this panel">Files</button><button data-act="refresh" title="Re-read the container\'s state">↻</button></div></div>'
-      +'<div class="qnote">Everything the aide runs for this session runs in here; the file tree, the terminal and the editor are behind Files.</div>';
-    el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.act; try{ if(a==='on') _sessionSbxToggle(true); else if(a==='term') _sessionSbxTerminal(); else if(a==='vscode') _sessionSbxVscode(); else if(a==='code'){ VeraLHM.deep(true); VeraLHM.pick('sandbox/code'); } else if(a==='refresh') _sessionSbxRefresh(); }catch(_){} }));
+      +'<div class="wid" data-w="file tree · files" data-tpl="lhm:sbx-tree"><div class="grp">Files <span class="mono">/workspace'+(files?' · '+files.length:'')+'</span></div><div class="sbx-tree">'+tree+'</div></div>'
+      +'<div class="wid" data-w="terminal · terminal" data-tpl="lhm:sbx-term"><div class="grp">Terminal <span class="mono">'+esc(term?(term.container.slice(0,24)+' · '+term.shell):'')+'</span><span class="sp"></span>'+(term?'<button class="lhm-x" data-act="term" title="Open the terminal full-page">↗</button>':'')+'</div><div class="sbx-term">'+(term?'':'<div class="lhm-empty">'+(on?'attaching…':'start the container for a terminal')+'</div>')+'</div></div>'
+      +'<div class="wid" data-w="actions · controls" data-tpl="lhm:actions"><div class="sbx-act">'+(on?'':'<button data-act="on" title="Create the container and route this session into it">Start container</button>')+'<button data-act="term" title="Open an interactive terminal into this session\'s container">Terminal</button><button data-act="vscode" title="Open VS Code on this container\'s workspace">VS Code</button><button data-act="code" title="Files, editor and preview">Files</button><button data-act="refresh" title="Refresh">↻</button></div></div>'
+      +'<div class="qnote">Everything the aide runs for this session runs in here; the file tree and the terminal are this container\'s, live.</div>';
+    // the terminal element lives on: the same instance is moved back into its slot on every render
+    if(term){ const slot=el.querySelector('.sbx-term'); if(!_sbxQ.el||_sbxQ.el.getAttribute('ws')!==term.ws){ try{ _sbxQ.el&&_sbxQ.el.remove(); }catch(_){} _sbxQ.el=document.createElement('vera-terminal'); _sbxQ.el.setAttribute('ws', term.ws); } if(slot&&_sbxQ.el.parentNode!==slot){ slot.innerHTML=''; slot.appendChild(_sbxQ.el); }
+      if(!(window.customElements&&customElements.get('vera-terminal'))){ const s=document.createElement('script'); s.src='/ui/vera-terminal.js'; s.async=true; document.head.appendChild(s); } }
+    el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.act; try{ if(a==='on') _sessionSbxToggle(true); else if(a==='term') _sessionSbxTerminal(); else if(a==='vscode') _sessionSbxVscode(); else if(a==='code'){ VeraLHM.deep(true); VeraLHM.pick('sandbox/code'); } else if(a==='refresh'){ _sbxQ.sid=''; _sessionSbxRefresh(); } }catch(_){} }));
   }
   // Ops glance: the capability estate at a glance (loaded · in reach for this agent · queued) as the board's cards
   function _quickOps(el){
