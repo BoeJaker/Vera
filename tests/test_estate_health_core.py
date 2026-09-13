@@ -147,3 +147,22 @@ def test_errors_sort_first_and_set_the_level():
     })
     assert [f["severity"] for f in result["findings"]] == [core.ERROR, core.INFO]
     assert result["level"] == core.ERROR
+
+
+def test_certificates_section_carries_expiry_findings_but_not_the_informational_ones():
+    out = core.certificates_section({
+        "certs": [{"name": "a"}, {"name": "b"}, {"name": "c"}],
+        "counts": {"ok": 1, "expired": 1, "expiring": 1},
+        "soonest": {"name": "old-app", "where": "192.168.0.9:443", "days_left": -3},
+        "findings": [
+            {"severity": "error", "subject": "old-app", "message": "The certificate for old-app expired 3 day(s) ago.", "detail": ""},
+            {"severity": "warn", "subject": "Gitea", "message": "The certificate for Gitea expires in 5 day(s).", "detail": ""},
+            {"severity": "info", "subject": "services", "message": "1 service(s) present a self-signed certificate", "detail": ""},
+        ]})
+    assert [(f["severity"], f["section"], f["subject"]) for f in out["findings"]] == \
+        [("error", "certificates", "old-app"), ("warn", "certificates", "Gitea")]
+    assert out["facts"] == {"certificates": 3, "expired": 1, "expiring": 1,
+                            "soonest": {"name": "old-app", "where": "192.168.0.9:443", "days_left": -3}}
+    assert core.certificates_section({"error": "certs.list is not loaded"})["error"] == "certs.list is not loaded"
+    assert core.certificates_section(None)["error"]
+    assert "certificates" in core.SECTIONS

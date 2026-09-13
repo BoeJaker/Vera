@@ -44,7 +44,7 @@ log = logging.getLogger("vera.estate")
 # The backup and disk readers run a script on each Proxmox node over SSH (60 s
 # limit of their own), so they get longer than the local checks.
 SOURCE_TIMEOUTS_S = {"state_store": 10.0, "containers": 25.0, "guests": 25.0,
-                     "backups": 75.0, "storage": 75.0, "services": 30.0}
+                     "backups": 75.0, "storage": 75.0, "services": 30.0, "certificates": 50.0}
 CACHE_TTL_S = 120.0
 # docker.disk.status also sweeps every exited session sandbox (~122 s on prod);
 # only its fallback path waits on it, and never for longer than this.
@@ -249,6 +249,10 @@ async def _services() -> Dict[str, Any]:
     return core.services_section(vfs, identity)
 
 
+async def _certificates() -> Dict[str, Any]:
+    return core.certificates_section(await _call("certs.list"))
+
+
 @capability(
     "estate.health",
     http_method="GET", http_path="/estate/health", http_tags=["estate", "obs"],
@@ -261,11 +265,13 @@ async def _services() -> Dict[str, Any]:
                 "after a host reboot and duplicate cluster records, backups (pxstore.backup."
                 "status warnings, failed guest backups, no backup in 36 h), disks (damaged, "
                 "importable or unused disks, Docker data disk filling up) and services (VFS-02 "
-                "services, estate mounts, FreeIPA reachability). Read-only, cached 120 s. "
+                "services, estate mounts, FreeIPA reachability) and certificates (certs.list: "
+                "expired or expiring certificates, unreadable sources). Read-only, cached 120 s. "
                 "Input: refresh (bool - skip the cache). Output: {level: ok|warn|error, "
                 "counts:{error,warn,info}, findings:[{severity, section, subject, message, "
                 "detail}], sections:{state_store, containers, guests, backups, storage, "
-                "services: {label, facts, elapsed_ms, error, findings}}, checked_at, cached}.",
+                "services, certificates: {label, facts, elapsed_ms, error, findings}}, "
+                "checked_at, cached}.",
 )
 async def cap_estate_health(refresh: bool = False, trace_id=None) -> Dict[str, Any]:
     if not refresh and _CACHE["result"] and time.monotonic() - _CACHE["at"] < CACHE_TTL_S:
@@ -285,7 +291,8 @@ async def cap_estate_health(refresh: bool = False, trace_id=None) -> Dict[str, A
         return name, out
 
     sources = (("state_store", _state_store), ("containers", _containers), ("guests", _guests),
-               ("backups", _backups), ("storage", _storage), ("services", _services))
+               ("backups", _backups), ("storage", _storage), ("services", _services),
+               ("certificates", _certificates))
     result = core.summarize(dict(await asyncio.gather(*(run(n, s) for n, s in sources))))
     result["checked_at"] = now_iso()
     _CACHE.update(at=time.monotonic(), result=result)
