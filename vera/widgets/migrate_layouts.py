@@ -18,7 +18,10 @@ placed at a position with a span. The rule, one to one:
                record the tile carried, with the wid as its id
 
 ``record`` is the tile's id when the grid's layout file defines it (the page's
-own tiles) and the record itself when the tile was added by the user. A legacy
+own tiles) and the record itself when the tile was added by the user - or when
+the user changed a page or file tile's record through its gear (the WidgetConfig
+surface): the edited record rides inline and the tile carries ``edited: true``,
+so the file's record is what a reset returns to. A legacy
 ``vera:wol-layout:*`` (the workers page's pre-VeraDash framework) is ignored.
 
 Pure, no I/O in the functions; ``VeraDash.migrate`` in vera/chat/vera-dashboard.js

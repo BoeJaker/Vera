@@ -17,7 +17,7 @@
    12
   ]
  },
- "note": "Every widget of the cluster-overview grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here.",
+ "note": "Every widget of the cluster-overview grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. draw.body = \"record\": the element draws the record and the page's markup is retired under it (VeraDash.drawTile). Generated from the markup by the M5 slice; edit by hand from here.",
  "widgets": [
   {
    "record": {
@@ -1289,7 +1289,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",

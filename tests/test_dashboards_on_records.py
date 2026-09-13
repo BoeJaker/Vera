@@ -104,7 +104,7 @@ def test_veradash_persists_the_layout_record_and_migrates_a_legacy_state():
 def test_veradash_fetches_the_layout_file_and_applies_it_under_the_users_state():
     for s in ("'/ui/widgets/layouts/' + encodeURIComponent(key)", "function applyFile(file)", "function loadFile()", "ctl.ready = loadFile();",
               "opts.layout === false", "if (fresh) state.order = fileOrder;", "r.draw && r.draw.body === 'page'",
-              "addRecord(r, { silent: true, wid: wid, fromFile: true, span: span"):
+              "addRecord(eff, { silent: true, wid: wid, fromFile: true, span: span"):
         assert s in DASH, s
 
 
@@ -154,12 +154,51 @@ def test_the_seven_layout_files_name_every_tile_of_their_grid_as_a_record():
             assert r["title"] and r["source"] and r["shape"], (key, wid)
             assert t["span"] == list(span) and r["frame"]["span"] == list(span), (key, wid)
             assert r["frame"]["size"] == REC.size_for_span(*span), (key, wid)
-            assert r["draw"]["body"] == "page", (key, wid)
+            assert r["draw"]["body"] in ("page", "record"), (key, wid)
             assert isinstance(t["at"], list) and len(t["at"]) == 2, (key, wid)
             for c in r.get("children") or []:
                 assert c["record"]["form"] in forms and c["slot"], (key, wid, c)
         total += MIG.count_records(lay)
     assert total >= 110, total
+
+
+def test_one_main_tile_converted_the_element_draws_its_record_the_page_body_retired():
+    """The conversion switch is the layout file: draw.body = "record" hands a page tile to <vera-widget> (VeraDash
+    retires the hand-drawn markup under it, ids intact). Diagnostics converts today - its result draws as the key ·
+    value list the element makes of it, the page's preformatted result; the other 23 keep the page body until a
+    record can name the part of its source it draws."""
+    main = _layout("main")
+    converted = [t["record"]["id"] for t in main["widgets"] if t["record"]["draw"].get("body") == "record"]
+    assert converted == ["diagnostics"], converted
+    assert sum(1 for t in main["widgets"] if t["record"]["draw"].get("body") == "page") == 23
+    assert 'draw.body = "record": the element draws the record and the page\'s markup is retired under it (VeraDash.drawTile)' in main["note"]
+    for s in ("function drawTile(w, rec)", "holder.className = 'w-page'; holder.hidden = true;", "var pageBody = !rec.form || (rec.draw && rec.draw.body === 'page');",
+              "if (eff) drawTile(w, eff);   // the record draws the body it owns; a page body stays the page's"):
+        assert s in DASH, s
+
+
+def test_add_widget_opens_the_widget_surface_and_every_tile_has_its_gear():
+    """The WidgetConfig board on the dashboard: + Add Widget opens VeraWidgetConfig (mode add, into dashboard, the
+    size ladder, templates) and places the record; the panel picker stays as openPanels and through a row of the
+    picker; gear on every tile opens the surface on its record (mode edit) and Save writes it back; without the
+    surface the record sheet opens; a record without a readable source draws the form's sample."""
+    for s in ("window.VeraWidgetConfig.open({ mode: 'add', into: 'dashboard', title: 'Add a widget', sizes: ladderSizes(), templates: true })",
+              "return openPanels();", "function openPanels()", "data-records", "function placeRecord(rec)",
+              "window.VeraWidgetConfig.open({ mode: 'edit', record: was, into: 'dashboard', title: was.title || wid, anchor: anchor || w, sizes: ladderSizes(), templates: true,",
+              "function ensureCfg(w)", "b.textContent = '⚙';", "function configure(wid, anchor)", "function applyRecord(wid, r)", "function openSheet(wid, rec)",
+              "function sizeLadder()", "function sampleFor(form)", "function withSample(rec)", "if (ed) t.edited = true;", "if (r && t.edited) state.edits[wid] = r;",
+              "sizeLadder: sizeLadder, ladderSizes: ladderSizes, sample: sampleFor, withSample: withSample"):
+        assert s in DASH, s
+    MIGDOC = _read("vera", "widgets", "migrate_layouts.py")
+    assert "the tile carries ``edited: true``" in MIGDOC
+
+
+def test_edit_mode_carries_the_dashboard_boards_cues_and_a_drop_on_the_grid():
+    for s in ("function gridVars()", "if (state.editing) gridVars();", "function onGridDragOver(e)", "function onGridDrop(e)",
+              "grid.addEventListener('dragover', onGridDragOver); grid.addEventListener('drop', onGridDrop);",
+              "'.dash-grid.editing > .widget > .w-resize{display:flex;opacity:.85}'", "moving · drop on the grid", "'.widget.vd-landed{animation:vdLanded 1.6s ease-out}'",
+              "function snapWidth(n)"):
+        assert s in DASH, s
 
 
 def test_the_composites_carry_the_sub_widgets_the_inventory_names():
