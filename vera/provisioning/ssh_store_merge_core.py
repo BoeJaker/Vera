@@ -104,6 +104,31 @@ def guest_ref_of(tags: Iterable[str]) -> str:
     return ""
 
 
+def guest_refs(tags: Any) -> List[str]:
+    """Every guest a login is tagged with; a reused address can carry several."""
+    items = tags.split(",") if isinstance(tags, str) else list(tags or [])
+    return [str(t).strip()[len(GUEST_TAG):] for t in items if str(t).strip().startswith(GUEST_TAG)]
+
+
+def login_for_guest(logins: Iterable[Mapping[str, Any]], cluster_id: str,
+                    vmid: Any) -> Optional[Mapping[str, Any]]:
+    """The exec login for a Proxmox guest: the label pve:<vmid>@<node> that
+    proxmox.guest.enroll writes, which the storage fabric has always matched, else
+    a login tagged guest:<cluster>:<vmid> (enrolment and the store merge tag them).
+    The label wins so a stale tag left on a reused address cannot displace it."""
+    logins = list(logins)
+    prefix = f"pve:{vmid}@"
+    for h in logins:
+        if str(h.get("label") or "").startswith(prefix):
+            return h
+    if cluster_id:
+        ref = f"{cluster_id}:{vmid}"
+        for h in logins:
+            if ref in guest_refs(h.get("tags")):
+                return h
+    return None
+
+
 def read_through(enrol_rows: Iterable[Mapping[str, Any]],
                  exec_rows: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     """ssh.host.list during the migration: the enrolment rows as before (each

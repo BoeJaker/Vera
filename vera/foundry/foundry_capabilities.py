@@ -857,6 +857,15 @@ def _vera_key_path() -> str:
     return str(Path.home() / ".vera" / "ssh" / "id_vera")
 
 
+async def _enrol_guest(**kw) -> Dict:
+    """Enrol a guest Foundry has just built through the one enrolment pipeline
+    (autoenroll.enrol, whose login step is enroll.guest); enroll.guest itself when
+    auto-enrol is not loaded."""
+    if CAPABILITY_REGISTRY.get("autoenroll.enrol"):
+        return await _call("autoenroll.enrol", steps="enroll_guest", **kw)
+    return await _call("enroll.guest", **kw)
+
+
 async def _wait_ssh(cluster_id, ip, port: int = 22, timeout: int = 180) -> bool:
     """Poll (from the PVE node, via bash /dev/tcp — no nc needed) until the guest's
     SSH port is open. Cloud-init needs ~a minute to boot + install Vera's key."""
@@ -884,9 +893,9 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             if want_enrol:
                 try:
                     res = await asyncio.wait_for(
-                        _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
-                              guest_type="lxc", node=node, fqdn=fqdn or "", via_proxmox=True,
-                              skip_mesh=("mesh" in feats)),
+                        _enrol_guest(cluster_id=cluster_id, vmid=vmid,
+                                     guest_type="lxc", node=node, fqdn=fqdn or "", via_proxmox=True,
+                                     skip_mesh=("mesh" in feats)),
                         timeout=90)
                 except asyncio.TimeoutError:
                     res = {"error": "enrol timed out (90s) -- continuing to features"}
@@ -914,10 +923,10 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
                 if ready:
                     try:
                         res = await asyncio.wait_for(
-                            _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
-                                  guest_type="qemu", node=node, fqdn=fqdn or "", ip=ip,
-                                  ssh_user="vera", ssh_key_path=_vera_key_path(),
-                                  skip_mesh=("mesh" in feats)),
+                            _enrol_guest(cluster_id=cluster_id, vmid=vmid,
+                                         guest_type="qemu", node=node, fqdn=fqdn or "", ip=ip,
+                                         ssh_user="vera", ssh_key_path=_vera_key_path(),
+                                         skip_mesh=("mesh" in feats)),
                             timeout=90)
                     except asyncio.TimeoutError:
                         res = {"error": "enrol timed out (90s) -- continuing to features"}

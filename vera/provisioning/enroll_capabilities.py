@@ -582,7 +582,9 @@ async def cap_enroll_script(fqdn: str = "", trace_id=None) -> Dict:
     memory="off", silent=True,
     description="List a cluster's guests annotated with enrolment state (whether "
                 "Vera holds SSH creds / a cert for them). Input: cluster_id (str). "
-                "Output: {guests:[{vmid,name,type,node,status,enrolled,host_id}]}.",
+                "A guest counts as enrolled when the enrolment store or the exec store holds "
+                "its login; exec_id is the exec-store login. "
+                "Output: {guests:[{vmid,name,type,node,status,ip,enrolled,host_id,exec_id,auth}]}.",
 )
 async def cap_discover(cluster_id: str = "", trace_id=None) -> Dict:
     status = _cap("proxmox.status")
@@ -597,14 +599,19 @@ async def cap_discover(cluster_id: str = "", trace_id=None) -> Dict:
     snap = await status(cluster_id=cluster_id)
     hosts = await _hosts_raw()
     by_ref = {h.get("guest_ref"): h for h in hosts if h.get("guest_ref")}
+    exec_logins = await _exec_hosts()
     gip = _cap("proxmox.guest.ip")
 
     async def _row(g: Dict) -> Dict:
         ref = f"{cluster_id}:{g['vmid']}"
         h = by_ref.get(ref)
+        # The exec login is what exec, terminals and the mesh use: the enrolment
+        # record's twin, else a login saved for this guest (proxmox.guest.enroll).
+        x = (_merge.find_twin(h, exec_logins) if h else None) or \
+            _merge.login_for_guest(exec_logins, cluster_id, g["vmid"])
         # Auto-detect the IP so the enrol form pre-fills it: use the saved SSH
         # host's address if enrolled, else resolve from Proxmox (LXC config / agent).
-        ip = (h.get("host") if h else "") or ""
+        ip = (h.get("host") if h else "") or (x or {}).get("host", "") or ""
         if not ip and g.get("status") == "running" and gip:
             try:
                 ip = ((await gip(cluster_id=cluster_id, node=g["node"],
@@ -613,8 +620,9 @@ async def cap_discover(cluster_id: str = "", trace_id=None) -> Dict:
                 ip = ""
         return {"vmid": g["vmid"], "name": g.get("name", ""), "type": g["type"],
                 "node": g["node"], "status": g["status"], "ip": ip,
-                "enrolled": bool(h), "host_id": h.get("id", "") if h else "",
-                "auth": h.get("auth", "") if h else ""}
+                "enrolled": bool(h or x), "host_id": (h or x or {}).get("id", ""),
+                "exec_id": (x or {}).get("id", ""),
+                "auth": (h or x or {}).get("auth", "")}
 
     guests = list(await asyncio.gather(
         *[_row(g) for g in snap.get("guests", []) if not g.get("template")]))
