@@ -16,8 +16,9 @@
  *
  * Deliberately dependency-free: chat already carries enough weight, and a CDN
  * import inside a chat bubble is a failure waiting to happen. Markdown is a
- * small subset renderer; mermaid diagrams degrade to their source unless the
- * host page already provides window.mermaid.
+ * small subset renderer; a diagram is drawn by the estate's own mermaid element (<vera-mermaid>, loaded once
+ * from the page — the one implementation the chat draws its fences with), by the host page's window.mermaid when
+ * that is all there is, and as its source otherwise.
  * ────────────────────────────────────────────────────────────────────────────*/
 (function () {
   const root = typeof window !== 'undefined' ? window : globalThis;
@@ -63,14 +64,22 @@
         <div class="vc-codehead">${esc(c.filename || c.lang || 'code')}</div>
         <pre class="vc-pre"><code>${esc(c.code || '')}</code></pre></div>`,
 
-    diagram: c => {
-      const src = c.mermaid || '';
-      // Render properly only if the HOST page already provides mermaid; never
-      // pull one in from a CDN just to draw inside a chat bubble.
-      const body = window.mermaid
-        ? `<pre class="mermaid">${esc(src)}</pre>`
-        : `<pre class="vc-pre vc-dim"><code>${esc(src)}</code></pre>`;
-      return body + (c.caption ? `<div class="vc-cap">${esc(c.caption)}</div>` : '');
+    /* a diagram item is a LIVE rendered diagram: the mermaid source drawn by the estate's own element (<vera-mermaid>,
+       the one the chat draws its fences with — never a CDN pulled in to draw inside a chat bubble). A keyed item holds
+       it in the column's live layer (its pan · zoom survive a render) with the board's actions — Open in the chat
+       (the chat's own pop-out), copy, source; a plain block holds the element inline. The host's window.mermaid still
+       draws when the element cannot be had; without a page at all, the source. */
+    diagram: (c, size, key, el) => {
+      const src = String(c.mermaid || c.code || c.source || '').trim();
+      const cap = c.caption ? `<div class="vc-cap">${esc(c.caption)}</div>` : '';
+      if (!src) return '<div class="vc-dim">no diagram source yet</div>' + cap;
+      if (typeof document === 'undefined') return `<pre class="vc-pre vc-dim"><code>${esc(src)}</code></pre>` + cap;
+      const title = String(c.title || c.caption || 'Diagram');
+      const live = !!(el && el._live && el._live[key]);
+      if (key) return `<div class="vc-diag" data-w="canvas.diagram"><div class="vc-th"><i class="dot${live ? ' on' : ' wait'}"></i><b>${esc(title)}</b><span class="mono">mermaid · ${src.split('\n').length} lines</span><span class="sp"></span>`
+        + '<button class="ib" data-act="dgopen" title="Open it in the chat — the chat\'s own diagram pop-out">Open in the chat ↗</button><button class="ib" data-act="dgcopy" title="Copy the mermaid source">copy</button><button class="ib" data-act="dgsrc" title="Show the source">source</button></div>'
+        + `<div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div><pre class="vc-pre vc-dgsrc" hidden><code>${esc(src)}</code></pre></div>` + cap;
+      return `<vera-mermaid class="vc-mm" bare title="${esc(title)}">${esc(src)}</vera-mermaid>` + cap;
     },
 
     image: c => `<figure class="vc-fig">
@@ -125,11 +134,14 @@
       const ws = c.ws || (hostId ? (container ? '/remote/docker/term/ws/' + encodeURIComponent(hostId) + '/' + encodeURIComponent(container) + '?shell=' + encodeURIComponent(shell || 'sh') : '/remote/ssh/term/ws/' + encodeURIComponent(hostId) + '?shell=' + encodeURIComponent(shell)) : '');
       const attached = !!key && !!ws && c.attached !== false;
       const live = !!(el && el._live && el._live[key]);
+      // the known hosts, listed under the connect row once asked for (the list is state on the element, so a render keeps it)
+      const hostsOpen = !!(key && el && el._hostsOpen && el._hostsOpen[key]);
+      const hosts = hostsOpen ? `<div class="vc-hosts pk" data-w="canvas.terminal.hosts">${el._hosts ? hostListHtml(el._hosts) : '<span class="vc-dim">known hosts — asking the estate…</span>'}</div>` : '';
       const head = `<div class="vc-th"><i class="dot${attached ? (live ? ' on' : ' wait') : ''}"></i><b>${esc(shown ? (container ? shown + ' / ' + container : shown) : 'no host yet')}</b><span class="mono">${esc(shell || (container ? 'sh' : 'login shell'))}${c.command ? ' · ' + esc(c.command) : ''}</span><span class="sp"></span>`
         + (attached ? '<button class="ib" data-act="tdetach" title="Detach — the item keeps its host; Attach opens a new shell">detach</button>' : (ws ? '<button class="ib on" data-act="tattach" title="Open a shell on this host">attach</button>' : ''))
         + (ws ? '<button class="ib" data-act="tshare" title="Copy the terminal\'s address">share</button>' : '') + '</div>';
       const conn = attached ? `<div class="vc-live" data-live="term" data-key="${esc(key)}" data-ws="${esc(ws)}"><span class="vc-dim">connecting…</span></div>`
-        : `<div class="vc-tconnect" data-w="canvas.terminal.connect"><input class="ti" data-f="host_id" placeholder="host id — an SSH host of the Exec panel" value="${esc(shown)}" spellcheck="false"><input class="ti" data-f="container" placeholder="container (docker) — optional" value="${esc(container)}" spellcheck="false"><input class="ti sm" data-f="shell" placeholder="shell" value="${esc(shell)}" spellcheck="false"><button class="ib on" data-act="tconnect">Connect</button></div>`;
+        : `<div class="vc-tconnect" data-w="canvas.terminal.connect"><input class="ti" data-f="host_id" placeholder="host id — an SSH host of the Exec panel" value="${esc(shown)}" spellcheck="false"><input class="ti" data-f="container" placeholder="container (docker) — optional" value="${esc(container)}" spellcheck="false"><input class="ti sm" data-f="shell" placeholder="shell" value="${esc(shell)}" spellcheck="false"><button class="ib${hostsOpen ? ' on' : ''}" data-act="thosts" title="The estate's known hosts — the Exec panel's SSH hosts, the containers on every docker host, your saved connections">hosts ▾</button><button class="ib on" data-act="tconnect">Connect</button></div>` + hosts;
       return `<div class="vc-term" data-w="canvas.terminal">${head}${conn}${c.output ? `<pre class="vc-pre vc-out"><code>${esc(String(c.output).slice(0, 4000))}</code></pre>` : ''}</div>`;
     },
 
@@ -230,7 +242,7 @@
   .err{color:var(--err,#f7768e);padding:10px}
   /* ── the SESSION projection (the Canvas board's column): the add bar at the top, pinned above, the NOW band,
         the items level with their turns, parked as a chip line at the bottom ── */
-  .addbar{position:sticky;top:0;z-index:4;display:flex;align-items:center;gap:5px;flex-wrap:wrap;
+  .addbar{position:sticky;top:0;z-index:6;display:flex;align-items:center;gap:5px;flex-wrap:wrap;
     padding:6px 0 6px;margin-bottom:2px;background:var(--bg1,#15181d);border-bottom:1px solid var(--border,#2a2f37)}
   .addbar .lbl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);margin-right:2px}
   .add{display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 9px;border-radius:11px;
@@ -282,8 +294,8 @@
   :host([stage]) .body{position:relative;padding-top:0}
   :host([stage]) .band.pinned{padding-top:6px}
   /* the NOW bar stays in view under the add bar while the stage scrolls with the transcript */
-  :host([stage]) .band.now>.band-h{position:sticky;top:34px;z-index:3;background:var(--bg1,#15181d);margin:0;padding:3px 0}
-  :host([stage]) .band.parked{position:sticky;bottom:0;z-index:3;background:var(--bg1,#15181d)}
+  :host([stage]) .band.now>.band-h{position:sticky;top:34px;z-index:5;background:var(--bg1,#15181d);margin:0;padding:3px 0}
+  :host([stage]) .band.parked{position:sticky;bottom:0;z-index:5;background:var(--bg1,#15181d)}
   .band.hid{padding:4px 0;position:relative}
   .hidbtn{font:inherit;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);background:none;border:1px solid var(--border,#2a2f37);border-radius:9px;padding:1px 8px;cursor:pointer}
   .hidbtn:hover{color:var(--fg,#dce1e8)}
@@ -399,7 +411,27 @@
   .addpop .pp:hover{background:var(--s2,var(--bg2,#1c2026))}
   .addpop .pp span{font-family:var(--f-mono,ui-monospace,monospace);font-size:9.5px;color:var(--t3,var(--dim,#6b7480))}
   .vc-rec{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-  .vc-rec b{font-size:11px}`;
+  .vc-rec b{font-size:11px}
+  /* the pickers (defect 32): the add bar's popover for panels and hosts, the terminal's host list — a search that
+     filters in place, the rows in their groups: icon · name · the line to find it by */
+  .addpop.pk{min-width:300px;max-width:min(96%,460px)}
+  .pk .row.q{padding:0 0 4px}.pk .pk-q{flex:1 1 auto}
+  .pk .pk-list{max-height:300px;overflow:auto;display:flex;flex-direction:column;gap:1px}
+  .pk .grp{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7480));padding:6px 8px 2px;position:sticky;top:0;background:var(--s1,var(--bg1,#15181d))}
+  .pk .pp{flex-direction:row;align-items:center;gap:7px;width:100%;padding:4px 8px}
+  .pk .pp .ic{width:18px;text-align:center;flex:0 0 auto;font-family:var(--f-mono,ui-monospace,monospace);font-size:10px;color:var(--t2,var(--fg2,#c3cad4))}
+  .pk .pp b{font-weight:500;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pk .pp span{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+  .pk .pp .tag{font-family:var(--f-mono,ui-monospace,monospace);font-size:8.5px;font-style:normal;color:var(--ac2,var(--acc2,#8fb87a));border:1px solid currentColor;border-radius:8px;padding:0 5px;flex:0 0 auto}
+  .pk .pp[hidden],.pk .grp[hidden]{display:none}
+  .vc-hosts{display:flex;flex-direction:column;gap:2px;padding:4px 0 6px;margin-top:2px;border-top:1px dashed var(--bd,var(--border,#2a2f37))}
+  .vc-hosts .pk-list{max-height:200px}.vc-hosts .grp{background:var(--s2,var(--bg2,#1c2026))}
+  /* the diagram item: the estate's mermaid element in the live layer, the source behind a click */
+  #live .lv[data-kind="mermaid"]{background:var(--s3,var(--bg3,#0f1114))}#live .lv vera-mermaid{display:block;width:100%;height:100%}
+  .vc-diag{display:flex;flex-direction:column;min-height:0;height:100%}
+  .vc-diag .vc-live{height:150px}.it[data-size="s"] .vc-diag .vc-live{height:60px}.it[data-size="l"] .vc-diag .vc-live{height:280px}.it[data-size="xl"] .vc-diag .vc-live{height:480px}
+  .vc-dgsrc{margin-top:6px;max-height:160px}
+  vera-mermaid.vc-mm{display:block;min-height:120px;margin:.3em 0}`;
 
   /* ── THE PLACER (Notes/38 §3.5), pure: items → a column and a top for each. An item sits level with the turn using it
      now (the turn's measured top in the transcript's scroll frame) — or, for an item added by hand, the turn it was
@@ -455,11 +487,52 @@
       default: return code;
     }
   }
+  /* ── the estate's known hosts, as picker rows (pure): the saved connections (conn.list), the SSH hosts of the Exec
+     panel and the running containers on every docker host (conn.targets — the remote subsystem's own enumeration).
+     Each row is what the terminal needs — host_id · container · shell — with a name and a line to find it by. ── */
+  function hostRowsOf(targets, conns) {
+    const T = targets && typeof targets === 'object' ? targets : {}; const out = [];
+    const saved = Array.isArray(conns) ? conns : (conns && Array.isArray(conns.connections) ? conns.connections : []);
+    saved.forEach((s) => { if (!s || typeof s !== 'object') return; const kind = String(s.kind || ''); const hostId = String(kind === 'docker' ? (s.docker_host_id || 'local') : (s.ssh_host_id || '')); if (!hostId) return;
+      out.push({ g: 'saved', n: String(s.label || s.container || hostId), sub: kind + ' · ' + (kind === 'docker' && s.container ? s.container + ' @ ' + hostId : hostId), host_id: hostId, container: String(kind === 'docker' ? (s.container || '') : ''), shell: String(s.shell || ''), kind, id: String(s.id || '') }); });
+    (Array.isArray(T.ssh) ? T.ssh : []).forEach((h) => { if (!h) return; const id = String(h.ssh_host_id || h.id || ''); if (!id) return;
+      out.push({ g: 'ssh', n: String(h.label || id), sub: (h.user ? h.user + '@' : '') + String(h.host || id) + (h.port && +h.port !== 22 ? ':' + h.port : '') + (h.tags ? ' · ' + h.tags : ''), host_id: id, container: '', shell: '', kind: 'ssh' }); });
+    (Array.isArray(T.docker) ? T.docker : []).forEach((d) => { if (!d) return; const name = String(d.container || d.name || ''); const hid = String(d.docker_host_id || d.host_id || 'local'); if (!name) return; const host = String(d.host_label || hid);
+      out.push({ g: 'docker:' + host, n: name, sub: host + (d.image ? ' · ' + d.image : '') + (d.state ? ' · ' + d.state : ''), host_id: hid, container: name, shell: 'sh', kind: 'docker', host }); });
+    return out;
+  }
+  /* ── every registered panel, as picker rows (pure): the registry (ui.panel.list — the same UI_PANELS the harness draws
+     its tabs from, in tab order) grouped the way a panel is registered (tab · inject · mount · element · dynamic), the
+     ones open for this session (ui.panels.open) first and marked — an open panel the registry does not list still shows. ── */
+  function panelRowsOf(list, open) {
+    const L = Array.isArray(list) ? list : (list && Array.isArray(list.panels) ? list.panels : []);
+    const O = Array.isArray(open) ? open : (open && Array.isArray(open.panels) ? open.panels : []);
+    const openBy = {}; O.forEach((p) => { if (p && p.id) openBy[String(p.id)] = p; });
+    const rows = L.filter((p) => p && p.id).map((p) => { const id = String(p.id); const o = openBy[id]; return { id, n: String(p.label || id), icon: String(p.icon || ''), mode: String(p.dynamic ? 'dynamic' : (p.mode || 'inject')), g: o ? 'open' : String(p.dynamic ? 'dynamic' : (p.mode || 'inject')), order: +(p.tab_order == null ? 100 : p.tab_order) || 0, open: !!o, host: o ? String(o.host || '') : '', origin: o ? String(o.origin || '') : '' }; });
+    O.forEach((p) => { if (p && p.id && !rows.some((r) => r.id === String(p.id))) rows.push({ id: String(p.id), n: String(p.label || p.id), icon: '', mode: '', g: 'open', order: 0, open: true, host: String(p.host || ''), origin: String(p.origin || '') }); });
+    rows.sort((a, b) => (b.open - a.open) || (a.order - b.order) || a.n.localeCompare(b.n));
+    return rows;
+  }
+  /* a picker: a search box that filters the rows in place, the rows in their groups (the add bar's popover, the
+     terminal's host list — one construction) */
+  function pickerHtml(rows, o) {
+    o = o || {}; const groups = [], by = {};
+    (rows || []).forEach((r) => { const g = String(r.g || ''); if (!by[g]) { by[g] = []; groups.push(g); } by[g].push(r); });
+    const label = (g) => (o.labels && o.labels[g]) || (g.startsWith('docker:') ? 'containers on ' + g.slice(7) : g);
+    return `<div class="row q"><input class="ti pk-q" placeholder="${esc(o.placeholder || 'search')}" spellcheck="false"><span class="vc-dim">${(rows || []).length}</span></div><div class="pk-list">`
+      + groups.map((g) => `<div class="grp">${esc(label(g))} · ${by[g].length}</div>` + by[g].map(o.row).join('')).join('') + '</div>';
+  }
+  const HOST_GLYPH = { ssh: '>_', docker: '⬡', saved: '★' };
+  const hostRow = (r) => `<button class="pp" data-act="hpick" data-host="${esc(r.host_id)}" data-container="${esc(r.container)}" data-shell="${esc(r.shell)}" data-n="${esc(r.n)}" data-q="${esc((r.n + ' ' + r.sub + ' ' + r.host_id + ' ' + r.kind).toLowerCase())}" title="${esc(r.kind === 'docker' ? 'a shell in the container ' + r.container + ' on ' + r.host_id : r.kind === 'ssh' ? 'a login shell on ' + r.host_id : 'the saved connection')}"><i class="ic">${esc(HOST_GLYPH[r.kind] || '>_')}</i><b>${esc(r.n)}</b><span>${esc(r.sub)}${r.shell ? ' · ' + esc(r.shell) : ''}</span></button>`;
+  const hostListHtml = (rows) => (rows && rows.length ? pickerHtml(rows, { row: hostRow, placeholder: 'find a host · a container', labels: { saved: 'saved connections', ssh: 'ssh hosts · the Exec panel' } })
+    : '<span class="vc-dim">no known host — the Exec panel keeps the SSH hosts, the Docker panel the hosts; type a host id</span>');
+  const panelRow = (r) => `<button class="pp" data-act="padd" data-pid="${esc(r.id)}" data-plabel="${esc(r.n)}" data-q="${esc((r.n + ' ' + r.id + ' ' + r.mode).toLowerCase())}" title="${esc(r.id + (r.open ? ' — open for this session (' + (r.host || 'chat') + ')' : ' — ' + r.mode))}"><i class="ic">${esc(r.icon || '▥')}</i><b>${esc(r.n)}</b>${r.open ? '<em class="tag">open' + (r.host ? ' · ' + esc(r.host) : '') + '</em>' : ''}<span>${esc(r.id)}${r.mode ? ' · ' + esc(r.mode) : ''}</span></button>`;
+  const panelListHtml = (rows) => pickerHtml(rows, { row: panelRow, placeholder: 'find a panel by name', labels: { open: 'open for this session', tab: 'tabs', inject: 'panels', mount: 'mounted', element: 'elements', dynamic: 'dynamic' } });
   /* the add bar: "+ note · terminal · panel · widget · chart" — each a real block type with its seed content; every
      one goes through canvas.add, the resolver's path, like anything an agent puts on the canvas */
   const ADD_KINDS = [
     { n: 'note', ik: '✎', kind: 'note', content: { title: 'Note', text: '' }, edit: true },
-    { n: 'terminal', ik: '>_', kind: 'session', content: { title: 'Terminal', host_id: '', container: '', shell: '' } },
+    { n: 'terminal', ik: '>_', kind: 'session', content: { title: 'Terminal', host_id: '', container: '', shell: '' }, hosts: true },   // the estate's known hosts pick the host (a blank terminal, a typed id too)
     { n: 'panel', ik: '▤', kind: 'panel', content: { panel: '', title: 'Panel' }, pick: true },
     { n: 'widget', ik: 'WG', kind: 'widget', content: { widget: '', title: 'Widget' }, sheet: true },   // the WidgetConfig sheet picks the record
     { n: 'chart', ik: 'CH', kind: 'widget', content: { name: 'chart', title: 'Chart', draw: { form: 'trace', size: 'm' }, data: [], source: { origin: 'you' } } },
@@ -659,6 +732,7 @@
         return `<div class="blk" data-type="${esc(b.type)}">${inner}</div>`;
       }).join('');
 
+      if (body.querySelector('vera-mermaid')) ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid');
       if (window.mermaid && body.querySelector('.mermaid')) {
         try { window.mermaid.run({ nodes: body.querySelectorAll('.mermaid') }); }
         catch (e) { /* leave the source visible */ }
@@ -788,6 +862,7 @@
       if (stage) this._placeNow();
       this._mountLive(body);
       if (this._editKey) { const ta = body.querySelector('.it[data-key="' + this._editKey.replace(/"/g, '\\"') + '"] textarea'); if (ta && !this._editFocused) { this._editFocused = true; try { ta.focus(); } catch (e) {} } }
+      if (body.querySelector('vera-mermaid')) ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid');
       if (window.mermaid && body.querySelector('.mermaid')) {
         try { window.mermaid.run({ nodes: body.querySelectorAll('.mermaid') }); }
         catch (e) { /* leave the source visible */ }
@@ -822,6 +897,9 @@
         const size = sizeOfHeight(r.h);
         try { this.dispatchEvent(new CustomEvent('vera:canvas:resized', { bubbles: true, detail: { key, height: r.h, size } })); } catch (e) {}
         if (size !== r.el.dataset.size) this.call('canvas.size', { key, size }); else if (this.hasAttribute('stage')) this._placeNow(); });
+      // a picker's search box: the rows that do not carry the words are hidden, a group with none left with them
+      body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.classList || !q.classList.contains('pk-q')) return; const s = String(q.value || '').toLowerCase().trim(); const list = q.closest('.pk') && q.closest('.pk').querySelector('.pk-list'); if (!list) return;
+        let grp = null, any = false; [...list.children].forEach((n) => { if (n.classList.contains('grp')) { if (grp) grp.hidden = !any; grp = n; any = false; return; } const on = !s || (n.dataset.q || '').includes(s); n.hidden = !on; any = any || on; }); if (grp) grp.hidden = !any; });
       body.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && this._editKey) { this._editKey = null; this._editFocused = false; if (this._doc) this.render(this._doc); } });
     }
     /* a folded item opens in the layout under the pointer — every folded item in the Hover tier, an aged one in any
@@ -871,6 +949,24 @@
         try { this.dispatchEvent(new CustomEvent('vera:canvas:terminal', { bubbles: true, detail: { key, host_id: c.host_id || '', container: c.container || '', attached: !!c.attached } })); } catch (e) {}
         return this.call('canvas.update', { key, content: c });
       }
+      /* the terminal's known hosts (defect 32): the list under the connect row; a pick fills the row and connects */
+      if (act === 'thosts') { this._hostsOpen = this._hostsOpen || {}; this._hostsOpen[key] = !this._hostsOpen[key]; this._open.add(key); if (this._doc) this.render(this._doc); if (this._hostsOpen[key]) this._hostRows().then(() => { if (this._doc) this.render(this._doc); }); return; }
+      if (act === 'hpick') {
+        const row = { host_id: String(btn.dataset.host || ''), container: String(btn.dataset.container || ''), shell: String(btn.dataset.shell || ''), n: String(btn.dataset.n || '') }; if (!row.host_id) return;
+        if (!it) return this._hostAdd(row);   // from the add bar: a terminal already on its host
+        const c = this._contentOf(key); if (!c) return; Object.assign(c, { host_id: row.host_id, container: row.container, shell: row.shell, attached: true }); if (!c.title || c.title === 'Terminal') c.title = row.n || row.host_id;
+        if (this._hostsOpen) delete this._hostsOpen[key]; this._open.add(key);
+        try { this.dispatchEvent(new CustomEvent('vera:canvas:terminal', { bubbles: true, detail: { key, host_id: c.host_id, container: c.container || '', attached: true } })); } catch (e) {}
+        return this.call('canvas.update', { key, content: c });
+      }
+      if (act === 'taddid') { const box = btn.closest('.row'); const rdf = (f) => { const i = box && box.querySelector('[data-f="' + f + '"]'); return i ? String(i.value || '').trim() : ''; }; const hid = rdf('hid'); if (!hid) { const i = box && box.querySelector('[data-f="hid"]'); if (i) i.focus(); return; } return this._hostAdd({ host_id: hid, container: rdf('hcont'), shell: '', n: hid }); }
+      if (act === 'tblank') { const pop = btn.closest('.addpop'); if (pop) pop.remove(); const k = ADD_KINDS.find(x => x.n === 'terminal'); return k ? this._addSeed(k) : undefined; }
+      /* the diagram's actions: Open in the chat (the chat's own pop-out hears vm:popout), copy, source */
+      if (act === 'dgopen') { const c = this._contentOf(key) || {}; const code = String(c.mermaid || c.code || c.source || ''); const title = String(c.title || c.caption || 'Diagram');
+        const ev2 = new CustomEvent('vera:canvas:diagram', { bubbles: true, composed: true, cancelable: true, detail: { key, code, title } }); this.dispatchEvent(ev2); if (ev2.defaultPrevented) return;
+        try { this.dispatchEvent(new CustomEvent('vm:popout', { bubbles: true, composed: true, detail: { code, title } })); } catch (e) {} return; }
+      if (act === 'dgcopy') { const c = this._contentOf(key) || {}; try { navigator.clipboard.writeText(String(c.mermaid || c.code || c.source || '')); } catch (e) {} return; }
+      if (act === 'dgsrc') { const p = it && it.querySelector('.vc-dgsrc'); if (p) p.hidden = !p.hidden; return; }
       if (act === 'tshare') { const h = it.querySelector('.vc-live[data-ws]'); const ws = h ? h.dataset.ws : ''; try { navigator.clipboard.writeText(location.origin + ws); } catch (e) {} return; }
       if (act === 'nbrun') return this._nbRun(key, it);
       if (act === 'nbopen') {
@@ -891,15 +987,10 @@
       if (act === 'paddid') { const i = btn.parentElement && btn.parentElement.querySelector('[data-f="pid"]'); return this._panelAdd(i ? i.value : '', ''); }
       if (act === 'add') {
         const k = ADD_KINDS.find(x => x.n === btn.dataset.kind); if (!k) return;
+        if (k.hosts) return this._hostPick(btn);
         if (k.pick) return this._panelPick(btn);
         if (k.sheet && this._widgetSurface()) return this._widgetPick(btn, k);
-        const nk = k.kind + ':' + k.n + '-' + Date.now().toString(36);
-        const args = { kind: k.kind, key: nk, content: JSON.parse(JSON.stringify(k.content)), at: 'now', size: 'm' };
-        // yours, not the turn's: it sits beside the turn in view and relates to no turn — no run is drawn to it
-        args.anchor = { origin: 'you', beside: focusMid };
-        this._open.add(nk); if (k.edit) { this._editKey = nk; this._editFocused = false; }
-        try { this.dispatchEvent(new CustomEvent('vera:canvas:add', { bubbles: true, detail: { key: nk, kind: k.kind, add: k.n } })); } catch (e) {}
-        return this.call('canvas.add', args);
+        return this._addSeed(k);
       }
       if (act === 'answer') {
         const b = this._blockOf(key); const d = decisionOf(b); if (!b || !d) return;
@@ -939,11 +1030,13 @@
           // the wrapper is the column's (placed, sized, hidden); the element inside is the estate's own and keeps its styles
           let inner;
           if (kind === 'term') { inner = document.createElement('vera-terminal'); inner.setAttribute('ws', h.dataset.ws || ''); ensureLib('/ui/vera-terminal.js', 'vera-terminal'); }
+          else if (kind === 'mermaid') { inner = document.createElement('vera-mermaid'); inner.setAttribute('bare', ''); inner.setAttribute('fill', ''); inner.setAttribute('title', h.dataset.title || 'diagram'); h.textContent = ''; this._mermaidInto(inner, key); }
           else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = ''; }
           else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
           el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);
           try { this.dispatchEvent(new CustomEvent('vera:canvas:live', { bubbles: true, detail: { key, kind, ws: h.dataset.ws || '', src: h.dataset.src || '' } })); } catch (e) {}
         } else if (kind === 'widget') { const inner = el.firstChild, rc = this._contentOf(key); const sz = h.dataset.size || 'm'; if (h.textContent) h.textContent = ''; if (inner && inner.getAttribute('size') !== sz) inner.setAttribute('size', sz); try { const j = JSON.stringify((rc && (rc.record || rc)) || null); if (inner && j && inner._recJson !== j) { inner._recJson = j; inner.record = rc.record || rc; } } catch (e) {}
+        } else if (kind === 'mermaid') { if (h.textContent) h.textContent = ''; this._mermaidInto(el.firstChild, key);
         } else if (kind === 'term' && h.dataset.ws) { const t = el.firstChild; if (t && t.getAttribute('ws') !== h.dataset.ws) { t.setAttribute('ws', h.dataset.ws); try { t.destroy && t.destroy(); t.connect(h.dataset.ws); } catch (e) {} } }
       });
       Object.keys(L).forEach((k) => { if (!body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]')) { try { L[k].remove(); } catch (e) {} delete L[k]; } });
@@ -963,7 +1056,19 @@
         if (!h || !h.getClientRects().length) { el.style.display = 'none'; return; }
         const r = h.getBoundingClientRect(); const w = Math.max(0, Math.round(r.width)), ht = Math.max(0, Math.round(r.height));
         el.style.display = ''; el.style.left = Math.round(r.left - B.left + body.scrollLeft) + 'px'; el.style.top = Math.round(r.top - B.top + body.scrollTop) + 'px';
-        if (el.style.width !== w + 'px' || el.style.height !== ht + 'px') { el.style.width = w + 'px'; el.style.height = ht + 'px'; if (el.dataset.kind === 'term') { const t = el.firstChild; try { t && t._doFit && t._doFit(); } catch (e) {} } }
+        if (el.style.width !== w + 'px' || el.style.height !== ht + 'px') { el.style.width = w + 'px'; el.style.height = ht + 'px'; if (el.dataset.kind === 'term') { const t = el.firstChild; try { t && t._doFit && t._doFit(); } catch (e) {} } if (el.dataset.kind === 'mermaid') { const m = el.firstChild; try { m && m.fit && m.fit(); } catch (e) {} } }
+      });
+    }
+    /* the diagram's source into the estate's mermaid element (loaded once from the page); a changed source redraws it;
+       the host's own window.mermaid draws when the element cannot be had, the source shows when nothing can */
+    _mermaidInto(inner, key) {
+      const c = this._contentOf(key) || {}; const code = String(c.mermaid || c.code || c.source || '').trim(); if (!inner || inner._mmCode === code) return; inner._mmCode = code;
+      ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid').then((ok) => {
+        if (!inner.isConnected) return;
+        if (typeof inner.render !== 'function' && typeof customElements !== 'undefined' && customElements.get('vera-mermaid')) { try { customElements.upgrade(inner); } catch (e) {} }
+        if (typeof inner.render === 'function') { try { inner.render(code); } catch (e) {} return; }
+        if (!ok && window.mermaid && typeof window.mermaid.render === 'function') { try { Promise.resolve(window.mermaid.render('vc-mm-' + Math.random().toString(36).slice(2, 8), code)).then((r) => { inner.innerHTML = (r && r.svg) || ''; }).catch(() => { inner.textContent = code; }); } catch (e) { inner.textContent = code; } return; }
+        inner.textContent = code;
       });
     }
     /* the bridge, asked for its answer (panel.query · panel.dispatch · ui.panels.open): the same /mcp/call, the reply back */
@@ -981,13 +1086,61 @@
     _sid() { return String((this._doc && this._doc.session) || this.getAttribute('session-id') || ''); }
     _contentOf(key) { const b = this._blockOf(key); return b ? Object.assign({}, b.content || {}) : null; }
     _readout(key, obj) { this._pq = this._pq || {}; let text = ''; try { text = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 1); } catch (e) { text = String(obj); } this._pq[key] = { text: String(text).slice(0, 4000) }; if (this._doc) this.render(this._doc); }
-    /* the add bar's panel: the panels open for this session (ui.panels.open), or any id */
+    /* the add bar's seed: the kind's own content as an item, yours, beside the turn in view */
+    _addSeed(k) {
+      const focusMid = this.dataset.focusMid || '';
+      const nk = k.kind + ':' + k.n + '-' + Date.now().toString(36);
+      const args = { kind: k.kind, key: nk, content: JSON.parse(JSON.stringify(k.content)), at: 'now', size: 'm' };
+      // yours, not the turn's: it sits beside the turn in view and relates to no turn — no run is drawn to it
+      args.anchor = { origin: 'you', beside: focusMid };
+      this._open.add(nk); if (k.edit) { this._editKey = nk; this._editFocused = false; }
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:add', { bubbles: true, detail: { key: nk, kind: k.kind, add: k.n } })); } catch (e) {}
+      return this.call('canvas.add', args);
+    }
+    /* the add bar's panel: EVERY registered panel by name (ui.panel.list — the registry the harness draws its tabs from),
+       the ones open for this session (ui.panels.open) first and marked, a search, and any id typed */
     async _panelPick(btn) {
       const bar = btn.closest('.addbar'); if (!bar) return; let pop = bar.querySelector('.addpop'); if (pop) { pop.remove(); return; }
-      pop = document.createElement('div'); pop.className = 'addpop'; pop.setAttribute('data-w', 'canvas.add.panel'); pop.innerHTML = '<span class="vc-dim">open panels — asking the bridge…</span>'; bar.appendChild(pop);
-      const r = await this.callResult('ui.panels.open', { session_id: this._sid() }); const rows = (r && Array.isArray(r.panels)) ? r.panels : [];
-      pop.innerHTML = (rows.length ? rows.map((p) => `<button class="pp" data-act="padd" data-pid="${esc(p.id)}" data-plabel="${esc(p.label || p.id)}"><b>${esc(p.label || p.id)}</b><span>${esc(p.host || '')}${p.origin ? ' · ' + esc(p.origin) : ''}</span></button>`).join('') : '<span class="vc-dim">no panel open for this session — any panel by its id:</span>')
+      pop = document.createElement('div'); pop.className = 'addpop pk'; pop.setAttribute('data-w', 'canvas.add.panel'); pop.innerHTML = '<span class="vc-dim">every panel — asking the registry…</span>'; bar.appendChild(pop);
+      const rows = await this._panelRows();
+      pop.innerHTML = (rows.length ? panelListHtml(rows) : '<span class="vc-dim">the registry answered no panel — any panel by its id:</span>')
         + '<div class="row"><input class="ti" data-f="pid" placeholder="panel id" spellcheck="false"><button class="ib on" data-act="paddid">Add</button></div>';
+      try { const q = pop.querySelector('.pk-q'); if (q) q.focus(); } catch (e) {}
+    }
+    /* the registry and the open set, asked together; the registry's light list first, the /ui/panels list the harness
+       reads when the light list is not there */
+    async _panelRows() {
+      const [list, open] = await Promise.all([this.callResult('ui.panel.list', {}), this.callResult('ui.panels.open', { session_id: this._sid() })]);
+      let L = list && Array.isArray(list.panels) ? list.panels : (Array.isArray(list) ? list : []);
+      if (!L.length) { try { const r = await fetch((window._veraBase || '').replace(/\/$/, '') + '/ui/panels', { headers: { Accept: 'application/json' } }); const j = await r.json(); L = Array.isArray(j) ? j : (j && Array.isArray(j.panels) ? j.panels : []); } catch (e) { L = []; } }
+      return panelRowsOf(L, open);
+    }
+    /* the add bar's terminal: the estate's known hosts (the picker), a typed host id, or a blank terminal */
+    async _hostPick(btn) {
+      const bar = btn.closest('.addbar'); if (!bar) return; let pop = bar.querySelector('.addpop'); if (pop) { pop.remove(); return; }
+      const typed = '<div class="row"><input class="ti" data-f="hid" placeholder="host id — an SSH host of the Exec panel" spellcheck="false"><input class="ti sm" data-f="hcont" placeholder="container" spellcheck="false"><button class="ib on" data-act="taddid">Add</button><button class="ib" data-act="tblank" title="A blank terminal — connect from the item">blank</button></div>';
+      pop = document.createElement('div'); pop.className = 'addpop pk'; pop.setAttribute('data-w', 'canvas.add.terminal'); pop.innerHTML = '<span class="vc-dim">known hosts — asking the estate…</span>' + typed; bar.appendChild(pop);
+      const rows = await this._hostRows(); if (!pop.isConnected) return;
+      pop.innerHTML = hostListHtml(rows) + typed;
+      try { const q = pop.querySelector('.pk-q'); if (q) q.focus(); } catch (e) {}
+    }
+    /* the known hosts, asked once and kept a while: conn.targets (the SSH hosts of the Exec panel, the running containers
+       on every docker host) and conn.list (the saved connections) — the remote subsystem's own enumerations */
+    async _hostRows() {
+      const now = Date.now(); if (this._hosts && this._hostsAt && now - this._hostsAt < 30000) return this._hosts;
+      const [t, s] = await Promise.all([this.callResult('conn.targets', { include_proxmox: false }), this.callResult('conn.list', {})]);
+      this._hosts = hostRowsOf(t, s); this._hostsAt = now; return this._hosts;
+    }
+    /* a terminal already on its host: the pick (or the typed id) lands an attached session item, yours */
+    _hostAdd(row) {
+      const focusMid = this.dataset.focusMid || ''; const hid = String(row.host_id || '').trim(); if (!hid) return;
+      const key = 'session:' + (row.container ? row.container : hid).replace(/[^a-zA-Z0-9_.-]/g, '') + '-' + Date.now().toString(36);
+      const content = { title: String(row.n || (row.container ? row.container + ' @ ' + hid : hid)), host_id: hid, container: String(row.container || ''), shell: String(row.shell || ''), attached: true };
+      const args = { kind: 'session', key, content, at: 'now', size: 'm', anchor: { origin: 'you', beside: focusMid } };   // picked by hand: beside the turn in view, related to no turn
+      this._open.add(key);
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:add', { bubbles: true, detail: { key, kind: 'session', add: 'terminal', host_id: hid, container: content.container } })); } catch (e) {}
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:terminal', { bubbles: true, detail: { key, host_id: hid, container: content.container, attached: true } })); } catch (e) {}
+      return this.call('canvas.add', args);
     }
     /* the add bar's widget: the WidgetConfig sheet (widget_element.js — this window's, or the host's when the column is
        embedded); the record it resolves is the item's content, keyed by its form, yours (beside the turn, no run) */
@@ -1047,7 +1200,7 @@
     }
   }
 
-  const api = { place, checkRoutes, decisionOf, suggestionsOf, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, version: 3 };
+  const api = { place, checkRoutes, decisionOf, suggestionsOf, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 4 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {

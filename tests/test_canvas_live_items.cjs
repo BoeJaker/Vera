@@ -8,7 +8,7 @@ const FILE = path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.js');
 const V = require(FILE); const SRC = fs.readFileSync(FILE, 'utf8');
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 const B = V.BLOCK;
-t('the item bodies are exported (version 3)', !!B && typeof B.session === 'function' && typeof B.notebook === 'function' && typeof B.panel === 'function' && V.version === 3);
+t('the item bodies are exported (version 4 — the pickers of test_canvas_backing.cjs came with it)', !!B && typeof B.session === 'function' && typeof B.notebook === 'function' && typeof B.panel === 'function' && V.version >= 3);
 
 // ── the live terminal ──
 const ssh = B.session({ title: 'Terminal', host_id: 'ct126', shell: '' }, 'm', 'session:t1', { _live: {} });
