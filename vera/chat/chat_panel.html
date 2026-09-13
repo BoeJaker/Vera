@@ -1374,6 +1374,7 @@ html[data-blocks="off"] .pa-att{background:transparent}
   #topBar{gap:6px;padding:0 10px}
   #topBar .agent{gap:5px;padding:0 4px 0 8px}
   #topBar .agent #agentMeta,#topBar .agent #capBadge{display:none}
+  #topBar .sess{min-width:96px}
   #topBar .sess #sessionName{max-width:150px}
   #topBar .tb-btn,#topBar .hbtn{padding:0 8px}
   #topBar #denGroup .tb-btn,#topBar #xplSeg .tb-btn,#topBar .pseg .tb-btn{padding:0 7px}
@@ -1389,6 +1390,11 @@ html[data-blocks="off"] .pa-att{background:transparent}
 #toolsSheet{display:none;position:absolute;right:16px;top:56px;z-index:60;width:520px;max-width:calc(100vw - 32px);flex-direction:column;gap:6px;padding:12px 14px;border-radius:var(--ui-radius,10px);background:var(--surf);box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.20),0 10px 30px -16px rgba(0,0,0,.60))}
 #toolsSheet.on{display:flex}
 #toolsSheet .ts-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+#toolsSheet .ts-row.ts-folded #xplSeg,#toolsSheet .ts-row.ts-folded .pseg,#toolsSheet .ts-row.ts-folded #denGroup{display:inline-flex;gap:2px;margin:0;padding:2px;border-radius:var(--r-sm,7px);background:var(--s2,var(--bg2,#1a1c20))}
+#toolsSheet .ts-row.ts-folded .tb-btn{height:26px;padding:0 9px;background:transparent;box-shadow:none;border-radius:calc(var(--r-sm,7px) - 2px)}
+#toolsSheet .ts-row.ts-folded .tb-btn.col-on,#toolsSheet .ts-row.ts-folded .tb-btn.on,#toolsSheet .ts-row.ts-folded .tb-btn.active{background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent));color:var(--ac,var(--acc,#5a9e8f))}
+body.hdr-folded #hdrMore::after{content:'';position:absolute;right:5px;top:5px;width:5px;height:5px;border-radius:50%;background:var(--ac,var(--acc,#5a9e8f))}
+#hdrMore{position:relative}
 #toolsSheet .ts-k{font-size:var(--label-size,10.5px);text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280));width:96px;flex-shrink:0}
 #toolsSheet .tb-group{display:inline-flex;gap:5px;flex-wrap:wrap}
 #toolsSheet .tb-btn{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:var(--r-sm,7px);color:var(--t2,var(--dim2,#8a92a0));font-size:10.5px;font-family:var(--f-ui,var(--sans,system-ui,sans-serif));background:var(--surf2);box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14));border:none;white-space:nowrap}
@@ -13171,6 +13177,25 @@ function _embedMount(){
       try{ if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='grown') _ctxRemoteSet(a.on); else if(m.act==='lanes'){ _ctxRemote.lanes=Array.isArray(a.lanes)?a.lanes:[]; _ctxRunsDraw(); } else if(m.act==='page') togglePage(a.name); else if(m.act==='explode') explode(a.on); else if(m.act==='explodeMode') explodeMode(a.m); else if(m.act==='session'&&a.sid&&a.sid!==SID) loadSession(a.sid); else if(m.act==='newSession') newSession(); }catch(_){} };
   }
 }
+  // the header folds when the frame is too narrow for every control: the secondary groups move into the ⋯ sheet (pages ·
+  // explode views · density, in that order) and come back when the room does — the same elements, a marker holding their place
+  const _FOLD_ORDER=[['pages','.pseg','Pages'],['xpl','#xplSeg','Explode views'],['den','#denGroup','Density']];
+  let _folded=[], _foldT=null;
+  function _chromeFold(bar, sheet){
+    const over=()=>bar.scrollWidth>bar.clientWidth+1;
+    const fold=(k,sel,label)=>{ const el=bar.querySelector(sel); if(!el) return false; const w=el.getBoundingClientRect().width; const hold=document.createElement('span'); hold.className='tb-hold'; hold.dataset.for=k; hold.hidden=true; el.parentNode.insertBefore(hold, el);
+      const row=document.createElement('div'); row.className='ts-row ts-folded'; row.dataset.fold=k; const kk=document.createElement('span'); kk.className='ts-k'; kk.textContent=label; row.appendChild(kk); row.appendChild(el); const note=sheet.querySelector('.ts-note'); sheet.insertBefore(row, note?note.nextSibling:sheet.firstChild); _folded.push({k, w, hold, row, el}); return true; };
+    const unfold=(f)=>{ if(f.hold.parentNode) f.hold.parentNode.insertBefore(f.el, f.hold); f.hold.remove(); f.row.remove(); _folded=_folded.filter(x=>x!==f); };
+    for(const [k,sel,label] of _FOLD_ORDER){ if(!over()) break; if(_folded.some(f=>f.k===k)) continue; fold(k,sel,label); }
+    // the room came back: the last group folded returns when its width fits, and stays if that overflows again
+    let guard=0; while(_folded.length&&guard++<3){ const f=_folded[_folded.length-1]; if(bar.clientWidth-bar.scrollWidth<=f.w+24) break; unfold(f); if(over()){ fold(f.k, _FOLD_ORDER.find(o=>o[0]===f.k)[1], _FOLD_ORDER.find(o=>o[0]===f.k)[2]); break; } }
+    document.body.classList.toggle('hdr-folded', _folded.length>0);
+  }
+  function _chromeFoldMount(bar, sheet){
+    const run=()=>{ clearTimeout(_foldT); _foldT=setTimeout(()=>{ try{ _chromeFold(bar, sheet); }catch(_){} }, 60); };
+    try{ new ResizeObserver(run).observe(bar); }catch(_){ window.addEventListener('resize', run); }
+    run();
+  }
   function _chromeMount(){
     const bar=document.getElementById('topBar'), sheet=document.getElementById('toolsSheet'); if(!bar||!sheet||sheet.dataset.mounted) return; sheet.dataset.mounted='1';
     // the groups the board keeps off the header, moved as they are (the mode button — Ask first / Act — stays)
@@ -13184,6 +13209,7 @@ function _embedMount(){
       [['ctx','Context → chat','The runs from the context records (the quick menu or the grown graph) to the message in focus'],['cv','Chat ↔ canvas','The runs between the turns and the items they made or read']].forEach(([k,label,title])=>{ const b=document.createElement('button'); b.className='tb-btn'+(_runsOff[k]?'':' on'); b.type='button'; b.dataset.runs=k; b.textContent=label; b.title=title; b.addEventListener('click',()=>_runsToggle(k)); g.appendChild(b); });
       row.appendChild(g); sheet.appendChild(row); }
     document.addEventListener('click', ev=>{ if(!sheet.classList.contains('on')) return; if(sheet.contains(ev.target)||(ev.target.closest&&ev.target.closest('#hdrMore'))) return; _toolsSheet(false); });
+    _chromeFoldMount(bar, sheet);
     // the meter opens the Context menu (the board: the budget bar is the way into the context rail)
     const m=document.getElementById('ctxMeter'); if(m&&!m.onclick) m.onclick=()=>{ try{ VeraLHM.pick('context'); const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); }catch(_){} };
     // the session meta line follows the transcript
@@ -17745,7 +17771,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,_cvLandReply,_studioHint,_cvDirectiveShape,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_chromeFold,_runsToggle,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
