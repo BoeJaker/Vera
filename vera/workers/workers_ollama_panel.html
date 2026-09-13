@@ -1799,10 +1799,12 @@ html.view-models #secNav [data-view="models"]{display:block}
           <div style="display:flex;gap:2px">
             <span class="j-tab active" id="nets-graph" onclick="P.netSub('graph')" style="padding:3px 9px;font-size:9px">Graph &amp; Firewall</span>
             <span class="j-tab" id="nets-ops" onclick="P.netSub('ops')" style="padding:3px 9px;font-size:9px">Traffic (NWM-01)</span>
+            <span class="j-tab" id="nets-netctl" onclick="P.netSub('netctl')" style="padding:3px 9px;font-size:9px" title="netctl's own pages, behind its own sign-in">netctl</span>
           </div>
         </div>
         <iframe id="net-sub-graph" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
         <iframe id="net-sub-ops" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+        <iframe id="net-sub-netctl" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
       </div>
     </div>
 
@@ -6404,7 +6406,7 @@ function obsSub(name){
 }
 
 // ── Network sub-tabs (graph+firewall / live traffic) ─────────────────────────
-const _netSubSrc={graph:'/netgraph/panel', ops:'/pxstore/netops-panel'};
+const _netSubSrc={graph:'/netgraph/panel', ops:'/pxstore/netops-panel', netctl:'/estate/netctl'};
 let _netSub='graph';
 function netSub(name){
   if(!_netSubSrc[name]) name='graph';

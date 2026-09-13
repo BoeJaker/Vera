@@ -3,7 +3,7 @@ estate_nav_capabilities.py -- the switch for top-level tabs folded into other ta
 ==================================================================================
 
 Some top-level tabs now open inside a broader tab. Estate covers Proxmox,
-Remote, Net Policy, Security, Identity, Provision and Integrations;
+Remote, Net Policy, Security, Identity, Provision, Integrations and Platforms;
 Capabilities covers Cap Ontology and MCP Servers; Agents covers Agent Bridges;
 Image Studio covers Companion. While this setting is on (the default) those
 tabs leave the tab bar, and anything that opens one lands on the matching pane
@@ -23,6 +23,8 @@ Redis layout
 from __future__ import annotations
 
 from typing import Any, Dict
+
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability, emit_event
@@ -54,7 +56,7 @@ def _state(enabled: bool) -> Dict[str, Any]:
     memory="off", silent=True,
     description="Whether the top-level tabs folded into a broader tab are retired, and which "
                 "pane each one opens instead. Estate covers Proxmox, Remote, Net Policy, "
-                "Security, Identity, Provision and Integrations; Capabilities covers Cap "
+                "Security, Identity, Provision, Integrations and Platforms; Capabilities covers Cap "
                 "Ontology and MCP Servers; Agents covers Agent Bridges; Image Studio covers "
                 "Companion. Output: {enabled, tabs:{panel_id: {label, panel, pane, sub, "
                 "section}}, note}.",
@@ -81,3 +83,35 @@ async def cap_tabs_retired_set(enabled: bool = True, trace_id=None) -> Dict[str,
     await r.set(nav.RETIRE_SETTING_KEY, "1" if on else "0")
     await emit_event({"type": "ui.tabs.retired", "enabled": on})
     return _state(on)
+
+
+_NETCTL_MISSING = """<!doctype html><meta charset="utf-8">
+<body style="margin:0;font:12px system-ui,sans-serif;background:var(--bg0,#0d0f12);color:#9aa3ad;
+display:flex;align-items:center;justify-content:center;height:100vh">
+<div style="max-width:52ch;line-height:1.6">
+<b style="color:#d8dde3">netctl is not registered yet.</b><br>
+Add it under Estate &rsaquo; Integrations &rsaquo; Services with a label that starts with
+<code>netctl</code> (for example <code>netctl (NWM-02)</code>, base URL
+<code>http://192.168.0.221:8088</code>) and allow embedding. Its pages still ask for
+netctl's own password.</div></body>"""
+
+
+async def _netctl_integration() -> Dict[str, Any]:
+    fn = (_orch.CAPABILITY_REGISTRY.get("integration.list") or {}).get("func")
+    if fn is None:
+        return {}
+    try:
+        res = await fn()
+    except Exception:
+        return {}
+    return nav.netctl_record(res.get("integrations") or [] if isinstance(res, dict) else [])
+
+
+@_orch.APP.get("/estate/netctl", include_in_schema=False)
+async def _estate_netctl():
+    """Network & Access > netctl: netctl's own pages through Vera's embed proxy.
+    netctl still asks for its own password; Vera only relays the pages."""
+    rec = await _netctl_integration()
+    if not rec.get("id"):
+        return HTMLResponse(_NETCTL_MISSING, status_code=404)
+    return RedirectResponse(f"/integrations/{rec['id']}/embed/", status_code=307)

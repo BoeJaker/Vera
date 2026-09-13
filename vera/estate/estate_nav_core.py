@@ -41,6 +41,18 @@ RETIRED_TABS: Dict[str, Dict[str, str]] = {
 _OFF = ("0", "false", "off", "no")
 
 
+NETCTL_LABEL = "netctl"
+
+
+def netctl_record(integrations: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    """The Integrations record that fronts netctl's own pages: its label starts
+    with 'netctl'. NWM-02, the node with the access tab, comes first."""
+    rows = [dict(i) for i in integrations
+            if str(i.get("label") or "").strip().lower().startswith(NETCTL_LABEL)]
+    rows.sort(key=lambda i: ("nwm-02" not in str(i.get("label") or "").lower(), str(i.get("label") or "")))
+    return rows[0] if rows else {}
+
+
 def setting_enabled(raw: Any) -> bool:
     """The stored switch. Absent means on: retiring is the default."""
     if raw is None:
