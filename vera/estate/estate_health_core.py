@@ -100,6 +100,15 @@ def state_store_section(info: Mapping[str, Any], present: Mapping[str, bool],
     return {"facts": facts, "findings": findings}
 
 
+def startup_lines(section: Mapping[str, Any]) -> List[str]:
+    """What the boot log should say about the state store: one line per
+    finding, with its detail, or the reason the check could not run."""
+    if section.get("error"):
+        return [f"could not check the state store: {section['error']}"]
+    return [f"{f['message']} {f['detail']}".strip() if f.get("detail") else f["message"]
+            for f in section.get("findings") or []]
+
+
 # ── containers ───────────────────────────────────────────────────────────────
 
 def is_sandbox(name: str, labels: Optional[Mapping[str, str]]) -> bool:

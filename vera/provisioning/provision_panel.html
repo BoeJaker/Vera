@@ -861,7 +861,12 @@ async function dpApply(){
   if(r.ok) dpLoad();   // refresh targets — new nodes/engines may exist now
 }
 
+// The Estate tab's Build entry opens this page at one tab (#install, #proxmox,
+// #docker); the hash changes without a reload.
+function tabFromHash(){const t=location.hash.slice(1);if(['deploy','install','proxmox','docker'].includes(t))showTab(t);}
+window.addEventListener('hashchange',tabFromHash);
 refresh();
+tabFromHash();
 dpLoad();
 </script>
 <script src="/ui/vera-panel-bridge.js"></script>

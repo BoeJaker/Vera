@@ -297,3 +297,35 @@ async def cap_estate_health(refresh: bool = False, trace_id=None) -> Dict[str, A
     result["checked_at"] = now_iso()
     _CACHE.update(at=time.monotonic(), result=result)
     return {**result, "cached": False}
+
+
+# ── startup check: the right Redis? ──────────────────────────────────────────
+# At the 2 Sep 2026 boot Vera connected to the host's own redis-server and ran
+# ten days without its estate settings; nothing said so until someone opened
+# the Overview. This runs the state-store check once, soon after boot, and
+# warns in the log. It only warns: which Redis to use is an operator decision.
+STARTUP_CHECK_WAIT_S = 90.0
+
+
+async def _startup_state_store_check() -> None:
+    deadline = time.monotonic() + STARTUP_CHECK_WAIT_S
+    while getattr(_orch, "REDIS", None) is None and time.monotonic() < deadline:
+        await asyncio.sleep(2)
+    try:
+        out = await asyncio.wait_for(_state_store(), SOURCE_TIMEOUTS_S["state_store"])
+    except asyncio.TimeoutError:
+        log.warning("state store check: Redis did not answer within %d s",
+                    int(SOURCE_TIMEOUTS_S["state_store"]))
+        return
+    for line in core.startup_lines(out):
+        log.warning("state store check: %s", line)
+    if not out.get("error") and not out.get("findings"):
+        log.info("state store check: connected to the estate's Redis (%s keys of %s expected)",
+                 out["facts"].get("expected_present"), out["facts"].get("expected_total"))
+
+
+try:
+    _orch.schedule(_startup_state_store_check, interval=10 ** 9,
+                   name="estate_state_store_startup_check", skip_in_sandbox=True)
+except Exception as _e:                                            # pragma: no cover
+    log.debug("estate: startup state-store check not scheduled: %s", _e)

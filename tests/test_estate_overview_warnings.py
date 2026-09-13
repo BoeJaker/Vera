@@ -106,7 +106,8 @@ def test_directory_not_configured_or_not_checkable_is_a_warning(identity, messag
     assert (f["severity"], f["message"]) == (core.WARN, message)
 
 
-def test_the_summary_lists_all_six_sections_in_order():
+def test_the_summary_lists_all_seven_sections_in_order():
     result = core.summarize({})
-    assert list(result["sections"]) == ["state_store", "containers", "guests", "backups", "storage", "services"]
+    assert list(result["sections"]) == ["state_store", "containers", "guests", "backups", "storage", "services",
+                                        "certificates"]
     assert result["level"] == "ok"

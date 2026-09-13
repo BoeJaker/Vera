@@ -166,3 +166,14 @@ def test_certificates_section_carries_expiry_findings_but_not_the_informational_
     assert core.certificates_section({"error": "certs.list is not loaded"})["error"] == "certs.list is not loaded"
     assert core.certificates_section(None)["error"]
     assert "certificates" in core.SECTIONS
+
+
+def test_the_boot_log_names_the_wrong_redis_and_the_missing_keys():
+    wrong = core.state_store_section({"executable": "/usr/bin/redis-server", "redis_version": "7.0.15"},
+                                     {"vera:proxmox:clusters": False}, "redis://localhost:6379/0", 12)
+    lines = core.startup_lines(wrong)
+    assert any("host's own redis-server" in l and "/usr/bin/redis-server" in l for l in lines)
+    assert any("Proxmox cluster records" in l for l in lines)
+    assert core.startup_lines({"error": "Vera has no Redis connection"}) == \
+        ["could not check the state store: Vera has no Redis connection"]
+    assert core.startup_lines(core.state_store_section(CONTAINER_REDIS, ALL_KEYS)) == []
