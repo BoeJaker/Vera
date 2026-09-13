@@ -51,6 +51,35 @@ def test_the_shapes_and_forms_are_the_spec_boards():
     assert R.form("nope") is None
 
 
+def test_every_form_carries_the_boards_name_and_the_boards_it_is_on():
+    # the three galleries: every form the boards draw is in the catalogue under the board's own name
+    on = {b: [f["id"] for f in R.forms_on(b)] for b in ("widgets", "motion", "iso", "spec", "reply")}
+    assert len(on["widgets"]) >= 60 and len(on["motion"]) >= 25 and len(on["iso"]) >= 20, {k: len(v) for k, v in on.items()}
+    for f in R.FORMS:
+        assert f["name"] and isinstance(f["boards"], list), f["id"]
+    assert R.form("thermo")["name"] == "Thermometers" and R.form("dial")["name"] == "Dial" and R.form("split-flap")["name"] == "Split-flap"
+    # the boards' names resolve as aliases, and the WidgetConfig board's own ids
+    assert R.form("Thermometers")["id"] == "thermo" and R.form("coin stacks")["id"] == "stacks" and R.form("Hero + trend")["id"] == "hero"
+    assert R.form("battery")["id"] == "level" and R.form("tablei")["id"] == "table" and R.form("logi")["id"] == "log"
+    # the motion board's forms move; the iso board's are iso-only; the sheet's three still there
+    for fid in ("dial", "tank", "turbine", "scope", "pulse", "conveyor", "orbit", "comet", "split-flap", "pipes", "city", "sweep"):
+        assert R.form(fid)["motion"] is True, fid
+    for fid in ("library", "pages", "approvals", "wiki", "notices", "devices", "notebook", "hosts", "containers", "models", "datasets", "sandboxes", "frame", "activity"):
+        assert R.form(fid)["proj"] == ["iso"] and "iso" in R.form(fid)["boards"], fid
+    for fid in ("panel", "form", "scatter"):
+        assert fid in R.form_ids()
+
+
+def test_read_range_rides_in_the_record():
+    r = R.normalise({"form": "radial", "source": "obs.pending", "read": {"range": [0, 20], "map": {"value": "pending"}}})
+    assert r["read"]["range"] == [0.0, 20.0] and r["read"]["map"] == {"value": "pending"}
+    assert R.normalise({"form": "radial", "range": ["0", "1.5"]})["read"]["range"] == [0.0, 1.5]
+    assert R.normalise({"form": "radial", "read": {"range": [1]}})["read"]["range"] is None
+    assert R.normalise({"form": "radial", "read": {"range": ["a", "b"]}})["read"]["range"] is None
+    r2, problems, _ = R.validate({"form": "radial", "source": "obs.pending", "read": {"range": [0, 20]}}, source_shape="level")
+    assert problems == [] and r2["read"]["range"] == [0.0, 20.0]
+
+
 def test_a_size_is_a_composition_and_a_span_picks_it():
     assert R.size_for_span(2) == "s" and R.size_for_span(3) == "s"
     assert R.size_for_span(4) == "m"

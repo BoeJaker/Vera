@@ -14,7 +14,7 @@ TWO SHAPES OF RECORD ARE ACCEPTED, ONE IS STORED.
     slice: {id, name, form, reads:{cap,args,every,note}, frame:<str>,
     draw:{form,size,motion}, can[], placed[], source, version, tags};
   - the FULL record the WidgetSpec board writes: {id, form, projection,
-    source, shape, title, read:{refresh,window,map,args}, frame:{size,span,
+    source, shape, title, read:{refresh,window,map,args,range}, frame:{size,span,
     caption,legend,motion,deep_dive,max_body}, draw:{...form options}, skin,
     actions[], place, panel, policy:{agent}}, plus the composite record
     (subject, layout, slots, children[{slot, record|id}], text);
@@ -58,123 +58,148 @@ COMPOSITIONS = {
 NO_SOURCE_FORMS = ("header", "button", "rail", "controls", "panel", "composite", "announcement", "links", "form")
 
 # ── the forms (the Widgets · WidgetsMotion · WidgetsIso galleries and the reply's own) ──
-# id · shape · projections · glyph · motion; sizes default to all five unless the form says otherwise.
-# The chat draws nine of these in a reply today (trace, radial, thermo, heat, log, lane, pipes, table, files).
-_F = lambda id, shape, proj=("flat",), glyph="", motion=False, sizes=SIZES, options=(): {  # noqa: E731
+# id · shape · projections · glyph · motion · sizes · options · the board's name · the boards it is on. Every form the three
+# boards draw is here under the board's own name, so a record can be written from the gallery and the sheet lists what
+# the gallery shows; the chat's own nine (trace, radial, thermo, heat, log, lane, pipes, table, files) are among them.
+# name: what the board calls the form (the sheet's row, the gallery's card); boards: which of the three galleries draw it
+# (widgets · motion · iso), "spec" for the WidgetSpec/WidgetConfig additions, "reply" for the chat's own and the chrome.
+_F = lambda id, shape, proj=("flat",), glyph="", motion=False, sizes=SIZES, options=(), name="", boards=(): {  # noqa: E731
     "id": id, "shape": shape, "proj": list(proj), "glyph": glyph or id, "motion": bool(motion),
-    "sizes": list(sizes), "options": list(options)}
+    "sizes": list(sizes), "options": list(options), "name": name or id, "boards": list(boards)}
 FORMS: List[Dict[str, Any]] = [
-    # levels and rates
-    _F("counter", "level", glyph="123", options=("unit", "delta")),
-    _F("hero", "level", glyph="hero", options=("unit", "delta", "trend")),                     # hero + trend
-    _F("level", "level", glyph="level", options=("min", "max", "bands")),
-    _F("meter", "level", ("flat", "iso"), glyph="meter", options=("min", "max", "unit", "delta")),   # meter + delta
-    _F("gauge", "level", glyph="arc", options=("min", "max", "bands")),                       # arc gauges
-    _F("radial", "level", ("flat", "iso"), glyph="ring", options=("min", "max", "unit")),
-    _F("ring", "level", glyph="ring", options=("min", "max")),                                # progress ring
-    _F("threshold", "level", glyph="scale", options=("bands",)),                              # threshold scale
-    _F("bullet", "values", glyph="bullet", options=("target", "bands")),
-    _F("rate", "rate", glyph="rate", options=("unit", "window")),
-    _F("meter-panel", "values", glyph="meters", options=("unit",)),                           # meter panel
-    # series
-    _F("trace", "series", glyph="spark", options=("palette", "bands", "fill")),               # sparkline / trace
-    _F("sparkline", "series", glyph="spark", options=("fill",)),
-    _F("line", "series", glyph="line", options=("palette", "legend")),
-    _F("area", "series", glyph="area", options=("palette", "stacked")),                       # stacked area
-    _F("step", "series", glyph="step"),                                                        # step chart
-    _F("slope", "series", glyph="slope"),
-    _F("horizon", "series", glyph="horizon", options=("bands",)),
-    _F("bump", "series", glyph="bump"),
-    _F("small-multiples", "series", glyph="multiples", options=("cols",)),
-    _F("candles", "ohlcv", ("flat", "iso"), glyph="ohlc", options=("volume",)),               # candlestick
-    _F("scope", "series", glyph="scope", motion=True),                                          # a trace with a sweep head
-    # values (one number per key)
-    _F("bars", "values", glyph="bars", options=("sort", "limit")),                            # column / ranked bars
-    _F("column", "values", glyph="column"),
-    _F("ranked", "values", glyph="ranked", options=("limit",)),
-    _F("stacked-bar", "parts", glyph="stacked"),
-    _F("diverging", "values", glyph="diverging"),
-    _F("lollipop", "values", glyph="lollipop"),
-    _F("histogram", "values", glyph="hist", options=("bins",)),
-    _F("waterfall", "values", glyph="waterfall"),
-    _F("pareto", "values", glyph="pareto"),
-    _F("box", "values", glyph="box"),                                                          # box plot
-    _F("radar", "values", glyph="radar"),
-    _F("thermo", "values", ("flat", "iso"), glyph="thermo", options=("unit", "max")),
-    _F("heat", "matrix", ("flat", "iso"), glyph="heat", options=("palette",)),                 # heat map
-    _F("matrix", "matrix", glyph="matrix"),                                                    # status matrix
-    _F("dots", "matrix", glyph="dots"),                                                        # dot matrix
-    _F("waffle", "parts", ("flat", "iso"), glyph="waffle"),
-    _F("pills", "values", glyph="pills"),                                                      # status pills
-    _F("numbers", "values", glyph="grid"),                                                     # number grid
-    _F("rings", "values", glyph="rings"),                                                      # activity rings
-    _F("spark-table", "items", glyph="sparktable"),
-    # parts of a whole
-    _F("donut", "parts", glyph="donut", options=("legend",)),
-    _F("treemap", "parts", ("flat", "iso"), glyph="treemap"),
-    _F("funnel", "stages", ("flat", "iso"), glyph="funnel"),
-    _F("stacks", "parts", glyph="stacks", motion=True),
-    # stages and time
-    _F("stepper", "stages", glyph="stepper"),
-    _F("gantt", "stages", ("flat", "iso"), glyph="gantt"),
-    _F("pipeline", "stages", glyph="pipeline"),                                                # pipeline progress
-    _F("conveyor", "stages", glyph="conveyor", motion=True),
-    _F("timeline", "events", glyph="timeline"),
-    _F("calendar", "calendar", ("flat", "iso"), glyph="calendar"),
-    _F("agenda", "calendar", ("flat", "iso"), glyph="agenda"),
-    _F("comet", "events", glyph="comet", motion=True),                                          # a day as a ring
-    # events
-    _F("log", "events", ("flat", "iso"), glyph="log", options=("lanes", "limit")),
-    _F("lane", "events", glyph="lane", options=("limit",)),
-    _F("feed", "events", ("flat", "iso"), glyph="feed"),
-    _F("pulse", "events", glyph="pulse", motion=True),
-    # graphs
-    _F("graph", "graph", glyph="graph", options=("layout",)),                                 # node graph
-    _F("minigraph", "graph", glyph="minigraph"),
-    _F("flow", "graph", glyph="flow"),
-    _F("pipes", "graph", ("flat", "iso"), glyph="pipes"),
-    _F("topology", "graph", ("flat", "iso"), glyph="topology"),
-    _F("city", "items", ("iso",), glyph="city"),                                              # nodes as a city
-    _F("orbit", "items", glyph="orbit", motion=True),
-    # items
-    _F("table", "items", ("flat", "iso"), glyph="table", options=("columns", "sort", "limit")),
-    _F("list", "items", glyph="list", options=("limit",)),
-    _F("rows", "items", glyph="rows"),
-    _F("cards", "items", glyph="cards"),                                                       # card stack
-    _F("files", "items", ("flat", "iso"), glyph="files"),
-    _F("tree", "items", glyph="tree"),
-    _F("people", "items", glyph="people"),
-    _F("gallery", "items", glyph="gallery"),
-    _F("board", "items", glyph="board"),                                                       # tasks board
-    _F("checklist", "items", glyph="check"),
-    _F("carousel", "items", glyph="carousel"),
-    _F("shelf", "items", glyph="shelf", motion=True),
-    _F("stack", "items", glyph="stack", motion=True),
-    _F("links", "items", glyph="links"),
-    # strings and single things
-    _F("string", "string", glyph="text"),
-    _F("announcement", "string", glyph="notice"),
-    _F("terminal", "string", ("flat", "iso"), glyph="terminal", sizes=("m", "l", "xl")),
-    _F("split-flap", "string", glyph="flap", motion=True),
-    _F("tank", "level", glyph="tank", motion=True),
-    _F("turbine", "rate", glyph="turbine", motion=True),
-    # points
-    _F("scatter", "points", ("flat", "iso"), glyph="scatter", options=("x", "y", "size")),
-    _F("globe", "points", glyph="globe", options=("layer", "page", "limit")),
-    # the three the spec adds, and the chrome the registry already names
-    _F("context_graph", "graph", glyph="context_graph", options=("lanes", "labels")),   # the chat's context graph: mini lanes; the full element at XL
-    _F("panel", "panel", glyph="panel", sizes=("l", "xl")),
-    _F("form", "values", glyph="form", options=("fields",)),
-    _F("composite", "composite", glyph="composite"),
-    _F("iso", "items", ("iso",), glyph="iso"),
-    _F("program", "stages", glyph="program"),
-    _F("ask", "string", glyph="ask"),
-    _F("node", "items", glyph="node"),
-    _F("controls", "string", glyph="controls", sizes=("xs", "s")),
-    _F("button", "string", glyph="button", sizes=("xs", "s")),
-    _F("header", "string", glyph="header", sizes=("xs", "s")),
-    _F("rail", "items", glyph="rail", sizes=("s",)),
-    _F("chart", "series", glyph="chart"),
+    # ── levels and rates ──
+    _F("counter", "level", glyph="123", options=("unit", "delta", "digits"), name="Counter", boards=("widgets",)),
+    _F("hero", "level", glyph="hero", options=("unit", "delta", "trend"), name="Hero + trend", boards=("widgets",)),
+    _F("level", "level", glyph="level", options=("min", "max", "bands", "cells"), name="Level", boards=("widgets",)),
+    _F("meter", "level", ("flat", "iso"), glyph="meter", options=("min", "max", "unit", "delta"), name="Meter + delta", boards=("widgets",)),
+    _F("gauge", "level", glyph="arc", options=("min", "max", "bands"), name="Arc gauges", boards=("widgets",)),
+    _F("radial", "level", ("flat", "iso"), glyph="ring", options=("min", "max", "unit"), name="Radial", boards=("motion", "spec")),
+    _F("ring", "level", glyph="ring", options=("min", "max"), name="Progress ring", boards=("widgets",)),
+    _F("threshold", "values", glyph="scale", options=("bands",), name="Threshold scale", boards=("widgets",)),
+    _F("bullet", "values", glyph="bullet", options=("target", "bands"), name="Bullet bars", boards=("widgets",)),
+    _F("rate", "rate", glyph="rate", options=("unit", "window"), name="Rate", boards=("spec",)),
+    _F("meter-panel", "values", ("iso",), glyph="meters", motion=True, options=("unit", "columns", "studs", "hot"), name="Meter panel", boards=("motion",)),
+    _F("dial", "level", ("iso",), glyph="dial", motion=True, options=("studs", "sweep", "bands"), name="Dial", boards=("motion",)),
+    _F("tank", "level", ("iso",), glyph="tank", motion=True, options=("wave", "bubbles", "feed"), name="Tank", boards=("motion",)),
+    _F("turbine", "rate", glyph="turbine", motion=True, options=("blades", "blur"), name="Turbine", boards=("motion",)),
+    _F("ticker", "rate", glyph="ticker", motion=True, options=("bars",), name="Ticker", boards=("spec",)),
+    # ── series ──
+    _F("trace", "series", glyph="spark", options=("palette", "bands", "fill"), name="Trace", boards=("motion", "spec")),
+    _F("sparkline", "series", glyph="spark", options=("fill",), name="Sparkline", boards=("reply",)),
+    _F("line", "series", glyph="line", options=("palette", "legend"), name="Line", boards=("reply",)),
+    _F("area", "series", ("flat", "iso"), glyph="area", options=("palette", "stacked", "order"), name="Stacked area", boards=("widgets",)),
+    _F("step", "series", glyph="step", name="Step chart", boards=("widgets",)),
+    _F("slope", "series", glyph="slope", name="Slope", boards=("widgets",)),
+    _F("horizon", "series", glyph="horizon", options=("bands",), name="Horizon", boards=("widgets",)),
+    _F("bump", "series", glyph="bump", options=("ranks",), name="Bump", boards=("widgets",)),
+    _F("small-multiples", "series", ("flat", "iso"), glyph="multiples", options=("cols", "rows"), name="Small multiples", boards=("widgets",)),
+    _F("candles", "ohlcv", ("flat", "iso"), glyph="ohlc", options=("volume", "bars"), name="Candlestick", boards=("widgets", "motion", "iso")),
+    _F("scope", "series", glyph="scope", motion=True, options=("sweep", "ghost", "graticule"), name="Scope", boards=("motion",)),
+    _F("chart", "series", glyph="chart", name="Chart", boards=("reply",)),
+    # ── values (one number per key) ──
+    _F("bars", "values", ("flat", "iso"), glyph="bars", options=("sort", "limit"), name="Bars", boards=("reply",)),
+    _F("column", "values", ("flat", "iso"), glyph="column", options=("limit",), name="Column", boards=("widgets",)),
+    _F("ranked", "values", glyph="ranked", options=("limit",), name="Ranked bars", boards=("widgets",)),
+    _F("stacked-bar", "parts", glyph="stacked", name="Stacked bar", boards=("widgets",)),
+    _F("diverging", "values", glyph="diverging", options=("centre",), name="Diverging", boards=("widgets",)),
+    _F("lollipop", "values", glyph="lollipop", name="Lollipop", boards=("widgets",)),
+    _F("histogram", "values", glyph="hist", options=("bins",), name="Histogram", boards=("widgets",)),
+    _F("waterfall", "values", glyph="waterfall", name="Waterfall", boards=("widgets",)),
+    _F("pareto", "values", glyph="pareto", options=("line",), name="Pareto", boards=("widgets",)),
+    _F("box", "values", glyph="box", name="Box plot", boards=("widgets",)),
+    _F("radar", "values", glyph="radar", name="Radar", boards=("widgets",)),
+    _F("thermo", "values", ("flat", "iso"), glyph="thermo", motion=True, options=("unit", "max", "throttle", "scale"), name="Thermometers", boards=("motion", "reply")),
+    _F("heat", "matrix", ("flat", "iso"), glyph="heat", options=("palette", "bands"), name="Heat map", boards=("widgets", "motion")),
+    _F("matrix", "matrix", glyph="matrix", name="Status matrix", boards=("widgets",)),
+    _F("dots", "matrix", glyph="dots", name="Dot matrix", boards=("widgets",)),
+    _F("waffle", "parts", ("flat", "iso"), glyph="waffle", options=("cells",), name="Waffle", boards=("widgets",)),
+    _F("pills", "values", glyph="pills", name="Status pills", boards=("widgets",)),
+    _F("numbers", "values", glyph="grid", name="Number grid", boards=("widgets",)),
+    _F("rings", "values", glyph="rings", name="Activity rings", boards=("widgets",)),
+    _F("spark-table", "items", glyph="sparktable", options=("rows", "figure"), name="Spark table", boards=("widgets",)),
+    _F("tabs", "matrix", glyph="tabs", name="Node health · tabs", boards=("widgets",)),
+    _F("slider", "values", glyph="slider", options=("min", "max", "threshold"), name="Alert threshold · slider", boards=("widgets",)),
+    _F("node", "values", glyph="node", name="Node composite", boards=("widgets", "reply")),
+    _F("glance", "values", glyph="glance", options=("figures",), name="Glance", boards=("widgets",)),
+    _F("compare", "values", glyph="compare", name="Compare", boards=("widgets",)),
+    # ── parts of a whole ──
+    _F("donut", "parts", glyph="donut", options=("legend", "gap"), name="Donut", boards=("widgets",)),
+    _F("treemap", "parts", ("flat", "iso"), glyph="treemap", name="Treemap", boards=("widgets",)),
+    _F("funnel", "stages", ("flat", "iso"), glyph="funnel", name="Funnel", boards=("widgets",)),
+    _F("stacks", "parts", ("iso",), glyph="stacks", motion=True, options=("columns", "coin"), name="Coin stacks", boards=("motion",)),
+    # ── stages and time ──
+    _F("stepper", "stages", glyph="stepper", name="Stepper", boards=("widgets",)),
+    _F("gantt", "stages", ("flat", "iso"), glyph="gantt", options=("rows",), name="Gantt", boards=("widgets",)),
+    _F("pipeline", "stages", ("flat", "iso"), glyph="pipeline", name="Pipeline", boards=("widgets", "iso")),
+    _F("conveyor", "stages", ("iso",), glyph="conveyor", motion=True, options=("belt", "work"), name="Conveyor", boards=("motion",)),
+    _F("approvals", "stages", ("iso",), glyph="approvals", name="Approvals", boards=("iso",)),
+    _F("timeline", "events", glyph="timeline", options=("now",), name="Timeline", boards=("widgets",)),
+    _F("calendar", "calendar", ("flat", "iso"), glyph="calendar", options=("weeks",), name="Calendar", boards=("widgets", "iso")),
+    _F("agenda", "calendar", ("flat", "iso"), glyph="agenda", options=("window", "now"), name="Agenda", boards=("widgets", "motion")),
+    _F("comet", "events", glyph="comet", motion=True, options=("window", "hours"), name="Comet ring", boards=("motion",)),
+    # ── events ──
+    _F("log", "events", ("flat", "iso"), glyph="log", motion=True, options=("lanes", "limit", "tail"), name="Log stream", boards=("widgets", "motion")),
+    _F("lane", "events", glyph="lane", options=("limit", "lanes"), name="Lane", boards=("widgets",)),
+    _F("feed", "events", ("flat", "iso"), glyph="feed", motion=True, options=("page", "show"), name="News feed", boards=("widgets", "motion", "iso")),
+    _F("pulse", "events", glyph="pulse", motion=True, options=("classes", "ring_life"), name="Pulse", boards=("motion",)),
+    _F("sweep", "events", ("iso",), glyph="sweep", motion=True, options=("sweep", "range"), name="Radar sweep", boards=("motion",)),
+    _F("activity", "events", ("iso",), glyph="activity", name="Activity", boards=("iso",)),
+    _F("notices", "events", ("iso",), glyph="notices", name="Notices", boards=("iso",)),
+    # ── graphs ──
+    _F("graph", "graph", glyph="graph", options=("layout",), name="Node graph", boards=("widgets",)),
+    _F("minigraph", "graph", glyph="minigraph", options=("hollow",), name="Mini graph", boards=("widgets",)),
+    _F("flow", "graph", glyph="flow", options=("nodes",), name="Flow", boards=("widgets",)),
+    _F("pipes", "graph", ("flat", "iso"), glyph="pipes", motion=True, options=("flow", "idle"), name="Pipes", boards=("motion",)),
+    _F("topology", "graph", ("flat", "iso"), glyph="topology", options=("floors",), name="Topology", boards=("widgets",)),
+    _F("diagram", "graph", glyph="diagram", name="Diagram", boards=("reply",)),
+    _F("city", "graph", ("iso",), glyph="city", motion=True, options=("footprint", "height", "colour", "lamp"), name="City", boards=("motion",)),
+    _F("orbit", "items", glyph="orbit", motion=True, options=("rings", "size"), name="Orbit", boards=("motion",)),
+    _F("context_graph", "graph", glyph="context_graph", options=("lanes", "labels"), name="Context graph", boards=("spec",)),
+    # ── items ──
+    _F("table", "items", ("flat", "iso"), glyph="table", options=("columns", "sort", "limit", "lit"), name="Table", boards=("widgets", "motion")),
+    _F("list", "items", ("flat", "iso"), glyph="list", options=("limit",), name="List", boards=("reply", "iso")),
+    _F("rows", "items", glyph="rows", name="Rows", boards=("reply",)),
+    _F("cards", "items", glyph="cards", name="Cards", boards=("reply",)),
+    _F("files", "items", ("flat", "iso"), glyph="files", options=("sort", "show"), name="Files", boards=("widgets", "motion", "iso")),
+    _F("tree", "items", glyph="tree", name="Tree", boards=("reply",)),
+    _F("people", "items", ("flat", "iso"), glyph="people", options=("presence",), name="People", boards=("widgets", "iso")),
+    _F("gallery", "items", ("flat", "iso"), glyph="gallery", options=("thumbs", "lightbox"), name="Gallery", boards=("widgets", "iso")),
+    _F("board", "items", ("flat", "iso"), glyph="board", options=("columns", "drag"), name="Task board", boards=("widgets", "motion", "iso")),
+    _F("checklist", "items", glyph="check", name="Checklist", boards=("widgets",)),
+    _F("carousel", "items", glyph="carousel", options=("pages",), name="Carousel", boards=("widgets",)),
+    _F("shelf", "items", ("iso",), glyph="shelf", motion=True, options=("depth",), name="Shelf", boards=("motion",)),
+    _F("stack", "items", ("iso",), glyph="stack", motion=True, options=("columns", "lift"), name="Card stack", boards=("motion",)),
+    _F("links", "items", glyph="links", options=("tiles",), name="Quick links", boards=("widgets",)),
+    _F("library", "items", ("iso",), glyph="library", name="Document library", boards=("iso",)),
+    _F("pages", "items", ("iso",), glyph="pages", name="Site pages", boards=("iso",)),
+    _F("wiki", "items", ("iso",), glyph="wiki", name="Wiki", boards=("iso",)),
+    _F("devices", "items", ("iso",), glyph="devices", name="Mesh devices", boards=("iso",)),
+    _F("notebook", "items", ("iso",), glyph="notebook", name="Notebook", boards=("iso",)),
+    _F("hosts", "items", ("iso",), glyph="hosts", name="Proxmox hosts", boards=("iso",)),
+    _F("containers", "items", ("iso",), glyph="containers", name="Docker containers", boards=("iso",)),
+    _F("models", "items", ("iso",), glyph="models", name="Model catalogue", boards=("iso",)),
+    _F("datasets", "items", ("iso",), glyph="datasets", name="Fabric datasets", boards=("iso",)),
+    _F("sandboxes", "items", ("iso",), glyph="sandboxes", name="Sandboxes", boards=("iso",)),
+    # ── strings and single things ──
+    _F("string", "string", glyph="text", name="String", boards=("reply",)),
+    _F("announcement", "string", glyph="notice", options=("priority", "actions"), name="Announcement", boards=("widgets",)),
+    _F("terminal", "string", ("flat", "iso"), glyph="terminal", motion=True, sizes=("m", "l", "xl"), options=("lines", "typing"), name="Terminal", boards=("widgets", "motion", "iso")),
+    _F("split-flap", "string", glyph="flap", motion=True, options=("lines", "highlight"), name="Split-flap", boards=("motion",)),
+    _F("frame", "string", ("iso",), glyph="frame", options=("kind", "stand"), name="Iso frame", boards=("iso",)),
+    # ── points ──
+    _F("scatter", "points", ("flat", "iso"), glyph="scatter", options=("x", "y", "size"), name="Scatter", boards=("widgets", "spec")),
+    _F("globe", "points", glyph="globe", options=("layer", "page", "limit"), name="Globe", boards=("reply",)),
+    # ── the three the spec adds, the composites, and the chrome the registry already names ──
+    _F("panel", "panel", glyph="panel", sizes=("l", "xl"), name="Registered panel", boards=("spec",)),
+    _F("form", "values", ("flat", "iso"), glyph="form", options=("fields",), name="Form", boards=("spec", "iso")),
+    _F("composite", "composite", ("flat", "iso"), glyph="composite", options=("layout",), name="Composite", boards=("motion",)),
+    _F("iso", "items", ("iso",), glyph="iso", name="Iso", boards=("reply",)),
+    _F("program", "stages", glyph="program", name="Program", boards=("reply",)),
+    _F("ask", "string", glyph="ask", name="Ask", boards=("reply",)),
+    _F("controls", "string", glyph="controls", sizes=("xs", "s"), name="Controls", boards=("reply",)),
+    _F("button", "string", glyph="button", sizes=("xs", "s"), name="Button", boards=("reply",)),
+    _F("header", "string", glyph="header", sizes=("xs", "s"), name="Header", boards=("reply",)),
+    _F("rail", "items", glyph="rail", sizes=("s",), options=("width", "slots"), name="Rail", boards=("motion",)),
 ]
 _FORM_BY_ID = {f["id"]: f for f in FORMS}
 # what the boards and older records call a form → the catalogue's id
@@ -186,11 +211,23 @@ FORM_ALIASES = {"hero + trend": "hero", "arc gauges": "gauge", "progress ring": 
                 "card stack": "cards", "temp list": "thermo", "status strip": "pills", "meter panel": "meter-panel",
                 "candlestick": "candles", "tasks": "board", "threshold scale": "threshold", "small multiples": "small-multiples",
                 "iso columns": "bars", "iso tiles": "heat", "iso blocks": "treemap", "iso cubes": "waffle",
-                "iso terraces": "thermo", "iso floors + pipes": "pipes", "galaxy": "graph", "bar": "bars"}
+                "iso terraces": "small-multiples", "iso floors + pipes": "topology", "galaxy": "graph", "bar": "bars",
+                # the WidgetConfig board's own ids for a few of these
+                "battery": "level", "tablei": "table", "temps": "thermo", "checks": "checklist", "memgraph": "minigraph",
+                "logi": "log", "notice": "announcement", "ohlcv": "candles", "sparks": "small-multiples", "trend": "hero"}
+# the boards' NAMES resolve too ("Thermometers" → thermo), so a record may be written the way the gallery labels it
+for _f in FORMS:
+    FORM_ALIASES.setdefault(_f["name"].lower(), _f["id"])
 
 
 def form_ids() -> List[str]:
     return [f["id"] for f in FORMS]
+
+
+def forms_on(board: str) -> List[Dict[str, Any]]:
+    """The forms one gallery board draws (widgets · motion · iso · spec · reply)."""
+    b = str(board or "").strip().lower()
+    return [f for f in FORMS if b in f["boards"]]
 
 
 def form(id_or_name: str) -> Optional[Dict[str, Any]]:
@@ -297,6 +334,11 @@ def normalise(record: Any) -> Dict[str, Any]:
     window = str(read_in.get("window") or r.get("window") or "").strip()[:24]
     size = _size(frame_in.get("size") or r.get("size") or draw_in.get("size"), "m")
     args = read_in.get("args") if isinstance(read_in.get("args"), dict) else (reads.get("args") if isinstance(reads.get("args"), dict) else (r.get("args") if isinstance(r.get("args"), dict) else {}))
+    rng = read_in.get("range") if isinstance(read_in.get("range"), (list, tuple)) else r.get("range")
+    try:
+        rng = [float(rng[0]), float(rng[1])] if isinstance(rng, (list, tuple)) and len(rng) == 2 else None
+    except (TypeError, ValueError):
+        rng = None
     motion = frame_in.get("motion")
     if motion is None:
         motion = bool(draw_in.get("motion")) if legacy else (f["motion"] if f else False)
@@ -324,7 +366,7 @@ def normalise(record: Any) -> Dict[str, Any]:
         "shape": str(r.get("shape") or (f["shape"] if f else "")).strip().lower()[:16],
         "title": title,
         "read": {"refresh": refresh, "window": window,
-                 "map": read_in.get("map") if isinstance(read_in.get("map"), dict) else {}, "args": args},
+                 "map": read_in.get("map") if isinstance(read_in.get("map"), dict) else {}, "args": args, "range": rng},
         "frame": {"size": size, "span": span, "caption": bool(frame_in.get("caption", True)),
                   "legend": bool(frame_in.get("legend", False)), "motion": bool(motion),
                   "deep_dive": bool(dive), "dive": bool(dive),

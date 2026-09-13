@@ -19,6 +19,10 @@
      window.VeraWidget.normalise(record)               → the record in one shape (form · source · title · read · frame · draw)
      window.VeraWidget.formByShape(data)               → the default form a result's shape picks (the Formats board's rule)
      window.VeraWidget.dataFor(data, form)             → the part of a result the form draws
+     window.VeraWidget.applyMap(data, map, shape)      → the source's envelope through the record's read.map: the shape's
+                                                          fields (value · series · rows · nodes …) picked by path, row fields
+                                                          renamed; the record's read.range is the level's lo – hi
+     window.VeraWidget.pick(obj, path)                 → one dotted path (a.b[2].c, history[-1]) out of an envelope
      window.VeraWidget.formFor(record, data)           → the form that can draw THIS data (the chosen one, else the shape's, else kv)
      window.VeraWidget.readable(cap)                   → may a block read this capability on its own?
      window.VeraWidget.key(record)                     → the record's identity: form · source · args
@@ -28,6 +32,9 @@
      window.VeraWidgetConfig.open(opts)                → the WidgetConfig board as a sheet (catalogue · record · live preview);
                                                           Promise<record | null> — every picker and every ⚙ goes through it
      <vera-widget record='{…json…}' size="m|auto" base="">   .record (property) · .refresh() · .read()
+       a COMPOSITE record reads its children's own sources (each child a record; a child whose source is $subject.<path>
+       takes that slice of the composite's one read); frame.motion false holds a moving form still; skin sets the
+       pack (data-style) on the element so the page's own pack rules dress it
        events (bubbling, composed): widget:open · widget:pin · widget:ask · widget:ops · widget:print · widget:mute ·
                                     widget:refresh · widget:resize · widget:rendered
 
@@ -53,7 +60,10 @@
                   node: 'kv', form: 'kv', tank: 'radial', turbine: 'counter', rate: 'counter', candles: 'trace', orbit: 'list', shelf: 'list', stack: 'list', city: 'table', iso: 'table', globe: 'scatter',
                   // the rest of the catalogue (widget_record.py's FORMS): every form id resolves to a renderer, so a pick never
                   // lands as "no drawing yet" — the board's names too (dial, galaxy)
-                  threshold: 'bar', 'small-multiples': 'trace', box: 'bars', radar: 'bars', carousel: 'list', terminal: 'log', controls: 'pills', button: 'string', header: 'string', rail: 'list', dial: 'radial', galaxy: 'context_graph' };
+                  threshold: 'bar', 'small-multiples': 'trace', box: 'bars', radar: 'bars', carousel: 'list', terminal: 'log', controls: 'pills', button: 'string', header: 'string', rail: 'list', dial: 'radial', galaxy: 'context_graph',
+                  // the boards' forms the catalogue names now and this file draws in its own way next: the nearest face until then
+                  sweep: 'log', activity: 'log', notices: 'log', library: 'list', pages: 'list', wiki: 'list', devices: 'list', notebook: 'list', hosts: 'list', containers: 'list', models: 'list', datasets: 'list', sandboxes: 'list',
+                  approvals: 'stepper', frame: 'string', diagram: 'pipes', glance: 'pills', compare: 'bars', tabs: 'matrix', slider: 'thermo', ticker: 'counter', battery: 'bar', tablei: 'table', temps: 'thermo', checks: 'checklist', memgraph: 'pipes', logi: 'log', notice: 'string' };
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
   const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'values', matrix: 'matrix', donut: 'parts',
                   stack: 'parts', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages',
@@ -107,6 +117,44 @@
   const level = (d) => (d && typeof d === 'object' && !Array.isArray(d)) ? { v: num(d.value), lo: num(d.min ?? 0), hi: num(d.max ?? 100), unit: typeof d.unit === 'string' ? d.unit : '', delta: d.delta } : (typeof d === 'number' ? { v: d, lo: 0, hi: 100, unit: '' } : null);
   // nothing to draw: no result, an empty list or object, an empty string
   const isEmpty = (d) => d == null || d === '' || (Array.isArray(d) && !d.length) || (typeof d === 'object' && !Array.isArray(d) && !Object.keys(d).length);
+
+  /* ── read.map: the source's envelope through the record's field mapping (the sheet's "← field" rows) ──────────
+     A source answers in its own shape ({ok, history:[…]}, {nodes:[{hostname, load}]}); the record says which of its
+     fields feed the form: the SHAPE's container fields pick a path out of the envelope (series ← history, rows ←
+     data.nodes, value ← gpu.util, nodes ← topo.nodes), every other key renames a field inside each row (name ←
+     hostname, value ← load). A path that resolves to nothing leaves the data as it was, so a map written for one
+     source never blanks the sample face of another. */
+  const SHAPE_FIELDS = { level: ['value', 'min', 'max', 'unit'], series: ['series'], values: ['values'], events: ['events'], graph: ['nodes', 'links'], items: ['rows'], stages: ['stages'], rate: ['rate', 'unit'],
+    parts: ['parts'], ohlcv: ['bars'], matrix: ['cells'], calendar: ['days'], string: ['text'], points: ['points'], panel: ['panel'], composite: ['children'] };
+  const CONTAINER = { series: 'series', values: 'values', events: 'events', items: 'rows', stages: 'stages', parts: 'parts', ohlcv: 'bars', matrix: 'cells', calendar: 'days', string: 'text', points: 'points', graph: 'nodes' };
+  function pick(x, p) {
+    if (x == null) return undefined; const path = String(p == null ? '' : p).trim(); if (!path || path === '$') return x;
+    const parts = path.replace(/^\$\.?/, '').replace(/\[(-?\d+)\]/g, '.$1').split('.').filter(Boolean); let cur = x;
+    for (const k of parts) { if (cur == null) return undefined; if (Array.isArray(cur) && /^-?\d+$/.test(k)) { const i = +k; cur = cur[i < 0 ? cur.length + i : i]; } else cur = cur[k]; }
+    return cur;
+  }
+  function applyMap(x, map, shape) {
+    if (!map || typeof map !== 'object' || x == null) return x; const keys = Object.keys(map).filter((k) => map[k] != null && map[k] !== ''); if (!keys.length) return x;
+    const sh = String(shape || ''), fields = SHAPE_FIELDS[sh] || [], cont = CONTAINER[sh];
+    if (sh === 'level' || sh === 'rate') { const o = (x && typeof x === 'object' && !Array.isArray(x)) ? Object.assign({}, x) : { value: x }; let hit = false;
+      ['value', 'rate', 'min', 'max', 'unit', 'delta', 'trend'].forEach((k) => { if (map[k] == null) return; const v = pick(x, map[k]); if (v !== undefined) { o[k === 'rate' ? 'value' : k] = v; hit = true; } });
+      return hit ? o : x; }
+    let base = x, hit = false;
+    if (sh === 'graph') { const o = Object.assign({}, (x && typeof x === 'object' && !Array.isArray(x)) ? x : {}); ['nodes', 'links'].forEach((k) => { if (map[k] == null) return; const v = pick(x, map[k]); if (v !== undefined) { o[k === 'links' ? 'links' : 'nodes'] = v; hit = true; } }); if (!hit) return x; base = o; }
+    else if (cont && map[cont] != null) { const v = pick(x, map[cont]); if (v !== undefined) { base = v; hit = true; } }
+    const renames = keys.filter((k) => !fields.includes(k) && k !== cont && !(sh === 'graph' && (k === 'nodes' || k === 'links')));
+    if (renames.length && Array.isArray(base) && base.some((r) => r && typeof r === 'object')) { base = base.map((r) => { if (!r || typeof r !== 'object') return r; const o = Object.assign({}, r); renames.forEach((k) => { const v = pick(r, map[k]); if (v !== undefined) { o[k] = v; hit = true; } }); return o; }); }
+    else if (renames.length && sh === 'graph' && base && Array.isArray(base.nodes)) { base = Object.assign({}, base, { nodes: base.nodes.map((r) => { if (!r || typeof r !== 'object') return r; const o = Object.assign({}, r); renames.forEach((k) => { const v = pick(r, map[k]); if (v !== undefined) { o[k] = v; hit = true; } }); return o; }) }); }
+    return hit ? base : x;
+  }
+  // the record's read.map + read.range on the data a form is handed (the element and the sheet both go through here)
+  function mapped(rec, form, data) {
+    if (!rec || data === undefined) return data; const m = rec.read && rec.read.map, sh = DRAWN[canon(form)];
+    let d = (m && typeof m === 'object' && Object.keys(m).length) ? applyMap(data, m, sh) : data;
+    const rg = rec.read && rec.read.range;
+    if (Array.isArray(rg) && rg.length === 2 && (sh === 'level' || sh === 'rate') && d && typeof d === 'object' && !Array.isArray(d)) d = Object.assign({}, d, { min: num(rg[0]), max: num(rg[1]) });
+    return d;
+  }
 
   /* ── the SAMPLE face: realistic data per shape, so every form has a face before it has read anything (the pickers'
      previews, a record placed without a source, a source that failed) — deterministic, marked "sample" when drawn ── */
@@ -374,10 +422,16 @@
     return '<iframe class="vw-panel" src="' + esc((o && o.base) || '') + '/ui/panel/window?id=' + encodeURIComponent(pid) + '" style="height:' + Math.max(H, 160) + 'px" title="' + esc(pid) + '"></iframe>';
   };
   R.composite = (d, H, o) => {
-    const kids = (o && o.record && Array.isArray(o.record.children)) ? o.record.children : [];
+    const rec = (o && o.record) || {}; const kids = Array.isArray(rec.children) ? rec.children : [];
     if (!kids.length) return EMPTY('a composite needs children');
-    const layout = (o && o.record && o.record.layout) || 'grid';
-    return '<div class="vw-comp vw-comp-' + esc(layout) + '">' + kids.slice(0, 8).map((c) => { const rec = c && typeof c.record === 'object' ? c.record : null; if (!rec) return '<div class="vw-slot"><small>' + esc(String(c && c.record || '')) + '</small></div>'; const n = normalise(rec); return '<div class="vw-slot" data-slot="' + esc(c.slot || '') + '">' + draw(n.form, rec.data, layout === 'rail' ? 's' : 'm', { record: n, draw: n.draw, title: n.title }) + '</div>'; }).join('') + '</div>';
+    const layout = rec.layout || 'grid', kd = (o && o.kids) || {}, chip = layout === 'rail' || layout === 'report';
+    return '<div class="vw-comp vw-comp-' + esc(layout) + '">' + kids.slice(0, 12).map((c, i) => {
+      const r0 = c && typeof c.record === 'object' ? c.record : null; const slot = String((c && c.slot) || String.fromCharCode(97 + i));
+      if (!r0) return '<div class="vw-slot" data-slot="' + esc(slot) + '"><small class="wempty">' + esc(String(c && c.record || '')) + '</small></div>';
+      const n = normalise(r0); const data = r0.data !== undefined ? r0.data : kd[slot]; const kopts = { record: n, draw: n.draw, bare: true };
+      if (chip) return '<div class="vw-slot vw-slot-row" data-slot="' + esc(slot) + '"><span class="k">' + esc(n.title || n.form) + '</span>' + draw(n.form, data, 's', kopts) + '</div>';
+      const fig = figure(n.form, mapped(n, n.form, data === undefined ? sample(n.form) : data));
+      return '<div class="vw-slot" data-slot="' + esc(slot) + '"><span class="vw-slot-h">' + esc(n.title || n.form) + (fig ? '<b>' + fig + '</b>' : '') + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: Math.max(44, Math.round(H * 0.8)), title: n.title }, kopts)) + '</div></div>'; }).join('') + '</div>';
   };
 
   /* ── draw at a size: the composition around the form ─────────────────── */
@@ -386,12 +440,14 @@
     opts = opts || {}; const f0 = String(form || ''); const f = canon(f0); size = SIZES.includes(size) ? size : 'm';
     const H = opts.height || HEIGHT[size] || 70;
     if (!R[f]) return EMPTY('form ' + f0 + ' · no drawing yet');
+    if (opts.map !== false) { const rec0 = opts.record; const m = opts.map || (rec0 && rec0.read && rec0.read.map), rg = opts.range || (rec0 && rec0.read && rec0.read.range);
+      if ((m && typeof m === 'object' && Object.keys(m).length) || (Array.isArray(rg) && rg.length === 2)) data = mapped({ read: { map: opts.map || m, range: opts.range || rg } }, f, data); }
     const d = dataFor(data, f);
     // nothing to draw yet (no result, an empty one, or a placeholder string handed to a form that draws numbers): the
     // form's SAMPLE face, marked — never "no data yet" (opts.sample === false keeps the bare answer for a caller that asks)
     if (f !== 'panel' && f !== 'composite' && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
       if (opts.sample === false) return EMPTY('no data yet');
-      return sampleFace(draw(f0, sample(f), size, Object.assign({}, opts, { sample: false })), size);
+      return sampleFace(draw(f0, sample(f), size, Object.assign({}, opts, { sample: false, map: false })), size);
     }
     if (f === 'composite' && !(opts.record && Array.isArray(opts.record.children) && opts.record.children.length)) {
       if (opts.sample === false) return EMPTY('a composite needs children');
@@ -427,15 +483,17 @@
     const draw = {}; Object.keys(drawIn).forEach((k) => { if (k !== 'form' && k !== 'size' && k !== 'motion') draw[k] = drawIn[k]; });
     const panel = String(o.panel || (o.source && typeof o.source === 'object' && o.source.panel) || (source.startsWith('panel:') ? source.slice(6) : ''));
     return { id: String(o.id || ''), form, source: source.startsWith('panel:') ? '' : source, title: String(o.title || o.name || source || form),
-      read: { refresh: String(o.refresh || read.refresh || reads.every || ''), window: String(o.window || read.window || ''), args },
-      frame: { size: SIZES.includes(size) ? size : 'm' }, draw, panel, actions: Array.isArray(o.actions) ? o.actions : ['dive', 'pin', 'ask'],
+      read: { refresh: String(o.refresh || read.refresh || reads.every || ''), window: String(o.window || read.window || ''), args,
+        map: (read.map && typeof read.map === 'object') ? Object.assign({}, read.map) : {}, range: (Array.isArray(read.range) && read.range.length === 2) ? [num(read.range[0]), num(read.range[1])] : null },
+      frame: { size: SIZES.includes(size) ? size : 'm', caption: frame.caption !== false, legend: !!frame.legend, motion: frame.motion == null ? null : !!frame.motion }, draw, panel,
+      skin: String(o.skin || 'inherit').toLowerCase(), subject: String(o.subject || ''), actions: Array.isArray(o.actions) ? o.actions : ['dive', 'pin', 'ask'],
       children: Array.isArray(o.children) ? o.children : undefined, layout: o.layout, data: o.data };
   }
   const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top)|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert)\b/.test(cap);
   const key = (rec) => { const n = normalise(rec); return n.form + ' ' + (n.source || (n.panel ? 'panel:' + n.panel : '')) + ' ' + JSON.stringify(n.read.args || {}); };
   // the form that can draw THIS data: the chosen one, else what its shape picks, else the key · value list
   function formFor(rec, data) {
-    const n = normalise(rec); const empty = (f) => { try { return /class="wempty"/.test(draw(f, data, 'm', { bare: true })); } catch (_) { return true; } };
+    const n = normalise(rec); data = mapped(n, n.form, data); const empty = (f) => { try { return /class="wempty"/.test(draw(f, data, 'm', { bare: true, map: false })); } catch (_) { return true; } };
     if (data === undefined || !empty(n.form)) return n.form;
     const byShape = formByShape(data); if (byShape && !empty(byShape)) return byShape;
     return 'kv';
@@ -495,7 +553,11 @@ span.vw-sampled{opacity:.85}
 .vw-panel{width:100%;border:none;background:transparent;display:block}
 .vw-l{display:grid;grid-template-columns:1fr 160px;gap:10px;width:100%;align-items:start}.vw-xl{display:grid;grid-template-columns:1fr 180px;gap:10px;width:100%;align-items:start}.vw-xl .vw-xltable{grid-column:1/-1}
 .vw-main{min-width:0}.vw-detail{display:flex;flex-direction:column;gap:3px;font-size:9.5px;border-left:1px solid var(--border,rgba(255,255,255,.09));padding-left:10px}.vw-detail div{display:flex;justify-content:space-between;gap:8px;color:var(--text,#d8dce4)}.vw-detail span{color:var(--dim2,#8a92a0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-detail b{font-family:var(--mono,ui-monospace,monospace);font-weight:400}
-.vw-comp{display:grid;gap:8px;width:100%;grid-template-columns:1fr 1fr}.vw-comp-rows,.vw-comp-report{grid-template-columns:1fr}.vw-comp-rail{grid-template-columns:1fr}.vw-slot{min-width:0}
+.vw-comp{display:grid;gap:8px;width:100%;grid-template-columns:1fr 1fr}.vw-comp-rows,.vw-comp-report{grid-template-columns:1fr}.vw-comp-rail{grid-template-columns:1fr}.vw-comp-2x2{grid-template-columns:1fr 1fr}
+.vw-slot{min-width:0;min-height:0;background:var(--surf2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:7px 9px 8px;display:flex;flex-direction:column;gap:4px;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
+.vw-slot-h{display:flex;align-items:baseline;gap:6px;font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t3,var(--dim,#6b7280));flex-shrink:0;white-space:nowrap;overflow:hidden}.vw-slot-h b{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:11px;color:var(--t1,var(--text,#d8dce4));font-weight:400;text-transform:none;letter-spacing:0}
+.vw-slot-b{flex:1;min-height:0;display:flex;align-items:center}.vw-slot-b > *{width:100%}
+.vw-slot-row{flex-direction:row;align-items:center;gap:8px;background:transparent;box-shadow:none;border-radius:0;padding:3px 0;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}.vw-slot-row .k{width:72px;flex-shrink:0;font-size:9.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:520px){.vw-l,.vw-xl{grid-template-columns:1fr}.vw-detail{border-left:none;padding-left:0}}`;
   function ensureCss(root) {
     const host = root && root.head ? root.head : root;
@@ -513,7 +575,8 @@ span.vw-sampled{opacity:.85}
 .vw-cap{font-size:9px;color:var(--dim2,#8a92a0);font-family:var(--mono,ui-monospace,monospace);display:flex;gap:6px;align-items:center}.vw-cap .sp{flex:1}
 .vw-acts{display:flex;gap:4px;flex-wrap:wrap}.vw-acts button{font-size:8.5px;color:var(--text,#d8dce4);background:var(--bg2,#1a1c20);border:1px solid var(--border,rgba(255,255,255,.09));border-radius:99px;padding:2px 7px;cursor:pointer;font-family:inherit}.vw-acts button:hover{color:var(--acc,#5a9e8f);border-color:var(--acc,#5a9e8f)}
 .vw-read{font-size:9px;padding:2px 8px;border:1px solid var(--border,rgba(255,255,255,.09));border-radius:4px;background:var(--bg2,#1a1c20);color:var(--dim2,#8a92a0);cursor:pointer;font-family:inherit}
-:host([size="xs"]) .vw-root,:host([size="s"]) .vw-root{display:inline-flex}:host([size="xs"]),:host([size="s"]){display:inline-block}`;
+:host([size="xs"]) .vw-root,:host([size="s"]) .vw-root{display:inline-flex}:host([size="xs"]),:host([size="s"]){display:inline-block}
+.vw-root[data-motion="0"] *,.vw-root[data-motion="0"] *::before,.vw-root[data-motion="0"] *::after{animation:none!important;transition:none!important}`;
   const ACTIONS = { dive: 'Deep dive', pin: 'Pin to canvas', ask: 'Ask Vera', ops: 'Open in Ops', print: 'Print card', mute: 'Mute' };
   const REFRESH_FLOOR = 10;
   // one capability call for the element and the surface: prod's envelope is {type:'tool_result', tool_name, content};
@@ -526,10 +589,10 @@ span.vw-sampled{opacity:.85}
   const sizeForWidth = (w) => w <= 120 ? 'xs' : w <= 220 ? 's' : w <= 380 ? 'm' : w <= 620 ? 'l' : 'xl';
 
   class VeraWidgetEl extends HTMLElement {
-    constructor() { super(); this._sh = this.attachShadow({ mode: 'open' }); this._rec = null; this._data = undefined; this._drawn = ''; this._timer = null; this._ro = null; this._auto = 'm'; }
+    constructor() { super(); this._sh = this.attachShadow({ mode: 'open' }); this._rec = null; this._data = undefined; this._drawn = ''; this._timer = null; this._ro = null; this._auto = 'm'; this._kids = {}; }
     static get observedAttributes() { return ['record', 'size', 'base', 'template-id']; }
     get record() { return this._rec; }
-    set record(v) { this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._drawn = ''; if (this.isConnected) this._boot(); }
+    set record(v) { this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._drawn = ''; this._kids = {}; if (this.isConnected) this._boot(); }
     get base() { return this.getAttribute('base') || window._veraBase || ''; }
     get size() { const s = this.getAttribute('size'); return s && s !== 'auto' && SIZES.includes(s) ? s : (s === 'auto' ? this._auto : (this._rec ? this._rec.frame.size : 'm')); }
     connectedCallback() {
@@ -550,11 +613,28 @@ span.vw-sampled{opacity:.85}
     _boot() {
       if (!this._rec) { this._rec = normalise({}); }
       this.render();
-      const cap = this._rec.source;
-      if (this._data === undefined && cap && readable(cap)) this.read();
+      const cap = this._rec.source, comp = this._rec.form === 'composite';
+      if (comp) this._readKids();
+      else if (this._data === undefined && cap && readable(cap)) this.read();
       const every = Math.max(REFRESH_FLOOR, parseRefresh(this._rec.read.refresh));
       if (this._timer) clearInterval(this._timer);
-      if (cap && this._rec.read.refresh && readable(cap)) this._timer = setInterval(() => this.read(), every * 1000);
+      if (comp && this._rec.read.refresh) this._timer = setInterval(() => this._readKids(), every * 1000);
+      else if (cap && this._rec.read.refresh && readable(cap)) this._timer = setInterval(() => this.read(), every * 1000);
+    }
+    // a composite's children read on their own: each child with a readable source is called with its own args; a child
+    // whose source is $subject.<path> takes that slice of the composite's one read (the composite's source, its args);
+    // a child that carries data keeps it. What came back sits per slot and the composite draws it.
+    async _readKids() {
+      const rec = this._rec; if (!rec || rec.form !== 'composite' || !Array.isArray(rec.children)) return;
+      const kids = rec.children.map((c, i) => ({ slot: String((c && c.slot) || String.fromCharCode(97 + i)), r: (c && typeof c.record === 'object') ? normalise(c.record) : null, own: c && typeof c.record === 'object' && c.record.data !== undefined }));
+      let subj; const wants = kids.some((k) => k.r && /^\$subject/.test(k.r.source));
+      if (wants && rec.source && readable(rec.source)) { try { subj = await this._call(rec.source, rec.read.args || {}); } catch (e) { subj = undefined; this._err = String(e && e.message || e).slice(0, 120); } }
+      const out = Object.assign({}, this._kids || {});
+      await Promise.all(kids.map(async (k) => { if (!k.r || k.own) return;
+        if (/^\$subject/.test(k.r.source)) { if (subj !== undefined) { const v = pick(subj, k.r.source.replace(/^\$subject\.?/, '')); if (v !== undefined) out[k.slot] = v; } return; }
+        if (k.r.source && readable(k.r.source)) { try { const v = await this._call(k.r.source, k.r.read.args || {}); if (!(v && typeof v === 'object' && v.error && Object.keys(v).length <= 2)) out[k.slot] = v; } catch (_) {} } }));
+      if (this._rec !== rec) return; this._kids = out; if (subj !== undefined) this._data = subj; this.render();
+      this.dispatchEvent(new CustomEvent('widget:refresh', { bubbles: true, composed: true, detail: { record: rec, data: this._data, kids: out } }));
     }
     async read(forced) {
       const cap = this._rec && this._rec.source; if (!cap) return;
@@ -568,7 +648,7 @@ span.vw-sampled{opacity:.85}
     _act(id) { this.dispatchEvent(new CustomEvent('widget:' + id, { bubbles: true, composed: true, detail: { record: this._rec, data: this._data, key: key(this._rec) } })); }
     render() {
       const rec = this._rec || normalise({}); const size = this.size; const form = this._drawn || rec.form;
-      const opts = { record: rec, draw: rec.draw, title: rec.title, panel: rec.panel, base: this.base };   // L and XL compose around the form
+      const opts = { record: rec, draw: rec.draw, title: rec.title, panel: rec.panel, base: this.base, kids: this._kids || {} };   // L and XL compose around the form
       // nothing read yet — no source, a source that waits for a click, a read in flight, a read that failed — draws the
       // form's SAMPLE face, marked, and says why in the caption; the widget always has a face (never "no data yet")
       const noData = this._data === undefined || isEmpty(this._data);
@@ -579,10 +659,15 @@ span.vw-sampled{opacity:.85}
       else if (this._data === undefined && rec.source) why = 'reading ' + esc(rec.source) + '…';
       const body = draw(form, noData ? undefined : this._data, size, opts);
       const small = size === 'xs' || size === 's';
-      const figureTxt = figure(form, sampled ? sample(form) : this._data);
+      const figureTxt = figure(form, sampled ? sample(form) : mapped(rec, form, this._data));
+      // the record's skin dresses the element with the page's own pack rules (data-style is what themes.css keys on);
+      // motion off holds every moving form still
+      const skin = rec.skin && rec.skin !== 'inherit' ? rec.skin : '';
+      if (skin) this.setAttribute('data-style', skin); else if (this._skinned) this.removeAttribute('data-style');
+      this._skinned = !!skin;
       const cap = (why ? why + ' · ' : '') + (rec.read.window ? 'window ' + esc(rec.read.window) : (rec.source ? esc(rec.source) : (rec.panel ? 'panel ' + esc(rec.panel) : (sampled ? 'sample · no source' : ''))));
       const acts = size === 'xl' ? '<div class="vw-acts">' + rec.actions.filter((a) => ACTIONS[a]).map((a) => '<button data-act="' + a + '">' + ACTIONS[a] + '</button>').join('') + '</div>' : '';
-      this._sh.innerHTML = '<style>' + ELEMENT_CSS + CSS + '</style><div class="vw-root" data-form="' + esc(form) + '" data-size="' + size + '"' + (sampled ? ' data-sample="1"' : '') + '>'
+      this._sh.innerHTML = '<style>' + ELEMENT_CSS + CSS + '</style><div class="vw-root" data-form="' + esc(form) + '" data-size="' + size + '"' + (sampled ? ' data-sample="1"' : '') + (rec.frame.motion === false ? ' data-motion="0"' : '') + (rec.frame.legend ? ' data-legend="1"' : '') + '>'
         + (small ? body : '<div class="vw-hd"><i></i>' + esc(rec.title) + (figureTxt && (form === 'radial' || form === 'counter' || form === 'bar' || form === 'trace') ? '<b>' + figureTxt + '</b>' : '') + '</div><div class="vw-body">' + body + '</div>'
           + '<div class="vw-cap">' + cap + '<span class="sp"></span>' + (this._drawn && this._drawn !== rec.form ? 'drawn as ' + esc(this._drawn) + ' · ' : '') + esc(rec.form) + ' · ' + size + '</div>' + acts)
         + '</div>';
@@ -593,7 +678,7 @@ span.vw-sampled{opacity:.85}
     }
   }
   if (window.customElements && !customElements.get('vera-widget')) customElements.define('vera-widget', VeraWidgetEl);
-  window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, version: 1 };
+  window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, version: 2 };
 
   /* ── THE WIDGET SURFACE — window.VeraWidgetConfig (the WidgetConfig board; the pickers of the Canvas, Harness and
      Dashboard boards) ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -621,6 +706,8 @@ span.vw-sampled{opacity:.85}
 .vwc-hd h3{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
 .vwc-hd .sub{font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0));max-width:760px;line-height:1.45}
 .vwc-hd .x{color:var(--t3,var(--dim,#6b7280));font-size:14px;align-self:center;padding:0 4px}
+.vwc-hd .vwc-seg{align-self:center;flex-wrap:nowrap}.vwc-hd .vwc-seg button{height:22px;padding:0 10px;font-size:10px}
+.vwc-cs .cn{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap}
 .vwc-hd .x:hover{color:var(--t1,var(--text,#d8dce4))}
 .vwc-3{flex:1;min-height:0;display:grid;grid-template-columns:292px 1fr 470px;gap:12px;padding:12px 18px 0}
 @media (max-width:1100px){.vwc-3{grid-template-columns:220px 1fr 320px}}
@@ -634,7 +721,7 @@ span.vw-sampled{opacity:.85}
 .vwc-r{display:grid;grid-template-columns:1fr auto auto auto;gap:4px;align-items:center;min-height:22px;padding:0 6px;border-radius:var(--r-sm,6px);font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0));cursor:pointer}
 .vwc-r:hover{background:var(--s3,var(--bg3,#232732));color:var(--t1,var(--text,#d8dce4))}
 .vwc-r.on{background:var(--pri-bg,var(--ac,var(--acc,#5a9e8f)));color:var(--pri-fg,var(--on-ac,#0b1119))}
-.vwc-r .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vwc-r .n small{color:inherit;opacity:.65;margin-left:5px;font-size:9px}
+.vwc-r .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vwc-r .n small{color:inherit;opacity:.65;margin-left:5px;font-size:9px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace))}
 .vwc-r .bd{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8px;color:var(--t3,var(--dim,#6b7280));background:var(--s3,var(--bg3,#232732));border-radius:var(--r-pill,999px);padding:1px 5px;white-space:nowrap}
 .vwc-r.on .bd{background:rgba(255,255,255,.18);color:inherit}
 .vwc-r .bd.live{color:var(--ac2,var(--acc2,#8fb87a))}.vwc-r .bd.mot{color:var(--ac3,var(--acc3,#d4a96a))}.vwc-r .bd.none{opacity:.5}
@@ -705,8 +792,6 @@ span.vw-sampled{opacity:.85}
   const SHAPE_DESC = { level: 'one number in a range', series: 'numbers over time', values: 'a set of labelled numbers', events: 'things that happened, with a time', graph: 'nodes and the links between them',
     items: 'a list of things with fields', stages: 'an ordered sequence with a position', rate: 'a number per second', parts: 'shares of a whole', ohlcv: 'open, high, low, close, volume', matrix: 'rows by columns',
     calendar: 'a value per day', string: 'text', points: 'pairs of numbers', panel: 'a registered panel id', composite: 'a frame of other widgets' };
-  const SHAPE_FIELDS = { level: ['value', 'min', 'max', 'unit'], series: ['series'], values: ['values'], events: ['events'], graph: ['nodes', 'links'], items: ['rows'], stages: ['stages'], rate: ['rate', 'unit'],
-    parts: ['parts'], ohlcv: ['bars'], matrix: ['cells'], calendar: ['days'], string: ['text'], points: ['points'], panel: ['panel'], composite: ['children'] };
   const SHAPE_ORDER = ['level', 'series', 'values', 'events', 'graph', 'items', 'stages', 'rate', 'parts', 'ohlcv', 'matrix', 'calendar', 'string', 'points', 'panel', 'composite'];
   const SHAPE_NAME = { level: 'Level', series: 'Series', values: 'Named values', events: 'Events', graph: 'Graph', items: 'Items', stages: 'Stages', rate: 'Rate', parts: 'Parts', ohlcv: 'OHLCV', matrix: 'Matrix', calendar: 'Calendar', string: 'String', points: 'XY points', panel: 'Panel', composite: 'Composite' };
   const RANGE_OF = { level: '0 – max · clamp', values: '0 – max · clamp', rate: '0 – auto' };
@@ -736,7 +821,7 @@ span.vw-sampled{opacity:.85}
     const placement = Array.isArray(o.placement) ? o.placement.slice() : (Array.isArray(o.placed) ? o.placed.map((p) => String(p).toLowerCase().replace(/^lhm.*$/, 'rail').replace(/^reply.*$/, 'chat')) : (o.place ? [o.place] : []));
     const draw = Object.assign({}, n.draw); delete draw.proj;
     const rec = { id: n.id || '', form: n.form, shape: String(o.shape || ''), projection: String(o.projection || drawIn.proj || ''), source: n.source || (n.panel ? 'panel:' + n.panel : ''),
-      title: String(o.title || o.name || ''), read: { refresh: n.read.refresh, window: n.read.window, args: Object.assign({}, n.read.args), map: (o.read && o.read.map && typeof o.read.map === 'object') ? Object.assign({}, o.read.map) : {} },
+      title: String(o.title || o.name || ''), read: { refresh: n.read.refresh, window: n.read.window, args: Object.assign({}, n.read.args), map: (o.read && o.read.map && typeof o.read.map === 'object') ? Object.assign({}, o.read.map) : {}, range: n.read.range || null },
       frame: { size: n.frame.size, caption: frame.caption !== false, legend: !!frame.legend, motion: frame.motion == null ? null : !!frame.motion, dive: frame.dive != null ? !!frame.dive : (frame.deep_dive != null ? !!frame.deep_dive : true) },
       draw, skin: String(o.skin || 'inherit'), actions: Array.isArray(o.actions) ? o.actions.slice() : (Array.isArray(o.can) && o.can.length ? o.can.filter((a) => ACTS.some((x) => x[0] === a)) : ['dive', 'pin', 'ask']),
       placement: placement.filter((p) => PLACES.some((x) => x[0] === p)), panel: n.panel || '' };
@@ -749,7 +834,7 @@ span.vw-sampled{opacity:.85}
   }
   // the record as it leaves the sheet: deep_dive and place beside dive and placement (both shapes read it)
   function recOut(rec) {
-    const r = clone(rec); r.frame.deep_dive = r.frame.dive; r.place = r.placement[0] || ''; if (r.frame.motion == null) delete r.frame.motion;
+    const r = clone(rec); r.frame.deep_dive = r.frame.dive; r.place = r.placement[0] || ''; if (r.frame.motion == null) delete r.frame.motion; if (!r.read.range) delete r.read.range;
     if (r.projection) r.draw.proj = r.projection;
     if (Array.isArray(r.children)) r.children = r.children.map((c) => ({ slot: c.slot, record: recOut(c.record) }));
     return r;
@@ -807,15 +892,23 @@ span.vw-sampled{opacity:.85}
     const el = h('div', 'vwc'); el.setAttribute('role', 'dialog'); el.setAttribute('data-w', 'widget config · sheet'); el.setAttribute('data-mode', S.mode);
     const hd = h('div', 'vwc-hd'); hd.appendChild(h('h3', '', S.opts.title || (S.mode === 'edit' ? 'Widget config' : 'Add a widget')));
     hd.appendChild(h('span', 'sub', 'One record makes any widget. Pick a form on the left; the record in the middle is everything that form can be told — what it reads, how it is framed, how it is drawn, what it can do, where it can go; the preview on the right is the widget those values produce.'));
-    hd.appendChild(h('span', 'sp')); const x = h('button', 'x', '✕'); x.type = 'button'; x.title = 'Cancel (Esc)'; x.addEventListener('click', () => cfgClose(null)); hd.appendChild(x); el.appendChild(hd);
+    hd.appendChild(h('span', 'sp')); hd.appendChild(h('span', 'vwc-seg vwc-packs')); const x = h('button', 'x', '✕'); x.type = 'button'; x.title = 'Cancel (Esc)'; x.addEventListener('click', () => cfgClose(null)); hd.appendChild(x); el.appendChild(hd);
     const cols = h('div', 'vwc-3');
-    const cat = h('div', 'vwc-cat'); const cs = h('div', 'vwc-cs'); cs.appendChild(h('span', '', '⌕')); const q = h('input', 'vwc-q'); q.type = 'search'; q.placeholder = 'find a form, a source, a template…'; q.addEventListener('input', () => { S.q = q.value; renderCat(); renderRec(); }); cs.appendChild(q); cat.appendChild(cs); cat.appendChild(h('div', 'vwc-cl')); cols.appendChild(cat);
+    const cat = h('div', 'vwc-cat'); const cs = h('div', 'vwc-cs'); cs.appendChild(h('span', '', '⌕')); const q = h('input', 'vwc-q'); q.type = 'search'; q.placeholder = 'find a form, a source, a template…'; q.addEventListener('input', () => { S.q = q.value; renderCat(); renderRec(); }); cs.appendChild(q); cs.appendChild(h('span', 'cn', '')); cat.appendChild(cs); cat.appendChild(h('div', 'vwc-cl')); cols.appendChild(cat);
     const rc = h('div', 'vwc-rec'); rc.appendChild(h('div', 'vwc-rh')); rc.appendChild(h('div', 'vwc-rb')); cols.appendChild(rc);
     const pv = h('div', 'vwc-pvw'); pv.appendChild(h('div', 'vwc-ph')); pv.appendChild(h('div', 'vwc-stage')); const pj = h('div', 'vwc-pj'); pj.appendChild(h('div', 'vwc-pjh', 'The record')); pj.appendChild(h('pre')); pv.appendChild(pj); cols.appendChild(pv);
     el.appendChild(cols); el.appendChild(h('div', 'vwc-ft'));
     document.body.appendChild(el); S.el = el;
-    renderCat(); renderRec(); renderPvw(); renderFoot();
+    renderCat(); renderRec(); renderPvw(); renderFoot(); renderPacks();
     setTimeout(() => { try { q.focus(); } catch (_) {} }, 0);
+  }
+  // the style packs (the same four the chat's Aa sheet sets): the segment in the header previews one on the sheet and
+  // writes it as the record's skin; "page" is inherit — the widget wears whatever pack the page wears
+  const PACKS = [['inherit', 'Page'], ['standard', 'Standard'], ['newspaper', 'News'], ['terminal', 'Term'], ['pixel', 'Pixel']];
+  function setSkin(p) { if (!S) return; S.rec.skin = p || 'inherit'; if (S.rec.skin === 'inherit') S.el.removeAttribute('data-style'); else S.el.setAttribute('data-style', S.rec.skin); changed(true); }
+  function renderPacks() {
+    if (!S) return; const seg = S.el.querySelector('.vwc-packs'); if (!seg) return; seg.innerHTML = ''; const cur = S.rec.skin || 'inherit';
+    PACKS.forEach((p) => { const b = h('button', p[0] === cur ? 'on' : '', p[1]); b.type = 'button'; b.title = p[0] === 'inherit' ? 'the page\'s own pack' : 'preview the ' + p[1] + ' pack · the record\'s skin'; b.addEventListener('click', () => setSkin(p[0])); seg.appendChild(b); });
   }
   async function loadCatalogue() {
     const st = S;
@@ -854,10 +947,10 @@ span.vw-sampled{opacity:.85}
     // every form, by shape, with its badges
     if (!cat) { list.appendChild(h('div', 'vwc-empty', 'Loading the catalogue…')); }
     else { const shapes = SHAPE_ORDER.filter((s) => !S.opts.shape || S.opts.shape === s);
-      shapes.forEach((sh) => { const fs = cat.forms.filter((f) => f.shape === sh && f.id !== 'context_graph' && matches(f.id + ' ' + (f.glyph || '') + ' ' + sh)); if (!fs.length) return; any = true;
+      shapes.forEach((sh) => { const fs = cat.forms.filter((f) => f.shape === sh && f.id !== 'context_graph' && matches(f.id + ' ' + (f.name || '') + ' ' + (f.glyph || '') + ' ' + sh)); if (!fs.length) return; any = true;
         const g = group(SHAPE_NAME[sh] || sh, SHAPE_DESC[sh] || '');
-        fs.forEach((f) => { const proj = (f.proj || ['flat']); const live = isLive(f.id);
-          row(g, { n: f.id, bd: [[proj.length > 1 ? 'both' : proj[0], 'none'], [f.motion ? 'moves' : 'still', f.motion ? 'mot' : 'none'], [live ? 'live' : 'record', live ? 'live' : 'none']],
+        fs.forEach((f) => { const proj = (f.proj || ['flat']); const live = isLive(f.id); const nm = f.name && f.name !== f.id ? f.name : '';
+          row(g, { n: nm || f.id, sub: nm ? f.id : '', bd: [[proj.length > 1 ? 'both' : proj[0], 'none'], [f.motion ? 'moves' : 'still', f.motion ? 'mot' : 'none'], [live ? 'live' : 'record', live ? 'live' : 'none']],
             on: !S.picked && rec.form === f.id && !(f.id === 'context_graph'), pick: () => { S.picked = null; pickForm(f.id, {}); } }); }); }); }
     // the registry: the panels (the old panel-as-widget entries, kept as a group) and your templates
     if (S.opts.templates) { const tp = S.tpls;
@@ -868,7 +961,9 @@ span.vw-sampled{opacity:.85}
         if (panels.length) { any = true; const g = group('Panels', 'every registered panel, as a widget');
           panels.forEach((t) => row(g, { n: t.name || t.id, sub: t.id.slice(6), bd: [['panel', 'none']], on: S.picked && S.picked.kind === 'tpl' && S.picked.id === t.id, pick: () => pickTemplate(t) })); } } }
     if (!any) list.appendChild(h('div', 'vwc-empty', 'Nothing matches "' + S.q + '".'));
-    const ph = S.el.querySelector('.vwc-cs'); ph.title = cat ? (cat.forms.length + ' forms · ' + cat.forms.filter((f) => isLive(f.id)).length + ' drawn live') : '';
+    // the counts line: "N forms · M with a live build" (the board's search-row text), in the search field and beside it
+    const ph = S.el.querySelector('.vwc-cs'); const live = cat ? cat.forms.filter((f) => isLive(f.id)).length : 0; const line = cat ? (cat.forms.length + ' forms · ' + live + ' with a live build') : '';
+    ph.title = line; const qi = ph.querySelector('.vwc-q'); if (qi) qi.placeholder = cat ? 'find a form · ' + line : 'find a form, a source, a template…'; const cn = ph.querySelector('.cn'); if (cn) cn.textContent = cat ? (cat.forms.length + ' · ' + live + ' live') : '';
   }
   function pickForm(id, o) {
     const rec = S.rec; const was = rec.form; rec.form = id; rec.shape = shapeOf(rec);
@@ -886,7 +981,7 @@ span.vw-sampled{opacity:.85}
   const validateLater = dbg(() => validate(), 350);
   function changed(rerender) {
     if (!S) return; S.armed = false; S.rec.shape = shapeOf(S.rec);
-    if (rerender) renderRec();
+    if (rerender) { renderRec(); renderCat(); renderPacks(); }
     renderPvw(); renderFoot(); validateLater();
     try { if (typeof S.opts.onChange === 'function') S.opts.onChange(recOut(S.rec)); } catch (_) {}
   }
@@ -918,7 +1013,7 @@ span.vw-sampled{opacity:.85}
     row(id, 'Form', val(rec.form));
     row(id, 'Shape', val(shape + ' · derived from the form', true));
     row(id, 'Projection', seg(projs.map((p) => [p, p]), rec.projection || projs[0], (p) => { rec.projection = p; changed(true); }));
-    row(id, 'Skin', seg([['inherit', 'inherit'], ['standard', 'std'], ['newspaper', 'news'], ['terminal', 'term'], ['pixel', 'pixel']], rec.skin || 'inherit', (p) => { rec.skin = p; changed(true); }));
+    row(id, 'Skin', seg(PACKS.map((p) => [p[0], p[0] === 'inherit' ? 'inherit' : p[1].toLowerCase()]), rec.skin || 'inherit', setSkin));
     // Source
     const needsNone = rec.form === 'panel' || rec.form === 'composite';
     const so = sec('Source', 'anything of shape <b>' + esc(shape) + '</b>' + (S.sources ? '' : ' · loading…'));
@@ -936,7 +1031,7 @@ span.vw-sampled{opacity:.85}
       if (rec.source) (SHAPE_FIELDS[shape] || []).forEach((k) => { const r = row(so, k, inp(rec.read.map[k], (v) => { if (v) rec.read.map[k] = v; else delete rec.read.map[k]; changed(false); }, '← ' + k)); r.title = 'the source\'s field that feeds ' + k; });
       row(so, 'Refresh', seg([['live', 'live'], ['5s', '5s'], ['10s', '10s'], ['1m', '1m'], ['event', 'on event'], ['', 'once']], rec.read.refresh || '', (v) => { rec.read.refresh = v; changed(true); }));
       row(so, 'Window', seg([['1h', '1h'], ['24h', '24h'], ['7d', '7d'], ['', 'all']], rec.read.window || '', (v) => { rec.read.window = v; changed(true); }));
-      row(so, 'Range', val(RANGE_OF[shape] || 'auto'));
+      { const rr = row(so, 'Range', inp(rec.read.range ? rec.read.range.join(' – ') : '', (v) => { const m = String(v).match(/(-?\d+(?:\.\d+)?)\s*(?:–|-|,|to|\.\.)\s*(-?\d+(?:\.\d+)?)/); rec.read.range = m ? [Number(m[1]), Number(m[2])] : null; changed(false); }, RANGE_OF[shape] || 'auto')); rr.title = 'lo – hi · the range the form draws against when the source gives none (the record\'s wins)'; }
     } else so.appendChild(h('div', 'vwc-dim', 'a ' + rec.form + ' reads nothing of its own'));
     // Frame
     const fr = sec('Frame');
@@ -979,7 +1074,7 @@ span.vw-sampled{opacity:.85}
     if (S.picked && S.picked.kind === 'menu') { ph.appendChild(h('span', '', 'Preview')); stage.innerHTML = ''; const n = h('div', 'vwc-pvn'); n.appendChild(h('span', 'big', S.picked.item.n)); n.appendChild(document.createTextNode('an element of the ' + (S.picked.item.c || 'other') + ' menu · drawn by that menu when placed')); stage.appendChild(n); pre.textContent = JSON.stringify(S.picked.item.record || {}, null, 1); S.lastPv = ''; return; }
     const size = rec.frame.size; ph.appendChild(h('span', '', 'Preview')); ph.appendChild(h('span', 'dim', SIZE_NAME[size] || size)); ph.appendChild(h('span', 'sp')); const note = h('span', 'dim', ''); ph.appendChild(note);
     const out = pvRecord(rec); const j = JSON.stringify(out, null, 1).replace(/\n\s+(?=[\]}])/g, ' ').replace(/\[\n\s+/g, '[').replace(/,\n\s+(?=[^"{ ])/g, ', '); pre.textContent = j;
-    const keyNow = JSON.stringify([out.form, out.source, out.read, out.frame.size, out.draw, out.projection, out.children, out.panel, out.title]);
+    const keyNow = JSON.stringify([out.form, out.source, out.read, out.frame.size, out.frame.motion, out.frame.legend, out.skin, out.draw, out.projection, out.children, out.panel, out.title]);
     let vw = S.pv;
     if (!vw || !vw.isConnected || keyNow !== S.lastPv) {
       stage.innerHTML = ''; const fr = h('div', 'vwc-pvf ' + size); fr.setAttribute('data-w', 'preview · ' + size);
@@ -1016,10 +1111,10 @@ span.vw-sampled{opacity:.85}
     if (st.problems.length && !st.armed) { st.armed = true; renderFoot(); return; }
     const out = recOut(st.rec); if (!out.title) out.title = titleOf(st.rec);
     // what widget.validate normalised, with the sheet's own keys kept beside it
-    const v = st.validated; const fin = v ? Object.assign({}, v, { title: out.title || v.title, read: Object.assign({}, v.read, { map: out.read.map, args: out.read.args }), frame: Object.assign({}, v.frame, { dive: out.frame.dive, caption: out.frame.caption, legend: out.frame.legend, motion: out.frame.motion != null ? out.frame.motion : v.frame.motion }),
+    const v = st.validated; const fin = v ? Object.assign({}, v, { title: out.title || v.title, read: Object.assign({}, v.read, { map: out.read.map, args: out.read.args, range: out.read.range || null }), skin: out.skin || v.skin, frame: Object.assign({}, v.frame, { dive: out.frame.dive, caption: out.frame.caption, legend: out.frame.legend, motion: out.frame.motion != null ? out.frame.motion : v.frame.motion }),
       draw: Object.assign({}, out.draw, v.draw), actions: out.actions, placement: out.placement, place: out.place, template: out.template, panel: v.panel || out.panel, projection: v.projection || out.projection, children: out.children || v.children }) : out;
     if (fin.data === undefined && out.data !== undefined) fin.data = out.data;
     cfgClose(fin);
   }
-  window.VeraWidgetConfig = { open: cfgOpen, close: () => cfgClose(null), recordFrom: recFrom, recordOut: recOut, entries: CG_ENTRIES.slice(), version: 1 };
+  window.VeraWidgetConfig = { open: cfgOpen, close: () => cfgClose(null), recordFrom: recFrom, recordOut: recOut, entries: CG_ENTRIES.slice(), packs: PACKS.slice(), version: 2 };
 })();

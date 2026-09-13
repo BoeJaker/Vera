@@ -61,6 +61,16 @@ def _load():
     return c, orch
 
 
+def test_widget_forms_filters_by_board_and_carries_the_names():
+    all_ = _run(C.widget_forms())
+    assert all_["ok"] and all_["count"] >= 110 and all_["boards"]["widgets"] >= 60 and all_["boards"]["motion"] >= 25 and all_["boards"]["iso"] >= 20
+    assert all(f.get("name") and isinstance(f.get("boards"), list) for f in all_["forms"])
+    iso = _run(C.widget_forms(board="iso"))
+    assert iso["count"] == all_["boards"]["iso"] and all("iso" in f["boards"] for f in iso["forms"])
+    q = _run(C.widget_forms(q="thermometers"))
+    assert [f["id"] for f in q["forms"]] == ["thermo"]
+
+
 def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
 

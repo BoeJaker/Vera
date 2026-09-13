@@ -27,7 +27,7 @@ def test_the_element_is_served_and_exposes_one_renderer():
     assert '@APP.get("/ui/widgets/widget_element.js", include_in_schema=False)' in UI
     assert 'Path(__file__).parent.parent / "widgets" / "widget_element.js"' in UI
     assert "customElements.define('vera-widget', VeraWidgetEl)" in EL
-    assert "window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, formFor, readable, key, hydrate, css: () => CSS, ensureCss," in EL
+    assert "window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss," in EL
     # the compositions the Sizes board names
     for s in ("'xs'", "'s'", "'m'", "'l'", "'xl'"):
         assert s in EL
