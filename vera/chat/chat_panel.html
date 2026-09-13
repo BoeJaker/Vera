@@ -1493,6 +1493,8 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .gm.on i{opacity:1}
 #rightRail.lhm-host .lhm-quick .gm b{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-weight:400;font-size:8px;color:var(--t3,var(--dim,#6b7280))}
 #rightRail.lhm-host .lhm-quick .gal-host{margin-bottom:8px}
+#rightRail.lhm-host .lhm-quick .gal-srch{display:flex;margin:4px 0 4px}#rightRail.lhm-host .lhm-quick .gal-srch input{flex:1;min-width:0;height:24px;border:1px solid var(--border);border-radius:var(--r-sm,6px);background:var(--bg0);color:var(--text);font:inherit;font-size:10.5px;padding:0 8px}
+#rightRail.lhm-host .lhm-quick .gal-host .cg-mini{max-width:100%}
 #rightRail.lhm-host .lhm-quick .wsearch{height:28px;display:flex;align-items:center;padding:0 10px;border-radius:var(--r-sm,6px);background:var(--s1,var(--bg1,#151719));box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));gap:6px;color:var(--t3,var(--dim,#6b7280));font-size:10.5px}
 #rightRail.lhm-host .lhm-quick .wsearch input{flex:1;min-width:0;background:transparent;border:none;padding:0;font-size:10.5px;color:var(--t1,var(--text,#d8dce4))}
 #rightRail.lhm-host .lhm-quick .tm-r{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;padding:6px 8px;margin:0 -8px;border-radius:var(--r-sm,6px);font-size:11px;color:var(--t1,var(--text,#d8dce4));cursor:pointer}
@@ -6157,6 +6159,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   // the graph column: the design's context graph — the Context menu grown into the full graph, beside the transcript.
   // The chat's own records (CTX_NODES / CTX_EDGES), the live loop's events and the goals feed <vera-context-graph>
   // (the chat's own element; nothing else's graph); the records in the focused turn's context run to the message.
+  let _ctxColFrameSig='';
   let _ctxCol=null, _ctxColTimer=null, _ctxColSig='', _ctxColPlanT=0, _ctxColMemT=0, _ctxColMemSig='', _ctxColDagSig='', _ctxTypingT=0, _ctxTypingTimer=null;
   // the run in the lane: _ctxRunSid is the loop session shown ('' = none yet — this session's last run is replayed);
   // a pick from the column's runs picker sets _ctxRunPicked; a tail (a picked run still running) is an AbortController
@@ -6168,7 +6171,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(!_ctxCol||!host.contains(_ctxCol)){
       if(!(window.customElements&&window.customElements.get('vera-context-graph'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The context graph is loading…</div>'; if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800); return; }
       host.innerHTML=''; _ctxCol=document.createElement('vera-context-graph'); host.appendChild(_ctxCol);
-      _ctxColSig=''; _ctxColMemSig=''; _ctxColDagSig='';   // a fresh element knows nothing yet: every sync feeds it again (the graph was empty after Explode closed)
+      _ctxColSig=''; _ctxColMemSig=''; _ctxColDagSig=''; _ctxColFrameSig='';   // a fresh element knows nothing yet: every sync feeds it again (the graph was empty after Explode closed)
       // a fresh column shows this session's run again (replayed from its persisted events) and refreshes the runs list
       _ctxRunSid=''; _ctxRunFor=''; _ctxRunPicked=false; _ctxRunsT=0; _ctxEstT=0;
       _ctxCol.addEventListener('vera:ctx:run', ev=>{ const sid=(ev.detail||{}).session_id||SID||''; _ctxRunPicked=sid!==(SID||''); _ctxColShowRun(sid); });
@@ -6202,6 +6205,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const sig=nodesAll.length+':'+edgesAll.length+':'+incl.length+':'+(nodesAll[0]&&nodesAll[0].id)+':'+mid+':'+_ctxQuery;
     if(sig!==_ctxColSig){ _ctxColSig=sig; const reads={}; if(mid) reads[mid]=incl;
       _ctxCol.setContext(nodesAll, edgesAll.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''})), {focus:incl, reads, color:srcCol, turn:mid?'turn '+mid:''}); }
+    try{ const fsig=CTX_FRAMES.length+':'+(CTX_FRAMES.length?CTX_FRAMES[CTX_FRAMES.length-1].id:''); if(fsig!==_ctxColFrameSig&&typeof _ctxCol.setFrames==='function'){ _ctxColFrameSig=fsig; _ctxCol.setFrames(CTX_FRAMES, {active:null}); } }catch(_){}   // the turns' frames, scrubbed in the element without touching the live set
     // the rail's other graphs, in the same column: the session's memory graph (loaded once per session, the rail's
     // own loader) and the run's DAG — fed when they changed
     if(SID&&!_memAllNodes.length&&Date.now()-_ctxColMemT>30000){ _ctxColMemT=Date.now(); try{ memGraphLoad(); }catch(_){} }
@@ -13135,6 +13139,7 @@ function _embedMount(){
      the chat's own state. The old pane of every menu is one press away ("Full ▸" in the header) in the same panel. */
   const _CTX_FAM_LABEL={agent:'Agent + system',skill:'Skills',ontology:'Ontologies',memory:'Memory recalls',vector:'Vector matches',graph:'Graph (Neo4j)',fabric:'Fabric records',cap:'Capabilities',web:'Web',news:'News',run:'Runs',related_qa:'Related Q&A',worldview:'Worldview',entities:'Entities',urls:'URLs',both:'Vector + graph'};
   let _qGalView='galaxy', _qGalAll=false, _qGalOff={}, _qSrcOn='', _qSessQ='', _qPanelQ='';
+  let _qGalSel='', _qGalList=false, _qGalQ='';   // the mini graph's detail: the record picked, the list drawer, its search
   const _kfmt=n=>n>=1000?(n/1000).toFixed(1)+'k':String(n);
   // every family of the assembled context: its records, its tokens (≈ chars / 4), its colour, its share
   function _ctxShares(){
@@ -13159,12 +13164,21 @@ function _embedMount(){
       const bar=el.querySelector('.ctx-grown-bar'); if(bar) bar.innerHTML='<span class="comp" title="'+esc(_lhmTxt('ctxMeterLabel'))+'">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span>';
       _graphColumnMount(); return; }
     const views=[['galaxy','galaxy'],['iso','iso'],['flow','flow'],['timeline','time']];
-    const sig=S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'');
+    const sig=S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'')+'#'+_qGalSel+(_qGalList?'L':'')+_qGalQ+':'+_memAllNodes.length+':'+_lastDagNodes.length+':'+S.nodes.filter(n=>n.included===false).length;
     if(el.dataset.sig===sig) return; el.dataset.sig=sig;
     const data={nodes:S.nodes.map(n=>({id:n.id,label:n.label,family:String(n.source||'context').toLowerCase(),score:n.score,included:n.included})), rels:CTX_EDGES.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''}))};
-    const gal=window.VeraWidget?VeraWidget.draw('context_graph',data,'m',{height:196,bare:true,view:_qGalView,allEdges:_qGalAll,off:_qGalOff,color:srcCol,hub:'aide',hubMeta:_kfmt(S.total)}):'';
+    // the mini graph is the element's: the same state the grown graph holds, in miniature — records with their text, the
+    // memory ring, the loop and the DAG, the families dimmed, ALL EDGES honoured, the picked record's card, the list drawer
+    let gal='', miniH=_qGalList?300:196;
+    if(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'){
+      try{ VeraContextGraph.ensureCss();
+        const st=VeraContextGraph.stateFrom({ nodes:S.nodes, rels:data.rels, memory:_memAllNodes, memEdges:_memAllEdges, dag:_lastDagNodes, dagEdges:_lastDagEdges, view:(_qGalView==='timeline'?'time':_qGalView), allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k]), color:srcCol, sel:_qGalSel||null, list:_qGalList, q:_qGalQ, turn:_grFocusMid?'turn '+_grFocusMid:'' });
+        gal=VeraContextGraph.miniHtml(st, 262, miniH); }catch(e){ gal=''; }
+    }
+    if(!gal) gal=window.VeraWidget?VeraWidget.draw('context_graph',data,'m',{height:196,bare:true,view:_qGalView,allEdges:_qGalAll,off:_qGalOff,color:srcCol,hub:'aide',hubMeta:_kfmt(S.total)}):'';
     el.innerHTML='<div class="wid" data-w="context galaxy · graph" data-tpl="lhm:ctx-galaxy">'
-      +'<div class="gal-ctl"><span class="vseg">'+views.map(v=>'<button class="'+(_qGalView===v[0]?'on':'')+'" data-view="'+v[0]+'" title="'+v[0]+' view">'+v[1]+'</button>').join('')+'</span><button class="gal-all'+(_qGalAll?' on':'')+'" title="Every record\'s edge to the hub">All edges</button></div>'
+      +'<div class="gal-ctl"><span class="vseg">'+views.map(v=>'<button class="'+(_qGalView===v[0]?'on':'')+'" data-view="'+v[0]+'" title="'+v[0]+' view">'+v[1]+'</button>').join('')+'</span><button class="gal-all'+(_qGalAll?' on':'')+'" title="Every record\'s edge to the hub">All edges</button><button class="gal-all gal-list'+(_qGalList?' on':'')+'" title="The records as a list — search, include, exclude">List</button></div>'
+      +(_qGalList?'<div class="gal-srch"><input type="search" placeholder="find a record…" value="'+esc(_qGalQ)+'"></div>':'')
       +'<div class="gal-mix">'+S.rows.map(r=>'<span class="gm'+(_qGalOff[r.f]?'':' on')+'" data-fam="'+esc(r.f)+'" style="--c:'+r.col+'" title="'+esc(r.label)+' — press to dim or light this family"><i></i>'+esc(r.label.replace(' + system','').replace(' (Neo4j)',''))+'<b>'+_kfmt(r.tok)+'</b></span>').join('')+'</div>'
       +'<div class="gal-host">'+gal+'</div></div>'
       +'<div class="wid" data-w="budget bar · meter" data-tpl="lhm:ctx-budget" title="'+esc(_lhmTxt('ctxMeterLabel'))+'"><span class="comp">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span></div>'
@@ -13173,6 +13187,13 @@ function _embedMount(){
         :'<div class="lhm-empty">Nothing assembled yet — the context is gathered as you type, and shown here by source.</div>')+'</div>';
     el.querySelectorAll('.vseg button').forEach(b=>b.addEventListener('click',()=>{ _qGalView=b.dataset.view; VeraLHM.render(); }));
     el.querySelector('.gal-all').addEventListener('click',()=>{ _qGalAll=!_qGalAll; VeraLHM.render(); });
+    const lb=el.querySelector('.gal-list'); if(lb) lb.addEventListener('click',()=>{ _qGalList=!_qGalList; if(!_qGalList) _qGalQ=''; VeraLHM.render(); });
+    const sq=el.querySelector('.gal-srch input'); if(sq){ sq.addEventListener('input',()=>{ _qGalQ=sq.value; VeraLHM.render(); setTimeout(()=>{ try{ const i=el.querySelector('.gal-srch input'); if(i){ i.focus(); i.setSelectionRange(i.value.length,i.value.length); } }catch(_){} },0); }); }
+    // the element's mini: a record picked opens its card; the card's include/exclude toggles the record; close puts the card away
+    el.querySelectorAll('.cg-mini .cg-node[data-id], .cg-mini .cg-row[data-id]').forEach(d=>d.addEventListener('click',ev=>{ if(ev.target.closest&&ev.target.closest('[data-a]')) return; _qGalSel=(_qGalSel===d.dataset.id?'':d.dataset.id); VeraLHM.render(); }));
+    el.querySelectorAll('.cg-mini [data-a="toggle"][data-id]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); const n=CTX_NODES.find(x=>x.id===b.dataset.id); if(n){ n.included=n.included===false; try{ renderCtxList(); }catch(_){} _ctxColSig=''; try{ _ctxColumnSync(_grFocusMid); }catch(_){} } VeraLHM.render(); }));
+    el.querySelectorAll('.cg-mini [data-a="close"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); _qGalSel=''; VeraLHM.render(); }));
+    el.querySelectorAll('.cg-mini [data-a="open"][data-id]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ nodeClick(b.dataset.id); }catch(_){} }));
     el.querySelectorAll('.gm').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; VeraLHM.render(); }));
     el.querySelector('.grp-act').addEventListener('click',()=>{ try{ _ctxFcRefresh(); }catch(_){} });
     el.querySelectorAll('.lrow').forEach(r=>r.addEventListener('click',()=>{ _qSrcOn=(_qSrcOn===r.dataset.fam?'':r.dataset.fam); VeraLHM.render(); }));
