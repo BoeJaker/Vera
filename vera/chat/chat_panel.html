@@ -13104,7 +13104,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     // Merge the localStorage name cache so locally-named sessions show their
     // name even if the server-side name record isn't in the search window yet.
     const _nc=_cachedSessionNames();
-    SESSIONS.forEach(s=>{ if(!s.name&&_nc[s.session_id]) s.name=_nc[s.session_id]; s.displayName=s.name||s.session_id.slice(-12); });
+    SESSIONS.forEach(s=>{ if(!s.name&&_nc[s.session_id]) s.name=_nc[s.session_id]; s.displayName=s.name||(s.preview?String(s.preview).replace(/\s+/g,' ').trim().slice(0,64):'')||('session · '+s.session_id.slice(-8)); });   // an unnamed session is its first question (the board), never a raw id
     renderHistList(SESSIONS);
   }
 

@@ -25,6 +25,7 @@ def test_the_agent_button_reads_model_and_node():
 def test_sessions_are_grouped_by_day_and_titled_by_their_first_question():
     assert "return t===today?'Today':t===yest?'Yesterday':(t||'Earlier'); };" in HTML
     assert "const titleOf=s=>String(s.displayName||s.name||(s.preview?String(s.preview)" in HTML, "a session is its first question until it is named"
+    assert "s.displayName=s.name||(s.preview?String(s.preview).replace(/\\s+/g,' ').trim().slice(0,64):'')||('session · '+s.session_id.slice(-8)); });" in HTML, "the display name is the first question, never the id tail"
     assert "(i===0||day(rows[i-1])!==day(s)?'<div class=\"grp\">'+esc(day(s))" in HTML, "a group head per day"
 
 
