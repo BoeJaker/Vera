@@ -2350,6 +2350,7 @@ async def cap_disks(cluster_id: str = "", node: str = "", trace_id=None) -> Dict
                 "latest result per guest, anything running now, and plain-language "
                 "warnings (no enabled job, a job writing to the hypervisor's root "
                 "disk, storage or a pool over 80%, a timer missing). Read-only. "
+                "backup.status joins this with PBS, every guest and the Vera host. "
                 "Inputs: cluster_id (str!), node (str!). Output: {jobs, storages, "
                 "pools, datasets, snapshots, timers, guard, replication, runs, "
                 "running, warnings} or {error}.",
