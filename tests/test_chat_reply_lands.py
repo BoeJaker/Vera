@@ -25,3 +25,11 @@ def test_the_runs_end_at_the_message_surface_and_a_reply_lands_on_the_canvas():
     assert "_capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:'s', anchor:{mid, turn:mid}})" in HTML
     assert "try{ _cvLandReply(_cvRelMid).then(()=>{ try{ _cvRelevance(_cvRelMid," in HTML, "land, then the relevance engine"
     assert "d:'canvas · '+(r.resolved==='shown'?'already there':'lifted out of the reply')" in HTML, "the exploded scene's landed layer sees it"
+
+
+def test_the_runs_end_on_the_block_or_the_station_and_only_real_anchors_draw():
+    # the target is measured once, in the one screen space: the block (its content edge), or exploded the station
+    assert "function _ctxRunsTarget(){" in HTML and "return {kind:'message', mid:w.dataset.mid||'', left:M.left, right:M.right, content:body?body.getBoundingClientRect().left:M.left" in HTML
+    assert "const T=_ctxRunsTarget(); if(!T||!rn){ svg.innerHTML=''; svg.removeAttribute('data-lit'); return; }" in HTML
+    # a reply's items and a loop's item carry the turn; the canvas router draws from real anchors only
+    assert "const items=its.filter(it=>it.mid&&!it.out&&it.state==='now'" in HTML and "wanted.forEach(it=>{ const M=_cvRunsSource(it.mid, msgs); if(M) routes.push({it, M}); });" in HTML

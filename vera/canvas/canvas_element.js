@@ -393,15 +393,16 @@
   .vc-rec b{font-size:11px}`;
 
   /* ── THE PLACER (Notes/38 §3.5), pure: items → a column and a top for each. An item sits level with the turn using it
-     now (the turn's measured top in the transcript's scroll frame); items whose turn is not in view pack after; auto
-     items never overlap — a column's next item starts at max(its turn's top, the column's bottom + gap); the column
-     chosen is the one that lets it sit highest. ── */
+     now (the turn's measured top in the transcript's scroll frame) — or, for an item added by hand, the turn it was
+     added beside (its level, never a relation); items whose turn is not in view pack after; auto items never overlap —
+     a column's next item starts at max(its turn's top, the column's bottom + gap); the column chosen is the one that
+     lets it sit highest. ── */
   function place(items, turns, o) {
     o = o || {}; const cols = Math.max(1, Math.min(4, o.columns || 1)), gap = o.gap == null ? 10 : o.gap, cw = o.colWidth || 300, pad = o.pad || 0;
-    const T = turns || {}; const known = (it) => !!(it.mid && T[it.mid] && typeof T[it.mid].top === 'number');
-    const order = (items || []).map((it, i) => ({ it, i })).sort((a, b) => { const ka = known(a.it), kb = known(b.it); if (ka && kb) return (T[a.it.mid].top - T[b.it.mid].top) || (a.i - b.i); if (ka) return -1; if (kb) return 1; return a.i - b.i; });
+    const T = turns || {}; const levelOf = (it) => it.mid || it.beside || ''; const known = (it) => { const m = levelOf(it); return !!(m && T[m] && typeof T[m].top === 'number'); };
+    const order = (items || []).map((it, i) => ({ it, i })).sort((a, b) => { const ka = known(a.it), kb = known(b.it); if (ka && kb) return (T[levelOf(a.it)].top - T[levelOf(b.it)].top) || (a.i - b.i); if (ka) return -1; if (kb) return 1; return a.i - b.i; });
     const bottoms = new Array(cols).fill(pad), used = new Array(cols).fill(false); const out = []; let maxB = pad;
-    order.forEach(({ it }) => { const ideal = known(it) ? Math.max(pad, T[it.mid].top) : null; let best = 0, bestY = Infinity;
+    order.forEach(({ it }) => { const ideal = known(it) ? Math.max(pad, T[levelOf(it)].top) : null; let best = 0, bestY = Infinity;
       for (let c = 0; c < cols; c++) { const floor = used[c] ? bottoms[c] + gap : bottoms[c]; const y = ideal == null ? floor : Math.max(ideal, floor); if (y < bestY) { bestY = y; best = c; } }
       const h = Math.max(1, it.h || 1);
       out.push({ key: it.key, mid: it.mid || '', col: best, x: best * (cw + gap), y: bestY, h, level: ideal != null && bestY === ideal });
@@ -580,7 +581,7 @@
       const st = this.shadowRoot.getElementById('stage'); if (!st) return;
       const cols = Math.max(1, Math.min(4, parseInt(this.getAttribute('columns') || '1', 10) || 1)); const W = st.clientWidth || 300, gap = 10; const w = Math.floor((W - gap * (cols - 1)) / cols);
       const cards = [...st.querySelectorAll('.it')]; cards.forEach((c) => { c.style.width = w + 'px'; });
-      const items = cards.map((c) => ({ key: c.dataset.key, h: c.offsetHeight, mid: c.dataset.mid || '' }));
+      const items = cards.map((c) => ({ key: c.dataset.key, h: c.offsetHeight, mid: c.dataset.mid || '', beside: c.dataset.beside || '' }));
       const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);   // the sticky heads overlay the stage's top: nothing is placed under them
       const P = place(items, this._turns || {}, { columns: cols, gap, colWidth: w, pad });
@@ -713,6 +714,8 @@
         const title = c.title || c.name || c.goal || c.filename || c.caption || (c.widget) || String(b.key).split(':').slice(1).join(':') || b.type;
         const size = ITEM_SIZES.includes(b.size) ? b.size : 'm';
         const a = b.anchor && typeof b.anchor === 'object' ? b.anchor : null; const mid = a ? String(a.turn || a.mid || '') : '';
+        // an item added by hand: yours, level with the turn it was added beside, related to no turn (no run, never aged)
+        const beside = a && !mid ? String(a.beside || '') : ''; const yours = !!(a && a.origin === 'you' && !mid);
         const open = this._open.has(key) || editing;
         const aged = isAged(mid, focusMid, order) && !(F && F.has(key)) && b.state !== 'pinned';
         const hovered = this._hovKey === key && (tier === 'hover' || aged);
@@ -721,9 +724,9 @@
         const px = this._px[key];
         const editable = EDITABLE.includes(b.type);
         const cls = 'it ' + esc(b.state || 'now') + fcls + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '');
-        return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${mid ? ' data-mid="' + esc(mid) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}>
+        return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${mid ? ' data-mid="' + esc(mid) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}>
           <div class="it-hd"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
-            ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : ''}<span class="k">${esc(b.key)}</span>
+            ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(b.key)}</span>
             <span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>
           <div class="it-bd">${inner}</div>
           <div class="it-ft" data-w="canvas.item.rail"><span class="it-a">
@@ -877,7 +880,8 @@
         if (k.pick) return this._panelPick(btn);
         const nk = k.kind + ':' + k.n + '-' + Date.now().toString(36);
         const args = { kind: k.kind, key: nk, content: JSON.parse(JSON.stringify(k.content)), at: 'now', size: 'm' };
-        if (focusMid) args.anchor = { turn: focusMid, mid: focusMid };
+        // yours, not the turn's: it sits beside the turn in view and relates to no turn — no run is drawn to it
+        args.anchor = { origin: 'you', beside: focusMid };
         this._open.add(nk); if (k.edit) { this._editKey = nk; this._editFocused = false; }
         try { this.dispatchEvent(new CustomEvent('vera:canvas:add', { bubbles: true, detail: { key: nk, kind: k.kind, add: k.n } })); } catch (e) {}
         return this.call('canvas.add', args);
@@ -970,7 +974,7 @@
     }
     _panelAdd(id, label) {
       id = String(id || '').trim(); if (!id) return; const key = 'panel:' + id; const focusMid = this.dataset.focusMid || '';
-      const args = { kind: 'panel', key, content: { panel: id, title: label || id }, at: 'now', size: 'l' }; if (focusMid) args.anchor = { turn: focusMid, mid: focusMid };
+      const args = { kind: 'panel', key, content: { panel: id, title: label || id }, at: 'now', size: 'l' }; args.anchor = { origin: 'you', beside: focusMid };   // picked by hand: beside the turn in view, related to no turn
       this._open.add(key);
       // the item first, then the host is asked for the panel's page (its registered page, alias or route) — the
       // update it answers with needs the item to exist
