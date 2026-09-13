@@ -156,10 +156,11 @@ FORMS: List[Dict[str, Any]] = [
     _F("orbit", "items", glyph="orbit", motion=True, options=("rings", "size"), name="Orbit", boards=("motion",)),
     _F("context_graph", "graph", glyph="context_graph", options=("lanes", "labels")),
     # ── items ──
-    _F("table", "items", ("flat", "iso"), glyph="table", options=("columns", "sort", "limit", "lit"), name="Table", boards=("widgets", "motion")),
+    _F("table", "items", ("flat", "iso"), glyph="table", options=("columns", "sort", "limit", "lit", "search"), name="Table", boards=("widgets", "motion")),
     _F("list", "items", ("flat", "iso"), glyph="list", options=("limit",), name="List", boards=("reply", "iso")),
-    _F("rows", "items", glyph="rows", name="Rows", boards=("reply",)),
-    _F("cards", "items", glyph="cards", name="Cards", boards=("reply",)),
+    _F("rows", "items", glyph="rows", options=("columns", "sort", "limit", "lit"), name="Rows", boards=("reply", "spec")),           # a table's rows without its header: a composite's child
+    _F("cards", "items", glyph="cards", options=("columns", "limit"), name="Cards", boards=("reply", "spec")),
+    _F("temps", "values", glyph="temps", options=("unit", "max", "throttle", "sort", "limit"), name="Temp list", boards=("spec",)),
     _F("files", "items", ("flat", "iso"), glyph="files", options=("sort", "show"), name="Files", boards=("widgets", "motion", "iso")),
     _F("tree", "items", glyph="tree", name="Tree", boards=("reply",)),
     _F("people", "items", ("flat", "iso"), glyph="people", options=("presence",), name="People", boards=("widgets", "iso")),
@@ -215,7 +216,7 @@ FORM_ALIASES = {"hero + trend": "hero", "arc gauges": "gauge", "progress ring": 
                 "iso columns": "bars", "iso tiles": "heat", "iso blocks": "treemap", "iso cubes": "waffle",
                 "iso terraces": "small-multiples", "iso floors + pipes": "topology", "galaxy": "graph", "bar": "bars",
                 # the WidgetConfig board's own ids for a few of these
-                "battery": "level", "tablei": "table", "temps": "thermo", "checks": "checklist", "memgraph": "minigraph",
+                "battery": "level", "tablei": "table", "checks": "checklist", "memgraph": "minigraph",
                 "logi": "log", "notice": "announcement", "ohlcv": "candles", "sparks": "small-multiples", "trend": "hero"}
 # the boards' NAMES resolve too ("Thermometers" → thermo), so a record may be written the way the gallery labels it
 for _f in FORMS:

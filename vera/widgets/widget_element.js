@@ -59,8 +59,8 @@
   // board's captions too (the motion and iso forms land in the next slices)
   // a form id the catalogue names but this file does not draw in its own right resolves to the nearest face; the board's
   // captions and the WidgetConfig board's own ids too
-  const ALIAS = { sparkline: 'trace', line: 'trace', chart: 'trace', parts: 'donut', rows: 'list', cards: 'list', tree: 'files', stages: 'stepper', program: 'stepper', ask: 'string', form: 'kv', rate: 'counter',
-                  iso: 'table', globe: 'scatter', controls: 'pills', button: 'string', header: 'string', galaxy: 'context_graph', battery: 'level', tablei: 'table', temps: 'thermo', checks: 'checklist',
+  const ALIAS = { sparkline: 'trace', line: 'trace', chart: 'trace', parts: 'donut', tree: 'files', stages: 'stepper', program: 'stepper', ask: 'string', form: 'kv', rate: 'counter',
+                  iso: 'table', globe: 'scatter', controls: 'pills', button: 'string', header: 'string', galaxy: 'context_graph', battery: 'level', tablei: 'table', checks: 'checklist',
                   memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples' };
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
   const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'matrix', matrix: 'matrix', donut: 'parts',
@@ -75,7 +75,9 @@
                   // the WidgetsMotion and WidgetsIso boards' forms (the iso ones draw on VeraISO)
                   dial: 'level', tank: 'level', turbine: 'rate', ticker: 'rate', scope: 'series', pulse: 'events', comet: 'events', sweep: 'events', activity: 'events', notices: 'events', 'split-flap': 'string', frame: 'string',
                   orbit: 'items', shelf: 'items', racks: 'items', stacks: 'parts', 'meter-panel': 'values', conveyor: 'stages', approvals: 'stages', city: 'graph', topology: 'graph', diagram: 'graph',
-                  library: 'items', pages: 'items', wiki: 'items', devices: 'items', notebook: 'items', hosts: 'items', containers: 'items', models: 'items', datasets: 'items', sandboxes: 'items' };
+                  library: 'items', pages: 'items', wiki: 'items', devices: 'items', notebook: 'items', hosts: 'items', containers: 'items', models: 'items', datasets: 'items', sandboxes: 'items',
+                  // the table family (defect 50)
+                  rows: 'items', cards: 'items', temps: 'values' };
   const canon = (form) => { const f = String(form || '').toLowerCase(); return DRAWN[f] ? f : (ALIAS[f] || f); };
 
   /* ── the data a form draws ────────────────────────────────────────────── */
@@ -290,6 +292,8 @@
     frame: () => ({ kind: 'terminal', title: 'vera@ct126 — tail -f vera_start.log', lines: [['vera@ct126:~$ tail -f vera_start.log', 'p'], ['14:38:02  fabric: corpus 4 412 docs', ''], ['14:38:05  fabric: digest unchanged', ''], ['14:38:05  fabric: 0 re-embeds', 'ac'], ['14:38:09  loop v7 · step 4 · code.author', 'dim'], ['▌', 'cur']] }),
     topology: () => ({ nodes: [['fabric', 0, 1, 1.5], ['neo4j', 0, 3, .8], ['redis', 0, 5, 2.2], ['router', 1, 2, 1.5], ['gate', 1, 4, 1.5], ['chat', 2, 3, 1.5], ['canvas', 2, 1, 2.4]].map((n) => ({ id: n[0], floor: n[1], u: n[2], v: n[3] })), links: [['fabric', 'router'], ['neo4j', 'router'], ['redis', 'gate'], ['router', 'chat'], ['gate', 'chat'], ['chat', 'canvas']].map((e) => ({ from: e[0], to: e[1] })), floors: ['fabric', 'routing', 'chat'] }),
     racks: () => SAMPLE.items(),
+    rows: () => SAMPLE.items(), cards: () => SAMPLE.items(),
+    temps: () => ({ 'gpu V100': 71, 'cpu pkg': 54, nvme0: 42, nvme1: 39, chipset: 48, ambient: 33 }),
   };
   // sample(formOrShape): the sample a form draws — a shape name gives the shape's, a form id its own (or its shape's)
   function sample(x) {
@@ -311,7 +315,7 @@
     if (form === 'string') return esc(String(typeof d === 'string' ? d : (d.text ?? d.value ?? d.title ?? '')).slice(0, 24));
     if (DRAWN[form] === 'ohlcv') { const r = rows(d); return r.length ? fmt(num(r[r.length - 1].close ?? r[r.length - 1].c)) : ''; }
     if (DRAWN[form] === 'matrix' || DRAWN[form] === 'calendar') { const r = rows(d); const n = r.length || ((d && typeof d === 'object') ? Object.keys(d).length : 0); return n ? n + ' rows' : ''; }
-    const r = rows(d); return r.length ? r.length + ' rows' : (typeof d === 'string' ? esc(d.slice(0, 24)) : '');
+    const r = rows(d); return r.length ? r.length + (r.length === 1 ? ' row' : ' rows') : (typeof d === 'string' ? esc(d.slice(0, 24)) : '');
   }
 
   /* ── the renderers, at M (the gallery's unit); L and XL compose around them ─ */
@@ -590,16 +594,54 @@
     const ext = (p) => { const m = String(p).match(/\.([a-z0-9]{1,4})$/i); return m ? m[1].toLowerCase() : ''; }; const EC = { py: DV(0), js: DV(3), html: DV(4), md: DV(2), csv: DV(1), json: DV(6), pdf: B.ac4, png: DV(5), jpg: DV(5), svg: DV(3) };
     return wrap('files', '<div class="vb-fr h"><span></span><span>name</span><span class="m">size</span><span class="m">changed</span></div>' + rw.slice(0, (o && o.draw && o.draw.limit) || 8).map((r) => { const p = String(r.path ?? r.name ?? r.file ?? ''), e = String(r.ext ?? r.kind ?? ext(p) ?? ''); return '<div class="vb-fr" title="' + esc(p) + '"><span class="ic" style="background:' + (EC[e] || B.t3) + '">' + esc(e.slice(0, 4)) + '</span><span class="n">' + esc(p.split('/').pop() || p) + (r.who || r.owner || r.by ? '<small>' + esc(String(r.who ?? r.owner ?? r.by)) + '</small>' : '') + '</span><span class="m">' + esc(String(r.size ?? r.bytes ?? '')) + '</span><span class="m">' + esc(String(r.changed ?? r.when ?? r.mtime ?? r.age ?? '')) + '</span></div>'; }).join(''));
   };
+  /* ══ THE TABLE FAMILY (Notes/42 defect 50: "might also need to define some table widgets") ═══════════════════════════
+     One grid under four forms. The columns come from the record's read.map (its renames, in the order written: name ←
+     hostname, value ← load → columns name · value), else draw.columns, else the envelope's own keys. The header sorts
+     (a click sets the column, a second flips the direction); the row count is the SIZE's: S is a count chip (the figure),
+     M shows 4 rows, L 8 with the footer (the order, the page, ‹ ›), XL the whole table paged at 12 with a search box.
+       table  the sortable grid (the Widgets board's Nodes)      rows   the same rows without the header — a composite's child
+       cards  each row a card (name · two fields · a status dot)  temps  the WidgetConfig board's Temp list: named values as
+                                                                        rows, a bar to the max, hottest first, coloured by band */
+  const TABLE_FORMS = new Set(['table', 'rows', 'cards', 'temps', 'files', 'list']);
+  const TABLE_ROWS = { xs: 1, s: 1, m: 4, l: 8, xl: 12 };
+  // the columns the record asks for: read.map's renames (not the container, not the shape's own fields), then draw.columns,
+  // then the row's plain keys — never more than `max`, never a key the row lacks
+  const tableCols = (rw, o, max) => {
+    const r0 = rw[0] || {}; const has = (c) => rw.some((r) => r && r[c] !== undefined);
+    const m = (o && o.record && o.record.read && o.record.read.map) || (o && o.map) || null; const skip = new Set(['rows', 'items', 'series', 'values', 'events', 'nodes', 'links', 'stages', 'parts', 'bars', 'cells', 'days', 'text', 'points', 'children', 'panel', 'value', 'min', 'max', 'unit', 'rate']);
+    let cols = m ? Object.keys(m).filter((k) => !skip.has(k) && has(k)) : [];
+    if (!cols.length && o && o.draw && Array.isArray(o.draw.columns)) cols = o.draw.columns.filter(has);
+    if (!cols.length) cols = Object.keys(r0).filter((k) => typeof r0[k] !== 'object' && !/^(_|__)/.test(k));
+    return cols.slice(0, max || 6);
+  };
+  const tableSort = (rw, cols, o) => { const sortBy = String(ui(o, 'sort', (o && o.draw && o.draw.sort) || '')), dir = +ui(o, 'dir', -1) || -1; if (sortBy && cols.includes(sortBy)) rw = rw.slice().sort((a, b) => { const x = a[sortBy], y = b[sortBy]; return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''))) * dir; }); return { rw, sortBy, dir }; };
+  const tableCell = (r, c, lit) => { const v = r[c]; const n = typeof v === 'number'; const hot = lit != null && n && v >= num(lit); const st = !n && /^(status|state|health)$/i.test(c); return '<span class="c' + (n ? ' num' : '') + (hot ? ' dn' : '') + '" title="' + esc(String(v ?? '')) + '">' + (st ? '<i class="st" style="background:' + stCol(v) + '"></i>' : '') + esc(v == null ? '' : (n ? fmt(v) : String(v))) + '</span>'; };
+  const gridCols = (cols) => cols.map((c, i) => i ? 'minmax(40px,auto)' : '1fr').join(' ');
   R.table = (d, H, o) => {
-    let rw = rows(d); if (!rw.length) return EMPTY('no rows');
-    const want = (o && o.draw && Array.isArray(o.draw.columns)) ? o.draw.columns : null, cols = (want || Object.keys(rw[0]).filter((k) => typeof rw[0][k] !== 'object')).slice(0, 6), lim = (o && o.draw && o.draw.limit) || 8;
-    const sortBy = String(ui(o, 'sort', (o && o.draw && o.draw.sort) || '')), dir = +ui(o, 'dir', -1) || -1; const lit = o && o.draw && o.draw.lit != null ? o.draw.lit : null;
-    if (sortBy && cols.includes(sortBy)) rw = rw.slice().sort((a, b) => { const x = a[sortBy], y = b[sortBy]; return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''))) * dir; });
+    let all = rows(d); if (!all.length) return EMPTY('no rows');
+    const size = (o && o.size) || 'm'; const cols = tableCols(all, o, size === 'xl' ? 8 : 6); const lit = o && o.draw && o.draw.lit != null ? o.draw.lit : null;
+    const q = String(ui(o, 'q', '')).trim().toLowerCase(); if (q) all = all.filter((r) => cols.some((c) => String(r[c] ?? '').toLowerCase().includes(q)));
+    const lim = (o && o.draw && o.draw.limit) || TABLE_ROWS[size] || 4; const { rw, sortBy, dir } = tableSort(all, cols, o);
     const page = Math.max(0, +ui(o, 'page', 0) || 0), pages = Math.max(1, Math.ceil(rw.length / lim)), pg = Math.min(page, pages - 1), shown = rw.slice(pg * lim, pg * lim + lim);
-    const cell = (r, c) => { const v = r[c]; const n = typeof v === 'number'; const hot = lit != null && n && v >= num(lit); return '<span class="c' + (n ? ' num' : '') + (hot ? ' dn' : '') + '" title="' + esc(String(v ?? '')) + '">' + esc(v == null ? '' : (n ? fmt(v) : String(v))) + '</span>'; };
-    return wrap('table', '<div class="vb-dgr h" style="grid-template-columns:' + cols.map((c, i) => i ? 'minmax(40px,auto)' : '1fr').join(' ') + '">' + cols.map((c) => '<button class="' + (sortBy === c ? 'on' : '') + '"' + set('sort', c) + (sortBy === c ? ' data-vb-set2="dir:' + (-dir) + '"' : ' data-vb-set2="dir:-1"') + '>' + esc(c) + '<span>' + (sortBy === c ? (dir < 0 ? '↓' : '↑') : '') + '</span></button>').join('') + '</div>'
-      + shown.map((r) => '<div class="vb-dgr" style="grid-template-columns:' + cols.map((c, i) => i ? 'minmax(40px,auto)' : '1fr').join(' ') + '">' + cols.map((c) => cell(r, c)).join('') + '</div>').join('')
-      + '<div class="vb-dgf"><span>' + (sortBy ? 'sorted by ' + esc(sortBy) + (dir < 0 ? ' · high first' : ' · low first') : rw.length + ' rows') + '</span><span style="margin-left:auto">' + (pg * lim + 1) + '–' + Math.min(rw.length, pg * lim + lim) + ' of ' + rw.length + '</span><button' + set('page', Math.max(0, pg - 1)) + '>‹</button><button' + set('page', Math.min(pages - 1, pg + 1)) + '>›</button></div>');
+    const head = '<div class="vb-dgr h" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => '<button class="' + (sortBy === c ? 'on' : '') + '"' + set('sort', c) + (sortBy === c ? ' data-vb-set2="dir:' + (-dir) + '"' : ' data-vb-set2="dir:-1"') + '>' + esc(c.replace(/_/g, ' ')) + '<span>' + (sortBy === c ? (dir < 0 ? '↓' : '↑') : '') + '</span></button>').join('') + '</div>';
+    const body = shown.map((r) => '<div class="vb-dgr" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('');
+    const search = size === 'xl' ? '<div class="vb-tsearch"><span>⌕</span><input type="search" value="' + esc(q) + '" placeholder="find in ' + all.length + ' rows" data-vb-input="q"></div>' : '';
+    const foot = size === 'l' || size === 'xl' || pages > 1 ? '<div class="vb-dgf"><span>' + (sortBy ? 'sorted by ' + esc(sortBy) + (dir < 0 ? ' · high first' : ' · low first') : rw.length + ' rows') + '</span><span style="margin-left:auto">' + (rw.length ? (pg * lim + 1) + '–' + Math.min(rw.length, pg * lim + lim) + ' of ' + rw.length : '0 of 0') + '</span><button' + set('page', Math.max(0, pg - 1)) + '>‹</button><button' + set('page', Math.min(pages - 1, pg + 1)) + '>›</button></div>' : '';
+    return wrap('table', search + head + (body || '<span class="vb-lbl">' + (q ? 'nothing matches "' + esc(q) + '"' : 'no rows') + '</span>') + foot, 'vb-tf');
+  };
+  R.rows = (d, H, o) => {
+    const all = rows(d); const str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const rw0 = all.length ? all : str.map((s) => ({ name: s })); if (!rw0.length) return EMPTY('no rows');
+    const size = (o && o.size) || 'm'; const cols = tableCols(rw0, o, 4); const lim = (o && o.draw && o.draw.limit) || TABLE_ROWS[size] || 4; const { rw } = tableSort(rw0, cols, o); const lit = o && o.draw && o.draw.lit != null ? o.draw.lit : null;
+    return wrap('rows', rw.slice(0, lim).map((r) => '<div class="vb-dgr" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('') + (rw.length > lim ? '<span class="vb-lbl">+ ' + (rw.length - lim) + ' more</span>' : ''), 'vb-tf');
+  };
+  R.cards = (d, H, o) => {
+    const rw = rows(d); if (!rw.length) return EMPTY('cards need rows'); const size = (o && o.size) || 'm'; const lim = (o && o.draw && o.draw.limit) || ({ m: 4, l: 6, xl: 12 }[size] || 4); const cols = tableCols(rw, o, 5); const nameC = cols.find((c) => /^(name|title|label|id|host|hostname|node)$/i.test(c)) || cols[0]; const rest = cols.filter((c) => c !== nameC && !/^(status|state|health)$/i.test(c)).slice(0, 2); const stC = cols.find((c) => /^(status|state|health)$/i.test(c));
+    return wrap('cards', '<div class="vb-cards">' + rw.slice(0, lim).map((r) => '<div class="vb-card">' + (stC ? '<i style="background:' + stCol(r[stC]) + '" title="' + esc(String(r[stC] ?? '')) + '"></i>' : '') + '<b>' + esc(String(r[nameC] ?? '')) + '</b>' + rest.map((c) => '<span><small>' + esc(c.replace(/_/g, ' ')) + '</small>' + esc(typeof r[c] === 'number' ? fmt(r[c]) : String(r[c] ?? '')) + '</span>').join('') + '</div>').join('') + '</div>' + (rw.length > lim ? cap('+ ' + (rw.length - lim) + ' more') : ''));
+  };
+  R.temps = (d, H, o) => {
+    let kv = keyed(d); if (!kv.length) return EMPTY('a temp list needs named values'); const size = (o && o.size) || 'm'; const lim = (o && o.draw && o.draw.limit) || TABLE_ROWS[size] || 4;
+    const max = num(o && o.draw && o.draw.max) || Math.max(95, ...kv.map((x) => x[1])), thr = num(o && o.draw && o.draw.throttle) || 70, unit = (o && o.draw && o.draw.unit) || '°'; if ((o && o.draw && o.draw.sort) !== 'name') kv = kv.slice().sort((a, b) => b[1] - a[1]);
+    return wrap('temps', kv.slice(0, lim).map((x) => { const col = x[1] >= thr ? B.ac4 : x[1] >= thr * .78 ? B.ac3 : B.ac2; return '<span class="vb-rw"><span class="n" title="' + esc(x[0]) + '">' + esc(x[0]) + '</span><span class="tr"><i style="width:' + pct(x[1], max).toFixed(1) + '%;background:' + col + '"></i><em style="left:' + pct(thr, max).toFixed(1) + '%"></em></span><span class="v" style="color:' + col + '">' + esc(fmt(x[1]) + unit) + '</span></span>'; }).join('') + (kv.length > lim ? '<span class="vb-lbl">+ ' + (kv.length - lim) + ' more · throttle ' + thr + esc(unit) + '</span>' : cap('throttle ' + thr + esc(unit) + ' · hottest first')), 'vb-tf');
   };
   R.gallery = (d, H, o) => {
     const rw = rows(d); const str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const items = rw.length ? rw : str.map((s) => ({ src: s, name: s.split('/').pop() })); if (!items.length) return EMPTY('a gallery needs items');
@@ -1254,14 +1296,14 @@
     if (size === 'xs') return '<span class="vw-xs" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i>' + (figure(f, data) || '—') + '</span>';
     if (size === 's') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
-    if (size === 'm' || opts.bare) return body;
+    if (size === 'm' || opts.bare || TABLE_FORMS.has(f)) return body;
     // L: the form plus its detail list beside it; XL: the form, its table, its log
     const kv = keyed(d).slice(0, 8); const rw = rows(d);
     const detail = kv.length ? '<div class="vw-detail">' + kv.map((x) => '<div><span>' + esc(x[0]) + '</span><b>' + esc(fmt(x[1])) + '</b></div>').join('') + '</div>'
       : (rw.length ? '<div class="vw-detail">' + rw.slice(0, 8).map((r) => '<div><span>' + esc(String(r.name ?? r.title ?? r.text ?? r.path ?? r.id ?? '')) + '</span><b>' + esc(String(r.value ?? r.v ?? r.status ?? r.count ?? '')) + '</b></div>').join('') + '</div>'
       : (Array.isArray(d) && d.length ? '<div class="vw-detail"><div><span>points</span><b>' + d.length + '</b></div><div><span>last</span><b>' + esc(fmt(series(d).slice(-1)[0])) + '</b></div><div><span>min · max</span><b>' + esc(fmt(Math.min(...series(d)))) + ' · ' + esc(fmt(Math.max(...series(d)))) + '</b></div></div>' : ''));
     if (size === 'l') return '<div class="vw-l"><div class="vw-main">' + body + '</div>' + detail + '</div>';
-    const table = (kv.length || rw.length) && f !== 'table' && f !== 'files' ? R.table(rw.length ? rw : kv.map((x) => ({ name: x[0], value: x[1] })), 140, {}) : '';
+    const table = (kv.length || rw.length) && !TABLE_FORMS.has(f) ? R.table(rw.length ? rw : kv.map((x) => ({ name: x[0], value: x[1] })), 140, { size: 'l' }) : '';
     return '<div class="vw-xl"><div class="vw-main">' + body + '</div>' + detail + (table ? '<div class="vw-xltable">' + table + '</div>' : '') + '</div>';
   }
   function forms() { return Object.keys(DRAWN).map((id) => ({ id, shape: DRAWN[id], sizes: SIZES.slice(), drawn: true, iso: !!R[id + '@iso'] || ISO_ONLY.has(id) })).concat(Object.keys(ALIAS).filter((id) => !DRAWN[id]).map((id) => ({ id, shape: DRAWN[ALIAS[id]] || '', sizes: SIZES.slice(), drawn: true, as: ALIAS[id] }))); }
@@ -1446,7 +1488,11 @@ span.vw-sampled{opacity:.85}
 .vb-fn,.vb-carn{display:flex;align-items:center;gap:5px}.vb-fn button,.vb-carn button{width:22px;height:18px;border-radius:var(--b-r);background:var(--b-surf2);color:var(--b-t2);font-size:11px}.vb-fn i,.vb-carn i{width:6px;height:6px;border-radius:50%;background:var(--b-s3);cursor:pointer}.vb-fn i.on,.vb-carn i.on{background:var(--b-ac)}.vb-fn span{margin-left:auto;font-family:var(--b-mono);font-size:8.5px;color:var(--b-t3)}.vb-carn .vb-lbl{margin-left:8px}
 .vb-fr{display:grid;grid-template-columns:18px 1fr 44px 52px;gap:7px;align-items:center;height:22px;font-size:10px;border-bottom:1px solid var(--b-bd)}.vb-fr.h{color:var(--b-t3);font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;height:18px}.vb-fr .ic{width:14px;height:16px;border-radius:2px;font-family:var(--b-mono);font-size:6.5px;font-weight:700;color:#0e0f12;display:flex;align-items:flex-end;justify-content:center;padding-bottom:1px}.vb-fr .n{color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-fr .n small{color:var(--b-t3);margin-left:5px;font-size:9px}.vb-fr .m{font-family:var(--b-mono);font-size:9px;color:var(--b-t3);text-align:right}
 .vb-dgr{display:grid;gap:6px;align-items:center;height:21px;font-size:9.5px;border-bottom:1px solid var(--b-bd)}.vb-dgr.h{height:20px}.vb-dgr.h button{font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--b-t3);text-align:left;display:flex;gap:3px;align-items:center;white-space:nowrap}.vb-dgr.h button.on{color:var(--b-t1)}.vb-dgr:nth-child(odd):not(.h){background:color-mix(in srgb,var(--b-surf2) 60%,transparent)}.vb-dgr .c{color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:4px}.vb-dgr .c.num{font-family:var(--b-mono);color:var(--b-t2);text-align:right;padding-left:0}.vb-dgr .c.dn{color:var(--b-ac4)}
-.vb-dgf{display:flex;align-items:center;gap:6px;font-size:8.5px;color:var(--b-t3);padding-top:4px;margin-top:auto}.vb-dgf button{width:18px;height:16px;border-radius:4px;background:var(--b-surf2);color:var(--b-t2)}
+.vb-dgf{display:flex;align-items:center;gap:6px;font-size:8.5px;color:var(--b-t3);padding-top:4px;margin-top:auto}
+.vb-dgr .c .st{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:middle}
+.vb-tsearch{display:flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:var(--b-r);background:var(--b-s2);color:var(--b-t3);font-size:10px;box-shadow:inset 0 0 0 1px var(--b-bd)}.vb-tsearch input{flex:1;border:none;background:transparent;color:var(--b-t1);font:inherit;font-size:10px;min-width:0;outline:none}
+.vb-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;flex:1;min-height:0;align-content:start}.vb-card{position:relative;background:var(--b-surf2);border-radius:var(--b-r);padding:7px 9px 7px 18px;display:flex;flex-direction:column;gap:2px;min-width:0;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}.vb-card i{position:absolute;left:7px;top:10px;width:6px;height:6px;border-radius:50%}.vb-card b{font-size:11px;font-weight:600;color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-card span{font-size:9.5px;color:var(--b-t1);font-family:var(--b-mono);display:flex;gap:6px;white-space:nowrap;overflow:hidden}.vb-card small{color:var(--b-t3);font-family:var(--b-ui)}
+.vb-tf{gap:2px}.vb-dgf button{width:18px;height:16px;border-radius:4px;background:var(--b-surf2);color:var(--b-t2)}
 .vb-gal{flex:none;min-height:110px;display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:1fr;gap:5px}.vb-gal .g{border-radius:var(--b-r);position:relative;overflow:hidden;min-height:44px;cursor:pointer;transition:transform .15s ease}.vb-gal .g:hover{transform:scale(1.04)}.vb-gal .g span{position:absolute;left:0;right:0;bottom:0;padding:3px 6px;font-size:8px;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.6));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-gal .g b{position:absolute;right:4px;top:3px;font-family:var(--b-mono);font-size:7.5px;color:#fff;opacity:.8}
 .vb-trm{flex:1;min-height:0;border-radius:var(--b-r);background:var(--b-s2);padding:7px 9px;font-family:var(--b-mono);font-size:9.5px;line-height:1.6;color:var(--b-t2);white-space:pre-wrap;overflow:hidden;box-shadow:inset 0 0 0 1px var(--b-bd)}.vb-trm b{color:var(--b-ac2);font-weight:500}.vb-trm em{color:var(--b-ac3);font-style:normal}.vb-trm .car{display:inline-block;width:6px;height:11px;background:var(--b-t1);vertical-align:-2px;animation:vb-tcur 1s steps(1) infinite}@keyframes vb-tcur{0%,50%{opacity:1}51%,100%{opacity:0}}
 .vb-trmh{display:flex;gap:6px;align-items:center;font-size:8.5px;color:var(--b-t3);font-family:var(--b-mono)}.vb-trmh i{width:7px;height:7px;border-radius:50%;background:var(--b-ac2)}
