@@ -25,8 +25,17 @@ def test_the_page_and_its_index():
     assert "if((ev.metaKey||ev.ctrlKey)&&ev.key===','){ ev.preventDefault(); _settingsPage(); }" in HTML, "⌘,"
 
 
+def test_the_group_page_is_a_grid_of_section_cards():
+    # the board: an index row selects its GROUP; the group's sections are tiled as cards; a row's cards light up
+    assert "const _SP_ROWGRP={};" in HTML and "card.className='sp-card'; card.dataset.row=r.id;" in HTML
+    assert "page.querySelectorAll('.sp-card').forEach(c=>c.classList.toggle('on', c.dataset.row===id));" in HTML
+    assert "#settingsPage .sp-grid{display:grid;" in HTML and '#settingsPage .sp-card .opt>input[type="checkbox"]{position:static;opacity:1;' in HTML
+    # the pack segment in the header; Appearance drawn in place
+    assert "w.className='sp-hd-pack'; w.appendChild(veraUI.makeStyleControl());" in HTML and "veraUI.injectPicker('spThemePick')" in HTML
+
+
 def test_the_fields_move_with_their_ids_and_handlers():
-    assert "function _spTake(paneId, title){" in HTML and "els.forEach(el=>block.appendChild(el));" in HTML, "the same elements move; nothing is copied"
+    assert "function _spTake(paneId, title){" in HTML and "els.forEach(el=>card.appendChild(el));" in HTML, "the same elements move; nothing is copied"
     assert "l.innerHTML='<span>'+moved[pid]+' section'+(moved[pid]>1?'s':'')+' moved to <b>Settings</b> — ⌘,</span>" in HTML, "the panes say where their fields went"
     for pair in ("['rpLoop','Agent loop variant']", "['rpCfg','Agent']", "['rpCtx','Sources']", "['rpLoop','Prompt template']", "['rpCfg','Telegram HITL']"):
         assert pair in HTML, pair
