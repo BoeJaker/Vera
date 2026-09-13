@@ -78,7 +78,7 @@ def test_evidence_failure_is_isolated(monkeypatch):
 
 def test_docker_capabilities_observe_after_local_gate_before_provider_execution():
     source = (ROOT / "vera" / "workers" / "docker_capabilities.py").read_text()
-    run_start = source.index("async def cap_docker_run")
+    run_start = source.index("async def _run_container_native")
     run = source[run_start:source.index("# ─────────────────────────────", run_start)]
     assert run.index("_sandbox_gate(") < run.index("observe_docker_effect(")
     assert run.index("observe_docker_effect(") < run.index("_run_local(argv")
