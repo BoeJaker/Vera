@@ -17,6 +17,22 @@ def _read(*parts):
 HTML = _read("vera", "chat", "chat_panel.html")
 
 
+def test_theme_picker_is_injected_once_the_card_is_in_the_document():
+    # the mirror showed an empty Theme card: injectPicker looks its container up by id, so it must run after the page is built
+    src = _read("vera", "chat", "chat_panel.html")
+    build =src[src.index("function _spBuild(){"):src.index("function _spShow(id){")]
+    assert build.count("injectPicker('spThemePick')") == 1
+    assert build.index("cn.appendChild(sec); });") < build.index("injectPicker('spThemePick')") < build.index("_spShow('variant');")
+
+
+def test_header_tightens_in_a_narrow_frame():
+    # the harness's chat frame is 1122–1178 px at 1440: the header must not overflow (⋯ and Aa fell off the edge)
+    src = _read("vera", "chat", "chat_panel.html")
+    assert "@media (max-width:1300px){" in src and "#topBar{gap:6px;padding:0 10px}" in src
+    assert "#topBar .agent #agentMeta,#topBar .agent #capBadge{display:none}" in src
+    assert "#topBar #ctxMeterBar{width:56px}" in src
+
+
 def test_the_page_and_its_index():
     assert '<div id="settingsPage" class="spage" hidden data-w="settings · page">' in HTML
     assert '<input type="search" placeholder="Find a setting" oninput="CH._spFilter(this.value)">' in HTML

@@ -1368,6 +1368,23 @@ html[data-blocks="off"] .pa-att{background:transparent}
 #topBar #ctxMeterLabel{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0))}
 #topBar .ico{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:var(--r-sm,7px);color:var(--t2,var(--dim2,#8a92a0));background:var(--surf2);box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14));border:none;cursor:pointer;flex-shrink:0}
 #topBar .ico:hover{color:var(--t1,var(--text,#d8dce4))}#topBar .ico.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+/* the chat in a narrower frame (the harness at 1440 gives it 1122–1178 px): the header tightens rather than overflowing —
+   the agent's meta and cap badge fold, the meter bar shortens, the segments tighten, the session name is capped */
+@media (max-width:1300px){
+  #topBar{gap:6px;padding:0 10px}
+  #topBar .agent{gap:5px;padding:0 4px 0 8px}
+  #topBar .agent #agentMeta,#topBar .agent #capBadge{display:none}
+  #topBar .sess #sessionName{max-width:150px}
+  #topBar .tb-btn,#topBar .hbtn{padding:0 8px}
+  #topBar #denGroup .tb-btn,#topBar #xplSeg .tb-btn,#topBar .pseg .tb-btn{padding:0 7px}
+  #topBar #ctxMeter{gap:6px;padding:0 8px}
+  #topBar #ctxMeterBar{width:56px}
+}
+@media (max-width:1140px){
+  #topBar .sess .sess-m{display:none}
+  #topBar #ctxMeterBar{width:40px}
+  #topBar #xplSeg,#topBar .pseg{margin-left:0}
+}
 /* ⋯ all chat tools — the header controls the board does not show, as the same elements, in a sheet under the header */
 #toolsSheet{display:none;position:absolute;right:16px;top:56px;z-index:60;width:520px;max-width:calc(100vw - 32px);flex-direction:column;gap:6px;padding:12px 14px;border-radius:var(--ui-radius,10px);background:var(--surf);box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.20),0 10px 30px -16px rgba(0,0,0,.60))}
 #toolsSheet.on{display:flex}
@@ -13100,7 +13117,6 @@ Your task: decide what to do next to advance toward the goal.
           try{ if(window.veraUI&&typeof veraUI.makeStyleControl==='function') c1.querySelector('.sp-look-pack').appendChild(veraUI.makeStyleControl()); else c1.querySelector('.sp-look-pack').innerHTML='<button class="btn" id="spOpenAppearance">Aa · Style pack &amp; theme…</button>'; }catch(_){}
           grid.appendChild(c1); n++; gn++;
           const c2=document.createElement('div'); c2.className='sp-card'; c2.dataset.row=r.id; c2.setAttribute('data-w','theme · card'); c2.innerHTML='<div class="sec">Theme</div><div class="sp-look-theme" id="spThemePick"></div><div class="lbl">the theme sets colour — every panel follows</div>';
-          try{ if(window.veraUI&&typeof veraUI.injectPicker==='function') veraUI.injectPicker('spThemePick'); }catch(_){}
           const ob=c1.querySelector('#spOpenAppearance'); if(ob) ob.addEventListener('click',ev=>{ try{ _appearanceSheet(ev); }catch(_){} });
           grid.appendChild(c2); n++; gn++;
         }
@@ -13113,6 +13129,8 @@ Your task: decide what to do next to advance toward the goal.
     page.querySelector('.sp-count').textContent=n+' sections · every field keeps its id and handler';
     // the pack segment in the page header (the board)
     try{ const hd=page.querySelector('.sp-hd'), k=hd&&hd.querySelector('.kbd'); if(hd&&k&&window.veraUI&&typeof veraUI.makeStyleControl==='function'&&!hd.querySelector('.sp-hd-pack')){ const w=document.createElement('span'); w.className='sp-hd-pack'; w.appendChild(veraUI.makeStyleControl()); hd.insertBefore(w, k); } }catch(_){}
+    // the theme picker fills its card now that the card is in the document (injectPicker looks the container up by id)
+    try{ if(document.getElementById('spThemePick')&&window.veraUI&&typeof veraUI.injectPicker==='function') veraUI.injectPicker('spThemePick'); }catch(_){}
     _spShow('variant');
   }
   function _spShow(id){ _spCur=id; const page=document.getElementById('settingsPage'); if(!page) return; const gid=_SP_ROWGRP[id]||id;
