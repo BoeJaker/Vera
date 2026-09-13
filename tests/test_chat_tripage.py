@@ -154,9 +154,10 @@ def test_the_directive_cases():
 # ── the element's projection ──────────────────────────────────────────────────
 
 def test_the_element_renders_the_session_projection():
-    assert "if (doc.mode === 'session' || blocks.some(b => b && b.key)) { this.renderSession(doc, blocks, body); return; }" in EL
+    # one projection for every canvas (Notes/42 defect 43): the session canvas and an agent's canvas through the same cards
+    assert "this.renderSession(doc, blocks, body);\n      if (this.hasAttribute('rail')) this._railMark();" in EL
     assert "renderSession(doc, blocks, body) {" in EL
-    for s in ('class="band pinned"', 'class="band now"', '<b>NOW</b>', 'class="band parked"', 'class="chips"', 'data-key="${esc(b.key)}" data-size="${size}"',
+    for s in ('class="band pinned"', 'class="band now"', "<b>${plainDoc ? 'BLOCKS' : 'NOW'}</b>", 'class="band parked"', 'class="chips"', 'data-key="${esc(b.key)}" data-size="${size}"',
               'data-act="pin"', 'data-act="park"', 'data-act="size"', 'data-act="remove"'):
         assert s in EL, s
     assert "window.VeraWidget && typeof window.VeraWidget.draw === 'function'" in EL and "window.VeraWidget.draw(rec.draw.form, rec.data, size" in EL
