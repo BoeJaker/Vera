@@ -28,7 +28,10 @@
      window.VeraWidget.key(record)                     → the record's identity: form · source · args
      window.VeraWidget.hydrate(root)                   → mounts <vera-mermaid> into the pipes form's slots when it is defined
      window.VeraWidget.sample(formOrShape)             → realistic sample data for a form (or a shape): the face a widget has
-                                                          before it has read anything — draw() and the element use it, marked
+                                                          before it has read anything — draw() and the element use it, marked.
+                                                          The sample is for a record with NO source or one never read; a read
+                                                          that answered empty draws the form's own empty state, a read that
+                                                          failed the last good reading dimmed — never the sample
      window.VeraWidgetConfig.open(opts)                → the WidgetConfig board as a sheet (catalogue · record · live preview);
                                                           Promise<record | null> — every picker and every ⚙ goes through it
      <vera-widget record='{…json…}' size="m|auto" base="">   .record (property) · .refresh() · .read()
@@ -146,7 +149,11 @@
       return hit ? o : x; }
     let base = x, hit = false;
     if (sh === 'graph') { const o = Object.assign({}, (x && typeof x === 'object' && !Array.isArray(x)) ? x : {}); ['nodes', 'links'].forEach((k) => { if (map[k] == null) return; const v = pick(x, map[k]); if (v !== undefined) { o[k === 'links' ? 'links' : 'nodes'] = v; hit = true; } }); if (!hit) return x; base = o; }
-    else if (cont && map[cont] != null) { const v = pick(x, map[cont]); if (v !== undefined) { base = v; hit = true; } }
+    else if (cont && map[cont] != null) { let v = pick(x, map[cont]); if (v !== undefined) {
+      // a container that is a dict of things (workers keyed by id, nodes keyed by host) lists its entries as rows, the key as the name
+      if (v && typeof v === 'object' && !Array.isArray(v) && cont !== 'text' && Object.keys(v).length && Object.keys(v).every((k) => v[k] && typeof v[k] === 'object')) v = Object.keys(v).map((k) => Object.assign({ name: k }, Array.isArray(v[k]) ? { values: v[k] } : v[k]));
+      else if (v && typeof v === 'object' && !Array.isArray(v) && (cont === 'rows' || cont === 'events' || cont === 'points') && Object.keys(v).length) v = Object.keys(v).map((k) => ({ name: k, value: v[k] }));
+      base = v; hit = true; } }
     const renames = keys.filter((k) => !fields.includes(k) && k !== cont && !(sh === 'graph' && (k === 'nodes' || k === 'links')));
     if (renames.length && Array.isArray(base) && base.some((r) => r && typeof r === 'object')) { base = base.map((r) => { if (!r || typeof r !== 'object') return r; const o = Object.assign({}, r); renames.forEach((k) => { const v = pick(r, map[k]); if (v !== undefined) { o[k] = v; hit = true; } }); return o; }); }
     else if (renames.length && sh === 'graph' && base && Array.isArray(base.nodes)) { base = Object.assign({}, base, { nodes: base.nodes.map((r) => { if (!r || typeof r !== 'object') return r; const o = Object.assign({}, r); renames.forEach((k) => { const v = pick(r, map[k]); if (v !== undefined) { o[k] = v; hit = true; } }); return o; }) }); }
@@ -526,10 +533,13 @@
     return '<div class="vw-comp vw-comp-' + esc(layout) + '">' + kids.slice(0, 12).map((c, i) => {
       const r0 = c && typeof c.record === 'object' ? c.record : null; const slot = String((c && c.slot) || String.fromCharCode(97 + i));
       if (!r0) return '<div class="vw-slot" data-slot="' + esc(slot) + '"><small class="wempty">' + esc(String(c && c.record || '')) + '</small></div>';
-      const n = normalise(r0); const data = r0.data !== undefined ? r0.data : kd[slot]; const kopts = { record: n, draw: n.draw, bare: true };
-      if (chip) return '<div class="vw-slot vw-slot-row" data-slot="' + esc(slot) + '"><span class="k">' + esc(n.title || n.form) + '</span>' + draw(n.form, data, 's', kopts) + '</div>';
-      const fig = figure(n.form, mapped(n, n.form, data === undefined ? sample(n.form) : data));
-      return '<div class="vw-slot" data-slot="' + esc(slot) + '"><span class="vw-slot-h">' + esc(n.title || n.form) + (fig ? '<b>' + fig + '</b>' : '') + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: Math.max(44, Math.round(H * 0.8)), title: n.title }, kopts)) + '</div></div>'; }).join('') + '</div>';
+      const n = normalise(r0); const k = kd[slot]; const wasRead = !!(k && typeof k === 'object' && k.__read); const data = r0.data !== undefined ? r0.data : (wasRead ? k.data : k); const kopts = { record: n, draw: n.draw, bare: true, sample: wasRead ? false : undefined };
+      const kHave = wasRead && k.data !== undefined && !isEmpty(dataFor(mapped(n, n.form, k.data), canon(n.form)));   // what the child's form would draw of the answer
+      const kerr = wasRead && k.err ? '<i class="vw-kerr" title="' + esc(k.err) + '">' + (kHave ? 'last reading' : 'read failed') + '</i>' : (wasRead && !kHave ? '<i class="vw-kempty">read · empty</i>' : '');
+      const stale = wasRead && k.err && kHave ? ' vw-stale' : '';
+      if (chip) return '<div class="vw-slot vw-slot-row' + stale + '" data-slot="' + esc(slot) + '"><span class="k">' + esc(n.title || n.form) + '</span>' + draw(n.form, data, 's', kopts) + kerr + '</div>';
+      const fig = figure(n.form, mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data));
+      return '<div class="vw-slot' + stale + '" data-slot="' + esc(slot) + '"><span class="vw-slot-h">' + esc(n.title || n.form) + (fig ? '<b>' + fig + '</b>' : '') + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: Math.max(44, Math.round(H * 0.8)), title: n.title }, kopts)) + '</div></div>'; }).join('') + '</div>';
   };
 
   /* ══ THE STILL FORMS — the Widgets board's seventy-five ways of reading data, each the board's own drawing ═════════
@@ -1234,7 +1244,7 @@
     // nothing to draw yet (no result, an empty one, or a placeholder string handed to a form that draws numbers): the
     // form's SAMPLE face, marked — never "no data yet" (opts.sample === false keeps the bare answer for a caller that asks)
     if (f !== 'panel' && f !== 'composite' && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
-      if (opts.sample === false) return EMPTY('no data yet');
+      if (opts.sample === false) { let own = ''; try { own = R[fi](d == null || typeof d === 'string' ? [] : d, H, Object.assign({ size: size }, opts)); } catch (_) { own = ''; } return (typeof own === 'string' && own) ? own : EMPTY('no data yet'); }
       return sampleFace(draw(f0, sample(f), size, Object.assign({}, opts, { sample: false, map: false })), size);
     }
     if (f === 'composite' && !(opts.record && Array.isArray(opts.record.children) && opts.record.children.length)) {
@@ -1278,7 +1288,7 @@
       skin: String(o.skin || 'inherit').toLowerCase(), subject: String(o.subject || ''), projection: String(o.projection || drawIn.proj || drawIn.projection || '').toLowerCase(), actions: Array.isArray(o.actions) ? o.actions : ['dive', 'pin', 'ask'],
       children: Array.isArray(o.children) ? o.children : undefined, layout: o.layout, data: o.data };
   }
-  const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top)|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert)\b/.test(cap);
+  const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top|instances|sources|request_log)|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert)\b/.test(cap);
   const key = (rec) => { const n = normalise(rec); return n.form + ' ' + (n.source || (n.panel ? 'panel:' + n.panel : '')) + ' ' + JSON.stringify(n.read.args || {}); };
   // the form that can draw THIS data: the chosen one, else what its shape picks, else the key · value list
   function formFor(rec, data) {
@@ -1349,7 +1359,9 @@ span.vw-sampled{opacity:.85}
 .vw-slot{min-width:0;min-height:0;background:var(--surf2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:7px 9px 8px;display:flex;flex-direction:column;gap:4px;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
 .vw-slot-h{display:flex;align-items:baseline;gap:6px;font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t3,var(--dim,#6b7280));flex-shrink:0;white-space:nowrap;overflow:hidden}.vw-slot-h b{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:11px;color:var(--t1,var(--text,#d8dce4));font-weight:400;text-transform:none;letter-spacing:0}
 .vw-slot-b{flex:1;min-height:0;display:flex;align-items:center}.vw-slot-b > *{width:100%}
-.vw-slot-row{flex-direction:row;align-items:center;gap:8px;background:transparent;box-shadow:none;border-radius:0;padding:3px 0;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}.vw-slot-row .k{width:72px;flex-shrink:0;font-size:9.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vw-slot-row{flex-direction:row;align-items:center;gap:8px;background:transparent;box-shadow:none;border-radius:0;padding:3px 0;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
+.vw-slot.vw-stale .vw-slot-b,.vw-slot-row.vw-stale .vw-chip{opacity:.55}.vw-kerr,.vw-kempty{font-style:normal;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:7.5px;letter-spacing:.06em;text-transform:uppercase;margin-left:6px;opacity:.85}.vw-kerr{color:var(--err,#c96b6b)}.vw-kempty{color:var(--t3,var(--dim,#6b7280))}
+.vw-root[data-stale="1"] .vw-body{opacity:.55}.vw-slot-row .k{width:72px;flex-shrink:0;font-size:9.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:520px){.vw-l,.vw-xl{grid-template-columns:1fr}.vw-detail{border-left:none;padding-left:0}}
 /* ── the boards' forms (vb-): the token bridge, then the Widgets board's CSS under its own prefix ── */
 
@@ -1540,7 +1552,7 @@ span.vw-sampled{opacity:.85}
     constructor() { super(); this._sh = this.attachShadow({ mode: 'open' }); this._rec = null; this._data = undefined; this._drawn = ''; this._timer = null; this._ro = null; this._auto = 'm'; this._kids = {}; this._ui = {}; }
     static get observedAttributes() { return ['record', 'size', 'base', 'template-id']; }
     get record() { return this._rec; }
-    set record(v) { this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._drawn = ''; this._kids = {}; if (this.isConnected) this._boot(); }
+    set record(v) { this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._drawn = ''; this._kids = {}; this._read = false; this._err = ''; if (this.isConnected) this._boot(); }
     get base() { return this.getAttribute('base') || window._veraBase || ''; }
     get size() { const s = this.getAttribute('size'); return s && s !== 'auto' && SIZES.includes(s) ? s : (s === 'auto' ? this._auto : (this._rec ? this._rec.frame.size : 'm')); }
     connectedCallback() {
@@ -1580,9 +1592,10 @@ span.vw-sampled{opacity:.85}
       let subj; const wants = kids.some((k) => k.r && /^\$subject/.test(k.r.source));
       if (wants && rec.source && readable(rec.source)) { try { subj = await this._call(rec.source, rec.read.args || {}); } catch (e) { subj = undefined; this._err = String(e && e.message || e).slice(0, 120); } }
       const out = Object.assign({}, this._kids || {});
+      const keep = (slot, v, err) => { const prev = out[slot] && out[slot].__read ? out[slot] : null; out[slot] = { __read: true, data: err ? (prev ? prev.data : undefined) : v, err: err || '' }; };
       await Promise.all(kids.map(async (k) => { if (!k.r || k.own) return;
-        if (/^\$subject/.test(k.r.source)) { if (subj !== undefined) { const v = pick(subj, k.r.source.replace(/^\$subject\.?/, '')); if (v !== undefined) out[k.slot] = v; } return; }
-        if (k.r.source && readable(k.r.source)) { try { const v = await this._call(k.r.source, k.r.read.args || {}); if (!(v && typeof v === 'object' && v.error && Object.keys(v).length <= 2)) out[k.slot] = v; } catch (_) {} } }));
+        if (/^\$subject/.test(k.r.source)) { if (subj !== undefined) keep(k.slot, pick(subj, k.r.source.replace(/^\$subject\.?/, ''))); else if (this._err) keep(k.slot, undefined, this._err); return; }
+        if (k.r.source && readable(k.r.source)) { try { const v = await this._call(k.r.source, k.r.read.args || {}); if (v && typeof v === 'object' && v.error && Object.keys(v).length <= 2) keep(k.slot, undefined, String(v.error).slice(0, 120)); else keep(k.slot, v); } catch (e) { keep(k.slot, undefined, String(e && e.message || e).slice(0, 120)); } } }));
       if (this._rec !== rec) return; this._kids = out; if (subj !== undefined) this._data = subj; this.render();
       this.dispatchEvent(new CustomEvent('widget:refresh', { bubbles: true, composed: true, detail: { record: rec, data: this._data, kids: out } }));
     }
@@ -1590,8 +1603,8 @@ span.vw-sampled{opacity:.85}
       const cap = this._rec && this._rec.source; if (!cap) return;
       if (!forced && !readable(cap)) return;
       let res; try { res = await this._call(cap, this._rec.read.args || {}); } catch (e) { res = { error: String(e && e.message || e) }; }
-      if (res && typeof res === 'object' && res.error && Object.keys(res).length <= 2) { this._err = String(res.error).slice(0, 120); this.render(); return; }
-      this._err = ''; this._data = res; this._drawn = formFor(this._rec, res); this.render();
+      if (res && typeof res === 'object' && res.error && Object.keys(res).length <= 2) { this._err = String(res.error).slice(0, 120); this._read = true; this.render(); return; }
+      this._err = ''; this._read = true; this._data = res; this._drawn = isEmpty(mapped(this._rec, this._rec.form, res)) ? '' : formFor(this._rec, res); this.render();
       this.dispatchEvent(new CustomEvent('widget:refresh', { bubbles: true, composed: true, detail: { record: this._rec, data: res } }));
     }
     refresh() { return this.read(true); }
@@ -1601,15 +1614,17 @@ span.vw-sampled{opacity:.85}
       const opts = { record: rec, draw: rec.draw, title: rec.title, panel: rec.panel, base: this.base, kids: this._kids || {}, ui: this._ui, height: this._bodyH || undefined, width: this._bodyW || undefined, projection: rec.projection };   // L and XL compose around the form
       // nothing read yet — no source, a source that waits for a click, a read in flight, a read that failed — draws the
       // form's SAMPLE face, marked, and says why in the caption; the widget always has a face (never "no data yet")
-      const noData = this._data === undefined || isEmpty(this._data);
-      const sampled = noData && form !== 'panel' && form !== 'composite';
+      const wasRead = !!this._read, dataM = mapped(rec, form, this._data), have = this._data !== undefined && !isEmpty(dataFor(dataM, form));   // what the form would draw of the answer
+      const sampled = !wasRead && !have && form !== 'panel' && form !== 'composite';      // the sample face: no source, or never read
+      const readEmpty = wasRead && !have && !this._err, stale = wasRead && !!this._err && have;
       let why = '';
-      if (this._err) why = esc(rec.source + ': ' + this._err);
+      if (this._err) why = esc(rec.source + ': ' + this._err) + (have ? ' · last reading' : '');
+      else if (readEmpty) why = 'read · empty';
       else if (this._data === undefined && rec.source && !readable(rec.source)) why = '<button class="vw-read" data-read>Read ' + esc(rec.source) + '</button>';
       else if (this._data === undefined && rec.source) why = 'reading ' + esc(rec.source) + '…';
-      const body = draw(form, noData ? undefined : this._data, size, opts);
+      const body = draw(form, have ? this._data : undefined, size, Object.assign({}, opts, wasRead ? { sample: false } : {}));
       const small = size === 'xs' || size === 's';
-      const figureTxt = figure(form, sampled ? sample(form) : mapped(rec, form, this._data));
+      const figureTxt = figure(form, sampled ? sample(form) : dataM);
       // the record's skin dresses the element with the page's own pack rules (data-style is what themes.css keys on);
       // motion off holds every moving form still
       const skin = rec.skin && rec.skin !== 'inherit' ? rec.skin : '';
@@ -1617,7 +1632,7 @@ span.vw-sampled{opacity:.85}
       this._skinned = !!skin;
       const cap = (why ? why + ' · ' : '') + (rec.read.window ? 'window ' + esc(rec.read.window) : (rec.source ? esc(rec.source) : (rec.panel ? 'panel ' + esc(rec.panel) : (sampled ? 'sample · no source' : ''))));
       const acts = size === 'xl' ? '<div class="vw-acts">' + rec.actions.filter((a) => ACTIONS[a]).map((a) => '<button data-act="' + a + '">' + ACTIONS[a] + '</button>').join('') + '</div>' : '';
-      this._sh.innerHTML = '<style>' + ELEMENT_CSS + CSS + '</style><div class="vw-root" data-form="' + esc(form) + '" data-size="' + size + '"' + (sampled ? ' data-sample="1"' : '') + (rec.frame.motion === false ? ' data-motion="0"' : '') + (rec.frame.legend ? ' data-legend="1"' : '') + '>'
+      this._sh.innerHTML = '<style>' + ELEMENT_CSS + CSS + '</style><div class="vw-root" data-form="' + esc(form) + '" data-size="' + size + '"' + (sampled ? ' data-sample="1"' : '') + (readEmpty ? ' data-empty="1"' : '') + (stale ? ' data-stale="1"' : '') + (rec.frame.motion === false ? ' data-motion="0"' : '') + (rec.frame.legend ? ' data-legend="1"' : '') + '>'
         + (small ? body : '<div class="vw-hd"><i></i>' + esc(rec.title) + (figureTxt && (form === 'radial' || form === 'counter' || form === 'bar' || form === 'trace') ? '<b>' + figureTxt + '</b>' : '') + '</div><div class="vw-body">' + body + '</div>'
           + '<div class="vw-cap">' + cap + '<span class="sp"></span>' + (this._drawn && this._drawn !== rec.form ? 'drawn as ' + esc(this._drawn) + ' · ' : '') + esc(rec.form) + ' · ' + size + '</div>' + acts)
         + '</div>';
@@ -1629,11 +1644,11 @@ span.vw-sampled{opacity:.85}
       this._sh.querySelectorAll('[data-vb-link]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); this.dispatchEvent(new CustomEvent('widget:open', { bubbles: true, composed: true, detail: { record: this._rec, href: a.dataset.vbLink, key: key(this._rec) } })); }));
       hydrate(this._sh);
       if (!small && this._measured !== size) { const b = this._sh.querySelector('.vw-body'); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0; this._measured = size; if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
-      this.dispatchEvent(new CustomEvent('widget:rendered', { bubbles: true, composed: true, detail: { form, size, sample: sampled } }));
+      this.dispatchEvent(new CustomEvent('widget:rendered', { bubbles: true, composed: true, detail: { form, size, sample: sampled, empty: readEmpty, stale } }));
     }
   }
   if (window.customElements && !customElements.get('vera-widget')) customElements.define('vera-widget', VeraWidgetEl);
-  window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, version: 3 };
+  window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, version: 4 };
 
   /* ── THE WIDGET SURFACE — window.VeraWidgetConfig (the WidgetConfig board; the pickers of the Canvas, Harness and
      Dashboard boards) ─────────────────────────────────────────────────────────────────────────────────────────────
