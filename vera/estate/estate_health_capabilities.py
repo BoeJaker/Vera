@@ -46,6 +46,9 @@ log = logging.getLogger("vera.estate")
 SOURCE_TIMEOUTS_S = {"state_store": 10.0, "containers": 25.0, "guests": 25.0,
                      "backups": 75.0, "storage": 75.0, "services": 30.0}
 CACHE_TTL_S = 120.0
+# docker.disk.status also sweeps every exited session sandbox (~122 s on prod);
+# only its fallback path waits on it, and never for longer than this.
+DOCKER_DISK_TIMEOUT_S = 20.0
 _INSPECT_CONCURRENCY = 4      # Engine inspect calls at once; the host runs 250+ containers
 _CONFIG_CONCURRENCY = 6       # Proxmox guest config reads at once
 _CACHE: Dict[str, Any] = {"at": 0.0, "result": None}
@@ -213,8 +216,28 @@ async def _backups() -> Dict[str, Any]:
     return core.backups_section(per["reports"])
 
 
+async def _docker_disk() -> Dict[str, Any]:
+    """Docker's data-disk headroom. docker.disk.status also counts every exited
+    session sandbox for its reap summary, which took ~122 s on prod and sank the
+    whole storage check past its timeout; that module's own disk helpers give
+    the headroom alone in well under a second."""
+    ev = _module_of("docker.disk.status")
+    if ev and ev.get("_disk") is not None and all(k in ev for k in ("_docker_root", "_disk_reading")):
+        try:
+            mount = await ev["_docker_root"]()
+            reading = await ev["_disk_reading"](mount)
+            if reading:
+                return ev["_disk"].describe(reading["mount"], reading["total_gb"], reading["free_gb"])
+        except Exception as e:
+            log.debug("docker disk headroom: %s", e)
+    try:
+        return await asyncio.wait_for(_call("docker.disk.status"), DOCKER_DISK_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        return {"error": f"docker.disk.status did not answer within {int(DOCKER_DISK_TIMEOUT_S)} s"}
+
+
 async def _storage() -> Dict[str, Any]:
-    per, docker_disk = await asyncio.gather(_per_node("pxstore.disks"), _call("docker.disk.status"))
+    per, docker_disk = await asyncio.gather(_per_node("pxstore.disks"), _docker_disk())
     reports = per.get("reports")
     if reports is None:
         reports = [{"node": "Proxmox", "status": {"error": per.get("error") or "no nodes"}}]
