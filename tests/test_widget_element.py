@@ -58,7 +58,7 @@ def test_the_registry_panel_previews_from_the_real_forms():
 
 def test_veradash_takes_a_record_tile_and_keeps_every_mechanic():
     assert "function addRecord(record, o2) {" in DASH
-    assert "document.createElement('vera-widget')" in DASH and "el.setAttribute('size', 'auto');" in DASH
+    assert "document.createElement('vera-widget')" in DASH and "el.setAttribute('size', sizeForSpan(sp0[0], sp0[1]));" in DASH   # the span picks the size (the Sizes board), not 'auto' (agent D2's dashboard slice)
     assert "state.dynamic[wid] = { record: record, wid: wid };" in DASH
     assert "if (info && info.record) { addRecord(info.record, { silent: true, wid: wid }); return; }" in DASH
     assert "addWidget: addWidget, addRecord: addRecord, refresh: applyLayout" in DASH
