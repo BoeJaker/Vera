@@ -22,7 +22,7 @@ def test_the_runs_end_at_the_message_surface_and_a_reply_lands_on_the_canvas():
     for k in ("k:'cap'", "k:'code'", "k:'diagram'", "k:'table'", "k:'widget'", "k:'image'"):
         assert k in HTML, k
     assert "const key='turn:'+mid+':'+m.k+':'+i; if(_CV_LANDED[key]) continue;" in HTML, "keyed to the turn, never doubled"
-    assert "_capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:'s', anchor:{mid, turn:mid}})" in HTML
+    assert "_capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid}})" in HTML   # a diagram lands at m, a widget at its record's size (Notes/42 defect 52)
     assert "try{ _cvLandReply(_cvRelMid).then(()=>{ try{ _cvRelevance(_cvRelMid," in HTML, "land, then the relevance engine"
     assert "d:'canvas · '+(r.resolved==='shown'?'already there':'lifted out of the reply')" in HTML, "the exploded scene's landed layer sees it"
 

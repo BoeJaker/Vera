@@ -45,6 +45,6 @@ def test_the_chat_puts_every_loop_on_the_session_canvas_and_keeps_it_current():
 
 def test_the_element_draws_a_loop_item_and_the_resolver_knows_the_type():
     assert "loop: c => {" in EL and 'class="vc-steps"' in EL and "c.goal || c.title || 'agentic loop'" in EL
-    assert "const title = c.title || c.name || c.goal ||" in EL
+    assert "const title = blockTitle(b);" in EL and "const own = c.title || c.name || c.goal ||" in EL   # one title for every card (blockTitle) — a loop's is its goal
     assert '"loop":     {"desc": "An agentic run as an item' in PY and '"loop": "goal"' in PY
     assert 'key: str = "", session_id: str = "", trace_id=None):' in PY and "rev = await _write(doc, \"update\", key)" in PY, "a keyed update is a write like any other"

@@ -15,11 +15,11 @@ def _read(*parts):
 
 def test_mermaid_fence_lands_as_a_diagram_item():
     src = _read("vera", "chat", "chat_panel.html")
-    assert "body.querySelectorAll('.mm-slot[data-mm]').forEach((el,i)=>{ const s=String(_MM_BLOCKS[el.dataset.mm]||'').trim(); if(!s) return; out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{title:'Diagram', mermaid:s.slice(0,8000), caption:''}, col:'#c58bd6', k:'diagram'}); });" in src
+    assert "body.querySelectorAll('.mm-slot[data-mm]').forEach((el,i)=>{ const s=String(_MM_BLOCKS[el.dataset.mm]||'').trim(); if(!s) return; out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{title:'Diagram', mermaid:s.slice(0,24000), caption:''}, col:'#c58bd6', k:'diagram'}); });" in src
     assert src.index("const _MM_BLOCKS={};") < src.index("function _cvHarvest")
 
 
 def test_exploded_cards_and_landed_items_carry_their_source():
     src = _read("vera", "chat", "chat_panel.html")
-    assert "made.push({n:'Diagram', d:'mermaid', col:'#a78bfa', kind:'diagram', mermaid:src.slice(0,8000)});" in src
+    assert "made.push({n:'Diagram', d:'mermaid', col:'#a78bfa', kind:'diagram', mermaid:src.slice(0,24000)});" in src   # a whole diagram (Notes/42 defect 52)
     assert "mermaid:m.kind==='diagram'?m.content.mermaid:undefined, record:m.kind==='widget'?(m.content.record||undefined):undefined});" in src

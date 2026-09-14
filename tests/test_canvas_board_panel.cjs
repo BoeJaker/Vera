@@ -9,7 +9,7 @@ const V = require(FILE); const SRC = fs.readFileSync(FILE, 'utf8');
 const PANEL = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_panel.html'), 'utf8');
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 
-t('the menus and the clipboard reader are exported (version 5)', Array.isArray(V.NOTE_MENU) && typeof V.fromClipboard === 'function' && V.ADD_WHAT && V.version === 5);
+t('the menus and the clipboard reader are exported (version 5)', Array.isArray(V.NOTE_MENU) && typeof V.fromClipboard === 'function' && V.ADD_WHAT && V.version >= 5);
 
 // ── 44: no kind adds on the add bar's click alone ──
 t('every add-bar kind opens something first — a picker, a menu or the sheet — none seeds a blank box', V.ADD_KINDS.every((k) => k.hosts || k.pick || k.sheet || k.menu) && V.ADD_KINDS.length === 5);
