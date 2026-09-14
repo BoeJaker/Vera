@@ -10074,7 +10074,9 @@ Your task: decide what to do next to advance toward the goal.
     // own output back into the search engine and graph.
     if(document.getElementById('ctxOnSend')?.checked){
       const lastUser=HISTORY.filter(h=>h.role==='user').slice(-1)[0]?.content||'';
-      if(lastUser)ctxFetch(false,lastUser.slice(0,200));
+      // the context fetched for the user's question becomes what that turn READ when nothing was recorded at its send
+      // (the first send of a session goes out before any fetch): the exploded scene's read plate for the turn, refreshed if open
+      if(lastUser){ const _rm=_cvRelMid; Promise.resolve(ctxFetch(false,lastUser.slice(0,200))).then(()=>{ try{ if(_rm&&!(_TURN_READS[_rm]||[]).length){ _xplRecordReads(_rm); _xplRefresh(); } }catch(_){} }).catch(()=>{}); }
     }
     if(HISTORY.filter(h=>h.role==='user').length===2&&SNAME==='New session')autoName(true);
     if(CTX_TAB==='memgraph')setTimeout(memGraphLoad,1000);
