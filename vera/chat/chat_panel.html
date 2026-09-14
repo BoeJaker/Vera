@@ -6261,10 +6261,11 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     try{ if(typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(!!_qGalAll); }catch(_){}   // a fresh element takes the mini's All edges
       _ctxCol.addEventListener('vera:ctx:focus-turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid) return; _ctxScrollTo(mid); });
       // the scrubber: a frame picked scrolls the chat to that turn (the scroll then makes it the active frame); live = the end
-      _ctxCol.addEventListener('vera:ctx:frame', ev=>{ const id=(ev.detail||{}).id; if(id==null){ _grFocusMid=''; _grScrollProg=Date.now(); const m=document.getElementById('msgs'); try{ m&&m.scrollTo({top:m.scrollHeight, behavior:'smooth'}); }catch(_){} _graphAnchorPost(true); return; } const f=CTX_FRAMES.find(x=>String(x.id)===String(id)); if(f&&f.mid) _ctxScrollTo(f.mid); });
+      _ctxCol.addEventListener('vera:ctx:frame', ev=>{ const id=(ev.detail||{}).id; _ctxColFrameSig=''; if(id==null){ _grFocusMid=''; _grScrollProg=Date.now(); const m=document.getElementById('msgs'); try{ m&&m.scrollTo({top:m.scrollHeight, behavior:'smooth'}); }catch(_){} _graphAnchorPost(true); return; } const f=CTX_FRAMES.find(x=>String(x.id)===String(id)); if(f&&f.mid) _ctxScrollTo(f.mid); });
       const msgs=document.getElementById('msgs');
       // a scroll by the user releases the pinned turn: the turn in view is the one the graphs show
-      if(msgs&&!msgs._ctxColBound){ msgs._ctxColBound=true; msgs.addEventListener('scroll', ()=>{ if(Date.now()-_grScrollProg>900) _grFocusMid=''; _graphAnchorPost(); }, {passive:true}); msgs.addEventListener('click', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap'); if(w){ _grFocusMid=w.dataset.mid||''; _graphAnchorPost(true); } }); }
+      _ctxFollowBind();
+      if(msgs&&!msgs._ctxColBound){ msgs._ctxColBound=true; msgs.addEventListener('click', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap'); if(w){ _grFocusMid=w.dataset.mid||''; _graphAnchorPost(true); } }); }
       window.addEventListener('resize', ()=>_ctxRunsDraw());
     }
     if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800);
@@ -10038,7 +10039,7 @@ Your task: decide what to do next to advance toward the goal.
 
     // NOTE: NO /memory/record/turn call here — handled server-side by agents.py
 
-    if(CTX_NODES.length){const _ts=_ctxTurnSend||{}; _saveFrame('Turn '+HISTORY.filter(h=>h.role==='user').length,true,{ mid:_ts.mid||_cvRelMid||'', amid:_ts.amid||(aMsg&&aMsg.mid)||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery });updateFrameUI();_ctxTurnSend=null; _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} }
+    if(CTX_NODES.length){const _ts=_ctxTurnSend||{}; _saveFrame('Turn '+HISTORY.filter(h=>h.role==='user').length,true,{ mid:_ts.mid||_cvRelMid||'', amid:_ts.amid||(aMsg&&aMsg.mid)||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery });updateFrameUI();_ctxTurnSend=null; _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} try{ _ctxFollow(true); }catch(_){} }
     // Re-fetch context after send if "ctxOnSend" is enabled. Use the USER's
     // last message — never the LLM response — so the search query reflects
     // what the user actually asked for. The previous version passed
@@ -12415,6 +12416,17 @@ Your task: decide what to do next to advance toward the goal.
     if(f===CTX_FRAMES[CTX_FRAMES.length-1]){ const inp=document.getElementById('chatInput'); if(inp&&inp.value.trim()&&Date.now()-_ctxTypingT<90000) return null; }
     return f; }
   function _ctxBroadcastFrames(){ if(_EMBED.only==='menu') return; try{ _lhmPost('frames',{ frames:CTX_FRAMES }); }catch(_){} }
+  // the frame in view right now (the turn in focus, live while typing) — the one both graphs draw
+  function _ctxActiveCompute(){ try{ const w=_focusedTurn(); const f=_ctxFrameInView(w?(w.dataset.mid||''):''); return f?f.id:null; }catch(_){ return null; } }
+  // the follow: on the transcript's scroll and the composer's input, whether or not the graph is grown — the mini
+  // re-renders when the frame in view changes; the grown column syncs through its anchor
+  let _ctxFollowT=0, _ctxFollowTimer=null;
+  function _ctxFollow(now){ const run=()=>{ _ctxFollowT=Date.now(); const active=_ctxActiveCompute(); if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){} }
+      if(_pages.has('graph')&&_ctxCol) _graphAnchorPost(true); else { try{ _ctxRunsDraw(); }catch(_){} } };
+    if(now||Date.now()-_ctxFollowT>150){ if(_ctxFollowTimer){ clearTimeout(_ctxFollowTimer); _ctxFollowTimer=null; } return run(); }
+    if(!_ctxFollowTimer) _ctxFollowTimer=setTimeout(()=>{ _ctxFollowTimer=null; run(); }, 160); }
+  function _ctxFollowBind(){ const msgs=document.getElementById('msgs'); if(msgs&&!msgs._ctxFollowBound){ msgs._ctxFollowBound=true; msgs.addEventListener('scroll', ()=>{ if(Date.now()-_grScrollProg>900) _grFocusMid=''; _ctxFollow(); }, {passive:true}); }
+    const inp=document.getElementById('chatInput'); if(inp&&!inp._ctxFollowBound){ inp._ctxFollowBound=true; inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxFollow(); }); } }
   function saveFrame(){const l=prompt('Frame name:','Frame '+(CTX_FRAMES.length+1));if(l===null)return;_saveFrame(l);updateFrameUI();appendSys('Frame saved: <b>'+esc(l)+'</b>');}
 
   function updateFrameUI(){
@@ -13259,7 +13271,7 @@ function _embedMount(){
       else if(m.act==='focus'&&a.mid){ _grFocusMid=a.mid; if(_ctxGrown){ try{ _ctxColumnSync(a.mid); }catch(_){} } try{ renderCtxGraph(); }catch(_){} }
       else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }
       else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} }
-      else if(m.act==='frames'){ CTX_FRAMES=Array.isArray(a.frames)?a.frames:[]; _ctxColFrameSig=''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} } try{ VeraLHM.render(); }catch(_){} } };
+      else if(m.act==='frames'){ CTX_FRAMES=Array.isArray(a.frames)?a.frames:[]; _ctxColFrameSig=''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} } try{ _ctxFollow(true); VeraLHM.render(); }catch(_){} } };
   }
   if(_EMBED.only==='chat'){
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from!=='menu') return; const a=m.args||{};
@@ -13330,6 +13342,7 @@ function _embedMount(){
     fill.innerHTML=S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('');
   }
   function _quickContext(el){
+    _ctxFollowBind(); _ctxActiveFrame=_ctxActiveCompute();
     const S=_ctxShares();
     if(_ctxGrown){
       const sig='grown#'+S.rows.map(r=>r.f+r.tok).join('|'); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
