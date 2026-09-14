@@ -834,6 +834,21 @@ def _desc(entry: Dict[str, Any]) -> str:
     return (m.group(1) if m else (d[:157].rstrip() + "…" if len(d) > 160 else d)).strip()
 
 
+_CONTAINER = {"series": "series", "events": "events", "ohlcv": "bars", "graph": "nodes"}
+
+
+def _container_for(shape: str, m: Dict[str, str]) -> Dict[str, str]:
+    """A measured map re-keyed to the shape that won (the hand list says series where the probe read items): the rows
+    container becomes the shape's own — rows ← samples becomes series ← samples."""
+    if not m or shape in ("graph",):
+        return m
+    want = _CONTAINER.get(shape, "rows")
+    have = [k for k in ("rows", "series", "events", "bars") if k in m]
+    if len(have) == 1 and have[0] != want and want != "nodes":
+        m = dict(m); m[want] = m.pop(have[0])
+    return m
+
+
 _CACHE: Dict[str, Any] = {"at": 0.0, "items": [], "live": {}}
 
 
@@ -857,9 +872,10 @@ def derive(hand: Dict[str, Dict[str, Any]], streams: List[Dict[str, Any]], regis
             continue
         tier = "hand" if h else ("measured" if m.get("shape") else "declared")
         params = _params(entry)
+        mp = _container_for(sh, dict(m.get("map") or {}))
         out.append({"id": name, "cap": name, "shape": sh, "domain": domain_of(name), "args": [p["name"] for p in params], "params": params,
                     "required": [p["name"] for p in params if p.get("required")], "refresh_min": (h or {}).get("refresh_min") or _REFRESH_FLOOR.get(sh, "30s"),
-                    "unit": (h or {}).get("unit") or "", "desc": _desc(entry), "map": dict(m.get("map") or {}), "keys": list(m.get("keys") or [])[:12],
+                    "unit": (h or {}).get("unit") or "", "desc": _desc(entry), "map": mp, "keys": list(m.get("keys") or [])[:12],
                     "tier": tier, "note": "" if h else ("measured" + (" · " + m["note"].strip() if m.get("note", "").strip() else "") if tier == "measured" else "shape from the name"),
                     "ms": m.get("ms"), "http": str(entry.get("http_method") or "")})
         seen.add(name)

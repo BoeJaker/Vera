@@ -142,6 +142,8 @@ def test_the_source_registry_is_derived_from_the_capability_registry():
     assert src["mesh.topology"]["shape"] == "graph" and src["mesh.topology"]["domain"] == "Mesh"
     # the hand list still wins and the streams ride along
     assert src["sysmon.history"]["tier"] == "hand" and src["sysmon.history"]["shape"] == "series" and src["stream:events"]["domain"] == "Streams"
+    assert src["sysmon.history"]["map"] == {"series": "samples"}      # the measured container re-keyed to the shape that won
+    assert S._container_for("series", {"rows": "samples"}) == {"series": "samples"} and S._container_for("items", {"series": "h"}) == {"rows": "h"} and S._container_for("level", {}) == {}
     # the redis.* read family registered itself and is a source (the redis group reads)
     for cap in ("redis.info", "redis.keys", "redis.get", "redis.stream.tail"):
         assert cap in ORCH.CAPABILITY_REGISTRY and cap in src and src[cap]["domain"] == "Redis", cap
