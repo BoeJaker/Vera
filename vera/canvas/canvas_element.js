@@ -306,7 +306,9 @@
   .it.now{box-shadow:0 0 0 1.5px rgba(224,154,85,.45)}
   .it.waiting{animation:waitring 2.2s ease-in-out infinite}
   @keyframes waitring{0%,100%{box-shadow:0 0 0 1.5px rgba(224,154,85,.45)}50%{box-shadow:0 0 0 3px rgba(224,154,85,.24)}}
-  .it.dim{opacity:.5;transition:opacity .15s}.it.dim:hover{opacity:1}.it.out{display:none}
+  .it.dim{opacity:.5;transition:opacity .15s}.it.dim:hover{opacity:1}
+  /* out of focus in Zen: a dimmed header line — the board folds a body in Zen, it never removes the item (defect 53) */
+  .it.out{opacity:.45;transition:opacity .15s}.it.out:hover{opacity:1}
   /* an item from a turn well behind the one in focus folds to its header line — the conversation has moved on */
   .it.aged{opacity:.55}.it.aged:hover{opacity:1}
   /* what Vera can also do: a ghost until one of its suggestions is taken */
@@ -468,7 +470,10 @@
   /* the diagram item: the estate's mermaid element in the live layer, the source behind a click */
   #live .lv[data-kind="mermaid"]{background:var(--s3,var(--bg3,#0f1114))}#live .lv vera-mermaid{display:block;width:100%;height:100%}
   .vc-diag{display:flex;flex-direction:column;min-height:0;height:100%}
-  .vc-diag .vc-live{height:150px}.it[data-size="s"] .vc-diag .vc-live{height:60px}.it[data-size="l"] .vc-diag .vc-live{height:280px}.it[data-size="xl"] .vc-diag .vc-live{height:480px}
+  /* the diagram's slot takes the diagram's own height at the slot's width (--dh, set when it renders), up to the size's
+     ceiling — s 120 · m 400 · l 640 · xl the diagram's own — never a fixed strip; a dragged size still wins */
+  .vc-diag .vc-live{height:var(--dh,150px);max-height:400px}.it[data-size="s"] .vc-diag .vc-live{max-height:120px}.it[data-size="l"] .vc-diag .vc-live{max-height:640px}.it[data-size="xl"] .vc-diag .vc-live{max-height:none}
+  .it[data-type="diagram"] .it-bd{max-height:none}
   .vc-dgsrc{margin-top:6px;max-height:160px}
   vera-mermaid.vc-mm{display:block;min-height:120px;margin:.3em 0}`;
 
@@ -659,7 +664,7 @@
   }
   /* compact = a header line: Hover and Zen fold everything not opened; an aged item folds in every tier; the NOW
      items (the decision, the suggestions) and a hovered one never fold */
-  function foldOf(o) { o = o || {}; if (o.now || o.open || o.hovered) return false; return !!(o.aged || (o.tier && o.tier !== 'full')); }
+  function foldOf(o) { o = o || {}; if (o.now || o.open || o.hovered || o.fresh) return false; return !!(o.aged || (o.tier && o.tier !== 'full')); }
   const textFieldOf = t => t === 'markdown' ? 'md' : t === 'code' ? 'code' : t === 'html' ? 'html' : 'text';
   /* the rail's rows (pure): the session's own canvas first ("this session"), the named canvases by recency, then the
      other sessions' canvases ("session · <id>") — every session canvas is titled "Session canvas", so the id tells them apart */
@@ -892,12 +897,13 @@
         const open = this._open.has(key) || editing;
         const aged = isAged(mid, focusMid, order) && !(F && F.has(key)) && b.state !== 'pinned';
         const hovered = this._hovKey === key && (tier === 'hover' || aged);
-        const wouldFold = foldOf({ tier, aged, open, now: isNow });        // a header line, until opened
+        const fresh = !!mid && mid === focusMid;                                    // the turn in view produced it: open, in every tier
+        const wouldFold = foldOf({ tier, aged, open, now: isNow, fresh });   // a header line, until opened
         const compact = wouldFold && !hovered;
         const px = this._px[key];
         const editable = EDITABLE.includes(b.type);
         const bid = b._bid ? String(b.id) : '';   // a keyless block: addressed by its id (canvas.update · canvas.remove · canvas.move)
-        const cls = 'it ' + esc(b.state || 'now') + fcls + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '');
+        const cls = 'it ' + esc(b.state || 'now') + fcls + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${mid ? ' data-mid="' + esc(mid) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}>
           <div class="it-hd"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
@@ -1134,7 +1140,8 @@
           // the wrapper is the column's (placed, sized, hidden); the element inside is the estate's own and keeps its styles
           let inner;
           if (kind === 'term') { inner = document.createElement('vera-terminal'); inner.setAttribute('ws', h.dataset.ws || ''); ensureLib('/ui/vera-terminal.js', 'vera-terminal'); }
-          else if (kind === 'mermaid') { inner = document.createElement('vera-mermaid'); inner.setAttribute('bare', ''); inner.setAttribute('fill', ''); inner.setAttribute('title', h.dataset.title || 'diagram'); h.textContent = ''; this._mermaidInto(inner, key); }
+          else if (kind === 'mermaid') { inner = document.createElement('vera-mermaid'); inner.setAttribute('bare', ''); inner.setAttribute('fill', ''); inner.setAttribute('title', h.dataset.title || 'diagram'); h.textContent = '';
+            inner.addEventListener('vm:rendered', () => this._diagramGrew(key, inner)); this._mermaidInto(inner, key); }
           else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = ''; }
           else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
           el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);
@@ -1162,6 +1169,15 @@
         el.style.display = ''; el.style.left = Math.round(r.left - B.left + body.scrollLeft) + 'px'; el.style.top = Math.round(r.top - B.top + body.scrollTop) + 'px';
         if (el.style.width !== w + 'px' || el.style.height !== ht + 'px') { el.style.width = w + 'px'; el.style.height = ht + 'px'; if (el.dataset.kind === 'term') { const t = el.firstChild; try { t && t._doFit && t._doFit(); } catch (e) {} } if (el.dataset.kind === 'mermaid') { const m = el.firstChild; try { m && m.fit && m.fit(); } catch (e) {} } }
       });
+    }
+    /* the diagram rendered: its slot takes the diagram's height at the slot's width (the size's ceiling is the CSS's);
+       the live layer follows, and the stage places again — the item grew */
+    _diagramGrew(key, inner) {
+      const body = this.shadowRoot.getElementById('body'); const h = body && body.querySelector('#items .vc-live[data-key="' + String(key).replace(/"/g, '\\"') + '"]'); if (!h || !inner || typeof inner.naturalHeight !== 'function') return;
+      const w = h.getBoundingClientRect().width || 300; const nat = inner.naturalHeight(w); if (!nat) return;
+      const dh = Math.max(60, Math.round(nat)) + 'px'; if (h.style.getPropertyValue('--dh') === dh) return;
+      h.style.setProperty('--dh', dh); h.dataset.natural = String(Math.round(nat));
+      requestAnimationFrame(() => { this._liveLayout(); if (this.hasAttribute('stage')) this._placeNow(); });
     }
     /* the diagram's source into the estate's mermaid element (loaded once from the page); a changed source redraws it;
        the host's own window.mermaid draws when the element cannot be had, the source shows when nothing can */
@@ -1382,7 +1398,7 @@
     }
   }
 
-  const api = { place, checkRoutes, decisionOf, suggestionsOf, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 5 };
+  const api = { place, checkRoutes, decisionOf, suggestionsOf, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {
