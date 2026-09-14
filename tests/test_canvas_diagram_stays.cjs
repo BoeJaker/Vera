@@ -33,4 +33,5 @@ t('in Zen an out-of-focus item dims and folds — it is never removed', SRC.incl
 
 t('the column learns the turn in focus from the transcript itself (the user turn a reply in view belongs to), not only from the graph page', HTML.includes("if((cv.dataset.focusMid||'')!==fm) cv.dataset.focusMid=fm; }catch(_){}") && HTML.includes("if(fw&&fw.classList.contains('a')){ let p=fw.previousElementSibling;"));
 t('a diagram measured while folded (a zero box) is drawn again once it has one', MM.includes("this._blind = !(bb.width > 0 && bb.height > 0);") && MM.includes("if (w && this._blind && this._code) { this.render(this._code); lastW = w; return; }"));
+t("a re-rendered slot (new markup on every revision) gets the drawn diagram's height again from the mount", SRC.includes("this._mermaidInto(el.firstChild, key); this._diagramGrew(key, el.firstChild);"));
 console.log(fails ? fails + ' failed' : 'passed all checks'); process.exit(fails ? 1 : 0);
