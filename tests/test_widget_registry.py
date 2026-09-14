@@ -231,6 +231,7 @@ def test_the_sources_view_lists_the_registry_by_domain():
     assert 'onclick="wrView(\'sources\')"' in PANEL and 'id="srcDoms"' in PANEL and 'id="srcList"' in PANEL and "function wrSourcesDraw()" in PANEL
     assert "name:'widget.sources', arguments:{limit:5000, refresh:!!refresh}" in PANEL and "probe:true, probe_limit:40" in PANEL
     assert "' measured · ' + (tiers.hand || 0) + ' hand · ' + (tiers.declared || 0) + ' declared'" in PANEL
+    assert "rows.slice(0, 1500)" in PANEL and "' more · narrow the search</div>'" in PANEL          # the whole registry (704 on the mirror) is on the list
     assert "async function wrSrcUse(id)" in PANEL and "record: { form, source: s.id, read: { map: s.map || {}, args:" in PANEL
 
 
