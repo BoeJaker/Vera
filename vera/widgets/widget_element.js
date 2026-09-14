@@ -2083,6 +2083,7 @@ span.vw-sampled{opacity:.85}
       const sb = h('div', 'vwc-ss'); const si = h('input', 'vwc-sq'); si.type = 'search'; si.placeholder = 'find a source · ' + all.length + ' sources · ' + all.filter((s) => s.shape === shape).length + ' of shape ' + shape; si.value = S.sq || ''; si.addEventListener('input', () => { S.sq = si.value; renderRec(); const q2 = S.el.querySelector('.vwc-sq'); if (q2) { q2.focus(); q2.setSelectionRange(q2.value.length, q2.value.length); } }); sb.appendChild(si); so.appendChild(sb);
       const chips = h('div', 'vwc-srcl'); const none = h('span', 'vwc-src' + (rec.source ? '' : ' on'), 'none · sample'); none.title = 'no source: the widget draws its sample face'; none.addEventListener('click', () => pickSource(null)); chips.appendChild(none);
       mine.slice(0, 120).forEach((s) => chips.appendChild(chipOf(s)));
+      if (mine.length > 120) { const more = h('span', 'vwc-dim', '+ ' + (mine.length - 120) + ' more of shape ' + shape + ' · type to find one'); more.title = 'the list shows the first 120; the search narrows it'; chips.appendChild(more); }
       if (rec.source && !all.some((s) => s.id === rec.source)) { const c = h('span', 'vwc-src on', rec.source); c.title = 'the record\'s source (not in the registry)'; chips.appendChild(c); }
       if (S.sources && !mine.length) chips.appendChild(h('span', 'vwc-dim', 'no ' + shape + ' source ' + (sq ? 'matches' : 'registered') + ' · another shape below, or type one:'));
       so.appendChild(chips);

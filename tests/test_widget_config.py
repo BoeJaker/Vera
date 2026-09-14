@@ -86,6 +86,7 @@ def test_the_sources_come_per_shape_and_fill_the_record_with_a_mapping():
     assert "(!S.srcShape || S.q || S.srcShape === s)" in EL and "const shape = shapeOf(rec); if (src.shape && src.shape !== shape && !S.opts.shape)" in EL
     # the params draw with their type and default, required starred
     assert "p.name + (p.required ? ' *' : '')" in EL
+    assert "' more of shape ' + shape + ' · type to find one'" in EL          # past the first 120 the list says how many more
     assert "function pickSource(src)" in EL and "rec.read.args[a] = ''" in EL
     assert "SHAPE_FIELDS" in EL and "rec.read.map[k]" in EL
 
