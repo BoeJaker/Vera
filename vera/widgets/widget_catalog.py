@@ -5,10 +5,13 @@ the registries every widget record points into - SHAPES, FORMS and SOURCES -
 and the capabilities a renderer or an editor asks before drawing.
 
   widget.forms(shape?, q?, board?)  the forms, each {id, name, boards, shape, proj, sizes, options, glyph, motion}
-  widget.sources(shape?, q?)      the sources: one per capability of a known shape (the catalogue is
-                                  built from the live capability registry at call time, with a hand
-                                  list for the streams and the well-known reads) - {id, shape, cap,
-                                  args, refresh_min, unit}
+  widget.sources(shape?, q?, domain?, refresh?, probe?)
+                                  the sources: every quiet read of the live capability registry with the
+                                  shape a widget reads it as (hand > measured > declared - widget_sources.py),
+                                  grouped by domain, with its arguments, a refresh floor and a one-line
+                                  description - {id, cap, shape, domain, args, params, refresh_min, unit,
+                                  desc, map, tier}; cached ten minutes, refresh re-derives, probe measures
+                                  the unmeasured argument-free reads live
   widget.validate(record)         the record normalised + the problems a bind would refuse + the
                                   warnings it would log (unknown draw options dropped, a size the form
                                   lacks, a refresh it cannot parse)
@@ -50,6 +53,7 @@ def _sibling(name: str):
 
 
 _rec = _sibling("widget_record")
+_src = _sibling("widget_sources")          # the derived source registry + the redis.* read family
 SHAPES = _rec.SHAPES
 FORMS = _rec.FORMS
 
@@ -126,20 +130,9 @@ _NEVER = ("write", "delete", "remove", "create", "run", "exec", "kill", "restart
 
 
 def guess_shape(name: str, description: str = "") -> str:
-    """The shape a capability most likely returns, from its name (a quiet read only); '' when there is no telling."""
-    n = str(name or "").lower()
-    parts = [p for p in n.replace("_", ".").split(".") if p]
-    if not parts or any(p in _NEVER for p in parts):
-        return ""
-    tail = parts[-1]
-    for words, shape in _NAME_SHAPE:
-        if tail in words:
-            return shape
-    d = str(description or "").lower()
-    for words, shape in _NAME_SHAPE:
-        if any((" " + w + " ") in (" " + d + " ") for w in words[:3]):
-            return shape
-    return ""
+    """The shape a capability most likely returns, from its name (a quiet read only); '' when there is no telling.
+    The declared tier of widget_sources - a hand or measured shape beats it."""
+    return _src.guess_shape(name, description)
 
 
 def _cap_args(meta: Dict[str, Any], fn: Any) -> List[str]:
@@ -150,33 +143,18 @@ def _cap_args(meta: Dict[str, Any], fn: Any) -> List[str]:
         return []
 
 
-def sources(shape: str = "", q: str = "") -> List[Dict[str, Any]]:
-    """Every source the catalogue knows: the hand list, the streams, and every registered capability whose name
-    says what it returns. Built at call time so a module loaded later is a source the moment it registers."""
-    out: List[Dict[str, Any]] = []
-    seen = set()
-    reg = getattr(_orch, "CAPABILITY_REGISTRY", {}) or {}
-    for name, entry in list(reg.items()):
-        meta = (entry or {}).get("meta") or {}
-        hand = HAND.get(name)
-        sh = (hand or {}).get("shape") or guess_shape(name, str(meta.get("description") or ""))
-        if not sh:
-            continue
-        out.append({"id": name, "shape": sh, "cap": name, "args": _cap_args(meta, (entry or {}).get("func")),
-                    "refresh_min": (hand or {}).get("refresh_min") or _REFRESH_FLOOR.get(sh, "30s"),
-                    "unit": (hand or {}).get("unit") or "", "note": "" if hand else "shape from the name"})
-        seen.add(name)
-    for name, hand in HAND.items():          # a hand-listed read not (yet) registered still shows, marked
-        if name not in seen:
-            out.append({"id": name, "shape": hand["shape"], "cap": name, "args": [], "refresh_min": hand.get("refresh_min") or "30s",
-                        "unit": hand.get("unit") or "", "note": "not registered here"})
-    out += [dict(s) for s in STREAMS]
-    s, qq = str(shape or "").strip().lower(), str(q or "").strip().lower()
+def sources(shape: str = "", q: str = "", domain: str = "", refresh: bool = False) -> List[Dict[str, Any]]:
+    """Every source the catalogue knows: the registry's quiet reads with their shape (hand > measured > declared), the
+    hand list's reads not (yet) registered, the streams - derived by widget_sources and cached; a module loaded later is
+    a source at the next derivation (or now, with refresh)."""
+    out = _src.catalogue(HAND, STREAMS, refresh=refresh)
+    s, qq, d = str(shape or "").strip().lower(), str(q or "").strip().lower(), str(domain or "").strip().lower()
     if s and s != "all":
         out = [x for x in out if x["shape"] == s]
+    if d and d != "all":
+        out = [x for x in out if str(x.get("domain") or "").lower() == d]
     if qq:
-        out = [x for x in out if qq in (x["id"] + " " + x.get("note", "")).lower()]
-    out.sort(key=lambda x: (x["note"] == "not registered here", x["id"]))
+        out = [x for x in out if qq in (x["id"] + " " + str(x.get("desc") or "") + " " + str(x.get("domain") or "") + " " + x.get("note", "")).lower()]
     return out
 
 
@@ -217,12 +195,28 @@ async def widget_forms(shape: str = "", q: str = "", board: str = "", trace_id=N
 @capability(
     "widget.sources", memory="off", silent=True,
     http_method="GET", http_path="/ui/widgets/sources", http_tags=["ui", "widgets"],
-    description="The widget catalogue's SOURCES: one per capability of a known shape (from the live capability "
-                "registry + a hand list for the well-known reads and the streams). Inputs: shape (str), q (str), "
-                "limit (int, 300). Output: {ok, sources:[{id, shape, cap, args[], refresh_min, unit, note}], count}.")
-async def widget_sources(shape: str = "", q: str = "", limit: int = 300, trace_id=None):
-    out = sources(shape, q)
-    return {"ok": True, "sources": out[: max(1, int(limit or 300))], "count": len(out)}
+    description="The widget catalogue's SOURCES: every quiet read of the live capability registry with the shape a widget "
+                "reads it as (hand > measured > declared), grouped by domain, with its arguments and a one-line description; "
+                "plus the hand-listed reads and the streams. Inputs: shape (str), q (str), domain (str), limit (int, 300), "
+                "refresh (bool - re-derive now), probe (bool - measure up to probe_limit unmeasured argument-free reads live, "
+                "a few seconds each). Output: {ok, sources:[{id, cap, shape, domain, args[], params[], required[], refresh_min, "
+                "unit, desc, map, keys, tier, note}], count, domains:{domain: n}, shapes:{shape: n}, tiers:{tier: n}, derived_at, probed}.")
+async def widget_sources(shape: str = "", q: str = "", domain: str = "", limit: int = 300, refresh: bool = False, probe: bool = False, probe_limit: int = 40, trace_id=None):
+    probed = None
+    if probe:
+        probed = await _src.probe(limit=int(probe_limit or 40))
+        refresh = True
+    all_ = sources(refresh=refresh)
+    out = sources(shape, q, domain)
+    domains: Dict[str, int] = {}
+    shapes: Dict[str, int] = {}
+    tiers: Dict[str, int] = {}
+    for x in all_:
+        domains[x.get("domain") or "Other"] = domains.get(x.get("domain") or "Other", 0) + 1
+        shapes[x["shape"]] = shapes.get(x["shape"], 0) + 1
+        tiers[x.get("tier") or "declared"] = tiers.get(x.get("tier") or "declared", 0) + 1
+    return {"ok": True, "sources": out[: max(1, int(limit or 300))], "count": len(out), "total": len(all_), "domains": domains, "shapes": shapes,
+            "tiers": tiers, "derived_at": _src.cached_at(), "probed": probed}
 
 
 @capability(

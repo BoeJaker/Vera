@@ -226,6 +226,14 @@ def test_the_lhm_library_opens_and_saves_a_parts_record():
     assert "if(_editing) _wireBars();" in lib
 
 
+def test_the_sources_view_lists_the_registry_by_domain():
+    PANEL = _read("vera", "widgets", "widget_registry_panel.html")
+    assert 'onclick="wrView(\'sources\')"' in PANEL and 'id="srcDoms"' in PANEL and 'id="srcList"' in PANEL and "function wrSourcesDraw()" in PANEL
+    assert "name:'widget.sources', arguments:{limit:5000, refresh:!!refresh}" in PANEL and "probe:true, probe_limit:40" in PANEL
+    assert "' measured · ' + (tiers.hand || 0) + ' hand · ' + (tiers.declared || 0) + ' declared'" in PANEL
+    assert "async function wrSrcUse(id)" in PANEL and "record: { form, source: s.id, read: { map: s.map || {}, args:" in PANEL
+
+
 def test_the_gallery_view_shows_every_form_at_its_sizes():
     # the registry panel carries the Gallery view (the Widgets boards as one gallery): a board filter, the five sizes,
     # the projection switch, a cell per form drawn by <vera-widget> from its sample, + Add on a cell → the config sheet

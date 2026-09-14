@@ -1341,7 +1341,7 @@
       skin: String(o.skin || 'inherit').toLowerCase(), subject: String(o.subject || ''), projection: String(o.projection || drawIn.proj || drawIn.projection || '').toLowerCase(), actions: Array.isArray(o.actions) ? o.actions : ['dive', 'pin', 'ask'],
       children: Array.isArray(o.children) ? o.children : undefined, layout: o.layout, data: o.data };
   }
-  const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top|instances|sources|request_log)|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert)\b/.test(cap);
+  const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top|instances|sources|request_log|info|keys)|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.|^redis\.|^proxmox\.|^mesh\.)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert)\b/.test(cap);
   const key = (rec) => { const n = normalise(rec); return n.form + ' ' + (n.source || (n.panel ? 'panel:' + n.panel : '')) + ' ' + JSON.stringify(n.read.args || {}); };
   // the form that can draw THIS data: the chosen one, else what its shape picks, else the key · value list
   function formFor(rec, data) {
@@ -1776,6 +1776,9 @@ span.vw-sampled{opacity:.85}
 .vwc-sw.on i{left:13px}
 .vwc-row .swl{display:flex;align-items:center;gap:8px;min-width:0}.vwc-row .swl .dim{font-size:9px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vwc-srcl{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0 6px;max-height:96px;overflow:auto;scrollbar-width:thin}
+.vwc-ss{padding:2px 0 4px}.vwc-ss input{width:100%;background:var(--bg,var(--bg0,#0e0f12));border-radius:var(--r-sm,6px);padding:4px 8px}
+.vwc-src.other{opacity:.75}.vwc-src.other::after{content:attr(data-shape);margin-left:5px;font-size:7.5px;opacity:.7;letter-spacing:.04em}
+.vwc-srcd{display:flex;flex-direction:column;gap:2px;padding:0 0 6px;max-height:190px;overflow:auto;scrollbar-width:thin}.vwc-srcg summary{cursor:pointer;font-size:9px;text-transform:uppercase;letter-spacing:.07em;font-weight:600;color:var(--t3,var(--dim,#6b7280));display:flex;gap:6px;align-items:baseline;padding:3px 0;list-style:none}.vwc-srcg summary::-webkit-details-marker{display:none}.vwc-srcg summary::before{content:'▸';font-size:8px;opacity:.7}.vwc-srcg[open] summary::before{content:'▾'}.vwc-srcg summary b{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-weight:400;font-size:8.5px}.vwc-srcg .vwc-srcl{max-height:72px;padding-left:10px}
 .vwc-src{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));background:var(--s3,var(--bg3,#232732));border-radius:var(--r-pill,999px);padding:2px 8px;cursor:pointer;white-space:nowrap}
 .vwc-src:hover{color:var(--t1,var(--text,#d8dce4))}
 .vwc-src.on{background:var(--pri-bg,var(--ac,var(--acc,#5a9e8f)));color:var(--pri-fg,var(--on-ac,#0b1119))}
@@ -1944,7 +1947,7 @@ span.vw-sampled{opacity:.85}
     // the record's derived keys need the catalogue: its shape, its projection; the first validation runs now
     st.rec.shape = shapeOf(st.rec); const fe = formEntry(st.rec.form); if (!st.rec.projection) st.rec.projection = (fe && fe.proj && fe.proj[0]) || 'flat';
     renderCat(); renderRec(); renderPvw(); validateLater();
-    try { const r = await call(st.base, 'widget.sources', { limit: 400 }); if (st !== S) return; st.sources = (r && Array.isArray(r.sources)) ? r.sources : []; } catch (_) { if (st !== S) return; st.sources = []; }
+    try { const r = await call(st.base, 'widget.sources', { limit: 2000 }); if (st !== S) return; st.sources = (r && Array.isArray(r.sources)) ? r.sources : []; st.srcMeta = r && r.domains ? { domains: r.domains, total: r.total, tiers: r.tiers } : null; } catch (_) { if (st !== S) return; st.sources = []; }
     renderCat(); renderRec();
     if (st.opts.templates) { try { const r = await call(st.base, 'widget.template.list', { limit: 300 }); if (st !== S) return; st.tpls = (r && Array.isArray(r.templates)) ? r.templates : []; } catch (_) { if (st !== S) return; st.tpls = []; } renderCat(); }
   }
@@ -1973,7 +1976,7 @@ span.vw-sampled{opacity:.85}
         pick: () => { S.picked = null; pickForm('context_graph', { size: S.sizes.includes(e.size) ? e.size : S.sizes[S.sizes.length - 1] }); } })); }
     // every form, by shape, with its badges
     if (!cat) { list.appendChild(h('div', 'vwc-empty', 'Loading the catalogue…')); }
-    else { const shapes = SHAPE_ORDER.filter((s) => !S.opts.shape || S.opts.shape === s);
+    else { const shapes = SHAPE_ORDER.filter((s) => (!S.opts.shape || S.opts.shape === s) && (!S.srcShape || S.q || S.srcShape === s));   // a picked source narrows the forms to its shape (the search lifts it)
       shapes.forEach((sh) => { const fs = cat.forms.filter((f) => f.shape === sh && f.id !== 'context_graph' && matches(f.id + ' ' + (f.name || '') + ' ' + (f.glyph || '') + ' ' + sh)); if (!fs.length) return; any = true;
         const g = group(SHAPE_NAME[sh] || sh, SHAPE_DESC[sh] || '');
         fs.forEach((f) => { const proj = (f.proj || ['flat']); const live = isLive(f.id); const nm = f.name && f.name !== f.id ? f.name : '';
@@ -1993,7 +1996,7 @@ span.vw-sampled{opacity:.85}
     ph.title = line; const qi = ph.querySelector('.vwc-q'); if (qi) qi.placeholder = cat ? 'find a form · ' + line : 'find a form, a source, a template…'; const cn = ph.querySelector('.cn'); if (cn) cn.textContent = cat ? (cat.forms.length + ' · ' + live + ' live') : '';
   }
   function pickForm(id, o) {
-    const rec = S.rec; const was = rec.form; rec.form = id; rec.shape = shapeOf(rec);
+    const rec = S.rec; const was = rec.form; rec.form = id; rec.shape = shapeOf(rec); if (S.srcShape && S.srcShape !== rec.shape) S.srcShape = '';
     const f = formEntry(id); if (f) { if (!(f.proj || []).includes(rec.projection)) rec.projection = (f.proj || ['flat'])[0]; if (!(f.sizes || SIZES).includes(rec.frame.size)) rec.frame.size = f.sizes[f.sizes.length - 1]; }
     if (o && o.size) rec.frame.size = o.size;
     if (was !== id) { rec.draw = {}; rec.read.map = {}; if (rec.source && S.sources) { const s = S.sources.find((x) => x.id === rec.source); if (s && s.shape !== rec.shape) rec.source = ''; } }
@@ -2002,7 +2005,15 @@ span.vw-sampled{opacity:.85}
     changed(true);
   }
   function pickTemplate(t) { S.picked = { kind: 'tpl', id: t.id }; const keep = S.rec.placement; S.rec = recFrom(Object.assign({}, t, { template: t.id }), S.into); if (!S.rec.placement.length) S.rec.placement = keep; S.rec.shape = shapeOf(S.rec); S.titleTouched = true; if (!S.sizes.includes(S.rec.frame.size)) S.rec.frame.size = S.sizes.includes('m') ? 'm' : S.sizes[0]; changed(true); }
-  function pickSource(src) { const rec = S.rec; rec.source = src ? src.id : ''; rec.read.map = {}; rec.read.args = {}; if (src) { (src.args || []).forEach((a) => { rec.read.args[a] = ''; }); if (!rec.read.refresh && src.refresh_min && src.refresh_min !== 'live' && src.refresh_min !== 'event') rec.read.refresh = src.refresh_min; if (!rec.draw.unit && src.unit) rec.draw.unit = src.unit; } if (!S.titleTouched) rec.title = ''; changed(true); }
+  // a pick: the record's source, its arguments (the required ones listed, the rest empty), the map the measurement suggests
+  // (the container the rows sit in), the refresh floor; a source of ANOTHER shape moves the record to that shape — the
+  // catalogue narrows to it and the form becomes that shape's first (the form list follows the source, defect 57)
+  function pickSource(src) { const rec = S.rec; rec.source = src ? src.id : ''; rec.read.map = {}; rec.read.args = {};
+    if (src) { (src.required || []).forEach((a) => { rec.read.args[a] = ''; }); if (src.map && typeof src.map === 'object') Object.keys(src.map).forEach((k) => { if (src.map[k] && src.map[k] !== '$') rec.read.map[k] = src.map[k]; else if (src.map[k] === '$') rec.read.map[k] = '$'; });
+      if (!rec.read.refresh && src.refresh_min && src.refresh_min !== 'live' && src.refresh_min !== 'event') rec.read.refresh = src.refresh_min; if (!rec.draw.unit && src.unit) rec.draw.unit = src.unit;
+      const shape = shapeOf(rec); if (src.shape && src.shape !== shape && !S.opts.shape) { S.srcShape = src.shape; const cat = (S.cat && S.cat.forms) || []; const f = cat.find((x) => x.shape === src.shape && isLive(x.id)) || cat.find((x) => x.shape === src.shape); if (f) { rec.form = f.id; rec.shape = src.shape; rec.draw = {}; const fe = formEntry(f.id); if (fe && !(fe.proj || []).includes(rec.projection)) rec.projection = (fe.proj || ['flat'])[0]; } } else S.srcShape = ''; }
+    else S.srcShape = '';
+    if (!S.titleTouched) rec.title = ''; changed(true); }
 
   /* ── every edit lands here: the record column re-renders (unless typing), the preview, the JSON, the host, the validator ── */
   const validateLater = dbg(() => validate(), 350);
@@ -2065,15 +2076,22 @@ span.vw-sampled{opacity:.85}
     const so = sec('Source', 'anything of shape <b>' + esc(shape) + '</b>' + (S.sources ? '' : ' · loading…'));
     if (rec.form === 'panel') { row(so, 'Panel', inp(rec.panel || rec.source.replace(/^panel:/, ''), (v) => { rec.panel = v; rec.source = v ? 'panel:' + v : ''; changed(false); }, 'a registered panel id')); }
     else if (!needsNone) {
-      const srcs = (S.sources || []).filter((s) => s.shape === shape && matches(s.id + ' ' + (s.note || '')));
+      const all = S.sources || []; const sq = String(S.sq || '').trim().toLowerCase(); const hit = (s) => !sq || (s.id + ' ' + (s.desc || '') + ' ' + (s.domain || '') + ' ' + s.shape).toLowerCase().indexOf(sq) >= 0;
+      const mine = all.filter((s) => s.shape === shape && hit(s)), others = all.filter((s) => s.shape !== shape && hit(s));
+      const chipOf = (s) => { const c = h('span', 'vwc-src' + (rec.source === s.id ? ' on' : '') + (s.shape !== shape ? ' other' : ''), s.id); c.setAttribute('data-shape', s.shape); c.title = (s.desc || s.note || '') + ' · ' + s.shape + (s.refresh_min ? ' · refresh ≥ ' + s.refresh_min : '') + (s.unit ? ' · ' + s.unit : '') + ((s.required || []).length ? ' · needs ' + s.required.join(', ') : '') + (s.tier ? ' · ' + s.tier : ''); c.addEventListener('click', () => pickSource(s)); return c; };
+      // the search across every source, with the counts (the sheet's "N sources · M of this shape")
+      const sb = h('div', 'vwc-ss'); const si = h('input', 'vwc-sq'); si.type = 'search'; si.placeholder = 'find a source · ' + all.length + ' sources · ' + all.filter((s) => s.shape === shape).length + ' of shape ' + shape; si.value = S.sq || ''; si.addEventListener('input', () => { S.sq = si.value; renderRec(); const q2 = S.el.querySelector('.vwc-sq'); if (q2) { q2.focus(); q2.setSelectionRange(q2.value.length, q2.value.length); } }); sb.appendChild(si); so.appendChild(sb);
       const chips = h('div', 'vwc-srcl'); const none = h('span', 'vwc-src' + (rec.source ? '' : ' on'), 'none · sample'); none.title = 'no source: the widget draws its sample face'; none.addEventListener('click', () => pickSource(null)); chips.appendChild(none);
-      srcs.slice(0, 80).forEach((s) => { const c = h('span', 'vwc-src' + (rec.source === s.id ? ' on' : ''), s.id); c.title = (s.note || '') + (s.refresh_min ? ' · refresh ≥ ' + s.refresh_min : '') + (s.unit ? ' · ' + s.unit : ''); c.addEventListener('click', () => pickSource(s)); chips.appendChild(c); });
-      if (rec.source && !srcs.some((s) => s.id === rec.source)) { const c = h('span', 'vwc-src on', rec.source); c.title = 'the record\'s source (not in the catalogue for this shape)'; chips.appendChild(c); }
-      if (S.sources && !srcs.length) chips.appendChild(h('span', 'vwc-dim', 'no ' + shape + ' source registered · type one:'));
+      mine.slice(0, 120).forEach((s) => chips.appendChild(chipOf(s)));
+      if (rec.source && !all.some((s) => s.id === rec.source)) { const c = h('span', 'vwc-src on', rec.source); c.title = 'the record\'s source (not in the registry)'; chips.appendChild(c); }
+      if (S.sources && !mine.length) chips.appendChild(h('span', 'vwc-dim', 'no ' + shape + ' source ' + (sq ? 'matches' : 'registered') + ' · another shape below, or type one:'));
       so.appendChild(chips);
-      if (S.sources && !srcs.length) row(so, 'Source', inp(rec.source, (v) => { rec.source = v; changed(false); }, 'capability id'));
-      const src = (S.sources || []).find((s) => s.id === rec.source);
-      if (src && (src.args || []).length) { src.args.forEach((a) => row(so, a, inp(rec.read.args[a], (v) => { rec.read.args[a] = v; changed(false); }, 'arg'))); }
+      // every other domain, folded — a pick there changes the record's shape (the catalogue narrows to it)
+      if (others.length) { const byD = {}; others.forEach((s) => { (byD[s.domain || 'Other'] = byD[s.domain || 'Other'] || []).push(s); });
+        const fold = h('div', 'vwc-srcd'); Object.keys(byD).sort().forEach((d) => { const det = h('details', 'vwc-srcg'); if (sq) det.open = true; const sm = h('summary'); sm.appendChild(h('span', '', d)); sm.appendChild(h('b', '', String(byD[d].length))); det.appendChild(sm); const l = h('div', 'vwc-srcl'); byD[d].slice(0, 80).forEach((s) => l.appendChild(chipOf(s))); det.appendChild(l); fold.appendChild(det); }); so.appendChild(fold); }
+      if (S.sources && !mine.length) row(so, 'Source', inp(rec.source, (v) => { rec.source = v; changed(false); }, 'capability id'));
+      const src = all.find((s) => s.id === rec.source);
+      if (src && (src.params || src.args || []).length) { (src.params && src.params.length ? src.params : (src.args || []).map((a) => ({ name: a }))).forEach((p) => { const r = row(so, p.name + (p.required ? ' *' : ''), inp(rec.read.args[p.name], (v) => { if (v === '') delete rec.read.args[p.name]; else rec.read.args[p.name] = v; changed(false); }, (p.type || 'arg') + (p.default != null && p.default !== '' ? ' · ' + p.default : ''))); if (p.desc) r.title = p.desc; }); }
       if (rec.source) (SHAPE_FIELDS[shape] || []).forEach((k) => { const r = row(so, k, inp(rec.read.map[k], (v) => { if (v) rec.read.map[k] = v; else delete rec.read.map[k]; changed(false); }, '← ' + k)); r.title = 'the source\'s field that feeds ' + k; });
       row(so, 'Refresh', seg([['live', 'live'], ['5s', '5s'], ['10s', '10s'], ['1m', '1m'], ['event', 'on event'], ['', 'once']], rec.read.refresh || '', (v) => { rec.read.refresh = v; changed(true); }));
       row(so, 'Window', seg([['1h', '1h'], ['24h', '24h'], ['7d', '7d'], ['', 'all']], rec.read.window || '', (v) => { rec.read.window = v; changed(true); }));
@@ -2165,5 +2183,5 @@ span.vw-sampled{opacity:.85}
     if (st.problems.length && !st.armed) { st.armed = true; renderFoot(); return; }
     cfgClose(finalise(out, st.validated));
   }
-  window.VeraWidgetConfig = { open: cfgOpen, close: () => cfgClose(null), recordFrom: recFrom, recordOut: recOut, entries: CG_ENTRIES.slice(), packs: PACKS.slice(), version: 2 };
+  window.VeraWidgetConfig = { open: cfgOpen, close: () => cfgClose(null), recordFrom: recFrom, recordOut: recOut, entries: CG_ENTRIES.slice(), packs: PACKS.slice(), version: 3 };
 })();
