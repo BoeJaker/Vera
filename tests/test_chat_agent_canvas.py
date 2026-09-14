@@ -34,6 +34,14 @@ def test_hint_lists_every_registry_form():
     assert "const form=known?draw:'table';" in src and "draw:{form:form, size:" in src
 
 
+def test_a_follow_ups_calls_run_under_the_same_mode():
+    # mirror web1.png: the second web.research (issued after the first's result) was staged with Run/Skip under Auto-act
+    src = _read("vera", "chat", "chat_panel.html")
+    fn = src[src.index("async function continueConversation("):src.index("async function _webSearch(")]
+    assert "const chainAuto=!!document.getElementById('cfgCapAutoExec')?.checked;" in fn
+    assert "await processCapPlaceholders(txt||'',targetBody,chainAuto);" in fn and "processCapPlaceholders(txt||'',targetBody,false)" not in fn
+
+
 def test_a_lifted_canvas_directive_is_shaped_and_anchored_to_the_turn():
     # mirror a42i.png: the items the model placed landed PARKED (no anchor → the relevance pass parked them); the chips were harvested
     src = _read("vera", "chat", "chat_panel.html")
@@ -128,4 +136,4 @@ def test_the_reply_record_says_its_renderer_form():
 
 def test_canvas_draws_a_record_carried_in_the_content():
     src = _read("vera", "canvas", "canvas_element.js")
-    assert "const rec = c && c.draw ? c : (c && c.record && c.record.draw ? Object.assign({}, c.record, c.title ? { title: c.title } : {}) : null);" in src
+    assert "const rec = isRec(c) ? c : (c && isRec(c.record) ? Object.assign({}, c.record, c.title ? { title: c.title } : {}) : null);" in src   # w85: a content with a form is a record too

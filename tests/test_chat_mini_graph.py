@@ -28,4 +28,4 @@ def test_the_minis_detail_list_search_and_frames():
     assert "let _qGalSel='', _qGalList=false, _qGalQ='';" in src
     assert 'class="gal-all gal-list' in src and 'class="gal-srch"' in src
     assert "'.cg-mini .cg-node[data-id], .cg-mini .cg-row[data-id]'" in src and "'.cg-mini [data-a=\"toggle\"][data-id]'" in src
-    assert "_ctxCol.setFrames(CTX_FRAMES, {active:null});" in src and "let _ctxColFrameSig='';" in src
+    assert "_ctxCol.setFrames(CTX_FRAMES, {active});" in src and "let _ctxColFrameSig='';" in src   # ctx-graph-5: the frame in view is the active one

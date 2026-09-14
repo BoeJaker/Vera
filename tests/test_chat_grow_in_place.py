@@ -28,7 +28,7 @@ def test_chat_instance_feeds_the_menu_and_holds_no_rail():
     src = _read("vera", "chat", "chat_panel.html")
     assert "function _ctxBroadcast(){ if(_EMBED.only==='menu') return;" in src
     assert "renderCtxGraph();renderCtxList();renderFabPane(); _ctxBroadcast();" in src
-    assert "CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query; _ctxBroadcast();" in src
+    assert "CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query; if(_ctxTurnSend) _ctxTurnSend.ids=new Set(nodes.map(n=>n.id)); _ctxBroadcast();" in src   # ctx-graph-5: the send's turn keeps its record ids
     assert "else if(m.act==='ctx'){ CTX_NODES=Array.isArray(a.nodes)?a.nodes:[];" in src
     assert "else if(m.act==='grown') _ctxRemoteSet(a.on);" in src
     assert "document.body.classList.toggle('ctx-remote', !!on)" in src

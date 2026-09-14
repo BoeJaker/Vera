@@ -24,11 +24,11 @@ def test_the_context_runs_take_ordered_lanes_and_arrivals():
     assert "const dn=G.filter(g=>g.my<=g.ty).sort((a,b)=>b.my-a.my), up=G.filter(g=>g.my>g.ty).sort((a,b)=>a.my-b.my);" in HTML
     assert "dn.concat(up).forEach((g,li)=>{ g.lane=li; });" in HTML, "the lane is the type's place in the ordered set"
     assert "const lx=G0+(leftSide?1:-1)*u*Math.min(HWG, 9*(rn-1));" in HTML, "one lane per type about the channel's middle"
-    assert "G.forEach((g,j)=>{ g.ty=mTop+mH/2+(j-(rn-1)/2)*fan; });" in HTML, "one arrival per type, fanned down the block"
-    assert "if(fan*(rn-1)>mH-8) fan=Math.max(4, (mH-8)/Math.max(1,rn-1));" in HTML, "never past the block's edges"
+    assert "Gs.forEach((g,j)=>{ g.ty=mTop+mH/2+(j-(n-1)/2)*fan; }); });" in HTML, "one arrival per type, fanned down the block (per turn since ctx-graph-5)"
+    assert "if(fan*(n-1)>mH-8) fan=Math.max(4, (mH-8)/Math.max(1,n-1));" in HTML, "never past the block's edges"
     # the branches are hairlines, the trunk carries the colour; a type crosses the plot once
     assert "out+=L(cx, ye, lx, ye, 'tr');" in HTML and "#ctxRunsOverlay line.br{stroke-opacity:.35;stroke-width:1}" in HTML
-    assert "out+=L(lx, g.ty, edgeAt(g.ty), g.ty, 'tr');" in HTML, "the arrival ends on the block's edge"
+    assert "out+=L(lx, g.ty, edgeAt(g.ty, g.side), g.ty, 'tr');" in HTML, "the arrival ends on ITS block's edge (the question or the response — ctx-graph-5)"
 
 
 def test_exploded_the_runs_end_on_the_station_in_the_one_screen_space():

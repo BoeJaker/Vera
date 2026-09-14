@@ -10947,7 +10947,10 @@ Your task: decide what to do next to advance toward the goal.
       }
     }catch(e){}
     targetBody.innerHTML='';
-    await processCapPlaceholders(txt||'',targetBody,false);
+    // a follow-up's own calls run under the same mode as the first (Auto-act runs them, Ask first stages them) — the
+    // 12-step loop guard in executeCapInline stops a runaway chain; always staging them stalled every two-step task
+    const chainAuto=!!document.getElementById('cfgCapAutoExec')?.checked;
+    await processCapPlaceholders(txt||'',targetBody,chainAuto);
     if(txt)HISTORY.push({role:'assistant',content:txt});
   }
 
