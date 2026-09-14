@@ -13380,7 +13380,7 @@ function _embedMount(){
       const bar=el.querySelector('.ctx-grown-bar'); if(bar) bar.innerHTML='<span class="comp" title="'+esc(_lhmTxt('ctxMeterLabel'))+'">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span>';
       _graphColumnMount(); return; }
     const views=[['galaxy','galaxy'],['iso','iso'],['flow','flow'],['timeline','time']];
-    const sig=S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'')+'#'+_qGalSel+(_qGalList?'L':'')+_qGalQ+':'+_memAllNodes.length+':'+_lastDagNodes.length+':'+S.nodes.filter(n=>n.included===false).length+':'+CTX_FRAMES.length+':'+_ctxActiveFrame;
+    const sig=S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'')+'#'+_qGalSel+(_qGalList?'L':'')+_qGalQ+':'+_memAllNodes.length+':'+_lastDagNodes.length+':'+S.nodes.filter(n=>n.included===false).length+':'+CTX_FRAMES.length+':'+_ctxActiveFrame+':'+_grFocusMid;
     if(el.dataset.sig===sig) return; el.dataset.sig=sig;
     const data={nodes:S.nodes.map(n=>({id:n.id,label:n.label,family:String(n.source||'context').toLowerCase(),score:n.score,included:n.included})), rels:CTX_EDGES.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''}))};
     // the mini graph is the element's: the same state the grown graph holds, in miniature — records with their text, the
@@ -15828,6 +15828,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     // a turn selected in the exploded scene (the turn dots, the scrubber, ← →, a station caption, the exchange) is the focused turn
     // everywhere: the grown context graph at that turn's frame, the mini graph re-drawn, the canvas with that turn's items in focus
     _xplEl.addEventListener('vera:xpl:turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid) return; _grFocusMid=mid;
+      try{ _ctxFollow(true); }catch(_){}   // the chat's own follow: the frame in view is this turn's — the mini re-draws when it changes, the anchor posts when the graph page is open
       try{ _ctxColSig=''; _ctxColumnSync(mid); }catch(_){}   // the grown graph for the turn, at the turn's frame (the sync activates the frame in view)
       try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}
       try{ const t=(_xplEl.state().scene.turns||[]).find(x=>x.mid===mid); _cvRelevance(mid, (t&&t.text)||'', {apply:false}); const cv=document.querySelector('#canvasColumn vera-canvas'); if(cv) cv.dataset.focusMid=mid; }catch(_){}
@@ -15900,6 +15901,12 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
   function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: scene', e); } }
   const _xplCtxCard=(n)=>({id:n.id, n:n.label||n.id, d:(n.source||'')+' · '+(+(n.score||0)).toFixed(2), col:srcCol(n.source), kind:n.type||n.source||'', score:+(n.score||0), body:String(n.text||'').slice(0,240)});
   function _xplRecordReads(mid){ try{ if(!mid||typeof CTX_NODES==='undefined') return; _TURN_READS[mid]=CTX_NODES.filter(n=>n.included!==false).slice(0,40).map(_xplCtxCard); _TURN_RELS[mid]=_xplRels(); }catch(_){} }
+  // what a turn read, for the scene: the reads recorded when the question was sent; when none were (the first send of a
+  // session goes out before its context fetch lands), the turn's frame — the context that was there when the reply landed
+  function _xplTurnReads(mid){ const r=_TURN_READS[mid]||[]; if(r.length) return { read:r, rel:_TURN_RELS[mid]||[] };
+    try{ const f=(CTX_FRAMES||[]).find(x=>x.mid===mid||x.amid===mid); if(!f||!Array.isArray(f.nodes)) return { read:r, rel:[] };
+      const ns=f.nodes.filter(n=>n.included!==false); const ids=new Set(ns.map(n=>n.id));
+      return { read:ns.slice(0,40).map(_xplCtxCard), rel:(f.edges||[]).filter(e=>ids.has(e.from)&&ids.has(e.to)).slice(0,80).map(e=>({from:e.from, to:e.to, kind:/memory|recall|related/i.test(String(e.type||e.label||''))?'mem':'cite'})) }; }catch(_){ return { read:r, rel:[] }; } }
   // the relations among the turn's records (the context graph's own edges), for the scene's context-graph layer
   function _xplRels(){ try{ const ids=new Set(CTX_NODES.filter(n=>n.included!==false).map(n=>n.id)); return (CTX_EDGES||[]).filter(e=>ids.has(e.from)&&ids.has(e.to)).slice(0,80).map(e=>({from:e.from, to:e.to, kind:/memory|recall|related/i.test(String(e.type||e.label||''))?'mem':'cite'})); }catch(_){ return []; } }
   // the scene from the transcript: a station per question with its reply folded in
@@ -15909,7 +15916,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     const txt=(w)=>{ const b=w.querySelector('.msg-body'); if(!b) return ''; if(b.querySelector('.think-throb')) return ''; const c=b.cloneNode(true); c.querySelectorAll('.think-throb,.think-box,.cap-dot,.wblk,.cap-inline,.mm-slot,.mermaid,vera-mermaid,vera-widget,pre,table,figure,.msg-actions,.pa-atts').forEach(x=>x.remove()); return String(c.textContent||'').replace(/\s+/g,' ').trim(); };   // the words — the figures are the turn's made/landed items
     const tm=(w)=>{ const t=w.querySelector('.mtime'); return t?String(t.textContent||'').trim():''; };
     wraps.forEach(w=>{ const mid=w.dataset.mid; const isU=w.classList.contains('u');
-      if(isU){ cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), readAll:(_TURN_READS[mid]||[]).slice(0,40), rel:(_TURN_RELS[mid]||[]).slice(0,80), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)};
+      if(isU){ const rd=_xplTurnReads(mid); cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:rd.read.slice(0,12), readAll:rd.read.slice(0,40), rel:rd.rel.slice(0,80), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)};
         w.querySelectorAll('.pa-atts .pa-att b').forEach(el=>{ cur.read.push({n:String(el.textContent||'').slice(0,60), d:'attached to the question', col:'#38bdf8', kind:'attachment'}); });
         turns.push(cur); return; }
       if(!cur){ cur={mid, who:'aide', t:tm(w), text:'', read:[], say:[], made:[], land:[]}; turns.push(cur); }
