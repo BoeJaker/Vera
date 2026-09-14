@@ -28,7 +28,7 @@ def _load():
 
     def capability(name, **kw):
         def deco(fn):
-            orch.CAPABILITY_REGISTRY[name] = {"func": fn, "meta": kw}
+            orch.CAPABILITY_REGISTRY[name] = {"func": fn, "raw": fn, "meta": kw, "schema": kw.get("schema"), "description": kw.get("description", ""), "http_method": kw.get("http_method")}
             return fn
         return deco
 
@@ -41,7 +41,17 @@ def _load():
     async def code_write(path="", text="", trace_id=None): return {}
     async def jobs_list(limit=50, trace_id=None): return {}
     async def foo_bar(trace_id=None): return {}
+    async def ollama_instances(trace_id=None): return {"gpu-250": {"url": "x", "status": "ok"}, "cpu-246": {"url": "y", "status": "ok"}}
+    async def obs_workers(trace_id=None): return {"w1": {"host": "ct126", "state": "busy"}, "w2": {"host": "ct121", "state": "idle"}}
+    async def fabric_sources_add(url="", trace_id=None): return {"id": "x"}
+    async def proxmox_guests(cluster="", limit=50, trace_id=None): return {"ok": True, "guests": [{"vmid": 100, "name": "vera", "status": "running"}]}
+    async def mesh_topology(trace_id=None): return {"nodes": [{"id": "a"}], "edges": [{"from": "a", "to": "a"}]}
     orch.CAPABILITY_REGISTRY.update({
+        "obs.workers": {"func": obs_workers, "raw": obs_workers, "description": "Every worker with its host and state.", "http_method": "GET", "schema": {"type": "object", "properties": {}, "required": []}},
+        "ollama.instances": {"func": ollama_instances, "raw": ollama_instances, "description": "Every Ollama instance with its models and load.", "http_method": "GET"},
+        "fabric.sources.add": {"func": fabric_sources_add, "raw": fabric_sources_add, "description": "Add a source.", "http_method": "POST", "schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": []}},
+        "proxmox.guests": {"func": proxmox_guests, "raw": proxmox_guests, "description": "The guests of a cluster: vmid, name, status. Inputs: cluster, limit.", "schema": {"type": "object", "properties": {"cluster": {"type": "string", "description": "the cluster id"}, "limit": {"type": "integer", "default": 50}}, "required": ["cluster"]}},
+        "mesh.topology": {"func": mesh_topology, "raw": mesh_topology, "description": "The mesh as nodes and edges.", "http_method": "GET"},
         "sysmon.history": {"func": sysmon_history, "meta": {"description": "cpu / ram / gpu series per node"}},
         "sysmon.status": {"func": sysmon_status, "meta": {"description": "a snapshot"}},
         "code.write": {"func": code_write, "meta": {"description": "write a file"}},
@@ -114,6 +124,62 @@ def test_widget_forms_lists_the_catalogue_and_filters_by_shape():
 def test_widget_sources_capability():
     r = _run(C.widget_sources(shape="items", limit=5))
     assert r["ok"] and len(r["sources"]) <= 5 and r["count"] >= 5 and all(s["shape"] == "items" for s in r["sources"])
+
+
+# ── the derived source registry (defect 57): hand > measured > declared, domains, params, the never-words, redis.* ──
+def test_the_source_registry_is_derived_from_the_capability_registry():
+    S = C._src
+    src = {s["id"]: s for s in C.sources(refresh=True)}
+    # a quiet read with no hand entry and a measured envelope: the measured shape, its container as the map, the tier says so
+    assert "ollama.instances" in src and src["ollama.instances"]["tier"] == "measured" and src["ollama.instances"]["shape"] == "items" and src["ollama.instances"]["map"] == {"rows": "$"}
+    assert src["obs.workers"]["tier"] == "hand" and src["obs.workers"]["map"] == {"rows": "$"}      # the hand shape wins; the measured map still rides along
+    # a write is never a source, whatever its group ("add" is a never-word)
+    assert "fabric.sources.add" not in src and "code.write" not in src and "foo.bar" not in src
+    # the declared tier: the shape from the name, the params from the declared schema (required flagged, default kept, the description)
+    assert src["proxmox.guests"]["tier"] == "declared" and src["proxmox.guests"]["shape"] == "items" and src["proxmox.guests"]["domain"] == "Proxmox"
+    assert src["proxmox.guests"]["required"] == ["cluster"] and [p["name"] for p in src["proxmox.guests"]["params"]] == ["cluster", "limit"] and src["proxmox.guests"]["params"][1]["default"] == 50
+    assert src["proxmox.guests"]["desc"].startswith("The guests of a cluster")
+    assert src["mesh.topology"]["shape"] == "graph" and src["mesh.topology"]["domain"] == "Mesh"
+    # the hand list still wins and the streams ride along
+    assert src["sysmon.history"]["tier"] == "hand" and src["sysmon.history"]["shape"] == "series" and src["stream:events"]["domain"] == "Streams"
+    # the redis.* read family registered itself and is a source (the redis group reads)
+    for cap in ("redis.info", "redis.keys", "redis.get", "redis.stream.tail"):
+        assert cap in ORCH.CAPABILITY_REGISTRY and cap in src and src[cap]["domain"] == "Redis", cap
+    assert src["redis.keys"]["shape"] == "items" and src["redis.stream.tail"]["shape"] == "events" and src["redis.info"]["shape"] == "values"
+    assert src["redis.get"]["required"] == ["key"]
+    # the capability answers the counts by domain, shape and tier, and filters by domain
+    r = _run(C.widget_sources(domain="proxmox"))
+    assert r["ok"] and r["domains"]["Proxmox"] >= 1 and r["tiers"]["measured"] >= 1 and r["shapes"]["items"] >= 1 and all(s["domain"] == "Proxmox" for s in r["sources"]) and r["total"] >= r["count"]
+    # the never-words and the read words
+    assert S.is_read("proxmox.guests") and S.is_read("obs.anything") and S.is_read("redis.keys") and not S.is_read("markets.alerts.ack") and not S.is_read("mesh.forget") and not S.is_read("fabric.sources.add") and not S.is_read("evolve.sandbox.status")
+    # the cache: a second call is the cached list; refresh re-derives
+    a = C._src.cached_at(); C.sources(); assert C._src.cached_at() == a; C.sources(refresh=True); assert C._src.cached_at() >= a
+
+
+def test_shape_of_reads_an_envelope_the_way_the_element_does():
+    S = C._src
+    assert S.shape_of({"value": 3, "max": 10}) == ("level", {})
+    assert S.shape_of([{"t": 1, "v": 2}])[0] == "series" and S.shape_of([1, 2, 3])[0] == "series"
+    assert S.shape_of({"ok": True, "history": [{"t": 1, "v": 2}]}) == ("series", {"series": "history"})
+    assert S.shape_of({"ok": True, "nodes": [{"hostname": "a", "load": 1}], "count": 1}) == ("items", {"rows": "nodes"})
+    assert S.shape_of([{"t": 1, "kind": "x", "text": "y"}])[0] == "events" and S.shape_of({"entries": [{"ts": 1, "status": "ok"}]}) == ("events", {"events": "entries"})
+    assert S.shape_of({"nodes": [], "edges": []}) == ("graph", {"nodes": "nodes", "links": "edges"})
+    assert S.shape_of({"w1": {"a": 1}, "w2": {"a": 2}}) == ("items", {"rows": "$"})
+    assert S.shape_of({"cpu": 41, "mem": 62}) == ("values", {}) and S.shape_of({"ok": True, "items": [], "count": 0}) == ("items", {"rows": "items"})
+    assert S.shape_of([{"open": 1, "close": 2}])[0] == "ohlcv" and S.shape_of("x")[0] == "string"
+    assert len(S.MEASURED) > 300 and S.MEASURED["obs.health"]["shape"] == "values" and S.MEASURED["topology.snapshot"]["shape"] == "graph" and S.MEASURED["obs.scheduler"]["shape"] == "items"
+
+
+def test_the_redis_read_family_is_read_only_and_says_when_redis_is_absent():
+    ORCH.REDIS = None
+    for cap in ("redis.info", "redis.keys", "redis.get", "redis.stream.tail"):
+        e = ORCH.CAPABILITY_REGISTRY[cap]
+        assert e["meta"]["http_method"] == "GET" and e["meta"]["silent"] and e["meta"]["memory"] == "off", cap
+    assert _run(C._src.redis_info())["error"] == "Redis not connected"
+    assert _run(C._src.redis_get(key="")) == {"error": "Redis not connected"}
+    src = _read("vera", "widgets", "widget_sources.py")
+    for verb in ("r.set(", "r.delete(", "r.xadd(", "r.flushdb(", "r.hset(", "r.lpush(", "r.rpush(", "r.expire("):
+        assert verb not in src, verb + " — the family only reads"
 
 
 def test_widget_validate_binds_the_source_shape_to_the_form():

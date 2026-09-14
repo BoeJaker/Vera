@@ -36,7 +36,7 @@ R = _load_record()
 # ── the surface, in the element file ─────────────────────────────────────────
 def test_the_surface_is_exported_from_the_element_file_with_its_contract():
     assert "window.VeraWidgetConfig = { open: cfgOpen, close:" in EL
-    assert "packs: PACKS.slice(), version: 2 }" in EL
+    assert "packs: PACKS.slice(), version: 3 }" in EL
     for key in ("mode", "record", "into", "title", "anchor", "sizes", "shape", "menuItems", "templates", "onChange", "ok"):
         assert re.search(r"opts\.%s\b" % re.escape(key), EL), key
     assert "Promise<record | null>" in EL
@@ -77,7 +77,15 @@ def test_the_sheets_polish_names_counts_highlight_packs_range():
 
 def test_the_sources_come_per_shape_and_fill_the_record_with_a_mapping():
     assert "'widget.sources'" in EL and "'widget.forms'" in EL and "'widget.validate'" in EL and "'widget.template.list'" in EL and "'widget.template.save'" in EL
-    assert "s.shape === shape" in EL          # the chips are the sources of the record's shape
+    assert "all.filter((s) => s.shape === shape && hit(s))" in EL          # the record's shape's sources first…
+    # …every other domain folded with its count, one search across all, the counts in its placeholder (defect 57)
+    assert "const mine = all.filter((s) => s.shape === shape && hit(s)), others = all.filter((s) => s.shape !== shape && hit(s));" in EL and "h('details', 'vwc-srcg')" in EL and "sm.appendChild(h('b', '', String(byD[d].length)))" in EL
+    assert "' sources · ' + all.filter((s) => s.shape === shape).length + ' of shape ' + shape" in EL and "{ limit: 2000 }" in EL
+    # a pick fills the required args, the measured map, and a source of another shape moves the record to that shape (the catalogue narrows)
+    assert "(src.required || []).forEach((a) => { rec.read.args[a] = ''; })" in EL and "rec.read.map[k] = src.map[k]" in EL and "S.srcShape = src.shape" in EL
+    assert "(!S.srcShape || S.q || S.srcShape === s)" in EL and "const shape = shapeOf(rec); if (src.shape && src.shape !== shape && !S.opts.shape)" in EL
+    # the params draw with their type and default, required starred
+    assert "p.name + (p.required ? ' *' : '')" in EL
     assert "function pickSource(src)" in EL and "rec.read.args[a] = ''" in EL
     assert "SHAPE_FIELDS" in EL and "rec.read.map[k]" in EL
 

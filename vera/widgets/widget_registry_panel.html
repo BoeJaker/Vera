@@ -129,6 +129,20 @@ header .seg button{height:22px;padding:0 10px;font-size:10.5px;color:var(--dim2)
 header .seg button.on{background:var(--pri-bg,var(--acc));color:var(--pri-fg,var(--bg0));font-weight:600}
 #gallery{flex:1;display:none;flex-direction:column;min-height:0;padding:10px 12px;gap:10px}
 #gallery.on{display:flex}#wrap.off{display:none}
+/* ═══ the SOURCES view: the registry of what a widget can read — a domain column, the sources of the domain as rows (id · shape ·
+   refresh · args · description · tier), one search across all, "Use" opens the config sheet on that source ═══ */
+#sources{flex:1;display:none;min-height:0;padding:10px 12px;gap:12px}#sources.on{display:flex}
+#srcDoms{width:212px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;border:1px solid var(--border);border-radius:var(--ui-radius,8px);background:var(--bg1);overflow:auto;min-height:0;padding:8px}
+#srcDoms .dm{display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:var(--r-sm,6px);font-size:11px;color:var(--dim2);cursor:pointer}#srcDoms .dm:hover{background:var(--bg2);color:var(--text)}#srcDoms .dm.on{background:var(--pri-bg,var(--acc));color:var(--pri-fg,var(--bg0));font-weight:600}#srcDoms .dm b{margin-left:auto;font-family:var(--mono);font-size:9px;font-weight:400;opacity:.8}
+#srcMain{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;min-height:0}
+#srcMain .bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}#srcMain .bar input{width:260px}#srcMain .bar .sub{font-size:10.5px;color:var(--dim2)}
+#srcList{flex:1;min-height:0;overflow:auto;border:1px solid var(--border);border-radius:var(--ui-radius,8px);background:var(--bg1);scrollbar-width:thin}
+.srow{display:grid;grid-template-columns:230px 70px 56px 1fr 60px;gap:10px;align-items:center;padding:6px 12px;border-bottom:1px solid var(--border);font-size:11px}
+.srow.h{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);position:sticky;top:0;background:var(--bg1)}
+.srow .id{font-family:var(--mono);font-size:10.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.srow .id small{display:block;font-size:8.5px;color:var(--dim);font-family:var(--sans)}
+.srow .sh{font-family:var(--mono);font-size:9px;color:var(--acc);text-transform:uppercase;letter-spacing:.5px}.srow .rf{font-family:var(--mono);font-size:9px;color:var(--dim2)}
+.srow .ds{color:var(--dim2);font-size:10.5px;line-height:1.35;overflow:hidden}.srow .ds code{font-family:var(--mono);font-size:9px;color:var(--acc);background:var(--bg2);padding:0 4px;border-radius:3px;margin-right:3px}.srow .ds .tier{font-family:var(--mono);font-size:8px;color:var(--dim);margin-left:6px;text-transform:uppercase;letter-spacing:.5px}
+.srow button{height:20px;padding:0 8px;font-size:9.5px;border-radius:var(--r-sm,4px)}
 .gal-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0}
 .gal-bar .sub{font-size:11px;color:var(--dim2);line-height:1.45;max-width:760px}
 .gal-bar .seg{display:flex;gap:2px;background:var(--bg2);border-radius:var(--r-sm,6px);padding:2px;border:1px solid var(--border)}
@@ -155,7 +169,7 @@ header .seg button.on{background:var(--pri-bg,var(--acc));color:var(--pri-fg,var
 </head>
 <body>
 <header>
-  <h1>Widgets</h1><span class="seg" id="view"><button class="on" onclick="wrView('templates')" title="Your saved records">Templates</button><button onclick="wrView('gallery')" title="Every form of the catalogue, drawn from its sample — the Widgets boards as one gallery">Gallery</button></span><span class="sub" id="count">…</span>
+  <h1>Widgets</h1><span class="seg" id="view"><button class="on" onclick="wrView('templates')" title="Your saved records">Templates</button><button onclick="wrView('gallery')" title="Every form of the catalogue, drawn from its sample — the Widgets boards as one gallery">Gallery</button><button onclick="wrView('sources')" title="Every source a widget can read — the capability registry's quiet reads, by domain, with the shape each answers">Sources</button></span><span class="sub" id="count">…</span>
   <input id="q" placeholder="search name · reads · frame" oninput="wrLoad()" style="width:220px">
   <span class="sp"></span>
   <button class="primary" onclick="wrNew()" title="A new widget record through the widget config sheet (catalogue · record · live preview)">+ New widget…</button>
@@ -175,6 +189,13 @@ header .seg button.on{background:var(--pri-bg,var(--acc));color:var(--pri-fg,var
     <span class="sub" id="galSub">loading the catalogue…</span>
   </div>
   <div class="gal-grid" id="galGrid"></div>
+</div>
+<div id="sources">
+  <div id="srcDoms"></div>
+  <div id="srcMain">
+    <div class="bar"><input id="srcQ" placeholder="find a source · id, description, domain" oninput="wrSourcesDraw()"><span class="seg" id="srcShapes"></span><span class="sub" id="srcSub">loading the registry…</span><button onclick="wrSourcesLoad(true)" title="Re-derive from the live capability registry">↻ Refresh</button><button onclick="wrSourcesProbe()" title="Measure up to 40 unmeasured argument-free reads live (a few seconds each)">Probe</button></div>
+    <div id="srcList"></div>
+  </div>
 </div>
 <div id="wrap">
   <div id="fil">
@@ -240,10 +261,42 @@ async function wrLoad(){
 function wrKind(k){ kind = k; wrLoad(); }
 /* ── the gallery view: every form of the catalogue drawn from its sample by the real renderer (widget_element.js) ── */
 let GAL = { view: 'templates', board: 'all', size: 'm', proj: 'board' };
-try{ const u = new URL(location.href); if(u.searchParams.get('view') === 'gallery' || /\/gallery\/?$/.test(u.pathname)) GAL.view = 'gallery'; if(u.searchParams.get('board')) GAL.board = u.searchParams.get('board'); if(u.searchParams.get('size')) GAL.size = u.searchParams.get('size'); }catch(e){}
+try{ const u = new URL(location.href); if(u.searchParams.get('view') === 'gallery' || /\/gallery\/?$/.test(u.pathname)) GAL.view = 'gallery'; if(u.searchParams.get('view') === 'sources') GAL.view = 'sources'; if(u.searchParams.get('board')) GAL.board = u.searchParams.get('board'); if(u.searchParams.get('size')) GAL.size = u.searchParams.get('size'); }catch(e){}
 const GAL_BOARDS = [['all', 'All'], ['widgets', 'Still'], ['motion', 'Motion'], ['iso', 'Iso'], ['spec', 'Spec'], ['reply', 'Reply']];
 const GAL_WIDE = new Set(['board', 'area', 'heat', 'topology', 'lane', 'timeline', 'stepper', 'carousel', 'tabs', 'pipeline', 'compare', 'graph', 'terminal', 'rail', 'city', 'kanban']);
-function wrView(v){ GAL.view = v === 'gallery' ? 'gallery' : 'templates'; document.getElementById('gallery').classList.toggle('on', GAL.view === 'gallery'); document.getElementById('wrap').classList.toggle('off', GAL.view === 'gallery'); document.querySelectorAll('#view button').forEach(b => b.classList.toggle('on', b.textContent.toLowerCase() === GAL.view)); if(GAL.view === 'gallery') wrGallery(); }
+function wrView(v){ GAL.view = v === 'gallery' ? 'gallery' : (v === 'sources' ? 'sources' : 'templates'); document.getElementById('gallery').classList.toggle('on', GAL.view === 'gallery'); document.getElementById('sources').classList.toggle('on', GAL.view === 'sources'); document.getElementById('wrap').classList.toggle('off', GAL.view !== 'templates'); document.querySelectorAll('#view button').forEach(b => b.classList.toggle('on', b.textContent.toLowerCase() === GAL.view)); if(GAL.view === 'gallery') wrGallery(); if(GAL.view === 'sources') wrSourcesLoad(); }
+/* ── the sources view: the registry of what a widget can read (widget.sources), by domain ── */
+let SRC = { all: [], meta: null, domain: 'all', shape: 'all' };
+async function wrSourcesLoad(refresh){
+  document.getElementById('srcSub').textContent = refresh ? 're-deriving…' : 'loading the registry…';
+  const r = await api('/mcp/call', {method:'POST', body:JSON.stringify({name:'widget.sources', arguments:{limit:5000, refresh:!!refresh}})});
+  const c = r && r.type === 'tool_result' ? r.content : (r && r.result !== undefined ? r.result : r);
+  SRC.all = (c && Array.isArray(c.sources)) ? c.sources : []; SRC.meta = c || null; wrSourcesDraw();
+}
+async function wrSourcesProbe(){
+  document.getElementById('srcSub').textContent = 'probing the unmeasured reads…';
+  const r = await api('/mcp/call', {method:'POST', body:JSON.stringify({name:'widget.sources', arguments:{limit:5000, probe:true, probe_limit:40}})});
+  const c = r && r.type === 'tool_result' ? r.content : (r && r.result !== undefined ? r.result : r);
+  SRC.all = (c && Array.isArray(c.sources)) ? c.sources : SRC.all; SRC.meta = c || SRC.meta; wrSourcesDraw(); if(c && c.probed) status('probed ' + (c.probed.probed || []).length + ' · ' + (c.probed.errors || []).length + ' errors', 'ok');
+}
+function wrSourcesDraw(){
+  const q = String((document.getElementById('srcQ') || {}).value || '').trim().toLowerCase();
+  const doms = {}; SRC.all.forEach(s => { const d = s.domain || 'Other'; doms[d] = (doms[d] || 0) + 1; });
+  const dEl = document.getElementById('srcDoms'); dEl.innerHTML = '<div class="dm' + (SRC.domain === 'all' ? ' on' : '') + '" onclick="wrSrcDom(\'all\')">All domains<b>' + SRC.all.length + '</b></div>' + Object.keys(doms).sort().map(d => '<div class="dm' + (SRC.domain === d ? ' on' : '') + '" onclick="wrSrcDom(\'' + esc(d).replace(/'/g, '') + '\')">' + esc(d) + '<b>' + doms[d] + '</b></div>').join('');
+  const shapes = {}; SRC.all.forEach(s => { shapes[s.shape] = (shapes[s.shape] || 0) + 1; });
+  document.getElementById('srcShapes').innerHTML = ['all'].concat(Object.keys(shapes).sort()).map(sh => '<button class="' + (SRC.shape === sh ? 'on' : '') + '" onclick="wrSrcShape(\'' + sh + '\')">' + sh + (sh === 'all' ? '' : ' · ' + shapes[sh]) + '</button>').join('');
+  const rows = SRC.all.filter(s => (SRC.domain === 'all' || (s.domain || 'Other') === SRC.domain) && (SRC.shape === 'all' || s.shape === SRC.shape) && (!q || (s.id + ' ' + (s.desc || '') + ' ' + (s.domain || '')).toLowerCase().includes(q)));
+  const m = SRC.meta || {}; const tiers = m.tiers || {};
+  document.getElementById('srcSub').textContent = rows.length + ' of ' + SRC.all.length + ' sources · ' + Object.keys(doms).length + ' domains · ' + (tiers.measured || 0) + ' measured · ' + (tiers.hand || 0) + ' hand · ' + (tiers.declared || 0) + ' declared';
+  document.getElementById('srcList').innerHTML = '<div class="srow h"><span>source</span><span>shape</span><span>refresh</span><span>reads · arguments</span><span></span></div>' + rows.slice(0, 600).map(s => '<div class="srow"><span class="id" title="' + esc(s.id) + '">' + esc(s.id) + '<small>' + esc(s.domain || '') + '</small></span><span class="sh">' + esc(s.shape) + '</span><span class="rf">' + esc(s.refresh_min || '') + '</span><span class="ds">' + (s.params || []).map(p => '<code title="' + esc(p.desc || '') + '">' + esc(p.name) + (p.required ? '*' : '') + '</code>').join('') + esc(s.desc || s.note || '') + (s.map && Object.keys(s.map).length ? ' <code>' + esc(Object.keys(s.map).map(k => k + ' ← ' + s.map[k]).join(' · ')) + '</code>' : '') + '<span class="tier">' + esc(s.tier || '') + '</span></span><button onclick="wrSrcUse(\'' + esc(s.id) + '\')" title="A widget over this source — the config sheet">Use</button></div>').join('') + (rows.length > 600 ? '<div class="empty">+ ' + (rows.length - 600) + ' more · narrow the search</div>' : '');
+}
+function wrSrcDom(d){ SRC.domain = d; wrSourcesDraw(); }
+function wrSrcShape(s){ SRC.shape = s; wrSourcesDraw(); }
+async function wrSrcUse(id){ const s = SRC.all.find(x => x.id === id); const S = surface(); if(!s || !S){ status('the config sheet is not loaded', 'err'); return; }
+  const forms = (CATALOG || []).filter(f => f.shape === s.shape); const form = (forms.find(f => window.VeraWidget && window.VeraWidget.forms().some(x => x.id === f.id && !x.as)) || forms[0] || {}).id || 'kv';
+  const rec = await S.open({ mode: 'add', into: 'dashboard', title: 'Widget over ' + s.id, templates: true, ok: 'Save', base: BASE, record: { form, source: s.id, read: { map: s.map || {}, args: Object.fromEntries((s.required || []).map(a => [a, ''])) }, frame: { size: 'm' } } });
+  if(!rec) return; const t = Object.assign({}, rec, { name: rec.title || rec.form, source: { origin: 'you', from: 'the sources view', panel: rec.panel || '' } });
+  const r = await api('/ui/widgets/templates/save', { method: 'POST', body: JSON.stringify({ template: t, force: true }) }); if(r && r.ok){ status('saved ' + r.template.id, 'ok'); sel = r.template.id; wrLoad(); } else status((r && (r.error || (r.problems || []).join('; '))) || 'save failed', 'err'); }
 async function wrGallery(){
   if(CATALOG === null) await wrCatalog(document.getElementById('nForm'));
   const seg = (id, list, cur, key) => { const el = document.getElementById(id); el.innerHTML = list.map(x => '<button class="' + (x[0] === cur ? 'on' : '') + '" onclick="wrGalSet(\'' + key + '\',\'' + x[0] + '\')">' + x[1] + '</button>').join(''); };
@@ -423,7 +476,7 @@ async function wrNewSave(){
   if(r && r.ok){ status('saved ' + r.template.id, 'ok'); wrNewToggle(false); sel = r.template.id; wrLoad(); } else status((r && (r.error || (r.problems || []).join('; '))) || 'save failed', 'err');
 }
 wrLoad();
-if(GAL.view === 'gallery') wrView('gallery');
+if(GAL.view === 'gallery' || GAL.view === 'sources') wrView(GAL.view);
 </script>
 <script src="/ui/vera-ui.js"></script>
 </body>
