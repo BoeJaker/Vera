@@ -50,10 +50,21 @@ def test_a_lifted_canvas_directive_is_shaped_and_anchored_to_the_turn():
     assert "if((el.classList.contains('drv')||/^canvas\\./i.test(n)||" in src
 
 
+def test_the_canvas_column_carries_the_driven_ribbon():
+    # the Driven board: a chip in the message, a RIBBON on the surface it drove, a row in the log — the canvas column
+    # (the surface the model drives most) had none
+    src = _read("vera", "chat", "chat_panel.html")
+    assert 'id="cvDrvRibbon" class="drv-ribbon"' in src and 'data-w="driven ribbon · canvas"' in src
+    assert "function _cvDrvRibbon(res){" in src and "async function _cvDrvUndo(){" in src
+    assert "try{ _cvDrvRibbon(content); }catch(_){} }" in src, "the chip and the ribbon come from one answer"
+    assert "_drvUndoRow,_cvDrvRibbon,_cvDrvUndo" in src
+    assert "#canvasColumn .tri-hd .drv-ribbon{margin-left:8px;max-width:60%;overflow:hidden}" in src
+
+
 def test_a_directive_lands_as_the_boards_chip_with_undo():
     # mirror a42h.png: each ui.directive landed as a JSON dump; the items landed PARKED; the receipts were harvested
     src = _read("vera", "chat", "chat_panel.html")
-    assert "if(capName==='ui.directive'&&content&&typeof content==='object'&&content.row){ try{ el.innerHTML=_drvChipHtml(content, resultId, previewClean); el.classList.add('drv'); }catch(_){} }" in src
+    assert "if(capName==='ui.directive'&&content&&typeof content==='object'&&content.row){ try{ el.innerHTML=_drvChipHtml(content, resultId, previewClean); el.classList.add('drv'); }catch(_){} try{ _cvDrvRibbon(content); }catch(_){} }" in src
     assert "function _drvChipHtml(res, resultId, raw){" in src and "async function _drvUndoRow(rowId, btn){" in src
     assert "args.content=c; if(!args.at) args.at='now';" in src
     assert "/canvas\\./.test(n)))&&!el.classList.contains('error')) return;" in src
