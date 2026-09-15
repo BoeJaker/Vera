@@ -1250,6 +1250,7 @@ html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !imp
 .drv-ribbon b{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--acc3,#d4a96a)}
 .drv-ribbon .who,.drv-ribbon .pol{font-family:var(--mono);font-size:8.5px;color:var(--dim2)}
 .drv-ribbon .btn.xs{font-size:8.5px;padding:0 6px}
+#canvasColumn .tri-hd .drv-ribbon{margin-left:8px;max-width:60%;overflow:hidden}
 .cchip{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:10px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:var(--label-size,9.5px);letter-spacing:.2px;cursor:pointer;user-select:none;white-space:nowrap;line-height:1.5}
 .cchip:hover{color:var(--text);border-color:var(--border2)}
 .cchip.on{color:var(--acc);border-color:var(--acc);background:color-mix(in srgb,var(--acc) 12%,transparent)}
@@ -2692,7 +2693,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <svg id="ctxRunsOverlay" aria-hidden="true"></svg>
     <svg id="cvRunsOverlay" aria-hidden="true"></svg>
     <div id="canvasColumn" class="tri-col" data-col="canvas">
-      <div class="tri-hd"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span class="sp"></span>
+      <div class="tri-hd"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span id="cvDrvRibbon" class="drv-ribbon" style="display:none" data-w="driven ribbon · canvas"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button class="btn xs" onclick="CH._cvDrvUndo()" title="Undo the directive that placed this">undo</button><button class="btn xs" onclick="CH._drvLog()" title="The directive log, the policy, the asks — the Driven panel">log</button><button class="btn xs" onclick="CH._cvDrvRibbon(null)" title="Dismiss">&#215;</button></span><span class="sp"></span>
         <span class="nowbar" title="Items in the NOW band"><i></i><b>NOW</b><span id="cvColNow">0</span></span>
         <button class="btn xs" id="cvColCols" onclick="CH._cvColumns()" title="Columns on the stage — items pack around the pinned ones">1 col</button>
         <button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></div>
@@ -8426,7 +8427,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
         ${imgGallery}`;
       // a DIRECTIVE (the control plane) lands as the board's chip — name · outcome · target · policy · Undo — not a dump of the
       // dispatcher's row; the raw result stays behind the toggle
-      if(capName==='ui.directive'&&content&&typeof content==='object'&&content.row){ try{ el.innerHTML=_drvChipHtml(content, resultId, previewClean); el.classList.add('drv'); }catch(_){} }
+      if(capName==='ui.directive'&&content&&typeof content==='object'&&content.row){ try{ el.innerHTML=_drvChipHtml(content, resultId, previewClean); el.classList.add('drv'); }catch(_){} try{ _cvDrvRibbon(content); }catch(_){} }   // …and the ribbon on the surface it drove
       scroll();
 
       if(!isErr){
@@ -14765,6 +14766,25 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       +'<button class="btn xs" style="font-size:8px" onclick="const p=document.getElementById(\''+resultId+'\');const o=p.style.display===\'none\';p.style.display=o?\'block\':\'none\';this.textContent=o?\'Hide\':\'raw\'">raw</button></div>'
       +'<div id="'+resultId+'" class="cap-result" style="display:none;background:var(--bg0);border-radius:3px;padding:5px;max-height:300px;overflow:auto"><pre style="font-family:var(--mono);font-size:9.5px;white-space:pre-wrap;margin:0">'+esc(String(raw||'').slice(0,8000))+'</pre></div>';
   }
+  // the Driven board's ribbon on the surface a directive drove: the canvas column says who placed an item, under
+  // which policy, with its undo — raised by the same row the message's chip is built from
+  let _cvDrvRow=null;
+  function _cvDrvRibbon(res){
+    const rb=document.getElementById('cvDrvRibbon'); if(!rb) return;
+    const row=res&&res.row; if(!row||!/^canvas\./.test(String(row.name||''))||String(row.by||'')==='you'){ if(!res){ _cvDrvRow=null; rb.style.display='none'; } return; }
+    _cvDrvRow=row; rb.style.display='inline-flex';
+    rb.querySelector('.who').textContent=String(row.by||'aide')+' · '+String(row.name||'').split('.')[1];
+    rb.querySelector('.pol').textContent='policy '+String(row.policy||'');
+    const u=rb.querySelector('button'); if(u) u.style.display=(row.undo&&row.undo.name&&row.id)?'':'none';
+  }
+  async function _cvDrvUndo(){
+    const row=_cvDrvRow; if(!row||!row.id) return;
+    try{ const r=await _capCall('ui.directive.undo',{session_id:SID||'', row_id:row.id});
+      appendSys(r&&r.ok?('Undone: <b>'+esc(String(row.name||''))+'</b>'):('Undo failed: '+esc(String((r&&r.error)||''))));
+      try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){}
+      _cvDrvRibbon(null);
+    }catch(e){ appendSys('Undo failed: '+esc(String(e&&e.message||e))); }
+  }
   async function _drvUndoRow(rowId, btn){
     if(btn){ btn.disabled=true; btn.textContent='Undoing…'; }
     try{ const r=await _capCall('ui.directive.undo',{session_id:SID||'', row_id:rowId}); if(btn) btn.textContent=(r&&r.ok)?'Undone':'Undo failed'; try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} }
@@ -17943,7 +17963,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,_cvLandReply,_studioHint,_cvDirectiveShape,_chromeFold,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
