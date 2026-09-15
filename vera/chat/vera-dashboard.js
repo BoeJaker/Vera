@@ -1331,7 +1331,7 @@
         while (body.firstChild) holder.appendChild(body.firstChild);
         body.appendChild(holder);
       }
-      if (!el) { el = document.createElement('vera-widget'); el.className = 'vd-draw'; body.appendChild(el); }
+      if (!el) { el = document.createElement('vera-widget'); el.className = 'vd-draw'; el.setAttribute('bare', ''); body.appendChild(el); }   // the tile's own head carries the title (the board's tile is one head)
       var sp = spanOf(w); el.setAttribute('size', sizeForSpan(sp[0], sp[1]));
       el.setAttribute('record', JSON.stringify(shown));
       w.dataset.converted = '1';
@@ -1506,6 +1506,7 @@
         '<div class="w-body" style="padding:8px;position:relative;min-height:0"></div>' +
         '<span class="w-resize" data-resize></span>';
       var el = document.createElement('vera-widget');
+      el.setAttribute('bare', '');   // the tile's own head carries the title and the record chip (the board's tile is one head)
       var sp0 = spanOf(widget);
       el.setAttribute('size', sizeForSpan(sp0[0], sp0[1]));   // the span picks the size (the Sizes board), not the pixels
       var shown = withSample(record); if (shown.sample) widget.dataset.sample = '1';   // no readable source: the form's sample, said so

@@ -1607,7 +1607,7 @@ span.vw-sampled{opacity:.85}
 
   class VeraWidgetEl extends HTMLElement {
     constructor() { super(); this._sh = this.attachShadow({ mode: 'open' }); this._rec = null; this._data = undefined; this._drawn = ''; this._timer = null; this._ro = null; this._auto = 'm'; this._kids = {}; this._ui = {}; }
-    static get observedAttributes() { return ['record', 'size', 'base', 'template-id']; }
+    static get observedAttributes() { return ['record', 'size', 'base', 'template-id', 'bare']; }
     get record() { return this._rec; }
     set record(v) { this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._drawn = ''; this._kids = {}; this._read = false; this._err = ''; if (this.isConnected) this._boot(); }
     get base() { return this.getAttribute('base') || window._veraBase || ''; }
@@ -1680,7 +1680,9 @@ span.vw-sampled{opacity:.85}
       else if (this._data === undefined && rec.source && !readable(rec.source)) why = '<button class="vw-read" data-read>Read ' + esc(rec.source) + '</button>';
       else if (this._data === undefined && rec.source) why = 'reading ' + esc(rec.source) + '…';
       const body = draw(form, have ? this._data : undefined, size, Object.assign({}, opts, wasRead ? { sample: false } : {}));
-      const small = size === 'xs' || size === 's';
+      // bare: the HOST draws the head (a dashboard tile's own head carries the title and the record chip — the board's
+      // tile is one head over the body), so the element draws its body and caption alone, as xs and s already do
+      const small = size === 'xs' || size === 's' || this.hasAttribute('bare');
       const figureTxt = figure(form, sampled ? sample(form) : dataM);
       // the record's skin dresses the element with the page's own pack rules (data-style is what themes.css keys on);
       // motion off holds every moving form still

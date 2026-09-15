@@ -83,7 +83,7 @@ T('the staged OK, the fixed rows, the gesture hold and the checking chip are in 
   for (const s of [
     "const fresh = !st.dirty && st.vAnswered && st.vAnswered === st.vseq;", 'async function validateDetached(st, out) {', "if (typeof st.opts.onValidating === 'function') st.opts.onValidating();",
     "st.opts.onValidated(v.problems.length ? null : finalise(out, v.validated), v.problems, v.warnings);", 'S.dirty = true;', 'st.vAnswered = seq;',
-    '.vw-body{flex:1;min-height:0;display:flex;align-items:safe center;justify-content:center;overflow:auto;font-size:10.5px}',
+    '.vw-body{flex:1;min-height:0;display:flex;align-items:safe center;justify-content:center;overflow:auto;font-size:10.5px;container-type:size}',
     'const fitRows = (o, size, rowH, chrome) =>', "const slotH = (o && o.height && !chip) ? Math.max(44, Math.floor((o.height - (nrows - 1) * 8) / nrows)) : 0",
     '.vw-slot-b{flex:1;min-height:0;display:flex;align-items:safe center;overflow:auto}', "bounded: d.max != null || d.min != null"
   ]) assert(EL.includes(s), s);
@@ -95,5 +95,10 @@ T('the staged OK, the fixed rows, the gesture hold and the checking chip are in 
     "(w.dataset.checking ? ' · checking…' : '')", "'.vd-rec.checking{font-style:italic;opacity:.8}'"
   ]) assert(DASH.includes(s), s);
   assert(!DASH.includes("flex:1 0 auto"), 'the drawing never grows the tile');
+});
+// the board's tile is ONE head: the tile draws the title and the record chip, the element inside is bare
+T('every tile the dashboard builds is bare', () => {
+  assert.strictEqual((DASH.match(/setAttribute\('bare', ''\)/g) || []).length, 2);
+  assert.ok(/el\.className = 'vd-draw'; el\.setAttribute\('bare', ''\);/.test(DASH));
 });
 console.log(n + ' passed' + (process.exitCode ? ', some failed' : ''));

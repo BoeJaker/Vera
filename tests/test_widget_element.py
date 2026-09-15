@@ -60,7 +60,7 @@ def test_veradash_takes_a_record_tile_and_keeps_every_mechanic():
     assert "function addRecord(record, o2) {" in DASH
     assert "document.createElement('vera-widget')" in DASH and "el.setAttribute('size', sizeForSpan(sp0[0], sp0[1]));" in DASH   # the span picks the size (the Sizes board), not 'auto' (agent D2's dashboard slice)
     assert "state.dynamic[wid] = { record: record, wid: wid };" in DASH
-    assert "if (info && info.record) { addRecord(info.record, { silent: true, wid: wid }); return; }" in DASH
+    assert "if (info.record) addRecord(info.record, { silent: true, wid: wid });" in DASH
     assert "addWidget: addWidget, addRecord: addRecord, refresh: applyLayout" in DASH
     assert DASH.count("data-vera-widget-el") == 2, "the element script is injected once"
     for fn in ("function init(grid, opts)", "function save()", "function load()", "function onDragStart(e)", "function onDragOver(e)", "function onDrop(e)",
@@ -70,4 +70,4 @@ def test_veradash_takes_a_record_tile_and_keeps_every_mechanic():
                "function wireWidget(w)", "function openLoader()", "function addWidget(panelId, o2)", "function removeDynamic(wid)", "function restoreDynamic()",
                "function fetchPanels()", "function renderLoader(q)", "function buildDoc(full)"):
         assert fn in DASH, fn + " still defined"
-    assert "window.VeraDash = { init: init };" in DASH
+    assert "window.VeraDash = { init: init," in DASH   # the module exports more than init since the records slice
