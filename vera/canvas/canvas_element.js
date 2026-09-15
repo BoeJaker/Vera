@@ -663,8 +663,9 @@
     const i = (order || []).indexOf(mid), f = (order || []).indexOf(focusMid); if (i < 0 || f < 0) return false; return i < f - back;
   }
   /* compact = a header line: Hover and Zen fold everything not opened; an aged item folds in every tier; the NOW
-     items (the decision, the suggestions) and a hovered one never fold */
-  function foldOf(o) { o = o || {}; if (o.now || o.open || o.hovered || o.fresh) return false; return !!(o.aged || (o.tier && o.tier !== 'full')); }
+     items (the decision, the suggestions), a hovered one, the turn in view's own and anything the relevance pass holds
+     IN FOCUS never fold — the band says "in focus", so the item is open (a placed widget folded away one turn later) */
+  function foldOf(o) { o = o || {}; if (o.now || o.open || o.hovered || o.fresh || o.inFocus) return false; return !!(o.aged || (o.tier && o.tier !== 'full')); }
   const textFieldOf = t => t === 'markdown' ? 'md' : t === 'code' ? 'code' : t === 'html' ? 'html' : 'text';
   /* the rail's rows (pure): the session's own canvas first ("this session"), the named canvases by recency, then the
      other sessions' canvases ("session · <id>") — every session canvas is titled "Session canvas", so the id tells them apart */
@@ -898,7 +899,7 @@
         const aged = isAged(mid, focusMid, order) && !(F && F.has(key)) && b.state !== 'pinned';
         const hovered = this._hovKey === key && (tier === 'hover' || aged);
         const fresh = !!mid && mid === focusMid;                                    // the turn in view produced it: open, in every tier
-        const wouldFold = foldOf({ tier, aged, open, now: isNow, fresh });   // a header line, until opened
+        const wouldFold = foldOf({ tier, aged, open, now: isNow, fresh, inFocus: !!F && F.has(key) });   // a header line, until opened
         const compact = wouldFold && !hovered;
         const px = this._px[key];
         const editable = EDITABLE.includes(b.type);
