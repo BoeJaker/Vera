@@ -7131,11 +7131,15 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     catch(_){ btn.textContent='Copy failed'; }
     setTimeout(()=>{btn.textContent=orig;},1200);
   }
-  function _codePreview(id){
-    const blk=_CODE_BLOCKS[id]; if(!blk)return;
-    _codePreviewLoad(blk.lang, blk.code, /*runJs*/false);
-    // Switch to the Code tab and pop open the right rail if it's slim
-    ctxTab('code', null);
+  /* Show the Code preview pane. It used to be opened with ctxTab('code') alone, which marks the pane but cannot
+     reveal it: #paneCode is a .ctx-pane inside the one LHM's detail column, and quick-menu mode hides everything in
+     there but the header, the quick menu, the CTA, the top list and the record sheet - with !important. So the pane
+     was being filled and never shown (Notes/42 defect 78). The menu opens it: PICK the menu, THEN go deep, in that
+     order, because pick() re-enters quick mode and would undo a deep() that came first. ctxTab stays for a shell that
+     still has the old tab bar. */
+  function _codePaneOpen(){
+    try{ if(window.VeraLHM){ VeraLHM.pick('sandbox/code'); VeraLHM.deep(true); } }catch(_){}
+    try{ ctxTab('code', null); }catch(_){}
     const r=document.getElementById('rightRail');
     if(r && r.classList.contains('slim')){
       r.classList.remove('slim');
@@ -7143,16 +7147,15 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       try{localStorage.setItem('vera_right_collapsed','0');}catch(_){}
     }
   }
+  function _codePreview(id){
+    const blk=_CODE_BLOCKS[id]; if(!blk)return;
+    _codePreviewLoad(blk.lang, blk.code, /*runJs*/false);
+    _codePaneOpen();
+  }
   function _codeRun(id){
     const blk=_CODE_BLOCKS[id]; if(!blk)return;
     _codePreviewLoad(blk.lang, blk.code, /*runJs*/true);
-    ctxTab('code', null);
-    const r=document.getElementById('rightRail');
-    if(r && r.classList.contains('slim')){
-      r.classList.remove('slim');
-      const h=document.getElementById('rResize'); if(h) h.style.display='';
-      try{localStorage.setItem('vera_right_collapsed','0');}catch(_){}
-    }
+    _codePaneOpen();
   }
 
   /* ── Save a chat code block to the artifact system ──────────────
