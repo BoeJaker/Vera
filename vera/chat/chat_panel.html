@@ -13547,7 +13547,8 @@ function _embedMount(){
       try{ VeraContextGraph.ensureCss();
         const st=VeraContextGraph.stateFrom({ nodes:S.nodes, rels:data.rels, memory:_memAllNodes, memEdges:_memAllEdges, dag:_lastDagNodes, dagEdges:_lastDagEdges, view:(_qGalView==='timeline'?'time':_qGalView), allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k]), color:srcCol, sel:_qGalSel||null, list:_qGalList, q:_qGalQ, turn:_grFocusMid?'turn '+_grFocusMid:'', frames:CTX_FRAMES, frame:_ctxActiveFrame });   // the frame of the turn in view, as the grown graph shows it
         gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle });
-        if(_qGalList&&typeof VeraContextGraph.miniList==='function') recs=VeraContextGraph.miniList(st, { q:_qGalQ }); }catch(e){ gal=''; recs=''; }
+        // the host says WHERE the rows are drawn: .cg-mini is the scope that lays a row out and carries the colours
+        if(_qGalList&&typeof VeraContextGraph.miniList==='function') recs='<div class="cg-mini cg-recs">'+VeraContextGraph.miniList(st, { q:_qGalQ })+'</div>'; }catch(e){ gal=''; recs=''; }
     }
     if(!gal) gal=window.VeraWidget?VeraWidget.draw('context_graph',data,'m',{height:196,bare:true,view:_qGalView,allEdges:_qGalAll,off:_qGalOff,color:srcCol,hub:'aide',hubMeta:_kfmt(S.total)}):'';
     el.innerHTML='<div class="wid" data-w="context galaxy · graph" data-tpl="lhm:ctx-galaxy">'

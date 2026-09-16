@@ -780,6 +780,12 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
 .cg-mini .cg-plan{width:5px;height:5px}.cg-mini .cg-planl,.cg-mini .cg-estl,.cg-mini .cg-estg,.cg-mini .cg-region,.cg-mini .cg-slbl,.cg-mini .cg-memg,.cg-mini .cg-stepl{font-size:5.5px;letter-spacing:.04em}
 .cg-mini .cg-step{width:7px;height:7px}.cg-mini .cg-step svg{width:4px;height:4px}.cg-mini .cg-pnode{width:5px;height:5px}
 .cg-mini .cg-node svg{display:none}.cg-mini .cg-node span{display:none}.cg-mini .cg-lstem{display:none}
+/* The records as a SECTION of a host's menu rather than a drawer over the plot: the same rows and the same
+   --cg-* tokens (both declared on .cg-mini), flowing down the column instead of floating in a fixed box. Without
+   this wrapper the rows are laid out by nothing at all and run together (Notes/42 defect 60). */
+.cg-mini.cg-recs{height:auto;overflow:visible}
+.cg-mini.cg-recs .cg-list{position:relative;inset:auto;width:100%;max-height:320px;border:none;border-radius:0;background:transparent;backdrop-filter:none}
+.cg-mini.cg-recs .cg-list-b{max-height:288px}
 .cg-mini .cg-list{width:100%;left:0;border-left:none;font-size:8px}.cg-mini .cg-list-h{padding:4px 7px;font-size:7.5px}.cg-mini .cg-row{padding:2px 7px;font-size:8.5px;grid-template-columns:6px minmax(0,1fr) 30px 22px 12px 12px;gap:1px 4px}.cg-mini .cg-list-h .all{font-size:7.5px;height:13px;padding:0 4px}.cg-mini .cg-rec-a a.lnk{font-size:8px;padding:2px 4px}.cg-mini .cg-row .dot{width:6px;height:6px}.cg-mini .cg-row .tok{font-size:7px}.cg-mini .cg-row button{width:12px;height:12px;font-size:8px}
 .cg-mini .cg-rec{pointer-events:auto}
 `.replace(/vera-context-graph(?=[ {.])/g, ':is(vera-context-graph,.cg-mini)');
