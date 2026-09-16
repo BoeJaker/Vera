@@ -503,6 +503,131 @@ async def _save_rec(rec: Dict) -> None:
     r = _redis()
     if r:
         await r.hset(KEY_SBX, rec["session_id"], json.dumps(rec))
+        await _cache_put(rec)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  DECODED-RECORD CACHE — why this exists (2026-09-16)
+#
+#  KEY_SBX is append-only in practice: a session that is stopped/archived keeps
+#  its record (it points at a committed image the session can be restored from),
+#  so the hash only ever grows. On prod it reached 1554 records / ~470KB, and
+#  FOUR separate paths each did `hgetall` + `json.loads` over every one of them
+#  ON THE EVENT LOOP:
+#      cap_sbx_list        — every UI poll
+#      _auto_sync_tick     — every 60s
+#      _idle_sleep_tick    — every 120s
+#      _idle_archive_tick  — hourly
+#  Measured cost was 418-840ms per full decode, and the stall dumper caught it
+#  twice in 15 minutes (session_sandbox_capabilities.py:1418 under json.loads,
+#  1561ms and 2124ms) alongside the gen-2 GC pauses that the churn of ~1500
+#  short-lived nested dicts per minute was driving.
+#
+#  A plain TTL cache does NOT fix this: the ticks run at 60s/120s, so any TTL
+#  short enough to be safe is always already expired when a tick arrives, and
+#  every tick still pays the full decode. So this cache is WRITE-THROUGH —
+#  _save_rec updates the cached entry in place instead of invalidating, which
+#  means a steady-state process does exactly ONE full decode (the first) and
+#  then never again, no matter how many records accumulate.
+#
+#  `_SBX_VER_KEY` guards against a writer outside this process: every write
+#  INCRs it, and a read that sees a version it didn't produce re-decodes. That
+#  keeps the cache correct without making the common path pay for the rare one.
+# ─────────────────────────────────────────────────────────────────────────────
+_SBX_VER_KEY = "vera:remote:sandboxes:ver"
+# session_id -> decoded record. Populated by the first _all_recs() and kept
+# current by _cache_put/_cache_drop; `ver` is the KEY_SBX version it reflects.
+_RECS_CACHE: Dict[str, Any] = {"ver": None, "recs": None}
+
+
+async def _delete_rec(session_id: str) -> bool:
+    """Remove a record from the registry entirely. Only ever called for a row
+    with nothing left to point at — no committed image to restore from — since
+    an archived record IS the restore handle (see cap_sbx_stop)."""
+    r = _redis()
+    if not r or not session_id:
+        return False
+    try:
+        await r.hdel(KEY_SBX, session_id)
+    except Exception:
+        return False
+    await _cache_drop(session_id)
+    return True
+
+
+async def _bump_ver(r) -> Optional[int]:
+    """INCR the registry version and return it. Best-effort: a Redis without
+    the key still works (INCR creates it at 1)."""
+    try:
+        return int(await r.incr(_SBX_VER_KEY))
+    except Exception:
+        return None
+
+
+async def _cache_put(rec: Dict) -> None:
+    """Write-through: fold one saved record into the cache instead of dropping
+    the whole decode. Keeps the cache authoritative across our own writes."""
+    r = _redis()
+    ver = await _bump_ver(r) if r else None
+    recs = _RECS_CACHE.get("recs")
+    if recs is None:
+        return                      # nothing decoded yet; next _all_recs loads it
+    sid = rec.get("session_id")
+    if sid:
+        recs[sid] = rec
+        _RECS_CACHE["ver"] = ver
+
+
+async def _cache_drop(session_id: str) -> None:
+    """Write-through counterpart for a DELETED row (see _registry_reap_tick)."""
+    r = _redis()
+    ver = await _bump_ver(r) if r else None
+    recs = _RECS_CACHE.get("recs")
+    if recs is None:
+        return
+    recs.pop(session_id, None)
+    _RECS_CACHE["ver"] = ver
+
+
+def _decode_all(items: Dict) -> Dict[str, Dict]:
+    """Pure decode of a raw hgetall — runs in a worker thread, never the loop."""
+    out: Dict[str, Dict] = {}
+    for k, v in (items or {}).items():
+        try:
+            rec = json.loads(v)
+        except Exception:
+            continue                # a corrupt row must not lose the other 1500
+        sid = rec.get("session_id") or (k.decode() if isinstance(k, bytes) else k)
+        if sid:
+            out[str(sid)] = rec
+    return out
+
+
+async def _all_recs() -> List[Dict]:
+    """Every sandbox record, decoded at most once per process (see the note
+    above). Returns SHALLOW COPIES: callers scan these and some of them stamp
+    scalar fields (`last_used`, `last_autosync`) before calling _save_rec, and a
+    mutation must not reach the cache except through that save."""
+    r = _redis()
+    if not r:
+        return []
+    try:
+        ver = await r.get(_SBX_VER_KEY)
+        ver = int(ver) if ver is not None else None
+    except Exception:
+        ver = None
+    recs = _RECS_CACHE.get("recs")
+    if recs is None or _RECS_CACHE.get("ver") != ver:
+        try:
+            items = await r.hgetall(KEY_SBX)
+        except Exception:
+            items = {}
+        # The decode is the expensive part (~0.5s at 1500 records) — keep it off
+        # the event loop so even this once-per-process cost cannot stall it.
+        recs = await asyncio.to_thread(_decode_all, items)
+        _RECS_CACHE["recs"] = recs
+        _RECS_CACHE["ver"] = ver
+    return [dict(rec) for rec in recs.values()]
 
 
 def _cname(session_id: str) -> str:
@@ -546,31 +671,48 @@ async def _docker_host(dk, host_id: str):
 # do ONE bulk query per docker host (the `vera-sbx-` name prefix is a docker
 # substring filter that returns them all) and cache it for a few seconds so a
 # burst of pollers collapses to a single call.
-_CSTATE_CACHE: Dict[str, Any] = {}   # host_key -> (expiry_monotonic, {cname: state})
+_CSTATE_CACHE: Dict[str, Any] = {}   # host_key -> (expiry_monotonic, {cname: state}, answered)
 _CSTATE_TTL = float(os.getenv("VERA_SBX_STATE_TTL", "3.0"))
 
 
-async def _containers_state_map(dk, rec_host: Dict, host_key: str,
-                                prefix: str = "vera-sbx-") -> Dict[str, str]:
-    """ONE docker call per host → {container_name: State}, TTL-cached."""
+async def _state_map_checked(dk, rec_host: Dict, host_key: str,
+                             prefix: str = "vera-sbx-") -> Tuple[Dict[str, str], bool]:
+    """ONE docker call per host → ({container_name: State}, answered).
+
+    `answered` is False when the host could not be queried. That distinction
+    matters to anything that DELETES on the strength of a container being
+    missing: this function swallows errors and returns an empty map, so an
+    unreachable docker host otherwise reads as "every container is gone".
+    Callers that only display state can keep ignoring it; _registry_reap_tick
+    must not (there is a permanently unreachable host in the registry).
+    """
     now = time.monotonic()
     hit = _CSTATE_CACHE.get(host_key)
     if hit and hit[0] > now:
-        return hit[1]
+        return hit[1], hit[2]
     import urllib.parse
     filt = urllib.parse.quote(json.dumps({"name": [prefix]}))
     m: Dict[str, str] = {}
+    ok = False
     try:
         status, body, _ = await dk._engine_request(
             rec_host, "GET", f"/containers/json?all=true&filters={filt}")
         rows = json.loads(body or b"[]") if status == 200 else []
+        ok = status == 200
         for row in rows:
             st = row.get("State", "")
             for n in (row.get("Names") or []):
                 m[n.lstrip("/")] = st
     except Exception:
-        pass
-    _CSTATE_CACHE[host_key] = (now + _CSTATE_TTL, m)
+        ok = False
+    _CSTATE_CACHE[host_key] = (now + _CSTATE_TTL, m, ok)
+    return m, ok
+
+
+async def _containers_state_map(dk, rec_host: Dict, host_key: str,
+                                prefix: str = "vera-sbx-") -> Dict[str, str]:
+    """ONE docker call per host → {container_name: State}, TTL-cached."""
+    m, _ok = await _state_map_checked(dk, rec_host, host_key, prefix)
     return m
 
 
@@ -1389,6 +1531,22 @@ async def cap_sbx_stop(session_id: str = "", sync: Optional[bool] = None,
         await dk._run_local(await dk._docker_argv(host, ["stop", rec["container"]]), timeout=40)
     rec["active"] = False
     rec["updated"] = now_iso()
+    # The container is gone. Whether the RECORD still means anything depends
+    # entirely on whether there's an image to restore from:
+    #   committed_image set  → the record IS the archive handle (cap_sbx_start
+    #                          rebuilds from it), so it must survive.
+    #   committed_image empty → it points at a container that no longer exists
+    #                          and an image that was never made. Keeping it only
+    #                          grows the hash every path has to scan, which is
+    #                          how the registry reached 1554 rows. Drop it.
+    # The /workspace volume is named from the session id either way, so a
+    # restart of the same session still finds its files.
+    if remove and not rec.get("committed_image"):
+        await _delete_rec(session_id)
+        await emit_event({"type": "remote.sandbox.stopped", "session_id": session_id,
+                          "record_removed": True})
+        return {"ok": True, "committed_image": committed, "synced": synced,
+                "record_removed": True}
     await _save_rec(rec)
     await emit_event({"type": "remote.sandbox.stopped", "session_id": session_id})
     return {"ok": True, "committed_image": committed, "synced": synced}
@@ -1407,17 +1565,11 @@ async def cap_sbx_list(trace_id=None) -> Dict:
     r = _redis()
     if not r:
         return {"sandboxes": [], "count": 0}
-    try:
-        items = await r.hgetall(KEY_SBX)
-    except Exception:
-        items = {}
     dk = _dk()
-    recs = []
-    for v in items.values():
-        try:
-            recs.append(json.loads(v))
-        except Exception:
-            continue
+    # Shared decode (see _all_recs): this used to json.loads every record in the
+    # hash on the event loop on EVERY poll — 418-840ms at 1554 records, and the
+    # blocking call the stall dumper caught twice in 15 minutes.
+    recs = await _all_recs()
     # ONE bulk docker query per host (cached) instead of one per container —
     # collapses the per-poll serial inspect storm that used to starve the loop.
     state_maps: Dict[str, Dict[str, str]] = {}
@@ -4266,13 +4418,8 @@ async def _auto_sync_tick() -> None:
                         and getattr(vcfg, "GITEA_OWNER", ""))
         if not (store_on or gitea_on):
             return
-        items = await r.hgetall(KEY_SBX)
         now = time.time()
-        for v in (items or {}).values():
-            try:
-                rec = json.loads(v)
-            except Exception:
-                continue
+        for rec in await _all_recs():
             if not rec.get("active") or not rec.get("container"):
                 continue
             sid = rec.get("session_id")
@@ -4485,19 +4632,13 @@ async def _idle_sleep_tick() -> None:
         dk = _dk()
         if not r or dk is None:
             return
-        items = await r.hgetall(KEY_SBX)
         aliases_raw = await r.hgetall(KEY_ALIAS)
         aliases: Dict[str, str] = {}
         for k, v in (aliases_raw or {}).items():
             k = k.decode() if isinstance(k, bytes) else k
             v = v.decode() if isinstance(v, bytes) else v
             aliases[str(k)] = str(v)
-        records = []
-        for v in (items or {}).values():
-            try:
-                records.append(json.loads(v))
-            except Exception:
-                continue
+        records = await _all_recs()
         now = time.time()
         plan = _idle_core.idle_plan(records, aliases, now=now, idle_s=idle_min * 60)
         for rec in plan.unstamped:
@@ -4553,14 +4694,9 @@ async def _idle_archive_tick() -> None:
         r = _redis()
         if not r:
             return
-        items = await r.hgetall(KEY_SBX)
         now = time.time()
         threshold_s = idle_days * 86400
-        for v in (items or {}).values():
-            try:
-                rec = json.loads(v)
-            except Exception:
-                continue
+        for rec in await _all_recs():
             if not rec.get("container"):
                 continue
             last = float(rec.get("last_used") or 0)
@@ -4575,6 +4711,82 @@ async def _idle_archive_tick() -> None:
                 log.debug("idle archive for %s failed: %s", rec.get("session_id"), e)
     except Exception as e:
         log.debug("sandbox idle-archive tick failed: %s", e)
+
+
+# Never delete more than this many rows in a single tick. The reap rule is
+# deliberately narrow, but a misconfigured threshold should surface as a slow
+# drip in the logs that someone can catch, not as an emptied registry.
+_REAP_MAX_PER_TICK = int(os.getenv("VERA_SANDBOX_REAP_MAX", "200") or 200)
+
+
+async def _registry_reap_tick() -> None:
+    """Scheduler tick: delete registry rows that have nothing left to point at.
+
+    KEY_SBX is otherwise append-only — _idle_archive_tick removes a container
+    but keeps its record, because for an archived session the record IS the
+    restore handle. Rows with no committed image get no such reprieve and were
+    simply accumulating: prod reached 1554 rows, of which 1366 named containers
+    that no longer existed, and every scan of the hash paid for all of them.
+
+    A row is reaped only when ALL of these hold:
+      * no `committed_image`  — nothing to restore from, so nothing is lost
+      * `last_used` older than the archive threshold
+      * its container genuinely does not exist, on a host that ANSWERED
+    The last clause is the important one: _state_map_checked returns an empty
+    map for a host it could not reach, so without it a docker outage would
+    read as "every container is gone" and delete the registry.
+    """
+    try:
+        cfg = await _get_cfg()
+        idle_days = int(cfg.get("idle_archive_days", _IDLE_ARCHIVE_DEFAULT_DAYS) or 0)
+        if idle_days <= 0:
+            return
+        r = _redis()
+        if not r:
+            return
+        dk = _dk()
+        now = time.time()
+        threshold_s = idle_days * 86400
+        recs = await _all_recs()
+        # One bulk docker query per DISTINCT host, and remember which hosts
+        # actually answered — see the docstring.
+        state_maps: Dict[str, Dict[str, str]] = {}
+        host_ok: Dict[str, bool] = {}
+        hids = {rec.get("docker_host_id", "local") for rec in recs
+                if rec.get("container") and not _is_local_rec(rec)}
+        for hid in hids:
+            try:
+                host = await _docker_host(dk, hid) if dk else None
+                if not host:
+                    host_ok[hid] = False
+                    continue
+                state_maps[hid], host_ok[hid] = await _state_map_checked(dk, host, hid)
+            except Exception:
+                host_ok[hid] = False
+        plan = _idle_core.reap_plan(
+            recs, now=now, idle_s=threshold_s,
+            state_maps=state_maps, host_ok=host_ok,
+            local_backend=_LOCAL_BACKEND, limit=_REAP_MAX_PER_TICK)
+        removed = 0
+        for sid in plan.remove:
+            if await _delete_rec(sid):
+                removed += 1
+        if plan.capped:
+            log.info("sandbox registry reap: hit the %d-row per-tick cap, "
+                     "continuing next tick", _REAP_MAX_PER_TICK)
+        if removed:
+            log.info("sandbox registry reap: removed %d row(s) with no container "
+                     "and no committed image, idle >%dd "
+                     "(kept: %d archived, %d recent, %d still present, "
+                     "%d unproven)", removed, idle_days,
+                     plan.kept_archived, plan.kept_fresh,
+                     plan.kept_present, plan.kept_unproven)
+            await emit_event({"type": "remote.sandbox.registry_reaped",
+                              "removed": removed, "idle_days": idle_days,
+                              "kept_archived": plan.kept_archived,
+                              "kept_unproven": plan.kept_unproven})
+    except Exception as e:
+        log.debug("sandbox registry reap tick failed: %s", e)
 
 
 # Register the periodic auto-sync + idle-sleep + idle-archive (the
@@ -4592,6 +4804,10 @@ try:
     schedule(_idle_archive_tick, 3600, name="sandbox_idle_archive")
 except Exception as _e:
     log.debug("could not register sandbox idle-archive: %s", _e)
+try:
+    schedule(_registry_reap_tick, 3600, name="sandbox_registry_reap")
+except Exception as _e:
+    log.debug("could not register sandbox registry reap: %s", _e)
 
 
 # Keep sandbox LIFECYCLE caps out of agent-loop toolkits: a loop already runs
