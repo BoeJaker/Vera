@@ -6585,8 +6585,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      the records are measured in. Never across a node: a branch leaves its rim level, or up or down first when another
      node is in the way. */
   // the relation runs can be switched off — context → chat, chat ↔ canvas — from the ⋯ tools sheet (persisted)
-  const _runsOff=(function(){ try{ const j=JSON.parse(localStorage.getItem('vera_runs_off')||'{}'); return { ctx:!!j.ctx, cv:!!j.cv }; }catch(_){ return { ctx:false, cv:false }; } })();
-  function _runsToggle(which, on){ if(!(which in _runsOff)) return; _runsOff[which]=(on==null)?!_runsOff[which]:!on; try{ localStorage.setItem('vera_runs_off', JSON.stringify(_runsOff)); }catch(_){} _runsSync(); try{ _ctxRunsDraw(); _cvRunsDraw(); }catch(_){} return !_runsOff[which]; }
+  // xpl: the RELATION edges inside the exploded scene - the third family, switched like the other two (defect 83)
+  const _runsOff=(function(){ try{ const j=JSON.parse(localStorage.getItem('vera_runs_off')||'{}'); return { ctx:!!j.ctx, cv:!!j.cv, xpl:!!j.xpl }; }catch(_){ return { ctx:false, cv:false, xpl:false }; } })();
+  function _runsToggle(which, on){ if(!(which in _runsOff)) return; _runsOff[which]=(on==null)?!_runsOff[which]:!on; try{ localStorage.setItem('vera_runs_off', JSON.stringify(_runsOff)); }catch(_){} _runsSync(); try{ if(_xplEl) _xplEl.dataset.rels=_runsOff.xpl?'off':'on'; }catch(_){} try{ _ctxRunsDraw(); _cvRunsDraw(); }catch(_){} return !_runsOff[which]; }
   // the switch is on the runs themselves — each column's own header — as well as in the ⋯ sheet; they are all one state
   function _runsSync(){ try{ Object.keys(_runsOff).forEach(k=>{ document.querySelectorAll('[data-runs="'+k+'"]').forEach(b=>b.classList.toggle('on', !_runsOff[k])); }); }catch(_){} }
   /* the runs stand down while a menu is over the surface they cross (defect 67). The page's own ☰ swaps the detail
@@ -13491,7 +13492,7 @@ function _embedMount(){
     // the relation runs: two switches (context → chat, chat ↔ canvas), on unless you turn them off
     { const row=document.createElement('div'); row.className='ts-row'; const kk=document.createElement('span'); kk.className='ts-k'; kk.textContent='Runs'; row.appendChild(kk);
       const g=document.createElement('div'); g.className='tb-group'; g.title='Relation runs — the lines from the context records to the message, and between the turns and the canvas items';
-      [['ctx','Context → chat','The runs from the context records (the quick menu or the grown graph) to the message in focus'],['cv','Chat ↔ canvas','The runs between the turns and the items they made or read']].forEach(([k,label,title])=>{ const b=document.createElement('button'); b.className='tb-btn'+(_runsOff[k]?'':' on'); b.type='button'; b.dataset.runs=k; b.textContent=label; b.title=title; b.addEventListener('click',()=>_runsToggle(k)); g.appendChild(b); });
+      [['ctx','Context → chat','The runs from the context records (the quick menu or the grown graph) to the message in focus'],['cv','Chat ↔ canvas','The runs between the turns and the items they made or read'],['xpl','Relations in Explode','The relation edges between the records in the exploded scene — every one of them in Full, and on hover in Hover and Zen']].forEach(([k,label,title])=>{ const b=document.createElement('button'); b.className='tb-btn'+(_runsOff[k]?'':' on'); b.type='button'; b.dataset.runs=k; b.textContent=label; b.title=title; b.addEventListener('click',()=>_runsToggle(k)); g.appendChild(b); });
       row.appendChild(g); sheet.appendChild(row); }
     _runsSync();   // the sheet's switches and the columns' own show the one state
     document.addEventListener('click', ev=>{ if(!sheet.classList.contains('on')) return; if(sheet.contains(ev.target)||(ev.target.closest&&ev.target.closest('#hdrMore'))) return; _toolsSheet(false); });
@@ -16078,7 +16079,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       _xplRefresh(); try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){}
     }catch(e){ appendSys('Place failed: '+esc(String(e&&e.message||e))); }
   }
-  function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: scene', e); } }
+  function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.dataset.rels=_runsOff.xpl?'off':'on'; _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: scene', e); } }
   const _xplCtxCard=(n)=>({id:n.id, n:n.label||n.id, d:(n.source||'')+' · '+(+(n.score||0)).toFixed(2), col:srcCol(n.source), kind:n.type||n.source||'', score:+(n.score||0), body:String(n.text||'').slice(0,240)});
   function _xplRecordReads(mid){ try{ if(!mid||typeof CTX_NODES==='undefined') return; _TURN_READS[mid]=CTX_NODES.filter(n=>n.included!==false).slice(0,40).map(_xplCtxCard); _TURN_RELS[mid]=_xplRels(); }catch(_){} }
   // what a turn read, for the scene: the reads recorded when the question was sent; when none were (the first send of a

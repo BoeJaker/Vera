@@ -157,12 +157,12 @@
         // stations, level into the target — never diagonally; two stations apart they drop to a lane under the plates
         // and travel there. A run's legs are pushed one by one, so every edge is horizontal or vertical.
         let lane = 0; const LO = Math.max(3, Math.round(6 * kW));
-        const run = (A, B, col, cls, title) => { if (!A || !B) return; const k = lane++, off = ((k % 5) - 2) * LO; let Pp;
+        const run = (A, B, col, cls, title, joins) => { if (!A || !B) return; const k = lane++, off = ((k % 5) - 2) * LO; let Pp;
           const dir = B.cx > A.cx ? 1 : -1, sx = A.cx + dir * (A.w / 2 + 3), ex = B.cx - dir * (B.w / 2 + 3);
           if (A.st === B.st) { const lx = xU(A.st) + SWD - 44 + off; Pp = [[A.cx + A.w / 2 + 3, A.cy], [lx, A.cy], [lx, B.cy], [B.cx + B.w / 2 + 3, B.cy]]; }
           else if (Math.abs(A.st - B.st) === 1) { const gx = (sx + ex) / 2 + off; Pp = [[sx, A.cy], [gx, A.cy], [gx, B.cy], [ex, B.cy]]; }
           else { const gA = (dir > 0 ? xU(A.st) + SWD + SGP / 2 - 16 : xU(A.st) - 16 - SGP / 2) + off, gB = (dir > 0 ? xU(B.st) - 16 - SGP / 2 : xU(B.st) + SWD + SGP / 2 - 16) - off, yl = rowTop + 22 + rowH + 14 + (k % 6) * 7; Pp = [[sx, A.cy], [gA, A.cy], [gA, yl], [gB, yl], [gB, B.cy], [ex, B.cy]]; }
-          for (let n = 0; n + 1 < Pp.length; n++) { const a = { x: Pp[n][0], y: Pp[n][1] }, b = { x: Pp[n + 1][0], y: Pp[n + 1][1] }; if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) < 1) continue; edge(a, b, col, cls, title); out.edges[out.edges.length - 1].run = out.runs; }
+          for (let n = 0; n + 1 < Pp.length; n++) { const a = { x: Pp[n][0], y: Pp[n][1] }, b = { x: Pp[n + 1][0], y: Pp[n + 1][1] }; if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) < 1) continue; edge(a, b, col, cls, title); const seg = out.edges[out.edges.length - 1]; seg.run = out.runs; if (joins) seg.joins = joins; }
           out.runs++; };
         const bx = (k) => boxes[k], nb = (c) => boxes['node:' + idOf(c)];
         const reads = cardsOf(t, 'read'), mades = cardsOf(t, 'made'), lands = cardsOf(t, 'land');
@@ -170,7 +170,8 @@
         const ex = bx('say:0'); if (ex) { reads.forEach((c, j) => run(bx('read:' + j), ex, 'var(--xp-dv1)', 'in', 'read by this turn')); if (!reads.length && lanes.length) run(nb(members(lanes[0])[0]), ex, 'var(--xp-dv1)', 'in', 'the context this turn read'); mades.forEach((c, j) => run(ex, bx('made:' + j), 'var(--xp-dv2)', 'out', 'produced by this turn')); }
         mades.forEach((c, j) => { const l = bx('land:' + j) || bx('land:0'); if (l) run(bx('made:' + j), l, 'var(--xp-ac)', 'link', 'this became a canvas item'); });
         lands.forEach((c, j) => { const n = nb(c); if (n && n.lane === 'canvas') run(bx('land:' + j), n, 'var(--xp-ac2)', 'pin', 'pinned back into the next prompt'); });
-        g.rels.forEach((r) => { const a = boxes['node:' + r.from], b = boxes['node:' + r.to], R = RELC[r.kind] || RELC.cite; if (a && b) run(a, b, R[0], R[1], R[2]); });
+        // the RELATIONS between the turn's context records - the only runs that answer to the tier and the switch
+        g.rels.forEach((r) => { const a = boxes['node:' + r.from], b = boxes['node:' + r.to], R = RELC[r.kind] || RELC.cite; if (a && b) run(a, b, R[0], R[1], R[2], [String(r.from), String(r.to)]); });
         out.rows.push({ mid: t.mid, si, y: px(rowTop), h: px(rowH + 22) });
         rowTop += 22 + rowH + ROWGAP;
       });
@@ -518,6 +519,13 @@ vera-exploded .xp-lb.station{font-size:11px;color:var(--xp-t2);pointer-events:au
 vera-exploded .xp-lb.sm{font-size:8.5px}
 vera-exploded .xp-e{position:absolute;height:2px;transform-origin:0 50%;z-index:6;pointer-events:none;border-radius:2px;background:var(--ec);opacity:.75;box-shadow:0 0 7px -2px var(--ec)}
 vera-exploded .xp-e.mem,vera-exploded .xp-e.pin,vera-exploded .xp-e.dash{height:0;border-top:2px dashed var(--ec);background:none;box-shadow:none}
+/* The relation edges answer to the tier (defect 83): Full draws every one of them, as it always did; Hover and Zen
+   rest them and light the ones touching whatever the pointer is on. data-rels="off" puts them away in every tier -
+   the header's third switch, beside Context -> chat and Chat <-> canvas. Only the RELATIONS answer to this: the runs
+   that carry the turn's own story (read · said · made · landed) are the scene itself and are never hidden. */
+vera-exploded[data-den="hover"] .xp-e.rel,vera-exploded[data-den="zen"] .xp-e.rel{opacity:0;transition:opacity .13s ease}
+vera-exploded[data-den="hover"] .xp-e.rel.hot,vera-exploded[data-den="zen"] .xp-e.rel.hot{opacity:.7}
+vera-exploded[data-rels="off"] .xp-e.rel{display:none}
 vera-exploded .xp-e.thin{height:1px;opacity:.5;box-shadow:none}vera-exploded .xp-e.rel{height:1px;opacity:.55;box-shadow:none;z-index:7}vera-exploded .xp-e.rel.cite{opacity:.4}vera-exploded .xp-e.rel.mem{height:0;border-top:1px dashed var(--ec);background:none}
 vera-exploded .xp-it{position:absolute;border-radius:6px;background:var(--xp-s2);box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px var(--xp-bd);cursor:pointer;z-index:10;padding:6px 10px;display:flex;flex-direction:column;gap:2px;box-sizing:border-box;overflow:hidden;transition:box-shadow .15s ease}
 vera-exploded .xp-it:hover{box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px var(--xp-t3),0 14px 28px -18px rgba(0,0,0,.95);z-index:22}
@@ -753,6 +761,11 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
         this.innerHTML = '<div class="xp-ctl"><span class="c">explode</span><button data-m="cards">Cards</button><button data-m="front">Front</button><button data-m="iso">Iso</button><span class="sep"></span><button data-a="fit" title="Back to the whole scene">Fit</button><button data-a="close" title="Back to the flat transcript">Flatten</button><span class="sep"></span><span class="c iso-c" data-r="isoc">iso</span><button data-a="solo" title="Only this turn — the selected turn\'s plate alone (the board\'s single-layer iso)">Turn</button><button data-a="all" title="Every turn — the plates in a row">All</button><button data-a="stack" title="Stack — the stations on floors, one above the other">Stack</button><button data-a="wsz" title="The iso widgets\' size — S · M · L">M</button><span class="sep"></span><button data-a="place" title="Place a widget from the registry onto this station\'s plate — it becomes one of the turn\'s items, tagged ⧉ with its template">+ Place</button><span class="sep"></span><input type="range" class="xp-scrub" data-r="scrub" min="0" max="0" value="0" title="Scrub through the session\'s turns (← → too)"></div><div class="xp-ctx" data-r="ctx"></div><div class="xp-dots" data-r="dots"></div><div class="xp-wrap" data-r="wrap"><div class="xp-view" data-r="view"></div></div><div class="xp-pz"><button data-a="zout" title="Zoom out">−</button><span class="z" data-r="zoom">100%</span><button data-a="zin" title="Zoom in">+</button><span class="sp"></span><button data-a="panl" title="Pan left">←</button><button data-a="panu" title="Pan up">↑</button><button data-a="pand" title="Pan down">↓</button><button data-a="panr" title="Pan right">→</button><span class="tl" data-r="tl"><span class="sp"></span><button data-a="tiltu" title="Tilt the view up — look down on the plane">⌃</button><span class="z" data-r="ang">30°</span><button data-a="tiltd" title="Tilt the view down — flatten the plane">⌄</button><button data-a="swl" title="Swing the view left">↺</button><button data-a="swr" title="Swing the view right">↻</button></span><span class="sp"></span><button data-a="fit" title="Back to fit">fit</button></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
         this.addEventListener('click', (e) => this._click(e));
+        /* the relation edges light under the pointer (defect 83). The scene's own runs are untouched; these are the
+           `.rel` segments, each carrying the two records it joins. In Full they are drawn anyway, so this only
+           shows itself in Hover and Zen - but the marking is the same in every tier, so nothing special-cases. */
+        this.addEventListener('mouseover', (e) => { const t = e.target && e.target.closest && e.target.closest('[data-id]'); this._relHot(t ? t.dataset.id : ''); });
+        this.addEventListener('mouseleave', () => this._relHot(''));
         // the timeline: the slider and ← → walk the session's turns
         if (!this.hasAttribute('tabindex')) this.setAttribute('tabindex', '0');
         if (this._r.scrub) this._r.scrub.addEventListener('input', () => { const ts = this._S.scene.turns || []; const t = ts[Math.max(0, Math.min(ts.length - 1, +this._r.scrub.value || 0))]; if (t && t.mid !== this._S.scene.sel) this.select(t.mid); });
@@ -784,6 +797,18 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
          a drag) the deck swung out of the frame instead of turning on the spot (Notes/42 defect 80). After the
          re-projection the plate in focus, or the whole deck when nothing is picked, goes back under the middle of the
          frame at whatever zoom is held. */
+      /* Light the relation edges that touch one record. The graph nodes (.xnd) carry the record's own id, which is
+         exactly what a relation names at each end, so the match is direct. A card's id is "<mid>:<layer>:<i>" and
+         names no relation - pointing at one simply lights nothing, which is right: the relations are between the
+         records, not between the cards the turn made from them. */
+      _relHot(id) {
+        try {
+          const key = String(id || ''); if (key === this._relLit) return; this._relLit = key;
+          this.querySelectorAll('.xp-e.rel').forEach((e) => {
+            e.classList.toggle('hot', !!key && (e.getAttribute('data-a') === key || e.getAttribute('data-b') === key));
+          });
+        } catch (_) {}
+      }
       _isoCentre() {
         if (this._S.mode !== 'iso') return;
         const raf = root.requestAnimationFrame || ((f) => setTimeout(f, 16));
@@ -916,15 +941,18 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
             + (b.on ? '<span class="xit-body">' + b.on + '</span>' : '') + (c.src ? '<img class="xp-img" src="' + esc(c.src) + '" alt="" loading="lazy">' : '') + (b.x ? '<div class="xit-x">' + b.x + '</div>' : '') + '</div>'; };
         // a widget on the plate: ITS OWN FORM's face on the board's card (the widget element draws it — defect 37: the
         // record's form, not one object per shape); the iso group only when the element is not on the page
-        /* a widget PLACED on the plate is the thing itself standing on it, with a small label beneath - never a card.
-           This used to read `if (face) return xitHtml(wg, face)`, so a widget with a real face went into a card and only a
-           widget WITHOUT one was built as an object on the plate: backwards (Notes/42 defect 79). The face is drawn
-           with proj:'iso' already, so on the plate it reads as an object. */
-        const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const face = faceHtml(c, widgetOf(c), S.wsz);
+        /* a widget standing on the SESSION CANVAS plane is the thing itself with a small label box beneath it, never
+           a card (Notes/42 defect 79). The plane is the point: the scene has four of them (read · the exchange ·
+           produced · session canvas) and this was written as "any widget with a face", which took the turn's own read
+           and produced widgets out of their cards too (defect 82). Off the canvas plane a widget is the board's card
+           again. The face is drawn with proj:'iso' already, so on the plane it reads as an object. */
+        const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const onPlane = wg.layer === 'land';
+          const face = faceHtml(c, widgetOf(c), S.wsz);
+          if (face && !onPlane) return xitHtml(wg, face);   // read · the exchange · produced: the board's card, as before
           const g = face ? null : groupOf(wg, ISO, { tilt: S.tilt || 30, azim: S.azim || 45 }); const b = isoBody(c, null);
           const cap = '<div class="xit frameless' + (open ? ' open' : '') + '" data-id="' + esc(wg.id) + '" title="' + esc(c.n || '') + (c.d ? ' — ' + esc(c.d) : '') + ' · click for the detail" style="left:' + (wg.x - wg.cw / 2).toFixed(1) + 'px;top:' + (wg.y + 6).toFixed(1) + 'px;width:' + wg.cw + 'px;--cc:' + esc(wg.col) + '"><span class="xit-n">' + tplTag(c) + esc(c.n || '') + '</span>' + (wg.value ? '<span class="xit-cv">' + esc(wg.value) + '</span>' : '') + '<span class="xit-d">' + esc(c.d || '') + '</span>'
             + '<div class="xit-x"><b style="color:var(--xp-t1)">' + esc(c.n || '') + '</b><br><span style="font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3)">' + esc(wg.form) + (wg.sample ? ' · no reading yet' : wg.value ? ' · ' + esc(wg.value) : '') + (c.tpl ? ' · ⧉ ' + esc(c.tpl) : '') + '</span>' + (b.on || b.x ? '<div class="xit-body" style="display:flex">' + b.on + b.x + '</div>' : '') + '</div></div>';
-          // the face, standing on the plate: the label box below it is the same cap the built object gets
+          // the face, standing on the CANVAS plate: the label box below it is the same cap the built object gets
           if (face) return '<div class="xig xigf' + (wg.sample ? ' sample' : '') + (open ? ' open' : '') + '" data-id="' + esc(wg.id) + '" title="' + esc(c.n || '') + ' \u00b7 click for the detail" style="' + st(wg.x, wg.y) + '--xw:' + wg.cw + 'px">' + face + '</div>' + cap;
           if (!g) return xitHtml(wg);   // no iso lib on the page: the widget is the board's flat widget card
           return '<div class="xig' + (wg.sample ? ' sample' : '') + (open ? ' open' : '') + '" data-id="' + esc(wg.id) + '" title="' + esc(c.n || '') + ' · click for the detail" style="' + st(wg.x, wg.y) + '--wsh:' + (-g.sh).toFixed(1) + 'px;--cc:' + esc(wg.col) + '">'
@@ -947,7 +975,7 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
         // the plates' edges as lines, the bands' hairlines (shown when Blocks is off): the planes stay planes without their fills
         (o.outline || []).forEach((e) => { h += '<span class="xp-pe' + (e.cls ? ' ' + e.cls : '') + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;transform:rotate(' + e.deg + 'deg)"></span>'; });
         (o.boutline || []).forEach((e) => { h += '<span class="xp-be" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;transform:rotate(' + e.deg + 'deg);--bc:' + esc(e.col) + '"></span>'; });
-        o.edges.forEach((e) => { h += '<div class="xp-e ' + e.cls + '" title="' + esc(e.title) + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;--ec:' + esc(e.col) + ';transform:rotate(' + e.deg + 'deg)"></div>'; });
+        o.edges.forEach((e) => { h += '<div class="xp-e ' + e.cls + '"' + (e.joins ? ' data-a="' + esc(e.joins[0]) + '" data-b="' + esc(e.joins[1]) + '"' : '') + ' title="' + esc(e.title) + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;--ec:' + esc(e.col) + ';transform:rotate(' + e.deg + 'deg)"></div>'; });
         o.labels.forEach((l) => { h += '<div class="xp-lb ' + l.cls + '" data-mid="' + esc(l.mid || '') + '" data-st="' + (l.st == null ? '' : l.st) + '" style="' + st(l.x, l.y) + 'color:' + esc(l.col) + (o.mode === 'iso' ? ';transform:' + (/\bmore\b/.test(l.cls) ? 'translate(-100%,-50%) ' : /\bempty\b/.test(l.cls) ? 'translate(-50%,-50%) ' : /\blane\b/.test(l.cls) ? 'translate(-100%,-50%) ' : /\bprompt\b/.test(l.cls) ? 'translate(-50%,-100%) ' : '') + 'scale(var(--inv,1))' : '') + '">' + esc(l.n) + '<b>' + esc(l.k) + '</b></div>'; });
         o.cards.forEach((c) => { if (c.ct) h += ctHtml(c); else if (!c.iw) h += itHtml(c, !!c.anchored); });
         o.graphs.forEach((g) => { h += g.iso

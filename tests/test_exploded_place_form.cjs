@@ -55,12 +55,26 @@ t('on the iso card the diagram is on the card, its source behind the click', ib.
 t('the scene loads the mermaid element once when a card needs it', SRC.includes("function ensureMermaid(doc) {") && SRC.includes("if (h.indexOf('<vera-mermaid') >= 0) ensureMermaid(this.ownerDocument);") && SRC.includes("s.src = '/ui/elements/vera_mermaid.js'"));
 
 // ── the renders draw the face: on the plate, in the cards, in the carousel; the group only without the element ──
-t('the iso widget stands on the plate as its own face, with the label beneath; the built object stands in without a face',
-  SRC.includes("const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const face = faceHtml(c, widgetOf(c), S.wsz);")
-  && SRC.includes("const g = face ? null : groupOf(wg, ISO, { tilt: S.tilt || 30, azim: S.azim || 45 }); const b = isoBody(c, null);")
+t('a widget on the SESSION CANVAS plane stands on it as its own face, with the label beneath',
+  SRC.includes("const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const onPlane = wg.layer === 'land';")
   && SRC.includes("if (face) return '<div class=\"xig xigf'")
-  && !SRC.includes("if (face) return xitHtml(wg, face);")
   && SRC.includes("vera-exploded .xigf{width:var(--xw,190px);height:auto;transform-origin:50% 100%;"));
+t('a widget on any OTHER plane - read, the exchange, produced - is the board\'s card, as it was',
+  SRC.includes("if (face && !onPlane) return xitHtml(wg, face);"));
+t('and the built object still stands in when there is no face to draw',
+  SRC.includes("const g = face ? null : groupOf(wg, ISO, { tilt: S.tilt || 30, azim: S.azim || 45 }); const b = isoBody(c, null);"));
+
+// the relation edges answer to the tier and to the switch (defect 83)
+t('a relation run carries the two records it joins, into the DOM',
+  SRC.includes("if (a && b) run(a, b, R[0], R[1], R[2], [String(r.from), String(r.to)]);")
+  && SRC.includes("if (joins) seg.joins = joins;")
+  && SRC.includes("(e.joins ? ' data-a=\"' + esc(e.joins[0]) + '\" data-b=\"' + esc(e.joins[1]) + '\"' : '')"));
+t('Full draws them all; Hover and Zen rest them and light what the pointer touches',
+  SRC.includes('vera-exploded[data-den="hover"] .xp-e.rel,vera-exploded[data-den="zen"] .xp-e.rel{opacity:0;transition:opacity .13s ease}')
+  && SRC.includes('vera-exploded[data-den="hover"] .xp-e.rel.hot,vera-exploded[data-den="zen"] .xp-e.rel.hot{opacity:.7}')
+  && SRC.includes("_relHot(id) {"));
+t('and the switch puts them away in every tier — only the relations, never the turn\'s own runs',
+  SRC.includes('vera-exploded[data-rels="off"] .xp-e.rel{display:none}'));
 t('and a rotation turns the scene on the spot rather than swinging it out of the frame',
   SRC.includes("this._schedule(); this._isoCentre(); return this._S.tilt;") && SRC.includes("this._schedule(); this._isoCentre(); return this._S.azim;")
   && SRC.includes("_isoCentre() {") && SRC.includes("p.x += (b.left + b.width / 2) - cx; p.y += (b.top + b.height / 2) - cy; p.auto = false;"));   // the iso group takes the view's angles since the PTZ controls; a face returns above this, so there is no face-or-body body left to name
