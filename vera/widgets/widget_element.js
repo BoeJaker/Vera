@@ -1807,8 +1807,14 @@ span.vw-sampled{opacity:.85}
 .vwc-pvf{flex:none;background:var(--s1,var(--bg1,#15171c));border-radius:var(--ui-radius,10px);box-shadow:0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09))),0 10px 30px -16px rgba(0,0,0,.6);padding:10px 12px;min-width:0}
 .vwc-pvf.xs,.vwc-pvf.s{background:transparent;box-shadow:none;padding:0;font-size:12.5px;line-height:1.75;color:var(--t2,var(--dim2,#8a92a0));max-width:380px}
 .vwc-pvf.xs b,.vwc-pvf.s b{color:var(--t1,var(--text,#d8dce4))}
-.vwc-pvf.m{width:302px;min-height:200px}.vwc-pvf.l{width:100%;min-height:200px}.vwc-pvf.xl{width:100%;min-height:300px}
+.vwc-pvf.m{width:302px;height:200px}.vwc-pvf.l{width:100%;height:200px}.vwc-pvf.xl{width:100%;height:300px}
+/* the frame is the size it is previewing and the widget FILLS it. It only ever asked for a minimum height and left the
+   widget to find its own, which the widget cannot do since its figures size to their body: a meter came out 30px tall
+   in a 200px frame — a sliver of a widget in an empty frame, not a preview of it (Notes/42 defect 69). XS and S stay
+   as they are: those previews are a phrase with the widget set in it, sized by the line. */
+.vwc-pvf.m,.vwc-pvf.l,.vwc-pvf.xl{display:flex;flex-direction:column;box-sizing:border-box}
 .vwc-pvf vera-widget{display:block;width:100%}
+.vwc-pvf.m > vera-widget,.vwc-pvf.l > vera-widget,.vwc-pvf.xl > vera-widget{flex:1 1 auto;min-height:0}
 .vwc-pvn{color:var(--t3,var(--dim,#6b7280));font-size:10px;text-align:center;padding:14px;line-height:1.5}.vwc-pvn .big{display:block;font-size:15px;font-weight:600;color:var(--t2,var(--dim2,#8a92a0));padding-bottom:4px}
 .vwc-pj{flex:1;min-height:0;display:flex;flex-direction:column;padding:6px 16px 0}
 .vwc-pjh{font-size:8.5px;text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280));padding-bottom:5px}
@@ -2144,6 +2150,7 @@ span.vw-sampled{opacity:.85}
     const out = pvRecord(rec); const j = JSON.stringify(out, null, 1).replace(/\n\s+(?=[\]}])/g, ' ').replace(/\[\n\s+/g, '[').replace(/,\n\s+(?=[^"{ ])/g, ', '); pre.textContent = j;
     const keyNow = JSON.stringify([out.form, out.source, out.read, out.frame.size, out.frame.motion, out.frame.legend, out.skin, out.draw, out.projection, out.children, out.panel, out.title]);
     let vw = S.pv;
+    const recNow = JSON.stringify(out);
     if (!vw || !vw.isConnected || keyNow !== S.lastPv) {
       stage.innerHTML = ''; const fr = h('div', 'vwc-pvf ' + size); fr.setAttribute('data-w', 'preview · ' + size);
       if (window.customElements && customElements.get('vera-widget')) { vw = document.createElement('vera-widget'); vw.setAttribute('size', size); if (S.base) vw.setAttribute('base', S.base); vw.record = out;
@@ -2151,7 +2158,12 @@ span.vw-sampled{opacity:.85}
         if (size === 'xs') { fr.appendChild(document.createTextNode('ct126 is serving qwen3:30b at ')); fr.appendChild(vw); fr.appendChild(document.createTextNode(' with 4 in flight and step 5 waiting on you.')); }
         else fr.appendChild(vw); }
       else { const n = h('div', 'vwc-pvn'); n.appendChild(h('span', 'big', rec.form)); n.appendChild(document.createTextNode('the widget renderer is not on this page')); fr.appendChild(n); vw = null; }
-      stage.appendChild(fr); S.pv = vw; S.lastPv = keyNow;
+      stage.appendChild(fr); S.pv = vw; S.lastPv = keyNow; S.lastRec = recNow;
+    } else if (recNow !== S.lastRec) {
+      // the rest of the record — its actions, its shape, its arguments — is not in the key the frame is rebuilt for, so
+      // those edits used to leave the preview showing the record it was built with. The same element simply takes the
+      // new one (defect 69)
+      S.lastRec = recNow; try { vw.record = out; } catch (_) {}
     }
   }
   /* ── the foot: the validator's problems and warnings, ⧉ Save as template, Cancel, Add / Save ── */
