@@ -6615,7 +6615,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(_EMBED.only==='chat'&&_ctxRemote.on&&!_ctxGrown){
       // the graph is the menu instance's: it posts one connector height per type; this side draws the channel lanes in
       // the column's gutter and one arrival per type on the block, in from the frame's left edge (the seam)
-      const TT=_ctxRunsTargets(); const T=TT.u||TT.a; if(!T){ svg.innerHTML=''; return; }
+      const TT=_ctxRunsTargets(); const T=TT.u||TT.a; if(!T){ _ctxRunsStand(svg); return; }
       const ft=_frameTop(); const b={ top:T.top+ft, bottom:T.bottom+ft, mid:T.mid||'', a:TT.a&&TT.u?{ top:TT.a.top+ft, bottom:TT.a.bottom+ft, mid:TT.a.mid||'' }:null };
       const bsig=JSON.stringify(b); if(_ctxRemoteSent!==bsig){ _ctxRemoteSent=bsig; _lhmPost('block', b); }
       const lanes=_ctxRemote.lanes||[]; const rn=lanes.length; const gut=_ctxRunsGutter(rn);
@@ -6627,7 +6627,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
         out+=L(0, ye, lx, ye, 'tr'); if(Math.abs(ty-ye)>0.5) out+=L(lx, ye, lx, ty, 'tr'); out+=L(lx, ty, edgeAt(ty, l.side), ty, 'tr'); });
       svg.innerHTML='<g fill="none" stroke-linecap="round">'+out+'</g>'; svg.dataset.target=T.kind; return;
     }
-    if(Date.now()-_ctxTypingT<900){ svg.innerHTML=''; if(!_ctxTypingTimer) _ctxTypingTimer=setTimeout(()=>{ _ctxTypingTimer=null; _ctxRunsDraw(); }, 950); return; }
+    if(Date.now()-_ctxTypingT<900){ _ctxRunsStand(svg); if(!_ctxTypingTimer) _ctxTypingTimer=setTimeout(()=>{ _ctxTypingTimer=null; _ctxRunsDraw(); }, 950); return; }
     const col=document.getElementById('chatColumn'), gcol=_ctxGrown?document.querySelector('#rightRail.lhm-host > .lhm-det'):document.getElementById('graphColumn');
     if(!_pages.has('graph')||!_ctxCol||!col||!gcol||!_runsGraphVisible()){ _ctxRunsStand(svg); return; }
     if(!_ctxCol._ctxRunsHoverBound){ _ctxCol._ctxRunsHoverBound=true; _ctxCol.addEventListener('mouseover', ev=>{ const n=ev.target&&ev.target.closest&&ev.target.closest('.cg-node[data-id],.cg-mem[data-id]'); _ctxRunsHover(n?n.dataset.id:''); }); _ctxCol.addEventListener('mouseleave', ()=>_ctxRunsHover('')); }

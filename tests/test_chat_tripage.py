@@ -107,7 +107,7 @@ def test_the_graph_column_is_the_chats_own_context_graph_and_hears_the_focused_t
     assert "#rightRail.lhm-host.lhm-grown > .lhm-det{width:min(46vw,680px);flex:0 0 min(46vw,680px)}" in HTML, "the graph grows the menu in place (no second column)"
     assert "if(ico&&!ico.classList.contains('top')&&ico.getAttribute('data-menu')!=='context') _ctxGrow(false); }catch(_){} }, true);" in HTML, "another rail icon folds the graph back"
     assert "_ctxCol.addEventListener('vera:ctx:collapse', ()=>{ _ctxGrow(false);" in HTML
-    assert "if(Date.now()-_ctxTypingT<900){ svg.innerHTML='';" in HTML and "inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxRunsDraw(); });" in HTML
+    assert "if(Date.now()-_ctxTypingT<900){ _ctxRunsStand(svg);" in HTML and "inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxRunsDraw(); });" in HTML
     assert "function _ctxAssembledExtra(layers, present){" in HTML and "const extra=_ctxAssembledExtra(_CTX_ALL_LAYERS, CTX_NODES);" in HTML
     assert "const _ex=_ctxAssembledExtra(_ctxLayers, vis); const extraNodes=_ex.nodes, extraEdges=_ex.edges;" in HTML, "the rail's graph draws from the same function"
     for src in ("'__skill__'", "'__ont__'", "'__ent__'", "'__cap__'", "'__qa__'", "'__agent__'"):

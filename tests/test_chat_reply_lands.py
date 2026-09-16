@@ -30,6 +30,12 @@ def test_the_runs_end_at_the_message_surface_and_a_reply_lands_on_the_canvas():
 def test_the_runs_end_on_the_block_or_the_station_and_only_real_anchors_draw():
     # the target is measured once, in the one screen space: the block (its content edge), or exploded the station
     assert "function _ctxRunsTarget(){" in HTML and "return {kind:'message', mid:w.dataset.mid||'', left:M.left, right:M.right, content:body?body.getBoundingClientRect().left:M.left" in HTML
-    assert "const T=_ctxRunsTarget(); if(!T||!rn){ svg.innerHTML=''; svg.removeAttribute('data-lit'); return; }" in HTML
+    # The overlay draws two families now - what the turn read and what the reply said - so the target is a PAIR,
+    # and standing down is a helper both of them share rather than a line repeated at each bail-out.
+    assert "const _ctxRunsStand=(svg)=>{ svg.innerHTML=''; svg.removeAttribute('data-lit'); if(_EMBED.only==='menu') _ctxLanesPost([]); };" in HTML
+    assert "const T=TT.u||TT.a; if(!T||!rn){ _ctxRunsStand(svg); return; }" in HTML, "the grown graph's draw stands down through the helper"
+    # and so do the two inside the remote-menu branch, which kept the old bare clear and left the lit source behind
+    assert "const TT=_ctxRunsTargets(); const T=TT.u||TT.a; if(!T){ _ctxRunsStand(svg); return; }" in HTML
+    assert "if(Date.now()-_ctxTypingT<900){ _ctxRunsStand(svg); if(!_ctxTypingTimer)" in HTML
     # a reply's items and a loop's item carry the turn; the canvas router draws from real anchors only
     assert "const items=its.filter(it=>it.mid&&!it.out&&it.state==='now'" in HTML and "wanted.forEach(it=>{ const M=_cvRunsSource(it.mid, msgs); if(M) routes.push({it, M}); });" in HTML
