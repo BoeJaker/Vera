@@ -84,8 +84,12 @@
     /* every part is a widget: edit mode outlines and names them; ⚙ opens the part's record, ⧉ saves it as a template */
     '.lhm-wbar{display:none;position:absolute;top:2px;right:4px;z-index:6;gap:2px}',
 /* the quick body in edit mode (the ChatMenu board): outline + name on every widget, the bar ⋮⋮ ⚙ ⧉ ✕, the foot, the picker */
-'.lhm-editing .lhm-quick .wid{outline:1px dashed color-mix(in srgb,var(--acc) 65%,transparent);outline-offset:4px;margin-top:10px;position:relative}',
-'.lhm-editing .lhm-quick .wid::before{content:attr(data-w);position:absolute;left:4px;top:-11px;z-index:5;font-family:var(--mono);font-size:7.5px;letter-spacing:.04em;color:var(--acc);background:var(--bg1);padding:0 5px;border-radius:99px;white-space:nowrap;pointer-events:none}',
+/* edit mode used to outline every part in dashed accent and print its data-w name over it. The user's call
+       (Notes/42 defect 22): "looks like dev mode ... all it needs is the ability to add widgets" - so the room for the
+       part's own bar stays and the blueprint goes. The part you point at lifts a quiet ring, which is enough to pick
+       one out without dressing the whole menu as a wireframe. */
+'.lhm-editing .lhm-quick .wid{margin-top:10px;position:relative;border-radius:var(--r-sm,6px)}',
+'.lhm-editing .lhm-quick .wid:hover{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--acc) 34%,transparent)}',
 '.lhm-editing .lhm-quick .wid.lhm-removed{opacity:.35}',
 '.lhm-quick .wid.lhm-off{display:none}',
 '.lhm-wbar.lhm-qbar{top:-11px;right:2px;align-items:center;padding:1px 3px;border-radius:99px;background:var(--bg1);box-shadow:0 0 0 1px var(--border)}',
@@ -140,8 +144,10 @@
     '.lhm-wcfg .lhm-wacts button{font-size:10px;padding:3px 8px;border:1px solid var(--border);border-radius:var(--r-sm,5px);background:var(--bg2);color:var(--text);cursor:pointer}',
     '.lhm-wcfg .lhm-wacts button:hover{border-color:var(--acc);color:var(--acc)}',
     '.lhm-wcfg .lhm-wnote{font-family:var(--mono);font-size:8.5px;color:var(--dim2)}',
-    '.lhm-editing [data-w]{outline:1px dashed var(--acc);outline-offset:-1px;position:relative}',
-    '.lhm-editing [data-w]::before{content:attr(data-w);position:absolute;top:0;left:0;z-index:5;font-family:var(--mono);font-size:8px;line-height:1;padding:2px 4px;background:var(--acc);color:var(--on-acc,#fff);border-radius:0 0 4px 0;pointer-events:none;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}',
+    /* the same again for a hosted menu's parts: the name is on the part's own bar and in its title, not stamped
+       across it in the accent colour (defect 22) */
+    '.lhm-editing [data-w]{position:relative;border-radius:var(--r-sm,6px)}',
+    '.lhm-editing [data-w]:hover{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--acc) 34%,transparent)}',
     /* hosted elsewhere (the harness draws the rail + tab strip): the owner keeps header, panes and CTA */
     'html.vpb-nav-hosted .lhm-rail,html.vpb-nav-hosted .lhm-det .ctx-tab-bar{display:none!important}',
     /* an absorbed menu in a host */
@@ -306,7 +312,11 @@
     if(_editing){ _quickEbar(m); _quickBars(m); _quickFoot(m); }
   }
   // the edit bar (the top of the menu while editing): what you are doing, the way in, the way out
-  function _ebar(title, onAdd, onDone){
+  // a part names itself the way everything else does - in its tooltip - now that edit mode no longer stamps the name
+// across it; nothing is lost, it is just not shouted (defect 22)
+function _nameParts(root){ try{ Array.prototype.forEach.call((root || document).querySelectorAll('[data-w]'), function(el){
+  if(!el.title) el.title = el.getAttribute('data-w') + ' \u00b7 a widget of this menu'; }); }catch(_){} }
+function _ebar(title, onAdd, onDone){
     var bar = _el('div', 'lhm-ebar');   // the editor's own, not a part of the menu (no tag, no bar)
     var lbl = _el('span', 'lbl'); lbl.innerHTML = '<b>✎ Editing</b> ' + _escH(title || 'this menu') + ' — every part is a widget'; bar.appendChild(lbl);
     var add = _el('button', 'pri', '+ Add widget'); add.type = 'button'; add.title = 'Any widget form, another menu\'s element, a template of yours — with a preview'; add.addEventListener('click', function(ev){ ev.stopPropagation(); onAdd(); }); bar.appendChild(add);
@@ -825,7 +835,7 @@
     if(cfg.note) wrap.appendChild(_el('div', 'lhm-s-note', cfg.note));
     if(cfg.edit !== false) wrap.appendChild(_el('div', 'lhm-wcfg'));   // the record sheet, opened by ⚙ in edit mode
     host.appendChild(wrap);
-    if(host._lhmEditing) sideEdit(host, true);   // a re-render keeps the menu in edit mode
+    if(host._lhmEditing){ sideEdit(host, true); _nameParts(host); }   // a re-render keeps the menu in edit mode
     return wrap;
   }
   // ── the STRIPS under a tab bar (tabs mode): the active panel's sections, then the open section's tabs ──

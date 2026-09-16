@@ -62,7 +62,7 @@ def test_a_side_menu_edits_every_part_is_a_widget():
     assert "function sideEdit(host, on){" in LIB and "sideEdit: sideEdit," in LIB
     assert "function _wireBars(root){" in LIB and "root = root || _host; if(!root) return;" in LIB, "the edit bars wire any root"
     assert "if(cfg.edit !== false){ var ed = _el('button', 'lhm-s-edit'" in LIB and "wrap.appendChild(_el('div', 'lhm-wcfg'));" in LIB, "the ✎ and the record sheet inside the side menu"
-    assert "if(host._lhmEditing) sideEdit(host, true);" in LIB, "a re-render keeps the menu in edit mode"
+    assert "if(host._lhmEditing){ sideEdit(host, true); _nameParts(host); }" in LIB, "a re-render keeps the menu in edit mode, and names its parts"
     assert "open: () => openTabPicker() }, edit: true, id: 'harness-main'," in HARNESS and "var _sideEditOn = {};" in LIB
 
 

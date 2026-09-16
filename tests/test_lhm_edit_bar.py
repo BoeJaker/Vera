@@ -27,6 +27,24 @@ def test_edit_bar_in_both_menus():
     assert "wrap.appendChild(_ebar((cfg.top && cfg.top.title) || 'this menu', function(){ sideAdd(host, cfg); }, function(){ sideEdit(host, false); }))" in src
 
 
+def test_edit_mode_is_not_dressed_as_a_wireframe():
+    """Notes/42 defect 22. The Canvas board draws edit mode as every part outlined and tagged; the user rejected that
+    look - "looks like dev mode ... all it needs is the ability to add widgets" - so the outlines and the printed
+    data-w tags are gone and the working parts stay: the edit bar, the per-widget bars, the add row."""
+    src = _read("vera", "chat", "vera-lhm.js")
+    # no dashed blueprint, and no name stamped across a part
+    assert "'.lhm-editing .lhm-quick .wid{margin-top:10px;position:relative;border-radius:var(--r-sm,6px)}'" in src
+    assert "'.lhm-editing [data-w]{position:relative;border-radius:var(--r-sm,6px)}'" in src
+    assert "content:attr(data-w)" not in src, "a part's name is no longer printed over it"
+    assert "outline:1px dashed var(--acc)" not in src
+    # what edit mode keeps: the bar that says you are editing, the per-part bars, the add row
+    assert "'.lhm-editing .lhm-ebar,.lhm-editing > .lhm-side > .lhm-ebar{display:flex}'" in src
+    assert "'.lhm-editing .lhm-wbar{display:flex}'" in src
+    assert "_el('button', 'pri', '+ Add widget')" in src
+    # a part still says what it is, on hover
+    assert "function _nameParts(root)" in src and "a widget of this menu" in src
+
+
 def test_side_menu_add_path_and_records():
     src = _read("vera", "chat", "vera-lhm.js")
     assert "function sideAdd(host, cfg)" in src and "into:'side'" in src
