@@ -14,6 +14,8 @@ import pytest
 
 _CRITICAL_MODULES = {
     "test_sandbox_idle_plan",  # sleep the container you judged, never an alias's target (2026-09-12)
+    "test_sandbox_reap_plan",  # an archived row IS the restore handle - never reap it (2026-09-16)
+    "test_stall_trace_core",  # name the frame someone can act on, not a stdlib line (2026-09-16)
     "test_spawn_off_loop",  # a docker call must not fork the server on the loop (2026-09-12)
     "test_editor_reply",  # an editor that declines has told you something (2026-08-31)
     "test_editor_output_bound",  # bound the editor by the file it edits (2026-08-31)
