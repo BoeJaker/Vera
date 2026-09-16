@@ -629,6 +629,10 @@ vera-exploded .xf-note{font-size:10.5px;line-height:1.5;color:var(--xp-t2);paddi
 /* an ISO WIDGET GROUP (the board's .xig): 0×0 at the item's pin; the faces, needle and big value sit about that origin.
    It counter-scales like the cards and is lifted (--wsh) so its lowest face clears the caption beneath */
 vera-exploded .xig{position:absolute;width:0;height:0;z-index:9;transform-origin:0 0;transform:scale(var(--inv,1)) translateY(var(--wsh,0px));cursor:pointer}
+/* a widget with a face of its own stands on the plate as itself: no frame, no ground, the label box beneath (defect 79) */
+vera-exploded .xigf{width:var(--xw,190px);height:auto;transform-origin:50% 100%;transform:translate(-50%,-100%) scale(var(--inv,1))}
+vera-exploded .xigf .xit-face{background:transparent!important;box-shadow:none!important;border-radius:0;padding:0;margin:0}
+vera-exploded .xigf.open{z-index:27}
 vera-exploded .xig.sample{opacity:.55}
 vera-exploded .xiw{position:absolute;display:block;z-index:8;clip-path:var(--cp);background:var(--fc)}vera-exploded .xiw.t{box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
 vera-exploded .xiw-n{position:absolute;height:3px;transform-origin:0 50%;background:var(--xp-t1);border-radius:2px;z-index:9;box-shadow:0 0 8px 1px color-mix(in srgb,var(--xp-dv2) 60%,transparent)}
@@ -773,8 +777,32 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
       // PTZ: the pan is the view's transform (a drag does the same); the tilt and the swing change the projection every plate,
       // band, stem, node and widget group is drawn through — the scene re-fits to the frame at the new angles
       pan(dx, dy) { const p = this._S.pan; if (this._S.mode === 'cards') { const v = this._r.view; if (v) v.scrollBy({ left: -dx, top: -dy, behavior: 'smooth' }); return; } p.x += dx; p.y += dy; this._applyPan(); }
-      tilt(deg) { this._S.tilt = Math.max(12, Math.min(60, deg == null ? 30 : +deg)); this._schedule(); return this._S.tilt; }
-      swing(deg) { this._S.azim = Math.max(25, Math.min(65, deg == null ? 45 : +deg)); this._schedule(); return this._S.azim; }
+      tilt(deg) { this._S.tilt = Math.max(12, Math.min(60, deg == null ? 30 : +deg)); this._schedule(); this._isoCentre(); return this._S.tilt; }
+      swing(deg) { this._S.azim = Math.max(25, Math.min(65, deg == null ? 45 : +deg)); this._schedule(); this._isoCentre(); return this._S.azim; }
+      /* A rotation turns the scene about its own centre. tilt() and swing() re-project every plate and re-render, and
+         used to leave the pan exactly where it was - so with an offset held (the stack selector holds one, and so does
+         a drag) the deck swung out of the frame instead of turning on the spot (Notes/42 defect 80). After the
+         re-projection the plate in focus, or the whole deck when nothing is picked, goes back under the middle of the
+         frame at whatever zoom is held. */
+      _isoCentre() {
+        if (this._S.mode !== 'iso') return;
+        const raf = root.requestAnimationFrame || ((f) => setTimeout(f, 16));
+        raf(() => raf(() => { try {
+          const sr = this.shadowRoot || this, wrap = this._r && this._r.wrap; if (!wrap) return;
+          const mid = (this._S.scene || {}).sel, pls = [...sr.querySelectorAll('.xp-pl')];
+          const pick = (mid && pls.find((q) => q.dataset.mid === mid)) || null;
+          let cx, cy;
+          if (pick) { const r = pick.getBoundingClientRect(); if (!(r.height > 0)) return; cx = r.left + r.width / 2; cy = r.top + r.height / 2; }
+          else {
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            pls.forEach((q) => { const r = q.getBoundingClientRect(); if (!(r.width > 0)) return; x0 = Math.min(x0, r.left); y0 = Math.min(y0, r.top); x1 = Math.max(x1, r.right); y1 = Math.max(y1, r.bottom); });
+            if (!(x1 > x0)) return; cx = (x0 + x1) / 2; cy = (y0 + y1) / 2;
+          }
+          const b = wrap.getBoundingClientRect(); const p = this._S.pan;
+          p.x += (b.left + b.width / 2) - cx; p.y += (b.top + b.height / 2) - cy; p.auto = false;
+          this._applyPan();
+        } catch (_) {} }));
+      }
       widgetSize(s) { const L = ['s', 'm', 'l']; this._S.wsz = L.includes(s) ? s : L[(L.indexOf(this._S.wsz || 'm') + 1) % L.length]; this._schedule(); return this._S.wsz; }
       mode(name) { if (name && /^(cards|front|iso)$/.test(name)) { this._S.mode = name; this._S.pan = { x: 0, y: 0, z: 1, auto: true }; this._S.open = null; this._S.focus = null; this._frontKey = null; this._schedule(); } return this._S.mode; }
       select(mid) { this._S.scene.sel = mid; this._schedule(); this._isoBring(); this.dispatchEvent(new CustomEvent('vera:xpl:turn', { detail: { mid }, bubbles: true })); }
@@ -888,10 +916,16 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
             + (b.on ? '<span class="xit-body">' + b.on + '</span>' : '') + (c.src ? '<img class="xp-img" src="' + esc(c.src) + '" alt="" loading="lazy">' : '') + (b.x ? '<div class="xit-x">' + b.x + '</div>' : '') + '</div>'; };
         // a widget on the plate: ITS OWN FORM's face on the board's card (the widget element draws it — defect 37: the
         // record's form, not one object per shape); the iso group only when the element is not on the page
-        const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const face = faceHtml(c, widgetOf(c), S.wsz); if (face) return xitHtml(wg, face);
-          const g = groupOf(wg, ISO, { tilt: S.tilt || 30, azim: S.azim || 45 }); const b = isoBody(c, null);
+        /* a widget PLACED on the plate is the thing itself standing on it, with a small label beneath - never a card.
+           This used to read `if (face) return xitHtml(wg, face)`, so a widget with a real face went into a card and only a
+           widget WITHOUT one was built as an object on the plate: backwards (Notes/42 defect 79). The face is drawn
+           with proj:'iso' already, so on the plate it reads as an object. */
+        const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const face = faceHtml(c, widgetOf(c), S.wsz);
+          const g = face ? null : groupOf(wg, ISO, { tilt: S.tilt || 30, azim: S.azim || 45 }); const b = isoBody(c, null);
           const cap = '<div class="xit frameless' + (open ? ' open' : '') + '" data-id="' + esc(wg.id) + '" title="' + esc(c.n || '') + (c.d ? ' — ' + esc(c.d) : '') + ' · click for the detail" style="left:' + (wg.x - wg.cw / 2).toFixed(1) + 'px;top:' + (wg.y + 6).toFixed(1) + 'px;width:' + wg.cw + 'px;--cc:' + esc(wg.col) + '"><span class="xit-n">' + tplTag(c) + esc(c.n || '') + '</span>' + (wg.value ? '<span class="xit-cv">' + esc(wg.value) + '</span>' : '') + '<span class="xit-d">' + esc(c.d || '') + '</span>'
             + '<div class="xit-x"><b style="color:var(--xp-t1)">' + esc(c.n || '') + '</b><br><span style="font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3)">' + esc(wg.form) + (wg.sample ? ' · no reading yet' : wg.value ? ' · ' + esc(wg.value) : '') + (c.tpl ? ' · ⧉ ' + esc(c.tpl) : '') + '</span>' + (b.on || b.x ? '<div class="xit-body" style="display:flex">' + b.on + b.x + '</div>' : '') + '</div></div>';
+          // the face, standing on the plate: the label box below it is the same cap the built object gets
+          if (face) return '<div class="xig xigf' + (wg.sample ? ' sample' : '') + (open ? ' open' : '') + '" data-id="' + esc(wg.id) + '" title="' + esc(c.n || '') + ' \u00b7 click for the detail" style="' + st(wg.x, wg.y) + '--xw:' + wg.cw + 'px">' + face + '</div>' + cap;
           if (!g) return xitHtml(wg);   // no iso lib on the page: the widget is the board's flat widget card
           return '<div class="xig' + (wg.sample ? ' sample' : '') + (open ? ' open' : '') + '" data-id="' + esc(wg.id) + '" title="' + esc(c.n || '') + ' · click for the detail" style="' + st(wg.x, wg.y) + '--wsh:' + (-g.sh).toFixed(1) + 'px;--cc:' + esc(wg.col) + '">'
             + g.faces.map((f) => '<i class="xiw ' + f.k + (f.cls ? ' ' + f.cls : '') + '" style="left:' + f.x + ';top:' + f.y + ';width:' + f.w + ';height:' + f.h + ';--cp:' + f.cp + ';--fc:' + f.col + '"></i>').join('')
