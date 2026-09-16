@@ -273,6 +273,182 @@ def _select_device() -> str:
     return "cpu"
 
 
+# ─────────────────────── GPU RESIDENCY (LLM HAS PRIORITY) ────────────────────
+#
+# This box shares ONE Tesla V100-PCIE-12GB (12,288 MiB) with ollama, inside
+# CT126. Measured 2026-09-16: this service held 3,548 MiB continuously for 2d18h
+# while idle, leaving ollama 8,740 MiB. At the configured OLLAMA_MAX_AUTO_CTX of
+# 28,672 the LLM needs ~10,560 MiB (6,844 weights + 3,760 KV at 128 KiB/token),
+# so it was ~1.8 GB short and ollama silently offloaded layers to CPU —
+# loop_executor throughput collapsed to 2.53 tok/s against 12-30 tok/s when it
+# fits, and 0.05 on a true CPU node.
+#
+# So: the LLM keeps the card. Whisper/SD weights live in CPU RAM (the CT has
+# 50 GB) and are moved onto the GPU only for the duration of a job, then parked
+# again. Moving is cheap over PCIe next to a reload from disk, and nothing is
+# unloaded from RAM, so a request never pays a cold start.
+#
+# Everything still loads on CUDA at startup exactly as before, because
+# _load_sd's tuning (attention backend, channels_last, VAE tiling) has to run
+# with the pipe on the card; it is parked immediately afterwards.
+#
+# Why not diffusers' enable_model_cpu_offload(): it only helps DURING a call and
+# still reorders submodules per step; the problem here is the 100% of the time
+# this service is IDLE. Parking is simpler and gives the card back completely.
+
+#: Park a model back to CPU RAM after this many seconds with no job. Short by
+#: design — the LLM is the priority tenant and a park costs ~a second.
+GPU_IDLE_UNLOAD_S = float(os.getenv("GPU_IDLE_UNLOAD_S", "120"))
+#: Never take the card unless this much would still be free afterwards, so a
+#: media job cannot squeeze the LLM into a partial offload.
+GPU_LLM_RESERVE_MB = int(os.getenv("GPU_LLM_RESERVE_MB", "512"))
+#: Wait this long for the card before giving up and running on CPU.
+GPU_ACQUIRE_WAIT_S = float(os.getenv("GPU_ACQUIRE_WAIT_S", "15"))
+#: Set 0 to restore the old always-resident behaviour.
+GPU_LAZY = (os.getenv("GPU_LAZY", "1") or "1").strip().lower() not in ("0", "false", "no")
+
+# The two decisions — "may this take the card?" and "what should be parked?" —
+# live in a pure sibling module so they can be tested without CUDA. Deploy both
+# files together.
+from gpu_residency_core import can_place as _can_place, new_state as _new_state, parkable as _parkable
+
+_gpu_lock = threading.RLock()
+# name -> {"resident": bool, "busy": int, "last": float, "mb": int}
+_gpu_state: dict = {}
+
+
+def _cuda_free_mb() -> tuple:
+    """(free_mb, total_mb) from the driver, or (0, 0) without CUDA."""
+    if not torch.cuda.is_available():
+        return (0, 0)
+    try:
+        free_b, total_b = torch.cuda.mem_get_info()
+        return (int(free_b // (1024 * 1024)), int(total_b // (1024 * 1024)))
+    except Exception:
+        return (0, 0)
+
+
+def _gpu_targets(name: str) -> list:
+    """The movable objects for one model.
+
+    SD's derived pipelines (img2img, controlnet, ip-adapter) are built from
+    `_sd_pipe.components`, so they share the same module objects and follow the
+    base pipe automatically — but a ControlNet pipe also owns a controlnet
+    module of its own, so move every non-None pipe in the family.
+    """
+    if name == "whisper":
+        return [_whisper_model] if _whisper_model is not None else []
+    if name == "sd":
+        fam = [_sd_pipe, globals().get("_sd_img2img_pipe"),
+               globals().get("_controlnet_pipe"), globals().get("_ipadapter_pipe")]
+        return [p for p in fam if p is not None]
+    return []
+
+
+def _gpu_move(name: str, dev: str) -> bool:
+    """Move one model's weights to `dev`. Returns True if it now sits there."""
+    objs = _gpu_targets(name)
+    if not objs:
+        return False
+    try:
+        for o in objs:
+            o.to(dev)
+    except Exception as e:
+        log.warning(f"[gpu] moving {name} to {dev} failed: {e}")
+        return False
+    if dev == "cpu":
+        try:
+            import gc as _gc
+            _gc.collect()
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+    st = _gpu_state.setdefault(name, _new_state())
+    st["resident"] = (dev != "cpu")
+    return True
+
+
+def _gpu_park(name: str, force: bool = False) -> bool:
+    """Give the card back for `name`. Refuses while a job holds it unless forced."""
+    with _gpu_lock:
+        st = _gpu_state.get(name)
+        if not st or not st["resident"]:
+            return False
+        if st["busy"] > 0 and not force:
+            return False
+        before = _cuda_free_mb()[0]
+        ok = _gpu_move(name, "cpu")
+        if ok:
+            freed = max(0, _cuda_free_mb()[0] - before)
+            st["mb"] = freed or st.get("mb", 0)
+            log.info(f"[gpu] parked {name} to CPU RAM (~{freed} MiB back to the LLM)")
+        return ok
+
+
+@contextmanager
+def _gpu_session(name: str):
+    """Hold the GPU for one job, yielding the device the job should actually use.
+
+    Yields "cuda" when the model is on the card, "cpu" when it could not be
+    placed without cutting into the LLM's reserve — callers must honour the
+    yielded device rather than assuming CUDA.
+    """
+    if not GPU_LAZY or not torch.cuda.is_available():
+        yield ("cuda" if torch.cuda.is_available() else "cpu")
+        return
+    dev = "cpu"
+    deadline = time.time() + GPU_ACQUIRE_WAIT_S
+    while True:
+        with _gpu_lock:
+            st = _gpu_state.setdefault(name, _new_state())
+            if st["resident"]:
+                st["busy"] += 1
+                st["last"] = time.time()
+                dev = "cuda"
+                break
+            free_mb, _tot = _cuda_free_mb()
+            if (_can_place(free_mb, int(st.get("mb", 0) or 0), GPU_LLM_RESERVE_MB)
+                    and _gpu_move(name, "cuda")):
+                st["busy"] += 1
+                st["last"] = time.time()
+                dev = "cuda"
+                break
+            if time.time() >= deadline:
+                log.info(f"[gpu] {name}: only {free_mb} MiB free (reserve "
+                         f"{GPU_LLM_RESERVE_MB} MiB) — running on CPU so the "
+                         f"LLM keeps the card")
+                dev = "cpu"
+                break
+        time.sleep(0.5)
+    try:
+        yield dev
+    finally:
+        if dev == "cuda":
+            with _gpu_lock:
+                st = _gpu_state.get(name) or {}
+                st["busy"] = max(0, int(st.get("busy", 1)) - 1)
+                st["last"] = time.time()
+
+
+def _gpu_reaper():
+    """Park anything idle past GPU_IDLE_UNLOAD_S. The whole point: this service
+    must not hold VRAM while doing nothing."""
+    log.info(f"[gpu] residency reaper started (idle unload {GPU_IDLE_UNLOAD_S:.0f}s, "
+             f"LLM reserve {GPU_LLM_RESERVE_MB} MiB)")
+    while True:
+        try:
+            time.sleep(min(30.0, max(5.0, GPU_IDLE_UNLOAD_S / 4.0)))
+            if GPU_IDLE_UNLOAD_S <= 0:
+                continue
+            with _gpu_lock:
+                names = _parkable(_gpu_state, now=time.time(),
+                                  idle_s=GPU_IDLE_UNLOAD_S)
+            for n in names:
+                _gpu_park(n)
+        except Exception as e:
+            log.debug(f"[gpu] reaper: {e}")
+
+
 def load_models():
     global _whisper_model, _sd_pipe, TTS_SAMPLE_RATE
 
@@ -308,6 +484,19 @@ def load_models():
             _load_kokoro()
         else:
             _load_coqui(device)
+
+    # Everything above deliberately loaded on CUDA so the device-specific tuning
+    # in _load_sd could run there. Now hand the card straight back: this service
+    # is idle almost all of the time, and the LLM sharing this V100 needs every
+    # MiB of it (see the GPU RESIDENCY note above). Weights stay in CPU RAM, so
+    # the first job after this pays a PCIe copy, not a reload.
+    if GPU_LAZY and device == "cuda":
+        for _name in ("whisper", "sd"):
+            if _gpu_targets(_name):
+                _gpu_state.setdefault(_name, _new_state())
+                _gpu_state[_name]["resident"] = True
+                _gpu_state[_name]["last"] = time.time()
+                _gpu_park(_name, force=True)
 
 
 def _load_sd(device: str):
@@ -753,12 +942,17 @@ def _stt_worker():
         job_id, payload, result_q = _stt_queue.get()
         try:
             audio_np = _bytes_to_float_array(payload["audio_bytes"])
-            result   = _whisper_model.transcribe(
-                audio_np,
-                language=payload.get("language"),
-                task=payload.get("task", "transcribe"),
-                fp16=torch.cuda.is_available(),
-            )
+            # Take the card only for this job, and honour the device actually
+            # granted — fp16 must follow where the weights REALLY are, not
+            # whether the box merely has CUDA. Parked on CPU, fp16=True is a
+            # hard error, which is why this reads `dev` and not is_available().
+            with _gpu_session("whisper") as dev:
+                result = _whisper_model.transcribe(
+                    audio_np,
+                    language=payload.get("language"),
+                    task=payload.get("task", "transcribe"),
+                    fp16=(dev == "cuda"),
+                )
             out = {"status": "ok", "text": result["text"].strip(), "language": result.get("language")}
         except Exception as e:
             log.error(f"STT error: {e}\n{traceback.format_exc()}")
@@ -1643,6 +1837,13 @@ def _sd_worker():
     while True:
         job_id, payload, result_q = _sd_queue.get()
         prog_id = payload.get("job_id") or ""
+        # Hold the card for this job only, then park SD again. Entered by hand
+        # rather than with a `with` block purely so the 60-line job body below
+        # keeps its indentation and the diff stays reviewable — semantics are
+        # identical, and the finally runs on every exit including the early
+        # `continue` in the _SD_OPS branch.
+        _sd_gpu = _gpu_session("sd")
+        _sd_gpu.__enter__()
         try:
             # Sprite-pipeline ops (rembg/upscale/controlnet/ipadapter) run through
             # their own handlers but on THIS serial worker so GPU use stays ordered.
@@ -1711,6 +1912,8 @@ def _sd_worker():
             log.error(f"SD error: {e}\n{traceback.format_exc()}")
             out = {"status": "error", "error": str(e)}
             _progress_set(prog_id, phase="error", error=str(e))
+        finally:
+            _sd_gpu.__exit__(None, None, None)
         if result_q: result_q.put(out)
         else: redis_set_result(job_id, out)
 
@@ -1786,6 +1989,8 @@ def _split_sentences(text: str) -> list[str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     load_models()
+    if GPU_LAZY and torch.cuda.is_available():
+        threading.Thread(target=_gpu_reaper, daemon=True).start()
     if ENABLE_WHISPER: threading.Thread(target=_stt_worker, daemon=True).start()
     if ENABLE_SD:      threading.Thread(target=_sd_worker,  daemon=True).start()
     if ENABLE_TTS:     threading.Thread(target=_tts_worker, daemon=True).start()
@@ -1844,6 +2049,48 @@ async def _stream_tts_sentences(sentences: list[str], opts: dict) -> AsyncGenera
             log.error(f"TTS stream error: {e}")
 
 # ─────────────────────────── ROUTES ──────────────────────────────────────────
+
+@app.get("/gpu/status")
+async def gpu_status():
+    """What this service is holding on the shared card, and what is free.
+
+    The LLM is the priority tenant here (one V100-12GB shared with ollama), so
+    this is the view that matters when a generation is slow: if `resident` is
+    true for anything while the LLM is working, that is VRAM the LLM could be
+    using.
+    """
+    free_mb, total_mb = _cuda_free_mb()
+    with _gpu_lock:
+        models = {
+            n: {"resident": bool(st.get("resident")),
+                "busy": int(st.get("busy", 0)),
+                "idle_s": round(max(0.0, time.time() - float(st.get("last") or 0)), 1),
+                "mb": int(st.get("mb", 0))}
+            for n, st in _gpu_state.items()
+        }
+    return {"lazy": GPU_LAZY, "cuda": torch.cuda.is_available(),
+            "free_mb": free_mb, "total_mb": total_mb,
+            "idle_unload_s": GPU_IDLE_UNLOAD_S,
+            "llm_reserve_mb": GPU_LLM_RESERVE_MB,
+            "models": models}
+
+
+@app.post("/gpu/release")
+async def gpu_release(force: bool = False):
+    """Hand the card back NOW, without waiting for the idle timer.
+
+    For the LLM side to call before a large-context generation: ollama sizes its
+    KV cache at load time, so VRAM freed after it has loaded does not help that
+    generation. `force=true` parks even a model with a job in flight — it will
+    simply be moved back for the next one.
+    """
+    freed = []
+    for name in list(_gpu_state.keys()):
+        before = _cuda_free_mb()[0]
+        if _gpu_park(name, force=bool(force)):
+            freed.append({"model": name, "mb": max(0, _cuda_free_mb()[0] - before)})
+    return {"ok": True, "released": freed, "free_mb": _cuda_free_mb()[0]}
+
 
 @app.get("/health")
 async def health():
