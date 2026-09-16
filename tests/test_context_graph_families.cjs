@@ -53,7 +53,8 @@ const gF3 = G.compute(Object.assign({}, base, { loop: L3.steps, runPlan: [], ste
 t('… a step picked in the lane brings it and its neighbours into the plot', gF3.stepNodes.map((n) => n.i).join(',') === '0,1,2' && /\bsel\b/.test(gF3.stepNodes[1].cls));
 t('memory in focus: only the session records that touch the prompt stay on the arm (the fact derived into v1)', gF.memNodes.map((n) => n.id).sort().join(',') === 'm1,sf1' && gF.families.find((f) => f.name === 'memory').level === 'focus');
 const gO = G.compute(Object.assign({}, base, { mix: { loop: 'off', memory: 'off', plan: 'off' } }), W, H);
-t('off folds the family away — no track, no layer, no chip glow; the context takes the whole circle again', gO.loopNodes.length === 0 && gO.stepNodes.length === 0 && gO.planNodes.length === 0 && gO.planPlot.length === 0 && gO.memNodes.length === 1 && gO.lanes.l === 0 && gO.lanes.t === 0 && gO.families.every((f) => !f.on) && gO.spokes.length === 4);
+// off used to leave the prompt's own recall on the arm; the user's review says off is off (Notes/42 defect 65)
+t('off folds the family away — no track, no layer, no chip glow, no record of its own; the context takes the whole circle again', gO.loopNodes.length === 0 && gO.stepNodes.length === 0 && gO.planNodes.length === 0 && gO.planPlot.length === 0 && gO.memNodes.length === 0 && gO.lanes.l === 0 && gO.lanes.t === 0 && gO.families.every((f) => !f.on) && gO.spokes.length === 4);
 t('mixOf: an explicit level wins, layersOff reads as off, else all', G.mixOf({ mix: { loop: 'focus' }, layersOff: new Set(['loop', 'estate']) }, 'loop') === 'focus' && G.mixOf({ layersOff: new Set(['estate']) }, 'estate') === 'off' && G.mixOf({}, 'memory') === 'all');
 // ── the iso view fills its column (defect 29) ──
 const tall = G.compute(Object.assign({}, base, { view: 'iso', mix: { loop: 'off', plan: 'off' } }), 640, 700);

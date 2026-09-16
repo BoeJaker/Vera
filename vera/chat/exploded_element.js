@@ -72,7 +72,11 @@
   const RELC = { cite: ['var(--xp-t3)', 'rel cite', 'cites'], mem: ['var(--xp-ac2)', 'rel mem', 'a memory that relates'], step: ['var(--xp-ac)', 'rel step', 'the next step in the loop'] };
   // the carousel's runs by kind: what was read in, what came out, what became a canvas item, what was pinned back
   const FRC = { in: 'var(--xp-dv1)', out: 'var(--xp-dv2)', link: 'var(--xp-ac)', mem: 'var(--xp-ac2)' };
-  const GALH = 84;   // the galaxy sheet lying past the nodes
+  /* the galaxy sheet lying past the nodes. The galaxy is a ROUND plot — its own mini is laid out at 262x196 — so a
+     sheet much wider than it is tall leaves records outside it top and bottom, and the sheet clips them; a sheet that
+     small also leaves the plot using a third of it. The sheet takes its height from its width at the plot's proportion,
+     so the whole galaxy is inside it and as big as the band can carry (Notes/42 defect 61). */
+  const galH = (w) => Math.round(Math.max(110, Math.min(240, w * 0.66)));
 
   /* ── the layout, pure ─────────────────────────────────────────────────────────────────────────────── */
   function layout(scene, mode, W, H, o) {
@@ -123,7 +127,7 @@
         const g = gData(t), lit = si === sel, boxes = {}; const oy = rowTop + 22 + HEAD;   // the row line of the first card, under the turn's caption and the plate's head
         const lanes = LANES.filter((l) => g.laneList.indexOf(l) >= 0);
         const members = (l) => g.nodes.filter((n) => n.lane === l).sort((a, b) => b.score - a.score);
-        const graphH = lanes.reduce((s, l) => s + 40 + Math.ceil(members(l).length / 3) * NR, 0) + (g.nodes.length ? GALH + 30 : 0);
+        const graphH = lanes.reduce((s, l) => s + 40 + Math.ceil(members(l).length / 3) * NR, 0) + (g.nodes.length ? galH(CW) + 30 : 0);
         // every column's rows, each row's excess over the base card, and from those the plate's height — its content's
         const cols = LAYERS.map((L, i) => { if (L.kind === 'graph') return { L, i, list: [], extras: [], h: Math.max(MINH, HEAD + graphH + FOOT) };
           const list = cardsOf(t, L.key); const extras = list.map((c, j) => Math.max(0, (HM[t.mid + ':' + L.key + ':' + j] || estH(c)) - CH));
@@ -148,7 +152,7 @@
               boxes['node:' + n.id] = { cx, cy, w: d, h: d, st: 0, lane: n.lane }; });
             ly += 40 + Math.ceil(ms.length / 3) * NR; });
           // the galaxy sheet lies past the lanes — the same widget the Context menu draws
-          if (g.nodes.length) out.graphs.push({ id: t.mid + ':graph', mid: t.mid, si, x: px(x), y: px(ly + 4), w: CW, h: GALH, data: g }); }
+          if (g.nodes.length) out.graphs.push({ id: t.mid + ':graph', mid: t.mid, si, x: px(x), y: px(ly + 4), w: CW, h: galH(CW), data: g }); }
         // the runs, routed as the board routes them: level out of a card's side, down or up the gutter between the
         // stations, level into the target — never diagonally; two stations apart they drop to a lane under the plates
         // and travel there. A run's legs are pushed one by one, so every edge is horizontal or vertical.
@@ -227,7 +231,7 @@
     const CW = STK ? 172 : 200, CH = STK ? 47 : 54, RAISE = STK ? 10 : 14;   // the board's card (tighter on a stack), standing on its stem
     const RV = STK ? 200 : 300, CU = STK ? 340 : 420, ROWMAX = 3, CAP = 6;  // the lattice (the board's pitches: a row clears a card, a column clears its width); six per band, the rest a count
     const HEAD = STK ? 100 : 130, FOOT = 30;                                  // headroom above a band's first row (the cards stand up from their pins), the room past its last
-    const LV = 64, GAL = { w: 200, h: 84 }, ICAP = 1.45;                      // a lane row's pitch in the graph band; the galaxy sheet lying past the nodes; the counter-scale's cap
+    const LV = 64, GAL = (function () { const w = STK ? 220 : 280; return { w, h: galH(w) }; })(), ICAP = 1.45;   // a lane row's pitch in the graph band; the galaxy sheet lying past the nodes (its own proportion — defect 61); the counter-scale's cap
     const proj = (u, v, z) => { const p = P(u, v, z || 0); return { x: p[0], y: p[1] }; };
     const yPerV = Math.max(0.05, Math.abs(proj(0, 100, 0).y - proj(0, 0, 0).y) / 100);   // screen px down per v unit, through P
     out.bands = []; out.widgets = []; out.stack = STK; out.wsz = WSZ;

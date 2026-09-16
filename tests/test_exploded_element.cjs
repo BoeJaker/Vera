@@ -93,5 +93,22 @@ const tl = X.layout(scene, 'iso', 1200, 800, { tilt: 12 }), th = X.layout(scene,
 const depth = (o) => Math.abs(o.plates[0].poly[2].y - o.plates[0].poly[0].y) / Math.max(1, Math.abs(o.plates[0].poly[1].x - o.plates[0].poly[0].x));
 t('iso PTZ: a tilt down flattens the plane, a tilt up looks down on it; a swing turns it; the angles are clamped and reported', depth(tl) < depth(i) && depth(i) < depth(th) && tl.tilt === 12 && th.tilt === 60 && sw.azim === 25 && X.layout(scene, 'iso', 1200, 800, { tilt: 5, azim: 90 }).tilt === 12 && X.layout(scene, 'iso', 1200, 800, { tilt: 5, azim: 90 }).azim === 65 && i.tilt === 30 && i.azim === 45 && Math.abs(sw.plates[0].poly[1].x - sw.plates[0].poly[0].x) !== Math.abs(i.plates[0].poly[1].x - i.plates[0].poly[0].x));
 t('iso PTZ: the element carries the controls — pan arrows, tilt, swing, fit — and Turn · All · Stack; the projection and the widget groups follow the view\'s angles', /data-a="panl"/.test(SRC2) && /data-a="tiltu"/.test(SRC2) && /data-a="swl"/.test(SRC2) && /data-a="solo"/.test(SRC2) && /data-a="all"/.test(SRC2) && /VeraISO\.proj\(S\.tilt \|\| 30, S\.azim \|\| 45, 1, true\)/.test(SRC2) && /groupOf\(wg, ISO, \{ tilt: S\.tilt \|\| 30, azim: S\.azim \|\| 45 \}\)/.test(SRC2) && /solo\(on\) \{/.test(SRC2) && /tilt\(deg\) \{/.test(SRC2) && /swing\(deg\) \{/.test(SRC2) && /pan\(dx, dy\) \{/.test(SRC2));
+// ── the galaxy sheet holds the galaxy (Notes/42 defect 61) ───────────────────────────────────────────────────
+{ const G = (() => { try { return require(path.join(__dirname, '..', 'vera', 'chat', 'context_graph_element.js')); } catch (_) { return null; } })();
+  const gscene = { sel: 'm1', turns: [{ mid: 'm1', who: 'you', t: '14:31', text: 'q', reply: 'a',
+    read: Array.from({ length: 12 }, (_, i) => ({ id: 'n' + i, n: 'record ' + i, d: 'chunk', col: '#a78bfa', kind: i % 3 === 0 ? 'memory' : 'chunk', score: 0.9 - i * 0.05 })), made: [], land: [] }] };
+  const cg = X.layout(gscene, 'cards', 1200, 800).graphs[0], ig = X.layout(gscene, 'iso', 1200, 800).graphs[0];
+  t('the sheet is as tall as a round plot needs — never the letterbox that clipped it', !!cg && !!ig && cg.h / cg.w > 0.6 && ig.h / ig.w > 0.6 && cg.h >= 110 && ig.h >= 110, JSON.stringify({ cards: cg && [cg.w, cg.h], iso: ig && [ig.w, ig.h] }));
+  t('the iso sheet is bigger than the 200x84 the plot used a third of', !!ig && ig.w >= 220 && ig.h >= 145, JSON.stringify(ig && [ig.w, ig.h]));
+  // and the galaxy, laid out in that sheet, is INSIDE it — the measurement the defect was found with
+  if (G) { const nodes = []; for (let i = 1; i <= 14; i++) nodes.push({ id: 'n' + i, label: 'record ' + i, source: ['vector', 'graph', 'fabric', 'web', 'cap'][i % 5], type: 'chunk', score: 0.95 - i * 0.05, included: i % 4 !== 0 });
+    for (let i = 1; i <= 6; i++) nodes.push({ id: 'm' + i, label: 'memory ' + i, source: 'memory', type: 'fact', score: 0.8 - i * 0.07, included: i % 2 === 0 });
+    const inside = (w, h, view) => { const o = G.mini(Object.assign({}, G.stateFrom({ nodes, edges: [], view }), { view }), w, h);
+      const pts = [].concat((o.cnodes || []).map((n) => [n.x, n.y, n.d || 12]), (o.memNodes || []).map((n) => [n.x, n.y, 12]));
+      return pts.every((p) => p[0] - p[2] / 2 >= 0 && p[1] - p[2] / 2 >= 0 && p[0] + p[2] / 2 <= w && p[1] + p[2] / 2 <= h); };
+    t('every record of the galaxy falls inside the sheet, in both modes', inside(cg.w, cg.h, 'galaxy') && inside(ig.w, ig.h, 'iso'));
+    t('…and the letterbox it replaced did not', !inside(212, 84, 'galaxy')); }
+  else t('the context graph element is on hand to measure the galaxy with', false, 'context_graph_element.js did not load'); }
+
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

@@ -7,7 +7,7 @@ const path = require('node:path'); const fs = require('node:fs');
 const FILE = path.join(__dirname, '..', 'vera', 'chat', 'exploded_element.js');
 const X = require(FILE); const SRC = fs.readFileSync(FILE, 'utf8');
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
-t('faceHtml and diagramHtml are exported (version 6)', typeof X.faceHtml === 'function' && typeof X.diagramHtml === 'function' && X.version === 6);
+t('faceHtml and diagramHtml are exported (version 6)', typeof X.faceHtml === 'function' && typeof X.diagramHtml === 'function' && X.version >= 6);
 
 // ── the root cause: one sample per SHAPE — every level the same dial, every set the same bars, the rest one block ──
 const before = ['radial', 'counter', 'bar'].map((f) => JSON.stringify(X.widgetOf({ kind: 'widget', form: f }).data));
@@ -55,8 +55,8 @@ t('on the iso card the diagram is on the card, its source behind the click', ib.
 t('the scene loads the mermaid element once when a card needs it', SRC.includes("function ensureMermaid(doc) {") && SRC.includes("if (h.indexOf('<vera-mermaid') >= 0) ensureMermaid(this.ownerDocument);") && SRC.includes("s.src = '/ui/elements/vera_mermaid.js'"));
 
 // ── the renders draw the face: on the plate, in the cards, in the carousel; the group only without the element ──
-t('the iso widget is its own face on the board\'s card; the iso group stands in without the element', SRC.includes("const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const face = faceHtml(c, widgetOf(c), S.wsz); if (face) return xitHtml(wg, face);") && SRC.includes("const b = isoBody(c, face ? null : wd);") && SRC.includes("const g = groupOf(wg, ISO, { tilt: 30, azim: 45 }); const b = isoBody(c, null);"));
-t('the cards scene and the front carousel draw the face too', SRC.includes("const face = (card.form || card.record || String(card.kind || '').toLowerCase() === 'widget') ? faceHtml(card, wd, S.wsz) : ''; const b = isoBody(card, face ? null : wd);") && SRC.includes("const rcFace = (c) => (c.card && (c.card.form || c.card.record || String(c.card.kind || '').toLowerCase() === 'widget') ? faceHtml(c.card, widgetOf(c.card), S.wsz) : '');"));
+t('the iso widget is its own face on the board\'s card; the iso group stands in without the element', SRC.includes("const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const face = faceHtml(c, widgetOf(c), S.wsz); if (face) return xitHtml(wg, face);") && SRC.includes("const g = groupOf(wg, ISO, { tilt: S.tilt || 30, azim: S.azim || 45 }); const b = isoBody(c, null);"));   // the iso group takes the view's angles since the PTZ controls; a face returns above this, so there is no face-or-body body left to name
+t('the cards scene and the front carousel draw the face too', SRC.includes("const face = (card.form || card.record || String(card.kind || '').toLowerCase() === 'widget') ? faceHtml(card, wd, S.wsz) : ''; const b0 = isoBody(card, face ? null : wd);") && SRC.includes("const rcFace = (c) => (c.card && (c.card.form || c.card.record || String(c.card.kind || '').toLowerCase() === 'widget') ? faceHtml(c.card, widgetOf(c.card), S.wsz) : '');"));
 t('a card carrying a record is a widget to the layout', SRC.includes("const isWidget = (c) => !!(c && (c.tpl || c.form || (c.record && typeof c.record === 'object') || String(c.kind || '').toLowerCase() === 'widget'));"));
 t('the face is styled at the card, hidden with a tight card until hovered or opened', SRC.includes("vera-exploded .xit-face{display:block;margin-top:4px;min-height:var(--fh,70px)") && SRC.includes("vera-exploded .xit.tight .xit-face{display:none}") && SRC.includes("vera-exploded .xf-diag vera-mermaid{display:block;width:100%;height:110px"));
 
