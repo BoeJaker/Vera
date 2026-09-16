@@ -13518,7 +13518,7 @@ function _embedMount(){
   // the board's face is the default; the detailed one this edge grew is a press away and remembered (defect 60)
   let _qGalStyle=(function(){ try{ return localStorage.getItem('vera_ctx_mini_style')==='detailed'?'detailed':'simple'; }catch(_){ return 'simple'; } })();
   // the mini graph's detail: the record picked, WHICH SOURCES ARE OPEN in the list, the search across them
-  let _qGalSel='', _qSrcOpen={}, _qGalQ='';
+  let _qGalSel='', _qSrcOpen={}, _qGalQ='', _ctxElWait=null;
   const _kfmt=n=>n>=1000?(n/1000).toFixed(1)+'k':String(n);
   // every family of the assembled context: its records, its tokens (≈ chars / 4), its colour, its share
   function _ctxShares(){
@@ -13562,6 +13562,14 @@ function _embedMount(){
         if(typeof VeraContextGraph.miniList==='function') _recsOf=(f)=>{ try{ return '<div class="cg-mini cg-recs">'+VeraContextGraph.miniList(st, { q:_qGalQ, fam:f })+'</div>'; }catch(_){ return ''; } }; }catch(e){ gal=''; _recsOf=()=>''; }
     }
     if(!gal) gal=window.VeraWidget?VeraWidget.draw('context_graph',data,'m',{height:196,bare:true,view:_qGalView,allEdges:_qGalAll,off:_qGalOff,color:srcCol,hub:'aide',hubMeta:_kfmt(S.total)}):'';
+    /* The fallback is a STAND-IN, not a decision. The repaint key knows which renderer drew the body (defect 84),
+       but a key is only read when the menu is composed again, and nothing composes it again once the element script
+       lands - so the stand-in stayed for the life of the page. When we have had to fall back, watch for the element
+       and compose once the moment it arrives, then stop watching. The fallback still draws immediately, so the menu
+       is never empty while the element is on its way. */
+    if(!window.VeraContextGraph||typeof VeraContextGraph.miniHtml!=='function'){
+      if(!_ctxElWait) _ctxElWait=setInterval(()=>{ if(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'){ clearInterval(_ctxElWait); _ctxElWait=null; try{ VeraLHM.render(); }catch(_){} } }, 400);
+    } else if(_ctxElWait){ clearInterval(_ctxElWait); _ctxElWait=null; }
     el.innerHTML='<div class="wid" data-w="context galaxy · graph" data-tpl="lhm:ctx-galaxy">'
       +'<div class="gal-ctl"><span class="vseg">'+views.map(v=>'<button class="'+(_qGalView===v[0]?'on':'')+'" data-view="'+v[0]+'" title="'+v[0]+' view">'+v[1]+'</button>').join('')+'</span><button class="gal-all'+(_qGalAll?' on':'')+'" title="Every record\'s edge to the hub">All edges</button><span class="vseg gal-style">'+[['simple','simple'],['detailed','detailed']].map(v=>'<button class="'+(_qGalStyle===v[0]?'on':'')+'" data-style="'+v[0]+'" title="'+(v[0]==='simple'?'The board\'s face: the context plot by itself':'Every family on the plot, the lanes, the record card and the list')+'">'+v[1]+'</button>').join('')+'</span></div>'
       +'<div class="gal-mix">'+S.rows.map(r=>'<span class="gm'+(_qGalOff[r.f]?'':' on')+'" data-fam="'+esc(r.f)+'" style="--c:'+r.col+'" title="'+esc(r.label)+' — press to dim or light this family"><i></i>'+esc(r.label.replace(' + system','').replace(' (Neo4j)',''))+'<b>'+_kfmt(r.tok)+'</b></span>').join('')+'</div>'
