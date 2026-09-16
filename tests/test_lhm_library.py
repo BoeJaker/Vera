@@ -72,7 +72,9 @@ def test_the_rail_has_the_designs_eight_menus():
 def test_every_menu_has_a_meta_line_and_one_cta():
     block = _menus_block()
     assert block.count("meta:()=>") == 8
-    assert block.count("cta:{label:") == 8
+    # a menu's label may be a getter rather than a literal: the Context menu's reads "Expand to the full graph" or
+    # "Fold back to the quick menu" depending on where the graph is, so both spellings count
+    assert block.count("cta:{label:") + block.count("cta:{get label(") == 8
 
 
 def test_the_panes_keep_their_ids():

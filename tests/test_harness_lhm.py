@@ -25,7 +25,9 @@ def _once(text, needle):
 
 def test_the_library_renders_the_side_menu_and_the_strips():
     assert "function side(host, cfg){" in LIB and "function strips(host, cfg){" in LIB
-    assert "side: side, sideEdit: sideEdit, strips: strips," in LIB, "exported"
+    # named one at a time: the export list grows (sideAdd landed between sideEdit and strips)
+    for k in ("side: side", "sideEdit: sideEdit", "strips: strips"):
+        assert k in LIB, k
     # the Harness board's parts: search · Open now · the panels with their sections · N registered · widgets · note
     for part in ("'lhm-s-srch'", "'Open now · ' + open.length + ' · one set, one bridge'", "'lhm-s-grp', 'Panels'", "' registered · ⌘K'", "'lhm-s-grp', 'Widgets'", "'lhm-s-note'"):
         assert part in LIB, part
