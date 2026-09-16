@@ -19,8 +19,11 @@ def test_the_mini_has_both_faces_and_the_quick_menu_switches_them():
     el = _read("vera", "chat", "context_graph_element.js")
     # the element draws whichever face it is handed; the switch is the host's
     assert "const simple = String(opts.style || S.miniStyle || 'detailed').toLowerCase() === 'simple';" in el
-    # simple is the CONTEXT plot: the other families are folded away, not drawn small
-    assert "mix: Object.assign({}, S.mix || {}, { memory: 'off', loop: 'off', plan: 'off', estate: 'off' })" in el
+    # Simple is the board's plot with EVERY source on it. This check used to say the opposite - that the other
+    # families are folded away - which is what the face did and why Memory recalls, the family the user asked
+    # about by name, was missing from it. The board's legend names eight and its plot draws eight.
+    assert "const base = simple ? Object.assign({}, S, { list: false }) : S;" in el
+    assert "memory: 'off', loop: 'off', plan: 'off', estate: 'off'" not in el, "the simple face folds no family away"
     # and nothing else is laid over it - no lanes, no list, no record card
     assert "if (simple) return '<div class=\"cg-mini simple\"" in el
     assert "const detail = simple ? null :" in el and "list = simple ? false :" in el
@@ -47,6 +50,9 @@ def test_the_mini_is_the_elements_face():
 def test_the_minis_detail_list_search_and_frames():
     src = _read("vera", "chat", "chat_panel.html")
     assert "let _qGalSel='', _qGalList=false, _qGalQ='';" in src
-    assert 'class="gal-all gal-list' in src and 'class="gal-srch"' in src
+    # the records and their search live in the "In this prompt" section now, not in a drawer inside the plot
+    assert 'class="grp-act gal-list' in src and 'class="gal-srch"' in src
+    assert "let gal='', recs='', miniH=196;" in src, "the plot keeps its box whatever the list is doing"
+    assert "recs=VeraContextGraph.miniList(st, { q:_qGalQ });" in src and "+recs+'</div>';" in src
     assert "'.cg-mini .cg-node[data-id], .cg-mini .cg-row[data-id]'" in src and "'.cg-mini [data-a=\"toggle\"][data-id]'" in src
     assert "_ctxCol.setFrames(CTX_FRAMES, {active});" in src and "let _ctxColFrameSig='';" in src   # ctx-graph-5: the frame in view is the active one
