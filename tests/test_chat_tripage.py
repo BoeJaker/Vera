@@ -80,6 +80,12 @@ def test_the_layout_css():
 def test_the_canvas_column_hosts_the_session_canvas_element():
     assert "_capCall('canvas.session.resolve',{session_id:SID})" in HTML
     assert "el=document.createElement('vera-canvas')" in HTML and "el.setAttribute('canvas-id', cid)" in HTML
+    # Creating the element is not mounting it. The whole mount is one long line, and a `//` note left mid-line once
+    # swallowed the rest of it - the append included - so the column drew empty, nothing could be placed on it by
+    # hand or by the model, and nothing threw (Notes/42 defect 81). The line must be live code from end to end.
+    _mk = [ln for ln in HTML.splitlines() if "el=document.createElement('vera-canvas')" in ln][0]
+    assert "host.appendChild(el);" in _mk, "the canvas element is created AND put in the column"
+    assert "//" not in _mk.split("host.appendChild(el);")[0], "no line comment may swallow the rest of the mount"
     assert "if(_pages.has('canvas')&&SID&&SID!==_cvColSid) _canvasColumnMount()" in HTML, "follows the session"
     _once(HTML, '<script src="/ui/elements/canvas_element.js"></script>')
     assert "el.addEventListener('vera:canvas:rendered'" in HTML and "dispatchEvent(new CustomEvent('vera:canvas:rendered'" in EL
