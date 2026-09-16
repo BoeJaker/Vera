@@ -6589,6 +6589,13 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   // those surfaces open and close without telling anyone, and nothing else redraws afterwards: a click on the rail's
   // ☰, on the ⋯, or in a context menu is the cue to look again — and to put the runs back when it has gone
   const _runsLook=()=>setTimeout(()=>{ try{ _ctxRunsDraw(); _cvRunsDraw(); }catch(_){} }, 90);
+  /* the runs follow the transcript at frame rate. They used to be redrawn only from _ctxFollow, throttled to 150ms
+     because that also re-feeds the graph element — so while the transcript scrolled the arrivals sat still through
+     two frames, then jumped: sampled, the block moved 47px before the runs moved at all, and then they moved 60 to
+     120 at once. Redrawing them is one SVG and costs nothing next to the re-sync, so it happens every frame and the
+     re-sync keeps the throttle it needs (Notes/42 defect 66). */
+  let _runsSoonRaf=0;
+  function _runsSoon(){ if(_runsSoonRaf) return; _runsSoonRaf=(window.requestAnimationFrame||setTimeout)(()=>{ _runsSoonRaf=0; try{ _ctxRunsDraw(); }catch(_){} try{ _cvRunsDraw(); }catch(_){} }); }
   document.addEventListener('click', ev=>{ try{ const t=ev.target; if(t&&t.closest&&(t.closest('#rightRail .lhm-rail .lhm-ico')||t.closest('#hdrMore')||t.closest('.cmw'))) _runsLook(); }catch(_){} }, true);
   function _ctxRunsDraw(){
     const svg=document.getElementById('ctxRunsOverlay'); if(!svg) return;
@@ -12575,7 +12582,7 @@ Your task: decide what to do next to advance toward the goal.
       if(_pages.has('graph')&&_ctxCol) _graphAnchorPost(true); else { try{ _ctxRunsDraw(); }catch(_){} } };
     if(now||Date.now()-_ctxFollowT>150){ if(_ctxFollowTimer){ clearTimeout(_ctxFollowTimer); _ctxFollowTimer=null; } return run(); }
     if(!_ctxFollowTimer) _ctxFollowTimer=setTimeout(()=>{ _ctxFollowTimer=null; run(); }, 160); }
-  function _ctxFollowBind(){ const msgs=document.getElementById('msgs'); if(msgs&&!msgs._ctxFollowBound){ msgs._ctxFollowBound=true; msgs.addEventListener('scroll', ()=>{ if(Date.now()-_grScrollProg>900) _grFocusMid=''; _ctxFollow(); }, {passive:true}); }
+  function _ctxFollowBind(){ const msgs=document.getElementById('msgs'); if(msgs&&!msgs._ctxFollowBound){ msgs._ctxFollowBound=true; msgs.addEventListener('scroll', ()=>{ if(Date.now()-_grScrollProg>900) _grFocusMid=''; _runsSoon(); _ctxFollow(); }, {passive:true}); }
     const inp=document.getElementById('chatInput'); if(inp&&!inp._ctxFollowBound){ inp._ctxFollowBound=true; inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxFollow(); }); } }
   function saveFrame(){const l=prompt('Frame name:','Frame '+(CTX_FRAMES.length+1));if(l===null)return;_saveFrame(l);updateFrameUI();appendSys('Frame saved: <b>'+esc(l)+'</b>');}
 

@@ -38,6 +38,18 @@ def test_the_runs_stand_down_while_a_menu_is_over_them():
     assert "if(_runsOff.ctx||_runsBlocked())" in src
 
 
+def test_the_runs_follow_the_transcript_at_frame_rate():
+    """Notes/42 defect 66, the half that measures. Sampled while the transcript scrolled: the block moved 14px and the
+    arrivals 3; at 33ms the block had moved another 33 and the arrivals none; at 50ms they jumped 60-120 at once. The
+    runs were redrawn only from _ctxFollow, which is throttled to 150ms because it also re-feeds the graph element."""
+    src = _read("vera", "chat", "chat_panel.html")
+    assert "function _runsSoon()" in src
+    assert "_runsSoonRaf=(window.requestAnimationFrame||setTimeout)" in src
+    # the scroll redraws the runs every frame and leaves the element's re-sync on its own throttle
+    assert "_grFocusMid=''; _runsSoon(); _ctxFollow(); }, {passive:true}); }" in src
+    assert "if(now||Date.now()-_ctxFollowT>150)" in src
+
+
 def test_a_surface_opening_or_closing_is_a_redraw():
     # nothing else redraws when a sheet or a menu goes away, so the runs would stay gone until the next scroll
     src = _read("vera", "chat", "chat_panel.html")
