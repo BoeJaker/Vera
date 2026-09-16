@@ -766,7 +766,7 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
       tipIn() { this.classList.remove('closing'); this.classList.add('opening'); clearTimeout(this._tipT); this._tipT = setTimeout(() => this.classList.remove('opening'), 600); }
       flatten(done) { this.classList.remove('opening'); this.classList.add('closing'); clearTimeout(this._tipT); this._tipT = setTimeout(() => { this.classList.remove('closing'); if (done) { try { done(); } catch (_) {} } }, 260); }
       setScene(scene) { this._S.scene = scene && scene.turns ? scene : { turns: [], sel: '' }; if (!this._S.scene.sel && this._S.scene.turns.length) this._S.scene.sel = this._S.scene.turns[this._S.scene.turns.length - 1].mid; this._schedule(); }
-      stack(on) { this._S.stack = on == null ? !this._S.stack : !!on; if (this._S.stack) this._S.solo = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); return this._S.stack; }
+      stack(on) { this._S.stack = on == null ? !this._S.stack : !!on; if (this._S.stack) this._S.solo = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); this._isoBring(); return this._S.stack; }   // stacking lands on the turn in focus, not wherever the deck happens to start
       // the board's single-turn iso: only the selected turn's plate (Stack and Turn are the board's `stacked` and `turn`)
       solo(on) { this._S.solo = on == null ? !this._S.solo : !!on; if (this._S.solo) this._S.stack = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); return this._S.solo; }
       // PTZ: the pan is the view's transform (a drag does the same); the tilt and the swing change the projection every plate,
@@ -776,7 +776,24 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
       swing(deg) { this._S.azim = Math.max(25, Math.min(65, deg == null ? 45 : +deg)); this._schedule(); return this._S.azim; }
       widgetSize(s) { const L = ['s', 'm', 'l']; this._S.wsz = L.includes(s) ? s : L[(L.indexOf(this._S.wsz || 'm') + 1) % L.length]; this._schedule(); return this._S.wsz; }
       mode(name) { if (name && /^(cards|front|iso)$/.test(name)) { this._S.mode = name; this._S.pan = { x: 0, y: 0, z: 1, auto: true }; this._S.open = null; this._S.focus = null; this._frontKey = null; this._schedule(); } return this._S.mode; }
-      select(mid) { this._S.scene.sel = mid; this._schedule(); this.dispatchEvent(new CustomEvent('vera:xpl:turn', { detail: { mid }, bubbles: true })); }
+      select(mid) { this._S.scene.sel = mid; this._schedule(); this._isoBring(); this.dispatchEvent(new CustomEvent('vera:xpl:turn', { detail: { mid }, bubbles: true })); }
+      /* Stacked, the deck is taller than the frame as soon as a session has a few turns — with eight turns four of the
+         eight plates are off it — so a turn picked in the selector was lit where it could not be seen and nothing moved
+         (Notes/42 defect 62). The plate picked is brought into the frame. Turn draws the picked turn by itself, so it
+         needs none of this, and the other modes are left alone. */
+      _isoBring() {
+        if (this._S.mode !== 'iso' || !this._S.stack) return;
+        const go = () => { try {
+          const sr = this.shadowRoot || this, mid = (this._S.scene || {}).sel; if (!mid) return;
+          const pl = [...sr.querySelectorAll('.xp-pl')].find((q) => q.dataset.mid === mid), wrap = this._r && this._r.wrap;
+          if (!pl || !wrap) return;
+          const r = pl.getBoundingClientRect(), b = wrap.getBoundingClientRect(); if (!(r.height > 0 && b.height > 0)) return;
+          const p = this._S.pan; p.x += (b.left + b.width / 2) - (r.left + r.width / 2); p.y += (b.top + b.height / 2) - (r.top + r.height / 2); p.auto = false;
+          this._applyPan();
+        } catch (_) {} };
+        const raf = root.requestAnimationFrame || ((f) => setTimeout(f, 16));
+        raf(() => raf(go));   // after the render this scheduled
+      }
       fit() { this._S.pan = { x: 0, y: 0, z: 1, auto: true }; this._applyPan(); this._schedule(); }   // back to the whole scene: the front takes its fit again
       state() { return this._S; }
       // the context window's meter for the chip bar (the host's ctx_used / ctx_max; the scene may carry it as scene.budget)
@@ -889,8 +906,8 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
             + '<div class="xit-x">' + b.x + '<span class="xit-xr">layer<b>' + esc(c.layer) + '</b></span><span class="xit-xr">turn<b>' + esc(c.turn) + '</b></span>' + (card.kind ? '<span class="xit-xr">kind<b>' + esc(card.kind) + '</b></span>' : '') + '</div></div>'; };
         if (o.mode === 'iso') {
           this.classList.toggle('stacked', !!o.stack);
-          o.plates.forEach((p) => { const xs = p.poly.map((q) => q.x), ys = p.poly.map((q) => q.y); const x0 = Math.min.apply(null, xs), y0 = Math.min.apply(null, ys), x1 = Math.max.apply(null, xs), y1 = Math.max.apply(null, ys); const cp = 'polygon(' + p.poly.map((q) => (q.x - x0).toFixed(1) + 'px ' + (q.y - y0).toFixed(1) + 'px').join(',') + ')'; h += '<div class="xp-pl iso' + (p.cls ? ' ' + p.cls : '') + '" style="' + st(x0, y0) + 'width:' + (x1 - x0).toFixed(1) + 'px;height:' + (y1 - y0).toFixed(1) + 'px;--cp:' + cp + '"></div>'; });
-        } else { o.plates.forEach((p) => { h += '<div class="xp-pl' + (p.cls ? ' ' + p.cls : '') + '" style="' + st(p.x, p.y) + 'width:' + p.w + 'px;height:' + p.h + 'px;--pc:' + esc(p.col || 'var(--xp-ac)') + '"></div>'; }); }
+          o.plates.forEach((p) => { const xs = p.poly.map((q) => q.x), ys = p.poly.map((q) => q.y); const x0 = Math.min.apply(null, xs), y0 = Math.min.apply(null, ys), x1 = Math.max.apply(null, xs), y1 = Math.max.apply(null, ys); const cp = 'polygon(' + p.poly.map((q) => (q.x - x0).toFixed(1) + 'px ' + (q.y - y0).toFixed(1) + 'px').join(',') + ')'; h += '<div class="xp-pl iso' + (p.cls ? ' ' + p.cls : '') + '" data-mid="' + esc(p.mid || '') + '" style="' + st(x0, y0) + 'width:' + (x1 - x0).toFixed(1) + 'px;height:' + (y1 - y0).toFixed(1) + 'px;--cp:' + cp + '"></div>'; });
+        } else { o.plates.forEach((p) => { h += '<div class="xp-pl' + (p.cls ? ' ' + p.cls : '') + '" data-mid="' + esc(p.mid || '') + '" style="' + st(p.x, p.y) + 'width:' + p.w + 'px;height:' + p.h + 'px;--pc:' + esc(p.col || 'var(--xp-ac)') + '"></div>'; }); }
         (o.bands || []).forEach((b) => { const xs = b.poly.map((q) => q.x), ys = b.poly.map((q) => q.y); const x0 = Math.min.apply(null, xs), y0 = Math.min.apply(null, ys), x1 = Math.max.apply(null, xs), y1 = Math.max.apply(null, ys); const cp = 'polygon(' + b.poly.map((q) => (q.x - x0).toFixed(1) + 'px ' + (q.y - y0).toFixed(1) + 'px').join(',') + ')'; h += '<div class="xp-band ' + esc(b.layer) + (b.empty ? ' empty' : '') + (b.cls ? ' ' + b.cls : '') + '" style="' + st(x0, y0) + 'width:' + (x1 - x0).toFixed(1) + 'px;height:' + (y1 - y0).toFixed(1) + 'px;--cp:' + cp + ';--bc:' + esc(b.col) + '"></div>'; });
         // the plates' edges as lines, the bands' hairlines (shown when Blocks is off): the planes stay planes without their fills
         (o.outline || []).forEach((e) => { h += '<span class="xp-pe' + (e.cls ? ' ' + e.cls : '') + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;transform:rotate(' + e.deg + 'deg)"></span>'; });

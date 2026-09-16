@@ -110,5 +110,21 @@ t('iso PTZ: the element carries the controls — pan arrows, tilt, swing, fit �
     t('…and the letterbox it replaced did not', !inside(212, 84, 'galaxy')); }
   else t('the context graph element is on hand to measure the galaxy with', false, 'context_graph_element.js did not load'); }
 
+// ── the iso stack's turn selector reaches the plate it picks (Notes/42 defect 62) ───────────────────────────
+{ const many = { sel: 'm8', turns: Array.from({ length: 8 }, (_, i) => ({ mid: 'm' + (i + 1), who: 'you', t: '14:1' + i, text: 'q', reply: 'a',
+    read: [{ id: 'r' + i, n: 'record', d: 'chunk', col: '#a78bfa', kind: 'chunk', score: 0.8 }], made: [], land: [] })) };
+  const st8 = X.layout(many, 'iso', 1440, 1000, { stack: true });
+  const cys = st8.plates.map((p) => p.poly.reduce((a, c) => a + c.y, 0) / p.poly.length);
+  const off = cys.filter((y) => y < 0 || y > 1000).length;
+  t('the stacked deck runs past the frame — the reason a pick has to be brought into it', st8.plates.length === 8 && off >= 3, 'plates off the frame: ' + off);
+  t('a plate says which turn it is, so the pick can be found in the DOM', /class="xp-pl iso' \+ \(p\.cls \? ' ' \+ p\.cls : ''\) \+ '" data-mid="/.test(SRC2) && /class="xp-pl' \+ \(p\.cls \? ' ' \+ p\.cls : ''\) \+ '" data-mid="/.test(SRC2));
+  t('selecting brings the plate into the frame, and only when stacked in iso', /select\(mid\) \{ this\._S\.scene\.sel = mid; this\._schedule\(\); this\._isoBring\(\);/.test(SRC2)
+    && /_isoBring\(\) \{\s*\n\s*if \(this\._S\.mode !== 'iso' \|\| !this\._S\.stack\) return;/.test(SRC2)
+    && /p\.x \+= \(b\.left \+ b\.width \/ 2\) - \(r\.left \+ r\.width \/ 2\); p\.y \+= \(b\.top \+ b\.height \/ 2\) - \(r\.top \+ r\.height \/ 2\);/.test(SRC2));
+  t('switching the stack on lands on the turn in focus', /this\._schedule\(\); this\._isoBring\(\); return this\._S\.stack;/.test(SRC2));
+  // Turn draws the picked turn by itself — the contrast the report draws, and why it needs none of this
+  const solo = X.layout(many, 'iso', 1440, 1000, { solo: true });
+  t('Turn draws the picked turn alone', solo.plates.length === 1 && solo.plates[0].mid === 'm8'); }
+
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
