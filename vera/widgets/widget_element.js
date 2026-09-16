@@ -55,6 +55,13 @@
   const SIZES = ['xs', 's', 'm', 'l', 'xl'];
   const HEIGHT = { xs: 14, s: 24, m: 96, l: 130, xl: 220 };
   const EMPTY = (t) => '<span class="wempty">' + esc(t) + '</span>';
+  /* A source that was READ and answered with nothing, said once for every form (Notes/42 defect 71a). The forms' own
+     empty lines - "a counter needs a value", "no numbers to draw" - explain a record the form cannot draw, which is a
+     different thing; used for an empty read they made the tile look as though its values had been cleared. A real
+     zero never comes here: zero is a reading. */
+  const NODATA = (src, size) => (size === 'xs' || size === 's')
+    ? '<span class="vw-xs vw-nodata">no data</span>'
+    : '<div class="vw-nodata"><b>no data</b><i>' + esc(src ? src + ' read \u00b7 nothing to show' : 'nothing read') + '</i></div>';
   // a form id the catalogue names but this file does not draw in its own right yet resolves to the nearest face; the
   // board's captions too (the motion and iso forms land in the next slices)
   // a form id the catalogue names but this file does not draw in its own right resolves to the nearest face; the board's
@@ -1367,6 +1374,10 @@
   /* ── the styles (host-injected once; the element carries them in its shadow) ── */
   const CSS = `
 .wempty{color:var(--dim2,#8a92a0);font-size:9.5px;font-family:var(--mono,ui-monospace,monospace)}
+.vw-nodata{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;width:100%;height:100%;min-height:34px;text-align:center}
+.vw-nodata > b{font-family:var(--mono,ui-monospace,monospace);font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a92a0)}
+.vw-nodata > i{font-style:normal;font-family:var(--mono,ui-monospace,monospace);font-size:8.5px;color:var(--dim,#6b7280);opacity:.9;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+span.vw-nodata{color:var(--dim2,#8a92a0);font-family:var(--mono,ui-monospace,monospace);font-size:10px}
 .vw-sampled{position:relative;width:100%;min-width:0}.vw-sampled > .vw-sampletag{position:absolute;right:0;top:-2px;font-style:normal;font-family:var(--mono,ui-monospace,monospace);font-size:7.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--acc3,#d4a96a);opacity:.85;pointer-events:none}
 span.vw-sampled{opacity:.85}
 .vw-svg{display:block;width:100%}
@@ -1679,7 +1690,10 @@ span.vw-sampled{opacity:.85}
       else if (readEmpty) why = 'read · empty';
       else if (this._data === undefined && rec.source && !readable(rec.source)) why = '<button class="vw-read" data-read>Read ' + esc(rec.source) + '</button>';
       else if (this._data === undefined && rec.source) why = 'reading ' + esc(rec.source) + '…';
-      const body = draw(form, have ? this._data : undefined, size, Object.assign({}, opts, wasRead ? { sample: false } : {}));
+      // a read that answered with nothing says so in one voice; everything else draws as it did
+      const body = readEmpty && form !== 'panel' && form !== 'composite'
+        ? NODATA(rec.source, size)
+        : draw(form, have ? this._data : undefined, size, Object.assign({}, opts, wasRead ? { sample: false } : {}));
       // bare: the HOST draws the head (a dashboard tile's own head carries the title and the record chip — the board's
       // tile is one head over the body), so the element draws its body and caption alone, as xs and s already do
       const small = size === 'xs' || size === 's' || this.hasAttribute('bare');
