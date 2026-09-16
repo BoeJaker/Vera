@@ -511,6 +511,9 @@
   /* ── THE COLUMN'S PARTS (the Canvas board), pure ──────────────────────────────────────────────────────────────── */
   const ITEM_SIZES = ['s', 'm', 'l', 'xl'];
   // a library of the estate loaded once from the page (the terminal element); the element that uses it draws when it lands
+  // the picker row that means "this session's own sandbox" rather than a host of the estate; it never reaches an
+  // item's content - picking it is resolved into a real host, container and socket first
+  const SBX_PICK = '@session';
   const _libs = {};
   function ensureLib(src, tag) {
     if (typeof document === 'undefined') return Promise.resolve(false);
@@ -534,8 +537,12 @@
   /* ── the estate's known hosts, as picker rows (pure): the saved connections (conn.list), the SSH hosts of the Exec
      panel and the running containers on every docker host (conn.targets — the remote subsystem's own enumeration).
      Each row is what the terminal needs — host_id · container · shell — with a name and a line to find it by. ── */
-  function hostRowsOf(targets, conns) {
+  function hostRowsOf(targets, conns, sid) {
     const T = targets && typeof targets === 'object' ? targets : {}; const out = [];
+    // first, because it is the one the session means: the container this chat runs its commands in. The estate's
+    // enumerations cannot list it - it belongs to the session, not the estate - so it is named here and resolved when
+    // it is picked (Notes/42 defect 64).
+    if (sid) out.push({ g: 'session', n: 'this session\'s sandbox', sub: 'the container this chat runs its commands in', host_id: SBX_PICK, container: '', shell: 'bash', kind: 'session', host: 'local' });
     const saved = Array.isArray(conns) ? conns : (conns && Array.isArray(conns.connections) ? conns.connections : []);
     saved.forEach((s) => { if (!s || typeof s !== 'object') return; const kind = String(s.kind || ''); const hostId = String(kind === 'docker' ? (s.docker_host_id || 'local') : (s.ssh_host_id || '')); if (!hostId) return;
       out.push({ g: 'saved', n: String(s.label || s.container || hostId), sub: kind + ' · ' + (kind === 'docker' && s.container ? s.container + ' @ ' + hostId : hostId), host_id: hostId, container: String(kind === 'docker' ? (s.container || '') : ''), shell: String(s.shell || ''), kind, id: String(s.id || '') }); });
@@ -1056,6 +1063,7 @@
       if (act === 'thosts') { this._hostsOpen = this._hostsOpen || {}; this._hostsOpen[key] = !this._hostsOpen[key]; this._open.add(key); if (this._doc) this.render(this._doc); if (this._hostsOpen[key]) this._hostRows().then(() => { if (this._doc) this.render(this._doc); }); return; }
       if (act === 'hpick') {
         const row = { host_id: String(btn.dataset.host || ''), container: String(btn.dataset.container || ''), shell: String(btn.dataset.shell || ''), n: String(btn.dataset.n || '') }; if (!row.host_id) return;
+        if (row.host_id === SBX_PICK) return this._sbxPick(key, it, btn);
         if (!it) return this._hostAdd(row);   // from the add bar: a terminal already on its host
         const c = this._contentOf(key); if (!c) return; Object.assign(c, { host_id: row.host_id, container: row.container, shell: row.shell, attached: true }); if (!c.title || c.title === 'Terminal') c.title = row.n || row.host_id;
         if (this._hostsOpen) delete this._hostsOpen[key]; this._open.add(key);
@@ -1064,6 +1072,7 @@
       }
       if (act === 'taddid') { const box = btn.closest('.row'); const rdf = (f) => { const i = box && box.querySelector('[data-f="' + f + '"]'); return i ? String(i.value || '').trim() : ''; }; const hid = rdf('hid'); if (!hid) { const i = box && box.querySelector('[data-f="hid"]'); if (i) i.focus(); return; } return this._hostAdd({ host_id: hid, container: rdf('hcont'), shell: '', n: hid }); }
       if (act === 'tblank') { const pop = btn.closest('.addpop'); if (pop) pop.remove(); const k = ADD_KINDS.find(x => x.n === 'terminal'); return k ? this._addSeed(k) : undefined; }
+      if (act === 'tsbx') return this._sbxPick(key, it, btn);   // the add bar: a terminal straight onto this session's sandbox
       /* the diagram's actions: Open in the chat (the chat's own pop-out hears vm:popout), copy, source */
       if (act === 'dgopen') { const c = this._contentOf(key) || {}; const code = String(c.mermaid || c.code || c.source || ''); const title = String(c.title || c.caption || 'Diagram');
         const ev2 = new CustomEvent('vera:canvas:diagram', { bubbles: true, composed: true, cancelable: true, detail: { key, code, title } }); this.dispatchEvent(ev2); if (ev2.defaultPrevented) return;
@@ -1239,18 +1248,41 @@
     /* the add bar's terminal: the estate's known hosts (the picker), a typed host id, or a blank terminal */
     async _hostPick(btn) {
       const pop = this._pop(btn, 'canvas.add.terminal'); if (!pop) return; const what = `<span class="vc-dim what">${esc(ADD_WHAT.terminal)}</span>`;
-      const typed = '<div class="row"><input class="ti" data-f="hid" placeholder="host id — an SSH host of the Exec panel" spellcheck="false"><input class="ti sm" data-f="hcont" placeholder="container" spellcheck="false"><button class="ib on" data-act="taddid">Add</button><button class="ib" data-act="tblank" title="A blank terminal — connect from the item">blank</button></div>';
+      const typed = '<div class="row"><input class="ti" data-f="hid" placeholder="host id — an SSH host of the Exec panel" spellcheck="false"><input class="ti sm" data-f="hcont" placeholder="container" spellcheck="false"><button class="ib on" data-act="taddid">Add</button><button class="ib" data-act="tblank" title="A blank terminal — connect from the item">blank</button><button class="ib" data-act="tsbx" title="A terminal on the container this session runs its commands in">this session\'s sandbox</button></div>';
       pop.innerHTML = what + '<span class="vc-dim">known hosts — asking the estate…</span>' + typed;
       const rows = await this._hostRows(); if (!pop.isConnected) return;
       pop.innerHTML = what + hostListHtml(rows) + typed;
       try { const q = pop.querySelector('.pk-q'); if (q) q.focus(); } catch (e) {}
+    }
+    /* "this session's sandbox", picked: sandbox.session.terminal wakes (or creates) the container for THIS canvas's
+       session and answers with the socket to it. The answer is written into the item - host, container, shell, ws - so
+       from here it is an ordinary terminal item: it survives a reload, it draws through the same path as any other, and
+       nothing downstream has to know where it came from (Notes/42 defect 64). */
+    async _sbxPick(key, it, btn) {
+      const sid = this._sid();
+      if (!sid) { if (key) this._readout(key, 'this canvas has no session, so it has no sandbox'); return; }
+      if (key) this._readout(key, '\u2026 waking this session\'s sandbox');
+      let d = null;
+      try { d = await this.callResult('sandbox.session.terminal', { session_id: sid, shell: 'bash' }); } catch (e) { d = null; }
+      if (!d || !d.ws_path) { const why = (d && (d.error || d.reason)) || 'the sandbox did not answer';
+        if (key) this._readout(key, 'the session sandbox could not be opened: ' + why); return; }
+      const row = { host_id: String(d.docker_host_id || 'local'), container: String(d.container || ''), shell: String(d.shell || 'bash'), ws: String(d.ws_path), n: 'this session\'s sandbox' };
+      if (!it) { const pop = btn && btn.closest('.addpop'); if (pop) pop.remove();
+        const k = ADD_KINDS.find((x) => x.n === 'terminal');
+        return this._addSeed(Object.assign({}, k, { content: { title: row.n, host_id: row.host_id, container: row.container, shell: row.shell, ws: row.ws, sandbox: true, attached: true } })); }
+      const c2 = this._contentOf(key); if (!c2) return;
+      Object.assign(c2, { host_id: row.host_id, container: row.container, shell: row.shell, ws: row.ws, sandbox: true, attached: true });
+      if (!c2.title || c2.title === 'Terminal') c2.title = row.n;
+      if (this._hostsOpen) delete this._hostsOpen[key]; this._open.add(key);
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:terminal', { bubbles: true, detail: { key, host_id: c2.host_id, container: c2.container, attached: true, sandbox: true } })); } catch (e) {}
+      return this.call('canvas.update', Object.assign(this._ref(key), { content: c2 }));
     }
     /* the known hosts, asked once and kept a while: conn.targets (the SSH hosts of the Exec panel, the running containers
        on every docker host) and conn.list (the saved connections) — the remote subsystem's own enumerations */
     async _hostRows() {
       const now = Date.now(); if (this._hosts && this._hostsAt && now - this._hostsAt < 30000) return this._hosts;
       const [t, s] = await Promise.all([this.callResult('conn.targets', { include_proxmox: false }), this.callResult('conn.list', {})]);
-      this._hosts = hostRowsOf(t, s); this._hostsAt = now; return this._hosts;
+      this._hosts = hostRowsOf(t, s, this._sid()); this._hostsAt = now; return this._hosts;
     }
     /* a terminal already on its host: the pick (or the typed id) lands an attached session item, yours */
     _hostAdd(row) {
