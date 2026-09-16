@@ -260,6 +260,20 @@ function gpuSel(cls, val){
     <option value="deny"${val==='deny'?' selected':''}>deny</option></select>`;
 }
 function gpuFields(v){return {prefer_gpu: v==='prefer', deny_gpu: v==='deny'};}
+// How this role's output is budgeted against the context window.
+//   fit      — output must FIT: num_predict = window - prompt - margin, so the
+//              runner never context-shifts and the answer stays grounded in the
+//              prompt it was given. The right default for tool/planner/JSON work.
+//   longform — output is MEANT to exceed the window; the runner's context shift
+//              is the supported mechanism for that ("infinite text generation").
+//              Still bounded by the node's device-class ceiling so it terminates.
+// NOTE: changing this alters how much the model may write, not what it writes.
+function ctxModeSel(cls, v){
+  const opts=[['','fit (default)'],['fit','fit'],['longform','longform']];
+  return `<select class="${cls}" title="fit: output must fit the window (never shifts). longform: output may exceed the window via context shift, still bounded by the node ceiling.">`
+    + opts.map(([val,lab])=>`<option value="${val}"${String(v||'')===val?' selected':''}>${lab}</option>`).join('')
+    + `</select>`;
+}
 function pinSel(cls, val, kind){
   // kind: 'llm' (ollama + vllm pins), 'media' (media node pins), 'all'
   const opts = ['<option value="">none</option>'];
@@ -547,6 +561,7 @@ function renderRoleProfiles(){
         <td><input type="number" step="0.05" min="0" max="2" class="f-temp" style="width:52px"
              value="${rule.options&&rule.options.temperature!=null?rule.options.temperature:''}"
              placeholder="dflt" title="sampling temperature (blank = model/node default)"></td>
+        <td>${ctxModeSel('f-ctxmode', rule.ctx_mode||'')}</td>
         <td><input type="number" class="f-esc" value="${rule.escalate_chars||0}" title="escalate_chars">
             ${gpuSel('f-escgpu', gpuVal(escd))}</td>
         <td><span class="badge ${isUser?'user':'declared'}">${isUser?'user':'declared'}</span></td>
@@ -569,7 +584,7 @@ function renderRoleProfiles(){
         ${(ROLES.user||{})[name]?`<button class="danger" onclick="resetRoleProfile('${esc(name)}')">↩ Reset all</button>`:''}
       </div>
       <div class="scroll-x"><table>
-        <thead><tr><th>Role</th><th>Job type</th><th>GPU</th><th>Pin node</th><th>Model</th><th>Temp</th><th>Escalate ≥ chars → GPU</th><th>Layer</th><th></th></tr></thead>
+        <thead><tr><th>Role</th><th>Job type</th><th>GPU</th><th>Pin node</th><th>Model</th><th>Temp</th><th title="How this role's output is budgeted against the context window">Output</th><th>Escalate ≥ chars → GPU</th><th>Layer</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
     </div>`;
@@ -590,6 +605,7 @@ function _collectProfileRoles(name){
       prefer_gpu: g.prefer_gpu, deny_gpu: g.deny_gpu,
       pin: tr.querySelector('.f-pin').value||'',
       model: tr.querySelector('.f-model').value.trim(),
+      ctx_mode: (tr.querySelector('.f-ctxmode')||{}).value||'',
       escalate_chars: escChars,
     };
     // Preserve the role's existing sampling options (top_p, num_ctx, …) and apply
