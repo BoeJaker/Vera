@@ -151,6 +151,13 @@
     const off = S.layersOff || new Set();
     const ghosts = S.related !== false;
     const lvl = {}; FAMS.forEach((f) => { lvl[f] = mixOf(S, f); });
+    /* The board's mini (Canvas.dc.html 1820-1827) is one circle of rings around one hub, a plain dot per record
+       coloured by its source, and eight labels at the rim - one per SOURCE, Memory recalls among them. This element
+       normally lifts the memory-sourced records onto an arm outside the circle and draws the session's own memory
+       graph beside them, and gives the loop, the plan and the estate sectors of their own. All of that is what the
+       DETAILED face adds. On the simple face memory is an ordinary source and nothing else is drawn. (Defect 60.) */
+    const simple = !!S.simplePlot;
+    if (simple) { lvl.loop = 'off'; lvl.plan = 'off'; lvl.estate = 'off'; }
     // the plan row: the run's own plan while a run is in the lane (the board's "planned workflow along the top"), else the goals
     const runPlan = (S.loop && S.loop.length && S.runPlan && S.runPlan.length) ? S.runPlan : [];
     const planIsRun = runPlan.length > 0;
@@ -180,14 +187,15 @@
     // the level governs the RECALLS as much as the session's own records — it used to gate only the session's, so
     // turning memory off left the arm exactly as it was (Notes/42 defect 65). Off: nothing. Focus: the recalls this
     // prompt actually carries. All: every recall the turn assembled, injected or not.
-    const memCtxAll = nodes.filter((n) => n.source === 'memory').map((n) => Object.assign({}, n, { _fam: 'memory', _injected: n.included !== false }));
+    const memCtxAll = simple ? [] : nodes.filter((n) => n.source === 'memory').map((n) => Object.assign({}, n, { _fam: 'memory', _injected: n.included !== false }));
     const memCtx = lvl.memory === 'off' ? [] : lvl.memory === 'focus' ? memCtxAll.filter((n) => n._injected) : memCtxAll;
     const litIds = new Set(nodes.filter((n) => focus.has(n.id) && n.included !== false).map((n) => n.id));
     const memTouch = new Set(); (S.memEdges || []).concat(EDGES).forEach((e) => { const a = String(e.from_id || e.from || ''), b = String(e.to_id || e.to || ''); if (litIds.has(a)) memTouch.add(b); if (litIds.has(b)) memTouch.add(a); });
-    const memSessAll = lvl.memory === 'off' ? [] : (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).map((m) => ({ id: m.id, label: (m.text || m.summary || m.capability || m.category || m.id || '').slice(0, 60), source: 'memory', type: m.record_type || m.type || 'memory', score: m.importance == null ? 0.5 : +m.importance, text: m.text || m.summary || '', included: false, rec: m, _fam: 'memory', _injected: false, _sess: true, created_at: m.created_at || '' }));
+    const memSessAll = (simple || lvl.memory === 'off') ? [] : (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).map((m) => ({ id: m.id, label: (m.text || m.summary || m.capability || m.category || m.id || '').slice(0, 60), source: 'memory', type: m.record_type || m.type || 'memory', score: m.importance == null ? 0.5 : +m.importance, text: m.text || m.summary || '', included: false, rec: m, _fam: 'memory', _injected: false, _sess: true, created_at: m.created_at || '' }));
     const memSess = lvl.memory === 'focus' ? memSessAll.filter((m) => memTouch.has(m.id)) : memSessAll;
     const mem = memCtx.concat(memSess);
-    const ctx = nodes.filter((n) => n.source !== 'memory' && !off.has(n.source) && (ghosts || n.included !== false));
+    // simple: the recalls are a SOURCE like the rest, so they take a sector of the circle rather than an arm beside it
+    const ctx = nodes.filter((n) => (simple || n.source !== 'memory') && !off.has(n.source) && (ghosts || n.included !== false));
     const srcs = [...new Set(ctx.map((n) => n.source || '?'))].sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99));
     const reads = frame ? (frame.reads || frameReads(frame, nodes)) : (S.reads || {});
     const readBy = (id) => Object.keys(reads).filter((k2) => (reads[k2] || []).indexOf(id) >= 0);
@@ -580,7 +588,7 @@
        draws eight, Memory recalls among them. It was built by folding the other families away, which took the one
        family the user had asked about by name off the face that was meant to be the board's. What simple drops is
        the lanes beneath the plot, the picked record's card and the drawer: the graph itself is whole. */
-    const base = simple ? Object.assign({}, S, { list: false }) : S;
+    const base = simple ? Object.assign({}, S, { list: false, simplePlot: true }) : S;
     const o = mini(Object.assign({}, base, { sel: detail || null, q: q || '' }), w, h);
     if (simple) return '<div class="cg-mini simple" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div></div>';
     return '<div class="cg-mini' + (list ? ' listing' : '') + '" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div><div class="cg-lanes">' + drawLanes(o, { noRecord: true }) + '</div>'
@@ -589,7 +597,13 @@
   // the mini's detail: the compact record card for one record, over the box (the widget form shows it on a click)
   function miniDetail(S, id, w, h) { const o = mini(Object.assign({}, S || {}, { sel: id || null, lsel: null }), w || 262, h || 196); return o.rec ? recordCard(o.rec, { compact: true }) : ''; }
   // the mini's list: the rows for the box, the search applied
-  function miniList(S, opts) { opts = opts || {}; const o = mini(Object.assign({}, S || {}, { q: opts.q !== undefined ? opts.q : (S && S.q) || '' }), opts.w || 262, opts.h || 196); return listHtml(o, { compact: true, limit: opts.limit || 40, closable: opts.closable }); }
+  /* opts.fam narrows the rows to ONE source, so a host can open a section of its own list in place rather than
+     showing a second list of everything (defect 60). The rows, their relevance bars and their include/exclude are
+     the element's own either way - only which of them are shown changes. */
+  function miniList(S, opts) { opts = opts || {}; const o = mini(Object.assign({}, S || {}, { q: opts.q !== undefined ? opts.q : (S && S.q) || '' }), opts.w || 262, opts.h || 196);
+    const o2 = opts.fam ? Object.assign({}, o, { list: o.list.filter((r) => String(r.source || '') === String(opts.fam)) }) : o;
+    if (opts.fam) o2.listTotal = o2.list.length;
+    return listHtml(o2, { compact: true, limit: opts.limit || 40, closable: opts.closable }); }
 
   /* ── the loop lane from the loop's events (the same stream <vera-loop-graph> reads), through families.js ── */
   function loopFromEvents(evs) {
@@ -758,7 +772,7 @@ vera-context-graph .cg-edge.exec.lit{opacity:.9;height:1.5px}
 vera-context-graph .cg-edge.mem.spine{border-top-style:solid;opacity:.85}vera-context-graph .cg-edge.mem.hub{opacity:.35}
 vera-context-graph .cg-edge.same{height:0;border-top:1px dotted var(--cg-bd2);background:none!important;opacity:.6}
 vera-context-graph .cg-hubt{position:absolute;transform:translate(-50%,0);font-family:var(--cg-mono);font-size:9px;color:var(--cg-t3);white-space:nowrap;pointer-events:none;letter-spacing:.02em}
-.cg-mini .cg-hubt{font-size:6.5px}
+.cg-mini .cg-hubt{font-size:8.5px}
 vera-context-graph .cg-edge.spoke{height:1px;opacity:.28}vera-context-graph .cg-edge.spoke.lit{height:1px;opacity:.55}
 vera-context-graph .cg-list-h .all{font:inherit;font-size:8.5px;height:16px;padding:0 6px;border:1px solid var(--cg-bd);border-radius:4px;background:var(--cg-s2);color:var(--cg-t2);cursor:pointer;flex:none}vera-context-graph .cg-list-h .all:hover{color:var(--cg-t1)}
 vera-context-graph .cg-rec-a a.lnk{font-size:10px;color:var(--cg-ac);text-decoration:none;padding:4px 6px;border-radius:4px;box-shadow:0 0 0 1px var(--cg-bd);background:var(--cg-s1)}vera-context-graph .cg-rec-a a.lnk:hover{text-decoration:underline}
@@ -774,10 +788,13 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
 /* the mini: the same classes in a small box — the widget form's face */
 .cg-mini{display:block;position:relative;overflow:hidden;--cg-bg:var(--bg0,#0e0f12);--cg-s1:var(--bg1,#15171c);--cg-s2:var(--bg2,#1b1e25);--cg-bd:var(--border,#2a2e37);--cg-bd2:color-mix(in srgb,var(--border,#2a2e37) 70%,var(--fg,#ddd));--cg-t1:var(--fg,#e6e6e6);--cg-t2:var(--dim,#aaa);--cg-t3:var(--dim2,#777);--cg-ac:var(--acc,#7c9cff);--cg-ac2:var(--acc2,#5ec9a0);--cg-est:#5aa0c8;--cg-mono:var(--mono,ui-monospace,monospace);font-size:8px;color:var(--cg-t1)}
 .cg-mini .cg-in{position:absolute;inset:0}.cg-mini .cg-lanes{position:absolute;inset:0;pointer-events:none}
-.cg-mini .cg-hub{width:22px;height:22px}.cg-mini .cg-hub b{font-size:7px}.cg-mini .cg-hub span{display:none}
+.cg-mini .cg-hub{width:24px;height:24px}.cg-mini .cg-hub b{font-size:9px}.cg-mini .cg-hub span{display:none}
 .cg-mini .cg-loop{width:30px;height:11px;padding:0 3px;font-size:6px;border-radius:3px}.cg-mini .cg-loop b{font-size:6px}.cg-mini .cg-loop .c,.cg-mini .cg-loop .t,.cg-mini .cg-loop .m{display:none}
 .cg-mini .cg-mem{width:5px;height:5px;border-radius:1px}.cg-mini .cg-mem.msg{width:7px;height:4px}.cg-mini .cg-est{width:5px;height:5px}
-.cg-mini .cg-plan{width:5px;height:5px}.cg-mini .cg-planl,.cg-mini .cg-estl,.cg-mini .cg-estg,.cg-mini .cg-region,.cg-mini .cg-slbl,.cg-mini .cg-memg,.cg-mini .cg-stepl{font-size:5.5px;letter-spacing:.04em}
+.cg-mini .cg-plan{width:5px;height:5px}/* the rim labels name the sources and have to be read (defect 60); the rest stay small - they only appear on the
+   detailed face, which has far more on it */
+.cg-mini .cg-slbl{font-size:8.5px;letter-spacing:.02em}
+.cg-mini .cg-planl,.cg-mini .cg-estl,.cg-mini .cg-estg,.cg-mini .cg-region,.cg-mini .cg-memg,.cg-mini .cg-stepl{font-size:6.5px;letter-spacing:.04em}
 .cg-mini .cg-step{width:7px;height:7px}.cg-mini .cg-step svg{width:4px;height:4px}.cg-mini .cg-pnode{width:5px;height:5px}
 .cg-mini .cg-node svg{display:none}.cg-mini .cg-node span{display:none}.cg-mini .cg-lstem{display:none}
 /* The records as a SECTION of a host's menu rather than a drawer over the plot: the same rows and the same
@@ -786,7 +803,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
 .cg-mini.cg-recs{height:auto;overflow:visible}
 .cg-mini.cg-recs .cg-list{position:relative;inset:auto;width:100%;max-height:320px;border:none;border-radius:0;background:transparent;backdrop-filter:none}
 .cg-mini.cg-recs .cg-list-b{max-height:288px}
-.cg-mini .cg-list{width:100%;left:0;border-left:none;font-size:8px}.cg-mini .cg-list-h{padding:4px 7px;font-size:7.5px}.cg-mini .cg-row{padding:2px 7px;font-size:8.5px;grid-template-columns:6px minmax(0,1fr) 30px 22px 12px 12px;gap:1px 4px}.cg-mini .cg-list-h .all{font-size:7.5px;height:13px;padding:0 4px}.cg-mini .cg-rec-a a.lnk{font-size:8px;padding:2px 4px}.cg-mini .cg-row .dot{width:6px;height:6px}.cg-mini .cg-row .tok{font-size:7px}.cg-mini .cg-row button{width:12px;height:12px;font-size:8px}
+.cg-mini .cg-list{width:100%;left:0;border-left:none;font-size:10px}.cg-mini .cg-list-h{padding:5px 8px;font-size:9px}.cg-mini .cg-row{padding:3px 8px;font-size:10px;grid-template-columns:6px minmax(0,1fr) 30px 22px 12px 12px;gap:1px 4px}.cg-mini .cg-list-h .all{font-size:7.5px;height:13px;padding:0 4px}.cg-mini .cg-rec-a a.lnk{font-size:8px;padding:2px 4px}.cg-mini .cg-row .dot{width:6px;height:6px}.cg-mini .cg-row .tok{font-size:7px}.cg-mini .cg-row button{width:12px;height:12px;font-size:8px}
 .cg-mini .cg-rec{pointer-events:auto}
 `.replace(/vera-context-graph(?=[ {.])/g, ':is(vera-context-graph,.cg-mini)');
   function ensureCss(doc) { doc = doc || document; if (doc.getElementById('vera-context-graph-css')) return; const s = doc.createElement('style'); s.id = 'vera-context-graph-css'; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s); }

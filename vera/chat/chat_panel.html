@@ -1520,6 +1520,10 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .lrow:hover{background:var(--surf2,var(--bg2,#1a1c20))}
 #rightRail.lhm-host .lhm-quick .lrow.on{background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent));box-shadow:inset 2px 0 0 var(--ac,var(--acc,#5a9e8f))}
 #rightRail.lhm-host .lhm-quick .lrow .tick{width:3px;height:13px;border-radius:2px;flex-shrink:0}
+/* a source is a SECTION: the caret says so, and its records sit under the row that opened them (defect 60) */
+#rightRail.lhm-host .lhm-quick .lrow .caret{font-size:8px;color:var(--t3,var(--dim,#6b7280));width:8px;flex-shrink:0}
+#rightRail.lhm-host .lhm-quick .lrow.open .caret{color:var(--ac,var(--acc,#5a9e8f))}
+#rightRail.lhm-host .lhm-quick .lrow.open+.cg-recs{margin:0 0 6px;padding-left:9px;box-shadow:inset 2px 0 0 var(--bd,var(--border,rgba(255,255,255,.09)))}
 #rightRail.lhm-host .lhm-quick .lrow .nm{font-size:11px;color:var(--t1,var(--text,#d8dce4));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 #rightRail.lhm-host .lhm-quick .lrow .nm small{display:block;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8.5px;color:var(--t3,var(--dim,#6b7280))}
 #rightRail.lhm-host .lhm-quick .lrow .rt-n{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));flex-shrink:0}
@@ -13511,8 +13515,10 @@ function _embedMount(){
   const _CTX_FAM_LABEL={agent:'Agent + system',skill:'Skills',ontology:'Ontologies',memory:'Memory recalls',vector:'Vector matches',graph:'Graph (Neo4j)',fabric:'Fabric records',cap:'Capabilities',web:'Web',news:'News',run:'Runs',related_qa:'Related Q&A',worldview:'Worldview',entities:'Entities',urls:'URLs',both:'Vector + graph'};
   let _qGalView='galaxy', _qGalAll=false, _qGalOff={}, _qSrcOn='', _qSessQ='', _qPanelQ='';
   // the mini's face: the board's simple plot, or the detailed one this edge grew (Notes/42 defect 60) - remembered
-  let _qGalStyle=(function(){ try{ return localStorage.getItem('vera_ctx_mini_style')==='simple'?'simple':'detailed'; }catch(_){ return 'detailed'; } })();
-  let _qGalSel='', _qGalList=false, _qGalQ='';   // the mini graph's detail: the record picked, the list drawer, its search
+  // the board's face is the default; the detailed one this edge grew is a press away and remembered (defect 60)
+  let _qGalStyle=(function(){ try{ return localStorage.getItem('vera_ctx_mini_style')==='detailed'?'detailed':'simple'; }catch(_){ return 'simple'; } })();
+  // the mini graph's detail: the record picked, WHICH SOURCES ARE OPEN in the list, the search across them
+  let _qGalSel='', _qSrcOpen={}, _qGalQ='';
   const _kfmt=n=>n>=1000?(n/1000).toFixed(1)+'k':String(n);
   // every family of the assembled context: its records, its tokens (≈ chars / 4), its colour, its share
   function _ctxShares(){
@@ -13538,18 +13544,19 @@ function _embedMount(){
       const bar=el.querySelector('.ctx-grown-bar'); if(bar) bar.innerHTML='<span class="comp" title="'+esc(_lhmTxt('ctxMeterLabel'))+'">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span>';
       _graphColumnMount(); return; }
     const views=[['galaxy','galaxy'],['iso','iso'],['flow','flow'],['timeline','time']];
-    const sig=S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'')+'#'+_qGalStyle+_qGalSel+(_qGalList?'L':'')+_qGalQ+':'+_memAllNodes.length+':'+_lastDagNodes.length+':'+S.nodes.filter(n=>n.included===false).length+':'+CTX_FRAMES.length+':'+_ctxActiveFrame+':'+_grFocusMid;
+    const sig=S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'')+'#'+_qGalStyle+_qGalSel+JSON.stringify(_qSrcOpen)+_qGalQ+':'+_memAllNodes.length+':'+_lastDagNodes.length+':'+S.nodes.filter(n=>n.included===false).length+':'+CTX_FRAMES.length+':'+_ctxActiveFrame+':'+_grFocusMid;
     if(el.dataset.sig===sig) return; el.dataset.sig=sig;
     const data={nodes:S.nodes.map(n=>({id:n.id,label:n.label,family:String(n.source||'context').toLowerCase(),score:n.score,included:n.included})), rels:CTX_EDGES.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''}))};
     // the mini graph is the element's: the same state the grown graph holds, in miniature — records with their text, the
     // memory ring, the loop and the DAG, the families dimmed, ALL EDGES honoured, the picked record's card, the list drawer
-    let gal='', recs='', miniH=196;   // the plot keeps its box: the records are a section of their own now, not a drawer inside it
+    let gal='', miniH=196, _recsOf=()=>'';   // the plot keeps its box; a section's records are asked for as it opens
     if(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'){
       try{ VeraContextGraph.ensureCss();
         const st=VeraContextGraph.stateFrom({ nodes:S.nodes, rels:data.rels, memory:_memAllNodes, memEdges:_memAllEdges, dag:_lastDagNodes, dagEdges:_lastDagEdges, view:(_qGalView==='timeline'?'time':_qGalView), allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k]), color:srcCol, sel:_qGalSel||null, list:_qGalList, q:_qGalQ, turn:_grFocusMid?'turn '+_grFocusMid:'', frames:CTX_FRAMES, frame:_ctxActiveFrame });   // the frame of the turn in view, as the grown graph shows it
         gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle });
-        // the host says WHERE the rows are drawn: .cg-mini is the scope that lays a row out and carries the colours
-        if(_qGalList&&typeof VeraContextGraph.miniList==='function') recs='<div class="cg-mini cg-recs">'+VeraContextGraph.miniList(st, { q:_qGalQ })+'</div>'; }catch(e){ gal=''; recs=''; }
+        // a section's own records, on demand. The host says WHERE they are drawn: .cg-mini is the scope that lays
+        // a row out and carries the colours, so the rows read the same here as they do inside the plot's own drawer.
+        if(typeof VeraContextGraph.miniList==='function') _recsOf=(f)=>{ try{ return '<div class="cg-mini cg-recs">'+VeraContextGraph.miniList(st, { q:_qGalQ, fam:f })+'</div>'; }catch(_){ return ''; } }; }catch(e){ gal=''; _recsOf=()=>''; }
     }
     if(!gal) gal=window.VeraWidget?VeraWidget.draw('context_graph',data,'m',{height:196,bare:true,view:_qGalView,allEdges:_qGalAll,off:_qGalOff,color:srcCol,hub:'aide',hubMeta:_kfmt(S.total)}):'';
     el.innerHTML='<div class="wid" data-w="context galaxy · graph" data-tpl="lhm:ctx-galaxy">'
@@ -13557,15 +13564,17 @@ function _embedMount(){
       +'<div class="gal-mix">'+S.rows.map(r=>'<span class="gm'+(_qGalOff[r.f]?'':' on')+'" data-fam="'+esc(r.f)+'" style="--c:'+r.col+'" title="'+esc(r.label)+' — press to dim or light this family"><i></i>'+esc(r.label.replace(' + system','').replace(' (Neo4j)',''))+'<b>'+_kfmt(r.tok)+'</b></span>').join('')+'</div>'
       +'<div class="gal-host">'+gal+'</div></div>'
       +'<div class="wid" data-w="budget bar · meter" data-tpl="lhm:ctx-budget" title="'+esc(_lhmTxt('ctxMeterLabel'))+'"><span class="comp">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span></div>'
-      // the records live here, under the sources they belong to — not in a drawer inside the plot (defect 60)
-      +'<div class="wid" data-w="in this prompt · list"><div class="grp">In this prompt<button class="grp-act gal-list'+(_qGalList?' on':'')+'" title="The records themselves — search, include, exclude">'+(_qGalList?'▾ records':'▸ records')+'</button><button class="grp-act" title="Refresh the assembled context">↻</button></div>'
-      +(_qGalList?'<div class="gal-srch"><input type="search" placeholder="find a record…" value="'+esc(_qGalQ)+'"></div>':'')
-      +(S.rows.length?S.rows.map(r=>'<div class="lrow'+(r.f===_qSrcOn?' on':'')+'" data-fam="'+esc(r.f)+'" title="'+esc(r.label+' — '+r.n+' record'+(r.n===1?'':'s')+' · '+_kfmt(r.tok)+' tokens')+'"><span class="tick" style="background:'+r.col+'"></span><span class="nm">'+esc(r.label)+'</span><span class="wbar"><i style="width:'+r.pct.toFixed(0)+'%;background:'+r.col+'"></i></span><span class="rt-n">'+_kfmt(r.tok)+'</span></div>').join('')
-        :'<div class="lhm-empty">Nothing assembled yet — the context is gathered as you type, and shown here by source.</div>')+recs+'</div>';
+      // ONE list. Each source is a SECTION that opens in place to the records it contributed — which is what the
+      // board's rows are for; a second list of everything under the first was not integrating them (defect 60).
+      +'<div class="wid" data-w="in this prompt · list"><div class="grp">In this prompt<button class="grp-act" title="Refresh the assembled context">↻</button></div>'
+      +(Object.keys(_qSrcOpen).length?'<div class="gal-srch"><input type="search" placeholder="find a record…" value="'+esc(_qGalQ)+'"></div>':'')
+      +(S.rows.length?S.rows.map(r=>{ const open=!!_qSrcOpen[r.f];
+          return '<div class="lrow'+(open||r.f===_qSrcOn?' on':'')+(open?' open':'')+'" data-fam="'+esc(r.f)+'" title="'+esc(r.label+' — '+r.n+' record'+(r.n===1?'':'s')+' · '+_kfmt(r.tok)+' tokens · press to '+(open?'close':'open')+' them')+'"><span class="tick" style="background:'+r.col+'"></span><span class="caret">'+(open?'▾':'▸')+'</span><span class="nm">'+esc(r.label)+'</span><span class="wbar"><i style="width:'+r.pct.toFixed(0)+'%;background:'+r.col+'"></i></span><span class="rt-n">'+_kfmt(r.tok)+'</span></div>'
+            +(open?_recsOf(r.f):''); }).join('')
+        :'<div class="lhm-empty">Nothing assembled yet — the context is gathered as you type, and shown here by source.</div>')+'</div>';
     el.querySelectorAll('.vseg button[data-view]').forEach(b=>b.addEventListener('click',()=>{ _qGalView=b.dataset.view; VeraLHM.render(); }));
     el.querySelectorAll('.gal-style button[data-style]').forEach(b=>b.addEventListener('click',()=>{ _qGalStyle=b.dataset.style; try{ localStorage.setItem('vera_ctx_mini_style', _qGalStyle); }catch(_){} VeraLHM.render(); }));
     el.querySelector('.gal-all').addEventListener('click',()=>{ _qGalAll=!_qGalAll; try{ if(_ctxCol&&typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(_qGalAll); }catch(_){} VeraLHM.render(); });   // the grown graph follows
-    const lb=el.querySelector('.gal-list'); if(lb) lb.addEventListener('click',()=>{ _qGalList=!_qGalList; if(!_qGalList) _qGalQ=''; VeraLHM.render(); });
     const sq=el.querySelector('.gal-srch input'); if(sq){ sq.addEventListener('input',()=>{ _qGalQ=sq.value; VeraLHM.render(); setTimeout(()=>{ try{ const i=el.querySelector('.gal-srch input'); if(i){ i.focus(); i.setSelectionRange(i.value.length,i.value.length); } }catch(_){} },0); }); }
     // the element's mini: a record picked opens its card; the card's include/exclude toggles the record; close puts the card away
     el.querySelectorAll('.cg-mini .cg-node[data-id], .cg-mini .cg-row[data-id]').forEach(d=>d.addEventListener('click',ev=>{ if(ev.target.closest&&ev.target.closest('[data-a]')) return; _qGalSel=(_qGalSel===d.dataset.id?'':d.dataset.id); VeraLHM.render(); }));
@@ -13577,7 +13586,11 @@ function _embedMount(){
     el.querySelectorAll('.cg-mini [data-a="open"][data-id]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ nodeClick(b.dataset.id); }catch(_){} }));
     el.querySelectorAll('.gm').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; VeraLHM.render(); }));
     el.querySelector('.grp-act').addEventListener('click',()=>{ try{ _ctxFcRefresh(); }catch(_){} });
-    el.querySelectorAll('.lrow').forEach(r=>r.addEventListener('click',()=>{ _qSrcOn=(_qSrcOn===r.dataset.fam?'':r.dataset.fam); VeraLHM.render(); }));
+    // opening a section lights its source on the plot too, so the list and the graph never say different things
+    el.querySelectorAll('.lrow[data-fam]').forEach(r=>r.addEventListener('click',()=>{ const f=r.dataset.fam;
+      if(_qSrcOpen[f]){ delete _qSrcOpen[f]; if(_qSrcOn===f) _qSrcOn=''; if(!Object.keys(_qSrcOpen).length) _qGalQ=''; }
+      else { _qSrcOpen[f]=true; _qSrcOn=f; }
+      VeraLHM.render(); }));
     el.querySelectorAll('.vw-gd[data-id]').forEach(d=>d.addEventListener('click',()=>{ try{ nodeClick(d.dataset.id); }catch(_){} }));
   }
   // Sessions: search, today's sessions as rows (the history list's own records), the current one lit
