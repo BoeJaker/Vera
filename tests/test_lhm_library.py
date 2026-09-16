@@ -121,7 +121,11 @@ def test_the_library_has_the_parts_and_names_them_as_widgets():
     assert "window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, absorb: absorb" in LIB
     for tag in ("'rail · '", "'menu header · header'", "'tabs · strip'", "'top list · list'", "'cta · button'"):
         assert tag in LIB, f"{tag} is not a named widget"
-    assert ".lhm-editing [data-w]::before{content:attr(data-w)" in LIB
+    # the parts are still named as widgets - that is what the tags above check - but edit mode no longer STAMPS
+    # the name across each of them: the user rejected that look (Notes/42 defect 22), so the name is on the part's
+    # own bar and in its title instead
+    assert "content:attr(data-w)" not in LIB
+    assert "function _nameParts(root)" in LIB and "a widget of this menu" in LIB
 
 
 def test_the_top_list_swaps_in_place_and_lists_what_is_open():
