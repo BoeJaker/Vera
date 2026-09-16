@@ -567,7 +567,7 @@
       + '</div></div>';
   }
   // the mini's face: the whole layout in one box (no chips, no header) — the widget form calls this with the state
-  /* The mini has two faces (Notes/42 defect 60). DETAILED is what it grew into on this edge: every family on the
+  /* The mini has two faces (Notes/42 defect 60, redone against the rendered board). DETAILED is what it grew into on this edge: every family on the
      plot - the memory ring, the loop, the plan, the estate - with the lanes beneath it, the record picked showing its
      card and the list drawer. SIMPLE is the board's: the context plot by itself, its rings, its spokes, its records
      and the hub, and nothing else on top of it. The element draws whichever face it is handed; the switch is the
@@ -576,8 +576,11 @@
     w = w || 262; h = h || 196; opts = opts || {}; S = S || {};
     const simple = String(opts.style || S.miniStyle || 'detailed').toLowerCase() === 'simple';
     const detail = simple ? null : (opts.detail !== undefined ? opts.detail : S.sel), list = simple ? false : (opts.list !== undefined ? !!opts.list : !!S.list), q = simple ? '' : (opts.q !== undefined ? opts.q : S.q);
-    // the simple face is the CONTEXT plot: the other families are folded away for it, not drawn small
-    const base = simple ? Object.assign({}, S, { mix: Object.assign({}, S.mix || {}, { memory: 'off', loop: 'off', plan: 'off', estate: 'off' }), list: false }) : S;
+    /* The simple face is the board's plot with EVERY source on it - the board's legend names eight and its plot
+       draws eight, Memory recalls among them. It was built by folding the other families away, which took the one
+       family the user had asked about by name off the face that was meant to be the board's. What simple drops is
+       the lanes beneath the plot, the picked record's card and the drawer: the graph itself is whole. */
+    const base = simple ? Object.assign({}, S, { list: false }) : S;
     const o = mini(Object.assign({}, base, { sel: detail || null, q: q || '' }), w, h);
     if (simple) return '<div class="cg-mini simple" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div></div>';
     return '<div class="cg-mini' + (list ? ' listing' : '') + '" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div><div class="cg-lanes">' + drawLanes(o, { noRecord: true }) + '</div>'

@@ -1528,7 +1528,10 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .comp{display:flex;height:9px;border-radius:3px;overflow:hidden;gap:1px;background:var(--s3,var(--bg3,#22262e));flex-shrink:0}
 #rightRail.lhm-host .lhm-quick .comp i{display:block;height:100%}
 #rightRail.lhm-host .lhm-quick .wid{position:relative;border-radius:var(--r-sm,6px)}
-#rightRail.lhm-host .lhm-quick .gal-ctl{display:flex;align-items:center;gap:6px;padding:0 0 6px}
+/* The row wraps. It held four controls in 262px with two of them on margin-left:auto, and the last was clipped
+   to "simp" (Notes/42 defect 60). The board's row is the views and All edges; List has moved to the section that
+   lists things, and the face switch takes the end - its own line when there is no room, which here there is not. */
+#rightRail.lhm-host .lhm-quick .gal-ctl{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:0 0 6px}
 #rightRail.lhm-host .lhm-quick .vseg{display:inline-flex;gap:2px;background:var(--s2,var(--bg2,#1a1c20));border-radius:6px;padding:2px}
 #rightRail.lhm-host .lhm-quick .vseg button{height:16px;padding:0 6px;border:none;border-radius:4px;background:transparent;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8.5px;color:var(--t3,var(--dim,#6b7280));cursor:pointer}
 #rightRail.lhm-host .lhm-quick .vseg button.on{background:var(--surf,var(--bg1,#151719));color:var(--t1,var(--text,#d8dce4))}
@@ -1542,7 +1545,10 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .gm b{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-weight:400;font-size:8px;color:var(--t3,var(--dim,#6b7280))}
 #rightRail.lhm-host .lhm-quick .gal-host{margin-bottom:8px}
 #rightRail.lhm-host .lhm-quick .gal-style{margin-left:auto}
-#rightRail.lhm-host .lhm-quick .gal-style button{font-size:9px}
+#rightRail.lhm-host .lhm-quick .gal-style button{font-size:9px;white-space:nowrap}
+/* the records toggle sits in the section's own heading, beside the refresh */
+#rightRail.lhm-host .lhm-quick .grp .grp-act.gal-list{font-size:9px;letter-spacing:.06em}
+#rightRail.lhm-host .lhm-quick .grp .grp-act.gal-list.on{color:var(--ac,var(--acc,#5a9e8f))}
 #rightRail.lhm-host .lhm-quick .gal-srch{display:flex;margin:4px 0 4px}#rightRail.lhm-host .lhm-quick .gal-srch input{flex:1;min-width:0;height:24px;border:1px solid var(--border);border-radius:var(--r-sm,6px);background:var(--bg0);color:var(--text);font:inherit;font-size:10.5px;padding:0 8px}
 #rightRail.lhm-host .lhm-quick .gal-host .cg-mini{max-width:100%}
 #rightRail.lhm-host .lhm-quick .wsearch{height:28px;display:flex;align-items:center;padding:0 10px;border-radius:var(--r-sm,6px);background:var(--s1,var(--bg1,#151719));box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));gap:6px;color:var(--t3,var(--dim,#6b7280));font-size:10.5px}
@@ -13536,22 +13542,24 @@ function _embedMount(){
     const data={nodes:S.nodes.map(n=>({id:n.id,label:n.label,family:String(n.source||'context').toLowerCase(),score:n.score,included:n.included})), rels:CTX_EDGES.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''}))};
     // the mini graph is the element's: the same state the grown graph holds, in miniature — records with their text, the
     // memory ring, the loop and the DAG, the families dimmed, ALL EDGES honoured, the picked record's card, the list drawer
-    let gal='', miniH=_qGalList?300:196;
+    let gal='', recs='', miniH=196;   // the plot keeps its box: the records are a section of their own now, not a drawer inside it
     if(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'){
       try{ VeraContextGraph.ensureCss();
         const st=VeraContextGraph.stateFrom({ nodes:S.nodes, rels:data.rels, memory:_memAllNodes, memEdges:_memAllEdges, dag:_lastDagNodes, dagEdges:_lastDagEdges, view:(_qGalView==='timeline'?'time':_qGalView), allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k]), color:srcCol, sel:_qGalSel||null, list:_qGalList, q:_qGalQ, turn:_grFocusMid?'turn '+_grFocusMid:'', frames:CTX_FRAMES, frame:_ctxActiveFrame });   // the frame of the turn in view, as the grown graph shows it
-        gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle }); }catch(e){ gal=''; }
+        gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle });
+        if(_qGalList&&typeof VeraContextGraph.miniList==='function') recs=VeraContextGraph.miniList(st, { q:_qGalQ }); }catch(e){ gal=''; recs=''; }
     }
     if(!gal) gal=window.VeraWidget?VeraWidget.draw('context_graph',data,'m',{height:196,bare:true,view:_qGalView,allEdges:_qGalAll,off:_qGalOff,color:srcCol,hub:'aide',hubMeta:_kfmt(S.total)}):'';
     el.innerHTML='<div class="wid" data-w="context galaxy · graph" data-tpl="lhm:ctx-galaxy">'
-      +'<div class="gal-ctl"><span class="vseg">'+views.map(v=>'<button class="'+(_qGalView===v[0]?'on':'')+'" data-view="'+v[0]+'" title="'+v[0]+' view">'+v[1]+'</button>').join('')+'</span><button class="gal-all'+(_qGalAll?' on':'')+'" title="Every record\'s edge to the hub">All edges</button><button class="gal-all gal-list'+(_qGalList?' on':'')+'" title="The records as a list — search, include, exclude">List</button><span class="vseg gal-style">'+[['simple','simple'],['detailed','detailed']].map(v=>'<button class="'+(_qGalStyle===v[0]?'on':'')+'" data-style="'+v[0]+'" title="'+(v[0]==='simple'?'The board\'s face: the context plot by itself':'Every family on the plot, the lanes, the record card and the list')+'">'+v[1]+'</button>').join('')+'</span></div>'
-      +(_qGalList?'<div class="gal-srch"><input type="search" placeholder="find a record…" value="'+esc(_qGalQ)+'"></div>':'')
+      +'<div class="gal-ctl"><span class="vseg">'+views.map(v=>'<button class="'+(_qGalView===v[0]?'on':'')+'" data-view="'+v[0]+'" title="'+v[0]+' view">'+v[1]+'</button>').join('')+'</span><button class="gal-all'+(_qGalAll?' on':'')+'" title="Every record\'s edge to the hub">All edges</button><span class="vseg gal-style">'+[['simple','simple'],['detailed','detailed']].map(v=>'<button class="'+(_qGalStyle===v[0]?'on':'')+'" data-style="'+v[0]+'" title="'+(v[0]==='simple'?'The board\'s face: the context plot by itself':'Every family on the plot, the lanes, the record card and the list')+'">'+v[1]+'</button>').join('')+'</span></div>'
       +'<div class="gal-mix">'+S.rows.map(r=>'<span class="gm'+(_qGalOff[r.f]?'':' on')+'" data-fam="'+esc(r.f)+'" style="--c:'+r.col+'" title="'+esc(r.label)+' — press to dim or light this family"><i></i>'+esc(r.label.replace(' + system','').replace(' (Neo4j)',''))+'<b>'+_kfmt(r.tok)+'</b></span>').join('')+'</div>'
       +'<div class="gal-host">'+gal+'</div></div>'
       +'<div class="wid" data-w="budget bar · meter" data-tpl="lhm:ctx-budget" title="'+esc(_lhmTxt('ctxMeterLabel'))+'"><span class="comp">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span></div>'
-      +'<div class="wid" data-w="in this prompt · list"><div class="grp">In this prompt<button class="grp-act" title="Refresh the assembled context">↻</button></div>'
+      // the records live here, under the sources they belong to — not in a drawer inside the plot (defect 60)
+      +'<div class="wid" data-w="in this prompt · list"><div class="grp">In this prompt<button class="grp-act gal-list'+(_qGalList?' on':'')+'" title="The records themselves — search, include, exclude">'+(_qGalList?'▾ records':'▸ records')+'</button><button class="grp-act" title="Refresh the assembled context">↻</button></div>'
+      +(_qGalList?'<div class="gal-srch"><input type="search" placeholder="find a record…" value="'+esc(_qGalQ)+'"></div>':'')
       +(S.rows.length?S.rows.map(r=>'<div class="lrow'+(r.f===_qSrcOn?' on':'')+'" data-fam="'+esc(r.f)+'" title="'+esc(r.label+' — '+r.n+' record'+(r.n===1?'':'s')+' · '+_kfmt(r.tok)+' tokens')+'"><span class="tick" style="background:'+r.col+'"></span><span class="nm">'+esc(r.label)+'</span><span class="wbar"><i style="width:'+r.pct.toFixed(0)+'%;background:'+r.col+'"></i></span><span class="rt-n">'+_kfmt(r.tok)+'</span></div>').join('')
-        :'<div class="lhm-empty">Nothing assembled yet — the context is gathered as you type, and shown here by source.</div>')+'</div>';
+        :'<div class="lhm-empty">Nothing assembled yet — the context is gathered as you type, and shown here by source.</div>')+recs+'</div>';
     el.querySelectorAll('.vseg button[data-view]').forEach(b=>b.addEventListener('click',()=>{ _qGalView=b.dataset.view; VeraLHM.render(); }));
     el.querySelectorAll('.gal-style button[data-style]').forEach(b=>b.addEventListener('click',()=>{ _qGalStyle=b.dataset.style; try{ localStorage.setItem('vera_ctx_mini_style', _qGalStyle); }catch(_){} VeraLHM.render(); }));
     el.querySelector('.gal-all').addEventListener('click',()=>{ _qGalAll=!_qGalAll; try{ if(_ctxCol&&typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(_qGalAll); }catch(_){} VeraLHM.render(); });   // the grown graph follows
