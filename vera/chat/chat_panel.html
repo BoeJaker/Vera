@@ -32,6 +32,22 @@ html,body{height:100%;overflow:hidden}
 body{background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12.5px;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased}
 input,select,textarea{background:var(--bg1);border:1px solid var(--border);color:var(--text);padding:3px 7px;border-radius:3px;font-family:var(--sans);font-size:11px;outline:none}
 input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+/* ── Drop menus ──────────────────────────────────────────────────────
+   Every drop menu in the chat is the chat's own. A native <select> paints its CLOSED control from the page but its
+   OPEN list from the operating system — a system-white list in the system's font over a dark themed UI, whatever the
+   page says. The rail's selects already drew their own caret; the ones outside it (the agent selector at the top among
+   them) showed the OS's, so the caret is the base now and the rail's rule simply keeps its own colour. The list below
+   is what opens instead of the OS's — the select itself is untouched, and stays the value every reader reads. */
+select{cursor:pointer;appearance:none;-webkit-appearance:none;padding-right:20px;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'><path d='M1 2.5L4 5.5L7 2.5' stroke='%238a92a0' fill='none' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/></svg>");background-repeat:no-repeat;background-position:right 7px center}
+select[multiple],select[size]:not([size="1"]){background-image:none;padding-right:7px}
+.vsel-m{position:fixed;z-index:3000;min-width:120px;max-height:min(52vh,420px);overflow:auto;scrollbar-width:thin;padding:4px;border-radius:var(--ui-radius,8px);background:var(--surf,var(--bg2,#1a1d24));box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.20),0 12px 34px -16px rgba(0,0,0,.70));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px}
+.vsel-o{display:flex;align-items:center;gap:8px;padding:5px 9px;border-radius:calc(var(--r-sm,6px) - 1px);color:var(--t2,var(--dim2,#8a92a0));white-space:nowrap;cursor:pointer}
+.vsel-o:hover,.vsel-o.cur{color:var(--t1,var(--text,#d8dce4));background:var(--bg3,#232732)}
+.vsel-o.on{color:var(--ac,var(--acc,#5a9e8f))}
+.vsel-o.on::after{content:'\2713';margin-left:auto;font-size:10px}
+.vsel-o.dis{opacity:.45;cursor:default}
+.vsel-g{padding:6px 9px 3px;font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:var(--t3,var(--dim,#6b7280))}
+html[data-blocks="off"] .vsel-m{background:var(--bg1);box-shadow:0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
 textarea{resize:none}
 .btn{display:inline-flex;align-items:center;gap:3px;padding:3px 9px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:500;transition:all .14s;white-space:nowrap;cursor:pointer}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
@@ -3975,6 +3991,62 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     sel.classList.add('ms-hidden');
     sel.after(wrap);
   }
+
+  /* ── the chat's own drop menu ──
+     What a <select> cannot style is the list it opens, so the list is ours: one delegated listener takes the press
+     before the operating system's popup, and the same options are drawn in the chat's vocabulary beside the control.
+     The select is not moved, wrapped or hidden — it keeps its place in the layout, its own styling, its value and its
+     handlers; a pick writes the value back and dispatches change exactly as a native pick would. Opening focuses the
+     select first, so a list that fills on focus (the agent selector at the top) still fills. */
+  let _vsel=null;
+  function _vselClose(){ const v=_vsel; if(!v) return; _vsel=null; try{ v.mo&&v.mo.disconnect(); }catch(_){} try{ v.menu.remove(); }catch(_){} }
+  // the option itself is what is picked, not its value: a list that refilled while it was open (the agent selector
+  // fetches its agents when it is focused) can hold two of a value, or none of the one that was drawn
+  function _vselPick(o){ const v=_vsel; if(!v||!o||o.disabled) return; const sel=v.sel, was=sel.value; _vselClose();
+    if(sel.contains(o)) o.selected=true; else sel.value=o.value;
+    if(sel.value!==was){ try{ sel.dispatchEvent(new Event('input',{bubbles:true})); }catch(_){} try{ sel.dispatchEvent(new Event('change',{bubbles:true})); }catch(_){} } }
+  function _vselMove(d){ const v=_vsel; if(!v||!v.rows.length) return; const n=v.rows.length; let i=v.i;
+    for(let k=0;k<n;k++){ i=(i+d+n)%n; if(!v.rows[i].o.disabled) break; }
+    if(v.rows[v.i]) v.rows[v.i].el.classList.remove('cur'); v.i=i; const r=v.rows[i]; r.el.classList.add('cur'); try{ r.el.scrollIntoView({block:'nearest'}); }catch(_){} }
+  function _vselOpen(sel, quiet){
+    if(!quiet&&_vsel&&_vsel.sel===sel){ _vselClose(); return; }
+    _vselClose();
+    if(!quiet){ try{ sel.focus({preventScroll:true}); }catch(_){ try{ sel.focus(); }catch(__){} }
+      try{ sel.dispatchEvent(new Event('focus')); }catch(_){} }   // the agent selector fills its list on focus
+    const menu=document.createElement('div'); menu.className='vsel-m'; menu.setAttribute('role','listbox'); menu.setAttribute('data-w','drop menu · '+(sel.id||'select'));
+    const rows=[];
+    const add=(o)=>{ const el=document.createElement('div'); el.className='vsel-o'+(o.selected?' on':'')+(o.disabled?' dis':''); el.setAttribute('role','option'); el.textContent=(o.textContent||'').trim()||'\u2014'; if(o.title) el.title=o.title;
+      el.addEventListener('mousedown',(ev)=>{ ev.preventDefault(); ev.stopPropagation(); _vselPick(o); });
+      menu.appendChild(el); rows.push({el, o}); };
+    [...sel.children].forEach((c)=>{ if(c.tagName==='OPTGROUP'){ const g=document.createElement('div'); g.className='vsel-g'; g.textContent=c.label||''; menu.appendChild(g); [...c.children].forEach((o)=>{ if(o.tagName==='OPTION') add(o); }); } else if(c.tagName==='OPTION') add(c); });
+    if(!rows.length){ const e=document.createElement('div'); e.className='vsel-g'; e.textContent='nothing to pick'; menu.appendChild(e); }
+    document.body.appendChild(menu);
+    // as wide as the control it belongs to, but never narrower than its own rows read (a top-bar select is as wide as
+    // the word in it — the list under it is not)
+    const r=sel.getBoundingClientRect(); menu.style.minWidth=Math.max(120, Math.round(r.width))+'px';
+    const mb=menu.getBoundingClientRect(), below=window.innerHeight-r.bottom-8;
+    menu.style.left=Math.max(6, Math.min(Math.round(r.left), window.innerWidth-Math.round(mb.width)-6))+'px';
+    menu.style.top=((mb.height>below&&r.top>mb.height+8)?Math.max(6, Math.round(r.top-mb.height-4)):Math.round(r.bottom+4))+'px';
+    _vsel={sel, menu, rows, i:Math.max(0, sel.selectedIndex), mo:null};
+    const cur=rows[_vsel.i]; if(cur){ cur.el.classList.add('cur'); try{ cur.el.scrollIntoView({block:'nearest'}); }catch(_){} }
+    // the list the menu was drawn from can be replaced while it is open (the agent selector answers its fetch): the
+    // menu is drawn again from what the select holds now — quietly, so the fill is not asked for a second time
+    try{ const mo=new MutationObserver(()=>{ if(_vsel&&_vsel.sel===sel) _vselOpen(sel, true); }); mo.observe(sel, {childList:true}); _vsel.mo=mo; }catch(_){}
+  }
+  // one listener for every drop menu there is or ever will be — a select added by a panel, a modal or a page is covered
+  document.addEventListener('mousedown',(ev)=>{ const t=ev.target; const s=t&&t.closest&&t.closest('select'); if(!s) return;
+    if(s.multiple||s.disabled||(s.size>1)||s.classList.contains('ms-hidden')) return;
+    const r=s.getBoundingClientRect(); if(!(r.width>0&&r.height>0)) return;   // nothing to anchor a list to: leave it alone
+    ev.preventDefault(); ev.stopPropagation(); _vselOpen(s); }, true);
+  document.addEventListener('mousedown',(ev)=>{ if(!_vsel) return; const t=ev.target; if(t&&t.closest&&(t.closest('.vsel-m')||t.closest('select'))) return; _vselClose(); }, true);
+  document.addEventListener('keydown',(ev)=>{ const v=_vsel;
+    if(!v){ const t=ev.target; if(t&&t.tagName==='SELECT'&&!t.multiple&&(ev.key==='Enter'||ev.key===' ')){ ev.preventDefault(); _vselOpen(t); } return; }
+    if(ev.key==='Escape'){ ev.preventDefault(); _vselClose(); try{ v.sel.focus(); }catch(_){} return; }
+    if(ev.key==='ArrowDown'){ ev.preventDefault(); _vselMove(1); return; }
+    if(ev.key==='ArrowUp'){ ev.preventDefault(); _vselMove(-1); return; }
+    if(ev.key==='Enter'||ev.key==='Tab'){ ev.preventDefault(); const r=v.rows[v.i]; if(r) _vselPick(r.o); } }, true);
+  window.addEventListener('resize', _vselClose);
+  document.addEventListener('scroll',(ev)=>{ if(_vsel&&ev.target&&ev.target.contains&&ev.target.contains(_vsel.menu)) return; _vselClose(); }, true);
 
   // All rail sections start collapsed by default, so each tab opens as a tidy
   // list of section headers the user can expand on demand. User toggles are
