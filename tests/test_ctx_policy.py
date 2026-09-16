@@ -235,6 +235,16 @@ def test_longform_bounds_by_intent_not_by_the_window():
     assert p.mode == LONGFORM
 
 
+def test_longform_is_opt_in_and_fit_is_what_you_get_by_default():
+    """The keep-efficacy question is unsettled (see PLAN), so shifting is never
+    the default — `fit` prevents the overrun rather than relying on num_keep to
+    make one safe."""
+    assert resolve(num_ctx=CTX, prompt_tokens=1000).mode == FIT
+    assert resolve(num_ctx=CTX, prompt_tokens=1000, mode="").mode == FIT
+    assert resolve(num_ctx=CTX, prompt_tokens=1000,
+                   mode="nonsense-value").mode != LONGFORM
+
+
 def test_longform_still_terminates_without_a_stated_intent():
     """Even asked for 'as much as you like', it must not be unbounded — ollama's
     own default of -1 is what let a runner aim at days of output."""

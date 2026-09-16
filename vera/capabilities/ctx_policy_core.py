@@ -17,10 +17,22 @@ physically fit. For loop_executor — measured at 43,254 prompt chars, roughly
 What happens on overflow is the part that makes it expensive. Every ollama
 runner on this estate launches with `--context-shift --keep 4`, and llama.cpp
 documents `--keep` as "number of tokens to keep from the initial prompt". At 4,
-a generation that outruns its window does not stop — it keeps producing with
-its instructions evicted. On a CPU node at ~0.05 tok/s that is days of work for
-an answer nobody is waiting for, which is exactly what was found burning twelve
-cores on cpu-247 on 2026-09-16.
+a generation that outruns its window does not stop — it keeps producing, having
+discarded most of the prompt it was given. On a CPU node at ~0.05 tok/s that is
+days of work for an answer nobody is waiting for, which is exactly what was
+found burning twelve cores on cpu-247 on 2026-09-16.
+
+MEASURED CAVEAT, so this is not overstated: a shift does not reliably destroy
+instruction-following. A formatting instruction ("start every sentence with
+ZEPHYR") survived a forced shift at keep=4 with compliance close to the
+unshifted control (9-10 markers per half against 12-13). The likely reason is
+self-reinforcement — the model's own retained output still demonstrates the
+pattern, so losing the system prompt does not change what it writes next.
+Whether a fact that appears ONLY in the prompt survives is UNPROVEN: three
+further designs each failed for a different instrumentation reason, not for
+lack of trying. So the cost of a shift is established (wasted compute on an
+unbounded generation) while the quality cost is not. That is why `fit` bounds
+output rather than relying on `num_keep` to make shifting safe.
 
 So `fit` is the default mode here: bound output to what actually fits.
 

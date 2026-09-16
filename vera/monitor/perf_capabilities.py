@@ -348,11 +348,17 @@ async def _check_ctx_shift() -> List[Dict]:
 
     prompt_eval_count + eval_count > num_ctx means the runner discarded part of
     the prompt to keep generating. Ollama launches every runner with `--keep 4`,
-    so what it discards is the system prompt: the model carries on fluently
-    having forgotten its instructions. Nothing could see this before — llama.cpp
-    does not log the shift anywhere reachable (a deliberately forced shift
-    logged nothing on all three nodes), but both counts arrive on every response
-    and _route_stats_update now records them.
+    so what it discards is most of the prompt. Nothing could see this before —
+    llama.cpp does not log the shift anywhere reachable (a deliberately forced
+    shift logged nothing on all three nodes), but both counts arrive on every
+    response and _route_stats_update now records them.
+
+    What a shift definitely costs is COMPUTE: the generation is no longer bounded
+    by the window, so it runs until num_predict, which on a CPU node is hours.
+    Whether it costs QUALITY is not established — a formatting instruction was
+    measured surviving a forced shift at keep=4 (self-reinforced by the model's
+    own retained output). So treat this finding as "a generation is overrunning
+    its budget", not as "the answer is wrong".
 
     A shift is not automatically wrong — it is the supported mechanism for
     output longer than the window — but an UNINTENDED one means the window

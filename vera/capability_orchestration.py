@@ -948,7 +948,13 @@ def _merge_rule_over_base(rule: Optional[dict], base: dict,
     eff = dict(base or {})
     if not rule:
         return eff
-    for k in ("prefer_gpu", "deny_gpu", "pin", "allow", "deny", "model"):
+    # ctx_mode joins the routing fields (2026-09-16): how this role's output
+    # should be budgeted against the context window. "fit" (default) bounds
+    # output to what the window actually holds; "longform" allows the runner's
+    # context shift, which is the supported mechanism for output LONGER than
+    # the window — see ctx_policy_core. It belongs here rather than in options
+    # because it is a policy per role, not a sampling knob.
+    for k in ("prefer_gpu", "deny_gpu", "pin", "allow", "deny", "model", "ctx_mode"):
         v = rule.get(k)
         if v:
             eff[k] = v
@@ -964,7 +970,7 @@ def _merge_rule_over_base(rule: Optional[dict], base: dict,
             # LIFT a base deny_gpu (e.g. reader jumps to GPU on big digests).
             if k in ("prefer_gpu", "deny_gpu"):
                 eff[k] = bool(v)
-            elif k in ("pin", "allow", "deny", "model") and v:
+            elif k in ("pin", "allow", "deny", "model", "ctx_mode") and v:
                 eff[k] = v
             elif k == "options" and isinstance(v, dict):
                 eff["options"] = {**(eff.get("options") or {}), **v}
@@ -3016,8 +3022,18 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         # num_predict = the output room actually available in the window (bounded
         # by the sensible max), so a long generation can use it ALL but nothing
         # decodes PAST the window. Only when the caller pinned no positive value.
+        # Per-role context policy (Model Routing: loop/<role> ctx_mode).
+        #   fit      — output must fit the window; the runner never shifts.
+        #   longform — output is MEANT to exceed the window; the shift is the
+        #              mechanism. Still bounded, by the device ceiling rather
+        #              than by the window, so it terminates.
+        _ctx_mode = str((eff_rule or {}).get("ctx_mode") or "fit").strip().lower()
         _ceiling = _output_ceiling_for(chosen)
-        if _ceiling > 0:
+        if _ctx_mode == "longform" and _ceiling > 0:
+            _np = int(_merged_opts.get("num_predict") or 0)
+            if _np <= 0:
+                _merged_opts["num_predict"] = _ceiling
+        elif _ceiling > 0:
             _np = int(_merged_opts.get("num_predict") or 0)
             if _np <= 0:
                 # Reserve a real margin. This used to be `num_ctx - _prompt_tok`
@@ -8432,7 +8448,13 @@ async def cap_ollama_routing_get(trace_id=None):
             description="Create or update a routing profile's rules, and optionally set it "
                         "active. A rule overrides the default for one job type. "
                         "Fields: profile (str! — name), label (str), "
-                        "rules (dict job_type->{prefer_gpu,deny_gpu,pin,allow:[],deny:[],model,avoid_embed,prefer}). `prefer` softly favours one node - it wins a tie and yields when it is the busier one. "
+                        "rules (dict job_type->{prefer_gpu,deny_gpu,pin,allow:[],deny:[],model,avoid_embed,prefer,ctx_mode}). `prefer` softly favours one node - it wins a tie and yields when it is the busier one. "
+                        "`ctx_mode` budgets this role's OUTPUT against the context window: "
+                        "'fit' (default) sizes num_predict to window-prompt-margin so the "
+                        "runner never context-shifts and the answer stays grounded in its "
+                        "prompt; 'longform' allows the shift - the supported mechanism for "
+                        "output LONGER than the window - still bounded by the node's "
+                        "device-class ceiling so it terminates. "
                         
                         "activate (bool). Omitted job types inherit the DEFAULT. Persists.")
 async def cap_ollama_routing_save(profile: str, label: str = "",
