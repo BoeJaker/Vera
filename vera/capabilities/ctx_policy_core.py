@@ -98,6 +98,31 @@ class CtxPlan:
         return out
 
 
+def window_ceiling(*, has_gpu: bool, vram_gb: float, detected_max: int,
+                   gpu_ceiling: int, floor: int = 2048) -> int:
+    """Largest context window to offer a model on this node.
+
+    CPU node -> the model's full window. These nodes have 50 GB of system RAM
+    and no spill cliff: the KV cache simply lives in RAM, so the GPU-shaped
+    ceiling does not apply. This is what lets a big prompt run UNSHIFTED on a
+    CPU node that would have to shift on the card.
+
+    GPU node -> the configured ceiling, because VRAM is the binding constraint.
+    A 12 GB card holds ~28-65k tokens of KV for a 9B model; the model's own
+    window may be 262,144.
+
+    GPU with UNKNOWN VRAM -> still the ceiling. This is the case that was wrong
+    (2026-09-16): unknown VRAM fell through to the CPU branch and returned the
+    model's full window, so gpu-250 — which reports no vram_gb from the catalog
+    — was being offered 262,144 on a 12.3 GB card, where the KV cache alone
+    would be 32 GB. "We don't know" must mean the ceiling, never no ceiling.
+    """
+    if not has_gpu:
+        return max(int(floor), int(detected_max) or int(floor))
+    ceiling = int(gpu_ceiling) or int(detected_max) or int(floor)
+    return max(int(floor), min(int(detected_max) or ceiling, ceiling))
+
+
 def did_shift(prompt_tokens: int, eval_count: int, num_ctx: int) -> bool:
     """Did this generation overrun its window and shift?
 

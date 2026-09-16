@@ -26,8 +26,43 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from vera.capabilities.ctx_policy_core import (  # noqa: E402
     CHARS_PER_TOKEN, DEFAULT_MARGIN, FIT, LONGFORM, MIN_PREDICT, CtxPlan,
     did_shift, estimate_tokens, keep_tokens, measured_chars_per_token,
-    output_bound, resolve, safe_chars_per_token,
+    output_bound, resolve, safe_chars_per_token, window_ceiling,
 )
+
+
+# ── window ceiling: CPU RAM is not VRAM ──────────────────────────────────────
+
+def test_a_cpu_node_keeps_the_models_full_window():
+    """These CPU nodes have 50 GB of system RAM and no spill cliff — the KV
+    cache just lives in RAM. A big prompt that would have to shift on the 12 GB
+    card runs UNSHIFTED here, which is the point of routing it to CPU."""
+    assert window_ceiling(has_gpu=False, vram_gb=0, detected_max=262144,
+                          gpu_ceiling=28672) == 262144
+
+
+def test_a_gpu_node_is_held_to_the_ceiling():
+    """12 GB of VRAM holds ~28k tokens of KV for a 9B model; the model's own
+    window is 262,144."""
+    assert window_ceiling(has_gpu=True, vram_gb=12.0, detected_max=262144,
+                          gpu_ceiling=28672) == 28672
+
+
+def test_unknown_vram_on_a_gpu_means_the_ceiling_not_no_ceiling():
+    """THE BUG (2026-09-16). gpu-250 reports vram_gb=None from the catalog, and
+    the old code treated that as the CPU case — offering a 12.3 GB card the
+    model's full 262,144 window, where the KV cache alone would be 32 GB."""
+    assert window_ceiling(has_gpu=True, vram_gb=0, detected_max=262144,
+                          gpu_ceiling=28672) == 28672
+    assert window_ceiling(has_gpu=True, vram_gb=None or 0, detected_max=262144,
+                          gpu_ceiling=65536) == 65536
+
+
+def test_the_ceiling_never_inflates_a_small_model_window():
+    """A model whose own window is smaller than the ceiling keeps its own."""
+    assert window_ceiling(has_gpu=True, vram_gb=12.0, detected_max=8192,
+                          gpu_ceiling=28672) == 8192
+    assert window_ceiling(has_gpu=False, vram_gb=0, detected_max=8192,
+                          gpu_ceiling=28672) == 8192
 
 CTX = 28672          # OLLAMA_MAX_AUTO_CTX on prod
 
