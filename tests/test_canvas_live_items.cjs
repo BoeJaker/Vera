@@ -60,5 +60,23 @@ t('the add bar and the panel picker anchor { origin: you, beside: the turn in vi
 t('the item carries where it sits (data-beside) and says it is yours; the placer levels it there', SRC.includes("data-beside=") && SRC.includes("added by you — it relates to no turn") && SRC.includes("const levelOf = (it) => it.mid || it.beside || '';"));
 t('a taken suggestion keeps its turn (it is the reply\'s), a re-shown item its own anchors', SRC.includes("const mid = s.mid || focusMid; if (mid) args.anchor = { turn: mid, mid };") && SRC.includes("if (s.taken) return this.call('canvas.add', { key: s.key });"));
 
+// ── the session's own sandbox is reachable from a canvas terminal (Notes/42 defect 64) ──
+{ const rows = V.hostRowsOf({ ssh: [{ ssh_host_id: 'ct126', label: 'ct126' }] }, [], 'sess-abc');
+  const first = rows[0] || {};
+  t('the session\'s sandbox is the first row of the terminal picker, and only when there is a session',
+    first.host_id === '@session' && first.g === 'session' && /sandbox/.test(first.n || '')
+    && !V.hostRowsOf({ ssh: [{ ssh_host_id: 'ct126' }] }, [], '').some((r) => r.host_id === '@session'),
+    JSON.stringify(first));
+  // the estate's own enumerations never carry it: it belongs to the session
+  t('it is not one of the estate rows', rows.filter((r) => r.host_id === '@session').length === 1);
+  // picking it resolves through sandbox.session.terminal and leaves an ORDINARY terminal item behind
+  t('picking it asks sandbox.session.terminal for this canvas\'s session', /this\.callResult\('sandbox\.session\.terminal', \{ session_id: sid, shell: 'bash' \}\)/.test(SRC));
+  t('the answer becomes host, container, shell and socket on the item', /Object\.assign\(c2, \{ host_id: row\.host_id, container: row\.container, shell: row\.shell, ws: row\.ws, sandbox: true, attached: true \}\)/.test(SRC));
+  t('and the item is persisted, so it survives a reload', /return this\.call\('canvas\.update', Object\.assign\(this\._ref\(key\), \{ content: c2 \}\)\);/.test(SRC));
+  t('the add bar offers it too', /data-act="tsbx"/.test(SRC) && /if \(act === 'tsbx'\) return this\._sbxPick\(key, it, btn\);/.test(SRC));
+  // a terminal item already carrying a socket draws through the ordinary path
+  const sbx = B.session({ title: "this session's sandbox", host_id: 'local', container: 'vera-sbx-abc', shell: 'bash', ws: '/remote/docker/term/ws/local/vera-sbx-abc?shell=bash', sandbox: true, attached: true }, 'm', 'session:s1', { _live: {} });
+  t('a resolved sandbox terminal is an ordinary live terminal item', /data-live="term"/.test(sbx) && /vera-sbx-abc/.test(sbx), sbx.slice(0, 160)); }
+
 console.log((fails ? 'FAILED ' : 'passed ') + (fails ? fails + ' check(s)' : 'all checks'));
 process.exit(fails ? 1 : 0);
