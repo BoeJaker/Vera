@@ -13555,7 +13555,7 @@ function _embedMount(){
     let gal='', miniH=196, _recsOf=()=>'';   // the plot keeps its box; a section's records are asked for as it opens
     if(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'){
       try{ VeraContextGraph.ensureCss();
-        const st=VeraContextGraph.stateFrom({ nodes:S.nodes, rels:data.rels, memory:_memAllNodes, memEdges:_memAllEdges, dag:_lastDagNodes, dagEdges:_lastDagEdges, view:(_qGalView==='timeline'?'time':_qGalView), allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k]), color:srcCol, sel:_qGalSel||null, list:_qGalList, q:_qGalQ, turn:_grFocusMid?'turn '+_grFocusMid:'', frames:CTX_FRAMES, frame:_ctxActiveFrame });   // the frame of the turn in view, as the grown graph shows it
+        const st=VeraContextGraph.stateFrom({ nodes:S.nodes, rels:data.rels, memory:_memAllNodes, memEdges:_memAllEdges, dag:_lastDagNodes, dagEdges:_lastDagEdges, view:(_qGalView==='timeline'?'time':_qGalView), allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k]), color:srcCol, sel:_qGalSel||null, list:false, q:_qGalQ, turn:_grFocusMid?'turn '+_grFocusMid:'', frames:CTX_FRAMES, frame:_ctxActiveFrame });   // the frame of the turn in view, as the grown graph shows it
         gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle });
         // a section's own records, on demand. The host says WHERE they are drawn: .cg-mini is the scope that lays
         // a row out and carries the colours, so the rows read the same here as they do inside the plot's own drawer.
