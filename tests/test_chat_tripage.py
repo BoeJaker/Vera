@@ -108,7 +108,9 @@ def test_the_graph_column_is_the_chats_own_context_graph_and_hears_the_focused_t
         assert HTML.count(src) >= 1, src
     assert "const msg={type:'vera:graph:anchor', mid:w?(w.dataset.mid||''):'', rect, session_id:SID||''};" in HTML
     assert "try{ _ctxColumnSync(msg.mid); _ctxRunsDraw(); }catch(_){}" in HTML, "the focused turn drives the graph and the runs"
-    assert "msgs.addEventListener('scroll', ()=>{ if(Date.now()-_grScrollProg>900) _grFocusMid=''; _ctxFollow(); }, {passive:true});" in HTML   # ctx-graph-5: the scroll follows the turn in view
+    # ctx-graph-5: the scroll follows the turn in view — and redraws the runs on the way, every frame rather than on
+    # _ctxFollow's 150ms throttle, which also re-feeds the element (Notes/42 defect 66)
+    assert "msgs.addEventListener('scroll', ()=>{ if(Date.now()-_grScrollProg>900) _grFocusMid=''; _runsSoon(); _ctxFollow(); }, {passive:true});" in HTML
     assert "Date.now()-_grAnchorT>150" in HTML, "throttled"
     assert '<svg id="ctxRunsOverlay" aria-hidden="true"></svg>' in HTML and "function _ctxRunsDraw(){" in HTML
     assert 'body[data-cols~="graph"] #graphColumn{order:-1;border-left:none;border-right:1px solid var(--border)}' in HTML, "the design's order: rail | graph | chat | canvas"

@@ -39,7 +39,10 @@ def test_the_runs_cross_the_seam_at_shared_heights():
     src = _read("vera", "chat", "chat_panel.html")
     assert "if(_EMBED.only==='menu'){ const b=_ctxRemoteBlock; if(!b||!(b.bottom>b.top)) return null;" in src
     assert "const seam=_EMBED.only==='menu', seamX=window.innerWidth; const lanesOut=[];" in src
-    assert "if(seam) _lhmPost('lanes',{ lanes:lanesOut });" in src
+    # the post goes through _ctxLanesPost now: standing down has to reach the chat instance too, or it keeps
+    # drawing the last lanes it was sent (Notes/42 defect 67)
+    assert "if(seam) _ctxLanesPost(lanesOut);" in src
+    assert "_lhmPost('lanes',{ lanes:arr||[] });" in src
     assert "if(_EMBED.only==='chat'&&_ctxRemote.on&&!_ctxGrown){" in src
     assert "_lhmPost('block', b);" in src
     assert "function _frameTop(){ try{ const f=window.frameElement; return f?f.getBoundingClientRect().top:0; }catch(_){ return 0; } }" in src

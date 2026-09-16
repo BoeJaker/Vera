@@ -43,7 +43,11 @@ def test_relation_runs_can_be_switched_off():
     src = _read("vera", "chat", "chat_panel.html")
     assert "localStorage.getItem('vera_runs_off')" in src
     assert "function _runsToggle(which, on)" in src
-    assert "if(_runsOff.ctx){ svg.innerHTML=''; return; }" in src
-    assert "if(_runsOff.cv){ svg.innerHTML=''; _cvLastCheck=null; return; }" in src
+    # the two draws now stand down for a menu over them as well as for the switch (Notes/42 defect 67), and the
+    # switch is on each column's own header as well as in the sheet (defect 70) — one state, read by every switch
+    assert "if(_runsOff.ctx||_runsBlocked())" in src
+    assert "if(_runsOff.cv||_runsBlocked()){ svg.innerHTML=''; _cvLastCheck=null; return; }" in src
     assert "kk.textContent='Runs';" in src and "b.dataset.runs=k;" in src
+    assert 'data-runs="cv" onclick="CH._runsToggle(\'cv\')"' in src
+    assert 'data-runs="ctx" onclick="CH._runsToggle(\'ctx\')"' in src
     assert "_spFilter,_runsToggle" in src
