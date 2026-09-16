@@ -9803,6 +9803,10 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "vfs/vfs_capabilities.py"),
         os.path.join(_here, "monitor/monitor_capabilities.py"),
         os.path.join(_here, "monitor/perf_capabilities.py"),
+        # Sees and controls the compute workers themselves — perf_capabilities
+        # reports a stalled LOOP, this reports a runner on another node that
+        # nothing is waiting for any more.
+        os.path.join(_here, "workers/node_agent_capabilities.py"),
         os.path.join(_here, "babblefish/babblefish_capabilities.py"),
         os.path.join(_here, "netmon/netmon_capabilities.py"),
         os.path.join(_here, "provisioning/provisioning_capabilities.py"),
