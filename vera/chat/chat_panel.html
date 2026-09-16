@@ -8073,9 +8073,20 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
 
     // Remove overlapping matches (keep first/longest for each position)
     matches.sort((a,b)=>a.idx-b.idx);
+    // a fenced block is CONTENT, never a call (defect 68). Two readings, because the trigger is the diagram's own text
+    // and not the fence around it:
+    //   · everything inside a fence is content — including an UNTERMINATED one, which is what a diagram still streaming is;
+    //   · mermaid's subroutine node is written id[[text]] with the id ABUTTING the bracket, so a [[ glued to an identifier is
+    //     that shape and never a call — a call stands after whitespace or a line start. This reads the mermaid content
+    //     itself, so it holds in loose diagram text with no fence at all.
+    const fences=[]; { const fre=/```[\s\S]*?```/g; let fm; while((fm=fre.exec(text))!==null) fences.push([fm.index, fm.index+fm[0].length]); }
+    { const tail=text.lastIndexOf('```'); if(tail>=0 && !fences.some(f=>tail>=f[0]&&tail<f[1])) fences.push([tail, text.length]); }   // a fence the stream has not closed yet
+    const inFence=(i)=>fences.some(f=>i>=f[0]&&i<f[1]);
+    const isNodeShape=(i)=>text.slice(i,i+2)==='[[' && i>0 && /[A-Za-z0-9_]/.test(text[i-1]);   // mermaid id[[…]]
     const deduped=[];
     let lastEnd=-1;
     for(const match of matches){
+      if(inFence(match.idx)||isNodeShape(match.idx)) continue;
       if(match.idx>=lastEnd){deduped.push(match);lastEnd=match.end;}
     }
     matches.length=0; deduped.forEach(x=>matches.push(x)); liftDirectives();
@@ -10014,7 +10025,7 @@ Your task: decide what to do next to advance toward the goal.
     // Process cap placeholders in response.
     // Strip code-block wrappers the LLM sometimes puts around placeholders.
     const stripped=fullText
-      .replace(/```[a-z]*\n?([\s\S]*?)```/g,'$1')  // strip fenced code blocks
+      .replace(/```[a-z]*\n?([\s\S]*?)```/g,(m,inner)=>/^\s*(?:\[\[|\u27e6)[\s\S]*(?:\]\]|\u27e7)\s*$/.test(inner)?inner:m)  // a fence the model wrapped a placeholder in is unwrapped; a fence with CONTENT (a mermaid diagram, a widget record, code) stays whole
       .replace(/`(\[\[(?:cap|suggest):[^\]]+\]\])`/g,'$1') // strip inline backtick around placeholders
       .replace(/`(\u27e6[^\u27e7]*\u27e7)`/g,'$1');   // …and around a directive the model quoted
     const hasPlaceholders=hasCapPlaceholders(stripped);

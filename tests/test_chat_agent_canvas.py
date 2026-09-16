@@ -87,6 +87,24 @@ def test_a_canvas_calls_receipt_is_not_harvested_as_an_item():
     assert "/canvas\\./.test(n)))&&!el.classList.contains('error')) return;" in src
 
 
+def test_a_fenced_block_is_content_not_a_call():
+    # defect 68: a ```mermaid fence was unwrapped before the scan and its text — A[[node.parse(x)]], mermaid's subroutine
+    # shape — matched a cap spelling, so the call ran and the drawn diagram was replaced by prose and a capability card
+    src = _read("vera", "chat", "chat_panel.html")
+    assert ".replace(/```[a-z]*\\n?([\\s\\S]*?)```/g,(m,inner)=>/^\\s*(?:\\[\\[|\\u27e6)[\\s\\S]*(?:\\]\\]|\\u27e7)\\s*$/.test(inner)?inner:m)" in src
+    assert "const fences=[]; { const fre=/```[\\s\\S]*?```/g; let fm; while((fm=fre.exec(text))!==null) fences.push([fm.index, fm.index+fm[0].length]); }" in src
+    assert "if(inFence(match.idx)||isNodeShape(match.idx)) continue;" in src
+
+
+def test_mermaid_node_shape_is_not_a_call_even_unfenced():
+    # the user's correction: the fence is not what triggers it, the diagram CONTENT is. mermaid writes a subroutine node
+    # as id[[text]] — the id abuts the bracket — so a [[ glued to an identifier is read as that shape wherever it sits,
+    # including a fence the stream has not closed yet (which is what a diagram mid-render is)
+    src = _read("vera", "chat", "chat_panel.html")
+    assert "const isNodeShape=(i)=>text.slice(i,i+2)==='[[' && i>0 && /[A-Za-z0-9_]/.test(text[i-1]);" in src
+    assert "if(tail>=0 && !fences.some(f=>tail>=f[0]&&tail<f[1])) fences.push([tail, text.length]);" in src
+
+
 def test_a_bare_cap_call_with_json_runs():
     # mirror a42f.png: [[canvas.add {"kind":…}]] — no cap: prefix, no parentheses — rendered as raw text
     src = _read("vera", "chat", "chat_panel.html")
