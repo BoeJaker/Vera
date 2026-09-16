@@ -166,7 +166,7 @@ def test_the_element_renders_the_session_projection():
     assert '<div class="vc-rec"><b>' in EL, "the record card when there is no drawer"
     assert "fetch(base + '/mcp/call'" in EL and "Object.assign({ id: this.canvasId }, args || {})" in EL
     assert "const rev = doc.revision != null ? doc.revision : doc.rev != null ? doc.rev" in EL
-    assert "static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id']; }" in EL   # the rail and the session (agent V)
+    assert "static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare']; }" in EL   # the rail, the session, and bare: a host that draws its own head (defect 74)
     assert "if (this.hasAttribute('compact')) this.style.setProperty('--vc-max', '240px');" in EL
     assert "this._timer = setInterval(() => this.refresh(), 3000);" in EL
     # the plain projection is what it was
