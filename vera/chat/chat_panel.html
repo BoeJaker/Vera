@@ -13518,7 +13518,7 @@ function _embedMount(){
   // the board's face is the default; the detailed one this edge grew is a press away and remembered (defect 60)
   let _qGalStyle=(function(){ try{ return localStorage.getItem('vera_ctx_mini_style')==='detailed'?'detailed':'simple'; }catch(_){ return 'simple'; } })();
   // the mini graph's detail: the record picked, WHICH SOURCES ARE OPEN in the list, the search across them
-  let _qGalSel='', _qSrcOpen={}, _qGalQ='', _ctxElWait=null;
+  let _qGalSel='', _qSrcOpen={}, _qGalQ='', _ctxElWait=null, _ctxMiniWarned=false;
   const _kfmt=n=>n>=1000?(n/1000).toFixed(1)+'k':String(n);
   // every family of the assembled context: its records, its tokens (≈ chars / 4), its colour, its share
   function _ctxShares(){
@@ -13559,7 +13559,7 @@ function _embedMount(){
         gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle });
         // a section's own records, on demand. The host says WHERE they are drawn: .cg-mini is the scope that lays
         // a row out and carries the colours, so the rows read the same here as they do inside the plot's own drawer.
-        if(typeof VeraContextGraph.miniList==='function') _recsOf=(f)=>{ try{ return '<div class="cg-mini cg-recs">'+VeraContextGraph.miniList(st, { q:_qGalQ, fam:f })+'</div>'; }catch(_){ return ''; } }; }catch(e){ gal=''; _recsOf=()=>''; }
+        if(typeof VeraContextGraph.miniList==='function') _recsOf=(f)=>{ try{ return '<div class="cg-mini cg-recs">'+VeraContextGraph.miniList(st, { q:_qGalQ, fam:f })+'</div>'; }catch(_){ return ''; } }; }catch(e){ gal=''; _recsOf=()=>''; if(!_ctxMiniWarned){ _ctxMiniWarned=true; try{ console.warn('context mini: the element threw, falling back to the widget renderer', e); }catch(_){} } }
     }
     if(!gal) gal=window.VeraWidget?VeraWidget.draw('context_graph',data,'m',{height:196,bare:true,view:_qGalView,allEdges:_qGalAll,off:_qGalOff,color:srcCol,hub:'aide',hubMeta:_kfmt(S.total)}):'';
     /* The fallback is a STAND-IN, not a decision. The repaint key knows which renderer drew the body (defect 84),
