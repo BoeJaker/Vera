@@ -23,6 +23,21 @@ PANEL = _read("vera", "widgets", "widget_registry_panel.html")
 UI = _read("vera", "ui builder", "ui_capabilities.py")
 
 
+def test_a_read_that_answered_with_nothing_says_no_data():
+    """Notes/42 defect 71a. Three states were told apart by the element and said in one voice by the forms: a record
+    the form cannot draw says "a counter needs a value", and a source that read and returned nothing was falling
+    through to those same words or to the form's blank face - which read as the values having been cleared. The empty
+    read has its own face now. A real zero is untouched: zero is a reading, not an absence."""
+    src = _read("vera", "widgets", "widget_element.js")
+    assert "const NODATA = (src, size) =>" in src
+    assert "readEmpty && form !== 'panel' && form !== 'composite'" in src
+    assert "? NODATA(rec.source, size)" in src
+    # the state it is for is the one the element already separated out
+    assert "const readEmpty = wasRead && !have && !this._err" in src
+    # and it has a look of its own
+    assert ".vw-nodata{display:flex" in src
+
+
 def test_the_element_is_served_and_exposes_one_renderer():
     assert '@APP.get("/ui/widgets/widget_element.js", include_in_schema=False)' in UI
     assert 'Path(__file__).parent.parent / "widgets" / "widget_element.js"' in UI
