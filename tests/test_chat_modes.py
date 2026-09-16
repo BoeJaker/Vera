@@ -175,7 +175,10 @@ def test_chat_keeps_one_live_diagram_across_streaming_repaints():
     p = _fn("_paintStream")
     assert "_MM_LIVE_KEY=key;" in p and "_MM_LIVE_EL[key]" in p and "el.stream(code)" in p
     card = _fn("_mdFenceCard")
-    assert "st.incomplete && _MM_LIVE_KEY" in card and 'data-mm-live="1" data-live="1"' in card
+    # the live slot is no longer only for an UNCLOSED fence: it used to be handed back the moment the model typed
+    # the closing fence, and the drawing became a code card until the final render redrew it (Notes/42 defect 73)
+    assert "if(_MM_LIVE_KEY && !_mmLiveTaken)" in card and 'data-mm-live="1" data-live="1"' in card
+    assert "_MM_LIVE_KEY=key; _mmLiveTaken=false;" in p, "one live diagram per message, chosen fresh each paint"
     # the hydrator settles that same element on the final render instead of remounting
     h = _fn("_hydrateMermaidSlots")
     assert "const live=key&&_MM_LIVE_EL[key]; if(live){ el=live; delete _MM_LIVE_EL[key]; }" in h

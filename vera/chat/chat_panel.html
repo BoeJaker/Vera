@@ -5409,8 +5409,8 @@ IMPORTANT:
   const _MM_LIVE_EL={};
   function _paintStream(bubEl, fullText){
     const key=(bubEl&&bubEl.dataset&&bubEl.dataset.mid)||'live';
-    _MM_LIVE_KEY=key;
-    let html=''; try{ html=_renderStreamingMarkdown(fullText); } finally { _MM_LIVE_KEY=''; }
+    _MM_LIVE_KEY=key; _mmLiveTaken=false;
+    let html=''; try{ html=_renderStreamingMarkdown(fullText); } finally { _MM_LIVE_KEY=''; _mmLiveTaken=false; }
     bubEl.innerHTML=html+'<span class="cur"></span>';
     const slot=bubEl.querySelector('.mm-slot[data-mm-live]');
     if(!slot) return;
@@ -6991,7 +6991,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      Run, the mermaid slot, the widget block). The chat's older inline renderer stays as the fallback when the
      shared script is not loaded. ═══ */
   const _mdUnesc=(x)=>String(x).replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&amp;/g,'&');
-  let _MM_LIVE_KEY='';                 // set while a streaming paint runs: the unclosed mermaid fence gets a live slot
+  let _MM_LIVE_KEY='';                 // set while a streaming paint runs: the first mermaid fence gets the live slot
+  let _mmLiveTaken=false;              // …and only the first: one <vera-mermaid> is kept alive per message
   function _mdFenceCard(lang,info,raw,st,opts){
     st=st||{}; opts=opts||{}; lang=lang||'';
     const L=lang.toLowerCase();
@@ -6999,8 +7000,15 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     // once (opts.liveMermaid!==false — the final render); while it is still STREAMING the slot is a live one: the
     // paint keeps a single <vera-mermaid> alive across repaints and streams the complete lines into it.
     if(L==='mermaid' && document.getElementById('cfgAutoRender')?.checked!==false){
-      if(!st.incomplete && opts.liveMermaid!==false){ const mid='mm'+(++_mmSeq); _MM_BLOCKS[mid]=raw; return `<div class="mm-slot" data-mm="${mid}" style="margin:8px 0"></div>`; }
-      if(st.incomplete && _MM_LIVE_KEY){ const mid='mml-'+_MM_LIVE_KEY; _MM_BLOCKS[mid]=raw; return `<div class="mm-slot mm-live" data-mm="${mid}" data-mm-live="1" data-live="1" style="margin:8px 0"></div>`; }
+      /* While a reply is STREAMING the first diagram keeps its live slot whether or not its fence has closed. It used
+         to lose it the moment the model typed the closing fence: the closed branch below wants liveMermaid!==false,
+         which a streaming paint never passes, so the drawing fell through to a code card and the reader watched it
+         turn into text and then be drawn again by the final render (Notes/42 defect 73). The live element is handed to
+         the final render by _hydrateMermaidSlots, so there is one diagram from the first line to the last. */
+      if(_MM_LIVE_KEY && !_mmLiveTaken){ _mmLiveTaken=true; const mid='mml-'+_MM_LIVE_KEY; _MM_BLOCKS[mid]=raw; return `<div class="mm-slot mm-live" data-mm="${mid}" data-mm-live="1" data-live="1" style="margin:8px 0"></div>`; }
+      // every other fence: a slot the hydrator fills once it is closed (a second diagram still being typed stays a
+      // code card until it closes, as it always has - only one drawing can be the live one)
+      if(!st.incomplete && (opts.liveMermaid!==false || _MM_LIVE_KEY)){ const mid='mm'+(++_mmSeq); _MM_BLOCKS[mid]=raw; return `<div class="mm-slot" data-mm="${mid}" style="margin:8px 0"></div>`; }
     }
     // ```widget fences are widgets in the reply (the record the model wrote)
     if(L==='widget' && !st.incomplete){ try{ const w=_widgetFence(raw); if(w) return w; }catch(_){} }
