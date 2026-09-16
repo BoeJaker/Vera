@@ -177,7 +177,11 @@
     // a session record already in the prompt is drawn once, filled; one never injected is hollow. In focus, only the
     // session records that touch something in the prompt stay on the arc
     const ctxIds = new Set(nodes.map((n) => n.id));
-    const memCtx = nodes.filter((n) => n.source === 'memory').map((n) => Object.assign({}, n, { _fam: 'memory', _injected: n.included !== false }));
+    // the level governs the RECALLS as much as the session's own records — it used to gate only the session's, so
+    // turning memory off left the arm exactly as it was (Notes/42 defect 65). Off: nothing. Focus: the recalls this
+    // prompt actually carries. All: every recall the turn assembled, injected or not.
+    const memCtxAll = nodes.filter((n) => n.source === 'memory').map((n) => Object.assign({}, n, { _fam: 'memory', _injected: n.included !== false }));
+    const memCtx = lvl.memory === 'off' ? [] : lvl.memory === 'focus' ? memCtxAll.filter((n) => n._injected) : memCtxAll;
     const litIds = new Set(nodes.filter((n) => focus.has(n.id) && n.included !== false).map((n) => n.id));
     const memTouch = new Set(); (S.memEdges || []).concat(EDGES).forEach((e) => { const a = String(e.from_id || e.from || ''), b = String(e.to_id || e.to || ''); if (litIds.has(a)) memTouch.add(b); if (litIds.has(b)) memTouch.add(a); });
     const memSessAll = lvl.memory === 'off' ? [] : (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).map((m) => ({ id: m.id, label: (m.text || m.summary || m.capability || m.category || m.id || '').slice(0, 60), source: 'memory', type: m.record_type || m.type || 'memory', score: m.importance == null ? 0.5 : +m.importance, text: m.text || m.summary || '', included: false, rec: m, _fam: 'memory', _injected: false, _sess: true, created_at: m.created_at || '' }));

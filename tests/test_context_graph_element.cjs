@@ -65,7 +65,10 @@ t('the rail\'s shapes and colours: a message is a slab, the session a diamond, a
 t('the session\'s relations: drawn among what is on the arc and into the prompt\'s records, hidden types folded', g6.cedges.some((e) => /followed by/i.test(e.title) && e.col === '#8fb87a') && g6.cedges.some((e) => /derived from/i.test(e.title) && /→ fabric_capabilities\.py/.test(e.title)) && !g6.cedges.some((e) => /session content/i.test(e.title)));
 t('a memory chip with the count; the region says how many from the session', g6.families.some((f) => f.name === 'memory' && f.n === 5 && f.on) && g6.regions.some((r) => /memory · session 3/.test(r.t)) && g6.ghosts === 2 + 3);
 const g7 = G.compute(Object.assign({}, base, { memory: sess, memEdges: sessEdges, layersOff: new Set(['memory']) }), 660, 600);
-t('the memory chip folds the session graph away, the prompt\'s own memory stays', g7.memNodes.length === 2 && g7.families.some((f) => f.name === 'memory' && !f.on));
+// this read the other way round until the user's review: off folded the session graph away and left the prompt's own
+// recalls on the arm, which is most of what is on it — "the memory recall toggle doesn't toggle the memory nodes"
+// (Notes/42 defect 65). Off is now off; focus keeps the recalls the prompt carries, all keeps every one.
+t('the memory chip folds the arm away — the session\'s records AND the prompt\'s own recalls', g7.memNodes.length === 0 && g7.families.some((f) => f.name === 'memory' && !f.on));
 const g8 = G.compute(Object.assign({}, base, { memory: sess, sel: 'sm1' }), 660, 600);
 t('the record panel for a session record: kind, recalled, created', g8.rec && g8.rec.family === 'memory' && g8.rec.rows[0].k === 'kind' && /human/.test(g8.rec.rows[0].v) && /never injected/.test(g8.rec.rows[1].v) && g8.rec.rec && g8.rec.rec.id === 'sm1');
 // the run's DAG as the loop lane while no loop is live
@@ -105,5 +108,16 @@ t('on: the strip along the bottom — the leaves grouped under their category, a
 t('the snapshot\'s links and the lane\'s "ran on" are drawn to the strip', gOn.sedges.some((e) => e.cls === 'est' && /ct126 → neo4j · serves/.test(e.title)) && gOn.sedges.some((e) => e.cls === 'ran' && e.title === 'step 1 ran on ct126'));
 const gSel = G.compute(Object.assign({}, base, { estate: { nodes: SNAP.nodes, edges: SNAP.edges }, layersOff: new Set(), sel: 'estate:node:ct126' }), 660, 600);
 t('a node\'s record: kind, status, detail, temperature', gSel.rec && gSel.rec.family === 'estate' && gSel.rec.rows.map((r) => r.k + '=' + r.v).join(',') === 'kind=node,status=ok,detail=61°C,temperature=61 °C');
+// ── the memory toggle reaches the recalls, not only the session's records (Notes/42 defect 65) ───────────────
+{ const nodes = [];
+  for (let i = 1; i <= 5; i++) nodes.push({ id: 'c' + i, label: 'chunk ' + i, source: 'vector', type: 'chunk', score: 0.9 - i * 0.1, included: true });
+  for (let i = 1; i <= 4; i++) nodes.push({ id: 'r' + i, label: 'recall ' + i, source: 'memory', type: 'fact', score: 0.8, included: i <= 2 });   // two injected, two not
+  const sess = [{ id: 's1', text: 'a session record', record_type: 'fact', importance: 0.6 }, { id: 's2', text: 'another', record_type: 'event', importance: 0.5 }];
+  const at = (level) => { const S = Object.assign(G.stateFrom({ nodes, edges: [], memory: sess }), { mix: { memory: level }, layersOff: new Set(level === 'off' ? ['memory'] : []) });
+    return G.compute(S, 420, 320).memNodes.length; };
+  t('memory off takes the recalls off the arm too — not just the session\'s records', at('off') === 0, 'off drew ' + at('off'));
+  t('memory all keeps every recall and every session record', at('all') === 6, 'all drew ' + at('all'));
+  t('memory focus keeps the recalls this prompt carries', at('focus') === 2, 'focus drew ' + at('focus')); }
+
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
