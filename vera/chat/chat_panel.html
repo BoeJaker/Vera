@@ -2696,11 +2696,13 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
       <div class="tri-hd"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span id="cvDrvRibbon" class="drv-ribbon" style="display:none" data-w="driven ribbon · canvas"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button class="btn xs" onclick="CH._cvDrvUndo()" title="Undo the directive that placed this">undo</button><button class="btn xs" onclick="CH._drvLog()" title="The directive log, the policy, the asks — the Driven panel">log</button><button class="btn xs" onclick="CH._cvDrvRibbon(null)" title="Dismiss">&#215;</button></span><span class="sp"></span>
         <span class="nowbar" title="Items in the NOW band"><i></i><b>NOW</b><span id="cvColNow">0</span></span>
         <button class="btn xs" id="cvColCols" onclick="CH._cvColumns()" title="Columns on the stage — items pack around the pinned ones">1 col</button>
+        <button class="btn xs" data-runs="cv" onclick="CH._runsToggle('cv')" title="The runs between the turns and the items they made or read — the same switch as the ⋯ sheet's">Runs</button>
         <button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></div>
       <div class="tri-bd" id="canvasColumnBody"></div>
     </div>
     <div id="graphColumn" class="tri-col" data-col="graph">
       <div class="tri-hd"><b>Graph</b><span class="lbl" id="grColSub">context graph</span><span class="sp"></span>
+        <button class="btn xs" data-runs="ctx" onclick="CH._runsToggle('ctx')" title="The runs from this turn's context records to the message that read them — the same switch as the ⋯ sheet's">Runs</button>
         <button class="btn xs" onclick="CH.togglePage('graph')" title="Close the graph column">&#215;</button></div>
       <!-- the design's context graph: the Context menu grown into the full graph, beside the transcript -->
       <div class="tri-bd" id="graphColumnBody"></div>
@@ -6033,7 +6035,7 @@ IMPORTANT:
     if((el=q('#canvasColumnBody'))) return ['canvas', 'session canvas', el, {}];
     return null;
   }
-  function _cmClose(){ if(_cm&&_cm.parentNode) _cm.parentNode.removeChild(_cm); _cm=null; }
+  function _cmClose(){ if(_cm&&_cm.parentNode) _cm.parentNode.removeChild(_cm); _cm=null; try{ _ctxRunsDraw(); _cvRunsDraw(); }catch(_){} }
   // a canvas item's own action (the live items: attach · run · query · refresh · standalone), reached from the menu
   function _cvItemAct(key, act){ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); const b=cv&&cv.shadowRoot&&cv.shadowRoot.querySelector('.it[data-key="'+String(key).replace(/"/g,'\\"')+'"] [data-act="'+act+'"]'); if(b){ b.click(); return true; } }catch(_){} return false; }
   function _crunClose(){ if(_crun&&_crun.parentNode) _crun.parentNode.removeChild(_crun); _crun=null; }
@@ -6049,7 +6051,7 @@ IMPORTANT:
       b.innerHTML=(r.t==='cap'?esc(r.cap):esc(r.n))+'<i>'+esc(r.t==='cap'?'stage':(r.k||''))+'</i>';
       b.addEventListener('click',e=>{ e.stopPropagation(); if(r.t==='cap'){ _crunOpen(r.cap, r.arg, name, ev.clientX, ev.clientY); _cmClose(); } else { _cmClose(); _cmAct(r.id, kind, name, el, x); } });
       m.appendChild(b); });
-    w.appendChild(m); document.body.appendChild(w); _cm=w;
+    w.appendChild(m); document.body.appendChild(w); _cm=w; try{ _ctxRunsDraw(); _cvRunsDraw(); }catch(_){}
     const r=m.getBoundingClientRect(); const left=Math.min(ev.clientX, window.innerWidth-r.width-8), top=Math.min(ev.clientY, window.innerHeight-r.height-8); m.style.left=Math.max(4,left)+'px'; m.style.top=Math.max(4,top)+'px';
     return true;
   }
@@ -6207,7 +6209,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      a hand-added item has none and gets no run. Exploded, a run leaves the item's station instead of the block. */
   function _cvRunsDraw(){
     const svg=document.getElementById('cvRunsOverlay'); if(!svg) return;
-    if(_runsOff.cv){ svg.innerHTML=''; _cvLastCheck=null; return; }
+    if(_runsOff.cv||_runsBlocked()){ svg.innerHTML=''; _cvLastCheck=null; return; }
     const cv=document.querySelector('#canvasColumnBody vera-canvas'); const col=document.getElementById('chatColumn'), ccol=document.getElementById('canvasColumn'), msgs=document.getElementById('msgs');
     if(!_pages.has('canvas')||!cv||!cv.itemRects||!col||!ccol||!msgs){ svg.innerHTML=''; _cvLastCheck=null; return; }
     const den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase();
@@ -6294,6 +6296,11 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       // a scroll by the user releases the pinned turn: the turn in view is the one the graphs show
       _ctxFollowBind();
       if(msgs&&!msgs._ctxColBound){ msgs._ctxColBound=true; msgs.addEventListener('click', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap'); if(w){ _grFocusMid=w.dataset.mid||''; _graphAnchorPost(true); } }); }
+      // the other half of the Hover tier: pointing at the block in focus shows everything that turn read
+      if(msgs&&!msgs._ctxHoverBound){ msgs._ctxHoverBound=true;
+        const set=(on)=>{ if(on===_ctxHoverBlock) return; _ctxHoverBlock=on; if(_den()==='hover'){ try{ _ctxRunsDraw(); }catch(_){} } };
+        msgs.addEventListener('mouseover', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap[data-mid]'); const f=_focusedTurn(); set(!!(w&&f&&w.dataset.mid===(f.dataset.mid||''))); });
+        msgs.addEventListener('mouseleave', ()=>set(false)); }
       window.addEventListener('resize', ()=>_ctxRunsDraw());
     }
     if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800);
@@ -6476,6 +6483,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   // the runs light up: the record under the pointer lights its type's trunk and branches, the rest recede
   function _ctxRunsHover(id){
     const svg=document.getElementById('ctxRunsOverlay'); if(!svg) return; const src=id?_ctxRunsIdSrc[id]:'';
+    // in the Hover tier the runs of the type you are on are the only ones drawn at all, so a change of type is a redraw
+    if(src!==_ctxHoverSrc){ _ctxHoverSrc=src; if(_den()==='hover'){ try{ _ctxRunsDraw(); }catch(_){} return; } }
     if(src) svg.setAttribute('data-lit', src); else svg.removeAttribute('data-lit');
     svg.querySelectorAll('line').forEach(l=>l.classList.toggle('lit', !!src&&l.getAttribute('data-src')===src));
   }
@@ -6489,10 +6498,31 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      node is in the way. */
   // the relation runs can be switched off — context → chat, chat ↔ canvas — from the ⋯ tools sheet (persisted)
   const _runsOff=(function(){ try{ const j=JSON.parse(localStorage.getItem('vera_runs_off')||'{}'); return { ctx:!!j.ctx, cv:!!j.cv }; }catch(_){ return { ctx:false, cv:false }; } })();
-  function _runsToggle(which, on){ if(!(which in _runsOff)) return; _runsOff[which]=(on==null)?!_runsOff[which]:!on; try{ localStorage.setItem('vera_runs_off', JSON.stringify(_runsOff)); }catch(_){} document.querySelectorAll('[data-runs="'+which+'"]').forEach(b=>b.classList.toggle('on', !_runsOff[which])); try{ _ctxRunsDraw(); _cvRunsDraw(); }catch(_){} return !_runsOff[which]; }
+  function _runsToggle(which, on){ if(!(which in _runsOff)) return; _runsOff[which]=(on==null)?!_runsOff[which]:!on; try{ localStorage.setItem('vera_runs_off', JSON.stringify(_runsOff)); }catch(_){} _runsSync(); try{ _ctxRunsDraw(); _cvRunsDraw(); }catch(_){} return !_runsOff[which]; }
+  // the switch is on the runs themselves — each column's own header — as well as in the ⋯ sheet; they are all one state
+  function _runsSync(){ try{ Object.keys(_runsOff).forEach(k=>{ document.querySelectorAll('[data-runs="'+k+'"]').forEach(b=>b.classList.toggle('on', !_runsOff[k])); }); }catch(_){} }
+  /* the runs stand down while a menu is over the surface they cross (defect 67). The page's own ☰ swaps the detail
+     column the graph sits in for the TOP-LEVEL LIST, and the graph's node positions outlive the graph: routed across it
+     anyway, the runs read as if the MENU were what the turn had read. The same for the tools sheet and a context menu. */
+  function _runsBlocked(){ try{ if(document.querySelector('#toolsSheet.on')) return true; if(document.querySelector('.cmw')) return true; if(document.querySelector('#rightRail .lhm-rail .lhm-ico.top.on')) return true; }catch(_){} return false; }
+  // …and the graph has to BE there: on screen, not swapped out from under its own positions
+  function _runsGraphVisible(){ const el=_ctxCol; if(!el||!el.isConnected) return false; const r=el.getBoundingClientRect(); return r.width>2&&r.height>2; }
+  // the menu instance posts its lanes to the chat instance; when it draws none it says so, or the chat keeps the last set
+  let _ctxLanesSent='';
+  function _ctxLanesPost(arr){ const s=JSON.stringify(arr||[]); if(s===_ctxLanesSent) return; _ctxLanesSent=s; _lhmPost('lanes',{ lanes:arr||[] }); }
+  const _ctxRunsStand=(svg)=>{ svg.innerHTML=''; svg.removeAttribute('data-lit'); if(_EMBED.only==='menu') _ctxLanesPost([]); };
+  // what the pointer is on, in the tier that draws only that: a record's type in the graph, or the block in focus
+  let _ctxHoverSrc='', _ctxHoverBlock=false;
+  const _den=()=>(document.documentElement.getAttribute('data-den')||'full').toLowerCase();
+  // those surfaces open and close without telling anyone, and nothing else redraws afterwards: a click on the rail's
+  // ☰, on the ⋯, or in a context menu is the cue to look again — and to put the runs back when it has gone
+  const _runsLook=()=>setTimeout(()=>{ try{ _ctxRunsDraw(); _cvRunsDraw(); }catch(_){} }, 90);
+  document.addEventListener('click', ev=>{ try{ const t=ev.target; if(t&&t.closest&&(t.closest('#rightRail .lhm-rail .lhm-ico')||t.closest('#hdrMore')||t.closest('.cmw'))) _runsLook(); }catch(_){} }, true);
   function _ctxRunsDraw(){
     const svg=document.getElementById('ctxRunsOverlay'); if(!svg) return;
-    if(_runsOff.ctx){ svg.innerHTML=''; return; }
+    if(_runsOff.ctx||_runsBlocked()){ _ctxRunsStand(svg); return; }
+    // Zen keeps the words and nothing else — the canvas runs have always read the tier, and these now read it too
+    if(_den()==='zen'){ _ctxRunsStand(svg); return; }
     if(_EMBED.only==='chat'&&_ctxRemote.on&&!_ctxGrown){
       // the graph is the menu instance's: it posts one connector height per type; this side draws the channel lanes in
       // the column's gutter and one arrival per type on the block, in from the frame's left edge (the seam)
@@ -6510,7 +6540,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     }
     if(Date.now()-_ctxTypingT<900){ svg.innerHTML=''; if(!_ctxTypingTimer) _ctxTypingTimer=setTimeout(()=>{ _ctxTypingTimer=null; _ctxRunsDraw(); }, 950); return; }
     const col=document.getElementById('chatColumn'), gcol=_ctxGrown?document.querySelector('#rightRail.lhm-host > .lhm-det'):document.getElementById('graphColumn');
-    if(!_pages.has('graph')||!_ctxCol||!col||!gcol){ svg.innerHTML=''; return; }
+    if(!_pages.has('graph')||!_ctxCol||!col||!gcol||!_runsGraphVisible()){ _ctxRunsStand(svg); return; }
     if(!_ctxCol._ctxRunsHoverBound){ _ctxCol._ctxRunsHoverBound=true; _ctxCol.addEventListener('mouseover', ev=>{ const n=ev.target&&ev.target.closest&&ev.target.closest('.cg-node[data-id],.cg-mem[data-id]'); _ctxRunsHover(n?n.dataset.id:''); }); _ctxCol.addEventListener('mouseleave', ()=>_ctxRunsHover('')); }
     // the types in this turn's context decide the channel's width; the channel is set first, everything measured after
     const gc0=gcol.getBoundingClientRect();
@@ -6521,8 +6551,12 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     // lane per type and side, so a type read by both has two runs, each to its own block; a block scrolled out of view
     // lends its runs to the other
     const bySrc={}; all.filter(p=>p.lit).forEach(p=>{ const side=(p.by==='a'&&TT.a)?'a':(TT.u?'u':(TT.a?'a':'u')); const k=p.source+'|'+side; (bySrc[k]=bySrc[k]||{src:p.source, side, col:p.col, nodes:[]}).nodes.push(p); });
-    const G=Object.keys(bySrc).map(k=>bySrc[k]).filter(g=>TT[g.side]); const rn=G.length; _ctxRunsGutter(rn);
-    const T=TT.u||TT.a; if(!T||!rn){ svg.innerHTML=''; svg.removeAttribute('data-lit'); return; }
+    let G=Object.keys(bySrc).map(k=>bySrc[k]).filter(g=>TT[g.side]);
+    // Hover draws only what you are pointing at: the type under the pointer on the plot, or — pointing at the block in
+    // focus — everything it read. Full draws them all; Zen returned above. (The canvas runs pick the same way.)
+    if(_den()==='hover') G=_ctxHoverBlock?G:(_ctxHoverSrc?G.filter(g=>g.src===_ctxHoverSrc):[]);
+    const rn=G.length; _ctxRunsGutter(rn);
+    const T=TT.u||TT.a; if(!T||!rn){ _ctxRunsStand(svg); return; }
     const R=_ctxGrown?{left:0,top:0,width:window.innerWidth,height:window.innerHeight}:col.getBoundingClientRect(), gc=gcol.getBoundingClientRect();
     const M={left:Math.min.apply(null,[TT.u,TT.a].filter(Boolean).map(q=>q.left)), right:Math.max.apply(null,[TT.u,TT.a].filter(Boolean).map(q=>q.right)), top:T.top, bottom:T.bottom};
     svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
@@ -6580,7 +6614,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       out+=L(lx, g.ty, edgeAt(g.ty, g.side), g.ty, 'tr');    // one arrival per type, on ITS block's edge (the question or the response)
       }
     });
-    if(seam) _lhmPost('lanes',{ lanes:lanesOut });
+    if(seam) _ctxLanesPost(lanesOut);
     svg.innerHTML='<g fill="none" stroke-linecap="round">'+out+'</g>';
     svg.dataset.target=T.kind; _ctxRunsHover(svg.getAttribute('data-lit')?Object.keys(_ctxRunsIdSrc).find(id=>_ctxRunsIdSrc[id]===svg.getAttribute('data-lit'))||'':'');
   }
@@ -13206,7 +13240,7 @@ Your task: decide what to do next to advance toward the goal.
     sandbox:'<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="13" height="11" rx="1.4"/><path d="M5.5 7l2.6 2-2.6 2M9.6 11h3.2"/></svg>',
     ops:'<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="m9 2.4 2 4.2 4.6.6-3.4 3.2.9 4.6L9 12.8 4.9 15l.9-4.6L2.4 7.2 7 6.6z"/></svg>',
     settings:'<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 5h9M14 5h1.5M2.5 13h4M9 13h6.5"/><circle cx="12.6" cy="5" r="1.7"/><circle cx="7.6" cy="13" r="1.7"/></svg>'};
-  function _toolsSheet(on){ const s=document.getElementById('toolsSheet'), b=document.getElementById('hdrMore'); if(!s) return; const v=on==null?!s.classList.contains('on'):!!on; s.classList.toggle('on', v); if(b) b.classList.toggle('on', v); }
+  function _toolsSheet(on){ const s=document.getElementById('toolsSheet'), b=document.getElementById('hdrMore'); if(!s) return; const v=on==null?!s.classList.contains('on'):!!on; s.classList.toggle('on', v); if(b) b.classList.toggle('on', v); try{ _ctxRunsDraw(); _cvRunsDraw(); }catch(_){} }
   function _appearanceSheet(ev){ try{ if(window.veraUI&&typeof veraUI.openAppearance==='function'){ veraUI.openAppearance(ev); return; } }catch(_){} try{ if(typeof openThemeMenu==='function'){ openThemeMenu(ev); return; } }catch(_){} try{ VeraLHM.pick('settings'); }catch(_){} }
   /* ── THE SETTINGS PAGE (the Settings board): ⌘, — an index (Agent loop · Chat · Context · Appearance) beside the
      content; every field of the Config pane (rpCfg), the Loop pane (rpLoop) and the Context pane (rpCtx) MOVES into its
@@ -13353,6 +13387,7 @@ function _embedMount(){
       const g=document.createElement('div'); g.className='tb-group'; g.title='Relation runs — the lines from the context records to the message, and between the turns and the canvas items';
       [['ctx','Context → chat','The runs from the context records (the quick menu or the grown graph) to the message in focus'],['cv','Chat ↔ canvas','The runs between the turns and the items they made or read']].forEach(([k,label,title])=>{ const b=document.createElement('button'); b.className='tb-btn'+(_runsOff[k]?'':' on'); b.type='button'; b.dataset.runs=k; b.textContent=label; b.title=title; b.addEventListener('click',()=>_runsToggle(k)); g.appendChild(b); });
       row.appendChild(g); sheet.appendChild(row); }
+    _runsSync();   // the sheet's switches and the columns' own show the one state
     document.addEventListener('click', ev=>{ if(!sheet.classList.contains('on')) return; if(sheet.contains(ev.target)||(ev.target.closest&&ev.target.closest('#hdrMore'))) return; _toolsSheet(false); });
     _chromeFoldMount(bar, sheet);
     // the meter opens the Context menu (the board: the budget bar is the way into the context rail)
@@ -17913,7 +17948,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     }
     _appearanceSync();
     try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); cv&&cv.retier&&cv.retier(); }catch(_){}   // the focus set follows the tier
-    try{ _cvRunsDraw(); }catch(_){}
+    try{ _cvRunsDraw(); _ctxRunsDraw(); }catch(_){}   // BOTH families read the tier (defect 70), so both are redrawn for it
     try{ if(_xpl.on) _xplRefresh(); }catch(_){}   // the scene's images follow the tier
   }
   function setDensity(id){ _appearanceApply({den:String(id||'full')}); }
