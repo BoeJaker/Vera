@@ -1267,6 +1267,11 @@ html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !imp
 .drv-ribbon .who,.drv-ribbon .pol{font-family:var(--mono);font-size:8.5px;color:var(--dim2)}
 .drv-ribbon .btn.xs{font-size:8.5px;padding:0 6px}
 #canvasColumn .tri-hd .drv-ribbon{margin-left:8px;max-width:60%;overflow:hidden}
+/* the design's COLS segment in the column's one title row */
+#cvColCols{display:inline-flex;align-items:center;gap:2px}
+#cvColCols .cols-k{font-size:8.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7280));font-weight:600;margin-right:3px}
+#cvColCols .btn.xs{min-width:16px;padding:0 5px}
+#cvColCols .btn.xs.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent))}
 .cchip{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:10px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:var(--label-size,9.5px);letter-spacing:.2px;cursor:pointer;user-select:none;white-space:nowrap;line-height:1.5}
 .cchip:hover{color:var(--text);border-color:var(--border2)}
 .cchip.on{color:var(--acc);border-color:var(--acc);background:color-mix(in srgb,var(--acc) 12%,transparent)}
@@ -2713,7 +2718,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div id="canvasColumn" class="tri-col" data-col="canvas">
       <div class="tri-hd"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span id="cvDrvRibbon" class="drv-ribbon" style="display:none" data-w="driven ribbon · canvas"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button class="btn xs" onclick="CH._cvDrvUndo()" title="Undo the directive that placed this">undo</button><button class="btn xs" onclick="CH._drvLog()" title="The directive log, the policy, the asks — the Driven panel">log</button><button class="btn xs" onclick="CH._cvDrvRibbon(null)" title="Dismiss">&#215;</button></span><span class="sp"></span>
         <span class="nowbar" title="Items in the NOW band"><i></i><b>NOW</b><span id="cvColNow">0</span></span>
-        <button class="btn xs" id="cvColCols" onclick="CH._cvColumns()" title="Columns on the stage — items pack around the pinned ones">1 col</button>
+        <span class="xmseg" id="cvColCols" title="Columns on the stage — items pack around the pinned ones"><b class="cols-k">COLS</b><button class="btn xs" data-cols="1" onclick="CH._cvColumns(1)">1</button><button class="btn xs" data-cols="2" onclick="CH._cvColumns(2)">2</button><button class="btn xs" data-cols="3" onclick="CH._cvColumns(3)">3</button><button class="btn xs" data-cols="4" onclick="CH._cvColumns(4)">4</button></span>
         <button class="btn xs" data-runs="cv" onclick="CH._runsToggle('cv')" title="The runs between the turns and the items they made or read — the same switch as the ⋯ sheet's">Runs</button>
         <button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></div>
       <div class="tri-bd" id="canvasColumnBody"></div>
@@ -6213,7 +6218,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     try{ const r=await _capCall('canvas.session.resolve',{session_id:SID}); cid=(r&&r.id)||''; }catch(_){}
     if(!cid) cid='cv_session_'+String(SID).replace(/[^A-Za-z0-9_.-]/g,'_').slice(0,64);
     let el=host.querySelector('vera-canvas');
-    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); try{ el.setAttribute('nb-api', _NB_API_BASE()); }catch(_){} host.appendChild(el);
+    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); el.setAttribute('bare','');   // the column's own .tri-hd IS the head (defect 74) try{ el.setAttribute('nb-api', _NB_API_BASE()); }catch(_){} host.appendChild(el);
       // the stage follows the transcript: its turn tops, its scroll, its reflow
       el.addEventListener('vera:canvas:placed', ()=>_cvRunsDraw());
       el.addEventListener('vera:canvas:hover', ev=>{ _cvHoverKey=(ev.detail||{}).key||null; _cvRunsDraw(); });
@@ -6225,6 +6230,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       if(!_cvStageTimer) _cvStageTimer=setInterval(()=>{ if(_pages.has('canvas')) _cvStageSync(); }, 700);
       const msgsEl=document.getElementById('msgs');
       if(msgsEl&&!msgsEl._cvRelBound){ msgsEl._cvRelBound=true; msgsEl.addEventListener('scroll', _cvRelFocus, {passive:true}); msgsEl.addEventListener('click', _cvRelFocus); }
+      _cvColsSync();
       el.addEventListener('vera:canvas:rendered', ev=>{ const d=ev.detail||{}; const n=document.getElementById('cvColNow'); if(n) n.textContent=String(d.now||0); const s=document.getElementById('cvColSub'); if(s) s.textContent=(d.pinned?d.pinned+' pinned · ':'')+(d.parked?d.parked+' parked · ':'')+'rev '+(d.revision||0); _cvStageSync(true); }); }
     if(el.getAttribute('canvas-id')!==cid) el.setAttribute('canvas-id', cid);
     try{ window._veraBase=BASE; }catch(_){}
@@ -6247,8 +6253,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      turn's right edge, down the gutter at the column's edge, into the item's left edge — never diagonally, never
      across a card — and the checker counts crossings and missed joins (zero by construction in one column). ── */
   let _cvStageTimer=null, _cvStageRO=null, _cvStageSig='', _cvHoverKey=null, _cvHoverMid=null, _cvLastCheck=null;
-  function _cvCols(){ let n=1; try{ n=parseInt(localStorage.getItem('vera:canvas:cols')||'1',10)||1; }catch(_){} return Math.max(1, Math.min(2, n)); }
-  function _cvColumns(){ const n=_cvCols()===1?2:1; try{ localStorage.setItem('vera:canvas:cols', String(n)); }catch(_){} const b=document.getElementById('cvColCols'); if(b) b.textContent=n+' col'+(n>1?'s':''); const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv) cv.setAttribute('columns', String(n)); }
+  // the element has placed into 1-4 columns all along; the control was the only thing that stopped at 2 (defect 77)
+  function _cvCols(){ let n=1; try{ n=parseInt(localStorage.getItem('vera:canvas:cols')||'1',10)||1; }catch(_){} return Math.max(1, Math.min(4, n)); }
+  function _cvColsSync(){ try{ const n=_cvCols(); document.querySelectorAll('#cvColCols button[data-cols]').forEach(b=>b.classList.toggle('on', +b.dataset.cols===n)); }catch(_){} }
+  function _cvColumns(n){ n=Math.max(1, Math.min(4, parseInt(n,10)||1)); try{ localStorage.setItem('vera:canvas:cols', String(n)); }catch(_){} _cvColsSync(); const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv) cv.setAttribute('columns', String(n)); try{ _cvRunsDraw(); }catch(_){} }
   function _cvTurnTops(){ const msgs=document.getElementById('msgs'); if(!msgs) return {}; const mr=msgs.getBoundingClientRect(); const out={}; msgs.querySelectorAll('.mwrap[data-mid]').forEach(w=>{ const r=w.getBoundingClientRect(); out[w.dataset.mid]={top:Math.round(r.top-mr.top+msgs.scrollTop), height:Math.round(r.height)}; }); return out; }
   function _cvStageSync(force){
     const cv=document.querySelector('#canvasColumnBody vera-canvas'); const msgs=document.getElementById('msgs'); if(!cv||!msgs||!_pages.has('canvas')) return;

@@ -212,7 +212,11 @@
     color:var(--fg,#dce1e8)}
   .wrap{border:1px solid var(--border,#2a2f37);border-radius:10px;
     background:var(--bg1,#15181d);overflow:hidden}
-  .head{display:flex;align-items:center;gap:8px;padding:6px 10px;
+  /* bare: the HOST draws the head. The tri-page column has its own title row - name, revision, the NOW count, the
+   columns, the switches - and the element drawing a second "Session canvas" line inside it put two headers on top of
+   each other and pushed the items down the column (Notes/42 defect 74). The widget element makes the same bargain. */
+:host([bare]) .head{display:none}
+.head{display:flex;align-items:center;gap:8px;padding:6px 10px;
     border-bottom:1px solid var(--border,#2a2f37);background:var(--bg2,#1c2026)}
   .title{font-weight:600;flex:1 1 auto;min-width:0;overflow:hidden;
     text-overflow:ellipsis;white-space:nowrap}
@@ -713,7 +717,7 @@
   const EDITABLE = ['note', 'markdown', 'code', 'html'];
 
   class VeraCanvas extends (typeof HTMLElement !== 'undefined' ? HTMLElement : class {}) {
-    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id']; }
+    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare']; }
 
     constructor() {
       super();
