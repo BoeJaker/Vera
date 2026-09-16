@@ -157,6 +157,28 @@ def test_the_registry_panel_draws_the_boards_cards_and_inspector():
     assert "function surface()" in PANEL and "window.parent" in PANEL
 
 
+def test_the_preview_is_the_widget_at_that_size_not_a_sliver_of_it():
+    """Notes/42 defect 69. Measured on the surface as it stood: the M frame is 302x200 and held a 278x30 widget; the
+    XL frame 438x300 and held a 414x52. The frame asked for a minimum height and never gave the widget one, which the
+    widget cannot supply itself since its figures size to their own body. With the frame sized and the widget filling
+    it, the same two previews measure 278x180 and 414x280."""
+    src = _read("vera", "widgets", "widget_element.js")
+    assert ".vwc-pvf.m{width:302px;height:200px}.vwc-pvf.l{width:100%;height:200px}.vwc-pvf.xl{width:100%;height:300px}" in src
+    assert ".vwc-pvf.m,.vwc-pvf.l,.vwc-pvf.xl{display:flex;flex-direction:column;box-sizing:border-box}" in src
+    assert ".vwc-pvf.m > vera-widget,.vwc-pvf.l > vera-widget,.vwc-pvf.xl > vera-widget{flex:1 1 auto;min-height:0}" in src
+    # XS and S are a phrase with the widget set into it — those previews are sized by the line, and stay as they were
+    assert ".vwc-pvf.xs,.vwc-pvf.s{background:transparent" in src
+
+
+def test_an_edit_the_frame_does_not_care_about_still_reaches_the_preview():
+    # the preview is rebuilt only when one of a dozen keys changes; the record's actions, shape and arguments are not
+    # among them, so those edits used to leave it showing the record it was built with
+    src = _read("vera", "widgets", "widget_element.js")
+    assert "const recNow = JSON.stringify(out);" in src
+    assert "S.pv = vw; S.lastPv = keyNow; S.lastRec = recNow;" in src
+    assert "S.lastRec = recNow; try { vw.record = out; } catch (_) {}" in src
+
+
 def test_nothing_of_the_old_panel_is_removed():
     for fn in ("wrLoad", "wrKind", "wrWhere", "shown", "wrList", "wrOpen", "wrCatalog", "wrPreview", "wrNewRecord", "wrNewPreview", "wrPlace", "wrRemove", "wrSaveCopy", "wrDelete", "wrNewToggle", "wrNewSave"):
         assert re.search(r"function %s\(" % fn, PANEL), fn
