@@ -49,6 +49,10 @@ def test_the_mini_is_the_elements_face():
     # the element never draws (Notes/42 defect 84) - measured on the mirror, where .gal-host held a .vw-gal while the
     # element sat loaded and idle beside it.
     assert "const sig=(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'?'E':'-')+S.rows.map(r=>r.f+r.tok).join('|')" in src, "the renderer is part of the repaint key"
+    # and a key is only read when the menu is composed AGAIN, which nothing did once the element landed - so the
+    # stand-in stayed for the life of the page. Having fallen back, the menu watches for the element and composes once.
+    assert "if(!_ctxElWait) _ctxElWait=setInterval(" in src and "clearInterval(_ctxElWait); _ctxElWait=null; try{ VeraLHM.render(); }catch(_){}" in src, "the fallback is a stand-in, not a decision"
+    assert "} else if(_ctxElWait){ clearInterval(_ctxElWait); _ctxElWait=null; }" in src, "and it stops watching once the element is there"
     assert "if(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'){" in src
     assert "allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k])" in src
     assert "gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle });" in src   # the face it is drawn in (defect 60)
@@ -58,7 +62,7 @@ def test_the_mini_is_the_elements_face():
 
 def test_the_minis_detail_list_search_and_frames():
     src = _read("vera", "chat", "chat_panel.html")
-    assert "let _qGalSel='', _qSrcOpen={}, _qGalQ='';" in src
+    assert "let _qGalSel='', _qSrcOpen={}, _qGalQ='', _ctxElWait=null;" in src
     # ONE list: each source is a section that opens IN PLACE to its own records. A second list of everything under
     # the first was not integrating them - it was the same drawer with its button moved.
     assert 'class="gal-srch"' in src and 'class="grp-act gal-list' not in src
