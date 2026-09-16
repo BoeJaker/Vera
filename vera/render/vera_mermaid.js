@@ -320,8 +320,11 @@
     const t = {
       bg:    v(['--s1', '--bg1', '--bg0'], '#101012'),
       card:  v(['--s2', '--bg2'], '#1a1c20'),
-      line:  v(['--bd2', '--border2'], 'rgba(255,255,255,.22)'),
-      soft:  v(['--bd', '--border'], 'rgba(255,255,255,.09)'),
+      /* the drawing's own lines are not a panel's border. Reading them from --bd (a 9% white) and --bd2 (22%) left a
+         diagram sitting lighter than the words around it (Notes/42 defect 76), so the edges take the dim TEXT token and
+         the node outlines the strong border. An element's themeVariables still win over both. */
+      line:  v(['--t2', '--dim2', '--bd2', '--border2'], '#8a92a0'),
+      soft:  v(['--bd2', '--border2', '--bd', '--border'], 'rgba(255,255,255,.22)'),
       text:  v(['--t1', '--text', '--fg'], '#d8dce4'),
       dim:   v(['--t2', '--dim2', '--fg2'], '#8a92a0'),
       acc:   v(['--ac', '--acc'], '#5a9e8f'),
@@ -853,6 +856,10 @@
       this._vp.addEventListener('pointercancel', up);
       this._vp.addEventListener('wheel', e => {
         if (!this._svgEl) return;
+        // the wheel belongs to the PAGE unless you mean the diagram: a plain wheel scrolls the transcript past it, and
+        // ctrl (or Command, or a trackpad pinch, which arrives as a ctrl-wheel) zooms. A drawing in a transcript must
+        // not trap the scroll (Notes/42 defect 75).
+        if (!(e.ctrlKey || e.metaKey)) return;
         e.preventDefault();
         const r = this._vp.getBoundingClientRect();
         const mx = e.clientX - r.left, my = e.clientY - r.top;

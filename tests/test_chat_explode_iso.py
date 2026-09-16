@@ -57,5 +57,6 @@ def test_a_turn_selected_in_the_scene_drives_the_context_graphs_and_the_canvas()
     assert "try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}\n      try{ const t=(_xplEl.state().scene.turns||[]).find(x=>x.mid===mid); _cvRelevance(mid, (t&&t.text)||'', {apply:false});" in HTML
     assert "_saveFrame('Turn '+HISTORY.filter(h=>h.role==='user').length,true,{ mid:" in HTML   # a turn's frame carries its mid (the ctx-graph slice), so the sync can activate it
     # the element emits the turn for every selection path through select(mid)
-    assert "select(mid) { this._S.scene.sel = mid; this._schedule(); this.dispatchEvent(new CustomEvent('vera:xpl:turn'" in EL
+    # select also brings the picked plate into the frame when the iso is stacked (Notes/42 defect 62)
+    assert "select(mid) { this._S.scene.sel = mid; this._schedule(); this._isoBring(); this.dispatchEvent(new CustomEvent('vera:xpl:turn'" in EL
     assert "solo(on) {" in EL and "tilt(deg) {" in EL and "swing(deg) {" in EL and 'data-a="tiltu"' in EL and 'data-a="solo"' in EL
