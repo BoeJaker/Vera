@@ -1,0 +1,52 @@
+# /etc/systemd/system/vera-node-agent.service
+#
+# Vera node agent — the control/monitor plane on a compute worker, served on
+# :8770. Vera reaches it via nodes.agent.status / nodes.runner.* and derives the
+# address from the node's own ollama URL, so a node is configured once.
+#
+# Install (on each compute node):
+#   sudo cp vera_node_agent.py node_runner_core.py /home/Servers/StableDiffustionWhisper/
+#   sudo cp vera-node-agent.env.example /etc/default/vera-node-agent   # then set the token
+#   sudo cp vera-node-agent.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now vera-node-agent
+#
+# This exists because Vera could route work to a node but not see what it was
+# DOING, and could not stop it. ollama's API reports which models are RESIDENT,
+# never which are COMPUTING, and the CPU nodes are ungated so nothing tracked
+# their work at all. On 2026-09-16 a runner on cpu-247 burned twelve of the
+# Proxmox host's forty-eight cores for eighty minutes with no client waiting on
+# it — the orchestrator had restarted mid-generation and llama-server cannot
+# tell. Finding it took root on the Proxmox host and `pct exec`; so did killing
+# it. Neither generalises past Proxmox.
+#
+# Unlike gpu-inference.service this needs no torch and no GPU: it reads /proc.
+# That is deliberate — the nodes that went wrong are the CPU-only ones.
+
+[Unit]
+Description=Vera node agent (compute-worker control and monitoring)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+EnvironmentFile=-/etc/default/vera-node-agent
+ExecStart=/home/Servers/StableDiffustionWhisper/env/bin/python3 /home/Servers/StableDiffustionWhisper/vera_node_agent.py
+WorkingDirectory=/home/Servers/StableDiffustionWhisper
+
+# No models to load — it should be answering within a second or it is broken.
+TimeoutStartSec=30
+TimeoutStopSec=15
+Restart=always
+RestartSec=5
+
+# It signals other processes on this node, so it stays root, but it must not be
+# able to reach beyond the node.
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+StandardOutput=append:/var/log/vera_node_agent.log
+StandardError=append:/var/log/vera_node_agent.log
+
+[Install]
+WantedBy=multi-user.target

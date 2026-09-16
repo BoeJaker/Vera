@@ -9343,6 +9343,12 @@ def record_perf_event(kind: str, **fields) -> None:
 # diagnose. The dumper thread polls fast enough to catch stalls near this bound.
 _LOOP_HANG_DUMP_S = float(os.getenv("VERA_LOOP_HANG_DUMP_S", "1") or 1)
 
+# Absolute path of the Vera package, so the stall dumper can tell OUR frames
+# from the stdlib's. Derived from __file__ so it is right both for prod
+# (/home/boejaker/Vera/vera) and a container (/app/Vera/vera).
+from .monitor.stall_trace_core import stall_where as _stall_where  # noqa: E402
+_VERA_PKG_DIR = str(Path(__file__).resolve().parent)
+
 def _start_stall_stack_dumper():
     """Daemon thread that dumps the MAIN thread's stack when the event loop goes
     unresponsive — i.e. catches the exact synchronous call blocking the loop
@@ -9369,17 +9375,14 @@ def _start_stall_stack_dumper():
                 log.error("EVENT LOOP HUNG >%.1fs — main thread is stuck HERE "
                           "(this is the blocking call starving WebSockets):\n%s",
                           stalled, stack)
-                # Record for the Perf monitor UI (best-effort). Extract the
-                # deepest Vera/app frame as a compact "where" for the table.
+                # Record for the Perf monitor UI (best-effort). Pick the deepest
+                # frame INSIDE the Vera package — "deepest non-site-packages"
+                # used to win for the stdlib (json/decoder.py, _weakrefset.py,
+                # asyncio/runners.py), which hid the application frame directly
+                # above it and sent perf.scan's "Blocking call(s)" line at stdlib
+                # internals. See monitor/stall_trace_core.py.
                 try:
-                    _where = ""
-                    for _ln in reversed((stack or "").splitlines()):
-                        _s = _ln.strip()
-                        if _s.startswith("File \"") and "/site-packages/" not in _s:
-                            _where = _s.replace("File \"", "").split("\"")[0]
-                            _lno = _s.split("line ", 1)[1].split(",")[0] if "line " in _s else ""
-                            _where = f"{_where.split('/')[-1]}:{_lno}"
-                            break
+                    _where = _stall_where(stack, _VERA_PKG_DIR)
                     record_perf_event("hang", stalled_ms=round(stalled * 1000),
                                       where=_where, stack=stack[-4000:])
                 except Exception:
@@ -9809,6 +9812,10 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "vfs/vfs_capabilities.py"),
         os.path.join(_here, "monitor/monitor_capabilities.py"),
         os.path.join(_here, "monitor/perf_capabilities.py"),
+        # Sees and controls the compute workers themselves — perf_capabilities
+        # reports a stalled LOOP, this reports a runner on another node that
+        # nothing is waiting for any more.
+        os.path.join(_here, "workers/node_agent_capabilities.py"),
         os.path.join(_here, "babblefish/babblefish_capabilities.py"),
         os.path.join(_here, "netmon/netmon_capabilities.py"),
         os.path.join(_here, "provisioning/provisioning_capabilities.py"),

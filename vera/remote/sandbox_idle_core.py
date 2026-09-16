@@ -99,6 +99,76 @@ def idle_plan(records: Iterable[dict], aliases: Mapping[str, str], *,
     return plan
 
 
+@dataclass
+class ReapPlan:
+    """What _registry_reap_tick should delete, and why it spared the rest."""
+    remove: List[str] = field(default_factory=list)       # session_ids to hdel
+    kept_archived: int = 0      # has a committed_image — it IS the restore handle
+    kept_fresh: int = 0         # used too recently
+    kept_present: int = 0       # its container still exists
+    kept_unproven: int = 0      # host did not answer, so absence is not established
+    capped: bool = False        # hit `limit`; the rest wait for the next tick
+
+
+def reap_plan(records: Iterable[dict], *, now: float, idle_s: float,
+              state_maps: Mapping[str, Mapping[str, str]],
+              host_ok: Mapping[str, bool],
+              local_backend: str = "local",
+              limit: int = 200) -> ReapPlan:
+    """Decide which registry rows have nothing left to point at.
+
+    KEY_SBX is append-only in practice: stopping a session removes its
+    container but keeps the record, because for an ARCHIVED session the record
+    is the restore handle (it names the committed image). Rows with no such
+    image just accumulate — prod reached 1554 rows, 1366 of them naming
+    containers that no longer existed, and every scan paid for all of them.
+
+    A row is reaped only when all of these hold:
+      * no `committed_image` — nothing to restore from, so nothing is lost
+      * `last_used` is at least `idle_s` old (an unstamped row is never reaped)
+      * its container genuinely does not exist
+
+    `host_ok[host_id]` must be True for that last clause to count. The docker
+    state query returns an EMPTY map for a host it could not reach, so without
+    this an outage would read as "every container is gone" and empty the
+    registry — and there is a permanently unreachable host in the estate.
+    """
+    plan = ReapPlan()
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        sid = rec.get("session_id")
+        if not sid:
+            continue
+        if len(plan.remove) >= limit:
+            plan.capped = True
+            break
+        if rec.get("committed_image"):
+            plan.kept_archived += 1
+            continue
+        last = float(rec.get("last_used") or 0)
+        if not last or now - last < idle_s:
+            plan.kept_fresh += 1
+            continue
+        if rec.get("backend") == local_backend:
+            # No container to be absent; the local backend's workspace is a
+            # plain directory, so "inactive and long stale" is the signal.
+            if rec.get("active"):
+                plan.kept_present += 1
+                continue
+        else:
+            hid = str(rec.get("docker_host_id") or "local")
+            if not host_ok.get(hid):
+                plan.kept_unproven += 1
+                continue
+            cname = rec.get("container")
+            if cname and state_maps.get(hid, {}).get(cname):
+                plan.kept_present += 1
+                continue
+        plan.remove.append(str(sid))
+    return plan
+
+
 def own_container_to_retire(own: Optional[dict], target: Optional[dict]) -> Optional[str]:
     """When `own` (the session being linked) already holds a docker container
     that is not the target's, return its name — the link makes it unreachable
