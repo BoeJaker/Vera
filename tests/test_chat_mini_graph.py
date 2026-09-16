@@ -44,6 +44,11 @@ def test_the_mini_has_both_faces_and_the_quick_menu_switches_them():
 
 def test_the_mini_is_the_elements_face():
     src = _read("vera", "chat", "chat_panel.html")
+    # The quick menu returns early on an unchanged signature. A body composed before the element script has loaded
+    # draws the widget FALLBACK, and unless the renderer is part of that key the early return then fires for ever and
+    # the element never draws (Notes/42 defect 84) - measured on the mirror, where .gal-host held a .vw-gal while the
+    # element sat loaded and idle beside it.
+    assert "const sig=(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'?'E':'-')+S.rows.map(r=>r.f+r.tok).join('|')" in src, "the renderer is part of the repaint key"
     assert "if(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'){" in src
     assert "allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k])" in src
     assert "gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle });" in src   # the face it is drawn in (defect 60)

@@ -13544,7 +13544,10 @@ function _embedMount(){
       const bar=el.querySelector('.ctx-grown-bar'); if(bar) bar.innerHTML='<span class="comp" title="'+esc(_lhmTxt('ctxMeterLabel'))+'">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span>';
       _graphColumnMount(); return; }
     const views=[['galaxy','galaxy'],['iso','iso'],['flow','flow'],['timeline','time']];
-    const sig=S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'')+'#'+_qGalStyle+_qGalSel+JSON.stringify(_qSrcOpen)+_qGalQ+':'+_memAllNodes.length+':'+_lastDagNodes.length+':'+S.nodes.filter(n=>n.included===false).length+':'+CTX_FRAMES.length+':'+_ctxActiveFrame+':'+_grFocusMid;
+    // The RENDERER is part of the key. A body composed before /ui/context_graph_element.js has loaded draws the
+    // widget fallback; without this the signature it stores looks identical to the one the element would produce,
+    // the early return fires on every later pass, and the element is never asked to draw at all (defect 84).
+    const sig=(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'?'E':'-')+S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'')+'#'+_qGalStyle+_qGalSel+JSON.stringify(_qSrcOpen)+_qGalQ+':'+_memAllNodes.length+':'+_lastDagNodes.length+':'+S.nodes.filter(n=>n.included===false).length+':'+CTX_FRAMES.length+':'+_ctxActiveFrame+':'+_grFocusMid;
     if(el.dataset.sig===sig) return; el.dataset.sig=sig;
     const data={nodes:S.nodes.map(n=>({id:n.id,label:n.label,family:String(n.source||'context').toLowerCase(),score:n.score,included:n.included})), rels:CTX_EDGES.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''}))};
     // the mini graph is the element's: the same state the grown graph holds, in miniature — records with their text, the
