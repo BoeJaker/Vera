@@ -62,7 +62,14 @@ def test_the_mini_is_the_elements_face():
 
 def test_the_minis_detail_list_search_and_frames():
     src = _read("vera", "chat", "chat_panel.html")
-    assert "let _qGalSel='', _qSrcOpen={}, _qGalQ='', _ctxElWait=null;" in src
+    assert "let _qGalSel='', _qSrcOpen={}, _qGalQ='', _ctxElWait=null, _ctxMiniWarned=false;" in src
+    # The drawer became sections, and one use of the old name survived inside the stateFrom call - so every render
+    # threw there, the catch emptied the galaxy and the widget fallback drew, which is why the face switch looked
+    # dead (Notes/42 defect 84). Nothing may name it again, and the plot carries no drawer of its own.
+    assert "_qGalList" not in src, "the drawer's old name is gone from every site, not just its declaration"
+    assert "sel:_qGalSel||null, list:false, q:_qGalQ," in src, "the plot has no drawer: the records are sections of the menu"
+    # and a render that throws has to say so, or the fallback hides it for the life of the page
+    assert "console.warn('context mini: the element threw, falling back to the widget renderer', e)" in src
     # ONE list: each source is a section that opens IN PLACE to its own records. A second list of everything under
     # the first was not integrating them - it was the same drawer with its button moved.
     assert 'class="gal-srch"' in src and 'class="grp-act gal-list' not in src
