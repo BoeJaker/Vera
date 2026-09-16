@@ -30,6 +30,16 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from .capability_enforcement import PolicyEnforcementDenied, enforcement_projection
+# Pure context-budget decisions — window vs prompt vs output vs retained prefix.
+# Imports nothing from Vera, so it is safe this early and cannot cycle. Pinned by
+# tests/test_ctx_policy.py, which is the point: these were inline and untestable.
+from .capabilities.ctx_policy_core import (
+    did_shift as _ctx_did_shift,
+    keep_tokens as _ctx_keep_tokens,
+    measured_chars_per_token as _ctx_measured_cpt,
+    output_bound as _ctx_output_bound,
+    safe_chars_per_token as _ctx_safe_cpt,
+)
 
 # HF tokenizers spins up Rust/rayon worker threads on first use; on a server that
 # forks subprocesses (docker/exec spawns) that both wastes CPU competing with the
@@ -947,7 +957,13 @@ def _merge_rule_over_base(rule: Optional[dict], base: dict,
     eff = dict(base or {})
     if not rule:
         return eff
-    for k in ("prefer_gpu", "deny_gpu", "pin", "allow", "deny", "model"):
+    # ctx_mode joins the routing fields (2026-09-16): how this role's output
+    # should be budgeted against the context window. "fit" (default) bounds
+    # output to what the window actually holds; "longform" allows the runner's
+    # context shift, which is the supported mechanism for output LONGER than
+    # the window — see ctx_policy_core. It belongs here rather than in options
+    # because it is a policy per role, not a sampling knob.
+    for k in ("prefer_gpu", "deny_gpu", "pin", "allow", "deny", "model", "ctx_mode"):
         v = rule.get(k)
         if v:
             eff[k] = v
@@ -963,7 +979,7 @@ def _merge_rule_over_base(rule: Optional[dict], base: dict,
             # LIFT a base deny_gpu (e.g. reader jumps to GPU on big digests).
             if k in ("prefer_gpu", "deny_gpu"):
                 eff[k] = bool(v)
-            elif k in ("pin", "allow", "deny", "model") and v:
+            elif k in ("pin", "allow", "deny", "model", "ctx_mode") and v:
                 eff[k] = v
             elif k == "options" and isinstance(v, dict):
                 eff["options"] = {**(eff.get("options") or {}), **v}
@@ -1019,7 +1035,25 @@ def _route_stats_key(model: str, iid: str, job_type: str) -> str:
 
 
 def _route_stats_update(model: str, iid: str, job_type: str,
-                        elapsed_s: float, tokens: int, prompt_chars: int) -> None:
+                        elapsed_s: float, tokens: int, prompt_chars: int,
+                        prompt_tokens: int = 0, num_ctx: int = 0) -> None:
+    """Record what a route actually did.
+
+    `prompt_tokens` (ollama's prompt_eval_count) and `num_ctx` were added
+    2026-09-16 and carry two things nothing else could supply:
+
+    * **the real chars/token for this route.** The window arithmetic used a flat
+      3.4, which over-counted prose but UNDER-counted the JSON, source and
+      loop-step text the agent loop actually sends (measured: 2.35-3.14). An
+      under-count over-states the room left for output, which is what pushes a
+      generation past the window.
+    * **whether the call context-SHIFTED.** prompt_eval_count + eval_count >
+      num_ctx means the runner discarded part of the prompt to keep going, and
+      ollama launches every runner with `--keep 4`, so what it discards is the
+      system prompt. Nothing could see this before: llama.cpp's shift is not in
+      any log we can reach (a deliberately forced shift logged nothing on all
+      three nodes), but both counts arrive on every response we already parse.
+    """
     key = _route_stats_key(model, iid, job_type)
     s = _ROUTE_STATS.get(key)
     tps = (tokens / elapsed_s) if (elapsed_s and elapsed_s > 0 and tokens) else 0.0
@@ -1030,6 +1064,18 @@ def _route_stats_update(model: str, iid: str, job_type: str,
         _ROUTE_STATS[key] = s
     a = _ROUTE_STATS_EMA
     s["n"] += 1
+    # Measured chars/token — the ratio the window arithmetic should be using.
+    cpt = _ctx_measured_cpt(prompt_chars, prompt_tokens)
+    if cpt:
+        s["ema_chars_per_token"] = round(
+            (1 - a) * float(s.get("ema_chars_per_token") or cpt) + a * cpt, 3)
+        s["n_tok_measured"] = int(s.get("n_tok_measured") or 0) + 1
+    # Context-shift telemetry.
+    if prompt_tokens and num_ctx:
+        s["n_ctx_measured"] = int(s.get("n_ctx_measured") or 0) + 1
+        if _ctx_did_shift(prompt_tokens, tokens, num_ctx):
+            s["shifts"] = int(s.get("shifts") or 0) + 1
+            s["last_shift_ts"] = now_iso()
     s["ema_elapsed_s"] = round((1 - a) * s["ema_elapsed_s"] + a * elapsed_s, 3)
     s["ema_tokens"] = round((1 - a) * s["ema_tokens"] + a * float(tokens or 0), 1)
     if tps > 0:
@@ -1045,6 +1091,41 @@ def _route_stats_update(model: str, iid: str, job_type: str,
             asyncio.get_running_loop().create_task(_save_route_stats())
         except Exception:
             pass
+
+
+def _route_chars_per_token(model: str, iid: str, job_type: str) -> float:
+    """Measured chars/token for this route, or the conservative default.
+
+    Prefers the exact (model, node, job_type) observation; falls back to any
+    observation of the same model on the same node; then to _CHARS_PER_TOKEN.
+    Only trusted after a few samples, so one odd prompt cannot move the window
+    arithmetic. Always returns the LOWER of measurement and default, because
+    over-counting tokens wastes a little window while under-counting shifts.
+    """
+    best = 0.0
+    key = _route_stats_key(model, iid, job_type)
+    s = _ROUTE_STATS.get(key)
+    if s and int(s.get("n_tok_measured") or 0) >= 3:
+        best = float(s.get("ema_chars_per_token") or 0)
+    if not best:
+        for st in _ROUTE_STATS.values():
+            if (st.get("model") == model and st.get("instance") == iid
+                    and int(st.get("n_tok_measured") or 0) >= 3):
+                cpt = float(st.get("ema_chars_per_token") or 0)
+                if cpt and (not best or cpt < best):
+                    best = cpt
+    return _ctx_safe_cpt(best or None, default=_CHARS_PER_TOKEN)
+
+
+def _output_ceiling_for(iid: str) -> int:
+    """Output ceiling for the node actually chosen — see the constants above.
+    GPU takes large outputs; CPU nodes do specialist work and embeddings."""
+    try:
+        has_gpu = bool((OLLAMA_INSTANCES.get(iid) or {}).get("has_gpu"))
+    except Exception:
+        has_gpu = False
+    pick = _OUTPUT_MAX_TOKENS_GPU if has_gpu else _OUTPUT_MAX_TOKENS_CPU
+    return pick if pick > 0 else _OUTPUT_MAX_TOKENS
 
 
 def _route_tps(model: str, iid: str) -> float:
@@ -2253,8 +2334,23 @@ def gpu_safe_ctx(model: str, iid: str) -> int:
 # token count comes out high and a borderline request escalates rather than
 # squeaking onto the GPU and spilling. Output is counted too — the KV cache has
 # to hold it.
-_CHARS_PER_TOKEN = float(os.environ.get("OLLAMA_CHARS_PER_TOKEN", "3.4"))
+# Fallback chars/token, used only until a route has been MEASURED. Lowered from
+# 3.4 to 2.3 on 2026-09-16: 3.4 under-counted exactly the content the agent loop
+# sends, measured against prompt_eval_count on qwen3.5-uncensored:9b —
+#   english prose 4.43 (+30% est, safe) · loop step 3.14 (-7.7%)
+#   json payload  2.99 (-12.2%)         · python source 2.35 (-30.9%)
+# Under-counting the prompt OVER-states the room left for output, so num_predict
+# comes out too big, prompt+output overruns the window, and the runner context-
+# shifts — discarding the system prompt, because ollama launches every runner
+# with `--keep 4`. Over-counting merely wastes a little window, so the default
+# must sit at the low end. _route_chars_per_token replaces this with the real
+# measured ratio per (model, job_type) as soon as one call has been observed.
+_CHARS_PER_TOKEN = float(os.environ.get("OLLAMA_CHARS_PER_TOKEN", "2.3"))
 _CTX_RESERVE_OUT = int(os.environ.get("OLLAMA_CTX_RESERVE_OUT", "1024"))
+# Headroom between prompt+output and the window edge. The old code reserved
+# NOTHING (`_room = num_ctx - _prompt_tok`), so any estimate error landed
+# straight on the edge and shifted.
+_CTX_SAFETY_MARGIN = int(os.environ.get("OLLAMA_CTX_SAFETY_MARGIN", "256"))
 
 
 def est_ctx_tokens(prompt: str = "", system: str = "", num_predict: int = 0) -> int:
@@ -2279,6 +2375,16 @@ _AUTO_CTX_FIT = os.environ.get("VERA_AUTO_CTX_FIT", "1").strip().lower() in (
 # ~8GB). Tune with VERA_OUTPUT_MAX_TOKENS; a caller that needs more sets
 # num_predict explicitly. 0 = don't reserve output room / don't set num_predict.
 _OUTPUT_MAX_TOKENS = int(os.environ.get("VERA_OUTPUT_MAX_TOKENS", "16384") or 0)
+# Per-device-class output ceilings. One uniform number cannot be right for both:
+# 16,384 tokens is ~16 minutes at the GPU's measured 17 tok/s and ~91 HOURS at a
+# CPU node's 0.05. The estate's division of labour (user, 2026-09-16) is that the
+# GPU takes large outputs, while the CPU nodes do specialist / higher-quality work
+# where an hour is acceptable, plus embeddings — so bulk generation is simply not
+# their job, and a smaller ceiling there is correct rather than restrictive.
+# Embeddings are unaffected either way: num_predict does not apply to them.
+# 0 = fall back to _OUTPUT_MAX_TOKENS.
+_OUTPUT_MAX_TOKENS_GPU = int(os.environ.get("VERA_OUTPUT_MAX_TOKENS_GPU", "0") or 0)
+_OUTPUT_MAX_TOKENS_CPU = int(os.environ.get("VERA_OUTPUT_MAX_TOKENS_CPU", "3072") or 0)
 
 
 def _round_ctx(n: int) -> int:
@@ -2902,7 +3008,12 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         # OUTPUT — reserving _OUTPUT_MAX_TOKENS so a big file/report isn't cut off
         # by a prompt-tight window — rounded to a stable step, capped to what this
         # node can safely hold.
-        _prompt_tok = int((len(prompt) + len(system)) / max(_CHARS_PER_TOKEN, 1.0))
+        # Use the MEASURED chars/token for this route, not a flat constant. The
+        # old 3.4 under-counted JSON/code/loop-step prompts by 8-31%, and an
+        # under-count is what pushes a generation past its window (see
+        # _route_chars_per_token).
+        _cpt = _route_chars_per_token(mdl, chosen, eff_job_type)
+        _prompt_tok = int((len(prompt) + len(system)) / max(_cpt, 1.0))
         _out_room = _OUTPUT_MAX_TOKENS if _OUTPUT_MAX_TOKENS > 0 else _CTX_RESERVE_OUT
         _fit = _round_ctx(_prompt_tok + _out_room)
         if _cap:
@@ -2920,11 +3031,41 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         # num_predict = the output room actually available in the window (bounded
         # by the sensible max), so a long generation can use it ALL but nothing
         # decodes PAST the window. Only when the caller pinned no positive value.
-        if _OUTPUT_MAX_TOKENS > 0:
+        # Per-role context policy (Model Routing: loop/<role> ctx_mode).
+        #   fit      — output must fit the window; the runner never shifts.
+        #   longform — output is MEANT to exceed the window; the shift is the
+        #              mechanism. Still bounded, by the device ceiling rather
+        #              than by the window, so it terminates.
+        _ctx_mode = str((eff_rule or {}).get("ctx_mode") or "fit").strip().lower()
+        _ceiling = _output_ceiling_for(chosen)
+        if _ctx_mode == "longform" and _ceiling > 0:
             _np = int(_merged_opts.get("num_predict") or 0)
             if _np <= 0:
-                _room = _merged_opts["num_ctx"] - _prompt_tok
-                _merged_opts["num_predict"] = max(512, min(_OUTPUT_MAX_TOKENS, _room))
+                _merged_opts["num_predict"] = _ceiling
+        elif _ceiling > 0:
+            _np = int(_merged_opts.get("num_predict") or 0)
+            if _np <= 0:
+                # Reserve a real margin. This used to be `num_ctx - _prompt_tok`
+                # with nothing held back, so any tokenizer disagreement (and the
+                # chat template's own wrapper tokens) landed straight on the
+                # window edge and shifted.
+                _merged_opts["num_predict"] = _ctx_output_bound(
+                    num_ctx=int(_merged_opts["num_ctx"]), prompt_tokens=_prompt_tok,
+                    ceiling=_ceiling, margin=_CTX_SAFETY_MARGIN)
+        # Keep the instructions across a shift, if one happens anyway. Runners
+        # launch at ollama's `--keep 4`, which discards the system prompt on the
+        # first shift; Vera has never set this.
+        #
+        # Derived from num_ctx ALONE, never from this call's system prompt.
+        # Measured: num_keep is baked in when the runner is first spawned for a
+        # (model, num_ctx) and silently ignored afterwards — 8/512/8 at the same
+        # model+ctx produced one runner at keep=8. A per-call value would
+        # therefore be decided by whichever request happened to spawn the
+        # runner. See ctx_policy_core.keep_tokens.
+        if "num_keep" not in _merged_opts:
+            _keep = _ctx_keep_tokens(int(_merged_opts["num_ctx"]))
+            if _keep:
+                _merged_opts["num_keep"] = _keep
     if _merged_opts:
         body["options"] = _merged_opts
     # Surface the ACTUAL sampling + window the model is called with, so the loop
@@ -3148,6 +3289,10 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                         _provider_ms = _phase_timing["provider_ms"]
                         _provider_elapsed = _provider_ms / 1000.0
                         eval_count = int(meta.get("eval_count") or len(buf))
+                        # Exact prompt length as the model tokenized it. Feeds
+                        # the measured chars/token ratio and the context-shift
+                        # detector in _route_stats_update.
+                        _prompt_eval = int(meta.get("prompt_eval_count") or 0)
                         # Surface truncation to the caller: Ollama sets
                         # done_reason="length" when it stopped because the output
                         # hit the context/num_predict ceiling (not a natural EOS).
@@ -3193,7 +3338,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                                           "cpu_spill": bool((_resid or {}).get("spilled"))})
                         _ollama_log_append(req_entry)
                         _route_stats_update(mdl, chosen, eff_job_type,
-                                            _provider_elapsed, eval_count, prompt_chars)
+                                            _provider_elapsed, eval_count, prompt_chars,
+                                            prompt_tokens=_prompt_eval,
+                                            num_ctx=int(_merged_opts.get("num_ctx") or 0))
                         try:
                             await emit_event({
                                 "type": "ollama.request_done", "req_id": req_id,
@@ -8310,7 +8457,13 @@ async def cap_ollama_routing_get(trace_id=None):
             description="Create or update a routing profile's rules, and optionally set it "
                         "active. A rule overrides the default for one job type. "
                         "Fields: profile (str! — name), label (str), "
-                        "rules (dict job_type->{prefer_gpu,deny_gpu,pin,allow:[],deny:[],model,avoid_embed,prefer}). `prefer` softly favours one node - it wins a tie and yields when it is the busier one. "
+                        "rules (dict job_type->{prefer_gpu,deny_gpu,pin,allow:[],deny:[],model,avoid_embed,prefer,ctx_mode}). `prefer` softly favours one node - it wins a tie and yields when it is the busier one. "
+                        "`ctx_mode` budgets this role's OUTPUT against the context window: "
+                        "'fit' (default) sizes num_predict to window-prompt-margin so the "
+                        "runner never context-shifts and the answer stays grounded in its "
+                        "prompt; 'longform' allows the shift - the supported mechanism for "
+                        "output LONGER than the window - still bounded by the node's "
+                        "device-class ceiling so it terminates. "
                         
                         "activate (bool). Omitted job types inherit the DEFAULT. Persists.")
 async def cap_ollama_routing_save(profile: str, label: str = "",
