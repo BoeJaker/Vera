@@ -39,6 +39,7 @@ from .capabilities.ctx_policy_core import (
     measured_chars_per_token as _ctx_measured_cpt,
     output_bound as _ctx_output_bound,
     safe_chars_per_token as _ctx_safe_cpt,
+    window_ceiling as _ctx_window_ceiling,
 )
 
 # HF tokenizers spins up Rust/rayon worker threads on first use; on a server that
@@ -2284,14 +2285,33 @@ _SPILL_SAMPLE   = float(os.environ.get("OLLAMA_SPILL_SAMPLE", "0.05"))
 _SPILL_TPS_HINT = float(os.environ.get("OLLAMA_SPILL_TPS_HINT", "60"))
 
 
+#: VRAM observed by the node agent (vera_node_agent's /node/status reads
+#: nvidia-smi on the node itself). Populated by nodes.agent.status. The catalog
+#: is the primary source; this fills the gap when it has not probed a node —
+#: gpu-250 reported vram_gb=None on 2026-09-16, which sent a 12.3 GB card down
+#: the "unknown VRAM" path in _auto_ctx_for.
+_NODE_VRAM_OBSERVED: Dict[str, float] = {}
+
+
 def _node_hw(iid: str) -> dict:
-    """Detected hardware for a node (catalog fills this); {} when unknown."""
+    """Detected hardware for a node (catalog fills this); {} when unknown.
+
+    Falls back to what the node agent last reported, so a node the catalog has
+    not probed still gets a real VRAM figure rather than none.
+    """
+    hw = {}
     try:
         cat = sys.modules.get("catalog_capabilities") or \
               sys.modules.get("Vera.vera.catalog.catalog_capabilities")
-        return (getattr(cat, "NODE_HW", {}) or {}).get(iid, {}) or {}
+        hw = dict((getattr(cat, "NODE_HW", {}) or {}).get(iid, {}) or {})
     except Exception:
-        return {}
+        hw = {}
+    if not hw.get("vram_gb"):
+        seen = _NODE_VRAM_OBSERVED.get(iid)
+        if seen:
+            hw["vram_gb"] = seen
+            hw.setdefault("vram_source", "node_agent")
+    return hw
 
 
 def _auto_ctx_for(model: str, iid: str, detected_max: int) -> int:
@@ -2309,15 +2329,14 @@ def _auto_ctx_for(model: str, iid: str, detected_max: int) -> int:
     inst = OLLAMA_INSTANCES.get(iid, {}) or {}
     hw = _node_hw(iid)
     vram = float(hw.get("vram_gb") or 0.0)
-    if not inst.get("has_gpu") or vram <= 0:
-        # CPU node (or GPU with unknown VRAM → treat conservatively as uncapped
-        # by the VRAM ceiling but still bounded by the model's own max).
-        return detected_max or _CTX_FLOOR
-    # Rough seat check: KV cache grows ~linearly with context. We don't know the
-    # model's per-token KV cost here, so use the global ceiling as the GPU
-    # default and let the residency probe correct it downward if it was wrong.
-    ceiling = OLLAMA_MAX_AUTO_CTX or detected_max or _CTX_FLOOR
-    return max(_CTX_FLOOR, min(detected_max or ceiling, ceiling))
+    # CPU vs GPU, and the unknown-VRAM case that used to return the model's FULL
+    # window for a 12 GB card — see ctx_policy_core.window_ceiling, which pins it.
+    # The residency probe (note_ctx_residency) still corrects a GPU ceiling
+    # downward afterwards if even this was too generous.
+    return _ctx_window_ceiling(
+        has_gpu=bool(inst.get("has_gpu")), vram_gb=vram,
+        detected_max=int(detected_max or 0),
+        gpu_ceiling=int(OLLAMA_MAX_AUTO_CTX or 0), floor=_CTX_FLOOR)
 
 
 def gpu_safe_ctx(model: str, iid: str) -> int:

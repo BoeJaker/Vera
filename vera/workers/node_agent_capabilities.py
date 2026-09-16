@@ -158,6 +158,18 @@ async def cap_nodes_agent_status(trace_id=None) -> Dict[str, Any]:
         if data is None:
             unreachable.append({"node": nid, "agent": url})
         else:
+            # Feed real VRAM back to the window arithmetic. The catalog is the
+            # primary source but had not probed gpu-250, so _auto_ctx_for saw
+            # vram_gb=None and offered a 12.3 GB card the model's full 262,144
+            # window. The agent reads nvidia-smi on the node itself, so this is
+            # measured rather than assumed.
+            gpu = data.get("gpu") or {}
+            total_mb = int(gpu.get("total_mb") or 0)
+            if total_mb > 0:
+                try:
+                    _orch._NODE_VRAM_OBSERVED[nid] = round(total_mb / 1024.0, 2)
+                except Exception:
+                    pass
             nodes.append({**data, "node_id": nid, "agent": url})
     return {"nodes": nodes, "unreachable": unreachable, "count": len(nodes)}
 
@@ -275,6 +287,13 @@ async def _reap_tick() -> None:
     the rule can be watched before it is trusted.
     """
     try:
+        # Refresh observed VRAM on the same tick — it costs one extra call and
+        # keeps _auto_ctx_for's window ceiling grounded in what the cards
+        # actually have.
+        try:
+            await cap_nodes_agent_status()
+        except Exception:
+            pass
         res = await _reap(dry_run=not REAP_ENABLED)
         if not res.get("stuck"):
             return
