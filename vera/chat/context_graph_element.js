@@ -567,10 +567,19 @@
       + '</div></div>';
   }
   // the mini's face: the whole layout in one box (no chips, no header) — the widget form calls this with the state
+  /* The mini has two faces (Notes/42 defect 60). DETAILED is what it grew into on this edge: every family on the
+     plot - the memory ring, the loop, the plan, the estate - with the lanes beneath it, the record picked showing its
+     card and the list drawer. SIMPLE is the board's: the context plot by itself, its rings, its spokes, its records
+     and the hub, and nothing else on top of it. The element draws whichever face it is handed; the switch is the
+     host's, so the quick menu and any other host can remember it their own way. */
   function miniHtml(S, w, h, opts) {
     w = w || 262; h = h || 196; opts = opts || {}; S = S || {};
-    const detail = opts.detail !== undefined ? opts.detail : S.sel, list = opts.list !== undefined ? !!opts.list : !!S.list, q = opts.q !== undefined ? opts.q : S.q;
-    const o = mini(Object.assign({}, S, { sel: detail || null, q: q || '' }), w, h);
+    const simple = String(opts.style || S.miniStyle || 'detailed').toLowerCase() === 'simple';
+    const detail = simple ? null : (opts.detail !== undefined ? opts.detail : S.sel), list = simple ? false : (opts.list !== undefined ? !!opts.list : !!S.list), q = simple ? '' : (opts.q !== undefined ? opts.q : S.q);
+    // the simple face is the CONTEXT plot: the other families are folded away for it, not drawn small
+    const base = simple ? Object.assign({}, S, { mix: Object.assign({}, S.mix || {}, { memory: 'off', loop: 'off', plan: 'off', estate: 'off' }), list: false }) : S;
+    const o = mini(Object.assign({}, base, { sel: detail || null, q: q || '' }), w, h);
+    if (simple) return '<div class="cg-mini simple" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div></div>';
     return '<div class="cg-mini' + (list ? ' listing' : '') + '" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div><div class="cg-lanes">' + drawLanes(o, { noRecord: true }) + '</div>'
       + (list ? listHtml(o, { compact: true, limit: 40 }) : '') + (o.rec ? recordCard(o.rec, { compact: true }) : '') + '</div>';
   }
