@@ -53,6 +53,11 @@ def test_the_minis_detail_list_search_and_frames():
     # the records and their search live in the "In this prompt" section now, not in a drawer inside the plot
     assert 'class="grp-act gal-list' in src and 'class="gal-srch"' in src
     assert "let gal='', recs='', miniH=196;" in src, "the plot keeps its box whatever the list is doing"
-    assert "recs=VeraContextGraph.miniList(st, { q:_qGalQ });" in src and "+recs+'</div>';" in src
+    # the rows carry the element's own scope wherever the host puts them: .cg-mini declares both the grid that
+    # lays a row out and every --cg-* colour, so bare rows draw as run-together text
+    assert "recs='<div class=\"cg-mini cg-recs\">'+VeraContextGraph.miniList(st, { q:_qGalQ })+'</div>';" in src
+    assert "+recs+'</div>';" in src
+    _el = _read("vera", "chat", "context_graph_element.js")
+    assert ".cg-mini.cg-recs{height:auto;overflow:visible}" in _el and ".cg-mini.cg-recs .cg-list{position:relative;inset:auto;width:100%;" in _el
     assert "'.cg-mini .cg-node[data-id], .cg-mini .cg-row[data-id]'" in src and "'.cg-mini [data-a=\"toggle\"][data-id]'" in src
     assert "_ctxCol.setFrames(CTX_FRAMES, {active});" in src and "let _ctxColFrameSig='';" in src   # ctx-graph-5: the frame in view is the active one
