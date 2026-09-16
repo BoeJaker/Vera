@@ -68,9 +68,20 @@
   const BLOCK = {
     markdown: c => `<div class="vc-md">${md(c.md || c.text || '')}</div>`,
 
-    code: c => `<div class="vc-codewrap">
-        <div class="vc-codehead">${esc(c.filename || c.lang || 'code')}</div>
-        <pre class="vc-pre"><code>${esc(c.code || '')}</code></pre></div>`,
+    /* a code item draws its source and, when the language is one a browser can simply show, the thing itself. The
+       preview is drawn in the column's live layer exactly as a diagram is: a sandboxed iframe, srcdoc, no network. It
+       is off until asked for, and the head carries the switch (Notes/42 defect 78 - the chat has had a Preview on its
+       fences all along; a canvas item never had one). */
+    code: (c, size, key, el) => {
+      const prev = !!(key && el && el._prevOn && el._prevOn[key]) && PREVIEWABLE(c.lang);
+      const head = `<div class="vc-codehead">${esc(c.filename || c.lang || 'code')}<span class="sp"></span>`
+        + (PREVIEWABLE(c.lang) && key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
+        + '</div>';
+      const bodyHtml = prev
+        ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>`
+        : `<pre class="vc-pre"><code>${esc(c.code || '')}</code></pre>`;
+      return `<div class="vc-codewrap">${head}${bodyHtml}</div>`;
+    },
 
     /* a diagram item is a LIVE rendered diagram: the mermaid source drawn by the estate's own element (<vera-mermaid>,
        the one the chat draws its fences with — never a CDN pulled in to draw inside a chat bubble). A keyed item holds
@@ -514,6 +525,16 @@
   // the picker row that means "this session's own sandbox" rather than a host of the estate; it never reaches an
   // item's content - picking it is resolved into a real host, container and socket first
   const SBX_PICK = '@session';
+  // the languages a browser can simply show - the same set the chat offers a Preview on
+  const PREVIEWABLE = (lang) => ['html', 'js', 'javascript', 'css', 'jsx', 'svg'].indexOf(String(lang || '').toLowerCase()) >= 0;
+  // a code item's preview document: html and svg stand on their own, css dresses a small sample, js runs on a bare page
+  function previewDoc(lang, code) {
+    const L = String(lang || '').toLowerCase(), src = String(code || '');
+    if (L === 'html' || L === 'svg') return src;
+    const head = '<!doctype html><meta charset="utf-8"><style>body{margin:0;padding:10px;background:#101012;color:#d8dce4;font:12px system-ui,sans-serif}</style>';
+    if (L === 'css') return head + '<style>' + src + '</style><h1>Heading</h1><p>A paragraph, a <a href="#">link</a> and a <button>button</button>, dressed by the sheet.</p>';
+    return head + '<body><script>try{' + src + '}catch(e){document.body.innerHTML=\'<pre style="color:#c96b6b">\'+String(e&&e.message||e)+\'</pre>\';}<\/script>';
+  }
   const _libs = {};
   function ensureLib(src, tag) {
     if (typeof document === 'undefined') return Promise.resolve(false);
@@ -1077,6 +1098,7 @@
       if (act === 'dgopen') { const c = this._contentOf(key) || {}; const code = String(c.mermaid || c.code || c.source || ''); const title = String(c.title || c.caption || 'Diagram');
         const ev2 = new CustomEvent('vera:canvas:diagram', { bubbles: true, composed: true, cancelable: true, detail: { key, code, title } }); this.dispatchEvent(ev2); if (ev2.defaultPrevented) return;
         try { this.dispatchEvent(new CustomEvent('vm:popout', { bubbles: true, composed: true, detail: { code, title } })); } catch (e) {} return; }
+      if (act === 'cprev') { this._prevOn = this._prevOn || {}; this._prevOn[key] = !this._prevOn[key]; this._open.add(key); if (this._doc) this.render(this._doc); return; }
       if (act === 'dgcopy') { const c = this._contentOf(key) || {}; try { navigator.clipboard.writeText(String(c.mermaid || c.code || c.source || '')); } catch (e) {} return; }
       if (act === 'dgsrc') { const p = it && it.querySelector('.vc-dgsrc'); if (p) p.hidden = !p.hidden; return; }
       if (act === 'tshare') { const h = it.querySelector('.vc-live[data-ws]'); const ws = h ? h.dataset.ws : ''; try { navigator.clipboard.writeText(location.origin + ws); } catch (e) {} return; }
@@ -1153,11 +1175,16 @@
           else if (kind === 'mermaid') { inner = document.createElement('vera-mermaid'); inner.setAttribute('bare', ''); inner.setAttribute('fill', ''); inner.setAttribute('title', h.dataset.title || 'diagram'); h.textContent = '';
             inner.addEventListener('vm:rendered', () => this._diagramGrew(key, inner)); this._mermaidInto(inner, key); }
           else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = ''; }
-          else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
+          else if (kind === 'preview') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);
+          inner.setAttribute('sandbox', 'allow-scripts');   // no network, no cookies, no same-origin: it only draws
+          h.textContent = ''; const cc = this._contentOf(key) || {}; inner.srcdoc = previewDoc(h.dataset.lang || cc.lang, cc.code || ''); }
+        else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
           el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);
           try { this.dispatchEvent(new CustomEvent('vera:canvas:live', { bubbles: true, detail: { key, kind, ws: h.dataset.ws || '', src: h.dataset.src || '' } })); } catch (e) {}
         } else if (kind === 'widget') { const inner = el.firstChild, rc = this._contentOf(key); const sz = h.dataset.size || 'm'; if (h.textContent) h.textContent = ''; if (inner && inner.getAttribute('size') !== sz) inner.setAttribute('size', sz); try { const j = JSON.stringify((rc && (rc.record || rc)) || null); if (inner && j && inner._recJson !== j) { inner._recJson = j; inner.record = rc.record || rc; } } catch (e) {}
         } else if (kind === 'mermaid') { if (h.textContent) h.textContent = ''; this._mermaidInto(el.firstChild, key); this._diagramGrew(key, el.firstChild);   // a re-rendered slot is new markup: the drawn diagram's height again
+        } else if (kind === 'preview') { if (h.textContent) h.textContent = ''; const f = el.firstChild, cc = this._contentOf(key) || {};
+          const doc = previewDoc(h.dataset.lang || cc.lang, cc.code || ''); if (f && f._doc !== doc) { f._doc = doc; f.srcdoc = doc; }
         } else if (kind === 'term' && h.dataset.ws) { const t = el.firstChild; if (t && t.getAttribute('ws') !== h.dataset.ws) { t.setAttribute('ws', h.dataset.ws); try { t.destroy && t.destroy(); t.connect(h.dataset.ws); } catch (e) {} } }
       });
       Object.keys(L).forEach((k) => { if (!body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]')) { try { L[k].remove(); } catch (e) {} delete L[k]; } });
