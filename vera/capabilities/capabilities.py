@@ -1983,10 +1983,23 @@ async def llm_generate(
     # Call ollama_generate with the true caller so logs/events show the real source.
     try:
         _ctx = await effective_num_ctx(model, instance_id or None, prefer_gpu, manual=_want_ctx)
-        _gen_opts = {"num_ctx": _ctx, "num_predict": _ctx}
+        # num_predict is deliberately NOT set here any more (2026-09-16).
+        #
+        # It used to be `num_predict = _ctx` — the whole window — which is more
+        # output than can fit, because the prompt already occupies part of it.
+        # Worse, setting it POSITIVE made ollama_generate's auto-fit block skip
+        # (`if _np <= 0`), so this path opted itself out of the one piece of code
+        # that sizes output correctly: num_ctx - prompt - margin, bounded by the
+        # node's device-class ceiling. The overflow did not truncate — runners
+        # launch with `--context-shift --keep 4`, so the generation continued
+        # with its system prompt discarded.
+        #
+        # Leaving it unset lets that block do its job. output_budget below still
+        # tightens further when the request STATES a length.
+        _gen_opts = {"num_ctx": _ctx}
     except Exception:
         _ctx = _want_ctx
-        _gen_opts = {"num_predict": _want_ctx}
+        _gen_opts = {}
     # When the request STATES a length, size num_predict to it. The comment
     # above assumes "the model still stops early at a natural EOS for short
     # answers"; census run 18 disproved that and it cost a goal - prose-only

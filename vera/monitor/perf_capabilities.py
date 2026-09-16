@@ -343,6 +343,52 @@ async def _check_ollama() -> List[Dict]:
     return out
 
 
+async def _check_ctx_shift() -> List[Dict]:
+    """Routes whose generations are overrunning their context window.
+
+    prompt_eval_count + eval_count > num_ctx means the runner discarded part of
+    the prompt to keep generating. Ollama launches every runner with `--keep 4`,
+    so what it discards is the system prompt: the model carries on fluently
+    having forgotten its instructions. Nothing could see this before — llama.cpp
+    does not log the shift anywhere reachable (a deliberately forced shift
+    logged nothing on all three nodes), but both counts arrive on every response
+    and _route_stats_update now records them.
+
+    A shift is not automatically wrong — it is the supported mechanism for
+    output longer than the window — but an UNINTENDED one means the window
+    arithmetic was off, and that is worth naming.
+    """
+    stats = getattr(_orch, "_ROUTE_STATS", {}) or {}
+    rows = []
+    for s in stats.values():
+        measured = int(s.get("n_ctx_measured") or 0)
+        shifts = int(s.get("shifts") or 0)
+        if measured >= 5 and shifts:
+            rows.append((shifts / measured, shifts, measured, s))
+    if not rows:
+        any_measured = any(int(s.get("n_ctx_measured") or 0) for s in stats.values())
+        return [_finding("ctx_shift", "ok", "Context window",
+                         "No context overruns observed"
+                         if any_measured else
+                         "No context measurements yet (needs traffic)", "")]
+    rows.sort(key=lambda r: -r[0])
+    worst = rows[0]
+    detail = "; ".join(
+        f"{s.get('job_type')}@{s.get('instance')} {n}/{m} calls "
+        f"({100.0 * r:.0f}%)" for r, n, m, s in rows[:4])
+    sev = "warn" if worst[0] >= 0.05 else "info"
+    return [_finding("ctx_shift", sev, "Context window",
+                     f"{len(rows)} route(s) overrunning the context window",
+                     detail,
+                     remediation=("prompt + output exceeded num_ctx, so the runner "
+                                  "discarded prompt tokens to continue — with "
+                                  "--keep 4 that means the system prompt. Either "
+                                  "the prompt-token estimate is low for this "
+                                  "content (see ema_chars_per_token on the route) "
+                                  "or num_ctx is too small for the work."),
+                     metric=round(100.0 * worst[0], 1))]
+
+
 async def _check_resources() -> List[Dict]:
     s = await _call("sysmon.status")
     if not isinstance(s, dict) or s.get("error"):
@@ -381,7 +427,7 @@ async def _check_resources() -> List[Dict]:
 async def perf_scan(trace_id=None) -> Dict:
     findings: List[Dict] = []
     for check in (_check_loop_stalls, _check_consumers, _check_zombie_jobs,
-                  _check_ollama, _check_resources):
+                  _check_ollama, _check_ctx_shift, _check_resources):
         try:
             findings += await check()
         except Exception as e:
