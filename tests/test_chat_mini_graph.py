@@ -19,11 +19,15 @@ def test_the_mini_has_both_faces_and_the_quick_menu_switches_them():
     el = _read("vera", "chat", "context_graph_element.js")
     # the element draws whichever face it is handed; the switch is the host's
     assert "const simple = String(opts.style || S.miniStyle || 'detailed').toLowerCase() === 'simple';" in el
-    # Simple is the board's plot with EVERY source on it. This check used to say the opposite - that the other
-    # families are folded away - which is what the face did and why Memory recalls, the family the user asked
-    # about by name, was missing from it. The board's legend names eight and its plot draws eight.
-    assert "const base = simple ? Object.assign({}, S, { list: false }) : S;" in el
-    assert "memory: 'off', loop: 'off', plan: 'off', estate: 'off'" not in el, "the simple face folds no family away"
+    # Simple is the BOARD's plot (Canvas.dc.html 1820-1827): one circle of rings around one hub, a plain dot per
+    # record coloured by its source, eight labels at the rim - one per SOURCE, Memory recalls among them. So the
+    # recalls take a sector like any other source instead of being lifted onto an arm, the session's own memory
+    # graph is not drawn beside them, and the loop, the plan and the estate keep to the detailed face.
+    assert "const base = simple ? Object.assign({}, S, { list: false, simplePlot: true }) : S;" in el
+    assert "const simple = !!S.simplePlot;" in el and "if (simple) { lvl.loop = 'off'; lvl.plan = 'off'; lvl.estate = 'off'; }" in el
+    assert "const ctx = nodes.filter((n) => (simple || n.source !== 'memory') && !off.has(n.source)" in el, "a recall is a source, not an arm"
+    assert "const memCtxAll = simple ? [] :" in el and "const memSessAll = (simple || lvl.memory === 'off') ? [] :" in el
+    assert "memory: 'off', loop: 'off', plan: 'off', estate: 'off'" not in el, "the simple face never folds the recalls away"
     # and nothing else is laid over it - no lanes, no list, no record card
     assert "if (simple) return '<div class=\"cg-mini simple\"" in el
     assert "const detail = simple ? null :" in el and "list = simple ? false :" in el
@@ -49,15 +53,25 @@ def test_the_mini_is_the_elements_face():
 
 def test_the_minis_detail_list_search_and_frames():
     src = _read("vera", "chat", "chat_panel.html")
-    assert "let _qGalSel='', _qGalList=false, _qGalQ='';" in src
-    # the records and their search live in the "In this prompt" section now, not in a drawer inside the plot
-    assert 'class="grp-act gal-list' in src and 'class="gal-srch"' in src
-    assert "let gal='', recs='', miniH=196;" in src, "the plot keeps its box whatever the list is doing"
+    assert "let _qGalSel='', _qSrcOpen={}, _qGalQ='';" in src
+    # ONE list: each source is a section that opens IN PLACE to its own records. A second list of everything under
+    # the first was not integrating them - it was the same drawer with its button moved.
+    assert 'class="gal-srch"' in src and 'class="grp-act gal-list' not in src
+    assert "let gal='', miniH=196, _recsOf=()=>'';" in src, "the plot keeps its box whatever a section is doing"
+    assert "_recsOf=(f)=>{" in src and "VeraContextGraph.miniList(st, { q:_qGalQ, fam:f })" in src
+    assert "+(open?_recsOf(r.f):'');" in src, "a section's records sit under the row that opened it"
+    assert "if(_qSrcOpen[f]){ delete _qSrcOpen[f];" in src and "else { _qSrcOpen[f]=true; _qSrcOn=f; }" in src, "opening a section lights its source on the plot"
+    _el2 = _read("vera", "chat", "context_graph_element.js")
+    assert "const o2 = opts.fam ? Object.assign({}, o, { list: o.list.filter((r) => String(r.source || '') === String(opts.fam)) }) : o;" in _el2
+    # the board's face is what the menu opens on
+    assert "localStorage.getItem('vera_ctx_mini_style')==='detailed'?'detailed':'simple'" in src, "simple is the default face"
     # the rows carry the element's own scope wherever the host puts them: .cg-mini declares both the grid that
     # lays a row out and every --cg-* colour, so bare rows draw as run-together text
-    assert "recs='<div class=\"cg-mini cg-recs\">'+VeraContextGraph.miniList(st, { q:_qGalQ })+'</div>';" in src
-    assert "+recs+'</div>';" in src
+    assert "return '<div class=\"cg-mini cg-recs\">'+VeraContextGraph.miniList(st, { q:_qGalQ, fam:f })+'</div>';" in src
     _el = _read("vera", "chat", "context_graph_element.js")
     assert ".cg-mini.cg-recs{height:auto;overflow:visible}" in _el and ".cg-mini.cg-recs .cg-list{position:relative;inset:auto;width:100%;" in _el
+    # and it has to be readable: the rim labels name the sources, and the rows are read one by one
+    assert ".cg-mini .cg-slbl{font-size:8.5px;" in _el and ".cg-mini .cg-hubt{font-size:8.5px}" in _el
+    assert ".cg-mini .cg-list{width:100%;left:0;border-left:none;font-size:10px}" in _el and ".cg-mini .cg-row{padding:3px 8px;font-size:10px;" in _el
     assert "'.cg-mini .cg-node[data-id], .cg-mini .cg-row[data-id]'" in src and "'.cg-mini [data-a=\"toggle\"][data-id]'" in src
     assert "_ctxCol.setFrames(CTX_FRAMES, {active});" in src and "let _ctxColFrameSig='';" in src   # ctx-graph-5: the frame in view is the active one

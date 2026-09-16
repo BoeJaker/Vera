@@ -32,7 +32,7 @@ def test_every_menu_has_the_boards_body_and_the_context_menu_is_the_galaxy_budge
     assert "if(_QUICK[m.id]) m.quick=_QUICK[m.id]; });" in HTML
     ctx = HTML[HTML.index("function _quickContext(el){"):HTML.index("function _quickSessions(el){")]
     assert "VeraWidget.draw('context_graph',data,'m',{height:196,bare:true,view:_qGalView,allEdges:_qGalAll,off:_qGalOff,color:srcCol,hub:'aide'" in ctx, "the galaxy is the widget form"
-    for s in ('data-w="context galaxy · graph" data-tpl="lhm:ctx-galaxy"', "class=\"vseg\"", "class=\"gal-all", "class=\"gal-mix\"", 'data-w="budget bar · meter" data-tpl="lhm:ctx-budget"', '<span class="comp">', 'In this prompt<button class="grp-act gal-list', 'title="Refresh the assembled context">↻</button>', '<div class="lrow', '<span class="wbar">'):
+    for s in ('data-w="context galaxy · graph" data-tpl="lhm:ctx-galaxy"', "class=\"vseg\"", "class=\"gal-all", "class=\"gal-mix\"", 'data-w="budget bar · meter" data-tpl="lhm:ctx-budget"', '<span class="comp">', 'In this prompt<button class="grp-act"', 'title="Refresh the assembled context">↻</button>', '<div class="lrow', '<span class="caret">', '<span class="wbar">'):
         assert s in ctx, s
     assert "nodeClick(d.dataset.id)" in ctx, "a record in the galaxy opens"
     assert "cta:{get label(){ return _ctxGrown?'Fold back to the quick menu ←':'Expand to the full graph →'; }, run:()=>_ctxGrow()}}," in HTML, "the CTA grows the menu into the full graph and folds it back"
