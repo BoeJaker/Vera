@@ -96,6 +96,10 @@ class OperatorSession:
     base_url: str = ""
     viewport: Dict[str, int] = field(default_factory=lambda: dict(DEFAULT_VIEWPORT))
     created_ts: float = field(default_factory=time.time)
+    # Last time anything touched this session. A context+page is a live chunk of
+    # a shared Chromium, so an abandoned session costs real memory until the
+    # process exits — see sweep_idle for the leak this bounds.
+    last_used: float = field(default_factory=time.time)
     # ref map: "e12" -> {"role","name","selector","bbox",...} (filled by perception)
     ref_map: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     history: List[Dict[str, Any]] = field(default_factory=list)
@@ -117,10 +121,14 @@ class OperatorSession:
             "refs": len(self.ref_map),
             "steps": len(self.history),
             "age_s": round(time.time() - self.created_ts, 1),
+            "idle_s": round(time.time() - self.last_used, 1),
             "url": self.meta.get("last_url", ""),
             "alive": self.page is not None,
             "policy": dict(self.policy or {}),
         }
+
+    def touch(self) -> None:
+        self.last_used = time.time()
 
 
 _SESSIONS: Dict[str, OperatorSession] = {}
@@ -163,20 +171,43 @@ async def start_session(session_id: str = "", base_url: str = "",
     if existing and existing.page is not None:
         try:
             if existing.context and existing.page and not existing.page.is_closed():
+                existing.touch()
                 return existing
         except Exception:
             pass
         await close_session(sid)
 
-    browser = await _get_browser()
+    global _browser
     vp = dict(viewport or DEFAULT_VIEWPORT)
-    context = await browser.new_context(
-        viewport=vp,
-        user_agent=_USER_AGENT,
-        ignore_https_errors=ignore_https_errors,
-        device_scale_factor=1,
-    )
-    page = await context.new_page()
+    context = page = None
+    # Two attempts, because the shared browser can legitimately go away between
+    # _get_browser() returning and new_context() being called: sweep_idle closes
+    # it once the last session ends, and a browser can also die on its own. A
+    # relaunch is cheap next to failing the caller's whole run.
+    for attempt in (1, 2):
+        browser = await _get_browser()
+        try:
+            context = await browser.new_context(
+                viewport=vp,
+                user_agent=_USER_AGENT,
+                ignore_https_errors=ignore_https_errors,
+                device_scale_factor=1,
+            )
+            page = await context.new_page()
+            break
+        except Exception as e:
+            try:
+                if context is not None:
+                    await context.close()
+            except Exception:
+                pass
+            context = page = None
+            if attempt == 2:
+                raise
+            log.warning("operator: browser was gone when starting session %s (%s) "
+                        "— relaunching once", sid, e)
+            async with _get_launch_lock():
+                _browser = None
     sess = OperatorSession(session_id=sid, base_url=base_url or "", viewport=vp,
                            target=dict(target or {}), context=context, page=page)
     _SESSIONS[sid] = sess
@@ -185,7 +216,13 @@ async def start_session(session_id: str = "", base_url: str = "",
 
 
 def get_session(session_id: str) -> Optional[OperatorSession]:
-    return _SESSIONS.get(session_id)
+    sess = _SESSIONS.get(session_id)
+    if sess is not None:
+        # Every observe/act goes through here, so this is the one place that
+        # reliably means "still in use" — without it the idle sweep would reap
+        # a session in the middle of a long mission.
+        sess.touch()
+    return sess
 
 
 def list_sessions() -> List[Dict[str, Any]]:
@@ -205,6 +242,90 @@ async def close_session(session_id: str) -> bool:
     sess.page = sess.context = None
     log.info("operator: session %s closed", session_id)
     return True
+
+
+#: A session untouched for this long is considered abandoned. Generous on
+#: purpose: a mission can legitimately sit between steps while a model thinks,
+#: and an LLM call's duration is unbounded.
+DEFAULT_SESSION_IDLE_S = 1800.0
+#: Once the last session ends, hold the browser this long before closing it, so
+#: a burst of back-to-back runs reuses one Chromium instead of relaunching.
+DEFAULT_BROWSER_LINGER_S = 300.0
+
+_browser_idle_since: Optional[float] = None
+
+
+def idle_session_ids(sessions: Dict[str, "OperatorSession"], *,
+                     now: float, idle_s: float) -> List[str]:
+    """Session ids untouched for at least `idle_s`. Pure — no Playwright, no
+    clock of its own — so the reap rule is unit-testable (test_operator_session_sweep).
+
+    A session with no page is already dead and is always collectable; that is
+    the shape a half-failed start leaves behind.
+    """
+    out: List[str] = []
+    for sid, sess in sessions.items():
+        if sess is None:
+            out.append(sid)
+            continue
+        if getattr(sess, "page", None) is None:
+            out.append(sid)
+            continue
+        last = float(getattr(sess, "last_used", 0) or 0)
+        if not last or now - last >= idle_s:
+            out.append(sid)
+    return out
+
+
+async def sweep_idle(idle_s: float = DEFAULT_SESSION_IDLE_S,
+                     linger_s: float = DEFAULT_BROWSER_LINGER_S) -> Dict[str, Any]:
+    """Close abandoned sessions, and the shared browser once none are left.
+
+    Why this exists (2026-09-16): `_SESSIONS` had no reaper and no cap, and the
+    shared Chromium lived for the whole process. Every operator run that raised,
+    timed out on its wall cap, or was CANCELLED skipped its close_session (the
+    call sat after run_loop rather than in a finally), so its context and page
+    stayed resident. Prod's headless_shell was observed at 8.4GB RSS / 110% CPU
+    on a host at 71.5% memory, next to the event-loop stalls that host
+    contention was feeding.
+
+    The browser close is the half that actually returns the memory: Chromium
+    does not hand much back while it lives, so reaping contexts alone would not
+    have shrunk that 8.4GB. start_session relaunches on demand and retries once
+    if it loses the race, so closing an idle browser is safe.
+    """
+    global _browser, _browser_idle_since
+    now = time.time()
+    closed = [sid for sid in idle_session_ids(_SESSIONS, now=now, idle_s=idle_s)]
+    for sid in closed:
+        try:
+            await close_session(sid)
+        except Exception as e:
+            log.debug("operator: idle sweep could not close %s: %s", sid, e)
+    if closed:
+        log.info("operator: idle sweep closed %d abandoned session(s) "
+                 "(idle >%.0fs): %s", len(closed), idle_s, ", ".join(closed[:6]))
+
+    browser_closed = False
+    if _SESSIONS:
+        _browser_idle_since = None
+    elif _browser is not None:
+        if _browser_idle_since is None:
+            _browser_idle_since = now
+        elif now - _browser_idle_since >= linger_s:
+            async with _get_launch_lock():
+                b, _browser = _browser, None
+            try:
+                if b is not None:
+                    await b.close()
+                    browser_closed = True
+                    log.info("operator: no sessions for %.0fs — shared browser "
+                             "closed, it will relaunch on demand", now - _browser_idle_since)
+            except Exception as e:
+                log.debug("operator: could not close idle browser: %s", e)
+            _browser_idle_since = None
+    return {"closed_sessions": closed, "browser_closed": browser_closed,
+            "live_sessions": len(_SESSIONS)}
 
 
 async def shutdown() -> None:

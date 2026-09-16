@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, capability, emit_event, enum_schema, register_ui,
+    schedule,
 )
 
 from Vera.vera.operator import browser_engine as _be
@@ -576,12 +577,18 @@ async def cap_connect(source: str = "", ref: str = "", goal: str = "",
                               "goal": goal[:200], "target": resolved.get("kind"),
                               "source": source, "ref": ref, "session_id": sid})
     await _op_clear_cancel(run_id)
-    result = await _loop.run_loop(goal, s, call_cap=_call, policy=policy, provider=provider,
-                                  max_steps=int(max_steps), canvas=resolved.get("canvas", False),
-                                  shots_dir=_shots_dir(sid) + f"/run-{run_id}", on_step=_on_step,
-                                  should_cancel=lambda: _op_is_cancelled(run_id))
-    if not keep_open:
-        await _be.close_session(sid)
+    # finally, not the happy path: run_loop raises on error, on its wall cap and
+    # on CANCELLATION (that is what should_cancel drives). Closing after it
+    # meant every such run left its browser context+page resident in the shared
+    # Chromium until the process exited.
+    try:
+        result = await _loop.run_loop(goal, s, call_cap=_call, policy=policy, provider=provider,
+                                      max_steps=int(max_steps), canvas=resolved.get("canvas", False),
+                                      shots_dir=_shots_dir(sid) + f"/run-{run_id}", on_step=_on_step,
+                                      should_cancel=lambda: _op_is_cancelled(run_id))
+    finally:
+        if not keep_open:
+            await _be.close_session(sid)
     result.update({"run_id": run_id, "source": source, "ref": ref,
                    "session_id": sid if keep_open else ""})
     await _op_record(run_id, {"type": "operator.run", "stage": "done", "run_id": run_id,
@@ -983,48 +990,52 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
     # A stale flag from a previous run of the same id would cancel this one
     # instantly; ids are random, but clearing is cheap and removes the class.
     await _op_clear_cancel(run_id)
-    result = await _loop.run_loop(
-        goal, s, call_cap=_call, policy=policy, provider=provider, model=model,
-        max_steps=int(max_steps),
-        # 0 = use the loop's own default budget; a caller with a tighter goal
-        # allowance can hand it a smaller one.
-        # Floored: a caller may tighten the budget but not below the point where
-        # the run cannot finish anything. Census 24 saw a model ask for 95s and
-        # the run die at 103s after five steps. 0 still means "use the default".
-        **_op_budget.budget_kwargs(max_seconds),
-        canvas=resolved.get("canvas", False),
-        shots_dir=shots, on_step=_on_step,
-        progress_tolerance=(int(progress_tolerance) if progress_tolerance
-                            else _progress.DEFAULT_TOLERANCE),
-        think=think,
-        # Pin the run to the file it was aimed at, when that is what it was
-        # aimed at. `url` here is whatever survived resolution above - explicit,
-        # path-derived or read out of the goal text - and nav_pin.is_pinnable
-        # accepts only a sandbox preview URL, so a goal that legitimately
-        # browses a site is never pinned. See nav_pin for the run this fixes.
-        #
-        # An INFERRED target is deliberately not pinned. The pin holds a run to
-        # a target it was TOLD to use; a page picked out of the workspace was
-        # never told, and pinning it would trap a goal that really did mean to
-        # go to the open web on a local file it never asked for - worse than
-        # the dashboard this fallback exists to avoid. Starting in the right
-        # place is the whole benefit; enforcing it is not ours to claim.
-        pin_url=_nav_fallback.pin_for(url, _target_inferred, _nav_pin.is_pinnable),
-        should_cancel=lambda: _op_is_cancelled(run_id))
-    # Assemble the per-step screenshots into a GIF of the whole run (the frames
-    # already exist — this is nearly free).
-    if record_gif and result.get("screenshots"):
-        gif_path = os.path.join(shots, "run.gif")
-        ga = _capture.assemble_gif(result["screenshots"], gif_path,
-                                   duration_ms=int(gif_duration_ms))
-        if ga.get("ok"):
-            result["gif"] = f"/operator/artifact?path={_artifact_rel(gif_path)}"
-            result["gif_path"] = gif_path
-            result["gif_frames"] = ga.get("frames")
-        else:
-            result["gif_error"] = ga.get("error")
-    if own and not keep_open:
-        await _be.close_session(s.session_id)
+    # See the matching note in cap_connect: this close belongs in a finally,
+    # because a cancelled or timed-out run is exactly the case that leaked.
+    try:
+        result = await _loop.run_loop(
+            goal, s, call_cap=_call, policy=policy, provider=provider, model=model,
+            max_steps=int(max_steps),
+            # 0 = use the loop's own default budget; a caller with a tighter goal
+            # allowance can hand it a smaller one.
+            # Floored: a caller may tighten the budget but not below the point where
+            # the run cannot finish anything. Census 24 saw a model ask for 95s and
+            # the run die at 103s after five steps. 0 still means "use the default".
+            **_op_budget.budget_kwargs(max_seconds),
+            canvas=resolved.get("canvas", False),
+            shots_dir=shots, on_step=_on_step,
+            progress_tolerance=(int(progress_tolerance) if progress_tolerance
+                                else _progress.DEFAULT_TOLERANCE),
+            think=think,
+            # Pin the run to the file it was aimed at, when that is what it was
+            # aimed at. `url` here is whatever survived resolution above - explicit,
+            # path-derived or read out of the goal text - and nav_pin.is_pinnable
+            # accepts only a sandbox preview URL, so a goal that legitimately
+            # browses a site is never pinned. See nav_pin for the run this fixes.
+            #
+            # An INFERRED target is deliberately not pinned. The pin holds a run to
+            # a target it was TOLD to use; a page picked out of the workspace was
+            # never told, and pinning it would trap a goal that really did mean to
+            # go to the open web on a local file it never asked for - worse than
+            # the dashboard this fallback exists to avoid. Starting in the right
+            # place is the whole benefit; enforcing it is not ours to claim.
+            pin_url=_nav_fallback.pin_for(url, _target_inferred, _nav_pin.is_pinnable),
+            should_cancel=lambda: _op_is_cancelled(run_id))
+        # Assemble the per-step screenshots into a GIF of the whole run (the frames
+        # already exist — this is nearly free).
+        if record_gif and result.get("screenshots"):
+            gif_path = os.path.join(shots, "run.gif")
+            ga = _capture.assemble_gif(result["screenshots"], gif_path,
+                                       duration_ms=int(gif_duration_ms))
+            if ga.get("ok"):
+                result["gif"] = f"/operator/artifact?path={_artifact_rel(gif_path)}"
+                result["gif_path"] = gif_path
+                result["gif_frames"] = ga.get("frames")
+            else:
+                result["gif_error"] = ga.get("error")
+    finally:
+        if own and not keep_open:
+            await _be.close_session(s.session_id)
     result.update({"run_id": run_id, "goal": goal, "target": resolved.get("kind"),
                    "session_id": s.session_id if (keep_open or not own) else ""})
     await _op_record(run_id, {"type": "operator.run", "stage": "done", "run_id": run_id,
@@ -1631,5 +1642,38 @@ register_ui(
     # top-level tab.
     mode="element", tab_order=73,
 )
+
+async def _operator_session_sweep() -> None:
+    """Scheduler tick: close abandoned operator sessions and, once none are
+    left, the shared browser.
+
+    `keep_open=True` sessions (and every operator.session.start) are handed to a
+    caller that is trusted to close them, and nothing collected the ones that
+    never were — there was no reaper and no cap on browser_engine._SESSIONS. A
+    live context+page is a real slice of a shared Chromium, which was observed
+    on prod at 8.4GB RSS. Both thresholds are env-tunable; 0 disables.
+    """
+    try:
+        idle_s = float(os.getenv("VERA_OPERATOR_SESSION_IDLE_S",
+                                 _be.DEFAULT_SESSION_IDLE_S) or 0)
+        if idle_s <= 0:
+            return
+        linger_s = float(os.getenv("VERA_OPERATOR_BROWSER_LINGER_S",
+                                   _be.DEFAULT_BROWSER_LINGER_S) or 0)
+        res = await _be.sweep_idle(idle_s=idle_s, linger_s=linger_s)
+        if res.get("closed_sessions") or res.get("browser_closed"):
+            await emit_event({"type": "operator.session.swept",
+                              "closed": len(res.get("closed_sessions") or []),
+                              "browser_closed": bool(res.get("browser_closed")),
+                              "live_sessions": res.get("live_sessions", 0)})
+    except Exception as e:
+        log.debug("operator session sweep failed: %s", e)
+
+
+try:
+    schedule(_operator_session_sweep, 300, name="operator_session_sweep")
+except Exception as _e:
+    log.debug("could not register operator session sweep: %s", _e)
+
 
 log.info("operator: capabilities registered (playwright=%s)", _be.playwright_available())
