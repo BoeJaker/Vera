@@ -963,7 +963,7 @@ header .hdr-right{margin-left:0;gap:6px}
           <span class="dlbl" id="dashRecLbl"></span>
           <span class="dash-meta" id="dashLastUpdate">never updated</span>
           <button class="btn sm"      onclick="loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadDockerStats();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadConnections();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch()" title="Refresh all widgets">↻ Refresh</button>
-          <button class="btn sm teal" onclick="clusterAutoRefresh()" id="dashAutoBtn">Auto 5s</button>
+          <button class="btn sm teal" onclick="clusterAutoRefresh()" id="dashAutoBtn" title="Auto-refresh: press to run the dashboard's reads every 5s">Auto off</button>
           <span id="clusterRefreshBadge" style="font-size:9.5px;color:var(--dim2);align-self:center"></span>
           <button class="btn sm"      onclick="loadDiagnostics()">Diagnostics</button>
           <button class="btn sm"      onclick="dashToggleEdit()" id="dashEditBtn" title="Configure dashboard layout">⚙ Configure</button>
@@ -6217,8 +6217,10 @@ function clusterAutoRefresh(){
   if(_clusterAutoInterval){
     clearInterval(_clusterAutoInterval);
     _clusterAutoInterval=null;
-    document.getElementById('clusterRefreshBadge').textContent='';
-    const b=document.getElementById('dashAutoBtn'); if(b){b.classList.remove('primary');b.textContent='Auto 5s';}
+    document.getElementById('clusterRefreshBadge').textContent='auto-refresh off';
+    // it said "Auto 5s" whether it was running or stopped - the same three words, a dot and a colour apart - and the
+    // badge went blank, so there was no telling the states apart at a glance (Notes/42 defect 71b)
+    const b=document.getElementById('dashAutoBtn'); if(b){b.classList.remove('primary');b.textContent='Auto off';b.title='Auto-refresh is OFF: the dashboard updates when you press Refresh. Press to resume every 5s.';}
   } else {
     _clusterAutoInterval=setInterval(()=>{
       loadCluster();loadSysmonSplit();loadSparklines();loadMimicSummary();
@@ -6226,7 +6228,7 @@ function clusterAutoRefresh(){
       dashTouch();
     },5000);
     document.getElementById('clusterRefreshBadge').textContent='● auto-refreshing every 5s';
-    const b=document.getElementById('dashAutoBtn'); if(b){b.classList.add('primary');b.textContent='● Auto 5s';}
+    const b=document.getElementById('dashAutoBtn'); if(b){b.classList.add('primary');b.textContent='● Auto 5s';b.title='Auto-refresh is ON: every 5 seconds. Press to stop.';}
   }
 }
 
