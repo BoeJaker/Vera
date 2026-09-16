@@ -15,6 +15,7 @@ import pytest
 _CRITICAL_MODULES = {
     "test_sandbox_idle_plan",  # sleep the container you judged, never an alias's target (2026-09-12)
     "test_operator_session_sweep",  # a cancelled run must not leak its browser context (2026-09-16)
+    "test_gpu_residency",  # media models must not sit on the LLM's GPU while idle (2026-09-16)
     "test_sandbox_reap_plan",  # an archived row IS the restore handle - never reap it (2026-09-16)
     "test_stall_trace_core",  # name the frame someone can act on, not a stdlib line (2026-09-16)
     "test_spawn_off_loop",  # a docker call must not fork the server on the loop (2026-09-12)
