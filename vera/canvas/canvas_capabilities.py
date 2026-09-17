@@ -943,7 +943,7 @@ async def _canvas_element_js():
 register_ui(
     "canvas",
     "Canvas",
-    "🎨",
+    "◮",
     """<div style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/canvas/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
