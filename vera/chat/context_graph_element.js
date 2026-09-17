@@ -601,6 +601,10 @@
     news: 'News', run: 'Runs', related_qa: 'Related Q&A', worldview: 'Worldview', entities: 'Entities', urls: 'Links', both: 'Memory + vector' };
   function drawMiniGalaxy(o, w, h) {
     const W = w || 262, H = h || 196, cx = W / 2, cy = H / 2 + 6, RAD = Math.PI / 180, RIM = 82;
+    // the view drives the arrangement, exactly as the board's does (Canvas.dc.html 6164-6199)
+    const GV = String(o.view || 'galaxy') === 'time' ? 'timeline' : String(o.view || 'galaxy');
+    const isoP = (x, y, z) => { const A = 32 * RAD, dx = x - cx, dy = y - cy;
+      return [cx + dx * Math.cos(A) - dy * Math.sin(A), cy + (dx * Math.sin(A) + dy * Math.cos(A)) * 0.56 - z]; };
     const by = {}; const seen = [];
     (o.list || []).forEach((r) => { const k = String(r.source || '?'); if (!by[k]) { by[k] = []; seen.push(k); } by[k].push(r); });
     seen.forEach((k) => by[k].sort((a, b) => (b.score || 0) - (a.score || 0)));
@@ -608,14 +612,25 @@
     const order = seen.slice().sort((a, b) => ((ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99)));
     const SRC = order.map((k) => ({ key: k, name: GAL_LABEL[k] || k, col: by[k][0] && by[k][0].col, rows: by[k] }));
     if (!SRC.length) return '<div class="cg-gal"></div>';
-    const P = {}, dots = [], labels = [];
+    const P = {}, dots = [], labels = [], stems = [];
     SRC.forEach((s, si) => {
       const N = Math.min(3 + (si % 2), s.rows.length);
       const a0 = -90 + si * (360 / SRC.length);
       for (let k = 0; k < N; k++) {
         const row = s.rows[k], rel = row.score != null ? Math.max(0, Math.min(1, +row.score)) : (0.92 - k * 0.17);
-        const r = 28 + k * 22, a = (a0 + (k - (N - 1) / 2) * 11) * RAD;
-        const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+        let x, y;
+        if (GV === 'flow') { x = 18 + si * 31; y = 30 + k * 26; }
+        else if (GV === 'timeline') { x = 30 + k * 60 + (si % 3) * 14; y = 16 + si * 22; }
+        else {
+          const r = 28 + k * 22, a = (a0 + (k - (N - 1) / 2) * 11) * RAD;
+          x = cx + Math.cos(a) * r; y = cy + Math.sin(a) * r;
+          if (GV === 'iso') {
+            // the same mark, turned onto the plane and raised by its relevance, with a pin down to the floor
+            const tw = (r / 80) * 40 * RAD, a2 = a + tw, gx = cx + Math.cos(a2) * r, gy = cy + Math.sin(a2) * r, z = rel * 22;
+            const q0 = isoP(gx, gy, 0), q = isoP(gx, gy, z); x = q[0]; y = q[1];
+            if (z > 4) stems.push('<span class="cg-gstem" style="left:' + q0[0].toFixed(1) + 'px;top:' + (q0[1] - z).toFixed(1) + 'px;height:' + z.toFixed(1) + 'px"></span>');
+          }
+        }
         P[si + ':' + k] = [x, y];
         const cls = (rel > 0.8 && row.included !== false ? 'lit ' : '') + (k === N - 1 ? 'hollow' : '');
         dots.push('<span class="cg-gd ' + cls + '" data-id="' + esc(row.id) + '" style="left:' + x.toFixed(1) + 'px;top:' + y.toFixed(1) + 'px;--c:' + esc(s.col || 'var(--cg-t2)') + ';opacity:' + (0.45 + rel * 0.55).toFixed(2) + '" title="' + esc(row.label + ' \u00b7 ' + s.name + ' \u00b7 relevance ' + rel.toFixed(2)) + '"></span>');
@@ -623,19 +638,30 @@
       /* the name rings the OUTSIDE, at the rim, along this source's own sector - not at its outermost mark. The
          board places it at the mark because its data is a mock where every source has three or four; a source with
          a single record has that mark at r=28, and its name would be drawn across the hub. */
-      const ar = a0 * RAD, lx = cx + Math.cos(ar) * RIM, ly = cy + Math.sin(ar) * RIM;
-      const lft = lx < cx;
+      // the name sits where that view puts the source: at the rim in galaxy and iso, by its column or its row otherwise
+      let lx, ly;
+      if (GV === 'flow') { lx = 18 + si * 31 - 6; ly = 30 + (N - 1) * 26 + 16; }
+      else if (GV === 'timeline') { lx = 6; ly = 16 + si * 22; }
+      else { const ar = a0 * RAD; const rr = GV === 'iso' ? RIM * 0.88 : RIM;
+        const q = GV === 'iso' ? isoP(cx + Math.cos(ar) * rr, cy + Math.sin(ar) * rr, 10) : [cx + Math.cos(ar) * rr, cy + Math.sin(ar) * rr];
+        lx = q[0]; ly = q[1]; }
+      const lft = GV === 'timeline' ? false : lx < cx;
       labels.push('<span class="cg-glb' + (lft ? ' l' : '') + '" style="left:' + lx.toFixed(1) + 'px;top:' + (ly - 4).toFixed(1) + 'px;color:' + esc(s.col || 'var(--cg-t2)') + '">' + esc(s.name.replace(' + system', '').replace(' matches', '').replace(' recalls', '')) + '</span>');
     });
-    const rings = [28, 50, 72].map((r) => '<span class="cg-gring" style="left:' + cx + 'px;top:' + cy + 'px;width:' + (r * 2) + 'px;height:' + (r * 2) + 'px"></span>').join('');
+    // the rings belong to the round views; flow and time have no circle to sit on
+    const rc = GV === 'iso' ? isoP(cx, cy, 0) : [cx, cy];
+    const rings = (GV === 'galaxy' || GV === 'iso') ? [28, 50, 72].map((r) => '<span class="cg-gring" style="left:' + rc[0].toFixed(1) + 'px;top:' + rc[1].toFixed(1) + 'px;width:' + (r * 2) + 'px;height:' + (r * 2) + 'px"></span>').join('') : '';
     // the spokes: every mark to the hub when All edges is on, else the relations the state actually carries
     const seg = (a, b, col, cls) => { const dx = b[0] - a[0], dy = b[1] - a[1];
       return '<span class="cg-gedge ' + cls + '" style="left:' + a[0].toFixed(1) + 'px;top:' + a[1].toFixed(1) + 'px;width:' + Math.hypot(dx, dy).toFixed(1) + 'px;transform:rotate(' + (Math.atan2(dy, dx) * 180 / Math.PI).toFixed(1) + 'deg);--c:' + esc(col) + '"></span>'; };
     let edges = '';
-    if (o.allEdges) SRC.forEach((s, si) => { for (let k = 0; k < 4; k++) { const p = P[si + ':' + k]; if (p) edges += seg(p, [cx, cy], s.col || 'var(--cg-t2)', 'faint'); } });
+    const hubAt = GV === 'flow' ? [cx, H - 12] : GV === 'timeline' ? [12, H - 10] : GV === 'iso' ? isoP(cx, cy, 16) : [cx, cy];
+    if (o.allEdges) SRC.forEach((s, si) => { for (let k = 0; k < 4; k++) { const p = P[si + ':' + k]; if (p) edges += seg(p, hubAt, s.col || 'var(--cg-t2)', 'faint'); } });
     const tk = o.tokens >= 1000 ? (o.tokens / 1000).toFixed(1) + 'k' : (o.tokens || '');
-    const hub = '<span class="cg-ghub" style="left:' + cx + 'px;top:' + cy + 'px">aide<b>' + esc(tk) + '</b></span>';
-    return '<div class="cg-gal">' + rings + edges + dots.join('') + labels.join('') + hub + '</div>';
+    const hp = GV === 'flow' ? [cx, H - 12] : GV === 'timeline' ? [12, H - 10] : GV === 'iso' ? isoP(cx, cy, 16) : [cx, cy];
+    if (GV === 'iso') { const h0 = isoP(cx, cy, 0); stems.push('<span class="cg-gstem" style="left:' + h0[0].toFixed(1) + 'px;top:' + (h0[1] - 16).toFixed(1) + 'px;height:16px"></span>'); }
+    const hub = '<span class="cg-ghub" style="left:' + hp[0].toFixed(1) + 'px;top:' + hp[1].toFixed(1) + 'px">aide<b>' + esc(tk) + '</b></span>';
+    return '<div class="cg-gal ' + esc(GV) + '">' + rings + stems.join('') + edges + dots.join('') + labels.join('') + hub + '</div>';
   }
   // the mini's detail: the compact record card for one record, over the box (the widget form shows it on a click)
   function miniDetail(S, id, w, h) { const o = mini(Object.assign({}, S || {}, { sel: id || null, lsel: null }), w || 262, h || 196); return o.rec ? recordCard(o.rec, { compact: true }) : ''; }
@@ -837,6 +863,10 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
 .cg-gal .cg-gd.lit{background:var(--c)}
 .cg-gal .cg-gd.hollow{background:transparent;box-shadow:0 0 0 1px var(--c)}
 .cg-gal .cg-gd:hover{box-shadow:0 0 0 1.2px var(--c),0 0 10px -2px var(--c)}
+/* iso stands every mark above the plane on a pin, the way the exploded scene grounds its items */
+.cg-gal .cg-gstem{position:absolute;width:1px;background:color-mix(in srgb,var(--cg-t2) 45%,transparent);transform:translateX(-50%);pointer-events:none}
+.cg-gal .cg-gstem::after{content:'';position:absolute;left:-2px;bottom:-1px;width:5px;height:3px;border-radius:50%;background:color-mix(in srgb,var(--cg-t2) 55%,transparent)}
+.cg-gal.iso .cg-gring{transform:translate(-50%,-50%) scaleY(.56)}
 .cg-gal .cg-gedge{position:absolute;height:1px;background:var(--c);transform-origin:0 50%;opacity:.55;pointer-events:none}
 .cg-gal .cg-gedge.faint{opacity:.18}
 .cg-gal .cg-glb{position:absolute;font-family:var(--cg-mono);font-size:8.5px;white-space:nowrap;opacity:.85;pointer-events:none;transform:translate(6px,-50%)}
