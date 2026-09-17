@@ -1093,7 +1093,15 @@ body[data-view="minimal"]:not(.has-msgs) #ctxStrip{
   background:var(--bg1);
 }
 /* The minimal welcome line (set by JS) */
-.min-welcome{font-size:18px;color:var(--dim2);text-align:center;letter-spacing:.5px;font-weight:300}
+.min-welcome{font-size:18px;color:var(--dim2);text-align:center;letter-spacing:.5px;font-weight:300;
+  /* #msgs centres its column, and a bottom margin in a centred column lifts an item by HALF of it. 90px lifted
+     this 45px and left it at y=443 - on top of the composer, which is centred in the same space. A third of the
+     viewport clears it, bounded so it neither collides on a short window nor floats away on a tall one. */
+  margin:0 0 clamp(190px,33vh,340px)}
+/* every other display line here goes through the pack's face; this one never did, so it kept the default sans and
+   a 300 weight whatever pack was on. Under a pack it takes --f-disp and drops the light weight and the tracking,
+   which fight a pixel or a newspaper face. Without a pack nothing changes. */
+html[data-style] .min-welcome{font-family:var(--f-disp,var(--sans));font-weight:normal;letter-spacing:normal}
 
 /* ── MINIMAL POST-SEND VIEW ──────────────────────────────────────────
    After the first message is sent (.has-msgs added), the layout

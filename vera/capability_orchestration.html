@@ -3529,11 +3529,14 @@ async function refreshAll(){
   ]);
   _dashHealthStripInit();
   dashTouch();
-  // Live by default: without this, nothing (topology status, mesh/temps/
-  // sysmon tiles, etc.) ever updates again after this initial load unless the
-  // user notices and clicks "Auto 5s" themselves — a dashboard billed as
-  // live/dynamic shouldn't require an opt-in click just to stay current.
-  if(!_clusterAutoInterval) clusterAutoRefresh();
+  /* The auto-refresh is the USER'S choice, and it is remembered (Notes/42 defect 92).
+     It used to start itself here. The reasoning was sound for a board on real data - one billed as live that
+     quietly stops being live is worse than one that asks - but it is wrong for a board being LOOKED AT: every
+     five seconds the reads run again, and a widget showing a SAMPLE reading is overwritten by the empty answer
+     its source actually gives, so the tiles you are judging go blank while you judge them.
+     Off unless it was turned on, and once turned on it stays on across reloads - which is the behaviour that
+     comment wanted, for anyone actually watching something. */
+  try{ if(localStorage.getItem('vera:dash:auto')==='on' && !_clusterAutoInterval) clusterAutoRefresh(); }catch(_){}
   // Pre-initialise the session node exactly once per session_id
   _initSessionOnce(_veraSessionId, 'assistant');
 }
@@ -6218,6 +6221,7 @@ function clusterAutoRefresh(){
     clearInterval(_clusterAutoInterval);
     _clusterAutoInterval=null;
     document.getElementById('clusterRefreshBadge').textContent='auto-refresh off';
+    try{ localStorage.setItem('vera:dash:auto','off'); }catch(_){}
     // it said "Auto 5s" whether it was running or stopped - the same three words, a dot and a colour apart - and the
     // badge went blank, so there was no telling the states apart at a glance (Notes/42 defect 71b)
     const b=document.getElementById('dashAutoBtn'); if(b){b.classList.remove('primary');b.textContent='Auto off';b.title='Auto-refresh is OFF: the dashboard updates when you press Refresh. Press to resume every 5s.';}
@@ -6228,6 +6232,7 @@ function clusterAutoRefresh(){
       dashTouch();
     },5000);
     document.getElementById('clusterRefreshBadge').textContent='● auto-refreshing every 5s';
+    try{ localStorage.setItem('vera:dash:auto','on'); }catch(_){}
     const b=document.getElementById('dashAutoBtn'); if(b){b.classList.add('primary');b.textContent='● Auto 5s';b.title='Auto-refresh is ON: every 5 seconds. Press to stop.';}
   }
 }
