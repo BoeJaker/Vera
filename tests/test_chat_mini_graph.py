@@ -23,7 +23,11 @@ def test_the_mini_has_both_faces_and_the_quick_menu_switches_them():
     # spokes, its records and the hub - with the other families FOLDED AWAY rather than drawn small. That one line
     # is what makes the two faces look like different graphs; removing it once turned simple into detailed with a
     # strip missing, which the user reported as having "2 complex" graphs.
-    assert "const base = simple ? Object.assign({}, S, { mix: Object.assign({}, S.mix || {}, { memory: 'off', loop: 'off', plan: 'off', estate: 'off' }), list: false }) : S;" in el
+    assert "const base = simple ? Object.assign({}, S, { mix: Object.assign({}, S.mix || {}, { loop: 'off', plan: 'off', estate: 'off' }), list: false }) : S;" in el
+    # The memories are on EVERY graph — simple, the complex mini and the grown one. The board names "Memory recalls"
+    # in the legend and the list beside the other seven sources; the memory level governs the recalls as well as the
+    # arm (defect 65), so folding it off took them out of the simple plot entirely. It is not folded.
+    assert "{ loop: 'off', plan: 'off', estate: 'off' }" in el and "memory: 'off', loop:" not in el, "the recalls are never folded off the simple face"
     # and nothing may reach around the fold to put a family back on that face
     assert "simplePlot" not in el, "the fold is the only thing that decides the simple face"
     assert "const ctx = nodes.filter((n) => n.source !== 'memory' && !off.has(n.source)" in el, "the recalls keep their own arm on the detailed face"
