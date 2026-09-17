@@ -476,6 +476,10 @@
       return { id: n.id, label: n.label || n.id, source: n.source || '?', col: p.col || color(n.source), score: sc, tok: tokOf(n), included: n._sess ? !!p.lit : n.included !== false, sess: !!n._sess, lit: !!p.lit, sel: S.sel === n.id, text: textOf(n).replace(/\s+/g, ' ').slice(0, 140), url: n.url || '', kind: p.icon || kindOf(n, n.source || '?') }; })
       .sort((a, b) => (a.sess === b.sess ? b.score - a.score : a.sess ? 1 : -1));
     out.listTotal = ctx.length + mem.length;
+    /* the relations as PAIRS, not geometry: out.cedges carries them already but positioned for this plot, and a
+       layout that places its marks differently (the mini galaxy) needs the pairs to join its own (defect 60) */
+    out.rels = EDGES.map((e0) => ({ from: String(e0.from_id || e0.from || ''), to: String(e0.to_id || e0.to || ''), type: edgeTypeOf(e0) }))
+      .filter((r) => r.from && r.to && r.from !== r.to);
     // the edge types drawn (and the folded ones), with counts — the chip row's second group
     const etc = {}; edgesAll.forEach((e0) => { const t = edgeTypeOf(e0); etc[t] = (etc[t] || 0) + 1; });
     out.edgeTypes = Object.keys(etc).sort((a, b) => etc[b] - etc[a]).map((t) => ({ name: t, n: etc[t], on: !eOff.has(t) }));
@@ -612,7 +616,7 @@
     const order = seen.slice().sort((a, b) => ((ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99)));
     const SRC = order.map((k) => ({ key: k, name: GAL_LABEL[k] || k, col: by[k][0] && by[k][0].col, rows: by[k] }));
     if (!SRC.length) return '<div class="cg-gal"></div>';
-    const P = {}, dots = [], labels = [], stems = [];
+    const P = {}, dots = [], labels = [], stems = [], at = {}, lead = {};
     SRC.forEach((s, si) => {
       const N = Math.min(3 + (si % 2), s.rows.length);
       const a0 = -90 + si * (360 / SRC.length);
@@ -631,7 +635,8 @@
             if (z > 4) stems.push('<span class="cg-gstem" style="left:' + q0[0].toFixed(1) + 'px;top:' + (q0[1] - z).toFixed(1) + 'px;height:' + z.toFixed(1) + 'px"></span>');
           }
         }
-        P[si + ':' + k] = [x, y];
+        P[si + ':' + k] = [x, y]; at[row.id] = { p: [x, y], col: s.col };
+        if (k === 0) lead[s.key] = at[row.id];   // the source's leading mark stands for its records that are not drawn
         const cls = (rel > 0.8 && row.included !== false ? 'lit ' : '') + (k === N - 1 ? 'hollow' : '');
         dots.push('<span class="cg-gd ' + cls + '" data-id="' + esc(row.id) + '" style="left:' + x.toFixed(1) + 'px;top:' + y.toFixed(1) + 'px;--c:' + esc(s.col || 'var(--cg-t2)') + ';opacity:' + (0.45 + rel * 0.55).toFixed(2) + '" title="' + esc(row.label + ' \u00b7 ' + s.name + ' \u00b7 relevance ' + rel.toFixed(2)) + '"></span>');
       }
@@ -654,7 +659,36 @@
     // the spokes: every mark to the hub when All edges is on, else the relations the state actually carries
     const seg = (a, b, col, cls) => { const dx = b[0] - a[0], dy = b[1] - a[1];
       return '<span class="cg-gedge ' + cls + '" style="left:' + a[0].toFixed(1) + 'px;top:' + a[1].toFixed(1) + 'px;width:' + Math.hypot(dx, dy).toFixed(1) + 'px;transform:rotate(' + (Math.atan2(dy, dx) * 180 / Math.PI).toFixed(1) + 'deg);--c:' + esc(col) + '"></span>'; };
+    /* a connector that has to stand apart from its neighbours is bowed; one that does not is the board's straight
+       span. The bow is a quadratic through a control point pushed off the midpoint's normal. */
+    const bowed = (a, b, bow, col, cls) => {
+      if (!bow) return seg(a, b, col, cls);
+      const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
+      const qx = (mx - dy / L * bow).toFixed(1), qy = (my + dx / L * bow).toFixed(1);
+      return '<svg class="cg-gcur ' + cls + '" style="--c:' + esc(col) + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none"><path d="M' + a[0].toFixed(1) + ' ' + a[1].toFixed(1) + ' Q' + qx + ' ' + qy + ' ' + b[0].toFixed(1) + ' ' + b[1].toFixed(1) + '"/></svg>';
+    };
     let edges = '';
+    /* THE INTER CONNECTORS: the relations the state holds, between marks this face actually drew. A pair joined
+       more than once, and a record fanning out to several others, would lie along the same line and read as one
+       thick edge - so each is bowed, alternating in sign and growing with the count on that pair. A lone relation
+       bows by nothing and is straight, as the board's are. */
+    /* This face draws a few marks per source, so a relation's own two records are usually not both among them.
+       A relation still SAYS something at this size - that these two sources are tied - so one whose record is not
+       drawn is carried by that source's leading mark. It is a summary, like the rest of this face. */
+    const srcOf = {}; (o.list || []).forEach((r) => { srcOf[r.id] = String(r.source || '?'); });
+    const markOf = (id) => at[id] || lead[srcOf[id]] || null;
+    const pairN = {}; let drawn = 0;
+    (o.rels || []).forEach((r) => {
+      if (drawn >= 14) return;                       // a handful, as the board has - not a hairball
+      const a = markOf(r.from), b = markOf(r.to); if (!a || !b || a === b) return;
+      const ka = a.p.join(), kb = b.p.join(); if (ka === kb) return;
+      const key = ka < kb ? ka + '|' + kb : kb + '|' + ka;
+      const n = (pairN[key] = (pairN[key] || 0) + 1);
+      if (n > 3) return;                             // three between the same two marks is plenty
+      const bow = n === 1 ? 0 : (n % 2 ? 1 : -1) * Math.ceil((n - 1) / 2) * 7;
+      edges += bowed(a.p, b.p, bow, a.col || 'var(--cg-t2)', 'rel' + (r.type === 'mem' ? ' mem' : ''));
+      drawn++;
+    });
     const hubAt = GV === 'flow' ? [cx, H - 12] : GV === 'timeline' ? [12, H - 10] : GV === 'iso' ? isoP(cx, cy, 16) : [cx, cy];
     if (o.allEdges) SRC.forEach((s, si) => { for (let k = 0; k < 4; k++) { const p = P[si + ':' + k]; if (p) edges += seg(p, hubAt, s.col || 'var(--cg-t2)', 'faint'); } });
     const tk = o.tokens >= 1000 ? (o.tokens / 1000).toFixed(1) + 'k' : (o.tokens || '');
@@ -869,6 +903,10 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
 .cg-gal.iso .cg-gring{transform:translate(-50%,-50%) scaleY(.56)}
 .cg-gal .cg-gedge{position:absolute;height:1px;background:var(--c);transform-origin:0 50%;opacity:.55;pointer-events:none}
 .cg-gal .cg-gedge.faint{opacity:.18}
+/* a bowed connector: the same line, curved away from the ones beside it so a fan reads as a fan (defect 60) */
+.cg-gal .cg-gcur{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+.cg-gal .cg-gcur path{fill:none;stroke:var(--c);stroke-width:1;opacity:.55;vector-effect:non-scaling-stroke}
+.cg-gal .cg-gcur.mem path{stroke-dasharray:3 2}
 .cg-gal .cg-glb{position:absolute;font-family:var(--cg-mono);font-size:8.5px;white-space:nowrap;opacity:.85;pointer-events:none;transform:translate(6px,-50%)}
 /* a name on the left of the plot reads outward too, so it never runs back over the middle */
 .cg-gal .cg-glb.l{transform:translate(-100%,-50%) translateX(-6px)}
