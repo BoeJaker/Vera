@@ -1560,7 +1560,16 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .wbar{height:4px;border-radius:2px;background:var(--s3,var(--bg3,#22262e));overflow:hidden;flex:0 0 44px}
 #rightRail.lhm-host .lhm-quick .wbar i{display:block;height:100%}
 #rightRail.lhm-host .lhm-quick .comp{display:flex;height:9px;border-radius:3px;overflow:hidden;gap:1px;background:var(--s3,var(--bg3,#22262e));flex-shrink:0}
-#rightRail.lhm-host .lhm-quick .comp i{display:block;height:100%}
+/* ...and the bar is that control. The widths stay the TRUE token shares: _qGalOff filters what the GRAPH draws
+   and has never changed what the prompt carries, so dimming a family must not resize the bar or it stops being a
+   budget bar. An off segment therefore keeps its place and a faint trace of its own colour — a segment that
+   vanished could never be pressed again and its family would be unreachable. min-width is the one concession to
+   geometry: a family holding 1% of the window is a 2px target, which cannot be pressed; the exact figure stays
+   in the row's title and in .rt-n below. */
+#rightRail.lhm-host .lhm-quick .comp i{display:block;height:100%;background:var(--c)}
+#rightRail.lhm-host .lhm-quick .comp i[data-fam]{cursor:pointer;min-width:7px}
+#rightRail.lhm-host .lhm-quick .comp i[data-fam]:hover{filter:brightness(1.3)}
+#rightRail.lhm-host .lhm-quick .comp i[data-fam].off{background:color-mix(in srgb,var(--c) 20%,transparent)}
 #rightRail.lhm-host .lhm-quick .wid{position:relative;border-radius:var(--r-sm,6px)}
 /* The row wraps. It held four controls in 262px with two of them on margin-left:auto, and the last was clipped
    to "simp" (Notes/42 defect 60). The board's row is the views and All edges; List has moved to the section that
@@ -1571,12 +1580,9 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .vseg button.on{background:var(--surf,var(--bg1,#151719));color:var(--t1,var(--text,#d8dce4))}
 #rightRail.lhm-host .lhm-quick .gal-all{margin-left:auto;height:18px;padding:0 8px;border:none;border-radius:99px;background:var(--s2,var(--bg2,#1a1c20));font-size:9px;color:var(--t3,var(--dim,#6b7280));cursor:pointer}
 #rightRail.lhm-host .lhm-quick .gal-all.on{color:var(--ac,var(--acc,#5a9e8f));box-shadow:inset 0 0 0 1px var(--ac,var(--acc,#5a9e8f))}
-#rightRail.lhm-host .lhm-quick .gal-mix{display:flex;flex-wrap:wrap;gap:4px;padding-bottom:6px}
-#rightRail.lhm-host .lhm-quick .gm{display:inline-flex;align-items:center;gap:4px;height:17px;padding:0 7px 0 5px;border-radius:99px;background:var(--s2,var(--bg2,#1a1c20));font-size:8.5px;color:var(--t3,var(--dim,#6b7280));cursor:pointer}
-#rightRail.lhm-host .lhm-quick .gm i{width:6px;height:6px;border-radius:2px;background:var(--c);opacity:.35}
-#rightRail.lhm-host .lhm-quick .gm.on{color:var(--t2,var(--dim2,#8a92a0))}
-#rightRail.lhm-host .lhm-quick .gm.on i{opacity:1}
-#rightRail.lhm-host .lhm-quick .gm b{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-weight:400;font-size:8px;color:var(--t3,var(--dim,#6b7280))}
+/* The chips that used to sit here (.gal-mix / .gm) were a second legend for the same families: colour, name and
+   tokens, all three of which the rows under "In this prompt" already carry (.tick, .nm, .rt-n). The control moved
+   onto the budget bar below, which was already drawing the same split. */
 /* The design's background wash: two radial gradients across the top of the page, the accent at the left and a
    second accent at the right, gone by 60% of a 300px band (Canvas.dc.html 711-713). Every board carries one. It is
    built from the theme's own accents, so it follows the theme rather than being painted in, sits behind everything
@@ -13706,9 +13712,16 @@ function _embedMount(){
     _ctxFollowBind(); _ctxActiveFrame=_ctxActiveCompute();
     const S=_ctxShares();
     if(_ctxGrown){
-      const sig='grown#'+S.rows.map(r=>r.f+r.tok).join('|'); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+      const sig='grown#'+S.rows.map(r=>r.f+r.tok).join('|')+'#'+JSON.stringify(_qGalOff);   // the bar's own off-state is part of the key, or pressing a band repaints nothing
+      if(el.dataset.sig===sig) return; el.dataset.sig=sig;
       if(!document.getElementById('ctxGrown')){ el.innerHTML='<div id="ctxGrown" class="wid" data-w="context graph · graph" data-tpl="lhm:ctx-galaxy"></div><div class="wid ctx-grown-bar" data-w="budget bar · meter" data-tpl="lhm:ctx-budget"></div>'; }
-      const bar=el.querySelector('.ctx-grown-bar'); if(bar) bar.innerHTML='<span class="comp" title="'+esc(_lhmTxt('ctxMeterLabel'))+'">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span>';
+      const bar=el.querySelector('.ctx-grown-bar');
+      if(bar){ bar.innerHTML='<span class="comp" title="'+esc(_lhmTxt('ctxMeterLabel'))+' — press a band to show or hide that source on the graph">'+S.rows.map(r=>'<i class="'+(_qGalOff[r.f]?'off':'on')+'" data-fam="'+esc(r.f)+'" style="width:'+r.pct.toFixed(1)+'%;--c:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok)+' tokens · press to '+(_qGalOff[r.f]?'show':'hide')+' it on the graph')+'"></i>').join('')+'</span>';
+        // the grown graph is the element, so it is told directly — its mixer levels are off · focus · all
+        // (context_graph_element.js:978), the same way the All-edges switch already follows into it
+        bar.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f];
+          try{ if(_ctxCol&&typeof _ctxCol.mix==='function') _ctxCol.mix(f, _qGalOff[f]?'off':'all'); }catch(_){}
+          try{ VeraLHM.render(); }catch(_){} })); }
       _graphColumnMount(); return; }
     const views=[['galaxy','galaxy'],['iso','iso'],['flow','flow'],['timeline','time']];
     // The RENDERER is part of the key. A body composed before /ui/context_graph_element.js has loaded draws the
@@ -13739,9 +13752,12 @@ function _embedMount(){
     } else if(_ctxElWait){ clearInterval(_ctxElWait); _ctxElWait=null; }
     el.innerHTML='<div class="wid" data-w="context galaxy · graph" data-tpl="lhm:ctx-galaxy">'
       +'<div class="gal-ctl"><span class="vseg">'+views.map(v=>'<button class="'+(_qGalView===v[0]?'on':'')+'" data-view="'+v[0]+'" title="'+v[0]+' view">'+v[1]+'</button>').join('')+'</span><button class="gal-all'+(_qGalAll?' on':'')+'" title="Every record\'s edge to the hub">All edges</button><span class="vseg gal-style">'+[['simple','simple'],['detailed','detailed']].map(v=>'<button class="'+(_qGalStyle===v[0]?'on':'')+'" data-style="'+v[0]+'" title="'+(v[0]==='simple'?'The board\'s face: the context plot by itself':'Every family on the plot, the lanes, the record card and the list')+'">'+v[1]+'</button>').join('')+'</span></div>'
-      +'<div class="gal-mix">'+S.rows.map(r=>'<span class="gm'+(_qGalOff[r.f]?'':' on')+'" data-fam="'+esc(r.f)+'" style="--c:'+r.col+'" title="'+esc(r.label)+' — press to dim or light this family"><i></i>'+esc(r.label.replace(' + system','').replace(' (Neo4j)',''))+'<b>'+_kfmt(r.tok)+'</b></span>').join('')+'</div>'
       +'<div class="gal-host">'+gal+'</div></div>'
-      +'<div class="wid" data-w="budget bar · meter" data-tpl="lhm:ctx-budget" title="'+esc(_lhmTxt('ctxMeterLabel'))+'"><span class="comp">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span></div>'
+      // the bar IS the section control (it replaced the chips): each segment is its family's share of the
+      // window AND the switch for whether the graph above draws it. The colour rides as --c so the off state can
+      // be a mix of the family's own colour in CSS; the width is the share either way.
+      +'<div class="wid" data-w="budget bar · meter" data-tpl="lhm:ctx-budget" title="'+esc(_lhmTxt('ctxMeterLabel'))+' — press a band to show or hide that source on the graph">'
+      +'<span class="comp">'+S.rows.map(r=>'<i class="'+(_qGalOff[r.f]?'off':'on')+'" data-fam="'+esc(r.f)+'" style="width:'+r.pct.toFixed(1)+'%;--c:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok)+' tokens · press to '+(_qGalOff[r.f]?'show':'hide')+' it on the graph')+'"></i>').join('')+'</span></div>'
       // ONE list. Each source is a SECTION that opens in place to the records it contributed — which is what the
       // board's rows are for; a second list of everything under the first was not integrating them (defect 60).
       +'<div class="wid" data-w="in this prompt · list"><div class="grp">In this prompt<button class="grp-act" title="Refresh the assembled context">↻</button></div>'
@@ -13762,7 +13778,9 @@ function _embedMount(){
     el.querySelectorAll('.cg-mini [data-a="incl-all"], .cg-mini [data-a="excl-all"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); const on=b.dataset.a==='incl-all'; CTX_NODES.forEach(n=>{ n.included=on; }); try{ renderCtxList(); }catch(_){} _ctxColSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} VeraLHM.render(); }));
     el.querySelectorAll('.cg-mini [data-a="preview"][data-url]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ _browserNavigate(b.dataset.url); }catch(_){} }));
     el.querySelectorAll('.cg-mini [data-a="open"][data-id]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ nodeClick(b.dataset.id); }catch(_){} }));
-    el.querySelectorAll('.gm').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; VeraLHM.render(); }));
+    // the budget bar's bands are the family switches now — same _qGalOff the chips drove, so the graph, the
+    // repaint key and the grown column all follow exactly as before
+    el.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; VeraLHM.render(); }));
     el.querySelector('.grp-act').addEventListener('click',()=>{ try{ _ctxFcRefresh(); }catch(_){} });
     // opening a section lights its source on the plot too, so the list and the graph never say different things
     el.querySelectorAll('.lrow[data-fam]').forEach(r=>r.addEventListener('click',()=>{ const f=r.dataset.fam;
