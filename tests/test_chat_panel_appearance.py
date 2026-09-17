@@ -130,7 +130,13 @@ def test_blocks_off_outranks_the_minimal_views_own_question_rules():
     base = HTML[:HTML.index("Density tiers and Blocks")]
     assert 'body[data-view="minimal"].has-msgs #msgs > .mwrap.u{' in base, "the minimal view moved; re-check the override"
     assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u{background:transparent;border-left-color:transparent}' in css
-    assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background-color:var(--bg0);background-image:none;border-left-color:transparent}' in css
+    # A pinned question is position:sticky and the answer scrolls underneath, so it has to hide what passes
+    # behind it - that is why it keeps a ground where every other message loses one. A FLAT ground hides the
+    # background wash as well, and read as a box Blocks off had failed to remove (Notes/42 defect 94). It
+    # occludes through a ground at about a third opacity over a blur now: the text under it is unreadable, the
+    # gradient carries through. The requirement is the occlusion, not the opacity.
+    assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background-color:color-mix(in srgb,var(--bg0) 34%,transparent);background-image:none;border-left-color:transparent;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}' in css
+    assert 'background-color:var(--bg0);background-image:none;border-left-color:transparent}' not in css, "no flat fill over the wash"
     assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs:not(.has-panel) #inputBar' in css
 
 # ── the chat reads the style-pack tokens (M1a-surfaces) ──────────────────────
