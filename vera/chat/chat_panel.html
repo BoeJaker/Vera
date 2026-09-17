@@ -6099,7 +6099,8 @@ IMPORTANT:
     const body=w&&w.querySelector('.msg-body'); if(!body||body.querySelector('.think-throb')) return 0;
     const made=_cvHarvest(body); if(!made.length) return 0; let n=0;
     for(let i=0;i<made.length;i++){ const m=made[i]; const key='turn:'+mid+':'+m.k+':'+i; if(_CV_LANDED[key]) continue;
-      try{ const r=await _capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid}});
+      // the reply is the maker: the run leaves ITS block, while the turn stays the question the station is keyed by
+      try{ const r=await _capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid, from:(w&&w.dataset&&w.dataset.mid)||mid}});
         if(!(r&&r.ok)) continue; _CV_LANDED[key]=true; n++;
         (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:m.n, d:'canvas · '+(r.resolved==='shown'?'already there':'lifted out of the reply'), col:m.col, kind:m.k, key, form:m.kind==='widget'?(m.content.widget||''):undefined, mermaid:m.kind==='diagram'?m.content.mermaid:undefined, record:m.kind==='widget'?(m.content.record||undefined):undefined});
       }catch(_){}
@@ -6318,17 +6319,19 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const pick=(its)=>{ const C=ccol.getBoundingClientRect(); const items=its.filter(it=>it.mid&&!it.out&&it.state==='now'&&it.rect.bottom>C.top+30&&it.rect.top<C.bottom);
       const wanted=den==='hover'?items.filter(it=>it.key===_cvHoverKey||(_cvHoverMid&&it.mid===_cvHoverMid)):items; return wanted; };
     // the channel is sized for the runs that will be drawn, THEN everything is measured (the inset moves the cards)
-    _cvRunsGutter(pick(cv.itemRects()).filter(it=>_cvRunsSource(it.mid, msgs)).length);
+    // a run leaves where the item CAME FROM - the reply that made it - and the turn only when nothing made it
+    const _srcMid=(it)=>it.from||it.mid;
+    _cvRunsGutter(pick(cv.itemRects()).filter(it=>_cvRunsSource(_srcMid(it), msgs)).length);
     const R=col.getBoundingClientRect(), C=ccol.getBoundingClientRect(), MB=msgs.getBoundingClientRect();
     svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
     const all=cv.itemRects(); const wanted=pick(all);
     const rects=all.map(it=>({key:it.key, x0:it.rect.left, y0:it.rect.top, x1:it.rect.right, y1:it.rect.bottom}));
     const routes=[];
-    wanted.forEach(it=>{ const M=_cvRunsSource(it.mid, msgs); if(M) routes.push({it, M}); });
+    wanted.forEach(it=>{ const M=_cvRunsSource(_srcMid(it), msgs); if(M) routes.push({it, M}); });
     // ordered by where they are going, then departing in that same order
     routes.sort((a,b)=>a.it.rect.top-b.it.rect.top);
     const n=routes.length;
-    const byMid={}; routes.forEach(r=>{ (byMid[r.it.mid]=byMid[r.it.mid]||[]).push(r); });
+    const byMid={}; routes.forEach(r=>{ const k=_srcMid(r.it); (byMid[k]=byMid[k]||[]).push(r); });   // fan from the block they actually leave
     Object.keys(byMid).forEach(mid=>{ const g=byMid[mid]; const M=g[0].M; const th=M.bottom-M.top; const k=g.length;
       // fanned across the height of the block itself, as far apart as there is room for and never overhanging it
       let fan=Math.min(15, Math.max(7, (th-18)/Math.max(1,k-1))); if(fan*(k-1)>th-8) fan=Math.max(4, (th-8)/Math.max(1,k-1));

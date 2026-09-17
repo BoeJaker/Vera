@@ -22,7 +22,9 @@ def test_the_runs_end_at_the_message_surface_and_a_reply_lands_on_the_canvas():
     for k in ("k:'cap'", "k:'code'", "k:'diagram'", "k:'table'", "k:'widget'", "k:'image'"):
         assert k in HTML, k
     assert "const key='turn:'+mid+':'+m.k+':'+i; if(_CV_LANDED[key]) continue;" in HTML, "keyed to the turn, never doubled"
-    assert "_capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid}})" in HTML   # a diagram lands at m, a widget at its record's size (Notes/42 defect 52)
+    # the anchor keeps the TURN (the station is keyed by it) and records the maker: the reply that produced the
+    # item, so its run leaves the reply's block rather than the question above it (Notes/42 defect 87)
+    assert "_capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid, from:(w&&w.dataset&&w.dataset.mid)||mid}})" in HTML   # a diagram lands at m, a widget at its record's size (Notes/42 defect 52)
     assert "try{ _cvLandReply(_cvRelMid).then(()=>{ try{ _cvRelevance(_cvRelMid," in HTML, "land, then the relevance engine"
     assert "d:'canvas · '+(r.resolved==='shown'?'already there':'lifted out of the reply')" in HTML, "the exploded scene's landed layer sees it"
 
@@ -38,4 +40,4 @@ def test_the_runs_end_on_the_block_or_the_station_and_only_real_anchors_draw():
     assert "const TT=_ctxRunsTargets(); const T=TT.u||TT.a; if(!T){ _ctxRunsStand(svg); return; }" in HTML
     assert "if(Date.now()-_ctxTypingT<900){ _ctxRunsStand(svg); if(!_ctxTypingTimer)" in HTML
     # a reply's items and a loop's item carry the turn; the canvas router draws from real anchors only
-    assert "const items=its.filter(it=>it.mid&&!it.out&&it.state==='now'" in HTML and "wanted.forEach(it=>{ const M=_cvRunsSource(it.mid, msgs); if(M) routes.push({it, M}); });" in HTML
+    assert "const items=its.filter(it=>it.mid&&!it.out&&it.state==='now'" in HTML and "wanted.forEach(it=>{ const M=_cvRunsSource(_srcMid(it), msgs); if(M) routes.push({it, M}); });" and "const _srcMid=(it)=>it.from||it.mid;" in HTML and "routes.push({it, M})" in HTML
