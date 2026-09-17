@@ -1566,6 +1566,11 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
   background:radial-gradient(120% 100% at 10% 0%,color-mix(in srgb,var(--acc,#5a9e8f) 12%,transparent),transparent 62%),
              radial-gradient(90% 80% at 92% 0%,color-mix(in srgb,var(--acc2,var(--acc,#5a9e8f)) 9%,transparent),transparent 60%)}
 html[data-blocks="off"] #veraWash{opacity:.7}
+/* the drawing, in the block that wrote it (defect 90) */
+.code-card .cb-prev{display:none}
+.code-card.prev .cb-prev{display:block;border-top:1px solid var(--border,rgba(255,255,255,.09))}
+.code-card.prev .cb-prev iframe{display:block;width:100%;height:320px;border:0;background:#fff}
+.code-card.prev > pre{display:none}
 #rightRail.lhm-host .lhm-quick .gal-host{margin-bottom:8px}
 #rightRail.lhm-host .lhm-quick .gal-style{margin-left:auto}
 #rightRail.lhm-host .lhm-quick .gal-style button{font-size:9px;white-space:nowrap}
@@ -5041,6 +5046,34 @@ IMPORTANT:
      html/css/js/jsx — a "Preview" button that opens a sandboxed iframe
      showing the rendered result. The Preview opens in the right rail's
      Code Preview tab (added below). */
+  /* A previewable block renders IN PLACE in the reply (Notes/42 defect 90). "Preview" used to send the code to
+     the LHM's preview pane and open it - which works, and is why it could be seen there, but it is not what the
+     button reads as: the block itself never rendered and a page the model had just written was three moves away
+     from being looked at. The same two rules the canvas uses decide it, so a block reads the same in both. */
+  const _PREVIEWABLE_L=['html','js','javascript','css','jsx','svg'];
+  const _cbPreviewable=(lang)=>_PREVIEWABLE_L.indexOf(String(lang||'').toLowerCase())>=0;
+  // a WHOLE PAGE draws itself without being asked; a fragment, a sheet or a script waits to be asked, because
+  // running those on sight would execute what a reply was only talking about
+  const _cbWholePage=(lang,code)=>['html','svg'].indexOf(String(lang||'').toLowerCase())>=0
+    && /<\s*(!doctype\s+html|html[\s>]|body[\s>]|svg[\s>])/i.test(String(code||''));
+  const _cbDoc=(lang,code)=>{ const L=String(lang||'').toLowerCase(), src=String(code||'');
+    if(L==='html'||L==='svg') return src;
+    const head='<!doctype html><meta charset="utf-8"><style>body{margin:0;padding:10px;background:#101012;color:#d8dce4;font:12px system-ui,sans-serif}</style>';
+    if(L==='css') return head+'<style>'+src+'</style><h1>Heading</h1><p>A paragraph, a <a href="#">link</a> and a <button>button</button>, dressed by the sheet.</p>';
+    return head+'<body><script>try{'+src+'}catch(e){document.body.innerHTML=\'<pre style="color:#c96b6b">\'+String(e&&e.message||e)+\'</pre>\';}<\/script>'; };
+  /* Toggle the drawing in the block itself. The frame is sandboxed with scripts and nothing else - no
+     same-origin, so it reaches no session, storage or cookie of ours - and is built only when it is first shown. */
+  function _codeInline(id, on){
+    const card=document.querySelector('.code-card[data-cb="'+id+'"]'); const blk=_CODE_BLOCKS[id]; if(!card||!blk) return;
+    const want=(on==null)?!card.classList.contains('prev'):!!on;
+    card.classList.toggle('prev', want);
+    const btn=card.querySelector('.cb-act[data-prev]'); if(btn) btn.textContent=want?'Source':'Preview';
+    if(!want) return;
+    let host=card.querySelector('.cb-prev');
+    if(!host){ host=document.createElement('div'); host.className='cb-prev'; card.appendChild(host); }
+    if(!host.firstChild){ const f=document.createElement('iframe'); f.setAttribute('sandbox','allow-scripts');
+      f.setAttribute('referrerpolicy','no-referrer'); f.srcdoc=_cbDoc(blk.lang, blk.code); host.appendChild(f); }
+  }
   let _codeBlockSeq=0;
   const _CODE_BLOCKS={}; // id -> {lang, code, filename}
   function _registerCodeBlock(lang, code, filename){
@@ -7063,8 +7096,11 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
            + `<pre><code>${highlightCode(raw, lang)}</code></pre></div>`;
     }
     const previewable=_isPreviewable(lang);
+    // a whole page opens as the drawing; the frame is built as soon as the block is in the document
+    if(_cbWholePage(lang, code)) setTimeout(()=>{ try{ _codeInline(id, true); }catch(_){} }, 0);
     const previewBtn=previewable
-      ? `<button class="cb-act" onclick="CH._codePreview('${id}')" title="Render in preview pane">Preview</button>`
+      ? `<button class="cb-act" data-prev onclick="CH._codeInline('${id}')" title="Render it here — a sandboxed frame, no network">${_cbWholePage(lang, code) ? 'Source' : 'Preview'}</button>`
+        + `<button class="cb-act" onclick="CH._codePreview('${id}')" title="Open it in the preview pane, larger">Pane</button>`
       : '';
     const runBtn=(['js','javascript','jsx'].includes(L))
       ? `<button class="cb-act" onclick="CH._codeRun('${id}')" title="Render in sandboxed iframe (browser console output captured)">Preview JS</button>`
@@ -18159,7 +18195,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _onPaste,_pasteAccept,_pasteDismiss,
     _docEditorOpen,_docEditorClose,_docChipUpdate,_docChipRemove,_docChipRemoveCurrent,
     _browserGo,_browserNav,_browserNavigate,_browserCapture,_browserToggleMode,_browserSwitchToScreenshot,_renderBrowserCtxList,_switchToListTab,
-    _codeCopy,_codePreview,_codeRun,_codeExec,_codeViewMode,_codePreviewClose,_autoPreviewToggle,
+    _codeCopy,_codePreview,_codeInline,_codeRun,_codeExec,_codeViewMode,_codePreviewClose,_autoPreviewToggle,
     _artifactsRefresh,_artifactOpen,_codeSaveArtifact,
     _sessionSbxToggle,_sessionSbxRefresh,_sessionSbxTerminal,_sessionSbxVscode,
     _artifactsFsMode,_artFsBrowse,
