@@ -463,7 +463,7 @@
     out.offSrcs = [...new Set(nodes.filter((n) => n.source !== 'memory').map((n) => n.source || '?'))].filter((s) => off.has(s)).map((s) => ({ name: s, col: color(s), n: nodes.filter((n) => (n.source || '?') === s).length }));
     // the other families' chips: the mixer — each carries its level (off · focus · all) and its count
     out.families = [];
-    const nMem = memCtx.length + (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).length;
+    const nMem = memCtxAll.length + (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).length;
     if (nMem) out.families.push({ name: 'memory', fam: 'memory', col: color('memory'), n: nMem, on: lvl.memory !== 'off', level: lvl.memory });
     if ((S.dag || []).length && !(S.loop && S.loop.length)) out.families.push({ name: 'dag', fam: 'loop', col: 'var(--cg-ac)', n: S.dag.length, on: lvl.loop !== 'off', level: lvl.loop });
     if (S.loop && S.loop.length) out.families.push({ name: 'loop', fam: 'loop', col: 'var(--cg-ac)', n: S.loop.length, on: lvl.loop !== 'off', level: lvl.loop });
@@ -600,7 +600,7 @@
     vector: 'Vector matches', graph: 'Graph (Neo4j)', fabric: 'Fabric records', cap: 'Capabilities', web: 'Web',
     news: 'News', run: 'Runs', related_qa: 'Related Q&A', worldview: 'Worldview', entities: 'Entities', urls: 'Links', both: 'Memory + vector' };
   function drawMiniGalaxy(o, w, h) {
-    const W = w || 262, H = h || 196, cx = W / 2, cy = H / 2 + 6, RAD = Math.PI / 180;
+    const W = w || 262, H = h || 196, cx = W / 2, cy = H / 2 + 6, RAD = Math.PI / 180, RIM = 82;
     const by = {}; const seen = [];
     (o.list || []).forEach((r) => { const k = String(r.source || '?'); if (!by[k]) { by[k] = []; seen.push(k); } by[k].push(r); });
     seen.forEach((k) => by[k].sort((a, b) => (b.score || 0) - (a.score || 0)));
@@ -612,16 +612,20 @@
     SRC.forEach((s, si) => {
       const N = Math.min(3 + (si % 2), s.rows.length);
       const a0 = -90 + si * (360 / SRC.length);
-      let last = null;
       for (let k = 0; k < N; k++) {
         const row = s.rows[k], rel = row.score != null ? Math.max(0, Math.min(1, +row.score)) : (0.92 - k * 0.17);
         const r = 28 + k * 22, a = (a0 + (k - (N - 1) / 2) * 11) * RAD;
         const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
-        P[si + ':' + k] = [x, y]; last = [x, y];
+        P[si + ':' + k] = [x, y];
         const cls = (rel > 0.8 && row.included !== false ? 'lit ' : '') + (k === N - 1 ? 'hollow' : '');
         dots.push('<span class="cg-gd ' + cls + '" data-id="' + esc(row.id) + '" style="left:' + x.toFixed(1) + 'px;top:' + y.toFixed(1) + 'px;--c:' + esc(s.col || 'var(--cg-t2)') + ';opacity:' + (0.45 + rel * 0.55).toFixed(2) + '" title="' + esc(row.label + ' \u00b7 ' + s.name + ' \u00b7 relevance ' + rel.toFixed(2)) + '"></span>');
       }
-      if (last) labels.push('<span class="cg-glb" style="left:' + (last[0] + 8).toFixed(1) + 'px;top:' + (last[1] - 4).toFixed(1) + 'px;color:' + esc(s.col || 'var(--cg-t2)') + '">' + esc(s.name.replace(' + system', '').replace(' matches', '').replace(' recalls', '')) + '</span>');
+      /* the name rings the OUTSIDE, at the rim, along this source's own sector - not at its outermost mark. The
+         board places it at the mark because its data is a mock where every source has three or four; a source with
+         a single record has that mark at r=28, and its name would be drawn across the hub. */
+      const ar = a0 * RAD, lx = cx + Math.cos(ar) * RIM, ly = cy + Math.sin(ar) * RIM;
+      const lft = lx < cx;
+      labels.push('<span class="cg-glb' + (lft ? ' l' : '') + '" style="left:' + lx.toFixed(1) + 'px;top:' + (ly - 4).toFixed(1) + 'px;color:' + esc(s.col || 'var(--cg-t2)') + '">' + esc(s.name.replace(' + system', '').replace(' matches', '').replace(' recalls', '')) + '</span>');
     });
     const rings = [28, 50, 72].map((r) => '<span class="cg-gring" style="left:' + cx + 'px;top:' + cy + 'px;width:' + (r * 2) + 'px;height:' + (r * 2) + 'px"></span>').join('');
     // the spokes: every mark to the hub when All edges is on, else the relations the state actually carries
@@ -835,7 +839,9 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
 .cg-gal .cg-gd:hover{box-shadow:0 0 0 1.2px var(--c),0 0 10px -2px var(--c)}
 .cg-gal .cg-gedge{position:absolute;height:1px;background:var(--c);transform-origin:0 50%;opacity:.55;pointer-events:none}
 .cg-gal .cg-gedge.faint{opacity:.18}
-.cg-gal .cg-glb{position:absolute;font-family:var(--cg-mono);font-size:8.5px;white-space:nowrap;opacity:.85;pointer-events:none}
+.cg-gal .cg-glb{position:absolute;font-family:var(--cg-mono);font-size:8.5px;white-space:nowrap;opacity:.85;pointer-events:none;transform:translate(6px,-50%)}
+/* a name on the left of the plot reads outward too, so it never runs back over the middle */
+.cg-gal .cg-glb.l{transform:translate(-100%,-50%) translateX(-6px)}
 .cg-gal .cg-ghub{position:absolute;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;background:var(--cg-s2);box-shadow:0 0 0 1.2px var(--cg-ac),0 0 14px color-mix(in srgb,var(--cg-ac) 35%,transparent);display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:var(--cg-mono);font-size:7.5px;color:var(--cg-t2);line-height:1}
 .cg-gal .cg-ghub b{font-size:7px;color:var(--cg-t3);font-weight:400}
 .cg-mini{display:block;position:relative;overflow:hidden;--cg-bg:var(--bg0,#0e0f12);--cg-s1:var(--bg1,#15171c);--cg-s2:var(--bg2,#1b1e25);--cg-bd:var(--border,#2a2e37);--cg-bd2:color-mix(in srgb,var(--border,#2a2e37) 70%,var(--fg,#ddd));--cg-t1:var(--fg,#e6e6e6);--cg-t2:var(--dim,#aaa);--cg-t3:var(--dim2,#777);--cg-ac:var(--acc,#7c9cff);--cg-ac2:var(--acc2,#5ec9a0);--cg-est:#5aa0c8;--cg-mono:var(--mono,ui-monospace,monospace);font-size:8px;color:var(--cg-t1)}

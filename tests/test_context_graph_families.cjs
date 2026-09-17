@@ -108,5 +108,19 @@ const fed = G.compute(Object.assign({}, base, { estate: { nodes: SNAP.nodes, edg
 t('fed: the chips memory · loop · plan · estate, from out.families each render', (fed.families || []).map((x) => x.name).join(',') === 'memory,loop,plan,estate', (fed.families || []).map((x) => x.name + ':' + x.n + ':' + x.level).join(' '));
 const memOnly = G.compute(Object.assign({}, base, { loop: [], runPlan: [], run: null, stepReads: [], plan: [] }), W, H);
 t('setMemory alone: the memory chip appears, at all by default', (memOnly.families || []).map((x) => x.name + ':' + x.level).join(',') === 'memory:all', (memOnly.families || []).map((x) => x.name).join(','));
+/* A chip you switch off must still be there to switch back on. Memory used to count its family from the list
+   AFTER the level was applied, so switching it off emptied the count, the chip disappeared and took the only way
+   back with it - and it was the ONLY family that did this, because the others count their raw size. The case that
+   breaks is a session whose memory is RECALLS with no separate session-memory graph beside them. */
+const recallsOnly = { nodes: [{ id: 'm1', label: 'a recall', source: 'memory', score: 0.8, included: true, text: 'x' },
+    { id: 'm2', label: 'another', source: 'memory', score: 0.6, included: true, text: 'y' },
+    { id: 'c1', label: 'a cap', source: 'cap', score: 0.7, included: true, text: 'z' }],
+  rels: [], memory: [], memEdges: [], loop: base.loop, runPlan: base.runPlan, estate: { nodes: SNAP.nodes, edges: SNAP.edges } };
+['memory', 'loop', 'plan', 'estate'].forEach((fam) => {
+  const off = G.compute(Object.assign({}, recallsOnly, { mix: { [fam]: 'off' } }), W, H);
+  const chip = (off.families || []).find((x) => x.fam === fam);
+  t('the ' + fam + ' chip is still there when ' + fam + ' is switched off, so it can be switched back on',
+    !!chip && chip.on === false, (off.families || []).map((x) => x.fam).join(','));
+});
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
