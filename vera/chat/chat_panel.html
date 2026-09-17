@@ -1064,8 +1064,17 @@ body[data-view="minimal"]:not(.has-msgs) #msgs > .sys-msg,
 body[data-view="minimal"]:not(.has-msgs) #msgs > .min-welcome{
   font-size:18px;color:var(--dim2);font-weight:300;letter-spacing:.5px;
   background:transparent;border:none;
-  /* Sit just above the centred input box (which is at top:46%). */
-  margin-bottom:90px;
+  /* Sit just above the centred input box, which is position:absolute at top:46% with a -50% translate - so its
+     CENTRE is at 46% of the height and the bar spans roughly 386 to 486 on a 949px window. #msgs centres its
+     column, so a bottom margin lifts by HALF of it: the old 90px lifted 45 and left the line at y=444, INSIDE
+     the bar. A third of the viewport clears it, bounded either way (Notes/42 defect 93). */
+  margin-bottom:clamp(200px,30vh,320px);
+}
+/* the same rule hard-codes the weight and the tracking, so a pack's display face never reached this line; the
+   override has to carry the same specificity to be seen at all */
+html[data-style] body[data-view="minimal"]:not(.has-msgs) #msgs > .sys-msg,
+html[data-style] body[data-view="minimal"]:not(.has-msgs) #msgs > .min-welcome{
+  font-family:var(--f-disp,var(--sans));font-weight:normal;letter-spacing:normal;
 }
 body[data-view="minimal"]:not(.has-msgs):not(.has-panel) #inputBar{
   position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);
@@ -1093,11 +1102,7 @@ body[data-view="minimal"]:not(.has-msgs) #ctxStrip{
   background:var(--bg1);
 }
 /* The minimal welcome line (set by JS) */
-.min-welcome{font-size:18px;color:var(--dim2);text-align:center;letter-spacing:.5px;font-weight:300;
-  /* #msgs centres its column, and a bottom margin in a centred column lifts an item by HALF of it. 90px lifted
-     this 45px and left it at y=443 - on top of the composer, which is centred in the same space. A third of the
-     viewport clears it, bounded so it neither collides on a short window nor floats away on a tall one. */
-  margin:0 0 clamp(190px,33vh,340px)}
+.min-welcome{font-size:18px;color:var(--dim2);text-align:center;letter-spacing:.5px;font-weight:300}
 /* every other display line here goes through the pack's face; this one never did, so it kept the default sans and
    a 300 weight whatever pack was on. Under a pack it takes --f-disp and drops the light weight and the tracking,
    which fight a pixel or a newspaper face. Without a pack nothing changes. */
