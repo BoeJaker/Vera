@@ -73,7 +73,11 @@
        is off until asked for, and the head carries the switch (Notes/42 defect 78 - the chat has had a Preview on its
        fences all along; a canvas item never had one). */
     code: (c, size, key, el) => {
-      const prev = !!(key && el && el._prevOn && el._prevOn[key]) && PREVIEWABLE(c.lang);
+      // a whole page starts drawn; anything else starts as source until the toggle says otherwise. What it
+      // actually settled on is remembered, so the toggle flips what you can SEE rather than an unset flag.
+      const pset = key && el && el._prevOn && Object.prototype.hasOwnProperty.call(el._prevOn, key);
+      const prev = PREVIEWABLE(c.lang) && (pset ? !!el._prevOn[key] : WHOLE_PAGE(c.lang, c.code));
+      if (key && el) { el._prevSeen = el._prevSeen || {}; el._prevSeen[key] = prev; }
       const head = `<div class="vc-codehead">${esc(c.filename || c.lang || 'code')}<span class="sp"></span>`
         + (PREVIEWABLE(c.lang) && key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
         + '</div>';
@@ -543,6 +547,11 @@
   const SBX_PICK = '@session';
   // the languages a browser can simply show - the same set the chat offers a Preview on
   const PREVIEWABLE = (lang) => ['html', 'js', 'javascript', 'css', 'jsx', 'svg'].indexOf(String(lang || '').toLowerCase()) >= 0;
+  /* A WHOLE PAGE draws itself without being asked (Notes/42 defect 90): a doctype, an <html> or a <body> is a
+     document the reply finished writing, not a fragment it was discussing. A fragment, a stylesheet or a script
+     waits to be asked - running those on sight would execute things a reply was only talking about. */
+  const WHOLE_PAGE = (lang, code) => ['html', 'svg'].indexOf(String(lang || '').toLowerCase()) >= 0
+    && /<\s*(!doctype\s+html|html[\s>]|body[\s>]|svg[\s>])/i.test(String(code || ''));
   // a code item's preview document: html and svg stand on their own, css dresses a small sample, js runs on a bare page
   function previewDoc(lang, code) {
     const L = String(lang || '').toLowerCase(), src = String(code || '');
@@ -1122,7 +1131,10 @@
       if (act === 'dgopen') { const c = this._contentOf(key) || {}; const code = String(c.mermaid || c.code || c.source || ''); const title = String(c.title || c.caption || 'Diagram');
         const ev2 = new CustomEvent('vera:canvas:diagram', { bubbles: true, composed: true, cancelable: true, detail: { key, code, title } }); this.dispatchEvent(ev2); if (ev2.defaultPrevented) return;
         try { this.dispatchEvent(new CustomEvent('vm:popout', { bubbles: true, composed: true, detail: { code, title } })); } catch (e) {} return; }
-      if (act === 'cprev') { this._prevOn = this._prevOn || {}; this._prevOn[key] = !this._prevOn[key]; this._open.add(key); if (this._doc) this.render(this._doc); return; }
+      if (act === 'cprev') { this._prevOn = this._prevOn || {};
+        // flip what is on SCREEN: the first press on a page that opened drawn turns it off, not on
+        this._prevOn[key] = !(this._prevSeen && this._prevSeen[key]);
+        this._open.add(key); if (this._doc) this.render(this._doc); return; }
       if (act === 'dgcopy') { const c = this._contentOf(key) || {}; try { navigator.clipboard.writeText(String(c.mermaid || c.code || c.source || '')); } catch (e) {} return; }
       if (act === 'dgsrc') { const p = it && it.querySelector('.vc-dgsrc'); if (p) p.hidden = !p.hidden; return; }
       if (act === 'tshare') { const h = it.querySelector('.vc-live[data-ws]'); const ws = h ? h.dataset.ws : ''; try { navigator.clipboard.writeText(location.origin + ws); } catch (e) {} return; }

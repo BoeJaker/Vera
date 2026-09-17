@@ -133,6 +133,14 @@ def test_chat_renders_through_the_shared_element_with_its_cards_as_the_hook():
     assert "VeraMD.version>=2" in r
     assert "let s=t.replace(/&/g,'&amp;')" in r                  # the fallback stays
     card = _fn("_mdFenceCard")
+    # A previewable block renders IN PLACE; the pane is still reachable beside it, and a whole HTML document
+    # opens as the drawing without being asked (Notes/42 defect 90).
+    assert "CH._codeInline(" in HTML and 'class="cb-act" data-prev' in HTML, "the block renders where it was written"
+    assert "if(_cbWholePage(lang, code)) setTimeout(" in HTML, "a whole page opens drawn"
+    assert "const _cbWholePage=(lang,code)=>['html','svg'].indexOf(String(lang||'').toLowerCase())>=0" in HTML
+    assert "f.setAttribute('sandbox','allow-scripts')" in HTML and "allow-same-origin" not in HTML.split("function _codeInline")[1][:900], "scripts only - the frame reaches nothing of ours"
+    assert ".code-card.prev > pre{display:none}" in HTML and ".code-card.prev .cb-prev iframe{" in HTML
+    assert "_codeCopy,_codePreview,_codeInline,_codeRun," in HTML, "exported on CH"
     for piece in ("CH._codeCopy(", "CH._codeSaveArtifact(", "CH._codePreview(", "CH._codeRun(", "CH._codeExec(", "highlightCode(raw, lang)", 'data-incomplete="1"'):
         assert piece in card, piece
     assert HTML.count("CH._codeSaveArtifact('${id}',this)") == 1   # the card is built in one place
