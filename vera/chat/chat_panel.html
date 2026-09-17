@@ -1254,7 +1254,13 @@ html[data-blocks="off"] .ctx-tab-bar{border-bottom-color:transparent}
    a gradient wash and a 2px accent bar — and boxes the input bar; Blocks off has to outrank those too. A PINNED
    question keeps an opaque ground (the answer would scroll through it otherwise) but loses the wash and the bar. */
 html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u{background:transparent;border-left-color:transparent}
-html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background-color:var(--bg0);background-image:none;border-left-color:transparent}
+/* THE box Blocks off never removed (Notes/42 defect 94). This rule is itself a Blocks-off rule and is more
+   specific than the general one for a pinned question, so it won and repainted the ground at full opacity -
+   measured on the mirror as rgb(9,15,24) across 736x70 at the top of the column, which is the box in the report.
+   The reason behind it is real: a pinned question is position:sticky and the answer scrolls underneath, so it has
+   to hide what passes behind. A flat fill hides the wash with it. It occludes through a ground at about a third
+   opacity over a blur instead - the text underneath is unreadable, the gradient carries through. */
+html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background-color:color-mix(in srgb,var(--bg0) 34%,transparent);background-image:none;border-left-color:transparent;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 html[data-blocks="off"] body[data-view="minimal"].has-msgs:not(.has-panel) #inputBar,html[data-blocks="off"] body[data-view="minimal"].has-msgs.has-panel #inputBar,html[data-blocks="off"] body[data-view="minimal"]:not(.has-msgs):not(.has-panel) #inputBar{background:transparent;border-color:transparent;box-shadow:none}
 html[data-blocks="off"] body[data-view="minimal"]:not(.has-msgs) #ctxStrip{background:transparent}
 /* ═══ Style packs on the chat surface (M1a-surfaces) — the pack sets FORM: type, radius, label metrics, body size,
