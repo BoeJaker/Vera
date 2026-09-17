@@ -354,6 +354,10 @@
   /* the stage: items placed level with their turns; the pinned band stays at the top, the parked chips at the bottom */
   .stage{position:relative;min-height:40px}
   .stage .it{position:absolute;margin:0;box-sizing:border-box;left:0;top:0;transition:top .32s cubic-bezier(.2,.7,.3,1),left .32s}
+  /* While the transcript is scrolling, a new top is not a move - it is a correction that should already have been
+     there - so it is taken instantly. Animating it makes the item chase the scroll and land a third of a second
+     late, which reads as the column resetting and dropping (Notes/42 defect 89). A drag already does this. */
+  .stage[data-scrolling] .it{transition:none}
   .stage .it.resizing{transition:none}
   :host([stage]) .body{position:relative;padding-top:0}
   :host([stage]) .band.pinned{padding-top:6px}
@@ -790,6 +794,10 @@
     syncScroll(msgsScrollTop, msgsTopClient) {
       const body = this.shadowRoot.getElementById('body'), st = this.shadowRoot.getElementById('stage'); if (!body || !st) return;
       if (this._rz) return;                                  // a resize in hand keeps the column still
+      /* the transcript is moving: place instantly until it has been still for a beat (defect 89) */
+      st.setAttribute('data-scrolling', '');
+      if (this._scrollIdle) clearTimeout(this._scrollIdle);
+      this._scrollIdle = setTimeout(() => { this._scrollIdle = null; try { st.removeAttribute('data-scrolling'); } catch (_) {} }, 140);
       const br = body.getBoundingClientRect();
       // an item at stage y = its turn's top lands at the turn's own client top
       body.scrollTop = Math.max(0, Math.round(msgsScrollTop + st.offsetTop - (msgsTopClient - br.top)));
