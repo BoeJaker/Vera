@@ -11329,7 +11329,7 @@ APP.get("/ui/elements/git_graph.js", include_in_schema=False)(
 
 
 register_ui(
-    "evolve", "Loop Lab", "🧪",
+    "evolve", "Loop Lab", "⌬",
     """<div id="evolve-mount" style="height:100%;display:flex;flex-direction:column;">
         <iframe src="/evolve/panel"
                 style="flex:1;border:none;width:100%;height:100%"></iframe>

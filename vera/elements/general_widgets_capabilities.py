@@ -76,7 +76,7 @@ _CHAT_DATA_INJECT_HTML = (
 register_ui(
     panel_id="chat-with-data",
     label="Chat with Data",
-    icon="💬",
+    icon="≟",
     mode="inject",
     tab_order=205,
     html=_CHAT_DATA_INJECT_HTML,

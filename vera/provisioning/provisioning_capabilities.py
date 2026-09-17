@@ -657,7 +657,7 @@ register_ui = (lambda *a, **k: None)
 register_ui(
     "provisioning-panel",
     "Security",
-    "🛡",
+    "⬟",
     """<div id="provisioning-panel-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/provisioning/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"

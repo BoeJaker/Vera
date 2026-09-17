@@ -1431,7 +1431,7 @@ register_ui(
 register_ui(
     panel_id="activity",
     label="Activity",
-    icon="🗓",
+    icon="⌇",
     mode="tab",
     tab_order=42,
     html=('<div style="height:100%;display:flex;flex-direction:column">'

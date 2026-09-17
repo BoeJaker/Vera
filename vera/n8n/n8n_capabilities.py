@@ -621,7 +621,7 @@ async def _n8n_panel_route():
 
 
 register_ui(
-    "n8n-panel", "n8n", "🔗",
+    "n8n-panel", "n8n", "⟿",
     """<div id="n8n-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/n8n/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"

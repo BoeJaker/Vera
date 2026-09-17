@@ -839,7 +839,7 @@ async def _registry_panel():
 
 # mode="element": registered and listed so it is discoverable, but NOT a
 # top-level tab - it is rendered inside the Agents/Skills/Ontologies panel.
-register_ui("agent-registry", "Registry", "🧰", _PANEL_HTML, js=_PANEL_JS,
+register_ui("agent-registry", "Registry", "▥", _PANEL_HTML, js=_PANEL_JS,
             ui_caps=["registry.list", "registry.get", "registry.interop",
                      "registry.upsert", "registry.delete", "registry.sync_skill",
                      "registry.import_skill"],

@@ -25784,7 +25784,7 @@ try:
     register_ui(
         "dag-workshop",
         "DAG Workshop",
-        "",            # no bare emoji per style guide
+        "⋔",            # no bare emoji per style guide
         """
             <iframe src="/workshop/panel"
             style="flex:1;border:none;width:100%;height:100%"
