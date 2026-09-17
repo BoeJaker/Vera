@@ -890,7 +890,10 @@ body.exploded #msgs,body.exploded #jumpToBottomBtn{display:none!important}
 .tb-xm{display:none}.tb-xm.on{display:inline-flex}
 /* an empty minimal session lays its system lines out in a row; beside a column they wrap and stay in the chat */
 body[data-view="minimal"]:not(.has-msgs).has-cols #msgs{flex-wrap:wrap;overflow:hidden}
-html[data-blocks="off"] .tri-col{border-left-color:transparent}
+/* the column paints the page ground (.tri-col{background:var(--bg0)}) and this rule only ever cleared its
+   border, so the canvas column stayed solid over the wash - the element going transparent inside it changed
+   nothing anyone could see (Notes/42 defect 88) */
+html[data-blocks="off"] .tri-col{border-left-color:transparent;background:transparent}
 html[data-blocks="off"] .tri-hd{background:transparent;border-color:transparent}
 
 /* Resize handle between #chatStack and #chatPanelHost. Hidden when no
@@ -1215,7 +1218,11 @@ html[data-den="zen"] .msg-body.u{font-size:13.5px}
 /* BLOCKS OFF — no tinted question, no closing rule, no boxed record: just the conversation */
 html[data-blocks="off"] .mwrap{border-bottom:none}
 html[data-blocks="off"] .mwrap.u{background:transparent}
-html[data-blocks="off"] .mwrap.u.pin{box-shadow:none;background:var(--bg0)}
+/* A pinned question has to occlude - the answer scrolls under it - which is why it keeps a ground where every
+   other message loses one. A FLAT ground also hides the wash, so with the glow behind it the question read as a
+   Blocks-off failure (defect 88). It occludes through a mostly-opaque ground and a blur now: the glow carries
+   through, the text scrolling underneath does not. */
+html[data-blocks="off"] .mwrap.u.pin{box-shadow:none;background:color-mix(in srgb,var(--bg0) 84%,transparent);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}
 html[data-blocks="off"] .sys-msg{border-bottom:none}
 html[data-blocks="off"] .cap-inline{background:transparent;border-color:transparent;border-left-color:var(--acc2)}
 html[data-blocks="off"] .cap-inline.error{border-left-color:var(--err)}
@@ -1225,6 +1232,10 @@ html[data-blocks="off"] .council-resp,html[data-blocks="off"] .council-resp.best
 html[data-blocks="off"] #inputBar,html[data-blocks="off"] #docChips,html[data-blocks="off"] #ctxStrip,html[data-blocks="off"] #podcastBar,html[data-blocks="off"] #councilPanel,html[data-blocks="off"] #sdPanel{background:transparent;border-color:transparent}
 html[data-blocks="off"] #topBar{background:transparent;border-bottom-color:transparent}
 html[data-blocks="off"] #rightRail{background:transparent;border-right-color:transparent}
+/* the LHM library carries its own stylesheet and almost no Blocks awareness; its CTA and its strips paint grounds
+   the chat's rules never named (defect 88). The ring stays, so the control is still a control. */
+html[data-blocks="off"] #rightRail .lhm-cta{background:transparent}
+html[data-blocks="off"] #rightRail .lhm-strips,html[data-blocks="off"] #rightRail .lhm-tsearch{background:transparent}
 html[data-blocks="off"] .ctx-tab-bar{border-bottom-color:transparent}
 /* the minimal view (the default once a message exists) paints the question with its own, more specific rules —
    a gradient wash and a 2px accent bar — and boxes the input bar; Blocks off has to outrank those too. A PINNED
