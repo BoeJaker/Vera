@@ -6343,6 +6343,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); el.setAttribute('bare','');   /* the column's own .tri-hd IS the head (defect 74) */ el.setAttribute('blocks', (document.documentElement.getAttribute('data-blocks')==='off')?'off':'on'); try{ el.setAttribute('nb-api', _NB_API_BASE()); }catch(_){} host.appendChild(el);
       // the stage follows the transcript: its turn tops, its scroll, its reflow
       el.addEventListener('vera:canvas:placed', ()=>_cvRunsDraw());
+      /* 'placed' is the start of the items' .32s glide, not the end of it, so the runs follow the glide itself —
+         from inside the shadow root the items live in, which a document listener cannot be relied on to see */
+      try{ if(el.shadowRoot) el.shadowRoot.addEventListener('transitionstart', _runsGlide, true); }catch(_){}
       el.addEventListener('vera:canvas:hover', ev=>{ _cvHoverKey=(ev.detail||{}).key||null; _cvRunsDraw(); });
       const msgs=document.getElementById('msgs');
       if(msgs&&!msgs._cvStageBound){ msgs._cvStageBound=true; msgs.addEventListener('scroll', ()=>_cvStageSync(), {passive:true}); msgs.addEventListener('mouseover', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap[data-mid]'); const m=w?w.dataset.mid:null; if(m!==_cvHoverMid){ _cvHoverMid=m; _cvRunsDraw(); } });
@@ -6685,7 +6688,12 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   function _ctxRunsFollowScene(){
     if(!_xplEl||_xplEl._ctxRunsBound) return; _xplEl._ctxRunsBound=true;
     const soon=()=>{ if(_ctxRunsRaf) return; _ctxRunsRaf=requestAnimationFrame(()=>{ _ctxRunsRaf=0; try{ _ctxRunsDraw(); }catch(_){} try{ _cvRunsDraw(); }catch(_){} }); };
-    _xplEl.addEventListener('vera:xpl:rendered', soon); ['wheel','pointermove','pointerup','click'].forEach(t=>_xplEl.addEventListener(t, soon, {passive:true}));
+    /* the element has finished rendering when it says so, and the context graph's twin event is already drawn
+       straight away (line 6487, 'vera:ctx:rendered'); putting this one through a frame first left these runs a
+       frame behind the scene for no reason. The raw pointer events keep the coalesced path — they fire far
+       faster than a redraw is worth. */
+    _xplEl.addEventListener('vera:xpl:rendered', ()=>{ try{ _ctxRunsDraw(); }catch(_){} try{ _cvRunsDraw(); }catch(_){} });
+    ['wheel','pointermove','pointerup','click'].forEach(t=>_xplEl.addEventListener(t, soon, {passive:true}));
   }
   // the runs light up: the record under the pointer lights its type's trunk and branches, the rest recede
   function _ctxRunsHover(id){
@@ -6732,6 +6740,48 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      re-sync keeps the throttle it needs (Notes/42 defect 66). */
   let _runsSoonRaf=0;
   function _runsSoon(){ if(_runsSoonRaf) return; _runsSoonRaf=(window.requestAnimationFrame||setTimeout)(()=>{ _runsSoonRaf=0; try{ _ctxRunsDraw(); }catch(_){} try{ _cvRunsDraw(); }catch(_){} }); }
+  /* ...and the other half of it: a run lands on two things that MOVE, and they do not move in steps, they GLIDE.
+     The exploded view's pan/zoom container carries transition:transform .38s (dropped only while .dragging, so a
+     wheel zoom glides in full) and the canvas stage's items carry transition:top .32s,left .32s (dropped only
+     while scrolling or resizing). Every redraw here hangs off a discrete event, and 'vera:canvas:placed' — the
+     most innocent-looking of them — fires the instant the new top/left are assigned, which is the START of the
+     glide: the runs are drawn to where the items still are, and the items then travel out from under them for a
+     third of a second. So the runs were never a frame behind; they stood still for the whole animation and
+     snapped at the end, which against a moving anchor reads as the edge tearing off (Notes/42 defect 96).
+     getBoundingClientRect() reports a transitioning element WHERE IT IS NOW, so the runs track a glide exactly
+     if they are simply redrawn while it runs. A transitionstart on any of the three surfaces holds a frame loop
+     open for that transition's OWN computed duration — read off the element, so retiming the CSS needs no
+     matching change here — and the loop closes itself when the last glide ends. With nothing animating, not one
+     frame is scheduled. */
+  let _runsHoldT=0, _runsHoldRaf=0;
+  function _runsFollowFrames(ms){
+    const until=Date.now()+Math.max(0, ms||0); if(until>_runsHoldT) _runsHoldT=until;
+    if(_runsHoldRaf) return;
+    const step=()=>{ _runsHoldRaf=0; try{ _ctxRunsDraw(); }catch(_){} try{ _cvRunsDraw(); }catch(_){}
+      if(Date.now()<_runsHoldT) _runsHoldRaf=requestAnimationFrame(step); };
+    _runsHoldRaf=requestAnimationFrame(step);
+  }
+  /* the glide's own length: the property's slot in transition-duration, plus the delay in front of it */
+  function _trMs(el, prop){
+    try{ const cs=getComputedStyle(el);
+      const ms=(v)=>{ v=String(v||'').trim(); const n=parseFloat(v); return isNaN(n)?0:(/ms$/.test(v)?n:n*1000); };
+      const ps=String(cs.transitionProperty||'').split(','), ds=String(cs.transitionDuration||'').split(','), ls=String(cs.transitionDelay||'').split(',');
+      let i=ps.findIndex(p=>p.trim()===prop); if(i<0) i=ps.findIndex(p=>p.trim()==='all'); if(i<0) i=0;
+      return ms(ds[i%ds.length])+ms(ls[i%ls.length]);
+    }catch(_){ return 400; }
+  }
+  /* vera-canvas keeps its items in a shadow root, so the element that is actually moving comes off the composed
+     path while the event itself is retargeted to the host — either one is enough to tell the three surfaces from
+     the rest of the page, and the duration is read from the element that carries the transition */
+  function _runsGlide(ev){
+    const p=ev.propertyName; if(p!=='transform'&&p!=='top'&&p!=='left') return;
+    const path=(ev.composedPath&&ev.composedPath())||[]; const el=path[0]||ev.target, host=ev.target;
+    const onSurface=(host&&host.closest&&host.closest('vera-exploded,vera-canvas,vera-context-graph'))
+                  ||(el&&el.closest&&el.closest('.stage,.xp-view,.cg-in'));
+    if(!onSurface) return;
+    _runsFollowFrames(_trMs((el&&el.nodeType===1)?el:host, p)+40);   /* a frame past the end, so the settled position is the last one drawn */
+  }
+  document.addEventListener('transitionstart', _runsGlide, true);
   document.addEventListener('click', ev=>{ try{ const t=ev.target; if(t&&t.closest&&(t.closest('#rightRail .lhm-rail .lhm-ico')||t.closest('#hdrMore')||t.closest('.cmw'))) _runsLook(); }catch(_){} }, true);
   function _ctxRunsDraw(){
     const svg=document.getElementById('ctxRunsOverlay'); if(!svg) return;
