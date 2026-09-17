@@ -580,8 +580,12 @@
        draws eight, Memory recalls among them. It was built by folding the other families away, which took the one
        family the user had asked about by name off the face that was meant to be the board's. What simple drops is
        the lanes beneath the plot, the picked record's card and the drawer: the graph itself is whole. */
-    // the simple face is the CONTEXT plot: the other families are folded away for it, not drawn small
-    const base = simple ? Object.assign({}, S, { mix: Object.assign({}, S.mix || {}, { memory: 'off', loop: 'off', plan: 'off', estate: 'off' }), list: false }) : S;
+    /* The simple face is the design's GALAXY: the context records and the memory recalls around the hub, and
+       nothing laid over them. The loop, the plan and the estate are folded away - the board's galaxy has no lane,
+       no plan row and no estate strip - but the RECALLS are not: the board names "Memory recalls" in the legend
+       and in the list beside the other seven sources, and the memory level governs the recalls as well as the arm
+       (defect 65), so folding it took them out of the plot too. The memories are on every graph. */
+    const base = simple ? Object.assign({}, S, { mix: Object.assign({}, S.mix || {}, { loop: 'off', plan: 'off', estate: 'off' }), list: false }) : S;
     const o = mini(Object.assign({}, base, { sel: detail || null, q: q || '' }), w, h);
     if (simple) return '<div class="cg-mini simple" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div></div>';
     return '<div class="cg-mini' + (list ? ' listing' : '') + '" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div><div class="cg-lanes">' + drawLanes(o, { noRecord: true }) + '</div>'
