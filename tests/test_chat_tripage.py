@@ -185,7 +185,17 @@ def test_the_relevance_engine_drives_the_canvas_columns_focus_set():
     # the pass ANSWERS (apply:false); the chat recalls what is in focus and parks nothing (Notes/42 defect 53)
     assert "_capCall('canvas.session.relevance',{session_id:SID, turn:mid||'', text:String(text||'').slice(0,2000), entities:entities.slice(0,60), recent, apply:false})" in fn
     assert "recalled=await _cvRecall(cv, r.focus||[], mid); if(recalled){ cv._rev=null; cv.refresh(); }" in fn
-    assert "cv.setFocus(r.focus||[], r.scores||{})" in fn and "if(den==='full') return;" in fn, "a focus change asks only in Hover and Zen"
+    # The SCREEN answers focus, in every tier: an item takes the weight of the message that MADE it, holds while
+    # that message is on screen and fades out with it - the drop-off IS the screen real estate. What the relevance
+    # engine returns is kept beside that and weighted by the same measure rather than written over it, so a message
+    # with relevant content holds those items too. Only the deeper CALL stays a Hover-and-Zen thing, where folding
+    # actually uses it. Before this, focus belonged to one turn and was replaced the moment another took over,
+    # however much of the first message was still on screen (Notes/42 defect 91).
+    assert "_cvRelServer={ keys:(r.focus||[]).map(String), scores:r.scores||{} }; _cvFocusSig=''; _cvScreenFocus();" in fn
+    assert "try{ _cvScreenFocus(); }catch(_){}" in fn and "if(den==='full') return;" in fn, "the deeper call is Hover and Zen only"
+    assert "w[m.dataset.mid]=Math.max(0, Math.min(1, vis/Math.max(1, Math.min(r.height||VH, VH))));" in HTML, "a message weighs the share of the viewport it holds"
+    assert "cv.itemRects().forEach(it=>{ const k=it.from||it.mid;" in HTML, "an item takes the weight of the message that made it"
+    assert "if(sig===_cvFocusSig) return; _cvFocusSig=sig;" in HTML, "setFocus re-renders, so only when the answer changed"
     assert "try{ _cvRelevance(_cvRelMid, _cvRelText+'\\n'+String(fullText||'').slice(0,1500)); }catch(_){}" in HTML, "asked when the reply lands"
     assert "_cvRelMid=uMsg.mid; _cvRelText=msg;" in HTML
     assert "msgsEl.addEventListener('scroll', _cvRelFocus, {passive:true}); msgsEl.addEventListener('click', _cvRelFocus);" in HTML

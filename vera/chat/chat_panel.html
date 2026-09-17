@@ -6090,7 +6090,8 @@ IMPORTANT:
     try{ r=await _capCall('canvas.session.relevance',{session_id:SID, turn:mid||'', text:String(text||'').slice(0,2000), entities:entities.slice(0,60), recent, apply:false}); }catch(_){ return null; }
     let recalled=0;
     try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&cv.setFocus&&r&&r.ok){
-      cv.setFocus(r.focus||[], r.scores||{});
+      // kept, then weighted by what is on screen - a message's relevance only holds while the message does
+      _cvRelServer={ keys:(r.focus||[]).map(String), scores:r.scores||{} }; _cvFocusSig=''; _cvScreenFocus();
       if(o.apply!==false){ recalled=await _cvRecall(cv, r.focus||[], mid); if(recalled){ cv._rev=null; cv.refresh(); } } } }catch(_){}
     if(r&&typeof r==='object') r.recalledByChat=recalled;
     return r;
@@ -6266,7 +6267,46 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const d=ev.detail||{}; if(!d.key||!d.id||!SID) return; const p=(UI_PANELS||[]).find(q=>q&&q.id===d.id); if(!p) return;
     try{ const src=await _panelSrcAsync(p); if(src) await _capCall('canvas.update',{session_id:SID, key:d.key, content:Object.assign({}, d.content||{}, {src, title:(d.content&&d.content.title)||p.label||d.id})}); }catch(_){}
   });
+  /* WHAT THE SCREEN SAYS IS IN FOCUS.
+     Every message on screen carries a weight - the share of the viewport it holds, capped at its own height, so a
+     message filling the view weighs 1 and one on its way out weighs almost nothing. An item takes the weight of
+     the message that MADE it (its `from`, or its turn when nothing made it), so it stays in focus for as long as
+     that message is on the screen and fades out with it rather than the instant another turn takes over.
+     The relevance engine's answer - the items a message is ABOUT rather than the ones it made - is kept beside
+     this and weighted by the same measure, and the two are merged by whichever weight is higher. */
+  let _cvRelServer=null, _cvFocusSig='';
+  function _cvScreenWeights(msgs){
+    const MB=msgs.getBoundingClientRect(), VH=Math.max(1, MB.height), w={};
+    msgs.querySelectorAll('.mwrap[data-mid]').forEach(m=>{
+      const r=m.getBoundingClientRect(); const vis=Math.min(r.bottom, MB.bottom)-Math.max(r.top, MB.top);
+      if(!(vis>0)) return;
+      w[m.dataset.mid]=Math.max(0, Math.min(1, vis/Math.max(1, Math.min(r.height||VH, VH))));
+    });
+    return w;
+  }
+  function _cvScreenFocus(){
+    const cv=document.querySelector('#canvasColumnBody vera-canvas'); const msgs=document.getElementById('msgs');
+    if(!cv||!msgs||typeof cv.setFocus!=='function'||typeof cv.itemRects!=='function'||!_pages.has('canvas')) return;
+    const w=_cvScreenWeights(msgs); const best={};
+    // an item made by a message is in focus while that message is on screen
+    cv.itemRects().forEach(it=>{ const k=it.from||it.mid; if(!k) return; const s=w[k];
+      if(s>0) best[it.key]=Math.max(best[it.key]||0, s); });
+    // and an item a visible message is ABOUT is held too, at that message's weight
+    if(_cvRelServer&&_cvRelServer.keys){ const lead=Math.max(0, ...Object.keys(w).map(k=>w[k]), 0);
+      const sc=_cvRelServer.scores||{};
+      _cvRelServer.keys.forEach(k=>{ const rel=(sc[k]&&sc[k].score!=null)?Math.max(0, Math.min(1, +sc[k].score)):1;
+        const v=lead*rel; if(v>0) best[k]=Math.max(best[k]||0, v); }); }
+    const keys=Object.keys(best).sort();
+    // setFocus re-renders, so only when the answer actually changed: the set, or a weight by a quarter
+    const sig=keys.map(k=>k+':'+Math.round(best[k]*4)).join('|');
+    if(sig===_cvFocusSig) return; _cvFocusSig=sig;
+    const scores={}; keys.forEach(k=>{ scores[k]={score:+best[k].toFixed(2)}; });
+    try{ cv.setFocus(keys, scores); }catch(_){}
+  }
   function _cvRelFocus(){
+    // the SCREEN answer is wanted in every tier - an item should hold while its message does whatever the tier -
+    // and only the deeper relevance call is left to Hover and Zen, where folding actually uses it
+    try{ _cvScreenFocus(); }catch(_){}
     const den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); if(den==='full') return;
     if(_cvRelFocusT) clearTimeout(_cvRelFocusT);
     _cvRelFocusT=setTimeout(()=>{ const w=_focusedTurn(); const mid=w?(w.dataset.mid||''):''; if(mid&&mid!==_cvRelLastFocus){ _cvRelLastFocus=mid; _cvRelevance(mid, String(w.textContent||'').slice(0,600), {apply:false}); } }, 400);
@@ -6330,6 +6370,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     try{ const fw=_focusedTurn(); let fm=fw?(fw.dataset.mid||''):''; if(fw&&fw.classList.contains('a')){ let p=fw.previousElementSibling; while(p&&!(p.classList&&p.classList.contains('mwrap')&&p.classList.contains('u'))) p=p.previousElementSibling; if(p&&p.dataset.mid) fm=p.dataset.mid; } if((cv.dataset.focusMid||'')!==fm) cv.dataset.focusMid=fm; }catch(_){}
     if(force||sig!==_cvStageSig){ _cvStageSig=sig; try{ cv.setTurns(turns, {height:msgs.scrollHeight}); }catch(_){} }
     try{ cv.syncScroll(msgs.scrollTop, msgs.getBoundingClientRect().top); }catch(_){}
+    try{ _cvScreenFocus(); }catch(_){}   // what is on screen decides what is in focus (defect 91)
     _cvRunsDraw();
   }
   // the chat|canvas channel is the canvas body's own inset: wide enough for this many lanes, 18 px apart, the design's
