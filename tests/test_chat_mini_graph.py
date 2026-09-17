@@ -19,15 +19,14 @@ def test_the_mini_has_both_faces_and_the_quick_menu_switches_them():
     el = _read("vera", "chat", "context_graph_element.js")
     # the element draws whichever face it is handed; the switch is the host's
     assert "const simple = String(opts.style || S.miniStyle || 'detailed').toLowerCase() === 'simple';" in el
-    # Simple is the BOARD's plot (Canvas.dc.html 1820-1827): one circle of rings around one hub, a plain dot per
-    # record coloured by its source, eight labels at the rim - one per SOURCE, Memory recalls among them. So the
-    # recalls take a sector like any other source instead of being lifted onto an arm, the session's own memory
-    # graph is not drawn beside them, and the loop, the plan and the estate keep to the detailed face.
-    assert "const base = simple ? Object.assign({}, S, { list: false, simplePlot: true }) : S;" in el
-    assert "const simple = !!S.simplePlot;" in el and "if (simple) { lvl.loop = 'off'; lvl.plan = 'off'; lvl.estate = 'off'; }" in el
-    assert "const ctx = nodes.filter((n) => (simple || n.source !== 'memory') && !off.has(n.source)" in el, "a recall is a source, not an arm"
-    assert "const memCtxAll = simple ? [] :" in el and "const memSessAll = (simple || lvl.memory === 'off') ? [] :" in el
-    assert "memory: 'off', loop: 'off', plan: 'off', estate: 'off'" not in el, "the simple face never folds the recalls away"
+    # SIMPLE is the board's face and the fold is the whole of it: the context plot by itself - its rings, its
+    # spokes, its records and the hub - with the other families FOLDED AWAY rather than drawn small. That one line
+    # is what makes the two faces look like different graphs; removing it once turned simple into detailed with a
+    # strip missing, which the user reported as having "2 complex" graphs.
+    assert "const base = simple ? Object.assign({}, S, { mix: Object.assign({}, S.mix || {}, { memory: 'off', loop: 'off', plan: 'off', estate: 'off' }), list: false }) : S;" in el
+    # and nothing may reach around the fold to put a family back on that face
+    assert "simplePlot" not in el, "the fold is the only thing that decides the simple face"
+    assert "const ctx = nodes.filter((n) => n.source !== 'memory' && !off.has(n.source)" in el, "the recalls keep their own arm on the detailed face"
     # and nothing else is laid over it - no lanes, no list, no record card
     assert "if (simple) return '<div class=\"cg-mini simple\"" in el
     assert "const detail = simple ? null :" in el and "list = simple ? false :" in el

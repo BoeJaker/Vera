@@ -151,13 +151,6 @@
     const off = S.layersOff || new Set();
     const ghosts = S.related !== false;
     const lvl = {}; FAMS.forEach((f) => { lvl[f] = mixOf(S, f); });
-    /* The board's mini (Canvas.dc.html 1820-1827) is one circle of rings around one hub, a plain dot per record
-       coloured by its source, and eight labels at the rim - one per SOURCE, Memory recalls among them. This element
-       normally lifts the memory-sourced records onto an arm outside the circle and draws the session's own memory
-       graph beside them, and gives the loop, the plan and the estate sectors of their own. All of that is what the
-       DETAILED face adds. On the simple face memory is an ordinary source and nothing else is drawn. (Defect 60.) */
-    const simple = !!S.simplePlot;
-    if (simple) { lvl.loop = 'off'; lvl.plan = 'off'; lvl.estate = 'off'; }
     // the plan row: the run's own plan while a run is in the lane (the board's "planned workflow along the top"), else the goals
     const runPlan = (S.loop && S.loop.length && S.runPlan && S.runPlan.length) ? S.runPlan : [];
     const planIsRun = runPlan.length > 0;
@@ -187,15 +180,14 @@
     // the level governs the RECALLS as much as the session's own records — it used to gate only the session's, so
     // turning memory off left the arm exactly as it was (Notes/42 defect 65). Off: nothing. Focus: the recalls this
     // prompt actually carries. All: every recall the turn assembled, injected or not.
-    const memCtxAll = simple ? [] : nodes.filter((n) => n.source === 'memory').map((n) => Object.assign({}, n, { _fam: 'memory', _injected: n.included !== false }));
+    const memCtxAll = nodes.filter((n) => n.source === 'memory').map((n) => Object.assign({}, n, { _fam: 'memory', _injected: n.included !== false }));
     const memCtx = lvl.memory === 'off' ? [] : lvl.memory === 'focus' ? memCtxAll.filter((n) => n._injected) : memCtxAll;
     const litIds = new Set(nodes.filter((n) => focus.has(n.id) && n.included !== false).map((n) => n.id));
     const memTouch = new Set(); (S.memEdges || []).concat(EDGES).forEach((e) => { const a = String(e.from_id || e.from || ''), b = String(e.to_id || e.to || ''); if (litIds.has(a)) memTouch.add(b); if (litIds.has(b)) memTouch.add(a); });
-    const memSessAll = (simple || lvl.memory === 'off') ? [] : (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).map((m) => ({ id: m.id, label: (m.text || m.summary || m.capability || m.category || m.id || '').slice(0, 60), source: 'memory', type: m.record_type || m.type || 'memory', score: m.importance == null ? 0.5 : +m.importance, text: m.text || m.summary || '', included: false, rec: m, _fam: 'memory', _injected: false, _sess: true, created_at: m.created_at || '' }));
+    const memSessAll = lvl.memory === 'off' ? [] : (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).map((m) => ({ id: m.id, label: (m.text || m.summary || m.capability || m.category || m.id || '').slice(0, 60), source: 'memory', type: m.record_type || m.type || 'memory', score: m.importance == null ? 0.5 : +m.importance, text: m.text || m.summary || '', included: false, rec: m, _fam: 'memory', _injected: false, _sess: true, created_at: m.created_at || '' }));
     const memSess = lvl.memory === 'focus' ? memSessAll.filter((m) => memTouch.has(m.id)) : memSessAll;
     const mem = memCtx.concat(memSess);
-    // simple: the recalls are a SOURCE like the rest, so they take a sector of the circle rather than an arm beside it
-    const ctx = nodes.filter((n) => (simple || n.source !== 'memory') && !off.has(n.source) && (ghosts || n.included !== false));
+    const ctx = nodes.filter((n) => n.source !== 'memory' && !off.has(n.source) && (ghosts || n.included !== false));
     const srcs = [...new Set(ctx.map((n) => n.source || '?'))].sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99));
     const reads = frame ? (frame.reads || frameReads(frame, nodes)) : (S.reads || {});
     const readBy = (id) => Object.keys(reads).filter((k2) => (reads[k2] || []).indexOf(id) >= 0);
@@ -588,7 +580,8 @@
        draws eight, Memory recalls among them. It was built by folding the other families away, which took the one
        family the user had asked about by name off the face that was meant to be the board's. What simple drops is
        the lanes beneath the plot, the picked record's card and the drawer: the graph itself is whole. */
-    const base = simple ? Object.assign({}, S, { list: false, simplePlot: true }) : S;
+    // the simple face is the CONTEXT plot: the other families are folded away for it, not drawn small
+    const base = simple ? Object.assign({}, S, { mix: Object.assign({}, S.mix || {}, { memory: 'off', loop: 'off', plan: 'off', estate: 'off' }), list: false }) : S;
     const o = mini(Object.assign({}, base, { sel: detail || null, q: q || '' }), w, h);
     if (simple) return '<div class="cg-mini simple" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div></div>';
     return '<div class="cg-mini' + (list ? ' listing' : '') + '" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div><div class="cg-lanes">' + drawLanes(o, { noRecord: true }) + '</div>'
