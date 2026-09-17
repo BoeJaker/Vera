@@ -44,7 +44,7 @@
    (vera:ctx:preview — the host opens its browser pane), Activity evidence ↗ · Memory graph ↗ on a run node; the list's
    head: Incl all · Excl all (vera:ctx:toggle-all). The mini's card and rows carry the same data-a hooks:
    `[data-a="preview"][data-url]` · `[data-a="incl-all"]` · `[data-a="excl-all"]` · `a.lnk` (the run links).
-   window.VeraContextGraph = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawLanes, recordCard,
+   window.VeraContextGraph = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawMiniGalaxy, drawLanes, recordCard,
    listHtml, VIEWS, FAMS, … } — compute() is pure (node-testable); mini(state, w, h) is the same layout in miniature
    (the tracks scaled to the box) and miniHtml(state, w, h, {detail, list, q}) draws it with the element's own classes —
    the `context_graph` widget form's M face; miniDetail(state, id, w) is the compact record card for one record (the
@@ -587,9 +587,51 @@
        (defect 65), so folding it took them out of the plot too. The memories are on every graph. */
     const base = simple ? Object.assign({}, S, { mix: Object.assign({}, S.mix || {}, { loop: 'off', plan: 'off', estate: 'off' }), list: false }) : S;
     const o = mini(Object.assign({}, base, { sel: detail || null, q: q || '' }), w, h);
-    if (simple) return '<div class="cg-mini simple" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div></div>';
+    if (simple) return '<div class="cg-mini simple" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawMiniGalaxy(o, w, h) + '</div></div>';
     return '<div class="cg-mini' + (list ? ' listing' : '') + '" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div><div class="cg-lanes">' + drawLanes(o, { noRecord: true }) + '</div>'
       + (list ? listHtml(o, { compact: true, limit: 40 }) : '') + (o.rec ? recordCard(o.rec, { compact: true }) : '') + '</div>';
+  }
+  /* THE DESIGN'S MINI GALAXY (Canvas.dc.html 6164-6199, .gal/.gd/.gring/.glb/.ghub). A different drawing from
+     drawPlot, not a setting on it: every source contributes its most relevant THREE OR FOUR records and no more,
+     each source takes its own sector of the circle, relevance falls outward along 28/50/72/94, the outermost mark
+     of a source is hollow and carries that source's name. Thirty-odd marks in all - which is what makes it read as
+     a galaxy rather than the crammed crescents you get from drawing all 412 ontologies (Notes/42 defect 60). */
+  const GAL_LABEL = { agent: 'Agent + system', skill: 'Skills', ontology: 'Ontologies', memory: 'Memory recalls',
+    vector: 'Vector matches', graph: 'Graph (Neo4j)', fabric: 'Fabric records', cap: 'Capabilities', web: 'Web',
+    news: 'News', run: 'Runs', related_qa: 'Related Q&A', worldview: 'Worldview', entities: 'Entities', urls: 'Links', both: 'Memory + vector' };
+  function drawMiniGalaxy(o, w, h) {
+    const W = w || 262, H = h || 196, cx = W / 2, cy = H / 2 + 6, RAD = Math.PI / 180;
+    const by = {}; const seen = [];
+    (o.list || []).forEach((r) => { const k = String(r.source || '?'); if (!by[k]) { by[k] = []; seen.push(k); } by[k].push(r); });
+    seen.forEach((k) => by[k].sort((a, b) => (b.score || 0) - (a.score || 0)));
+    // the element names a sector by its raw key ("ontology", "cap"); the board names it as the legend does
+    const order = seen.slice().sort((a, b) => ((ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99)));
+    const SRC = order.map((k) => ({ key: k, name: GAL_LABEL[k] || k, col: by[k][0] && by[k][0].col, rows: by[k] }));
+    if (!SRC.length) return '<div class="cg-gal"></div>';
+    const P = {}, dots = [], labels = [];
+    SRC.forEach((s, si) => {
+      const N = Math.min(3 + (si % 2), s.rows.length);
+      const a0 = -90 + si * (360 / SRC.length);
+      let last = null;
+      for (let k = 0; k < N; k++) {
+        const row = s.rows[k], rel = row.score != null ? Math.max(0, Math.min(1, +row.score)) : (0.92 - k * 0.17);
+        const r = 28 + k * 22, a = (a0 + (k - (N - 1) / 2) * 11) * RAD;
+        const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+        P[si + ':' + k] = [x, y]; last = [x, y];
+        const cls = (rel > 0.8 && row.included !== false ? 'lit ' : '') + (k === N - 1 ? 'hollow' : '');
+        dots.push('<span class="cg-gd ' + cls + '" data-id="' + esc(row.id) + '" style="left:' + x.toFixed(1) + 'px;top:' + y.toFixed(1) + 'px;--c:' + esc(s.col || 'var(--cg-t2)') + ';opacity:' + (0.45 + rel * 0.55).toFixed(2) + '" title="' + esc(row.label + ' \u00b7 ' + s.name + ' \u00b7 relevance ' + rel.toFixed(2)) + '"></span>');
+      }
+      if (last) labels.push('<span class="cg-glb" style="left:' + (last[0] + 8).toFixed(1) + 'px;top:' + (last[1] - 4).toFixed(1) + 'px;color:' + esc(s.col || 'var(--cg-t2)') + '">' + esc(s.name.replace(' + system', '').replace(' matches', '').replace(' recalls', '')) + '</span>');
+    });
+    const rings = [28, 50, 72].map((r) => '<span class="cg-gring" style="left:' + cx + 'px;top:' + cy + 'px;width:' + (r * 2) + 'px;height:' + (r * 2) + 'px"></span>').join('');
+    // the spokes: every mark to the hub when All edges is on, else the relations the state actually carries
+    const seg = (a, b, col, cls) => { const dx = b[0] - a[0], dy = b[1] - a[1];
+      return '<span class="cg-gedge ' + cls + '" style="left:' + a[0].toFixed(1) + 'px;top:' + a[1].toFixed(1) + 'px;width:' + Math.hypot(dx, dy).toFixed(1) + 'px;transform:rotate(' + (Math.atan2(dy, dx) * 180 / Math.PI).toFixed(1) + 'deg);--c:' + esc(col) + '"></span>'; };
+    let edges = '';
+    if (o.allEdges) SRC.forEach((s, si) => { for (let k = 0; k < 4; k++) { const p = P[si + ':' + k]; if (p) edges += seg(p, [cx, cy], s.col || 'var(--cg-t2)', 'faint'); } });
+    const tk = o.tokens >= 1000 ? (o.tokens / 1000).toFixed(1) + 'k' : (o.tokens || '');
+    const hub = '<span class="cg-ghub" style="left:' + cx + 'px;top:' + cy + 'px">aide<b>' + esc(tk) + '</b></span>';
+    return '<div class="cg-gal">' + rings + edges + dots.join('') + labels.join('') + hub + '</div>';
   }
   // the mini's detail: the compact record card for one record, over the box (the widget form shows it on a click)
   function miniDetail(S, id, w, h) { const o = mini(Object.assign({}, S || {}, { sel: id || null, lsel: null }), w || 262, h || 196); return o.rec ? recordCard(o.rec, { compact: true }) : ''; }
@@ -783,6 +825,19 @@ vera-context-graph .cg-lay .lv{display:inline-flex;gap:2px;margin-left:2px}vera-
 vera-context-graph .cg-lay .lv b.on{background:currentColor}
 vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
 /* the mini: the same classes in a small box — the widget form's face */
+/* the design's mini galaxy (Canvas.dc.html .gal/.gd/.gring/.glb/.ghub), at the element's own tokens. The label
+   is a little larger than the board's 7.5px: at this size it has to be read, not just seen (defect 60). */
+.cg-gal{position:absolute;inset:0;border-radius:8px;background:radial-gradient(circle at 50% 52%,color-mix(in srgb,var(--cg-ac) 9%,transparent),transparent 60%);overflow:hidden}
+.cg-gal .cg-gring{position:absolute;border-radius:50%;box-shadow:0 0 0 1px color-mix(in srgb,var(--cg-bd2) 70%,transparent);transform:translate(-50%,-50%);pointer-events:none}
+.cg-gal .cg-gd{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--cg-s2);box-shadow:0 0 0 1.2px var(--c);transform:translate(-50%,-50%);cursor:pointer}
+.cg-gal .cg-gd.lit{background:var(--c)}
+.cg-gal .cg-gd.hollow{background:transparent;box-shadow:0 0 0 1px var(--c)}
+.cg-gal .cg-gd:hover{box-shadow:0 0 0 1.2px var(--c),0 0 10px -2px var(--c)}
+.cg-gal .cg-gedge{position:absolute;height:1px;background:var(--c);transform-origin:0 50%;opacity:.55;pointer-events:none}
+.cg-gal .cg-gedge.faint{opacity:.18}
+.cg-gal .cg-glb{position:absolute;font-family:var(--cg-mono);font-size:8.5px;white-space:nowrap;opacity:.85;pointer-events:none}
+.cg-gal .cg-ghub{position:absolute;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;background:var(--cg-s2);box-shadow:0 0 0 1.2px var(--cg-ac),0 0 14px color-mix(in srgb,var(--cg-ac) 35%,transparent);display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:var(--cg-mono);font-size:7.5px;color:var(--cg-t2);line-height:1}
+.cg-gal .cg-ghub b{font-size:7px;color:var(--cg-t3);font-weight:400}
 .cg-mini{display:block;position:relative;overflow:hidden;--cg-bg:var(--bg0,#0e0f12);--cg-s1:var(--bg1,#15171c);--cg-s2:var(--bg2,#1b1e25);--cg-bd:var(--border,#2a2e37);--cg-bd2:color-mix(in srgb,var(--border,#2a2e37) 70%,var(--fg,#ddd));--cg-t1:var(--fg,#e6e6e6);--cg-t2:var(--dim,#aaa);--cg-t3:var(--dim2,#777);--cg-ac:var(--acc,#7c9cff);--cg-ac2:var(--acc2,#5ec9a0);--cg-est:#5aa0c8;--cg-mono:var(--mono,ui-monospace,monospace);font-size:8px;color:var(--cg-t1)}
 .cg-mini .cg-in{position:absolute;inset:0}.cg-mini .cg-lanes{position:absolute;inset:0;pointer-events:none}
 .cg-mini .cg-hub{width:24px;height:24px}.cg-mini .cg-hub b{font-size:9px}.cg-mini .cg-hub span{display:none}
@@ -921,7 +976,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
     }
     root.customElements.define('vera-context-graph', VeraContextGraph);
   }
-  const api = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawLanes, recordCard, listHtml, panTo, textOf, edgeTypeOf, loopFromEvents, planFromGoals, dagSteps, mixOf, VIEWS, FAMS, frameReads, ensureCss, kindOf, ICON, version: 6 };
+  const api = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawMiniGalaxy, drawLanes, recordCard, listHtml, panTo, textOf, edgeTypeOf, loopFromEvents, planFromGoals, dagSteps, mixOf, VIEWS, FAMS, frameReads, ensureCss, kindOf, ICON, version: 6 };
   root.VeraContextGraph = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
