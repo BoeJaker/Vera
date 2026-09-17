@@ -24,6 +24,18 @@ def test_the_mini_has_both_faces_and_the_quick_menu_switches_them():
     # is what makes the two faces look like different graphs; removing it once turned simple into detailed with a
     # strip missing, which the user reported as having "2 complex" graphs.
     assert "const base = simple ? Object.assign({}, S, { mix: Object.assign({}, S.mix || {}, { loop: 'off', plan: 'off', estate: 'off' }), list: false }) : S;" in el
+    # SIMPLE is the design's mini GALAXY - a different drawing, not drawPlot with layers off. Its sparseness is the
+    # point and it is explicit in the board (Canvas.dc.html 6170): three or four marks per SOURCE, each source its
+    # own sector, relevance falling outward along 28/50/72/94, the outermost hollow and carrying the source's name.
+    # Drawing every record instead is what made simple read as a second complex graph.
+    assert "function drawMiniGalaxy(o, w, h) {" in el
+    assert "if (simple) return '<div class=\"cg-mini simple\"" in el and "drawMiniGalaxy(o, w, h)" in el, "simple draws the galaxy"
+    assert "const N = Math.min(3 + (si % 2), s.rows.length);" in el, "three or four marks per source - the whole of the sparseness"
+    assert "const r = 28 + k * 22, a = (a0 + (k - (N - 1) / 2) * 11) * RAD;" in el, "the board's radii and sector spread"
+    assert "const a0 = -90 + si * (360 / SRC.length);" in el, "the sources sit evenly around the circle"
+    assert "'Memory recalls'" in el and "'Graph (Neo4j)'" in el, "the rim labels are the legend's names, not the raw keys"
+    # and the COMPLEX pair is untouched: the mini's detailed face and the grown graph are the same drawing at two sizes
+    assert "drawPlot(o) + '</div><div class=\"cg-lanes\">'" in el, "detailed still draws the full plot and its lanes"
     # The memories are on EVERY graph — simple, the complex mini and the grown one. The board names "Memory recalls"
     # in the legend and the list beside the other seven sources; the memory level governs the recalls as well as the
     # arm (defect 65), so folding it off took them out of the simple plot entirely. It is not folded.
