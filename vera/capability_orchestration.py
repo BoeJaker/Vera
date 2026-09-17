@@ -10631,7 +10631,7 @@ async def _memgraph_panel_route():
 
 try:
     register_ui(
-        "memory-graph", "Memory Graph", "",
+        "memory-graph", "Memory Graph", "✣",
         """<div style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/memgraph/panel"
           style="flex:1;border:none;width:100%;height:100%"

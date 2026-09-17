@@ -1076,7 +1076,7 @@ async def _godseye_app(request: Request, path: str = ""):
 register_ui(
     "godseye",
     "Godseye",
-    "\U0001F30D",
+    "⊕",
     html="""<div style="height:100%;display:flex;flex-direction:column">
   <iframe src="/godseye/panel" style="flex:1;border:none;width:100%;height:100%;
           background:var(--bg0,#0d0f12)"

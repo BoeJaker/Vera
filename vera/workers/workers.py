@@ -492,7 +492,7 @@ _WOL_MOUNT_JS = r"""
 register_ui(
     "workers-ollama",
     "Estate",
-    "",
+    "⌗",
     '<div id="panel-wol" style="height:100%;overflow:hidden;background:var(--bg0)"></div>',
     _WOL_MOUNT_JS,
     ui_caps=[
@@ -525,7 +525,7 @@ _MODELS_MOUNT_JS = (_WOL_MOUNT_JS
 register_ui(
     "models",
     "Models",
-    "",
+    "⛃",
     '<div id="panel-models" style="height:100%;overflow:hidden;background:var(--bg0)"></div>',
     _MODELS_MOUNT_JS,
     ui_caps=[

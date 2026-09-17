@@ -83,7 +83,7 @@ _LES_INJECT_HTML = (
 register_ui(
     panel_id="live-event-stream",
     label="Live Event Stream",
-    icon="⚡",
+    icon="⇶",
     mode="inject",
     tab_order=210,
     html=_LES_INJECT_HTML,
@@ -141,7 +141,7 @@ _SL_INJECT_HTML = (
 register_ui(
     panel_id="system-log",
     label="System Log",
-    icon="📋",
+    icon="≡",
     mode="inject",
     tab_order=211,
     html=_SL_INJECT_HTML,

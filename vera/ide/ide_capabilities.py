@@ -2264,7 +2264,7 @@ async def ide_ws_changes_panel_html(trace_id=None):
 
 
 register_ui(
-    "ide-workspace-changes", "Workspace Changes", "🔀",
+    "ide-workspace-changes", "Workspace Changes", "≢",
     """<div style="height:100%;display:flex;flex-direction:column;">
       <iframe src="/ide/changes/panel"
               style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#14161a);"
@@ -2694,7 +2694,7 @@ async def _research_panel():
 register_ui(
     "ide-panel",
     "IDE",
-    "",
+    "✎",
     """<div id="ide-panel-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/ide/vscode/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
