@@ -212,6 +212,14 @@
     color:var(--fg,#dce1e8)}
   .wrap{border:1px solid var(--border,#2a2f37);border-radius:10px;
     background:var(--bg1,#15181d);overflow:hidden}
+  /* Blocks off: the whole chat drops its surfaces and the session canvas has to go with it - the board turns the
+     canvas column, its head and its items flat (Canvas.dc.html 655). A rule on <html> cannot cross a shadow root,
+     so the host carries the tier and the element answers to it here (Notes/42 defect 85). The GROUNDS go; the
+     structure - the lines that say where one item ends and the next begins - stays. */
+  :host([blocks="off"]) .wrap{background:transparent;border-color:transparent}
+  :host([blocks="off"]) .head{background:transparent;border-bottom-color:color-mix(in srgb,var(--border,#2a2f37) 55%,transparent)}
+  :host([blocks="off"]) .it{background:transparent;box-shadow:none;border-color:color-mix(in srgb,var(--border,#2a2f37) 55%,transparent)}
+  :host([blocks="off"]) .addbar{background:transparent}
   /* bare: the HOST draws the head. The tri-page column has its own title row - name, revision, the NOW count, the
    columns, the switches - and the element drawing a second "Session canvas" line inside it put two headers on top of
    each other and pushed the items down the column (Notes/42 defect 74). The widget element makes the same bargain. */
@@ -717,7 +725,7 @@
   const EDITABLE = ['note', 'markdown', 'code', 'html'];
 
   class VeraCanvas extends (typeof HTMLElement !== 'undefined' ? HTMLElement : class {}) {
-    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare']; }
+    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks']; }
 
     constructor() {
       super();

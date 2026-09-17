@@ -1547,6 +1547,14 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .gm.on{color:var(--t2,var(--dim2,#8a92a0))}
 #rightRail.lhm-host .lhm-quick .gm.on i{opacity:1}
 #rightRail.lhm-host .lhm-quick .gm b{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-weight:400;font-size:8px;color:var(--t3,var(--dim,#6b7280))}
+/* The design's background wash: two radial gradients across the top of the page, the accent at the left and a
+   second accent at the right, gone by 60% of a 300px band (Canvas.dc.html 711-713). Every board carries one. It is
+   built from the theme's own accents, so it follows the theme rather than being painted in, sits behind everything
+   and takes no pointer (Notes/42 defect 86). */
+#veraWash{position:fixed;left:0;right:0;top:0;height:300px;pointer-events:none;z-index:0;
+  background:radial-gradient(120% 100% at 10% 0%,color-mix(in srgb,var(--acc,#5a9e8f) 12%,transparent),transparent 62%),
+             radial-gradient(90% 80% at 92% 0%,color-mix(in srgb,var(--acc2,var(--acc,#5a9e8f)) 9%,transparent),transparent 60%)}
+html[data-blocks="off"] #veraWash{opacity:.7}
 #rightRail.lhm-host .lhm-quick .gal-host{margin-bottom:8px}
 #rightRail.lhm-host .lhm-quick .gal-style{margin-left:auto}
 #rightRail.lhm-host .lhm-quick .gal-style button{font-size:9px;white-space:nowrap}
@@ -6228,7 +6236,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     try{ const r=await _capCall('canvas.session.resolve',{session_id:SID}); cid=(r&&r.id)||''; }catch(_){}
     if(!cid) cid='cv_session_'+String(SID).replace(/[^A-Za-z0-9_.-]/g,'_').slice(0,64);
     let el=host.querySelector('vera-canvas');
-    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); el.setAttribute('bare','');   /* the column's own .tri-hd IS the head (defect 74) */ try{ el.setAttribute('nb-api', _NB_API_BASE()); }catch(_){} host.appendChild(el);
+    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); el.setAttribute('bare','');   /* the column's own .tri-hd IS the head (defect 74) */ el.setAttribute('blocks', (document.documentElement.getAttribute('data-blocks')==='off')?'off':'on'); try{ el.setAttribute('nb-api', _NB_API_BASE()); }catch(_){} host.appendChild(el);
       // the stage follows the transcript: its turn tops, its scroll, its reflow
       el.addEventListener('vera:canvas:placed', ()=>_cvRunsDraw());
       el.addEventListener('vera:canvas:hover', ev=>{ _cvHoverKey=(ev.detail||{}).key||null; _cvRunsDraw(); });
@@ -18081,7 +18089,9 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     if(window.veraUI&&veraUI.setAppearance){ veraUI.setAppearance(patch); }
     else {
       if(patch.den){ d.setAttribute('data-den',patch.den); try{localStorage.setItem('vera:ui:den',patch.den);}catch(_){} }
-      if(patch.blocks!=null){ d.setAttribute('data-blocks',patch.blocks?'on':'off'); try{localStorage.setItem('vera:ui:blocks',patch.blocks?'on':'off');}catch(_){} }
+      if(patch.blocks!=null){ d.setAttribute('data-blocks',patch.blocks?'on':'off'); try{localStorage.setItem('vera:ui:blocks',patch.blocks?'on':'off');}catch(_){}
+        // the session canvas is behind a shadow root, so the tier is handed to it rather than inherited (defect 85)
+        try{ document.querySelectorAll('vera-canvas').forEach(cv=>cv.setAttribute('blocks', patch.blocks?'on':'off')); }catch(_){} }
     }
     _appearanceSync();
     try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); cv&&cv.retier&&cv.retier(); }catch(_){}   // the focus set follows the tier
@@ -18157,6 +18167,8 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
 })();
 
 window.addEventListener('DOMContentLoaded',()=>{
+  // the design's wash sits behind the whole page, first child so nothing has to be re-stacked around it
+  try{ if(!document.getElementById('veraWash')){ const wsh=document.createElement('div'); wsh.id='veraWash'; document.body.insertBefore(wsh, document.body.firstChild); } }catch(_){}
   const linkedSession=new URLSearchParams(window.location.search).get('session_id')||'';
   CH.init({baseUrl:(()=>{const o=(window.location.origin&&window.location.origin!=='null')?window.location.origin:'http://localhost:8000';try{return window.parent?._veraBase||window._veraBase||localStorage.getItem('vera_base')||o;}catch(e){return o;}})(),sessionId:linkedSession});
 });
