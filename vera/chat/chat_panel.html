@@ -11633,29 +11633,37 @@ Your task: decide what to do next to advance toward the goal.
     return 0;
   }
 
-  async function ctxFetch(force=false,queryOverride='',fast=false){
+  /* sink: hand the result back instead of writing it to the live set. A turn's own context is derived through
+     this (see _ctxDeriveFrame) and CTX_NODES/CTX_EDGES must stay exclusively what the NEXT question carries, so
+     in sink mode this function writes no global, paints nothing, and cannot disturb the live fetch. */
+  async function ctxFetch(force=false,queryOverride='',fast=false,sink=null){
+    const solo=!!sink;
     const query=(queryOverride||document.getElementById('chatInput')?.value?.trim()||HISTORY.slice(-1)[0]?.content||'').trim();
     if(!query&&!force)return;
 
-    // Cancel any in-flight fetch immediately
-    if(_ctxAbort){_ctxAbort.abort();_ctxAbort=null;}
-    const myVersion=++_ctxVersion;
+    // Cancel any in-flight fetch immediately — but a DERIVED fetch runs alongside the live one and must neither
+    // cancel it nor bump the version it checks itself against, so it owns a private controller and is stale only
+    // if it was itself aborted.
+    if(!solo&&_ctxAbort){_ctxAbort.abort();_ctxAbort=null;}
+    const myVersion=solo?_ctxVersion:++_ctxVersion;
     const abort=new AbortController();
-    _ctxAbort=abort;
+    if(!solo)_ctxAbort=abort;
 
     const sp=document.getElementById('ctxSpinner'),st=document.getElementById('ctxStripTxt');
-    if(sp)sp.classList.remove('hidden');if(st)st.textContent='Fetching…';
+    if(!solo){ if(sp)sp.classList.remove('hidden'); if(st)st.textContent='Fetching…'; }
 
     const k=parseInt(document.getElementById('ctxK')?.value||'8');
     const minSim=parseFloat(document.getElementById('ctxSim')?.value||'0.55');
     const fabK=parseInt(document.getElementById('ctxFabK')?.value||'5');
     const fabDS=document.getElementById('ctxFabDS')?.value||'';
     const memLim=parseInt(document.getElementById('ctxMemLim')?.value||'5');
-    const webK=parseInt(document.getElementById('ctxWebK')?.value||'5');
-    const newsK=parseInt(document.getElementById('ctxNewsK')?.value||'3');
+    /* a derived turn context never searches the live web. It is reconstructing a PAST turn, and scrolling a long
+       transcript would otherwise fire one web and one news search per turn. Both are gated on >0 further down. */
+    const webK=solo?0:parseInt(document.getElementById('ctxWebK')?.value||'5');
+    const newsK=solo?0:parseInt(document.getElementById('ctxNewsK')?.value||'3');
 
     // Helper: stale-check after every await — discard result if a newer fetch started
-    const stale=()=>myVersion!==_ctxVersion||abort.signal.aborted;
+    const stale=()=>solo?abort.signal.aborted:(myVersion!==_ctxVersion||abort.signal.aborted);
 
     // Abort-aware fetch wrapper
     const fetchA=async(path,method,body)=>{
@@ -11677,6 +11685,7 @@ Your task: decide what to do next to advance toward the goal.
     // authoritative summary (per-source breakdown) once everything has settled.
     const _flush=()=>{
       if(stale())return;
+      if(solo)return;   // a derived fetch commits once, at the end, into its sink — it never paints
       CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query;
       if(_ctxTurnSend) _ctxTurnSend.ids=new Set(nodes.map(n=>n.id));   // the turn in flight: this is its prompt's context
       renderCtxGraph();renderCtxList();renderFabPane(); _ctxBroadcast();
@@ -11973,7 +11982,10 @@ Your task: decide what to do next to advance toward the goal.
     for(let i=0;i<vn.length-1;i++)if(vn[i].score>0.7&&vn[i+1].score>0.7)edges.push({from:vn[i].id,to:vn[i+1].id,type:'SIMILAR',source:'vector'});
 
     // Final stale check — discard if a newer fetch has started
-    if(stale()){if(sp)sp.classList.add('hidden');return;}
+    if(stale()){if(!solo&&sp)sp.classList.add('hidden');return;}
+
+    // the derived fetch's one and only commit: into the caller's sink, touching nothing live
+    if(solo){ sink.nodes=nodes; sink.edges=edges; sink.query=query; return; }
 
     _ctxAbort=null;
     CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query; if(_ctxTurnSend) _ctxTurnSend.ids=new Set(nodes.map(n=>n.id)); _ctxBroadcast();
@@ -12783,37 +12795,56 @@ Your task: decide what to do next to advance toward the goal.
     // the graphs then show — the old graph's "start typing to load context")
     if(f===CTX_FRAMES[CTX_FRAMES.length-1]){ const inp=document.getElementById('chatInput'); if(inp&&inp.value.trim()&&Date.now()-_ctxTypingT<90000) return null; }
     return f; }
-  /* A restored turn's context is not lost — it is IN the question. Every message is stored with the block that
-     was injected with it, which is why loadSession already has to strip "[Retrieved Context]" before showing the
-     text. The composer writes it as one line per record, "[source] text", with web and news carrying their label
-     and url inside the bracket, so it reads straight back into the shape a frame holds.
-     This costs no request and writes nothing live: CTX_NODES/CTX_EDGES are what the NEXT question carries and are
-     never assigned from here — which is the whole reason the rebuild does not go anywhere near ctxFetch. What the
-     block cannot give back is marked on the frame rather than invented: it records what was retrieved, not how
-     records relate (so no edges), and it truncates each record at 300 chars (so a family's share is an estimate
-     off that text). Notes/42 defect 98. */
-  const _RCMARK='\n\n[Retrieved Context]\n';
-  function _ctxNodesFromPrompt(txt, mid){
-    const s=String(txt||''); const i=s.indexOf(_RCMARK); if(i<0) return [];
-    let body=s.slice(i+_RCMARK.length); const stop=body.indexOf('\n\n['); if(stop>=0) body=body.slice(0,stop);
-    const out=[];
-    body.split('\n').forEach((ln,k)=>{
-      const m=/^\[([^\]]+)\]\s?([\s\S]*)$/.exec(ln); if(!m) return;
-      let src=String(m[1]).trim(), label='', url='';
-      const q=/^(web|news)\s+"([^"]*)"(?:\s+(\S+))?$/.exec(src);   // web and news keep their label (and url) in the bracket
-      if(q){ src=q[1]; label=q[2]; url=q[3]||''; }
-      const text=m[2]||''; if(!src) return;
-      out.push({ id:'rf:'+mid+':'+k, source:src.toLowerCase(), label:label||text.slice(0,48)||src, text, url, included:true, restored:true });
-    });
-    return out;
-  }
   function _ctxBroadcastFrames(){ if(_EMBED.only==='menu') return; try{ _lhmPost('frames',{ frames:CTX_FRAMES }); }catch(_){} }
+  /* The turn in view with no frame of its own DERIVES one, from its own question, and keeps it.
+     Sessions do not persist the context that was assembled for a turn: the stored record carries only
+     {role, agent_id, thinking, agent_name, latency_ms} and the retrieved block goes to the SYSTEM prompt, never
+     into the stored question (measured — of five stored questions in a real session, zero carried it). So a
+     reloaded transcript has no frames at all, every turn shows the same live set, and the relation edges point
+     at a different message each time you scroll while the graph never changes. That is what makes the edges
+     look pointless (Notes/42 defect 99).
+     It is the SAME retrieval the composer uses, run against that turn's own text into a SINK, so
+     CTX_NODES/CTX_EDGES — what the NEXT question carries — are never written from here. One at a time, once per
+     turn, remembered even when it comes back empty so a barren turn is not asked for twice.
+     A turn is a PAIR: the frame binds the question's mid AND the answer's amid, which is what _ctxFrameInView
+     matches on, so focusing either half draws the same context. */
+  let _turnCtxBusy='', _rfSeq=0; const _turnCtxDone={};
+  const _frameForMid=(mid)=>!!(mid&&CTX_FRAMES.some(f=>f&&(f.mid===mid||f.amid===mid)));
+  function _turnPair(w){
+    const msgs=document.getElementById('msgs'); if(!w||!msgs) return null;
+    const all=[...msgs.querySelectorAll('.mwrap[data-mid]')]; let i=all.indexOf(w); if(i<0) return null;
+    while(i>=0&&!all[i].classList.contains('u')) i--;          // the question this turn hangs off
+    if(i<0) return null;
+    const q=all[i], a=(all[i+1]&&all[i+1].classList.contains('a'))?all[i+1]:null;
+    const body=q.querySelector('.mbody')||q.querySelector('.msg-body')||q;
+    return { mid:q.dataset.mid||'', amid:a?(a.dataset.mid||''):'', text:String(body.textContent||'').trim() };
+  }
+  function _ctxDeriveFrame(w){
+    if(typeof ctxFetch!=='function'||_turnCtxBusy) return;
+    const p=_turnPair(w); if(!p||!p.mid||p.text.length<3) return;
+    if(_turnCtxDone[p.mid]||_frameForMid(p.mid)||_frameForMid(p.amid)) return;
+    _turnCtxDone[p.mid]=true; _turnCtxBusy=p.mid;
+    const sink={};
+    Promise.resolve(ctxFetch(true, p.text.slice(0,400), false, sink)).then(()=>{
+      const n=(sink.nodes||[]).filter(x=>x&&x.id);
+      if(!n.length||_frameForMid(p.mid)) return;
+      CTX_FRAMES.push({ id:(--_rfSeq), label:'Turn '+(CTX_FRAMES.length+1),
+        nodes:JSON.parse(JSON.stringify(n)), edges:JSON.parse(JSON.stringify(sink.edges||[])),
+        ts:'', mid:p.mid, amid:p.amid, turn:'turn '+p.mid, query:String(sink.query||'').slice(0,200), derived:true });
+      _ctxColFrameSig='';
+      try{ updateFrameUI(); }catch(_){}
+      try{ _ctxBroadcastFrames(); }catch(_){}
+      try{ _ctxFollow(true); }catch(_){}
+    }).catch(()=>{}).then(()=>{ _turnCtxBusy=''; });
+  }
   // the frame in view right now (the turn in focus, live while typing) — the one both graphs draw
   function _ctxActiveCompute(){ try{ const w=_focusedTurn(); const f=_ctxFrameInView(w?(w.dataset.mid||''):''); return f?f.id:null; }catch(_){ return null; } }
   // the follow: on the transcript's scroll and the composer's input, whether or not the graph is grown — the mini
   // re-renders when the frame in view changes; the grown column syncs through its anchor
   let _ctxFollowT=0, _ctxFollowTimer=null;
   function _ctxFollow(now){ const run=()=>{ _ctxFollowT=Date.now(); const active=_ctxActiveCompute(); if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){} }
+      // nothing to draw for the turn in view: derive its context once, then follow again when it lands
+      if(active==null){ try{ _ctxDeriveFrame(_focusedTurn()); }catch(_){} }
       if(_pages.has('graph')&&_ctxCol) _graphAnchorPost(true); else { try{ _ctxRunsDraw(); }catch(_){} } };
     if(now||Date.now()-_ctxFollowT>150){ if(_ctxFollowTimer){ clearTimeout(_ctxFollowTimer); _ctxFollowTimer=null; } return run(); }
     if(!_ctxFollowTimer) _ctxFollowTimer=setTimeout(()=>{ _ctxFollowTimer=null; run(); }, 160); }
@@ -14204,12 +14235,6 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     const res=await api('/memory/search','POST',{query:'',limit:60,record_type:'message',category:'chat',session_id:sid});
     const records=(res?.results||[]).map(r=>r.record||r).filter(r=>r.session_id===sid).sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
     BOX().innerHTML=`<div class="sys-msg">Session: <b>${esc(sid.slice(-12))}</b> · ${records.length} messages</div>`;
-    /* the turns' own frames. Without these CTX_FRAMES is empty for the entire restored transcript and the graphs
-       can never follow the turn in view — they track only turns SENT in this page load (Notes/42 defect 98). The
-       ids are NEGATIVE because updateFrameUI interpolates them unquoted into onclick="CH.loadFrame(${f.id})", so
-       a string id would be a syntax error there; negatives cannot collide with _saveFrame's Date.now(). */
-    let _rfPend=null;
-    const _rfClose=(amid)=>{ if(!_rfPend) return; _rfPend.amid=amid||''; CTX_FRAMES.push(_rfPend); _rfPend=null; };
     for(const rec of records){
       if(rec.human_text&&(rec.full_text||rec.text)){
         const ts=(rec.created_at||'').slice(11,16)||'--:--';
@@ -14221,10 +14246,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
         try{ const pa=_paFromMarkdown(displayTxt); if(pa) _paRenderAttachments(m.body, pa.typed, pa.docs); }catch(_){}
         m.time.textContent=ts;BOX().appendChild(m.wrap);
         HISTORY.push({role:'user',content:txt}); // full text goes into HISTORY for continuity
-        _rfClose('');   // a question with no answer after it still gets its frame
-        { const _mid=m.wrap.dataset.mid||'', _n=_ctxNodesFromPrompt(txt, _mid);
-          if(_n.length&&_mid) _rfPend={ id:-(CTX_FRAMES.length+1), label:'Turn '+(CTX_FRAMES.length+1), nodes:_n, edges:[], ts,
-            mid:_mid, amid:'', turn:'turn '+_mid, query:displayTxt.slice(0,200), restored:true }; }
+
       }else if(rec.ai_output&&(rec.full_text||rec.text)){
         const ts=(rec.created_at||'').slice(11,16)||'--:--';
         const agLbl=rec.agent_name||(rec.tags||[]).find(t=>t&&!['ai','message','chat','session'].includes(t))||'agent';
@@ -14241,11 +14263,8 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
         const m=_mkMsg('agent',agLbl,bodyHtml);
         m.time.textContent=ts;BOX().appendChild(m.wrap);
         HISTORY.push({role:'assistant',content:txt});
-        _rfClose(m.wrap.dataset.mid||'');   // the answer closes the turn's frame, so either end of it matches
       }
     }
-    _rfClose('');   // a trailing question with no answer
-    try{ updateFrameUI(); _ctxBroadcastFrames(); }catch(_){}
     renderHistList(SESSIONS);scroll();
 
     // Restore right panel context from last user message
