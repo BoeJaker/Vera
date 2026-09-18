@@ -10041,7 +10041,16 @@ Your task: decide what to do next to advance toward the goal.
     // Recompute injection now that context is guaranteed to match this msg,
     // then reconcile the "+N ctx" pill on the already-painted user message.
     ctxInj=buildCtxInj(msg);
-    _ctxTurnSend={ mid:uMsg.mid, amid:aMsg.mid, ids:new Set(CTX_NODES.map(n=>n.id)), query:_ctxQuery }; _ctxTypingT=0;   // this turn's frame, saved when the reply lands; the composer is sent, not typed
+    /* The turn's context is captured HERE, at send, because this is the only moment it is certainly the set
+       that went with THIS question. The save used to re-read live CTX_NODES when the reply landed, by which
+       time it can hold the next question's context or be empty - and it was gated on that set being non-empty,
+       so a turn could end up with no frame at all and fall back to the live set while scrolling. Measured: two
+       turns with genuinely different context produced ONE frame, and both questions drew the same graph
+       (Notes/42 defect 103). The turn number is taken here too, from the rendered questions, so the label
+       cannot drift as HISTORY-based counting did. */
+    _ctxTurnSend={ mid:uMsg.mid, amid:aMsg.mid, ids:new Set(CTX_NODES.map(n=>n.id)), query:_ctxQuery,
+      nodes:JSON.parse(JSON.stringify(CTX_NODES)), edges:JSON.parse(JSON.stringify(CTX_EDGES)),
+      turnNo:document.querySelectorAll('#msgs .mwrap.u').length }; _ctxTypingT=0;   // this turn's frame, saved when the reply lands; the composer is sent, not typed
     try{
       const _mS=parseFloat(document.getElementById('ctxSim')?.value||'0.55');
       const _kK=parseInt(document.getElementById('ctxK')?.value||'8');
@@ -10346,7 +10355,11 @@ Your task: decide what to do next to advance toward the goal.
 
     // NOTE: NO /memory/record/turn call here — handled server-side by agents.py
 
-    if(CTX_NODES.length){const _ts=_ctxTurnSend||{}; _saveFrame('Turn '+HISTORY.filter(h=>h.role==='user').length,true,{ mid:_ts.mid||_cvRelMid||'', amid:_ts.amid||(aMsg&&aMsg.mid)||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery });updateFrameUI();_ctxTurnSend=null; _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} try{ _ctxFollow(true); }catch(_){} }
+    { const _ts=_ctxTurnSend||{};
+      // the set this turn actually sent, captured at send; only if that is empty does the live set stand in
+      const _sn=Array.isArray(_ts.nodes)&&_ts.nodes.length?_ts.nodes:(CTX_NODES.length?CTX_NODES:null);
+      if(_sn){ _saveFrame('Turn '+(_ts.turnNo||document.querySelectorAll('#msgs .mwrap.u').length),true,{ mid:_ts.mid||_cvRelMid||'', amid:_ts.amid||(aMsg&&aMsg.mid)||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery, nodes:_sn, edges:_ts.edges });updateFrameUI(); }
+      _ctxTurnSend=null; _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} try{ _ctxFollow(true); }catch(_){} }
     // Re-fetch context after send if "ctxOnSend" is enabled. Use the USER's
     // last message — never the LLM response — so the search query reflects
     // what the user actually asked for. The previous version passed
@@ -12717,8 +12730,11 @@ Your task: decide what to do next to advance toward the goal.
   // a frame is a TURN's context: extra = {mid, amid, sentIds, query} — the question's and the response's message ids, the
   // records that were in the prompt when it was sent (the rest, and the observed runs, were read by the response: by 'a')
   function _saveFrame(label,quiet=false,extra){const x=extra||{};const sent=x.sentIds instanceof Set?x.sentIds:null;
-    const nodes=JSON.parse(JSON.stringify(CTX_NODES)).map(n=>Object.assign(n,{ by:(n.source==='run'||(sent&&!sent.has(n.id)))?'a':'u' }));
-    const f={id:Date.now(),label:label||('Frame '+(CTX_FRAMES.length+1)),nodes,edges:JSON.parse(JSON.stringify(CTX_EDGES)),ts:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),mid:x.mid||'',amid:x.amid||'',turn:x.mid?'turn '+x.mid:'',query:x.query||_ctxQuery||''};CTX_FRAMES.push(f);CTX_ACTIVE=f.id;_ctxBroadcastFrames();return f;}
+    /* a completed turn hands in the set it ACTUALLY sent, captured at send time; every other caller (the
+       Frames button, session restore, browse) means "snapshot what is live now" and still gets that */
+    const _src=Array.isArray(x.nodes)?x.nodes:CTX_NODES, _srcE=Array.isArray(x.edges)?x.edges:CTX_EDGES;
+    const nodes=JSON.parse(JSON.stringify(_src)).map(n=>Object.assign(n,{ by:(n.source==='run'||(sent&&!sent.has(n.id)))?'a':'u' }));
+    const f={id:Date.now(),label:label||('Frame '+(CTX_FRAMES.length+1)),nodes,edges:JSON.parse(JSON.stringify(_srcE)),ts:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),mid:x.mid||'',amid:x.amid||'',turn:x.mid?'turn '+x.mid:'',query:x.query||_ctxQuery||''};CTX_FRAMES.push(f);if(CTX_FRAMES.length>500)CTX_FRAMES.splice(0,CTX_FRAMES.length-500);CTX_ACTIVE=f.id;   /* the frames live in the page; 500 turns is far beyond any real transcript and stops a very long session growing without bound */_ctxBroadcastFrames();return f;}
   // which frame is the turn in view: the one whose question or response is that message — unless it is the newest turn
   // and the next question is being typed (the live set is what the graphs show then)
   let _ctxTurnSend=null, _ctxActiveFrame=null;
