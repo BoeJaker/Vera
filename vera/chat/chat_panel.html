@@ -12834,8 +12834,15 @@ Your task: decide what to do next to advance toward the goal.
       _ctxColFrameSig='';
       try{ updateFrameUI(); }catch(_){}
       try{ _ctxBroadcastFrames(); }catch(_){}
+    }).catch(()=>{}).then(()=>{
+      /* the lock is freed BEFORE the follow, and the follow runs in the tail so it happens whether the fetch
+         resolved or threw. The follow is what asks for the NEXT turn's context, and by the time a derivation
+         lands the reader has usually scrolled past the turn that started it — releasing afterwards meant that
+         next turn was refused as busy and, with no further scroll event to retry on, never derived at all.
+         Measured: only the first turn looked at in a page load ever got its own context (Notes/42 defect 100). */
+      _turnCtxBusy='';
       try{ _ctxFollow(true); }catch(_){}
-    }).catch(()=>{}).then(()=>{ _turnCtxBusy=''; });
+    });
   }
   // the frame in view right now (the turn in focus, live while typing) — the one both graphs draw
   function _ctxActiveCompute(){ try{ const w=_focusedTurn(); const f=_ctxFrameInView(w?(w.dataset.mid||''):''); return f?f.id:null; }catch(_){ return null; } }

@@ -43,5 +43,13 @@ t('a later turn resolves to its own question, not the first', pair(wraps[3]).mid
 t('a trailing question with no answer still resolves, with no amid', pair(wraps[4]).mid === 'm5' && pair(wraps[4]).amid === '');
 t('an unknown wrap yields nothing', pair(mkWrap('zz', 'u')) === null && pair(null) === null);
 
+// the ordering that makes it work for the SECOND turn and every turn after it. Freeing the lock after the
+// follow meant the follow - the very thing that asks for the next turn's context - was refused as busy, and
+// with no further scroll event to retry on that turn never derived. Measured live: only the first turn looked
+// at in a page load ever got its own context.
+{ const iFree = D.indexOf("_turnCtxBusy='';"), iFollow = D.indexOf('_ctxFollow(true)');
+  t('the derivation lock is freed BEFORE the follow, not after', iFree >= 0 && iFollow >= 0 && iFree < iFollow, 'free@' + iFree + ' follow@' + iFollow);
+  t('and the follow runs in the tail, so it happens whether the fetch resolved or threw', /\}\)\.catch\(\(\)=>\{\}\)\.then\(\(\)=>\{[\s\S]*_turnCtxBusy='';[\s\S]*_ctxFollow\(true\)/.test(D)); }
+
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
