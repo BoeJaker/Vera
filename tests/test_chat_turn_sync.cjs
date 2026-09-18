@@ -1,62 +1,47 @@
-// The context graphs follow the turn in view (Notes/42 defects 97 + 98; vera/chat/chat_panel.html).
-// A restored turn's context is not lost - it is IN the question: every message is stored with the
-// "[Retrieved Context]" block that was injected with it, which is why loadSession has to strip it before
-// displaying the text. The composer writes one line per record, "[source] text", web and news carrying their
-// label and url inside the bracket. So a turn's context reads back out of the transcript with NO request, and
-// without going anywhere near ctxFetch - CTX_NODES/CTX_EDGES are what the NEXT question carries and must never
-// be written by the rebuild.
-// This runs the parser the page actually ships, cut out by its markers.
+// The turn in view gets its own context, so the graph matches the message the relation edges point at
+// (Notes/42 defect 99; vera/chat/chat_panel.html).
+//
+// Sessions do not persist the context assembled for a turn: the stored record carries only
+// {role, agent_id, thinking, agent_name, latency_ms}, and the retrieved block is injected into the SYSTEM
+// prompt, never into the stored question - measured on a real session, five stored questions, zero carrying it.
+// So a reloaded transcript has no frames, every turn shows the same live set, and the edges point somewhere new
+// on every scroll while the graph never changes. The turn's context is therefore DERIVED from its own question,
+// once, through the SAME retrieval the composer uses, handed back in a SINK so CTX_NODES/CTX_EDGES - what the
+// NEXT question carries - are never written.
 //   node tests/test_chat_turn_sync.cjs   (CommonJS: the gate parses js as scripts)
 const fs = require('node:fs'), path = require('node:path');
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 const src = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_panel.html'), 'utf8');
 
-// the parser and the format are checked TOGETHER: if the composer's line changes, this fails rather than
-// silently parsing a format nothing writes any more
-t('the composer still writes the block this parser reads', src.indexOf("return'\\n\\n[Retrieved Context]\\n'+items.join('\\n');") >= 0);
+// ── the sink: ctxFetch hands the result back instead of writing the live set ──
+t('ctxFetch takes a sink and knows it is in sink mode', src.indexOf("async function ctxFetch(force=false,queryOverride='',fast=false,sink=null){") >= 0 && src.indexOf('const solo=!!sink;') >= 0);
+t('a derived fetch does not cancel the live one', src.indexOf('if(!solo&&_ctxAbort){_ctxAbort.abort();_ctxAbort=null;}') >= 0 && src.indexOf('if(!solo)_ctxAbort=abort;') >= 0);
+t('and does not bump the version the live one checks itself against', src.indexOf('const myVersion=solo?_ctxVersion:++_ctxVersion;') >= 0);
+t('stale, for a derived fetch, means only that IT was aborted', src.indexOf('const stale=()=>solo?abort.signal.aborted:(myVersion!==_ctxVersion||abort.signal.aborted);') >= 0);
+t('it paints nothing on the way', src.indexOf('if(solo)return;   // a derived fetch commits once') >= 0);
+t('it commits once, into the sink, touching nothing live', src.indexOf('if(solo){ sink.nodes=nodes; sink.edges=edges; sink.query=query; return; }') >= 0);
+t('and never searches the live web — a scroll must not fire a search per turn', src.indexOf('const webK=solo?0:') >= 0 && src.indexOf('const newsK=solo?0:') >= 0);
+t('the web and news sources are gated on those being > 0', /CTX_SRCS\.has\('web'\)[^\n]*webK>0/.test(src) && /CTX_SRCS\.has\('news'\)[^\n]*newsK>0/.test(src));
 
-const P0 = src.indexOf('  const _RCMARK='), P1 = src.indexOf('  function _ctxBroadcastFrames(){');
-t('the parser is present in the page', P0 >= 0 && P1 > P0);
-if (P0 < 0 || P1 < P0) process.exit(1);
-const parse = new Function(src.slice(P0, P1) + '\nreturn _ctxNodesFromPrompt;')();
+// the derivation itself must never write what the next prompt carries
+const D = src.slice(src.indexOf('function _ctxDeriveFrame(w){'), src.indexOf('  // the frame in view right now'));
+t('the derivation never assigns CTX_NODES/CTX_EDGES', !/CTX_NODES\s*=|CTX_EDGES\s*=/.test(D));
+t('it derives at most one turn at a time and never twice for the same turn', D.indexOf('if(typeof ctxFetch!==\'function\'||_turnCtxBusy) return;') >= 0 && D.indexOf('if(_turnCtxDone[p.mid]||_frameForMid(p.mid)||_frameForMid(p.amid)) return;') >= 0);
+t('a turn is a PAIR — the frame binds the question AND the answer', D.indexOf('mid:p.mid, amid:p.amid') >= 0 && src.indexOf('CTX_FRAMES.find(x=>x.mid===mid||x.amid===mid)') >= 0);
+t('the follow asks for one when the turn in view has no frame', src.indexOf('if(active==null){ try{ _ctxDeriveFrame(_focusedTurn()); }catch(_){} }') >= 0);
+t('ids stay numeric — updateFrameUI interpolates them unquoted into onclick', D.indexOf('id:(--_rfSeq)') >= 0 && src.indexOf('onclick="CH.loadFrame(${f.id})"') >= 0);
+t('the block that never gets written is no longer parsed', src.indexOf('_ctxNodesFromPrompt') < 0 && src.indexOf('_RCMARK') < 0);
 
-// exactly how the composer builds it (the builder maps each node to "[src] text" and joins with \n)
-const build = (items) => '\n\n[Retrieved Context]\n' + items.join('\n');
-
-const q = 'what is the estate topology?';
-const n1 = parse(q + build(['[ontology] Estate is modelled as nodes and links', '[memory] you asked about topology last week', '[caps] nodes.list returns every host']), 'm7');
-t('every record comes back, in order', n1.length === 3 && n1[0].source === 'ontology' && n1[1].source === 'memory' && n1[2].source === 'caps', JSON.stringify(n1.map(n => n.source)));
-t('the text is kept and a label is derived from it', n1[0].text === 'Estate is modelled as nodes and links' && n1[0].label.startsWith('Estate is modelled'));
-t('ids are unique and carry the turn', n1[0].id === 'rf:m7:0' && n1[2].id === 'rf:m7:2' && new Set(n1.map(n => n.id)).size === 3);
-t('a rebuilt record is marked as restored and included', n1.every((n) => n.restored === true && n.included === true));
-
-// web and news keep their label and url INSIDE the bracket - the source must not swallow them
-const n2 = parse(q + build(['[web "Proxmox docs" https://pve.proxmox.com/wiki] clustering requires quorum', '[news "Outage" https://x.test/a] a datacentre lost power']), 'm9');
-t('web keeps its family, not the whole bracket', n2[0].source === 'web', JSON.stringify(n2[0]));
-t('web takes its label and url from the bracket', n2[0].label === 'Proxmox docs' && n2[0].url === 'https://pve.proxmox.com/wiki');
-t('news likewise', n2[1].source === 'news' && n2[1].label === 'Outage' && n2[1].url === 'https://x.test/a');
-t('and the text after the bracket is still the text', n2[0].text === 'clustering requires quorum');
-
-// a question with no block, and a block followed by another injected block
-t('a question carrying no context yields nothing', parse('just a question', 'm1').length === 0);
-t('an empty string is safe', parse('', 'm1').length === 0 && parse(null, 'm1').length === 0);
-const withNext = q + build(['[ontology] first']) + '\n\n[INTEGRATED CAPABILITY MODE]\nsomething else entirely';
-const n3 = parse(withNext, 'm2');
-t('a following injected block is not swallowed', n3.length === 1 && n3[0].text === 'first', JSON.stringify(n3));
-// the source is what decides the family and therefore the colour, so a malformed line is dropped, not guessed
-t('a line with no bracket is dropped', parse(q + build(['[ontology] kept', 'no bracket here']), 'm3').length === 1);
-t('a record whose text is empty still counts, labelled by its source', (() => { const r = parse(q + build(['[skills] ']), 'm4'); return r.length === 1 && r[0].source === 'skills' && r[0].label === 'skills'; })());
-
-// the rebuild must never write what the NEXT prompt carries - that was the whole reason not to use ctxFetch
-const fn = src.slice(P0, P1);
-t('the parser never assigns CTX_NODES/CTX_EDGES and never calls ctxFetch', !/CTX_NODES\s*=|CTX_EDGES\s*=|ctxFetch\s*\(/.test(fn));
-
-// the wiring: the restore builds one frame per turn, and the rows/bar/meter follow the same frame as the graph
-t('the restore collects a frame per turn', src.indexOf('const _rfClose=(amid)=>{') >= 0 && src.indexOf('_rfClose(m.wrap.dataset.mid||\'\');') >= 0);
-t('frame ids are numeric — updateFrameUI interpolates them unquoted into onclick', src.indexOf('id:-(CTX_FRAMES.length+1)') >= 0);
-t('a rebuilt frame binds to the turn by mid, which is what _ctxFrameInView matches on', src.indexOf('mid:_mid, amid:\'\'') >= 0 && src.indexOf('CTX_FRAMES.find(x=>x.mid===mid||x.amid===mid)') >= 0);
-t('the rows, the budget bar and the header meter follow the active frame, as the graph does', src.indexOf('const fr=(_ctxActiveFrame!=null)?CTX_FRAMES.find(f=>f&&String(f.id)===String(_ctxActiveFrame)):null;') >= 0);
-t('the assembled extras are added only to the LIVE set, never to a frame', src.indexOf('if(!fr){ try{ const ex=_ctxAssembledExtra(_CTX_ALL_LAYERS, CTX_NODES);') >= 0);
+// ── _turnPair: which question a focused message belongs to ──
+const mkWrap = (mid, role) => ({ dataset: { mid }, classList: { contains: (c) => c === role }, querySelector: () => ({ textContent: 'question ' + mid }) });
+const wraps = [mkWrap('m1', 'u'), mkWrap('m2', 'a'), mkWrap('m3', 'u'), mkWrap('m4', 'a'), mkWrap('m5', 'u')];
+const doc = { getElementById: (id) => (id === 'msgs' ? { querySelectorAll: () => wraps } : null) };
+const pair = new Function('document', src.slice(884871, 885472).replace(/^\s*function /, 'function ') + '\nreturn _turnPair;')(doc);
+t('a question maps to its own turn, with its answer', JSON.stringify(pair(wraps[0])) === JSON.stringify({ mid: 'm1', amid: 'm2', text: 'question m1' }), JSON.stringify(pair(wraps[0])));
+t('an ANSWER maps to the same turn — the context belongs to both halves', JSON.stringify(pair(wraps[1])) === JSON.stringify({ mid: 'm1', amid: 'm2', text: 'question m1' }), JSON.stringify(pair(wraps[1])));
+t('a later turn resolves to its own question, not the first', pair(wraps[3]).mid === 'm3' && pair(wraps[3]).amid === 'm4');
+t('a trailing question with no answer still resolves, with no amid', pair(wraps[4]).mid === 'm5' && pair(wraps[4]).amid === '');
+t('an unknown wrap yields nothing', pair(mkWrap('zz', 'u')) === null && pair(null) === null);
 
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
