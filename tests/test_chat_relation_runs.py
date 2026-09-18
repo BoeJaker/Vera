@@ -50,32 +50,6 @@ def test_the_runs_follow_the_transcript_at_frame_rate():
     assert "if(now||Date.now()-_ctxFollowT>150)" in src
 
 
-def test_the_runs_follow_a_glide_not_just_an_event():
-    """Notes/42 defect 96. Defect 66 made the runs follow the transcript every frame. The other half went unseen:
-    a run also lands on things that GLIDE under a CSS transition - the exploded view's pan container
-    (transition:transform .38s, dropped only while .dragging, so a WHEEL ZOOM glides in full) and the canvas
-    stage's items (transition:top .32s,left .32s, dropped only while scrolling or resizing). Every redraw hung off
-    a discrete event, and 'vera:canvas:placed' fires as the new top/left go on - the START of the glide - so the
-    runs were drawn where the items still were and then stood still for a third of a second while the items
-    travelled out from under them. Not a frame of lag: a third of a second of standing still, which against a
-    moving anchor reads as the edge tearing off and snapping back.
-    getBoundingClientRect() reports a transitioning element where it is NOW, so redrawing while it glides tracks
-    it exactly. tests/test_chat_runs_glide.cjs runs the driver itself."""
-    src = _read("vera", "chat", "chat_panel.html")
-    # the hold is the transition's OWN length, read off the element, so retiming the CSS needs no change here
-    assert "function _trMs(el, prop)" in src
-    assert "function _runsFollowFrames(ms)" in src
-    assert "if(Date.now()<_runsHoldT) _runsHoldRaf=requestAnimationFrame(step);" in src
-    # with nothing animating, not one frame is scheduled - the follow is started by the transition, never polled
-    assert "document.addEventListener('transitionstart', _runsGlide, true);" in src
-    assert "if(p!=='transform'&&p!=='top'&&p!=='left') return;" in src
-    # vera-canvas keeps its items in a shadow root, so a document listener alone cannot be relied on to see them
-    assert "if(el.shadowRoot) el.shadowRoot.addEventListener('transitionstart', _runsGlide, true);" in src
-    # the element has finished rendering when it says so - the context graph's twin event is already drawn at once
-    assert "_xplEl.addEventListener('vera:xpl:rendered', ()=>{ try{ _ctxRunsDraw(); }catch(_){} try{ _cvRunsDraw(); }catch(_){} });" in src
-    assert "_xplEl.addEventListener('vera:xpl:rendered', soon)" not in src, "the deferred draw put those runs a frame behind"
-
-
 def test_a_surface_opening_or_closing_is_a_redraw():
     # nothing else redraws when a sheet or a menu goes away, so the runs would stay gone until the next scroll
     src = _read("vera", "chat", "chat_panel.html")
