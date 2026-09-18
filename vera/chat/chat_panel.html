@@ -10402,10 +10402,7 @@ Your task: decide what to do next to advance toward the goal.
 
     // NOTE: NO /memory/record/turn call here — handled server-side by agents.py
 
-    if(CTX_NODES.length){const _ts=_ctxTurnSend||{}; _saveFrame('Turn '+HISTORY.filter(h=>h.role==='user').length,true,{ mid:_ts.mid||_cvRelMid||'', amid:_ts.amid||(aMsg&&aMsg.mid)||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery });updateFrameUI();_ctxTurnSend=null; _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} try{ _ctxFollow(true); }catch(_){}
-      // and write it down: this is the context that was ACTUALLY sent with the turn, which is the only moment
-      // it is known. Read back by _ctxFramesLoad when the session is opened again (Notes/42 defect 101).
-      try{ _ctxFrameStore(CTX_FRAMES[CTX_FRAMES.length-1]); }catch(_){} }
+    if(CTX_NODES.length){const _ts=_ctxTurnSend||{}; _saveFrame('Turn '+HISTORY.filter(h=>h.role==='user').length,true,{ mid:_ts.mid||_cvRelMid||'', amid:_ts.amid||(aMsg&&aMsg.mid)||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery });updateFrameUI();_ctxTurnSend=null; _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} try{ _ctxFollow(true); }catch(_){} }
     // Re-fetch context after send if "ctxOnSend" is enabled. Use the USER's
     // last message — never the LLM response — so the search query reflects
     // what the user actually asked for. The previous version passed
@@ -12787,44 +12784,6 @@ Your task: decide what to do next to advance toward the goal.
     if(f===CTX_FRAMES[CTX_FRAMES.length-1]){ const inp=document.getElementById('chatInput'); if(inp&&inp.value.trim()&&Date.now()-_ctxTypingT<90000) return null; }
     return f; }
   function _ctxBroadcastFrames(){ if(_EMBED.only==='menu') return; try{ _lhmPost('frames',{ frames:CTX_FRAMES }); }catch(_){} }
-  /* A turn's context is a FACT ABOUT THAT TURN, so it is written down when the turn happens and looked up
-     afterwards — never re-derived while the reader scrolls. Re-running retrieval per turn was slow, spent a
-     full recall on a scroll, and did not even give the right answer: it returned whatever retrieval says TODAY
-     about that question, so the graph could show records that were never in that prompt (Notes/42 defect 101).
-     The chat already writes its own records through /memory/store — session names as record_type 'event', cap
-     results as 'cap_result' — so a frame is stored the same way, as one 'ctx_frame' record per turn. Compact by
-     design: the ids, labels, sources and scores every graph needs to draw, and a short head of each record's
-     text, rather than the whole assembled set. */
-  const _CTXF_TYPE='ctx_frame';
-  const _ctxFrameSlim=(f)=>({ mid:f.mid||'', amid:f.amid||'', label:f.label||'', ts:f.ts||'', query:String(f.query||'').slice(0,200),
-    nodes:(f.nodes||[]).filter(n=>n&&n.id).map(n=>({ id:n.id, label:String(n.label||'').slice(0,160), source:n.source||'context',
-      score:n.score, by:n.by, included:n.included!==false, text:String(n.text||'').slice(0,240) })),
-    edges:(f.edges||[]).map(e=>({ from:e.from, to:e.to, type:e.type||e.label||'' })) });
-  function _ctxFrameStore(f){
-    if(!f||!f.mid||!SID) return;
-    try{ api('/memory/store','POST',{ text:'ctx frame '+f.mid, session_id:SID, record_type:_CTXF_TYPE,
-      source_type:'system', category:'chat', tags:'ctx_frame', summary:String(f.query||f.label||'').slice(0,120),
-      full_text:JSON.stringify(_ctxFrameSlim(f)), human_text:false, ai_output:false }).catch(()=>{});
-    }catch(_){}
-  }
-  /* and read back, in one search, before the transcript is walked — so the graphs have every turn's real
-     context in hand the moment the session opens and scrolling costs nothing */
-  async function _ctxFramesLoad(sid){
-    try{
-      const r=await api('/memory/search','POST',{ query:'', limit:200, record_type:_CTXF_TYPE, category:'chat', session_id:sid });
-      const recs=(r&&r.results||[]).map(x=>x.record||x).filter(x=>x&&x.session_id===sid);
-      const out=[]; const seen={};
-      recs.forEach(x=>{ let d=null; try{ d=JSON.parse(x.full_text||x.text||'null'); }catch(_){ d=null; }
-        if(!d||!d.mid||seen[d.mid]) return; seen[d.mid]=1;
-        out.push({ id:-(out.length+1), label:d.label||('Turn '+(out.length+1)), nodes:d.nodes||[],
-          edges:(d.edges||[]).map(e=>({from:e.from,to:e.to,label:e.type||''})), ts:d.ts||'',
-          mid:d.mid, amid:d.amid||'', turn:'turn '+d.mid, query:d.query||'', stored:true,
-          created:x.created_at||'' }); });
-      out.sort((a,b)=>String(a.created).localeCompare(String(b.created)));
-      out.forEach((f,i)=>{ f.id=-(i+1); });   // numeric: updateFrameUI interpolates the id unquoted into onclick
-      return out;
-    }catch(_){ return []; }
-  }
   // the frame in view right now (the turn in focus, live while typing) — the one both graphs draw
   function _ctxActiveCompute(){ try{ const w=_focusedTurn(); const f=_ctxFrameInView(w?(w.dataset.mid||''):''); return f?f.id:null; }catch(_){ return null; } }
   // the follow: on the transcript's scroll and the composer's input, whether or not the graph is grown — the mini
@@ -14218,9 +14177,6 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     HISTORY=[];CTX_FRAMES=[];CTX_NODES=[];CTX_EDGES=[];
     updateFrameUI();BOX().innerHTML='<div class="sys-msg">Loading…</div>';
 
-    // every turn's own context, read back before the transcript is walked, so the graphs can follow the turn in
-    // view from the first scroll with no retrieval at all
-    try{ CTX_FRAMES=await _ctxFramesLoad(sid); }catch(_){ CTX_FRAMES=[]; }
     const res=await api('/memory/search','POST',{query:'',limit:60,record_type:'message',category:'chat',session_id:sid});
     const records=(res?.results||[]).map(r=>r.record||r).filter(r=>r.session_id===sid).sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
     BOX().innerHTML=`<div class="sys-msg">Session: <b>${esc(sid.slice(-12))}</b> · ${records.length} messages</div>`;
@@ -14254,7 +14210,6 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
         HISTORY.push({role:'assistant',content:txt});
       }
     }
-    try{ updateFrameUI(); _ctxBroadcastFrames(); _ctxFollow(true); }catch(_){}
     renderHistList(SESSIONS);scroll();
 
     // Restore right panel context from last user message
