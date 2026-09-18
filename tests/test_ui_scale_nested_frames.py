@@ -13,12 +13,17 @@ and as a frame whose parent has already zoomed.
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 
 import pytest
 
 pytestmark = pytest.mark.critical
+# The two behavioural tests run the real scale helpers, so they need node; they
+# skip rather than pass quietly where it is missing (the gate's test container).
+# The static checks below carry the guard in every environment.
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 UI_JS = os.path.join(ROOT, "vera", "vera-ui.js")
@@ -85,6 +90,7 @@ def _run_node():
         os.unlink(path)
 
 
+@needs_node
 def test_a_top_level_document_still_paints_the_scale():
     out = _run_node()
     assert out["top_scaled"] == {"zoom": "1.4", "width": "calc(100vw / 1.4)", "uiScale": "1.4"}
@@ -92,6 +98,7 @@ def test_a_top_level_document_still_paints_the_scale():
     assert out["clamped_high"]["zoom"] == "2"
 
 
+@needs_node
 def test_a_frame_inside_a_scaled_ancestor_inherits_instead_of_multiplying():
     out = _run_node()
     assert out["nested_in_scaled"] == {"zoom": "", "width": "", "uiScale": ""}
@@ -120,3 +127,17 @@ def test_the_shell_boot_runs_only_in_the_top_document():
     text = open(SHELL, encoding="utf-8").read()
     assert "d.style.zoom=String(sc)" in text
     assert "/ui/panels/" not in text.split("</head>")[0]
+
+
+def test_the_guard_is_wired_into_the_painter():
+    """Runs everywhere, node or not: the walk up the frame chain exists, it looks
+    at an ancestor's own zoom, and _paintScale consults it before painting."""
+    src = open(UI_JS, encoding="utf-8").read()
+    guard = re.search(r"function _ancestorPaintedScale\(\)\s*\{(.+?)\n  \}", src, re.S)
+    assert guard, "the frame-chain guard is gone"
+    body = guard.group(1)
+    assert "w.parent" in body and "documentElement.style.zoom" in body
+    assert "try" in body and "catch" in body, "a cross-origin ancestor must not throw"
+    paint = re.search(r"function _paintScale\(s\)\s*\{(.+?)\n  \}", src, re.S)
+    assert paint and "_ancestorPaintedScale()" in paint.group(1), \
+        "_paintScale no longer consults the guard"
