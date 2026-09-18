@@ -10405,7 +10405,13 @@ Your task: decide what to do next to advance toward the goal.
     if(CTX_NODES.length){const _ts=_ctxTurnSend||{}; _saveFrame('Turn '+HISTORY.filter(h=>h.role==='user').length,true,{ mid:_ts.mid||_cvRelMid||'', amid:_ts.amid||(aMsg&&aMsg.mid)||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery });updateFrameUI();_ctxTurnSend=null; _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} try{ _ctxFollow(true); }catch(_){}
       // written down here because this is the only moment the context that was ACTUALLY sent is known; read
       // back by _ctxFramesRestore whenever the session is opened again (Notes/42 defect 102)
-      try{ _ctxFrameSave(HISTORY.filter(h=>h.role==='user').length, CTX_FRAMES[CTX_FRAMES.length-1]); }catch(_){} }
+      /* the ordinal must be the one the READER will compute: it counts rendered questions as it walks the
+         restored transcript, so the writer counts rendered questions too. HISTORY was the wrong basis - it
+         drifts from the transcript, and a key written under one counting is never found under the other
+         (measured: three sends produced t2 and t3, with t3 holding the SECOND question and no t1). */
+      try{ const _uw=[...document.querySelectorAll('#msgs .mwrap.u')];
+        const _qi=_uw.findIndex(x=>x.dataset.mid===((_ts&&_ts.mid)||''));
+        _ctxFrameSave(_qi>=0?_qi+1:_uw.length, CTX_FRAMES[CTX_FRAMES.length-1]); }catch(_){} }
     // Re-fetch context after send if "ctxOnSend" is enabled. Use the USER's
     // last message — never the LLM response — so the search query reflects
     // what the user actually asked for. The previous version passed
