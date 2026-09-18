@@ -364,10 +364,21 @@
       _navActiveId = id; publishStateDebounced();
       return {ok: true};
     }
-    var el = document.querySelector(
-      '[data-sec="' + id + '"], [data-section="' + id + '"], [data-view="' + id + '"], ' +
-      '[data-tab="' + id + '"], [data-nav="' + id + '"], [data-pane="' + id + '"], ' +
-      '[data-s="' + id + '"], [data-go="' + id + '"], [data-k="' + id + '"]');
+    // One selector list would leave the choice to document order, which picks
+    // the WRONG element as soon as two attributes carry the same value:
+    // workers_ollama_panel.html marks every Estate item `data-view="estate"`
+    // (the view that OWNS the item) and the map pane `data-pane="estate"`, so
+    // selecting the map matched the "Overview" section heading and clicking it
+    // did nothing — the Map menu item was dead while every other one worked
+    // (18 Sep 2026). So try the attributes one at a time, in order of how
+    // specifically each names a target. `data-view` goes last: in this codebase
+    // it usually groups items rather than naming one.
+    var ATTRS = ['data-sec', 'data-section', 'data-tab', 'data-nav', 'data-pane',
+                 'data-s', 'data-go', 'data-k', 'data-view'];
+    var el = null;
+    for(var ai = 0; ai < ATTRS.length && !el; ai++){
+      el = document.querySelector('[' + ATTRS[ai] + '="' + id + '"]');
+    }
     if(!el){ var found = _findNamed(id); el = found && found.el; }
     if(!el) return {ok: false, error: 'no nav target for id: ' + id};
     el.click();
