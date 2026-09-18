@@ -1560,7 +1560,16 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .wbar{height:4px;border-radius:2px;background:var(--s3,var(--bg3,#22262e));overflow:hidden;flex:0 0 44px}
 #rightRail.lhm-host .lhm-quick .wbar i{display:block;height:100%}
 #rightRail.lhm-host .lhm-quick .comp{display:flex;height:9px;border-radius:3px;overflow:hidden;gap:1px;background:var(--s3,var(--bg3,#22262e));flex-shrink:0}
-#rightRail.lhm-host .lhm-quick .comp i{display:block;height:100%}
+/* ...and the bar is that control. The widths stay the TRUE token shares: _qGalOff filters what the GRAPH draws
+   and has never changed what the prompt carries, so dimming a family must not resize the bar or it stops being a
+   budget bar. An off segment therefore keeps its place and a faint trace of its own colour — a segment that
+   vanished could never be pressed again and its family would be unreachable. min-width is the one concession to
+   geometry: a family holding 1% of the window is a 2px target, which cannot be pressed; the exact figure stays
+   in the row's title and in .rt-n below. */
+#rightRail.lhm-host .lhm-quick .comp i{display:block;height:100%;background:var(--c)}
+#rightRail.lhm-host .lhm-quick .comp i[data-fam]{cursor:pointer;min-width:7px}
+#rightRail.lhm-host .lhm-quick .comp i[data-fam]:hover{filter:brightness(1.3)}
+#rightRail.lhm-host .lhm-quick .comp i[data-fam].off{background:color-mix(in srgb,var(--c) 20%,transparent)}
 #rightRail.lhm-host .lhm-quick .wid{position:relative;border-radius:var(--r-sm,6px)}
 /* The row wraps. It held four controls in 262px with two of them on margin-left:auto, and the last was clipped
    to "simp" (Notes/42 defect 60). The board's row is the views and All edges; List has moved to the section that
@@ -1571,12 +1580,9 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .vseg button.on{background:var(--surf,var(--bg1,#151719));color:var(--t1,var(--text,#d8dce4))}
 #rightRail.lhm-host .lhm-quick .gal-all{margin-left:auto;height:18px;padding:0 8px;border:none;border-radius:99px;background:var(--s2,var(--bg2,#1a1c20));font-size:9px;color:var(--t3,var(--dim,#6b7280));cursor:pointer}
 #rightRail.lhm-host .lhm-quick .gal-all.on{color:var(--ac,var(--acc,#5a9e8f));box-shadow:inset 0 0 0 1px var(--ac,var(--acc,#5a9e8f))}
-#rightRail.lhm-host .lhm-quick .gal-mix{display:flex;flex-wrap:wrap;gap:4px;padding-bottom:6px}
-#rightRail.lhm-host .lhm-quick .gm{display:inline-flex;align-items:center;gap:4px;height:17px;padding:0 7px 0 5px;border-radius:99px;background:var(--s2,var(--bg2,#1a1c20));font-size:8.5px;color:var(--t3,var(--dim,#6b7280));cursor:pointer}
-#rightRail.lhm-host .lhm-quick .gm i{width:6px;height:6px;border-radius:2px;background:var(--c);opacity:.35}
-#rightRail.lhm-host .lhm-quick .gm.on{color:var(--t2,var(--dim2,#8a92a0))}
-#rightRail.lhm-host .lhm-quick .gm.on i{opacity:1}
-#rightRail.lhm-host .lhm-quick .gm b{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-weight:400;font-size:8px;color:var(--t3,var(--dim,#6b7280))}
+/* The chips that used to sit here (.gal-mix / .gm) were a second legend for the same families: colour, name and
+   tokens, all three of which the rows under "In this prompt" already carry (.tick, .nm, .rt-n). The control moved
+   onto the budget bar below, which was already drawing the same split. */
 /* The design's background wash: two radial gradients across the top of the page, the accent at the left and a
    second accent at the right, gone by 60% of a 300px band (Canvas.dc.html 711-713). Every board carries one. It is
    built from the theme's own accents, so it follows the theme rather than being painted in, sits behind everything
@@ -6343,6 +6349,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); el.setAttribute('bare','');   /* the column's own .tri-hd IS the head (defect 74) */ el.setAttribute('blocks', (document.documentElement.getAttribute('data-blocks')==='off')?'off':'on'); try{ el.setAttribute('nb-api', _NB_API_BASE()); }catch(_){} host.appendChild(el);
       // the stage follows the transcript: its turn tops, its scroll, its reflow
       el.addEventListener('vera:canvas:placed', ()=>_cvRunsDraw());
+      /* 'placed' is the start of the items' .32s glide, not the end of it, so the runs follow the glide itself —
+         from inside the shadow root the items live in, which a document listener cannot be relied on to see */
+      try{ if(el.shadowRoot) el.shadowRoot.addEventListener('transitionstart', _runsGlide, true); }catch(_){}
       el.addEventListener('vera:canvas:hover', ev=>{ _cvHoverKey=(ev.detail||{}).key||null; _cvRunsDraw(); });
       const msgs=document.getElementById('msgs');
       if(msgs&&!msgs._cvStageBound){ msgs._cvStageBound=true; msgs.addEventListener('scroll', ()=>_cvStageSync(), {passive:true}); msgs.addEventListener('mouseover', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap[data-mid]'); const m=w?w.dataset.mid:null; if(m!==_cvHoverMid){ _cvHoverMid=m; _cvRunsDraw(); } });
@@ -6685,7 +6694,12 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   function _ctxRunsFollowScene(){
     if(!_xplEl||_xplEl._ctxRunsBound) return; _xplEl._ctxRunsBound=true;
     const soon=()=>{ if(_ctxRunsRaf) return; _ctxRunsRaf=requestAnimationFrame(()=>{ _ctxRunsRaf=0; try{ _ctxRunsDraw(); }catch(_){} try{ _cvRunsDraw(); }catch(_){} }); };
-    _xplEl.addEventListener('vera:xpl:rendered', soon); ['wheel','pointermove','pointerup','click'].forEach(t=>_xplEl.addEventListener(t, soon, {passive:true}));
+    /* the element has finished rendering when it says so, and the context graph's twin event is already drawn
+       straight away (line 6487, 'vera:ctx:rendered'); putting this one through a frame first left these runs a
+       frame behind the scene for no reason. The raw pointer events keep the coalesced path — they fire far
+       faster than a redraw is worth. */
+    _xplEl.addEventListener('vera:xpl:rendered', ()=>{ try{ _ctxRunsDraw(); }catch(_){} try{ _cvRunsDraw(); }catch(_){} });
+    ['wheel','pointermove','pointerup','click'].forEach(t=>_xplEl.addEventListener(t, soon, {passive:true}));
   }
   // the runs light up: the record under the pointer lights its type's trunk and branches, the rest recede
   function _ctxRunsHover(id){
@@ -6732,6 +6746,48 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      re-sync keeps the throttle it needs (Notes/42 defect 66). */
   let _runsSoonRaf=0;
   function _runsSoon(){ if(_runsSoonRaf) return; _runsSoonRaf=(window.requestAnimationFrame||setTimeout)(()=>{ _runsSoonRaf=0; try{ _ctxRunsDraw(); }catch(_){} try{ _cvRunsDraw(); }catch(_){} }); }
+  /* ...and the other half of it: a run lands on two things that MOVE, and they do not move in steps, they GLIDE.
+     The exploded view's pan/zoom container carries transition:transform .38s (dropped only while .dragging, so a
+     wheel zoom glides in full) and the canvas stage's items carry transition:top .32s,left .32s (dropped only
+     while scrolling or resizing). Every redraw here hangs off a discrete event, and 'vera:canvas:placed' — the
+     most innocent-looking of them — fires the instant the new top/left are assigned, which is the START of the
+     glide: the runs are drawn to where the items still are, and the items then travel out from under them for a
+     third of a second. So the runs were never a frame behind; they stood still for the whole animation and
+     snapped at the end, which against a moving anchor reads as the edge tearing off (Notes/42 defect 96).
+     getBoundingClientRect() reports a transitioning element WHERE IT IS NOW, so the runs track a glide exactly
+     if they are simply redrawn while it runs. A transitionstart on any of the three surfaces holds a frame loop
+     open for that transition's OWN computed duration — read off the element, so retiming the CSS needs no
+     matching change here — and the loop closes itself when the last glide ends. With nothing animating, not one
+     frame is scheduled. */
+  let _runsHoldT=0, _runsHoldRaf=0;
+  function _runsFollowFrames(ms){
+    const until=Date.now()+Math.max(0, ms||0); if(until>_runsHoldT) _runsHoldT=until;
+    if(_runsHoldRaf) return;
+    const step=()=>{ _runsHoldRaf=0; try{ _ctxRunsDraw(); }catch(_){} try{ _cvRunsDraw(); }catch(_){}
+      if(Date.now()<_runsHoldT) _runsHoldRaf=requestAnimationFrame(step); };
+    _runsHoldRaf=requestAnimationFrame(step);
+  }
+  /* the glide's own length: the property's slot in transition-duration, plus the delay in front of it */
+  function _trMs(el, prop){
+    try{ const cs=getComputedStyle(el);
+      const ms=(v)=>{ v=String(v||'').trim(); const n=parseFloat(v); return isNaN(n)?0:(/ms$/.test(v)?n:n*1000); };
+      const ps=String(cs.transitionProperty||'').split(','), ds=String(cs.transitionDuration||'').split(','), ls=String(cs.transitionDelay||'').split(',');
+      let i=ps.findIndex(p=>p.trim()===prop); if(i<0) i=ps.findIndex(p=>p.trim()==='all'); if(i<0) i=0;
+      return ms(ds[i%ds.length])+ms(ls[i%ls.length]);
+    }catch(_){ return 400; }
+  }
+  /* vera-canvas keeps its items in a shadow root, so the element that is actually moving comes off the composed
+     path while the event itself is retargeted to the host — either one is enough to tell the three surfaces from
+     the rest of the page, and the duration is read from the element that carries the transition */
+  function _runsGlide(ev){
+    const p=ev.propertyName; if(p!=='transform'&&p!=='top'&&p!=='left') return;
+    const path=(ev.composedPath&&ev.composedPath())||[]; const el=path[0]||ev.target, host=ev.target;
+    const onSurface=(host&&host.closest&&host.closest('vera-exploded,vera-canvas,vera-context-graph'))
+                  ||(el&&el.closest&&el.closest('.stage,.xp-view,.cg-in'));
+    if(!onSurface) return;
+    _runsFollowFrames(_trMs((el&&el.nodeType===1)?el:host, p)+40);   /* a frame past the end, so the settled position is the last one drawn */
+  }
+  document.addEventListener('transitionstart', _runsGlide, true);
   document.addEventListener('click', ev=>{ try{ const t=ev.target; if(t&&t.closest&&(t.closest('#rightRail .lhm-rail .lhm-ico')||t.closest('#hdrMore')||t.closest('.cmw'))) _runsLook(); }catch(_){} }, true);
   function _ctxRunsDraw(){
     const svg=document.getElementById('ctxRunsOverlay'); if(!svg) return;
@@ -12727,6 +12783,30 @@ Your task: decide what to do next to advance toward the goal.
     // the graphs then show — the old graph's "start typing to load context")
     if(f===CTX_FRAMES[CTX_FRAMES.length-1]){ const inp=document.getElementById('chatInput'); if(inp&&inp.value.trim()&&Date.now()-_ctxTypingT<90000) return null; }
     return f; }
+  /* A restored turn's context is not lost — it is IN the question. Every message is stored with the block that
+     was injected with it, which is why loadSession already has to strip "[Retrieved Context]" before showing the
+     text. The composer writes it as one line per record, "[source] text", with web and news carrying their label
+     and url inside the bracket, so it reads straight back into the shape a frame holds.
+     This costs no request and writes nothing live: CTX_NODES/CTX_EDGES are what the NEXT question carries and are
+     never assigned from here — which is the whole reason the rebuild does not go anywhere near ctxFetch. What the
+     block cannot give back is marked on the frame rather than invented: it records what was retrieved, not how
+     records relate (so no edges), and it truncates each record at 300 chars (so a family's share is an estimate
+     off that text). Notes/42 defect 98. */
+  const _RCMARK='\n\n[Retrieved Context]\n';
+  function _ctxNodesFromPrompt(txt, mid){
+    const s=String(txt||''); const i=s.indexOf(_RCMARK); if(i<0) return [];
+    let body=s.slice(i+_RCMARK.length); const stop=body.indexOf('\n\n['); if(stop>=0) body=body.slice(0,stop);
+    const out=[];
+    body.split('\n').forEach((ln,k)=>{
+      const m=/^\[([^\]]+)\]\s?([\s\S]*)$/.exec(ln); if(!m) return;
+      let src=String(m[1]).trim(), label='', url='';
+      const q=/^(web|news)\s+"([^"]*)"(?:\s+(\S+))?$/.exec(src);   // web and news keep their label (and url) in the bracket
+      if(q){ src=q[1]; label=q[2]; url=q[3]||''; }
+      const text=m[2]||''; if(!src) return;
+      out.push({ id:'rf:'+mid+':'+k, source:src.toLowerCase(), label:label||text.slice(0,48)||src, text, url, included:true, restored:true });
+    });
+    return out;
+  }
   function _ctxBroadcastFrames(){ if(_EMBED.only==='menu') return; try{ _lhmPost('frames',{ frames:CTX_FRAMES }); }catch(_){} }
   // the frame in view right now (the turn in focus, live while typing) — the one both graphs draw
   function _ctxActiveCompute(){ try{ const w=_focusedTurn(); const f=_ctxFrameInView(w?(w.dataset.mid||''):''); return f?f.id:null; }catch(_){ return null; } }
@@ -13645,7 +13725,16 @@ function _embedMount(){
   const _kfmt=n=>n>=1000?(n/1000).toFixed(1)+'k':String(n);
   // every family of the assembled context: its records, its tokens (≈ chars / 4), its colour, its share
   function _ctxShares(){
-    let nodes=CTX_NODES.slice(); try{ const ex=_ctxAssembledExtra(_CTX_ALL_LAYERS, CTX_NODES); nodes=nodes.concat(ex.nodes.filter(n=>!CTX_NODES.some(c=>c.id===n.id))); }catch(_){}
+    /* The rows under "In this prompt", the budget bar and the header meter are the SAME reading as the graph, so
+       they follow the turn in view exactly as it does. They read CTX_NODES unconditionally before this and never
+       looked at the active frame, so scrolling back moved the graph onto that turn's context and left the list
+       and the bar describing the LIVE set — what the NEXT question is assembling. Three readings of one thing,
+       disagreeing on screen (Notes/42 defect 97).
+       The assembled extras are added only to the live set: a frame is already a snapshot of what was assembled
+       at the time, so adding today's agent, skills and ontologies to it would be inventing context it never had. */
+    const fr=(_ctxActiveFrame!=null)?CTX_FRAMES.find(f=>f&&String(f.id)===String(_ctxActiveFrame)):null;
+    let nodes=fr?(fr.nodes||[]).slice():CTX_NODES.slice();
+    if(!fr){ try{ const ex=_ctxAssembledExtra(_CTX_ALL_LAYERS, CTX_NODES); nodes=nodes.concat(ex.nodes.filter(n=>!CTX_NODES.some(c=>c.id===n.id))); }catch(_){} }
     const by={}; nodes.forEach(n=>{ if(n.included===false) return; const f=String(n.source||n.family||'context').toLowerCase(); const b=by[f]||(by[f]={f, n:0, tok:0}); b.n++; b.tok+=Math.max(8, Math.round(String(n.text||n.label||'').length/4)); });
     const rows=Object.values(by).sort((a,b)=>b.tok-a.tok); const total=rows.reduce((s,b)=>s+b.tok,0)||1;
     rows.forEach(b=>{ b.pct=b.tok/total*100; b.col=srcCol(b.f); b.label=_CTX_FAM_LABEL[b.f]||b.f; });
@@ -13662,9 +13751,16 @@ function _embedMount(){
     _ctxFollowBind(); _ctxActiveFrame=_ctxActiveCompute();
     const S=_ctxShares();
     if(_ctxGrown){
-      const sig='grown#'+S.rows.map(r=>r.f+r.tok).join('|'); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+      const sig='grown#'+S.rows.map(r=>r.f+r.tok).join('|')+'#'+JSON.stringify(_qGalOff);   // the bar's own off-state is part of the key, or pressing a band repaints nothing
+      if(el.dataset.sig===sig) return; el.dataset.sig=sig;
       if(!document.getElementById('ctxGrown')){ el.innerHTML='<div id="ctxGrown" class="wid" data-w="context graph · graph" data-tpl="lhm:ctx-galaxy"></div><div class="wid ctx-grown-bar" data-w="budget bar · meter" data-tpl="lhm:ctx-budget"></div>'; }
-      const bar=el.querySelector('.ctx-grown-bar'); if(bar) bar.innerHTML='<span class="comp" title="'+esc(_lhmTxt('ctxMeterLabel'))+'">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span>';
+      const bar=el.querySelector('.ctx-grown-bar');
+      if(bar){ bar.innerHTML='<span class="comp" title="'+esc(_lhmTxt('ctxMeterLabel'))+' — press a band to show or hide that source on the graph">'+S.rows.map(r=>'<i class="'+(_qGalOff[r.f]?'off':'on')+'" data-fam="'+esc(r.f)+'" style="width:'+r.pct.toFixed(1)+'%;--c:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok)+' tokens · press to '+(_qGalOff[r.f]?'show':'hide')+' it on the graph')+'"></i>').join('')+'</span>';
+        // the grown graph is the element, so it is told directly — its mixer levels are off · focus · all
+        // (context_graph_element.js:978), the same way the All-edges switch already follows into it
+        bar.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f];
+          try{ if(_ctxCol&&typeof _ctxCol.mix==='function') _ctxCol.mix(f, _qGalOff[f]?'off':'all'); }catch(_){}
+          try{ VeraLHM.render(); }catch(_){} })); }
       _graphColumnMount(); return; }
     const views=[['galaxy','galaxy'],['iso','iso'],['flow','flow'],['timeline','time']];
     // The RENDERER is part of the key. A body composed before /ui/context_graph_element.js has loaded draws the
@@ -13695,9 +13791,12 @@ function _embedMount(){
     } else if(_ctxElWait){ clearInterval(_ctxElWait); _ctxElWait=null; }
     el.innerHTML='<div class="wid" data-w="context galaxy · graph" data-tpl="lhm:ctx-galaxy">'
       +'<div class="gal-ctl"><span class="vseg">'+views.map(v=>'<button class="'+(_qGalView===v[0]?'on':'')+'" data-view="'+v[0]+'" title="'+v[0]+' view">'+v[1]+'</button>').join('')+'</span><button class="gal-all'+(_qGalAll?' on':'')+'" title="Every record\'s edge to the hub">All edges</button><span class="vseg gal-style">'+[['simple','simple'],['detailed','detailed']].map(v=>'<button class="'+(_qGalStyle===v[0]?'on':'')+'" data-style="'+v[0]+'" title="'+(v[0]==='simple'?'The board\'s face: the context plot by itself':'Every family on the plot, the lanes, the record card and the list')+'">'+v[1]+'</button>').join('')+'</span></div>'
-      +'<div class="gal-mix">'+S.rows.map(r=>'<span class="gm'+(_qGalOff[r.f]?'':' on')+'" data-fam="'+esc(r.f)+'" style="--c:'+r.col+'" title="'+esc(r.label)+' — press to dim or light this family"><i></i>'+esc(r.label.replace(' + system','').replace(' (Neo4j)',''))+'<b>'+_kfmt(r.tok)+'</b></span>').join('')+'</div>'
       +'<div class="gal-host">'+gal+'</div></div>'
-      +'<div class="wid" data-w="budget bar · meter" data-tpl="lhm:ctx-budget" title="'+esc(_lhmTxt('ctxMeterLabel'))+'"><span class="comp">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span></div>'
+      // the bar IS the section control (it replaced the chips): each segment is its family's share of the
+      // window AND the switch for whether the graph above draws it. The colour rides as --c so the off state can
+      // be a mix of the family's own colour in CSS; the width is the share either way.
+      +'<div class="wid" data-w="budget bar · meter" data-tpl="lhm:ctx-budget" title="'+esc(_lhmTxt('ctxMeterLabel'))+' — press a band to show or hide that source on the graph">'
+      +'<span class="comp">'+S.rows.map(r=>'<i class="'+(_qGalOff[r.f]?'off':'on')+'" data-fam="'+esc(r.f)+'" style="width:'+r.pct.toFixed(1)+'%;--c:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok)+' tokens · press to '+(_qGalOff[r.f]?'show':'hide')+' it on the graph')+'"></i>').join('')+'</span></div>'
       // ONE list. Each source is a SECTION that opens in place to the records it contributed — which is what the
       // board's rows are for; a second list of everything under the first was not integrating them (defect 60).
       +'<div class="wid" data-w="in this prompt · list"><div class="grp">In this prompt<button class="grp-act" title="Refresh the assembled context">↻</button></div>'
@@ -13718,7 +13817,9 @@ function _embedMount(){
     el.querySelectorAll('.cg-mini [data-a="incl-all"], .cg-mini [data-a="excl-all"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); const on=b.dataset.a==='incl-all'; CTX_NODES.forEach(n=>{ n.included=on; }); try{ renderCtxList(); }catch(_){} _ctxColSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} VeraLHM.render(); }));
     el.querySelectorAll('.cg-mini [data-a="preview"][data-url]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ _browserNavigate(b.dataset.url); }catch(_){} }));
     el.querySelectorAll('.cg-mini [data-a="open"][data-id]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ nodeClick(b.dataset.id); }catch(_){} }));
-    el.querySelectorAll('.gm').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; VeraLHM.render(); }));
+    // the budget bar's bands are the family switches now — same _qGalOff the chips drove, so the graph, the
+    // repaint key and the grown column all follow exactly as before
+    el.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; VeraLHM.render(); }));
     el.querySelector('.grp-act').addEventListener('click',()=>{ try{ _ctxFcRefresh(); }catch(_){} });
     // opening a section lights its source on the plot too, so the list and the graph never say different things
     el.querySelectorAll('.lrow[data-fam]').forEach(r=>r.addEventListener('click',()=>{ const f=r.dataset.fam;
@@ -14103,6 +14204,12 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     const res=await api('/memory/search','POST',{query:'',limit:60,record_type:'message',category:'chat',session_id:sid});
     const records=(res?.results||[]).map(r=>r.record||r).filter(r=>r.session_id===sid).sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
     BOX().innerHTML=`<div class="sys-msg">Session: <b>${esc(sid.slice(-12))}</b> · ${records.length} messages</div>`;
+    /* the turns' own frames. Without these CTX_FRAMES is empty for the entire restored transcript and the graphs
+       can never follow the turn in view — they track only turns SENT in this page load (Notes/42 defect 98). The
+       ids are NEGATIVE because updateFrameUI interpolates them unquoted into onclick="CH.loadFrame(${f.id})", so
+       a string id would be a syntax error there; negatives cannot collide with _saveFrame's Date.now(). */
+    let _rfPend=null;
+    const _rfClose=(amid)=>{ if(!_rfPend) return; _rfPend.amid=amid||''; CTX_FRAMES.push(_rfPend); _rfPend=null; };
     for(const rec of records){
       if(rec.human_text&&(rec.full_text||rec.text)){
         const ts=(rec.created_at||'').slice(11,16)||'--:--';
@@ -14114,6 +14221,10 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
         try{ const pa=_paFromMarkdown(displayTxt); if(pa) _paRenderAttachments(m.body, pa.typed, pa.docs); }catch(_){}
         m.time.textContent=ts;BOX().appendChild(m.wrap);
         HISTORY.push({role:'user',content:txt}); // full text goes into HISTORY for continuity
+        _rfClose('');   // a question with no answer after it still gets its frame
+        { const _mid=m.wrap.dataset.mid||'', _n=_ctxNodesFromPrompt(txt, _mid);
+          if(_n.length&&_mid) _rfPend={ id:-(CTX_FRAMES.length+1), label:'Turn '+(CTX_FRAMES.length+1), nodes:_n, edges:[], ts,
+            mid:_mid, amid:'', turn:'turn '+_mid, query:displayTxt.slice(0,200), restored:true }; }
       }else if(rec.ai_output&&(rec.full_text||rec.text)){
         const ts=(rec.created_at||'').slice(11,16)||'--:--';
         const agLbl=rec.agent_name||(rec.tags||[]).find(t=>t&&!['ai','message','chat','session'].includes(t))||'agent';
@@ -14130,8 +14241,11 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
         const m=_mkMsg('agent',agLbl,bodyHtml);
         m.time.textContent=ts;BOX().appendChild(m.wrap);
         HISTORY.push({role:'assistant',content:txt});
+        _rfClose(m.wrap.dataset.mid||'');   // the answer closes the turn's frame, so either end of it matches
       }
     }
+    _rfClose('');   // a trailing question with no answer
+    try{ updateFrameUI(); _ctxBroadcastFrames(); }catch(_){}
     renderHistList(SESSIONS);scroll();
 
     // Restore right panel context from last user message
