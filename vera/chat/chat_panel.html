@@ -10357,8 +10357,21 @@ Your task: decide what to do next to advance toward the goal.
 
     { const _ts=_ctxTurnSend||{};
       // the set this turn actually sent, captured at send; only if that is empty does the live set stand in
-      const _sn=Array.isArray(_ts.nodes)&&_ts.nodes.length?_ts.nodes:(CTX_NODES.length?CTX_NODES:null);
-      if(_sn){ _saveFrame('Turn '+(_ts.turnNo||document.querySelectorAll('#msgs .mwrap.u').length),true,{ mid:_ts.mid||_cvRelMid||'', amid:_ts.amid||(aMsg&&aMsg.mid)||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery, nodes:_sn, edges:_ts.edges });updateFrameUI(); }
+      const _sn=Array.isArray(_ts.nodes)&&_ts.nodes.length?_ts.nodes:(CTX_NODES.length?CTX_NODES.slice():[]);
+      /* EVERY completed turn gets a frame, even an empty one. A turn that carried no records is not a turn
+         without a frame - it is a turn whose context was empty, and saying so is what stops it borrowing the
+         live set and showing the newest turn's context instead. The first turn of a page load routinely has
+         none, because the send races the context fetch on a 600ms timer (Notes/42 defect 105). */
+      const _f=_saveFrame('Turn '+(_ts.turnNo||document.querySelectorAll('#msgs .mwrap.u').length),true,{ mid:_ts.mid||_cvRelMid||'', amid:_ts.amid||(aMsg&&aMsg.mid)||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery, nodes:_sn, edges:_ts.edges||[] });
+      /* and it is tagged onto its two messages FROM THE DOM. The assistant message object is in hand here, so
+         its wrap is known for certain, and the question is the .mwrap immediately before it - no mid, no
+         ordinal, nothing that can drift. Measured before this: only one turn in three ended up tagged. */
+      try{ const _aw=aMsg&&aMsg.wrap;
+        if(_aw&&_f){ _aw.dataset.frame=String(_f.id);
+          let _qw=_aw.previousElementSibling;
+          while(_qw&&!(_qw.classList&&_qw.classList.contains('mwrap'))) _qw=_qw.previousElementSibling;
+          if(_qw&&_qw.classList.contains('u')) _qw.dataset.frame=String(_f.id); } }catch(_){}
+      updateFrameUI();
       _ctxTurnSend=null; _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} try{ _ctxFollow(true); }catch(_){} }
     // Re-fetch context after send if "ctxOnSend" is enabled. Use the USER's
     // last message — never the LLM response — so the search query reflects
