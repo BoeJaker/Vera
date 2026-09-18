@@ -12734,11 +12734,24 @@ Your task: decide what to do next to advance toward the goal.
        Frames button, session restore, browse) means "snapshot what is live now" and still gets that */
     const _src=Array.isArray(x.nodes)?x.nodes:CTX_NODES, _srcE=Array.isArray(x.edges)?x.edges:CTX_EDGES;
     const nodes=JSON.parse(JSON.stringify(_src)).map(n=>Object.assign(n,{ by:(n.source==='run'||(sent&&!sent.has(n.id)))?'a':'u' }));
-    const f={id:Date.now(),label:label||('Frame '+(CTX_FRAMES.length+1)),nodes,edges:JSON.parse(JSON.stringify(_srcE)),ts:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),mid:x.mid||'',amid:x.amid||'',turn:x.mid?'turn '+x.mid:'',query:x.query||_ctxQuery||''};CTX_FRAMES.push(f);if(CTX_FRAMES.length>500)CTX_FRAMES.splice(0,CTX_FRAMES.length-500);CTX_ACTIVE=f.id;   /* the frames live in the page; 500 turns is far beyond any real transcript and stops a very long session growing without bound */_ctxBroadcastFrames();return f;}
+    const f={id:Date.now(),label:label||('Frame '+(CTX_FRAMES.length+1)),nodes,edges:JSON.parse(JSON.stringify(_srcE)),ts:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),mid:x.mid||'',amid:x.amid||'',turn:x.mid?'turn '+x.mid:'',query:x.query||_ctxQuery||''};CTX_FRAMES.push(f);if(CTX_FRAMES.length>500)CTX_FRAMES.splice(0,CTX_FRAMES.length-500);CTX_ACTIVE=f.id;
+    /* the message names its own frame. Every identifier this lookup has leaned on drifts - HISTORY turn
+       numbers gave two frames both called "Turn 2", mids are re-issued at render time, _ctxTurnSend is null on
+       some paths - so the frame is attached to the question and the answer themselves and read back off the
+       element in view (Notes/42 defect 104). */
+    try{ const _tag=(m)=>{ if(!m) return; const w=document.querySelector('#msgs .mwrap[data-mid="'+m+'"]'); if(w) w.dataset.frame=String(f.id); };
+      _tag(f.mid); _tag(f.amid); }catch(_){}   /* the frames live in the page; 500 turns is far beyond any real transcript and stops a very long session growing without bound */_ctxBroadcastFrames();return f;}
   // which frame is the turn in view: the one whose question or response is that message — unless it is the newest turn
   // and the next question is being typed (the live set is what the graphs show then)
   let _ctxTurnSend=null, _ctxActiveFrame=null;
-  function _ctxFrameInView(mid){ if(!mid||!CTX_FRAMES.length) return null; const f=CTX_FRAMES.find(x=>x.mid===mid||x.amid===mid); if(!f) return null;
+  function _ctxFrameInView(mid){ if(!mid||!CTX_FRAMES.length) return null;
+    /* the element in view names its own frame — no counting, no matching, nothing that can drift. The mid/amid
+       comparison stays as a fallback for frames made by paths with no wrap to tag (Frames button, restore). */
+    let f=null;
+    try{ const w=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); const fid=w&&w.dataset.frame;
+      if(fid) f=CTX_FRAMES.find(x=>String(x.id)===String(fid))||null; }catch(_){}
+    if(!f) f=CTX_FRAMES.find(x=>x.mid===mid||x.amid===mid)||null;
+    if(!f) return null;
     // the newest turn's frame gives way to the live set while the next question is being typed (its context is what
     // the graphs then show — the old graph's "start typing to load context")
     if(f===CTX_FRAMES[CTX_FRAMES.length-1]){ const inp=document.getElementById('chatInput'); if(inp&&inp.value.trim()&&Date.now()-_ctxTypingT<90000) return null; }
