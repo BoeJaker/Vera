@@ -11603,29 +11603,36 @@ Your task: decide what to do next to advance toward the goal.
     return 0;
   }
 
-  async function ctxFetch(force=false,queryOverride='',fast=false){
+  /* sink: hand the result back instead of writing it to the live set. An older message's context is computed
+     through this, and CTX_NODES/CTX_EDGES must stay exclusively what the NEXT question carries, so in sink
+     mode this writes no global, paints nothing, and cannot disturb the live fetch. */
+  async function ctxFetch(force=false,queryOverride='',fast=false,sink=null){
+    const solo=!!sink;
     const query=(queryOverride||document.getElementById('chatInput')?.value?.trim()||HISTORY.slice(-1)[0]?.content||'').trim();
     if(!query&&!force)return;
 
-    // Cancel any in-flight fetch immediately
-    if(_ctxAbort){_ctxAbort.abort();_ctxAbort=null;}
-    const myVersion=++_ctxVersion;
+    // Cancel any in-flight fetch immediately — but a computed OLD turn runs alongside the live one and must
+    // neither cancel it nor bump the version it checks itself against, so it owns a private controller.
+    if(!solo&&_ctxAbort){_ctxAbort.abort();_ctxAbort=null;}
+    const myVersion=solo?_ctxVersion:++_ctxVersion;
     const abort=new AbortController();
-    _ctxAbort=abort;
+    if(!solo)_ctxAbort=abort;
 
     const sp=document.getElementById('ctxSpinner'),st=document.getElementById('ctxStripTxt');
-    if(sp)sp.classList.remove('hidden');if(st)st.textContent='Fetching…';
+    if(!solo){ if(sp)sp.classList.remove('hidden'); if(st)st.textContent='Fetching…'; }
 
     const k=parseInt(document.getElementById('ctxK')?.value||'8');
     const minSim=parseFloat(document.getElementById('ctxSim')?.value||'0.55');
     const fabK=parseInt(document.getElementById('ctxFabK')?.value||'5');
     const fabDS=document.getElementById('ctxFabDS')?.value||'';
     const memLim=parseInt(document.getElementById('ctxMemLim')?.value||'5');
-    const webK=parseInt(document.getElementById('ctxWebK')?.value||'5');
-    const newsK=parseInt(document.getElementById('ctxNewsK')?.value||'3');
+    /* reconstructing an OLD turn never searches the live web — scrolling a long transcript must not fire a
+       web and a news search per message. Both are gated on >0 further down. */
+    const webK=solo?0:parseInt(document.getElementById('ctxWebK')?.value||'5');
+    const newsK=solo?0:parseInt(document.getElementById('ctxNewsK')?.value||'3');
 
     // Helper: stale-check after every await — discard result if a newer fetch started
-    const stale=()=>myVersion!==_ctxVersion||abort.signal.aborted;
+    const stale=()=>solo?abort.signal.aborted:(myVersion!==_ctxVersion||abort.signal.aborted);
 
     // Abort-aware fetch wrapper
     const fetchA=async(path,method,body)=>{
@@ -11647,6 +11654,7 @@ Your task: decide what to do next to advance toward the goal.
     // authoritative summary (per-source breakdown) once everything has settled.
     const _flush=()=>{
       if(stale())return;
+      if(solo)return;   // a computed turn commits once, at the end, into its sink — it never paints
       CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query;
       if(_ctxTurnSend) _ctxTurnSend.ids=new Set(nodes.map(n=>n.id));   // the turn in flight: this is its prompt's context
       renderCtxGraph();renderCtxList();renderFabPane(); _ctxBroadcast();
@@ -11943,7 +11951,10 @@ Your task: decide what to do next to advance toward the goal.
     for(let i=0;i<vn.length-1;i++)if(vn[i].score>0.7&&vn[i+1].score>0.7)edges.push({from:vn[i].id,to:vn[i+1].id,type:'SIMILAR',source:'vector'});
 
     // Final stale check — discard if a newer fetch has started
-    if(stale()){if(sp)sp.classList.add('hidden');return;}
+    if(stale()){if(!solo&&sp)sp.classList.add('hidden');return;}
+
+    // the computed turn's one and only commit: into the caller's sink, touching nothing live
+    if(solo){ sink.nodes=nodes; sink.edges=edges; sink.query=query; return; }
 
     _ctxAbort=null;
     CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query; if(_ctxTurnSend) _ctxTurnSend.ids=new Set(nodes.map(n=>n.id)); _ctxBroadcast();
@@ -12770,12 +12781,54 @@ Your task: decide what to do next to advance toward the goal.
     if(f===CTX_FRAMES[CTX_FRAMES.length-1]){ const inp=document.getElementById('chatInput'); if(inp&&inp.value.trim()&&Date.now()-_ctxTypingT<90000) return null; }
     return f; }
   function _ctxBroadcastFrames(){ if(_EMBED.only==='menu') return; try{ _lhmPost('frames',{ frames:CTX_FRAMES }); }catch(_){} }
+  /* An older message has no frame because its context was never recorded when that turn happened: the stored
+     record carries graph_id:'' and relations:[], its metadata is only {role, agent_id, thinking, agent_name,
+     latency_ms}, and the session graph's edges are message/activity links. So there is nothing to look up and
+     scrolling up shows nothing (Notes/42 defect 106).
+     Its context is therefore computed the FIRST time you land on it, and kept as that message's frame - bound
+     to the question and the answer from the DOM, exactly as a live turn's is. This is not a recall per scroll:
+     at most once per message for the life of the page, never for a message that already has a frame, never
+     more than one at a time, and remembered even when it comes back empty so a barren message is not asked
+     for twice. Turns sent in this page load already carry their own context and compute nothing. */
+  let _oldCtxBusy=''; const _oldCtxDone={};
+  function _turnOf(w){
+    const msgs=document.getElementById('msgs'); if(!w||!msgs) return null;
+    let q=w; while(q&&!(q.classList&&q.classList.contains('u'))){ q=q.previousElementSibling;
+      while(q&&!(q.classList&&q.classList.contains('mwrap'))) q=q.previousElementSibling; }
+    if(!q) return null;
+    let a=q.nextElementSibling; while(a&&!(a.classList&&a.classList.contains('mwrap'))) a=a.nextElementSibling;
+    if(a&&!a.classList.contains('a')) a=null;
+    const body=q.querySelector('.mbody')||q.querySelector('.msg-body')||q;
+    return { q, a, mid:q.dataset.mid||'', amid:a?(a.dataset.mid||''):'', text:String(body.textContent||'').trim() };
+  }
+  function _ctxComputeOlder(w){
+    if(typeof ctxFetch!=='function'||_oldCtxBusy) return;
+    const p=_turnOf(w); if(!p||!p.mid||p.text.length<3) return;
+    if(p.q.dataset.frame||_oldCtxDone[p.mid]) return;          // already has one, or already tried
+    _oldCtxDone[p.mid]=true; _oldCtxBusy=p.mid;
+    const sink={};
+    Promise.resolve(ctxFetch(true, p.text.slice(0,400), false, sink)).then(()=>{
+      const n=(sink.nodes||[]).filter(x=>x&&x.id);
+      if(!n.length||p.q.dataset.frame) return;
+      const f=_saveFrame('Turn '+p.mid, true, { mid:p.mid, amid:p.amid, nodes:n, edges:sink.edges||[], query:sink.query||p.text.slice(0,160) });
+      try{ if(f){ p.q.dataset.frame=String(f.id); if(p.a) p.a.dataset.frame=String(f.id); } }catch(_){}
+      _ctxColFrameSig='';
+      try{ updateFrameUI(); }catch(_){}
+    }).catch(()=>{}).then(()=>{
+      // the lock is freed BEFORE the follow: the follow is what asks for the next message, and releasing it
+      // afterwards meant only the first message ever resolved
+      _oldCtxBusy='';
+      try{ _ctxFollow(true); }catch(_){}
+    });
+  }
   // the frame in view right now (the turn in focus, live while typing) — the one both graphs draw
   function _ctxActiveCompute(){ try{ const w=_focusedTurn(); const f=_ctxFrameInView(w?(w.dataset.mid||''):''); return f?f.id:null; }catch(_){ return null; } }
   // the follow: on the transcript's scroll and the composer's input, whether or not the graph is grown — the mini
   // re-renders when the frame in view changes; the grown column syncs through its anchor
   let _ctxFollowT=0, _ctxFollowTimer=null;
   function _ctxFollow(now){ const run=()=>{ _ctxFollowT=Date.now(); const active=_ctxActiveCompute(); if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){} }
+      // an older message with nothing recorded: compute its context once, then follow again when it lands
+      if(active==null){ try{ _ctxComputeOlder(_focusedTurn()); }catch(_){} }
       if(_pages.has('graph')&&_ctxCol) _graphAnchorPost(true); else { try{ _ctxRunsDraw(); }catch(_){} } };
     if(now||Date.now()-_ctxFollowT>150){ if(_ctxFollowTimer){ clearTimeout(_ctxFollowTimer); _ctxFollowTimer=null; } return run(); }
     if(!_ctxFollowTimer) _ctxFollowTimer=setTimeout(()=>{ _ctxFollowTimer=null; run(); }, 160); }
