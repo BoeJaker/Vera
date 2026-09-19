@@ -155,8 +155,8 @@ function renderInterop(){
     </div>
     <div class="interop-card"><h2>Runtime compatibility</h2>
       <div class="metric">${esc(m.candidate_count||0)} runtimes</div>
-      <div class="metric-note">${esc(m.dimension_count||0)} dimensions · ${esc(m.queued_live_cases||0)} live cases queued</div>
-      <div class="contract-list"><span class="contract">${esc(m.execution_lane||'unknown')}</span><span class="contract">selection ${m.ready_for_selection?'ready':'not ready'}</span></div>
+      <div class="metric-note">${esc(m.dimension_count||0)} dimensions · ${esc(m.required_live_cases??m.queued_live_cases??0)} conformance cases</div>
+      <div class="contract-list"><span class="contract ${m.evidence_evaluator_registered?'ready':''}">evidence ${m.evidence_evaluator_registered?'validated':'unavailable'}</span><span class="contract">selection ${m.ready_for_selection?'ready':'not ready'}</span></div>
     </div>
     <div class="interop-card"><h2>Runtime adapters</h2>
       <div class="metric">${esc(adapters.length)} migrated</div>
