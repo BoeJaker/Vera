@@ -927,7 +927,7 @@ vera-exploded .xp-band.estate{background:color-mix(in srgb,var(--bc) 5%,transpar
 vera-exploded [data-drag]{cursor:grab}vera-exploded .xp-lift{cursor:grabbing!important;z-index:60!important;opacity:.92;transition:none!important;pointer-events:none}
 vera-exploded .xp-pl.drop{box-shadow:inset 0 0 0 2px var(--xp-ac),0 0 0 4px color-mix(in srgb,var(--xp-ac) 22%,transparent)!important;background:color-mix(in srgb,var(--xp-ac) 12%,transparent)!important}
 vera-exploded .xp-drop-before{box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 2px var(--xp-ac)!important}
-vera-exploded .xp-wrap.dropping{cursor:grabbing}
+vera-exploded .xp-wrap.dropping{cursor:grabbing}vera-exploded .xp-wrap.dropping .xp-pl{pointer-events:auto}
 /* the edit affordance on a widget you placed: a small gear, shown as you point at it */
 vera-exploded .xit-edit{position:absolute;right:4px;top:4px;width:16px;height:16px;border:0;border-radius:4px;background:var(--xp-s3);color:var(--xp-t2);font-size:10px;line-height:16px;padding:0;cursor:pointer;opacity:0;z-index:3;transition:opacity .12s ease}
 vera-exploded .xit:hover .xit-edit,vera-exploded .xit.open .xit-edit{opacity:1}vera-exploded .xit-edit:hover{color:var(--xp-t1);background:var(--xp-bd2)}
@@ -1016,7 +1016,9 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         const dropEnd = (e) => { const g = this._dragW; if (!g) return; this._dragW = null; if (!g.on) return; g.el.classList.remove('xp-lift'); g.el.style.transform = g.tf0; wrap.classList.remove('dropping');
           this.querySelectorAll('.xp-pl.drop,.xp-drop-before').forEach((el) => { el.classList.remove('drop'); el.classList.remove('xp-drop-before'); }); try { this.releasePointerCapture(g.pid); } catch (_) {}
           this._dragJust = true; setTimeout(() => { this._dragJust = false; }, 250);
+          const held = this._renderHeld; this._renderHeld = false;
           if (e.type === 'pointercancel' || !(g.to || g.before)) { this._schedule(); return; }
+          if (held) this._schedule();
           const wg = this._itemOf(g.id); this.dispatchEvent(new CustomEvent('vera:xpl:move', { detail: { id: g.id, key: g.key || (wg && wg.key) || '', from: g.from, to: g.to || g.from, before: g.before, card: wg ? wg.card : null }, bubbles: true })); };
         this.addEventListener('pointerup', dropEnd); this.addEventListener('pointercancel', dropEnd);
         wrap.addEventListener('pointerdown', (e) => { if (e.button || this._S.mode === 'cards' || (e.target.closest && e.target.closest('.xp-it,.xp-rc,.xp-cp,.xit,.xig,.xnd,button,.xp-lb.station'))) return; this._drag = { x0: e.clientX, y0: e.clientY, px: this._S.pan.x, py: this._S.pan.y, id: e.pointerId, moved: false }; });
@@ -1156,6 +1158,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
       }
       _schedule() { if (this._raf || !this._built) return; this._raf = (root.requestAnimationFrame || setTimeout)(() => { this._raf = 0; this._render(); }); }
       _render() {
+        if (this._dragW && this._dragW.on) { this._renderHeld = true; return; }   // a widget is in the hand: nothing is rebuilt under it until the drop
         const S = this._S, wrap = this._r.wrap, view = this._r.view; const W = wrap.clientWidth || 800, H = wrap.clientHeight || 600;
         const ISO = root.VeraISO && typeof root.VeraISO.proj === 'function' ? root.VeraISO : null;
         const proj = ISO ? root.VeraISO.proj(S.tilt || 30, S.azim || 45, 1, true) : null;   // the shared projection when it is there, at the view's tilt and swing; z in px, as the floors are measured
