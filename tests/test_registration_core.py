@@ -54,7 +54,8 @@ def test_coverage_puts_every_machine_against_every_plane_and_counts_the_gaps():
 
 
 def test_stale_entries_are_the_ones_no_machine_answers_to():
-    st = core.stale(src())
+    # the directory's A records: ollama-e's address belongs to no machine, dc's neither
+    st = core.stale(src(), {"ollama-e.vera.int": ["192.168.0.249"], "dc.vera.int": ["192.168.0.91"]})
     got = {(s["kind"], s["id"]): s for s in st}
     assert ("identity", "ollama-e.vera.int") in got and ("identity", "dc.vera.int") in got
     assert got[("identity", "ollama-e.vera.int")]["action"] == {"cap": "identity.host.delete",
@@ -95,3 +96,36 @@ def test_the_capabilities_and_the_destroy_hook_are_wired():
     assert '_cap("estate.registration.forget")' in body and body.index("DELETE") < body.index("estate.registration.forget")
     panel = open(os.path.join(ROOT, "vera", "workers", "workers_ollama_panel.html"), encoding="utf-8").read()
     assert "prvs-registration" in panel and "registration:'/estate/registration/panel'" in panel
+
+
+def test_a_directory_host_is_judged_by_address_never_by_name_alone():
+    """19 Sep 2026: CT126 is labelled Ollama but registered as ollama126.vera.int,
+    the Vera VM is LLM but vera.vera.int; a name match called both stale."""
+    machines = MACHINES + [
+        {"id": "m-126", "label": "Ollama", "kind": "guest", "status": "running", "addr": "192.168.0.250", "ips": ["192.168.0.250"],
+         "vmid": 126, "type": "lxc", "ssh_host_id": "ssh-126"},
+        {"id": "m-104", "label": "LLM", "kind": "guest", "status": "running", "addr": "192.168.0.138", "ips": ["192.168.0.138"],
+         "vmid": 104, "type": "qemu", "ssh_host_id": ""}]
+    ssh = SSH + [{"id": "ssh-126", "label": "ollama126.vera.int", "host": "192.168.0.250", "tags": []}]
+    identity = IDENTITY + [{"fqdn": "ollama126.vera.int"}, {"fqdn": "vera.vera.int"}, {"fqdn": "mystery.vera.int"}]
+    s = ent.Sources(machines=machines, backups=BACKUPS, certs=[], mesh=MESH, identity=identity, ssh_hosts=ssh, now=NOW)
+    resolved = {"vera.vera.int": ["192.168.0.138"], "ollama-e.vera.int": ["192.168.0.249"], "dc.vera.int": ["192.168.0.91"],
+                "ollama126.vera.int": ["192.168.0.250"]}
+    st = {s_["id"]: s_ for s_ in core.stale(s, resolved) if s_["kind"] == "identity"}
+    assert "ollama126.vera.int" not in st, "its login by that name reaches a machine"
+    assert "vera.vera.int" not in st, "its A record is the Vera VM's address"
+    assert st["ollama-e.vera.int"]["action"]["cap"] == "identity.host.delete" and "192.168.0.249" in st["ollama-e.vera.int"]["why"]
+    assert st["dc.vera.int"]["action"], "positively unclaimed: its address belongs to no machine"
+    assert st["mystery.vera.int"]["unverified"] is True and st["mystery.vera.int"]["action"] is None, \
+        "an address we could not look up is never pruned on a name alone"
+    # without any address evidence at all, nothing in the directory is called stale with an action
+    assert all(x.get("action") is None for x in core.stale(s, None) if x["kind"] == "identity")
+
+
+def test_prune_only_ever_runs_entries_that_carry_an_action():
+    caps = open(os.path.join(ROOT, "vera", "estate", "registration_capabilities.py"), encoding="utf-8").read()
+    assert 'if p.get("action")]' in caps
+    assert '"dnsrecord_find"' in caps, "the directory's own A records are the address evidence"
+    panel = open(os.path.join(ROOT, "vera", "estate", "registration_panel.html"), encoding="utf-8").read()
+    assert 'class="stale-pick"' in panel and "ids: sel.map(s => String(s.id))" in panel, "prune acts on ticked entries only"
+    assert "unverified" in panel
