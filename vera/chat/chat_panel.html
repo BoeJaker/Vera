@@ -863,6 +863,13 @@ body[data-cols~="graph"] #graphColumn{order:-1;border-left:none;border-right:1px
 /* the expanded context IS the Context quick menu GROWN in place: the same rail, panel and header; the panel widens and
    its body is the full context graph; the CTA folds it back (nothing opens beside the menu) */
 #rightRail.lhm-host.lhm-grown > .lhm-det{width:min(46vw,680px);flex:0 0 min(46vw,680px)}
+/* THE EXPANDED GRAPH WAS CAPPED AT 680px. Every attempt to thin the plot out - the spiral, the rank tiebreak, the
+   elliptical stretch - was spending the same 660px of plot, on a 1700px screen, with the other 1000px going to a
+   chat column that had long since hit its own 736px measure and was padding the rest. The density was a SIZE
+   problem before it was a layout one. Where there is room to give (and only there: below 1600 the chat still
+   needs its half), the graph takes it, and the galaxy's radii and the elliptical stretch both scale off the plot,
+   so the node-to-node space grows with it rather than the same crowd being drawn larger. */
+@media (min-width:1600px){ #rightRail.lhm-host.lhm-grown > .lhm-det{width:min(56vw,1080px);flex:0 0 min(56vw,1080px)} }
 #rightRail.lhm-host.lhm-grown .lhm-quick{padding:0 0 6px;gap:0}
 #rightRail.lhm-host.lhm-grown .lhm-quick #ctxGrown{flex:1;min-height:0;display:flex;flex-direction:column}
 #rightRail.lhm-host.lhm-grown .lhm-quick #ctxGrown vera-context-graph{flex:1;min-height:0}
@@ -1414,7 +1421,11 @@ html[data-blocks="off"] .pa-att{background:transparent}
 #topBar #xplSeg .tb-btn,#topBar .pseg .tb-btn{height:26px;padding:0 9px;background:transparent;box-shadow:none;border-radius:calc(var(--r-sm,7px) - 2px)}
 #topBar #xplSeg .tb-btn.col-on,#topBar .pseg .tb-btn.col-on{background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent));color:var(--ac,var(--acc,#5a9e8f));box-shadow:none}
 #topBar #ctxMeter{display:flex;align-items:center;gap:9px;height:30px;padding:0 11px;border-radius:var(--r-sm,7px);background:var(--surf2);box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14));cursor:pointer}
-#topBar #ctxMeterBar{width:88px;height:5px;border-radius:3px;overflow:hidden;background:var(--s3,var(--bg3,#22262e));border:none;display:flex;gap:1px}
+/* THE CONTEXT METER IS READ, NOT GLANCED AT. 88x5px is a hairline: the fill is sized to used/max, so the free
+   space IS drawn — as the unfilled remainder — but at a fifth of a centimetre with eight coloured segments
+   crammed into the used part, neither the split nor what is left of the window can be seen. Wider and taller,
+   with the empty part given its own tone so the remaining space reads as a THING rather than as absence. */
+#topBar #ctxMeterBar{width:168px;height:9px;border-radius:5px;overflow:hidden;background:var(--s3,var(--bg3,#22262e));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--bd,var(--border,#2a2e36)) 70%,transparent);border:none;display:flex;gap:1px}
 #topBar #ctxMeterBar i{display:block;height:100%}
 #topBar #ctxMeterFill{height:100%;background:var(--ac,var(--acc,#5a9e8f))}
 #topBar #ctxMeterLabel{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0))}
@@ -1431,6 +1442,7 @@ html[data-blocks="off"] .pa-att{background:transparent}
   #topBar .tb-btn,#topBar .hbtn{padding:0 8px}
   #topBar #denGroup .tb-btn,#topBar #xplSeg .tb-btn,#topBar .pseg .tb-btn{padding:0 7px}
   #topBar #ctxMeter{gap:6px;padding:0 8px}
+  #topBar #ctxMeterBar{width:104px;height:8px}
   #topBar #ctxMeterBar{width:56px}
 }
 @media (max-width:1140px){
@@ -4298,7 +4310,11 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     fill.style.width=pct+'%';
     fill.style.background=pct>85?'var(--err)':pct>65?'var(--warn)':'var(--acc2)';
     const rem=max-used;
-    if(lbl){ lbl.textContent=`${(used/1000).toFixed(1)}k / ${(max/1000).toFixed(0)}k`; lbl.title=rem.toLocaleString()+' free'; }
+    /* the label says what is LEFT as well as what is used: "how much room have I got" is the question this
+       meter is asked, and it was only answerable by hovering for a tooltip */
+    if(lbl){ lbl.textContent=`${(used/1000).toFixed(1)}k / ${(max/1000).toFixed(0)}k`
+        + (rem>0?`  ${(rem/1000).toFixed(rem<10000?1:0)}k free`:'  full');
+      lbl.title=rem.toLocaleString()+' tokens free of '+max.toLocaleString(); }
     try{ _ctxMeterSegs(); }catch(_){}
   }
 
@@ -6551,6 +6567,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       _ctxCol.addEventListener('vera:ctx:toggle', ev=>{ const id=(ev.detail||{}).id; const n=CTX_NODES.find(x=>x.id===id); if(!n) return; n.included=n.included===false; try{ renderCtxList(); }catch(_){} _ctxColSig=''; _ctxColumnSync(_grFocusMid||''); });
     // the grown graph's All edges is the mini's (one state); Incl all / Excl all set every record; Preview page opens the browser pane
     _ctxCol.addEventListener('vera:ctx:alledges', ev=>{ _qGalAll=!!(ev.detail||{}).on; try{ VeraLHM.render(); }catch(_){} });
+    /* the graph asking for the settings that decide what it draws — the Settings page holds them under Context
+       (Sources · Injection · Session memory · Parameters · Fabric dataset), and the graph names its section */
+    _ctxCol.addEventListener('vera:ctx:settings', ev=>{ try{ _settingsPage(true, (ev.detail||{}).section||'sources'); }catch(_){} });
     _ctxCol.addEventListener('vera:ctx:toggle-all', ev=>{ const on=!!(ev.detail||{}).included; CTX_NODES.forEach(n=>{ n.included=on; }); try{ renderCtxList(); }catch(_){} _ctxColSig=''; _ctxColumnSync(_grFocusMid||''); try{ VeraLHM.render(); }catch(_){} });
     _ctxCol.addEventListener('vera:ctx:preview', ev=>{ const u=String((ev.detail||{}).url||''); if(u) try{ _browserNavigate(u); }catch(_){} });
     try{ if(typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(!!_qGalAll); }catch(_){}   // a fresh element takes the mini's All edges
@@ -12471,6 +12490,7 @@ Your task: decide what to do next to advance toward the goal.
      `.has()` call site keeps its meaning. Only .has/.add/.delete were ever used (_ctxAssembledExtra takes the
      same shape and calls only .has), so the object stands in for the Set completely. */
   let _qGalOff={};
+  const _ctxMiniArr={};  // the mini graph's arrival store - see VeraContextGraph.drawPlot
   const _ctxLayers={
     has:(f)=>!_qGalOff[String(f)],
     add:(f)=>{ delete _qGalOff[String(f)]; },
@@ -14127,7 +14147,10 @@ function _embedMount(){
       try{ VeraContextGraph.ensureCss();
         const st=VeraContextGraph.stateFrom({ nodes:S.nodes, rels:data.rels, memory:_memAllNodes, memEdges:_memAllEdges, dag:_lastDagNodes, dagEdges:_lastDagEdges, view:(_qGalView==='timeline'?'time':_qGalView), allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k]), color:srcCol, sel:_qGalSel||null, list:false, q:_qGalQ, turn:_grFocusMid?'turn '+_grFocusMid:'', frames:CTX_FRAMES, frame:_ctxActiveFrame });   // the frame of the turn in view, as the grown graph shows it
         // card:false — a picked record opens in the list below, not in a card laid over the 262px plot
-        gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle, card:false });
+        /* the mini's own arrival store (the element keeps a separate one): a record flies out of the hub the
+           first paint it appears on, and every later paint of the same turn - a pan, a folded family, a search -
+           finds it already seen and animates nothing */
+        gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle, card:false, arr:_ctxMiniArr });
         _ctxMiniPos=(function(){ try{ return VeraContextGraph.mini(Object.assign({}, st, { sel:_qGalSel||null }), 262, miniH).pos||{}; }catch(_){ return {}; } })();
         // a section's own records, on demand. The host says WHERE they are drawn: .cg-mini is the scope that lays
         // a row out and carries the colours, so the rows read the same here as they do inside the plot's own drawer.
@@ -14169,7 +14192,21 @@ function _embedMount(){
       +'<span class="caret">'+(_qRawOpen?'▾':'▸')+'</span>Raw prompt'
       +'<span class="rt-n">'+(_ctxRawLen()?_kfmt(_ctxRawLen())+' chars':'—')+'</span>'
       +'<button class="grp-act" data-a="raw-refresh" title="Re-assemble the context and read it back">↻</button></div>'
-      +(_qRawOpen?'<pre class="ctx-raw-b">'+esc(_ctxRawText())+'</pre>':'')+'</div>';
+      +(_qRawOpen?'<pre class="ctx-raw-b">'+esc(_ctxRawText())+'</pre>':'')+'</div>'
+      /* WHAT DECIDED ALL OF THE ABOVE. Everything in this menu shows the context that WAS assembled; the settings
+         that decide what gets assembled - the sources, the injection, the session memory, k and the similarity
+         floor, the fabric dataset - moved out of the legacy Context pane and into the Settings page, and nothing
+         here said so. From the graph, the configuration had simply vanished. These rows are built FROM the
+         Settings page's own index (_SP_MAP's Context group), not from a second list beside it, so a section
+         renamed or added there appears here and the two cannot drift apart. Each row opens that exact section. */
+      +(function(){ try{
+          const g=(typeof _SP_MAP!=='undefined'?_SP_MAP:[]).find(x=>x.grp==='Context'); if(!g||!g.rows.length) return '';
+          return '<div class="wid ctx-cfg" data-w="context settings \u00b7 list">'
+            +'<div class="grp" title="What decides the context above \u2014 these fields live on the Settings page (\u2318,)">Context settings'
+            +'<button class="grp-act" data-a="cfg-open" title="Open the Settings page at Context">\u2699</button></div>'
+            +g.rows.map(r=>'<div class="lrow cfg" data-sec="'+esc(r.id)+'" title="'+esc(r.n+(r.note?' \u2014 '+r.note:'')+' \u00b7 opens the Settings page here')+'">'
+              +'<span class="caret">\u203a</span><span class="nm">'+esc(r.n)+'</span><span class="rt-n">'+esc(r.note||'')+'</span></div>').join('')
+            +'</div>'; }catch(_){ return ''; } })();
     el.querySelectorAll('.vseg button[data-view]').forEach(b=>b.addEventListener('click',()=>{ _qGalView=b.dataset.view; VeraLHM.render(); }));
     el.querySelectorAll('.gal-style button[data-style]').forEach(b=>b.addEventListener('click',()=>{ _qGalStyle=b.dataset.style; try{ localStorage.setItem('vera_ctx_mini_style', _qGalStyle); }catch(_){} VeraLHM.render(); }));
     el.querySelector('.gal-all').addEventListener('click',()=>{ _qGalAll=!_qGalAll; try{ if(_ctxCol&&typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(_qGalAll); }catch(_){} VeraLHM.render(); });   // the grown graph follows
@@ -14222,6 +14259,9 @@ function _embedMount(){
     el.querySelectorAll('[data-add-id]').forEach(r=>r.addEventListener('click',ev=>{ ev.stopPropagation();
       _ctxAddPick(r.dataset.addFam, r.dataset.addId); }));
     el.querySelectorAll('[data-a="raw-toggle"]').forEach(h=>h.addEventListener('click',()=>{ _qRawOpen=!_qRawOpen; VeraLHM.render(); }));
+    // a configuration row opens the Settings page AT its section, not at the top of a long page
+    el.querySelectorAll('.ctx-cfg .lrow[data-sec]').forEach(r=>r.addEventListener('click',()=>{ try{ _settingsPage(true, r.dataset.sec); }catch(_){} }));
+    el.querySelectorAll('[data-a="cfg-open"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ _settingsPage(true,'sources'); }catch(_){} }));
     el.querySelectorAll('[data-a="raw-refresh"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation();
       _qRawOpen=true; Promise.resolve().then(()=>_ctxFcRefresh()).catch(()=>{}).then(()=>{ try{ VeraLHM.render(); }catch(_){} }); }));
     // opening a section lights its source on the plot too, so the list and the graph never say different things

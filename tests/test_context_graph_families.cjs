@@ -51,7 +51,9 @@ const gF2 = G.compute(Object.assign({}, base, { loop: L3.steps, runPlan: [], ste
 t('… five steps, none reading the prompt: the plot shows the running one and its neighbour, the lane all five', gF2.loopNodes.length === 5 && gF2.stepNodes.map((n) => n.i).join(',') === '3,4');
 const gF3 = G.compute(Object.assign({}, base, { loop: L3.steps, runPlan: [], stepReads: [], mix: { loop: 'focus' }, lsel: 1 }), W, H);
 t('… a step picked in the lane brings it and its neighbours into the plot', gF3.stepNodes.map((n) => n.i).join(',') === '0,1,2' && /\bsel\b/.test(gF3.stepNodes[1].cls));
-t('memory in focus: only the session records that touch the prompt stay on the arm (the fact derived into v1)', gF.memNodes.map((n) => n.id).sort().join(',') === 'm1,sf1' && gF.families.find((f) => f.name === 'memory').level === 'focus');
+// memory is a SOURCE on the meter now, not a chip beside it: the reader is choosing a source of context, and
+// keeping it apart meant one of the eight things in the prompt was switched somewhere else from the other seven
+t('memory in focus: only the session records that touch the prompt stay on the arm (the fact derived into v1)', gF.memNodes.map((n) => n.id).sort().join(',') === 'm1,sf1' && (gF.meter.find((f) => f.name === 'memory') || {}).level === 'focus');
 const gO = G.compute(Object.assign({}, base, { mix: { loop: 'off', memory: 'off', plan: 'off' } }), W, H);
 // off used to leave the prompt's own recall on the arm; the user's review says off is off (Notes/42 defect 65)
 t('off folds the family away — no track, no layer, no chip glow, no record of its own; the context takes the whole circle again', gO.loopNodes.length === 0 && gO.stepNodes.length === 0 && gO.planNodes.length === 0 && gO.planPlot.length === 0 && gO.memNodes.length === 0 && gO.lanes.l === 0 && gO.lanes.t === 0 && gO.families.every((f) => !f.on) && gO.spokes.length === 4);
@@ -105,9 +107,14 @@ t('the memory adapter carries the group and the edge class (a hub edge is not st
 const fresh = G.compute(Object.assign({}, base, { nodes: nodes.filter((n) => n.source !== 'memory'), memory: [], memEdges: [], loop: [], runPlan: [], run: null, stepReads: [], plan: [], estate: { nodes: [], edges: [] } }), W, H);
 t('a fresh session: no family chip until a family has nodes (the memory chip counts the prompt\'s own recall too)', (fresh.families || []).length === 0, (fresh.families || []).map((x) => x.name).join(','));
 const fed = G.compute(Object.assign({}, base, { estate: { nodes: SNAP.nodes, edges: SNAP.edges } }), W, H);
-t('fed: the chips memory · loop · plan · estate, from out.families each render', (fed.families || []).map((x) => x.name).join(',') === 'memory,loop,plan,estate', (fed.families || []).map((x) => x.name + ':' + x.n + ':' + x.level).join(' '));
+/* The four used to be one row of chips. They are three things, and are now in the three places they belong:
+   MEMORY is a source of the prompt, so it is a band on the meter with the other sources; ESTATE is the machines
+   the work ran on, not context at all, so it rides the turns line; LOOP and PLAN stay as family chips. */
+t('fed: loop and plan are the family chips', (fed.families || []).map((x) => x.name).join(',') === 'loop,plan', (fed.families || []).map((x) => x.name + ':' + x.n + ':' + x.level).join(' '));
+t('fed: memory is a band on the meter, with the sources', (fed.meter || []).some((x) => x.name === 'memory'), (fed.meter || []).map((x) => x.name).join(','));
+t('fed: the estate rides the turns line', !!fed.estateChip && fed.estateChip.fam === 'estate');
 const memOnly = G.compute(Object.assign({}, base, { loop: [], runPlan: [], run: null, stepReads: [], plan: [] }), W, H);
-t('setMemory alone: the memory chip appears, at all by default', (memOnly.families || []).map((x) => x.name + ':' + x.level).join(',') === 'memory:all', (memOnly.families || []).map((x) => x.name).join(','));
+t('setMemory alone: memory appears on the meter, at all by default', (memOnly.meter || []).some((x) => x.name === 'memory' && x.level === 'all'), (memOnly.meter || []).map((x) => x.name + ':' + x.level).join(','));
 /* A chip you switch off must still be there to switch back on. Memory used to count its family from the list
    AFTER the level was applied, so switching it off emptied the count, the chip disappeared and took the only way
    back with it - and it was the ONLY family that did this, because the others count their raw size. The case that
@@ -116,11 +123,35 @@ const recallsOnly = { nodes: [{ id: 'm1', label: 'a recall', source: 'memory', s
     { id: 'm2', label: 'another', source: 'memory', score: 0.6, included: true, text: 'y' },
     { id: 'c1', label: 'a cap', source: 'cap', score: 0.7, included: true, text: 'z' }],
   rels: [], memory: [], memEdges: [], loop: base.loop, runPlan: base.runPlan, estate: { nodes: SNAP.nodes, edges: SNAP.edges } };
-['memory', 'loop', 'plan', 'estate'].forEach((fam) => {
+/* Switched off, each must STILL BE THERE — wherever it now lives. Something that vanishes when you turn it off
+   can never be turned back on, and that holds just as much on the meter and the turns line as it did in the
+   chip row. */
+['loop', 'plan'].forEach((fam) => {
   const off = G.compute(Object.assign({}, recallsOnly, { mix: { [fam]: 'off' } }), W, H);
   const chip = (off.families || []).find((x) => x.fam === fam);
   t('the ' + fam + ' chip is still there when ' + fam + ' is switched off, so it can be switched back on',
     !!chip && chip.on === false, (off.families || []).map((x) => x.fam).join(','));
 });
+{
+  const off = G.compute(Object.assign({}, recallsOnly, { mix: { memory: 'off' } }), W, H);
+  const band = (off.meter || []).find((x) => x.name === 'memory');
+  t('memory keeps its band on the meter when switched off', !!band && band.level === 'off',
+    (off.meter || []).map((x) => x.name + ':' + x.level).join(','));
+  t('...and keeps its WIDTH, so the row does not reshuffle around it', !!band && band.tok > 0);
+}
+{
+  const off = G.compute(Object.assign({}, recallsOnly, { mix: { estate: 'off' } }), W, H);
+  t('the estate stays on the turns line when switched off', !!off.estateChip && off.estateChip.on === false);
+}
+// the meter is ordered by SIZE and does not move when a band is switched: a band you pressed must still be
+// where you pressed it, and the biggest belongs on the left where the eye starts
+{
+  const all = G.compute(recallsOnly, W, H);
+  const one = G.compute(Object.assign({}, recallsOnly, { mix: { memory: 'off' } }), W, H);
+  const names = (o) => (o.meter || []).map((x) => x.name).join(',');
+  t('the meter keeps its order when a band is switched off', names(all) === names(one), names(all) + ' vs ' + names(one));
+  const toks = (all.meter || []).map((x) => x.tok);
+  t('and it is ordered largest first', toks.every((v, i) => i === 0 || toks[i - 1] >= v), toks.join(','));
+}
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

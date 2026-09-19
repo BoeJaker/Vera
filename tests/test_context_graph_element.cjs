@@ -63,12 +63,12 @@ const g6 = G.compute(Object.assign({}, base, { memory: sess, memEdges: sessEdges
 t('the session memory graph joins the arc, hollow; a record already in the prompt is drawn once, in its sector', g6.memNodes.length === 2 + 3 && g6.memNodes.filter((n) => /ghost/.test(n.cls)).length === 4 && !g6.memNodes.some((n) => n.id === 'v1') && g6.cnodes.some((n) => n.id === 'v1') && g6.pos.sm1.ghost && g6.pos.sm1.sess);
 t('the rail\'s shapes and colours: a message is a slab, the session a diamond, a dag step dashed', /\bmsg\b/.test(g6.memNodes.find((n) => n.id === 'sm1').cls) && /\bsess\b/.test(g6.memNodes.find((n) => n.id === 'ss1').cls) && /\bdag\b/.test(g6.memNodes.find((n) => n.id === 'sd1').cls) && g6.memNodes.find((n) => n.id === 'sm1').col === '#5a9e8f');
 t('the session\'s relations: drawn among what is on the arc and into the prompt\'s records, hidden types folded', g6.cedges.some((e) => /followed by/i.test(e.title) && e.col === '#8fb87a') && g6.cedges.some((e) => /derived from/i.test(e.title) && /→ fabric_capabilities\.py/.test(e.title)) && !g6.cedges.some((e) => /session content/i.test(e.title)));
-t('a memory chip with the count; the region says how many from the session', g6.families.some((f) => f.name === 'memory' && f.n === 5 && f.on) && g6.regions.some((r) => /memory · session 3/.test(r.t)) && g6.ghosts === 2 + 3);
+t('a memory chip with the count; the region says how many from the session', g6.meter.some((f) => f.name === 'memory' && f.n === 5 && f.level !== 'off') && g6.regions.some((r) => /memory · session 3/.test(r.t)) && g6.ghosts === 2 + 3);
 const g7 = G.compute(Object.assign({}, base, { memory: sess, memEdges: sessEdges, layersOff: new Set(['memory']) }), 660, 600);
 // this read the other way round until the user's review: off folded the session graph away and left the prompt's own
 // recalls on the arm, which is most of what is on it — "the memory recall toggle doesn't toggle the memory nodes"
 // (Notes/42 defect 65). Off is now off; focus keeps the recalls the prompt carries, all keeps every one.
-t('the memory chip folds the arm away — the session\'s records AND the prompt\'s own recalls', g7.memNodes.length === 0 && g7.families.some((f) => f.name === 'memory' && !f.on));
+t('the memory chip folds the arm away — the session\'s records AND the prompt\'s own recalls', g7.memNodes.length === 0 && g7.meter.some((f) => f.name === 'memory' && !f.on));
 const g8 = G.compute(Object.assign({}, base, { memory: sess, sel: 'sm1' }), 660, 600);
 t('the record panel for a session record: kind, recalled, created', g8.rec && g8.rec.family === 'memory' && g8.rec.rows[0].k === 'kind' && /human/.test(g8.rec.rows[0].v) && /never injected/.test(g8.rec.rows[1].v) && g8.rec.rec && g8.rec.rec.id === 'sm1');
 // the run's DAG as the loop lane while no loop is live
@@ -102,7 +102,7 @@ const SNAP = F.toDoc('estate', { nodes: [{ id: 'hub', label: 'Vera', kind: 'hub'
 const RO = G.loopFromEvents([{ type: 'start', run_id: 'r2' }, { type: 'agent_loop_v7.step_start', step_id: 1, title: 'embed' }, { type: 'agent_loop_v5.tool_done', step_id: 1, tool: 'fabric.embed', node: 'ct126' }, { type: 'agent_loop_v7.step_done', step_id: 1 }]);
 t('loopFromEvents: the node a step ran on', RO.steps[0].ranOn.join(',') === 'ct126');
 const gOff = G.compute(Object.assign({}, base, { estate: { nodes: SNAP.nodes, edges: SNAP.edges }, layersOff: new Set(['estate']) }), 660, 600);
-t('off by default: the chip with its count (leaves only — no hub, category or monitor), no strip', gOff.families.some((f) => f.name === 'estate' && f.n === 4 && f.on === false) && gOff.estNodes.length === 0 && gOff.lanes.b === 0);
+t('off by default: the chip with its count (leaves only — no hub, category or monitor), no strip', (gOff.estateChip && gOff.estateChip.n === 4 && gOff.estateChip.on === false) && gOff.estNodes.length === 0 && gOff.lanes.b === 0);
 const gOn = G.compute(Object.assign({}, base, { estate: { nodes: SNAP.nodes, edges: SNAP.edges }, loop: RO.steps, layersOff: new Set() }), 660, 600);
 t('on: the strip along the bottom — the leaves grouped under their category, a service in its own group, status classes, the plot above it', gOn.lanes.b === 68 && gOn.estNodes.length === 4 && gOn.estLabels.map((g) => g.t).join(',') === 'Nodes · 2,Docker · 1,Services · 1' && gOn.estNodes.map((n) => n.cls).join(',') === 'ok,warn,err,ok' && gOn.estNodes.every((n) => n.y > 500) && gOn.rings.every((r) => r.cy + r.d / 2 <= 600 - 68 + 1) && gOn.regions.some((r) => r.t === 'estate'), JSON.stringify(gOn.estLabels));
 t('the snapshot\'s links and the lane\'s "ran on" are drawn to the strip', gOn.sedges.some((e) => e.cls === 'est' && /ct126 → neo4j · serves/.test(e.title)) && gOn.sedges.some((e) => e.cls === 'ran' && e.title === 'step 1 ran on ct126'));
