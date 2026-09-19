@@ -10362,15 +10362,17 @@ Your task: decide what to do next to advance toward the goal.
          without a frame - it is a turn whose context was empty, and saying so is what stops it borrowing the
          live set and showing the newest turn's context instead. The first turn of a page load routinely has
          none, because the send races the context fetch on a 600ms timer (Notes/42 defect 105). */
-      const _f=_saveFrame('Turn '+(_ts.turnNo||document.querySelectorAll('#msgs .mwrap.u').length),true,{ mid:_ts.mid||_cvRelMid||'', amid:_ts.amid||(aMsg&&aMsg.mid)||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery, nodes:_sn, edges:_ts.edges||[] });
-      /* and it is tagged onto its two messages FROM THE DOM. The assistant message object is in hand here, so
-         its wrap is known for certain, and the question is the .mwrap immediately before it - no mid, no
-         ordinal, nothing that can drift. Measured before this: only one turn in three ended up tagged. */
-      try{ const _aw=aMsg&&aMsg.wrap;
-        if(_aw&&_f){ _aw.dataset.frame=String(_f.id);
-          let _qw=_aw.previousElementSibling;
-          while(_qw&&!(_qw.classList&&_qw.classList.contains('mwrap'))) _qw=_qw.previousElementSibling;
-          if(_qw&&_qw.classList.contains('u')) _qw.dataset.frame=String(_f.id); } }catch(_){}
+      /* The turn's own message elements are in hand, so its mids come from THEM. _ctxTurnSend.mid goes
+         stale on some paths, and _saveFrame tags by mid, so a stale mid stamped this turn's frame onto an
+         EARLIER message: measured, three turns produced m1->109100, m3->065619, m5->109100, with turns 1
+         and 3 sharing one frame. Taking both mids from the answer wrap and the question wrap before it
+         removes the last identifier that could drift (Notes/42 defect 110). */
+      let _aw=aMsg&&aMsg.wrap, _qw=null;
+      if(_aw){ _qw=_aw.previousElementSibling;
+        while(_qw&&!(_qw.classList&&_qw.classList.contains('mwrap'))) _qw=_qw.previousElementSibling;
+        if(_qw&&!_qw.classList.contains('u')) _qw=null; }
+      const _f=_saveFrame('Turn '+(_ts.turnNo||document.querySelectorAll('#msgs .mwrap.u').length),true,{ mid:(_qw&&_qw.dataset.mid)||_ts.mid||_cvRelMid||'', amid:(_aw&&_aw.dataset.mid)||_ts.amid||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery, nodes:_sn, edges:_ts.edges||[] });
+      try{ if(_f){ if(_aw) _aw.dataset.frame=String(_f.id); if(_qw) _qw.dataset.frame=String(_f.id); } }catch(_){}
       updateFrameUI();
       _ctxTurnSend=null; _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} try{ _ctxFollow(true); }catch(_){} }
     // Re-fetch context after send if "ctxOnSend" is enabled. Use the USER's
