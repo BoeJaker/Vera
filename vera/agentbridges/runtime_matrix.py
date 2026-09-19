@@ -5,9 +5,10 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import re
-from typing import Any
+from typing import Any, Iterable, Mapping
 
 SCHEMA = "vera.agent-runtime-matrix/v1"
+LIVE_EVIDENCE_SCHEMA = "vera.agent-runtime-matrix-live-evidence/v1"
 EVIDENCE_AS_OF = "2026-09-02"
 DIMENSIONS = (
     "tools", "providers", "handoffs", "structured_output", "policy",
@@ -18,6 +19,8 @@ UPSTREAM_STATES = {"supported", "partial", "unknown"}
 VERA_STATES = {"supported", "partial", "not_integrated", "not_applicable"}
 INTEGRATION_STATES = {"native", "shipped_bridge", "prospective", "compatibility_path"}
 _ID = re.compile(r"[a-z][a-z0-9._-]{1,63}\Z")
+_REASON = re.compile(r"[a-z][a-z0-9._-]{1,95}\Z")
+LIVE_STATES = {"passed", "failed", "unavailable"}
 _ADAPTER_DIMENSIONS = {
     "streaming": "stream",
     "cancellation": "cancellation",
@@ -142,6 +145,124 @@ class RuntimeMatrix:
             "universal_winner": None, "imports_runtimes": False, "executes": False,
         }
 
+
+@dataclass(frozen=True)
+class RuntimeLiveObservation:
+    """Payload-free result for one runtime/case pair.
+
+    Prompts, model output, stderr, traces, credentials, and container logs are
+    deliberately absent.  The evidence records only the bounded facts needed
+    to decide whether a declared conformance case was observed.
+    """
+
+    runtime_id: str
+    case: str
+    state: str
+    reason_code: str
+    terminal_count: int = 0
+    cleanup_verified: bool = False
+    resource_release_verified: bool = False
+
+    def __post_init__(self) -> None:
+        if not _ID.fullmatch(self.runtime_id):
+            raise ValueError("runtime_id must be a bounded lowercase identifier")
+        if self.state not in LIVE_STATES:
+            raise ValueError("invalid live evidence state")
+        if not _REASON.fullmatch(self.reason_code):
+            raise ValueError("reason_code must be a bounded lowercase identifier")
+        if not 0 <= int(self.terminal_count) <= 1:
+            raise ValueError("terminal_count must be zero or one")
+        if self.state == "passed" and self.case == "runtime.cleanup" \
+                and not self.cleanup_verified:
+            raise ValueError("cleanup pass requires verified container absence")
+        if self.state == "passed" and self.case == "runtime.resource_release" \
+                and not self.resource_release_verified:
+            raise ValueError("resource release pass requires verified capacity")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "runtime_id": self.runtime_id,
+            "case": self.case,
+            "state": self.state,
+            "reason_code": self.reason_code,
+            "terminal_count": int(self.terminal_count),
+            "cleanup_verified": bool(self.cleanup_verified),
+            "resource_release_verified": bool(self.resource_release_verified),
+        }
+
+
+def evaluate_live_evidence(
+    observations: Iterable[RuntimeLiveObservation | Mapping[str, Any]],
+    selected_runtime_ids: Iterable[str],
+) -> dict[str, Any]:
+    """Validate and summarize selected live evidence without choosing a winner."""
+    matrix = compile_runtime_matrix()
+    candidate_ids = {item.runtime_id for item in matrix.candidates}
+    required_cases = set(matrix.required_live_cases)
+    selected_values = list(selected_runtime_ids)
+    if len(selected_values) > 32:
+        raise ValueError("selected runtime count exceeds bounds")
+    selected = tuple(sorted({_bounded(item, "selected runtime", 64)
+                             for item in selected_values}))
+    if not selected:
+        raise ValueError("at least one selected runtime is required")
+    unknown = sorted(set(selected) - candidate_ids)
+    if unknown:
+        raise ValueError(f"unknown selected runtimes: {', '.join(unknown)}")
+
+    raw_observations = list(observations)
+    if len(raw_observations) > 1_024:
+        raise ValueError("live observation count exceeds bounds")
+    normalized = []
+    seen = set()
+    for raw in raw_observations:
+        item = raw if isinstance(raw, RuntimeLiveObservation) \
+            else RuntimeLiveObservation(**dict(raw))
+        if item.runtime_id not in selected:
+            raise ValueError("observation runtime is not selected")
+        if item.case not in required_cases:
+            raise ValueError("observation case is not declared by the matrix")
+        key = (item.runtime_id, item.case)
+        if key in seen:
+            raise ValueError("duplicate runtime live observation")
+        seen.add(key)
+        normalized.append(item)
+    normalized.sort(key=lambda item: (item.runtime_id, item.case))
+
+    summaries = []
+    for runtime_id in selected:
+        items = [item for item in normalized if item.runtime_id == runtime_id]
+        observed = {item.case for item in items}
+        counts = {state: sum(item.state == state for item in items)
+                  for state in sorted(LIVE_STATES)}
+        missing = sorted(required_cases - observed)
+        summaries.append({
+            "runtime_id": runtime_id,
+            "observed_cases": len(observed),
+            "required_cases": len(required_cases),
+            "missing_cases": missing,
+            "counts": counts,
+            "evidence_complete": not missing,
+            "conformant": not missing and not counts["failed"] and not counts["unavailable"],
+        })
+
+    identity = {
+        "schema": LIVE_EVIDENCE_SCHEMA,
+        "matrix_id": matrix.matrix_id,
+        "selected_runtime_ids": list(selected),
+        "observations": [item.to_dict() for item in normalized],
+    }
+    return {
+        **identity,
+        "evidence_id": "runtime_live_" + hashlib.sha256(
+            _canonical(identity).encode("utf-8")).hexdigest(),
+        "summaries": summaries,
+        "evidence_complete": all(item["evidence_complete"] for item in summaries),
+        "ready_for_selection": False,
+        "universal_winner": None,
+        "payloads_retained": False,
+        "executes": False,
+    }
 
 def _features(upstream: dict[str, str], vera_supported: tuple[str, ...] = (),
               vera_partial: tuple[str, ...] = ()) -> tuple[FeatureAssessment, ...]:

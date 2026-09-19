@@ -189,6 +189,28 @@ def test_payload_bounds_reject_deep_wide_and_oversized_values():
         runtime._bounded_payload("x" * (runtime.MAX_STRING_CHARS + 1))
 
 
+def test_text_evidence_is_stable_bounded_and_does_not_retain_text():
+    secret = "private runtime task text"
+    first = runtime.text_evidence(secret)
+    second = runtime.text_evidence(secret)
+    assert first == second
+    assert first["chars"] == len(secret)
+    assert len(first["sha256"]) == 16
+    assert secret not in str(first)
+
+
+def test_shipped_bridge_start_events_and_activity_redact_goals():
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "vera"
+    for name in ("langgraph", "smolagents", "pydanticai"):
+        source = (root / name / f"{name}_capabilities.py").read_text(
+            encoding="utf-8")
+        assert 'redact_args=["goal"]' in source
+        assert '"goal_evidence": text_evidence(goal)' in source
+        assert '"goal": goal[:200]' not in source
+
+
 def test_owned_docker_container_requires_exact_explicit_valid_name():
     assert runtime._owned_docker_container([
         "docker", "run", "--rm", "--name", "vera-owned-1", "image",

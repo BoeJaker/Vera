@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import hashlib
 import json
 import math
 import re
@@ -85,6 +86,15 @@ def _valid_run_id(run_id: Any) -> str:
     if not _RUN_ID.fullmatch(value):
         raise ValueError("run_id must be a bounded identifier")
     return value
+
+
+def text_evidence(value: Any) -> Dict[str, Any]:
+    """Return bounded identity evidence without retaining caller text."""
+    text = str(value or "")
+    return {
+        "chars": len(text),
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+    }
 
 
 def _register_run(run_id: str) -> Optional[_ActiveBridgeRun]:

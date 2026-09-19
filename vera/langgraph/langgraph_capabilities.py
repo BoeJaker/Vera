@@ -60,6 +60,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from Vera.vera.agentbridges.agentbridge_runtime import pick_ollama_instance
+from Vera.vera.agentbridges.agentbridge_runtime import text_evidence
 from Vera.vera.agentbridges.runtime_adapter import (
     ContainerRunRequest, ContainerRuntimeAdapter,
 )
@@ -114,7 +115,7 @@ async def langgraph_image_ensure(force: bool = False, trace_id=None) -> Dict[str
 @capability(
     "langgraph.run",
     http_method="POST", http_path="/langgraph/run", http_tags=["langgraph"],
-    memory="on",
+    memory="on", redact_args=["goal"],
     description="Run ONE goal through a LangGraph ReAct agent (langgraph."
                 "prebuilt.create_react_agent, structured tool-calling — the "
                 "opposite paradigm from smolagents' code-as-action), in a "
@@ -156,7 +157,8 @@ async def langgraph_run(goal: str, session_id: str = "", trace_id=None) -> Dict[
 
     run_id = uuid.uuid4().hex[:12]
     await emit_event({"type": f"{_EVENT_PREFIX}.start", "run_id": run_id,
-                      "session_id": session_id, "goal": goal[:200], "ts": now_iso()})
+                      "session_id": session_id,
+                      "goal_evidence": text_evidence(goal), "ts": now_iso()})
 
     argv = ["docker", "run", "--rm", "--name", f"vera-langgraph-{run_id}",
             "-e", f"GOAL={goal}",
