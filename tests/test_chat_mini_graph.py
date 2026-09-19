@@ -53,7 +53,7 @@ def test_the_mini_has_both_faces_and_the_quick_menu_switches_them():
 
     src = _read("vera", "chat", "chat_panel.html")
     assert "let _qGalStyle=" in src and "localStorage.getItem('vera_ctx_mini_style')" in src
-    assert "VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle })" in src
+    assert "VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle, card:false })" in src
     assert 'data-style="' in src and "localStorage.setItem('vera_ctx_mini_style', _qGalStyle)" in src
     # the view buttons keep their own handler now that a second segment shares the row
     assert "el.querySelectorAll('.vseg button[data-view]')" in src
@@ -74,7 +74,7 @@ def test_the_mini_is_the_elements_face():
     assert "} else if(_ctxElWait){ clearInterval(_ctxElWait); _ctxElWait=null; }" in src, "and it stops watching once the element is there"
     assert "if(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'){" in src
     assert "allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k])" in src
-    assert "gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle });" in src   # the face it is drawn in (defect 60)
+    assert "gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle, card:false });" in src   # the face it is drawn in (defect 60)
     # the widget renderer stays the fallback
     assert "if(!gal) gal=window.VeraWidget?VeraWidget.draw('context_graph',data,'m'" in src
 
@@ -108,5 +108,7 @@ def test_the_minis_detail_list_search_and_frames():
     # and it has to be readable: the rim labels name the sources, and the rows are read one by one
     assert ".cg-mini .cg-slbl{font-size:8.5px;" in _el and ".cg-mini .cg-hubt{font-size:8.5px}" in _el
     assert ".cg-mini .cg-list{width:100%;left:0;border-left:none;font-size:10px}" in _el and ".cg-mini .cg-row{padding:3px 8px;font-size:10px;" in _el
-    assert "'.cg-mini .cg-node[data-id], .cg-mini .cg-row[data-id]'" in src and "'.cg-mini [data-a=\"toggle\"][data-id]'" in src
+    # .cg-gd too: the mini's DEFAULT face is the simple galaxy, whose marks are .cg-gd, so a selector naming only
+    # .cg-node picks records on the face the reader rarely has open
+    assert "'.cg-mini .cg-node[data-id], .cg-mini .cg-gd[data-id], .cg-mini .cg-row[data-id]'" in src and "'.cg-mini [data-a=\"toggle\"][data-id]'" in src
     assert "_ctxCol.setFrames(CTX_FRAMES, {active});" in src and "let _ctxColFrameSig='';" in src   # ctx-graph-5: the frame in view is the active one
