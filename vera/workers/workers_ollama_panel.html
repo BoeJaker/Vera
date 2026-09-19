@@ -1961,6 +1961,7 @@ html.view-models #secNav [data-view="models"]{display:block}
             <span class="j-tab active" id="prvs-security" onclick="P.provSub('security')" style="padding:3px 9px;font-size:9px">Security</span>
             <span class="j-tab" id="prvs-secrets" onclick="P.provSub('secrets')" style="padding:3px 9px;font-size:9px">Secrets</span>
             <span class="j-tab" id="prvs-certs" onclick="P.provSub('certs')" style="padding:3px 9px;font-size:9px">Certificates</span>
+            <span class="j-tab" id="prvs-registration" onclick="P.provSub('registration')" style="padding:3px 9px;font-size:9px">Registration</span>
             <span class="j-tab" id="prvs-identity" onclick="P.provSub('identity')" style="padding:3px 9px;font-size:9px">Identity</span>
             <span class="j-tab" id="prvs-enroll" onclick="P.provSub('enroll')" style="padding:3px 9px;font-size:9px">Enroll</span>
             <span class="j-tab" id="prvs-mesh" onclick="P.provSub('mesh')" style="padding:3px 9px;font-size:9px">Mesh</span>
@@ -1970,6 +1971,7 @@ html.view-models #secNav [data-view="models"]{display:block}
         <iframe id="prv-sub-security" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-secrets" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-certs" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
+        <iframe id="prv-sub-registration" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-identity" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-enroll" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-mesh" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
@@ -6668,7 +6670,7 @@ async function connProbeRow(id){
 // ── Provision sub-tabs — every provisioning surface consolidated in one pane ──
 // (netpolicy was dropped: it just duplicated Network → Graph & Firewall.
 //  The OPA policy engine deploys from the Security sub-tab's services card.)
-const _prvSubSrc={security:'/provisioning/panel',secrets:'/secrets/panel',certs:'/certs/panel',identity:'/identity/panel',enroll:'/enroll/panel',mesh:'/netsec/panel'};
+const _prvSubSrc={security:'/provisioning/panel',secrets:'/secrets/panel',certs:'/certs/panel',registration:'/estate/registration/panel',identity:'/identity/panel',enroll:'/enroll/panel',mesh:'/netsec/panel'};
 let _prvSub='security';
 function provSub(name){
   if(!_prvSubSrc[name]) name='security';
