@@ -128,10 +128,11 @@ host/container/image identifiers, and raw approval/idempotency references are
 not retained. The projection does not block, retry, or record completion.
 Stack/store deployment and build jobs use the same projection. Proxmox guest
 lifecycle, guest/node execution, clone/create/destroy, and firewall mutations
-also observe one logical operation before the first provider call. General
-managed-host provisioning remains incomplete; only its store deployment and
-removal paths are covered. Nested implementations suppress duplicate identities
-where a public deployment delegates to Docker.
+also observe one logical operation before the first provider call. Managed-host
+component deployment, runtime installation and combined install/connect runs,
+store deployment/removal, and security-service deployment/removal now use the
+same payload-free observation boundary. Nested runtime installation suppresses
+the duplicate identity when the public combined run delegates to install.
 
 ---
 
@@ -365,8 +366,9 @@ retained. Builder startup and the Arduino, PlatformIO, arbitrary-command, and
 isolated-Python compiler paths use the same provider-neutral Infrastructure
 projection before their first local or remote mutation. Builder source,
 commands, dependencies, environment values, logs, and artifacts never enter the
-ledger. This infrastructure path remains observe-only and partial while
-managed-host provisioning families are still being instrumented. Proxmox guest
+ledger. This infrastructure path remains observe-only: complete static coverage
+of the currently inventoried Proxmox and managed-host provisioning mutations
+does not authorize enforcement or prove provider idempotency. Proxmox guest
 actions, guest and node commands, cloning, VM/LXC creation, destruction, and
 firewall add/delete now contribute one payload-free observation per public
 operation. The observation records only digests and never retains commands,

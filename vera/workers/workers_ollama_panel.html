@@ -6426,9 +6426,14 @@ function showPane(name, el){
 // and the shell sends vera:estate:open for a retired tab.
 const _VIEW=(new URLSearchParams(location.search).get('view')==='models')?'models':'estate';
 if(_VIEW==='models') document.documentElement.classList.add('view-models');
+// The select callback is not optional here, whatever the bridge's fallback
+// does: this panel's pane ids share their namespace with data-view, and the
+// map pane ('estate') collides with the view name, so a lookup by attribute
+// can land on a section heading instead of the item.
 if(window.VeraPanelBridge) VeraPanelBridge.registerNav(
   [...document.querySelectorAll('#secNav .snav[data-view="'+_VIEW+'"]')]
-    .map(el=>({id:el.dataset.pane, label:el.textContent.trim()})));
+    .map(el=>({id:el.dataset.pane, label:el.textContent.trim()})),
+  id=>showPane(id, document.querySelector('#secNav .snav[data-pane="'+id+'"]')));
 function estateOpen(pane, sub){
   if(!$('pane-'+pane)) return false;
   showPane(pane, document.querySelector('.snav[data-pane="'+pane+'"]'));

@@ -81,7 +81,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <div class="stat"><div class="v" id="st-up">—</div><div class="l">Interfaces up</div></div>
       <div class="stat"><div class="v" id="st-enrolled">—</div><div class="l">Enrolled</div></div>
       <div class="stat"><div class="v" id="st-hand">—</div><div class="l">Handshaking</div></div>
+      <div class="stat" id="st-door-wrap" hidden><div class="v" id="st-door">—</div><div class="l">netctl door</div></div>
     </div>
+    <div class="hint" id="door-line" hidden></div>
 
     <!-- ── Config ─────────────────────────────────────────────────────────── -->
     <div class="card">
@@ -174,9 +176,23 @@ async function loadMembers(){
   const up=(st.members||[]).filter(s=>s.up).length; $('st-up').textContent=up; $('st-up').className='v '+(up===members.length&&members.length?'ok':up?'warn':'');
   const enr=members.filter(x=>x.enrolled).length; $('st-enrolled').textContent=enr+'/'+members.length; $('st-enrolled').className='v '+(enr===members.length&&members.length?'ok':enr?'warn':'');
   const hand=(st.members||[]).reduce((a,s)=>a+(s.handshaken||0),0); $('st-hand').textContent=hand;
+  // On the netctl door the door itself is a member of the picture: whether it
+  // is open, where devices dial it, and what it sees of each member live.
+  const door=m.door||{}; const onDoor=(m.provider==='netctl');
+  $('st-door-wrap').hidden=!onDoor; $('door-line').hidden=!onDoor;
+  if(onDoor){
+    if(door.error){ $('st-door').textContent='?'; $('st-door').className='v warn'; $('door-line').textContent='The door did not answer: '+door.error; }
+    else { $('st-door').textContent=door.up?'open':(door.enabled?'down':'closed'); $('st-door').className='v '+(door.up?'ok':'warn');
+      $('door-line').textContent='Members are devices on the netctl WireGuard door ('+(door.endpoint||'no endpoint yet')+', '+(door.cidr||'')+') on the vera profile: they reach Vera and each other, and nothing else on the estate; '+(door.devices||0)+' vera device'+(door.devices===1?'':'s')+' at the door.'; }
+  }
   $('m-body').innerHTML=members.length?members.map(x=>{
     const s=status[x.host_id]||{};
-    const state=s.up?'<span class="pill ok">up</span>':(x.state==='error'?`<span class="pill err" title="${esc(s.error||x.last_error||'')}">error</span>`:'<span class="pill">'+esc(x.state||'—')+'</span>');
+    let state=s.up?'<span class="pill ok">up</span>':(x.state==='error'?`<span class="pill err" title="${esc(s.error||x.last_error||'')}">error</span>`:'<span class="pill">'+esc(x.state||'—')+'</span>');
+    if(onDoor){
+      if(x.door_missing) state+=' <span class="pill warn" title="Vera has this member but the door has no such device — Sync re-enrols it">not at door</span>';
+      else if(x.connected===true) state+=' <span class="pill ok">handshake '+(x.last_handshake_s!=null?Math.round(x.last_handshake_s)+'s ago':'')+'</span>';
+      else if(x.connected===false) state+=' <span class="pill" title="enrolled at the door, no recent handshake">quiet</span>';
+    }
     return `<tr>
       <td><b>${esc(x.label||x.host)}</b><div class="hint">${esc(x.host||'')}</div></td>
       <td class="mono">${esc(x.ip||'—')}</td>

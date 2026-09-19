@@ -31,7 +31,9 @@ the "+ SSH host" form in this panel). Installs need root or passwordless sudo.
 
 from __future__ import annotations
 
+import json
 import logging
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -41,9 +43,11 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, register_ui,
 )
+from Vera.vera.integrations.infrastructure_effects import observe_infrastructure_effect
 
 log = logging.getLogger("vera.provision")
 _HERE = Path(__file__).parent
+_NESTED_EFFECT: ContextVar[bool] = ContextVar("provision_nested_effect", default=False)
 
 
 def _cap(name: str):
@@ -222,15 +226,22 @@ async def cap_detect(host_id: str = "", trace_id=None) -> Dict:
     "provision.install",
     http_method="POST", http_path="/provision/install", http_tags=["provision"],
     memory="off",
+    redact_args=["host_id", "target", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Install a runtime on a stored host over SSH. Inputs: host_id "
                 "(str!), target ('ollama'|'vllm'|'docker'|'nvidia'), sudo (bool="
                 "true — prefix privileged steps with sudo unless the login is "
                 "root), port (int — override the listen port), timeout (int=900). "
-                "Output: {ok, rc, target, done(reached end marker), log(tail)}. "
+                "Output: {ok, rc, target, done(reached end marker), log(tail), "
+                "effect_shadow}. Optional idempotency, approval, and retry "
+                "inputs are observe-only and never sent to SSH. "
                 "Long downloads may exceed the timeout — re-run is idempotent.",
 )
 async def cap_install(host_id: str = "", target: str = "", sudo: bool = True,
-                      port: int = 0, timeout: int = 900, trace_id=None) -> Dict:
+                      port: int = 0, timeout: int = 900,
+                      idempotency_key: str = "",
+                      approval_receipt_ref: str = "", retry: bool = False,
+                      trace_id=None) -> Dict:
     if not host_id or target not in _TARGETS:
         return {"ok": False, "error": "host_id and a valid target are required",
                 "targets": list(_TARGETS)}
@@ -243,6 +254,14 @@ async def cap_install(host_id: str = "", target: str = "", sudo: bool = True,
     cmd = t["install"].format(
         sudo=_sudo, port=_port,
         ollama_recipe=_ollama_core.ct_install_script(_port, sudo=_sudo))
+    shadow = None
+    if not _NESTED_EFFECT.get():
+        shadow = observe_infrastructure_effect(
+            provider="ssh", target_ref=host_id, resource_ref=target,
+            operation_ref=json.dumps({"port": _port, "sudo": bool(sudo)},
+                                     sort_keys=True, separators=(",", ":")),
+            mode="runtime_install", idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
     await emit_event({"type": "provision.install.start", "host": rec.get("host", ""),
                       "target": target})
     res = await _ssh(host_id, cmd, timeout=int(timeout or 900))
@@ -251,9 +270,12 @@ async def cap_install(host_id: str = "", target: str = "", sudo: bool = True,
     ok = bool(res.get("ok")) and done
     await emit_event({"type": "provision.install.done", "host": rec.get("host", ""),
                       "target": target, "ok": ok})
-    return {"ok": ok, "rc": res.get("rc"), "target": target, "done": done,
+    result = {"ok": ok, "rc": res.get("rc"), "target": target, "done": done,
             "log": (out + "\n" + (res.get("stderr", "") or ""))[-4000:],
             "error": res.get("error", "") if not ok else ""}
+    if shadow is not None:
+        result["effect_shadow"] = shadow
+    return result
 
 
 @capability(
@@ -360,19 +382,46 @@ async def cap_connect(host_id: str = "", target: str = "", port: int = 0,
     "provision.run",
     http_method="POST", http_path="/provision/run", http_tags=["provision"],
     memory="off",
+    redact_args=["host_id", "target", "serve_model", "idempotency_key",
+                 "approval_receipt_ref"],
+    redact_result=True,
     description="One-shot: install a runtime on a stored host over SSH, then "
                 "register it into the cluster. Inputs: host_id (str!), target, "
                 "sudo (bool=true), port (int), has_gpu (bool), connect (bool=true "
                 "— register after install), serve_model (str — vLLM: start this "
                 "model before connecting), timeout (int=900). Output: {ok, install, "
-                "serve, connect}.",
+                "serve, connect, effect_shadow}. Optional idempotency, approval, "
+                "and retry inputs are observe-only and never sent to SSH or "
+                "downstream registries.",
 )
 async def cap_run(host_id: str = "", target: str = "", sudo: bool = True,
                   port: int = 0, has_gpu: bool = False, connect: bool = True,
-                  serve_model: str = "", timeout: int = 900, trace_id=None) -> Dict:
-    inst = await cap_install(host_id=host_id, target=target, sudo=sudo,
-                             port=port, timeout=timeout)
-    out: Dict[str, Any] = {"install": inst}
+                  serve_model: str = "", timeout: int = 900,
+                  idempotency_key: str = "",
+                  approval_receipt_ref: str = "", retry: bool = False,
+                  trace_id=None) -> Dict:
+    if not host_id or target not in _TARGETS:
+        return {"ok": False, "error": "host_id and a valid target are required",
+                "targets": list(_TARGETS)}
+    rec = await _host_rec(host_id)
+    if not rec:
+        return {"ok": False, "error": f"host_id not found: {host_id}"}
+    shadow = observe_infrastructure_effect(
+        provider="ssh", target_ref=host_id, resource_ref=target,
+        operation_ref=json.dumps({
+            "connect": bool(connect), "has_gpu": bool(has_gpu),
+            "port": int(port or _TARGETS[target]["default_port"]),
+            "serve_model": bool(serve_model), "sudo": bool(sudo),
+        }, sort_keys=True, separators=(",", ":")), mode="runtime_run",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
+    token = _NESTED_EFFECT.set(True)
+    try:
+        inst = await cap_install(host_id=host_id, target=target, sudo=sudo,
+                                 port=port, timeout=timeout)
+    finally:
+        _NESTED_EFFECT.reset(token)
+    out: Dict[str, Any] = {"install": inst, "effect_shadow": shadow}
     if not inst.get("ok"):
         out["ok"] = False
         return out

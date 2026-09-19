@@ -64,6 +64,17 @@ try:
     from Vera.vera.research.alias_compatibility import research_alias
 except ImportError:                                        # pragma: no cover
     from vera.research.alias_compatibility import research_alias
+# Pure routing helpers (app-free, unit-tested in test_research_route_core.py)
+try:
+    from Vera.vera.research.research_route_core import (
+        escalation_threshold as _escalation_threshold,
+        should_escalate as _should_escalate,
+    )
+except ImportError:                                        # pragma: no cover
+    from vera.research.research_route_core import (
+        escalation_threshold as _escalation_threshold,
+        should_escalate as _should_escalate,
+    )
 _BACKEND_HOST = _vera_cfg.BACKEND_HOST
 
 # Persistence through the data fabric (replaces research_db.py)
@@ -123,6 +134,7 @@ except ImportError:
 # override there wins. The static `instances` list below remains the per-tier
 # model/ctx/thinking DEFAULTS and the standalone-mode fallback.
 _resolve_role = None
+_resolve_role_rule = None
 _VERA_NODES: dict = {}
 if _VERA_MODE:
     try:
@@ -130,12 +142,14 @@ if _VERA_MODE:
             from Vera.vera.capability_orchestration import (
                 register_routing_profile as _register_routing_profile,
                 resolve_role as _resolve_role,
+                resolve_role_rule as _resolve_role_rule,
                 OLLAMA_INSTANCES as _VERA_NODES,
             )
         except ImportError:
             from capability_orchestration import (
                 register_routing_profile as _register_routing_profile,
                 resolve_role as _resolve_role,
+                resolve_role_rule as _resolve_role_rule,
                 OLLAMA_INSTANCES as _VERA_NODES,
             )
         _register_routing_profile("research", label="Research", owner="research", roles={
@@ -3887,19 +3901,26 @@ def _tier_defaults(tier: ModelTier) -> Optional[OllamaInstance]:
     return None
 
 
-def _vera_routed_instance(tier: ModelTier) -> Optional[OllamaInstance]:
+def _vera_routed_instance(tier: ModelTier,
+                          prompt_chars: int = 0) -> Optional[OllamaInstance]:
     """Resolve a research role through Vera's cluster router (role profile
     'research'). Re-resolved on every call so requests load-balance across the
     cluster and follow live routing-rule edits. Returns None when routing is
     unavailable (standalone mode / no online node) — callers fall back to the
-    static instance list."""
+    static instance list.
+
+    `prompt_chars` is how big the generation actually is. It drives the role
+    rule's length escalation (see _escalated_for_prompt); 0 means "not known
+    yet", which is the honest value at get_instance time because the node is
+    resolved before the prompt is composed."""
     if not (_VERA_MODE and _resolve_role):
         return None
     cfg_inst = _tier_defaults(tier)
     role = _TIER_ROLE.get(tier, "writer")
     try:
         res = _resolve_role("research", role,
-                            model=(cfg_inst.model if cfg_inst else ""))
+                            model=(cfg_inst.model if cfg_inst else ""),
+                            prompt_chars=int(prompt_chars or 0))
     except Exception as e:
         log.debug("vera route research/%s failed: %s", role, e)
         return None
@@ -3950,6 +3971,74 @@ async def get_instance(tier: ModelTier) -> Optional[OllamaInstance]:
     for inst in instances:
         if inst.enabled: return inst
     return None
+
+
+def _has_gpu(vera_iid: str) -> bool:
+    """Whether a routed node id is a GPU node, per the cluster's own registry."""
+    if not (vera_iid and _VERA_NODES):
+        return False
+    return bool((_VERA_NODES.get(vera_iid) or {}).get("has_gpu"))
+
+
+def _escalated_for_prompt(inst: OllamaInstance,
+                          prompt_chars: int) -> OllamaInstance:
+    """Re-resolve `inst` now that the real prompt size is known.
+
+    get_instance() has to pick a node before the prompt exists -- callers
+    resolve a tier, then spend a while building the prompt out of citations --
+    so the router is asked with prompt_chars=0 and a role rule's length
+    escalation can never fire. That made the verifier role's "big digests go to
+    the GPU" escalation dead from the day it was written: the analyst tier is
+    deny_gpu, and a 68-citation digest is exactly the case the escalation was
+    added for, but it stayed on a CPU node.
+
+    So ask again here, where the size is known. Only when the role's rule
+    actually has a threshold this prompt crosses -- otherwise the original
+    instance is returned untouched, so ordinary calls keep the node (and the
+    load reservation) they were already routed to, and this never becomes a
+    second round of load balancing behind the caller's back.
+
+    Never raises: a routing hiccup must not take down a generation that already
+    has a perfectly good node.
+    """
+    if not (_VERA_MODE and _resolve_role and _resolve_role_rule):
+        return inst
+    # Only re-resolve something the cluster router chose in the first place.
+    # A static/standalone instance was never routed, so there is no rule to
+    # escalate and nothing to re-ask.
+    if not inst.vera_iid:
+        return inst
+    try:
+        role = _TIER_ROLE.get(inst.tier, "writer")
+        rule = _resolve_role_rule("research", role)
+        if not _should_escalate(rule, prompt_chars):
+            return inst
+        routed = _vera_routed_instance(inst.tier, prompt_chars=prompt_chars)
+        if not routed or not routed.vera_iid:
+            return inst
+        if routed.vera_iid == inst.vera_iid:
+            # Threshold crossed but the router still likes this node (every
+            # GPU node busy, or the escalated rule is satisfied here already).
+            return inst
+        # An escalation must never cost us a GPU we already had. prefer_gpu is
+        # deliberately SOFT (test_route_preference), so re-resolving under load
+        # can answer with a CPU node -- fine when we started on CPU, a
+        # downgrade when we started on GPU. Today only the verifier role has an
+        # escalate block and it starts deny_gpu, so this cannot trigger; it is
+        # here because the rules are editable live in the Model Routing page.
+        if _has_gpu(inst.vera_iid) and not _has_gpu(routed.vera_iid):
+            log.debug("research route escalation declined [%s]: %s -> %s "
+                      "would give up the GPU", role, inst.vera_iid,
+                      routed.vera_iid)
+            return inst
+        log.info("research route escalated [%s]: %s -> %s at %d chars "
+                 "(threshold %d)", role, inst.vera_iid, routed.vera_iid,
+                 prompt_chars, _escalation_threshold(rule))
+        return routed
+    except Exception as e:
+        log.debug("research route escalation failed (keeping %s): %s",
+                  inst.vera_iid, e)
+        return inst
 
 
 def _today_preamble() -> str:
@@ -4032,10 +4121,16 @@ async def stream_ollama(
       - timeout_secs is automatically scaled via _effective_timeout() so
         callers don't need to know whether thinking is enabled.
     """
-    eff_timeout = _effective_timeout(inst, timeout_secs)
     # Anchor every research generation to the current date so the model never
     # falls back to its training-era year (esp. when composing search queries).
     system = _today_preamble() + (system or "")
+    # This is the first point where the real generation size is known -- the
+    # node was chosen back in get_instance(), before the prompt was composed --
+    # so it is the only place a role rule's length escalation can be applied.
+    # Must run BEFORE _detect_ctx and the in_use reservation below, both of
+    # which are per-node and have to describe the node we actually call.
+    inst = _escalated_for_prompt(inst, len(prompt or "") + len(system))
+    eff_timeout = _effective_timeout(inst, timeout_secs)
     num_ctx = await _detect_ctx(inst)   # detected model max (ctx_size caps it down)
     payload = {
         "model":  inst.model,

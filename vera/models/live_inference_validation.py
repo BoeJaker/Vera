@@ -32,7 +32,8 @@ def _identifier(value: str, fallback: str) -> str:
     return (cleaned or fallback)[:128]
 
 
-def _output_evidence(result: Any, expected_sha256: str) -> dict[str, Any]:
+def _output_evidence(result: Any, expected_output: str,
+                     expected_sha256: str, content_mode: str) -> dict[str, Any]:
     chunks: list[str] = []
     for value in result.outputs:
         decoded = json.loads(value.json_data)
@@ -42,6 +43,30 @@ def _output_evidence(result: Any, expected_sha256: str) -> dict[str, Any]:
     text = "".join(chunks)
     output_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
     transport_passed = bool(result.status == "completed" and text)
+    semantic_evidence: dict[str, Any] = {}
+    if content_mode == "json_semantic":
+        try:
+            actual = json.loads(text)
+            expected = json.loads(expected_output)
+            content_conformant = actual == expected
+            semantic_evidence["json_valid"] = True
+            semantic_evidence["json_type_matches"] = type(actual) is type(expected)
+            if isinstance(actual, dict) and isinstance(expected, dict):
+                expected_keys = set(expected)
+                actual_keys = set(actual)
+                semantic_evidence.update({
+                    "expected_field_count": len(expected_keys),
+                    "missing_field_count": len(expected_keys - actual_keys),
+                    "extra_field_count": len(actual_keys - expected_keys),
+                    "matching_value_count": sum(
+                        1 for key, value in expected.items()
+                        if key in actual and actual[key] == value),
+                })
+        except (TypeError, ValueError):
+            content_conformant = False
+            semantic_evidence["json_valid"] = False
+    else:
+        content_conformant = output_sha256 == expected_sha256
     return {
         "status": result.status,
         "error_code": result.error_code,
@@ -50,8 +75,9 @@ def _output_evidence(result: Any, expected_sha256: str) -> dict[str, Any]:
         "output_sha256": output_sha256,
         "expected_output_sha256": expected_sha256,
         "transport_passed": transport_passed,
-        "content_conformant": bool(transport_passed and output_sha256 == expected_sha256),
+        "content_conformant": bool(transport_passed and content_conformant),
         "usage": dict(result.usage),
+        **semantic_evidence,
     }
 
 
@@ -87,6 +113,7 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
                                    artifact_sha256: str, artifact_size: int,
                                    runner: Runner, prompt: str = "Reply with VERA_OK only.",
                                    expected_output: str = "VERA_OK",
+                                   content_mode: str = "exact_text",
                                    case_timeout_seconds: float = 60,
                                    validate_cancellation: bool = False,
                                    cancellation_delay_seconds: float = 0.1,
@@ -97,6 +124,14 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
     if not isinstance(expected_output, str) or not expected_output \
             or len(expected_output.encode("utf-8")) > 16_384:
         raise ValueError("expected output must be non-empty and at most 16384 bytes")
+    if content_mode not in {"exact_text", "json_semantic"}:
+        raise ValueError("unsupported content mode")
+    if content_mode == "json_semantic":
+        try:
+            if not isinstance(json.loads(expected_output), (dict, list)):
+                raise ValueError
+        except (TypeError, ValueError) as exc:
+            raise ValueError("JSON semantic expectation must be an object or array") from exc
     if (isinstance(cancellation_delay_seconds, bool) or
             not 0 < cancellation_delay_seconds <= 5):
         raise ValueError("cancellation delay must be within 5 seconds")
@@ -116,7 +151,8 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
         request = InferenceRequest(
             package.package_id, "generate", "prompt/v1", "text/v1",
             (InferenceValue.from_json("prompt", prompt),),
-            parameters=(("max_tokens", 32), ("temperature", 0), ("think", False)),
+            parameters=(("json_mode", content_mode == "json_semantic"),
+                        ("max_tokens", 32), ("temperature", 0), ("think", False)),
             stream=stream, max_output_bytes=16_384)
         started = time.monotonic()
         try:
@@ -129,7 +165,8 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
                           "passed": False, "expected_output_sha256": expected_sha256,
                           "elapsed_ms": round((time.monotonic() - started) * 1000)})
             break
-        evidence = _output_evidence(result, expected_sha256)
+        evidence = _output_evidence(
+            result, expected_output, expected_sha256, content_mode)
         evidence.update({"case": "stream" if stream else "non_stream",
                          "elapsed_ms": round((time.monotonic() - started) * 1000)})
         evidence["passed"] = bool(evidence["transport_passed"]
@@ -140,7 +177,8 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
         request = InferenceRequest(
             package.package_id, "generate", "prompt/v1", "text/v1",
             (InferenceValue.from_json("prompt", prompt),),
-            parameters=(("max_tokens", 32), ("temperature", 0), ("think", False)),
+            parameters=(("json_mode", content_mode == "json_semantic"),
+                        ("max_tokens", 32), ("temperature", 0), ("think", False)),
             stream=True, max_output_bytes=16_384)
         started = time.monotonic()
         task = asyncio.create_task(consume_inference(provider, request))
@@ -181,6 +219,7 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
         "cases": cases,
         "transport_passed": all(case["transport_passed"] for case in cases),
         "content_conformant": all(case["content_conformant"] for case in cases),
+        "content_contract": content_mode,
         "passed": all(case["passed"] for case in cases),
         "privacy": "prompt_and_output_omitted",
     }

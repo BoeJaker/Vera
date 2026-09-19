@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any, Mapping, Optional
 
 # Handlers carrying this attribute are ours, and are safe for
@@ -134,3 +135,102 @@ def should_offload(handler: logging.Handler) -> bool:
     """
     return type(handler) is logging.StreamHandler or bool(
         getattr(handler, OFFLOAD_ATTR, False))
+
+
+# ── secrets must not reach the log file ──────────────────────────────────────
+# Telegram puts the bot token in the URL PATH, and httpx logs every request at
+# INFO ("HTTP Request: POST https://api.telegram.org/bot<token>/getUpdates").
+# Prod's own log therefore held a live credential in plaintext on every poll -
+# ~3,000 lines a day - and anything that ships a log (a paste, a bug report,
+# `logs/` in a backup) ships the token with it. Silencing httpx would cost the
+# request logging that diagnoses routing, so the token is masked instead, as
+# late as possible: one filter on the handlers, so every logger is covered
+# whatever it passes as msg or args.
+_SECRET_PATTERNS = (
+    # Telegram: /bot<digits>:<35-ish urlsafe chars>/method
+    re.compile(r"(/bot)(\d{5,})(:)([A-Za-z0-9_\-]{20,})"),
+    # Anything that spells its own secret out in a query string or header dump.
+    re.compile(r"((?:api_?key|access_?token|auth_?token|password|secret)"
+               r"[\"'\s:=]{1,4})([A-Za-z0-9_\-.]{12,})", re.I),
+)
+
+
+def redact(text: str) -> str:
+    """Mask credentials in a log line. Keeps enough to correlate (the bot id,
+    the parameter name) and drops the part that authenticates."""
+    out = str(text)
+    if "/bot" in out:
+        out = _SECRET_PATTERNS[0].sub(r"\1\2\3<redacted>", out)
+    if any(w in out.lower() for w in ("key", "token", "password", "secret")):
+        out = _SECRET_PATTERNS[1].sub(r"\1<redacted>", out)
+    return out
+
+
+def _mask_arg(a):
+    """Redact one format argument. httpx logs the request URL as an httpx.URL
+    OBJECT, not a str - `'HTTP Request: %s %s ...', request.method, request.url`
+    - so a str-only check let the token through and prod kept writing it
+    (2026-09-19). Anything whose string form carries a secret is replaced by
+    the redacted string; everything else is returned untouched, so typed args
+    (the %d status code, uvicorn's unpacked tuple) keep their types."""
+    if isinstance(a, str):
+        return redact(a)
+    if a is None or isinstance(a, (int, float, bool, bytes)):
+        return a
+    try:
+        s = str(a)
+    except Exception:
+        return a
+    r = redact(s)
+    return r if r != s else a
+
+
+class RedactingFilter(logging.Filter):
+    """Masks secrets in the record's message AND its args.
+
+    A filter, not a formatter: the record passes through every handler, and the
+    args are where httpx keeps the URL. Returning True always - this never drops
+    a line, it only rewrites one. Never raises: a logging filter that throws
+    takes out the log call that used it.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if isinstance(record.msg, str) and ("/bot" in record.msg or ":" in record.msg):
+                record.msg = redact(record.msg)
+            if record.args:
+                if isinstance(record.args, dict):
+                    record.args = {k: _mask_arg(v) for k, v in record.args.items()}
+                else:
+                    record.args = tuple(_mask_arg(a) for a in record.args)
+        except Exception:
+            pass
+        return True
+
+
+def install_redaction() -> bool:
+    """Redact at the point every LogRecord is CREATED, whatever handler it ends
+    up in. Idempotent.
+
+    A handler filter was not enough: the first cut put RedactingFilter on the
+    handlers present when log_setup's file handler was built, and prod kept
+    writing tokens - perf_capabilities opens a second RotatingFileHandler on the
+    in-tree logs/vera.log LATER in startup, and that one never saw the filter
+    (2026-09-19). Handlers come and go; the record factory is the one choke
+    point every logger shares. Also wrapped: the QueueHandler offload copies
+    records, so this runs before any copy is made.
+    """
+    current = logging.getLogRecordFactory()
+    if getattr(current, "_vera_redacting", False):
+        return False
+    _filter = RedactingFilter()
+
+    def factory(*args, **kwargs):
+        record = current(*args, **kwargs)
+        _filter.filter(record)
+        return record
+
+    factory._vera_redacting = True          # type: ignore[attr-defined]
+    factory._vera_wrapped = current         # type: ignore[attr-defined]
+    logging.setLogRecordFactory(factory)
+    return True

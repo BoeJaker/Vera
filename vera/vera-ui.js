@@ -105,6 +105,26 @@
     try{ var v = localStorage.getItem(SCALE_KEY); return v!=null ? _clampScale(v) : SCALE_DEFAULT; }
     catch(e){ return SCALE_DEFAULT; }
   }
+  // Only the OUTERMOST document we control may paint the scale. CSS `zoom`
+  // inherits into an iframe's content: a panel inside the zoomed shell that
+  // zooms itself again renders at scale², which squeezed the Estate panel's
+  // left menu into an unreadable strip and — because Chromium maps pointer
+  // coordinates into a nested zoomed frame from the unscaled geometry — left
+  // every menu item's hit area offset from where it was painted, so clicking
+  // "Map" did nothing (18 Sep 2026). A panel opened on its own has no scaled
+  // ancestor and still paints, so standalone panels are unaffected.
+  function _ancestorPaintedScale(){
+    try{
+      var w = window;
+      for(var hops = 0; w !== w.parent && hops < 20; hops++){
+        w = w.parent;
+        var d = w.document;                       // throws when cross-origin
+        if(d && d.documentElement && d.documentElement.style.zoom) return true;
+      }
+    }catch(e){ /* cross-origin ancestor: it cannot have zoomed us through CSS */ }
+    return false;
+  }
+
   // Paint only — no persistence/broadcast. `zoom` reflows at the scaled size
   // (unlike transform:scale, which repaints and leaves scrollbars/overflow
   // wrong). Supported in every current engine (Firefox 126+).
@@ -121,6 +141,10 @@
   function _paintScale(s){
     s = _clampScale(s);
     var d = document.documentElement;
+    // An ancestor already zoomed us; inherit it instead of multiplying it.
+    // --ui-scale stays 1 here because this frame's own 100vh is its (already
+    // scaled) iframe box, which needs no counter-sizing.
+    if(_ancestorPaintedScale()) s = 1;
     try{
       if(s === 1){
         d.style.zoom = '';

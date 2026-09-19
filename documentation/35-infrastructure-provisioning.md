@@ -41,20 +41,25 @@ firewall edits, host commands, package installation, and service deployment are
 real mutations on the selected engine, cluster, or managed host.
 
 `integration.effect.inventory` publishes this distinction without contacting a
-target. Docker, builder, store-deployment, and Proxmox mutation paths now create
-provider-neutral, payload-free observations immediately before their first
-external mutation. Proxmox guest actions, guest and node commands, cloning, VM
-and LXC creation, destruction, and firewall edits each produce one logical
-observation containing only digests of the cluster, resource, and operation.
+target. Docker, builder, store-deployment, Proxmox, and managed-host provisioning
+mutation paths now create provider-neutral, payload-free observations immediately
+before their first external mutation. Proxmox guest actions, guest and node
+commands, cloning, VM and LXC creation, destruction, and firewall edits each
+produce one logical observation containing only digests of the cluster, resource,
+and operation. Component deployment, runtime installation and combined runtime
+runs, and security-service deployment/removal apply the same rule to SSH and
+Docker targets. A combined runtime run suppresses its nested install observation
+so one public operation is represented once.
 Commands, guest configuration, credentials, addresses, comments, and raw
 approval or idempotency references are not retained. The observation is not an
 authorization decision: it does not block, retry, open credentials, or record
 provider completion, and it is isolated from existing execution failures.
 
-General managed-host provisioning remains only partly observed: store deploy and
-remove are covered, while package installation, command execution, service
-deployment, and security rollout still require their own boundary migration.
-Infrastructure evidence remains separate and must not borrow Generic API, Email,
+The static inventory now reports complete observation coverage for its currently
+declared Proxmox and managed-host provisioning mutations. That is coverage, not
+enforcement readiness: credentialed provider validation, operation-specific
+approval, provider idempotency analysis, and durable completion evidence remain
+separate work. Infrastructure evidence must not borrow Generic API, Email,
 Telegram, or Commerce authority.
 No automatic retry is added: repeating a partially completed provision, guest
 creation, firewall edit, image build, or destructive action without provider

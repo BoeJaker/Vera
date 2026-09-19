@@ -32,6 +32,7 @@ _CRITICAL_MODULES = {
     "test_v6_extract_paths",    # a capability name is not a file (2026-09-08)
     "test_author_browser_observable",  # a page a browser verifies must be readable by one (2026-09-08)
     "test_route_preference",   # soft node preference must stay SOFT (2026-09-08)
+    "test_research_route_core",  # a routing escalation asked with 0 chars is dead (2026-09-18)
     "test_artifact_location",  # a file the run already made has a place (2026-09-01)
     "test_instance_identity",  # an estate write must name its writer (2026-09-01)
     "test_estate_role",  # only the estate owner may sweep it (2026-09-01)

@@ -96,11 +96,21 @@ KEY_HIST_FMT  = "vera:tg:history:{cid}"
 KEY_EVENTS    = "vera:tg:events"
 KEY_BOT_INFO  = "vera:tg:bot_info"
 
+try:
+    from Vera.vera.telegram import tg_bots_core as _bots
+except Exception:                                    # worktree / app-free import
+    from vera.telegram import tg_bots_core as _bots
+
 # In-process runtime state
 _BOT_TASK:        Optional[asyncio.Task] = None
 _EVENT_TASK:      Optional[asyncio.Task] = None
 _BOT_RUNNING:     bool                   = False
 _BOT_INFO:        Dict[str, Any]         = {}
+# Per-bot runtime state; _BOT_INFO/_BOT_LAST_UPDATE above mirror the "default" bot
+# so everything that read them before multi-bot keeps reading the same thing.
+_BOT_TASKS:       Dict[str, asyncio.Task] = {}
+_BOT_INFOS:       Dict[str, Dict[str, Any]] = {}
+_BOT_LAST:        Dict[str, Dict[str, Any]] = {}
 _BOT_LAST_UPDATE: Dict[str, Any]         = {"ts": None, "offset": 0, "count": 0, "error": None}
 _PER_CHAT_AGENT:  Dict[str, str]         = {}   # transient overrides via /agent
 _PER_CHAT_THINK:  Dict[str, bool]        = {}
@@ -108,6 +118,7 @@ _PER_CHAT_THINK:  Dict[str, bool]        = {}
 DEFAULT_CONFIG: Dict[str, Any] = {
     "token":          "",
     "admin_chat_id":  "",
+    "bots":           [],        # more bots: [{id, label, token, admin_chat_id, enabled}]
     "default_agent":  "assistant",
     "auto_start":     False,
     "allow_unknown":  False,     # if True, any chat can talk to the bot
@@ -146,6 +157,8 @@ async def _get_config() -> Dict[str, Any]:
         # open_secret() tolerates legacy plaintext, so pre-encryption tokens
         # keep working until the next save re-seals them.
         merged["token"] = vsecrets.open_secret(merged.get("token", ""))
+        merged["bots"] = [dict(b, token=vsecrets.open_secret(b.get("token", "")))
+                          for b in (merged.get("bots") or []) if isinstance(b, dict)]
         return merged
     except Exception as e:
         log.warning("tg config read: %s", e)
@@ -158,7 +171,10 @@ async def _save_config(cfg_data: Dict[str, Any]):
         return
     try:
         # Seal the bot token before it touches Redis (never store plaintext).
-        data = {**cfg_data, "token": vsecrets.seal(cfg_data.get("token", ""))}
+        data = {k: v for k, v in cfg_data.items() if not str(k).startswith("_")}
+        data["token"] = vsecrets.seal(cfg_data.get("token", ""))
+        data["bots"] = [dict(b, token=vsecrets.seal(b.get("token", "")))
+                        for b in (cfg_data.get("bots") or []) if isinstance(b, dict)]
         await r.set(KEY_CONFIG, json.dumps(data))
     except Exception as e:
         log.warning("tg config save: %s", e)
@@ -190,23 +206,23 @@ async def _save_events_cfg(ev: Dict[str, Any]):
         log.warning("tg events save: %s", e)
 
 
-async def _get_offset() -> int:
+async def _get_offset(bot_id: str = _bots.DEFAULT_BOT_ID) -> int:
     r = _redis()
     if not r:
         return 0
     try:
-        v = await r.get(KEY_OFFSET)
+        v = await r.get(_bots.key_for(KEY_OFFSET, bot_id))
         return int(v) if v else 0
     except Exception:
         return 0
 
 
-async def _set_offset(o: int):
+async def _set_offset(o: int, bot_id: str = _bots.DEFAULT_BOT_ID):
     r = _redis()
     if not r:
         return
     try:
-        await r.set(KEY_OFFSET, str(o))
+        await r.set(_bots.key_for(KEY_OFFSET, bot_id), str(o))
     except Exception:
         pass
 
@@ -337,12 +353,19 @@ async def _send_message(chat_id: str, text: str, parse_mode: str = None,
                         disable_preview: bool = True, effect_mode: str = "plain",
                         idempotency_key: str = "",
                         approval_receipt_ref: str = "",
-                        retry: bool = False) -> Dict[str, Any]:
+                        retry: bool = False, bot_id: str = "") -> Dict[str, Any]:
     shadow = _observe_send_effect(
         str(chat_id), mode=effect_mode, idempotency_key=idempotency_key,
         approval_receipt_ref=approval_receipt_ref, retry=retry)
     cfg_data = await _get_config()
-    token    = cfg_data.get("token", "")
+    # Reply through the bot this chat talks to; a chat with no bot of its own
+    # (or a send to a chat we have never seen) goes out through the default.
+    bots = _bots.normalise_bots(cfg_data)
+    bot = _bots.bot_by_id(bots, bot_id) if bot_id else None
+    if bot is None:
+        rec = await _get_chat(str(chat_id)) or {}
+        bot = _bots.bot_by_id(bots, rec.get("bot_id")) or _bots.default_bot(bots)
+    token = (bot or {}).get("token", "")
     if not token:
         return {"ok": False, "error": "no token", "effect_shadow": shadow}
     limit  = int(cfg_data.get("max_reply_chars", 3800))
@@ -417,6 +440,7 @@ async def _ensure_chat_record(msg: Dict[str, Any], cfg_data: Dict[str, Any]) -> 
         "first_seen": existing.get("first_seen", now_iso()),
         "last_seen":  now_iso(),
         "msg_count":  int(existing.get("msg_count", 0)) + 1,
+        "bot_id":     cfg_data.get("_bot_id") or existing.get("bot_id") or _bots.DEFAULT_BOT_ID,
     }
     # Admin chat is implicitly allowed
     admin = str(cfg_data.get("admin_chat_id", "") or "")
@@ -430,7 +454,7 @@ async def _ingest_message_to_fabric(chat_rec: Dict[str, Any], msg: Dict[str, Any
     """Best-effort fabric ingest — failures are silent."""
     try:
         import sys as _sys
-        fabric = _sys,modules.get("data_fabric")
+        fabric = _sys.modules.get("data_fabric")
         if not fabric or not hasattr(fabric, "ingest_dataset"):
             return
         await fabric.ingest_dataset(
@@ -759,36 +783,49 @@ async def _handle_update(update: Dict[str, Any], cfg_data: Dict[str, Any]):
 # POLLING LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _poll_loop():
-    global _BOT_RUNNING, _BOT_INFO, _BOT_LAST_UPDATE
-    cfg_data = await _get_config()
-    token    = cfg_data.get("token", "")
+async def _poll_loop(bot: Dict[str, Any]):
+    """Long-poll ONE bot. There is one of these tasks per enabled bot; each has
+    its own offset and bot_info key (the default bot keeps the legacy keys)."""
+    global _BOT_INFO, _BOT_LAST_UPDATE
+    bid   = str(bot.get("id") or _bots.DEFAULT_BOT_ID)
+    token = bot.get("token", "")
+    is_default = (bid == _bots.DEFAULT_BOT_ID)
+    last = _BOT_LAST.setdefault(bid, {"ts": None, "offset": 0, "count": 0, "error": None})
     if not token:
-        log.info("tg poll: no token configured — not starting")
-        _BOT_RUNNING = False
+        log.info("tg poll [%s]: no token configured - not starting", bid)
         return
 
     me = await _tg_api(token, "getMe", timeout=10)
     if not me.get("ok"):
-        log.error("tg getMe failed: %s", me.get("error") or me.get("description"))
-        _BOT_RUNNING = False
-        _BOT_LAST_UPDATE["error"] = me.get("error") or me.get("description") or "getMe failed"
+        err = me.get("error") or me.get("description") or "getMe failed"
+        log.error("tg getMe [%s] failed: %s", bid, err)
+        last["error"] = str(err)[:200]
+        if is_default:
+            _BOT_LAST_UPDATE = last
         return
-    _BOT_INFO = me.get("result", {})
+    info = me.get("result", {})
+    _BOT_INFOS[bid] = info
+    if is_default:
+        _BOT_INFO = info
     r = _redis()
     if r:
         try:
-            await r.set(KEY_BOT_INFO, json.dumps(_BOT_INFO))
+            await r.set(_bots.key_for(KEY_BOT_INFO, bid), json.dumps(info))
         except Exception:
             pass
-    log.info("tg bot online: @%s", _BOT_INFO.get("username", "?"))
+    log.info("tg bot [%s] online: @%s", bid, info.get("username", "?"))
 
-    offset  = await _get_offset()
+    offset  = await _get_offset(bid)
     backoff = 1.0
 
     while _BOT_RUNNING:
         try:
             cfg_data = await _get_config()  # re-read so live edits take effect
+            # This bot's view of the config: its own admin chat, and its id so
+            # the chat record remembers which bot the conversation arrived on.
+            live = _bots.bot_by_id(_bots.normalise_bots(cfg_data), bid) or bot
+            view = dict(cfg_data, _bot_id=bid,
+                        admin_chat_id=live.get("admin_chat_id") or cfg_data.get("admin_chat_id", ""))
             res = await _tg_api(token, "getUpdates", {
                 "offset":          offset,
                 "timeout":         POLL_TIMEOUT_S,
@@ -797,8 +834,8 @@ async def _poll_loop():
 
             if not res.get("ok"):
                 err = res.get("error") or res.get("description") or "unknown"
-                _BOT_LAST_UPDATE["error"] = str(err)[:200]
-                log.warning("tg getUpdates: %s", err)
+                last["error"] = str(err)[:200]
+                log.warning("tg getUpdates [%s]: %s", bid, err)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, POLL_BACKOFF_MAX_S)
                 continue
@@ -808,27 +845,24 @@ async def _poll_loop():
             for u in updates:
                 offset = max(offset, u.get("update_id", 0) + 1)
                 try:
-                    await _handle_update(u, cfg_data)
+                    await _handle_update(u, view)
                 except Exception as e:
-                    log.exception("tg handle_update: %s", e)
+                    log.exception("tg handle_update [%s]: %s", bid, e)
             if updates:
-                await _set_offset(offset)
-            _BOT_LAST_UPDATE = {
-                "ts":     now_iso(),
-                "offset": offset,
-                "count":  len(updates),
-                "error":  None,
-            }
+                await _set_offset(offset, bid)
+            last.update(ts=now_iso(), offset=offset, count=len(updates), error=None)
+            if is_default:
+                _BOT_LAST_UPDATE = last
         except asyncio.CancelledError:
-            log.info("tg poll cancelled")
+            log.info("tg poll [%s] cancelled", bid)
             break
         except Exception as e:
-            log.warning("tg poll loop: %s", e)
-            _BOT_LAST_UPDATE["error"] = str(e)[:200]
+            log.warning("tg poll loop [%s]: %s", bid, e)
+            last["error"] = str(e)[:200]
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, POLL_BACKOFF_MAX_S)
 
-    log.info("tg poll stopped")
+    log.info("tg poll [%s] stopped", bid)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -888,41 +922,63 @@ async def _event_bridge_loop():
 # LIFECYCLE HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _start_bot_internal() -> Dict[str, Any]:
-    global _BOT_TASK, _BOT_RUNNING, _EVENT_TASK
-    if _BOT_RUNNING and _BOT_TASK and not _BOT_TASK.done():
-        return {"running": True, "info": _BOT_INFO, "note": "already running"}
+async def _start_bot_internal(bot_id: str = "") -> Dict[str, Any]:
+    """Start the poller for every enabled bot (or just `bot_id`). A bot whose
+    task is already alive is left alone, so this is safe to call repeatedly."""
+    global _BOT_RUNNING, _EVENT_TASK
     cfg_data = await _get_config()
-    if not cfg_data.get("token"):
-        return {"running": False, "error": "no token configured"}
+    bots = _bots.enabled_bots(_bots.normalise_bots(cfg_data))
+    if bot_id:
+        bots = [b for b in bots if b["id"] == _bots._clean_id(bot_id)]
+    if not bots:
+        return {"running": False, "error": "no token configured" if not bot_id
+                else f"no enabled bot '{bot_id}'"}
     _BOT_RUNNING = True
-    _BOT_TASK = asyncio.create_task(_poll_loop())
+    started = []
+    for b in bots:
+        t = _BOT_TASKS.get(b["id"])
+        if t and not t.done():
+            continue
+        _BOT_TASKS[b["id"]] = asyncio.create_task(_poll_loop(b))
+        started.append(b["id"])
     if not _EVENT_TASK or _EVENT_TASK.done():
         _EVENT_TASK = asyncio.create_task(_event_bridge_loop())
-    # Brief sleep so getMe has a chance to populate _BOT_INFO before returning
+    # Brief sleep so getMe has a chance to populate the bot info before returning
     await asyncio.sleep(0.6)
-    return {"running": _BOT_RUNNING, "info": _BOT_INFO,
-            "error": _BOT_LAST_UPDATE.get("error")}
+    return {"running": _BOT_RUNNING, "info": _BOT_INFO, "started": started,
+            "bots": _bots_status(), "error": _BOT_LAST_UPDATE.get("error")}
 
 
-async def _stop_bot_internal() -> Dict[str, Any]:
-    global _BOT_TASK, _BOT_RUNNING, _EVENT_TASK
-    _BOT_RUNNING = False
-    if _BOT_TASK and not _BOT_TASK.done():
-        _BOT_TASK.cancel()
-        try:
-            await asyncio.wait_for(_BOT_TASK, timeout=3)
-        except Exception:
-            pass
-    if _EVENT_TASK and not _EVENT_TASK.done():
-        _EVENT_TASK.cancel()
-        try:
-            await asyncio.wait_for(_EVENT_TASK, timeout=3)
-        except Exception:
-            pass
-    _BOT_TASK = None
-    _EVENT_TASK = None
-    return {"running": False}
+async def _stop_bot_internal(bot_id: str = "") -> Dict[str, Any]:
+    """Stop one bot's poller, or (no id) every poller and the event bridge."""
+    global _BOT_RUNNING, _EVENT_TASK
+    ids = [_bots._clean_id(bot_id)] if bot_id else list(_BOT_TASKS)
+    for bid in ids:
+        t = _BOT_TASKS.pop(bid, None)
+        if t and not t.done():
+            t.cancel()
+            try:
+                await asyncio.wait_for(t, timeout=3)
+            except Exception:
+                pass
+    if not bot_id or not _BOT_TASKS:
+        _BOT_RUNNING = False
+        if _EVENT_TASK and not _EVENT_TASK.done():
+            _EVENT_TASK.cancel()
+            try:
+                await asyncio.wait_for(_EVENT_TASK, timeout=3)
+            except Exception:
+                pass
+        _EVENT_TASK = None
+    return {"running": _BOT_RUNNING, "bots": _bots_status()}
+
+
+def _bots_status() -> Dict[str, Any]:
+    out = {}
+    for bid, t in _BOT_TASKS.items():
+        out[bid] = {"running": bool(t) and not t.done(), "bot": _BOT_INFOS.get(bid, {}),
+                    "last_update": _BOT_LAST.get(bid, {})}
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -944,10 +1000,11 @@ async def tg_config_set(
     allow_unknown:   Optional[bool] = None,
     think_default:   Optional[bool] = None,
     max_reply_chars: Optional[int]  = None,
+    bots:            Optional[Any]  = None,
     trace_id=None,
 ):
     current = await _get_config()
-    old_token = current.get("token", "")
+    old_tokens = {b["id"]: b["token"] for b in _bots.normalise_bots(current)}
 
     if token           is not None: current["token"]           = token.strip()
     if admin_chat_id   is not None: current["admin_chat_id"]   = str(admin_chat_id).strip()
@@ -956,6 +1013,7 @@ async def tg_config_set(
     if allow_unknown   is not None: current["allow_unknown"]   = bool(allow_unknown)
     if think_default   is not None: current["think_default"]   = bool(think_default)
     if max_reply_chars is not None: current["max_reply_chars"] = max(200, min(int(max_reply_chars), 4096))
+    if bots            is not None: current["bots"]            = _bots.merge_bots(current.get("bots") or [], bots)
 
     await _save_config(current)
 
@@ -971,16 +1029,13 @@ async def tg_config_set(
         await _save_chat(admin, rec)
 
     restarted = False
-    if _BOT_RUNNING and current.get("token") != old_token:
+    new_tokens = {b["id"]: b["token"] for b in _bots.normalise_bots(current)}
+    if _BOT_RUNNING and new_tokens != old_tokens:
         await _stop_bot_internal()
         await _start_bot_internal()
         restarted = True
 
-    redacted = dict(current)
-    if redacted.get("token"):
-        t = redacted["token"]
-        redacted["token"] = (t[:6] + "…" + t[-4:]) if len(t) > 12 else "***"
-    return {"ok": True, "restarted": restarted, "config": redacted}
+    return {"ok": True, "restarted": restarted, "config": _bots.redacted_config(current)}
 
 
 @capability(
@@ -990,14 +1045,7 @@ async def tg_config_set(
 )
 async def tg_config_get(trace_id=None):
     cfg_data = await _get_config()
-    redacted = dict(cfg_data)
-    if redacted.get("token"):
-        t = redacted["token"]
-        redacted["token"]      = (t[:6] + "…" + t[-4:]) if len(t) > 12 else "***"
-        redacted["token_set"]  = True
-    else:
-        redacted["token_set"]  = False
-    return {"config": redacted}
+    return {"config": _bots.redacted_config(cfg_data)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1007,19 +1055,20 @@ async def tg_config_get(trace_id=None):
 @capability(
     "tg.bot.start", memory="off",
     http_method="POST", http_path="/tg/start", http_tags=["telegram"],
-    description="Start the Telegram polling loop.",
+    description="Start the Telegram polling loop for every enabled bot, or for one. "
+                "Input: bot_id (str - optional, e.g. 'default', 'ops').",
 )
-async def tg_bot_start(trace_id=None):
-    return await _start_bot_internal()
+async def tg_bot_start(bot_id: str = "", trace_id=None):
+    return await _start_bot_internal(bot_id)
 
 
 @capability(
     "tg.bot.stop", memory="off",
     http_method="POST", http_path="/tg/stop", http_tags=["telegram"],
-    description="Stop the Telegram polling loop.",
+    description="Stop the Telegram polling loop - every bot, or one. Input: bot_id (str - optional).",
 )
-async def tg_bot_stop(trace_id=None):
-    return await _stop_bot_internal()
+async def tg_bot_stop(bot_id: str = "", trace_id=None):
+    return await _stop_bot_internal(bot_id)
 
 
 @capability(
@@ -1028,10 +1077,12 @@ async def tg_bot_stop(trace_id=None):
     description="Telegram bot status: running/stopped, bot info, last poll details.",
 )
 async def tg_bot_status(trace_id=None):
+    per_bot = _bots_status()
     return {
-        "running":     _BOT_RUNNING and bool(_BOT_TASK) and not (_BOT_TASK.done() if _BOT_TASK else True),
+        "running":     _BOT_RUNNING and any(v["running"] for v in per_bot.values()),
         "bot":         _BOT_INFO,
         "last_update": _BOT_LAST_UPDATE,
+        "bots":        per_bot,
         "per_chat_agent": _PER_CHAT_AGENT,
     }
 
@@ -1325,7 +1376,7 @@ async def _startup():
                     log.debug("tg token migration skipped: %s", _mig_e)
 
         cfg_data = await _get_config()
-        if cfg_data.get("auto_start") and cfg_data.get("token"):
+        if cfg_data.get("auto_start") and _bots.default_bot(_bots.normalise_bots(cfg_data)):
             log.info("tg auto-start enabled — launching poll loop")
             await _start_bot_internal()
         else:

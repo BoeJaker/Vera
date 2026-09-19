@@ -160,6 +160,11 @@ def _install_file_log_handler() -> str:
         # Tagged so _offload_blocking_log_handlers moves it behind a queue: a
         # stalling disk must not stall the event loop (see log_setup docstring).
         setattr(h, _ls.OFFLOAD_ATTR, True)
+        # Mask credentials on the way OUT, so nothing that reaches a file or a
+        # console can carry one. httpx logs Telegram's token-in-the-URL at INFO.
+        # At the record factory, not on handlers: perf_capabilities opens a second
+        # file handler later in startup, and a handler-level filter missed it.
+        _ls.install_redaction()
         _root.addHandler(h)
         return cfg["path"]
     except Exception as _e:
@@ -1629,6 +1634,29 @@ async def _gate_heartbeat(lease: dict, session_id: str = "",
         pass
 
 
+async def _release_ollama_lease(lease: dict) -> None:
+    """Release a gate lease before its owning context can finish unwinding.
+
+    Cancellation used to schedule this work as an unobserved task. Short-lived
+    commands could then close their event loop before the broker request ran,
+    leaving the shared capacity slot occupied until lease expiry. Bound the
+    cleanup wait so cancellation remains responsive while still retaining the
+    lease TTL as a last-resort backstop.
+    """
+    try:
+        if lease.get("broker_lease_id") and _GATE_BROKER is not None:
+            release = _GATE_BROKER.release(lease)
+        elif COORD_REDIS is not None:
+            release = _gate.release(COORD_REDIS, lease)
+        else:
+            return
+        await asyncio.wait_for(asyncio.shield(asyncio.create_task(release)), timeout=5.0)
+    except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+        # The renewable lease is deliberately short; failure here must not hide
+        # or replace the generation's terminal result.
+        pass
+
+
 @asynccontextmanager
 async def _ollama_slot(iid: str, timeout: Optional[float] = None):
     """`async with _ollama_sem(iid)` with a bounded acquisition wait. Raises a
@@ -1697,18 +1725,7 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None):
         if _hb_task is not None:
             _hb_task.cancel()   # stop renewing; the slot may now expire on its own
         if _lease is not None:
-            # Fire the release as an INDEPENDENT task, not `await`ed here: if THIS
-            # coroutine is being cancelled, an awaited release in the finally gets
-            # interrupted mid-flight and the slot is orphaned (exactly how the
-            # gate kept wedging). A detached task completes regardless; the short
-            # lease TTL above is the backstop if even it can't run.
-            try:
-                if _lease.get("broker_lease_id") and _GATE_BROKER is not None:
-                    asyncio.ensure_future(_GATE_BROKER.release(_lease))
-                elif COORD_REDIS is not None:
-                    asyncio.ensure_future(_gate.release(COORD_REDIS, _lease))
-            except Exception:
-                pass
+            await _release_ollama_lease(_lease)
         sem.release()
 
 
