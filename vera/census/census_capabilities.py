@@ -770,6 +770,18 @@ async def census_control_view() -> Dict[str, Any]:
             "active": active, "dir": str(CENSUS_DIR)}
 
 
+async def census_health() -> Dict[str, Any]:
+    """What /health says about the census: two small local files, summarised
+    by control.health_summary. Never raises - /health is polled by the harness
+    itself and by census_all.sh, and must not fail on the census's account."""
+    try:
+        control, active = await asyncio.gather(asyncio.to_thread(_read_control_sync),
+                                               asyncio.to_thread(_read_active_sync))
+        return _ctl.health_summary(control, active)
+    except Exception as e:
+        return {"busy": False, "state": "unknown", "error": str(e)[:120]}
+
+
 @capability(
     "census.control", memory="off", silent=True,
     http_method="GET", http_path="/census/control", http_tags=["census", "workshop"],

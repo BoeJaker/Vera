@@ -214,6 +214,47 @@ def restart_plan(active: Dict[str, Any], resume: bool,
             "active": v}
 
 
+def health_summary(control: Dict[str, Any], active: Dict[str, Any]) -> Dict[str, Any]:
+    """The one line about the census that /health carries, for an agent
+    deciding whether it may use the GPU right now (2026-09-19).
+
+    `active` is an active_view(). `busy` is the verdict: True while a census
+    goal is in flight OR about to be (a yield requested but not yet parked
+    still has a goal running) - any GPU call now taints a row. A parked
+    (paused / yielded) or absent harness leaves the box to whoever asks; a
+    stale one is reported as such rather than as busy, because a harness that
+    died hours ago holds nothing.
+    """
+    a = active or {}
+    c = control or {}
+    cs = control_state(c)
+    live = bool(a.get("live"))
+    st = str(a.get("state") or "none")
+    if not a.get("present"):
+        state = "none"
+    elif a.get("stale"):
+        state = "stale"
+    elif st == "paused":
+        state = "yielded" if (a.get("pause_kind") == "yield" or cs == "yield") else "paused"
+    elif st == "running":
+        state = "yielding" if cs == "yield" else ("pausing" if cs == "pause" else "running")
+    else:
+        state = st                     # done / dropped
+    busy = live and st == "running"
+    out: Dict[str, Any] = {"busy": busy, "state": state, "control": cs}
+    if a.get("present"):
+        p = a.get("progress") or {}
+        out.update({"template": a.get("template") or "", "goal": a.get("current_goal") or "",
+                    "done": p.get("done"), "total": p.get("total"),
+                    "census_run": a.get("census_run") or ""})
+    if cs != "run":
+        out["by"] = c.get("by") or ""
+    if busy:
+        out["advice"] = ("census goal in flight: no GPU work; census.control.set action=yield "
+                         "and wait for acked, then resume when done")
+    return out
+
+
 #: How long a restart waits for the harness to say it has paused (or dropped)
 #: before re-exec'ing anyway. The harness reads the control file every 3s and a
 #: cancel takes a few seconds; a harness that says nothing in this long is not
