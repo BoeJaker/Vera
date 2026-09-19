@@ -187,7 +187,21 @@
     const memSessAll = lvl.memory === 'off' ? [] : (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).map((m) => ({ id: m.id, label: (m.text || m.summary || m.capability || m.category || m.id || '').slice(0, 60), source: 'memory', type: m.record_type || m.type || 'memory', score: m.importance == null ? 0.5 : +m.importance, text: m.text || m.summary || '', included: false, rec: m, _fam: 'memory', _injected: false, _sess: true, created_at: m.created_at || '' }));
     const memSess = lvl.memory === 'focus' ? memSessAll.filter((m) => memTouch.has(m.id)) : memSessAll;
     const mem = memCtx.concat(memSess);
-    const ctx = nodes.filter((n) => n.source !== 'memory' && !off.has(n.source) && (ghosts || n.included !== false));
+    /* A SOURCE has three levels too, not two. The families (loop, plan, memory, estate) have cycled
+       off · focus · all for a long time through mixOf; a source could only be on or off, so the only way to cut
+       a noisy family down was to lose it entirely. mixOf is already generic over its key and mix() already keeps
+       layersOff in step, so a source reads through exactly the same path: off hides it, focus keeps only the
+       records of it that actually went into the prompt, all keeps everything.
+       Anything never set still answers 'all' (or 'off' if the host put it in layersOff), so every existing
+       caller behaves as before. */
+    const srcLvl = (s) => mixOf(S, s || '?');
+    const ctx = nodes.filter((n) => {
+      if (n.source === 'memory') return false;
+      const L = srcLvl(n.source);
+      if (L === 'off') return false;
+      if (L === 'focus' && n.included === false) return false;
+      return ghosts || n.included !== false;
+    });
     const srcs = [...new Set(ctx.map((n) => n.source || '?'))].sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99));
     const reads = frame ? (frame.reads || frameReads(frame, nodes)) : (S.reads || {});
     const readBy = (id) => Object.keys(reads).filter((k2) => (reads[k2] || []).indexOf(id) >= 0);
@@ -522,8 +536,14 @@
         rels: rd.slice(0, 4).map((r) => 'read ' + r.label).concat((s.marks || []).slice(0, 3).map((m) => m.kind + ' · ' + m.status)) }; }
     // All edges off: only the relations that touch the prompt (lit, used, memory, the chain) stay; the dim ones fold away
     if (!S.allEdges) { out.cedges = out.cedges.filter((e2) => e2.cls !== 'rel'); out.sedges = out.sedges.filter((e2) => e2.cls !== 'rel'); }
-    out.srcs = srcs.map((s) => ({ name: s, col: color(s), n: ctx.filter((n) => (n.source || '?') === s).length }));
-    out.offSrcs = [...new Set(nodes.filter((n) => n.source !== 'memory').map((n) => n.source || '?'))].filter((s) => off.has(s)).map((s) => ({ name: s, col: color(s), n: nodes.filter((n) => (n.source || '?') === s).length }));
+    // each source with its records, its TOKENS and its level — the meter is sized by tokens, so it is the budget
+    // and the legend at once rather than a second row of chips saying the same names
+    out.srcs = srcs.map((s) => { const own = ctx.filter((n) => (n.source || '?') === s);
+      return { name: s, col: color(s), n: own.length, level: srcLvl(s), tok: own.reduce((a, n) => a + tokOf(n), 0) }; });
+    // a source switched OFF still has to be reachable, or it could never be switched back on — it keeps its
+    // place on the meter, at the width its records would have had
+    out.offSrcs = [...new Set(nodes.filter((n) => n.source !== 'memory').map((n) => n.source || '?'))].filter((s) => srcLvl(s) === 'off').map((s) => { const own = nodes.filter((n) => (n.source || '?') === s);
+      return { name: s, col: color(s), n: own.length, level: 'off', tok: own.reduce((a, n) => a + tokOf(n), 0) }; });
     // the other families' chips: the mixer — each carries its level (off · focus · all) and its count
     out.families = [];
     const nMem = memCtxAll.length + (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).length;
@@ -536,7 +556,13 @@
     // the LIST: the records as rows (the old renderCtxList's: source dot · label · relevance bar · tokens · included),
     // the most relevant first, the search's hits only while a search is on; every row knows its record for the panel
     out.list = ctx.concat(mem).filter((n) => matchQ(n)).map((n) => { const p = out.pos[n.id] || {}; const sc = Math.max(0, Math.min(1, n.score == null ? 0.5 : +n.score));
-      return { id: n.id, label: n.label || n.id, source: n.source || '?', col: p.col || color(n.source), score: sc, tok: tokOf(n), included: n._sess ? !!p.lit : n.included !== false, sess: !!n._sess, lit: !!p.lit, sel: S.sel === n.id, text: textOf(n).replace(/\s+/g, ' ').slice(0, 140), url: n.url || '', kind: p.icon || kindOf(n, n.source || '?') }; })
+      /* `text` stayed at 140 characters because the row only ever showed a one-line tease. The list under the
+         graph is the place the whole record is meant to be readable, so the row carries the body (capped, with
+         the height held by CSS rather than by cutting the words off) and the facts that were only ever in the
+         record card: which side of the turn read it, what kind of thing it is, and where it came from. */
+      return { id: n.id, label: n.label || n.id, source: n.source || '?', col: p.col || color(n.source), score: sc, tok: tokOf(n), included: n._sess ? !!p.lit : n.included !== false, sess: !!n._sess, lit: !!p.lit, sel: S.sel === n.id, text: textOf(n).replace(/\s+/g, ' ').slice(0, 140), url: n.url || '', kind: p.icon || kindOf(n, n.source || '?'),
+        full: textOf(n).replace(/[ \t]+/g, ' ').trim().slice(0, 1400), by: p.by === 'a' ? 'a' : 'u',
+        type: String(n.type || '') || '', turn: p.turn || '' }; })
       .sort((a, b) => (a.sess === b.sess ? b.score - a.score : a.sess ? 1 : -1));
     out.listTotal = ctx.length + mem.length;
     /* the relations as PAIRS, not geometry: out.cedges carries them already but positioned for this plot, and a
@@ -630,7 +656,25 @@
         + '<i class="dot"></i><b>' + esc(r.label) + '</b><span class="bar"><i style="width:' + Math.round(r.score * 100) + '%"></i></span><span class="tok">' + r.tok + '</span>'
         + (r.url ? '<button class="pv" data-a="preview" data-id="' + esc(r.id) + '" data-url="' + esc(r.url) + '" title="Open the page in the browser pane">◫</button>' : '<span class="pv"></span>')
         + (r.sess ? '<span></span>' : '<button data-a="toggle" data-id="' + esc(r.id) + '" title="' + (r.included ? 'Exclude from the prompt' : 'Include in the prompt') + '">' + (r.included ? '✕' : '＋') + '</button>')
-        + (r.text && !opts.compact ? '<small>' + esc(r.text) + '</small>' : '') + '</div>').join('') : '<div class="cg-list-e">' + (o.q ? 'nothing matches' : 'no records yet') + '</div>')
+        /* FULL DETAIL, not a one-line tease. The row showed 140 characters and nothing else, so the only way to
+           learn what a record actually was, or which side of the turn read it, was to click through to the card.
+           Under the graph that is the wrong way round: the list is where the records are read. The compact face
+           (the rail's mini) keeps the tease — it has a box the size of a postcard. */
+        + (opts.compact
+            ? (r.text ? '<small>' + esc(r.text) + '</small>' : '')
+            : '<div class="cg-row-d">'
+              + '<div class="cg-row-m"><span class="fam">' + esc(r.source) + '</span>'
+              + (r.type && r.type !== r.source ? '<span>' + esc(r.type) + '</span>' : '')
+              + '<span>' + (r.sess ? 'importance ' : 'relevance ') + r.score.toFixed(2) + '</span>'
+              + '<span>' + r.tok + ' tok</span>'
+              + '<span class="' + (r.included ? 'in' : 'out') + '">'
+              + (r.sess ? (r.included ? 'in the prompt' : 'in the session, not injected')
+                        : r.included ? (r.by === 'a' ? 'read by the answer' : 'in the prompt') : 'excluded')
+              + '</span>' + (r.turn ? '<span>' + esc(r.turn) + '</span>' : '') + '</div>'
+              + (r.full ? '<div class="cg-row-x">' + esc(r.full) + '</div>' : '')
+              + (r.url ? '<a class="cg-row-u" href="' + esc(r.url) + '" target="_blank" rel="noopener">' + esc(r.url.slice(0, 90)) + '</a>' : '')
+              + '</div>')
+        + '</div>').join('') : '<div class="cg-list-e">' + (o.q ? 'nothing matches' : 'no records yet') + '</div>')
       + '</div></div>';
   }
   // the mini's face: the whole layout in one box (no chips, no header) — the widget form calls this with the state
@@ -903,6 +947,19 @@ vera-context-graph .cg-rec-r a.v{color:var(--cg-ac);text-decoration:none;overflo
 vera-context-graph .cg-rec.compact{left:6px;right:6px;bottom:6px;padding:7px 8px;gap:2px;font-size:8px;max-height:70%;overflow:hidden}vera-context-graph .cg-rec.compact .cg-rec-h{font-size:9.5px}vera-context-graph .cg-rec.compact .cg-rec-r{font-size:8px}vera-context-graph .cg-rec.compact .cg-rec-r .k{width:52px}vera-context-graph .cg-rec.compact .cg-rec-t{font-size:8px;max-height:44px;margin-top:2px;padding-top:3px}vera-context-graph .cg-rec.compact .cg-rec-a button{font-size:8px;padding:2px 6px}
 vera-context-graph .cg-node.miss,vera-context-graph .cg-mem.miss{opacity:.12!important;filter:saturate(.2)}
 vera-context-graph .cg-body{flex:1;min-height:0;min-width:0;display:flex}vera-context-graph .cg-body .cg-plot{flex:1;min-width:0}
+/* THE SOURCE METER — the section control and the legend in one strip. A band's width is its share of the window,
+   so the thing you press to fold a source away is the same thing that tells you what folding it would save.
+   An OFF band keeps its place and a trace of its own colour: one that vanished could never be pressed again. */
+vera-context-graph .cg-meter{display:flex;align-items:stretch;gap:2px;flex:1 1 100%;min-width:0;height:20px;border-radius:5px;overflow:hidden;background:var(--cg-s3,var(--cg-s2))}
+vera-context-graph .cg-mb{position:relative;flex:1 1 0;min-width:34px;display:flex;align-items:center;gap:4px;padding:0 5px;border:0;border-radius:4px;cursor:pointer;overflow:hidden;font:inherit;font-family:var(--cg-mono);font-size:8px;color:var(--cg-t1);background:color-mix(in srgb,var(--mc) 78%,transparent)}
+vera-context-graph .cg-mb:hover{filter:brightness(1.18)}
+vera-context-graph .cg-mb .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+vera-context-graph .cg-mb b{font-weight:400;opacity:.75;margin-left:auto}
+vera-context-graph .cg-mb i{display:none}
+/* focus: the band is hatched, so "some of it" reads differently from "all of it" at a glance */
+vera-context-graph .cg-mb.focus{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--mc) 78%,transparent) 0 5px,color-mix(in srgb,var(--mc) 34%,transparent) 5px 10px)}
+vera-context-graph .cg-mb.off{background:color-mix(in srgb,var(--mc) 16%,transparent);color:var(--cg-t3)}
+vera-context-graph .cg-mb.off .nm{text-decoration:line-through}
 /* the hover card: small, above the plot, and never in the pointer's way (it would flicker as the cursor entered
    its own card and left the node) */
 vera-context-graph .cg-hover{position:absolute;z-index:9;pointer-events:none;max-width:260px}
@@ -927,6 +984,16 @@ vera-context-graph .cg-row .bar{grid-area:b;height:4px;border-radius:2px;backgro
 vera-context-graph .cg-row .tok{grid-area:t;font-family:var(--cg-mono);font-size:8.5px;color:var(--cg-t3);text-align:right}
 vera-context-graph .cg-row .pv{grid-area:p}vera-context-graph .cg-row button{grid-area:x;font:inherit;font-size:9px;line-height:1;width:16px;height:16px;padding:0;border:none;border-radius:3px;background:transparent;color:var(--cg-t3);cursor:pointer}vera-context-graph .cg-row button:hover{background:var(--cg-bd);color:var(--cg-t1)}
 vera-context-graph .cg-row small{grid-area:s;font-size:9px;line-height:1.35;color:var(--cg-t3);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* the row's detail block: the record as it actually is. The body is HELD by a max-height and scrolls, rather
+   than being cut off mid-word — a record you cannot finish reading is the thing this replaces. */
+vera-context-graph .cg-row-d{grid-column:1/-1;margin:3px 0 1px;display:flex;flex-direction:column;gap:3px}
+vera-context-graph .cg-row-m{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-family:var(--cg-mono);font-size:8px;color:var(--cg-t3)}
+vera-context-graph .cg-row-m .fam{color:var(--rc,var(--cg-t2))}
+vera-context-graph .cg-row-m .in{color:var(--cg-ac)}
+vera-context-graph .cg-row-m .out{color:var(--cg-t3);text-decoration:line-through}
+vera-context-graph .cg-row-x{font-size:9.5px;line-height:1.5;color:var(--cg-t2);white-space:pre-wrap;word-break:break-word;max-height:132px;overflow-y:auto;padding:4px 6px;border-left:2px solid color-mix(in srgb,var(--rc,var(--cg-bd)) 45%,transparent);background:color-mix(in srgb,var(--cg-s2) 60%,transparent);border-radius:0 5px 5px 0}
+vera-context-graph .cg-row-u{font-family:var(--cg-mono);font-size:8px;color:var(--cg-ac2);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+vera-context-graph .cg-row-u:hover{text-decoration:underline}
 vera-context-graph .cg-list-e{padding:14px 10px;font-size:10px;color:var(--cg-t3);text-align:center}
 vera-context-graph .cg-srch{font:inherit;font-size:9.5px;height:20px;width:118px;padding:0 7px;border:1px solid var(--cg-bd);border-radius:5px;background:var(--cg-s2);color:var(--cg-t1);outline:none}vera-context-graph .cg-srch:focus{border-color:var(--cg-ac)}vera-context-graph .cg-srch::placeholder{color:var(--cg-t3)}
 vera-context-graph .cg-lay.et{height:18px;font-size:8.5px;padding:0 7px;text-transform:lowercase;color:var(--cg-t2)}vera-context-graph .cg-lay.et i{width:10px;height:1.5px;border-radius:0;background:currentColor}vera-context-graph .cg-lay.et:not(.on){opacity:.45;text-decoration:line-through}vera-context-graph .cg-lay.et.on{box-shadow:inset 0 0 0 1px var(--cg-bd)}
@@ -1115,7 +1182,10 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
       _click(e) {
         const t = e.target; const b = t.closest && t.closest('button[data-v]'); if (b) { this.view(b.dataset.v); return; }
         const a = t.closest && t.closest('[data-a]'); if (a) { const S = this._S; const k = a.dataset.a;
-          if (k === 'fit') this.fit(); else if (k === 'collapse') { this.dispatchEvent(new CustomEvent('vera:ctx:collapse', { bubbles: true })); } else if (k === 'alledges') { S.allEdges = !S.allEdges; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:alledges', { detail: { on: S.allEdges }, bubbles: true })); } else if (k === 'layer') { const s = a.dataset.s; if (FAMS.indexOf(s) >= 0) { const cur = mixOf(S, s); this.mix(s, cur === 'off' ? 'focus' : cur === 'focus' ? 'all' : 'off'); } else { if (S.layersOff.has(s)) S.layersOff.delete(s); else S.layersOff.add(s); this._schedule(); } }
+          if (k === 'fit') this.fit(); else if (k === 'collapse') { this.dispatchEvent(new CustomEvent('vera:ctx:collapse', { bubbles: true })); } else if (k === 'alledges') { S.allEdges = !S.allEdges; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:alledges', { detail: { on: S.allEdges }, bubbles: true })); }           // a SOURCE cycles the same three levels a family does now: off · focus · all. It used to flip on/off,
+          // so the only way to quieten a noisy source was to lose it. mix() is the one path for both.
+          else if (k === 'layer') { const s = a.dataset.s; const cur = mixOf(S, s);
+            this.mix(s, cur === 'off' ? 'focus' : cur === 'focus' ? 'all' : 'off'); }
           else if (k === 'related') { S.related = !S.related; this._schedule(); } else if (k === 'close') { S.sel = null; this._schedule(); }
           else if (k === 'zoom') { this.zoomTo(a.dataset.id); } else if (k === 'preview') { this.dispatchEvent(new CustomEvent('vera:ctx:preview', { detail: { id: a.dataset.id, url: a.dataset.url }, bubbles: true })); }
           else if (k === 'incl-all' || k === 'excl-all') { this.dispatchEvent(new CustomEvent('vera:ctx:toggle-all', { detail: { included: k === 'incl-all' }, bubbles: true })); }
@@ -1153,7 +1223,25 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
         // the mixer: a family chip cycles off → focus → all; the three bars say where it stands
         const LV = { off: 0, focus: 1, all: 2 };
         const famChip = (f) => '<button class="cg-lay fam ' + (f.on ? 'on' : '') + '" data-a="layer" data-s="' + esc(f.fam) + '" data-level="' + esc(f.level) + '" style="color:' + esc(f.col) + '" title="' + esc(f.name) + ' · ' + f.n + ' · the ' + esc(f.name) + ' graph as a family of this one — ' + (f.level === 'off' ? 'off' : f.level === 'focus' ? 'in focus: what touches the prompt' : 'everything') + ' · click to cycle off · focus · all"><i class="' + (f.name === 'plan' ? 'd' : f.name === 'estate' ? 'h' : f.name === 'memory' ? '' : 'p') + '" style="background:' + esc(f.col) + '"></i>' + esc(f.name) + '<b>' + f.n + '</b><span class="lv"><b class="' + (LV[f.level] >= 1 ? 'on' : '') + '"></b><b class="' + (LV[f.level] >= 2 ? 'on' : '') + '"></b></span></button>';
-        this._r.layers.innerHTML = o.srcs.concat(o.offSrcs).map((s) => '<button class="cg-lay ' + (S.layersOff.has(s.name) ? '' : 'on') + '" data-a="layer" data-s="' + esc(s.name) + '" style="color:' + esc(s.col) + '" title="' + esc(s.name) + ' · ' + s.n + ' records · click to fold this layer out of the graph"><i style="background:' + esc(s.col) + '"></i>' + esc(s.name) + '<b>' + s.n + '</b></button>').join('')
+        /* THE METER IS THE SECTION CONTROL, AND THE LEGEND. The sources were a row of chips carrying a colour,
+           a name and a count — three facts the meter can carry while ALSO showing what the plot cannot: how much
+           of the window each source is actually spending. A band's width is its token share; pressing it cycles
+           off · focus · all, the same three levels the family chips have always had.
+           An off band keeps its place and a trace of its own colour: a band that vanished could never be pressed
+           again, and its source would be unreachable. min-width is the one concession to geometry — a source
+           holding 1% of the window is a 2px target. */
+        const meterSrcs = o.srcs.concat(o.offSrcs);
+        const meterTot = meterSrcs.reduce((a, s) => a + (s.tok || 0), 0) || 1;
+        const LVN = { off: 'off', focus: 'in focus: only what went into the prompt', all: 'everything' };
+        this._r.layers.innerHTML = (meterSrcs.length
+          ? '<span class="cg-meter" role="group" aria-label="context sources">'
+            + meterSrcs.map((s) => '<button class="cg-mb ' + esc(s.level) + '" data-a="layer" data-s="' + esc(s.name)
+              + '" data-level="' + esc(s.level) + '" style="--mc:' + esc(s.col) + ';flex-grow:' + Math.max(1, Math.round((s.tok || 0) / meterTot * 1000))
+              + '" title="' + esc(s.name + ' · ' + s.n + ' record' + (s.n === 1 ? '' : 's') + ' · ' + (s.tok || 0) + ' tokens · '
+              + Math.round((s.tok || 0) / meterTot * 100) + '% of the window · ' + (LVN[s.level] || 'everything')
+              + ' · press to cycle off · focus · all') + '"><i></i><span class="nm">' + esc(s.name) + '</span><b>' + s.n + '</b></button>').join('')
+            + '</span>'
+          : '')
           + (o.families || []).map(famChip).join('')
           + ((o.edgeTypes || []).length ? '<span class="sep"></span>' + o.edgeTypes.slice(0, 10).map((t) => '<button class="cg-lay et ' + (t.on ? 'on' : '') + '" data-a="etype" data-t="' + esc(t.name) + '"' + (t.on ? '' : ' data-off="1"') + ' title="' + esc(t.name.replace(/_/g, ' ').toLowerCase()) + ' · ' + t.n + ' relation' + (t.n === 1 ? '' : 's') + ' · click to ' + (t.on ? 'fold this type away' : 'draw it again') + '"><i></i>' + esc(t.name.replace(/_/g, ' ')) + '<b>' + t.n + '</b></button>').join('') : '')
           + (o.ghosts ? '<span style="flex:1"></span><button class="cg-lay ' + (S.related ? 'on' : '') + '" data-a="related" style="color:var(--cg-ac2)" title="Records related to this question that were not injected"><i class="s"></i>related<b>+' + o.ghosts + '</b></button>' : '');
