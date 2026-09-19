@@ -4642,16 +4642,23 @@ def subscribe_stream(name: str, cb: Callable):
 # ─────────────────────────────────────────────────────────────────────────────
 # REDIS DISPATCH
 # ─────────────────────────────────────────────────────────────────────────────
-async def dispatch_task(cap_name: str, payload: dict, trace_id: str) -> str:
+async def dispatch_task(cap_name: str, payload: dict, trace_id: str,
+                        bg: str = "") -> str:
+    """Queue a capability on the task stream. `bg`, when set, is the
+    BACKGROUND_LLM label the worker runs it under: contextvars do not cross
+    Redis, so the label travels in the record. The idle queue's `cap` jobs use
+    this so their Ollama calls are demoted and logged as background work."""
     task_id=new_id()
     rec={"id":task_id,"capability":cap_name,"payload":json.dumps(payload),"trace_id":trace_id,"ts":now_iso()}
+    if bg: rec["bg"]=str(bg)
     if REDIS: await REDIS.xadd(TASK_STREAM,rec,maxlen=5000,approximate=True)
     else:
         cap=CAPABILITY_REGISTRY.get(cap_name)
-        if cap: asyncio.create_task(_run_local(cap,task_id,payload,trace_id))
+        if cap: asyncio.create_task(_run_local(cap,task_id,payload,trace_id,bg=bg))
     return task_id
 
-async def _run_local(cap,task_id,payload,trace_id):
+async def _run_local(cap,task_id,payload,trace_id,bg=""):
+    if bg: BACKGROUND_LLM.set(str(bg))     # this task's own context only
     # Skip if already cancelled before it started.
     if task_id in CANCELLED_TASKS:
         CANCELLED_TASKS.discard(task_id)
@@ -4911,6 +4918,7 @@ async def worker_loop(worker_id: str):
                 cap_name = data[b"capability"].decode()
                 payload  = json.loads(data[b"payload"])
                 trace_id = data[b"trace_id"].decode()
+                bg_label = (data.get(b"bg") or b"").decode() if isinstance(data.get(b"bg"), bytes) else str(data.get(b"bg") or "")
                 cap      = CAPABILITY_REGISTRY.get(cap_name)
 
                 # Queued-cancel guard: if this task was stopped before a worker
@@ -4968,6 +4976,7 @@ async def worker_loop(worker_id: str):
                         await REDIS.xadd(TASK_STREAM, {
                             "id": task_id, "capability": cap_name,
                             "payload": json.dumps(payload), "trace_id": trace_id, "ts": now_iso(),
+                            **({"bg": bg_label} if bg_label else {}),
                         }, maxlen=5000, approximate=True)
                     else:
                         log.warning("Worker %s: no handler for %s on any worker", worker_id, cap_name)
@@ -4979,7 +4988,16 @@ async def worker_loop(worker_id: str):
                 else:
                     # Run the cap as a separate task so cluster.job.stop can
                     # cancel it cooperatively (cancel() interrupts at next await).
-                    inner = asyncio.ensure_future(cap["raw"](**payload, trace_id=trace_id))
+                    # A record carrying `bg` runs inside BACKGROUND_LLM: every
+                    # Ollama call the cap makes is then background work — demoted
+                    # off the GPU while a person is active — exactly as the dream
+                    # scheduler's calls are. The set() lands in the new task's own
+                    # context, so nothing leaks into the worker loop.
+                    async def _run_cap(_bg=bg_label):
+                        if _bg:
+                            BACKGROUND_LLM.set(_bg)
+                        return await cap["raw"](**payload, trace_id=trace_id)
+                    inner = asyncio.ensure_future(_run_cap())
                     RUNNING_TASKS[task_id] = inner
                     try:
                         result = await inner
@@ -10022,6 +10040,10 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "web/web_api_capabilities.py"),
         os.path.join(_here, "telegram/telegram_capabilities.py"),
         os.path.join(_here, "dream/dream_capabilities.py"),
+        # Idle-queue `cap` jobs: any capability as background work, dispatched
+        # through the task stream under a BACKGROUND_LLM label. After the
+        # queue's own producers, whose service it registers a handler with.
+        os.path.join(_here, "background/cap_jobs.py"),
         os.path.join(_here, "dream/project_capabilities.py"),
         os.path.join(_here, "execution/exec_capabilities.py"),
         os.path.join(_here, "proxmox/proxmox_capabilities.py"),
