@@ -202,3 +202,52 @@ def test_the_provider_declares_that_the_door_allocates_addresses():
     assert "assigns_addresses = True" in src
     assert '"ip": "" if prov.assigns_addresses else _alloc_ip(cfg)' in src
     assert '"provider": "netctl"' in src, "the door is the default for a new estate"
+
+
+# ── the incident: a LAN member must not tunnel to the LAN it is on ───────────
+
+def test_a_member_on_the_estate_lan_keeps_vera_off_the_tunnel():
+    """cpu-247, 19 Sep 2026: AllowedIPs carried Vera's LAN address, wg-quick routed
+    it through the door, Vera spoke to the host directly, and the asymmetric
+    path stalled SSH and the Ollama API for nine minutes."""
+    allowed = ["192.168.0.138/32", "10.66.66.0/24"]
+    assert core.door_routes_for(allowed, "10.66.66.2", member_host="192.168.0.247") == ["10.66.66.0/24"]
+    conf = core.wg_door_config("10.66.66.2", {"server_pubkey": PUB_A, "endpoint": "192.168.0.221:51821",
+                                              "allowed_ips": allowed}, "/k", member_host="192.168.0.247")
+    assert "AllowedIPs = 10.66.66.0/24" in conf and "192.168.0.138" not in conf
+
+
+def test_an_off_lan_member_still_reaches_vera_through_the_tunnel():
+    allowed = ["192.168.0.138/32", "10.66.66.0/24"]
+    assert core.door_routes_for(allowed, "10.66.66.9", member_host="10.5.0.9") == allowed
+    # No host known at all: nothing is stripped (the door's word stands).
+    assert core.door_routes_for(allowed, "10.66.66.9") == allowed
+    # The tunnel's own range is never dropped, whatever the member's LAN is.
+    assert "10.66.66.0/24" in core.door_routes_for(["10.66.66.0/24"], "10.66.66.4", member_host="10.66.66.4")
+
+
+def test_apply_passes_the_members_lan_address_and_records_the_device_first():
+    w = World()
+    member = {"host_id": "h1", "label": "Ollama-C", "host": "192.168.0.247", "pubkey": PUB_B}
+    out = run(w.provider.apply("h1", cfg(), member, peers=[]))
+    assert out["ok"]
+    assert "192.168.0.138" not in w.scripts[0], "a LAN member must not route Vera's LAN address into the tunnel"
+    assert "AllowedIPs = 10.66.66.0/24" in w.scripts[0]
+
+
+def test_a_slow_bring_up_is_checked_rather_than_declared_down():
+    w = World()
+    seen = []
+
+    async def ssh(host_id, command, timeout=120):
+        seen.append(command)
+        if "wg show" in command:
+            return {"ok": True, "rc": 0, "stdout": "VERA_WG_PRESENT\n", "stderr": ""}
+        return {"ok": False, "rc": -1, "stdout": "", "stderr": "timeout after 300s"}   # channel gave up
+
+    w.provider.apply.__globals__["_ssh"] = ssh
+    member = {"host_id": "h1", "label": "w", "host": "192.168.0.50", "pubkey": PUB_B}
+    out = run(w.provider.apply("h1", cfg(), member, peers=[]))
+    assert out["ok"], out
+    assert member["door_device"], "the device is on the record even though the channel timed out"
+    assert any("wg show" in c for c in seen)
