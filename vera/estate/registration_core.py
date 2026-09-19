@@ -65,6 +65,8 @@ def stale(src: Sources, resolved: Optional[Mapping[str, List[str]]] = None) -> L
     names = {_lower(m.get("label")).split(".")[0] for m in src.machines if m.get("label")}
     login_names = {_lower(h.get("label")).split(".")[0].split(" ")[0]: _lower(h.get("host")) for h in src.ssh_hosts}
     resolved = dict(resolved or {})
+    cert_names = {_lower(n) for c in src.certs if c.get("state") in ("ok", "renew soon", "expiring")
+                  for n in (c.get("names") or [])}
     for h in src.identity:
         fqdn = _lower(h.get("fqdn"))
         if not fqdn:
@@ -74,17 +76,23 @@ def stale(src: Sources, resolved: Optional[Mapping[str, List[str]]] = None) -> L
             continue
         if short in login_names and login_names[short] in addrs:
             continue                                   # a login by that name reaches a machine
+        if fqdn in cert_names:
+            continue                                   # a live service presents a certificate for it
         ips = [_lower(a) for a in (resolved.get(fqdn) or resolved.get(h.get("fqdn")) or [])]
         if any(ip in addrs for ip in ips):
             continue                                   # its address is a machine's
-        if fqdn not in resolved and h.get("fqdn") not in resolved:
+        if not ips:
+            # No address to check: a host registered without DNS (Vera's own
+            # vera.vera.int is one) looks exactly like a dead one. Say so, and
+            # never offer to remove it on that evidence.
             out.append({"kind": "identity", "id": h.get("fqdn"), "label": h.get("fqdn"),
-                        "why": "matches no machine or login by name, and its address is not known - check before removing",
+                        "why": ("it has no address record" if (fqdn in resolved or h.get("fqdn") in resolved)
+                                else "its address could not be read") + ", and no machine, login or certificate "
+                               "answers to its name - check before removing it in Trust > Identity",
                         "unverified": True, "action": None})
             continue
         out.append({"kind": "identity", "id": h.get("fqdn"), "label": h.get("fqdn"),
-                    "why": ("no machine has its address " + ", ".join(ips)) if ips else
-                           "it has no address record and no machine or login answers to its name",
+                    "why": "no machine has its address " + ", ".join(ips),
                     "action": {"cap": "identity.host.delete", "args": {"fqdn": h.get("fqdn"), "updatedns": True}}})
     for h in src.ssh_hosts:
         host = _lower(h.get("host"))
