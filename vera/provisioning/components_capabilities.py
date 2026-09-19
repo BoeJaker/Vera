@@ -31,6 +31,7 @@ Capabilities (group `provision.*`)
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import shlex
@@ -41,6 +42,7 @@ from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import APP, capability, emit_event, register_ui
+from Vera.vera.integrations.infrastructure_effects import observe_infrastructure_effect
 from Vera.vera.provisioning.components_core import rewrite_host, native_worker_cmd
 
 log = logging.getLogger("vera.provision.components")
@@ -187,6 +189,9 @@ async def cap_components(trace_id=None) -> Dict:
     "provision.deploy",
     http_method="POST", http_path="/provision/deploy", http_tags=["provision"],
     memory="off",
+    redact_args=["host_id", "component", "vera_url", "idempotency_key",
+                 "approval_receipt_ref"],
+    redact_result=True,
     description="Push a bundled component's file(s) to a stored host (into "
                 "~/.vera/edge) and optionally install deps + launch it. Inputs: "
                 "host_id (str!), component (gpu_inference|onnx_runtime|"
@@ -194,12 +199,16 @@ async def cap_components(trace_id=None) -> Dict:
                 "launch (bool=true), systemd (bool=false — install as a service, "
                 "needs sudo), sudo (bool=true), vera_url (str — required for "
                 "mesh_gateway), timeout (int=900). Output: {ok, pushed, installed, "
-                "launched, mode, port, url, log}.",
+                "launched, mode, port, url, log, effect_shadow}. Optional "
+                "idempotency, approval, and retry inputs are observe-only and "
+                "never sent to SSH.",
 )
 async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
                      install_deps: bool = False, launch: bool = True,
                      systemd: bool = False, sudo: bool = True, vera_url: str = "",
-                     timeout: int = 900, trace_id=None) -> Dict:
+                     timeout: int = 900, idempotency_key: str = "",
+                     approval_receipt_ref: str = "", retry: bool = False,
+                     trace_id=None) -> Dict:
     comp = _COMPONENTS.get(component)
     if not host_id or not comp:
         return {"ok": False, "error": "host_id and a valid component are required",
@@ -225,6 +234,15 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
             return {"ok": False, "error": f"bundled file missing in repo: {rel}"}
         parts.append(_push_cmd(content, f"{_EDGE_DIR}/{dest}"))
         out["pushed"].append(dest)
+    shadow = observe_infrastructure_effect(
+        provider="ssh", target_ref=host_id, resource_ref=component,
+        operation_ref=json.dumps({
+            "install_deps": bool(install_deps), "launch": bool(launch),
+            "port": port, "systemd": bool(systemd),
+        }, sort_keys=True, separators=(",", ":")), mode="component_deploy",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
+    out["effect_shadow"] = shadow
     res = await _ssh(host_id, " && ".join(parts), timeout=120)
     if not res.get("ok"):
         out["ok"] = False

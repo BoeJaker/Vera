@@ -55,14 +55,16 @@ def test_inventory_does_not_claim_unmigrated_enforcement_or_retry():
         "build.platformio", "build.run", "build.python"]
     provisioning = _domain(result, "proxmox_and_provisioning")
     assert provisioning["effect_contract_applied"] is False
-    assert provisioning["effect_observation"] == "partial"
+    assert provisioning["effect_observation"] == "complete"
     assert provisioning["observed_mutations"] == [
         "proxmox.guest.action", "proxmox.guest.exec",
         "proxmox.node.exec", "proxmox.guest.clone",
         "proxmox.vm.create", "proxmox.lxc.create",
         "proxmox.guest.destroy", "proxmox.fw.rule.add",
         "proxmox.fw.rule.delete",
-        "provision.store.deploy", "provision.store.remove"]
+        "provision.deploy", "provision.install", "provision.run",
+        "provision.store.deploy", "provision.store.remove",
+        "provision.security.deploy", "provision.security.remove"]
     assert "infrastructure" in EVIDENCE_FAMILIES
 
 
@@ -110,9 +112,9 @@ def test_inventory_matches_current_infrastructure_mutation_surface():
     ):
         assert name in provisioning["observed_mutations"]
     assert provider_effect_inventory()["next_adapter"] == {
-        "domain": "proxmox_and_provisioning",
-        "providers": ["provisioning"],
-        "reason": "managed_host_provisioning_write_operations_remain_unobserved",
+        "domain": "",
+        "providers": [],
+        "reason": "inventory_declared_remote_mutations_observed",
         "required_before_enforcement": [
             "payload_free_shadow_evidence",
             "operation_specific_approval",

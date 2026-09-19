@@ -137,14 +137,16 @@ _DOMAINS: tuple[dict[str, Any], ...] = (
         "external_mutation": True,
         "effect_family": "infrastructure",
         "effect_contract_applied": False,
-        "effect_observation": "partial",
+        "effect_observation": "complete",
         "observed_mutations": [
             "proxmox.guest.action", "proxmox.guest.exec",
             "proxmox.node.exec", "proxmox.guest.clone",
             "proxmox.vm.create", "proxmox.lxc.create",
             "proxmox.guest.destroy", "proxmox.fw.rule.add",
             "proxmox.fw.rule.delete",
+            "provision.deploy", "provision.install", "provision.run",
             "provision.store.deploy", "provision.store.remove",
+            "provision.security.deploy", "provision.security.remove",
         ],
         "automatic_retries": False,
         "source_modules": [
@@ -170,9 +172,9 @@ def provider_effect_inventory() -> dict[str, Any]:
             "enforcement_available": False,
         },
         "next_adapter": {
-            "domain": "proxmox_and_provisioning",
-            "providers": ["provisioning"],
-            "reason": "managed_host_provisioning_write_operations_remain_unobserved",
+            "domain": "",
+            "providers": [],
+            "reason": "inventory_declared_remote_mutations_observed",
             "required_before_enforcement": [
                 "payload_free_shadow_evidence",
                 "operation_specific_approval",
