@@ -11,7 +11,7 @@ Pure over estate_entity_core.Sources (tests/test_registration_core.py).
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Optional
 
 from .estate_entity_core import PLANES, Sources, _lower, machine_planes
 from .estate_nav_core import entity_ref
@@ -48,19 +48,44 @@ def coverage(src: Sources) -> Dict[str, Any]:
             "complete": sum(1 for r in rows if r["complete"])}
 
 
-def stale(src: Sources) -> List[Dict[str, Any]]:
+def stale(src: Sources, resolved: Optional[Mapping[str, List[str]]] = None) -> List[Dict[str, Any]]:
     """Registry entries no machine answers to: a directory host, an SSH login,
-    a mesh member or a door device whose machine is gone. Each carries the
-    action that would remove it, for prune() to run or a person to read."""
+    a mesh member whose machine is gone. Each carries the action that would
+    remove it, for prune() to run or a person to read.
+
+    A directory host is judged by ADDRESS, never by name alone: CT126 is
+    labelled "Ollama" but registered as ollama126.vera.int, and the Vera VM is
+    "LLM" but vera.vera.int - a name match called both stale on 19 Sep 2026.
+    `resolved` is the directory's own A records (fqdn -> addresses). A host is
+    stale only when it is positively unclaimed: its name matches no machine
+    and no login, and its addresses (if known) belong to no machine. A host
+    whose address is unknown is not stale - it is "unverified" and left alone."""
     out: List[Dict[str, Any]] = []
     addrs = {a for m in src.machines for a in src.addrs_of(m)}
     names = {_lower(m.get("label")).split(".")[0] for m in src.machines if m.get("label")}
+    login_names = {_lower(h.get("label")).split(".")[0].split(" ")[0]: _lower(h.get("host")) for h in src.ssh_hosts}
+    resolved = dict(resolved or {})
     for h in src.identity:
         fqdn = _lower(h.get("fqdn"))
-        if fqdn and fqdn.split(".")[0] not in names:
+        if not fqdn:
+            continue
+        short = fqdn.split(".")[0]
+        if short in names:
+            continue
+        if short in login_names and login_names[short] in addrs:
+            continue                                   # a login by that name reaches a machine
+        ips = [_lower(a) for a in (resolved.get(fqdn) or resolved.get(h.get("fqdn")) or [])]
+        if any(ip in addrs for ip in ips):
+            continue                                   # its address is a machine's
+        if fqdn not in resolved and h.get("fqdn") not in resolved:
             out.append({"kind": "identity", "id": h.get("fqdn"), "label": h.get("fqdn"),
-                        "why": "no machine in the estate answers to this name",
-                        "action": {"cap": "identity.host.delete", "args": {"fqdn": h.get("fqdn"), "updatedns": True}}})
+                        "why": "matches no machine or login by name, and its address is not known - check before removing",
+                        "unverified": True, "action": None})
+            continue
+        out.append({"kind": "identity", "id": h.get("fqdn"), "label": h.get("fqdn"),
+                    "why": ("no machine has its address " + ", ".join(ips)) if ips else
+                           "it has no address record and no machine or login answers to its name",
+                    "action": {"cap": "identity.host.delete", "args": {"fqdn": h.get("fqdn"), "updatedns": True}}})
     for h in src.ssh_hosts:
         host = _lower(h.get("host"))
         if not host or host in _KEEP_LOGINS:
