@@ -17,9 +17,12 @@ is the measuring instrument — a UI that could quietly perturb it would make
 every number it displays suspect.
 
 The one deliberate exception is `census.control.set` (2026-09-10): it writes a
-REQUEST — pause, resume or drop — that the harness polls and acts on itself,
-so a prod restart no longer costs a census. It never touches a run file. See
-`control.py` for the contract and why the default on restart is resume.
+REQUEST — pause, resume, drop or yield — that the harness polls and acts on
+itself, so a prod restart no longer costs a census. It never touches a run
+file. See `control.py` for the contract and why the default on restart is
+resume. A yield (2026-09-19) is the polite one: the goal in flight finishes,
+the harness parks before the next, and the box is free for other tests until
+a resume — no row is cancelled and nothing is re-run.
 """
 import asyncio
 import sys
@@ -29,7 +32,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability
+from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability, enum_schema
 from Vera.vera.census import census_core as cc
 from Vera.vera.census import operator_census_core as occ
 
@@ -782,21 +785,37 @@ async def cap_census_control(trace_id=None) -> Dict[str, Any]:
     return await census_control_view()
 
 
+#: The longest `census.control.set` will block waiting for the harness to act.
+#: A yield is acknowledged only when the goal in flight ENDS, which can be a
+#: whole wall cap away (30 min), so a caller who wants to wait that long polls
+#: `census.control` instead of holding an HTTP call open.
+CONTROL_WAIT_MAX_S = 300.0
+
+
 @capability(
     "census.control.set", memory="off",
     http_method="POST", http_path="/census/control/set", http_tags=["census", "workshop"],
+    schema=enum_schema(action=["pause", "resume", "drop", "yield"]),
     description=(
-        "ASK the running census to pause, resume or drop. The harness polls the "
-        "control file every 15 s and acts on it: pause cancels the goal in flight "
-        "and, once resumed and prod is healthy, RE-RUNS that goal from scratch "
-        "(the abandoned attempt is noted on the row, never recorded as a result); "
-        "drop cancels the goal and ends the whole set, archived as -dropped. "
+        "ASK the running census to pause, resume, drop or yield. The harness polls "
+        "the control file every few seconds and acts on it: pause cancels the goal "
+        "in flight and, once resumed and prod is healthy, RE-RUNS that goal from "
+        "scratch (the abandoned attempt is noted on the row, never recorded as a "
+        "result); drop cancels the goal and ends the whole set, archived as "
+        "-dropped; YIELD is the polite pause for running other tests on the box: "
+        "the goal in flight finishes untouched, then the harness parks before the "
+        "next goal (active.state=paused, pause_kind=yield) until a resume - nothing "
+        "is cancelled or re-run. Protocol for a test that needs the GPU: "
+        "action=yield, then wait until `acked` (pass wait_s, or poll census.control "
+        "for active.state=paused), run the test, then action=resume. "
         "sys.dev.restart writes a pause itself (default) or a drop "
-        "(resume_census=false) before it re-execs. Inputs: action (str! — pause|"
-        "resume|drop), reason (str), by (str). Output: {ok, wrote, state, active}."),
+        "(resume_census=false) before it re-execs. Inputs: action (str! - pause|"
+        "resume|drop|yield), reason (str), by (str), wait_s (int, 0-300: block until "
+        "the harness has acted on a pause/yield/drop, or this long). Output: {ok, "
+        "wrote, state, active, acked, waited_s}."),
 )
 async def cap_census_control_set(action: str = "", reason: str = "", by: str = "",
-                                 trace_id=None) -> Dict[str, Any]:
+                                 wait_s: int = 0, trace_id=None) -> Dict[str, Any]:
     try:
         data = _ctl.make_control(action, reason=reason, by=by or "census.control.set")
     except ValueError as e:
@@ -804,10 +823,28 @@ async def cap_census_control_set(action: str = "", reason: str = "", by: str = "
     ok = await asyncio.to_thread(_ctl.write_json, _control_path(), data)
     if not ok:
         return {"ok": False, "error": "could not write %s" % _control_path()}
+    kind = ((data.get("drop") and "DROP") or (data.get("after_goal") and "YIELD")
+            or (data.get("pause") and "PAUSE") or "RESUME")
+    log.warning("census.control: %s (%s) by %s", kind, reason or "-", by or "-")
+    ack: Dict[str, Any] = {"acked": False, "waited_s": 0.0, "why": "not waited"}
+    try:
+        wait = min(max(float(wait_s or 0), 0.0), CONTROL_WAIT_MAX_S)
+    except (TypeError, ValueError):
+        wait = 0.0
+    if wait > 0 and kind in ("PAUSE", "YIELD"):
+        # A harness ALREADY parked (a yield written over a pause, say) does not
+        # rewrite its active file while it waits, so the timestamp-based ack
+        # would never arrive: the box is free right now, say so.
+        parked = await asyncio.to_thread(_read_active_sync)
+        if parked.get("live") and parked.get("state") == "paused":
+            ack = {"acked": True, "waited_s": 0.0, "why": "already parked"}
+            wait = 0.0
+    if wait > 0 and kind != "RESUME":
+        ack = await census_wait_acked(
+            {"action": "drop" if kind == "DROP" else "pause", "wrote": True,
+             "written_at": data.get("ts")}, wait)
     view = await census_control_view()
-    log.warning("census.control: %s (%s) by %s", data.get("pause") and "PAUSE"
-                or data.get("drop") and "DROP" or "RESUME", reason or "-", by or "-")
-    return {"ok": True, "wrote": data, **view}
+    return {"ok": True, "wrote": data, **view, **ack}
 
 
 async def census_before_restart(resume: bool, by: str = "sys.dev.restart") -> Dict[str, Any]:
@@ -823,7 +860,8 @@ async def census_before_restart(resume: bool, by: str = "sys.dev.restart") -> Di
                         "the harness stays paused after the restart", plan["why"])
         return plan
     data = _ctl.make_control(plan["action"], reason=_ctl.RESTART_REASON, by=by,
-                             resume_on_start=(plan["action"] == "pause"))
+                             resume_on_start=(plan["action"] == "pause"),
+                             restore=plan.get("restore"))
     plan["wrote"] = await asyncio.to_thread(_ctl.write_json, _control_path(), data)
     plan["written_at"] = str(data.get("ts") or "")
     plan["ack_wait_max_s"] = _ctl.PAUSE_ACK_MAX_S
@@ -935,8 +973,7 @@ async def census_wait_acked(plan: Dict[str, Any], max_wait_s: float = 0.0) -> Di
             return {"acked": True, "waited_s": waited}
         await asyncio.sleep(1.0)
     waited = round(time.time() - t0, 1)
-    log.warning("census: harness did not acknowledge the %s within %ss; restarting anyway",
-                action, waited)
+    log.warning("census: harness did not acknowledge the %s within %ss", action, waited)
     return {"acked": False, "waited_s": waited, "why": "timeout"}
 
 
@@ -948,17 +985,18 @@ def _lift_restart_pause_sync() -> Dict[str, Any]:
     control = _ctl.read_json(path)
     if not _ctl.should_lift_on_start(control):
         return {"lifted": False, "state": _ctl.control_state(control)}
-    data = _ctl.make_control("resume", reason="lifted on startup after restart",
-                             by="census startup")
+    data = _ctl.lift_control(control, by="census startup")
     ok = _ctl.write_json(path, data)
-    return {"lifted": bool(ok), "state": "run" if ok else _ctl.control_state(control)}
+    return {"lifted": bool(ok), "state": _ctl.control_state(data) if ok else _ctl.control_state(control)}
 
 
 try:
     _lift = _lift_restart_pause_sync()
     if _lift.get("lifted"):
-        log.warning("census: restart pause LIFTED on startup — the harness will resume "
-                    "and re-run the goal it was on")
+        log.warning("census: restart pause LIFTED on startup — %s",
+                    "a person's yield is restored; the harness parks until they resume"
+                    if _lift.get("state") == "yield"
+                    else "the harness will resume and re-run the goal it was on")
 except Exception as _e:                                  # pragma: no cover
     log.info("census: startup pause check skipped: %s", _e)
 
