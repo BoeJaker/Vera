@@ -25,7 +25,7 @@ t('cards: a run leaves a card at its side and travels the gutter between the sta
 t('cards: a tall card pushes the rows under it down by its excess (the element hands the measured heights back)', (() => { const b = X.layout(scene, 'cards', 1200, 800, { heights: { 'm1:read:0': 54 } }), h = X.layout(scene, 'cards', 1200, 800, { heights: { 'm1:read:0': 200 } }); const r = h.cards.filter((k) => k.mid === 'm1' && k.layer === 'read'); return r[0].h === 200 && r[1].y - r[0].y === 64 + 146 && h.plates[1].h === b.plates[1].h + 146 && b.cards.filter((k) => k.mid === 'm1' && k.layer === 'read')[1].y - b.cards.filter((k) => k.mid === 'm1' && k.layer === 'read')[0].y === 64; })());
 t('cards: the turns are rows, the stage grows down; every plate is as tall as ITS content (the exchange 2 cards, the read plate its table\'s room), never below the floor', c.rows.length === 2 && c.plates[5].y > c.plates[0].y + c.plates[0].h && c.size.h > c.plates[5].y && c.size.w >= c.plates[4].x + 215 && c.inv === 1 && c.plates[2].h === 60 + 64 + 54 + 24 && c.plates[1].h === 60 + 64 + 54 + 42 + 24 && c.plates[1].h !== c.plates[2].h && c.plates[9].h === 150 && c.plates[0].h >= 150);
 t('cards: labels — the turn (who · time · text), each layer\'s caption inside its plate, each lane with its count', c.labels.some((l) => l.cls.indexOf('station') === 0 && /you · 14:31/.test(l.n)) && c.labels.some((l) => /layer hit read/.test(l.cls) && l.k === 'what the turn read' && l.y === c.plates[1].y + 15) && c.labels.some((l) => /lane memory/.test(l.cls) && l.k === '1'));
-t('cards: the context graph is lanes of typed nodes in its plate, the galaxy past them', c.gnodes.filter((n) => n.mid === 'm1').length === 3 && c.gnodes.every((n) => n.x > c.plates[0].x && n.x < c.plates[0].x + 430 && /^M/.test(n.icon)) && c.graphs.length === 2 && c.graphs[0].y > Math.max.apply(null, c.gnodes.filter((n) => n.mid === 'm1').map((n) => n.y)));
+t('cards: the context graph is lanes of typed nodes in its plate — the board draws the lanes alone; the galaxy sheet past them is an option', c.gnodes.filter((n) => n.mid === 'm1').length === 3 && c.gnodes.every((n) => n.x > c.plates[0].x && n.x < c.plates[0].x + 430 && /^M/.test(n.icon)) && c.graphs.length === 0 && (() => { const g = X.layout(scene, 'cards', 1200, 800, { galaxy: true }); return g.graphs.length === 2 && g.graphs[0].y > Math.max.apply(null, g.gnodes.filter((n) => n.mid === 'm1').map((n) => n.y)); })());
 // ── front
 const f = X.layout(scene, 'front', 1200, 800, { layer: 2 });
 t('front: five panels of the selected station, the exchange centred, the others in depth', f.panels.length === 5 && f.panels[2].cls.indexOf('on') === 0 && /translateX\(0px\) translateZ\(0px\) rotateY\(26deg\)/.test(f.panels[2].tf) && /translateZ\(-126px\)/.test(f.panels[1].tf) && f.panels[4].cls.indexOf('far') === 0);
@@ -50,9 +50,9 @@ t('frontRuns: none while a section is focused', X.frontRuns(ff, () => 0).h.lengt
 const gt = { turns: [{ mid: 'g1', who: 'you', t: '10:00', text: 'why', read: [{ id: 'v1', n: 'fabric.py', kind: 'chunk', score: 0.9 }, { id: 'm1', n: 'recall', kind: 'memory', score: 0.6, included: false }], rel: [{ from: 'm1', to: 'v1', kind: 'mem' }], land: [{ id: 'k1', n: 'boot log', kind: 'note' }], made: [{ n: 'render', kind: 'image', src: 'data:image/png;base64,AAAA' }, { n: 'loop', kind: 'loop', steps: [{ label: 'recall' }, { label: 'author' }] }] }], sel: 'g1' };
 const gd = X.graphData(gt.turns[0]);
 t('graphData: a lane per family, the members with their relevance, the relations the host recorded, the run\'s steps and their order', gd.laneList.join(',') === 'context,memory,loop,canvas' && gd.nodes.length === 5 && gd.rels.length === 2 && gd.rels.some((r) => r.kind === 'mem') && gd.rels.some((r) => r.kind === 'step' && r.from === 'step:1' && r.to === 'step:2') && gd.nodes.find((n) => n.id === 'm1').included === false && gd.nodes.filter((n) => n.lane === 'loop').length === 2, JSON.stringify(gd));
-const gc = X.layout(gt, 'cards', 1200, 700, { den: 'full' });
-t('cards: the graph layer is nodes and a galaxy box, not cards; an image card gets room in Full', gc.graphs.length === 1 && gc.graphs[0].data.nodes.length === 5 && gc.gnodes.length === 5 && gc.cards.filter((c) => c.layer === 'graph').length === 0 && gc.cards.find((c) => c.card.src).h === 116);
-t('cards: the relations inside the graph run between the nodes (a memory dashed, the loop\'s thread), a pinned item back into the canvas lane', runsOf(gc, 'rel mem') === 1 && runsOf(gc, 'rel step') === 1 && runsOf(gc, 'pin') === 1 && gc.edges.filter((e) => e.cls === 'pin').length === 5);
+const gc = X.layout(gt, 'cards', 1200, 700, { den: 'full', galaxy: true });
+t('cards: the graph layer is nodes (and, asked for, a galaxy box), not cards; an image card gets room in Full', gc.graphs.length === 1 && gc.graphs[0].data.nodes.length === 5 && gc.gnodes.length === 5 && gc.cards.filter((c) => c.layer === 'graph').length === 0 && gc.cards.find((c) => c.card.src).h === 116);
+t('cards: the relations inside the graph run between the nodes (a memory dashed, the loop\'s thread), a pinned item back into the canvas lane', runsOf(gc, 'rel mem') === 1 && runsOf(gc, 'rel step') === 1 && runsOf(gc, 'pin') === 1 && gc.edges.filter((e) => e.cls === 'pin').length >= 5);
 const gh = X.layout(gt, 'cards', 1200, 700, { den: 'hover' });
 t('cards: in Hover and Zen the image card keeps its height (the image shows over it)', gh.cards.find((c) => c.card.src).h === 54);
 t('cards: the chip bar\'s data — the selected turn\'s lanes with counts, the ghosts, related on', c.ctx && c.ctx.lanes.map((l) => l.lane + ':' + l.n).join(',') === 'context:1,loop:2' && c.ctx.ghosts === 0 && c.ctx.related === true && gc.ctx.lanes.map((l) => l.lane + ':' + l.n).join(',') === 'context:1,memory:1,loop:2,canvas:1' && gc.ctx.ghosts === 1);
@@ -67,7 +67,7 @@ t('iso: a plate per station as a four-cornered polygon, the selected lit', i.pla
 t('iso: plates are identical parallelograms in a row (same shape, shifted)', (() => { const d = (p) => [p.poly[1].x - p.poly[0].x, p.poly[2].y - p.poly[0].y]; const a = d(i.plates[0]), b = d(i.plates[1]); return Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) < 0.5 && i.plates[1].poly[0].x > i.plates[0].poly[0].x; })());
 t('iso: every plate carries its four edges as lines, every band its four hairlines (the planes without their fills)', i.outline.length === 8 && i.outline.every((e) => e.len > 0 && typeof e.deg === 'number') && i.boutline.length === 40 && i.boutline.every((e) => e.col));
 t('iso: cards anchored at projected points inside the frame, counter-scaled in the DOM', i.cards.length === c.cards.length && i.cards.every((k) => k.anchored && k.x > 0 && k.x < 1200 && k.y > 0 && k.y < 800));
-t('iso: the same runs as the cards view', i.edges.filter((e) => e.cls === 'in').length === 3 && i.edges.filter((e) => e.cls === 'out').length === 3 && i.edges.filter((e) => e.cls === 'link').length === 1);
+t('iso: the same runs as the cards view (counted by run — a run is several legs on the lattice)', ['in', 'in mem', 'out', 'link', 'pin', 'rel step'].every((k) => runsOf(i, k) === runsOf(c, k)) && runsOf(i, 'out') === 3 && runsOf(i, 'link') === 1);
 t('iso: the shared projection is used when given', (() => { let n = 0; const P = (u, v, z) => { n++; return [u - v, (u + v) * 0.5 - (z || 0)]; }; X.layout(scene, 'iso', 1200, 800, { proj: P }); return n > 8; })());
 t('iso: fitted into the frame', i.fit.s > 0.3 && i.fit.s <= 1.4);
 t('an empty session lays out nothing and does not crash', X.layout({ turns: [] }, 'iso', 800, 600).cards.length === 0 && X.layout(null, 'front', 800, 600).panels.length === 0 && X.frontRuns(X.layout(null, 'front', 800, 600), null).n === 0);
@@ -97,7 +97,8 @@ t('iso PTZ: the element carries the controls — pan arrows, tilt, swing, fit �
 { const G = (() => { try { return require(path.join(__dirname, '..', 'vera', 'chat', 'context_graph_element.js')); } catch (_) { return null; } })();
   const gscene = { sel: 'm1', turns: [{ mid: 'm1', who: 'you', t: '14:31', text: 'q', reply: 'a',
     read: Array.from({ length: 12 }, (_, i) => ({ id: 'n' + i, n: 'record ' + i, d: 'chunk', col: '#a78bfa', kind: i % 3 === 0 ? 'memory' : 'chunk', score: 0.9 - i * 0.05 })), made: [], land: [] }] };
-  const cg = X.layout(gscene, 'cards', 1200, 800).graphs[0], ig = X.layout(gscene, 'iso', 1200, 800).graphs[0];
+  const cg = X.layout(gscene, 'cards', 1200, 800, { galaxy: true }).graphs[0], ig = X.layout(gscene, 'iso', 1200, 800, { galaxy: true }).graphs[0];
+  t('the galaxy sheet is drawn only when asked for (the board draws the lanes alone)', X.layout(gscene, 'cards', 1200, 800).graphs.length === 0 && X.layout(gscene, 'iso', 1200, 800).graphs.length === 0 && !!cg && !!ig);
   t('the sheet is as tall as a round plot needs — never the letterbox that clipped it', !!cg && !!ig && cg.h / cg.w > 0.6 && ig.h / ig.w > 0.6 && cg.h >= 110 && ig.h >= 110, JSON.stringify({ cards: cg && [cg.w, cg.h], iso: ig && [ig.w, ig.h] }));
   t('the iso sheet is bigger than the 200x84 the plot used a third of', !!ig && ig.w >= 220 && ig.h >= 145, JSON.stringify(ig && [ig.w, ig.h]));
   // and the galaxy, laid out in that sheet, is INSIDE it — the measurement the defect was found with
@@ -111,12 +112,12 @@ t('iso PTZ: the element carries the controls — pan arrows, tilt, swing, fit �
   else t('the context graph element is on hand to measure the galaxy with', false, 'context_graph_element.js did not load'); }
 
 // ── the iso stack's turn selector reaches the plate it picks (Notes/42 defect 62) ───────────────────────────
-{ const many = { sel: 'm8', turns: Array.from({ length: 8 }, (_, i) => ({ mid: 'm' + (i + 1), who: 'you', t: '14:1' + i, text: 'q', reply: 'a',
+{ const many = { sel: 'm8', turns: Array.from({ length: 12 }, (_, i) => ({ mid: 'm' + (i + 1), who: 'you', t: '14:1' + i, text: 'q', reply: 'a',
     read: [{ id: 'r' + i, n: 'record', d: 'chunk', col: '#a78bfa', kind: 'chunk', score: 0.8 }], made: [], land: [] })) };
   const st8 = X.layout(many, 'iso', 1440, 1000, { stack: true });
   const cys = st8.plates.map((p) => p.poly.reduce((a, c) => a + c.y, 0) / p.poly.length);
   const off = cys.filter((y) => y < 0 || y > 1000).length;
-  t('the stacked deck runs past the frame — the reason a pick has to be brought into it', st8.plates.length === 8 && off >= 3, 'plates off the frame: ' + off);
+  t('the stacked deck runs past the frame — the reason a pick has to be brought into it', st8.plates.length === 12 && off >= 3, 'plates off the frame: ' + off);
   t('a plate says which turn it is, so the pick can be found in the DOM', /class="xp-pl iso' \+ \(p\.cls \? ' ' \+ p\.cls : ''\) \+ '" data-mid="/.test(SRC2) && /class="xp-pl' \+ \(p\.cls \? ' ' \+ p\.cls : ''\) \+ '" data-mid="/.test(SRC2));
   t('selecting brings the plate into the frame, and only when stacked in iso', /select\(mid\) \{ this\._S\.scene\.sel = mid; this\._schedule\(\); this\._isoBring\(\);/.test(SRC2)
     && /_isoBring\(\) \{\s*\n\s*if \(this\._S\.mode !== 'iso' \|\| !this\._S\.stack\) return;/.test(SRC2)

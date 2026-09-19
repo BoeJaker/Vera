@@ -66,8 +66,9 @@ t('and the built object still stands in when there is no face to draw',
 
 // the relation edges answer to the tier and to the switch (defect 83)
 t('a relation run carries the two records it joins, into the DOM',
-  SRC.includes("if (a && b) run(a, b, R[0], R[1], R[2], [String(r.from), String(r.to)]);")
-  && SRC.includes("if (joins) seg.joins = joins;")
+  SRC.includes("if (a && b) R.add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)]);")
+  && SRC.includes("if (a && b) R.add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)], { rel: true });")
+  && SRC.includes("if (r.joins) seg.joins = r.joins;")
   && SRC.includes("(e.joins ? ' data-a=\"' + esc(e.joins[0]) + '\" data-b=\"' + esc(e.joins[1]) + '\"' : '')"));
 t('Full draws them all; Hover and Zen rest them and light what the pointer touches',
   SRC.includes('vera-exploded[data-den="hover"] .xp-e.rel,vera-exploded[data-den="zen"] .xp-e.rel{opacity:0;transition:opacity .13s ease}')
@@ -79,7 +80,7 @@ t('and a rotation turns the scene on the spot rather than swinging it out of the
   SRC.includes("this._schedule(); this._isoCentre(); return this._S.tilt;") && SRC.includes("this._schedule(); this._isoCentre(); return this._S.azim;")
   && SRC.includes("_isoCentre() {") && SRC.includes("p.x += (b.left + b.width / 2) - cx; p.y += (b.top + b.height / 2) - cy; p.auto = false;"));   // the iso group takes the view's angles since the PTZ controls; a face returns above this, so there is no face-or-body body left to name
 t('the cards scene and the front carousel draw the face too', SRC.includes("const face = (card.form || card.record || String(card.kind || '').toLowerCase() === 'widget') ? faceHtml(card, wd, S.wsz) : ''; const b0 = isoBody(card, face ? null : wd);") && SRC.includes("const rcFace = (c) => (c.card && (c.card.form || c.card.record || String(c.card.kind || '').toLowerCase() === 'widget') ? faceHtml(c.card, widgetOf(c.card), S.wsz) : '');"));
-t('a card carrying a record is a widget to the layout', SRC.includes("const isWidget = (c) => !!(c && (c.tpl || c.form || (c.record && typeof c.record === 'object') || String(c.kind || '').toLowerCase() === 'widget'));"));
+t('a card carrying a record is a widget to the layout', SRC.includes("const isWidgetCard = (c) => !!(c && (c.tpl || c.form || (c.record && typeof c.record === 'object') || String(c.kind || '').toLowerCase() === 'widget'));") && SRC.includes("const isWidget = isWidgetCard;"));
 t('the face is styled at the card, hidden with a tight card until hovered or opened', SRC.includes("vera-exploded .xit-face{display:block;margin-top:4px;min-height:var(--fh,70px)") && SRC.includes("vera-exploded .xit.tight .xit-face{display:none}") && SRC.includes("vera-exploded .xf-diag vera-mermaid{display:block;width:100%;height:110px"));
 
 console.log((fails ? 'FAILED ' : 'passed ') + (fails ? fails + ' check(s)' : 'all checks'));
