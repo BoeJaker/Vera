@@ -36,7 +36,7 @@ t('the capture is keyed by the question, not a single slot',
 t('the single slot is gone entirely', !/_ctxTurnSend\b/.test(src),
   'one slot means the second send overwrites the first turn in flight');
 t('the turn still captures what it actually sent, at send',
-  src.indexOf('nodes:JSON.parse(JSON.stringify(CTX_NODES)), edges:JSON.parse(JSON.stringify(CTX_EDGES)),') >= 0);
+  src.indexOf('nodes:JSON.parse(JSON.stringify(_allN)), edges:JSON.parse(JSON.stringify(_allE)),') >= 0);
 t('the save looks the capture up by THIS turn\'s own question',
   src.indexOf('const _ts=(_qmid&&_ctxTurnSends.get(_qmid))||{};') >= 0,
   'taking "whatever was captured last" stamps a newer question\'s context onto an older turn');

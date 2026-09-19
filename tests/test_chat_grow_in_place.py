@@ -54,6 +54,12 @@ def test_the_runs_cross_the_seam_at_shared_heights():
 def test_the_mini_graph_follows_the_focus_and_explode_folds_the_remote_graph():
     src = _read("vera", "chat", "chat_panel.html")
     assert "if(mid&&mid!==_ctxMiniMid){ _ctxMiniMid=mid; try{ renderCtxGraph(); }catch(_){} }" in src
-    assert "_lhmPost('focus',{ mid:mid })" in src and "else if(m.act==='focus'&&a.mid)" in src
+    # The focused turn travels chat -> menu. It is broadcast from the FOLLOW itself, not only from the graph
+    # column's sync: on the board the column is not open, so the column-only broadcast never fired and the
+    # menu's graph could not move. An EMPTY mid is a real value ("the chat is at the bottom with a question
+    # being typed, show the live set"), so the handler no longer requires a.mid, and it recomputes the frame
+    # and repaints rather than redrawing the legacy SVG alone.
+    assert "_lhmPost('focus',{ mid:m })" in src and "_lhmPost('focus',{ mid:mid })" in src
+    assert "else if(m.act==='focus'){ _grFocusMid=a.mid||'';" in src
     assert "remote:_ctxRemote.on" in src and "_lhmPost('grow-set',{ on:false })" in src and "_lhmPost('grow-set',{ on:true })" in src
     assert "else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }" in src

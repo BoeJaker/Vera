@@ -6558,7 +6558,11 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     _ctxColEstate();
     const s=document.getElementById('grColSub'); if(s) s.textContent='context graph · '+incl.length+' of '+nodesAll.length+' in the prompt';
     if(mid&&mid!==_ctxMiniMid){ _ctxMiniMid=mid; try{ renderCtxGraph(); }catch(_){} }   // the mini graph follows the focus too
-    if(mid&&mid!==_ctxFocusSent&&_EMBED.only!=='menu'){ _ctxFocusSent=mid; _lhmPost('focus',{ mid:mid }); }
+    // the column's own broadcast, for the paths that reach it without the scroll follow (a turn clicked to pin
+    // it). It must agree with _ctxFollow's, which is the one that can say "show the live set" with an empty mid
+    // — otherwise, with the column open, this would immediately override that and the composer's context would
+    // never appear at the bottom.
+    if(mid&&mid!==_ctxFocusSent&&_EMBED.only!=='menu'&&!_ctxComposerLive()){ _ctxFocusSent=mid; _lhmPost('focus',{ mid:mid }); }
   }
   let _ctxMiniMid='';
   // the live loop's events, teed into the column's loop lane (the same stream the loop card and the rail's graph read)
@@ -10113,8 +10117,20 @@ Your task: decide what to do next to advance toward the goal.
        the live set while scrolling, which is the very complaint this feature exists to fix. Measured: three
        questions asked without waiting produced ONE frame and two unframed turns; the same three asked in
        sequence produced three. A map keyed by the question means each turn in flight keeps its own. */
-    _ctxTurnSends.set(uMsg.mid, { mid:uMsg.mid, amid:aMsg.mid, ids:new Set(CTX_NODES.map(n=>n.id)), query:_ctxQuery,
-      nodes:JSON.parse(JSON.stringify(CTX_NODES)), edges:JSON.parse(JSON.stringify(CTX_EDGES)),
+    /* THE WHOLE prompt, not just the retrieved records. CTX_NODES holds what was RETRIEVED (memory, vector,
+       graph, fabric, web...); the agent, its skills, its ontologies, its capabilities and the related Q&A are
+       synthesised at render time by _ctxAssembledExtra from the LIVE _assembledCtx and were never in CTX_NODES.
+       A frame built from CTX_NODES alone is therefore missing five whole families, and a past turn drew a
+       visibly poorer graph than it had shown live - the user reported exactly that: "missing some of the
+       sections like caps, graph, skills". They belong to the turn, so they are captured WITH it, here, while
+       _assembledCtx still describes this question. That also makes a frame self-contained: nothing about a past
+       turn is re-derived from today's state. */
+    let _allN=CTX_NODES, _allE=CTX_EDGES;
+    try{ const _ex=_ctxAssembledExtra(_CTX_ALL_LAYERS, CTX_NODES);
+      _allN=CTX_NODES.concat(_ex.nodes.filter(n=>!CTX_NODES.some(c=>c.id===n.id)));
+      _allE=CTX_EDGES.concat(_ex.edges); }catch(_){}
+    _ctxTurnSends.set(uMsg.mid, { mid:uMsg.mid, amid:aMsg.mid, ids:new Set(_allN.map(n=>n.id)), query:_ctxQuery,
+      nodes:JSON.parse(JSON.stringify(_allN)), edges:JSON.parse(JSON.stringify(_allE)),
       turnNo:document.querySelectorAll('#msgs .mwrap.u').length });
     _ctxTurnSendLast=uMsg.mid; _ctxTypingT=0;   // this turn's frame, saved when the reply lands; the composer is sent, not typed
     try{
@@ -12916,7 +12932,18 @@ Your task: decide what to do next to advance toward the goal.
     return { nodes:CTX_NODES, edges:CTX_EDGES, frame:null };
   }
   // the frame in view right now (the turn in focus, live while typing) — the one both graphs draw
-  function _ctxActiveCompute(){ try{ const w=_focusedTurn(); const f=_ctxFrameInView(w?(w.dataset.mid||''):''); return f?f.id:null; }catch(_){ return null; } }
+  /* THE TRANSCRIPT AND THE GRAPH ARE TWO PAGES. On the board the chat runs as one instance (only=chat) and the
+     rail's menu, which is where the mini context graph lives, as another (only=menu). The menu renders NO
+     transcript, so _focusedTurn() finds no .mwrap at all and this returned null on every scroll — the graph
+     could never follow, and always drew the live set. Measured in the real two-instance split: scrolling the
+     chat through three turns left the menu's graph, budget bar and list identical at every position.
+     So when this page has no transcript, the turn in view is whatever the chat instance last told us
+     (_grFocusMid, set from its 'focus' broadcast). Standalone, nothing changes: the wraps are right here. */
+  function _ctxActiveCompute(){ try{
+      const w=_focusedTurn();
+      let mid=w?(w.dataset.mid||''):'';
+      if(!mid && !document.querySelector('#msgs .mwrap')) mid=_grFocusMid||'';
+      const f=_ctxFrameInView(mid); return f?f.id:null; }catch(_){ return null; } }
   // the follow: on the transcript's scroll and the composer's input, whether or not the graph is grown — the mini
   // re-renders when the frame in view changes; the grown column syncs through its anchor
   let _ctxFollowT=0, _ctxFollowTimer=null;
@@ -12933,6 +12960,15 @@ Your task: decide what to do next to advance toward the goal.
     try{ document.querySelectorAll('[data-ctx-layer]').forEach(b=>b.classList.toggle('on', _ctxLayers.has(b.dataset.ctxLayer))); }catch(_){}
   }
   function _ctxFollow(now){ const run=()=>{ _ctxFollowT=Date.now(); const active=_ctxActiveCompute(); if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; _ctxViewRepaint(); }
+      /* Tell the other instance which turn is in view. This went out only from _ctxColumnSync, which runs only
+         when the graph COLUMN is mounted — so on the board, where the graph lives in the rail's menu and the
+         column is not open, scrolling the chat broadcast nothing and the menu's graph never moved.
+         An EMPTY mid is meaningful and is sent: it means "show the live set", which is what the bottom of the
+         transcript with a question half-typed means. The menu cannot work that out for itself — it has neither
+         the transcript nor the composer — so the instance that owns both decides. */
+      try{ if(_EMBED.only!=='menu'&&document.querySelector('#msgs .mwrap')){
+        const w=_focusedTurn(); const m=_ctxComposerLive()?'':(w?(w.dataset.mid||''):'');
+        if(m!==_ctxFocusSent){ _ctxFocusSent=m; _lhmPost('focus',{ mid:m }); } } }catch(_){}
       if(_pages.has('graph')&&_ctxCol) _graphAnchorPost(true); else { try{ _ctxRunsDraw(); }catch(_){} } };
     if(now||Date.now()-_ctxFollowT>150){ if(_ctxFollowTimer){ clearTimeout(_ctxFollowTimer); _ctxFollowTimer=null; } return run(); }
     if(!_ctxFollowTimer) _ctxFollowTimer=setTimeout(()=>{ _ctxFollowTimer=null; run(); }, 160); }
@@ -13799,7 +13835,12 @@ function _embedMount(){
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from==='menu') return; const a=m.args||{};
       if(m.act==='session'&&a.sid&&a.sid!==SID){ try{ loadSession(a.sid); }catch(_){} }
       else if(m.act==='ctx'){ CTX_NODES=Array.isArray(a.nodes)?a.nodes:[]; CTX_EDGES=Array.isArray(a.edges)?a.edges:[]; _ctxQuery=a.query||''; if(a.mid) _grFocusMid=a.mid; try{ renderCtxGraph(); renderCtxList(); renderFabPane(); }catch(_){} const cc=document.getElementById('ctxCount'); if(cc) cc.textContent=CTX_NODES.length+' ctx'; const empty=document.getElementById('ctxEmpty'); if(empty) empty.style.display=CTX_NODES.length?'none':'flex'; if(_ctxGrown){ _ctxColSig=''; try{ _ctxColumnSync(a.mid||''); }catch(_){} } }
-      else if(m.act==='focus'&&a.mid){ _grFocusMid=a.mid; if(_ctxGrown){ try{ _ctxColumnSync(a.mid); }catch(_){} } try{ renderCtxGraph(); }catch(_){} }
+      /* The turn in view, from the instance that has the transcript. An EMPTY mid is a real value — "the chat is
+         at the bottom with a question being typed, show the live set" — so this no longer requires a.mid, which
+         used to drop that case. And it recomputes the frame and repaints EVERY surface: it used to set
+         _grFocusMid and redraw the legacy SVG only, leaving the mini plot, the budget bar and "In this prompt"
+         on whatever they had, which on the board is the whole context graph the user actually looks at. */
+      else if(m.act==='focus'){ _grFocusMid=a.mid||''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid); }catch(_){} } try{ _ctxFollow(true); }catch(_){} }
       else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }
       else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} }
       // updateFrameUI too: the legacy strip and Frames pane are views onto CTX_FRAMES like any other, and the
@@ -13810,6 +13851,17 @@ function _embedMount(){
   if(_EMBED.only==='chat'){
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from!=='menu') return; const a=m.args||{};
       try{ if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='grown') _ctxRemoteSet(a.on); else if(m.act==='lanes'){ _ctxRemote.lanes=Array.isArray(a.lanes)?a.lanes:[]; _ctxRunsDraw(); } else if(m.act==='page') togglePage(a.name); else if(m.act==='explode') explode(a.on); else if(m.act==='explodeMode') explodeMode(a.m); else if(m.act==='session'&&a.sid&&a.sid!==SID) loadSession(a.sid); else if(m.act==='newSession') newSession(); }catch(_){} };
+  }
+  /* The transcript's scroll listener is bound HERE, for any instance that has a transcript.
+     It was bound only from the rail's quick menu and from mounting the graph column — and the chat instance on
+     the board has neither, so #msgs carried NO scroll listener at all: scrolling computed no focus, broadcast
+     nothing, and the menu's graph had nothing to follow. It is idempotent (msgs._ctxFollowBound), so the two
+     existing call sites are unaffected; this only guarantees it happens. */
+  try{ _ctxFollowBind(); }catch(_){}
+  if(!document.getElementById('msgs')||!document.getElementById('msgs')._ctxFollowBound){
+    // the element is built later on some paths; watch briefly rather than miss the binding for the session
+    let _fbT=0; const _fb=setInterval(()=>{ try{ _ctxFollowBind(); }catch(_){}
+      const m=document.getElementById('msgs'); if((m&&m._ctxFollowBound)||++_fbT>40) clearInterval(_fb); }, 250);
   }
 }
   // the header folds when the frame is too narrow for every control: the secondary groups move into the ⋯ sheet (pages ·
