@@ -70,6 +70,8 @@ label.tog{display:flex;gap:6px;align-items:center;color:var(--fg2);font-size:11p
       <div class="muted" id="meta" style="margin-top:8px"></div></div>
   </div></div>
 </div>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,
@@ -94,7 +96,7 @@ function render(){
   const showOld = $('showOld').checked;
   const rows = (DATA.certs||[]).filter(c => showOld || c.state !== 'superseded');
   $('certs').innerHTML = rows.length ? '<table><tr><th>Name</th><th>Where</th><th>Issuer</th><th>Covers</th><th>Expires</th><th>Days left</th><th>State</th></tr>'
-    + rows.map(c => `<tr><td>${esc(c.name)}</td><td class="muted">${esc(SOURCE[c.source]||c.source)} · ${esc(c.where)}</td>
+    + rows.map(c => `<tr><td><span data-entity="cert:${esc(c.name)}" title="Everything the estate knows about this certificate" style="cursor:pointer;border-bottom:1px dotted var(--dim)">${esc(c.name)}</span></td><td class="muted">${esc(SOURCE[c.source]||c.source)} · ${esc(c.where)}</td>
       <td>${esc(c.issuer_kind||'')}</td><td><code>${esc((c.names||[]).slice(0,4).join(', '))}</code></td>
       <td class="num">${esc(when(c.not_after))}</td><td class="num">${c.days_left==null?'':esc(c.days_left)}</td>
       <td><span class="pill ${STATE_KIND[c.state]||''}">${esc(c.state)}</span></td></tr>`).join('') + '</table>'
