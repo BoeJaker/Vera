@@ -10107,9 +10107,16 @@ Your task: decide what to do next to advance toward the goal.
        turns with genuinely different context produced ONE frame, and both questions drew the same graph
        (Notes/42 defect 103). The turn number is taken here too, from the rendered questions, so the label
        cannot drift as HISTORY-based counting did. */
-    _ctxTurnSend={ mid:uMsg.mid, amid:aMsg.mid, ids:new Set(CTX_NODES.map(n=>n.id)), query:_ctxQuery,
+    /* Keyed by the QUESTION's mid, because turns overlap. Asking a second question while the first is still
+       streaming is ordinary use, and the composer accepts it - but this was a single slot, so the second send
+       overwrote the first turn's capture and the first turn ended up with no frame at all. It then fell back to
+       the live set while scrolling, which is the very complaint this feature exists to fix. Measured: three
+       questions asked without waiting produced ONE frame and two unframed turns; the same three asked in
+       sequence produced three. A map keyed by the question means each turn in flight keeps its own. */
+    _ctxTurnSends.set(uMsg.mid, { mid:uMsg.mid, amid:aMsg.mid, ids:new Set(CTX_NODES.map(n=>n.id)), query:_ctxQuery,
       nodes:JSON.parse(JSON.stringify(CTX_NODES)), edges:JSON.parse(JSON.stringify(CTX_EDGES)),
-      turnNo:document.querySelectorAll('#msgs .mwrap.u').length }; _ctxTypingT=0;   // this turn's frame, saved when the reply lands; the composer is sent, not typed
+      turnNo:document.querySelectorAll('#msgs .mwrap.u').length });
+    _ctxTurnSendLast=uMsg.mid; _ctxTypingT=0;   // this turn's frame, saved when the reply lands; the composer is sent, not typed
     try{
       const _mS=parseFloat(document.getElementById('ctxSim')?.value||'0.55');
       const _kK=parseInt(document.getElementById('ctxK')?.value||'8');
@@ -10414,26 +10421,35 @@ Your task: decide what to do next to advance toward the goal.
 
     // NOTE: NO /memory/record/turn call here — handled server-side by agents.py
 
-    { const _ts=_ctxTurnSend||{};
+    { let _aw0=aMsg&&aMsg.wrap, _qw0=null;
+      if(_aw0){ _qw0=_aw0.previousElementSibling;
+        while(_qw0&&!(_qw0.classList&&_qw0.classList.contains('mwrap'))) _qw0=_qw0.previousElementSibling;
+        if(_qw0&&!_qw0.classList.contains('u')) _qw0=null; }
+      /* THIS turn's capture, looked up by ITS OWN question - never "whatever was captured last". With turns
+         overlapping, the last capture belongs to a question asked after this one, and taking it would stamp the
+         newer question's context onto this older turn. The question's own mid is the key both ends. */
+      let _qmid=(_qw0&&_qw0.dataset.mid)||'';
+      try{ if(!_qmid && uMsg && uMsg.mid) _qmid=uMsg.mid; }catch(_){}
+      const _ts=(_qmid&&_ctxTurnSends.get(_qmid))||{};
       // the set this turn actually sent, captured at send; only if that is empty does the live set stand in
       const _sn=Array.isArray(_ts.nodes)&&_ts.nodes.length?_ts.nodes:(CTX_NODES.length?CTX_NODES.slice():[]);
       /* EVERY completed turn gets a frame, even an empty one. A turn that carried no records is not a turn
          without a frame - it is a turn whose context was empty, and saying so is what stops it borrowing the
          live set and showing the newest turn's context instead. The first turn of a page load routinely has
          none, because the send races the context fetch on a 600ms timer (Notes/42 defect 105). */
-      /* The turn's own message elements are in hand, so its mids come from THEM. _ctxTurnSend.mid goes
+      /* The turn's own message elements are in hand, so its mids come from THEM. _ctxTurnSends entry mid goes
          stale on some paths, and _saveFrame tags by mid, so a stale mid stamped this turn's frame onto an
          EARLIER message: measured, three turns produced m1->109100, m3->065619, m5->109100, with turns 1
          and 3 sharing one frame. Taking both mids from the answer wrap and the question wrap before it
          removes the last identifier that could drift (Notes/42 defect 110). */
-      let _aw=aMsg&&aMsg.wrap, _qw=null;
-      if(_aw){ _qw=_aw.previousElementSibling;
-        while(_qw&&!(_qw.classList&&_qw.classList.contains('mwrap'))) _qw=_qw.previousElementSibling;
-        if(_qw&&!_qw.classList.contains('u')) _qw=null; }
+      const _aw=_aw0, _qw=_qw0;
       const _f=_saveFrame('Turn '+(_ts.turnNo||document.querySelectorAll('#msgs .mwrap.u').length),true,{ mid:(_qw&&_qw.dataset.mid)||_ts.mid||_cvRelMid||'', amid:(_aw&&_aw.dataset.mid)||_ts.amid||'', sentIds:_ts.ids||null, query:_ts.query||_ctxQuery, nodes:_sn, edges:_ts.edges||[] });
       try{ if(_f){ if(_aw) _aw.dataset.frame=String(_f.id); if(_qw) _qw.dataset.frame=String(_f.id); } }catch(_){}
       updateFrameUI();
-      _ctxTurnSend=null; _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} try{ _ctxFollow(true); }catch(_){} }
+      // only THIS turn's capture is retired; any other turn still in flight keeps its own
+      if(_qmid) _ctxTurnSends.delete(_qmid);
+      if(_ctxTurnSendLast===_qmid) _ctxTurnSendLast='';
+      _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} try{ _ctxFollow(true); }catch(_){} }
     // Re-fetch context after send if "ctxOnSend" is enabled. Use the USER's
     // last message — never the LLM response — so the search query reflects
     // what the user actually asked for. The previous version passed
@@ -11709,7 +11725,7 @@ Your task: decide what to do next to advance toward the goal.
     const _flush=()=>{
       if(stale())return;
       CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query;
-      if(_ctxTurnSend) _ctxTurnSend.ids=new Set(nodes.map(n=>n.id));   // the turn in flight: this is its prompt's context
+      _ctxPatchSentIds(nodes);   // the turn in flight: this is its prompt's context — only when one turn is in flight
       renderCtxGraph();renderCtxList();renderFabPane(); _ctxBroadcast();
       const cc=document.getElementById('ctxCount');if(cc)cc.textContent=nodes.length+' ctx';
       const empty=document.getElementById('ctxEmpty');if(empty)empty.style.display=nodes.length?'none':'flex';
@@ -12007,7 +12023,7 @@ Your task: decide what to do next to advance toward the goal.
     if(stale()){if(sp)sp.classList.add('hidden');return;}
 
     _ctxAbort=null;
-    CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query; if(_ctxTurnSend) _ctxTurnSend.ids=new Set(nodes.map(n=>n.id)); _ctxBroadcast();
+    CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query; _ctxPatchSentIds(nodes); _ctxBroadcast();
     if(sp)sp.classList.add('hidden');
     const vec=nodes.filter(n=>n.source==='vector'||n.source==='both').length;
     const grp=nodes.filter(n=>n.source==='graph').length;
@@ -12832,14 +12848,37 @@ Your task: decide what to do next to advance toward the goal.
     const nodes=JSON.parse(JSON.stringify(_src)).map(n=>Object.assign(n,{ by:(n.source==='run'||(sent&&!sent.has(n.id)))?'a':'u' }));
     const f={id:Date.now(),label:label||('Frame '+(CTX_FRAMES.length+1)),nodes,edges:JSON.parse(JSON.stringify(_srcE)),ts:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),mid:x.mid||'',amid:x.amid||'',turn:x.mid?'turn '+x.mid:'',query:x.query||_ctxQuery||''};CTX_FRAMES.push(f);if(CTX_FRAMES.length>500)CTX_FRAMES.splice(0,CTX_FRAMES.length-500);
     /* the message names its own frame. Every identifier this lookup has leaned on drifts - HISTORY turn
-       numbers gave two frames both called "Turn 2", mids are re-issued at render time, _ctxTurnSend is null on
+       numbers gave two frames both called "Turn 2", mids are re-issued at render time, the send capture is absent on
        some paths - so the frame is attached to the question and the answer themselves and read back off the
        element in view (Notes/42 defect 104). */
     try{ const _tag=(m)=>{ if(!m) return; const w=document.querySelector('#msgs .mwrap[data-mid="'+m+'"]'); if(w) w.dataset.frame=String(f.id); };
       _tag(f.mid); _tag(f.amid); }catch(_){}   /* the frames live in the page; 500 turns is far beyond any real transcript and stops a very long session growing without bound */_ctxBroadcastFrames();return f;}
-  // which frame is the turn in view: the one whose question or response is that message — unless it is the newest turn
-  // and the next question is being typed (the live set is what the graphs show then)
-  let _ctxTurnSend=null, _ctxActiveFrame=null;
+  // which frame is the turn in view: the one whose question or response is that message — unless you are at the
+  // very bottom with a question typed, where the live set (what THAT question is assembling) is what to show
+  let _ctxTurnSends=new Map(), _ctxTurnSendLast='', _ctxActiveFrame=null;
+  /* A context fetch that lands after a send belongs to the turn in flight, and says which records its prompt
+     actually carried. With more than one turn in flight there is no way to tell which question it was for, and
+     guessing would stamp one question's records onto another's frame — so the send-time copy stands, which is
+     already a faithful snapshot of what was live when that question went. */
+  function _ctxPatchSentIds(nodes){
+    try{ if(_ctxTurnSends.size!==1 || !_ctxTurnSendLast) return;
+      const t=_ctxTurnSends.get(_ctxTurnSendLast); if(t) t.ids=new Set(nodes.map(n=>n.id)); }catch(_){}
+  }
+  /* AT THE BOTTOM means the composer's context is what to show. Scrolled up even slightly, the message in view
+     owns the graphs — including while a question sits half-typed, which is the whole point: you can read back
+     over the conversation without losing what you were writing, and the typed question's context comes back the
+     moment you return to the end. A turn pinned by clicking it wins over both. */
+  function _ctxAtBottom(){
+    try{ const m=document.getElementById('msgs'); if(!m) return true;
+      return m.scrollTop+m.clientHeight>=m.scrollHeight-8; }catch(_){ return true; }
+  }
+  function _ctxComposerLive(){
+    try{ if(_grFocusMid) return false;              // a pinned turn is an explicit choice; it is not overridden
+      if(!_ctxAtBottom()) return false;
+      const inp=document.getElementById('chatInput');
+      return !!(inp&&inp.value.trim());
+    }catch(_){ return false; }
+  }
   function _ctxFrameInView(mid){ if(!mid||!CTX_FRAMES.length) return null;
     /* the element in view names its own frame — no counting, no matching, nothing that can drift. The mid/amid
        comparison stays as a fallback for frames made by paths with no wrap to tag (Frames button, restore). */
@@ -12848,9 +12887,12 @@ Your task: decide what to do next to advance toward the goal.
       if(fid) f=CTX_FRAMES.find(x=>String(x.id)===String(fid))||null; }catch(_){}
     if(!f) f=CTX_FRAMES.find(x=>x.mid===mid||x.amid===mid)||null;
     if(!f) return null;
-    // the newest turn's frame gives way to the live set while the next question is being typed (its context is what
-    // the graphs then show — the old graph's "start typing to load context")
-    if(f===CTX_FRAMES[CTX_FRAMES.length-1]){ const inp=document.getElementById('chatInput'); if(inp&&inp.value.trim()&&Date.now()-_ctxTypingT<90000) return null; }
+    /* The composer wins ONLY at the very bottom. This used to be keyed on "is this the newest frame", plus a 90s
+       timer — so a half-typed question blanked the newest turn's context wherever you were reading, including
+       part-way up a long final answer, and it came back on a stopwatch rather than on where you were. The rule
+       is positional now: scrolled up at all, the message in view owns the graphs even with a question typed out;
+       return to the end and the typed question's own context comes back. */
+    if(_ctxComposerLive() && f===CTX_FRAMES[CTX_FRAMES.length-1]) return null;
     return f; }
   function _ctxBroadcastFrames(){ if(_EMBED.only==='menu') return; try{ _lhmPost('frames',{ frames:CTX_FRAMES }); }catch(_){} }
   /* THE one reading of "the context on screen", and the seam this whole feature turns on.
@@ -14345,7 +14387,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
        past turn had. Do NOT generalise it into per-turn rebuilding: a past turn's frame computed today is
        today's context wearing that turn's label, which is the exact complaint this feature exists to fix, and
        ctxFetch also ASSIGNS CTX_NODES/CTX_EDGES, so doing it per turn while scrolling would rewrite what the
-       next question carries. Frames for an active session are captured at send (_ctxTurnSend) and never
+       next question carries. Frames for an active session are captured at send (_ctxTurnSends) and never
        re-queried. A restored transcript's turns simply have no frames, and the graphs show the live set. */
     const lastContent=HISTORY.filter(h=>h.role==='user').slice(-1)[0]?.content||'';
     if(lastContent){
