@@ -127,5 +127,54 @@ t('it never eats the pointer', /\.cg-hover\{[^}]*pointer-events:none/.test(src),
   'a card under the cursor would flicker as the pointer left the node');
 t('it says what the record is', /cg-hv-t/.test(src) && /cg-hv-m/.test(src) && /in the prompt/.test(src));
 
+// ---- the list under the graph shows the whole record ---------------------------------------------------------
+// A row showed 140 characters and nothing else, so the only way to learn what a record was, or which side of the
+// turn read it, was to click through to the card. Under the graph the list is where records are READ.
+{
+  const LONG = 'The narrator keeps a journal of every step the loop took, and the reader needs the whole of it, '
+    + 'not the first twenty words, because the interesting part is usually at the end. '.repeat(3);
+  const st = api.stateFrom({ nodes: [
+    { id: 'm1', label: 'A memory', source: 'memory', text: LONG, score: 0.82, included: true, type: 'fact' },
+    { id: 'w1', label: 'A page', source: 'web', text: 'short', score: 0.7, included: false, url: 'https://example.com/p' },
+  ], rels: [], view: 'galaxy', color: () => '#8fb87a' });
+  const o = api.compute(st, 900, 700);
+  const full = api.listHtml(o, {}), compact = api.listHtml(o, { compact: true });
+  t('a row carries a detail block', full.indexOf('cg-row-d') >= 0);
+  t('it names the family and the relevance', />memory</.test(full) && /relevance 0\.82/.test(full));
+  t('it says whether the record went into the prompt', full.indexOf('in the prompt') >= 0 && full.indexOf('>excluded<') >= 0);
+  const body = (full.match(/cg-row-x">([^<]*)/) || [])[1] || '';
+  t('the body is the record, not a 140-character tease', body.length > 300, body.length + ' chars');
+  t('a url is reachable from the row', full.indexOf('cg-row-u') >= 0);
+  t('the rail\'s compact face is left alone', compact.indexOf('cg-row-d') < 0 && compact.indexOf('<small>') >= 0);
+}
+
+// ---- the meter is the section control, and the legend ---------------------------------------------------------
+// The sources were a row of chips carrying a colour, a name and a count — all three of which the meter carries
+// while also showing the one thing they could not: how much of the window each source spends.
+{
+  const mk = (s, n, inc) => Array.from({ length: n }, (_, i) => ({ id: s + i, label: s + ' ' + i, source: s,
+    text: 'y'.repeat(300), included: inc === undefined ? true : i < inc, score: 0.7 }));
+  const base = { nodes: [...mk('cap', 6, 2), ...mk('web', 2)], rels: [], view: 'galaxy', color: () => '#8fb87a' };
+  const all = api.compute(api.stateFrom(base), 900, 700);
+  const cap = all.srcs.find((s) => s.name === 'cap') || {};
+  t('a source carries its level and its token weight', cap.level === 'all' && cap.tok > 0 && cap.n === 6);
+
+  const foc = api.compute(Object.assign({}, api.stateFrom(base), { mix: { cap: 'focus' } }), 900, 700);
+  t('focus keeps only what went into the prompt', (foc.srcs.find((s) => s.name === 'cap') || {}).n === 2,
+    'six records, two of them in the prompt');
+
+  const off = api.compute(Object.assign({}, api.stateFrom(base), { mix: { cap: 'off' } }), 900, 700);
+  t('off drops the source from the plot', !off.srcs.find((s) => s.name === 'cap'));
+  t('...but it keeps its place on the meter, at its own width',
+    (off.offSrcs.find((s) => s.name === 'cap') || {}).tok > 0,
+    'a band that vanished could never be pressed again');
+}
+t('the meter replaces the source chips', src.indexOf('class="cg-meter"') >= 0 && src.indexOf('class="cg-mb ') >= 0);
+t('a band is sized by its share of the window', /flex-grow:' \+ Math\.max\(1, Math\.round\(\(s\.tok \|\| 0\) \/ meterTot \* 1000\)\)/.test(src));
+t('pressing a source cycles off, focus, all — the same three a family has',
+  /k === 'layer'[\s\S]{0,220}cur === 'off' \? 'focus' : cur === 'focus' \? 'all' : 'off'/.test(src));
+t('and the old two-state source toggle is gone', src.indexOf("if (S.layersOff.has(s)) S.layersOff.delete(s); else S.layersOff.add(s);") < 0);
+t('an off band is still visible enough to press back on', /\.cg-mb\.off\{background:color-mix\(in srgb,var\(--mc\) 16%/.test(src));
+
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

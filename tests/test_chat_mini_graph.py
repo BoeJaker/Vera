@@ -42,7 +42,11 @@ def test_the_mini_has_both_faces_and_the_quick_menu_switches_them():
     assert "{ loop: 'off', plan: 'off', estate: 'off' }" in el and "memory: 'off', loop:" not in el, "the recalls are never folded off the simple face"
     # and nothing may reach around the fold to put a family back on that face
     assert "simplePlot" not in el, "the fold is the only thing that decides the simple face"
-    assert "const ctx = nodes.filter((n) => n.source !== 'memory' && !off.has(n.source)" in el, "the recalls keep their own arm on the detailed face"
+    # the recalls keep their own arm on the detailed face: memory is excluded from ctx so it is drawn on the
+    # memory ring, not fanned into a context sector. The filter now also reads a source's LEVEL (off / focus /
+    # all) rather than a plain on-off set, so the line is asserted by what it does, not by its old wording.
+    assert "if (n.source === 'memory') return false;" in el, "the recalls keep their own arm on the detailed face"
+    assert "const srcLvl = (s) => mixOf(S, s || '?');" in el, "a source has three levels, like a family"
     # and nothing else is laid over it - no lanes, no list, no record card
     assert "if (simple) return '<div class=\"cg-mini simple\"" in el
     assert "const detail = simple ? null :" in el and "list = simple ? false :" in el

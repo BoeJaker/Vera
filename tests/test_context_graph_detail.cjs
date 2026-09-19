@@ -43,7 +43,9 @@ const l0 = G.compute(base, W, H);
 t('a row per record, the memory recall included, most relevant first', l0.list.length === 6 && l0.list[0].id === 'v1' && l0.list[l0.list.length - 1].id === 'w1', l0.list.map((r) => r.id).join(','));
 t('a row knows its source colour, relevance, tokens, included, text', l0.list[0].col && l0.list[0].score === 0.94 && l0.list[0].tok > 0 && l0.list[0].included === true && l0.list.find((r) => r.id === 'w1').included === false && l0.list[0].text.indexOf('def ensure') === 0);
 const lh = G.listHtml(l0, {});
-t('the list draws rows with the dot, the bar, the tokens and the toggle', (lh.match(/class="cg-row/g) || []).length === 6 && /class="bar"><i style="width:94%"/.test(lh) && /data-a="toggle" data-id="w1"[^>]*>＋</.test(lh) && /6 records/.test(lh));
+// count the ROW element, not anything whose class merely BEGINS with cg-row: a row now carries its detail
+// block (cg-row-d / -m / -x / -u), and a prefix match counts those as rows too
+t('the list draws rows with the dot, the bar, the tokens and the toggle', (lh.match(/class="cg-row[ "]/g) || []).length === 6 && /class="bar"><i style="width:94%"/.test(lh) && /data-a="toggle" data-id="w1"[^>]*>＋</.test(lh) && /6 records/.test(lh));
 t('an excluded record is a hollow row', /cg-row excl[^"]*" data-id="w1"/.test(lh));
 
 // ── the search: the list filters, the plot dims what does not match, the hits count ──
