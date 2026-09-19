@@ -47,6 +47,21 @@ def test_every_menu_has_the_boards_body_and_the_context_menu_is_the_galaxy_budge
     # and _qGalOff is now the ONE source filter: the legacy .lbtn row reads it through _ctxLayers, so a band
     # repaints every surface it governs rather than only the rail's own menu
     assert "el.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; _ctxViewRepaint(); }));" in ctx, "pressing a band toggles the same _qGalOff the chips drove, and repaints every surface"
+    # THE RAW PROMPT. The legacy Context pane held six sub-views: Graph, List, Fabric, Raw, Frames and Settings.
+    # Every one of them is covered by a surface that outlives it - the plot, "In this prompt", the fabric section,
+    # the frames scrubber - and its Settings sections have already been MOVED into the Settings page (_spTake
+    # appendChild's them out of #rpCtx, which is why that view now reads "6 sections moved to Settings").
+    # Raw was the exception: the assembled system prompt could be read in that pane and nowhere else. It lives
+    # here now, folded shut, because it is long and it is not what the menu is for.
+    assert 'data-w="raw prompt \u00b7 text"' in ctx, "the raw prompt has a home outside the legacy pane"
+    assert 'data-a="raw-toggle"' in ctx and 'data-a="raw-refresh"' in ctx
+    assert "const _ctxRawText=()=>" in HTML and "_assembledCtx.fullRaw" in HTML, "it reads the real assembled prompt"
+    # the fold and the prompt's length are part of the repaint key, or pressing the fold repaints nothing - the
+    # same early-return the budget bar's off-state fell into
+    assert "+':'+(_qRawOpen?'R':'r')+':'+_ctxRawLen();" in HTML, "the fold is in the menu's repaint signature"
+    # and the refresh must not also toggle the fold
+    assert "ev.stopPropagation();" in HTML
+
     assert "nodeClick(d.dataset.id)" in ctx, "a record in the galaxy opens"
     assert "cta:{get label(){ return _ctxGrown?'Fold back to the quick menu ←':'Expand to the full graph →'; }, run:()=>_ctxGrow()}}," in HTML, "the CTA grows the menu into the full graph and folds it back"
     assert "function _ctxShares(){" in HTML and "function _ctxMeterSegs(){" in HTML and "try{ _ctxMeterSegs(); }catch(_){}" in HTML, "the header meter carries the same shares"
