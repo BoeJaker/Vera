@@ -170,12 +170,48 @@ def door_device_name(label, host_id=""):
     return stem[:32]
 
 
-def wg_door_config(address, door, iface_key_path):
+def door_routes_for(allowed_ips, address, member_host=""):
+    """The ranges a member should send INTO the tunnel. Anything it is already
+    on stays off the tunnel: a member on the estate LAN that tunnels to Vera's
+    LAN address sends its replies through the door while Vera speaks to it
+    directly, and the asymmetric path stalls every connection - which took
+    cpu-247 away from Vera for nine minutes on 19 Sep 2026. The tunnel's own
+    range is always kept; a range whose /24 contains the member's own address
+    is dropped; everything else (what an off-LAN member needs) is kept."""
+    import ipaddress
+    keep = []
+    try:
+        me = ipaddress.ip_address(str(member_host).split("/")[0]) if member_host else None
+        my_lan = ipaddress.ip_network(f"{me}/24", strict=False) if me else None
+    except ValueError:
+        me, my_lan = None, None
+    try:
+        overlay = ipaddress.ip_address(str(address).split("/")[0])
+    except ValueError:
+        overlay = None
+    for a in (allowed_ips or []):
+        if not a:
+            continue
+        try:
+            net = ipaddress.ip_network(a, strict=False)
+        except ValueError:
+            continue
+        if overlay is not None and overlay in net:
+            keep.append(a)                       # the tunnel itself
+        elif my_lan is not None and net.network_address in my_lan:
+            continue                             # already on that LAN: leave it there
+        else:
+            keep.append(a)
+    return keep
+
+
+def wg_door_config(address, door, iface_key_path, member_host=""):
     """A member's WireGuard config when its only peer is netctl's door.
     `door` is what /api/door/peer answered: server_pubkey, endpoint, allowed_ips,
     keepalive. The private key is read on the host from `iface_key_path` (shell
-    substitution), so it is never rendered here or sent over the wire."""
-    allowed = [a for a in (door.get("allowed_ips") or []) if a]
+    substitution), so it is never rendered here or sent over the wire. Ranges
+    the member is already on are not routed into the tunnel (door_routes_for)."""
+    allowed = door_routes_for(door.get("allowed_ips") or [], address, member_host)
     lines = ["[Interface]",
              "PrivateKey = $(cat %s)" % iface_key_path,
              "Address = %s/32" % str(address).split("/")[0],

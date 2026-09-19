@@ -621,7 +621,11 @@ class NetctlDoorProvider(WireGuardProvider):
                                           "(no server key or endpoint) — is its "
                                           "DuckDNS name configured?"}
         ifc = self._iface(cfg)
-        conf = wg_door_config(dev.get("address", ""), dev, f"/etc/wireguard/{ifc}.key")
+        # The door is on the record before the tunnel is tried, so a bring-up
+        # that times out still leaves Vera knowing which device is its own.
+        member["door_device"] = dev.get("name", "")
+        conf = wg_door_config(dev.get("address", ""), dev, f"/etc/wireguard/{ifc}.key",
+                              member_host=member.get("host", ""))
         # Unquoted heredoc so $(cat key) runs ON the host: the private key is
         # read there and never crosses the wire.
         script = ("umask 077\n"
@@ -633,11 +637,18 @@ class NetctlDoorProvider(WireGuardProvider):
                   f"(systemctl enable --now wg-quick@{ifc} >/tmp/vera_wg_up.log 2>&1 "
                   f"|| wg-quick up {ifc} >/tmp/vera_wg_up.log 2>&1) && echo VERA_WG_UP "
                   "|| echo VERA_WG_UPFAIL; fi")
-        r = await _ssh(host_id, _root_wrap(script), timeout=120)
+        # systemctl enable --now on a fresh install has taken over two minutes;
+        # if the channel gives up first, the interface is checked directly
+        # rather than reporting a tunnel that came up a moment later as down.
+        r = await _ssh(host_id, _root_wrap(script), timeout=300)
         out, err = (r.get("stdout") or ""), (r.get("stderr") or "")
         if "VERA_WG_SYNCED" not in out and "VERA_WG_UP" not in out:
-            return {"ok": False,
-                    "error": (err.strip() or out.strip() or "the tunnel would not come up")[:400]}
+            probe = await _ssh(host_id, _root_wrap(f"wg show {ifc} listen-port >/dev/null 2>&1 "
+                                                    f"&& echo VERA_WG_PRESENT"), timeout=60)
+            if "VERA_WG_PRESENT" not in (probe.get("stdout") or ""):
+                return {"ok": False,
+                        "error": (err.strip() or out.strip() or "the tunnel would not come up")[:400]}
+            out = "VERA_WG_UP"
         # The door allocated the address, so the member record follows it.
         member["ip"] = str(dev.get("address", "")).split("/")[0]
         member["door_device"] = dev.get("name", "")
