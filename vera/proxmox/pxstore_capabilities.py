@@ -85,6 +85,7 @@ from Vera.vera.capability_orchestration import (
 )
 # A guest's exec login: its pve:<vmid>@ label, else its guest tag (one SSH store).
 from Vera.vera.provisioning import ssh_store_merge_core as _ssh_store
+from Vera.vera.proxmox import pool_core as _pool
 from Vera.vera.proxmox.pxstore_attach_core import (
     DEFAULT_CT_PATH as _ATTACH_CT_PATH,
     is_token_bindmount_refusal as _is_token_refusal,
@@ -451,6 +452,14 @@ def _cpuset_fmt(cpus: List[int]) -> str:
 _INV_SCRIPT = r"""
 echo '###ZPOOL'
 zpool list -Hp -o name,size,alloc,free,health 2>/dev/null
+echo '###ZPOOLX'
+zpool list -Hp -o name,size,alloc,free,health,fragmentation,capacity,dedupratio 2>/dev/null
+echo '###ZCOMP'
+zfs get -Hp -o name,value compressratio $(zpool list -H -o name 2>/dev/null) 2>/dev/null
+echo '###ZSTATUS'
+zpool status 2>/dev/null
+echo '###ZIOSTAT'
+zpool iostat -Hp 1 2 2>/dev/null
 echo '###ZFS'
 zfs list -Hp -t filesystem,volume -o name,used,avail,refer,quota,mountpoint,type 2>/dev/null
 echo '###DF'
@@ -463,11 +472,17 @@ echo '###END'
 
 def _parse_inventory(stdout: str) -> Dict:
     pools, datasets, mounts, exports = [], [], [], []
+    # zpool's own words about each pool (layout, scrub, throughput, compression)
+    # are kept whole and handed to pool_core after the line-by-line pass.
+    raw: Dict[str, List[str]] = {"ZPOOLX": [], "ZCOMP": [], "ZSTATUS": [], "ZIOSTAT": []}
     section = ""
     for line in stdout.splitlines():
         line = line.rstrip()
         if line.startswith("###"):
             section = line[3:]
+            continue
+        if section in raw:
+            raw[section].append(line)
             continue
         if not line.strip():
             continue
@@ -488,8 +503,15 @@ def _parse_inventory(stdout: str) -> Dict:
                 exports.append({"path": f[0], "clients": " ".join(f[1:])})
         except Exception:
             continue
+    try:
+        pools = _pool.merge(pools, _pool.parse_zpool_status("\n".join(raw["ZSTATUS"])),
+                            _pool.parse_zpool_list("\n".join(raw["ZPOOLX"])),
+                            _pool.parse_compress("\n".join(raw["ZCOMP"])),
+                            _pool.parse_iostat("\n".join(raw["ZIOSTAT"])))
+    except Exception as e:                       # the basic rows still stand
+        log.debug("inventory: pool detail failed: %s", e)
     return {"pools": pools, "datasets": datasets, "mounts": mounts,
-            "exports": exports}
+            "exports": exports, "pool_findings": _pool.pool_findings(pools)}
 
 
 def _guest_datasets(vmid: int, datasets: List[Dict]) -> List[Dict]:
@@ -569,7 +591,7 @@ async def cap_inventory(cluster_id: str = "", node: str = "", trace_id=None) -> 
 
     unalloc = sum(p["free"] for p in inv["pools"])
     return {"node": node, "nodes": nodes, "guests": out_guests,
-            "pools": inv["pools"], "datasets": inv["datasets"],
+            "pools": inv["pools"], "pool_findings": inv.get("pool_findings") or [], "datasets": inv["datasets"],
             "mounts": inv["mounts"], "storages": storages,
             "exports": inv.get("exports", []),
             "unallocated_bytes": unalloc,
