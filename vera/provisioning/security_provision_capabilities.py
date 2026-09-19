@@ -40,6 +40,7 @@ from urllib.parse import urlparse
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability, emit_event, now_iso
+from Vera.vera.integrations.infrastructure_effects import observe_infrastructure_effect
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -194,6 +195,9 @@ async def _write_volume_file(dk, rec: Dict, volume: str, path_in_vol: str,
     "secprov.deploy",
     http_method="POST", http_path="/provision/security/deploy", http_tags=["provision"],
     memory="off",
+    redact_args=["host_id", "service", "env", "ports", "idempotency_key",
+                 "approval_receipt_ref"],
+    redact_result=True,
     description="Deploy a Security/Identity/Net-Policy/Enroll backing service (or "
                 "'all') onto a registered Docker host as vera-<svc> (label "
                 "vera.secsvc). Generated secrets (root tokens, CA/admin passwords) "
@@ -201,11 +205,16 @@ async def _write_volume_file(dk, rec: Dict, volume: str, path_in_vol: str,
                 "host_id (str — docker host, default 'local'), service (str! — "
                 "openbao|step-ca|lldap|opa|all), env (dict — extra/override env), "
                 "ports (dict — host:container overrides). Output: per-service "
-                "{ok, container_id|already, endpoint, secrets?}.",
+                "{ok, container_id|already, endpoint, secrets?, effect_shadow?}. "
+                "Optional idempotency, approval, and retry inputs are observe-only "
+                "and never sent to Docker.",
 )
 async def cap_sec_deploy(host_id: str = "local", service: str = "",
                          env: Optional[Dict[str, str]] = None,
-                         ports: Optional[Dict[str, Any]] = None, trace_id=None) -> Dict:
+                         ports: Optional[Dict[str, Any]] = None,
+                         idempotency_key: str = "",
+                         approval_receipt_ref: str = "", retry: bool = False,
+                         trace_id=None) -> Dict:
     dk = _dk()
     if dk is None:
         return {"error": "docker module not loaded"}
@@ -231,9 +240,15 @@ async def cap_sec_deploy(host_id: str = "local", service: str = "",
         if existing:
             out.update({"ok": True, "already": True, "state": existing.get("State", "")})
             if existing.get("State") != "running":
+                shadow = observe_infrastructure_effect(
+                    provider="docker", target_ref=rec["id"], resource_ref=cname,
+                    operation_ref="restart_existing:true", mode="security_deploy",
+                    idempotency_key=idempotency_key,
+                    approval_receipt_ref=approval_receipt_ref, retry=retry)
                 res = await dk._run_local(await dk._docker_argv(rec, ["start", cname]),
                                           timeout=60)
                 out["restarted"] = bool(res.get("ok"))
+                out["effect_shadow"] = shadow
             results[name] = out
             continue
 
@@ -250,12 +265,24 @@ async def cap_sec_deploy(host_id: str = "local", service: str = "",
         if spec.get("extra_args"):
             extra += " " + spec["extra_args"]
 
-        run = await dk.cap_docker_run(
+        shadow = observe_infrastructure_effect(
+            provider="docker", target_ref=rec["id"], resource_ref=cname,
+            operation_ref=json.dumps({
+                "image": spec["image"], "ports": port_map,
+                "volumes": sorted((spec.get("volumes") or {}).items()),
+            }, sort_keys=True, separators=(",", ":")), mode="security_deploy",
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
+        run = await dk._run_container_native(
             host_id=rec["id"], image=spec["image"], name=cname, ports=prts,
             env=env_map, volumes=vols, restart="unless-stopped",
-            extra_args=extra, command=_fmt(spec.get("command", ""), ctx), pull=True)
+            extra_args=extra, command=_fmt(spec.get("command", ""), ctx), pull=True,
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry,
+            effect_mode="security_deploy", effect_shadow=shadow)
 
         out["ok"] = bool(run.get("ok"))
+        out["effect_shadow"] = run.get("effect_shadow", shadow)
         out["container_id"] = (run.get("container_id") or "")[:12]
         if not out["ok"]:
             out["error"] = run.get("error", "docker run failed")
@@ -321,11 +348,17 @@ async def cap_sec_status(host_id: str = "local", trace_id=None) -> Dict:
 @capability(
     "secprov.remove",
     http_method="POST", http_path="/provision/security/remove", http_tags=["provision"],
+    redact_args=["host_id", "service", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Stop and remove a security backing-service container (named "
                 "volumes are kept). Inputs: host_id (str='local'), service (str!). "
-                "Output: {ok}.",
+                "Output: {ok, effect_shadow}. Optional idempotency, approval, and "
+                "retry inputs are observe-only and never sent to Docker.",
 )
-async def cap_sec_remove(host_id: str = "local", service: str = "", trace_id=None) -> Dict:
+async def cap_sec_remove(host_id: str = "local", service: str = "",
+                         idempotency_key: str = "",
+                         approval_receipt_ref: str = "", retry: bool = False,
+                         trace_id=None) -> Dict:
     dk = _dk()
     if dk is None:
         return {"error": "docker module not loaded"}
@@ -335,13 +368,19 @@ async def cap_sec_remove(host_id: str = "local", service: str = "", trace_id=Non
     if not rec:
         return {"error": f"unknown docker host: {host_id}"}
     cname = f"vera-{service}"
+    shadow = observe_infrastructure_effect(
+        provider="docker", target_ref=rec["id"], resource_ref=cname,
+        operation_ref="remove:keep_volumes", mode="security_remove",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     res = await dk._run_local(await dk._docker_argv(rec, ["rm", "-f", cname]), timeout=40)
     r = _redis()
     if r:
         await r.hdel(KEY_SEC, f"{rec['id']}:{service}")
     await emit_event({"type": "provision.security.removed", "service": service,
                       "host_id": rec["id"]})
-    return {"ok": res.get("ok", False), "stderr": res.get("stderr", "")}
+    return {"ok": res.get("ok", False), "stderr": res.get("stderr", ""),
+            "effect_shadow": shadow}
 
 
 log.info("security_provision_capabilities loaded — openbao/step-ca/lldap/opa")
