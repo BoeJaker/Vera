@@ -45,11 +45,16 @@ function build(per, turn) {
   FAMS.forEach((f) => { for (let i = 0; i < per; i++) nodes.push({ id: f + i, label: f + ' record ' + i,
     source: f, text: 'x'.repeat(200), included: true, score: i < 2 ? 0.95 - 0.05 * i : undefined }); });
   const st = api.stateFrom({ nodes, rels: [], view: 'galaxy', color: () => '#888' });
-  const o = api.compute(st, 900, 700); if (turn) o.turn = turn;
+  /* the TURN KEY is what identifies a turn now, not the label - compute() gives the live set the constant 'live'
+     and a frame its id, which is exactly why a response streaming in no longer reloads the graph */
+  const o = api.compute(st, 900, 700); if (turn) { o.turn = turn; o.turnKey = turn; }
   return o;
 }
 // records draw as .cg-node and memory RECALLS as .cg-mem - both are context, so both arrive
 const arrived = (h) => (h.match(/class="cg-(?:node|mem) [^"]*\barr\b/g) || []).length;
+const settled = (h) => (h.match(/class="cg-(?:node|mem) [^"]*\bmov\b/g) || []).length;
+// the floor between animations is wall-clock; a test fires its paints back to back, so time is passed by hand
+const later = (store) => { store.at = 0; return store; };
 const nodesIn = (h) => (h.match(/class="cg-(?:node|mem) /g) || []).length;
 
 // ---- a turn's context flies in, and the same turn painted again does not ------------------------------------
@@ -75,7 +80,7 @@ const nodesIn = (h) => (h.match(/class="cg-(?:node|mem) /g) || []).length;
   const store = {};
   api.drawPlot(o, store);
   const o2 = build(7, 'turn-1');          // the same turn, one more record per family
-  const h = api.drawPlot(o2, store);
+  const h = api.drawPlot(o2, later(store));
   t('a record joining a drawn turn arrives by itself', arrived(h) === 5, 'arrived ' + arrived(h) + ' (expected the 5 new ones)');
 }
 
@@ -83,9 +88,15 @@ const nodesIn = (h) => (h.match(/class="cg-(?:node|mem) /g) || []).length;
 {
   const o = build(6, 'turn-1'); const store = {};
   api.drawPlot(o, store); api.drawPlot(o, store);
+  /* A DIFFERENT TURN IS A MOVE, NOT A LOAD. Scrolling the transcript used to fire the full staggered flight
+     for every turn it passed, which is the strobe. The records settle instead: marked, but with no flight
+     vector and no stagger. */
   const o2 = build(6, 'turn-2');
-  t('a different turn brings its context in again', arrived(api.drawPlot(o2, store)) === 30);
-  t('and settles on the next paint of it', arrived(api.drawPlot(o2, store)) === 0);
+  const h2 = api.drawPlot(o2, later(store));
+  t('a different turn does not re-fly the whole context', arrived(h2) === 0, 'flew ' + arrived(h2));
+  t('it settles instead', settled(h2) === 30, 'settled ' + settled(h2));
+  t('a settle carries no flight vector', !/--ax:/.test(h2.slice(h2.indexOf('mov'))) || !/mov[^>]*--ax:/.test(h2));
+  t('and the next paint of it animates nothing', arrived(api.drawPlot(o2, later(store))) + settled(api.drawPlot(o2, later(store))) === 0);
 }
 
 // ---- no store, no marks: the mini that does not keep one is unaffected ----------------------------------------
@@ -122,18 +133,40 @@ const nodesIn = (h) => (h.match(/class="cg-(?:node|mem) /g) || []).length;
   const first = api.drawMiniGalaxy(o, 262, 196, store);
   t('the simple galaxy brings its marks in', gd(first) > 0, 'arrived ' + gd(first));
   t('they fly from the galaxy centre, not the plot hub', /--ax:-?\d+px/.test(first));
-  t('and the same turn painted again animates nothing', gd(api.drawMiniGalaxy(o, 262, 196, store)) === 0);
+  t('and the same turn painted again animates nothing', gd(api.drawMiniGalaxy(o, 262, 196, later(store))) === 0);
   /* The two faces SHARE a store, and they do not draw the same marks: the simple galaxy shows each source's
      leading few, the detailed plot shows them all. So flipping face must not replay the marks already seen -
      and must still bring in the records the simple face never drew, because for the viewer those ARE new. */
   const share = {};
   const simpleH = api.drawMiniGalaxy(o, 262, 196, share);
+  later(share);
   const drew = (simpleH.match(/class="cg-gd [^"]*" data-id=/g) || []).length;
   const detailed = api.drawPlot(o, share);
   const total = nodesIn(detailed);
   t('flipping face does not replay what was already drawn', arrived(detailed) === total - drew,
     'arrived ' + arrived(detailed) + ', simple had drawn ' + drew + ' of ' + total);
   t('but the records the simple face never drew do arrive', arrived(detailed) > 0 && arrived(detailed) < total);
+}
+
+// ---- a burst animates ONCE, not once per paint ---------------------------------------------------------------
+{
+  /* Context is re-fed several times while a single response comes in, and the transcript scrolls at frame rate.
+     Without a floor every one of those paints was its own animation, which is what made the graph look like it
+     was reloading over and over. */
+  const store = {};
+  api.drawPlot(build(6, 'turn-1'), store);              // the load
+  const burst = [];
+  for (let i = 2; i <= 6; i++) burst.push(arrived(api.drawPlot(build(6, 'turn-' + i), store)) + settled(api.drawPlot(build(6, 'turn-' + i), store)));
+  t('five turn changes inside the floor animate nothing further', burst.reduce((a, b) => a + b, 0) === 0, burst.join(','));
+  const after = api.drawPlot(build(6, 'turn-9'), later(store));
+  t('and once the floor has passed, the next one does', settled(after) > 0, 'settled ' + settled(after));
+}
+
+// ---- the turn's identity, not its label -----------------------------------------------------------------------
+{
+  t('the turn carries a stable key', /out\.turnKey = frame \? String\(frame\.id\) : 'live'/.test(src));
+  t('and the arrival is keyed on it', /o\.turnKey != null \? o\.turnKey : \(o\.turn \|\| ''\)/.test(src));
+  t('the settle is defined and unstaggered', /@keyframes cg-settle/.test(src) && /\.mov[^\n]*animation:cg-settle/.test(src));
 }
 
 console.log(fails ? fails + ' FAILED' : 'all passed');
