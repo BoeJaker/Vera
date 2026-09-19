@@ -16,7 +16,6 @@ itself at 320px, and popWindows stayed 0 until the button was pressed, which mad
 The third surface, the canvas, is covered here too: see test_canvas_preview_has_room.
 """
 from pathlib import Path
-import inspect
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
