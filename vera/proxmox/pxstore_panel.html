@@ -724,13 +724,28 @@ P.refresh = async ()=>{
 P.renderOverview = ()=>{
   const inv=P.state.inv; if(!inv) return;
   $('unallocLab').textContent = inv.pools.length?('· unallocated across pools: '+fmtB(inv.unallocated_bytes)):'';
+  // What each pool IS and is doing: layout, scrub, this second's throughput,
+  // compression and fragmentation - zpool's own words, parsed on the node.
+  const rate=b=>b>=1048576?(b/1048576).toFixed(1)+' MB/s':b>=1024?Math.round(b/1024)+' KB/s':(b||0)+' B/s';
+  const scrub=p=>{ if(p.scan_state==='running') return (p.scan_kind||'scrub')+' running'+(p.scan_pct!=null?' · '+p.scan_pct.toFixed(0)+'%':'');
+    if(p.scan_state==='done') return 'scrubbed '+(p.scan_age_d===0?'today':p.scan_age_d+' d ago')+(p.scan_errors?' · '+p.scan_errors+' errors':'');
+    if(p.scan_state==='never') return 'never scrubbed'; return ''; };
+  const findByPool={}; (inv.pool_findings||[]).forEach(f=>{ (findByPool[f.pool]=findByPool[f.pool]||[]).push(f); });
   $('poolGrid').innerHTML = inv.pools.map(p=>{
     const pct=p.size?Math.round(p.alloc/p.size*100):0;
+    const fs=findByPool[p.name]||[]; const worst=fs.length?fs[0].severity:'';
+    const io=(p.read_bps!=null)?`<span title="read / write this second">↓ ${rate(p.read_bps)} · ↑ ${rate(p.write_bps)}</span>`:'';
+    const facts=[p.layout?esc(p.layout):'', scrub(p)?esc(scrub(p)):'',
+      p.compressratio?('compresses '+p.compressratio.toFixed(2)+'×'):'', p.frag_pct!=null?(p.frag_pct+'% fragmented'):''].filter(Boolean);
     return `<div class="card"><div class="hd"><span class="nm" data-entity="pool:${esc(p.name)}" title="What is on this pool" style="cursor:pointer;border-bottom:1px dotted var(--t3)">${esc(p.name)}</span>
       <span class="pill ${p.health==='ONLINE'?'ok':'err'}">${esc(p.health)}</span>
+      ${worst?`<span class="pill ${worst==='error'?'err':worst==='warn'?'warn':'dim'}" title="${esc(fs.map(f=>f.message).join(' '))}">${fs.length} note${fs.length===1?'':'s'}</span>`:''}
       <span class="sub">${fmtB(p.size)}</span></div>
       <div class="metric"><div class="lab"><span>alloc ${fmtB(p.alloc)}</span><span>free ${fmtB(p.free)}</span></div>
-      <div class="${barClass(pct)}"><i style="width:${pct}%"></i></div></div></div>`;
+      <div class="${barClass(pct)}"><i style="width:${pct}%"></i></div></div>
+      <div class="kv" style="display:flex;flex-wrap:wrap;gap:4px 10px">${facts.map(f=>'<span>'+f+'</span>').join('')}${io}</div>
+      ${fs.length?`<div class="kv" style="color:var(--${worst==='error'?'err':worst==='warn'?'warn':'t3'})">${esc(fs[0].message)}${fs[0].detail?' <span style="opacity:.7">— '+esc(fs[0].detail)+'</span>':''}</div>`:''}
+      </div>`;
   }).join('')||'<div class="empty">No ZFS pools reported (node SSH unmapped? → ⚙ Setup)</div>';
 
   $('guestTbl').querySelector('tbody').innerHTML = (inv.guests||[]).map(g=>{

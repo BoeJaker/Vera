@@ -1,0 +1,109 @@
+###ZLIST
+backup	1194000908288	191629082624	1002371825664	ONLINE	0	16	1.00
+cpool	1194000908288	454713870848	739287037440	ONLINE	33	38	1.00
+rpool	1194000908288	763552382976	430448525312	ONLINE	48	63	1.00
+tank_sda	1194000908288	4526997504	1189473910784	ONLINE	0	0	1.00
+tank_sde	1194000908288	5737484288	1188263424000	ONLINE	0	0	1.00
+tank_sdf	1194000908288	421167419392	772833488896	ONLINE	32	35	1.00
+tank_sdh	3831110828032	521180774400	3309930053632	ONLINE	8	13	1.00
+###ZCOMP
+backup	1.15
+cpool	1.76
+rpool	1.27
+tank_sda	2.07
+tank_sde	2.01
+tank_sdf	1.38
+tank_sdh	1.10
+###ZSTATUS
+  pool: backup
+ state: ONLINE
+  scan: scrub repaired 0B in 00:08:54 with 0 errors on Sun Sep 13 00:32:58 2026
+config:
+
+	NAME                      STATE     READ WRITE CKSUM
+	backup                    ONLINE       0     0     0
+	  scsi-35000cca0805797ac  ONLINE       0     0     0
+
+errors: No known data errors
+
+  pool: cpool
+ state: ONLINE
+  scan: scrub repaired 0B in 01:56:39 with 0 errors on Sun Sep 13 02:20:46 2026
+config:
+
+	NAME                      STATE     READ WRITE CKSUM
+	cpool                     ONLINE       0     0     0
+	  wwn-0x5000cca03219f0fc  ONLINE       0     0     0
+
+errors: No known data errors
+
+  pool: rpool
+ state: ONLINE
+  scan: scrub repaired 0B in 02:04:40 with 0 errors on Sun Sep 13 02:28:49 2026
+config:
+
+	NAME                            STATE     READ WRITE CKSUM
+	rpool                           ONLINE       0     0     0
+	  scsi-35000c500940573e7-part3  ONLINE       0     0     0
+
+errors: No known data errors
+
+  pool: tank_sda
+ state: ONLINE
+  scan: scrub repaired 0B in 00:01:04 with 0 errors on Sun Sep 13 00:25:19 2026
+config:
+
+	NAME                      STATE     READ WRITE CKSUM
+	tank_sda                  ONLINE       0     0     0
+	  wwn-0x5000cca0800f1de8  ONLINE       0     0     0
+
+errors: No known data errors
+
+  pool: tank_sde
+ state: ONLINE
+  scan: scrub repaired 0B in 00:00:36 with 0 errors on Sun Sep 13 00:24:53 2026
+config:
+
+	NAME        STATE     READ WRITE CKSUM
+	tank_sde    ONLINE       0     0     0
+	  sde       ONLINE       0     0     0
+
+errors: No known data errors
+
+  pool: tank_sdf
+ state: ONLINE
+  scan: scrub repaired 0B in 01:23:16 with 0 errors on Sun Sep 13 01:47:34 2026
+config:
+
+	NAME                      STATE     READ WRITE CKSUM
+	tank_sdf                  ONLINE       0     0     0
+	  wwn-0x5000c50097b3508b  ONLINE       0     0     0
+
+errors: No known data errors
+
+  pool: tank_sdh
+ state: ONLINE
+  scan: scrub repaired 0B in 00:58:10 with 0 errors on Sun Sep 13 01:22:30 2026
+config:
+
+	NAME                      STATE     READ WRITE CKSUM
+	tank_sdh                  ONLINE       0     0     0
+	  wwn-0x58ce38e07c89442c  ONLINE       0     0     0
+
+errors: No known data errors
+###ZIOSTAT
+backup	191629082624	1002371825664	1	11	489522	590757
+cpool	454713870848	739287037440	15	58	801616	3327660
+rpool	763552382976	430448525312	11	26	861372	1005476
+tank_sda	4526997504	1189473910784	0	0	6221	7
+tank_sde	5737484288	1188263424000	0	4	19945	124951
+tank_sdf	421167419392	772833488896	12	32	706163	2210827
+tank_sdh	521180774400	3309930053632	3	19	1785666	1062432
+backup	191629082624	1002371825664	0	0	0	0
+cpool	454713870848	739287037440	1	11	9691	510071
+rpool	763552382976	430448525312	0	68	0	3627519
+tank_sda	4526997504	1189473910784	0	0	0	0
+tank_sde	5741707264	1188259201024	0	79	0	5080351
+tank_sdf	421174898688	772826009600	0	151	0	4639690
+tank_sdh	521180774400	3309930053632	0	0	0	0
+
