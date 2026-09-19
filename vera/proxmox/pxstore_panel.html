@@ -569,8 +569,13 @@ P.bkStatus = async ()=>{
     `<div class="card"><div class="hd"><span class="nm">Replica</span><span class="sub">file fabric → backup disk</span></div>
       ${timerLine('vera-replicate.timer','replicated')}
       <div class="kv">${(r.replication||[]).slice(-4).map(l=>esc(l.msg)).join('<br>')||'no runs yet'}</div></div>`;
+  // A PVE job's name is its optional comment; two of the three here have none,
+  // so the id was all the row showed. Say what the job does instead, id second.
+  const jobName=j=>{ if(j.comment) return j.comment.split(/[.;]/)[0].slice(0,80);
+    const n=j.all?'every guest'+(j.exclude?' except '+String(j.exclude).split(',').length:''):(String(j.vmid||'').split(',').filter(Boolean).length+' guests');
+    return n+' → '+(j.storage||'?')+(j.schedule?', '+j.schedule:'')+(j.enabled?'':' (disabled)'); };
   $('bkJobs').querySelector('tbody').innerHTML=(r.jobs||[]).map(j=>`<tr>
-     <td><b>${esc(j.id)}</b>${j.comment?`<div class="kv">${esc(j.comment)}</div>`:''}</td>
+     <td><b>${esc(jobName(j))}</b><div class="kv">${esc(j.id)}${j.comment&&j.comment.length>80?' · '+esc(j.comment):''}</div></td>
      <td>${esc(j.schedule)}<div class="kv">next ${j.enabled?until(j.next_run):'—'}</div></td>
      <td>${esc(j.storage)}</td>
      <td class="kv">${j.all?('all'+(j.exclude?' except '+esc(j.exclude):'')):esc(j.vmid)}</td>
@@ -733,7 +738,8 @@ P.renderOverview = ()=>{
     const used=(g.datasets||[]).reduce((a,d)=>a+(d.used||0),0);
     const diskKeys=Object.keys(g.disks||{}).filter(k=>k==='rootfs'||/^(scsi|virtio|sata|ide)\d+$/.test(k));
     const dk=diskKeys[0]||(g.type==='lxc'?'rootfs':'scsi0');
-    return `<tr><td><b>${esc(g.name)}</b> <span class="kv">#${g.vmid}</span></td>
+    return `<tr><td><b>${esc(g.name)}</b> <span class="kv">#${g.vmid}</span>
+        <a href="#" class="kv" title="Open this machine in Estate > Machines" onclick="veraUI.openEntity('guest:${g.vmid}');return false" style="margin-left:6px;color:var(--acc,#4a9eff);text-decoration:none">machine ›</a></td>
       <td>${g.type==='lxc'?'CT':'VM'}</td>
       <td><span class="pill ${g.status==='running'?'ok':'dim'}">${esc(g.status)}</span></td>
       <td>${ds}</td><td>${fmtB(used||g.disk)}</td><td>${fmtB(g.maxdisk)}</td>
@@ -973,7 +979,8 @@ P.renderCpu = ()=>{
   ).join('');
   $('cpuTbl').querySelector('tbody').innerHTML=m.guests.map(g=>{
     const flags=(g.flags||[]).map(f=>`<span class="flagchip ${f==='spans-numa'||f==='overlaps-reserved'?'bad':''}">${esc(f)}</span>`).join('')||'<span class="kv">ok</span>';
-    return `<tr><td><b>${esc(g.name)}</b> <span class="kv">#${g.vmid}</span></td>
+    return `<tr><td><b>${esc(g.name)}</b> <span class="kv">#${g.vmid}</span>
+        <a href="#" class="kv" title="Open this machine in Estate > Machines" onclick="veraUI.openEntity('guest:${g.vmid}');return false" style="margin-left:6px;color:var(--acc,#4a9eff);text-decoration:none">machine ›</a></td>
       <td>${g.type==='lxc'?'CT':'VM'}</td>
       <td><span class="pill ${g.status==='running'?'ok':'dim'}">${esc(g.status)}</span></td>
       <td>${esc(g.pinned||'—')}</td><td>${esc(g.live||'—')}</td>

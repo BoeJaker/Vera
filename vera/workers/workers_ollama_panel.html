@@ -199,6 +199,7 @@ html.view-models #secNav [data-view="models"]{display:block}
 .ov-facts{margin-bottom:6px;font-family:var(--mono);font-size:9.5px;color:var(--dim);overflow-wrap:anywhere}
 .ov-list{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg1)}
 .ov-list>*+*{border-top:1px solid var(--border)}
+.mc-focus td{background:var(--accent-soft,rgba(74,158,255,.14));box-shadow:inset 3px 0 0 var(--acc3);transition:background 1.5s}
 .bld-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
 .bld{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg1);color:var(--text);text-decoration:none;font-size:11px}
 .bld:hover{border-color:var(--acc3)}
@@ -6279,6 +6280,33 @@ setTimeout(()=>{ const p=$('pane-overview'); if(_VIEW==='estate'&&p&&p.classList
 let _mcRows=[], _mcKind='', _mcBusy=false;
 const _MC_KIND={'proxmox-node':'Proxmox node',guest:'Guest',host:'Host','docker-host':'Docker host'};
 function mcInit(){ if(_mcRows.length) mcRender(); else mcLoad(); }
+// Focus one machine from a deep link: a guest by vmid (or cluster:vmid), a
+// host by its login id. Clears the kind and text filters so the row can be
+// there, scrolls to it and lights it for a moment.
+let _mcFocusWant=null;
+function mcFocus(kind, id){
+  _mcFocusWant={kind, id:String(id)};
+  if(!_mcRows.length){ mcLoad(); return; }
+  _mcApplyFocus();
+}
+function _mcMatch(r, want){
+  if(!want) return false;
+  if(want.kind==='guest'){ const v=want.id.includes(':')?want.id.split(':').pop():want.id; return r.kind==='guest'&&String(r.vmid)===v; }
+  if(want.kind==='host') return r.ssh_host_id===want.id||r.id===want.id;
+  return false;
+}
+function _mcApplyFocus(){
+  const want=_mcFocusWant; if(!want) return;
+  const r=_mcRows.find(x=>_mcMatch(x,want)); _mcFocusWant=null;
+  if(!r){ txt('mc-status','No machine matches '+want.kind+' '+want.id); return; }
+  _mcKind=''; document.querySelectorAll('#mc-kinds .j-tab').forEach((t,i)=>t.classList.toggle('active', i===0));
+  const f=$('mc-filter'); if(f) f.value='';
+  mcRender();
+  const idx=_mcRows.indexOf(r), tr=document.querySelector('#mc-tbody tr[data-idx="'+idx+'"]');
+  if(!tr) return;
+  tr.classList.add('mc-focus'); tr.scrollIntoView({block:'center'});
+  setTimeout(()=>tr.classList.remove('mc-focus'), 4000);
+}
 async function mcLoad(){
   if(_mcBusy) return;
   _mcBusy=true;
@@ -6291,6 +6319,7 @@ async function mcLoad(){
       +(errs.length?(' · '+errs.join('; ')):'')) : 'The machine list did not answer.');
   } finally { _mcBusy=false; }
   mcRender();
+  if(_mcFocusWant) _mcApplyFocus();
 }
 function mcKind(kind, el){
   _mcKind=kind||'';
@@ -6307,7 +6336,7 @@ function mcRender(){
     const where=(r.kind==='guest'&&r.vmid)?((r.type==='qemu'?'VM ':'CT ')+r.vmid+(r.node?' on '+r.node:'')):'';
     const acts=(r.actions||[]).map(a=>'<button class="btn sm'+(a.id==='shutdown'?' err-btn':'')
       +'" onclick="P.mcAct('+idx+','+sq(a.id)+')">'+esc(a.label)+'</button>').join('');
-    return '<tr><td><b>'+esc(r.label)+'</b>'+(where?'<span class="mc-note">'+esc(where)+'</span>':'')
+    return '<tr data-idx="'+idx+'"><td><b>'+esc(r.label)+'</b>'+(where?'<span class="mc-note">'+esc(where)+'</span>':'')
       +(r.note?'<span class="mc-note">'+esc(r.note)+'</span>':'')+'</td>'
       +'<td class="mc-kind">'+esc(_MC_KIND[r.kind]||r.kind)+'</td>'
       +'<td><span class="mc-state '+esc(r.status||'')+'">'+esc(r.status||'—')+'</span></td>'
@@ -6414,17 +6443,51 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav(
   [...document.querySelectorAll('#secNav .snav[data-view="'+_VIEW+'"]')]
     .map(el=>({id:el.dataset.pane, label:el.textContent.trim()})),
   id=>showPane(id, document.querySelector('#secNav .snav[data-pane="'+id+'"]')));
-function estateOpen(pane, sub){
+function estateOpen(pane, sub, entity){
   if(!$('pane-'+pane)) return false;
   showPane(pane, document.querySelector('.snav[data-pane="'+pane+'"]'));
   if(sub&&pane==='provision') provSub(sub);
   if(sub&&pane==='network') netSub(sub);
+  if(entity) entityFocus(pane, sub, String(entity));
   return true;
+}
+// ── Entities in deep links ───────────────────────────────────────────────────
+// A reference is `<kind>:<id>` (estate_nav_core.ENTITY_KINDS names the pane
+// that can focus each kind). It arrives three ways: `?entity=` on the URL,
+// `vera:estate:open {entity}` from the shell, and `vera:entity:open {ref}` from
+// any panel embedded here that wants the reader to see a thing elsewhere. The
+// native panes focus directly; an iframe pane is told and answers when it has.
+const _ENTITY_PANE={guest:'machines',host:'machines','docker-host':'docker',container:'docker',
+  pool:'storage',dataset:'storage',integration:'integrations',identity:'provision',mesh:'provision',
+  'secret':'provision',cert:'provision','backup-job':'storage',model:'ollama'};   // pragma: allowlist secret (an entity kind, not a value)
+const _ENTITY_SUB={identity:'identity',mesh:'mesh','secret':'secrets',cert:'certs','backup-job':'estate'};   // pragma: allowlist secret
+const _PANE_FRAME={storage:'storage-frame',integrations:'integrations-frame',foundry:'foundry-frame',
+  software:'software-frame',platforms:'platforms-frame',remote:'remote-frame',estate:'estate-frame'};
+function entityParse(ref){ const i=String(ref||'').indexOf(':'); if(i<1) return null;
+  const kind=String(ref).slice(0,i).toLowerCase(), id=String(ref).slice(i+1); return (_ENTITY_PANE[kind]&&id)?{kind,id}:null; }
+function entityOpen(ref){
+  const e=entityParse(ref); if(!e) return false;
+  return estateOpen(_ENTITY_PANE[e.kind], _ENTITY_SUB[e.kind]||'', ref);
+}
+function entityFocus(pane, sub, ref){
+  const e=entityParse(ref); if(!e) return;
+  if(pane==='machines') return mcFocus(e.kind, e.id);
+  if(pane==='proxmox'&&e.kind==='guest') return mcFocus(e.kind, e.id);
+  // sub-tab iframes (Trust, Network) and whole-pane iframes get the message
+  const fid=(pane==='provision')?('prv-sub-'+(sub||_prvSub)):(pane==='network')?('net-sub-'+(sub||_netSub)):_PANE_FRAME[pane];
+  const f=fid&&$(fid); if(!f) return;
+  let tries=0;
+  const done=ev=>{ if(ev.data?.type==='vera:entity:focused'&&ev.data.ref===ref){ tries=99; window.removeEventListener('message',done); } };
+  const send=()=>{ try{ f.contentWindow.postMessage({type:'vera:entity:focus', kind:e.kind, id:e.id, ref}, '*'); }catch(_){}
+    if(++tries<15) setTimeout(send, 500); else window.removeEventListener('message',done); };
+  window.addEventListener('message', done);
+  send();
 }
 // After the whole script has run: provSub/netSub read state declared below.
 setTimeout(()=>{
   const q=new URLSearchParams(location.search);
-  if(q.get('pane')) estateOpen(q.get('pane'), q.get('sub')||'');
+  if(q.get('entity')&&!q.get('pane')) entityOpen(q.get('entity'));
+  else if(q.get('pane')) estateOpen(q.get('pane'), q.get('sub')||'', q.get('entity')||'');
   else if(_VIEW==='models') estateOpen('ollama','');
 }, 0);
 
@@ -6619,8 +6682,12 @@ function provSub(name){
 window.addEventListener('message', e=>{
   if(e.data?.type==='vera:base'){/* could update BASE */}
   if(e.data?.type==='vera:estate:open'&&e.data.pane){
-    const ok=estateOpen(String(e.data.pane), String(e.data.sub||''));
+    const ok=estateOpen(String(e.data.pane), String(e.data.sub||''), e.data.entity?String(e.data.entity):'');
     try{ if(e.source) e.source.postMessage({type:'vera:estate:opened', rid:e.data.rid, ok}, '*'); }catch(_){}
+  }
+  if(e.data?.type==='vera:entity:open'&&e.data.ref){
+    const ok=entityOpen(String(e.data.ref));
+    try{ if(e.source) e.source.postMessage({type:'vera:entity:opened', ref:e.data.ref, ok}, '*'); }catch(_){}
   }
   if(e.data?.type==='vera:theme'&&e.data.vars){
     const root=document.documentElement;
@@ -8215,7 +8282,7 @@ return {
   dkrSpawnWorker, dkrWorkerList, dkrWorkerStop, dkrTerm,
   stkRefresh, stkDeploy, pmxSsh, pmxEnrollSsh,
   sbxRefresh, sbxNew, sbxStop, sbxTerm, sbxSync, sbxRestore, sbxSnaps, sbxContext, sbxDetail, sbxCloseDetail, sbxConfig, sbxConfigSave,
-  termOpen, termClose, provSub, buildGo,
+  termOpen, termClose, provSub, buildGo, entityOpen, mcFocus,
   netSub, pmxSub, obsSub,
   connLoad, connRender, connEdit, connMgrClose, connAuthToggle,
   connSave, connDelete, connProbe, connProbeRow,

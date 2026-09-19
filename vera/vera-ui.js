@@ -679,7 +679,26 @@
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
+  // ── Open an estate entity from anywhere ──────────────────────────────────
+  // `ref` is `<kind>:<id>` (guest:145, pool:corp/tank_sdh, cert:dc.vera.int).
+  // Inside the Estate panel's tree the request goes up to it by message and it
+  // opens the right pane focused on that thing; standalone, the Estate panel is
+  // opened with the reference on its URL. No page has to know another page's
+  // data model - only the reference vocabulary in estate_nav_core.
+  function openEntity(ref){
+    ref = String(ref || '');
+    if(!/^[a-z-]+:.+/.test(ref)) return false;
+    if(window.parent && window.parent !== window){
+      try{ window.parent.postMessage({type:'vera:entity:open', ref: ref}, '*'); return true; }catch(e){}
+    }
+    try{ window.top.location.href = BASE + '/ui/panels/workers-ollama?entity=' + encodeURIComponent(ref); }catch(e){
+      location.href = BASE + '/ui/panels/workers-ollama?entity=' + encodeURIComponent(ref);
+    }
+    return true;
+  }
+
   window.veraUI = {
+    openEntity: openEntity,
     setTheme: function(id){
       // Always call the API so the change is broadcast and we get vars back
       fetch(BASE + '/ui/theme/set', {
