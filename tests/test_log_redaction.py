@@ -80,3 +80,16 @@ def test_install_redaction_covers_a_handler_added_later(tmp_path):
         fac = logging.getLogRecordFactory()
         if getattr(fac, "_vera_redacting", False):
             logging.setLogRecordFactory(fac._vera_wrapped)
+
+
+def test_a_url_object_argument_is_redacted_like_httpx_logs_it():
+    """httpx passes request.url as an httpx.URL object, not a str. The first
+    filter only looked at str args and prod kept writing the token."""
+    import httpx
+    f = log_setup.RedactingFilter()
+    rec = _record('HTTP Request: %s %s "%s %d %s"', "POST", httpx.URL(URL), "HTTP/1.1", 200, "OK")
+    f.filter(rec)
+    out = rec.getMessage()
+    assert ("A" * 35) not in out
+    assert "/bot1234567890:<redacted>" in out and "200 OK" in out
+    assert rec.args[3] == 200 and isinstance(rec.args[3], int), "typed args keep their type"
