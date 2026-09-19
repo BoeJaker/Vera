@@ -166,6 +166,25 @@ def redact(text: str) -> str:
     return out
 
 
+def _mask_arg(a):
+    """Redact one format argument. httpx logs the request URL as an httpx.URL
+    OBJECT, not a str - `'HTTP Request: %s %s ...', request.method, request.url`
+    - so a str-only check let the token through and prod kept writing it
+    (2026-09-19). Anything whose string form carries a secret is replaced by
+    the redacted string; everything else is returned untouched, so typed args
+    (the %d status code, uvicorn's unpacked tuple) keep their types."""
+    if isinstance(a, str):
+        return redact(a)
+    if a is None or isinstance(a, (int, float, bool, bytes)):
+        return a
+    try:
+        s = str(a)
+    except Exception:
+        return a
+    r = redact(s)
+    return r if r != s else a
+
+
 class RedactingFilter(logging.Filter):
     """Masks secrets in the record's message AND its args.
 
@@ -181,11 +200,9 @@ class RedactingFilter(logging.Filter):
                 record.msg = redact(record.msg)
             if record.args:
                 if isinstance(record.args, dict):
-                    record.args = {k: (redact(v) if isinstance(v, str) else v)
-                                   for k, v in record.args.items()}
+                    record.args = {k: _mask_arg(v) for k, v in record.args.items()}
                 else:
-                    record.args = tuple(redact(a) if isinstance(a, str) else a
-                                        for a in record.args)
+                    record.args = tuple(_mask_arg(a) for a in record.args)
         except Exception:
             pass
         return True
