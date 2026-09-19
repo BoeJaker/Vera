@@ -25,7 +25,7 @@ t('the turn carries the context it actually sent, captured at send',
 t('every completed turn gets a frame, even an empty one',
   src.indexOf('const _f=_saveFrame(') >= 0 && src.indexOf('if(_sn){ _saveFrame(') < 0 && src.indexOf('CTX_NODES.length?CTX_NODES.slice():[]') >= 0);
 t('the frame is tagged onto its answer and its question, from the DOM',
-  src.indexOf('_aw.dataset.frame=String(_f.id);') >= 0 && src.indexOf("_qw.classList.contains('u')") >= 0);
+  src.indexOf('_aw.dataset.frame=String(_f.id);') >= 0 && src.indexOf("_qw0.classList.contains('u')") >= 0);
 t('the lookup reads that tag off the focused message',
   src.indexOf('const fid=w&&w.dataset.frame;') >= 0);
 t('with mid/amid only as a fallback for frames that have no wrap to tag',
@@ -34,8 +34,11 @@ t('_saveFrame stores the snapshot handed to it, not whatever is live',
   src.indexOf('const _src=Array.isArray(x.nodes)?x.nodes:CTX_NODES') >= 0);
 t('a very long chat cannot grow without bound',
   src.indexOf('if(CTX_FRAMES.length>500)CTX_FRAMES.splice(0,CTX_FRAMES.length-500);') >= 0);
+// ...but only AT THE BOTTOM. Scrolled up, the message in view keeps its own context even with a question
+// half-typed, so you can read back over the conversation without losing what you were writing; the typed
+// question's context returns when you return to the end. See test_chat_ctx_typing_and_overlap.cjs.
 t('the newest turn still yields to the live set while the next question is typed',
-  src.indexOf("if(f===CTX_FRAMES[CTX_FRAMES.length-1]){ const inp=document.getElementById('chatInput');") >= 0);
+  src.indexOf('if(_ctxComposerLive() && f===CTX_FRAMES[CTX_FRAMES.length-1]) return null;') >= 0);
 
 // nothing may re-query a past turn: that yields TODAY's context, which is the wrong answer
 for (const dead of ['_ctxComputeOlder', '_turnOf', '_oldCtxBusy', '_oldCtxDone'])
