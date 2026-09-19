@@ -265,10 +265,58 @@
       out.hub = { x: out.hubs[0].x, y: out.hubs[0].y, hid: true };
     }
     const bucket = {};
-    const place = (si, i, n, score, id) => {
-      const mid = midOf(si), half = step / 2 - 5;
-      const r = Math.min(RMAX, 52 * k + (1 - score) * (RMAX - 52 * k) / 0.4);
-      const a = n === 1 ? mid : mid - half + (i + 0.5) * ((half * 2) / n);
+    /* THE ARM. Distance was a function of SCORE ALONE, through a curve that saturated:
+           r = min(RMAX, 52k + (1 - score)·(RMAX - 52k)/0.4)
+       (1 - score)/0.4 reaches 1 at score 0.6, so every record scoring 0.6 or less sat on RMAX exactly — and a
+       record with no score at all defaults to 0.5, which is most of them (memory, fabric, caps, skills and
+       ontologies carry no relevance number). The result was a dense ring of touching circles at the rim, which
+       is what "nodes of the same type stacked one atop the other" is. Only scores between 0.6 and 1.0 moved at
+       all, so the radius carried almost no information.
+       Two changes:
+       - RANK BREAKS THE TIE. Each record also takes its place in its family's own order (f, the sorted index),
+         so equal scores still spread along the arm instead of collapsing onto one radius. Score still leads;
+         rank only separates.
+       - THE ARM CURVES. The angle now advances with distance, which is what makes a spiral rather than the
+         spokes-and-rings radar this drew before. SWIRL is the turn across the whole arm; a family's band leaves
+         its sector as an arc, and the arms read as arms.
+       The centre is kept clear (R_IN) so the hub and its label are not crowded, and the fan is inset by the
+       widest node's radius so neighbouring families do not touch at the rim. */
+    const R_IN = Math.min(RMAX * 0.30, 46 * k);
+    const SWIRL = 34;
+    /* One radius law, so the guide rings mean what the nodes mean (f = rank in family, 0.5 = rank-neutral).
+       SCORE KEEPS ITS OLD SENSITIVITY. (1 - score)/0.4 magnifies differences across 0.6–1.0, which is the band
+       real relevance scores land in; flattening it over the whole 0–1 range pulled the top-scored records of a
+       family together and measured WORSE than what it replaced (28.8px apart before, 16px after). It is kept.
+       RANK ONLY BREAKS THE TIE. That curve saturates at score 0.6, and a record with no score defaults to 0.5 —
+       which is most of them — so everything unscored landed on RMAX exactly, one ring of touching circles. The
+       rank term is small enough not to disturb genuinely-scored records and large enough to fan out the tied
+       ones, which is the whole of what it is for. */
+    /* rw is how much of the arm RANK gets, and it is decided per family by whether score has anything to say.
+       A family whose records all carry the same score (or none) gets rank almost all of the arm — there is
+       nothing else to order them by, and leaving them on 28% of it packed 24 records into 53px, which is the
+       crowding. A family with a real score spread keeps score in charge and rank only nudges ties apart. */
+    const armR = (score, f, rw) => R_IN + (RMAX - R_IN)
+      * Math.max(0, Math.min(1, (1 - rw) * Math.min(1, Math.max(0, 1 - score) / 0.4) + rw * f));
+    const place = (si, i, n, score, id, rw) => {
+      const mid = midOf(si);
+      /* The turn is spent INSIDE the family's own sector, not added to it. The sectors mean something — the
+         context keeps the left and top, the plan the top right, the loop the right and bottom — and a swirl
+         laid on top of the fan pushed context records round into the loop's arc. So the fan gives up the room
+         the turn needs, and the turn is centred on the sector's middle: the arm curves, the family stays put. */
+      const swirl = Math.min(SWIRL, Math.max(0, step * 0.45));
+      const half = Math.max(3, (step / 2 - 6) - swirl / 2);
+      const f = n > 1 ? i / (n - 1) : 0.5;                    // this record's rank within its family
+      const r = armR(score, f, rw);
+      const arm = (r - R_IN) / Math.max(1, RMAX - R_IN);       // 0 at the core, 1 at the rim
+      /* The fan widens as the radius shrinks. A fixed angular step is NOT a fixed distance: the gap between two
+         neighbours is r·Δa, so the same fan that reads comfortably at the rim crushes the records nearest the
+         core. Widening by RMAX/r holds the gap roughly constant along the arm; the sector is still the ceiling,
+         so a family never spills into its neighbour. */
+      // fan across the sector. Scaling this by RMAX/r to widen the crowded inner rows and clamping it back into
+      // the sector was tried and measured WORSE: every over-scaled node lands on the same sector edge, two
+      // records at identical angle and radius, 0.0px apart.
+      const spread = n === 1 ? 0 : -half + (i + 0.5) * ((half * 2) / n);
+      const a = mid + spread + (swirl * arm - swirl / 2);
       const gx = cxp + Math.cos(a * RAD) * r, gy = cyp + Math.sin(a * RAD) * r;
       if (view === 'galaxy') return { x: gx, y: gy };
       if (view === 'iso') return stemTo(gx, gy, score * 70 * k);
@@ -278,7 +326,9 @@
       return { x: LANE_L + 30 * k + cw * (k2 ? k2 - 0.5 : cols - 0.5) + (nth % 2) * 10 * k, y: LANE_T + 50 * k + lh * si + nth * 19 * k };
     };
     if (!quad) {
-    if (view === 'galaxy') [0.90, 0.75, 0.60].forEach((sc) => { const r = Math.min(RMAX, 52 * k + (1 - sc) * (RMAX - 52 * k) / 0.4); out.rings.push({ cx: px(cxp), cy: px(cyp), d: px(r * 2) }); });
+    // the relevance guides read off the SAME law the nodes follow, rank-neutral — they drifted apart when the
+    // radius changed and would otherwise mark bands nothing sits in
+    if (view === 'galaxy') [0.90, 0.75, 0.60].forEach((sc) => { out.rings.push({ cx: px(cxp), cy: px(cyp), d: px(armR(sc, 0.5, 0.28) * 2) }); });
     if (view === 'time') { const cols = Math.max(turnKeys.length, 1) + 1, cw = (PW - LANE_L - 60 * k) / cols; for (let c = 1; c <= cols; c++) out.sectorLabels.push({ name: c < cols ? (turnKeys[c - 1] || 'm' + c) : 'never', col: 'var(--cg-t3)', x: px(LANE_L + 30 * k + cw * (c - 0.5)), y: px(LANE_T + 12 * k) }); }
     if (view === 'iso') { const c = isoP(cxp, cyp, 0); out.plate = { x: px(c.x - ISO.box.w / 2), y: px(c.y - ISO.box.h / 2), w: px(ISO.box.w), h: px(ISO.box.h) };
       // the sector discs (the board's annular wedges on the floor): one per family, over the family's sector and the
@@ -299,9 +349,22 @@
       else if (view === 'iso') { const p = isoP(cxp + Math.cos(mid * RAD) * (RMAX + 26 * k), cyp + Math.sin(mid * RAD) * (RMAX + 26 * k), 0); out.sectorLabels.push({ name: s, col, x: px(p.x), y: px(p.y) }); }
       else if (view === 'flow') { const cw = (PW - LANE_L - 24 * k) / srcs.length; out.sectorLabels.push({ name: s, col, x: px(LANE_L + 12 * k + cw * (si + 0.5)), y: px(LANE_T + 26 * k) }); }
       else { const lh = (PH - LANE_T - 120 * k) / (srcs.length + (plotLoop.length ? 1 : 0)); out.sectorLabels.push({ name: s, col, x: px(LANE_L + 8 * k), y: px(LANE_T + 50 * k + lh * si), lane: true }); }
+      /* Half the arm to rank, half to score. The list is already sorted by score, so rank PRESERVES the score
+         ordering — it only guarantees that records the score cannot tell apart still get their own radius.
+         Measured at the density a real turn produces (48 records over 8 families): the closest pair is unchanged
+         at 27px, families sit slightly further apart, nothing overlaps, and every record in a family gains its
+         own radius where three in six used to share one.
+         KNOWN LIMIT: at extreme density — two dozen records in ONE family — this is worse than the flat ring it
+         replaced (pairs under 20px: 76 -> 112). A single ring is the most space-efficient way to place many tied
+         records; it is simply unreadable, which is the reason for changing it. The proper answer there is bands
+         whose capacity follows their own radius, the way the memory ring packs its rows; banding by a capacity
+         taken from RMAX was tried and is worse still, because the inner bands are far too short for it (nine
+         records at r=46 land 3px apart). That work is not done here. */
+      const sOf = (x) => Math.max(0, Math.min(1, x.score == null ? 0.5 : +x.score));
+      const rw = 0.5;
       list.forEach((n, i) => {
-        const score = Math.max(0, Math.min(1, n.score == null ? 0.5 : +n.score)), tok = tokOf(n);
-        const q = place(si, i, list.length, score, n.id);
+        const score = sOf(n), tok = tokOf(n);
+        const q = place(si, i, list.length, score, n.id, rw);
         const inFocus = focus.has(n.id) && n.included !== false, by = readBy(n.id), everRead = by.length > 0, ghost = n.included === false;
         if (inFocus) { out.tokens += tok; out.lit++; }
         const d = Math.max(17 * k, (7 + Math.sqrt(tok) / 2.7 + 8) * k);
@@ -698,6 +761,21 @@
     return '<div class="cg-gal ' + esc(GV) + '">' + rings + stems.join('') + edges + dots.join('') + labels.join('') + hub + '</div>';
   }
   // the mini's detail: the compact record card for one record, over the box (the widget form shows it on a click)
+  /* The hover card's contents: what this record IS, at a glance. Deliberately NOT recordCard — no buttons, no
+     relations list, nothing that invites a click, because the click card is what a click is for. Colour comes
+     from the family so the card and the node agree, and the text is cut short: a hover is a look, not a read. */
+  function hoverCard(p) {
+    const fam = p.source || 'context', sc = p.score == null ? null : +p.score;
+    const txt = String((p.rec && (p.rec.text || p.rec.label)) || p.label || '').replace(/\s+/g, ' ').trim();
+    return '<div class="cg-hv" style="--gc:' + esc(p.col || 'var(--cg-ac)') + '">'
+      + '<div class="cg-hv-t">' + esc(String(p.label || p.id || '').slice(0, 88)) + '</div>'
+      + '<div class="cg-hv-m"><i></i>' + esc(fam)
+      + (sc != null && !isNaN(sc) ? '<b>' + sc.toFixed(2) + '</b>' : '')
+      + (p.tok ? '<span>' + (p.tok >= 1000 ? (p.tok / 1000).toFixed(1) + 'k' : p.tok) + ' tok</span>' : '')
+      + '<em>' + (p.ghost ? 'excluded' : p.lit ? 'in the prompt' : 'not sent') + '</em></div>'
+      + (txt && txt !== p.label ? '<div class="cg-hv-x">' + esc(txt.slice(0, 180)) + (txt.length > 180 ? '…' : '') + '</div>' : '')
+      + '</div>';
+  }
   function miniDetail(S, id, w, h) { const o = mini(Object.assign({}, S || {}, { sel: id || null, lsel: null }), w || 262, h || 196); return o.rec ? recordCard(o.rec, { compact: true }) : ''; }
   // the mini's list: the rows for the box, the search applied
   /* opts.fam narrows the rows to ONE source, so a host can open a section of its own list in place rather than
@@ -825,6 +903,17 @@ vera-context-graph .cg-rec-r a.v{color:var(--cg-ac);text-decoration:none;overflo
 vera-context-graph .cg-rec.compact{left:6px;right:6px;bottom:6px;padding:7px 8px;gap:2px;font-size:8px;max-height:70%;overflow:hidden}vera-context-graph .cg-rec.compact .cg-rec-h{font-size:9.5px}vera-context-graph .cg-rec.compact .cg-rec-r{font-size:8px}vera-context-graph .cg-rec.compact .cg-rec-r .k{width:52px}vera-context-graph .cg-rec.compact .cg-rec-t{font-size:8px;max-height:44px;margin-top:2px;padding-top:3px}vera-context-graph .cg-rec.compact .cg-rec-a button{font-size:8px;padding:2px 6px}
 vera-context-graph .cg-node.miss,vera-context-graph .cg-mem.miss{opacity:.12!important;filter:saturate(.2)}
 vera-context-graph .cg-body{flex:1;min-height:0;min-width:0;display:flex}vera-context-graph .cg-body .cg-plot{flex:1;min-width:0}
+/* the hover card: small, above the plot, and never in the pointer's way (it would flicker as the cursor entered
+   its own card and left the node) */
+vera-context-graph .cg-hover{position:absolute;z-index:9;pointer-events:none;max-width:260px}
+vera-context-graph .cg-hover[hidden]{display:none}
+vera-context-graph .cg-hv{border:1px solid var(--cg-bd);border-left:2px solid var(--gc);border-radius:7px;background:color-mix(in srgb,var(--cg-s1) 94%,transparent);backdrop-filter:blur(6px);box-shadow:0 6px 18px rgba(0,0,0,.34);padding:6px 8px}
+vera-context-graph .cg-hv-t{font-size:10.5px;line-height:1.35;color:var(--cg-t1);font-weight:600}
+vera-context-graph .cg-hv-m{display:flex;align-items:center;gap:5px;margin-top:3px;font-family:var(--cg-mono);font-size:8.5px;color:var(--cg-t3)}
+vera-context-graph .cg-hv-m i{width:6px;height:6px;border-radius:2px;background:var(--gc);flex:none}
+vera-context-graph .cg-hv-m b{font-weight:400;color:var(--cg-t2)}
+vera-context-graph .cg-hv-m em{font-style:normal;margin-left:auto;color:var(--cg-t3)}
+vera-context-graph .cg-hv-x{margin-top:4px;font-size:9.5px;line-height:1.45;color:var(--cg-t3);max-height:62px;overflow:hidden}
 vera-context-graph .cg-list-box{flex:none;width:236px;min-height:0;display:flex;margin:6px 10px 10px 0}vera-context-graph .cg-list-box[hidden]{display:none}
 vera-context-graph .cg-list{position:absolute;top:0;right:0;bottom:0;width:236px;z-index:7;display:flex;flex-direction:column;background:color-mix(in srgb,var(--cg-s1) 92%,transparent);border-left:1px solid var(--cg-bd);backdrop-filter:blur(3px)}
 vera-context-graph .cg-list-box .cg-list{position:relative;inset:auto;width:100%;border:1px solid var(--cg-bd);border-radius:8px;background:var(--cg-s1);backdrop-filter:none}
@@ -944,7 +1033,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
         const a = this.getAttribute('view'); if (a) this._S.view = a;
         this.innerHTML = '<div class="cg-hd"><h2>Context graph</h2><span class="lbl" data-r="tok"></span><select class="cg-sel" data-r="runs" hidden title="The run in the lane — this session\'s, or any recorded run"></select><span class="sp"></span><span class="cg-seg" data-r="views" title="The unified graph\'s layouts, here"></span><button class="cg-btn" data-a="alledges" data-r="alledges" title="Draw every relation, not only the ones that touch the prompt">All edges</button><input class="cg-srch" data-r="q" type="search" placeholder="⌕ find a record" title="Filter the list and dim what does not match in the plot — label, text, source, type, tags"><span class="lbl" data-r="hits"></span><button class="cg-btn" data-a="list" data-r="list" title="The records as a list beside the plot">List</button><span class="lbl" data-r="zoom">100%</span><button class="cg-btn" data-a="fit" title="Back to the whole graph">Fit</button><button class="cg-btn" data-a="collapse" title="Fold the graph back into the quick menu">Collapse</button></div>'
           + '<div class="cg-key"><span><b>angle</b> = source</span><span><b>distance</b> = lower relevance</span><span><b>area</b> = tokens</span><span><b>hollow</b> = related, not injected</span></div>'
-          + '<div class="cg-layers" data-r="layers"></div><div class="cg-frames" data-r="frames" hidden></div><div class="cg-body"><div class="cg-plot" data-r="plot"><div class="cg-in" data-r="in"></div><div data-r="lanes"></div></div><div class="cg-list-box" data-r="listbox" hidden></div></div>';
+          + '<div class="cg-layers" data-r="layers"></div><div class="cg-frames" data-r="frames" hidden></div><div class="cg-body"><div class="cg-plot" data-r="plot"><div class="cg-in" data-r="in"></div><div data-r="lanes"></div><div class="cg-hover" data-r="hover" hidden></div></div><div class="cg-list-box" data-r="listbox" hidden></div></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
         this._r.views.innerHTML = VIEWS.map((v) => '<button data-v="' + v[0] + '" title="' + esc(v[2]) + '">' + v[1] + '</button>').join('');
         this.addEventListener('click', (e) => this._click(e));
@@ -954,7 +1043,23 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
         const plot = this._r.plot;
         // ctrl (or Command, or a pinch) zooms the plot; a plain wheel scrolls the page past it (defect 75)
       plot.addEventListener('wheel', (e) => { if (!(e.ctrlKey || e.metaKey)) return; e.preventDefault(); const r = plot.getBoundingClientRect(); const qx = e.clientX - (r.left + r.width / 2), qy = e.clientY - (r.top + r.height / 2); const p = this._S.pan; const nz = Math.max(0.5, Math.min(4, p.z * (e.deltaY > 0 ? 0.88 : 1.14))), k = nz / p.z; this._S.pan = { z: nz, x: qx - (qx - p.x) * k, y: qy - (qy - p.y) * k }; this._schedule(); }, { passive: false });
-        plot.addEventListener('pointerdown', (e) => { if (e.button || (e.target.closest && e.target.closest('.cg-rec,.cg-list,.cg-node,.cg-mem,.cg-loop,button'))) return; e.preventDefault(); this._drag = { x0: e.clientX, y0: e.clientY, px: this._S.pan.x, py: this._S.pan.y, id: e.pointerId, moved: false }; });
+        /* THE HOVER CARD. A node carried a native title= tooltip and nothing else: the browser's own delayed
+           grey box, which cannot show the colour, the share or the text, and which the record card (a click,
+           with its Focus turn / Zoom to / Preview buttons) is far too heavy to stand in for. This is the light
+           one — what the record IS, read without committing to it. The click card is unchanged and still wins:
+           pressing a node hides this and opens that. */
+        plot.addEventListener('pointerover', (e) => {
+          const t = e.target && e.target.closest && e.target.closest('.cg-node[data-id],.cg-mem[data-id]');
+          if (!t) return; this._hoverAt(t.dataset.id, e);
+        });
+        plot.addEventListener('pointermove', (e) => { if (this._hoverId && !this._drag) this._hoverAt(this._hoverId, e, true); });
+        plot.addEventListener('pointerout', (e) => {
+          const t = e.target && e.target.closest && e.target.closest('.cg-node[data-id],.cg-mem[data-id]');
+          const to = e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.cg-node[data-id],.cg-mem[data-id]');
+          if (t && to === t) return; this._hoverHide();
+        });
+        plot.addEventListener('pointerleave', () => this._hoverHide());
+        plot.addEventListener('pointerdown', (e) => { this._hoverHide(); if (e.button || (e.target.closest && e.target.closest('.cg-rec,.cg-list,.cg-node,.cg-mem,.cg-loop,button'))) return; e.preventDefault(); this._drag = { x0: e.clientX, y0: e.clientY, px: this._S.pan.x, py: this._S.pan.y, id: e.pointerId, moved: false }; });
         plot.addEventListener('pointermove', (e) => { const g = this._drag; if (!g) return; const dx = e.clientX - g.x0, dy = e.clientY - g.y0; if (!g.moved && Math.abs(dx) + Math.abs(dy) > 4) { g.moved = true; plot.classList.add('drag'); try { plot.setPointerCapture(g.id); } catch (_) {} } if (g.moved) { this._S.pan.x = g.px + dx; this._S.pan.y = g.py + dy; this._schedule(); } });
         const up = () => { if (this._drag) { plot.classList.remove('drag'); this._drag = null; } }; plot.addEventListener('pointerup', up); plot.addEventListener('pointercancel', up);
         if (root.ResizeObserver) { this._ro = new ResizeObserver(() => this._schedule()); this._ro.observe(plot); }
@@ -988,6 +1093,19 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
       fit() { this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); }
       select(id) { this._S.sel = id || null; this._schedule(); }
       // pan the plot so the record sits at its centre, at zoom z (at least 1.6, or the current zoom if larger)
+      _hoverHide() { this._hoverId = null; const h = this._r && this._r.hover; if (h) { h.hidden = true; h.innerHTML = ''; } }
+      _hoverAt(id, e, moveOnly) {
+        const h = this._r && this._r.hover, p = this._last && this._last.pos[id];
+        if (!h || !p) { this._hoverHide(); return; }
+        if (!moveOnly || this._hoverId !== id) { this._hoverId = id; h.innerHTML = hoverCard(p); h.hidden = false; }
+        // keep it beside the cursor and inside the plot — a card that runs off the edge tells you nothing
+        const r = this._r.plot.getBoundingClientRect();
+        const w = h.offsetWidth || 200, ht = h.offsetHeight || 60;
+        let x = e.clientX - r.left + 14, y = e.clientY - r.top + 14;
+        if (x + w > r.width - 4) x = Math.max(4, e.clientX - r.left - w - 14);
+        if (y + ht > r.height - 4) y = Math.max(4, e.clientY - r.top - ht - 14);
+        h.style.left = x.toFixed(0) + 'px'; h.style.top = y.toFixed(0) + 'px';
+      }
       zoomTo(id, z) { const p = this._last && this._last.pos[id]; if (!p) return false; const plot = this._r.plot; const W = Math.max(200, plot.clientWidth || 600), H = Math.max(160, plot.clientHeight || 500); this._S.pan = panTo(p, W, H, z || Math.max(this._S.pan.z || 1, 1.6)); this._schedule(); return true; }
       state() { return this._S; }
       // screen positions of the drawn records (for the runs to the message the host draws)
