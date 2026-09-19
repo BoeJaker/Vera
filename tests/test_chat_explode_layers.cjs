@@ -1,0 +1,22 @@
+// The chat's side of the exploded scene's layers and its widgets (the Canvas board's exploded iso; Notes/42): the host
+// stamps every message with its moment, fetches this session's capability events and the estate snapshot when the
+// activity / estate layers are on, buckets the calls into the turns, restores the canvas's placed items into the LAND
+// layer (so a widget on a plate survives a reload), and re-anchors or edits a widget the scene reports moved or edited.
+//   node tests/test_chat_explode_layers.cjs
+const path = require('node:path'); const fs = require('node:fs');
+const HTML = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_panel.html'), 'utf8');
+let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if (!cond) fails++; };
+const has = (s) => HTML.includes(s);
+t('every message wrap carries the moment it was rendered', has("wrap.dataset.mid = mid; wrap.dataset.ts = String(Date.now());"));
+t('the scene reads it back into the turns, and the canvas\'s items into the LAND layer', has("const tsOf={}; wraps.forEach(w=>{ tsOf[w.dataset.mid]=+w.dataset.ts||0; });") && has("turns.forEach(t=>{ t.ts=tsOf[t.mid]||0; t.land=_xplLandOf(t.mid, t.land); });"));
+t('the layers are the element\'s switches; the host hears them and keeps what they need', has("_xplEl.addEventListener('vera:xpl:layers', ev=>{ _xplLayers=Object.assign({}, _xplLayers, ev.detail||{}); _xplSync(true); });") && has("if(_xplLayers.activity||_xplLayers.estate){ const by=_xplBucket(turns); turns.forEach(t=>{ const a=by[t.mid]||[]; if(_xplLayers.activity) t.activity=a; if(_xplLayers.estate) t.estate=_xplEstateOf(a); }); }"));
+t('one sync: the session\'s cap events (6 s), the topology snapshot (60 s), the canvas (4 s) — a re-render only when something changed', has("async function _xplSync(force){") && has("_capCall('obs.events',{limit:500})") && has("_capCall('topology.snapshot',{})") && has("_capCall('canvas.get',{id:_xplCv.id})") && has("if(changed&&_xpl.on&&_xplEl){"));
+t('only this session\'s cap.call · cap.ok · cap.error, paired by trace — a call without its ok is still running', has("/^cap\\.(call|ok|error)$/.test(String(e.type||''))&&String(e.session_id||'')===SID") && has("status:'run'") && has("status:e.type==='cap.error'?'error':'ok'"));
+t('a call belongs to the turn whose capability card names it, else to the turn whose moment precedes it (when the moments are real), else the last', has("const named=turns.filter(t=>(t.made||[]).some(m=>/^(cap|capability|tool)$/i.test(String(m.kind||''))&&String(m.n||'').toLowerCase().indexOf(e.cap.toLowerCase())===0));") && has("if(!t&&real){") && has("if(!t) t=named[0]||turns[turns.length-1];"));
+t('the estate is the snapshot\'s node for the cap\'s group — the topology map\'s own table — and the machines that serve it', has("const _XPL_GROUP_NODE={ dream:'svc:dream'") && has("function _xplEstateOf(acts){") && has("String(ed.kind||'')!=='serves'&&!/^node:/.test(String(from||''))"));
+t('the canvas\'s anchored blocks become LAND cards; a block anchored elsewhere leaves the turn it was placed on', has("function _xplCardOfBlock(b, key){") && has("function _xplLandOf(mid, mine){") && has("return !(keys.has(c.key)||(b&&b.mid&&b.mid!==mid));"));
+t('a widget dropped on another turn is re-anchored there (anchors only grow); dropped before another item, reordered', has("_xplEl.addEventListener('vera:xpl:move', ev=>_xplMove(ev.detail||{}));") && has("await _capCall('canvas.add',{ session_id:SID, key, at:'now', anchor:{ mid:to, turn:to, moved_from:from } })") && has("await _capCall('canvas.move',{ id:_xplCv.id, block_id:bk.id, order:ob.order||0 });"));
+t('the gear opens the WidgetConfig sheet on the record and writes the saved record back to the item', has("_xplEl.addEventListener('vera:xpl:edit', ev=>_xplEdit(ev.detail||{}));") && has("rec=await Sh.open({ mode:'edit', into:'canvas', record:rec0, title:'Edit · '+(card.n||rec0.form||'widget') });") && has("await _capCall('canvas.update',{ session_id:SID, key, content })"));
+t('the refresh keeps the sync going without blocking the scene', has("_xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: scene', e); } try{ _xplSync(false); }catch(_){} }"));
+console.log((fails ? 'FAILED ' : 'passed ') + (fails ? fails + ' check(s)' : 'all checks'));
+process.exit(fails ? 1 : 0);

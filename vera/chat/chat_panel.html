@@ -3944,7 +3944,7 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     const mid = 'm'+(++_MSG_SEQ);
     const wrap=document.createElement('div');
     wrap.className='mwrap '+(role==='user'?'u':'a');
-    wrap.dataset.mid = mid;
+    wrap.dataset.mid = mid; wrap.dataset.ts = String(Date.now());   // when it was rendered: the exploded scene buckets the turn's calls by it
     // Sticky-pin only the newest question. Un-pin any earlier one first so two
     // questions never stick at top:0 at once (the "older card pokes out" bug).
     if(role==='user'){
@@ -16805,6 +16805,12 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===_xpl.mode));
     _ctxRunsFollowScene(); _xplEl.addEventListener('vera:xpl:close', ()=>_xplClose());
     _xplEl.addEventListener('vera:xpl:place', ev=>_xplPlaceOpen((ev.detail||{}).mid||''));
+    // the two optional layers and the galaxy are the element's own switches (remembered per browser); the host fetches what they need
+    _xplEl.addEventListener('vera:xpl:layers', ev=>{ _xplLayers=Object.assign({}, _xplLayers, ev.detail||{}); _xplSync(true); });
+    try{ const st=_xplEl.state(); _xplLayers=Object.assign({}, _xplLayers, st.layers||{}, { galaxy:!!st.galaxy }); }catch(_){}
+    // a widget picked up and dropped on another turn's plate (or before another item) is re-anchored; a gear edits its record
+    _xplEl.addEventListener('vera:xpl:move', ev=>_xplMove(ev.detail||{}));
+    _xplEl.addEventListener('vera:xpl:edit', ev=>_xplEdit(ev.detail||{}));
     // a turn selected in the exploded scene (the turn dots, the scrubber, ← →, a station caption, the exchange) is the focused turn
     // everywhere: the grown context graph at that turn's frame, the mini graph re-drawn, the canvas with that turn's items in focus
     _xplEl.addEventListener('vera:xpl:turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid) return; _grFocusMid=mid;
@@ -16878,7 +16884,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       _xplRefresh(); try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){}
     }catch(e){ appendSys('Place failed: '+esc(String(e&&e.message||e))); }
   }
-  function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.dataset.rels=_runsOff.xpl?'off':'on'; _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: scene', e); } }
+  function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.dataset.rels=_runsOff.xpl?'off':'on'; _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: scene', e); } try{ _xplSync(false); }catch(_){} }
   const _xplCtxCard=(n)=>({id:n.id, n:n.label||n.id, d:(n.source||'')+' · '+(+(n.score||0)).toFixed(2), col:srcCol(n.source), kind:n.type||n.source||'', score:+(n.score||0), body:String(n.text||'').slice(0,240)});
   function _xplRecordReads(mid){ try{ if(!mid||typeof CTX_NODES==='undefined') return; _TURN_READS[mid]=CTX_NODES.filter(n=>n.included!==false).slice(0,40).map(_xplCtxCard); _TURN_RELS[mid]=_xplRels(); }catch(_){} }
   // what a turn read, for the scene: the reads recorded when the question was sent; when none were (the first send of a
@@ -16892,6 +16898,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
   // the scene from the transcript: a station per question with its reply folded in
   function _xplScene(){
     const wraps=[...document.querySelectorAll('#msgs .mwrap[data-mid]')]; const turns=[]; let cur=null;
+    const tsOf={}; wraps.forEach(w=>{ tsOf[w.dataset.mid]=+w.dataset.ts||0; });
     // the words of a message — never the thinking throbber's phrase, the think box or the streaming dot
     const txt=(w)=>{ const b=w.querySelector('.msg-body'); if(!b) return ''; if(b.querySelector('.think-throb')) return ''; const c=b.cloneNode(true); c.querySelectorAll('.think-throb,.think-box,.cap-dot,.wblk,.cap-inline,.mm-slot,.mermaid,vera-mermaid,vera-widget,pre,table,figure,.msg-actions,.pa-atts').forEach(x=>x.remove()); return String(c.textContent||'').replace(/\s+/g,' ').trim(); };   // the words — the figures are the turn's made/landed items
     const tm=(w)=>{ const t=w.querySelector('.mtime'); return t?String(t.textContent||'').trim():''; };
@@ -16916,8 +16923,83 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     // the newest question without a recorded context: the live context is what it read
     const last=turns.length?turns[turns.length-1]:null;
     if(last&&!last.read.length&&typeof CTX_NODES!=='undefined'){ const live=CTX_NODES.filter(n=>n.included!==false).map(_xplCtxCard); last.read=live.slice(0,12); last.readAll=live.slice(0,40); last.rel=_xplRels(); }
+    // every turn: its moment, its canvas items as the session canvas holds them (a reload keeps what was placed; a move
+    // lands where it was dropped), and — when the layers are on — the calls it made and where they ran
+    turns.forEach(t=>{ t.ts=tsOf[t.mid]||0; t.land=_xplLandOf(t.mid, t.land); });
+    if(_xplLayers.activity||_xplLayers.estate){ const by=_xplBucket(turns); turns.forEach(t=>{ const a=by[t.mid]||[]; if(_xplLayers.activity) t.activity=a; if(_xplLayers.estate) t.estate=_xplEstateOf(a); }); }
     return {turns, sel:(_grFocusMid&&turns.some(t=>t.mid===_grFocusMid))?_grFocusMid:(last?last.mid:'')};
   }
+  /* ── the exploded scene's LAYERS and its canvas items (the Canvas board's exploded iso; the user's ask of 2026-09-19) ──
+     ACTIVITY — the capability calls this session made (obs.events: cap.call · cap.ok · cap.error, this session's), bucketed
+     into the turns: a call whose cap a turn's capability card names belongs to that turn; otherwise the turn whose moment
+     precedes it (when the turns' moments are real — a reloaded transcript is stamped at load, so it falls to the last turn).
+     ESTATE — where those calls ran: the topology snapshot's node for the cap's group (the same table the topology map
+     routes by), and the machines the snapshot says serve it. LAND — the session canvas's items anchored to a turn, so a
+     widget placed on a plate is still there after a reload and moves when it is dropped on another turn. ── */
+  let _xplLayers={ activity:false, estate:false, galaxy:false }, _xplEvents=[], _xplEventsAt=0, _xplTopo=null, _xplTopoAt=0, _xplCv={ id:'', rev:null, byMid:{}, blocks:{}, at:0 }, _xplSyncing=false, _xplSyncSig='';
+  const _XPL_GROUP_NODE={ dream:'svc:dream', project:'svc:dream', chat:'svc:chat', chat_panels:'svc:chat', dag:'svc:dag', dag_workshop:'svc:dag', loops:'svc:dag', agent_loop_v5:'svc:dag', agent_loop_v6:'svc:dag', agent_loop_v7:'svc:dag', agent_loop_v8:'svc:dag', docker:'cat:docker', sandbox:'cat:sandboxes', evolve:'cat:sandboxes', mesh:'cat:mesh', netmon:'cat:mesh', recon:'cat:mesh', fabric:'cat:fabric', memory:'cat:fabric', discover:'cat:fabric', research:'cat:fabric', web:'cat:fabric', knowledgebase:'cat:fabric', nodes:'cat:nodes', provision:'cat:nodes', perf:'svc:perf', ollama:'cat:ollama', llm:'cat:ollama', embed:'cat:ollama', ide:'user', operator:'user', accounts:'user', calendar:'user', cal:'user', email:'user' };
+  const _XPL_NOISE=new Set(['obs','health','ui','mcp','session','syslog','panel','caps','db','stream','cluster','canvas','widget','activity','topology']);
+  // one pass: the events (every 6 s), the snapshot (every 60 s), the canvas (every 4 s) — then a re-render only when something changed
+  async function _xplSync(force){ if(!_xpl.on||_xplSyncing) return; _xplSyncing=true; const now=Date.now(); let changed=false;
+    try{
+      if(SID&&(force||now-_xplCv.at>4000)){ _xplCv.at=now; try{ if(!_xplCv.id){ const r=await _capCall('canvas.session.resolve',{session_id:SID}); _xplCv.id=String((r&&(r.id||r.canvas_id||(r.canvas&&r.canvas.id)))||''); }
+          if(_xplCv.id){ const d=await _capCall('canvas.get',{id:_xplCv.id}); const doc=(d&&(d.canvas||d.doc||d))||{}; const rev=doc.revision!=null?doc.revision:(doc.rev!=null?doc.rev:JSON.stringify(doc.blocks||[]).length);
+            if(rev!==_xplCv.rev){ _xplCv.rev=rev; const byMid={}, blocks={}; (doc.blocks||[]).forEach(b=>{ const a=b.anchor||((b.anchors||[]).slice(-1)[0])||{}; const mid=String(a.mid||a.turn||''); const key=String(b.key||''); if(key) blocks[key]={ id:b.id, mid, order:(b.layout&&b.layout.order)||0 }; if(!mid||b.state==='parked') return; (byMid[mid]=byMid[mid]||[]).push(_xplCardOfBlock(b, key)); }); _xplCv.byMid=byMid; _xplCv.blocks=blocks; changed=true; } } }catch(_){} }
+      if((_xplLayers.activity||_xplLayers.estate)&&SID&&(force||now-_xplEventsAt>6000)){ _xplEventsAt=now; try{ let ev=await _capCall('obs.events',{limit:500}); ev=Array.isArray(ev)?ev:((ev&&(ev.events||ev.result||ev.items))||[]);
+          const mine=ev.filter(e=>e&&/^cap\.(call|ok|error)$/.test(String(e.type||''))&&String(e.session_id||'')===SID).map(e=>({ type:e.type, cap:String(e.name||''), group:String(e.group||String(e.name||'').split('.')[0]), ts:Date.parse(e.ts||e.time||'')||0, ms:e.elapsed_ms!=null?Math.round(+e.elapsed_ms):null, trace:String(e.trace_id||''), preview:String(e.preview||'').slice(0,200) }));
+          const sig=JSON.stringify(mine.map(e=>[e.type,e.cap,e.ts])); if(sig!==_xplSyncSig){ _xplSyncSig=sig; _xplEvents=mine; changed=true; } }catch(_){} }
+      if(_xplLayers.estate&&(force||!_xplTopo||now-_xplTopoAt>60000)){ _xplTopoAt=now; try{ const t=await _capCall('topology.snapshot',{}); if(t&&Array.isArray(t.nodes)){ _xplTopo=t; changed=true; } }catch(_){} }
+    } finally { _xplSyncing=false; }
+    if(changed&&_xpl.on&&_xplEl){ try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: sync', e); } }
+  }
+  // a canvas block as a card of the scene's LAND layer (the same vocabulary the chat's own landings use)
+  function _xplCardOfBlock(b, key){ const c=(b.content&&typeof b.content==='object')?b.content:{}; const type=String(b.type||'note'); const form=String(c.form||c.widget||(c.draw&&c.draw.form)||'');
+    const COL={ widget:'#a78bfa', diagram:'#a78bfa', code:'#fb923c', table:'#38bdf8', note:'#5ec9a0', session:'#38bdf8', panel:'#c9955a', notebook:'#c9955a' };
+    const n=String(c.title||c.name||(type==='widget'?(form||'widget'):type==='code'?((c.lang||'code')+' block'):type==='diagram'?'Diagram':type)).slice(0,60);
+    const placed=c.placed&&typeof c.placed==='object'?c.placed:null; const d='canvas · '+(placed?(placed.where==='iso plate'?'placed on the plate':'placed'):(b.state==='pinned'?'pinned':'landed'))+(b.size?' · '+b.size:'');
+    return { n, d, col:COL[type]||'#5ec9a0', kind:type==='widget'?'widget':type, key, form:form||undefined, record:(type==='widget'&&c.record&&typeof c.record==='object')?c.record:(type==='widget'?c:undefined), mermaid:type==='diagram'?String(c.mermaid||c.source||''):undefined, tpl:c.template||undefined, included:b.state==='pinned'?true:undefined, body:type==='code'?String(c.code||c.text||'').slice(0,400):undefined }; }
+  // the turn's canvas items: what the canvas holds for the turn (its anchors are the truth after a move), plus what this page
+  // placed and the canvas has not answered for yet
+  function _xplLandOf(mid, mine){ const cv=_xplCv.byMid[mid]||[]; const keys=new Set(cv.map(c=>c.key)); const kept=(mine||[]).filter(c=>{ if(!c.key) return true; const b=_xplCv.blocks[c.key]; return !(keys.has(c.key)||(b&&b.mid&&b.mid!==mid)); }); return cv.concat(kept).slice(0,12); }
+  // the session's calls, bucketed into the turns (see above); call · ok · error paired by trace, so a call without its
+  // ok is still running
+  function _xplBucket(turns){ const by={}; if(!turns.length) return by; const pend={}, done=[];
+    _xplEvents.slice().sort((a,b)=>a.ts-b.ts).forEach(e=>{ if(e.type==='cap.call'){ pend[e.trace||e.cap+e.ts]=e; return; } const k=e.trace||''; if(k&&pend[k]) delete pend[k]; done.push({ n:e.cap, cap:e.cap, group:e.group, ts:e.ts, ms:e.ms, status:e.type==='cap.error'?'error':'ok', preview:e.preview }); });
+    Object.keys(pend).forEach(k=>{ const e=pend[k]; done.push({ n:e.cap, cap:e.cap, group:e.group, ts:e.ts, ms:null, status:'run', preview:e.preview }); }); done.sort((a,b)=>a.ts-b.ts);
+    const tsList=turns.map(t=>t.ts||0), real=turns.length>1&&(Math.max.apply(null,tsList)-Math.min.apply(null,tsList))>30000;
+    const hhmm=(ts)=>{ try{ const d=new Date(ts); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }catch(_){ return ''; } };
+    done.forEach(e=>{ const named=turns.filter(t=>(t.made||[]).some(m=>/^(cap|capability|tool)$/i.test(String(m.kind||''))&&String(m.n||'').toLowerCase().indexOf(e.cap.toLowerCase())===0)); let t=named.length===1?named[0]:null;
+      if(!t&&real){ for(let i=turns.length-1;i>=0;i--){ if((turns[i].ts||0)<=e.ts){ t=turns[i]; break; } } if(!t) t=turns[0]; }
+      if(!t) t=named[0]||turns[turns.length-1];
+      (by[t.mid]=by[t.mid]||[]).push(Object.assign({ t:hhmm(e.ts) }, e)); });
+    Object.keys(by).forEach(k=>{ by[k]=by[k].slice(-24); }); return by; }
+  // where a turn's calls ran: the snapshot's node for each call's group, and the machines that serve it
+  function _xplEstateOf(acts){ const T=_xplTopo; if(!T||!Array.isArray(T.nodes)||!acts||!acts.length) return []; const byId={}; T.nodes.forEach(nd=>{ byId[nd.id]=nd; }); const out=[], idx={};
+    const add=(nd, ai, via)=>{ if(!nd) return null; if(idx[nd.id]==null){ idx[nd.id]=out.length; out.push({ id:nd.id, label:nd.label||nd.id, kind:String(nd.kind||'service'), status:String(nd.status||''), detail:String(nd.detail||''), acts:[], via }); } const e=out[idx[nd.id]]; if(ai!=null&&e.acts.indexOf(ai)<0) e.acts.push(ai); return idx[nd.id]; };
+    acts.forEach((a, ai)=>{ const g=String(a.group||'').toLowerCase(); if(_XPL_NOISE.has(g)) return; const nid=_XPL_GROUP_NODE[g]; const nd=nid&&byId[nid]; if(!nd) return; const i=add(nd, ai, undefined); if(i==null) return;
+      (T.edges||T.links||[]).forEach(ed=>{ const to=ed.to||ed.target, from=ed.from||ed.source; if(to!==nd.id||String(ed.kind||'')!=='serves'&&!/^node:/.test(String(from||''))) return; const m=byId[from]; if(m&&out.length<12) add(m, null, i); }); });
+    return out.slice(0,12); }
+  // a widget dropped on another turn's plate: the record is re-anchored there (anchors only grow — the latest is the truth);
+  // dropped before another item on the same plate, it is reordered
+  async function _xplMove(d){ const key=String(d.key||''); if(!key||!SID) return; const from=String(d.from||''), to=String(d.to||from); const bk=_xplCv.blocks[key]||{};
+    try{
+      if(to&&to!==from){ const r=await _capCall('canvas.add',{ session_id:SID, key, at:'now', anchor:{ mid:to, turn:to, moved_from:from } }); if(!(r&&r.ok)) throw new Error((r&&r.error)||'canvas.add failed');
+        const mine=(_TURN_LAND[from]||[]); const i=mine.findIndex(c=>c.key===key); if(i>=0){ const c=mine.splice(i,1)[0]; (_TURN_LAND[to]=_TURN_LAND[to]||[]).push(c); } }
+      if(d.before&&_xplCv.id&&bk.id){ const bkey=(_xplEl&&_xplEl._itemOf&&_xplEl._itemOf(d.before)||{}).key||''; const ob=bkey&&_xplCv.blocks[bkey]; if(ob&&ob.id!==bk.id){ await _capCall('canvas.move',{ id:_xplCv.id, block_id:bk.id, order:ob.order||0 }); } }
+      _xplCv.rev=null; _xplCv.at=0; await _xplSync(true); try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){}
+    }catch(e){ appendSys('Move failed: '+esc(String(e&&e.message||e))); _xplRefresh(); } }
+  // the gear on a placed widget: the WidgetConfig sheet on its record; the saved record is written back to the canvas item
+  async function _xplEdit(d){ const key=String(d.key||''), card=d.card||{}; if(!key||!SID) return;
+    const Sh=(function(){ try{ const p=window.parent; if(window.frameElement&&p&&p!==window&&p.VeraWidgetConfig&&p.VeraWidgetConfig.open) return p.VeraWidgetConfig; }catch(_){} try{ if(window.VeraWidgetConfig&&window.VeraWidgetConfig.open) return window.VeraWidgetConfig; }catch(_){} return null; })();
+    if(!Sh){ appendSys('The widget sheet is not on this page.'); return; }
+    const rec0=(card.record&&typeof card.record==='object')?card.record:{ form:card.form||'kv', title:card.n||'' }; let rec=null;
+    try{ rec=await Sh.open({ mode:'edit', into:'canvas', record:rec0, title:'Edit · '+(card.n||rec0.form||'widget') }); }catch(_){ rec=null; } if(!rec) return;
+    const form=String(rec.form||(rec.draw&&rec.draw.form)||rec0.form||'kv'), size=String((rec.frame&&rec.frame.size)||(rec.draw&&rec.draw.size)||'m');
+    const content=Object.assign({}, rec, { widget:form, form, title:rec.title||card.n||form, draw:Object.assign({}, rec.draw||{}, { form, size }), record:rec, placed:(card.record&&card.record.placed)||{ where:'iso plate', turn:d.mid } });
+    try{ const r=await _capCall('canvas.update',{ session_id:SID, key, content }); if(!(r&&r.ok)) throw new Error((r&&r.error)||'canvas.update failed');
+      Object.keys(_TURN_LAND).forEach(m=>{ (_TURN_LAND[m]||[]).forEach(c=>{ if(c.key===key){ c.record=rec; c.form=form; c.n=content.title; } }); });
+      _xplCv.rev=null; _xplCv.at=0; await _xplSync(true); try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){}
+    }catch(e){ appendSys('Edit failed: '+esc(String(e&&e.message||e))); } }
 
   /* ═══ PASTE HANDLER — large paste becomes a pinned doc chip ═══
      Old behaviour: modal popup forcing the user to choose Insert / Cancel.
