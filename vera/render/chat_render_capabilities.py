@@ -9,8 +9,16 @@ put LIVE VISUALS in front of the user instead of walls of text:
                     SVG/PNG export). Supports flowchart/graph, sequenceDiagram,
                     stateDiagram and pie.
   render.html     — display an arbitrary HTML/CSS/JS snippet (charts, widgets,
-                    mini-UIs) in a sandboxed iframe card — inline in the chat
-                    or floating over the UI as a pop-out.
+                    mini-UIs) in a sandboxed card in the chat — the SAME card a
+                    ```html fenced block gets, so a rendered snippet and a written
+                    one look and behave alike (source toggle, pane, pop-out).
+
+                    POP-OUT IS THE USER'S CHOICE. This defaulted to popout=True
+                    and the description advertised that default, so a model that
+                    merely wanted to show a chart threw a floating window over the
+                    user's whole UI, every time. The card carries its own pop-out
+                    button; the model should not reach for it uninvited. The other
+                    render caps already defaulted false — this one was the outlier.
   render.chart    — quick data chart (bar | line | pie) from a simple spec;
                     drawn client-side as themed SVG.
   render.screen   — float ANY registered UI panel (including ones built
@@ -112,17 +120,23 @@ async def cap_render_mermaid(code: str = "", title: str = "Diagram",
     http_method="POST", http_path="/render/html", http_tags=["render", "ui"],
     memory="off",
     description="Render an HTML/CSS/JS snippet for the user — a chart, widget, "
-                "table, animation or mini-UI — in a SANDBOXED iframe card in the "
-                "chat, optionally floating over the whole UI as a pop-out window. "
+                "table, animation or mini-UI — in a SANDBOXED code card in the "
+                "chat, the same card a ```html fenced block gets: the reader can "
+                "show the source, open it in the pane, or float it over the UI. "
                 "The snippet is self-contained (inline styles/scripts; no external "
-                "network access guaranteed). "
+                "network access guaranteed). A complete document draws itself; a "
+                "fragment waits to be asked. "
+                "DO NOT pass popout — floating a window over the user's whole UI is "
+                "THEIR choice, made with the card's own pop-out button. Leave it "
+                "alone unless the user has asked, in this conversation, for the "
+                "render to pop out. "
                 "Input: html (str! — the snippet or full document), title (str), "
-                "session_id (str! — chat session id), popout (bool, default true), "
-                "height (int px for the inline card, default 380). "
+                "session_id (str! — chat session id), popout (bool, default false — "
+                "see above), height (int px for the inline card, default 380). "
                 "Output: {ok, rendered}.",
 )
 async def cap_render_html(html: str = "", title: str = "Preview",
-                          session_id: str = "", popout: bool = True,
+                          session_id: str = "", popout: bool = False,
                           height: int = 380, trace_id=None) -> Dict[str, Any]:
     if not (html or "").strip():
         return {"error": "html required"}
