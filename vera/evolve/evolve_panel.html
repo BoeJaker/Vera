@@ -2050,9 +2050,15 @@ async function loadCensusLive(){
   const p=r.progress||{}, a=r.active, c=r.counters||{}, hz=r.harness||{}, ctl=r.control||{};
   _cenLiveData=r;
   const doneN=(p.completed==null?null:p.completed);
+  // A yield is a pause that waits for the goal in flight to END: until the
+  // harness parks (hz.state paused) the census is still running, so the
+  // status must not say "paused" on the strength of the request alone.
+  const yielding=ctl.state==='yield'&&hz.state!=='paused';
   const hzLive=!!hz.live, paused=hz.state==='paused'||ctl.state==='pause';
   const ctlTag=ctl.state==='drop'?'<span class="tag" style="color:#c96b6b">drop requested</span>'
-    :(ctl.state==='pause'?'<span class="tag" style="color:#c9a35a">pause requested'+(ctl.reason?(' · '+esc(ctl.reason)):'')+'</span>':'');
+    :(ctl.state==='pause'?'<span class="tag" style="color:#c9a35a">pause requested'+(ctl.reason?(' · '+esc(ctl.reason)):'')+'</span>'
+    :(yielding?'<span class="tag" style="color:#c9a35a" title="the goal in flight finishes untouched; the harness parks before the next one">yield requested · parks after '+esc(a?(a.goal_id||'this goal'):(hz.current_goal||'this goal'))+(ctl.reason?(' · '+esc(ctl.reason)):'')+'</span>'
+    :(ctl.state==='yield'?'<span class="tag" style="color:#c9a35a">yielded'+(ctl.reason?(' · '+esc(ctl.reason)):'')+'</span>':'')));
   $('census-live-status').innerHTML=(a||hzLive)
     ?('<span style="color:'+(paused?'#c9a35a':'#3cb371')+'">'+(paused?'paused':'running')+'</span>'
       +(hz.template?(' · <span class="mono">'+esc(hz.template)+'</span>'):'')
@@ -2063,15 +2069,19 @@ async function loadCensusLive(){
   // Controls: ask the harness, never touch the run. Pause re-runs the goal
   // in flight after prod comes back; drop ends the set.
   const ctrl=(hzLive||a)?('<span class="row" style="gap:4px;margin-left:8px">'
-      +(paused?'<button class="btn sm" onclick="censusControl(\'resume\')" title="lift the pause — the harness re-runs the goal it was on">▶ resume</button>'
-              :'<button class="btn sm" onclick="censusControl(\'pause\')" title="cancel the goal in flight; the harness re-runs it once resumed">⏸ pause</button>')
+      +(paused?'<button class="btn sm" onclick="censusControl(\'resume\')" title="lift the pause — the harness '+(ctl.state==='yield'?'starts the next goal':'re-runs the goal it was on')+'">▶ resume</button>'
+              :(yielding?'<button class="btn sm" onclick="censusControl(\'resume\')" title="withdraw the yield — the census carries on">▶ carry on</button>'
+                        :'<button class="btn sm" onclick="censusControl(\'yield\')" title="finish the goal in flight, then park before the next one — for running other tests on the box without tainting a row">⏭ yield</button>'
+                         +'<button class="btn sm" onclick="censusControl(\'pause\')" title="cancel the goal in flight; the harness re-runs it once resumed">⏸ pause</button>'))
       +'<button class="btn sm" onclick="censusControl(\'drop\')" title="cancel the goal in flight and end the whole set (archived as -dropped)">✕ drop</button>'
       +'</span>'):'';
   if(!a){
     // Between goals there is no active loop for 30-60s; this branch must
     // still render and still return, or following dies at the first gap.
     el.innerHTML=_cenRecent(r)
-      +'<div class="empty" style="padding:8px">'+(paused?'Census paused — the harness will re-run <b>'+esc(hz.current_goal||'the goal it was on')+'</b> once resumed.'
+      +'<div class="empty" style="padding:8px">'+(paused?(hz.pause_kind==='yield'
+          ?'Census yielded — the box is free for other tests; the harness starts <b>'+esc(hz.current_goal||'the next goal')+'</b> once resumed.'
+          :'Census paused — the harness will re-run <b>'+esc(hz.current_goal||'the goal it was on')+'</b> once resumed.')
         :(hzLive?'Between goals — the harness is starting <b>'+esc(hz.current_goal||'the next goal')+'</b>.':'No census loop is running right now.'))
       +' '+ctlTag+ctrl
       +((p.remaining||[]).length?(' <span class="hint">'+(p.remaining||[]).length+' goal(s) not yet recorded: '+esc((p.remaining||[]).join(', '))+'</span>'):'')
@@ -2103,12 +2113,14 @@ async function loadCensusLive(){
   return doneN;
 }
 
-/* Ask the harness to pause / resume / drop. A drop ends the whole set. */
+/* Ask the harness to pause / resume / drop / yield. A drop ends the whole set;
+   a yield parks only once the goal in flight has ended. */
 async function censusControl(action){
   if(action==='drop'&&!confirm('Drop the running census?\n\nThe goal in flight is cancelled, nothing more runs, and what finished is archived as -dropped.'))return;
   const r=await post('/census/control/set',{action:action,by:'loop-lab'});
   if(!r||!r.ok){toast('census '+action+' failed: '+((r&&r.error)||'?'));return}
-  toast('census: '+action+' requested — the harness acts within ~15s');
+  toast(action==='yield'?'census: yield requested — the goal in flight finishes, then the harness parks'
+                        :'census: '+action+' requested — the harness acts within ~15s');
   censusPoll();
 }
 
