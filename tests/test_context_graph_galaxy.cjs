@@ -46,6 +46,16 @@ if (!api) { console.log(fails + ' FAILED'); process.exit(1); }
 
 // five families; two records carry a real score, the rest carry NONE — the ordinary shape
 const FAMS = ['memory', 'vector', 'graph', 'fabric', 'cap'];
+function plotAt(W, H, per) {
+  const nodes = [];
+  FAMS.forEach((f) => { for (let i = 0; i < (per || 6); i++) nodes.push({ id: f + i, label: f + ' record ' + i,
+    source: f, text: 'x'.repeat(200), included: true, score: i < 2 ? 0.95 - 0.05 * i : undefined }); });
+  const st = api.stateFrom({ nodes, rels: [], view: 'galaxy', color: () => '#888' });
+  const o = api.compute(st, W, H);
+  const hub = { x: parseFloat(o.hub.x), y: parseFloat(o.hub.y) };
+  const rows = Object.keys(o.pos).map((id) => ({ id, p: o.pos[id] }));
+  return { o, hub, rows };
+}
 function plot(per) {
   const nodes = [];
   FAMS.forEach((f) => { for (let i = 0; i < per; i++) nodes.push({ id: f + i, label: f + ' record ' + i,
@@ -257,6 +267,31 @@ t('an off band is still visible enough to press back on', /\.cg-mb\.off\{backgro
 }
 t('the relations are drawn as a meter, not a chip row', /class="cg-meter et"/.test(src) && src.indexOf('cg-lay et ') < 0);
 t('a band is sized by how many relations it holds', /flex-grow:' \+ Math\.max\(1, Math\.round\(t\.n \/ tot \* 1000\)\)/.test(src));
+
+// ---- the galaxy uses the panel it is given -------------------------------------------------------------------
+// RMAX is bounded by the SHORTER side, so on the grown graph — measured at 1359x713 — the drawing spanned
+// x 416..943: 527px of 1359, the full height used and three fifths of the width empty. Everything was crammed
+// into a circle inscribed in a wide rectangle.
+{
+  const wide = plotAt(1359, 713), tall = plotAt(700, 1000);
+  const span = (rows, ax) => { const v = rows.map((r) => r.p[ax]); return Math.max(...v) - Math.min(...v); };
+  t('a wide panel is used across its width', span(wide.rows, 'x') > 800, span(wide.rows, 'x').toFixed(0) + 'px of 1359');
+  t('...without spilling out of it', Math.min(...wide.rows.map((r) => r.p.x)) > 0 && Math.max(...wide.rows.map((r) => r.p.x)) < 1359);
+  t('a tall narrow column is left as it was', span(tall.rows, 'x') <= span(tall.rows, 'y') + 1,
+    'the stretch must never make a narrow plot wider than it is tall');
+  t('the relevance rings are stretched with it, or they would not fit their own records',
+    src.indexOf("out.rings.push({ cx: px(cxp), cy: px(cyp), d: px(d), dw: px(d * SX) })") >= 0 &&
+    src.indexOf("'width:' + (r.dw || r.d) + 'px;height:' + r.d + 'px'") >= 0);
+  t('and a spoke is rebuilt from its stretched end point, not just lengthened',
+    src.indexOf('out.spokes.push({ x: px(cxp), y: px(cyp), len: px(Math.hypot(ex, ey)), deg: Math.atan2(ey, ex) * 180 / Math.PI });') >= 0);
+}
+
+// ---- one switch for the whole row ----------------------------------------------------------------------------
+t('a master focuses every source at once', src.indexOf("data-a=\"focus-all\"") >= 0 &&
+  src.indexOf("else if (k === 'focus-all')") >= 0);
+t('...and reads the row, so one press always changes something',
+  src.indexOf("const to = rows.some((r) => r.level === 'all') ? 'focus' : 'all';") >= 0,
+  'a fixed direction would do nothing when the row is already in that state');
 
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

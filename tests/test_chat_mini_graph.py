@@ -5,6 +5,7 @@ picked opens its compact card, the card's include/exclude toggles the record, a 
 with search; the frames history reaches the grown graph (setFrames). Text-level.
 """
 import os
+import re
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 
@@ -28,14 +29,19 @@ def test_the_mini_has_both_faces_and_the_quick_menu_switches_them():
     # point and it is explicit in the board (Canvas.dc.html 6170): three or four marks per SOURCE, each source its
     # own sector, relevance falling outward along 28/50/72/94, the outermost hollow and carrying the source's name.
     # Drawing every record instead is what made simple read as a second complex graph.
-    assert "function drawMiniGalaxy(o, w, h) {" in el
-    assert "if (simple) return '<div class=\"cg-mini simple\"" in el and "drawMiniGalaxy(o, w, h)" in el, "simple draws the galaxy"
-    assert "const N = Math.min(3 + (si % 2), s.rows.length);" in el, "three or four marks per source - the whole of the sparseness"
+    # the simple face has a draw of its own; its parameter list is not the claim (it gained the arrival store)
+    assert "function drawMiniGalaxy(o, w, h" in el
+    assert "if (simple) return '<div class=\"cg-mini simple\"" in el and "drawMiniGalaxy(o, w, h" in el, "simple draws the galaxy"
+    # three or four marks per source is the whole of the sparseness. The rule now has ONE definition - the arrival
+    # pass has to know which marks are about to be drawn, and a second copy of the formula beside the first is how
+    # the two quietly stop agreeing - so the test follows it to where it lives rather than to the binding it had.
+    assert "Math.min(3 + (si % 2), s.rows.length)" in el, "three or four marks per source - the whole of the sparseness"
+    assert "const nOf = (s, si) =>" in el and "const N = nOf(s, si);" in el, "the drawing and the arrival read the same rule"
     assert "const r = 28 + k * 22, a = (a0 + (k - (N - 1) / 2) * 11) * RAD;" in el, "the board's radii and sector spread"
     assert "const a0 = -90 + si * (360 / SRC.length);" in el, "the sources sit evenly around the circle"
     assert "'Memory recalls'" in el and "'Graph (Neo4j)'" in el, "the rim labels are the legend's names, not the raw keys"
     # and the COMPLEX pair is untouched: the mini's detailed face and the grown graph are the same drawing at two sizes
-    assert "drawPlot(o) + '</div><div class=\"cg-lanes\">'" in el, "detailed still draws the full plot and its lanes"
+    assert "drawPlot(o, opts.arr) + '</div><div class=\"cg-lanes\">'" in el, "detailed still draws the full plot and its lanes"
     # The memories are on EVERY graph — simple, the complex mini and the grown one. The board names "Memory recalls"
     # in the legend and the list beside the other seven sources; the memory level governs the recalls as well as the
     # arm (defect 65), so folding it off took them out of the simple plot entirely. It is not folded.
@@ -53,7 +59,12 @@ def test_the_mini_has_both_faces_and_the_quick_menu_switches_them():
 
     src = _read("vera", "chat", "chat_panel.html")
     assert "let _qGalStyle=" in src and "localStorage.getItem('vera_ctx_mini_style')" in src
-    assert "VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle, card:false })" in src
+    # what this is about: the element draws the mini, at the rail's width, in the face the menu chose, with no
+    # card laid over the plot. Pinning the options object whole made ADDING an option (the arrival store) read as
+    # the face having been dropped.
+    call = re.search(r"gal=VeraContextGraph\.miniHtml\(st, 262, miniH, \{([^}]*)\}\)", src)
+    assert call, "the element draws the mini at the rail's width"
+    assert "style:_qGalStyle" in call.group(1) and "card:false" in call.group(1)
     assert 'data-style="' in src and "localStorage.setItem('vera_ctx_mini_style', _qGalStyle)" in src
     # the view buttons keep their own handler now that a second segment shares the row
     assert "el.querySelectorAll('.vseg button[data-view]')" in src
@@ -74,7 +85,8 @@ def test_the_mini_is_the_elements_face():
     assert "} else if(_ctxElWait){ clearInterval(_ctxElWait); _ctxElWait=null; }" in src, "and it stops watching once the element is there"
     assert "if(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'){" in src
     assert "allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k])" in src
-    assert "gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle, card:false });" in src   # the face it is drawn in (defect 60)
+    call = re.search(r"gal=VeraContextGraph\.miniHtml\(st, 262, miniH, \{([^}]*)\}\)", src)
+    assert call and "style:_qGalStyle" in call.group(1) and "card:false" in call.group(1)   # the face it is drawn in (defect 60)
     # the widget renderer stays the fallback
     assert "if(!gal) gal=window.VeraWidget?VeraWidget.draw('context_graph',data,'m'" in src
 

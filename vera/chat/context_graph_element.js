@@ -273,6 +273,15 @@
         : (x, y, z) => { const u = x - cxp, v = y - cyp; return { x: cxp + (u - v) * kx, y: cyp + Y0 + (u + v) * ky - (z || 0) }; };
       ISO = { kx, ky, sinT, tilt, y0: Y0, k: K0, pad: PAD, box, fit: Math.max(box.w / (PW - LANE_L), box.h / (PH - LANE_T)) };
     } else RMAX = Math.max(60 * k, Math.min(PW - LANE_L, PH - LANE_T) / 2 - memMargin);
+    /* THE GALAXY IS AN ELLIPSE, because the panel is. RMAX is bounded by the SHORTER side, so on the grown
+       graph — measured at 1359 x 713 — the drawing spanned x 416..943: 527px of 1359, with the full height used
+       and three fifths of the width empty. Everything was crammed into a circle inscribed in a wide rectangle.
+       Stretching the horizontal by the box's own aspect uses the room that is already there, which makes the
+       drawing bigger AND the gaps between records wider without touching the container. Capped, because past a
+       point an ellipse stops reading as a galaxy and starts reading as a squashed one; and never below 1, so a
+       tall narrow column is left exactly as it was. */
+    const SX = (view === 'galaxy' && !quad)
+      ? Math.max(1, Math.min(1.9, ((PW - LANE_L) / Math.max(1, PH - LANE_T)) * 0.92)) : 1;
     const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], memLabels: [], cedges: [], sedges: [], stems: [], pins: [], plate: null, regions: [], loopNodes: [], loopStems: [], planNodes: [], stepNodes: [], planPlot: [], estNodes: [], estLabels: [], dividers: [], pos: {}, tokens: 0, lit: 0, hits: 0, q: QS, turn: turnLabel, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' || quad }, discs: [], iso: ISO, k };
     // the plot's pan/zoom, for what is drawn OUTSIDE it (the lanes) but joins a record inside it
     const GZ = (S.pan && S.pan.z) || 1, GX = (S.pan && S.pan.x) || 0, GY = (S.pan && S.pan.y) || 0;
@@ -353,7 +362,7 @@
       // records at identical angle and radius, 0.0px apart.
       const spread = n === 1 ? 0 : -half + (i + 0.5) * ((half * 2) / n);
       const a = mid + spread + (swirl * arm - swirl / 2);
-      const gx = cxp + Math.cos(a * RAD) * r, gy = cyp + Math.sin(a * RAD) * r;
+      const gx = cxp + Math.cos(a * RAD) * r * SX, gy = cyp + Math.sin(a * RAD) * r;
       if (view === 'galaxy') return { x: gx, y: gy };
       if (view === 'iso') return stemTo(gx, gy, score * 70 * k);
       if (view === 'flow') { const cw = (PW - LANE_L - 24 * k) / Math.max(srcs.length, 1); return { x: LANE_L + 12 * k + cw * (si + 0.5), y: LANE_T + 44 * k + Math.min(1, (1 - score) / 0.4) * (PH - LANE_T - (150 + (plotLoop.length ? 50 : 0)) * k) }; }
@@ -364,7 +373,7 @@
     if (!quad) {
     // the relevance guides read off the SAME law the nodes follow, rank-neutral — they drifted apart when the
     // radius changed and would otherwise mark bands nothing sits in
-    if (view === 'galaxy') [0.90, 0.75, 0.60].forEach((sc) => { out.rings.push({ cx: px(cxp), cy: px(cyp), d: px(armR(sc, 0.5, 0.28) * 2) }); });
+    if (view === 'galaxy') [0.90, 0.75, 0.60].forEach((sc) => { const d = armR(sc, 0.5, 0.28) * 2; out.rings.push({ cx: px(cxp), cy: px(cyp), d: px(d), dw: px(d * SX) }); });
     if (view === 'time') { const cols = Math.max(turnKeys.length, 1) + 1, cw = (PW - LANE_L - 60 * k) / cols; for (let c = 1; c <= cols; c++) out.sectorLabels.push({ name: c < cols ? (turnKeys[c - 1] || 'm' + c) : 'never', col: 'var(--cg-t3)', x: px(LANE_L + 30 * k + cw * (c - 0.5)), y: px(LANE_T + 12 * k) }); }
     if (view === 'iso') { const c = isoP(cxp, cyp, 0); out.plate = { x: px(c.x - ISO.box.w / 2), y: px(c.y - ISO.box.h / 2), w: px(ISO.box.w), h: px(ISO.box.h) };
       // the sector discs (the board's annular wedges on the floor): one per family, over the family's sector and the
@@ -381,7 +390,13 @@
     srcs.forEach((s, si) => {
       const list = ctx.filter((n) => (n.source || '?') === s).sort((a, b) => (b.score || 0) - (a.score || 0));
       const mid = midOf(si), col = color(s);
-      if (view === 'galaxy') { out.spokes.push({ x: px(cxp), y: px(cyp), len: px(RMAX + 10 * k), deg: (mid - step / 2) }); if (famPlot && si === srcs.length - 1) out.spokes.push({ x: px(cxp), y: px(cyp), len: px(RMAX + 10 * k), deg: (mid + step / 2) }); out.sectorLabels.push({ name: s, col, x: px(cxp + Math.cos(mid * RAD) * (RMAX + 26 * k)), y: px(cyp + Math.sin(mid * RAD) * (RMAX + 26 * k)) }); }
+      if (view === 'galaxy') {
+        // a spoke is drawn from a length and an angle, so the stretch is applied to its END POINT and the pair
+        // read back off it — scaling the length alone would leave the spokes crossing their own sectors
+        const spoke = (deg) => { const R = RMAX + 10 * k, ex = Math.cos(deg * RAD) * R * SX, ey = Math.sin(deg * RAD) * R;
+          out.spokes.push({ x: px(cxp), y: px(cyp), len: px(Math.hypot(ex, ey)), deg: Math.atan2(ey, ex) * 180 / Math.PI }); };
+        spoke(mid - step / 2); if (famPlot && si === srcs.length - 1) spoke(mid + step / 2);
+        out.sectorLabels.push({ name: s, col, x: px(cxp + Math.cos(mid * RAD) * (RMAX + 26 * k) * SX), y: px(cyp + Math.sin(mid * RAD) * (RMAX + 26 * k)) }); }
       else if (view === 'iso') { const p = isoP(cxp + Math.cos(mid * RAD) * (RMAX + 26 * k), cyp + Math.sin(mid * RAD) * (RMAX + 26 * k), 0); out.sectorLabels.push({ name: s, col, x: px(p.x), y: px(p.y) }); }
       else if (view === 'flow') { const cw = (PW - LANE_L - 24 * k) / srcs.length; out.sectorLabels.push({ name: s, col, x: px(LANE_L + 12 * k + cw * (si + 0.5)), y: px(LANE_T + 26 * k) }); }
       else { const lh = (PH - LANE_T - 120 * k) / (srcs.length + (plotLoop.length ? 1 : 0)); out.sectorLabels.push({ name: s, col, x: px(LANE_L + 8 * k), y: px(LANE_T + 50 * k + lh * si), lane: true }); }
@@ -450,7 +465,7 @@
     // entity …), ordered in time within a group, hollow where never injected, in by importance
     if (mem.length) {
       const R1 = RMAX + 44 * k, R2 = RMAX + 74 * k, ROW = 26 * k, GAP = 1;
-      const memAt = (a, R, row) => { if (view === 'galaxy') return { x: cxp + Math.cos(a * RAD) * R, y: cyp + Math.sin(a * RAD) * R }; if (view === 'iso') return isoP(cxp + Math.cos(a * RAD) * R, cyp + Math.sin(a * RAD) * R, 0); return { x: LANE_L + 40 * k + ((a - MEM_A0) / MEM_AW) * (PW - LANE_L - 80 * k), y: PH - 50 * k + row * 20 * k }; };
+      const memAt = (a, R, row) => { if (view === 'galaxy') return { x: cxp + Math.cos(a * RAD) * R * SX, y: cyp + Math.sin(a * RAD) * R }; if (view === 'iso') return isoP(cxp + Math.cos(a * RAD) * R, cyp + Math.sin(a * RAD) * R, 0); return { x: LANE_L + 40 * k + ((a - MEM_A0) / MEM_AW) * (PW - LANE_L - 80 * k), y: PH - 50 * k + row * 20 * k }; };
       const byTime = (a, b) => String(a.created_at || '').localeCompare(String(b.created_at || ''));
       const inj = mem.filter((n) => n._injected).sort(byTime), gh = ghosts ? mem.filter((n) => !n._injected).sort(byTime) : [];
       const memCol = (n) => (n._sess && S.memColor && S.memColor(n.type)) || color('memory');
@@ -578,11 +593,32 @@
     // the other families' chips: the mixer — each carries its level (off · focus · all) and its count
     out.families = [];
     const nMem = memCtxAll.length + (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).length;
-    if (nMem) out.families.push({ name: 'memory', fam: 'memory', col: color('memory'), n: nMem, on: lvl.memory !== 'off', level: lvl.memory });
+    /* MEMORY IS A SOURCE ON THE METER, not a chip beside it. It sat with loop, plan and estate because it draws
+       its own arm rather than a sector — but that is a fact about the LAYOUT, and the reader is choosing a
+       SOURCE of context. Keeping it apart meant one of the eight things in the prompt was switched somewhere
+       else from the other seven. Its level still cycles through the same mixOf it always did.
+       ESTATE moves the other way, onto the turns line: it is not a source of this turn's prompt at all. */
+    const memTok = memCtxAll.reduce((a, n) => a + tokOf(n), 0)
+      + (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).reduce((a, n) => a + tokOf(n), 0);
     if ((S.dag || []).length && !(S.loop && S.loop.length)) out.families.push({ name: 'dag', fam: 'loop', col: 'var(--cg-ac)', n: S.dag.length, on: lvl.loop !== 'off', level: lvl.loop });
     if (S.loop && S.loop.length) out.families.push({ name: 'loop', fam: 'loop', col: 'var(--cg-ac)', n: S.loop.length, on: lvl.loop !== 'off', level: lvl.loop });
     if (runPlan.length || (S.plan || []).length) out.families.push({ name: 'plan', fam: 'plan', col: 'var(--cg-t2)', n: runPlan.length || S.plan.length, on: lvl.plan !== 'off', level: lvl.plan });
-    if (estAll.length) out.families.push({ name: 'estate', fam: 'estate', col: 'var(--cg-est)', n: estAll.length, on: lvl.estate !== 'off', level: lvl.estate });
+    // the estate rides the turns line, not the family row — it is a view of the machines, not a source of this
+    // turn's prompt, and sitting among the prompt's own families implied it was one
+    out.estateChip = estAll.length ? { name: 'estate', fam: 'estate', col: 'var(--cg-est)', n: estAll.length, on: lvl.estate !== 'off', level: lvl.estate } : null;
+    /* THE METER, IN ONE ORDER THAT DOES NOT MOVE. It was built as srcs.concat(offSrcs): the live sources first
+       in a fixed family order, then the switched-off ones appended — so a band JUMPED to the end the moment you
+       pressed it off, and the order had nothing to do with how much of the window each source was spending. Both
+       are wrong for a thing you aim at: the bands must be where you last saw them, and the biggest must be on
+       the left where the eye starts.
+       So: one list, every source whether on, in focus or off, memory among them, sized by the tokens it holds
+       IN THE PROMPT (not by what survives its own level — otherwise switching to focus would shrink the band and
+       shuffle the row). Ties break on the name, so equal sizes cannot flip between renders. */
+    const meterTokOf = (s) => nodes.filter((n) => (n.source || '?') === s).reduce((a, n) => a + tokOf(n), 0);
+    out.meter = [...new Set(nodes.filter((n) => n.source !== 'memory').map((n) => n.source || '?'))]
+      .map((s) => ({ name: s, col: color(s), n: nodes.filter((n) => (n.source || '?') === s).length, level: srcLvl(s), tok: meterTokOf(s) }));
+    if (nMem) out.meter.push({ name: 'memory', col: color('memory'), n: nMem, level: lvl.memory, tok: memTok });
+    out.meter.sort((a, b) => (b.tok - a.tok) || a.name.localeCompare(b.name));
     out.ghosts = nodes.filter((n) => n.included === false).length + memSess.filter((n) => !n._injected).length;
     // the LIST: the records as rows (the old renderCtxList's: source dot · label · relevance bar · tokens · included),
     // the most relevant first, the search's hits only while a search is on; every row knows its record for the panel
@@ -622,11 +658,54 @@
   /* ── the drawing, shared by the element and the mini: the layout → markup in the element's own classes ── */
   const stAt = (x, y) => 'left:' + x + 'px;top:' + y + 'px;';
   const edgeHtml = (e) => '<div class="cg-edge ' + e.cls + '" title="' + esc(e.title) + '" style="' + stAt(e.x, e.y) + 'width:' + e.len + 'px;background:' + esc(e.col) + ';transform:rotate(' + e.deg + 'deg)"></div>';
+  /* CONTEXT ARRIVING IN THE GRAPH. The legacy graph got its motion for free: the force layout re-settled on every
+     fetch, so a record joining the turn visibly pushed its way in among the others. The galaxy places
+     deterministically, which is what makes it readable - and what made an arrival invisible, the record simply
+     being there on the next paint. So records now FLY OUT OF THE HUB, from the prompt they were assembled for,
+     and land with a ring ping, staggered so eight records read as an arrival rather than a flash.
+
+     The store belongs to the CALLER (the element has its own, the mini has its own) and is keyed by the turn: a
+     paint that changes nothing - a pan, a zoom, a family folded away - finds every id already seen and animates
+     NOTHING. That is the whole guard against strobing, and it is why the seen-set is consulted before it is
+     added to. A new turn empties the set, so its whole context flies in together; scrolling back does the same
+     for the turn scrolled to, which is the one moment the cascade is worth watching. */
+  function arrivalsOf(o, store, opts) {
+    if (!store || typeof Set === 'undefined') return null;
+    opts = opts || {};
+    /* the two faces draw different marks, from different lists, around different hubs - the detailed plot's
+       records and recalls around o.hub, the simple galaxy's dots around its own centre - so the caller says
+       which ids it is about to draw and where they are flying from. The STORE is shared between them, which is
+       what stops flipping the face from replaying the whole arrival. */
+    const key = String(o.turn || '') + '#' + String(o.view || '');
+    if (store.key !== key) { store.key = key; store.seen = null; }
+    const first = !store.seen;
+    const seen = store.seen || (store.seen = new Set());
+    const fresh = new Set();
+    const mark = (n) => { const id = (n && typeof n === 'object') ? n.id : n;
+      if (id != null && !seen.has(id)) { fresh.add(id); seen.add(id); } };
+    if (opts.ids) opts.ids.forEach(mark);
+    else { (o.cnodes || []).forEach(mark); (o.memNodes || []).forEach(mark); }
+    if (!fresh.size) return null;
+    const order = new Map(); let i = 0; fresh.forEach((id) => order.set(id, i++));
+    const hub = opts.hub || o.hub || { x: 0, y: 0 };
+    /* a whole turn landing gets a longer stagger than a single late record joining one, or the cascade of a
+       big turn finishes before the eye reaches the far side of the plot */
+    const step = first ? Math.max(14, Math.min(46, Math.round(560 / Math.max(1, fresh.size)))) : 26;
+    return {
+      cls(n) { return fresh.has(n.id) ? ' arr' : ''; },
+      st(n) {
+        if (!fresh.has(n.id)) return '';
+        return ';--ax:' + Math.round((hub.x || 0) - n.x) + 'px;--ay:' + Math.round((hub.y || 0) - n.y)
+          + 'px;--ad:' + (order.get(n.id) * step) + 'ms';
+      },
+    };
+  }
   // what pans and zooms: rings, spokes, the plate and its discs, stems and pins, the records, the memory ring, the plot's
   // own steps and plan diamonds, the relations inside, the region captions, the hub
-  function drawPlot(o) {
+  function drawPlot(o, arrStore) {
     let h = '';
-    o.rings.forEach((r) => { h += '<div class="cg-ring' + (r.cls ? ' ' + r.cls : '') + '" style="' + stAt(r.cx, r.cy) + 'width:' + r.d + 'px;height:' + r.d + 'px' + (r.tf ? ';--tf:' + r.tf : '') + '"></div>'; });
+    const A = arrivalsOf(o, arrStore);
+    o.rings.forEach((r) => { h += '<div class="cg-ring' + (r.cls ? ' ' + r.cls : '') + '" style="' + stAt(r.cx, r.cy) + 'width:' + (r.dw || r.d) + 'px;height:' + r.d + 'px' + (r.tf ? ';--tf:' + r.tf : '') + '"></div>'; });
     o.spokes.forEach((s) => { h += '<div class="cg-spoke" style="' + stAt(s.x, s.y) + 'width:' + s.len + 'px;transform:rotate(' + s.deg + 'deg)"></div>'; });
     if (o.plate) h += '<div class="cg-plate" style="' + stAt(o.plate.x, o.plate.y) + 'width:' + o.plate.w + 'px;height:' + o.plate.h + 'px"></div>';
     (o.discs || []).forEach((d) => { h += '<div class="cg-disc" data-fam="' + esc(d.name) + '" style="' + stAt(d.x, d.y) + 'width:' + d.d + 'px;height:' + d.d + 'px;--c:' + esc(d.col) + ';--a0:' + d.a0 + ';--a1:' + d.a1 + ';--m0:' + d.m0 + ';--m1:' + d.m1 + ';transform:' + d.tf + '"></div>'; });
@@ -635,8 +714,8 @@
     (o.pins || []).forEach((p) => { h += '<div class="cg-pin' + (p.cls ? ' ' + p.cls : '') + '" style="' + stAt(p.x, p.y) + 'height:' + p.h + 'px;--c:' + esc(p.col) + '"></div>'; });
     o.sectorLabels.forEach((s) => { h += '<div class="cg-slbl' + (s.lane ? ' lane' : '') + '" style="' + stAt(s.x, s.y) + 'color:' + esc(s.col) + '">' + esc(s.name) + '</div>'; });
     o.cedges.forEach((e) => { h += edgeHtml(e); });
-    o.cnodes.forEach((n) => { h += '<div class="cg-node ' + n.cls + '" data-id="' + esc(n.id) + '" data-kind="' + esc(n.kind || '') + '" style="' + stAt(n.x, n.y) + 'width:' + n.d + 'px;height:' + n.d + 'px;--nc:' + esc(n.col) + ';opacity:' + n.op + '">' + (n.d >= 14 ? iconSvg(n.kind) : '') + (n.d >= 30 ? '<span>' + esc(String(n.id).replace(/^__\w+__/, '').slice(0, 6)) + '</span>' : '') + '</div>'; });
-    o.memNodes.forEach((n) => { h += '<div class="cg-mem ' + n.cls + '" data-id="' + esc(n.id) + '" data-kind="' + esc(n.kind || '') + '" style="' + stAt(n.x, n.y) + (n.col ? ';--mc:' + esc(n.col) : '') + (n.op && n.op !== '1' ? ';--op:' + n.op : '') + '"></div>'; });
+    o.cnodes.forEach((n) => { h += '<div class="cg-node ' + n.cls + (A ? A.cls(n) : '') + '" data-id="' + esc(n.id) + '" data-kind="' + esc(n.kind || '') + '" style="' + stAt(n.x, n.y) + 'width:' + n.d + 'px;height:' + n.d + 'px;--nc:' + esc(n.col) + ';opacity:' + n.op + (A ? A.st(n) : '') + '">' + (n.d >= 14 ? iconSvg(n.kind) : '') + (n.d >= 30 ? '<span>' + esc(String(n.id).replace(/^__\w+__/, '').slice(0, 6)) + '</span>' : '') + '</div>'; });
+    o.memNodes.forEach((n) => { h += '<div class="cg-mem ' + n.cls + (A ? A.cls(n) : '') + '" data-id="' + esc(n.id) + '" data-kind="' + esc(n.kind || '') + '" style="' + stAt(n.x, n.y) + (n.col ? ';--mc:' + esc(n.col) : '') + (n.op && n.op !== '1' ? ';--op:' + n.op : '') + (A ? A.st(n) : '') + '"></div>'; });
     (o.memLabels || []).forEach((l) => { h += '<div class="cg-memg" style="' + stAt(l.x, l.y) + 'color:' + esc(l.col) + '">' + esc(l.t) + '</div>'; });
     (o.stepNodes || []).forEach((n) => { h += '<div class="cg-step ' + n.cls + '" data-i="' + n.i + '" data-id="' + esc(n.id) + '" title="' + esc(n.title) + '" style="' + stAt(n.x, n.y) + '">' + iconSvg('step') + '</div><div class="cg-stepl" style="' + stAt(n.x, n.y + 9 * (o.k || 1)) + '">' + esc(n.label) + '</div>'; });
     (o.planPlot || []).forEach((n) => { h += '<div class="cg-pnode ' + n.cls + '" title="' + esc(n.title) + '" style="' + stAt(n.x, n.y) + '"></div><div class="cg-stepl" style="' + stAt(n.x, n.y + 8 * (o.k || 1)) + '">' + esc(n.label) + '</div>'; });
@@ -729,8 +808,8 @@
        (defect 65), so folding it took them out of the plot too. The memories are on every graph. */
     const base = simple ? Object.assign({}, S, { mix: Object.assign({}, S.mix || {}, { loop: 'off', plan: 'off', estate: 'off' }), list: false }) : S;
     const o = mini(Object.assign({}, base, { sel: detail || null, q: q || '' }), w, h);
-    if (simple) return '<div class="cg-mini simple" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawMiniGalaxy(o, w, h) + '</div></div>';
-    return '<div class="cg-mini' + (list ? ' listing' : '') + '" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div><div class="cg-lanes">' + drawLanes(o, { noRecord: true }) + '</div>'
+    if (simple) return '<div class="cg-mini simple" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawMiniGalaxy(o, w, h, opts.arr) + '</div></div>';
+    return '<div class="cg-mini' + (list ? ' listing' : '') + '" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o, opts.arr) + '</div><div class="cg-lanes">' + drawLanes(o, { noRecord: true }) + '</div>'
       /* opts.card === false marks the picked node WITHOUT laying its card over the plot. The rail's menu is
          262px wide, so the card covered the graph the record was found on; the chat opens the record in the
          list beneath instead, and still wants the node marked so the two agree on what is picked. */
@@ -744,7 +823,7 @@
   const GAL_LABEL = { agent: 'Agent + system', skill: 'Skills', ontology: 'Ontologies', memory: 'Memory recalls',
     vector: 'Vector matches', graph: 'Graph (Neo4j)', fabric: 'Fabric records', cap: 'Capabilities', web: 'Web',
     news: 'News', run: 'Runs', related_qa: 'Related Q&A', worldview: 'Worldview', entities: 'Entities', urls: 'Links', both: 'Memory + vector' };
-  function drawMiniGalaxy(o, w, h) {
+  function drawMiniGalaxy(o, w, h, arrStore) {
     const W = w || 262, H = h || 196, cx = W / 2, cy = H / 2 + 6, RAD = Math.PI / 180, RIM = 82;
     // the view drives the arrangement, exactly as the board's does (Canvas.dc.html 6164-6199)
     const GV = String(o.view || 'galaxy') === 'time' ? 'timeline' : String(o.view || 'galaxy');
@@ -758,8 +837,12 @@
     const SRC = order.map((k) => ({ key: k, name: GAL_LABEL[k] || k, col: by[k][0] && by[k][0].col, rows: by[k] }));
     if (!SRC.length) return '<div class="cg-gal"></div>';
     const P = {}, dots = [], labels = [], stems = [], at = {}, lead = {};
+    // ONE definition of how many marks a source draws - the arrival pass below reads the same one
+    const nOf = (s, si) => Math.min(3 + (si % 2), s.rows.length);
+    const drawnIds = []; SRC.forEach((s, si) => { for (let k = 0; k < nOf(s, si); k++) drawnIds.push(s.rows[k].id); });
+    const A = arrivalsOf(o, arrStore, { ids: drawnIds, hub: { x: cx, y: cy } });
     SRC.forEach((s, si) => {
-      const N = Math.min(3 + (si % 2), s.rows.length);
+      const N = nOf(s, si);
       const a0 = -90 + si * (360 / SRC.length);
       for (let k = 0; k < N; k++) {
         const row = s.rows[k], rel = row.score != null ? Math.max(0, Math.min(1, +row.score)) : (0.92 - k * 0.17);
@@ -779,7 +862,7 @@
         P[si + ':' + k] = [x, y]; at[row.id] = { p: [x, y], col: s.col };
         if (k === 0) lead[s.key] = at[row.id];   // the source's leading mark stands for its records that are not drawn
         const cls = (rel > 0.8 && row.included !== false ? 'lit ' : '') + (k === N - 1 ? 'hollow' : '');
-        dots.push('<span class="cg-gd ' + cls + '" data-id="' + esc(row.id) + '" style="left:' + x.toFixed(1) + 'px;top:' + y.toFixed(1) + 'px;--c:' + esc(s.col || 'var(--cg-t2)') + ';opacity:' + (0.45 + rel * 0.55).toFixed(2) + '"></span>');
+        dots.push('<span class="cg-gd ' + cls + (A ? A.cls(row) : '') + '" data-id="' + esc(row.id) + '" style="left:' + x.toFixed(1) + 'px;top:' + y.toFixed(1) + 'px;--c:' + esc(s.col || 'var(--cg-t2)') + ';opacity:' + (0.45 + rel * 0.55).toFixed(2) + (A ? A.st({ id: row.id, x, y }) : '') + '"></span>');
       }
       /* the name rings the OUTSIDE, at the rim, along this source's own sector - not at its outermost mark. The
          board places it at the mark because its data is a mock where every source has three or four; a source with
@@ -1031,6 +1114,13 @@ vera-context-graph .cg-mb i{display:none}
 vera-context-graph .cg-mb.focus{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--mc) 78%,transparent) 0 5px,color-mix(in srgb,var(--mc) 34%,transparent) 5px 10px)}
 vera-context-graph .cg-mb.off{background:color-mix(in srgb,var(--mc) 16%,transparent);color:var(--cg-t3)}
 vera-context-graph .cg-mb.off .nm{text-decoration:line-through}
+/* the master, and the estate on the turns line */
+vera-context-graph .cg-lay.master{flex:none;font-size:8.5px}
+vera-context-graph .cg-lay.master.on{color:var(--cg-ac)}
+vera-context-graph .cg-frames-sp{flex:1 1 auto;min-width:8px}
+vera-context-graph .cg-frame.est{border-color:color-mix(in srgb,var(--ec) 45%,transparent)}
+vera-context-graph .cg-frame.est i{width:6px;height:6px;border-radius:2px;background:var(--ec);opacity:.4}
+vera-context-graph .cg-frame.est.on i{opacity:1}
 /* the hover card: small, above the plot, and never in the pointer's way (it would flicker as the cursor entered
    its own card and left the node) */
 vera-context-graph .cg-hover{position:absolute;z-index:9;pointer-events:none;max-width:260px}
@@ -1091,6 +1181,22 @@ vera-context-graph .cg-step.sel{box-shadow:0 0 0 2px var(--cg-ac),0 0 0 6px colo
 vera-context-graph .cg-step.sub{width:11px;height:11px}vera-context-graph .cg-step.pruned{opacity:.35}
 vera-context-graph .cg-stepl{position:absolute;transform:translate(-50%,0);font-family:var(--cg-mono);font-size:7.5px;color:var(--cg-t3);white-space:nowrap;pointer-events:none;max-width:84px;overflow:hidden;text-overflow:ellipsis}
 @keyframes cg-pulse{0%{transform:scale(.7);opacity:.6}100%{transform:scale(1.35);opacity:0}}
+/* A RECORD ARRIVING. It starts ON the hub (--ax/--ay carry the vector back to it), scaled to nothing, and
+   overshoots very slightly on landing so the stop is legible. The animation does not hold its end state: the node's
+   own inline opacity - its relevance ranking - takes over the instant the flight ends, so an arrival never leaves a
+   record brighter than its rank earned. --ad staggers the cascade. */
+@keyframes cg-arrive{
+  0%{opacity:0;transform:translate(calc(-50% + var(--ax,0px)),calc(-50% + var(--ay,0px))) scale(.12)}
+  45%{opacity:1}
+  78%{transform:translate(-50%,-50%) scale(1.22)}
+  100%{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+@keyframes cg-land{0%{opacity:0;transform:scale(.4)}35%{opacity:.75}100%{opacity:0;transform:scale(2.1)}}
+vera-context-graph .cg-node.arr,vera-context-graph .cg-mem.arr,.cg-gal .cg-gd.arr{animation:cg-arrive .62s cubic-bezier(.16,.84,.34,1) var(--ad,0ms) backwards}
+/* the ring the record lands inside - the ping fires when the flight does, not before it */
+vera-context-graph .cg-node.arr::after{content:"";position:absolute;inset:-4px;border-radius:inherit;border:1.5px solid var(--nc);pointer-events:none;opacity:0;animation:cg-land .7s ease-out calc(var(--ad,0ms) + .34s) 1}
+@media (prefers-reduced-motion:reduce){
+  vera-context-graph .cg-node.arr,vera-context-graph .cg-mem.arr,.cg-gal .cg-gd.arr{animation:none}
+  vera-context-graph .cg-node.arr::after{animation:none}}
 vera-context-graph .cg-pnode{position:absolute;transform:translate(-50%,-50%) rotate(45deg);width:9px;height:9px;border-radius:1px;background:var(--cg-t3);z-index:2}
 vera-context-graph .cg-pnode.done{background:var(--cg-ac2)}vera-context-graph .cg-pnode.run{background:var(--cg-ac);box-shadow:0 0 0 2px var(--cg-bg),0 0 0 3.5px color-mix(in srgb,var(--cg-ac) 45%,transparent)}vera-context-graph .cg-pnode.fail{background:#e06c75}
 vera-context-graph .cg-pin{position:absolute;width:1px;transform:translateX(-.5px);background:linear-gradient(180deg,color-mix(in srgb,var(--c) 85%,transparent),color-mix(in srgb,var(--c) 35%,transparent));pointer-events:none;z-index:1}
@@ -1169,7 +1275,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
       connectedCallback() {
         ensureCss(this.ownerDocument); if (this._built) { this._schedule(); return; } this._built = true;
         const a = this.getAttribute('view'); if (a) this._S.view = a;
-        this.innerHTML = '<div class="cg-hd"><h2>Context graph</h2><span class="lbl" data-r="tok"></span><select class="cg-sel" data-r="runs" hidden title="The run in the lane — this session\'s, or any recorded run"></select><span class="sp"></span><span class="cg-seg" data-r="views" title="The unified graph\'s layouts, here"></span><button class="cg-btn" data-a="alledges" data-r="alledges" title="Draw every relation, not only the ones that touch the prompt">All edges</button><input class="cg-srch" data-r="q" type="search" placeholder="⌕ find a record" title="Filter the list and dim what does not match in the plot — label, text, source, type, tags"><span class="lbl" data-r="hits"></span><button class="cg-btn" data-a="list" data-r="list" title="The records as a list beside the plot">List</button><span class="lbl" data-r="zoom">100%</span><button class="cg-btn" data-a="fit" title="Back to the whole graph">Fit</button><button class="cg-btn" data-a="collapse" title="Fold the graph back into the quick menu">Collapse</button></div>'
+        this.innerHTML = '<div class="cg-hd"><h2>Context graph</h2><span class="lbl" data-r="tok"></span><select class="cg-sel" data-r="runs" hidden title="The run in the lane — this session\'s, or any recorded run"></select><span class="sp"></span><span class="cg-seg" data-r="views" title="The unified graph\'s layouts, here"></span><button class="cg-btn" data-a="alledges" data-r="alledges" title="Draw every relation, not only the ones that touch the prompt">All edges</button><input class="cg-srch" data-r="q" type="search" placeholder="⌕ find a record" title="Filter the list and dim what does not match in the plot — label, text, source, type, tags"><span class="lbl" data-r="hits"></span><button class="cg-btn" data-a="list" data-r="list" title="The records as a list beside the plot">List</button><span class="lbl" data-r="zoom">100%</span><button class="cg-btn" data-a="fit" title="Back to the whole graph">Fit</button><button class="cg-btn" data-a="settings" title="Context settings \u2014 sources, injection, session memory, k and similarity, the fabric dataset">\u2699</button><button class="cg-btn" data-a="collapse" title="Fold the graph back into the quick menu">Collapse</button></div>'
           + '<div class="cg-key"><span><b>angle</b> = source</span><span><b>distance</b> = lower relevance</span><span><b>area</b> = tokens</span><span><b>hollow</b> = related, not injected</span></div>'
           + '<div class="cg-layers" data-r="layers"></div><div class="cg-frames" data-r="frames" hidden></div><div class="cg-body"><div class="cg-plot" data-r="plot"><div class="cg-in" data-r="in"></div><div data-r="lanes"></div><div class="cg-hover" data-r="hover" hidden></div></div><div class="cg-list-box" data-r="listbox" hidden></div></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
@@ -1228,10 +1334,19 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
       _click(e) {
         const t = e.target; const b = t.closest && t.closest('button[data-v]'); if (b) { this.view(b.dataset.v); return; }
         const a = t.closest && t.closest('[data-a]'); if (a) { const S = this._S; const k = a.dataset.a;
-          if (k === 'fit') this.fit(); else if (k === 'collapse') { this.dispatchEvent(new CustomEvent('vera:ctx:collapse', { bubbles: true })); } else if (k === 'alledges') { S.allEdges = !S.allEdges; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:alledges', { detail: { on: S.allEdges }, bubbles: true })); }           // a SOURCE cycles the same three levels a family does now: off · focus · all. It used to flip on/off,
+          if (k === 'fit') this.fit(); else if (k === 'collapse') { this.dispatchEvent(new CustomEvent('vera:ctx:collapse', { bubbles: true })); }
+          /* THE GRAPH ASKS, THE HOST OPENS. The settings that decide what this graph is drawing - the sources, the
+             injection, k, the similarity floor - moved to the host's Settings page, and from the graph there was
+             no way to reach them: you could see what had been assembled and not what had assembled it. The element
+             owns no settings surface of its own, so it says which section it wants and the host opens it. */
+          else if (k === 'settings') { this.dispatchEvent(new CustomEvent('vera:ctx:settings', { detail: { section: a.dataset.sec || 'sources' }, bubbles: true })); } else if (k === 'alledges') { S.allEdges = !S.allEdges; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:alledges', { detail: { on: S.allEdges }, bubbles: true })); }           // a SOURCE cycles the same three levels a family does now: off · focus · all. It used to flip on/off,
           // so the only way to quieten a noisy source was to lose it. mix() is the one path for both.
           else if (k === 'layer') { const s = a.dataset.s; const cur = mixOf(S, s);
             this.mix(s, cur === 'off' ? 'focus' : cur === 'focus' ? 'all' : 'off'); }
+          else if (k === 'focus-all') { const rows = (this._last && this._last.meter) || [];
+            const to = rows.some((r) => r.level === 'all') ? 'focus' : 'all';
+            rows.forEach((r) => { S.mix[r.name] = to; if (to === 'off') S.layersOff.add(r.name); else S.layersOff.delete(r.name); });
+            this._schedule(); }
           else if (k === 'related') { S.related = !S.related; this._schedule(); } else if (k === 'close') { S.sel = null; this._schedule(); }
           else if (k === 'zoom') { this.zoomTo(a.dataset.id); } else if (k === 'preview') { this.dispatchEvent(new CustomEvent('vera:ctx:preview', { detail: { id: a.dataset.id, url: a.dataset.url }, bubbles: true })); }
           else if (k === 'incl-all' || k === 'excl-all') { this.dispatchEvent(new CustomEvent('vera:ctx:toggle-all', { detail: { included: k === 'incl-all' }, bubbles: true })); }
@@ -1258,8 +1373,17 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
         if (this._r.list) this._r.list.classList.toggle('on', !!S.list);
         if (this._r.hits) this._r.hits.textContent = o.q ? o.hits + ' hit' + (o.hits === 1 ? '' : 's') : '';
         // the frames scrubber: the turns' snapshots, the live set first
-        if (this._r.frames) { const fr = o.frames || []; this._r.frames.hidden = !fr.length;
-          if (fr.length) this._r.frames.innerHTML = '<span>frames</span><button class="cg-frame live ' + (o.frame ? '' : 'on') + '" data-a="frame" data-id="" title="The live records"><i></i>live</button>' + fr.slice(-12).map((f) => '<button class="cg-frame ' + (f.on ? 'on' : '') + '" data-a="frame" data-id="' + esc(f.id) + '" title="' + esc(f.label + (f.ts ? ' · ' + f.ts : '') + ' · ' + f.n + ' records · click to view this turn\'s context') + '">' + esc(f.label) + '<b>' + f.n + '</b></button>').join(''); }
+        /* The turns line carries the ESTATE switch at its end. The estate is not a source of this turn's prompt
+           — it is the machines the work ran on — so sitting it among the prompt's own families implied it was
+           one. It belongs with the turns, which are the other thing on this graph that is not context. */
+        if (this._r.frames) { const fr = o.frames || [], est = o.estateChip;
+          this._r.frames.hidden = !(fr.length || est);
+          const estBtn = est ? '<button class="cg-frame est ' + (est.on ? 'on' : '') + '" data-a="layer" data-s="estate"'
+            + ' style="--ec:' + esc(est.col) + '" title="' + esc('the estate — ' + est.n + ' node' + (est.n === 1 ? '' : 's')
+            + ' · ' + (est.level === 'off' ? 'off' : est.level === 'focus' ? 'in focus: what the run touched' : 'everything')
+            + ' · press to cycle off · focus · all') + '"><i></i>estate<b>' + est.n + '</b></button>' : '';
+          if (fr.length || est) this._r.frames.innerHTML = (fr.length ? '<span>turns</span><button class="cg-frame live ' + (o.frame ? '' : 'on') + '" data-a="frame" data-id="" title="The live records"><i></i>live</button>' + fr.slice(-12).map((f) => '<button class="cg-frame ' + (f.on ? 'on' : '') + '" data-a="frame" data-id="' + esc(f.id) + '" title="' + esc(f.label + (f.ts ? ' · ' + f.ts : '') + ' · ' + f.n + ' records · click to view this turn\'s context') + '">' + esc(f.label) + '<b>' + f.n + '</b></button>').join('') : '')
+            + (estBtn ? '<span class="cg-frames-sp"></span>' + estBtn : ''); }
         if (this._r.runs) { const runs = S.runs || []; const cur = S.runSel || ''; const others = runs.filter((r) => r.session_id !== cur);
           const sig = cur + '|' + (S.run ? S.run.label + ':' + S.run.status : '') + '|' + others.map((r) => r.session_id + ':' + r.status).join(',');
           if (sig !== this._runsSig) { this._runsSig = sig; const glyph = (st) => st === 'running' ? '● ' : /error|fail|interrupted/.test(st || '') ? '✕ ' : '✓ ';
@@ -1276,11 +1400,20 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
            An off band keeps its place and a trace of its own colour: a band that vanished could never be pressed
            again, and its source would be unreachable. min-width is the one concession to geometry — a source
            holding 1% of the window is a 2px target. */
-        const meterSrcs = o.srcs.concat(o.offSrcs);
+        const meterSrcs = o.meter || o.srcs.concat(o.offSrcs);
         const meterTot = meterSrcs.reduce((a, s) => a + (s.tok || 0), 0) || 1;
         const LVN = { off: 'off', focus: 'in focus: only what went into the prompt', all: 'everything' };
+        /* ONE SWITCH FOR ALL OF THEM. Cutting a noisy prompt down meant pressing every band twice; putting it
+           back meant pressing every band again. The master reads the row and does the opposite of what most of
+           it says — if anything is still on 'all' it takes everything to focus, otherwise it takes everything
+           back to all — so one press always changes something, whichever state the row is in. */
+        const anyAll = meterSrcs.some((s) => s.level === 'all');
         this._r.layers.innerHTML = (meterSrcs.length
-          ? '<span class="cg-meter" role="group" aria-label="context sources">'
+          ? '<button class="cg-lay master ' + (anyAll ? '' : 'on') + '" data-a="focus-all" title="'
+            + (anyAll ? 'Show only what matters in every source — the few most relevant of each'
+                      : 'Show everything in every source again')
+            + '"><i></i>' + (anyAll ? 'focus all' : 'show all') + '</button>'
+            + '<span class="cg-meter" role="group" aria-label="context sources">'
             + meterSrcs.map((s) => '<button class="cg-mb ' + esc(s.level) + '" data-a="layer" data-s="' + esc(s.name)
               + '" data-level="' + esc(s.level) + '" style="--mc:' + esc(s.col) + ';flex-grow:' + Math.max(1, Math.round((s.tok || 0) / meterTot * 1000))
               + '" title="' + esc(s.name + ' · ' + s.n + ' record' + (s.n === 1 ? '' : 's') + ' · ' + (s.tok || 0) + ' tokens · '
@@ -1304,7 +1437,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
                   + '"><i></i><span class="nm">' + esc(t.name.replace(/_/g, ' ').toLowerCase()) + '</span><b>' + t.n + '</b></button>').join('')
                 + '</span>'; })() : '')
           + (o.ghosts ? '<span style="flex:1"></span><button class="cg-lay ' + (S.related ? 'on' : '') + '" data-a="related" style="color:var(--cg-ac2)" title="Records related to this question that were not injected"><i class="s"></i>related<b>+' + o.ghosts + '</b></button>' : '');
-        this._r.in.innerHTML = drawPlot(o);
+        this._r.in.innerHTML = drawPlot(o, (this._arr || (this._arr = {})));
         // the lanes stay put while the plot pans and zooms
         if (this._r.listbox) { this._r.listbox.hidden = !S.list; this._r.listbox.innerHTML = S.list ? listHtml(o) : ''; }
         let l = drawLanes(o);

@@ -51,11 +51,18 @@ def test_a_turn_selected_in_the_scene_drives_the_context_graphs_and_the_canvas()
     # Notes/42 defect 55: the chat's vera:xpl:turn hook syncs the grown graph at the turn's frame, re-draws the mini graph and
     # puts the turn's items in focus on the canvas; a turn's frame remembers its turn
     assert "try{ _ctxFollow(true); }catch(_){}" in HTML and "_ctxColSig=''; _ctxColumnSync(mid); }catch(_){}" in HTML   # the chat's own follow first (the mini's frame), then the grown sync
-    assert "+':'+_ctxActiveFrame+':'+_grFocusMid;" in HTML   # the mini re-draws for a new focus (its turn label)
+    # The claim is that the focused turn is PART of the repaint key, not that it is the last thing in it: the
+    # trailing ';' pinned this assertion to the end of a signature that has grown since (the raw fold's state and
+    # length, what is typed in an add box). Pinning the end made an unrelated addition to the key look like the
+    # focus having been dropped from it.
+    assert "+':'+_ctxActiveFrame+':'+_grFocusMid" in HTML   # the mini re-draws for a new focus (its turn label)
     assert "if(_rm&&!(_TURN_READS[_rm]||[]).length){ _xplRecordReads(_rm); _xplRefresh(); }" in HTML   # the post-send fetch is the first turn's reads when its send recorded none
     assert "function _xplTurnReads(mid){" in HTML and "const rd=_xplTurnReads(mid); cur={mid," in HTML   # a turn without recorded reads takes its frame's
     assert "try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}\n      try{ const t=(_xplEl.state().scene.turns||[]).find(x=>x.mid===mid); _cvRelevance(mid, (t&&t.text)||'', {apply:false});" in HTML
-    assert "_saveFrame('Turn '+HISTORY.filter(h=>h.role==='user').length,true,{ mid:" in HTML   # a turn's frame carries its mid (the ctx-graph slice), so the sync can activate it
+    # The claim is that a turn's frame CARRIES ITS MID, so the sync can activate it. How the turn is NUMBERED is a
+    # different question, and it had to change: with overlapping turns HISTORY's user count names whichever turn
+    # finished last, not the one being saved, so the number now comes from the turn's own record.
+    assert "_saveFrame('Turn '" in HTML and "true,{ mid:" in HTML   # a turn's frame carries its mid (the ctx-graph slice)
     # the element emits the turn for every selection path through select(mid)
     # select also brings the picked plate into the frame when the iso is stacked (Notes/42 defect 62)
     assert "select(mid) { this._S.scene.sel = mid; this._schedule(); this._isoBring(); this.dispatchEvent(new CustomEvent('vera:xpl:turn'" in EL
