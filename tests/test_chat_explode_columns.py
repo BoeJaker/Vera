@@ -42,7 +42,9 @@ def test_explode_folds_the_columns_and_restores_them():
 def test_relation_runs_can_be_switched_off():
     src = _read("vera", "chat", "chat_panel.html")
     assert "localStorage.getItem('vera_runs_off')" in src
-    assert "function _runsToggle(which, on)" in src
+    # the parameter list is not the claim - it gained a `quiet` flag so an incoming toggle from the OTHER chat
+    # instance does not echo straight back out again
+    assert "function _runsToggle(which, on" in src
     # the two draws now stand down for a menu over them as well as for the switch (Notes/42 defect 67), and the
     # switch is on each column's own header as well as in the sheet (defect 70) — one state, read by every switch
     assert "if(_runsOff.ctx||_runsBlocked())" in src
@@ -51,3 +53,14 @@ def test_relation_runs_can_be_switched_off():
     assert 'data-runs="cv" onclick="CH._runsToggle(\'cv\')"' in src
     assert 'data-runs="ctx" onclick="CH._runsToggle(\'ctx\')"' in src
     assert "_spFilter,_runsToggle" in src
+
+    # A RUN HAS TWO HALVES AND THEY LIVE IN DIFFERENT PAGES. On the board the chat runs as two instances -
+    # ?only=chat draws the run from the message, ?only=menu draws it from the graph - and _runsOff was read from
+    # localStorage once into a const at load, so the switch only ever silenced the half belonging to whichever
+    # instance held the button. The other went on drawing its end of a run that now went nowhere.
+    assert "_lhmPost('runs', { which, off:_runsOff[which] })" in src, "the toggle is broadcast"
+    assert "function _runsApply(which, off)" in src and "_runsToggle(which, !off, true)" in src, "and applied without echoing"
+    assert src.count("m.act==='runs'") >= 2, "both instances act on it"
+    assert "ev.key!=='vera_runs_off'" in src, "and a plain second tab hears it too"
+    # the expanded graph carries the same switch, over the end of the run it draws
+    assert "_ctxCol.addEventListener('vera:ctx:runs'" in src

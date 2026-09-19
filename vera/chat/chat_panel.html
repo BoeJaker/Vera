@@ -230,6 +230,30 @@ details.lp-sub:not([open])>summary{opacity:.8}
 
 /* Messages — terminal/document style */
 #msgs{flex:1;overflow-y:auto;padding:0;display:flex;flex-direction:column;scroll-behavior:smooth;position:relative}
+/* THE TURNS RAIL. A conversation of any length has no map: the only way back to something said earlier is to
+   scroll and read. One dot per turn down the top left, opening on hover to the turn's own first words - the
+   same gesture the exploded scene uses, and the same one the context graph's turn rail uses, so the two read
+   as one idea. It sits in the STACK rather than in #msgs, or it would scroll away with the transcript, and it
+   never takes pointer events except on the dots themselves. */
+#turnRail{position:absolute;left:0;top:0;z-index:6;display:flex;flex-direction:column;gap:3px;
+  max-height:min(62%,420px);padding:8px 6px 8px 8px;overflow-y:auto;overflow-x:hidden;
+  width:24px;transition:width .16s ease,background .16s ease;
+  background:linear-gradient(90deg,var(--bg0) 62%,transparent);border-radius:0 8px 8px 0;
+  scrollbar-width:none;font-size:10px}
+#turnRail::-webkit-scrollbar{display:none}
+#turnRail[hidden]{display:none}
+#turnRail:hover,#turnRail.wide{width:212px;background:var(--bg0);box-shadow:0 2px 14px -6px rgba(0,0,0,.55)}
+#turnRail .tr-d{flex:none;display:flex;align-items:center;gap:8px;height:17px;padding:0 4px;border:1px solid transparent;
+  border-radius:9px;background:none;color:var(--dim2);font:inherit;font-size:10px;cursor:pointer;overflow:hidden;text-align:left;width:100%}
+#turnRail .tr-d > i{flex:none;width:7px;height:7px;border-radius:50%;background:var(--bg3,#22262e);
+  box-shadow:inset 0 0 0 1.1px var(--border);transition:background .12s,box-shadow .12s}
+#turnRail .tr-d > span{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transition:opacity .16s}
+#turnRail:hover .tr-d > span,#turnRail.wide .tr-d > span{opacity:1}
+#turnRail .tr-d:hover{background:var(--bg2);color:var(--fg)}
+#turnRail .tr-d.on{color:var(--fg)}
+#turnRail .tr-d.on > i{background:var(--acc);box-shadow:inset 0 0 0 1.1px var(--acc),0 0 7px -1px var(--acc)}
+/* the rail would sit over the first message at narrow widths, where the transcript has no margin to spare */
+@media (max-width:900px){ #turnRail{display:none} }
 
 /* Jump-to-bottom button — fixed inside #chatStack, only visible when the
    user has scrolled away from the bottom during streaming. Click to
@@ -2659,6 +2683,8 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
        and only span 50% of the centre area. -->
   <div id="chatColumn">
     <div id="chatStack">
+      <!-- the turns of this conversation as a column of dots, top left, opening to each turn's first words -->
+      <div id="turnRail" aria-label="turns in this conversation" hidden></div>
       <div id="xplHost"></div>
       <div id="msgs"><div class="sys-msg">Select an agent and start chatting.</div></div>
 
@@ -6570,6 +6596,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     /* the graph asking for the settings that decide what it draws — the Settings page holds them under Context
        (Sources · Injection · Session memory · Parameters · Fabric dataset), and the graph names its section */
     _ctxCol.addEventListener('vera:ctx:settings', ev=>{ try{ _settingsPage(true, (ev.detail||{}).section||'sources'); }catch(_){} });
+    // the expanded graph's own switch for the runs — the same setting the chat's settings sheet holds, so it
+    // travels to the other instance exactly the same way and both ends of a run go together
+    _ctxCol.addEventListener('vera:ctx:runs', ()=>{ try{ _runsToggle('ctx'); }catch(_){} });
+    try{ _ctxRunsMark(); }catch(_){}
     _ctxCol.addEventListener('vera:ctx:toggle-all', ev=>{ const on=!!(ev.detail||{}).included; CTX_NODES.forEach(n=>{ n.included=on; }); try{ renderCtxList(); }catch(_){} _ctxColSig=''; _ctxColumnSync(_grFocusMid||''); try{ VeraLHM.render(); }catch(_){} });
     _ctxCol.addEventListener('vera:ctx:preview', ev=>{ const u=String((ev.detail||{}).url||''); if(u) try{ _browserNavigate(u); }catch(_){} });
     try{ if(typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(!!_qGalAll); }catch(_){}   // a fresh element takes the mini's All edges
@@ -6792,7 +6822,17 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   // the relation runs can be switched off — context → chat, chat ↔ canvas — from the ⋯ tools sheet (persisted)
   // xpl: the RELATION edges inside the exploded scene - the third family, switched like the other two (defect 83)
   const _runsOff=(function(){ try{ const j=JSON.parse(localStorage.getItem('vera_runs_off')||'{}'); return { ctx:!!j.ctx, cv:!!j.cv, xpl:!!j.xpl }; }catch(_){ return { ctx:false, cv:false, xpl:false }; } })();
-  function _runsToggle(which, on){ if(!(which in _runsOff)) return; _runsOff[which]=(on==null)?!_runsOff[which]:!on; try{ localStorage.setItem('vera_runs_off', JSON.stringify(_runsOff)); }catch(_){} _runsSync(); try{ if(_xplEl) _xplEl.dataset.rels=_runsOff.xpl?'off':'on'; }catch(_){} try{ _ctxRunsDraw(); _cvRunsDraw(); }catch(_){} return !_runsOff[which]; }
+  /* A RUN HAS TWO HALVES AND THEY LIVE IN DIFFERENT PAGES. On the board the chat is two instances - ?only=chat
+     draws the run from the message, ?only=menu draws it from the graph - and _runsOff was read from localStorage
+     ONCE into a const at load. Pressing "Context to chat" in the settings therefore turned off only the half
+     belonging to whichever instance held the button: the other page kept its stale copy for the life of the
+     session and went on drawing its end of a run that now went nowhere, which is the disconnected stub.
+     The toggle is broadcast like every other cross-instance action, and applied locally when it arrives. */
+  function _runsToggle(which, on, quiet){ if(!(which in _runsOff)) return; _runsOff[which]=(on==null)?!_runsOff[which]:!on; try{ localStorage.setItem('vera_runs_off', JSON.stringify(_runsOff)); }catch(_){} _runsSync(); try{ if(_xplEl) _xplEl.dataset.rels=_runsOff.xpl?'off':'on'; }catch(_){} try{ _ctxRunsDraw(); _cvRunsDraw(); }catch(_){} try{ _ctxRunsMark(); }catch(_){} if(!quiet) _lhmPost('runs', { which, off:_runsOff[which] }); return !_runsOff[which]; }
+  // the other instance saying it has toggled one; `quiet` so it does not echo back
+  function _runsApply(which, off){ if(!(which in _runsOff)) return; if(_runsOff[which]===!!off) return; _runsToggle(which, !off, true); }
+  // the expanded graph's own button reflects the state, wherever it was pressed
+  function _ctxRunsMark(){ try{ if(_ctxCol&&_ctxCol.setAttribute) _ctxCol.setAttribute('data-runs', _runsOff.ctx?'off':'on'); }catch(_){} }
   // the switch is on the runs themselves — each column's own header — as well as in the ⋯ sheet; they are all one state
   function _runsSync(){ try{ Object.keys(_runsOff).forEach(k=>{ document.querySelectorAll('[data-runs="'+k+'"]').forEach(b=>b.classList.toggle('on', !_runsOff[k])); }); }catch(_){} }
   /* the runs stand down while a menu is over the surface they cross (defect 67). The page's own ☰ swaps the detail
@@ -6805,6 +6845,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   let _ctxLanesSent='';
   function _ctxLanesPost(arr){ const s=JSON.stringify(arr||[]); if(s===_ctxLanesSent) return; _ctxLanesSent=s; _lhmPost('lanes',{ lanes:arr||[] }); }
   const _ctxRunsStand=(svg)=>{ svg.innerHTML=''; svg.removeAttribute('data-lit'); if(_EMBED.only==='menu') _ctxLanesPost([]); };
+  // the same stale-copy problem reaches an ordinary second tab, where the channel is not the path
+  try{ window.addEventListener('storage', ev=>{ if(ev.key!=='vera_runs_off'||!ev.newValue) return;
+    try{ const j=JSON.parse(ev.newValue)||{}; Object.keys(_runsOff).forEach(k=>_runsApply(k, !!j[k])); }catch(_){} }); }catch(_){}
   // what the pointer is on, in the tier that draws only that: a record's type in the graph, or the block in focus
   let _ctxHoverSrc='', _ctxHoverBlock=false;
   const _den=()=>(document.documentElement.getAttribute('data-den')||'full').toLowerCase();
@@ -13062,7 +13105,56 @@ Your task: decide what to do next to advance toward the goal.
     // place - otherwise pressing a band on the budget bar would leave its .lbtn twin lit
     try{ document.querySelectorAll('[data-ctx-layer]').forEach(b=>b.classList.toggle('on', _ctxLayers.has(b.dataset.ctxLayer))); }catch(_){}
   }
-  function _ctxFollow(now){ const run=()=>{ _ctxFollowT=Date.now(); const active=_ctxActiveCompute(); if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; _ctxViewRepaint(); }
+  /* THE TURNS RAIL, built from the transcript itself rather than from CTX_FRAMES: the frames are page-local and
+     a restored session has none, but the messages are always there - so the rail works on a reloaded session,
+     which is exactly when a map of the conversation is worth having.
+     It rebuilds only when the SET of turns changes (the signature), so the scroll handler that calls it every
+     frame does nothing but move the lit dot. */
+  let _turnRailSig='', _turnRailOn='';
+  /* the MESSAGE, not the wrapper: the wrapper carries the timestamp and the row chrome, so the words came out as
+     "04:39 PMWhich docker hosts..."; and not the context pill either, which is a count of what was retrieved for
+     the turn and read as part of the question ("...registered? +8 ctx"). */
+  function _turnRailWords(w){
+    const b=w.querySelector('.msg-body')||w;
+    let t='';
+    try{ const c=b.cloneNode(true); c.querySelectorAll('.ctx-pill,.cap-inline,.mtime').forEach(e=>e.remove()); t=c.textContent||''; }
+    catch(_){ t=b.textContent||''; }
+    t=t.replace(/\s+/g,' ').trim();
+    if(!t) return 'turn';
+    return t.length>40?t.slice(0,39).replace(/\s\S*$/,'')+String.fromCharCode(0x2026):t;
+  }
+  function _turnRailSync(){
+    const rail=document.getElementById('turnRail'); if(!rail) return;
+    const ws=[...document.querySelectorAll('#msgs .mwrap.u[data-mid]')];
+    // one turn is no map, and the menu instance has no transcript to map
+    if(_EMBED.only==='menu'||ws.length<2){ rail.hidden=true; rail.innerHTML=''; _turnRailSig=''; return; }
+    rail.hidden=false;
+    const sig=ws.map(w=>w.dataset.mid).join('|');
+    if(sig!==_turnRailSig){ _turnRailSig=sig;
+      rail.innerHTML=ws.map((w,i)=>'<button class="tr-d" type="button" data-mid="'+esc(w.dataset.mid)+'" title="'+esc('Turn '+(i+1)+': '+_turnRailWords(w))+'"><i></i><span>'+esc(_turnRailWords(w))+'</span></button>').join('');
+      /* the rebuild threw the lit class away with the old buttons, and the cache below still said that turn was
+         lit - so the dot went dark and nothing ever put it back. Forgetting what was lit is part of rebuilding. */
+      _turnRailOn='';
+    }
+    /* the dot for the turn in view, which is the same turn every other surface is following - except at the
+       BOTTOM, where _focusedTurn answers nothing because the context belongs to the composer. That is right for
+       the context and wrong for a map of the transcript: at the bottom you are looking at the last turn, so
+       that is the dot that lights. */
+    /* _focusedTurn answers with a MESSAGE, and a turn is a question plus the answer to it - at the bottom of the
+       transcript the message in view is the assistant's, whose mid matches no dot here, so the rail lit nothing
+       at all. Walk back from the message in view to the question it belongs to: that is its turn. */
+    let cur=''; try{ let f=_focusedTurn();
+      while(f&&!(f.classList&&f.classList.contains('u'))) f=f.previousElementSibling;
+      cur=(f&&f.dataset&&f.dataset.mid)||''; }catch(_){}
+    if(!cur&&ws.length) cur=ws[ws.length-1].dataset.mid||'';
+    if(cur!==_turnRailOn){ _turnRailOn=cur;
+      rail.querySelectorAll('.tr-d').forEach(b=>b.classList.toggle('on', b.dataset.mid===cur)); }
+  }
+  document.addEventListener('click', ev=>{
+    const b=ev.target&&ev.target.closest&&ev.target.closest('#turnRail .tr-d'); if(!b) return;
+    ev.preventDefault(); try{ _ctxScrollTo(b.dataset.mid); }catch(_){}
+  });
+  function _ctxFollow(now){ const run=()=>{ _ctxFollowT=Date.now(); try{ _turnRailSync(); }catch(_){} const active=_ctxActiveCompute(); if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; _ctxViewRepaint(); }
       /* Tell the other instance which turn is in view. This went out only from _ctxColumnSync, which runs only
          when the graph COLUMN is mounted — so on the board, where the graph lives in the rail's menu and the
          column is not open, scrolling the chat broadcast nothing and the menu's graph never moved.
@@ -13076,6 +13168,13 @@ Your task: decide what to do next to advance toward the goal.
     if(now||Date.now()-_ctxFollowT>150){ if(_ctxFollowTimer){ clearTimeout(_ctxFollowTimer); _ctxFollowTimer=null; } return run(); }
     if(!_ctxFollowTimer) _ctxFollowTimer=setTimeout(()=>{ _ctxFollowTimer=null; run(); }, 160); }
   function _ctxFollowBind(){ const msgs=document.getElementById('msgs'); if(msgs&&!msgs._ctxFollowBound){ msgs._ctxFollowBound=true; msgs.addEventListener('scroll', ()=>{ if(Date.now()-_grScrollProg>900) _grFocusMid=''; _runsSoon(); _ctxFollow(); }, {passive:true}); }
+    /* the rail also has to notice a turn ARRIVING, and turns arrive down several paths - a send, a session
+       loaded, history restored. Watching the transcript covers all of them at once, and the sync itself is
+       guarded by the turn signature, so this costs a string compare per batch of mutations. */
+    if(msgs&&!msgs._turnRailObs&&typeof MutationObserver==='function'){ msgs._turnRailObs=true;
+      let t=0; const mo=new MutationObserver(()=>{ if(t) return; t=setTimeout(()=>{ t=0; try{ _turnRailSync(); }catch(_){} }, 120); });
+      try{ mo.observe(msgs,{ childList:true, subtree:true }); }catch(_){}
+      try{ _turnRailSync(); }catch(_){} }
     const inp=document.getElementById('chatInput'); if(inp&&!inp._ctxFollowBound){ inp._ctxFollowBound=true; inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxFollow(); }); } }
   function saveFrame(){const l=prompt('Frame name:','Frame '+(CTX_FRAMES.length+1));if(l===null)return;_saveFrame(l);updateFrameUI();appendSys('Frame saved: <b>'+esc(l)+'</b>');}
 
@@ -13946,6 +14045,7 @@ function _embedMount(){
       else if(m.act==='focus'){ _grFocusMid=a.mid||''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid); }catch(_){} } try{ _ctxFollow(true); }catch(_){} }
       else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }
       else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} }
+      else if(m.act==='runs'){ _runsApply(a.which, a.off); }
       // updateFrameUI too: the legacy strip and Frames pane are views onto CTX_FRAMES like any other, and the
       // embedded menu was the one path that replaced the list without telling them - so they sat empty for the
       // whole session while every other surface had the turns
@@ -13953,7 +14053,7 @@ function _embedMount(){
   }
   if(_EMBED.only==='chat'){
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from!=='menu') return; const a=m.args||{};
-      try{ if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='grown') _ctxRemoteSet(a.on); else if(m.act==='lanes'){ _ctxRemote.lanes=Array.isArray(a.lanes)?a.lanes:[]; _ctxRunsDraw(); } else if(m.act==='page') togglePage(a.name); else if(m.act==='explode') explode(a.on); else if(m.act==='explodeMode') explodeMode(a.m); else if(m.act==='session'&&a.sid&&a.sid!==SID) loadSession(a.sid); else if(m.act==='newSession') newSession(); }catch(_){} };
+      try{ if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='grown') _ctxRemoteSet(a.on); else if(m.act==='lanes'){ _ctxRemote.lanes=Array.isArray(a.lanes)?a.lanes:[]; _ctxRunsDraw(); } else if(m.act==='runs'){ _runsApply(a.which, a.off); } else if(m.act==='page') togglePage(a.name); else if(m.act==='explode') explode(a.on); else if(m.act==='explodeMode') explodeMode(a.m); else if(m.act==='session'&&a.sid&&a.sid!==SID) loadSession(a.sid); else if(m.act==='newSession') newSession(); }catch(_){} };
   }
   /* The transcript's scroll listener is bound HERE, for any instance that has a transcript.
      It was bound only from the rail's quick menu and from mounting the graph column — and the chat instance on

@@ -245,8 +245,37 @@
     // the galaxy's bands: the context alone takes the whole circle; with a family beside it the context keeps the left
     // and top (190°), the plan the top right, the loop the right and bottom; the memory arm lies outside the context
     const CTX0 = famPlot ? -200 : -90, CTXW = famPlot ? 190 : 360;
-    const step = CTXW / Math.max(srcs.length, 1);
-    const midOf = (si) => famPlot ? CTX0 + (si + 0.5) * step : -90 + si * step;
+    /* SECTORS PROPORTIONAL TO WHAT THEY HOLD. Every family used to be handed CTXW/srcs.length regardless of how
+       many records it contributed, so a turn carrying twelve capabilities and two skills gave both the same arc:
+       the caps were crushed into theirs while the skills' stood all but empty. That - not the container - is
+       where most of the crowding came from, and it is why widening the panel bought so little.
+
+       A floor keeps a one-record family readable (a sector too thin to hold its own label is not a sector), and
+       the weights are normalised back into CTXW afterwards so the floors cannot push the band past the arc the
+       context owns.
+
+       SECTOR_W is the exponent: 1 is strictly proportional, 0 is the old equal split - and measured over a
+       56-record turn at the grown graph's real 932x650, STRICTLY proportional is the one that wins where it
+       counts. Equal sectors post the better MEDIAN gap (12.4px against 9.4) and a far worse floor: 19 pairs
+       closer than 6px and a worst pair 0.4px apart, against 12 pairs and 2.8px. The median is not what reads as
+       density - the crushed cluster is - and that median is high precisely BECAUSE the sparse families are
+       sitting on arc the crowded one needed. */
+    const SECTOR_W = 1.0, SECTOR_FLOOR = 0.42;
+    const famCnt = srcs.map((s2) => ctx.filter((n) => (n.source || '?') === s2).length);
+    const famW = (() => {
+      const even = CTXW / Math.max(srcs.length, 1);
+      if (srcs.length < 2) return [CTXW];
+      const raw = famCnt.map((c) => Math.pow(Math.max(1, c), SECTOR_W));
+      const tot = raw.reduce((a, b) => a + b, 0) || 1;
+      let w = raw.map((x) => Math.max(even * SECTOR_FLOOR, CTXW * x / tot));
+      const sum = w.reduce((a, b) => a + b, 0) || 1;
+      return w.map((x) => x * CTXW / sum);
+    })();
+    const famAt = []; famW.reduce((acc, w2, i) => { famAt[i] = acc; return acc + w2; }, 0);
+    // the first sector keeps the edge it always had, so the families do not rotate under the user
+    const SEC0 = famPlot ? CTX0 : -90 - (famW[0] || 0) / 2;
+    const stepOf = (si) => (famW[si] != null ? famW[si] : CTXW / Math.max(srcs.length, 1));
+    const midOf = (si) => SEC0 + (famAt[si] || 0) + stepOf(si) / 2;
     const MEM_A0 = famPlot ? -195 : -150, MEM_AW = famPlot ? 180 : 300;
     const PLAN_A = [-10, 40], LOOP_A = [40, 160];
     // the iso view: the galaxy at a tilt, sized from the column. The plate is the ground square [-s, s]² about the hub
@@ -280,8 +309,19 @@
        drawing bigger AND the gaps between records wider without touching the container. Capped, because past a
        point an ellipse stops reading as a galaxy and starts reading as a squashed one; and never below 1, so a
        tall narrow column is left exactly as it was. */
+    /* and the stretch is chosen to FILL the width, not by a rule of thumb about the box. RMAX is bounded by the
+       shorter side, which on the grown graph is the HEIGHT - so widening the panel moved RMAX not at all, and
+       the aspect-times-0.92 heuristic left the drawing spanning 72% of the width with the height 83% used. The
+       horizontal half-extent the plot can afford is (PW - LANE_L)/2, and what has to fit inside it is not RMAX
+       but the WHOLE drawing: the memory ring and the sector labels are laid outside RMAX, and the stretch
+       carries them out with it. memMargin is exactly the room already reserved for them (RMAX + memMargin is
+       the short side's half), so the divisor is RMAX + memMargin. Dividing by RMAX alone overshot by that
+       margin times the stretch and pushed the memory arm out of the box - caught by the exploded sheet's own
+       containment test, where the sheet is small enough for the error to show. Still capped - past a point an
+       ellipse stops reading as a galaxy and starts reading as a squashed one - and never below 1, so a tall
+       narrow column is left exactly as it was. */
     const SX = (view === 'galaxy' && !quad)
-      ? Math.max(1, Math.min(1.9, ((PW - LANE_L) / Math.max(1, PH - LANE_T)) * 0.92)) : 1;
+      ? Math.max(1, Math.min(2.0, ((PW - LANE_L) / 2) / Math.max(1, RMAX + memMargin))) : 1;
     const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], memLabels: [], cedges: [], sedges: [], stems: [], pins: [], plate: null, regions: [], loopNodes: [], loopStems: [], planNodes: [], stepNodes: [], planPlot: [], estNodes: [], estLabels: [], dividers: [], pos: {}, tokens: 0, lit: 0, hits: 0, q: QS, turn: turnLabel, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' || quad }, discs: [], iso: ISO, k };
     // the plot's pan/zoom, for what is drawn OUTSIDE it (the lanes) but joins a record inside it
     const GZ = (S.pan && S.pan.z) || 1, GX = (S.pan && S.pan.x) || 0, GY = (S.pan && S.pan.y) || 0;
@@ -348,8 +388,9 @@
          context keeps the left and top, the plan the top right, the loop the right and bottom — and a swirl
          laid on top of the fan pushed context records round into the loop's arc. So the fan gives up the room
          the turn needs, and the turn is centred on the sector's middle: the arm curves, the family stays put. */
-      const swirl = Math.min(SWIRL, Math.max(0, step * 0.45));
-      const half = Math.max(3, (step / 2 - 6) - swirl / 2);
+      const sw = stepOf(si);
+      const swirl = Math.min(SWIRL, Math.max(0, sw * 0.45));
+      const half = Math.max(3, (sw / 2 - 6) - swirl / 2);
       const f = n > 1 ? i / (n - 1) : 0.5;                    // this record's rank within its family
       const r = armR(score, f, rw);
       const arm = (r - R_IN) / Math.max(1, RMAX - R_IN);       // 0 at the core, 1 at the rim
@@ -381,7 +422,7 @@
       // kx·√2 × ky·√2 about the hub, its parameter phased by 45° — so the wedge is a conic gradient in a circle, then that scale
       const r0 = 44 * k, r1 = RMAX + 6 * k, kx = ISO.kx * Math.SQRT2, ky = ISO.ky * Math.SQRT2, tf = 'scale(' + kx.toFixed(3) + ',' + ky.toFixed(3) + ')';
       const disc = (a0, aw, col, name, ri, ro) => out.discs.push({ x: px(c.x - ro), y: px(c.y - ro), d: px(ro * 2), col, a0: (a0 + 90 + 45).toFixed(1) + 'deg', a1: aw.toFixed(1) + 'deg', m0: (ri / ro * 50).toFixed(1) + '%', m1: (ri / ro * 50 + 0.6).toFixed(1) + '%', tf, name });
-      srcs.forEach((s2, si) => { const mid = midOf(si), half = step / 2 - 5; disc(mid - half, half * 2, color(s2), s2, r0, r1); });
+      srcs.forEach((s2, si) => { const mid = midOf(si), half = stepOf(si) / 2 - 5; disc(mid - half, half * 2, color(s2), s2, r0, r1); });
       if (plotPlan.length) disc(PLAN_A[0], PLAN_A[1] - PLAN_A[0], 'var(--cg-t2)', 'plan', RMAX * 0.62, r1);
       if (plotLoop.length) disc(LOOP_A[0], LOOP_A[1] - LOOP_A[0], 'var(--cg-ac)', isDag ? 'dag' : 'loop', r0, r1);
       // the memory ring lies on the floor too (dashed), and the hub stands on a pin
@@ -395,7 +436,7 @@
         // read back off it — scaling the length alone would leave the spokes crossing their own sectors
         const spoke = (deg) => { const R = RMAX + 10 * k, ex = Math.cos(deg * RAD) * R * SX, ey = Math.sin(deg * RAD) * R;
           out.spokes.push({ x: px(cxp), y: px(cyp), len: px(Math.hypot(ex, ey)), deg: Math.atan2(ey, ex) * 180 / Math.PI }); };
-        spoke(mid - step / 2); if (famPlot && si === srcs.length - 1) spoke(mid + step / 2);
+        spoke(mid - stepOf(si) / 2); if (famPlot && si === srcs.length - 1) spoke(mid + stepOf(si) / 2);
         out.sectorLabels.push({ name: s, col, x: px(cxp + Math.cos(mid * RAD) * (RMAX + 26 * k) * SX), y: px(cyp + Math.sin(mid * RAD) * (RMAX + 26 * k)) }); }
       else if (view === 'iso') { const p = isoP(cxp + Math.cos(mid * RAD) * (RMAX + 26 * k), cyp + Math.sin(mid * RAD) * (RMAX + 26 * k), 0); out.sectorLabels.push({ name: s, col, x: px(p.x), y: px(p.y) }); }
       else if (view === 'flow') { const cw = (PW - LANE_L - 24 * k) / srcs.length; out.sectorLabels.push({ name: s, col, x: px(LANE_L + 12 * k + cw * (si + 0.5)), y: px(LANE_T + 26 * k) }); }
@@ -418,7 +459,12 @@
         const q = place(si, i, list.length, score, n.id, rw);
         const inFocus = focus.has(n.id) && n.included !== false, by = readBy(n.id), everRead = by.length > 0, ghost = n.included === false;
         if (inFocus) { out.tokens += tok; out.lit++; }
-        const d = Math.max(17 * k, (7 + Math.sqrt(tok) / 2.7 + 8) * k);
+        /* AND THE MARK ITSELF. Room is the lever with the most give left, and the nodes were 18.2px of an 8px
+           gap: at the grown graph's real size, 26 of 56 neighbours sat closer than 6px. At 15px it is 2 of 56,
+           and the median gap goes 8.5 to 11.7 - the same drawing, the same positions, simply not drawn so fat.
+           15 and not less because the kind icon is drawn from 14px up, and a mark you cannot read the kind of
+           is a dot, not a record. The token term keeps its shape so a big record still reads as a big one. */
+        const d = Math.max(15 * k, (6 + Math.sqrt(tok) / 3.0 + 6) * k);
         const kind = kindOf(n, s);
         const hit = matchQ(n); if (QS && hit) out.hits++;
         out.pos[n.id] = { x: q.x, y: q.y, col, source: s, label: n.label || n.id, lit: inFocus, rim: d / 2, ghost, score, tok, kind: n.type || s, icon: kind, rec: n, hit, by: n.by === 'a' ? 'a' : 'u' };
@@ -640,8 +686,18 @@
     const etc = {}; edgesAll.forEach((e0) => { const t = edgeTypeOf(e0); etc[t] = (etc[t] || 0) + 1; });
     out.edgeTypes = Object.keys(etc).sort((a, b) => etc[b] - etc[a]).map((t) => ({ name: t, n: etc[t], on: !eOff.has(t), col: etCol(t) }));
     // the frames scrubber: the turns' snapshots, the one in view marked; "live" is the current set
-    out.frames = frames.filter((f) => f && f.id != null).map((f) => ({ id: f.id, label: f.label || String(f.id), ts: f.ts || '', n: (f.nodes || []).length, on: frame != null && String(f.id) === String(frame.id) }));
+    /* a turn's own FIRST WORDS, not just "Turn 4": a column of dots is only navigable if a dot can say what its
+       turn was about. The question the turn asked is the best label there is for it, and the frame already
+       carries it - it was simply never surfaced. */
+    const frWords = (f) => { const q = String(f.query || (f.q || '')).replace(/\s+/g, ' ').trim();
+      if (!q) return f.label || String(f.id);
+      return q.length > 38 ? q.slice(0, 37).replace(/\s\S*$/, '') + String.fromCharCode(0x2026) : q; };
+    out.frames = frames.filter((f) => f && f.id != null).map((f) => ({ id: f.id, label: f.label || String(f.id), words: frWords(f), ts: f.ts || '', n: (f.nodes || []).length, on: frame != null && String(f.id) === String(frame.id) }));
     out.frame = frame ? { id: frame.id, label: frame.label || String(frame.id) } : null;
+    /* the turn's IDENTITY, which is not its label. The label carries the turn number and the question, and both
+       move while a turn is still being answered - keying the arrival on it made every graph reload from scratch
+       several times per response. */
+    out.turnKey = frame ? String(frame.id) : 'live';
     out.lanes = { l: LANE_L, t: LANE_T, b: LANE_B, hasLanes };
     out.mix = lvl;
     return out;
@@ -672,29 +728,48 @@
   function arrivalsOf(o, store, opts) {
     if (!store || typeof Set === 'undefined') return null;
     opts = opts || {};
-    /* the two faces draw different marks, from different lists, around different hubs - the detailed plot's
-       records and recalls around o.hub, the simple galaxy's dots around its own centre - so the caller says
-       which ids it is about to draw and where they are flying from. The STORE is shared between them, which is
-       what stops flipping the face from replaying the whole arrival. */
-    const key = String(o.turn || '') + '#' + String(o.view || '');
-    if (store.key !== key) { store.key = key; store.seen = null; }
+    /* THREE THINGS HAPPEN TO THIS GRAPH AND THEY ARE NOT THE SAME EVENT.
+
+       A LOAD is the graph getting its first content: the whole context arrives, and a staggered flight out of
+       the hub is worth watching once.
+       An ADD is a record joining the turn already on screen while the answer is still coming in: only the new
+       record flies, and the ones already drawn must not so much as flicker.
+       A MOVE is the turn in view changing - scrolling the transcript. The old behaviour treated this as a load,
+       so scrolling back through a session fired a full cascade per turn and the graph strobed. It is not an
+       arrival at all: the records are simply somewhere else now, so they SETTLE - a short, unstaggered ease
+       with no flight - which reads as the drawing changing rather than being rebuilt.
+
+       And a floor between animations, because bursts are the norm here: context is re-fed several times per
+       response and the transcript scrolls at frame rate. Inside the floor a paint draws, and draws still. */
+    const key = String(o.turnKey != null ? o.turnKey : (o.turn || '')) + '#' + String(o.view || '');
+    const ids = [];
+    if (opts.ids) opts.ids.forEach((n) => ids.push((n && typeof n === 'object') ? n.id : n));
+    else { (o.cnodes || []).forEach((n) => ids.push(n.id)); (o.memNodes || []).forEach((n) => ids.push(n.id)); }
     const first = !store.seen;
-    const seen = store.seen || (store.seen = new Set());
+    const moved = !first && store.key !== key;
+    if (store.key !== key) { store.key = key; store.seen = new Set(); }
+    const seen = store.seen;
     const fresh = new Set();
-    const mark = (n) => { const id = (n && typeof n === 'object') ? n.id : n;
-      if (id != null && !seen.has(id)) { fresh.add(id); seen.add(id); } };
-    if (opts.ids) opts.ids.forEach(mark);
-    else { (o.cnodes || []).forEach(mark); (o.memNodes || []).forEach(mark); }
+    ids.forEach((id) => { if (id != null && !seen.has(id)) { fresh.add(id); seen.add(id); } });
     if (!fresh.size) return null;
+    const now = (typeof Date !== 'undefined' && Date.now) ? Date.now() : 0;
+    const FLOOR = 340;
+    if (store.at && now - store.at < FLOOR) return null;   // a burst animates once, not once per paint
+    store.at = now;
+    const mode = first ? 'load' : moved ? 'move' : 'add';
     const order = new Map(); let i = 0; fresh.forEach((id) => order.set(id, i++));
     const hub = opts.hub || o.hub || { x: 0, y: 0 };
-    /* a whole turn landing gets a longer stagger than a single late record joining one, or the cascade of a
-       big turn finishes before the eye reaches the far side of the plot */
-    const step = first ? Math.max(14, Math.min(46, Math.round(560 / Math.max(1, fresh.size)))) : 26;
+    /* a whole turn landing staggers across the plot; a single record joining one does not wait its turn; and a
+       MOVE does not stagger at all - a wave travelling over a graph the eye is already reading is the strobe */
+    const step = mode === 'load' ? Math.max(14, Math.min(46, Math.round(560 / Math.max(1, fresh.size))))
+      : mode === 'add' ? 26 : 0;
+    const cls = mode === 'move' ? ' mov' : ' arr';
     return {
-      cls(n) { return fresh.has(n.id) ? ' arr' : ''; },
+      mode,
+      cls(n) { return fresh.has(n.id) ? cls : ''; },
       st(n) {
         if (!fresh.has(n.id)) return '';
+        if (mode === 'move') return '';
         return ';--ax:' + Math.round((hub.x || 0) - n.x) + 'px;--ay:' + Math.round((hub.y || 0) - n.y)
           + 'px;--ad:' + (order.get(n.id) * step) + 'ms';
       },
@@ -1159,8 +1234,37 @@ vera-context-graph .cg-list-e{padding:14px 10px;font-size:10px;color:var(--cg-t3
 vera-context-graph .cg-srch{font:inherit;font-size:9.5px;height:20px;width:118px;padding:0 7px;border:1px solid var(--cg-bd);border-radius:5px;background:var(--cg-s2);color:var(--cg-t1);outline:none}vera-context-graph .cg-srch:focus{border-color:var(--cg-ac)}vera-context-graph .cg-srch::placeholder{color:var(--cg-t3)}
 vera-context-graph .cg-lay.et{height:18px;font-size:8.5px;padding:0 7px;text-transform:lowercase;color:var(--cg-t2)}vera-context-graph .cg-lay.et i{width:10px;height:1.5px;border-radius:0;background:currentColor}vera-context-graph .cg-lay.et:not(.on){opacity:.45;text-decoration:line-through}vera-context-graph .cg-lay.et.on{box-shadow:inset 0 0 0 1px var(--cg-bd)}
 vera-context-graph .cg-layers .sep{width:1px;height:14px;background:var(--cg-bd);margin:0 4px}
-vera-context-graph .cg-frames{flex-shrink:0;display:flex;align-items:center;gap:4px;padding:6px 10px 0;overflow-x:auto;font-family:var(--cg-mono);font-size:9px;color:var(--cg-t3)}vera-context-graph .cg-frames[hidden]{display:none}
-vera-context-graph .cg-frame{flex:none;display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 8px;border-radius:999px;border:1px solid var(--cg-bd);background:var(--cg-s2);color:var(--cg-t2);font:inherit;cursor:pointer}vera-context-graph .cg-frame b{font-weight:400;color:var(--cg-t3)}vera-context-graph .cg-frame.on{color:var(--cg-t1);border-color:var(--cg-ac);box-shadow:inset 0 0 0 1px var(--cg-ac)}vera-context-graph .cg-frame.live i{width:6px;height:6px;border-radius:50%;background:var(--cg-ac2)}
+/* THE TURNS RAIL. A narrow column of dots down the left of the plot that opens - on hover, or pinned with its
+   own header button - to each turn's first words. Collapsed it costs 26px and shows the whole session; open it
+   overlays the plot rather than reflowing it, because a rail that resizes the graph makes the drawing jump
+   every time the pointer crosses it. */
+vera-context-graph .cg-frames{flex:0 0 26px;width:26px;align-self:stretch;display:flex;flex-direction:column;gap:6px;padding:6px 0 6px 4px;font-family:var(--cg-mono);font-size:9px;color:var(--cg-t3);position:relative;z-index:4;transition:flex-basis .16s ease,width .16s ease}
+vera-context-graph .cg-frames[hidden]{display:none}
+vera-context-graph .cg-frames:hover,vera-context-graph .cg-frames.wide{flex-basis:186px;width:186px}
+vera-context-graph .cg-frames .cg-fr-hd{flex:none;height:14px;display:flex;align-items:center;overflow:hidden}
+vera-context-graph .cg-fr-x{font:inherit;color:var(--cg-t3);background:none;border:0;padding:0 2px;cursor:pointer;opacity:0;transition:opacity .16s}
+vera-context-graph .cg-frames:hover .cg-fr-x,vera-context-graph .cg-frames.wide .cg-fr-x{opacity:1}
+vera-context-graph .cg-frames.wide .cg-fr-x{color:var(--cg-ac)}
+/* the newest turn at the BOTTOM, where the newest message is - so the list grows the way the transcript does */
+vera-context-graph .cg-fr-list{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;justify-content:flex-end;gap:3px;overflow-y:auto;overflow-x:hidden}
+vera-context-graph .cg-fr-ft{flex:none;display:flex;flex-direction:column;gap:3px;padding-top:5px;margin-top:2px;border-top:1px solid var(--cg-bd)}
+vera-context-graph .cg-frame{flex:none;display:flex;align-items:center;gap:7px;height:18px;padding:0 4px;border-radius:9px;border:1px solid transparent;background:none;color:var(--cg-t2);font:inherit;cursor:pointer;overflow:hidden;text-align:left}
+vera-context-graph .cg-frame > i{flex:none;width:8px;height:8px;border-radius:50%;background:var(--cg-s2);box-shadow:inset 0 0 0 1.2px var(--cg-bd2);transition:background .12s,box-shadow .12s}
+vera-context-graph .cg-frame .nm{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transition:opacity .16s}
+vera-context-graph .cg-frame b{flex:none;font-weight:400;color:var(--cg-t3);opacity:0;transition:opacity .16s}
+vera-context-graph .cg-frames:hover .cg-frame .nm,vera-context-graph .cg-frames.wide .cg-frame .nm,
+vera-context-graph .cg-frames:hover .cg-frame b,vera-context-graph .cg-frames.wide .cg-frame b{opacity:1}
+vera-context-graph .cg-frame:hover{background:var(--cg-s2)}
+vera-context-graph .cg-frame.on{color:var(--cg-t1);border-color:var(--cg-ac)}
+vera-context-graph .cg-frame.on > i{background:var(--cg-ac);box-shadow:inset 0 0 0 1.2px var(--cg-ac),0 0 8px -1px var(--cg-ac)}
+vera-context-graph .cg-frame.live > i{background:var(--cg-ac2);box-shadow:inset 0 0 0 1.2px var(--cg-ac2)}
+vera-context-graph .cg-frame.est > i{background:var(--ec,var(--cg-est));box-shadow:none}
+vera-context-graph .cg-frame.master > i{background:none;box-shadow:inset 0 0 0 1.2px var(--cg-t3)}
+vera-context-graph .cg-frame.master.on > i{background:var(--cg-t2);box-shadow:inset 0 0 0 1.2px var(--cg-t2)}
+/* the runs switch reads its state off the host, which owns the setting and both ends of the run */
+vera-context-graph .cg-frame.runs > i{background:none;box-shadow:inset 0 0 0 1.2px var(--cg-bd2)}
+vera-context-graph[data-runs="on"] .cg-frame.runs > i{background:var(--cg-ac);box-shadow:inset 0 0 0 1.2px var(--cg-ac)}
+vera-context-graph[data-runs="on"] .cg-frame.runs{color:var(--cg-t1)}
 vera-context-graph .cg-rec-a{display:flex;gap:6px;margin-top:5px}
 vera-context-graph .cg-rec-a button{font:inherit;font-size:10px;color:var(--cg-t2);background:var(--cg-s1);border:none;border-radius:4px;padding:4px 8px;cursor:pointer;box-shadow:0 0 0 1px var(--cg-bd)}
 vera-context-graph .cg-rec-a button.pri{color:var(--cg-bg);background:var(--cg-ac);box-shadow:none}
@@ -1191,11 +1295,16 @@ vera-context-graph .cg-stepl{position:absolute;transform:translate(-50%,0);font-
   78%{transform:translate(-50%,-50%) scale(1.22)}
   100%{opacity:1;transform:translate(-50%,-50%) scale(1)}}
 @keyframes cg-land{0%{opacity:0;transform:scale(.4)}35%{opacity:.75}100%{opacity:0;transform:scale(2.1)}}
+/* A MOVE, not an arrival: the turn in view changed and the records are simply somewhere else now. No flight, no
+   stagger, no ring - a short ease that reads as the drawing changing rather than being rebuilt. */
+@keyframes cg-settle{from{opacity:0;transform:translate(-50%,-50%) scale(.9)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+vera-context-graph .cg-node.mov,vera-context-graph .cg-mem.mov,.cg-gal .cg-gd.mov{animation:cg-settle .2s ease-out backwards}
 vera-context-graph .cg-node.arr,vera-context-graph .cg-mem.arr,.cg-gal .cg-gd.arr{animation:cg-arrive .62s cubic-bezier(.16,.84,.34,1) var(--ad,0ms) backwards}
 /* the ring the record lands inside - the ping fires when the flight does, not before it */
 vera-context-graph .cg-node.arr::after{content:"";position:absolute;inset:-4px;border-radius:inherit;border:1.5px solid var(--nc);pointer-events:none;opacity:0;animation:cg-land .7s ease-out calc(var(--ad,0ms) + .34s) 1}
 @media (prefers-reduced-motion:reduce){
-  vera-context-graph .cg-node.arr,vera-context-graph .cg-mem.arr,.cg-gal .cg-gd.arr{animation:none}
+  vera-context-graph .cg-node.arr,vera-context-graph .cg-mem.arr,.cg-gal .cg-gd.arr,
+  vera-context-graph .cg-node.mov,vera-context-graph .cg-mem.mov,.cg-gal .cg-gd.mov{animation:none}
   vera-context-graph .cg-node.arr::after{animation:none}}
 vera-context-graph .cg-pnode{position:absolute;transform:translate(-50%,-50%) rotate(45deg);width:9px;height:9px;border-radius:1px;background:var(--cg-t3);z-index:2}
 vera-context-graph .cg-pnode.done{background:var(--cg-ac2)}vera-context-graph .cg-pnode.run{background:var(--cg-ac);box-shadow:0 0 0 2px var(--cg-bg),0 0 0 3.5px color-mix(in srgb,var(--cg-ac) 45%,transparent)}vera-context-graph .cg-pnode.fail{background:#e06c75}
@@ -1277,7 +1386,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
         const a = this.getAttribute('view'); if (a) this._S.view = a;
         this.innerHTML = '<div class="cg-hd"><h2>Context graph</h2><span class="lbl" data-r="tok"></span><select class="cg-sel" data-r="runs" hidden title="The run in the lane — this session\'s, or any recorded run"></select><span class="sp"></span><span class="cg-seg" data-r="views" title="The unified graph\'s layouts, here"></span><button class="cg-btn" data-a="alledges" data-r="alledges" title="Draw every relation, not only the ones that touch the prompt">All edges</button><input class="cg-srch" data-r="q" type="search" placeholder="⌕ find a record" title="Filter the list and dim what does not match in the plot — label, text, source, type, tags"><span class="lbl" data-r="hits"></span><button class="cg-btn" data-a="list" data-r="list" title="The records as a list beside the plot">List</button><span class="lbl" data-r="zoom">100%</span><button class="cg-btn" data-a="fit" title="Back to the whole graph">Fit</button><button class="cg-btn" data-a="settings" title="Context settings \u2014 sources, injection, session memory, k and similarity, the fabric dataset">\u2699</button><button class="cg-btn" data-a="collapse" title="Fold the graph back into the quick menu">Collapse</button></div>'
           + '<div class="cg-key"><span><b>angle</b> = source</span><span><b>distance</b> = lower relevance</span><span><b>area</b> = tokens</span><span><b>hollow</b> = related, not injected</span></div>'
-          + '<div class="cg-layers" data-r="layers"></div><div class="cg-frames" data-r="frames" hidden></div><div class="cg-body"><div class="cg-plot" data-r="plot"><div class="cg-in" data-r="in"></div><div data-r="lanes"></div><div class="cg-hover" data-r="hover" hidden></div></div><div class="cg-list-box" data-r="listbox" hidden></div></div>';
+          + '<div class="cg-layers" data-r="layers"></div><div class="cg-body"><div class="cg-frames" data-r="frames" hidden></div><div class="cg-plot" data-r="plot"><div class="cg-in" data-r="in"></div><div data-r="lanes"></div><div class="cg-hover" data-r="hover" hidden></div></div><div class="cg-list-box" data-r="listbox" hidden></div></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
         this._r.views.innerHTML = VIEWS.map((v) => '<button data-v="' + v[0] + '" title="' + esc(v[2]) + '">' + v[1] + '</button>').join('');
         this.addEventListener('click', (e) => this._click(e));
@@ -1339,7 +1448,12 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
              injection, k, the similarity floor - moved to the host's Settings page, and from the graph there was
              no way to reach them: you could see what had been assembled and not what had assembled it. The element
              owns no settings surface of its own, so it says which section it wants and the host opens it. */
-          else if (k === 'settings') { this.dispatchEvent(new CustomEvent('vera:ctx:settings', { detail: { section: a.dataset.sec || 'sources' }, bubbles: true })); } else if (k === 'alledges') { S.allEdges = !S.allEdges; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:alledges', { detail: { on: S.allEdges }, bubbles: true })); }           // a SOURCE cycles the same three levels a family does now: off · focus · all. It used to flip on/off,
+          else if (k === 'settings') { this.dispatchEvent(new CustomEvent('vera:ctx:settings', { detail: { section: a.dataset.sec || 'sources' }, bubbles: true })); }
+          // the turns rail pinned open, for reading down a long session without holding the pointer in it
+          else if (k === 'frames-wide') { if (this._r.frames) this._r.frames.classList.toggle('wide'); }
+          /* the runs switch. A run is drawn half by this graph's host and half by the chat - the element owns
+             neither end, so it asks, exactly as it does for the settings. */
+          else if (k === 'runs') { this.dispatchEvent(new CustomEvent('vera:ctx:runs', { bubbles: true })); } else if (k === 'alledges') { S.allEdges = !S.allEdges; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:alledges', { detail: { on: S.allEdges }, bubbles: true })); }           // a SOURCE cycles the same three levels a family does now: off · focus · all. It used to flip on/off,
           // so the only way to quieten a noisy source was to lose it. mix() is the one path for both.
           else if (k === 'layer') { const s = a.dataset.s; const cur = mixOf(S, s);
             this.mix(s, cur === 'off' ? 'focus' : cur === 'focus' ? 'all' : 'off'); }
@@ -1376,14 +1490,40 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
         /* The turns line carries the ESTATE switch at its end. The estate is not a source of this turn's prompt
            — it is the machines the work ran on — so sitting it among the prompt's own families implied it was
            one. It belongs with the turns, which are the other thing on this graph that is not context. */
+        /* THE MASTER IS DRAWN ON THE TURNS LINE, but it READS the meter's row - and the meter renders after the
+           rail does. A function rather than a value, so the order of the two renders stops mattering: whichever
+           runs first, the button is built from the row as it stands at that moment. */
+        const masterBtn = () => { const rows = o.meter || o.srcs.concat(o.offSrcs); if (!rows.length) return '';
+          const anyAll2 = rows.some((r2) => r2.level === 'all');
+          return '<button class="cg-frame master ' + (anyAll2 ? '' : 'on') + '" data-a="focus-all" title="'
+            + (anyAll2 ? 'Show only what matters in every source - the few most relevant of each'
+                       : 'Show everything in every source again')
+            + '"><i></i><span class="nm">' + (anyAll2 ? 'focus all' : 'show all') + '</span></button>'; };
         if (this._r.frames) { const fr = o.frames || [], est = o.estateChip;
           this._r.frames.hidden = !(fr.length || est);
           const estBtn = est ? '<button class="cg-frame est ' + (est.on ? 'on' : '') + '" data-a="layer" data-s="estate"'
             + ' style="--ec:' + esc(est.col) + '" title="' + esc('the estate — ' + est.n + ' node' + (est.n === 1 ? '' : 's')
             + ' · ' + (est.level === 'off' ? 'off' : est.level === 'focus' ? 'in focus: what the run touched' : 'everything')
             + ' · press to cycle off · focus · all') + '"><i></i>estate<b>' + est.n + '</b></button>' : '';
-          if (fr.length || est) this._r.frames.innerHTML = (fr.length ? '<span>turns</span><button class="cg-frame live ' + (o.frame ? '' : 'on') + '" data-a="frame" data-id="" title="The live records"><i></i>live</button>' + fr.slice(-12).map((f) => '<button class="cg-frame ' + (f.on ? 'on' : '') + '" data-a="frame" data-id="' + esc(f.id) + '" title="' + esc(f.label + (f.ts ? ' · ' + f.ts : '') + ' · ' + f.n + ' records · click to view this turn\'s context') + '">' + esc(f.label) + '<b>' + f.n + '</b></button>').join('') : '')
-            + (estBtn ? '<span class="cg-frames-sp"></span>' + estBtn : ''); }
+          /* THE TURNS ARE A COLUMN OF DOTS DOWN THE LEFT, not a row of pills above the plot. As a row they were
+             the widest thing in the header, they shoved the meter about as the session grew, and slice(-12)
+             threw the rest of the conversation away to stop the row from wrapping. A column has the room a
+             conversation actually needs: one dot per turn, the rail opening to each turn's own first words,
+             and the newest at the BOTTOM, where the newest message is.
+          
+             The MASTER sits on this line now: it is what you reach for while reading a turn, and the meter's
+             own row is where the sources belong. The estate keeps its place here, and the runs switch joins
+             them - a run has one end in this graph and one in the chat, so its switch belongs where you can
+             see the end this graph draws. */
+          if (fr.length || est) this._r.frames.innerHTML =
+            '<div class="cg-fr-hd"><button class="cg-fr-x" data-a="frames-wide" title="Keep the turns open">turns</button></div>'
+            + (fr.length ? '<div class="cg-fr-list">'
+              + fr.map((f) => '<button class="cg-frame ' + (f.on ? 'on' : '') + '" data-a="frame" data-id="' + esc(f.id) + '" title="' + esc(f.label + (f.ts ? ' · ' + f.ts : '') + ' · ' + f.n + ' records · click to view this turn\'s context') + '"><i></i><span class="nm">' + esc(f.words || f.label) + '</span><b>' + f.n + '</b></button>').join('')
+              + '<button class="cg-frame live ' + (o.frame ? '' : 'on') + '" data-a="frame" data-id="" title="The live records - what the next prompt will carry"><i></i><span class="nm">live</span></button>'
+              + '</div>' : '')
+            + '<div class="cg-fr-ft">' + masterBtn() + estBtn
+            + '<button class="cg-frame runs" data-a="runs" title="The runs from these records to the message in focus - both ends of them"><i></i><span class="nm">runs</span></button>'
+            + '</div>'; }
         if (this._r.runs) { const runs = S.runs || []; const cur = S.runSel || ''; const others = runs.filter((r) => r.session_id !== cur);
           const sig = cur + '|' + (S.run ? S.run.label + ':' + S.run.status : '') + '|' + others.map((r) => r.session_id + ':' + r.status).join(',');
           if (sig !== this._runsSig) { this._runsSig = sig; const glyph = (st) => st === 'running' ? '● ' : /error|fail|interrupted/.test(st || '') ? '✕ ' : '✓ ';
@@ -1409,11 +1549,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
            back to all — so one press always changes something, whichever state the row is in. */
         const anyAll = meterSrcs.some((s) => s.level === 'all');
         this._r.layers.innerHTML = (meterSrcs.length
-          ? '<button class="cg-lay master ' + (anyAll ? '' : 'on') + '" data-a="focus-all" title="'
-            + (anyAll ? 'Show only what matters in every source — the few most relevant of each'
-                      : 'Show everything in every source again')
-            + '"><i></i>' + (anyAll ? 'focus all' : 'show all') + '</button>'
-            + '<span class="cg-meter" role="group" aria-label="context sources">'
+            ? '<span class="cg-meter" role="group" aria-label="context sources">'
             + meterSrcs.map((s) => '<button class="cg-mb ' + esc(s.level) + '" data-a="layer" data-s="' + esc(s.name)
               + '" data-level="' + esc(s.level) + '" style="--mc:' + esc(s.col) + ';flex-grow:' + Math.max(1, Math.round((s.tok || 0) / meterTot * 1000))
               + '" title="' + esc(s.name + ' · ' + s.n + ' record' + (s.n === 1 ? '' : 's') + ' · ' + (s.tok || 0) + ' tokens · '
