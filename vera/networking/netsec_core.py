@@ -141,3 +141,62 @@ def wg_client_config(ip, listen_port, peers, client_host=""):
             lines.append("Endpoint = %s" % p["endpoint"])
         lines += ["PersistentKeepalive = 25", ""]
     return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  netctl door (the `vera` profile)
+#  Vera's machines join the estate's one WireGuard door instead of Vera running
+#  a second control plane. The door allocates the address and holds the server
+#  key; each host still generates its own key and sends only the public half.
+#  Pure -> unit-testable (tests/test_netsec_door.py).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def door_device_name(label, host_id=""):
+    """netctl accepts [A-Za-z0-9_-]{1,32} for a device name, and the name is how
+    a device is found again on the next sync, so it has to be stable and unique.
+    Label first (it is what an operator reads in netctl's own UI), falling back
+    to the host id, with a short id suffix so two hosts that share a label do
+    not collide."""
+    raw = str(label or "").strip() or str(host_id or "").strip()
+    cleaned = "".join(c if (c.isalnum() or c in "-_") else "-" for c in raw).strip("-_")
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    suffix = str(host_id or "").replace("-", "")[:6]
+    if not cleaned:
+        cleaned = "vera"
+    stem = ("vera-" + cleaned) if not cleaned.lower().startswith("vera") else cleaned
+    if suffix:
+        stem = stem[:32 - len(suffix) - 1].rstrip("-_") + "-" + suffix
+    return stem[:32]
+
+
+def wg_door_config(address, door, iface_key_path):
+    """A member's WireGuard config when its only peer is netctl's door.
+    `door` is what /api/door/peer answered: server_pubkey, endpoint, allowed_ips,
+    keepalive. The private key is read on the host from `iface_key_path` (shell
+    substitution), so it is never rendered here or sent over the wire."""
+    allowed = [a for a in (door.get("allowed_ips") or []) if a]
+    lines = ["[Interface]",
+             "PrivateKey = $(cat %s)" % iface_key_path,
+             "Address = %s/32" % str(address).split("/")[0],
+             "",
+             "[Peer]",
+             "PublicKey = %s" % (door.get("server_pubkey") or ""),
+             "AllowedIPs = %s" % (", ".join(allowed) or "0.0.0.0/32")]
+    if door.get("endpoint"):
+        lines.append("Endpoint = %s" % door["endpoint"])
+    lines += ["PersistentKeepalive = %d" % int(door.get("keepalive") or 25), ""]
+    return "\n".join(lines)
+
+
+def door_device_for(devices, name, pubkey=""):
+    """Find this member's device in the door's list, and say what to do with it:
+    ('ok', dev) it is there with the right key; ('rekey', dev) the name is taken
+    by an older key of ours and must be revoked first; ('add', None) not there."""
+    for d in (devices or []):
+        if d.get("name") != name:
+            continue
+        if pubkey and d.get("pubkey") and d.get("pubkey") != pubkey:
+            return "rekey", d
+        return "ok", d
+    return "add", None

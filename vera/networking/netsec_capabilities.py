@@ -40,6 +40,7 @@ Capabilities (group `netsec.mesh.*`)
 from __future__ import annotations
 
 import asyncio
+import inspect
 import ipaddress
 import json
 import logging
@@ -49,6 +50,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import httpx
 from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
@@ -57,6 +59,7 @@ from Vera.vera.capability_orchestration import APP, capability, emit_event, now_
 from Vera.vera.networking.netsec_core import (
     wireguard_install_script as _wireguard_install_script,
     wg_peer_allowed_ips, wg_gateway_postup, wg_gateway_postdown, wg_routes_for_member, wg_client_config,
+    door_device_name, door_device_for, wg_door_config,
 )
 
 log = logging.getLogger("vera.netsec")
@@ -66,10 +69,17 @@ KEY_MESH = "vera:netsec:mesh"        # redis hash, field "main" → JSON config
 KEY_ENROLL = "vera:provisioning:ssh_hosts"   # enroll store (dual — cross-ref only)
 
 _DEFAULTS: Dict[str, Any] = {
-    "provider": "wireguard",
-    "subnet": "10.88.0.0/16",
+    # netctl owns the estate's one WireGuard door; Vera's machines join it on
+    # the `vera` profile rather than Vera running a second control plane. The
+    # self-hosted providers stay available for an estate without netctl.
+    "provider": "netctl",
+    "subnet": "10.88.0.0/16",   # self-hosted providers only; the door allocates
     "listen_port": 51820,
     "iface": "vera0",
+    # Vera acts at the door with a token that can only add, list and revoke
+    # vera-profile devices. It is held in the secrets service, never here.
+    "door_url": "http://192.168.0.221:8088",
+    "door_secret": "netctl/door-vera",
     "enroll_token": "",         # shared self-enrol token (netsec.mesh.enroll_token)
     "enforce": False,           # tolerant to begin — warn, don't block
     "members": {},              # host_id → member record
@@ -86,6 +96,46 @@ def _redis():
 def _cap(name: str):
     c = _orch.CAPABILITY_REGISTRY.get(name)
     return c.get("func") if c else None
+
+
+def _secrets_service() -> Optional[Dict[str, Any]]:
+    fn = (_orch.CAPABILITY_REGISTRY.get("secrets.status") or {}).get("func")
+    return getattr(inspect.unwrap(fn), "__globals__", None) if fn is not None else None
+
+
+async def _door(cfg: Dict, method: str, path: str,
+                body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """netctl's door API, authorised by the vera-profile token in the secrets
+    service. That token may add, list and revoke vera-profile devices and
+    reach nothing else — not the gateway, not egress, not DNS, and not the
+    devices of any other profile."""
+    svc = _secrets_service()
+    if not svc or "get_named" not in svc:
+        return {"error": "the secrets service is not loaded, so the netctl door "
+                         "token cannot be read"}
+    where = cfg.get("door_secret") or _DEFAULTS["door_secret"]
+    token = ((await svc["get_named"](where)) or {}).get("value", "")
+    if not token:
+        return {"error": f"the secrets service holds no netctl door token at {where!r} "
+                         f"— issue one on the door node: door.py issue <name> vera"}
+    base = (cfg.get("door_url") or _DEFAULTS["door_url"]).rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.request(method, base + path,
+                                     headers={"X-Netctl-Door": token}, json=body)
+        data = r.json() if r.content else {}
+    except Exception as e:
+        return {"error": f"netctl's door at {base} did not answer: {type(e).__name__}"}
+    if r.status_code == 401:
+        return {"error": "netctl refused the door token"}
+    if r.status_code == 403:
+        return {"error": "netctl refused: this token is not scoped to vera devices"}
+    if not isinstance(data, dict):
+        return {"error": "netctl gave an unreadable answer"}
+    if r.status_code >= 400:
+        return {"error": data.get("error") or data.get("message")
+                or f"netctl answered HTTP {r.status_code}"}
+    return data
 
 
 async def _ssh(host_id: str, command: str, timeout: int = 120) -> Dict:
@@ -209,6 +259,9 @@ class MeshProvider:
     label = "Base"
     description = ""
     experimental = False
+    # True when the provider's own control plane hands out the overlay
+    # address, so Vera must not allocate one from `subnet` first.
+    assigns_addresses = False
 
     async def ensure_installed(self, host_id: str, cfg: Dict) -> Dict:
         raise NotImplementedError
@@ -500,8 +553,113 @@ class NebulaProvider(MeshProvider):
         return {"ok": True}
 
 
+class NetctlDoorProvider(WireGuardProvider):
+    """Vera's machines as devices on the estate's one WireGuard door.
+
+    The door (netctl, on NWM-02) already owns the server key, the endpoint,
+    the DuckDNS name and the router forward. A second control plane beside it
+    would duplicate all four to reach machines that are on the same LAN, so
+    Vera joins instead, on a profile of its own: a `vera` device reaches Vera
+    and the other machines Vera manages, Vera may open connections back to it,
+    and nothing else on the estate answers. Every other profile keeps the
+    opposite guarantees — a phone is not reachable and devices cannot see each
+    other.
+
+    Install and key generation are inherited: the key pair is still made ON
+    the host and only the public half is sent, which is what a door built for
+    phones (netctl generates their keys) would otherwise give up.
+    """
+    name = "netctl"
+    label = "netctl door"
+    description = ("Join the estate's one WireGuard door (netctl) on the vera "
+                   "profile, instead of Vera running a second WireGuard control "
+                   "plane. netctl allocates the address and holds the server key; "
+                   "each host still generates its own key and sends only the "
+                   "public half, over a token scoped to vera devices.")
+    assigns_addresses = True
+
+    async def _enrol(self, cfg: Dict, member: Dict) -> Dict:
+        """Make sure this member has a device at the door, and return it."""
+        name = member.get("door_device") or door_device_name(member.get("label"),
+                                                             member.get("host_id"))
+        listing = await _door(cfg, "GET", "/api/door/peers")
+        if listing.get("error"):
+            return listing
+        action, dev = door_device_for(listing.get("peers"), name, member.get("pubkey", ""))
+        if action == "rekey":
+            gone = await _door(cfg, "POST", f"/api/door/peer/delete/{name}")
+            if gone.get("error"):
+                return {"error": f"the door still holds an older key for {name}: "
+                                 f"{gone['error']}"}
+            action = "add"
+        if action == "add":
+            made = await _door(cfg, "POST", "/api/door/peer",
+                               {"name": name, "pubkey": member.get("pubkey", "")})
+            if made.get("error") or not made.get("ok"):
+                return {"error": made.get("error") or made.get("message")
+                        or "the door would not enrol this device"}
+            dev = made
+        else:
+            # Already enrolled: the listing has the address, the door status has
+            # the server key and endpoint every member needs to dial.
+            dev = dict(dev or {})
+            dev.setdefault("server_pubkey", listing.get("server_pubkey", ""))
+            dev.setdefault("endpoint", listing.get("endpoint", ""))
+            dev.setdefault("allowed_ips", listing.get("allowed_ips") or [])
+        dev["name"] = name
+        return dev
+
+    async def apply(self, host_id: str, cfg: Dict, member: Dict,
+                    peers: List[Dict]) -> Dict:
+        # `peers` is ignored on purpose: at a door every member has exactly one
+        # peer, the door itself, and the door decides who may reach whom.
+        dev = await self._enrol(cfg, member)
+        if dev.get("error"):
+            return {"ok": False, "error": dev["error"]}
+        if not dev.get("server_pubkey") or not dev.get("endpoint"):
+            return {"ok": False, "error": "the door did not say how to reach it "
+                                          "(no server key or endpoint) — is its "
+                                          "DuckDNS name configured?"}
+        ifc = self._iface(cfg)
+        conf = wg_door_config(dev.get("address", ""), dev, f"/etc/wireguard/{ifc}.key")
+        # Unquoted heredoc so $(cat key) runs ON the host: the private key is
+        # read there and never crosses the wire.
+        script = ("umask 077\n"
+                  f"cat > /etc/wireguard/{ifc}.conf <<EOF\n{conf}\nEOF\n"
+                  f"if ip link show {ifc} >/dev/null 2>&1; then "
+                  f"wg-quick strip {ifc} > /tmp/vera_{ifc}.strip 2>/dev/null && "
+                  f"wg syncconf {ifc} /tmp/vera_{ifc}.strip && echo VERA_WG_SYNCED; "
+                  "else "
+                  f"(systemctl enable --now wg-quick@{ifc} >/tmp/vera_wg_up.log 2>&1 "
+                  f"|| wg-quick up {ifc} >/tmp/vera_wg_up.log 2>&1) && echo VERA_WG_UP "
+                  "|| echo VERA_WG_UPFAIL; fi")
+        r = await _ssh(host_id, _root_wrap(script), timeout=120)
+        out, err = (r.get("stdout") or ""), (r.get("stderr") or "")
+        if "VERA_WG_SYNCED" not in out and "VERA_WG_UP" not in out:
+            return {"ok": False,
+                    "error": (err.strip() or out.strip() or "the tunnel would not come up")[:400]}
+        # The door allocated the address, so the member record follows it.
+        member["ip"] = str(dev.get("address", "")).split("/")[0]
+        member["door_device"] = dev.get("name", "")
+        member["endpoint"] = dev.get("endpoint", member.get("endpoint", ""))
+        return {"ok": True, "detail": ("synced" if "SYNCED" in out else "up")
+                + f" as {member['door_device']} ({member['ip']})"}
+
+    async def teardown(self, host_id: str, cfg: Dict) -> Dict:
+        res = await super().teardown(host_id, cfg)
+        member = (cfg.get("members") or {}).get(host_id) or {}
+        name = member.get("door_device")
+        if name:
+            gone = await _door(cfg, "POST", f"/api/door/peer/delete/{name}")
+            if gone.get("error"):
+                res = dict(res or {})
+                res["warning"] = (f"the tunnel is down, but netctl still lists the "
+                                  f"device {name}: {gone['error']}")
+        return res
+
+
 _PROVIDERS: Dict[str, MeshProvider] = {
-    p.name: p for p in (WireGuardProvider(), NebulaProvider())
+    p.name: p for p in (NetctlDoorProvider(), WireGuardProvider(), NebulaProvider())
 }
 
 
@@ -614,22 +772,48 @@ async def cap_mesh_candidates(trace_id=None) -> Dict:
     http_method="GET", http_path="/netsec/mesh/members", http_tags=["netsec"],
     memory="off", silent=True,
     description="Current mesh members with overlay IP, enrolment flag and the "
-                "last recorded bring-up state. Output: {provider, subnet, "
-                "enforce, members:[{host_id,label,host,ip,pubkey,endpoint,"
-                "enrolled,state}]}.",
+                "last recorded bring-up state. On the netctl door provider each "
+                "member also carries what the door sees live (connected, seconds "
+                "since its last handshake, device name) and the answer carries the "
+                "door itself (up, endpoint, its address range). Output: {provider, "
+                "subnet, enforce, members:[{host_id,label,host,ip,pubkey,endpoint,"
+                "enrolled,state,door_device,connected,last_handshake_s}], door:{up,"
+                "endpoint,cidr,devices,error}}.",
 )
 async def cap_mesh_members(trace_id=None) -> Dict:
     cfg = await _cfg()
     enrolled = await _enrolled_index()
+    door: Dict[str, Any] = {}
+    live: Dict[str, Dict[str, Any]] = {}
+    if cfg.get("provider") == "netctl":
+        seen = await _door(cfg, "GET", "/api/door/peers")
+        if seen.get("error"):
+            door = {"error": seen["error"]}
+        else:
+            live = {d.get("name", ""): d for d in seen.get("peers") or []}
+            door = {"up": seen.get("up"), "enabled": seen.get("enabled"),
+                    "endpoint": seen.get("endpoint"), "cidr": seen.get("cidr"),
+                    "devices": len(live)}
     out = []
     for hid, m in cfg.get("members", {}).items():
-        out.append({**{k: m.get(k) for k in
-                       ("host_id", "label", "host", "ip", "pubkey", "endpoint",
-                        "state", "joined")},
-                    "enrolled": enrolled.get(m.get("host", ""), "") == "cert"})
-    return {"provider": cfg["provider"], "subnet": cfg["subnet"],
+        row = {**{k: m.get(k) for k in
+                  ("host_id", "label", "host", "ip", "pubkey", "endpoint",
+                   "state", "joined", "door_device")},
+               "enrolled": enrolled.get(m.get("host", ""), "") == "cert"}
+        d = live.get(m.get("door_device") or "")
+        if d is not None:
+            row["connected"] = bool(d.get("connected"))
+            row["last_handshake_s"] = d.get("last_handshake_s")
+            if not row.get("ip") and d.get("address"):
+                row["ip"] = d["address"]
+        elif live or door.get("up") is not None:
+            row["connected"] = False
+            row["door_missing"] = True     # Vera remembers it; the door does not
+        out.append(row)
+    subnet = door.get("cidr") or cfg["subnet"]
+    return {"provider": cfg["provider"], "subnet": subnet,
             "enforce": cfg["enforce"], "listen_port": cfg["listen_port"],
-            "members": out}
+            "members": out, "door": door}
 
 
 async def _resolve_exec(host_id: str) -> Optional[Dict]:
@@ -668,7 +852,9 @@ async def cap_mesh_join(host_id: str = "", endpoint: str = "", trace_id=None) ->
     prov = _provider(cfg)
     member = cfg["members"].get(host_id) or {
         "host_id": host_id, "label": rec.get("label") or addr, "host": addr,
-        "ip": _alloc_ip(cfg), "endpoint": endpoint or f"{addr}:{cfg['listen_port']}",
+        # A door hands out the address itself; apply() fills it in.
+        "ip": "" if prov.assigns_addresses else _alloc_ip(cfg),
+        "endpoint": endpoint or f"{addr}:{cfg['listen_port']}",
         "joined": now_iso(),
     }
     if endpoint:
