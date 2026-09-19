@@ -116,10 +116,23 @@ function plot(per) {
 
 // ---- the hover card ------------------------------------------------------------------------------------------
 t('the plot carries a hover slot', src.indexOf('<div class="cg-hover" data-r="hover" hidden></div>') >= 0);
-t('hovering a node opens it', src.indexOf("plot.addEventListener('pointerover'") >= 0 &&
-  src.indexOf("closest('.cg-node[data-id],.cg-mem[data-id]')") >= 0);
-t('leaving the plot closes it', src.indexOf("plot.addEventListener('pointerleave', () => this._hoverHide());") >= 0);
-t('pressing a node closes it, so the record card wins', /pointerdown['"], \(e\) => \{ this\._hoverHide\(\);/.test(src));
+// ONE implementation, used by BOTH graphs: the mini is static HTML the chat drops into its rail, so the
+// behaviour is exported rather than written twice. Two tooltips for one gesture is what this replaces.
+t('the hover is a shared binder, not wiring on one plot', src.indexOf('function bindHover(root, getRec, opts) {') >= 0);
+t('...exported, so the chat can put the same card on the mini', /const api = \{[^}]*bindHover, hoverCard/.test(src));
+t('the expanded plot uses it', src.indexOf('this._hoverHide = bindHover(plot, (id) => this._last && this._last.pos[id])') >= 0);
+t('hovering a node opens it', src.indexOf("root.addEventListener('pointerover'") >= 0 &&
+  src.indexOf("opts.sel || '.cg-node[data-id],.cg-mem[data-id],.cg-gd[data-id]'") >= 0,
+  'the mini\'s DEFAULT face is the simple galaxy, whose marks are .cg-gd — leaving it out means the hover works '
+  + 'on the expanded graph and on nothing the reader usually looks at');
+// and no face keeps the browser's own tooltip, or two would show at once
+t('the simple face drops its native title too', !/cg-gd[\s\S]{0,400}title="' \+ esc\(row\.label/.test(src));
+t('leaving closes it', src.indexOf("root.addEventListener('pointerleave', hide);") >= 0);
+t('pressing closes it, so the record card wins', src.indexOf("root.addEventListener('pointerdown', hide);") >= 0);
+t('binding twice does not stack listeners', src.indexOf('if (!root || root._cgHoverBound) return; root._cgHoverBound = true;') >= 0);
+// and the browser's own tooltip is gone from the record nodes, or both would show at once
+t('no native title on a record node', !/class="cg-node ' \+ n\.cls \+ '" data-id="[^"]*" \+ esc\(n\.id\)[^;]*title=/.test(src)
+  && src.indexOf('data-kind="\' + esc(n.kind || \'\') + \'" title="\' + esc(n.title)') < 0);
 t('it is NOT the record card', src.indexOf('function hoverCard(p) {') >= 0 &&
   src.indexOf('hoverCard') >= 0 && !/function hoverCard[\s\S]{0,900}data-a="zoom"/.test(src),
   'the hover card must not carry the click card\'s buttons');
@@ -159,9 +172,17 @@ t('it says what the record is', /cg-hv-t/.test(src) && /cg-hv-m/.test(src) && /i
   const cap = all.srcs.find((s) => s.name === 'cap') || {};
   t('a source carries its level and its token weight', cap.level === 'all' && cap.tok > 0 && cap.n === 6);
 
-  const foc = api.compute(Object.assign({}, api.stateFrom(base), { mix: { cap: 'focus' } }), 900, 700);
-  t('focus keeps only what went into the prompt', (foc.srcs.find((s) => s.name === 'cap') || {}).n === 2,
-    'six records, two of them in the prompt');
+  /* FOCUS IS THE FEW THAT MATTER. It used to mean "only the records that went into the prompt", which is a
+     no-op in ordinary use — almost everything assembled has included !== false — so focus drew what all drew and
+     the control read as a plain on/off. It is the top three by relevance now, as focus means everywhere else in
+     this graph. Ten records, every one of them included: */
+  const ten = { nodes: Array.from({ length: 10 }, (_, i) => ({ id: 'c' + i, label: 'cap ' + i, source: 'cap',
+    text: 'x'.repeat(100), included: true, score: 0.95 - i * 0.05 })), rels: [], view: 'galaxy', color: () => '#888' };
+  const focAll = api.compute(api.stateFrom(ten), 900, 700);
+  const focFew = api.compute(Object.assign({}, api.stateFrom(ten), { mix: { cap: 'focus' } }), 900, 700);
+  t('all draws the whole family', (focAll.srcs.find((s) => s.name === 'cap') || {}).n === 10);
+  t('focus draws the few that matter, not the same ten', (focFew.srcs.find((s) => s.name === 'cap') || {}).n === 3,
+    'focus must differ from all, or the three levels are two');
 
   const off = api.compute(Object.assign({}, api.stateFrom(base), { mix: { cap: 'off' } }), 900, 700);
   t('off drops the source from the plot', !off.srcs.find((s) => s.name === 'cap'));
@@ -175,6 +196,67 @@ t('pressing a source cycles off, focus, all — the same three a family has',
   /k === 'layer'[\s\S]{0,220}cur === 'off' \? 'focus' : cur === 'focus' \? 'all' : 'off'/.test(src));
 t('and the old two-state source toggle is gone', src.indexOf("if (S.layersOff.has(s)) S.layersOff.delete(s); else S.layersOff.add(s);") < 0);
 t('an off band is still visible enough to press back on', /\.cg-mb\.off\{background:color-mix\(in srgb,var\(--mc\) 16%/.test(src));
+
+// ---- a search must not leave relations to records it faded out -----------------------------------------------
+// The search dims what does not match rather than removing it, but the relations were drawn from the node set
+// alone and took no notice — so searching left full-strength edges running to records that had just faded, and
+// the graph appeared to relate things that were not there. Measured before: 2 of 4 nodes drawn, all 3 relations
+// still at full strength, two of them into the dimmed pair.
+{
+  const nodes = [
+    { id: 'a1', label: 'alpha one', source: 'vector', text: 'alpha', included: true, score: 0.9 },
+    { id: 'a2', label: 'alpha two', source: 'vector', text: 'alpha', included: true, score: 0.8 },
+    { id: 'b1', label: 'beta one', source: 'cap', text: 'beta', included: true, score: 0.7 },
+    { id: 'b2', label: 'beta two', source: 'cap', text: 'beta', included: true, score: 0.6 },
+  ];
+  const rels = [{ from: 'a1', to: 'b1', label: 'CITES' }, { from: 'a2', to: 'b2', label: 'SIMILAR' }, { from: 'a1', to: 'a2', label: 'RELATED' }];
+  const at = (extra) => api.compute(Object.assign({}, api.stateFrom({ nodes, rels, view: 'galaxy', color: () => '#888' }), extra), 900, 700);
+  const bright = (o) => o.cedges.filter((e) => /\brel\b/.test(e.cls) && !/\bmiss\b/.test(e.cls));
+
+  const plain = at({});
+  t('with no search every relation is drawn', bright(plain).length === 3);
+
+  const q = at({ q: 'alpha' });
+  const drawn = new Set(q.cnodes.filter((n) => !/\bmiss\b/.test(n.cls)).map((n) => n.id));
+  t('the search dims the records that do not match', drawn.size === 2, [...drawn].join(','));
+  t('and no relation into a faded record stays bright', bright(q).length === 1,
+    bright(q).map((e) => e.title).join(' | ') + ' — an edge must be no brighter than its dimmest end');
+
+  // the spokes to the chat answer to it too: a spoke to a faded record is the same lie, pointing at the hub
+  const sp = at({ q: 'alpha', allEdges: true });
+  const spokes = sp.cedges.filter((e) => /\bspoke\b/.test(e.cls));
+  t('a spoke to a faded record fades with it', spokes.some((e) => /\bmiss\b/.test(e.cls)),
+    spokes.length + ' spokes, none dimmed');
+}
+
+// ---- the relation legend is a meter, coded to the edges -------------------------------------------------------
+{
+  const nodes = [{ id: 'x', label: 'x', source: 'vector', text: 'x', included: true, score: 0.9 },
+    { id: 'y', label: 'y', source: 'vector', text: 'y', included: true, score: 0.8 }];
+  const o = api.compute(api.stateFrom({ nodes, rels: [{ from: 'x', to: 'y', label: 'CITES' }], view: 'galaxy', color: () => '#888' }), 900, 700);
+  t('a relation type carries a colour of its own', !!(o.edgeTypes[0] && o.edgeTypes[0].col),
+    'a grey legend cannot say which lines are which type');
+  // and DIFFERENT types get DIFFERENT colours. Deferring to the host's edgeColor collapsed the whole legend to
+  // one value — measured live as six bands sharing a single colour — because it answers the same default for
+  // every context type; it exists for the memory graph's styling, not for this.
+  {
+    const many = { nodes: [{ id: 'p', label: 'p', source: 'vector', text: 'p', included: true, score: 0.9 },
+      { id: 'q', label: 'q', source: 'vector', text: 'q', included: true, score: 0.8 },
+      { id: 'r', label: 'r', source: 'cap', text: 'r', included: true, score: 0.7 }],
+      rels: [{ from: 'p', to: 'q', label: 'CITES' }, { from: 'q', to: 'r', label: 'HAS_SKILL' }, { from: 'p', to: 'r', label: 'DEFINES' }],
+      view: 'galaxy', color: () => '#888', edgeColor: () => '#999' };   // a host that answers one colour for all
+    const om = api.compute(api.stateFrom(many), 900, 700);
+    const cols = new Set(om.edgeTypes.map((t) => t.col));
+    t('...and three types are three colours, whatever the host says', cols.size === 3, [...cols].join(','));
+    // the EDGES are drawn in it, or the legend codes to nothing
+    const relCols = new Set(om.cedges.filter((e) => /\brel\b/.test(e.cls)).map((e) => e.col || ''));
+    t('the relations themselves are drawn in their type colour', relCols.size >= 2, [...relCols].join(','));
+  }
+  t('the same type is the same colour every render',
+    api.compute(api.stateFrom({ nodes, rels: [{ from: 'x', to: 'y', label: 'CITES' }], view: 'galaxy', color: () => '#888' }), 900, 700).edgeTypes[0].col === o.edgeTypes[0].col);
+}
+t('the relations are drawn as a meter, not a chip row', /class="cg-meter et"/.test(src) && src.indexOf('cg-lay et ') < 0);
+t('a band is sized by how many relations it holds', /flex-grow:' \+ Math\.max\(1, Math\.round\(t\.n \/ tot \* 1000\)\)/.test(src));
 
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

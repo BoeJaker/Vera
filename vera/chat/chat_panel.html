@@ -13976,6 +13976,9 @@ function _embedMount(){
   let _qGalStyle=(function(){ try{ return localStorage.getItem('vera_ctx_mini_style')==='detailed'?'detailed':'simple'; }catch(_){ return 'simple'; } })();
   // the mini graph's detail: the record picked, WHICH SOURCES ARE OPEN in the list, the search across them
   let _qGalSel='', _qSrcOpen={}, _qGalQ='', _ctxElWait=null, _ctxMiniWarned=false;
+  // the mini's own record positions, so the SHARED hover card (the element's, not a second one) can resolve a
+  // node id here exactly as it does in the expanded graph
+  let _ctxMiniPos={};
   const _kfmt=n=>n>=1000?(n/1000).toFixed(1)+'k':String(n);
   // every family of the assembled context: its records, its tokens (≈ chars / 4), its colour, its share
   function _ctxShares(){
@@ -14008,14 +14011,11 @@ function _embedMount(){
       // shares alone are not enough — two turns can hold the same families at the same token counts)
       const sig='grown#'+S.rows.map(r=>r.f+r.tok).join('|')+'#'+JSON.stringify(_qGalOff)+'#'+_ctxActiveFrame;
       if(el.dataset.sig===sig) return; el.dataset.sig=sig;
-      if(!document.getElementById('ctxGrown')){ el.innerHTML='<div id="ctxGrown" class="wid" data-w="context graph · graph" data-tpl="lhm:ctx-galaxy"></div><div class="wid ctx-grown-bar" data-w="budget bar · meter" data-tpl="lhm:ctx-budget"></div>'; }
-      const bar=el.querySelector('.ctx-grown-bar');
-      if(bar){ bar.innerHTML='<span class="comp" title="'+esc(_lhmTxt('ctxMeterLabel'))+' — press a band to show or hide that source on the graph">'+S.rows.map(r=>'<i class="'+(_qGalOff[r.f]?'off':'on')+'" data-fam="'+esc(r.f)+'" style="width:'+r.pct.toFixed(1)+'%;--c:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok)+' tokens · press to '+(_qGalOff[r.f]?'show':'hide')+' it on the graph')+'"></i>').join('')+'</span>';
-        // the grown graph is the element, so it is told directly — its mixer levels are off · focus · all
-        // (context_graph_element.js:978), the same way the All-edges switch already follows into it
-        bar.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f];
-          try{ if(_ctxCol&&typeof _ctxCol.mix==='function') _ctxCol.mix(f, _qGalOff[f]?'off':'all'); }catch(_){}
-          _ctxViewRepaint(); })); }
+      /* NO SECOND METER UNDER THE EXPANDED GRAPH. The element carries its own source meter along the top now —
+         the same bands, the same widths, and three levels instead of two — so a budget bar beneath it was the
+         same reading twice, and the lower one was the poorer of the two: it could only switch a source on or
+         off. The mini keeps its bar, because the mini's plot has no meter of its own. */
+      if(!document.getElementById('ctxGrown')){ el.innerHTML='<div id="ctxGrown" class="wid" data-w="context graph · graph" data-tpl="lhm:ctx-galaxy"></div>'; }
       _graphColumnMount(); return; }
     const views=[['galaxy','galaxy'],['iso','iso'],['flow','flow'],['timeline','time']];
     // The RENDERER is part of the key. A body composed before /ui/context_graph_element.js has loaded draws the
@@ -14033,7 +14033,9 @@ function _embedMount(){
     if(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'){
       try{ VeraContextGraph.ensureCss();
         const st=VeraContextGraph.stateFrom({ nodes:S.nodes, rels:data.rels, memory:_memAllNodes, memEdges:_memAllEdges, dag:_lastDagNodes, dagEdges:_lastDagEdges, view:(_qGalView==='timeline'?'time':_qGalView), allEdges:_qGalAll, off:Object.keys(_qGalOff).filter(k=>_qGalOff[k]), color:srcCol, sel:_qGalSel||null, list:false, q:_qGalQ, turn:_grFocusMid?'turn '+_grFocusMid:'', frames:CTX_FRAMES, frame:_ctxActiveFrame });   // the frame of the turn in view, as the grown graph shows it
-        gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle });
+        // card:false — a picked record opens in the list below, not in a card laid over the 262px plot
+        gal=VeraContextGraph.miniHtml(st, 262, miniH, { style:_qGalStyle, card:false });
+        _ctxMiniPos=(function(){ try{ return VeraContextGraph.mini(Object.assign({}, st, { sel:_qGalSel||null }), 262, miniH).pos||{}; }catch(_){ return {}; } })();
         // a section's own records, on demand. The host says WHERE they are drawn: .cg-mini is the scope that lays
         // a row out and carries the colours, so the rows read the same here as they do inside the plot's own drawer.
         if(typeof VeraContextGraph.miniList==='function') _recsOf=(f)=>{ try{ return '<div class="cg-mini cg-recs">'+VeraContextGraph.miniList(st, { q:_qGalQ, fam:f })+'</div>'; }catch(_){ return ''; } }; }catch(e){ gal=''; _recsOf=()=>''; if(!_ctxMiniWarned){ _ctxMiniWarned=true; try{ console.warn('context mini: the element threw, falling back to the widget renderer', e); }catch(_){} } }
@@ -14080,9 +14082,29 @@ function _embedMount(){
     el.querySelector('.gal-all').addEventListener('click',()=>{ _qGalAll=!_qGalAll; try{ if(_ctxCol&&typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(_qGalAll); }catch(_){} VeraLHM.render(); });   // the grown graph follows
     const sq=el.querySelector('.gal-srch input'); if(sq){ sq.addEventListener('input',()=>{ _qGalQ=sq.value; VeraLHM.render(); setTimeout(()=>{ try{ const i=el.querySelector('.gal-srch input'); if(i){ i.focus(); i.setSelectionRange(i.value.length,i.value.length); } }catch(_){} },0); }); }
     // the element's mini: a record picked opens its card; the card's include/exclude toggles the record; close puts the card away
-    el.querySelectorAll('.cg-mini .cg-node[data-id], .cg-mini .cg-row[data-id]').forEach(d=>d.addEventListener('click',ev=>{ if(ev.target.closest&&ev.target.closest('[data-a]')) return; _qGalSel=(_qGalSel===d.dataset.id?'':d.dataset.id); VeraLHM.render(); }));
+    /* A NODE PICKED IN THE MINI OPENS IT IN THE LIST BELOW, not in a card over the plot. The card covered the
+       graph you had just used to find the record, in a menu 262px wide — so choosing a record hid the thing that
+       gave it context. The list under the plot is already the place a record is read (it carries the whole
+       record now), so a pick opens that record's SECTION and scrolls to its row. _qGalSel still marks the node
+       on the plot, so the graph and the list agree on what is picked; it just no longer draws the card. */
+    el.querySelectorAll('.cg-mini .cg-node[data-id], .cg-mini .cg-gd[data-id], .cg-mini .cg-row[data-id]').forEach(d=>d.addEventListener('click',ev=>{
+      if(ev.target.closest&&ev.target.closest('[data-a]')) return;
+      const id=d.dataset.id, was=_qGalSel===id;
+      _qGalSel=was?'':id;
+      if(!was){ try{ const n=(_ctxShares().nodes||[]).find(x=>x.id===id);
+        const fam=n?String(n.source||n.family||'context').toLowerCase():''; if(fam){ _qSrcOpen[fam]=true; _qSrcOn=fam; } }catch(_){} }
+      VeraLHM.render();
+      if(!was) setTimeout(()=>{ try{ const row=document.querySelector('#rightRail .lhm-quick .cg-recs [data-id="'+CSS.escape(id)+'"]');
+        if(row&&row.scrollIntoView) row.scrollIntoView({block:'nearest'}); }catch(_){} },0);
+    }));
     el.querySelectorAll('.cg-mini [data-a="toggle"][data-id]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); const n=CTX_NODES.find(x=>x.id===b.dataset.id); if(n){ n.included=n.included===false; try{ renderCtxList(); }catch(_){} _ctxColSig=''; try{ _ctxColumnSync(_grFocusMid); }catch(_){} } VeraLHM.render(); }));
     el.querySelectorAll('.cg-mini [data-a="close"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); _qGalSel=''; VeraLHM.render(); }));
+    /* THE SAME HOVER CARD THE EXPANDED GRAPH HAS. The mini is static HTML the element hands back, so it carried
+       the browser's own title= tooltip while the expanded graph had the designed one — two different answers to
+       the same gesture. bindHover is the element's, exported, so there is one implementation and it cannot
+       drift; it is idempotent, so re-rendering the menu does not stack listeners. */
+    try{ el.querySelectorAll('.cg-mini').forEach(m=>{ if(window.VeraContextGraph&&typeof VeraContextGraph.bindHover==='function')
+      VeraContextGraph.bindHover(m, id=>_ctxMiniPos[id]); }); }catch(_){}
     // the mini's list head: Incl all · Excl all; a record's page preview opens the browser pane (the element's hooks)
     el.querySelectorAll('.cg-mini [data-a="incl-all"], .cg-mini [data-a="excl-all"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); const on=b.dataset.a==='incl-all'; CTX_NODES.forEach(n=>{ n.included=on; }); try{ renderCtxList(); }catch(_){} _ctxColSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} VeraLHM.render(); }));
     el.querySelectorAll('.cg-mini [data-a="preview"][data-url]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ _browserNavigate(b.dataset.url); }catch(_){} }));

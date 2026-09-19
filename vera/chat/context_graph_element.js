@@ -145,6 +145,19 @@
     const eOff = S.edgesOff || new Set();
     const edgesAll = ((frame ? frame.edges : S.edges) || []).filter((e0) => e0 && e0.from != null && e0.to != null).map((e0) => ({ from: e0.from, to: e0.to, label: String(e0.label || e0.type || e0.relation || '') }));
     const EDGES = edgesAll.filter((e0) => !eOff.has(edgeTypeOf(e0)));
+    /* A RELATION TYPE HAS A COLOUR, and the edges are DRAWN in it — that is what makes the legend above a legend
+       rather than a row of swatches next to uniformly grey lines. The name picks the hue, so a type is the same
+       colour every render and on both graphs. The host's own edgeColor is NOT consulted here: it exists for the
+       memory graph's relation styling and answers the same default for every context type, which collapsed the
+       whole legend to one colour (measured: six bands, one distinct value). */
+    const ETP = ['#a78bfa', '#5a9e8f', '#e8a44c', '#38bdf8', '#ec4899', '#8fb87a', '#fb923c', '#2dd4bf'];
+    /* Colours come from the type's PLACE in the sorted set of types, not from a hash of its name: a hash
+       collides, and two relation types sharing a colour is precisely the thing a legend must not do — measured,
+       three types came out as two colours. Sorting by name (not by count) keeps a type's colour steady as counts
+       move about, so the legend does not reshuffle itself between renders. */
+    const etNames = [...new Set(edgesAll.map((e0) => edgeTypeOf(e0)))].sort();
+    const etIdx = {}; etNames.forEach((t, i) => { etIdx[t] = i; });
+    const etCol = (t) => ETP[(etIdx[t] == null ? etNames.length : etIdx[t]) % ETP.length];
     // the search: a record matches on its label, id, text, source, type or tags; what does not match dims in the plot
     const QS = String(S.q || '').trim().toLowerCase();
     const matchQ = (n) => !QS || [n.label, n.id, textOf(n), n.source, n.type, n.dataset, n.url].concat(n.tags || []).some((v) => v && String(v).toLowerCase().indexOf(QS) >= 0);
@@ -187,19 +200,28 @@
     const memSessAll = lvl.memory === 'off' ? [] : (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).map((m) => ({ id: m.id, label: (m.text || m.summary || m.capability || m.category || m.id || '').slice(0, 60), source: 'memory', type: m.record_type || m.type || 'memory', score: m.importance == null ? 0.5 : +m.importance, text: m.text || m.summary || '', included: false, rec: m, _fam: 'memory', _injected: false, _sess: true, created_at: m.created_at || '' }));
     const memSess = lvl.memory === 'focus' ? memSessAll.filter((m) => memTouch.has(m.id)) : memSessAll;
     const mem = memCtx.concat(memSess);
-    /* A SOURCE has three levels too, not two. The families (loop, plan, memory, estate) have cycled
-       off · focus · all for a long time through mixOf; a source could only be on or off, so the only way to cut
-       a noisy family down was to lose it entirely. mixOf is already generic over its key and mix() already keeps
-       layersOff in step, so a source reads through exactly the same path: off hides it, focus keeps only the
-       records of it that actually went into the prompt, all keeps everything.
+    /* A SOURCE has three levels, like a family: off · focus · all.
+       FOCUS IS THE FEW THAT MATTER, not "the ones in the prompt". It was the latter, and that is a no-op in
+       ordinary use — almost every assembled record has included !== false, so focus drew exactly what all drew
+       and the control read as a plain on/off. It is the top FOC_N of the source by relevance now, which is what
+       focus means everywhere else in this graph: the loop shows the running step and its neighbours, the plan
+       the current step, memory the recalls that touch the prompt. A record that is explicitly selected stays
+       whatever its rank, or picking one from the list could make it vanish.
        Anything never set still answers 'all' (or 'off' if the host put it in layersOff), so every existing
        caller behaves as before. */
+    const FOC_N = 3;
     const srcLvl = (s) => mixOf(S, s || '?');
+    const focRank = {};                                   // source -> the ids its focus keeps
+    nodes.forEach((n) => { const s = n.source; if (s === 'memory' || srcLvl(s) !== 'focus') return;
+      (focRank[s] = focRank[s] || []).push(n); });
+    Object.keys(focRank).forEach((s) => { focRank[s] = new Set(focRank[s]
+      .slice().sort((a, b) => (b.score == null ? 0.5 : +b.score) - (a.score == null ? 0.5 : +a.score))
+      .slice(0, FOC_N).map((n) => n.id)); });
     const ctx = nodes.filter((n) => {
       if (n.source === 'memory') return false;
       const L = srcLvl(n.source);
       if (L === 'off') return false;
-      if (L === 'focus' && n.included === false) return false;
+      if (L === 'focus' && !(focRank[n.source] && focRank[n.source].has(n.id)) && S.sel !== n.id) return false;
       return ghosts || n.included !== false;
     });
     const srcs = [...new Set(ctx.map((n) => n.source || '?'))].sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99));
@@ -485,11 +507,20 @@
       out.regions.push({ x: px(LANE_L + 20 * k), y: px(1), col: 'var(--cg-t2)', t: (planIsRun ? 'plan · ' : 'goals · ') + plan.length + (planIsRun ? ' steps · ' : ' · ') + plan.filter((p) => /^(done|complete|completed|ok)$/.test(p.status || '')).length + ' done' });
     }
     // relations INSIDE the graph: what cites what (the context's own edges; a quad's cells drew their own)
+    /* AN EDGE IS NO BRIGHTER THAN ITS DIMMEST END. A search dims what does not match rather than removing it,
+       but the relations were drawn from the node set alone and took no notice — so searching left full-strength
+       edges running to records the search had just faded out, and the graph appeared to be relating things that
+       were not there. Measured: searching one of two families drew 2 of 4 nodes and still drew all 3 relations,
+       two of them into the dimmed pair. A missed end now dims the edge with it. */
     if (!quad) EDGES.forEach((e2) => { const a = out.pos[e2.from], b = out.pos[e2.to]; if (!a || !b) return; const lit = a.lit && b.lit; const memRel = a.source === 'memory' || b.source === 'memory';
-      edge(out.cedges, a, b, memRel ? 'var(--cg-ac2)' : lit ? a.col : 'var(--cg-bd2)', memRel ? 'mem' : lit ? 'rel lit' : 'rel', a.label + ' → ' + b.label + (e2.label ? ' · ' + String(e2.label).replace(/_/g, ' ').toLowerCase() : '')); });
+      const miss = QS && !(a.hit && b.hit);
+      edge(out.cedges, a, b, miss ? 'var(--cg-bd2)' : memRel ? 'var(--cg-ac2)' : etCol(edgeTypeOf(e2)), (memRel ? 'mem' : lit ? 'rel lit' : 'rel') + (miss ? ' miss' : ''), a.label + ' → ' + b.label + (e2.label ? ' · ' + String(e2.label).replace(/_/g, ' ').toLowerCase() : '')); });
     // All edges on: every record's spoke to the hub — the aide retrieved each for the turn (the old rail graph's edges
     // from the agent), lit when the record is in the prompt; none where the hub is hidden (flow · time)
-    if (!quad && S.allEdges && out.hub && !out.hub.hid) { const hp = { x: out.hub.x, y: out.hub.y }; out.cnodes.concat(out.memNodes.filter((n) => ctxIds.has(n.id))).forEach((n) => { const p = out.pos[n.id]; if (p) edge(out.cedges, hp, p, p.lit ? p.col : 'var(--cg-bd2)', 'spoke' + (p.lit ? ' lit' : ''), 'aide → ' + p.label + ' · retrieved for the turn'); }); }
+    // ...and the spokes to the hub answer to the search too: a spoke to a record the search faded out is the
+    // same lie as a relation to it, just pointing at the chat instead
+    if (!quad && S.allEdges && out.hub && !out.hub.hid) { const hp = { x: out.hub.x, y: out.hub.y }; out.cnodes.concat(out.memNodes.filter((n) => ctxIds.has(n.id))).forEach((n) => { const p = out.pos[n.id]; if (!p) return; const miss = QS && !p.hit;
+      edge(out.cedges, hp, p, miss ? 'var(--cg-bd2)' : p.lit ? p.col : 'var(--cg-bd2)', 'spoke' + (p.lit ? ' lit' : '') + (miss ? ' miss' : ''), 'aide → ' + p.label + ' · retrieved for the turn'); }); }
     // the step in focus (or the one running), wired to the records it read — from the fixed lane into the moving plot,
     // and from the plot's own step where the layer draws it
     stepReads.forEach((ids, si) => { const a = lpos[si], s2 = spos[si]; if (!a && !s2) return; const lit = S.lsel != null ? S.lsel === si : (loop[si] && loop[si].status === 'running'); if (!lit && S.lsel != null) return;
@@ -571,7 +602,7 @@
       .filter((r) => r.from && r.to && r.from !== r.to);
     // the edge types drawn (and the folded ones), with counts — the chip row's second group
     const etc = {}; edgesAll.forEach((e0) => { const t = edgeTypeOf(e0); etc[t] = (etc[t] || 0) + 1; });
-    out.edgeTypes = Object.keys(etc).sort((a, b) => etc[b] - etc[a]).map((t) => ({ name: t, n: etc[t], on: !eOff.has(t) }));
+    out.edgeTypes = Object.keys(etc).sort((a, b) => etc[b] - etc[a]).map((t) => ({ name: t, n: etc[t], on: !eOff.has(t), col: etCol(t) }));
     // the frames scrubber: the turns' snapshots, the one in view marked; "live" is the current set
     out.frames = frames.filter((f) => f && f.id != null).map((f) => ({ id: f.id, label: f.label || String(f.id), ts: f.ts || '', n: (f.nodes || []).length, on: frame != null && String(f.id) === String(frame.id) }));
     out.frame = frame ? { id: frame.id, label: frame.label || String(frame.id) } : null;
@@ -604,8 +635,8 @@
     (o.pins || []).forEach((p) => { h += '<div class="cg-pin' + (p.cls ? ' ' + p.cls : '') + '" style="' + stAt(p.x, p.y) + 'height:' + p.h + 'px;--c:' + esc(p.col) + '"></div>'; });
     o.sectorLabels.forEach((s) => { h += '<div class="cg-slbl' + (s.lane ? ' lane' : '') + '" style="' + stAt(s.x, s.y) + 'color:' + esc(s.col) + '">' + esc(s.name) + '</div>'; });
     o.cedges.forEach((e) => { h += edgeHtml(e); });
-    o.cnodes.forEach((n) => { h += '<div class="cg-node ' + n.cls + '" data-id="' + esc(n.id) + '" data-kind="' + esc(n.kind || '') + '" title="' + esc(n.title) + '" style="' + stAt(n.x, n.y) + 'width:' + n.d + 'px;height:' + n.d + 'px;--nc:' + esc(n.col) + ';opacity:' + n.op + '">' + (n.d >= 14 ? iconSvg(n.kind) : '') + (n.d >= 30 ? '<span>' + esc(String(n.id).replace(/^__\w+__/, '').slice(0, 6)) + '</span>' : '') + '</div>'; });
-    o.memNodes.forEach((n) => { h += '<div class="cg-mem ' + n.cls + '" data-id="' + esc(n.id) + '" data-kind="' + esc(n.kind || '') + '" title="' + esc(n.title) + '" style="' + stAt(n.x, n.y) + (n.col ? ';--mc:' + esc(n.col) : '') + (n.op && n.op !== '1' ? ';--op:' + n.op : '') + '"></div>'; });
+    o.cnodes.forEach((n) => { h += '<div class="cg-node ' + n.cls + '" data-id="' + esc(n.id) + '" data-kind="' + esc(n.kind || '') + '" style="' + stAt(n.x, n.y) + 'width:' + n.d + 'px;height:' + n.d + 'px;--nc:' + esc(n.col) + ';opacity:' + n.op + '">' + (n.d >= 14 ? iconSvg(n.kind) : '') + (n.d >= 30 ? '<span>' + esc(String(n.id).replace(/^__\w+__/, '').slice(0, 6)) + '</span>' : '') + '</div>'; });
+    o.memNodes.forEach((n) => { h += '<div class="cg-mem ' + n.cls + '" data-id="' + esc(n.id) + '" data-kind="' + esc(n.kind || '') + '" style="' + stAt(n.x, n.y) + (n.col ? ';--mc:' + esc(n.col) : '') + (n.op && n.op !== '1' ? ';--op:' + n.op : '') + '"></div>'; });
     (o.memLabels || []).forEach((l) => { h += '<div class="cg-memg" style="' + stAt(l.x, l.y) + 'color:' + esc(l.col) + '">' + esc(l.t) + '</div>'; });
     (o.stepNodes || []).forEach((n) => { h += '<div class="cg-step ' + n.cls + '" data-i="' + n.i + '" data-id="' + esc(n.id) + '" title="' + esc(n.title) + '" style="' + stAt(n.x, n.y) + '">' + iconSvg('step') + '</div><div class="cg-stepl" style="' + stAt(n.x, n.y + 9 * (o.k || 1)) + '">' + esc(n.label) + '</div>'; });
     (o.planPlot || []).forEach((n) => { h += '<div class="cg-pnode ' + n.cls + '" title="' + esc(n.title) + '" style="' + stAt(n.x, n.y) + '"></div><div class="cg-stepl" style="' + stAt(n.x, n.y + 8 * (o.k || 1)) + '">' + esc(n.label) + '</div>'; });
@@ -700,7 +731,10 @@
     const o = mini(Object.assign({}, base, { sel: detail || null, q: q || '' }), w, h);
     if (simple) return '<div class="cg-mini simple" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawMiniGalaxy(o, w, h) + '</div></div>';
     return '<div class="cg-mini' + (list ? ' listing' : '') + '" style="width:' + w + 'px;height:' + h + 'px"><div class="cg-in">' + drawPlot(o) + '</div><div class="cg-lanes">' + drawLanes(o, { noRecord: true }) + '</div>'
-      + (list ? listHtml(o, { compact: true, limit: 40 }) : '') + (o.rec ? recordCard(o.rec, { compact: true }) : '') + '</div>';
+      /* opts.card === false marks the picked node WITHOUT laying its card over the plot. The rail's menu is
+         262px wide, so the card covered the graph the record was found on; the chat opens the record in the
+         list beneath instead, and still wants the node marked so the two agree on what is picked. */
+      + (list ? listHtml(o, { compact: true, limit: 40 }) : '') + (o.rec && opts.card !== false ? recordCard(o.rec, { compact: true }) : '') + '</div>';
   }
   /* THE DESIGN'S MINI GALAXY (Canvas.dc.html 6164-6199, .gal/.gd/.gring/.glb/.ghub). A different drawing from
      drawPlot, not a setting on it: every source contributes its most relevant THREE OR FOUR records and no more,
@@ -745,7 +779,7 @@
         P[si + ':' + k] = [x, y]; at[row.id] = { p: [x, y], col: s.col };
         if (k === 0) lead[s.key] = at[row.id];   // the source's leading mark stands for its records that are not drawn
         const cls = (rel > 0.8 && row.included !== false ? 'lit ' : '') + (k === N - 1 ? 'hollow' : '');
-        dots.push('<span class="cg-gd ' + cls + '" data-id="' + esc(row.id) + '" style="left:' + x.toFixed(1) + 'px;top:' + y.toFixed(1) + 'px;--c:' + esc(s.col || 'var(--cg-t2)') + ';opacity:' + (0.45 + rel * 0.55).toFixed(2) + '" title="' + esc(row.label + ' \u00b7 ' + s.name + ' \u00b7 relevance ' + rel.toFixed(2)) + '"></span>');
+        dots.push('<span class="cg-gd ' + cls + '" data-id="' + esc(row.id) + '" style="left:' + x.toFixed(1) + 'px;top:' + y.toFixed(1) + 'px;--c:' + esc(s.col || 'var(--cg-t2)') + ';opacity:' + (0.45 + rel * 0.55).toFixed(2) + '"></span>');
       }
       /* the name rings the OUTSIDE, at the rim, along this source's own sector - not at its outermost mark. The
          board places it at the mark because its data is a mock where every source has three or four; a source with
@@ -820,6 +854,41 @@
       + (txt && txt !== p.label ? '<div class="cg-hv-x">' + esc(txt.slice(0, 180)) + (txt.length > 180 ? '…' : '') + '</div>' : '')
       + '</div>';
   }
+  /* ONE HOVER, BOTH GRAPHS. The card belongs to the element, but the mini is static HTML the chat drops into its
+     own rail — so the behaviour is exported rather than reimplemented there. Give it a root to watch and a way
+     to turn an id into a record, and it does the rest: show on a node, follow the pointer, clamp inside the box,
+     hide on leave and on press. The chat's mini and the element's plot then carry the SAME tooltip, which is the
+     whole point of removing the browser's default one. */
+  function bindHover(root, getRec, opts) {
+    if (!root || root._cgHoverBound) return; root._cgHoverBound = true;
+    opts = opts || {};
+    const card = document.createElement('div');
+    card.className = 'cg-hover'; card.hidden = true;
+    if (getComputedStyle(root).position === 'static') root.style.position = 'relative';
+    root.appendChild(card);
+    let cur = null;
+    const hide = () => { cur = null; card.hidden = true; card.innerHTML = ''; };
+    const at = (id, e) => {
+      const rec = getRec(id);
+      if (!rec) { hide(); return; }
+      if (cur !== id) { cur = id; card.innerHTML = hoverCard(rec); card.hidden = false; }
+      const r = root.getBoundingClientRect(), w = card.offsetWidth || 200, h = card.offsetHeight || 60;
+      let x = e.clientX - r.left + 14, y = e.clientY - r.top + 14;
+      if (x + w > r.width - 4) x = Math.max(4, e.clientX - r.left - w - 14);
+      if (y + h > r.height - 4) y = Math.max(4, e.clientY - r.top - h - 14);
+      card.style.left = x.toFixed(0) + 'px'; card.style.top = y.toFixed(0) + 'px';
+    };
+    // the mini's DEFAULT face is the simple galaxy, whose marks are .cg-gd — leave it out and the hover works
+    // on the expanded graph and on nothing the reader usually looks at
+    const SEL = opts.sel || '.cg-node[data-id],.cg-mem[data-id],.cg-gd[data-id]';
+    root.addEventListener('pointerover', (e) => { const t = e.target && e.target.closest && e.target.closest(SEL); if (t) at(t.dataset.id, e); });
+    root.addEventListener('pointermove', (e) => { if (cur) { const t = e.target && e.target.closest && e.target.closest(SEL); if (t) at(t.dataset.id, e); else hide(); } });
+    root.addEventListener('pointerout', (e) => { const t = e.target && e.target.closest && e.target.closest(SEL);
+      const to = e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest(SEL); if (t && to === t) return; hide(); });
+    root.addEventListener('pointerleave', hide);
+    root.addEventListener('pointerdown', hide);
+    return hide;
+  }
   function miniDetail(S, id, w, h) { const o = mini(Object.assign({}, S || {}, { sel: id || null, lsel: null }), w || 262, h || 196); return o.rec ? recordCard(o.rec, { compact: true }) : ''; }
   // the mini's list: the rows for the box, the search applied
   /* opts.fam narrows the rows to ONE source, so a host can open a section of its own list in place rather than
@@ -887,6 +956,8 @@ vera-context-graph .cg-edge{position:absolute;height:1.5px;transform-origin:0 50
 vera-context-graph .cg-edge.rel{height:1px;opacity:.5}vera-context-graph .cg-edge.rel:not(.lit){height:0;opacity:.45;border-top:1px dashed var(--cg-bd2);background:none!important}
 vera-context-graph .cg-edge.lit{opacity:1;height:2px}vera-context-graph .cg-edge.used{height:2px;opacity:.9;border-radius:2px}
 vera-context-graph .cg-edge.mem{height:0;opacity:.75;border-top:1.5px dashed var(--cg-ac2);background:none!important}
+/* an edge into a record the search faded out fades with it — it must never look brighter than its dimmest end */
+vera-context-graph .cg-edge.miss{opacity:.1!important}
 vera-context-graph .cg-node{position:absolute;transform:translate(-50%,-50%);border-radius:50%;cursor:pointer;background:var(--nc);transition:transform .12s;display:flex;align-items:center;justify-content:center}
 vera-context-graph .cg-node:hover{transform:translate(-50%,-50%) scale(1.4)}
 vera-context-graph .cg-node.sq{border-radius:3px}
@@ -1110,23 +1181,11 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
         const plot = this._r.plot;
         // ctrl (or Command, or a pinch) zooms the plot; a plain wheel scrolls the page past it (defect 75)
       plot.addEventListener('wheel', (e) => { if (!(e.ctrlKey || e.metaKey)) return; e.preventDefault(); const r = plot.getBoundingClientRect(); const qx = e.clientX - (r.left + r.width / 2), qy = e.clientY - (r.top + r.height / 2); const p = this._S.pan; const nz = Math.max(0.5, Math.min(4, p.z * (e.deltaY > 0 ? 0.88 : 1.14))), k = nz / p.z; this._S.pan = { z: nz, x: qx - (qx - p.x) * k, y: qy - (qy - p.y) * k }; this._schedule(); }, { passive: false });
-        /* THE HOVER CARD. A node carried a native title= tooltip and nothing else: the browser's own delayed
-           grey box, which cannot show the colour, the share or the text, and which the record card (a click,
-           with its Focus turn / Zoom to / Preview buttons) is far too heavy to stand in for. This is the light
-           one — what the record IS, read without committing to it. The click card is unchanged and still wins:
-           pressing a node hides this and opens that. */
-        plot.addEventListener('pointerover', (e) => {
-          const t = e.target && e.target.closest && e.target.closest('.cg-node[data-id],.cg-mem[data-id]');
-          if (!t) return; this._hoverAt(t.dataset.id, e);
-        });
-        plot.addEventListener('pointermove', (e) => { if (this._hoverId && !this._drag) this._hoverAt(this._hoverId, e, true); });
-        plot.addEventListener('pointerout', (e) => {
-          const t = e.target && e.target.closest && e.target.closest('.cg-node[data-id],.cg-mem[data-id]');
-          const to = e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.cg-node[data-id],.cg-mem[data-id]');
-          if (t && to === t) return; this._hoverHide();
-        });
-        plot.addEventListener('pointerleave', () => this._hoverHide());
-        plot.addEventListener('pointerdown', (e) => { this._hoverHide(); if (e.button || (e.target.closest && e.target.closest('.cg-rec,.cg-list,.cg-node,.cg-mem,.cg-loop,button'))) return; e.preventDefault(); this._drag = { x0: e.clientX, y0: e.clientY, px: this._S.pan.x, py: this._S.pan.y, id: e.pointerId, moved: false }; });
+        /* THE HOVER CARD, through the shared binder — the same one the chat puts on its mini, so both graphs
+           carry one tooltip rather than two that drift. The record card (a click, with Focus turn / Zoom to /
+           Preview) is unchanged and still wins: the binder hides on pointerdown. */
+        this._hoverHide = bindHover(plot, (id) => this._last && this._last.pos[id]) || (() => {});
+        plot.addEventListener('pointerdown', (e) => { if (e.button || (e.target.closest && e.target.closest('.cg-rec,.cg-list,.cg-node,.cg-mem,.cg-loop,button'))) return; e.preventDefault(); this._drag = { x0: e.clientX, y0: e.clientY, px: this._S.pan.x, py: this._S.pan.y, id: e.pointerId, moved: false }; });
         plot.addEventListener('pointermove', (e) => { const g = this._drag; if (!g) return; const dx = e.clientX - g.x0, dy = e.clientY - g.y0; if (!g.moved && Math.abs(dx) + Math.abs(dy) > 4) { g.moved = true; plot.classList.add('drag'); try { plot.setPointerCapture(g.id); } catch (_) {} } if (g.moved) { this._S.pan.x = g.px + dx; this._S.pan.y = g.py + dy; this._schedule(); } });
         const up = () => { if (this._drag) { plot.classList.remove('drag'); this._drag = null; } }; plot.addEventListener('pointerup', up); plot.addEventListener('pointercancel', up);
         if (root.ResizeObserver) { this._ro = new ResizeObserver(() => this._schedule()); this._ro.observe(plot); }
@@ -1160,19 +1219,6 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
       fit() { this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); }
       select(id) { this._S.sel = id || null; this._schedule(); }
       // pan the plot so the record sits at its centre, at zoom z (at least 1.6, or the current zoom if larger)
-      _hoverHide() { this._hoverId = null; const h = this._r && this._r.hover; if (h) { h.hidden = true; h.innerHTML = ''; } }
-      _hoverAt(id, e, moveOnly) {
-        const h = this._r && this._r.hover, p = this._last && this._last.pos[id];
-        if (!h || !p) { this._hoverHide(); return; }
-        if (!moveOnly || this._hoverId !== id) { this._hoverId = id; h.innerHTML = hoverCard(p); h.hidden = false; }
-        // keep it beside the cursor and inside the plot — a card that runs off the edge tells you nothing
-        const r = this._r.plot.getBoundingClientRect();
-        const w = h.offsetWidth || 200, ht = h.offsetHeight || 60;
-        let x = e.clientX - r.left + 14, y = e.clientY - r.top + 14;
-        if (x + w > r.width - 4) x = Math.max(4, e.clientX - r.left - w - 14);
-        if (y + ht > r.height - 4) y = Math.max(4, e.clientY - r.top - ht - 14);
-        h.style.left = x.toFixed(0) + 'px'; h.style.top = y.toFixed(0) + 'px';
-      }
       zoomTo(id, z) { const p = this._last && this._last.pos[id]; if (!p) return false; const plot = this._r.plot; const W = Math.max(200, plot.clientWidth || 600), H = Math.max(160, plot.clientHeight || 500); this._S.pan = panTo(p, W, H, z || Math.max(this._S.pan.z || 1, 1.6)); this._schedule(); return true; }
       state() { return this._S; }
       // screen positions of the drawn records (for the runs to the message the host draws)
@@ -1243,7 +1289,20 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
             + '</span>'
           : '')
           + (o.families || []).map(famChip).join('')
-          + ((o.edgeTypes || []).length ? '<span class="sep"></span>' + o.edgeTypes.slice(0, 10).map((t) => '<button class="cg-lay et ' + (t.on ? 'on' : '') + '" data-a="etype" data-t="' + esc(t.name) + '"' + (t.on ? '' : ' data-off="1"') + ' title="' + esc(t.name.replace(/_/g, ' ').toLowerCase()) + ' · ' + t.n + ' relation' + (t.n === 1 ? '' : 's') + ' · click to ' + (t.on ? 'fold this type away' : 'draw it again') + '"><i></i>' + esc(t.name.replace(/_/g, ' ')) + '<b>' + t.n + '</b></button>').join('') : '')
+          /* THE RELATIONS GET A METER TOO, coded to the edges they draw. They were a row of chips carrying a
+             name and a count in a uniform grey, which told you a type existed but not which lines on the plot
+             were that type. Each band is now the type's own colour and is sized by how many relations it holds,
+             so the legend and the drawing agree at a glance. A folded type keeps its place, faintly, exactly as
+             a folded source does on the meter above. */
+          + ((o.edgeTypes || []).length ? (function () {
+              const ets = o.edgeTypes.slice(0, 10), tot = ets.reduce((a, t) => a + t.n, 0) || 1;
+              return '<span class="cg-meter et" role="group" aria-label="relation types">'
+                + ets.map((t) => '<button class="cg-mb' + (t.on ? '' : ' off') + '" data-a="etype" data-t="' + esc(t.name) + '"'
+                  + (t.on ? '' : ' data-off="1"') + ' style="--mc:' + esc(t.col) + ';flex-grow:' + Math.max(1, Math.round(t.n / tot * 1000))
+                  + '" title="' + esc(t.name.replace(/_/g, ' ').toLowerCase()) + ' · ' + t.n + ' relation' + (t.n === 1 ? '' : 's')
+                  + ' · ' + Math.round(t.n / tot * 100) + '% of them · press to ' + (t.on ? 'fold this type away' : 'draw it again')
+                  + '"><i></i><span class="nm">' + esc(t.name.replace(/_/g, ' ').toLowerCase()) + '</span><b>' + t.n + '</b></button>').join('')
+                + '</span>'; })() : '')
           + (o.ghosts ? '<span style="flex:1"></span><button class="cg-lay ' + (S.related ? 'on' : '') + '" data-a="related" style="color:var(--cg-ac2)" title="Records related to this question that were not injected"><i class="s"></i>related<b>+' + o.ghosts + '</b></button>' : '');
         this._r.in.innerHTML = drawPlot(o);
         // the lanes stay put while the plot pans and zooms
@@ -1256,7 +1315,7 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
     }
     root.customElements.define('vera-context-graph', VeraContextGraph);
   }
-  const api = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawMiniGalaxy, drawLanes, recordCard, listHtml, panTo, textOf, edgeTypeOf, loopFromEvents, planFromGoals, dagSteps, mixOf, VIEWS, FAMS, frameReads, ensureCss, kindOf, ICON, version: 6 };
+  const api = { compute, mini, miniHtml, miniDetail, miniList, stateFrom, drawPlot, drawMiniGalaxy, drawLanes, recordCard, bindHover, hoverCard, listHtml, panTo, textOf, edgeTypeOf, loopFromEvents, planFromGoals, dagSteps, mixOf, VIEWS, FAMS, frameReads, ensureCss, kindOf, ICON, version: 6 };
   root.VeraContextGraph = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
