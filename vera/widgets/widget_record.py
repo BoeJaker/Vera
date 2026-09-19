@@ -189,7 +189,7 @@ FORMS: List[Dict[str, Any]] = [
     _F("frame", "string", ("iso",), glyph="frame", options=("kind", "stand"), name="Iso frame", boards=("iso",)),
     # ── points ──
     _F("scatter", "points", ("flat", "iso"), glyph="scatter", options=("x", "y", "size"), name="Scatter", boards=("widgets", "spec")),
-    _F("globe", "points", glyph="globe", options=("layer", "page", "limit"), name="Globe", boards=("reply",)),
+    _F("globe", "points", ("flat", "iso"), glyph="globe", motion=True, sizes=("s", "m", "l", "xl"), options=("layer", "page", "limit", "pins", "view", "night", "sweep", "list", "grat"), name="Globe", boards=("globes", "reply")),
     # ── the three the spec adds, the composites, and the chrome the registry already names ──
     _F("panel", "panel", glyph="panel", sizes=("l", "xl"), name="Registered panel", boards=("spec",)),
     _F("form", "values", ("flat", "iso"), glyph="form", options=("fields",), name="Form", boards=("spec", "iso")),

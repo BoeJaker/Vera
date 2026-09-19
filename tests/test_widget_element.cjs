@@ -14,7 +14,7 @@ vm.runInNewContext(src, ctx);
 const W = ctx.window.VeraWidget;
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 
-t('api', ['draw', 'forms', 'normalise', 'formByShape', 'dataFor', 'applyMap', 'pick', 'mapped', 'formFor', 'readable', 'key', 'hydrate', 'css', 'ensureCss', 'sample', 'call', 'ensureIso'].every((k) => typeof W[k] === 'function') && W.version === 4);
+t('api', ['draw', 'forms', 'normalise', 'formByShape', 'dataFor', 'applyMap', 'pick', 'mapped', 'formFor', 'readable', 'key', 'hydrate', 'css', 'ensureCss', 'sample', 'call', 'ensureIso'].every((k) => typeof W[k] === 'function') && W.version >= 5);
 t('the element is defined', !!defined['vera-widget']);
 const series = [{ t: 1, v: 40 }, { t: 2, v: 48 }, { t: 3, v: 62 }, { t: 4, v: 55 }];
 const fix = {
