@@ -136,7 +136,13 @@ def test_chat_renders_through_the_shared_element_with_its_cards_as_the_hook():
     # A previewable block renders IN PLACE; the pane is still reachable beside it, and a whole HTML document
     # opens as the drawing without being asked (Notes/42 defect 90).
     assert "CH._codeInline(" in HTML and 'class="cb-act" data-prev' in HTML, "the block renders where it was written"
-    assert "if(_cbWholePage(lang, code)) setTimeout(" in HTML, "a whole page opens drawn"
+    # A whole page opens drawn. This asserted the call TEXT verbatim - including its argument - and the argument
+    # was wrong: `code` is declared nowhere in _mdFenceCard, whose source parameter is `raw`. So this line pinned
+    # a ReferenceError in place and passed while every fenced block in the chat threw and fell back to the shared
+    # renderer's plain card. Assert the behaviour instead; tests/test_chat_code_card.cjs CALLS the card and fails
+    # if it throws, which is the only thing that would have caught it.
+    assert "if(_cbWholePage(lang, raw)) setTimeout(" in HTML, "a whole page opens drawn"
+    assert "_cbWholePage(lang, code)" not in HTML, "the card's source is its own `raw` parameter"
     assert "const _cbWholePage=(lang,code)=>['html','svg'].indexOf(String(lang||'').toLowerCase())>=0" in HTML
     assert "f.setAttribute('sandbox','allow-scripts')" in HTML and "allow-same-origin" not in HTML.split("function _codeInline")[1][:900], "scripts only - the frame reaches nothing of ours"
     assert ".code-card.prev > pre{display:none}" in HTML and ".code-card.prev .cb-prev iframe{" in HTML

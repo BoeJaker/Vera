@@ -5084,6 +5084,18 @@ IMPORTANT:
   // running those on sight would execute what a reply was only talking about
   const _cbWholePage=(lang,code)=>['html','svg'].indexOf(String(lang||'').toLowerCase())>=0
     && /<\s*(!doctype\s+html|html[\s>]|body[\s>]|svg[\s>])/i.test(String(code||''));
+  /* THE FENCE'S LANGUAGE, ON THE ELEMENT. The card knew the language and threw it away: it wrote a bare
+     <pre><code>, while the two things that harvest a rendered reply — the session canvas (_cvHarvest) and
+     Explode — both read it back off exactly this class:
+         (String(el.className||'').match(/language-([\w-]+)/)||[])[1] || ''
+     Nothing in the chat or the shared markdown renderer ever wrote it (grep: two readers, zero writers), so
+     every harvested code item arrived with lang:'' — and a canvas code item with no language fails
+     PREVIEWABLE(), which is why a code item on the canvas never offered a preview. The same gap made both
+     harvesters' `lang==='mermaid'` test unreachable, so a diagram harvested as plain code.
+     Keep the shape the readers expect: `language-<lang>`, lowercased, and nothing at all when the fence
+     carried no language (an unlabelled block genuinely has none). */
+  const _langClass=(lang)=>{ const L=String(lang||'').toLowerCase().replace(/[^a-z0-9_-]/g,'');
+    return L ? ` class="language-${L}"` : ''; };
   const _cbDoc=(lang,code)=>{ const L=String(lang||'').toLowerCase(), src=String(code||'');
     if(L==='html'||L==='svg') return src;
     const head='<!doctype html><meta charset="utf-8"><style>body{margin:0;padding:10px;background:#101012;color:#d8dce4;font:12px system-ui,sans-serif}</style>';
@@ -7221,13 +7233,20 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       // marked data-incomplete so the linter skips it (no half-written-brace noise)
       return `<div class="code-card" data-cb="${id}" data-incomplete="1">`
            + `<div class="code-bar"><span class="code-lang">${langLbl}</span><div style="flex:1"></div><span class="cb-stream">streaming</span></div>`
-           + `<pre><code>${highlightCode(raw, lang)}</code></pre></div>`;
+           + `<pre><code${_langClass(lang)}>${highlightCode(raw, lang)}</code></pre></div>`;
     }
     const previewable=_isPreviewable(lang);
-    // a whole page opens as the drawing; the frame is built as soon as the block is in the document
-    if(_cbWholePage(lang, code)) setTimeout(()=>{ try{ _codeInline(id, true); }catch(_){} }, 0);
+    /* a whole page opens as the drawing; the frame is built as soon as the block is in the document.
+       The source is `raw` — this function's parameter. It read `code`, which is declared nowhere in this scope,
+       so EVERY fenced block threw a ReferenceError before it could build its toolbar. Nothing showed, because
+       the shared renderer swallows a fence callback that throws and quietly substitutes its own plain card
+       (vera_markdown_element.js: `catch (_) { card = ''; }` then `card || fenceCard(...)`). The reply therefore
+       rendered a code block with a lone "copy" button and none of Preview, Pane, Run or Save, with nothing in
+       the console to say why — and the same throw silently disabled code linting, auto-save to the session's
+       artifact directory and auto-preview, all of which look for .code-card[data-cb]. */
+    if(_cbWholePage(lang, raw)) setTimeout(()=>{ try{ _codeInline(id, true); }catch(_){} }, 0);
     const previewBtn=previewable
-      ? `<button class="cb-act" data-prev onclick="CH._codeInline('${id}')" title="Render it here — a sandboxed frame, no network">${_cbWholePage(lang, code) ? 'Source' : 'Preview'}</button>`
+      ? `<button class="cb-act" data-prev onclick="CH._codeInline('${id}')" title="Render it here — a sandboxed frame, no network">${_cbWholePage(lang, raw) ? 'Source' : 'Preview'}</button>`
         + `<button class="cb-act" onclick="CH._codePreview('${id}')" title="Open it in the preview pane, larger">Pane</button>`
       : '';
     const runBtn=(['js','javascript','jsx'].includes(L))
@@ -7245,7 +7264,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
          +   `<button class="cb-act" onclick="CH._codeCopy('${id}',this)" title="Copy to clipboard">Copy</button>`
          +   saveBtn + previewBtn + runBtn + execBtn
          + `</div>`
-         + `<pre><code>${highlightCode(raw, lang)}</code></pre>`
+         + `<pre><code${_langClass(lang)}>${highlightCode(raw, lang)}</code></pre>`
          + `<div class="code-exec-out" data-exec-out="${id}" style="display:none"></div>`
          + `</div>`;
   }
