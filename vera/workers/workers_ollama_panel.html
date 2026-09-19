@@ -199,6 +199,8 @@ html.view-models #secNav [data-view="models"]{display:block}
 .ov-facts{margin-bottom:6px;font-family:var(--mono);font-size:9.5px;color:var(--dim);overflow-wrap:anywhere}
 .ov-list{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg1)}
 .ov-list>*+*{border-top:1px solid var(--border)}
+.mc-ent{cursor:pointer;border-bottom:1px dotted var(--dim)}
+.mc-ent:hover{color:var(--acc3)}
 .mc-focus td{background:var(--accent-soft,rgba(74,158,255,.14));box-shadow:inset 3px 0 0 var(--acc3);transition:background 1.5s}
 .bld-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
 .bld{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg1);color:var(--text);text-decoration:none;font-size:11px}
@@ -6336,7 +6338,8 @@ function mcRender(){
     const where=(r.kind==='guest'&&r.vmid)?((r.type==='qemu'?'VM ':'CT ')+r.vmid+(r.node?' on '+r.node:'')):'';
     const acts=(r.actions||[]).map(a=>'<button class="btn sm'+(a.id==='shutdown'?' err-btn':'')
       +'" onclick="P.mcAct('+idx+','+sq(a.id)+')">'+esc(a.label)+'</button>').join('');
-    return '<tr data-idx="'+idx+'"><td><b>'+esc(r.label)+'</b>'+(where?'<span class="mc-note">'+esc(where)+'</span>':'')
+    const eref=(r.kind==='guest'&&r.vmid!=null)?('guest:'+r.vmid):(r.ssh_host_id?('host:'+r.ssh_host_id):'');
+    return '<tr data-idx="'+idx+'"><td><b'+(eref?' class="mc-ent" data-entity="'+esc(eref)+'" title="Everything the estate knows about this machine" tabindex="0"':'')+'>'+esc(r.label)+'</b>'+(where?'<span class="mc-note">'+esc(where)+'</span>':'')
       +(r.note?'<span class="mc-note">'+esc(r.note)+'</span>':'')+'</td>'
       +'<td class="mc-kind">'+esc(_MC_KIND[r.kind]||r.kind)+'</td>'
       +'<td><span class="mc-state '+esc(r.status||'')+'">'+esc(r.status||'—')+'</span></td>'
@@ -8306,6 +8309,7 @@ return {
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
 <script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>
 </body>
 </html>

@@ -726,7 +726,7 @@ P.renderOverview = ()=>{
   $('unallocLab').textContent = inv.pools.length?('· unallocated across pools: '+fmtB(inv.unallocated_bytes)):'';
   $('poolGrid').innerHTML = inv.pools.map(p=>{
     const pct=p.size?Math.round(p.alloc/p.size*100):0;
-    return `<div class="card"><div class="hd"><span class="nm">${esc(p.name)}</span>
+    return `<div class="card"><div class="hd"><span class="nm" data-entity="pool:${esc(p.name)}" title="What is on this pool" style="cursor:pointer;border-bottom:1px dotted var(--t3)">${esc(p.name)}</span>
       <span class="pill ${p.health==='ONLINE'?'ok':'err'}">${esc(p.health)}</span>
       <span class="sub">${fmtB(p.size)}</span></div>
       <div class="metric"><div class="lab"><span>alloc ${fmtB(p.alloc)}</span><span>free ${fmtB(p.free)}</span></div>
@@ -738,7 +738,7 @@ P.renderOverview = ()=>{
     const used=(g.datasets||[]).reduce((a,d)=>a+(d.used||0),0);
     const diskKeys=Object.keys(g.disks||{}).filter(k=>k==='rootfs'||/^(scsi|virtio|sata|ide)\d+$/.test(k));
     const dk=diskKeys[0]||(g.type==='lxc'?'rootfs':'scsi0');
-    return `<tr><td><b>${esc(g.name)}</b> <span class="kv">#${g.vmid}</span>
+    return `<tr><td><b data-entity="guest:${g.vmid}" title="Everything the estate knows about this guest" style="cursor:pointer;border-bottom:1px dotted var(--t3)">${esc(g.name)}</b> <span class="kv">#${g.vmid}</span>
         <a href="#" class="kv" title="Open this machine in Estate > Machines" onclick="veraUI.openEntity('guest:${g.vmid}');return false" style="margin-left:6px;color:var(--acc,#4a9eff);text-decoration:none">machine ›</a></td>
       <td>${g.type==='lxc'?'CT':'VM'}</td>
       <td><span class="pill ${g.status==='running'?'ok':'dim'}">${esc(g.status)}</span></td>
@@ -979,7 +979,7 @@ P.renderCpu = ()=>{
   ).join('');
   $('cpuTbl').querySelector('tbody').innerHTML=m.guests.map(g=>{
     const flags=(g.flags||[]).map(f=>`<span class="flagchip ${f==='spans-numa'||f==='overlaps-reserved'?'bad':''}">${esc(f)}</span>`).join('')||'<span class="kv">ok</span>';
-    return `<tr><td><b>${esc(g.name)}</b> <span class="kv">#${g.vmid}</span>
+    return `<tr><td><b data-entity="guest:${g.vmid}" title="Everything the estate knows about this guest" style="cursor:pointer;border-bottom:1px dotted var(--t3)">${esc(g.name)}</b> <span class="kv">#${g.vmid}</span>
         <a href="#" class="kv" title="Open this machine in Estate > Machines" onclick="veraUI.openEntity('guest:${g.vmid}');return false" style="margin-left:6px;color:var(--acc,#4a9eff);text-decoration:none">machine ›</a></td>
       <td>${g.type==='lxc'?'CT':'VM'}</td>
       <td><span class="pill ${g.status==='running'?'ok':'dim'}">${esc(g.status)}</span></td>
@@ -1267,6 +1267,7 @@ P.init().then(()=>{
 });
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
