@@ -55,6 +55,8 @@ a{color:var(--ac)}
 @media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}}
 @media(min-width:1000px){.grid{grid-template-columns:repeat(3,1fr)}}
 .card{background:var(--s2);border:1px solid var(--bd);border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
+.metric .bar{height:6px;background:var(--s3);border-radius:3px;overflow:hidden}.metric .bar i{display:block;height:100%;background:var(--acc)}
 .card .hd{display:flex;align-items:center;gap:8px}
 .card .hd .nm{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card .hd .sub{color:var(--t3);font-size:11px;margin-left:auto;white-space:nowrap}
@@ -126,6 +128,7 @@ details.fold .twrap{background:var(--bg1)}
     <nav id="nav">
       <button class="nav-btn active" data-p="overview" onclick="P.show('overview',this)"><span class="gl">▤</span><span>Overview</span></button>
       <button class="nav-btn" data-p="fs" onclick="P.show('fs',this)"><span class="gl">🗂</span><span>File Fabric</span></button>
+      <button class="nav-btn" data-p="docker" onclick="P.show('docker',this)"><span class="gl">🐳</span><span>Docker</span></button>
       <button class="nav-btn" data-p="store" onclick="P.show('store',this)"><span class="gl">◱</span><span>Model Store</span></button>
       <button class="nav-btn" data-p="veradata" onclick="P.show('veradata',this)"><span class="gl">🗄</span><span>Vera Data</span></button>
       <button class="nav-btn" data-p="estate" onclick="P.show('estate',this)"><span class="gl">⛃</span><span>Estate &amp; Backup</span></button>
@@ -259,6 +262,27 @@ details.fold .twrap{background:var(--bg1)}
 
     <!-- CPU / NUMA — shown via the Workers panel's Proxmox pane
          (/pxstore/panel?solo=cpu); not in this panel's storage nav. -->
+    <!-- ── DOCKER — where the Docker host's disk has gone ─────────────────── -->
+    <div class="pane" id="p-docker">
+      <div class="card" style="margin-bottom:14px">
+        <div class="hd"><span class="nm">Docker data disk</span><span class="sub" id="dkfs-when">—</span>
+          <button class="btn sm" style="margin-left:8px" onclick="P.dockerFsLoad(true)">Recompute</button></div>
+        <div class="kv" id="dkfs-note">The Engine walks every layer for this, which takes minutes on this host; the answer is kept for ten minutes.</div>
+        <div id="dkfs-cats" style="display:flex;flex-direction:column;gap:8px;margin-top:8px"></div>
+        <div id="dkfs-findings" style="margin-top:8px"></div>
+      </div>
+      <div class="grid2">
+        <div class="card"><div class="hd"><span class="nm">Containers by writable layer</span><span class="sub">data written inside the container</span></div>
+          <div class="tbl"><table><thead><tr><th>Container</th><th>State</th><th>Writable</th><th>Root fs</th></tr></thead><tbody id="dkfs-ctr"></tbody></table></div></div>
+        <div class="card"><div class="hd"><span class="nm">Volumes</span><span class="sub">largest first</span></div>
+          <div class="tbl"><table><thead><tr><th>Volume</th><th>Size</th><th>Used by</th></tr></thead><tbody id="dkfs-vol"></tbody></table></div></div>
+        <div class="card"><div class="hd"><span class="nm">Images</span><span class="sub">largest first</span></div>
+          <div class="tbl"><table><thead><tr><th>Image</th><th>Size</th><th>Shared</th><th>Containers</th></tr></thead><tbody id="dkfs-img"></tbody></table></div></div>
+        <div class="card"><div class="hd"><span class="nm">Session sandboxes</span><span class="sub">what the reaper sees</span></div>
+          <div class="kv" id="dkfs-sbx">—</div></div>
+      </div>
+    </div>
+
     <div class="pane" id="p-cpu">
       <div class="note"><b>NUMA-safe placement.</b> Reserved ranges (managed below —
         e.g. the ollama / ollama-a / ollama-b cpusets) show red; the pinner refuses
@@ -507,9 +531,39 @@ P.show = (p,el)=>{
   if(t) $('secTitle').textContent=t.textContent;
   if(p==='cpu'){ if(!P.state.cpuMap) P.cpuLoad(); P.renderSetup(); }
   if(p==='fs') P.fsLoad();
+  if(p==='docker') P.dockerFsLoad(false);
   if(p==='setup') P.renderSetup();
   if(p==='store') P.storeLoad();
   if(p==='estate') P.estateInit();
+};
+
+/* ── DOCKER — docker.disk.breakdown, computed in the background and polled ── */
+let _dkfsPoll=null;
+P.dockerFsLoad = async (refresh)=>{
+  clearTimeout(_dkfsPoll);
+  let r;
+  try{ r=await api('/docker/disk/breakdown'+(refresh?'?refresh=1':'')); }
+  catch(e){ $('dkfs-note').textContent=e.message; return; }
+  if(r.error&&!r.breakdown){ $('dkfs-note').textContent=r.error; }
+  const b=r.breakdown;
+  if(r.computing){
+    $('dkfs-when').textContent='computing…'+(b?' (showing the last answer)':'');
+    _dkfsPoll=setTimeout(()=>P.dockerFsLoad(false), 5000);
+  } else if(b){
+    $('dkfs-when').textContent='computed '+(r.age_s<90?r.age_s+' s ago':Math.round(r.age_s/60)+' min ago')+' in '+(b.took_s||0)+' s';
+  }
+  if(!b) return;
+  const total=Math.max(1,(b.categories||[]).reduce((a,c)=>a+(c.size||0),0));
+  $('dkfs-cats').innerHTML=(b.categories||[]).map(c=>`<div class="metric"><div class="lab"><span><b>${esc(c.label)}</b> · ${c.count}</span>
+      <span>${fmtB(c.size)}${c.reclaimable?` · <span style="color:var(--warn)">${fmtB(c.reclaimable)} reclaimable</span> <span style="opacity:.7">(${esc(c.why)})</span>`:''}</span></div>
+      <div class="bar"><i style="width:${Math.round(100*(c.size||0)/total)}%"></i></div></div>`).join('')
+    +`<div class="kv">Layers on disk ${fmtB(b.layers_size)} · <b>${fmtB(b.reclaimable_total)}</b> could be reclaimed in all.</div>`;
+  $('dkfs-findings').innerHTML=(b.findings||[]).map(f=>`<div class="note" style="border-color:var(--${f.severity==='warn'?'warn':'bd'})">${f.severity==='warn'?'⚠ ':''}${esc(f.message)}${f.detail?` <span class="kv">${esc(f.detail)}</span>`:''}</div>`).join('');
+  $('dkfs-ctr').innerHTML=(b.top_containers||[]).map(c=>`<tr><td><b>${esc(c.name)}</b><div class="kv">${esc(c.image)}</div></td><td><span class="pill ${c.state==='running'?'ok':'dim'}">${esc(c.state)}</span></td><td>${fmtB(c.writable)}</td><td class="kv">${fmtB(c.rootfs)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">none</td></tr>';
+  $('dkfs-vol').innerHTML=(b.top_volumes||[]).map(v=>`<tr><td class="mono" style="font-size:10px">${esc(v.name)}</td><td>${fmtB(v.size)}</td><td>${v.used_by?v.used_by+' container'+(v.used_by===1?'':'s'):'<span style="color:var(--warn)">nothing</span>'}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">none</td></tr>';
+  $('dkfs-img').innerHTML=(b.top_images||[]).map(i=>`<tr><td class="mono" style="font-size:10px">${esc((i.tags||[]).join(', ')||'<untagged>')}</td><td>${fmtB(i.size)}</td><td class="kv">${fmtB(i.shared)}</td><td>${i.containers||0}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">none</td></tr>';
+  const s=b.sandboxes||{};
+  $('dkfs-sbx').textContent=`${s.count||0} session sandboxes hold ${fmtB(s.writable||0)} in writable layers; ${s.reapable||0} finished ones older than ${s.retain_hours||24} h can be reaped (docker.disk.reap keeps running ones).`;
 };
 
 /* ── ESTATE & BACKUP — cross-estate storage + scheduled sync/backup (nodes.*) ── */
