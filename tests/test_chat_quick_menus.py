@@ -44,7 +44,9 @@ def test_every_menu_has_the_boards_body_and_the_context_menu_is_the_galaxy_budge
     # each band is its family's share AND the switch for whether the graph draws it; an off band keeps its place
     # and a trace of its own colour, because a band that vanished could never be pressed again
     assert "'<i class=\"'+(_qGalOff[r.f]?'off':'on')+'\" data-fam=\"'+esc(r.f)+'\" style=\"width:'+r.pct.toFixed(1)+'%;--c:'+r.col+'\"" in ctx, "the bar's bands carry family, state and colour"
-    assert "el.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; VeraLHM.render(); }));" in ctx, "pressing a band toggles the same _qGalOff the chips drove"
+    # and _qGalOff is now the ONE source filter: the legacy .lbtn row reads it through _ctxLayers, so a band
+    # repaints every surface it governs rather than only the rail's own menu
+    assert "el.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; _ctxViewRepaint(); }));" in ctx, "pressing a band toggles the same _qGalOff the chips drove, and repaints every surface"
     assert "nodeClick(d.dataset.id)" in ctx, "a record in the galaxy opens"
     assert "cta:{get label(){ return _ctxGrown?'Fold back to the quick menu ←':'Expand to the full graph →'; }, run:()=>_ctxGrow()}}," in HTML, "the CTA grows the menu into the full graph and folds it back"
     assert "function _ctxShares(){" in HTML and "function _ctxMeterSegs(){" in HTML and "try{ _ctxMeterSegs(); }catch(_){}" in HTML, "the header meter carries the same shares"

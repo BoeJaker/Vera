@@ -3245,7 +3245,10 @@ const CH = (() => {
   let ALL_CAPS=[];
   let SESSION_DAG_LOG=[];  // [{label, dag, initialState, ts, status, result}]
   let HISTORY=[];
-  let CTX_NODES=[], CTX_EDGES=[], CTX_FRAMES=[], CTX_ACTIVE=null;
+  // CTX_NODES/CTX_EDGES are the LIVE set - what the next question carries. CTX_FRAMES are the turns' snapshots.
+  // There is no separate "active frame" here: _ctxActiveFrame (the turn in view) is the only one, and every
+  // surface that shows a frame reads it through _ctxInView().
+  let CTX_NODES=[], CTX_EDGES=[], CTX_FRAMES=[];
   let CTX_LAYER='both', CTX_TAB='ctx';
   let CTX_SRCS=new Set(['memory','fabric','entities','urls']);
   let CTX_TIMER=null, _ctxVersion=0, _ctxAbort=null;
@@ -12358,16 +12361,30 @@ Your task: decide what to do next to advance toward the goal.
   const srcCol=s=>s==='vector'?'#a78bfa':s==='graph'?'#fb923c':s==='both'?'#8fb87a':s==='fabric'?'#38bdf8':s==='memory'?'#5a9e8f':s==='web'?'#f59e0b':s==='news'?'#e879f9':s==='cap'?'#ec4899':s==='run'?'#60a5fa':s==='skill'?'#5a9e8f':s==='ontology'?'#c9955a':s==='related_qa'?'#e8a44c':s==='worldview'?'#2dd4bf':s==='agent'?'#888':'#8a7e70';
 
   // Per-source layer state (all on by default)
-  let _ctxLayers=new Set(['vector','graph','memory','fabric','web','cap','run','skill','ontology','related_qa','worldview','agent','news','both']);
+  /* WHICH SOURCES ARE SHOWN - one state, two surfaces.
+     This used to be a Set of the families that are ON, driven by the .lbtn row, while the budget bar's bands
+     (and the chips before them) drove _qGalOff, a map of the families that are OFF. Two controls over the same
+     domain and the same records: switching Memory off on the graph left it lit on the legacy list, and pressing
+     a band did nothing to either. _ctxLayers is now a READ of _qGalOff, so the bar drives every surface and the
+     .lbtn row becomes a second view onto the same state rather than a second state. Retiring the legacy row is
+     then deleting markup, not unpicking logic.
+     A family with no entry in the map is ON - which is exactly what membership of the old Set meant, so every
+     `.has()` call site keeps its meaning. Only .has/.add/.delete were ever used (_ctxAssembledExtra takes the
+     same shape and calls only .has), so the object stands in for the Set completely. */
+  let _qGalOff={};
+  const _ctxLayers={
+    has:(f)=>!_qGalOff[String(f)],
+    add:(f)=>{ delete _qGalOff[String(f)]; },
+    delete:(f)=>{ _qGalOff[String(f)]=true; }
+  };
   // Persistent node-position cache (keyed by node id) so progressive/incremental
   // renders and resize reflows keep a stable layout instead of re-randomising.
   let _ctxPos=new Map();
   function _ctxLayerToggle(layer){
-    const btn=document.querySelector(`[data-ctx-layer="${layer}"]`);
-    if(_ctxLayers.has(layer)){_ctxLayers.delete(layer);if(btn)btn.classList.remove('on');}
-    else{_ctxLayers.add(layer);if(btn)btn.classList.add('on');}
-    if(CTX_VIEW==='graph')renderCtxGraph();
-    if(CTX_VIEW==='list')renderCtxList();
+    if(_ctxLayers.has(layer)) _ctxLayers.delete(layer); else _ctxLayers.add(layer);
+    // every surface, not just this pane's two: the same switch now governs the mini plot and the budget bar,
+    // and _ctxViewRepaint puts the .lbtn row back in step whichever control was pressed
+    _ctxViewRepaint();
   }
 
   // Assembled-context cache (from _ctxFcRefresh)
@@ -12813,7 +12830,7 @@ Your task: decide what to do next to advance toward the goal.
        Frames button, session restore, browse) means "snapshot what is live now" and still gets that */
     const _src=Array.isArray(x.nodes)?x.nodes:CTX_NODES, _srcE=Array.isArray(x.edges)?x.edges:CTX_EDGES;
     const nodes=JSON.parse(JSON.stringify(_src)).map(n=>Object.assign(n,{ by:(n.source==='run'||(sent&&!sent.has(n.id)))?'a':'u' }));
-    const f={id:Date.now(),label:label||('Frame '+(CTX_FRAMES.length+1)),nodes,edges:JSON.parse(JSON.stringify(_srcE)),ts:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),mid:x.mid||'',amid:x.amid||'',turn:x.mid?'turn '+x.mid:'',query:x.query||_ctxQuery||''};CTX_FRAMES.push(f);if(CTX_FRAMES.length>500)CTX_FRAMES.splice(0,CTX_FRAMES.length-500);CTX_ACTIVE=f.id;
+    const f={id:Date.now(),label:label||('Frame '+(CTX_FRAMES.length+1)),nodes,edges:JSON.parse(JSON.stringify(_srcE)),ts:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),mid:x.mid||'',amid:x.amid||'',turn:x.mid?'turn '+x.mid:'',query:x.query||_ctxQuery||''};CTX_FRAMES.push(f);if(CTX_FRAMES.length>500)CTX_FRAMES.splice(0,CTX_FRAMES.length-500);
     /* the message names its own frame. Every identifier this lookup has leaned on drifts - HISTORY turn
        numbers gave two frames both called "Turn 2", mids are re-issued at render time, _ctxTurnSend is null on
        some paths - so the frame is attached to the question and the answer themselves and read back off the
@@ -12869,6 +12886,9 @@ Your task: decide what to do next to advance toward the goal.
     try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}
     try{ if(CTX_VIEW==='graph') renderCtxGraph(); else if(CTX_VIEW==='list') renderCtxList(); else if(CTX_VIEW==='fabric') renderFabPane(); }catch(_){}
     try{ _ctxMeterSegs(); }catch(_){}
+    // the legacy layer row is a VIEW of _qGalOff now, so it is redrawn from that state rather than toggled in
+    // place - otherwise pressing a band on the budget bar would leave its .lbtn twin lit
+    try{ document.querySelectorAll('[data-ctx-layer]').forEach(b=>b.classList.toggle('on', _ctxLayers.has(b.dataset.ctxLayer))); }catch(_){}
   }
   function _ctxFollow(now){ const run=()=>{ _ctxFollowT=Date.now(); const active=_ctxActiveCompute(); if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; _ctxViewRepaint(); }
       if(_pages.has('graph')&&_ctxCol) _graphAnchorPost(true); else { try{ _ctxRunsDraw(); }catch(_){} } };
@@ -12880,12 +12900,32 @@ Your task: decide what to do next to advance toward the goal.
 
   function updateFrameUI(){
     const strip=document.getElementById('fbStrip');
-    if(strip)strip.innerHTML=CTX_FRAMES.slice(-5).map(f=>`<span class="frame-chip${f.id===CTX_ACTIVE?' on':''}" onclick="CH.loadFrame(${f.id})">${esc(f.label)} <span style="color:var(--dim)">${f.ts}</span></span>`).join('');
+    // ONE notion of "the frame showing". CTX_ACTIVE used to mean "the frame last saved or loaded into the live
+    // set" while _ctxActiveFrame meant "the turn in view" - two answers to one question, so scrolling the chat
+    // moved the graphs but left this strip highlighting whatever was last clicked. Both are _ctxActiveFrame now,
+    // which is why these surfaces track the scroll for free.
+    const _on=(f)=>String(f.id)===String(_ctxActiveFrame);
+    if(strip)strip.innerHTML=CTX_FRAMES.slice(-5).map(f=>`<span class="frame-chip${_on(f)?' on':''}" onclick="CH.loadFrame(${f.id})">${esc(f.label)} <span style="color:var(--dim)">${f.ts}</span></span>`).join('');
     const fp=document.getElementById('paneFrames');
-    if(fp)fp.innerHTML=CTX_FRAMES.length?CTX_FRAMES.map(f=>`<div style="padding:5px 7px;background:var(--bg2);border:1px solid ${f.id===CTX_ACTIVE?'var(--acc)':'var(--border)'};border-radius:3px;cursor:pointer;margin-bottom:3px" onclick="CH.loadFrame(${f.id})"><div style="font-size:10px;font-weight:600">${esc(f.label)}</div><div style="font-size:9px;color:var(--dim2)">${f.ts} · ${f.nodes.length} nodes</div></div>`).join(''):'<div style="font-size:10px;color:var(--dim)">No frames yet. Saved each turn.</div>';
+    if(fp)fp.innerHTML=CTX_FRAMES.length?CTX_FRAMES.map(f=>`<div style="padding:5px 7px;background:var(--bg2);border:1px solid ${_on(f)?'var(--acc)':'var(--border)'};border-radius:3px;cursor:pointer;margin-bottom:3px" onclick="CH.loadFrame(${f.id})" title="Show this turn - scrolls the chat to it; the context you send is untouched"><div style="font-size:10px;font-weight:600">${esc(f.label)}</div><div style="font-size:9px;color:var(--dim2)">${f.ts} · ${f.nodes.length} nodes</div></div>`).join(''):'<div style="font-size:10px;color:var(--dim)">No frames yet. Saved each turn.</div>';
   }
 
-  function loadFrame(id){const f=CTX_FRAMES.find(x=>x.id===id);if(!f)return;CTX_NODES=JSON.parse(JSON.stringify(f.nodes));CTX_EDGES=JSON.parse(JSON.stringify(f.edges));CTX_ACTIVE=id;renderCtxGraph();renderCtxList();renderFabPane();updateFrameUI();const cc=document.getElementById('ctxCount');if(cc)cc.textContent=CTX_NODES.length+' ctx';}
+  /* Picking a frame SHOWS that turn; it does not load it.
+     This used to assign CTX_NODES/CTX_EDGES from the frame - and those globals are what the NEXT question
+     carries, so opening an old turn in the Frames pane silently swapped the context your next message would be
+     sent with, with nothing on screen to say so. It is the one place the display/prompt split was crossed.
+     The frames scrubber on the grown graph already had the right answer: a frame picked SCROLLS THE CHAT to its
+     turn, and the scroll makes it the turn in view through the normal follow path (vera:ctx:frame -> _ctxScrollTo).
+     The legacy strip and pane now do the same, so they are a third view onto one state rather than a second
+     mechanism - which is what lets the legacy area be retired by deleting it.
+     A frame with no turn to scroll to (one saved by hand from the Frames button) still selects, so the graphs
+     draw it; nothing is assigned either way. */
+  function loadFrame(id){
+    const f=CTX_FRAMES.find(x=>String(x.id)===String(id)); if(!f) return;
+    _ctxActiveFrame=f.id;
+    if(f.mid){ _ctxScrollTo(f.mid); }
+    _ctxViewRepaint(); updateFrameUI();
+  }
 
   /* ═══ TABS & RESIZE ═══ */
   // CTX_VIEW: which sub-view inside the Context tab is showing.
@@ -13720,7 +13760,10 @@ function _embedMount(){
       else if(m.act==='focus'&&a.mid){ _grFocusMid=a.mid; if(_ctxGrown){ try{ _ctxColumnSync(a.mid); }catch(_){} } try{ renderCtxGraph(); }catch(_){} }
       else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }
       else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} }
-      else if(m.act==='frames'){ CTX_FRAMES=Array.isArray(a.frames)?a.frames:[]; _ctxColFrameSig=''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} } try{ _ctxFollow(true); VeraLHM.render(); }catch(_){} } };
+      // updateFrameUI too: the legacy strip and Frames pane are views onto CTX_FRAMES like any other, and the
+      // embedded menu was the one path that replaced the list without telling them - so they sat empty for the
+      // whole session while every other surface had the turns
+      else if(m.act==='frames'){ CTX_FRAMES=Array.isArray(a.frames)?a.frames:[]; _ctxColFrameSig=''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} } try{ _ctxFollow(true); updateFrameUI(); VeraLHM.render(); }catch(_){} } };
   }
   if(_EMBED.only==='chat'){
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from!=='menu') return; const a=m.args||{};
@@ -13773,7 +13816,7 @@ function _embedMount(){
      Sessions · Activity · Loop · Workspace · Sandbox · Ops glance · Settings: the board's compact bodies, read from
      the chat's own state. The old pane of every menu is one press away ("Full ▸" in the header) in the same panel. */
   const _CTX_FAM_LABEL={agent:'Agent + system',skill:'Skills',ontology:'Ontologies',memory:'Memory recalls',vector:'Vector matches',graph:'Graph (Neo4j)',fabric:'Fabric records',cap:'Capabilities',web:'Web',news:'News',run:'Runs',related_qa:'Related Q&A',worldview:'Worldview',entities:'Entities',urls:'URLs',both:'Vector + graph'};
-  let _qGalView='galaxy', _qGalAll=false, _qGalOff={}, _qSrcOn='', _qSessQ='', _qPanelQ='';
+  let _qGalView='galaxy', _qGalAll=false, _qSrcOn='', _qSessQ='', _qPanelQ='';   // _qGalOff is declared with _ctxLayers, which reads it
   // the mini's face: the board's simple plot, or the detailed one this edge grew (Notes/42 defect 60) - remembered
   // the board's face is the default; the detailed one this edge grew is a press away and remembered (defect 60)
   let _qGalStyle=(function(){ try{ return localStorage.getItem('vera_ctx_mini_style')==='detailed'?'detailed':'simple'; }catch(_){ return 'simple'; } })();
@@ -13818,7 +13861,7 @@ function _embedMount(){
         // (context_graph_element.js:978), the same way the All-edges switch already follows into it
         bar.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f];
           try{ if(_ctxCol&&typeof _ctxCol.mix==='function') _ctxCol.mix(f, _qGalOff[f]?'off':'all'); }catch(_){}
-          try{ VeraLHM.render(); }catch(_){} })); }
+          _ctxViewRepaint(); })); }
       _graphColumnMount(); return; }
     const views=[['galaxy','galaxy'],['iso','iso'],['flow','flow'],['timeline','time']];
     // The RENDERER is part of the key. A body composed before /ui/context_graph_element.js has loaded draws the
@@ -13877,7 +13920,9 @@ function _embedMount(){
     el.querySelectorAll('.cg-mini [data-a="open"][data-id]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ nodeClick(b.dataset.id); }catch(_){} }));
     // the budget bar's bands are the family switches now — same _qGalOff the chips drove, so the graph, the
     // repaint key and the grown column all follow exactly as before
-    el.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; VeraLHM.render(); }));
+    // one source filter, so a band repaints every surface it governs - the plot, the list beside it, and the
+    // legacy graph/list/layer-row that now read the same _qGalOff through _ctxLayers
+    el.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; _ctxViewRepaint(); }));
     el.querySelector('.grp-act').addEventListener('click',()=>{ try{ _ctxFcRefresh(); }catch(_){} });
     // opening a section lights its source on the plot too, so the list and the graph never say different things
     el.querySelectorAll('.lrow[data-fam]').forEach(r=>r.addEventListener('click',()=>{ const f=r.dataset.fam;
@@ -14293,7 +14338,15 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     }
     renderHistList(SESSIONS);scroll();
 
-    // Restore right panel context from last user message
+    /* Restore right panel context from last user message.
+       THE BOUNDARY, and it is worth being explicit about because this is the only place in the file that asks
+       the server for a frame. It re-queries /context/assemble with the NEWEST question and keeps the answer as
+       one frame labelled "Session restore" - which is the live set for a fresh conversation, not the context any
+       past turn had. Do NOT generalise it into per-turn rebuilding: a past turn's frame computed today is
+       today's context wearing that turn's label, which is the exact complaint this feature exists to fix, and
+       ctxFetch also ASSIGNS CTX_NODES/CTX_EDGES, so doing it per turn while scrolling would rewrite what the
+       next question carries. Frames for an active session are captured at send (_ctxTurnSend) and never
+       re-queried. A restored transcript's turns simply have no frames, and the graphs show the live set. */
     const lastContent=HISTORY.filter(h=>h.role==='user').slice(-1)[0]?.content||'';
     if(lastContent){
       // ctxFetch is async — after it resolves save a frame

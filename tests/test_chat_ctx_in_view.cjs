@@ -77,10 +77,43 @@ t('the grown budget bar repaints when the turn in view changes, not only when th
 // ---- the budget bar is the section control; the chips are gone ---------------------------------------------
 t('the chips are gone', src.indexOf('class="gal-mix"') < 0 && src.indexOf(".querySelectorAll('.gm')") < 0);
 t('each band of the bar is its family\'s switch',
-  src.indexOf("el.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; VeraLHM.render(); }));") >= 0);
+  src.indexOf("el.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; _ctxViewRepaint(); }));") >= 0);
 t('an off band keeps its place and a trace of its colour, or it could never be pressed again',
   src.indexOf('.comp i[data-fam].off{background:color-mix(in srgb,var(--c) 20%,transparent)}') >= 0 &&
   src.indexOf('.comp i[data-fam]{cursor:pointer;min-width:7px}') >= 0);
+
+// ---- ONE source filter: the legacy layer row reads the bar's state ----------------------------------------
+// The .lbtn row kept a Set of families that are ON while the bar kept _qGalOff of those that are OFF - two
+// controls over the same records, so switching Memory off on the graph left it lit on the legacy list.
+t('_ctxLayers is a read of _qGalOff, not a second Set',
+  src.indexOf('has:(f)=>!_qGalOff[String(f)],') >= 0 &&
+  src.indexOf("let _ctxLayers=new Set(['vector','graph','memory'") < 0);
+t('a family with no entry is ON, which is what membership of the old Set meant',
+  src.indexOf('add:(f)=>{ delete _qGalOff[String(f)]; },') >= 0 && src.indexOf('delete:(f)=>{ _qGalOff[String(f)]=true; }') >= 0);
+t('the legacy layer row is redrawn from that state, not toggled in place',
+  src.indexOf("document.querySelectorAll('[data-ctx-layer]').forEach(b=>b.classList.toggle('on', _ctxLayers.has(b.dataset.ctxLayer)));") >= 0,
+  'else pressing a band leaves its .lbtn twin lit');
+t('the legacy toggle repaints every surface it now governs',
+  (body('function _ctxLayerToggle(layer){') || '').indexOf('_ctxViewRepaint();') >= 0);
+
+// ---- ONE frame identity, and picking a frame SHOWS a turn rather than loading it ---------------------------
+t('CTX_ACTIVE is gone - _ctxActiveFrame (the turn in view) is the only answer',
+  (src.match(/CTX_ACTIVE/g) || []).length <= 1, 'only the comment explaining its removal may remain');
+const lf = body('function loadFrame(id){');
+t('loadFrame no longer assigns the globals the next question carries',
+  !!lf && lf.indexOf('CTX_NODES=JSON.parse') < 0 && lf.indexOf('CTX_EDGES=JSON.parse') < 0,
+  'viewing an old turn must never rewrite what you are about to send');
+t('it scrolls the chat to that turn instead, as the grown graph\'s scrubber already did',
+  !!lf && lf.indexOf('if(f.mid){ _ctxScrollTo(f.mid); }') >= 0);
+t('the legacy strip and pane mark the turn in view',
+  src.indexOf('const _on=(f)=>String(f.id)===String(_ctxActiveFrame);') >= 0);
+t('frames arriving over the embed bridge reach the legacy frames UI too',
+  src.indexOf('try{ _ctxFollow(true); updateFrameUI(); VeraLHM.render(); }catch(_){} } };') >= 0,
+  'the embedded menu replaced CTX_FRAMES without telling them, so they sat empty all session');
+
+// ---- the one server round-trip on a frame path stays fenced ------------------------------------------------
+t('the session-restore re-query is marked as the boundary it is',
+  src.indexOf('THE BOUNDARY, and it is worth being explicit about because this is the only place in the file that asks') >= 0);
 
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
