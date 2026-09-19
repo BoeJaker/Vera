@@ -139,12 +139,8 @@ function picked(){ return [...document.querySelectorAll('.stale-pick:checked')].
 async function prune(confirmIt){
   const sel = picked();
   if(!sel.length) return alert('Tick the entries to remove first. Unverified entries cannot be removed from here.');
-  if(confirmIt && !confirm(`Remove ${sel.length} ticked entr${sel.length===1?'y':'ies'} from their registries?
-
-  ${sel.map(s=>s.kind+'  '+s.label).join('
-  ')}
-
-Directory hosts lose their DNS record too.`)) return;
+  const lines = sel.map(s => s.kind + '  ' + s.label).join(String.fromCharCode(10) + '  ');
+  if(confirmIt && !confirm('Remove ' + sel.length + ' ticked entr' + (sel.length===1?'y':'ies') + ' from their registries?' + String.fromCharCode(10,10) + '  ' + lines + String.fromCharCode(10,10) + 'Directory hosts lose their DNS record too.')) return;
   const r = await cap('estate.registration.prune', {confirm: !!confirmIt, ids: sel.map(s => String(s.id))});
   const out = $('prune-out'); out.style.display = 'block';
   out.textContent = r.error ? r.error : (r.dry_run ? 'Would remove:\n' : 'Removed:\n')
