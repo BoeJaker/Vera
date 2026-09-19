@@ -157,6 +157,41 @@ def test_a_restart_under_a_live_yield_pauses_and_restores_it():
     assert ct.restart_plan(running, resume=False, control=theirs)["action"] == "drop"
 
 
+# ── /health: is the box free? ────────────────────────────────────────────────
+def test_health_summary_says_busy_only_while_a_goal_is_in_flight():
+    """An agent reads /health before GPU work. `busy` must be true exactly
+    when a census goal is running (or a yield is requested but not yet
+    parked - the goal is still running), and false for a parked, finished,
+    absent or dead harness, so it neither taints a row nor waits on a ghost."""
+    def view(**a):
+        base = {"updated_at": _ts(-10), "goals_total": 12, "goals_done": 3,
+                "current_goal": "author-then-edit", "template": "default", "census_run": "run54"}
+        base.update(a)
+        return ct.active_view(base)
+    run = ct.make_control("resume")
+    h = ct.health_summary(run, view(state="running"))
+    assert h["busy"] and h["state"] == "running" and h["control"] == "run"
+    assert h["goal"] == "author-then-edit" and h["done"] == 3 and h["total"] == 12 \
+        and h["template"] == "default" and h["census_run"] == "run54" and "advice" in h
+    # yield requested, goal still running: still busy, and it says why
+    y = ct.make_control("yield", by="claude")
+    h = ct.health_summary(y, view(state="running"))
+    assert h["busy"] and h["state"] == "yielding" and h["by"] == "claude"
+    # parked on the yield: free
+    h = ct.health_summary(y, view(state="paused", pause_kind="yield"))
+    assert not h["busy"] and h["state"] == "yielded" and "advice" not in h
+    # a plain pause, parked: free; a plain pause not yet acted on: busy, 'pausing'
+    p = ct.make_control("pause", by="sys.dev.restart", resume_on_start=True)
+    assert ct.health_summary(p, view(state="paused"))["state"] == "paused"
+    assert ct.health_summary(p, view(state="running")) == dict(
+        ct.health_summary(p, view(state="running")), busy=True, state="pausing")
+    # no harness at all, a finished one, a dead one
+    assert ct.health_summary({}, ct.active_view({})) == {"busy": False, "state": "none", "control": "run"}
+    assert not ct.health_summary(run, view(state="done"))["busy"]
+    dead = ct.health_summary(run, view(state="running", updated_at=_ts(-ct.ACTIVE_STALE_S - 60)))
+    assert not dead["busy"] and dead["state"] == "stale"
+
+
 # ── routing on rows ──────────────────────────────────────────────────────────
 ROW = {
     "id": "build-simple-code", "status": "done", "wall_s": 427.0,

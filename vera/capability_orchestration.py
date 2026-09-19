@@ -7554,12 +7554,47 @@ async def _backend_answers(kind: str) -> bool:
     return False
 
 
+async def _health_gpu_gate() -> Dict[str, Any]:
+    """The GPU gate in one line for /health: is anyone generating on a GPU
+    node right now, and who. Summed over the gated GPU nodes (one today).
+    Never raises - /health must answer even with the coordination Redis down."""
+    try:
+        st = await ollama_gate_status()
+        gpu = [n for n in (st.get("nodes") or []) if n.get("has_gpu") and n.get("gated")]
+        held = sum(int(n.get("held") or 0) for n in gpu)
+        owners = [o for n in gpu for o in (n.get("owners") or [])]
+        return {"busy": held > 0, "held": held,
+                "capacity": sum(int(n.get("capacity") or 0) for n in gpu),
+                "owners": owners[:8], "enabled": bool(st.get("enabled")),
+                "coord_connected": bool(st.get("coord_connected"))}
+    except Exception as e:
+        return {"busy": None, "error": str(e)[:120]}
+
+
+async def _health_census() -> Dict[str, Any]:
+    """The census in one line for /health, from the census module (registered
+    under its bare filename, like census_before_restart reaches it)."""
+    try:
+        _cc = sys.modules.get("census_capabilities")
+        if _cc is None or not hasattr(_cc, "census_health"):
+            return {"busy": False, "state": "unavailable"}
+        return await _cc.census_health()
+    except Exception as e:
+        return {"busy": False, "state": "unknown", "error": str(e)[:120]}
+
+
 @capability("obs.health", memory="off", silent=True,
             http_method="GET", http_path="/health", http_tags=["obs"],
             description="Overall orchestrator health: backends, workers, caps, "
                         "Ollama nodes. Each backend is PROBED with a trivial "
                         "query, not tested for the presence of a connection "
-                        "object — see _backend_answers.")
+                        "object — see _backend_answers. Also says whether the box "
+                        "is free for GPU work: `gpu_gate` {busy, held, capacity, "
+                        "owners} is the GPU gate right now, and `census` {busy, "
+                        "state, template, goal, done/total, control, by} is the "
+                        "loop census - busy means a census goal is in flight (any "
+                        "GPU call taints its row; yield it with census.control.set "
+                        "action=yield and wait for acked, resume after).")
 async def obs_health(trace_id=None):
     return {"redis":await _backend_answers("redis"),
             "postgres":await _backend_answers("postgres"),"chroma":bool(CHROMA),
@@ -7568,6 +7603,8 @@ async def obs_health(trace_id=None):
             "mcp_servers":len(MCP_SERVERS),
             "ollama":{iid:{"status":i["status"],"latency_ms":i["latency_ms"],"has_gpu":i["has_gpu"]}
                       for iid,i in OLLAMA_INSTANCES.items()},
+            "gpu_gate":await _health_gpu_gate(),
+            "census":await _health_census(),
             "mode":"distributed" if REDIS else "local"}
 
 

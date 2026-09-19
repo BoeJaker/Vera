@@ -44,6 +44,29 @@ editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
   still showed `running` and `cancel` found no live task in the new process). (4) Any
   timing read from a window where >1 inference ran is contention-confounded — discard it.
   (See the standing memory note `no-concurrent-loop-tests`.)
+- **⛔ A CENSUS MAY BE RUNNING — check before ANY GPU work, and YIELD it, never
+  pause it.** A census (§11) is a loop on prod's GPU that can run for hours, one
+  goal at a time, and a single concurrent GPU call taints the row it is measuring.
+  `GET /health` now says so in one read: `census.busy` (a goal in flight — with
+  `state`, `template`, `goal`, `done`/`total`, `control`, `by`) and `gpu_gate.busy`
+  (`held`/`capacity`/`owners` — who holds the GPU slot right now). Read both, not just
+  the gate: between a census's own calls the slot is free while the goal is still
+  in flight. If `census.busy` and you genuinely need the GPU for a smaller test:
+  ```
+  census.control.set action=yield reason="<what you are running>" by="<you>" wait_s=300
+  ```
+  A **yield** lets the goal in flight FINISH untouched, then the harness parks
+  before the next goal (`/health` → `census.state: yielded`, `census.control` →
+  `active.state: paused`, `pause_kind: yield`). `wait_s` blocks up to 5 min for
+  that; a goal can be a wall cap (30 min) away, so if `acked` comes back false keep
+  polling `/health` (`census.busy` false) rather than re-firing. Run your test, then
+  `census.control.set action=resume`. A plain **`pause` CANCELS the goal in flight
+  and it re-runs later** — that is for restarts and emergencies, not for borrowing
+  the box; and a `drop` ends the whole set. Two more rules: never restart prod
+  mid-goal by any route other than `sys.dev.restart` (it goes through the census
+  gate: pause → ack → cancel owned loops → re-exec → restore), and a paused/yielded
+  census that is not yours is someone else's — do not resume it for them (`by`
+  says whose it is).
 - **Multi-agent estate is live.** Other agents may be working in their own
   containers (`evolve.sandbox.list` shows them), all sharing one GPU. Never touch
   another agent's branch/container. Before a **prod restart**, check
@@ -614,7 +637,9 @@ A census takes ~3h. Drive it with `/loop` (dynamic mode) and `ScheduleWakeup`,
 doing ONE step of the cycle per wake-up:
 
     census running?  -> report one line, reschedule. NO GPU work, NO prod
-                        restart (a restart kills the census).
+                        restart (a restart kills the census). Need the box for
+                        a small test anyway? census.control.set action=yield,
+                        wait for /health census.busy=false, test, resume (§0).
     census finished? -> archive, root-cause from artifacts, update PLAN.md and
                         the board, pick ONE improvement, land it, re-test the
                         real goal, then a fresh census.
