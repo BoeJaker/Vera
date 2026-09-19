@@ -47,6 +47,32 @@ def test_every_menu_has_the_boards_body_and_the_context_menu_is_the_galaxy_budge
     # and _qGalOff is now the ONE source filter: the legacy .lbtn row reads it through _ctxLayers, so a band
     # repaints every surface it governs rather than only the rail's own menu
     assert "el.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; _ctxViewRepaint(); }));" in ctx, "pressing a band toggles the same _qGalOff the chips drove, and repaints every surface"
+    # A CAPABILITY CARRIES WHAT IT IS, not just what it is called. These nodes were pushed with a label and
+    # nothing else, so a capability in the context list was a bare name - while the SAME capability, when
+    # buildCapHint puts it in, arrives with its description. The registry is already in this page.
+    assert "const def=(typeof ALL_CAPS!=='undefined'&&ALL_CAPS||[]).find(x=>x&&x.name===c);" in HTML
+    assert "extraNodes.push({id:cid,label:c,source:'cap',score:0.6,type:'cap',text:txt,tags:(def&&def.tags)||[]});" in HTML
+    assert "const sig=Object.keys(props).slice(0,10).map(k=>k+(req.includes(k)?'!':'')" in HTML, "and the signature its schema declares"
+    # an ontology says what it is too; only its entities carried descriptions before
+    assert "text:[( _od&&_od.description)||'', _od&&_od.entities?(_od.entities.length+' entities'):'']" in HTML
+
+    # ADDING FROM THE SECTION THAT LISTS IT. Capabilities, skills and ontologies are the parts of the prompt a
+    # reader most wants to change, and the only way was the Settings page's pickers - two surfaces from the
+    # records they govern. The registries are already here: ALL_CAPS, _allSkills, _allOnts.
+    assert "const _CTX_ADDABLE={ cap:'capability', skill:'skill', ontology:'ontology' };" in HTML
+    assert "function _ctxAddBox(fam){" in HTML and "+(open?_ctxAddBox(r.f)+_recsOf(r.f):'')" in HTML, "the box opens with its section"
+    assert "function _ctxAddPool(fam){" in HTML and "ALL_CAPS" in HTML and "_allSkills" in HTML and "_allOnts" in HTML
+    # a capability lands as a record on the spot, in the SAME shape buildCapHint uses, so the two cannot disagree
+    assert "CTX_NODES.push({ id:'cap:'+id, label:id, source:'cap', type:'capability', score:1.0," in HTML
+    # a skill or an ontology is an assembly setting, so the prompt is rebuilt - and the mode has to be 'pick' or
+    # the selection is held but never injected, which would look like the add did nothing
+    assert "if(m&&m.value!=='pick'){ m.value='pick'; _ctxItemModeChange(kind,'pick'); } else { _renderCtxPicker(kind); }" in HTML
+    assert "await _ctxFcRefresh();" in HTML, "the context is re-assembled so the addition appears"
+    # what is typed is in the repaint key, or the menu returns early and the search never shows a result
+    assert "+':'+JSON.stringify(_qAddQ);" in HTML
+    # and what is already in is marked rather than offered twice
+    assert "function _ctxAlreadyIn(fam,id){" in HTML
+
     # THE RAW PROMPT. The legacy Context pane held six sub-views: Graph, List, Fabric, Raw, Frames and Settings.
     # Every one of them is covered by a surface that outlives it - the plot, "In this prompt", the fabric section,
     # the frames scrubber - and its Settings sections have already been MOVED into the Settings page (_spTake
@@ -58,7 +84,9 @@ def test_every_menu_has_the_boards_body_and_the_context_menu_is_the_galaxy_budge
     assert "const _ctxRawText=()=>" in HTML and "_assembledCtx.fullRaw" in HTML, "it reads the real assembled prompt"
     # the fold and the prompt's length are part of the repaint key, or pressing the fold repaints nothing - the
     # same early-return the budget bar's off-state fell into
-    assert "+':'+(_qRawOpen?'R':'r')+':'+_ctxRawLen();" in HTML, "the fold is in the menu's repaint signature"
+    # the terminator is deliberately NOT part of this: the signature grows as the menu does, and pinning the
+    # semicolon only breaks the test the next time something is appended to it
+    assert "+':'+(_qRawOpen?'R':'r')+':'+_ctxRawLen()" in HTML, "the fold is in the menu's repaint signature"
     # and the refresh must not also toggle the fold
     assert "ev.stopPropagation();" in HTML
 

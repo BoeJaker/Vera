@@ -94,7 +94,9 @@ def test_the_minis_detail_list_search_and_frames():
     assert 'class="gal-srch"' in src and 'class="grp-act gal-list' not in src
     assert "let gal='', miniH=196, _recsOf=()=>'';" in src, "the plot keeps its box whatever a section is doing"
     assert "_recsOf=(f)=>{" in src and "VeraContextGraph.miniList(st, { q:_qGalQ, fam:f })" in src
-    assert "+(open?_recsOf(r.f):'');" in src, "a section's records sit under the row that opened it"
+    # the add box opens with the section, above its records — capabilities, skills and ontologies are the parts
+    # of the prompt a reader most wants to change, and they are changed where they are listed
+    assert "+(open?_ctxAddBox(r.f)+_recsOf(r.f):'');" in src, "a section's records sit under the row that opened it"
     assert "if(_qSrcOpen[f]){ delete _qSrcOpen[f];" in src and "else { _qSrcOpen[f]=true; _qSrcOn=f; }" in src, "opening a section lights its source on the plot"
     _el2 = _read("vera", "chat", "context_graph_element.js")
     assert "const o2 = opts.fam ? Object.assign({}, o, { list: o.list.filter((r) => String(r.source || '') === String(opts.fam)) }) : o;" in _el2
