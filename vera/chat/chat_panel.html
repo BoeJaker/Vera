@@ -1559,6 +1559,11 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .lrow .rt-n{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));flex-shrink:0}
 #rightRail.lhm-host .lhm-quick .wbar{height:4px;border-radius:2px;background:var(--s3,var(--bg3,#22262e));overflow:hidden;flex:0 0 44px}
 #rightRail.lhm-host .lhm-quick .wbar i{display:block;height:100%}
+/* the raw prompt: a fold in the menu, monospaced, its own scroll. It is long by nature — the point is that it is
+   READABLE here at all, which it was not once the legacy Context pane's Raw view went. */
+#rightRail.lhm-host .lhm-quick .ctx-raw .grp{cursor:pointer}
+#rightRail.lhm-host .lhm-quick .ctx-raw .caret{margin-right:4px;color:var(--t3,var(--dim,#6b7280))}
+#rightRail.lhm-host .lhm-quick .ctx-raw-b{margin:4px 0 0;padding:6px 7px;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;line-height:1.5;color:var(--t2,var(--dim2,#8a92a0));background:var(--s2,var(--bg2,#1a1c20));border-radius:5px}
 #rightRail.lhm-host .lhm-quick .comp{display:flex;height:9px;border-radius:3px;overflow:hidden;gap:1px;background:var(--s3,var(--bg3,#22262e));flex-shrink:0}
 /* ...and the bar is that control. The widths stay the TRUE token shares: _qGalOff filters what the GRAPH draws
    and has never changed what the prompt carries, so dimming a family must not resize the bar or it stops being a
@@ -13961,6 +13966,11 @@ function _embedMount(){
      the chat's own state. The old pane of every menu is one press away ("Full ▸" in the header) in the same panel. */
   const _CTX_FAM_LABEL={agent:'Agent + system',skill:'Skills',ontology:'Ontologies',memory:'Memory recalls',vector:'Vector matches',graph:'Graph (Neo4j)',fabric:'Fabric records',cap:'Capabilities',web:'Web',news:'News',run:'Runs',related_qa:'Related Q&A',worldview:'Worldview',entities:'Entities',urls:'URLs',both:'Vector + graph'};
   let _qGalView='galaxy', _qGalAll=false, _qSrcOn='', _qSessQ='', _qPanelQ='';   // _qGalOff is declared with _ctxLayers, which reads it
+  // the raw prompt's fold, remembered for the session: it is long, and it is not what the menu is for
+  let _qRawOpen=false;
+  // the assembled system prompt, exactly as it is sent — the one thing the legacy Context pane held alone
+  const _ctxRawText=()=>{ try{ return String((_assembledCtx&&(_assembledCtx.fullRaw||(_assembledCtx.res&&_assembledCtx.res.system_prompt)))||''); }catch(_){ return ''; } };
+  const _ctxRawLen=()=>_ctxRawText().length;
   // the mini's face: the board's simple plot, or the detailed one this edge grew (Notes/42 defect 60) - remembered
   // the board's face is the default; the detailed one this edge grew is a press away and remembered (defect 60)
   let _qGalStyle=(function(){ try{ return localStorage.getItem('vera_ctx_mini_style')==='detailed'?'detailed':'simple'; }catch(_){ return 'simple'; } })();
@@ -14011,7 +14021,10 @@ function _embedMount(){
     // The RENDERER is part of the key. A body composed before /ui/context_graph_element.js has loaded draws the
     // widget fallback; without this the signature it stores looks identical to the one the element would produce,
     // the early return fires on every later pass, and the element is never asked to draw at all (defect 84).
-    const sig=(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'?'E':'-')+S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'')+'#'+_qGalStyle+_qGalSel+JSON.stringify(_qSrcOpen)+_qGalQ+':'+_memAllNodes.length+':'+_lastDagNodes.length+':'+S.nodes.filter(n=>n.included===false).length+':'+CTX_FRAMES.length+':'+_ctxActiveFrame+':'+_grFocusMid;
+    const sig=(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'?'E':'-')+S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'')+'#'+_qGalStyle+_qGalSel+JSON.stringify(_qSrcOpen)+_qGalQ+':'+_memAllNodes.length+':'+_lastDagNodes.length+':'+S.nodes.filter(n=>n.included===false).length+':'+CTX_FRAMES.length+':'+_ctxActiveFrame+':'+_grFocusMid
+      // the raw fold and the prompt's own length: without them the menu returns early on an unchanged key and
+      // pressing the fold repaints nothing — the same trap the budget bar's off-state fell into
+      +':'+(_qRawOpen?'R':'r')+':'+_ctxRawLen();
     if(el.dataset.sig===sig) return; el.dataset.sig=sig;
     const data={nodes:S.nodes.map(n=>({id:n.id,label:n.label,family:String(n.source||'context').toLowerCase(),score:n.score,included:n.included})), rels:CTX_EDGES.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''}))};
     // the mini graph is the element's: the same state the grown graph holds, in miniature — records with their text, the
@@ -14049,7 +14062,19 @@ function _embedMount(){
       +(S.rows.length?S.rows.map(r=>{ const open=!!_qSrcOpen[r.f];
           return '<div class="lrow'+(open||r.f===_qSrcOn?' on':'')+(open?' open':'')+'" data-fam="'+esc(r.f)+'" title="'+esc(r.label+' — '+r.n+' record'+(r.n===1?'':'s')+' · '+_kfmt(r.tok)+' tokens · press to '+(open?'close':'open')+' them')+'"><span class="tick" style="background:'+r.col+'"></span><span class="caret">'+(open?'▾':'▸')+'</span><span class="nm">'+esc(r.label)+'</span><span class="wbar"><i style="width:'+r.pct.toFixed(0)+'%;background:'+r.col+'"></i></span><span class="rt-n">'+_kfmt(r.tok)+'</span></div>'
             +(open?_recsOf(r.f):''); }).join('')
-        :'<div class="lhm-empty">Nothing assembled yet — the context is gathered as you type, and shown here by source.</div>')+'</div>';
+        :'<div class="lhm-empty">Nothing assembled yet — the context is gathered as you type, and shown here by source.</div>')+'</div>'
+      /* THE RAW PROMPT, the last thing the legacy Context pane held that lived nowhere else. Its Graph, List,
+         Fabric and Frames views are all covered by surfaces above (the plot, "In this prompt", the fabric
+         section, the frames scrubber) and its Settings sections have already been moved into the Settings page,
+         which leaves a signpost in their place. Raw had no equivalent anywhere: the only way to read the actual
+         assembled system prompt was that pane. It is folded shut by default, because it is long and it is not
+         what you come here for. */
+      +'<div class="wid ctx-raw'+(_qRawOpen?' open':'')+'" data-w="raw prompt · text">'
+      +'<div class="grp" data-a="raw-toggle" title="The assembled system prompt, exactly as it is sent">'
+      +'<span class="caret">'+(_qRawOpen?'▾':'▸')+'</span>Raw prompt'
+      +'<span class="rt-n">'+(_ctxRawLen()?_kfmt(_ctxRawLen())+' chars':'—')+'</span>'
+      +'<button class="grp-act" data-a="raw-refresh" title="Re-assemble the context and read it back">↻</button></div>'
+      +(_qRawOpen?'<pre class="ctx-raw-b">'+esc(_ctxRawText())+'</pre>':'')+'</div>';
     el.querySelectorAll('.vseg button[data-view]').forEach(b=>b.addEventListener('click',()=>{ _qGalView=b.dataset.view; VeraLHM.render(); }));
     el.querySelectorAll('.gal-style button[data-style]').forEach(b=>b.addEventListener('click',()=>{ _qGalStyle=b.dataset.style; try{ localStorage.setItem('vera_ctx_mini_style', _qGalStyle); }catch(_){} VeraLHM.render(); }));
     el.querySelector('.gal-all').addEventListener('click',()=>{ _qGalAll=!_qGalAll; try{ if(_ctxCol&&typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(_qGalAll); }catch(_){} VeraLHM.render(); });   // the grown graph follows
@@ -14068,6 +14093,11 @@ function _embedMount(){
     // legacy graph/list/layer-row that now read the same _qGalOff through _ctxLayers
     el.querySelectorAll('.comp i[data-fam]').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; _ctxViewRepaint(); }));
     el.querySelector('.grp-act').addEventListener('click',()=>{ try{ _ctxFcRefresh(); }catch(_){} });
+    // the raw prompt: its fold, and a re-assemble that reads it back. The refresh must not also toggle the fold,
+    // so it stops the press reaching the header.
+    el.querySelectorAll('[data-a="raw-toggle"]').forEach(h=>h.addEventListener('click',()=>{ _qRawOpen=!_qRawOpen; VeraLHM.render(); }));
+    el.querySelectorAll('[data-a="raw-refresh"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation();
+      _qRawOpen=true; Promise.resolve().then(()=>_ctxFcRefresh()).catch(()=>{}).then(()=>{ try{ VeraLHM.render(); }catch(_){} }); }));
     // opening a section lights its source on the plot too, so the list and the graph never say different things
     el.querySelectorAll('.lrow[data-fam]').forEach(r=>r.addEventListener('click',()=>{ const f=r.dataset.fam;
       if(_qSrcOpen[f]){ delete _qSrcOpen[f]; if(_qSrcOn===f) _qSrcOn=''; if(!Object.keys(_qSrcOpen).length) _qGalQ=''; }
