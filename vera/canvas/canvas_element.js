@@ -476,6 +476,17 @@
   .vc-live{flex:1 1 auto;min-height:40px;height:110px;border-radius:6px;background:var(--s3,var(--bg3,#0f1114));display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--t3,var(--dim,#6b7480))}
   .it[data-size="s"] .vc-live{height:40px}.it[data-size="l"] .vc-live{height:230px}.it[data-size="xl"] .vc-live{height:440px}
   .it.sized .vc-live{height:auto}
+  /* A RENDERED PAGE NEEDS ROOM. The preview slot is a .vc-live, and a code item lands at size "s" (_cvLandSize
+     gives 's' to everything that is not a diagram, table or image) - so a whole HTML document, which previews
+     itself on sight, was drawn into a 620x40 strip: measured on the canvas, slotHeight 40, frameHeight 40. One
+     line of a page, which is not a preview of anything. Diagrams were given their own height years ago
+     (.vc-diag below); previews never were. Same treatment: a real height per size, and the dragged size still
+     wins through .it.sized. Specificity carries .vc-live.vc-preview over the size rules above. */
+  .vc-live.vc-preview{height:260px}
+  .it[data-size="s"] .vc-live.vc-preview{height:200px}
+  .it[data-size="l"] .vc-live.vc-preview{height:380px}
+  .it[data-size="xl"] .vc-live.vc-preview{height:560px}
+  .it.sized .vc-live.vc-preview{height:auto}
   .vc-nbout{margin-top:6px;border-left:2px solid var(--ac,var(--acc,#5a9e8f))}
   .vc-pq{margin-top:6px;max-height:160px}
   .addpop{position:absolute;left:0;top:100%;z-index:6;margin-top:4px;min-width:260px;max-width:min(92%,420px);padding:8px;border-radius:var(--ui-radius,8px);background:var(--s1,var(--bg1,#15181d));box-shadow:var(--elev,0 8px 24px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,#2a2f37));display:flex;flex-direction:column;gap:2px}

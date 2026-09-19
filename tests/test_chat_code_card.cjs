@@ -33,20 +33,23 @@ const cut = (a, b, label) => {
 };
 const helpers = cut("  const _cbWholePage=(lang,code)=>", "  const _cbDoc=(lang,code)=>", '_cbWholePage/_langClass');
 const previewable = cut("  function _isPreviewable(lang){", "\n  //", '_isPreviewable');
+// the real filename parser, not a stub — the card's naming rule (a fence's filename beats a caller's title) is
+// only meaningful against the thing that actually parses it
+const fname = cut("  function _parseFenceFilename(info){", "\n  /*", '_parseFenceFilename');
 const card = cut("  function _mdFenceCard(lang,info,raw,st,opts){", "\n  function renderMd(t,opts){", '_mdFenceCard');
-if (!helpers || !previewable || !card) { console.log(fails + ' FAILED'); process.exit(1); }
+if (!helpers || !previewable || !fname || !card) { console.log(fails + ' FAILED'); process.exit(1); }
 
 // stubs for what the card reaches outside itself; everything the card DECIDES is the real thing
 const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const api = new Function(
-  'document', '_MM_LIVE_KEY', '_mmLiveTaken', '_MM_BLOCKS', '_widgetFence', '_parseFenceFilename',
+  'document', '_MM_LIVE_KEY', '_mmLiveTaken', '_MM_BLOCKS', '_widgetFence',
   '_registerCodeBlock', 'esc', 'highlightCode', '_isServerRunnable', '_codeSaveArtifact',
-  'let _mmSeq=0;\n' + helpers + previewable + card + '\nreturn { _mdFenceCard, _cbWholePage, _langClass, _isPreviewable };'
+  'let _mmSeq=0;\n' + helpers + previewable + fname + card + '\nreturn { _mdFenceCard, _cbWholePage, _langClass, _isPreviewable };'
 )(
   { getElementById: () => null },              // no cfgAutoRender checkbox in the harness
   '', false, {},                               // no live mermaid slot
-  () => '', () => '',                          // no widget fence, no fence filename
-  (lang, raw, fname) => 'cb1',                 // a stable block id
+  () => '',                                    // no widget fence
+  (lang, raw, fn) => 'cb1',                    // a stable block id
   esc, (raw) => esc(raw),                      // highlight = escape, so the assertions read the source back
   (lang) => ['python', 'py', 'node', 'ruby'].includes(String(lang || '').toLowerCase()),
   () => {}
@@ -68,6 +71,14 @@ t('Copy is there', !!html && html.indexOf("CH._codeCopy('cb1'") >= 0);
 t('Save is there', !!html && html.indexOf("CH._codeSaveArtifact('cb1'") >= 0);
 t('Preview renders it in place', !!html && html.indexOf('data-prev') >= 0 && html.indexOf("CH._codeInline('cb1')") >= 0);
 t('Pane opens it larger', !!html && html.indexOf("CH._codePreview('cb1')") >= 0);
+// the pop-out render.html used to force on the reader, offered on the card instead - same window, their call
+t('Pop out is offered, not done to you', !!html && html.indexOf("CH._codePop('cb1')") >= 0);
+t('a non-previewable language gets no pop-out either', render('python', 'print(1)').indexOf('_codePop') < 0);
+// render.html has no fence to carry a filename, so it names the card through opts.title
+t('a card can be named by its caller', /html · <span[^>]*>My Preview</.test(
+  api._mdFenceCard('html', '', FRAGMENT, {}, { title: 'My Preview' })));
+t('...but a fence\'s own filename still wins', /html · <span[^>]*>app\.html</.test(
+  api._mdFenceCard('html', 'file=app.html', FRAGMENT, {}, { title: 'My Preview' })));
 t('a fragment offers "Preview"', !!html && />Preview</.test(html));
 t('a whole document offers "Source", because it is already drawn',
   />Source</.test(render('html', WHOLE)));

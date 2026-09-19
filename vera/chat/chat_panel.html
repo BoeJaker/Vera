@@ -5912,6 +5912,21 @@ IMPORTANT:
     m.body.appendChild(_artInlineCard(p));
     BOX().appendChild(m.wrap); scroll();
   }
+  /* ONE CARD FOR HTML, however it arrived. A ```html fence in a reply and the render.html capability were two
+     different cards: the fence got the code card (source toggle, Pane, Copy, Save, lint, auto-save to artifacts)
+     while the cap got a bare titled iframe with only a pop-out, on a different sandbox policy. Same content, two
+     looks, two sets of things you could do with it. render.html now builds the code card, so a rendered snippet
+     and a written one are the same object — and the whole-page auto-render, the sandbox and the sizing are the
+     card's, in one place, rather than duplicated here. */
+  function _htmlCardToChat(p){
+    const m=_mkMsg('agent','render','');
+    m.body.innerHTML=_mdFenceCard('html','',String(p.content||''),{},{ title:p.title||'' });
+    BOX().appendChild(m.wrap); scroll();
+    // the same post-render pass a reply's own blocks get, so a rendered snippet is linted and saved alike
+    try{ _lintRenderedBlocks(m.body); }catch(_){}
+    try{ _maybeAutoSaveArtifacts(m.body); }catch(_){}
+    return m;
+  }
   // Entry point for the __chat_render__ pseudo-action (and local callers).
   function _handleChatRender(payload){
     const p=payload||{};
@@ -5922,7 +5937,9 @@ IMPORTANT:
       if(p.kind==='panel'){
         const aid='a'+(++_artSeq); _ART_STORE[aid]=p; _artPop(aid);
       }else{
-        _artToChat(p);
+        // html goes through the code card, so it is the same object a ```html fence produces
+        if(p.kind==='html') _htmlCardToChat(p); else _artToChat(p);
+        // and popping out stays possible — it is just no longer done TO the user without being asked
         if(p.popout){ const aid='a'+(++_artSeq); _ART_STORE[aid]=p; _artPop(aid); }
       }
       try{HISTORY.push({role:'tool',content:'[render] displayed '+p.kind+(p.title?(' — '+p.title):'')+' to the user'});}catch(_){}
@@ -7226,7 +7243,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     }
     // ```widget fences are widgets in the reply (the record the model wrote)
     if(L==='widget' && !st.incomplete){ try{ const w=_widgetFence(raw); if(w) return w; }catch(_){} }
-    const fname=_parseFenceFilename(info||'');
+    // opts.title names a card that did not come from a fence (render.html passes the cap's title); a fence's own
+    // filename still wins, because that is what the author wrote above the block
+    const fname=_parseFenceFilename(info||'')||String(opts.title||'');
     const id=_registerCodeBlock(lang,raw,fname);
     const langLbl=esc((lang||'plain').toLowerCase())+(fname?` · <span style="color:var(--acc,#5a9e8f)">${esc(fname)}</span>`:'');
     if(st.incomplete){
@@ -7248,6 +7267,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const previewBtn=previewable
       ? `<button class="cb-act" data-prev onclick="CH._codeInline('${id}')" title="Render it here — a sandboxed frame, no network">${_cbWholePage(lang, raw) ? 'Source' : 'Preview'}</button>`
         + `<button class="cb-act" onclick="CH._codePreview('${id}')" title="Open it in the preview pane, larger">Pane</button>`
+        // the pop-out the render cap used to force on the reader, offered instead: same floating window, their call
+        + `<button class="cb-act" onclick="CH._codePop('${id}')" title="Float it over the UI">⤢ Pop out</button>`
       : '';
     const runBtn=(['js','javascript','jsx'].includes(L))
       ? `<button class="cb-act" onclick="CH._codeRun('${id}')" title="Render in sandboxed iframe (browser console output captured)">Preview JS</button>`
@@ -7354,6 +7375,16 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     try{ navigator.clipboard.writeText(blk.code); btn.textContent='Copied'; }
     catch(_){ btn.textContent='Copy failed'; }
     setTimeout(()=>{btn.textContent=orig;},1200);
+  }
+  /* Float this block over the UI — the artifact pop-out, reached from the card. It is the same window render.html
+     used to open by itself; the only change is who decides. The artifact store is keyed per opened window, so a
+     block can be popped more than once and each window stands alone. */
+  function _codePop(id){
+    const blk=_CODE_BLOCKS[id]; if(!blk)return;
+    const aid='a'+(++_artSeq);
+    _ART_STORE[aid]={ kind:'html', title:blk.filename||('html · '+((blk.code||'').length)+' chars'),
+                      content:_cbDoc(blk.lang, blk.code), height:520 };
+    _artPop(aid);
   }
   /* Show the Code preview pane. It used to be opened with ctxTab('code') alone, which marks the pane but cannot
      reveal it: #paneCode is a .ctx-pane inside the one LHM's detail column, and quick-menu mode hides everything in
@@ -18585,7 +18616,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _onPaste,_pasteAccept,_pasteDismiss,
     _docEditorOpen,_docEditorClose,_docChipUpdate,_docChipRemove,_docChipRemoveCurrent,
     _browserGo,_browserNav,_browserNavigate,_browserCapture,_browserToggleMode,_browserSwitchToScreenshot,_renderBrowserCtxList,_switchToListTab,
-    _codeCopy,_codePreview,_codeInline,_codeRun,_codeExec,_codeViewMode,_codePreviewClose,_autoPreviewToggle,
+    _codeCopy,_codePreview,_codeInline,_codeRun,_codePop,_codeExec,_codeViewMode,_codePreviewClose,_autoPreviewToggle,
     _artifactsRefresh,_artifactOpen,_codeSaveArtifact,
     _sessionSbxToggle,_sessionSbxRefresh,_sessionSbxTerminal,_sessionSbxVscode,
     _artifactsFsMode,_artFsBrowse,
