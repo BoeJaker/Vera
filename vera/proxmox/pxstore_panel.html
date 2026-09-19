@@ -537,6 +537,42 @@ P.show = (p,el)=>{
   if(p==='estate') P.estateInit();
 };
 
+/* ── ZFS controls — every button is a dry run first, then a confirmed run ── */
+P.zfsOp = async (capName, args, title, extra)=>{
+  const base={cluster_id:P.state.cluster,node:P.state.node,...args};
+  const path='/'+capName.replace(/\./g,'/');
+  let dry;
+  try{ dry=await api(path,'POST',base); }catch(e){ return toast(e.message,'err'); }
+  const plan=dry.plan||{};
+  if(dry.error&&!plan.commands?.length) return toast(dry.error,'err');
+  const text=(title||capName)+'\n\nWill run on '+P.state.node+':\n  '+(plan.commands||[]).join('\n  ')
+    +(plan.before||plan.after?`\n\nLayout: ${plan.before||''} → ${plan.after||''}`:'')
+    +((plan.warnings||[]).length?'\n\nMind:\n  • '+plan.warnings.join('\n  • '):'')+'\n\nRun it?';
+  if(!confirm(text)) return;
+  const conf={...base,confirm:true,...(extra||{})};
+  if(extra&&extra.needsPool){ const typed=prompt('Type the pool name to confirm: '+args.pool); if(typed!==args.pool) return toast('not run: name did not match','err'); conf.confirm_pool=typed; }
+  delete conf.needsPool;
+  let r; try{ r=await api(path,'POST',conf); }catch(e){ return toast(e.message,'err'); }
+  if(r.error||!r.ok){ toast((r.error||'did not succeed')+(r.stderr?' — '+r.stderr.slice(-200):''),'err'); return; }
+  toast((plan.op||'done')+' ran on '+P.state.node,'ok');
+  setTimeout(()=>P.load&&P.load(), 1500);
+};
+P.zfsResize = (vmid,gtype,disk,dataset)=>{
+  const size=prompt('New absolute size for '+dataset+' (e.g. 200G). A subvol can shrink to no less than it holds; a VM disk can only grow.');
+  if(!size) return;
+  P.zfsOp('pxstore.zfs.resize',{dataset,size:size.trim(),vmid,guest_type:gtype,disk},'Resize '+dataset+' to '+size.trim());
+};
+P.zfsMirror = (pool,existing)=>{
+  const ex=existing||prompt('The disk now in '+pool+' (as zpool status names it):'); if(!ex) return;
+  const nw=prompt('The EMPTY disk to attach beside '+ex+' (e.g. /dev/disk/by-id/wwn-…). Everything on it is overwritten.'); if(!nw) return;
+  P.zfsOp('pxstore.zfs.attach',{pool,existing:ex,new:nw.trim()},'Mirror '+pool+': attach '+nw.trim()+' beside '+ex,{needsPool:true});
+};
+P.zfsAddVdev = (pool)=>{
+  const disks=prompt('Disks for the new vdev in '+pool+', space-separated (1 = single disk, 2 = mirror, 3+ = raidz1):'); if(!disks) return;
+  const list=disks.trim().split(/\s+/); const kind=list.length===1?'disk':list.length===2?'mirror':'raidz1';
+  P.zfsOp('pxstore.zfs.add',{pool,disks:list,kind},'Add a '+kind+' vdev to '+pool,{needsPool:true});
+};
+
 /* ── DOCKER — docker.disk.breakdown, computed in the background and polled ── */
 let _dkfsPoll=null;
 P.dockerFsLoad = async (refresh)=>{
@@ -799,6 +835,13 @@ P.renderOverview = ()=>{
       <div class="${barClass(pct)}"><i style="width:${pct}%"></i></div></div>
       <div class="kv" style="display:flex;flex-wrap:wrap;gap:4px 10px">${facts.map(f=>'<span>'+f+'</span>').join('')}${io}</div>
       ${fs.length?`<div class="kv" style="color:var(--${worst==='error'?'err':worst==='warn'?'warn':'t3'})">${esc(fs[0].message)}${fs[0].detail?' <span style="opacity:.7">— '+esc(fs[0].detail)+'</span>':''}</div>`:''}
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">
+        ${p.scan_state==='running'?`<button class="btn sm" onclick="P.zfsOp('pxstore.zfs.scrub',{pool:'${esc(p.name)}',action:'stop'},'Stop the scrub of ${esc(p.name)}')">Stop scrub</button>`
+          :`<button class="btn sm" onclick="P.zfsOp('pxstore.zfs.scrub',{pool:'${esc(p.name)}'},'Scrub ${esc(p.name)}')">Scrub</button>`}
+        <button class="btn sm" onclick="P.zfsOp('pxstore.zfs.trim',{pool:'${esc(p.name)}'},'Trim ${esc(p.name)}')">Trim</button>
+        ${p.redundancy==='none'&&p.disks===1?`<button class="btn sm" title="Attach an empty disk beside this one to make a mirror" onclick="P.zfsMirror('${esc(p.name)}','${esc(((p.vdevs||[])[0]||{}).name||'')}')">Mirror it…</button>`:''}
+        <button class="btn sm" onclick="P.zfsAddVdev('${esc(p.name)}')">Add vdev…</button>
+      </div>
       </div>`;
   }).join('')||'<div class="empty">No ZFS pools reported (node SSH unmapped? → ⚙ Setup)</div>';
 
@@ -815,6 +858,7 @@ P.renderOverview = ()=>{
       <td style="white-space:nowrap">
         <input style="width:70px" placeholder="+10G" id="rz-${g.vmid}">
         <button class="btn sm" onclick="P.resize(${g.vmid},'${esc(g.type)}','${esc(dk)}')">Grow ${esc(dk)}</button>
+        ${(g.datasets||[]).length?`<button class="btn sm" title="Set an absolute size; a subvol can shrink, a VM disk cannot" onclick="P.zfsResize(${g.vmid},'${esc(g.type)}','${esc(dk)}','${esc((g.datasets[0]||{}).name||'')}')">Resize…</button>`:''}
       </td></tr>`;
   }).join('')||'<tr><td colspan="7" class="empty">no guests</td></tr>';
 
