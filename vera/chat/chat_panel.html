@@ -6542,7 +6542,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     try{ const fr=_ctxFrameInView(mid); const active=fr?fr.id:null;
       const fsig=CTX_FRAMES.length+':'+(CTX_FRAMES.length?CTX_FRAMES[CTX_FRAMES.length-1].id:'')+':'+active;
       if(fsig!==_ctxColFrameSig&&typeof _ctxCol.setFrames==='function'){ _ctxColFrameSig=fsig; _ctxCol.setFrames(CTX_FRAMES, {active}); }
-      if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){} try{ _ctxRunsDraw(); }catch(_){} } }catch(_){}
+      if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; _ctxViewRepaint(); try{ _ctxRunsDraw(); }catch(_){} } }catch(_){}
     // the rail's other graphs, in the same column: the session's memory graph (loaded once per session, the rail's
     // own loader) and the run's DAG — fed when they changed
     if(SID&&!_memAllNodes.length&&Date.now()-_ctxColMemT>30000){ _ctxColMemT=Date.now(); try{ memGraphLoad(); }catch(_){} }
@@ -12526,13 +12526,17 @@ Your task: decide what to do next to advance toward the goal.
   function renderCtxGraph(){
     const svg=document.getElementById('ctxSvg'),nG=document.getElementById('nodeG'),eG=document.getElementById('edgeG');if(!svg||!nG||!eG)return;
     // Per-source layer filtering (replaces old Both/Vec/Neo toggle)
-    const vis=CTX_NODES.filter(n=>_ctxLayers.has(n.source));
+    // the turn in view, or the live set when the newest turn is (_ctxInView) — this graph is a DISPLAY surface, so
+    // it follows the transcript's scroll exactly as the plot does rather than staying on the newest turn
+    const _V=_ctxInView();
+    const vis=_V.nodes.filter(n=>_ctxLayers.has(n.source));
     const visIds=new Set(vis.map(n=>n.id));
-    const visE=CTX_EDGES.filter(e=>visIds.has(e.from)&&visIds.has(e.to));
+    const visE=_V.edges.filter(e=>visIds.has(e.from)&&visIds.has(e.to));
 
     // the assembled context (skills, ontologies, caps, agent, related Q&A) as synthetic nodes — the one function the
-    // graph column reads too
-    const _ex=_ctxAssembledExtra(_ctxLayers, vis); const extraNodes=_ex.nodes, extraEdges=_ex.edges;
+    // graph column reads too. A frame already holds what was assembled for that turn, so the extras are the live
+    // set's alone (see _ctxInView).
+    const _ex=_V.frame?{nodes:[],edges:[]}:_ctxAssembledExtra(_ctxLayers, vis); const extraNodes=_ex.nodes, extraEdges=_ex.edges;
     const allVis=[...vis,...extraNodes.filter(n=>!vis.find(v=>v.id===n.id))];
     const allVisIds=new Set(allVis.map(n=>n.id));
     const allEdges=[...visE,...extraEdges.filter(e=>allVisIds.has(e.from)&&allVisIds.has(e.to))];
@@ -12621,12 +12625,16 @@ Your task: decide what to do next to advance toward the goal.
   function renderCtxList(){
     const el=document.getElementById('paneList');if(!el)return;
 
-    // Apply per-source layer filter (same toggles as graph)
-    const filtered=CTX_NODES.filter(n=>_ctxLayers.has(n.source));
+    // Apply per-source layer filter (same toggles as graph), over the turn in view — a DISPLAY surface, so it
+    // follows the scroll with the graph above it rather than describing the newest turn while the plot shows an
+    // older one (_ctxInView)
+    const _V=_ctxInView();
+    const filtered=_V.nodes.filter(n=>_ctxLayers.has(n.source));
 
-    // Build assembled-context sections (skills, ontologies, caps, related-QA, memory, agent)
+    // Build assembled-context sections (skills, ontologies, caps, related-QA, memory, agent). _assembledCtx is
+    // the LIVE assembly, so these belong to the live set only; a frame already carries that turn's own.
     const acSections=[];
-    const ac=_assembledCtx;
+    const ac=_V.frame?null:_assembledCtx;
     if(ac?.res){
       if(_ctxLayers.has('agent')&&ac.agent){
         const a=ac.agent;
@@ -12792,7 +12800,7 @@ Your task: decide what to do next to advance toward the goal.
 
   function renderFabPane(){
     const el=document.getElementById('paneFabric');if(!el)return;
-    const fabs=CTX_NODES.filter(n=>n.source==='fabric'&&n.type!=='dataset');
+    const fabs=_ctxInView().nodes.filter(n=>n.source==='fabric'&&n.type!=='dataset');   // a display surface: the turn in view
     if(!fabs.length){el.innerHTML='<div style="font-size:10px;color:var(--dim)">No fabric results</div>';return;}
     el.innerHTML=fabs.map(n=>`<div style="padding:4px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:3px;font-size:9.5px;margin-bottom:3px"><span style="font-family:var(--mono);font-size:8.5px;color:var(--acc3)">${esc(n.dataset||'—')}</span> · ${(n.score||0).toFixed(2)}<br>${esc((n.text||n.label||'').slice(0,140))}</div>`).join('');
   }
@@ -12828,12 +12836,41 @@ Your task: decide what to do next to advance toward the goal.
     if(f===CTX_FRAMES[CTX_FRAMES.length-1]){ const inp=document.getElementById('chatInput'); if(inp&&inp.value.trim()&&Date.now()-_ctxTypingT<90000) return null; }
     return f; }
   function _ctxBroadcastFrames(){ if(_EMBED.only==='menu') return; try{ _lhmPost('frames',{ frames:CTX_FRAMES }); }catch(_){} }
+  /* THE one reading of "the context on screen", and the seam this whole feature turns on.
+     Every surface that DISPLAYS context reads this. Every surface that BUILDS THE NEXT PROMPT keeps reading
+     CTX_NODES/CTX_EDGES directly — the composer, ctxFetch, the include/exclude toggles, every push of a new
+     record. That split IS the safety property: what you look at follows the scroll, what you send never does.
+     (The legacy Frames pane used to cross that line: loadFrame ASSIGNED the globals, so viewing an old turn
+     silently rewrote the context the next question would carry.)
+     Before this, six display surfaces each reached for the live globals independently, so only the graph plot
+     followed the turn in view — the element does its own frame swap. Measured on the design edge at three scroll
+     positions: the plot correctly drew turn 1, 2 and 3, while the budget bar, the "In this prompt" list, the
+     header meter, the legacy SVG graph (54 nodes, unchanged) and the legacy list all stayed on the newest turn.
+     A frame is already a snapshot of what was assembled at the time, so the assembled extras (agent, skills,
+     ontologies, caps) are added to the LIVE set only — adding today's to a past turn would invent context it
+     never had. Falls back to the live set on any error: a display bug must never blank the graphs. */
+  function _ctxInView(){
+    try{
+      const f=(_ctxActiveFrame!=null)?CTX_FRAMES.find(x=>x&&String(x.id)===String(_ctxActiveFrame)):null;
+      if(f) return { nodes:(f.nodes||[]), edges:(f.edges||[]), frame:f };
+    }catch(_){}
+    return { nodes:CTX_NODES, edges:CTX_EDGES, frame:null };
+  }
   // the frame in view right now (the turn in focus, live while typing) — the one both graphs draw
   function _ctxActiveCompute(){ try{ const w=_focusedTurn(); const f=_ctxFrameInView(w?(w.dataset.mid||''):''); return f?f.id:null; }catch(_){ return null; } }
   // the follow: on the transcript's scroll and the composer's input, whether or not the graph is grown — the mini
   // re-renders when the frame in view changes; the grown column syncs through its anchor
   let _ctxFollowT=0, _ctxFollowTimer=null;
-  function _ctxFollow(now){ const run=()=>{ _ctxFollowT=Date.now(); const active=_ctxActiveCompute(); if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){} }
+  /* Every display surface repaints when the turn in view changes — one function, so a surface cannot be added to
+     _ctxInView and then silently never redraw. The rail's menu (the mini plot, the budget bar, "In this prompt")
+     goes through VeraLHM; the right rail's own panes are drawn directly, and only the sub-view on screen is drawn
+     because the others read their state when they are next shown. */
+  function _ctxViewRepaint(){
+    try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}
+    try{ if(CTX_VIEW==='graph') renderCtxGraph(); else if(CTX_VIEW==='list') renderCtxList(); else if(CTX_VIEW==='fabric') renderFabPane(); }catch(_){}
+    try{ _ctxMeterSegs(); }catch(_){}
+  }
+  function _ctxFollow(now){ const run=()=>{ _ctxFollowT=Date.now(); const active=_ctxActiveCompute(); if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; _ctxViewRepaint(); }
       if(_pages.has('graph')&&_ctxCol) _graphAnchorPost(true); else { try{ _ctxRunsDraw(); }catch(_){} } };
     if(now||Date.now()-_ctxFollowT>150){ if(_ctxFollowTimer){ clearTimeout(_ctxFollowTimer); _ctxFollowTimer=null; } return run(); }
     if(!_ctxFollowTimer) _ctxFollowTimer=setTimeout(()=>{ _ctxFollowTimer=null; run(); }, 160); }
@@ -13745,7 +13782,14 @@ function _embedMount(){
   const _kfmt=n=>n>=1000?(n/1000).toFixed(1)+'k':String(n);
   // every family of the assembled context: its records, its tokens (≈ chars / 4), its colour, its share
   function _ctxShares(){
-    let nodes=CTX_NODES.slice(); try{ const ex=_ctxAssembledExtra(_CTX_ALL_LAYERS, CTX_NODES); nodes=nodes.concat(ex.nodes.filter(n=>!CTX_NODES.some(c=>c.id===n.id))); }catch(_){}
+    /* The rows under "In this prompt", the budget bar (which is now the section control) and the header meter are
+       the SAME reading as the graph beside them, so they follow the turn in view exactly as it does. They read
+       CTX_NODES unconditionally before this, so scrolling back moved the plot onto that turn's context and left
+       all three describing the LIVE set — what the NEXT question is assembling. Three readings of one thing,
+       disagreeing on screen, with the bar's bands pointing at families the graph was no longer drawing. */
+    const _V=_ctxInView();
+    let nodes=_V.nodes.slice();
+    if(!_V.frame){ try{ const ex=_ctxAssembledExtra(_CTX_ALL_LAYERS, CTX_NODES); nodes=nodes.concat(ex.nodes.filter(n=>!CTX_NODES.some(c=>c.id===n.id))); }catch(_){} }
     const by={}; nodes.forEach(n=>{ if(n.included===false) return; const f=String(n.source||n.family||'context').toLowerCase(); const b=by[f]||(by[f]={f, n:0, tok:0}); b.n++; b.tok+=Math.max(8, Math.round(String(n.text||n.label||'').length/4)); });
     const rows=Object.values(by).sort((a,b)=>b.tok-a.tok); const total=rows.reduce((s,b)=>s+b.tok,0)||1;
     rows.forEach(b=>{ b.pct=b.tok/total*100; b.col=srcCol(b.f); b.label=_CTX_FAM_LABEL[b.f]||b.f; });
@@ -13762,7 +13806,10 @@ function _embedMount(){
     _ctxFollowBind(); _ctxActiveFrame=_ctxActiveCompute();
     const S=_ctxShares();
     if(_ctxGrown){
-      const sig='grown#'+S.rows.map(r=>r.f+r.tok).join('|')+'#'+JSON.stringify(_qGalOff);   // the bar's own off-state is part of the key, or pressing a band repaints nothing
+      // the bar's own off-state is part of the key, or pressing a band repaints nothing; so is the frame in view,
+      // or scrolling the transcript with the graph grown leaves the bar on the turn you scrolled away from (the
+      // shares alone are not enough — two turns can hold the same families at the same token counts)
+      const sig='grown#'+S.rows.map(r=>r.f+r.tok).join('|')+'#'+JSON.stringify(_qGalOff)+'#'+_ctxActiveFrame;
       if(el.dataset.sig===sig) return; el.dataset.sig=sig;
       if(!document.getElementById('ctxGrown')){ el.innerHTML='<div id="ctxGrown" class="wid" data-w="context graph · graph" data-tpl="lhm:ctx-galaxy"></div><div class="wid ctx-grown-bar" data-w="budget bar · meter" data-tpl="lhm:ctx-budget"></div>'; }
       const bar=el.querySelector('.ctx-grown-bar');
