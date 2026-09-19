@@ -189,3 +189,31 @@ class RedactingFilter(logging.Filter):
         except Exception:
             pass
         return True
+
+
+def install_redaction() -> bool:
+    """Redact at the point every LogRecord is CREATED, whatever handler it ends
+    up in. Idempotent.
+
+    A handler filter was not enough: the first cut put RedactingFilter on the
+    handlers present when log_setup's file handler was built, and prod kept
+    writing tokens - perf_capabilities opens a second RotatingFileHandler on the
+    in-tree logs/vera.log LATER in startup, and that one never saw the filter
+    (2026-09-19). Handlers come and go; the record factory is the one choke
+    point every logger shares. Also wrapped: the QueueHandler offload copies
+    records, so this runs before any copy is made.
+    """
+    current = logging.getLogRecordFactory()
+    if getattr(current, "_vera_redacting", False):
+        return False
+    _filter = RedactingFilter()
+
+    def factory(*args, **kwargs):
+        record = current(*args, **kwargs)
+        _filter.filter(record)
+        return record
+
+    factory._vera_redacting = True          # type: ignore[attr-defined]
+    factory._vera_wrapped = current         # type: ignore[attr-defined]
+    logging.setLogRecordFactory(factory)
+    return True

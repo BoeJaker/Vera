@@ -162,10 +162,9 @@ def _install_file_log_handler() -> str:
         setattr(h, _ls.OFFLOAD_ATTR, True)
         # Mask credentials on the way OUT, so nothing that reaches a file or a
         # console can carry one. httpx logs Telegram's token-in-the-URL at INFO.
-        _redactor = _ls.RedactingFilter()
-        h.addFilter(_redactor)
-        for _existing in list(_root.handlers):
-            _existing.addFilter(_redactor)
+        # At the record factory, not on handlers: perf_capabilities opens a second
+        # file handler later in startup, and a handler-level filter missed it.
+        _ls.install_redaction()
         _root.addHandler(h)
         return cfg["path"]
     except Exception as _e:

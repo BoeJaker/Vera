@@ -57,3 +57,26 @@ def test_the_filter_never_drops_or_raises_on_odd_records():
     rec2 = _record("count=%d", 3)
     assert f.filter(rec2) is True
     assert rec2.getMessage() == "count=3"
+
+
+def test_install_redaction_covers_a_handler_added_later(tmp_path):
+    """The failure mode seen live: a second file handler installed after the
+    filter still wrote the token. Redaction at the record factory covers it."""
+    import logging.handlers
+    installed = log_setup.install_redaction()
+    try:
+        lg = logging.getLogger("test.redaction.late")
+        lg.propagate = False
+        path = tmp_path / "late.log"
+        h = logging.FileHandler(path, encoding="utf-8")     # no filter on purpose
+        lg.addHandler(h)
+        lg.warning("HTTP Request: %s %s", "POST", URL)
+        h.flush(); h.close(); lg.removeHandler(h)
+        text = path.read_text(encoding="utf-8")
+        assert ("A" * 35) not in text
+        assert "/bot1234567890:<redacted>" in text
+        assert log_setup.install_redaction() is False, "second install is a no-op"
+    finally:
+        fac = logging.getLogRecordFactory()
+        if getattr(fac, "_vera_redacting", False):
+            logging.setLogRecordFactory(fac._vera_wrapped)
