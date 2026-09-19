@@ -160,6 +160,46 @@ def test_lost_broker_renewal_cancels_the_generation_holder(monkeypatch):
     run(exercise())
 
 
+def test_cancelled_slot_waits_for_broker_release_before_returning(monkeypatch):
+    released = asyncio.Event()
+    entered = asyncio.Event()
+    iid = "broker-cancel-release-node"
+
+    class Broker:
+        async def acquire(self, node, wait):
+            return {"broker_lease_id": "opaque", "node": node}
+
+        async def release(self, lease):
+            await asyncio.sleep(0.01)
+            released.set()
+            return True
+
+        async def renew(self, lease, ttl):
+            return True
+
+    monkeypatch.setattr(evolve._orch, "_GATE_ON", True)
+    monkeypatch.setattr(evolve._orch, "_GATE_BROKER_CONFIGURED", True)
+    monkeypatch.setattr(evolve._orch, "_GATE_BROKER", Broker())
+    monkeypatch.setattr(evolve._orch, "OLLAMA_INSTANCES", {
+        iid: {"has_gpu": True}})
+    monkeypatch.setattr(evolve._orch._gate, "capacity_for", lambda _gpu: 1)
+
+    async def exercise():
+        async def body():
+            async with evolve._orch._ollama_slot(iid):
+                entered.set()
+                await asyncio.Future()
+
+        task = asyncio.create_task(body())
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert released.is_set(), "slot returned before broker lease release completed"
+
+    run(exercise())
+
+
 def test_mcp_header_enters_scoped_context_and_is_reset():
     name = 'test.sandbox.gate.header'
     existing = evolve._orch.CAPABILITY_REGISTRY.get(name)

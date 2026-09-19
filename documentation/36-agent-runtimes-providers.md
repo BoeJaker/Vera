@@ -100,6 +100,23 @@ transcripts. Reports contain only mismatch field names and hashes, never model
 payloads. These checks do not dispatch inference; representative runtime,
 placement, load, and recovery tests remain a separate live gate.
 
+The opt-in live Ollama validator uses that shared inference gate and reports
+transport success separately from content conformance. It runs non-streaming,
+streaming, and cancellation cases through the same portable provider binding;
+reports retain output hashes, sizes, chunk/usage counts, and bounded semantic
+diagnostics rather than prompts or generated content. Exact text remains the
+default content contract. A JSON-semantic mode can compare a supplied object or
+array after parsing while reporting only type, field-count, and value-match
+counts.
+
+Representative `qwen2.5:0.5b` evidence confirms both transport modes and task
+cancellation work, but the model changes the capitalization of the requested
+sentinel, so exact content conformance remains failed rather than being weakened
+to a case-insensitive pass. Cancellation now waits for a bounded broker-release
+attempt before its task can finish. This prevents a short-lived validation
+process from closing its event loop with the shared GPU lease still held; lease
+expiry remains the final backstop if the controller is unreachable.
+
 `InferenceDeployment` is the durable join between those pieces. Its stable
 identity binds one admitted ModelPackage to a provider and target, exact runtime
 kind/version, verified artifact digests, placement labels, and a single retry

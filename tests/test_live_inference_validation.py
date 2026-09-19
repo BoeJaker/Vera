@@ -46,6 +46,7 @@ async def test_live_validator_uses_portable_binding_and_emits_no_content():
     assert "Reply with" not in encoded
     assert "VERA_OK" not in encoded
     assert len(runner.calls) == 2
+    assert runner.calls[0][0] == "Reply with VERA_OK only."
     assert runner.calls[0][1]["model"] == "qwen2.5:0.5b"
     assert runner.calls[0][1]["instance_id"] == "gpu-250"
     assert runner.calls[0][1]["options"] == {"num_predict": 32, "temperature": 0}
@@ -107,6 +108,47 @@ def test_expected_content_must_be_bounded(expected):
         asyncio.run(validate_ollama_provider(
             model="model", instance_id="node", artifact_sha256="b" * 64,
             artifact_size=1, runner=Runner(), expected_output=expected))
+
+
+@pytest.mark.asyncio
+async def test_json_semantic_content_accepts_formatting_but_not_wrong_value():
+    async def formatted(_prompt, **kwargs):
+        text = '{\n  "sentinel": "VERA_OK"\n}'
+        callback = kwargs.get("stream_cb")
+        if callback:
+            await callback(text)
+        kwargs["meta_out"].update({"eval_count": 4})
+        assert kwargs["json_mode"] is True
+        return text
+
+    report = await validate_ollama_provider(
+        model="model", instance_id="node", artifact_sha256="b" * 64,
+        artifact_size=1, runner=formatted,
+        expected_output='{"sentinel":"VERA_OK"}',
+        content_mode="json_semantic")
+    assert report["passed"] is True
+    assert report["content_contract"] == "json_semantic"
+    assert all(case["json_valid"] and case["missing_field_count"] == 0
+               and case["extra_field_count"] == 0
+               and case["matching_value_count"] == 1
+               for case in report["cases"])
+    assert "sentinel" not in json.dumps(report)
+
+    async def wrong(_prompt, **kwargs):
+        callback = kwargs.get("stream_cb")
+        if callback:
+            await callback('{"sentinel":"wrong"}')
+        kwargs["meta_out"].update({"eval_count": 3})
+        return '{"sentinel":"wrong"}'
+
+    report = await validate_ollama_provider(
+        model="model", instance_id="node", artifact_sha256="b" * 64,
+        artifact_size=1, runner=wrong,
+        expected_output='{"sentinel":"VERA_OK"}',
+        content_mode="json_semantic")
+    assert report["transport_passed"] is True
+    assert report["content_conformant"] is False
+    assert report["passed"] is False
 
 
 @pytest.mark.parametrize('mode', ['direct', 'controller_broker'])
