@@ -94,7 +94,8 @@ def test_cancellation_inside_the_gate_hands_the_permit_back():
     sem = CO._ollama_sem(iid)
     assert sem._value == 1, "fixture node started out already held"
 
-    saved = (CO._GATE_ON, CO.COORD_REDIS, CO._gate.capacity_for, CO._gate.acquire)
+    saved = (CO._GATE_ON, CO.COORD_REDIS, CO._gate.capacity_for, CO._gate.acquire,
+             CO._GATE_BROKER_CONFIGURED, CO._GATE_BROKER)
 
     async def scenario():
         entered = asyncio.Event()
@@ -104,6 +105,8 @@ def test_cancellation_inside_the_gate_hands_the_permit_back():
             await asyncio.sleep(3600)
 
         CO._GATE_ON = True
+        CO._GATE_BROKER_CONFIGURED = False
+        CO._GATE_BROKER = None
         CO.COORD_REDIS = object()          # non-None: reach the acquire
         CO._gate.capacity_for = lambda has_gpu: 1
         CO._gate.acquire = never_returns
@@ -127,6 +130,7 @@ def test_cancellation_inside_the_gate_hands_the_permit_back():
     finally:
         CO._GATE_ON, CO.COORD_REDIS = saved[0], saved[1]
         CO._gate.capacity_for, CO._gate.acquire = saved[2], saved[3]
+        CO._GATE_BROKER_CONFIGURED, CO._GATE_BROKER = saved[4], saved[5]
 
     assert sem._value == 1, (
         "a cancelled generation leaked the node's only permit - every later "
