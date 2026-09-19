@@ -21,7 +21,7 @@ let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 
 const src = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_panel.html'), 'utf8');
 
 t('the turn carries the context it actually sent, captured at send',
-  src.indexOf('nodes:JSON.parse(JSON.stringify(CTX_NODES)), edges:JSON.parse(JSON.stringify(CTX_EDGES)),') >= 0);
+  src.indexOf('nodes:JSON.parse(JSON.stringify(_allN)), edges:JSON.parse(JSON.stringify(_allE)),') >= 0);
 t('every completed turn gets a frame, even an empty one',
   src.indexOf('const _f=_saveFrame(') >= 0 && src.indexOf('if(_sn){ _saveFrame(') < 0 && src.indexOf('CTX_NODES.length?CTX_NODES.slice():[]') >= 0);
 t('the frame is tagged onto its answer and its question, from the DOM',

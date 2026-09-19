@@ -61,7 +61,7 @@ t('the assembled extras are added to the LIVE set only', !!shares && shares.inde
 
 // ---- the other half of the split: the prompt still carries the LIVE set -----------------------------------
 t('ctxFetch still assigns the live set', src.indexOf('CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query;') >= 0);
-t('the send path still captures the live set at send', src.indexOf('nodes:JSON.parse(JSON.stringify(CTX_NODES)), edges:JSON.parse(JSON.stringify(CTX_EDGES)),') >= 0);
+t('the send path still captures the live set at send', src.indexOf('nodes:JSON.parse(JSON.stringify(_allN)), edges:JSON.parse(JSON.stringify(_allE)),') >= 0);
 t('include/exclude still toggles the live set', src.indexOf('function _ctxExcludeAll(){CTX_NODES.forEach(n=>n.included=false);renderCtxList();}') >= 0);
 t('_ctxInView is not used where the prompt is built', (body('function _ctxInView(){') || '') && src.slice(src.indexOf('const items=CTX_NODES'), src.indexOf('const items=CTX_NODES') + 400).indexOf('_ctxInView') < 0);
 
