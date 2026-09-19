@@ -10370,7 +10370,9 @@ Your task: decide what to do next to advance toward the goal.
         if(_aw&&_f){ _aw.dataset.frame=String(_f.id);
           let _qw=_aw.previousElementSibling;
           while(_qw&&!(_qw.classList&&_qw.classList.contains('mwrap'))) _qw=_qw.previousElementSibling;
-          if(_qw&&_qw.classList.contains('u')) _qw.dataset.frame=String(_f.id); } }catch(_){}
+          if(_qw&&_qw.classList.contains('u')){ _qw.dataset.frame=String(_f.id);
+            // and it is written down, so the recording survives a reload instead of dying with the page
+            try{ _ctxTurnPersist(_qw,_f); }catch(_){} } } }catch(_){}
       updateFrameUI();
       _ctxTurnSend=null; _ctxColSig=''; _ctxColFrameSig=''; try{ _ctxColumnSync(_grFocusMid||''); }catch(_){} try{ _ctxFollow(true); }catch(_){} }
     // Re-fetch context after send if "ctxOnSend" is enabled. Use the USER's
@@ -12780,6 +12782,66 @@ Your task: decide what to do next to advance toward the goal.
     // the graphs then show — the old graph's "start typing to load context")
     if(f===CTX_FRAMES[CTX_FRAMES.length-1]){ const inp=document.getElementById('chatInput'); if(inp&&inp.value.trim()&&Date.now()-_ctxTypingT<90000) return null; }
     return f; }
+  /* A recorded turn has to survive a reload, or every message is recomputed next time. The notes KV is the
+     store because it is KEYED and reads back immediately (verified: set then get returns the value at once).
+     /memory/search is not usable - a row written through /memory/store is invisible to it at t+0s, t+28s and
+     t+45s - which is what sank an earlier attempt (Notes/42 defect 107).
+     THE KEY IS THE QUESTION'S OWN WORDS, not a counter. Every counter tried has drifted: HISTORY user counts
+     gave two frames both called "Turn 2", mids are reissued at render time, ordinals shift when a restore
+     truncates. A hash of the rendered question text, plus which occurrence of that text it is, is computed
+     identically by the writer and the reader from the transcript they can both see. */
+  const _CTXK_SCOPE='ctxturn', _CTXK_MAX=5600;
+  const _ctxHash=(s)=>{ let h=5381; s=String(s||''); for(let i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))>>>0; return h.toString(36); };
+  const _ctxQText=(w)=>{ const b=w&&(w.querySelector('.mbody')||w.querySelector('.msg-body')); return String(((b||w||{}).textContent)||'').trim().slice(0,600); };
+  function _ctxTurnKey(sid,qw){
+    const msgs=document.getElementById('msgs'); if(!sid||!qw||!msgs) return '';
+    const txt=_ctxQText(qw); if(!txt) return '';
+    const hh=_ctxHash(txt); let n=0;
+    const all=[...msgs.querySelectorAll('.mwrap.u')];
+    for(const x of all){ if(x===qw) break; if(_ctxHash(_ctxQText(x))===hh) n++; }   // the nth time this question was asked
+    return String(sid)+':'+hh+(n?'#'+n:'');
+  }
+  /* only what a graph needs to draw; record bodies are never stored, and an oversized turn is trimmed by
+     score rather than dropped whole */
+  function _ctxTurnPack(f){
+    const ns=(f.nodes||[]).filter(n=>n&&n.id).slice().sort((a,b)=>(b.score||0)-(a.score||0))
+      .map(n=>{ const o={i:n.id,l:String(n.label||'').slice(0,80),s:String(n.source||'context')};
+        if(typeof n.score==='number') o.c=+n.score.toFixed(3);
+        if(n.included===false) o.x=0; if(n.by) o.b=n.by; return o; });
+    const o={q:String(f.query||'').slice(0,160),n:ns,e:(f.edges||[]).map(e=>({f:e.from,t:e.to,r:e.type||e.label||''}))};
+    let s=JSON.stringify(o);
+    if(s.length>_CTXK_MAX){ o.e=[]; s=JSON.stringify(o); }
+    while(s.length>_CTXK_MAX&&o.n.length>4){ o.n=o.n.slice(0,Math.max(4,Math.floor(o.n.length*0.75))); s=JSON.stringify(o); }
+    return s;
+  }
+  function _ctxTurnPersist(qw,f){
+    if(!SID||!qw||!f||!(f.nodes||[]).length) return;
+    const k=_ctxTurnKey(SID,qw); if(!k) return;
+    try{ api('/notes/set','POST',{ scope:_CTXK_SCOPE, ref_id:k, content:_ctxTurnPack(f), updated_by:'agent' }).catch(()=>{}); }catch(_){}
+  }
+  /* read back AFTER the transcript exists, because the key needs the rendered questions. A question that
+     already carries a frame is left alone - a live turn's own capture is never overwritten. */
+  async function _ctxTurnsRestore(sid){
+    const msgs=document.getElementById('msgs'); if(!sid||!msgs||typeof _saveFrame!=='function') return 0;
+    const qs=[...msgs.querySelectorAll('.mwrap.u')]; let got=0;
+    await Promise.all(qs.map(async(qw)=>{
+      if(qw.dataset.frame) return;
+      const k=_ctxTurnKey(sid,qw); if(!k) return;
+      try{
+        const r=await api('/notes/get?scope='+encodeURIComponent(_CTXK_SCOPE)+'&ref_id='+encodeURIComponent(k));
+        if(!r||!r.exists||!r.content) return;
+        const d=JSON.parse(r.content); const ns=(d&&d.n)||[]; if(!ns.length) return;
+        let aw=qw.nextElementSibling; while(aw&&!(aw.classList&&aw.classList.contains('mwrap'))) aw=aw.nextElementSibling;
+        if(aw&&!aw.classList.contains('a')) aw=null;
+        const f=_saveFrame('Turn '+(qw.dataset.mid||''),true,{ mid:qw.dataset.mid||'', amid:aw?(aw.dataset.mid||''):'',
+          nodes:ns.map(x=>({ id:x.i, label:x.l||x.i, source:x.s||'context', score:x.c, by:x.b, included:x.x!==0 })),
+          edges:(d.e||[]).map(e=>({from:e.f,to:e.t,type:e.r||''})), query:d.q||'' });
+        if(f){ qw.dataset.frame=String(f.id); if(aw) aw.dataset.frame=String(f.id); got++; }
+      }catch(_){}
+    }));
+    try{ updateFrameUI(); _ctxBroadcastFrames(); _ctxFollow(true); }catch(_){}
+    return got;
+  }
   function _ctxBroadcastFrames(){ if(_EMBED.only==='menu') return; try{ _lhmPost('frames',{ frames:CTX_FRAMES }); }catch(_){} }
   /* An older message has no frame because its context was never recorded when that turn happened: the stored
      record carries graph_id:'' and relations:[], its metadata is only {role, agent_id, thinking, agent_name,
@@ -14227,6 +14289,9 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
         HISTORY.push({role:'assistant',content:txt});
       }
     }
+    // the transcript exists now, so every question can be keyed by its own words: bring back whatever was
+    // recorded for this session last time, before anything has to be recomputed
+    try{ await _ctxTurnsRestore(sid); }catch(_){}
     renderHistList(SESSIONS);scroll();
 
     // Restore right panel context from last user message
