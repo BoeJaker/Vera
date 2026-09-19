@@ -109,7 +109,10 @@ def test_the_graph_column_is_the_chats_own_context_graph_and_hears_the_focused_t
     assert "_ctxCol.addEventListener('vera:ctx:collapse', ()=>{ _ctxGrow(false);" in HTML
     assert "if(Date.now()-_ctxTypingT<900){ _ctxRunsStand(svg);" in HTML and "inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxRunsDraw(); });" in HTML
     assert "function _ctxAssembledExtra(layers, present){" in HTML and "const extra=_ctxAssembledExtra(_CTX_ALL_LAYERS, CTX_NODES);" in HTML
-    assert "const _ex=_ctxAssembledExtra(_ctxLayers, vis); const extraNodes=_ex.nodes, extraEdges=_ex.edges;" in HTML, "the rail's graph draws from the same function"
+    # ...for the LIVE set. Scrolled back onto a past turn the graph draws that turn's frame, which is already a
+    # snapshot of what was assembled at the time — adding today's agent, skills and ontologies to it would be
+    # inventing context that turn never had.
+    assert "const _ex=_V.frame?{nodes:[],edges:[]}:_ctxAssembledExtra(_ctxLayers, vis); const extraNodes=_ex.nodes, extraEdges=_ex.edges;" in HTML, "the rail's graph draws from the same function"
     for src in ("'__skill__'", "'__ont__'", "'__ent__'", "'__cap__'", "'__qa__'", "'__agent__'"):
         assert HTML.count(src) >= 1, src
     assert "const msg={type:'vera:graph:anchor', mid:w?(w.dataset.mid||''):'', rect, session_id:SID||''};" in HTML
