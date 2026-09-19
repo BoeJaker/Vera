@@ -57,6 +57,44 @@ def _flag(v: Any) -> bool:
     return bool(v) and str(v).strip().lower() not in ("0", "false", "no", "off")
 
 
+async def _directory_addresses(src) -> Dict[str, List[str]]:
+    """The directory's own A records, fqdn -> addresses, so a host is judged by
+    where it points rather than what it is called. Empty when the directory
+    cannot be asked - then no host is called stale on that evidence."""
+    idm = _module_of("identity.status") or {}
+    if not all(k in idm for k in ("_state_opened", "_ipa_call")) or not src.identity:
+        return {}
+    try:
+        st = await idm["_state_opened"]()
+        if not st.get("ipa_url"):
+            return {}
+        zones = sorted({".".join(str(h.get("fqdn", "")).split(".")[1:]) for h in src.identity if "." in str(h.get("fqdn", ""))})
+        out: Dict[str, List[str]] = {}
+        for zone in zones:
+            res, err = await idm["_ipa_call"](st, "dnsrecord_find", [zone], {"sizelimit": 2000})
+            rows = (res or {}).get("result") if isinstance(res, dict) else None
+            if err or rows is None:
+                log.debug("registration: dnsrecord_find %s: %s", zone, err)
+                continue
+            for r in rows:
+                name = r.get("idnsname")
+                name = name[0] if isinstance(name, list) else name
+                name = str(name or "").rstrip(".")
+                if not name or name == "@":
+                    continue
+                fqdn = name if name.endswith(zone) else f"{name}.{zone}"
+                out[fqdn.lower()] = [str(a) for a in (r.get("arecord") or [])]
+            # every host of a zone we could read is now "known", even with no A record
+            for h in src.identity:
+                f = str(h.get("fqdn", "")).lower()
+                if f.endswith("." + zone):
+                    out.setdefault(f, [])
+        return out
+    except Exception as e:
+        log.debug("registration: directory addresses failed: %s", e)
+        return {}
+
+
 async def _run_actions(actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     done = []
     for a in actions:
@@ -87,7 +125,7 @@ async def cap_registration(refresh: bool = False, trace_id=None) -> Dict[str, An
     except RuntimeError as e:
         return {"error": str(e)}
     out = core.coverage(src)
-    out["stale"] = core.stale(src)
+    out["stale"] = core.stale(src, await _directory_addresses(src))
     out["errors"] = dict(src.errors)
     out["checked_at"] = now_iso()
     return out
@@ -110,7 +148,7 @@ async def cap_registration_prune(confirm: bool = False, kinds: Optional[List[str
         src = await _sources(True)
     except RuntimeError as e:
         return {"error": str(e)}
-    plan = core.stale(src)
+    plan = [p for p in core.stale(src, await _directory_addresses(src)) if p.get("action")]
     if kinds:
         plan = [p for p in plan if p.get("kind") in set(kinds)]
     if ids:

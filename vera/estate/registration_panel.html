@@ -118,7 +118,7 @@ function render(){
     : '<div class="empty">Every machine is registered in every plane that applies.</div>';
   const st = DATA.stale||[];
   $('stale-n').textContent = st.length ? st.length : 'none';
-  $('stale').innerHTML = st.length ? st.map(s => `<div class="stale"><span class="k">${esc(s.kind)}</span><span>${esc(s.label)}</span><span class="w">${esc(s.why)} · ${esc((s.action||{}).cap||'')}</span></div>`).join('')
+  $('stale').innerHTML = st.length ? st.map((s,i) => `<div class="stale">${s.action?`<input type="checkbox" class="stale-pick" data-i="${i}" checked>`:'<span style="width:13px;display:inline-block"></span>'}<span class="k">${esc(s.kind)}</span><span>${esc(s.label)}${s.unverified?' <span class="pl unknown" title="not removable from here until its address is known">unverified</span>':''}</span><span class="w">${esc(s.why)}${s.action?' · '+esc(s.action.cap):''}</span></div>`).join('')
     : '<div class="muted">Nothing stale.</div>';
   const errs = Object.keys(DATA.errors||{});
   $('meta').textContent = `checked ${DATA.checked_at||''}` + (errs.length ? ` · not read: ${errs.join(', ')}` : '');
@@ -135,9 +135,13 @@ async function enrol(vmid, node, type, cluster){
   alert(r.error ? ('Enrolment: ' + r.error) : ('Enrolment ' + (r.status||'') + (r.fqdn?' as '+r.fqdn:'')));
   load(true);
 }
+function picked(){ return [...document.querySelectorAll('.stale-pick:checked')].map(cb => (DATA.stale||[])[+cb.dataset.i]).filter(s => s && s.action); }
 async function prune(confirmIt){
-  if(confirmIt && !confirm('Remove every stale entry listed above from its registry? Directory hosts lose their DNS record too.')) return;
-  const r = await cap('estate.registration.prune', {confirm: !!confirmIt});
+  const sel = picked();
+  if(!sel.length) return alert('Tick the entries to remove first. Unverified entries cannot be removed from here.');
+  const lines = sel.map(s => s.kind + '  ' + s.label).join(String.fromCharCode(10) + '  ');
+  if(confirmIt && !confirm('Remove ' + sel.length + ' ticked entr' + (sel.length===1?'y':'ies') + ' from their registries?' + String.fromCharCode(10,10) + '  ' + lines + String.fromCharCode(10,10) + 'Directory hosts lose their DNS record too.')) return;
+  const r = await cap('estate.registration.prune', {confirm: !!confirmIt, ids: sel.map(s => String(s.id))});
   const out = $('prune-out'); out.style.display = 'block';
   out.textContent = r.error ? r.error : (r.dry_run ? 'Would remove:\n' : 'Removed:\n')
     + ((r.dry_run ? r.plan : r.done)||[]).map(x => `  ${x.kind}  ${x.label||x.id}${x.ok===false?'  FAILED: '+x.error:''}`).join('\n') || '  nothing';

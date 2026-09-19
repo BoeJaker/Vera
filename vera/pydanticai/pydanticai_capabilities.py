@@ -46,6 +46,7 @@ from typing import Any, Dict
 
 from Vera.vera.agentbridges.agentbridge_runtime import (
     build_image, image_present, pick_ollama_instance, stream_bridge_container,
+    text_evidence,
 )
 from Vera.vera.capability_orchestration import (
     capability, emit_event, now_iso, OLLAMA_INSTANCES, OLLAMA_MODEL,
@@ -99,7 +100,7 @@ async def pydanticai_image_ensure(force: bool = False, trace_id=None) -> Dict[st
 @capability(
     "pydanticai.run",
     http_method="POST", http_path="/pydanticai/run", http_tags=["pydanticai"],
-    memory="on",
+    memory="on", redact_args=["goal"],
     description="Launch ONE goal through a PydanticAI agent (typed/schema-"
                 "first — a third distinct paradigm from smolagents' "
                 "code-as-action and LangGraph's message graph), in a fresh, "
@@ -139,7 +140,8 @@ async def pydanticai_run(goal: str, session_id: str = "", trace_id=None) -> Dict
 
     run_id = uuid.uuid4().hex[:12]
     await emit_event({"type": f"{_EVENT_PREFIX}.start", "run_id": run_id,
-                      "session_id": session_id, "goal": goal[:200], "ts": now_iso()})
+                      "session_id": session_id,
+                      "goal_evidence": text_evidence(goal), "ts": now_iso()})
 
     argv = ["docker", "run", "--rm", "--name", f"vera-pydanticai-{run_id}",
             "-e", f"GOAL={goal}",

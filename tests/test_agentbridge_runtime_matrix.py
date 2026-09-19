@@ -6,7 +6,8 @@ import pytest
 pytestmark = pytest.mark.critical
 
 from vera.agentbridges.runtime_matrix import (
-    DIMENSIONS, FeatureAssessment, RuntimeCandidate, compile_runtime_matrix,
+    DIMENSIONS, FeatureAssessment, RuntimeCandidate, RuntimeLiveObservation,
+    compile_runtime_matrix, evaluate_live_evidence,
 )
 
 
@@ -103,3 +104,102 @@ def test_capability_returns_the_same_static_matrix():
     result = asyncio.run(caps.agentbridge_runtime_matrix.__wrapped__())
     assert result == compile_runtime_matrix().to_dict()
     assert result["executes"] is False
+
+
+def test_live_evidence_is_payload_free_stable_and_never_selects_a_winner():
+    cases = compile_runtime_matrix().required_live_cases
+    observations = [RuntimeLiveObservation(
+        runtime_id="langgraph", case=case, state="passed",
+        reason_code="verified", terminal_count=(0 if case == "runtime.version_report" else 1),
+        cleanup_verified=(case == "runtime.cleanup"),
+        resource_release_verified=(case == "runtime.resource_release"),
+    ) for case in cases]
+    first = evaluate_live_evidence(observations, ["langgraph"])
+    second = evaluate_live_evidence(reversed(observations), ["langgraph"])
+    assert first == second
+    assert first["evidence_complete"] is True
+    assert first["summaries"][0]["conformant"] is True
+    assert first["ready_for_selection"] is False
+    assert first["universal_winner"] is None
+    assert first["payloads_retained"] is False
+    assert first["executes"] is False
+    assert "prompt" not in str(first).lower()
+    assert "answer" not in str(first).lower()
+    assert "stderr" not in str(first).lower()
+
+
+def test_live_evidence_preserves_missing_failed_and_unavailable_distinctions():
+    report = evaluate_live_evidence([
+        {"runtime_id": "smolagents", "case": "runtime.timeout",
+         "state": "passed", "reason_code": "timeout_bounded", "terminal_count": 1},
+        {"runtime_id": "smolagents", "case": "runtime.cancel",
+         "state": "unavailable", "reason_code": "adapter_not_registered"},
+        {"runtime_id": "pydanticai", "case": "runtime.timeout",
+         "state": "failed", "reason_code": "container_leaked", "terminal_count": 1},
+    ], ["pydanticai", "smolagents"])
+    by_id = {item["runtime_id"]: item for item in report["summaries"]}
+    assert by_id["smolagents"]["counts"] == {
+        "failed": 0, "passed": 1, "unavailable": 1}
+    assert by_id["pydanticai"]["counts"]["failed"] == 1
+    assert report["evidence_complete"] is False
+    assert all(not item["conformant"] for item in report["summaries"])
+
+
+def test_live_evidence_rejects_forged_duplicates_and_unproven_passes():
+    with pytest.raises(ValueError, match="cleanup pass"):
+        RuntimeLiveObservation(
+            "langgraph", "runtime.cleanup", "passed", "claimed")
+    with pytest.raises(ValueError, match="resource release pass"):
+        RuntimeLiveObservation(
+            "langgraph", "runtime.resource_release", "passed", "claimed")
+    duplicate = {
+        "runtime_id": "langgraph", "case": "runtime.timeout",
+        "state": "failed", "reason_code": "timeout_missing",
+    }
+    with pytest.raises(ValueError, match="duplicate"):
+        evaluate_live_evidence([duplicate, duplicate], ["langgraph"])
+    with pytest.raises(ValueError, match="not selected"):
+        evaluate_live_evidence([duplicate], ["smolagents"])
+    with pytest.raises(ValueError, match="not declared"):
+        evaluate_live_evidence([{
+            **duplicate, "case": "runtime.magic"}], ["langgraph"])
+    with pytest.raises(ValueError, match="runtime count"):
+        evaluate_live_evidence([], [f"runtime-{index}" for index in range(33)])
+    with pytest.raises(ValueError, match="observation count"):
+        evaluate_live_evidence([duplicate] * 1_025, ["langgraph"])
+
+
+def test_live_evidence_capability_fails_closed_without_execution():
+    from vera.agentbridges import agentbridge_capabilities as caps
+
+    result = asyncio.run(caps.agentbridge_runtime_matrix_evaluate.__wrapped__(
+        observations=[{
+            "runtime_id": "langgraph", "case": "runtime.version_report",
+            "state": "passed", "reason_code": "verified",
+        }],
+        selected_runtime_ids=["langgraph"],
+    ))
+    assert result["executes"] is False
+    assert result["evidence_complete"] is False
+    rejected = asyncio.run(caps.agentbridge_runtime_matrix_evaluate.__wrapped__(
+        observations=[], selected_runtime_ids=[]))
+    assert rejected["ok"] is False
+
+
+def test_agent_bridge_exposes_evidence_boundary_without_claiming_selection():
+    from pathlib import Path
+    from vera.agentbridges import agentbridge_capabilities as caps
+
+    status = asyncio.run(caps.agentbridge_interoperability.__wrapped__())
+    runtime = status["runtime_matrix"]
+    assert runtime["required_live_cases"] == 10
+    assert runtime["evidence_evaluator_registered"] is True
+    assert runtime["ready_for_selection"] is False
+    shared = {item["id"]: item for item in status["shared_contracts"]}
+    assert shared["runtime_matrix_evidence"]["registered"] is True
+
+    panel = (Path(__file__).parents[1] / "vera" / "agentbridges" /
+             "agentbridge_catalog_panel.html").read_text(encoding="utf-8")
+    assert "conformance cases" in panel
+    assert "evidence ${m.evidence_evaluator_registered?'validated':'unavailable'}" in panel
+    assert "live cases queued" not in panel
