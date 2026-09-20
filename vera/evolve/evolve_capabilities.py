@@ -7446,6 +7446,9 @@ services:
       OLLAMA_EMBED_URL: "{_host_for_docker(getattr(c, 'OLLAMA_EMBED_URL', 'http://192.168.0.246:11435'))}"
       OLLAMA_MODEL: "{getattr(c, 'OLLAMA_MODEL', '')}"
       VERA_IS_DEV_SANDBOX: "1"
+      # A sandbox reads prod's estate one way (read-only GET capabilities in the estate groups are answered by
+      # prod's /mcp/call — sandbox_guard.read_through_allowed); 0 turns it off for a sandbox that must stand alone.
+      VERA_UPSTREAM_READ_URL: "https://host.docker.internal:8999/mcp/call"
       # Dev containers ARE the sanctioned place for sys.dev.* (restart/env) — a
       # sandbox needs to restart its own process to pick up module-import changes.
       # Prod never sets this by default, so enable it here (the skill relied on it

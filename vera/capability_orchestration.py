@@ -1377,6 +1377,31 @@ except _GateBrokerError as _broker_error:
     _GATE_BROKER_ERROR = str(_broker_error)
 # Dev-sandbox write guard (strict no-op in prod). See vera/sandbox_guard.py.
 from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked   # noqa: E402
+try:
+    from Vera.vera.sandbox_guard import upstream_read_url as _sg_upstream_url, read_through_allowed as _sg_read_through_allowed   # noqa: E402
+except Exception:  # pragma: no cover
+    try:
+        from .sandbox_guard import upstream_read_url as _sg_upstream_url, read_through_allowed as _sg_read_through_allowed
+    except Exception:
+        _sg_upstream_url = lambda env=None: ""          # noqa: E731
+        _sg_read_through_allowed = lambda name, method, env=None: False   # noqa: E731
+_READ_THROUGH_URL = _sg_upstream_url()   # '' outside a dev sandbox: the hook below is then never taken
+
+
+async def _upstream_read(name: str, kw: dict):
+    """One read of prod's estate from a sandbox (sandbox_guard.read_through_allowed said yes): prod's /mcp/call,
+    the arguments as given, no trace of ours. None when prod could not answer — the local capability runs then."""
+    args = {k: v for k, v in (kw or {}).items() if k != "trace_id"}
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=12) as c:
+            r = await c.post(_READ_THROUGH_URL, json={"name": name, "arguments": args, "caller_kind": "sandbox-read"},
+                             headers={"X-Vera-Read-Through": "sandbox"})
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception as e:  # prod unreachable, a slow read, a bad body: the sandbox answers for itself
+        log.debug("read-through %s: %s", name, e)
+        return None
 
 
 def _split_redis_url(url: str):
@@ -5724,6 +5749,13 @@ def capability(
                         return _estate_guard.refusal(name)
                 except Exception as _eg:              # pragma: no cover
                     log.debug("estate guard skipped for %s: %s", name, _eg)
+            # READ-THROUGH: a dev sandbox has no estate of its own (its Redis and SQLite are its own, empty); a read-only
+            # estate capability is answered by prod, one way — see sandbox_guard.read_through_allowed. Prod itself
+            # never takes this branch (_READ_THROUGH_URL is '' outside a sandbox).
+            if _READ_THROUGH_URL and http_method == "GET" and not kw.get("_local") and _sg_read_through_allowed(name, http_method):
+                _rt = await _upstream_read(name, kw)
+                if _rt is not None:
+                    return _rt
             tid     = kw.pop("trace_id",None) or new_id()
             if _alias_for:
                 _surface = ("http_caller" if CURRENT_HTTP_CAP.get("") == name

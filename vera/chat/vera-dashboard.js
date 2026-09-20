@@ -1655,6 +1655,30 @@
       save(); renderLayouts();
       return all[name];
     }
+    /* ── presets: the layout FILES a page ships (opts.presets = [{key, name}]); loading one replaces the grid's tiles
+       with the file's — the records' tiles go, the page's own tiles hide unless the file names them — and the page's
+       own key is the way back to its default file ── */
+    var PRESETS = Array.isArray(opts.presets) ? opts.presets.filter(function (p) { return p && p.key; }) : [];
+    function loadPreset(pkey) {
+      pkey = String(pkey || '');
+      var url = '/ui/widgets/layouts/' + encodeURIComponent(pkey);
+      return fetch(url, { headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          if (!j || !Array.isArray(j.widgets)) return false;
+          widgets().forEach(function (w) { if (w.dataset.record) w.remove(); else if (w.dataset.panel && state.dynamic[w.dataset.wid]) w.remove(); });
+          state.order = []; state.hidden = new Set(); state.sizes = {}; state.dynamic = {}; state.edits = {}; state.meta = {}; state.seen = {}; state.records = {};
+          state.name = pkey === key ? 'default' : 'preset:' + pkey;
+          var named = {}; j.widgets.forEach(function (t) { var r = t && t.record; var wid = (r && typeof r === 'object') ? String(r.id || '') : String(r || ''); if (wid) named[wid] = 1; });
+          widgets().forEach(function (w) { if (!named[w.dataset.wid]) state.hidden.add(w.dataset.wid); });
+          applyFile(j);
+          if (withLoader) restoreDynamic();
+          save(); renderLayouts();
+          try { grid.dispatchEvent(new CustomEvent('vera:dash:preset', { bubbles: true, detail: { key: pkey, widgets: j.widgets.length } })); } catch (e) {}
+          return true;
+        })
+        .catch(function () { return false; });
+    }
     function loadLayout(name) {
       var rec = name === 'default' ? null : layouts()[name];
       if (name !== 'default' && !rec) return false;
@@ -1713,8 +1737,17 @@
           '<span class="lm-meta">' + n(all[nm]) + '</span><button data-lm-load="' + esc(nm) + '">Load</button>' +
           '<button data-lm-del="' + esc(nm) + '" title="Delete">✕</button></div>');
       });
+      if (PRESETS.length) {
+        rows.push('<div class="lm-row lm-sec"><span class="lm-name">presets</span><span class="lm-meta">the layouts this dashboard ships \u00b7 a file each</span></div>');
+        PRESETS.forEach(function (p) {
+          var on = state.name === 'preset:' + p.key || (p.key === key && state.name === 'default');
+          rows.push('<div class="lm-row"><span class="lm-name' + (on ? ' on' : '') + '">' + esc(p.name || p.key) + '</span>' +
+            '<span class="lm-meta">' + esc(p.note || ('layout file \u00b7 ' + p.key)) + '</span><button data-lm-preset="' + esc(p.key) + '">Load</button></div>');
+        });
+      }
       var list = _lm.querySelector('.vd-lm-list');
       list.innerHTML = rows.join('');
+      list.querySelectorAll('[data-lm-preset]').forEach(function (b) { b.onclick = function () { loadPreset(b.getAttribute('data-lm-preset')); }; });
       list.querySelectorAll('[data-lm-load]').forEach(function (b) { b.onclick = function () { loadLayout(b.getAttribute('data-lm-load')); }; });
       list.querySelectorAll('[data-lm-del]').forEach(function (b) { b.onclick = function () { deleteLayout(b.getAttribute('data-lm-del')); }; });
     }
@@ -1741,7 +1774,7 @@
       // the record side
       layout: layoutRecord, records: function () { var o = {}; widgets().forEach(function (w) { var r = recordOf(w.dataset.wid); if (r) o[w.dataset.wid] = r; }); return o; },
       applyFile: applyFile, file: function () { return state.file; }, arrange: doArrange,
-      layouts: layouts, saveLayout: saveLayout, loadLayout: loadLayout, deleteLayout: deleteLayout, openLayouts: openLayouts,
+      layouts: layouts, saveLayout: saveLayout, loadLayout: loadLayout, loadPreset: loadPreset, presets: PRESETS, deleteLayout: deleteLayout, openLayouts: openLayouts,
       state: function () { return { name: state.name, order: state.order.slice(), hidden: Array.from(state.hidden), sizes: state.sizes, grid: state.grid }; }
     };
     grid._veraDash = ctl;

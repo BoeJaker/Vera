@@ -1549,7 +1549,7 @@ span.vw-sampled{opacity:.85}
 .vb-row{display:flex;align-items:center;gap:8px;width:100%}
 .vb-chart{flex:none;min-height:56px;position:relative;width:100%}.vb-chart svg{display:block;width:100%;height:100%;min-height:56px;overflow:visible}.vb-chart.rel{min-height:64px}
 .vb-spk{width:100%;height:18px;display:block;overflow:visible}
-.vb-hero{display:flex;align-items:baseline;gap:7px}.vb-hero b{font-family:var(--b-mono);font-size:30px;font-weight:700;letter-spacing:-.035em;line-height:1}.vb-hero .u{font-family:var(--b-mono);font-size:13px;color:var(--b-t2)}
+.vb-hero{display:flex;align-items:baseline;gap:7px}.vb-hero b{font-family:var(--b-mono);font-size:clamp(16px, min(60cqh, 12cqw), 30px);font-weight:700;letter-spacing:-.035em;line-height:1}.vb-hero .u{font-family:var(--b-mono);font-size:13px;color:var(--b-t2)}
 .vb-lg{display:flex;flex-direction:column;gap:4px;min-width:0}.vb-lg span{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--b-t2);white-space:nowrap;overflow:hidden}.vb-lg i{width:8px;height:8px;border-radius:2px;flex-shrink:0}.vb-lg b{margin-left:auto;font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);font-weight:400}.vb-lg.row{flex-direction:row;flex-wrap:wrap;gap:4px 12px}
 .vb-lgr{display:flex;align-items:center;gap:12px;font-size:9.5px;color:var(--b-t2)}.vb-lgr span{display:inline-flex;align-items:center;gap:6px}.vb-lgr i{width:8px;height:8px;border-radius:2px}
 .vb-rw{display:flex;align-items:center;gap:8px;font-size:10px}.vb-rw .n{width:64px;flex-shrink:0;color:var(--b-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-rw .tr{flex:1;height:7px;border-radius:4px;background:var(--b-s3);overflow:hidden;position:relative}.vb-rw .tr i{display:block;height:100%;border-radius:4px}.vb-rw .tr em{position:absolute;top:-2px;width:2px;height:11px;background:var(--b-t1);transform:translateX(-50%)}.vb-rw .v{width:38px;text-align:right;font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);flex-shrink:0}
@@ -1585,7 +1585,7 @@ span.vw-sampled{opacity:.85}
 .vb-dial{position:relative;flex-shrink:0;display:block}.vb-dial svg{width:100%;height:100%;transform:rotate(-90deg);display:block}.vb-dial > span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--b-mono);font-size:15px;font-weight:700}
 .vb-bar2{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--b-s3);width:100%}.vb-bar2 i{display:block;height:100%}
 .vb-colbars{display:flex;align-items:flex-end;gap:2px;height:100%;min-height:56px;width:100%}.vb-colbars.gap{gap:3px}.vb-colbars i{flex:1;border-radius:2px 2px 0 0;display:block;min-height:1px}.vb-cols{flex:none;min-height:24px;display:flex}
-.vb-seg7{display:flex;gap:3px;justify-content:center;align-items:baseline;padding:2px 0;flex-wrap:wrap;max-width:100%}.vb-seg7 span{position:relative;font-family:var(--b-mono);font-size:clamp(18px, 68cqh, 34px);font-weight:700;line-height:1;letter-spacing:-.02em}.vb-seg7 span.p{font-size:clamp(12px, 44cqh, 22px);color:var(--b-t3)}.vb-seg7 span.u{font-size:clamp(9px, 26cqh, 13px)}.vb-seg7 span::before{content:attr(data-g);position:absolute;left:0;top:0;opacity:0;pointer-events:none}
+.vb-seg7{display:flex;gap:3px;justify-content:center;align-items:baseline;padding:2px 0;flex-wrap:nowrap;max-width:100%;overflow:hidden}.vb-seg7 span{position:relative;font-family:var(--b-mono);font-size:clamp(13px, min(68cqh, 15cqw), 34px);font-weight:700;line-height:1;letter-spacing:-.02em}.vb-seg7 span.p{font-size:clamp(12px, 44cqh, 22px);color:var(--b-t3)}.vb-seg7 span.u{font-size:clamp(9px, 26cqh, 13px)}.vb-seg7 span::before{content:attr(data-g);position:absolute;left:0;top:0;opacity:0;pointer-events:none}
 .vb-tick{display:flex;align-items:flex-end;gap:2px;height:30px;flex-shrink:0}.vb-tick i{flex:1;border-radius:1px 1px 0 0;min-height:1px}
 .vb-batt{display:flex;align-items:center;gap:3px;height:38px;flex-shrink:0}.vb-batt .cells{flex:1;height:100%;display:flex;gap:3px;padding:4px;border-radius:var(--b-r);box-shadow:inset 0 0 0 2px var(--b-bd2)}.vb-batt .cells i{flex:1;border-radius:2px;background:var(--b-s3)}.vb-batt .cells i.on{background:var(--b-ac2)}.vb-batt .cells i.warn{background:var(--b-ac3)}.vb-batt b{width:5px;height:14px;background:var(--b-bd2);border-radius:0 2px 2px 0}
 /* series */
@@ -1674,10 +1674,10 @@ span.vw-sampled{opacity:.85}
   const sizeForWidth = (w) => w <= 120 ? 'xs' : w <= 220 ? 's' : w <= 380 ? 'm' : w <= 620 ? 'l' : 'xl';
 
   class VeraWidgetEl extends HTMLElement {
-    constructor() { super(); this._sh = this.attachShadow({ mode: 'open' }); this._rec = null; this._data = undefined; this._drawn = ''; this._timer = null; this._ro = null; this._auto = 'm'; this._kids = {}; this._ui = {}; }
+    constructor() { super(); this._sh = this.attachShadow({ mode: 'open' }); this._rec = null; this._data = undefined; this._empty = false; this._drawn = ''; this._timer = null; this._ro = null; this._auto = 'm'; this._kids = {}; this._ui = {}; }
     static get observedAttributes() { return ['record', 'size', 'base', 'template-id', 'bare']; }
     get record() { return this._rec; }
-    set record(v) { this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._drawn = ''; this._kids = {}; this._read = false; this._err = ''; if (this.isConnected) this._boot(); }
+    set record(v) { this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._empty = false; this._drawn = ''; this._kids = {}; this._read = false; this._err = ''; if (this.isConnected) this._boot(); }
     get base() { return this.getAttribute('base') || window._veraBase || ''; }
     get size() { const s = this.getAttribute('size'); return s && s !== 'auto' && SIZES.includes(s) ? s : (s === 'auto' ? this._auto : (this._rec ? this._rec.frame.size : 'm')); }
     connectedCallback() {
@@ -1728,8 +1728,13 @@ span.vw-sampled{opacity:.85}
       const cap = this._rec && this._rec.source; if (!cap) return;
       if (!forced && !readable(cap)) return;
       let res; try { res = await this._call(cap, this._rec.read.args || {}); } catch (e) { res = { error: String(e && e.message || e) }; }
-      if (res && typeof res === 'object' && res.error && Object.keys(res).length <= 2) { this._err = String(res.error).slice(0, 120); this._read = true; this.render(); return; }
-      this._err = ''; this._read = true; this._data = res; this._drawn = isEmpty(mapped(this._rec, this._rec.form, res)) ? '' : formFor(this._rec, res); this.render();
+      // a read that failed keeps the last reading, else the sample face (marked) — a tile never empties on a refresh
+      if (res && typeof res === 'object' && res.error && Object.keys(res).length <= 2) { this._err = String(res.error).slice(0, 120); this._read = this._data !== undefined; this.render(); return; }
+      const got = !isEmpty(mapped(this._rec, this._rec.form, res));
+      // a read that answered with nothing while nothing is shown yet: the sample face stays and the caption says so (a sandbox
+      // without the store behind a source, a fresh instance) — the next refresh may bring the thing itself
+      if (!got && this._data === undefined) { this._err = ''; this._empty = true; this._read = false; this.render(); return; }
+      this._empty = false; this._err = ''; this._read = true; this._data = res; this._drawn = got ? formFor(this._rec, res) : ''; this.render();
       this.dispatchEvent(new CustomEvent('widget:refresh', { bubbles: true, composed: true, detail: { record: this._rec, data: res } }));
     }
     refresh() { return this.read(true); }
@@ -1743,7 +1748,8 @@ span.vw-sampled{opacity:.85}
       const sampled = !wasRead && !have && form !== 'panel' && form !== 'composite';      // the sample face: no source, or never read
       const readEmpty = wasRead && !have && !this._err, stale = wasRead && !!this._err && have;
       let why = '';
-      if (this._err) why = esc(rec.source + ': ' + this._err) + (have ? ' · last reading' : '');
+      if (this._err) why = esc(rec.source + ': ' + this._err) + (have ? ' · last reading' : ' · sample');
+      else if (this._empty && !have) why = esc(rec.source) + ' · read empty · sample';
       else if (readEmpty) why = 'read · empty';
       else if (this._data === undefined && rec.source && !readable(rec.source)) why = '<button class="vw-read" data-read>Read ' + esc(rec.source) + '</button>';
       else if (this._data === undefined && rec.source) why = 'reading ' + esc(rec.source) + '…';
