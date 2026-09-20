@@ -7226,6 +7226,12 @@ async def mcp_call_endpoint(name: str, arguments: str = "", trace_id=None):
         args = arguments or {}
     cap = CAPABILITY_REGISTRY.get(name)
     if not cap:
+        # a sandbox that does not load this module still answers a reading of the estate from prod (worldview.stats
+        # on a mirror without the worldview module)
+        if _READ_THROUGH_URL and _sg_read_through_allowed(name, "GET"):
+            _rt = await _upstream_read(name, args)
+            if _rt is not None:
+                return {"type": "tool_result", "tool_name": name, "trace_id": trace_id or new_id(), "content": _rt}
         raise HTTPException(404, f"Unknown capability: {name}")
     tid    = trace_id or new_id()
     result = await cap["func"](**args, trace_id=tid)
@@ -7257,6 +7263,10 @@ def _make_mcp_call_handler():
 
         cap = CAPABILITY_REGISTRY.get(name)
         if not cap:
+            if _READ_THROUGH_URL and _sg_read_through_allowed(name, "GET"):   # a module this sandbox does not load: prod's reading
+                _rt = await _upstream_read(name, args)
+                if _rt is not None:
+                    return {"type": "tool_result", "tool_name": name, "trace_id": new_id(), "content": _rt}
             raise HTTPException(404, f"Unknown capability: {name}")
 
         # Filter args to accepted params — prevents unexpected kwarg errors

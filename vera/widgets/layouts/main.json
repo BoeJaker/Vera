@@ -2015,16 +2015,15 @@
   {
    "record": {
     "id": "programmes",
-    "form": "stack",
+    "form": "pills",
     "source": "loops.program.list",
     "title": "Programmes",
     "read": {
      "refresh": "60s",
      "map": {
-      "rows": "programs",
+      "values": "programs",
       "name": "name",
-      "status": "status",
-      "note": "brief"
+      "status": "status"
      }
     },
     "frame": {
@@ -2035,8 +2034,7 @@
      ]
     },
     "draw": {
-     "body": "record",
-     "limit": 4
+     "body": "record"
     }
    },
    "at": [
