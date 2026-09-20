@@ -85,8 +85,9 @@ async def _sources(refresh: bool = False) -> core.Sources:
         return _CACHE["sources"]
     names = ("estate.machines", "backup.status", "certs.list", "netsec.mesh.members",
              "identity.host.list", "exec.ssh.hosts.list", "integration.list", "docker.hosts.list")
-    results = await asyncio.gather(*[_call(n) for n in names], _inventory(), _call("docker.ps", all=True))
-    got = dict(zip(names + ("pxstore.inventory", "docker.ps"), results))
+    results = await asyncio.gather(*[_call(n) for n in names], _inventory(), _call("docker.ps", all=True),
+                                   _call("secrets.list"), _call("ollama.instances"))
+    got = dict(zip(names + ("pxstore.inventory", "docker.ps", "secrets.list", "ollama.instances"), results))
     errors = {n: r["error"] for n, r in got.items() if isinstance(r, dict) and r.get("error")}
     ident = got["identity.host.list"]
     src = core.Sources(
@@ -100,6 +101,8 @@ async def _sources(refresh: bool = False) -> core.Sources:
         docker_hosts=got["docker.hosts.list"].get("hosts"),
         inventory=got["pxstore.inventory"] if not got["pxstore.inventory"].get("error") else {},
         containers=got["docker.ps"].get("containers") or [],
+        secrets=got["secrets.list"].get("secrets") or [],
+        instances={k: v for k, v in got["ollama.instances"].items() if isinstance(v, dict) and "models" in v},
         errors=errors)
     _CACHE.update(at=time.time(), sources=src)
     return src
