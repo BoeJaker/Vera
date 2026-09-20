@@ -188,6 +188,29 @@ whole turn hides the cause. Use request/job history and capability traces to
 identify the slow boundary. If remembered text contains tool-like markers, it
 must remain quoted context rather than becoming executable instructions.
 
+The chat, IDE-chat, and IDE-generation capability boundaries redact prompts,
+system instructions, conversation history, file context, and returned model
+text from generic capability-activity previews. IDE chat events retain only a
+prompt character count and short digest for correlation. Streaming chat
+activity follows the same rule: it records message length and digest plus
+response length, audio count, and elapsed time, without a message or response
+preview. Conversation memory
+continues to store the content needed by the product, but observability does not
+create a second prompt or response copy. IDE generation also uses the shared
+model router, queue, cancellation, and stage-timing path; it does not maintain a
+private direct HTTP route to a model server.
+The IDE token-stream endpoint follows that same route and cancels its shared
+generation task if the client disconnects, allowing the coordinator to release
+any held model lease. Its Activity record contains prompt/system evidence and
+file counts rather than text or file names; the SSE response still carries the
+tokens requested by the connected client.
+
+Ordinary chat is single-pass by default. Features that intentionally add model
+work—quick acknowledgement and two-tier continuation—are disabled on new agent
+records and have explicit controls in the agent editor. When enabled, their
+requests remain separate routed generations rather than an invisible quality
+check after the answer.
+
 Operators should verify the agent's model still exists, its capability names
 resolve, and its selected datasets are healthy. Restore/version operations alter
 agent configuration, not historical turns. Source surfaces live primarily in

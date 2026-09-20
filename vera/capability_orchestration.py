@@ -2667,6 +2667,50 @@ _OLLAMA_REQUEST_LOG: List[dict] = []      # ring buffer, max 500
 _OLLAMA_REQUEST_LOG_MAX = 2000
 
 
+def _ollama_payload_evidence(value: Any, kind: str = "prompt") -> Dict[str, Any]:
+    """Return bounded, content-free evidence for an LLM payload.
+
+    Request telemetry is operational metadata, not a prompt archive.  Keeping a
+    prefix here exposed chat, authoring, IDE and embedding content through the
+    request-log capability even when the originating capability was redacted.
+    """
+    text = str(value or "")
+    return {
+        "kind": str(kind or "prompt")[:24],
+        "chars": len(text),
+        "sha256": hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16],
+    }
+
+
+def _ollama_payload_preview(value: Any, kind: str = "prompt") -> str:
+    evidence = _ollama_payload_evidence(value, kind)
+    return (f"[{evidence['kind']} chars={evidence['chars']} "
+            f"sha256={evidence['sha256']}]")
+
+
+def _sanitize_ollama_log_entry(entry: dict) -> dict:
+    """Copy one request-log entry without retaining raw prompt/embed content."""
+    clean = dict(entry or {})
+    raw_full = clean.pop("prompt_full", None)
+    raw_preview = clean.get("prompt_preview", "")
+    safe = (re.fullmatch(
+        r"\[(?P<kind>prompt|embed) chars=(?P<chars>\d+) "
+        r"sha256=(?P<sha256>[0-9a-f]{16})\]", raw_preview)
+        if isinstance(raw_preview, str) else None)
+    if safe:
+        clean.setdefault("prompt_evidence", {
+            "kind": safe.group("kind"),
+            "chars": int(safe.group("chars")),
+            "sha256": safe.group("sha256"),
+        })
+        return clean
+    raw = raw_full if raw_full is not None else raw_preview
+    kind = "embed" if str(raw_preview).startswith("[embed]") else "prompt"
+    clean["prompt_preview"] = _ollama_payload_preview(raw, kind)
+    clean["prompt_evidence"] = _ollama_payload_evidence(raw, kind)
+    return clean
+
+
 def _err_text(e: Exception, limit: int = 300) -> str:
     """Human-readable error string that is never empty.
 
@@ -3120,7 +3164,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     t_start  = time.time()
     _submitted_mono = time.monotonic()
     _provider_started_mono = None
-    prompt_preview = (prompt or "")[:120].replace("\n", " ")
+    prompt_preview = _ollama_payload_preview(prompt, "prompt")
+    prompt_evidence = _ollama_payload_evidence(prompt, "prompt")
 
     log.info(
         "ollama_req [%s] model=%s inst=%s job=%s rule=%s%s est=%ss chars=%d caller=%s:%s route=%s prompt=%s",
@@ -3174,7 +3219,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 "caller_module": caller["caller_module"],
                 "cap_name":    caller["cap_name"],
                 "prompt_preview": prompt_preview,
-                "prompt_full": (prompt or "")[:16000],
+                "prompt_evidence": prompt_evidence,
                 "json_mode":   json_mode,
                 "prefer_gpu":  prefer_gpu,
                 "streaming":   stream_cb is not None,
@@ -3551,8 +3596,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
 
 
 def _ollama_log_append(entry: dict):
-    """Append to the in-process ring buffer."""
-    _OLLAMA_REQUEST_LOG.append(entry)
+    """Append content-free operational metadata to the in-process ring buffer."""
+    _OLLAMA_REQUEST_LOG.append(_sanitize_ollama_log_entry(entry))
     if len(_OLLAMA_REQUEST_LOG) > _OLLAMA_REQUEST_LOG_MAX:
         del _OLLAMA_REQUEST_LOG[:-_OLLAMA_REQUEST_LOG_MAX]
 
@@ -3694,7 +3739,8 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
     caller = _ollama_caller_info()
     req_id = str(uuid.uuid4())[:12]
     t_start = time.time()
-    text_preview = (text or "")[:120].replace("\n", " ")
+    text_preview = _ollama_payload_preview(text, "embed")
+    text_evidence = _ollama_payload_evidence(text, "embed")
 
     log.info(
         "ollama_embed [%s] model=%s inst=%s caller=%s:%s text=%s",
@@ -3706,7 +3752,8 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
     req_entry = {
         "req_id": req_id, "model": mdl, "instance": chosen,
         "caller_file": caller["caller_file"], "caller_func": caller["caller_func"],
-        "prompt_preview": f"[embed] {text_preview}", "ts": now_iso(),
+        "prompt_preview": text_preview, "prompt_evidence": text_evidence,
+        "ts": now_iso(),
         "status": "running",
     }
 
@@ -3731,8 +3778,8 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
                 "caller_func":  caller["caller_func"],
                 "caller_module": caller["caller_module"],
                 "cap_name":     caller["cap_name"] or "ollama.embed",
-                "prompt_preview": f"[embed] {text_preview}",
-                "prompt_full":  f"[embed] {(text or '')[:16000]}",
+                "prompt_preview": text_preview,
+                "prompt_evidence": text_evidence,
                 "json_mode":    False,
                 "prefer_gpu":   prefer_gpu,
                 "streaming":    False,
@@ -8997,7 +9044,10 @@ async def cap_ollama_pull(model: str, instance_id: str, trace_id=None):
                         "caller_file (str, filter), status (str, filter).")
 async def cap_ollama_request_log(limit: int = 50, caller_file: str = "",
                                   status: str = "", trace_id=None):
-    entries = list(reversed(_OLLAMA_REQUEST_LOG))  # newest first
+    # Sanitise again on read so a hot-upgraded process or a legacy/direct caller
+    # cannot expose an entry that predates the append-boundary defence.
+    entries = [_sanitize_ollama_log_entry(e)
+               for e in reversed(_OLLAMA_REQUEST_LOG)]  # newest first
     if caller_file:
         entries = [e for e in entries if caller_file in e.get("caller_file", "")]
     if status:

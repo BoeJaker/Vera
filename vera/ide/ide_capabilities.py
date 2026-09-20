@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import hashlib
 import json
 import logging
 import os
@@ -76,6 +77,29 @@ from Vera.vera.capability_orchestration import (
 _HERE = Path(__file__).parent
 
 log = logging.getLogger("vera.ide")
+
+# Keep detached terminal-record writes alive after an SSE request disconnects.
+# asyncio only keeps weak references to tasks, so an unreferenced task can be
+# collected before the activity sink has accepted it.
+_IDE_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _schedule_ide_background(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _IDE_BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_IDE_BACKGROUND_TASKS.discard)
+    return task
+
+
+def _text_evidence(value: object) -> dict:
+    """Return stable, payload-free evidence for prompt-like text."""
+    raw = str(value or "")
+    return {
+        "chars": len(raw),
+        "sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16],
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GRAPH + FABRIC HELPERS (inline — no separate integration module)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -710,6 +734,8 @@ async def ide_agent_list(trace_id=None):
     "ide.agent.chat",
     http_method="POST", http_path="/ide/agents/chat", http_tags=["ide", "agents"],
     memory="off",
+    redact_args=["prompt", "system", "history", "context_files"],
+    redact_result=True,
     description="Send a prompt to one of the IDE agents. "
                 "Input: agent (thinker|writer|analyser), prompt (str!), "
                 "system (str), history (JSON array), model (str), "
@@ -758,7 +784,7 @@ async def ide_agent_chat(
     sid = session_id or _ide_session_id()
     await emit_event({"type": "ide.agent.chat", "agent": agent_name,
                       "chars": len(text), "session_id": sid,
-                      "prompt_snippet": prompt[:80]})
+                      "prompt_evidence": _text_evidence(prompt)})
 
     # Record conversation turn to memory graph + fabric
     asyncio.ensure_future(_ide_record_agent_turn(
@@ -835,6 +861,8 @@ async def ide_models(trace_id=None):
     "ide.generate",
     http_method="POST", http_path="/ide/generate", http_tags=["ide", "llm"],
     memory="off",
+    redact_args=["prompt", "system"],
+    redact_result=True,
     description="Generate text via a named IDE agent (thinker|writer|analyser). "
                 "Input: agent (str), prompt (str!), system (str), model (str), "
                 "instance_id (str), temperature (float). "
@@ -868,65 +896,21 @@ async def ide_generate(
     else:
         opts["temperature"] = preset.get("temperature", 0.3)
 
-    chosen = iid or pick_instance(prefer_gpu=preset.get("prefer_gpu", False))
-    if not chosen:
-        return {"error": "No online Ollama instance", "text": ""}
-
-    inst = OLLAMA_INSTANCES.get(chosen, {})
-    url  = inst.get("url", "")
-    body = {"model": mdl, "prompt": prompt, "stream": False, "options": opts}
-    if sys_p:
-        body["system"] = sys_p
-
-    # ── Log the Ollama request ───────────────────────────────────────────────
-    import time as _time
-    from Vera.vera.capability_orchestration import (
-        emit_event, _ollama_log_append, _ollama_caller_info,
-    )
-    _req_id = str(uuid.uuid4())[:12]
-    _t0 = _time.time()
-    _prompt_preview = (prompt or "")[:120].replace("\n", " ")
-    _prompt_full = (prompt or "")[:16000]
-    log.info("ollama_req [%s] model=%s inst=%s caller=ide_capabilities:ide_generate agent=%s prompt=%s",
-             _req_id, mdl, chosen, agent_name, _prompt_preview)
+    meta: dict = {}
     try:
-        await emit_event({
-            "type": "ollama.request", "req_id": _req_id,
-            "model": mdl, "instance_id": chosen, "instance_url": url,
-            "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
-            "caller_module": "ide_capabilities", "cap_name": "ide.generate",
-            "prompt_preview": _prompt_preview, "prompt_full": _prompt_full, "json_mode": False,
-            "prefer_gpu": preset.get("prefer_gpu", False), "streaming": False,
-        })
-    except Exception:
-        pass
-
-    inst["in_use"] = inst.get("in_use", 0) + 1
-    try:
-        async with httpx.AsyncClient(timeout=120) as c:
-            r = await c.post(f"{url}/api/generate", json=body)
-            r.raise_for_status()
-            d = r.json()
-            text = d.get("response", "")
-        _elapsed = round(_time.time() - _t0, 2)
-        log.info("ollama_done [%s] %.2fs caller=ide_capabilities:ide_generate agent=%s",
-                 _req_id, _elapsed, agent_name)
-        _ollama_log_append({
-            "req_id": _req_id, "model": mdl, "instance": chosen,
-            "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
-            "prompt_preview": _prompt_preview, "ts": now_iso(),
-            "status": "done", "elapsed_s": _elapsed,
-            "eval_count": d.get("eval_count", 0),
-        })
-        try:
-            await emit_event({
-                "type": "ollama.request_done", "req_id": _req_id,
-                "model": mdl, "instance_id": chosen,
-                "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
-                "elapsed_s": _elapsed, "eval_count": d.get("eval_count", 0),
-            })
-        except Exception:
-            pass
+        text = await ollama_generate(
+            prompt,
+            system=sys_p,
+            model=mdl,
+            instance_id=iid or None,
+            prefer_gpu=bool(preset.get("prefer_gpu", False)),
+            options=opts,
+            profile="ide",
+            role=IDE_ROLE_BY_AGENT.get(agent_name, "writer"),
+            request_stage="generation",
+            meta_out=meta,
+        )
+        chosen = str(meta.get("instance") or iid or "unknown")
         sid = session_id or _ide_get_session_id()
         asyncio.ensure_future(_record(
             session_id=sid, category="ide.generate",
@@ -940,32 +924,12 @@ async def ide_generate(
             fabric_data={"agent": agent_name, "model": mdl,
                          "prompt": prompt[:5000], "response": text[:50000]},
         ))
-        return {"text": text, "agent": agent_name, "model": mdl, "instance": chosen}
+        return {"text": text, "agent": agent_name,
+                "model": str(meta.get("model") or mdl), "instance": chosen}
     except Exception as e:
         from Vera.vera.capability_orchestration import _err_text
-        _elapsed = round(_time.time() - _t0, 2)
         _err = _err_text(e)
-        log.error("ollama_generate [%s] FAILED after %.2fs inst=%s caller=ide_capabilities:ide_generate err=%s",
-                  _req_id, _elapsed, chosen, _err)
-        _ollama_log_append({
-            "req_id": _req_id, "model": mdl, "instance": chosen,
-            "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
-            "prompt_preview": _prompt_preview, "ts": now_iso(),
-            "status": "error", "elapsed_s": _elapsed, "error": _err,
-        })
-        try:
-            await emit_event({
-                "type": "ollama.request_error", "req_id": _req_id,
-                "model": mdl, "instance_id": chosen,
-                "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
-                "elapsed_s": _elapsed, "error": _err,
-                "error_type": type(e).__name__,
-            })
-        except Exception:
-            pass
         return {"error": _err, "text": "", "agent": agent_name}
-    finally:
-        inst["in_use"] = max(0, inst.get("in_use", 1) - 1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1018,110 +982,109 @@ async def ide_stream_endpoint(request: Request):
             yield b'data: {"type":"error","text":"No online Ollama instance"}\n\n'
         return StreamingResponse(_err(), media_type="text/event-stream")
 
-    inst = OLLAMA_INSTANCES.get(chosen, {})
-    url  = inst.get("url", "")
     opts = {
         "num_ctx":     preset.get("num_ctx", 8192),
         "temperature": preset.get("temperature", 0.3),
     }
-    ol_body = {"model": model, "prompt": prompt, "stream": True, "options": opts}
-    if full_system:
-        ol_body["system"] = full_system
 
     async def _generate():
         import time as _time
-        from Vera.vera.capability_orchestration import (
-            emit_event as _emit_event, _ollama_log_append,
-        )
-        _req_id = str(uuid.uuid4())[:12]
         _t0_stream = _time.monotonic()
-        _prompt_preview = (prompt or "")[:120].replace("\n", " ")
-        _prompt_full = (prompt or "")[:16000]
-        log.info("ollama_req [%s] model=%s inst=%s caller=ide_capabilities:ide_stream agent=%s prompt=%s",
-                 _req_id, model, chosen, agent_name_short, _prompt_preview)
-        try:
-            await _emit_event({
-                "type": "ollama.request", "req_id": _req_id,
-                "model": model, "instance_id": chosen, "instance_url": url,
-                "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
-                "caller_module": "ide_capabilities", "cap_name": "ide.stream",
-                "prompt_preview": _prompt_preview, "prompt_full": _prompt_full, "json_mode": False,
-                "prefer_gpu": preset.get("prefer_gpu", False), "streaming": True,
-            })
-        except Exception:
-            pass
         yield b": ping\n\n"
         full = []
         error_text = ""
-        inst["in_use"] = inst.get("in_use", 0) + 1
+        meta: dict = {}
+        token_queue: asyncio.Queue = asyncio.Queue()
+
+        async def _on_token(token: str):
+            await token_queue.put(str(token or ""))
+
+        def _record_cancellation():
+            """Schedule one payload-free terminal observation for a disconnect."""
+            elapsed_ms = round((_time.monotonic() - _t0_stream) * 1000)
+            session_id = body.get("session_id", "") or _ide_get_session_id()
+            _schedule_ide_background(record_stream_activity(
+                cap_name="ide.stream", session_id=session_id,
+                params={
+                    "agent": agent_name_short,
+                    "model": str(meta.get("model") or model),
+                    "instance_id": str(meta.get("instance") or chosen),
+                    "prompt_evidence": _text_evidence(prompt),
+                    "system_evidence": _text_evidence(system),
+                    "context_file_count": len(ctx_raw) if isinstance(ctx_raw, dict) else 0,
+                },
+                result={
+                    "agent": agent_name_short,
+                    "response_chars": sum(len(part) for part in full),
+                    "elapsed_ms": elapsed_ms,
+                    "error": "cancelled by caller",
+                },
+                elapsed_ms=elapsed_ms,
+                group="ide",
+            ))
+
+        generation = asyncio.create_task(ollama_generate(
+            prompt,
+            system=full_system,
+            model=model,
+            instance_id=chosen,
+            prefer_gpu=bool(preset.get("prefer_gpu", False)),
+            stream_cb=_on_token,
+            options=opts,
+            profile="ide",
+            role=IDE_ROLE_BY_AGENT.get(agent_name, "writer"),
+            request_stage="generation",
+            meta_out=meta,
+        ))
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0)) as c:
-                async with c.stream("POST", f"{url}/api/generate", json=ol_body) as resp:
-                    if resp.status_code != 200:
-                        err = await resp.aread()
-                        error_text = err.decode()[:500]
-                        yield f"data: {json.dumps({'type':'error','text':error_text[:200]})}\n\n".encode()
-                        return
-                    async for line in resp.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            token = json.loads(line).get("response", "")
-                        except Exception:
-                            continue
-                        if token:
-                            full.append(token)
-                            yield f"data: {json.dumps({'type':'token','text':token})}\n\n".encode()
+            while not generation.done() or not token_queue.empty():
+                try:
+                    token = await asyncio.wait_for(token_queue.get(), timeout=0.25)
+                except asyncio.TimeoutError:
+                    # StreamingResponse does not reliably cancel an async
+                    # generator while it is waiting for its first body chunk.
+                    # Poll the ASGI disconnect signal so prompt evaluation is
+                    # aborted even when no model token has arrived yet.
+                    if await request.is_disconnected():
+                        raise asyncio.CancelledError
+                    continue
+                if token:
+                    full.append(token)
+                    yield f"data: {json.dumps({'type':'token','text':token})}\n\n".encode()
+            full_text = await generation
+        except asyncio.CancelledError:
+            generation.cancel()
+            await asyncio.gather(generation, return_exceptions=True)
+            # A disconnected SSE client cancels this generator before the
+            # normal terminal recorder below can run.  Keep that cancellation
+            # observable without retaining the prompt or partial response.
+            # Detach the small bookkeeping write from the canceled request;
+            # model work has already been stopped above.  The module-level
+            # task set keeps a strong reference until the sink finishes.
+            try:
+                _record_cancellation()
+            except Exception as _e:
+                log.debug("record_stream_activity ide.stream cancellation: %s", _e)
+            raise
         except Exception as e:
             from Vera.vera.capability_orchestration import _err_text
             error_text = _err_text(e)
             yield f"data: {json.dumps({'type':'error','text':error_text})}\n\n".encode()
-            return
+            full_text = "".join(full)
         finally:
-            inst["in_use"] = max(0, inst.get("in_use", 1) - 1)
-            # ── Log completion of the Ollama request ─────────────────────────
-            # Must live in the finally: the error paths above `return` out of
-            # the generator, so code after this block never runs for them —
-            # previously errors left the request dangling as "running" forever.
-            _elapsed_s = round((_time.monotonic() - _t0_stream), 2)
-            if error_text:
-                log.error("ollama_generate [%s] FAILED after %.2fs caller=ide_capabilities:ide_stream err=%s",
-                          _req_id, _elapsed_s, error_text[:120])
-                _ollama_log_append({
-                    "req_id": _req_id, "model": model, "instance": chosen,
-                    "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
-                    "prompt_preview": _prompt_preview, "ts": now_iso(),
-                    "status": "error", "elapsed_s": _elapsed_s, "error": error_text[:300],
-                })
-                try:
-                    await _emit_event({
-                        "type": "ollama.request_error", "req_id": _req_id,
-                        "model": model, "instance_id": chosen,
-                        "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
-                        "elapsed_s": _elapsed_s, "error": error_text[:300],
-                    })
-                except Exception:
-                    pass
-            else:
-                log.info("ollama_done [%s] %.2fs tokens=%d caller=ide_capabilities:ide_stream",
-                         _req_id, _elapsed_s, len(full))
-                _ollama_log_append({
-                    "req_id": _req_id, "model": model, "instance": chosen,
-                    "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
-                    "prompt_preview": _prompt_preview, "ts": now_iso(),
-                    "status": "done", "elapsed_s": _elapsed_s, "tokens": len(full),
-                })
-                try:
-                    await _emit_event({
-                        "type": "ollama.request_done", "req_id": _req_id,
-                        "model": model, "instance_id": chosen,
-                        "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
-                        "elapsed_s": _elapsed_s, "token_count": len(full),
-                    })
-                except Exception:
-                    pass
+            if not generation.done():
+                generation.cancel()
+                await asyncio.gather(generation, return_exceptions=True)
+                # Starlette may close an async response generator with
+                # GeneratorExit rather than CancelledError.  That path still
+                # reaches finally, so emit the same content-free terminal
+                # observation here.  The CancelledError branch has already
+                # made generation.done() true and therefore cannot duplicate
+                # this record.
+                _record_cancellation()
 
-        full_text = "".join(full)
+        effective_model = str(meta.get("model") or model)
+        effective_instance = str(meta.get("instance") or chosen)
         _sid = body.get("session_id", "") or _ide_get_session_id()
         # 1) IDE-domain event recording — keeps the IDE module's own
         #    FOLLOWS_ACTIVITY chain (used by the IDE panel's history view)
@@ -1134,8 +1097,9 @@ async def ide_stream_endpoint(request: Request):
             importance=0.7, source_type="ai", record_type="message",
             capability_name="ide.stream", broadcast_type="ide.stream_done",
             fabric_dataset="ide.agent_turns",
-            metadata={"agent": agent_name_short, "model": model, "instance": chosen},
-            fabric_data={"agent": agent_name_short, "model": model,
+            metadata={"agent": agent_name_short, "model": effective_model,
+                      "instance": effective_instance},
+            fabric_data={"agent": agent_name_short, "model": effective_model,
                          "prompt": prompt[:5000], "response": full_text[:50000]},
         ))
         # 2) Unified-path recording — emits cap.call/cap.ok so this raw
@@ -1147,16 +1111,15 @@ async def ide_stream_endpoint(request: Request):
                 cap_name="ide.stream", session_id=_sid,
                 params={
                     "agent":         agent_name_short,
-                    "model":         model,
-                    "instance_id":   chosen,
-                    "prompt":        prompt,
-                    "system":        system,
-                    "context_files": list(ctx_raw.keys())[:20] if isinstance(ctx_raw, dict) else [],
+                    "model":         effective_model,
+                    "instance_id":   effective_instance,
+                    "prompt_evidence": _text_evidence(prompt),
+                    "system_evidence": _text_evidence(system),
+                    "context_file_count": len(ctx_raw) if isinstance(ctx_raw, dict) else 0,
                 },
                 result={
                     "agent":          agent_name_short,
                     "response_chars": len(full_text),
-                    "preview":        full_text[:800],
                     "elapsed_ms":     elapsed_ms,
                     "error":          error_text or None,
                 },

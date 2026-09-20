@@ -97,6 +97,15 @@ def _get_dag_runner():
 
 log = logging.getLogger("vera.agents")
 
+
+def _text_evidence(value: object) -> dict:
+    """Return stable correlation evidence without retaining text payloads."""
+    raw = str(value or "")
+    return {
+        "chars": len(raw),
+        "sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16],
+    }
+
 # Hard budget for pre-request context injection (memory + RAG lookups) in the
 # interactive chat paths. These lookups ride the embedding/fabric stack, which
 # shares Ollama nodes with generation — when that node is busy an unbounded
@@ -2005,7 +2014,7 @@ async def agent_chat_stream_endpoint(request: Request):
                             "agent_name":   agent.name,
                             "model":        agent.model or OLLAMA_MODEL,
                             "instance_id":  agent.instance_id,
-                            "message":      message,
+                            "message_evidence": _text_evidence(message),
                             "history_len":  len(history or []),
                             "tts":          use_tts,
                             "think":        getattr(agent, "think", False),
@@ -2014,7 +2023,6 @@ async def agent_chat_stream_endpoint(request: Request):
                             "agent":         agent.name,
                             "response_chars": _resp_chars,
                             "audio_chunks":  _audio_chunks,
-                            "preview":       "".join(_resp_head)[:800],
                             "elapsed_ms":    elapsed_ms,
                         },
                         elapsed_ms=elapsed_ms,
@@ -2029,7 +2037,7 @@ async def agent_chat_stream_endpoint(request: Request):
                             "agent_name":   agent.name,
                             "model":        agent.model or OLLAMA_MODEL,
                             "instance_id":  agent.instance_id,
-                            "message":      message,
+                            "message_evidence": _text_evidence(message),
                             "history_len":  len(history or []),
                             "tts":          use_tts,
                             "think":        getattr(agent, "think", False),
@@ -2038,7 +2046,6 @@ async def agent_chat_stream_endpoint(request: Request):
                             "agent":         agent.name,
                             "response_chars": _resp_chars,
                             "audio_chunks":  _audio_chunks,
-                            "preview":       "".join(_resp_head)[:800],
                             "elapsed_ms":    elapsed_ms,
                         },
                         elapsed_ms=elapsed_ms,
@@ -4966,6 +4973,8 @@ async def agent_delete(id: str, trace_id=None):
 @capability(
     "agent.chat", memory="on",
     http_method="POST", http_path="/agents/chat", http_tags=["agents"],
+    redact_args=["message", "history"],
+    redact_result=True,
     description="Send a message to an agent. Returns text response.",
 )
 async def agent_chat(
