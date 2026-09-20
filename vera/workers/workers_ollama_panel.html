@@ -105,12 +105,12 @@ html.view-models #secNav [data-view="models"]{display:block}
 /* ── Buttons ── */
 .btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-family:var(--sans);font-size:10.5px;font-weight:500;transition:all .14s;white-space:nowrap}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
-.btn.primary:hover{filter:brightness(1.1);color:#fff}
+.btn.primary,.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
+.btn.primary:hover,.btn.pri:hover{filter:brightness(1.1);color:#fff}
 .btn.sm{padding:2px 7px;font-size:9.5px}
 .btn.gpu-btn{background:rgba(201,122,90,.1);border-color:var(--gpu);color:var(--gpu)}
 .btn.warn-btn{background:rgba(201,163,90,.1);border-color:var(--warn);color:var(--warn)}
-.btn.err-btn{border-color:var(--err);color:var(--err)}
+.btn.err-btn,.btn.danger,.btn.red,.btn.no{border-color:var(--err);color:var(--err)}
 .btn:disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
 
 /* ── Configurable widget grid (mirrors dashboard) ── */

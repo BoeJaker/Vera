@@ -1,6 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Babblefish — Universal Protocol Translator</title>
@@ -35,8 +41,8 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--acc)}
 .btns{display:flex;gap:6px;flex-wrap:wrap}
 .btn{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-size:11px;font-weight:600;transition:all .14s}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#111)}
-.btn.primary:hover{filter:brightness(1.08)}
+.btn.primary,.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#111)}
+.btn.primary:hover,.btn.pri:hover{filter:brightness(1.08)}
 .moddesc{font-size:10px;color:var(--dim2);line-height:1.5;background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius);padding:8px}
 .moddesc code{color:var(--acc2);font-family:var(--mono)}
 .out-tb{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--bg1)}
@@ -175,5 +181,6 @@ async function doProbe(){
 document.getElementById('proto').addEventListener('change', renderMod);
 loadMods();
 </script>
+<script src="/ui/vera-ui.js"></script>
 </body>
 </html>

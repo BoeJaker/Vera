@@ -176,12 +176,12 @@ textarea { font-family: var(--mono); resize: vertical; min-height: 80px; }
   transition: all .12s;
 }
 .btn:hover { background: var(--border); border-color: var(--acc); }
-.btn.primary { background: var(--acc); color: var(--on-acc,#fff); border-color: var(--acc); }
-.btn.primary:hover { background: #5cabff; }
-.btn.danger  { color: var(--err); border-color: rgba(239,91,91,.35); }
-.btn.danger:hover { background: rgba(239,91,91,.1); }
-.btn.ok     { color: var(--acc2); border-color: rgba(40,194,138,.35); }
-.btn.ok:hover { background: rgba(40,194,138,.08); }
+.btn.primary,.btn.pri{ background: var(--acc); color: var(--on-acc,#fff); border-color: var(--acc); }
+.btn.primary:hover,.btn.pri:hover{ background: #5cabff; }
+.btn.danger,.btn.red,.btn.err-btn,.btn.no{ color: var(--err); border-color: rgba(239,91,91,.35); }
+.btn.danger:hover,.btn.red:hover,.btn.err-btn:hover,.btn.no:hover{ background: rgba(239,91,91,.1); }
+.btn.ok,.btn.grn,.btn.ok-btn{ color: var(--acc2); border-color: rgba(40,194,138,.35); }
+.btn.ok:hover,.btn.grn:hover,.btn.ok-btn:hover{ background: rgba(40,194,138,.08); }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn svg { width: 12px; height: 12px; }
 

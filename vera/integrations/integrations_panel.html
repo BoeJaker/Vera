@@ -1,6 +1,12 @@
 <!doctype html>
 <html>
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Integrations Hub</title>
@@ -16,8 +22,8 @@
   .ttl{font-weight:600;font-size:14px}.sp{flex:1}
   .btn{background:var(--bg2);color:var(--fg);border:1px solid var(--line);border-radius:7px;
     padding:6px 11px;font-size:12px;cursor:pointer}
-  .btn:hover{border-color:var(--acc)} .btn.pri{background:var(--acc);color:#04121f;border-color:var(--acc);font-weight:600}
-  .btn.sm{padding:3px 8px;font-size:11px} .btn.danger:hover{border-color:var(--stop);color:var(--stop)}
+  .btn:hover{border-color:var(--acc)} .btn.pri,.btn.primary{background:var(--acc);color:#04121f;border-color:var(--acc);font-weight:600}
+  .btn.sm{padding:3px 8px;font-size:11px} .btn.danger:hover,.btn.red:hover,.btn.err-btn:hover,.btn.no:hover{border-color:var(--stop);color:var(--stop)}
   .btn:disabled{opacity:.4;cursor:not-allowed}
   #grid{flex:1;overflow:auto;padding:14px;display:grid;
     grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px;align-content:start}
@@ -460,5 +466,6 @@ async function applyRegister(){
 load();
 </script>
 <script src="/ui/vera-entity-drawer.js"></script>
+<script src="/ui/vera-ui.js"></script>
 </body>
 </html>
