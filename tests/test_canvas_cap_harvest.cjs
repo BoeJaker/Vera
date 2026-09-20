@@ -174,6 +174,14 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   t('the chat listens and lands it', /document\.addEventListener\('vera:research:source'/.test(src));
   t('keyed by url so a re-run updates rather than doubles', /const key='source:'\+url\.replace/.test(src));
   t('and it lands WITHOUT the page body or picture', /content:\{ url, title:String\(d\.title\|\|''\), domain, chars:\+d\.chars\|\|0, failed:!!d\.failed \}/.test(src));
+  /* ...but not as a bare headline. The crawl knows how much it read and passes on none of it, so the card was an
+     address and a title until pressed - a reading list of headlines is a bibliography. The first few get a
+     snippet; the rest wait to be asked, which is the bargain the screenshot makes too. */
+  t('the first few sources arrive with something to read', /if\(!d\.failed\) _cvSnippet\(key, url\);/.test(src));
+  t('bounded, because a deep run reads dozens', /if\(_cvSnipN>=3\) return; _cvSnipN\+\+;/.test(src));
+  t('and short, because it is a preview and not the page', /max_chars:600/.test(src) && /txt\.slice\(0,400\)/.test(src));
+  t('a page that would not load is not fetched for a preview of nothing', /if\(!d\.failed\)/.test(src));
+  t('and one that already has a snippet is left alone', /if\(!b\|\|!b\.content\|\|b\.content\.snippet\) return;/.test(src));
 }
 
 // ---- the item fetches the page only when it is opened ----------------------------------------------------------
