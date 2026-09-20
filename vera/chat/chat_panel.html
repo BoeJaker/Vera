@@ -6229,11 +6229,75 @@ IMPORTANT:
   // anchored to the turn; the resolver brings an existing key back instead of doubling it; the turn's landed layer
   // (the exploded scene) and the canvas routing see the same items
   const _CV_LANDED={};
+  /* WHAT A CAPABILITY RESULT ACTUALLY IS. Every cap card landed on the canvas as `markdown` holding a fenced dump
+     of its own result text, cut at 2000 characters - so a command's output, a list of hosts and a set of numbers
+     all arrived as the same wall of text, and none of them could be read, sorted or charted. The chat already
+     knows better: it has a shape rule (_widgetFormByShape) that picks a form for a result, and it draws research
+     reports and image galleries properly in the transcript. The canvas simply never asked.
+
+     These read the RESULT (kept on the card by executeCapInline), not the rendered text, and pick the canvas
+     block that fits it. Nothing here guesses at prose: a result that matches nothing falls through to the
+     markdown it landed as before, which is the honest representation of something with no shape. */
+  const _cvCapTerm=(c)=>{
+    // a command and its output is a TERMINAL, not a paragraph about one (exec.bash.run and its family:
+    // {ok, rc, stdout, stderr, elapsed_ms, command})
+    if(!c||typeof c!=='object'||c.command==null) return null;
+    if(c.stdout==null&&c.stderr==null) return null;
+    const out=[String(c.stdout||''),String(c.stderr||'')].filter(x=>x.trim()).join('\n');
+    const cmd=String(c.command).replace(/\s+/g,' ').trim();
+    return { kind:'session', n:cmd.slice(0,52)||'command', k:'term', col:'#7dd3fc',
+      d:'terminal'+(c.rc!=null?' \u00b7 rc '+c.rc:'')+(c.elapsed_ms!=null?' \u00b7 '+c.elapsed_ms+'ms':''),
+      content:{ command:cmd, output:out.slice(0,16000), host:String(c.host||''), session_id:String(c.session_id||'') } };
+  };
+  /* the rows in a result, whatever the envelope calls them. _widgetData digs through a FIXED list of keys
+     (data, result, items, rows, points, series, ...) which is right for the forms it feeds and too narrow here:
+     a capability answers {ok:true, hosts:[...]} or {containers:[...]} or {jobs:[...]} far more often than it
+     answers {data:[...]}, and every one of those was falling through to the JSON dump. So the rows are found by
+     SHAPE - the first array of objects at the top level - and the fixed list is tried first because when it does
+     match it is the authored answer. */
+  const _cvRowsOf=(c)=>{
+    if(Array.isArray(c)) return c;
+    if(!c||typeof c!=='object') return null;
+    const ok=(v)=>Array.isArray(v)&&v.length&&v[0]&&typeof v[0]==='object'&&!Array.isArray(v[0]);
+    for(const k of ['data','result','items','rows','points','series','values','entries','results']) if(ok(c[k])) return c[k];
+    for(const k of Object.keys(c)) if(ok(c[k])) return c[k];
+    return null;
+  };
+  const _cvCapTable=(c,name)=>{
+    // rows of the same shape are a TABLE - sortable, readable, and the thing the user asked to explore
+    const rows=_cvRowsOf(c);
+    if(!Array.isArray(rows)||!rows.length) return null;
+    const first=rows[0]; if(!first||typeof first!=='object'||Array.isArray(first)) return null;
+    const columns=Object.keys(first).filter(k=>typeof first[k]!=='object').slice(0,8);
+    if(columns.length<2) return null;
+    const body=rows.slice(0,80).map(r=>columns.map(k=>{ const v=r&&r[k]; return v==null?'':String(v).slice(0,120); }));
+    return { kind:'table', n:(name||'result')+' \u00b7 '+body.length+' rows', k:'table', col:'#38bdf8',
+      d:'table \u00b7 '+body.length+' rows', content:{ columns, rows:body, caption:String(name||'') } };
+  };
+  const _cvCapWidget=(c,name,args)=>{
+    // a shape the widget rule already recognises IS a chart - the same rule the transcript draws by
+    if(typeof _widgetFormByShape!=='function'||typeof _widgetRecord!=='function') return null;
+    let form=null; try{ form=_widgetFormByShape(c); }catch(_){ return null; }
+    if(!form||form==='table') return null;                 // a table is handled above, with real columns
+    let rec=null; try{ rec=_widgetRecord({form, source:name, args, name}, 'rule'); }catch(_){ return null; }
+    if(!rec) return null;
+    let data=c; try{ data=_widgetData(c, form); }catch(_){}
+    const full=Object.assign({}, rec, {data});
+    return { kind:'widget', n:name||form, k:'widget', col:'#a78bfa', d:'widget \u00b7 '+form,
+      content:Object.assign({}, full, {widget:form, form, title:name||form, record:full}) };
+  };
   function _cvHarvest(body){
     const out=[]; if(!body) return out;
-    body.querySelectorAll('.cap-inline').forEach((el,i)=>{ const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:'')||'').replace(/\s+/g,' ').trim().slice(0,80); const res=String((el.querySelector('.cap-result,.cap-peek,.cap-md')||{}).textContent||'').trim().slice(0,2000); if(!n) return;
+    body.querySelectorAll('.cap-inline').forEach((el, i) => { const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:'')||'').replace(/\s+/g,' ').trim().slice(0,80); const res=String((el.querySelector('.cap-result,.cap-peek,.cap-md')||{}).textContent||'').trim().slice(0,2000); if(!n) return;
       if((el.classList.contains('drv')||/^canvas\./i.test(n)||(/^(driven\s*)?ui\.directive\b/i.test(n)&&/canvas\./.test(n)))&&!el.classList.contains('error')) return;   // a directive's chip is never an item   // a canvas call put its item there itself — its receipt is not a second item (a failed one still lands, where the item would have been)
-      out.push({kind:'markdown', n:n.split(' ')[0]||'capability', d:'capability · '+(el.classList.contains('error')?'failed':'done'), content:{md:'**'+n+'**\n\n'+(res?'```\n'+res+'\n```':'')}, col:'var(--acc2)', k:'cap'}); });
+      /* the RESULT decides the item, not the rendered text. Kept on the card by executeCapInline; a card
+         from a restored session has none, and falls through to the markdown it always landed as. */
+      const cap = el.__cap || null, cres = cap && !cap.err ? cap.content : null;
+      const cname = String((cap && cap.name) || n.split(' ')[0] || 'capability');
+      let made = null;
+      try{ made = _cvCapTerm(cres) || _cvCapTable(cres, cname) || _cvCapWidget(cres, cname, cap && cap.args); }catch(_){ made = null; }
+      if(made){ out.push(made); return; }
+      out.push({kind:'markdown', n:n.split(' ')[0]||'capability', d:'capability \u00b7 '+(el.classList.contains('error')?'failed':'done'), content:{md:'**'+n+'**\n\n'+(res?'```\n'+res+'\n```':'')}, col:'var(--acc2)', k:'cap'}); });
     body.querySelectorAll('pre code').forEach((el,i)=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; const s=String(el.textContent||''); if(!s.trim()) return;
       if(lang==='mermaid'){ out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{mermaid:s.slice(0,24000)}, col:'#a78bfa', k:'diagram'}); return; }
       if(lang==='widget') return;
@@ -6257,6 +6321,8 @@ IMPORTANT:
     const k=String((m&&m.kind)||''); const c=(m&&m.content)||{};
     if(k==='widget'){ const s=String((c.draw&&c.draw.size)||(c.record&&c.record.draw&&c.record.draw.size)||(c.frame&&c.frame.size)||'m'); return ['s','m','l','xl'].includes(s)?s:'m'; }
     if(k==='diagram'||k==='table'||k==='image') return 'm';
+    // a terminal is a scrollback: at 's' it shows a prompt and two lines, which is not the output you asked for
+    if(k==='session') return 'm';
     return 's';
   }
   async function _cvLandReply(mid){
@@ -8901,6 +8967,12 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
         ${(_peek&&!imgGallery)?`<div id="${resultId}_pk" class="cap-peek" style="display:${_collapsed?'block':'none'}">${esc(_peek.slice(0,160))}</div>`:''}
         <div id="${resultId}" class="cap-result" style="background:var(--bg0);border-radius:3px;padding:${_rep?'8px 10px':'5px'};max-height:${_rep?'75vh':'300px'};overflow:auto;display:${_collapsed?'none':'block'}">${bodyInner}</div>
         ${imgGallery}`;
+      /* THE RESULT ITSELF, KEPT. Everything above turns `content` into pixels and then drops it: the only trace
+         left in the DOM is the serialised text inside .cap-result, truncated for display. The session canvas
+         then harvested THAT - which is why a capability landed on the canvas as a fenced wall of JSON rather
+         than as the table, the chart or the terminal output it actually was. The payload costs nothing to keep
+         on the node that is already holding it, and it is what lets the canvas draw the result properly. */
+      try{ el.__cap={ name:capName, args:coercedArgs, content, err:isErr }; }catch(_){}
       // a DIRECTIVE (the control plane) lands as the board's chip — name · outcome · target · policy · Undo — not a dump of the
       // dispatcher's row; the raw result stays behind the toggle
       if(capName==='ui.directive'&&content&&typeof content==='object'&&content.row){ try{ el.innerHTML=_drvChipHtml(content, resultId, previewClean); el.classList.add('drv'); }catch(_){} try{ _cvDrvRibbon(content); }catch(_){} }   // …and the ribbon on the surface it drove
