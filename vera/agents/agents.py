@@ -2248,6 +2248,37 @@ _CHAT_CTX_RESERVE_OUT = int(os.environ.get("VERA_CHAT_CTX_RESERVE_OUT", "8192") 
 # feeds is an optimisation — on failure we fall back to the previous behaviour.
 _CHAT_PS_TIMEOUT_S = float(os.environ.get("VERA_CHAT_PS_TIMEOUT_S", "3") or 3)
 
+# How long to wait for the FIRST line of a reply before saying so. This is not
+# the generation budget: once tokens are flowing the per-chunk wait goes back to
+# OLLAMA_GEN_TIMEOUT, so a long silent <think> block is still fine. It bounds
+# only "the node never started", which on 2026-09-20 meant chat hung until the
+# browser gave up, showing an empty bubble and naming nothing.
+_CHAT_FIRST_TOKEN_S = float(os.environ.get("VERA_CHAT_FIRST_TOKEN_S", "90") or 90)
+
+
+def _chat_stall_frame(node: str, model: str, url: str, waited: float,
+                      what: str) -> bytes:
+    """An SSE error frame that names the node, the model, and what to do.
+
+    The failure this reports is invisible from everywhere else: ollama answers
+    /api/ps, /api/tags and /api/version from in front of its scheduler, so the
+    node reads as online and idle in obs.health, /ollama/cluster and the gate
+    while generation is dead. Somebody looking at an empty chat bubble has no
+    way to reach that conclusion, so say it here.
+    """
+    return ("data: " + json.dumps({
+        "type": "error",
+        "node": node,
+        "model": model,
+        "text": (
+            f"No reply from {node} ({model}): it {what} within {waited:.0f}s. "
+            f"The node is reachable and reports itself healthy — metadata "
+            f"endpoints bypass ollama's scheduler, so a deadlocked scheduler "
+            f"still looks online everywhere else. Check it with "
+            f"nodes.ollama.dispatch_check; if it reports {node} wedged, restart "
+            f"ollama on that node."),
+    }) + "\n\n").encode()
+
 
 async def _resident_num_ctx(url: str, model: str) -> int:
     """context_length of `model`'s already-loaded runner on `url`, else 0.
@@ -2799,13 +2830,59 @@ class AgentRunner:
                 timeout=httpx.Timeout(_orch.OLLAMA_GEN_TIMEOUT, connect=10.0),
                 follow_redirects=True,
             ) as c:
-                async with c.stream("POST", f"{url}/api/chat", json=body) as resp:
+                # The generous per-chunk budget above is right for a model that
+                # is WORKING and quiet (a long <think> block). It is wrong for a
+                # node that never starts: on 2026-09-20 ollama's scheduler
+                # deadlocked, accepted this POST and never sent a response line,
+                # so the reply hung until the browser gave up — no tokens, no
+                # error, an empty bubble and no way to tell what failed. Bound
+                # the wait for the FIRST line separately and say what happened.
+                _stream_cm = c.stream("POST", f"{url}/api/chat", json=body)
+                try:
+                    resp = await asyncio.wait_for(_stream_cm.__aenter__(),
+                                                  timeout=_CHAT_FIRST_TOKEN_S)
+                except asyncio.TimeoutError:
+                    # Abandoned deliberately: nothing was read from it, so there
+                    # is no partial generation to lose (contrast _StreamLines).
+                    yield _chat_stall_frame(chosen, model, url, _CHAT_FIRST_TOKEN_S,
+                                            "never sent a response")
+                    _og_entry.update({"status": "error", "elapsed_s": round(time.time() - _og_t0, 2),
+                                      "error": f"no response headers within {_CHAT_FIRST_TOKEN_S:.0f}s "
+                                               f"(node accepted the request and never dispatched it)"})
+                    _orch._ollama_log_append(_og_entry)
+                    _og_done_sent = True
+                    return
+                try:
                     if resp.status_code != 200:
                         body_txt = await resp.aread()
                         yield f"data: {json.dumps({'type':'error','text':f'Ollama {resp.status_code}: {body_txt.decode()[:200]}'})}\n\n".encode()
                         return
 
-                    async for line in resp.aiter_lines():
+                    _lines = _orch._StreamLines(resp.aiter_lines())
+                    _seen_any = False
+                    while True:
+                        try:
+                            # Poll non-destructively: a TimeoutError here leaves
+                            # the stream intact, so a slow-but-progressing
+                            # generation is never cut off (see _StreamLines).
+                            line = await _lines.next(
+                                timeout=(_orch.OLLAMA_GEN_TIMEOUT if _seen_any
+                                         else _CHAT_FIRST_TOKEN_S))
+                        except asyncio.TimeoutError:
+                            if _seen_any:
+                                continue          # quiet but alive — keep waiting
+                            yield _chat_stall_frame(chosen, model, url,
+                                                    _CHAT_FIRST_TOKEN_S,
+                                                    "sent headers but no tokens")
+                            _og_entry.update({"status": "error",
+                                              "elapsed_s": round(time.time() - _og_t0, 2),
+                                              "error": f"no first token within {_CHAT_FIRST_TOKEN_S:.0f}s"})
+                            _orch._ollama_log_append(_og_entry)
+                            _og_done_sent = True
+                            return
+                        except StopAsyncIteration:
+                            break
+                        _seen_any = True
                         if not line.strip():
                             continue
                         try:
@@ -2855,6 +2932,14 @@ class AgentRunner:
                             _prompt_eval_count = chunk.get("prompt_eval_count", 0)
                             _ctx_used = _eval_count + _prompt_eval_count
                             break
+                finally:
+                    # Entered by hand above (to bound the header wait), so it is
+                    # closed by hand too — on every path out, including the
+                    # early returns and a client disconnect.
+                    try:
+                        await _stream_cm.__aexit__(None, None, None)
+                    except Exception:
+                        pass
 
             _og_stream_ok = True
 

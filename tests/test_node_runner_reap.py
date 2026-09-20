@@ -20,8 +20,9 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "edge"))
 
 from node_runner_core import (  # noqa: E402
-    DEFAULT_STUCK_S, Runner, is_active, parse_model_from_cmdline,
-    parse_port_from_cmdline, reap_plan,
+    DEFAULT_STUCK_S, DispatchProbe, Runner, dispatch_finding, is_active,
+    is_dispatch_wedged, parse_model_from_cmdline, parse_port_from_cmdline,
+    reap_plan,
 )
 
 STUCK_S = DEFAULT_STUCK_S  # 1800s = 2x OLLAMA_GEN_TIMEOUT
@@ -124,3 +125,94 @@ def test_parsing_is_safe_on_junk():
     assert parse_model_from_cmdline("") == ""
     assert parse_model_from_cmdline("llama-server --model") == ""
     assert parse_port_from_cmdline("llama-server --port notanint") == 0
+
+
+# ── the OTHER failure: a healthy runner nothing dispatches to ────────────────
+# gpu-250, 2026-09-20. ollama's scheduler deadlocked: it accepted generations
+# and never handed them to its own runner, which stayed idle, healthy and
+# resident. Every check Vera had said "online, idle" — including this reaper,
+# correctly by its own rule — while chat produced nothing for eight hours.
+
+def _p(**kw):
+    base = dict(node="gpu-250", metadata_ok=True, resident_models=1,
+                dispatched=False, probe_s=25.0)
+    base.update(kw)
+    return DispatchProbe(**base)
+
+
+def test_the_incident_is_recognised():
+    """Metadata answers, a model is resident, generation never comes back."""
+    assert is_dispatch_wedged(_p()) is True
+
+
+def test_a_node_that_is_simply_down_is_not_called_wedged():
+    """`unreachable` already reports that, and the remedy is different."""
+    assert is_dispatch_wedged(_p(metadata_ok=False)) is False
+
+
+def test_a_cold_node_with_nothing_loaded_is_not_called_wedged():
+    """With no model resident a slow reply is a model LOAD, which is normal."""
+    assert is_dispatch_wedged(_p(resident_models=0)) is False
+
+
+def test_an_unprobed_node_is_unknown_not_wedged():
+    """None must never read as False — that would flag every skipped node."""
+    assert is_dispatch_wedged(_p(dispatched=None)) is False
+    assert is_dispatch_wedged(None) is False
+
+
+def test_a_skipped_probe_is_never_a_finding():
+    """We skip while a census or the GPU gate is busy; that is not evidence."""
+    assert is_dispatch_wedged(_p(skipped="census in flight (goal 3)")) is False
+
+
+def test_a_healthy_node_is_not_wedged():
+    assert is_dispatch_wedged(_p(dispatched=True, probe_s=0.4)) is False
+
+
+def test_finding_is_none_when_healthy():
+    assert dispatch_finding(_p(dispatched=True)) is None
+    assert dispatch_finding(None) is None
+
+
+def test_finding_names_the_node_and_forbids_killing_the_runner():
+    """The obvious reading of 'runner idle, node not serving' is to kill the
+    runner. That is wrong: it loses the loaded model and leaves the deadlock."""
+    f = dispatch_finding(_p())
+    assert f["node"] == "gpu-250"
+    assert f["severity"] == "crit"
+    remedy = f["remedy"].lower()
+    assert "restart ollama" in remedy
+    assert "not kill" in remedy or "never kill" in remedy
+
+
+def test_finding_tells_the_reader_how_to_rule_out_a_merely_busy_node():
+    """From outside, a saturated node and a deadlocked one look identical — and
+    the remedies are opposite, so the finding must not assert just one."""
+    f = dispatch_finding(_p())
+    disc = f["discriminator"].lower()
+    assert "/health" in disc and "slot" in disc
+    assert "saturated" in disc
+    assert "wedged" in disc
+
+
+def test_finding_warns_that_metadata_checks_cannot_see_this():
+    """The whole reason it went unreported for eight hours."""
+    detail = dispatch_finding(_p())["detail"].lower()
+    assert "/api/ps" in detail
+    assert "bypass" in detail or "online" in detail
+
+
+def test_to_dict_carries_the_verdict():
+    assert _p().to_dict()["wedged"] is True
+    assert _p(dispatched=True).to_dict()["wedged"] is False
+
+
+def test_a_wedged_node_does_not_make_its_idle_runner_reapable():
+    """The safety property. The runner is the part that still works, and
+    reap_plan must keep it for exactly the reason it always did: idle."""
+    idle = _r(pid=2478281, state="S", cpu=2637.0, age=36074.0, node="gpu-250")
+    v = reap_plan([idle], stuck_s=STUCK_S)
+    assert v.stuck == []
+    assert idle in v.kept
+    assert "idle" in v.reasons[idle.pid]
