@@ -68,6 +68,60 @@
   const BLOCK = {
     markdown: c => `<div class="vc-md">${md(c.md || c.text || '')}</div>`,
 
+    /* A MONTH, WITH WHAT IS ON IT. Backed by the diary rather than by a copy of it: the month buttons and a day
+       press go back to cal.events.list, so the item is a VIEW of the calendar and not a screenshot taken once.
+       An event written anywhere - by the aide, by the panel, by Google's sync - shows here on the next refresh.
+
+       The week starts Monday. Days carry a dot per event up to three and then a count, because a grid where a
+       busy day and a quiet one look alike is a decoration; and the selected day's events are listed underneath
+       with their times, since that is the question a calendar is actually asked. */
+    calendar: (c, size, key, el) => {
+      const evs = Array.isArray(c.events) ? c.events : [];
+      const pad = (n) => (n < 10 ? '0' : '') + n;
+      const today = new Date();
+      const todayKey = today.getFullYear() + '-' + pad(today.getMonth() + 1) + '-' + pad(today.getDate());
+      const month = /^\d{4}-\d{2}$/.test(String(c.month || '')) ? String(c.month) : todayKey.slice(0, 7);
+      const [Y, M] = month.split('-').map(Number);
+      const first = new Date(Y, M - 1, 1);
+      const days = new Date(Y, M, 0).getDate();
+      // Monday-first: JS makes Sunday 0, and a week that starts on Sunday is not the week this is read in
+      const lead = (first.getDay() + 6) % 7;
+      const byDay = {};
+      evs.forEach((e) => { const d = String(e && e.start || '').slice(0, 10); if (!d) return; (byDay[d] = byDay[d] || []).push(e); });
+      const sel = /^\d{4}-\d{2}-\d{2}$/.test(String(c.selected || '')) ? String(c.selected) : '';
+      const MON = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      let cells = '';
+      for (let i = 0; i < lead; i++) cells += '<span class="vc-cal-d out"></span>';
+      for (let d = 1; d <= days; d++) {
+        const k = month + '-' + pad(d);
+        const on = byDay[k] || [];
+        const dots = on.slice(0, 3).map((e) => '<i style="background:' + esc(String(e.color || 'var(--acc,#5a9e8f)')) + '"></i>').join('');
+        cells += '<button class="vc-cal-d' + (k === todayKey ? ' today' : '') + (k === sel ? ' on' : '') + (on.length ? ' has' : '')
+          + '" data-cal-day="' + k + '" data-cal-key="' + esc(key || '') + '"'
+          + ' title="' + esc(k + (on.length ? ' \u00b7 ' + on.length + ' event' + (on.length === 1 ? '' : 's') : '')) + '">'
+          + '<b>' + d + '</b><span class="vc-cal-dots">' + dots + (on.length > 3 ? '<em>+' + (on.length - 3) + '</em>' : '') + '</span></button>';
+      }
+      const listFor = sel ? (byDay[sel] || []) : evs.slice().sort((a, b) => String(a.start || '').localeCompare(String(b.start || ''))).slice(0, 8);
+      const timeOf = (e) => { const s = String(e.start || ''); if (e.all_day || s.length <= 10) return 'all day'; const t = s.slice(11, 16); return t || ''; };
+      const rows = listFor.map((e) => '<div class="vc-cal-e">'
+        + '<span class="vc-cal-t">' + esc(timeOf(e)) + '</span>'
+        + '<span class="vc-cal-n" style="border-color:' + esc(String(e.color || 'var(--acc,#5a9e8f)')) + '">' + esc(String(e.title || 'event'))
+        + (e.location ? ' <em>' + esc(String(e.location)) + '</em>' : '') + '</span></div>').join('')
+        || '<div class="vc-cal-none">' + (sel ? 'Nothing on this day.' : 'Nothing in this month.') + '</div>';
+      return '<div class="vc-cal">'
+        + '<div class="vc-cal-hd">'
+        + '<button class="vc-cal-b" data-cal-mv="-1" data-cal-key="' + esc(key || '') + '" title="The month before">\u2039</button>'
+        + '<span class="vc-cal-m">' + esc(MON[M - 1] + ' ' + Y) + '</span>'
+        + '<button class="vc-cal-b" data-cal-mv="1" data-cal-key="' + esc(key || '') + '" title="The month after">\u203a</button>'
+        + '<span class="vc-cal-sp"></span>'
+        + '<button class="vc-cal-b" data-cal-mv="0" data-cal-key="' + esc(key || '') + '" title="Back to this month">today</button>'
+        + '</div>'
+        + '<div class="vc-cal-w">' + ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d) => '<span>' + d + '</span>').join('') + '</div>'
+        + '<div class="vc-cal-g">' + cells + '</div>'
+        + '<div class="vc-cal-l">' + rows + '</div>'
+        + '</div>';
+    },
+
     /* DATED EVENTS IN ORDER. `when` is whatever precision the prose had - a year, a month, a day - and it is
        shown as it was read rather than padded out to a fake day so the axis looks tidy. A run of events in the
        same year is grouped under it, because a timeline of forty rows each labelled with the same four digits
@@ -445,6 +499,35 @@
   .it-hd .ic[data-kind="note"]{background:#8fb87a}.it-hd .ic[data-kind="markdown"]{background:#8fb87a}
   .it-hd .ic[data-kind="source"]{background:#7aa2d6}
   .it-hd .ic[data-kind="timeline"]{background:#c9955a}
+  .it-hd .ic[data-kind="calendar"]{background:#9fe1e7}
+  .vc-cal{display:flex;flex-direction:column;gap:6px}
+  .vc-cal-hd{display:flex;align-items:center;gap:5px}
+  .vc-cal-m{font-size:11px;font-weight:600;color:var(--fg,#ddd)}
+  .vc-cal-sp{flex:1}
+  .vc-cal-b{font:inherit;font-size:9.5px;min-width:19px;height:19px;padding:0 7px;border:1px solid var(--border,#3a3530);
+    border-radius:9px;background:var(--bg2,#272421);color:var(--dim2,#8a7e70);cursor:pointer;line-height:1}
+  .vc-cal-b:hover{color:var(--fg,#ddd);border-color:var(--acc,#5a9e8f)}
+  .vc-cal-w{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;font-family:var(--mono,monospace);font-size:8.5px;
+    color:var(--dim2,#8a7e70);text-align:center}
+  .vc-cal-g{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+  .vc-cal-d{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:1px;
+    min-height:30px;padding:2px 0 3px;border:1px solid transparent;border-radius:5px;background:none;font:inherit;
+    color:var(--dim2,#8a7e70);cursor:pointer}
+  .vc-cal-d.out{visibility:hidden;cursor:default}
+  .vc-cal-d b{font-size:10px;font-weight:500;line-height:1}
+  .vc-cal-d.has b{color:var(--fg,#ddd)}
+  .vc-cal-d:hover{background:var(--bg2,#272421)}
+  .vc-cal-d.today b{color:var(--acc,#5a9e8f);font-weight:700}
+  .vc-cal-d.on{border-color:var(--acc,#5a9e8f);background:var(--bg2,#272421)}
+  .vc-cal-dots{display:flex;align-items:center;gap:1.5px;min-height:4px}
+  .vc-cal-dots i{width:3.5px;height:3.5px;border-radius:50%;display:block}
+  .vc-cal-dots em{font-style:normal;font-size:7px;color:var(--dim2,#8a7e70)}
+  .vc-cal-l{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--border,#3a3530);padding-top:5px}
+  .vc-cal-e{display:grid;grid-template-columns:44px 1fr;gap:6px;align-items:baseline}
+  .vc-cal-t{font-family:var(--mono,monospace);font-size:8.5px;color:var(--dim2,#8a7e70)}
+  .vc-cal-n{font-size:10.5px;color:var(--fg,#ddd);border-left:2px solid var(--acc,#5a9e8f);padding-left:6px}
+  .vc-cal-n em{font-style:normal;font-size:9px;color:var(--dim2,#8a7e70)}
+  .vc-cal-none{font-size:10px;color:var(--dim2,#8a7e70);font-style:italic}
   /* the axis is the left rule; the year stands on it, the events hang off it */
   .vc-tl{display:flex;flex-direction:column;gap:1px;position:relative;padding-left:2px}
   .vc-tl-h{font-size:11px;font-weight:600;color:var(--fg,#ddd);margin-bottom:5px}
@@ -1167,6 +1250,11 @@
         // a source's own two buttons: read the page, see the page
         const sa = t.closest('[data-src-act]');
         if (sa && body.contains(sa)) { ev.stopPropagation(); this._srcAct(sa.dataset.srcKey, sa.dataset.srcAct); return; }
+        // the calendar's month buttons and its days
+        const cm = t.closest('[data-cal-mv]');
+        if (cm && body.contains(cm)) { ev.stopPropagation(); this._calAct(cm.dataset.calKey, cm.dataset.calMv); return; }
+        const cd = t.closest('[data-cal-day]');
+        if (cd && body.contains(cd)) { ev.stopPropagation(); this._calAct(cd.dataset.calKey, cd.dataset.calDay); return; }
         const ch = t.closest('.chip[data-key]'); if (ch) { ev.stopPropagation(); this.call('canvas.add', { key: ch.dataset.key }); return; }
         const hd = t.closest('.it-hd'); const it = hd && hd.closest('.it[data-key]');
         if (it && !it.classList.contains('ghost')) { ev.stopPropagation(); this._toggleOpen(it.dataset.key); }
@@ -1446,6 +1534,35 @@
         const src = /^data:|^https?:/.test(shot) ? shot : 'data:' + mime + ';base64,' + shot;
         return this.call('canvas.update', { key, content: Object.assign({}, c, { shot: src }) });
       }
+    }
+    /* THE MONTH AND THE DAY GO BACK TO THE DIARY. Not to a copy held in the item: a calendar whose contents were
+       fixed when it landed would be wrong by the next event written, and it is a calendar - being current is the
+       whole of what it is for. The month's events are re-read from cal.events.list and written into the item, so
+       the answer survives a reload and the next look costs nothing. */
+    async _calAct(key, act) {
+      const b = this._blockOf(key); const c = (b && b.content) || null; if (!c) return;
+      const pad = (n) => (n < 10 ? '0' : '') + n;
+      const now = new Date();
+      const cur = /^\d{4}-\d{2}$/.test(String(c.month || '')) ? String(c.month)
+        : now.getFullYear() + '-' + pad(now.getMonth() + 1);
+      if (/^-?\d+$/.test(String(act))) {
+        const step = +act;
+        let month;
+        if (step === 0) month = now.getFullYear() + '-' + pad(now.getMonth() + 1);
+        else { const [Y, M] = cur.split('-').map(Number); const d = new Date(Y, M - 1 + step, 1);
+          month = d.getFullYear() + '-' + pad(d.getMonth() + 1); }
+        this._readout(key, '\u2026 ' + month);
+        const from = month + '-01';
+        const [yy, mm] = month.split('-').map(Number);
+        const to = month + '-' + pad(new Date(yy, mm, 0).getDate());
+        const r = await this.callResult('cal.events.list', { start: from, end: to });
+        const events = (r && Array.isArray(r.events)) ? r.events : [];
+        return this.call('canvas.update', { key, content: Object.assign({}, c, { month, selected: '', events }) });
+      }
+      // a day: local only, the month's events are already here
+      const day = String(act || '');
+      const next = Object.assign({}, c, { selected: c.selected === day ? '' : day });
+      return this.call('canvas.update', { key, content: next });
     }
     _sid() { return String((this._doc && this._doc.session) || this.getAttribute('session-id') || ''); }
     _contentOf(key) { const b = this._blockOf(key); return b ? Object.assign({}, b.content || {}) : null; }

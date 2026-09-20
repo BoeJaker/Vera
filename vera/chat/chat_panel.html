@@ -6262,6 +6262,25 @@ IMPORTANT:
   }
   document.addEventListener('vera:research:source', ev=>{ try{ _cvLandSource(ev.detail||{}); }catch(_){} });
 
+  /* AN EVENT WRITTEN PUTS THE MONTH ON THE CANVAS. cal.event.upsert answers with the one event it wrote, which
+     on its own is a receipt - the useful thing is the month it landed in, so the diary is re-read for that month
+     and the calendar item is added or refreshed in place. Keyed by the month, so writing three events builds one
+     calendar rather than three. */
+  async function _cvLandCalendar(ev, mid){
+    if(!SID) return 0;
+    const start=String((ev&&(ev.start||ev.date))||''); const month=/^\d{4}-\d{2}/.test(start)?start.slice(0,7):'';
+    if(!month) return 0;
+    const pad=(n)=>(n<10?'0':'')+n; const [yy,mm]=month.split('-').map(Number);
+    let events=[];
+    try{ const r=await _capCall('cal.events.list',{ start:month+'-01', end:month+'-'+pad(new Date(yy,mm,0).getDate()) });
+      events=(r&&Array.isArray(r.events))?r.events:[]; }catch(_){ return 0; }
+    if(!events.length) return 0;
+    try{ const r=await _capCall('canvas.add',{ session_id:SID, kind:'calendar', key:'calendar:'+month, at:'now', size:'m',
+      content:{ title:'Calendar', month, selected:String(start).slice(0,10), events },
+      anchor:mid?{ mid, turn:mid }:undefined });
+      return (r&&r.ok)?events.length:0; }catch(_){ return 0; }
+  }
+
   /* AND THE TIMELINE, when a run finishes. Only when there is one to draw: a report about a library's API has no
      dates in it and should get no axis, so an empty extraction lands nothing rather than an empty item saying so.
      Keyed by the turn, because the timeline is OF that question - asking again produces a new one rather than
@@ -6494,6 +6513,20 @@ IMPORTANT:
       return { kind:'image', n:String(c.title||'image'), k:'image', col:'#e879f9', d:'image',
                content:{ url, alt:String(c.title||''), caption:String(c.caption||'') } }; });
 
+  /* A LIST OF DATED THINGS WITH TITLES IS A MONTH. The table rule below would draw the diary as a grid of
+     truncated cells - id, title, start, end, all_day, location, source, colour - which is the data and not the
+     answer to "what have I got on". Before the table, after the terminal. */
+  const _cvCalMonth=(evs)=>{ const d=String((evs[0]&&evs[0].start)||'').slice(0,7);
+    if(/^\d{4}-\d{2}$/.test(d)) return d;
+    const n=new Date(); return n.getFullYear()+'-'+(n.getMonth()<9?'0':'')+(n.getMonth()+1); };
+  cvAdapter('calendar',
+    (c)=>{ const e=c&&typeof c==='object'&&Array.isArray(c.events)?c.events:null;
+      return !!(e&&e.length&&e[0]&&typeof e[0]==='object'&&e[0].start!=null&&e[0].title!=null); },
+    (c)=>{ const evs=c.events.slice(0,400);
+      return { kind:'calendar', n:'Calendar', k:'calendar', col:'#9fe1e7',
+               d:'calendar \u00b7 '+evs.length+' event'+(evs.length===1?'':'s'),
+               key:'calendar:month', content:{ title:'Calendar', month:_cvCalMonth(evs), selected:'', events:evs } }; });
+
   // rows of the same shape: a table with real columns
   cvAdapter('table', (c,ctx)=>!!_cvCapTable(c,ctx.cap), (c,ctx)=>_cvCapTable(c,ctx.cap));
 
@@ -6520,6 +6553,8 @@ IMPORTANT:
       const cap = el.__cap || null, cres = cap && !cap.err ? cap.content : null;
       const cname = String((cap && cap.name) || n.split(' ')[0] || 'capability');
       let made = null;
+      // an event written is not an item in itself - it is a reason to show the month it landed in
+      try{ if(/^cal\.(event|todo)\.upsert$/.test(cname)&&cres&&cres.event) _cvLandCalendar(cres.event, _cvRelMid||''); }catch(_){}
       try{ made = _cvAdapt(cname, cres, cap && cap.args); }catch(_){ made = null; }
       // a search answers with PAGES - several items, not one - so a recogniser may hand back a list
       if(Array.isArray(made)){ made.forEach(x=>out.push(x)); return; }
@@ -6553,6 +6588,7 @@ IMPORTANT:
     if(k==='source') return 's';   // a card to scan; it earns its height when you open the page
     if(k==='html') return 'm';     // a rendered page in a letterbox is the squash this set out to fix
     if(k==='prose') return 'm';    // a report IS the deliverable; it is not a footnote to itself
+    if(k==='calendar') return 'm';  // a month grid in a small item is a row of grey squares
     return 's';
   }
   async function _cvLandReply(mid){

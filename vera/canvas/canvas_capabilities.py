@@ -86,6 +86,12 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
     "html":     {"desc": "Raw HTML — ON-THE-FLY escape hatch; prefer a predefined "
                          "type so the UI stays consistent.",
                  "content": "{html:str}"},
+    "calendar": {"desc": "A month, with what is on. Backed by the diary itself (cal.events.list) rather than "
+                         "by a copy of it: the item refreshes when the month changes and when an event is "
+                         "written, so it is a view of the calendar and not a screenshot of one. `month` is "
+                         "YYYY-MM, `selected` a YYYY-MM-DD the day list is showing.",
+                 "content": "{title?:str, month?:str, selected?:str, "
+                            "events:[{id,title,start,end?,all_day?,location?,color?}]}"},
     "timeline": {"desc": "Dated events in order - what a research run turned up about a subject, laid out on "
                          "a time axis. Events carry a `when` that may be a year, a month or a day, so a "
                          "timeline built from prose does not have to pretend to a precision the prose did "

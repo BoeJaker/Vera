@@ -206,10 +206,13 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
 {
   /* 2513 capabilities across 150 namespaces. Whatever decides what a result becomes cannot be a function per
      capability, and it cannot be a chain of ifs someone edits in the middle each time a cap is added. */
-  t('the rules are a registry, in order', Array.isArray(REG) && REG.length >= 7, REG && REG.length);
+  t('the rules are a registry, in order', Array.isArray(REG) && REG.length >= 8, REG && REG.length);
   t('each one says what it recognises and what it builds',
     REG.every((a) => a.name && typeof a.when === 'function' && typeof a.build === 'function'));
-  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,sources,html,image,table,widget,prose',
+  /* the order IS the behaviour, so it is pinned - a rule that moves above another changes what results become.
+     calendar sits above table because the diary drawn as rows of id/title/start/end is the data and not the
+     answer; prose sits last because almost every result carries some string. */
+  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,sources,html,image,calendar,table,widget,prose',
     REG.map((a) => a.name).join(','));
 
   // and it routes, by shape alone, with no capability named anywhere
