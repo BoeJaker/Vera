@@ -68,6 +68,30 @@
   const BLOCK = {
     markdown: c => `<div class="vc-md">${md(c.md || c.text || '')}</div>`,
 
+    /* DATED EVENTS IN ORDER. `when` is whatever precision the prose had - a year, a month, a day - and it is
+       shown as it was read rather than padded out to a fake day so the axis looks tidy. A run of events in the
+       same year is grouped under it, because a timeline of forty rows each labelled with the same four digits
+       is a list wearing an axis. Each event keeps the page it came from, so the timeline is a way back into the
+       sources rather than a summary that has left them behind. */
+    timeline: (c) => {
+      const ev = Array.isArray(c.events) ? c.events : [];
+      if (!ev.length) return `<div class="vc-tl-empty">No dated events were found.</div>`;
+      const yearOf = (w) => String(w || '').slice(0, 4);
+      const rest = (w) => { const s = String(w || ''); return s.length > 4 ? s.slice(5) : ''; };
+      let out = '', year = '';
+      ev.forEach((e) => {
+        const y = yearOf(e.when);
+        if (y !== year) { year = y; out += `<div class="vc-tl-y">${esc(y)}</div>`; }
+        const when = rest(e.when);
+        out += `<div class="vc-tl-e">`
+          + `<span class="vc-tl-w">${esc(when || '')}</span>`
+          + `<span class="vc-tl-t">${esc(String(e.label || e.text || ''))}`
+          + (e.url ? ` <a class="vc-tl-a" href="${esc(e.url)}" target="_blank" rel="noopener">source</a>` : '')
+          + `</span></div>`;
+      });
+      return `<div class="vc-tl">${c.title ? `<div class="vc-tl-h">${esc(c.title)}</div>` : ''}${out}</div>`;
+    },
+
     /* A PAGE THE RESEARCH READ. The run already knows every page it fetched - the research card has listed them
        beside the report all along - but the canvas only ever got the finished prose, so the thing you could not
        do was go back to what it was BUILT from. This is that: where it came from, what it said, and what it
@@ -415,6 +439,19 @@
     letter-spacing:0;text-transform:none;line-height:1}
   .it-hd .ic[data-kind="note"]{background:#8fb87a}.it-hd .ic[data-kind="markdown"]{background:#8fb87a}
   .it-hd .ic[data-kind="source"]{background:#7aa2d6}
+  .it-hd .ic[data-kind="timeline"]{background:#c9955a}
+  /* the axis is the left rule; the year stands on it, the events hang off it */
+  .vc-tl{display:flex;flex-direction:column;gap:1px;position:relative;padding-left:2px}
+  .vc-tl-h{font-size:11px;font-weight:600;color:var(--fg,#ddd);margin-bottom:5px}
+  .vc-tl-y{font-family:var(--mono,monospace);font-size:10px;font-weight:600;color:var(--acc3,#c9955a);
+    margin:7px 0 2px;padding-left:9px;border-left:2px solid var(--acc3,#c9955a)}
+  .vc-tl-e{display:grid;grid-template-columns:34px 1fr;gap:7px;padding:2px 0 2px 9px;
+    border-left:1px solid var(--border,#3a3530)}
+  .vc-tl-w{font-family:var(--mono,monospace);font-size:9px;color:var(--dim2,#8a7e70);padding-top:1px;text-align:right}
+  .vc-tl-t{font-size:10.5px;line-height:1.5;color:var(--fg,#ddd)}
+  .vc-tl-a{font-size:9px;color:var(--dim2,#8a7e70);text-decoration:none;white-space:nowrap}
+  .vc-tl-a:hover{color:var(--acc,#5a9e8f);text-decoration:underline}
+  .vc-tl-empty{font-size:10.5px;color:var(--dim2,#8a7e70);font-style:italic}
   /* a source reads as a page, not as a row: the domain small above it, the title the thing you click */
   .vc-src{display:flex;flex-direction:column;gap:5px;padding:2px 0}
   .vc-src-hd{display:flex;align-items:center;gap:7px;font-size:9px;color:var(--dim2,#8a7e70);font-family:var(--mono,monospace)}
