@@ -1039,12 +1039,27 @@ async def cap_guest_destroy(cluster_id: str = "", node: str = "",
         rec=rec, mode="guest_destroy", resource_ref=f"{node}:{guest_type}:{vmid}",
         operation={"purge": bool(purge)}, idempotency_key=idempotency_key,
         approval_receipt_ref=approval_receipt_ref, retry=retry)
+    # Its name, while the config still exists: the registries key on it.
+    cfg, _cfg_err = await _pve(rec, "GET", f"/nodes/{node}/{guest_type}/{vmid}/config")
+    gname = (cfg or {}).get("name") or (cfg or {}).get("hostname") or "" if isinstance(cfg, dict) else ""
     upid, err = await _pve(rec, "DELETE", path)
     if err:
         return {"error": err, "effect_shadow": shadow}
     await emit_event({"type": "proxmox.guest.destroy", "cluster": cluster_id,
                       "node": node, "vmid": vmid})
-    return {"ok": True, "upid": upid, "effect_shadow": shadow}
+    # The guest is gone; its SSH logins, directory host and mesh membership go
+    # with it, so the registries do not keep a machine that no longer answers
+    # (the directory still listed a container retired that morning, 19 Sep 2026).
+    forgotten: Dict = {}
+    forget = _cap("estate.registration.forget")
+    if forget:
+        try:
+            forgotten = await forget(vmid=int(vmid), name=gname) or {}
+        except Exception as e:
+            forgotten = {"error": f"{type(e).__name__}: {e}"}
+    return {"ok": True, "upid": upid, "effect_shadow": shadow,
+            "forgotten": [{k: d.get(k) for k in ("kind", "label", "ok", "error")} for d in forgotten.get("done") or []],
+            "forget_error": forgotten.get("error", "")}
 
 
 @capability(

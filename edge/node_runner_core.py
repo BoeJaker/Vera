@@ -27,7 +27,7 @@ CPU at twice that has, by definition, no one left to answer.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 #: Default: 2x OLLAMA_GEN_TIMEOUT (900s), matching _sweep_stuck_running's
 #: threshold for the same reason. Never below this floor.
@@ -113,6 +113,211 @@ def reap_plan(runners: Iterable[Runner], *, stuck_s: float = DEFAULT_STUCK_S,
             f"computing for {r.age_s:.0f}s ({r.cpu_seconds:.0f}s CPU) — past "
             f"{stuck_s:.0f}s, so every client that asked has already timed out")
     return v
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE OTHER FAILURE: a runner nothing is WRONG with, that nothing reaches
+# ─────────────────────────────────────────────────────────────────────────────
+# `reap_plan` above answers "is this runner burning the box for nobody". On
+# 2026-09-20 gpu-250 failed the opposite way and this module reported all-clear
+# throughout, correctly by its own rule and uselessly in practice.
+#
+# ollama's scheduler deadlocked. Its HTTP server kept answering, its runner
+# stayed healthy, idle and resident with the model in VRAM — and generation
+# requests were accepted and never dispatched to it. Talking to the runner
+# directly returned in 0.41s; the same request through ollama timed out at 30s
+# having produced no journal line and never moved the runner's slot off
+# `is_processing: false`.
+#
+# Every signal Vera owned said the node was fine, because /api/ps, /api/tags and
+# /api/version do NOT go through the scheduler: obs.health, /ollama/cluster,
+# in_use, gpu_gate and this reaper all read "online, idle". Chat hung for eight
+# hours with no reply and nothing to look at.
+#
+# Killing the runner is NOT the remedy and must never be inferred from this: the
+# runner is the healthy part, and `reap_plan` already keeps it (idle, no CPU).
+# The wedged component is `ollama serve` itself, and only restarting it clears
+# the deadlock. So this classifies and NAMES the state; it never reaps.
+
+
+@dataclass
+class DispatchProbe:
+    """What one node's ollama API did when asked to do a trivial generation.
+
+    `dispatched` is three-valued on purpose: True (it answered), False (it did
+    not, within the probe's bound), None (not probed — see `skipped`). None must
+    never read as a wedge; an unprobed node is an unknown, not a finding.
+    """
+    node: str = ""
+    metadata_ok: bool = False          # /api/ps answered at all
+    resident_models: int = 0           # how many models it reports loaded
+    dispatched: Optional[bool] = None  # the node ANSWERED the probe at all
+    probe_s: float = 0.0
+    skipped: str = ""                  # why the probe did not run
+    probe_model: str = ""              # which resident model was asked
+    #: Is a runner on this node actually BURNING CPU right now? This is what
+    #: separates the two ways a node stops answering, and Vera already collects
+    #: it (nodes.runner.list -> is_active). None = unknown.
+    runner_busy: Optional[bool] = None
+    runner_cpu_s: float = 0.0          # accumulated CPU of the busiest runner
+
+    def to_dict(self) -> Dict:
+        return {"node": self.node, "metadata_ok": self.metadata_ok,
+                "resident_models": self.resident_models,
+                "dispatched": self.dispatched, "probe_model": self.probe_model,
+                "probe_s": round(self.probe_s, 2), "skipped": self.skipped,
+                "runner_busy": self.runner_busy,
+                "runner_cpu_s": round(self.runner_cpu_s, 1),
+                "wedged": is_dispatch_wedged(self),
+                "saturated": is_node_saturated(self)}
+
+
+def is_dispatch_wedged(p: Optional[DispatchProbe]) -> bool:
+    """ollama is answering metadata but will not hand work to its own runner.
+
+    All four conditions are required, and each one excludes a different
+    innocent explanation:
+
+      * probed at all        — an unprobed node is unknown, not wedged
+      * metadata answered    — a node that is simply DOWN is a different finding
+                               (and `unreachable` already reports it)
+      * a model is resident  — with nothing loaded, a slow reply is a cold model
+                               load, which is normal and can take minutes
+      * the node never       — `dispatched` is False ONLY when the probe got no
+        answered at all        reply whatsoever. Any HTTP response, including a
+                               4xx, proves the scheduler is alive and answering;
+                               reading a non-200 as a wedge flagged a healthy
+                               gpu-250 in 0.06s because the resident model was
+                               an embedding one that cannot serve /api/generate.
+    """
+    if not _probe_failed(p):
+        return False
+    # A runner that is BURNING CPU is not wedged, it is oversubscribed: the
+    # request is queued behind real work and will be served eventually. Calling
+    # that a wedge sends someone to restart ollama, which throws away the work
+    # in flight and does not address the load. Observed 2026-09-20: cpu-246 and
+    # cpu-247 failed a 150s probe while their embedding runner held ~12 cores of
+    # a 48-core host at load 77. Only gpu-250 was genuinely deadlocked.
+    return p.runner_busy is not True
+
+
+def _probe_failed(p: Optional[DispatchProbe]) -> bool:
+    """The node was asked, could be asked, and did not answer."""
+    if p is None or p.skipped:
+        return False
+    if not p.metadata_ok:
+        return False          # simply down — `unreachable` covers that
+    if p.resident_models <= 0:
+        return False          # nothing loaded: slowness is a cold model load
+    return p.dispatched is False
+
+
+def is_node_saturated(p: Optional[DispatchProbe]) -> bool:
+    """The node did not answer because its runner is busy, not because it is
+    deadlocked. Same symptom, opposite remedy: shed load, do not restart."""
+    return _probe_failed(p) and p.runner_busy is True
+
+
+def is_embedding_model(m: Dict) -> bool:
+    """Would ollama refuse /api/generate for this resident model?
+
+    An embedding model cannot complete, so a 4xx from one says something about
+    the MODEL and nothing about whether the node dispatches work.
+    """
+    if not isinstance(m, dict):
+        return False
+    name = str(m.get("name") or m.get("model") or "").lower()
+    details = m.get("details") or {}
+    fam = str(details.get("family") or "").lower()
+    fams = [str(f).lower() for f in (details.get("families") or [])]
+    return ("embed" in name or "bert" in fam
+            or any("bert" in f for f in fams))
+
+
+def probe_call(models: Optional[List[Dict]]) -> Tuple[str, str, Dict]:
+    """(model, path, payload) for the cheapest call a RESIDENT model can serve.
+
+    Prefers a generative model: a completion exercises the same scheduler path
+    real work uses. Falls back to /api/embed for an embedding-only node, so a
+    node serving only nomic-embed-text is still probed meaningfully instead of
+    being asked to do something it cannot and failing for the wrong reason.
+    """
+    rows = [m for m in (models or []) if isinstance(m, dict)]
+    if not rows:
+        return "", "", {}
+    gen = [m for m in rows if not is_embedding_model(m)]
+    if gen:
+        name = str(gen[0].get("name") or gen[0].get("model") or "")
+        if name:
+            return name, "/api/generate", {
+                "model": name, "prompt": "ping", "stream": False,
+                "options": {"num_predict": 1},
+            }
+    name = str(rows[0].get("name") or rows[0].get("model") or "")
+    if not name:
+        return "", "", {}
+    return name, "/api/embed", {"model": name, "input": "ping"}
+
+
+def dispatch_finding(p: Optional[DispatchProbe]) -> Optional[Dict]:
+    """A reportable finding for a wedged node, or None when it is healthy.
+
+    Carries the remedy because the obvious reading of "runner idle, node not
+    serving" is to kill the runner, and that is the wrong move: it destroys a
+    loaded model and leaves the actual deadlock in place.
+    """
+    if is_node_saturated(p):
+        return {
+            "node": p.node,
+            "severity": "warn",
+            "kind": "saturated",
+            "title": f"{p.node}: cannot serve requests — its runner is saturated",
+            "detail": (
+                f"A 1-token request to an already-resident model did not return "
+                f"within {p.probe_s:.0f}s, and a runner on this node is actively "
+                f"burning CPU ({p.runner_cpu_s:.0f}s accumulated). The node is not "
+                "deadlocked — work is queued behind real work. Note these nodes "
+                "are usually LXC containers sharing one host, so /proc/loadavg "
+                "inside them shows the HOST's load, and one node's runner can "
+                "starve the others."),
+            "discriminator": "",
+            "remedy": (
+                "Shed load — do NOT restart ollama; that discards the work in "
+                "flight and the queue rebuilds immediately. Find what is "
+                "generating the volume (nodes.runner.list shows CPU per runner; "
+                "ollama.request_log shows who is calling) and slow or redirect "
+                "it."),
+        }
+    if not is_dispatch_wedged(p):
+        return None
+    return {
+        "kind": "wedged",
+        "node": p.node,
+        "severity": "crit",
+        "title": f"{p.node}: ollama accepts generations but never dispatches them",
+        "detail": (
+            f"/api/ps answers and reports {p.resident_models} resident model(s), "
+            f"but a 1-token generation did not return within {p.probe_s:.0f}s. "
+            "With the model already in memory that is milliseconds of real work. "
+            "Metadata endpoints bypass ollama's scheduler, so health checks that "
+            "only poll /api/ps, /api/tags or /api/version will keep reporting "
+            "this node online and free while nothing can generate on it."),
+        # Two causes produce this from outside, and they have OPPOSITE remedies,
+        # so name both rather than assert the one we saw. A node saturated by
+        # other work is slow; a deadlocked scheduler never answers at all.
+        "discriminator": (
+            f"On {p.node}, ask the runner directly: `nodes.runner.list` gives its "
+            "pid and port, then `curl 127.0.0.1:<port>/health` and `/slots` ON "
+            "that node. A runner that answers /health in milliseconds with its "
+            "slot idle, while ollama's own API will not generate, is a WEDGED "
+            "SCHEDULER. A runner at high CPU with a busy slot is a SATURATED "
+            "NODE — that one needs load shed, not a restart."),
+        "remedy": (
+            f"If the runner is idle and healthy: restart ollama on {p.node} "
+            "(systemctl restart ollama-vera in its container) — only that clears "
+            "the deadlock. Do NOT kill the runner: it is the working part, and "
+            "killing it loses the loaded model without fixing anything."),
+    }
 
 
 def parse_model_from_cmdline(cmdline: str) -> str:

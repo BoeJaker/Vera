@@ -78,7 +78,7 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
     <div class="kpis" id="kpis"></div>
     <span class="stat"><span id="dot" class="dot"></span><span id="statTxt">…</span></span>
     <button class="btn" onclick="loadAll()">⟳ Refresh</button>
-    <button class="btn" id="deepBtn" onclick="deepLoad()" title="SSH to Proxmox + Docker for the full guest / container list (slower)">⤓ Deep scan</button>
+    <button class="btn" id="deepBtn" onclick="ALL_MACHINES=!ALL_MACHINES;this.textContent=ALL_MACHINES?'⤓ registered only':'⤓ every machine';loadAll()" title="Show every machine in the estate, registered or not">⤓ every machine</button>
   </header>
   <div class="stage">
     <svg id="map" preserveAspectRatio="xMinYMin meet"><g id="edges"></g><g id="pulses"></g><g id="nodes"></g></svg>
@@ -111,68 +111,59 @@ let STATE={hosts:[],sys:{},clusters:[]};
 function shortName(fqdn){return (fqdn||'').split('.')[0];}
 function ipHost(h){return (h||'').replace(/^https?:\/\//,'').split(':')[0];}
 
+// The picture is the registration table: every machine in the estate (the one
+// list, estate.machines) with its standing in each plane. The map used to
+// rebuild the estate itself from the enrol store plus mesh members - eight
+// fetches, 27 of 56 machines, and its own idea of who was on the mesh.
+let ALL_MACHINES=false;
 async function loadAll(){
   $('#statTxt').textContent='scanning';
-  const [clusters,dockerHosts,sshHosts,mesh,ipaHosts,ipaStatus,seal]=await Promise.all([
-    j('/proxmox/cluster/list'), j('/workers/docker/hosts'), j('/enroll/ssh/host/list'),
-    j('/netsec/mesh/members'), j('/identity/host/list'), j('/identity/status'),
-    j('/identity/openbao/seal/status'),
+  const [reg,mesh,ipaStatus,seal]=await Promise.all([
+    j('/estate/registration'), j('/netsec/mesh/members'), j('/identity/status'), j('/identity/openbao/seal/status'),
   ]);
-  const clist=(clusters&&clusters.clusters)||[];
-  const dhosts=(dockerHosts&&dockerHosts.hosts)||[];
-  const shosts=(sshHosts&&sshHosts.hosts)||[];
+  const rows=(reg&&reg.rows)||[];
   const members=(mesh&&mesh.members)||[];
-  const ipaList=(ipaHosts&&ipaHosts.hosts)||[];
-  const ipaFqdns=new Set(ipaList.map(h=>(h.fqdn||'').toLowerCase()));
-  const memByIp={}, memByName={};
-  members.forEach(m=>{ if(m.host)memByIp[ipHost(m.host)]=m; if(m.label)memByName[shortName(m.label).toLowerCase()]=m; });
-  const dockerSsh=new Set(dhosts.map(d=>d.ssh_host_id).filter(Boolean));
-  const clusterById={}; clist.forEach(c=>clusterById[c.id]=c);
-
-  // unify hosts from the SSH provisioning store (the estate we manage)
-  const hosts=[]; const seenIp=new Set();
-  shosts.forEach(s=>{
-    const ip=ipHost(s.host); seenIp.add(ip);
-    let gr=null; if(s.guest_ref&&String(s.guest_ref).includes(':')){const[cl,vm]=String(s.guest_ref).split(':');gr={cluster:cl,vmid:vm};}
-    const mem=memByIp[ip]||memByName[shortName(s.label).toLowerCase()];
-    const isDocker=dockerSsh.has(s.id);
-    hosts.push({
-      name:shortName(s.label)||ip, fqdn:s.label, ip, kind: isDocker?'docker':(gr?'lxc':'host'),
-      guest:gr, cert:s.auth==='cert',
-      mesh: mem?{ip:mem.ip}:null,
-      ipa: ipaFqdns.has((s.label||'').toLowerCase()),
+  const hosts=rows.filter(r=>ALL_MACHINES||r.planes.ssh.state==='yes'||r.planes.mesh.state!=='no'||r.planes.directory.state==='yes')
+    .map(r=>{
+      const P=r.planes||{};
+      const isGuest=r.kind==='guest';
+      return {name:shortName(r.label)||r.addr, fqdn:(P.directory||{}).fqdn||r.label, ip:r.addr||'',
+        kind: r.kind==='docker-host'?'docker':(isGuest?(r.type==='qemu'?'vm':'lxc'):'host'),
+        guest: isGuest?{cluster:r.cluster_id,vmid:r.vmid}:null,
+        cert: (P.ssh||{}).auth==='cert',
+        login: (P.ssh||{}).state==='yes',
+        mesh: (P.mesh||{}).state!=='no' ? {ip:(P.mesh||{}).ip||'', connected:!!(P.mesh||{}).connected} : null,
+        ipa: (P.directory||{}).state==='yes',
+        backup: (P.backup||{}).state,
+        status: r.status||'', ref: r.ref, complete: !!r.complete};
     });
-  });
-  // mesh members not in the SSH store (e.g. the docker test host)
-  members.forEach(m=>{ const ip=ipHost(m.host); if(ip&&!seenIp.has(ip)){ seenIp.add(ip);
-    hosts.push({name:shortName(m.label)||ip, fqdn:m.label, ip, kind:'host', guest:null, cert:false,
-      mesh:{ip:m.ip}, ipa:ipaFqdns.has((m.label||'').toLowerCase())}); }});
   hosts.sort((a,b)=>(a.kind+a.name).localeCompare(b.kind+b.name));
-
-  STATE={ hosts, clusters:clist,
+  const ipaCount=rows.filter(r=>r.planes.directory.state==='yes').length;
+  STATE={ hosts, clusters:[], total:rows.length,
     sys:{
-      proxmox:{on:clist.length>0, meta:clist.map(c=>c.label).join(', ')||'—',
+      proxmox:{on:rows.some(r=>r.kind==='guest'), meta:rows.filter(r=>r.kind==='proxmox-node').map(r=>r.label).join(', ')||'—',
                count:hosts.filter(h=>h.guest).length},
-      docker:{on:dhosts.length>0, meta:dhosts.length+' host'+(dhosts.length!=1?'s':''),
+      docker:{on:rows.some(r=>r.kind==='docker-host'), meta:rows.filter(r=>r.kind==='docker-host').length+' host'+(rows.filter(r=>r.kind==='docker-host').length!=1?'s':''),
               count:hosts.filter(h=>h.kind==='docker').length},
       ipa:{on:!!(ipaStatus&&ipaStatus.reachable), meta:(ipaStatus&&ipaStatus.reachable)?('v'+(ipaStatus.version||'?')):'unreachable',
-           count:ipaList.length},
+           count:ipaCount},
       vault:{on:!!(seal&&seal.reachable), sealed:seal&&seal.sealed,
              meta: !seal||!seal.reachable?'unreachable':(seal.sealed?'SEALED':'unsealed')+(seal.autounseal_configured?(' · KMS '+ (seal.kms_backend||'')):' · no auto-unseal'),
              bad: seal&&seal.sealed, count:0},
-      mesh:{on:members.length>0, meta:((mesh&&mesh.subnet)||'')+(mesh&&mesh.enforce?' · enforced':''),
+      mesh:{on:members.length>0, meta:((mesh&&mesh.door&&mesh.door.up)?'door open · ':'')+((mesh&&mesh.subnet)||'')+(mesh&&mesh.enforce?' · enforced':''),
             count:hosts.filter(h=>h.mesh).length},
     }};
   render();
-  kpis(hosts,seal,members,ipaList);
-  $('#dot').className='dot live'; $('#statTxt').textContent='live';
+  kpis(hosts,seal,members,{length:ipaCount});
+  $('#dot').className='dot live'; $('#statTxt').textContent='live · '+hosts.length+' of '+rows.length+' machines';
 }
 
 function kpis(hosts,seal,members,ipa){
   const el=$('#kpis');
   el.innerHTML=[
-    ['hosts',hosts.length],['on mesh',hosts.filter(h=>h.mesh).length],
-    ['cert SSH',hosts.filter(h=>h.cert).length],['FreeIPA',ipa.length],
+    ['machines',hosts.length+(STATE.total&&STATE.total!==hosts.length?' / '+STATE.total:'')],['on mesh',hosts.filter(h=>h.mesh).length],
+    ['SSH login',hosts.filter(h=>h.login).length],['cert SSH',hosts.filter(h=>h.cert).length],['FreeIPA',ipa.length],
+    ['backed up',hosts.filter(h=>h.backup==='yes').length],
     ['vault', !seal?'—':(seal.sealed?'sealed':'open')],
   ].map(([k,v])=>`<span class="kpi">${k} <b>${v}</b></span>`).join('');
 }
@@ -234,13 +225,15 @@ function render(){
     const box=el('rect',{class:'hostbox g',x:p.x,y:p.y,width:p.w,height:p.h,rx:7});
     box.addEventListener('mouseenter',()=>hoverHost(i,true));
     box.addEventListener('mouseleave',()=>hoverHost(i,false));
+    if(h.ref){ box.style.cursor='pointer'; box.addEventListener('click',()=>{ if(window.veraEntityDrawer) veraEntityDrawer.open(h.ref); }); }
+    if(h.status&&h.status!=='running'&&h.guest) box.style.opacity='.55';
     g.appendChild(box);
-    const ic={lxc:'📦',docker:'🐳',host:'💻'}[h.kind]||'💻';
+    const ic={lxc:'📦',vm:'🖥',docker:'🐳',host:'💻'}[h.kind]||'💻';
     g.appendChild(txt(p.x+15,p.y+p.h/2+4,ic,{'font-size':'13','text-anchor':'middle'}));
     g.appendChild(txt(p.x+30,p.y+p.h/2-2,h.name,{class:'lbl'}));
     g.appendChild(txt(p.x+30,p.y+p.h/2+9,h.ip+(h.mesh?('  ·  '+h.mesh.ip):''),{class:'sub2'}));
     let bx=p.x+p.w-14;
-    [[h.ipa,'🆔'],[h.mesh,'🕸️'],[h.cert,'🔐']].forEach(([on,ic])=>{ if(on){
+    [[h.ipa,'🆔'],[h.mesh,'🕸️'],[h.cert||h.login,h.cert?'🔐':'🔑'],[h.backup==='yes','💾']].forEach(([on,ic])=>{ if(on){
       g.appendChild(txt(bx,p.y+p.h/2+4,ic,{class:'badge-t','text-anchor':'end'})); bx-=17; }});
     ND.appendChild(g);
   });
@@ -255,7 +248,8 @@ function hoverHost(i,on){
 }
 
 // ── deep scan (slow: SSH to Proxmox + Docker) ───────────────────────────────
-async function deepLoad(){
+async function deepLoad(){ /* retired: the registration table already lists every guest and container host */
+  return loadAll();
   const b=$('#deepBtn'); b.disabled=true; b.textContent='⤓ scanning…';
   try{
     for(const c of STATE.clusters){
@@ -322,5 +316,6 @@ loadAll();
 setInterval(pollEvents,2500);
 setInterval(loadAll,45000);
 </script>
+<script src="/ui/vera-entity-drawer.js"></script>
 </body>
 </html>

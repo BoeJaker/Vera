@@ -10709,6 +10709,7 @@ def _code_author_timing(started: float, generation_started: float,
 @capability(
     "code.author", memory="on",
     http_method="POST", http_path="/code/author", http_tags=["code", "fabric"],
+    redact_args=["task", "context_files", "requirements", "content"],
     contract={
         "canonical_task": "source_file.author",
         "aliases": ["source.author"],
@@ -11402,6 +11403,7 @@ def _v5_prose_ungrounded_refs(text: str, real_files: Optional[List[str]]) -> Lis
 @capability(
     "prose.author", memory="on",
     http_method="POST", http_path="/prose/author", http_tags=["fabric", "docs"],
+    redact_args=["task", "context_files", "content", "text"],
     contract={
         "canonical_task": "document.author",
         "aliases": ["document.write"],

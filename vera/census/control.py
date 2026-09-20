@@ -10,6 +10,12 @@ do with it. Two requests exist:
             is logged on the row (`reruns`), never recorded as a result.
     drop    cancel the goal in flight and stop the whole set; the driver
             archives what finished so far as `-partial-dropped`.
+    yield   a pause that takes effect at the next goal boundary: the goal in
+            flight runs to its end untouched (its row stays a measurement),
+            then the harness parks exactly as for a pause. On file it is a
+            pause with `after_goal: true`; `resume` lifts it. For running
+            other tests on the box without tainting a row or costing a
+            re-run (2026-09-19).
 
 Why it exists: a prod restart kills the loop under the goal, and before this
 the harness recorded that as the goal's result and moved on. So restarting prod
@@ -71,33 +77,52 @@ def write_json(path: str, data: Dict[str, Any]) -> bool:
 # ── control ──────────────────────────────────────────────────────────────────
 
 def control_state(control: Dict[str, Any]) -> str:
-    """'drop' outranks 'pause' outranks 'run'."""
+    """'drop' outranks 'pause' outranks 'yield' outranks 'run'.
+
+    A yield IS a pause (`pause: true`) with `after_goal: true`; every reader
+    that only asks "is a pause on file" (the restart plan, the startup lift,
+    the harness's own parking) keeps working unchanged. The distinct state is
+    for whoever shows it: a yield does not cancel anything."""
     c = control or {}
     if c.get("drop"):
         return "drop"
     if c.get("pause"):
-        return "pause"
+        return "yield" if c.get("after_goal") else "pause"
     return "run"
 
 
+ACTIONS = ("pause", "resume", "drop", "yield")
+
+
 def make_control(action: str, reason: str = "", by: str = "",
-                 resume_on_start: bool = False) -> Dict[str, Any]:
-    """The file to write for one of pause / resume / drop.
+                 resume_on_start: bool = False,
+                 restore: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The file to write for one of pause / resume / drop / yield.
 
     `resume_on_start` marks a pause written by a restart: the census module
     lifts it when the process comes back, so nobody has to remember to.
+    `restore` rides on such a pause when it displaced a person's YIELD: the
+    lift then re-writes the yield instead of a resume, so the census parks
+    after the goal the restart interrupted rather than running on a box
+    someone had asked for.
     """
     a = str(action or "").strip().lower()
-    if a not in ("pause", "resume", "drop"):
-        raise ValueError("action must be pause, resume or drop")
-    return {
-        "pause": a == "pause",
+    if a not in ACTIONS:
+        raise ValueError("action must be one of %s" % ", ".join(ACTIONS))
+    d = {
+        "pause": a in ("pause", "yield"),
+        "after_goal": a == "yield",
         "drop": a == "drop",
         "reason": str(reason or "")[:200],
         "by": str(by or "")[:80],
         "resume_on_start": bool(resume_on_start) if a == "pause" else False,
         "ts": _now_iso(),
     }
+    if a == "pause" and resume_on_start and restore and restore.get("after_goal"):
+        d["restore"] = {"after_goal": True,
+                        "reason": str(restore.get("reason") or "")[:200],
+                        "by": str(restore.get("by") or "")[:80]}
+    return d
 
 
 def should_lift_on_start(control: Dict[str, Any]) -> bool:
@@ -105,6 +130,18 @@ def should_lift_on_start(control: Dict[str, Any]) -> bool:
     resume - the one case the process itself is allowed to lift a pause."""
     c = control or {}
     return bool(c.get("pause")) and bool(c.get("resume_on_start")) and not c.get("drop")
+
+
+def lift_control(control: Dict[str, Any], by: str = "census startup") -> Dict[str, Any]:
+    """What the startup lift writes in place of a restart's pause: a resume,
+    or the yield that pause displaced (`restore`) - the person's request
+    outlives the restart, and the goal the restart interrupted re-runs only
+    after they resume."""
+    r = (control or {}).get("restore") or {}
+    if r.get("after_goal"):
+        return make_control("yield", reason=r.get("reason") or "restored after restart",
+                            by=r.get("by") or by)
+    return make_control("resume", reason="lifted on startup after restart", by=by)
 
 
 # ── active ───────────────────────────────────────────────────────────────────
@@ -155,6 +192,16 @@ def restart_plan(active: Dict[str, Any], resume: bool,
     if not v.get("live"):
         return {"action": "none", "why": "no live census", "active": v}
     c = control or {}
+    if (resume and c.get("pause") and c.get("after_goal") and not c.get("drop")
+            and v.get("state") == "running"):
+        # A yield with the goal still in flight: the harness has NOT parked, so
+        # the restart would kill the loop under it and the goal would be
+        # recorded as cancelled. Pause it properly (the harness cancels and
+        # acks, the goal re-runs) and put the yield back on startup.
+        return {"action": "pause", "why": "yield on file but a goal is in flight; "
+                "the restart pauses it and restores the yield on startup",
+                "active": v, "restore": {"after_goal": True, "reason": c.get("reason") or "",
+                                         "by": c.get("by") or ""}}
     if resume and c.get("pause") and not c.get("resume_on_start") and not c.get("drop"):
         # Only the restart's own pause is displaced. A caller who asked NOT to
         # resume (a drop) still gets the drop: that is an explicit choice.
@@ -165,6 +212,47 @@ def restart_plan(active: Dict[str, Any], resume: bool,
                 "active": v}
     return {"action": "drop", "why": "census in flight; caller asked not to resume",
             "active": v}
+
+
+def health_summary(control: Dict[str, Any], active: Dict[str, Any]) -> Dict[str, Any]:
+    """The one line about the census that /health carries, for an agent
+    deciding whether it may use the GPU right now (2026-09-19).
+
+    `active` is an active_view(). `busy` is the verdict: True while a census
+    goal is in flight OR about to be (a yield requested but not yet parked
+    still has a goal running) - any GPU call now taints a row. A parked
+    (paused / yielded) or absent harness leaves the box to whoever asks; a
+    stale one is reported as such rather than as busy, because a harness that
+    died hours ago holds nothing.
+    """
+    a = active or {}
+    c = control or {}
+    cs = control_state(c)
+    live = bool(a.get("live"))
+    st = str(a.get("state") or "none")
+    if not a.get("present"):
+        state = "none"
+    elif a.get("stale"):
+        state = "stale"
+    elif st == "paused":
+        state = "yielded" if (a.get("pause_kind") == "yield" or cs == "yield") else "paused"
+    elif st == "running":
+        state = "yielding" if cs == "yield" else ("pausing" if cs == "pause" else "running")
+    else:
+        state = st                     # done / dropped
+    busy = live and st == "running"
+    out: Dict[str, Any] = {"busy": busy, "state": state, "control": cs}
+    if a.get("present"):
+        p = a.get("progress") or {}
+        out.update({"template": a.get("template") or "", "goal": a.get("current_goal") or "",
+                    "done": p.get("done"), "total": p.get("total"),
+                    "census_run": a.get("census_run") or ""})
+    if cs != "run":
+        out["by"] = c.get("by") or ""
+    if busy:
+        out["advice"] = ("census goal in flight: no GPU work; census.control.set action=yield "
+                         "and wait for acked, then resume when done")
+    return out
 
 
 #: How long a restart waits for the harness to say it has paused (or dropped)

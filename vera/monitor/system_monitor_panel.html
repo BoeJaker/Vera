@@ -262,7 +262,7 @@ function renderDocker(d){ d=d||{};
   rows.innerHTML=(d.hosts||[]).map(h=>{
     const tag=h.reachable?'<span class="tag t-ok">up</span>':'<span class="tag t-err">down</span>';
     const meta=h.reachable?`${h.running}/${h.containers} running`:esc(h.error||'unreachable');
-    return `<div class="row"><span class="nm" title="${esc(h.label)}">${esc(h.label)}</span><span class="tag t-dim">${esc(h.kind||'?')}</span><span class="meta">${esc(meta)}</span>${tag}</div>`;
+    return `<div class="row"><span class="nm" title="${esc(h.label)}">${veraEstate.chip(h.id?'docker-host:'+h.id:'', h.label)}</span><span class="tag t-dim">${esc(h.kind||'?')}</span><span class="meta">${esc(meta)}</span>${tag}</div>`;
   }).join('');
 }
 function renderOllama(o){ o=o||{};
@@ -277,7 +277,8 @@ function renderOllama(o){ o=o||{};
     const gpu=n.has_gpu?'<span class="tag t-gpu">gpu</span>':'';
     const lat=(on&&n.latency_ms!=null)?Math.round(n.latency_ms)+'ms · ':'';
     const meta=on?`${lat}${n.models} model${n.models===1?'':'s'}${n.in_use?' · '+n.in_use+' busy':''}`:'';
-    return `<div class="row"><span class="nm" title="${esc(n.url||n.label)}">${esc(n.label)}</span>${gpu}<span class="meta">${esc(meta)}</span>${tag}</div>`;
+    const addr=String(n.url||'').replace(/^[a-z]+:\/\//,'').replace(/[:/].*$/,'');
+    return `<div class="row"><span class="nm" title="${esc(n.url||n.label)}">${veraEstate.chip(veraEstate.refFor({addr}), n.label)}</span>${gpu}<span class="meta">${esc(meta)}</span>${tag}</div>`;
   }).join('');
 }
 
@@ -286,7 +287,8 @@ async function refresh(force){
   try{
     const [s,h] = await Promise.all([
       api('/sysmon/status'+(force===true?'?fresh=true':'')),
-      api('/sysmon/history?limit=240') ]);
+      api('/sysmon/history?limit=240'),
+      veraEstate.machines().catch(()=>[]) ]);
     $('banner').style.display='none';
     renderProxmox(s.proxmox); renderDocker(s.docker); renderOllama(s.ollama);
     _history = (h.samples)||[];
@@ -354,5 +356,7 @@ return { refresh, toggleAuto, popout, toggleFloat };
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-estate.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
 </body>
 </html>

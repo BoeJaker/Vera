@@ -50,6 +50,10 @@ class _SlowExitProcess(_Process):
         return 0
 
 
+class _ExitedSilentProcess(_Process):
+    returncode = 7
+
+
 async def _run(monkeypatch, process, run_id="run-1", timeout_s=30,
                stall_s=20, gate_instance_id=""):
     events = []
@@ -185,6 +189,73 @@ def test_payload_bounds_reject_deep_wide_and_oversized_values():
         runtime._bounded_payload("x" * (runtime.MAX_STRING_CHARS + 1))
 
 
+def test_text_evidence_is_stable_bounded_and_does_not_retain_text():
+    secret = "private runtime task text"
+    first = runtime.text_evidence(secret)
+    second = runtime.text_evidence(secret)
+    assert first == second
+    assert first["chars"] == len(secret)
+    assert len(first["sha256"]) == 16
+    assert secret not in str(first)
+
+
+def test_shipped_bridge_start_events_and_activity_redact_goals():
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "vera"
+    for name in ("langgraph", "smolagents", "pydanticai"):
+        source = (root / name / f"{name}_capabilities.py").read_text(
+            encoding="utf-8")
+        assert 'redact_args=["goal"]' in source
+        assert '"goal_evidence": text_evidence(goal)' in source
+        assert '"goal": goal[:200]' not in source
+
+
+def test_owned_docker_container_requires_exact_explicit_valid_name():
+    assert runtime._owned_docker_container([
+        "docker", "run", "--rm", "--name", "vera-owned-1", "image",
+    ]) == "vera-owned-1"
+    assert runtime._owned_docker_container(["docker", "run", "image"]) == ""
+    assert runtime._owned_docker_container([
+        "docker", "run", "--name", "../other", "image",
+    ]) == ""
+    assert runtime._owned_docker_container([
+        "podman", "run", "--name", "vera-owned-1", "image",
+    ]) == ""
+
+
+def test_abnormal_exit_removes_only_the_exact_owned_docker_container(monkeypatch):
+    async def scenario():
+        calls = []
+
+        async def fake_sh(argv, timeout=0):
+            calls.append((tuple(argv), timeout))
+            return {"ok": argv[:3] != ["docker", "container", "inspect"]}
+
+        monkeypatch.setattr(runtime, "sh", fake_sh)
+        process = _Process()
+        events = []
+
+        async def create(*argv, **kwargs):
+            return process
+
+        async def emit(event):
+            events.append(event)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+        await runtime.stream_bridge_container(
+            run_id="owned-cleanup", session_id="",
+            argv=["docker", "run", "--rm", "--name", "vera-owned-1", "image"],
+            event_type_prefix="fixture.run", emit=emit,
+            timeout_s=1, stall_s=0.001)
+        return calls, events
+
+    calls, events = asyncio.run(scenario())
+    assert calls[0] == (("docker", "rm", "-f", "vera-owned-1"), 15)
+    assert calls[1] == (("docker", "container", "inspect", "vera-owned-1"), 5)
+    assert events[-1]["reason_code"] == "stalled"
+
+
 def test_generic_cancel_cap_routes_only_declared_runtime(monkeypatch):
     from vera.agentbridges import agentbridge_capabilities as caps
 
@@ -278,3 +349,7 @@ def test_crash_stall_and_timeout_have_distinct_terminal_reasons(monkeypatch):
     timed, timeout_events = asyncio.run(scenario(_Process(), 0.001, 1))
     assert timed.kill_count == 1
     assert timeout_events[-1]["reason_code"] == "timeout"
+
+    silent, silent_events = asyncio.run(scenario(_ExitedSilentProcess(), 1, 0.001))
+    assert silent.kill_count == 0
+    assert silent_events[-1]["reason_code"] == "process_exit"

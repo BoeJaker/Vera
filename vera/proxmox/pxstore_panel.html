@@ -55,6 +55,8 @@ a{color:var(--ac)}
 @media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}}
 @media(min-width:1000px){.grid{grid-template-columns:repeat(3,1fr)}}
 .card{background:var(--s2);border:1px solid var(--bd);border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
+.metric .bar{height:6px;background:var(--s3);border-radius:3px;overflow:hidden}.metric .bar i{display:block;height:100%;background:var(--acc)}
 .card .hd{display:flex;align-items:center;gap:8px}
 .card .hd .nm{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card .hd .sub{color:var(--t3);font-size:11px;margin-left:auto;white-space:nowrap}
@@ -126,6 +128,7 @@ details.fold .twrap{background:var(--bg1)}
     <nav id="nav">
       <button class="nav-btn active" data-p="overview" onclick="P.show('overview',this)"><span class="gl">▤</span><span>Overview</span></button>
       <button class="nav-btn" data-p="fs" onclick="P.show('fs',this)"><span class="gl">🗂</span><span>File Fabric</span></button>
+      <button class="nav-btn" data-p="docker" onclick="P.show('docker',this)"><span class="gl">🐳</span><span>Docker</span></button>
       <button class="nav-btn" data-p="store" onclick="P.show('store',this)"><span class="gl">◱</span><span>Model Store</span></button>
       <button class="nav-btn" data-p="veradata" onclick="P.show('veradata',this)"><span class="gl">🗄</span><span>Vera Data</span></button>
       <button class="nav-btn" data-p="estate" onclick="P.show('estate',this)"><span class="gl">⛃</span><span>Estate &amp; Backup</span></button>
@@ -259,6 +262,27 @@ details.fold .twrap{background:var(--bg1)}
 
     <!-- CPU / NUMA — shown via the Workers panel's Proxmox pane
          (/pxstore/panel?solo=cpu); not in this panel's storage nav. -->
+    <!-- ── DOCKER — where the Docker host's disk has gone ─────────────────── -->
+    <div class="pane" id="p-docker">
+      <div class="card" style="margin-bottom:14px">
+        <div class="hd"><span class="nm">Docker data disk</span><span class="sub" id="dkfs-when">—</span>
+          <button class="btn sm" style="margin-left:8px" onclick="P.dockerFsLoad(true)">Recompute</button></div>
+        <div class="kv" id="dkfs-note">The Engine walks every layer for this, which takes minutes on this host; the answer is kept for ten minutes.</div>
+        <div id="dkfs-cats" style="display:flex;flex-direction:column;gap:8px;margin-top:8px"></div>
+        <div id="dkfs-findings" style="margin-top:8px"></div>
+      </div>
+      <div class="grid2">
+        <div class="card"><div class="hd"><span class="nm">Containers by writable layer</span><span class="sub">data written inside the container</span></div>
+          <div class="tbl"><table><thead><tr><th>Container</th><th>State</th><th>Writable</th><th>Root fs</th></tr></thead><tbody id="dkfs-ctr"></tbody></table></div></div>
+        <div class="card"><div class="hd"><span class="nm">Volumes</span><span class="sub">largest first</span></div>
+          <div class="tbl"><table><thead><tr><th>Volume</th><th>Size</th><th>Used by</th></tr></thead><tbody id="dkfs-vol"></tbody></table></div></div>
+        <div class="card"><div class="hd"><span class="nm">Images</span><span class="sub">largest first</span></div>
+          <div class="tbl"><table><thead><tr><th>Image</th><th>Size</th><th>Shared</th><th>Containers</th></tr></thead><tbody id="dkfs-img"></tbody></table></div></div>
+        <div class="card"><div class="hd"><span class="nm">Session sandboxes</span><span class="sub">what the reaper sees</span></div>
+          <div class="kv" id="dkfs-sbx">—</div></div>
+      </div>
+    </div>
+
     <div class="pane" id="p-cpu">
       <div class="note"><b>NUMA-safe placement.</b> Reserved ranges (managed below —
         e.g. the ollama / ollama-a / ollama-b cpusets) show red; the pinner refuses
@@ -413,7 +437,7 @@ details.fold .twrap{background:var(--bg1)}
         <tbody><tr><td colspan="5" class="empty">—</td></tr></tbody>
       </table></div>
       <div class="twrap"><table id="bkRuns">
-        <thead><tr><th>Guest</th><th>Last backup</th><th>Result</th></tr></thead>
+        <thead><tr><th>Guest</th><th>Last backup</th><th>Covered</th></tr></thead>
         <tbody><tr><td colspan="3" class="empty">—</td></tr></tbody>
       </table></div>
 
@@ -507,9 +531,67 @@ P.show = (p,el)=>{
   if(t) $('secTitle').textContent=t.textContent;
   if(p==='cpu'){ if(!P.state.cpuMap) P.cpuLoad(); P.renderSetup(); }
   if(p==='fs') P.fsLoad();
+  if(p==='docker') P.dockerFsLoad(false);
   if(p==='setup') P.renderSetup();
   if(p==='store') P.storeLoad();
   if(p==='estate') P.estateInit();
+};
+
+/* ── ZFS controls — every button is a dry run first, then a confirmed run ── */
+// The one flow every estate write uses (vera-estate.js): the dry run's plan
+// shown first, then the confirmed run; layout changes want the pool typed back.
+P.zfsOp = async (capName, args, title, extra)=>{
+  const base={cluster_id:P.state.cluster,node:P.state.node,...args};
+  const opts={where:P.state.node};
+  if(extra&&extra.needsPool) opts.typed={label:'the pool name',value:args.pool,field:'confirm_pool'};
+  const r=await veraEstate.plan(capName, base, title, opts);
+  if(!r||r.cancelled||r.ok===false) return;
+  toast(((r.plan||{}).op||'done')+' ran on '+P.state.node,'ok');
+  setTimeout(()=>P.init&&P.init(), 1500);
+};
+P.zfsResize = (vmid,gtype,disk,dataset)=>{
+  const size=prompt('New absolute size for '+dataset+' (e.g. 200G). A subvol can shrink to no less than it holds; a VM disk can only grow.');
+  if(!size) return;
+  P.zfsOp('pxstore.zfs.resize',{dataset,size:size.trim(),vmid,guest_type:gtype,disk},'Resize '+dataset+' to '+size.trim());
+};
+P.zfsMirror = (pool,existing)=>{
+  const ex=existing||prompt('The disk now in '+pool+' (as zpool status names it):'); if(!ex) return;
+  const nw=prompt('The EMPTY disk to attach beside '+ex+' (e.g. /dev/disk/by-id/wwn-…). Everything on it is overwritten.'); if(!nw) return;
+  P.zfsOp('pxstore.zfs.attach',{pool,existing:ex,new:nw.trim()},'Mirror '+pool+': attach '+nw.trim()+' beside '+ex,{needsPool:true});
+};
+P.zfsAddVdev = (pool)=>{
+  const disks=prompt('Disks for the new vdev in '+pool+', space-separated (1 = single disk, 2 = mirror, 3+ = raidz1):'); if(!disks) return;
+  const list=disks.trim().split(/\s+/); const kind=list.length===1?'disk':list.length===2?'mirror':'raidz1';
+  P.zfsOp('pxstore.zfs.add',{pool,disks:list,kind},'Add a '+kind+' vdev to '+pool,{needsPool:true});
+};
+
+/* ── DOCKER — docker.disk.breakdown, computed in the background and polled ── */
+let _dkfsPoll=null;
+P.dockerFsLoad = async (refresh)=>{
+  clearTimeout(_dkfsPoll);
+  let r;
+  try{ r=await api('/docker/disk/breakdown'+(refresh?'?refresh=1':'')); }
+  catch(e){ $('dkfs-note').textContent=e.message; return; }
+  if(r.error&&!r.breakdown){ $('dkfs-note').textContent=r.error; }
+  const b=r.breakdown;
+  if(r.computing){
+    $('dkfs-when').textContent='computing…'+(b?' (showing the last answer)':'');
+    _dkfsPoll=setTimeout(()=>P.dockerFsLoad(false), 5000);
+  } else if(b){
+    $('dkfs-when').textContent='computed '+(r.age_s<90?r.age_s+' s ago':Math.round(r.age_s/60)+' min ago')+' in '+(b.took_s||0)+' s';
+  }
+  if(!b) return;
+  const total=Math.max(1,(b.categories||[]).reduce((a,c)=>a+(c.size||0),0));
+  $('dkfs-cats').innerHTML=(b.categories||[]).map(c=>`<div class="metric"><div class="lab"><span><b>${esc(c.label)}</b> · ${c.count}</span>
+      <span>${fmtB(c.size)}${c.reclaimable?` · <span style="color:var(--warn)">${fmtB(c.reclaimable)} reclaimable</span> <span style="opacity:.7">(${esc(c.why)})</span>`:''}</span></div>
+      <div class="bar"><i style="width:${Math.round(100*(c.size||0)/total)}%"></i></div></div>`).join('')
+    +`<div class="kv">Layers on disk ${fmtB(b.layers_size)} · <b>${fmtB(b.reclaimable_total)}</b> could be reclaimed in all.</div>`;
+  $('dkfs-findings').innerHTML=(b.findings||[]).map(f=>`<div class="note" style="border-color:var(--${f.severity==='warn'?'warn':'bd'})">${f.severity==='warn'?'⚠ ':''}${esc(f.message)}${f.detail?` <span class="kv">${esc(f.detail)}</span>`:''}</div>`).join('');
+  $('dkfs-ctr').innerHTML=(b.top_containers||[]).map(c=>`<tr><td><b>${esc(c.name)}</b><div class="kv">${esc(c.image)}</div></td><td><span class="pill ${c.state==='running'?'ok':'dim'}">${esc(c.state)}</span></td><td>${fmtB(c.writable)}</td><td class="kv">${fmtB(c.rootfs)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">none</td></tr>';
+  $('dkfs-vol').innerHTML=(b.top_volumes||[]).map(v=>`<tr><td class="mono" style="font-size:10px">${esc(v.name)}</td><td>${fmtB(v.size)}</td><td>${v.used_by?v.used_by+' container'+(v.used_by===1?'':'s'):'<span style="color:var(--warn)">nothing</span>'}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">none</td></tr>';
+  $('dkfs-img').innerHTML=(b.top_images||[]).map(i=>`<tr><td class="mono" style="font-size:10px">${esc((i.tags||[]).join(', ')||'<untagged>')}</td><td>${fmtB(i.size)}</td><td class="kv">${fmtB(i.shared)}</td><td>${i.containers||0}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">none</td></tr>';
+  const s=b.sandboxes||{};
+  $('dkfs-sbx').textContent=`${s.count||0} session sandboxes hold ${fmtB(s.writable||0)} in writable layers; ${s.reapable||0} finished ones older than ${s.retain_hours||24} h can be reaped (docker.disk.reap keeps running ones).`;
 };
 
 /* ── ESTATE & BACKUP — cross-estate storage + scheduled sync/backup (nodes.*) ── */
@@ -540,8 +622,11 @@ P.estateInit = async ()=>{
 };
 P.bkStatus = async ()=>{
   if(!P.state.cluster||!P.state.node) return;
-  let r;
-  try{ r=await api('/pxstore/backup/status','POST',{cluster_id:P.state.cluster,node:P.state.node}); }
+  let r, group={};
+  // The jobs and the per-guest coverage come from the estate's one backup reader
+  // (backup.status - the same one the Overview reads); this node's storages,
+  // timers and run log still come from the node itself.
+  try{ [r,group]=await Promise.all([api('/pxstore/backup/status','POST',{cluster_id:P.state.cluster,node:P.state.node}), api('/backup/status').catch(()=>({}))]); }
   catch(e){ $('bkTiles').innerHTML=`<div class="empty">${esc(e.message)}</div>`; return; }
   if(r.error){ $('bkTiles').innerHTML=`<div class="empty">${esc(r.error)}</div>`; return; }
   $('bkWarn').innerHTML=(r.warnings||[]).map(w=>
@@ -569,8 +654,20 @@ P.bkStatus = async ()=>{
     `<div class="card"><div class="hd"><span class="nm">Replica</span><span class="sub">file fabric → backup disk</span></div>
       ${timerLine('vera-replicate.timer','replicated')}
       <div class="kv">${(r.replication||[]).slice(-4).map(l=>esc(l.msg)).join('<br>')||'no runs yet'}</div></div>`;
-  $('bkJobs').querySelector('tbody').innerHTML=(r.jobs||[]).map(j=>`<tr>
-     <td><b>${esc(j.id)}</b>${j.comment?`<div class="kv">${esc(j.comment)}</div>`:''}</td>
+  // A PVE job's name is its optional comment; two of the three here have none,
+  // so the id was all the row showed. Say what the job does instead, id second.
+  const jobName=j=>{ if(j.comment) return j.comment.split(/[.;]/)[0].slice(0,80);
+    const n=j.all?'every guest'+(j.exclude?' except '+String(j.exclude).split(',').length:''):(String(j.vmid||'').split(',').filter(Boolean).length+' guests');
+    return n+' → '+(j.storage||'?')+(j.schedule?', '+j.schedule:'')+(j.enabled?'':' (disabled)'); };
+  const sched=(group&&group.schedules)||[];
+  $('bkJobs').querySelector('tbody').innerHTML=sched.length?sched.map(j=>`<tr>
+     <td>${veraEstate.chip('backup-job:'+j.id, j.comment?j.comment.split(/[.;]/)[0].slice(0,80):(j.what||j.id))}<div class="kv">${esc(j.id)} · ${esc(j.owner||'')}</div></td>
+     <td>${esc(j.schedule||'—')}<div class="kv">next ${j.enabled&&j.next_run?until(j.next_run):'—'}</div></td>
+     <td>${esc(j.storage||'—')}</td>
+     <td class="kv">${esc(j.what||'')}</td>
+     <td><span class="pill ${j.enabled?'ok':'dim'}">${j.enabled?'enabled':'disabled'}</span></td></tr>`).join('')
+     :(r.jobs||[]).map(j=>`<tr>
+     <td><b>${esc(jobName(j))}</b><div class="kv">${esc(j.id)}${j.comment&&j.comment.length>80?' · '+esc(j.comment):''}</div></td>
      <td>${esc(j.schedule)}<div class="kv">next ${j.enabled?until(j.next_run):'—'}</div></td>
      <td>${esc(j.storage)}</td>
      <td class="kv">${j.all?('all'+(j.exclude?' except '+esc(j.exclude):'')):esc(j.vmid)}</td>
@@ -578,7 +675,12 @@ P.bkStatus = async ()=>{
      ||'<tr><td colspan="5" class="empty">no backup jobs</td></tr>';
   const running=(r.running||[]).length
     ?`<tr><td colspan="3"><span class="pill warn">running now</span> <span class="kv">${esc(r.running[0].slice(0,120))}</span></td></tr>`:'';
-  $('bkRuns').querySelector('tbody').innerHTML=running+((r.runs||[]).map(x=>`<tr><td>${esc(x.guest)}</td><td>${ago(x.at)}</td>
+  const guests=(group&&group.guests)||[];
+  $('bkRuns').querySelector('tbody').innerHTML=running+(guests.length?guests.filter(g=>!g.template).sort((a,b)=>(b.latest_at||0)-(a.latest_at||0)).map(g=>`<tr>
+     <td>${veraEstate.chip('guest:'+g.vmid, g.name||('#'+g.vmid))}<span class="kv"> ${g.type==='qemu'?'VM':'CT'} ${g.vmid}</span></td>
+     <td>${g.latest_at?ago(g.latest_at):'never'}${g.backups?`<span class="kv"> · ${g.backups} cop${g.backups===1?'y':'ies'}</span>`:''}</td>
+     <td>${(g.covered_by||[]).length?`<span class="pill ${g.backups?'ok':'warn'}">${g.backups?'covered':'covered, no copy yet'}</span>`:(g.excluded_by||[]).length?`<span class="pill dim" title="${esc(g.excluded_by.join(', '))}">excluded</span>`:'<span class="pill warn">no job covers it</span>'}</td></tr>`).join('')
+     :(r.runs||[]).map(x=>`<tr><td>${esc(x.guest)}</td><td>${ago(x.at)}</td>
      <td><span class="pill ${x.result==='ok'?'ok':x.result==='error'?'err':x.result==='running'?'warn':'dim'}">${esc(x.result)}</span>
      <span class="kv">${esc(x.line.slice(0,100))}</span></td></tr>`).join('')
      ||'<tr><td colspan="3" class="empty">no backup has run on this node</td></tr>');
@@ -719,13 +821,35 @@ P.refresh = async ()=>{
 P.renderOverview = ()=>{
   const inv=P.state.inv; if(!inv) return;
   $('unallocLab').textContent = inv.pools.length?('· unallocated across pools: '+fmtB(inv.unallocated_bytes)):'';
+  // What each pool IS and is doing: layout, scrub, this second's throughput,
+  // compression and fragmentation - zpool's own words, parsed on the node.
+  const rate=b=>b>=1048576?(b/1048576).toFixed(1)+' MB/s':b>=1024?Math.round(b/1024)+' KB/s':(b||0)+' B/s';
+  const scrub=p=>{ if(p.scan_state==='running') return (p.scan_kind||'scrub')+' running'+(p.scan_pct!=null?' · '+p.scan_pct.toFixed(0)+'%':'');
+    if(p.scan_state==='done') return 'scrubbed '+(p.scan_age_d===0?'today':p.scan_age_d+' d ago')+(p.scan_errors?' · '+p.scan_errors+' errors':'');
+    if(p.scan_state==='never') return 'never scrubbed'; return ''; };
+  const findByPool={}; (inv.pool_findings||[]).forEach(f=>{ (findByPool[f.pool]=findByPool[f.pool]||[]).push(f); });
   $('poolGrid').innerHTML = inv.pools.map(p=>{
     const pct=p.size?Math.round(p.alloc/p.size*100):0;
-    return `<div class="card"><div class="hd"><span class="nm">${esc(p.name)}</span>
+    const fs=findByPool[p.name]||[]; const worst=fs.length?fs[0].severity:'';
+    const io=(p.read_bps!=null)?`<span title="read / write this second">↓ ${rate(p.read_bps)} · ↑ ${rate(p.write_bps)}</span>`:'';
+    const facts=[p.layout?esc(p.layout):'', scrub(p)?esc(scrub(p)):'',
+      p.compressratio?('compresses '+p.compressratio.toFixed(2)+'×'):'', p.frag_pct!=null?(p.frag_pct+'% fragmented'):''].filter(Boolean);
+    return `<div class="card"><div class="hd"><span class="nm" data-entity="pool:${esc(p.name)}" title="What is on this pool" style="cursor:pointer;border-bottom:1px dotted var(--t3)">${esc(p.name)}</span>
       <span class="pill ${p.health==='ONLINE'?'ok':'err'}">${esc(p.health)}</span>
+      ${worst?`<span class="pill ${worst==='error'?'err':worst==='warn'?'warn':'dim'}" title="${esc(fs.map(f=>f.message).join(' '))}">${fs.length} note${fs.length===1?'':'s'}</span>`:''}
       <span class="sub">${fmtB(p.size)}</span></div>
       <div class="metric"><div class="lab"><span>alloc ${fmtB(p.alloc)}</span><span>free ${fmtB(p.free)}</span></div>
-      <div class="${barClass(pct)}"><i style="width:${pct}%"></i></div></div></div>`;
+      <div class="${barClass(pct)}"><i style="width:${pct}%"></i></div></div>
+      <div class="kv" style="display:flex;flex-wrap:wrap;gap:4px 10px">${facts.map(f=>'<span>'+f+'</span>').join('')}${io}</div>
+      ${fs.length?`<div class="kv" style="color:var(--${worst==='error'?'err':worst==='warn'?'warn':'t3'})">${esc(fs[0].message)}${fs[0].detail?' <span style="opacity:.7">— '+esc(fs[0].detail)+'</span>':''}</div>`:''}
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">
+        ${p.scan_state==='running'?`<button class="btn sm" onclick="P.zfsOp('pxstore.zfs.scrub',{pool:'${esc(p.name)}',action:'stop'},'Stop the scrub of ${esc(p.name)}')">Stop scrub</button>`
+          :`<button class="btn sm" onclick="P.zfsOp('pxstore.zfs.scrub',{pool:'${esc(p.name)}'},'Scrub ${esc(p.name)}')">Scrub</button>`}
+        <button class="btn sm" onclick="P.zfsOp('pxstore.zfs.trim',{pool:'${esc(p.name)}'},'Trim ${esc(p.name)}')">Trim</button>
+        ${p.redundancy==='none'&&p.disks===1?`<button class="btn sm" title="Attach an empty disk beside this one to make a mirror" onclick="P.zfsMirror('${esc(p.name)}','${esc(((p.vdevs||[])[0]||{}).name||'')}')">Mirror it…</button>`:''}
+        <button class="btn sm" onclick="P.zfsAddVdev('${esc(p.name)}')">Add vdev…</button>
+      </div>
+      </div>`;
   }).join('')||'<div class="empty">No ZFS pools reported (node SSH unmapped? → ⚙ Setup)</div>';
 
   $('guestTbl').querySelector('tbody').innerHTML = (inv.guests||[]).map(g=>{
@@ -733,13 +857,15 @@ P.renderOverview = ()=>{
     const used=(g.datasets||[]).reduce((a,d)=>a+(d.used||0),0);
     const diskKeys=Object.keys(g.disks||{}).filter(k=>k==='rootfs'||/^(scsi|virtio|sata|ide)\d+$/.test(k));
     const dk=diskKeys[0]||(g.type==='lxc'?'rootfs':'scsi0');
-    return `<tr><td><b>${esc(g.name)}</b> <span class="kv">#${g.vmid}</span></td>
+    return `<tr><td><b data-entity="guest:${g.vmid}" title="Everything the estate knows about this guest" style="cursor:pointer;border-bottom:1px dotted var(--t3)">${esc(g.name)}</b> <span class="kv">#${g.vmid}</span>
+        <a href="#" class="kv" title="Open this machine in Estate > Machines" onclick="veraUI.openEntity('guest:${g.vmid}');return false" style="margin-left:6px;color:var(--acc,#4a9eff);text-decoration:none">machine ›</a></td>
       <td>${g.type==='lxc'?'CT':'VM'}</td>
       <td><span class="pill ${g.status==='running'?'ok':'dim'}">${esc(g.status)}</span></td>
       <td>${ds}</td><td>${fmtB(used||g.disk)}</td><td>${fmtB(g.maxdisk)}</td>
       <td style="white-space:nowrap">
         <input style="width:70px" placeholder="+10G" id="rz-${g.vmid}">
         <button class="btn sm" onclick="P.resize(${g.vmid},'${esc(g.type)}','${esc(dk)}')">Grow ${esc(dk)}</button>
+        ${(g.datasets||[]).length?`<button class="btn sm" title="Set an absolute size; a subvol can shrink, a VM disk cannot" onclick="P.zfsResize(${g.vmid},'${esc(g.type)}','${esc(dk)}','${esc((g.datasets[0]||{}).name||'')}')">Resize…</button>`:''}
       </td></tr>`;
   }).join('')||'<tr><td colspan="7" class="empty">no guests</td></tr>';
 
@@ -973,7 +1099,8 @@ P.renderCpu = ()=>{
   ).join('');
   $('cpuTbl').querySelector('tbody').innerHTML=m.guests.map(g=>{
     const flags=(g.flags||[]).map(f=>`<span class="flagchip ${f==='spans-numa'||f==='overlaps-reserved'?'bad':''}">${esc(f)}</span>`).join('')||'<span class="kv">ok</span>';
-    return `<tr><td><b>${esc(g.name)}</b> <span class="kv">#${g.vmid}</span></td>
+    return `<tr><td><b data-entity="guest:${g.vmid}" title="Everything the estate knows about this guest" style="cursor:pointer;border-bottom:1px dotted var(--t3)">${esc(g.name)}</b> <span class="kv">#${g.vmid}</span>
+        <a href="#" class="kv" title="Open this machine in Estate > Machines" onclick="veraUI.openEntity('guest:${g.vmid}');return false" style="margin-left:6px;color:var(--acc,#4a9eff);text-decoration:none">machine ›</a></td>
       <td>${g.type==='lxc'?'CT':'VM'}</td>
       <td><span class="pill ${g.status==='running'?'ok':'dim'}">${esc(g.status)}</span></td>
       <td>${esc(g.pinned||'—')}</td><td>${esc(g.live||'—')}</td>
@@ -1005,7 +1132,7 @@ P.fillCTSelects = ()=>{
   const cts=(P.state.inv?.guests||[]).filter(g=>g.type==='lxc');
   const opts=cts.map(g=>`<option value="${g.vmid}">${esc(g.name)} (#${g.vmid})</option>`).join('');
   ['conCT','atCT','wrSrc'].forEach(id=>{ if($(id)) $(id).innerHTML=opts||'<option value="">no CTs</option>'; });
-  if($('sxHost')) $('sxHost').innerHTML=(P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}">${esc(h.label||h.host)}</option>`).join('')||'<option value="">no SSH hosts</option>';
+  if($('sxHost')) veraEstate.fillSelect($('sxHost'), {selected:$('sxHost').value||''}).catch(()=>{});
   const st=P.state.settings||{};
   if(st.store_mount) $('stInfo').innerHTML=`store: <b>${esc(st.store_dataset)}</b> @ ${esc(st.store_mount)}`;
   if(st.store_dataset&&!$('stDataset').value) $('stDataset').value=st.store_dataset;
@@ -1198,18 +1325,19 @@ P.storeAttachRemote = async ()=>{
 /* ── setup ── */
 P.renderSetupSelects = ()=>{
   const st=P.state.settings||{};
-  if($('setWriterHost')) $('setWriterHost').innerHTML='<option value="">VFS-02 (found by its label)</option>'+
-    (P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}" ${h.id===st.store_writer_host?'selected':''}>${esc(h.label||h.host)} (${esc(h.host)})</option>`).join('');
-  if($('setNwm')) $('setNwm').innerHTML='<option value="">— not set —</option>'+
-    (P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}" ${h.id===st.nwm_host_id?'selected':''}>${esc(h.label||h.host)}</option>`).join('');
+  if($('setWriterHost')) veraEstate.fillSelect($('setWriterHost'), {blank:'VFS-02 (found by its label)', selected:st.store_writer_host||''}).catch(()=>{});
+  if($('setNwm')) veraEstate.fillSelect($('setNwm'), {blank:'— not set —', selected:st.nwm_host_id||''}).catch(()=>{});
 };
 P.renderSetup = async ()=>{
   // Re-fetch the canonical SSH host list so credentials added in
   // Estate → Connections after this panel loaded show up here.
   try{ P.state.sshHosts=(await api('/exec/ssh/hosts')).hosts||P.state.sshHosts||[]; }catch(e){}
   const st=P.state.settings||{}; const hosts=P.state.sshHosts||[];
+  // The same machine list every pane shows (estate.machines), not the SSH store's own.
+  const est=await veraEstate.logins().catch(()=>[]);
   const hostOpts=hid=>['<option value="">— unmapped —</option>']
-    .concat(hosts.map(h=>`<option value="${esc(h.id)}" ${h.id===hid?'selected':''}>${esc(h.label||h.host)} (${esc(h.user)}@${esc(h.host)})</option>`)).join('');
+    .concat((est.length?est.map(m=>({id:m.ssh_host_id,text:veraEstate.label(m)})):hosts.map(h=>({id:h.id,text:(h.label||h.host)+' ('+h.user+'@'+h.host+')'})))
+      .map(o=>`<option value="${esc(o.id)}" ${o.id===hid?'selected':''}>${esc(o.text)}</option>`)).join('');
   $('nodeMap').innerHTML=(P.state.nodes.length?P.state.nodes:['?']).map(n=>
     `<div class="frow"><div class="field sm"><label>Node</label><input value="${esc(n)}" disabled></div>
      <div class="field"><label>Root SSH credential</label><select data-node="${esc(n)}" class="nodeSel">${hostOpts((st.node_hosts||{})[n]||'')}</select></div></div>`
@@ -1260,6 +1388,8 @@ P.init().then(()=>{
 });
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
+<script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>

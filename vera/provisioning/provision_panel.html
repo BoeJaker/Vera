@@ -65,6 +65,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}.toast.ok{border-color:var(--ok)}
 </style>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-estate.js"></script>
 </head>
 <body>
 <div id="shell">
@@ -333,8 +334,15 @@ async function refresh(){
   const j=await api('/exec/ssh/hosts');
   _hosts=(j&&j.hosts)||[];
   const sel=$('hostSel');
-  sel.innerHTML=_hosts.length
-    ? _hosts.map(h=>'<option value="'+esc(h.id)+'">'+esc(h.label||(h.user+'@'+h.host))+'</option>').join('')
+  // Labelled and ordered by the estate's one machine list, so this dropdown reads
+  // like Machines and Trust do; a login the estate list does not know is still offered.
+  let opts=[];
+  try{ const est=await veraEstate.logins(); const byId={}; est.forEach(m=>byId[m.ssh_host_id]=m);
+    opts=_hosts.map(h=>({id:h.id,text:byId[h.id]?veraEstate.label(byId[h.id]):(h.label||(h.user+'@'+h.host)),known:!!byId[h.id]}))
+      .sort((a,b)=>(a.known===b.known?a.text.localeCompare(b.text):(a.known?-1:1))); }
+  catch(e){ opts=_hosts.map(h=>({id:h.id,text:h.label||(h.user+'@'+h.host)})); }
+  sel.innerHTML=opts.length
+    ? opts.map(o=>'<option value="'+esc(o.id)+'">'+esc(o.text)+'</option>').join('')
     : '<option value="">no SSH hosts — add one →</option>';
   onHost();
   if(!_targets.length){ const t=await api('/provision/targets'); _targets=(t&&t.targets)||[]; renderTargets(); }

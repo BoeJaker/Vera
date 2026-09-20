@@ -36,7 +36,9 @@ from fastapi.responses import HTMLResponse
 from Vera.vera.agentbridges.agentbridge_registry import BRIDGES, BY_ID
 from Vera.vera.agentbridges.agentbridge_runtime import image_present
 from Vera.vera.agentbridges.runtime_registry import RUNTIME_ADAPTERS
-from Vera.vera.agentbridges.runtime_matrix import compile_runtime_matrix
+from Vera.vera.agentbridges.runtime_matrix import (
+    compile_runtime_matrix, evaluate_live_evidence,
+)
 from Vera.vera.execution.a2a_adapter import compile_a2a_adapter_status
 from Vera.vera.execution.a2a_mapping import compile_a2a_protocol_mapping
 from Vera.vera.integrations.source_intake import lifecycle_contract
@@ -56,11 +58,32 @@ _RUNTIME_ADAPTERS = RUNTIME_ADAPTERS
     memory="off", silent=True,
     description="Return the deterministic agent-runtime compatibility comparison. "
                 "Separates upstream claims from Vera-verified bridge coverage; "
-                "imports and executes no optional runtime and keeps every live "
-                "comparison queued.",
+                "imports and executes no optional runtime; live evidence is "
+                "validated separately.",
 )
 async def agentbridge_runtime_matrix(trace_id=None) -> Dict[str, Any]:
     return compile_runtime_matrix().to_dict()
+
+
+@capability(
+    "agentbridge.runtime_matrix.evaluate", http_method="POST",
+    http_path="/agentbridge/runtime-matrix/evaluate",
+    http_tags=["agentbridge", "interop"], memory="off", silent=True,
+    description="Validate payload-free live conformance observations for selected "
+                "runtime candidates. Does not execute a runtime, retain prompts or "
+                "outputs, rank candidates, or choose a winner. Inputs: observations "
+                "(list of runtime_id/case/state/reason_code plus bounded lifecycle "
+                "facts), selected_runtime_ids (list).",
+)
+async def agentbridge_runtime_matrix_evaluate(
+        observations: Optional[List[Dict[str, Any]]] = None,
+        selected_runtime_ids: Optional[List[str]] = None,
+        trace_id=None) -> Dict[str, Any]:
+    try:
+        return evaluate_live_evidence(
+            observations or [], selected_runtime_ids or [])
+    except (TypeError, ValueError) as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 @capability(
@@ -90,6 +113,7 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
         ("portable_telemetry", "run.telemetry.status"),
         ("durability_fixture", "workflow.durability.fixture"),
         ("runtime_matrix", "agentbridge.runtime_matrix"),
+        ("runtime_matrix_evidence", "agentbridge.runtime_matrix.evaluate"),
         ("runtime_cancel", "agentbridge.run.cancel"),
         ("runtime_version", "agentbridge.runtime.version"),
         ("a2a_conformance", "interop.a2a.conformance"),
@@ -129,6 +153,9 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
             "candidate_count": matrix.get("candidate_count", 0),
             "dimension_count": len(matrix.get("dimensions", [])),
             "queued_live_cases": len(matrix.get("required_live_cases", [])),
+            "required_live_cases": len(matrix.get("required_live_cases", [])),
+            "evidence_evaluator_registered": (
+                "agentbridge.runtime_matrix.evaluate" in CAPABILITY_REGISTRY),
             "execution_lane": matrix.get("execution_lane"),
             "ready_for_selection": matrix.get("ready_for_selection", False),
         },

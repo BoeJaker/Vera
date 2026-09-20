@@ -75,3 +75,53 @@ def annotate_panels(panels: Iterable[Mapping[str, Any]], enabled: bool) -> List[
             q["retired_into"] = dict(target)
         out.append(q)
     return out
+
+
+# ── entities in deep links ───────────────────────────────────────────────────
+# Every mechanism that moves a reader between panes carried only the pane:
+# `?pane=&sub=`, `vera:estate:open {pane, sub}` and the injected-menu relay. So
+# "open Machines focused on VM 145" could not be said, and the storage view
+# listed guests with no way out of the list. An entity reference is
+# `<kind>:<id>`; each kind names the pane (and sub-tab) that can focus it.
+
+ENTITY_KINDS: Dict[str, Dict[str, str]] = {
+    "guest":       {"pane": "machines",     "sub": "",         "noun": "machine"},
+    "host":        {"pane": "machines",     "sub": "",         "noun": "machine"},
+    "docker-host": {"pane": "docker",       "sub": "",         "noun": "Docker host"},
+    "container":   {"pane": "docker",       "sub": "",         "noun": "container"},
+    "pool":        {"pane": "storage",      "sub": "",         "noun": "pool"},
+    "dataset":     {"pane": "storage",      "sub": "",         "noun": "dataset"},
+    "integration": {"pane": "integrations", "sub": "",         "noun": "service"},
+    "identity":    {"pane": "provision",    "sub": "identity", "noun": "directory host"},
+    "mesh":        {"pane": "provision",    "sub": "mesh",     "noun": "mesh member"},
+    "secret":      {"pane": "provision",    "sub": "secrets",  "noun": "secret"},
+    "cert":        {"pane": "provision",    "sub": "certs",    "noun": "certificate"},
+    "backup-job":  {"pane": "storage",      "sub": "estate",   "noun": "backup job"},
+    "model":       {"pane": "ollama",       "sub": "",         "noun": "model"},
+}
+
+
+def parse_entity(ref: Any) -> Dict[str, str]:
+    """`kind:id` -> {kind, id}, or {} when it names nothing this estate knows.
+    The id may itself contain colons (a guest is `cluster:vmid`, a container
+    `host/name`), so only the first colon divides."""
+    s = str(ref or "").strip()
+    if ":" not in s:
+        return {}
+    kind, ident = s.split(":", 1)
+    kind, ident = kind.strip().lower(), ident.strip()
+    if kind not in ENTITY_KINDS or not ident:
+        return {}
+    return {"kind": kind, "id": ident}
+
+
+def entity_target(ref: Any) -> Dict[str, str]:
+    """Where a reference opens: {kind, id, pane, sub, noun}, or {}."""
+    ent = parse_entity(ref)
+    if not ent:
+        return {}
+    return {**ent, **ENTITY_KINDS[ent["kind"]]}
+
+
+def entity_ref(kind: str, ident: Any) -> str:
+    return f"{kind}:{ident}" if kind in ENTITY_KINDS and str(ident or "").strip() else ""

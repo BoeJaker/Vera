@@ -45,6 +45,8 @@ input{font:inherit;color:inherit;background:var(--bg0);border:1px solid var(--bo
 .toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}
 </style>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-estate.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
 </head>
 <body>
 <div id="shell">
@@ -91,7 +93,8 @@ async function boot(){
   let cl={}; try{ cl=await api('/proxmox/cluster/list','GET'); }catch(e){}
   const cs=cl.clusters||[]; $('#clusterSel').innerHTML=cs.map(c=>`<option value="${esc(c.id)}">${esc(c.label||c.id)}</option>`).join('')||'<option value="">no cluster</option>';
   let dh={}; try{ dh=await api('/workers/docker/hosts/list','GET'); }catch(e){ try{ dh=await api('/docker/hosts/list','GET'); }catch(_){ } }
-  const hosts=(dh.hosts||dh.items||[]); $('#dockerSel').innerHTML='<option value="">all docker hosts</option>'+hosts.map(h=>`<option value="${esc(h.id)}">${esc(h.label||h.id)}</option>`).join('');
+  try{ await veraEstate.machines(); }catch(e){}
+  const hosts=(dh.hosts||dh.items||[]); $('#dockerSel').innerHTML='<option value="">all docker hosts</option>'+hosts.map(h=>{ const m=veraEstate.find({docker_host_id:h.id}); return `<option value="${esc(h.id)}">${esc(m?veraEstate.label(m):(h.label||h.id))}</option>`; }).join('');
   load();
 }
 
@@ -149,8 +152,19 @@ function showNodeInfo(n){
   let h=`<div class="kvp"><b>Kind:</b> ${esc(d.kind)}</div>`;
   if(d.kind==='guest') h+=`<div class="kvp"><b>VMID:</b> ${esc(d.vmid)} · ${esc(d.gtype)} · ${esc(d.status)} @ ${esc(d.node)}</div>`;
   if(d.kind==='dnet') h+=`<div class="kvp"><b>Driver:</b> ${esc(d.driver||'')}</div>`;
+  const ref=entityRefFor(d);
+  if(ref) h+=`<div class="kvp" style="margin-top:6px"><button class="btn sm" data-entity="${esc(ref)}" title="Everything the estate knows about this">Open in the estate ›</button></div>`;
   h+=`<div class="kvp" style="margin-top:4px;color:var(--dim)">Use ＋ Connect, then tap another node to link them.</div>`;
   showInfo(d.label, h);
+}
+// The graph's node -> the estate's reference for it (guests by vmid, containers by host/name,
+// Docker hosts by id, Proxmox nodes through the one list).
+function entityRefFor(d){
+  if(d.kind==='guest') return 'guest:'+d.vmid;
+  if(d.kind==='container') return 'container:'+(d.host_id||'local')+'/'+d.label;
+  if(d.kind==='docker_host') return 'docker-host:'+d.host_id;
+  if(d.kind==='pve_node') return veraEstate.refFor({node:d.label});
+  return '';
 }
 function showInfo(t,html){ $('#infoT').textContent=t; $('#infoB').innerHTML=html; $('#info').classList.add('on'); }
 function closeInfo(){ $('#info').classList.remove('on'); }
@@ -172,8 +186,9 @@ async function doConnect(a,b){
     if(!host) return toast('select a docker host',true);
     if(nnode.data('host_id')&&cnode.data('host_id')&&nnode.data('host_id')!==cnode.data('host_id'))
       return toast('container and network are on different docker hosts',true);
-    try{ const r=await api('/netgraph/edge/allow','POST',{kind:'docker',host_id:host,container:cont,network:net});
-      if(r.error) return toast(r.error,true); toast('connected'); load(); }catch(e){ toast(e.message,true); }
+    try{ const r=await veraEstate.confirmRun('/netgraph/edge/allow',{kind:'docker',host_id:host,container:cont,network:net},
+        'Connect container '+cnode.data('label')+' to Docker network '+nnode.data('label')+' on '+host+'?');
+      if(r.cancelled||r.error) return; toast('connected'); load(); }catch(e){ toast(e.message,true); }
     return;
   }
   // Proxmox firewall: <something> → guest  → open ALLOW rule form
@@ -197,8 +212,10 @@ function fwForm(guest, srcDefault){
 }
 async function fwAllow(g){
   const cluster_id=$('#clusterSel').value;
-  try{ const r=await api('/netgraph/edge/allow','POST',{kind:'pve',cluster_id,node:g.node,guest_type:g.gtype,vmid:g.vmid,source:$('#fwSrc').value.trim(),proto:$('#fwProto').value.trim(),dport:$('#fwDport').value.trim()});
-    if(r.error) return toast(r.error,true); toast('rule added'); closeInfo(); load(); }catch(e){ toast(e.message,true); }
+  const source=$('#fwSrc').value.trim(), proto=$('#fwProto').value.trim(), dport=$('#fwDport').value.trim();
+  const text='Add an ACCEPT firewall rule on '+veraEstate.guestName(g.vmid,g.gtype)+': from '+(source||'anywhere')+(proto?' · '+proto:'')+(dport?' · port '+dport:'')+'?';
+  try{ const r=await veraEstate.confirmRun('/netgraph/edge/allow',{kind:'pve',cluster_id,node:g.node,guest_type:g.gtype,vmid:g.vmid,source,proto,dport},text);
+    if(r.cancelled||r.error) return; toast('rule added'); closeInfo(); load(); }catch(e){ toast(e.message,true); }
 }
 
 async function cutSelected(){
@@ -207,13 +224,14 @@ async function cutSelected(){
   if(e.data('rel')==='member'){
     const host=e.source().data('host_id')||$('#dockerSel').value;
     const cont=e.source().data('container_id'), net=e.target().data('net_id');
-    try{ const r=await api('/netgraph/edge/deny','POST',{kind:'docker',host_id:host,container:cont,network:net});
-      if(r.error) return toast(r.error,true); toast('disconnected'); load(); }catch(ex){ toast(ex.message,true); }
+    try{ const r=await veraEstate.confirmRun('/netgraph/edge/deny',{kind:'docker',host_id:host,container:cont,network:net},
+        'Disconnect container '+e.source().data('label')+' from Docker network '+e.target().data('label')+' on '+host+'?');
+      if(r.cancelled||r.error) return; toast('disconnected'); load(); }catch(ex){ toast(ex.message,true); }
   } else if(e.data('rel')==='fw'){
     const cluster_id=$('#clusterSel').value;
-    if(!confirm('Delete firewall rule pos '+m.pos+'?')) return;
-    try{ const r=await api('/netgraph/edge/deny','POST',{kind:'pve',cluster_id,node:m.node,guest_type:m.gtype,vmid:m.vmid,pos:m.pos});
-      if(r.error) return toast(r.error,true); toast('rule removed'); load(); }catch(ex){ toast(ex.message,true); }
+    try{ const r=await veraEstate.confirmRun('/netgraph/edge/deny',{kind:'pve',cluster_id,node:m.node,guest_type:m.gtype,vmid:m.vmid,pos:m.pos},
+        'Delete firewall rule '+m.pos+' ('+(m.proto||'any')+' · dport '+(m.dport||'any')+') on '+veraEstate.guestName(m.vmid,m.gtype)+'?');
+      if(r.cancelled||r.error) return; toast('rule removed'); load(); }catch(ex){ toast(ex.message,true); }
   }
   selEdge=null; $('#cutBtn').disabled=true;
 }

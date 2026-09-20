@@ -126,6 +126,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
         SSH credential in Storage → Setup (nwm_host_id).</div>
       <div class="frow">
         <button class="btn" onclick="NO.nwmFlows()">↻ Flows (conntrack)</button>
+        <button class="btn" id="nwmAcctBtn" onclick="NO.nwmAccounting()" style="display:none" title="Byte counts are all 0 until the monitor's kernel counts them (nf_conntrack_acct)">Count bytes</button>
         <div class="field sm"><label>Capture secs</label><input id="nwmSecs" type="number" value="10" min="2" max="60"></div>
         <div class="field"><label>BPF filter (opt)</label><input id="nwmFilter" placeholder="not port 22"></div>
         <button class="btn" onclick="NO.nwmCapture()">◉ Capture sample</button>
@@ -241,17 +242,32 @@ NO.fwDel=async(pos)=>{
 NO.nwmFlows=async()=>{
   $('nwmInfo').textContent='sampling conntrack…';
   try{
-    const r=await api('/pxstore/nwm/flows','POST',{cluster_id:NO.cluster});
+    const [r]=await Promise.all([api('/pxstore/nwm/flows','POST',{cluster_id:NO.cluster}), veraEstate.machines().catch(()=>[])]);
     if(r.error){ $('nwmInfo').textContent=''; return alert(r.error); }
-    $('nwmInfo').textContent=`tool: ${r.tool} · ${r.total_flows} flows`;
+    const monitor=r.host_id?veraEstate.chip('host:'+r.host_id,(veraEstate.find({ssh_host_id:r.host_id})||{}).label||'the monitor'):'';
+    const noBytes=r.tool==='conntrack'&&r.accounting===false;
+    $('nwmInfo').innerHTML=`tool: ${esc(r.tool)} · ${r.total_flows} flows`+(monitor?` · via ${monitor}`:'')
+      +(noBytes?` · <span style="color:var(--warn)">bytes not counted - the monitor's kernel has nf_conntrack_acct off</span>`:'');
+    $('nwmAcctBtn').style.display=noBytes?'':'none';
+    NO._nwmHost=r.host_id||'';
     $('talkTbl').querySelector('tbody').innerHTML=(r.talkers||[]).map(t=>
-      `<tr><td><b>${esc(t.host)}</b></td><td>${t.conns}</td><td>${fmtB(t.bytes)}</td></tr>`
+      `<tr><td><b>${NO.who(t.host)}</b></td><td>${t.conns}</td><td>${fmtB(t.bytes)}</td></tr>`
     ).join('')||'<tr><td colspan="3" class="empty">—</td></tr>';
     $('flowTbl').querySelector('tbody').innerHTML=(r.flows||[]).map(f=>
-      `<tr><td>${esc(f.src)}</td><td>${esc(f.dst)}</td><td>${esc(f.proto)}</td>
+      `<tr><td>${NO.who(f.src)}</td><td>${NO.who(f.dst)}</td><td>${esc(f.proto)}</td>
        <td>${esc(f.dport)}</td><td>${f.conns}</td><td>${fmtB(f.bytes)}</td></tr>`
     ).join('')||'<tr><td colspan="6" class="empty">—</td></tr>';
   }catch(e){ $('nwmInfo').textContent=''; alert(e.message); }
+};
+// An address in a flow, named the way the estate names the machine behind it.
+NO.who=(addr)=>{
+  const m=veraEstate.find({addr}); if(!m) return esc(addr);
+  return veraEstate.chip(veraEstate.ref(m), m.label+' · '+addr);
+};
+NO.nwmAccounting=async()=>{
+  const r=await veraEstate.plan('/pxstore/nwm/accounting',{cluster_id:NO.cluster,host_id:NO._nwmHost||'',enable:true},
+    'Count bytes per flow on the monitor',{where:'the NWM monitor'});
+  if(r&&r.ok!==false&&!r.cancelled) NO.nwmFlows();
 };
 NO.nwmCapture=async()=>{
   const secs=parseInt($('nwmSecs').value)||10;
@@ -261,7 +277,7 @@ NO.nwmCapture=async()=>{
     if(r.error){ $('nwmInfo').textContent=''; return alert(r.error); }
     $('nwmInfo').textContent=`${r.pkts_seen} packets in ${r.seconds}s`;
     $('flowTbl').querySelector('tbody').innerHTML=(r.convs||[]).map(c=>
-      `<tr><td>${esc(c.src)}</td><td>${esc(c.dst)}</td><td colspan="2" class="kv">capture</td>
+      `<tr><td>${NO.who(c.src)}</td><td>${NO.who(c.dst)}</td><td colspan="2" class="kv">capture</td>
        <td>${c.pkts}</td><td>${fmtB(c.bytes)}</td></tr>`
     ).join('')||'<tr><td colspan="6" class="empty">no conversations parsed</td></tr>';
   }catch(e){ $('nwmInfo').textContent=''; alert(e.message); }
@@ -270,6 +286,8 @@ NO.nwmCapture=async()=>{
 NO.init();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-estate.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>

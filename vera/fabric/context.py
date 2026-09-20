@@ -113,6 +113,44 @@ def _split_ids(spec: str) -> List[str]:
 
 import re as _re
 
+
+def _canonical_tool_name(name: Any, valid_tools: list) -> str:
+    """Accept an exact capability name or its harmless empty-call spelling.
+
+    Models often echo a zero-argument signature as ``cap.name()``.  Only strip
+    that empty suffix when the resulting exact name is in the supplied toolkit;
+    never interpret arguments or broaden the allow-list.
+    """
+    raw = str(name or "").strip()
+    if raw in (valid_tools or []):
+        return raw
+    match = _re.fullmatch(r"([A-Za-z0-9_.-]+)\s*\(\s*\)", raw)
+    candidate = match.group(1) if match else ""
+    return candidate if candidate in (valid_tools or []) else raw
+
+
+def _terminal_action_summary(action: dict, *, had_success: bool = False) -> tuple:
+    """Recognise explicit terminal actions plus a post-tool summary-only reply."""
+    if not isinstance(action, dict):
+        return False, ""
+    verbs = {"done", "finish", "stop", "complete", "final"}
+    action_name = str(action.get("action") or "").strip().lower()
+    tool_name = str(action.get("tool") or "").strip().strip("()").lower()
+    summary = next((str(action.get(key)).strip()
+                    for key in ("summary", "final", "answer", "response", "message")
+                    if isinstance(action.get(key), str) and action.get(key).strip()), "")
+    if action_name in verbs or tool_name in verbs or action.get("final") or action.get("answer"):
+        return True, summary
+
+    # Once a real tool succeeded, models commonly answer with {summary: "..."}
+    # and omit the redundant action marker.  Accept only that narrow shape: no
+    # tool-bearing fields and no unrecognised action verb.
+    tool_fields = ("tool", "tool_use", "tool_call", "capability", "function", "name")
+    if had_success and not action_name and not any(action.get(k) for k in tool_fields) and summary:
+        return True, summary
+    return False, ""
+
+
 def _extract_tool_action(action: dict, valid_tools: list) -> tuple:
     """Extract (tool_name, args, thought) from an LLM action dict, handling
     every common malformation: tool_use{name,input}, tool, capability, function,
@@ -127,11 +165,11 @@ def _extract_tool_action(action: dict, valid_tools: list) -> tuple:
     # 1. Canonical tool_use:{name,input}
     tu = action.get("tool_use") or action.get("tool_call")
     if isinstance(tu, dict) and tu.get("name"):
-        return (str(tu["name"]).strip(),
+        return (_canonical_tool_name(tu["name"], valid_tools),
                 tu.get("input") or tu.get("args") or tu.get("arguments") or {},
                 thought)
     if isinstance(tu, str) and tu.strip():
-        return (tu.strip(),
+        return (_canonical_tool_name(tu, valid_tools),
                 action.get("input") or action.get("args") or action.get("arguments") or {},
                 thought)
 
@@ -140,7 +178,7 @@ def _extract_tool_action(action: dict, valid_tools: list) -> tuple:
         name = (action.get("name") or action.get("tool")
                 or action.get("function") or action.get("cap") or "")
         if isinstance(name, str) and name.strip():
-            return (name.strip(),
+            return (_canonical_tool_name(name, valid_tools),
                     action.get("input") or action.get("args") or action.get("arguments") or {},
                     thought)
 
@@ -157,7 +195,7 @@ def _extract_tool_action(action: dict, valid_tools: list) -> tuple:
     name = (action.get("tool") or action.get("capability")
             or action.get("function") or action.get("name") or "")
     if isinstance(name, str) and name.strip():
-        return (name.strip(),
+        return (_canonical_tool_name(name, valid_tools),
                 action.get("args") or action.get("arguments") or action.get("input") or {},
                 thought)
 
@@ -2306,16 +2344,11 @@ async def cap_dag_agent_loop(
                 continue
 
             # Done?
-            _tool_raw_v1 = action.get("tool", "")
-            _is_done_via_tool_v1 = (isinstance(_tool_raw_v1, str)
-                                     and _tool_raw_v1.strip().strip("()").lower()
-                                     in ("done", "finish", "stop", "complete", "final"))
-            if (action.get("action") in ("done", "finish", "stop", "complete")
-                    or action.get("final") or action.get("answer")
-                    or _is_done_via_tool_v1):
+            _is_terminal_v1, _terminal_summary_v1 = _terminal_action_summary(
+                action, had_success=any(h.get("ok") for h in history))
+            if _is_terminal_v1:
                 done    = True
-                summary = (action.get("summary") or action.get("final")
-                            or action.get("answer") or "")
+                summary = _terminal_summary_v1
                 await stream_append_token(stream_id, f"\n[done] {summary}\n")
                 await emit_event({
                     "type": "agent_loop.done",
@@ -2443,19 +2476,6 @@ async def cap_dag_agent_loop(
                 "ms":      elapsed,
                 "thought": action.get("thought", ""),
             })
-
-            # ── Phase accounting ────────────────────────────────────────────
-            if invoke.get("ok"):
-                if _dw_cap_phase(tool) == "explore":
-                    explore_done += 1
-                    if acted and not validated:
-                        validated = True
-                        await _emit_phase_v2("validate", validated=True, tool=tool)
-                    else:
-                        await _emit_phase_v2("explore", tool=tool)
-                else:
-                    acted = True
-                    await _emit_phase_v2("act", tool=tool)
 
             await stream_append_token(
                 stream_id,

@@ -664,10 +664,11 @@ async function loadHosts(){
   }catch(e){ _hosts=[]; }
   const sel = document.getElementById('ssh-host-sel');
   const cur = sel.value;
+  let names={}; try{ names=await veraEstate.labelMap(); }catch(e){}
   sel.innerHTML = '<option value="">-- inline --</option>';
   for(const h of _hosts){
     const o=document.createElement('option'); o.value=h.id;
-    o.textContent = `${h.label||h.host} (${h.user||'?'}@${h.host}:${h.port||22})`;
+    o.textContent = names[h.id] ? `${names[h.id]} · ${h.user||'?'}@${h.host}:${h.port||22}` : `${h.label||h.host} (${h.user||'?'}@${h.host}:${h.port||22})`;
     sel.appendChild(o);
   }
   sel.value = cur;
@@ -1293,6 +1294,7 @@ window.VeraExec = {setMode,setLayout,sshTo,sshToInline,loadHosts,runLocal,runSsh
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>
 <script>

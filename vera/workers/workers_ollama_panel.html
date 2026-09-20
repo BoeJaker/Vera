@@ -199,6 +199,9 @@ html.view-models #secNav [data-view="models"]{display:block}
 .ov-facts{margin-bottom:6px;font-family:var(--mono);font-size:9.5px;color:var(--dim);overflow-wrap:anywhere}
 .ov-list{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg1)}
 .ov-list>*+*{border-top:1px solid var(--border)}
+.mc-ent{cursor:pointer;border-bottom:1px dotted var(--dim)}
+.mc-ent:hover{color:var(--acc3)}
+.mc-focus td{background:var(--accent-soft,rgba(74,158,255,.14));box-shadow:inset 3px 0 0 var(--acc3);transition:background 1.5s}
 .bld-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
 .bld{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg1);color:var(--text);text-decoration:none;font-size:11px}
 .bld:hover{border-color:var(--acc3)}
@@ -419,7 +422,6 @@ html.view-models #secNav [data-view="models"]{display:block}
     <div class="nsec" data-view="estate">Machines</div>
     <div class="snav" data-pane="machines" data-view="estate" onclick="P.show('machines',this)">All</div>
     <div class="snav" data-pane="workers" data-view="estate" onclick="P.show('workers',this)">Workers</div>
-    <div class="snav" data-pane="nodes" data-view="estate" onclick="P.show('nodes',this)">Nodes</div>
     <div class="snav" data-pane="proxmox" data-view="estate" onclick="P.show('proxmox',this)">Proxmox</div>
     <div class="snav" data-pane="docker" data-view="estate" onclick="P.show('docker',this)">Docker</div>
     <div class="snav" data-pane="sandbox" data-view="estate" onclick="P.show('sandbox',this)">Sandbox</div>
@@ -1972,6 +1974,7 @@ html.view-models #secNav [data-view="models"]{display:block}
             <span class="j-tab active" id="prvs-security" onclick="P.provSub('security')" style="padding:3px 9px;font-size:9px">Security</span>
             <span class="j-tab" id="prvs-secrets" onclick="P.provSub('secrets')" style="padding:3px 9px;font-size:9px">Secrets</span>
             <span class="j-tab" id="prvs-certs" onclick="P.provSub('certs')" style="padding:3px 9px;font-size:9px">Certificates</span>
+            <span class="j-tab" id="prvs-registration" onclick="P.provSub('registration')" style="padding:3px 9px;font-size:9px">Registration</span>
             <span class="j-tab" id="prvs-identity" onclick="P.provSub('identity')" style="padding:3px 9px;font-size:9px">Identity</span>
             <span class="j-tab" id="prvs-enroll" onclick="P.provSub('enroll')" style="padding:3px 9px;font-size:9px">Enroll</span>
             <span class="j-tab" id="prvs-mesh" onclick="P.provSub('mesh')" style="padding:3px 9px;font-size:9px">Mesh</span>
@@ -1981,6 +1984,7 @@ html.view-models #secNav [data-view="models"]{display:block}
         <iframe id="prv-sub-security" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-secrets" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-certs" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
+        <iframe id="prv-sub-registration" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-identity" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-enroll" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="prv-sub-mesh" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
@@ -5471,7 +5475,7 @@ function pmxRenderVms(){
     const diskPct=v.maxdisk>0?Math.round((v.disk||0)/v.maxdisk*100):0;
     return '<tr>'
       +'<td style="font-family:var(--mono);color:var(--dim2)">'+esc(v.vmid||'')+'</td>'
-      +'<td style="font-weight:600">'+esc(v.name||'?')+'</td>'
+      +'<td style="font-weight:600"><span class="mc-ent" data-entity="guest:'+esc(v.vmid)+'" title="Everything the estate knows about this guest" tabindex="0">'+esc(v.name||'?')+'</span></td>'
       +'<td><span style="font-size:8px;padding:1px 5px;border-radius:3px;font-weight:700;'+
         (v.type==='qemu'?'background:rgba(90,158,143,.12);color:var(--acc)':'background:rgba(201,163,90,.1);color:var(--warn)')+'">'+esc(v.type==='qemu'?'VM':'CT')+'</span></td>'
       +'<td style="font-size:9px;color:var(--dim2)">'+esc(v.node||'')+'</td>'
@@ -5513,25 +5517,17 @@ async function pmxEnrollSsh(node,type,vmid,name,cid){
   pmxSsh(node,type,vmid,name,cid);
 }
 
-async function pmxStartVm(node,vmid,type){
+async function pmxPower(node,vmid,type,action){
   if(!_pmxCur) return;
-  if(!confirm('Start '+(type==='qemu'?'VM':'CT')+' '+vmid+'?')) return;
+  const text=(action==='start'?'Start ':'Shut down ')+veraEstate.guestName(vmid,type)+' on '+node+'?';
   try{
-    const r=await _pmxApi('/proxmox/guest/action','POST',{cluster_id:_pmxCur,node,guest_type:type,vmid:parseInt(vmid),action:'start'});
-    if(r.error) alert('Error: '+r.error);
+    const r=await veraEstate.confirmRun('/proxmox/guest/action',{cluster_id:_pmxCur,node,guest_type:type,vmid:parseInt(vmid),action},text);
+    if(r.cancelled||r.error) return;
     setTimeout(pmxRefresh,1500); setTimeout(pmxRefresh,4000);
   }catch(e){alert('Error: '+e.message);}
 }
-
-async function pmxStopVm(node,vmid,type){
-  if(!_pmxCur) return;
-  if(!confirm('Shut down '+(type==='qemu'?'VM':'CT')+' '+vmid+'?')) return;
-  try{
-    const r=await _pmxApi('/proxmox/guest/action','POST',{cluster_id:_pmxCur,node,guest_type:type,vmid:parseInt(vmid),action:'shutdown'});
-    if(r.error) alert('Error: '+r.error);
-    setTimeout(pmxRefresh,1500); setTimeout(pmxRefresh,4000);
-  }catch(e){alert('Error: '+e.message);}
-}
+function pmxStartVm(node,vmid,type){ return pmxPower(node,vmid,type,'start'); }
+function pmxStopVm(node,vmid,type){ return pmxPower(node,vmid,type,'shutdown'); }
 
 // ── Console: terminal (xterm) + remote desktop (noVNC) ────────────────────
 let _pmxCon={term:null,fit:null,ws:null,rfb:null,deeplink:'',sendResize:null};
@@ -5628,10 +5624,12 @@ async function _dkrInitHosts(){
   let recs=[];
   try{ const j=await api('/workers/docker/hosts'); recs=(j&&j.hosts)||[]; }catch(e){}
   _dkrHosts={}; recs.forEach(r=>{_dkrHosts[r.id]=r; if(r.default) _dkrHostId=r.id;});
+  // Label each Docker host by the machine it is, from the one estate list.
+  try{ const ms=await veraEstate.machines(); recs.forEach(r=>{ const m=ms.find(x=>x.docker_host_id===r.id||(r.ssh_host_id&&x.ssh_host_id===r.ssh_host_id)); if(m) r._estate=veraEstate.label(m); }); }catch(e){}
   sel.innerHTML='<option value="">Select host…</option>';
   recs.forEach(r=>{
     const tail=r.kind==='tcp'&&r.url?(' '+r.url):r.kind==='ssh'?(' '+(r.ssh_host_id||'')):'';
-    sel.innerHTML+='<option value="'+esc(r.id)+'">'+esc(r.label+' ['+r.kind+']'+tail)+'</option>';
+    sel.innerHTML+='<option value="'+esc(r.id)+'">'+esc((r._estate||r.label)+' ['+r.kind+']'+tail)+'</option>';
   });
   if(_cluster){
     Object.values(_cluster.workers||{}).forEach(w=>{
@@ -5800,7 +5798,7 @@ function dkrRenderContainers(){
     const ramStr=st.memory_limit>0?_fmtBytes(st.memory_usage)+'/'+_fmtBytes(st.memory_limit):'—';
     const created=c.Created?new Date(c.Created*1000).toLocaleDateString():'—';
     return '<tr>'
-      +'<td style="font-weight:600;color:var(--acc2)">'+esc(name)+(isSbx?' <span class="j-badge" style="font-size:7px" title="session sandbox container">sbx</span>':'')+'</td>'
+      +'<td style="font-weight:600;color:var(--acc2)"><span class="mc-ent" data-entity="container:'+esc((_dkrHostId||'local')+'/'+name)+'" title="Everything the estate knows about this container" tabindex="0">'+esc(name)+'</span>'+(isSbx?' <span class="j-badge" style="font-size:7px" title="session sandbox container">sbx</span>':'')+'</td>'
       +'<td style="font-size:9px;color:var(--dim2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(image)+'">'+esc(image.split(':')[0])+'</td>'
       +'<td><span class="j-badge '+(running?'j-running':'j-done')+'" style="'+(running?'':'color:var(--dim)')+'">'+esc(c.State)+'</span></td>'
       +'<td style="font-size:8.5px;font-family:var(--mono)">'+esc(ports)+'</td>'
@@ -6245,8 +6243,9 @@ function _ovFacts(key,f){
   return '';
 }
 function _ovRow(f){
+  const chip=f.ref?' <span class="mc-ent" data-entity="'+esc(f.ref)+'" title="Everything the estate knows about this" tabindex="0">'+esc(f.subject||f.ref)+' ›</span>':'';
   return '<div class="ov-row"><span class="ov-sev '+esc(f.severity)+'">'+esc(_OV_SEV[f.severity]||f.severity)+'</span>'
-    +'<span>'+esc(f.message)+(f.detail?'<span class="ov-detail">'+esc(f.detail)+'</span>':'')+'</span></div>';
+    +'<span>'+esc(f.message)+chip+(f.detail?'<span class="ov-detail">'+esc(f.detail)+'</span>':'')+'</span></div>';
 }
 function ovRender(r){
   const sum=$('ov-summary'), box=$('ov-sections'); if(!sum||!box) return;
@@ -6299,6 +6298,33 @@ setTimeout(()=>{ const p=$('pane-overview'); if(_VIEW==='estate'&&p&&p.classList
 let _mcRows=[], _mcKind='', _mcBusy=false;
 const _MC_KIND={'proxmox-node':'Proxmox node',guest:'Guest',host:'Host','docker-host':'Docker host'};
 function mcInit(){ if(_mcRows.length) mcRender(); else mcLoad(); }
+// Focus one machine from a deep link: a guest by vmid (or cluster:vmid), a
+// host by its login id. Clears the kind and text filters so the row can be
+// there, scrolls to it and lights it for a moment.
+let _mcFocusWant=null;
+function mcFocus(kind, id){
+  _mcFocusWant={kind, id:String(id)};
+  if(!_mcRows.length){ mcLoad(); return; }
+  _mcApplyFocus();
+}
+function _mcMatch(r, want){
+  if(!want) return false;
+  if(want.kind==='guest'){ const v=want.id.includes(':')?want.id.split(':').pop():want.id; return r.kind==='guest'&&String(r.vmid)===v; }
+  if(want.kind==='host') return r.ssh_host_id===want.id||r.id===want.id;
+  return false;
+}
+function _mcApplyFocus(){
+  const want=_mcFocusWant; if(!want) return;
+  const r=_mcRows.find(x=>_mcMatch(x,want)); _mcFocusWant=null;
+  if(!r){ txt('mc-status','No machine matches '+want.kind+' '+want.id); return; }
+  _mcKind=''; document.querySelectorAll('#mc-kinds .j-tab').forEach((t,i)=>t.classList.toggle('active', i===0));
+  const f=$('mc-filter'); if(f) f.value='';
+  mcRender();
+  const idx=_mcRows.indexOf(r), tr=document.querySelector('#mc-tbody tr[data-idx="'+idx+'"]');
+  if(!tr) return;
+  tr.classList.add('mc-focus'); tr.scrollIntoView({block:'center'});
+  setTimeout(()=>tr.classList.remove('mc-focus'), 4000);
+}
 async function mcLoad(){
   if(_mcBusy) return;
   _mcBusy=true;
@@ -6311,6 +6337,7 @@ async function mcLoad(){
       +(errs.length?(' · '+errs.join('; ')):'')) : 'The machine list did not answer.');
   } finally { _mcBusy=false; }
   mcRender();
+  if(_mcFocusWant) _mcApplyFocus();
 }
 function mcKind(kind, el){
   _mcKind=kind||'';
@@ -6327,7 +6354,8 @@ function mcRender(){
     const where=(r.kind==='guest'&&r.vmid)?((r.type==='qemu'?'VM ':'CT ')+r.vmid+(r.node?' on '+r.node:'')):'';
     const acts=(r.actions||[]).map(a=>'<button class="btn sm'+(a.id==='shutdown'?' err-btn':'')
       +'" onclick="P.mcAct('+idx+','+sq(a.id)+')">'+esc(a.label)+'</button>').join('');
-    return '<tr><td><b>'+esc(r.label)+'</b>'+(where?'<span class="mc-note">'+esc(where)+'</span>':'')
+    const eref=(r.kind==='guest'&&r.vmid!=null)?('guest:'+r.vmid):(r.ssh_host_id?('host:'+r.ssh_host_id):'');
+    return '<tr data-idx="'+idx+'"><td><b'+(eref?' class="mc-ent" data-entity="'+esc(eref)+'" title="Everything the estate knows about this machine" tabindex="0"':'')+'>'+esc(r.label)+'</b>'+(where?'<span class="mc-note">'+esc(where)+'</span>':'')
       +(r.note?'<span class="mc-note">'+esc(r.note)+'</span>':'')+'</td>'
       +'<td class="mc-kind">'+esc(_MC_KIND[r.kind]||r.kind)+'</td>'
       +'<td><span class="mc-state '+esc(r.status||'')+'">'+esc(r.status||'—')+'</span></td>'
@@ -6346,9 +6374,10 @@ async function mcAct(idx, action){
   const what=(r.type==='qemu'?'VM ':'CT ')+r.vmid+' ('+r.label+')';
   if(action==='start'||action==='shutdown'||action==='reboot'){
     const verb={start:'Start',shutdown:'Shut down',reboot:'Reboot'}[action];
-    if(!confirm(verb+' '+what+'?')) return;
-    const res=await api('/proxmox/guest/action','POST',{cluster_id:r.cluster_id,node:r.node,guest_type:r.type,vmid:parseInt(r.vmid),action});
-    if(!res||res.error){ alert(verb+' failed: '+((res&&res.error)||'no answer')); return; }
+    const res=await veraEstate.confirmRun('/proxmox/guest/action',{cluster_id:r.cluster_id,node:r.node,guest_type:r.type,vmid:parseInt(r.vmid),action},
+      verb+' '+what+'?'+(action==='shutdown'?String.fromCharCode(10,10)+'Everything it serves stops until it is started again.':action==='reboot'?String.fromCharCode(10,10)+'In-flight work on it is lost.':''));
+    if(!res||res.cancelled) return;
+    if(res.error){ return; }
     txt('mc-status', verb+' sent to '+what);
     setTimeout(mcLoad,2500); setTimeout(mcLoad,7000);
     return;
@@ -6366,12 +6395,28 @@ async function mcAct(idx, action){
     }
     return pmxSsh(r.node,r.type,String(r.vmid),r.label,r.cluster_id);
   }
+  if(action==='provision'){
+    if(!_ndNodes.length) await ndLoad();
+    const n=_ndNodes.find(x=>x.id===r.id||x.ssh_host_id===r.ssh_host_id);
+    if(!n) return txt('mc-status','Provisioning needs this machine in nodes.list; it is not there yet.');
+    _mcFloat('nd-prov');
+    return ndProv(n.id);
+  }
+  if(action==='backend'){
+    if(!_ndNodes.length) await ndLoad();
+    const n=_ndNodes.find(x=>x.id===r.id||x.ssh_host_id===r.ssh_host_id);
+    if(!n) return txt('mc-status','Switching the backend needs this machine in nodes.list; it is not there yet.');
+    return ndSwitch(n.id);
+  }
   if(action==='cpu'){ estateOpen('proxmox',''); return pmxSub('cpu'); }
   if(action==='detect'){ txt('mc-status','detecting '+r.label+'…'); await ndDetect(r.ssh_host_id); return mcLoad(); }
   if(action==='containers'){ estateOpen('docker',''); return dkrSelectHost(r.docker_host_id); }
 }
 
 function showPane(name, el){
+  if(name==='nodes'){ // folded into Machines: the same list, plus Provision and Switch backend per row
+    return showPane('machines', document.querySelector('.snav[data-pane="machines"]'));
+  }
   if(name==='perf'){ // legacy alias — Perf now lives as a sub-tab of Observe
     showPane('observe', document.querySelector('.snav[data-pane="observe"]'));
     obsSub('perf');
@@ -6434,17 +6479,51 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav(
   [...document.querySelectorAll('#secNav .snav[data-view="'+_VIEW+'"]')]
     .map(el=>({id:el.dataset.pane, label:el.textContent.trim()})),
   id=>showPane(id, document.querySelector('#secNav .snav[data-pane="'+id+'"]')));
-function estateOpen(pane, sub){
+function estateOpen(pane, sub, entity){
   if(!$('pane-'+pane)) return false;
   showPane(pane, document.querySelector('.snav[data-pane="'+pane+'"]'));
   if(sub&&pane==='provision') provSub(sub);
   if(sub&&pane==='network') netSub(sub);
+  if(entity) entityFocus(pane, sub, String(entity));
   return true;
+}
+// ── Entities in deep links ───────────────────────────────────────────────────
+// A reference is `<kind>:<id>` (estate_nav_core.ENTITY_KINDS names the pane
+// that can focus each kind). It arrives three ways: `?entity=` on the URL,
+// `vera:estate:open {entity}` from the shell, and `vera:entity:open {ref}` from
+// any panel embedded here that wants the reader to see a thing elsewhere. The
+// native panes focus directly; an iframe pane is told and answers when it has.
+const _ENTITY_PANE={guest:'machines',host:'machines','docker-host':'docker',container:'docker',
+  pool:'storage',dataset:'storage',integration:'integrations',identity:'provision',mesh:'provision',
+  'secret':'provision',cert:'provision','backup-job':'storage',model:'ollama'};   // pragma: allowlist secret (an entity kind, not a value)
+const _ENTITY_SUB={identity:'identity',mesh:'mesh','secret':'secrets',cert:'certs','backup-job':'estate'};   // pragma: allowlist secret
+const _PANE_FRAME={storage:'storage-frame',integrations:'integrations-frame',foundry:'foundry-frame',
+  software:'software-frame',platforms:'platforms-frame',remote:'remote-frame',estate:'estate-frame'};
+function entityParse(ref){ const i=String(ref||'').indexOf(':'); if(i<1) return null;
+  const kind=String(ref).slice(0,i).toLowerCase(), id=String(ref).slice(i+1); return (_ENTITY_PANE[kind]&&id)?{kind,id}:null; }
+function entityOpen(ref){
+  const e=entityParse(ref); if(!e) return false;
+  return estateOpen(_ENTITY_PANE[e.kind], _ENTITY_SUB[e.kind]||'', ref);
+}
+function entityFocus(pane, sub, ref){
+  const e=entityParse(ref); if(!e) return;
+  if(pane==='machines') return mcFocus(e.kind, e.id);
+  if(pane==='proxmox'&&e.kind==='guest') return mcFocus(e.kind, e.id);
+  // sub-tab iframes (Trust, Network) and whole-pane iframes get the message
+  const fid=(pane==='provision')?('prv-sub-'+(sub||_prvSub)):(pane==='network')?('net-sub-'+(sub||_netSub)):_PANE_FRAME[pane];
+  const f=fid&&$(fid); if(!f) return;
+  let tries=0;
+  const done=ev=>{ if(ev.data?.type==='vera:entity:focused'&&ev.data.ref===ref){ tries=99; window.removeEventListener('message',done); } };
+  const send=()=>{ try{ f.contentWindow.postMessage({type:'vera:entity:focus', kind:e.kind, id:e.id, ref}, '*'); }catch(_){}
+    if(++tries<15) setTimeout(send, 500); else window.removeEventListener('message',done); };
+  window.addEventListener('message', done);
+  send();
 }
 // After the whole script has run: provSub/netSub read state declared below.
 setTimeout(()=>{
   const q=new URLSearchParams(location.search);
-  if(q.get('pane')) estateOpen(q.get('pane'), q.get('sub')||'');
+  if(q.get('entity')&&!q.get('pane')) entityOpen(q.get('entity'));
+  else if(q.get('pane')) estateOpen(q.get('pane'), q.get('sub')||'', q.get('entity')||'');
   else if(_VIEW==='models') estateOpen('ollama','');
 }, 0);
 
@@ -6557,7 +6636,7 @@ function connRender(){
     const reach=h._reach===undefined?'<span style="color:var(--dim)">—</span>'
       :h._reach?`<span style="color:var(--acc2)">✓ ${h._lat||''}ms</span>`:`<span style="color:var(--err)">✕</span>`;
     return `<tr>
-      <td><b>${esc(h.label||'')}</b></td><td style="font-family:var(--mono)">${esc(h.host||'')}</td>
+      <td><b>${veraEstate.chip('host:'+h.id, h.label||'')}</b></td><td style="font-family:var(--mono)">${esc(h.host||'')}</td>
       <td>${esc(h.user||'')}</td><td>${esc(h.port||22)}</td><td>${esc(h.auth||'password')}</td>
       <td><div class="chips">${tags}</div></td><td>${reach}</td>
       <td style="white-space:nowrap">
@@ -6622,7 +6701,7 @@ async function connProbeRow(id){
 // ── Provision sub-tabs — every provisioning surface consolidated in one pane ──
 // (netpolicy was dropped: it just duplicated Network → Graph & Firewall.
 //  The OPA policy engine deploys from the Security sub-tab's services card.)
-const _prvSubSrc={security:'/provisioning/panel',secrets:'/secrets/panel',certs:'/certs/panel',identity:'/identity/panel',enroll:'/enroll/panel',mesh:'/netsec/panel'};
+const _prvSubSrc={security:'/provisioning/panel',secrets:'/secrets/panel',certs:'/certs/panel',registration:'/estate/registration/panel',identity:'/identity/panel',enroll:'/enroll/panel',mesh:'/netsec/panel'};
 let _prvSub='security';
 function provSub(name){
   if(!_prvSubSrc[name]) name='security';
@@ -6639,8 +6718,12 @@ function provSub(name){
 window.addEventListener('message', e=>{
   if(e.data?.type==='vera:base'){/* could update BASE */}
   if(e.data?.type==='vera:estate:open'&&e.data.pane){
-    const ok=estateOpen(String(e.data.pane), String(e.data.sub||''));
+    const ok=estateOpen(String(e.data.pane), String(e.data.sub||''), e.data.entity?String(e.data.entity):'');
     try{ if(e.source) e.source.postMessage({type:'vera:estate:opened', rid:e.data.rid, ok}, '*'); }catch(_){}
+  }
+  if(e.data?.type==='vera:entity:open'&&e.data.ref){
+    const ok=entityOpen(String(e.data.ref));
+    try{ if(e.source) e.source.postMessage({type:'vera:entity:opened', ref:e.data.ref, ok}, '*'); }catch(_){}
   }
   if(e.data?.type==='vera:theme'&&e.data.vars){
     const root=document.documentElement;
@@ -7158,7 +7241,7 @@ function catInstalledRender(){
       <div style="font-size:8px;color:var(--dim2);margin-top:2px">${n.models_path?esc(n.models_path)+' · ':''}models ${(n.size_gb||0).toFixed(1)}G${n.models_dir_gb!=null?' (store '+n.models_dir_gb+'G)':''}${n.disk_source?' · via '+esc(n.disk_source):''}</div>`;
     }
     const rows=models.map(m=>`<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:2px 6px;font-family:var(--mono);font-size:9.5px">${m.loaded?'<span title="Resident in VRAM now" style="color:var(--warn)">⬤ </span>':''}${esc(m.name)}</td>
+      <td style="padding:2px 6px;font-family:var(--mono);font-size:9.5px">${m.loaded?'<span title="Resident in VRAM now" style="color:var(--warn)">⬤ </span>':''}<span class="mc-ent" data-entity="model:${esc(m.name)}" title="Which nodes serve this model" tabindex="0">${esc(m.name)}</span></td>
       <td style="font-size:9px;color:var(--dim2)">${esc(m.quant||'')}</td>
       <td style="font-size:9px;color:var(--dim2)">${m.params_b?m.params_b+'B':''}</td>
       <td style="font-size:9px">${m.size_gb!=null?m.size_gb+'G':'—'}</td>
@@ -8238,7 +8321,7 @@ return {
   dkrSpawnWorker, dkrWorkerList, dkrWorkerStop, dkrTerm,
   stkRefresh, stkDeploy, pmxSsh, pmxEnrollSsh,
   sbxRefresh, sbxNew, sbxStop, sbxTerm, sbxSync, sbxRestore, sbxSnaps, sbxContext, sbxDetail, sbxCloseDetail, sbxConfig, sbxConfigSave,
-  termOpen, termClose, provSub, buildGo,
+  termOpen, termClose, provSub, buildGo, entityOpen, mcFocus,
   netSub, pmxSub, obsSub,
   connLoad, connRender, connEdit, connMgrClose, connAuthToggle,
   connSave, connDelete, connProbe, connProbeRow,
@@ -8262,6 +8345,8 @@ return {
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
+<script src="/ui/vera-estate.js"></script>
 <script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>
 </body>
 </html>

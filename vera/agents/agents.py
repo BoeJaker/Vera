@@ -78,6 +78,17 @@ from Vera.vera.capability_orchestration import (
     register_ui,
 )
 
+# Pure context-window sizing (no app import, so tests reach it as
+# vera.agents.chat_ctx_core — see the namespace-package trap in the skill).
+try:
+    from Vera.vera.agents import chat_ctx_core as _chat_ctx
+except Exception:                       # worktree / app-free import
+    from vera.agents import chat_ctx_core as _chat_ctx
+try:
+    from Vera.vera.agents import queue_status_core as _queue_status
+except Exception:                       # worktree / app-free import
+    from vera.agents import queue_status_core as _queue_status
+
 # Lazy import helper for DAG execution — avoids circular import at load time
 def _get_dag_runner():
     """Return (plan_dag, _hitl_run_graph_stream, _HITL_PENDING) from orch module."""
@@ -89,6 +100,15 @@ def _get_dag_runner():
     )
 
 log = logging.getLogger("vera.agents")
+
+
+def _text_evidence(value: object) -> dict:
+    """Return stable correlation evidence without retaining text payloads."""
+    raw = str(value or "")
+    return {
+        "chars": len(raw),
+        "sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16],
+    }
 
 # Hard budget for pre-request context injection (memory + RAG lookups) in the
 # interactive chat paths. These lookups ride the embedding/fabric stack, which
@@ -1998,7 +2018,7 @@ async def agent_chat_stream_endpoint(request: Request):
                             "agent_name":   agent.name,
                             "model":        agent.model or OLLAMA_MODEL,
                             "instance_id":  agent.instance_id,
-                            "message":      message,
+                            "message_evidence": _text_evidence(message),
                             "history_len":  len(history or []),
                             "tts":          use_tts,
                             "think":        getattr(agent, "think", False),
@@ -2007,7 +2027,6 @@ async def agent_chat_stream_endpoint(request: Request):
                             "agent":         agent.name,
                             "response_chars": _resp_chars,
                             "audio_chunks":  _audio_chunks,
-                            "preview":       "".join(_resp_head)[:800],
                             "elapsed_ms":    elapsed_ms,
                         },
                         elapsed_ms=elapsed_ms,
@@ -2022,7 +2041,7 @@ async def agent_chat_stream_endpoint(request: Request):
                             "agent_name":   agent.name,
                             "model":        agent.model or OLLAMA_MODEL,
                             "instance_id":  agent.instance_id,
-                            "message":      message,
+                            "message_evidence": _text_evidence(message),
                             "history_len":  len(history or []),
                             "tts":          use_tts,
                             "think":        getattr(agent, "think", False),
@@ -2031,7 +2050,6 @@ async def agent_chat_stream_endpoint(request: Request):
                             "agent":         agent.name,
                             "response_chars": _resp_chars,
                             "audio_chunks":  _audio_chunks,
-                            "preview":       "".join(_resp_head)[:800],
                             "elapsed_ms":    elapsed_ms,
                         },
                         elapsed_ms=elapsed_ms,
@@ -2220,6 +2238,167 @@ async def compact_messages(messages: List[Dict], budget_tokens: int,
     return new_messages, n_compacted
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CHAT CONTEXT WINDOW — sized to the turn, not to the node
+# ─────────────────────────────────────────────────────────────────────────────
+# See vera/agents/chat_ctx_core.py for why this exists. Short version: ollama
+# keys a runner by (model, num_ctx), so asking for a different window than the
+# resident runner evicts it and loads another. Chat used to ask for the node
+# maximum on every turn while ollama_generate fits its window to the prompt, so
+# the two evicted each other on a node whose VRAM fits one runner — the thrash
+# that wedged gpu-250's scheduler on 2026-09-20.
+
+# Room to leave for the reply when sizing a FRESH window. A chat reply is
+# open-ended, so this is deliberately generous: the window only shrinks below
+# the node cap when the turn genuinely doesn't need it, and a resident larger
+# window is reused as-is (never truncated) by stable_chat_num_ctx.
+_CHAT_CTX_RESERVE_OUT = int(os.environ.get("VERA_CHAT_CTX_RESERVE_OUT", "8192") or 8192)
+
+# Bounded hard: this runs inline before the reply, so a slow/unreachable node
+# must cost a couple of seconds at most, never the turn. Everything this probe
+# feeds is an optimisation — on failure we fall back to the previous behaviour.
+_CHAT_PS_TIMEOUT_S = float(os.environ.get("VERA_CHAT_PS_TIMEOUT_S", "3") or 3)
+
+# How long to wait for the FIRST line of a reply before saying so. This is not
+# the generation budget: once tokens are flowing the per-chunk wait goes back to
+# OLLAMA_GEN_TIMEOUT, so a long silent <think> block is still fine. It bounds
+# only "the node never started", which on 2026-09-20 meant chat hung until the
+# browser gave up, showing an empty bubble and naming nothing.
+_CHAT_FIRST_TOKEN_S = float(os.environ.get("VERA_CHAT_FIRST_TOKEN_S", "90") or 90)
+
+
+#: How often to refresh the "what am I waiting for" line while a turn has not
+#: produced its first token. Cheap: the facts are in-process except one bounded
+#: node probe, which is cached for this long anyway.
+_CHAT_QUEUE_REFRESH_S = float(os.environ.get("VERA_CHAT_QUEUE_REFRESH_S", "5") or 5)
+
+#: Bound on asking a node whether its runner is busy. Unknown is a fine answer —
+#: it just means we do not claim the node is idle (queue_status_core).
+_CHAT_RUNNER_PROBE_S = float(os.environ.get("VERA_CHAT_RUNNER_PROBE_S", "3") or 3)
+
+
+def _vera_jobs_ahead(chosen: str, own_slot_id: str) -> List[Dict]:
+    """Vera's own in-flight generations on `chosen`, this turn excluded.
+
+    Reads the live in-flight registry, NOT the request log: that log only gets a
+    row when a request COMPLETES (its entries are built with status="running"
+    but appended from the done/error paths), so it can never answer "what is
+    running right now". These are the only jobs we can NAME; anything else on
+    the node is invisible here, which is why the caller also asks the node.
+    """
+    try:
+        return _orch.inflight_on(chosen, exclude=own_slot_id)
+    except Exception as e:
+        log.debug("jobs-ahead read: %s", e)
+        return []
+
+
+async def _runner_busy(chosen: str) -> Optional[bool]:
+    """Does the node itself say its runner is computing? None when unknown.
+
+    This is the half that sees work Vera did not start — n8n, a sandbox, the
+    other container sharing the host. Without it a busy node looks idle, which
+    is exactly the failure mode that cost eight hours on 2026-09-20.
+    """
+    try:
+        _na = sys.modules.get("node_agent_capabilities")
+        if _na is None:
+            return None
+        got = await asyncio.wait_for(_na._collect_runners(chosen),
+                                     timeout=_CHAT_RUNNER_PROBE_S)
+        rows = [r for r in (got.get("runners") or []) if r.get("node") == chosen]
+        if not rows:
+            return None                   # no agent / nothing reported: unknown
+        return any(_na.is_active(_na.Runner(
+            pid=int(r.get("pid") or 0), state=str(r.get("state") or ""),
+            cpu_seconds=float(r.get("cpu_seconds") or 0))) for r in rows)
+    except Exception:
+        return None
+
+
+def _queue_frame(status: Dict) -> bytes:
+    """The SSE frame the chat UI renders as a status line above the bubble."""
+    return ("data: " + json.dumps({
+        "type": "queued",
+        "state": status.get("state"),
+        "node": status.get("node"),
+        "text": status.get("text"),
+        "ahead": status.get("ahead") or [],
+        "will_load": bool(status.get("will_load")),
+    }) + "\n\n").encode()
+
+
+def _chat_stall_frame(node: str, model: str, url: str, waited: float,
+                      what: str) -> bytes:
+    """An SSE error frame that names the node, the model, and what to do.
+
+    The failure this reports is invisible from everywhere else: ollama answers
+    /api/ps, /api/tags and /api/version from in front of its scheduler, so the
+    node reads as online and idle in obs.health, /ollama/cluster and the gate
+    while generation is dead. Somebody looking at an empty chat bubble has no
+    way to reach that conclusion, so say it here.
+    """
+    return ("data: " + json.dumps({
+        "type": "error",
+        "node": node,
+        "model": model,
+        "text": (
+            f"No reply from {node} ({model}): it {what} within {waited:.0f}s. "
+            f"The node is reachable and reports itself healthy — metadata "
+            f"endpoints bypass ollama's scheduler, so a deadlocked scheduler "
+            f"still looks online everywhere else. Check it with "
+            f"nodes.ollama.dispatch_check; if it reports {node} wedged, restart "
+            f"ollama on that node."),
+    }) + "\n\n").encode()
+
+
+async def _resident_num_ctx(url: str, model: str) -> int:
+    """context_length of `model`'s already-loaded runner on `url`, else 0.
+
+    Never raises and never waits long — a failure here just means we size the
+    window from the prompt instead of reusing what is loaded.
+    """
+    if not url or not model:
+        return 0
+    try:
+        async with httpx.AsyncClient(timeout=_CHAT_PS_TIMEOUT_S) as c:
+            r = await c.get(f"{url}/api/ps")
+            if r.status_code != 200:
+                return 0
+            return _chat_ctx.resident_ctx_from_ps(r.json(), model)
+    except Exception as e:
+        log.debug("resident num_ctx probe [%s/%s]: %s", url, model, e)
+        return 0
+
+
+async def _resident_ps(url: str) -> Optional[Dict]:
+    """The first model row from a node's /api/ps, or None.
+
+    Separate from _resident_num_ctx because the wait-status line needs the
+    model NAME as well as its window (to say whether a load is coming), and
+    because it must never raise into a chat turn.
+    """
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=_CHAT_PS_TIMEOUT_S) as c:
+            r = await c.get(f"{url}/api/ps")
+            if r.status_code != 200:
+                return None
+            rows = ((r.json() or {}).get("models") or [])
+            return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+async def _chat_num_ctx(messages: List[Dict], model: str, url: str,
+                        cap: int, reserve: int) -> int:
+    """The num_ctx to request for this chat turn (see chat_ctx_core)."""
+    needed = _estimate_tokens(messages) + max(int(reserve or 0), _CHAT_CTX_RESERVE_OUT)
+    resident = await _resident_num_ctx(url, model)
+    return _chat_ctx.stable_chat_num_ctx(needed=needed, cap=cap, resident=resident)
+
+
 def _now_context_line() -> str:
     """A short, authoritative 'current date/time' line to ground LLM calls.
 
@@ -2375,13 +2554,18 @@ class AgentRunner:
         inst = OLLAMA_INSTANCES.get(chosen, {})
         url  = inst.get("url", "http://192.168.0.246:11435")
 
-        # Effective context window: model's detected max, capped down by the
-        # agent's num_ctx (>0) and OLLAMA_MAX_AUTO_CTX. Compact older turns to fit.
-        ctx_window = await _orch.effective_num_ctx(
+        # Node-safe CEILING (model max, capped by the agent's num_ctx and
+        # OLLAMA_MAX_AUTO_CTX) — then size THIS turn's request inside it, so we
+        # reuse a resident runner instead of evicting it (see chat_ctx_core).
+        _ctx_cap = await _orch.effective_num_ctx(
             model, instance_id=chosen, prefer_gpu=agent.prefer_gpu,
             manual=getattr(agent, "num_ctx", 0))
         _reserve = agent.num_predict if getattr(agent, "num_predict", -1) > 0 else 1024
-        messages, _n_compacted = await compact_messages(messages, ctx_window - _reserve)
+        ctx_window = await _chat_num_ctx(messages, model, url, _ctx_cap, _reserve)
+        # See run_stream: compact to the agent's budget even when we borrow a
+        # larger runner that is already loaded.
+        _compact_budget = (min(_ctx_cap, ctx_window) if _ctx_cap > 0 else ctx_window)
+        messages, _n_compacted = await compact_messages(messages, _compact_budget - _reserve)
 
         body: dict = {
             "model":    model,
@@ -2541,12 +2725,21 @@ class AgentRunner:
         url  = inst.get("url", "http://192.168.0.246:11435")
 
         # Effective context window + compaction (see compact_messages / run()).
-        ctx_window = await _orch.effective_num_ctx(
+        # `effective_num_ctx` is the node-safe CEILING, not the request: asking
+        # for it on every turn forced an ollama runner reload whenever another
+        # caller had the model loaded at a different window (chat_ctx_core).
+        _ctx_cap = await _orch.effective_num_ctx(
             model, instance_id=chosen, prefer_gpu=agent.prefer_gpu,
             manual=getattr(agent, "num_ctx", 0))
         _reserve = agent.num_predict if getattr(agent, "num_predict", -1) > 0 else 1024
+        ctx_window = await _chat_num_ctx(messages, model, url, _ctx_cap, _reserve)
+        # Compact to the AGENT's budget, not to the window we borrowed. When a
+        # bigger runner is already loaded we use it rather than force a reload,
+        # but that must not quietly let the agent send more context than its
+        # num_ctx allows — the allocation is borrowed, the budget is not.
+        _compact_budget = (min(_ctx_cap, ctx_window) if _ctx_cap > 0 else ctx_window)
         _t_compact = time.time()
-        messages, _n_compacted = await compact_messages(messages, ctx_window - _reserve)
+        messages, _n_compacted = await compact_messages(messages, _compact_budget - _reserve)
         _compact_s = time.time() - _t_compact
         if _compact_s > 2:
             log.info("run_stream [%s] history compaction took %.1fs (summarize job on "
@@ -2721,6 +2914,52 @@ class AgentRunner:
 
         _og_stream_ok = False   # upstream stream ran to completion
         _og_done_sent = False   # a terminal request_done/request_error was emitted
+
+        # ── What is this turn waiting for? ───────────────────────────────────
+        # A 90s reply and a hung one look identical from the chat window, and
+        # the answer is usually mundane (a loop step is on the same node, or the
+        # model has to load). Say so. See queue_status_core for why this never
+        # claims the node is FREE — Vera can only name its own jobs, so the node
+        # is asked too, and silence is the answer when nothing is known.
+        # Register this turn too. run_stream POSTs straight to /api/chat and so
+        # never passes through ollama_generate's bookkeeping — without this a
+        # chat is invisible to the next chat's wait line, and excludes itself
+        # from its own. Cleared in the outer finally, which runs on every path
+        # including the client vanishing mid-stream.
+        _chat_slot = str(uuid.uuid4())[:12]
+        try:
+            _orch.OLLAMA_INFLIGHT[_chat_slot] = {
+                "instance": chosen, "job_type": "chat", "model": model,
+                "started": time.monotonic()}
+        except Exception:
+            pass
+
+        async def _wait_status() -> Optional[Dict]:
+            try:
+                _ahead = _vera_jobs_ahead(chosen, _chat_slot)
+                # Only pay for the node probe when Vera has nothing of its own
+                # in flight — with a named job ahead we already know the answer.
+                _busy = None if _ahead else await _runner_busy(chosen)
+                _res_model, _res_ctx = "", 0
+                try:
+                    _ps = await _resident_ps(url)
+                    if _ps:
+                        _res_model = str(_ps.get("name") or "")
+                        _res_ctx = int(_ps.get("context_length") or 0)
+                except Exception:
+                    pass
+                return _queue_status.describe_wait(
+                    chosen, _ahead,
+                    resident_model=_res_model, resident_ctx=_res_ctx,
+                    requested_model=model, requested_ctx=ctx_window,
+                    runner_busy=_busy)
+            except Exception as e:
+                log.debug("wait status: %s", e)
+                return None
+
+        _st = await _wait_status()
+        if _queue_status.should_emit(_st):
+            yield _queue_frame(_st)
         try:
             # `read` is a PER-CHUNK timeout in httpx (resets on every byte received),
             # not a cumulative cap on the whole stream — so this fires whenever the
@@ -2737,13 +2976,72 @@ class AgentRunner:
                 timeout=httpx.Timeout(_orch.OLLAMA_GEN_TIMEOUT, connect=10.0),
                 follow_redirects=True,
             ) as c:
-                async with c.stream("POST", f"{url}/api/chat", json=body) as resp:
+                # The generous per-chunk budget above is right for a model that
+                # is WORKING and quiet (a long <think> block). It is wrong for a
+                # node that never starts: on 2026-09-20 ollama's scheduler
+                # deadlocked, accepted this POST and never sent a response line,
+                # so the reply hung until the browser gave up — no tokens, no
+                # error, an empty bubble and no way to tell what failed. Bound
+                # the wait for the FIRST line separately and say what happened.
+                _stream_cm = c.stream("POST", f"{url}/api/chat", json=body)
+                try:
+                    resp = await asyncio.wait_for(_stream_cm.__aenter__(),
+                                                  timeout=_CHAT_FIRST_TOKEN_S)
+                except asyncio.TimeoutError:
+                    # Abandoned deliberately: nothing was read from it, so there
+                    # is no partial generation to lose (contrast _StreamLines).
+                    yield _chat_stall_frame(chosen, model, url, _CHAT_FIRST_TOKEN_S,
+                                            "never sent a response")
+                    _og_entry.update({"status": "error", "elapsed_s": round(time.time() - _og_t0, 2),
+                                      "error": f"no response headers within {_CHAT_FIRST_TOKEN_S:.0f}s "
+                                               f"(node accepted the request and never dispatched it)"})
+                    _orch._ollama_log_append(_og_entry)
+                    _og_done_sent = True
+                    return
+                try:
                     if resp.status_code != 200:
                         body_txt = await resp.aread()
                         yield f"data: {json.dumps({'type':'error','text':f'Ollama {resp.status_code}: {body_txt.decode()[:200]}'})}\n\n".encode()
                         return
 
-                    async for line in resp.aiter_lines():
+                    _lines = _orch._StreamLines(resp.aiter_lines())
+                    _seen_any = False
+                    _waited = 0.0
+                    while True:
+                        try:
+                            # Poll non-destructively: a TimeoutError here leaves
+                            # the stream intact, so a slow-but-progressing
+                            # generation is never cut off (see _StreamLines).
+                            # Before the first token the poll is SHORT so the
+                            # wait line can be refreshed; the first-token
+                            # deadline below is what actually bounds the wait.
+                            line = await _lines.next(
+                                timeout=(_orch.OLLAMA_GEN_TIMEOUT if _seen_any
+                                         else _CHAT_QUEUE_REFRESH_S))
+                        except asyncio.TimeoutError:
+                            if _seen_any:
+                                continue          # quiet but alive — keep waiting
+                            # Still no first token. Refresh what we are waiting
+                            # for — a queue that is draining looks different
+                            # from one that is not, and both beat silence.
+                            _waited += _CHAT_QUEUE_REFRESH_S
+                            if _waited < _CHAT_FIRST_TOKEN_S:
+                                _st = await _wait_status()
+                                if _queue_status.should_emit(_st):
+                                    yield _queue_frame(_st)
+                                continue
+                            yield _chat_stall_frame(chosen, model, url,
+                                                    _CHAT_FIRST_TOKEN_S,
+                                                    "sent headers but no tokens")
+                            _og_entry.update({"status": "error",
+                                              "elapsed_s": round(time.time() - _og_t0, 2),
+                                              "error": f"no first token within {_CHAT_FIRST_TOKEN_S:.0f}s"})
+                            _orch._ollama_log_append(_og_entry)
+                            _og_done_sent = True
+                            return
+                        except StopAsyncIteration:
+                            break
+                        _seen_any = True
                         if not line.strip():
                             continue
                         try:
@@ -2793,6 +3091,14 @@ class AgentRunner:
                             _prompt_eval_count = chunk.get("prompt_eval_count", 0)
                             _ctx_used = _eval_count + _prompt_eval_count
                             break
+                finally:
+                    # Entered by hand above (to bound the header wait), so it is
+                    # closed by hand too — on every path out, including the
+                    # early returns and a client disconnect.
+                    try:
+                        await _stream_cm.__aexit__(None, None, None)
+                    except Exception:
+                        pass
 
             _og_stream_ok = True
 
@@ -2820,6 +3126,12 @@ class AgentRunner:
                 pass  # client may already be gone
             return
         finally:
+            # Always, on every path — a finished turn must not haunt the next
+            # turn's wait line as a phantom job ahead of it.
+            try:
+                _orch.OLLAMA_INFLIGHT.pop(_chat_slot, None)
+            except Exception:
+                pass
             if not _og_stream_ok and not _og_done_sent:
                 # We're exiting without a terminal event: the client vanished
                 # mid-stream (GeneratorExit at a yield — page reload / closed
@@ -4811,6 +5123,8 @@ async def agent_delete(id: str, trace_id=None):
 @capability(
     "agent.chat", memory="on",
     http_method="POST", http_path="/agents/chat", http_tags=["agents"],
+    redact_args=["message", "history"],
+    redact_result=True,
     description="Send a message to an agent. Returns text response.",
 )
 async def agent_chat(

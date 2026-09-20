@@ -2041,9 +2041,21 @@ def _embed_node_id() -> str:
 # Each hold is recorded with a start time so a sweep can tell a long generation
 # from a lost one. The counter is only ever DECREASED by exactly what was
 # reclaimed - never recomputed - because media slots share it.
-def _inflight_hold(inst: dict, slot_id: str) -> None:
+#: slot_id -> {instance, job_type, model, started}. The ONLY place an in-flight
+#: generation can be seen while it is still running: _OLLAMA_REQUEST_LOG gets a
+#: row on COMPLETION, so it can never answer "what is running right now" (its
+#: entries are built with status="running" but appended only from the done/error
+#: paths). The chat wait-line needs the live answer — see queue_status_core.
+#: Kept beside the in_use counters so it is added and cleared on exactly the
+#: same paths and cannot leak differently from them.
+OLLAMA_INFLIGHT: Dict[str, dict] = {}
+
+
+def _inflight_hold(inst: dict, slot_id: str, meta: Optional[dict] = None) -> None:
     try:
         inst.setdefault("_inflight", {})[slot_id] = time.monotonic()
+        if meta:
+            OLLAMA_INFLIGHT[slot_id] = {**meta, "started": time.monotonic()}
     except Exception:
         pass
 
@@ -2053,6 +2065,33 @@ def _inflight_release(inst: dict, slot_id: str) -> None:
         (inst.get("_inflight") or {}).pop(slot_id, None)
     except Exception:
         pass
+    # Outside the try above: the registry must be cleared even if the per-
+    # instance bookkeeping raises, or a finished job haunts the wait line.
+    OLLAMA_INFLIGHT.pop(slot_id, None)
+
+
+def inflight_on(instance_id: str, exclude: str = "") -> List[dict]:
+    """Generations Vera has in flight on `instance_id`, newest-age last.
+
+    Embeds are left out: they run on the CPU pool and are not what a chat turn
+    on a GPU node is waiting behind. Returns [] rather than raising — a wait
+    line is never worth failing a turn for.
+    """
+    out: List[dict] = []
+    try:
+        now = time.monotonic()
+        for sid, m in list(OLLAMA_INFLIGHT.items()):
+            if sid == exclude or m.get("instance") != instance_id:
+                continue
+            if "embed" in str(m.get("model") or ""):
+                continue
+            out.append({"job_type": m.get("job_type") or "",
+                        "caller": m.get("caller") or "",
+                        "model": m.get("model") or "",
+                        "age_s": max(now - float(m.get("started") or now), 0.0)})
+    except Exception:
+        return []
+    return out
 
 
 def _inflight_sweep() -> None:
@@ -2716,6 +2755,50 @@ _OLLAMA_REQUEST_LOG: List[dict] = []      # ring buffer, max 500
 _OLLAMA_REQUEST_LOG_MAX = 2000
 
 
+def _ollama_payload_evidence(value: Any, kind: str = "prompt") -> Dict[str, Any]:
+    """Return bounded, content-free evidence for an LLM payload.
+
+    Request telemetry is operational metadata, not a prompt archive.  Keeping a
+    prefix here exposed chat, authoring, IDE and embedding content through the
+    request-log capability even when the originating capability was redacted.
+    """
+    text = str(value or "")
+    return {
+        "kind": str(kind or "prompt")[:24],
+        "chars": len(text),
+        "sha256": hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16],
+    }
+
+
+def _ollama_payload_preview(value: Any, kind: str = "prompt") -> str:
+    evidence = _ollama_payload_evidence(value, kind)
+    return (f"[{evidence['kind']} chars={evidence['chars']} "
+            f"sha256={evidence['sha256']}]")
+
+
+def _sanitize_ollama_log_entry(entry: dict) -> dict:
+    """Copy one request-log entry without retaining raw prompt/embed content."""
+    clean = dict(entry or {})
+    raw_full = clean.pop("prompt_full", None)
+    raw_preview = clean.get("prompt_preview", "")
+    safe = (re.fullmatch(
+        r"\[(?P<kind>prompt|embed) chars=(?P<chars>\d+) "
+        r"sha256=(?P<sha256>[0-9a-f]{16})\]", raw_preview)
+        if isinstance(raw_preview, str) else None)
+    if safe:
+        clean.setdefault("prompt_evidence", {
+            "kind": safe.group("kind"),
+            "chars": int(safe.group("chars")),
+            "sha256": safe.group("sha256"),
+        })
+        return clean
+    raw = raw_full if raw_full is not None else raw_preview
+    kind = "embed" if str(raw_preview).startswith("[embed]") else "prompt"
+    clean["prompt_preview"] = _ollama_payload_preview(raw, kind)
+    clean["prompt_evidence"] = _ollama_payload_evidence(raw, kind)
+    return clean
+
+
 def _err_text(e: Exception, limit: int = 300) -> str:
     """Human-readable error string that is never empty.
 
@@ -3045,6 +3128,16 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     inst["in_use"] = inst.get("in_use", 0) + 1
     _inflight_hold(inst, _req_slot_id)
     mdl    = eff_model or OLLAMA_MODEL
+    # Register what this slot is actually doing, now that the model is resolved.
+    # Set here rather than passed to _inflight_hold above because that call must
+    # reserve the slot synchronously, before `mdl` exists. This is what lets a
+    # chat turn say "queued behind loop_executor" instead of just "waiting".
+    try:
+        OLLAMA_INFLIGHT[_req_slot_id] = {
+            "instance": chosen, "job_type": eff_job_type or "",
+            "model": mdl, "started": time.monotonic()}
+    except Exception:
+        pass
     # Record what actually serves the request. A caller that passes no model
     # (llm.generate with only a job_type) cannot know the rule's model or the
     # node picked, and used to report OLLAMA_MODEL - a naming call running
@@ -3169,7 +3262,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     t_start  = time.time()
     _submitted_mono = time.monotonic()
     _provider_started_mono = None
-    prompt_preview = (prompt or "")[:120].replace("\n", " ")
+    prompt_preview = _ollama_payload_preview(prompt, "prompt")
+    prompt_evidence = _ollama_payload_evidence(prompt, "prompt")
 
     log.info(
         "ollama_req [%s] model=%s inst=%s job=%s rule=%s%s est=%ss chars=%d caller=%s:%s route=%s prompt=%s",
@@ -3223,7 +3317,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 "caller_module": caller["caller_module"],
                 "cap_name":    caller["cap_name"],
                 "prompt_preview": prompt_preview,
-                "prompt_full": (prompt or "")[:16000],
+                "prompt_evidence": prompt_evidence,
                 "json_mode":   json_mode,
                 "prefer_gpu":  prefer_gpu,
                 "streaming":   stream_cb is not None,
@@ -3600,8 +3694,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
 
 
 def _ollama_log_append(entry: dict):
-    """Append to the in-process ring buffer."""
-    _OLLAMA_REQUEST_LOG.append(entry)
+    """Append content-free operational metadata to the in-process ring buffer."""
+    _OLLAMA_REQUEST_LOG.append(_sanitize_ollama_log_entry(entry))
     if len(_OLLAMA_REQUEST_LOG) > _OLLAMA_REQUEST_LOG_MAX:
         del _OLLAMA_REQUEST_LOG[:-_OLLAMA_REQUEST_LOG_MAX]
 
@@ -3743,7 +3837,8 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
     caller = _ollama_caller_info()
     req_id = str(uuid.uuid4())[:12]
     t_start = time.time()
-    text_preview = (text or "")[:120].replace("\n", " ")
+    text_preview = _ollama_payload_preview(text, "embed")
+    text_evidence = _ollama_payload_evidence(text, "embed")
 
     log.info(
         "ollama_embed [%s] model=%s inst=%s caller=%s:%s text=%s",
@@ -3755,7 +3850,8 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
     req_entry = {
         "req_id": req_id, "model": mdl, "instance": chosen,
         "caller_file": caller["caller_file"], "caller_func": caller["caller_func"],
-        "prompt_preview": f"[embed] {text_preview}", "ts": now_iso(),
+        "prompt_preview": text_preview, "prompt_evidence": text_evidence,
+        "ts": now_iso(),
         "status": "running",
     }
 
@@ -3780,8 +3876,8 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
                 "caller_func":  caller["caller_func"],
                 "caller_module": caller["caller_module"],
                 "cap_name":     caller["cap_name"] or "ollama.embed",
-                "prompt_preview": f"[embed] {text_preview}",
-                "prompt_full":  f"[embed] {(text or '')[:16000]}",
+                "prompt_preview": text_preview,
+                "prompt_evidence": text_evidence,
                 "json_mode":    False,
                 "prefer_gpu":   prefer_gpu,
                 "streaming":    False,
@@ -4691,16 +4787,23 @@ def subscribe_stream(name: str, cb: Callable):
 # ─────────────────────────────────────────────────────────────────────────────
 # REDIS DISPATCH
 # ─────────────────────────────────────────────────────────────────────────────
-async def dispatch_task(cap_name: str, payload: dict, trace_id: str) -> str:
+async def dispatch_task(cap_name: str, payload: dict, trace_id: str,
+                        bg: str = "") -> str:
+    """Queue a capability on the task stream. `bg`, when set, is the
+    BACKGROUND_LLM label the worker runs it under: contextvars do not cross
+    Redis, so the label travels in the record. The idle queue's `cap` jobs use
+    this so their Ollama calls are demoted and logged as background work."""
     task_id=new_id()
     rec={"id":task_id,"capability":cap_name,"payload":json.dumps(payload),"trace_id":trace_id,"ts":now_iso()}
+    if bg: rec["bg"]=str(bg)
     if REDIS: await REDIS.xadd(TASK_STREAM,rec,maxlen=5000,approximate=True)
     else:
         cap=CAPABILITY_REGISTRY.get(cap_name)
-        if cap: asyncio.create_task(_run_local(cap,task_id,payload,trace_id))
+        if cap: asyncio.create_task(_run_local(cap,task_id,payload,trace_id,bg=bg))
     return task_id
 
-async def _run_local(cap,task_id,payload,trace_id):
+async def _run_local(cap,task_id,payload,trace_id,bg=""):
+    if bg: BACKGROUND_LLM.set(str(bg))     # this task's own context only
     # Skip if already cancelled before it started.
     if task_id in CANCELLED_TASKS:
         CANCELLED_TASKS.discard(task_id)
@@ -4960,6 +5063,7 @@ async def worker_loop(worker_id: str):
                 cap_name = data[b"capability"].decode()
                 payload  = json.loads(data[b"payload"])
                 trace_id = data[b"trace_id"].decode()
+                bg_label = (data.get(b"bg") or b"").decode() if isinstance(data.get(b"bg"), bytes) else str(data.get(b"bg") or "")
                 cap      = CAPABILITY_REGISTRY.get(cap_name)
 
                 # Queued-cancel guard: if this task was stopped before a worker
@@ -5017,6 +5121,7 @@ async def worker_loop(worker_id: str):
                         await REDIS.xadd(TASK_STREAM, {
                             "id": task_id, "capability": cap_name,
                             "payload": json.dumps(payload), "trace_id": trace_id, "ts": now_iso(),
+                            **({"bg": bg_label} if bg_label else {}),
                         }, maxlen=5000, approximate=True)
                     else:
                         log.warning("Worker %s: no handler for %s on any worker", worker_id, cap_name)
@@ -5028,7 +5133,16 @@ async def worker_loop(worker_id: str):
                 else:
                     # Run the cap as a separate task so cluster.job.stop can
                     # cancel it cooperatively (cancel() interrupts at next await).
-                    inner = asyncio.ensure_future(cap["raw"](**payload, trace_id=trace_id))
+                    # A record carrying `bg` runs inside BACKGROUND_LLM: every
+                    # Ollama call the cap makes is then background work — demoted
+                    # off the GPU while a person is active — exactly as the dream
+                    # scheduler's calls are. The set() lands in the new task's own
+                    # context, so nothing leaks into the worker loop.
+                    async def _run_cap(_bg=bg_label):
+                        if _bg:
+                            BACKGROUND_LLM.set(_bg)
+                        return await cap["raw"](**payload, trace_id=trace_id)
+                    inner = asyncio.ensure_future(_run_cap())
                     RUNNING_TASKS[task_id] = inner
                     try:
                         result = await inner
@@ -7610,12 +7724,47 @@ async def _backend_answers(kind: str) -> bool:
     return False
 
 
+async def _health_gpu_gate() -> Dict[str, Any]:
+    """The GPU gate in one line for /health: is anyone generating on a GPU
+    node right now, and who. Summed over the gated GPU nodes (one today).
+    Never raises - /health must answer even with the coordination Redis down."""
+    try:
+        st = await ollama_gate_status()
+        gpu = [n for n in (st.get("nodes") or []) if n.get("has_gpu") and n.get("gated")]
+        held = sum(int(n.get("held") or 0) for n in gpu)
+        owners = [o for n in gpu for o in (n.get("owners") or [])]
+        return {"busy": held > 0, "held": held,
+                "capacity": sum(int(n.get("capacity") or 0) for n in gpu),
+                "owners": owners[:8], "enabled": bool(st.get("enabled")),
+                "coord_connected": bool(st.get("coord_connected"))}
+    except Exception as e:
+        return {"busy": None, "error": str(e)[:120]}
+
+
+async def _health_census() -> Dict[str, Any]:
+    """The census in one line for /health, from the census module (registered
+    under its bare filename, like census_before_restart reaches it)."""
+    try:
+        _cc = sys.modules.get("census_capabilities")
+        if _cc is None or not hasattr(_cc, "census_health"):
+            return {"busy": False, "state": "unavailable"}
+        return await _cc.census_health()
+    except Exception as e:
+        return {"busy": False, "state": "unknown", "error": str(e)[:120]}
+
+
 @capability("obs.health", memory="off", silent=True,
             http_method="GET", http_path="/health", http_tags=["obs"],
             description="Overall orchestrator health: backends, workers, caps, "
                         "Ollama nodes. Each backend is PROBED with a trivial "
                         "query, not tested for the presence of a connection "
-                        "object — see _backend_answers.")
+                        "object — see _backend_answers. Also says whether the box "
+                        "is free for GPU work: `gpu_gate` {busy, held, capacity, "
+                        "owners} is the GPU gate right now, and `census` {busy, "
+                        "state, template, goal, done/total, control, by} is the "
+                        "loop census - busy means a census goal is in flight (any "
+                        "GPU call taints its row; yield it with census.control.set "
+                        "action=yield and wait for acked, resume after).")
 async def obs_health(trace_id=None):
     return {"redis":await _backend_answers("redis"),
             "postgres":await _backend_answers("postgres"),"chroma":bool(CHROMA),
@@ -7624,6 +7773,8 @@ async def obs_health(trace_id=None):
             "mcp_servers":len(MCP_SERVERS),
             "ollama":{iid:{"status":i["status"],"latency_ms":i["latency_ms"],"has_gpu":i["has_gpu"]}
                       for iid,i in OLLAMA_INSTANCES.items()},
+            "gpu_gate":await _health_gpu_gate(),
+            "census":await _health_census(),
             "mode":"distributed" if REDIS else "local"}
 
 
@@ -8998,7 +9149,10 @@ async def cap_ollama_pull(model: str, instance_id: str, trace_id=None):
                         "caller_file (str, filter), status (str, filter).")
 async def cap_ollama_request_log(limit: int = 50, caller_file: str = "",
                                   status: str = "", trace_id=None):
-    entries = list(reversed(_OLLAMA_REQUEST_LOG))  # newest first
+    # Sanitise again on read so a hot-upgraded process or a legacy/direct caller
+    # cannot expose an entry that predates the append-boundary defence.
+    entries = [_sanitize_ollama_log_entry(e)
+               for e in reversed(_OLLAMA_REQUEST_LOG)]  # newest first
     if caller_file:
         entries = [e for e in entries if caller_file in e.get("caller_file", "")]
     if status:
@@ -10041,10 +10195,15 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "web/web_api_capabilities.py"),
         os.path.join(_here, "telegram/telegram_capabilities.py"),
         os.path.join(_here, "dream/dream_capabilities.py"),
+        # Idle-queue `cap` jobs: any capability as background work, dispatched
+        # through the task stream under a BACKGROUND_LLM label. After the
+        # queue's own producers, whose service it registers a handler with.
+        os.path.join(_here, "background/cap_jobs.py"),
         os.path.join(_here, "dream/project_capabilities.py"),
         os.path.join(_here, "execution/exec_capabilities.py"),
         os.path.join(_here, "proxmox/proxmox_capabilities.py"),
         os.path.join(_here, "proxmox/pxstore_capabilities.py"),
+        os.path.join(_here, "proxmox/zfs_ops_capabilities.py"),
         os.path.join(_here, "vfs/vfs_capabilities.py"),
         os.path.join(_here, "monitor/monitor_capabilities.py"),
         os.path.join(_here, "monitor/perf_capabilities.py"),
@@ -10072,11 +10231,14 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "foundry/foundry_capabilities.py"),
         # printer/printer_capabilities.py retired -> converged into business/thermal_printer_capabilities.py
         os.path.join(_here, "workers/docker_capabilities.py"),
+        os.path.join(_here, "workers/docker_disk_capabilities.py"),
         os.path.join(_here, "workers/workers.py"),
         os.path.join(_here, "estate/estate_health_capabilities.py"),
         os.path.join(_here, "estate/estate_nav_capabilities.py"),
         os.path.join(_here, "estate/estate_machines_capabilities.py"),
         os.path.join(_here, "estate/backup_capabilities.py"),
+        os.path.join(_here, "estate/estate_entity_capabilities.py"),
+        os.path.join(_here, "estate/registration_capabilities.py"),
         os.path.join(_here, "security/secrets_capabilities.py"),
         os.path.join(_here, "security/certs_capabilities.py"),
         os.path.join(_here, "execution/ssh_cleanup_capabilities.py"),
@@ -10123,6 +10285,10 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "activity/activity_capabilities.py"),
         os.path.join(_here, "worldview/worldview_jepa.py"),
         os.path.join(_here, "research/researcher_api.py"),
+        # nlp_dispatch BEFORE nlp_capabilities: the caps import the placement
+        # switch from it, and its own caps (nlp.config.*, nlp.nodes) are how an
+        # operator sees why an nlp.* call went where it did.
+        os.path.join(_here, "research/nlp_dispatch.py"),
         os.path.join(_here, "research/nlp_capabilities.py"),
         os.path.join(_here, "vector browser/vector_browser_capabilites.py"),
         os.path.join(_here, "workers/job_persistance.py"),

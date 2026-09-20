@@ -46,7 +46,11 @@ current official documentation describes the feature; Vera means repository
 adapter code has implemented or verified it. An advertised upstream session or
 guardrail therefore remains `not_integrated` until Vera has evidence. The
 matrix imports no optional runtime, installs nothing, performs no model/network
-call, and selects no winner. All execution and failure drills are `queued_live`.
+call, and selects no winner. `agentbridge.runtime_matrix.evaluate` accepts only
+bounded, payload-free observations for explicitly selected runtimes. It keeps
+passed, failed, unavailable, and missing cases distinct, requires proof for
+cleanup/resource-release passes, and always leaves selection to a separate
+decision.
 For a shipped RuntimeAdapter, package pins and directly equivalent lifecycle
 dimensions come from that adapter's declaration. This keeps execution evidence
 in one place without inflating unrelated matrix claims such as policy or
@@ -245,6 +249,36 @@ payloads are bounded and cannot override trusted run, session, or event fields.
 Success is emitted only after the owned container process exits. If it prints a
 result and then hangs, Vera kills and reaps it; inability to reap becomes an
 explicit teardown failure rather than a false successful run.
+On abnormal exit, the runner also force-removes only the exact validated
+container name supplied by its own `docker run --name` arguments. This matters
+because killing the local Docker client does not necessarily stop the
+daemon-owned container. Cleanup is verified before the terminal event is
+accepted; the runner never guesses by image name or prefix.
+
+The opt-in `vera.agentbridges.live_runtime_validation` command exercises this
+boundary with network-disabled, resource-bounded throwaway containers. Its
+report contains lifecycle facts only. The representative live run verifies
+normal completion, malformed output, silent crash, a missing runtime dependency,
+stall, hard timeout, cancellation, one terminal event per case, and confirmed
+container removal. A separate real LangGraph cancellation check verifies the
+shared inference lease returns to the pool. The command is not registered as a
+capability and is never run by the ordinary unit suite.
+
+A representative comparison has also exercised the three shipped bridge images
+sequentially against the same bounded calculator task. Smolagents, PydanticAI,
+and LangGraph each reached one successful terminal event, with their native
+step counts preserved rather than normalized into a quality ranking. Subsequent
+runs acquiring the single shared model slot proved that prior bridge leases were
+released, and no named probe container remained. This evidence does not make a
+universal-winner claim: session resume remains unsupported for the one-shot
+bridges, while generic cancellation and OCI package attestation are currently
+exposed only for registered RuntimeAdapters.
+
+Bridge goals are treated as payload, not telemetry. Capability activity redacts
+the `goal` argument, and start events contain only its character count and a
+short SHA-256 identity. Run/session IDs, lifecycle state, timings, step counts,
+and stable reason codes remain observable without copying task text into the
+event stream.
 The image records its runtime identity and complete pinned package set as OCI
 labels. Agent Bridge can compare those labels with the declared adapter without
 starting the image; missing labels and drift remain visibly distinct from a

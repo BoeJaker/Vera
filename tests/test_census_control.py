@@ -101,6 +101,97 @@ def test_a_restart_keeps_a_persons_pause():
     assert ct.restart_plan(paused, resume=False, control=theirs)["action"] == "drop"
 
 
+# ── yield: a pause that waits for the goal boundary ──────────────────────────
+def test_a_yield_is_a_pause_that_takes_effect_after_the_goal():
+    """The polite pause (2026-09-19): other tests need the box, but a cancelled
+    goal is a wasted half hour and a re-run. On file a yield IS a pause, so
+    every reader that only asks "is a pause on file" keeps working; the
+    harness alone reads `after_goal` and lets the goal in flight finish."""
+    y = ct.make_control("yield", reason="running the operator regressions", by="claude")
+    assert y["pause"] and y["after_goal"] and not y["drop"] and not y["resume_on_start"]
+    assert ct.control_state(y) == "yield"
+    # An ordinary pause carries the flag, false, so a reader never KeyErrors on it.
+    p = ct.make_control("pause")
+    assert p["after_goal"] is False and ct.control_state(p) == "pause"
+    # Precedence: a drop still outranks it; a resume clears it.
+    assert ct.control_state(dict(y, drop=True)) == "drop"
+    r = ct.make_control("resume")
+    assert not r["pause"] and not r["after_goal"] and ct.control_state(r) == "run"
+    # A person's yield is a person's pause: startup never lifts it.
+    assert not ct.should_lift_on_start(y)
+    # The harness acknowledges a yield the way it acknowledges a pause: by
+    # parking (state=paused) at or after the control was written.
+    assert ct.pause_acked({"state": "paused", "updated_at": y["ts"]}, y["ts"])
+    assert not ct.pause_acked({"state": "running", "updated_at": y["ts"]}, y["ts"]), \
+        "still finishing the goal: not yet acknowledged"
+
+
+def test_a_restart_under_a_live_yield_pauses_and_restores_it():
+    """A yield with the goal still in flight means the harness has NOT parked.
+    A restart that 'kept' it (as it keeps a person's pause) would kill the loop
+    under the harness and the goal would be recorded as cancelled. So the
+    restart pauses properly - the harness cancels and acks, the goal re-runs -
+    and puts the yield back on startup, so the census parks after that goal
+    instead of running on a box someone asked for."""
+    theirs = ct.make_control("yield", reason="need the GPU", by="claude")
+    running = {"state": "running", "updated_at": _ts(-10), "goals_total": 4, "goals_done": 1}
+    plan = ct.restart_plan(running, resume=True, control=theirs)
+    assert plan["action"] == "pause" and plan["restore"] == {
+        "after_goal": True, "reason": "need the GPU", "by": "claude"}
+    ours = ct.make_control("pause", reason=ct.RESTART_REASON, by="sys.dev.restart",
+                           resume_on_start=True, restore=plan["restore"])
+    assert ours["pause"] and ours["resume_on_start"] and ours["restore"]["after_goal"]
+    assert ct.should_lift_on_start(ours), "the restart's pause still lifts itself"
+    lifted = ct.lift_control(ours)
+    assert ct.control_state(lifted) == "yield" and lifted["by"] == "claude" \
+        and lifted["reason"] == "need the GPU", "...into the yield it displaced, not a resume"
+    # Once the harness HAS parked on the yield it is a person's pause like any other: kept.
+    parked = {"state": "paused", "updated_at": _ts(-10), "goals_total": 4, "goals_done": 2}
+    assert ct.restart_plan(parked, resume=True, control=theirs)["action"] == "none"
+    # A plain restart pause (no yield displaced) still lifts into a resume.
+    plain = ct.make_control("pause", reason=ct.RESTART_REASON, by="sys.dev.restart", resume_on_start=True)
+    assert "restore" not in plain and ct.control_state(ct.lift_control(plain)) == "run"
+    # `restore` rides only on a restart's pause: a person's pause never carries one.
+    assert "restore" not in ct.make_control("pause", restore={"after_goal": True})
+    # A caller who asked not to resume still drops, yield or no yield.
+    assert ct.restart_plan(running, resume=False, control=theirs)["action"] == "drop"
+
+
+# ── /health: is the box free? ────────────────────────────────────────────────
+def test_health_summary_says_busy_only_while_a_goal_is_in_flight():
+    """An agent reads /health before GPU work. `busy` must be true exactly
+    when a census goal is running (or a yield is requested but not yet
+    parked - the goal is still running), and false for a parked, finished,
+    absent or dead harness, so it neither taints a row nor waits on a ghost."""
+    def view(**a):
+        base = {"updated_at": _ts(-10), "goals_total": 12, "goals_done": 3,
+                "current_goal": "author-then-edit", "template": "default", "census_run": "run54"}
+        base.update(a)
+        return ct.active_view(base)
+    run = ct.make_control("resume")
+    h = ct.health_summary(run, view(state="running"))
+    assert h["busy"] and h["state"] == "running" and h["control"] == "run"
+    assert h["goal"] == "author-then-edit" and h["done"] == 3 and h["total"] == 12 \
+        and h["template"] == "default" and h["census_run"] == "run54" and "advice" in h
+    # yield requested, goal still running: still busy, and it says why
+    y = ct.make_control("yield", by="claude")
+    h = ct.health_summary(y, view(state="running"))
+    assert h["busy"] and h["state"] == "yielding" and h["by"] == "claude"
+    # parked on the yield: free
+    h = ct.health_summary(y, view(state="paused", pause_kind="yield"))
+    assert not h["busy"] and h["state"] == "yielded" and "advice" not in h
+    # a plain pause, parked: free; a plain pause not yet acted on: busy, 'pausing'
+    p = ct.make_control("pause", by="sys.dev.restart", resume_on_start=True)
+    assert ct.health_summary(p, view(state="paused"))["state"] == "paused"
+    assert ct.health_summary(p, view(state="running")) == dict(
+        ct.health_summary(p, view(state="running")), busy=True, state="pausing")
+    # no harness at all, a finished one, a dead one
+    assert ct.health_summary({}, ct.active_view({})) == {"busy": False, "state": "none", "control": "run"}
+    assert not ct.health_summary(run, view(state="done"))["busy"]
+    dead = ct.health_summary(run, view(state="running", updated_at=_ts(-ct.ACTIVE_STALE_S - 60)))
+    assert not dead["busy"] and dead["state"] == "stale"
+
+
 # ── routing on rows ──────────────────────────────────────────────────────────
 ROW = {
     "id": "build-simple-code", "status": "done", "wall_s": 427.0,

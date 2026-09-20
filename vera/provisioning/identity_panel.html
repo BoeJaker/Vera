@@ -43,6 +43,7 @@ input:focus,select:focus{border-color:var(--acc)}
 .toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}
 </style>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
 </head>
 <body>
 <div id="shell">
@@ -315,7 +316,7 @@ async function regHost(){
     show('#hOut','Enrolled '+r.fqdn+(r.otp?'\nOne-time enrol password: '+r.otp:'')); $('#hFqdn').value='';$('#hIp').value=''; loadHosts();
   }catch(e){ toast(e.message,true); }
 }
-async function loadHosts(){ try{ const r=await api('/identity/host/list'); $('#hList').innerHTML=(r.hosts||[]).map(h=>`<div class="list-row"><span class="k">${esc(h.fqdn)}</span><span class="hint">${h.enrolled?'enrolled':'pending'}</span></div>`).join(''); }catch(e){} }
+async function loadHosts(){ try{ const r=await api('/identity/host/list'); $('#hList').innerHTML=(r.hosts||[]).map(h=>`<div class="list-row"><span class="k" data-entity="identity:${esc(h.fqdn)}" style="cursor:pointer;border-bottom:1px dotted var(--dim)" title="Which machine this is, and whether anything still answers to it">${esc(h.fqdn)}</span><span class="hint">${h.enrolled?'enrolled':'pending'}</span></div>`).join(''); }catch(e){} }
 async function regUser(){
   const login=$('#uLogin').value.trim(),first=$('#uFirst').value.trim(),last=$('#uLast').value.trim();
   if(!login||!first||!last)return toast('login, first, last required',true);

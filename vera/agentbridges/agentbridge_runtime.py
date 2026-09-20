@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import hashlib
 import json
 import math
 import re
@@ -64,6 +65,7 @@ MAX_STRING_CHARS = 32_768
 PROCESS_EXIT_GRACE_S = 10.0
 PROCESS_KILL_GRACE_S = 5.0
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_CONTAINER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 
 
 @dataclass
@@ -84,6 +86,15 @@ def _valid_run_id(run_id: Any) -> str:
     if not _RUN_ID.fullmatch(value):
         raise ValueError("run_id must be a bounded identifier")
     return value
+
+
+def text_evidence(value: Any) -> Dict[str, Any]:
+    """Return bounded identity evidence without retaining caller text."""
+    text = str(value or "")
+    return {
+        "chars": len(text),
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+    }
 
 
 def _register_run(run_id: str) -> Optional[_ActiveBridgeRun]:
@@ -247,6 +258,36 @@ async def release_gpu_gate(lease: Optional[Dict[str, Any]]) -> None:
     except Exception:
         pass
 
+
+def _owned_docker_container(argv: List[str]) -> str:
+    """Return an exact, explicitly named ``docker run`` target or ``""``.
+
+    The runner must never guess container identity from a process, image, or
+    prefix.  Only its own validated ``--name VALUE`` argument is eligible for
+    abnormal-path cleanup.
+    """
+    if len(argv) < 4 or argv[:2] != ["docker", "run"]:
+        return ""
+    try:
+        index = argv.index("--name")
+        name = argv[index + 1]
+    except (ValueError, IndexError):
+        return ""
+    return name if isinstance(name, str) and _CONTAINER_NAME.fullmatch(name) else ""
+
+
+async def _remove_owned_docker_container(name: str) -> bool:
+    """Force-remove one exact owned container and prove it is absent."""
+    if not name or not _CONTAINER_NAME.fullmatch(name):
+        return False
+    await sh(["docker", "rm", "-f", name], timeout=15)
+    for _ in range(50):
+        present = await sh(["docker", "container", "inspect", name], timeout=5)
+        if not present.get("ok"):
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
 EmitFn = Callable[[Dict[str, Any]], Awaitable[None]]
 
 
@@ -372,6 +413,7 @@ async def _stream_bridge_container_inner(
     protocol_error = ""
     cancelled = cancelled_before_bind
     teardown_error = ""
+    owned_container = _owned_docker_container(argv)
 
     try:
         while True:
@@ -387,6 +429,12 @@ async def _stream_bridge_container_inner(
             try:
                 raw = await asyncio.wait_for(proc.stdout.readline(), timeout=wait_for)
             except asyncio.TimeoutError:
+                # Docker's attach pipe can remain pending briefly even after
+                # the client process has exited without writing stdout.  Its
+                # authoritative return code distinguishes that crash from a
+                # live but silent container.
+                if getattr(proc, "returncode", None) is not None:
+                    break
                 if deadline_limited:
                     timed_out = True
                 else:
@@ -450,6 +498,9 @@ async def _stream_bridge_container_inner(
                 await asyncio.wait_for(proc.wait(), timeout=PROCESS_KILL_GRACE_S)
             except Exception:
                 teardown_error = "container could not be reaped after kill"
+        if termination_requested and owned_container:
+            if not await _remove_owned_docker_container(owned_container):
+                teardown_error = "owned container could not be removed after termination"
         stderr_task.cancel()
         await asyncio.gather(stderr_task, return_exceptions=True)
         with _ACTIVE_RUNS_LOCK:
