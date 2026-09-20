@@ -1399,14 +1399,17 @@ async def _upstream_read(name: str, kw: dict):
         if r.status_code != 200:
             return None
         j = r.json()
-        # /mcp/call answers in the MCP envelope: {type: tool_result, tool_name, trace_id, content: [{type: text, text: <json>}]}
-        # — the capability's own result is the text inside; a tile wants that, not the envelope
-        if isinstance(j, dict) and j.get("type") == "tool_result" and isinstance(j.get("content"), list):
-            txt = "".join(str(c.get("text", "")) for c in j["content"] if isinstance(c, dict))
-            try:
-                return json.loads(txt)
-            except Exception:
-                return {"text": txt}
+        # /mcp/call answers in the MCP envelope {type: tool_result, tool_name, trace_id, content: <the result>} — the
+        # capability's own result is `content` (a list of text parts on an older bridge); a tile wants that, not the envelope
+        if isinstance(j, dict) and j.get("type") == "tool_result" and "content" in j:
+            c = j["content"]
+            if isinstance(c, list) and c and all(isinstance(x, dict) and "text" in x for x in c):
+                txt = "".join(str(x.get("text", "")) for x in c)
+                try:
+                    return json.loads(txt)
+                except Exception:
+                    return {"text": txt}
+            return c
         return j
     except Exception as e:  # prod unreachable, a slow read, a bad body: the sandbox answers for itself
         log.debug("read-through %s: %s", name, e)
