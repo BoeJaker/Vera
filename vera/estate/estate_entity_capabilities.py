@@ -124,6 +124,15 @@ async def cap_entity_resolve(ref: str = "", refresh: bool = False, trace_id=None
     return core.resolve(ref, src)
 
 
+_ESTATE_JS = Path(__file__).parent / "vera-estate.js"
+
+
+@APP.get("/ui/vera-estate.js", include_in_schema=False)
+async def _estate_js():
+    body = _ESTATE_JS.read_text(encoding="utf-8") if _ESTATE_JS.exists() else "console.error('vera-estate.js missing')"
+    return Response(body, media_type="application/javascript")
+
+
 @APP.get("/ui/vera-entity-drawer.js", include_in_schema=False)
 async def _entity_drawer_js():
     body = _DRAWER.read_text(encoding="utf-8") if _DRAWER.exists() else "console.error('vera-entity-drawer.js missing')"

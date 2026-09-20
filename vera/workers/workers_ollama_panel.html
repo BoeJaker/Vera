@@ -5456,7 +5456,7 @@ function pmxRenderVms(){
     const diskPct=v.maxdisk>0?Math.round((v.disk||0)/v.maxdisk*100):0;
     return '<tr>'
       +'<td style="font-family:var(--mono);color:var(--dim2)">'+esc(v.vmid||'')+'</td>'
-      +'<td style="font-weight:600">'+esc(v.name||'?')+'</td>'
+      +'<td style="font-weight:600"><span class="mc-ent" data-entity="guest:'+esc(v.vmid)+'" title="Everything the estate knows about this guest" tabindex="0">'+esc(v.name||'?')+'</span></td>'
       +'<td><span style="font-size:8px;padding:1px 5px;border-radius:3px;font-weight:700;'+
         (v.type==='qemu'?'background:rgba(90,158,143,.12);color:var(--acc)':'background:rgba(201,163,90,.1);color:var(--warn)')+'">'+esc(v.type==='qemu'?'VM':'CT')+'</span></td>'
       +'<td style="font-size:9px;color:var(--dim2)">'+esc(v.node||'')+'</td>'
@@ -6360,9 +6360,14 @@ async function mcAct(idx, action){
   const what=(r.type==='qemu'?'VM ':'CT ')+r.vmid+' ('+r.label+')';
   if(action==='start'||action==='shutdown'||action==='reboot'){
     const verb={start:'Start',shutdown:'Shut down',reboot:'Reboot'}[action];
-    if(!confirm(verb+' '+what+'?')) return;
-    const res=await api('/proxmox/guest/action','POST',{cluster_id:r.cluster_id,node:r.node,guest_type:r.type,vmid:parseInt(r.vmid),action});
-    if(!res||res.error){ alert(verb+' failed: '+((res&&res.error)||'no answer')); return; }
+    const res=await veraEstate.confirmRun('/proxmox/guest/action',{cluster_id:r.cluster_id,node:r.node,guest_type:r.type,vmid:parseInt(r.vmid),action},
+      verb+' '+what+'?'+(action==='shutdown'?'
+
+Everything it serves stops until it is started again.':action==='reboot'?'
+
+In-flight work on it is lost.':''));
+    if(!res||res.cancelled) return;
+    if(res.error){ return; }
     txt('mc-status', verb+' sent to '+what);
     setTimeout(mcLoad,2500); setTimeout(mcLoad,7000);
     return;
@@ -8312,6 +8317,7 @@ return {
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-entity-drawer.js"></script>
+<script src="/ui/vera-estate.js"></script>
 <script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>
 </body>
 </html>
