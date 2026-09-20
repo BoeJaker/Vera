@@ -282,7 +282,12 @@
   :host([blocks="off"]) .wrap{background:transparent;border-color:transparent}
   :host([blocks="off"]) .head{background:transparent;border-bottom-color:color-mix(in srgb,var(--border,#2a2f37) 55%,transparent)}
   :host([blocks="off"]) .it{background:transparent;box-shadow:none;border-color:color-mix(in srgb,var(--border,#2a2f37) 55%,transparent)}
-  :host([blocks="off"]) .addbar{background:transparent}
+  /* THE ADD BAR KEEPS ITS BACKGROUND WHATEVER "blocks" SAYS. Blocks off means "do not paint a background behind
+     each item" - a density preference about the items. The add bar is not an item: it is STICKY, so with nothing
+     behind it the canvas scrolls under the buttons and they become unreadable over whatever passes beneath. That
+     is a legibility floor, not a decoration, and it bit because the server's appearance seed has blocks off, so
+     every device that has never chosen one gets it. The border is the part that can go. */
+  :host([blocks="off"]) .addbar{border-bottom-color:color-mix(in srgb,var(--border,#2a2f37) 55%,transparent)}
   /* bare: the HOST draws the head. The tri-page column has its own title row - name, revision, the NOW count, the
    columns, the switches - and the element drawing a second "Session canvas" line inside it put two headers on top of
    each other and pushed the items down the column (Notes/42 defect 74). The widget element makes the same bargain. */
@@ -1393,7 +1398,8 @@
         // already fetched, so this press is only the fold - a local repaint, the way the code preview folds
         if (c.text) { this._srcOpen[key] = !this._srcOpen[key]; this._open.add(key); if (this._doc) this.render(this._doc); return; }
         this._readout(key, '\u2026 reading the page');
-        const r = await this.callResult('browser.content', { url: String(c.url), format: 'text' });
+        // browser.content takes max_chars; `format` was never a parameter of it
+        const r = await this.callResult('browser.content', { url: String(c.url), max_chars: 40000 });
         const text = String((r && (r.text || r.content || r.markdown)) || '');
         if (!text) return this._readout(key, (r && r.error) || 'nothing came back');
         this._srcOpen[key] = true;
@@ -1403,9 +1409,17 @@
         if (c.shot) return this.call('canvas.update', { key, content: Object.assign({}, c, { shot: '' }) });
         this._readout(key, '\u2026 taking the picture');
         const r = await this.callResult('browser.screenshot', { url: String(c.url), full_page: false });
-        const shot = String((r && (r.image || r.data_url || r.screenshot || r.png)) || '');
+        /* browser.screenshot answers {ok, image_b64, url, title, load_ms} - image_b64, which is the one name
+           this was not reading. The picture was fetched every time and thrown away every time: the press did
+           nothing, silently, which is the worst way for it to fail. Measured against the live cap. */
+        const shot = String((r && (r.image_b64 || r.image || r.data_url || r.screenshot || r.png)) || '');
         if (!shot) return this._readout(key, (r && r.error) || 'no picture came back');
-        const src = /^data:|^https?:/.test(shot) ? shot : 'data:image/png;base64,' + shot;
+        /* the cap answers base64 bytes, and not always PNG despite the argument's name - measured, example.com
+           came back starting "/9j/", which is JPEG. Browsers sniff and draw it either way, so this was invisible
+           and wrong; the magic says which it is. */
+        const mime = /^\/9j\//.test(shot) ? 'image/jpeg' : /^R0lGOD/.test(shot) ? 'image/gif'
+          : /^UklGR/.test(shot) ? 'image/webp' : 'image/png';
+        const src = /^data:|^https?:/.test(shot) ? shot : 'data:' + mime + ';base64,' + shot;
         return this.call('canvas.update', { key, content: Object.assign({}, c, { shot: src }) });
       }
     }
