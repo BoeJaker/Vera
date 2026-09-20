@@ -749,12 +749,12 @@ header .hdr-right{margin-left:0;gap:6px}
 #dashHealthStrip > span:first-child{display:none}
 #dashHealthStrip > span{background:var(--s1,var(--bg1,#151719))!important;border:none!important;border-radius:var(--ui-radius,10px)!important;box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5));padding:8px 12px!important;font-size:8.5px!important;text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280))!important;min-width:110px}
 .panel#panel-dashboard{padding:0 0 16px}
-.dash-grid{padding:0 16px;gap:14px}
+.dash-grid{padding:0 16px;gap:10px}   /* the Dashboard board's gutter */
 .widget{background:var(--s1,var(--bg1,#151719));border:none;border-radius:var(--ui-radius,10px);box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5))}
 .widget:hover{border-color:transparent;box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
 .w-head{height:34px;padding:0 12px;gap:8px;border-bottom:none;background:transparent}
 .w-title{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:var(--label-size,9px);font-weight:var(--label-weight,600);letter-spacing:var(--label-track,.09em);text-transform:var(--label-case,uppercase);color:var(--t2,var(--dim2,#8a92a0));flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.w-head{padding:11px var(--pad,12px) 0;height:auto;min-height:30px}
+.w-head{padding:8px var(--pad,11px) 0;height:auto;min-height:26px}
 .w-head .w-dot{width:6px;height:6px}
 /* the counters as the board's hero numbers */
 .w-body .kpi{gap:4px;justify-content:flex-start;padding-top:2px}
@@ -772,7 +772,7 @@ header .hdr-right{margin-left:0;gap:6px}
 .widget:hover .w-head .w-actions,.widget:focus-within .w-head .w-actions,.dash-grid.editing .w-head .w-actions,.widget.floating .w-head .w-actions{display:inline-flex}
 .w-iconbtn{width:22px;height:22px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280))}
 .w-iconbtn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
-.w-body{padding:6px var(--pad,12px) 12px;overflow:hidden}
+.w-body{padding:4px var(--pad,11px) 10px;overflow:hidden}
 .w-body.flush{padding:0}
 /* the element fills the tile's body and no more: a flex child that may shrink, so the element measures the FRAME (not its
    content) and every form fits what it is given - a tile never scrolls */
@@ -784,7 +784,7 @@ header .hdr-right{margin-left:0;gap:6px}
 /* a SECTION tile: the band's name, flat on the page, the label at the foot of its row so it reads as the heading of the
    tiles below (the Dashboard board's side sections; the Sizes board's report lines) */
 .widget.w-section{background:transparent!important;border:none!important;box-shadow:none!important;border-radius:0;justify-content:flex-end;overflow:visible}
-.widget.w-section .w-head{padding:0 4px 5px;min-height:0;height:auto;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));box-shadow:none}
+.widget.w-section .w-head{padding:0 2px 4px;min-height:0;height:auto;border-bottom:1px solid var(--bd2,var(--border2,rgba(255,255,255,.18)));box-shadow:none}
 .widget.w-section .w-title{font-size:calc(var(--label-size,9px) + 2px);letter-spacing:calc(var(--label-track,.09em) + .04em);color:var(--t2,var(--dim2,#8a92a0));max-width:none;flex:1 1 auto}
 .widget.w-section .w-title::after{content:attr(data-count);margin-left:10px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--t3,var(--dim,#6b7280))}
 .widget.w-section .vd-rec,.widget.w-section .w-resize,.widget.w-section .w-dot{display:none!important}
