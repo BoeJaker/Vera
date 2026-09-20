@@ -1653,8 +1653,23 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None,
                        gate_wait: Optional[float] = None):
     """`async with _ollama_sem(iid)` with a bounded acquisition wait. Raises a
     plain Exception on queue timeout so ollama_generate's normal error path
-    (request_error event + node fallback) handles it like any other failure."""
+    (request_error event + node fallback) handles it like any other failure.
+
+    `timeout` is a TOTAL queueing budget, not a per-phase one. There are two
+    queues here — the per-node semaphore inside this process, then the shared
+    cross-process gate — and they used to be bounded separately, so a caller
+    that asked to wait at most N could wait N on the first and another N on the
+    second. Worse, a caller that bounded only the gate (`gate_wait`) still
+    queued UNBOUNDED on the semaphore first and never reached its own bound:
+    measured 2026-09-20, a chat with a 3s gate wait sat 115s behind a running
+    job and then proceeded, because it never got past the local queue.
+
+    So the budget is now a deadline: whatever `timeout` is left after the local
+    queue is what the gate may use. `gate_wait` still caps the gate phase on its
+    own, for callers that do not bound the total.
+    """
     wait = OLLAMA_QUEUE_TIMEOUT if timeout is None else timeout
+    _t_enter = time.monotonic()
     sem = _ollama_sem(iid)
     if wait and wait > 0:
         try:
@@ -1699,27 +1714,58 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None,
                     _gate_heartbeat(_lease, _current_run_session(), _activity,
                                     asyncio.current_task()))
             else:
-                # Existing production/local behavior remains deliberately
-                # fail-open until it is separately migrated to strict mode.
-                try:
-                    if COORD_REDIS is None:
-                        await _ensure_coord_redis()
-                    if _cap > 0 and COORD_REDIS is not None:
-                        # `gate_wait` bounds how long THIS caller queues for the
-                        # shared slot before proceeding unslotted. The default
-                        # (_gate.wait_s(), 600s) is right for batch work, and is
-                        # unchanged for every caller that does not pass one; an
-                        # interactive caller passes something short, because a
-                        # chat that waits ten minutes for a slot is worse than a
-                        # chat that overlaps one job.
-                        _gw = _gate.wait_s() if gate_wait is None else max(0.0, float(gate_wait))
+                # A QUEUE TIMEOUT IS NOT PERMISSION TO PROCEED.
+                #
+                # This used to fail open on every reason acquire() could decline:
+                # a caller that queued for the full budget (VERA_GATE_WAIT_S,
+                # 600s) then generated anyway, which is precisely the flooding
+                # the gate exists to prevent — and the barge-in was invisible,
+                # logged at debug.
+                #
+                # The reasons are not equivalent, so they are not treated alike:
+                #
+                #   queue_timeout       the node is genuinely busy. RAISE. The
+                #                       caller's normal error path handles it
+                #                       (request_error + node fallback), exactly
+                #                       as it already does for the LOCAL queue
+                #                       timeout above.
+                #   coordination_error  Redis threw; the gate itself is broken.
+                #                       Proceed, but say so at WARNING: failing
+                #                       all inference because the coordinator is
+                #                       down is worse than running ungated, and
+                #                       that is an availability trade-off rather
+                #                       than a queueing decision. It must be
+                #                       visible, not swallowed at debug.
+                #
+                # ungated_node / coordination_unavailable cannot occur here —
+                # the `if` below already excludes both.
+                if COORD_REDIS is None:
+                    await _ensure_coord_redis()
+                if _cap > 0 and COORD_REDIS is not None:
+                    # `gate_wait` bounds how long THIS caller queues before the
+                    # attempt is declined. The default (_gate.wait_s(), 600s) is
+                    # unchanged for every caller that does not pass one.
+                    _gw = _gate.wait_s() if gate_wait is None else max(0.0, float(gate_wait))
+                    if wait and wait > 0:
+                        # Spend only what is LEFT of the caller's total budget.
+                        _gw = max(0.0, min(_gw, wait - (time.monotonic() - _t_enter)))
+                    try:
                         _lease = await _gate.acquire(
-                            COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gw)
-                        if _lease is not None:
-                            _hb_task = asyncio.ensure_future(
-                                _gate_heartbeat(_lease, _current_run_session(), _activity))
-                except Exception as _ge:
-                    log.debug("ollama gate acquire skipped for %s: %s", iid, _ge)
+                            COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gw,
+                            required=True)
+                    except _gate.GateAcquisitionError as _ge:
+                        if str(_ge) == "queue_timeout":
+                            raise Exception(
+                                f"gpu gate timeout on {iid}: no free slot after "
+                                f"{int(_gw)}s (node busy with earlier requests)")
+                        log.warning(
+                            "ollama gate UNAVAILABLE for %s (%s) — proceeding "
+                            "UNGATED; concurrent generation on this node is "
+                            "possible until coordination recovers", iid, _ge)
+                        _lease = None
+                    if _lease is not None:
+                        _hb_task = asyncio.ensure_future(
+                            _gate_heartbeat(_lease, _current_run_session(), _activity))
         yield _activity
     finally:
         if _hb_task is not None:

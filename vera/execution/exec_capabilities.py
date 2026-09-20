@@ -1192,7 +1192,9 @@ async def artifact_list_files(session_id: str = "", limit: int = 40) -> Optional
                 for e in (r.get("entries") or []):
                     n = str(e.get("name") or "").strip()
                     if n and not n.startswith("."):
-                        names.append(n + ("/" if e.get("kind") == "dir" else ""))
+                        # The sandbox ls reports kind='directory'; testing for
+                        # 'dir' marked NO directory as one (2026-09-20).
+                        names.append(n + ("/" if _is_dir_kind(e.get("kind")) else ""))
                 return sorted(names)[:max(1, limit)]
         except Exception as e:
             log.debug("artifact_list_files sandbox list failed: %s", e)
@@ -1206,6 +1208,57 @@ async def artifact_list_files(session_id: str = "", limit: int = 40) -> Optional
         log.debug("artifact_list_files host list failed: %s", e)
         return None
     return names[:max(1, limit)]
+
+
+async def artifact_list_files_deep(session_id: str = "", max_depth: int = 3,
+                                   max_dirs: int = 12, limit: int = 200) -> Optional[List[str]]:
+    """`artifact_list_files`, but BELOW the top level too: relative paths of the
+    files in the session's working directory and its subdirectories (dirs end
+    in '/'), breadth-first, capped (`workdir_listing_core.walk_listing`).
+
+    Why: the loop's success-criterion gate judged "is there a .py file?" from
+    the top-level listing alone, so a goal that built a PACKAGE
+    (`statkit/stats.py`) was hard-failed on every step while its files sat one
+    directory down - census runs 54 and 55, `build-multifile`, both wall caps
+    (2026-09-20). None = could NOT be determined; [] = really empty."""
+    from .workdir_listing_core import walk_listing, is_dir_kind as _idk
+    session_id = session_id or _trigger_session_id()
+    sb = _sandbox_mod()
+    if session_id and sb is not None and hasattr(sb, "route_fs_list"):
+        root = _sandbox_workdir()
+
+        async def _list_sb(rel: str):
+            try:
+                r = await sb.route_fs_list(session_id, (root.rstrip("/") + "/" + rel) if rel else root)
+            except Exception as e:
+                log.debug("artifact_list_files_deep sandbox list failed (%s): %s", rel, e)
+                return None
+            if r is None or r.get("error"):
+                return None
+            return [(str(e.get("name") or ""), _idk(e.get("kind"))) for e in (r.get("entries") or [])]
+
+        got = await walk_listing(_list_sb, "", max_depth=max_depth, max_dirs=max_dirs, limit=limit)
+        if got is not None:
+            return got
+    try:
+        base = artifact_dir(session_id=session_id)
+    except Exception as e:
+        log.debug("artifact_list_files_deep host base failed: %s", e)
+        return None
+
+    async def _list_host(rel: str):
+        d = os.path.join(base, rel) if rel else base
+        try:
+            return [(n, os.path.isdir(os.path.join(d, n))) for n in os.listdir(d)]
+        except Exception:
+            return None
+
+    return await walk_listing(_list_host, "", max_depth=max_depth, max_dirs=max_dirs, limit=limit)
+
+
+def _is_dir_kind(kind) -> bool:
+    from .workdir_listing_core import is_dir_kind
+    return is_dir_kind(kind)
 
 
 def _sandbox_workdir() -> str:

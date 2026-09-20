@@ -36,6 +36,7 @@ _CRITICAL_MODULES = {
     "test_edge_server_body_binding",  # a POST endpoint that cannot take a body (2026-09-20)
     "test_edge_dir_resolution",  # $HOME is not writable on 2 of 3 ollama nodes (2026-09-20)
     "test_inference_is_gated",  # chat generated outside the one-queue GPU gate (2026-09-20)
+    "test_gate_timeout_is_not_permission",  # waiting out the queue is not a licence (2026-09-20)
     "test_research_route_core",  # a routing escalation asked with 0 chars is dead (2026-09-18)
     "test_artifact_location",  # a file the run already made has a place (2026-09-01)
     "test_instance_identity",  # an estate write must name its writer (2026-09-01)
@@ -214,6 +215,7 @@ _CRITICAL_MODULES = {
     "test_chat_ctx_core",  # chat asked for the node max every turn and evicted the runner it could have reused (2026-09-20)
     "test_embed_policy_core",  # machine state was 59% of all embedding time while real text queued behind it (2026-09-20)
     "test_queue_status_core",  # a wait line must never claim a node is free - in_use only sees Vera (2026-09-20)
+    "test_workdir_listing_core",  # the file-type gate saw only the top level: a package's .py files one dir down failed every step to the wall cap (2026-09-20)
 }
 
 
