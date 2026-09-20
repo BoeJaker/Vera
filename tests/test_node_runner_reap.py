@@ -20,7 +20,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "edge"))
 
 from node_runner_core import (  # noqa: E402
-    DEFAULT_STUCK_S, DispatchProbe, Runner, dispatch_finding, is_active, is_embedding_model, probe_call,
+    DEFAULT_STUCK_S, DispatchProbe, Runner, dispatch_finding, is_active, is_embedding_model, is_node_saturated, probe_call,
     is_dispatch_wedged, parse_model_from_cmdline, parse_port_from_cmdline,
     reap_plan,
 )
@@ -268,6 +268,64 @@ def test_probe_call_is_safe_on_junk():
     for bad in (None, [], [None], [{}], ["nope"]):
         model, path, payload = probe_call(bad)
         assert model == "" and path == "" and payload == {}
+
+
+# ── saturated is NOT wedged: same symptom, opposite remedy ───────────────────
+# 2026-09-20: cpu-246 and cpu-247 failed a 150s probe while their embedding
+# runner held ~12 cores of a 48-core host at load 77. Calling that a deadlock
+# sends someone to restart ollama, which discards the work in flight and the
+# queue rebuilds at once. Only gpu-250 was genuinely deadlocked — its runner
+# was at 0% CPU with its slot idle.
+
+def test_a_busy_runner_means_saturated_not_wedged():
+    p = _p(runner_busy=True, runner_cpu_s=25513.0)
+    assert is_node_saturated(p) is True
+    assert is_dispatch_wedged(p) is False
+
+
+def test_an_idle_runner_that_will_not_answer_is_wedged():
+    p = _p(runner_busy=False, runner_cpu_s=2637.0)
+    assert is_dispatch_wedged(p) is True
+    assert is_node_saturated(p) is False
+
+
+def test_unknown_runner_state_still_reads_as_wedged():
+    """Without the agent we cannot prove it is busy; the probe failing with a
+    resident model is still the stronger signal. `runner_busy` defaults None."""
+    assert is_dispatch_wedged(_p()) is True
+
+
+def test_a_node_that_answered_is_neither():
+    p = _p(dispatched=True, runner_busy=True)
+    assert is_dispatch_wedged(p) is False
+    assert is_node_saturated(p) is False
+
+
+def test_the_two_findings_carry_opposite_remedies():
+    wedged = dispatch_finding(_p(runner_busy=False))
+    saturated = dispatch_finding(_p(runner_busy=True, runner_cpu_s=25513.0))
+    assert wedged["kind"] == "wedged"
+    assert saturated["kind"] == "saturated"
+    assert "restart ollama" in wedged["remedy"].lower()
+    assert "not restart" in saturated["remedy"].lower()
+    assert "shed load" in saturated["remedy"].lower()
+    # A restart is the wrong move on a loaded box, so it must not be suggested.
+    assert saturated["severity"] == "warn" and wedged["severity"] == "crit"
+
+
+def test_saturated_finding_warns_that_loadavg_lies_in_a_container():
+    """All three nodes reported the same load average because they are LXCs on
+    one host — the number that made this look like three separate failures."""
+    d = dispatch_finding(_p(runner_busy=True))["detail"].lower()
+    assert "loadavg" in d or "load" in d
+    assert "host" in d
+
+
+def test_to_dict_separates_the_two():
+    d = _p(runner_busy=True).to_dict()
+    assert d["saturated"] is True and d["wedged"] is False
+    d2 = _p(runner_busy=False).to_dict()
+    assert d2["wedged"] is True and d2["saturated"] is False
 
 
 def test_a_wedged_node_does_not_make_its_idle_runner_reapable():

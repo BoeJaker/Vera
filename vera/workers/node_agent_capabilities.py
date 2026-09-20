@@ -52,7 +52,7 @@ from Vera.vera import capability_orchestration as _orch
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))), "edge"))
 from node_runner_core import (  # noqa: E402
-    DEFAULT_STUCK_S, DispatchProbe, Runner, dispatch_finding, probe_call,
+    DEFAULT_STUCK_S, DispatchProbe, Runner, dispatch_finding, is_active, probe_call,
     is_dispatch_wedged, reap_plan,
 )
 
@@ -309,18 +309,43 @@ async def _probe_dispatch(nid: str, inst: Dict) -> DispatchProbe:
                 "the healthy part. Inputs: node (str filter). Output: "
                 "{probes:[...], wedged:[...], findings:[...]}.")
 async def cap_nodes_ollama_dispatch_check(node: str = "", trace_id=None) -> Dict[str, Any]:
+    # One collection up front: whether a node's runner is actually computing is
+    # what separates a deadlock from an overloaded box, and the agent already
+    # reports it. Without this the two are indistinguishable from outside and
+    # the finding would send someone to restart a merely-busy node.
+    try:
+        got = await _collect_runners(node)
+        busy: Dict[str, Any] = {}
+        for r in got.get("runners") or []:
+            nid = r.get("node") or ""
+            cpu = float(r.get("cpu_seconds") or 0)
+            active = is_active(Runner(pid=int(r.get("pid") or 0),
+                                      state=str(r.get("state") or ""),
+                                      cpu_seconds=cpu))
+            prev = busy.get(nid)
+            if prev is None or cpu > prev[1]:
+                busy[nid] = (active or (prev[0] if prev else False), cpu)
+            elif active:
+                busy[nid] = (True, prev[1])
+    except Exception as e:
+        log.debug("dispatch check: runner collection failed: %s", e)
+        busy = {}
+
     probes, findings = [], []
     for nid, inst in _nodes().items():
         if node and nid != node:
             continue
         p = await _probe_dispatch(nid, inst)
+        if nid in busy:
+            p.runner_busy, p.runner_cpu_s = busy[nid][0], busy[nid][1]
         probes.append(p.to_dict())
         f = dispatch_finding(p)
         if f:
             findings.append(f)
     wedged = [p["node"] for p in probes if p.get("wedged")]
-    return {"probes": probes, "wedged": wedged, "findings": findings,
-            "probe_bound_s": DISPATCH_PROBE_S}
+    saturated = [p["node"] for p in probes if p.get("saturated")]
+    return {"probes": probes, "wedged": wedged, "saturated": saturated,
+            "findings": findings, "probe_bound_s": DISPATCH_PROBE_S}
 
 
 @capability(
@@ -432,7 +457,20 @@ async def _report_dispatch_wedges() -> None:
     how to tell them apart.
     """
     res = await cap_nodes_ollama_dispatch_check()
-    findings = {f.get("node"): f for f in (res.get("findings") or [])}
+    # ONLY a deadlock counts toward the strike. A saturated node fails the same
+    # probe and must not accumulate toward a warning whose remedy is a restart —
+    # restarting an overloaded node throws away the work in flight and the queue
+    # rebuilds immediately. It gets its own, quieter line.
+    findings = {f.get("node"): f for f in (res.get("findings") or [])
+                if f.get("kind") == "wedged"}
+    _cpu = {p["node"]: p.get("runner_cpu_s") or 0.0
+            for p in (res.get("probes") or [])}
+    for f in (res.get("findings") or []):
+        if f.get("kind") == "saturated":
+            nid = f.get("node") or ""
+            log.warning("node %s: cannot serve a 1-token request — its runner "
+                        "is saturated (%.0fs CPU accumulated), not deadlocked. "
+                        "%s", nid, _cpu.get(nid, 0.0), f.get("remedy"))
     probed = {p["node"] for p in (res.get("probes") or []) if not p.get("skipped")}
 
     for nid in probed:
