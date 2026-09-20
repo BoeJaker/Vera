@@ -1725,7 +1725,9 @@ span.vw-sampled{opacity:.85}
     if (typeof document === 'undefined' || !document.head || !document.head.appendChild || window.VeraISO || ensureIso.loading) return;
     if (document.querySelector && document.querySelector('script[src$="/ui/iso.js"]')) { ensureIso.loading = true; const t = setInterval(() => { if (window.VeraISO) { clearInterval(t); INSTANCES.forEach((el) => { try { el.render(); } catch (_) {} }); } }, 200); return; }
     ensureIso.loading = true; const sc = document.createElement('script'); sc.src = (base || '') + '/ui/iso.js'; sc.async = true;
-    sc.onload = () => { INSTANCES.forEach((el) => { try { el.render(); } catch (_) {} }); }; sc.onerror = () => { ensureIso.loading = false; };
+    sc.onload = () => { INSTANCES.forEach((el) => { try { el.render(); } catch (_) {} }); };
+    // a load that fails (a flaky connection, a certificate hiccup) is tried again, or every iso form waits forever on 'loading the projection'
+    sc.onerror = () => { ensureIso.loading = false; sc.remove(); ensureIso.tries = (ensureIso.tries || 0) + 1; if (ensureIso.tries < 6) setTimeout(() => ensureIso(base), 1500 * ensureIso.tries); };
     document.head.appendChild(sc);
   }
   const REFRESH_FLOOR = 10;
