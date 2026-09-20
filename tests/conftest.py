@@ -214,6 +214,7 @@ _CRITICAL_MODULES = {
     "test_chat_ctx_core",  # chat asked for the node max every turn and evicted the runner it could have reused (2026-09-20)
     "test_embed_policy_core",  # machine state was 59% of all embedding time while real text queued behind it (2026-09-20)
     "test_queue_status_core",  # a wait line must never claim a node is free - in_use only sees Vera (2026-09-20)
+    "test_workdir_listing_core",  # the file-type gate saw only the top level: a package's .py files one dir down failed every step to the wall cap (2026-09-20)
 }
 
 
