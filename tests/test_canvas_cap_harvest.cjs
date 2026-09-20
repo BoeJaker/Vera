@@ -173,6 +173,18 @@ const { T, B: TBL, W, S: SRC } = ctx;
   t('the canvas draws a source', /^    source: \(c, size, key, el\) => \{/m.test(cv));
   t('the page body is fetched on demand, not on landing', /browser\.content/.test(cv) && /_srcAct\(key, act\)/.test(cv));
   t('and so is the picture', /browser\.screenshot/.test(cv));
+  /* the field name the cap actually answers with. It returns {ok, image_b64, url, title, load_ms}, and reading
+     image/data_url/screenshot/png instead meant the picture was fetched every time and thrown away every time -
+     the press did nothing, silently, which is the worst way for it to fail. Measured against the live cap. */
+  t('the screenshot is read from the field the cap answers with', /r\.image_b64 \|\| r\.image/.test(cv));
+  t('and the data url names the format the bytes actually are', /\/\^\\\/9j\\\/\/\.test\(shot\) \? 'image\/jpeg'/.test(cv));
+  t('browser.content is asked with max_chars, which is its parameter', /browser\.content', \{ url: String\(c\.url\), max_chars: 40000 \}/.test(cv));
+  /* the add bar is STICKY, so with no background the canvas scrolls under the buttons and they become
+     unreadable. "blocks off" is a preference about ITEMS; it cannot be allowed to take the floor out from
+     under a toolbar - and it bit because the server's appearance seed has blocks off for every new device. */
+  t('the add bar keeps a background even with blocks off',
+    !/:host\(\[blocks="off"\]\) \.addbar\{background:transparent\}/.test(cv)
+    && /:host\(\[blocks="off"\]\) \.addbar\{border-bottom-color/.test(cv));
   t('what comes back is written into the item, so the second look is free', /canvas\.update', \{ key, content: Object\.assign\(\{\}, c, \{ text:/.test(cv));
   t('a second press is only the fold, not a second fetch', /if \(c\.text\) \{ this\._srcOpen\[key\] = !this\._srcOpen\[key\]/.test(cv));
   t('a source that would not load says so rather than being tidied away', /c\.failed \? `<span class="vc-src-n bad">did not load<\/span>`/.test(cv));
