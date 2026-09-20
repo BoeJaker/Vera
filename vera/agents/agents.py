@@ -78,6 +78,13 @@ from Vera.vera.capability_orchestration import (
     register_ui,
 )
 
+# Pure context-window sizing (no app import, so tests reach it as
+# vera.agents.chat_ctx_core — see the namespace-package trap in the skill).
+try:
+    from Vera.vera.agents import chat_ctx_core as _chat_ctx
+except Exception:                       # worktree / app-free import
+    from vera.agents import chat_ctx_core as _chat_ctx
+
 # Lazy import helper for DAG execution — avoids circular import at load time
 def _get_dag_runner():
     """Return (plan_dag, _hitl_run_graph_stream, _HITL_PENDING) from orch module."""
@@ -2220,6 +2227,55 @@ async def compact_messages(messages: List[Dict], budget_tokens: int,
     return new_messages, n_compacted
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CHAT CONTEXT WINDOW — sized to the turn, not to the node
+# ─────────────────────────────────────────────────────────────────────────────
+# See vera/agents/chat_ctx_core.py for why this exists. Short version: ollama
+# keys a runner by (model, num_ctx), so asking for a different window than the
+# resident runner evicts it and loads another. Chat used to ask for the node
+# maximum on every turn while ollama_generate fits its window to the prompt, so
+# the two evicted each other on a node whose VRAM fits one runner — the thrash
+# that wedged gpu-250's scheduler on 2026-09-20.
+
+# Room to leave for the reply when sizing a FRESH window. A chat reply is
+# open-ended, so this is deliberately generous: the window only shrinks below
+# the node cap when the turn genuinely doesn't need it, and a resident larger
+# window is reused as-is (never truncated) by stable_chat_num_ctx.
+_CHAT_CTX_RESERVE_OUT = int(os.environ.get("VERA_CHAT_CTX_RESERVE_OUT", "8192") or 8192)
+
+# Bounded hard: this runs inline before the reply, so a slow/unreachable node
+# must cost a couple of seconds at most, never the turn. Everything this probe
+# feeds is an optimisation — on failure we fall back to the previous behaviour.
+_CHAT_PS_TIMEOUT_S = float(os.environ.get("VERA_CHAT_PS_TIMEOUT_S", "3") or 3)
+
+
+async def _resident_num_ctx(url: str, model: str) -> int:
+    """context_length of `model`'s already-loaded runner on `url`, else 0.
+
+    Never raises and never waits long — a failure here just means we size the
+    window from the prompt instead of reusing what is loaded.
+    """
+    if not url or not model:
+        return 0
+    try:
+        async with httpx.AsyncClient(timeout=_CHAT_PS_TIMEOUT_S) as c:
+            r = await c.get(f"{url}/api/ps")
+            if r.status_code != 200:
+                return 0
+            return _chat_ctx.resident_ctx_from_ps(r.json(), model)
+    except Exception as e:
+        log.debug("resident num_ctx probe [%s/%s]: %s", url, model, e)
+        return 0
+
+
+async def _chat_num_ctx(messages: List[Dict], model: str, url: str,
+                        cap: int, reserve: int) -> int:
+    """The num_ctx to request for this chat turn (see chat_ctx_core)."""
+    needed = _estimate_tokens(messages) + max(int(reserve or 0), _CHAT_CTX_RESERVE_OUT)
+    resident = await _resident_num_ctx(url, model)
+    return _chat_ctx.stable_chat_num_ctx(needed=needed, cap=cap, resident=resident)
+
+
 def _now_context_line() -> str:
     """A short, authoritative 'current date/time' line to ground LLM calls.
 
@@ -2375,12 +2431,14 @@ class AgentRunner:
         inst = OLLAMA_INSTANCES.get(chosen, {})
         url  = inst.get("url", "http://192.168.0.246:11435")
 
-        # Effective context window: model's detected max, capped down by the
-        # agent's num_ctx (>0) and OLLAMA_MAX_AUTO_CTX. Compact older turns to fit.
-        ctx_window = await _orch.effective_num_ctx(
+        # Node-safe CEILING (model max, capped by the agent's num_ctx and
+        # OLLAMA_MAX_AUTO_CTX) — then size THIS turn's request inside it, so we
+        # reuse a resident runner instead of evicting it (see chat_ctx_core).
+        _ctx_cap = await _orch.effective_num_ctx(
             model, instance_id=chosen, prefer_gpu=agent.prefer_gpu,
             manual=getattr(agent, "num_ctx", 0))
         _reserve = agent.num_predict if getattr(agent, "num_predict", -1) > 0 else 1024
+        ctx_window = await _chat_num_ctx(messages, model, url, _ctx_cap, _reserve)
         messages, _n_compacted = await compact_messages(messages, ctx_window - _reserve)
 
         body: dict = {
@@ -2541,10 +2599,14 @@ class AgentRunner:
         url  = inst.get("url", "http://192.168.0.246:11435")
 
         # Effective context window + compaction (see compact_messages / run()).
-        ctx_window = await _orch.effective_num_ctx(
+        # `effective_num_ctx` is the node-safe CEILING, not the request: asking
+        # for it on every turn forced an ollama runner reload whenever another
+        # caller had the model loaded at a different window (chat_ctx_core).
+        _ctx_cap = await _orch.effective_num_ctx(
             model, instance_id=chosen, prefer_gpu=agent.prefer_gpu,
             manual=getattr(agent, "num_ctx", 0))
         _reserve = agent.num_predict if getattr(agent, "num_predict", -1) > 0 else 1024
+        ctx_window = await _chat_num_ctx(messages, model, url, _ctx_cap, _reserve)
         _t_compact = time.time()
         messages, _n_compacted = await compact_messages(messages, ctx_window - _reserve)
         _compact_s = time.time() - _t_compact
