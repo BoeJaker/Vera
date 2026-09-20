@@ -169,5 +169,17 @@ const nodesIn = (h) => (h.match(/class="cg-(?:node|mem) /g) || []).length;
   t('the settle is defined and unstaggered', /@keyframes cg-settle/.test(src) && /\.mov[^\n]*animation:cg-settle/.test(src));
 }
 
+// ---- the turns rail reserves a gutter and opens OVER the plot --------------------------------------------------
+{
+  /* It used to open by growing its own flex-basis, which is a reflow: the plot lost 160px the moment the pointer
+     crossed the rail, every node moved, and the drawing jumped under the hand reaching for it - the opposite of
+     what its own comment claimed. The flex item is a fixed gutter now and the column inside it is absolute. */
+  t('the rail is a fixed gutter', /\.cg-frames\{flex:0 0 26px;width:26px;[^}]*position:relative/.test(src));
+  t('it no longer animates its own width in the flow', !/\.cg-frames\{[^}]*transition:[^}]*flex-basis/.test(src));
+  t('the column inside it is absolute', /\.cg-fr-in\{position:absolute;left:0;top:0;bottom:0;width:26px/.test(src));
+  t('and opening widens THAT, not the flex item', /\.cg-frames:hover \.cg-fr-in,[^{]*\.cg-frames\.wide \.cg-fr-in\{width:190px/.test(src));
+  t('the markup wraps the rail parts in it', /'<div class="cg-fr-in"><div class="cg-fr-hd">/.test(src) && /\+ '<\/div><\/div>'; \}/.test(src));
+}
+
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
