@@ -255,7 +255,7 @@
     // gap by their own LANE, so no two legs of different runs ever share a length.
     // the board's single-turn iso (`turn` beside `stacked`): only the selected turn's floor; otherwise every turn, a floor each (Stack overrides Turn)
     const SOLO = !!o.solo && !o.stack && turns.length > 1; if (SOLO) { turns = [turns[sel]]; sel = 0; }
-    const STK = turns.length > 1;
+    const STK = !!o.stack && turns.length > 1, ALL = !STK && turns.length > 1;   // Stack: floors in z; All: every floor on the one plane, one behind the other along v
     const TILT = o.tilt == null ? (STK ? 12 : 30) : Math.max(12, Math.min(60, +o.tilt)), AZIM = o.azim == null ? 45 : Math.max(25, Math.min(65, +o.azim));   // a stack starts flatter, so its floors read as floors (the board)
     const P = o.proj || isoP(TILT, AZIM);   // the classic isometric the whole design draws with, unless the view was tilted or swung
     const WSZ = o.wsz === 's' || o.wsz === 'l' ? o.wsz : 'm';
@@ -266,7 +266,7 @@
     const FW = { s: 60, m: 78, l: 108 }[WSZ], FH = Math.round(FW * 0.56);
     const isWidget = isWidgetCard;
     const GU = UXS * KI, GV = KI;   // a station unit and an entity unit, in ground px
-    const proj = (U, V, z) => { const p = P(U, V, z || 0); return { x: p[0], y: p[1] }; };
+    const proj0 = (U, V, z) => { const p = P(U, V, z || 0); return { x: p[0], y: p[1] }; }; const proj = proj0;
     const ESTL = { key: 'estate', name: 'estate', sub: 'where it ran', col: 'var(--xp-dv3)', kind: 'nodes' }, ACTL = { key: 'activity', name: 'activity', sub: 'what ran', col: 'var(--xp-ac2)', kind: 'acts' };
     const STA = LAYERS.concat(ACT ? [ACTL] : [], EST ? [ESTL] : []);
     const graphs = turns.map(gData), actsL = turns.map((t) => ACT ? actsOf(t) : []), estsL = turns.map((t) => EST ? estOf(t) : []);
@@ -284,10 +284,12 @@
     const ZH = (() => { const c = [proj(fU0 * GU, fV0 * GV, 0), proj(fU1 * GU, fV0 * GV, 0), proj(fU1 * GU, fV1 * GV, 0), proj(fU0 * GU, fV1 * GV, 0)]; const ys = c.map((q) => q.y); const perZ = Math.max(0.05, (proj(0, 0, 0).y - proj(0, 0, 100).y) / 100); return Math.round((Math.max.apply(null, ys) - Math.min.apply(null, ys) + CH + 60) / perZ); })();
     const pts = []; const pinsG = {};
     const pin = (U, V, z, r) => ({ U, V, z: z || 0, r: r || 0 });
+    const FD = (fV1 - fV0 + 0.5) * GV;   // a floor's depth along v, plus the gap to the next (All)
     turns.forEach((t, si) => {
-      const z = STK ? (turns.length - 1 - si) * ZH : 0, G = pinsG[t.mid] = {}; const g = graphs[si];
+      const z = STK ? (turns.length - 1 - si) * ZH : 0, VOFF = ALL ? si * FD : 0, G = pinsG[t.mid] = {}; const g = graphs[si];
+      const proj = (U, V, zz) => proj0(U, V + VOFF, zz);   // this floor's place on the plane
       const fc = [proj(fU0 * GU, fV0 * GV, z), proj(fU1 * GU, fV0 * GV, z), proj(fU1 * GU, fV1 * GV, z), proj(fU0 * GU, fV1 * GV, z)]; fc.forEach((c) => pts.push(c));
-      out.plates.push({ si, mid: t.mid, cls: si === sel ? 'on' : '', poly: fc.map((c) => ({ x: c.x, y: c.y })), z, u0: fU0 * GU, pw: (fU1 - fU0) * GU, ph: (fV1 - fV0) * GV });
+      out.plates.push({ si, mid: t.mid, cls: si === sel ? 'on' : '', poly: fc.map((c) => ({ x: c.x, y: c.y })), z, u0: fU0 * GU, pw: (fU1 - fU0) * GU, ph: (fV1 - fV0) * GV, voff: VOFF });
       const lb = proj((uA(0) + 0.04) * GU, (vA - 0.5) * GV, z); out.labels.push({ si, x: lb.x, y: lb.y, n: (t.who || 'you') + ' · ' + (t.t || ''), k: String(t.text || '').slice(0, 40), cls: 'station' + (si === sel ? ' on' : ''), col: 'var(--xp-t2)', mid: t.mid });
       STA.forEach((L, i) => {
         const U0 = uA(i) * GU, U1 = uB(i) * GU, V0 = vA * GV, V1 = vB * GV;
@@ -311,7 +313,7 @@
           lanes.forEach((lane, k) => { const M = shown.filter((n) => n.lane === lane).sort((a, b) => b.score - a.score), n = M.length; const lp = proj((uA(0) - 0.46) * GU, vSec(k) * GV, z);
             out.labels.push({ si, x: lp.x, y: lp.y - 7, n: lane, k: String(g.nodes.filter((x) => x.lane === lane).length), cls: 'layer sm lane', col: M[0].col || L.col });
             M.forEach((nd, mi) => { const rel = Math.max(0, Math.min(1, nd.score)); const gi = shown.indexOf(nd); const du = (Math.min(0.56, (1 - rel) * 1.5) + gi * 0.012) * (mi % 2 ? 1 : -1), dv = n > 1 ? (mi - (n - 1) / 2) * Math.min(0.36, 1.1 / (n - 1)) : 0;
-              const U = (uC(0) + du) * GU, V = (vSec(k) + dv) * GV, p = proj(U, V, z); pts.push(p); const d = Math.round(19 + rel * 9); G['node:' + nd.id] = pin(U, V, z, d / 2);
+              const U = (uC(0) + du) * GU, V = (vSec(k) + dv) * GV, p = proj(U, V, z); pts.push(p); const d = Math.round(19 + rel * 9); G['node:' + nd.id] = pin(U, V + VOFF, z, d / 2);
               out.gnodes.push({ id: t.mid + ':graph:' + nd.id, nid: nd.id, mid: t.mid, si, x: p.x, y: p.y, d, col: nd.col || L.col, icon: ICON_OF(nd.kind, nd.lane), label: nd.label, lane: nd.lane, kind: nd.kind, score: rel, ghost: nd.included === false, lit: rel > 0.82, op: +(0.45 + rel * 0.55).toFixed(2) }); }); });
           if (more > 0) { const mp = proj(U1 - 20, V1 - 30, z); out.labels.push({ si, x: mp.x, y: mp.y, n: '+' + more + ' more', k: 'in the context', cls: 'layer sm more', col: L.col, mid: t.mid }); }
           // the context galaxy, an iso sheet lying on the floor past the plate — an option (the Context menu's own widget)
@@ -321,12 +323,12 @@
           // the ACTIVITY as a graph of what ran: the calls down the plate in time order (eight to a column), a child a step
           // to the right of its parent — the tree reads across the plate, the sequence down it
           const tree = actTree(acts, 8); const N = acts.length, per = 8, pitch = N > 1 ? Math.min(0.9, (VSPAN - 0.6) / (Math.min(per, N) - 1)) : 0;
-          acts.forEach((a, ai) => { const col = Math.floor(ai / per), row = ai % per; const rowsIn = Math.min(per, N - col * per); const U = (uC(i, col) - 0.22 + Math.min(2, tree.depth[ai]) * 0.22) * GU, V = (row * pitch + (VSPAN - (rowsIn - 1) * pitch) / 2) * GV; const p = proj(U, V, z); pts.push(p); G['act:' + ai] = pin(U, V, z, 11);
+          acts.forEach((a, ai) => { const col = Math.floor(ai / per), row = ai % per; const rowsIn = Math.min(per, N - col * per); const U = (uC(i, col) - 0.22 + Math.min(2, tree.depth[ai]) * 0.22) * GU, V = (row * pitch + (VSPAN - (rowsIn - 1) * pitch) / 2) * GV; const p = proj(U, V, z); pts.push(p); G['act:' + ai] = pin(U, V + VOFF, z, 11);
             out.anodes.push({ id: t.mid + ':act:' + ai, mid: t.mid, si, x: p.x, y: p.y, d: 22, col: actCol(a), icon: ICON.cap, label: a.n || a.cap || 'call', meta: actMeta(a), status: String(a.status || ''), lane: 'activity', depth: tree.depth[ai] }); });
           return; }
         if (L.kind === 'nodes') {
           const N = ests.length, per = RPC, pitch = N > 1 ? Math.min(1, (VSPAN - 0.6) / (Math.min(per, N) - 1)) : 0;
-          ests.forEach((e, ei) => { const col = Math.floor(ei / per), row = ei % per; const rowsIn = Math.min(per, N - col * per); const U = uC(i, col) * GU, V = (row * pitch + (VSPAN - (rowsIn - 1) * pitch) / 2) * GV; const p = proj(U, V, z); pts.push(p); G['est:' + ei] = pin(U, V, z, 12);
+          ests.forEach((e, ei) => { const col = Math.floor(ei / per), row = ei % per; const rowsIn = Math.min(per, N - col * per); const U = uC(i, col) * GU, V = (row * pitch + (VSPAN - (rowsIn - 1) * pitch) / 2) * GV; const p = proj(U, V, z); pts.push(p); G['est:' + ei] = pin(U, V + VOFF, z, 12);
             out.enodes.push({ id: t.mid + ':est:' + ei, mid: t.mid, si, x: p.x, y: p.y, d: 24, col: estCol(e), icon: ICON_OF(e.kind, 'estate'), label: e.label || e.id, meta: e.detail || e.kind || '', status: String(e.status || ''), lane: 'estate' }); });
           return; }
         // the items: down the rows first (centred in the span), then a column to the right; a canvas item dropped
@@ -336,7 +338,7 @@
         shown.forEach((c, ci) => { const at = L.key === 'land' && c.at && c.at.iso; let U, V;
           if (at && isFinite(+at.u)) { U = U0 + Math.max(40, Math.min(U1 - U0 - 40, +at.u)); V = V0 + Math.max(60, Math.min(V1 - V0 - 40, +at.v)); }
           else { const cj = Math.floor(flow / RPB), rj = flow % RPB, rowsIn = Math.min(RPB, shown.length - cj * RPB), pitch = RPB > VSPAN + 1 ? VSPAN / (RPB - 1) : 1; flow++; U = uC(i, cj) * GU; V = (rj * pitch + (VSPAN - (rowsIn - 1) * pitch) / 2) * GV; }
-          const p = proj(U, V, z); pts.push(p); const wd = widgetOf(c), id = t.mid + ':' + L.key + ':' + ci, grp = isWidget(c); G[L.key + ':' + ci] = pin(U, V, z);
+          const p = proj(U, V, z); pts.push(p); const wd = widgetOf(c), id = t.mid + ':' + L.key + ':' + ci, grp = isWidget(c); G[L.key + ':' + ci] = pin(U, V + VOFF, z);
           out.widgets.push({ id, mid: t.mid, si, layer: L.key, ci, x: p.x, y: p.y, w: FW, h: FH, cw: CW, ch: CH, stem: RAISE, card: c, col: c.col || L.col, form: wd.form, data: wd.data, placed: !!c.tpl, sample: !!wd.sample, draw: grp ? 'group' : 'card', value: grp ? valueOf(wd) : '', tight: STK, drag: L.key === 'land' && grp, key: c.key || '' });
           out.cards.push({ id, mid: t.mid, si, layer: L.key, ci, x: p.x, y: p.y, w: CW, h: CH, card: c, col: c.col || L.col, anchored: true, iw: true }); });
       });
@@ -344,10 +346,11 @@
     // fit the scene into the frame: scale and shift. The items counter-scale by the FIT alone (1:1 text when fitted,
     // capped as the board's embed caps it) — the pan zoom then grows and shrinks them with the scene
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; pts.forEach((p) => { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); });
-    const s = Math.max(0.2, Math.min(1.4, Math.min((W - 80) / Math.max(1, x1 - x0 + 200), (H - 120) / Math.max(1, y1 - y0 + 140))));   // a busy turn is wide (a column per six items, seven stations): it still fits, down to a fifth
+    const s = Math.max(turns.length > 1 ? 0.2 : 0.45, Math.min(1.4, Math.min((W - 80) / Math.max(1, x1 - x0 + 200), (H - 120) / Math.max(1, y1 - y0 + 140))));   // one floor stays near the board's own scale (the view pans past the frame); several floors fit it, down to a fifth
     const dx = W / 2 - s * (x0 + x1) / 2, dy = H / 2 - s * (y0 + y1) / 2 + 20;
     out.fit = { s: +s.toFixed(3), x: px(dx), y: px(dy) }; out.ground = { s, dx, dy, tilt: TILT, azim: AZIM, custom: !!o.proj };   // the drop's way back from a screen point to the ground
     out.inv = +(s * Math.min(1.2, 1 / Math.min(1, s))).toFixed(3);   /* the items follow the fit, grown no more than 1.2x against a small scene: a station's pitch always clears a card */
+    const NK = Math.max(1, 0.75 / out.inv); out.gnodes.forEach((n) => { n.d = Math.round(n.d * NK); const pn = (pinsG[n.mid] || {})['node:' + n.nid]; if (pn) pn.r = n.d / 2; });
     const T = (p) => ({ x: px(p.x * s + dx), y: px(p.y * s + dy) });
     out.plates.forEach((pl) => { pl.poly = pl.poly.map(T); });
     out.bands.forEach((b) => { b.poly = b.poly.map(T); });
@@ -364,9 +367,9 @@
     const kept = out.edges.filter((e) => e.raw).map((e) => { const a = T({ x: e.x, y: e.y }); return Object.assign({}, e, { x: a.x, y: a.y, len: px(e.len * s), raw: undefined }); });
     out.edges = kept; out.runs = 0;
     // ── the runs: the board's ISO.route on the ground, projected through P and the fit ────────────────────────────
-    const at = (U, V, z) => { const p = proj(U, V, z); return { x: p.x * s + dx, y: p.y * s + dy }; };   // unrounded: a short leg keeps its exact direction
+    const at = (U, V, z) => { const p = proj0(U, V, z); return { x: p.x * s + dx, y: p.y * s + dy }; };   // unrounded: a short leg keeps its exact direction (the pins already carry their floor's place)
     const stationOf = (U) => { let best = 0; STA.forEach((L, i) => { if (U >= uA(i) * GU - 1) best = i; }); return best; };
-    const LANE = 18, PORT = 12, STEP = 27, VO = (VSPAN + 0.9) * GV;   // a lane's pitch, a port's pitch, and a step aside that never lands on a port line (27 is no multiple of 6)   // a lane's pitch in the gap, a port's pitch at a pin, the far end a round-about run travels past
+    const SK = 1 / (s * 0.75), LANE = 13 * SK, PORT = 6 * SK, STEP = 21 * SK, VO = (VSPAN + 0.9) * GV;   // a lane's pitch (13 px on screen), a port's (6), a step aside (21), whatever the fit   // a lane's pitch in the gap, a port's pitch at a pin, the far end a round-about run travels past
     let rid = 0;
     turns.forEach((t, si) => { const G = pinsG[t.mid] || {}; const gp = (k) => G[k] || null; const runs = [];
       const add = (A, B, col, cls, title, joins, opt) => { if (!A || !B) return; runs.push(Object.assign({ A, B, col, cls, title, joins, id: ++rid }, opt || {})); };
@@ -390,13 +393,27 @@
       Object.keys(byPin).forEach((k) => { const Q = byPin[k]; Q.sort((p, q) => { const fa = p[1] === 'a' ? p[0].B : p[0].A, fb = q[1] === 'a' ? q[0].B : q[0].A; return (fa.V - fb.V) || (fa.U - fb.U); }); const n = Q.length; Q.forEach(([r, end], j) => { r[end === 'a' ? 'pa' : 'pb'] = (j - (n - 1) / 2) * PORT; r[end === 'a' ? 'fa' : 'fb'] = (n - 1) / 2 * PORT; }); });   /* and how wide the fan is: a step aside starts past it */
       const byGap = {}; runs.forEach((r) => { const sa = stationOf(r.A.U), sb = stationOf(r.B.U); r.sa = sa; r.sb = sb; r.same = sa === sb; r.around = sb < sa || sb - sa > 1; const key = r.same ? 's' + sa : r.around ? 'o' : 'g' + Math.min(sa, sb); (byGap[key] = byGap[key] || []).push(r); });
       Object.keys(byGap).forEach((k) => { const Q = byGap[k]; Q.sort((p, q) => (p.B.V - q.B.V) || (p.A.V - q.A.V)); const n = Q.length; Q.forEach((r, j) => { r.off = (k === 'o' || k[0] === 's') ? j * LANE : (j - (n - 1) / 2) * LANE; }); });   /* a round-about run and a run within one station take their own lane outward, never a mirrored one */
-      runs.forEach((r) => { const A = r.A, B = r.B, pa = r.pa || 0, pb = r.pb || 0, off = r.off || 0; let W_;
-        if (r.direct && Math.abs(A.U - B.U) < 0.5) W_ = [[A.U, A.V], [B.U, B.V]];   // a step to the next call in the column: one leg along v
-        else if (r.around) { const vo = VO + off, ouA = (r.fa || 0) + STEP + off, ouB = (r.fb || 0) + STEP + off; W_ = [[A.U + pa, A.V], [A.U + pa, A.V + pa], [A.U + pa + ouA, A.V + pa], [A.U + pa + ouA, vo], [B.U + pb + ouB, vo], [B.U + pb + ouB, B.V + pb], [B.U + pb, B.V + pb], [B.U + pb, B.V]]; }   // round the far end: along v past the plates, along u, back along v
-        else { let um; if (r.same) { const lo = uA(r.sa) * GU + 8, hi = uB(r.sa) * GU - 8;   // within one station: between the two (the board), or beside them when they stand in one column — inside the plate, never in a gap's lanes
-            const st = Math.max(r.fa || 0, r.fb || 0) + STEP; um = Math.abs(A.U - B.U) >= 2 * st ? (A.U + B.U) / 2 + off - 15 : Math.max(A.U, B.U) + st + off; if (um > hi) um = Math.min(A.U, B.U) - st - off; um = Math.max(lo, Math.min(hi, um)); }
-          else um = (uB(r.sa) * GU + uA(r.sb) * GU) / 2 + off;   // the gap between the two stations
-          W_ = [[A.U + pa, A.V], [A.U + pa, A.V + pa], [um, A.V + pa], [um, B.V + pb], [B.U + pb, B.V + pb], [B.U + pb, B.V]]; }
+      if (o.debug) (out.runsDbg = out.runsDbg || []).push.apply(out.runsDbg, runs.map((r) => ({ cls: r.cls, title: r.title, A: [r.A.U, r.A.V], B: [r.B.U, r.B.V], pa: r.pa, pb: r.pb, off: r.off, sa: r.sa, sb: r.sb, around: r.around, same: r.same })));
+      // every leg registers the line it occupies (a level line at one v, a plumb line at one u, per floor); a run that
+      // would share a line with an earlier run nudges its ports and its lane and routes again — ports and lanes fall on
+      // a grid, and two pins a row apart can put a port line of one on the row line of the other
+      const occ = {}; const TOL = 2.5 * SK, MIN = 3 * SK;
+      const legsOf = (Wp) => { const L = []; for (let n = 0; n < Wp.length - 1; n++) { const p = Wp[n], q = Wp[n + 1]; if (Math.abs(p[0] - q[0]) < 1e-6 && Math.abs(p[1] - q[1]) < 1e-6) continue;
+        if (Math.abs(p[0] - q[0]) < 1e-6) L.push({ k: 'v', c: p[0], a: Math.min(p[1], q[1]), b: Math.max(p[1], q[1]) }); else if (Math.abs(p[1] - q[1]) < 1e-6) L.push({ k: 'h', c: p[1], a: Math.min(p[0], q[0]), b: Math.max(p[0], q[0]) }); } return L; };
+      const clash = (L, z) => { const O = occ[z]; if (!O) return false; return L.some((l) => O[l.k].some((m) => Math.abs(m.c - l.c) < TOL && Math.min(m.b, l.b) - Math.max(m.a, l.a) > MIN)); };
+      const take = (L, z) => { const O = occ[z] = occ[z] || { h: [], v: [] }; L.forEach((l) => O[l.k].push(l)); };
+      runs.forEach((r) => { const A = r.A, B = r.B;
+        const build = (pa, pb, off) => { let W_;
+          if (r.direct && Math.abs(A.U - B.U) < 0.5) W_ = [[A.U, A.V], [B.U, B.V]];   // a step to the next call in the column: one leg along v
+          else if (r.around) { const vo = VO + off, ouA = (r.fa || 0) + STEP + off, ouB = (r.fb || 0) + STEP + off; W_ = [[A.U + pa, A.V], [A.U + pa, A.V + pa], [A.U + pa + ouA, A.V + pa], [A.U + pa + ouA, vo], [B.U + pb + ouB, vo], [B.U + pb + ouB, B.V + pb], [B.U + pb, B.V + pb], [B.U + pb, B.V]]; }   // round the far end
+          else { let um; if (r.same) { const lo = uA(r.sa) * GU + 8, hi = uB(r.sa) * GU - 8;   // within one station: between the two (the board), or beside them when they stand in one column — inside the plate, never in a gap's lanes
+              const st = Math.max(r.fa || 0, r.fb || 0) + STEP; um = Math.abs(A.U - B.U) >= 2 * st ? (A.U + B.U) / 2 + off - 15 : Math.max(A.U, B.U) + st + off; if (um > hi) um = Math.min(A.U, B.U) - st - off; um = Math.max(lo, Math.min(hi, um)); }
+            else um = (uB(r.sa) * GU + uA(r.sb) * GU) / 2 + off;   // the gap between the two stations
+            W_ = [[A.U + pa, A.V], [A.U + pa, A.V + pa], [um, A.V + pa], [um, B.V + pb], [B.U + pb, B.V + pb], [B.U + pb, B.V]]; }
+          return W_; };
+        let pa = r.pa || 0, pb = r.pb || 0, off = r.off || 0, W_ = build(pa, pb, off), L = legsOf(W_);
+        for (let k = 0; k < 8 && clash(L, A.z); k++) { const d = (k % 2 ? -1 : 1) * Math.ceil((k + 1) / 2) * 0.41 * PORT; W_ = build(pa + d, pb + d, off + d); L = legsOf(W_); }
+        take(L, A.z);
         const Pp = W_.map((q) => at(q[0], q[1], A.z)); out.runs++;
         // the ends: a node is met at its rim, not its centre (the last leg shortened along itself)
         const trim = (p, q, rr) => { const d = Math.hypot(q.x - p.x, q.y - p.y); if (!rr || d < 1) return p; const k = Math.min(0.9, rr * out.inv / d); return { x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k }; };
@@ -790,8 +807,8 @@ vera-exploded .xp-lb{position:absolute;font-size:10px;letter-spacing:.12em;text-
 vera-exploded .xp-lb b{font-family:var(--xp-mono);font-size:9.5px;letter-spacing:0;font-weight:400;text-transform:none;color:var(--xp-t3);max-width:320px;overflow:hidden;text-overflow:ellipsis}
 vera-exploded .xp-lb.station{font-size:11px;color:var(--xp-t2);pointer-events:auto;cursor:pointer}vera-exploded .xp-lb.station.on{color:var(--xp-t1)}vera-exploded .xp-lb.station:hover{text-decoration:underline;text-underline-offset:3px}
 vera-exploded .xp-lb.sm{font-size:8.5px}
-vera-exploded .xp-e{position:absolute;height:2px;transform-origin:0 50%;z-index:6;pointer-events:none;border-radius:2px;background:var(--ec);opacity:.75;box-shadow:0 0 7px -2px var(--ec)}
-vera-exploded .xp-e.mem,vera-exploded .xp-e.pin,vera-exploded .xp-e.dash{height:0;border-top:2px dashed var(--ec);background:none;box-shadow:none}
+vera-exploded .xp-e{position:absolute;height:1.5px;transform-origin:0 50%;z-index:6;pointer-events:none;border-radius:1px;background:var(--ec);opacity:.6}
+vera-exploded .xp-e.mem,vera-exploded .xp-e.pin,vera-exploded .xp-e.dash{height:0;border-top:1.5px dashed var(--ec);background:none;box-shadow:none}
 /* The relation edges answer to the tier (defect 83): Full draws every one of them, as it always did; Hover and Zen
    rest them and light the ones touching whatever the pointer is on. data-rels="off" puts them away in every tier -
    the header's third switch, beside Context -> chat and Chat <-> canvas. Only the RELATIONS answer to this: the runs
@@ -990,7 +1007,7 @@ vera-exploded .xp-band.gen{background:color-mix(in srgb,var(--xp-ac2) 12%,transp
    host, a container or a service; their runs carry their own kind so the key can name them */
 vera-exploded .xnd.act{border-radius:5px}vera-exploded .xnd.est{border-radius:4px;box-shadow:inset 0 0 0 1.4px var(--nc),0 0 0 2px color-mix(in srgb,var(--nc) 14%,transparent)}
 vera-exploded .xnd.act.run{animation:xp-breathe 1.6s ease-in-out infinite}
-vera-exploded .xp-e.act{opacity:.7}vera-exploded .xp-e.est{opacity:.7}vera-exploded .xp-e.link.dash{height:0;border-top:2px dashed var(--ec);background:none;box-shadow:none}
+vera-exploded .xp-e.act{opacity:.7}vera-exploded .xp-e.est{opacity:.7}vera-exploded .xp-e.link.dash{height:0;border-top:1.5px dashed var(--ec);background:none;box-shadow:none}
 vera-exploded .xp-band.estate{background:color-mix(in srgb,var(--bc) 5%,transparent)}
 /* a widget is picked up: it follows the pointer, the plate it can be dropped on lights, the item it would go before lifts a ring */
 vera-exploded [data-drag]{cursor:grab}vera-exploded .xp-lift{cursor:grabbing!important;z-index:60!important;opacity:.92;transition:none!important;pointer-events:none}
