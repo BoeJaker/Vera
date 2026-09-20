@@ -6027,7 +6027,14 @@ IMPORTANT:
     const later=(what)=>({ok:false,outcome:'unsupported',note:what+' — lands with a later slice'});
     switch(name){
       case 'ui.ask': _uiAskChip(a.row||{}); return done('the ask chip is on the message');
-      case 'panel.open': { const ok=await panelOpen(String(a.id||''), who); return ok?done('opened beside the chat'):{ok:false,outcome:'failed',note:'no panel '+a.id}; }
+      /* A PANEL OPENED IS A PANEL ON THE CANVAS TOO. "Open the calendar" opened a page beside the chat and the
+         canvas never heard about it - so the working area had no idea what the user was working in, and the panel
+         could not be kept, parked, recalled or arranged beside the things it relates to. It lands as an item as
+         well, keyed by the panel, which the resolver turns into a show rather than a second copy when it is
+         already there. The page beside the chat still opens: this adds the canvas, it does not replace anything. */
+      case 'panel.open': { const ok=await panelOpen(String(a.id||''), who);
+        if(ok) try{ _cvLandPanel(String(a.id||''), a.title||a.label||'', _cvRelMid||''); }catch(_){}
+        return ok?done('opened beside the chat'):{ok:false,outcome:'failed',note:'no panel '+a.id}; }
       case 'panel.close': {
         if(!a.id||a.id===_activePanelId){ panelClose(); return done('closed beside the chat'); }
         if(window.parent&&window.parent!==window){ try{ window.parent.postMessage({type:'vera:lhm:close', id:a.id}, '*'); }catch(_){} return done('asked the harness to close its tab'); }
@@ -6261,6 +6268,17 @@ IMPORTANT:
       anchor:mid?{ mid, turn:mid }:undefined }); }catch(_){}
   }
   document.addEventListener('vera:research:source', ev=>{ try{ _cvLandSource(ev.detail||{}); }catch(_){} });
+
+  /* A PANEL ON THE CANVAS. The canvas already draws one - live in its frame, with query and dispatch over the
+     bridge - and nothing ever put one there; the block type existed and had no way in. Keyed by the panel, so
+     opening the calendar twice keeps one item and brings it back rather than stacking copies. */
+  async function _cvLandPanel(id, title, mid){
+    if(!SID||!id) return 0;
+    try{ const r=await _capCall('canvas.add',{ session_id:SID, kind:'panel', key:'panel:'+id, at:'now', size:'l',
+      content:{ panel:id, title:String(title||id) },
+      anchor:mid?{ mid, turn:mid }:undefined });
+      return (r&&r.ok)?1:0; }catch(_){ return 0; }
+  }
 
   /* AN EVENT WRITTEN PUTS THE MONTH ON THE CANVAS. cal.event.upsert answers with the one event it wrote, which
      on its own is a receipt - the useful thing is the month it landed in, so the diary is re-read for that month

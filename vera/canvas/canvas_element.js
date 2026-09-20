@@ -247,11 +247,21 @@
       // in the column's live layer over this slot — never re-created by a render
       if (rec && form && key && typeof customElements !== 'undefined' && customElements.get('vera-widget')) {
         const src = typeof rec.source === 'string' ? rec.source : ((rec.source && (rec.source.origin || rec.source.from)) || (rec.reads && rec.reads.cap) || '');
-        return `<div class="vc-wid" data-w="canvas.widget"><div class="vc-live" data-live="widget" data-key="${esc(key)}" data-size="${esc(size || (rec.draw && rec.draw.size) || 'm')}"><span class="vc-dim">${esc(form)}…</span></div><div class="vc-cap mono">${esc(form)}${src ? ' · ' + esc(src) : ' · sample'}</div></div>`;
+        /* A WIDGET IS DRIVABLE, the way a panel is. A panel item has had query and dispatch over the bridge all
+           along; a widget was a picture of a capability's answer at the moment it landed, and a working area
+           made of stale pictures is a scrapbook. Its record says which cap it reads and with what, so it can
+           read it again - and the answer is written into the item, so the refresh survives a reload the way the
+           source's page body and the calendar's month do. The button appears only when there IS a source: a
+           widget drawn from inline data has nothing to go back to. */
+        const rcap = (rec.reads && rec.reads.cap) ? String(rec.reads.cap) : '';
+        return `<div class="vc-wid" data-w="canvas.widget"><div class="vc-live" data-live="widget" data-key="${esc(key)}" data-size="${esc(size || (rec.draw && rec.draw.size) || 'm')}"><span class="vc-dim">${esc(form)}…</span></div><div class="vc-cap mono">${esc(form)}${src ? ' · ' + esc(src) : ' · sample'}${rcap ? `<button class="vc-wid-b" data-wid-act="refresh" data-wid-key="${esc(key)}" title="Read ${esc(rcap)} again and redraw">refresh</button>` : ''}</div></div>`;
       }
-      if (rec && window.VeraWidget && typeof window.VeraWidget.draw === 'function') {
+      /* `root` rather than a bare `window`: the module is loaded as a script in the page AND required directly by
+         the tests, and the branch above already guards `typeof customElements` for the same reason. A bare window
+         here made the widget path the one drawing that could not be tested at all. */
+      if (rec && root.VeraWidget && typeof root.VeraWidget.draw === 'function') {
         try {
-          const out = window.VeraWidget.draw(form, rec.data, size || (rec.draw && rec.draw.size) || 'm');
+          const out = root.VeraWidget.draw(form, rec.data, size || (rec.draw && rec.draw.size) || 'm');
           if (out != null) return typeof out === 'string' ? out : (out.outerHTML || '');
         } catch (e) { /* fall through to the record card */ }
       }
@@ -528,6 +538,9 @@
   .vc-cal-n{font-size:10.5px;color:var(--fg,#ddd);border-left:2px solid var(--acc,#5a9e8f);padding-left:6px}
   .vc-cal-n em{font-style:normal;font-size:9px;color:var(--dim2,#8a7e70)}
   .vc-cal-none{font-size:10px;color:var(--dim2,#8a7e70);font-style:italic}
+  .vc-wid-b{font:inherit;font-size:8.5px;height:16px;padding:0 7px;margin-left:6px;border:1px solid var(--border,#3a3530);
+    border-radius:8px;background:var(--bg2,#272421);color:var(--dim2,#8a7e70);cursor:pointer;vertical-align:middle}
+  .vc-wid-b:hover{color:var(--fg,#ddd);border-color:var(--acc,#5a9e8f)}
   /* the axis is the left rule; the year stands on it, the events hang off it */
   .vc-tl{display:flex;flex-direction:column;gap:1px;position:relative;padding-left:2px}
   .vc-tl-h{font-size:11px;font-weight:600;color:var(--fg,#ddd);margin-bottom:5px}
@@ -1251,6 +1264,8 @@
         const sa = t.closest('[data-src-act]');
         if (sa && body.contains(sa)) { ev.stopPropagation(); this._srcAct(sa.dataset.srcKey, sa.dataset.srcAct); return; }
         // the calendar's month buttons and its days
+        const wa = t.closest('[data-wid-act]');
+        if (wa && body.contains(wa)) { ev.stopPropagation(); this._widAct(wa.dataset.widKey, wa.dataset.widAct); return; }
         const cm = t.closest('[data-cal-mv]');
         if (cm && body.contains(cm)) { ev.stopPropagation(); this._calAct(cm.dataset.calKey, cm.dataset.calMv); return; }
         const cd = t.closest('[data-cal-day]');
@@ -1568,6 +1583,22 @@
       // a day: local only, the month's events are already here
       const day = String(act || '');
       const next = Object.assign({}, c, { selected: c.selected === day ? '' : day });
+      return this.call('canvas.update', { key, content: next });
+    }
+    /* a widget, read again. Its record says which capability it draws and with what arguments - the same pair the
+       chat used when it placed it - so this is that cap called once more and the answer put back in the item. */
+    async _widAct(key, act) {
+      if (act !== 'refresh') return;
+      const b = this._blockOf(key); const c = (b && b.content) || null; if (!c) return;
+      const rec = (c.draw || c.form) ? c : (c.record || null); if (!rec) return;
+      const cap = (rec.reads && rec.reads.cap) ? String(rec.reads.cap) : ''; if (!cap) return;
+      const args = (rec.reads && rec.reads.args && typeof rec.reads.args === 'object') ? rec.reads.args : {};
+      this._readout(key, '\u2026 ' + cap);
+      const r = await this.callResult(cap, args);
+      if (!r || r.ok === false) return this._readout(key, (r && r.error) || 'nothing came back');
+      const next = Object.assign({}, c);
+      if (next.draw || next.form) next.data = r;
+      else { next.record = Object.assign({}, next.record); next.record.data = r; }
       return this.call('canvas.update', { key, content: next });
     }
     _sid() { return String((this._doc && this._doc.session) || this.getAttribute('session-id') || ''); }
