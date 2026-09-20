@@ -262,7 +262,8 @@
     const ACT = !!(o.layers && o.layers.activity), EST = !!(o.layers && o.layers.estate), GAL = o.galaxy !== false;
     out.solo = SOLO; out.tilt = TILT; out.azim = AZIM; out.anodes = []; out.enodes = []; out.bands = []; out.widgets = []; out.stack = STK; out.wsz = WSZ;
     const KI = STK ? 340 : 300, UXS = 1.5, VSPAN = STK ? 5 : den === 'full' ? 6 : 5;   // the board's ground: 300 px a unit, the stations 1.5 units apart   // px per ground unit; the u axis stretched so neighbouring cards never meet; the plates' depth
-    const CW = STK ? 172 : 206, CH = STK ? 47 : 58, RAISE = STK ? 10 : 14, RPC = 6, DU = 1.34, MAXC = 4, CAP = RPC * MAXC, CAPG = 12;
+    const CW = STK ? 172 : 206, CH = STK ? 47 : 58, RAISE = STK ? 10 : 14, RPC = 6, DU = 1.34, MAXC = 4, MAXCL = 6, CAP = RPC * MAXC, CAPL = RPC * MAXCL, CAPG = 12;
+    const LANDC = Math.max(1, Math.min(MAXCL, Math.round(+o.landCols) || 1));   // the session canvas plate grows out along u — to six columns on its own, or widened by hand
     const FW = { s: 60, m: 78, l: 108 }[WSZ], FH = Math.round(FW * 0.56);
     const isWidget = isWidgetCard;
     const GU = UXS * KI, GV = KI;   // a station unit and an entity unit, in ground px
@@ -270,10 +271,10 @@
     const ESTL = { key: 'estate', name: 'estate', sub: 'where it ran', col: 'var(--xp-dv3)', kind: 'nodes' }, ACTL = { key: 'activity', name: 'activity', sub: 'what ran', col: 'var(--xp-ac2)', kind: 'acts' };
     const STA = LAYERS.concat(ACT ? [ACTL] : [], EST ? [ESTL] : []);
     const graphs = turns.map(gData), actsL = turns.map((t) => ACT ? actsOf(t) : []), estsL = turns.map((t) => EST ? estOf(t) : []);
-    const colsOf = (n) => Math.max(1, Math.min(MAXC, Math.ceil(n / RPC)));
+    const colsOf = (n, mx) => Math.max(1, Math.min(mx || MAXC, Math.ceil(n / RPC)));
     // every station is as wide as its fullest turn needs (a column per six items past the first), so the stations line up
     // across the floors; the context plate is the wide one (relevance spreads across it)
-    const colsAt = STA.map((L) => Math.max.apply(null, turns.map((t, si) => L.kind === 'graph' ? 1 : L.kind === 'acts' ? Math.max(1, Math.min(MAXC, Math.ceil(actsL[si].length / 8))) : L.kind === 'nodes' ? colsOf(estsL[si].length) : colsOf(Math.min(CAP, cardsOf(t, L.key).length))).concat([1])));
+    const colsAt = STA.map((L) => Math.max.apply(null, turns.map((t, si) => L.kind === 'graph' ? 1 : L.kind === 'acts' ? colsOf(actsL[si].length) : L.kind === 'nodes' ? colsOf(estsL[si].length) : L.key === 'land' ? Math.max(LANDC, colsOf(Math.min(CAPL, cardsOf(t, L.key).length), MAXCL)) : colsOf(Math.min(CAP, cardsOf(t, L.key).length))).concat([1])));
     const halfW = (i) => i === 0 ? 0.64 : 0.44, GAP = 0.12;
     const uOrg = []; { let u = 0; STA.forEach((L, i) => { uOrg[i] = u; u += 2 * halfW(i) + (colsAt[i] - 1) * DU + GAP; }); }
     const uC = (i, cj) => uOrg[i] + halfW(i) + (cj || 0) * DU;                       // a column's centre line
@@ -312,28 +313,29 @@
           const vSec = (k) => nsec > 1 ? 0.5 + k * (VSPAN - 1) / (nsec - 1) : VSPAN / 2;
           lanes.forEach((lane, k) => { const M = shown.filter((n) => n.lane === lane).sort((a, b) => b.score - a.score), n = M.length; const lp = proj((uA(0) - 0.46) * GU, vSec(k) * GV, z);
             out.labels.push({ si, x: lp.x, y: lp.y - 7, n: lane, k: String(g.nodes.filter((x) => x.lane === lane).length), cls: 'layer sm lane', col: M[0].col || L.col });
-            M.forEach((nd, mi) => { const rel = Math.max(0, Math.min(1, nd.score)); const gi = shown.indexOf(nd); const du = (Math.min(0.56, (1 - rel) * 1.5) + gi * 0.012) * (mi % 2 ? 1 : -1), dv = n > 1 ? (mi - (n - 1) / 2) * Math.min(0.36, 1.1 / (n - 1)) : 0;
+            M.forEach((nd, mi) => { const rel = Math.max(0, Math.min(1, nd.score)); const gi = shown.indexOf(nd); const du = (0.1 + 0.46 * (n > 1 ? mi / (n - 1) : 0) + gi * 0.004) * (mi % 2 ? 1 : -1), dv = n > 1 ? (mi - (n - 1) / 2) * Math.min(0.36, 1.1 / (n - 1)) : 0;
               const U = (uC(0) + du) * GU, V = (vSec(k) + dv) * GV, p = proj(U, V, z); pts.push(p); const d = Math.round(19 + rel * 9); G['node:' + nd.id] = pin(U, V + VOFF, z, d / 2);
               out.gnodes.push({ id: t.mid + ':graph:' + nd.id, nid: nd.id, mid: t.mid, si, x: p.x, y: p.y, d, col: nd.col || L.col, icon: ICON_OF(nd.kind, nd.lane), label: nd.label, lane: nd.lane, kind: nd.kind, score: rel, ghost: nd.included === false, lit: rel > 0.82, op: +(0.45 + rel * 0.55).toFixed(2) }); }); });
           if (more > 0) { const mp = proj(U1 - 20, V1 - 30, z); out.labels.push({ si, x: mp.x, y: mp.y, n: '+' + more + ' more', k: 'in the context', cls: 'layer sm more', col: L.col, mid: t.mid }); }
           // the context galaxy, an iso sheet lying on the floor past the plate — an option (the Context menu's own widget)
           if (GAL) { const GW = STK ? 220 : 280; const c = proj(uc, (vB + GALV / 2) * GV, z); pts.push(c); out.graphs.push({ id: t.mid + ':graph', mid: t.mid, si, x: c.x, y: c.y, w: GW, h: galH(GW), data: g, iso: true }); }
           return; }
-        if (L.kind === 'acts') {
-          // the ACTIVITY as a graph of what ran: the calls down the plate in time order (eight to a column), a child a step
-          // to the right of its parent — the tree reads across the plate, the sequence down it
-          const tree = actTree(acts, 8); const N = acts.length, per = 8, pitch = N > 1 ? Math.min(0.9, (VSPAN - 0.6) / (Math.min(per, N) - 1)) : 0;
-          acts.forEach((a, ai) => { const col = Math.floor(ai / per), row = ai % per; const rowsIn = Math.min(per, N - col * per); const U = (uC(i, col) - 0.22 + Math.min(2, tree.depth[ai]) * 0.22) * GU, V = (row * pitch + (VSPAN - (rowsIn - 1) * pitch) / 2) * GV; const p = proj(U, V, z); pts.push(p); G['act:' + ai] = pin(U, V + VOFF, z, 11);
-            out.anodes.push({ id: t.mid + ':act:' + ai, mid: t.mid, si, x: p.x, y: p.y, d: 22, col: actCol(a), icon: ICON.cap, label: a.n || a.cap || 'call', meta: actMeta(a), status: String(a.status || ''), lane: 'activity', depth: tree.depth[ai] }); });
-          return; }
-        if (L.kind === 'nodes') {
-          const N = ests.length, per = RPC, pitch = N > 1 ? Math.min(1, (VSPAN - 0.6) / (Math.min(per, N) - 1)) : 0;
-          ests.forEach((e, ei) => { const col = Math.floor(ei / per), row = ei % per; const rowsIn = Math.min(per, N - col * per); const U = uC(i, col) * GU, V = (row * pitch + (VSPAN - (rowsIn - 1) * pitch) / 2) * GV; const p = proj(U, V, z); pts.push(p); G['est:' + ei] = pin(U, V + VOFF, z, 12);
-            out.enodes.push({ id: t.mid + ':est:' + ei, mid: t.mid, si, x: p.x, y: p.y, d: 24, col: estCol(e), icon: ICON_OF(e.kind, 'estate'), label: e.label || e.id, meta: e.detail || e.kind || '', status: String(e.status || ''), lane: 'estate' }); });
+        if (L.kind === 'acts' || L.kind === 'nodes') {
+          // the two layers' items are the board's billboards too — a call, a subsystem or a machine on its stem at its pin,
+          // down the plate in time order then a column to the right; the tree of what ran is the runs between them
+          const items = L.kind === 'acts' ? acts : ests, N = items.length, act = L.kind === 'acts', cols = colsOf(N), RPB = Math.ceil(N / cols);
+          items.forEach((it, k) => { const cj = Math.floor(k / RPB), rj = k % RPB, rowsIn = Math.min(RPB, N - cj * RPB), pitch = RPB > VSPAN + 1 ? VSPAN / (RPB - 1) : 1;
+            const U = uC(i, cj) * GU, V = (rj * pitch + (VSPAN - (rowsIn - 1) * pitch) / 2) * GV, p = proj(U, V, z); pts.push(p); const key = (act ? 'act:' : 'est:') + k; G[key] = pin(U, V + VOFF, z);
+            const c = act ? { n: it.n || it.cap || 'call', d: actMeta(it), col: actCol(it), kind: 'cap', body: it.preview || '' }
+              : { n: it.label || it.id, d: [it.kind, it.status, it.detail].filter(Boolean).join(' · '), col: estCol(it), kind: /host|node|machine|container|guest/.test(String(it.kind || '')) ? 'host' : 'service' };
+            const id = t.mid + ':' + key;
+            out.widgets.push({ id, mid: t.mid, si, layer: L.key, ci: k, x: p.x, y: p.y, w: FW, h: FH, cw: CW, ch: CH, stem: RAISE, card: c, col: c.col, form: '', data: null, placed: false, sample: false, draw: 'card', value: '', tight: STK, drag: false, key: '' });
+            out.cards.push({ id, mid: t.mid, si, layer: L.key, ci: k, x: p.x, y: p.y, w: CW, h: CH, card: c, col: c.col, anchored: true, iw: true });
+            (act ? out.anodes : out.enodes).push({ id, mid: t.mid, si, x: p.x, y: p.y, d: 22, col: c.col, icon: act ? ICON.cap : ICON_OF(it.kind, 'estate'), label: c.n, meta: c.d, status: String(it.status || ''), lane: act ? 'activity' : 'estate', depth: 0, bb: true }); });
           return; }
         // the items: down the rows first (centred in the span), then a column to the right; a canvas item dropped
         // somewhere on the plate (card.at.iso, ground px relative to the plate) stands there
-        const shown = list.slice(0, CAP), more = list.length - shown.length, cols = colsOf(shown.length), RPB = Math.ceil(shown.length / cols); let flow = 0;
+        const shown = list.slice(0, L.key === 'land' ? CAPL : CAP), more = list.length - shown.length, cols = colsOf(shown.length, L.key === 'land' ? MAXCL : MAXC), RPB = Math.ceil(shown.length / cols); let flow = 0;
         if (more > 0) { const mp = proj(U1 - 20, V1 - 30, z); out.labels.push({ si, x: mp.x, y: mp.y, n: '+' + more + ' more', k: 'in the ' + L.name, cls: 'layer sm more', col: L.col, mid: t.mid }); }
         shown.forEach((c, ci) => { const at = L.key === 'land' && c.at && c.at.iso; let U, V;
           if (at && isFinite(+at.u)) { U = U0 + Math.max(40, Math.min(U1 - U0 - 40, +at.u)); V = V0 + Math.max(60, Math.min(V1 - V0 - 40, +at.v)); }
@@ -369,7 +371,7 @@
     // ── the runs: the board's ISO.route on the ground, projected through P and the fit ────────────────────────────
     const at = (U, V, z) => { const p = proj0(U, V, z); return { x: p.x * s + dx, y: p.y * s + dy }; };   // unrounded: a short leg keeps its exact direction (the pins already carry their floor's place)
     const stationOf = (U) => { let best = 0; STA.forEach((L, i) => { if (U >= uA(i) * GU - 1) best = i; }); return best; };
-    const SK = 1 / (s * 0.75), LANE = 13 * SK, PORT = 6 * SK, STEP = 21 * SK, VO = (VSPAN + 0.9) * GV;   // a lane's pitch (13 px on screen), a port's (6), a step aside (21), whatever the fit   // a lane's pitch in the gap, a port's pitch at a pin, the far end a round-about run travels past
+    const SK = 1 / (s * 0.75), LANE = 13 * SK, PORT = 6 * SK, STEP = 21 * SK, VO = (VSPAN + 0.5) * GV;   // a lane's pitch (13 px on screen), a port's (6), a step aside (21), whatever the fit   // a lane's pitch in the gap, a port's pitch at a pin, the far end a round-about run travels past
     let rid = 0;
     turns.forEach((t, si) => { const G = pinsG[t.mid] || {}; const gp = (k) => G[k] || null; const runs = [];
       const add = (A, B, col, cls, title, joins, opt) => { if (!A || !B) return; runs.push(Object.assign({ A, B, col, cls, title, joins, id: ++rid }, opt || {})); };
@@ -387,39 +389,53 @@
           add(gp('act:' + from[1]), gp('act:' + ai), 'var(--xp-ac2)', cls, title); }); void tree; }
       estsL[si].forEach((e, ei) => { estRuns(e, (ai) => gp('act:' + ai)).forEach(([ai, title]) => add(gp('act:' + ai), gp('est:' + ei), 'var(--xp-dv3)', 'est', title)); if (e.via != null && gp('est:' + e.via)) add(gp('est:' + e.via), gp('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it', null, { direct: true }); });
       g.rels.forEach((r) => { const a = gp('node:' + r.from), b = gp('node:' + r.to), Rc = RELC[r.kind] || RELC.cite; if (a && b) add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)], { rel: true }); });
-      // PORTS: the runs at one pin, fanned in the order of their far ends; LANES: the runs through one gap, fanned in the
-      // order of their targets — so neighbouring runs stay parallel and never have to cross to reach neighbouring pins
-      const byPin = {}; runs.forEach((r) => { (byPin[r.A.U + '/' + r.A.V] = byPin[r.A.U + '/' + r.A.V] || []).push([r, 'a']); (byPin[r.B.U + '/' + r.B.V] = byPin[r.B.U + '/' + r.B.V] || []).push([r, 'b']); });
-      Object.keys(byPin).forEach((k) => { const Q = byPin[k]; Q.sort((p, q) => { const fa = p[1] === 'a' ? p[0].B : p[0].A, fb = q[1] === 'a' ? q[0].B : q[0].A; return (fa.V - fb.V) || (fa.U - fb.U); }); const n = Q.length; Q.forEach(([r, end], j) => { r[end === 'a' ? 'pa' : 'pb'] = (j - (n - 1) / 2) * PORT; r[end === 'a' ? 'fa' : 'fb'] = (n - 1) / 2 * PORT; }); });   /* and how wide the fan is: a step aside starts past it */
-      const byGap = {}; runs.forEach((r) => { const sa = stationOf(r.A.U), sb = stationOf(r.B.U); r.sa = sa; r.sb = sb; r.same = sa === sb; r.around = sb < sa || sb - sa > 1; const key = r.same ? 's' + sa : r.around ? 'o' : 'g' + Math.min(sa, sb); (byGap[key] = byGap[key] || []).push(r); });
-      Object.keys(byGap).forEach((k) => { const Q = byGap[k]; Q.sort((p, q) => (p.B.V - q.B.V) || (p.A.V - q.A.V)); const n = Q.length; Q.forEach((r, j) => { r.off = (k === 'o' || k[0] === 's') ? j * LANE : (j - (n - 1) / 2) * LANE; }); });   /* a round-about run and a run within one station take their own lane outward, never a mirrored one */
-      if (o.debug) (out.runsDbg = out.runsDbg || []).push.apply(out.runsDbg, runs.map((r) => ({ cls: r.cls, title: r.title, A: [r.A.U, r.A.V], B: [r.B.U, r.B.V], pa: r.pa, pb: r.pb, off: r.off, sa: r.sa, sb: r.sb, around: r.around, same: r.same })));
-      // every leg registers the line it occupies (a level line at one v, a plumb line at one u, per floor); a run that
-      // would share a line with an earlier run nudges its ports and its lane and routes again — ports and lanes fall on
-      // a grid, and two pins a row apart can put a port line of one on the row line of the other
-      const occ = {}; const TOL = 2.5 * SK, MIN = 3 * SK;
-      const legsOf = (Wp) => { const L = []; for (let n = 0; n < Wp.length - 1; n++) { const p = Wp[n], q = Wp[n + 1]; if (Math.abs(p[0] - q[0]) < 1e-6 && Math.abs(p[1] - q[1]) < 1e-6) continue;
+      // PORTS: the runs at one pin, in the order of their far ends, each on its own port line (a pin with one run keeps it
+      // at the pin); LANES: the runs through one gap, in the order of their targets. Runs that share a pin AND a gap are
+      // COLLECTED: one trunk leaves (or reaches) the pin along its row, a short comb fans them onto their port lines, and
+      // each crosses the gap on its own lane — many runs to one node read as one bundle. A forward run to a station further
+      // on crosses the plates between at its row and turns in the gap before its target; only a run bound backwards goes
+      // round the far end. Every run ENDS AT ITS PIN: the last stub from the port line to the pin may share its length with
+      // its neighbours' (that is the join), and is marked so.
+      const keyP = (p) => p.U + '/' + p.V, gapEdges = (g) => [uB(g) * GU, uA(g + 1) * GU];
+      runs.forEach((r) => { const sa = stationOf(r.A.U), sb = stationOf(r.B.U); r.sa = sa; r.sb = sb; r.same = sa === sb; r.around = sb < sa; r.g = r.same || r.around ? -1 : sb - 1; r.gk = r.same ? 's' + sa : r.around ? 'o' : 'g' + r.g; });
+      const byPin = {}; runs.forEach((r) => { (byPin[keyP(r.A)] = byPin[keyP(r.A)] || []).push([r, 'a']); (byPin[keyP(r.B)] = byPin[keyP(r.B)] || []).push([r, 'b']); });
+      Object.keys(byPin).forEach((k, pi) => { const Q = byPin[k]; Q.sort((p, q) => { const fa = p[1] === 'a' ? p[0].B : p[0].A, fb = q[1] === 'a' ? q[0].B : q[0].A; return (fa.V - fb.V) || (fa.U - fb.U); }); const n = Q.length, ph = n > 1 ? ((pi * 0.37) % 1) * PORT : 0;   /* a phase per pin: two pins' port lines never share the one grid */
+        Q.forEach(([r, end], j) => { r[end === 'a' ? 'pa' : 'pb'] = (j - (n - 1) / 2) * PORT + ph; r[end === 'a' ? 'fa' : 'fb'] = (n - 1) / 2 * PORT + Math.abs(ph); }); });
+      const combs = {}; runs.forEach((r) => { if (r.g < 0) return; [['a', r.A], ['b', r.B]].forEach(([end, p]) => { const k = keyP(p) + '|' + r.gk + '|' + end; (combs[k] = combs[k] || { runs: [], end, pin: p, g: r.g, done: false }).runs.push(r); r[end === 'a' ? 'ca' : 'cb'] = k; }); });
+      Object.keys(combs).forEach((k) => { if (combs[k].runs.length < 2) delete combs[k]; });
+      const byGap = {}; runs.forEach((r) => { (byGap[r.gk] = byGap[r.gk] || []).push(r); });
+      Object.keys(byGap).forEach((k) => { const Q = byGap[k]; Q.sort((p, q) => (p.B.V - q.B.V) || (p.A.V - q.A.V)); const n = Q.length; Q.forEach((r, j) => { r.off = (k === 'o' || k[0] === 's') ? j * LANE : (j - (n - 1) / 2) * LANE; }); });
+      // every leg registers the line it occupies (a level line at one v, a plumb line at one u, per floor); a run that would
+      // share a line with an earlier run takes another lane, then another port line, and routes again
+      const occ = {}; const TOL = 1.2 * SK, MIN = 3 * SK;
+      const legsOf = (Wp, tails) => { const L = []; for (let n = 0; n < Wp.length - 1; n++) { if (tails && tails.indexOf(n) >= 0) continue; const p = Wp[n], q = Wp[n + 1]; if (Math.abs(p[0] - q[0]) < 1e-6 && Math.abs(p[1] - q[1]) < 1e-6) continue;
         if (Math.abs(p[0] - q[0]) < 1e-6) L.push({ k: 'v', c: p[0], a: Math.min(p[1], q[1]), b: Math.max(p[1], q[1]) }); else if (Math.abs(p[1] - q[1]) < 1e-6) L.push({ k: 'h', c: p[1], a: Math.min(p[0], q[0]), b: Math.max(p[0], q[0]) }); } return L; };
       const clash = (L, z) => { const O = occ[z]; if (!O) return false; return L.some((l) => O[l.k].some((m) => Math.abs(m.c - l.c) < TOL && Math.min(m.b, l.b) - Math.max(m.a, l.a) > MIN)); };
       const take = (L, z) => { const O = occ[z] = occ[z] || { h: [], v: [] }; L.forEach((l) => O[l.k].push(l)); };
-      runs.forEach((r) => { const A = r.A, B = r.B;
-        const build = (pa, pb, off) => { let W_;
-          if (r.direct && Math.abs(A.U - B.U) < 0.5) W_ = [[A.U, A.V], [B.U, B.V]];   // a step to the next call in the column: one leg along v
-          else if (r.around) { const vo = VO + off, ouA = (r.fa || 0) + STEP + off, ouB = (r.fb || 0) + STEP + off; W_ = [[A.U + pa, A.V], [A.U + pa, A.V + pa], [A.U + pa + ouA, A.V + pa], [A.U + pa + ouA, vo], [B.U + pb + ouB, vo], [B.U + pb + ouB, B.V + pb], [B.U + pb, B.V + pb], [B.U + pb, B.V]]; }   // round the far end
-          else { let um; if (r.same) { const lo = uA(r.sa) * GU + 8, hi = uB(r.sa) * GU - 8;   // within one station: between the two (the board), or beside them when they stand in one column — inside the plate, never in a gap's lanes
-              const st = Math.max(r.fa || 0, r.fb || 0) + STEP; um = Math.abs(A.U - B.U) >= 2 * st ? (A.U + B.U) / 2 + off - 15 : Math.max(A.U, B.U) + st + off; if (um > hi) um = Math.min(A.U, B.U) - st - off; um = Math.max(lo, Math.min(hi, um)); }
-            else um = (uB(r.sa) * GU + uA(r.sb) * GU) / 2 + off;   // the gap between the two stations
-            W_ = [[A.U + pa, A.V], [A.U + pa, A.V + pa], [um, A.V + pa], [um, B.V + pb], [B.U + pb, B.V + pb], [B.U + pb, B.V]]; }
-          return W_; };
-        let pa = r.pa || 0, pb = r.pb || 0, off = r.off || 0, W_ = build(pa, pb, off), L = legsOf(W_);
-        for (let k = 0; k < 8 && clash(L, A.z); k++) { const d = (k % 2 ? -1 : 1) * Math.ceil((k + 1) / 2) * 0.41 * PORT; W_ = build(pa + d, pb + d, off + d); L = legsOf(W_); }
-        take(L, A.z);
-        const Pp = W_.map((q) => at(q[0], q[1], A.z)); out.runs++;
-        // the ends: a node is met at its rim, not its centre (the last leg shortened along itself)
-        const trim = (p, q, rr) => { const d = Math.hypot(q.x - p.x, q.y - p.y); if (!rr || d < 1) return p; const k = Math.min(0.9, rr * out.inv / d); return { x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k }; };
-        Pp[0] = trim(Pp[0], Pp[1], A.r); Pp[Pp.length - 1] = trim(Pp[Pp.length - 1], Pp[Pp.length - 2], B.r);
-        for (let n = 0; n < Pp.length - 1; n++) { const p = Pp[n], q = Pp[n + 1]; const dxx = q.x - p.x, dyy = q.y - p.y, LN = Math.hypot(dxx, dyy); if (LN < 2.5) continue;
-          out.edges.push({ x: px(p.x), y: px(p.y), len: px(LN), deg: +(Math.atan2(dyy, dxx) * 180 / Math.PI).toFixed(2), col: r.col, cls: r.cls, title: r.title, run: r.id, joins: r.joins || undefined }); } }); });
+      const trim = (p, q, rr) => { const d = Math.hypot(q.x - p.x, q.y - p.y); if (!rr || d < 1) return p; const k = Math.min(0.9, rr * out.inv / d); return { x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k }; };
+      const emit = (Wp, r, id, tails, rA, rB, cls) => { const Pp = Wp.map((q) => at(q[0], q[1], r.A.z)); if (rA) Pp[0] = trim(Pp[0], Pp[1], rA); if (rB) Pp[Pp.length - 1] = trim(Pp[Pp.length - 1], Pp[Pp.length - 2], rB);
+        for (let n = 0; n < Pp.length - 1; n++) { const p = Pp[n], q = Pp[n + 1]; const dxx = q.x - p.x, dyy = q.y - p.y, LN = Math.hypot(dxx, dyy); if (LN < 0.6) continue;
+          out.edges.push({ x: px(p.x), y: px(p.y), len: px(LN), deg: +(Math.atan2(dyy, dxx) * 180 / Math.PI).toFixed(2), col: r.col, cls: cls || r.cls, title: r.title, run: id, joins: r.joins || undefined, tail: tails && tails.indexOf(n) >= 0 ? true : undefined }); } };
+      // a comb: the trunk from the pin along its row to the fan line before (after) the gap, and the fan itself — drawn once
+      const emitComb = (C) => { if (!C || C.done) return; C.done = true; const p = C.pin, r = C.runs[0], fan = Math.max.apply(null, C.runs.map((x) => (C.end === 'a' ? x.fa : x.fb) || 0)) + PORT; const [gL, gR] = gapEdges(C.g); const tx = C.end === 'a' ? gL - STEP : gR + STEP; const id = ++rid;
+        const W1 = [[p.U, p.V], [tx, p.V]], W2 = [[tx, p.V - fan], [tx, p.V + fan]]; take(legsOf(W1).concat(legsOf(W2)), r.A.z); emit(W1, r, id, null, p.r, 0, r.cls + ' trunk'); emit(W2, r, id, null, 0, 0, r.cls + ' trunk'); };
+      runs.forEach((r) => { const A = r.A, B = r.B; const CA = combs[r.ca], CB = combs[r.cb];
+        const build = (pa, pb, off) => {
+          if (r.direct && Math.abs(A.U - B.U) < 0.5) return { W: [[A.U, A.V], [B.U, B.V]], tails: [] };   // a step to the next call in the column: one leg along v
+          if (r.around) { const vo = VO + off, ouA = (r.fa || 0) + STEP + off, ouB = (r.fb || 0) + STEP + off; return { W: [[A.U, A.V], [A.U + pa, A.V], [A.U + pa, A.V + pa], [A.U + pa + ouA, A.V + pa], [A.U + pa + ouA, vo], [B.U + pb + ouB, vo], [B.U + pb + ouB, B.V + pb], [B.U + pb, B.V + pb], [B.U + pb, B.V], [B.U, B.V]], tails: [0, 8] }; }   // round the far end
+          if (r.same) { const lo = uA(r.sa) * GU + 8, hi = uB(r.sa) * GU - 8, st = Math.max(r.fa || 0, r.fb || 0) + STEP;   // within one station: between the two (the board), or beside them when they stand in one column — inside the plate
+            let um = Math.abs(A.U - B.U) >= 2 * st ? (A.U + B.U) / 2 + off - 15 : Math.max(A.U, B.U) + st + off; if (um > hi) um = Math.min(A.U, B.U) - st - off; um = Math.max(lo, Math.min(hi, um));
+            return { W: [[A.U, A.V], [A.U + pa, A.V], [A.U + pa, A.V + pa], [um, A.V + pa], [um, B.V + pb], [B.U + pb, B.V + pb], [B.U + pb, B.V], [B.U, B.V]], tails: [0, 6] }; }
+          const [gL, gR] = gapEdges(r.g), um = (gL + gR) / 2 + off, ta = gL - STEP, tb = gR + STEP;
+          const head = CA ? [[ta, A.V + pa]] : [[A.U, A.V], [A.U + pa, A.V], [A.U + pa, A.V + pa]];
+          const tail = CB ? [[tb, B.V + pb]] : [[B.U + pb, B.V + pb], [B.U + pb, B.V], [B.U, B.V]];
+          const W = head.concat([[um, A.V + pa], [um, B.V + pb]], tail); const tails = []; if (!CA) tails.push(0); if (!CB) tails.push(W.length - 2); return { W, tails }; };
+        let pa = r.pa || 0, pb = r.pb || 0, off = r.off || 0, R_ = build(pa, pb, off), L = legsOf(R_.W, R_.tails);
+        for (let k = 0; k < 8 && clash(L, A.z); k++) { const d = (k % 2 ? -1 : 1) * Math.ceil((k + 1) / 2); R_ = k < 4 ? build(pa, pb, off + d * 0.5 * LANE) : build(pa + d * 0.5 * PORT, pb + d * 0.5 * PORT, off); L = legsOf(R_.W, R_.tails); }
+        take(L, A.z); emitComb(CA); emitComb(CB); out.runs++;
+        emit(R_.W, r, r.id, R_.tails, CA ? 0 : A.r, CB ? 0 : B.r); });
+      // no leg twice
+      { const seen = {}; out.edges = out.edges.filter((e) => { const k = e.x + '/' + e.y + '/' + e.len + '/' + e.deg; if (seen[k]) return false; seen[k] = 1; return true; }); } });
     out.size = { w: W, h: H };
     return out;
   }
@@ -816,7 +832,7 @@ vera-exploded .xp-e.mem,vera-exploded .xp-e.pin,vera-exploded .xp-e.dash{height:
 vera-exploded[data-den="hover"] .xp-e.rel,vera-exploded[data-den="zen"] .xp-e.rel{opacity:0;transition:opacity .13s ease}
 vera-exploded[data-den="hover"] .xp-e.rel.hot,vera-exploded[data-den="zen"] .xp-e.rel.hot{opacity:.7}
 vera-exploded[data-rels="off"] .xp-e.rel{display:none}
-vera-exploded .xp-e.thin{height:1px;opacity:.5;box-shadow:none}vera-exploded .xp-e.rel{height:1px;opacity:.55;box-shadow:none;z-index:7}vera-exploded .xp-e.rel.cite{opacity:.4}vera-exploded .xp-e.rel.mem{height:0;border-top:1px dashed var(--ec);background:none}
+vera-exploded .xp-e.thin{height:1px;opacity:.5;box-shadow:none}vera-exploded .xp-e.rel{height:1.5px;opacity:.5;box-shadow:none;z-index:7}vera-exploded .xp-e.rel.cite{opacity:.4}vera-exploded .xp-e.rel.mem{height:0;border-top:1.5px dashed var(--ec);background:none}
 vera-exploded .xp-it{position:absolute;border-radius:6px;background:var(--xp-s2);box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px var(--xp-bd);cursor:pointer;z-index:10;padding:6px 10px;display:flex;flex-direction:column;gap:2px;box-sizing:border-box;overflow:hidden;transition:box-shadow .15s ease}
 vera-exploded .xp-it:hover{box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px var(--xp-t3),0 14px 28px -18px rgba(0,0,0,.95);z-index:22}
 vera-exploded .xp-it.open{height:auto!important;z-index:26;background:color-mix(in srgb,var(--xp-s1) 97%,transparent);box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1.5px var(--xp-ac),0 26px 46px -18px rgba(0,0,0,.98)}
@@ -909,7 +925,7 @@ vera-exploded .xp-rc .xit-face{margin-top:6px}
 vera-exploded .xf-diag{display:block;margin-top:3px}vera-exploded .xf-diag vera-mermaid{display:block;width:100%;height:110px;min-height:0}vera-exploded .xit.ct .xf-diag vera-mermaid{height:150px}
 vera-exploded .xp-rc .b .xf-diag vera-mermaid,vera-exploded .xp-it .b .xf-diag vera-mermaid{height:130px}
 vera-exploded .xit-body{display:flex;flex-direction:column;gap:3px;margin-top:4px}
-vera-exploded .xit-x{display:none;flex-direction:column;gap:2px;margin-top:5px;padding-top:5px;box-shadow:inset 0 1px 0 0 var(--xp-bd);max-height:170px;overflow:auto}vera-exploded .xit.open .xit-x{display:flex}
+vera-exploded .xit-x{display:none;flex-direction:column;gap:2px;margin-top:5px;padding-top:5px;box-shadow:inset 0 1px 0 0 var(--xp-bd);max-height:230px;overflow:auto}vera-exploded .xf-frame{width:100%;height:160px;border:0;border-radius:4px;background:#fff;flex-shrink:0}vera-exploded .xit.open .xit-x{display:flex}
 vera-exploded .xit-x pre{margin:0;font-family:var(--xp-mono);font-size:9px;white-space:pre-wrap;color:var(--xp-t2);line-height:1.45}
 vera-exploded .xit-m{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}vera-exploded .xit-b{font-family:var(--xp-mono);font-size:9px;color:var(--xp-ac);background:color-mix(in srgb,var(--xp-ac) 15%,transparent);border-radius:999px;padding:1px 7px}
 /* the canvas item vocabulary, the board's: a card IS a chart, a table, a diff, a loop, a line of code — not a title with a caption under it */
@@ -1057,12 +1073,14 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
     if (codeish && lines.length) { on += '<span class="' + (k === 'code' ? 'xf-code' : 'xf-term') + '">' + esc(lines[0].slice(0, 80)) + '</span>'; if (lines.length > 1) x += '<pre>' + esc(String(c.body).slice(0, 600)) + '</pre>'; }
     else if (k === 'diagram' && diagramHtml(c)) { on += diagramHtml(c); x += '<pre>' + esc(String(c.mermaid || c.body || '').slice(0, 600)) + '</pre>'; }   // the diagram on the card, its source behind the click
     else if (c.body && !c.rows) x += '<pre>' + esc(String(c.body).slice(0, 600)) + '</pre>';
+    if (c.html) { x += '<iframe class="xf-frame" sandbox="allow-scripts" srcdoc="' + esc(String(c.html).slice(0, 60000)) + '"></iframe>'; if (!on) on += '<span class="xf-term">html · preview behind the click</span>'; }   // the render, as the canvas shows it
+    if (c.src && k !== 'image') x += '<img class="xp-img" src="' + esc(c.src) + '" alt="" loading="lazy">';
     return { on, x };
   }
 
   if (typeof HTMLElement !== 'undefined' && root.customElements && !root.customElements.get('vera-exploded')) {
     class VeraExploded extends HTMLElement {
-      constructor() { super(); this._S = { scene: { turns: [], sel: '' }, mode: 'cards', layer: 2, open: null, focus: null, heights: {}, related: true, lanesOff: {}, budget: null, solo: false, tilt: 30, azim: 45, pan: { x: 0, y: 0, z: 1 }, layers: readPref('vera_xpl_layers', { activity: false, estate: false }), galaxy: readPref('vera_xpl_galaxy', true) !== false }; this._raf = 0; }
+      constructor() { super(); this._S = { scene: { turns: [], sel: '' }, mode: 'cards', layer: 2, open: null, focus: null, heights: {}, related: true, lanesOff: {}, budget: null, solo: false, tilt: 30, azim: 45, pan: { x: 0, y: 0, z: 1 }, layers: readPref('vera_xpl_layers', { activity: false, estate: false }), galaxy: readPref('vera_xpl_galaxy', true) !== false, landCols: +readPref('vera_xpl_landcols', 1) || 1 }; this._raf = 0; }
       // the two layers and the galaxy are the user's choice, remembered per browser
       layers(v) { if (v && typeof v === 'object') { this._S.layers = { activity: !!v.activity, estate: !!v.estate }; writePref('vera_xpl_layers', this._S.layers); this._schedule(); this._layersEv(); } return this._S.layers; }
       galaxy(on) { this._S.galaxy = on == null ? !this._S.galaxy : !!on; writePref('vera_xpl_galaxy', this._S.galaxy); this._schedule(); this._layersEv(); return this._S.galaxy; }
@@ -1070,7 +1088,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
       connectedCallback() {
         ensureCss(this.ownerDocument); ensureIso(this.ownerDocument, () => this._schedule()); if (this._built) { this._schedule(); return; } this._built = true;
         const m = this.getAttribute('mode'); if (m) this._S.mode = m;
-        this.innerHTML = '<div class="xp-ctl"><span class="c">explode</span><button data-m="cards">Cards</button><button data-m="front">Front</button><button data-m="iso">Iso</button><span class="sep"></span><button data-a="fit" title="Back to the whole scene">Fit</button><button data-a="close" title="Back to the flat transcript">Flatten</button><span class="sep"></span><span class="c iso-c" data-r="isoc">iso</span><button data-a="solo" title="Only this turn — the selected turn\'s plate alone (the board\'s single-layer iso)">Turn</button><button data-a="all" title="Every turn — the plates in a row">All</button><button data-a="stack" title="Stack — the stations on floors, one above the other">Stack</button><button data-a="wsz" title="The iso widgets\' size — S · M · L">M</button><span class="sep"></span><button data-a="place" title="Place a widget from the registry onto this station\'s plate — it becomes one of the turn\'s items, tagged ⧉ with its template">+ Place</button><span class="sep"></span><input type="range" class="xp-scrub" data-r="scrub" min="0" max="0" value="0" title="Scrub through the session\'s turns (← → too)"></div><div class="xp-ctx" data-r="ctx"></div><div class="xp-dots" data-r="dots"></div><div class="xp-wrap" data-r="wrap"><div class="xp-view" data-r="view"></div></div><div class="xp-pz"><button data-a="zout" title="Zoom out">−</button><span class="z" data-r="zoom">100%</span><button data-a="zin" title="Zoom in">+</button><span class="sp"></span><button data-a="panl" title="Pan left">←</button><button data-a="panu" title="Pan up">↑</button><button data-a="pand" title="Pan down">↓</button><button data-a="panr" title="Pan right">→</button><span class="tl" data-r="tl"><span class="sp"></span><button data-a="tiltu" title="Tilt the view up — look down on the plane">⌃</button><span class="z" data-r="ang">30°</span><button data-a="tiltd" title="Tilt the view down — flatten the plane">⌄</button><button data-a="swl" title="Swing the view left">↺</button><button data-a="swr" title="Swing the view right">↻</button></span><span class="sp"></span><button data-a="fit" title="Back to fit">fit</button></div>';
+        this.innerHTML = '<div class="xp-ctl"><span class="c">explode</span><button data-m="cards">Cards</button><button data-m="front">Front</button><button data-m="iso">Iso</button><span class="sep"></span><button data-a="fit" title="Back to the whole scene">Fit</button><button data-a="close" title="Back to the flat transcript">Flatten</button><span class="sep"></span><span class="c iso-c" data-r="isoc">iso</span><button data-a="solo" title="Only this turn — the selected turn\'s plate alone (the board\'s single-layer iso)">Turn</button><button data-a="all" title="Every turn — the plates in a row">All</button><button data-a="stack" title="Stack — the stations on floors, one above the other">Stack</button><button data-a="wsz" title="The iso widgets\' size — S · M · L">M</button><button data-a="landw" title="The session canvas plate: a column wider, out along u (shift-click: narrower)">Canvas +</button><span class="sep"></span><button data-a="place" title="Place a widget from the registry onto this station\'s plate — it becomes one of the turn\'s items, tagged ⧉ with its template">+ Place</button><span class="sep"></span><input type="range" class="xp-scrub" data-r="scrub" min="0" max="0" value="0" title="Scrub through the session\'s turns (← → too)"></div><div class="xp-ctx" data-r="ctx"></div><div class="xp-dots" data-r="dots"></div><div class="xp-wrap" data-r="wrap"><div class="xp-view" data-r="view"></div></div><div class="xp-pz"><button data-a="zout" title="Zoom out">−</button><span class="z" data-r="zoom">100%</span><button data-a="zin" title="Zoom in">+</button><span class="sp"></span><button data-a="panl" title="Pan left">←</button><button data-a="panu" title="Pan up">↑</button><button data-a="pand" title="Pan down">↓</button><button data-a="panr" title="Pan right">→</button><span class="tl" data-r="tl"><span class="sp"></span><button data-a="tiltu" title="Tilt the view up — look down on the plane">⌃</button><span class="z" data-r="ang">30°</span><button data-a="tiltd" title="Tilt the view down — flatten the plane">⌄</button><button data-a="swl" title="Swing the view left">↺</button><button data-a="swr" title="Swing the view right">↻</button></span><span class="sp"></span><button data-a="fit" title="Back to fit">fit</button></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
         this.addEventListener('click', (e) => this._click(e));
         /* the relation edges light under the pointer (defect 83). The scene's own runs are untouched; these are the
@@ -1221,7 +1239,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         const t = e.target;
         const eb = t.closest && t.closest('[data-edit]'); if (eb) { const it = eb.closest('[data-id]'); const id = it ? it.dataset.id : ''; const [mid] = id.split(':'); const wg = this._itemOf(id); e.stopPropagation(); this.dispatchEvent(new CustomEvent('vera:xpl:edit', { detail: { id, mid, key: (it && it.dataset.key) || (wg && wg.key) || '', card: wg ? wg.card : null }, bubbles: true })); return; }
         const mb = t.closest && t.closest('button[data-m]'); if (mb) { this.mode(mb.dataset.m); return; }
-        const ab = t.closest && t.closest('[data-a]'); if (ab) { const k = ab.dataset.a; if (k === 'fit') this.fit(); else if (k === 'stack') this.stack(); else if (k === 'wsz') this.widgetSize(); else if (k === 'place') { const ts = this._S.scene.turns || []; const t = ts.find((x) => x.mid === this._S.scene.sel) || ts[ts.length - 1]; this.dispatchEvent(new CustomEvent('vera:xpl:place', { detail: { mid: t ? t.mid : '' }, bubbles: true })); } else if (k === 'close') this.dispatchEvent(new CustomEvent('vera:xpl:close', { bubbles: true })); else if (k === 'solo') this.solo(true); else if (k === 'all') { this._S.solo = false; this._S.stack = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); } else if (k === 'panl' || k === 'panr' || k === 'panu' || k === 'pand') this.pan(k === 'panl' ? 80 : k === 'panr' ? -80 : 0, k === 'panu' ? 80 : k === 'pand' ? -80 : 0); else if (k === 'tiltu' || k === 'tiltd') this.tilt(this._S.tilt + (k === 'tiltu' ? 6 : -6)); else if (k === 'swl' || k === 'swr') this.swing(this._S.azim + (k === 'swl' ? -5 : 5)); else if (k === 'zin' || k === 'zout') { const p = this._S.pan; p.auto = false; p.z = Math.max(0.4, Math.min(3, p.z * (k === 'zin' ? 1.2 : 0.83))); this._applyPan(); } else if (k === 'prev' || k === 'next') { this._S.layer = Math.max(0, Math.min(LAYERS.length - 1, this._S.layer + (k === 'next' ? 1 : -1))); this._schedule(); } return; }
+        const ab = t.closest && t.closest('[data-a]'); if (ab) { const k = ab.dataset.a; if (k === 'fit') this.fit(); else if (k === 'stack') this.stack(); else if (k === 'wsz') this.widgetSize(); else if (k === 'landw') { this._S.landCols = Math.max(1, Math.min(6, (this._S.landCols || 1) + (e.shiftKey ? -1 : 1))); writePref('vera_xpl_landcols', this._S.landCols); this._schedule(); } else if (k === 'place') { const ts = this._S.scene.turns || []; const t = ts.find((x) => x.mid === this._S.scene.sel) || ts[ts.length - 1]; this.dispatchEvent(new CustomEvent('vera:xpl:place', { detail: { mid: t ? t.mid : '' }, bubbles: true })); } else if (k === 'close') this.dispatchEvent(new CustomEvent('vera:xpl:close', { bubbles: true })); else if (k === 'solo') this.solo(true); else if (k === 'all') { this._S.solo = false; this._S.stack = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); } else if (k === 'panl' || k === 'panr' || k === 'panu' || k === 'pand') this.pan(k === 'panl' ? 80 : k === 'panr' ? -80 : 0, k === 'panu' ? 80 : k === 'pand' ? -80 : 0); else if (k === 'tiltu' || k === 'tiltd') this.tilt(this._S.tilt + (k === 'tiltu' ? 6 : -6)); else if (k === 'swl' || k === 'swr') this.swing(this._S.azim + (k === 'swl' ? -5 : 5)); else if (k === 'zin' || k === 'zout') { const p = this._S.pan; p.auto = false; p.z = Math.max(0.4, Math.min(3, p.z * (k === 'zin' ? 1.2 : 0.83))); this._applyPan(); } else if (k === 'prev' || k === 'next') { this._S.layer = Math.max(0, Math.min(LAYERS.length - 1, this._S.layer + (k === 'next' ? 1 : -1))); this._schedule(); } return; }
         const cb = t.closest && t.closest('.xp-cb'); if (cb) { if (cb.dataset.layer) { const L = Object.assign({}, this._S.layers); L[cb.dataset.layer] = !L[cb.dataset.layer]; this.layers(L); return; } if (cb.dataset.galaxy) { this.galaxy(); return; } if (cb.dataset.rel) this._S.related = !this._S.related; else if (cb.dataset.lane) { this._S.lanesOff = Object.assign({}, this._S.lanesOff); this._S.lanesOff[cb.dataset.lane] = !this._S.lanesOff[cb.dataset.lane]; } this._schedule(); return; }
         const dot = t.closest && t.closest('.xp-dot'); if (dot) { this.select(dot.dataset.mid); return; }
         const st = t.closest && t.closest('.xp-lb.station'); if (st) { this.select(st.dataset.mid); return; }
@@ -1273,7 +1291,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         const ISO = root.VeraISO && typeof root.VeraISO.proj === 'function' ? root.VeraISO : null;
         const proj = ISO ? root.VeraISO.proj(S.tilt || 30, S.azim || 45, 1, true) : null;   // the shared projection when it is there, at the view's tilt and swing; z in px, as the floors are measured
         const den = (this.ownerDocument && this.ownerDocument.documentElement.getAttribute('data-den') || 'full').toLowerCase(); this.dataset.den = den;
-        const o = layout(S.scene, S.mode, W, H, { layer: S.layer, proj, den, stack: S.stack, solo: S.solo, tilt: S.tilt, azim: S.azim, wsz: S.wsz, focus: S.focus, heights: S.heights, related: S.related, lanesOff: S.lanesOff, layers: S.layers, galaxy: S.galaxy }); this._last = o;
+        const o = layout(S.scene, S.mode, W, H, { layer: S.layer, proj, den, stack: S.stack, solo: S.solo, tilt: S.tilt, azim: S.azim, wsz: S.wsz, focus: S.focus, heights: S.heights, related: S.related, lanesOff: S.lanesOff, layers: S.layers, galaxy: S.galaxy, landCols: S.landCols }); this._last = o;
         // the chip bar: the selected turn's layers with their counts (each a toggle), related, the window's meter — over the stage in cards and iso
         if (this._r.ctx) { const bud = S.budget || (S.scene && S.scene.budget) || null, kf = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
           const bar = (o.ctx && o.mode !== 'front' && (S.scene.turns || []).length) ? '<span class="c">context</span>' + o.ctx.lanes.map((l) => '<button class="xp-cb' + (l.off ? '' : ' on') + '" data-lane="' + esc(l.lane) + '" style="--lc:' + esc(l.col) + '" title="' + l.n + ' ' + esc(l.lane) + ' record' + (l.n === 1 ? '' : 's') + ' in this turn\u2019s context \u2014 click to hide or show the lane"><i></i>' + esc(l.lane) + '<b>' + l.n + '</b></button>').join('')
@@ -1352,7 +1370,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
           : '<div class="xp-g" data-id="' + esc(g.id) + '" style="' + st(g.x, g.y) + 'width:' + g.w + 'px;height:' + g.h + 'px">' + graphHtml(g.data, g.h - 10) + '</div>'; });
         (o.gnodes || []).forEach((n) => { h += '<span class="xnd' + (n.lit ? ' lit' : '') + (n.ghost ? ' ghost' : '') + (S.open === n.id ? ' sel' : '') + '" data-id="' + esc(n.id) + '" title="' + esc(n.label + ' — ' + n.lane + ' · relevance ' + n.score.toFixed(2) + (n.ghost ? ' · related, not injected' : ' · in the prompt')) + '" style="' + st(n.x, n.y) + 'width:' + n.d + 'px;height:' + n.d + 'px;--nc:' + esc(n.col) + ';opacity:' + n.op + '"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><path d="' + n.icon + '"></path></svg><span class="xnl">' + esc(n.label) + '<b>' + esc(n.lane + ' · ' + n.score.toFixed(2)) + '</b></span></span>'; });
         // the two layers' nodes: a call, an estate node — the same typed ring, its label and reading under the pointer
-        (o.anodes || []).concat(o.enodes || []).forEach((n) => { h += '<span class="xnd ' + (n.lane === 'activity' ? 'act' : 'est') + (/run|call|start/i.test(n.status) ? ' run' : '') + (S.open === n.id ? ' sel' : '') + '" data-id="' + esc(n.id) + '" title="' + esc(n.label + (n.meta ? ' \u00b7 ' + n.meta : '')) + '" style="' + st(n.x, n.y) + 'width:' + n.d + 'px;height:' + n.d + 'px;--nc:' + esc(n.col) + '"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><path d="' + n.icon + '"></path></svg><span class="xnl">' + esc(n.label) + '<b>' + esc(n.meta || n.lane) + '</b></span></span>'; });
+        (o.anodes || []).concat(o.enodes || []).forEach((n) => { if (n.bb) return; h += '<span class="xnd ' + (n.lane === 'activity' ? 'act' : 'est') + (/run|call|start/i.test(n.status) ? ' run' : '') + (S.open === n.id ? ' sel' : '') + '" data-id="' + esc(n.id) + '" title="' + esc(n.label + (n.meta ? ' \u00b7 ' + n.meta : '')) + '" style="' + st(n.x, n.y) + 'width:' + n.d + 'px;height:' + n.d + 'px;--nc:' + esc(n.col) + '"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><path d="' + n.icon + '"></path></svg><span class="xnl">' + esc(n.label) + '<b>' + esc(n.meta || n.lane) + '</b></span></span>'; });
         // the stems first, then every item in paint order — the lower on the screen, the later (it stands in front)
         (o.widgets || []).forEach((wg) => { h += '<span class="xstem" style="left:' + wg.x.toFixed(1) + 'px;top:' + (wg.y - (wg.draw === 'group' ? 0 : wg.stem)).toFixed(1) + 'px;height:' + (wg.draw === 'group' ? 0 : wg.stem) + 'px;--sc:' + esc(wg.col) + '"><i></i></span>'; });
         (o.widgets || []).slice().sort((a, b) => a.y - b.y).forEach((wg) => { h += wg.draw === 'group' ? xigHtml(wg) : xitHtml(wg); });

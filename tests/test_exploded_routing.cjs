@@ -23,7 +23,7 @@ const near = (a, b, eps) => Math.abs(a - b) <= (eps == null ? 0.02 : eps);
 const angOf = (e) => ((e.deg % 180) + 180) % 180;
 const endOf = (e) => { const r = e.deg * Math.PI / 180; return { x: e.x + Math.cos(r) * e.len, y: e.y + Math.sin(r) * e.len }; };
 // two legs of DIFFERENT runs sharing a length: collinear (same angle, no perpendicular gap) with projections that overlap
-const overlaps = (o) => { const L = legs(o); const bad = [];
+const overlaps = (o) => { const L = legs(o).filter((e) => !e.tail); const bad = [];
   for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) { const a = L[i], b = L[j]; if (a.run === b.run) continue; if (!near(angOf(a), angOf(b), 0.6)) continue;
     const r = a.deg * Math.PI / 180, ux = Math.cos(r), uy = Math.sin(r); const perp = Math.abs(-(b.x - a.x) * uy + (b.y - a.y) * ux); if (perp > 0.75 * Math.max(0.35, o.fit ? o.fit.s : 1)) continue;   // "the same line" scales with the scene
     const pa0 = 0, pa1 = a.len, pb0 = (b.x - a.x) * ux + (b.y - a.y) * uy, pb1 = pb0 + (endOf(b).x - b.x) * ux + (endOf(b).y - b.y) * uy;
