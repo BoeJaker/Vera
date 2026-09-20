@@ -5881,7 +5881,7 @@ def capability(
             # READ-THROUGH: a dev sandbox has no estate of its own (its Redis and SQLite are its own, empty); a read-only
             # estate capability is answered by prod, one way — see sandbox_guard.read_through_allowed. Prod itself
             # never takes this branch (_READ_THROUGH_URL is '' outside a sandbox).
-            if _READ_THROUGH_URL and http_method == "GET" and not kw.get("_local") and _sg_read_through_allowed(name, http_method):
+            if _READ_THROUGH_URL and not kw.get("_local") and _sg_read_through_allowed(name, http_method):   # the policy says which routes read
                 _rt = await _upstream_read(name, kw)
                 if _rt is not None:
                     return _rt

@@ -1183,7 +1183,7 @@
     "source": "estate.health",
     "title": "Estate health",
     "read": {
-     "refresh": "60s"
+     "refresh": "5m"
     },
     "frame": {
      "size": "m",
@@ -1299,7 +1299,7 @@
     4
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "5m",
    "floated": false
   },
   {
@@ -1310,7 +1310,7 @@
     "shape": "graph",
     "title": "Stack topology",
     "read": {
-     "refresh": "30s"
+     "refresh": "2m"
     },
     "frame": {
      "size": "xl",
@@ -1339,7 +1339,7 @@
     4
    ],
    "hidden": false,
-   "refresh": "30s",
+   "refresh": "2m",
    "floated": false
   },
   {
@@ -1349,7 +1349,7 @@
     "source": "backup.status",
     "title": "Backups",
     "read": {
-     "refresh": "60s"
+     "refresh": "5m"
     },
     "frame": {
      "size": "m",
@@ -1462,7 +1462,7 @@
     4
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "5m",
    "floated": false
   },
   {
@@ -1829,7 +1829,7 @@
     "source": "fabric.health",
     "title": "Fabric health",
     "read": {
-     "refresh": "60s",
+     "refresh": "5m",
      "map": {
       "keys": [
        "records_count",
@@ -1863,7 +1863,7 @@
     2
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "5m",
    "floated": false
   },
   {
@@ -1917,7 +1917,7 @@
     "source": "evolve.errors.list",
     "title": "Errors to triage",
     "read": {
-     "refresh": "60s",
+     "refresh": "5m",
      "map": {
       "values": "counts"
      }
@@ -1942,7 +1942,7 @@
     2
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "5m",
    "floated": false
   },
   {
@@ -2019,7 +2019,7 @@
     "source": "loops.program.list",
     "title": "Programmes",
     "read": {
-     "refresh": "60s",
+     "refresh": "5m",
      "map": {
       "values": "programs",
       "name": "name",
@@ -2046,7 +2046,7 @@
     2
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "5m",
    "floated": false
   },
   {
@@ -2568,7 +2568,7 @@
     "source": "mesh.topology",
     "title": "Mesh topology",
     "read": {
-     "refresh": "60s",
+     "refresh": "5m",
      "map": {
       "nodes": "nodes",
       "links": "edges"
@@ -2594,7 +2594,7 @@
     4
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "5m",
    "floated": false
   },
   {
@@ -2604,7 +2604,7 @@
     "source": "nodes.list",
     "title": "Machines",
     "read": {
-     "refresh": "60s",
+     "refresh": "5m",
      "map": {
       "rows": "nodes",
       "name": "label"
@@ -2637,7 +2637,7 @@
     4
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "5m",
    "floated": false
   },
   {
@@ -2744,7 +2744,7 @@
     "source": "netscan.map.list",
     "title": "Recon · identity · research",
     "read": {
-     "refresh": "60s"
+     "refresh": "5m"
     },
     "frame": {
      "size": "m",
@@ -2838,7 +2838,7 @@
     3
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "5m",
    "floated": false
   },
   {
@@ -2994,7 +2994,7 @@
     "source": "ha.summary",
     "title": "Home Assistant",
     "read": {
-     "refresh": "60s",
+     "refresh": "5m",
      "map": {
       "parts": "domains"
      }
@@ -3019,7 +3019,7 @@
     2
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "5m",
    "floated": false
   },
   {
@@ -3029,7 +3029,7 @@
     "source": "n8n.workflow.list",
     "title": "Automations",
     "read": {
-     "refresh": "60s",
+     "refresh": "5m",
      "map": {
       "values": "workflows",
       "name": "name",
@@ -3056,7 +3056,7 @@
     2
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "5m",
    "floated": false
   },
   {
@@ -3066,7 +3066,7 @@
     "source": "cal.events.list",
     "title": "Calendar",
     "read": {
-     "refresh": "60s",
+     "refresh": "5m",
      "map": {
       "days": "events",
       "when": "start",
@@ -3093,7 +3093,7 @@
     2
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "5m",
    "floated": false
   },
   {
