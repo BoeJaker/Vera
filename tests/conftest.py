@@ -32,6 +32,7 @@ _CRITICAL_MODULES = {
     "test_v6_extract_paths",    # a capability name is not a file (2026-09-08)
     "test_author_browser_observable",  # a page a browser verifies must be readable by one (2026-09-08)
     "test_route_preference",   # soft node preference must stay SOFT (2026-09-08)
+    "test_graph_panel_assets",  # a renamed panel JS serves a comment, silently (2026-09-20)
     "test_nlp_placement",      # the host must never silently run NLP (2026-09-20)
     "test_edge_server_body_binding",  # a POST endpoint that cannot take a body (2026-09-20)
     "test_edge_dir_resolution",  # $HOME is not writable on 2 of 3 ollama nodes (2026-09-20)
