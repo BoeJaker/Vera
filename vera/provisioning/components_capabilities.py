@@ -69,6 +69,16 @@ async def _resolve_edge_dir(host_id: str) -> Dict[str, Any]:
     if chosen:
         return {"ok": True, "dir": chosen, "venv": f"{chosen}/venv",
                 "tried": list(_EDGE_DIR_CANDIDATES)}
+    # Distinguish "could not ask" from "asked, and nowhere was writable".
+    # Collapsing the two sends the reader hunting for a permissions problem on
+    # the target when the real answer is that SSH never ran (observed: a
+    # sandbox without asyncssh reported an unwritable filesystem it had never
+    # reached).
+    if not res.get("ok"):
+        return {"ok": False, "dir": "", "venv": "",
+                "tried": list(_EDGE_DIR_CANDIDATES),
+                "error": "could not probe the target over SSH: "
+                         f"{res.get('error') or res.get('stderr') or 'no response'}"}
     return {"ok": False, "dir": "", "venv": "",
             "tried": list(_EDGE_DIR_CANDIDATES),
             "error": "no writable working directory on the target "
