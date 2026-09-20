@@ -16939,7 +16939,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     // every turn: its moment, its canvas items as the session canvas holds them (a reload keeps what was placed; a move
     // lands where it was dropped), and — when the layers are on — the calls it made and where they ran
     turns.forEach(t=>{ t.ts=tsOf[t.mid]||0; t.land=_xplLandOf(t.mid, t.land); });
-    if(_xplLayers.activity||_xplLayers.estate){ const by=_xplBucket(turns); turns.forEach(t=>{ const a=by[t.mid]||[]; if(_xplLayers.activity) t.activity=a; if(_xplLayers.estate) t.estate=_xplEstateOf(a); }); }
+    if(_xplLayers.activity||_xplLayers.estate){ const by=_xplBucket(turns), llm=_xplLLMFor(turns); turns.forEach(t=>{ const a=by[t.mid]||[]; if(_xplLayers.activity) t.activity=a; if(_xplLayers.estate) t.estate=_xplEstateOf(a, llm[t.mid]||[]); }); }
     return {turns, sel:(_grFocusMid&&turns.some(t=>t.mid===_grFocusMid))?_grFocusMid:(last?last.mid:'')};
   }
   /* ── the exploded scene's LAYERS and its canvas items (the Canvas board's exploded iso; the user's ask of 2026-09-19) ──
@@ -16949,7 +16949,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
      ESTATE — where those calls ran: the topology snapshot's node for the cap's group (the same table the topology map
      routes by), and the machines the snapshot says serve it. LAND — the session canvas's items anchored to a turn, so a
      widget placed on a plate is still there after a reload and moves when it is dropped on another turn. ── */
-  let _xplLayers={ activity:false, estate:false, galaxy:false }, _xplEvents=[], _xplEventsAt=0, _xplTopo=null, _xplTopoAt=0, _xplCv={ id:'', rev:null, byMid:{}, blocks:{}, at:0 }, _xplSyncing=false, _xplSyncSig='';
+  let _xplLayers={ activity:false, estate:false, galaxy:false }, _xplEvents=[], _xplLLM=[], _xplEventsAt=0, _xplTopo=null, _xplTopoAt=0, _xplCv={ id:'', rev:null, byMid:{}, blocks:{}, at:0 }, _xplSyncing=false, _xplSyncSig='';
   const _XPL_GROUP_NODE={ dream:'svc:dream', project:'svc:dream', chat:'svc:chat', chat_panels:'svc:chat', dag:'svc:dag', dag_workshop:'svc:dag', loops:'svc:dag', agent_loop_v5:'svc:dag', agent_loop_v6:'svc:dag', agent_loop_v7:'svc:dag', agent_loop_v8:'svc:dag', docker:'cat:docker', sandbox:'cat:sandboxes', evolve:'cat:sandboxes', mesh:'cat:mesh', netmon:'cat:mesh', recon:'cat:mesh', fabric:'cat:fabric', memory:'cat:fabric', discover:'cat:fabric', research:'cat:fabric', web:'cat:fabric', knowledgebase:'cat:fabric', nodes:'cat:nodes', provision:'cat:nodes', perf:'svc:perf', ollama:'cat:ollama', llm:'cat:ollama', embed:'cat:ollama', ide:'user', operator:'user', accounts:'user', calendar:'user', cal:'user', email:'user' };
   const _XPL_NOISE=new Set(['obs','health','ui','mcp','session','syslog','panel','caps','db','stream','cluster','canvas','widget','activity','topology']);
   // one pass: the events (every 6 s), the snapshot (every 60 s), the canvas (every 4 s) — then a re-render only when something changed
@@ -16959,7 +16959,9 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
           if(_xplCv.id){ const d=await _capCall('canvas.get',{id:_xplCv.id}); const doc=(d&&(d.canvas||d.doc||d))||{}; const rev=doc.revision!=null?doc.revision:(doc.rev!=null?doc.rev:JSON.stringify(doc.blocks||[]).length);
             if(rev!==_xplCv.rev){ _xplCv.rev=rev; const byMid={}, blocks={}; (doc.blocks||[]).forEach(b=>{ const a=b.anchor||((b.anchors||[]).slice(-1)[0])||{}; const mid=String(a.mid||a.turn||''); const key=String(b.key||''); if(key) blocks[key]={ id:b.id, mid, order:(b.layout&&b.layout.order)||0 }; if(!mid||b.state==='parked') return; (byMid[mid]=byMid[mid]||[]).push(_xplCardOfBlock(b, key)); }); _xplCv.byMid=byMid; _xplCv.blocks=blocks; changed=true; } } }catch(_){} }
       if((_xplLayers.activity||_xplLayers.estate)&&SID&&(force||now-_xplEventsAt>6000)){ _xplEventsAt=now; try{ let ev=await _capCall('obs.events',{limit:500}); ev=Array.isArray(ev)?ev:((ev&&(ev.events||ev.result||ev.items))||[]);
-          const mine=ev.filter(e=>e&&/^cap\.(call|ok|error)$/.test(String(e.type||''))&&String(e.session_id||'')===SID).map(e=>({ type:e.type, cap:String(e.name||''), group:String(e.group||String(e.name||'').split('.')[0]), ts:Date.parse(e.ts||e.time||'')||0, ms:e.elapsed_ms!=null?Math.round(+e.elapsed_ms):null, trace:String(e.trace_id||''), preview:String(e.preview||'').slice(0,200) }));
+          const mine=ev.filter(e=>e&&/^cap\.(call|ok|error)$/.test(String(e.type||''))&&String(e.session_id||'')===SID).map(e=>({ type:e.type, cap:String(e.name||''), group:String(e.group||String(e.name||'').split('.')[0]), ts:Date.parse(e.ts||e.time||'')||0, ms:e.elapsed_ms!=null?Math.round(+e.elapsed_ms):null, trace:String(e.trace_id||''), trig:String(e.trigger_id||''), tcap:String(e.trigger_cap||''), preview:String(e.preview||'').slice(0,200) }));
+          // the model's own requests: not session-scoped, so kept by time and bucketed with the turns' moments — the estate that ran the turn
+          _xplLLM=ev.filter(e=>e&&/^ollama\.(request|request_done|request_error)$/.test(String(e.type||''))).map(e=>({ type:e.type, ts:Date.parse(e.ts||'')||0, instance:String(e.instance_id||''), model:String(e.model||''), cap:String(e.cap_name||''), origin:String((e.origin&&(e.origin.node||e.origin.host))||''), req:String(e.req_id||''), s:e.elapsed_s!=null?+e.elapsed_s:null }));
           const sig=JSON.stringify(mine.map(e=>[e.type,e.cap,e.ts])); if(sig!==_xplSyncSig){ _xplSyncSig=sig; _xplEvents=mine; changed=true; } }catch(_){} }
       if(_xplLayers.estate&&(force||!_xplTopo||now-_xplTopoAt>60000)){ _xplTopoAt=now; try{ const t=await _capCall('topology.snapshot',{}); if(t&&Array.isArray(t.nodes)){ _xplTopo=t; changed=true; } }catch(_){} }
     } finally { _xplSyncing=false; }
@@ -16970,32 +16972,43 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     const COL={ widget:'#a78bfa', diagram:'#a78bfa', code:'#fb923c', table:'#38bdf8', note:'#5ec9a0', session:'#38bdf8', panel:'#c9955a', notebook:'#c9955a' };
     const n=String(c.title||c.name||(type==='widget'?(form||'widget'):type==='code'?((c.lang||'code')+' block'):type==='diagram'?'Diagram':type)).slice(0,60);
     const placed=c.placed&&typeof c.placed==='object'?c.placed:null; const d='canvas · '+(placed?(placed.where==='iso plate'?'placed on the plate':'placed'):(b.state==='pinned'?'pinned':'landed'))+(b.size?' · '+b.size:'');
-    return { n, d, col:COL[type]||'#5ec9a0', kind:type==='widget'?'widget':type, key, form:form||undefined, record:(type==='widget'&&c.record&&typeof c.record==='object')?c.record:(type==='widget'?c:undefined), mermaid:type==='diagram'?String(c.mermaid||c.source||''):undefined, tpl:c.template||undefined, included:b.state==='pinned'?true:undefined, body:type==='code'?String(c.code||c.text||'').slice(0,400):undefined }; }
+    return { n, d, col:COL[type]||'#5ec9a0', kind:type==='widget'?'widget':type, key, form:form||undefined, at:(b.meta&&b.meta.xpl_at&&typeof b.meta.xpl_at==='object')?b.meta.xpl_at:undefined, record:(type==='widget'&&c.record&&typeof c.record==='object')?c.record:(type==='widget'?c:undefined), mermaid:type==='diagram'?String(c.mermaid||c.source||''):undefined, tpl:c.template||undefined, included:b.state==='pinned'?true:undefined, body:type==='code'?String(c.code||c.text||'').slice(0,400):undefined }; }
   // the turn's canvas items: what the canvas holds for the turn (its anchors are the truth after a move), plus what this page
   // placed and the canvas has not answered for yet
   function _xplLandOf(mid, mine){ const cv=_xplCv.byMid[mid]||[]; const keys=new Set(cv.map(c=>c.key)); const kept=(mine||[]).filter(c=>{ if(!c.key) return true; const b=_xplCv.blocks[c.key]; return !(keys.has(c.key)||(b&&b.mid&&b.mid!==mid)); }); return cv.concat(kept).slice(0,12); }
   // the session's calls, bucketed into the turns (see above); call · ok · error paired by trace, so a call without its
   // ok is still running
   function _xplBucket(turns){ const by={}; if(!turns.length) return by; const pend={}, done=[];
-    _xplEvents.slice().sort((a,b)=>a.ts-b.ts).forEach(e=>{ if(e.type==='cap.call'){ pend[e.trace||e.cap+e.ts]=e; return; } const k=e.trace||''; if(k&&pend[k]) delete pend[k]; done.push({ n:e.cap, cap:e.cap, group:e.group, ts:e.ts, ms:e.ms, status:e.type==='cap.error'?'error':'ok', preview:e.preview }); });
-    Object.keys(pend).forEach(k=>{ const e=pend[k]; done.push({ n:e.cap, cap:e.cap, group:e.group, ts:e.ts, ms:null, status:'run', preview:e.preview }); }); done.sort((a,b)=>a.ts-b.ts);
+    _xplEvents.slice().sort((a,b)=>a.ts-b.ts).forEach(e=>{ if(e.type==='cap.call'){ pend[e.trace||e.cap+e.ts]=e; return; } const k=e.trace||''; const call=k&&pend[k]; if(call) delete pend[k]; done.push({ n:e.cap, cap:e.cap, group:e.group, ts:(call&&call.ts)||e.ts, ms:e.ms, status:e.type==='cap.error'?'error':'ok', preview:e.preview, trace:e.trace, trig:(call&&call.trig)||e.trig||'', tcap:(call&&call.tcap)||e.tcap||'' }); });
+    Object.keys(pend).forEach(k=>{ const e=pend[k]; done.push({ n:e.cap, cap:e.cap, group:e.group, ts:e.ts, ms:null, status:'run', preview:e.preview, trace:e.trace, trig:e.trig||'', tcap:e.tcap||'' }); }); done.sort((a,b)=>a.ts-b.ts);
     const tsList=turns.map(t=>t.ts||0), real=turns.length>1&&(Math.max.apply(null,tsList)-Math.min.apply(null,tsList))>30000;
     const hhmm=(ts)=>{ try{ const d=new Date(ts); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }catch(_){ return ''; } };
     done.forEach(e=>{ const named=turns.filter(t=>(t.made||[]).some(m=>/^(cap|capability|tool)$/i.test(String(m.kind||''))&&String(m.n||'').toLowerCase().indexOf(e.cap.toLowerCase())===0)); let t=named.length===1?named[0]:null;
       if(!t&&real){ for(let i=turns.length-1;i>=0;i--){ if((turns[i].ts||0)<=e.ts){ t=turns[i]; break; } } if(!t) t=turns[0]; }
       if(!t) t=named[0]||turns[turns.length-1];
       (by[t.mid]=by[t.mid]||[]).push(Object.assign({ t:hhmm(e.ts) }, e)); });
-    Object.keys(by).forEach(k=>{ by[k]=by[k].slice(-24); }); return by; }
+    // the tree: a call's parent is the call that triggered it (the trigger id names the parent's trace); the root calls hang off the exchange
+    Object.keys(by).forEach(k=>{ const L=by[k]=by[k].slice(-24); L.forEach(a=>{ const j=a.trig?L.findIndex(x=>x.trace&&x.trace===a.trig):-1; a.parent=j>=0?j:null; }); }); return by; }
+  // the model's requests, by turn: the window between the turn's moment and the next (when the moments are real), else the last turn
+  function _xplLLMFor(turns){ const by={}; if(!turns.length||!_xplLLM.length) return by; const tsList=turns.map(t=>t.ts||0), real=turns.length>1&&(Math.max.apply(null,tsList)-Math.min.apply(null,tsList))>30000;
+    _xplLLM.filter(e=>e.type==='ollama.request_done'||e.type==='ollama.request_error').forEach(e=>{ let t=null; if(real){ for(let i=turns.length-1;i>=0;i--){ if((turns[i].ts||0)<=e.ts){ t=turns[i]; break; } } } if(!t) t=turns[turns.length-1]; (by[t.mid]=by[t.mid]||[]).push(e); });
+    return by; }
   // where a turn's calls ran: the snapshot's node for each call's group, and the machines that serve it
-  function _xplEstateOf(acts){ const T=_xplTopo; if(!T||!Array.isArray(T.nodes)||!acts||!acts.length) return []; const byId={}; T.nodes.forEach(nd=>{ byId[nd.id]=nd; }); const out=[], idx={};
+  function _xplEstateOf(acts, llm){ const T=_xplTopo; acts=acts||[]; llm=llm||[]; if(!T||!Array.isArray(T.nodes)||(!acts.length&&!llm.length)) return []; const byId={}, byLabel={}; T.nodes.forEach(nd=>{ byId[nd.id]=nd; byLabel[String(nd.label||'').toLowerCase()]=nd; }); const out=[], idx={};
     const add=(nd, ai, via)=>{ if(!nd) return null; if(idx[nd.id]==null){ idx[nd.id]=out.length; out.push({ id:nd.id, label:nd.label||nd.id, kind:String(nd.kind||'service'), status:String(nd.status||''), detail:String(nd.detail||''), acts:[], via }); } const e=out[idx[nd.id]]; if(ai!=null&&e.acts.indexOf(ai)<0) e.acts.push(ai); return idx[nd.id]; };
-    acts.forEach((a, ai)=>{ const g=String(a.group||'').toLowerCase(); if(_XPL_NOISE.has(g)) return; const nid=_XPL_GROUP_NODE[g]; const nd=nid&&byId[nid]; if(!nd) return; const i=add(nd, ai, undefined); if(i==null) return;
-      (T.edges||T.links||[]).forEach(ed=>{ const to=ed.to||ed.target, from=ed.from||ed.source; if(to!==nd.id||String(ed.kind||'')!=='serves'&&!/^node:/.test(String(from||''))) return; const m=byId[from]; if(m&&out.length<12) add(m, null, i); }); });
+    const serving=(nd, i)=>{ (T.edges||T.links||[]).forEach(ed=>{ const to=ed.to||ed.target, from=ed.from||ed.source; if(to!==nd.id||String(ed.kind||'')!=='serves'&&!/^node:/.test(String(from||''))) return; const m=byId[from]; if(m&&out.length<12) add(m, null, i); }); };
+    // the model's requests: the instance each ran on (ollama:<instance>), the machine that serves it, the host it was made from
+    llm.forEach(e=>{ const inst=e.instance&&(byId['ollama:'+e.instance]||byLabel[e.instance.toLowerCase()]); const ai=acts.findIndex(a=>e.cap&&String(a.cap||'')===e.cap); if(inst){ const i=add(inst, ai>=0?ai:null, undefined); if(i!=null){ const en=out[i]; en.detail=[en.detail, e.model].filter(Boolean).filter((v,k,arr)=>arr.indexOf(v)===k).join(' · ').slice(0,80); serving(inst, i); } }
+      const org=e.origin&&byLabel[e.origin.toLowerCase()]; if(org) add(org, ai>=0?ai:null, undefined); });
+    acts.forEach((a, ai)=>{ const g=String(a.group||'').toLowerCase(); if(_XPL_NOISE.has(g)) return; const nid=_XPL_GROUP_NODE[g]; const nd=nid&&byId[nid]; if(!nd) return; const i=add(nd, ai, undefined); if(i==null) return; serving(nd, i); });
     return out.slice(0,12); }
   // a widget dropped on another turn's plate: the record is re-anchored there (anchors only grow — the latest is the truth);
   // dropped before another item on the same plate, it is reordered
   async function _xplMove(d){ const key=String(d.key||''); if(!key||!SID) return; const from=String(d.from||''), to=String(d.to||from); const bk=_xplCv.blocks[key]||{};
     try{
+      if(d.at&&typeof d.at==='object'){ const cur=(_xplCv.byMid[to]||_xplCv.byMid[from]||[]).concat(_TURN_LAND[from]||[], _TURN_LAND[to]||[]).find(c=>c.key===key); const at=Object.assign({}, (cur&&cur.at)||{}, d.at);
+        const r0=await _capCall('canvas.update',{ session_id:SID, key, meta:{ xpl_at:at } }); if(!(r0&&r0.ok)) throw new Error((r0&&r0.error)||'canvas.update failed');
+        Object.keys(_TURN_LAND).forEach(m=>{ (_TURN_LAND[m]||[]).forEach(c=>{ if(c.key===key) c.at=at; }); }); }
       if(to&&to!==from){ const r=await _capCall('canvas.add',{ session_id:SID, key, at:'now', anchor:{ mid:to, turn:to, moved_from:from } }); if(!(r&&r.ok)) throw new Error((r&&r.error)||'canvas.add failed');
         const mine=(_TURN_LAND[from]||[]); const i=mine.findIndex(c=>c.key===key); if(i>=0){ const c=mine.splice(i,1)[0]; (_TURN_LAND[to]=_TURN_LAND[to]||[]).push(c); } }
       if(d.before&&_xplCv.id&&bk.id){ const bkey=(_xplEl&&_xplEl._itemOf&&_xplEl._itemOf(d.before)||{}).key||''; const ob=bkey&&_xplCv.blocks[bkey]; if(ob&&ob.id!==bk.id){ await _capCall('canvas.move',{ id:_xplCv.id, block_id:bk.id, order:ob.order||0 }); } }
