@@ -317,6 +317,9 @@ details.lp-sub:not([open])>summary{opacity:.8}
 .msg-body .vmd-call > div > b{display:block;font-size:.8em;text-transform:uppercase;letter-spacing:.06em;color:var(--text);font-weight:600}
 .msg-body .vmd-call > div > p{margin:.15em 0 0}
 .msg-body .vmd-call.note{background:color-mix(in srgb,var(--acc) 10%,var(--bg1))}
+/* a TIP is not a note. A note is something to know, a tip something to try, and they were sharing a tone - so
+   the one the aide reaches for most often was the one you could not pick out of a reply at a glance. */
+.msg-body .vmd-call.tip{background:color-mix(in srgb,var(--acc4,#9e8fa0) 13%,var(--bg1))}
 .msg-body .vmd-call.warn{background:color-mix(in srgb,var(--warn,#c9a35a) 12%,var(--bg1))}
 .msg-body .vmd-call.stop{background:color-mix(in srgb,var(--err) 12%,var(--bg1))}
 .msg-body .vmd-call-i{text-align:center}
@@ -7276,11 +7279,20 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const sid=(typeof SID!=='undefined'&&SID)?SID:'';
     const sidArg=sid?'"session_id":"'+sid+'",':'';
     /* The block has to say WHO IT IS FOR before it says what is in it. Without that it reads as a description
-       of a feature, and the aide passes the description on - "Quick tip: drop it into the reply as a `widget
-       block and it appears live on your session canvas" - which the user can do nothing with, since they cannot
-       emit a fence, and which shows them the machinery the design hides (Notes/42 defect 95). */
+       of a feature, and the aide passes the description on as a tip about fences and canvases - which the user
+       can do nothing with, since they cannot emit a fence, and which shows them the machinery the design hides
+       (Notes/42 defect 95).
+
+       DEFECT 95 KEPT HAPPENING, and the rule below is why. It banned the behaviour by QUOTING it: the exact
+       opening the model was not to write sat in the prompt as a literal string, twice - once here as an
+       example and once in the rule itself. An instruction carrying its own counter-example is a good way to
+       plant the phrase, and it landed hardest on a turn with no content of its own ("thanks"), where the
+       model reaches for the most recent thing it was told. The rule describes the behaviour now instead of
+       quoting it, and says what to DO on such a turn rather than only what not to. */
     const L=['\n\n[STUDIO — visual & execution tools enabled by the user]',
-      'THESE ARE YOUR OWN TOOLS, NOT INFORMATION TO PASS ON. Use them silently. The user sees the picture, the diagram, the widget, the canvas item — never the mechanism that made it. Do not name a fence, a cap call, a directive or a capability; do not explain how you produced something; do not tell the user what you are able to do. A sentence of the form "Quick tip: …" about your own tooling is always wrong, and so is "I can drop that into the canvas for you" — just do it.'];
+      'THESE ARE YOUR OWN TOOLS, NOT INFORMATION TO PASS ON. Use them silently. The user sees the picture, the diagram, the widget, the canvas item — never the mechanism that made it. Do not name a fence, a cap call, a directive or a capability; do not explain how you produced something; do not tell the user what you are able to do. A reply that opens by advertising your own tooling is always wrong, however it is phrased; and do not offer to put something somewhere — put it there.',
+      'When the user says only thanks, or greets you, or closes the conversation, ANSWER THAT. A short human reply is the whole turn — do not fill it by describing what you have loaded, synced or prepared.',
+      'A genuine tip, note or warning — about THEIR work, never about yours — is written as a callout and renders as one: a line of "> [!TIP]" (or [!NOTE], [!WARNING]) and the text under it. Use it when something is worth setting apart; prose is the default.'];
     if(ill)L.push('- Pictures & illustrations: when the user asks you to imagine / draw / picture / show / illustrate a scene, place, object, character or concept (e.g. "imagine London", "show me a fox"), that is an IMAGE request — do NOT answer with a mermaid diagram. Generate one image with [[cap:media.illustrate {"subject":"…","style":"photorealistic" or a fitting style,"mode":"generate"}]] — its result renders in the chat automatically. Use mode:"search" for a real reference photo of something that exists. One image per reply; no session_id needed.');
     if(ref)L.push('- Reference images: to SHOW real examples of something that exists, use [[cap:media.image.search {"query":"…","limit":4}]] — the results render as a gallery in the chat automatically (no session_id needed).');
     if(ren){
