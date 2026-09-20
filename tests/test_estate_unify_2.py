@@ -39,8 +39,8 @@ def test_a_finding_about_a_container_or_guest_carries_its_reference():
                             "guests": {"findings": [health.finding("warn", "guests", "147", "VM 147 will not start.")]}})
     refs = {f["subject"]: f.get("ref") for f in out["findings"]}
     assert refs == {"redis": "container:local/redis", "147": "guest:147"}
-    panel = read("vera", "workers", "workers_ollama_panel.html")
-    assert "f.ref?' <span class=\"mc-ent\" data-entity=\"'+esc(f.ref)" in panel, "the Overview draws the chip"
+    panel = read("vera", "estate", "estate_overview_panel.html")
+    assert "${f.ref?' · '+chip(f.ref,f.subject||f.ref):''}" in panel, "the Overview draws the chip"
 
 
 def test_a_container_resolves_from_the_engine_rows():
