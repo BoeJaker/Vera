@@ -194,7 +194,7 @@
         // the activity: off the capability card that triggered it (by name), else the exchange; then the chain, call to call
         actRuns(acts, mades, (from, ai, cls, title) => R.add(from === 'ex' ? ex : from[0] === 'made' ? bx('made:' + from[1]) : bx('act:' + from[1]), bx('act:' + ai), 'var(--xp-ac2)', cls, title));
         // the estate: every call to the subsystem it ran through, the machines behind it
-        ests.forEach((e, ei) => { (e.acts || []).forEach((ai) => { if (bx('act:' + ai)) R.add(bx('act:' + ai), bx('est:' + ei), 'var(--xp-dv3)', 'est', 'ran through ' + (e.label || e.id)); }); if (e.via != null && bx('est:' + e.via)) R.add(bx('est:' + e.via), bx('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it'); });
+        ests.forEach((e, ei) => { (e.acts || []).forEach((ai) => { if (bx('act:' + ai)) R.add(bx('act:' + ai), bx('est:' + ei), 'var(--xp-dv3)', 'est', 'ran through ' + (e.label || e.id), null, { trunk: 'est:' + ei, tend: 'b' }); }); if (e.via != null && bx('est:' + e.via)) R.add(bx('est:' + e.via), bx('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it'); });
         // the RELATIONS between the turn's context records - the only runs that answer to the tier and the switch
         g.rels.forEach((r) => { const a = boxes['node:' + r.from], b = boxes['node:' + r.to], Rc = RELC[r.kind] || RELC.cite; if (a && b) R.add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)]); });
         R.flush();
@@ -387,7 +387,7 @@
       // a canvas item whose record is a context node (the pin-back): the graph knows it by the lane
       g.nodes.filter((n) => n.lane === 'canvas').forEach((n) => { const li = lands.findIndex((c) => String(c.id != null ? c.id : c.n) === n.id); if (li >= 0 && gp('land:' + li)) R.add(gp('land:' + li), gp('node:' + n.id), 'var(--xp-ac2)', 'pin', 'pinned back into the next prompt', null, { side: 'R' }); });
       actRuns(actsL[si], mades, (from, ai, cls, title) => R.add(from === 'ex' ? ex : from[0] === 'made' ? gp('made:' + from[1]) : gp('act:' + from[1]), gp('act:' + ai), 'var(--xp-ac2)', cls, title, null, cls === 'rel step act' ? { direct: true } : null));
-      estsL[si].forEach((e, ei) => { (e.acts || []).forEach((ai) => { if (gp('act:' + ai)) R.add(gp('act:' + ai), gp('est:' + ei), 'var(--xp-dv3)', 'est', 'ran through ' + (e.label || e.id), null, { side: 'R' }); }); if (e.via != null && gp('est:' + e.via)) R.add(gp('est:' + e.via), gp('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it', null, { rel: true }); });
+      estsL[si].forEach((e, ei) => { (e.acts || []).forEach((ai) => { if (gp('act:' + ai)) R.add(gp('act:' + ai), gp('est:' + ei), 'var(--xp-dv3)', 'est', 'ran through ' + (e.label || e.id), null, { side: 'R', trunk: 'est:' + ei, tend: 'b' }); }); if (e.via != null && gp('est:' + e.via)) R.add(gp('est:' + e.via), gp('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it', null, { rel: true }); });
       g.rels.forEach((r) => { const a = gp('node:' + r.from), b = gp('node:' + r.to), Rc = RELC[r.kind] || RELC.cite; if (a && b) R.add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)], { rel: true }); });
       R.flush(); });
     out.size = { w: W, h: H };
@@ -615,7 +615,7 @@
      radial and a table a table, on the plate, in the cards and in the carousel alike. '' without the widget element on
      the page (the iso group / the widget card stand in). ── */
   const SCREENY = /^(terminal|term|frame|panel|page|notebook|web|browser|chat|dashboard|dash)$/;
-  const planeSize = (form, sz) => { const scr = SCREENY.test(String(form || '').toLowerCase()); return { w: { s: 150, m: 220, l: 320 }[sz] * (scr ? 1.2 : 1), h: { s: 60, m: 110, l: 170 }[sz] * (scr ? 1.5 : 1) }; };
+  const planeSize = (form, sz) => { const scr = SCREENY.test(String(form || '').toLowerCase()); return scr ? { w: { s: 200, m: 330, l: 480 }[sz], h: { s: 140, m: 230, l: 340 }[sz] } : { w: { s: 150, m: 220, l: 320 }[sz], h: { s: 60, m: 110, l: 170 }[sz] }; };
   function faceHtml(c, wd, wsz, o) {
     if (!(root.VeraWidget && typeof root.VeraWidget.draw === 'function') || !wd || !wd.form) return '';
     const own = wd.size === 'xs' || wd.size === 's' ? 's' : wd.size === 'l' || wd.size === 'xl' ? 'l' : 'm';
@@ -625,7 +625,7 @@
     const pl = o && o.plane ? planeSize(wd.form, sz) : null;
     const H = pl ? Math.round(pl.h) : { s: 24, m: 70, l: 110 }[sz]; let rec = wd.record || null;
     try { if (rec && typeof root.VeraWidget.normalise === 'function') rec = root.VeraWidget.normalise(rec); } catch (_) {}
-    let html = ''; try { html = root.VeraWidget.draw(wd.form, wd.data, pl ? (sz === 's' ? 'm' : 'l') : sz, Object.assign({ bare: true, height: H, title: (c && c.n) || wd.form, record: rec, draw: rec && rec.draw, proj: 'iso' }, pl ? { width: Math.round(pl.w), frameMax: 2.6 } : {})); } catch (_) { html = ''; }
+    let html = ''; try { html = root.VeraWidget.draw(wd.form, wd.data, pl ? (sz === 's' ? 'm' : 'l') : sz, Object.assign({ bare: true, height: H, title: (c && c.n) || wd.form, record: rec, draw: rec && rec.draw, proj: 'iso' }, pl ? { width: Math.round(pl.w), frameMax: 3 } : {})); } catch (_) { html = ''; }
     if (!html) return '';
     return '<div class="xit-face' + (wd.sample ? ' sample' : '') + '" data-form="' + esc(wd.form) + '" data-size="' + sz + '" style="--fh:' + H + 'px">' + html + '</div>';
   }
@@ -1064,12 +1064,12 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
           return { x: (cx - r.left) / zoom, y: (cy - r.top) / zoom }; };
         this._dragLocal = local;
         this.addEventListener('pointermove', (e) => { const g = this._dragW; if (!g) return; const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
-          if (!g.on) { if (Math.abs(dx) + Math.abs(dy) < 6) return; g.on = true; g.el.classList.add('xp-lift'); wrap.classList.add('dropping'); g.tf0 = g.el.style.transform || ''; g.l0 = local(g.x0, g.y0); try { this.setPointerCapture(g.pid); } catch (_) {} }
-          const l = local(e.clientX, e.clientY); g.el.style.transform = 'translate(' + (l.x - g.l0.x).toFixed(1) + 'px,' + (l.y - g.l0.y).toFixed(1) + 'px) ' + g.tf0;
+          if (!g.on) { if (Math.abs(dx) + Math.abs(dy) < 6) return; g.on = true; g.el.classList.add('xp-lift'); wrap.classList.add('dropping'); g.l0 = local(g.x0, g.y0); try { this.setPointerCapture(g.pid); } catch (_) {} }
+          const l = local(e.clientX, e.clientY); g.el.style.translate = (l.x - g.l0.x).toFixed(1) + 'px ' + (l.y - g.l0.y).toFixed(1) + 'px';   /* the translate property composes BEFORE the class transform, so the item's own foot-anchoring (translate + the fit's counter-scale) stays under the lift */
           const hit = this._dropAt(l.x, l.y, g.id); const pl = hit.mid ? this.querySelector('.xp-pl[data-mid="' + hit.mid + '"]') : null; const before = hit.before ? this.querySelector('[data-drag][data-id="' + hit.before + '"]') : null;
           this.querySelectorAll('.xp-pl.drop').forEach((el) => { if (el !== pl) el.classList.remove('drop'); }); this.querySelectorAll('.xp-drop-before').forEach((el) => { if (el !== before) el.classList.remove('xp-drop-before'); });
           if (pl) pl.classList.add('drop'); if (before) before.classList.add('xp-drop-before'); g.to = hit.mid || ''; g.before = hit.before || ''; g.at = hit.at || null; g.layer = hit.layer || ''; });
-        const dropEnd = (e) => { const g = this._dragW; if (!g) return; this._dragW = null; if (!g.on) return; g.el.classList.remove('xp-lift'); g.el.style.transform = g.tf0; wrap.classList.remove('dropping');
+        const dropEnd = (e) => { const g = this._dragW; if (!g) return; this._dragW = null; if (!g.on) return; g.el.classList.remove('xp-lift'); g.el.style.translate = ''; wrap.classList.remove('dropping');
           this.querySelectorAll('.xp-pl.drop,.xp-drop-before').forEach((el) => { el.classList.remove('drop'); el.classList.remove('xp-drop-before'); }); try { this.releasePointerCapture(g.pid); } catch (_) {}
           this._dragJust = true; setTimeout(() => { this._dragJust = false; }, 250);
           const held = this._renderHeld; this._renderHeld = false;
@@ -1140,8 +1140,9 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         const inPoly = (p, poly) => { let ok = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const a = poly[i], b = poly[j]; if ((a.y > p.y) !== (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) ok = !ok; } return ok; };
         if (o.mode === 'iso') { const pl = (o.plates || []).find((q) => inPoly({ x, y }, q.poly)); if (!pl) return out; out.mid = pl.mid;
           const band = (o.bands || []).find((b) => b.si === pl.si && inPoly({ x, y }, b.poly)); out.layer = band ? band.layer : '';
-          if (band && band.layer === 'land' && o.ground) { const gr = o.ground, px0 = (x - gr.dx) / gr.s, py0 = (y - gr.dy) / gr.s; const T = gr.tilt * Math.PI / 180, A = gr.azim * Math.PI / 180, sT = Math.sin(T), cT = Math.cos(T), cA = Math.cos(A), sA = Math.sin(A);
-            const q = (py0 + (pl.z || 0) * cT) / Math.max(0.05, sT); const u = px0 * cA + q * sA, v = -px0 * sA + q * cA; out.at = { iso: { u: Math.round(u - pl.u0), v: Math.round(v - band.v0) } }; }
+          const landB = (band && band.layer === 'land') ? band : (o.bands || []).find((b) => b.si === pl.si && b.layer === 'land');   /* dropped on another band of the plate: the widget still lands on the canvas, in the pointer's column */
+          if (landB && o.ground) { const gr = o.ground, px0 = (x - gr.dx) / gr.s, py0 = (y - gr.dy) / gr.s; const T = gr.tilt * Math.PI / 180, A = gr.azim * Math.PI / 180, sT = Math.sin(T), cT = Math.cos(T), cA = Math.cos(A), sA = Math.sin(A);
+            const q = (py0 + (pl.z || 0) * cT) / Math.max(0.05, sT); const u = px0 * cA + q * sA, v = -px0 * sA + q * cA; out.at = { iso: { u: Math.round(u - pl.u0), v: Math.round(v - landB.v0) } }; }
           const near = (o.widgets || []).filter((w) => w.layer === 'land' && w.mid === pl.mid && w.id !== selfId).map((w) => ({ w, d: Math.hypot(w.x - x, w.y - y) })).sort((a, b) => a.d - b.d)[0]; if (near && near.d < 70) out.before = near.w.id; return out; }
         const pl = (o.plates || []).find((q) => x >= q.x && x <= q.x + q.w && y >= q.y && y <= q.y + q.h); if (!pl) return out; out.mid = pl.mid; out.layer = pl.layer || '';
         if (pl.layer === 'land') { out.at = { cards: { x: Math.round(x - pl.x), y: Math.round(y - pl.y) } }; const near = (o.cards || []).filter((c) => c.layer === 'land' && c.mid === pl.mid && c.id !== selfId && x >= c.x - 10 && x <= c.x + c.w + 10 && y >= c.y - 6 && y <= c.y + c.h + 6)[0]; if (near) out.before = near.id; }

@@ -16961,12 +16961,15 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       if((_xplLayers.activity||_xplLayers.estate)&&SID&&(force||now-_xplEventsAt>6000)){ _xplEventsAt=now; try{ let ev=await _capCall('obs.events',{limit:500}); ev=Array.isArray(ev)?ev:((ev&&(ev.events||ev.result||ev.items))||[]);
           const mine=ev.filter(e=>e&&/^cap\.(call|ok|error)$/.test(String(e.type||''))&&String(e.session_id||'')===SID).map(e=>({ type:e.type, cap:String(e.name||''), group:String(e.group||String(e.name||'').split('.')[0]), ts:Date.parse(e.ts||e.time||'')||0, ms:e.elapsed_ms!=null?Math.round(+e.elapsed_ms):null, trace:String(e.trace_id||''), trig:String(e.trigger_id||''), tcap:String(e.trigger_cap||''), preview:String(e.preview||'').slice(0,200) }));
           // the model's own requests: not session-scoped, so kept by time and bucketed with the turns' moments — the estate that ran the turn
-          _xplLLM=ev.filter(e=>e&&/^ollama\.(request|request_done|request_error)$/.test(String(e.type||''))).map(e=>({ type:e.type, ts:Date.parse(e.ts||'')||0, instance:String(e.instance_id||''), model:String(e.model||''), cap:String(e.cap_name||''), origin:String((e.origin&&(e.origin.node||e.origin.host))||''), req:String(e.req_id||''), s:e.elapsed_s!=null?+e.elapsed_s:null }));
-          const sig=JSON.stringify(mine.map(e=>[e.type,e.cap,e.ts])); if(sig!==_xplSyncSig){ _xplSyncSig=sig; _xplEvents=mine; changed=true; } }catch(_){} }
+          const llmNow=ev.filter(e=>e&&/^ollama\.(request|request_done|request_error)$/.test(String(e.type||''))).map(e=>({ type:e.type, ts:Date.parse(e.ts||'')||0, instance:String(e.instance_id||''), model:String(e.model||''), cap:String(e.cap_name||''), origin:String((e.origin&&(e.origin.node||e.origin.host))||''), req:String(e.req_id||''), s:e.elapsed_s!=null?+e.elapsed_s:null }));
+          // the stream is a ring of 500 (a few minutes when the estate is busy): the view accumulates what it has seen, so a turn's calls stay while the explode is open
+          _xplLLM=_xplMerge(_xplLLM, llmNow, e=>e.type+'|'+e.req+'|'+e.ts); const capOf={}; _xplLLM.forEach(e=>{ if(e.type==='ollama.request'&&e.cap) capOf[e.req]=e.cap; }); _xplLLM.forEach(e=>{ if(!e.cap&&capOf[e.req]) e.cap=capOf[e.req]; });
+          const merged=_xplMerge(_xplEvents, mine, e=>e.type+'|'+e.trace+'|'+e.ts); const sig=merged.length+'|'+(merged.length?merged[merged.length-1].ts:0); if(sig!==_xplSyncSig){ _xplSyncSig=sig; _xplEvents=merged; changed=true; } }catch(_){} }
       if(_xplLayers.estate&&(force||!_xplTopo||now-_xplTopoAt>60000)){ _xplTopoAt=now; try{ const t=await _capCall('topology.snapshot',{}); if(t&&Array.isArray(t.nodes)){ _xplTopo=t; changed=true; } }catch(_){} }
     } finally { _xplSyncing=false; }
     if(changed&&_xpl.on&&_xplEl){ try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: sync', e); } }
   }
+  function _xplMerge(old, add, keyOf){ const seen=new Set(old.map(keyOf)); const out=old.slice(); add.forEach(e=>{ const k=keyOf(e); if(!seen.has(k)){ seen.add(k); out.push(e); } }); out.sort((a,b)=>a.ts-b.ts); return out.slice(-4000); }
   // a canvas block as a card of the scene's LAND layer (the same vocabulary the chat's own landings use)
   function _xplCardOfBlock(b, key){ const c=(b.content&&typeof b.content==='object')?b.content:{}; const type=String(b.type||'note'); const form=String(c.form||c.widget||(c.draw&&c.draw.form)||'');
     const COL={ widget:'#a78bfa', diagram:'#a78bfa', code:'#fb923c', table:'#38bdf8', note:'#5ec9a0', session:'#38bdf8', panel:'#c9955a', notebook:'#c9955a' };
@@ -16988,7 +16991,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       if(!t) t=named[0]||turns[turns.length-1];
       (by[t.mid]=by[t.mid]||[]).push(Object.assign({ t:hhmm(e.ts) }, e)); });
     // the tree: a call's parent is the call that triggered it (the trigger id names the parent's trace); the root calls hang off the exchange
-    Object.keys(by).forEach(k=>{ const L=by[k]=by[k].slice(-24); L.forEach(a=>{ const j=a.trig?L.findIndex(x=>x.trace&&x.trace===a.trig):-1; a.parent=j>=0?j:null; }); }); return by; }
+    Object.keys(by).forEach(k=>{ const L=by[k]=by[k].slice(-24); L.forEach(a=>{ const j=(a.trig&&a.trig!==a.trace)?L.findIndex(x=>x!==a&&x.trace&&x.trace===a.trig):-1; a.parent=j>=0?j:null; }); }); return by; }
   // the model's requests, by turn: the window between the turn's moment and the next (when the moments are real), else the last turn
   function _xplLLMFor(turns){ const by={}; if(!turns.length||!_xplLLM.length) return by; const tsList=turns.map(t=>t.ts||0), real=turns.length>1&&(Math.max.apply(null,tsList)-Math.min.apply(null,tsList))>30000;
     _xplLLM.filter(e=>e.type==='ollama.request_done'||e.type==='ollama.request_error').forEach(e=>{ let t=null; if(real){ for(let i=turns.length-1;i>=0;i--){ if((turns[i].ts||0)<=e.ts){ t=turns[i]; break; } } } if(!t) t=turns[turns.length-1]; (by[t.mid]=by[t.mid]||[]).push(e); });
