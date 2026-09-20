@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import datetime as _dt
 import hashlib
 import json
 import logging
@@ -84,6 +85,10 @@ try:
     from Vera.vera.agents import chat_ctx_core as _chat_ctx
 except Exception:                       # worktree / app-free import
     from vera.agents import chat_ctx_core as _chat_ctx
+try:
+    from Vera.vera.agents import queue_status_core as _queue_status
+except Exception:                       # worktree / app-free import
+    from vera.agents import queue_status_core as _queue_status
 
 # Lazy import helper for DAG execution — avoids circular import at load time
 def _get_dag_runner():
@@ -2263,6 +2268,82 @@ _CHAT_PS_TIMEOUT_S = float(os.environ.get("VERA_CHAT_PS_TIMEOUT_S", "3") or 3)
 _CHAT_FIRST_TOKEN_S = float(os.environ.get("VERA_CHAT_FIRST_TOKEN_S", "90") or 90)
 
 
+#: How often to refresh the "what am I waiting for" line while a turn has not
+#: produced its first token. Cheap: the facts are in-process except one bounded
+#: node probe, which is cached for this long anyway.
+_CHAT_QUEUE_REFRESH_S = float(os.environ.get("VERA_CHAT_QUEUE_REFRESH_S", "5") or 5)
+
+#: Bound on asking a node whether its runner is busy. Unknown is a fine answer —
+#: it just means we do not claim the node is idle (queue_status_core).
+_CHAT_RUNNER_PROBE_S = float(os.environ.get("VERA_CHAT_RUNNER_PROBE_S", "3") or 3)
+
+
+def _vera_jobs_ahead(chosen: str, own_req_id: str) -> List[Dict]:
+    """Vera's own in-flight generations on `chosen`, this turn excluded.
+
+    Read straight out of the orchestrator's ring buffer — no I/O. These are the
+    only jobs we can NAME; anything else on the node is invisible here, which is
+    why the caller also asks the node itself.
+    """
+    out: List[Dict] = []
+    try:
+        now = time.time()
+        for e in reversed(_orch._OLLAMA_REQUEST_LOG[-200:]):
+            if e.get("status") != "running":
+                continue
+            if e.get("instance") != chosen or e.get("req_id") == own_req_id:
+                continue
+            if "embed" in str(e.get("model") or ""):
+                continue          # embeds run on the CPU pool, not in our way
+            try:
+                age = now - _dt.datetime.fromisoformat(
+                    str(e.get("ts", "")).replace("Z", "+00:00")).timestamp()
+            except Exception:
+                age = 0.0
+            out.append({"job_type": e.get("job_type") or "",
+                        "caller": e.get("caller_func") or "",
+                        "model": e.get("model") or "",
+                        "age_s": max(age, 0.0)})
+    except Exception as e:
+        log.debug("jobs-ahead read: %s", e)
+    return out
+
+
+async def _runner_busy(chosen: str) -> Optional[bool]:
+    """Does the node itself say its runner is computing? None when unknown.
+
+    This is the half that sees work Vera did not start — n8n, a sandbox, the
+    other container sharing the host. Without it a busy node looks idle, which
+    is exactly the failure mode that cost eight hours on 2026-09-20.
+    """
+    try:
+        _na = sys.modules.get("node_agent_capabilities")
+        if _na is None:
+            return None
+        got = await asyncio.wait_for(_na._collect_runners(chosen),
+                                     timeout=_CHAT_RUNNER_PROBE_S)
+        rows = [r for r in (got.get("runners") or []) if r.get("node") == chosen]
+        if not rows:
+            return None                   # no agent / nothing reported: unknown
+        return any(_na.is_active(_na.Runner(
+            pid=int(r.get("pid") or 0), state=str(r.get("state") or ""),
+            cpu_seconds=float(r.get("cpu_seconds") or 0))) for r in rows)
+    except Exception:
+        return None
+
+
+def _queue_frame(status: Dict) -> bytes:
+    """The SSE frame the chat UI renders as a status line above the bubble."""
+    return ("data: " + json.dumps({
+        "type": "queued",
+        "state": status.get("state"),
+        "node": status.get("node"),
+        "text": status.get("text"),
+        "ahead": status.get("ahead") or [],
+        "will_load": bool(status.get("will_load")),
+    }) + "\n\n").encode()
+
+
 def _chat_stall_frame(node: str, model: str, url: str, waited: float,
                       what: str) -> bytes:
     """An SSE error frame that names the node, the model, and what to do.
@@ -2304,6 +2385,26 @@ async def _resident_num_ctx(url: str, model: str) -> int:
     except Exception as e:
         log.debug("resident num_ctx probe [%s/%s]: %s", url, model, e)
         return 0
+
+
+async def _resident_ps(url: str) -> Optional[Dict]:
+    """The first model row from a node's /api/ps, or None.
+
+    Separate from _resident_num_ctx because the wait-status line needs the
+    model NAME as well as its window (to say whether a load is coming), and
+    because it must never raise into a chat turn.
+    """
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=_CHAT_PS_TIMEOUT_S) as c:
+            r = await c.get(f"{url}/api/ps")
+            if r.status_code != 200:
+                return None
+            rows = ((r.json() or {}).get("models") or [])
+            return rows[0] if rows else None
+    except Exception:
+        return None
 
 
 async def _chat_num_ctx(messages: List[Dict], model: str, url: str,
@@ -2829,6 +2930,39 @@ class AgentRunner:
 
         _og_stream_ok = False   # upstream stream ran to completion
         _og_done_sent = False   # a terminal request_done/request_error was emitted
+
+        # ── What is this turn waiting for? ───────────────────────────────────
+        # A 90s reply and a hung one look identical from the chat window, and
+        # the answer is usually mundane (a loop step is on the same node, or the
+        # model has to load). Say so. See queue_status_core for why this never
+        # claims the node is FREE — Vera can only name its own jobs, so the node
+        # is asked too, and silence is the answer when nothing is known.
+        async def _wait_status() -> Optional[Dict]:
+            try:
+                _ahead = _vera_jobs_ahead(chosen, _og_req_id)
+                # Only pay for the node probe when Vera has nothing of its own
+                # in flight — with a named job ahead we already know the answer.
+                _busy = None if _ahead else await _runner_busy(chosen)
+                _res_model, _res_ctx = "", 0
+                try:
+                    _ps = await _resident_ps(url)
+                    if _ps:
+                        _res_model = str(_ps.get("name") or "")
+                        _res_ctx = int(_ps.get("context_length") or 0)
+                except Exception:
+                    pass
+                return _queue_status.describe_wait(
+                    chosen, _ahead,
+                    resident_model=_res_model, resident_ctx=_res_ctx,
+                    requested_model=model, requested_ctx=ctx_window,
+                    runner_busy=_busy)
+            except Exception as e:
+                log.debug("wait status: %s", e)
+                return None
+
+        _st = await _wait_status()
+        if _queue_status.should_emit(_st):
+            yield _queue_frame(_st)
         try:
             # `read` is a PER-CHUNK timeout in httpx (resets on every byte received),
             # not a cumulative cap on the whole stream — so this fires whenever the
@@ -2875,17 +3009,30 @@ class AgentRunner:
 
                     _lines = _orch._StreamLines(resp.aiter_lines())
                     _seen_any = False
+                    _waited = 0.0
                     while True:
                         try:
                             # Poll non-destructively: a TimeoutError here leaves
                             # the stream intact, so a slow-but-progressing
                             # generation is never cut off (see _StreamLines).
+                            # Before the first token the poll is SHORT so the
+                            # wait line can be refreshed; the first-token
+                            # deadline below is what actually bounds the wait.
                             line = await _lines.next(
                                 timeout=(_orch.OLLAMA_GEN_TIMEOUT if _seen_any
-                                         else _CHAT_FIRST_TOKEN_S))
+                                         else _CHAT_QUEUE_REFRESH_S))
                         except asyncio.TimeoutError:
                             if _seen_any:
                                 continue          # quiet but alive — keep waiting
+                            # Still no first token. Refresh what we are waiting
+                            # for — a queue that is draining looks different
+                            # from one that is not, and both beat silence.
+                            _waited += _CHAT_QUEUE_REFRESH_S
+                            if _waited < _CHAT_FIRST_TOKEN_S:
+                                _st = await _wait_status()
+                                if _queue_status.should_emit(_st):
+                                    yield _queue_frame(_st)
+                                continue
                             yield _chat_stall_frame(chosen, model, url,
                                                     _CHAT_FIRST_TOKEN_S,
                                                     "sent headers but no tokens")

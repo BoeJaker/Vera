@@ -7834,6 +7834,10 @@ Your task: decide what to do next to advance toward the goal.
           try{
             const ev=JSON.parse(raw);
             if(ev.type==='token'){fullText+=ev.text||'';bubEl.dataset.markdown=fullText;
+              /* First token: whatever we were queued behind is over. Guarded by
+                 a dataset flag so the common case costs a property read, not a
+                 DOM query on every single token. */
+              if(aMsg.wrap.dataset.qline){try{const _q=aMsg.wrap.querySelector('.queue-status-line');if(_q)_q.remove();}catch(_){}delete aMsg.wrap.dataset.qline;}
               // Auto-open panels the moment a [[panel:…]] closes; only scan when
               // a ']' just arrived (a directive may have just completed).
               if((ev.text||'').includes(']'))_streamAutoOpenPanels(fullText);
@@ -7842,6 +7846,29 @@ Your task: decide what to do next to advance toward the goal.
               // Coalesced to one paint per frame; see _scheduleStreamRender.
               _scheduleStreamRender();}
             else if(ev.type==='thinking'){fullThink+=ev.text||'';thkEl.style.display='block';thkEl.textContent=fullThink;}
+            /* What this turn is waiting for, refreshed until the first token.
+               The server only names jobs Vera itself started; when it cannot
+               see what is holding the node it says so rather than claiming the
+               node is free, and sends nothing at all when nothing is known.
+               See vera/agents/queue_status_core.py. */
+            else if(ev.type==='queued'&&ev.text){
+              try{
+                let qEl=aMsg.wrap.querySelector('.queue-status-line');
+                if(!qEl){
+                  qEl=document.createElement('div');qEl.className='queue-status-line';
+                  qEl.style.cssText='font-size:10px;color:var(--dim2);margin:2px 0 5px 62px;opacity:.95;overflow-wrap:anywhere;line-height:1.5';
+                  const _row=bubEl.closest('.msg-user-line')||bubEl.parentNode;
+                  (_row.parentNode||aMsg.wrap).insertBefore(qEl,_row);
+                  aMsg.wrap.dataset.qline='1';
+                }
+                const _icon=(ev.state==='loading')?'\u{1F4E6}':(ev.state==='busy_elsewhere'?'\u{1F513}':'\u{23F3}');
+                qEl.textContent=_icon+' '+ev.text;
+                qEl.title=(ev.ahead&&ev.ahead.length)
+                  ? ev.ahead.map(function(a){return (a.job_type||a.caller||'job')+' · '+(a.model||'')+' · '+Math.round(a.age_s||0)+'s';}).join('\n')
+                  : '';
+                scroll();
+              }catch(_){}
+            }
             // Quick opener — a one-liner from the second endpoint, shown as a
             // light line ABOVE the main bubble; never merged into fullText.
             else if(ev.type==='opener'&&ev.text){
