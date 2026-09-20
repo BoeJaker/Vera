@@ -96,6 +96,39 @@ def test_prompt_evidence_does_not_retain_text():
     assert secret not in repr(evidence)
 
 
+def test_shared_router_request_log_never_retains_prompt_payloads():
+    from vera import capability_orchestration as orchestration
+
+    secret = "private authoring instruction that must not enter telemetry"
+    clean = orchestration._sanitize_ollama_log_entry({
+        "req_id": "request-1",
+        "prompt_preview": secret[:24],
+        "prompt_full": secret,
+        "status": "done",
+    })
+
+    assert "prompt_full" not in clean
+    assert clean["prompt_preview"].startswith("[prompt chars=")
+    assert clean["prompt_evidence"]["chars"] == len(secret)
+    assert len(clean["prompt_evidence"]["sha256"]) == 16
+    assert secret not in repr(clean)
+    assert secret[:24] not in repr(clean)
+
+    safe_again = orchestration._sanitize_ollama_log_entry(clean)
+    assert safe_again == clean
+    assert safe_again["prompt_evidence"] == clean["prompt_evidence"]
+
+
+def test_shared_router_generation_and_embedding_events_are_payload_free():
+    source = (ROOT / "vera" / "capability_orchestration.py").read_text(
+        encoding="utf-8")
+
+    assert 'prompt_preview = _ollama_payload_preview(prompt, "prompt")' in source
+    assert 'text_preview = _ollama_payload_preview(text, "embed")' in source
+    assert '"prompt_full": (prompt or "")[:16000]' not in source
+    assert '"prompt_full":  f"[embed]' not in source
+
+
 def test_stream_activity_keeps_metrics_without_message_or_response_copy():
     source = _function_source(
         ROOT / "vera" / "agents" / "agents.py", "agent_chat_stream_endpoint")
