@@ -69,7 +69,7 @@ def test_an_enrolled_guest_takes_its_state_and_cluster_from_proxmox():
     assert row["ssh_label"] == "pve:126@corp" and row["note"] == ""
     assert row["hardware"] == ["12 cores", "50 GB RAM"]
     assert row["runs"] == ["ollama GPU Node"]
-    assert ids(row) == ["console", "shutdown", "reboot", "ssh", "detect"]
+    assert ids(row) == ["console", "shutdown", "reboot", "ssh", "detect", "provision"]
     assert row["actions"][0]["mode"] == "term"
 
 
@@ -89,14 +89,14 @@ def test_stopped_guests_can_only_be_started_and_templates_offer_nothing():
 def test_an_enrolled_guest_missing_from_proxmox_keeps_its_terminal():
     row = machines()["pve:999@corp"]
     assert row["status"] == "unknown" and "does not list" in row["note"]
-    assert ids(row) == ["ssh", "detect"]
+    assert ids(row) == ["ssh", "detect", "provision"]
 
 
 def test_nodes_hosts_and_docker_hosts_get_their_own_actions():
     rows = machines()
-    assert ids(rows["PVE01"]) == ["ssh", "cpu", "detect"]
+    assert ids(rows["PVE01"]) == ["ssh", "cpu", "detect", "provision"]
     assert rows["PVE01"]["hardware"] == ["Tesla V100-PCIE-12GB", "48 cores", "252 GB RAM"]
-    assert ids(rows["ollama126.vera.int"]) == ["ssh", "detect"]
+    assert ids(rows["ollama126.vera.int"]) == ["ssh", "detect", "provision"]
     assert rows["192.168.0.250 (vera-worker)"]["kind"] == "docker-host"
     assert ids(rows["192.168.0.250 (vera-worker)"]) == ["containers"]
 
@@ -118,7 +118,7 @@ def test_an_ssh_host_on_a_guests_static_ip_is_that_guest():
     assert list(rows) == ["VFS-02"]
     row = rows["VFS-02"]
     assert (row["kind"], row["ssh_host_id"], row["logins"], row["note"]) == ("guest", "vfs", 1, "")
-    assert ids(row) == ["console", "shutdown", "reboot", "ssh", "detect"]
+    assert ids(row) == ["console", "shutdown", "reboot", "ssh", "detect", "provision"]
 
 
 def test_a_guest_without_a_static_ip_joins_the_host_with_its_name():

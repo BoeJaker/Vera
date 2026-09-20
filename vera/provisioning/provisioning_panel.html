@@ -62,6 +62,7 @@ input:focus,select:focus{border-color:var(--acc)}
 .toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}
 </style>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-estate.js"></script>
 </head>
 <body>
 <div id="shell">
@@ -174,13 +175,7 @@ async function loadConfig(){
   $('#cBase').value=c.base_domain||''; $('#cVerify').checked=!!c.verify_tls;
   $('#obTokFlag').textContent=c.has_openbao_token?'· stored':'';
   // SSH hosts for the install target
-  try{
-    const h=await api('/exec/ssh/hosts/list'); const sel=$('#cSsh');
-    const hosts=(h&&(h.hosts||h.items||h))||[];
-    sel.innerHTML='<option value="">— none —</option>'+
-      (Array.isArray(hosts)?hosts:[]).map(x=>`<option value="${esc(x.id||x.host_id||x.name||'')}">${esc(x.label||x.name||x.host||x.id||'')}</option>`).join('');
-    if(c.default_ssh_host_id) sel.value=c.default_ssh_host_id;
-  }catch(e){}
+  try{ await veraEstate.fillSelect($('#cSsh'), {blank:'— none —', selected:c.default_ssh_host_id||''}); }catch(e){}
 }
 async function saveConfig(){
   const body={ openbao_addr:$('#cObAddr').value.trim(), stepca_url:$('#cCaUrl').value.trim(),

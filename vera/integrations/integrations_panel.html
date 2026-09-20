@@ -311,7 +311,7 @@ function card(it){
   if(it.in_mesh)badges.push('<span class="bdg ok">mesh</span>');
   if(it.sensitive)badges.push('<span class="bdg warn">sensitive</span>');
   d.innerHTML=`<div class="chead"><span class="ico">${esc(kindIcon(it.kind))}</span>
-      <div style="min-width:0;flex:1"><div class="nm">${esc(it.label)}</div>
+      <div style="min-width:0;flex:1"><div class="nm" data-entity="integration:${esc(it.id)}" style="cursor:pointer" title="The machine this runs on, its certificate, its access">${esc(it.label)}</div>
       <div class="sub">${esc(it.kind)} · ${esc(it.base_url||(it.host?it.host+':'+it.port:''))}</div></div></div>
     <div class="badges">${badges.join('')}</div>
     <div class="toggles">${MODES.map(m=>tgHtml(it,m)).join('')}</div>
@@ -459,5 +459,6 @@ async function applyRegister(){
 
 load();
 </script>
+<script src="/ui/vera-entity-drawer.js"></script>
 </body>
 </html>

@@ -286,6 +286,20 @@ async def _serve_vera_panel_js():
                     media_type="application/javascript")
 
 
+# Serve vera-select.js — the one searchable pick / multi-pick control
+@APP.get("/ui/vera-select.js", include_in_schema=False)
+async def _serve_vera_select_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "vera-select.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(content="console.warn('vera-select.js not found');",
+                    media_type="application/javascript")
+
+
 # Serve vera-loader.js — configurable loading animation (default: evolving graph)
 @APP.get("/ui/vera-loader.js", include_in_schema=False)
 async def _serve_vera_loader_js():

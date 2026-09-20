@@ -411,6 +411,19 @@ def _order(f: Mapping[str, Any]):
     return (_RANK.get(f.get("severity"), 3), f.get("section", ""), f.get("subject", ""))
 
 
+def entity_ref_for(section: str, subject: Any) -> str:
+    """The entity a finding is about, when its subject names one: a container
+    on the Vera host, a guest by vmid. Anything else stays a plain finding."""
+    s = str(subject or "").strip()
+    if not s:
+        return ""
+    if section == "containers" and s not in ("docker", "Docker"):
+        return f"container:local/{s}"
+    if section in ("guests", "backups") and s.isdigit():
+        return f"guest:{s}"
+    return ""
+
+
 def summarize(results: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
     """One result: overall level, counts, every finding (errors first) and the
     per-section facts. A source that failed is itself a finding, never a blank."""
@@ -418,7 +431,8 @@ def summarize(results: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
     everything: List[Dict[str, Any]] = []
     for key, label in SECTIONS.items():
         res = results.get(key) or {}
-        items = list(res.get("findings") or [])
+        items = [dict(f, ref=entity_ref_for(key, f.get("subject"))) if not f.get("ref") else dict(f)
+                 for f in (res.get("findings") or [])]
         if res.get("error"):
             items.append(finding(WARN, key, label,
                                  f"Could not check {_SECTION_NOUN[key]}: {res['error']}"))

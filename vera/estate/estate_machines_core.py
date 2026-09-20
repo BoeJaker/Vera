@@ -106,6 +106,11 @@ def actions(row: Mapping[str, Any]) -> List[Dict[str, str]]:
         acts.append({"id": "cpu", "label": "CPU / NUMA"})
     if reachable and row.get("ssh_host_id"):
         acts.append({"id": "detect", "label": "Detect"})
+        # What the Nodes pane offered that Machines did not: install a runtime
+        # on the machine, and swap an inference node between Ollama and vLLM.
+        acts.append({"id": "provision", "label": "Provision"})
+        if any(r in ("ollama", "vllm") for r in (row.get("runs") or [])):
+            acts.append({"id": "backend", "label": "Switch backend"})
     if row.get("docker_host_id"):
         acts.append({"id": "containers", "label": "Containers"})
     return acts

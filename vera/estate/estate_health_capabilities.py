@@ -33,7 +33,10 @@ import inspect
 import logging
 import time
 from typing import Any, Dict, List, Optional
+from pathlib import Path
 from urllib.parse import urlparse
+
+from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability, now_iso
@@ -322,6 +325,16 @@ async def _startup_state_store_check() -> None:
     if not out.get("error") and not out.get("findings"):
         log.info("state store check: connected to the estate's Redis (%s keys of %s expected)",
                  out["facts"].get("expected_present"), out["facts"].get("expected_total"))
+
+
+_OVERVIEW_PANEL = Path(__file__).parent / "estate_overview_panel.html"
+
+
+@_orch.APP.get("/estate/overview/panel", include_in_schema=False)
+async def _overview_panel():
+    """The Overview as a dashboard: one VeraDash grid over the estate's readers."""
+    return HTMLResponse(_OVERVIEW_PANEL.read_text(encoding="utf-8") if _OVERVIEW_PANEL.exists()
+                        else "<p style='color:red'>estate_overview_panel.html not found</p>")
 
 
 try:

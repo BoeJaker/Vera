@@ -42,6 +42,28 @@
     return CACHE.inflight;
   }
   function logins(refresh){ return machines(refresh).then(function(rows){ return rows.filter(function(m){ return m.ssh_host_id; }); }); }
+  // Synchronous lookup in the loaded list (call machines() once first): by login id, vmid,
+  // Docker host id, Proxmox node name, or any address the machine answers on.
+  function find(q){
+    var rows = CACHE.rows || []; q = q || {};
+    return rows.find(function(m){
+      return (q.ssh_host_id && m.ssh_host_id === q.ssh_host_id)
+          || (q.vmid != null && q.vmid !== '' && m.kind === 'guest' && String(m.vmid) === String(q.vmid))
+          || (q.docker_host_id && m.docker_host_id === q.docker_host_id)
+          || (q.node && m.kind === 'proxmox-node' && m.node === q.node)
+          || (q.addr && (m.addr === q.addr || (m.ips || []).indexOf(q.addr) >= 0));
+    }) || null;
+  }
+  function refFor(q){ return ref(find(q)); }
+  // "NWM-02 (CT 145)" / "CT 145" - what a confirmation calls a guest.
+  function guestName(vmid, type){
+    var m = find({vmid: vmid}); var kind = (type || (m && m.type)) === 'qemu' ? 'VM ' : 'CT ';
+    return (m && m.label ? m.label + ' (' + kind + vmid + ')' : kind + vmid);
+  }
+  // login id -> the estate's label, for selects that keep their own rows but should read the same.
+  function labelMap(refresh){
+    return machines(refresh).then(function(rows){ var o = {}; rows.forEach(function(m){ if (m.ssh_host_id) o[m.ssh_host_id] = label(m); }); return o; });
+  }
   var KIND = {'proxmox-node':'node', guest:'guest', host:'host', 'docker-host':'Docker'};
   function label(m){
     var where = m.kind === 'guest' && m.vmid != null ? ((m.type === 'qemu' ? 'VM ' : 'CT ') + m.vmid) : (KIND[m.kind] || m.kind || '');
@@ -127,5 +149,6 @@
   function chip(r, text){ return r ? '<span data-entity="' + esc(r) + '" style="cursor:pointer;border-bottom:1px dotted currentColor" title="Everything the estate knows about this">' + esc(text) + '</span>' : esc(text); }
 
   window.veraEstate = {machines: machines, logins: logins, pick: pick, fillSelect: fillSelect, ref: ref,
-                       label: label, plan: plan, confirmRun: confirmRun, chip: chip, BASE: BASE};
+                       label: label, plan: plan, confirmRun: confirmRun, chip: chip, BASE: BASE,
+                       find: find, refFor: refFor, labelMap: labelMap, guestName: guestName};
 })();

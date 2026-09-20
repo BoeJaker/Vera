@@ -594,7 +594,7 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
           <div class="fi"><label>Interval (s)</label><input class="ip" id="mon-interval" type="number" value="60" min="15"></div>
           <div class="fi"><label>Sweep every N</label><input class="ip" id="mon-discovery-n" type="number" value="5" min="1"></div>
         </div>
-        <div class="fi"><label>LAN CIDRs (blank = auto from graph)</label><input class="ip" id="mon-cidrs" placeholder="192.168.1.0/24, 10.0.0.0/24"></div>
+        <div class="fi"><label>LAN CIDRs (blank = auto from graph)</label><input class="ip" id="mon-cidrs" data-select="static" data-select-new placeholder="192.168.1.0/24, 10.0.0.0/24"></div>
         <div class="checkrow"><label><input type="checkbox" id="mon-newdev"> alert when a new/unknown device appears</label></div>
         <div class="fi"><label>Default alert channels</label>
           <div class="checkrow">
@@ -1704,13 +1704,14 @@ async function loadHosts(){
     const r = await fetch('/exec/ssh/hosts/list',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     const j = await r.json(); _hosts = j.hosts||[];
   }catch{ _hosts=[]; }
+  let names={}; try{ names=await veraEstate.labelMap(); }catch(e){}
   for(const id of ['docker-host-id','pve-host-id','k8s-host-id']){
     const sel=document.getElementById(id); if(!sel) continue;
     const cur=sel.value;
     sel.innerHTML='<option value="">-- pick --</option>';
     for(const h of _hosts){
       const o=document.createElement('option'); o.value=h.id;
-      o.textContent = `${h.label||h.host} (${h.user||'?'}@${h.host})`;
+      o.textContent = names[h.id] ? `${names[h.id]} · ${h.user||'?'}@${h.host}` : `${h.label||h.host} (${h.user||'?'}@${h.host})`;
       sel.appendChild(o);
     }
     sel.value=cur;
@@ -4688,6 +4689,7 @@ function _populateOsintModels(){
 }
 
 </script>
+<script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script>
 /* ── Vera chat ↔ panel bridge wiring ─────────────────────────────────────
@@ -4783,5 +4785,6 @@ function _populateOsintModels(){
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 </body>
 </html>

@@ -109,7 +109,7 @@ button.danger:hover{border-color:var(--err);color:var(--err)}
     ALL long-horizon loops run on. Set here to steer every program; leave blank to let each loop choose.</div>
   <div class="toolbar" style="margin-top:6px">
     <label class="dim">Model <select id="v8-model" style="width:210px" onchange="saveV8Config()"><option value="">(per-loop)</option></select></label>
-    <label class="dim">Agent <input type="text" id="v8-agent" placeholder="(per-loop)" style="width:140px" onchange="saveV8Config()"></label>
+    <label class="dim">Agent <input type="text" id="v8-agent" data-select="agents" data-select-single data-select-new placeholder="(per-loop)" style="width:140px" onchange="saveV8Config()"></label>
     <label class="dim">Engine
       <select id="v8-engine" onchange="saveV8Config()">
         <option value="">per-loop</option><option value="v5">v5</option>
@@ -923,5 +923,6 @@ window.addEventListener('message', e=>{
 });
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 </body>
 </html>

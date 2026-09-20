@@ -1475,7 +1475,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
       Mirror agent baseline (Domain Capabilities)
     </label>
     <div class="row" style="gap:4px">
-      <textarea id="loopBaseCaps" rows="2" style="flex:1;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="exec.bash.run web.search ide.code.grep ide.code.replace browser.navigate fabric.skills.get" title="Caps always included in the loop's toolkit (space/comma separated). With mirror ON these are added to the agent baseline; with mirror OFF they are the full base set."></textarea>
+      <textarea id="loopBaseCaps" data-select="caps" data-select-sep=" " rows="2" style="flex:1;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="exec.bash.run web.search ide.code.grep ide.code.replace browser.navigate fabric.skills.get" title="Caps always included in the loop's toolkit (space/comma separated). With mirror ON these are added to the agent baseline; with mirror OFF they are the full base set."></textarea>
     </div>
     <div class="row" style="gap:4px;justify-content:flex-end">
       <button class="btn xs" type="button" onclick="CH.loopLoadAgentCaps()" title="Fill the box with the current agent's caps so you can see and prune what's available">Load agent caps</button>
@@ -1512,7 +1512,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
       Long-running HITL (ask first)
     </label>
     <label class="row numrow" title="(v4) Comma-separated extra caps to treat as long-running for this run (adds to the built-in detection).">
-      <input id="loopLongCaps" type="text" placeholder="e.g. mytool.run, scan.deep" style="flex:1;min-width:0;font-size:9px">
+      <input id="loopLongCaps" data-select="caps" type="text" placeholder="e.g. mytool.run, scan.deep" style="flex:1;min-width:0;font-size:9px">
       <span class="nlbl" style="flex:0 0 auto">Long-running caps</span>
     </label>
 
@@ -1612,9 +1612,9 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
         Push code versions to Gitea
       </label>
       <div style="font-size:8.5px;color:var(--dim);margin:4px 0 1px">Skill allow-list (only these skill ids are eligible; empty = all):</div>
-      <textarea id="loopSkillAllow" rows="1" style="width:100%;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="sys-dag-creation sys-fabric-query" title="Whitelist: if non-empty, ONLY these skill ids may be injected (space/comma separated)."></textarea>
+      <textarea id="loopSkillAllow" data-select="skills" data-select-new rows="1" style="width:100%;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="sys-dag-creation sys-fabric-query" title="Whitelist: if non-empty, ONLY these skill ids may be injected (space/comma separated)."></textarea>
       <div style="font-size:8.5px;color:var(--dim);margin:4px 0 1px">Skill deny-list (never inject these skill ids):</div>
-      <textarea id="loopSkillDeny" rows="1" style="width:100%;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="sys-ui-building" title="Blacklist: these skill ids are never injected (space/comma separated)."></textarea>
+      <textarea id="loopSkillDeny" data-select="skills" data-select-new rows="1" style="width:100%;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="sys-ui-building" title="Blacklist: these skill ids are never injected (space/comma separated)."></textarea>
     </div>
     </details>
 
@@ -7834,6 +7834,10 @@ Your task: decide what to do next to advance toward the goal.
           try{
             const ev=JSON.parse(raw);
             if(ev.type==='token'){fullText+=ev.text||'';bubEl.dataset.markdown=fullText;
+              /* First token: whatever we were queued behind is over. Guarded by
+                 a dataset flag so the common case costs a property read, not a
+                 DOM query on every single token. */
+              if(aMsg.wrap.dataset.qline){try{const _q=aMsg.wrap.querySelector('.queue-status-line');if(_q)_q.remove();}catch(_){}delete aMsg.wrap.dataset.qline;}
               // Auto-open panels the moment a [[panel:…]] closes; only scan when
               // a ']' just arrived (a directive may have just completed).
               if((ev.text||'').includes(']'))_streamAutoOpenPanels(fullText);
@@ -7842,6 +7846,29 @@ Your task: decide what to do next to advance toward the goal.
               // Coalesced to one paint per frame; see _scheduleStreamRender.
               _scheduleStreamRender();}
             else if(ev.type==='thinking'){fullThink+=ev.text||'';thkEl.style.display='block';thkEl.textContent=fullThink;}
+            /* What this turn is waiting for, refreshed until the first token.
+               The server only names jobs Vera itself started; when it cannot
+               see what is holding the node it says so rather than claiming the
+               node is free, and sends nothing at all when nothing is known.
+               See vera/agents/queue_status_core.py. */
+            else if(ev.type==='queued'&&ev.text){
+              try{
+                let qEl=aMsg.wrap.querySelector('.queue-status-line');
+                if(!qEl){
+                  qEl=document.createElement('div');qEl.className='queue-status-line';
+                  qEl.style.cssText='font-size:10px;color:var(--dim2);margin:2px 0 5px 62px;opacity:.95;overflow-wrap:anywhere;line-height:1.5';
+                  const _row=bubEl.closest('.msg-user-line')||bubEl.parentNode;
+                  (_row.parentNode||aMsg.wrap).insertBefore(qEl,_row);
+                  aMsg.wrap.dataset.qline='1';
+                }
+                const _icon=(ev.state==='loading')?'\u{1F4E6}':(ev.state==='busy_elsewhere'?'\u{1F513}':'\u{23F3}');
+                qEl.textContent=_icon+' '+ev.text;
+                qEl.title=(ev.ahead&&ev.ahead.length)
+                  ? ev.ahead.map(function(a){return (a.job_type||a.caller||'job')+' · '+(a.model||'')+' · '+Math.round(a.age_s||0)+'s';}).join('\n')
+                  : '';
+                scroll();
+              }catch(_){}
+            }
             // Quick opener — a one-liner from the second endpoint, shown as a
             // light line ABOVE the main bubble; never merged into fullText.
             else if(ev.type==='opener'&&ev.text){
@@ -15044,6 +15071,7 @@ window.addEventListener('DOMContentLoaded',()=>{
 });
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <!-- <vera-agent-loop-output> element: loaded from the standalone file.
      Single source of truth — no embedded copy to drift out of sync.
      Served by agent_loop_output_capabilities.py at /ui/elements/agent_loop_output.js.

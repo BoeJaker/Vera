@@ -28,6 +28,7 @@ def every_action_id():
         {"kind": "guest", "cluster_id": "c", "node": "n", "type": "qemu", "vmid": 2, "status": "stopped"},
         {"kind": "proxmox-node", "ssh_host_id": "h"},
         {"kind": "docker-host", "docker_host_id": "d"},
+        {"kind": "host", "ssh_host_id": "o", "runs": ["ollama"], "status": "running"},   # an inference node
     ]
     return {a["id"] for r in rows for a in core.actions(r)}
 
@@ -36,7 +37,7 @@ def test_every_action_the_list_can_offer_has_a_handler():
     body = panel()
     handler = body[body.index("async function mcAct(idx, action){"):body.index("function showPane(name, el){")]
     ids = every_action_id()
-    assert ids == {"console", "shutdown", "reboot", "start", "ssh", "cpu", "detect", "containers"}
+    assert ids == {"console", "shutdown", "reboot", "start", "ssh", "cpu", "detect", "containers", "provision", "backend"}
     for action in ids:
         assert f"'{action}'" in handler, action
 
@@ -53,5 +54,5 @@ def test_console_terminal_and_enrolment_take_the_rows_cluster():
     for fn in ("pmxSsh", "pmxEnrollSsh", "pmxConsole"):
         match = re.search(r"async function " + fn + r"\(([^)]*)\)", body)
         assert match and match.group(1).split(",")[-1] == "cid", fn
-    assert "cluster_id:_pmxCur," not in body[body.index("async function pmxSsh("):body.index("async function pmxStartVm(")]
+    assert "cluster_id:_pmxCur," not in body[body.index("async function pmxSsh("):body.index("async function pmxPower(")]
     assert "{cluster_id:cid||_pmxCur,node,guest_type:type,vmid:parseInt(vmid),mode}" in body

@@ -1649,7 +1649,8 @@ async def _release_ollama_lease(lease: dict) -> None:
 
 
 @asynccontextmanager
-async def _ollama_slot(iid: str, timeout: Optional[float] = None):
+async def _ollama_slot(iid: str, timeout: Optional[float] = None,
+                       gate_wait: Optional[float] = None):
     """`async with _ollama_sem(iid)` with a bounded acquisition wait. Raises a
     plain Exception on queue timeout so ollama_generate's normal error path
     (request_error event + node fallback) handles it like any other failure."""
@@ -1704,8 +1705,16 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None):
                     if COORD_REDIS is None:
                         await _ensure_coord_redis()
                     if _cap > 0 and COORD_REDIS is not None:
+                        # `gate_wait` bounds how long THIS caller queues for the
+                        # shared slot before proceeding unslotted. The default
+                        # (_gate.wait_s(), 600s) is right for batch work, and is
+                        # unchanged for every caller that does not pass one; an
+                        # interactive caller passes something short, because a
+                        # chat that waits ten minutes for a slot is worse than a
+                        # chat that overlaps one job.
+                        _gw = _gate.wait_s() if gate_wait is None else max(0.0, float(gate_wait))
                         _lease = await _gate.acquire(
-                            COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gate.wait_s())
+                            COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gw)
                         if _lease is not None:
                             _hb_task = asyncio.ensure_future(
                                 _gate_heartbeat(_lease, _current_run_session(), _activity))
@@ -1992,9 +2001,21 @@ def _embed_node_id() -> str:
 # Each hold is recorded with a start time so a sweep can tell a long generation
 # from a lost one. The counter is only ever DECREASED by exactly what was
 # reclaimed - never recomputed - because media slots share it.
-def _inflight_hold(inst: dict, slot_id: str) -> None:
+#: slot_id -> {instance, job_type, model, started}. The ONLY place an in-flight
+#: generation can be seen while it is still running: _OLLAMA_REQUEST_LOG gets a
+#: row on COMPLETION, so it can never answer "what is running right now" (its
+#: entries are built with status="running" but appended only from the done/error
+#: paths). The chat wait-line needs the live answer — see queue_status_core.
+#: Kept beside the in_use counters so it is added and cleared on exactly the
+#: same paths and cannot leak differently from them.
+OLLAMA_INFLIGHT: Dict[str, dict] = {}
+
+
+def _inflight_hold(inst: dict, slot_id: str, meta: Optional[dict] = None) -> None:
     try:
         inst.setdefault("_inflight", {})[slot_id] = time.monotonic()
+        if meta:
+            OLLAMA_INFLIGHT[slot_id] = {**meta, "started": time.monotonic()}
     except Exception:
         pass
 
@@ -2004,6 +2025,33 @@ def _inflight_release(inst: dict, slot_id: str) -> None:
         (inst.get("_inflight") or {}).pop(slot_id, None)
     except Exception:
         pass
+    # Outside the try above: the registry must be cleared even if the per-
+    # instance bookkeeping raises, or a finished job haunts the wait line.
+    OLLAMA_INFLIGHT.pop(slot_id, None)
+
+
+def inflight_on(instance_id: str, exclude: str = "") -> List[dict]:
+    """Generations Vera has in flight on `instance_id`, newest-age last.
+
+    Embeds are left out: they run on the CPU pool and are not what a chat turn
+    on a GPU node is waiting behind. Returns [] rather than raising — a wait
+    line is never worth failing a turn for.
+    """
+    out: List[dict] = []
+    try:
+        now = time.monotonic()
+        for sid, m in list(OLLAMA_INFLIGHT.items()):
+            if sid == exclude or m.get("instance") != instance_id:
+                continue
+            if "embed" in str(m.get("model") or ""):
+                continue
+            out.append({"job_type": m.get("job_type") or "",
+                        "caller": m.get("caller") or "",
+                        "model": m.get("model") or "",
+                        "age_s": max(now - float(m.get("started") or now), 0.0)})
+    except Exception:
+        return []
+    return out
 
 
 def _inflight_sweep() -> None:
@@ -3040,6 +3088,16 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     inst["in_use"] = inst.get("in_use", 0) + 1
     _inflight_hold(inst, _req_slot_id)
     mdl    = eff_model or OLLAMA_MODEL
+    # Register what this slot is actually doing, now that the model is resolved.
+    # Set here rather than passed to _inflight_hold above because that call must
+    # reserve the slot synchronously, before `mdl` exists. This is what lets a
+    # chat turn say "queued behind loop_executor" instead of just "waiting".
+    try:
+        OLLAMA_INFLIGHT[_req_slot_id] = {
+            "instance": chosen, "job_type": eff_job_type or "",
+            "model": mdl, "started": time.monotonic()}
+    except Exception:
+        pass
     # Record what actually serves the request. A caller that passes no model
     # (llm.generate with only a job_type) cannot know the rule's model or the
     # node picked, and used to report OLLAMA_MODEL - a naming call running
@@ -10180,6 +10238,10 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "activity/activity_capabilities.py"),
         os.path.join(_here, "worldview/worldview_jepa.py"),
         os.path.join(_here, "research/researcher_api.py"),
+        # nlp_dispatch BEFORE nlp_capabilities: the caps import the placement
+        # switch from it, and its own caps (nlp.config.*, nlp.nodes) are how an
+        # operator sees why an nlp.* call went where it did.
+        os.path.join(_here, "research/nlp_dispatch.py"),
         os.path.join(_here, "research/nlp_capabilities.py"),
         os.path.join(_here, "vector browser/vector_browser_capabilites.py"),
         os.path.join(_here, "workers/job_persistance.py"),

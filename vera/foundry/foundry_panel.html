@@ -130,7 +130,7 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
         <div id="pxeProfiles" style="max-height:118px;overflow:auto;margin-bottom:6px"><span class="muted">none</span></div>
         <input id="pxePName" placeholder="profile name (e.g. workstation)">
         <select id="pxePImg" style="margin-top:4px"></select>
-        <input id="pxePFeats" placeholder="features: enrol mesh hardening file-client" style="margin-top:4px">
+        <input id="pxePFeats" data-select="features" data-select-sep=" " placeholder="features: enrol mesh hardening file-client" style="margin-top:4px">
         <button class="btn gho" style="margin-top:6px" onclick="pxeProfileSave()">+ profile</button>
       </div>
       <div>
@@ -443,5 +443,6 @@ function jumpTo(){const el=location.hash&&document.getElementById(location.hash.
 window.addEventListener('hashchange',jumpTo);
 boot().then(jumpTo);
 </script>
+<script src="/ui/vera-select.js"></script>
 </body>
 </html>

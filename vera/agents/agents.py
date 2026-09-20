@@ -74,6 +74,7 @@ from Vera.vera.capability_orchestration import (
     APP,            # noqa
     CAPABILITY_REGISTRY, OLLAMA_INSTANCES, OLLAMA_MODEL,
     capability, emit_event, media_base, now_iso, ollama_generate, pick_instance, schedule,
+    _ollama_slot,
     record_stream_activity, begin_stream_activity, end_stream_activity,
     register_ui,
 )
@@ -84,6 +85,10 @@ try:
     from Vera.vera.agents import chat_ctx_core as _chat_ctx
 except Exception:                       # worktree / app-free import
     from vera.agents import chat_ctx_core as _chat_ctx
+try:
+    from Vera.vera.agents import queue_status_core as _queue_status
+except Exception:                       # worktree / app-free import
+    from vera.agents import queue_status_core as _queue_status
 
 # Lazy import helper for DAG execution — avoids circular import at load time
 def _get_dag_runner():
@@ -2261,6 +2266,108 @@ _CHAT_PS_TIMEOUT_S = float(os.environ.get("VERA_CHAT_PS_TIMEOUT_S", "3") or 3)
 # only "the node never started", which on 2026-09-20 meant chat hung until the
 # browser gave up, showing an empty bubble and naming nothing.
 _CHAT_FIRST_TOKEN_S = float(os.environ.get("VERA_CHAT_FIRST_TOKEN_S", "90") or 90)
+#: How long an interactive chat queues for the shared GPU slot before going
+#: anyway. The gate's own default is 600s, which is right for batch work and
+#: wrong for a person watching an empty bubble. Short and fail-open: chat joins
+#: the queue (so it no longer silently doubles up on a gpu_cap=1 node) without
+#: being able to stall behind a long generation.
+_CHAT_GATE_WAIT_S = float(os.environ.get("VERA_CHAT_GATE_WAIT_S", "20") or 20)
+
+
+@contextlib.asynccontextmanager
+async def _chat_gpu_slot(chosen: str, req_id: str = ""):
+    """The shared GPU slot for an interactive chat: bounded, and fail-open.
+
+    Chat POSTs straight to /api/chat, so it used to generate entirely outside
+    the cross-process gate — two generations could run on a gpu_cap=1 node at
+    once and both crawled.
+
+    Both waits are bounded on purpose. The local semaphore's default wait is
+    OLLAMA_QUEUE_TIMEOUT=0, i.e. UNBOUNDED; inheriting that would let one chat
+    block behind another forever, which is a worse failure than the overlap it
+    fixes. And on timeout this proceeds unslotted rather than failing: a person
+    watching an empty bubble is better served by overlapping one job than by
+    queueing behind a long batch generation.
+
+    Yields True when the slot was actually held.
+    """
+    cm = _ollama_slot(chosen, timeout=_CHAT_GATE_WAIT_S,
+                      gate_wait=_CHAT_GATE_WAIT_S)
+    entered = False
+    try:
+        await cm.__aenter__()
+        entered = True
+    except Exception as e:
+        log.info("chat [%s] proceeding unslotted on %s: %s", req_id, chosen, e)
+    try:
+        yield entered
+    finally:
+        if entered:
+            try:
+                await cm.__aexit__(None, None, None)
+            except Exception:
+                pass
+
+
+#: How often to refresh the "what am I waiting for" line while a turn has not
+#: produced its first token. Cheap: the facts are in-process except one bounded
+#: node probe, which is cached for this long anyway.
+_CHAT_QUEUE_REFRESH_S = float(os.environ.get("VERA_CHAT_QUEUE_REFRESH_S", "5") or 5)
+
+#: Bound on asking a node whether its runner is busy. Unknown is a fine answer —
+#: it just means we do not claim the node is idle (queue_status_core).
+_CHAT_RUNNER_PROBE_S = float(os.environ.get("VERA_CHAT_RUNNER_PROBE_S", "3") or 3)
+
+
+def _vera_jobs_ahead(chosen: str, own_slot_id: str) -> List[Dict]:
+    """Vera's own in-flight generations on `chosen`, this turn excluded.
+
+    Reads the live in-flight registry, NOT the request log: that log only gets a
+    row when a request COMPLETES (its entries are built with status="running"
+    but appended from the done/error paths), so it can never answer "what is
+    running right now". These are the only jobs we can NAME; anything else on
+    the node is invisible here, which is why the caller also asks the node.
+    """
+    try:
+        return _orch.inflight_on(chosen, exclude=own_slot_id)
+    except Exception as e:
+        log.debug("jobs-ahead read: %s", e)
+        return []
+
+
+async def _runner_busy(chosen: str) -> Optional[bool]:
+    """Does the node itself say its runner is computing? None when unknown.
+
+    This is the half that sees work Vera did not start — n8n, a sandbox, the
+    other container sharing the host. Without it a busy node looks idle, which
+    is exactly the failure mode that cost eight hours on 2026-09-20.
+    """
+    try:
+        _na = sys.modules.get("node_agent_capabilities")
+        if _na is None:
+            return None
+        got = await asyncio.wait_for(_na._collect_runners(chosen),
+                                     timeout=_CHAT_RUNNER_PROBE_S)
+        rows = [r for r in (got.get("runners") or []) if r.get("node") == chosen]
+        if not rows:
+            return None                   # no agent / nothing reported: unknown
+        return any(_na.is_active(_na.Runner(
+            pid=int(r.get("pid") or 0), state=str(r.get("state") or ""),
+            cpu_seconds=float(r.get("cpu_seconds") or 0))) for r in rows)
+    except Exception:
+        return None
+
+
+def _queue_frame(status: Dict) -> bytes:
+    """The SSE frame the chat UI renders as a status line above the bubble."""
+    return ("data: " + json.dumps({
+        "type": "queued",
+        "state": status.get("state"),
+        "node": status.get("node"),
+        "text": status.get("text"),
+        "ahead": status.get("ahead") or [],
+        "will_load": bool(status.get("will_load")),
+    }) + "\n\n").encode()
 
 
 def _chat_stall_frame(node: str, model: str, url: str, waited: float,
@@ -2304,6 +2411,26 @@ async def _resident_num_ctx(url: str, model: str) -> int:
     except Exception as e:
         log.debug("resident num_ctx probe [%s/%s]: %s", url, model, e)
         return 0
+
+
+async def _resident_ps(url: str) -> Optional[Dict]:
+    """The first model row from a node's /api/ps, or None.
+
+    Separate from _resident_num_ctx because the wait-status line needs the
+    model NAME as well as its window (to say whether a load is coming), and
+    because it must never raise into a chat turn.
+    """
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=_CHAT_PS_TIMEOUT_S) as c:
+            r = await c.get(f"{url}/api/ps")
+            if r.status_code != 200:
+                return None
+            rows = ((r.json() or {}).get("models") or [])
+            return rows[0] if rows else None
+    except Exception:
+        return None
 
 
 async def _chat_num_ctx(messages: List[Dict], model: str, url: str,
@@ -2494,10 +2621,17 @@ class AgentRunner:
 
         t0 = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=180) as c:
-                r = await c.post(f"{url}/api/chat", json=body)
-                r.raise_for_status()
-                data = r.json()
+            # Chat POSTs straight to /api/chat, so it used to generate entirely
+            # OUTSIDE the shared GPU queue — two generations could run on a
+            # gpu_cap=1 node at once, and both crawled. Take the slot. The wait
+            # is short and fail-open on purpose: a person waiting on a reply is
+            # better served by overlapping one job than by queueing behind a
+            # long batch generation.
+            async with _chat_gpu_slot(chosen):
+                async with httpx.AsyncClient(timeout=180) as c:
+                    r = await c.post(f"{url}/api/chat", json=body)
+                    r.raise_for_status()
+                    data = r.json()
 
             msg_out  = data.get("message", {})
             raw_text = msg_out.get("content", "").strip()
@@ -2829,6 +2963,74 @@ class AgentRunner:
 
         _og_stream_ok = False   # upstream stream ran to completion
         _og_done_sent = False   # a terminal request_done/request_error was emitted
+
+        # ── What is this turn waiting for? ───────────────────────────────────
+        # A 90s reply and a hung one look identical from the chat window, and
+        # the answer is usually mundane (a loop step is on the same node, or the
+        # model has to load). Say so. See queue_status_core for why this never
+        # claims the node is FREE — Vera can only name its own jobs, so the node
+        # is asked too, and silence is the answer when nothing is known.
+        # Register this turn too. run_stream POSTs straight to /api/chat and so
+        # never passes through ollama_generate's bookkeeping — without this a
+        # chat is invisible to the next chat's wait line, and excludes itself
+        # from its own. Cleared in the outer finally, which runs on every path
+        # including the client vanishing mid-stream.
+        # ── Join the shared GPU queue ────────────────────────────────────────
+        # run_stream streams straight to /api/chat, so until now it generated
+        # entirely OUTSIDE the cross-process gate: two generations could run on
+        # a gpu_cap=1 node at once and both crawled (observed 2026-09-20 — a
+        # 3m43s chat overlapping a 3m18s generate that the client abandoned).
+        #
+        # Both waits are bounded and fail-open, deliberately. The local
+        # semaphore's default wait is OLLAMA_QUEUE_TIMEOUT=0, i.e. UNBOUNDED —
+        # inheriting that would let one chat block behind another forever, which
+        # is a worse failure than the overlap being fixed. On timeout we proceed
+        # unslotted: a person watching an empty bubble is better served by
+        # overlapping one job than by queueing behind a long batch generation.
+        # Released in the outer finally below, which runs on every path.
+        _gate_cm = _ollama_slot(chosen, timeout=_CHAT_GATE_WAIT_S,
+                                gate_wait=_CHAT_GATE_WAIT_S)
+        try:
+            await _gate_cm.__aenter__()
+        except Exception as _ge:
+            log.info("chat [%s] proceeding unslotted on %s: %s",
+                     _og_req_id, chosen, _ge)
+            _gate_cm = None
+
+        _chat_slot = str(uuid.uuid4())[:12]
+        try:
+            _orch.OLLAMA_INFLIGHT[_chat_slot] = {
+                "instance": chosen, "job_type": "chat", "model": model,
+                "started": time.monotonic()}
+        except Exception:
+            pass
+
+        async def _wait_status() -> Optional[Dict]:
+            try:
+                _ahead = _vera_jobs_ahead(chosen, _chat_slot)
+                # Only pay for the node probe when Vera has nothing of its own
+                # in flight — with a named job ahead we already know the answer.
+                _busy = None if _ahead else await _runner_busy(chosen)
+                _res_model, _res_ctx = "", 0
+                try:
+                    _ps = await _resident_ps(url)
+                    if _ps:
+                        _res_model = str(_ps.get("name") or "")
+                        _res_ctx = int(_ps.get("context_length") or 0)
+                except Exception:
+                    pass
+                return _queue_status.describe_wait(
+                    chosen, _ahead,
+                    resident_model=_res_model, resident_ctx=_res_ctx,
+                    requested_model=model, requested_ctx=ctx_window,
+                    runner_busy=_busy)
+            except Exception as e:
+                log.debug("wait status: %s", e)
+                return None
+
+        _st = await _wait_status()
+        if _queue_status.should_emit(_st):
+            yield _queue_frame(_st)
         try:
             # `read` is a PER-CHUNK timeout in httpx (resets on every byte received),
             # not a cumulative cap on the whole stream — so this fires whenever the
@@ -2875,17 +3077,30 @@ class AgentRunner:
 
                     _lines = _orch._StreamLines(resp.aiter_lines())
                     _seen_any = False
+                    _waited = 0.0
                     while True:
                         try:
                             # Poll non-destructively: a TimeoutError here leaves
                             # the stream intact, so a slow-but-progressing
                             # generation is never cut off (see _StreamLines).
+                            # Before the first token the poll is SHORT so the
+                            # wait line can be refreshed; the first-token
+                            # deadline below is what actually bounds the wait.
                             line = await _lines.next(
                                 timeout=(_orch.OLLAMA_GEN_TIMEOUT if _seen_any
-                                         else _CHAT_FIRST_TOKEN_S))
+                                         else _CHAT_QUEUE_REFRESH_S))
                         except asyncio.TimeoutError:
                             if _seen_any:
                                 continue          # quiet but alive — keep waiting
+                            # Still no first token. Refresh what we are waiting
+                            # for — a queue that is draining looks different
+                            # from one that is not, and both beat silence.
+                            _waited += _CHAT_QUEUE_REFRESH_S
+                            if _waited < _CHAT_FIRST_TOKEN_S:
+                                _st = await _wait_status()
+                                if _queue_status.should_emit(_st):
+                                    yield _queue_frame(_st)
+                                continue
                             yield _chat_stall_frame(chosen, model, url,
                                                     _CHAT_FIRST_TOKEN_S,
                                                     "sent headers but no tokens")
@@ -2982,6 +3197,21 @@ class AgentRunner:
                 pass  # client may already be gone
             return
         finally:
+            # Always, on every path — a finished turn must not haunt the next
+            # turn's wait line as a phantom job ahead of it.
+            try:
+                _orch.OLLAMA_INFLIGHT.pop(_chat_slot, None)
+            except Exception:
+                pass
+            # Hand the shared GPU slot back. Must happen here rather than at the
+            # end of the stream body: the client vanishing mid-stream raises
+            # GeneratorExit at a yield, and a slot leaked that way is this
+            # node's ONLY permit — every later request on it would block.
+            if _gate_cm is not None:
+                try:
+                    await _gate_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
             if not _og_stream_ok and not _og_done_sent:
                 # We're exiting without a terminal event: the client vanished
                 # mid-stream (GeneratorExit at a yield — page reload / closed

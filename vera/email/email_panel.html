@@ -183,7 +183,7 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
             <select id="s-default"></select>
             <div class="hint">Used for sending when none is picked, and for notifications.</div>
           </div>
-          <div class="field"><label class="fl">AI model (Ollama)</label><input id="s-model" placeholder="(cluster default)"></div>
+          <div class="field"><label class="fl">AI model (Ollama)</label><input id="s-model" data-select="models" data-select-single data-select-new placeholder="(cluster default)"></div>
         </div>
         <div class="field">
           <label class="fl">Reading</label>
@@ -379,6 +379,7 @@ async function testConn(){
 boot();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>

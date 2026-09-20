@@ -2484,13 +2484,23 @@ _CT_RE = re.compile(
 )
 async def cap_nwm_flows(cluster_id: str = "", host_id: str = "",
                         limit: int = 40, trace_id=None) -> Dict:
-    script = ("if command -v conntrack >/dev/null 2>&1; then echo '###CT'; "
+    if not host_id and cluster_id:
+        host_id = (await _cfg_get(cluster_id)).get("nwm_host_id", "")
+    # The first line says whether the kernel counts bytes per flow at all -
+    # without nf_conntrack_acct every byte column below is honestly zero.
+    script = ("printf '###ACCT %s\\n' \"$(cat /proc/sys/net/netfilter/nf_conntrack_acct 2>/dev/null || echo ?)\"; "
+              "if command -v conntrack >/dev/null 2>&1; then echo '###CT'; "
               "conntrack -L -o extended 2>/dev/null | head -4000; "
               "else echo '###SS'; ss -tuna 2>/dev/null | tail -n +2 | head -4000; fi")
     r = await _nwm_ssh(cluster_id, host_id, _sh(script), timeout=45)
     if r.get("rc") != 0 and not r.get("stdout"):
         return {"error": r.get("error") or r.get("stderr", "")[:300]}
     lines = r.get("stdout", "").splitlines()
+    accounting = None
+    if lines and lines[0].startswith("###ACCT"):
+        v = lines[0].split(None, 1)[1].strip() if " " in lines[0] else "?"
+        accounting = {"1": True, "0": False}.get(v)
+        lines = lines[1:]
     tool = "conntrack" if lines and lines[0].strip() == "###CT" else "ss"
     flows: Dict[Tuple, Dict] = {}
     talkers: Dict[str, Dict] = {}
@@ -2530,7 +2540,36 @@ async def cap_nwm_flows(cluster_id: str = "", host_id: str = "",
     fl = sorted(flows.values(), key=lambda x: (-x["bytes"], -x["conns"]))
     tk = sorted(talkers.values(), key=lambda x: (-x["bytes"], -x["conns"]))
     return {"tool": tool, "flows": fl[: max(1, int(limit))],
-            "talkers": tk[:20], "total_flows": len(fl)}
+            "talkers": tk[:20], "total_flows": len(fl),
+            "accounting": accounting, "host_id": host_id}
+
+
+@capability(
+    "pxstore.nwm.accounting",
+    http_method="POST", http_path="/pxstore/nwm/accounting", http_tags=["pxstore"],
+    description="Turn per-flow byte counting on (or off) on the NWM monitor: "
+                "sysctl net.netfilter.nf_conntrack_acct. Until it is on, "
+                "pxstore.nwm.flows reports every byte count as 0. Runtime "
+                "only - it does not survive the monitor rebooting. Inputs: "
+                "cluster_id (str), host_id (str - override), enable "
+                "(bool=true), confirm (bool=false - dry run otherwise). "
+                "Output: {plan:{commands,warnings}, ok, accounting}.",
+)
+async def cap_nwm_accounting(cluster_id: str = "", host_id: str = "",
+                             enable: bool = True, confirm: bool = False,
+                             trace_id=None) -> Dict:
+    val = 1 if enable else 0
+    plan = {"commands": [f"sysctl -w net.netfilter.nf_conntrack_acct={val}"],
+            "warnings": ["Runtime only: the monitor forgets this when it reboots.",
+                         "Existing flows keep counting from now, not from when they opened."]}
+    if not confirm:
+        return {"plan": plan, "dry_run": True}
+    r = await _nwm_ssh(cluster_id, host_id, _sh(plan["commands"][0] + " && cat /proc/sys/net/netfilter/nf_conntrack_acct"),
+                       timeout=30)
+    if r.get("rc") != 0:
+        return {"plan": plan, "ok": False, "error": r.get("error") or r.get("stderr", "")[:300]}
+    now = (r.get("stdout") or "").strip().splitlines()[-1:] or ["?"]
+    return {"plan": plan, "ok": now[0].strip() == str(val), "accounting": now[0].strip() == "1"}
 
 
 @capability(

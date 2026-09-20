@@ -437,7 +437,7 @@ details.fold .twrap{background:var(--bg1)}
         <tbody><tr><td colspan="5" class="empty">—</td></tr></tbody>
       </table></div>
       <div class="twrap"><table id="bkRuns">
-        <thead><tr><th>Guest</th><th>Last backup</th><th>Result</th></tr></thead>
+        <thead><tr><th>Guest</th><th>Last backup</th><th>Covered</th></tr></thead>
         <tbody><tr><td colspan="3" class="empty">—</td></tr></tbody>
       </table></div>
 
@@ -622,8 +622,11 @@ P.estateInit = async ()=>{
 };
 P.bkStatus = async ()=>{
   if(!P.state.cluster||!P.state.node) return;
-  let r;
-  try{ r=await api('/pxstore/backup/status','POST',{cluster_id:P.state.cluster,node:P.state.node}); }
+  let r, group={};
+  // The jobs and the per-guest coverage come from the estate's one backup reader
+  // (backup.status - the same one the Overview reads); this node's storages,
+  // timers and run log still come from the node itself.
+  try{ [r,group]=await Promise.all([api('/pxstore/backup/status','POST',{cluster_id:P.state.cluster,node:P.state.node}), api('/backup/status').catch(()=>({}))]); }
   catch(e){ $('bkTiles').innerHTML=`<div class="empty">${esc(e.message)}</div>`; return; }
   if(r.error){ $('bkTiles').innerHTML=`<div class="empty">${esc(r.error)}</div>`; return; }
   $('bkWarn').innerHTML=(r.warnings||[]).map(w=>
@@ -656,7 +659,14 @@ P.bkStatus = async ()=>{
   const jobName=j=>{ if(j.comment) return j.comment.split(/[.;]/)[0].slice(0,80);
     const n=j.all?'every guest'+(j.exclude?' except '+String(j.exclude).split(',').length:''):(String(j.vmid||'').split(',').filter(Boolean).length+' guests');
     return n+' → '+(j.storage||'?')+(j.schedule?', '+j.schedule:'')+(j.enabled?'':' (disabled)'); };
-  $('bkJobs').querySelector('tbody').innerHTML=(r.jobs||[]).map(j=>`<tr>
+  const sched=(group&&group.schedules)||[];
+  $('bkJobs').querySelector('tbody').innerHTML=sched.length?sched.map(j=>`<tr>
+     <td>${veraEstate.chip('backup-job:'+j.id, j.comment?j.comment.split(/[.;]/)[0].slice(0,80):(j.what||j.id))}<div class="kv">${esc(j.id)} · ${esc(j.owner||'')}</div></td>
+     <td>${esc(j.schedule||'—')}<div class="kv">next ${j.enabled&&j.next_run?until(j.next_run):'—'}</div></td>
+     <td>${esc(j.storage||'—')}</td>
+     <td class="kv">${esc(j.what||'')}</td>
+     <td><span class="pill ${j.enabled?'ok':'dim'}">${j.enabled?'enabled':'disabled'}</span></td></tr>`).join('')
+     :(r.jobs||[]).map(j=>`<tr>
      <td><b>${esc(jobName(j))}</b><div class="kv">${esc(j.id)}${j.comment&&j.comment.length>80?' · '+esc(j.comment):''}</div></td>
      <td>${esc(j.schedule)}<div class="kv">next ${j.enabled?until(j.next_run):'—'}</div></td>
      <td>${esc(j.storage)}</td>
@@ -665,7 +675,12 @@ P.bkStatus = async ()=>{
      ||'<tr><td colspan="5" class="empty">no backup jobs</td></tr>';
   const running=(r.running||[]).length
     ?`<tr><td colspan="3"><span class="pill warn">running now</span> <span class="kv">${esc(r.running[0].slice(0,120))}</span></td></tr>`:'';
-  $('bkRuns').querySelector('tbody').innerHTML=running+((r.runs||[]).map(x=>`<tr><td>${esc(x.guest)}</td><td>${ago(x.at)}</td>
+  const guests=(group&&group.guests)||[];
+  $('bkRuns').querySelector('tbody').innerHTML=running+(guests.length?guests.filter(g=>!g.template).sort((a,b)=>(b.latest_at||0)-(a.latest_at||0)).map(g=>`<tr>
+     <td>${veraEstate.chip('guest:'+g.vmid, g.name||('#'+g.vmid))}<span class="kv"> ${g.type==='qemu'?'VM':'CT'} ${g.vmid}</span></td>
+     <td>${g.latest_at?ago(g.latest_at):'never'}${g.backups?`<span class="kv"> · ${g.backups} cop${g.backups===1?'y':'ies'}</span>`:''}</td>
+     <td>${(g.covered_by||[]).length?`<span class="pill ${g.backups?'ok':'warn'}">${g.backups?'covered':'covered, no copy yet'}</span>`:(g.excluded_by||[]).length?`<span class="pill dim" title="${esc(g.excluded_by.join(', '))}">excluded</span>`:'<span class="pill warn">no job covers it</span>'}</td></tr>`).join('')
+     :(r.runs||[]).map(x=>`<tr><td>${esc(x.guest)}</td><td>${ago(x.at)}</td>
      <td><span class="pill ${x.result==='ok'?'ok':x.result==='error'?'err':x.result==='running'?'warn':'dim'}">${esc(x.result)}</span>
      <span class="kv">${esc(x.line.slice(0,100))}</span></td></tr>`).join('')
      ||'<tr><td colspan="3" class="empty">no backup has run on this node</td></tr>');
@@ -1117,7 +1132,7 @@ P.fillCTSelects = ()=>{
   const cts=(P.state.inv?.guests||[]).filter(g=>g.type==='lxc');
   const opts=cts.map(g=>`<option value="${g.vmid}">${esc(g.name)} (#${g.vmid})</option>`).join('');
   ['conCT','atCT','wrSrc'].forEach(id=>{ if($(id)) $(id).innerHTML=opts||'<option value="">no CTs</option>'; });
-  if($('sxHost')) $('sxHost').innerHTML=(P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}">${esc(h.label||h.host)}</option>`).join('')||'<option value="">no SSH hosts</option>';
+  if($('sxHost')) veraEstate.fillSelect($('sxHost'), {selected:$('sxHost').value||''}).catch(()=>{});
   const st=P.state.settings||{};
   if(st.store_mount) $('stInfo').innerHTML=`store: <b>${esc(st.store_dataset)}</b> @ ${esc(st.store_mount)}`;
   if(st.store_dataset&&!$('stDataset').value) $('stDataset').value=st.store_dataset;
@@ -1310,10 +1325,8 @@ P.storeAttachRemote = async ()=>{
 /* ── setup ── */
 P.renderSetupSelects = ()=>{
   const st=P.state.settings||{};
-  if($('setWriterHost')) $('setWriterHost').innerHTML='<option value="">VFS-02 (found by its label)</option>'+
-    (P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}" ${h.id===st.store_writer_host?'selected':''}>${esc(h.label||h.host)} (${esc(h.host)})</option>`).join('');
-  if($('setNwm')) $('setNwm').innerHTML='<option value="">— not set —</option>'+
-    (P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}" ${h.id===st.nwm_host_id?'selected':''}>${esc(h.label||h.host)}</option>`).join('');
+  if($('setWriterHost')) veraEstate.fillSelect($('setWriterHost'), {blank:'VFS-02 (found by its label)', selected:st.store_writer_host||''}).catch(()=>{});
+  if($('setNwm')) veraEstate.fillSelect($('setNwm'), {blank:'— not set —', selected:st.nwm_host_id||''}).catch(()=>{});
 };
 P.renderSetup = async ()=>{
   // Re-fetch the canonical SSH host list so credentials added in
