@@ -21,7 +21,12 @@ def test_the_runs_end_at_the_message_surface_and_a_reply_lands_on_the_canvas():
     assert "function _cvHarvest(body){" in HTML and "async function _cvLandReply(mid){" in HTML
     for k in ("k:'cap'", "k:'code'", "k:'diagram'", "k:'table'", "k:'widget'", "k:'image'"):
         assert k in HTML, k
-    assert "const key='turn:'+mid+':'+m.k+':'+i; if(_CV_LANDED[key]) continue;" in HTML, "keyed to the turn, never doubled"
+    # keyed to the turn, never doubled - and an item may name its OWN key, which a source does: it is keyed by the
+    # page rather than by where in the reply it was found, or the same page lands once as the research run
+    # announced it, again as the reply cited it, and again on every later turn that mentions it. The turn key is
+    # still the default, because for everything else the turn IS the identity.
+    assert "const key=m.key||('turn:'+mid+':'+m.k+':'+i); if(_CV_LANDED[key]) continue;" in HTML, "keyed to the turn, never doubled"
+    assert "k:'source'" in HTML and "k:'term'" in HTML, "a result lands as what it is" 
     # the anchor keeps the TURN (the station is keyed by it) and records the maker: the reply that produced the
     # item, so its run leaves the reply's block rather than the question above it (Notes/42 defect 87)
     assert "_capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid, from:(w&&w.dataset&&w.dataset.mid)||mid}})" in HTML   # a diagram lands at m, a widget at its record's size (Notes/42 defect 52)

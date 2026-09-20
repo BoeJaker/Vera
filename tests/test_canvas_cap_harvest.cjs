@@ -69,10 +69,12 @@ const ctx = {
     return null;
   },
   _widgetRecord: (o) => ({ name: o.name, form: o.form, draw: { form: o.form, size: 'm' }, reads: { cap: o.source } }),
+  // the page has URL; a bare vm context does not, and the source recogniser reads a domain off the address with it
+  URL,
 };
 vm.createContext(ctx);
-vm.runInContext(block + '\nthis.T=_cvCapTerm; this.B=_cvCapTable; this.W=_cvCapWidget;', ctx);
-const { T, B: TBL, W } = ctx;
+vm.runInContext(block + '\nthis.T=_cvCapTerm; this.B=_cvCapTable; this.W=_cvCapWidget; this.S=_cvCapSources;', ctx);
+const { T, B: TBL, W, S: SRC } = ctx;
 
 // ── a command and its output is a terminal ─────────────────────────────────────────────────────────────────────
 {
@@ -129,6 +131,54 @@ const { T, B: TBL, W } = ctx;
   t('and a card from a restored session, with no kept result, falls through too',
     /const cap = el\.__cap \|\| null/.test(src) && /if\(made\)\{ out\.push\(made\); return; \}/.test(src));
   t('a FAILED cap is never drawn as data', /cap && !cap\.err \? cap\.content : null/.test(src));
+}
+
+// ---- a web result is a list of PAGES, not a grid of truncated cells --------------------------------------------
+{
+  const res = { ok: true, results: [
+    { url: 'https://example.com/a', title: 'The first page', snippet: 'about a thing' },
+    { url: 'https://other.org/b', title: 'The second', description: 'about another' },
+    { url: 'https://third.net/c', name: 'Third' }] };
+  const r = SRC(res);
+  t('a search result becomes source items', Array.isArray(r) && r.length === 3, JSON.stringify(r && r.length));
+  t('each one is a source', !!r && r.every((x) => x.kind === 'source'));
+  t('with its domain read off the address', !!r && r[0].content.domain === 'example.com' && r[1].content.domain === 'other.org');
+  t('the snippet is taken from whichever field carried it', !!r && r[0].content.snippet === 'about a thing' && r[1].content.snippet === 'about another');
+  /* keyed by the PAGE, not by where in the reply it was found - otherwise the same page lands once as the run
+     announced it and again as the reply cited it, and again on every later turn that mentions it */
+  t('keyed by the page', !!r && r[0].key === 'source:example.com/a');
+  t('and the harvest honours an item that names its own key', /const key=m\.key\|\|\('turn:'\+mid/.test(src));
+  // the guards
+  t('one link is not a reading list', SRC({ results: [{ url: 'https://only.one/x', title: 'x' }] }) === null);
+  t('rows with no addresses are left to the table', SRC({ rows: [{ name: 'a', cpu: 1 }, { name: 'b', cpu: 2 }] }) === null);
+  t('a search is capped, the canvas is not a results page', SRC({ results: Array.from({ length: 40 }, (_, i) => ({ url: 'https://x.io/' + i, title: 't' + i })) }).length === 10);
+  t('sources are tried BEFORE the table', /_cvCapTerm\(cres\) \|\| _cvCapSources\(cres\) \|\| _cvCapTable/.test(src));
+  t('and a recogniser may answer with several items', /if\(Array\.isArray\(made\)\)\{ made\.forEach/.test(src));
+}
+
+// ---- the research run announces its pages as it reads them -----------------------------------------------------
+{
+  const card = fs.readFileSync(path.join(__dirname, '..', 'vera', 'research_card_element.js'), 'utf8');
+  t('a crawled page is announced', /vera:research:source/.test(card) && /addPage\(url, domain, chars, failed\)/.test(card));
+  t('and so is a cited one', (card.match(/vera:research:source/g) || []).length >= 2);
+  t('the card asks rather than writing to a canvas it does not own', !/canvas\.add/.test(card));
+  t('the chat listens and lands it', /document\.addEventListener\('vera:research:source'/.test(src));
+  t('keyed by url so a re-run updates rather than doubles', /const key='source:'\+url\.replace/.test(src));
+  t('and it lands WITHOUT the page body or picture', /content:\{ url, title:String\(d\.title\|\|''\), domain, chars:\+d\.chars\|\|0, failed:!!d\.failed \}/.test(src));
+}
+
+// ---- the item fetches the page only when it is opened ----------------------------------------------------------
+{
+  const cv = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.js'), 'utf8');
+  t('the canvas draws a source', /^    source: \(c, size, key, el\) => \{/m.test(cv));
+  t('the page body is fetched on demand, not on landing', /browser\.content/.test(cv) && /_srcAct\(key, act\)/.test(cv));
+  t('and so is the picture', /browser\.screenshot/.test(cv));
+  t('what comes back is written into the item, so the second look is free', /canvas\.update', \{ key, content: Object\.assign\(\{\}, c, \{ text:/.test(cv));
+  t('a second press is only the fold, not a second fetch', /if \(c\.text\) \{ this\._srcOpen\[key\] = !this\._srcOpen\[key\]/.test(cv));
+  t('a source that would not load says so rather than being tidied away', /c\.failed \? `<span class="vc-src-n bad">did not load<\/span>`/.test(cv));
+  t('the buttons reach the handler', /\[data-src-act\]/.test(cv));
+  const py = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_capabilities.py'), 'utf8');
+  t('and the block type is declared server-side', /"source":\s*\{"desc"/.test(py) && /url:str, title\?:str/.test(py));
 }
 
 console.log(fails ? fails + ' FAILED' : 'all passed');

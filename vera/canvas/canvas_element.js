@@ -68,6 +68,41 @@
   const BLOCK = {
     markdown: c => `<div class="vc-md">${md(c.md || c.text || '')}</div>`,
 
+    /* A PAGE THE RESEARCH READ. The run already knows every page it fetched - the research card has listed them
+       beside the report all along - but the canvas only ever got the finished prose, so the thing you could not
+       do was go back to what it was BUILT from. This is that: where it came from, what it said, and what it
+       looked like.
+
+       The body and the screenshot are NOT fetched when the item lands. A deep run reads dozens of pages, and
+       forty screenshots taken to be thumbnails nobody opens is forty browser sessions. They are fetched when the
+       item is opened, by the host, and written back into the item - so the second look is instant and the first
+       costs one page. `failed` is kept rather than hidden: a source that would not load is a fact about the
+       research, not a blank to tidy away. */
+    source: (c, size, key, el) => {
+      const url = String(c.url || ''); let host = String(c.domain || '');
+      if (!host && url) { try { host = new URL(url).host; } catch (e) { host = url.slice(0, 40); } }
+      const open = !!(key && el && el._srcOpen && el._srcOpen[key]);
+      const title = String(c.title || host || url || 'source');
+      const chars = c.chars ? (c.chars > 1000 ? (c.chars / 1000).toFixed(1) + 'k' : String(c.chars)) + ' chars' : '';
+      const shot = String(c.shot || '');
+      const text = String(c.text || '');
+      return `<div class="vc-src${c.failed ? ' bad' : ''}${open ? ' open' : ''}">`
+        + `<div class="vc-src-hd">`
+        + `<span class="vc-src-dom">${esc(host)}</span>`
+        + (chars ? `<span class="vc-src-n">${esc(chars)}</span>` : '')
+        + (c.failed ? `<span class="vc-src-n bad">did not load</span>` : '')
+        + `</div>`
+        + `<a class="vc-src-t" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(url)}">${esc(title)}</a>`
+        + (c.snippet ? `<div class="vc-src-s">${esc(String(c.snippet).slice(0, 400))}</div>` : '')
+        + `<div class="vc-src-act">`
+        + `<button class="vc-src-b" data-src-act="read" data-src-key="${esc(key || '')}">${open ? 'less' : (text ? 'read' : 'read the page')}</button>`
+        + `<button class="vc-src-b" data-src-act="shot" data-src-key="${esc(key || '')}">${shot ? 'hide the picture' : 'see the page'}</button>`
+        + `</div>`
+        + (open && text ? `<div class="vc-src-body">${md(text.slice(0, 20000))}</div>` : '')
+        + (shot ? `<img class="vc-src-shot" src="${esc(shot)}" alt="${esc(title)}">` : '')
+        + `</div>`;
+    },
+
     /* a code item draws its source and, when the language is one a browser can simply show, the thing itself. The
        preview is drawn in the column's live layer exactly as a diagram is: a sandboxed iframe, srcdoc, no network. It
        is off until asked for, and the head carries the switch (Notes/42 defect 78 - the chat has had a Preview on its
@@ -379,6 +414,25 @@
     font-family:ui-monospace,Consolas,monospace;font-size:8px;color:#101317;background:var(--dim,#6b7480);padding:0;border:0;
     letter-spacing:0;text-transform:none;line-height:1}
   .it-hd .ic[data-kind="note"]{background:#8fb87a}.it-hd .ic[data-kind="markdown"]{background:#8fb87a}
+  .it-hd .ic[data-kind="source"]{background:#7aa2d6}
+  /* a source reads as a page, not as a row: the domain small above it, the title the thing you click */
+  .vc-src{display:flex;flex-direction:column;gap:5px;padding:2px 0}
+  .vc-src-hd{display:flex;align-items:center;gap:7px;font-size:9px;color:var(--dim2,#8a7e70);font-family:var(--mono,monospace)}
+  .vc-src-dom{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%}
+  .vc-src-n{opacity:.75}.vc-src-n.bad{color:var(--err,#c96b6b);opacity:1}
+  .vc-src.bad .vc-src-t{opacity:.6;text-decoration:line-through}
+  .vc-src-t{font-size:12px;line-height:1.4;color:var(--fg,#ddd);text-decoration:none;font-weight:500}
+  .vc-src-t:hover{text-decoration:underline}
+  .vc-src-s{font-size:10.5px;line-height:1.55;color:var(--dim2,#8a7e70);
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .vc-src-act{display:flex;gap:5px;margin-top:1px}
+  .vc-src-b{font:inherit;font-size:9px;height:19px;padding:0 8px;border:1px solid var(--border,#3a3530);
+    border-radius:9px;background:var(--bg2,#272421);color:var(--dim2,#8a7e70);cursor:pointer}
+  .vc-src-b:hover{color:var(--fg,#ddd);border-color:var(--acc,#5a9e8f)}
+  .vc-src-b[disabled]{opacity:.5;cursor:default}
+  .vc-src-body{font-size:11px;line-height:1.6;max-height:340px;overflow:auto;
+    border-top:1px solid var(--border,#3a3530);padding-top:6px;margin-top:2px}
+  .vc-src-shot{width:100%;border-radius:6px;border:1px solid var(--border,#3a3530);margin-top:2px}
   .it-hd .ic[data-kind="code"]{background:#5ec9a0}.it-hd .ic[data-kind="session"]{background:#4fb3bf}
   .it-hd .ic[data-kind="table"]{background:#6aa2e8}.it-hd .ic[data-kind="widget"]{background:#a78bfa}
   .it-hd .ic[data-kind="loop"]{background:var(--acc3,#e09a55)}.it-hd .ic[data-kind="diagram"]{background:#c58bd6}
@@ -1044,6 +1098,9 @@
         if (t.closest('textarea')) return;
         const act = t.closest('[data-act]');
         if (act && body.contains(act)) { ev.stopPropagation(); this._act(act, ev); return; }
+        // a source's own two buttons: read the page, see the page
+        const sa = t.closest('[data-src-act]');
+        if (sa && body.contains(sa)) { ev.stopPropagation(); this._srcAct(sa.dataset.srcKey, sa.dataset.srcAct); return; }
         const ch = t.closest('.chip[data-key]'); if (ch) { ev.stopPropagation(); this.call('canvas.add', { key: ch.dataset.key }); return; }
         const hd = t.closest('.it-hd'); const it = hd && hd.closest('.it[data-key]');
         if (it && !it.classList.contains('ghost')) { ev.stopPropagation(); this._toggleOpen(it.dataset.key); }
@@ -1286,6 +1343,34 @@
       this._readout(key, '… ' + name); const r = await this.callResult(name, args);
       try { this.dispatchEvent(new CustomEvent('vera:canvas:panel', { bubbles: true, detail: { key, id, action: name, reply: r } })); } catch (e) {}
       return this._readout(key, r);
+    }
+    /* A SOURCE, OPENED. The page's text and its picture are fetched HERE and not when the item landed: a deep run
+       reads dozens of pages, and forty screenshots taken to be thumbnails nobody opens is forty browser sessions
+       for nothing. Fetched once and written back into the item through canvas.update, so it is the canvas that
+       remembers - the second look costs nothing, and it survives a reload the way the rest of the item does. */
+    async _srcAct(key, act) {
+      const b = this._blockOf(key); const c = (b && b.content) || null; if (!c || !c.url) return;
+      this._srcOpen = this._srcOpen || {};
+      if (act === 'read') {
+        // already fetched: this is only the fold
+        // already fetched, so this press is only the fold - a local repaint, the way the code preview folds
+        if (c.text) { this._srcOpen[key] = !this._srcOpen[key]; this._open.add(key); if (this._doc) this.render(this._doc); return; }
+        this._readout(key, '\u2026 reading the page');
+        const r = await this.callResult('browser.content', { url: String(c.url), format: 'text' });
+        const text = String((r && (r.text || r.content || r.markdown)) || '');
+        if (!text) return this._readout(key, (r && r.error) || 'nothing came back');
+        this._srcOpen[key] = true;
+        return this.call('canvas.update', { key, content: Object.assign({}, c, { text: text.slice(0, 40000) }) });
+      }
+      if (act === 'shot') {
+        if (c.shot) return this.call('canvas.update', { key, content: Object.assign({}, c, { shot: '' }) });
+        this._readout(key, '\u2026 taking the picture');
+        const r = await this.callResult('browser.screenshot', { url: String(c.url), full_page: false });
+        const shot = String((r && (r.image || r.data_url || r.screenshot || r.png)) || '');
+        if (!shot) return this._readout(key, (r && r.error) || 'no picture came back');
+        const src = /^data:|^https?:/.test(shot) ? shot : 'data:image/png;base64,' + shot;
+        return this.call('canvas.update', { key, content: Object.assign({}, c, { shot: src }) });
+      }
     }
     _sid() { return String((this._doc && this._doc.session) || this.getAttribute('session-id') || ''); }
     _contentOf(key) { const b = this._blockOf(key); return b ? Object.assign({}, b.content || {}) : null; }
