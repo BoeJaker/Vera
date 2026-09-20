@@ -184,6 +184,39 @@ def test_refusing_the_gate_still_hands_back_the_local_permit():
             f"and block every later request on the node")
 
 
+def test_the_queue_budget_is_a_total_not_two_separate_waits():
+    """There are TWO queues here — the per-node semaphore inside this process,
+    then the shared cross-process gate — and bounding them separately means a
+    caller asking to wait at most N can wait N on each.
+
+    Worse, bounding only the gate leaves the local queue unbounded, so the
+    bound never applies at all. Measured 2026-09-20: a chat with a 3s gate wait
+    sat 115s behind a running job and then proceeded, never reaching the gate.
+
+    So the gate phase must spend only what is LEFT of `timeout`.
+    """
+    seg = _fn_source("vera/capability_orchestration.py", "_ollama_slot")
+    assert "_t_enter" in seg, "no entry timestamp — the budget cannot be a total"
+    assert "wait - (time.monotonic() - _t_enter)" in seg, (
+        "the gate phase does not subtract time already spent in the local "
+        "queue, so the two waits still compose additively")
+
+
+def test_both_chat_paths_bound_the_same_way():
+    """run() and run_stream() reach ollama by different routes; if only one
+    bounds its total wait they behave differently under load for no reason the
+    reader can see."""
+    src = open(os.path.join(_ROOT, "vera/agents/agents.py"), encoding="utf-8").read()
+    calls = [ln for ln in src.splitlines() if "_ollama_slot(chosen" in ln]
+    assert len(calls) >= 2, f"expected both chat paths to gate, found {calls}"
+    # Each call site must pass the total budget, not just the gate cap.
+    joined = src
+    for marker in ("timeout=_CHAT_GATE_WAIT_S", "gate_wait=_CHAT_GATE_WAIT_S"):
+        assert joined.count(marker) >= 2, (
+            f"{marker} appears {joined.count(marker)}x — the two chat paths "
+            f"disagree about how they bound their wait")
+
+
 def test_chat_does_not_generate_after_being_refused():
     """The barge-in, moved behind a shorter timer, is still a barge-in."""
     seg = _fn_source("vera/agents/agents.py", "run_stream")
