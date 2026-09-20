@@ -45,6 +45,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import re
 import shlex
 import string
 from typing import Any, Dict, List, Optional
@@ -575,3 +576,115 @@ async def cap_settings_save(host: str = "", host_internal: str = "",
         return {"error": "Redis unavailable -- settings not persisted"}
     await r.hset(KEY_CFG, "settings", json.dumps(cfg))
     return {"ok": True, "settings": cfg}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  WRITABLE ESTATE - which guests estate-rw exposes, and who may reach it
+# ═════════════════════════════════════════════════════════════════════════════
+from Vera.vera.vfs import vfs_rw_core as _rw          # noqa: E402  (plans, app-free)
+
+
+async def _rw_state() -> Dict[str, Any]:
+    """The list, what is actually mounted writable, and the share's reach."""
+    r = await _ssh(f"cat {_rw.RW_LIST} 2>/dev/null; echo '###RW'; "
+                   "python3 -c \"import json;d=json.load(open('/var/lib/vfs/estate-state.json'));"
+                   "print(json.dumps({'rw':d.get('rw',[]),'mounted':[m.get('name') for m in d.get('mounted',[]) "
+                   "if m.get('state') in ('mounted','already')]}))\" 2>/dev/null; echo '###SMB'; "
+                   f"sed -n '/^\[{_rw.SHARE}\]/,/^\[/p' {_rw.SMB_CONF} 2>/dev/null", timeout=45)
+    if r.get("error"):
+        return {"error": r["error"]}
+    out = r.get("stdout") or ""
+    lst, _, rest = out.partition("###RW")
+    rep, _, smb = rest.partition("###SMB")
+    try:
+        report = json.loads(rep.strip() or "{}")
+    except json.JSONDecodeError:
+        report = {}
+    reach = _rw.share_reach("[" + _rw.SHARE + "]\n" + smb, _rw.SHARE)
+    return {"names": _rw.parse_list(lst), "rw": report.get("rw", []), "known": report.get("mounted", []),
+            "share": reach}
+
+
+@capability(
+    "vfs.estate.rw",
+    http_method="POST", http_path="/vfs/estate/rw", http_tags=["vfs"],
+    memory="off", silent=True,
+    description="Which guests the file server exposes WRITABLE: the names in "
+                "/etc/vfs/estate-rw.list on VFS-02, what is actually mounted under "
+                "/srv/vfs/estate-rw, and who may open that share (valid users, hosts "
+                "allow, door_only). No inputs. Output: {names, rw:[{name,src,state}], "
+                "known:[guest names in the tree], share:{valid_users,hosts_allow,door_only}}.",
+)
+async def cap_estate_rw(trace_id=None) -> Dict:
+    return await _rw_state()
+
+
+@capability(
+    "vfs.estate.rw.set",
+    http_method="POST", http_path="/vfs/estate/rw/set", http_tags=["vfs"],
+    description="Make exactly these guests writable through estate-rw (@vfs-admin "
+                "only): writes /etc/vfs/estate-rw.list and rebuilds the tree. Dry run "
+                "by default - the plan says which guests are added or dropped, which "
+                "of them are running (the guest writes the same files), and what the "
+                "rebuild does; confirm=true runs it. Inputs: names (list of guest "
+                "names as the tree knows them), confirm (bool=false). Output: {plan:{"
+                "commands,warnings,adds,drops}, dry_run} or {ok, rw:[...], names}.",
+)
+async def cap_estate_rw_set(names: Optional[List[str]] = None, confirm: bool = False,
+                            trace_id=None) -> Dict:
+    st = await _rw_state()
+    if st.get("error"):
+        return {"error": st["error"]}
+    if isinstance(names, str):
+        names = [n for n in re.split(r"[\s,]+", names) if n]
+    chk = _rw.check_names(names or [], st["known"])
+    if chk["bad"]:
+        return {"error": f"not a guest name: {', '.join(chk['bad'])}"}
+    if chk["unknown"]:
+        return {"error": f"not in the estate tree: {', '.join(chk['unknown'])} - only guests the tree already "
+                         f"mounts can be made writable (run vfs.estate.sync if one is missing)"}
+    running: List[str] = []
+    listc = _rawcap("estate.machines")
+    if listc is not None:
+        try:
+            res = await listc()
+            running = [m.get("label") for m in (res or {}).get("machines", []) if m.get("status") == "running"]
+        except Exception as e:                                      # pragma: no cover - best effort
+            log.debug("estate.machines unavailable for the rw plan: %s", e)
+    plan = _rw.set_plan(chk["ok"], st["names"], running)
+    if not confirm:
+        return {"plan": plan, "dry_run": True, "current": st["names"]}
+    await emit_event({"type": "vfs.progress", "stage": "estate.rw",
+                      "message": f"writable estate set to {len(chk['ok'])} guest(s)"})
+    r = await _ssh(_rw.script(plan["commands"]), timeout=300)
+    if r.get("error") or r.get("rc") not in (0, None):
+        return {"plan": plan, "ok": False, "error": r.get("error") or (r.get("stderr") or "")[-400:]}
+    after = await _rw_state()
+    return {"plan": plan, "ok": True, "names": after.get("names", []), "rw": after.get("rw", [])}
+
+
+@capability(
+    "vfs.estate.rw.door_only",
+    http_method="POST", http_path="/vfs/estate/rw/door_only", http_tags=["vfs"],
+    description="Limit the writable estate share to devices on the VFS WireGuard "
+                "door (10.55.55.0/24) - a device key plus the @vfs-admin password - "
+                "or reopen it to every network Samba listens on. Edits only the "
+                "[estate-rw] block of smb.conf on VFS-02 with a dated backup, reloads "
+                "only if testparm accepts the result, and never drops sessions. Dry "
+                "run by default. Inputs: enable (bool=true), confirm (bool=false). "
+                "Output: {plan:{commands,warnings}, dry_run} or {ok, share}.",
+)
+async def cap_estate_rw_door_only(enable: bool = True, confirm: bool = False,
+                                  trace_id=None) -> Dict:
+    plan = _rw.door_only_plan(bool(enable))
+    if not confirm:
+        st = await _rw_state()
+        return {"plan": plan, "dry_run": True, "share": st.get("share")}
+    await emit_event({"type": "vfs.progress", "stage": "estate.rw",
+                      "message": "estate-rw reach: " + ("door only" if enable else "any network")})
+    r = await _ssh(_rw.script(plan["commands"]), timeout=120)
+    if r.get("error") or r.get("rc") not in (0, None):
+        return {"plan": plan, "ok": False, "error": r.get("error") or (r.get("stderr") or "")[-400:],
+                "log": (r.get("stdout") or "")[-400:]}
+    after = await _rw_state()
+    return {"plan": plan, "ok": True, "share": after.get("share"), "log": (r.get("stdout") or "")[-200:]}
