@@ -52,7 +52,8 @@ from Vera.vera import capability_orchestration as _orch
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))), "edge"))
 from node_runner_core import (  # noqa: E402
-    DEFAULT_STUCK_S, Runner, reap_plan,
+    DEFAULT_STUCK_S, DispatchProbe, Runner, dispatch_finding,
+    is_dispatch_wedged, reap_plan,
 )
 
 log = logging.getLogger("vera.nodes.agent")
@@ -71,6 +72,11 @@ REAP_ENABLED = (os.getenv("VERA_RUNNER_REAP", "0") or "0").strip().lower() in (
 #: Never kill more than this in one pass — a misconfigured threshold should
 #: read as a slow drip in the log, not an estate-wide cull.
 REAP_MAX = int(os.getenv("VERA_RUNNER_REAP_MAX", "2") or 2)
+#: How long a 1-token generation on an ALREADY-RESIDENT model may take before
+#: the node counts as not dispatching. Resident means no load to pay for, so
+#: this is milliseconds of real work; the bound is generous for queueing behind
+#: one other request, not for a cold start.
+DISPATCH_PROBE_S = float(os.getenv("VERA_DISPATCH_PROBE_S", "25") or 25)
 
 
 def _agent_url(inst: Dict) -> str:
@@ -188,7 +194,129 @@ async def cap_nodes_runner_list(node: str = "", trace_id=None) -> Dict[str, Any]
     stuck = [r for r in got["runners"] if r.get("stuck")]
     return {"runners": got["runners"], "stuck_count": len(stuck),
             "stuck": stuck, "unreachable": got["unreachable"],
-            "stuck_after_s": STUCK_S}
+            "stuck_after_s": STUCK_S,
+            "note": "`stuck` means a runner is COMPUTING for nobody. It cannot "
+                    "see a node whose ollama accepts generations and never "
+                    "dispatches them — that runner is idle and healthy. Use "
+                    "nodes.ollama.dispatch_check for that."}
+
+
+async def _busy_reason() -> str:
+    """Why we must not fire a probe generation right now, or "" if we may.
+
+    A probe is one token on a model that is already in memory, but the GPU gate
+    is capacity 1 and a census goal in flight is tainted by ANY concurrent GPU
+    call. Cheap is not the same as free.
+    """
+    try:
+        census = await _orch._health_census()
+        if census.get("busy"):
+            return f"census in flight ({census.get('goal') or census.get('state')})"
+    except Exception:
+        pass
+    try:
+        gate = await _orch._health_gpu_gate()
+        if gate.get("busy"):
+            owners = ", ".join(str(o) for o in (gate.get("owners") or [])[:3])
+            return f"GPU gate held{f' by {owners}' if owners else ''}"
+    except Exception:
+        pass
+    return ""
+
+
+async def _probe_dispatch(nid: str, inst: Dict) -> DispatchProbe:
+    """Ask one node's ollama to generate a single token, and time it.
+
+    Deliberately shaped so a healthy node pays almost nothing and a wedged one
+    is unambiguous:
+
+      * the model is whatever /api/ps says is ALREADY resident, so there is no
+        load to wait for and no eviction of anyone else's work;
+      * `num_predict: 1` — one token;
+      * NO `num_ctx`. Sending one would force a runner reload if it differed
+        from the resident window, which is the very fault that caused the
+        outage this probe exists to detect.
+    """
+    p = DispatchProbe(node=nid)
+    url = str(inst.get("url") or "")
+    if not url:
+        p.skipped = "no url"
+        return p
+    busy = await _busy_reason()
+    if busy:
+        p.skipped = busy
+        return p
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=8.0) as c:
+            r = await c.get(f"{url}/api/ps")
+            if r.status_code != 200:
+                p.skipped = f"/api/ps HTTP {r.status_code}"
+                return p
+            models = ((r.json() or {}).get("models") or [])
+            p.metadata_ok = True
+            p.resident_models = len(models)
+    except Exception as e:
+        p.skipped = f"/api/ps unreachable: {type(e).__name__}"
+        return p
+
+    if p.resident_models <= 0:
+        # Nothing loaded: a slow reply here would be a cold model load, which is
+        # normal and unbounded. Not a wedge, and not something to probe for.
+        return p
+
+    model = str(models[0].get("name") or models[0].get("model") or "")
+    if not model:
+        p.skipped = "resident model has no name"
+        return p
+
+    t0 = time.time()
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=DISPATCH_PROBE_S) as c:
+            r = await c.post(f"{url}/api/generate", json={
+                "model": model, "prompt": "ping", "stream": False,
+                "options": {"num_predict": 1},
+            })
+        p.probe_s = time.time() - t0
+        p.dispatched = (r.status_code == 200)
+    except Exception:
+        # Timeout or transport failure with a model already in memory: the
+        # request never reached the runner.
+        p.probe_s = time.time() - t0
+        p.dispatched = False
+    return p
+
+
+@capability(
+    "nodes.ollama.dispatch_check", memory="off",
+    http_method="POST", http_path="/nodes/ollama/dispatch_check",
+    http_tags=["nodes", "obs"],
+    description="Is each ollama node actually DISPATCHING work, or only "
+                "answering metadata? /api/ps, /api/tags and /api/version do not "
+                "go through ollama's scheduler, so a node whose scheduler has "
+                "deadlocked still reports online and idle to every other health "
+                "check Vera has — that is how chat hung for eight hours on "
+                "2026-09-20 with nothing flagged. This asks each node for ONE "
+                "token from a model it already has resident (no load, no "
+                "eviction, no num_ctx) and reports which nodes never answered. "
+                "Skipped automatically while a census or the GPU gate is busy. "
+                "Reports only — it never kills a runner, because the runner is "
+                "the healthy part. Inputs: node (str filter). Output: "
+                "{probes:[...], wedged:[...], findings:[...]}.")
+async def cap_nodes_ollama_dispatch_check(node: str = "", trace_id=None) -> Dict[str, Any]:
+    probes, findings = [], []
+    for nid, inst in _nodes().items():
+        if node and nid != node:
+            continue
+        p = await _probe_dispatch(nid, inst)
+        probes.append(p.to_dict())
+        f = dispatch_finding(p)
+        if f:
+            findings.append(f)
+    wedged = [p["node"] for p in probes if p.get("wedged")]
+    return {"probes": probes, "wedged": wedged, "findings": findings,
+            "probe_bound_s": DISPATCH_PROBE_S}
 
 
 @capability(
@@ -278,6 +406,58 @@ async def cap_nodes_runner_reap(dry_run: bool = True, limit: int = 0,
     return res
 
 
+#: Consecutive failed probes before reporting. One is not enough: a node
+#: saturated by other work looks exactly like a wedged one from outside, and a
+#: single slow probe is the normal way that shows up. At the 300s tick this is
+#: ~10 minutes of a resident model never producing one token.
+DISPATCH_CONFIRM_N = int(os.getenv("VERA_DISPATCH_CONFIRM_N", "3") or 3)
+
+#: node -> consecutive failed probes. Reset by any success, so a node has to be
+#: continuously unable to generate, not merely slow now and then.
+_WEDGE_STRIKES: Dict[str, int] = {}
+#: Nodes already reported, so the warning is raised on the EDGE rather than
+#: every tick — and raised again if a node recovers and then wedges anew.
+_WEDGED_SEEN: set = set()
+
+
+async def _report_dispatch_wedges() -> None:
+    """Probe every node for dispatch and report one that stays unable to answer.
+
+    Never kills anything. Both causes of a failed probe (deadlocked scheduler,
+    saturated node) are made worse by killing the runner, and the finding says
+    how to tell them apart.
+    """
+    res = await cap_nodes_ollama_dispatch_check()
+    findings = {f.get("node"): f for f in (res.get("findings") or [])}
+    probed = {p["node"] for p in (res.get("probes") or []) if not p.get("skipped")}
+
+    for nid in probed:
+        if nid in findings:
+            _WEDGE_STRIKES[nid] = _WEDGE_STRIKES.get(nid, 0) + 1
+        else:
+            _WEDGE_STRIKES.pop(nid, None)
+
+    confirmed = {n for n, s in _WEDGE_STRIKES.items() if s >= DISPATCH_CONFIRM_N}
+    for nid in confirmed - _WEDGED_SEEN:
+        f = findings.get(nid) or {}
+        log.error("node %s: ollama has accepted generations and not dispatched "
+                  "one for %d consecutive probes. Metadata endpoints bypass its "
+                  "scheduler, so every other health check still reads this node "
+                  "as online and free. %s %s",
+                  nid, _WEDGE_STRIKES.get(nid, 0),
+                  f.get("discriminator", ""), f.get("remedy", ""))
+        await emit_event({"type": "nodes.ollama.dispatch_wedged", "node": nid,
+                          "consecutive": _WEDGE_STRIKES.get(nid, 0),
+                          "detail": f.get("detail"),
+                          "discriminator": f.get("discriminator"),
+                          "remedy": f.get("remedy")})
+    for nid in list(_WEDGED_SEEN - confirmed):
+        log.warning("node %s: ollama is dispatching again", nid)
+        await emit_event({"type": "nodes.ollama.dispatch_recovered", "node": nid})
+    _WEDGED_SEEN.clear()
+    _WEDGED_SEEN.update(confirmed)
+
+
 async def _reap_tick() -> None:
     """Scheduler tick: stop runners nothing is waiting for.
 
@@ -294,6 +474,16 @@ async def _reap_tick() -> None:
             await cap_nodes_agent_status()
         except Exception:
             pass
+
+        # BEFORE the stuck check, and deliberately not guarded by it: a wedged
+        # scheduler produces ZERO stuck runners (its runner is idle and healthy),
+        # so anything that only runs when something is already stuck can never
+        # see it. That is precisely why 2026-09-20 went eight hours unreported.
+        try:
+            await _report_dispatch_wedges()
+        except Exception as e:
+            log.debug("dispatch wedge check: %s", e)
+
         res = await _reap(dry_run=not REAP_ENABLED)
         if not res.get("stuck"):
             return

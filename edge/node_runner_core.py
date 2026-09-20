@@ -115,6 +115,116 @@ def reap_plan(runners: Iterable[Runner], *, stuck_s: float = DEFAULT_STUCK_S,
     return v
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# THE OTHER FAILURE: a runner nothing is WRONG with, that nothing reaches
+# ─────────────────────────────────────────────────────────────────────────────
+# `reap_plan` above answers "is this runner burning the box for nobody". On
+# 2026-09-20 gpu-250 failed the opposite way and this module reported all-clear
+# throughout, correctly by its own rule and uselessly in practice.
+#
+# ollama's scheduler deadlocked. Its HTTP server kept answering, its runner
+# stayed healthy, idle and resident with the model in VRAM — and generation
+# requests were accepted and never dispatched to it. Talking to the runner
+# directly returned in 0.41s; the same request through ollama timed out at 30s
+# having produced no journal line and never moved the runner's slot off
+# `is_processing: false`.
+#
+# Every signal Vera owned said the node was fine, because /api/ps, /api/tags and
+# /api/version do NOT go through the scheduler: obs.health, /ollama/cluster,
+# in_use, gpu_gate and this reaper all read "online, idle". Chat hung for eight
+# hours with no reply and nothing to look at.
+#
+# Killing the runner is NOT the remedy and must never be inferred from this: the
+# runner is the healthy part, and `reap_plan` already keeps it (idle, no CPU).
+# The wedged component is `ollama serve` itself, and only restarting it clears
+# the deadlock. So this classifies and NAMES the state; it never reaps.
+
+
+@dataclass
+class DispatchProbe:
+    """What one node's ollama API did when asked to do a trivial generation.
+
+    `dispatched` is three-valued on purpose: True (it answered), False (it did
+    not, within the probe's bound), None (not probed — see `skipped`). None must
+    never read as a wedge; an unprobed node is an unknown, not a finding.
+    """
+    node: str = ""
+    metadata_ok: bool = False          # /api/ps answered at all
+    resident_models: int = 0           # how many models it reports loaded
+    dispatched: Optional[bool] = None  # a 1-token generate completed
+    probe_s: float = 0.0
+    skipped: str = ""                  # why the probe did not run
+
+    def to_dict(self) -> Dict:
+        return {"node": self.node, "metadata_ok": self.metadata_ok,
+                "resident_models": self.resident_models,
+                "dispatched": self.dispatched,
+                "probe_s": round(self.probe_s, 2), "skipped": self.skipped,
+                "wedged": is_dispatch_wedged(self)}
+
+
+def is_dispatch_wedged(p: Optional[DispatchProbe]) -> bool:
+    """ollama is answering metadata but will not hand work to its own runner.
+
+    All four conditions are required, and each one excludes a different
+    innocent explanation:
+
+      * probed at all        — an unprobed node is unknown, not wedged
+      * metadata answered    — a node that is simply DOWN is a different finding
+                               (and `unreachable` already reports it)
+      * a model is resident  — with nothing loaded, a slow reply is a cold model
+                               load, which is normal and can take minutes
+      * generation did not   — with a model already in memory, a 1-token
+        come back              generation is milliseconds of work; not getting
+                               one back means it never reached the runner
+    """
+    if p is None or p.skipped:
+        return False
+    if not p.metadata_ok:
+        return False
+    if p.resident_models <= 0:
+        return False
+    return p.dispatched is False
+
+
+def dispatch_finding(p: Optional[DispatchProbe]) -> Optional[Dict]:
+    """A reportable finding for a wedged node, or None when it is healthy.
+
+    Carries the remedy because the obvious reading of "runner idle, node not
+    serving" is to kill the runner, and that is the wrong move: it destroys a
+    loaded model and leaves the actual deadlock in place.
+    """
+    if not is_dispatch_wedged(p):
+        return None
+    return {
+        "node": p.node,
+        "severity": "crit",
+        "title": f"{p.node}: ollama accepts generations but never dispatches them",
+        "detail": (
+            f"/api/ps answers and reports {p.resident_models} resident model(s), "
+            f"but a 1-token generation did not return within {p.probe_s:.0f}s. "
+            "With the model already in memory that is milliseconds of real work. "
+            "Metadata endpoints bypass ollama's scheduler, so health checks that "
+            "only poll /api/ps, /api/tags or /api/version will keep reporting "
+            "this node online and free while nothing can generate on it."),
+        # Two causes produce this from outside, and they have OPPOSITE remedies,
+        # so name both rather than assert the one we saw. A node saturated by
+        # other work is slow; a deadlocked scheduler never answers at all.
+        "discriminator": (
+            f"On {p.node}, ask the runner directly: `nodes.runner.list` gives its "
+            "pid and port, then `curl 127.0.0.1:<port>/health` and `/slots` ON "
+            "that node. A runner that answers /health in milliseconds with its "
+            "slot idle, while ollama's own API will not generate, is a WEDGED "
+            "SCHEDULER. A runner at high CPU with a busy slot is a SATURATED "
+            "NODE — that one needs load shed, not a restart."),
+        "remedy": (
+            f"If the runner is idle and healthy: restart ollama on {p.node} "
+            "(systemctl restart ollama-vera in its container) — only that clears "
+            "the deadlock. Do NOT kill the runner: it is the working part, and "
+            "killing it loses the loaded model without fixing anything."),
+    }
+
+
 def parse_model_from_cmdline(cmdline: str) -> str:
     """Pull the model blob/name out of a llama-server command line.
 
