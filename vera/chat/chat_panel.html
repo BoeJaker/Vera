@@ -16939,7 +16939,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     // every turn: its moment, its canvas items as the session canvas holds them (a reload keeps what was placed; a move
     // lands where it was dropped), and — when the layers are on — the calls it made and where they ran
     turns.forEach(t=>{ t.ts=tsOf[t.mid]||0; t.land=_xplLandOf(t.mid, t.land); });
-    if(_xplLayers.activity||_xplLayers.estate){ const by=_xplBucket(turns), llm=_xplLLMFor(turns); turns.forEach(t=>{ const a=by[t.mid]||[]; if(_xplLayers.activity) t.activity=a; if(_xplLayers.estate) t.estate=_xplEstateOf(a, llm[t.mid]||[]); }); }
+    if(_xplLayers.activity||_xplLayers.estate){ const by=_xplBucket(turns), llm=_xplLLMFor(turns, by); turns.forEach(t=>{ const a=by[t.mid]||[]; if(_xplLayers.activity) t.activity=a; if(_xplLayers.estate) t.estate=_xplEstateOf(a, llm[t.mid]||[]); }); }
     return {turns, sel:(_grFocusMid&&turns.some(t=>t.mid===_grFocusMid))?_grFocusMid:(last?last.mid:'')};
   }
   /* ── the exploded scene's LAYERS and its canvas items (the Canvas board's exploded iso; the user's ask of 2026-09-19) ──
@@ -16991,11 +16991,18 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       if(!t) t=named[0]||turns[turns.length-1];
       (by[t.mid]=by[t.mid]||[]).push(Object.assign({ t:hhmm(e.ts) }, e)); });
     // the tree: a call's parent is the call that triggered it (the trigger id names the parent's trace); the root calls hang off the exchange
-    Object.keys(by).forEach(k=>{ const L=by[k]=by[k].slice(-24); L.forEach(a=>{ const j=(a.trig&&a.trig!==a.trace)?L.findIndex(x=>x!==a&&x.trace&&x.trace===a.trig):-1; a.parent=j>=0?j:null; }); }); return by; }
-  // the model's requests, by turn: the window between the turn's moment and the next (when the moments are real), else the last turn
-  function _xplLLMFor(turns){ const by={}; if(!turns.length||!_xplLLM.length) return by; const tsList=turns.map(t=>t.ts||0), real=turns.length>1&&(Math.max.apply(null,tsList)-Math.min.apply(null,tsList))>30000;
-    _xplLLM.filter(e=>e.type==='ollama.request_done'||e.type==='ollama.request_error').forEach(e=>{ let t=null; if(real){ for(let i=turns.length-1;i>=0;i--){ if((turns[i].ts||0)<=e.ts){ t=turns[i]; break; } } } if(!t) t=turns[turns.length-1]; (by[t.mid]=by[t.mid]||[]).push(e); });
-    return by; }
+    Object.keys(by).forEach(k=>{ const L=by[k]=by[k].slice(-24);
+      // a parent named but never seen — a silent capability, or one already out of the ring — stands in under its name, so its children still hang together
+      L.slice().forEach(a=>{ if(a.trig&&a.trig!==a.trace&&a.tcap&&a.tcap!==a.cap&&!L.some(x=>x.trace===a.trig)) L.push({ n:a.tcap, cap:a.tcap, group:String(a.tcap).split('.')[0], ts:a.ts, ms:null, status:'ok', preview:'', trace:a.trig, trig:'', tcap:'', t:a.t, virtual:true }); });
+      L.sort((a,b)=>a.ts-b.ts); L.forEach(a=>{ const j=(a.trig&&a.trig!==a.trace)?L.findIndex(x=>x!==a&&x.trace&&x.trace===a.trig):-1; a.parent=j>=0?j:null; }); }); return by; }
+  // the model's requests carry no session: each is the turn whose SPAN it falls in — from the turn's first call to its last call's end (with a little slack), or,
+  // for a turn whose calls are gone from the ring, from its moment to the next turn's — never everything that came after the last turn
+  function _xplLLMFor(turns, by){ const out={}; if(!turns.length||!_xplLLM.length) return out; by=by||{};
+    const span=turns.map((t,i)=>{ const A=(by[t.mid]||[]).filter(a=>a.ts); const next=(turns[i+1]&&turns[i+1].ts)||0;
+      if(A.length) return [Math.min.apply(null,A.map(a=>a.ts))-3000, Math.max.apply(null,A.map(a=>a.ts+(a.ms||0)))+8000];
+      return [(t.ts||0)-3000, next?next-1:(t.ts||0)+120000]; });
+    _xplLLM.filter(e=>e.type==='ollama.request_done'||e.type==='ollama.request_error').forEach(e=>{ for(let i=turns.length-1;i>=0;i--){ if(e.ts>=span[i][0]&&e.ts<=span[i][1]){ (out[turns[i].mid]=out[turns[i].mid]||[]).push(e); return; } } });
+    return out; }
   // where a turn's calls ran: the snapshot's node for each call's group, and the machines that serve it
   function _xplEstateOf(acts, llm){ const T=_xplTopo; acts=acts||[]; llm=llm||[]; if(!T||!Array.isArray(T.nodes)||(!acts.length&&!llm.length)) return []; const byId={}, byLabel={}; T.nodes.forEach(nd=>{ byId[nd.id]=nd; byLabel[String(nd.label||'').toLowerCase()]=nd; }); const out=[], idx={};
     const add=(nd, ai, via)=>{ if(!nd) return null; if(idx[nd.id]==null){ idx[nd.id]=out.length; out.push({ id:nd.id, label:nd.label||nd.id, kind:String(nd.kind||'service'), status:String(nd.status||''), detail:String(nd.detail||''), acts:[], via }); } const e=out[idx[nd.id]]; if(ai!=null&&e.acts.indexOf(ai)<0) e.acts.push(ai); return idx[nd.id]; };

@@ -146,7 +146,7 @@
           if (L.kind === 'nodes') return { L, i, list: [], extras: [], h: Math.max(MINH, HEAD + laneH(ests.length, 3) + FOOT) };
           const list = cardsOf(t, L.key); const extras = list.map((c, j) => Math.max(0, (HM[t.mid + ':' + L.key + ':' + j] || estH(c)) - CH));
           const cardsH = list.length ? (list.length - 1) * VP + CH + extras.reduce((a, b) => a + b, 0) : 0;
-          return { L, i, list, extras, h: Math.max(MINH, HEAD + cardsH + (L.key === 'made' && acts.length ? 40 + actTree(acts).rows.length * NR + (list.length ? 10 : 0) : 0) + FOOT) }; });
+          return { L, i, list, extras, h: Math.max(MINH, HEAD + cardsH + (L.key === 'made' && acts.length ? 40 + actTree(acts, 6).rows.length * NR + (list.length ? 10 : 0) : 0) + FOOT) }; });
         const rowH = Math.max.apply(null, cols.map((c) => c.h));
         out.labels.push({ si, mid: t.mid, x: px(PADX), y: px(rowTop), n: (t.who || 'you') + ' · ' + (t.t || ''), k: String(t.text || '').slice(0, 60), cls: 'station' + (lit ? ' on' : ''), col: 'var(--xp-t2)' });
         cols.forEach((c) => { const x = xU(c.i);
@@ -173,7 +173,7 @@
         // ACTIVITY: the calls this turn made, a lane of typed nodes under the produced cards, in the order they ran
         if (acts.length) { const c3 = cols[3]; let ly = oy + (c3.list.length ? (c3.list.length - 1) * VP + CH + c3.extras.reduce((a, b) => a + b, 0) + 10 : 0);
           out.labels.push({ si, mid: t.mid, x: px(xU(3)), y: px(ly - 13), n: 'activity', k: acts.length + ' call' + (acts.length === 1 ? '' : 's'), cls: 'layer sm lane activity', col: 'var(--xp-ac2)' });
-          const tree = actTree(acts), x3 = xU(3), per = Math.max(1, Math.min(6, Math.max.apply(null, tree.rows.map((r) => r.length).concat([1])))), gx = Math.min(NX, (SWD - 40) / per);
+          const tree = actTree(acts, 6), x3 = xU(3), per = Math.max(1, Math.min(6, Math.max.apply(null, tree.rows.map((r) => r.length).concat([1])))), gx = Math.min(NX, (SWD - 40) / per);
           tree.rows.forEach((row, ri) => { row.forEach((ai, k) => { const a = acts[ai], cx = x3 + SWD / 2 + (k - (row.length - 1) / 2) * gx, cy = ly + ri * NR + 12, d = 22;
             out.anodes.push({ id: t.mid + ':act:' + ai, mid: t.mid, si, x: px(cx), y: px(cy), d, col: actCol(a), icon: ICON.cap, label: a.n || a.cap || 'call', meta: actMeta(a), status: String(a.status || ''), lane: 'activity', depth: ri }); boxes['act:' + ai] = { cx, cy, w: d, h: d, st: 3, node: true }; }); }); }
         // ESTATE: where the turn's calls ran — the subsystems and the machines behind them, a sixth plate
@@ -192,9 +192,9 @@
         landRuns(mades, lands, (mi, li, why) => R.add(mi == null ? ex : bx('made:' + mi), bx('land:' + li), mi == null ? 'var(--xp-ac)' : 'var(--xp-ac)', mi == null ? 'link dash' : 'link', why));
         lands.forEach((c, j) => { const n = nb(c); if (n && n.lane === 'canvas') R.add(bx('land:' + j), n, 'var(--xp-ac2)', 'pin', 'pinned back into the next prompt'); });
         // the activity: off the capability card that triggered it (by name), else the exchange; then the chain, call to call
-        actRuns(acts, mades, (from, ai, cls, title) => R.add(from === 'ex' ? ex : from[0] === 'made' ? bx('made:' + from[1]) : bx('act:' + from[1]), bx('act:' + ai), 'var(--xp-ac2)', cls, title));
+        actRuns(acts, mades, (from, ai, cls, title) => R.add(from === 'ex' ? ex : from[0] === 'made' ? bx('made:' + from[1]) : bx('act:' + from[1]), bx('act:' + ai), 'var(--xp-ac2)', cls, title, null, actTrunk(from, cls)));
         // the estate: every call to the subsystem it ran through, the machines behind it
-        ests.forEach((e, ei) => { (e.acts || []).forEach((ai) => { if (bx('act:' + ai)) R.add(bx('act:' + ai), bx('est:' + ei), 'var(--xp-dv3)', 'est', 'ran through ' + (e.label || e.id), null, { trunk: 'est:' + ei, tend: 'b' }); }); if (e.via != null && bx('est:' + e.via)) R.add(bx('est:' + e.via), bx('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it'); });
+        ests.forEach((e, ei) => { estRuns(e, (ai) => bx('act:' + ai)).forEach(([ai, title]) => R.add(bx('act:' + ai), bx('est:' + ei), 'var(--xp-dv3)', 'est', title, null, { trunk: 'est:' + ei, tend: 'b' })); if (e.via != null && bx('est:' + e.via)) R.add(bx('est:' + e.via), bx('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it'); });
         // the RELATIONS between the turn's context records - the only runs that answer to the tier and the switch
         g.rels.forEach((r) => { const a = boxes['node:' + r.from], b = boxes['node:' + r.to], Rc = RELC[r.kind] || RELC.cite; if (a && b) R.add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)]); });
         R.flush();
@@ -275,7 +275,7 @@
     const laneDepth = (g) => LANES.filter((l) => g.laneList.indexOf(l) >= 0).reduce((s, l) => s + LV * Math.ceil(g.nodes.filter((n) => n.lane === l).length / 2), 0);
     const anyGraph = graphs.some((g) => g.nodes.length);
     const GNODES = 40 + Math.max.apply(null, graphs.map(laneDepth).concat([LV])) + 20, GALV = anyGraph && GAL ? Math.round(GALD.h * ICAP / yPerV) + 40 : 0;
-    const ACTV = Math.max.apply(null, actsL.map((a) => a.length ? 40 + 56 * actTree(a).rows.length : 0).concat([0]));
+    const ACTV = Math.max.apply(null, actsL.map((a) => a.length ? 40 + 56 * actTree(a, 8).rows.length : 0).concat([0]));
     const ESTV = Math.max.apply(null, estsL.map((e) => e.length ? 40 + LV * Math.ceil(e.length / 3) + 30 : 0).concat([LV + 70]));
     const VBS = BANDS.map((L) => L.kind === 'graph' ? GNODES + GALV + 30 : L.kind === 'nodes' ? ESTV : HEAD + RV * (Math.max.apply(null, turns.map((t) => rowsOf(shownOf(t, L).length))) - 1) + FOOT + (L.key === 'made' ? ACTV : 0));
     const V0S = VBS.map((_, i) => VBS.slice(0, i).reduce((a, b) => a + b, 0)); const PH = VBS.reduce((a, b) => a + b, 0);
@@ -342,7 +342,7 @@
         if (L.key === 'made' && actsL[si].length) { const acts = actsL[si]; const rows = rowsOf(shown.length), av0 = v0 + HEAD + RV * (rows - 1) + (shown.length ? 110 : 40);
           const lp = proj(u0 - 8, av0, z); out.labels.push({ si, x: lp.x, y: lp.y, n: 'activity', k: acts.length + ' call' + (acts.length === 1 ? '' : 's'), cls: 'layer sm lane activity', col: 'var(--xp-ac2)' });
           // the tree from the trigger chain: the roots in a row, every child under its parent, a row per depth
-          const tree = actTree(acts), per = Math.max(1, Math.min(6, Math.max.apply(null, tree.rows.map((r) => r.length).concat([1])))), gx = Math.min(80, (PW - 2 * MG) / per);
+          const tree = actTree(acts, 8), per = Math.max(1, Math.min(8, Math.max.apply(null, tree.rows.map((r) => r.length).concat([1])))), gx = Math.min(80, (PW - 2 * MG) / per);
           tree.rows.forEach((row, ri) => { row.forEach((ai, k) => { const a = acts[ai]; const gu = u0 + PW / 2 + (k - (row.length - 1) / 2) * gx, gv = av0 + ri * 56; const p = proj(gu, gv, z); pts.push(p); G['act:' + ai] = gpt(gu, gv, z, true);
             out.anodes.push({ id: t.mid + ':act:' + ai, mid: t.mid, si, x: p.x, y: p.y, d: 22, col: actCol(a), icon: ICON.cap, label: a.n || a.cap || 'call', meta: actMeta(a), status: String(a.status || ''), lane: 'activity', depth: ri }); }); }); }
       });
@@ -386,8 +386,8 @@
       landRuns(mades, lands, (mi, li, why) => R.add(mi == null ? ex : gp('made:' + mi), gp('land:' + li), 'var(--xp-ac)', mi == null ? 'link dash' : 'link', why));
       // a canvas item whose record is a context node (the pin-back): the graph knows it by the lane
       g.nodes.filter((n) => n.lane === 'canvas').forEach((n) => { const li = lands.findIndex((c) => String(c.id != null ? c.id : c.n) === n.id); if (li >= 0 && gp('land:' + li)) R.add(gp('land:' + li), gp('node:' + n.id), 'var(--xp-ac2)', 'pin', 'pinned back into the next prompt', null, { side: 'R' }); });
-      actRuns(actsL[si], mades, (from, ai, cls, title) => R.add(from === 'ex' ? ex : from[0] === 'made' ? gp('made:' + from[1]) : gp('act:' + from[1]), gp('act:' + ai), 'var(--xp-ac2)', cls, title, null, cls === 'rel step act' ? { direct: true } : null));
-      estsL[si].forEach((e, ei) => { (e.acts || []).forEach((ai) => { if (gp('act:' + ai)) R.add(gp('act:' + ai), gp('est:' + ei), 'var(--xp-dv3)', 'est', 'ran through ' + (e.label || e.id), null, { side: 'R', trunk: 'est:' + ei, tend: 'b' }); }); if (e.via != null && gp('est:' + e.via)) R.add(gp('est:' + e.via), gp('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it', null, { rel: true }); });
+      actRuns(actsL[si], mades, (from, ai, cls, title) => R.add(from === 'ex' ? ex : from[0] === 'made' ? gp('made:' + from[1]) : gp('act:' + from[1]), gp('act:' + ai), 'var(--xp-ac2)', cls, title, null, cls === 'rel step act' ? { direct: true } : actTrunk(from, cls)));
+      estsL[si].forEach((e, ei) => { estRuns(e, (ai) => gp('act:' + ai)).forEach(([ai, title]) => R.add(gp('act:' + ai), gp('est:' + ei), 'var(--xp-dv3)', 'est', title, null, { side: 'R', trunk: 'est:' + ei, tend: 'b' })); if (e.via != null && gp('est:' + e.via)) R.add(gp('est:' + e.via), gp('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it', null, { rel: true }); });
       g.rels.forEach((r) => { const a = gp('node:' + r.from), b = gp('node:' + r.to), Rc = RELC[r.kind] || RELC.cite; if (a && b) R.add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)], { rel: true }); });
       R.flush(); });
     out.size = { w: W, h: H };
@@ -417,11 +417,17 @@
      index, `parent`), else the capability card that names it (`card`), else the exchange. rows[] lists the indices per
      depth in time order, so the tree lays out top-down; runs go parent → child, and the siblings of one parent are
      chained in time order (a thin step relation) — the structure of what ran, not a fan back to the chat item. */
-  function actTree(acts) { const N = (acts || []).length, parent = [], depth = [], rows = [];
+  function actTree(acts, per) { const N = (acts || []).length, parent = [], depth = [], rows = [];
     for (let i = 0; i < N; i++) { const p = acts[i] && acts[i].parent; parent[i] = (p != null && p !== i && p >= 0 && p < N) ? +p : -1; }
     const dOf = (i, seen) => { if (parent[i] < 0) return 0; if (seen[i]) return 0; seen[i] = 1; return 1 + dOf(parent[i], seen); };
     for (let i = 0; i < N; i++) { depth[i] = Math.min(6, dOf(i, {})); (rows[depth[i]] = rows[depth[i]] || []).push(i); }
-    return { parent, depth, rows: rows.filter(Boolean) }; }
+    const W = Math.max(1, per || 6), wrapped = []; rows.filter(Boolean).forEach((row) => { for (let i = 0; i < row.length; i += W) wrapped.push(row.slice(i, i + W)); });   /* a row wraps: a busy turn stays on its plate */
+    return { parent, depth, rows: wrapped }; }
+  /* the calls a source triggered leave it by ONE departure (the exchange to its roots, a card to the calls it ran, a parent
+     to its children) and branch at their own ports; a step between siblings is its own short run */
+  function actTrunk(from, cls) { return cls === 'rel step act' ? null : { trunk: 'act:' + (from === 'ex' ? 'ex' : from[0] + ':' + from[1]), tend: 'a' }; }
+  /* the estate layer says WHERE the turn ran: a few calls through a subsystem are joined each; many are one counted run */
+  function estRuns(e, has) { const A = (e.acts || []).filter((ai) => has(ai)), name = e.label || e.id; if (A.length > 3) return [[A[0], A.length + ' calls ran through ' + name]]; return A.map((ai) => [ai, 'ran through ' + name]); }
   function actRuns(acts, mades, cb) { const T = actTree(acts), last = {};
     acts.forEach((a, ai) => { const p = T.parent[ai];
       if (p >= 0) cb(['act', p], ai, 'act', 'triggered by ' + (acts[p].n || acts[p].cap || 'the call above') + (a.ms != null ? ' · ' + a.ms + ' ms' : ''));
@@ -615,7 +621,7 @@
      radial and a table a table, on the plate, in the cards and in the carousel alike. '' without the widget element on
      the page (the iso group / the widget card stand in). ── */
   const SCREENY = /^(terminal|term|frame|panel|page|notebook|web|browser|chat|dashboard|dash)$/;
-  const planeSize = (form, sz) => { const scr = SCREENY.test(String(form || '').toLowerCase()); return scr ? { w: { s: 200, m: 330, l: 480 }[sz], h: { s: 140, m: 230, l: 340 }[sz] } : { w: { s: 150, m: 220, l: 320 }[sz], h: { s: 60, m: 110, l: 170 }[sz] }; };
+  const planeSize = (form, sz) => { const scr = SCREENY.test(String(form || '').toLowerCase()); return scr ? { w: { s: 200, m: 330, l: 480 }[sz], h: { s: 160, m: 280, l: 420 }[sz] } : { w: { s: 150, m: 220, l: 320 }[sz], h: { s: 60, m: 110, l: 170 }[sz] }; };
   function faceHtml(c, wd, wsz, o) {
     if (!(root.VeraWidget && typeof root.VeraWidget.draw === 'function') || !wd || !wd.form) return '';
     const own = wd.size === 'xs' || wd.size === 's' ? 's' : wd.size === 'l' || wd.size === 'xl' ? 'l' : 'm';
