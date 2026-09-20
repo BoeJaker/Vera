@@ -1730,13 +1730,18 @@ span.vw-sampled{opacity:.85}
   // one capability call for the element and the surface: prod's envelope is {type:'tool_result', tool_name, content};
   // a stand-in may answer {result} or the bare object — every one is opened
   const INFLIGHT = new Map();   // one fetch per (base, name, args) at a time, shared by every element that asks
+  // the read queue: at most CALL_LANES fetches in flight, first asked first served - a slow reading is never starved by
+  // the fast tiles' refresh timers, and a page of fifty tiles opens without the browser's connection limit deciding
+  const CALL_LANES = 5, QUEUE = []; let LANES = 0;
+  function pump() { while (LANES < CALL_LANES && QUEUE.length) { const job = QUEUE.shift(); LANES++; job.run().then(job.ok, job.no).finally(() => { LANES--; pump(); }); } }
+  function enqueue(run) { return new Promise((ok, no) => { QUEUE.push({ run, ok, no }); pump(); }); }
   async function call(base, name, args) {
     let key = ''; try { key = (base || '') + '|' + name + '|' + JSON.stringify(args || {}); } catch (_) { key = ''; }
     if (key && INFLIGHT.has(key)) return INFLIGHT.get(key);
-    const p = (async () => {
+    const p = enqueue(async () => {
       const r = await fetch((base || '') + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) });
       const j = await r.json(); return (j && j.type === 'tool_result') ? j.content : (j && j.result !== undefined ? j.result : (j && j.content !== undefined ? j.content : j));
-    })();
+    });
     if (key) { INFLIGHT.set(key, p); p.then(() => setTimeout(() => INFLIGHT.delete(key), 1500), () => INFLIGHT.delete(key)); }
     return p;
   }
