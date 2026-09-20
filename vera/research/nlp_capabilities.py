@@ -73,14 +73,36 @@ except ImportError:
 # stalling takes the whole system down. By default they run on a compute node
 # and NOT here; `nlp.local` is the switch that decides whether this host may
 # ever run them. See nlp_dispatch_core.resolve_placement for the rule.
-# ⚠ ABSOLUTE import — this file is a `_module_files` loader entry point, which
-# the loader imports by path, so it has no parent package and a relative import
-# would raise and unregister every cap below.
+# ⚠ NEVER a relative import here. This file is a `_module_files` loader entry
+# point, and the loader calls spec_from_file_location(basename, path) with NO
+# package — so `from .nlp_dispatch import …` raises "attempted relative import
+# with no known parent package", the loader catches it, and every capability in
+# this file silently fails to register.
+#
+# Prefer the module object the LOADER already created (flat name `nlp_dispatch`,
+# loaded just before this file). Importing `Vera.vera.research.nlp_dispatch`
+# instead would execute the module a SECOND time under a different sys.modules
+# key, giving two copies with two independent discovery caches — so
+# `nlp.config.set` would reset the cache on one copy while calls were routed by
+# the other, and a re-pinned node would not take effect until the TTL expired.
+def _load_dispatch():
+    import sys
+    mod = sys.modules.get("nlp_dispatch")       # the loader's copy, in the app
+    if mod is not None:
+        return mod
+    try:                                        # tests / standalone
+        from Vera.vera.research import nlp_dispatch as mod  # noqa: F811
+        return mod
+    except ImportError:
+        from vera.research import nlp_dispatch as mod       # noqa: F811
+        return mod
+
+
 try:
-    from Vera.vera.research.nlp_dispatch import remote_call as _remote_call
+    _dispatch = _load_dispatch()
     HAS_DISPATCH = True
 except Exception as e:  # pragma: no cover - optional during partial deploys
-    _remote_call = None
+    _dispatch = None
     HAS_DISPATCH = False
     log.warning("nlp_dispatch unavailable — nlp.* will run in-process: %s", e)
 
@@ -90,7 +112,7 @@ async def _offload(path: str, body: dict):
     means, and only means, that the switch permits running it here instead."""
     if not HAS_DISPATCH:
         return False, {}
-    return await _remote_call(path, body)
+    return await _dispatch.remote_call(path, body)
 
 RERANK_MODEL    = os.getenv("VERA_RERANK_MODEL", "Xenova/ms-marco-MiniLM-L-6-v2")
 SENTIMENT_MODEL = os.getenv("VERA_SENTIMENT_MODEL",
@@ -309,8 +331,7 @@ if _CAP_AVAILABLE:
         placement = {}
         if HAS_DISPATCH:
             try:
-                from Vera.vera.research.nlp_dispatch import placement as _placement
-                p = await _placement()
+                p = await _dispatch.placement()
                 node = p.get("node") or {}
                 placement = {"where": p["where"], "reason": p["reason"],
                              "node": str(node.get("node_id") or ""),
