@@ -24,11 +24,17 @@ THE MODEL STORE IS READ-ONLY
 ────────────────────────────
 The ollama nodes share one ZFS model store, bind-mounted read-only into each
 node. So models are **pre-exported** into it by `edge/nlp_export_models.py` and
-loaded from disk here: no torch, no network, no writes at request time.
+loaded from disk here: no conversion, no network and no writes at request time.
 `from_pretrained(id, export=True)` would convert from the torch checkpoint on
 first request and needs to write — it fails on a read-only store, and it fails
 *after* the service has already reported healthy. If a model is missing from the
 store this server says so rather than silently reaching for the hub.
+
+This does NOT make the runtime torch-free: `optimum[onnxruntime]` supplies the
+ORTModelFor* loader classes and pulls torch as a hard dependency (measured — it
+fetched a 554MB torch wheel). Pre-exporting buys the absence of CONVERSION and
+of network at request time, which is what a read-only store actually requires;
+it does not buy a smaller install.
 
 ⚠ PORT. The node agent (`edge/vera_node_agent.py`) owns 8770 on every node, and
 the `onnx_runtime` component now takes 8772. This server is 8771.
@@ -412,9 +418,9 @@ def build_app():
                 "core": HAS_CORE,
                 "chunk": {"chars": CHUNK_CHARS, "overlap": CHUNK_OVERLAP},
                 "tasks": {t: {"model": model_id_for(t),
-                              "present": model_present(t) if
-                              TASK_KIND.get(t) != "fastembed" else None,
-                              "loaded": t in _PIPES or t in _RAW}
+                              "present": model_present(t),
+                              "loaded": (t in _PIPES or t in _RAW or
+                                         (t == "rerank" and _ENCODER is not None))}
                           for t in DEFAULT_MODELS}}
 
     @app.get("/models")

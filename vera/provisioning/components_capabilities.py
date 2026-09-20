@@ -113,11 +113,20 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
                   # The exporter that populates the shared model store. It runs
                   # once, on a box with torch and internet — not at serve time.
                   ("edge/nlp_export_models.py", "nlp_export_models.py")],
-        # NOTE: no torch. Models are pre-exported to ONNX into the shared store
-        # by nlp_export_models.py, so the runtime needs neither torch (~2.5GB)
-        # nor outbound network on a production node.
-        "pip": ["onnxruntime", "transformers", "sentencepiece", "protobuf",
-                "numpy", "fastembed", "fastapi", "uvicorn"],
+        # `optimum[onnxruntime]` provides the ORTModelFor* classes that LOAD the
+        # pre-exported ONNX, and it pulls torch as a hard dependency — measured,
+        # not assumed: installing it fetched torch 2.14 (a 554MB wheel). So the
+        # runtime is not torch-free. What pre-exporting still buys is the thing
+        # that actually matters here: no CONVERSION and no network at request
+        # time, which is what makes a read-only model store workable at all.
+        #
+        # transformers is pinned to the major version the models were exported
+        # under. Left unpinned, this install pulled transformers 5.x against
+        # artifacts built with 4.x — a mismatch that is not worth discovering
+        # on a production node.
+        "pip": ["optimum[onnxruntime]", "transformers>=4.57,<5", "onnxruntime",
+                "sentencepiece", "protobuf", "numpy", "fastembed",
+                "fastapi", "uvicorn"],
         "run": "{py} nlp_server.py serve --host 0.0.0.0 --port {port}",
         "env": {
             # ONNX Runtime will otherwise take every core it can see and starve
