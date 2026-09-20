@@ -144,11 +144,18 @@ def test_every_gate_holder_actually_holds_the_gate():
             f"{holder} is trusted as a gate holder but never enters _ollama_slot")
 
 
-def test_interactive_chat_bounds_both_waits():
-    """Chat must not inherit the unbounded defaults. The local semaphore's wait
-    is OLLAMA_QUEUE_TIMEOUT=0 (unbounded) and the gate's is 600s; a chat that
-    inherited either would hang behind another job rather than overlap it —
-    a worse failure than the one being fixed."""
+def test_interactive_chat_bounds_its_gate_wait():
+    """Chat bounds how long it QUEUES before the attempt is declined.
+
+    Only the gate wait is bounded, deliberately. The local semaphore's wait
+    follows the system default (`OLLAMA_QUEUE_TIMEOUT=0`), because queueing
+    behind a job already running on this node is legitimate progress and that
+    job will end — the surrounding code takes the same position. The GATE wait
+    is bounded so a saturated estate reports itself instead of a turn hanging
+    for the gate's 600s default.
+
+    What must never come back is the third option: declining to queue and then
+    generating anyway. See test_gate_timeout_is_not_permission.py."""
     src = open(os.path.join(_ROOT, "vera/agents/agents.py"), encoding="utf-8").read()
     assert "_CHAT_GATE_WAIT_S" in src
     tree = ast.parse(src)
@@ -157,7 +164,6 @@ def test_interactive_chat_bounds_both_waits():
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
                 and node.name == "_chat_gpu_slot":
             seg = "\n".join(lines[node.lineno - 1:node.end_lineno])
-            assert "timeout=_CHAT_GATE_WAIT_S" in seg, "local queue wait unbounded"
             assert "gate_wait=_CHAT_GATE_WAIT_S" in seg, "gate wait unbounded"
             return
     raise AssertionError("_chat_gpu_slot not found")
