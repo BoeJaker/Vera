@@ -196,8 +196,19 @@ def test_the_relevance_engine_drives_the_canvas_columns_focus_set():
     # however much of the first message was still on screen (Notes/42 defect 91).
     assert "_cvRelServer={ keys:(r.focus||[]).map(String), scores:r.scores||{} }; _cvFocusSig=''; _cvScreenFocus();" in fn
     assert "try{ _cvScreenFocus(); }catch(_){}" in fn and "if(den==='full') return;" in fn, "the deeper call is Hover and Zen only"
-    assert "w[m.dataset.mid]=Math.max(0, Math.min(1, vis/Math.max(1, Math.min(r.height||VH, VH))));" in HTML, "a message weighs the share of the viewport it holds"
-    assert "cv.itemRects().forEach(it=>{ const k=it.from||it.mid;" in HTML, "an item takes the weight of the message that made it"
+    assert "const v=Math.max(0, Math.min(1, vis/Math.max(1, Math.min(r.height||VH, VH))));" in HTML, "a message weighs the share of the viewport it holds"
+
+    # AND AN ITEM IS HELD BY ITS TURN, not by one message of it. This used to read `it.from || it.mid` - a single
+    # key, looked up in a single message's visibility - and a turn is a question plus everything answering it:
+    # the tool call and the reply to the tool output are separate messages with separate mids. An item made
+    # during the tool call left the canvas the moment you scrolled to the reply, in the middle of the answer.
+    # The document had kept every anchor all along (they only ever grow); nothing was reading them.
+    assert "const mids=(it.anchors&&it.anchors.length?it.anchors:[]).concat([it.from,it.mid]).filter(Boolean);" in HTML, \
+        "an item is held by every message it belongs to"
+    assert "let s=0; mids.forEach(k=>{ const v=w[k]; if(v>s) s=v; });" in HTML, "at the weight of the best of them"
+    # a message inherits its turn's weight, which is what makes any part of the turn hold the whole turn's items
+    assert "if(m.classList.contains('u')) turn=mid;" in HTML and "turnW[t]=Math.max(turnW[t]||0, v);" in HTML, \
+        "a turn is opened by a user message and weighs the most any of its messages shows"
     assert "if(sig===_cvFocusSig) return; _cvFocusSig=sig;" in HTML, "setFocus re-renders, so only when the answer changed"
     assert "try{ _cvRelevance(_cvRelMid, _cvRelText+'\\n'+String(fullText||'').slice(0,1500)); }catch(_){}" in HTML, "asked when the reply lands"
     assert "_cvRelMid=uMsg.mid; _cvRelText=msg;" in HTML
