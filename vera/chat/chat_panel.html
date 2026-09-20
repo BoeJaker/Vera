@@ -917,6 +917,7 @@ body.ctx-grown #ctxRunsOverlay,body.ctx-remote #ctxRunsOverlay{display:block;pos
 #xplPlace .row i{font-style:normal;color:var(--acc);width:14px;text-align:center}
 #xplPlace .row em{font-style:normal;font-family:var(--mono);font-size:8.5px;color:var(--dim2);margin-left:auto}
 body.exploded #xplHost{display:flex;position:absolute;inset:0;z-index:3}   /* the scene takes the whole column, down to its foot; the composer floats over it */
+body.exploded #chatStack{justify-content:flex-end}   /* the scene is out of the flow: what is left (the context strip, the composer) sits at the column's foot, over the scene */
 body.exploded #inputBar,body.exploded #ctxStrip{position:relative;z-index:4}
 body.exploded #msgs,body.exploded #jumpToBottomBtn{display:none!important}
 #msgs.xpl-back{animation:xpl-back .32s ease both}
