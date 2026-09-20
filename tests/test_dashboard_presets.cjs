@@ -64,7 +64,8 @@ const SOURCES = new Set(['obs.health', 'obs.events', 'obs.scheduler', 'obs.worke
   const holes = []; for (let j = 0; j < rows; j++) for (let i = 0; i < 12; i++) if (!cells[i + ',' + j]) holes.push(i + ',' + j);
   t('the overview places every tile by hand and no two overlap', !overlap, overlap);
   t('every row of the overview is filled across its twelve columns (no gaps)', !holes.length, holes.slice(0, 6).join(' '));
-  t('the overview has at least twenty-four tiles over real sources', shown.length >= 24 && shown.every((w) => w.record.source), String(shown.length));
+  const tilesOnly = shown.filter((w) => w.record.form !== 'section'), sections = shown.filter((w) => w.record.form === 'section');
+  t('the overview has at least twenty-four tiles over real sources, under at least five sections', tilesOnly.length >= 24 && tilesOnly.every((w) => w.record.source) && sections.length >= 5 && sections.every((w) => w.span[0] === 12 && w.span[1] === 1), tilesOnly.length + ' tiles ' + sections.length + ' sections');
   t('every title is a name, not an id (no dots, no underscores, no "· source")', shown.every((w) => /^[A-Z][^_]*$/.test(w.record.title) && !/\.(status|stats|list|health|scan)/.test(w.record.title)), shown.filter((w) => !/^[A-Z][^_]*$/.test(w.record.title)).map((w) => w.record.title).join(' | '));
   const oldIds = ['host-resources', 'host-temps', 'status', 'mode', 'redis', 'workers', 'caps', 'pending', 'postgres', 'chroma', 'neo4j', 'ollama', 'mesh-info', 'looplab-info', 'sandboxes-info'];
   const named = {}; main.widgets.forEach((w) => { named[typeof w.record === 'string' ? w.record : w.record.id] = w; });

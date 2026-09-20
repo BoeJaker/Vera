@@ -325,6 +325,19 @@
   // the sample face, marked — a class on the inline sizes, a tag on the cell sizes
   const sampleFace = (html, size) => (size === 'xs' || size === 's') ? html.replace(/^<span class="(vw-xs|vw-chip)"/, '<span class="$1 vw-sampled" data-sample="1"') : '<div class="vw-sampled" data-sample="1">' + html + '<i class="vw-sampletag" title="sample data — nothing read yet">sample</i></div>';
   // the one figure a size below M shows
+  // the chips a row-shaped answer makes at S: up to draw.limit (four) entries, each name · value (a number, a unit) or
+  // name · status (a dot), then '+ n' - the Sizes board's node box, where a list is a line of chips
+  function chipRow(form, d, opts) {
+    const lim = Math.max(1, Math.min(8, (opts && opts.draw && +opts.draw.limit) || 4)); const unit = (opts && opts.draw && opts.draw.unit) || '';
+    let ents = [];
+    if (form === 'kv' && d && typeof d === 'object' && !Array.isArray(d)) ents = Object.keys(d).filter((k) => d[k] === null || typeof d[k] !== 'object').map((k) => ({ n: k, v: d[k] === null ? '—' : (typeof d[k] === 'boolean' ? (d[k] ? 'yes' : 'no') : d[k]) }));
+    else if (form === 'numbers' || form === 'temps' || (form === 'pills' && keyed(d).length)) ents = keyed(d).map((x) => ({ n: x[0], v: x[1] }));
+    else { const rw = rows(d); const firstNum = (r) => { const k = Object.keys(r).find((q) => typeof r[q] === 'number' && !/^(id|rssi_raw)$/.test(q)); return k ? r[k] : undefined; };
+      ents = rw.map((r) => ({ n: nameOf(r), v: r.value ?? r.v ?? r.count ?? r.n ?? r.latency_ms ?? r.port ?? r.age_h ?? r.runs ?? r.size_gb ?? firstNum(r), st: r.status ?? r.state ?? r.health ?? r.decision ?? r.severity ?? '' })); }   // a row with no named value shows its first number
+    ents = ents.filter((e) => e.n !== '' && e.n != null); if (!ents.length) return '';
+    const chip = (e) => '<span class="vw-chip" title="' + esc(e.n + (e.v != null ? ' ' + fmt(e.v) : '') + (e.st ? ' ' + e.st : '')) + '">' + (e.st ? '<i class="st" style="background:' + stCol(e.st) + '"></i>' : '') + '<small>' + esc(String(e.n).slice(0, 22)) + '</small>' + (e.v != null && e.v !== '' ? '<b>' + esc(typeof e.v === 'number' ? fmt(e.v) + (unit ? ' ' + unit : '') : String(e.v).slice(0, 14)) + '</b>' : (e.st ? '<b>' + esc(String(e.st).slice(0, 12)) + '</b>' : '')) + '</span>';
+    return '<span class="vw-chips">' + ents.slice(0, lim).map(chip).join('') + (ents.length > lim ? '<span class="vw-chip more">+ ' + (ents.length - lim) + '</span>' : '') + '</span>';
+  }
   function figure(form, data) {
     form = canon(form); const d = dataFor(data, form);
     if (d == null) return '';
@@ -412,9 +425,10 @@
     return EMPTY('pills need { name: number } or rows with a status');
   };
   const logLine = (r) => '<div><span class="t">' + esc(String(r.t ?? r.ts ?? r.time ?? r.when ?? '').slice(11, 19) || String(r.t ?? r.ts ?? '').slice(0, 8)) + '</span><span class="k">' + esc(String(r.kind ?? r.level ?? r.type ?? '')) + '</span><span>' + esc(String(r.text ?? r.msg ?? r.message ?? r.line ?? r.title ?? '')) + '</span></div>';
-  R.log = (d) => {
+  R.log = (d, H) => {
     const rw = rows(d); if (!rw.length || !rw.some((r) => r.text != null || r.msg != null || r.message != null || r.line != null || r.title != null)) return EMPTY('a log needs rows with text');
-    return '<div class="vw-log">' + rw.slice(-12).map(logLine).join('') + '</div>';
+    const n = Math.max(3, Math.min(40, Math.floor(((H || 70) - 2) / 14)));   // the lines that fit the body (14 px each)
+    return '<div class="vw-log">' + rw.slice(-n).map(logLine).join('') + '</div>';
   };
   R.lane = (d) => {
     const rw = rows(d); if (!rw.length || !rw.some((r) => r.text != null || r.msg != null || r.message != null || r.line != null)) return EMPTY('a log needs rows with text');
@@ -428,11 +442,11 @@
     return '<div class="vw-tablewrap" style="max-height:' + Math.max(H, 60) + 'px"><table><thead><tr>' + cols.map((c) => '<th>' + esc(c) + '</th>').join('') + '</tr></thead><tbody>' + rw.slice(0, (o && o.draw && o.draw.limit) || 12).map((r) => '<tr>' + cols.map((c) => '<td title="' + esc(String(r[c] ?? '')) + '">' + esc(String(r[c] ?? '')) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
   };
   R.files = (d, H, o) => { const rw = rows(d); if (!rw.length) return EMPTY('no rows'); if (!rw.some((r) => r.path != null)) return EMPTY('files need a path field'); return R.table(rw, H, { draw: { columns: ['path'].concat(Object.keys(rw[0]).filter((k) => k !== 'path' && typeof rw[0][k] !== 'object').slice(0, 4)) } }); };
-  R.list = (d) => {
-    const rw = rows(d); const str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string');
-    if (str.length) return '<div class="vw-list">' + str.slice(0, 12).map((s) => '<div><b>' + esc(s) + '</b></div>').join('') + '</div>';
+  R.list = (d, H) => {
+    const rw = rows(d); const str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const n = Math.max(2, Math.min(24, Math.floor(((H || 70) - 2) / 16)));
+    if (str.length) return '<div class="vw-list">' + str.slice(0, n).map((s) => '<div><b>' + esc(s) + '</b></div>').join('') + '</div>';
     if (!rw.length) return EMPTY('no rows');
-    return '<div class="vw-list">' + rw.slice(0, 12).map((r) => '<div><b>' + esc(String(r.name ?? r.title ?? r.label ?? r.id ?? '')) + '</b><small>' + esc(String(r.meta ?? r.when ?? r.status ?? r.count ?? r.value ?? '')) + '</small></div>').join('') + '</div>';
+    return '<div class="vw-list">' + rw.slice(0, n).map((r) => '<div><b>' + esc(String(r.name ?? r.title ?? r.label ?? r.id ?? '')) + '</b><small>' + esc(String(r.meta ?? r.when ?? r.status ?? r.count ?? r.value ?? '')) + '</small></div>').join('') + '</div>';
   };
   R.checklist = (d) => {
     const rw = rows(d); if (!rw.length) return EMPTY('a checklist needs items');
@@ -449,10 +463,11 @@
     return '<div class="vw-cal">' + Object.keys(by).sort().slice(0, 6).map((k) => '<div class="day"><b>' + esc(k) + '</b>' + by[k].slice(0, 5).map((r) => '<span><small>' + esc(String(r.when ?? r.start ?? r.t ?? '').slice(11, 16)) + '</small>' + esc(String(r.title ?? r.name ?? r.text ?? '')) + '</span>').join('') + '</div>').join('') + '</div>';
   };
   R.string = (d) => { const s = typeof d === 'string' ? d : (d && typeof d === 'object' ? String(d.text ?? d.value ?? d.message ?? JSON.stringify(d)) : String(d)); return s ? '<div class="vw-str">' + esc(s.slice(0, 2000)) + '</div>' : EMPTY('nothing to show'); };
-  R.kv = (d) => {
+  R.kv = (d, H, o2) => {
     const o = (d && typeof d === 'object' && !Array.isArray(d)) ? d : null; if (!o) return EMPTY('nothing to list');
-    const ks = Object.keys(o).filter((k) => typeof o[k] !== 'object' || o[k] === null).slice(0, 10); if (!ks.length) return EMPTY('no plain values to list');
-    return '<div class="vw-log vw-kv">' + ks.map((k) => '<div><span class="k">' + esc(k) + '</span><span>' + esc(String(o[k])) + '</span></div>').join('') + '</div>';
+    const all = Object.keys(o).filter((k) => typeof o[k] !== 'object' || o[k] === null); if (!all.length) return EMPTY('no plain values to list');
+    const n = Math.max(2, Math.min((o2 && o2.draw && o2.draw.limit) || 12, Math.floor(((H || 70) - 2) / 14))); const ks = all.slice(0, n);   // the pairs that fit
+    return '<div class="vw-log vw-kv">' + ks.map((k) => '<div><span class="k">' + esc(k) + '</span><span>' + esc(String(o[k])) + '</span></div>').join('') + (all.length > n ? '<div class="more">+ ' + (all.length - n) + ' more</div>' : '') + '</div>';
   };
   R.scatter = (d, H) => {
     const pts = rows(d).map((p) => [num(p.x ?? p.t ?? p[0]), num(p.y ?? p.v ?? p.value ?? p[1]), num(p.size ?? p.r ?? 3)]); if (pts.length < 2) return EMPTY('a scatter needs points');
@@ -562,10 +577,14 @@
     // chart; each row of slots is as tall as its neediest child, the measured body split by those weights; the last row
     // fills its width (three children are two slots and a wide one, not a slot and a hole) - no half-empty row, no scrolling slot
     const need = (c) => { const f = canon((c && c.record && typeof c.record === 'object' && c.record.form) || ''); return /^(counter|string|hero|level|ring|dial|gauge|meter|pills|numbers|kv|dots)$/.test(f) ? 0.62 : /^(rows|list|table|log|feed|cards|files|checklist|temps|thermo|bullet|ranked|hosts)$/.test(f) ? 1.15 : 1; };
-    const wts = []; for (let i = 0; i < shown.length; i += ncol) wts.push(Math.max(...shown.slice(i, i + ncol).map(need))); const wsum = wts.reduce((a, b) => a + b, 0) || 1;
-    const bodyH = (o && o.height && !chip) ? o.height : 0, slotHOf = (ri) => bodyH ? Math.max(44, Math.floor((bodyH - (nrows - 1) * 8) * (wts[ri] || 1) / wsum)) : 0;
+    // the least a slot can be and still show its child whole: a figure, three rows, a chart's floor - a row of slots
+    // gets at least its tallest floor, the rest of the body is shared by weight (a list over a figure)
+    const floorOf = (c) => { const f = canon((c && c.record && typeof c.record === 'object' && c.record.form) || ''); return /^(counter|hero|string|pills|numbers)$/.test(f) ? 62 : /^(kv)$/.test(f) ? 78 : /^(rows|list|table|log|feed|temps|thermo|files|checklist|ranked|bullet)$/.test(f) ? 88 : /^(ring|dial|gauge)$/.test(f) ? 96 : 72; };
+    const wts = [], fls = []; for (let i = 0; i < shown.length; i += ncol) { const rw = shown.slice(i, i + ncol); wts.push(Math.max(...rw.map(need))); fls.push(Math.max(...rw.map(floorOf))); } const wsum = wts.reduce((a, b) => a + b, 0) || 1;
+    const bodyH = (o && o.height && !chip) ? o.height : 0, free = Math.max(0, bodyH - (nrows - 1) * 8 - fls.reduce((a, b) => a + b, 0));
+    const slotHOf = (ri) => bodyH ? Math.max(44, (fls[ri] || 44) + Math.floor(free * (wts[ri] || 1) / wsum)) : 0;
     const rest = shown.length % ncol, firstOfLast = shown.length - rest, spanOf = (i) => { if (!rest || i < firstOfLast || shown.length < 2) return 1; const j = i - firstOfLast, base = Math.floor(ncol / rest), extra = ncol - base * rest; return base + (j < extra ? 1 : 0); };
-    return '<div class="vw-comp vw-comp-' + esc(layout) + '"' + (!chip && ncol !== 2 ? ' style="grid-template-columns:repeat(' + ncol + ',1fr)"' : '') + '>' + shown.map((c, i) => {
+    return '<div class="vw-comp vw-comp-' + esc(layout) + '"' + (!chip && ncol !== 2 ? ' style="grid-template-columns:repeat(' + ncol + ',1fr)"' : (chip && o && o.height ? ' style="height:' + o.height + 'px"' : '')) + '>' + shown.map((c, i) => {
       const slotH = slotHOf(Math.floor(i / ncol)), kidH = slotH ? Math.max(24, slotH - 36) : Math.max(44, Math.round(H * 0.8)), sp = spanOf(i);
       const slotStyle = (slotH || sp > 1) ? ' style="' + (slotH ? 'height:' + slotH + 'px;' : '') + (sp > 1 ? 'grid-column:span ' + sp + ';' : '') + '"' : '';
       const r0 = c && typeof c.record === 'object' ? c.record : null; const slot = String((c && c.slot) || String.fromCharCode(97 + i));
@@ -574,7 +593,7 @@
       const kHave = wasRead && k.data !== undefined && !isEmpty(dataFor(mapped(n, n.form, k.data), canon(n.form)));   // what the child's form would draw of the answer
       const kerr = wasRead && k.err ? '<i class="vw-kerr" title="' + esc(k.err) + '">' + (kHave ? 'last reading' : 'read failed') + '</i>' : (wasRead && !kHave ? '<i class="vw-kempty">read · empty</i>' : '');
       const stale = wasRead && k.err && kHave ? ' vw-stale' : '';
-      if (chip) return '<div class="vw-slot vw-slot-row' + stale + '" data-slot="' + esc(slot) + '"><span class="k">' + esc(n.title || n.form) + '</span>' + draw(n.form, data, 's', kopts) + kerr + '</div>';
+      if (chip) return '<div class="vw-slot vw-slot-row' + stale + '" data-slot="' + esc(slot) + '"><span class="k" title="' + esc(n.title || n.form) + '">' + esc(n.title || n.form) + '</span><span class="vw-slot-c">' + draw(n.form, data, 's', Object.assign({}, kopts, { title: '' })) + kerr + '</span></div>';
       const fig = /^(counter|hero|string|level|ring|meter|gauge|dial|tank|numbers)$/.test(canon(n.form)) ? '' : figure(n.form, mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data));
       return '<div class="vw-slot' + stale + '" data-slot="' + esc(slot) + '"' + slotStyle + '><span class="vw-slot-h">' + esc(n.title || n.form) + (fig ? '<b>' + fig + '</b>' : '') + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: kidH, title: n.title }, kopts)) + '</div></div>'; }).join('') + '</div>';
   };
@@ -667,7 +686,8 @@
   };
   R.rows = (d, H, o) => {
     const all = rows(d); const str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const rw0 = all.length ? all : str.map((s) => ({ name: s })); if (!rw0.length) return EMPTY('no rows');
-    const size = (o && o.size) || 'm'; const cols = tableCols(rw0, o, 4); const lim = (o && o.draw && o.draw.limit) || fitRows(o, size, 17, 18); const { rw } = tableSort(rw0, cols, o); const lit = o && o.draw && o.draw.lit != null ? o.draw.lit : null;
+    const size = (o && o.size) || 'm'; const cols = tableCols(rw0, o, 4); let lim = (o && o.draw && o.draw.limit) || fitRows(o, size, 17, 18); if (!(o && o.draw && o.draw.limit) && rw0.length > lim) lim = fitRows(o, size, 17, 34);   // room for the '+ n more' line
+    const { rw } = tableSort(rw0, cols, o); const lit = o && o.draw && o.draw.lit != null ? o.draw.lit : null;
     return wrap('rows', rw.slice(0, lim).map((r) => '<div class="vb-dgr" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('') + (rw.length > lim ? '<span class="vb-lbl">+ ' + (rw.length - lim) + ' more</span>' : ''), 'vb-tf');
   };
   R.cards = (d, H, o) => {
@@ -1376,6 +1396,7 @@
       return sampleFace(draw(f0, data, size, Object.assign({}, opts, { sample: false, record: Object.assign({}, opts.record || {}, sample('composite')) })), size);
     }
     if (size === 'xs') return '<span class="vw-xs" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i>' + (figure(f, data) || '—') + '</span>';
+    if (size === 's' && (DRAWN[f] === 'items' || f === 'kv' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f, d, opts); if (cs) return cs; }
     if (size === 's') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
     if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || f === 'composite' || DRAWN[f] === 'events') return body;   // a composite, a table, a feed: the body is the composition
@@ -1489,7 +1510,11 @@ span.vw-sampled{opacity:.85}
 .vw-slot-b{flex:1;min-height:0;display:flex;align-items:safe center;overflow:auto}.vw-slot-b > *{width:100%}
 .vw-slot-row{flex-direction:row;align-items:center;gap:8px;background:transparent;box-shadow:none;border-radius:0;padding:3px 0;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
 .vw-slot.vw-stale .vw-slot-b,.vw-slot-row.vw-stale .vw-chip{opacity:.55}.vw-kerr,.vw-kempty{font-style:normal;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:7.5px;letter-spacing:.06em;text-transform:uppercase;margin-left:6px;opacity:.85}.vw-kerr{color:var(--err,#c96b6b)}.vw-kempty{color:var(--t3,var(--dim,#6b7280))}
-.vw-root[data-stale="1"] .vw-body{opacity:.55}.vw-slot-row .k{width:72px;flex-shrink:0;font-size:9.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vw-root[data-stale="1"] .vw-body{opacity:.55}.vw-slot-row .k{width:84px;flex-shrink:0;font-size:var(--label-size,9px);text-transform:var(--label-case,uppercase);letter-spacing:var(--label-track,.06em);font-weight:var(--label-weight,600);color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vw-slot-row .vw-slot-c{flex:1;min-width:0;display:flex;align-items:center;overflow:hidden}.vw-slot-row .vw-slot-c > *{max-width:100%}
+.vw-comp-rows,.vw-comp-report,.vw-comp-rail{display:flex;flex-direction:column;gap:0;align-content:start;height:100%;justify-content:space-evenly}.vw-slot-row{min-height:22px;padding:1px 0;flex:0 0 auto}.vw-slot-row:last-child{border-bottom:none}
+.vw-chips{display:inline-flex;flex-wrap:nowrap;gap:4px;min-width:0;max-width:100%;overflow:hidden}.vw-chips .vw-chip{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}.vw-chips .vw-chip small{overflow:hidden;text-overflow:ellipsis}.vw-chip .st{width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block}.vw-chip.more{color:var(--dim2,#8a92a0)}
+.vw-kv .more{color:var(--dim2,#8a92a0);font-size:8.5px}
 @media (max-width:520px){.vw-l,.vw-xl{grid-template-columns:1fr}.vw-detail{border-left:none;padding-left:0}}
 /* -- the style pack (data-style on the page root, seen through :host-context): labels take its case, tracking and weight;
    pixel's figures its display face, its bars striped and its lines hard; newspaper rules under a slot's head; terminal is
@@ -1708,7 +1733,10 @@ span.vw-sampled{opacity:.85}
     constructor() { super(); this._sh = this.attachShadow({ mode: 'open' }); this._rec = null; this._data = undefined; this._empty = false; this._drawn = ''; this._timer = null; this._ro = null; this._auto = 'm'; this._kids = {}; this._ui = {}; }
     static get observedAttributes() { return ['record', 'size', 'base', 'template-id', 'bare']; }
     get record() { return this._rec; }
-    set record(v) { this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._empty = false; this._drawn = ''; this._kids = {}; this._read = false; this._err = ''; if (this.isConnected) this._boot(); }
+    set record(v) {
+      let j = ''; try { j = JSON.stringify(v); } catch (_) { j = ''; }
+      if (j && j === this._recJson && this._rec) return;   // the same record again (a layout re-applied): keep the reading, the children and the timer
+      this._recJson = j; this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._empty = false; this._drawn = ''; this._kids = {}; this._read = false; this._err = ''; if (this.isConnected) this._boot(); }
     get base() { return this.getAttribute('base') || window._veraBase || ''; }
     get size() { const s = this.getAttribute('size'); return s && s !== 'auto' && SIZES.includes(s) ? s : (s === 'auto' ? this._auto : (this._rec ? this._rec.frame.size : 'm')); }
     connectedCallback() {
@@ -1810,7 +1838,8 @@ span.vw-sampled{opacity:.85}
       this._sh.querySelectorAll('[data-vb-input]').forEach((i) => i.addEventListener('input', () => { this._ui[i.dataset.vbInput] = /^-?\d+(\.\d+)?$/.test(i.value) ? Number(i.value) : i.value; this.render(); }));
       this._sh.querySelectorAll('[data-vb-link]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); this.dispatchEvent(new CustomEvent('widget:open', { bubbles: true, composed: true, detail: { record: this._rec, href: a.dataset.vbLink, key: key(this._rec) } })); }));
       hydrate(this._sh);
-      if (!small && this._measured !== size) { const b = this._sh.querySelector('.vw-body'); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0; this._measured = size; if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
+      // a bare element (a dashboard tile's body) measures too: its host sizes it, and the forms fit what they are given
+      if (size !== 'xs' && size !== 's' && this._measured !== size) { const b = this._sh.querySelector('.vw-body'); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0; this._measured = size; if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
       this.dispatchEvent(new CustomEvent('widget:rendered', { bubbles: true, composed: true, detail: { form, size, sample: sampled, empty: readEmpty, stale } }));
     }
   }

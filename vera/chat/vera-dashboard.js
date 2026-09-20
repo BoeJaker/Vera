@@ -427,6 +427,7 @@
     var fr = record && record.frame && typeof record.frame === 'object' ? record.frame : {};
     if (Array.isArray(fr.span) && fr.span.length === 2 && +fr.span[0]) return [+fr.span[0], +fr.span[1] || 1];
     if (record && record.form === 'panel') return [6, 3];
+    if (record && record.form === 'section') return [12, 1];   // a section names the band under it: the full width, one row
     var size = String(fr.size || (record && record.size) || (record && record.draw && record.draw.size) || 'm').toLowerCase();
     return { xs: [2, 1], s: [2, 1], m: [4, 2], l: [6, 2], xl: [8, 4] }[size] || [4, 2];   // l = 6 × 2: three rows on a 6-wide read as XL (sizeForSpan)
   }
@@ -1491,7 +1492,7 @@
       var wid = (o2 && o2.wid) || ('rec-' + rid + '-' + Math.random().toString(36).slice(2, 6));
       if (grid.querySelector(':scope > [data-wid="' + wid + '"]')) return null;
       var widget = document.createElement('div');
-      widget.className = 'widget ' + spanClass(record);
+      widget.className = 'widget ' + spanClass(record) + (record.form === 'section' ? ' w-section' : '');
       widget.dataset.wid = wid; widget.dataset.record = '1';
       if (o2 && o2.fromFile) widget.dataset.fromFile = '1';
       if (o2 && o2.span) setSpan(widget, o2.span);
@@ -1505,6 +1506,10 @@
         ((o2 && o2.fromFile) ? '' : '<button class="w-iconbtn" data-vd-remove title="Remove widget">🗑</button>') + '</span></div>' +
         '<div class="w-body" style="padding:8px;position:relative;min-height:0"></div>' +
         '<span class="w-resize" data-resize></span>';
+      if (record.form === 'section') {   // a section is its head alone: the label, and the count of tiles it names once the grid is laid
+        widget.querySelector('.w-body').remove(); widget.querySelector('.w-dot').remove();
+        grid.appendChild(widget); state.records[wid] = record; state.meta[wid] = state.meta[wid] || { at: null, refresh: '', floated: false }; wireWidget(widget); return widget;
+      }
       var el = document.createElement('vera-widget');
       el.setAttribute('bare', '');   // the tile's own head carries the title and the record chip (the board's tile is one head)
       var sp0 = spanOf(widget);
