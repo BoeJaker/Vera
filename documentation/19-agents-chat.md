@@ -199,6 +199,11 @@ continues to store the content needed by the product, but observability does not
 create a second prompt or response copy. IDE generation also uses the shared
 model router, queue, cancellation, and stage-timing path; it does not maintain a
 private direct HTTP route to a model server.
+The IDE token-stream endpoint follows that same route and cancels its shared
+generation task if the client disconnects, allowing the coordinator to release
+any held model lease. Its Activity record contains prompt/system evidence and
+file counts rather than text or file names; the SSE response still carries the
+tokens requested by the connected client.
 
 Operators should verify the agent's model still exists, its capability names
 resolve, and its selected datasets are healthy. Restore/version operations alter

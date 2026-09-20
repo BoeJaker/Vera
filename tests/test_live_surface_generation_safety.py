@@ -159,3 +159,18 @@ def test_ide_generate_has_no_private_direct_provider_path():
     assert "prompt_preview" not in source
     assert "prompt_full" not in source
     assert "emit_event(" not in source
+
+
+def test_ide_stream_uses_shared_router_and_payload_free_activity():
+    source = _function_source(
+        ROOT / "vera" / "ide" / "ide_capabilities.py", "ide_stream_endpoint")
+
+    assert "ollama_generate(" in source
+    assert "stream_cb=_on_token" in source
+    assert "generation.cancel()" in source
+    assert "httpx.AsyncClient" not in source
+    assert '"prompt_evidence": _text_evidence(prompt)' in source
+    assert '"system_evidence": _text_evidence(system)' in source
+    assert '"context_file_count":' in source
+    assert '"prompt":        prompt' not in source
+    assert '"preview":        full_text' not in source
