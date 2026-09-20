@@ -1,6 +1,7 @@
 import ast
 import asyncio
 from pathlib import Path
+import re
 
 import pytest
 
@@ -103,6 +104,21 @@ def test_stream_activity_keeps_metrics_without_message_or_response_copy():
     assert '"message":      message' not in source
     assert '"preview":       "".join(_resp_head)' not in source
     assert source.count('"response_chars": _resp_chars') == 2
+
+
+def test_extra_chat_generations_are_off_by_default_and_visible_in_ui():
+    source = (ROOT / "vera" / "agents" / "agents.py").read_text(encoding="utf-8")
+    panel = (ROOT / "vera" / "agents" / "agent_panel.html").read_text(
+        encoding="utf-8")
+
+    assert re.search(r"^\s*quick_opener:\s*bool\s*=\s*False", source, re.M)
+    assert re.search(r'^\s*two_tier:\s*str\s*=\s*"off"', source, re.M)
+    assert '_qo_enabled and len(message or "") >= _qo_threshold' in source
+    assert '_tt_plan.get("split")' in source
+    assert 'id="f-quick_opener"' in panel
+    assert 'id="f-two_tier"' in panel
+    assert "quick_opener:false" in panel
+    assert "two_tier:'off'" in panel
 
 
 def test_ide_generate_uses_shared_router_and_preserves_effective_route(monkeypatch):

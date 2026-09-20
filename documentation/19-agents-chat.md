@@ -205,6 +205,12 @@ any held model lease. Its Activity record contains prompt/system evidence and
 file counts rather than text or file names; the SSE response still carries the
 tokens requested by the connected client.
 
+Ordinary chat is single-pass by default. Features that intentionally add model
+work—quick acknowledgement and two-tier continuation—are disabled on new agent
+records and have explicit controls in the agent editor. When enabled, their
+requests remain separate routed generations rather than an invisible quality
+check after the answer.
+
 Operators should verify the agent's model still exists, its capability names
 resolve, and its selected datasets are healthy. Restore/version operations alter
 agent configuration, not historical turns. Source surfaces live primarily in
