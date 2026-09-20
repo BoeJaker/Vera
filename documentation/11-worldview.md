@@ -193,13 +193,16 @@ dangling edges merely to obtain a green report.
 
 ## Documentation capture
 
-WorldView is registered as an injected Data Fabric section, while its full UI is
-served by a dedicated same-origin panel route. Documentation capture uses that
-route directly and waits for the latent-map canvas and initialized view
-description. This avoids photographing the otherwise empty injection wrapper.
+The documentation recipe targets the dedicated **JEPA Worldview** panel, not
+the separate Worldview Intelligence Platform or Godseye interfaces. It waits
+for the latent-map canvas, initialized view description, and a positive
+rendered-item count. If the optional JEPA runtime, model, or capability family
+is unavailable, capture fails explicitly instead of publishing its empty shell.
 
 <!-- VERA:AUTO:screenshots START -->
+_No populated JEPA Worldview screenshot is currently available._
 <!-- VERA:AUTO:screenshots END -->
 
 <!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
 <!-- VERA:AUTO:capabilities END -->

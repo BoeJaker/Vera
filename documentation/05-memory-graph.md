@@ -384,11 +384,57 @@ memory records. It waits for both the canvas and the populated node/edge status
 line, so an empty session landing view cannot be mistaken for a useful graph.
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Recent memory activity
+
+![A populated recent-activity graph with memory records, sessions, and their relationships.](assets/memory-graph/memory-graph-recent.png)
+
+*A populated recent-activity graph with memory records, sessions, and their relationships.  ·  captured `seeded`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities
 
 <!-- VERA:AUTO:capabilities START -->
-_No capabilities resolved for this domain._
+| Capability | HTTP | Description |
+|---|---|---|
+| `memory.agent_context` | — | Retrieve relevant past memories for injection into an agent's context. |
+| `memory.all_edges` | — | Get all edges from Neo4j, including Session->Memory edges. |
+| `memory.all_nodes` | — | Get all Memory nodes from Neo4j (no session filter). |
+| `memory.auto_summarise` | — | Ask the LLM to generate a summary for a stored record and update it. |
+| `memory.backends` | — | List active memory backends and their connection status. |
+| `memory.backfill_vectors` | — | Re-encode memory records that exist in Postgres (the source of truth) but have NO vector in the CURRENT Chroma collection — use after a Chroma reset, an embed-model switch (collections are versione… |
+| `memory.browse` | — | Look at REAL records from ONE dataset with NO search query needed — for 'what's actually in this dataset' rather than 'find me X'. Different from memory.seek: seek ranks by relevance to a query, br… |
+| `memory.edge_diag` | — | Diagnostic: count edges in Postgres and Neo4j for a session. |
+| `memory.find_similar_questions` | — | Vector-search past USER turns only. Building block for second-order recall. Inputs: query (str!), limit (int 5), session_id (str — restrict), min_score (float 0.0). Output: {questions: [{q, id, sco… |
+| `memory.forget` | — | Soft-delete a memory record (sets archived=True). Records are never physically deleted. |
+| `memory.get` | — | Retrieve a specific memory record by id. |
+| `memory.graph_clear` | — | DESTRUCTIVE: delete ALL :Memory and :Session nodes. Requires confirm=True. |
+| `memory.graph_full` | — | Return nodes + edges in one call. Use mode=session (+session_id), mode=recent, or mode=all. |
+| `memory.graph_normalize` | — | Merge duplicate :Session nodes (same session_id), prune orphan Memory. |
+| `memory.graph_stats` | — | Counts by label / category / per-session for the memory graph. |
+| `memory.label_node` | — | Use LLM to generate a short readable label for a memory node based on its content. |
+| `memory.label_session` | — | Label all unlabelled nodes in a session. Runs label_node for each node missing a summary. |
+| `memory.map` | — | Browse the fabric's dataset namespaces ONE LEVEL at a time — there are thousands of datasets, never try to list them all. prefix='' shows the top-level namespaces with aggregate counts; prefix='cap… |
+| `memory.neo4j_diag` | — | Diagnose Neo4j connectivity, node and edge counts. |
+| `memory.promote` | — | Manually promote a Redis event or raw dict payload to persistent memory. |
+| `memory.read` | — | Read ONE full record verbatim by id (ids come from memory.seek / fabric.query results). Checks the fabric first, then the session-memory store. Params: record_id (str!), offset (int 0 — character o… |
+| `memory.recall` | — | Smart recall: semantic search + automatic graph-neighbour expansion for rich context. WHEN TO USE: the best general-purpose memory retrieval — use this before answering questions that might benefit… |
+| `memory.recall_2nd_order` | — | Second-order recall: similar past USER questions → paired ASSISTANT answers → graph-neighbour knowledge attached to those answers. Inputs: query (str!), limit (int 5), graph_depth (int 1), neighbou… |
+| `memory.record_turn` | — | Store a human→agent conversation turn as linked graph nodes. |
+| `memory.reindex_embeddings` | — | Re-embed stored memory vectors (Chroma) with the CURRENT embedding provider — run after switching VERA_EMBED_PROVIDER so existing vectors match new ones. DRY-RUN by default. Input: confirm (bool — … |
+| `memory.relate` | — | Create a typed relationship between two memory records in the graph. |
+| `memory.search` | — | Search long-term memory using hybrid semantic + keyword matching. WHEN TO USE: recall past research results, stored facts, previous tool outputs for a topic. Input: query (str!), limit (int, defaul… |
+| `memory.seek` | — | THE canonical way to search Vera's stored knowledge (data fabric + session memory). Hybrid keyword+semantic search across all storage backends with near-duplicate collapse and diversity selection, … |
+| `memory.select` | — | Filter and sort a dataset's rows by FIELD VALUES — the typed read to complement memory.seek's semantic search. WHEN TO USE: you know the dataset and want specific rows (a symbol's price series in a… |
+| `memory.session_delete` | — | DESTRUCTIVE: delete one session and all its memories. Requires session_id. |
+| `memory.session_delete_bulk` | — | DESTRUCTIVE: delete multiple sessions matching a session_id prefix. Requires confirm=True. |
+| `memory.session_edges` | — | Get all graph edges for a session from Neo4j. |
+| `memory.session_graph` | — | Get all memory nodes for a session, ordered chronologically. |
+| `memory.session_history` | — | Retrieve all memory records for a session, ordered by time. |
+| `memory.session_init` | — | Create or resume a memory session node. Returns the session root node id. |
+| `memory.session_nodes` | — | Get all Memory nodes for a session from Neo4j (not Postgres). |
+| `memory.similar` | — | Find the top-N most semantically similar records to a given text or record id. |
+| `memory.stats` | — | Statistics from all active memory backends (record counts, index sizes). |
+| `memory.store` | — | Persist a text record to long-term memory (Postgres + Chroma vector index + Neo4j graph). WHEN TO USE: save important facts, research results, or context you want to recall in this or future sessio… |
+| `memory.tooling` | — | Get or set the agent-facing retrieval tooling mode. mode='' reports the current mode. 'canonical' hides the overlapping fabric/memory read caps from agent discovery so agents converge on memory.see… |
+| `memory.traverse` | — | Graph traversal from a memory node. Returns connected records up to depth hops. |
 <!-- VERA:AUTO:capabilities END -->

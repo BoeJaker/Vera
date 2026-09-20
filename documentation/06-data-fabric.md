@@ -587,12 +587,6 @@ graph summary is ready. Production is never seeded for screenshots.
 ![ML Lab](assets/data-fabric/ml-lab.png)
 
 *ML Lab  ·  captured `seeded`*
-
-#### Vector Browser
-
-![Vector Browser](assets/data-fabric/vector-browser-panel.png)
-
-*Vector Browser  ·  captured `seeded`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities
@@ -606,6 +600,13 @@ graph summary is ready. Production is never seeded for screenshots.
 | `fabric.ai_analyse_links` | — | Suggest dataset-level relations using the LLM, then automatically drive Loom for each accepted pair. Replaces the old standalone analyser. Input: max_pairs (int default 8), min_score (float default… |
 | `fabric.api.list` | — | List discovered API surfaces across all datasets for the API browser. Each API is annotated with its enumerated endpoint sub-tables and whether it has been promoted to a recurring source. Input: da… |
 | `fabric.api.map` | — | Sample an API endpoint and MAP its response shape: locate the record array, infer a flat field schema, return a small sample, and suggest a jq_path so it can be wired up as a pull source. Input: su… |
+| `fabric.artifact.get` | — | Policy-gated bounded artifact download. Inputs: artifact_id, max_bytes (capped by FABRIC_ARTIFACT_MAX_GET_BYTES). Returns data_b64. |
+| `fabric.artifact.put` | — | Policy-gated checksum-addressed artifact upload. Inputs: data_b64, media_type, created_at, retain_until. Decoded size is bounded by FABRIC_ARTIFACT_MAX_PUT_BYTES. Output contains immutable metadata. |
+| `fabric.artifact.reference` | — | Policy-gated immutable reference to an existing artifact. A reference_id is idempotent but cannot be retargeted. |
+| `fabric.artifact.replica.reconcile` | — | Policy-gated bounded retry of failed artifact replication. Requires FABRIC_ARTIFACT_REPLICA=object_store. Local verified bytes remain authoritative; limit is clamped to 1..100. |
+| `fabric.artifact.restore_local` | — | Policy-gated repair of a missing or corrupt local artifact from its checksum-verified replica. Requires an explicitly configured artifact replica and never accepts mismatched remote bytes. |
+| `fabric.artifact.stat` | — | Policy-gated metadata lookup for one checksum-addressed artifact. |
+| `fabric.artifact.verify` | — | Policy-gated checksum and size verification for one artifact. |
 | `fabric.aux_graph.link` | — | Link two typed nodes in the auxiliary Neo4j graph. |
 | `fabric.aux_graph.query` | — | Read-only Cypher query on the fabric Neo4j graph. Returns: {rows (raw data shape), nodes [{id,name,label,labels,props}], edges [{from,to,rel,props}]} — the latter two are usable directly by graph v… |
 | `fabric.backfill_vectors` | — | Re-encode fabric records that exist in Postgres (source of truth) but have NO vector in the shared vera_fabric Chroma collection — use after a chroma_reset or an embedder outage that skipped vector… |
@@ -716,6 +717,9 @@ graph summary is ready. Production is never seeded for screenshots.
 | `fabric.pipelines.save` | — | Save a search pipeline definition. Input: name (str!), description (str), stages (list of stage objects [{type, config}] OR JSON string), tags (str). Output: {id, name}. |
 | `fabric.query` | — | Search the data fabric across all stored datasets using keyword and/or semantic (vector) search. WHEN TO USE: when you need to look up records, documents, or data from structured datasets; when the… |
 | `fabric.record.summarise` | — | Generate an LLM summary of a single record. Input: record_id (str!). Output: {ok, record_id, summary}. |
+| `fabric.revision.get` | — | Policy-gated canonical Fabric revision read. Returns the current revision for record_id, or an exact revision_id bound to that record. |
+| `fabric.revision.put` | — | Policy-gated canonical Fabric revision write. Commits immutable authority and a SQLite projection receipt; projection failure is reported durably without undoing authority. Inputs: namespace, recor… |
+| `fabric.revision.reconcile` | — | Policy-gated bounded retry of failed/stale canonical SQLite projection receipts. Inputs: limit (1..100). Each item is transitioned through rebuilding and ends applied/removed/failed. |
 | `fabric.rss.fetch_content` | — | Pull an RSS feed and fetch full article text for each entry. Input: source_id (str!) — must be an existing RSS source. max_articles (int, default 10) — cap on article fetches (rate-limiting). Outpu… |
 | `fabric.schema` | — | Get schema for a dataset. Input: dataset_id (query param). |
 | `fabric.schema.declare` | — | Declare (and version) the schema for a dataset so agents and loops can operate on it reliably and quality can be checked. Inputs: dataset_id (str!), schema (object mapping field -> {type: string\|n… |
