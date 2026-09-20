@@ -1386,6 +1386,7 @@ except Exception:  # pragma: no cover
         _sg_upstream_url = lambda env=None: ""          # noqa: E731
         _sg_read_through_allowed = lambda name, method, env=None: False   # noqa: E731
 _READ_THROUGH_URL = _sg_upstream_url()   # '' outside a dev sandbox: the hook below is then never taken
+_READ_THROUGH_TIMEOUT_S = float(os.environ.get("VERA_UPSTREAM_READ_TIMEOUT_S") or 40)   # seconds prod gets to answer one reading
 
 
 async def _upstream_read(name: str, kw: dict):
@@ -1393,7 +1394,9 @@ async def _upstream_read(name: str, kw: dict):
     the arguments as given, no trace of ours. None when prod could not answer — the local capability runs then."""
     args = {k: v for k, v in (kw or {}).items() if k != "trace_id"}
     try:
-        async with httpx.AsyncClient(verify=False, timeout=12) as c:
+        # a reading can be slow on the estate itself (topology.snapshot walks every node: ~11 s on prod, longer while a
+        # dashboard of seventeen tiles reads at once) - waiting beats answering from the sandbox's empty stores
+        async with httpx.AsyncClient(verify=False, timeout=_READ_THROUGH_TIMEOUT_S) as c:
             r = await c.post(_READ_THROUGH_URL, json={"name": name, "arguments": args, "caller_kind": "sandbox-read"},
                              headers={"X-Vera-Read-Through": "sandbox"})
         if r.status_code != 200:

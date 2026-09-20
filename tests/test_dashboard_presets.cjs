@@ -54,5 +54,8 @@ const SOURCES = new Set(['obs.health', 'obs.events', 'obs.scheduler', 'obs.worke
   const snap = { nodes: [{ id: 'hub', label: 'Vera', kind: 'hub' }, { id: 'cat:nodes', label: 'Nodes', kind: 'category' }, { id: 'node:1', label: 'ct126', kind: 'node', status: 'ok' }], edges: [{ from: 'hub', to: 'cat:nodes' }, { from: 'cat:nodes', to: 'node:1', kind: 'serves' }], ts: 1 };
   const h = W.draw('topology', snap, 'm', { bare: true });
   t('the topology form draws a snapshot-shaped answer (nodes + edges) as the graph', !/wempty|vw-nodata/.test(h) && /vb-topo/.test(h) && (h.match(/class="tn"/g) || []).length === 3, h.slice(0, 160)); }
+// ── the read-through waits for a slow reading (prod's topology.snapshot takes ~11 s; the old 12 s limit fell back to the sandbox's empty stores) ──
+{ const CO = fs.readFileSync(path.join(R, 'vera', 'capability_orchestration.py'), 'utf8');
+  t('the read-through timeout is a named constant, 40 s by default, overridable by VERA_UPSTREAM_READ_TIMEOUT_S', CO.includes('_READ_THROUGH_TIMEOUT_S = float(os.environ.get("VERA_UPSTREAM_READ_TIMEOUT_S") or 40)') && CO.includes('timeout=_READ_THROUGH_TIMEOUT_S') && !CO.includes('verify=False, timeout=12)')); }
 console.log((fails ? 'FAILED ' : 'passed ') + (fails ? fails + ' check(s)' : 'all checks'));
 process.exit(fails ? 1 : 0);
