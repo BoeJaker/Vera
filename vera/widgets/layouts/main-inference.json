@@ -4,24 +4,1256 @@
  "layout": "default",
  "key": "main-inference",
  "user": "",
- "grid": {"cols": 12, "row": 58, "gap": 10, "widths": [2, 3, 4, 6, 8, 12]},
- "note": "The Inference preset of the main dashboard: the GPU gate and who holds it, every Ollama instance and what it is doing, the routing statistics by model and job type, the request log as it runs, the model catalogue per node and the bench's results, the census. Every tile is a record read through the element; a sandbox reads these from prod one way.",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "The Inference preset: the overview's Now, Inference and Memory bands - the gate, the instances, node latency and throughput, the request rate and log, routing by model, the catalogue, the routing rules, the stores and the fabric.",
  "widgets": [
-  {"record": {"id": "inf-gate", "form": "pills", "source": "obs.health", "shape": "values", "title": "GPU gate", "read": {"refresh": "5s", "map": {"values": "gpu_gate"}}, "frame": {"size": "m", "span": [3, 2]}, "draw": {"body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [3, 2], "hidden": false, "refresh": "5s", "floated": false},
-  {"record": {"id": "inf-census", "form": "pills", "source": "obs.health", "shape": "values", "title": "Census", "read": {"refresh": "10s", "map": {"values": "census"}}, "frame": {"size": "m", "span": [3, 2]}, "draw": {"body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [3, 2], "hidden": false, "refresh": "10s", "floated": false},
-  {"record": {"id": "inf-inuse", "form": "ring", "source": "sysmon.status", "shape": "level", "title": "Instances in use", "read": {"refresh": "5s", "map": {"value": "ollama.in_use", "max": "ollama.total"}}, "frame": {"size": "m", "span": [2, 2]}, "draw": {"body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [2, 2], "hidden": false, "refresh": "5s", "floated": false},
-  {"record": {"id": "inf-online", "form": "counter", "source": "sysmon.status", "shape": "level", "title": "Online", "read": {"refresh": "5s", "map": {"value": "ollama.online"}}, "frame": {"size": "m", "span": [2, 2]}, "draw": {"unit": "nodes", "body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [2, 2], "hidden": false, "refresh": "5s", "floated": false},
-  {"record": {"id": "inf-gpu", "form": "counter", "source": "sysmon.status", "shape": "level", "title": "GPU nodes", "read": {"refresh": "5s", "map": {"value": "ollama.gpu"}}, "frame": {"size": "m", "span": [2, 2]}, "draw": {"unit": "gpu", "body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [2, 2], "hidden": false, "refresh": "5s", "floated": false},
-  {"record": {"id": "inf-gate-nodes", "form": "table", "source": "ollama.gate.status", "shape": "items", "title": "The gate by node", "read": {"refresh": "5s", "map": {"rows": "nodes"}}, "frame": {"size": "xl", "span": [6, 3], "max_body": 160}, "draw": {"columns": ["node", "has_gpu", "gated", "capacity", "held", "free"], "body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [6, 3], "hidden": false, "refresh": "5s", "floated": false},
-  {"record": {"id": "inf-instances", "form": "cards", "source": "ollama.instances", "shape": "items", "title": "Ollama instances", "read": {"refresh": "5s", "map": {"rows": "$", "name": "label", "status": "status", "latency_ms": "latency_ms", "in_use": "in_use", "errors": "errors"}}, "frame": {"size": "xl", "span": [6, 3]}, "draw": {"body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [6, 3], "hidden": false, "refresh": "5s", "floated": false},
-  {"record": {"id": "inf-routing", "form": "table", "source": "ollama.route_stats", "shape": "items", "title": "Routing · by model, instance and job type", "read": {"refresh": "15s", "map": {"rows": "stats"}}, "frame": {"size": "xl", "span": [8, 4], "max_body": 260}, "draw": {"columns": ["model", "instance", "job_type", "n", "ema_elapsed_s", "ema_tps", "ema_tokens"], "sort": "n", "body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [8, 4], "hidden": false, "refresh": "15s", "floated": false},
-  {"record": {"id": "inf-log", "form": "feed", "source": "ollama.request_log", "shape": "events", "title": "Request log", "read": {"refresh": "10s", "map": {"events": "entries", "t": "ts", "kind": "instance", "text": "model"}}, "frame": {"size": "xl", "span": [4, 4]}, "draw": {"body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [4, 4], "hidden": false, "refresh": "10s", "floated": false},
-  {"record": {"id": "inf-catalog", "form": "composite", "source": "catalog.installed", "shape": "composite", "title": "Model catalogue", "read": {"refresh": "60s"}, "frame": {"size": "xl", "span": [6, 4]}, "draw": {"body": "record"}, "layout": "2x2", "children": [{"slot": "models", "record": {"id": "inf-catalog:models", "form": "counter", "source": "$subject", "title": "installed models", "shape": "level", "read": {"map": {"value": "total_models"}}}}, {"slot": "size", "record": {"id": "inf-catalog:size", "form": "counter", "source": "$subject", "title": "on disk", "shape": "level", "read": {"map": {"value": "total_size_gb"}}, "draw": {"unit": "GB"}}}, {"slot": "nodes", "record": {"id": "inf-catalog:nodes", "form": "rows", "source": "$subject.nodes", "title": "per node", "shape": "items", "read": {"map": {"name": "label", "status": "status", "gpu": "gpu_name", "free_gb": "disk_free_gb"}}}}], "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [6, 4], "hidden": false, "refresh": "60s", "floated": false},
-  {"record": {"id": "inf-models", "form": "table", "source": "ollama.list_models", "shape": "items", "title": "Models per instance", "read": {"refresh": "60s", "map": {"rows": "$"}}, "frame": {"size": "xl", "span": [6, 4], "max_body": 200}, "draw": {"columns": ["name", "count", "status", "has_gpu", "url"], "body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [6, 4], "hidden": false, "refresh": "60s", "floated": false},
-  {"record": {"id": "inf-bench", "form": "table", "source": "bench.results", "shape": "items", "title": "Bench · the leaderboard", "read": {"refresh": "120s", "map": {"rows": "results"}}, "frame": {"size": "xl", "span": [6, 4], "max_body": 240}, "draw": {"columns": ["model", "node_label", "role", "accuracy", "perf", "quant", "size_gb"], "sort": "accuracy", "body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [6, 4], "hidden": false, "refresh": "120s", "floated": false},
-  {"record": {"id": "inf-routing-cfg", "form": "kv", "source": "ollama.routing.get", "shape": "values", "title": "Routing configuration", "read": {"refresh": "60s"}, "frame": {"size": "xl", "span": [6, 4], "max_body": 240}, "draw": {"body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [6, 4], "hidden": false, "refresh": "60s", "floated": false},
-  {"record": {"id": "inf-queue", "form": "trace", "source": "sysmon.history", "shape": "series", "title": "Queue depth", "read": {"refresh": "10s", "map": {"series": "samples", "v": "queue"}}, "frame": {"size": "m", "span": [4, 2]}, "draw": {"body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [4, 2], "hidden": false, "refresh": "10s", "floated": false},
-  {"record": {"id": "inf-background", "form": "pills", "source": "background.status", "shape": "values", "title": "Background queue", "read": {"refresh": "15s", "map": {"values": "queue"}}, "frame": {"size": "m", "span": [4, 2]}, "draw": {"body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [4, 2], "hidden": false, "refresh": "15s", "floated": false},
-  {"record": {"id": "inf-embed", "form": "kv", "source": "ollama.embed_config", "shape": "values", "title": "Embedding", "read": {"refresh": "60s"}, "frame": {"size": "m", "span": [4, 2]}, "draw": {"body": "record"}, "actions": ["dive", "pin", "ask"], "place": "dashboard"}, "span": [4, 2], "hidden": false, "refresh": "60s", "floated": false}
+  {
+   "record": {
+    "id": "sec-now",
+    "form": "section",
+    "source": "",
+    "title": "Now · the figures",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "host-cpu",
+    "form": "trace",
+    "source": "sysmon.history",
+    "title": "Host CPU",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "series": "samples",
+      "v": "cpu"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "%"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    0,
+    1
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "capacity",
+    "form": "gauge",
+    "source": "sysmon.status",
+    "title": "Capacity",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "pick": {
+       "cpu": "resources.cpu",
+       "memory": "resources.mem",
+       "proxmox mem": "proxmox.mem_pct"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "load",
+     "unit": "%"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    4,
+    1
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fleet",
+    "form": "numbers",
+    "source": "sysmon.status",
+    "title": "Fleet",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "pick": {
+       "guests up": "proxmox.running",
+       "guests": "proxmox.guests",
+       "containers": "docker.running",
+       "ollama": "ollama.online"
+      }
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    8,
+    1
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "gpu-gate",
+    "form": "level",
+    "source": "obs.health",
+    "title": "GPU gate",
+    "read": {
+     "refresh": "5s",
+     "map": {
+      "value": "gpu_gate.held",
+      "max": "gpu_gate.capacity"
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "held",
+     "cells": 4
+    }
+   },
+   "at": [
+    10,
+    1
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "control-plane",
+    "form": "numbers",
+    "source": "obs.health",
+    "title": "Control plane",
+    "read": {
+     "refresh": "5s",
+     "map": {
+      "pick": {
+       "workers": "workers",
+       "capabilities": "caps",
+       "mcp servers": "mcp_servers",
+       "mode": "mode"
+      }
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    3
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "census",
+    "form": "level",
+    "source": "obs.health",
+    "title": "Census · goals",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "value": "census.done",
+      "max": "census.total"
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "done",
+     "cells": 6
+    }
+   },
+   "at": [
+    2,
+    3
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "temps",
+    "form": "thermo",
+    "source": "obs.node_temps",
+    "title": "Temperatures",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "values": "hosts",
+      "name": "label",
+      "value": "max_c"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "°",
+     "throttle": 70,
+     "limit": 5
+    },
+    "panel": "perf-monitor"
+   },
+   "at": [
+    4,
+    3
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "events",
+    "form": "log",
+    "source": "obs.events",
+    "title": "Live events",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "events": "$",
+      "t": "ts",
+      "kind": "type",
+      "text": "name"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "activity"
+   },
+   "at": [
+    8,
+    3
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-inference",
+    "form": "section",
+    "source": "",
+    "title": "Inference · models · routing",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    5
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sysmon-ollama",
+    "form": "composite",
+    "source": "sysmon.status",
+    "title": "Ollama",
+    "read": {
+     "refresh": "10s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "ring",
+       "source": "$subject.ollama",
+       "title": "in use",
+       "read": {
+        "map": {
+         "value": "in_use",
+         "max": "total"
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.ollama.nodes",
+       "title": "nodes",
+       "read": {
+        "map": {
+         "name": "label",
+         "status": "status",
+         "latency_ms": "latency_ms"
+        }
+       },
+       "draw": {
+        "columns": [
+         "name",
+         "status",
+         "latency_ms"
+        ]
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "ollama.gate.status",
+       "title": "GPU gate · held by node",
+       "read": {
+        "map": {
+         "rows": "nodes",
+         "name": "node",
+         "value": "held",
+         "status": "gated"
+        }
+       },
+       "draw": {
+        "columns": [
+         "name",
+         "value"
+        ]
+       }
+      }
+     }
+    ],
+    "panel": "workers-ollama"
+   },
+   "at": [
+    0,
+    6
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "node-perf",
+    "form": "small-multiples",
+    "source": "bench.node_perf.history",
+    "title": "Node latency · ping",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "series",
+      "v": "ping_ms"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "rows": 3,
+     "unit": "ms"
+    },
+    "panel": "workers-ollama"
+   },
+   "at": [
+    4,
+    6
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "node-tps",
+    "form": "small-multiples",
+    "source": "bench.node_perf.history",
+    "title": "Node throughput · tokens/s",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "series",
+      "v": "tps"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "rows": 3,
+     "unit": "tok/s"
+    },
+    "panel": "workers-ollama"
+   },
+   "at": [
+    4,
+    8
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "requests-rate",
+    "form": "pulse",
+    "source": "ollama.request_log",
+    "title": "Requests · rate",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "events": "entries",
+      "t": "ts",
+      "kind": "instance",
+      "text": "model"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "workers-ollama"
+   },
+   "at": [
+    8,
+    6
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "requests",
+    "form": "log",
+    "source": "ollama.request_log",
+    "title": "Requests · latest",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "events": "entries",
+      "t": "ts",
+      "kind": "instance",
+      "text": "model"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "workers-ollama"
+   },
+   "at": [
+    8,
+    8
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "routing",
+    "form": "ranked",
+    "source": "ollama.route_stats",
+    "title": "Routing · calls by model",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "stats",
+      "name": "model",
+      "value": "n"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "workers-ollama"
+   },
+   "at": [
+    0,
+    10
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "models",
+    "form": "composite",
+    "source": "catalog.installed",
+    "title": "Models",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "catalogue",
+       "read": {
+        "map": {
+         "keys": [
+          "total_models",
+          "total_size_gb"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.nodes",
+       "title": "per node",
+       "read": {
+        "map": {
+         "name": "label",
+         "status": "status",
+         "value": "vram_gb"
+        }
+       },
+       "draw": {
+        "unit": "GB",
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "bench.results",
+       "title": "bench",
+       "read": {
+        "map": {
+         "rows": "results",
+         "name": "model",
+         "value": "accuracy",
+         "status": "role"
+        }
+       },
+       "draw": {
+        "limit": 2
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "panel": "workers-ollama"
+   },
+   "at": [
+    4,
+    10
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "guests",
+    "form": "pills",
+    "source": "sysmon.status",
+    "title": "Guests · busiest",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "values": "proxmox.top_guests",
+      "name": "name",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    8,
+    10
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "routing-rules",
+    "form": "table",
+    "source": "ollama.cap_routing.get",
+    "title": "Routing rules",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "rows": "declared"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "columns": [
+      "name",
+      "job_type",
+      "prefer_gpu",
+      "deny_gpu",
+      "model"
+     ]
+    }
+   },
+   "at": [
+    0,
+    12
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "routing-cfg",
+    "form": "composite",
+    "source": "ollama.routing.get",
+    "title": "Routing · embedding",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "routing",
+       "read": {
+        "map": {
+         "keys": [
+          "active_profile"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "ollama.embed_config",
+       "title": "embedding",
+       "read": {
+        "map": {
+         "keys": [
+          "embed_model",
+          "embed_url",
+          "prefer_gpu",
+          "pinned_instance"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "ollama.instances",
+       "title": "instances",
+       "read": {
+        "map": {
+         "rows": "$",
+         "name": "label",
+         "status": "status",
+         "value": "latency_ms"
+        }
+       },
+       "draw": {
+        "unit": "ms",
+        "limit": 3
+       }
+      }
+     }
+    ],
+    "layout": "report"
+   },
+   "at": [
+    6,
+    12
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-memory",
+    "form": "section",
+    "source": "",
+    "title": "Memory · fabric · stores",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    14
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "memory-stores",
+    "form": "composite",
+    "source": "memory.stats",
+    "title": "Memory stores",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "counter",
+       "source": "$subject.backends.postgres",
+       "title": "postgres",
+       "read": {
+        "map": {
+         "value": "total"
+        }
+       },
+       "draw": {
+        "unit": "records"
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "counter",
+       "source": "$subject.backends.chroma",
+       "title": "chroma",
+       "read": {
+        "map": {
+         "value": "count"
+        }
+       },
+       "draw": {
+        "unit": "vectors"
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "$subject.backends.neo4j",
+       "title": "neo4j",
+       "read": {
+        "map": {
+         "keys": [
+          "nodes",
+          "relationships",
+          "sessions"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "panel": "fabric-panel"
+   },
+   "at": [
+    0,
+    15
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric",
+    "form": "numbers",
+    "source": "fabric.stats",
+    "title": "Fabric",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "pick": {
+       "records": "postgres.records",
+       "vectors": "chroma.count",
+       "datasets": "postgres.datasets"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "fabric-panel"
+   },
+   "at": [
+    4,
+    15
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric-health",
+    "form": "kv",
+    "source": "fabric.health",
+    "title": "Fabric health",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "keys": [
+       "records_count",
+       "datasets_count",
+       "sources_count",
+       "write_queue_size",
+       "journal_mode",
+       "db_size",
+       "writer_task_alive"
+      ]
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "fabric-panel"
+   },
+   "at": [
+    8,
+    15
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "worldview",
+    "form": "kv",
+    "source": "worldview.stats",
+    "title": "Worldview",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "model",
+      "keys": [
+       "num_concepts",
+       "records_assigned",
+       "labelled_concepts",
+       "transitions_observed",
+       "device",
+       "embed_dim",
+       "latent_dim"
+      ]
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "fabric-panel"
+   },
+   "at": [
+    0,
+    17
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "errors",
+    "form": "pareto",
+    "source": "evolve.errors.list",
+    "title": "Errors to triage",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "counts"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "evolve"
+   },
+   "at": [
+    4,
+    17
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "host-memory",
+    "form": "trace",
+    "source": "sysmon.history",
+    "title": "Host memory",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "series": "samples",
+      "v": "mem"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "%"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    8,
+    17
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  }
  ]
 }

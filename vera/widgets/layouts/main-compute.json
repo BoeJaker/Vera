@@ -17,39 +17,188 @@
    12
   ]
  },
- "note": "The Distributed compute preset of the main dashboard: the workers and what they are doing, the task stream and the background queue, the sandbox pool and its capacity, the Loop Lab, the scheduler, the host's own load, the live events. Every tile is a record read through the element; a sandbox reads these from prod one way.",
+ "note": "The Distributed compute preset: the overview's Now, Agents and Studio bands - the programmes, Loop Lab, the background queue, the sandboxes, the dreamer, the agents and projects, home, automations and the calendar.",
  "widgets": [
   {
    "record": {
-    "id": "cmp-workers",
-    "form": "counter",
-    "source": "obs.health",
-    "shape": "level",
-    "title": "Workers",
+    "id": "sec-now",
+    "form": "section",
+    "source": "",
+    "title": "Now · the figures",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "host-cpu",
+    "form": "trace",
+    "source": "sysmon.history",
+    "title": "Host CPU",
     "read": {
-     "refresh": "5s",
+     "refresh": "10s",
      "map": {
-      "value": "workers"
+      "series": "samples",
+      "v": "cpu"
      }
     },
     "frame": {
      "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "%"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    0,
+    1
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "capacity",
+    "form": "gauge",
+    "source": "sysmon.status",
+    "title": "Capacity",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "pick": {
+       "cpu": "resources.cpu",
+       "memory": "resources.mem",
+       "proxmox mem": "proxmox.mem_pct"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "load",
+     "unit": "%"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    4,
+    1
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fleet",
+    "form": "numbers",
+    "source": "sysmon.status",
+    "title": "Fleet",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "pick": {
+       "guests up": "proxmox.running",
+       "guests": "proxmox.guests",
+       "containers": "docker.running",
+       "ollama": "ollama.online"
+      }
+     }
+    },
+    "frame": {
+     "size": "s",
      "span": [
       2,
       2
      ]
     },
     "draw": {
-     "unit": "workers",
      "body": "record"
     },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    "panel": "system-monitor"
    },
+   "at": [
+    8,
+    1
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "gpu-gate",
+    "form": "level",
+    "source": "obs.health",
+    "title": "GPU gate",
+    "read": {
+     "refresh": "5s",
+     "map": {
+      "value": "gpu_gate.held",
+      "max": "gpu_gate.capacity"
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "held",
+     "cells": 4
+    }
+   },
+   "at": [
+    10,
+    1
+   ],
    "span": [
     2,
     2
@@ -60,58 +209,23 @@
   },
   {
    "record": {
-    "id": "cmp-caps",
-    "form": "counter",
+    "id": "control-plane",
+    "form": "numbers",
     "source": "obs.health",
-    "shape": "level",
-    "title": "Capabilities",
+    "title": "Control plane",
     "read": {
-     "refresh": "30s",
+     "refresh": "5s",
      "map": {
-      "value": "caps"
+      "pick": {
+       "workers": "workers",
+       "capabilities": "caps",
+       "mcp servers": "mcp_servers",
+       "mode": "mode"
+      }
      }
     },
     "frame": {
-     "size": "m",
-     "span": [
-      2,
-      2
-     ]
-    },
-    "draw": {
-     "unit": "caps",
-     "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
-   },
-   "span": [
-    2,
-    2
-   ],
-   "hidden": false,
-   "refresh": "30s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "cmp-mode",
-    "form": "string",
-    "source": "obs.health",
-    "shape": "string",
-    "title": "Mode",
-    "read": {
-     "refresh": "30s",
-     "map": {
-      "text": "mode"
-     }
-    },
-    "frame": {
-     "size": "m",
+     "size": "s",
      "span": [
       2,
       2
@@ -119,54 +233,52 @@
     },
     "draw": {
      "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    }
    },
+   "at": [
+    0,
+    3
+   ],
    "span": [
     2,
     2
    ],
    "hidden": false,
-   "refresh": "30s",
+   "refresh": "5s",
    "floated": false
   },
   {
    "record": {
-    "id": "cmp-stream",
-    "form": "pills",
-    "source": "jobs.stats",
-    "shape": "values",
-    "title": "Task stream",
+    "id": "census",
+    "form": "level",
+    "source": "obs.health",
+    "title": "Census · goals",
     "read": {
      "refresh": "10s",
      "map": {
-      "values": "stream"
+      "value": "census.done",
+      "max": "census.total"
      }
     },
     "frame": {
-     "size": "m",
+     "size": "s",
      "span": [
-      3,
+      2,
       2
      ]
     },
     "draw": {
-     "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+     "body": "record",
+     "unit": "done",
+     "cells": 6
+    }
    },
+   "at": [
+    2,
+    3
+   ],
    "span": [
-    3,
+    2,
     2
    ],
    "hidden": false,
@@ -175,184 +287,40 @@
   },
   {
    "record": {
-    "id": "cmp-capacity",
-    "form": "pills",
-    "source": "evolve.sandbox.list",
-    "shape": "values",
-    "title": "Sandbox capacity",
-    "read": {
-     "refresh": "30s",
-     "map": {
-      "values": "capacity"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      3,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
-   },
-   "span": [
-    3,
-    2
-   ],
-   "hidden": false,
-   "refresh": "30s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "cmp-workerlist",
-    "form": "table",
-    "source": "obs.workers",
-    "shape": "items",
-    "title": "Workers · what each is doing",
+    "id": "temps",
+    "form": "thermo",
+    "source": "obs.node_temps",
+    "title": "Temperatures",
     "read": {
      "refresh": "10s",
      "map": {
-      "rows": "$"
+      "values": "hosts",
+      "name": "label",
+      "value": "max_c"
      }
-    },
-    "frame": {
-     "size": "xl",
-     "span": [
-      8,
-      4
-     ],
-     "max_body": 280
-    },
-    "draw": {
-     "columns": [
-      "name",
-      "status",
-      "host",
-      "current_task",
-      "tasks_done",
-      "tasks_failed",
-      "cpu_pct",
-      "ram_pct"
-     ],
-     "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
-   },
-   "span": [
-    8,
-    4
-   ],
-   "hidden": false,
-   "refresh": "10s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "cmp-load",
-    "form": "composite",
-    "source": "sysmon.history",
-    "shape": "composite",
-    "title": "Host load",
-    "read": {
-     "refresh": "10s"
     },
     "frame": {
      "size": "m",
      "span": [
       4,
-      4
+      2
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "unit": "°",
+     "throttle": 70,
+     "limit": 5
     },
-    "layout": "2x2",
-    "children": [
-     {
-      "slot": "cpu",
-      "record": {
-       "id": "cmp-load:cpu",
-       "form": "trace",
-       "source": "$subject.samples",
-       "title": "cpu %",
-       "shape": "series",
-       "read": {
-        "map": {
-         "v": "cpu"
-        }
-       }
-      }
-     },
-     {
-      "slot": "mem",
-      "record": {
-       "id": "cmp-load:mem",
-       "form": "trace",
-       "source": "$subject.samples",
-       "title": "memory %",
-       "shape": "series",
-       "read": {
-        "map": {
-         "v": "mem"
-        }
-       }
-      }
-     },
-     {
-      "slot": "queue",
-      "record": {
-       "id": "cmp-load:queue",
-       "form": "trace",
-       "source": "$subject.samples",
-       "title": "queue",
-       "shape": "series",
-       "read": {
-        "map": {
-         "v": "queue"
-        }
-       }
-      }
-     },
-     {
-      "slot": "procs",
-      "record": {
-       "id": "cmp-load:procs",
-       "form": "rows",
-       "source": "sysmon.status",
-       "title": "top processes",
-       "shape": "items",
-       "read": {
-        "map": {
-         "rows": "top_processes"
-        }
-       }
-      }
-     }
-    ],
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    "panel": "perf-monitor"
    },
+   "at": [
+    4,
+    3
+   ],
    "span": [
     4,
-    4
+    2
    ],
    "hidden": false,
    "refresh": "10s",
@@ -360,211 +328,519 @@
   },
   {
    "record": {
-    "id": "cmp-background",
-    "form": "composite",
-    "source": "background.status",
-    "shape": "composite",
-    "title": "Background queue · waiting for an idle box",
+    "id": "events",
+    "form": "log",
+    "source": "obs.events",
+    "title": "Live events",
     "read": {
-     "refresh": "15s"
-    },
-    "frame": {
-     "size": "xl",
-     "span": [
-      6,
-      4
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "layout": "2x2",
-    "children": [
-     {
-      "slot": "queue",
-      "record": {
-       "id": "cmp-background:queue",
-       "form": "pills",
-       "source": "$subject.queue",
-       "title": "queue",
-       "shape": "values"
-      }
-     },
-     {
-      "slot": "state",
-      "record": {
-       "id": "cmp-background:state",
-       "form": "kv",
-       "source": "$subject",
-       "title": "state",
-       "shape": "values"
-      }
-     },
-     {
-      "slot": "jobs",
-      "record": {
-       "id": "cmp-background:jobs",
-       "form": "rows",
-       "source": "$subject.jobs",
-       "title": "jobs",
-       "shape": "items",
-       "read": {
-        "map": {
-         "name": "name",
-         "status": "last_ok",
-         "runs": "runs",
-         "defers": "defers"
-        }
-       }
-      }
-     }
-    ],
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
-   },
-   "span": [
-    6,
-    4
-   ],
-   "hidden": false,
-   "refresh": "15s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "cmp-sandboxes",
-    "form": "table",
-    "source": "evolve.sandbox.list",
-    "shape": "items",
-    "title": "Sandboxes · the pool",
-    "read": {
-     "refresh": "30s",
+     "refresh": "10s",
      "map": {
-      "rows": "sandboxes"
+      "events": "$",
+      "t": "ts",
+      "kind": "type",
+      "text": "name"
      }
-    },
-    "frame": {
-     "size": "xl",
-     "span": [
-      6,
-      4
-     ],
-     "max_body": 260
-    },
-    "draw": {
-     "columns": [
-      "name",
-      "branch",
-      "port",
-      "running",
-      "paused",
-      "pinned",
-      "owner"
-     ],
-     "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
-   },
-   "span": [
-    6,
-    4
-   ],
-   "hidden": false,
-   "refresh": "30s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "cmp-looplab",
-    "form": "composite",
-    "source": "evolve.sandbox.status",
-    "shape": "composite",
-    "title": "Loop Lab",
-    "read": {
-     "refresh": "10s"
     },
     "frame": {
      "size": "m",
      "span": [
       4,
-      4
+      2
      ]
     },
     "draw": {
      "body": "record"
     },
-    "layout": "2x2",
+    "panel": "activity"
+   },
+   "at": [
+    8,
+    3
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-agents",
+    "form": "section",
+    "source": "",
+    "title": "Agents · loops · Loop Lab",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    5
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "programmes",
+    "form": "pills",
+    "source": "loops.program.list",
+    "title": "Programmes",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "programs",
+      "name": "name",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "evolve"
+   },
+   "at": [
+    0,
+    6
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab",
+    "form": "composite",
+    "source": "evolve.sandbox.list",
+    "title": "Loop Lab",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
     "children": [
      {
-      "slot": "state",
+      "slot": "a",
       "record": {
-       "id": "cmp-looplab:state",
        "form": "kv",
-       "source": "$subject",
-       "title": "sandbox",
-       "shape": "values"
-      }
-     },
-     {
-      "slot": "slots",
-      "record": {
-       "id": "cmp-looplab:slots",
-       "form": "counter",
-       "source": "evolve.sandbox.list",
-       "title": "slots free",
-       "shape": "level",
+       "source": "$subject.capacity",
+       "title": "capacity",
        "read": {
         "map": {
-         "value": "capacity.available_slots"
+         "keys": [
+          "available_slots",
+          "port_capacity",
+          "redis_db_capacity"
+         ]
         }
        }
       }
      },
      {
-      "slot": "runs",
+      "slot": "b",
       "record": {
-       "id": "cmp-looplab:runs",
+       "form": "rows",
+       "source": "$subject",
+       "title": "sandboxes",
+       "read": {
+        "map": {
+         "rows": "sandboxes",
+         "name": "name",
+         "value": "port"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
        "form": "rows",
        "source": "evolve.pipeline.list",
        "title": "pipelines",
-       "shape": "items",
        "read": {
         "map": {
          "rows": "pipelines",
          "name": "id",
          "status": "decision"
         }
+       },
+       "draw": {
+        "limit": 4
        }
       }
      }
     ],
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    "layout": "report",
+    "panel": "evolve"
    },
+   "at": [
+    4,
+    6
+   ],
    "span": [
     4,
-    4
+    2
    ],
    "hidden": false,
-   "refresh": "10s",
+   "refresh": "30s",
    "floated": false
   },
   {
    "record": {
-    "id": "cmp-scheduler",
+    "id": "background",
+    "form": "composite",
+    "source": "background.status",
+    "title": "Background jobs",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "state",
+       "read": {
+        "map": {
+         "keys": [
+          "running",
+          "quiet_for_s",
+          "min_quiet_s"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.jobs",
+       "title": "jobs",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "runs",
+         "status": "last_ok"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "$subject.queue",
+       "title": "queue",
+       "read": {
+        "map": {
+         "keys": [
+          "depth",
+          "oldest_wait_s",
+          "note"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "panel": "activity"
+   },
+   "at": [
+    8,
+    6
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sandboxes",
+    "form": "sandboxes",
+    "source": "evolve.sandbox.list",
+    "title": "Sandboxes",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "rows": "sandboxes",
+      "name": "name",
+      "status": "running"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "evolve"
+   },
+   "at": [
+    0,
+    8
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "minds",
+    "form": "composite",
+    "source": "dream.scheduler.status",
+    "title": "Dream · narrator",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "dream",
+       "read": {
+        "map": {
+         "keys": [
+          "scheduler_running",
+          "enabled",
+          "idle_minutes",
+          "in_cycle"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "dream.director.status",
+       "title": "director",
+       "read": {
+        "map": {
+         "keys": [
+          "running",
+          "conversational",
+          "cpu_pressure"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "system.narrator.status",
+       "title": "narrator",
+       "read": {
+        "map": {
+         "keys": [
+          "enabled",
+          "loop_running",
+          "model"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "panel": "dream-panel"
+   },
+   "at": [
+    4,
+    8
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agents",
+    "form": "composite",
+    "source": "agent.list",
+    "title": "Agents · projects",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "agents",
+       "read": {
+        "map": {
+         "keys": [
+          "count"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "project.list",
+       "title": "projects",
+       "read": {
+        "map": {
+         "rows": "projects",
+         "name": "name",
+         "status": "status"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "workshop.list_loop_variants",
+       "title": "loop variants",
+       "read": {
+        "map": {
+         "rows": "variants",
+         "name": "label"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "$subject.agents",
+       "title": "agents",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "num_ctx"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "panel": "agent-registry"
+   },
+   "at": [
+    8,
+    8
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "scheduler",
     "form": "table",
     "source": "obs.scheduler",
     "shape": "items",
@@ -576,12 +852,11 @@
      }
     },
     "frame": {
-     "size": "xl",
+     "size": "l",
      "span": [
-      8,
-      4
-     ],
-     "max_body": 260
+      6,
+      3
+     ]
     },
     "draw": {
      "columns": [
@@ -600,9 +875,13 @@
     ],
     "place": "dashboard"
    },
+   "at": [
+    0,
+    11
+   ],
    "span": [
-    8,
-    4
+    6,
+    3
    ],
    "hidden": false,
    "refresh": "30s",
@@ -610,29 +889,33 @@
   },
   {
    "record": {
-    "id": "cmp-guests",
-    "form": "rows",
-    "source": "sysmon.status",
+    "id": "workerlist",
+    "form": "table",
+    "source": "obs.workers",
     "shape": "items",
-    "title": "Proxmox · busiest guests",
+    "title": "Workers",
     "read": {
      "refresh": "10s",
      "map": {
-      "rows": "proxmox.top_guests",
-      "name": "name",
-      "status": "status",
-      "cpu": "cpu",
-      "mem": "mem"
+      "rows": "$"
      }
     },
     "frame": {
-     "size": "m",
+     "size": "l",
      "span": [
-      4,
+      6,
       3
      ]
     },
     "draw": {
+     "columns": [
+      "name",
+      "status",
+      "host",
+      "tasks_done",
+      "tasks_failed",
+      "cap_count"
+     ],
      "body": "record"
     },
     "actions": [
@@ -642,8 +925,12 @@
     ],
     "place": "dashboard"
    },
+   "at": [
+    6,
+    11
+   ],
    "span": [
-    4,
+    6,
     3
    ],
    "hidden": false,
@@ -652,94 +939,152 @@
   },
   {
    "record": {
-    "id": "cmp-mesh",
-    "form": "rows",
-    "source": "mesh.nodes",
-    "shape": "items",
-    "title": "Mesh nodes",
-    "read": {
-     "refresh": "15s",
-     "map": {
-      "rows": "nodes",
-      "name": "name",
-      "status": "role",
-      "ip": "ip",
-      "rssi": "rssi"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      3
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
-   },
-   "span": [
-    4,
-    3
-   ],
-   "hidden": false,
-   "refresh": "15s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "cmp-events",
-    "form": "feed",
-    "source": "obs.events",
-    "shape": "events",
-    "title": "Live events",
-    "read": {
-     "refresh": "10s",
-     "map": {
-      "events": "$",
-      "t": "ts",
-      "kind": "type",
-      "text": "name"
-     }
-    },
+    "id": "sec-studio",
+    "form": "section",
+    "source": "",
+    "title": "Studio · home · automations",
     "frame": {
      "size": "xl",
      "span": [
-      8,
-      3
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    14
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "home",
+    "form": "treemap",
+    "source": "ha.summary",
+    "title": "Home Assistant",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "parts": "domains"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
      ]
     },
     "draw": {
      "body": "record"
     },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    "panel": "ha-panel"
    },
+   "at": [
+    0,
+    15
+   ],
    "span": [
-    8,
-    3
+    4,
+    2
    ],
    "hidden": false,
-   "refresh": "10s",
+   "refresh": "60s",
    "floated": false
   },
   {
    "record": {
-    "id": "cmp-diagnostics",
+    "id": "automations",
+    "form": "pills",
+    "source": "n8n.workflow.list",
+    "title": "Automations",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "workflows",
+      "name": "name",
+      "status": "active"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "n8n-panel"
+   },
+   "at": [
+    4,
+    15
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "calendar",
+    "form": "agenda",
+    "source": "cal.events.list",
+    "title": "Calendar",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "days": "events",
+      "when": "start",
+      "title": "title"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "calendar-panel"
+   },
+   "at": [
+    8,
+    15
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "diagnostics",
     "form": "terminal",
     "source": "obs.diagnostics",
     "shape": "string",
-    "title": "Diagnostics · this instance",
+    "title": "Diagnostics",
     "read": {
      "refresh": "30s"
     },
@@ -760,6 +1105,10 @@
     ],
     "place": "dashboard"
    },
+   "at": [
+    0,
+    17
+   ],
    "span": [
     12,
     3

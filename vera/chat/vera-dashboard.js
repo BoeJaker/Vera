@@ -1285,7 +1285,7 @@
       chip.classList.toggle('sample', !!w.dataset.sample); chip.classList.toggle('checking', !!w.dataset.checking); chip.classList.toggle('bad', !!probs.length);
       chip.title = 'record ' + (r.id || w.dataset.wid) + ' · ' + text + (w.dataset.sample ? ' · drawn from the form\'s sample: the source cannot be read' : '')
         + (w.dataset.checking ? ' · widget.validate is checking this record' : '') + (probs.length ? '\nwidget.validate: ' + probs.join(' · ') : '');
-      ensureCfg(w);
+      ensureCfg(w); ensureOpen(w, r);
       if (r.form) w.dataset.form = r.form;
       if (src) w.dataset.source = src; else if (r.panel) w.dataset.source = 'panel:' + r.panel;
       var mb = r.frame && r.frame.max_body, body = w.querySelector(':scope > .w-body');
@@ -1299,6 +1299,21 @@
       b.title = 'Configure this widget — its record: source · form · size · options';
       b.onclick = function (e) { e.stopPropagation(); configure(w.dataset.wid, b); };
       act.insertBefore(b, act.firstChild);
+    }
+
+    // drill through: a record that names the page its data lives on (record.panel) opens that page; the shell's
+    // switchTab knows a registered panel's tab as auto-<id>, a popped window is the fallback
+    function openPanelTab(pid) {
+      var sw = (typeof window.switchTab === 'function') ? window.switchTab : (window.parent && window.parent !== window && typeof window.parent.switchTab === 'function') ? window.parent.switchTab : null;
+      if (sw) { try { sw('auto-' + pid); return; } catch (e) { /* fall through to the window */ } }
+      window.open('/ui/panel/window?id=' + encodeURIComponent(pid), 'veraPanel_' + pid, 'width=1040,height=820,menubar=no,toolbar=no,location=no,status=no');
+    }
+    function ensureOpen(w, r) {
+      var act = w.querySelector(':scope > .w-head .w-actions'); if (!act) return;
+      var b = act.querySelector('.vd-open'), pid = (r && r.form !== 'panel' && r.panel) ? String(r.panel) : '';
+      if (!pid) { if (b) b.remove(); return; }
+      if (!b) { b = document.createElement('button'); b.className = 'w-iconbtn vd-open'; b.textContent = '\u2197'; var cfg = act.querySelector('.vd-cfg'); if (cfg && cfg.nextSibling) act.insertBefore(b, cfg.nextSibling); else act.insertBefore(b, act.firstChild); }
+      b.title = 'Open ' + pid + ' \u2014 the page this data lives on'; b.onclick = function (e) { e.stopPropagation(); openPanelTab(pid); };
     }
 
     /* ── the record draws the tile ──
@@ -1773,7 +1788,7 @@
       toggleEdit: toggleEdit, reset: reset, openLoader: openLoader,
       hide: hide, show: show, addWidget: addWidget, addRecord: addRecord, refresh: applyLayout,
       // the widget surface's paths: the picker of panels, a record placed, a tile's ⚙, a record saved, a tile drawn
-      openPanels: openPanels, placeRecord: placeRecord, configure: configure, applyRecord: applyRecord,
+      openPanels: openPanels, openPanelTab: openPanelTab, placeRecord: placeRecord, configure: configure, applyRecord: applyRecord,
       drawTile: function (wid, rec) { var w = byIdAnywhere(wid); if (w) drawTile(w, rec || recordOf(wid)); recordChip(w); return w; },
       recordOf: recordOf, editing: function () { return state.editing; },
       // the record side

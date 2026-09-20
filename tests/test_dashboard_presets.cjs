@@ -27,19 +27,26 @@ t('Layouts ▾ lists the presets with a Load each', VD.includes('data-lm-preset=
 t('the main dashboard ships four: Overview · Estate · Inference · Distributed compute', /presets:\[\{key:'main',name:'Overview'/.test(CH) && /\{key:'main-estate',name:'Estate'/.test(CH) && /\{key:'main-inference',name:'Inference/.test(CH) && /\{key:'main-compute',name:'Distributed compute'/.test(CH));
 
 // ── the layout files: well formed, every tile a record with a form, a source (or a subject) and a span inside the grid ──
-const FORMS = new Set((WE.match(/^\s+R\.([a-z_]+) = /gm) || []).map((m) => m.trim().replace(/^R\./, '').replace(/\s*=\s*$/, '')).concat((WE.match(/^\s+R\['([a-z_@]+)'\] = /gm) || []).map((m) => m.trim().replace(/^R\['/, '').replace(/'\]\s*=\s*$/, ''))));
+const FORMS = new Set((WE.match(/^\s+R\.([a-z_]+) = /gm) || []).map((m) => m.trim().replace(/^R\./, '').replace(/\s*=\s*$/, '')).concat((WE.match(/^\s+R\['([a-z_@-]+)'\] = /gm) || []).map((m) => m.trim().replace(/^R\['/, '').replace(/'\]\s*=\s*$/, ''))));
+FORMS.add('section');   // a section band is drawn by the dashboard itself (a head, no body)
 const SOURCES = new Set(['obs.health', 'obs.events', 'obs.scheduler', 'obs.workers', 'obs.node_temps', 'obs.diagnostics', 'obs.redis', 'obs.pending', 'sysmon.status', 'sysmon.history', 'topology.snapshot', 'perf.scan', 'memory.stats', 'jobs.stats',
   'ollama.gate.status', 'ollama.instances', 'ollama.route_stats', 'ollama.request_log', 'ollama.list_models', 'ollama.routing.get', 'ollama.embed_config', 'catalog.installed', 'catalog.nodes', 'bench.results', 'background.status',
   'estate.health', 'backup.status', 'mesh.nodes', 'evolve.sandbox.list', 'evolve.sandbox.status', 'evolve.pipeline.list', 'sandbox.session.list', 'ide.vscode.instances', 'obs.cluster']);
+const MAINSRC = new Set(JSON.parse(fs.readFileSync(path.join(R, 'vera', 'widgets', 'layouts', 'main.json'), 'utf8')).widgets.filter((w) => w.record && typeof w.record === 'object').flatMap((w) => [w.record.source].concat((w.record.children || []).map((c) => c.record.source))));
 ['main-estate', 'main-inference', 'main-compute'].forEach((k) => {
   const j = JSON.parse(fs.readFileSync(path.join(R, 'vera', 'widgets', 'layouts', k + '.json'), 'utf8'));
   const ids = new Set(); let bad = [];
   (j.widgets || []).forEach((w) => { const r = w.record || {}; if (!r.id || ids.has(r.id)) bad.push('id ' + r.id); ids.add(r.id);
     if (!FORMS.has(r.form)) bad.push(r.id + ' form ' + r.form);
-    if (r.form !== 'composite' && !SOURCES.has(r.source)) bad.push(r.id + ' source ' + r.source);
+    if (r.form !== 'composite' && r.form !== 'section' && !SOURCES.has(r.source) && !MAINSRC.has(r.source)) bad.push(r.id + ' source ' + r.source);
     if (!(Array.isArray(w.span) && w.span[0] >= 1 && w.span[0] <= 12 && w.span[1] >= 1)) bad.push(r.id + ' span');
-    if (!(r.draw && r.draw.body === 'record')) bad.push(r.id + ' body');
-    (r.children || []).forEach((c) => { const cr = c.record || {}; if (!FORMS.has(cr.form)) bad.push(cr.id + ' child form ' + cr.form); if (!(String(cr.source || '').startsWith('$subject') || SOURCES.has(cr.source))) bad.push(cr.id + ' child source ' + cr.source); }); });
+    if (!(r.draw && (r.draw.body === 'record' || r.draw.body === 'page'))) bad.push(r.id + ' body');   // the stack topology keeps its page body
+    (r.children || []).forEach((c) => { const cr = c.record || {}; if (!FORMS.has(cr.form)) bad.push(cr.id + ' child form ' + cr.form); if (!(String(cr.source || '').startsWith('$subject') || SOURCES.has(cr.source) || MAINSRC.has(cr.source))) bad.push(cr.id + ' child source ' + cr.source); }); });
+  // the preset is the overview's bands re-flowed: sections and tiles, rows filled across the twelve columns, no overlap
+  const cells = {}; let overlap = '', rows = 0; (j.widgets || []).forEach((w) => { const [x, y] = w.at, [cw, ch] = w.span; for (let i = x; i < x + cw; i++) for (let jj = y; jj < y + ch; jj++) { const kk = i + ',' + jj; if (cells[kk]) overlap = overlap || (w.record.id + ' over ' + cells[kk]); cells[kk] = w.record.id; rows = Math.max(rows, jj + 1); } });
+  const holes = []; for (let jj = 0; jj < rows; jj++) for (let i = 0; i < 12; i++) if (!cells[i + ',' + jj]) holes.push(i + ',' + jj);
+  const tiles = (j.widgets || []).filter((w) => w.record.form !== 'section'), secs = (j.widgets || []).filter((w) => w.record.form === 'section');
+  t(k + ': cut from the overview - at least eighteen tiles under at least two sections, every row filled, no overlap', tiles.length >= 18 && secs.length >= 2 && !holes.length && !overlap, tiles.length + ' tiles ' + secs.length + ' sections holes ' + holes.slice(0, 4).join(' ') + ' ' + overlap);
   t(k + ': ' + (j.widgets || []).length + ' record tiles, every form drawable, every source a known read, every span in the grid', j.key === k && j.grid && j.grid.cols === 12 && (j.widgets || []).length >= 12 && !bad.length, JSON.stringify(bad.slice(0, 6)));
 });
 // ── the element itself, in a bare context (the widget test's loader): it reads the dashboard's sources on its own, and the
@@ -102,5 +109,14 @@ const SOURCES = new Set(['obs.health', 'obs.events', 'obs.scheduler', 'obs.worke
   t("node latency rows show the instance, its status and its latency (the record's columns, not the map's keys)", /gpu-250/.test(h) && /online/.test(h) && /\b17\b/.test(h) && /\b19\b/.test(h), h.slice(0, 240));
   const comp = W.draw('composite', null, 'm', { bare: true, record: { form: 'composite', children: [{ slot: 'a', record: { form: 'counter', title: 'postgres', data: { value: 345923, unit: 'records' } } }, { slot: 'b', record: { form: 'rows', title: 'guests', data: [{ name: 'x', value: 1 }, { name: 'y', value: 2 }] } }] }, height: 200, width: 300 });
   t('a composite slot of a counter carries no second figure in its head (the seven-segment figure stands alone); a slot of rows says how many', /<span class="vw-slot-h">postgres<\/span>/.test(comp) && (comp.match(/vb-seg7/g) || []).length === 1 && /2 rows/.test(comp), comp.replace(/<style[\s\S]*?<\/style>/g, '').slice(0, 200)); }
+// -- drill-through: a record that names its page (record.panel) gets an arrow in its head that opens that page's tab --
+{ const VD2 = fs.readFileSync(path.join(R, 'vera', 'chat', 'vera-dashboard.js'), 'utf8');
+  t('the dashboard puts an open arrow on a record tile that names its panel, and opens the shell tab auto-<panel> (a popped window when there is no shell)', VD2.includes('function openPanelTab(pid)') && VD2.includes("sw('auto-' + pid)") && VD2.includes('ensureCfg(w); ensureOpen(w, r);') && VD2.includes("pid = (r && r.form !== 'panel' && r.panel) ? String(r.panel) : ''") && VD2.includes('openPanelTab: openPanelTab,'));
+  const PANELS = new Set(['system-monitor', 'workers-ollama', 'fabric-panel', 'evolve', 'mesh', 'activity', 'perf-monitor', 'n8n-panel', 'ide-panel', 'ha-panel', 'godseye', 'dream-panel', 'calendar-panel', 'agent-registry', 'models', 'markets', 'memory-graph', 'fabric-stats']);
+  const main = JSON.parse(fs.readFileSync(path.join(R, 'vera', 'widgets', 'layouts', 'main.json'), 'utf8')); const withPanel = main.widgets.filter((w) => w.record && typeof w.record === 'object' && w.record.panel);
+  t('most of the overview drills through: thirty or more records name their page, and every name is a registered panel id (ui.panel.list)', withPanel.length >= 30 && withPanel.every((w) => PANELS.has(w.record.panel)), withPanel.length + ' ' + withPanel.filter((w) => !PANELS.has(w.record.panel)).map((w) => w.record.panel).join(' '));
+  t('the iso forms stand in tiles four rows tall (a city, racks and containers of the estate; the sandboxes three)', ['guests-city', 'guests-racks', 'stack-iso'].every((id) => { const w = main.widgets.find((x) => x.record && x.record.id === id); return w && w.span[0] === 4 && w.span[1] === 4; }) && main.widgets.find((x) => x.record && x.record.id === 'sandboxes').span[1] === 3);
+  const SG = fs.readFileSync(path.join(R, 'vera', 'sandbox_guard.py'), 'utf8');
+  t('docker.ps is a reading (the containers iso reads it through)', /READ_WORDS = frozenset\(\([\s\S]*?"ps"\)\)/.test(SG)); }
 console.log((fails ? 'FAILED ' : 'passed ') + (fails ? fails + ' check(s)' : 'all checks'));
 process.exit(fails ? 1 : 0);

@@ -113,7 +113,7 @@ def read_through_groups(env: Optional[Dict[str, str]] = None) -> tuple:
 
 # the reading names: a capability ending in one of these is a read whatever its route (its arguments name what to read)
 READ_WORDS = frozenset(("status", "stats", "health", "snapshot", "summary", "list", "get", "history", "topology", "results",
-                        "nodes", "installed", "info", "config", "overview", "usage", "scan", "report", "metrics", "recent", "top"))
+                        "nodes", "installed", "info", "config", "overview", "usage", "scan", "report", "metrics", "recent", "top", "ps"))
 
 
 def read_through_allowed(name: str, http_method: Optional[str],

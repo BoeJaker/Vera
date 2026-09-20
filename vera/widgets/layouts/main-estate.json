@@ -17,326 +17,269 @@
    12
   ]
  },
- "note": "The Estate preset of the main dashboard: what runs where — the topology, the Proxmox and Docker hosts, the machines the catalogue knows, their temperatures and resources, the backups and the storage behind them, the mesh, and the health scan. Every tile is a record (draw.body = record) read through the element; a sandbox reads these from prod one way (sandbox_guard.read_through_allowed).",
+ "note": "The Estate preset: the overview's Now, Estate and Network bands on their own - the figures, the hosts as a city, the guests, the containers, health, backups, the file fabric, the mesh, the machines, recon and the connections.",
  "widgets": [
   {
    "record": {
-    "id": "est-topology",
-    "form": "topology",
-    "source": "topology.snapshot",
-    "shape": "graph",
-    "title": "Stack topology",
-    "read": {
-     "refresh": "30s"
-    },
+    "id": "sec-now",
+    "form": "section",
+    "source": "",
+    "title": "Now · the figures",
     "frame": {
      "size": "xl",
      "span": [
       12,
-      5
+      1
      ]
     },
     "draw": {
      "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    }
    },
+   "at": [
+    0,
+    0
+   ],
    "span": [
     12,
-    5
+    1
    ],
    "hidden": false,
-   "refresh": "30s",
+   "refresh": "",
    "floated": false
   },
   {
    "record": {
-    "id": "est-health",
-    "form": "pills",
-    "source": "estate.health",
-    "shape": "values",
-    "title": "Estate health · findings",
+    "id": "host-cpu",
+    "form": "trace",
+    "source": "sysmon.history",
+    "title": "Host CPU",
     "read": {
-     "refresh": "60s",
+     "refresh": "10s",
      "map": {
-      "values": "counts"
+      "series": "samples",
+      "v": "cpu"
      }
     },
     "frame": {
      "size": "m",
      "span": [
-      3,
+      4,
       2
      ]
     },
     "draw": {
      "body": "record",
-     "unit": "findings"
+     "unit": "%"
     },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    "panel": "system-monitor"
    },
+   "at": [
+    0,
+    1
+   ],
    "span": [
-    3,
+    4,
     2
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "10s",
    "floated": false
   },
   {
    "record": {
-    "id": "est-level",
-    "form": "string",
-    "source": "estate.health",
-    "shape": "string",
-    "title": "Estate level",
+    "id": "capacity",
+    "form": "gauge",
+    "source": "sysmon.status",
+    "title": "Capacity",
     "read": {
-     "refresh": "60s",
+     "refresh": "10s",
      "map": {
-      "text": "level"
+      "pick": {
+       "cpu": "resources.cpu",
+       "memory": "resources.mem",
+       "proxmox mem": "proxmox.mem_pct"
+      }
      }
     },
     "frame": {
      "size": "m",
      "span": [
-      3,
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "load",
+     "unit": "%"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    4,
+    1
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fleet",
+    "form": "numbers",
+    "source": "sysmon.status",
+    "title": "Fleet",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "pick": {
+       "guests up": "proxmox.running",
+       "guests": "proxmox.guests",
+       "containers": "docker.running",
+       "ollama": "ollama.online"
+      }
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
       2
      ]
     },
     "draw": {
      "body": "record"
     },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    "panel": "system-monitor"
    },
+   "at": [
+    8,
+    1
+   ],
    "span": [
-    3,
+    2,
     2
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "10s",
    "floated": false
   },
   {
    "record": {
-    "id": "est-sections",
-    "form": "table",
-    "source": "estate.health",
-    "shape": "items",
-    "title": "Health by section",
+    "id": "gpu-gate",
+    "form": "level",
+    "source": "obs.health",
+    "title": "GPU gate",
     "read": {
-     "refresh": "60s",
+     "refresh": "5s",
      "map": {
-      "rows": "sections"
+      "value": "gpu_gate.held",
+      "max": "gpu_gate.capacity"
      }
     },
     "frame": {
-     "size": "xl",
+     "size": "s",
      "span": [
-      6,
-      3
-     ],
-     "max_body": 200
+      2,
+      2
+     ]
     },
     "draw": {
-     "columns": [
-      "name",
-      "label",
-      "elapsed_ms",
-      "error"
-     ],
-     "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+     "body": "record",
+     "unit": "held",
+     "cells": 4
+    }
    },
+   "at": [
+    10,
+    1
+   ],
    "span": [
-    6,
-    3
+    2,
+    2
    ],
    "hidden": false,
-   "refresh": "60s",
+   "refresh": "5s",
    "floated": false
   },
   {
    "record": {
-    "id": "est-perf",
-    "form": "composite",
-    "source": "perf.scan",
-    "shape": "composite",
-    "title": "Health · perf.scan",
+    "id": "control-plane",
+    "form": "numbers",
+    "source": "obs.health",
+    "title": "Control plane",
     "read": {
-     "refresh": "30s"
+     "refresh": "5s",
+     "map": {
+      "pick": {
+       "workers": "workers",
+       "capabilities": "caps",
+       "mcp servers": "mcp_servers",
+       "mode": "mode"
+      }
+     }
     },
     "frame": {
-     "size": "xl",
+     "size": "s",
      "span": [
-      6,
-      3
+      2,
+      2
      ]
     },
     "draw": {
      "body": "record"
-    },
-    "layout": "2x2",
-    "children": [
-     {
-      "slot": "summary",
-      "record": {
-       "id": "est-perf:summary",
-       "form": "pills",
-       "source": "$subject.summary",
-       "title": "findings",
-       "shape": "values"
-      }
-     },
-     {
-      "slot": "findings",
-      "record": {
-       "id": "est-perf:findings",
-       "form": "rows",
-       "source": "$subject.findings",
-       "title": "what perf.scan found",
-       "shape": "items",
-       "read": {
-        "map": {
-         "name": "title",
-         "status": "severity",
-         "area": "area"
-        }
-       }
-      }
-     }
-    ],
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    }
    },
-   "span": [
-    6,
+   "at": [
+    0,
     3
    ],
+   "span": [
+    2,
+    2
+   ],
    "hidden": false,
-   "refresh": "30s",
+   "refresh": "5s",
    "floated": false
   },
   {
    "record": {
-    "id": "est-proxmox",
-    "form": "composite",
-    "source": "sysmon.status",
-    "shape": "composite",
-    "title": "Proxmox",
+    "id": "census",
+    "form": "level",
+    "source": "obs.health",
+    "title": "Census · goals",
     "read": {
-     "refresh": "10s"
+     "refresh": "10s",
+     "map": {
+      "value": "census.done",
+      "max": "census.total"
+     }
     },
     "frame": {
-     "size": "m",
+     "size": "s",
      "span": [
-      4,
-      5
+      2,
+      2
      ]
     },
     "draw": {
-     "body": "record"
-    },
-    "layout": "2x2",
-    "children": [
-     {
-      "slot": "counts",
-      "record": {
-       "id": "est-proxmox:counts",
-       "form": "pills",
-       "source": "$subject.proxmox",
-       "title": "counts",
-       "shape": "values"
-      }
-     },
-     {
-      "slot": "memory",
-      "record": {
-       "id": "est-proxmox:memory",
-       "form": "hero",
-       "source": "$subject.proxmox",
-       "title": "memory",
-       "shape": "level",
-       "read": {
-        "map": {
-         "value": "mem_used_gb",
-         "max": "mem_total_gb"
-        }
-       },
-       "draw": {
-        "unit": "GB"
-       }
-      }
-     },
-     {
-      "slot": "guests",
-      "record": {
-       "id": "est-proxmox:guests",
-       "form": "rows",
-       "source": "$subject.proxmox.top_guests",
-       "title": "top guests",
-       "shape": "items",
-       "read": {
-        "map": {
-         "name": "name",
-         "status": "status",
-         "cpu": "cpu",
-         "mem": "mem"
-        }
-       }
-      }
-     },
-     {
-      "slot": "mem",
-      "record": {
-       "id": "est-proxmox:mem",
-       "form": "meter",
-       "source": "$subject.proxmox",
-       "title": "memory %",
-       "shape": "level",
-       "read": {
-        "map": {
-         "value": "mem_pct",
-         "max": "100"
-        }
-       }
-      }
-     }
-    ],
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+     "body": "record",
+     "unit": "done",
+     "cells": 6
+    }
    },
+   "at": [
+    2,
+    3
+   ],
    "span": [
-    4,
-    5
+    2,
+    2
    ],
    "hidden": false,
    "refresh": "10s",
@@ -344,150 +287,10 @@
   },
   {
    "record": {
-    "id": "est-docker",
-    "form": "composite",
-    "source": "sysmon.status",
-    "shape": "composite",
-    "title": "Docker",
-    "read": {
-     "refresh": "10s"
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      5
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "layout": "2x2",
-    "children": [
-     {
-      "slot": "counts",
-      "record": {
-       "id": "est-docker:counts",
-       "form": "pills",
-       "source": "$subject.docker",
-       "title": "counts",
-       "shape": "values"
-      }
-     },
-     {
-      "slot": "hosts",
-      "record": {
-       "id": "est-docker:hosts",
-       "form": "rows",
-       "source": "$subject.docker.hosts",
-       "title": "hosts",
-       "shape": "items",
-       "read": {
-        "map": {
-         "name": "label",
-         "containers": "containers",
-         "running": "running"
-        }
-       }
-      }
-     },
-     {
-      "slot": "running",
-      "record": {
-       "id": "est-docker:running",
-       "form": "counter",
-       "source": "$subject.docker",
-       "title": "running",
-       "shape": "level",
-       "read": {
-        "map": {
-         "value": "running"
-        }
-       }
-      }
-     },
-     {
-      "slot": "reach",
-      "record": {
-       "id": "est-docker:reach",
-       "form": "ring",
-       "source": "$subject.docker",
-       "title": "reachable",
-       "shape": "level",
-       "read": {
-        "map": {
-         "value": "reachable",
-         "max": "total_hosts"
-        }
-       }
-      }
-     }
-    ],
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
-   },
-   "span": [
-    4,
-    5
-   ],
-   "hidden": false,
-   "refresh": "10s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "est-hosts",
-    "form": "hosts",
-    "source": "catalog.nodes",
-    "shape": "items",
-    "title": "Machines · the catalogue",
-    "read": {
-     "refresh": "60s",
-     "map": {
-      "rows": "nodes",
-      "name": "label",
-      "status": "status",
-      "gpu": "gpu_name",
-      "vram_gb": "vram_gb",
-      "ram_gb": "ram_gb"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      5
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
-   },
-   "span": [
-    4,
-    5
-   ],
-   "hidden": false,
-   "refresh": "60s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "est-temps",
-    "form": "temps",
+    "id": "temps",
+    "form": "thermo",
     "source": "obs.node_temps",
-    "shape": "values",
-    "title": "Host temps — every sensor",
+    "title": "Temperatures",
     "read": {
      "refresh": "10s",
      "map": {
@@ -500,26 +303,24 @@
      "size": "m",
      "span": [
       4,
-      4
-     ],
-     "max_body": 290
+      2
+     ]
     },
     "draw": {
+     "body": "record",
      "unit": "°",
      "throttle": 70,
-     "limit": 8,
-     "body": "record"
+     "limit": 5
     },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    "panel": "perf-monitor"
    },
+   "at": [
+    4,
+    3
+   ],
    "span": [
     4,
-    4
+    2
    ],
    "hidden": false,
    "refresh": "10s",
@@ -527,11 +328,78 @@
   },
   {
    "record": {
-    "id": "est-resources",
+    "id": "events",
+    "form": "log",
+    "source": "obs.events",
+    "title": "Live events",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "events": "$",
+      "t": "ts",
+      "kind": "type",
+      "text": "name"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "activity"
+   },
+   "at": [
+    8,
+    3
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-estate",
+    "form": "section",
+    "source": "",
+    "title": "Estate · hosts · guests · containers",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    5
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sysmon-proxmox",
     "form": "composite",
-    "source": "sysmon.history",
-    "shape": "composite",
-    "title": "Host resources",
+    "source": "sysmon.status",
+    "title": "Proxmox",
     "read": {
      "refresh": "10s"
     },
@@ -545,61 +413,90 @@
     "draw": {
      "body": "record"
     },
-    "layout": "2x2",
     "children": [
      {
-      "slot": "cpu",
+      "slot": "a",
       "record": {
-       "id": "est-resources:cpu",
-       "form": "trace",
-       "source": "$subject.samples",
-       "title": "cpu %",
-       "shape": "series",
+       "form": "kv",
+       "source": "$subject.proxmox",
+       "title": "guests",
        "read": {
         "map": {
-         "v": "cpu"
+         "keys": [
+          "configured",
+          "nodes",
+          "guests",
+          "running"
+         ]
         }
        }
       }
      },
      {
-      "slot": "mem",
+      "slot": "b",
       "record": {
-       "id": "est-resources:mem",
-       "form": "trace",
-       "source": "$subject.samples",
-       "title": "memory %",
-       "shape": "series",
+       "form": "meter",
+       "source": "$subject.proxmox",
+       "title": "memory",
        "read": {
         "map": {
-         "v": "mem"
+         "value": "mem_used_gb",
+         "max": "mem_total_gb"
         }
+       },
+       "draw": {
+        "unit": "GB"
        }
       }
      },
      {
-      "slot": "procs",
+      "slot": "c",
       "record": {
-       "id": "est-resources:procs",
        "form": "rows",
-       "source": "sysmon.status",
-       "title": "top processes",
-       "shape": "items",
+       "source": "$subject.proxmox.top_guests",
+       "title": "busiest guests",
        "read": {
         "map": {
-         "rows": "top_processes"
+         "name": "name",
+         "status": "status",
+         "cpu": "cpu",
+         "mem": "mem"
         }
+       },
+       "draw": {
+        "columns": [
+         "name",
+         "status",
+         "cpu",
+         "mem"
+        ]
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "memory %",
+       "read": {
+        "map": {
+         "series": "samples",
+         "v": "pmx_mem_pct"
+        }
+       },
+       "draw": {
+        "unit": "%"
        }
       }
      }
     ],
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    "panel": "system-monitor"
    },
+   "at": [
+    0,
+    6
+   ],
    "span": [
     4,
     4
@@ -610,13 +507,12 @@
   },
   {
    "record": {
-    "id": "est-mesh",
+    "id": "sysmon-docker",
     "form": "composite",
-    "source": "mesh.nodes",
-    "shape": "composite",
-    "title": "Mesh",
+    "source": "sysmon.status",
+    "title": "Docker",
     "read": {
-     "refresh": "15s"
+     "refresh": "10s"
     },
     "frame": {
      "size": "m",
@@ -628,288 +524,464 @@
     "draw": {
      "body": "record"
     },
-    "layout": "2x2",
     "children": [
      {
-      "slot": "count",
+      "slot": "a",
       "record": {
-       "id": "est-mesh:count",
-       "form": "counter",
-       "source": "$subject",
-       "title": "nodes",
-       "shape": "level",
+       "form": "kv",
+       "source": "$subject.docker",
+       "title": "containers",
        "read": {
         "map": {
-         "value": "count"
+         "keys": [
+          "total_hosts",
+          "reachable",
+          "running",
+          "containers"
+         ]
         }
        }
       }
      },
      {
-      "slot": "transports",
+      "slot": "b",
       "record": {
-       "id": "est-mesh:transports",
-       "form": "kv",
-       "source": "$subject.transports",
-       "title": "transports",
-       "shape": "values"
+       "form": "rows",
+       "source": "$subject.docker.hosts",
+       "title": "hosts",
+       "read": {
+        "map": {
+         "name": "label",
+         "containers": "containers",
+         "running": "running"
+        }
+       },
+       "draw": {
+        "columns": [
+         "name",
+         "running",
+         "containers"
+        ]
+       }
       }
      },
      {
-      "slot": "nodes",
+      "slot": "c",
       "record": {
-       "id": "est-mesh:nodes",
-       "form": "rows",
-       "source": "$subject.nodes",
-       "title": "nodes",
-       "shape": "items",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "running",
        "read": {
         "map": {
-         "name": "name",
-         "status": "role",
-         "ip": "ip",
-         "rssi": "rssi"
+         "series": "samples",
+         "v": "dkr_running"
+        }
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "pills",
+       "source": "docker.stack.status",
+       "title": "the stack",
+       "read": {
+        "map": {
+         "values": "services",
+         "name": "label",
+         "status": "status"
         }
        }
       }
      }
     ],
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    "panel": "system-monitor"
    },
+   "at": [
+    4,
+    6
+   ],
    "span": [
     4,
     4
    ],
    "hidden": false,
-   "refresh": "15s",
+   "refresh": "10s",
    "floated": false
   },
   {
    "record": {
-    "id": "est-backups",
-    "form": "table",
-    "source": "backup.status",
-    "shape": "items",
-    "title": "Backups · every guest",
+    "id": "estate-health",
+    "form": "composite",
+    "source": "estate.health",
+    "title": "Estate health",
     "read": {
-     "refresh": "120s",
-     "map": {
-      "rows": "guests"
-     }
+     "refresh": "60s"
     },
     "frame": {
-     "size": "xl",
+     "size": "m",
      "span": [
-      6,
+      4,
       4
-     ],
-     "max_body": 260
+     ]
     },
     "draw": {
-     "columns": [
-      "name",
-      "type",
-      "node",
-      "status",
-      "covered_by",
-      "age_h",
-      "verified"
-     ],
-     "sort": "age_h",
      "body": "record"
     },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "string",
+       "source": "$subject",
+       "title": "level",
+       "read": {
+        "map": {
+         "text": "level"
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "$subject.counts",
+       "title": "findings",
+       "read": {}
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "sections",
+       "read": {
+        "map": {
+         "rows": "sections",
+         "value": "elapsed_ms"
+        }
+       },
+       "draw": {
+        "limit": 4,
+        "unit": "ms"
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "warnings",
+       "read": {
+        "map": {
+         "rows": "findings",
+         "name": "subject",
+         "status": "severity"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "e",
+      "record": {
+       "form": "rows",
+       "source": "perf.scan",
+       "title": "perf.scan",
+       "read": {
+        "map": {
+         "rows": "findings",
+         "name": "title",
+         "status": "severity"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "f",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "checked",
+       "read": {
+        "map": {
+         "keys": [
+          "checked_at"
+         ]
+        }
+       }
+      }
+     }
     ],
-    "place": "dashboard"
+    "layout": "report",
+    "panel": "system-monitor"
    },
+   "at": [
+    8,
+    6
+   ],
    "span": [
-    6,
+    4,
     4
    ],
    "hidden": false,
-   "refresh": "120s",
+   "refresh": "60s",
    "floated": false
   },
   {
    "record": {
-    "id": "est-schedules",
-    "form": "table",
-    "source": "backup.status",
-    "shape": "items",
-    "title": "Backup schedules",
+    "id": "topology-map",
+    "form": "topology",
+    "source": "topology.snapshot",
+    "shape": "graph",
+    "title": "Stack topology",
     "read": {
-     "refresh": "120s",
-     "map": {
-      "rows": "schedules"
-     }
+     "refresh": "2m"
     },
     "frame": {
      "size": "xl",
      "span": [
-      6,
-      2
-     ],
-     "max_body": 140
+      8,
+      4
+     ]
     },
     "draw": {
-     "columns": [
-      "id",
-      "what",
-      "schedule",
-      "enabled",
-      "next_run",
-      "last_run"
-     ],
-     "body": "record"
+     "body": "page"
     },
     "actions": [
      "dive",
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "the page draws the estate's own <vera-topology-map> (status colour per node, click a node to open it, collapse a kind); the topology form draws a diagram of the graph without those hooks"
    },
+   "at": [
+    0,
+    10
+   ],
    "span": [
-    6,
-    2
+    8,
+    4
    ],
    "hidden": false,
-   "refresh": "120s",
+   "refresh": "30s",
    "floated": false
   },
   {
    "record": {
-    "id": "est-storage",
-    "form": "table",
-    "source": "backup.status",
-    "shape": "items",
-    "title": "Backup storage",
-    "read": {
-     "refresh": "120s",
-     "map": {
-      "rows": "storages"
-     }
-    },
-    "frame": {
-     "size": "xl",
-     "span": [
-      6,
-      2
-     ],
-     "max_body": 140
-    },
-    "draw": {
-     "columns": [
-      "name",
-      "type",
-      "node",
-      "used",
-      "avail",
-      "total",
-      "active"
-     ],
-     "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
-   },
-   "span": [
-    6,
-    2
-   ],
-   "hidden": false,
-   "refresh": "120s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "est-stores",
+    "id": "backups",
     "form": "composite",
-    "source": "memory.stats",
-    "shape": "composite",
-    "title": "Stores · Postgres · Chroma · Neo4j",
+    "source": "backup.status",
+    "title": "Backups",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "rows",
+       "source": "$subject.guests",
+       "title": "guests",
+       "read": {
+        "map": {
+         "name": "name",
+         "status": "status",
+         "value": "backups"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.schedules",
+       "title": "schedules",
+       "read": {
+        "map": {
+         "name": "what",
+         "status": "enabled"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject.storages",
+       "title": "storage",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "used"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "kv",
+       "source": "$subject.host",
+       "title": "host job",
+       "read": {
+        "map": {
+         "keys": [
+          "result",
+          "running",
+          "next"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "e",
+      "record": {
+       "form": "kv",
+       "source": "$subject.snapshots.corp",
+       "title": "snapshots",
+       "read": {
+        "map": {
+         "keys": [
+          "backup",
+          "cpool",
+          "rpool",
+          "tank_sde",
+          "tank_sdh"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "panel": "system-monitor"
+   },
+   "at": [
+    8,
+    10
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "node-agents",
+    "form": "composite",
+    "source": "nodes.agent.status",
+    "title": "Node agents",
     "read": {
      "refresh": "30s"
     },
     "frame": {
      "size": "m",
      "span": [
-      6,
+      4,
       2
      ]
     },
     "draw": {
      "body": "record"
     },
-    "layout": "3x1",
     "children": [
      {
-      "slot": "pg",
+      "slot": "a",
       "record": {
-       "id": "est-stores:pg",
-       "form": "counter",
-       "source": "$subject.backends.postgres",
-       "title": "postgres records",
-       "shape": "level",
+       "form": "rows",
+       "source": "$subject.nodes",
+       "title": "cores",
        "read": {
         "map": {
-         "value": "total"
+         "name": "node",
+         "value": "cores"
         }
+       },
+       "draw": {
+        "limit": 3
        }
       }
      },
      {
-      "slot": "ch",
+      "slot": "b",
       "record": {
-       "id": "est-stores:ch",
-       "form": "counter",
-       "source": "$subject.backends.chroma",
-       "title": "chroma vectors",
-       "shape": "level",
+       "form": "rows",
+       "source": "$subject.nodes",
+       "title": "memory free",
        "read": {
         "map": {
-         "value": "count"
+         "name": "node",
+         "value": "mem_available_mb"
         }
+       },
+       "draw": {
+        "unit": "MB",
+        "limit": 3
        }
       }
      },
      {
-      "slot": "neo",
+      "slot": "c",
       "record": {
-       "id": "est-stores:neo",
-       "form": "counter",
-       "source": "$subject.backends.neo4j",
-       "title": "neo4j nodes",
-       "shape": "level",
+       "form": "rows",
+       "source": "$subject.nodes",
+       "title": "runners",
        "read": {
         "map": {
-         "value": "nodes"
+         "name": "node",
+         "value": "runners"
         }
+       },
+       "draw": {
+        "limit": 3
        }
       }
      }
     ],
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
+    "layout": "report",
+    "panel": "workers-ollama"
    },
+   "at": [
+    0,
+    14
+   ],
    "span": [
-    6,
+    4,
     2
    ],
    "hidden": false,
@@ -918,40 +990,159 @@
   },
   {
    "record": {
-    "id": "est-events",
-    "form": "feed",
-    "source": "obs.events",
-    "shape": "events",
-    "title": "Live events",
+    "id": "file-fabric",
+    "form": "composite",
+    "source": "vfs.status",
+    "title": "File fabric",
     "read": {
-     "refresh": "10s",
-     "map": {
-      "events": "$",
-      "t": "ts",
-      "kind": "type",
-      "text": "name"
-     }
+     "refresh": "60s"
     },
     "frame": {
-     "size": "xl",
+     "size": "m",
      "span": [
-      6,
-      3
+      4,
+      2
      ]
     },
     "draw": {
      "body": "record"
     },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject.services",
+       "title": "services",
+       "read": {}
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "$subject.estate",
+       "title": "estate",
+       "read": {
+        "map": {
+         "keys": [
+          "mounted"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject.shares",
+       "title": "shares",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "drive_letter"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     }
     ],
-    "place": "dashboard"
+    "layout": "report"
    },
+   "at": [
+    4,
+    14
+   ],
    "span": [
-    6,
-    3
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "traffic",
+    "form": "numbers",
+    "source": "netmon.snapshot",
+    "title": "Traffic",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "guests": "totals.guests",
+       "running": "totals.running",
+       "net in": "totals.netin",
+       "net out": "totals.netout"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "bytes": [
+      "net in",
+      "net out"
+     ]
+    }
+   },
+   "at": [
+    8,
+    14
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "guests-city",
+    "form": "city",
+    "source": "sysmon.status",
+    "title": "Guests · cpu as height, memory as colour",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "nodes": "proxmox.top_guests",
+      "name": "name",
+      "load": "cpu_pct",
+      "temp": "mem_pct",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    0,
+    16
+   ],
+   "span": [
+    4,
+    4
    ],
    "hidden": false,
    "refresh": "10s",
@@ -959,44 +1150,506 @@
   },
   {
    "record": {
-    "id": "est-scheduler",
-    "form": "table",
-    "source": "obs.scheduler",
-    "shape": "items",
-    "title": "Scheduler",
+    "id": "guests-racks",
+    "form": "racks",
+    "source": "backup.status",
+    "title": "Guests · by state",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "rows": "guests",
+      "name": "name",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    4,
+    16
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "stack-iso",
+    "form": "containers",
+    "source": "docker.ps",
+    "title": "Containers · running",
     "read": {
      "refresh": "30s",
      "map": {
-      "rows": "$"
+      "rows": "containers",
+      "name": "Names",
+      "status": "State",
+      "host": "host_id"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    8,
+    16
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-network",
+    "form": "section",
+    "source": "",
+    "title": "Network · access · devices",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    20
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "mesh-topology",
+    "form": "graph",
+    "source": "mesh.topology",
+    "title": "Mesh topology",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "nodes": "nodes",
+      "links": "edges"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "mesh"
+   },
+   "at": [
+    0,
+    21
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "machines",
+    "form": "table",
+    "source": "nodes.list",
+    "title": "Machines",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "rows": "nodes",
+      "name": "label"
      }
     },
     "frame": {
      "size": "xl",
      "span": [
-      6,
-      3
-     ],
-     "max_body": 200
+      8,
+      4
+     ]
     },
     "draw": {
+     "body": "record",
      "columns": [
       "name",
-      "interval",
-      "runs",
-      "last"
-     ],
-     "sort": "runs",
+      "addr",
+      "docker_kind",
+      "ssh_host_id",
+      "user"
+     ]
+    },
+    "panel": "mesh"
+   },
+   "at": [
+    4,
+    21
+   ],
+   "span": [
+    8,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "mesh",
+    "form": "composite",
+    "source": "mesh.nodes",
+    "title": "Mesh · secure mesh",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
      "body": "record"
     },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "mesh",
+       "read": {
+        "map": {
+         "keys": [
+          "count",
+          "heartbeat"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "$subject.transports",
+       "title": "transports",
+       "read": {}
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject.nodes",
+       "title": "nodes",
+       "read": {
+        "map": {
+         "name": "name",
+         "status": "status",
+         "value": "rssi"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "netsec.mesh.status",
+       "title": "secure members",
+       "read": {
+        "map": {
+         "rows": "members",
+         "name": "label",
+         "status": "up",
+         "value": "peer_count"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     }
     ],
-    "place": "dashboard"
+    "layout": "report",
+    "panel": "mesh"
    },
+   "at": [
+    0,
+    25
+   ],
    "span": [
-    6,
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "recon",
+    "form": "composite",
+    "source": "netscan.map.list",
+    "title": "Recon · identity · research",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "rows",
+       "source": "$subject.maps",
+       "title": "maps",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "node_count"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.maps",
+       "title": "edges",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "edge_count"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "identity.status",
+       "title": "identity",
+       "read": {
+        "map": {
+         "keys": [
+          "configured",
+          "reachable",
+          "version"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "kv",
+       "source": "research.health",
+       "title": "research",
+       "read": {
+        "map": {
+         "keys": [
+          "status",
+          "jobs_active",
+          "instances",
+          "sources"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "panel": "godseye"
+   },
+   "at": [
+    4,
+    25
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "connections",
+    "form": "composite",
+    "source": "ide.vscode.instances",
+    "title": "Connections",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "rows",
+       "source": "$subject.instances",
+       "title": "VS Code",
+       "read": {
+        "map": {
+         "name": "label",
+         "status": "status"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "ide.claude_sessions.sources",
+       "title": "Claude Code",
+       "read": {
+        "map": {
+         "rows": "sources",
+         "name": "label",
+         "status": "alive"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "openclaw.status",
+       "title": "OpenClaw",
+       "read": {
+        "map": {
+         "keys": [
+          "connected",
+          "gateway_version"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "kv",
+       "source": "tg.bot.status",
+       "title": "telegram",
+       "read": {
+        "map": {
+         "keys": [
+          "running"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "e",
+      "record": {
+       "form": "kv",
+       "source": "ide.remote.summary",
+       "title": "remote ide",
+       "read": {
+        "map": {
+         "keys": [
+          "instances",
+          "runs"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "panel": "ide-panel"
+   },
+   "at": [
+    8,
+    25
+   ],
+   "span": [
+    4,
     3
    ],
    "hidden": false,
