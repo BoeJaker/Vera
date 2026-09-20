@@ -82,3 +82,8 @@ def test_widget_read_runs_many_readings_in_one_call(monkeypatch):
     assert not r[2]["ok"] and "no store" in r[2]["error"]
     assert not r[3]["ok"] and r[3]["error"] == "unknown capability"
     assert asyncio.run(wc.widget_read(calls=[])) == {"ok": True, "results": [], "count": 0}
+    # the list may arrive as a JSON string (the call handler coerces an untyped argument): it still reads
+    out = asyncio.run(wc.widget_read(calls='[{"name": "a.status"}]'))
+    assert out["count"] == 1 and out["results"][0]["ok"] and out["results"][0]["content"] == {"a": 1}
+    import inspect as _i
+    assert "calls" in wc.widget_read.__wrapped__.__annotations__ if hasattr(wc.widget_read, "__wrapped__") else True

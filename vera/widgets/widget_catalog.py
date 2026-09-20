@@ -289,12 +289,18 @@ def load_layout(key: str) -> Optional[Dict[str, Any]]:
 @capability(
     "widget.read", memory="off", silent=True,
     http_method="POST", http_path="/ui/widgets/read", http_tags=["ui", "widgets"],
+    schema={"properties": {"calls": {"type": "array", "items": {"type": "object"}, "description": "[{name, arguments}] - the readings to run together"}}},
     description="Many readings in one call: a dashboard of fifty tiles asks for its sources together instead of on "
                 "fifty connections (the browser allows six per host and the page's other requests hold them). Each "
                 "call runs as /mcp/call would - the same wrapper, the same sandbox read-through. Input: calls (list of "
                 "{name, arguments}; at most 40). Output: {ok, results:[{name, ok, content | error, ms}], count}.")
-async def widget_read(calls=None, trace_id=None):
+async def widget_read(calls: Optional[List[Dict[str, Any]]] = None, trace_id=None):
     import asyncio as _aio, sys as _sys, time as _time
+    if isinstance(calls, str):   # the handler once coerced the list to a string; a JSON string still reads
+        try:
+            calls = json.loads(calls)
+        except Exception:
+            calls = []
     co = _sys.modules.get("Vera.vera.capability_orchestration") or _sys.modules.get("vera.capability_orchestration")
     reg = getattr(co, "CAPABILITY_REGISTRY", None) or {}
     items = [c for c in (calls or []) if isinstance(c, dict) and c.get("name")][:40]
