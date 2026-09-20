@@ -2296,7 +2296,13 @@ async def _chat_gpu_slot(chosen: str, req_id: str = ""):
     an error the caller can report, never as a silent second generation on a
     node that is already busy.
     """
-    async with _ollama_slot(chosen, gate_wait=_CHAT_GATE_WAIT_S) as act:
+    # `timeout` as well as `gate_wait`: it is the TOTAL budget. Passing only
+    # gate_wait leaves the local per-node queue unbounded, so the bound never
+    # applies — measured, a chat with a 3s gate wait sat 115s behind a running
+    # job and then proceeded, never reaching the gate at all. run_stream passes
+    # both for the same reason; these two paths must not disagree.
+    async with _ollama_slot(chosen, timeout=_CHAT_GATE_WAIT_S,
+                            gate_wait=_CHAT_GATE_WAIT_S) as act:
         yield act
 
 

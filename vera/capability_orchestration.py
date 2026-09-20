@@ -1653,8 +1653,23 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None,
                        gate_wait: Optional[float] = None):
     """`async with _ollama_sem(iid)` with a bounded acquisition wait. Raises a
     plain Exception on queue timeout so ollama_generate's normal error path
-    (request_error event + node fallback) handles it like any other failure."""
+    (request_error event + node fallback) handles it like any other failure.
+
+    `timeout` is a TOTAL queueing budget, not a per-phase one. There are two
+    queues here — the per-node semaphore inside this process, then the shared
+    cross-process gate — and they used to be bounded separately, so a caller
+    that asked to wait at most N could wait N on the first and another N on the
+    second. Worse, a caller that bounded only the gate (`gate_wait`) still
+    queued UNBOUNDED on the semaphore first and never reached its own bound:
+    measured 2026-09-20, a chat with a 3s gate wait sat 115s behind a running
+    job and then proceeded, because it never got past the local queue.
+
+    So the budget is now a deadline: whatever `timeout` is left after the local
+    queue is what the gate may use. `gate_wait` still caps the gate phase on its
+    own, for callers that do not bound the total.
+    """
     wait = OLLAMA_QUEUE_TIMEOUT if timeout is None else timeout
+    _t_enter = time.monotonic()
     sem = _ollama_sem(iid)
     if wait and wait > 0:
         try:
@@ -1731,6 +1746,9 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None,
                     # attempt is declined. The default (_gate.wait_s(), 600s) is
                     # unchanged for every caller that does not pass one.
                     _gw = _gate.wait_s() if gate_wait is None else max(0.0, float(gate_wait))
+                    if wait and wait > 0:
+                        # Spend only what is LEFT of the caller's total budget.
+                        _gw = max(0.0, min(_gw, wait - (time.monotonic() - _t_enter)))
                     try:
                         _lease = await _gate.acquire(
                             COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gw,
