@@ -283,7 +283,20 @@ const reader = res.body.getReader();
 // final: data: {"type":"done"}\n\ndata: [DONE]
 ```
 
-The panel uses this for the chat tab and the inspector's review streaming. Internally it calls `pick_instance()` and routes through Vera's cluster.
+The panel uses this for the chat tab and the inspector's review streaming. Both
+`ide.generate` and `ide.stream` use Vera's shared model router with the `ide`
+profile and the selected agent role; they no longer maintain a private provider
+path. Consequently, queueing, instance selection, timing, cancellation, and
+GPU admission follow the same policy as other model-backed capabilities.
+
+The stream sends an initial SSE heartbeat, checks the HTTP disconnect signal
+while the model is still evaluating the prompt, and cancels the provider task
+if the browser closes or aborts before the first token. This matters because a
+client can disappear during a long prompt evaluation without consuming another
+SSE chunk. Cancellation releases the shared model lease and records terminal
+metadata without retaining prompt, system, context-file, or partial-response
+text. Request telemetry likewise exposes only bounded length and digest
+evidence for prompt-like input.
 
 ---
 
