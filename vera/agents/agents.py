@@ -74,6 +74,7 @@ from Vera.vera.capability_orchestration import (
     APP,            # noqa
     CAPABILITY_REGISTRY, OLLAMA_INSTANCES, OLLAMA_MODEL,
     capability, emit_event, media_base, now_iso, ollama_generate, pick_instance, schedule,
+    _ollama_slot,
     record_stream_activity, begin_stream_activity, end_stream_activity,
     register_ui,
 )
@@ -2265,6 +2266,47 @@ _CHAT_PS_TIMEOUT_S = float(os.environ.get("VERA_CHAT_PS_TIMEOUT_S", "3") or 3)
 # only "the node never started", which on 2026-09-20 meant chat hung until the
 # browser gave up, showing an empty bubble and naming nothing.
 _CHAT_FIRST_TOKEN_S = float(os.environ.get("VERA_CHAT_FIRST_TOKEN_S", "90") or 90)
+#: How long an interactive chat queues for the shared GPU slot before going
+#: anyway. The gate's own default is 600s, which is right for batch work and
+#: wrong for a person watching an empty bubble. Short and fail-open: chat joins
+#: the queue (so it no longer silently doubles up on a gpu_cap=1 node) without
+#: being able to stall behind a long generation.
+_CHAT_GATE_WAIT_S = float(os.environ.get("VERA_CHAT_GATE_WAIT_S", "20") or 20)
+
+
+@contextlib.asynccontextmanager
+async def _chat_gpu_slot(chosen: str, req_id: str = ""):
+    """The shared GPU slot for an interactive chat: bounded, and fail-open.
+
+    Chat POSTs straight to /api/chat, so it used to generate entirely outside
+    the cross-process gate — two generations could run on a gpu_cap=1 node at
+    once and both crawled.
+
+    Both waits are bounded on purpose. The local semaphore's default wait is
+    OLLAMA_QUEUE_TIMEOUT=0, i.e. UNBOUNDED; inheriting that would let one chat
+    block behind another forever, which is a worse failure than the overlap it
+    fixes. And on timeout this proceeds unslotted rather than failing: a person
+    watching an empty bubble is better served by overlapping one job than by
+    queueing behind a long batch generation.
+
+    Yields True when the slot was actually held.
+    """
+    cm = _ollama_slot(chosen, timeout=_CHAT_GATE_WAIT_S,
+                      gate_wait=_CHAT_GATE_WAIT_S)
+    entered = False
+    try:
+        await cm.__aenter__()
+        entered = True
+    except Exception as e:
+        log.info("chat [%s] proceeding unslotted on %s: %s", req_id, chosen, e)
+    try:
+        yield entered
+    finally:
+        if entered:
+            try:
+                await cm.__aexit__(None, None, None)
+            except Exception:
+                pass
 
 
 #: How often to refresh the "what am I waiting for" line while a turn has not
@@ -2579,10 +2621,17 @@ class AgentRunner:
 
         t0 = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=180) as c:
-                r = await c.post(f"{url}/api/chat", json=body)
-                r.raise_for_status()
-                data = r.json()
+            # Chat POSTs straight to /api/chat, so it used to generate entirely
+            # OUTSIDE the shared GPU queue — two generations could run on a
+            # gpu_cap=1 node at once, and both crawled. Take the slot. The wait
+            # is short and fail-open on purpose: a person waiting on a reply is
+            # better served by overlapping one job than by queueing behind a
+            # long batch generation.
+            async with _chat_gpu_slot(chosen):
+                async with httpx.AsyncClient(timeout=180) as c:
+                    r = await c.post(f"{url}/api/chat", json=body)
+                    r.raise_for_status()
+                    data = r.json()
 
             msg_out  = data.get("message", {})
             raw_text = msg_out.get("content", "").strip()
@@ -2926,6 +2975,28 @@ class AgentRunner:
         # chat is invisible to the next chat's wait line, and excludes itself
         # from its own. Cleared in the outer finally, which runs on every path
         # including the client vanishing mid-stream.
+        # ── Join the shared GPU queue ────────────────────────────────────────
+        # run_stream streams straight to /api/chat, so until now it generated
+        # entirely OUTSIDE the cross-process gate: two generations could run on
+        # a gpu_cap=1 node at once and both crawled (observed 2026-09-20 — a
+        # 3m43s chat overlapping a 3m18s generate that the client abandoned).
+        #
+        # Both waits are bounded and fail-open, deliberately. The local
+        # semaphore's default wait is OLLAMA_QUEUE_TIMEOUT=0, i.e. UNBOUNDED —
+        # inheriting that would let one chat block behind another forever, which
+        # is a worse failure than the overlap being fixed. On timeout we proceed
+        # unslotted: a person watching an empty bubble is better served by
+        # overlapping one job than by queueing behind a long batch generation.
+        # Released in the outer finally below, which runs on every path.
+        _gate_cm = _ollama_slot(chosen, timeout=_CHAT_GATE_WAIT_S,
+                                gate_wait=_CHAT_GATE_WAIT_S)
+        try:
+            await _gate_cm.__aenter__()
+        except Exception as _ge:
+            log.info("chat [%s] proceeding unslotted on %s: %s",
+                     _og_req_id, chosen, _ge)
+            _gate_cm = None
+
         _chat_slot = str(uuid.uuid4())[:12]
         try:
             _orch.OLLAMA_INFLIGHT[_chat_slot] = {
@@ -3132,6 +3203,15 @@ class AgentRunner:
                 _orch.OLLAMA_INFLIGHT.pop(_chat_slot, None)
             except Exception:
                 pass
+            # Hand the shared GPU slot back. Must happen here rather than at the
+            # end of the stream body: the client vanishing mid-stream raises
+            # GeneratorExit at a yield, and a slot leaked that way is this
+            # node's ONLY permit — every later request on it would block.
+            if _gate_cm is not None:
+                try:
+                    await _gate_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
             if not _og_stream_ok and not _og_done_sent:
                 # We're exiting without a terminal event: the client vanished
                 # mid-stream (GeneratorExit at a yield — page reload / closed
