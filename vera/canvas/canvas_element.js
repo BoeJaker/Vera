@@ -921,9 +921,25 @@
       // the first sync: an item with nothing to stand beside was placed before the view was known — once, it moves into view
       if (first && this._placed && this._placed.placements.some((p) => !p.mid && !p.level)) this._placeNow();
     }
+    /* WHAT IS PARKED, AND WHICH MESSAGES IT BELONGS TO. A parked item is shelved, not deleted, and the host
+       needs to know which turns it came from to decide whether scrolling back has made it relevant again -
+       otherwise an item goes away for good the moment the conversation moves on, and the only way to see it is
+       to make it a second time. Read off the document rather than the DOM, because a parked item is a chip. */
+    parkedAnchors() {
+      const out = []; const bl = (this._doc && this._doc.blocks) || [];
+      bl.forEach((b) => {
+        if (!b || !b.key || b.state !== 'parked') return;
+        const seen = []; (b.anchors || []).concat(b.anchor ? [b.anchor] : []).forEach((x) => {
+          if (!x || typeof x !== 'object') return;
+          [x.turn, x.mid, x.from, x.beside].forEach((v) => { const t = String(v || ''); if (t && seen.indexOf(t) < 0) seen.push(t); });
+        });
+        if (seen.length) out.push({ key: String(b.key), anchors: seen });
+      });
+      return out;
+    }
     itemRects() {
       const out = []; const F = this._focus;
-      this.shadowRoot.querySelectorAll('.it[data-key]').forEach((el) => { const r = el.getBoundingClientRect(); out.push({ key: el.dataset.key, mid: el.dataset.mid || '', from: el.dataset.from || '', col: +(el.dataset.col || 0), state: el.classList.contains('pinned') ? 'pinned' : 'now', inFocus: !F || F.has(el.dataset.key) || el.classList.contains('pinned'), out: el.classList.contains('out'), compact: el.classList.contains('compact'), open: el.classList.contains('openin'), ghost: el.classList.contains('ghost'), rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }); });
+      this.shadowRoot.querySelectorAll('.it[data-key]').forEach((el) => { const r = el.getBoundingClientRect(); out.push({ key: el.dataset.key, mid: el.dataset.mid || '', from: el.dataset.from || '', anchors: String(el.dataset.anchors || '').split(' ').filter(Boolean), col: +(el.dataset.col || 0), state: el.classList.contains('pinned') ? 'pinned' : 'now', inFocus: !F || F.has(el.dataset.key) || el.classList.contains('pinned'), out: el.classList.contains('out'), compact: el.classList.contains('compact'), open: el.classList.contains('openin'), ghost: el.classList.contains('ghost'), rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }); });
       return out;
     }
     _placeNow() {
@@ -1057,6 +1073,14 @@
         const title = blockTitle(b);
         const size = ITEM_SIZES.includes(b.size) ? b.size : 'm';
         const a = b.anchor && typeof b.anchor === 'object' ? b.anchor : null; const mid = a ? String(a.turn || a.mid || '') : '';
+        /* EVERY MESSAGE THIS ITEM BELONGS TO, not only the last one. The document has kept them all along -
+           anchors only ever grow - and the item carried just the latest, so the host could ask "is the message
+           that made this on screen?" about one message and no other. A reply that calls a tool is two messages;
+           the item is anchored to one of them, and scrolling to the other dropped it. */
+        const anchorMids = (() => { const seen = []; (b.anchors || []).concat(a ? [a] : []).forEach((x) => {
+          if (!x || typeof x !== 'object') return;
+          [x.turn, x.mid, x.from, x.beside].forEach((v) => { const t = String(v || ''); if (t && seen.indexOf(t) < 0) seen.push(t); });
+        }); return seen; })();
         // WHERE IT CAME FROM, when that is not the turn: a reply's item was made by the reply, and its run should
         // leave the reply's block rather than the question above it (Notes/42 defect 87). The turn stays the turn -
         // the exploded scene and the harvest key a station by it.
@@ -1073,7 +1097,7 @@
         const editable = EDITABLE.includes(b.type);
         const bid = b._bid ? String(b.id) : '';   // a keyless block: addressed by its id (canvas.update · canvas.remove · canvas.move)
         const cls = 'it ' + esc(b.state || 'now') + fcls + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '');
-        return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}>
+        return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}>
           <div class="it-hd"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
             <span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>

@@ -6580,13 +6580,35 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      The relevance engine's answer - the items a message is ABOUT rather than the ones it made - is kept beside
      this and weighted by the same measure, and the two are merged by whichever weight is higher. */
   let _cvRelServer=null, _cvFocusSig='';
+  /* HOW MUCH OF EACH MESSAGE IS ON SCREEN - and of each TURN, which is not the same thing.
+
+     A turn is a question and everything that answers it: the user's message, the tool calls, and the reply that
+     comes after the tool output. They are separate .mwrap elements with separate mids. An item made during a
+     turn belongs to the turn, not to whichever message happened to make it - so scrolling from the tool call to
+     the reply was taking the item off the canvas mid-answer, which is what "they don't stay in view" was.
+
+     So every message also reports its TURN's weight: the turn is open at a user message and runs to the next
+     one, and its weight is the most any of its messages can show. An item anchored anywhere in the turn is then
+     held for as long as any part of that turn is on screen. */
+  // what has already been brought back this session, and when the last one was - a recall is a write, so it is
+  // paced rather than fired on every scroll frame
+  let _cvRecallT=0; const _cvRecalled={};
   function _cvScreenWeights(msgs){
-    const MB=msgs.getBoundingClientRect(), VH=Math.max(1, MB.height), w={};
+    const MB=msgs.getBoundingClientRect(), VH=Math.max(1, MB.height), w={}, turnOf={}, turnW={};
+    let turn='';
     msgs.querySelectorAll('.mwrap[data-mid]').forEach(m=>{
+      const mid=m.dataset.mid; if(!mid) return;
+      if(m.classList.contains('u')) turn=mid;          // a user message opens a turn
+      turnOf[mid]=turn||mid;
       const r=m.getBoundingClientRect(); const vis=Math.min(r.bottom, MB.bottom)-Math.max(r.top, MB.top);
       if(!(vis>0)) return;
-      w[m.dataset.mid]=Math.max(0, Math.min(1, vis/Math.max(1, Math.min(r.height||VH, VH))));
+      const v=Math.max(0, Math.min(1, vis/Math.max(1, Math.min(r.height||VH, VH))));
+      w[mid]=Math.max(w[mid]||0, v);
+      const t=turnOf[mid]; turnW[t]=Math.max(turnW[t]||0, v);
     });
+    // a message inherits its turn's weight, so any message of a visible turn counts as visible for an item
+    Object.keys(turnOf).forEach(mid=>{ const t=turnOf[mid]; const v=turnW[t]||0;
+      if(v>0) w[mid]=Math.max(w[mid]||0, v); });
     return w;
   }
   function _cvScreenFocus(){
@@ -6594,13 +6616,36 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(!cv||!msgs||typeof cv.setFocus!=='function'||typeof cv.itemRects!=='function'||!_pages.has('canvas')) return;
     const w=_cvScreenWeights(msgs); const best={};
     // an item made by a message is in focus while that message is on screen
-    cv.itemRects().forEach(it=>{ const k=it.from||it.mid; if(!k) return; const s=w[k];
+    /* an item is held by ANY message it belongs to, at the weight of the best of them. It used to be held by one
+       - `from` or else `mid` - so an item whose maker had scrolled away vanished even though the turn it was
+         part of was still on screen. */
+    cv.itemRects().forEach(it=>{
+      const mids=(it.anchors&&it.anchors.length?it.anchors:[]).concat([it.from,it.mid]).filter(Boolean);
+      let s=0; mids.forEach(k=>{ const v=w[k]; if(v>s) s=v; });
       if(s>0) best[it.key]=Math.max(best[it.key]||0, s); });
     // and an item a visible message is ABOUT is held too, at that message's weight
     if(_cvRelServer&&_cvRelServer.keys){ const lead=Math.max(0, ...Object.keys(w).map(k=>w[k]), 0);
       const sc=_cvRelServer.scores||{};
       _cvRelServer.keys.forEach(k=>{ const rel=(sc[k]&&sc[k].score!=null)?Math.max(0, Math.min(1, +sc[k].score)):1;
         const v=lead*rel; if(v>0) best[k]=Math.max(best[k]||0, v); }); }
+    /* AND AN ITEM COMES BACK WHEN ITS TURN DOES. Scrolling back to a turn whose items were parked used to show
+       nothing: the item was shelved, the only way to see it again was to make it a second time, and a thing you
+       cannot get back is a thing that was lost. A parked item whose turn is substantially on screen is recalled
+       through the resolver - canvas.add with its key, which is recall rather than re-create, so it keeps its
+       anchors and its history.
+
+       Half the screen, not a sliver, or scrolling PAST a turn drags its shelf back up behind you; and one recall
+       at a time with a gap after it, because this runs on every scroll frame. */
+    try{
+      if(typeof cv.parkedAnchors==='function' && Date.now()-_cvRecallT>1200){
+        const back=cv.parkedAnchors().filter(p=>p.anchors.some(m=>(w[m]||0)>=0.5)).map(p=>p.key);
+        const fresh=back.filter(k=>!_cvRecalled[k]);
+        if(fresh.length){ _cvRecallT=Date.now(); const k=fresh[0]; _cvRecalled[k]=true;
+          _capCall('canvas.add',{ session_id:SID, key:k }).then(r=>{ if(r&&r.ok){ cv._rev=null; cv.refresh(); } })
+            .catch(()=>{ delete _cvRecalled[k]; });
+        }
+      }
+    }catch(_){}
     const keys=Object.keys(best).sort();
     // setFocus re-renders, so only when the answer actually changed: the set, or a weight by a quarter
     const sig=keys.map(k=>k+':'+Math.round(best[k]*4)).join('|');
