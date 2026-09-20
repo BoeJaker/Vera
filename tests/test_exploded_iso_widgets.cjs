@@ -16,7 +16,7 @@ const w = o.widgets.find((x) => x.layer === 'land'); ok(w && w.form === 'thermo'
 const b = o.widgets.find((x) => x.card.n === 'Boot timings'); ok(b && b.form === 'bars' && b.data.a === 18, 'a reply widget carries its form and data');
 const c = o.widgets.find((x) => x.layer === 'made' && x.card.kind === 'cap'); ok(c && c.form === 'log', 'a capability card draws as a log');
 const r = o.widgets.find((x) => x.layer === 'read' && x.card.id === 'm1'); ok(r && r.form === 'bar', 'a scored record draws as a meter');
-ok(o.graphs.length === 0 && (() => { const g = X.layout({ turns: [t], sel: 'm1' }, 'iso', 1200, 800, { galaxy: true }); return g.graphs.length === 1 && g.graphs[0].iso; })(), 'the context galaxy is an option on the plate: off by default (the board draws the lanes alone), on when asked');
+ok(o.graphs.length === 1 && o.graphs[0].iso && X.layout({ turns: [t], sel: 'm1' }, 'iso', 1200, 800, { galaxy: false }).graphs.length === 0, 'the context galaxy lies on the plate by default (the board draws it beside the lanes); the chip hides it');
 ok(o.labels.some((l) => l.cls.includes('empty') && l.n === 'nothing produced'), 'an empty band says so');
 ok(o.edges.some((e) => e.cls === 'in') && o.edges.some((e) => e.cls === 'out') && o.edges.some((e) => e.cls === 'link'), 'the runs between the pins');
 const s = X.layout({ turns: [t, t], sel: 'm1' }, 'iso', 1200, 800, { stack: true, wsz: 'l' }); ok(s.stack && s.plates[0].z !== s.plates[1].z, 'Stack: the stations on floors'); ok(s.widgets[0].w === 108, 'size L frames');
