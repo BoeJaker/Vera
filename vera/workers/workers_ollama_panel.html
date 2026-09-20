@@ -6624,7 +6624,7 @@ function connRender(){
     const reach=h._reach===undefined?'<span style="color:var(--dim)">—</span>'
       :h._reach?`<span style="color:var(--acc2)">✓ ${h._lat||''}ms</span>`:`<span style="color:var(--err)">✕</span>`;
     return `<tr>
-      <td><b>${esc(h.label||'')}</b></td><td style="font-family:var(--mono)">${esc(h.host||'')}</td>
+      <td><b>${veraEstate.chip('host:'+h.id, h.label||'')}</b></td><td style="font-family:var(--mono)">${esc(h.host||'')}</td>
       <td>${esc(h.user||'')}</td><td>${esc(h.port||22)}</td><td>${esc(h.auth||'password')}</td>
       <td><div class="chips">${tags}</div></td><td>${reach}</td>
       <td style="white-space:nowrap">
