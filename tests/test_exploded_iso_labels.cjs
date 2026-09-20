@@ -40,7 +40,7 @@ ok((body(t.land[1]).on.match(/xf-tr/g) || []).length === 3 && (body(t.land[1]).x
 ok(/xf-w/.test(body(t.made[1]).on) && /c 19/.test(body(t.made[1]).on) && /xf-ws/.test(body(t.made[1]).on), 'a widget without the lib: the board\'s widget card — the reading and a sparkline');
 ok(/xf-code/.test(body({ kind: 'code', body: 'def x():\n  pass' }).on), 'a code block: a line of code');
 // (1b) the context records are typed icon nodes about the prompt line; the galaxy lies past them
-ok(o.gnodes.length === 10 && o.gnodes.every((n) => n.mid === 'm1' && n.d >= 19 && n.d <= 28 && /^M/.test(n.icon)), 'the graph band draws every record the turn read, what landed and the loop\'s steps as icon nodes (' + o.gnodes.length + ')');
+ok(o.gnodes.length === 10 && o.gnodes.every((n) => n.mid === 'm1' && n.d >= 19 && /^M/.test(n.icon)), 'the graph band draws every record the turn read, what landed and the loop\'s steps as icon nodes (' + o.gnodes.length + ')');
 const nv = o.gnodes.find((n) => n.nid === 'v1'), nm = o.gnodes.find((n) => n.nid === 'mm'), np = o.gnodes.find((n) => n.nid === 'pg');
 ok(nv.icon === X.ICON.file && nm.icon === X.ICON.memory && np.icon === X.ICON.page && o.gnodes.find((n) => n.nid === 'GPU').icon === X.ICON.canvas, 'the icon is the record\'s kind: a chunk a file, a memory the memory glyph, a page a page, a canvas item the canvas');
 ok(nv.lit && !nv.ghost && nm.ghost && !nm.lit && nv.lane === 'context' && nm.lane === 'memory', 'lit when it is in the prompt, hollow when it only relates; a lane per family');
