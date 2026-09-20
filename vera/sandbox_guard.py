@@ -70,7 +70,7 @@ READ_THROUGH_GROUPS = (
     "nodes", "activity", "health", "workers", "gpu", "census", "mesh", "backup",
     "perf", "jobs", "background", "catalog", "netmap", "proxmox", "docker",
     "autoenroll", "netsec", "provision", "evolve", "sandbox", "memory", "fabric",
-    "markets", "llm")
+    "markets", "ide", "openclaw", "llm")
 # a reading that is about THIS process, not the estate: stays local
 READ_THROUGH_LOCAL = ("evolve.sandbox.status", "obs.diagnostics", "obs.modules", "obs.pending",
                       "llm.formats", "sandbox.session.list",
