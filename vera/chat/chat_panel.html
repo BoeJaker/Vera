@@ -6255,7 +6255,27 @@ IMPORTANT:
      It lands with what is known at that moment - the address, the domain, how much was read - and NOT with the
      page's text or picture: a deep run reads dozens of pages, and the item fetches those when it is opened.
      Anchored to the turn that asked, so it lives with the question it belongs to. */
-  const _CV_SRC_SEEN={};
+  /* A SOURCE ARRIVES AS A HEADLINE AND NOTHING ELSE. The crawl announces {url, domain, chars} - it knows how
+     much it read and does not pass on a word of it - so the card was an address and a title until you pressed
+     "read the page". A reading list of bare headlines is a bibliography, not something you can explore.
+
+     So the first few sources of a run get a SNIPPET, read once and written into the item. Three of them, 600
+     characters each: enough to tell whether a page is worth opening, bounded because a deep run reads dozens and
+     a page fetched to make a two-line preview is still a page fetched. The rest stay headlines until asked for -
+     which is the same bargain the screenshot makes. */
+  const _CV_SRC_SEEN={}; let _cvSnipN=0;
+  async function _cvSnippet(key, url){
+    if(_cvSnipN>=3) return; _cvSnipN++;
+    try{
+      const r=await _capCall('browser.content',{ url, max_chars:600 });
+      const txt=String((r&&(r.text||r.content))||'').replace(/\s+/g,' ').trim();
+      if(!txt) return;
+      const cur=await _capCall('canvas.get',{ session_id:SID });
+      const doc=(cur&&(cur.canvas||cur))||{}; const b=((doc.blocks)||[]).find(x=>x&&x.key===key);
+      if(!b||!b.content||b.content.snippet) return;                   // gone, or someone got there first
+      await _capCall('canvas.update',{ session_id:SID, key, content:Object.assign({}, b.content, { snippet:txt.slice(0,400) }) });
+    }catch(_){}
+  }
   async function _cvLandSource(d){
     if(!SID||!d||!d.url) return;
     const url=String(d.url); const key='source:'+url.replace(/^https?:\/\//,'').slice(0,120);
@@ -6265,7 +6285,10 @@ IMPORTANT:
     const mid=_cvRelMid||'';
     try{ await _capCall('canvas.add',{ session_id:SID, kind:'source', key, at:'now', size:'s',
       content:{ url, title:String(d.title||''), domain, chars:+d.chars||0, failed:!!d.failed },
-      anchor:mid?{ mid, turn:mid }:undefined }); }catch(_){}
+      anchor:mid?{ mid, turn:mid }:undefined });
+      // a page that would not load has nothing to read; the rest get a couple of lines to judge by
+      if(!d.failed) _cvSnippet(key, url);
+    }catch(_){}
   }
   document.addEventListener('vera:research:source', ev=>{ try{ _cvLandSource(ev.detail||{}); }catch(_){} });
 
