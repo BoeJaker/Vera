@@ -43,15 +43,37 @@ from fastapi.responses import HTMLResponse
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import APP, capability, emit_event, register_ui
 from Vera.vera.integrations.infrastructure_effects import observe_infrastructure_effect
-from Vera.vera.provisioning.components_core import rewrite_host, native_worker_cmd
+from Vera.vera.provisioning.components_core import (
+    rewrite_host, native_worker_cmd,
+    EDGE_DIR_CANDIDATES as _EDGE_DIR_CANDIDATES,
+    edge_dir_probe_cmd, parse_edge_dir, pidfile_lookup_cmd,
+)
 
 log = logging.getLogger("vera.provision.components")
 _HERE = Path(__file__).parent
 # .../Vera/vera/provisioning/components_capabilities.py → parents[2] == repo root
 _REPO = Path(__file__).resolve().parents[2]
 
-_EDGE_DIR = "$HOME/.vera/edge"          # remote working dir for deployed components
+_EDGE_DIR = "$HOME/.vera/edge"          # preferred remote working dir
 _VENV = "$HOME/.vera/edge/venv"         # shared venv for the python components
+
+async def _resolve_edge_dir(host_id: str) -> Dict[str, Any]:
+    """Pick a writable working directory on the target, in preference order.
+
+    Returns {ok, dir, venv, tried}. The candidate list and the probe itself live
+    in components_core so they can be unit-tested without booting Vera, and so
+    status/stop provably search the same places the deploy wrote to.
+    """
+    res = await _ssh(host_id, edge_dir_probe_cmd(), timeout=40)
+    chosen = parse_edge_dir(res.get("stdout") or "")
+    if chosen:
+        return {"ok": True, "dir": chosen, "venv": f"{chosen}/venv",
+                "tried": list(_EDGE_DIR_CANDIDATES)}
+    return {"ok": False, "dir": "", "venv": "",
+            "tried": list(_EDGE_DIR_CANDIDATES),
+            "error": "no writable working directory on the target "
+                     f"(tried {', '.join(_EDGE_DIR_CANDIDATES)}) — "
+                     "$HOME is often unwritable on an unprivileged LXC node"}
 
 
 def _cap(name: str):
@@ -128,6 +150,19 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
                 "sentencepiece", "protobuf", "numpy", "fastembed",
                 "fastapi", "uvicorn"],
         "run": "{py} nlp_server.py serve --host 0.0.0.0 --port {port}",
+        # The model store is a Proxmox bind-mount, which SSH cannot create.
+        # Check it BEFORE installing ~2GB of wheels, and say exactly how to fix
+        # it: otherwise the first request fails with a model-not-found long
+        # after the deploy reported success.
+        "precheck": {
+            "cmd": ('[ -d /opt/nlp-models ] && ls -d /opt/nlp-models/*/ '
+                    '>/dev/null 2>&1 && echo VERA_PRECHECK_OK'),
+            "why": ("the shared NLP model store is not mounted at "
+                    "/opt/nlp-models on this node. On the Proxmox host: "
+                    "pct set <ctid> -mp2 /tank_sdh/vera-store/models/nlp,"
+                    "mp=/opt/nlp-models,ro=1 && pct reboot <ctid>. "
+                    "Populate it once with edge/nlp_export_models.py."),
+        },
         "env": {
             # ONNX Runtime will otherwise take every core it can see and starve
             # the ollama runner sharing this container. This is the setting that
@@ -210,9 +245,9 @@ def _push_cmd(content: bytes, dest: str) -> str:
     return f"printf %s {shlex.quote(b64)} | base64 -d > {dest}"
 
 
-def _py_bin(install_deps: bool) -> str:
+def _py_bin(install_deps: bool, venv: str = "") -> str:
     # Use the shared venv when we created/maintain one, else the system python3.
-    return f'"{_VENV}/bin/python"' if install_deps else "python3"
+    return f'"{venv or _VENV}/bin/python"' if install_deps else "python3"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -277,12 +312,34 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
                       "component": component})
 
     # 1) push files ───────────────────────────────────────────────────────────
-    parts = [f"mkdir -p {_EDGE_DIR}"]
+    # Never assume $HOME is writable — see _EDGE_DIR_CANDIDATES for why two of
+    # the three ollama nodes cannot use it at all.
+    edge = await _resolve_edge_dir(host_id)
+    if not edge.get("ok"):
+        out["ok"] = False
+        out["error"] = edge.get("error", "no writable working directory")
+        out["edge_dir_tried"] = edge.get("tried")
+        return out
+    edge_dir, venv = edge["dir"], edge["venv"]
+    out["edge_dir"] = edge_dir
+
+    # 0b) component precheck — fail before spending the install, not after
+    pre = comp.get("precheck") or {}
+    if pre.get("cmd"):
+        pres = await _ssh(host_id, pre["cmd"], timeout=40)
+        if "VERA_PRECHECK_OK" not in (pres.get("stdout") or ""):
+            out["ok"] = False
+            out["error"] = f"precheck failed: {pre.get('why', 'unmet requirement')}"
+            out["precheck"] = False
+            return out
+        out["precheck"] = True
+
+    parts = [f"mkdir -p {edge_dir}"]
     for rel, dest in comp["files"]:
         content = _read_local(rel)
         if content is None:
             return {"ok": False, "error": f"bundled file missing in repo: {rel}"}
-        parts.append(_push_cmd(content, f"{_EDGE_DIR}/{dest}"))
+        parts.append(_push_cmd(content, f"{edge_dir}/{dest}"))
         out["pushed"].append(dest)
     shadow = observe_infrastructure_effect(
         provider="ssh", target_ref=host_id, resource_ref=component,
@@ -301,15 +358,15 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
 
     # 2) install deps (optional) ───────────────────────────────────────────────
     if install_deps and comp["python"]:
-        steps = [f'python3 -m venv "{_VENV}" --system-site-packages',
-                 f'"{_VENV}/bin/pip" install -U pip wheel']
+        steps = [f'python3 -m venv "{venv}" --system-site-packages',
+                 f'"{venv}/bin/pip" install -U pip wheel']
         if comp.get("requirements"):
             req = _read_local(comp["requirements"])
             if req is not None:
-                steps.append(_push_cmd(req, f"{_EDGE_DIR}/requirements.txt"))
-                steps.append(f'"{_VENV}/bin/pip" install -r {_EDGE_DIR}/requirements.txt')
+                steps.append(_push_cmd(req, f"{edge_dir}/requirements.txt"))
+                steps.append(f'"{venv}/bin/pip" install -r {edge_dir}/requirements.txt')
         elif comp.get("pip"):
-            steps.append(f'"{_VENV}/bin/pip" install ' + " ".join(shlex.quote(p) for p in comp["pip"]))
+            steps.append(f'"{venv}/bin/pip" install ' + " ".join(shlex.quote(p) for p in comp["pip"]))
         steps.append("echo VERA_DEPS_DONE")
         dres = await _ssh(host_id, " && ".join(steps), timeout=int(timeout or 900))
         out["installed"] = "VERA_DEPS_DONE" in (dres.get("stdout", "") or "")
@@ -322,14 +379,14 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
 
     # 3) launch (optional) ─────────────────────────────────────────────────────
     if launch:
-        py = _py_bin(install_deps)
+        py = _py_bin(install_deps, venv)
         run_cmd = comp["run"].format(py=py, port=port, vera_url=shlex.quote(vera_url) if vera_url else "")
         env = {k: v.format(port=port) for k, v in (comp.get("env") or {}).items()}
         if systemd:
-            lres = await _launch_systemd(host_id, rec, component, comp, run_cmd, env, sudo)
+            lres = await _launch_systemd(host_id, rec, component, comp, run_cmd, env, sudo, edge_dir)
             out["mode"] = "systemd"
         else:
-            lres = await _launch_nohup(host_id, component, run_cmd, env)
+            lres = await _launch_nohup(host_id, component, run_cmd, env, edge_dir)
             out["mode"] = "nohup"
         out["launched"] = bool(lres.get("ok"))
         out["launch_log"] = lres.get("log", "")
@@ -346,10 +403,11 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
     return out
 
 
-async def _launch_nohup(host_id: str, key: str, run_cmd: str, env: Dict[str, str]) -> Dict:
+async def _launch_nohup(host_id: str, key: str, run_cmd: str, env: Dict[str, str],
+                        edge_dir: str = "") -> Dict:
     envp = "".join(f"{k}={shlex.quote(v)} " for k, v in env.items())
     cmd = (
-        f"cd {_EDGE_DIR} && "
+        f"cd {edge_dir or _EDGE_DIR} && "
         f"{{ {envp}nohup {run_cmd} > {key}.log 2>&1 & echo $! > {key}.pid ; }} && "
         f'sleep 1 && echo "VERA_LAUNCHED pid=$(cat {key}.pid 2>/dev/null)"'
     )
@@ -360,7 +418,8 @@ async def _launch_nohup(host_id: str, key: str, run_cmd: str, env: Dict[str, str
 
 
 async def _launch_systemd(host_id: str, rec: Dict, key: str, comp: Dict,
-                          run_cmd: str, env: Dict[str, str], sudo: bool) -> Dict:
+                          run_cmd: str, env: Dict[str, str], sudo: bool,
+                          edge_dir: str = "") -> Dict:
     s = _sudo_for(rec, sudo)
     envlines = "".join(f"Environment={k}={v}\\n" for k, v in env.items())
     # Heredoc expands $HOME on the host so ExecStart/WorkingDirectory are absolute.
@@ -368,7 +427,7 @@ async def _launch_systemd(host_id: str, rec: Dict, key: str, comp: Dict,
         "[Unit]\\n"
         f"Description=Vera {comp['label']}\\nAfter=network-online.target\\n\\n"
         "[Service]\\nType=simple\\n"
-        f"WorkingDirectory=$HOME/.vera/edge\\n"
+        f"WorkingDirectory={edge_dir or _EDGE_DIR}\\n"
         f"{envlines}"
         f"ExecStart={run_cmd}\\n"
         "Restart=on-failure\\nRestartSec=3\\n\\n"
@@ -384,6 +443,7 @@ async def _launch_systemd(host_id: str, rec: Dict, key: str, comp: Dict,
     log_tail = ((res.get("stdout", "") or "") + "\n" + (res.get("stderr", "") or ""))[-2000:]
     ok = bool(res.get("ok")) and "VERA_LAUNCHED" in (res.get("stdout", "") or "")
     return {"ok": ok, "log": log_tail, "error": "" if ok else (res.get("stderr") or res.get("error") or "")}
+
 
 
 @capability(
@@ -404,7 +464,7 @@ async def cap_component_status(host_id: str = "", component: str = "",
         return {"ok": True, "running": state == "active", "detail": state or "unknown"}
     res = await _ssh(
         host_id,
-        f'PID=$(cat {_EDGE_DIR}/{component}.pid 2>/dev/null); '
+        pidfile_lookup_cmd(component) +
         f'if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then echo "running pid=$PID"; '
         f'else echo stopped; fi',
         timeout=20)
@@ -430,8 +490,8 @@ async def cap_component_stop(host_id: str = "", component: str = "",
     else:
         res = await _ssh(
             host_id,
-            f'PID=$(cat {_EDGE_DIR}/{component}.pid 2>/dev/null); '
-            f'[ -n "$PID" ] && kill "$PID" 2>/dev/null; rm -f {_EDGE_DIR}/{component}.pid; echo VERA_STOPPED',
+            pidfile_lookup_cmd(component) +
+            '[ -n "$PID" ] && kill "$PID" 2>/dev/null; rm -f "$PIDF"; echo VERA_STOPPED',
             timeout=20)
     ok = "VERA_STOPPED" in (res.get("stdout", "") or "")
     await emit_event({"type": "provision.component.stop", "component": component, "ok": ok})

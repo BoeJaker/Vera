@@ -89,3 +89,55 @@ def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str
     else:
         launch = launch_nohup
     return setup + launch
+
+
+# ── Where a component may live on the target ─────────────────────────────────
+# ⚠ `$HOME` is NOT reliably writable. On an unprivileged LXC container, `/root`
+# can be owned by a uid outside the container's mapped range: it shows as
+# `nobody:root` mode 0700 and even root INSIDE the container cannot traverse it.
+# Measured 2026-09-20 across the three ollama nodes — gpu-250 `nobody:root`
+# (mkdir fails), cpu-246 `root:100000` (works), cpu-247 `nobody:root` (fails) —
+# so two of the three could not receive ANY python component. It is the same
+# reason `ollama-vera.service` on those nodes sets `HOME=/`.
+EDGE_DIR_CANDIDATES = ("$HOME/.vera/edge", "/opt/vera/edge", "/var/lib/vera/edge")
+
+#: Marker the probe prints so the caller can parse a definite answer rather than
+#: guessing from an exit code.
+EDGE_DIR_MARKER = "VERA_EDGE_DIR="
+
+
+def edge_dir_probe_cmd(candidates=None) -> str:
+    """Shell that prints `VERA_EDGE_DIR=<first writable candidate>`.
+
+    Probing beats assuming: without it the failure surfaces as a venv creation
+    error several steps later that names a path but never the reason.
+    """
+    cands = tuple(candidates or EDGE_DIR_CANDIDATES)
+    parts = ['D=""']
+    parts += [f'[ -z "$D" ] && mkdir -p {c} 2>/dev/null && [ -w {c} ] && D={c}'
+              for c in cands]
+    parts.append(f'[ -n "$D" ] && echo "{EDGE_DIR_MARKER}$D" || echo VERA_EDGE_DIR_NONE')
+    return "; ".join(parts)
+
+
+def parse_edge_dir(stdout: str) -> str:
+    """The directory the probe chose, or "" when none was writable."""
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith(EDGE_DIR_MARKER):
+            return line[len(EDGE_DIR_MARKER):].strip()
+    return ""
+
+
+def pidfile_lookup_cmd(component: str, candidates=None) -> str:
+    """Shell that locates `<component>.pid` in whichever edge dir was used.
+
+    status/stop must search the SAME candidates as the deploy probe. If they
+    only looked in `$HOME`, a component deployed to the fallback directory would
+    report "stopped" while still running — the worst possible answer to give a
+    stop command.
+    """
+    dirs = " ".join(tuple(candidates or EDGE_DIR_CANDIDATES))
+    return (f'PIDF=""; for d in {dirs}; do '
+            f'[ -f "$d/{component}.pid" ] && PIDF="$d/{component}.pid" && break; done; '
+            f'PID=$(cat "$PIDF" 2>/dev/null); ')
