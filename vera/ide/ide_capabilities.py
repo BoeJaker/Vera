@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import hashlib
 import json
 import logging
 import os
@@ -76,6 +77,17 @@ from Vera.vera.capability_orchestration import (
 _HERE = Path(__file__).parent
 
 log = logging.getLogger("vera.ide")
+
+
+def _text_evidence(value: object) -> dict:
+    """Return stable, payload-free evidence for prompt-like text."""
+    raw = str(value or "")
+    return {
+        "chars": len(raw),
+        "sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16],
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GRAPH + FABRIC HELPERS (inline — no separate integration module)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -710,6 +722,8 @@ async def ide_agent_list(trace_id=None):
     "ide.agent.chat",
     http_method="POST", http_path="/ide/agents/chat", http_tags=["ide", "agents"],
     memory="off",
+    redact_args=["prompt", "system", "history", "context_files"],
+    redact_result=True,
     description="Send a prompt to one of the IDE agents. "
                 "Input: agent (thinker|writer|analyser), prompt (str!), "
                 "system (str), history (JSON array), model (str), "
@@ -758,7 +772,7 @@ async def ide_agent_chat(
     sid = session_id or _ide_session_id()
     await emit_event({"type": "ide.agent.chat", "agent": agent_name,
                       "chars": len(text), "session_id": sid,
-                      "prompt_snippet": prompt[:80]})
+                      "prompt_evidence": _text_evidence(prompt)})
 
     # Record conversation turn to memory graph + fabric
     asyncio.ensure_future(_ide_record_agent_turn(
@@ -835,6 +849,8 @@ async def ide_models(trace_id=None):
     "ide.generate",
     http_method="POST", http_path="/ide/generate", http_tags=["ide", "llm"],
     memory="off",
+    redact_args=["prompt", "system"],
+    redact_result=True,
     description="Generate text via a named IDE agent (thinker|writer|analyser). "
                 "Input: agent (str), prompt (str!), system (str), model (str), "
                 "instance_id (str), temperature (float). "
@@ -868,65 +884,21 @@ async def ide_generate(
     else:
         opts["temperature"] = preset.get("temperature", 0.3)
 
-    chosen = iid or pick_instance(prefer_gpu=preset.get("prefer_gpu", False))
-    if not chosen:
-        return {"error": "No online Ollama instance", "text": ""}
-
-    inst = OLLAMA_INSTANCES.get(chosen, {})
-    url  = inst.get("url", "")
-    body = {"model": mdl, "prompt": prompt, "stream": False, "options": opts}
-    if sys_p:
-        body["system"] = sys_p
-
-    # ── Log the Ollama request ───────────────────────────────────────────────
-    import time as _time
-    from Vera.vera.capability_orchestration import (
-        emit_event, _ollama_log_append, _ollama_caller_info,
-    )
-    _req_id = str(uuid.uuid4())[:12]
-    _t0 = _time.time()
-    _prompt_preview = (prompt or "")[:120].replace("\n", " ")
-    _prompt_full = (prompt or "")[:16000]
-    log.info("ollama_req [%s] model=%s inst=%s caller=ide_capabilities:ide_generate agent=%s prompt=%s",
-             _req_id, mdl, chosen, agent_name, _prompt_preview)
+    meta: dict = {}
     try:
-        await emit_event({
-            "type": "ollama.request", "req_id": _req_id,
-            "model": mdl, "instance_id": chosen, "instance_url": url,
-            "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
-            "caller_module": "ide_capabilities", "cap_name": "ide.generate",
-            "prompt_preview": _prompt_preview, "prompt_full": _prompt_full, "json_mode": False,
-            "prefer_gpu": preset.get("prefer_gpu", False), "streaming": False,
-        })
-    except Exception:
-        pass
-
-    inst["in_use"] = inst.get("in_use", 0) + 1
-    try:
-        async with httpx.AsyncClient(timeout=120) as c:
-            r = await c.post(f"{url}/api/generate", json=body)
-            r.raise_for_status()
-            d = r.json()
-            text = d.get("response", "")
-        _elapsed = round(_time.time() - _t0, 2)
-        log.info("ollama_done [%s] %.2fs caller=ide_capabilities:ide_generate agent=%s",
-                 _req_id, _elapsed, agent_name)
-        _ollama_log_append({
-            "req_id": _req_id, "model": mdl, "instance": chosen,
-            "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
-            "prompt_preview": _prompt_preview, "ts": now_iso(),
-            "status": "done", "elapsed_s": _elapsed,
-            "eval_count": d.get("eval_count", 0),
-        })
-        try:
-            await emit_event({
-                "type": "ollama.request_done", "req_id": _req_id,
-                "model": mdl, "instance_id": chosen,
-                "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
-                "elapsed_s": _elapsed, "eval_count": d.get("eval_count", 0),
-            })
-        except Exception:
-            pass
+        text = await ollama_generate(
+            prompt,
+            system=sys_p,
+            model=mdl,
+            instance_id=iid or None,
+            prefer_gpu=bool(preset.get("prefer_gpu", False)),
+            options=opts,
+            profile="ide",
+            role=IDE_ROLE_BY_AGENT.get(agent_name, "writer"),
+            request_stage="generation",
+            meta_out=meta,
+        )
+        chosen = str(meta.get("instance") or iid or "unknown")
         sid = session_id or _ide_get_session_id()
         asyncio.ensure_future(_record(
             session_id=sid, category="ide.generate",
@@ -940,32 +912,12 @@ async def ide_generate(
             fabric_data={"agent": agent_name, "model": mdl,
                          "prompt": prompt[:5000], "response": text[:50000]},
         ))
-        return {"text": text, "agent": agent_name, "model": mdl, "instance": chosen}
+        return {"text": text, "agent": agent_name,
+                "model": str(meta.get("model") or mdl), "instance": chosen}
     except Exception as e:
         from Vera.vera.capability_orchestration import _err_text
-        _elapsed = round(_time.time() - _t0, 2)
         _err = _err_text(e)
-        log.error("ollama_generate [%s] FAILED after %.2fs inst=%s caller=ide_capabilities:ide_generate err=%s",
-                  _req_id, _elapsed, chosen, _err)
-        _ollama_log_append({
-            "req_id": _req_id, "model": mdl, "instance": chosen,
-            "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
-            "prompt_preview": _prompt_preview, "ts": now_iso(),
-            "status": "error", "elapsed_s": _elapsed, "error": _err,
-        })
-        try:
-            await emit_event({
-                "type": "ollama.request_error", "req_id": _req_id,
-                "model": mdl, "instance_id": chosen,
-                "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
-                "elapsed_s": _elapsed, "error": _err,
-                "error_type": type(e).__name__,
-            })
-        except Exception:
-            pass
         return {"error": _err, "text": "", "agent": agent_name}
-    finally:
-        inst["in_use"] = max(0, inst.get("in_use", 1) - 1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

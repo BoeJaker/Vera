@@ -4811,6 +4811,8 @@ async def agent_delete(id: str, trace_id=None):
 @capability(
     "agent.chat", memory="on",
     http_method="POST", http_path="/agents/chat", http_tags=["agents"],
+    redact_args=["message", "history"],
+    redact_result=True,
     description="Send a message to an agent. Returns text response.",
 )
 async def agent_chat(
