@@ -33,7 +33,7 @@ t('and the harvest reads it rather than the rendered text',
 t('a terminal lands big enough to read', /if\(k==='session'\) return 'm';/.test(src));
 
 // ── cut the three recognisers out and run them ─────────────────────────────────────────────────────────────────
-const A = "const _cvCapTerm=(c)=>{", B = "  function _cvHarvest(body){";
+const A = "  const CV_ADAPTERS=[];", B = "  function _cvHarvest(body){";
 const i0 = src.indexOf(A), i1 = src.indexOf(B);
 t('the recognisers are present in the page', i0 >= 0 && i1 > i0);
 if (i0 < 0 || i1 < i0) { console.log(fails + ' FAILED'); process.exit(1); }
@@ -71,10 +71,16 @@ const ctx = {
   _widgetRecord: (o) => ({ name: o.name, form: o.form, draw: { form: o.form, size: 'm' }, reads: { cap: o.source } }),
   // the page has URL; a bare vm context does not, and the source recogniser reads a domain off the address with it
   URL,
+  // the registry reads a cap's declared Output: out of the descriptions the chat already holds
+  ALL_CAPS: [
+    { name: 'exec.bash.run', description: 'Run a command. Output: {ok, rc, stdout, stderr, elapsed_ms, command}.' },
+    { name: 'research.report', description: 'Write a report. Output: {report, sources}.' },
+    { name: 'quiet.status', description: 'A status line. Output: {ok, text}.' },
+  ],
 };
 vm.createContext(ctx);
-vm.runInContext(block + '\nthis.T=_cvCapTerm; this.B=_cvCapTable; this.W=_cvCapWidget; this.S=_cvCapSources;', ctx);
-const { T, B: TBL, W, S: SRC } = ctx;
+vm.runInContext(block + '\nthis.T=_cvCapTerm; this.B=_cvCapTable; this.W=_cvCapWidget; this.S=_cvCapSources; this.AD=_cvAdapt; this.REG=CV_ADAPTERS;', ctx);
+const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
 
 // ── a command and its output is a terminal ─────────────────────────────────────────────────────────────────────
 {
@@ -152,7 +158,10 @@ const { T, B: TBL, W, S: SRC } = ctx;
   t('one link is not a reading list', SRC({ results: [{ url: 'https://only.one/x', title: 'x' }] }) === null);
   t('rows with no addresses are left to the table', SRC({ rows: [{ name: 'a', cpu: 1 }, { name: 'b', cpu: 2 }] }) === null);
   t('a search is capped, the canvas is not a results page', SRC({ results: Array.from({ length: 40 }, (_, i) => ({ url: 'https://x.io/' + i, title: 't' + i })) }).length === 10);
-  t('sources are tried BEFORE the table', /_cvCapTerm\(cres\) \|\| _cvCapSources\(cres\) \|\| _cvCapTable/.test(src));
+  /* the chain of ifs this used to pin is a registry now - the claim is the same one, that a page with an address
+     is a source before it is a row, and it is made by the ORDER of the table rather than by the order of ||s */
+  t('sources are tried BEFORE the table', REG.map((a) => a.name).indexOf('sources') < REG.map((a) => a.name).indexOf('table'));
+  t('and the harvest asks the registry rather than a chain', /made = _cvAdapt\(cname, cres, cap && cap\.args\)/.test(src));
   t('and a recogniser may answer with several items', /if\(Array\.isArray\(made\)\)\{ made\.forEach/.test(src));
 }
 
@@ -191,6 +200,56 @@ const { T, B: TBL, W, S: SRC } = ctx;
   t('the buttons reach the handler', /\[data-src-act\]/.test(cv));
   const py = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_capabilities.py'), 'utf8');
   t('and the block type is declared server-side', /"source":\s*\{"desc"/.test(py) && /url:str, title\?:str/.test(py));
+}
+
+// ---- the registry: one ordered table, and adding a kind is appending to it ------------------------------------
+{
+  /* 2513 capabilities across 150 namespaces. Whatever decides what a result becomes cannot be a function per
+     capability, and it cannot be a chain of ifs someone edits in the middle each time a cap is added. */
+  t('the rules are a registry, in order', Array.isArray(REG) && REG.length >= 7, REG && REG.length);
+  t('each one says what it recognises and what it builds',
+    REG.every((a) => a.name && typeof a.when === 'function' && typeof a.build === 'function'));
+  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,sources,html,image,table,widget,prose',
+    REG.map((a) => a.name).join(','));
+
+  // and it routes, by shape alone, with no capability named anywhere
+  const kind = (cap, res) => { const m = AD(cap, res, {}); return m ? (Array.isArray(m) ? m[0].kind + '[]' : m.kind) : null; };
+  t('a command goes to a terminal', kind('exec.bash.run', { command: 'ls', stdout: 'a\nb', rc: 0 }) === 'session');
+  t('rows go to a table', kind('docker.hosts', { hosts: [{ name: 'a', cpu: 1 }, { name: 'b', cpu: 2 }] }) === 'table');
+  t('pages go to sources', kind('web.search', { results: [{ url: 'https://a.io', title: 'A' }, { url: 'https://b.io', title: 'B' }] }) === 'source[]');
+  t('a gauge goes to a widget', kind('gpu.load', { value: 62, min: 0, max: 100 }) === 'widget');
+  t('html goes to the html block', kind('render.html', { html: '<h1>hi</h1>' }) === 'html');
+  t('an image goes to an image', kind('browser.screenshot', { image_b64: 'iVBORw0KG' }) === 'image');
+  t('a written report goes to markdown, not a code fence', kind('research.report', { report: 'x'.repeat(400) }) === 'markdown');
+  t('and a shapeless result matches nothing at all', kind('some.cap', { ok: true, note: 'done' }) === null);
+}
+
+// ---- the declaration is a hint, never the decision -------------------------------------------------------------
+{
+  /* 1680 of the 2513 caps declare Output: {...} in their own description, and the chat already has every one of
+     them. It settles a tie the shape cannot: {ok, text} is a page from one cap and a status line from another. */
+  const m = AD('exec.bash.run', { command: 'true', stdout: '', stderr: '', rc: 0 }, {});
+  t('a cap that SAYS it returns stdout is a command even when it printed nothing', !!m && m.kind === 'session', JSON.stringify(m && m.kind));
+  // ...and a short string from a cap that declares no report is not dressed up as one
+  t('a short status line is not made into a document', AD('quiet.status', { ok: true, text: 'done' }, {}) === null);
+  t('but a long one is the document it plainly is', (AD('quiet.status', { ok: true, text: 'y'.repeat(300) }, {}) || {}).kind === 'markdown');
+  t('the declaration cannot overrule the bytes', (AD('research.report', { hosts: [{ a: 1, b: 2 }, { a: 3, b: 4 }] }, {}) || {}).kind === 'table');
+}
+
+// ---- the override, for the handful the rules read wrongly -------------------------------------------------------
+{
+  /* a canvas.* result describes what the canvas just did - drawing the receipt would put a receipt on the canvas,
+     which is the one place it must not go */
+  t('a namespace can be sent nowhere', AD('canvas.add', { ok: true, key: 'x', item: { id: 'b1' } }, {}) === null);
+  t('and a single cap too', AD('ui.directive', { ok: true, row: { name: 'x' } }, {}) === null);
+  t('the override is a table, one line per correction', /const CV_CAP_KIND=\{/.test(src) && /'canvas\.\*':''/.test(src));
+  t('a namespace override is found from the cap name', /const ns=n\.split\('\.'\)\[0\]\+'\.\*'/.test(src));
+}
+
+// ---- and the sizes the new kinds land at ------------------------------------------------------------------------
+{
+  t('a rendered page is not put in a letterbox', /if\(k==='html'\) return 'm';/.test(src));
+  t('a report is not a footnote to itself', /if\(k==='prose'\) return 'm';/.test(src));
 }
 
 console.log(fails ? fails + ' FAILED' : 'all passed');

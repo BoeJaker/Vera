@@ -919,7 +919,7 @@ body.ctx-grown #ctxRunsOverlay,body.ctx-remote #ctxRunsOverlay{display:block;pos
 body.exploded #xplHost{display:flex;position:absolute;inset:0;z-index:3}   /* the scene takes the whole column, down to its foot; the composer floats over it */
 body.exploded #chatStack{justify-content:flex-end}   /* the scene is out of the flow: what is left (the context strip, the composer) sits at the column's foot, over the scene */
 body.exploded #inputBar,body.exploded #ctxStrip{position:relative;z-index:4}
-body.exploded #msgs,body.exploded #jumpToBottomBtn{display:none!important}
+body.exploded #msgs,body.exploded #jumpToBottomBtn,body.exploded #turnRail{display:none!important}   /* the rail maps the transcript; with the scene in its place there is no transcript to map */
 #msgs.xpl-back{animation:xpl-back .32s ease both}
 @keyframes xpl-back{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 #xplHost vera-exploded{flex:1;min-height:0}
@@ -6332,6 +6332,67 @@ IMPORTANT:
     events.sort((a,b)=>a.key-b.key||a.label.localeCompare(b.label));
     return events.slice(0,40);
   }
+  /* ═══ THE CAP → CANVAS ADAPTER ═══════════════════════════════════════════════════════════════════════════════
+     There are 2513 capabilities across 150 namespaces. Whatever decides what a result becomes on the canvas, it
+     cannot be a function per capability, and it cannot be a chain of ifs that someone has to open and edit in the
+     middle every time a cap is added. It is a REGISTRY: an ordered list of small rules, each saying what it
+     recognises and what it builds. Adding a kind is appending one entry; correcting a wrong guess is one line in
+     the override table. Nothing else has to be touched, and nothing here knows about any particular capability.
+
+     Three inputs, strongest first:
+
+       1. THE SHAPE OF THE RESULT. What actually came back. Always available, always the truth, and it is what
+          makes a brand-new capability work on the day it is written without anybody having taught this anything.
+       2. WHAT THE CAP SAYS IT RETURNS. 1680 of the 2513 declare "Output: {...}" in their own description, and the
+          chat already has every description in ALL_CAPS. It costs one parse and it settles the cases where the
+          shape is ambiguous - {ok:true, text:"..."} is a page from one cap and a status line from another.
+       3. AN OVERRIDE. For the handful the first two get wrong. A name or a namespace to an adapter, by hand.
+
+     A result matching nothing still becomes markdown, which is the honest drawing of a thing with no shape. */
+  const CV_ADAPTERS=[];
+  const cvAdapter=(name, when, build)=>{ CV_ADAPTERS.push({ name, when, build }); };
+  /* a cap's own declared output keys, read once out of its description. The declaration is prose written by the
+     cap's author, so it is a HINT and never the decision: it narrows a tie, it does not overrule the bytes. */
+  const _CV_DECL={};
+  function _cvDeclared(capName){
+    const n=String(capName||''); if(!n) return null;
+    if(_CV_DECL[n]!==undefined) return _CV_DECL[n];
+    let keys=null;
+    try{
+      const cap=(typeof ALL_CAPS!=='undefined'&&Array.isArray(ALL_CAPS))?ALL_CAPS.find(c=>c&&c.name===n):null;
+      const m=cap&&String(cap.description||'').match(/Output:\s*\{([^}]{0,400})/);
+      if(m){ keys=new Set((m[1].match(/([a-z_]{2,24})\s*[:,\]\}?]/g)||[]).map(x=>x.replace(/[^a-z_]/g,''))); }
+    }catch(_){ keys=null; }
+    _CV_DECL[n]=keys; return keys;
+  }
+  /* the last resort. A capability whose result the rules read wrongly is named here, with the adapter it should
+     use - or '' to send it straight to markdown. One line per correction, and the reason beside it. */
+  const CV_CAP_KIND={
+    // canvas.* answers describe what the canvas just did; drawing the receipt as an item is a receipt on the canvas
+    'canvas.*':'', 'ui.directive':'',
+  };
+  function _cvOverride(capName){
+    const n=String(capName||''); if(!n) return undefined;
+    if(CV_CAP_KIND[n]!==undefined) return CV_CAP_KIND[n];
+    const ns=n.split('.')[0]+'.*';
+    return CV_CAP_KIND[ns];
+  }
+  // the one entry point: a result in, a canvas item (or several, or nothing) out
+  function _cvAdapt(capName, result, args){
+    if(result==null) return null;
+    const ov=_cvOverride(capName);
+    if(ov==='') return null;                       // named as "never draw this"
+    const ctx={ cap:String(capName||''), args:args||{}, declared:_cvDeclared(capName) };
+    for(let i=0;i<CV_ADAPTERS.length;i++){
+      const a=CV_ADAPTERS[i];
+      if(ov&&a.name!==ov) continue;                // forced to one adapter
+      let ok=false; try{ ok=!!a.when(result, ctx); }catch(_){ ok=false; }
+      if(!ok) continue;
+      let made=null; try{ made=a.build(result, ctx); }catch(_){ made=null; }
+      if(made) return made;
+    }
+    return null;
+  }
   const _cvCapTerm=(c)=>{
     // a command and its output is a TERMINAL, not a paragraph about one (exec.bash.run and its family:
     // {ok, rc, stdout, stderr, elapsed_ms, command})
@@ -6398,6 +6459,58 @@ IMPORTANT:
     return { kind:'widget', n:name||form, k:'widget', col:'#a78bfa', d:'widget \u00b7 '+form,
       content:Object.assign({}, full, {widget:form, form, title:name||form, record:full}) };
   };
+  /* ── the rules, in the order they are tried ──────────────────────────────────────────────────────────────── */
+  const _cvStr=(c,keys)=>{ if(!c||typeof c!=='object') return ''; for(let i=0;i<keys.length;i++){ const v=c[keys[i]];
+    if(typeof v==='string'&&v.trim()) return v; } return ''; };
+  const _cvDec=(ctx,k)=>!!(ctx&&ctx.declared&&ctx.declared.has(k));
+
+  // a command and its output is a TERMINAL. The declaration settles it when the shape is thin - a cap that says
+  // it returns stdout is a command even on the run where the command printed nothing.
+  cvAdapter('terminal',
+    (c,ctx)=>!!(c&&typeof c==='object'&&c.command!=null&&(c.stdout!=null||c.stderr!=null))
+           || !!(c&&typeof c==='object'&&_cvDec(ctx,'stdout')&&(c.stdout!=null||c.stderr!=null)),
+    (c)=>_cvCapTerm(c) || (function(){
+      const out=[String(c.stdout||''),String(c.stderr||'')].filter(x=>x.trim()).join('\n');
+      const cmd=String(c.command||c.cmd||'').replace(/\s+/g,' ').trim();
+      return { kind:'session', n:cmd.slice(0,52)||'output', k:'term', col:'#7dd3fc', d:'terminal',
+               content:{ command:cmd, output:out.slice(0,16000) } }; })());
+
+  // pages, with addresses: a reading list, not a grid of truncated cells
+  cvAdapter('sources', (c)=>!!_cvCapSources(c), (c)=>_cvCapSources(c));
+
+  // RAW HTML a cap built. The canvas has an html block and this was going to markdown as escaped source.
+  cvAdapter('html',
+    (c,ctx)=>!!(c&&typeof c==='object'&&typeof c.html==='string'&&/<[a-z!]/i.test(c.html)) || (_cvDec(ctx,'html')&&!!(c&&c.html)),
+    (c)=>({ kind:'html', n:String(c.title||'page'), k:'html', col:'#f0abfc', d:'html',
+            content:{ html:String(c.html).slice(0,200000) } }));
+
+  // an IMAGE a cap produced - base64 or an address. browser.screenshot, the media caps, anything that draws.
+  cvAdapter('image',
+    (c)=>!!(c&&typeof c==='object'&&(typeof c.image_b64==='string'||(typeof c.url==='string'&&/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(c.url)))),
+    (c)=>{ const b=c.image_b64?String(c.image_b64):'';
+      const mime=/^\/9j\//.test(b)?'image/jpeg':/^R0lGOD/.test(b)?'image/gif':/^UklGR/.test(b)?'image/webp':'image/png';
+      const url=b?('data:'+mime+';base64,'+b):String(c.url||'');
+      if(!url) return null;
+      return { kind:'image', n:String(c.title||'image'), k:'image', col:'#e879f9', d:'image',
+               content:{ url, alt:String(c.title||''), caption:String(c.caption||'') } }; });
+
+  // rows of the same shape: a table with real columns
+  cvAdapter('table', (c,ctx)=>!!_cvCapTable(c,ctx.cap), (c,ctx)=>_cvCapTable(c,ctx.cap));
+
+  // a shape the chat's own widget rule recognises IS that chart
+  cvAdapter('widget', (c,ctx)=>!!_cvCapWidget(c,ctx.cap,ctx.args), (c,ctx)=>_cvCapWidget(c,ctx.cap,ctx.args));
+
+  /* PROSE a cap wrote - a report, a summary, a note. Long text is the deliverable itself and was being fenced
+     into a code block, which is the one drawing that makes writing unreadable. Last of the rules, because almost
+     every result carries SOME string and this must never take one off a table or a terminal. */
+  cvAdapter('prose',
+    (c,ctx)=>{ const v=_cvStr(c,['report','markdown','md','summary','text','answer','content']);
+      return v.length>=200 || (v.length>=40 && (_cvDec(ctx,'report')||_cvDec(ctx,'summary')||_cvDec(ctx,'markdown'))); },
+    (c)=>{ const v=_cvStr(c,['report','markdown','md','summary','text','answer','content']);
+      const first=v.replace(/^#+\s*/,'').split('\n').find(x=>x.trim())||'note';
+      return { kind:'markdown', n:first.slice(0,52), k:'prose', col:'var(--acc2)', d:'written',
+               content:{ md:v.slice(0,20000) } }; });
+
   function _cvHarvest(body){
     const out=[]; if(!body) return out;
     body.querySelectorAll('.cap-inline').forEach((el, i) => { const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:'')||'').replace(/\s+/g,' ').trim().slice(0,80); const res=String((el.querySelector('.cap-result,.cap-peek,.cap-md')||{}).textContent||'').trim().slice(0,2000); if(!n) return;
@@ -6407,7 +6520,7 @@ IMPORTANT:
       const cap = el.__cap || null, cres = cap && !cap.err ? cap.content : null;
       const cname = String((cap && cap.name) || n.split(' ')[0] || 'capability');
       let made = null;
-      try{ made = _cvCapTerm(cres) || _cvCapSources(cres) || _cvCapTable(cres, cname) || _cvCapWidget(cres, cname, cap && cap.args); }catch(_){ made = null; }
+      try{ made = _cvAdapt(cname, cres, cap && cap.args); }catch(_){ made = null; }
       // a search answers with PAGES - several items, not one - so a recogniser may hand back a list
       if(Array.isArray(made)){ made.forEach(x=>out.push(x)); return; }
       if(made){ out.push(made); return; }
@@ -6438,6 +6551,8 @@ IMPORTANT:
     // a terminal is a scrollback: at 's' it shows a prompt and two lines, which is not the output you asked for
     if(k==='session') return 'm';
     if(k==='source') return 's';   // a card to scan; it earns its height when you open the page
+    if(k==='html') return 'm';     // a rendered page in a letterbox is the squash this set out to fix
+    if(k==='prose') return 'm';    // a report IS the deliverable; it is not a footnote to itself
     return 's';
   }
   async function _cvLandReply(mid){
