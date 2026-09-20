@@ -5786,7 +5786,7 @@ function dkrRenderContainers(){
     const ramStr=st.memory_limit>0?_fmtBytes(st.memory_usage)+'/'+_fmtBytes(st.memory_limit):'—';
     const created=c.Created?new Date(c.Created*1000).toLocaleDateString():'—';
     return '<tr>'
-      +'<td style="font-weight:600;color:var(--acc2)">'+esc(name)+(isSbx?' <span class="j-badge" style="font-size:7px" title="session sandbox container">sbx</span>':'')+'</td>'
+      +'<td style="font-weight:600;color:var(--acc2)"><span class="mc-ent" data-entity="container:'+esc((_dkrHostId||'local')+'/'+name)+'" title="Everything the estate knows about this container" tabindex="0">'+esc(name)+'</span>'+(isSbx?' <span class="j-badge" style="font-size:7px" title="session sandbox container">sbx</span>':'')+'</td>'
       +'<td style="font-size:9px;color:var(--dim2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(image)+'">'+esc(image.split(':')[0])+'</td>'
       +'<td><span class="j-badge '+(running?'j-running':'j-done')+'" style="'+(running?'':'color:var(--dim)')+'">'+esc(c.State)+'</span></td>'
       +'<td style="font-size:8.5px;font-family:var(--mono)">'+esc(ports)+'</td>'
@@ -7226,7 +7226,7 @@ function catInstalledRender(){
       <div style="font-size:8px;color:var(--dim2);margin-top:2px">${n.models_path?esc(n.models_path)+' · ':''}models ${(n.size_gb||0).toFixed(1)}G${n.models_dir_gb!=null?' (store '+n.models_dir_gb+'G)':''}${n.disk_source?' · via '+esc(n.disk_source):''}</div>`;
     }
     const rows=models.map(m=>`<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:2px 6px;font-family:var(--mono);font-size:9.5px">${m.loaded?'<span title="Resident in VRAM now" style="color:var(--warn)">⬤ </span>':''}${esc(m.name)}</td>
+      <td style="padding:2px 6px;font-family:var(--mono);font-size:9.5px">${m.loaded?'<span title="Resident in VRAM now" style="color:var(--warn)">⬤ </span>':''}<span class="mc-ent" data-entity="model:${esc(m.name)}" title="Which nodes serve this model" tabindex="0">${esc(m.name)}</span></td>
       <td style="font-size:9px;color:var(--dim2)">${esc(m.quant||'')}</td>
       <td style="font-size:9px;color:var(--dim2)">${m.params_b?m.params_b+'B':''}</td>
       <td style="font-size:9px">${m.size_gb!=null?m.size_gb+'G':'—'}</td>

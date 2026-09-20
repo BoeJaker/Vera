@@ -73,9 +73,12 @@ class Sources:
 
     def __init__(self, machines=None, backups=None, certs=None, mesh=None, identity=None,
                  ssh_hosts=None, integrations=None, docker_hosts=None, inventory=None,
-                 containers=None, errors: Optional[Mapping[str, str]] = None, now: Optional[float] = None):
+                 containers=None, secrets=None, instances=None,
+                 errors: Optional[Mapping[str, str]] = None, now: Optional[float] = None):
         self.machines = list(machines or [])
         self.containers = list(containers or [])      # docker.ps rows (Engine shape), local host
+        self.secrets = list(secrets or [])            # secrets.list rows: path, updated, versions - never values
+        self.instances = dict(instances or {})        # ollama.instances: node -> {label, url, models, status}
         self.backups = dict(backups or {})            # backup.status: guests, schedules
         self.certs = list(certs or [])
         self.mesh = list(mesh or [])
@@ -427,6 +430,47 @@ def _container_record(src: Sources, ident: str) -> Dict[str, Any]:
             "planes": {}, "related": related, "links": [_link("Open in Docker", entity_ref("container", ident))]}
 
 
+def _secret_record(src: Sources, path: str) -> Dict[str, Any]:
+    """A named secret by its path. Only ever its metadata: where it lives, when it
+    changed, how many versions - the value stays in the store."""
+    s = next((x for x in src.secrets if _s(x.get("path")) == path), None)
+    if not s:
+        return {"found": False}
+    facts = [_fact("Store", "OpenBao · secret/vera/named/" + path), _fact("Updated", s.get("updated") or "—"),
+             _fact("Versions", s.get("versions") if s.get("versions") is not None else "—"),
+             _fact("Value", "never shown here; hand it to keydrop from Trust › Secrets")]
+    # Who uses it is known from the path's family, not from a reader.
+    if path.startswith("platform/"):
+        facts.append(_fact("Used by", "Platforms (Integrations › Platforms) - a platform credential"))
+    elif path.startswith("netctl/"):
+        facts.append(_fact("Used by", "the netctl door: vfs.peer.* and netsec.mesh.* act there with it"))
+    elif path.startswith("backup/"):
+        facts.append(_fact("Used by", "a migration or cleanup backup - safe to delete once its change has settled"))
+    return {"found": True, "title": path, "subtitle": "named secret", "facts": facts, "planes": {},
+            "related": [], "links": [_link("Open in Trust › Secrets", entity_ref("secret", path))]}
+
+
+def _model_record(src: Sources, tag: str) -> Dict[str, Any]:
+    """A model by its tag: which inference nodes serve it, from ollama.instances."""
+    holders = [(k, v) for k, v in src.instances.items() if isinstance(v, dict) and tag in (v.get("models") or [])]
+    if not holders and not any(tag in (v.get("models") or []) for v in src.instances.values() if isinstance(v, dict)):
+        if not src.instances:
+            return {"found": False}
+        return {"found": False, "error": f"no inference node serves {tag!r}"}
+    online = [k for k, v in holders if v.get("status") == "online"]
+    facts = [_fact("Served by", ", ".join(f"{k} ({v.get('label') or k})" for k, v in holders) or "no node"),
+             _fact("Online now", ", ".join(online) or "none"),
+             _fact("On the GPU", ", ".join(k for k, v in holders if v.get("has_gpu")) or "no")]
+    related = []
+    for k, v in holders:
+        m = src.machine_by_addr(_host_of_url(v.get("url", "")))
+        if m:
+            related.append({"ref": entity_ref("guest" if m.get("kind") == "guest" else "host", m.get("vmid") if m.get("kind") == "guest" else m.get("ssh_host_id") or m.get("id")),
+                            "label": m.get("label", ""), "noun": "machine", "detail": k})
+    return {"found": True, "title": tag, "subtitle": f"model · {len(holders)} node{'s' if len(holders) != 1 else ''}",
+            "facts": facts, "planes": {}, "related": related, "links": [_link("Open in Models", entity_ref("model", tag))]}
+
+
 def _docker_host_record(src: Sources, ident: str) -> Dict[str, Any]:
     d = next((y for y in src.docker_hosts if y.get("id") == ident), None)
     if not d:
@@ -478,6 +522,10 @@ def resolve(ref: Any, src: Sources) -> Dict[str, Any]:
         rec = _docker_host_record(src, ident)
     elif kind == "container":
         rec = _container_record(src, ident)
+    elif kind == "secret":
+        rec = _secret_record(src, ident)
+    elif kind == "model":
+        rec = _model_record(src, ident)
     else:
         rec = {"found": False, "error": f"{kind} is known but has no reader joined yet"}
     out = {**base, **rec}
