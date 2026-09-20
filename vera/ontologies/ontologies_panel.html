@@ -125,7 +125,7 @@ textarea.json-bad{border-color:rgba(201,107,107,.55)}
               <div class="field-group"><div class="field-label">Name</div><input id="f-name" placeholder="My Ontology"></div>
               <div class="field-group"><div class="field-label">Domain</div><input id="f-domain" placeholder="general, medical, legal..."></div>
               <div class="field-group"><div class="field-label">Description</div><input id="f-desc" placeholder="What this ontology covers..."></div>
-              <div class="field-group"><div class="field-label">Tags</div><input id="f-tags" placeholder="comma, separated"></div>
+              <div class="field-group"><div class="field-label">Tags</div><input id="f-tags" data-select="static" data-select-new placeholder="comma, separated"></div>
               <div class="row" style="gap:8px;margin-top:4px">
                 <label class="label">Enabled</label>
                 <input type="checkbox" id="f-enabled" checked>
@@ -240,7 +240,7 @@ textarea.json-bad{border-color:rgba(201,107,107,.55)}
               <div class="field-group"><div class="field-label">Description (optional)</div>
                 <input id="b-desc" placeholder="auto-generated if blank"></div>
               <div class="field-group"><div class="field-label">Tags</div>
-                <input id="b-tags" placeholder="comma-separated"></div>
+                <input id="b-tags" data-select="static" data-select-new placeholder="comma-separated"></div>
             </div>
             <div>
               <div class="field-group"><div class="field-label">Datasets (multi-select)</div>
@@ -981,6 +981,7 @@ const OP = (() => {
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

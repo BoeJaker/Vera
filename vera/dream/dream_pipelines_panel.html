@@ -104,7 +104,7 @@
     <label class="fld">Description</label><textarea id="f-desc" style="min-height:44px"></textarea>
 
     <label class="fld">Stages (one per line, in order)</label>
-    <textarea id="f-stages" placeholder="dream.stage.snapshot_source&#10;dream.stage.review_codebase&#10;dream.stage.review_report&#10;dream.stage.deliver" oninput="renderStyleToggles()"></textarea>
+    <textarea id="f-stages" data-select="caps" data-select-prefix="dream.stage." data-select-sep="\n" placeholder="dream.stage.snapshot_source&#10;dream.stage.review_codebase&#10;dream.stage.review_report&#10;dream.stage.deliver" oninput="renderStyleToggles()"></textarea>
     <div class="ref" id="stage-ref"></div>
 
     <div class="two">
@@ -321,6 +321,7 @@ $('ov').addEventListener('click', e=>{ if (e.target===$('ov')) closeEditor(); })
 loadAll(); loadStageRef();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>

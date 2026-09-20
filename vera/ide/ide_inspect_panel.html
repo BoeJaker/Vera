@@ -288,7 +288,7 @@
         <textarea id="bp-desc" rows="3" placeholder="Describe the panel's purpose and what API endpoints it calls."></textarea>
       </label>
       <label class="field span-2">Uses capabilities (comma-separated)
-        <input id="bp-caps" placeholder="obs.stats, fabric.datasets">
+        <input id="bp-caps" data-select="caps" placeholder="obs.stats, fabric.datasets">
       </label>
     </div>
     <div class="row">
@@ -627,6 +627,7 @@ loadInfo();
 loadSnapshots();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

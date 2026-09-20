@@ -225,7 +225,7 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
             <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Mirostat</div>
               <select id="f-mirostat"><option value="0">Off</option><option value="1">v1</option><option value="2">v2</option></select></div>
             <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Stop sequences</div>
-              <input id="f-stop" placeholder="\n\n, ### (comma-separated)"></div>
+              <input id="f-stop" data-select="static" data-select-new placeholder="\n\n, ### (comma-separated)"></div>
           </div>
 
           <div class="sec">Task Routing <span style="font-weight:400;color:var(--dim2);font-size:9.5px">— auto-classify each message to a job type</span></div>
@@ -412,7 +412,7 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
               <input id="f-memory_inject_limit" type="number" value="5" min="1" max="50">
               <div class="hint">per request</div></div>
             <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Filter by tags</div>
-              <input id="f-memory_tags" placeholder="tag1, tag2 (blank = all)">
+              <input id="f-memory_tags" data-select="static" data-select-new placeholder="tag1, tag2 (blank = all)">
               <div class="hint">only recall memories with matching tags</div></div>
           </div>
           <div class="sec">Session Memory Notes &amp; Context</div>
@@ -441,7 +441,7 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
               <div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Trigger threshold (chars)</div>
               <input id="f-quick_opener_threshold" type="number" value="1500" min="200" step="100">
               <div style="font-size:9.5px;color:var(--dim2);margin:8px 0 3px">Opener model (blank = agent model)</div>
-              <input id="f-quick_opener_model" placeholder="e.g. llama3.2:1b">
+              <input id="f-quick_opener_model" data-select="models" data-select-single data-select-new placeholder="e.g. llama3.2:1b">
             </div>
           </div>
           <div class="g2" style="margin-bottom:12px">
@@ -1342,6 +1342,7 @@ const AP = (() => {
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>
