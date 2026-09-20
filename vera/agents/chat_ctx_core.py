@@ -83,10 +83,20 @@ def stable_chat_num_ctx(needed: int,
     # still asks for a sensible window rather than a few hundred tokens.
     want = max(needed, floor)
 
-    # Reuse an already-loaded window when it covers this turn. `<= cap` keeps a
-    # runner some other caller loaded larger than we are permitted to use from
-    # silently raising our own ceiling.
-    if resident and resident >= want and (cap <= 0 or resident <= cap):
+    # Reuse ANY already-loaded window that covers this turn — including one
+    # LARGER than `cap`.
+    #
+    # The first cut refused those, and that left the thrash in place: gpu-250
+    # kept a 24576 runner loaded by other callers, chat's cap was the agent's
+    # 16384, so every turn still forced a reload (measured 2026-09-20: 102s,
+    # 150s timeout, 88s for one-word replies). `cap` bounds the window we would
+    # ask to CREATE; a bigger one that already exists costs nothing to use, and
+    # the reload it avoids is the whole problem.
+    #
+    # It does NOT license sending more context than the agent allows: the caller
+    # compacts to min(cap, window), so the operator's num_ctx still bounds the
+    # prompt. Only the allocation is borrowed.
+    if resident and resident >= want:
         return resident
 
     want = _round_up(want, step)

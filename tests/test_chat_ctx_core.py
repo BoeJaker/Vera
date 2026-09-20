@@ -43,10 +43,24 @@ def test_resident_window_is_not_adopted_when_it_cannot_hold_the_turn():
     assert got <= 28672
 
 
-def test_resident_window_above_the_cap_is_not_adopted():
-    """Another caller's larger runner must not raise our own ceiling."""
-    got = cc.stable_chat_num_ctx(needed=900, cap=8192, resident=24576)
-    assert got <= 8192
+def test_a_larger_resident_window_IS_adopted():
+    """The correction that actually stopped the thrash.
+
+    The first cut refused a resident window above `cap`, which left gpu-250
+    reloading on every turn: other callers kept a 24576 runner loaded, the
+    agent's cap was 16384, so chat asked for something different every time —
+    measured at 102s, a 150s timeout, and 88s for one-word replies. `cap`
+    bounds the window we would ask to CREATE; one that already exists is free.
+    """
+    assert cc.stable_chat_num_ctx(needed=900, cap=16384, resident=24576) == 24576
+
+
+def test_borrowing_a_bigger_window_does_not_raise_the_prompt_budget():
+    """The guard that makes the above safe lives in the caller: it compacts to
+    min(cap, window). Pinned here so the pair cannot drift apart."""
+    window = cc.stable_chat_num_ctx(needed=900, cap=16384, resident=24576)
+    assert window == 24576
+    assert min(16384, window) == 16384   # what the caller compacts against
 
 
 # ── clamping ─────────────────────────────────────────────────────────────────
@@ -127,10 +141,19 @@ def test_observed_gpu250_case_does_not_reload():
 
     Runner resident at 24576 (ollama's own fit for the 12GB card); agent cap
     16384; a one-line question. Before the fix chat asked for 16384 and evicted
-    the 24576 runner. 24576 is above this agent's cap, so it must NOT be
-    adopted — but the request must still be stable turn to turn.
+    the 24576 runner on every single turn.
     """
     first = cc.stable_chat_num_ctx(needed=1100, cap=16384, resident=24576)
-    second = cc.stable_chat_num_ctx(needed=1240, cap=16384, resident=first)
-    assert first <= 16384
-    assert second == first, "the second turn must reuse the runner the first loaded"
+    second = cc.stable_chat_num_ctx(needed=1240, cap=16384, resident=24576)
+    assert first == 24576, "must adopt the runner that is already loaded"
+    assert second == first, "and keep adopting it, turn after turn"
+
+
+def test_chat_and_another_caller_converge_instead_of_fighting():
+    """Two callers, one runner slot. Whoever loads first, the other adopts it —
+    which is the only way the thrash ends on a node that fits one runner."""
+    loaded_by_someone_else = 24576
+    turns = [cc.stable_chat_num_ctx(needed=n, cap=16384,
+                                    resident=loaded_by_someone_else)
+             for n in (800, 1500, 3000, 9000)]
+    assert turns == [24576] * 4, turns
