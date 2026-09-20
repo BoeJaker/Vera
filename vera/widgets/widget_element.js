@@ -1732,16 +1732,43 @@ span.vw-sampled{opacity:.85}
   const INFLIGHT = new Map();   // one fetch per (base, name, args) at a time, shared by every element that asks
   // the read queue: at most CALL_LANES fetches in flight, first asked first served - a slow reading is never starved by
   // the fast tiles' refresh timers, and a page of fifty tiles opens without the browser's connection limit deciding
-  const CALL_LANES = 5, QUEUE = []; let LANES = 0;
-  function pump() { while (LANES < CALL_LANES && QUEUE.length) { const job = QUEUE.shift(); LANES++; job.run().then(job.ok, job.no).finally(() => { LANES--; pump(); }); } }
-  function enqueue(run) { return new Promise((ok, no) => { QUEUE.push({ run, ok, no }); pump(); }); }
+  // Six lanes (the browser's own limit per host); the SLOW readings - the ones known to take seconds (a health sweep, a
+  // backup census, a topology walk) and any reading that last took over four seconds - may hold two of them at most,
+  // so the fast tiles never queue behind them (a fair FIFO alone let five slow reads take every lane and the page sat
+  // on its samples); a fast reading passes a waiting slow one when the slow lanes are full
+  // BATCHED READS. A dashboard of fifty tiles asked on fifty connections, and the browser gives a host six, shared with
+  // everything else the page loads - so the reads queued for minutes behind the shell's own requests. The readings
+  // asked within a beat go to prod as ONE widget.read call (a connection each, at most 24 readings a batch); the
+  // readings known to take seconds (a health sweep, a backup census, a topology walk, or one that last took over four
+  // seconds) batch among themselves, so a fast reading is never held by a slow one. A server without widget.read
+  // (a 404) is asked one reading at a time, as before.
+  const COST = new Map(), BATCH_MAX = 24, BATCH_MS = 40, PENDING = { fast: [], slow: [] }, TIMERS = {}; let BATCH_OFF = false;
+  const SLOW_NAMES = /^(estate\.health|backup\.status|fabric\.health|topology\.snapshot|mesh\.topology|perf\.scan|evolve\.errors\.list)$/;
+  const isSlow = (name) => SLOW_NAMES.test(String(name || '')) || (COST.get(name) || 0) > 4000;
+  const opened = (j) => (j && j.type === 'tool_result') ? j.content : (j && j.result !== undefined ? j.result : (j && j.content !== undefined ? j.content : j));
+  async function single(base, name, args) {
+    const r = await fetch((base || '') + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) });
+    return opened(await r.json());
+  }
+  async function flush(lane) {
+    TIMERS[lane] = null; const items = PENDING[lane].splice(0, BATCH_MAX); if (PENDING[lane].length) TIMERS[lane] = setTimeout(() => flush(lane), 0);
+    if (!items.length) return;
+    const base = items[0].base, t0 = Date.now();
+    const fallback = () => items.forEach((it) => single(it.base, it.name, it.args).then(it.ok, it.no));
+    if (BATCH_OFF) return fallback();
+    try {
+      const r = await fetch((base || '') + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'widget.read', arguments: { calls: items.map((it) => ({ name: it.name, arguments: it.args || {} })) } }) });
+      if (r.status === 404) { BATCH_OFF = true; return fallback(); }
+      const c = opened(await r.json()); const res = c && Array.isArray(c.results) ? c.results : null;
+      if (!res) return fallback();
+      items.forEach((it, i) => { const q = res[i]; COST.set(it.name, (q && q.ms) || (Date.now() - t0)); if (q && q.ok) it.ok(q.content); else it.no(new Error((q && q.error) || 'read failed')); });
+    } catch (e) { fallback(); }
+  }
+  function enqueue(base, name, args) { return new Promise((ok, no) => { const lane = isSlow(name) ? 'slow' : 'fast'; PENDING[lane].push({ base, name, args, ok, no }); if (!TIMERS[lane]) TIMERS[lane] = setTimeout(() => flush(lane), BATCH_MS); }); }
   async function call(base, name, args) {
     let key = ''; try { key = (base || '') + '|' + name + '|' + JSON.stringify(args || {}); } catch (_) { key = ''; }
     if (key && INFLIGHT.has(key)) return INFLIGHT.get(key);
-    const p = enqueue(async () => {
-      const r = await fetch((base || '') + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) });
-      const j = await r.json(); return (j && j.type === 'tool_result') ? j.content : (j && j.result !== undefined ? j.result : (j && j.content !== undefined ? j.content : j));
-    });
+    const p = enqueue(base, name, args);
     if (key) { INFLIGHT.set(key, p); p.then(() => setTimeout(() => INFLIGHT.delete(key), 1500), () => INFLIGHT.delete(key)); }
     return p;
   }

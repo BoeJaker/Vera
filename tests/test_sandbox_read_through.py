@@ -59,3 +59,26 @@ def test_the_groups_can_be_narrowed_from_the_environment():
     assert sg.read_through_allowed("obs.health", "GET", env) is True
     assert sg.read_through_allowed("ollama.instances", "GET", env) is False
     assert sg.read_through_groups(SBX) == sg.READ_THROUGH_GROUPS
+
+
+def test_widget_read_runs_many_readings_in_one_call(monkeypatch):
+    """widget.read: each call runs as /mcp/call would, one failed reading never fails the batch, unknown names say so."""
+    import asyncio, sys, types
+    from vera.widgets import widget_catalog as wc
+    co = types.SimpleNamespace(_READ_THROUGH_URL="", CAPABILITY_REGISTRY={
+        "a.status": {"func": (lambda **kw: asyncio.sleep(0, result={"a": 1})), "schema": {"properties": {}}},
+        "b.list": {"func": (lambda **kw: asyncio.sleep(0, result=[1, 2, 3])), "schema": {"properties": {"n": {"type": "integer"}}}},
+    })
+
+    async def boom(**kw):
+        raise RuntimeError("no store")
+    co.CAPABILITY_REGISTRY["c.stats"] = {"func": boom, "schema": {"properties": {}}}
+    monkeypatch.setitem(sys.modules, "Vera.vera.capability_orchestration", co)
+    out = asyncio.run(wc.widget_read(calls=[{"name": "a.status"}, {"name": "b.list", "arguments": {"n": 2, "junk": 1}}, {"name": "c.stats"}, {"name": "nope.get"}]))
+    assert out["ok"] and out["count"] == 4
+    r = out["results"]
+    assert r[0]["ok"] and r[0]["content"] == {"a": 1}
+    assert r[1]["ok"] and r[1]["content"] == [1, 2, 3]
+    assert not r[2]["ok"] and "no store" in r[2]["error"]
+    assert not r[3]["ok"] and r[3]["error"] == "unknown capability"
+    assert asyncio.run(wc.widget_read(calls=[])) == {"ok": True, "results": [], "count": 0}

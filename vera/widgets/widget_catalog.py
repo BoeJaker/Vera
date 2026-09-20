@@ -287,6 +287,46 @@ def load_layout(key: str) -> Optional[Dict[str, Any]]:
 
 
 @capability(
+    "widget.read", memory="off", silent=True,
+    http_method="POST", http_path="/ui/widgets/read", http_tags=["ui", "widgets"],
+    description="Many readings in one call: a dashboard of fifty tiles asks for its sources together instead of on "
+                "fifty connections (the browser allows six per host and the page's other requests hold them). Each "
+                "call runs as /mcp/call would - the same wrapper, the same sandbox read-through. Input: calls (list of "
+                "{name, arguments}; at most 40). Output: {ok, results:[{name, ok, content | error, ms}], count}.")
+async def widget_read(calls=None, trace_id=None):
+    import asyncio as _aio, sys as _sys, time as _time
+    co = _sys.modules.get("Vera.vera.capability_orchestration") or _sys.modules.get("vera.capability_orchestration")
+    reg = getattr(co, "CAPABILITY_REGISTRY", None) or {}
+    items = [c for c in (calls or []) if isinstance(c, dict) and c.get("name")][:40]
+
+    async def one(c):
+        name = str(c.get("name") or ""); args = c.get("arguments") or {}
+        if not isinstance(args, dict):
+            args = {}
+        t0 = _time.time()
+        try:
+            cap = reg.get(name)
+            if not cap:
+                # a reading this process does not load may still be prod's, through the sandbox read-through
+                rt = None
+                if getattr(co, "_READ_THROUGH_URL", "") and co._sg_read_through_allowed(name, "GET"):
+                    rt = await co._upstream_read(name, args)
+                if rt is None:
+                    return {"name": name, "ok": False, "error": "unknown capability", "ms": int((_time.time() - t0) * 1000)}
+                return {"name": name, "ok": True, "content": rt, "ms": int((_time.time() - t0) * 1000)}
+            accepted = set((cap.get("schema") or {}).get("properties", {}).keys())
+            if accepted:
+                args = {k: v for k, v in args.items() if k in accepted}
+            res = await cap["func"](**args)
+            return {"name": name, "ok": True, "content": res, "ms": int((_time.time() - t0) * 1000)}
+        except Exception as e:   # one failed reading never fails the batch
+            return {"name": name, "ok": False, "error": str(e)[:200], "ms": int((_time.time() - t0) * 1000)}
+
+    results = await _aio.gather(*[one(c) for c in items]) if items else []
+    return {"ok": True, "results": list(results), "count": len(results)}
+
+
+@capability(
     "widget.layouts", memory="off", silent=True,
     http_method="GET", http_path="/ui/widgets/layouts", http_tags=["ui", "widgets"],
     description="The dashboards' layout files: one per VeraDash grid, every widget of the grid as a record. "

@@ -6,7 +6,7 @@ const fs = require('node:fs'); const path = require('node:path'); const vm = req
 const here = __dirname;
 const src = fs.readFileSync(path.join(here, '..', 'vera', 'widgets', 'widget_element.js'), 'utf8');
 const defined = {};
-const ctx = { window: {}, console, HTMLElement: class {}, CustomEvent: class {}, customElements: { get: (n) => defined[n], define: (n, c) => { defined[n] = c; } }, document: { querySelectorAll: () => [], createElement: () => ({ setAttribute() {}, appendChild() {} }) } };
+const ctx = { setTimeout, clearTimeout, window: {}, console, HTMLElement: class {}, CustomEvent: class {}, customElements: { get: (n) => defined[n], define: (n, c) => { defined[n] = c; } }, document: { querySelectorAll: () => [], createElement: () => ({ setAttribute() {}, appendChild() {} }) } };
 ctx.window.customElements = ctx.customElements; ctx.window.document = ctx.document;
 // the one projection library first (the element loads /ui/iso.js itself in a page; here it is in the context already)
 vm.runInNewContext(fs.readFileSync(path.join(here, '..', 'vera', 'ui', 'iso.js'), 'utf8'), ctx);
@@ -157,13 +157,17 @@ t('a report / rail composite draws its children as chips in rows', /vw-slot-row[
 t('css names the sample tag', /\.vw-sampletag/.test(W.css()) && /\.vw-sampled/.test(W.css()));
 // ── the one /mcp/call helper opens prod's envelope and a stand-in's ──
 (async () => {
-  const answers = [{ type: 'tool_result', tool_name: 'x', content: { ok: true, a: 1 } }, { result: { ok: true, b: 2 } }, { ok: true, c: 3 }];
-  let i = 0; ctx.fetch = async () => ({ json: async () => answers[i++] });
-  const r = [await W.call('', 'x', { i: 1 }), await W.call('', 'x', { i: 2 }), await W.call('', 'x', { i: 3 })];
-  t('call() opens {type:tool_result, content}, {result} and the bare object', r[0].a === 1 && r[1].b === 2 && r[2].c === 3);
-  let n = 0; ctx.fetch = async () => { n++; return { json: async () => ({ ok: true, n }) }; };
-  const same = await Promise.all([W.call('', 'shared', { q: 1 }), W.call('', 'shared', { q: 1 }), W.call('', 'shared', { q: 1 })]);
-  t('the same read asked for three times at once is one fetch, shared', n === 1 && same.every((x) => x.n === 1), 'fetches ' + n);
+  // a stub server: widget.read answers the batch, a single call answers itself in one of the three envelopes
+  const answers = { x1: { type: 'tool_result', tool_name: 'x', content: { ok: true, a: 1 } }, x2: { result: { ok: true, b: 2 } }, x3: { ok: true, c: 3 } };
+  let fetches = 0, batched = 0; ctx.fetch = async (url, o) => { fetches++; const body = JSON.parse(o.body); if (body.name === 'widget.read') { batched += body.arguments.calls.length; return { status: 200, json: async () => ({ type: 'tool_result', content: { ok: true, results: body.arguments.calls.map((c) => ({ name: c.name, ok: true, content: { ok: true, k: c.name + (c.arguments.i || ''), n: fetches }, ms: 1 })) } }) }; } return { status: 200, json: async () => answers['x' + body.arguments.i] }; };
+  const r = await Promise.all([W.call('', 'x', { i: 1 }), W.call('', 'y', { i: 2 }), W.call('', 'z', { i: 3 })]);
+  t('three readings asked in one beat go to the server as ONE widget.read call and each gets its own answer', fetches === 1 && batched === 3 && r[0].k === 'x1' && r[1].k === 'y2' && r[2].k === 'z3', 'fetches ' + fetches + ' batched ' + batched + ' ' + JSON.stringify(r).slice(0, 80));
+  fetches = 0; const same = await Promise.all([W.call('', 'shared', { q: 1 }), W.call('', 'shared', { q: 1 }), W.call('', 'shared', { q: 1 })]);
+  t('the same read asked for three times at once is one reading, shared', fetches === 1 && same.every((x) => x.k === 'shared'), 'fetches ' + fetches);
+  fetches = 0; ctx.fetch = async (url, o) => { fetches++; const body = JSON.parse(o.body); if (body.name === 'widget.read') return { status: 404, json: async () => ({ detail: 'Unknown capability: widget.read' }) }; return { status: 200, json: async () => answers['x' + body.arguments.i] }; };
+  await new Promise((ok) => setTimeout(ok, 1600));   // the shared-read memory of the earlier calls lapses
+  const r2 = [await W.call('', 'x', { i: 1 }), await W.call('', 'x', { i: 2 }), await W.call('', 'x', { i: 3 })];
+  t('a server without widget.read (404) is asked one reading at a time, and call() still opens {type:tool_result, content}, {result} and the bare object', r2[0].a === 1 && r2[1].b === 2 && r2[2].c === 3, JSON.stringify(r2).slice(0, 120));
   // ── the surface (window.VeraWidgetConfig): the API, its record shapes, the two context-graph entries ──
   const C = ctx.window.VeraWidgetConfig;
   t('VeraWidgetConfig: open/close, version 3, the packs, the two context-graph entries', C && typeof C.open === 'function' && typeof C.close === 'function' && C.version === 3 && C.packs.length === 5 && C.packs[0][0] === 'inherit' && C.packs[4][0] === 'pixel' && C.entries.length === 2 && C.entries[0].id === 'context_graph' && C.entries[0].size === 'm' && C.entries[1].size === 'xl' && /mini/.test(C.entries[0].n) && /full/.test(C.entries[1].n));
