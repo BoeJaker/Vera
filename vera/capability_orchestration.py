@@ -10229,6 +10229,10 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "activity/activity_capabilities.py"),
         os.path.join(_here, "worldview/worldview_jepa.py"),
         os.path.join(_here, "research/researcher_api.py"),
+        # nlp_dispatch BEFORE nlp_capabilities: the caps import the placement
+        # switch from it, and its own caps (nlp.config.*, nlp.nodes) are how an
+        # operator sees why an nlp.* call went where it did.
+        os.path.join(_here, "research/nlp_dispatch.py"),
         os.path.join(_here, "research/nlp_capabilities.py"),
         os.path.join(_here, "vector browser/vector_browser_capabilites.py"),
         os.path.join(_here, "workers/job_persistance.py"),

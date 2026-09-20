@@ -32,7 +32,15 @@ CLI:
   python onnx_runtime.py bench    <slug> [--n 1000]
 """
 
-from __future__ import annotations
+# ⚠ `from __future__ import annotations` was REMOVED here, and must not come
+# back while RunReq is declared inside build_app(). It stringifies annotations,
+# and FastAPI resolves a stringified annotation against the MODULE globals —
+# where a model defined inside a function does not exist. FastAPI then falls
+# back to treating `req` as a QUERY parameter, so `POST /run/{slug}` rejected
+# every request it was ever sent with
+#   422 {"loc": ["query", "req"], "msg": "Field required"}
+# regardless of the body. Verified against fastapi 0.116.1 / pydantic 2.11.7 on
+# 2026-09-20; this endpoint has never been able to accept a tensor.
 
 import argparse
 import json
