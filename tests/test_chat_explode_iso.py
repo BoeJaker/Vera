@@ -33,7 +33,7 @@ def test_the_element_draws_bands_and_the_boards_items_and_carries_stack_size_and
     assert "xp-if-hd" not in EL and "frameHtml" not in EL, "no terminal-style frame with a three-dot header"
     assert "a record the turn read" in EL and "return { form: 'bar'," in EL, "a read record stands as its relevance meter"
     # the items scale with the scene: the counter-scale follows the fit alone, set once per render, never by the pan zoom
-    assert "out.inv = +(s * Math.min(1.45, 1 / Math.min(1, s))).toFixed(3);" in EL and "view.style.setProperty('--inv'" in EL
+    assert "out.inv = +(s * Math.min(1.2, 1 / Math.min(1, s))).toFixed(3);" in EL and "view.style.setProperty('--inv'" in EL
     pan = EL[EL.index("_applyPan() {"):EL.index("_click(e) {")]
     assert "--inv" not in pan
 
