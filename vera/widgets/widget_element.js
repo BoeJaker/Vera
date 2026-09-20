@@ -1725,7 +1725,9 @@ span.vw-sampled{opacity:.85}
     if (typeof document === 'undefined' || !document.head || !document.head.appendChild || window.VeraISO || ensureIso.loading) return;
     if (document.querySelector && document.querySelector('script[src$="/ui/iso.js"]')) { ensureIso.loading = true; const t = setInterval(() => { if (window.VeraISO) { clearInterval(t); INSTANCES.forEach((el) => { try { el.render(); } catch (_) {} }); } }, 200); return; }
     ensureIso.loading = true; const sc = document.createElement('script'); sc.src = (base || '') + '/ui/iso.js'; sc.async = true;
-    sc.onload = () => { INSTANCES.forEach((el) => { try { el.render(); } catch (_) {} }); }; sc.onerror = () => { ensureIso.loading = false; };
+    sc.onload = () => { INSTANCES.forEach((el) => { try { el.render(); } catch (_) {} }); };
+    // a load that fails (a flaky connection, a certificate hiccup) is tried again, or every iso form waits forever on 'loading the projection'
+    sc.onerror = () => { ensureIso.loading = false; sc.remove(); ensureIso.tries = (ensureIso.tries || 0) + 1; if (ensureIso.tries < 6) setTimeout(() => ensureIso(base), 1500 * ensureIso.tries); };
     document.head.appendChild(sc);
   }
   const REFRESH_FLOOR = 10;
@@ -1890,7 +1892,7 @@ span.vw-sampled{opacity:.85}
       this._sh.querySelectorAll('[data-vb-link]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); this.dispatchEvent(new CustomEvent('widget:open', { bubbles: true, composed: true, detail: { record: this._rec, href: a.dataset.vbLink, key: key(this._rec) } })); }));
       hydrate(this._sh);
       // a bare element (a dashboard tile's body) measures too: its host sizes it, and the forms fit what they are given
-      if (size !== 'xs' && size !== 's' && this._measured !== size) { const b = this._sh.querySelector('.vw-body'); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0; this._measured = size; if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
+      if (size !== 'xs' && size !== 's' && this._measured !== size) { const b = this._sh.querySelector('.vw-body') || (this.hasAttribute('bare') ? this : null); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0; if (hb > 0 || wb > 0) this._measured = size; if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
       this.dispatchEvent(new CustomEvent('widget:rendered', { bubbles: true, composed: true, detail: { form, size, sample: sampled, empty: readEmpty, stale } }));
     }
   }

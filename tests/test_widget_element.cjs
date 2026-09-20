@@ -193,6 +193,8 @@ t('css names the sample tag', /\.vw-sampletag/.test(W.css()) && /\.vw-sampled/.t
   t('graph: a measured body is filled (the mesh drew 300 px wide in a 516 px tile); an unmeasured one keeps the fixed width', /width:100%;max-width:100%/.test(gw) && !/width:300px/.test(gw) && /width:300px;max-width:100%/.test(gn), (gw.match(/style="width[^"]*"/) || [''])[0]);
   t('the slow lane batches four readings at most (one twenty-second health sweep held twenty-three others)', src.includes("splice(0, lane === 'slow' ? 4 : BATCH_MAX)"));
   t('city: a stopped guest is drawn down (status stopped/down/off), once', src.includes("down: !!(n.down || /stopped|down|off/.test(String(n.status ?? ''))) }));") && !src.includes("down: !num(n.load ?? n.value ?? 0) && /down/"));
+  t('a bare element measures its HOST (it has no .vw-body): the iso scenes and the mesh graph drew 96 px tall in a 236 px tile; an unlaid-out element measures again next render', src.includes("const b = this._sh.querySelector('.vw-body') || (this.hasAttribute('bare') ? this : null);") && src.includes("if (hb > 0 || wb > 0) this._measured = size;") && src.includes("this._measured = ''; if (this._rec) this.render();"));
+  t('the iso script is fetched again when a load fails (every iso form waited forever on the projection after one bad fetch)', src.includes('sc.onerror = () => { ensureIso.loading = false; sc.remove(); ensureIso.tries = (ensureIso.tries || 0) + 1; if (ensureIso.tries < 6) setTimeout(() => ensureIso(base), 1500 * ensureIso.tries); };'));
   console.log(fails ? fails + ' FAILED' : 'all passed');
   process.exit(fails ? 1 : 0);
 })();
