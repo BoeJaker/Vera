@@ -1,6 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Vera Canvas</title>
@@ -300,5 +306,6 @@ if(_q) openCanvas(_q);
 // Allow the host harness to focus a canvas via postMessage {canvas:'<id>'}.
 window.addEventListener('message', e=>{ if(e.data && e.data.canvas) openCanvas(e.data.canvas); });
 </script>
+<script src="/ui/vera-ui.js"></script>
 </body>
 </html>

@@ -74,13 +74,13 @@ body{display:flex;height:100vh;overflow:hidden}
 .btn{background:var(--bg2);border:1px solid var(--border2);color:var(--fg2);padding:4px 11px;
   border-radius:5px;font-size:10.5px;cursor:pointer;transition:.12s;display:inline-flex;align-items:center;gap:5px;font-family:inherit;white-space:nowrap}
 .btn:hover{background:var(--bg3);color:var(--fg);border-color:var(--border3)}
-.btn.pri{background:rgba(109,158,235,.15);border-color:rgba(109,158,235,.3);color:var(--acc)}
-.btn.pri:hover{background:rgba(109,158,235,.25)}
-.btn.grn{background:rgba(74,222,128,.12);border-color:rgba(74,222,128,.25);color:var(--acc2)}
-.btn.grn:hover{background:rgba(74,222,128,.2)}
+.btn.pri,.btn.primary{background:rgba(109,158,235,.15);border-color:rgba(109,158,235,.3);color:var(--acc)}
+.btn.pri:hover,.btn.primary:hover{background:rgba(109,158,235,.25)}
+.btn.grn,.btn.ok,.btn.ok-btn{background:rgba(74,222,128,.12);border-color:rgba(74,222,128,.25);color:var(--acc2)}
+.btn.grn:hover,.btn.ok:hover,.btn.ok-btn:hover{background:rgba(74,222,128,.2)}
 .btn.org{background:rgba(251,146,60,.1);border-color:rgba(251,146,60,.25);color:var(--acc3)}
-.btn.red{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.2);color:var(--err)}
-.btn.red:hover{background:rgba(248,113,113,.15)}
+.btn.red,.btn.danger,.btn.err-btn,.btn.no{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.2);color:var(--err)}
+.btn.red:hover,.btn.danger:hover,.btn.err-btn:hover,.btn.no:hover{background:rgba(248,113,113,.15)}
 .btn.sm{padding:2px 8px;font-size:10px}
 .btn:disabled{opacity:.4;cursor:default}
 

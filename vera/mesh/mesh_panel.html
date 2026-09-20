@@ -51,10 +51,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 11px;border-radius:var(--radius-sm);
   background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-size:11px;cursor:pointer;font-family:var(--sans)}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#10201c);font-weight:600}
-.btn.primary:hover{filter:brightness(1.1);color:var(--on-acc,#10201c)}
+.btn.primary,.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#10201c);font-weight:600}
+.btn.primary:hover,.btn.pri:hover{filter:brightness(1.1);color:var(--on-acc,#10201c)}
 .btn.sm{padding:3px 7px;font-size:10px}
-.btn.danger:hover{border-color:var(--err);color:var(--err)}
+.btn.danger:hover,.btn.red:hover,.btn.err-btn:hover,.btn.no:hover{border-color:var(--err);color:var(--err)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .status{font-size:10px;color:var(--dim2);margin-top:6px;min-height:13px;word-break:break-word}
 .status.ok{color:var(--ok)}.status.err{color:var(--err)}.status.warn{color:var(--warn)}

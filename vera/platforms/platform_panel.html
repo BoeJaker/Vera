@@ -35,8 +35,8 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
 .btn{background:var(--bg2);border:1px solid var(--border2);color:var(--fg);border-radius:5px;
   padding:6px 12px;font:inherit;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
 .btn:hover{background:var(--bg3);border-color:var(--acc)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600}
-.btn.ok{background:var(--ok);border-color:var(--ok);color:#04121f;font-weight:600}
+.btn.primary,.btn.pri{background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600}
+.btn.ok,.btn.grn,.btn.ok-btn{background:var(--ok);border-color:var(--ok);color:#04121f;font-weight:600}
 .btn.sm{padding:3px 9px;font-size:10px}
 input[type=text],input[type=password],select{width:100%;background:var(--bg);border:1px solid var(--border2);
   color:var(--fg);border-radius:5px;padding:6px 9px;font:inherit;font-size:11px;font-family:var(--mono)}
@@ -283,5 +283,6 @@ async function loadAll(){
 }
 loadAll();
 </script>
+<script src="/ui/vera-ui.js"></script>
 </body>
 </html>

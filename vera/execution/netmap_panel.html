@@ -24,7 +24,7 @@
 [data-theme="ice"]  {--bg:#090f18;--s1:#0d1620;--s2:#121e2c;--s3:#182638;--bd:rgba(80,160,255,.1);--bd2:rgba(80,160,255,.2);--t1:#c0d8f0;--t2:#406880;--t3:#1e3850;--ac:#5ab0f0;--ac2:#38d0b0;--ac3:#e0b060;--ac4:#e06868;--ac5:#8070e0}
 
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;background:var(--bg);color:var(--t1);font:12px/1.45 'ui-monospace','SFMono-Regular','Menlo',monospace;overflow:hidden}
+html,body{height:100%;background:var(--bg);color:var(--t1);font:12px/1.45 var(--font-ui);overflow:hidden}
 button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 input,select,textarea{font:inherit;color:inherit;background:none;border:none;outline:none}
 ::-webkit-scrollbar{width:6px;height:6px}
@@ -71,7 +71,7 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
 .rail-section .btn:hover{opacity:.9}
 .rail-section .btn.ghost{background:var(--bg);color:var(--t1);border:1px solid var(--bd)}
 .rail-section .btn.ghost:hover{border-color:var(--bd2)}
-.rail-section .btn.danger{background:var(--ac4)}
+.rail-section .btn.danger,.rail-section .btn.red,.rail-section .btn.err-btn,.rail-section .btn.no{background:var(--ac4)}
 .rail-section .btn.osint{background:var(--ac5)}
 .rail-section .btn:disabled{opacity:.4;cursor:wait}
 .rail-section .modeswitch{display:flex;background:var(--bg);border:1px solid var(--bd);border-radius:3px;padding:2px;margin-bottom:4px;width:100%}

@@ -32,12 +32,12 @@ input,select,textarea{font:inherit;color:var(--text);background:var(--bg1);borde
 input:focus,select:focus,textarea:focus{border-color:var(--acc)}
 .btn{background:var(--bg2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 10px;font-size:11px;display:inline-flex;align-items:center;gap:5px;transition:all .15s}
 .btn:hover{background:var(--bg3);border-color:var(--acc)}
-.btn.primary{background:rgba(90,158,143,.18);border-color:var(--acc);color:var(--acc)}
-.btn.primary:hover{background:rgba(90,158,143,.28)}
+.btn.primary,.btn.pri{background:rgba(90,158,143,.18);border-color:var(--acc);color:var(--acc)}
+.btn.primary:hover,.btn.pri:hover{background:rgba(90,158,143,.28)}
 .btn.violet{background:rgba(160,126,193,.15);border-color:var(--acc4);color:var(--acc4)}
 .btn.violet:hover{background:rgba(160,126,193,.25)}
-.btn.danger{color:var(--err);border-color:rgba(199,90,90,.4)}
-.btn.danger:hover{background:rgba(199,90,90,.12)}
+.btn.danger,.btn.red,.btn.err-btn,.btn.no{color:var(--err);border-color:rgba(199,90,90,.4)}
+.btn.danger:hover,.btn.red:hover,.btn.err-btn:hover,.btn.no:hover{background:rgba(199,90,90,.12)}
 .btn.warn{color:var(--warn);border-color:rgba(217,119,87,.4)}
 .btn.warn:hover{background:rgba(217,119,87,.12)}
 .btn.sm{padding:3px 7px;font-size:10.5px}

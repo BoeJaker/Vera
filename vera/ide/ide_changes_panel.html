@@ -1,6 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vera — Workspace Changes</title>
@@ -24,9 +30,9 @@ header .flex{flex:1}
 select,button{font-family:inherit;font-size:11px}
 .btn{background:var(--bg2);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:5px 10px;cursor:pointer}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.ok{border-color:var(--ok);color:var(--ok)}
-.btn.ok:hover{background:rgba(109,184,122,.12)}
-.btn.no:hover{border-color:var(--err);color:var(--err)}
+.btn.ok,.btn.grn,.btn.ok-btn{border-color:var(--ok);color:var(--ok)}
+.btn.ok:hover,.btn.grn:hover,.btn.ok-btn:hover{background:rgba(109,184,122,.12)}
+.btn.no:hover,.btn.danger:hover,.btn.red:hover,.btn.err-btn:hover{border-color:var(--err);color:var(--err)}
 .btn:disabled{opacity:.4;cursor:default}
 main{flex:1;display:flex;min-height:0}
 .side{width:270px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;background:var(--bg0)}
@@ -203,5 +209,6 @@ $('statusSel').addEventListener('change',()=>{ _sel=null; loadList(); });
 loadList();
 setInterval(loadList, 20000);
 </script>
+<script src="/ui/vera-ui.js"></script>
 </body>
 </html>

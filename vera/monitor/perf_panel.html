@@ -1,6 +1,12 @@
 <!doctype html>
 <html>
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vera — Performance & Diagnostics</title>
@@ -25,7 +31,7 @@
   .btn{background:var(--bg2,#241f1b);border:1px solid var(--border,#2a2622);
     color:var(--text);padding:5px 11px;border-radius:5px;cursor:pointer;font-size:11px}
   .btn:hover{border-color:var(--acc,#c9a45a)}
-  .btn.pri{background:var(--acc,#c9a45a);color:#1a1512;border-color:var(--acc,#c9a45a);font-weight:600}
+  .btn.pri,.btn.primary{background:var(--acc,#c9a45a);color:#1a1512;border-color:var(--acc,#c9a45a);font-weight:600}
   .btn.sm{padding:2px 8px;font-size:10px}
   input,select{background:var(--bg0,#141210);border:1px solid var(--border,#2a2622);
     color:var(--text);padding:4px 7px;border-radius:4px;font-size:11px;font-family:var(--mono,monospace)}
