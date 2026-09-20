@@ -96,6 +96,20 @@ transaction boundary. Its exact-record read returns the first backend result in
 registration order, so a successful read does not by itself prove that all
 three copies agree. Reconciliation and repair must therefore be explicit.
 
+Backend operations are latency-bounded independently. After the separately
+bounded embedding step, store, search, and update give each backend
+`VERA_MEMORY_BACKEND_TIMEOUT_S` seconds (10 seconds by default). A timed-out
+provider contributes a failed write/update receipt or no search hits while the
+healthy providers continue; task cancellation still propagates instead of being
+reported as an ordinary provider failure. This bounds degradation without
+claiming cross-backend transactionality.
+
+Development sandboxes normally point at the shared production memory services,
+so their write guard suppresses native memory mutations. A suppressed operation
+reports `false` for each backend—it never claims that a protected no-op was
+persisted. The guard has an explicit process-level override for controlled
+validation and seeding; routine sandbox traffic remains protected.
+
 The longer-term canonical authority is an immutable Fabric `RecordRevision`.
 A `MemoryProjection` is retrieval state bound to that exact record and revision
 through a citation; it is never a competing source of original content. The
@@ -257,6 +271,13 @@ Chroma's built-in 384-dim default embedder. The embed circuit-breaker retries
 every 5 minutes rather than latching until restart. After an outage or a
 collection reset, run `memory.backfill_vectors` to re-encode the gap from
 Postgres.
+
+The Chroma HTTP client and server are also kept on the same major protocol
+generation. A mixed 0.x client and 1.x server can pass heartbeat while failing
+to decode collection configuration, which otherwise looks like a mysteriously
+empty semantic layer. Chroma metadata accepts JSON scalar values only, so memory
+timestamps hydrated as Python datetimes are normalized back to ISO-8601 before
+metadata-only updates such as soft deletion.
 
 ### `memory.query`
 
