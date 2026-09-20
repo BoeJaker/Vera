@@ -191,7 +191,10 @@ must remain quoted context rather than becoming executable instructions.
 The chat, IDE-chat, and IDE-generation capability boundaries redact prompts,
 system instructions, conversation history, file context, and returned model
 text from generic capability-activity previews. IDE chat events retain only a
-prompt character count and short digest for correlation. Conversation memory
+prompt character count and short digest for correlation. Streaming chat
+activity follows the same rule: it records message length and digest plus
+response length, audio count, and elapsed time, without a message or response
+preview. Conversation memory
 continues to store the content needed by the product, but observability does not
 create a second prompt or response copy. IDE generation also uses the shared
 model router, queue, cancellation, and stage-timing path; it does not maintain a

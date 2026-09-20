@@ -95,6 +95,16 @@ def test_prompt_evidence_does_not_retain_text():
     assert secret not in repr(evidence)
 
 
+def test_stream_activity_keeps_metrics_without_message_or_response_copy():
+    source = _function_source(
+        ROOT / "vera" / "agents" / "agents.py", "agent_chat_stream_endpoint")
+
+    assert source.count('"message_evidence": _text_evidence(message)') == 2
+    assert '"message":      message' not in source
+    assert '"preview":       "".join(_resp_head)' not in source
+    assert source.count('"response_chars": _resp_chars') == 2
+
+
 def test_ide_generate_uses_shared_router_and_preserves_effective_route(monkeypatch):
     from vera.ide import ide_capabilities as ide
 
