@@ -129,6 +129,15 @@ def test_shared_router_generation_and_embedding_events_are_payload_free():
     assert '"prompt_full":  f"[embed]' not in source
 
 
+def test_v1_agent_loop_does_not_reference_v2_only_phase_state():
+    source = _function_source(
+        ROOT / "vera" / "fabric" / "context.py", "cap_dag_agent_loop")
+
+    for v2_only_name in (
+            "_dw_cap_phase", "_emit_phase_v2", "explore_done", "validated"):
+        assert v2_only_name not in source
+
+
 def test_stream_activity_keeps_metrics_without_message_or_response_copy():
     source = _function_source(
         ROOT / "vera" / "agents" / "agents.py", "agent_chat_stream_endpoint")

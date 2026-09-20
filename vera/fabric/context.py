@@ -2444,19 +2444,6 @@ async def cap_dag_agent_loop(
                 "thought": action.get("thought", ""),
             })
 
-            # ── Phase accounting ────────────────────────────────────────────
-            if invoke.get("ok"):
-                if _dw_cap_phase(tool) == "explore":
-                    explore_done += 1
-                    if acted and not validated:
-                        validated = True
-                        await _emit_phase_v2("validate", validated=True, tool=tool)
-                    else:
-                        await _emit_phase_v2("explore", tool=tool)
-                else:
-                    acted = True
-                    await _emit_phase_v2("act", tool=tool)
-
             await stream_append_token(
                 stream_id,
                 f"\n[exec #{cycles}] {tool}({json.dumps(args, default=str)[:200]}) → "
