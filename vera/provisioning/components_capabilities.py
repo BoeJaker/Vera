@@ -90,12 +90,41 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
                 "Python deps — enable 'install deps' and expect a long first run.",
     },
     "onnx_runtime": {
-        "label": "ONNX Runtime", "port": 8770, "python": True,
+        # ⚠ 8772, NOT 8770. The node agent (edge/vera_node_agent.py) listens on
+        # 8770 on EVERY node, so this component declared a port it could never
+        # have bound on any node running the agent — a latent collision that
+        # would have surfaced as a confusing deploy failure rather than as the
+        # configuration error it is.
+        "label": "ONNX Runtime", "port": 8772, "python": True,
         "files": [("edge/onnx_runtime.py", "onnx_runtime.py")],
         "pip": ["onnxruntime", "onnx", "numpy", "fastapi", "uvicorn"],
         "run": "{py} onnx_runtime.py serve --host 0.0.0.0 --port {port}",
         "desc": "Edge ONNX model server (CUDAExecutionProvider→DML→CPU). Serves the "
-                ".onnx artifacts produced by ml.export.onnx.",
+                ".onnx artifacts produced by ml.export.onnx. Tensor-level: takes "
+                "and returns tensors. For text (NER/classify/rerank) use nlp_server.",
+    },
+    "nlp_server": {
+        # 8771 — clear of the node agent (8770) and onnx_runtime (8772).
+        "label": "NLP Server", "port": 8771, "python": True,
+        "files": [("edge/nlp_server.py", "nlp_server.py"),
+                  # Shipped so the node and the Vera host share ONE
+                  # implementation of chunking and offset merging.
+                  ("vera/research/nlp_dispatch_core.py", "nlp_dispatch_core.py")],
+        "pip": ["optimum[onnxruntime]", "transformers", "fastembed",
+                "fastapi", "uvicorn"],
+        "run": "{py} nlp_server.py serve --host 0.0.0.0 --port {port}",
+        "env": {
+            # ONNX Runtime will otherwise take every core it can see and starve
+            # the ollama runner sharing this container. This is the setting that
+            # decides whether NLP on the GPU node is free or ruinous.
+            "VERA_NLP_THREADS": "4",
+            "VERA_NLP_PORT": "{port}",
+        },
+        "heavy": True,
+        "desc": "Text-level NLP for nlp.ner / nlp.classify / nlp.rerank, so the "
+                "2-core Vera host never runs them. OntoNotes-v5 NER (has DATE), "
+                "chunks whole documents rather than truncating, and caps its own "
+                "thread count so the node keeps inferring. Large first install.",
     },
     # ollama_wrapper was removed as a deployable component. It proxied :11435 in
     # front of Ollama to make requests visible, but it was never deployed, it
