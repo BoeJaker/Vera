@@ -621,7 +621,7 @@
      radial and a table a table, on the plate, in the cards and in the carousel alike. '' without the widget element on
      the page (the iso group / the widget card stand in). ── */
   const SCREENY = /^(terminal|term|frame|panel|page|notebook|web|browser|chat|dashboard|dash)$/;
-  const planeSize = (form, sz) => { const scr = SCREENY.test(String(form || '').toLowerCase()); return scr ? { w: { s: 200, m: 330, l: 480 }[sz], h: { s: 160, m: 280, l: 420 }[sz] } : { w: { s: 150, m: 220, l: 320 }[sz], h: { s: 60, m: 110, l: 170 }[sz] }; };
+  const planeSize = (form, sz) => { const scr = SCREENY.test(String(form || '').toLowerCase()); return scr ? { w: { s: 240, m: 400, l: 600 }[sz], h: { s: 160, m: 280, l: 420 }[sz] } : { w: { s: 150, m: 220, l: 320 }[sz], h: { s: 60, m: 110, l: 170 }[sz] }; };
   function faceHtml(c, wd, wsz, o) {
     if (!(root.VeraWidget && typeof root.VeraWidget.draw === 'function') || !wd || !wd.form) return '';
     const own = wd.size === 'xs' || wd.size === 's' ? 's' : wd.size === 'l' || wd.size === 'xl' ? 'l' : 'm';
