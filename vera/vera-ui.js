@@ -222,10 +222,22 @@
   // Paint only — the three attributes on the root. A pack carries its own
   // --ui-radius in themes.css; the theme's inline layout tail must not shadow
   // it, so that one property is cleared from the inline style here.
+  // The packs' faces (the StylePacks board): one stylesheet link, added once by whichever page paints a pack first -
+  // a page that ships the link itself (id veraPackFonts) is left alone. Without the faces a pack is only its metrics:
+  // pixel fell back to the monospace stack and newspaper's serif never showed.
+  var PACK_FONTS = 'https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Libre+Baskerville:wght@400;700&family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500;700&family=Pixelify+Sans:wght@400;500;600;700&family=Press+Start+2P&family=VT323&display=swap';
+  function _ensurePackFonts(){
+    try{
+      if(document.getElementById('veraPackFonts') || document.querySelector('link[href*="Pixelify+Sans"]')) return;
+      var l = document.createElement('link'); l.id = 'veraPackFonts'; l.rel = 'stylesheet'; l.href = PACK_FONTS;
+      (document.head || document.documentElement).appendChild(l);
+    }catch(e){}
+  }
   function _paintAppearance(a){
     a = _clampAppearance(a);
     _appearance = a;
     var d = document.documentElement;
+    _ensurePackFonts();
     try{
       d.setAttribute('data-style', a.style);
       d.setAttribute('data-den', a.den);
