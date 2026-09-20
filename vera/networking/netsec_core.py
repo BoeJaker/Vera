@@ -29,6 +29,13 @@ fi
 
 
 def wireguard_install_script() -> str:
+    """The install, package-manager agnostic. Debian gets wireguard-tools alone
+    with --no-install-recommends: the `wireguard` metapackage recommends the
+    kernel module packages, which on a container with stale apt lists tried
+    to fetch a realtime kernel image and failed (CT126, 20 Sep 2026); every
+    kernel this estate runs has WireGuard built in. VERA_WG_UID is echoed so
+    the caller can tell "this login is not root" from "root, but apt could not
+    write" - the two were reported as one before."""
     """Package-manager-agnostic WireGuard install run over SSH. Waits for cloud-init
     + the apt/dpkg locks first (see _PKG_WAIT), elevates with `sudo -n` when not
     root, logs to /tmp/vera_wg_install.log, and prints VERA_WG_* markers the caller
@@ -36,11 +43,12 @@ def wireguard_install_script() -> str:
     a late-arriving lock waits rather than fails."""
     return r"""
 command -v wg >/dev/null 2>&1 && { echo VERA_WG_PRESENT; exit 0; }
+echo "VERA_WG_UID=$(id -u)"
 S=""; [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1 && S="sudo -n"
 __PKG_WAIT__
 {
   if command -v apt-get >/dev/null 2>&1; then
-    $S apt-get -o DPkg::Lock::Timeout=300 update -y && $S env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y wireguard wireguard-tools
+    $S apt-get -o DPkg::Lock::Timeout=300 update -y && $S env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends wireguard-tools
   elif command -v dnf >/dev/null 2>&1; then
     $S dnf install -y wireguard-tools
   elif command -v yum >/dev/null 2>&1; then
