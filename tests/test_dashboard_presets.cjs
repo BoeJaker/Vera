@@ -17,7 +17,7 @@ t('the seven-segment counter never wraps onto a second line: the digits shrink w
 
 // ── the read-through hook (the policy itself is tested in tests/test_sandbox_read_through.py) ──
 t('a read-only estate capability, called in a sandbox, is answered by prod before the local one runs — and only a GET', CO.includes('if _READ_THROUGH_URL and http_method == "GET" and not kw.get("_local") and _sg_read_through_allowed(name, http_method):') && CO.includes('_rt = await _upstream_read(name, kw)') && CO.includes('async def _upstream_read(name: str, kw: dict):'));
-t("prod answers in the MCP envelope; the capability's own result is unwrapped from it (a tile drew the envelope's keys before)", CO.includes('if isinstance(j, dict) and j.get("type") == "tool_result" and isinstance(j.get("content"), list):') && CO.includes('return json.loads(txt)'));
+t("prod answers in the MCP envelope; the capability's own result is unwrapped from it (a tile drew the envelope's keys before)", CO.includes('if isinstance(j, dict) and j.get("type") == "tool_result" and "content" in j:') && CO.includes('return json.loads(txt)') && CO.includes('            return c'));
 t('prod is asked with the arguments as given, no trace of ours, and marked as a sandbox read', CO.includes('args = {k: v for k, v in (kw or {}).items() if k != "trace_id"}') && CO.includes('"caller_kind": "sandbox-read"') && CO.includes('headers={"X-Vera-Read-Through": "sandbox"}'));
 t('the sandbox compose says where prod is (the code defaults to the same door)', EV.includes('VERA_UPSTREAM_READ_URL: "https://host.docker.internal:8999/mcp/call"'));
 
