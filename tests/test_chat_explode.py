@@ -44,7 +44,16 @@ def test_the_header_has_explode_and_its_modes_and_the_scene_takes_the_transcript
     for m in ("cards", "front", "iso"):
         assert 'data-xm="%s" onclick="CH.explodeMode(\'%s\')"' % (m, m) in HTML, m
     assert '<div id="xplHost"></div>\n      <div id="msgs">' in HTML, "the scene in the transcript's place, the composer docked under it"
-    assert "body.exploded #msgs,body.exploded #jumpToBottomBtn{display:none!important}" in HTML and "body.exploded #xplHost{display:flex}" in HTML
+    # the scene is shown and the transcript hidden. The rule gained its geometry in 2394448 (the scene takes the
+    # whole column, the composer floats over it), so pinning the declaration block whole made a layout change
+    # read as the scene no longer being shown at all.
+    # The claim: with the scene up, the transcript and the things that belong to it are hidden and the scene is
+    # shown. Pinning either declaration WHOLE made two unrelated edits read as the feature breaking - the rule
+    # gained its geometry in 2394448, and the turn rail joined the hidden list (it maps the transcript, and with
+    # the scene in the transcript's place there is no transcript to map). So: the members, and the property.
+    assert re.search(r"body\.exploded #msgs[^{\n]*\{display:none!important\}", HTML), "the transcript is hidden"
+    assert re.search(r"body\.exploded #jumpToBottomBtn[^{\n]*\{display:none!important\}", HTML), "and so is its jump button"
+    assert "body.exploded #xplHost{display:flex" in HTML, "and the scene is shown in its place"
     x = _fn("explode")
     assert "document.body.classList.toggle('exploded', on);" in x and "if(on){ _xplMount(); _xplRefresh();" in x
     assert "if(on) document.body.classList.add('has-msgs');" in x, "the composer docks under the scene"
