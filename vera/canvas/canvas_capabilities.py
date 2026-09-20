@@ -86,6 +86,11 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
     "html":     {"desc": "Raw HTML — ON-THE-FLY escape hatch; prefer a predefined "
                          "type so the UI stays consistent.",
                  "content": "{html:str}"},
+    "timeline": {"desc": "Dated events in order - what a research run turned up about a subject, laid out on "
+                         "a time axis. Events carry a `when` that may be a year, a month or a day, so a "
+                         "timeline built from prose does not have to pretend to a precision the prose did "
+                         "not have.",
+                 "content": "{title?:str, events:[{when:str, label:str, text?:str, url?:str}], subject?:str}"},
     "source":   {"desc": "A page a research run read: where it came from, what it said, and what it "
                          "looked like. Landed as the run finds them - a citation, a crawled page - and "
                          "keyed by url so the same page is never on the canvas twice. `text` and `shot` "

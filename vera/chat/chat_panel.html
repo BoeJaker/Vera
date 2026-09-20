@@ -6260,6 +6260,76 @@ IMPORTANT:
   }
   document.addEventListener('vera:research:source', ev=>{ try{ _cvLandSource(ev.detail||{}); }catch(_){} });
 
+  /* AND THE TIMELINE, when a run finishes. Only when there is one to draw: a report about a library's API has no
+     dates in it and should get no axis, so an empty extraction lands nothing rather than an empty item saying so.
+     Keyed by the turn, because the timeline is OF that question - asking again produces a new one rather than
+     overwriting the answer you already have. */
+  async function _cvLandTimeline(text, mid){
+    if(!SID) return 0;
+    let events=[]; try{ events=_tlEvents(text,{}); }catch(_){ return 0; }
+    // two dates are a pair, not a history; below that the prose is better read as prose
+    if(events.length<3) return 0;
+    const subject=String((document.querySelector('#msgs .mwrap.u[data-mid="'+(mid||'')+'"] .msg-body')||{}).textContent||'').replace(/\s+/g,' ').trim().slice(0,70);
+    const key='timeline:'+(mid||Date.now());
+    try{ const r=await _capCall('canvas.add',{ session_id:SID, kind:'timeline', key, at:'now', size:'m',
+      content:{ title:subject?('Timeline \u00b7 '+subject):'Timeline', subject, events },
+      anchor:mid?{ mid, turn:mid }:undefined });
+      return (r&&r.ok)?events.length:0; }catch(_){ return 0; }
+  }
+
+  /* A TIMELINE OUT OF WHAT THE RESEARCH FOUND.
+
+     The plan was to lean on the research system's NLP for this. It does not work: nlp.ner answers
+     "optimum/transformers not installed" on prod and on the mirror, and the model it would load if it were
+     installed is dslim/bert-base-NER - CoNLL-2003, whose labels are PER, ORG, LOC and MISC. There is no DATE
+     among them, so it could never have supplied the dates a timeline is made of, and it truncates at 1024
+     characters besides, which is a paragraph of a report that runs to thousands.
+
+     Dates are one of the few things where a matcher genuinely beats a general tagger: they are written in a
+     handful of shapes and they carry their own precision. So the dates come from the text, and each event is
+     the sentence its date sits in. `when` keeps whatever precision the prose had - a year, a month, a day -
+     rather than inventing a January the 1st to sort by, and the sort key is separate from what is shown. */
+  const _TL_MON={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+  const _tlPad=(n)=>(n<10?'0':'')+n;
+  function _tlDates(sentence){
+    const out=[]; const M='(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?';
+    const add=(y,mo,d,raw)=>{ y=+y; if(!(y>=1000&&y<=2999)) return;
+      out.push({ when: d?(y+'-'+_tlPad(+mo)+'-'+_tlPad(+d)) : mo?(y+'-'+_tlPad(+mo)) : String(y),
+                 key: y*10000 + (mo?+mo:0)*100 + (d?+d:0), raw }); };
+    let m;
+    // 2007-01-09
+    const iso=/\b(\d{4})-(\d{2})-(\d{2})\b/g;
+    while((m=iso.exec(sentence))) add(m[1],m[2],m[3],m[0]);
+    // 9 January 2007  /  9 Jan 2007
+    const dmy=new RegExp('\\b(\\d{1,2})\\s+'+M+'\\s+(\\d{4})\\b','gi');
+    while((m=dmy.exec(sentence))) add(m[3],_TL_MON[m[2].slice(0,3).toLowerCase()],m[1],m[0]);
+    // January 9, 2007  /  April 1976
+    const mdy=new RegExp('\\b'+M+'\\s+(\\d{1,2})?,?\\s*(\\d{4})\\b','gi');
+    while((m=mdy.exec(sentence))) add(m[3],_TL_MON[m[1].slice(0,3).toLowerCase()],m[2]||'',m[0]);
+    // a bare year, but only where the prose is USING it as one - in 1984, by 2020, since 1976, (1984)
+    const yr=/(?:\b(?:in|by|since|from|until|during|until|circa|c\.)\s+|\()(1[5-9]\d{2}|20\d{2})\b/gi;
+    while((m=yr.exec(sentence))) add(m[1],'','',m[1]);
+    // the most precise reading of a given year wins, so "April 1976" is not also logged as a bare 1976
+    const best={}; out.forEach(o=>{ const y=o.when.slice(0,4); if(!best[y]||o.key>best[y].key) best[y]=o; });
+    return Object.keys(best).map(k=>best[k]);
+  }
+  function _tlEvents(text, o){
+    o=o||{}; const src=String(text||''); if(!src.trim()) return [];
+    // markdown out of the way: a heading marker or a bullet is not part of the event
+    const flat=src.replace(/```[\s\S]*?```/g,' ').replace(/^\s*[#>*\-]+\s*/gm,'')
+                  .replace(/\[([^\]]*)\]\([^)]*\)/g,'$1').replace(/[*_`]/g,'');
+    const sentences=flat.split(/(?<=[.!?])\s+|\n+/).map(x=>x.replace(/\s+/g,' ').trim()).filter(x=>x.length>12);
+    const seen={}, events=[];
+    sentences.forEach(sn=>{
+      _tlDates(sn).forEach(d=>{
+        const label=sn.length>180?sn.slice(0,177).replace(/\s\S*$/,'')+String.fromCharCode(0x2026):sn;
+        const k=d.when+'|'+label.slice(0,48).toLowerCase(); if(seen[k]) return; seen[k]=true;
+        events.push({ when:d.when, key:d.key, label, url:String(o.url||'') });
+      });
+    });
+    events.sort((a,b)=>a.key-b.key||a.label.localeCompare(b.label));
+    return events.slice(0,40);
+  }
   const _cvCapTerm=(c)=>{
     // a command and its output is a TERMINAL, not a paragraph about one (exec.bash.run and its family:
     // {ok, rc, stdout, stderr, elapsed_ms, command})
@@ -11852,6 +11922,8 @@ Your task: decide what to do next to advance toward the goal.
               fullText=result;
               finish(result);
               if(result){
+                // the report is in: if it has a history in it, draw one
+                try{ _cvLandTimeline(result, _cvRelMid||''); }catch(_){}
                 const rNode={id:'research-'+jobId,label:'Research: '+result.slice(0,50),
                              text:result.slice(0,1500),type:'research',score:0.9,source:'web'};
                 if(!CTX_NODES.find(n=>n.id===rNode.id))CTX_NODES.push(rNode);
