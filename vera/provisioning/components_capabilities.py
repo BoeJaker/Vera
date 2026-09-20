@@ -146,9 +146,20 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         # under. Left unpinned, this install pulled transformers 5.x against
         # artifacts built with 4.x — a mismatch that is not worth discovering
         # on a production node.
-        "pip": ["optimum[onnxruntime]", "transformers>=4.57,<5", "onnxruntime",
-                "sentencepiece", "protobuf", "numpy", "fastembed",
-                "fastapi", "uvicorn"],
+        # ORDERED, separate pip invocations. A single flat list cannot express
+        # this: torch MUST come from the CPU index first, because
+        # optimum[onnxruntime] depends on torch and pip would otherwise resolve
+        # the default CUDA build — measured at 554MB for torch plus another
+        # 553MB of nvidia cudnn, for a server that runs ONNX on CPU only.
+        # transformers is pinned to the major version the models were exported
+        # under: optimum 2.1.0 against transformers 5.x fails at load with
+        # "cannot import name FLAX_WEIGHTS_NAME".
+        "pip_steps": [
+            ["torch", "--index-url", "https://download.pytorch.org/whl/cpu"],
+            ["optimum[onnxruntime]", "transformers>=4.57,<5", "onnxruntime",
+             "sentencepiece", "protobuf", "numpy", "fastembed",
+             "fastapi", "uvicorn"],
+        ],
         "run": "{py} nlp_server.py serve --host 0.0.0.0 --port {port}",
         # The model store is a Proxmox bind-mount, which SSH cannot create.
         # Check it BEFORE installing ~2GB of wheels, and say exactly how to fix
@@ -365,6 +376,12 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
             if req is not None:
                 steps.append(_push_cmd(req, f"{edge_dir}/requirements.txt"))
                 steps.append(f'"{venv}/bin/pip" install -r {edge_dir}/requirements.txt')
+        elif comp.get("pip_steps"):
+            # Separate invocations, in order — some components need an index or
+            # a constraint applied to one package and not the rest.
+            for group in comp["pip_steps"]:
+                steps.append(f'"{venv}/bin/pip" install ' +
+                             " ".join(shlex.quote(p) for p in group))
         elif comp.get("pip"):
             steps.append(f'"{venv}/bin/pip" install ' + " ".join(shlex.quote(p) for p in comp["pip"]))
         steps.append("echo VERA_DEPS_DONE")
