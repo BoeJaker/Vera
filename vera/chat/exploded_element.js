@@ -344,7 +344,7 @@
     // fit the scene into the frame: scale and shift. The items counter-scale by the FIT alone (1:1 text when fitted,
     // capped as the board's embed caps it) — the pan zoom then grows and shrinks them with the scene
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; pts.forEach((p) => { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); });
-    const s = Math.max(0.3, Math.min(1.4, Math.min((W - 80) / Math.max(1, x1 - x0 + 200), (H - 120) / Math.max(1, y1 - y0 + 140))));
+    const s = Math.max(0.2, Math.min(1.4, Math.min((W - 80) / Math.max(1, x1 - x0 + 200), (H - 120) / Math.max(1, y1 - y0 + 140))));   // a busy turn is wide (a column per six items, seven stations): it still fits, down to a fifth
     const dx = W / 2 - s * (x0 + x1) / 2, dy = H / 2 - s * (y0 + y1) / 2 + 20;
     out.fit = { s: +s.toFixed(3), x: px(dx), y: px(dy) }; out.ground = { s, dx, dy, tilt: TILT, azim: AZIM, custom: !!o.proj };   // the drop's way back from a screen point to the ground
     out.inv = +(s * Math.min(1.2, 1 / Math.min(1, s))).toFixed(3);   /* the items follow the fit, grown no more than 1.2x against a small scene: a station's pitch always clears a card */
@@ -1183,6 +1183,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
           const pl = [...sr.querySelectorAll('.xp-pl')].find((q) => q.dataset.mid === mid), wrap = this._r && this._r.wrap;
           if (!pl || !wrap) return;
           const r = pl.getBoundingClientRect(), b = wrap.getBoundingClientRect(); if (!(r.height > 0 && b.height > 0)) return;
+          if (r.left >= b.left - 2 && r.right <= b.right + 2 && r.top >= b.top - 2 && r.bottom <= b.bottom + 2) return;   // already in the frame: the view stays where it is
           const p = this._S.pan; p.x += (b.left + b.width / 2) - (r.left + r.width / 2); p.y += (b.top + b.height / 2) - (r.top + r.height / 2); p.auto = false;
           this._applyPan();
         } catch (_) {} };

@@ -54,7 +54,7 @@ ok(sameShape(o.plates[0].poly, o.plates[1].poly) && X.LAYERS.every((L) => { cons
 ok(o.inv === +(o.fit.s * Math.min(1.2, 1 / Math.min(1, o.fit.s))).toFixed(3) && o.inv < 1 && o.inv > o.fit.s, 'the items\' scale is the board\'s rule at the fit — grown against a small scene, never past 1.2× of it (' + o.fit.s + ' → ' + o.inv + ')');
 const big = X.layout({ turns: [{ mid: 'a', who: 'you', t: '', text: 'hi', read: [], say: [], made: [], land: [] }], sel: 'a' }, 'iso', 6000, 5000, {});
 ok(big.fit.s >= 1 && big.inv === big.fit.s, 'a scene that fits at 1:1 or larger carries its items at the scene\'s own scale (' + big.fit.s + ')');
-const tiny = X.layout(scene, 'iso', 400, 300, {}); ok(tiny.fit.s === 0.3 && tiny.inv === +(0.3 * 1.2).toFixed(3), 'the cap: 1.2× the scene, the board\'s embedded rule (' + tiny.inv + ')');
+const tiny = X.layout(scene, 'iso', 400, 300, {}); ok(tiny.fit.s === 0.2 && tiny.inv === +(0.2 * 1.2).toFixed(3), 'the cap: 1.2× the scene, the board\'s embedded rule (' + tiny.inv + ')');
 ok(!/--inv/.test(SRC.slice(SRC.indexOf('_applyPan() {'), SRC.indexOf('_click(e) {'))) && /view\.style\.setProperty\('--inv'/.test(SRC), 'the pan zoom never writes the counter-scale; the render sets it once from the fit');
 ok(/vera-exploded \.xit\{[^}]*transform:translateY\(-100%\) scale\(var\(--inv,1\)\)/.test(SRC) && /vera-exploded \.xig\{[^}]*scale\(var\(--inv,1\)\)/.test(SRC) && /vera-exploded \.xnd\{[^}]*scale\(var\(--inv,1\)\)/.test(SRC), 'cards, widget groups and nodes counter-scale by the one --inv; the view\'s zoom transform carries them');
 ok(!/xp-if-hd/.test(SRC) && !/xp-if\b/.test(SRC) && !/frameHtml/.test(SRC), 'no terminal-style frame with a three-dot header is left');
