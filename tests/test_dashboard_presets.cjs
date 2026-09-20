@@ -42,5 +42,17 @@ const SOURCES = new Set(['obs.health', 'obs.events', 'obs.scheduler', 'obs.worke
     (r.children || []).forEach((c) => { const cr = c.record || {}; if (!FORMS.has(cr.form)) bad.push(cr.id + ' child form ' + cr.form); if (!(String(cr.source || '').startsWith('$subject') || SOURCES.has(cr.source))) bad.push(cr.id + ' child source ' + cr.source); }); });
   t(k + ': ' + (j.widgets || []).length + ' record tiles, every form drawable, every source a known read, every span in the grid', j.key === k && j.grid && j.grid.cols === 12 && (j.widgets || []).length >= 12 && !bad.length, JSON.stringify(bad.slice(0, 6)));
 });
+// ── the element itself, in a bare context (the widget test's loader): it reads the dashboard's sources on its own, and the
+//    topology form draws a snapshot-shaped answer ──
+{ const vm = require('node:vm'); const defined = {};
+  const ctx = { window: {}, console, HTMLElement: class {}, CustomEvent: class {}, customElements: { get: (n) => defined[n], define: (n, c) => { defined[n] = c; } }, document: { querySelectorAll: () => [], createElement: () => ({ setAttribute() {}, appendChild() {}, style: {} }), head: { appendChild() {} }, getElementById: () => null }, setTimeout, clearTimeout, requestAnimationFrame: (f) => setTimeout(f, 0), localStorage: { getItem: () => null, setItem() {} } };
+  ctx.window.customElements = ctx.customElements; ctx.window.document = ctx.document; ctx.window.localStorage = ctx.localStorage;
+  vm.runInNewContext(fs.readFileSync(path.join(R, 'vera', 'ui', 'iso.js'), 'utf8'), ctx); vm.runInNewContext(WE, ctx); const W = ctx.window.VeraWidget;
+  const reads = ['ollama.route_stats', 'bench.results', 'ollama.embed_config', 'ollama.routing.get', 'catalog.installed', 'catalog.nodes', 'estate.health', 'backup.status', 'background.status', 'topology.snapshot', 'ollama.gate.status', 'ollama.instances', 'ollama.list_models', 'evolve.sandbox.list', 'obs.health'];
+  t('the element reads every source the presets name on its own (no Read button left waiting)', reads.every((c) => W.readable(c) === true), JSON.stringify(reads.filter((c) => !W.readable(c))));
+  t('and never a writing capability', ['ollama.routing.save', 'ollama.pull', 'evolve.sandbox.spawn', 'catalog.install', 'bench.run'].every((c) => W.readable(c) === false));
+  const snap = { nodes: [{ id: 'hub', label: 'Vera', kind: 'hub' }, { id: 'cat:nodes', label: 'Nodes', kind: 'category' }, { id: 'node:1', label: 'ct126', kind: 'node', status: 'ok' }], edges: [{ from: 'hub', to: 'cat:nodes' }, { from: 'cat:nodes', to: 'node:1', kind: 'serves' }], ts: 1 };
+  const h = W.draw('topology', snap, 'm', { bare: true });
+  t('the topology form draws a snapshot-shaped answer (nodes + edges) as the graph', !/wempty|vw-nodata/.test(h) && /vb-topo/.test(h) && (h.match(/class="tn"/g) || []).length === 3, h.slice(0, 160)); }
 console.log((fails ? 'FAILED ' : 'passed ') + (fails ? fails + ' check(s)' : 'all checks'));
 process.exit(fails ? 1 : 0);
