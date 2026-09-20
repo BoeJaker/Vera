@@ -415,8 +415,9 @@ async def _wait_ready(page, settle_ms: int,
                    page.wait_for_load_state("networkidle", timeout=4000))
     ready_selector = str(state.get("ready_selector") or "")
     ready_text = str(state.get("ready_text") or "")
+    ready_count = str(state.get("ready_count") or "")
     await _observe(
-        "meaningful_content", not (ready_selector or ready_text), 10000,
+        "meaningful_content", not (ready_selector or ready_text or ready_count), 10000,
         page.wait_for_function(
             "() => { const b=document.body; if(!b) return false; "
             "const text=(b.innerText||'').replace(/loading[….]*/ig,'').trim(); "
@@ -433,7 +434,15 @@ async def _wait_ready(page, settle_ms: int,
                 """sel => { const e=document.querySelector(sel);
                 if(!e) return false; const t=(e.innerText||e.textContent||'').trim();
                 return t.length > 2 && !/^(loading|starting|—|[.]{3})/i.test(t); }""",
-                ready_text, timeout=20000))
+                arg=ready_text, timeout=20000))
+    if ready_count:
+        await _observe(
+            f"count:{ready_count}", True, 20000,
+            page.wait_for_function(
+                """sel => { const e=document.querySelector(sel);
+                if(!e) return false; const m=(e.innerText||e.textContent||'').match(/\\d[\\d,]*/);
+                return !!m && Number(m[0].replace(/,/g,'')) > 0; }""",
+                arg=ready_count, timeout=20000))
     try:
         await page.evaluate("""async () => {
           if (document.fonts && document.fonts.ready) await document.fonts.ready;

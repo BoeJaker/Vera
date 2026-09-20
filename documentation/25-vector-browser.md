@@ -54,7 +54,17 @@ record view must finish pagination and report either a range or an explicit empt
 result before a screenshot is accepted.
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Vector storage overview
+
+![The overview reports vector counts, dimensions, and alignment across configured stores.](assets/vector-browser/vector-browser-panel-overview.png)
+
+*The overview reports vector counts, dimensions, and alignment across configured stores.  ·  captured `seeded`*
+
+#### Chroma vector records
+
+![The record browser shows dataset ownership and embedding health without exposing full vectors.](assets/vector-browser/vector-browser-panel-chroma.png)
+
+*The record browser shows dataset ownership and embedding health without exposing full vectors.  ·  captured `seeded`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

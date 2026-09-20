@@ -148,6 +148,11 @@ def test_graph_and_vector_capture_recipes_target_real_panel_markup():
                     element_id = selector[1:].split()[0].split(".")[0]
                     assert f'id="{element_id}"' in markup
 
+    galaxy = DM.by_slug("galaxy-graph")["capture_states"]["memory-galaxy-panel"]
+    assert galaxy[0]["ready_selector"] == "body > canvas"
+    galaxy_markup = (root / "vera/fabric/memory_map.html").read_text(encoding="utf-8")
+    assert "document.body.appendChild(renderer.domElement)" in galaxy_markup
+
 
 def test_gallery_build():
     assert G.OUTPUT_FILE == "GALLERY.md"
