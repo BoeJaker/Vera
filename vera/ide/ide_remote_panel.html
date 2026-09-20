@@ -288,7 +288,9 @@ $('#reg-kind').onchange=()=>{
 async function loadHosts(){
   const r=await api('/exec/ssh/hosts');
   const sel=$('#reg-host'); sel.innerHTML='<option value="">— pick a host —</option>';
-  (r.hosts||[]).forEach(h=>{
+  // Labelled and ordered by the estate's one machine list where it knows the login.
+  let est={}; try{ (await veraEstate.logins()).forEach(m=>{ est[m.ssh_host_id]=veraEstate.label(m); }); }catch(e){}
+  (r.hosts||[]).sort((a,b)=>((est[b.id]?1:0)-(est[a.id]?1:0))||String(est[a.id]||a.label||'').localeCompare(String(est[b.id]||b.label||''))).forEach(h=>{ if(est[h.id]) h.label=est[h.id];
     const o=document.createElement('option'); o.value=h.id;
     o.textContent=(h.label||h.host)+'  ('+(h.user||'')+'@'+(h.host||'')+')'; sel.appendChild(o);
   });
@@ -552,5 +554,6 @@ setInterval(()=>{ if($('#v-queue').classList.contains('active')) loadQueue(); },
 setInterval(()=>{ if($('#v-instances').classList.contains('active')) loadInstances(); }, 15000);
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-estate.js"></script>
 </body>
 </html>

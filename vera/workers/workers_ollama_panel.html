@@ -422,7 +422,6 @@ html.view-models #secNav [data-view="models"]{display:block}
     <div class="nsec" data-view="estate">Machines</div>
     <div class="snav" data-pane="machines" data-view="estate" onclick="P.show('machines',this)">All</div>
     <div class="snav" data-pane="workers" data-view="estate" onclick="P.show('workers',this)">Workers</div>
-    <div class="snav" data-pane="nodes" data-view="estate" onclick="P.show('nodes',this)">Nodes</div>
     <div class="snav" data-pane="proxmox" data-view="estate" onclick="P.show('proxmox',this)">Proxmox</div>
     <div class="snav" data-pane="docker" data-view="estate" onclick="P.show('docker',this)">Docker</div>
     <div class="snav" data-pane="sandbox" data-view="estate" onclick="P.show('sandbox',this)">Sandbox</div>
@@ -5613,10 +5612,12 @@ async function _dkrInitHosts(){
   let recs=[];
   try{ const j=await api('/workers/docker/hosts'); recs=(j&&j.hosts)||[]; }catch(e){}
   _dkrHosts={}; recs.forEach(r=>{_dkrHosts[r.id]=r; if(r.default) _dkrHostId=r.id;});
+  // Label each Docker host by the machine it is, from the one estate list.
+  try{ const ms=await veraEstate.machines(); recs.forEach(r=>{ const m=ms.find(x=>x.docker_host_id===r.id||(r.ssh_host_id&&x.ssh_host_id===r.ssh_host_id)); if(m) r._estate=veraEstate.label(m); }); }catch(e){}
   sel.innerHTML='<option value="">Select host…</option>';
   recs.forEach(r=>{
     const tail=r.kind==='tcp'&&r.url?(' '+r.url):r.kind==='ssh'?(' '+(r.ssh_host_id||'')):'';
-    sel.innerHTML+='<option value="'+esc(r.id)+'">'+esc(r.label+' ['+r.kind+']'+tail)+'</option>';
+    sel.innerHTML+='<option value="'+esc(r.id)+'">'+esc((r._estate||r.label)+' ['+r.kind+']'+tail)+'</option>';
   });
   if(_cluster){
     Object.values(_cluster.workers||{}).forEach(w=>{
@@ -6230,8 +6231,9 @@ function _ovFacts(key,f){
   return '';
 }
 function _ovRow(f){
+  const chip=f.ref?' <span class="mc-ent" data-entity="'+esc(f.ref)+'" title="Everything the estate knows about this" tabindex="0">'+esc(f.subject||f.ref)+' ›</span>':'';
   return '<div class="ov-row"><span class="ov-sev '+esc(f.severity)+'">'+esc(_OV_SEV[f.severity]||f.severity)+'</span>'
-    +'<span>'+esc(f.message)+(f.detail?'<span class="ov-detail">'+esc(f.detail)+'</span>':'')+'</span></div>';
+    +'<span>'+esc(f.message)+chip+(f.detail?'<span class="ov-detail">'+esc(f.detail)+'</span>':'')+'</span></div>';
 }
 function ovRender(r){
   const sum=$('ov-summary'), box=$('ov-sections'); if(!sum||!box) return;
@@ -6381,12 +6383,28 @@ async function mcAct(idx, action){
     }
     return pmxSsh(r.node,r.type,String(r.vmid),r.label,r.cluster_id);
   }
+  if(action==='provision'){
+    if(!_ndNodes.length) await ndLoad();
+    const n=_ndNodes.find(x=>x.id===r.id||x.ssh_host_id===r.ssh_host_id);
+    if(!n) return txt('mc-status','Provisioning needs this machine in nodes.list; it is not there yet.');
+    _mcFloat('nd-prov');
+    return ndProv(n.id);
+  }
+  if(action==='backend'){
+    if(!_ndNodes.length) await ndLoad();
+    const n=_ndNodes.find(x=>x.id===r.id||x.ssh_host_id===r.ssh_host_id);
+    if(!n) return txt('mc-status','Switching the backend needs this machine in nodes.list; it is not there yet.');
+    return ndSwitch(n.id);
+  }
   if(action==='cpu'){ estateOpen('proxmox',''); return pmxSub('cpu'); }
   if(action==='detect'){ txt('mc-status','detecting '+r.label+'…'); await ndDetect(r.ssh_host_id); return mcLoad(); }
   if(action==='containers'){ estateOpen('docker',''); return dkrSelectHost(r.docker_host_id); }
 }
 
 function showPane(name, el){
+  if(name==='nodes'){ // folded into Machines: the same list, plus Provision and Switch backend per row
+    return showPane('machines', document.querySelector('.snav[data-pane="machines"]'));
+  }
   if(name==='perf'){ // legacy alias — Perf now lives as a sub-tab of Observe
     showPane('observe', document.querySelector('.snav[data-pane="observe"]'));
     obsSub('perf');

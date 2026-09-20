@@ -73,8 +73,9 @@ class Sources:
 
     def __init__(self, machines=None, backups=None, certs=None, mesh=None, identity=None,
                  ssh_hosts=None, integrations=None, docker_hosts=None, inventory=None,
-                 errors: Optional[Mapping[str, str]] = None, now: Optional[float] = None):
+                 containers=None, errors: Optional[Mapping[str, str]] = None, now: Optional[float] = None):
         self.machines = list(machines or [])
+        self.containers = list(containers or [])      # docker.ps rows (Engine shape), local host
         self.backups = dict(backups or {})            # backup.status: guests, schedules
         self.certs = list(certs or [])
         self.mesh = list(mesh or [])
@@ -391,6 +392,41 @@ def _identity_record(src: Sources, fqdn: str) -> Dict[str, Any]:
             "planes": {}, "related": related, "links": [_link("Open in Trust › Identity", entity_ref("identity", fqdn))]}
 
 
+def _container_name(c: Mapping[str, Any]) -> str:
+    names = c.get("Names") or []
+    return str(names[0] if names else (c.get("Name") or c.get("Id") or "")).lstrip("/")
+
+
+def _container_record(src: Sources, ident: str) -> Dict[str, Any]:
+    """ident is host/name (host is the Docker host id, 'local' for Vera's own)."""
+    host, _, name = ident.partition("/")
+    if not name:
+        host, name = "local", host
+    c = next((x for x in src.containers if _container_name(x) == name or str(x.get("Id", "")).startswith(name)), None)
+    if not c:
+        return {"found": False}
+    labels = c.get("Labels") or {}
+    project = labels.get("com.docker.compose.project", "")
+    ports = sorted({f"{p.get('PublicPort')}->{p.get('PrivatePort')}/{p.get('Type')}" for p in (c.get("Ports") or []) if p.get("PublicPort")})
+    restart = ((c.get("HostConfig") or {}).get("RestartPolicy") or {}).get("Name") or ""
+    facts = [_fact("State", c.get("State") or "—"), _fact("Status", c.get("Status") or "—"),
+             _fact("Image", c.get("Image") or "—"), _fact("Compose project", project or "not managed by compose"),
+             _fact("Restart policy", restart or "none"), _fact("Ports", ", ".join(ports) or "none published")]
+    mounts = [m.get("Source") or m.get("Name") for m in (c.get("Mounts") or []) if m.get("Source") or m.get("Name")]
+    if mounts:
+        facts.append(_fact("Mounts", ", ".join(str(m) for m in mounts[:6])))
+    dh = next((d for d in src.docker_hosts if d.get("id") == host), None)
+    related = []
+    if dh:
+        related.append({"ref": entity_ref("docker-host", host), "label": dh.get("label") or host, "noun": "Docker host"})
+    m = src.machine_by_host_id((dh or {}).get("ssh_host_id") or "") if dh else {}
+    if m:
+        related.append({"ref": entity_ref("guest" if m.get("kind") == "guest" else "host", m.get("vmid") if m.get("kind") == "guest" else m.get("ssh_host_id") or m.get("id")),
+                        "label": m.get("label", ""), "noun": "machine"})
+    return {"found": True, "title": name, "subtitle": f"container · {c.get('State') or ''}".strip(" ·"), "facts": facts,
+            "planes": {}, "related": related, "links": [_link("Open in Docker", entity_ref("container", ident))]}
+
+
 def _docker_host_record(src: Sources, ident: str) -> Dict[str, Any]:
     d = next((y for y in src.docker_hosts if y.get("id") == ident), None)
     if not d:
@@ -440,6 +476,8 @@ def resolve(ref: Any, src: Sources) -> Dict[str, Any]:
         rec = _identity_record(src, ident)
     elif kind == "docker-host":
         rec = _docker_host_record(src, ident)
+    elif kind == "container":
+        rec = _container_record(src, ident)
     else:
         rec = {"found": False, "error": f"{kind} is known but has no reader joined yet"}
     out = {**base, **rec}
