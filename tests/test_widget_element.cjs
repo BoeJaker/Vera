@@ -159,8 +159,11 @@ t('css names the sample tag', /\.vw-sampletag/.test(W.css()) && /\.vw-sampled/.t
 (async () => {
   const answers = [{ type: 'tool_result', tool_name: 'x', content: { ok: true, a: 1 } }, { result: { ok: true, b: 2 } }, { ok: true, c: 3 }];
   let i = 0; ctx.fetch = async () => ({ json: async () => answers[i++] });
-  const r = [await W.call('', 'x'), await W.call('', 'x'), await W.call('', 'x')];
+  const r = [await W.call('', 'x', { i: 1 }), await W.call('', 'x', { i: 2 }), await W.call('', 'x', { i: 3 })];
   t('call() opens {type:tool_result, content}, {result} and the bare object', r[0].a === 1 && r[1].b === 2 && r[2].c === 3);
+  let n = 0; ctx.fetch = async () => { n++; return { json: async () => ({ ok: true, n }) }; };
+  const same = await Promise.all([W.call('', 'shared', { q: 1 }), W.call('', 'shared', { q: 1 }), W.call('', 'shared', { q: 1 })]);
+  t('the same read asked for three times at once is one fetch, shared', n === 1 && same.every((x) => x.n === 1), 'fetches ' + n);
   // ── the surface (window.VeraWidgetConfig): the API, its record shapes, the two context-graph entries ──
   const C = ctx.window.VeraWidgetConfig;
   t('VeraWidgetConfig: open/close, version 3, the packs, the two context-graph entries', C && typeof C.open === 'function' && typeof C.close === 'function' && C.version === 3 && C.packs.length === 5 && C.packs[0][0] === 'inherit' && C.packs[4][0] === 'pixel' && C.entries.length === 2 && C.entries[0].id === 'context_graph' && C.entries[0].size === 'm' && C.entries[1].size === 'xl' && /mini/.test(C.entries[0].n) && /full/.test(C.entries[1].n));

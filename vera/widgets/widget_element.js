@@ -1722,9 +1722,16 @@ span.vw-sampled{opacity:.85}
   const REFRESH_FLOOR = 10;
   // one capability call for the element and the surface: prod's envelope is {type:'tool_result', tool_name, content};
   // a stand-in may answer {result} or the bare object — every one is opened
+  const INFLIGHT = new Map();   // one fetch per (base, name, args) at a time, shared by every element that asks
   async function call(base, name, args) {
-    const r = await fetch((base || '') + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) });
-    const j = await r.json(); return (j && j.type === 'tool_result') ? j.content : (j && j.result !== undefined ? j.result : (j && j.content !== undefined ? j.content : j));
+    let key = ''; try { key = (base || '') + '|' + name + '|' + JSON.stringify(args || {}); } catch (_) { key = ''; }
+    if (key && INFLIGHT.has(key)) return INFLIGHT.get(key);
+    const p = (async () => {
+      const r = await fetch((base || '') + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) });
+      const j = await r.json(); return (j && j.type === 'tool_result') ? j.content : (j && j.result !== undefined ? j.result : (j && j.content !== undefined ? j.content : j));
+    })();
+    if (key) { INFLIGHT.set(key, p); p.then(() => setTimeout(() => INFLIGHT.delete(key), 1500), () => INFLIGHT.delete(key)); }
+    return p;
   }
   const parseRefresh = (s) => { const m = String(s || '').match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/); if (!m) return 0; const n = parseFloat(m[1]); return m[2] === 'ms' ? n / 1000 : m[2] === 'm' ? n * 60 : m[2] === 'h' ? n * 3600 : n; };
   const sizeForWidth = (w) => w <= 120 ? 'xs' : w <= 220 ? 's' : w <= 380 ? 'm' : w <= 620 ? 'l' : 'xl';
@@ -1777,9 +1784,12 @@ span.vw-sampled{opacity:.85}
       if (wants && rec.source && readable(rec.source)) { try { subj = await this._call(rec.source, rec.read.args || {}); } catch (e) { subj = undefined; this._err = String(e && e.message || e).slice(0, 120); } }
       const out = Object.assign({}, this._kids || {});
       const keep = (slot, v, err) => { const prev = out[slot] && out[slot].__read ? out[slot] : null; out[slot] = { __read: true, data: err ? (prev ? prev.data : undefined) : v, err: err || '' }; };
-      await Promise.all(kids.map(async (k) => { if (!k.r || k.own) return;
-        if (/^\$subject/.test(k.r.source)) { if (subj !== undefined) keep(k.slot, pick(subj, k.r.source.replace(/^\$subject\.?/, ''))); else if (this._err) keep(k.slot, undefined, this._err); return; }
-        if (k.r.source && readable(k.r.source)) { try { const v = await this._call(k.r.source, k.r.read.args || {}); if (v && typeof v === 'object' && v.error && Object.keys(v).length <= 2) keep(k.slot, undefined, String(v.error).slice(0, 120)); else keep(k.slot, v); } catch (e) { keep(k.slot, undefined, String(e && e.message || e).slice(0, 120)); } } }));
+      // what the subject answers is drawn now; every child that reads on its own is drawn as it lands
+      const show = () => { if (this._rec !== rec) return; this._kids = Object.assign({}, out); if (subj !== undefined) this._data = subj; this.render(); };
+      kids.forEach((k) => { if (!k.r || k.own || !/^\$subject/.test(k.r.source)) return; if (subj !== undefined) keep(k.slot, pick(subj, k.r.source.replace(/^\$subject\.?/, ''))); else if (this._err) keep(k.slot, undefined, this._err); });
+      show();
+      await Promise.all(kids.map(async (k) => { if (!k.r || k.own || /^\$subject/.test(k.r.source)) return;
+        if (k.r.source && readable(k.r.source)) { try { const v = await this._call(k.r.source, k.r.read.args || {}); if (v && typeof v === 'object' && v.error && Object.keys(v).length <= 2) keep(k.slot, undefined, String(v.error).slice(0, 120)); else keep(k.slot, v); } catch (e) { keep(k.slot, undefined, String(e && e.message || e).slice(0, 120)); } show(); } }));
       if (this._rec !== rec) return; this._kids = out; if (subj !== undefined) this._data = subj; this.render();
       this.dispatchEvent(new CustomEvent('widget:refresh', { bubbles: true, composed: true, detail: { record: rec, data: this._data, kids: out } }));
     }
