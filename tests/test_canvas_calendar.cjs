@@ -81,6 +81,17 @@ const EVENTS = [
 // ── it is linked to the diary, not a copy of it ────────────────────────────────────────────────────────────────
 {
   t('the month buttons go back to the diary', /callResult\('cal\.events\.list', \{ start: from, end: to \}\)/.test(cvSrc));
+  /* `end` is EXCLUSIVE at midnight. Asking to the last day of the month drops that whole day - measured against
+     the real cap: four events seeded into September, a 01..30 range answered with three, and the one on the 30th
+     was the one missing. An event written on the last of the month landing a calendar that does not show it is
+     the single case this has to get right. */
+  t('the range runs to the first of the NEXT month, not the last of this one',
+    /const to = nxt\.getFullYear\(\) \+ '-' \+ pad\(nxt\.getMonth\(\) \+ 1\) \+ '-01';/.test(cvSrc)
+    && !/const to = month \+ '-' \+ pad\(new Date/.test(cvSrc));
+  t('and what comes back is filtered to the month asked for',
+    /\.filter\(\(e\) => String\(e && e\.start \|\| ''\)\.slice\(0, 7\) === month\)/.test(cvSrc));
+  t('the chat side asks the same way', /const nxt=new Date\(yy,mm,1\); const to=nxt\.getFullYear\(\)/.test(chat)
+    && /\.filter\(e=>String\(\(e&&e\.start\)\|\|''\)\.slice\(0,7\)===month\)/.test(chat));
   t('and the answer is written into the item, so it survives a reload',
     /canvas\.update', \{ key, content: Object\.assign\(\{\}, c, \{ month, selected: '', events \}\) \}/.test(cvSrc));
   t('a day press is local - the month is already here', /selected: c\.selected === day \? '' : day/.test(cvSrc));
