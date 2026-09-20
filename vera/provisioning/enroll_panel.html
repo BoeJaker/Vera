@@ -50,6 +50,8 @@ input:focus,select:focus{border-color:var(--acc)}
 .toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}
 </style>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-estate.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
 </head>
 <body>
 <div id="shell">
@@ -156,7 +158,7 @@ async function discover(){
   $('#st-total').textContent=GUESTS.length;
   $('#g-tbody').innerHTML=GUESTS.length?GUESTS.map(g=>`<tr>
     <td style="color:var(--dim)">${g.vmid}</td>
-    <td style="font-weight:600">${esc(g.name||'?')}</td>
+    <td style="font-weight:600">${veraEstate.chip('guest:'+g.vmid, g.name||'?')}</td>
     <td><span class="pill">${g.type==='qemu'?'VM':'CT'}</span></td>
     <td style="color:var(--dim2)">${esc(g.node)}</td>
     <td><span class="pill ${g.status==='running'?'run':'stop'}">${esc(g.status)}</span></td>
@@ -168,8 +170,9 @@ async function discover(){
 async function loadHosts(){
   let d={}; try{ d=await api('/enroll/ssh/host/list'); }catch(e){}
   const hs=d.hosts||[];
+  try{ await veraEstate.machines(); }catch(e){}
   $('#h-tbody').innerHTML=hs.length?hs.map(h=>`<tr>
-    <td style="font-weight:600">${esc(h.label||'')}</td>
+    <td style="font-weight:600">${veraEstate.chip(veraEstate.refFor({addr:h.host}), h.label||'')}</td>
     <td style="color:var(--dim2)">${esc(h.host||'')}:${h.port||22}</td>
     <td>${esc(h.user||'')}</td>
     <td><span class="pill ${h.auth==='cert'?'ok':''}">${esc(h.auth||'')}</span></td>

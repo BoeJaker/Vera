@@ -1704,13 +1704,14 @@ async function loadHosts(){
     const r = await fetch('/exec/ssh/hosts/list',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     const j = await r.json(); _hosts = j.hosts||[];
   }catch{ _hosts=[]; }
+  let names={}; try{ names=await veraEstate.labelMap(); }catch(e){}
   for(const id of ['docker-host-id','pve-host-id','k8s-host-id']){
     const sel=document.getElementById(id); if(!sel) continue;
     const cur=sel.value;
     sel.innerHTML='<option value="">-- pick --</option>';
     for(const h of _hosts){
       const o=document.createElement('option'); o.value=h.id;
-      o.textContent = `${h.label||h.host} (${h.user||'?'}@${h.host})`;
+      o.textContent = names[h.id] ? `${names[h.id]} · ${h.user||'?'}@${h.host}` : `${h.label||h.host} (${h.user||'?'}@${h.host})`;
       sel.appendChild(o);
     }
     sel.value=cur;
@@ -4688,6 +4689,7 @@ function _populateOsintModels(){
 }
 
 </script>
+<script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script>
 /* ── Vera chat ↔ panel bridge wiring ─────────────────────────────────────

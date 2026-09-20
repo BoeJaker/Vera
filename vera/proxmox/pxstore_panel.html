@@ -1132,7 +1132,7 @@ P.fillCTSelects = ()=>{
   const cts=(P.state.inv?.guests||[]).filter(g=>g.type==='lxc');
   const opts=cts.map(g=>`<option value="${g.vmid}">${esc(g.name)} (#${g.vmid})</option>`).join('');
   ['conCT','atCT','wrSrc'].forEach(id=>{ if($(id)) $(id).innerHTML=opts||'<option value="">no CTs</option>'; });
-  if($('sxHost')) $('sxHost').innerHTML=(P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}">${esc(h.label||h.host)}</option>`).join('')||'<option value="">no SSH hosts</option>';
+  if($('sxHost')) veraEstate.fillSelect($('sxHost'), {selected:$('sxHost').value||''}).catch(()=>{});
   const st=P.state.settings||{};
   if(st.store_mount) $('stInfo').innerHTML=`store: <b>${esc(st.store_dataset)}</b> @ ${esc(st.store_mount)}`;
   if(st.store_dataset&&!$('stDataset').value) $('stDataset').value=st.store_dataset;
@@ -1325,10 +1325,8 @@ P.storeAttachRemote = async ()=>{
 /* ── setup ── */
 P.renderSetupSelects = ()=>{
   const st=P.state.settings||{};
-  if($('setWriterHost')) $('setWriterHost').innerHTML='<option value="">VFS-02 (found by its label)</option>'+
-    (P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}" ${h.id===st.store_writer_host?'selected':''}>${esc(h.label||h.host)} (${esc(h.host)})</option>`).join('');
-  if($('setNwm')) $('setNwm').innerHTML='<option value="">— not set —</option>'+
-    (P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}" ${h.id===st.nwm_host_id?'selected':''}>${esc(h.label||h.host)}</option>`).join('');
+  if($('setWriterHost')) veraEstate.fillSelect($('setWriterHost'), {blank:'VFS-02 (found by its label)', selected:st.store_writer_host||''}).catch(()=>{});
+  if($('setNwm')) veraEstate.fillSelect($('setNwm'), {blank:'— not set —', selected:st.nwm_host_id||''}).catch(()=>{});
 };
 P.renderSetup = async ()=>{
   // Re-fetch the canonical SSH host list so credentials added in

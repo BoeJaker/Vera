@@ -224,6 +224,7 @@ async function refresh(){
     // cluster specifically, so it's shown as its own section (name-matching
     // a PVE node to an SSH host label isn't reliable enough to fuse per-node).
     try{ TEMPS=await api('/nodes/temps'); }catch(e){ TEMPS=null; }
+    try{ await veraEstate.machines(); }catch(e){}
     render(); $('#autoStat').textContent='updated '+new Date().toLocaleTimeString();
   }catch(e){ toast('status failed: '+e.message,true); }
 }
@@ -239,7 +240,7 @@ function render(){
     const mp=pct(n.mem,n.maxmem);
     const up = n.status==='online';
     h+=`<div class="card">
-      <div class="hd"><span class="nm">🖥 ${esc(n.node)}</span>
+      <div class="hd"><span class="nm">🖥 ${veraEstate.chip(veraEstate.refFor({node:n.node}), n.node)}</span>
         <span class="pill ${up?'run':'stop'}">${esc(n.status||'?')}</span></div>
       ${metric('CPU',Math.round((n.cpu||0)*100)+'%',Math.round((n.cpu||0)*100))}
       ${metric('Mem',fmtBytes(n.mem)+' / '+fmtBytes(n.maxmem),mp)}
@@ -276,7 +277,7 @@ function render(){
     const mp=pct(g.mem,g.maxmem);
     h+=`<div class="card">
       <div class="hd">
-        <span class="nm">${g.type==='lxc'?'📦':'🗔'} ${esc(g.name||('vm'+g.vmid))}</span>
+        <span class="nm">${g.type==='lxc'?'📦':'🗔'} ${veraEstate.chip('guest:'+g.vmid, g.name||('vm'+g.vmid))}</span>
         <span class="pill ${run?'run':'stop'}">${esc(g.status)}</span>
       </div>
       <div class="hd"><span class="sub" style="margin-left:0;color:var(--t2)">${g.type} · ${g.vmid} · ${esc(g.node)}</span></div>
@@ -474,5 +475,7 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ if($('#con').clas
 boot();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-estate.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
 </body>
 </html>

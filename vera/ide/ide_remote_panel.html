@@ -340,7 +340,7 @@ function renderInstances(){
       <div class="top">
         <div>
           <span class="name">${esc(i.label||i.id)}</span> <span class="kind">${i.kind}</span>
-          <div class="meta">${i.url?esc(i.url):'(no url)'} · workdir: ${esc(i.workdir||'—')} · host: ${esc(i.host_id||'—')}</div>
+          <div class="meta">${i.url?esc(i.url):'(no url)'} · workdir: ${esc(i.workdir||'—')} · host: ${i.host_id?veraEstate.chip('host:'+i.host_id, (veraEstate.find({ssh_host_id:i.host_id})||{}).label||i.host_id):'—'}</div>
         </div>
         <div>${statusChip(i)}</div>
       </div>
@@ -540,7 +540,7 @@ async function pxgLoad(){
   PXG_CFG=r.ssh_config||'';
   $('#pxg-cfg').textContent=PXG_CFG||'— no SSH-enrolled guests yet (Workers → Proxmox → guest → Enroll) —';
   $('#pxg-body').innerHTML=(r.targets||[]).map(t=>`<tr>
-    <td><b>${esc(t.name)}</b> <span class="muted">#${t.vmid}</span></td>
+    <td><b>${veraEstate.chip('guest:'+t.vmid, t.name)}</b> <span class="muted">#${t.vmid}</span></td>
     <td>${t.type==='lxc'?'CT':'VM'}</td>
     <td><span class="chip ${t.via==='ssh'?'ok':''}"><span class="dot"></span><span>${esc(t.via)}</span></span></td>
     <td>${t.uri?`<a href="${esc(t.uri)}">Open in VS Code ↗</a>`:'<span class="muted">via share</span>'}</td>
@@ -555,5 +555,6 @@ setInterval(()=>{ if($('#v-instances').classList.contains('active')) loadInstanc
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-estate.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
 </body>
 </html>
