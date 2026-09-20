@@ -57,5 +57,38 @@ const SOURCES = new Set(['obs.health', 'obs.events', 'obs.scheduler', 'obs.worke
 // ── the read-through waits for a slow reading (prod's topology.snapshot takes ~11 s; the old 12 s limit fell back to the sandbox's empty stores) ──
 { const CO = fs.readFileSync(path.join(R, 'vera', 'capability_orchestration.py'), 'utf8');
   t('the read-through timeout is a named constant, 40 s by default, overridable by VERA_UPSTREAM_READ_TIMEOUT_S', CO.includes('_READ_THROUGH_TIMEOUT_S = float(os.environ.get("VERA_UPSTREAM_READ_TIMEOUT_S") or 40)') && CO.includes('timeout=_READ_THROUGH_TIMEOUT_S') && !CO.includes('verify=False, timeout=12)')); }
+// -- the Cluster overview (main.json): bands that fill the twelve columns, no overlap, human titles, every page tile named --
+{ const main = JSON.parse(fs.readFileSync(path.join(R, 'vera', 'widgets', 'layouts', 'main.json'), 'utf8'));
+  const shown = main.widgets.filter((w) => !w.hidden), cells = {}; let overlap = '', rows = 0;
+  shown.forEach((w) => { const [x, y] = w.at, [cw, ch] = w.span; for (let i = x; i < x + cw; i++) for (let j = y; j < y + ch; j++) { const k = i + ',' + j; if (cells[k]) overlap = overlap || (w.record.id + ' over ' + cells[k]); cells[k] = w.record.id; rows = Math.max(rows, j + 1); } });
+  const holes = []; for (let j = 0; j < rows; j++) for (let i = 0; i < 12; i++) if (!cells[i + ',' + j]) holes.push(i + ',' + j);
+  t('the overview places every tile by hand and no two overlap', !overlap, overlap);
+  t('every row of the overview is filled across its twelve columns (no gaps)', !holes.length, holes.slice(0, 6).join(' '));
+  t('the overview has at least twenty-four tiles over real sources', shown.length >= 24 && shown.every((w) => w.record.source), String(shown.length));
+  t('every title is a name, not an id (no dots, no underscores, no "· source")', shown.every((w) => /^[A-Z][^_]*$/.test(w.record.title) && !/\.(status|stats|list|health|scan)/.test(w.record.title)), shown.filter((w) => !/^[A-Z][^_]*$/.test(w.record.title)).map((w) => w.record.title).join(' | '));
+  const oldIds = ['host-resources', 'host-temps', 'status', 'mode', 'redis', 'workers', 'caps', 'pending', 'postgres', 'chroma', 'neo4j', 'ollama', 'mesh-info', 'looplab-info', 'sandboxes-info'];
+  const named = {}; main.widgets.forEach((w) => { named[typeof w.record === 'string' ? w.record : w.record.id] = w; });
+  t('the page tiles the overview replaced are named hidden, so a fresh dashboard does not show them twice', oldIds.every((id) => named[id] && named[id].hidden), oldIds.filter((id) => !(named[id] && named[id].hidden)).join(' '));
+  t('the composites carry an odd child count somewhere (the last-row fill is exercised) and the stack topology is eight wide', shown.some((w) => w.record.form === 'composite' && w.record.children.length % 2 === 1) && named['topology-map'].span[0] === 8);
+  // the maps' new words draw the right thing through the element itself
+  const vm = require('node:vm'); const defined = {};
+  const ctx = { window: {}, console, HTMLElement: class {}, CustomEvent: class {}, customElements: { get: (n) => defined[n], define: (n, c) => { defined[n] = c; } }, document: { querySelectorAll: () => [], createElement: () => ({ setAttribute() {}, appendChild() {}, style: {} }), head: { appendChild() {} }, getElementById: () => null }, setTimeout, clearTimeout, requestAnimationFrame: (f) => setTimeout(f, 0), localStorage: { getItem: () => null, setItem() {} } };
+  ctx.window.customElements = ctx.customElements; ctx.window.document = ctx.document; ctx.window.localStorage = ctx.localStorage;
+  vm.runInNewContext(fs.readFileSync(path.join(R, 'vera', 'ui', 'iso.js'), 'utf8'), ctx); vm.runInNewContext(WE, ctx); const W = ctx.window.VeraWidget;
+  const sys = { resources: { cpu: 21, mem: 56 }, proxmox: { running: 21, guests: 55, mem_pct: 58.6, configured: 1, nodes: 1 }, docker: { running: 64, containers: 244 }, ollama: { online: 3 } };
+  const fleet = W.draw('rows', sys, 'm', { bare: true, record: { form: 'rows', read: { map: { pick: { 'guests up': 'proxmox.running', 'containers up': 'docker.running', 'ollama online': 'ollama.online' } } }, draw: { columns: ['name', 'value'] } } });
+  t('pick builds rows from paths anywhere in the answer (a fleet from proxmox, docker and ollama)', /guests up/.test(fleet) && /containers up/.test(fleet) && /ollama online/.test(fleet) && /\b64\b/.test(fleet) && !/wempty/.test(fleet), fleet.slice(0, 200));
+  const kv = W.draw('kv', sys.proxmox, 'm', { bare: true, record: { form: 'kv', read: { map: { keys: ['guests', 'running'] } } } });
+  t('keys keeps only the named entries of a dict, in that order', /guests/.test(kv) && /running/.test(kv) && !/mem_pct/.test(kv) && kv.indexOf('guests') < kv.indexOf('running'), kv.slice(0, 200));
+  const comp = { form: 'composite', children: [{ slot: 'a', record: { form: 'counter', data: { value: 3 } } }, { slot: 'b', record: { form: 'rows', data: [{ name: 'x', value: 1 }, { name: 'y', value: 2 }] } }, { slot: 'c', record: { form: 'kv', data: { p: 1 } } }] };
+  const h3 = W.draw('composite', null, 'm', { bare: true, record: comp, height: 200, width: 300 });
+  const hs = [...h3.matchAll(/height:(\d+)px/g)].map((m) => +m[1]);
+  t('a composite of three: the last child spans the row (no hole), and the row holding the list is taller than the row of one figure', /grid-column:span 2/.test(h3) && hs.length === 3 && hs[0] === hs[1] && hs[1] > hs[2], JSON.stringify(hs) + ' ' + (h3.match(/grid-column:[^;"]+/g) || []).join(','));
+  const h5 = W.draw('composite', null, 'm', { bare: true, record: { form: 'composite', children: comp.children.concat([{ slot: 'd', record: { form: 'kv', data: { q: 1 } } }, { slot: 'e', record: { form: 'kv', data: { r: 1 } } }]) }, height: 300, width: 700 });
+  t('a wide composite of five draws three columns and its last row fills the width', /grid-template-columns:repeat\(3,1fr\)/.test(h5) && /grid-column:span 2/.test(h5), (h5.match(/grid-(template-columns|column):[^;"]+/g) || []).join(','));
+  t('the shadow styles carry the packs: labels read the pack metrics, pixel hardens lines and stripes bars, terminal hatches', /text-transform:var\(--label-case/.test(WE) && /:host-context\(\[data-style="pixel"\]\) polyline/.test(WE) && /:host-context\(\[data-style="terminal"\]\)/.test(WE) && /:host-context\(\[data-style="newspaper"\]\)/.test(WE));
+  const HTML = fs.readFileSync(path.join(R, 'vera', 'capability_orchestration.html'), 'utf8'), UI = fs.readFileSync(path.join(R, 'vera', 'vera-ui.js'), 'utf8');
+  t('the packs\' faces are loaded: the shell page links them, and the UI script adds the link on any page that paints a pack', /Pixelify\+Sans/.test(HTML) && /id="veraPackFonts"/.test(HTML) && /_ensurePackFonts\(\)/.test(UI) && /Press\+Start\+2P/.test(UI));
+  t('the tile head and body take the pack\'s label case, tracking, weight and padding; pixel marks titles, newspaper rules the head, terminal outlines', /text-transform:var\(--label-case,uppercase\)/.test(HTML) && /\.w-head\{padding:11px var\(--pad,12px\) 0/.test(HTML) && /\[data-style="pixel"\] \.w-head \.w-title::before/.test(HTML) && /\[data-style="newspaper"\] \.w-head\{border-bottom/.test(HTML) && /\[data-style="terminal"\] \.dash-toolbar \.btn\.teal/.test(HTML)); }
 console.log((fails ? 'FAILED ' : 'passed ') + (fails ? fails + ' check(s)' : 'all checks'));
 process.exit(fails ? 1 : 0);

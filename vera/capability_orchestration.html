@@ -49,6 +49,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" media="print" onload="this.media='all'"
       href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap">
+<!-- the style packs' faces (the StylePacks board): Instrument Sans · Source Serif 4 · Libre Baskerville · JetBrains Mono · Pixelify Sans · Press Start 2P · VT323 -->
+<link rel="stylesheet" media="print" onload="this.media='all'" id="veraPackFonts"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Libre+Baskerville:wght@400;700&family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500;700&family=Pixelify+Sans:wght@400;500;600;700&family=Press+Start+2P&family=VT323&display=swap">
 <style>
 /* ── Warm dark (default) ── */
 :root{
@@ -749,8 +752,8 @@ header .hdr-right{margin-left:0;gap:6px}
 .widget{background:var(--s1,var(--bg1,#151719));border:none;border-radius:var(--ui-radius,10px);box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5))}
 .widget:hover{border-color:transparent;box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
 .w-head{height:34px;padding:0 12px;gap:8px;border-bottom:none;background:transparent}
-.w-title{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:var(--label-size,9px);font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--t2,var(--dim2,#8a92a0));flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.w-head{padding:11px 12px 0;height:auto;min-height:30px}
+.w-title{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:var(--label-size,9px);font-weight:var(--label-weight,600);letter-spacing:var(--label-track,.09em);text-transform:var(--label-case,uppercase);color:var(--t2,var(--dim2,#8a92a0));flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.w-head{padding:11px var(--pad,12px) 0;height:auto;min-height:30px}
 .w-head .w-dot{width:6px;height:6px}
 /* the counters as the board's hero numbers */
 .w-body .kpi{gap:4px;justify-content:flex-start;padding-top:2px}
@@ -768,9 +771,21 @@ header .hdr-right{margin-left:0;gap:6px}
 .widget:hover .w-head .w-actions,.widget:focus-within .w-head .w-actions,.dash-grid.editing .w-head .w-actions,.widget.floating .w-head .w-actions{display:inline-flex}
 .w-iconbtn{width:22px;height:22px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280))}
 .w-iconbtn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
-.w-body{padding:6px 12px 12px}
+.w-body{padding:6px var(--pad,12px) 12px}
 .w-body.flush{padding:0}
 .w-grip{color:var(--t3,var(--dim,#6b7280))}
+/* the style packs on the tiles (the StylePacks board — radius, pill and card already come through the pack's variables):
+   pixel's marker before a title, its display face on the hero figures and its bevelled chips; newspaper's double rule under
+   a tile's head and heavier titles; terminal's outlines where the other packs fill */
+[data-style="pixel"] .w-head .w-title::before{content:'AA';margin-right:6px;color:var(--ac,var(--acc,#5a9e8f))}
+[data-style="pixel"] .w-head .w-dot,[data-style="pixel"] .dash-toolbar .live i{border-radius:0}
+[data-style="pixel"] .w-body .kpi-val{font-family:var(--f-disp,var(--f-mono));font-size:22px!important;letter-spacing:0!important}
+[data-style="pixel"] .w-head .vd-rec,[data-style="pixel"] .dash-toolbar .btn,[data-style="pixel"] .dash-toolbar .mbtn,[data-style="pixel"] #dashHealthStrip > span{box-shadow:inset 0 2px 0 0 rgba(255,255,255,.06),inset 0 -2px 0 0 rgba(0,0,0,.22),0 0 0 2px var(--bd2,var(--border2,rgba(255,255,255,.18)))!important}
+[data-style="pixel"] .dash-toolbar .btn.teal,[data-style="pixel"] .dash-toolbar .btn.pri,[data-style="pixel"] .dash-toolbar .mbtn.pri{box-shadow:inset 0 2px 0 0 rgba(255,255,255,.14),inset 0 -2px 0 0 rgba(0,0,0,.28),0 0 0 2px var(--ac,var(--acc,#5a9e8f))!important}
+[data-style="newspaper"] .w-head{border-bottom:1px solid var(--t3,var(--dim,#6b7280));box-shadow:0 2px 0 -1px var(--bd,var(--border,rgba(255,255,255,.09)));padding-bottom:6px}
+[data-style="newspaper"] .w-title{font-weight:700}
+[data-style="terminal"] .dash-toolbar .btn.teal,[data-style="terminal"] .dash-toolbar .btn.pri,[data-style="terminal"] .dash-toolbar .mbtn.pri{background:transparent;color:var(--ac,var(--acc,#5a9e8f));box-shadow:inset 0 0 0 1px var(--ac,var(--acc,#5a9e8f))}
+[data-style="terminal"] .w-head .vd-rec,[data-style="terminal"] #dashHealthStrip > span{background:transparent!important;box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
 </style>
 </head>
 <body>

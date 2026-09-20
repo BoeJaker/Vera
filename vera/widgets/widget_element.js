@@ -154,20 +154,27 @@
   function applyMap(x, map, shape) {
     if (!map || typeof map !== 'object' || x == null) return x; const keys = Object.keys(map).filter((k) => map[k] != null && map[k] !== ''); if (!keys.length) return x;
     const sh = String(shape || ''), fields = SHAPE_FIELDS[sh] || [], cont = CONTAINER[sh];
+    // pick: {label: path, ...} builds the thing from paths anywhere in the answer (a fleet from proxmox.running, docker.running
+    // and ollama.online) - keys: [name, ...] keeps only those entries of a dict, or those rows, in that order
+    let picked = false;
+    if (map.pick && typeof map.pick === 'object' && !Array.isArray(map.pick)) { const o = {}; Object.keys(map.pick).forEach((k) => { const v = pick(x, map.pick[k]); if (v !== undefined) o[k] = v; });
+      if (Object.keys(o).length) { x = (cont === 'rows' || cont === 'events' || cont === 'points') ? Object.keys(o).map((k) => ({ name: k, value: o[k] })) : o; picked = true; } }
+    const only = Array.isArray(map.keys) ? map.keys.map(String) : null, nm = (r) => String(r.name ?? r.id ?? r.label ?? r.key ?? '');
+    const keep = (b) => { if (!only) return b; if (Array.isArray(b)) return only.map((k) => b.find((r) => r && typeof r === 'object' && nm(r) === k)).filter(Boolean); if (b && typeof b === 'object') { const o = {}; only.forEach((k) => { if (b[k] !== undefined) o[k] = b[k]; }); return o; } return b; };
     if (sh === 'level' || sh === 'rate') { const o = (x && typeof x === 'object' && !Array.isArray(x)) ? Object.assign({}, x) : { value: x }; let hit = false;
       ['value', 'rate', 'min', 'max', 'unit', 'delta', 'trend'].forEach((k) => { if (map[k] == null) return; const v = pick(x, map[k]); if (v !== undefined) { o[k === 'rate' ? 'value' : k] = v; hit = true; } });
       return hit ? o : x; }
-    let base = x, hit = false;
+    let base = x, hit = picked;
     if (sh === 'graph') { const o = Object.assign({}, (x && typeof x === 'object' && !Array.isArray(x)) ? x : {}); ['nodes', 'links'].forEach((k) => { if (map[k] == null) return; const v = pick(x, map[k]); if (v !== undefined) { o[k === 'links' ? 'links' : 'nodes'] = v; hit = true; } }); if (!hit) return x; base = o; }
     else if (cont && map[cont] != null) { let v = pick(x, map[cont]); if (v !== undefined) {
       // a container that is a dict of things (workers keyed by id, nodes keyed by host) lists its entries as rows, the key as the name
       if (v && typeof v === 'object' && !Array.isArray(v) && cont !== 'text' && Object.keys(v).length && Object.keys(v).every((k) => v[k] && typeof v[k] === 'object')) v = Object.keys(v).map((k) => Object.assign({ name: k }, Array.isArray(v[k]) ? { values: v[k] } : v[k]));
       else if (v && typeof v === 'object' && !Array.isArray(v) && (cont === 'rows' || cont === 'events' || cont === 'points') && Object.keys(v).length) v = Object.keys(v).map((k) => ({ name: k, value: v[k] }));
       base = v; hit = true; } }
-    const renames = keys.filter((k) => !fields.includes(k) && k !== cont && !(sh === 'graph' && (k === 'nodes' || k === 'links')));
+    const renames = keys.filter((k) => !fields.includes(k) && k !== cont && k !== 'pick' && k !== 'keys' && !(sh === 'graph' && (k === 'nodes' || k === 'links')));
     if (renames.length && Array.isArray(base) && base.some((r) => r && typeof r === 'object')) { base = base.map((r) => { if (!r || typeof r !== 'object') return r; const o = Object.assign({}, r); renames.forEach((k) => { const v = pick(r, map[k]); if (v !== undefined) { o[k] = v; hit = true; } }); return o; }); }
     else if (renames.length && sh === 'graph' && base && Array.isArray(base.nodes)) { base = Object.assign({}, base, { nodes: base.nodes.map((r) => { if (!r || typeof r !== 'object') return r; const o = Object.assign({}, r); renames.forEach((k) => { const v = pick(r, map[k]); if (v !== undefined) { o[k] = v; hit = true; } }); return o; }) }); }
-    return hit ? base : x;
+    return keep(hit ? base : x);
   }
   // the record's read.map + read.range on the data a form is handed (the element and the sheet both go through here)
   function mapped(rec, form, data) {
@@ -549,10 +556,18 @@
     const layout = rec.layout || 'grid', kd = (o && o.kids) || {}, chip = layout === 'rail' || layout === 'report';
     // the frame's height (opts.height is the element's measured body) shared among the rows of slots: a 2 × 2 of four
     // children gets two rows, each slot a fixed height, its body scrolling — the composite fills its tile and never grows it
-    const shown = kids.slice(0, 12), ncol = chip ? 1 : 2, nrows = Math.max(1, Math.ceil(shown.length / ncol));
-    const slotH = (o && o.height && !chip) ? Math.max(44, Math.floor((o.height - (nrows - 1) * 8) / nrows)) : 0, kidH = slotH ? Math.max(24, slotH - 40) : Math.max(44, Math.round(H * 0.8));
-    const slotStyle = slotH ? ' style="height:' + slotH + 'px"' : '';
-    return '<div class="vw-comp vw-comp-' + esc(layout) + '">' + shown.map((c, i) => {
+    const shown = kids.slice(0, 12), wide = !!(o && o.width && o.width >= 560);
+    const ncol = chip ? 1 : Math.max(1, Math.min(4, (rec.draw && +rec.draw.cols) || (wide && shown.length >= 3 ? 3 : 2))), nrows = Math.max(1, Math.ceil(shown.length / ncol));
+    // a slot's share of the frame follows what its child needs: a figure (counter, ring, kv) takes less than a list or a
+    // chart; each row of slots is as tall as its neediest child, the measured body split by those weights; the last row
+    // fills its width (three children are two slots and a wide one, not a slot and a hole) - no half-empty row, no scrolling slot
+    const need = (c) => { const f = canon((c && c.record && typeof c.record === 'object' && c.record.form) || ''); return /^(counter|string|hero|level|ring|dial|gauge|meter|pills|numbers|kv|dots)$/.test(f) ? 0.62 : /^(rows|list|table|log|feed|cards|files|checklist|temps|thermo|bullet|ranked|hosts)$/.test(f) ? 1.15 : 1; };
+    const wts = []; for (let i = 0; i < shown.length; i += ncol) wts.push(Math.max(...shown.slice(i, i + ncol).map(need))); const wsum = wts.reduce((a, b) => a + b, 0) || 1;
+    const bodyH = (o && o.height && !chip) ? o.height : 0, slotHOf = (ri) => bodyH ? Math.max(44, Math.floor((bodyH - (nrows - 1) * 8) * (wts[ri] || 1) / wsum)) : 0;
+    const rest = shown.length % ncol, firstOfLast = shown.length - rest, spanOf = (i) => { if (!rest || i < firstOfLast || shown.length < 2) return 1; const j = i - firstOfLast, base = Math.floor(ncol / rest), extra = ncol - base * rest; return base + (j < extra ? 1 : 0); };
+    return '<div class="vw-comp vw-comp-' + esc(layout) + '"' + (!chip && ncol !== 2 ? ' style="grid-template-columns:repeat(' + ncol + ',1fr)"' : '') + '>' + shown.map((c, i) => {
+      const slotH = slotHOf(Math.floor(i / ncol)), kidH = slotH ? Math.max(24, slotH - 36) : Math.max(44, Math.round(H * 0.8)), sp = spanOf(i);
+      const slotStyle = (slotH || sp > 1) ? ' style="' + (slotH ? 'height:' + slotH + 'px;' : '') + (sp > 1 ? 'grid-column:span ' + sp + ';' : '') + '"' : '';
       const r0 = c && typeof c.record === 'object' ? c.record : null; const slot = String((c && c.slot) || String.fromCharCode(97 + i));
       if (!r0) return '<div class="vw-slot" data-slot="' + esc(slot) + '"><small class="wempty">' + esc(String(c && c.record || '')) + '</small></div>';
       const n = normalise(r0); const k = kd[slot]; const wasRead = !!(k && typeof k === 'object' && k.__read); const data = r0.data !== undefined ? r0.data : (wasRead ? k.data : k); const kopts = { record: n, draw: n.draw, bare: true, sample: wasRead ? false : undefined };
@@ -1476,6 +1491,21 @@ span.vw-sampled{opacity:.85}
 .vw-slot.vw-stale .vw-slot-b,.vw-slot-row.vw-stale .vw-chip{opacity:.55}.vw-kerr,.vw-kempty{font-style:normal;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:7.5px;letter-spacing:.06em;text-transform:uppercase;margin-left:6px;opacity:.85}.vw-kerr{color:var(--err,#c96b6b)}.vw-kempty{color:var(--t3,var(--dim,#6b7280))}
 .vw-root[data-stale="1"] .vw-body{opacity:.55}.vw-slot-row .k{width:72px;flex-shrink:0;font-size:9.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:520px){.vw-l,.vw-xl{grid-template-columns:1fr}.vw-detail{border-left:none;padding-left:0}}
+/* -- the style pack (data-style on the page root, seen through :host-context): labels take its case, tracking and weight;
+   pixel's figures its display face, its bars striped and its lines hard; newspaper rules under a slot's head; terminal is
+   outlines and hatching, not floods; every pack's radius comes through --r-sm -- */
+.vw-slot-h,.vw-hd,.vw-log .lane,.vw-tablewrap th{text-transform:var(--label-case,uppercase);letter-spacing:var(--label-track,.08em);font-weight:var(--label-weight,600);font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
+:host-context([data-style="pixel"]) .vw-slot{box-shadow:0 0 0 2px var(--bd2,rgba(255,255,255,.14))}
+:host-context([data-style="pixel"]) .vw-hero b,:host-context([data-style="pixel"]) .vb-hero b,:host-context([data-style="pixel"]) .vw-slot-h b,:host-context([data-style="pixel"]) .vb-bigs b{font-family:var(--f-disp,var(--f-mono,ui-monospace,monospace));letter-spacing:0;font-size:clamp(11px, min(42cqh, 8cqw), 20px)}
+:host-context([data-style="pixel"]) .vw-track,:host-context([data-style="pixel"]) .vw-track i,:host-context([data-style="pixel"]) .vw-therm span,:host-context([data-style="pixel"]) .vw-therm span i,:host-context([data-style="pixel"]) .vb-rw .tr,:host-context([data-style="pixel"]) .vb-rw .tr i,:host-context([data-style="pixel"]) .vw-stackbar,:host-context([data-style="pixel"]) .vw-stackbar i,:host-context([data-style="pixel"]) .vw-pill,:host-context([data-style="pixel"]) .vw-legend i,:host-context([data-style="pixel"]) .vb-batt .cells i,:host-context([data-style="pixel"]) .vw-heat div{border-radius:0}
+:host-context([data-style="pixel"]) .vw-track i,:host-context([data-style="pixel"]) .vw-therm span i,:host-context([data-style="pixel"]) .vb-rw .tr i,:host-context([data-style="pixel"]) .vw-stackbar i,:host-context([data-style="pixel"]) .vb-batt .cells i.on{background-image:repeating-linear-gradient(90deg,rgba(0,0,0,.3) 0 1px,transparent 1px 4px)}
+:host-context([data-style="pixel"]) polyline,:host-context([data-style="pixel"]) polygon{stroke-width:3;stroke-linejoin:miter;stroke-linecap:butt;shape-rendering:crispEdges}
+:host-context([data-style="pixel"]) circle,:host-context([data-style="pixel"]) rect{shape-rendering:crispEdges}
+:host-context([data-style="newspaper"]) .vw-slot{background:transparent;box-shadow:0 0 0 1px var(--bd,rgba(255,255,255,.09))}
+:host-context([data-style="newspaper"]) .vw-slot-h{border-bottom:1px solid var(--t3,#6b7280);padding-bottom:3px}
+:host-context([data-style="terminal"]) .vw-slot{background:transparent;box-shadow:0 0 0 1px var(--bd,rgba(255,255,255,.09))}
+:host-context([data-style="terminal"]) .vw-track i,:host-context([data-style="terminal"]) .vw-therm span i,:host-context([data-style="terminal"]) .vb-rw .tr i,:host-context([data-style="terminal"]) .vw-stackbar i{background-image:repeating-linear-gradient(135deg,rgba(0,0,0,.38) 0 2px,transparent 2px 5px)}
+:host-context([data-style="terminal"]) .vw-pill{background:transparent;box-shadow:inset 0 0 0 1px var(--bd2,rgba(255,255,255,.14))}
 /* ── the boards' forms (vb-): the token bridge, then the Widgets board's CSS under its own prefix ── */
 
 /* ── the iso and motion forms (the WidgetsMotion and WidgetsIso boards): every face a positioned div with a clip-path ── */
