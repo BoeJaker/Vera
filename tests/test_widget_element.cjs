@@ -186,6 +186,13 @@ t('css names the sample tag', /\.vw-sampletag/.test(W.css()) && /\.vw-sampled/.t
   const g1 = W.draw('gauge', { value: 62, min: 0, max: 100, unit: '%' }, 'm', { title: 'GPU' });
   t('gauge: a level-shaped object is ONE gauge (not value · min · max)', (g1.match(/class="vb-gg"/g) || []).length === 1 && /62/.test(g1), g1.slice(0, 200));
   t('gauge: a { name: number } object is still one gauge per name', (W.draw('gauge', { cpu: 40, mem: 71 }, 'm').match(/class="vb-gg"/g) || []).length === 2);
+  const nb = W.draw('numbers', { 'net in': 2093796556800, guests: 52 }, 'm', { draw: { bytes: ['net in'] } });
+  t('numbers: draw.bytes names the figures that are byte counts - drawn in KB / MB / GB / TB (Traffic read 2093796556800)', /1\.9 TB/.test(nb) && /\b52\b/.test(nb) && !/2093796556800/.test(nb), nb.replace(/<style[\s\S]*?<\/style>/g, '').slice(0, 200));
+  const gd = { nodes: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], links: [{ source: 'a', target: 'b' }, { source: 'a', target: 'c' }] };
+  const gw = W.draw('graph', gd, 'l', { bare: true, height: 200, width: 500 }), gn = W.draw('graph', gd, 'l', { bare: true, height: 200 });
+  t('graph: a measured body is filled (the mesh drew 300 px wide in a 516 px tile); an unmeasured one keeps the fixed width', /width:100%;max-width:100%/.test(gw) && !/width:300px/.test(gw) && /width:300px;max-width:100%/.test(gn), (gw.match(/style="width[^"]*"/) || [''])[0]);
+  t('the slow lane batches four readings at most (one twenty-second health sweep held twenty-three others)', src.includes("splice(0, lane === 'slow' ? 4 : BATCH_MAX)"));
+  t('city: a stopped guest is drawn down (status stopped/down/off), once', src.includes("down: !!(n.down || /stopped|down|off/.test(String(n.status ?? ''))) }));") && !src.includes("down: !num(n.load ?? n.value ?? 0) && /down/"));
   console.log(fails ? fails + ' FAILED' : 'all passed');
   process.exit(fails ? 1 : 0);
 })();

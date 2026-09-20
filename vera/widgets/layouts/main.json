@@ -154,7 +154,8 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "system-monitor"
    },
    "at": [
     8,
@@ -310,7 +311,8 @@
      "unit": "°",
      "throttle": 70,
      "limit": 5
-    }
+    },
+    "panel": "perf-monitor"
    },
    "at": [
     4,
@@ -348,7 +350,8 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "activity"
    },
    "at": [
     8,
@@ -586,7 +589,8 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "workers-ollama"
    },
    "at": [
     8,
@@ -624,7 +628,8 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "workers-ollama"
    },
    "at": [
     8,
@@ -661,7 +666,8 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "workers-ollama"
    },
    "at": [
     0,
@@ -1183,7 +1189,7 @@
     "source": "estate.health",
     "title": "Estate health",
     "read": {
-     "refresh": "5m"
+     "refresh": "60s"
     },
     "frame": {
      "size": "m",
@@ -1288,7 +1294,8 @@
       }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "panel": "system-monitor"
    },
    "at": [
     8,
@@ -1299,7 +1306,7 @@
     4
    ],
    "hidden": false,
-   "refresh": "5m",
+   "refresh": "60s",
    "floated": false
   },
   {
@@ -1339,7 +1346,7 @@
     4
    ],
    "hidden": false,
-   "refresh": "2m",
+   "refresh": "30s",
    "floated": false
   },
   {
@@ -1349,7 +1356,7 @@
     "source": "backup.status",
     "title": "Backups",
     "read": {
-     "refresh": "5m"
+     "refresh": "60s"
     },
     "frame": {
      "size": "m",
@@ -1451,7 +1458,8 @@
       }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "panel": "system-monitor"
    },
    "at": [
     8,
@@ -1462,7 +1470,7 @@
     4
    ],
    "hidden": false,
-   "refresh": "5m",
+   "refresh": "60s",
    "floated": false
   },
   {
@@ -1538,7 +1546,8 @@
       }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "panel": "workers-ollama"
    },
    "at": [
     0,
@@ -1653,7 +1662,11 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "bytes": [
+      "net in",
+      "net out"
+     ]
     }
    },
    "at": [
@@ -1663,6 +1676,123 @@
    "span": [
     4,
     2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "guests-city",
+    "form": "city",
+    "source": "sysmon.status",
+    "title": "Guests · cpu as height, memory as colour",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "nodes": "proxmox.top_guests",
+      "name": "name",
+      "load": "cpu_pct",
+      "temp": "mem_pct",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    0,
+    25
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "guests-racks",
+    "form": "racks",
+    "source": "backup.status",
+    "title": "Guests · by state",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "rows": "guests",
+      "name": "name",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    4,
+    25
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "stack-iso",
+    "form": "containers",
+    "source": "docker.ps",
+    "title": "Containers · running",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "rows": "containers",
+      "name": "Names",
+      "status": "State",
+      "host": "host_id"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "panel": "system-monitor"
+   },
+   "at": [
+    8,
+    25
+   ],
+   "span": [
+    4,
+    4
    ],
    "hidden": false,
    "refresh": "30s",
@@ -1687,7 +1817,7 @@
    },
    "at": [
     0,
-    25
+    29
    ],
    "span": [
     12,
@@ -1768,11 +1898,11 @@
      }
     ],
     "layout": "report",
-    "panel": "fabric"
+    "panel": "fabric-panel"
    },
    "at": [
     0,
-    26
+    30
    ],
    "span": [
     4,
@@ -1808,11 +1938,11 @@
     "draw": {
      "body": "record"
     },
-    "panel": "fabric"
+    "panel": "fabric-panel"
    },
    "at": [
     4,
-    26
+    30
    ],
    "span": [
     4,
@@ -1829,7 +1959,7 @@
     "source": "fabric.health",
     "title": "Fabric health",
     "read": {
-     "refresh": "5m",
+     "refresh": "60s",
      "map": {
       "keys": [
        "records_count",
@@ -1852,18 +1982,18 @@
     "draw": {
      "body": "record"
     },
-    "panel": "fabric"
+    "panel": "fabric-panel"
    },
    "at": [
     8,
-    26
+    30
    ],
    "span": [
     4,
     2
    ],
    "hidden": false,
-   "refresh": "5m",
+   "refresh": "60s",
    "floated": false
   },
   {
@@ -1896,11 +2026,12 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "fabric-panel"
    },
    "at": [
     0,
-    28
+    32
    ],
    "span": [
     4,
@@ -1917,7 +2048,7 @@
     "source": "evolve.errors.list",
     "title": "Errors to triage",
     "read": {
-     "refresh": "5m",
+     "refresh": "60s",
      "map": {
       "values": "counts"
      }
@@ -1931,18 +2062,19 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "evolve"
    },
    "at": [
     4,
-    28
+    32
    ],
    "span": [
     4,
     2
    ],
    "hidden": false,
-   "refresh": "5m",
+   "refresh": "60s",
    "floated": false
   },
   {
@@ -1973,7 +2105,7 @@
    },
    "at": [
     8,
-    28
+    32
    ],
    "span": [
     4,
@@ -2002,7 +2134,7 @@
    },
    "at": [
     0,
-    30
+    34
    ],
    "span": [
     12,
@@ -2019,7 +2151,7 @@
     "source": "loops.program.list",
     "title": "Programmes",
     "read": {
-     "refresh": "5m",
+     "refresh": "60s",
      "map": {
       "values": "programs",
       "name": "name",
@@ -2035,18 +2167,19 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "evolve"
    },
    "at": [
     0,
-    31
+    35
    ],
    "span": [
     4,
     2
    ],
    "hidden": false,
-   "refresh": "5m",
+   "refresh": "60s",
    "floated": false
   },
   {
@@ -2123,11 +2256,12 @@
       }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "panel": "evolve"
    },
    "at": [
     4,
-    31
+    35
    ],
    "span": [
     4,
@@ -2210,11 +2344,12 @@
       }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "panel": "activity"
    },
    "at": [
     8,
-    31
+    35
    ],
    "span": [
     4,
@@ -2242,20 +2377,21 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "evolve"
    },
    "at": [
     0,
-    33
+    37
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "30s",
@@ -2274,7 +2410,7 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -2334,15 +2470,16 @@
       }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "panel": "dream-panel"
    },
    "at": [
     4,
-    33
+    37
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "60s",
@@ -2361,7 +2498,7 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -2417,17 +2554,35 @@
         "limit": 4
        }
       }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "$subject.agents",
+       "title": "agents",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "num_ctx"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "panel": "agent-registry"
    },
    "at": [
     8,
-    33
+    37
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "60s",
@@ -2472,7 +2627,7 @@
    },
    "at": [
     0,
-    35
+    40
    ],
    "span": [
     6,
@@ -2522,7 +2677,7 @@
    },
    "at": [
     6,
-    35
+    40
    ],
    "span": [
     6,
@@ -2551,7 +2706,7 @@
    },
    "at": [
     0,
-    38
+    43
    ],
    "span": [
     12,
@@ -2568,7 +2723,7 @@
     "source": "mesh.topology",
     "title": "Mesh topology",
     "read": {
-     "refresh": "5m",
+     "refresh": "60s",
      "map": {
       "nodes": "nodes",
       "links": "edges"
@@ -2583,18 +2738,19 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "mesh"
    },
    "at": [
     0,
-    39
+    44
    ],
    "span": [
     4,
     4
    ],
    "hidden": false,
-   "refresh": "5m",
+   "refresh": "60s",
    "floated": false
   },
   {
@@ -2604,7 +2760,7 @@
     "source": "nodes.list",
     "title": "Machines",
     "read": {
-     "refresh": "5m",
+     "refresh": "60s",
      "map": {
       "rows": "nodes",
       "name": "label"
@@ -2626,18 +2782,19 @@
       "ssh_host_id",
       "user"
      ]
-    }
+    },
+    "panel": "mesh"
    },
    "at": [
     4,
-    39
+    44
    ],
    "span": [
     8,
     4
    ],
    "hidden": false,
-   "refresh": "5m",
+   "refresh": "60s",
    "floated": false
   },
   {
@@ -2723,11 +2880,12 @@
       }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "panel": "mesh"
    },
    "at": [
     0,
-    43
+    48
    ],
    "span": [
     4,
@@ -2744,7 +2902,7 @@
     "source": "netscan.map.list",
     "title": "Recon · identity · research",
     "read": {
-     "refresh": "5m"
+     "refresh": "60s"
     },
     "frame": {
      "size": "m",
@@ -2827,18 +2985,19 @@
       }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "panel": "godseye"
    },
    "at": [
     4,
-    43
+    48
    ],
    "span": [
     4,
     3
    ],
    "hidden": false,
-   "refresh": "5m",
+   "refresh": "60s",
    "floated": false
   },
   {
@@ -2944,11 +3103,12 @@
       }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "panel": "ide-panel"
    },
    "at": [
     8,
-    43
+    48
    ],
    "span": [
     4,
@@ -2977,7 +3137,7 @@
    },
    "at": [
     0,
-    46
+    51
    ],
    "span": [
     12,
@@ -2994,7 +3154,7 @@
     "source": "ha.summary",
     "title": "Home Assistant",
     "read": {
-     "refresh": "5m",
+     "refresh": "60s",
      "map": {
       "parts": "domains"
      }
@@ -3008,18 +3168,19 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "ha-panel"
    },
    "at": [
     0,
-    47
+    52
    ],
    "span": [
     4,
     2
    ],
    "hidden": false,
-   "refresh": "5m",
+   "refresh": "60s",
    "floated": false
   },
   {
@@ -3029,7 +3190,7 @@
     "source": "n8n.workflow.list",
     "title": "Automations",
     "read": {
-     "refresh": "5m",
+     "refresh": "60s",
      "map": {
       "values": "workflows",
       "name": "name",
@@ -3045,18 +3206,19 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "n8n-panel"
    },
    "at": [
     4,
-    47
+    52
    ],
    "span": [
     4,
     2
    ],
    "hidden": false,
-   "refresh": "5m",
+   "refresh": "60s",
    "floated": false
   },
   {
@@ -3066,7 +3228,7 @@
     "source": "cal.events.list",
     "title": "Calendar",
     "read": {
-     "refresh": "5m",
+     "refresh": "60s",
      "map": {
       "days": "events",
       "when": "start",
@@ -3082,18 +3244,19 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "panel": "calendar-panel"
    },
    "at": [
     8,
-    47
+    52
    ],
    "span": [
     4,
     2
    ],
    "hidden": false,
-   "refresh": "5m",
+   "refresh": "60s",
    "floated": false
   },
   {
@@ -3125,7 +3288,7 @@
    },
    "at": [
     0,
-    49
+    54
    ],
    "span": [
     12,
