@@ -182,6 +182,34 @@ def test_merged_entities_come_back_in_document_order():
     assert [e["start"] for e in merged] == [5, 200]
 
 
+# ── The model registry ───────────────────────────────────────────────────────
+
+def test_every_model_has_a_kind():
+    """The exporter picks an ORT class from TASK_KIND and the server picks a
+    pipeline from it. A task in one map and not the other exports nothing, or
+    loads nothing, without saying so."""
+    assert set(C.DEFAULT_MODELS) == set(C.TASK_KIND), (
+        "DEFAULT_MODELS and TASK_KIND disagree: "
+        f"{set(C.DEFAULT_MODELS) ^ set(C.TASK_KIND)}")
+
+
+def test_slug_is_stable_and_filesystem_safe():
+    """The slug IS the directory name in the shared store. If it ever changes,
+    every previously exported model becomes invisible to the server — which on
+    a read-only store means falling back to a hub download that cannot write."""
+    assert C.model_slug("djagatiya/ner-roberta-base-ontonotesv5-englishv4") == \
+        "djagatiya__ner-roberta-base-ontonotesv5-englishv4"
+    for model_id in C.DEFAULT_MODELS.values():
+        slug = C.model_slug(model_id)
+        assert "/" not in slug and "\\" not in slug
+        assert slug and slug == C.model_slug(model_id)      # deterministic
+
+
+def test_ner_default_is_an_ontonotes_model():
+    """The DATE label is the whole reason for this model choice."""
+    assert "ontonotes" in C.DEFAULT_MODELS["ner"].lower()
+
+
 def test_ontonotes_date_survives_the_merge():
     """The label set is the reason for the model change — guard it end to end."""
     pieces = [(0, [{"entity": "DATE", "word": "3 March 2024",

@@ -107,11 +107,17 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         # 8771 — clear of the node agent (8770) and onnx_runtime (8772).
         "label": "NLP Server", "port": 8771, "python": True,
         "files": [("edge/nlp_server.py", "nlp_server.py"),
-                  # Shipped so the node and the Vera host share ONE
-                  # implementation of chunking and offset merging.
-                  ("vera/research/nlp_dispatch_core.py", "nlp_dispatch_core.py")],
-        "pip": ["optimum[onnxruntime]", "transformers", "fastembed",
-                "fastapi", "uvicorn"],
+                  # Shipped so the node and the Vera host share ONE registry and
+                  # ONE implementation of chunking and offset merging.
+                  ("vera/research/nlp_dispatch_core.py", "nlp_dispatch_core.py"),
+                  # The exporter that populates the shared model store. It runs
+                  # once, on a box with torch and internet — not at serve time.
+                  ("edge/nlp_export_models.py", "nlp_export_models.py")],
+        # NOTE: no torch. Models are pre-exported to ONNX into the shared store
+        # by nlp_export_models.py, so the runtime needs neither torch (~2.5GB)
+        # nor outbound network on a production node.
+        "pip": ["onnxruntime", "transformers", "sentencepiece", "protobuf",
+                "numpy", "fastembed", "fastapi", "uvicorn"],
         "run": "{py} nlp_server.py serve --host 0.0.0.0 --port {port}",
         "env": {
             # ONNX Runtime will otherwise take every core it can see and starve
@@ -119,12 +125,18 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
             # decides whether NLP on the GPU node is free or ruinous.
             "VERA_NLP_THREADS": "4",
             "VERA_NLP_PORT": "{port}",
+            # The shared ZFS model store, bind-mounted read-only into the node
+            # alongside ollama's own blobs.
+            "VERA_NLP_MODEL_DIR": "/opt/nlp-models",
         },
         "heavy": True,
-        "desc": "Text-level NLP for nlp.ner / nlp.classify / nlp.rerank, so the "
-                "2-core Vera host never runs them. OntoNotes-v5 NER (has DATE), "
-                "chunks whole documents rather than truncating, and caps its own "
-                "thread count so the node keeps inferring. Large first install.",
+        "desc": "Text-level NLP so the 2-core Vera host never runs it: NER "
+                "(OntoNotes-v5, has DATE, plus multilingual), sentiment, "
+                "zero-shot classification, extractive QA, language id, "
+                "embeddings and reranking. Loads pre-exported ONNX from the "
+                "shared read-only model store, chunks whole documents rather "
+                "than truncating, and caps its thread count so the node keeps "
+                "inferring.",
     },
     # ollama_wrapper was removed as a deployable component. It proxied :11435 in
     # front of Ollama to make requests visible, but it was never deployed, it

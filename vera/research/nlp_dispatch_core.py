@@ -33,7 +33,68 @@ again and this module is where that choice would be re-made.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+# ── The model set ────────────────────────────────────────────────────────────
+# One registry, read by BOTH the exporter (edge/nlp_export_models.py, which
+# builds the ONNX artifacts) and the server (edge/nlp_server.py, which loads
+# them). They must agree on the directory name for a model or the server will
+# silently fall back to downloading from the hub at request time — on a node
+# whose model store is mounted READ-ONLY, that fails at the worst moment.
+#
+# Chosen to be genuinely useful on CPU: base-sized, quantisation-friendly, and
+# covering tasks an LLM call would otherwise be spent on. The ollama nodes share
+# one read-only ZFS model store, so these are downloaded once and served by
+# every node.
+DEFAULT_MODELS: Dict[str, str] = {
+    # NER. OntoNotes v5 — 18 types INCLUDING DATE/TIME, which CoNLL-2003 lacks
+    # entirely and which is the reason NER was wanted here (timelines).
+    "ner":        "djagatiya/ner-roberta-base-ontonotesv5-englishv4",
+    # NER for text that is not English. PER/ORG/LOC across ten languages.
+    "ner_multi":  "Davlan/xlm-roberta-base-ner-hrl",
+    # Binary sentiment. The long-standing default; kept so nothing regresses.
+    "classify":   "distilbert-base-uncased-finetuned-sst-2-english",
+    # Three-class sentiment (neg/neu/pos) trained on short informal text —
+    # far better than SST-2 on anything conversational.
+    "sentiment3": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+    # Zero-shot classification: arbitrary caller-supplied labels, no training.
+    # The highest-leverage model here — it replaces a whole class of LLM calls.
+    "zeroshot":   "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli",  # pragma: allowlist secret
+    # Extractive QA: answer a question FROM a passage, with a span and a score.
+    "qa":         "deepset/roberta-base-squad2",
+    # Language identification, 20 languages — cheap routing/preprocessing.
+    "langid":     "papluca/xlm-roberta-base-language-detection",
+    # Sentence embeddings on CPU. Note the standing rule that embedding work is
+    # never GPU-routed; this is a CPU model on a CPU path.
+    "embed":      "sentence-transformers/all-MiniLM-L6-v2",  # pragma: allowlist secret
+    # Cross-encoder reranker, loaded through fastembed rather than optimum.
+    "rerank":     "Xenova/ms-marco-MiniLM-L-6-v2",
+}
+
+#: How each task's model is loaded. The exporter picks an ORT class from this
+#: and the server picks a pipeline from it, so a task added in one place cannot
+#: be forgotten in the other.
+TASK_KIND: Dict[str, str] = {
+    "ner":        "token-classification",
+    "ner_multi":  "token-classification",
+    "classify":   "text-classification",
+    "sentiment3": "text-classification",
+    "zeroshot":   "zero-shot-classification",
+    "qa":         "question-answering",
+    "langid":     "text-classification",
+    "embed":      "feature-extraction",
+    "rerank":     "fastembed",          # not an optimum export
+}
+
+
+def model_slug(model_id: str) -> str:
+    """Directory name for a model inside the shared store.
+
+    `org/name` -> `org__name`. Flat and reversible, so the store can be listed
+    and matched against the registry by eye.
+    """
+    return re.sub(r"[^A-Za-z0-9._-]", "_", str(model_id).replace("/", "__"))
 
 # ── Placement ────────────────────────────────────────────────────────────────
 
