@@ -85,8 +85,8 @@ async def _sources(refresh: bool = False) -> core.Sources:
         return _CACHE["sources"]
     names = ("estate.machines", "backup.status", "certs.list", "netsec.mesh.members",
              "identity.host.list", "exec.ssh.hosts.list", "integration.list", "docker.hosts.list")
-    results = await asyncio.gather(*[_call(n) for n in names], _inventory())
-    got = dict(zip(names + ("pxstore.inventory",), results))
+    results = await asyncio.gather(*[_call(n) for n in names], _inventory(), _call("docker.ps", all=True))
+    got = dict(zip(names + ("pxstore.inventory", "docker.ps"), results))
     errors = {n: r["error"] for n, r in got.items() if isinstance(r, dict) and r.get("error")}
     ident = got["identity.host.list"]
     src = core.Sources(
@@ -99,6 +99,7 @@ async def _sources(refresh: bool = False) -> core.Sources:
         integrations=got["integration.list"].get("integrations"),
         docker_hosts=got["docker.hosts.list"].get("hosts"),
         inventory=got["pxstore.inventory"] if not got["pxstore.inventory"].get("error") else {},
+        containers=got["docker.ps"].get("containers") or [],
         errors=errors)
     _CACHE.update(at=time.time(), sources=src)
     return src
