@@ -186,8 +186,9 @@ async function doConnect(a,b){
     if(!host) return toast('select a docker host',true);
     if(nnode.data('host_id')&&cnode.data('host_id')&&nnode.data('host_id')!==cnode.data('host_id'))
       return toast('container and network are on different docker hosts',true);
-    try{ const r=await api('/netgraph/edge/allow','POST',{kind:'docker',host_id:host,container:cont,network:net});
-      if(r.error) return toast(r.error,true); toast('connected'); load(); }catch(e){ toast(e.message,true); }
+    try{ const r=await veraEstate.confirmRun('/netgraph/edge/allow',{kind:'docker',host_id:host,container:cont,network:net},
+        'Connect container '+cnode.data('label')+' to Docker network '+nnode.data('label')+' on '+host+'?');
+      if(r.cancelled||r.error) return; toast('connected'); load(); }catch(e){ toast(e.message,true); }
     return;
   }
   // Proxmox firewall: <something> → guest  → open ALLOW rule form
@@ -211,8 +212,10 @@ function fwForm(guest, srcDefault){
 }
 async function fwAllow(g){
   const cluster_id=$('#clusterSel').value;
-  try{ const r=await api('/netgraph/edge/allow','POST',{kind:'pve',cluster_id,node:g.node,guest_type:g.gtype,vmid:g.vmid,source:$('#fwSrc').value.trim(),proto:$('#fwProto').value.trim(),dport:$('#fwDport').value.trim()});
-    if(r.error) return toast(r.error,true); toast('rule added'); closeInfo(); load(); }catch(e){ toast(e.message,true); }
+  const source=$('#fwSrc').value.trim(), proto=$('#fwProto').value.trim(), dport=$('#fwDport').value.trim();
+  const text='Add an ACCEPT firewall rule on '+veraEstate.guestName(g.vmid,g.gtype)+': from '+(source||'anywhere')+(proto?' · '+proto:'')+(dport?' · port '+dport:'')+'?';
+  try{ const r=await veraEstate.confirmRun('/netgraph/edge/allow',{kind:'pve',cluster_id,node:g.node,guest_type:g.gtype,vmid:g.vmid,source,proto,dport},text);
+    if(r.cancelled||r.error) return; toast('rule added'); closeInfo(); load(); }catch(e){ toast(e.message,true); }
 }
 
 async function cutSelected(){
@@ -221,13 +224,14 @@ async function cutSelected(){
   if(e.data('rel')==='member'){
     const host=e.source().data('host_id')||$('#dockerSel').value;
     const cont=e.source().data('container_id'), net=e.target().data('net_id');
-    try{ const r=await api('/netgraph/edge/deny','POST',{kind:'docker',host_id:host,container:cont,network:net});
-      if(r.error) return toast(r.error,true); toast('disconnected'); load(); }catch(ex){ toast(ex.message,true); }
+    try{ const r=await veraEstate.confirmRun('/netgraph/edge/deny',{kind:'docker',host_id:host,container:cont,network:net},
+        'Disconnect container '+e.source().data('label')+' from Docker network '+e.target().data('label')+' on '+host+'?');
+      if(r.cancelled||r.error) return; toast('disconnected'); load(); }catch(ex){ toast(ex.message,true); }
   } else if(e.data('rel')==='fw'){
     const cluster_id=$('#clusterSel').value;
-    if(!confirm('Delete firewall rule pos '+m.pos+'?')) return;
-    try{ const r=await api('/netgraph/edge/deny','POST',{kind:'pve',cluster_id,node:m.node,guest_type:m.gtype,vmid:m.vmid,pos:m.pos});
-      if(r.error) return toast(r.error,true); toast('rule removed'); load(); }catch(ex){ toast(ex.message,true); }
+    try{ const r=await veraEstate.confirmRun('/netgraph/edge/deny',{kind:'pve',cluster_id,node:m.node,guest_type:m.gtype,vmid:m.vmid,pos:m.pos},
+        'Delete firewall rule '+m.pos+' ('+(m.proto||'any')+' · dport '+(m.dport||'any')+') on '+veraEstate.guestName(m.vmid,m.gtype)+'?');
+      if(r.cancelled||r.error) return; toast('rule removed'); load(); }catch(ex){ toast(ex.message,true); }
   }
   selEdge=null; $('#cutBtn').disabled=true;
 }

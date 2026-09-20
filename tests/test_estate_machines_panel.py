@@ -54,5 +54,5 @@ def test_console_terminal_and_enrolment_take_the_rows_cluster():
     for fn in ("pmxSsh", "pmxEnrollSsh", "pmxConsole"):
         match = re.search(r"async function " + fn + r"\(([^)]*)\)", body)
         assert match and match.group(1).split(",")[-1] == "cid", fn
-    assert "cluster_id:_pmxCur," not in body[body.index("async function pmxSsh("):body.index("async function pmxStartVm(")]
+    assert "cluster_id:_pmxCur," not in body[body.index("async function pmxSsh("):body.index("async function pmxPower(")]
     assert "{cluster_id:cid||_pmxCur,node,guest_type:type,vmid:parseInt(vmid),mode}" in body

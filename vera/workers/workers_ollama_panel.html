@@ -5497,25 +5497,17 @@ async function pmxEnrollSsh(node,type,vmid,name,cid){
   pmxSsh(node,type,vmid,name,cid);
 }
 
-async function pmxStartVm(node,vmid,type){
+async function pmxPower(node,vmid,type,action){
   if(!_pmxCur) return;
-  if(!confirm('Start '+(type==='qemu'?'VM':'CT')+' '+vmid+'?')) return;
+  const text=(action==='start'?'Start ':'Shut down ')+veraEstate.guestName(vmid,type)+' on '+node+'?';
   try{
-    const r=await _pmxApi('/proxmox/guest/action','POST',{cluster_id:_pmxCur,node,guest_type:type,vmid:parseInt(vmid),action:'start'});
-    if(r.error) alert('Error: '+r.error);
+    const r=await veraEstate.confirmRun('/proxmox/guest/action',{cluster_id:_pmxCur,node,guest_type:type,vmid:parseInt(vmid),action},text);
+    if(r.cancelled||r.error) return;
     setTimeout(pmxRefresh,1500); setTimeout(pmxRefresh,4000);
   }catch(e){alert('Error: '+e.message);}
 }
-
-async function pmxStopVm(node,vmid,type){
-  if(!_pmxCur) return;
-  if(!confirm('Shut down '+(type==='qemu'?'VM':'CT')+' '+vmid+'?')) return;
-  try{
-    const r=await _pmxApi('/proxmox/guest/action','POST',{cluster_id:_pmxCur,node,guest_type:type,vmid:parseInt(vmid),action:'shutdown'});
-    if(r.error) alert('Error: '+r.error);
-    setTimeout(pmxRefresh,1500); setTimeout(pmxRefresh,4000);
-  }catch(e){alert('Error: '+e.message);}
-}
+function pmxStartVm(node,vmid,type){ return pmxPower(node,vmid,type,'start'); }
+function pmxStopVm(node,vmid,type){ return pmxPower(node,vmid,type,'shutdown'); }
 
 // ── Console: terminal (xterm) + remote desktop (noVNC) ────────────────────
 let _pmxCon={term:null,fit:null,ws:null,rfb:null,deeplink:'',sendResize:null};

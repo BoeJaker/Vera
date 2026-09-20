@@ -318,12 +318,13 @@ function metric(lab,val,p){
     <div class="${barClass(p)}"><i style="width:${Math.max(2,p)}%"></i></div></div>`;
 }
 
+const POWER_VERB={start:'Start',stop:'Stop (power off, no shutdown)',shutdown:'Shut down',reboot:'Reboot',suspend:'Suspend',resume:'Resume'};
 async function guest(node,type,vmid,action){
-  if((action==='stop'||action==='shutdown')&&!confirm(`${action} ${type} ${vmid}?`)) return;
-  toast(`${action} ${vmid}…`);
+  const text=(POWER_VERB[action]||action)+' '+veraEstate.guestName(vmid,type)+' on '+node+'?';
   try{
-    const r=await api('/proxmox/guest/action','POST',{cluster_id:CUR,node,guest_type:type,vmid,action});
-    if(r.error) return toast(r.error,true);
+    const r=await veraEstate.confirmRun('/proxmox/guest/action',{cluster_id:CUR,node,guest_type:type,vmid,action},text);
+    if(r.cancelled||r.error) return;
+    toast(`${action} ${vmid}…`);
     setTimeout(refresh,1500); setTimeout(refresh,4000);
   }catch(e){ toast('action failed: '+e.message,true); }
 }
