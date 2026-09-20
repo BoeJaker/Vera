@@ -246,9 +246,54 @@ def test_ide_stream_uses_shared_router_and_payload_free_activity():
     assert "ollama_generate(" in source
     assert "stream_cb=_on_token" in source
     assert "generation.cancel()" in source
+    assert "await request.is_disconnected()" in source
     assert "httpx.AsyncClient" not in source
     assert '"prompt_evidence": _text_evidence(prompt)' in source
     assert '"system_evidence": _text_evidence(system)' in source
     assert '"context_file_count":' in source
     assert '"prompt":        prompt' not in source
     assert '"preview":        full_text' not in source
+
+
+def test_ide_stream_cancellation_emits_payload_free_terminal_activity():
+    source = _function_source(
+        ROOT / "vera" / "ide" / "ide_capabilities.py", "ide_stream_endpoint")
+
+    recorder = source.split("def _record_cancellation():", 1)[1].split(
+        "generation =", 1)[0]
+    assert "_schedule_ide_background(record_stream_activity(" in recorder
+    assert '"error": "cancelled by caller"' in recorder
+    assert '"prompt_evidence": _text_evidence(prompt)' in recorder
+    assert '"system_evidence": _text_evidence(system)' in recorder
+    assert '"prompt": prompt' not in recorder
+    assert '"response":' not in recorder
+
+    cancelled = source.split("except asyncio.CancelledError:", 1)[1].split(
+        "except Exception as e:", 1)[0]
+    assert "generation.cancel()" in cancelled
+    assert "_record_cancellation()" in cancelled
+
+    generator_finally = source.split("finally:", 1)[1].split(
+        "effective_model =", 1)[0]
+    assert "if not generation.done():" in generator_finally
+    assert "_record_cancellation()" in generator_finally
+
+
+def test_ide_background_tasks_are_strongly_held_until_completion():
+    from vera.ide import ide_capabilities as ide
+
+    async def run():
+        release = asyncio.Event()
+
+        async def pending():
+            await release.wait()
+            return "done"
+
+        task = ide._schedule_ide_background(pending())
+        assert task in ide._IDE_BACKGROUND_TASKS
+        release.set()
+        assert await task == "done"
+        await asyncio.sleep(0)
+        assert task not in ide._IDE_BACKGROUND_TASKS
+
+    asyncio.run(run())

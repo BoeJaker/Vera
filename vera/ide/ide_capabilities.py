@@ -78,6 +78,18 @@ _HERE = Path(__file__).parent
 
 log = logging.getLogger("vera.ide")
 
+# Keep detached terminal-record writes alive after an SSE request disconnects.
+# asyncio only keeps weak references to tasks, so an unreferenced task can be
+# collected before the activity sink has accepted it.
+_IDE_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _schedule_ide_background(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _IDE_BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_IDE_BACKGROUND_TASKS.discard)
+    return task
+
 
 def _text_evidence(value: object) -> dict:
     """Return stable, payload-free evidence for prompt-like text."""
@@ -987,6 +999,30 @@ async def ide_stream_endpoint(request: Request):
         async def _on_token(token: str):
             await token_queue.put(str(token or ""))
 
+        def _record_cancellation():
+            """Schedule one payload-free terminal observation for a disconnect."""
+            elapsed_ms = round((_time.monotonic() - _t0_stream) * 1000)
+            session_id = body.get("session_id", "") or _ide_get_session_id()
+            _schedule_ide_background(record_stream_activity(
+                cap_name="ide.stream", session_id=session_id,
+                params={
+                    "agent": agent_name_short,
+                    "model": str(meta.get("model") or model),
+                    "instance_id": str(meta.get("instance") or chosen),
+                    "prompt_evidence": _text_evidence(prompt),
+                    "system_evidence": _text_evidence(system),
+                    "context_file_count": len(ctx_raw) if isinstance(ctx_raw, dict) else 0,
+                },
+                result={
+                    "agent": agent_name_short,
+                    "response_chars": sum(len(part) for part in full),
+                    "elapsed_ms": elapsed_ms,
+                    "error": "cancelled by caller",
+                },
+                elapsed_ms=elapsed_ms,
+                group="ide",
+            ))
+
         generation = asyncio.create_task(ollama_generate(
             prompt,
             system=full_system,
@@ -1005,6 +1041,12 @@ async def ide_stream_endpoint(request: Request):
                 try:
                     token = await asyncio.wait_for(token_queue.get(), timeout=0.25)
                 except asyncio.TimeoutError:
+                    # StreamingResponse does not reliably cancel an async
+                    # generator while it is waiting for its first body chunk.
+                    # Poll the ASGI disconnect signal so prompt evaluation is
+                    # aborted even when no model token has arrived yet.
+                    if await request.is_disconnected():
+                        raise asyncio.CancelledError
                     continue
                 if token:
                     full.append(token)
@@ -1013,6 +1055,16 @@ async def ide_stream_endpoint(request: Request):
         except asyncio.CancelledError:
             generation.cancel()
             await asyncio.gather(generation, return_exceptions=True)
+            # A disconnected SSE client cancels this generator before the
+            # normal terminal recorder below can run.  Keep that cancellation
+            # observable without retaining the prompt or partial response.
+            # Detach the small bookkeeping write from the canceled request;
+            # model work has already been stopped above.  The module-level
+            # task set keeps a strong reference until the sink finishes.
+            try:
+                _record_cancellation()
+            except Exception as _e:
+                log.debug("record_stream_activity ide.stream cancellation: %s", _e)
             raise
         except Exception as e:
             from Vera.vera.capability_orchestration import _err_text
@@ -1023,6 +1075,13 @@ async def ide_stream_endpoint(request: Request):
             if not generation.done():
                 generation.cancel()
                 await asyncio.gather(generation, return_exceptions=True)
+                # Starlette may close an async response generator with
+                # GeneratorExit rather than CancelledError.  That path still
+                # reaches finally, so emit the same content-free terminal
+                # observation here.  The CancelledError branch has already
+                # made generation.done() true and therefore cannot duplicate
+                # this record.
+                _record_cancellation()
 
         effective_model = str(meta.get("model") or model)
         effective_instance = str(meta.get("instance") or chosen)
