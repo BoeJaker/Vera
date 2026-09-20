@@ -139,7 +139,7 @@ def test_v1_agent_loop_does_not_reference_v2_only_phase_state():
 
 
 def test_agent_loop_accepts_only_empty_call_spelling_of_an_allowed_tool():
-    from vera.fabric.context import _canonical_tool_name
+    from vera.fabric.context import _canonical_tool_name, _terminal_action_summary
 
     allowed = ["system.timestamp"]
     assert _canonical_tool_name("system.timestamp", allowed) == "system.timestamp"
@@ -147,6 +147,15 @@ def test_agent_loop_accepts_only_empty_call_spelling_of_an_allowed_tool():
     assert _canonical_tool_name(" system.timestamp ( ) ", allowed) == "system.timestamp"
     assert _canonical_tool_name("system.timestamp(1)", allowed) == "system.timestamp(1)"
     assert _canonical_tool_name("other.tool()", allowed) == "other.tool()"
+
+    assert _terminal_action_summary(
+        {"action": "final", "summary": "finished"}) == (True, "finished")
+    assert _terminal_action_summary(
+        {"summary": "finished"}, had_success=True) == (True, "finished")
+    assert _terminal_action_summary(
+        {"summary": "not yet"}, had_success=False) == (False, "")
+    assert _terminal_action_summary(
+        {"action": "invented", "summary": "not yet"}, had_success=True) == (False, "")
 
 
 def test_stream_activity_keeps_metrics_without_message_or_response_copy():
