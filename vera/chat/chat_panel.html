@@ -6270,10 +6270,14 @@ IMPORTANT:
     if(!SID) return 0;
     const start=String((ev&&(ev.start||ev.date))||''); const month=/^\d{4}-\d{2}/.test(start)?start.slice(0,7):'';
     if(!month) return 0;
+    /* `end` is EXCLUSIVE at midnight, so a range ending on the last day of the month drops that whole day - an
+       event written on the 30th would land a calendar that does not show it, which is the one case this has to
+       get right. To the first of the next month, then filtered back to the month asked for. */
     const pad=(n)=>(n<10?'0':'')+n; const [yy,mm]=month.split('-').map(Number);
+    const nxt=new Date(yy,mm,1); const to=nxt.getFullYear()+'-'+pad(nxt.getMonth()+1)+'-01';
     let events=[];
-    try{ const r=await _capCall('cal.events.list',{ start:month+'-01', end:month+'-'+pad(new Date(yy,mm,0).getDate()) });
-      events=(r&&Array.isArray(r.events))?r.events:[]; }catch(_){ return 0; }
+    try{ const r=await _capCall('cal.events.list',{ start:month+'-01', end:to });
+      events=((r&&Array.isArray(r.events))?r.events:[]).filter(e=>String((e&&e.start)||'').slice(0,7)===month); }catch(_){ return 0; }
     if(!events.length) return 0;
     try{ const r=await _capCall('canvas.add',{ session_id:SID, kind:'calendar', key:'calendar:'+month, at:'now', size:'m',
       content:{ title:'Calendar', month, selected:String(start).slice(0,10), events },

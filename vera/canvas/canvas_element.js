@@ -1552,11 +1552,17 @@
         else { const [Y, M] = cur.split('-').map(Number); const d = new Date(Y, M - 1 + step, 1);
           month = d.getFullYear() + '-' + pad(d.getMonth() + 1); }
         this._readout(key, '\u2026 ' + month);
+        /* cal.events.list takes `end` EXCLUSIVE, at midnight: asking to the last day of the month drops that
+           whole day. Measured - four events seeded into September, a 01..30 range answered with three, and the
+           one on the 30th was the one missing. So the range runs to the FIRST OF THE NEXT MONTH, and what comes
+           back is filtered to the month asked for, since that request also picks up the 1st of the next one. */
         const from = month + '-01';
         const [yy, mm] = month.split('-').map(Number);
-        const to = month + '-' + pad(new Date(yy, mm, 0).getDate());
+        const nxt = new Date(yy, mm, 1);
+        const to = nxt.getFullYear() + '-' + pad(nxt.getMonth() + 1) + '-01';
         const r = await this.callResult('cal.events.list', { start: from, end: to });
-        const events = (r && Array.isArray(r.events)) ? r.events : [];
+        const events = ((r && Array.isArray(r.events)) ? r.events : [])
+          .filter((e) => String(e && e.start || '').slice(0, 7) === month);
         return this.call('canvas.update', { key, content: Object.assign({}, c, { month, selected: '', events }) });
       }
       // a day: local only, the month's events are already here
