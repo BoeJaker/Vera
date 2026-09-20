@@ -52,7 +52,6 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-import datetime as _dt
 import hashlib
 import json
 import logging
@@ -2278,35 +2277,20 @@ _CHAT_QUEUE_REFRESH_S = float(os.environ.get("VERA_CHAT_QUEUE_REFRESH_S", "5") o
 _CHAT_RUNNER_PROBE_S = float(os.environ.get("VERA_CHAT_RUNNER_PROBE_S", "3") or 3)
 
 
-def _vera_jobs_ahead(chosen: str, own_req_id: str) -> List[Dict]:
+def _vera_jobs_ahead(chosen: str, own_slot_id: str) -> List[Dict]:
     """Vera's own in-flight generations on `chosen`, this turn excluded.
 
-    Read straight out of the orchestrator's ring buffer — no I/O. These are the
-    only jobs we can NAME; anything else on the node is invisible here, which is
-    why the caller also asks the node itself.
+    Reads the live in-flight registry, NOT the request log: that log only gets a
+    row when a request COMPLETES (its entries are built with status="running"
+    but appended from the done/error paths), so it can never answer "what is
+    running right now". These are the only jobs we can NAME; anything else on
+    the node is invisible here, which is why the caller also asks the node.
     """
-    out: List[Dict] = []
     try:
-        now = time.time()
-        for e in reversed(_orch._OLLAMA_REQUEST_LOG[-200:]):
-            if e.get("status") != "running":
-                continue
-            if e.get("instance") != chosen or e.get("req_id") == own_req_id:
-                continue
-            if "embed" in str(e.get("model") or ""):
-                continue          # embeds run on the CPU pool, not in our way
-            try:
-                age = now - _dt.datetime.fromisoformat(
-                    str(e.get("ts", "")).replace("Z", "+00:00")).timestamp()
-            except Exception:
-                age = 0.0
-            out.append({"job_type": e.get("job_type") or "",
-                        "caller": e.get("caller_func") or "",
-                        "model": e.get("model") or "",
-                        "age_s": max(age, 0.0)})
+        return _orch.inflight_on(chosen, exclude=own_slot_id)
     except Exception as e:
         log.debug("jobs-ahead read: %s", e)
-    return out
+        return []
 
 
 async def _runner_busy(chosen: str) -> Optional[bool]:
@@ -2937,9 +2921,22 @@ class AgentRunner:
         # model has to load). Say so. See queue_status_core for why this never
         # claims the node is FREE — Vera can only name its own jobs, so the node
         # is asked too, and silence is the answer when nothing is known.
+        # Register this turn too. run_stream POSTs straight to /api/chat and so
+        # never passes through ollama_generate's bookkeeping — without this a
+        # chat is invisible to the next chat's wait line, and excludes itself
+        # from its own. Cleared in the outer finally, which runs on every path
+        # including the client vanishing mid-stream.
+        _chat_slot = str(uuid.uuid4())[:12]
+        try:
+            _orch.OLLAMA_INFLIGHT[_chat_slot] = {
+                "instance": chosen, "job_type": "chat", "model": model,
+                "started": time.monotonic()}
+        except Exception:
+            pass
+
         async def _wait_status() -> Optional[Dict]:
             try:
-                _ahead = _vera_jobs_ahead(chosen, _og_req_id)
+                _ahead = _vera_jobs_ahead(chosen, _chat_slot)
                 # Only pay for the node probe when Vera has nothing of its own
                 # in flight — with a named job ahead we already know the answer.
                 _busy = None if _ahead else await _runner_busy(chosen)
@@ -3129,6 +3126,12 @@ class AgentRunner:
                 pass  # client may already be gone
             return
         finally:
+            # Always, on every path — a finished turn must not haunt the next
+            # turn's wait line as a phantom job ahead of it.
+            try:
+                _orch.OLLAMA_INFLIGHT.pop(_chat_slot, None)
+            except Exception:
+                pass
             if not _og_stream_ok and not _og_done_sent:
                 # We're exiting without a terminal event: the client vanished
                 # mid-stream (GeneratorExit at a yield — page reload / closed
