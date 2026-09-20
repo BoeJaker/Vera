@@ -254,10 +254,14 @@ if _CAP_AVAILABLE:
         description=("Sequence / sentiment classification with an ONNX model (ORT "
                      "CPU). Input: text (str!). Output: {top, labels:[{label, score}]}."),
     )
-    async def cap_nlp_classify(text: str = "", trace_id=None):
+    async def cap_nlp_classify(text: str = "", task: str = "classify",
+                               trace_id=None):
         if not text:
             return {"error": "text is required"}
-        handled, out = await _offload("/classify", {"text": text})
+        if task not in ("classify", "sentiment3"):
+            return {"error": "task must be 'classify' (binary SST-2) or "
+                             "'sentiment3' (negative/neutral/positive)"}
+        handled, out = await _offload("/classify", {"text": text, "task": task})
         if handled:
             return out
         if not HAS_ORT_CLASSIFY:
@@ -284,12 +288,15 @@ if _CAP_AVAILABLE:
                      "CPU). Input: text (str!). Output: {entities:[{entity, word, "
                      "score, start, end}]}."),
     )
-    async def cap_nlp_ner(text: str = "", trace_id=None):
+    async def cap_nlp_ner(text: str = "", task: str = "ner", trace_id=None):
         if not text:
             return {"error": "text is required"}
+        if task not in ("ner", "ner_multi"):
+            return {"error": "task must be 'ner' (OntoNotes, English) or "
+                             "'ner_multi' (multilingual)"}
         # Off-host first. A node chunks the WHOLE document; the in-process path
         # below still truncates, because that is all it has ever been able to do.
-        handled, out = await _offload("/ner", {"text": text})
+        handled, out = await _offload("/ner", {"text": text, "task": task})
         if handled:
             return out
         if not HAS_ORT_CLASSIFY:
@@ -310,6 +317,86 @@ if _CAP_AVAILABLE:
         } for e in res]
         return {"ok": True, "text": text, "model": NER_MODEL,
                 "entities": entities, "count": len(entities)}
+
+    # ── Node-only capabilities ───────────────────────────────────────────────
+    # These have NO in-process implementation, by design: the host carries no
+    # ML runtime and is not going to grow one. `nlp.local` cannot make them run
+    # here, so an unserved call says that plainly instead of reporting a
+    # missing dependency the operator would then try to install on the host.
+    async def _node_only(cap: str, path: str, body: dict):
+        handled, out = await _offload(path, body)
+        if handled:
+            return out
+        return {"error": f"{cap} runs only on a node",
+                "reason": ("no node is serving NLP. This capability has no "
+                           "in-process implementation — nlp.local does not "
+                           "apply to it, because the Vera host deliberately "
+                           "carries no ML runtime."),
+                "hint": "deploy the nlp_server component to a node (nodes.provision)"}
+
+    @capability(
+        "nlp.zeroshot",
+        http_method="POST", http_path="/nlp/zeroshot", http_tags=["nlp", "onnx"],
+        memory="on",
+        description=("Classify text against labels supplied at call time — no "
+                     "training and no LLM call. Input: text (str!), labels "
+                     "(JSON array of candidate labels!), multi_label (bool, "
+                     "false = labels compete, true = each scored "
+                     "independently). Output: {top, labels:[{label, score}]}."),
+    )
+    async def cap_nlp_zeroshot(text: str = "", labels: Any = None,
+                               multi_label: bool = False, trace_id=None):
+        if not text:
+            return {"error": "text is required"}
+        cands = _coerce_docs(labels)
+        if not cands:
+            return {"error": "labels is required (JSON array of candidate labels)"}
+        return await _node_only("nlp.zeroshot", "/zeroshot",
+                                {"text": text, "labels": cands,
+                                 "multi_label": bool(multi_label)})
+
+    @capability(
+        "nlp.qa",
+        http_method="POST", http_path="/nlp/qa", http_tags=["nlp", "onnx"],
+        memory="on",
+        description=("Extractive question answering: find the answer span in a "
+                     "passage. Input: question (str!), context (str!). Output: "
+                     "{answer, score, start, end}. Extractive — it quotes the "
+                     "passage and cannot invent an answer."),
+    )
+    async def cap_nlp_qa(question: str = "", context: str = "", trace_id=None):
+        if not question:
+            return {"error": "question is required"}
+        if not context:
+            return {"error": "context is required"}
+        return await _node_only("nlp.qa", "/qa",
+                                {"question": question, "context": context})
+
+    @capability(
+        "nlp.langid",
+        http_method="POST", http_path="/nlp/langid", http_tags=["nlp", "onnx"],
+        memory="on",
+        description=("Identify the language of a text (20 languages). Input: "
+                     "text (str!). Output: {lang, langs:[{lang, score}]}."),
+    )
+    async def cap_nlp_langid(text: str = "", trace_id=None):
+        if not text:
+            return {"error": "text is required"}
+        return await _node_only("nlp.langid", "/langid", {"text": text})
+
+    @capability(
+        "nlp.embed",
+        http_method="POST", http_path="/nlp/embed", http_tags=["nlp", "onnx"],
+        memory="off",
+        description=("Sentence embeddings on a node's CPU (mean-pooled, "
+                     "L2-normalised). Input: texts (JSON array of strings!). "
+                     "Output: {embeddings:[[float]], dim, count}."),
+    )
+    async def cap_nlp_embed(texts: Any = None, trace_id=None):
+        docs = _coerce_docs(texts)
+        if not docs:
+            return {"error": "texts is required (JSON array of strings)"}
+        return await _node_only("nlp.embed", "/embed", {"texts": docs})
 
     @capability(
         "nlp.models",
