@@ -575,7 +575,7 @@
       const kerr = wasRead && k.err ? '<i class="vw-kerr" title="' + esc(k.err) + '">' + (kHave ? 'last reading' : 'read failed') + '</i>' : (wasRead && !kHave ? '<i class="vw-kempty">read · empty</i>' : '');
       const stale = wasRead && k.err && kHave ? ' vw-stale' : '';
       if (chip) return '<div class="vw-slot vw-slot-row' + stale + '" data-slot="' + esc(slot) + '"><span class="k">' + esc(n.title || n.form) + '</span>' + draw(n.form, data, 's', kopts) + kerr + '</div>';
-      const fig = figure(n.form, mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data));
+      const fig = /^(counter|hero|string|level|ring|meter|gauge|dial|tank|numbers)$/.test(canon(n.form)) ? '' : figure(n.form, mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data));
       return '<div class="vw-slot' + stale + '" data-slot="' + esc(slot) + '"' + slotStyle + '><span class="vw-slot-h">' + esc(n.title || n.form) + (fig ? '<b>' + fig + '</b>' : '') + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: kidH, title: n.title }, kopts)) + '</div></div>'; }).join('') + '</div>';
   };
 
@@ -645,8 +645,8 @@
   const tableCols = (rw, o, max) => {
     const r0 = rw[0] || {}; const has = (c) => rw.some((r) => r && r[c] !== undefined);
     const m = (o && o.record && o.record.read && o.record.read.map) || (o && o.map) || null; const skip = new Set(['rows', 'items', 'series', 'values', 'events', 'nodes', 'links', 'stages', 'parts', 'bars', 'cells', 'days', 'text', 'points', 'children', 'panel', 'value', 'min', 'max', 'unit', 'rate']);
-    let cols = m ? Object.keys(m).filter((k) => !skip.has(k) && has(k)) : [];
-    if (!cols.length && o && o.draw && Array.isArray(o.draw.columns)) cols = o.draw.columns.filter(has);
+    let cols = (o && o.draw && Array.isArray(o.draw.columns)) ? o.draw.columns.filter(has) : [];   // the record's own columns first
+    if (!cols.length && m) cols = Object.keys(m).filter((k) => !skip.has(k) && has(k));
     if (!cols.length) cols = Object.keys(r0).filter((k) => typeof r0[k] !== 'object' && !/^(_|__)/.test(k));
     return cols.slice(0, max || 6);
   };
@@ -1496,7 +1496,8 @@ span.vw-sampled{opacity:.85}
    outlines and hatching, not floods; every pack's radius comes through --r-sm -- */
 .vw-slot-h,.vw-hd,.vw-log .lane,.vw-tablewrap th{text-transform:var(--label-case,uppercase);letter-spacing:var(--label-track,.08em);font-weight:var(--label-weight,600);font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
 :host-context([data-style="pixel"]) .vw-slot{box-shadow:0 0 0 2px var(--bd2,rgba(255,255,255,.14))}
-:host-context([data-style="pixel"]) .vw-hero b,:host-context([data-style="pixel"]) .vb-hero b,:host-context([data-style="pixel"]) .vw-slot-h b,:host-context([data-style="pixel"]) .vb-bigs b{font-family:var(--f-disp,var(--f-mono,ui-monospace,monospace));letter-spacing:0;font-size:clamp(11px, min(42cqh, 8cqw), 20px)}
+:host-context([data-style="pixel"]) .vw-hero b,:host-context([data-style="pixel"]) .vb-hero b,:host-context([data-style="pixel"]) .vb-bigs b{font-family:var(--f-disp,var(--f-mono,ui-monospace,monospace));letter-spacing:0;font-size:clamp(11px, min(42cqh, 8cqw), 20px)}
+:host-context([data-style="pixel"]) .vw-slot-h b{font-family:var(--f-mono,ui-monospace,monospace);font-size:12px}
 :host-context([data-style="pixel"]) .vw-track,:host-context([data-style="pixel"]) .vw-track i,:host-context([data-style="pixel"]) .vw-therm span,:host-context([data-style="pixel"]) .vw-therm span i,:host-context([data-style="pixel"]) .vb-rw .tr,:host-context([data-style="pixel"]) .vb-rw .tr i,:host-context([data-style="pixel"]) .vw-stackbar,:host-context([data-style="pixel"]) .vw-stackbar i,:host-context([data-style="pixel"]) .vw-pill,:host-context([data-style="pixel"]) .vw-legend i,:host-context([data-style="pixel"]) .vb-batt .cells i,:host-context([data-style="pixel"]) .vw-heat div{border-radius:0}
 :host-context([data-style="pixel"]) .vw-track i,:host-context([data-style="pixel"]) .vw-therm span i,:host-context([data-style="pixel"]) .vb-rw .tr i,:host-context([data-style="pixel"]) .vw-stackbar i,:host-context([data-style="pixel"]) .vb-batt .cells i.on{background-image:repeating-linear-gradient(90deg,rgba(0,0,0,.3) 0 1px,transparent 1px 4px)}
 :host-context([data-style="pixel"]) polyline,:host-context([data-style="pixel"]) polygon{stroke-width:3;stroke-linejoin:miter;stroke-linecap:butt;shape-rendering:crispEdges}
