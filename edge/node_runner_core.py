@@ -27,7 +27,7 @@ CPU at twice that has, by definition, no one left to answer.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 #: Default: 2x OLLAMA_GEN_TIMEOUT (900s), matching _sweep_stuck_running's
 #: threshold for the same reason. Never below this floor.
@@ -151,14 +151,15 @@ class DispatchProbe:
     node: str = ""
     metadata_ok: bool = False          # /api/ps answered at all
     resident_models: int = 0           # how many models it reports loaded
-    dispatched: Optional[bool] = None  # a 1-token generate completed
+    dispatched: Optional[bool] = None  # the node ANSWERED the probe at all
     probe_s: float = 0.0
     skipped: str = ""                  # why the probe did not run
+    probe_model: str = ""              # which resident model was asked
 
     def to_dict(self) -> Dict:
         return {"node": self.node, "metadata_ok": self.metadata_ok,
                 "resident_models": self.resident_models,
-                "dispatched": self.dispatched,
+                "dispatched": self.dispatched, "probe_model": self.probe_model,
                 "probe_s": round(self.probe_s, 2), "skipped": self.skipped,
                 "wedged": is_dispatch_wedged(self)}
 
@@ -174,9 +175,12 @@ def is_dispatch_wedged(p: Optional[DispatchProbe]) -> bool:
                                (and `unreachable` already reports it)
       * a model is resident  — with nothing loaded, a slow reply is a cold model
                                load, which is normal and can take minutes
-      * generation did not   — with a model already in memory, a 1-token
-        come back              generation is milliseconds of work; not getting
-                               one back means it never reached the runner
+      * the node never       — `dispatched` is False ONLY when the probe got no
+        answered at all        reply whatsoever. Any HTTP response, including a
+                               4xx, proves the scheduler is alive and answering;
+                               reading a non-200 as a wedge flagged a healthy
+                               gpu-250 in 0.06s because the resident model was
+                               an embedding one that cannot serve /api/generate.
     """
     if p is None or p.skipped:
         return False
@@ -185,6 +189,47 @@ def is_dispatch_wedged(p: Optional[DispatchProbe]) -> bool:
     if p.resident_models <= 0:
         return False
     return p.dispatched is False
+
+
+def is_embedding_model(m: Dict) -> bool:
+    """Would ollama refuse /api/generate for this resident model?
+
+    An embedding model cannot complete, so a 4xx from one says something about
+    the MODEL and nothing about whether the node dispatches work.
+    """
+    if not isinstance(m, dict):
+        return False
+    name = str(m.get("name") or m.get("model") or "").lower()
+    details = m.get("details") or {}
+    fam = str(details.get("family") or "").lower()
+    fams = [str(f).lower() for f in (details.get("families") or [])]
+    return ("embed" in name or "bert" in fam
+            or any("bert" in f for f in fams))
+
+
+def probe_call(models: Optional[List[Dict]]) -> Tuple[str, str, Dict]:
+    """(model, path, payload) for the cheapest call a RESIDENT model can serve.
+
+    Prefers a generative model: a completion exercises the same scheduler path
+    real work uses. Falls back to /api/embed for an embedding-only node, so a
+    node serving only nomic-embed-text is still probed meaningfully instead of
+    being asked to do something it cannot and failing for the wrong reason.
+    """
+    rows = [m for m in (models or []) if isinstance(m, dict)]
+    if not rows:
+        return "", "", {}
+    gen = [m for m in rows if not is_embedding_model(m)]
+    if gen:
+        name = str(gen[0].get("name") or gen[0].get("model") or "")
+        if name:
+            return name, "/api/generate", {
+                "model": name, "prompt": "ping", "stream": False,
+                "options": {"num_predict": 1},
+            }
+    name = str(rows[0].get("name") or rows[0].get("model") or "")
+    if not name:
+        return "", "", {}
+    return name, "/api/embed", {"model": name, "input": "ping"}
 
 
 def dispatch_finding(p: Optional[DispatchProbe]) -> Optional[Dict]:
