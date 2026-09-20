@@ -6566,9 +6566,20 @@ IMPORTANT:
       return { kind:'markdown', n:first.slice(0,52), k:'prose', col:'var(--acc2)', d:'written',
                content:{ md:v.slice(0,20000) } }; });
 
-  function _cvHarvest(body){
-    const out=[]; if(!body) return out;
-    body.querySelectorAll('.cap-inline').forEach((el, i) => { const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:'')||'').replace(/\s+/g,' ').trim().slice(0,80); const res=String((el.querySelector('.cap-result,.cap-peek,.cap-md')||{}).textContent||'').trim().slice(0,2000); if(!n) return;
+  /* ═══ THE HOOKS ═════════════════════════════════════════════════════════════════════════════════════════════
+     The canvas is not a second place to render a reply. It is a working area, and it is kept by two hands: the
+     model, which asks for things directly, and RULES, which watch what comes out of a turn and lift what can be
+     worked with. A fence, a table, a diagram, an image, a capability's answer, a run of dates - each of those is
+     a thing you can do something with, and each was a hand-written querySelectorAll in a function that had to be
+     opened and edited in the middle to add one more.
+
+     A table of hooks instead. A hook is a name, what it looks for, and what it makes. Appending one is the whole
+     of adding a rule, and the order here is the order they are lifted in. The bodies below are the ones that were
+     already in the harvest, unchanged - this moved them, it did not rewrite them. */
+  const CV_HOOKS=[];
+  const cvHook=(name, sel, take)=>{ CV_HOOKS.push({ name, sel, take }); };
+
+    cvHook('capability', '.cap-inline', (el, out, i) => { const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:'')||'').replace(/\s+/g,' ').trim().slice(0,80); const res=String((el.querySelector('.cap-result,.cap-peek,.cap-md')||{}).textContent||'').trim().slice(0,2000); if(!n) return;
       if((el.classList.contains('drv')||/^canvas\./i.test(n)||(/^(driven\s*)?ui\.directive\b/i.test(n)&&/canvas\./.test(n)))&&!el.classList.contains('error')) return;   // a directive's chip is never an item   // a canvas call put its item there itself — its receipt is not a second item (a failed one still lands, where the item would have been)
       /* the RESULT decides the item, not the rendered text. Kept on the card by executeCapInline; a card
          from a restored session has none, and falls through to the markdown it always landed as. */
@@ -6582,21 +6593,49 @@ IMPORTANT:
       if(Array.isArray(made)){ made.forEach(x=>out.push(x)); return; }
       if(made){ out.push(made); return; }
       out.push({kind:'markdown', n:n.split(' ')[0]||'capability', d:'capability \u00b7 '+(el.classList.contains('error')?'failed':'done'), content:{md:'**'+n+'**\n\n'+(res?'```\n'+res+'\n```':'')}, col:'var(--acc2)', k:'cap'}); });
-    body.querySelectorAll('pre code').forEach((el,i)=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; const s=String(el.textContent||''); if(!s.trim()) return;
+
+    cvHook('code', 'pre code', (el, out, i) => { const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; const s=String(el.textContent||''); if(!s.trim()) return;
       if(lang==='mermaid'){ out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{mermaid:s.slice(0,24000)}, col:'#a78bfa', k:'diagram'}); return; }
       if(lang==='widget') return;
       out.push({kind:'code', n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', content:{code:s.slice(0,12000), lang}, col:'#fb923c', k:'code'}); });
+
     // a mermaid fence is a slot the mermaid element fills (renderMd keeps its source in _MM_BLOCKS): it lands as a diagram item
-    body.querySelectorAll('.mm-slot[data-mm]').forEach((el,i)=>{ const s=String(_MM_BLOCKS[el.dataset.mm]||'').trim(); if(!s) return; out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{title:'Diagram', mermaid:s.slice(0,24000), caption:''}, col:'#c58bd6', k:'diagram'}); });   // a whole diagram: the store has no cap of its own
-    body.querySelectorAll('table').forEach((el,i)=>{ const columns=[...el.querySelectorAll('thead th, tr:first-child th')].map(x=>String(x.textContent||'').trim()); const rows=[...el.querySelectorAll('tbody tr, tr')].filter(tr=>tr.querySelector('td')).map(tr=>[...tr.querySelectorAll('td')].map(td=>String(td.textContent||'').trim())).slice(0,60); if(!rows.length) return;
+    cvHook('diagram', '.mm-slot[data-mm]', (el, out, i) => { const s=String(_MM_BLOCKS[el.dataset.mm]||'').trim(); if(!s) return; out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{title:'Diagram', mermaid:s.slice(0,24000), caption:''}, col:'#c58bd6', k:'diagram'}); });
+
+    // a whole diagram: the store has no cap of its own
+    cvHook('table', 'table', (el, out, i) => { const columns=[...el.querySelectorAll('thead th, tr:first-child th')].map(x=>String(x.textContent||'').trim()); const rows=[...el.querySelectorAll('tbody tr, tr')].filter(tr=>tr.querySelector('td')).map(tr=>[...tr.querySelectorAll('td')].map(td=>String(td.textContent||'').trim())).slice(0,60); if(!rows.length) return;
       out.push({kind:'table', n:(columns[0]||'Table')+' · '+rows.length+' rows', d:'table · '+rows.length+' rows', content:{columns, rows, caption:''}, col:'#38bdf8', k:'table'}); });
-    body.querySelectorAll('.wblk[id^="w"]').forEach((el,i)=>{ const w=_W_STORE[el.id]; if(!w||!w.rec||el.closest('vera-widget')) return; const rec=Object.assign({}, w.rec, w.data!==undefined?{data:w.data}:{}); const form=rec.draw.form; const title=rec.title||rec.name||form;
+
+    cvHook('widget', '.wblk[id^="w"]', (el, out, i) => { const w=_W_STORE[el.id]; if(!w||!w.rec||el.closest('vera-widget')) return; const rec=Object.assign({}, w.rec, w.data!==undefined?{data:w.data}:{}); const form=rec.draw.form; const title=rec.title||rec.name||form;
       out.push({kind:'widget', n:title, d:'widget · '+form, content:Object.assign({}, rec, {widget:form, form, title, record:rec}), col:'#a78bfa', k:'widget'}); });
-    body.querySelectorAll('vera-widget').forEach((el,i)=>{ let rec=null; try{ rec=el.record||JSON.parse(el.getAttribute('record')||'null'); }catch(_){} const form=(rec&&rec.form)||el.getAttribute('form')||''; if(!form) return;
+
+    cvHook('widget-element', 'vera-widget', (el, out, i) => { let rec=null; try{ rec=el.record||JSON.parse(el.getAttribute('record')||'null'); }catch(_){} const form=(rec&&rec.form)||el.getAttribute('form')||''; if(!form) return;
       const title=(rec&&(rec.title||rec.name))||el.getAttribute('title')||form;
       out.push({kind:'widget', n:title, d:'widget · '+form, content:Object.assign({}, rec&&rec.draw?rec:{}, {widget:form, form, title, args:(rec&&(rec.source||rec.args))||{}, record:rec||undefined}), col:'#a78bfa', k:'widget'}); });
-    body.querySelectorAll('img').forEach((el,i)=>{ if(el.closest('.msg-actions,.cap-inline-header,.pa-att')||/\b(ico|icon|avatar)\b/.test(String(el.className||''))) return; const src=el.currentSrc||el.getAttribute('src')||''; if(!src||src.length>200000) return;
+
+    cvHook('image', 'img', (el, out, i) => { if(el.closest('.msg-actions,.cap-inline-header,.pa-att')||/\b(ico|icon|avatar)\b/.test(String(el.className||''))) return; const src=el.currentSrc||el.getAttribute('src')||''; if(!src||src.length>200000) return;
       out.push({kind:'image', n:el.getAttribute('alt')||'image', d:el.closest('.sd-img,.cap-imgs')?'image · diffusion':'image', content:{url:src, alt:el.getAttribute('alt')||''}, col:'#e879f9', k:'image'}); });
+
+  /* AND ONE THAT READS THE WORDS RATHER THAN THE MARKUP. Dates in a reply are a history whether or not a
+     research run produced them - "what happened to the company" answered from what the model already knows has
+     the same shape as the same question answered from the web, and only one of them was getting an axis. The
+     extractor is the research one; what differs is where the text comes from. Three dates or it is prose. */
+  cvHook('timeline', null, (body, out) => {
+    const txt=String((body&&body.textContent)||''); if(txt.length<80) return;
+    let ev=[]; try{ ev=_tlEvents(txt,{}); }catch(_){ return; }
+    if(ev.length<3) return;
+    out.push({ kind:'timeline', n:'Timeline \u00b7 '+ev.length+' events', k:'timeline', col:'#c9955a',
+               d:'timeline \u00b7 '+ev.length+' events', content:{ title:'Timeline', events:ev } });
+  });
+
+  function _cvHarvest(body){
+    const out=[]; if(!body) return out;
+    CV_HOOKS.forEach(h=>{
+      try{
+        if(h.sel) body.querySelectorAll(h.sel).forEach((el, i)=>{ try{ h.take(el, out, i, body); }catch(_){} });
+        else h.take(body, out, 0, body);
+      }catch(_){}
+    });
     return out.slice(0,12);
   }
   // the size a lifted item lands at: a diagram fills its width (m — its height follows the drawing), a widget its record's

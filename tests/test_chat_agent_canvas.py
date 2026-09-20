@@ -136,7 +136,10 @@ def test_directive_shapes_its_content():
 
 def test_harvest_lifts_widget_blocks_with_their_record():
     src = _read("vera", "chat", "chat_panel.html")
-    assert "body.querySelectorAll('.wblk[id^=\"w\"]').forEach((el,i)=>{ const w=_W_STORE[el.id];" in src
+    # the harvest is a table of hooks now, so the rule is asserted by what it looks for and what it reads, not by
+    # the shape of the loop that used to hold it
+    assert "cvHook('widget', '.wblk[id^=\"w\"]'" in src, "a widget block is a hook"
+    assert "const w=_W_STORE[el.id];" in src, "and it reads the record the block was drawn from"
     assert "content:Object.assign({}, rec, {widget:form, form, title, record:rec}), col:'#a78bfa', k:'widget'}); });" in src
 
 

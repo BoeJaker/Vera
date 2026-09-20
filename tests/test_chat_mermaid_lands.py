@@ -15,7 +15,11 @@ def _read(*parts):
 
 def test_mermaid_fence_lands_as_a_diagram_item():
     src = _read("vera", "chat", "chat_panel.html")
-    assert "body.querySelectorAll('.mm-slot[data-mm]').forEach((el,i)=>{ const s=String(_MM_BLOCKS[el.dataset.mm]||'').trim(); if(!s) return; out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{title:'Diagram', mermaid:s.slice(0,24000), caption:''}, col:'#c58bd6', k:'diagram'}); });" in src
+    # the harvest is a table of hooks now; the rule is the same one, asserted by what it looks for and what it
+    # makes rather than by the loop that used to hold it
+    assert "cvHook('diagram', '.mm-slot[data-mm]'" in src, "a mermaid slot is a hook"
+    assert "_MM_BLOCKS[el.dataset.mm]" in src, "and it takes the source renderMd kept"
+    assert "kind:'diagram'" in src and "k:'diagram'" in src, "which lands as a diagram item"
     assert src.index("const _MM_BLOCKS={};") < src.index("function _cvHarvest")
 
 
