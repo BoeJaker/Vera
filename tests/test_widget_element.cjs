@@ -174,7 +174,7 @@ t('css names the sample tag', /\.vw-sampletag/.test(W.css()) && /\.vw-sampled/.t
   t('recordFrom: a composite\'s children are records', comp.children.length === 2 && comp.children[0].record.form === 'radial' && comp.children[0].record.source === 'obs.pending' && comp.children[1].record.form === 'trace' && comp.layout === '2x2');
   t('the element takes bare — the host draws the head (a dashboard tile drew its title and figure twice)', /static get observedAttributes\(\) \{ return \['record', 'size', 'base', 'template-id', 'bare'\]; \}/.test(src) && /const small = size === 'xs' \|\| size === 's' \|\| this\.hasAttribute\('bare'\);/.test(src));
   const c1 = W.draw('counter', { value: 2506 }, 'm');
-  t('counter: the seven-segment figure follows the body it stands in (a 2×2 tile\'s figure was cut off)', /vb-seg7/.test(c1) && /\.vb-seg7 span\{[^}]*font-size:clamp\(18px, 68cqh, 34px\)/.test(src) && /\.vb-seg7\{[^}]*padding:2px 0/.test(src), c1.slice(0, 120));
+  t('counter: the seven-segment figure follows the body it stands in (a 2×2 tile\'s figure was cut off)', /vb-seg7/.test(c1) && /\.vb-seg7 span\{[^}]*font-size:clamp\(13px, min\(68cqh, 15cqw\), 34px\)/.test(src) && /\.vb-seg7\{[^}]*flex-wrap:nowrap/.test(src), c1.slice(0, 120));
   t('the widget body is a size container (the figures size by it)', /\.vw-body\{[^}]*container-type:size\}/.test(src) && /\.vw-hero b\{font-size:clamp\(16px, 62cqh, 26px\)/.test(src));
   const g1 = W.draw('gauge', { value: 62, min: 0, max: 100, unit: '%' }, 'm', { title: 'GPU' });
   t('gauge: a level-shaped object is ONE gauge (not value · min · max)', (g1.match(/class="vb-gg"/g) || []).length === 1 && /62/.test(g1), g1.slice(0, 200));
