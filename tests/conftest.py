@@ -208,6 +208,7 @@ _CRITICAL_MODULES = {
     "test_missing_module_import",  # a name resolved only at CALL time: agentbridge.catalog 500'd for a day (2026-09-12)
     "test_automations_hub",  # a pane swapped in after load can never be switched off again (2026-09-12)
     "test_chat_ctx_core",  # chat asked for the node max every turn and evicted the runner it could have reused (2026-09-20)
+    "test_embed_policy_core",  # machine state was 59% of all embedding time while real text queued behind it (2026-09-20)
 }
 
 

@@ -62,6 +62,14 @@ import httpx
 from Vera.vera.config import cfg
 
 # ── Orchestrator integration ──────────────────────────────────────────────────
+# Pure embedding policy (no app import, so tests reach it as
+# vera.fabric.embed_policy_core without the runtime).
+try:
+    from Vera.vera.fabric import embed_policy_core as _embed_policy
+except Exception:                       # worktree / app-free import
+    from vera.fabric import embed_policy_core as _embed_policy
+embedding_excluded = _embed_policy.embedding_excluded
+
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP,
@@ -2593,6 +2601,27 @@ async def ingest_dataset(
     defer_embedding: bool = False,
     queue_backfill: bool = True,
 ) -> Dict:
+    # Embedding policy. EMBED_EXCLUDED_DATASETS has always existed, but until
+    # 2026-09-20 only the BACKFILL consulted it — so a producer could declare
+    # its dataset excluded and still pay for an embed on every single ingest.
+    # That is how Home Assistant state came to be 59% of all embedding time on
+    # this estate (see embed_policy_core). Decide it here, before any record is
+    # built, and take the switched-off path below: stored, text-searchable, no
+    # vector, nothing queued.
+    if not defer_embedding and embedding_excluded(
+            dataset_id, EMBED_EXCLUDED_DATASETS, EMBED_EXCLUDED_PATTERNS):
+        defer_embedding = True
+        queue_backfill = False
+        # Once per dataset per process: silently dropping vectors is exactly the
+        # kind of thing that is impossible to discover later from the outside.
+        if dataset_id not in _NO_EMBED_ANNOUNCED:
+            _NO_EMBED_ANNOUNCED.add(dataset_id)
+            log.info("fabric: %s is excluded from embedding — rows are stored "
+                     "and text-searchable but carry no vector "
+                     "(VERA_FABRIC_NO_EMBED=%s). Backfill it by name to catch "
+                     "up deliberately.", dataset_id,
+                     ",".join(EMBED_EXCLUDED_PATTERNS) or "(none)")
+
     recs: List[DataRecord] = []
     for item in (data if isinstance(data, list) else [data]):
         # Keyed-upsert hook: a caller (e.g. fabric.upsert) may inject a
@@ -5854,7 +5883,24 @@ async def cap_fabric_backfill_vectors(confirm: bool = False, dataset_id: str = "
 
     # The scan query binds $1=last_id, so the dataset filter is $2 there but $1
     # in the standalone COUNT.
-    excluded = sorted(EMBED_EXCLUDED_DATASETS) if not dataset_id else []
+    # One policy, two callers. The SQL filter takes a literal list, so the
+    # operator's globs are expanded against the datasets that actually exist —
+    # otherwise a pattern would stop ingest from embedding while the backfill
+    # went right on filling the same rows in, which is the drift this policy
+    # module exists to prevent. Naming a dataset explicitly still backfills it.
+    excluded: List[str] = []
+    if not dataset_id:
+        _skip: set = set(EMBED_EXCLUDED_DATASETS)
+        if EMBED_EXCLUDED_PATTERNS and FABRIC_PG.available:
+            try:
+                for _d in (await FABRIC_PG.list_datasets() or []):
+                    _did = str((_d or {}).get("dataset_id") or "")
+                    if _did and embedding_excluded(
+                            _did, EMBED_EXCLUDED_DATASETS, EMBED_EXCLUDED_PATTERNS):
+                        _skip.add(_did)
+            except Exception as _e:
+                log.debug("backfill: could not expand no-embed patterns: %s", _e)
+        excluded = sorted(_skip)
     if dataset_id:
         cond, args = ("dataset_id=$2", [dataset_id])
     elif excluded:
@@ -10386,7 +10432,22 @@ except Exception:                                          # pragma: no cover
 #: a backfill that names one of them explicitly still runs (that is how you
 #: catch up deliberately). Producers add and remove their own dataset here -
 #: ide.claude_sessions registers itself according to its toggle.
+#:
+#: Consulted by ingest_dataset as well as the backfill since 2026-09-20. It was
+#: backfill-only before, which meant declaring a dataset excluded stopped the
+#: catch-up job and changed nothing about the per-ingest cost.
 EMBED_EXCLUDED_DATASETS: set = set()
+
+#: Operator-configured globs, for producers that cannot register themselves -
+#: notably anything arriving over HTTP /fabric/ingest, which is how the n8n
+#: `ha-sync` workflow pushes Home Assistant state. Comma-separated in
+#: VERA_FABRIC_NO_EMBED; set it EMPTY to exclude nothing.
+EMBED_EXCLUDED_PATTERNS: List[str] = _embed_policy.parse_patterns(
+    os.getenv("VERA_FABRIC_NO_EMBED"))
+
+#: Datasets we have already announced as no-embed, so the notice is one line per
+#: dataset per process rather than one per ingest.
+_NO_EMBED_ANNOUNCED: set = set()
 
 
 async def _fabric_backfill_job(job=None, should_continue=None):
