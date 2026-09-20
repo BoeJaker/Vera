@@ -35,8 +35,13 @@ def test_only_a_get_routed_estate_reading_qualifies():
                  "memory.stats", "obs.scheduler", "obs.workers"):
         assert sg.read_through_allowed(name, "GET", SBX) is True, name
     for name in ("obs.health",):
-        assert sg.read_through_allowed(name, "POST", SBX) is False       # a POST is never a read-through
-        assert sg.read_through_allowed(name, None, SBX) is False
+        # a POST (or no route) reads through only when its last name is a reading word - these all are
+        assert sg.read_through_allowed(name, "POST", SBX) is (name.replace('_', '.').split('.')[-1] in sg.READ_WORDS), name
+    for name in ("vfs.status", "netmon.snapshot", "docker.stack.status", "perf.scan", "n8n.workflow.list", "cal.events.list"):
+        assert sg.read_through_allowed(name, "POST", SBX) is True, name
+        assert sg.read_through_allowed(name, None, SBX) is True, name
+    for name in ("ollama.pull", "docker.stack.restart", "vfs.mount", "evolve.sandbox.spawn"):
+        assert sg.read_through_allowed(name, "POST", SBX) is False, name
 
 
 def test_a_writing_word_or_a_reading_about_the_sandbox_itself_stays_local():

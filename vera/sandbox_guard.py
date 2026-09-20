@@ -111,16 +111,24 @@ def read_through_groups(env: Optional[Dict[str, str]] = None) -> tuple:
     return tuple(g.strip().lower() for g in raw.split(",") if g.strip())
 
 
+# the reading names: a capability ending in one of these is a read whatever its route (its arguments name what to read)
+READ_WORDS = frozenset(("status", "stats", "health", "snapshot", "summary", "list", "get", "history", "topology", "results",
+                        "nodes", "installed", "info", "config", "overview", "usage", "scan", "report", "metrics", "recent", "top"))
+
+
 def read_through_allowed(name: str, http_method: Optional[str],
                          env: Optional[Dict[str, str]] = None) -> bool:
-    """True when a sandbox may answer this capability from prod: a GET route,
-    an estate group, no writing word in the name, not a reading about the
-    sandbox itself."""
+    """True when a sandbox may answer this capability from prod: a GET route
+    (or a reading name on any route), an estate group, no writing word in the
+    name, not a reading about the sandbox itself."""
     if not upstream_read_url(env):
         return False
-    if str(http_method or "").upper() != "GET":
-        return False
     n = str(name or "").strip().lower()
+    # a GET route reads; so does a capability routed POST (or with no route) whose last name is a reading word - vfs.status,
+    # netmon.snapshot, docker.stack.status, perf.scan are reads however they are routed
+    last = n.replace("_", ".").split(".")[-1] if n else ""
+    if str(http_method or "").upper() != "GET" and last not in READ_WORDS:
+        return False
     if not n or n in READ_THROUGH_LOCAL or n.startswith(("sys.", "ui.", "widget.", "session.")):
         return False
     parts = [p for p in n.replace("_", ".").split(".") if p]
