@@ -6361,11 +6361,7 @@ async function mcAct(idx, action){
   if(action==='start'||action==='shutdown'||action==='reboot'){
     const verb={start:'Start',shutdown:'Shut down',reboot:'Reboot'}[action];
     const res=await veraEstate.confirmRun('/proxmox/guest/action',{cluster_id:r.cluster_id,node:r.node,guest_type:r.type,vmid:parseInt(r.vmid),action},
-      verb+' '+what+'?'+(action==='shutdown'?'
-
-Everything it serves stops until it is started again.':action==='reboot'?'
-
-In-flight work on it is lost.':''));
+      verb+' '+what+'?'+(action==='shutdown'?String.fromCharCode(10,10)+'Everything it serves stops until it is started again.':action==='reboot'?String.fromCharCode(10,10)+'In-flight work on it is lost.':''));
     if(!res||res.cancelled) return;
     if(res.error){ return; }
     txt('mc-status', verb+' sent to '+what);

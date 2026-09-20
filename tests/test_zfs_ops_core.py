@@ -114,8 +114,11 @@ def test_every_control_is_a_dry_run_unless_confirmed_and_layout_changes_want_the
     assert orch.count("proxmox/zfs_ops_capabilities.py") == 1
     panel = open(os.path.join(root, "vera", "proxmox", "pxstore_panel.html"), encoding="utf-8").read()
     fn = panel[panel.index("P.zfsOp = async"):panel.index("P.zfsResize = ")]
-    assert "dry=await api(path,'POST',base)" in fn and "if(!confirm(text)) return;" in fn, "the plan is shown before anything runs"
-    assert "confirm_pool=typed" in fn and "name did not match" in fn
+    # the plan-then-confirm flow lives in vera-estate.js now; Storage delegates to it
+    assert "veraEstate.plan(capName, base, title, opts)" in fn, "Storage must use the shared plan flow"
+    assert "field:'confirm_pool'" in fn, "layout changes pass the typed-name requirement through"
+    shared = open(os.path.join(root, "vera", "estate", "vera-estate.js"), encoding="utf-8").read()
+    assert "if (!confirm(text))" in shared and "{confirm: true}" in shared, "the plan is shown before anything runs"
     for btn in ("P.zfsOp('pxstore.zfs.scrub'", "P.zfsOp('pxstore.zfs.trim'", "P.zfsMirror(", "P.zfsAddVdev(", "P.zfsResize("):
         assert btn in panel, btn
     assert "p.redundancy==='none'&&p.disks===1" in panel, "Mirror it is offered only to a single-disk pool"
