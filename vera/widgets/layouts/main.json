@@ -348,17 +348,16 @@
   {
    "record": {
     "id": "requests",
-    "form": "activity",
+    "form": "log",
     "source": "ollama.request_log",
-    "title": "Requests · by instance",
+    "title": "Requests · latest",
     "read": {
      "refresh": "10s",
      "map": {
       "events": "entries",
       "t": "ts",
       "kind": "instance",
-      "text": "model",
-      "duration": "elapsed_s"
+      "text": "model"
      }
     },
     "frame": {
