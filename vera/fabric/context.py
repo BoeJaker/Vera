@@ -113,6 +113,22 @@ def _split_ids(spec: str) -> List[str]:
 
 import re as _re
 
+
+def _canonical_tool_name(name: Any, valid_tools: list) -> str:
+    """Accept an exact capability name or its harmless empty-call spelling.
+
+    Models often echo a zero-argument signature as ``cap.name()``.  Only strip
+    that empty suffix when the resulting exact name is in the supplied toolkit;
+    never interpret arguments or broaden the allow-list.
+    """
+    raw = str(name or "").strip()
+    if raw in (valid_tools or []):
+        return raw
+    match = _re.fullmatch(r"([A-Za-z0-9_.-]+)\s*\(\s*\)", raw)
+    candidate = match.group(1) if match else ""
+    return candidate if candidate in (valid_tools or []) else raw
+
+
 def _extract_tool_action(action: dict, valid_tools: list) -> tuple:
     """Extract (tool_name, args, thought) from an LLM action dict, handling
     every common malformation: tool_use{name,input}, tool, capability, function,
@@ -127,11 +143,11 @@ def _extract_tool_action(action: dict, valid_tools: list) -> tuple:
     # 1. Canonical tool_use:{name,input}
     tu = action.get("tool_use") or action.get("tool_call")
     if isinstance(tu, dict) and tu.get("name"):
-        return (str(tu["name"]).strip(),
+        return (_canonical_tool_name(tu["name"], valid_tools),
                 tu.get("input") or tu.get("args") or tu.get("arguments") or {},
                 thought)
     if isinstance(tu, str) and tu.strip():
-        return (tu.strip(),
+        return (_canonical_tool_name(tu, valid_tools),
                 action.get("input") or action.get("args") or action.get("arguments") or {},
                 thought)
 
@@ -140,7 +156,7 @@ def _extract_tool_action(action: dict, valid_tools: list) -> tuple:
         name = (action.get("name") or action.get("tool")
                 or action.get("function") or action.get("cap") or "")
         if isinstance(name, str) and name.strip():
-            return (name.strip(),
+            return (_canonical_tool_name(name, valid_tools),
                     action.get("input") or action.get("args") or action.get("arguments") or {},
                     thought)
 
@@ -157,7 +173,7 @@ def _extract_tool_action(action: dict, valid_tools: list) -> tuple:
     name = (action.get("tool") or action.get("capability")
             or action.get("function") or action.get("name") or "")
     if isinstance(name, str) and name.strip():
-        return (name.strip(),
+        return (_canonical_tool_name(name, valid_tools),
                 action.get("args") or action.get("arguments") or action.get("input") or {},
                 thought)
 

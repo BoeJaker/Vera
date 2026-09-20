@@ -138,6 +138,17 @@ def test_v1_agent_loop_does_not_reference_v2_only_phase_state():
         assert v2_only_name not in source
 
 
+def test_agent_loop_accepts_only_empty_call_spelling_of_an_allowed_tool():
+    from vera.fabric.context import _canonical_tool_name
+
+    allowed = ["system.timestamp"]
+    assert _canonical_tool_name("system.timestamp", allowed) == "system.timestamp"
+    assert _canonical_tool_name("system.timestamp()", allowed) == "system.timestamp"
+    assert _canonical_tool_name(" system.timestamp ( ) ", allowed) == "system.timestamp"
+    assert _canonical_tool_name("system.timestamp(1)", allowed) == "system.timestamp(1)"
+    assert _canonical_tool_name("other.tool()", allowed) == "other.tool()"
+
+
 def test_stream_activity_keeps_metrics_without_message_or_response_copy():
     source = _function_source(
         ROOT / "vera" / "agents" / "agents.py", "agent_chat_stream_endpoint")
