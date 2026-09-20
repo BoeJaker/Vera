@@ -55,6 +55,11 @@
     }) || null;
   }
   function refFor(q){ return ref(find(q)); }
+  // "NWM-02 (CT 145)" / "CT 145" - what a confirmation calls a guest.
+  function guestName(vmid, type){
+    var m = find({vmid: vmid}); var kind = (type || (m && m.type)) === 'qemu' ? 'VM ' : 'CT ';
+    return (m && m.label ? m.label + ' (' + kind + vmid + ')' : kind + vmid);
+  }
   // login id -> the estate's label, for selects that keep their own rows but should read the same.
   function labelMap(refresh){
     return machines(refresh).then(function(rows){ var o = {}; rows.forEach(function(m){ if (m.ssh_host_id) o[m.ssh_host_id] = label(m); }); return o; });
@@ -145,5 +150,5 @@
 
   window.veraEstate = {machines: machines, logins: logins, pick: pick, fillSelect: fillSelect, ref: ref,
                        label: label, plan: plan, confirmRun: confirmRun, chip: chip, BASE: BASE,
-                       find: find, refFor: refFor, labelMap: labelMap};
+                       find: find, refFor: refFor, labelMap: labelMap, guestName: guestName};
 })();
