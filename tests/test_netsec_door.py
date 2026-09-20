@@ -251,3 +251,22 @@ def test_a_slow_bring_up_is_checked_rather_than_declared_down():
     assert out["ok"], out
     assert member["door_device"], "the device is on the record even though the channel timed out"
     assert any("wg show" in c for c in seen)
+
+
+# ── 20 Sep 2026: CT126's join said "user not root" while root; apt could not write ──
+
+def test_the_install_never_drags_a_kernel_into_a_container_and_says_who_it_ran_as():
+    script = core.wireguard_install_script()
+    assert "--no-install-recommends wireguard-tools" in script
+    assert "install -y wireguard wireguard-tools" not in script, "the wireguard metapackage recommends kernel modules"
+    assert 'echo "VERA_WG_UID=$(id -u)"' in script
+
+
+def test_the_install_error_blames_root_only_when_the_login_was_not_root():
+    src = open(SRC, encoding="utf-8").read()
+    start = src.index("class WireGuardProvider")
+    body = src[src.index("async def ensure_installed", start):src.index("async def gen_identity", start)]
+    assert 'ran_as_root = "VERA_WG_UID=0" in out' in body
+    assert "who owns /var/lib/apt/lists" in body, "root + permission denied points at the apt lists"
+    assert "could not reach the host over SSH" in body, "an unreachable host is not an install failure"
+    assert "not ran_as_root and" in body, "'lacks root' is only said when the uid was not 0"

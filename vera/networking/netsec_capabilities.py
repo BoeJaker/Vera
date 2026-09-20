@@ -317,12 +317,23 @@ class WireGuardProvider(MeshProvider):
         if "---VERA_WG_LOG_TAIL---" in out:
             tail = out.split("---VERA_WG_LOG_TAIL---", 1)[1].strip()
         tail = tail or (r.get("stderr") or "").strip()
-        if "VERA_WG_NOPKG" in out:
+        ran_as_root = "VERA_WG_UID=0" in out
+        if not out.strip() and (r.get("rc") in (None, -1, 255) or r.get("error")):
+            # nothing ran at all: the channel never reached the host
+            hint = f"could not reach the host over SSH ({(r.get('error') or err).strip()[:160] or 'no answer'})"
+        elif "VERA_WG_NOPKG" in out:
             hint = ("no supported package manager found on the host — install "
                     "wireguard-tools manually, or use the Nebula provider instead")
-        elif "permission denied" in (tail.lower() + out.lower()) or "are not allowed" in tail.lower():
+        elif ran_as_root and "permission denied" in (tail.lower() + out.lower()):
+            hint = ("root, but the package manager could not write - on an unprivileged "
+                    "container check who owns /var/lib/apt/lists (an unshifted host uid "
+                    "blocks apt; chown it to the container's root from the host)")
+        elif not ran_as_root and ("permission denied" in (tail.lower() + out.lower())
+                                  or "are not allowed" in tail.lower()):
             hint = ("the SSH user lacks root — grant passwordless sudo, enrol the "
                     "host as root, or pre-install wireguard-tools")
+        elif "404" in tail or "Failed to fetch" in tail:
+            hint = "the package lists are stale or the mirror is missing packages - apt-get update on the host"
         else:
             hint = "package install failed"
         err = f"wireguard install failed — {hint}."
