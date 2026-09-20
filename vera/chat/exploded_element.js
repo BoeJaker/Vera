@@ -296,7 +296,7 @@
         const bc = [proj(U0, V0, z), proj(U1, V0, z), proj(U1, V1, z), proj(U0, V1, z)]; bc.forEach((c) => pts.push(c));
         const list = L.kind ? [] : cardsOf(t, L.key), acts = actsL[si], ests = estsL[si];
         const empty = L.kind === 'graph' ? !g.nodes.length : L.kind === 'acts' ? !acts.length : L.kind === 'nodes' ? !ests.length : !list.length;
-        out.bands.push({ si, mid: t.mid, layer: L.key, poly: bc.map((c) => ({ x: c.x, y: c.y })), col: L.col, empty, cls: (si === sel ? 'on' : '') + (L.key === 'say' && pendOf(t) ? ' gen' : ''), u0: U0, pw: U1 - U0, v0: V0, vb: V1 - V0 });
+        out.bands.push({ si, mid: t.mid, layer: L.key, poly: bc.map((c) => ({ x: c.x, y: c.y })), col: L.col, empty, cls: (si === sel ? 'on' : '') + (L.key === 'say' && pendOf(t) ? ' gen' : ''), u0: U0, pw: U1 - U0, v0: V0 + VOFF, vb: V1 - V0 });   /* the band's place on the plane, floor offset included: a drop's v is relative to it */
         const ll = proj((uA(i) + 0.04) * GU, (vA - 0.3) * GV, z);
         const count = L.kind === 'graph' ? g.nodes.length : L.kind === 'acts' ? acts.length : L.kind === 'nodes' ? ests.length : list.length;
         out.labels.push({ si, x: ll.x, y: ll.y, n: L.name, k: L.kind === 'acts' ? count + ' call' + (count === 1 ? '' : 's') : String(count), cls: 'layer sm ' + L.key, col: L.col, st: i });
