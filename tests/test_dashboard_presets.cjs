@@ -97,9 +97,9 @@ const SOURCES = new Set(['obs.health', 'obs.events', 'obs.scheduler', 'obs.worke
   vm.runInNewContext(fs.readFileSync(path.join(R, 'vera', 'ui', 'iso.js'), 'utf8'), ctx); vm.runInNewContext(WE, ctx); const W = ctx.window.VeraWidget;
   const health = { ollama: { 'gpu-250': { label: 'GPU Node', status: 'online', latency_ms: 17 }, 'cpu-246': { label: 'CPU Node A', status: 'online', latency_ms: 19 } } };
   const rec = { form: 'rows', read: { map: { rows: 'ollama', value: 'latency_ms', status: 'status' } }, draw: { columns: ['name', 'status', 'value'] } };
-  const h = W.draw('rows', health, 'm', { bare: true, record: rec });
-  t("node latency rows show the instance, its status and its latency (the record's columns, not the map's keys)", /gpu-250/.test(h) && /online/.test(h) && /17/.test(h) && /19/.test(h), h.slice(0, 240));
+  const h = W.draw('rows', health, 'm', { bare: true, record: rec, draw: rec.draw });
+  t("node latency rows show the instance, its status and its latency (the record's columns, not the map's keys)", /gpu-250/.test(h) && /online/.test(h) && /\b17\b/.test(h) && /\b19\b/.test(h), h.slice(0, 240));
   const comp = W.draw('composite', null, 'm', { bare: true, record: { form: 'composite', children: [{ slot: 'a', record: { form: 'counter', title: 'postgres', data: { value: 345923, unit: 'records' } } }, { slot: 'b', record: { form: 'rows', title: 'guests', data: [{ name: 'x', value: 1 }, { name: 'y', value: 2 }] } }] }, height: 200, width: 300 });
-  t('a composite slot of a counter carries no second figure in its head; a slot of rows says how many', (comp.match(/345,923/g) || []).length === 1 && /2 rows/.test(comp), (comp.match(/345,923/g) || []).length + ' ' + comp.slice(0, 160)); }
+  t('a composite slot of a counter carries no second figure in its head (the seven-segment figure stands alone); a slot of rows says how many', /<span class="vw-slot-h">postgres<\/span>/.test(comp) && (comp.match(/vb-seg7/g) || []).length === 1 && /2 rows/.test(comp), comp.replace(/<style[\s\S]*?<\/style>/g, '').slice(0, 200)); }
 console.log((fails ? 'FAILED ' : 'passed ') + (fails ? fails + ' check(s)' : 'all checks'));
 process.exit(fails ? 1 : 0);
