@@ -52,7 +52,7 @@ from Vera.vera import capability_orchestration as _orch
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))), "edge"))
 from node_runner_core import (  # noqa: E402
-    DEFAULT_STUCK_S, DispatchProbe, Runner, dispatch_finding,
+    DEFAULT_STUCK_S, DispatchProbe, Runner, dispatch_finding, probe_call,
     is_dispatch_wedged, reap_plan,
 )
 
@@ -265,27 +265,31 @@ async def _probe_dispatch(nid: str, inst: Dict) -> DispatchProbe:
         # normal and unbounded. Not a wedge, and not something to probe for.
         return p
 
-    model = str(models[0].get("name") or models[0].get("model") or "")
+    model, path, payload = probe_call(models)
     if not model:
-        p.skipped = "resident model has no name"
+        p.skipped = "resident model has no usable name"
         return p
+    p.probe_model = model
 
     t0 = time.time()
     try:
         import httpx
         async with httpx.AsyncClient(timeout=DISPATCH_PROBE_S) as c:
-            r = await c.post(f"{url}/api/generate", json={
-                "model": model, "prompt": "ping", "stream": False,
-                "options": {"num_predict": 1},
-            })
-        p.probe_s = time.time() - t0
-        p.dispatched = (r.status_code == 200)
+            await c.post(f"{url}{path}", json=payload)
+        # ANY reply — including 4xx/5xx — proves the scheduler is alive and
+        # answering. Only never answering at all is the wedge. Asserting
+        # status==200 instead flagged gpu-250 as wedged in 0.06s when /api/ps
+        # happened to have nomic-embed-text resident and ollama (rightly)
+        # refused to /api/generate with an embedding model.
+        p.dispatched = True
     except Exception:
         # Timeout or transport failure with a model already in memory: the
-        # request never reached the runner.
-        p.probe_s = time.time() - t0
+        # request never came back.
         p.dispatched = False
+    p.probe_s = time.time() - t0
     return p
+
+
 
 
 @capability(

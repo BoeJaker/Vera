@@ -20,7 +20,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "edge"))
 
 from node_runner_core import (  # noqa: E402
-    DEFAULT_STUCK_S, DispatchProbe, Runner, dispatch_finding, is_active,
+    DEFAULT_STUCK_S, DispatchProbe, Runner, dispatch_finding, is_active, is_embedding_model, probe_call,
     is_dispatch_wedged, parse_model_from_cmdline, parse_port_from_cmdline,
     reap_plan,
 )
@@ -206,6 +206,68 @@ def test_finding_warns_that_metadata_checks_cannot_see_this():
 def test_to_dict_carries_the_verdict():
     assert _p().to_dict()["wedged"] is True
     assert _p(dispatched=True).to_dict()["wedged"] is False
+
+
+def test_a_node_that_answered_is_never_wedged_however_it_answered():
+    """`dispatched` means ANSWERED, not answered-200.
+
+    The first cut asserted status==200 and flagged a perfectly healthy gpu-250
+    as wedged in 0.06s: /api/ps happened to have nomic-embed-text resident, and
+    ollama correctly refused to /api/generate with an embedding model. A fast
+    refusal is proof the scheduler is alive — it is the opposite of a wedge.
+    """
+    answered_fast = _p(dispatched=True, probe_s=0.06)
+    assert is_dispatch_wedged(answered_fast) is False
+    assert dispatch_finding(answered_fast) is None
+
+
+def test_probe_model_is_reported_so_a_finding_can_be_checked():
+    """Without it, 'node X did not answer' cannot be reproduced by hand."""
+    assert _p(probe_model="qwen3.5:9b").to_dict()["probe_model"] == "qwen3.5:9b"
+
+
+# ── choosing what to ask a node ──────────────────────────────────────────────
+
+_EMBED = {"name": "nomic-embed-text:latest",
+          "details": {"family": "nomic-bert", "families": ["nomic-bert"]}}
+_GEN = {"name": "jaahas/qwen3.5-uncensored:9b",
+        "details": {"family": "qwen35", "families": ["qwen35"]}}
+
+
+def test_an_embedding_model_is_recognised():
+    assert is_embedding_model(_EMBED) is True
+    assert is_embedding_model(_GEN) is False
+    assert is_embedding_model({}) is False
+    assert is_embedding_model(None) is False
+
+
+def test_a_generative_model_is_preferred_even_when_listed_second():
+    """This is the actual gpu-250 case: /api/ps had the embed model first."""
+    model, path, payload = probe_call([_EMBED, _GEN])
+    assert model == _GEN["name"]
+    assert path == "/api/generate"
+    assert payload["options"]["num_predict"] == 1
+
+
+def test_the_probe_never_sends_num_ctx():
+    """Sending one would force a runner reload if it differed from the resident
+    window — the exact fault this whole diagnosis started from."""
+    _, _, payload = probe_call([_GEN])
+    assert "num_ctx" not in (payload.get("options") or {})
+
+
+def test_an_embedding_only_node_is_probed_with_embed_not_generate():
+    """Asking it to generate is a 4xx about the MODEL, which proves nothing."""
+    model, path, payload = probe_call([_EMBED])
+    assert model == _EMBED["name"]
+    assert path == "/api/embed"
+    assert "input" in payload
+
+
+def test_probe_call_is_safe_on_junk():
+    for bad in (None, [], [None], [{}], ["nope"]):
+        model, path, payload = probe_call(bad)
+        assert model == "" and path == "" and payload == {}
 
 
 def test_a_wedged_node_does_not_make_its_idle_runner_reapable():
