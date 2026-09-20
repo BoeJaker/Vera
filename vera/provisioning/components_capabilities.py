@@ -69,6 +69,16 @@ async def _resolve_edge_dir(host_id: str) -> Dict[str, Any]:
     if chosen:
         return {"ok": True, "dir": chosen, "venv": f"{chosen}/venv",
                 "tried": list(_EDGE_DIR_CANDIDATES)}
+    # Distinguish "could not ask" from "asked, and nowhere was writable".
+    # Collapsing the two sends the reader hunting for a permissions problem on
+    # the target when the real answer is that SSH never ran (observed: a
+    # sandbox without asyncssh reported an unwritable filesystem it had never
+    # reached).
+    if not res.get("ok"):
+        return {"ok": False, "dir": "", "venv": "",
+                "tried": list(_EDGE_DIR_CANDIDATES),
+                "error": "could not probe the target over SSH: "
+                         f"{res.get('error') or res.get('stderr') or 'no response'}"}
     return {"ok": False, "dir": "", "venv": "",
             "tried": list(_EDGE_DIR_CANDIDATES),
             "error": "no writable working directory on the target "
@@ -183,6 +193,11 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
             # The shared ZFS model store, bind-mounted read-only into the node
             # alongside ollama's own blobs.
             "VERA_NLP_MODEL_DIR": "/opt/nlp-models",
+            # /root is unreachable on these unprivileged LXC nodes (nobody:root
+            # 0700), so anything that touches a default cache under $HOME dies
+            # with a permission error. ollama-vera.service sets HOME=/ for the
+            # same reason.
+            "HOME": "/",
         },
         "heavy": True,
         "desc": "Text-level NLP so the 2-core Vera host never runs it: NER "
@@ -323,6 +338,21 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
                       "component": component})
 
     # 1) push files ───────────────────────────────────────────────────────────
+    # The effect shadow is recorded BEFORE any SSH, and exactly once. The
+    # deploy's intent is fully known here, and the invariant is enforced by
+    # test_component_deploy_observes_before_ssh_without_forwarding_controls —
+    # the working-directory probe below is itself an SSH call, so it must not
+    # run first.
+    shadow = observe_infrastructure_effect(
+        provider="ssh", target_ref=host_id, resource_ref=component,
+        operation_ref=json.dumps({
+            "install_deps": bool(install_deps), "launch": bool(launch),
+            "port": port, "systemd": bool(systemd),
+        }, sort_keys=True, separators=(",", ":")), mode="component_deploy",
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
+    out["effect_shadow"] = shadow
+
     # Never assume $HOME is writable — see _EDGE_DIR_CANDIDATES for why two of
     # the three ollama nodes cannot use it at all.
     edge = await _resolve_edge_dir(host_id)
@@ -352,15 +382,6 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
             return {"ok": False, "error": f"bundled file missing in repo: {rel}"}
         parts.append(_push_cmd(content, f"{edge_dir}/{dest}"))
         out["pushed"].append(dest)
-    shadow = observe_infrastructure_effect(
-        provider="ssh", target_ref=host_id, resource_ref=component,
-        operation_ref=json.dumps({
-            "install_deps": bool(install_deps), "launch": bool(launch),
-            "port": port, "systemd": bool(systemd),
-        }, sort_keys=True, separators=(",", ":")), mode="component_deploy",
-        idempotency_key=idempotency_key,
-        approval_receipt_ref=approval_receipt_ref, retry=retry)
-    out["effect_shadow"] = shadow
     res = await _ssh(host_id, " && ".join(parts), timeout=120)
     if not res.get("ok"):
         out["ok"] = False
