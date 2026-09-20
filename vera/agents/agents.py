@@ -2470,7 +2470,10 @@ class AgentRunner:
             manual=getattr(agent, "num_ctx", 0))
         _reserve = agent.num_predict if getattr(agent, "num_predict", -1) > 0 else 1024
         ctx_window = await _chat_num_ctx(messages, model, url, _ctx_cap, _reserve)
-        messages, _n_compacted = await compact_messages(messages, ctx_window - _reserve)
+        # See run_stream: compact to the agent's budget even when we borrow a
+        # larger runner that is already loaded.
+        _compact_budget = (min(_ctx_cap, ctx_window) if _ctx_cap > 0 else ctx_window)
+        messages, _n_compacted = await compact_messages(messages, _compact_budget - _reserve)
 
         body: dict = {
             "model":    model,
@@ -2638,8 +2641,13 @@ class AgentRunner:
             manual=getattr(agent, "num_ctx", 0))
         _reserve = agent.num_predict if getattr(agent, "num_predict", -1) > 0 else 1024
         ctx_window = await _chat_num_ctx(messages, model, url, _ctx_cap, _reserve)
+        # Compact to the AGENT's budget, not to the window we borrowed. When a
+        # bigger runner is already loaded we use it rather than force a reload,
+        # but that must not quietly let the agent send more context than its
+        # num_ctx allows — the allocation is borrowed, the budget is not.
+        _compact_budget = (min(_ctx_cap, ctx_window) if _ctx_cap > 0 else ctx_window)
         _t_compact = time.time()
-        messages, _n_compacted = await compact_messages(messages, ctx_window - _reserve)
+        messages, _n_compacted = await compact_messages(messages, _compact_budget - _reserve)
         _compact_s = time.time() - _t_compact
         if _compact_s > 2:
             log.info("run_stream [%s] history compaction took %.1fs (summarize job on "
