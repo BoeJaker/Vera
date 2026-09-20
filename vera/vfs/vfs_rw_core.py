@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List
 RW_LIST = "/etc/vfs/estate-rw.list"
 SMB_CONF = "/etc/samba/smb.conf"
 SHARE = "estate-rw"
-DOOR_CIDR = "10.55.55.0/24"           # the VFS WireGuard door - a device key per peer
+DOOR_CIDR = "10.66.66.0/24"           # netctl's door on NWM-02 - a device key per peer; the caps pass the live one
 _NAME_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 
 
@@ -73,7 +73,7 @@ def set_plan(names: List[str], current: List[str], running: Iterable[str] = ()) 
     return {"commands": commands, "warnings": warnings, "adds": adds, "drops": drops, "names": list(names)}
 
 
-def share_reach(smb_conf: str, share: str = SHARE) -> Dict[str, Any]:
+def share_reach(smb_conf: str, share: str = SHARE, door_cidr: str = DOOR_CIDR) -> Dict[str, Any]:
     """The [share] block's `hosts allow`, or None when any network may open it."""
     m = re.search(r"^\[" + re.escape(share) + r"\]\s*$(.*?)(?=^\[|\Z)", smb_conf or "", re.M | re.S)
     if not m:
@@ -83,17 +83,17 @@ def share_reach(smb_conf: str, share: str = SHARE) -> Dict[str, Any]:
     vu = re.search(r"^\s*valid users\s*=\s*(.+?)\s*$", block, re.M)
     allow = ha.group(1).split() if ha else None
     return {"found": True, "hosts_allow": allow, "valid_users": vu.group(1) if vu else None,
-            "door_only": bool(allow) and all(a in ("127.0.0.1", "localhost") or a.startswith(DOOR_CIDR.rsplit(".", 1)[0] + ".") for a in allow)}
+            "door_only": bool(allow) and all(a in ("127.0.0.1", "localhost") or a == door_cidr or a.startswith(door_cidr.rsplit(".", 1)[0] + ".") for a in allow)}
 
 
-def door_only_plan(enable: bool, share: str = SHARE) -> Dict[str, Any]:
+def door_only_plan(enable: bool, share: str = SHARE, door_cidr: str = DOOR_CIDR) -> Dict[str, Any]:
     """Limit (or reopen) the writable share to the VFS WireGuard door.
 
     Edits only the [share] block, keeps a dated backup, refuses to reload
     unless testparm accepts the result, and reloads without dropping
     sessions (smbcontrol reload-config).
     """
-    allow = f"{DOOR_CIDR} 127.0.0.1"
+    allow = f"{door_cidr} 127.0.0.1"
     py = (
         "import re,sys,io\n"
         f"p='{SMB_CONF}'; s=open(p).read()\n"
@@ -114,7 +114,7 @@ def door_only_plan(enable: bool, share: str = SHARE) -> Dict[str, Any]:
         f"testparm -s --section-name={share} 2>/dev/null | grep -E 'hosts (allow|deny)' || echo 'hosts allow: any'",
     ]
     if enable:
-        warnings = [f"Writing to {share} then needs the VFS WireGuard door ({DOOR_CIDR}) - even at home. "
+        warnings = [f"Writing to {share} then needs the WireGuard door ({door_cidr}) - even at home. "
                     "Reads through [estate] stay reachable on the LAN.",
                     "A device on the door holds its own key; that key plus the @vfs-admin password are the two factors.",
                     "If testparm rejects the edit nothing is reloaded and the dated backup is beside smb.conf."]

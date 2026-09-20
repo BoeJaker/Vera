@@ -584,6 +584,20 @@ async def cap_settings_save(host: str = "", host_internal: str = "",
 from Vera.vera.vfs import vfs_rw_core as _rw          # noqa: E402  (plans, app-free)
 
 
+async def _door_cidr() -> str:
+    """The WireGuard door's subnet as the mesh reports it (netctl's door on NWM-02)."""
+    m = _rawcap("netsec.mesh.members")
+    if m is not None:
+        try:
+            res = await m()
+            cidr = ((res or {}).get("door") or {}).get("cidr") or (res or {}).get("subnet")
+            if cidr:
+                return str(cidr)
+        except Exception as e:                                      # pragma: no cover - best effort
+            log.debug("door cidr unavailable, using the default: %s", e)
+    return _rw.DOOR_CIDR
+
+
 async def _rw_state() -> Dict[str, Any]:
     """The list, what is actually mounted writable, and the share's reach."""
     r = await _ssh(f"cat {_rw.RW_LIST} 2>/dev/null; echo '###RW'; "
@@ -600,7 +614,7 @@ async def _rw_state() -> Dict[str, Any]:
         report = json.loads(rep.strip() or "{}")
     except json.JSONDecodeError:
         report = {}
-    reach = _rw.share_reach(smb, _rw.SHARE)          # the sed slice already starts at the header
+    reach = _rw.share_reach(smb, _rw.SHARE, await _door_cidr())   # the sed slice already starts at the header
     return {"names": _rw.parse_list(lst), "rw": report.get("rw", []), "known": report.get("mounted", []),
             "share": reach}
 
@@ -676,7 +690,7 @@ async def cap_estate_rw_set(names: Optional[List[str]] = None, confirm: bool = F
 )
 async def cap_estate_rw_door_only(enable: bool = True, confirm: bool = False,
                                   trace_id=None) -> Dict:
-    plan = _rw.door_only_plan(bool(enable))
+    plan = _rw.door_only_plan(bool(enable), door_cidr=await _door_cidr())
     if not confirm:
         st = await _rw_state()
         return {"plan": plan, "dry_run": True, "share": st.get("share")}
