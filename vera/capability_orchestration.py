@@ -1649,7 +1649,8 @@ async def _release_ollama_lease(lease: dict) -> None:
 
 
 @asynccontextmanager
-async def _ollama_slot(iid: str, timeout: Optional[float] = None):
+async def _ollama_slot(iid: str, timeout: Optional[float] = None,
+                       gate_wait: Optional[float] = None):
     """`async with _ollama_sem(iid)` with a bounded acquisition wait. Raises a
     plain Exception on queue timeout so ollama_generate's normal error path
     (request_error event + node fallback) handles it like any other failure."""
@@ -1704,8 +1705,16 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None):
                     if COORD_REDIS is None:
                         await _ensure_coord_redis()
                     if _cap > 0 and COORD_REDIS is not None:
+                        # `gate_wait` bounds how long THIS caller queues for the
+                        # shared slot before proceeding unslotted. The default
+                        # (_gate.wait_s(), 600s) is right for batch work, and is
+                        # unchanged for every caller that does not pass one; an
+                        # interactive caller passes something short, because a
+                        # chat that waits ten minutes for a slot is worse than a
+                        # chat that overlaps one job.
+                        _gw = _gate.wait_s() if gate_wait is None else max(0.0, float(gate_wait))
                         _lease = await _gate.acquire(
-                            COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gate.wait_s())
+                            COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gw)
                         if _lease is not None:
                             _hb_task = asyncio.ensure_future(
                                 _gate_heartbeat(_lease, _current_run_session(), _activity))

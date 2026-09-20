@@ -484,9 +484,13 @@ async def cap_vision_describe(
 
     t0 = time.monotonic()
     last_err = ""
+    from Vera.vera.capability_orchestration import _ollama_slot
     for cand in candidates[:3]:
         try:
-            async with httpx.AsyncClient(timeout=180) as c:
+            # A vision describe is a full generation on a routed node; without
+            # the slot it runs beside whatever already holds it.
+            async with _ollama_slot(cand.get("instance") or ""):
+              async with httpx.AsyncClient(timeout=180) as c:
                 r = await c.post(f"{cand['url']}/api/generate", json={
                     "model": cand["model"],
                     "prompt": prompt or "Describe this image in detail.",
