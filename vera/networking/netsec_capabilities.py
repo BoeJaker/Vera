@@ -768,25 +768,51 @@ async def cap_mesh_config_save(provider: Optional[str] = None, subnet: str = "",
     "netsec.mesh.candidates",
     http_method="GET", http_path="/netsec/mesh/candidates", http_tags=["netsec"],
     memory="off", silent=True,
-    description="Exec-store SSH hosts not yet on the mesh, each flagged with "
-                "whether it is enrolled (cert). Output: {candidates:[{host_id,"
-                "label,host,user,enrolled,auth}]}.",
+    description="Machines that could join the mesh: the estate's one machine list "
+                "(estate.machines) filtered to those with an SSH login and not yet a "
+                "member, each with its kind, state, address, entity reference and "
+                "whether it is enrolled (cert). Falls back to the SSH store alone if the "
+                "estate list is unavailable. Output: {candidates:[{host_id,label,host,"
+                "user,enrolled,auth,kind,status,vmid,ref}], source}.",
 )
 async def cap_mesh_candidates(trace_id=None) -> Dict:
     cfg = await _cfg()
     members = cfg.get("members", {})
     enrolled = await _enrolled_index()
+    logins = {h.get("id"): h for h in await _exec_hosts() if h.get("id")}
     out = []
-    for h in await _exec_hosts():
-        hid = h.get("id")
-        if not hid or hid in members:
+    # One list for the whole estate: every pane that offers a machine offers the
+    # same rows, labelled the same way. The SSH store alone is the fallback.
+    machines = _cap("estate.machines")
+    rows = []
+    if machines:
+        try:
+            rows = (await machines() or {}).get("machines") or []
+        except Exception as e:
+            log.debug("mesh candidates: estate.machines failed: %s", e)
+    if rows:
+        for m in rows:
+            hid = m.get("ssh_host_id")
+            if not hid or hid in members or m.get("template"):
+                continue
+            h = logins.get(hid) or {}
+            addr = _host_addr(h) if h else (m.get("addr") or "")
+            auth = enrolled.get(addr, "")
+            out.append({"host_id": hid, "label": m.get("label") or h.get("label") or addr,
+                        "host": addr, "user": h.get("user", ""), "enrolled": auth == "cert",
+                        "auth": auth or "unknown", "kind": m.get("kind") or "", "status": m.get("status") or "",
+                        "vmid": m.get("vmid"),
+                        "ref": (f"guest:{m['vmid']}" if m.get("kind") == "guest" and m.get("vmid") is not None else f"host:{hid}")})
+        return {"candidates": out, "source": "estate.machines"}
+    for hid, h in logins.items():
+        if hid in members:
             continue
         addr = _host_addr(h)
         auth = enrolled.get(addr, "")
-        out.append({"host_id": hid, "label": h.get("label") or addr,
-                    "host": addr, "user": h.get("user", ""),
-                    "enrolled": auth == "cert", "auth": auth or "unknown"})
-    return {"candidates": out}
+        out.append({"host_id": hid, "label": h.get("label") or addr, "host": addr, "user": h.get("user", ""),
+                    "enrolled": auth == "cert", "auth": auth or "unknown", "kind": "host", "status": "",
+                    "vmid": None, "ref": f"host:{hid}"})
+    return {"candidates": out, "source": "exec.ssh.hosts"}
 
 
 @capability(

@@ -167,14 +167,19 @@ def machine_planes(src: Sources, m: Mapping[str, Any]) -> Dict[str, Dict[str, st
     planes["ssh"] = (_plane("yes", f"{ssh.get('user') or 'root'}@{ssh.get('host')} ({ssh.get('auth') or '?'})",
                             entity_ref("host", ssh.get("id")))
                      if ssh else _plane("no", "no SSH login in the store"))
+    if ssh:
+        planes["ssh"].update(auth=ssh.get("auth") or "", host_id=ssh.get("id") or "", user=ssh.get("user") or "")
     ident = src.identity_for(m)
     planes["directory"] = (_plane("yes", ident.get("fqdn", ""), entity_ref("identity", ident.get("fqdn")))
                            if ident else _plane("no", "not in FreeIPA"))
+    if ident:
+        planes["directory"]["fqdn"] = ident.get("fqdn", "")
     mesh = src.mesh_for(m)
     if mesh:
         state = "yes" if mesh.get("connected") or mesh.get("state") == "up" else "unknown"
         planes["mesh"] = _plane(state, f"{mesh.get('ip') or ''} {('connected' if mesh.get('connected') else mesh.get('state') or '')}".strip(),
                                 entity_ref("mesh", mesh.get("host_id")))
+        planes["mesh"].update(ip=mesh.get("ip") or "", connected=bool(mesh.get("connected")), host_id=mesh.get("host_id") or "")
     else:
         planes["mesh"] = _plane("no", "not on the door")
     certs = src.certs_for(m)

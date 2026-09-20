@@ -538,24 +538,16 @@ P.show = (p,el)=>{
 };
 
 /* ── ZFS controls — every button is a dry run first, then a confirmed run ── */
+// The one flow every estate write uses (vera-estate.js): the dry run's plan
+// shown first, then the confirmed run; layout changes want the pool typed back.
 P.zfsOp = async (capName, args, title, extra)=>{
   const base={cluster_id:P.state.cluster,node:P.state.node,...args};
-  const path='/'+capName.replace(/\./g,'/');
-  let dry;
-  try{ dry=await api(path,'POST',base); }catch(e){ return toast(e.message,'err'); }
-  const plan=dry.plan||{};
-  if(dry.error&&!plan.commands?.length) return toast(dry.error,'err');
-  const text=(title||capName)+'\n\nWill run on '+P.state.node+':\n  '+(plan.commands||[]).join('\n  ')
-    +(plan.before||plan.after?`\n\nLayout: ${plan.before||''} → ${plan.after||''}`:'')
-    +((plan.warnings||[]).length?'\n\nMind:\n  • '+plan.warnings.join('\n  • '):'')+'\n\nRun it?';
-  if(!confirm(text)) return;
-  const conf={...base,confirm:true,...(extra||{})};
-  if(extra&&extra.needsPool){ const typed=prompt('Type the pool name to confirm: '+args.pool); if(typed!==args.pool) return toast('not run: name did not match','err'); conf.confirm_pool=typed; }
-  delete conf.needsPool;
-  let r; try{ r=await api(path,'POST',conf); }catch(e){ return toast(e.message,'err'); }
-  if(r.error||!r.ok){ toast((r.error||'did not succeed')+(r.stderr?' — '+r.stderr.slice(-200):''),'err'); return; }
-  toast((plan.op||'done')+' ran on '+P.state.node,'ok');
-  setTimeout(()=>P.load&&P.load(), 1500);
+  const opts={where:P.state.node};
+  if(extra&&extra.needsPool) opts.typed={label:'the pool name',value:args.pool,field:'confirm_pool'};
+  const r=await veraEstate.plan(capName, base, title, opts);
+  if(!r||r.cancelled||r.ok===false) return;
+  toast(((r.plan||{}).op||'done')+' ran on '+P.state.node,'ok');
+  setTimeout(()=>P.init&&P.init(), 1500);
 };
 P.zfsResize = (vmid,gtype,disk,dataset)=>{
   const size=prompt('New absolute size for '+dataset+' (e.g. 200G). A subvol can shrink to no less than it holds; a VM disk can only grow.');
@@ -1328,8 +1320,11 @@ P.renderSetup = async ()=>{
   // Estate → Connections after this panel loaded show up here.
   try{ P.state.sshHosts=(await api('/exec/ssh/hosts')).hosts||P.state.sshHosts||[]; }catch(e){}
   const st=P.state.settings||{}; const hosts=P.state.sshHosts||[];
+  // The same machine list every pane shows (estate.machines), not the SSH store's own.
+  const est=await veraEstate.logins().catch(()=>[]);
   const hostOpts=hid=>['<option value="">— unmapped —</option>']
-    .concat(hosts.map(h=>`<option value="${esc(h.id)}" ${h.id===hid?'selected':''}>${esc(h.label||h.host)} (${esc(h.user)}@${esc(h.host)})</option>`)).join('');
+    .concat((est.length?est.map(m=>({id:m.ssh_host_id,text:veraEstate.label(m)})):hosts.map(h=>({id:h.id,text:(h.label||h.host)+' ('+h.user+'@'+h.host+')'})))
+      .map(o=>`<option value="${esc(o.id)}" ${o.id===hid?'selected':''}>${esc(o.text)}</option>`)).join('');
   $('nodeMap').innerHTML=(P.state.nodes.length?P.state.nodes:['?']).map(n=>
     `<div class="frow"><div class="field sm"><label>Node</label><input value="${esc(n)}" disabled></div>
      <div class="field"><label>Root SSH credential</label><select data-node="${esc(n)}" class="nodeSel">${hostOpts((st.node_hosts||{})[n]||'')}</select></div></div>`
@@ -1381,6 +1376,7 @@ P.init().then(()=>{
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-entity-drawer.js"></script>
+<script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>

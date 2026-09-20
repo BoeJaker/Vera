@@ -54,6 +54,8 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}.toast.ok{border-color:var(--ok)}
 </style>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
+<script src="/ui/vera-estate.js"></script>
 </head>
 <body>
 <div id="shell">
@@ -194,7 +196,7 @@ async function loadMembers(){
       else if(x.connected===false) state+=' <span class="pill" title="enrolled at the door, no recent handshake">quiet</span>';
     }
     return `<tr>
-      <td><b>${esc(x.label||x.host)}</b><div class="hint">${esc(x.host||'')}</div></td>
+      <td>${veraEstate.chip('mesh:'+x.host_id, x.label||x.host)}<div class="hint">${esc(x.host||'')}</div></td>
       <td class="mono">${esc(x.ip||'—')}</td>
       <td>${x.enrolled?'<span class="pill ok">cert</span>':'<span class="pill warn">no</span>'}</td>
       <td>${state}</td>
@@ -210,24 +212,24 @@ async function loadMembers(){
 async function loadCandidates(){
   const j=await api('/netsec/mesh/candidates'); const cs=j.candidates||[];
   $('c-body').innerHTML=cs.length?cs.map(c=>`<tr>
-    <td><b>${esc(c.label)}</b></td><td>${esc(c.user||'')}</td><td class="mono">${esc(c.host||'')}</td>
+    <td>${veraEstate.chip(c.ref, c.label)}<div class="hint">${esc(c.kind||'')}${c.vmid!=null?' '+c.vmid:''}${c.status?' · '+esc(c.status):''}</div></td><td>${esc(c.user||'')}</td><td class="mono">${esc(c.host||'')}</td>
     <td>${c.enrolled?'<span class="pill ok">cert</span>':`<span class="pill">${esc(c.auth||'—')}</span>`}</td>
     <td style="white-space:nowrap"><button class="btn sm pri" onclick="join('${esc(c.host_id)}','${esc(c.label)}')">Join mesh</button></td>
-  </tr>`).join(''):'<tr><td colspan="5" class="empty">All exec hosts are already on the mesh (or none are saved). Add hosts in Workers → Connections.</td></tr>';
+  </tr>`).join(''):'<tr><td colspan="5" class="empty">Every machine with a login is already on the mesh. Machines without a login appear once enrolled (Trust → Registration).</td></tr>';
 }
 
 async function join(hid,label){
-  if(!confirm('Join "'+label+'" to the mesh? Installs the provider over SSH and generates a key on the host.')) return;
-  out('c-out','▶ Joining '+label+'… (installing provider, generating identity, syncing peers)');
-  const r=await api('/netsec/mesh/join','POST',{host_id:hid});
+  out('c-out','▶ Joining '+label+'… (installing wireguard-tools over SSH, generating a key on the host, enrolling at the door)');
+  const r=await veraEstate.confirmRun('/netsec/mesh/join',{host_id:hid},'Join "'+label+'" to the mesh?\n\nInstalls wireguard-tools over SSH, generates a key on the host (only the public half leaves it), and enrols it at the netctl door on the vera profile.');
+  if(r.cancelled){ out('c-out',''); return; }
   if(r.error){ out('c-out','✗ '+r.error); return toast(r.error,'err'); }
   out('c-out','✓ joined '+label+' → '+(r.member&&r.member.ip||'')+(r.warning?'\n⚠ '+r.warning:'')+'\n\nsync:\n'+JSON.stringify(r.sync,null,2));
   toast('Joined '+label,'ok'); refresh();
 }
 async function leave(hid,label){
-  if(!confirm('Remove "'+label+'" from the mesh? Tears its interface down and resyncs the rest.')) return;
   out('m-out','removing '+label+'…');
-  const r=await api('/netsec/mesh/leave','POST',{host_id:hid});
+  const r=await veraEstate.confirmRun('/netsec/mesh/leave',{host_id:hid},'Remove "'+label+'" from the mesh?\n\nTears its tunnel down and revokes its device at the door.');
+  if(r.cancelled){ out('m-out',''); return; }
   if(r.error){ out('m-out','✗ '+r.error); return toast(r.error,'err'); }
   out('m-out','✓ removed '+label); toast('Removed '+label,'ok'); refresh();
 }
