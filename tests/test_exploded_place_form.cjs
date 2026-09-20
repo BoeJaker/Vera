@@ -67,7 +67,8 @@ t('and the built object still stands in when there is no face to draw',
 // the relation edges answer to the tier and to the switch (defect 83)
 t('a relation run carries the two records it joins, into the DOM',
   SRC.includes("if (a && b) R.add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)]);")
-  && SRC.includes("if (a && b) R.add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)], { rel: true });")
+  && SRC.includes("if (a && b) add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)], { rel: true });")
+  && SRC.includes("joins: r.joins || undefined")
   && SRC.includes("if (r.joins) seg.joins = r.joins;")
   && SRC.includes("(e.joins ? ' data-a=\"' + esc(e.joins[0]) + '\" data-b=\"' + esc(e.joins[1]) + '\"' : '')"));
 t('Full draws them all; Hover and Zen rest them and light what the pointer touches',

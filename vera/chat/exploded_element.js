@@ -244,107 +244,101 @@
       out.station = { mid: t.mid, who: t.who, t: t.t, text: t.text };
       return out;
     }
-    // iso: u = station, v = the layer bands; the plates identical parallelograms in a row (Stack: the stations on
-    // floors, one above the other). Every band is drawn; every item is the board's card on a stem at its pin, a widget
-    // an iso widget group with its caption, the context records icon nodes about the prompt line (the galaxy sheet past
-    // them only when it is asked for), the runs along the lattice's own lanes. The ACTIVITY layer chains the turn's
-    // calls in the produced band, off the card that triggered each; the ESTATE layer is one more band at the end.
-    // the view's tilt and swing (the board's PTZ: 30°/45° is the classic isometric; a tilt down flattens the plane, a swing turns it)
-    const TILT = o.tilt == null ? 30 : Math.max(12, Math.min(60, +o.tilt)), AZIM = o.azim == null ? 45 : Math.max(25, Math.min(65, +o.azim));
+    // ISO — the board's exploded scene (Canvas.dc.html): u = STATION, v = the entity axis, z = the floor. Every layer is
+    // its own plate in a row along u (context graph · read · the exchange · produced · session canvas, then the two
+    // optional layers as stations of their own), identical parallelograms VSPAN deep; a turn is a floor, several turns
+    // floors one above the other. An item stands on its stem at its pin, centred in the span, a column to the right
+    // past six; the context records scatter about the PROMPT LINE, nearer it the more relevant, a lane per family
+    // along the plate. A run is the board's ISO.route: every leg changes exactly one of u, v or z — out of the pin,
+    // along u to the gap between the two stations, along v, along u into the target's pin; a run bound backwards, or
+    // past a station, goes round the far end. Runs sharing a pin leave and arrive by their own PORTS, runs sharing a
+    // gap by their own LANE, so no two legs of different runs ever share a length.
+    // the board's single-turn iso (`turn` beside `stacked`): only the selected turn's floor; otherwise every turn, a floor each (Stack overrides Turn)
+    const SOLO = !!o.solo && !o.stack && turns.length > 1; if (SOLO) { turns = [turns[sel]]; sel = 0; }
+    const STK = turns.length > 1;
+    const TILT = o.tilt == null ? (STK ? 12 : 30) : Math.max(12, Math.min(60, +o.tilt)), AZIM = o.azim == null ? 45 : Math.max(25, Math.min(65, +o.azim));   // a stack starts flatter, so its floors read as floors (the board)
     const P = o.proj || isoP(TILT, AZIM);   // the classic isometric the whole design draws with, unless the view was tilted or swung
-    const STK = !!o.stack, WSZ = o.wsz === 's' || o.wsz === 'l' ? o.wsz : 'm';
-    const ACT = !!(o.layers && o.layers.activity), EST = !!(o.layers && o.layers.estate), GAL = o.galaxy !== false;   // the board draws the galaxy sheet beside the lanes; the chip hides it
-    // the board's single-turn iso (its `turn` beside `stacked`): only the selected turn's plate; Stack shows every turn on floors
-    const SOLO = !!o.solo && !STK && turns.length > 1; if (SOLO) { turns = [turns[sel]]; sel = 0; }
-    out.solo = SOLO; out.tilt = TILT; out.azim = AZIM; out.anodes = []; out.enodes = [];
-    const FW = { s: 60, m: 78, l: 108 }[WSZ], FH = Math.round(FW * 0.56);   // the iso widgets' footprint — S · M · L
-    const CW = STK ? 172 : 200, CH = STK ? 47 : 54, RAISE = STK ? 10 : 14;   // the board's card (tighter on a stack), standing on its stem
-    const RV = STK ? 200 : 300, CU = STK ? 340 : 420, ROWMAX = 3, CAP = 6;  // the lattice (the board's pitches: a row clears a card, a column clears its width); six per band, the rest a count
-    const HEAD = STK ? 100 : 130, FOOT = 30;                                  // headroom above a band's first row (the cards stand up from their pins), the room past its last
-    const LV = 44, GAL_W = STK ? 220 : 280, GALD = { w: GAL_W, h: galH(GAL_W) }, ICAP = 1.45;   // a lane row's pitch in the graph band; the galaxy sheet lying past the nodes (its own proportion — defect 61); the counter-scale's cap
-    const proj = (u, v, z) => { const p = P(u, v, z || 0); return { x: p[0], y: p[1] }; };
-    const yPerV = Math.max(0.05, Math.abs(proj(0, 100, 0).y - proj(0, 0, 0).y) / 100);   // screen px down per v unit, through P
-    out.bands = []; out.widgets = []; out.stack = STK; out.wsz = WSZ;
+    const WSZ = o.wsz === 's' || o.wsz === 'l' ? o.wsz : 'm';
+    const ACT = !!(o.layers && o.layers.activity), EST = !!(o.layers && o.layers.estate), GAL = o.galaxy !== false;
+    out.solo = SOLO; out.tilt = TILT; out.azim = AZIM; out.anodes = []; out.enodes = []; out.bands = []; out.widgets = []; out.stack = STK; out.wsz = WSZ;
+    const KI = STK ? 340 : 300, UXS = 1.5, VSPAN = STK ? 5 : den === 'full' ? 6 : 5;   // the board's ground: 300 px a unit, the stations 1.5 units apart   // px per ground unit; the u axis stretched so neighbouring cards never meet; the plates' depth
+    const CW = STK ? 172 : 206, CH = STK ? 47 : 58, RAISE = STK ? 10 : 14, RPC = 6, DU = 1.34, MAXC = 4, CAP = RPC * MAXC, CAPG = 12;
+    const FW = { s: 60, m: 78, l: 108 }[WSZ], FH = Math.round(FW * 0.56);
     const isWidget = isWidgetCard;
-    const shownOf = (t, L) => cardsOf(t, L.key).slice(0, CAP);
-    const colsOf = (n) => Math.max(1, Math.ceil(n / ROWMAX)), rowsOf = (n) => Math.max(1, Math.min(ROWMAX, n));
-    const ESTL = { key: 'estate', name: 'estate', sub: 'where it ran', col: 'var(--xp-dv3)', kind: 'nodes' };
-    const BANDS = EST ? LAYERS.concat([ESTL]) : LAYERS;
-    // the bands are as deep as their fullest station needs, so the plates stay identical and the bands line up across them
+    const GU = UXS * KI, GV = KI;   // a station unit and an entity unit, in ground px
+    const proj = (U, V, z) => { const p = P(U, V, z || 0); return { x: p[0], y: p[1] }; };
+    const ESTL = { key: 'estate', name: 'estate', sub: 'where it ran', col: 'var(--xp-dv3)', kind: 'nodes' }, ACTL = { key: 'activity', name: 'activity', sub: 'what ran', col: 'var(--xp-ac2)', kind: 'acts' };
+    const STA = LAYERS.concat(ACT ? [ACTL] : [], EST ? [ESTL] : []);
     const graphs = turns.map(gData), actsL = turns.map((t) => ACT ? actsOf(t) : []), estsL = turns.map((t) => EST ? estOf(t) : []);
-    const laneDepth = (g) => LANES.filter((l) => g.laneList.indexOf(l) >= 0).reduce((s, l) => s + LV * Math.ceil(g.nodes.filter((n) => n.lane === l).length / 2), 0);
-    const anyGraph = graphs.some((g) => g.nodes.length);
-    const GNODES = 40 + Math.max.apply(null, graphs.map(laneDepth).concat([LV])) + 20, GALV = anyGraph && GAL ? Math.round(GALD.h * ICAP / yPerV) + 40 : 0;
-    const ACTV = Math.max.apply(null, actsL.map((a) => a.length ? 40 + 56 * actTree(a, 8).rows.length : 0).concat([0]));
-    const ESTV = Math.max.apply(null, estsL.map((e) => e.length ? 40 + LV * Math.ceil(e.length / 3) + 30 : 0).concat([LV + 70]));
-    const VBS = BANDS.map((L) => L.kind === 'graph' ? GNODES + GALV + 30 : L.kind === 'nodes' ? ESTV : HEAD + RV * (Math.max.apply(null, turns.map((t) => rowsOf(shownOf(t, L).length))) - 1) + FOOT + (L.key === 'made' ? ACTV : 0));
-    const V0S = VBS.map((_, i) => VBS.slice(0, i).reduce((a, b) => a + b, 0)); const PH = VBS.reduce((a, b) => a + b, 0);
-    const COLS = Math.max.apply(null, turns.map((t) => Math.max.apply(null, LAYERS.filter((L) => L.kind !== 'graph').map((L) => colsOf(shownOf(t, L).length)))));
-    // the plate's margins are the runs' corridors: as wide as the lanes the fullest station needs (the board: the inset
-    // grows with the number of relations), never narrower than the board's 80
-    const LP = 10;
-    const lanesOf = (t, i) => { const r = cardsOf(t, 'read').length, m = cardsOf(t, 'made').length, l = cardsOf(t, 'land').length; return Math.min(CAP, r) * 2 + Math.min(CAP, m) + Math.min(CAP, l) + actsL[i].length + estsL[i].length; };
-    const NL = Math.max.apply(null, turns.map(lanesOf).concat([0]));
-    const MG = Math.max(80, Math.min(150, 30 + Math.min(12, NL) * LP));
-    const PW = 2 * MG + 200 + (COLS - 1) * CU; const pts = [];
-    // a floor is held clear of the one beneath: the plate's projected depth plus a gap, in z (measured through P)
-    const ZH = (() => { const a = proj(0, 0, 0), b = proj(PW, PH, 0), c = proj(0, 0, 100); const perZ = Math.max(0.05, (a.y - c.y) / 100); return Math.round((Math.abs(b.y - a.y) + 90) / perZ); })();
-    let uRun = 0; const pinsG = {};   // every pin's ground point, by turn and key: the runs are routed on the ground and projected after the fit
-    const gpt = (u, v, z, node) => ({ u, v, z: z || 0, node: !!node });
+    const colsOf = (n) => Math.max(1, Math.min(MAXC, Math.ceil(n / RPC)));
+    // every station is as wide as its fullest turn needs (a column per six items past the first), so the stations line up
+    // across the floors; the context plate is the wide one (relevance spreads across it)
+    const colsAt = STA.map((L) => Math.max.apply(null, turns.map((t, si) => L.kind === 'graph' ? 1 : L.kind === 'acts' ? Math.max(1, Math.min(MAXC, Math.ceil(actsL[si].length / 8))) : L.kind === 'nodes' ? colsOf(estsL[si].length) : colsOf(Math.min(CAP, cardsOf(t, L.key).length))).concat([1])));
+    const halfW = (i) => i === 0 ? 0.64 : 0.44, GAP = 0.12;
+    const uOrg = []; { let u = 0; STA.forEach((L, i) => { uOrg[i] = u; u += 2 * halfW(i) + (colsAt[i] - 1) * DU + GAP; }); }
+    const uC = (i, cj) => uOrg[i] + halfW(i) + (cj || 0) * DU;                       // a column's centre line
+    const uA = (i) => uOrg[i], uB = (i) => uOrg[i] + 2 * halfW(i) + (colsAt[i] - 1) * DU;   // a plate's u extent
+    const vA = -0.62, vB = VSPAN + 0.62, GALV = GAL ? 1.7 : 0;                          // the plates' v extent; the galaxy sheet lies on the floor past the graph plate
+    const fU0 = uA(0) - 0.12, fU1 = uB(STA.length - 1) + 0.12, fV0 = vA - 0.16, fV1 = vB + 0.16 + GALV;   // the floor
+    // a floor is held clear of the one beneath: its projected height plus a gap, in z (the board's derived separation)
+    const ZH = (() => { const c = [proj(fU0 * GU, fV0 * GV, 0), proj(fU1 * GU, fV0 * GV, 0), proj(fU1 * GU, fV1 * GV, 0), proj(fU0 * GU, fV1 * GV, 0)]; const ys = c.map((q) => q.y); const perZ = Math.max(0.05, (proj(0, 0, 0).y - proj(0, 0, 100).y) / 100); return Math.round((Math.max.apply(null, ys) - Math.min.apply(null, ys) + CH + 60) / perZ); })();
+    const pts = []; const pinsG = {};
+    const pin = (U, V, z, r) => ({ U, V, z: z || 0, r: r || 0 });
     turns.forEach((t, si) => {
-      const u0 = STK ? 0 : uRun, z = STK ? (turns.length - 1 - si) * ZH : 0; if (!STK) uRun += PW + 160;
-      const corners = [proj(u0, 0, z), proj(u0 + PW, 0, z), proj(u0 + PW, PH, z), proj(u0, PH, z)]; corners.forEach((c) => pts.push(c));
-      out.plates.push({ si, mid: t.mid, cls: si === sel ? 'on' : '', poly: corners.map((c) => ({ x: c.x, y: c.y })), z, u0, pw: PW, ph: PH });
-      const lb = proj(u0, -18, z); out.labels.push({ si, x: lb.x, y: lb.y, n: (t.who || 'you') + ' · ' + (t.t || ''), k: String(t.text || '').slice(0, 40), cls: 'station' + (si === sel ? ' on' : ''), col: 'var(--xp-t2)', mid: t.mid });
-      const G = pinsG[t.mid] = {};
-      BANDS.forEach((L, li) => {
-        const v0 = V0S[li], VB = VBS[li]; const list = L.kind ? [] : cardsOf(t, L.key);
-        // the band on the plate — drawn whether or not the turn has anything in it
-        const bc = [proj(u0 + 4, v0 + 4, z), proj(u0 + PW - 4, v0 + 4, z), proj(u0 + PW - 4, v0 + VB - 4, z), proj(u0 + 4, v0 + VB - 4, z)];
-        const ll = proj(u0 + PW + 8, v0 + 10, z);
-        if (L.kind === 'graph') { const g = graphs[si];
-          out.labels.push({ si, x: ll.x, y: ll.y, n: L.name, k: String(g.nodes.length), cls: 'layer sm ' + L.key, col: L.col });
-          out.bands.push({ si, mid: t.mid, layer: L.key, poly: bc.map((c) => ({ x: c.x, y: c.y })), col: L.col, empty: !g.nodes.length, cls: si === sel ? 'on' : '', v0, vb: VB });
-          if (!g.nodes.length) { const e = proj(u0 + PW / 2, v0 + VB / 2, z); out.labels.push({ si, x: e.x, y: e.y, n: 'nothing read', k: '', cls: 'layer sm empty', col: 'var(--xp-t3)' }); return; }
-          // the prompt line runs down the band's middle; a record sits nearer it the more relevant it is, a lane per family down the band
-          const um = u0 + PW / 2, SPR = PW / 2 - MG + 20; let lv = v0 + 40;
-          const a0 = proj(um, v0 + 16, z), a1 = proj(um, v0 + GNODES - 16, z); out.edges.push({ x: px(a0.x), y: px(a0.y), len: px(Math.hypot(a1.x - a0.x, a1.y - a0.y)), deg: +(Math.atan2(a1.y - a0.y, a1.x - a0.x) * 180 / Math.PI).toFixed(2), col: 'var(--xp-dv1)', cls: 'thin prompt', title: 'the prompt — nearer the line, more relevant', raw: true });
-          out.labels.push({ si, x: a0.x, y: a0.y - 14, n: 'the prompt', k: g.nodes.length + ' rec', cls: 'layer sm prompt', col: 'var(--xp-dv1)' });
-          LANES.forEach((lane) => { const members = g.nodes.filter((n) => n.lane === lane).sort((a, b) => b.score - a.score); if (!members.length) return;
-            const lp = proj(u0 - 8, lv + LV / 2, z); out.labels.push({ si, x: lp.x, y: lp.y, n: lane, k: String(members.length), cls: 'layer sm lane', col: members[0].col || L.col });
-            // the board: a record sits nearer the prompt line the more relevant it is, hugging it; the families cluster
-            members.forEach((n, mi) => { const row = Math.floor(mi / 2), side = mi % 2 ? 1 : -1; const rel = Math.max(0, Math.min(1, n.score));
-              const gu = um + side * (22 + (1 - rel) * Math.min(150, SPR) + (row % 2) * 10), gv = lv + row * LV + LV / 2; const p = proj(gu, gv, z); pts.push(p); G['node:' + n.id] = gpt(gu, gv, z, true);
-              out.gnodes.push({ id: t.mid + ':graph:' + n.id, nid: n.id, mid: t.mid, si, x: p.x, y: p.y, d: Math.round(16 + rel * 7), col: n.col || L.col, icon: ICON_OF(n.kind, n.lane), label: n.label, lane: n.lane, kind: n.kind, score: rel, ghost: n.included === false, lit: rel > 0.82, op: +(0.45 + rel * 0.55).toFixed(2) }); });
-            lv += LV * Math.ceil(members.length / 2); });
-          // the context galaxy, iso view, lying in the band past the nodes: the same widget the Context menu draws — an option
-          if (GAL) { const c = proj(u0 + PW / 2, v0 + GNODES + GALV / 2, z); pts.push(c); out.graphs.push({ id: t.mid + ':graph', mid: t.mid, si, x: c.x, y: c.y, w: GALD.w, h: GALD.h, data: g, iso: true }); }
+      const z = STK ? (turns.length - 1 - si) * ZH : 0, G = pinsG[t.mid] = {}; const g = graphs[si];
+      const fc = [proj(fU0 * GU, fV0 * GV, z), proj(fU1 * GU, fV0 * GV, z), proj(fU1 * GU, fV1 * GV, z), proj(fU0 * GU, fV1 * GV, z)]; fc.forEach((c) => pts.push(c));
+      out.plates.push({ si, mid: t.mid, cls: si === sel ? 'on' : '', poly: fc.map((c) => ({ x: c.x, y: c.y })), z, u0: fU0 * GU, pw: (fU1 - fU0) * GU, ph: (fV1 - fV0) * GV });
+      const lb = proj((uA(0) + 0.04) * GU, (vA - 0.5) * GV, z); out.labels.push({ si, x: lb.x, y: lb.y, n: (t.who || 'you') + ' · ' + (t.t || ''), k: String(t.text || '').slice(0, 40), cls: 'station' + (si === sel ? ' on' : ''), col: 'var(--xp-t2)', mid: t.mid });
+      STA.forEach((L, i) => {
+        const U0 = uA(i) * GU, U1 = uB(i) * GU, V0 = vA * GV, V1 = vB * GV;
+        const bc = [proj(U0, V0, z), proj(U1, V0, z), proj(U1, V1, z), proj(U0, V1, z)]; bc.forEach((c) => pts.push(c));
+        const list = L.kind ? [] : cardsOf(t, L.key), acts = actsL[si], ests = estsL[si];
+        const empty = L.kind === 'graph' ? !g.nodes.length : L.kind === 'acts' ? !acts.length : L.kind === 'nodes' ? !ests.length : !list.length;
+        out.bands.push({ si, mid: t.mid, layer: L.key, poly: bc.map((c) => ({ x: c.x, y: c.y })), col: L.col, empty, cls: (si === sel ? 'on' : '') + (L.key === 'say' && pendOf(t) ? ' gen' : ''), u0: U0, pw: U1 - U0, v0: V0, vb: V1 - V0 });
+        const ll = proj((uA(i) + 0.04) * GU, (vA - 0.3) * GV, z);
+        const count = L.kind === 'graph' ? g.nodes.length : L.kind === 'acts' ? acts.length : L.kind === 'nodes' ? ests.length : list.length;
+        out.labels.push({ si, x: ll.x, y: ll.y, n: L.name, k: L.kind === 'acts' ? count + ' call' + (count === 1 ? '' : 's') : String(count), cls: 'layer sm ' + L.key, col: L.col, st: i });
+        if (empty) { const e = proj((U0 + U1) / 2, (V0 + V1) / 2, z); out.labels.push({ si, x: e.x, y: e.y, n: L.key === 'say' ? 'no reply yet' : L.key === 'read' ? 'nothing read' : L.key === 'made' ? 'nothing produced' : L.key === 'land' ? 'nothing landed' : L.key === 'graph' ? 'nothing read' : L.key === 'activity' ? 'no calls' : 'nowhere yet', k: '', cls: 'layer sm empty', col: 'var(--xp-t3)' }); return; }
+        if (L.kind === 'graph') {
+          // the PROMPT LINE down the plate's middle: a record sits nearer it the more relevant it is (alternate sides), a
+          // lane per family along the plate; the twelve most relevant on the plate, the rest a count
+          const uc = uC(0) * GU; const a0 = proj(uc, -0.5 * GV, z), a1 = proj(uc, (VSPAN + 0.5) * GV, z);
+          out.edges.push({ x: px(a0.x), y: px(a0.y), len: px(Math.hypot(a1.x - a0.x, a1.y - a0.y)), deg: +(Math.atan2(a1.y - a0.y, a1.x - a0.x) * 180 / Math.PI).toFixed(2), col: 'var(--xp-dv1)', cls: 'thin prompt', title: 'the prompt — nearer the line, more relevant', raw: true });
+          out.labels.push({ si, x: a0.x, y: a0.y - 14, n: 'the prompt', k: g.nodes.length + ' rec · nearer the line, more relevant', cls: 'layer sm prompt', col: 'var(--xp-dv1)' });
+          const shown = g.nodes.slice().sort((a, b) => b.score - a.score).slice(0, CAPG), more = g.nodes.length - shown.length;
+          const lanes = LANES.filter((l) => shown.some((n) => n.lane === l)), nsec = lanes.length;
+          const vSec = (k) => nsec > 1 ? 0.5 + k * (VSPAN - 1) / (nsec - 1) : VSPAN / 2;
+          lanes.forEach((lane, k) => { const M = shown.filter((n) => n.lane === lane).sort((a, b) => b.score - a.score), n = M.length; const lp = proj((uA(0) - 0.46) * GU, vSec(k) * GV, z);
+            out.labels.push({ si, x: lp.x, y: lp.y - 7, n: lane, k: String(g.nodes.filter((x) => x.lane === lane).length), cls: 'layer sm lane', col: M[0].col || L.col });
+            M.forEach((nd, mi) => { const rel = Math.max(0, Math.min(1, nd.score)); const gi = shown.indexOf(nd); const du = (Math.min(0.56, (1 - rel) * 1.5) + gi * 0.012) * (mi % 2 ? 1 : -1), dv = n > 1 ? (mi - (n - 1) / 2) * Math.min(0.36, 1.1 / (n - 1)) : 0;
+              const U = (uC(0) + du) * GU, V = (vSec(k) + dv) * GV, p = proj(U, V, z); pts.push(p); const d = Math.round(19 + rel * 9); G['node:' + nd.id] = pin(U, V, z, d / 2);
+              out.gnodes.push({ id: t.mid + ':graph:' + nd.id, nid: nd.id, mid: t.mid, si, x: p.x, y: p.y, d, col: nd.col || L.col, icon: ICON_OF(nd.kind, nd.lane), label: nd.label, lane: nd.lane, kind: nd.kind, score: rel, ghost: nd.included === false, lit: rel > 0.82, op: +(0.45 + rel * 0.55).toFixed(2) }); }); });
+          if (more > 0) { const mp = proj(U1 - 20, V1 - 30, z); out.labels.push({ si, x: mp.x, y: mp.y, n: '+' + more + ' more', k: 'in the context', cls: 'layer sm more', col: L.col, mid: t.mid }); }
+          // the context galaxy, an iso sheet lying on the floor past the plate — an option (the Context menu's own widget)
+          if (GAL) { const GW = STK ? 220 : 280; const c = proj(uc, (vB + GALV / 2) * GV, z); pts.push(c); out.graphs.push({ id: t.mid + ':graph', mid: t.mid, si, x: c.x, y: c.y, w: GW, h: galH(GW), data: g, iso: true }); }
           return; }
-        if (L.kind === 'nodes') { const es = estsL[si];
-          out.labels.push({ si, x: ll.x, y: ll.y, n: L.name, k: String(es.length), cls: 'layer sm ' + L.key, col: L.col });
-          out.bands.push({ si, mid: t.mid, layer: L.key, poly: bc.map((c) => ({ x: c.x, y: c.y })), col: L.col, empty: !es.length, cls: si === sel ? 'on' : '', v0, vb: VB });
-          if (!es.length) { const e = proj(u0 + PW / 2, v0 + VB / 2, z); out.labels.push({ si, x: e.x, y: e.y, n: 'nowhere yet', k: '', cls: 'layer sm empty', col: 'var(--xp-t3)' }); return; }
-          es.forEach((e, ei) => { const row = Math.floor(ei / 3), inRow = Math.min(3, es.length - row * 3), k = ei % 3; const gu = u0 + PW / 2 + (k - (inRow - 1) / 2) * Math.min(160, (PW - 2 * MG) / 2), gv = v0 + 60 + row * LV; const p = proj(gu, gv, z); pts.push(p); G['est:' + ei] = gpt(gu, gv, z, true);
+        if (L.kind === 'acts') {
+          // the ACTIVITY as a graph of what ran: the calls down the plate in time order (eight to a column), a child a step
+          // to the right of its parent — the tree reads across the plate, the sequence down it
+          const tree = actTree(acts, 8); const N = acts.length, per = 8, pitch = N > 1 ? Math.min(0.9, (VSPAN - 0.6) / (Math.min(per, N) - 1)) : 0;
+          acts.forEach((a, ai) => { const col = Math.floor(ai / per), row = ai % per; const rowsIn = Math.min(per, N - col * per); const U = (uC(i, col) - 0.22 + Math.min(2, tree.depth[ai]) * 0.22) * GU, V = (row * pitch + (VSPAN - (rowsIn - 1) * pitch) / 2) * GV; const p = proj(U, V, z); pts.push(p); G['act:' + ai] = pin(U, V, z, 11);
+            out.anodes.push({ id: t.mid + ':act:' + ai, mid: t.mid, si, x: p.x, y: p.y, d: 22, col: actCol(a), icon: ICON.cap, label: a.n || a.cap || 'call', meta: actMeta(a), status: String(a.status || ''), lane: 'activity', depth: tree.depth[ai] }); });
+          return; }
+        if (L.kind === 'nodes') {
+          const N = ests.length, per = RPC, pitch = N > 1 ? Math.min(1, (VSPAN - 0.6) / (Math.min(per, N) - 1)) : 0;
+          ests.forEach((e, ei) => { const col = Math.floor(ei / per), row = ei % per; const rowsIn = Math.min(per, N - col * per); const U = uC(i, col) * GU, V = (row * pitch + (VSPAN - (rowsIn - 1) * pitch) / 2) * GV; const p = proj(U, V, z); pts.push(p); G['est:' + ei] = pin(U, V, z, 12);
             out.enodes.push({ id: t.mid + ':est:' + ei, mid: t.mid, si, x: p.x, y: p.y, d: 24, col: estCol(e), icon: ICON_OF(e.kind, 'estate'), label: e.label || e.id, meta: e.detail || e.kind || '', status: String(e.status || ''), lane: 'estate' }); });
           return; }
-        out.labels.push({ si, x: ll.x, y: ll.y, n: L.name, k: String(list.length), cls: 'layer sm ' + L.key, col: L.col });
-        out.bands.push({ si, mid: t.mid, layer: L.key, poly: bc.map((c) => ({ x: c.x, y: c.y })), col: L.col, empty: !list.length && !(L.key === 'made' && actsL[si].length), cls: (si === sel ? 'on' : '') + (L.key === 'say' && pendOf(t) ? ' gen' : ''), v0, vb: VB });
-        if (!list.length && !(L.key === 'made' && actsL[si].length)) { const e = proj(u0 + PW / 2, v0 + VB / 2, z); out.labels.push({ si, x: e.x, y: e.y, n: L.key === 'say' ? 'no reply yet' : L.key === 'read' ? 'nothing read' : L.key === 'made' ? 'nothing produced' : 'nothing landed', k: '', cls: 'layer sm empty', col: 'var(--xp-t3)' }); return; }
-        // every item on its pin: the band fills down its rows first, then a column to the right (the board: the plate grows along u)
-        const shown = list.slice(0, CAP), more = list.length - shown.length; const cols = colsOf(shown.length);
-        if (more > 0) { const mp = proj(u0 + PW - 30, v0 + VB - 26, z); out.labels.push({ si, x: mp.x, y: mp.y, n: '+' + more + ' more', k: 'in the graph band', cls: 'layer sm more', col: L.col, mid: t.mid }); }
-        let flow = 0;   // an item dropped somewhere on the plate (card.at.iso, relative to the band) stands there; the rest fill the rows
-        shown.forEach((c, ci) => { const at = L.key === 'land' && c.at && c.at.iso; let gu, gv; if (at && isFinite(+at.u)) { gu = u0 + Math.max(60, Math.min(PW - 60, +at.u)); gv = v0 + Math.max(HEAD - 40, Math.min(VB - 40, +at.v)); } else { const col = Math.floor(flow / ROWMAX), row = flow % ROWMAX; flow++; gu = u0 + PW / 2 - (cols - 1) * CU / 2 + col * CU; gv = v0 + HEAD + row * RV; } const p = proj(gu, gv, z); pts.push(p);
-          const wd = widgetOf(c); const id = t.mid + ':' + L.key + ':' + ci; const grp = isWidget(c); G[L.key + ':' + ci] = gpt(gu, gv, z);
+        // the items: down the rows first (centred in the span), then a column to the right; a canvas item dropped
+        // somewhere on the plate (card.at.iso, ground px relative to the plate) stands there
+        const shown = list.slice(0, CAP), more = list.length - shown.length, cols = colsOf(shown.length), RPB = Math.ceil(shown.length / cols); let flow = 0;
+        if (more > 0) { const mp = proj(U1 - 20, V1 - 30, z); out.labels.push({ si, x: mp.x, y: mp.y, n: '+' + more + ' more', k: 'in the ' + L.name, cls: 'layer sm more', col: L.col, mid: t.mid }); }
+        shown.forEach((c, ci) => { const at = L.key === 'land' && c.at && c.at.iso; let U, V;
+          if (at && isFinite(+at.u)) { U = U0 + Math.max(40, Math.min(U1 - U0 - 40, +at.u)); V = V0 + Math.max(60, Math.min(V1 - V0 - 40, +at.v)); }
+          else { const cj = Math.floor(flow / RPB), rj = flow % RPB, rowsIn = Math.min(RPB, shown.length - cj * RPB), pitch = RPB > VSPAN + 1 ? VSPAN / (RPB - 1) : 1; flow++; U = uC(i, cj) * GU; V = (rj * pitch + (VSPAN - (rowsIn - 1) * pitch) / 2) * GV; }
+          const p = proj(U, V, z); pts.push(p); const wd = widgetOf(c), id = t.mid + ':' + L.key + ':' + ci, grp = isWidget(c); G[L.key + ':' + ci] = pin(U, V, z);
           out.widgets.push({ id, mid: t.mid, si, layer: L.key, ci, x: p.x, y: p.y, w: FW, h: FH, cw: CW, ch: CH, stem: RAISE, card: c, col: c.col || L.col, form: wd.form, data: wd.data, placed: !!c.tpl, sample: !!wd.sample, draw: grp ? 'group' : 'card', value: grp ? valueOf(wd) : '', tight: STK, drag: L.key === 'land' && grp, key: c.key || '' });
           out.cards.push({ id, mid: t.mid, si, layer: L.key, ci, x: p.x, y: p.y, w: CW, h: CH, card: c, col: c.col || L.col, anchored: true, iw: true }); });
-        // the ACTIVITY: the turn's calls in a row along the plate under the produced items, six to a row, in time order
-        if (L.key === 'made' && actsL[si].length) { const acts = actsL[si]; const rows = rowsOf(shown.length), av0 = v0 + HEAD + RV * (rows - 1) + (shown.length ? 110 : 40);
-          const lp = proj(u0 - 8, av0, z); out.labels.push({ si, x: lp.x, y: lp.y, n: 'activity', k: acts.length + ' call' + (acts.length === 1 ? '' : 's'), cls: 'layer sm lane activity', col: 'var(--xp-ac2)' });
-          // the tree from the trigger chain: the roots in a row, every child under its parent, a row per depth
-          const tree = actTree(acts, 8), per = Math.max(1, Math.min(8, Math.max.apply(null, tree.rows.map((r) => r.length).concat([1])))), gx = Math.min(80, (PW - 2 * MG) / per);
-          tree.rows.forEach((row, ri) => { row.forEach((ai, k) => { const a = acts[ai]; const gu = u0 + PW / 2 + (k - (row.length - 1) / 2) * gx, gv = av0 + ri * 56; const p = proj(gu, gv, z); pts.push(p); G['act:' + ai] = gpt(gu, gv, z, true);
-            out.anodes.push({ id: t.mid + ':act:' + ai, mid: t.mid, si, x: p.x, y: p.y, d: 22, col: actCol(a), icon: ICON.cap, label: a.n || a.cap || 'call', meta: actMeta(a), status: String(a.status || ''), lane: 'activity', depth: ri }); }); }); }
       });
     });
     // fit the scene into the frame: scale and shift. The items counter-scale by the FIT alone (1:1 text when fitted,
@@ -353,13 +347,10 @@
     const s = Math.max(0.3, Math.min(1.4, Math.min((W - 80) / Math.max(1, x1 - x0 + 200), (H - 120) / Math.max(1, y1 - y0 + 140))));
     const dx = W / 2 - s * (x0 + x1) / 2, dy = H / 2 - s * (y0 + y1) / 2 + 20;
     out.fit = { s: +s.toFixed(3), x: px(dx), y: px(dy) }; out.ground = { s, dx, dy, tilt: TILT, azim: AZIM, custom: !!o.proj };   // the drop's way back from a screen point to the ground
-    // the fit is baked into the coordinates (the board scales its stage instead), so the items' DOM scale is the board's
-    // rule applied at the fit: 1:1 when fitted, grown no more than 1.45× against a small scene — s · min(1.45, 1/s)
-    out.inv = +(s * Math.min(1.45, 1 / Math.min(1, s))).toFixed(3);
+    out.inv = +(s * Math.min(1.2, 1 / Math.min(1, s))).toFixed(3);   /* the items follow the fit, grown no more than 1.2x against a small scene: a station's pitch always clears a card */
     const T = (p) => ({ x: px(p.x * s + dx), y: px(p.y * s + dy) });
     out.plates.forEach((pl) => { pl.poly = pl.poly.map(T); });
     out.bands.forEach((b) => { b.poly = b.poly.map(T); });
-    // the plates' edges as lines (the board's .xpe): four per plate, four hairlines per band — what keeps a plane a plane when Blocks takes its fill
     const edgesOf = (poly) => poly.map((a, i) => { const b = poly[(i + 1) % poly.length]; return { x: a.x, y: a.y, len: px(Math.hypot(b.x - a.x, b.y - a.y)), deg: +(Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI).toFixed(2) }; });
     out.outline = []; out.plates.forEach((pl) => { edgesOf(pl.poly).forEach((e) => out.outline.push(Object.assign(e, { si: pl.si, cls: pl.cls }))); });
     out.boutline = []; out.bands.forEach((b) => { edgesOf(b.poly).forEach((e) => out.boutline.push(Object.assign(e, { si: b.si, col: b.col }))); });
@@ -372,24 +363,46 @@
     out.graphs.forEach((g) => { const q = T(g); g.x = q.x; g.y = q.y; });
     const kept = out.edges.filter((e) => e.raw).map((e) => { const a = T({ x: e.x, y: e.y }); return Object.assign({}, e, { x: a.x, y: a.y, len: px(e.len * s), raw: undefined }); });
     out.edges = kept; out.runs = 0;
-    // the runs, on the lattice: routed on the ground between the pins, then projected through P and the fit, so every
-    // leg lies along u, along v or straight up — the same rule the ops map's pipes and the widget gallery's floors follow
-    const at = (u, v, z) => { const p = proj(u, v, z); return { x: p.x * s + dx, y: p.y * s + dy }; };   // unrounded: a short leg keeps its exact direction
-    turns.forEach((t, si) => { const G = pinsG[t.mid] || {}; const pl = out.plates[si] || { u0: 0, pw: PW };
-      const R = isoRouter({ u0: pl.u0, PW: pl.pw, MG, LP, at, edge, out });
-      const gp = (k) => G[k] || null, np = (c) => gp('node:' + String((c && (c.id != null ? c.id : c.n)) || ''));
-      const reads = cardsOf(t, 'read').slice(0, CAP), mades = cardsOf(t, 'made').slice(0, CAP), lands = cardsOf(t, 'land').slice(0, CAP), g = graphs[si];
-      reads.forEach((c, j) => { const n = np(c); if (!n || !gp('read:' + j)) return; const gn = g.nodes.find((x) => x.id === String((c.id != null ? c.id : c.n) || '')), mem = !!(gn && gn.lane === 'memory'); R.add(n, gp('read:' + j), mem ? 'var(--xp-ac2)' : 'var(--xp-dv1)', mem ? 'in mem' : 'in', mem ? 'the memory that was recalled' : 'the context entry that was injected'); });
+    // ── the runs: the board's ISO.route on the ground, projected through P and the fit ────────────────────────────
+    const at = (U, V, z) => { const p = proj(U, V, z); return { x: p.x * s + dx, y: p.y * s + dy }; };   // unrounded: a short leg keeps its exact direction
+    const stationOf = (U) => { let best = 0; STA.forEach((L, i) => { if (U >= uA(i) * GU - 1) best = i; }); return best; };
+    const LANE = 18, PORT = 12, STEP = 27, VO = (VSPAN + 0.9) * GV;   // a lane's pitch, a port's pitch, and a step aside that never lands on a port line (27 is no multiple of 6)   // a lane's pitch in the gap, a port's pitch at a pin, the far end a round-about run travels past
+    let rid = 0;
+    turns.forEach((t, si) => { const G = pinsG[t.mid] || {}; const gp = (k) => G[k] || null; const runs = [];
+      const add = (A, B, col, cls, title, joins, opt) => { if (!A || !B) return; runs.push(Object.assign({ A, B, col, cls, title, joins, id: ++rid }, opt || {})); };
+      const np = (c) => gp('node:' + String((c && (c.id != null ? c.id : c.n)) || '')), g = graphs[si];
+      const reads = cardsOf(t, 'read').slice(0, CAP), mades = cardsOf(t, 'made').slice(0, CAP), lands = cardsOf(t, 'land').slice(0, CAP);
+      reads.forEach((c, j) => { const n = np(c); if (!n || !gp('read:' + j)) return; const gn = g.nodes.find((x) => x.id === String((c.id != null ? c.id : c.n) || '')), mem = !!(gn && gn.lane === 'memory'); add(n, gp('read:' + j), mem ? 'var(--xp-ac2)' : 'var(--xp-dv1)', mem ? 'in mem' : 'in', mem ? 'the memory that was recalled' : 'the context entry that was injected'); });
       const ex = gp('say:0');
-      const laneOfCard = (c) => { const nn = g.nodes.find((x) => x.id === String((c.id != null ? c.id : c.n) || '')); return nn ? nn.lane : 'context'; };
-      if (ex) { reads.forEach((c, j) => R.add(gp('read:' + j), ex, 'var(--xp-dv1)', 'in', 'read by this turn', null, { trunk: 'in:' + laneOfCard(c), tend: 'b' })); if (!reads.length && g.nodes.length) { const first = g.nodes.slice().sort((a, b) => b.score - a.score)[0]; R.add(gp('node:' + first.id), ex, 'var(--xp-dv1)', 'in', 'the context this turn read'); } mades.forEach((c, j) => R.add(ex, gp('made:' + j), 'var(--xp-dv2)', 'out', 'produced by this turn', null, { trunk: 'out', tend: 'a' })); }
-      landRuns(mades, lands, (mi, li, why) => R.add(mi == null ? ex : gp('made:' + mi), gp('land:' + li), 'var(--xp-ac)', mi == null ? 'link dash' : 'link', why));
-      // a canvas item whose record is a context node (the pin-back): the graph knows it by the lane
-      g.nodes.filter((n) => n.lane === 'canvas').forEach((n) => { const li = lands.findIndex((c) => String(c.id != null ? c.id : c.n) === n.id); if (li >= 0 && gp('land:' + li)) R.add(gp('land:' + li), gp('node:' + n.id), 'var(--xp-ac2)', 'pin', 'pinned back into the next prompt', null, { side: 'R' }); });
-      actRuns(actsL[si], mades, (from, ai, cls, title) => R.add(from === 'ex' ? ex : from[0] === 'made' ? gp('made:' + from[1]) : gp('act:' + from[1]), gp('act:' + ai), 'var(--xp-ac2)', cls, title, null, cls === 'rel step act' ? { direct: true } : actTrunk(from, cls)));
-      estsL[si].forEach((e, ei) => { estRuns(e, (ai) => gp('act:' + ai)).forEach(([ai, title]) => R.add(gp('act:' + ai), gp('est:' + ei), 'var(--xp-dv3)', 'est', title, null, { side: 'R', trunk: 'est:' + ei, tend: 'b' })); if (e.via != null && gp('est:' + e.via)) R.add(gp('est:' + e.via), gp('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it', null, { rel: true }); });
-      g.rels.forEach((r) => { const a = gp('node:' + r.from), b = gp('node:' + r.to), Rc = RELC[r.kind] || RELC.cite; if (a && b) R.add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)], { rel: true }); });
-      R.flush(); });
+      if (ex) { reads.forEach((c, j) => add(gp('read:' + j), ex, 'var(--xp-dv1)', 'in', 'the passage the answer is based on')); if (!reads.length && g.nodes.length) { const first = g.nodes.slice().sort((a, b) => b.score - a.score)[0]; add(gp('node:' + first.id), ex, 'var(--xp-dv1)', 'in', 'the context this turn read'); } mades.forEach((c, j) => add(ex, gp('made:' + j), 'var(--xp-dv2)', 'out', 'produced by this turn')); }
+      landRuns(mades, lands, (mi, li, why) => add(mi == null ? ex : gp('made:' + mi), gp('land:' + li), 'var(--xp-ac)', mi == null ? 'link dash' : 'link', why));
+      g.nodes.filter((n) => n.lane === 'canvas').forEach((n) => { const li = lands.findIndex((c) => String(c.id != null ? c.id : c.n) === n.id); if (li >= 0 && gp('land:' + li) && gp('node:' + n.id)) add(gp('land:' + li), gp('node:' + n.id), 'var(--xp-ac2)', 'pin', 'pinned back into the next prompt'); });
+      // the activity: a graph of what ran — parent to child, step to step; the exchange (or the card that ran it) joins the FIRST root only
+      const acts = actsL[si]; if (acts.length) { const tree = actTree(acts, 8); let joined = false;
+        actRuns(acts, mades, (from, ai, cls, title) => { if (cls === 'rel step act') { add(gp('act:' + from[1]), gp('act:' + ai), 'var(--xp-ac2)', cls, title, null, { direct: true }); return; }
+          if (from === 'ex' || from[0] === 'made') { if (from[0] === 'made') { add(gp('made:' + from[1]), gp('act:' + ai), 'var(--xp-ac2)', cls, title); return; } if (joined) return; joined = true; add(ex, gp('act:' + ai), 'var(--xp-ac2)', cls, 'the calls this turn made — the first of them'); return; }
+          add(gp('act:' + from[1]), gp('act:' + ai), 'var(--xp-ac2)', cls, title); }); void tree; }
+      estsL[si].forEach((e, ei) => { estRuns(e, (ai) => gp('act:' + ai)).forEach(([ai, title]) => add(gp('act:' + ai), gp('est:' + ei), 'var(--xp-dv3)', 'est', title)); if (e.via != null && gp('est:' + e.via)) add(gp('est:' + e.via), gp('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it', null, { direct: true }); });
+      g.rels.forEach((r) => { const a = gp('node:' + r.from), b = gp('node:' + r.to), Rc = RELC[r.kind] || RELC.cite; if (a && b) add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)], { rel: true }); });
+      // PORTS: the runs at one pin, fanned in the order of their far ends; LANES: the runs through one gap, fanned in the
+      // order of their targets — so neighbouring runs stay parallel and never have to cross to reach neighbouring pins
+      const byPin = {}; runs.forEach((r) => { (byPin[r.A.U + '/' + r.A.V] = byPin[r.A.U + '/' + r.A.V] || []).push([r, 'a']); (byPin[r.B.U + '/' + r.B.V] = byPin[r.B.U + '/' + r.B.V] || []).push([r, 'b']); });
+      Object.keys(byPin).forEach((k) => { const Q = byPin[k]; Q.sort((p, q) => { const fa = p[1] === 'a' ? p[0].B : p[0].A, fb = q[1] === 'a' ? q[0].B : q[0].A; return (fa.V - fb.V) || (fa.U - fb.U); }); const n = Q.length; Q.forEach(([r, end], j) => { r[end === 'a' ? 'pa' : 'pb'] = (j - (n - 1) / 2) * PORT; r[end === 'a' ? 'fa' : 'fb'] = (n - 1) / 2 * PORT; }); });   /* and how wide the fan is: a step aside starts past it */
+      const byGap = {}; runs.forEach((r) => { const sa = stationOf(r.A.U), sb = stationOf(r.B.U); r.sa = sa; r.sb = sb; r.same = sa === sb; r.around = sb < sa || sb - sa > 1; const key = r.same ? 's' + sa : r.around ? 'o' : 'g' + Math.min(sa, sb); (byGap[key] = byGap[key] || []).push(r); });
+      Object.keys(byGap).forEach((k) => { const Q = byGap[k]; Q.sort((p, q) => (p.B.V - q.B.V) || (p.A.V - q.A.V)); const n = Q.length; Q.forEach((r, j) => { r.off = (k === 'o' || k[0] === 's') ? j * LANE : (j - (n - 1) / 2) * LANE; }); });   /* a round-about run and a run within one station take their own lane outward, never a mirrored one */
+      runs.forEach((r) => { const A = r.A, B = r.B, pa = r.pa || 0, pb = r.pb || 0, off = r.off || 0; let W_;
+        if (r.direct && Math.abs(A.U - B.U) < 0.5) W_ = [[A.U, A.V], [B.U, B.V]];   // a step to the next call in the column: one leg along v
+        else if (r.around) { const vo = VO + off, ouA = (r.fa || 0) + STEP + off, ouB = (r.fb || 0) + STEP + off; W_ = [[A.U + pa, A.V], [A.U + pa, A.V + pa], [A.U + pa + ouA, A.V + pa], [A.U + pa + ouA, vo], [B.U + pb + ouB, vo], [B.U + pb + ouB, B.V + pb], [B.U + pb, B.V + pb], [B.U + pb, B.V]]; }   // round the far end: along v past the plates, along u, back along v
+        else { let um; if (r.same) { const lo = uA(r.sa) * GU + 8, hi = uB(r.sa) * GU - 8;   // within one station: between the two (the board), or beside them when they stand in one column — inside the plate, never in a gap's lanes
+            const st = Math.max(r.fa || 0, r.fb || 0) + STEP; um = Math.abs(A.U - B.U) >= 2 * st ? (A.U + B.U) / 2 + off - 15 : Math.max(A.U, B.U) + st + off; if (um > hi) um = Math.min(A.U, B.U) - st - off; um = Math.max(lo, Math.min(hi, um)); }
+          else um = (uB(r.sa) * GU + uA(r.sb) * GU) / 2 + off;   // the gap between the two stations
+          W_ = [[A.U + pa, A.V], [A.U + pa, A.V + pa], [um, A.V + pa], [um, B.V + pb], [B.U + pb, B.V + pb], [B.U + pb, B.V]]; }
+        const Pp = W_.map((q) => at(q[0], q[1], A.z)); out.runs++;
+        // the ends: a node is met at its rim, not its centre (the last leg shortened along itself)
+        const trim = (p, q, rr) => { const d = Math.hypot(q.x - p.x, q.y - p.y); if (!rr || d < 1) return p; const k = Math.min(0.9, rr * out.inv / d); return { x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k }; };
+        Pp[0] = trim(Pp[0], Pp[1], A.r); Pp[Pp.length - 1] = trim(Pp[Pp.length - 1], Pp[Pp.length - 2], B.r);
+        for (let n = 0; n < Pp.length - 1; n++) { const p = Pp[n], q = Pp[n + 1]; const dxx = q.x - p.x, dyy = q.y - p.y, LN = Math.hypot(dxx, dyy); if (LN < 2.5) continue;
+          out.edges.push({ x: px(p.x), y: px(p.y), len: px(LN), deg: +(Math.atan2(dyy, dxx) * 180 / Math.PI).toFixed(2), col: r.col, cls: r.cls, title: r.title, run: r.id, joins: r.joins || undefined }); } }); });
     out.size = { w: W, h: H };
     return out;
   }
@@ -1148,7 +1161,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
           const band = (o.bands || []).find((b) => b.si === pl.si && inPoly({ x, y }, b.poly)); out.layer = band ? band.layer : '';
           const landB = (band && band.layer === 'land') ? band : (o.bands || []).find((b) => b.si === pl.si && b.layer === 'land');   /* dropped on another band of the plate: the widget still lands on the canvas, in the pointer's column */
           if (landB && o.ground) { const gr = o.ground, px0 = (x - gr.dx) / gr.s, py0 = (y - gr.dy) / gr.s; const T = gr.tilt * Math.PI / 180, A = gr.azim * Math.PI / 180, sT = Math.sin(T), cT = Math.cos(T), cA = Math.cos(A), sA = Math.sin(A);
-            const q = (py0 + (pl.z || 0) * cT) / Math.max(0.05, sT); const u = px0 * cA + q * sA, v = -px0 * sA + q * cA; out.at = { iso: { u: Math.round(u - pl.u0), v: Math.round(v - landB.v0) } }; }
+            const q = (py0 + (pl.z || 0) * cT) / Math.max(0.05, sT); const u = px0 * cA + q * sA, v = -px0 * sA + q * cA; out.at = { iso: { u: Math.round(u - (landB.u0 != null ? landB.u0 : pl.u0)), v: Math.round(v - landB.v0) } }; }
           const near = (o.widgets || []).filter((w) => w.layer === 'land' && w.mid === pl.mid && w.id !== selfId).map((w) => ({ w, d: Math.hypot(w.x - x, w.y - y) })).sort((a, b) => a.d - b.d)[0]; if (near && near.d < 70) out.before = near.w.id; return out; }
         const pl = (o.plates || []).find((q) => x >= q.x && x <= q.x + q.w && y >= q.y && y <= q.y + q.h); if (!pl) return out; out.mid = pl.mid; out.layer = pl.layer || '';
         if (pl.layer === 'land') { out.at = { cards: { x: Math.round(x - pl.x), y: Math.round(y - pl.y) } }; const near = (o.cards || []).filter((c) => c.layer === 'land' && c.mid === pl.mid && c.id !== selfId && x >= c.x - 10 && x <= c.x + c.w + 10 && y >= c.y - 6 && y <= c.y + c.h + 6)[0]; if (near) out.before = near.id; }
@@ -1164,7 +1177,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
          (Notes/42 defect 62). The plate picked is brought into the frame. Turn draws the picked turn by itself, so it
          needs none of this, and the other modes are left alone. */
       _isoBring() {
-        if (this._S.mode !== 'iso' || !this._S.stack) return;
+        if (this._S.mode !== 'iso' || !(this._S.stack || (this._last && this._last.stack))) return;
         const go = () => { try {
           const sr = this.shadowRoot || this, mid = (this._S.scene || {}).sel; if (!mid) return;
           const pl = [...sr.querySelectorAll('.xp-pl')].find((q) => q.dataset.mid === mid), wrap = this._r && this._r.wrap;
@@ -1341,7 +1354,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
     }
     root.customElements.define('vera-exploded', VeraExploded);
   }
-  const api = { layout, frontRuns, LAYERS, ensureCss, ensureIso, graphData, cardsRouter, isoRouter, landRuns, actsOf, estOf, actParent, actTree, actRuns, planeSize, widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 11 };
+  const api = { layout, frontRuns, LAYERS, ensureCss, ensureIso, graphData, cardsRouter, isoRouter, landRuns, actsOf, estOf, actParent, actTree, actRuns, planeSize, widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 12 };
   root.VeraExploded = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

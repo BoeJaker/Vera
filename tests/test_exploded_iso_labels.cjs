@@ -16,7 +16,7 @@ const t = { mid: 'm1', who: 'you', t: '14:31', text: 'why is boot slow?', reply:
 const scene = { turns: [t, { mid: 'm2', who: 'you', t: '14:38', text: 'where?', read: [], say: [], made: [], land: [] }], sel: 'm1' };
 const o = X.layout(scene, 'iso', 1200, 800, {});
 // (1) every item is the board's card at its pin — a widget an iso widget group with its caption
-ok(o.widgets.length === 12 && o.widgets.every((w) => w.cw === 200 && w.ch === 54 && w.stem === 14), 'every item carries the board\'s card (200 × 54, a 14px stem) at its pin: 3 read · 2 exchange · 4 made · 2 landed · turn 2\'s question (' + o.widgets.length + ')');
+ok(o.widgets.length === 12 && o.widgets.every((w) => w.cw === (o.stack ? 172 : 206) && w.ch === (o.stack ? 47 : 58) && w.stem === (o.stack ? 10 : 14)), 'every item carries the board\'s iso card (206 × 58 on a 14px stem; 172 × 47 on a 10px stem when stacked) at its pin: 3 read · 2 exchange · 4 made · 2 landed · turn 2\'s question (' + o.widgets.length + ')');
 const groups = o.widgets.filter((w) => w.draw === 'group'), cards = o.widgets.filter((w) => w.draw === 'card');
 ok(groups.length === 2 && groups.every((w) => w.card.kind === 'widget'), 'the reply widget and the placed widget are iso widget groups; nothing else is (' + groups.length + ')');
 ok(cards.length === 10 && cards.some((w) => w.card.kind === 'cap') && cards.some((w) => w.card.kind === 'diff') && cards.some((w) => w.card.kind === 'chunk'), 'records, capabilities, diffs, loops and tables are cards');
@@ -51,16 +51,16 @@ ok(o.graphs.length >= 1 && o.graphs[0].iso && o.graphs[0].y > Math.max.apply(nul
 const sameShape = (a, b) => Math.abs((a[1].x - a[0].x) - (b[1].x - b[0].x)) < .5 && Math.abs((a[2].y - a[0].y) - (b[2].y - b[0].y)) < .5;
 ok(sameShape(o.plates[0].poly, o.plates[1].poly) && X.LAYERS.every((L) => { const bs = o.bands.filter((b) => b.layer === L.key); return bs.length === 2 && sameShape(bs[0].poly, bs[1].poly); }), 'the plates stay identical: every band as deep as its fullest station, the same on every plate');
 // (2) the items scale with the scene: the counter-scale follows the fit alone, capped as the board's embed is
-ok(o.inv === +(o.fit.s * Math.min(1.45, 1 / Math.min(1, o.fit.s))).toFixed(3) && o.inv < 1 && o.inv > o.fit.s, 'the items\' scale is the board\'s rule at the fit — grown against a small scene, never past 1.45× of it (' + o.fit.s + ' → ' + o.inv + ')');
+ok(o.inv === +(o.fit.s * Math.min(1.2, 1 / Math.min(1, o.fit.s))).toFixed(3) && o.inv < 1 && o.inv > o.fit.s, 'the items\' scale is the board\'s rule at the fit — grown against a small scene, never past 1.2× of it (' + o.fit.s + ' → ' + o.inv + ')');
 const big = X.layout({ turns: [{ mid: 'a', who: 'you', t: '', text: 'hi', read: [], say: [], made: [], land: [] }], sel: 'a' }, 'iso', 6000, 5000, {});
 ok(big.fit.s >= 1 && big.inv === big.fit.s, 'a scene that fits at 1:1 or larger carries its items at the scene\'s own scale (' + big.fit.s + ')');
-const tiny = X.layout(scene, 'iso', 400, 300, {}); ok(tiny.fit.s === 0.3 && tiny.inv === +(0.3 * 1.45).toFixed(3), 'the cap: 1.45× the scene, the board\'s embedded rule (' + tiny.inv + ')');
+const tiny = X.layout(scene, 'iso', 400, 300, {}); ok(tiny.fit.s === 0.3 && tiny.inv === +(0.3 * 1.2).toFixed(3), 'the cap: 1.2× the scene, the board\'s embedded rule (' + tiny.inv + ')');
 ok(!/--inv/.test(SRC.slice(SRC.indexOf('_applyPan() {'), SRC.indexOf('_click(e) {'))) && /view\.style\.setProperty\('--inv'/.test(SRC), 'the pan zoom never writes the counter-scale; the render sets it once from the fit');
 ok(/vera-exploded \.xit\{[^}]*transform:translateY\(-100%\) scale\(var\(--inv,1\)\)/.test(SRC) && /vera-exploded \.xig\{[^}]*scale\(var\(--inv,1\)\)/.test(SRC) && /vera-exploded \.xnd\{[^}]*scale\(var\(--inv,1\)\)/.test(SRC), 'cards, widget groups and nodes counter-scale by the one --inv; the view\'s zoom transform carries them');
 ok(!/xp-if-hd/.test(SRC) && !/xp-if\b/.test(SRC) && !/frameHtml/.test(SRC), 'no terminal-style frame with a three-dot header is left');
 // (3) what was there stays: bands, +N more, Stack, Size, Blocks off, tip-in / flatten, images per tier, widgetOf, the events
-const many = X.layout({ turns: [Object.assign({}, t, { made: t.made.concat(t.made, t.made) })], sel: 'm1' }, 'iso', 1200, 800, {});
-ok(many.labels.some((l) => /more/.test(l.cls) && l.n === '+6 more') && many.widgets.filter((w) => w.layer === 'made').length === 6, 'six per band, the rest a count');
+const many = X.layout({ turns: [Object.assign({}, t, { made: [].concat(t.made, t.made, t.made, t.made, t.made, t.made, t.made, t.made) })], sel: 'm1' }, 'iso', 1200, 800, {});
+ok(many.labels.some((l) => /more/.test(l.cls) && l.n === '+' + (t.made.length * 8 - 24) + ' more') && many.widgets.filter((w) => w.layer === 'made').length === 24, 'six to a column, four columns to a station (the board), the rest a count');
 ok(o.bands.length === 10 && o.bands.filter((b) => b.empty).length === 4 && o.labels.some((l) => /empty/.test(l.cls) && l.n === 'nothing produced'), 'every band drawn, the empty ones say so');
 for (const s of ['stack(on) {', 'widgetSize(s) {', 'tipIn() {', 'flatten(done) {', ':root[data-blocks="off"] vera-exploded .xit', 'vera-exploded.opening .xp-view{animation:xp-tip', 'vera-exploded.closing .xp-view{animation:xp-flat',
   'vera-exploded[data-den="hover"] .xit:hover .xp-img', 'vera-exploded[data-den="zen"] .xit.open .xp-img', "new CustomEvent('vera:xpl:pick'", "new CustomEvent('vera:xpl:place'", "new CustomEvent('vera:xpl:rendered'", "root.VeraISO.proj(S.tilt || 30, S.azim || 45, 1, true)", 'class="tpl"', "view: 'iso', full: false"]) ok(SRC.indexOf(s) >= 0, 'kept: ' + s);
