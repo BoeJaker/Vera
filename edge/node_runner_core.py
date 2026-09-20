@@ -155,13 +155,21 @@ class DispatchProbe:
     probe_s: float = 0.0
     skipped: str = ""                  # why the probe did not run
     probe_model: str = ""              # which resident model was asked
+    #: Is a runner on this node actually BURNING CPU right now? This is what
+    #: separates the two ways a node stops answering, and Vera already collects
+    #: it (nodes.runner.list -> is_active). None = unknown.
+    runner_busy: Optional[bool] = None
+    runner_cpu_s: float = 0.0          # accumulated CPU of the busiest runner
 
     def to_dict(self) -> Dict:
         return {"node": self.node, "metadata_ok": self.metadata_ok,
                 "resident_models": self.resident_models,
                 "dispatched": self.dispatched, "probe_model": self.probe_model,
                 "probe_s": round(self.probe_s, 2), "skipped": self.skipped,
-                "wedged": is_dispatch_wedged(self)}
+                "runner_busy": self.runner_busy,
+                "runner_cpu_s": round(self.runner_cpu_s, 1),
+                "wedged": is_dispatch_wedged(self),
+                "saturated": is_node_saturated(self)}
 
 
 def is_dispatch_wedged(p: Optional[DispatchProbe]) -> bool:
@@ -182,13 +190,32 @@ def is_dispatch_wedged(p: Optional[DispatchProbe]) -> bool:
                                gpu-250 in 0.06s because the resident model was
                                an embedding one that cannot serve /api/generate.
     """
+    if not _probe_failed(p):
+        return False
+    # A runner that is BURNING CPU is not wedged, it is oversubscribed: the
+    # request is queued behind real work and will be served eventually. Calling
+    # that a wedge sends someone to restart ollama, which throws away the work
+    # in flight and does not address the load. Observed 2026-09-20: cpu-246 and
+    # cpu-247 failed a 150s probe while their embedding runner held ~12 cores of
+    # a 48-core host at load 77. Only gpu-250 was genuinely deadlocked.
+    return p.runner_busy is not True
+
+
+def _probe_failed(p: Optional[DispatchProbe]) -> bool:
+    """The node was asked, could be asked, and did not answer."""
     if p is None or p.skipped:
         return False
     if not p.metadata_ok:
-        return False
+        return False          # simply down — `unreachable` covers that
     if p.resident_models <= 0:
-        return False
+        return False          # nothing loaded: slowness is a cold model load
     return p.dispatched is False
+
+
+def is_node_saturated(p: Optional[DispatchProbe]) -> bool:
+    """The node did not answer because its runner is busy, not because it is
+    deadlocked. Same symptom, opposite remedy: shed load, do not restart."""
+    return _probe_failed(p) and p.runner_busy is True
 
 
 def is_embedding_model(m: Dict) -> bool:
@@ -239,9 +266,32 @@ def dispatch_finding(p: Optional[DispatchProbe]) -> Optional[Dict]:
     serving" is to kill the runner, and that is the wrong move: it destroys a
     loaded model and leaves the actual deadlock in place.
     """
+    if is_node_saturated(p):
+        return {
+            "node": p.node,
+            "severity": "warn",
+            "kind": "saturated",
+            "title": f"{p.node}: cannot serve requests — its runner is saturated",
+            "detail": (
+                f"A 1-token request to an already-resident model did not return "
+                f"within {p.probe_s:.0f}s, and a runner on this node is actively "
+                f"burning CPU ({p.runner_cpu_s:.0f}s accumulated). The node is not "
+                "deadlocked — work is queued behind real work. Note these nodes "
+                "are usually LXC containers sharing one host, so /proc/loadavg "
+                "inside them shows the HOST's load, and one node's runner can "
+                "starve the others."),
+            "discriminator": "",
+            "remedy": (
+                "Shed load — do NOT restart ollama; that discards the work in "
+                "flight and the queue rebuilds immediately. Find what is "
+                "generating the volume (nodes.runner.list shows CPU per runner; "
+                "ollama.request_log shows who is calling) and slow or redirect "
+                "it."),
+        }
     if not is_dispatch_wedged(p):
         return None
     return {
+        "kind": "wedged",
         "node": p.node,
         "severity": "crit",
         "title": f"{p.node}: ollama accepts generations but never dispatches them",
