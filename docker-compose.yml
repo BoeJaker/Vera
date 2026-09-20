@@ -176,7 +176,10 @@ services:
 
   # ── ChromaDB (vector store) ────────────────────────────────────────────────
   chromadb:
-    image: chromadb/chroma:0.5.23
+    # Keep this protocol generation aligned with requirements.txt's
+    # chromadb-client constraint. Mixed 0.x/1.x pairs heartbeat successfully
+    # but cannot decode collection configuration.
+    image: chromadb/chroma:1.0.0
     container_name: vera-chromadb
     ports:
       - "${CHROMA_PORT:-8008}:8000"
