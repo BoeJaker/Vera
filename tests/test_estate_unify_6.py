@@ -52,7 +52,7 @@ def nwm(stdout, rc=0):
 
 
 def run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 CT = ("###ACCT 0\n###CT\n"
