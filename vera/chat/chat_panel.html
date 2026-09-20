@@ -235,15 +235,18 @@ details.lp-sub:not([open])>summary{opacity:.8}
    same gesture the exploded scene uses, and the same one the context graph's turn rail uses, so the two read
    as one idea. It sits in the STACK rather than in #msgs, or it would scroll away with the transcript, and it
    never takes pointer events except on the dots themselves. */
+/* COLLAPSED IT IS DOTS ALONE. The 24 px column with 14 px of padding left the 7 px dot 1 px past the button's edge, so
+   every dot was clipped on its right; and the wash behind the column read as a stripe down the transcript. The column is
+   30 px, the dot sits whole, and nothing is painted behind it until it opens. */
 #turnRail{position:absolute;left:0;top:0;z-index:6;display:flex;flex-direction:column;gap:3px;
-  max-height:min(62%,420px);padding:8px 6px 8px 8px;overflow-y:auto;overflow-x:hidden;
-  width:24px;transition:width .16s ease,background .16s ease;
-  background:linear-gradient(90deg,var(--bg0) 62%,transparent);border-radius:0 8px 8px 0;
+  max-height:min(62%,420px);padding:8px 4px 8px 8px;overflow-y:auto;overflow-x:hidden;
+  width:30px;transition:width .16s ease,background .16s ease;
+  background:none;border-radius:0 8px 8px 0;
   scrollbar-width:none;font-size:10px}
 #turnRail::-webkit-scrollbar{display:none}
 #turnRail[hidden]{display:none}
 #turnRail:hover,#turnRail.wide{width:212px;background:var(--bg0);box-shadow:0 2px 14px -6px rgba(0,0,0,.55)}
-#turnRail .tr-d{flex:none;display:flex;align-items:center;gap:8px;height:17px;padding:0 4px;border:1px solid transparent;
+#turnRail .tr-d{flex:none;display:flex;align-items:center;gap:8px;height:17px;padding:0 5px;border:1px solid transparent;
   border-radius:9px;background:none;color:var(--dim2);font:inherit;font-size:10px;cursor:pointer;overflow:hidden;text-align:left;width:100%}
 #turnRail .tr-d > i{flex:none;width:7px;height:7px;border-radius:50%;background:var(--bg3,#22262e);
   box-shadow:inset 0 0 0 1.1px var(--border);transition:background .12s,box-shadow .12s}
@@ -14534,6 +14537,10 @@ Your task: decide what to do next to advance toward the goal.
     on=(on==null)?!_spOpen:!!on; const page=document.getElementById('settingsPage'); if(!page) return false;
     if(on){ _spBuild(); page.hidden=false; _spOpen=true; document.body.classList.add('settings-open'); if(sec) _spShow(sec); else _spCounts(); try{ const q=page.querySelector('.sp-srch input'); q&&q.focus(); }catch(_){} }
     else { page.hidden=true; _spOpen=false; document.body.classList.remove('settings-open'); }
+    // the menu instance is a 318 px slot in the shell: a page fixed to that frame showed its left edge and nothing else -
+    // ask the shell for a page-wide slot while the page is open; when it closes the slot goes back to the menu, or to
+    // the grown graph if that is open
+    if(_EMBED.only==='menu'){ try{ window.parent.postMessage({ type:'vera:lhm:grow', on:_spOpen||!!_ctxGrown, page:_spOpen?'settings':'', width:_spOpen?1100:(_ctxGrown?706:318) }, '*'); }catch(_){} }
     return _spOpen;
   }
   document.addEventListener('keydown', ev=>{ if((ev.metaKey||ev.ctrlKey)&&ev.key===','){ ev.preventDefault(); _settingsPage(); } if(ev.key==='Escape'&&_spOpen){ _settingsPage(false); } });

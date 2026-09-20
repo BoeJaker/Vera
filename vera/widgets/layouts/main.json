@@ -17,8 +17,37 @@
    12
   ]
  },
- "note": "The Cluster overview in the Dashboard board's grammar: bands of tiles that each fill the twelve columns - the figures first (host cpu, capacity, fleet, the GPU gate), what is moving (pipelines, temperatures, the control plane, the census, requests), the streams (events, routing, sandboxes, node latency), the estate's composites (Proxmox, Docker, Ollama), the stack and its health, the tables, the stores, queues and lab, the edges (mesh, connections, backups), the terminal. Every tile is a record over a real source: read.map names the envelope's fields (the shape's container <- a path; a dict of things <- rows named by key; every other key <- a field of each row; pick: {label: path} builds a thing from paths anywhere in the answer; keys: [...] keeps only those entries). A composite reads its subject once and its children take $subject.<path> slices, or read on their own; slots share the frame by what each child needs. The page tiles this layout replaced are named hidden at the end. Edit by hand from here.",
+ "note": "The Cluster overview in sections: Now (the figures), Inference, Estate, Memory, Agents, Network - each a SECTION record (form section: a full-width label band, one row) over bands of tiles that each fill the twelve columns. Every tile is a record over a real source; read.map names the envelope's fields (container <- path; dict of things <- rows named by key; other keys <- a field of each row; pick {label: path}; keys [...]). A composite with layout 'report' is lines of label + chips (each child drawn at S: a rows child is its first entries as chips, a kv child its pairs, a counter its figure) and never leaves a hole; a grid composite shares its body by what each child needs. The page tiles this layout replaced are named hidden at the end.",
  "widgets": [
+  {
+   "record": {
+    "id": "sec-now",
+    "form": "section",
+    "source": "",
+    "title": "Now · the figures",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
   {
    "record": {
     "id": "host-cpu",
@@ -46,7 +75,7 @@
    },
    "at": [
     0,
-    0
+    1
    ],
    "span": [
     4,
@@ -87,7 +116,7 @@
    },
    "at": [
     4,
-    0
+    1
    ],
    "span": [
     4,
@@ -131,7 +160,7 @@
    },
    "at": [
     8,
-    0
+    1
    ],
    "span": [
     2,
@@ -169,7 +198,7 @@
    },
    "at": [
     10,
-    0
+    1
    ],
    "span": [
     2,
@@ -177,90 +206,6 @@
    ],
    "hidden": false,
    "refresh": "5s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "pipelines",
-    "form": "rows",
-    "source": "evolve.pipeline.list",
-    "title": "Pipelines · latest",
-    "read": {
-     "refresh": "30s",
-     "map": {
-      "rows": "pipelines",
-      "name": "id",
-      "status": "decision"
-     }
-    },
-    "frame": {
-     "size": "s",
-     "span": [
-      2,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record",
-     "columns": [
-      "name",
-      "status"
-     ]
-    }
-   },
-   "at": [
-    0,
-    2
-   ],
-   "span": [
-    2,
-    2
-   ],
-   "hidden": false,
-   "refresh": "30s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "temps",
-    "form": "rows",
-    "source": "obs.node_temps",
-    "title": "Temperatures",
-    "read": {
-     "refresh": "10s",
-     "map": {
-      "rows": "hosts",
-      "name": "label",
-      "value": "max_c"
-     }
-    },
-    "frame": {
-     "size": "s",
-     "span": [
-      2,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record",
-     "columns": [
-      "name",
-      "value"
-     ],
-     "sort": "value",
-     "unit": "°"
-    }
-   },
-   "at": [
-    2,
-    2
-   ],
-   "span": [
-    2,
-    2
-   ],
-   "hidden": false,
-   "refresh": "10s",
    "floated": false
   },
   {
@@ -296,8 +241,8 @@
     }
    },
    "at": [
-    4,
-    2
+    0,
+    3
    ],
    "span": [
     2,
@@ -334,8 +279,8 @@
     }
    },
    "at": [
-    6,
-    2
+    2,
+    3
    ],
    "span": [
     2,
@@ -347,40 +292,86 @@
   },
   {
    "record": {
-    "id": "requests",
-    "form": "log",
-    "source": "ollama.request_log",
-    "title": "Requests · latest",
+    "id": "temps",
+    "form": "rows",
+    "source": "obs.node_temps",
+    "title": "Temperatures",
     "read": {
      "refresh": "10s",
      "map": {
-      "events": "entries",
-      "t": "ts",
-      "kind": "instance",
-      "text": "model"
+      "rows": "hosts",
+      "name": "label",
+      "value": "max_c"
      }
     },
     "frame": {
-     "size": "m",
+     "size": "s",
      "span": [
-      4,
+      2,
       2
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "columns": [
+      "name",
+      "value"
+     ],
+     "sort": "value",
+     "unit": "°"
     }
    },
    "at": [
-    8,
-    2
+    4,
+    3
    ],
    "span": [
-    4,
+    2,
     2
    ],
    "hidden": false,
    "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "pipelines",
+    "form": "rows",
+    "source": "evolve.pipeline.list",
+    "title": "Pipelines · latest",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "rows": "pipelines",
+      "name": "id",
+      "status": "decision"
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "columns": [
+      "name",
+      "status"
+     ]
+    }
+   },
+   "at": [
+    6,
+    3
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
    "floated": false
   },
   {
@@ -410,8 +401,8 @@
     }
    },
    "at": [
-    0,
-    4
+    8,
+    3
    ],
    "span": [
     4,
@@ -423,87 +414,123 @@
   },
   {
    "record": {
-    "id": "routing",
-    "form": "rows",
-    "source": "ollama.route_stats",
-    "title": "Routing · calls by model",
-    "read": {
-     "refresh": "30s",
-     "map": {
-      "rows": "stats",
-      "name": "model",
-      "value": "n",
-      "status": "instance"
-     }
-    },
+    "id": "sec-inference",
+    "form": "section",
+    "source": "",
+    "title": "Inference · models · routing",
     "frame": {
-     "size": "s",
+     "size": "xl",
      "span": [
-      2,
-      2
+      12,
+      1
      ]
     },
     "draw": {
-     "body": "record",
-     "columns": [
-      "name",
-      "value"
-     ],
-     "sort": "value"
+     "body": "record"
     }
    },
    "at": [
-    4,
-    4
+    0,
+    5
    ],
    "span": [
-    2,
-    2
+    12,
+    1
    ],
    "hidden": false,
-   "refresh": "30s",
+   "refresh": "",
    "floated": false
   },
   {
    "record": {
-    "id": "sandboxes",
-    "form": "rows",
-    "source": "evolve.sandbox.list",
-    "title": "Sandboxes",
+    "id": "sysmon-ollama",
+    "form": "composite",
+    "source": "sysmon.status",
+    "title": "Ollama",
     "read": {
-     "refresh": "30s",
-     "map": {
-      "rows": "sandboxes",
-      "name": "name",
-      "value": "port",
-      "status": "owner"
-     }
+     "refresh": "10s"
     },
     "frame": {
-     "size": "s",
+     "size": "m",
      "span": [
-      2,
-      2
+      4,
+      4
      ]
     },
     "draw": {
-     "body": "record",
-     "columns": [
-      "name",
-      "value"
-     ]
-    }
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "ring",
+       "source": "$subject.ollama",
+       "title": "in use",
+       "read": {
+        "map": {
+         "value": "in_use",
+         "max": "total"
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.ollama.nodes",
+       "title": "nodes",
+       "read": {
+        "map": {
+         "name": "label",
+         "status": "status",
+         "latency_ms": "latency_ms"
+        }
+       },
+       "draw": {
+        "columns": [
+         "name",
+         "status",
+         "latency_ms"
+        ]
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "ollama.gate.status",
+       "title": "GPU gate · held by node",
+       "read": {
+        "map": {
+         "rows": "nodes",
+         "name": "node",
+         "value": "held",
+         "status": "gated"
+        }
+       },
+       "draw": {
+        "columns": [
+         "name",
+         "value"
+        ]
+       }
+      }
+     }
+    ]
    },
    "at": [
-    6,
-    4
+    0,
+    6
    ],
    "span": [
-    2,
-    2
+    4,
+    4
    ],
    "hidden": false,
-   "refresh": "30s",
+   "refresh": "10s",
    "floated": false
   },
   {
@@ -538,8 +565,8 @@
     }
    },
    "at": [
-    8,
-    4
+    4,
+    6
    ],
    "span": [
     4,
@@ -547,6 +574,337 @@
    ],
    "hidden": false,
    "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "routing",
+    "form": "rows",
+    "source": "ollama.route_stats",
+    "title": "Routing · calls by model",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "rows": "stats",
+      "name": "model",
+      "value": "n",
+      "status": "instance"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "columns": [
+      "name",
+      "status",
+      "value"
+     ],
+     "sort": "value"
+    }
+   },
+   "at": [
+    8,
+    6
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "requests",
+    "form": "log",
+    "source": "ollama.request_log",
+    "title": "Requests · latest",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "events": "entries",
+      "t": "ts",
+      "kind": "instance",
+      "text": "model"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    4,
+    8
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "models",
+    "form": "composite",
+    "source": "catalog.installed",
+    "title": "Models",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "counter",
+       "source": "$subject",
+       "title": "installed",
+       "read": {
+        "map": {
+         "value": "total_models"
+        }
+       },
+       "draw": {
+        "unit": "models"
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "counter",
+       "source": "$subject",
+       "title": "on disk",
+       "read": {
+        "map": {
+         "value": "total_size_gb"
+        }
+       },
+       "draw": {
+        "unit": "GB"
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject.nodes",
+       "title": "per node",
+       "read": {
+        "map": {
+         "name": "label",
+         "status": "status",
+         "value": "vram_gb"
+        }
+       },
+       "draw": {
+        "unit": "GB",
+        "limit": 3
+       }
+      }
+     }
+    ],
+    "layout": "report"
+   },
+   "at": [
+    8,
+    8
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "bench",
+    "form": "rows",
+    "source": "bench.results",
+    "title": "Bench · leaderboard",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "rows": "results",
+      "name": "model",
+      "value": "accuracy",
+      "status": "role"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "columns": [
+      "name",
+      "status",
+      "value",
+      "node_label",
+      "size_gb"
+     ],
+     "sort": "value"
+    }
+   },
+   "at": [
+    0,
+    10
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "routing-cfg",
+    "form": "composite",
+    "source": "ollama.routing.get",
+    "title": "Routing · embedding",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "routing",
+       "read": {
+        "map": {
+         "keys": [
+          "active_profile"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "ollama.embed_config",
+       "title": "embedding",
+       "read": {
+        "map": {
+         "keys": [
+          "embed_model",
+          "embed_url",
+          "prefer_gpu",
+          "pinned_instance"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "ollama.instances",
+       "title": "instances",
+       "read": {
+        "map": {
+         "rows": "$",
+         "name": "label",
+         "status": "status",
+         "value": "latency_ms"
+        }
+       },
+       "draw": {
+        "unit": "ms",
+        "limit": 3
+       }
+      }
+     }
+    ],
+    "layout": "report"
+   },
+   "at": [
+    6,
+    10
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-estate",
+    "form": "section",
+    "source": "",
+    "title": "Estate · hosts · guests · containers",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    12
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
    "floated": false
   },
   {
@@ -649,7 +1007,7 @@
    },
    "at": [
     0,
-    6
+    13
    ],
    "span": [
     4,
@@ -737,7 +1095,7 @@
    },
    "at": [
     4,
-    6
+    13
    ],
    "span": [
     4,
@@ -745,138 +1103,6 @@
    ],
    "hidden": false,
    "refresh": "10s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "sysmon-ollama",
-    "form": "composite",
-    "source": "sysmon.status",
-    "title": "Ollama",
-    "read": {
-     "refresh": "10s"
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      4
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "children": [
-     {
-      "slot": "a",
-      "record": {
-       "form": "ring",
-       "source": "$subject.ollama",
-       "title": "in use",
-       "read": {
-        "map": {
-         "value": "in_use",
-         "max": "total"
-        }
-       }
-      }
-     },
-     {
-      "slot": "b",
-      "record": {
-       "form": "rows",
-       "source": "$subject.ollama.nodes",
-       "title": "nodes",
-       "read": {
-        "map": {
-         "name": "label",
-         "status": "status",
-         "latency_ms": "latency_ms"
-        }
-       },
-       "draw": {
-        "columns": [
-         "name",
-         "status",
-         "latency_ms"
-        ]
-       }
-      }
-     },
-     {
-      "slot": "c",
-      "record": {
-       "form": "rows",
-       "source": "ollama.gate.status",
-       "title": "GPU gate · held by node",
-       "read": {
-        "map": {
-         "rows": "nodes",
-         "name": "node",
-         "value": "held",
-         "status": "gated"
-        }
-       },
-       "draw": {
-        "columns": [
-         "name",
-         "value"
-        ]
-       }
-      }
-     }
-    ]
-   },
-   "at": [
-    8,
-    6
-   ],
-   "span": [
-    4,
-    4
-   ],
-   "hidden": false,
-   "refresh": "10s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "topology-map",
-    "form": "topology",
-    "source": "topology.snapshot",
-    "shape": "graph",
-    "title": "Stack topology",
-    "read": {
-     "refresh": "30s"
-    },
-    "frame": {
-     "size": "xl",
-     "span": [
-      8,
-      4
-     ]
-    },
-    "draw": {
-     "body": "page"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard",
-    "note": "the page draws the estate's own <vera-topology-map> (status colour per node, click a node to open it, collapse a kind); the topology form draws a diagram of the graph without those hooks"
-   },
-   "at": [
-    0,
-    10
-   ],
-   "span": [
-    8,
-    4
-   ],
-   "hidden": false,
-   "refresh": "30s",
    "floated": false
   },
   {
@@ -930,14 +1156,12 @@
        "read": {
         "map": {
          "rows": "sections",
-         "status": "error"
+         "value": "elapsed_ms"
         }
        },
        "draw": {
-        "columns": [
-         "name",
-         "elapsed_ms"
-        ]
+        "limit": 4,
+        "unit": "ms"
        }
       }
      },
@@ -946,28 +1170,58 @@
       "record": {
        "form": "rows",
        "source": "$subject",
-       "title": "what it found",
+       "title": "warnings",
        "read": {
         "map": {
          "rows": "findings",
          "name": "subject",
-         "status": "severity",
-         "text": "message"
+         "status": "severity"
         }
        },
        "draw": {
-        "columns": [
-         "name",
-         "status"
-        ]
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "e",
+      "record": {
+       "form": "rows",
+       "source": "perf.scan",
+       "title": "perf.scan",
+       "read": {
+        "map": {
+         "rows": "findings",
+         "name": "title",
+         "status": "severity"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "f",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "checked",
+       "read": {
+        "map": {
+         "keys": [
+          "checked_at"
+         ]
+        }
        }
       }
      }
-    ]
+    ],
+    "layout": "report"
    },
    "at": [
     8,
-    10
+    13
    ],
    "span": [
     4,
@@ -975,6 +1229,653 @@
    ],
    "hidden": false,
    "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "topology-map",
+    "form": "topology",
+    "source": "topology.snapshot",
+    "shape": "graph",
+    "title": "Stack topology",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      8,
+      4
+     ]
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "the page draws the estate's own <vera-topology-map> (status colour per node, click a node to open it, collapse a kind); the topology form draws a diagram of the graph without those hooks"
+   },
+   "at": [
+    0,
+    17
+   ],
+   "span": [
+    8,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "backups",
+    "form": "composite",
+    "source": "backup.status",
+    "title": "Backups",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "rows",
+       "source": "$subject.guests",
+       "title": "guests",
+       "read": {
+        "map": {
+         "name": "name",
+         "status": "status",
+         "value": "backups"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.schedules",
+       "title": "schedules",
+       "read": {
+        "map": {
+         "name": "what",
+         "status": "enabled"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject.storages",
+       "title": "storage",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "used"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "kv",
+       "source": "$subject.host",
+       "title": "host job",
+       "read": {
+        "map": {
+         "keys": [
+          "result",
+          "running",
+          "next"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "e",
+      "record": {
+       "form": "kv",
+       "source": "$subject.snapshots.corp",
+       "title": "snapshots",
+       "read": {
+        "map": {
+         "keys": [
+          "backup",
+          "cpool",
+          "rpool",
+          "tank_sde",
+          "tank_sdh"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report"
+   },
+   "at": [
+    8,
+    17
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-memory",
+    "form": "section",
+    "source": "",
+    "title": "Memory · fabric · stores",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    21
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "memory-stores",
+    "form": "composite",
+    "source": "memory.stats",
+    "title": "Memory stores",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "counter",
+       "source": "$subject.backends.postgres",
+       "title": "postgres",
+       "read": {
+        "map": {
+         "value": "total"
+        }
+       },
+       "draw": {
+        "unit": "records"
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "counter",
+       "source": "$subject.backends.chroma",
+       "title": "chroma",
+       "read": {
+        "map": {
+         "value": "count"
+        }
+       },
+       "draw": {
+        "unit": "vectors"
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "$subject.backends.neo4j",
+       "title": "neo4j",
+       "read": {
+        "map": {
+         "keys": [
+          "nodes",
+          "relationships",
+          "sessions"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report"
+   },
+   "at": [
+    0,
+    22
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "queues",
+    "form": "composite",
+    "source": "jobs.stats",
+    "title": "Queues",
+    "read": {
+     "refresh": "10s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject.stream",
+       "title": "task stream",
+       "read": {
+        "map": {
+         "keys": [
+          "length",
+          "pending_total",
+          "consumer_count"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "background.status",
+       "title": "background",
+       "read": {
+        "map": {
+         "values": "queue",
+         "keys": [
+          "depth",
+          "oldest_wait_s",
+          "blocked_reason"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "obs.redis",
+       "title": "redis",
+       "read": {
+        "map": {
+         "keys": [
+          "connected_clients",
+          "used_memory_human",
+          "uptime_days"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report"
+   },
+   "at": [
+    4,
+    22
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "host-memory",
+    "form": "trace",
+    "source": "sysmon.history",
+    "title": "Host memory",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "series": "samples",
+      "v": "mem"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "%"
+    }
+   },
+   "at": [
+    8,
+    22
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-agents",
+    "form": "section",
+    "source": "",
+    "title": "Agents · loops · Loop Lab",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    24
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab",
+    "form": "composite",
+    "source": "evolve.sandbox.list",
+    "title": "Loop Lab",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject.capacity",
+       "title": "capacity",
+       "read": {
+        "map": {
+         "keys": [
+          "available_slots",
+          "port_capacity",
+          "redis_db_capacity"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "sandboxes",
+       "read": {
+        "map": {
+         "rows": "sandboxes",
+         "name": "name",
+         "value": "port"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "evolve.pipeline.list",
+       "title": "pipelines",
+       "read": {
+        "map": {
+         "rows": "pipelines",
+         "name": "id",
+         "status": "decision"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     }
+    ],
+    "layout": "report"
+   },
+   "at": [
+    0,
+    25
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "background",
+    "form": "composite",
+    "source": "background.status",
+    "title": "Background jobs",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "state",
+       "read": {
+        "map": {
+         "keys": [
+          "running",
+          "quiet_for_s",
+          "min_quiet_s"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.jobs",
+       "title": "jobs",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "runs",
+         "status": "last_ok"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "$subject.queue",
+       "title": "queue",
+       "read": {
+        "map": {
+         "keys": [
+          "depth",
+          "oldest_wait_s",
+          "note"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report"
+   },
+   "at": [
+    4,
+    25
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sandboxes",
+    "form": "rows",
+    "source": "evolve.sandbox.list",
+    "title": "Sandboxes",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "rows": "sandboxes",
+      "name": "name",
+      "value": "port",
+      "status": "owner"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "columns": [
+      "name",
+      "status",
+      "value"
+     ]
+    }
+   },
+   "at": [
+    8,
+    25
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
    "floated": false
   },
   {
@@ -1016,7 +1917,7 @@
    },
    "at": [
     0,
-    14
+    27
    ],
    "span": [
     6,
@@ -1066,7 +1967,7 @@
    },
    "at": [
     6,
-    14
+    27
    ],
    "span": [
     6,
@@ -1078,263 +1979,31 @@
   },
   {
    "record": {
-    "id": "memory-stores",
-    "form": "composite",
-    "source": "memory.stats",
-    "title": "Memory stores",
-    "read": {
-     "refresh": "30s"
-    },
+    "id": "sec-network",
+    "form": "section",
+    "source": "",
+    "title": "Network · access · devices",
     "frame": {
-     "size": "m",
+     "size": "xl",
      "span": [
-      4,
-      3
+      12,
+      1
      ]
     },
     "draw": {
      "body": "record"
-    },
-    "children": [
-     {
-      "slot": "a",
-      "record": {
-       "form": "counter",
-       "source": "$subject.backends.postgres",
-       "title": "postgres",
-       "read": {
-        "map": {
-         "value": "total"
-        }
-       },
-       "draw": {
-        "unit": "records"
-       }
-      }
-     },
-     {
-      "slot": "b",
-      "record": {
-       "form": "counter",
-       "source": "$subject.backends.chroma",
-       "title": "chroma",
-       "read": {
-        "map": {
-         "value": "count"
-        }
-       },
-       "draw": {
-        "unit": "vectors"
-       }
-      }
-     },
-     {
-      "slot": "c",
-      "record": {
-       "form": "counter",
-       "source": "$subject.backends.neo4j",
-       "title": "neo4j",
-       "read": {
-        "map": {
-         "value": "nodes"
-        }
-       },
-       "draw": {
-        "unit": "nodes"
-       }
-      }
-     }
-    ]
+    }
    },
    "at": [
     0,
-    18
+    31
    ],
    "span": [
-    4,
-    3
+    12,
+    1
    ],
    "hidden": false,
-   "refresh": "30s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "queues",
-    "form": "composite",
-    "source": "jobs.stats",
-    "title": "Queues",
-    "read": {
-     "refresh": "10s"
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      3
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "children": [
-     {
-      "slot": "a",
-      "record": {
-       "form": "kv",
-       "source": "$subject.stream",
-       "title": "task stream",
-       "read": {
-        "map": {
-         "keys": [
-          "length",
-          "pending_total",
-          "consumer_count"
-         ]
-        }
-       }
-      }
-     },
-     {
-      "slot": "b",
-      "record": {
-       "form": "kv",
-       "source": "background.status",
-       "title": "background",
-       "read": {
-        "map": {
-         "values": "queue",
-         "keys": [
-          "depth",
-          "oldest_wait_s",
-          "blocked_reason",
-          "note"
-         ]
-        }
-       }
-      }
-     },
-     {
-      "slot": "c",
-      "record": {
-       "form": "kv",
-       "source": "obs.redis",
-       "title": "redis",
-       "read": {
-        "map": {
-         "keys": [
-          "connected_clients",
-          "used_memory_human",
-          "uptime_days"
-         ]
-        }
-       }
-      }
-     }
-    ]
-   },
-   "at": [
-    4,
-    18
-   ],
-   "span": [
-    4,
-    3
-   ],
-   "hidden": false,
-   "refresh": "10s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "looplab",
-    "form": "composite",
-    "source": "evolve.sandbox.list",
-    "title": "Loop Lab",
-    "read": {
-     "refresh": "30s"
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      3
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "children": [
-     {
-      "slot": "a",
-      "record": {
-       "form": "counter",
-       "source": "$subject",
-       "title": "slots free",
-       "read": {
-        "map": {
-         "value": "capacity.available_slots"
-        }
-       },
-       "draw": {
-        "unit": "slots"
-       }
-      }
-     },
-     {
-      "slot": "b",
-      "record": {
-       "form": "rows",
-       "source": "$subject",
-       "title": "sandboxes",
-       "read": {
-        "map": {
-         "rows": "sandboxes",
-         "name": "name",
-         "value": "port"
-        }
-       },
-       "draw": {
-        "columns": [
-         "name",
-         "value"
-        ]
-       }
-      }
-     },
-     {
-      "slot": "c",
-      "record": {
-       "form": "rows",
-       "source": "evolve.pipeline.list",
-       "title": "pipelines",
-       "read": {
-        "map": {
-         "rows": "pipelines",
-         "name": "id",
-         "status": "decision"
-        }
-       },
-       "draw": {
-        "columns": [
-         "name",
-         "status"
-        ]
-       }
-      }
-     }
-    ]
-   },
-   "at": [
-    8,
-    18
-   ],
-   "span": [
-    4,
-    3
-   ],
-   "hidden": false,
-   "refresh": "30s",
+   "refresh": "",
    "floated": false
   },
   {
@@ -1350,7 +2019,7 @@
      "size": "m",
      "span": [
       4,
-      3
+      2
      ]
     },
     "draw": {
@@ -1360,16 +2029,16 @@
      {
       "slot": "a",
       "record": {
-       "form": "counter",
+       "form": "kv",
        "source": "$subject",
-       "title": "nodes",
+       "title": "mesh",
        "read": {
         "map": {
-         "value": "count"
+         "keys": [
+          "count",
+          "heartbeat"
+         ]
         }
-       },
-       "draw": {
-        "unit": "nodes"
        }
       }
      },
@@ -1392,28 +2061,24 @@
         "map": {
          "name": "name",
          "status": "status",
-         "ip": "ip",
-         "rssi": "rssi"
+         "value": "rssi"
         }
        },
        "draw": {
-        "columns": [
-         "name",
-         "status",
-         "rssi"
-        ]
+        "limit": 3
        }
       }
      }
-    ]
+    ],
+    "layout": "report"
    },
    "at": [
     0,
-    21
+    32
    ],
    "span": [
     4,
-    3
+    2
    ],
    "hidden": false,
    "refresh": "30s",
@@ -1432,7 +2097,7 @@
      "size": "m",
      "span": [
       4,
-      3
+      2
      ]
     },
     "draw": {
@@ -1448,16 +2113,11 @@
        "read": {
         "map": {
          "name": "label",
-         "status": "status",
-         "kind": "kind"
+         "status": "status"
         }
        },
        "draw": {
-        "columns": [
-         "name",
-         "status",
-         "kind"
-        ]
+        "limit": 3
        }
       }
      },
@@ -1471,16 +2131,11 @@
         "map": {
          "rows": "sources",
          "name": "label",
-         "kind": "kind",
-         "alive": "alive"
+         "status": "alive"
         }
        },
        "draw": {
-        "columns": [
-         "name",
-         "kind",
-         "alive"
-        ]
+        "limit": 3
        }
       }
      },
@@ -1501,15 +2156,16 @@
        }
       }
      }
-    ]
+    ],
+    "layout": "report"
    },
    "at": [
     4,
-    21
+    32
    ],
    "span": [
     4,
-    3
+    2
    ],
    "hidden": false,
    "refresh": "30s",
@@ -1517,24 +2173,24 @@
   },
   {
    "record": {
-    "id": "backups",
+    "id": "machines",
     "form": "rows",
-    "source": "backup.status",
-    "title": "Backups · by guest",
+    "source": "catalog.nodes",
+    "title": "Machines · the catalogue",
     "read": {
      "refresh": "60s",
      "map": {
-      "rows": "guests",
-      "name": "name",
+      "rows": "nodes",
+      "name": "label",
       "status": "status",
-      "value": "backups"
+      "value": "ram_gb"
      }
     },
     "frame": {
      "size": "m",
      "span": [
       4,
-      3
+      2
      ]
     },
     "draw": {
@@ -1543,16 +2199,17 @@
       "name",
       "status",
       "value"
-     ]
+     ],
+     "unit": "GB"
     }
    },
    "at": [
     8,
-    21
+    32
    ],
    "span": [
     4,
-    3
+    2
    ],
    "hidden": false,
    "refresh": "60s",
@@ -1587,7 +2244,7 @@
    },
    "at": [
     0,
-    24
+    34
    ],
    "span": [
     12,
@@ -1598,12 +2255,20 @@
    "floated": false
   },
   {
-   "record": "host-resources",
+   "record": "embed",
    "at": null,
    "span": [
     4,
-    3
+    2
    ],
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "host-resources",
+   "at": null,
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1611,10 +2276,7 @@
   {
    "record": "host-temps",
    "at": null,
-   "span": [
-    4,
-    4
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1622,10 +2284,7 @@
   {
    "record": "status",
    "at": null,
-   "span": [
-    2,
-    2
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1633,10 +2292,7 @@
   {
    "record": "mode",
    "at": null,
-   "span": [
-    2,
-    2
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1644,10 +2300,7 @@
   {
    "record": "redis",
    "at": null,
-   "span": [
-    2,
-    2
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1655,10 +2308,7 @@
   {
    "record": "workers",
    "at": null,
-   "span": [
-    2,
-    2
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1666,10 +2316,7 @@
   {
    "record": "caps",
    "at": null,
-   "span": [
-    2,
-    2
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1677,10 +2324,7 @@
   {
    "record": "pending",
    "at": null,
-   "span": [
-    2,
-    2
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1688,10 +2332,7 @@
   {
    "record": "postgres",
    "at": null,
-   "span": [
-    4,
-    2
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1699,10 +2340,7 @@
   {
    "record": "chroma",
    "at": null,
-   "span": [
-    4,
-    2
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1710,10 +2348,7 @@
   {
    "record": "neo4j",
    "at": null,
-   "span": [
-    4,
-    2
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1721,10 +2356,7 @@
   {
    "record": "ollama",
    "at": null,
-   "span": [
-    6,
-    4
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1732,10 +2364,7 @@
   {
    "record": "mesh-info",
    "at": null,
-   "span": [
-    4,
-    4
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1743,10 +2372,7 @@
   {
    "record": "looplab-info",
    "at": null,
-   "span": [
-    4,
-    4
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1754,10 +2380,15 @@
   {
    "record": "sandboxes-info",
    "at": null,
-   "span": [
-    4,
-    3
-   ],
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "queues-page",
+   "at": null,
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false
@@ -1765,10 +2396,7 @@
   {
    "record": "health",
    "at": null,
-   "span": [
-    6,
-    3
-   ],
+   "span": null,
    "hidden": true,
    "refresh": "",
    "floated": false

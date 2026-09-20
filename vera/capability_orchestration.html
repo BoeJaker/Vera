@@ -289,6 +289,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 /* the chat open: its MENU instance is the LHM (one persistent frame, the board's 318 px) */
 #lhmNav.lhm-nav.absorbed.chatmenu{width:318px!important}
 #lhmNav.lhm-nav.absorbed.chatmenu.grown{width:706px!important}   /* the Context menu grown into the full graph, in place */
+#lhmNav.lhm-nav.absorbed.chatmenu.page{width:min(1100px,calc(100vw - 80px))!important}   /* the menu showing a page (Settings): the page's width, not the menu's */
 .body-wrap.lhm .main.autohide-reserve-v.absorbed.chatmenu{padding-left:318px}
 .lhm-nav #lhmMenuHost{display:none;flex:1;min-height:0}
 .lhm-nav #lhmMenuHost.on{display:flex}
@@ -771,12 +772,25 @@ header .hdr-right{margin-left:0;gap:6px}
 .widget:hover .w-head .w-actions,.widget:focus-within .w-head .w-actions,.dash-grid.editing .w-head .w-actions,.widget.floating .w-head .w-actions{display:inline-flex}
 .w-iconbtn{width:22px;height:22px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280))}
 .w-iconbtn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
-.w-body{padding:6px var(--pad,12px) 12px}
+.w-body{padding:6px var(--pad,12px) 12px;overflow:hidden}
 .w-body.flush{padding:0}
+/* the element fills the tile's body and no more: a flex child that may shrink, so the element measures the FRAME (not its
+   content) and every form fits what it is given - a tile never scrolls */
+.w-body > vera-widget{flex:1 1 auto;min-height:0;display:block;overflow:hidden}
 .w-grip{color:var(--t3,var(--dim,#6b7280))}
 /* the style packs on the tiles (the StylePacks board — radius, pill and card already come through the pack's variables):
    pixel's marker before a title, its display face on the hero figures and its bevelled chips; newspaper's double rule under
    a tile's head and heavier titles; terminal's outlines where the other packs fill */
+/* a SECTION tile: the band's name, flat on the page, the label at the foot of its row so it reads as the heading of the
+   tiles below (the Dashboard board's side sections; the Sizes board's report lines) */
+.widget.w-section{background:transparent!important;border:none!important;box-shadow:none!important;border-radius:0;justify-content:flex-end;overflow:visible}
+.widget.w-section .w-head{padding:0 4px 5px;min-height:0;height:auto;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));box-shadow:none}
+.widget.w-section .w-title{font-size:calc(var(--label-size,9px) + 2px);letter-spacing:calc(var(--label-track,.09em) + .04em);color:var(--t2,var(--dim2,#8a92a0));max-width:none;flex:1 1 auto}
+.widget.w-section .w-title::after{content:attr(data-count);margin-left:10px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--t3,var(--dim,#6b7280))}
+.widget.w-section .vd-rec,.widget.w-section .w-resize,.widget.w-section .w-dot{display:none!important}
+.widget.w-section:hover{box-shadow:none!important}
+.dash-grid.editing .widget.w-section{box-shadow:0 0 0 1px color-mix(in srgb,var(--acc,#5a9e8f) 30%,transparent)!important}
+[data-style="newspaper"] .widget.w-section .w-head{border-bottom:2px solid var(--t2,var(--dim2,#8a92a0))}
 [data-style="pixel"] .w-head .w-title::before{content:'\25AA';margin-right:6px;color:var(--ac,var(--acc,#5a9e8f))}
 [data-style="pixel"] .w-head .w-dot,[data-style="pixel"] .dash-toolbar .live i{border-radius:0}
 [data-style="pixel"] .w-body .kpi-val{font-family:var(--f-disp,var(--f-mono));font-size:22px!important;letter-spacing:0!important}
@@ -2431,7 +2445,7 @@ function _hostFramesWatch(){
 function _hostFrameSrc(src){ try{ const s = String(src || ''); if(/\/chat_panel(\?|#|$)/.test(s) && !/[?&]only=/.test(s)) return s + (s.indexOf('?') >= 0 ? '&' : '?') + 'only=chat&harness=yes'; }catch(_){} return src; }
 // the chat's MENU instance as the LHM: one persistent frame (never rebuilt with the list), shown while the chat is the open UI
 // the menu instance grows its graph in place: the slot widens with it
-window.addEventListener('message', ev=>{ const d=ev&&ev.data; if(!d||d.type!=='vera:lhm:grow') return; const nav=document.getElementById('lhmNav'); if(nav) nav.classList.toggle('grown', !!d.on); });
+window.addEventListener('message', ev=>{ const d=ev&&ev.data; if(!d||d.type!=='vera:lhm:grow') return; const nav=document.getElementById('lhmNav'); if(nav){ nav.classList.toggle('grown', !!d.on); nav.classList.toggle('page', !!(d.on && d.page)); } });
 function _lhmMenuFrame(nav, src){
   let hostEl = document.getElementById('lhmMenuHost');
   if(!hostEl){ hostEl = document.createElement('div'); hostEl.id = 'lhmMenuHost'; hostEl.setAttribute('data-w', 'the chat\'s menu · lhm'); const tabs = document.getElementById('lhmNavTabs'); if(tabs && tabs.parentNode) tabs.parentNode.insertBefore(hostEl, tabs.nextSibling); else nav.appendChild(hostEl); }
