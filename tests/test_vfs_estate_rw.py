@@ -50,6 +50,10 @@ def test_the_share_reach_is_read_from_its_block_only():
     r2 = rw.share_reach(conf2)
     assert r2["hosts_allow"] == ["10.55.55.0/24", "127.0.0.1"] and r2["door_only"] is True
     assert rw.share_reach("[x]\n")["found"] is False
+    # the reader hands share_reach the sed slice that already begins at the header - a
+    # second header in front made the block empty and the share read as open
+    caps = read("vera", "vfs", "vfs_capabilities.py")
+    assert "_rw.share_reach(smb, _rw.SHARE)" in caps and '"[" + _rw.SHARE + "]' not in caps
 
 
 def test_door_only_is_backed_up_testparm_gated_and_reloads_without_dropping_sessions():
