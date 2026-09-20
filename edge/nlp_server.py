@@ -35,7 +35,13 @@ OMP thread pool is sized at load time and a SessionOptions set afterwards
 cannot shrink it.
 """
 
-from __future__ import annotations
+# ⚠ NO `from __future__ import annotations` in this file, deliberately.
+# It stringifies annotations, and FastAPI resolves a stringified annotation
+# against the MODULE globals — so a pydantic model declared inside build_app()
+# becomes unresolvable and FastAPI silently falls back to treating the body
+# parameter as a QUERY parameter. Every POST then 422s with
+# {"loc": ["query", "req"], "msg": "Field required"} no matter what body is
+# sent. Verified against fastapi 0.116.1 / pydantic 2.11.7.
 
 import argparse
 import os
@@ -45,13 +51,22 @@ import os
 # the node able to keep inferring while NLP runs.
 NLP_THREADS = int(os.getenv("VERA_NLP_THREADS", "4") or 4)
 for _var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
-    os.environ.setdefault(_var, str(NLP_THREADS))
+    # A CAP, not a default: setdefault() would let an environment that already
+    # exported a larger value (or one inherited from a parent process) blow
+    # straight through the limit this server exists to enforce. A smaller
+    # existing value is a deliberate tightening and is left alone.
+    try:
+        _existing = int(os.environ.get(_var, "") or 0)
+    except ValueError:
+        _existing = 0
+    os.environ[_var] = str(min(_existing, NLP_THREADS) if _existing > 0
+                           else NLP_THREADS)
 
 import json          # noqa: E402  (after the thread cap, deliberately)
 import logging       # noqa: E402
 import threading     # noqa: E402
 import time          # noqa: E402
-from typing import Any, Dict, List, Optional  # noqa: E402
+from typing import Any, Dict, List  # noqa: E402
 
 try:
     # Shipped alongside this file by the `nlp_server` component so the host and
