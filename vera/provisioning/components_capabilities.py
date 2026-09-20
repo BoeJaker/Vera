@@ -193,6 +193,11 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
             # The shared ZFS model store, bind-mounted read-only into the node
             # alongside ollama's own blobs.
             "VERA_NLP_MODEL_DIR": "/opt/nlp-models",
+            # /root is unreachable on these unprivileged LXC nodes (nobody:root
+            # 0700), so anything that touches a default cache under $HOME dies
+            # with a permission error. ollama-vera.service sets HOME=/ for the
+            # same reason.
+            "HOME": "/",
         },
         "heavy": True,
         "desc": "Text-level NLP so the 2-core Vera host never runs it: NER "
