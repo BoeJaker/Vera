@@ -171,7 +171,11 @@ def test_the_element_renders_the_session_projection():
     for s in ('class="band pinned"', 'class="band now"', "<b>${plainDoc ? 'BLOCKS' : 'NOW'}</b>", 'class="band parked"', 'class="chips"', 'data-key="${esc(b.key)}" data-size="${size}"',
               'data-act="pin"', 'data-act="park"', 'data-act="size"', 'data-act="remove"'):
         assert s in EL, s
-    assert "window.VeraWidget && typeof window.VeraWidget.draw === 'function'" in EL and "window.VeraWidget.draw(form, rec.data, size" in EL   # the form is the record's (rec.form or draw.form)
+    # the ONE shared drawer, reached through `root` rather than a bare `window`: the module is loaded as a script
+    # in the page and required directly by the tests, and the branch above it already guards `typeof
+    # customElements` for the same reason. A bare window made the widget drawing the one path no test could reach.
+    assert "root.VeraWidget && typeof root.VeraWidget.draw === 'function'" in EL and "root.VeraWidget.draw(form, rec.data, size" in EL   # the form is the record's (rec.form or draw.form)
+    assert "const root = typeof window !== 'undefined' ? window : globalThis;" in EL
     assert '<div class="vc-rec"><b>' in EL, "the record card when there is no drawer"
     assert "fetch(base + '/mcp/call'" in EL and "Object.assign({ id: this.canvasId }, args || {})" in EL
     assert "const rev = doc.revision != null ? doc.revision : doc.rev != null ? doc.rev" in EL
