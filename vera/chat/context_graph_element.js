@@ -1238,9 +1238,15 @@ vera-context-graph .cg-layers .sep{width:1px;height:14px;background:var(--cg-bd)
    own header button - to each turn's first words. Collapsed it costs 26px and shows the whole session; open it
    overlays the plot rather than reflowing it, because a rail that resizes the graph makes the drawing jump
    every time the pointer crosses it. */
-vera-context-graph .cg-frames{flex:0 0 26px;width:26px;align-self:stretch;display:flex;flex-direction:column;gap:6px;padding:6px 0 6px 4px;font-family:var(--cg-mono);font-size:9px;color:var(--cg-t3);position:relative;z-index:4;transition:flex-basis .16s ease,width .16s ease}
+/* THE RAIL RESERVES A GUTTER AND OPENS OVER THE PLOT. It used to open by growing its own flex-basis, which is a
+   reflow: the plot lost 160px the moment the pointer crossed the rail, every node moved, and the drawing jumped
+   under the hand that was reaching for it - the opposite of what the comment above claimed it did. The flex item
+   is now a fixed 26px gutter that never changes, and the column INSIDE it is absolutely positioned, so opening
+   it covers the plot instead of resizing it and nothing in the graph moves. */
+vera-context-graph .cg-frames{flex:0 0 26px;width:26px;align-self:stretch;position:relative;z-index:4;font-family:var(--cg-mono);font-size:9px;color:var(--cg-t3)}
 vera-context-graph .cg-frames[hidden]{display:none}
-vera-context-graph .cg-frames:hover,vera-context-graph .cg-frames.wide{flex-basis:186px;width:186px}
+vera-context-graph .cg-fr-in{position:absolute;left:0;top:0;bottom:0;width:26px;display:flex;flex-direction:column;gap:6px;padding:6px 0 6px 4px;box-sizing:border-box;border-radius:0 8px 8px 0;transition:width .16s ease,background .16s ease}
+vera-context-graph .cg-frames:hover .cg-fr-in,vera-context-graph .cg-frames.wide .cg-fr-in{width:190px;background:var(--cg-s1);box-shadow:2px 0 14px -6px rgba(0,0,0,.6)}
 vera-context-graph .cg-frames .cg-fr-hd{flex:none;height:14px;display:flex;align-items:center;overflow:hidden}
 vera-context-graph .cg-fr-x{font:inherit;color:var(--cg-t3);background:none;border:0;padding:0 2px;cursor:pointer;opacity:0;transition:opacity .16s}
 vera-context-graph .cg-frames:hover .cg-fr-x,vera-context-graph .cg-frames.wide .cg-fr-x{opacity:1}
@@ -1516,14 +1522,14 @@ vera-context-graph .cg-lay.fam:not(.on){opacity:.55}
              them - a run has one end in this graph and one in the chat, so its switch belongs where you can
              see the end this graph draws. */
           if (fr.length || est) this._r.frames.innerHTML =
-            '<div class="cg-fr-hd"><button class="cg-fr-x" data-a="frames-wide" title="Keep the turns open">turns</button></div>'
+            '<div class="cg-fr-in"><div class="cg-fr-hd"><button class="cg-fr-x" data-a="frames-wide" title="Keep the turns open">turns</button></div>'
             + (fr.length ? '<div class="cg-fr-list">'
               + fr.map((f) => '<button class="cg-frame ' + (f.on ? 'on' : '') + '" data-a="frame" data-id="' + esc(f.id) + '" title="' + esc(f.label + (f.ts ? ' · ' + f.ts : '') + ' · ' + f.n + ' records · click to view this turn\'s context') + '"><i></i><span class="nm">' + esc(f.words || f.label) + '</span><b>' + f.n + '</b></button>').join('')
               + '<button class="cg-frame live ' + (o.frame ? '' : 'on') + '" data-a="frame" data-id="" title="The live records - what the next prompt will carry"><i></i><span class="nm">live</span></button>'
               + '</div>' : '')
             + '<div class="cg-fr-ft">' + masterBtn() + estBtn
             + '<button class="cg-frame runs" data-a="runs" title="The runs from these records to the message in focus - both ends of them"><i></i><span class="nm">runs</span></button>'
-            + '</div>'; }
+            + '</div></div>'; }
         if (this._r.runs) { const runs = S.runs || []; const cur = S.runSel || ''; const others = runs.filter((r) => r.session_id !== cur);
           const sig = cur + '|' + (S.run ? S.run.label + ':' + S.run.status : '') + '|' + others.map((r) => r.session_id + ':' + r.status).join(',');
           if (sig !== this._runsSig) { this._runsSig = sig; const glyph = (st) => st === 'running' ? '● ' : /error|fail|interrupted/.test(st || '') ? '✕ ' : '✓ ';

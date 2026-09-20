@@ -1803,6 +1803,11 @@ body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri
 html[data-only="menu"] body > :not(:has(#rightRail)){display:none!important}
 html[data-only="menu"] :has(> #rightRail) > :not(#rightRail){display:none!important}
 html[data-only="menu"] body > #ctxRunsOverlay{display:none!important}
+/* THE SETTINGS PAGE IS OPENED FROM THE MENU - the context graph's gear and the configuration rows both call it -
+   so in the menu instance it has to survive the rule above, which hides every body child that does not contain
+   the rail. It is reparented to body on mount for exactly that reason (the runs overlay is moved the same way),
+   and without this it un-hid itself into a 0x0 box: the press worked, the page opened, and nothing appeared. */
+html[data-only="menu"] body > #settingsPage:not([hidden]){display:flex!important;position:fixed;inset:0;z-index:60}
 html[data-only="menu"] body.ctx-grown > #ctxRunsOverlay{display:block!important;position:fixed;inset:0;width:100vw;height:100vh;z-index:5}   /* the seam runs, over the grown graph */
 html[data-only="menu"] #rightRail,html[data-only="menu"] #rightRail.lhm-host{display:flex!important;width:100%!important;flex:1 1 auto;min-height:0;height:100vh;border:none}
 html[data-only="menu"] #rightRail.lhm-host .lhm-det{flex:1 1 auto;width:auto!important;min-width:0}
@@ -14033,6 +14038,8 @@ function _embedMount(){
   if(_EMBED.only==='menu'){
     try{ const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); }catch(_){}
     try{ const ov=document.getElementById('ctxRunsOverlay'); if(ov&&ov.parentNode!==document.body) document.body.appendChild(ov); }catch(_){}   // the runs overlay out of the hidden column, over the menu's viewport
+    // and the Settings page with it: the menu is where it is opened from, and where it was drawn 0x0
+    try{ const sp=document.getElementById('settingsPage'); if(sp&&sp.parentNode!==document.body) document.body.appendChild(sp); }catch(_){}
     window.addEventListener('storage', ev=>{ if(ev.key==='vera_session_id'&&ev.newValue&&ev.newValue!==SID){ try{ loadSession(ev.newValue); }catch(_){} } });
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from==='menu') return; const a=m.args||{};
       if(m.act==='session'&&a.sid&&a.sid!==SID){ try{ loadSession(a.sid); }catch(_){} }
@@ -14115,7 +14122,7 @@ function _embedMount(){
   const _CTX_FAM_LABEL={agent:'Agent + system',skill:'Skills',ontology:'Ontologies',memory:'Memory recalls',vector:'Vector matches',graph:'Graph (Neo4j)',fabric:'Fabric records',cap:'Capabilities',web:'Web',news:'News',run:'Runs',related_qa:'Related Q&A',worldview:'Worldview',entities:'Entities',urls:'URLs',both:'Vector + graph'};
   let _qGalView='galaxy', _qGalAll=false, _qSrcOn='', _qSessQ='', _qPanelQ='';   // _qGalOff is declared with _ctxLayers, which reads it
   // the raw prompt's fold, remembered for the session: it is long, and it is not what the menu is for
-  let _qRawOpen=false;
+  let _qRawOpen=false, _qCfgOpen=false;   // the two folds at the foot of the context menu
   /* ADDING A CAPABILITY, SKILL OR ONTOLOGY FROM THE SECTION THAT LISTS IT. These three are the parts of the
      prompt a reader is most likely to want to CHANGE — "it needs the docker cap for this" — and the only way to
      do it was the Settings page's pickers, which list everything and sit two surfaces away from the records
@@ -14235,7 +14242,7 @@ function _embedMount(){
     const sig=(window.VeraContextGraph&&typeof VeraContextGraph.miniHtml==='function'?'E':'-')+S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'')+'#'+_qGalStyle+_qGalSel+JSON.stringify(_qSrcOpen)+_qGalQ+':'+_memAllNodes.length+':'+_lastDagNodes.length+':'+S.nodes.filter(n=>n.included===false).length+':'+CTX_FRAMES.length+':'+_ctxActiveFrame+':'+_grFocusMid
       // the raw fold and the prompt's own length: without them the menu returns early on an unchanged key and
       // pressing the fold repaints nothing — the same trap the budget bar's off-state fell into
-      +':'+(_qRawOpen?'R':'r')+':'+_ctxRawLen()
+      +':'+(_qRawOpen?'R':'r')+':'+_ctxRawLen()+':'+(_qCfgOpen?'C':'c')
       // what is typed in an add box, or the menu returns early and the search never shows a result
       +':'+JSON.stringify(_qAddQ);
     if(el.dataset.sig===sig) return; el.dataset.sig=sig;
@@ -14301,11 +14308,16 @@ function _embedMount(){
          renamed or added there appears here and the two cannot drift apart. Each row opens that exact section. */
       +(function(){ try{
           const g=(typeof _SP_MAP!=='undefined'?_SP_MAP:[]).find(x=>x.grp==='Context'); if(!g||!g.rows.length) return '';
-          return '<div class="wid ctx-cfg" data-w="context settings \u00b7 list">'
-            +'<div class="grp" title="What decides the context above \u2014 these fields live on the Settings page (\u2318,)">Context settings'
+          /* FOLDED SHUT, like the raw prompt below it. Five rows standing open at the foot of the menu is five
+             rows of somewhere-else on a surface whose job is what IS in the prompt; it is a signpost, and a
+             signpost does not need to be a list until you are looking for it. */
+          return '<div class="wid ctx-cfg'+(_qCfgOpen?' open':'')+'" data-w="context settings \u00b7 list">'
+            +'<div class="grp" data-a="cfg-toggle" title="What decides the context above \u2014 these fields live on the Settings page (\u2318,)">'
+            +'<span class="caret">'+(_qCfgOpen?'\u25be':'\u25b8')+'</span>Context settings'
+            +'<span class="rt-n">'+g.rows.length+'</span>'
             +'<button class="grp-act" data-a="cfg-open" title="Open the Settings page at Context">\u2699</button></div>'
-            +g.rows.map(r=>'<div class="lrow cfg" data-sec="'+esc(r.id)+'" title="'+esc(r.n+(r.note?' \u2014 '+r.note:'')+' \u00b7 opens the Settings page here')+'">'
-              +'<span class="caret">\u203a</span><span class="nm">'+esc(r.n)+'</span><span class="rt-n">'+esc(r.note||'')+'</span></div>').join('')
+            +(_qCfgOpen?g.rows.map(r=>'<div class="lrow cfg" data-sec="'+esc(r.id)+'" title="'+esc(r.n+(r.note?' \u2014 '+r.note:'')+' \u00b7 opens the Settings page here')+'">'
+              +'<span class="caret">\u203a</span><span class="nm">'+esc(r.n)+'</span><span class="rt-n">'+esc(r.note||'')+'</span></div>').join(''):'')
             +'</div>'; }catch(_){ return ''; } })();
     el.querySelectorAll('.vseg button[data-view]').forEach(b=>b.addEventListener('click',()=>{ _qGalView=b.dataset.view; VeraLHM.render(); }));
     el.querySelectorAll('.gal-style button[data-style]').forEach(b=>b.addEventListener('click',()=>{ _qGalStyle=b.dataset.style; try{ localStorage.setItem('vera_ctx_mini_style', _qGalStyle); }catch(_){} VeraLHM.render(); }));
@@ -14362,6 +14374,7 @@ function _embedMount(){
     // a configuration row opens the Settings page AT its section, not at the top of a long page
     el.querySelectorAll('.ctx-cfg .lrow[data-sec]').forEach(r=>r.addEventListener('click',()=>{ try{ _settingsPage(true, r.dataset.sec); }catch(_){} }));
     el.querySelectorAll('[data-a="cfg-open"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ _settingsPage(true,'sources'); }catch(_){} }));
+    el.querySelectorAll('[data-a="cfg-toggle"]').forEach(h=>h.addEventListener('click',()=>{ _qCfgOpen=!_qCfgOpen; VeraLHM.render(); }));
     el.querySelectorAll('[data-a="raw-refresh"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation();
       _qRawOpen=true; Promise.resolve().then(()=>_ctxFcRefresh()).catch(()=>{}).then(()=>{ try{ VeraLHM.render(); }catch(_){} }); }));
     // opening a section lights its source on the plot too, so the list and the graph never say different things

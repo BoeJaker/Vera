@@ -104,3 +104,35 @@ def test_the_old_panes_and_their_controls_are_still_there():
     for ctl in ("ctxViewGraph", "ctxViewList", "ctxViewFabric", "ctxViewRaw", "ctxViewFrames", "ctxViewSettings", "ctxLayerBar", "histList", "histSearch", "rpCapList", "rpPanelList", "loopVariant", "sbxSessionTools", "monitorStream"):
         assert 'id="%s"' % ctl in HTML, ctl
     assert "onclick=\"CH.ctxTab('ctx',this)\"" in HTML and "onclick=\"CH.railTab('Caps',this)\"" in HTML
+
+
+def test_the_context_configuration_is_reachable_and_folded():
+    """The settings the context graph is drawn BY, reachable from the graph itself.
+
+    The fields (Sources, Injection, Session memory, Parameters, Fabric dataset) did move to the Settings page;
+    what did not exist was any route to them from the graph, so from where the user stood the configuration had
+    vanished with the legacy pane. Two defects, both measured live:
+
+      1. In the ?only=menu instance - which is the one that draws the mini graph on the board - the page un-hid
+         itself into a 0x0 box. The press worked, `hidden` went false, display went flex, and nothing appeared,
+         because a rule hides every body child that does not contain the rail. It is reparented to body on mount
+         the way the runs overlay already is, with an exception for it there.
+      2. The rows stood open. Five rows of somewhere-else at the foot of a menu whose job is what IS in the
+         prompt; it is a signpost, and folds shut like the raw prompt below it.
+    """
+    src = _read("vera", "chat", "chat_panel.html")
+
+    # built FROM the Settings page's own index, so a section renamed there cannot drift from this list
+    assert "_SP_MAP" in src and "x.grp==='Context'" in src
+    assert 'data-a="cfg-toggle"' in src and 'data-a="cfg-open"' in src
+
+    # folded shut by default...
+    assert "let _qRawOpen=false, _qCfgOpen=false;" in src
+    assert "(_qCfgOpen?g.rows.map" in src, "the rows are only rendered when the fold is open"
+    # ...and the fold's state is part of the repaint key, or pressing the caret repaints nothing.
+    # That trap has now caught the budget bar, the raw fold and the add boxes in turn.
+    assert "+':'+(_qCfgOpen?'C':'c')" in src
+
+    # the menu instance can actually show the page it opens
+    assert "if(sp&&sp.parentNode!==document.body) document.body.appendChild(sp);" in src
+    assert 'html[data-only="menu"] body > #settingsPage:not([hidden])' in src
