@@ -600,7 +600,7 @@ async def _rw_state() -> Dict[str, Any]:
         report = json.loads(rep.strip() or "{}")
     except json.JSONDecodeError:
         report = {}
-    reach = _rw.share_reach("[" + _rw.SHARE + "]\n" + smb, _rw.SHARE)
+    reach = _rw.share_reach(smb, _rw.SHARE)          # the sed slice already starts at the header
     return {"names": _rw.parse_list(lst), "rw": report.get("rw", []), "known": report.get("mounted", []),
             "share": reach}
 
