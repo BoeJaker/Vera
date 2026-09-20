@@ -86,6 +86,13 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
     "html":     {"desc": "Raw HTML — ON-THE-FLY escape hatch; prefer a predefined "
                          "type so the UI stays consistent.",
                  "content": "{html:str}"},
+    "source":   {"desc": "A page a research run read: where it came from, what it said, and what it "
+                         "looked like. Landed as the run finds them - a citation, a crawled page - and "
+                         "keyed by url so the same page is never on the canvas twice. `text` and `shot` "
+                         "are filled in on demand by the item itself (browser.content / browser.screenshot), "
+                         "so a run that reads forty pages does not fetch forty screenshots.",
+                 "content": "{url:str, title?:str, domain?:str, snippet?:str, chars?:int, "
+                            "text?:str, shot?:str, failed?:bool, query?:str}"},
     "loop":     {"desc": "An agentic run as an item: its goal, status and steps (each a "
                          "capability) — written by the chat and by the loop itself (P7).",
                  "content": "{goal:str, status:str, steps:[{n:str, cap?:str, status?:str, ms?:str}], run?:str}"},

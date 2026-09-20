@@ -6238,6 +6238,25 @@ IMPORTANT:
      These read the RESULT (kept on the card by executeCapInline), not the rendered text, and pick the canvas
      block that fits it. Nothing here guesses at prose: a result that matches nothing falls through to the
      markdown it landed as before, which is the honest representation of something with no shape. */
+  /* SOURCES, AS THE RUN FINDS THEM. The research card announces every page it reads; this puts each one on the
+     session canvas, keyed by url so the same page is never there twice and a re-run updates rather than doubles.
+     It lands with what is known at that moment - the address, the domain, how much was read - and NOT with the
+     page's text or picture: a deep run reads dozens of pages, and the item fetches those when it is opened.
+     Anchored to the turn that asked, so it lives with the question it belongs to. */
+  const _CV_SRC_SEEN={};
+  async function _cvLandSource(d){
+    if(!SID||!d||!d.url) return;
+    const url=String(d.url); const key='source:'+url.replace(/^https?:\/\//,'').slice(0,120);
+    // the crawl and the citation both announce a page; the second one should not re-post it
+    if(_CV_SRC_SEEN[key]&&!d.cited) return; _CV_SRC_SEEN[key]=true;
+    let domain=String(d.domain||''); if(!domain){ try{ domain=new URL(url).host; }catch(_){ domain=''; } }
+    const mid=_cvRelMid||'';
+    try{ await _capCall('canvas.add',{ session_id:SID, kind:'source', key, at:'now', size:'s',
+      content:{ url, title:String(d.title||''), domain, chars:+d.chars||0, failed:!!d.failed },
+      anchor:mid?{ mid, turn:mid }:undefined }); }catch(_){}
+  }
+  document.addEventListener('vera:research:source', ev=>{ try{ _cvLandSource(ev.detail||{}); }catch(_){} });
+
   const _cvCapTerm=(c)=>{
     // a command and its output is a TERMINAL, not a paragraph about one (exec.bash.run and its family:
     // {ok, rc, stdout, stderr, elapsed_ms, command})
@@ -6262,6 +6281,24 @@ IMPORTANT:
     for(const k of ['data','result','items','rows','points','series','values','entries','results']) if(ok(c[k])) return c[k];
     for(const k of Object.keys(c)) if(ok(c[k])) return c[k];
     return null;
+  };
+  /* A WEB RESULT IS A LIST OF PAGES, not a table of strings. web.search and its family answer with rows that
+     carry a url and a title, and the table recogniser below would draw them as a grid of truncated cells with
+     the addresses cut off - technically the data, useless as an answer. Sources are pages: each one becomes an
+     item you can open, read and look at. Capped, because a search answers with plenty and the canvas is a place
+     to think, not a results page. */
+  const _cvCapSources=(c)=>{
+    const rows=_cvRowsOf(c); if(!Array.isArray(rows)||!rows.length) return null;
+    const src=rows.map(r=>{
+      const url=String((r&&(r.url||r.link||r.href))||''); if(!url||!/^https?:/i.test(url)) return null;
+      let domain=''; try{ domain=new URL(url).host; }catch(_){}
+      return { url, domain, title:String((r&&(r.title||r.name||r.heading))||''),
+               snippet:String((r&&(r.snippet||r.summary||r.description||r.text||r.content))||'').slice(0,400) };
+    }).filter(Boolean);
+    // one page is a link, not a reading list; and a row set with no addresses is simply a table
+    if(src.length<2) return null;
+    return src.slice(0,10).map(x=>({ kind:'source', n:x.title||x.domain||x.url, k:'source', col:'#7aa2d6',
+      d:'source \u00b7 '+(x.domain||'web'), key:'source:'+x.url.replace(/^https?:\/\//,'').slice(0,120), content:x }));
   };
   const _cvCapTable=(c,name)=>{
     // rows of the same shape are a TABLE - sortable, readable, and the thing the user asked to explore
@@ -6295,7 +6332,9 @@ IMPORTANT:
       const cap = el.__cap || null, cres = cap && !cap.err ? cap.content : null;
       const cname = String((cap && cap.name) || n.split(' ')[0] || 'capability');
       let made = null;
-      try{ made = _cvCapTerm(cres) || _cvCapTable(cres, cname) || _cvCapWidget(cres, cname, cap && cap.args); }catch(_){ made = null; }
+      try{ made = _cvCapTerm(cres) || _cvCapSources(cres) || _cvCapTable(cres, cname) || _cvCapWidget(cres, cname, cap && cap.args); }catch(_){ made = null; }
+      // a search answers with PAGES - several items, not one - so a recogniser may hand back a list
+      if(Array.isArray(made)){ made.forEach(x=>out.push(x)); return; }
       if(made){ out.push(made); return; }
       out.push({kind:'markdown', n:n.split(' ')[0]||'capability', d:'capability \u00b7 '+(el.classList.contains('error')?'failed':'done'), content:{md:'**'+n+'**\n\n'+(res?'```\n'+res+'\n```':'')}, col:'var(--acc2)', k:'cap'}); });
     body.querySelectorAll('pre code').forEach((el,i)=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; const s=String(el.textContent||''); if(!s.trim()) return;
@@ -6323,6 +6362,7 @@ IMPORTANT:
     if(k==='diagram'||k==='table'||k==='image') return 'm';
     // a terminal is a scrollback: at 's' it shows a prompt and two lines, which is not the output you asked for
     if(k==='session') return 'm';
+    if(k==='source') return 's';   // a card to scan; it earns its height when you open the page
     return 's';
   }
   async function _cvLandReply(mid){
@@ -6330,7 +6370,12 @@ IMPORTANT:
     let w=q.nextElementSibling; while(w&&!(w.classList&&w.classList.contains('mwrap')&&w.classList.contains('a'))) w=w.nextElementSibling;
     const body=w&&w.querySelector('.msg-body'); if(!body||body.querySelector('.think-throb')) return 0;
     const made=_cvHarvest(body); if(!made.length) return 0; let n=0;
-    for(let i=0;i<made.length;i++){ const m=made[i]; const key='turn:'+mid+':'+m.k+':'+i; if(_CV_LANDED[key]) continue;
+    for(let i=0;i<made.length;i++){ const m=made[i];
+      /* an item may name its OWN key, and a source does: it is keyed by the page, not by where in the reply it
+         was found. Without that the same page lands twice - once as the run announced it, once as the reply
+         mentioned it - and again on every later turn that cites it. The turn key stays the default, because for
+         everything else the turn IS the identity. */
+      const key=m.key||('turn:'+mid+':'+m.k+':'+i); if(_CV_LANDED[key]) continue;
       // the reply is the maker: the run leaves ITS block, while the turn stays the question the station is keyed by
       try{ const r=await _capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid, from:(w&&w.dataset&&w.dataset.mid)||mid}});
         if(!(r&&r.ok)) continue; _CV_LANDED[key]=true; n++;
