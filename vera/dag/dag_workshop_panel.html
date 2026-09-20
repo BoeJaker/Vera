@@ -700,7 +700,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc)}
         <div class="bld-meta">
           <input id="bName" placeholder="DAG name (snake_case)" style="flex:0 0 180px">
           <input id="bDesc" placeholder="Description" style="flex:1;min-width:140px">
-          <input id="bTags" placeholder="tags" style="flex:0 0 140px">
+          <input id="bTags" data-select="static" data-select-new placeholder="tags" style="flex:0 0 140px">
           <select id="bCat" style="flex:0 0 120px">
             <option value="general">general</option>
             <option value="research">research</option>
@@ -985,7 +985,7 @@ Click 'Variables help' for the full list."></textarea>
             <label>Long-running caps (csv)
               <span style="font-size:9px;color:var(--dim)">— extra caps to treat as long-running this run</span>
             </label>
-            <input id="alLongRunCaps" placeholder="e.g. mytool.run, scan.deep">
+            <input id="alLongRunCaps" data-select="caps" placeholder="e.g. mytool.run, scan.deep">
           </div>
           <!-- ── v4 strict-loop options ───────────────────────────────── -->
           <div class="al-meta-row" id="alStepsRow" style="display:none;flex-direction:column;align-items:flex-start;gap:4px">
@@ -1054,7 +1054,7 @@ Click 'Variables help' for the full list."></textarea>
           </label>
           <div class="al-meta-row">
             <label>Allowed caps (csv)</label>
-            <input id="alAllowed" placeholder="empty = auto + base toolkit">
+            <input id="alAllowed" data-select="caps" placeholder="empty = auto + base toolkit">
           </div>
           <div class="al-meta-row">
             <label>Max cycles</label>
@@ -1106,7 +1106,7 @@ Click 'Variables help' for the full list."></textarea>
             <label>Base toolkit
               <span style="font-size:9px;color:var(--dim)">— always-included caps (the floor when triage can't narrow). Space/comma separated. Empty = Web &amp; browser + skills default</span>
             </label>
-            <input id="alBaseCaps" type="text" placeholder="web.search http.get browser.navigate fabric.skills.get">
+            <input id="alBaseCaps" data-select="caps" data-select-sep=" " type="text" placeholder="web.search http.get browser.navigate fabric.skills.get">
           </div>
           <label class="al-meta-toggle" id="alAwaitRow">
             <input type="checkbox" id="alAwaitLong" checked>
@@ -6290,6 +6290,7 @@ document.addEventListener('DOMContentLoaded', ()=>{ navCounts(); libLoad(); palL
 if(document.readyState!=='loading'){ navCounts(); libLoad(); palLoadTree(); alLoadDiscoveryOptions(); alLoadPresets(); jobsAutoLoop(); jobsRefresh(); }
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
 
 <!-- <vera-agent-loop-output> element — the SAME renderer the chat panel uses.

@@ -460,7 +460,7 @@ html.vpb-nav-hosted body{padding-left:0}
       <span class="hint" id="ct-status">—</span>
       <span style="flex:1"></span>
       <select id="ct-pick" style="min-width:150px" onchange="ctPick()"></select>
-      <input id="ct-model" placeholder="model (blank = live routing)" style="width:190px;margin-left:6px">
+      <input id="ct-model" data-select="models" data-select-single data-select-new placeholder="model (blank = live routing)" style="width:190px;margin-left:6px">
       <button class="btn sm" onclick="ctSeed()" title="write this template's goals as suite tasks tagged census-&lt;name&gt;">Seed</button>
       <button class="btn sm" onclick="ctRun()" title="run the seeded tasks as a suite on prod's own loop (the census posture) - the archived series' instrument">▶ Run census</button>
       <button class="btn sm" onclick="ctEdit()">Edit</button>
@@ -683,7 +683,7 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="card-h" style="margin-top:10px"><span class="card-t" style="font-size:10.5px">Background synthesis (edit queue)</span></div>
     <div class="grid">
       <div><label class="row" style="gap:6px;margin-top:6px"><input type="checkbox" id="st-editq" style="width:auto"> Synthesise on background CPU queue</label></div>
-      <div><label class="fld">Edit model</label><input id="st-editq-model" placeholder="gpt-oss:20b" style="width:100%"></div>
+      <div><label class="fld">Edit model</label><input id="st-editq-model" data-select="models" data-select-single data-select-new placeholder="gpt-oss:20b" style="width:100%"></div>
       <div><label class="fld">CPU node (instance)</label><select id="st-editq-inst" style="width:100%"><option value="">auto (any CPU node)</option></select></div>
     </div>
     <div class="row" style="margin-top:10px">
@@ -1851,7 +1851,7 @@ const _AG_ITEM_MODAL=`<div class="card-h"><span class="card-t" id="bn-heading">N
     <select id="bn-lane"></select>
   </div>
   <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px">
-    <input id="bn-labels" placeholder="labels (comma: code, needs:help)" style="flex:1;min-width:160px">
+    <input id="bn-labels" data-select="static" data-select-new placeholder="labels (comma: code, needs:help)" style="flex:1;min-width:160px">
     <input id="bn-repo" placeholder="repo" style="width:120px">
     <input id="bn-project" placeholder="project" style="width:120px">
   </div>
@@ -1981,7 +1981,7 @@ const _AG_SEATS_MODAL=`<div class="card-h"><span class="card-t">Capacity</span><
   <div style="background:var(--bg2);border-radius:6px;padding:8px;margin:8px 0">
     <div class="row" style="gap:6px;flex-wrap:wrap">
       <input id="cs-id" placeholder="seat_id (e.g. acct-a)" style="width:150px">
-      <input id="cs-target" placeholder="target instance_id" style="width:160px">
+      <input id="cs-target" data-select="instances" data-select-single placeholder="target instance_id" style="width:160px">
       <input id="cs-label" placeholder="label" style="flex:1;min-width:120px">
       <select id="cs-auth" style="width:130px"><option value="oauth-token">oauth-token</option><option value="host-login">host-login</option></select>
       <button class="btn primary sm" onclick="capRegister()">Register</button>
@@ -4330,9 +4330,9 @@ function openTask(t){
     +'<div><label class="fld">id</label><input id="tk-id" value="'+esc(t.id||'')+'" '+(t.id?'readonly':'')+' style="width:100%"></div>'
     +'<div><label class="fld">label</label><input id="tk-label" value="'+esc(t.label||'')+'" style="width:100%"></div>'
     +'<div><label class="fld">type</label><select id="tk-type" style="width:100%" onchange="tkTypeCh()"><option value="loop"'+(t.type!=='cap'?' selected':'')+'>loop</option><option value="cap"'+(t.type==='cap'?' selected':'')+'>cap</option></select></div>'
-    +'<div><label class="fld">tags (csv)</label><input id="tk-tags" value="'+esc((t.tags||[]).join(','))+'" style="width:100%"></div>'
+    +'<div><label class="fld">tags (csv)</label><input id="tk-tags" data-select="static" data-select-new value="'+esc((t.tags||[]).join(','))+'" style="width:100%"></div>'
     +'<div id="tk-loop1"><label class="fld">profile</label><select id="tk-profile" style="width:100%">'+_profiles.map(p=>'<option value="'+esc(p.id)+'"'+(t.profile===p.id?' selected':'')+'>'+esc(p.label||p.id)+'</option>').join('')+'</select></div>'
-    +'<div id="tk-loop2"><label class="fld">allowed_caps (csv)</label><input id="tk-caps" value="'+esc(t.allowed_caps||'')+'" style="width:100%"></div>'
+    +'<div id="tk-loop2"><label class="fld">allowed_caps (csv)</label><input id="tk-caps" data-select="caps" value="'+esc(t.allowed_caps||'')+'" style="width:100%"></div>'
     +'<div id="tk-cap1" style="display:none"><label class="fld">cap</label><input id="tk-cap" value="'+esc(t.cap||'')+'" style="width:100%"></div>'
     +'<div id="tk-cap2" style="display:none"><label class="fld">args (JSON)</label><input id="tk-args" value="'+esc(JSON.stringify(t.args||{}))+'" style="width:100%"></div>'
     +'<div><label class="fld">max steps</label><input id="tk-steps" type="number" value="'+(t.max_steps||6)+'" style="width:100%"></div>'
@@ -5832,5 +5832,6 @@ refreshActiveRun();
 loadAll();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 </body>
 </html>

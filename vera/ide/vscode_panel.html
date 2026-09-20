@@ -120,7 +120,7 @@
              <code class="inline">vera-projects</code> volume, installs the Claude Code CLI
              and the Vera MCP bridge, and is embedded through Vera's same-origin proxy
              so login works inside this page.</p>
-          <input id="dep-host" placeholder="docker host id (default: local)">
+          <input id="dep-host" data-select="docker-hosts" data-select-single data-select-new placeholder="docker host id (default: local)">
           <div style="display:flex;gap:8px;align-items:center">
             <button class="btn primary" id="btn-deploy">Deploy central VS Code</button>
             <span class="muted" id="dep-note" style="font-size:11px"></span>
@@ -326,5 +326,7 @@ $('#btn-deploy').onclick=async()=>{
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-estate.js"></script>
+<script src="/ui/vera-select.js"></script>
 </body>
 </html>

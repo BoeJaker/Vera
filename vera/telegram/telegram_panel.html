@@ -455,7 +455,7 @@ textarea { font-family: var(--mono); resize: vertical; min-height: 80px; }
             </div>
             <div class="field">
               <label>Default Agent</label>
-              <input type="text" id="cfg-agent" placeholder="assistant">
+              <input type="text" id="cfg-agent" data-select="agents" data-select-single data-select-new placeholder="assistant">
               <div class="hint">Free-text messages route here via <span class="code">agent.chat</span>.</div>
             </div>
           </div>
@@ -584,7 +584,7 @@ textarea { font-family: var(--mono); resize: vertical; min-height: 80px; }
           </div>
           <div class="field">
             <label>Event Types (comma separated prefixes)</label>
-            <input type="text" id="ev-types" placeholder="dag.completed, research.completed, cap.error">
+            <input type="text" id="ev-types" data-select="static" data-select-new data-select-options="dag.completed|research.completed|cap.error|loop.completed|dream.completed|pipeline.promoted" placeholder="dag.completed, research.completed, cap.error">
             <div class="hint">Match by prefix — <span class="code">dag</span> matches every DAG event,
             <span class="code">cap.error</span> only matches errors.</div>
           </div>
@@ -964,6 +964,7 @@ setInterval(loadCapsBadge, 30000);
 refreshAll();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>

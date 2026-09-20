@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/ui/themes.css">
 <link rel="stylesheet" href="/ui/vera-panel.css">
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <style>
   :root{
     /* Fallbacks — overridden by the live theme via vera-ui.js */
@@ -249,7 +250,7 @@
           <label class="chk"><input type="checkbox" id="dryrun"> dry-run (plan only, don't execute)</label>
           <label class="chk"><input type="checkbox" id="recgif"> 🎞 record run as GIF</label>
           <label>Allowlist — external hosts you permit operating (comma-sep)</label>
-          <input type="text" id="allowlist" placeholder="maxhodl.com, app.internal">
+          <input type="text" id="allowlist" data-select="static" data-select-new placeholder="maxhodl.com, app.internal">
           <div class="hint">Vera's own UI and local/sandbox targets are always operable. Any other site must be listed here — that's all it takes; tick dry-run to preview first.</div>
           <button class="act" id="runBtn">▶ Run to goal</button>
           <div class="btns">

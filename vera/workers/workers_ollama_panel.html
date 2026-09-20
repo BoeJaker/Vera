@@ -666,8 +666,8 @@ html.view-models #secNav [data-view="models"]{display:block}
                  summarise, fast, big-context…). Shown in the model pickers. -->
             <div style="display:flex;gap:5px;align-items:center">
               <span style="font-size:9px;font-weight:600;color:var(--gpu)" title="Tag models by purpose — tags show in the model pickers and are readable via ollama.model_tags.get">🏷 Model tags</span>
-              <input id="mt-model" list="rr-model-list" placeholder="model" style="font-size:8.5px;width:130px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px">
-              <input id="mt-tags" placeholder="planning,code,fast" style="font-size:8.5px;flex:1;min-width:80px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px">
+              <input id="mt-model" data-select="models" data-select-single data-select-new list="rr-model-list" placeholder="model" style="font-size:8.5px;width:130px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px">
+              <input id="mt-tags" data-select="static" data-select-new placeholder="planning,code,fast" style="font-size:8.5px;flex:1;min-width:80px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px">
               <button class="btn sm" onclick="P.modelTagSave()">Save</button>
               <span id="mt-status" style="font-size:8px;color:var(--dim2);font-family:var(--mono)"></span>
             </div>
@@ -718,7 +718,7 @@ html.view-models #secNav [data-view="models"]{display:block}
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Embedding Config</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-embed-cfg')">×</button></span></div>
           <div class="w-body">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-              <div class="fld"><label>Embed Model</label><input id="emb-model" style="font-size:9.5px" placeholder="nomic-embed-text"></div>
+              <div class="fld"><label>Embed Model</label><input id="emb-model" data-select="models" data-select-single data-select-new style="font-size:9.5px" placeholder="nomic-embed-text"></div>
               <div class="fld"><label>Pin to Instance</label><select id="emb-pin" style="font-size:9.5px"><option value="">Auto (strategy)</option></select></div>
             </div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
@@ -1686,7 +1686,7 @@ html.view-models #secNav [data-view="models"]{display:block}
             <div id="sbx-cfg" style="display:none;padding:7px 10px;border-bottom:1px solid var(--line);background:var(--bg2);font-size:9px">
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
                 <label style="display:flex;gap:4px;align-items:center">Docker host
-                  <input id="sbx-cfg-host" placeholder="local" style="width:120px;font-size:9px"></label>
+                  <input id="sbx-cfg-host" data-select="docker-hosts" data-select-single data-select-new placeholder="local" style="width:120px;font-size:9px"></label>
                 <label style="display:flex;gap:4px;align-items:center">Base image
                   <input id="sbx-cfg-img" placeholder="python:3.12-slim" style="width:150px;font-size:9px"></label>
                 <label style="display:flex;gap:4px;align-items:center" title="Periodic auto-sync of active sandboxes to the store; 0 disables">Auto-sync (s)
@@ -1906,7 +1906,7 @@ html.view-models #secNav [data-view="models"]{display:block}
               <div class="field" id="conn-f-pw-wrap"><label style="font-size:9px;color:var(--dim2)">Password <span style="color:var(--dim)">(blank = keep existing)</span></label><input id="conn-f-password" type="password" placeholder="••••••"></div>
               <div class="field" id="conn-f-key-wrap" style="display:none"><label style="font-size:9px;color:var(--dim2)">Private key path (on the Vera host)</label><input id="conn-f-key" placeholder="/root/.ssh/id_ed25519"></div>
               <div class="field" id="conn-f-pass-wrap" style="display:none"><label style="font-size:9px;color:var(--dim2)">Key passphrase (optional)</label><input id="conn-f-passphrase" type="password"></div>
-              <div class="field"><label style="font-size:9px;color:var(--dim2)">Tags (comma-sep — e.g. proxmox,pve)</label><input id="conn-f-tags" placeholder="proxmox"></div>
+              <div class="field"><label style="font-size:9px;color:var(--dim2)">Tags (comma-sep — e.g. proxmox,pve)</label><input id="conn-f-tags" data-select="tags" data-select-new data-select-url="/exec/ssh/hosts" data-select-path="hosts[].tags[]" placeholder="proxmox"></div>
               <div style="display:flex;gap:8px;margin-top:4px">
                 <button class="btn" onclick="P.connProbe()" style="flex:0 0 auto">Test reach</button>
                 <span style="flex:1"></span>
@@ -8231,6 +8231,7 @@ return {
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-entity-drawer.js"></script>
 <script src="/ui/vera-estate.js"></script>
 <script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>

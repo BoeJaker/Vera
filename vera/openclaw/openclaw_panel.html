@@ -219,7 +219,7 @@ input:checked+.toggle-slider:before{background:var(--acc);transform:translateX(1
         </div>
         <div class="field">
           <label>Agent ID</label>
-          <input type="text" id="agent-id-input" value="main" placeholder="main">
+          <input type="text" id="agent-id-input" data-select="agents" data-select-single data-select-new value="main" placeholder="main">
         </div>
         <div style="display:flex;gap:5px;margin-top:4px">
           <button class="btn" id="btn-refresh-sessions" style="flex:1;justify-content:center;font-size:10px">Refresh</button>
@@ -301,7 +301,7 @@ input:checked+.toggle-slider:before{background:var(--acc);transform:translateX(1
         </div>
         <div class="cfg-field">
           <label>Default Agent ID</label>
-          <input type="text" id="cfg-agent-id" value="main" placeholder="main">
+          <input type="text" id="cfg-agent-id" data-select="agents" data-select-single data-select-new value="main" placeholder="main">
         </div>
         <div class="cfg-field">
           <label>Default Session Key</label>
@@ -939,6 +939,7 @@ function showToast(msg) {
 })(); // end IIFE
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>

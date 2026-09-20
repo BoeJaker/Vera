@@ -531,7 +531,7 @@ body.rail-hidden #rail{ display:none; }
         <div style="max-width:520px">
           <div class="field">
             <label class="fl">Ollama model</label>
-            <input id="set-model" placeholder="(cluster default)">
+            <input id="set-model" data-select="models" data-select-single data-select-new placeholder="(cluster default)">
             <div class="hint">Model used for the scheduling assistant &amp; brain-dump organiser. Blank = cluster default.</div>
           </div>
           <div class="row2">
@@ -1810,6 +1810,7 @@ setInterval(()=>{ renderAgenda(); if(VIEW!=="month") renderView(); },300000);
 </script>
 <script src="/ui/elements/agent_loop_output.js" id="alo-script"></script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
