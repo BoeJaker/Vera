@@ -72,10 +72,30 @@ def build_one(task, model_id, out_root):
     target = os.path.join(out_root, model_slug(model_id))
 
     if kind == "fastembed":
-        # fastembed ships its own ONNX and manages its own cache directory; it
-        # is fetched by warming the reranker, not by an optimum export.
-        _log(f"SKIP  {task:11s} {model_id}  (fastembed manages this itself)")
-        return {"task": task, "model": model_id, "dir": "", "status": "fastembed"}
+        # fastembed ships ONNX rather than a torch checkpoint, so there is
+        # nothing to export — but it still DOWNLOADS on first use, and the
+        # server runs offline against a read-only store. So warm it INTO the
+        # store now, where it will be mounted read-only with everything else.
+        cache = os.path.join(out_root, "_fastembed")
+        if os.path.isdir(cache) and os.listdir(cache):
+            _log(f"HAVE  {task:11s} {model_id}  (fastembed cache)")
+            return {"task": task, "model": model_id, "dir": "_fastembed",
+                    "status": "ok", "kind": kind}
+        _log(f"WARM  {task:11s} {model_id}  -> _fastembed")
+        t0 = time.monotonic()
+        try:
+            os.makedirs(cache, exist_ok=True)
+            from fastembed.rerank.cross_encoder import TextCrossEncoder
+            enc = TextCrossEncoder(model_name=model_id, cache_dir=cache)
+            list(enc.rerank("warm", ["warm the session so the model is fetched"]))
+        except Exception as e:
+            _log(f"FAIL  {task:11s} {model_id}: {type(e).__name__}: {e}")
+            return {"task": task, "model": model_id, "dir": "",
+                    "status": "failed", "error": f"{type(e).__name__}: {e}"}
+        _log(f"OK    {task:11s} {model_id}  cached in "
+             f"{round(time.monotonic() - t0, 1)}s")
+        return {"task": task, "model": model_id, "dir": "_fastembed",
+                "status": "ok", "kind": kind}
 
     if _already_built(target):
         _log(f"HAVE  {task:11s} {model_id}")

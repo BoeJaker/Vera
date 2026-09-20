@@ -130,11 +130,26 @@ def model_id_for(task: str) -> str:
 
 
 def model_path_for(task: str) -> str:
+    if TASK_KIND.get(task) == "fastembed":
+        return fastembed_dir()          # its own cache layout, not a slug dir
     mid = model_id_for(task)
     return os.path.join(MODEL_ROOT, model_slug(mid)) if mid else ""
 
 
 def model_present(task: str) -> bool:
+    """Is this task's model actually in the store?
+
+    fastembed is the exception: it keeps its own cache layout under `_fastembed`
+    rather than a slug directory with a .onnx beside the config, so asking the
+    slug path would always answer "no" and the inventory would under-report a
+    model that is in fact present and loadable.
+    """
+    if TASK_KIND.get(task) == "fastembed":
+        d = fastembed_dir()
+        try:
+            return os.path.isdir(d) and bool(os.listdir(d))
+        except OSError:
+            return False
     p = model_path_for(task)
     try:
         return bool(p) and os.path.isdir(p) and any(
@@ -205,15 +220,27 @@ def get_raw(task: str):
     return _RAW[task]
 
 
+def fastembed_dir() -> str:
+    """Where fastembed's own ONNX cache lives — inside the shared store.
+
+    fastembed ships ONNX rather than a torch checkpoint, so it is not part of
+    the optimum export; but it still DOWNLOADS on first use, and this server
+    runs offline against a read-only store. The cache is therefore populated
+    once by the exporter and mounted read-only with everything else.
+    """
+    return os.getenv("VERA_NLP_FASTEMBED_DIR",
+                     os.path.join(MODEL_ROOT, "_fastembed"))
+
+
 def get_encoder():
-    """fastembed reranker. Manages its own ONNX cache, so it is not part of the
-    pre-exported set."""
+    """fastembed reranker, read from the pre-populated cache in the store."""
     global _ENCODER
     if _ENCODER is None:
         with _LOCK:
             if _ENCODER is None:
                 from fastembed.rerank.cross_encoder import TextCrossEncoder
-                _ENCODER = TextCrossEncoder(model_name=model_id_for("rerank"))
+                _ENCODER = TextCrossEncoder(model_name=model_id_for("rerank"),
+                                            cache_dir=fastembed_dir())
     return _ENCODER
 
 
