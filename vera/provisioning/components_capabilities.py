@@ -169,6 +169,14 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
             ["optimum[onnxruntime]", "transformers>=4.57,<5", "onnxruntime",
              "sentencepiece", "protobuf", "numpy", "fastembed",
              "fastapi", "uvicorn"],
+            # The fabric's own entity engines, off the host: GLiNER (zero-shot
+            # NER, a torch checkpoint the exporter saves into the store) and
+            # spaCy with its English pipeline as a PINNED wheel — `spacy
+            # download` would reach the hub at deploy time and pick whatever
+            # version is current; the wheel is the same file every time.
+            ["gliner>=0.2.13", "spacy>=3.8,<3.9",
+             "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/"
+             "en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"],
         ],
         "run": "{py} nlp_server.py serve --host 0.0.0.0 --port {port}",
         # The model store is a Proxmox bind-mount, which SSH cannot create.
@@ -201,12 +209,13 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         },
         "heavy": True,
         "desc": "Text-level NLP so the 2-core Vera host never runs it: NER "
-                "(OntoNotes-v5, has DATE, plus multilingual), sentiment, "
+                "(OntoNotes-v5, has DATE, plus multilingual), GLiNER zero-shot "
+                "NER over any labels (the fabric's own engine), spaCy, sentiment, "
                 "zero-shot classification, extractive QA, language id, "
-                "embeddings and reranking. Loads pre-exported ONNX from the "
-                "shared read-only model store, chunks whole documents rather "
-                "than truncating, and caps its thread count so the node keeps "
-                "inferring.",
+                "embeddings and reranking. Loads pre-exported ONNX (and the "
+                "GLiNER checkpoint) from the shared read-only model store, "
+                "chunks whole documents rather than truncating, and caps its "
+                "thread count so the node keeps inferring.",
     },
     # ollama_wrapper was removed as a deployable component. It proxied :11435 in
     # front of Ollama to make requests visible, but it was never deployed, it
