@@ -201,6 +201,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="ship" onclick="nav('ship')" title="Every branch &mdash; its pipeline, review, sandbox and tests &mdash; in one table, the commit graph, race lanes, authorship and gate strip below it"><span class="ic">&#8599;</span>Ship</button>
   <button class="btn" data-sec="agents" onclick="nav('agents')" title="Every agent session &mdash; Claude Code, Codex, a Vera loop, an edit-queue agent &mdash; with its board items, pipelines and sandboxes; the board by lane, notes and seats fold up under it"><span class="ic">&#9737;</span>Agents</button>
   <button class="btn" data-sec="mission" onclick="nav('mission')" title="Every event &mdash; actions, errors, gates &mdash; in one table, with what is live and what needs a person above it; the run-once and improve-live theatres fold up under it"><span class="ic">&#9673;</span>Mission control</button>
+  <button class="btn" data-sec="schedule" onclick="nav('schedule')" title="A calendar of Loop Lab work &mdash; censuses, suites, tasks, pipeline steps, board items &mdash; started by the scheduler only when the box is free"><span class="ic">🗓</span>Schedule</button>
   <button class="btn" data-sec="settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
 </div>
 
@@ -669,6 +670,36 @@ html.vpb-nav-hosted body{padding-left:0}
 </div>
 
 <!-- ── SETTINGS ── -->
+<!-- == SCHEDULE: a calendar of Loop Lab work - censuses, suites, tasks, pipeline steps,
+     board items, capabilities - each on a weekly window (or once), started by the
+     scheduler tick only when the box is free (no census beside a census, no census
+     beside a loop). The calendar is <vera-calendar> (reusable; /ui/elements/calendar.js);
+     the windows are read-only projections, the runs the scheduler started sit beside
+     them. Click an empty slot to make a schedule there; click a window to edit it. -->
+<div class="sec" id="sec-schedule" style="display:none">
+  <div class="card">
+    <div class="card-h">
+      <span class="card-t">SCHEDULE</span>
+      <span class="hint" id="sch-state">—</span>
+      <label class="row" style="gap:5px"><input type="checkbox" id="sch-enabled" style="width:auto" onchange="schCfgSave()"> scheduler on</label>
+      <button class="btn sm" onclick="schTick()" title="Run the scheduler pass now: close a finished census, apply window-end controls, start what is due">tick now</button>
+      <button class="btn sm primary" onclick="schOpen(null)">+ schedule</button>
+      <button class="btn sm" onclick="schSeed()" title="Censuses of the default template back to back, weekdays 05:00-17:00">+ weekday census</button>
+    </div>
+    <div class="row" style="align-items:flex-start;gap:12px">
+      <div style="flex:3;min-width:420px">
+        <vera-calendar id="sch-cal" src="/evolve/schedule/events" view="week" hour-start="4" hour-end="21" poll="60000"></vera-calendar>
+      </div>
+      <div style="flex:1;min-width:280px">
+        <div class="card-h"><span class="card-t" style="font-size:10.5px">Schedules</span></div>
+        <div id="sch-list" class="hint">loading…</div>
+        <div class="card-h" style="margin-top:10px"><span class="card-t" style="font-size:10.5px">Started by the scheduler</span></div>
+        <div id="sch-runs" class="hint">—</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="sec" id="sec-settings" style="display:none">
   <div class="card">
     <div class="card-h"><span class="card-t">Loop Lab configuration</span></div>
@@ -714,6 +745,7 @@ window._veraSubscribe=fn=>{_busSubs.add(fn);return ()=>_busSubs.delete(fn)};
 <script src="/ui/elements/test_activity_timeline.js"></script>
 <script src="/ui/elements/author_map.js"></script>
 <script src="/ui/elements/git_graph.js"></script>
+<script src="/ui/elements/calendar.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script>
 const $=id=>document.getElementById(id);
@@ -945,6 +977,7 @@ function nav(sec){
     // absorbed before it: an old deep-link or injected nav item still lands
     // on the table that holds their data.
     pipelines:()=>nav('ship'),review:()=>nav('ship'),sources:()=>nav('ship'),sandbox:()=>nav('ship'),unittests:()=>nav('ship'),logs:()=>nav('ship'),
+    schedule:loadSchedule,
     settings:fillSettings}[sec];
   if(f)f();
   // The address bar says which page is open (a deep link says more).
@@ -967,8 +1000,134 @@ function nav(sec){
 // generic nav_select fallback matches directly.
 if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'work', label:'Work'}, {id:'ship', label:'Ship'}, {id:'agents', label:'Agents'},
-  {id:'mission', label:'Mission control'}, {id:'settings', label:'Settings'},
+  {id:'mission', label:'Mission control'}, {id:'schedule', label:'Schedule'}, {id:'settings', label:'Settings'},
 ]);
+
+/* ═══ SCHEDULE — a calendar of Loop Lab work (evolve.schedule.*) ═══ */
+const SCH_KIND_LABEL={census:'Census',suite:'Suite',task:'Task',pipeline:'Pipeline',board:'Board item',cap:'Capability'};
+const SCH_DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+let _schCache={schedules:[],next:{},state:{},config:{}};
+async function loadSchedule(){
+  const d=await api('/evolve/schedule/list'); if(!d)return;
+  _schCache=d;
+  $('sch-enabled').checked=!!(d.config||{}).enabled;
+  const st=d.state||{};
+  $('sch-state').textContent=(st.census_running?'census in flight ('+(st.template||'')+' '+(st.census_run||'')+')':'box free')
+    +(st.loops_running?' · '+st.loops_running+' loop(s)':'')+(st.harness_blocked?' · '+st.harness_blocked:'')+' · tz '+((d.config||{}).timezone||'');
+  schList(); schRuns();
+  const cal=$('sch-cal'); if(cal&&typeof cal.refresh==='function')cal.refresh();
+}
+function schWhen(s){
+  if(s.once_at)return 'once '+String(s.once_at).replace('T',' ').slice(0,16);
+  const days=(s.days||[]).map(i=>SCH_DAYS[i]).join(' ');
+  const rep=s.repeat==='continuous'?'back to back':s.repeat==='every'?'every '+s.every_minutes+' min':'once per window';
+  return days+' '+s.start+'–'+s.end+' · '+rep;
+}
+function schList(){
+  const L=_schCache.schedules||[];
+  if(!L.length){$('sch-list').innerHTML='<span class="hint">no schedules yet — click an empty calendar slot, or + schedule</span>';return}
+  $('sch-list').innerHTML=L.map(s=>{
+    const nx=(_schCache.next||{})[s.id];
+    return '<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--border);padding:4px 0;gap:6px">'
+      +'<div style="flex:1;min-width:0"><div style="font-weight:600;'+(s.enabled?'':'opacity:.5;text-decoration:line-through')+'">'+esc(s.title)+'</div>'
+      +'<div class="hint">'+esc(SCH_KIND_LABEL[s.kind]||s.kind)+' · '+esc(schWhen(s))+(nx?' · next '+esc(String(nx.start).replace('T',' ').slice(5,16)):'')
+      +(s.last_started_at?' · last '+esc(String(s.last_started_at).replace('T',' ').slice(5,16))+' '+esc(s.last_result||''):'')+'</div></div>'
+      +'<div class="row" style="gap:3px;flex-wrap:nowrap">'
+      +'<button class="btn sm" onclick="schToggle(\''+s.id+'\','+(s.enabled?'false':'true')+')" title="'+(s.enabled?'switch off':'switch on')+'">'+(s.enabled?'on':'off')+'</button>'
+      +'<button class="btn sm" onclick="schRunNow(\''+s.id+'\')" title="start now, outside the window (still waits for a free box)">▶</button>'
+      +'<button class="btn sm" onclick="schOpen(\''+s.id+'\')" title="edit">✎</button>'
+      +'<button class="btn sm" onclick="schDelete(\''+s.id+'\')" title="delete">✕</button></div></div>';
+  }).join('');
+}
+async function schRuns(){
+  const d=await api('/evolve/schedule/history?limit=12'); const R=(d&&d.runs)||[];
+  $('sch-runs').innerHTML=R.length?R.map(r=>'<div class="hint" style="padding:2px 0">'+esc(String(r.started_at).replace('T',' ').slice(5,16))+' · '+esc(r.title||r.kind)+' · <b>'+esc(r.result||'')+'</b>'+(r.detail?' · '+esc(String(r.detail).slice(0,60)):'')+'</div>').join(''):'nothing yet';
+}
+function schKindFields(kind,t){
+  t=t||{};
+  const f=(id,label,val,ph)=>'<div><label class="fld">'+label+'</label><input id="'+id+'" value="'+esc(val||'')+'" placeholder="'+esc(ph||'')+'" style="width:100%"></div>';
+  if(kind==='census')return f('sch-t-template','Template',t.template||'default','default')
+    +'<div><label class="fld">At window end</label><select id="sch-t-awe" style="width:100%"><option value="finish">let the census in flight finish</option><option value="yield">yield (park after the goal in flight)</option><option value="drop">drop the set</option></select></div>';
+  if(kind==='suite')return f('sch-t-tag','Suite tag',t.tag,'e.g. nightly or census-default')+f('sch-t-profile','Profile (optional)',t.profile,'')
+    +'<div><label class="row" style="gap:6px;margin-top:16px"><input type="checkbox" id="sch-t-assess" style="width:auto" '+(t.assess?'checked':'')+'> assess</label></div>';
+  if(kind==='task')return f('sch-t-id','Task id',t.id,'evolve task id')
+    +'<div><label class="row" style="gap:6px;margin-top:16px"><input type="checkbox" id="sch-t-assess" style="width:auto" '+(t.assess?'checked':'')+'> assess</label></div>';
+  if(kind==='pipeline')return '<div><label class="fld">Action</label><select id="sch-t-action" style="width:100%" onchange="schPipeFields()"><option value="test">test (run the gate)</option><option value="promote">promote → bleeding-edge</option><option value="adopt">adopt a branch → bleeding-edge</option></select></div>'
+    +f('sch-t-id','Pipeline id',t.id,'')+f('sch-t-branch','Branch (adopt)',t.branch,'feat/…');
+  if(kind==='board')return f('sch-t-id','Board item id',t.id,'')+f('sch-t-executor','Executor',t.executor||'deterministic','deterministic')+f('sch-t-agent','Agent',t.agent||'orchestrator','orchestrator');
+  return f('sch-t-name','Capability',t.name,'e.g. evolve.errors.sync')+'<div><label class="fld">Arguments (JSON)</label><textarea id="sch-t-args" rows="3" style="width:100%">'+esc(JSON.stringify(t.arguments||{}))+'</textarea></div>';
+}
+function schPipeFields(){}
+function schOpen(id,prefill){
+  const s=id?(_schCache.schedules||[]).find(x=>x.id===id):null;
+  const r=s||Object.assign({kind:'census',target:{template:'default'},days:[0,1,2,3,4],start:'05:00',end:'17:00',
+    timezone:(_schCache.config||{}).timezone||'Europe/London',repeat:'continuous',every_minutes:60,at_window_end:'finish',exclusive:true,enabled:true,title:''},prefill||{});
+  const kindOpts=Object.keys(SCH_KIND_LABEL).map(k=>'<option value="'+k+'" '+(k===r.kind?'selected':'')+'>'+SCH_KIND_LABEL[k]+'</option>').join('');
+  const days=SCH_DAYS.map((d,i)=>'<label class="row" style="gap:3px"><input type="checkbox" class="sch-day" value="'+i+'" style="width:auto" '+((r.days||[]).indexOf(i)>=0?'checked':'')+'>'+d+'</label>').join('');
+  openModal('<div class="card-h"><span class="card-t">'+(s?'EDIT SCHEDULE':'NEW SCHEDULE')+'</span><button class="btn sm" onclick="closeModal()">✕</button></div>'
+    +'<div class="grid">'
+    +'<div><label class="fld">Title</label><input id="sch-title" value="'+esc(r.title||'')+'" placeholder="(from the kind and target)" style="width:100%"></div>'
+    +'<div><label class="fld">Kind</label><select id="sch-kind" style="width:100%" onchange="schKindChange()">'+kindOpts+'</select></div>'
+    +'</div><div class="grid" id="sch-target">'+schKindFields(r.kind,r.target)+'</div>'
+    +'<div class="card-h" style="margin-top:8px"><span class="card-t" style="font-size:10.5px">When</span></div>'
+    +'<div class="row" style="gap:10px">'+days+'</div>'
+    +'<div class="grid" style="margin-top:6px">'
+    +'<div><label class="fld">From</label><input id="sch-start" value="'+esc(r.start||'05:00')+'" placeholder="05:00" style="width:100%"></div>'
+    +'<div><label class="fld">To</label><input id="sch-end" value="'+esc(r.end||'17:00')+'" placeholder="17:00" style="width:100%"></div>'
+    +'<div><label class="fld">Timezone</label><input id="sch-tz" value="'+esc(r.timezone||'Europe/London')+'" style="width:100%"></div>'
+    +'<div><label class="fld">Repeat inside the window</label><select id="sch-repeat" style="width:100%"><option value="continuous">back to back (start the next when the last finished)</option><option value="once_per_window">once, when the window opens</option><option value="every">every N minutes</option></select></div>'
+    +'<div><label class="fld">Every (minutes)</label><input id="sch-every" type="number" min="1" value="'+esc(r.every_minutes||60)+'" style="width:100%"></div>'
+    +'<div><label class="fld">Or once at (ISO, leave blank for weekly)</label><input id="sch-once" value="'+esc(r.once_at||'')+'" placeholder="2026-09-22T09:00" style="width:100%"></div>'
+    +'</div><div class="row" style="margin-top:8px;gap:14px">'
+    +'<label class="row" style="gap:5px"><input type="checkbox" id="sch-excl" style="width:auto" '+(r.exclusive!==false?'checked':'')+'> never beside a census</label>'
+    +'<label class="row" style="gap:5px"><input type="checkbox" id="sch-on" style="width:auto" '+(r.enabled!==false?'checked':'')+'> enabled</label>'
+    +'<span style="flex:1"></span><button class="btn primary" onclick="schSave(\''+(s?s.id:'')+'\')">Save</button></div>'
+    +'<div class="hint" style="margin-top:6px">A census needs the box to itself: it starts only when no census and no agent loop is running. Pipelines may reach bleeding-edge, never main.</div>');
+  $('sch-repeat').value=r.repeat||'continuous';
+  if(r.kind==='census'&&$('sch-t-awe'))$('sch-t-awe').value=r.at_window_end||'finish';
+  if(r.kind==='pipeline'&&$('sch-t-action'))$('sch-t-action').value=(r.target||{}).action||'test';
+}
+function schKindChange(){const k=$('sch-kind').value;$('sch-target').innerHTML=schKindFields(k,{});if(k==='census')$('sch-repeat').value='continuous';else if($('sch-repeat').value==='continuous')$('sch-repeat').value='once_per_window'}
+function schReadTarget(kind){
+  const v=id=>{const e=$(id);return e?e.value.trim():''};
+  if(kind==='census')return {template:v('sch-t-template')||'default'};
+  if(kind==='suite')return {tag:v('sch-t-tag'),profile:v('sch-t-profile'),assess:!!($('sch-t-assess')||{}).checked};
+  if(kind==='task')return {id:v('sch-t-id'),assess:!!($('sch-t-assess')||{}).checked};
+  if(kind==='pipeline')return {action:v('sch-t-action')||'test',id:v('sch-t-id'),branch:v('sch-t-branch')};
+  if(kind==='board')return {id:v('sch-t-id'),executor:v('sch-t-executor')||'deterministic',agent:v('sch-t-agent')||'orchestrator'};
+  let args={};try{args=JSON.parse(v('sch-t-args')||'{}')}catch(_){toast('arguments must be JSON');throw new Error('bad json')}
+  return {name:v('sch-t-name'),arguments:args};
+}
+async function schSave(id){
+  const kind=$('sch-kind').value; let target; try{target=schReadTarget(kind)}catch(_){return}
+  const rec={id:id||undefined,title:$('sch-title').value.trim(),kind,target,
+    days:[...document.querySelectorAll('.sch-day:checked')].map(e=>+e.value),
+    start:$('sch-start').value.trim(),end:$('sch-end').value.trim(),timezone:$('sch-tz').value.trim(),
+    repeat:$('sch-repeat').value,every_minutes:+$('sch-every').value||60,once_at:$('sch-once').value.trim(),
+    exclusive:$('sch-excl').checked,enabled:$('sch-on').checked};
+  if(kind==='census'&&$('sch-t-awe'))rec.at_window_end=$('sch-t-awe').value;
+  const d=await api('/evolve/schedule/upsert',{method:'POST',body:JSON.stringify({schedule:rec})});
+  if(!d||!d.ok){toast('not saved: '+((d&&d.error)||'?'));return}
+  closeModal();toast('saved · next '+(d.next?String(d.next.start).replace('T',' ').slice(0,16):'—'));loadSchedule();
+}
+async function schDelete(id){if(!confirm('Delete this schedule? A census it started keeps running.'))return;const d=await api('/evolve/schedule/delete',{method:'POST',body:JSON.stringify({id})});if(d&&d.ok)toast('deleted');loadSchedule()}
+async function schToggle(id,on){const d=await api('/evolve/schedule/enable',{method:'POST',body:JSON.stringify({id,enabled:on})});if(!d||!d.ok)toast('failed');loadSchedule()}
+async function schRunNow(id){toast('starting…');const d=await api('/evolve/schedule/run_now',{method:'POST',body:JSON.stringify({id})});
+  const s=(d&&d.started&&d.started[0]);const k=(d&&d.skipped&&d.skipped[0]);
+  toast(s?(s.result+(s.detail?': '+s.detail:'')):k?('not started: '+k.reason):'no change');loadSchedule()}
+async function schTick(){const d=await api('/evolve/schedule/tick',{method:'POST',body:'{}'});toast(d?('started '+((d.started||[]).length)+' · controls '+((d.controls||[]).length)):'tick failed');loadSchedule()}
+async function schSeed(){const d=await api('/evolve/schedule/seed_weekday_census',{method:'POST',body:'{}'});toast(d&&d.ok?(d.existing?'already there':'weekday census schedule added'):'failed');loadSchedule()}
+async function schCfgSave(){const d=await api('/evolve/schedule/config/set',{method:'POST',body:JSON.stringify({enabled:$('sch-enabled').checked})});toast(d&&d.ok?('scheduler '+(d.config.enabled?'on':'off')):'failed');loadSchedule()}
+// The calendar: an empty slot makes a schedule there (a weekly window on that
+// weekday from that hour); a window chip opens its schedule.
+document.addEventListener('DOMContentLoaded',()=>{
+  const cal=$('sch-cal'); if(!cal)return;
+  cal.addEventListener('slot-select',e=>{
+    const d=e.detail; const dt=new Date(d.date+'T00:00:00'); const wd=(dt.getDay()+6)%7; const hh=String(d.hour).padStart(2,'0');
+    schOpen(null,{days:[wd],start:hh+':00',end:(String(Math.min(23,d.hour+3)).padStart(2,'0'))+':00'});
+  });
+  cal.addEventListener('event-open',e=>{const ev=e.detail.event||{};if(ev.schedule_id)schOpen(ev.schedule_id);else if(ev.detail)toast(ev.title+' · '+ev.detail)});
+});
 
 /* ═══ TEST GENERATION — LLM-propose pytest for a branch (route-forward M3.4) ═══ */
 async function genTests(){

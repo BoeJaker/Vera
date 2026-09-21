@@ -10351,6 +10351,9 @@ async def lifespan(app: FastAPI):
         # action list. After the surfaces it aggregates.
         os.path.join(_here, "automations/automations_capabilities.py"),
         os.path.join(_here, "evolve/evolve_capabilities.py"),
+        # Schedules: when censuses, suites, tasks, pipeline steps, board items
+        # may run; needs evolve/, board/ and census/ caps to exist first.
+        os.path.join(_here, "evolve/schedule_capabilities.py"),
         # One task through time: reads the census archive AND the suite's run
         # records, so it must come after both census/ and evolve/ above.
         os.path.join(_here, "evolve/task_history_capabilities.py"),
