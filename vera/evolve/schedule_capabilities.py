@@ -177,11 +177,19 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-def _census_state_sync() -> Dict[str, Any]:
+LAUNCH_GRACE_S = 180   # census_all.sh -> run_census.py -> census.active.json takes seconds, not minutes
+
+
+def _census_state_sync(owner: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Is a census in flight, and can one be started? Read from the harness's
-    own files, the way /health does, plus whether its process is alive."""
+    own files, the way /health does, plus whether its process is alive.
+    `owner` is the record of the census THIS scheduler started (Redis), so a
+    launch still spinning up counts as running and a census parked on our
+    own yield is told apart from a person's pause."""
     d = Path(_CENSUS_DIR)
+    owner = owner or {}
     active = _ctl.read_json(str(d / _ctl.ACTIVE_NAME)) if _ctl else {}
+    control = _ctl.read_json(str(d / _ctl.CONTROL_NAME)) if _ctl else {}
     view = _ctl.active_view(active) if _ctl else {}
     state = str(view.get("state") or "")
     pid = active.get("pid")
@@ -193,16 +201,32 @@ def _census_state_sync() -> Dict[str, Any]:
         set_line = ""
     if set_line.startswith("running") and alive:
         running = True
+    # The launch we made moments ago: its shell is alive and the harness has
+    # not written its report yet. That is a census in flight, not a free box.
+    launching = False
+    started = core.parse_iso(str(owner.get("started_at") or ""))
+    if owner.get("pid") and started and (datetime.now(timezone.utc) - started).total_seconds() < LAUNCH_GRACE_S:
+        launching = _pid_alive(owner["pid"]) or running
+        running = running or launching
+    cstate = _ctl.control_state(control) if _ctl else "run"
+    control_by = str(control.get("by") or "")
+    parked_by_us = bool(running and state == "paused" and cstate in ("yield", "pause")
+                        and control_by == _BY and owner.get("schedule_id"))
     blocked = ""
     if not d.exists():
         blocked = f"census dir missing: {d}"
     elif not (d / "census_all.sh").exists():
         blocked = "census_all.sh not found"
+    elif not running and cstate != "run" and control_by != _BY:
+        blocked = f"a person's {cstate} is on file (by {control_by or '?'})"
     elif not running and any((d / n).exists() and (d / n).stat().st_size > 0
                              for n in ("census.jsonl", "census.log")):
         blocked = "partial run files present (census.jsonl / census.log) - archive or park them first"
     return {"census_running": running, "census_state": state, "census_pid": pid,
-            "census_alive": alive, "set_line": set_line, "harness_blocked": blocked,
+            "census_alive": alive, "census_launching": launching, "set_line": set_line,
+            "harness_blocked": blocked, "control_state": cstate, "control_by": control_by,
+            "census_parked_by_us": parked_by_us, "census_owner": owner.get("schedule_id", "") if running else "",
+            "window_end_applied": bool(owner.get("window_end_applied")) if running else False,
             "census_run": active.get("census_run", ""), "template": active.get("template", "")}
 
 
@@ -220,26 +244,51 @@ async def _loops_running() -> int:
     return 1 if isinstance(res, dict) and res else 0
 
 
-async def box_state() -> Dict[str, Any]:
-    st = await asyncio.to_thread(_census_state_sync)
-    st["loops_running"] = await _loops_running()
+async def _owner() -> Dict[str, Any]:
     r = _redis()
-    owner = {}
+    if r is None:
+        return {}
+    try:
+        raw = await r.get(KEY_ACTIVE_CENSUS)
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+async def _set_owner(d: Dict[str, Any]) -> None:
+    r = _redis()
     if r is not None:
         try:
-            raw = await r.get(KEY_ACTIVE_CENSUS)
-            owner = json.loads(raw) if raw else {}
+            await r.set(KEY_ACTIVE_CENSUS, json.dumps(d))
         except Exception:
-            owner = {}
-    st["census_owner"] = owner.get("schedule_id", "") if st["census_running"] else ""
+            pass
+
+
+async def box_state() -> Dict[str, Any]:
+    owner = await _owner()
+    st = await asyncio.to_thread(_census_state_sync, owner)
+    st["loops_running"] = await _loops_running()
     st["census_owner_run"] = owner
     return st
 
 
 # ── launchers ────────────────────────────────────────────────────────────────
 
+def _clear_own_control_sync() -> None:
+    """A yield/drop THIS scheduler wrote outlives the run it was for
+    (census_all.sh refuses to start under a drop); replace it with a resume."""
+    if not _ctl:
+        return
+    d = Path(_CENSUS_DIR)
+    control = _ctl.read_json(str(d / _ctl.CONTROL_NAME))
+    if _ctl.control_state(control) != "run" and str(control.get("by") or "") == _BY:
+        _ctl.write_json(str(d / _ctl.CONTROL_NAME),
+                        _ctl.make_control("resume", reason="scheduler: clearing its own control before a new run", by=_BY))
+
+
 def _launch_census_sync(template: str) -> Dict[str, Any]:
     d = Path(_CENSUS_DIR)
+    _clear_own_control_sync()
     env = dict(os.environ)
     env["CENSUS_TEMPLATES"] = template or "default"
     try:
@@ -261,13 +310,19 @@ def _launch_census_sync(template: str) -> Dict[str, Any]:
 async def _start(action: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
     kind, t = action["kind"], dict(action.get("target") or {})
     if kind == "census":
+        if action.get("reason") == "resume":
+            # Parked on this schedule's own yield: lift it, the harness carries on.
+            res = await _call("census.control.set", action="resume",
+                              reason="scheduler: window open again", by=_BY)
+            own = await _owner()
+            own.pop("window_end_applied", None)
+            await _set_owner(own)
+            return {"ok": bool((res or {}).get("ok")), "resumed": True,
+                    "error": (res or {}).get("error", "")}
         res = await asyncio.to_thread(_launch_census_sync, t.get("template", "default"))
         if res.get("ok"):
-            r = _redis()
-            if r is not None:
-                await r.set(KEY_ACTIVE_CENSUS, json.dumps({
-                    "schedule_id": rec["id"], "started_at": core.iso(_now()),
-                    "pid": res.get("pid"), "template": t.get("template", "default")}))
+            await _set_owner({"schedule_id": rec["id"], "started_at": core.iso(_now()),
+                              "pid": res.get("pid"), "template": t.get("template", "default")})
         return res
     if kind == "suite":
         return await _call("evolve.suite.start", tag=t.get("tag", ""), profile=t.get("profile", ""),
@@ -309,7 +364,7 @@ def _result_word(res: Any) -> str:
 async def _finalize_census_if_done(state: Dict[str, Any]) -> None:
     """The census this scheduler started has ended: close its run record."""
     owner = state.get("census_owner_run") or {}
-    if not owner or state.get("census_running"):
+    if not owner or state.get("census_running") or state.get("census_launching"):
         return
     r = _redis()
     result = "done" if str(state.get("set_line", "")).startswith("done") else \
@@ -350,19 +405,24 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
     (run_now), still subject to the box gating."""
     now = now or _now()
     cfg = await _get_config()
-    scheds = await _load_all()
     state = await box_state()
     await _finalize_census_if_done(state)
     if not state.get("census_running"):
         state["census_owner"] = ""
+    scheds = await _load_all()          # after finalize: last_finished_at is on the records now
     started, controls, skipped = [], [], []
-    # Window-end controls for censuses this scheduler owns.
+    # Window-end controls for censuses this scheduler owns - applied once per run.
     for rec in scheds:
         act = core.window_end_action(rec, now, state)
         if act:
             res = await _call("census.control.set", action=act["action"], reason=act["reason"], by=_BY)
-            controls.append({"schedule_id": rec["id"], "action": act["action"],
-                             "ok": bool((res or {}).get("ok"))})
+            ok = bool((res or {}).get("ok"))
+            controls.append({"schedule_id": rec["id"], "action": act["action"], "ok": ok})
+            if ok:
+                own = await _owner()
+                own["window_end_applied"] = act["action"]
+                await _set_owner(own)
+                state["window_end_applied"] = True
     if not cfg.get("enabled", True) and not force_ids:
         return {"ok": True, "enabled": False, "started": [], "controls": controls, "state": state}
     if force_ids:
@@ -395,17 +455,16 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
         if rec["kind"] != "census" or word == "error":
             run["finished_at"] = core.iso(_now())
         if rec["kind"] == "census" and word != "error":
-            r = _redis()
-            if r is not None:
-                try:
-                    raw = await r.get(KEY_ACTIVE_CENSUS)
-                    d = json.loads(raw) if raw else {}
-                    d["run_id"] = run_id
-                    await r.set(KEY_ACTIVE_CENSUS, json.dumps(d))
-                except Exception:
-                    pass
+            own = await _owner()
+            if not (res or {}).get("resumed"):
+                own["run_id"] = run_id
+                await _set_owner(own)
+            else:
+                run["finished_at"] = core.iso(_now())
+                run["result"] = "resumed"
             state["census_running"] = True
             state["census_owner"] = rec["id"]
+            state["census_parked_by_us"] = False
         await _append_run(run)
         rec["last_started_at"] = core.iso(now)
         rec["last_result"] = word

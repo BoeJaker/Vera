@@ -36,6 +36,7 @@
   if (customElements.get('vera-calendar')) return;
 
   const DAY_MS = 86400000;
+  const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
   const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const pad = n => (n < 10 ? '0' : '') + n;
   const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
@@ -179,7 +180,7 @@
         const e = toDate(ev.end) || new Date(s.getTime() + 3600000);
         // A multi-day event lands on every day it covers.
         let d = new Date(s.getFullYear(), s.getMonth(), s.getDate());
-        for (let i = 0; i < 31 && d < e; i++) { (m[ymd(d)] = m[ymd(d)] || []).push(ev); d = new Date(d.getTime() + DAY_MS); }
+        for (let i = 0; i < 31 && d < e; i++) { (m[ymd(d)] = m[ymd(d)] || []).push(ev); d = addDays(d, 1); }
       }
       for (const k in m) m[k].sort((a, b) => String(a.start).localeCompare(String(b.start)));
       return m;
@@ -209,7 +210,7 @@
       const [s] = this.range(); const by = this._byDay(); const today = ymd(new Date()); const mon = this._date.getMonth();
       let h = '<div class="grid month">' + DOW.map(d => '<div class="hd">' + d + '</div>').join('');
       for (let i = 0; i < 42; i++) {
-        const d = new Date(s.getTime() + i * DAY_MS); const k = ymd(d); const evs = by[k] || [];
+        const d = addDays(s, i); const k = ymd(d); const evs = by[k] || [];
         const cls = 'cell' + (d.getMonth() !== mon ? ' other' : '') + (k === today ? ' today' : '') + (d.getDay() === 0 || d.getDay() === 6 ? ' wknd' : '');
         h += '<div class="' + cls + '" data-slot="' + k + '" data-hour="9"><span class="dn">' + d.getDate() + '</span>';
         evs.slice(0, 4).forEach(ev => { const st = toDate(ev.start); const t = ev.all_day || !st ? '' : hm(st) + ' ';
@@ -222,7 +223,7 @@
     _timeGrid(days) {
       const [s] = this.range(); const by = this._byDay(); const today = ymd(new Date());
       const h0 = Math.max(0, parseInt(this.getAttribute('hour-start') || '0', 10)), h1 = Math.min(24, parseInt(this.getAttribute('hour-end') || '24', 10));
-      const cols = []; for (let i = 0; i < days; i++) cols.push(new Date(s.getTime() + i * DAY_MS));
+      const cols = []; for (let i = 0; i < days; i++) cols.push(addDays(s, i));
       let h = '<div class="grid ' + (days === 7 ? 'week' : 'day') + '"><div class="hd"></div>';
       cols.forEach(d => { h += '<div class="hd' + (ymd(d) === today ? ' today' : '') + '">' + (days === 7 ? DOW[(d.getDay() + 6) % 7] + ' ' + d.getDate() : '') + '</div>'; });
       // all-day row

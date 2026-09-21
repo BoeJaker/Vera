@@ -41,7 +41,8 @@ COLORS = {"census": "#c9a35a", "suite": "#6db87a", "task": "#8fb87a",
 # same fence the idle queue keeps, plus the one action that reaches prod.
 CAP_DENY_PREFIXES = ("sys.", "background.", "evolve.bleeding_edge.", "evolve.schedule.",
                      "census.control", "loops.config", "evolve.sandbox.down",
-                     "evolve.sandbox.up", "evolve.pipeline.promote")
+                     "evolve.sandbox.up", "evolve.pipeline.promote",
+                     "cluster.job.stop", "jobs.purge_pending")
 
 _HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
@@ -76,8 +77,9 @@ def iso(dt: datetime) -> str:
     return dt.isoformat(timespec="seconds")
 
 
-def parse_iso(s: str) -> Optional[datetime]:
-    """An aware datetime from ISO text (a trailing Z accepted); naive text is UTC."""
+def parse_iso(s: str, *, default_tz: Optional[tzinfo] = None) -> Optional[datetime]:
+    """An aware datetime from ISO text (a trailing Z accepted); naive text is
+    taken in `default_tz` (UTC when not given)."""
     t = str(s or "").strip()
     if not t:
         return None
@@ -86,7 +88,7 @@ def parse_iso(s: str) -> Optional[datetime]:
     except ValueError:
         return None
     if d.tzinfo is None:
-        d = d.replace(tzinfo=timezone.utc)
+        d = d.replace(tzinfo=default_tz or timezone.utc)
     return d
 
 
@@ -119,9 +121,10 @@ def normalize(rec: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[st
     resolve_tz(r["timezone"])                      # fail early on a bad zone
     once_at = str(r.get("once_at") or "").strip()
     if once_at:
-        if parse_iso(once_at) is None:
+        at = parse_iso(once_at, default_tz=resolve_tz(r["timezone"]))
+        if at is None:
             raise ValueError("once_at must be an ISO datetime")
-        r["once_at"] = iso(parse_iso(once_at))
+        r["once_at"] = iso(at)
         r["days"] = []
     else:
         r["once_at"] = ""
@@ -309,7 +312,8 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
                 return False, "interval not elapsed"
         elif repeat == "continuous":
             if kind == "census":
-                if state.get("census_running"):
+                if state.get("census_running") and not (
+                        state.get("census_parked_by_us") and state.get("census_owner") == rec.get("id")):
                     return False, "census in flight"
                 cool = timedelta(minutes=int(rec.get("cooldown_minutes") or 0))
                 last_fin = parse_iso(rec.get("last_finished_at") or "")
@@ -323,6 +327,8 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
     # Box gating. A census is one loop on prod's GPU; nothing else may run
     # beside it (HANDOVER §4.1-4.2), and a census needs the box to itself.
     if kind == "census":
+        if state.get("census_parked_by_us") and state.get("census_owner") == rec.get("id"):
+            return True, "resume"          # parked on this schedule's own yield
         if state.get("census_running"):
             return False, "census in flight"
         if int(state.get("loops_running") or 0) > 0:
@@ -345,7 +351,8 @@ def plan_tick(schedules: Iterable[Dict[str, Any]], now: datetime, state: Dict[st
     for rec in schedules:
         if len(out) >= max_starts:
             break
-        if rec.get("kind") == "census" and census_taken:
+        if rec.get("kind") == "census" and census_taken and not (
+                st.get("census_parked_by_us") and st.get("census_owner") == rec.get("id")):
             continue
         due, why = is_due(rec, now, st)
         if not due:
@@ -355,6 +362,7 @@ def plan_tick(schedules: Iterable[Dict[str, Any]], now: datetime, state: Dict[st
         if rec.get("kind") == "census":
             census_taken = True
             st["census_running"] = True     # exclusive kinds see the census we just planned
+            st["census_parked_by_us"] = False
     return out
 
 
@@ -364,7 +372,11 @@ def window_end_action(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]
     running: the control action it asked for (yield or drop), else None."""
     if rec.get("kind") != "census" or rec.get("at_window_end", "finish") == "finish":
         return None
+    if rec.get("once_at"):
+        return None
     if not state.get("census_running") or state.get("census_owner") != rec.get("id"):
+        return None
+    if state.get("window_end_applied"):
         return None
     if current_window(rec, now):
         return None

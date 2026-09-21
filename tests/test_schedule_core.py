@@ -103,6 +103,34 @@ def test_plan_tick_starts_one_census_and_fences_exclusive_work():
     assert len(sc.plan_tick([n, n, n, n], MON, FREE, max_starts=2)) == 2
 
 
+def test_parked_on_our_own_yield_resumes_when_the_window_is_open():
+    r = weekday(at_window_end="yield")
+    parked = dict(FREE, census_running=True, census_parked_by_us=True, census_owner=r["id"])
+    assert sc.is_due(r, MON, parked) == (True, "resume")
+    assert sc.is_due(r, SAT, parked)[1] == "outside window"
+    other = weekday()
+    assert sc.is_due(other, MON, parked)[1] == "census in flight"
+    plan = sc.plan_tick([other, r], MON, parked)
+    assert [p["reason"] for p in plan] == ["resume"]
+
+
+def test_once_at_is_in_the_records_timezone_and_never_window_ends():
+    o = sc.normalize({"kind": "census", "target": {}, "once_at": "2026-09-22T09:00", "timezone": "+01:00",
+                      "at_window_end": "yield"}, now=_t(2026, 9, 21, 0))
+    assert o["once_at"] == "2026-09-22T09:00:00+01:00"
+    assert sc.is_due(o, _t(2026, 9, 22, 7, 59), FREE)[1] == "not yet"
+    assert sc.is_due(o, _t(2026, 9, 22, 8, 0), FREE) == (True, "due")
+    st = dict(FREE, census_running=True, census_owner=o["id"])
+    assert sc.window_end_action(o, _t(2026, 9, 22, 8, 5), st) is None
+
+
+def test_window_end_action_is_applied_once():
+    y = weekday(at_window_end="drop")
+    st = dict(FREE, census_running=True, census_owner=y["id"])
+    assert sc.window_end_action(y, _t(2026, 9, 21, 17, 1), st)["action"] == "drop"
+    assert sc.window_end_action(y, _t(2026, 9, 21, 17, 1), dict(st, window_end_applied=True)) is None
+
+
 def test_window_end_action_only_for_the_owner_after_the_window():
     y = weekday(at_window_end="yield")
     running_mine = dict(FREE, census_running=True, census_owner=y["id"])
@@ -146,6 +174,7 @@ def test_normalize_rejects_what_a_person_must_fix():
     with pytest.raises(ValueError):
         sc.normalize({"kind": "pipeline", "target": {"action": "adopt"}})
     assert sc.cap_denied("sys.dev.restart") and sc.cap_denied("evolve.pipeline.promote")
+    assert sc.cap_denied("cluster.job.stop") and sc.cap_denied("jobs.purge_pending")
     assert not sc.cap_denied("evolve.suite.start") and not sc.cap_denied("obs.provenance")
 
 
