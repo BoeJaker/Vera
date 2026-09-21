@@ -10355,6 +10355,8 @@ async def lifespan(app: FastAPI):
         # operator sees why an nlp.* call went where it did.
         os.path.join(_here, "research/nlp_dispatch.py"),
         os.path.join(_here, "research/nlp_capabilities.py"),
+        # explode AFTER the nlp caps: its node-tier layers call them through the registry
+        os.path.join(_here, "research/explode_capabilities.py"),
         os.path.join(_here, "vector browser/vector_browser_capabilites.py"),
         os.path.join(_here, "workers/job_persistance.py"),
         os.path.join(_here, "accounts/accounts_capabilities.py"),
