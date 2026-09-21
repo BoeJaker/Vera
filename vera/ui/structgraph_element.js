@@ -54,11 +54,13 @@
     const groups = (doc.groups || []).map((g, i) => ({ id: S(g.id || ('g' + i)), label: S(g.label || g.id || ''), kind: S(g.kind || 'group'), parent: g.parent == null ? null : S(g.parent), span: g.span || null }));
     const cards = (doc.cards || []).map((c, i) => Object.assign({}, c, { id: S(c.id || ('c' + i)), group: c.group == null ? null : S(c.group), layer: S(c.layer || 'base'), kind: S(c.kind || 'entity'), title: S(c.title || c.id || ''), subtitle: S(c.subtitle || ''), fields: Array.isArray(c.fields) ? c.fields : [], badges: Array.isArray(c.badges) ? c.badges : [] }));
     const edges = (doc.edges || []).map((e) => Object.assign({}, e, { from: S(e.from), to: S(e.to), layer: S(e.layer || 'base'), kind: S(e.kind || 'RELATES').toUpperCase(), resolution: S(e.resolution || 'exact') }));
-    let layers = (doc.layers || []).map((l) => Object.assign({ on: true }, l, { id: S(l.id), label: S(l.label || l.id) }));
+    // a scorer's receipt (kind 'assessment') is not a layer of cards to toggle: it belongs to the verdict rail
+    const scorers = (doc.layers || []).filter((l) => l && l.kind === 'assessment').map((l) => Object.assign({}, l, { id: S(l.id), label: S(l.label || l.id) }));
+    let layers = (doc.layers || []).filter((l) => !(l && l.kind === 'assessment')).map((l) => Object.assign({ on: true }, l, { id: S(l.id), label: S(l.label || l.id) }));
     const seen = new Set(layers.map((l) => l.id));
     cards.concat(edges).forEach((x) => { if (!seen.has(x.layer)) { seen.add(x.layer); layers.push({ id: x.layer, label: x.layer, on: true }); } });
     layers.forEach((l) => { l.count = cards.filter((c) => c.layer === l.id).length + edges.filter((e) => e.layer === l.id).length; });
-    return { kind: S(doc.kind || (cards.some((c) => /function|class|module/.test(c.kind)) ? 'code' : 'prose')), source: doc.source || {}, layout: Object.assign({ direction: 'LR', mode: '' }, doc.layout || {}), layers, groups, cards, edges, assessments: doc.assessments || [] };
+    return { kind: S(doc.kind || (cards.some((c) => /function|class|module/.test(c.kind)) ? 'code' : 'prose')), source: doc.source || {}, layout: Object.assign({ direction: 'LR', mode: '' }, doc.layout || {}), layers, scorers, groups, cards, edges, assessments: doc.assessments || [] };
   }
 
   /* ── geometry at k = 1 ────────────────────────────────────────────────────────────────────────────────── */
@@ -70,9 +72,11 @@
     o = o || {}; const D = normalise(doc); const R = routesLib(); if (!R) throw new Error('vera/ui/routes.js is not loaded');
     const off = o.layersOff || {}; const onLayer = {}; D.layers.forEach((l) => { onLayer[l.id] = !off[l.id] && l.on !== false; });
     const cards = D.cards.filter((c) => onLayer[c.layer] !== false); const cid = new Map(cards.map((c) => [c.id, c]));
+    // a verdict on a card (complexity, a smell, a clone, tested, provenance) is a badge on it — sized in before layout
+    D.assessments.forEach((a) => { const c = a.on && a.on !== 'source' ? cid.get(a.on) : null; if (!c) return; const b = String(a.badge || a.label || a.key); if (c.badges.indexOf(b) < 0) c.badges = c.badges.concat([b]); });
     const edges = D.edges.filter((e) => onLayer[e.layer] !== false && cid.has(e.from) && cid.has(e.to) && e.from !== e.to);
     const mode = o.mode || D.layout.mode || (D.kind === 'code' ? 'dependency' : 'position'), dir = (o.direction || D.layout.direction || 'LR').toUpperCase();
-    const out = { kind: D.kind, mode, direction: dir, plates: [], cards: [], edges: [], ports: [], labels: [], legend: [], layers: D.layers.map((l) => Object.assign({}, l, { on: onLayer[l.id] !== false })), assessments: D.assessments.filter((a) => !a.on || a.on === 'source'), size: { w: W, h: H }, runs: 0, back: [] };
+    const out = { kind: D.kind, mode, direction: dir, plates: [], cards: [], edges: [], ports: [], labels: [], legend: [], layers: D.layers.map((l) => Object.assign({}, l, { on: onLayer[l.id] !== false })), scorers: D.scorers, assessments: D.assessments.filter((a) => !a.on || a.on === 'source'), size: { w: W, h: H }, runs: 0, back: [] };
     if (!cards.length) return out;
     // ── bands and columns by mode
     const G = new Map(D.groups.map((g) => [g.id, g])); const topOf = (gid) => { let g = G.get(gid), guard = 0; while (g && g.parent != null && G.has(g.parent) && guard++ < 32) g = G.get(g.parent); return g ? g.id : null; };
@@ -140,6 +144,8 @@
       out.labels.push({ plate: p.id, x: px(p.x + 12), y: px(p.y + 8), n: p.label || p.id, k: p.kind, depth: p.depth }); p.children.forEach(walkPlates); };
     plates.forEach(walkPlates);
     cards.forEach((c) => { const p = pos.get(c.id); out.cards.push({ id: c.id, x: px(p.x), y: px(p.y), w: p.w, h: px(p.h), col: colOf.get(c.id), band: bandOf.get(c.id), plate: plateOf.get(c.id), card: c, glyph: glyphOf(c.kind), colr: kindCol(c.kind), cls: 'sg-card k-' + c.kind.toLowerCase().replace(/[^a-z0-9_-]/g, '_') + ' l-' + c.layer.replace(/[^a-z0-9_-]/gi, '_') + (c.kind.toLowerCase() === 'external' ? ' ext' : '') }); });
+    out.verdicts = {};   // per-card assessments, by card id — the element shows them on hover
+    D.assessments.forEach((a) => { if (a.on && a.on !== 'source' && cid.has(a.on)) (out.verdicts[a.on] = out.verdicts[a.on] || []).push(a); });
     if (mode === 'position' && out.columns) out.columns.forEach((k, i) => out.labels.push({ column: i, x: px(geo.xc[i]), y: px(K.MY + (out.assessments.length ? K.RAIL : 0) + 6), n: k, k: 'column' }));
     const kinds = {}; edges.forEach((e) => { kinds[e.kind] = (kinds[e.kind] || 0) + 1; }); out.legend = Object.keys(kinds).map((k) => ({ kind: k, n: kinds[k], col: (KIND[k] || KIND.RELATES)[0], cls: (KIND[k] || KIND.RELATES)[1], label: (KIND[k] || KIND.RELATES)[2] }));
     out.size = { w: px(geo.totalW), h: px(geo.totalH) }; out.geom = { columns: NC, bands: plates.length, gutters: geo.gw, channels: geo.ch, xc: geo.xc };
@@ -180,7 +186,7 @@ vera-structgraph .sg-card.ext{opacity:.62;background:var(--xp-s1)}vera-structgra
 vera-structgraph .sg-card .n{display:flex;align-items:baseline;gap:6px;font-size:11.5px;font-weight:600;line-height:1.25;color:var(--xp-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}vera-structgraph .sg-card .n .g{color:var(--cc);font-weight:400;font-size:11px;flex:none}
 vera-structgraph .sg-card .m{font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
 vera-structgraph .sg-card .f{display:grid;grid-template-columns:auto 1fr;gap:0 8px;margin-top:3px;font-family:var(--xp-mono);font-size:9px;line-height:13px;color:var(--xp-t2)}vera-structgraph .sg-card .f b{font-weight:400;color:var(--xp-t3)}vera-structgraph .sg-card .f span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-vera-structgraph .sg-card .b{display:flex;gap:4px;margin-top:3px;flex-wrap:nowrap;overflow:hidden}vera-structgraph .sg-card .b i{font-style:normal;font-size:8.5px;font-family:var(--xp-mono);padding:1px 5px;border-radius:999px;background:var(--xp-s3);color:var(--xp-t2);white-space:nowrap}vera-structgraph .sg-card .b i.warn{background:color-mix(in srgb,var(--xp-dv2) 25%,var(--xp-s3));color:var(--xp-dv2)}
+vera-structgraph .sg-card .b{display:flex;gap:4px;margin-top:3px;flex-wrap:nowrap;overflow:hidden}vera-structgraph .sg-card .b i{font-style:normal;font-size:8.5px;font-family:var(--xp-mono);padding:1px 5px;border-radius:999px;background:var(--xp-s3);color:var(--xp-t2);white-space:nowrap}vera-structgraph .sg-card .b i.warn{background:color-mix(in srgb,var(--xp-dv2) 25%,var(--xp-s3));color:var(--xp-dv2)}vera-structgraph .sg-card .b i.ok{background:color-mix(in srgb,var(--xp-ac2) 22%,var(--xp-s3));color:var(--xp-ac2)}
 vera-structgraph .sg-card .bar{height:3px;border-radius:2px;background:var(--xp-s3);margin-top:4px;overflow:hidden}vera-structgraph .sg-card .bar i{display:block;height:100%;background:var(--cc)}
 vera-structgraph .sg-e{position:absolute;height:0;border-top:1.5px solid var(--ec);transform-origin:0 0;pointer-events:auto;z-index:2;opacity:.85}
 vera-structgraph .sg-e::after{content:"";position:absolute;left:0;right:0;top:-5px;height:10px}
@@ -188,7 +194,7 @@ vera-structgraph .sg-e.dash{border-top-style:dashed}vera-structgraph .sg-e.dot,v
 vera-structgraph .sg-e.lit{opacity:1;border-top-width:2.5px;z-index:3;filter:drop-shadow(0 0 2px var(--ec))}vera-structgraph .sg-e.dim{opacity:.12}
 vera-structgraph .sg-port{position:absolute;width:5px;height:5px;border-radius:50%;background:var(--xp-bg);box-shadow:0 0 0 1.5px var(--xp-t3);transform:translate(-50%,-50%);z-index:4;pointer-events:none}
 vera-structgraph .sg-vr{position:absolute;display:flex;gap:6px;align-items:center;z-index:5}vera-structgraph .sg-vr .c{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--xp-t3);margin-right:2px}
-vera-structgraph .sg-vr span{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;color:var(--xp-t2);padding:2px 8px;border-radius:999px;background:var(--xp-s2);box-shadow:0 0 0 1px var(--xp-bd);cursor:default}vera-structgraph .sg-vr span i{display:inline-block;width:34px;height:3px;border-radius:2px;background:var(--xp-s3);overflow:hidden}vera-structgraph .sg-vr span i b{display:block;height:100%;background:var(--xp-ac2)}vera-structgraph .sg-vr span em{font-style:normal;font-family:var(--xp-mono);color:var(--xp-t3)}
+vera-structgraph .sg-vr span{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;color:var(--xp-t2);padding:2px 8px;border-radius:999px;background:var(--xp-s2);box-shadow:0 0 0 1px var(--xp-bd);cursor:default;pointer-events:auto}vera-structgraph .sg-vr span.has-ev{cursor:pointer}vera-structgraph .sg-vr span.has-ev:hover{color:var(--xp-t1);box-shadow:0 0 0 1px var(--xp-ac)}vera-structgraph .sg-vr span i{display:inline-block;width:34px;height:3px;border-radius:2px;background:var(--xp-s3);overflow:hidden}vera-structgraph .sg-vr span i b{display:block;height:100%;background:var(--xp-ac2)}vera-structgraph .sg-vr span em{font-style:normal;font-family:var(--xp-mono);color:var(--xp-t3)}
 vera-structgraph .sg-pz{position:absolute;right:12px;top:10px;z-index:30;display:flex;align-items:center;gap:2px;padding:3px 6px;border-radius:8px;background:color-mix(in srgb,var(--xp-s1) 92%,transparent);box-shadow:0 0 0 1px var(--xp-bd)}vera-structgraph .sg-pz button{font:inherit;font-size:11px;color:var(--xp-t2);background:none;border:0;cursor:pointer;padding:1px 7px;border-radius:6px}vera-structgraph .sg-pz .z{font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3);min-width:34px;text-align:center}
 vera-structgraph .sg-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--xp-t3);font-size:11px}
 vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[bare] .sg-key{display:none}`;
@@ -198,7 +204,7 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
   function cardHtml(k) { const c = k.card; let h = '<div class="n"><span class="g">' + esc(k.glyph) + '</span><span>' + esc(c.title) + '</span></div>';
     if (c.subtitle) h += '<div class="m">' + esc(c.subtitle) + (c.by ? ' · ' + esc(c.by) : '') + '</div>';
     if (c.fields.length) h += '<div class="f">' + c.fields.slice(0, K.MAXF).map((f) => '<b>' + esc(f.k) + '</b><span>' + esc(f.v) + '</span>').join('') + '</div>';
-    if (c.badges.length) h += '<div class="b">' + c.badges.slice(0, 5).map((b) => '<i class="' + (/^(partial|error|warn)/i.test(String(b)) ? 'warn' : '') + '">' + esc(b) + '</i>').join('') + '</div>';
+    if (c.badges.length) h += '<div class="b">' + c.badges.slice(0, 5).map((b) => '<i class="' + (/^(partial|error|warn|smell|clone|cc )/i.test(String(b)) ? 'warn' : /^(tested|retyped)/i.test(String(b)) ? 'ok' : '') + '">' + esc(b) + '</i>').join('') + '</div>';
     if (c.score != null) h += '<div class="bar"><i style="width:' + Math.round(Math.max(0, Math.min(1, +c.score)) * 100) + '%"></i></div>';
     return h; }
   function sceneHtml(o) { let h = '';
@@ -207,7 +213,7 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
     o.edges.forEach((e) => { h += '<div class="' + e.cls + '" data-from="' + esc(e.from) + '" data-to="' + esc(e.to) + '" data-run="' + e.run + '" title="' + esc(e.title) + '" style="--ec:' + e.col + ';left:' + e.x + 'px;top:' + e.y + 'px;width:' + e.len + 'px;transform:rotate(' + e.deg + 'deg)"></div>'; });
     o.ports.forEach((p) => { h += '<div class="sg-port" data-run="' + p.run + '" style="left:' + p.x + 'px;top:' + p.y + 'px"></div>'; });
     o.cards.forEach((k) => { h += '<div class="' + k.cls + '" data-id="' + esc(k.id) + '" style="--cc:' + k.colr + ';left:' + k.x + 'px;top:' + k.y + 'px;width:' + k.w + 'px;height:' + k.h + 'px" title="' + esc(k.card.title + (k.card.span ? ' · ' + (k.card.span.path || '') + ' ' + (k.card.span.start != null ? k.card.span.start + '–' + k.card.span.end : '') : '')) + '">' + cardHtml(k) + '</div>'; });
-    if (o.assessments.length) h += '<div class="sg-vr" style="left:' + K.MX + 'px;top:' + (K.MY - 6) + 'px"><span class="c">verdict</span>' + o.assessments.map((a) => '<span title="' + esc((a.by || '') + (a.confidence != null ? ' · confidence ' + a.confidence : '')) + '">' + esc(a.label || a.key) + '<i><b style="width:' + Math.round(Math.max(0, Math.min(1, +a.score || 0)) * 100) + '%"></b></i><em>' + (a.score != null ? (+a.score).toFixed(2) : '') + '</em></span>').join('') + '</div>';
+    if (o.assessments.length) h += '<div class="sg-vr" style="left:' + K.MX + 'px;top:' + (K.MY - 6) + 'px"><span class="c">verdict</span>' + o.assessments.map((a, i) => '<span data-k="' + i + '" class="' + ((a.evidence || []).length ? 'has-ev' : '') + '" title="' + esc((a.by || '') + (a.confidence != null ? ' · confidence ' + a.confidence : '') + ((a.evidence || []).length ? ' · click: the evidence' : '')) + '">' + esc(a.label || a.key) + '<i><b style="width:' + Math.round(Math.max(0, Math.min(1, +a.score || 0)) * 100) + '%"></b></i><em>' + (a.score != null ? (+a.score).toFixed(2) : '') + '</em></span>').join('') + '</div>';
     return h; }
 
   if (typeof HTMLElement !== 'undefined' && root.customElements && !root.customElements.get('vera-structgraph')) {
@@ -228,6 +234,12 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
         const $ = (r) => this.querySelector('[data-r="' + r + '"]'); const wrap = $('wrap');
         this.addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (b && b.dataset.a) { const a = b.dataset.a; if (a === 'zin') this._zoomBy(1.2); else if (a === 'zout') this._zoomBy(1 / 1.2); else if (a === 'fit') this.fit(); return; }
           if (b && b.dataset.m) { this.mode(b.dataset.m); return; } if (b && b.dataset.l) { const id = b.dataset.l, m = {}; m[id] = !!this._S.layersOff[id]; this.layers(m); return; }
+          const vr = ev.target.closest('.sg-vr span[data-k]'); if (vr && this._last) { const a = this._last.assessments[+vr.dataset.k]; if (!a) return;
+            // the verdict's evidence: the cards whose spans it falls in are lit, the rest quiet; the host hears the spans
+            const evs = (a.evidence || []).filter((e) => e && e.span); const hit = new Set();
+            this._last.cards.forEach((k) => { const s = k.card.span || {}; if (evs.some((e) => (e.span.path || '') === (s.path || '') && e.span.start < s.end && s.start < e.span.end)) hit.add(k.id); });
+            this._S.sel = null; this._hover = null; this._paint(); this.querySelectorAll('.sg-card').forEach((c) => { c.classList.toggle('lit', hit.has(c.dataset.id)); c.classList.toggle('dim', evs.length > 0 && !hit.has(c.dataset.id)); });
+            this.dispatchEvent(new CustomEvent('vera-explode-verdict', { detail: { key: a.key, label: a.label, score: a.score, confidence: a.confidence, by: a.by, evidence: evs }, bubbles: true })); return; }
           const card = ev.target.closest('.sg-card'); if (card) { const k = this._cardOf(card.dataset.id); this._S.sel = card.dataset.id; this._paint(); this.dispatchEvent(new CustomEvent('vera-explode-select', { detail: { id: card.dataset.id, span: k && k.card.span, card: k && k.card }, bubbles: true })); return; }
           const e = ev.target.closest('.sg-e'); if (e) { const seg = this._last && this._last.edges.find((s) => String(s.run) === e.dataset.run); this.dispatchEvent(new CustomEvent('vera-explode-edge', { detail: { from: e.dataset.from, to: e.dataset.to, title: seg && seg.title, run: +e.dataset.run }, bubbles: true })); } });
         this.addEventListener('dblclick', (ev) => { const card = ev.target.closest('.sg-card'); if (!card) return; const k = this._cardOf(card.dataset.id); this.dispatchEvent(new CustomEvent('vera-explode-drill', { detail: { id: card.dataset.id, card: k && k.card }, bubbles: true })); });
@@ -258,7 +270,10 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
         this._last = o; view.innerHTML = sceneHtml(o);
         // FIT: scaled to the room, never below half (the exploded scene's rule for the embedded stage — text must stay
         // readable); a scene that does not fit at half scrolls instead, at half
-        if (S.fit) { const z = Math.min(1, (W - 16) / Math.max(1, o.size.w), (H - 16) / Math.max(1, o.size.h)); S.zoom = Math.max(0.5, z); S.px = Math.max(8, (W - o.size.w * S.zoom) / 2); S.py = Math.max(8, (H - o.size.h * S.zoom) / 2); S.fit = false; }
+        // in full mode the toolbar floats over the top of the wrap: the scene starts under it, so the verdict rail
+        // and the first plate's caption are never covered
+        const top = this.hasAttribute('bare') ? 8 : Math.max(34, (this.querySelector('.sg-ctl') || {}).offsetHeight || 0) + 16;   // the bar is empty on the first pass
+        if (S.fit) { const z = Math.min(1, (W - 16) / Math.max(1, o.size.w), (H - top - 8) / Math.max(1, o.size.h)); S.zoom = Math.max(0.5, z); S.px = Math.max(8, (W - o.size.w * S.zoom) / 2); S.py = Math.max(top, (H - o.size.h * S.zoom) / 2); S.fit = false; }
         this._place(); this._paint();
         // the toolbar: the modes this kind of graph has, the layer chips with their counts
         const modes = o.kind === 'code' ? [['dependency', 'Dependency']] : [['position', 'Position'], ['type', 'Type']];

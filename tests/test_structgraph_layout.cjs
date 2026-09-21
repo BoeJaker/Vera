@@ -84,6 +84,17 @@ t('prose: crossings are few — at most 4 on this passage', crossings(p) <= 4, '
   invariants('prose · type', ty, PROSE);
   t('prose · type: a band per entity type in the canonical order, the paragraphs as the columns', ty.plates.map((q) => q.id).join(',') === 'kind:person,kind:org,kind:location,kind:date,kind:event,kind:claim' && cardOf(ty, 'e.alice').col === 0 && cardOf(ty, 'e.bob').col === 1 && cardOf(ty, 'e.close').col === 2 && ty.geom.columns === 3); }
 
+// ── verdicts on cards
+{ const doc = JSON.parse(JSON.stringify(CODE)); doc.assessments = doc.assessments.concat([
+    { key: 'complexity', label: 'complexity', score: 0.4, confidence: 0.9, by: 'cyclomatic', on: 'nlp._dispatch', badge: 'cc 23', evidence: [{ span: { path: 'vera/research/nlp_capabilities.py', start: 800, end: 2100 }, note: 'cyclomatic complexity 23' }] },
+    { key: 'tests', label: 'tested', score: 1, confidence: 0.5, by: 'named in tests/', on: 'core.route', badge: 'tested', evidence: [] },
+    { key: 'smells', label: 'no smells', score: 0.7, confidence: 0.5, by: 'security patterns', on: 'source', evidence: [{ span: { path: 'vera/research/nlp_capabilities.py', start: 900, end: 910 }, note: 'eval()' }] }]);
+  const v = SG.layout(doc, 1400, 900);
+  t('a verdict on a card is a badge on it, sized in before layout; a source verdict is not', cardOf(v, 'nlp._dispatch').card.badges.indexOf('cc 23') >= 0 && cardOf(v, 'core.route').card.badges.indexOf('tested') >= 0 && cardOf(v, 'nlp._dispatch').h > cardOf(c, 'nlp._dispatch').h - 1 && !v.cards.some((k) => k.card.badges.indexOf('no smells') >= 0));
+  t('the per-card verdicts are kept by card for the element, the source ones on the rail', v.verdicts['nlp._dispatch'].length === 1 && v.assessments.length === 3 && v.assessments.every((a) => !a.on || a.on === 'source'));
+  const h = SG.sceneHtml(v);
+  t('the rail marks a verdict that carries evidence as clickable', /class="has-ev"[^>]*>no smells/.test(h) && /<i class="warn">cc 23<\/i>/.test(h) && /<i class="ok">tested<\/i>/.test(h)); }
+
 // ── the shared library
 t('routes: rank is longest-path — a chain ranks 0..n, a diamond joins at the far side, a cycle\'s back edge is reported', (() => { const r = RT.rank(['a', 'b', 'c', 'd'], [{ from: 'a', to: 'b' }, { from: 'a', to: 'c' }, { from: 'b', to: 'd' }, { from: 'c', to: 'd' }, { from: 'b', to: 'c' }, { from: 'd', to: 'a' }]); return r.rank.get('a') === 0 && r.rank.get('b') === 1 && r.rank.get('c') === 2 && r.rank.get('d') === 3 && r.depth === 4 && r.back.length === 1 && r.back[0].from === 'd'; })());
 t('routes: order lines a cell up with its neighbours', (() => { const y = { a: 10, b: 200, x: 0, y: 0 }; const o = RT.order([['x', 'y']], [{ from: 'x', to: 'b' }, { from: 'y', to: 'a' }], (id) => y[id]); return o[0].join(',') === 'y,x'; })());

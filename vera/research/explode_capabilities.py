@@ -61,6 +61,20 @@ def _wa():
     return wa
 
 
+def _assess():
+    """The scorer registry (assess_capabilities.py, loaded after this file): the loader's copy in the app, the
+    package's in tests."""
+    import sys
+    mod = sys.modules.get("assess_capabilities")
+    if mod is not None:
+        return mod
+    try:
+        from Vera.vera.research import assess_capabilities as mod  # noqa: F811
+    except ImportError:
+        from vera.research import assess_capabilities as mod       # noqa: F811
+    return mod
+
+
 def _code_core():
     """The pure code extractor (vera/research/code_explode_core.py). This file is a `_module_files` entry point
     loaded flat, so the import is absolute — the app's package first, the test tree's second."""
@@ -502,10 +516,22 @@ async def explode_text(text: str, *, path: str = "", base: int = 0, layers: Opti
             "paragraphs": len(paras), "sentences": len(ctx["sentences"])}
 
 
+def _assess_arg(assess) -> Optional[List[str]]:
+    """assess=False → None (do not run); True → [] (the default scorers); a list / comma string → those keys."""
+    if assess is None or assess is False or assess == "" or assess == "false":
+        return None
+    if assess is True or assess == "true" or assess == "default":
+        return []
+    if isinstance(assess, str):
+        return [s.strip() for s in assess.split(",") if s.strip()]
+    return list(assess)
+
+
 async def explode_prose(text: str = "", record_id: str = "", record_ids: Optional[List[str]] = None,
                         ranges: Optional[List] = None, mode: str = "", layers: Optional[List[str]] = None,
-                        content_type: str = "text", include_text: bool = True, max_chars: int = 60000) -> Dict:
-    """The contract for a passage, a record, a slice of a record, or several records (as lanes)."""
+                        content_type: str = "text", include_text: bool = True, max_chars: int = 60000, assess=None) -> Dict:
+    """The contract for a passage, a record, a slice of a record, or several records (as lanes). `assess` runs the
+    prose scorers (True: the defaults; a list: those) and appends their assessments and receipts."""
     if isinstance(layers, str):
         layers = [s.strip() for s in layers.split(",") if s.strip()] or None
     ids = [r for r in (record_ids or []) if r] or ([record_id] if record_id else [])
@@ -584,6 +610,23 @@ async def explode_prose(text: str = "", record_id: str = "", record_ids: Optiona
         src["dataset_id"] = lanes[0].get("dataset_id", ""); src["source_id"] = lanes[0].get("source_id", "")
     if include_text:
         src["text"] = lanes[0]["text"] if not multi else {l["id"]: l["text"] for l in lanes}
+    want = _assess_arg(assess)
+    if want is not None:
+        # the scorers read the (first) lane's text — the slice when there is one — and see the layers' own
+        # assessments (a language id) before composing trust
+        one = rng[0] if len(rng) == 1 else None
+        seg = lanes[0]["text"][one[0]:one[1]] if one else lanes[0]["text"]
+        base = one[0] if one else 0
+        paras = [{"start": p["span"]["start"] - base, "end": p["span"]["end"] - base} for p in groups if p["kind"] == "paragraph"]
+        A = _assess()
+        n_prior = len(assessments)
+        res = await A.assess_prose_text(seg, paras, lanes[0]["id"], want or None, prior=assessments)
+        for a in res["assessments"][n_prior:]:
+            for ev in a.get("evidence") or []:   # the scorers' spans, back into the record's coordinates
+                if base and ev.get("span") and ev["span"].get("path") == lanes[0]["id"]:
+                    ev["span"]["start"] += base; ev["span"]["end"] += base
+        assessments = res["assessments"]
+        layer_rows += res["receipts"]
     return {"ok": True, "kind": "prose", "source": src, "layout": {"direction": "LR", "mode": mode},
             "layers": layer_rows, "groups": groups, "cards": cards, "edges": edges, "assessments": assessments,
             "counts": {"groups": len(groups), "cards": len(cards), "edges": len(edges), "assessments": len(assessments), "paragraphs": paras_total}}
@@ -634,7 +677,7 @@ def _read_repo_files(paths: List[str], max_files: int, max_bytes: int) -> Dict:
 
 
 async def explode_code(text: str = "", lang: str = "", path: str = "", paths: Optional[List[str]] = None, record_id: str = "",
-                       depth: int = 1, max_files: int = 40, max_bytes: int = 2000000, prefer_tree_sitter: bool = False) -> Dict:
+                       depth: int = 1, max_files: int = 40, max_bytes: int = 2000000, prefer_tree_sitter: bool = False, assess=None) -> Dict:
     # max_bytes: capability_orchestration.py alone is past 400k chars; a truncated file is a syntax error and every
     # symbol in it falls to a stub (seen live 2026-09-21) — 2M keeps the repo's biggest modules whole, and ast reads
     # them in well under a second
@@ -687,6 +730,13 @@ async def explode_code(text: str = "", lang: str = "", path: str = "", paths: Op
     doc = await loop.run_in_executor(None, lambda: core.explode_sources(sources, prefer_tree_sitter=prefer_tree_sitter, label=label))
     doc["source"]["skipped"] = skipped
     doc["source"]["text"] = {s["path"]: s["text"] for s in sources} if len(sources) > 1 else sources[0]["text"]
+    want = _assess_arg(assess)
+    if want is not None:
+        A = _assess()
+        res = await A.assess_code_doc(doc, {s["path"]: s["text"] for s in sources}, want or None, _repo_root() if not text and not record_id else "")
+        doc["assessments"] = res["assessments"]
+        doc["layers"] = list(doc["layers"]) + res["receipts"]
+        doc["counts"]["assessments"] = len(doc["assessments"])
     return doc
 
 
@@ -703,15 +753,16 @@ if _CAP_AVAILABLE:
                      "tree-sitter when installed (parses broken and partial code), tolerant patterns for JS / CSS / HTML; "
                      "every card says which. One of: text + lang (a snippet), path / paths (repo-relative files or a "
                      "directory; depth=1 pulls in the repo files they import), record_id (a fabric record holding code). "
+                     "assess (bool | list) runs the code scorers — complexity, smells, clones, tests, provenance, health. "
                      "Nothing is persisted. Output: {ok, kind: code|page, source:{paths, partial, errors, engines, "
                      "tree_sitter, text}, layout, layers, groups, cards, edges, assessments:[syntax, resolved], counts}."),
     )
     async def cap_code_explode(text: str = "", lang: str = "", path: str = "", paths: Optional[List[str]] = None, record_id: str = "",
-                               depth: int = 1, max_files: int = 40, prefer_tree_sitter: bool = False, trace_id=None) -> Dict:
+                               depth: int = 1, max_files: int = 40, prefer_tree_sitter: bool = False, assess=None, trace_id=None) -> Dict:
         if isinstance(paths, str):
             paths = [p.strip() for p in paths.split(",") if p.strip()]
         return await explode_code(text=text, lang=lang, path=path, paths=paths, record_id=record_id, depth=int(depth or 0),
-                                  max_files=max(1, min(200, int(max_files or 40))), prefer_tree_sitter=bool(prefer_tree_sitter))
+                                  max_files=max(1, min(200, int(max_files or 40))), prefer_tree_sitter=bool(prefer_tree_sitter), assess=assess)
 
     @capability(
         "nlp.explode.prose",
@@ -724,15 +775,16 @@ if _CAP_AVAILABLE:
                      "as lanes). mode: 'position' (paragraphs down, entity types across — the default for a passage "
                      "or a slice) | 'type' (a band per entity type — the default for a whole record). layers: list "
                      "of layer ids to run (nlp.explode.layers lists them; default = the layers on by default). "
-                     "include_text (bool=True) carries the source text back for click-to-source. "
+                     "include_text (bool=True) carries the source text back for click-to-source. assess (bool | list) runs the "
+                     "prose scorers (assess.scorers) and appends their verdicts and receipts. "
                      "Output: {ok, kind, source:{record_id, ranges, partial, label, text_hash, text}, layout, "
                      "layers:[{id, label, by, where, on, count, ms, error?}], groups, cards, edges, assessments, counts}."),
     )
     async def cap_explode_prose(text: str = "", record_id: str = "", record_ids: Optional[List[str]] = None,
                                 ranges: Optional[List] = None, mode: str = "", layers: Optional[List[str]] = None,
-                                content_type: str = "text", include_text: bool = True, trace_id=None) -> Dict:
+                                content_type: str = "text", include_text: bool = True, assess=None, trace_id=None) -> Dict:
         return await explode_prose(text=text, record_id=record_id, record_ids=record_ids, ranges=ranges, mode=mode,
-                                   layers=layers, content_type=content_type, include_text=bool(include_text))
+                                   layers=layers, content_type=content_type, include_text=bool(include_text), assess=assess)
 
     @capability(
         "nlp.explode.layers",

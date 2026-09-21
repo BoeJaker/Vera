@@ -856,9 +856,7 @@ def explode_sources(sources: List[Dict], *, max_external: int = 40, prefer_tree_
                             elif cands:
                                 target = cands[0]["id"]; res = "heuristic"; lbl = "one of %d by name" % len(cands)
                 if not target:
-                    if via and via not in ("self", "cls", "this", "?", "()"):
-                        n_ext += 1
-                    continue
+                    continue                       # a method on a value (`name.strip()`) is not an external symbol
                 if res == "external":
                     n_ext += 1
                 add_edge(s["id"], target, "CALLS", res, "code.calls", lbl, p["engine"])
