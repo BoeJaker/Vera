@@ -61,6 +61,50 @@ def test_the_groups_can_be_narrowed_from_the_environment():
     assert sg.read_through_groups(SBX) == sg.READ_THROUGH_GROUPS
 
 
+def test_the_hook_is_armed_by_the_serving_app_not_by_the_import(monkeypatch):
+    """Importing the orchestration module never arms the read-through, whatever the environment says: the gate's
+    ephemeral pytest container is started with VERA_IS_DEV_SANDBOX=1 like any sandbox, and armed at import the hook
+    answered every monkeypatched reader from prod's live estate. lifespan() arms it; a bare import runs the local
+    function. The registry is only populated in-container (Vera.vera resolves to this checkout there)."""
+    import asyncio, os, sys
+    import pytest
+    try:
+        from Vera.vera import capability_orchestration as co
+    except Exception:
+        pytest.skip("app module not importable here")
+    here = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
+    if not os.path.realpath(getattr(co, "__file__", "")).startswith(here):
+        pytest.skip("app module not importable from THIS checkout here")
+
+    assert co.read_through_url() == "", "a bare import must not arm the read-through"
+    seen = []
+
+    async def fake_upstream(name, kw):
+        seen.append(name)
+        return {"from": "prod"}
+    monkeypatch.setattr(co, "_upstream_read", fake_upstream)
+
+    name = "obs.readthrough.probe.status"          # an estate group, a reading word, GET: the policy forwards it
+    assert sg.read_through_allowed(name, "GET", SBX) is True
+
+    @co.capability(name, description="probe", http_method="GET", http_path="/obs/readthrough/probe", silent=True, memory="off")
+    async def _probe():
+        return {"from": "local"}
+    monkeypatch.setattr(co, "_READ_THROUGH_URL", "")   # restore whatever this leaves behind
+
+    assert asyncio.run(_probe()) == {"from": "local"}
+    assert seen == [], "disarmed, the local function answers"
+
+    assert co.arm_read_through(SBX) == sg.DEFAULT_UPSTREAM_READ_URL
+    assert co.read_through_url() == sg.DEFAULT_UPSTREAM_READ_URL
+    assert asyncio.run(_probe()) == {"from": "prod"}
+    assert seen == [name], "armed, the serving sandbox reads prod"
+
+    assert co.arm_read_through({}) == "", "prod (not a sandbox) never arms"
+    assert co.arm_read_through(dict(SBX, VERA_UPSTREAM_READ_URL="off")) == ""
+    assert asyncio.run(_probe()) == {"from": "local"}
+
+
 def test_widget_read_runs_many_readings_in_one_call(monkeypatch):
     """widget.read: each call runs as /mcp/call would, one failed reading never fails the batch, unknown names say so."""
     import asyncio, sys, types
