@@ -15,8 +15,9 @@ import asyncio
 import importlib.util
 import json
 import os
-import sys
 import types
+
+from orchestration_stub import stubbed_orchestration
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 
@@ -79,12 +80,10 @@ def _load_module():
     orch.emit_event = _emit
     orch.now_iso = lambda: "2026-09-11T00:00:00+00:00"
     orch.register_ui = lambda *a, **k: orch.UI.__setitem__(a[0], {"args": a, "kw": k})
-    pkg = types.ModuleType("Vera"); pkg.__path__ = []
-    sub = types.ModuleType("Vera.vera"); sub.__path__ = []
-    sys.modules["Vera"] = pkg; sys.modules["Vera.vera"] = sub; sys.modules["Vera.vera.capability_orchestration"] = orch
     spec = importlib.util.spec_from_file_location("widget_registry_under_test", os.path.join(ROOT, "vera", "widgets", "widget_registry.py"))
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    with stubbed_orchestration(orch):
+        spec.loader.exec_module(mod)
     return mod, orch
 
 
