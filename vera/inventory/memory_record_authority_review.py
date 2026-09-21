@@ -120,7 +120,7 @@ SOURCE_ASSERTIONS = {
         "class ChromaBackend(MemoryBackend):", "class Neo4jBackend(MemoryBackend):",
         "class HybridMemoryStore:", "MEMORY.register(PostgresBackend())",
         "MEMORY.register(ChromaBackend())", "MEMORY.register(Neo4jBackend())",
-        "tasks = {name: b.store(record) for name, b in self._backends.items()}",
+        "asyncio.wait_for(b.store(record), _BACKEND_OP_TIMEOUT_S)",
         "for b in self._backends.values():",
     ),
     "vera/fabric/record_revision.py": ("class RecordRevision:",),

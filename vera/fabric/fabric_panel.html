@@ -36,10 +36,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);
   border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;
   font-family:var(--sans);font-size:11px;font-weight:500;transition:all .14s;white-space:nowrap}
 .btn:hover{border-color:var(--acc);color:var(--acc);background:rgba(90,158,143,.08)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
-.btn.primary:hover{filter:brightness(1.1)}
+.btn.primary,.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
+.btn.primary:hover,.btn.pri:hover{filter:brightness(1.1)}
 .btn.teal{background:rgba(0,212,170,.1);border-color:var(--acc2);color:var(--acc2)}
-.btn.danger{border-color:var(--err);color:var(--err)}
+.btn.danger,.btn.red,.btn.err-btn,.btn.no{border-color:var(--err);color:var(--err)}
 .btn.sm{padding:2px 7px;font-size:10px}
 .btn:disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
 .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px}
@@ -403,7 +403,7 @@ code{font-family:var(--mono);font-size:.9em}
         </div>
         <div>
           <div class="row"><label>Dataset</label><input id="fsSrcDs" placeholder="auto" style="flex:1;font-size:11px"></div>
-          <div class="row"><label>Tags</label><input id="fsSrcTags" placeholder="news, tech" style="flex:1;font-size:11px"></div>
+          <div class="row"><label>Tags</label><input id="fsSrcTags" data-select="tags" data-select-new data-select-url="/fabric/sources" data-select-path="sources[].tags[]" placeholder="news, tech" style="flex:1;font-size:11px"></div>
           <div class="row"><label></label>
             <label style="font-size:10px;color:var(--dim2);display:flex;align-items:center;gap:5px;cursor:pointer">
               <input type="checkbox" id="fsAutoStitch"> Auto-stitch new records into the graph on each pull
@@ -643,7 +643,7 @@ code{font-family:var(--mono);font-size:.9em}
           <input id="iotSerialDs" placeholder="auto: ts.serial.port" style="flex:1;font-size:11px">
         </div>
         <div class="row"><label>Tags</label>
-          <input id="iotSerialTags" placeholder="sensor, esp32, temperature" style="flex:1;font-size:11px">
+          <input id="iotSerialTags" data-select="tags" data-select-new data-select-url="/fabric/sources" data-select-path="sources[].tags[]" placeholder="sensor, esp32, temperature" style="flex:1;font-size:11px">
         </div>
         <div style="display:flex;gap:5px;margin-top:6px">
           <button class="btn primary sm" onclick="iotSerialRead()">▶ Read Serial</button>
@@ -699,7 +699,7 @@ code{font-family:var(--mono);font-size:.9em}
         <div style="font-size:10px;font-weight:600;color:var(--acc2);margin-bottom:8px">Manual Time-Series Ingest</div>
         <div class="row"><label>Dataset</label><input id="tsManDs" placeholder="ts.my_sensor" style="flex:1;font-size:11px"></div>
         <div class="row"><label>Source</label><input id="tsManSrc" placeholder="manual" value="manual" style="flex:1;font-size:11px"></div>
-        <div class="row"><label>Tags</label><input id="tsManTags" placeholder="temperature, esp32" style="flex:1;font-size:11px"></div>
+        <div class="row"><label>Tags</label><input id="tsManTags" data-select="tags" data-select-new data-select-url="/fabric/sources" data-select-path="sources[].tags[]" placeholder="temperature, esp32" style="flex:1;font-size:11px"></div>
         <div style="font-size:9.5px;color:var(--dim2);margin-bottom:4px">Rows (JSON array of objects with ts, field, value):</div>
         <textarea id="tsManRows" style="height:90px;font-family:var(--mono);font-size:10px" placeholder='[{"ts":"2024-01-01T12:00:00Z","field":"temperature","value":23.5},...]'></textarea>
         <button class="btn primary sm" style="margin-top:6px" onclick="tsManualIngest()">Ingest</button>
@@ -806,7 +806,7 @@ code{font-family:var(--mono);font-size:.9em}
           <div class="row"><label>Dataset</label><input id="stealthDs" placeholder="auto" style="flex:1;font-size:11px"></div>
         </div>
         <div class="row"><label>Topic filter</label><input id="stealthTopic" placeholder="e.g. Pokémon evolution (optional)" style="flex:1;font-size:11px"></div>
-        <div class="row"><label>Tags</label><input id="stealthTags" placeholder="wiki, pokemon" style="flex:1;font-size:11px"></div>
+        <div class="row"><label>Tags</label><input id="stealthTags" data-select="tags" data-select-new data-select-url="/fabric/sources" data-select-path="sources[].tags[]" placeholder="wiki, pokemon" style="flex:1;font-size:11px"></div>
         <div style="display:flex;gap:5px;margin-top:6px">
           <button class="btn primary sm" onclick="stealthCrawl()">🕷 Crawl</button>
           <button class="btn sm" onclick="stealthFetchOne()">Fetch single URL</button>
@@ -1285,7 +1285,7 @@ code{font-family:var(--mono);font-size:.9em}
         <div>
           <div class="row"><label>Name</label><input id="skName" placeholder="e.g. Threat Intel Knowledge" style="flex:1;font-size:11px"></div>
           <div class="row"><label>Description</label><input id="skDesc" placeholder="auto-generated if blank" style="flex:1;font-size:11px"></div>
-          <div class="row"><label>Tags</label><input id="skTags" placeholder="security, threat" style="flex:1;font-size:11px"></div>
+          <div class="row"><label>Tags</label><input id="skTags" data-select="tags" data-select-new data-select-url="/fabric/sources" data-select-path="sources[].tags[]" placeholder="security, threat" style="flex:1;font-size:11px"></div>
         </div>
         <div>
           <div class="row"><label>Dataset(s)</label>
@@ -1315,7 +1315,7 @@ code{font-family:var(--mono);font-size:.9em}
           <div class="row"><label>Name</label><input id="obName" placeholder="e.g. Threat Intel Schema" style="flex:1;font-size:11px"></div>
           <div class="row"><label>Domain</label><input id="obDomain" placeholder="e.g. security, finance, biology" value="general" style="flex:1;font-size:11px"></div>
           <div class="row"><label>Description</label><input id="obDesc" placeholder="auto-generated if blank" style="flex:1;font-size:11px"></div>
-          <div class="row"><label>Tags</label><input id="obTags" placeholder="comma-separated" style="flex:1;font-size:11px"></div>
+          <div class="row"><label>Tags</label><input id="obTags" data-select="tags" data-select-new data-select-url="/fabric/sources" data-select-path="sources[].tags[]" placeholder="comma-separated" style="flex:1;font-size:11px"></div>
         </div>
         <div>
           <div class="row"><label>Dataset(s)</label>
@@ -6126,6 +6126,7 @@ window.addEventListener('vg:action', function(ev){
 </script>
 <link rel="stylesheet" href="/ui/vera-panel.css">
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/elements/flow_builder.js"></script>
 <script src="/ui/elements/flow_caps.js"></script>
@@ -8202,5 +8203,6 @@ function qrViewInGraph(recId, dsId) {
 </script>
 <script src="/ui/vera-graph-panel-loom.js"></script>
 <script src="/ui/vera-graph-panel-worldview.js"></script>
+<script src="/ui/vera-graph-panel-explode.js"></script>
 <script src="/ui/vera-graph-panel-discover.js"></script>
 <script src="/ui/vera-graph-panel-api.js"></script>

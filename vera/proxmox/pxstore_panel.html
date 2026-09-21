@@ -41,9 +41,9 @@ a{color:var(--ac)}
 #top select{width:auto;min-width:110px;max-width:40vw}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:6px;background:var(--s3);border:1px solid var(--bd2);color:var(--t1);font-size:12px;white-space:nowrap}
 .btn:hover{border-color:var(--ac)}
-.btn.pri{background:var(--ac);border-color:var(--ac);color:#06121c;font-weight:700}
+.btn.pri,.btn.primary{background:var(--ac);border-color:var(--ac);color:#06121c;font-weight:700}
 .btn.sm{padding:5px 8px;font-size:11px}
-.btn.danger{color:var(--err);border-color:var(--err)}
+.btn.danger,.btn.red,.btn.err-btn,.btn.no{color:var(--err);border-color:var(--err)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .spacer{flex:1}
 #body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px;padding-bottom:60px}
@@ -201,10 +201,12 @@ details.fold .twrap{background:var(--bg1)}
       <div class="frow" id="vfsSetup"></div>
 
       <div class="section-h">Estate tree <span class="kv" id="vfsEstateLab"></span>
-        <button class="btn sm" style="margin-left:10px" onclick="P.vfsEstateSync()">↺ Rebuild now</button></div>
+        <button class="btn sm" style="margin-left:10px" onclick="P.vfsEstateSync()">↺ Rebuild now</button>
+        <button class="btn sm" id="vfsRwApply" style="margin-left:6px;display:none" onclick="P.vfsRwApply()" title="Write /etc/vfs/estate-rw.list on VFS-02 and rebuild - the plan is shown first">Apply writable set</button>
+        <span class="kv" id="vfsRwReach" style="margin-left:auto"></span></div>
       <div class="twrap"><table id="vfsEstateTbl">
-        <thead><tr><th>Guest</th><th>Kind</th><th>Source</th></tr></thead>
-        <tbody><tr><td colspan="3" class="empty">—</td></tr></tbody>
+        <thead><tr><th>Guest</th><th>Kind</th><th>Source</th><th title="Mounted writable under estate-rw (@vfs-admin only)">Writable</th></tr></thead>
+        <tbody><tr><td colspan="4" class="empty">—</td></tr></tbody>
       </table></div>
       <div id="vfsSkipped" class="kv" style="margin:-6px 2px 12px"></div>
 
@@ -924,15 +926,15 @@ const VFS_SVC={'smbd':'SMB','nfs-server':'NFS','wg-quick@wg0':'WireGuard door',
   'syncthing@syncthing':'Syncthing','nginx':'Setup endpoint','vfs-estate-sync.timer':'Estate timer'};
 const soft = p => p.catch(e=>({error:e.message}));
 P.fsLoad = async ()=>{
-  const [st,sh,es,pe]=await Promise.all([
+  const [st,sh,es,pe,rw]=await Promise.all([
     soft(api('/vfs/status','POST',{})), soft(api('/vfs/shares','POST',{})),
-    soft(api('/vfs/estate/list','POST',{})), soft(api('/vfs/peer/list','POST',{}))]);
+    soft(api('/vfs/estate/list','POST',{})), soft(api('/vfs/peer/list','POST',{})), soft(api('/vfs/estate/rw','POST',{}))]);
   if(st.error){
     $('vfsSvc').innerHTML=`<div class="empty">${/HTTP 404/.test(st.error)
       ?'The file fabric controls (vfs.*) are not loaded in this Vera build.'
       :'VFS-02 unreachable: '+esc(st.error)}</div>`;
   }else P.renderVfsStatus(st);
-  P.renderVfsShares(sh); P.renderVfsEstate(es); P.renderVfsPeers(pe);
+  P.renderVfsShares(sh); P.state.vfsRw=rw&&!rw.error?rw:null; P.renderVfsEstate(es); P.renderVfsPeers(pe);
   P.fsStatus();
 };
 P.renderVfsStatus = st=>{
@@ -970,12 +972,17 @@ P.renderVfsShares = sh=>{
 };
 P.renderVfsEstate = es=>{
   const tb=$('vfsEstateTbl').querySelector('tbody');
-  if(es.error){ tb.innerHTML=`<tr><td colspan="3" class="empty">${esc(es.error)}</td></tr>`; $('vfsEstateLab').textContent=''; $('vfsSkipped').innerHTML=''; return; }
+  if(es.error){ tb.innerHTML=`<tr><td colspan="4" class="empty">${esc(es.error)}</td></tr>`; $('vfsEstateLab').textContent=''; $('vfsSkipped').innerHTML=''; return; }
   const rows=(es.entries||[]).slice().sort((a,b)=>String(a.name).localeCompare(String(b.name)));
-  $('vfsEstateLab').textContent=`· ${rows.length} filesystems, read-only`;
-  tb.innerHTML=rows.map(e=>`<tr><td><b>${esc(e.name)}</b></td>
+  const rw=P.state.vfsRw||{}, wanted=new Set(rw.names||[]), live=new Set((rw.rw||[]).map(x=>x.name));
+  $('vfsEstateLab').textContent=`· ${rows.length} filesystems, read-only`+(wanted.size?` · ${wanted.size} writable in estate-rw`:'');
+  const reach=rw.share||null;
+  $('vfsRwReach').innerHTML=reach&&reach.found?`estate-rw: <b>${esc(reach.valid_users||'')}</b> · ${reach.door_only?'<span class="pill ok" title="Only devices on the VFS WireGuard door can open it">door only</span>':'<span class="pill warn" title="Any network Samba listens on">any network</span>'} <button class="btn sm" onclick="P.vfsRwDoor(${reach.door_only?'false':'true'})">${reach.door_only?'Open to LAN':'Door only'}</button>`:'';
+  tb.innerHTML=rows.map(e=>`<tr><td><b>${veraEstate.chip(veraEstate.refFor({vmid:(e.source.match(/subvol-(\d+)-/)||[])[1]}),e.name)}</b></td>
     <td><span class="pill ${e.kind==='sshfs'?'warn':'dim'}">${e.kind==='sshfs'?'running VM (sshfs)':'dataset'}</span></td>
-    <td class="kv">${esc(e.source)}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">empty — Rebuild now</td></tr>';
+    <td class="kv">${esc(e.source)}</td>
+    <td>${e.kind==='bind'?`<label class="kv" style="cursor:pointer"><input type="checkbox" class="vfs-rw-cb" data-name="${esc(e.name)}" ${wanted.has(e.name)?'checked':''} onchange="P.vfsRwChanged()"> ${live.has(e.name)?'<span class="pill ok">mounted rw</span>':wanted.has(e.name)?'<span class="pill warn">listed, not yet mounted</span>':''}</label>`:'<span class="kv">—</span>'}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">empty — Rebuild now</td></tr>';
+  P.vfsRwChanged();
   const sk=es.skipped||[];
   $('vfsSkipped').innerHTML=sk.length?`Not in the tree (${sk.length}): `+sk.map(s=>typeof s==='string'?esc(s)
     :`<span title="${esc(s.reason||'')}">${esc(s.name||'?')}</span>`).join(' · '):'';
@@ -1007,6 +1014,24 @@ P.vfsPeerRemove = async name=>{
     if(r.error) return toast(r.error,'err');
     toast('Revoked '+name); P.renderVfsPeers(await soft(api('/vfs/peer/list','POST',{})));
   }catch(e){ toast(e.message,'err'); }
+};
+// The writable set: ticked names vs the list on the server; Apply shows the plan first.
+P.vfsRwChanged = ()=>{
+  const want=[...document.querySelectorAll('.vfs-rw-cb:checked')].map(c=>c.dataset.name).sort();
+  const cur=((P.state.vfsRw||{}).names||[]).slice().sort();
+  const b=$('vfsRwApply'); if(!b) return;
+  const dirty=JSON.stringify(want)!==JSON.stringify(cur);
+  b.style.display=P.state.vfsRw?'':'none'; b.classList.toggle('pri',dirty); b.disabled=!dirty;
+  b.textContent=dirty?`Apply writable set (${want.length})`:'Writable set applied';
+};
+P.vfsRwApply = async ()=>{
+  const names=[...document.querySelectorAll('.vfs-rw-cb:checked')].map(c=>c.dataset.name);
+  const r=await veraEstate.plan('/vfs/estate/rw/set',{names},'Writable estate: '+(names.length?names.join(', '):'none'),{where:'VFS-02'});
+  if(r&&r.ok){ toast(`Writable: ${(r.names||[]).length} guest(s)`); P.state.vfsRw=await soft(api('/vfs/estate/rw','POST',{})); P.renderVfsEstate(await soft(api('/vfs/estate/list','POST',{}))); }
+};
+P.vfsRwDoor = async (enable)=>{
+  const r=await veraEstate.plan('/vfs/estate/rw/door_only',{enable},enable?'Limit estate-rw to the VFS WireGuard door':'Open estate-rw to every network',{where:'VFS-02 (smb.conf, testparm-checked, no sessions dropped)'});
+  if(r&&r.ok){ toast('estate-rw reach: '+(enable?'door only':'any network')); P.state.vfsRw=await soft(api('/vfs/estate/rw','POST',{})); P.renderVfsEstate(await soft(api('/vfs/estate/list','POST',{}))); }
 };
 P.vfsEstateSync = async ()=>{
   toast('Rebuilding the estate tree on VFS-02…');

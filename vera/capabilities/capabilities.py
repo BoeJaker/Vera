@@ -2546,7 +2546,7 @@ async def ollama_generate_raw(
 ):
     import time as _time
     from Vera.vera.capability_orchestration import (
-        _ollama_log_append, _ollama_caller_info,
+        _ollama_log_append, _ollama_caller_info, _ollama_slot,
     )
 
     chosen=pick_instance(prefer_gpu=prefer_gpu,instance_id=instance_id or None,model=model)
@@ -2579,9 +2579,13 @@ async def ollama_generate_raw(
 
     inst["in_use"]+=1
     try:
-        async with httpx.AsyncClient(timeout=120) as c:
-            r=await c.post(f"{inst['url']}/api/generate",json=payload); r.raise_for_status()
-            d=r.json()
+        # Hold the shared GPU slot: this picks a node with prefer_gpu and then
+        # generates, so without the gate it runs alongside whatever already has
+        # the slot on a gpu_cap=1 node.
+        async with _ollama_slot(chosen):
+            async with httpx.AsyncClient(timeout=120) as c:
+                r=await c.post(f"{inst['url']}/api/generate",json=payload); r.raise_for_status()
+                d=r.json()
         _elapsed = round(_time.time() - _t0, 2)
         log.info("ollama_done [%s] %.2fs caller=capabilities:ollama_generate_raw", _req_id, _elapsed)
         _ollama_log_append({
@@ -2693,6 +2697,7 @@ async def llm_stream_endpoint(request: _Request):
         import time as _time
         from Vera.vera.capability_orchestration import (
             emit_event as _emit_event, _ollama_log_append, now_iso as _now_iso,
+            _ollama_slot,
         )
         _req_id = str(uuid.uuid4())[:12]
         _t0 = _time.monotonic()
@@ -2716,7 +2721,10 @@ async def llm_stream_endpoint(request: _Request):
         full = []
         _error_text = ""
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0)) as c:
+            # Same reason as ollama_generate_raw: routed to a node, so it must
+            # queue with everything else rather than generate beside it.
+            async with _ollama_slot(chosen):
+              async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0)) as c:
                 async with c.stream("POST", f"{url}/api/generate", json=ollama_body) as resp:
                     if resp.status_code != 200:
                         err = await resp.aread()

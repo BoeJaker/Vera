@@ -43,15 +43,47 @@ from fastapi.responses import HTMLResponse
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import APP, capability, emit_event, register_ui
 from Vera.vera.integrations.infrastructure_effects import observe_infrastructure_effect
-from Vera.vera.provisioning.components_core import rewrite_host, native_worker_cmd
+from Vera.vera.provisioning.components_core import (
+    rewrite_host, native_worker_cmd,
+    EDGE_DIR_CANDIDATES as _EDGE_DIR_CANDIDATES,
+    edge_dir_probe_cmd, parse_edge_dir, pidfile_lookup_cmd,
+)
 
 log = logging.getLogger("vera.provision.components")
 _HERE = Path(__file__).parent
 # .../Vera/vera/provisioning/components_capabilities.py → parents[2] == repo root
 _REPO = Path(__file__).resolve().parents[2]
 
-_EDGE_DIR = "$HOME/.vera/edge"          # remote working dir for deployed components
+_EDGE_DIR = "$HOME/.vera/edge"          # preferred remote working dir
 _VENV = "$HOME/.vera/edge/venv"         # shared venv for the python components
+
+async def _resolve_edge_dir(host_id: str) -> Dict[str, Any]:
+    """Pick a writable working directory on the target, in preference order.
+
+    Returns {ok, dir, venv, tried}. The candidate list and the probe itself live
+    in components_core so they can be unit-tested without booting Vera, and so
+    status/stop provably search the same places the deploy wrote to.
+    """
+    res = await _ssh(host_id, edge_dir_probe_cmd(), timeout=40)
+    chosen = parse_edge_dir(res.get("stdout") or "")
+    if chosen:
+        return {"ok": True, "dir": chosen, "venv": f"{chosen}/venv",
+                "tried": list(_EDGE_DIR_CANDIDATES)}
+    # Distinguish "could not ask" from "asked, and nowhere was writable".
+    # Collapsing the two sends the reader hunting for a permissions problem on
+    # the target when the real answer is that SSH never ran (observed: a
+    # sandbox without asyncssh reported an unwritable filesystem it had never
+    # reached).
+    if not res.get("ok"):
+        return {"ok": False, "dir": "", "venv": "",
+                "tried": list(_EDGE_DIR_CANDIDATES),
+                "error": "could not probe the target over SSH: "
+                         f"{res.get('error') or res.get('stderr') or 'no response'}"}
+    return {"ok": False, "dir": "", "venv": "",
+            "tried": list(_EDGE_DIR_CANDIDATES),
+            "error": "no writable working directory on the target "
+                     f"(tried {', '.join(_EDGE_DIR_CANDIDATES)}) — "
+                     "$HOME is often unwritable on an unprivileged LXC node"}
 
 
 def _cap(name: str):
@@ -107,24 +139,74 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         # 8771 — clear of the node agent (8770) and onnx_runtime (8772).
         "label": "NLP Server", "port": 8771, "python": True,
         "files": [("edge/nlp_server.py", "nlp_server.py"),
-                  # Shipped so the node and the Vera host share ONE
-                  # implementation of chunking and offset merging.
-                  ("vera/research/nlp_dispatch_core.py", "nlp_dispatch_core.py")],
-        "pip": ["optimum[onnxruntime]", "transformers", "fastembed",
-                "fastapi", "uvicorn"],
+                  # Shipped so the node and the Vera host share ONE registry and
+                  # ONE implementation of chunking and offset merging.
+                  ("vera/research/nlp_dispatch_core.py", "nlp_dispatch_core.py"),
+                  # The exporter that populates the shared model store. It runs
+                  # once, on a box with torch and internet — not at serve time.
+                  ("edge/nlp_export_models.py", "nlp_export_models.py")],
+        # `optimum[onnxruntime]` provides the ORTModelFor* classes that LOAD the
+        # pre-exported ONNX, and it pulls torch as a hard dependency — measured,
+        # not assumed: installing it fetched torch 2.14 (a 554MB wheel). So the
+        # runtime is not torch-free. What pre-exporting still buys is the thing
+        # that actually matters here: no CONVERSION and no network at request
+        # time, which is what makes a read-only model store workable at all.
+        #
+        # transformers is pinned to the major version the models were exported
+        # under. Left unpinned, this install pulled transformers 5.x against
+        # artifacts built with 4.x — a mismatch that is not worth discovering
+        # on a production node.
+        # ORDERED, separate pip invocations. A single flat list cannot express
+        # this: torch MUST come from the CPU index first, because
+        # optimum[onnxruntime] depends on torch and pip would otherwise resolve
+        # the default CUDA build — measured at 554MB for torch plus another
+        # 553MB of nvidia cudnn, for a server that runs ONNX on CPU only.
+        # transformers is pinned to the major version the models were exported
+        # under: optimum 2.1.0 against transformers 5.x fails at load with
+        # "cannot import name FLAX_WEIGHTS_NAME".
+        "pip_steps": [
+            ["torch", "--index-url", "https://download.pytorch.org/whl/cpu"],
+            ["optimum[onnxruntime]", "transformers>=4.57,<5", "onnxruntime",
+             "sentencepiece", "protobuf", "numpy", "fastembed",
+             "fastapi", "uvicorn"],
+        ],
         "run": "{py} nlp_server.py serve --host 0.0.0.0 --port {port}",
+        # The model store is a Proxmox bind-mount, which SSH cannot create.
+        # Check it BEFORE installing ~2GB of wheels, and say exactly how to fix
+        # it: otherwise the first request fails with a model-not-found long
+        # after the deploy reported success.
+        "precheck": {
+            "cmd": ('[ -d /opt/nlp-models ] && ls -d /opt/nlp-models/*/ '
+                    '>/dev/null 2>&1 && echo VERA_PRECHECK_OK'),
+            "why": ("the shared NLP model store is not mounted at "
+                    "/opt/nlp-models on this node. On the Proxmox host: "
+                    "pct set <ctid> -mp2 /tank_sdh/vera-store/models/nlp,"
+                    "mp=/opt/nlp-models,ro=1 && pct reboot <ctid>. "
+                    "Populate it once with edge/nlp_export_models.py."),
+        },
         "env": {
             # ONNX Runtime will otherwise take every core it can see and starve
             # the ollama runner sharing this container. This is the setting that
             # decides whether NLP on the GPU node is free or ruinous.
             "VERA_NLP_THREADS": "4",
             "VERA_NLP_PORT": "{port}",
+            # The shared ZFS model store, bind-mounted read-only into the node
+            # alongside ollama's own blobs.
+            "VERA_NLP_MODEL_DIR": "/opt/nlp-models",
+            # /root is unreachable on these unprivileged LXC nodes (nobody:root
+            # 0700), so anything that touches a default cache under $HOME dies
+            # with a permission error. ollama-vera.service sets HOME=/ for the
+            # same reason.
+            "HOME": "/",
         },
         "heavy": True,
-        "desc": "Text-level NLP for nlp.ner / nlp.classify / nlp.rerank, so the "
-                "2-core Vera host never runs them. OntoNotes-v5 NER (has DATE), "
-                "chunks whole documents rather than truncating, and caps its own "
-                "thread count so the node keeps inferring. Large first install.",
+        "desc": "Text-level NLP so the 2-core Vera host never runs it: NER "
+                "(OntoNotes-v5, has DATE, plus multilingual), sentiment, "
+                "zero-shot classification, extractive QA, language id, "
+                "embeddings and reranking. Loads pre-exported ONNX from the "
+                "shared read-only model store, chunks whole documents rather "
+                "than truncating, and caps its thread count so the node keeps "
+                "inferring.",
     },
     # ollama_wrapper was removed as a deployable component. It proxied :11435 in
     # front of Ollama to make requests visible, but it was never deployed, it
@@ -189,9 +271,9 @@ def _push_cmd(content: bytes, dest: str) -> str:
     return f"printf %s {shlex.quote(b64)} | base64 -d > {dest}"
 
 
-def _py_bin(install_deps: bool) -> str:
+def _py_bin(install_deps: bool, venv: str = "") -> str:
     # Use the shared venv when we created/maintain one, else the system python3.
-    return f'"{_VENV}/bin/python"' if install_deps else "python3"
+    return f'"{venv or _VENV}/bin/python"' if install_deps else "python3"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -256,13 +338,11 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
                       "component": component})
 
     # 1) push files ───────────────────────────────────────────────────────────
-    parts = [f"mkdir -p {_EDGE_DIR}"]
-    for rel, dest in comp["files"]:
-        content = _read_local(rel)
-        if content is None:
-            return {"ok": False, "error": f"bundled file missing in repo: {rel}"}
-        parts.append(_push_cmd(content, f"{_EDGE_DIR}/{dest}"))
-        out["pushed"].append(dest)
+    # The effect shadow is recorded BEFORE any SSH, and exactly once. The
+    # deploy's intent is fully known here, and the invariant is enforced by
+    # test_component_deploy_observes_before_ssh_without_forwarding_controls —
+    # the working-directory probe below is itself an SSH call, so it must not
+    # run first.
     shadow = observe_infrastructure_effect(
         provider="ssh", target_ref=host_id, resource_ref=component,
         operation_ref=json.dumps({
@@ -272,6 +352,36 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
         idempotency_key=idempotency_key,
         approval_receipt_ref=approval_receipt_ref, retry=retry)
     out["effect_shadow"] = shadow
+
+    # Never assume $HOME is writable — see _EDGE_DIR_CANDIDATES for why two of
+    # the three ollama nodes cannot use it at all.
+    edge = await _resolve_edge_dir(host_id)
+    if not edge.get("ok"):
+        out["ok"] = False
+        out["error"] = edge.get("error", "no writable working directory")
+        out["edge_dir_tried"] = edge.get("tried")
+        return out
+    edge_dir, venv = edge["dir"], edge["venv"]
+    out["edge_dir"] = edge_dir
+
+    # 0b) component precheck — fail before spending the install, not after
+    pre = comp.get("precheck") or {}
+    if pre.get("cmd"):
+        pres = await _ssh(host_id, pre["cmd"], timeout=40)
+        if "VERA_PRECHECK_OK" not in (pres.get("stdout") or ""):
+            out["ok"] = False
+            out["error"] = f"precheck failed: {pre.get('why', 'unmet requirement')}"
+            out["precheck"] = False
+            return out
+        out["precheck"] = True
+
+    parts = [f"mkdir -p {edge_dir}"]
+    for rel, dest in comp["files"]:
+        content = _read_local(rel)
+        if content is None:
+            return {"ok": False, "error": f"bundled file missing in repo: {rel}"}
+        parts.append(_push_cmd(content, f"{edge_dir}/{dest}"))
+        out["pushed"].append(dest)
     res = await _ssh(host_id, " && ".join(parts), timeout=120)
     if not res.get("ok"):
         out["ok"] = False
@@ -280,15 +390,21 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
 
     # 2) install deps (optional) ───────────────────────────────────────────────
     if install_deps and comp["python"]:
-        steps = [f'python3 -m venv "{_VENV}" --system-site-packages',
-                 f'"{_VENV}/bin/pip" install -U pip wheel']
+        steps = [f'python3 -m venv "{venv}" --system-site-packages',
+                 f'"{venv}/bin/pip" install -U pip wheel']
         if comp.get("requirements"):
             req = _read_local(comp["requirements"])
             if req is not None:
-                steps.append(_push_cmd(req, f"{_EDGE_DIR}/requirements.txt"))
-                steps.append(f'"{_VENV}/bin/pip" install -r {_EDGE_DIR}/requirements.txt')
+                steps.append(_push_cmd(req, f"{edge_dir}/requirements.txt"))
+                steps.append(f'"{venv}/bin/pip" install -r {edge_dir}/requirements.txt')
+        elif comp.get("pip_steps"):
+            # Separate invocations, in order — some components need an index or
+            # a constraint applied to one package and not the rest.
+            for group in comp["pip_steps"]:
+                steps.append(f'"{venv}/bin/pip" install ' +
+                             " ".join(shlex.quote(p) for p in group))
         elif comp.get("pip"):
-            steps.append(f'"{_VENV}/bin/pip" install ' + " ".join(shlex.quote(p) for p in comp["pip"]))
+            steps.append(f'"{venv}/bin/pip" install ' + " ".join(shlex.quote(p) for p in comp["pip"]))
         steps.append("echo VERA_DEPS_DONE")
         dres = await _ssh(host_id, " && ".join(steps), timeout=int(timeout or 900))
         out["installed"] = "VERA_DEPS_DONE" in (dres.get("stdout", "") or "")
@@ -301,14 +417,14 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
 
     # 3) launch (optional) ─────────────────────────────────────────────────────
     if launch:
-        py = _py_bin(install_deps)
+        py = _py_bin(install_deps, venv)
         run_cmd = comp["run"].format(py=py, port=port, vera_url=shlex.quote(vera_url) if vera_url else "")
         env = {k: v.format(port=port) for k, v in (comp.get("env") or {}).items()}
         if systemd:
-            lres = await _launch_systemd(host_id, rec, component, comp, run_cmd, env, sudo)
+            lres = await _launch_systemd(host_id, rec, component, comp, run_cmd, env, sudo, edge_dir)
             out["mode"] = "systemd"
         else:
-            lres = await _launch_nohup(host_id, component, run_cmd, env)
+            lres = await _launch_nohup(host_id, component, run_cmd, env, edge_dir)
             out["mode"] = "nohup"
         out["launched"] = bool(lres.get("ok"))
         out["launch_log"] = lres.get("log", "")
@@ -325,10 +441,11 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
     return out
 
 
-async def _launch_nohup(host_id: str, key: str, run_cmd: str, env: Dict[str, str]) -> Dict:
+async def _launch_nohup(host_id: str, key: str, run_cmd: str, env: Dict[str, str],
+                        edge_dir: str = "") -> Dict:
     envp = "".join(f"{k}={shlex.quote(v)} " for k, v in env.items())
     cmd = (
-        f"cd {_EDGE_DIR} && "
+        f"cd {edge_dir or _EDGE_DIR} && "
         f"{{ {envp}nohup {run_cmd} > {key}.log 2>&1 & echo $! > {key}.pid ; }} && "
         f'sleep 1 && echo "VERA_LAUNCHED pid=$(cat {key}.pid 2>/dev/null)"'
     )
@@ -339,7 +456,8 @@ async def _launch_nohup(host_id: str, key: str, run_cmd: str, env: Dict[str, str
 
 
 async def _launch_systemd(host_id: str, rec: Dict, key: str, comp: Dict,
-                          run_cmd: str, env: Dict[str, str], sudo: bool) -> Dict:
+                          run_cmd: str, env: Dict[str, str], sudo: bool,
+                          edge_dir: str = "") -> Dict:
     s = _sudo_for(rec, sudo)
     envlines = "".join(f"Environment={k}={v}\\n" for k, v in env.items())
     # Heredoc expands $HOME on the host so ExecStart/WorkingDirectory are absolute.
@@ -347,7 +465,7 @@ async def _launch_systemd(host_id: str, rec: Dict, key: str, comp: Dict,
         "[Unit]\\n"
         f"Description=Vera {comp['label']}\\nAfter=network-online.target\\n\\n"
         "[Service]\\nType=simple\\n"
-        f"WorkingDirectory=$HOME/.vera/edge\\n"
+        f"WorkingDirectory={edge_dir or _EDGE_DIR}\\n"
         f"{envlines}"
         f"ExecStart={run_cmd}\\n"
         "Restart=on-failure\\nRestartSec=3\\n\\n"
@@ -363,6 +481,7 @@ async def _launch_systemd(host_id: str, rec: Dict, key: str, comp: Dict,
     log_tail = ((res.get("stdout", "") or "") + "\n" + (res.get("stderr", "") or ""))[-2000:]
     ok = bool(res.get("ok")) and "VERA_LAUNCHED" in (res.get("stdout", "") or "")
     return {"ok": ok, "log": log_tail, "error": "" if ok else (res.get("stderr") or res.get("error") or "")}
+
 
 
 @capability(
@@ -383,7 +502,7 @@ async def cap_component_status(host_id: str = "", component: str = "",
         return {"ok": True, "running": state == "active", "detail": state or "unknown"}
     res = await _ssh(
         host_id,
-        f'PID=$(cat {_EDGE_DIR}/{component}.pid 2>/dev/null); '
+        pidfile_lookup_cmd(component) +
         f'if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then echo "running pid=$PID"; '
         f'else echo stopped; fi',
         timeout=20)
@@ -409,8 +528,8 @@ async def cap_component_stop(host_id: str = "", component: str = "",
     else:
         res = await _ssh(
             host_id,
-            f'PID=$(cat {_EDGE_DIR}/{component}.pid 2>/dev/null); '
-            f'[ -n "$PID" ] && kill "$PID" 2>/dev/null; rm -f {_EDGE_DIR}/{component}.pid; echo VERA_STOPPED',
+            pidfile_lookup_cmd(component) +
+            '[ -n "$PID" ] && kill "$PID" 2>/dev/null; rm -f "$PIDF"; echo VERA_STOPPED',
             timeout=20)
     ok = "VERA_STOPPED" in (res.get("stdout", "") or "")
     await emit_event({"type": "provision.component.stop", "component": component, "ok": ok})

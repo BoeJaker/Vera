@@ -28,10 +28,10 @@
        border-radius:7px;padding:7px 12px;font-size:12px;cursor:pointer;
        transition:.12s;display:inline-flex;align-items:center;gap:6px}
   .btn:hover{background:var(--bg3);border-color:var(--acc)}
-  .btn.pri{background:var(--acc);color:var(--on-acc,#08121f);border-color:var(--acc);font-weight:600}
-  .btn.grn{background:var(--grn);color:#06140d;border-color:var(--grn);font-weight:600}
-  .btn.red{background:transparent;color:var(--red);border-color:#5a2b2b}
-  .btn.red:hover{background:#2a1414}
+  .btn.pri,.btn.primary{background:var(--acc);color:var(--on-acc,#08121f);border-color:var(--acc);font-weight:600}
+  .btn.grn,.btn.ok,.btn.ok-btn{background:var(--grn);color:#06140d;border-color:var(--grn);font-weight:600}
+  .btn.red,.btn.danger,.btn.err-btn,.btn.no{background:transparent;color:var(--red);border-color:#5a2b2b}
+  .btn.red:hover,.btn.danger:hover,.btn.err-btn:hover,.btn.no:hover{background:#2a1414}
   .btn.sm{padding:4px 9px;font-size:11px;border-radius:6px}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
   .card{background:var(--bg1);border:1px solid var(--border);border-radius:10px;
@@ -104,7 +104,7 @@
     <label class="fld">Description</label><textarea id="f-desc" style="min-height:44px"></textarea>
 
     <label class="fld">Stages (one per line, in order)</label>
-    <textarea id="f-stages" placeholder="dream.stage.snapshot_source&#10;dream.stage.review_codebase&#10;dream.stage.review_report&#10;dream.stage.deliver" oninput="renderStyleToggles()"></textarea>
+    <textarea id="f-stages" data-select="caps" data-select-prefix="dream.stage." data-select-sep="\n" placeholder="dream.stage.snapshot_source&#10;dream.stage.review_codebase&#10;dream.stage.review_report&#10;dream.stage.deliver" oninput="renderStyleToggles()"></textarea>
     <div class="ref" id="stage-ref"></div>
 
     <div class="two">
@@ -321,6 +321,7 @@ $('ov').addEventListener('click', e=>{ if (e.target===$('ov')) closeEditor(); })
 loadAll(); loadStageRef();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>

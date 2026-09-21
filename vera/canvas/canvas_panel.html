@@ -1,6 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Vera Canvas</title>
@@ -44,5 +50,6 @@
   if (!named && !el.getAttribute('canvas-id')) { const r = await call('canvas.list', { limit: 1 }); const first = r && Array.isArray(r.canvases) && r.canvases[0]; if (first && !named) show(first.id); }
 })();
 </script>
+<script src="/ui/vera-ui.js"></script>
 </body>
 </html>

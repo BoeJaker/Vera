@@ -65,11 +65,11 @@ html, body { height: 100%; width: 100%; overflow: hidden; background: var(--bg0)
   transition: all .14s; white-space: nowrap;
 }
 .btn:hover { border-color: var(--acc); color: var(--acc); background: rgba(90,158,143,.1); }
-.btn.primary { background: var(--acc); border-color: var(--acc); color: var(--on-acc,#fff); font-weight: 600; }
-.btn.primary:hover { filter: brightness(1.1); color: #fff; }
+.btn.primary,.btn.pri{ background: var(--acc); border-color: var(--acc); color: var(--on-acc,#fff); font-weight: 600; }
+.btn.primary:hover,.btn.pri:hover{ filter: brightness(1.1); color: #fff; }
 .btn.teal   { background: rgba(143,184,122,.08); border-color: var(--acc2); color: var(--acc2); }
 .btn.amber  { background: rgba(201,149,90,.08); border-color: var(--acc3); color: var(--acc3); }
-.btn.danger { border-color: var(--err); color: var(--err); }
+.btn.danger,.btn.red,.btn.err-btn,.btn.no{ border-color: var(--err); color: var(--err); }
 .btn.sm { padding: 3px 8px; font-size: 10px; }
 .btn:disabled { opacity: .35; cursor: not-allowed; pointer-events: none; }
 

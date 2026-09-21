@@ -27,13 +27,13 @@ select option{background:var(--bg2)}
 textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.55}
 .btn{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:500;cursor:pointer;transition:all .14s;white-space:nowrap;user-select:none}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff)}
-.btn.pri:hover{filter:brightness(1.1)}
-.btn.ok{background:rgba(109,184,122,.12);border-color:var(--ok);color:var(--ok)}
-.btn.ok:hover{background:rgba(109,184,122,.2)}
+.btn.pri,.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff)}
+.btn.pri:hover,.btn.primary:hover{filter:brightness(1.1)}
+.btn.ok,.btn.grn,.btn.ok-btn{background:rgba(109,184,122,.12);border-color:var(--ok);color:var(--ok)}
+.btn.ok:hover,.btn.grn:hover,.btn.ok-btn:hover{background:rgba(109,184,122,.2)}
 .btn.warn{border-color:var(--warn);color:var(--warn)}
-.btn.danger{border-color:var(--err);color:var(--err)}
-.btn.danger:hover{background:rgba(201,107,107,.15)}
+.btn.danger,.btn.red,.btn.err-btn,.btn.no{border-color:var(--err);color:var(--err)}
+.btn.danger:hover,.btn.red:hover,.btn.err-btn:hover,.btn.no:hover{background:rgba(201,107,107,.15)}
 .btn:disabled{opacity:.35;pointer-events:none}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -219,7 +219,7 @@ input:checked+.toggle-slider:before{background:var(--acc);transform:translateX(1
         </div>
         <div class="field">
           <label>Agent ID</label>
-          <input type="text" id="agent-id-input" value="main" placeholder="main">
+          <input type="text" id="agent-id-input" data-select="agents" data-select-single data-select-new value="main" placeholder="main">
         </div>
         <div style="display:flex;gap:5px;margin-top:4px">
           <button class="btn" id="btn-refresh-sessions" style="flex:1;justify-content:center;font-size:10px">Refresh</button>
@@ -301,7 +301,7 @@ input:checked+.toggle-slider:before{background:var(--acc);transform:translateX(1
         </div>
         <div class="cfg-field">
           <label>Default Agent ID</label>
-          <input type="text" id="cfg-agent-id" value="main" placeholder="main">
+          <input type="text" id="cfg-agent-id" data-select="agents" data-select-single data-select-new value="main" placeholder="main">
         </div>
         <div class="cfg-field">
           <label>Default Session Key</label>
@@ -939,6 +939,7 @@ function showToast(msg) {
 })(); // end IIFE
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>

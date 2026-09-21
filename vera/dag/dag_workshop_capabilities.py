@@ -75,6 +75,12 @@ from Vera.vera.capability_orchestration import (
 
 from Vera.vera.dag import chain_deps as _chain_deps
 try:
+    from Vera.vera.dag.operator_model_arg_core import (
+        heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS)
+except ImportError:                                        # pragma: no cover
+    from vera.dag.operator_model_arg_core import (
+        heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS)
+try:
     from Vera.vera.dag import loop_prompt_rules as _loop_rules
 except ImportError:                                        # pragma: no cover
     from vera.dag import loop_prompt_rules as _loop_rules
@@ -9792,6 +9798,23 @@ async def _v5_workdir_files(session_id: str, limit: int = 40) -> Optional[List[s
         return None
 
 
+async def _v5_workdir_files_deep(session_id: str) -> Optional[List[str]]:
+    """`_v5_workdir_files` below the top level: relative paths under the
+    working directory, dirs with a trailing '/', capped by depth/dirs/names
+    (`exec_capabilities.artifact_list_files_deep`). None = not determinable."""
+    try:
+        import importlib as _il
+        _ex = _il.import_module("Vera.vera.execution.exec_capabilities")
+        fn = getattr(_ex, "artifact_list_files_deep", None)
+        if fn is None:
+            return None
+        got = await fn(session_id=session_id)
+        return list(got) if got is not None else None
+    except Exception as e:
+        log.debug("v5 deep workdir listing failed: %s", e)
+        return None
+
+
 def _v5_sandbox_preview_url(session_id: str, relpath: str) -> str:
     """A live URL that actually renders/serves `relpath` out of this session's
     sandbox — for `operator.run`'s `url` target, so a step can have a REAL
@@ -16468,6 +16491,26 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                       "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                                       "session_id": sid,
                                       "note": f"goal (missing) → step goal: {_step_goal[:100]}"})
+        # ── operator.* made-up `model` self-heal ────────────────────────────
+        # The executor can name a model that does not exist - census run57,
+        # author-then-edit: `operator.run(provider="local", model="fast")`.
+        # The thinker forwarded "fast" to Ollama, which 404'd EVERY think, so
+        # the operator could not decide and clicked the same control until its
+        # guards fired: 978 s + 279 s of the goal spent clicking blind. The url
+        # and goal of that very call were repaired above; the model was not.
+        # Drop a model no Ollama node serves so the routed default applies.
+        # A served model is never touched, and with no catalogue nothing is.
+        if tool in _OPERATOR_MODEL_CAPS and isinstance(args, dict) and args.get("model"):
+            try:
+                _served = sorted({str(m) for _i in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values()
+                                  for m in ((_i or {}).get("models") or [])})
+            except Exception:
+                _served = []
+            for _fld, _val, _note in _heal_model_arg(tool, args, _served):
+                args[_fld] = _val
+                await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "session_id": sid, "note": _note})
         # ── code.author / prose.author / code.edit missing `task`/`path` self-heal ──
         # A BUILD step ("Create index.html") reliably burns 3-4 cycles because the
         # specialist fumbles the authoring contract — observed live, EVERY run:
@@ -20161,10 +20204,34 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
         # list was actually produced, so a planning step that did nothing is
         # still caught — it just isn't failed for the filesystem not yet
         # containing files it only ENUMERATED.
+        #
+        # And the listing this is answered from must reach BELOW the top level.
+        # `_wf` is the top-level listing only: a goal that builds a PACKAGE
+        # writes `statkit/__init__.py` + `statkit/stats.py`, the top level is
+        # just `statkit/`, and this gate hard-failed EVERY step of that goal
+        # ("no file in the working directory actually has one") while the
+        # files sat one directory down - the loop re-created the package
+        # directory until the wall cap, on two censuses in a row (runs 54 and
+        # 55, `build-multifile`, 2026-09-20), and the coder model took the
+        # blame. So when the top level has no match, walk the subdirectories
+        # (capped: depth 3, 12 dirs, 200 names) before failing, and show the
+        # judge what was found there.
         _crit_exts = set(m.lower() for m in _V6_CRIT_EXT_RE.findall(crit))
         if _crit_exts and _wf is not None and not _V6_FILE_LIST_CRIT_RE.search(crit):
-            _ext_ok = any(str(f).lower().endswith(tuple(f".{e}" for e in _crit_exts))
-                          for f in _wf)
+            _ext_suffixes = tuple(f".{e}" for e in _crit_exts)
+            _ext_ok = any(str(f).lower().endswith(_ext_suffixes) for f in _wf)
+            if not _ext_ok and session_id:
+                try:
+                    _deep = await _v5_workdir_files_deep(session_id)
+                except Exception:
+                    _deep = None
+                _deep_hits = [f for f in (_deep or [])
+                              if not str(f).endswith("/") and str(f).lower().endswith(_ext_suffixes)]
+                if _deep_hits:
+                    _ext_ok = True
+                    exist_block += ("FILES IN SUBDIRECTORIES OF THE WORKING DIRECTORY (these "
+                                    "satisfy the criterion's file type): "
+                                    + ", ".join(_deep_hits[:20]) + "\n")
             if not _ext_ok:
                 return {"met": False,
                         "reason": ("the success criterion requires a file with one of these "

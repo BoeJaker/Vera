@@ -302,6 +302,13 @@ class MemoryRecord:
 
     def to_chroma_doc(self) -> Tuple[str, str, dict]:
         """Returns (id, document_text, metadata_dict) for ChromaDB."""
+        # Postgres and the hybrid update path legitimately hydrate timestamps
+        # as datetime objects. Chroma metadata accepts scalar JSON values only;
+        # normalize both timestamps here so store and metadata-only update use
+        # the same safe representation.
+        def _chroma_timestamp(value: Any) -> str:
+            return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
         meta = {
             "session_id":   self.session_id,
             "trace_id":     self.trace_id,
@@ -317,8 +324,8 @@ class MemoryRecord:
             "model":        self.model,
             "capability":   self.capability,
             "language":     self.language,
-            "created_at":   self.created_at,
-            "updated_at":   self.updated_at,
+            "created_at":   _chroma_timestamp(self.created_at),
+            "updated_at":   _chroma_timestamp(self.updated_at),
             "content_hash": self.content_hash,
             "summary":      self.summary[:500],
             "parent_id":    self.parent_id,
@@ -1364,6 +1371,13 @@ _EMBED_WAIT_S = float(os.getenv("VERA_EMBED_WAIT_S", "5") or 5)
 _EMBED_SLOW_COOLDOWN_S = float(os.getenv("VERA_EMBED_SLOW_COOLDOWN_S", "30") or 30)
 _EMBED_SLOW_UNTIL = 0.0     # monotonic deadline of the current slow-cooldown (0 = none)
 
+# A degraded backing store must not hold every memory caller indefinitely.
+# This applies after the separately bounded embedding phase.  Individual
+# backends still own their internal retries; the hybrid layer owns the latency
+# budget and isolates a provider that fails to return.
+_BACKEND_OP_TIMEOUT_S = max(
+    0.1, float(os.getenv("VERA_MEMORY_BACKEND_TIMEOUT_S", "10") or 10))
+
 async def embed_text(text: str) -> Optional[List[float]]:
     """Generate a text embedding via the centralized ollama_embed (logged to Jobs).
 
@@ -1505,7 +1519,10 @@ class HybridMemoryStore:
         # still lives in the sandbox's isolated Redis/SQLite fabric elsewhere.
         if _sbx_write_blocked():
             _sbx_note("memory")
-            return {name: True for name in self._backends}
+            # A protected no-op is not a successful persistence receipt. False
+            # keeps callers from reporting data as stored when no backend saw
+            # it; the write guard remains fail-closed and side-effect free.
+            return {name: False for name in self._backends}
         # Fill in derived fields
         if not record.content_hash:
             record.content_hash = record.compute_hash()
@@ -1522,10 +1539,18 @@ class HybridMemoryStore:
                 record.embedding_model = OLLAMA_EMBED_MODEL
 
         # Fan out to all backends concurrently
-        tasks = {name: b.store(record) for name, b in self._backends.items()}
+        tasks = {
+            name: asyncio.wait_for(b.store(record), _BACKEND_OP_TIMEOUT_S)
+            for name, b in self._backends.items()
+        }
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         outcome = {}
         for name, res in zip(tasks.keys(), results):
+            if isinstance(res, asyncio.CancelledError):
+                raise res
+            if isinstance(res, TimeoutError):
+                log.warning("Memory backend %s store timed out after %.1fs",
+                            name, _BACKEND_OP_TIMEOUT_S)
             outcome[name] = res if isinstance(res, bool) else False
 
         await emit_event({
@@ -1592,10 +1617,19 @@ class HybridMemoryStore:
         # chroma — pure waste. Skip it when nothing active needs it.
         embedding = await embed_text(query) if "chroma" in active else None
         tasks = {
-            name: b.search(query, limit=limit*2, filters=filters, embedding=embedding)
+            name: asyncio.wait_for(
+                b.search(query, limit=limit*2, filters=filters, embedding=embedding),
+                _BACKEND_OP_TIMEOUT_S,
+            )
             for name, b in active.items()
         }
         all_results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        for name, result in zip(tasks.keys(), all_results):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, TimeoutError):
+                log.warning("Memory backend %s search timed out after %.1fs",
+                            name, _BACKEND_OP_TIMEOUT_S)
         return self._merge_and_rank(tasks.keys(), all_results, limit)
 
     def _merge_and_rank(self, names, all_results, limit: int) -> List[Dict]:
@@ -1711,10 +1745,19 @@ class HybridMemoryStore:
     async def update(self, record_id: str, updates: Dict) -> Dict:
         if _sbx_write_blocked():
             _sbx_note("memory-update")
-            return {name: True for name in self._backends}
+            return {name: False for name in self._backends}
         updates["updated_at"] = datetime.now(timezone.utc)
-        tasks = {n: b.update(record_id, updates) for n,b in self._backends.items()}
+        tasks = {
+            n: asyncio.wait_for(b.update(record_id, updates), _BACKEND_OP_TIMEOUT_S)
+            for n, b in self._backends.items()
+        }
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        for name, result in zip(tasks.keys(), results):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, TimeoutError):
+                log.warning("Memory backend %s update timed out after %.1fs",
+                            name, _BACKEND_OP_TIMEOUT_S)
         return {n: r if isinstance(r, bool) else False for n, r in zip(tasks, results)}
 
     async def relate(self, from_id: str, to_id: str, relation_type: str,

@@ -37,8 +37,9 @@ class _Page:
         if "network_idle" in self.failures:
             raise TimeoutError("network idle timed out")
 
-    async def wait_for_function(self, expression, *args, **kwargs):
-        condition = "text" if args else "meaningful_content"
+    async def wait_for_function(self, expression, *, arg=None, timeout=None):
+        condition = ("count" if arg is not None and "match" in expression
+                     else "text" if arg is not None else "meaningful_content")
         if condition in self.failures:
             raise TimeoutError(f"{condition} timed out")
 
@@ -132,3 +133,15 @@ def test_wait_ready_returns_bounded_named_evidence():
         {"condition": "meaningful_content", "required": True, "status": "ready"},
         {"condition": "assets_settled", "required": False, "status": "ready"},
     ]
+
+
+def test_positive_count_is_required_for_populated_capture(tmp_path: Path):
+    page = _Page({"count"})
+    result = asyncio.run(_shoot_panel(
+        SimpleNamespace(page=page), "https://vera.test/panel",
+        str(tmp_path / "panel.png"),
+        state={"ready_selector": "#graph", "ready_count": "#graph-stats"}))
+
+    assert result["ok"] is False
+    assert result["failed_condition"] == "count:#graph-stats"
+    assert page.screenshots == []
