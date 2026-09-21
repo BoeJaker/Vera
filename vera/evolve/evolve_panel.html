@@ -5350,6 +5350,7 @@ async function loadEdges(){
   const r=await api('/evolve/bleeding_edge/list');
   if(!r||!r.edges){const el=$('edges-list');if(el)el.innerHTML='<div class="hint">'+esc((r&&r.error)||'unavailable')+'</div>';return}
   renderEdges(r);
+  releaseStatus();
 }
 /* The edges list - from its own call, or from the Ship table's read. */
 function renderEdges(r){
@@ -5371,17 +5372,32 @@ function _edgeRowHtml(e,main){
       +'<span style="flex:1"></span>'
       +'<button class="btn sm" onclick="edgeEnsure(\''+esc(e.name)+'\')" title="bring up / refresh the standing container for this edge (needs a free pool slot)">container</button>'
       +'<button class="btn sm" onclick="edgeMirror(\''+esc(e.name)+'\')" title="point the primary sandbox at this edge (sandbox.up target)">sandbox &rarr; edge</button>'
-      +'<button class="btn sm ok-btn" onclick="edgeRelease(\''+esc(e.name)+'\',\''+esc(e.branch)+'\')" title="fast-forward main to this edge (the release) \u2014 asks for confirmation">promote to main</button>'
+      +'<button class="btn sm ok-btn" onclick="edgeRelease(\''+esc(e.name)+'\',\''+esc(e.branch)+'\')" title="release: fast-forward main to this edge and restart prod \u2014 waits for a census in flight (or yields it, or force) \u2014 asks for confirmation">release to prod</button>'
       +'</div>';
 }
+document.addEventListener('DOMContentLoaded',()=>{const host=document.getElementById('edges-list');if(host&&!$('release-status')){const d=document.createElement('div');d.id='release-status';d.className='hint';d.style.padding='4px 0';host.parentNode.insertBefore(d,host.nextSibling)}releaseStatus()});
 async function edgeEnsure(name){toast('ensuring '+name+' container\u2026');const r=await post('/evolve/bleeding_edge/container/ensure',{edge:name});toast(r&&r.ok?('up: '+(r.name||'')+' :'+(r.port||'')):(r&&r.error)||'failed');loadEdges();loadSandboxPool()}
 async function edgeMirror(name){const r=await post('/evolve/sandbox/up',{target:name});toast(r&&(r.ok||r.healthy)?('primary sandbox on '+name):(r&&r.error)||'failed');loadSandboxPool()}
+async function releaseStatus(){
+  const el=$('release-status'); if(!el)return;
+  const r=await api('/evolve/release/status'); if(!r){el.textContent='';return}
+  const p=r.pending; const c=r.census||{};
+  el.innerHTML=p?('<b>release pending</b> '+esc(p.edge||'')+' \u00b7 '+esc(p.status)+' ('+esc(p.mode)+') \u00b7 '+esc(r.summary||'')
+      +' <button class="btn sm" onclick="releaseCancel()">cancel</button>'
+      +(p.status==='waiting'?' <button class="btn sm" onclick="releaseForce()" title="go now: the restart pauses and re-runs the census goal">force now</button>':''))
+    :('census: '+esc(c.state||'none')+(c.goal?' \u00b7 '+esc(c.goal):'')+(r.history&&r.history[0]?' \u00b7 last release '+esc(r.history[0].status)+' '+esc(String(r.history[0].finished_at||r.history[0].updated_at||'').slice(0,16)):''));
+}
+async function releaseCancel(){const r=await post('/evolve/release/cancel',{reason:'cancelled from Loop Lab'});toast(r&&r.ok?'release cancelled'+(r.census_resumed?' \u00b7 census resumed':''):(r&&r.error)||'failed');releaseStatus()}
+async function releaseForce(){if(!confirm('Release NOW? The restart pauses the census goal in flight and re-runs it later.'))return;await post('/evolve/release/cancel',{reason:'forcing'});const r=await post('/evolve/release/prod',{confirm:true,force:true,reason:'forced from Loop Lab'});toast(r&&r.ok?('releasing: '+(r.status||'')):(r&&(r.error||r.refused))||'failed');releaseStatus()}
 async function edgeRelease(name,branch){
-  const ok=confirm('RELEASE: fast-forward main to '+branch+' ('+name+')?\n\nThis is the deliberate step that moves the branch prod serves. Only proceed on the user\'s explicit, unambiguous go-ahead. It refuses unless main is an ancestor of the edge (no merge commit, no guessing).');
+  const ok=confirm('RELEASE: fast-forward main to '+branch+' ('+name+') and restart prod?\n\nThis is the deliberate step that moves the branch prod serves. Only proceed on the user\'s explicit, unambiguous go-ahead. It refuses unless main is an ancestor of the edge (no merge commit, no guessing).');
   if(!ok)return;
-  const r=await post('/evolve/bleeding_edge/promote_to_main',{edge:name,confirm:true});
-  toast(r&&r.ok?('main @ '+String(r.commit||'').slice(0,8)+(r.restart_required?' \u2014 restart required':'')):(r&&r.error)||'refused');
-  loadEdges();
+  const mode=(prompt('If a census is in flight, how should the release wait?\n  finish = wait until the census has ended (default)\n  goal   = yield: let the goal in flight finish, park, release, resume after\n  force  = release now (the census goal is paused and re-run)','finish')||'finish').trim().toLowerCase();
+  if(['finish','goal','force'].indexOf(mode)<0){toast('unknown mode '+mode);return}
+  const r=await post('/evolve/release/prod',{edge:name,confirm:true,census:mode,force:mode==='force',reason:'Loop Lab release button'});
+  if(r&&r.held)toast('release pending ('+mode+'): '+(r.why||''));
+  else toast(r&&r.ok?('releasing: '+(r.status||'')+' main @ '+String((r.merge||{}).commit||'').slice(0,8)):(r&&(r.error||r.refused))||'refused');
+  loadEdges();releaseStatus();
 }
 
 /* ═══ SANDBOX ═══ */
