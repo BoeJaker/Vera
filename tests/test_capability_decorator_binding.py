@@ -40,6 +40,13 @@ KNOWN_ABBREVIATIONS = {
     ("ui.graph_panels.worldview_js", "serve_worldview_panel_js"),
     ("ui.graph_panels.api_js", "serve_api_panel_js"),
     ("ui.graph_panels.discover_js", "serve_discover_panel_js"),
+    # Same convention as the five above: the capability is `<panel>_js` and the
+    # function is `serve_<panel>_panel_js`. Checked by reading vera_graph_panels.py
+    # — the decorator sits directly on serve_explode_panel_js, which serves
+    # vera_graph_panel_explode.js. Added 2026-09-20 as a deliberate entry, not to
+    # silence the test: renaming the function to satisfy _resembles() would make
+    # it the only one of six siblings not following the house pattern.
+    ("ui.graph_panels.explode_js", "serve_explode_panel_js"),
     ("integration.panel.html", "cap_panel"),
     ("netmon.snapshot", "cap_netmon"),
     ("netscan.dork.search", "cap_netscan_dork"),
