@@ -333,11 +333,13 @@ async def cap_user_register(login: str = "", first: str = "", last: str = "",
                 "through sssd. Inputs: login (str!), title (str - keydrop title), "
                 "no_expiry (bool=false - clear the forced password change an "
                 "admin-set password carries; for accounts whose password was "
-                "sealed to keydrop and cannot be changed interactively). Output: "
-                "{ok, login, token, keydrop_entry, auth_type} or {error}.",
+                "sealed to keydrop and cannot be changed interactively), seal "
+                "(bool=true - false returns the otpauth URI instead of sealing it: "
+                "ONLY for scratch accounts in a rehearsal, never a person's). Output: "
+                "{ok, login, token, keydrop_entry|uri, auth_type} or {error}.",
 )
 async def cap_user_mfa(login: str = "", title: str = "", no_expiry: bool = False,
-                       trace_id=None) -> Dict:
+                       seal: bool = True, trace_id=None) -> Dict:
     if not login:
         return {"error": "login required"}
     st = await _state_opened()
@@ -352,14 +354,16 @@ async def cap_user_mfa(login: str = "", title: str = "", no_expiry: bool = False
     tid = tid[0] if isinstance(tid, list) else tid
     if not uri:
         return {"error": "IPA issued a token but returned no otpauth URI"}
-    # the secret is only ever inside keydrop; strip it from what we keep
-    from Vera.vera.security import secret_service_core as _ssc
-    from Vera.vera.security.secrets_capabilities import _keydrop_put_sync, _thread
-    drop = await _thread(_keydrop_put_sync, "IPA TOTP token",
-                         _ssc.keydrop_payload(title or f"FreeIPA TOTP {login}", login, uri,
-                                              "otpauth", f"Scan/import this otpauth URI into an authenticator app. "
-                                              f"Token {tid} for {login} on {st.get('ipa_url', '')}. Every IPA-joined "
-                                              f"host asks password then this code (sssd).", tags=["vera", "totp"]))
+    drop: Dict[str, Any] = {"entry": None}
+    if seal:
+        # the secret is only ever inside keydrop; strip it from what we keep
+        from Vera.vera.security import secret_service_core as _ssc
+        from Vera.vera.security.secrets_capabilities import _keydrop_put_sync, _thread
+        drop = await _thread(_keydrop_put_sync, "IPA TOTP token",
+                             _ssc.keydrop_payload(title or f"FreeIPA TOTP {login}", login, uri,
+                                                  "otpauth", f"Scan/import this otpauth URI into an authenticator app. "
+                                                  f"Token {tid} for {login} on {st.get('ipa_url', '')}. Every IPA-joined "
+                                                  f"host asks password then this code (sssd).", tags=["vera", "totp"]))
     if drop.get("error"):
         # do not leave a token nobody can use
         await _ipa_call(st, "otptoken_del", args=[tid], options={})
@@ -370,8 +374,11 @@ async def cap_user_mfa(login: str = "", title: str = "", no_expiry: bool = False
     res, err = await _ipa_call(st, "user_mod", args=[login], options=opts)
     if res is None:
         return {"error": f"token sealed (keydrop entry {drop.get('entry')}) but auth type not set: {err}"}
-    await emit_event({"type": "identity.user.mfa", "login": login, "token": tid})
-    return {"ok": True, "login": login, "token": tid, "keydrop_entry": drop.get("entry"), "auth_type": "otp"}
+    await emit_event({"type": "identity.user.mfa", "login": login, "token": tid, "sealed": bool(seal)})
+    out = {"ok": True, "login": login, "token": tid, "keydrop_entry": drop.get("entry"), "auth_type": "otp"}
+    if not seal:
+        out["uri"] = uri
+    return out
 
 
 @capability(

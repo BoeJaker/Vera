@@ -78,3 +78,10 @@ def test_a_token_keydrop_refuses_is_deleted_again():
     assert "keydrop refused" in out["error"]
     assert ("otptoken_del", ["tok-1"], {}) in calls, "no token left that nobody can use"
     assert not any(c[0] == "user_mod" for c in calls), "auth type untouched"
+
+
+def test_a_scratch_account_may_get_the_uri_back_instead():
+    calls = []
+    out = asyncio.run(cap(calls)(login="rehearsal", seal=False))
+    assert out["ok"] and out["uri"].startswith("otpauth://totp/") and out["keydrop_entry"] is None
+    assert not any(c[0] == "keydrop" for c in calls)
