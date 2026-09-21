@@ -6476,6 +6476,19 @@ async def evolve_bleeding_edge_promote_to_main(repo: str = DEFAULT_REPO_ID,
     if res.get("restart_required"):
         out["restart_required"] = True
         out["note"] = "merged into the live checkout — a deliberate restart is required to activate it"
+        # A restart under a census goal pauses and re-runs that goal (a
+        # tainted row, half an hour lost). Say so here; the census-aware path
+        # is evolve.release.prod, which waits for the census and then restarts.
+        try:
+            import sys as _sys
+            _cc = _sys.modules.get("census_capabilities")
+            _cs = await _cc.census_health() if _cc is not None and hasattr(_cc, "census_health") else {}
+            if _cs.get("busy") or _cs.get("state") in ("running", "yielding", "pausing"):
+                out["census"] = _cs
+                out["note"] += (" — a census goal is in flight (%s): restart through evolve.release.prod, "
+                                "which waits for it (or force=true)" % (_cs.get("goal") or _cs.get("state")))
+        except Exception:
+            pass
     if ok:
         # main just moved — keep the mainline mirror (and anything sourced
         # from it) current too.

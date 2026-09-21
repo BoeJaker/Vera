@@ -663,6 +663,24 @@ run_now / tick / events / history / config.get / config.set`, and
 schedule. Records and every decision live in `vera/evolve/schedule_core.py`
 (pure, `tests/test_schedule_core.py` in the critical tier).
 
+### The release, gated on the census
+
+`evolve.release.prod(confirm, edge, census, force, restart, reason)` is the
+one call that puts an edge on prod: fast-forward `main` to it
+(`evolve.bleeding_edge.promote_to_main`) and restart (`sys.dev.restart`).
+A restart kills every loop in flight and the restart's own census gate
+PAUSES the census goal (cancelled, re-run later). So the release checks the
+census first and, when a goal is in flight, **waits**: `census=finish`
+(default) until no census is in flight at all; `census=goal` writes a
+yield — the goal in flight finishes, the harness parks, the release goes,
+and the census is resumed once the new process is up; `force=true` goes
+now. A wait returns `held: true` at once and is carried by a 30 s job
+(`evolve.release.tick`); `evolve.release.status` shows it,
+`evolve.release.cancel` drops it (and resumes a census it yielded). The
+Ship page's "release to prod" button asks which mode and shows the pending
+release under the edges. `promote_to_main` itself is unchanged (merge only)
+but now says when a census is in flight.
+
 ## 9. Markets self-improving loop
 
 `vera/markets/markets_evolve_capabilities.py` applies the same idea to the
