@@ -766,8 +766,10 @@ def explode_sources(sources: List[Dict], *, max_external: int = 40, prefer_tree_
                 m_ = imp["module"]
                 if "/" in m_ or m_.endswith((".js", ".mjs", ".css", ".ts")):   # a path import: the file it names
                     top = os.path.basename(m_)
+                elif m_.startswith("."):                                           # a relative import: the module's own name
+                    top = m_.lstrip(".").split(".")[-1] or (imp.get("name") or m_)
                 else:
-                    top = m_.split(".")[0] if not m_.startswith(".") else m_
+                    top = m_.split(".")[0]
                 if p["lang"] == "python" and top in _STDLIB:
                     if top not in stdlib_seen:
                         stdlib_seen.append(top)
@@ -820,8 +822,8 @@ def explode_sources(sources: List[Dict], *, max_external: int = 40, prefer_tree_
                             hit = [x for x in by_name.get(name, []) if x["path"] == mpath and x["kind"] in ("function", "class", "method")]
                             if hit:
                                 target = hit[0]["id"]
-                        elif al.split(".")[0] not in _STDLIB:  # a package (or an unparsed module of our own) called through: a stub
-                            ext = stub_for(al, name)
+                        elif al.split(".")[0] not in _STDLIB:  # a package (or an unparsed object of our own) called through: the stub is what was called THROUGH
+                            ext = stub_for(al, root)
                             if ext:
                                 target = ext; res = "external"
                     if not target:
