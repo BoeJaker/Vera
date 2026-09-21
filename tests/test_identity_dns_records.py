@@ -34,7 +34,7 @@ def caps(calls):
                     {"idnsname": ["pve"], "arecord": ["192.168.0.200"]}]
             if len(args) > 1:
                 rows = [r for r in rows if r["idnsname"][0] == args[1]]
-            return {"result": {"result": rows}}, ""
+            return {"result": rows, "count": len(rows)}, ""      # what _ipa_call returns: IPA's result object
         return {"result": {}}, ""
 
     async def emit_event(ev):
