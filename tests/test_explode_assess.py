@@ -63,6 +63,8 @@ def test_the_registry_runs_scorers_in_order_and_a_failure_is_its_own_receipt(mon
     rec = {r["id"]: r for r in res["receipts"]}
     assert "no node" in rec["assess.lang"]["error"] and rec["assess.readability"]["count"] == 1
     assert [s["key"] for s in AC.scorer_list("code")] == ["complexity", "smells", "clones", "tests", "provenance", "health"]
+    defaults = [s["key"] for s in AC.scorer_list("prose") if s["default_on"]]
+    assert defaults == ["readability", "structure", "sources", "trust"], "language needs a node; AI-likelihood is opt-in"
 
 
 CODE = '''import os, pickle
@@ -148,8 +150,12 @@ def test_assess_rides_on_both_explode_capabilities_and_a_slice_keeps_record_coor
     text = "Intro paragraph here, short and plain.\n\n" + HUMAN
     out = _run(X.explode_prose(text=text, layers=["ner"], assess=True))
     keys = [a["key"] for a in out["assessments"]]
-    assert "readability" in keys and "sources" in keys and "ai_likelihood" in keys and "trust" in keys and "lang" not in keys
+    assert "readability" in keys and "sources" in keys and "trust" in keys and "lang" not in keys
+    assert "ai_likelihood" not in keys, "stylometry is experimental and OFF by default — it could not tell the estate's LLM reports from scraped pages"
     assert any(r["id"] == "assess.trust" for r in out["layers"])
+    opt = _run(X.explode_prose(text=text, layers=["ner"], assess=["ai_likelihood", "sources", "trust"]))
+    ok = {a["key"]: a for a in opt["assessments"]}
+    assert "ai_likelihood" in ok and "experimental" in ok["ai_likelihood"]["by"] and "not AI-generated" in ok["trust"]["by"], "asked for by name, it runs and the composite says it used it"
     store = {"r1": {"id": "r1", "dataset_id": "d", "text": text, "source_id": "s", "tags": ""}}
     monkeypatch.setattr(X, "_read_record", lambda rid: store.get(rid))
     s0 = text.find("I didn't")

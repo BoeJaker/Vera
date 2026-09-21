@@ -173,9 +173,13 @@ async def _s_health(ctx):
 register_scorer("readability", "readable", "prose", _s_readability, by="Flesch reading ease")
 register_scorer("structure", "structured", "prose", _s_structure, by="paragraph shape · headings · lists")
 register_scorer("sources", "sourced", "prose", _s_sources, by="links · citations · attributions")
-register_scorer("ai_likelihood", "AI-generated", "prose", _s_ai, by="stylometry · heuristic (no model)")
+# OFF by default (2026-09-22): measured on the mirror, stylometry did not separate Vera's own LLM-written research
+# records (0.02–0.10) from scraped pages (0.00–0.25) — modern model output varies sentence length as prose does. A
+# number that cannot tell them apart must not feed trust by default. Opt in by name; a real detector is a model on
+# the node tier (a fine-tuned classifier exported into the shared store, or a perplexity path), registered here.
+register_scorer("ai_likelihood", "AI-generated", "prose", _s_ai, by="stylometry · heuristic (no model) · experimental", default_on=False)
 register_scorer("lang", "language", "prose", _s_lang, by="nlp.langid", where="node tier", default_on=False)
-register_scorer("trust", "trust", "prose", _s_trust, by="composite", needs=["sources", "ai_likelihood", "readability", "structure"])
+register_scorer("trust", "trust", "prose", _s_trust, by="composite", needs=["sources", "readability", "structure"])
 register_scorer("complexity", "simple", "code", _s_complexity, by="cyclomatic")
 register_scorer("smells", "no smells", "code", _s_smells, by="security patterns")
 register_scorer("clones", "no clones", "code", _s_clones, by="normalised body hash")
