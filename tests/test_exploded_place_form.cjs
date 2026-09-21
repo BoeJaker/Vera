@@ -6,6 +6,8 @@
 const path = require('node:path'); const fs = require('node:fs');
 const FILE = path.join(__dirname, '..', 'vera', 'chat', 'exploded_element.js');
 const X = require(FILE); const SRC = fs.readFileSync(FILE, 'utf8');
+// the routers live in the shared vera/ui/routes.js; a check on a run's source reads both
+const RSRC = fs.readFileSync(path.join(__dirname, '..', 'vera', 'ui', 'routes.js'), 'utf8');
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 t('faceHtml and diagramHtml are exported (version 6)', typeof X.faceHtml === 'function' && typeof X.diagramHtml === 'function' && X.version >= 6);
 
@@ -69,7 +71,7 @@ t('a relation run carries the two records it joins, into the DOM',
   SRC.includes("if (a && b) R.add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)]);")
   && SRC.includes("if (a && b) add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)], { rel: true });")
   && SRC.includes("joins: r.joins || undefined")
-  && SRC.includes("if (r.joins) seg.joins = r.joins;")
+  && RSRC.includes("if (r.joins) seg.joins = r.joins;")
   && SRC.includes("(e.joins ? ' data-a=\"' + esc(e.joins[0]) + '\" data-b=\"' + esc(e.joins[1]) + '\"' : '')"));
 t('Full draws them all; Hover and Zen rest them and light what the pointer touches',
   SRC.includes('vera-exploded[data-den="hover"] .xp-e.rel,vera-exploded[data-den="zen"] .xp-e.rel{opacity:0;transition:opacity .13s ease}')

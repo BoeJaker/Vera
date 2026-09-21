@@ -481,148 +481,14 @@
       const k = String(p); if (last[k] != null) cb(['act', last[k]], ai, 'rel step act', 'the next call'); last[k] = ai; }); }
   const isWidgetCard = (c) => !!(c && (c.tpl || c.form || (c.record && typeof c.record === 'object') || String(c.kind || '').toLowerCase() === 'widget'));
 
-  /* ── the CARDS router: every run collected, then laned ──────────────────────────────────────────────────────────
-     A run leaves a card by its side, travels the gutter between the stations (or, two stations apart, drops to a bus
-     lane under the row), and comes level into its target. Lanes are allotted per gutter in the order the runs are
-     GOING — a descending run bound lower takes the outer lane, an ascending one bound higher the same — so bundles
-     come out parallel; ports fan a card's side in lane order so no two legs ever share a length. Pure. */
-  function cardsRouter(G) {
-    const runs = [];
-    const add = (A, B, col, cls, title, joins, o) => { if (A && B) runs.push(Object.assign({ A, B, col, cls: cls || '', title: title || '', joins }, o || {})); };
-    const gx0 = (k) => G.xU(k) - 16 + G.SWD + G.SGP / 2;                     // the centre of the gutter right of station k
-    const px0 = (k) => G.xU(k) + G.SWD - 44;                                  // the in-plate lane, in the plate's right margin
-    const flush = () => {
-      const groups = {};   // gutter key -> [{r, ty, desc}]
-      const want = (k, r, ty, desc) => { (groups[k] = groups[k] || []).push({ r, ty, desc }); };
-      // a TRUNK: the runs of one kind into one target (or out of one source) in one gutter share a lane, and the shared
-      // end is drawn once — the board's "five or six arrivals, not seventeen". The first member carries the lane; the
-      // rest borrow it and skip their own shared end.
-      const trunks = {};
-      runs.forEach((r) => { const d = r.B.st - r.A.st; r.dir = d > 0 ? 1 : d < 0 ? -1 : 0; r.same = d === 0; r.bus = Math.abs(d) >= 2;
-        if (r.trunk && !r.same && !r.bus) { const k = r.trunk + '|' + (r.tend === 'a' ? key(r.A) : key(r.B)); if (trunks[k]) { r.lead = trunks[k]; (r.lead.members = r.lead.members || []).push(r); return; } trunks[k] = r; }
-        if (r.same) { if (Math.abs(r.A.cy - r.B.cy) < 1 || Math.abs(r.A.cx - r.B.cx) < 1) return; want('p' + r.A.st, r, r.B.cy, r.B.cy > r.A.cy); }
-        else if (!r.bus) want('g' + Math.min(r.A.st, r.B.st), r, r.B.cy, r.B.cy > r.A.cy);
-        else { r.gA = 'g' + (r.dir > 0 ? r.A.st : r.A.st - 1); r.gB = 'g' + (r.dir > 0 ? r.B.st - 1 : r.B.st); want(r.gA, r, 1e9, true); want(r.gB, r, r.B.cy, false); } });
-      // the bus lanes under the row: one per far run
-      let nb = 0; runs.forEach((r) => { if (r.bus) { r.yl = G.rowBottom + 14 + (nb++) * 7; } });
-      Object.keys(groups).forEach((k) => { const L = groups[k];
-        // the order: descending runs first, bound lower first; then ascending, bound higher first — that is left to right
-        const desc = L.filter((e) => e.desc).sort((a, b) => b.ty - a.ty), asc = L.filter((e) => !e.desc).sort((a, b) => a.ty - b.ty); const all = desc.concat(asc), n = all.length;
-        const inPlate = k[0] === 'p', room = inPlate ? 40 : Math.max(8, G.SGP - 10), pitch = Math.min(inPlate ? 6 : 9, room / Math.max(1, n - 1));
-        const x0 = inPlate ? px0(+k.slice(1)) : gx0(+k.slice(1));
-        all.forEach((e, i) => { const x = x0 + (i - (n - 1) / 2) * pitch; if (e.r.bus) { if (k === e.r.gA) e.r.lxA = x; else e.r.lxB = x; } else e.r.lx = x; }); });
-      // ports: a card's side fans its departures and arrivals in lane order, so a bundle leaves and lands parallel.
-      // A NODE (a context record, a call, an estate node — small, several to a row) is joined from above or below
-      // instead: a short plumb leg to a band between the rows, then level to the lane. The band is shared by the row
-      // and fanned by reach — the node furthest from the lane takes the outer band — so two nodes in one row never
-      // share a horizontal and a stub never crosses a neighbour's run.
-      const ports = {}, nports = {};
-      const side = (box, x) => (x > box.cx ? 'R' : 'L');
-      runs.forEach((r) => { if (r.lead) { r.lx = r.lead.lx; r.dir = r.lead.dir; } if (r.same && r.lx == null) return;
-        const xa = r.bus ? r.lxA : r.lx, xb = r.bus ? r.lxB : r.lx;
-        r.sa = r.same ? 'R' : side(r.A, xa); r.sb = r.same ? 'R' : side(r.B, xb);
-        [['a', r.A, xa, r.B], ['b', r.B, xb, r.A]].forEach((e) => { if (r.lead && e[0] === (r.tend || 'b')) return;   // a member's shared end is the lead's
-          const box = e[1], other = e[3];
-          if (box.node) { let vs = other.cy > box.cy + 1 ? 'B' : other.cy < box.cy - 1 ? 'T' : 'B';
-            const plumb = (b, sd) => runs.some((q) => q !== r && q.same && Math.abs(q.A.cx - q.B.cx) < 1 && ((q.A === b && (sd === 'B' ? q.B.cy > b.cy : q.B.cy < b.cy)) || (q.B === b && (sd === 'B' ? q.A.cy > b.cy : q.A.cy < b.cy))));
-            if (plumb(box, vs) && !plumb(box, vs === 'B' ? 'T' : 'B')) vs = vs === 'B' ? 'T' : 'B';   // a plumb run to an aligned neighbour owns that side
-            const k = 'N' + box.st + '/' + Math.round(box.cy) + '/' + vs; (nports[k] = nports[k] || []).push({ r, end: e[0], reach: Math.abs(e[2] - box.cx), vs }); }
-          else { const k = key(box) + (e[0] === 'a' ? r.sa : r.sb); (ports[k] = ports[k] || []).push({ r, end: e[0], x: e[2] }); } }); });
-      Object.keys(ports).forEach((k) => { const P = ports[k], n = P.length; if (!n) return; const box = P[0].end === 'a' ? P[0].r.A : P[0].r.B; const pf = Math.min(11, Math.max(4, (box.h - 8) / Math.max(1, n - 1)));
-        // departures: left lane, top port. arrivals from above: left lane, bottom port; from below: left lane, top port
-        P.forEach((p) => { const o = p.end === 'a' ? p.r.A : p.r.B, q = p.end === 'a' ? p.r.B : p.r.A; p.fromAbove = p.end === 'b' && q.cy < o.cy - 1; });
-        const aboveN = P.filter((p) => p.fromAbove).length;
-        P.sort((p, q) => (aboveN > n / 2 ? -1 : 1) * (p.x - q.x));
-        P.forEach((p, i) => { const y = box.cy + (i - (n - 1) / 2) * pf; if (p.end === 'a') p.r.ya = y; else p.r.yb = y; }); });
-      Object.keys(nports).forEach((k) => { const P = nports[k], n = P.length; P.sort((p, q) => q.reach - p.reach);   // the furthest reach first: the outer band
-        const byBox = {}; P.forEach((p) => { const box = p.end === 'a' ? p.r.A : p.r.B; const kk = box.cx.toFixed(1); (byBox[kk] = byBox[kk] || []).push(p); });
-        Object.keys(byBox).forEach((kk) => { const Q = byBox[kk], m = Q.length; Q.forEach((p, j) => { p.dx = (j - (m - 1) / 2) * 4; }); });   // two stubs from one node never share
-        P.forEach((p, i) => { const box = p.end === 'a' ? p.r.A : p.r.B; const sgn = p.vs === 'B' ? 1 : -1; const y = box.cy + sgn * (box.h / 2 + 3 + (n - 1 - i) * 4);   /* the row's own half of the gap: the next row's bands take the other half */ if (p.end === 'a') { p.r.ya = y; p.r.na = sgn; p.r.xa = p.dx || 0; } else { p.r.yb = y; p.r.nb = sgn; p.r.xb = p.dx || 0; } }); });
-      // the legs
-      runs.forEach((r) => { const A = r.A, B = r.B, k = r.lead ? r.lead.rid : G.out.runs; if (!r.lead) r.rid = k;
-        const ya = r.ya == null ? (r.lead && r.tend === 'a' ? r.lead.ya : A.cy) : r.ya, yb = r.yb == null ? (r.lead && (r.tend || 'b') === 'b' ? r.lead.yb : B.cy) : r.yb; let Pp;
-        // where a run leaves A and enters B: a card by its side at its port; a node by a plumb stub to its band
-        const outA = (lx) => (A.node ? [[A.cx + (r.xa || 0), A.cy + (r.na || 1) * (A.h / 2 + 2)], [A.cx + (r.xa || 0), ya]] : [[A.cx + (lx > A.cx ? 1 : -1) * (A.w / 2 + 3), ya]]);
-        const inB = (lx) => (B.node ? [[B.cx + (r.xb || 0), yb], [B.cx + (r.xb || 0), B.cy + (r.nb || 1) * (B.h / 2 + 2)]] : [[B.cx + (lx > B.cx ? 1 : -1) * (B.w / 2 + 3), yb]]);
-        if (r.same) { if (Math.abs(A.cy - B.cy) < 1) { const l = A.cx < B.cx ? A : B, rr = l === A ? B : A; Pp = [[l.cx + l.w / 2 + 3, A.cy], [rr.cx - rr.w / 2 - 3, A.cy]]; }
-          else if (Math.abs(A.cx - B.cx) < 1) { const t = A.cy < B.cy ? A : B, bb = t === A ? B : A; Pp = [[A.cx, t.cy + t.h / 2 + 3], [A.cx, bb.cy - bb.h / 2 - 3]]; }
-          else { const lx = r.lx; Pp = outA(lx).concat([[lx, ya], [lx, yb]], inB(lx)); } }
-        else if (!r.bus) { if (r.lead && (r.tend || 'b') === 'b') Pp = outA(r.lx).concat([[r.lx, ya], [r.lx, yb]]);          // a member joins the trunk: its own departure, then the lane down to the shared arrival
-          else if (r.lead && r.tend === 'a') Pp = [[r.lx, ya], [r.lx, yb]].concat(inB(r.lx));                                 // a branch leaves the trunk: the lane from the shared departure, then its own arrival
-          else Pp = outA(r.lx).concat([[r.lx, ya], [r.lx, yb]], inB(r.lx)); }
-        else Pp = outA(r.lxA).concat([[r.lxA, ya], [r.lxA, r.yl], [r.lxB, r.yl], [r.lxB, yb]], inB(r.lxB));
-        for (let n = 0; n + 1 < Pp.length; n++) { const a = { x: Pp[n][0], y: Pp[n][1] }, b = { x: Pp[n + 1][0], y: Pp[n + 1][1] }; if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) < 1) continue; if (r.lead && Math.abs(a.x - b.x) < 1 && G.out.edges.some((e) => e.run === k && Math.abs(e.x - a.x) < 0.5 && e.deg % 180 !== 0 && Math.min(a.y, b.y) >= Math.min(e.y, e.y + (e.deg > 0 ? e.len : -e.len)) - 0.5 && Math.max(a.y, b.y) <= Math.max(e.y, e.y + (e.deg > 0 ? e.len : -e.len)) + 0.5)) continue;   // the trunk's lane is drawn once
-          G.edge(a, b, r.col, r.cls, r.title); const seg = G.out.edges[G.out.edges.length - 1]; seg.run = k; if (r.joins) seg.joins = r.joins; }
-        if (!r.lead) G.out.runs++; });
-      runs.length = 0;
-    };
-    const key = (b) => b.cx.toFixed(1) + ',' + b.cy.toFixed(1);
-    return { add, flush };
-  }
-
-  /* ── the ISO router: the lattice's own lanes ───────────────────────────────────────────────────────────────────
-     Every pin has a ground point (u along the plate, v down it, z the floor). A run leaves its pin along u to a
-     corridor in the plate's margin, travels the corridor along v to its target's row, and comes back along u to the
-     target's pin — three legs, each changing exactly one ground coordinate, so the run is isometric by construction
-     (the design's ISO.route rule). Runs bound down the plate take the LEFT margin, runs bound back up the RIGHT;
-     the corridor's lanes are allotted outer-first by reach and the pins' ports fanned in lane order, exactly as the
-     cards router does, so nothing overlaps and bundles stay parallel. Relations inside one band are an L (u, then v).
-     Pure: the caller hands in the projection and the plate's u-extent. */
-  function isoRouter(G) {
-    const runs = [];
-    const add = (A, B, col, cls, title, joins, o) => { if (A && B) runs.push(Object.assign({ A, B, col, cls: cls || '', title: title || '', joins }, o || {})); };
-    const flush = () => {
-      const byCor = { L: [], R: [] }, byCol = {};
-      const LOC = 112;   // a local lane stands just clear of a column's cards (half a card and a step)
-      const trunks = {}; const pk = (p) => p.u.toFixed(1) + ',' + p.v.toFixed(1) + ',' + (p.z || 0);
-      runs.forEach((r) => { if (r.direct || r.rel) return; r.flat = Math.abs(r.A.v - r.B.v) < 0.5; if (r.flat) return;
-        if (r.trunk) { const k = r.trunk + '|' + (r.tend === 'a' ? pk(r.A) : pk(r.B)); if (trunks[k]) { r.lead = trunks[k]; return; } trunks[k] = r; }
-        r.aligned = Math.abs(r.A.u - r.B.u) < 0.5; r.down = r.B.v > r.A.v + 0.5;
-        if (r.aligned) { const k = 'C' + r.A.u.toFixed(1) + '/' + (r.A.z || 0); (byCol[k] = byCol[k] || []).push(r); return; }
-        r.cor = r.side || (r.down ? 'L' : 'R'); byCor[r.cor].push(r); });
-      const reach = (r) => Math.abs(r.B.v - r.A.v) + Math.abs(r.B.u - r.A.u) * 0.001;
-      ['L', 'R'].forEach((c) => { const L = byCor[c]; const n = L.length; if (!n) return;
-        // outer first: the farthest reach hugs the plate's edge, the shortest sits nearest the items
-        L.sort((a, b) => reach(b) - reach(a));
-        const pitch = Math.min(G.LP, Math.max(5, (G.MG - 16) / Math.max(1, n - 1)));
-        L.forEach((r, i) => { r.lu = c === 'L' ? G.u0 + 8 + i * pitch : G.u0 + G.PW - 8 - i * pitch; r.li = i; }); });
-      // the column's own lanes: the farthest reach outermost, so a nearer run's level leg never crosses a farther one
-      Object.keys(byCol).forEach((k) => { const L = byCol[k]; L.sort((a, b) => reach(b) - reach(a)); L.forEach((r, i) => { r.lu = r.A.u + LOC + (L.length - 1 - i) * 12; r.li = i; r.cor = 'C'; }); });
-      // ports: every pin end joins its run by a PLUMB stub along v to a BAND beside its row, then level along u to the
-      // corridor (a relation goes level to its partner's u at the band and plumbs into it — no corridor). A node's band
-      // clears the node (16), a card pin's its marker (8). The bands of one row are shared and ordered so that nothing
-      // crosses: the pin nearer the corridor takes the band nearer the row, and of the runs leaving ONE pin the one
-      // with the furthest reach takes the nearer band (its level leg then passes clear of the inner lanes). Two runs
-      // leaving one pin fan their stubs a little along u so they never share the stub.
-      const bands = {}; const rowKey = (p, sgn) => Math.round(p.v) + '/' + (p.z || 0) + '/' + sgn;
-      const edgeU = (r, p) => (r.cor === 'L' ? G.u0 : r.cor === 'R' ? G.u0 + G.PW : r.lu);
-      const want = (r, end) => { const p = end === 'a' ? r.A : r.B, q = end === 'a' ? r.B : r.A; const sgn = q.v > p.v + 0.5 ? 1 : q.v < p.v - 0.5 ? -1 : 1;
-        const reach = r.rel ? Math.abs(q.u - p.u) : Math.abs(r.lu - p.u), dist = r.rel ? reach : Math.abs(edgeU(r, p) - p.u);
-        (bands[rowKey(p, sgn)] = bands[rowKey(p, sgn)] || []).push({ r, end, p, sgn, reach, dist }); };
-      runs.forEach((r) => { if (r.lead) { r.lu = r.lead.lu; r.cor = r.lead.cor; r.aligned = r.lead.aligned; } });
-      runs.forEach((r) => { if (r.direct || Math.abs(r.A.v - r.B.v) < 0.5) return; if (!(r.lead && (r.tend || 'b') === 'a')) want(r, 'a'); if (!(r.lead && (r.tend || 'b') === 'b')) want(r, 'b'); });
-      Object.keys(bands).forEach((k) => { const P = bands[k]; P.sort((a, b) => (a.dist - b.dist) || (b.reach - a.reach)); const n = P.length;
-        const byPin = {}; P.forEach((e) => { const kk = e.p.u.toFixed(1); (byPin[kk] = byPin[kk] || []).push(e); });
-        Object.keys(byPin).forEach((kk) => { const Q = byPin[kk], m = Q.length; Q.forEach((e, j) => { e.du = (j - (m - 1) / 2) * 8; }); });
-        P.forEach((e, i) => { const base = e.p.node ? 16 : 8; const dv = e.sgn * (base + i * 6); if (e.end === 'a') { e.r.va = dv; e.r.ua = e.du || 0; } else { e.r.vb = dv; e.r.ub = e.du || 0; } }); });
-      runs.forEach((r) => { const A = r.A, B = r.B, k = r.lead ? r.lead.rid : G.out.runs; if (!r.lead) r.rid = k; let W;
-        if (r.lead) { if (r.va == null) r.va = r.lead.va; if (r.vb == null) r.vb = r.lead.vb; if (r.ua == null) r.ua = r.lead.ua; if (r.ub == null) r.ub = r.lead.ub; }
-        if (r.direct || Math.abs(A.v - B.v) < 0.5) W = [[A.u, A.v, A.z], [B.u, B.v, B.z]];                 // along one axis already
-        else if (r.rel) { const va = A.v + (r.va || 0), ua = A.u + (r.ua || 0), ub = B.u + (r.ub || 0); W = [[A.u, A.v, A.z], [ua, A.v, A.z], [ua, va, A.z], [ub, va, A.z], [ub, B.v, B.z], [B.u, B.v, B.z]]; }   // out to the band, level to the partner, plumb into it
-        else { const va = A.v + (r.va || 0), vb = B.v + (r.vb || 0), ua = A.u + (r.ua || 0), ub = B.u + (r.ub || 0);
-          if (r.lead && (r.tend || 'b') === 'b') W = [[A.u, A.v, A.z], [ua, A.v, A.z], [ua, va, A.z], [r.lu, va, A.z], [r.lu, vb, B.z]];   // a member: its departure, then the shared lane to the arrival band
-          else if (r.lead && r.tend === 'a') W = [[r.lu, va, A.z], [r.lu, vb, B.z], [ub, vb, B.z], [ub, B.v, B.z], [B.u, B.v, B.z]];       // a branch: the shared lane, then its own arrival
-          else W = [[A.u, A.v, A.z], [ua, A.v, A.z], [ua, va, A.z], [r.lu, va, A.z], [r.lu, vb, B.z], [ub, vb, B.z], [ub, B.v, B.z], [B.u, B.v, B.z]]; }
-        const Wd = W.filter((q, i) => !i || Math.abs(q[0] - W[i - 1][0]) + Math.abs(q[1] - W[i - 1][1]) + Math.abs((q[2] || 0) - (W[i - 1][2] || 0)) > 0.5);
-        const S = Wd.map((q) => G.at(q[0], q[1], q[2]));
-        for (let n = 0; n + 1 < S.length; n++) { const a = S[n], b = S[n + 1]; if (Math.hypot(a.x - b.x, a.y - b.y) < 2.5) continue;
-          if (r.lead && n === (r.tend === 'a' ? 0 : S.length - 2) && G.out.edges.some((e) => e.run === k && Math.hypot(e.x - a.x, e.y - a.y) < 0.75)) continue;   // the trunk's lane leg is drawn once
-          G.edge(a, b, r.col, r.cls, r.title); const seg = G.out.edges[G.out.edges.length - 1]; seg.run = k; if (r.joins) seg.joins = r.joins; }
-        if (!r.lead) G.out.runs++; });
-      runs.length = 0;
-    };
-    return { add, flush, pending: () => runs.length };
-  }
+  /* ── the ROUTERS live in the shared /ui/routes.js (window.VeraRoutes; vera/ui/routes.js) — the one implementation
+     the exploded scene and the structured graph (<vera-structgraph>) both route with, so a routing fix lands in both.
+     On a page the element loads the script once (ensureRoutes) and draws when it is there; in node the module is
+     required beside this file, so layout() stays pure and node-testable exactly as before. ── */
+  const routesLib = () => root.VeraRoutes || (typeof require === 'function' && typeof __dirname === 'string' ? require(require('node:path').join(__dirname, '..', 'ui', 'routes.js')) : null);
+  const cardsRouter = (G) => { const L = routesLib(); if (!L) throw new Error('vera/ui/routes.js is not loaded'); return L.cardsRouter(G); };
+  const isoRouter = (G) => { const L = routesLib(); if (!L) throw new Error('vera/ui/routes.js is not loaded'); return L.isoRouter(G); };
+  function ensureRoutes(doc, onload) { doc = doc || document; if (root.VeraRoutes || doc.getElementById('vera-routes-lib')) return; const s = doc.createElement('script'); s.id = 'vera-routes-lib'; s.src = '/ui/routes.js'; s.async = true; s.onload = () => { try { onload && onload(); } catch (_) {} }; (doc.head || doc.documentElement).appendChild(s); }
   /* ── an item as a WIDGET: the form and the data a widget of this kind reads ─────────────────────────────── */
   const SAMPLE = { series: [3, 5, 4, 7, 6, 8, 7], level: { value: 62, max: 100 }, values: { a: 4, b: 7, c: 5, d: 6 }, items: [{ name: 'no reading yet', value: '' }], events: [{ t: '', text: 'no reading yet' }], stages: { steps: [{ label: 'no steps yet', status: '' }] }, string: 'no reading yet', points: [[1, 2], [2, 3], [3, 2]], graph: { nodes: [], links: [] } };
   const SHAPE = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'values', matrix: 'values', donut: 'values', stack: 'values', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages', calendar: 'items', string: 'string', kv: 'values', pipes: 'graph', context_graph: 'graph', scatter: 'points' };
@@ -1086,7 +952,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
       galaxy(on) { this._S.galaxy = on == null ? !this._S.galaxy : !!on; writePref('vera_xpl_galaxy', this._S.galaxy); this._schedule(); this._layersEv(); return this._S.galaxy; }
       _layersEv() { this.dispatchEvent(new CustomEvent('vera:xpl:layers', { detail: { activity: !!this._S.layers.activity, estate: !!this._S.layers.estate, galaxy: !!this._S.galaxy }, bubbles: true })); }
       connectedCallback() {
-        ensureCss(this.ownerDocument); ensureIso(this.ownerDocument, () => this._schedule()); if (this._built) { this._schedule(); return; } this._built = true;
+        ensureCss(this.ownerDocument); ensureIso(this.ownerDocument, () => this._schedule()); ensureRoutes(this.ownerDocument, () => this._schedule()); if (this._built) { this._schedule(); return; } this._built = true;
         const m = this.getAttribute('mode'); if (m) this._S.mode = m;
         this.innerHTML = '<div class="xp-ctl"><span class="c">explode</span><button data-m="cards">Cards</button><button data-m="front">Front</button><button data-m="iso">Iso</button><span class="sep"></span><button data-a="fit" title="Back to the whole scene">Fit</button><button data-a="close" title="Back to the flat transcript">Flatten</button><span class="sep"></span><span class="c iso-c" data-r="isoc">iso</span><button data-a="solo" title="Only this turn — the selected turn\'s plate alone (the board\'s single-layer iso)">Turn</button><button data-a="all" title="Every turn — the plates in a row">All</button><button data-a="stack" title="Stack — the stations on floors, one above the other">Stack</button><button data-a="wsz" title="The iso widgets\' size — S · M · L">M</button><button data-a="landw" title="The session canvas plate: a column wider, out along u (shift-click: narrower)">Canvas +</button><span class="sep"></span><button data-a="place" title="Place a widget from the registry onto this station\'s plate — it becomes one of the turn\'s items, tagged ⧉ with its template">+ Place</button><span class="sep"></span><input type="range" class="xp-scrub" data-r="scrub" min="0" max="0" value="0" title="Scrub through the session\'s turns (← → too)"></div><div class="xp-ctx" data-r="ctx"></div><div class="xp-dots" data-r="dots"></div><div class="xp-wrap" data-r="wrap"><div class="xp-view" data-r="view"></div></div><div class="xp-pz"><button data-a="zout" title="Zoom out">−</button><span class="z" data-r="zoom">100%</span><button data-a="zin" title="Zoom in">+</button><span class="sp"></span><button data-a="panl" title="Pan left">←</button><button data-a="panu" title="Pan up">↑</button><button data-a="pand" title="Pan down">↓</button><button data-a="panr" title="Pan right">→</button><span class="tl" data-r="tl"><span class="sp"></span><button data-a="tiltu" title="Tilt the view up — look down on the plane">⌃</button><span class="z" data-r="ang">30°</span><button data-a="tiltd" title="Tilt the view down — flatten the plane">⌄</button><button data-a="swl" title="Swing the view left">↺</button><button data-a="swr" title="Swing the view right">↻</button></span><span class="sp"></span><button data-a="fit" title="Back to fit">fit</button></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
@@ -1286,6 +1152,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
       }
       _schedule() { if (this._raf || !this._built) return; this._raf = (root.requestAnimationFrame || setTimeout)(() => { this._raf = 0; this._render(); }); }
       _render() {
+        if (!routesLib()) { ensureRoutes(this.ownerDocument, () => this._schedule()); return; }   // the routers are on their way; draw when they land
         if (this._dragW && this._dragW.on) { this._renderHeld = true; return; }   // a widget is in the hand: nothing is rebuilt under it until the drop
         const S = this._S, wrap = this._r.wrap, view = this._r.view; const W = wrap.clientWidth || 800, H = wrap.clientHeight || 600;
         const ISO = root.VeraISO && typeof root.VeraISO.proj === 'function' ? root.VeraISO : null;
@@ -1390,7 +1257,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
     }
     root.customElements.define('vera-exploded', VeraExploded);
   }
-  const api = { layout, frontRuns, LAYERS, ensureCss, ensureIso, graphData, cardsRouter, isoRouter, landRuns, actsOf, estOf, actParent, actTree, actRuns, planeSize, widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 12 };
+  const api = { layout, frontRuns, LAYERS, ensureCss, ensureIso, ensureRoutes, graphData, cardsRouter, isoRouter, landRuns, actsOf, estOf, actParent, actTree, actRuns, planeSize, widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 12 };
   root.VeraExploded = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

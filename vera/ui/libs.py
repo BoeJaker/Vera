@@ -8,6 +8,12 @@ from the same copy.
                                                        exploded view, iso widgets,
                                                        the graph's isometric galaxy
   /ui/menus.js  -> vera/ui/menus.js  window.MENUS     every context menu
+  /ui/routes.js -> vera/ui/routes.js window.VeraRoutes the run routers: the exploded
+                                                       scene's cards and iso runs, the
+                                                       structured graph's channels
+  /ui/structgraph.js -> vera/ui/structgraph_element.js  <vera-structgraph>: code and
+                                                       prose as bands, columns, cards
+                                                       and routed runs
 
 Routes only - no state, no capabilities - so the module body may run more than
 once (the namespace import trap) without a side effect.
@@ -37,3 +43,13 @@ async def _serve_iso_js():
 @APP.get("/ui/menus.js", include_in_schema=False)
 async def _serve_menus_js():
     return _script("menus.js")
+
+
+@APP.get("/ui/routes.js", include_in_schema=False)
+async def _serve_routes_js():
+    return _script("routes.js")
+
+
+@APP.get("/ui/structgraph.js", include_in_schema=False)
+async def _serve_structgraph_js():
+    return _script("structgraph_element.js")
