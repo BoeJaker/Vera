@@ -46,6 +46,8 @@
  *   <vera-graph-embed renderer="struct" record="rec-4f2a" ranges="[[0,1180]]" mode="position">
  *   <vera-graph-embed renderer="struct" text="…a pasted passage…">
  *   <vera-graph-embed renderer="struct" src="/some/contract.json">
+ *   <vera-graph-embed renderer="struct" path="vera/research/explode_capabilities.py" depth="1">   a repo file (+ its imports)
+ *   <vera-graph-embed renderer="struct" code="def f(): …" lang="python">                           a snippet (an LLM's, a page's)
  *   el.setDoc(contract)                      a contract the host already has
  *
  *   layers      comma-separated layer ids to run (default: the layers on by default)
@@ -159,13 +161,20 @@
         } else {
           var body = {};
           var rec = this.getAttribute('record'), text = this.getAttribute('text');
-          if (rec) body.record_id = rec;
+          var code = this.getAttribute('code'), cpath = this.getAttribute('path');
+          var endpoint = '/nlp/explode/prose';
+          if (code != null || cpath) {   // code: a snippet (code="…" lang="…"), or a repo file / directory (path="…")
+            endpoint = '/code/explode';
+            if (code) { body.text = code; body.lang = this.getAttribute('lang') || ''; if (cpath) body.path = cpath; }
+            else body.path = cpath;
+            var depth = this.getAttribute('depth'); if (depth != null) body.depth = parseInt(depth, 10) || 0;
+          } else if (rec) body.record_id = rec;
           else if (text) body.text = text;
-          else { this._fail('nothing to explode — give record, text or src'); return null; }
+          else { this._fail('nothing to explode — give record, text, code, path or src'); return null; }
           var ranges = this.getAttribute('ranges'); if (ranges) { try { body.ranges = JSON.parse(ranges); } catch (e) {} }
-          var mode = this.getAttribute('mode'); if (mode) body.mode = mode;
-          var layers = this.getAttribute('layers'); if (layers) body.layers = layers.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-          res = await fetch(base + '/nlp/explode/prose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          var mode = this.getAttribute('mode'); if (mode && endpoint !== '/code/explode') body.mode = mode;
+          var layers = this.getAttribute('layers'); if (layers && endpoint !== '/code/explode') body.layers = layers.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+          res = await fetch(base + endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         }
         doc = await res.json();
       } catch (e) {
