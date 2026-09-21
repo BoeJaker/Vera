@@ -13,7 +13,8 @@ Rules that keep a verdict honest:
   * every score has evidence spans where it can — a trust score with nothing to click on is an opinion.
   * a per-card assessment (`on` = a card id) shows on that card as a badge; a source-level one on the verdict rail.
 
-Prose (no model):     readability · structure · sources · ai_likelihood (stylometry) · trust (composite)
+Prose (no model):     readability · structure · sources · trust (composite) · ai_likelihood (stylometry — EXPERIMENTAL,
+                      opt-in: on the estate's real data it did not tell LLM-written reports from scraped pages)
 Code (no model):      complexity · smells · clones · tests (given the test corpus) · provenance (given git facts)
 Model-backed scorers (an LLM rubric, a two-model AI detector, a claim checker) register through the same
 registry in assess_capabilities.py when they exist; none is invented here.
@@ -122,10 +123,16 @@ def ai_likelihood_stylometry(text: str, path: str = "") -> Optional[Dict]:
     a thinner vocabulary for its length, few dashes / parentheses / questions, and a set of stock phrases. Each
     signal is weak; the sum is offered at low confidence with the phrases it found as evidence. A two-model
     detector (Binoculars) replaces this when one is registered."""
-    sents = sentences(text); words = _WORD_RX.findall(text)
+    # headings, bullets and table rows are not sentences: their short, varied lines read as "bursty" and hide a
+    # machine's even prose — the statistics run over the prose lines, the phrases over everything
+    lines = text.split("\n")
+    struct_lines = [l for l in lines if re.match(r"^\s*(#{1,6}\s|[-*•]\s|\d+[.)]\s|\|)", l)]
+    prose = "\n".join(l for l in lines if l.strip() and l not in struct_lines)
+    structured = len(struct_lines) / max(1, len([l for l in lines if l.strip()]))
+    sents = sentences(prose); words = _WORD_RX.findall(prose)
     if len(words) < 60 or len(sents) < 4:
         return None
-    lens = [len(_WORD_RX.findall(text[s:e])) for s, e in sents]
+    lens = [len(_WORD_RX.findall(prose[s:e])) for s, e in sents]
     lens = [n for n in lens if n > 0] or [1]
     mean = sum(lens) / len(lens)
     cv = (sum((n - mean) ** 2 for n in lens) / len(lens)) ** 0.5 / max(1e-6, mean)       # burstiness: humans ~0.6+, models ~0.3-0.45
@@ -141,7 +148,7 @@ def ai_likelihood_stylometry(text: str, path: str = "") -> Optional[Dict]:
                 break
         if len(found) >= 12:
             break
-    starts = [text[s:e].strip().split(" ")[0].lower() for s, e in sents if text[s:e].strip()]
+    starts = [prose[s:e].strip().split(" ")[0].lower() for s, e in sents if prose[s:e].strip()]
     rep_start = 1 - len(set(starts)) / max(1, len(starts))
     sig_burst = _clamp((0.55 - cv) / 0.35)                    # 1 when sentences are very even
     sig_ttr = _clamp((0.62 - ttr) / 0.25)                     # 1 when the vocabulary is thin
@@ -149,9 +156,12 @@ def ai_likelihood_stylometry(text: str, path: str = "") -> Optional[Dict]:
     sig_phr = _clamp(len(found) / max(4.0, len(words) / 150.0))
     score = 0.35 * sig_burst + 0.2 * sig_ttr + 0.15 * sig_punct + 0.2 * sig_phr + 0.1 * _clamp(rep_start * 2)
     ev = [{"span": _span(path, s, e), "note": "stock phrase: " + ph} for ph, s, e in found[:8]]
-    return {"key": "ai_likelihood", "label": "AI-generated", "score": round(_clamp(score), 3), "confidence": 0.35,
-            "by": "stylometry · heuristic (no model)", "on": "source", "evidence": ev,
-            "detail": {"burstiness": round(cv, 3), "type_token": round(ttr, 3), "punct_per_100w": round(punct, 2), "stock_phrases": len(found), "repeated_starts": round(rep_start, 3)}}
+    # a report that is mostly headings and lists gives stylometry little prose to read — say so, and trust it less
+    conf = 0.35 if structured < 0.3 else 0.2
+    by = "stylometry · heuristic (no model) · experimental" + (" · structured text, unreliable here" if structured >= 0.3 else "")
+    return {"key": "ai_likelihood", "label": "AI-generated", "score": round(_clamp(score), 3), "confidence": conf,
+            "by": by, "on": "source", "evidence": ev,
+            "detail": {"burstiness": round(cv, 3), "type_token": round(ttr, 3), "punct_per_100w": round(punct, 2), "stock_phrases": len(found), "repeated_starts": round(rep_start, 3), "structured": round(structured, 3)}}
 
 
 def trust(assessments: List[Dict]) -> Optional[Dict]:
