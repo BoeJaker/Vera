@@ -195,3 +195,25 @@ def test_named_zone_when_available():
     # BST in September: 05:00 London = 04:00 UTC.
     w = sc.current_window(r, _t(2026, 9, 21, 4, 30))
     assert w and w[0].astimezone(UTC) == _t(2026, 9, 21, 4)
+
+
+def test_results_mode_projects_runs_and_goals():
+    suites = [{"suite_id": "run57", "tag": "census-default", "started_at": "2026-09-21T04:07:09Z",
+               "ts": "2026-09-21T07:46:10Z", "tasks_n": 3, "done": 2, "capped": 1, "pass_rate": 0.868,
+               "results": [{"task": "census-default-a", "label": "a", "status": "done", "elapsed_s": 100, "checks": "5/5"},
+                           {"task": "census-default-b", "label": "b", "status": "wall-cap", "elapsed_s": 1800, "hit_cap": True},
+                           {"task": "census-default-c", "label": "c", "status": "done", "elapsed_s": 60}]},
+              {"suite_id": "old", "tag": "nightly", "started_at": "2026-09-01T00:00:00Z", "ts": "2026-09-01T01:00:00Z",
+               "tasks_n": 1, "pass_rate": 0.2, "results": []}]
+    ev = sc.results_events(suites, _t(2026, 9, 20, 0), _t(2026, 9, 27, 0))
+    assert [e["id"] for e in ev] == ["result:run57"]
+    e = ev[0]
+    assert e["kind"] == "census" and e["grade"] == "good" and e["color"] == sc.RESULT_COLORS["good"]
+    assert e["title"].startswith("run57 · 2/3 · 87%") and "1 capped" in e["title"]
+    assert e["start"] == "2026-09-21T04:07:09+00:00" and e["end"] == "2026-09-21T07:46:10+00:00"
+    assert len(e["rows"]) == 3 and e["rows"][1]["hit_cap"] is True
+    goals = sc.results_events(suites, _t(2026, 9, 20, 0), _t(2026, 9, 27, 0), granularity="goals")
+    assert [g["id"] for g in goals] == ["result:run57:a", "result:run57:b", "result:run57:c"]
+    assert goals[0]["end"] == "2026-09-21T04:08:49+00:00"          # placed by elapsed time, in order
+    assert goals[1]["grade"] == "bad" and goals[1]["start"] == goals[0]["end"]
+    assert sc.result_grade(None) == "none" and sc.result_grade(0.7) == "mixed" and sc.result_grade(0.1) == "bad"

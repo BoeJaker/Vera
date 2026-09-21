@@ -614,18 +614,28 @@ async def cap_schedule_tick(trace_id=None) -> Dict[str, Any]:
 
 @capability("evolve.schedule.events", memory="off", silent=True,
             http_method="GET", http_path="/evolve/schedule/events", http_tags=["evolve", "schedule", "calendar"],
-            description="Calendar events for the Loop Lab schedules: one read-only event per window "
-                        "per day (source loop-lab) plus the runs the scheduler started (source "
-                        "loop-lab-run). Input: start, end (ISO; default this week ± 3 days). "
-                        "Output: {events[], count}.")
-async def cap_schedule_events(start: str = "", end: str = "", trace_id=None) -> Dict[str, Any]:
+            description="Calendar events for the Loop Lab schedules. mode=windows (default): one "
+                        "read-only event per window per day (source loop-lab) plus the runs the "
+                        "scheduler started (source loop-lab-run); mode=results: every archived census "
+                        "run and suite as a span coloured by its pass rate (source results; "
+                        "granularity=runs|goals); mode=both. Input: start, end (ISO; default this "
+                        "week ± 3 days), mode, granularity. Output: {events[], count}.")
+async def cap_schedule_events(start: str = "", end: str = "", mode: str = "windows",
+                              granularity: str = "runs", trace_id=None) -> Dict[str, Any]:
     now = _now()
     s = core.parse_iso(start) or (now - __import__("datetime").timedelta(days=3))
     e = core.parse_iso(end) or (now + __import__("datetime").timedelta(days=10))
-    scheds = await _load_all()
-    ev = core.project_events(scheds, s, e) + core.history_events(await _runs(MAX_RUNS), s, e)
+    mode = (mode or "windows").strip().lower()
+    ev: List[Dict[str, Any]] = []
+    if mode in ("windows", "both"):
+        scheds = await _load_all()
+        ev += core.project_events(scheds, s, e) + core.history_events(await _runs(MAX_RUNS), s, e)
+    if mode in ("results", "both"):
+        res = await _call("evolve.suites", limit=400)
+        suites = (res.get("suites") if isinstance(res, dict) else None) or []
+        ev += core.results_events(suites, s, e, granularity=(granularity or "runs").strip().lower())
     ev.sort(key=lambda x: x["start"])
-    return {"events": ev, "count": len(ev)}
+    return {"events": ev, "count": len(ev), "mode": mode}
 
 
 @capability("evolve.schedule.history", memory="off", silent=True,
