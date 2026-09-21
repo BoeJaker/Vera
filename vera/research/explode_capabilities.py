@@ -24,6 +24,8 @@ the node tier's NER, language id and sentiment. Another tool is one
 Capabilities
     nlp.explode.prose    text | record_id | record_ids, ranges, mode, layers → the contract
     nlp.explode.layers   the registered layers and their defaults
+    code.explode         text + lang | path / paths (repo files, one hop of imports) | record_id → the contract
+                         (the extractor itself is vera/research/code_explode_core.py — pure, node-testable)
 
 Rules the contract keeps (EXPLODE.md §3): no card without a span; every edge
 carries its resolution ("exact" for a cued, typed relation; "heuristic" for a
@@ -57,6 +59,16 @@ except ImportError:  # pragma: no cover - tests import the pure helpers only
 def _wa():
     import Vera.vera.fabric.fabric_web_acquisition as wa
     return wa
+
+
+def _code_core():
+    """The pure code extractor (vera/research/code_explode_core.py). This file is a `_module_files` entry point
+    loaded flat, so the import is absolute — the app's package first, the test tree's second."""
+    try:
+        from Vera.vera.research import code_explode_core as core
+    except ImportError:
+        from vera.research import code_explode_core as core
+    return core
 
 
 def _sqlite_conn():
@@ -577,8 +589,127 @@ async def explode_prose(text: str = "", record_id: str = "", record_ids: Optiona
             "counts": {"groups": len(groups), "cards": len(cards), "edges": len(edges), "assessments": len(assessments), "paragraphs": paras_total}}
 
 
+# ── code: files of the repo, a snippet, a record — the pure extractor over what was read ───────────
+_CODE_EXT = (".py", ".pyi", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".css", ".html", ".htm")
+
+
+def _repo_root() -> str:
+    import os
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+
+
+def _read_repo_files(paths: List[str], max_files: int, max_bytes: int) -> Dict:
+    """Read repo-relative files (a directory lists its code files, non-recursively) — never outside the repo."""
+    import os
+    root = _repo_root()
+    out, skipped, total = [], [], 0
+    for rel in paths:
+        rel = str(rel).replace("\\", "/").lstrip("/")
+        full = os.path.abspath(os.path.join(root, rel))
+        if not (full == root or full.startswith(root + os.sep)):
+            skipped.append({"path": rel, "why": "outside the repo"})
+            continue
+        if os.path.isdir(full):
+            for name in sorted(os.listdir(full)):
+                if name.lower().endswith(_CODE_EXT) and os.path.isfile(os.path.join(full, name)):
+                    paths.append(rel.rstrip("/") + "/" + name)
+            continue
+        if not os.path.isfile(full):
+            skipped.append({"path": rel, "why": "not a file"})
+            continue
+        if len(out) >= max_files:
+            skipped.append({"path": rel, "why": "max_files"})
+            continue
+        try:
+            with open(full, "r", encoding="utf-8", errors="replace") as fh:
+                text = fh.read(max_bytes + 1)
+        except Exception as e:
+            skipped.append({"path": rel, "why": str(e)[:80]})
+            continue
+        if len(text) > max_bytes:
+            skipped.append({"path": rel, "why": "truncated at %d chars" % max_bytes}); text = text[:max_bytes]
+        total += len(text)
+        out.append({"path": rel, "text": text})
+    return {"sources": out, "skipped": skipped, "chars": total}
+
+
+async def explode_code(text: str = "", lang: str = "", path: str = "", paths: Optional[List[str]] = None, record_id: str = "",
+                       depth: int = 1, max_files: int = 40, max_bytes: int = 400000, prefer_tree_sitter: bool = False) -> Dict:
+    """The contract for a snippet (text + lang), repo files (path / paths — a directory lists its code files;
+    depth=1 pulls in the repo files they import, once), or a fabric record holding code."""
+    import os
+    core = _code_core()
+    loop = asyncio.get_running_loop()
+    sources: List[Dict] = []
+    skipped: List[Dict] = []
+    label = ""
+    if text:
+        sources.append({"path": path or ("snippet." + (lang or "txt")), "text": text[:max_bytes], "lang": lang})
+        label = path or "pasted " + (lang or "code")
+    elif record_id:
+        rec = await loop.run_in_executor(None, _read_record, record_id)
+        if not rec:
+            return {"error": "record %s not found" % record_id}
+        sources.append({"path": record_id, "text": (rec.get("text") or "")[:max_bytes], "lang": lang})
+        label = "record " + record_id
+    else:
+        want = [p for p in ([path] if path else []) + list(paths or []) if p]
+        if not want:
+            return {"error": "text, path, paths or record_id required"}
+        read = await loop.run_in_executor(None, _read_repo_files, list(want), max_files, max_bytes)
+        sources, skipped = read["sources"], read["skipped"]
+        if not sources:
+            return {"error": "nothing readable in " + ", ".join(want), "skipped": skipped}
+        label = want[0] if len(want) == 1 else "%d paths" % len(want)
+        # one hop: the repo files the seeds import join the parsed set, so calls across them resolve exact
+        if depth and depth > 0 and len(sources) < max_files:
+            seen = {s["path"] for s in sources}
+            extra: List[str] = []
+            for s in sources:
+                lang_s = core.detect_lang(s["path"], s["text"], s.get("lang") or "")
+                if lang_s == "python":
+                    p = core.parse_python_ast(s["path"], s["text"])
+                elif lang_s in ("javascript", "typescript"):
+                    p = core.parse_js_patterns(s["path"], s["text"])
+                elif lang_s == "html":
+                    p = core.parse_html(s["path"], s["text"])
+                else:
+                    continue
+                for cand in core.import_targets(p["imports"], s["path"]):
+                    if cand not in seen and cand not in extra and os.path.isfile(os.path.join(_repo_root(), cand)):
+                        extra.append(cand); seen.add(cand)
+            if extra:
+                more = await loop.run_in_executor(None, _read_repo_files, extra[: max(0, max_files - len(sources))], max_files, max_bytes)
+                sources += more["sources"]; skipped += more["skipped"]
+    doc = await loop.run_in_executor(None, lambda: core.explode_sources(sources, prefer_tree_sitter=prefer_tree_sitter, label=label))
+    doc["source"]["skipped"] = skipped
+    doc["source"]["text"] = {s["path"]: s["text"] for s in sources} if len(sources) > 1 else sources[0]["text"]
+    return doc
+
+
 # ── capabilities ──────────────────────────────────────────────────────────────────────────────────
 if _CAP_AVAILABLE:
+    @capability(
+        "code.explode",
+        http_method="POST", http_path="/code/explode", http_tags=["code", "graph"],
+        memory="off",
+        description=("Explode code into a STRUCTURED graph — the contract <vera-structgraph> draws: files and classes as "
+                     "groups, modules / classes / functions / methods (or a page's elements and CSS rules) as cards with "
+                     "their spans, CALLS / IMPORTS / INHERITS / MATCHES edges each with a resolution (exact | heuristic | "
+                     "external — an unresolved target is a grey stub, never an invented edge). Engines: Python via ast, "
+                     "tree-sitter when installed (parses broken and partial code), tolerant patterns for JS / CSS / HTML; "
+                     "every card says which. One of: text + lang (a snippet), path / paths (repo-relative files or a "
+                     "directory; depth=1 pulls in the repo files they import), record_id (a fabric record holding code). "
+                     "Nothing is persisted. Output: {ok, kind: code|page, source:{paths, partial, errors, engines, "
+                     "tree_sitter, text}, layout, layers, groups, cards, edges, assessments:[syntax, resolved], counts}."),
+    )
+    async def cap_code_explode(text: str = "", lang: str = "", path: str = "", paths: Optional[List[str]] = None, record_id: str = "",
+                               depth: int = 1, max_files: int = 40, prefer_tree_sitter: bool = False, trace_id=None) -> Dict:
+        if isinstance(paths, str):
+            paths = [p.strip() for p in paths.split(",") if p.strip()]
+        return await explode_code(text=text, lang=lang, path=path, paths=paths, record_id=record_id, depth=int(depth or 0),
+                                  max_files=max(1, min(200, int(max_files or 40))), prefer_tree_sitter=bool(prefer_tree_sitter))
+
     @capability(
         "nlp.explode.prose",
         http_method="POST", http_path="/nlp/explode/prose", http_tags=["nlp", "fabric", "graph"],

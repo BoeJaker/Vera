@@ -110,7 +110,18 @@
           '<option value="record">A record</option>' +
           '<option value="records">Several records — lanes</option>' +
           '<option value="text">A passage — pasted</option>' +
+          '<option value="code">Code — a repo file, directory or snippet</option>' +
         '</select>' +
+        '<div class="xp-w-code" style="display:none">' +
+          '<div style="' + CSS_LABEL + '">Repo path (file or directory)</div>' +
+          '<input class="xp-code-path" placeholder="vera/research/explode_capabilities.py" style="' + CSS_FIELD + '">' +
+          '<div style="display:flex;gap:6px;align-items:center;margin-top:4px;font-size:9px;color:var(--dim,#6a6058)">' +
+            '<label style="display:flex;gap:4px;align-items:center;cursor:pointer"><input type="checkbox" class="xp-code-hop" checked style="margin:0">pull in the files it imports</label>' +
+          '</div>' +
+          '<div style="' + CSS_LABEL + '">— or a snippet</div>' +
+          '<textarea class="xp-code-text" rows="6" placeholder="Paste code. tree-sitter reads broken or partial code when installed; ast / patterns otherwise." style="' + CSS_FIELD + ';resize:vertical"></textarea>' +
+          '<select class="xp-code-lang" style="' + CSS_FIELD + ';margin-top:4px"><option value="">language — detect</option><option value="python">python</option><option value="javascript">javascript</option><option value="typescript">typescript</option><option value="css">css</option><option value="html">html</option></select>' +
+        '</div>' +
         '<div class="xp-w-record">' +
           '<div style="' + CSS_LABEL + '">Record id</div>' +
           '<div style="display:flex;gap:4px"><input class="xp-record" placeholder="record id" style="' + CSS_FIELD + '">' +
@@ -153,6 +164,9 @@
         $('.xp-w-record').style.display = w === 'record' ? '' : 'none';
         $('.xp-w-records').style.display = w === 'records' ? '' : 'none';
         $('.xp-w-text').style.display = w === 'text' ? '' : 'none';
+        $('.xp-w-code').style.display = w === 'code' ? '' : 'none';
+        // prose has modes and NLP layers; code has one layout and its own layers (drawn from the reply)
+        [modeSel, modeSel.previousElementSibling, layersEl, layersEl.previousElementSibling].forEach(function (el) { if (el) el.style.display = w === 'code' ? 'none' : ''; });
       }
       whatSel.onchange = syncWhat;
       syncWhat();
@@ -245,17 +259,25 @@
           var ids = recsIn.value.split(/\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
           if (ids.length < 2) { say('two or more record ids, one per line', true); return; }
           body.record_ids = ids; label = ids.length + ' records';
+        } else if (w === 'code') {
+          var cpath = $('.xp-code-path').value.trim(), ctext = ($('.xp-code-text').value || '').trim();
+          body = {};
+          if (ctext) { body.text = ctext; body.lang = $('.xp-code-lang').value; body.path = cpath; label = 'code · ' + (body.lang || 'detected') + ' · ' + ctext.length + ' chars'; }
+          else if (cpath) { body.path = cpath; body.depth = $('.xp-code-hop').checked ? 1 : 0; label = cpath; }
+          else { say('a repo path or a snippet is needed', true); return; }
         } else {
           var text = (textIn.value || '').trim();
           if (!text) { say('nothing to explode', true); return; }
           body.text = text; label = 'passage · ' + text.length + ' chars';
         }
-        if (modeSel.value) body.mode = modeSel.value;
-        var L = chosenLayers(); if (L) body.layers = L;
+        if (w !== 'code') {
+          if (modeSel.value) body.mode = modeSel.value;
+          var L = chosenLayers(); if (L) body.layers = L;
+        }
         say('exploding…');
         try {
           await ensureStruct();
-          var res = await fetch(base + '/nlp/explode/prose', {
+          var res = await fetch(base + (w === 'code' ? '/code/explode' : '/nlp/explode/prose'), {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
           });
           var doc = await res.json();
@@ -265,7 +287,8 @@
           var rows = (doc.layers || []).map(function (l) {
             return (l.on ? (l.error ? '✗ ' : '✓ ') : '· ') + esc(l.label || l.id) + (l.on && !l.error ? ' ' + l.count + (l.ms ? ' · ' + l.ms + ' ms' : '') + (l.where ? ' · ' + esc(l.where) : '') : '') + (l.error ? ' — ' + esc(l.error) : '');
           });
-          say((doc.counts ? doc.counts.cards + ' cards, ' + doc.counts.edges + ' runs, ' + doc.counts.paragraphs + ' paragraphs' : '') +
+          say((doc.counts ? doc.counts.cards + ' cards, ' + doc.counts.edges + ' runs, ' + (doc.counts.paragraphs != null ? doc.counts.paragraphs + ' paragraphs' : doc.counts.files + ' file' + (doc.counts.files === 1 ? '' : 's') + (doc.counts.external ? ', ' + doc.counts.external + ' external' : '')) : '') +
+              (doc.source && doc.source.engines ? ' · ' + doc.source.engines.join(' + ') + (doc.source.tree_sitter === false ? ' (tree-sitter not installed)' : '') : '') +
               (doc.source && doc.source.partial ? ' · partial' : '') + ' · not persisted<br>' + rows.join('<br>'));
         } catch (e) {
           say('explode failed: ' + e, true);
