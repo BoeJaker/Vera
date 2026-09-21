@@ -16,8 +16,9 @@ import asyncio
 import importlib.util
 import json
 import os
-import sys
 import types
+
+from orchestration_stub import stubbed_orchestration
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 
@@ -122,16 +123,13 @@ def _load():
     orch.register_ui = lambda panel_id, label, icon, html, js="", ui_caps=None, mode="inject", tab_order=100, **kw: orch.UI_PANELS.__setitem__(panel_id, {"id": panel_id, "label": label, "icon": icon, "html": html, "ui_caps": ui_caps or [], "mode": mode, "tab_order": tab_order})
     orch.now_iso = lambda: "2026-09-11T00:00:00+00:00"
     orch.schedule = lambda fn, interval, name=None, skip_in_sandbox=False, singleton=False: orch.SCHEDULED_TASKS.append({"fn": fn, "int": interval, "name": name})
-    pkg = types.ModuleType("Vera"); pkg.__path__ = []
-    sub = types.ModuleType("Vera.vera"); sub.__path__ = []
-    sys.modules["Vera"] = pkg; sys.modules["Vera.vera"] = sub; sys.modules["Vera.vera.capability_orchestration"] = orch
-
     def load(name, rel):
         spec = importlib.util.spec_from_file_location(name, os.path.join(ROOT, *rel))
         mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); return mod
 
-    d = load("directives_under_test", ("vera", "ui", "directives.py"))
-    s = load("scripts_under_test", ("vera", "ui", "scripts.py"))
+    with stubbed_orchestration(orch):
+        d = load("directives_under_test", ("vera", "ui", "directives.py"))
+        s = load("scripts_under_test", ("vera", "ui", "scripts.py"))
     return d, s, orch
 
 

@@ -11,8 +11,9 @@ text-level.
 import asyncio
 import importlib.util
 import os
-import sys
 import types
+
+from orchestration_stub import stubbed_orchestration
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 
@@ -59,15 +60,12 @@ def _load():
         "foo.bar": {"func": foo_bar, "meta": {"description": "nothing to tell"}},
     })
     orch.APP = _App(); orch.capability = capability
-    pkg = types.ModuleType("Vera"); pkg.__path__ = []
-    sub = types.ModuleType("Vera.vera"); sub.__path__ = []
-    sys.modules["Vera"] = pkg; sys.modules["Vera.vera"] = sub; sys.modules["Vera.vera.capability_orchestration"] = orch
-
     def load(name, rel):
         spec = importlib.util.spec_from_file_location(name, os.path.join(ROOT, *rel))
         mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); return mod
 
-    c = load("widget_catalog_under_test", ("vera", "widgets", "widget_catalog.py"))
+    with stubbed_orchestration(orch):
+        c = load("widget_catalog_under_test", ("vera", "widgets", "widget_catalog.py"))
     return c, orch
 
 

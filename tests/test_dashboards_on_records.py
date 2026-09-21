@@ -15,6 +15,8 @@ import re
 import sys
 import types
 
+from orchestration_stub import stubbed_orchestration
+
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 
 
@@ -379,10 +381,8 @@ def _catalog():
 
     orch.APP = _App()
     orch.capability = capability
-    pkg = types.ModuleType("Vera"); pkg.__path__ = []
-    sub = types.ModuleType("Vera.vera"); sub.__path__ = []
-    sys.modules["Vera"] = pkg; sys.modules["Vera.vera"] = sub; sys.modules["Vera.vera.capability_orchestration"] = orch
-    return _load("widget_catalog_under_test", "vera", "widgets", "widget_catalog.py"), orch
+    with stubbed_orchestration(orch):
+        return _load("widget_catalog_under_test", "vera", "widgets", "widget_catalog.py"), orch
 
 
 def test_the_catalogue_lists_and_serves_the_layout_files():
