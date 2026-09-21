@@ -634,7 +634,10 @@ def _read_repo_files(paths: List[str], max_files: int, max_bytes: int) -> Dict:
 
 
 async def explode_code(text: str = "", lang: str = "", path: str = "", paths: Optional[List[str]] = None, record_id: str = "",
-                       depth: int = 1, max_files: int = 40, max_bytes: int = 400000, prefer_tree_sitter: bool = False) -> Dict:
+                       depth: int = 1, max_files: int = 40, max_bytes: int = 2000000, prefer_tree_sitter: bool = False) -> Dict:
+    # max_bytes: capability_orchestration.py alone is past 400k chars; a truncated file is a syntax error and every
+    # symbol in it falls to a stub (seen live 2026-09-21) — 2M keeps the repo's biggest modules whole, and ast reads
+    # them in well under a second
     """The contract for a snippet (text + lang), repo files (path / paths — a directory lists its code files;
     depth=1 pulls in the repo files they import, once), or a fabric record holding code."""
     import os
