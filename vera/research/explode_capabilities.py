@@ -184,6 +184,10 @@ def _entity_cards(ent_list: List[Dict], ctx: Dict, layer: str, by: str) -> List[
         pos = int(e.get("position", 0) or 0) + ctx["base"]
         n = int(e.get("mention_count", 1) or 1)
         pi = _para_index(ctx["paragraphs"], pos)
+        # a "name" that runs across a paragraph break is the fallback engine's capitalised-phrase detector
+        # reading past a blank line ("Summary\n\nSeptember"): not an entity
+        if ctx["paragraphs"] and pos + len(name) > ctx["paragraphs"][pi]["end"]:
+            continue
         card = {"id": cid, "group": ctx["paragraphs"][pi]["id"] if ctx["paragraphs"] else None,
                 "layer": layer, "kind": etype, "title": name,
                 "subtitle": "%s · %d mention%s" % (etype.upper(), n, "" if n == 1 else "s"),
@@ -249,6 +253,10 @@ async def _layer_rel_typed(ctx: Dict) -> Dict:
             continue
         rel = str(r.get("rel") or "RELATED_TO")
         cued = bool(r.get("cue")) and rel not in ("RELATED_TO", "DATED", "CO_OCCURS", "MENTIONED_WITH")
+        # a cue between ADJACENT entities can pair the wrong two ("on Tuesday in Bristol" → Tuesday located in
+        # Bristol): a date or an amount is never the thing located, founded or led — such a run is a guess
+        if cued and _kind(r.get("from_type")) in ("date", "amount") and rel in ("LOCATED_IN", "FOUNDED", "LEADS", "WORKS_FOR", "BASED_IN"):
+            cued = False
         edges.append({"from": a, "to": b, "layer": "rel.typed", "kind": "RELATES",
                       "label": rel.lower().replace("_", " "),
                       "resolution": "exact" if cued else "heuristic",
@@ -281,6 +289,7 @@ async def _layer_rel_cooccur(ctx: Dict) -> Dict:
     return {"edges": edges, "by": "same sentence", "where": "host"}
 
 
+_NODE_NER_DROP = {"CARDINAL", "ORDINAL", "PERCENT", "QUANTITY"}   # what the fabric's spaCy path drops too
 _NODE_NER_KIND = {"PERSON": "person", "PER": "person", "ORG": "org", "GPE": "location", "LOC": "location",
                   "FAC": "location", "DATE": "date", "TIME": "date", "EVENT": "event", "MONEY": "amount",
                   "PRODUCT": "product", "WORK_OF_ART": "work", "LAW": "law", "NORP": "group", "LANGUAGE": "language"}
@@ -299,17 +308,26 @@ async def _layer_ner_node(ctx: Dict) -> Dict:
         word = (e.get("word") or "").strip()
         if not word or e.get("start") is None:
             continue
-        etype = _NODE_NER_KIND.get(str(e.get("entity") or "").upper(), _kind(str(e.get("entity") or "entity")))
+        label = str(e.get("entity") or "").upper()
+        if label in _NODE_NER_DROP:            # a bare number or a percentage is not a thing the diagram is about
+            continue
+        # markdown punctuation the model kept at either end ("**Claude Fable 5.1") is not part of the name: the
+        # span moves with the trim so it still points at the name in the text
+        lead = len(word) - len(word.lstrip("*#_`>[("))
+        word = word.strip("*#_`>[](),.;:")
+        if not word:
+            continue
+        etype = _NODE_NER_KIND.get(label, _kind(label or "entity"))
         norm = word.lower()
         key = (etype, norm)
-        start = int(e["start"]) + ctx["base"]
+        start = int(e["start"]) + lead + ctx["base"]
         if key in seen:
             seen[key]["_n"] += 1
             continue
         pi = _para_index(ctx["paragraphs"], start)
         card = {"id": _eid(etype, norm) + ":node", "group": ctx["paragraphs"][pi]["id"] if ctx["paragraphs"] else None,
                 "layer": "ner.node", "kind": etype, "title": word, "subtitle": etype.upper() + " · node NER",
-                "span": {"path": ctx.get("path", ""), "start": start, "end": int(e.get("end") or start + len(word)) + ctx["base"]},
+                "span": {"path": ctx.get("path", ""), "start": start, "end": start + len(word)},
                 "fields": [], "badges": [], "score": round(float(e.get("score") or 0), 3), "by": res.get("model", "nlp.ner"), "_n": 1}
         seen[key] = card
         cards.append(card)
