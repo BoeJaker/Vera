@@ -75,6 +75,12 @@ from Vera.vera.capability_orchestration import (
 
 from Vera.vera.dag import chain_deps as _chain_deps
 try:
+    from Vera.vera.dag.operator_model_arg_core import (
+        heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS)
+except ImportError:                                        # pragma: no cover
+    from vera.dag.operator_model_arg_core import (
+        heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS)
+try:
     from Vera.vera.dag import loop_prompt_rules as _loop_rules
 except ImportError:                                        # pragma: no cover
     from vera.dag import loop_prompt_rules as _loop_rules
@@ -16472,6 +16478,26 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                       "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                                       "session_id": sid,
                                       "note": f"goal (missing) → step goal: {_step_goal[:100]}"})
+        # ── operator.* made-up `model` self-heal ────────────────────────────
+        # The executor can name a model that does not exist - census run57,
+        # author-then-edit: `operator.run(provider="local", model="fast")`.
+        # The thinker forwarded "fast" to Ollama, which 404'd EVERY think, so
+        # the operator could not decide and clicked the same control until its
+        # guards fired: 978 s + 279 s of the goal spent clicking blind. The url
+        # and goal of that very call were repaired above; the model was not.
+        # Drop a model no Ollama node serves so the routed default applies.
+        # A served model is never touched, and with no catalogue nothing is.
+        if tool in _OPERATOR_MODEL_CAPS and isinstance(args, dict) and args.get("model"):
+            try:
+                _served = sorted({str(m) for _i in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values()
+                                  for m in ((_i or {}).get("models") or [])})
+            except Exception:
+                _served = []
+            for _fld, _val, _note in _heal_model_arg(tool, args, _served):
+                args[_fld] = _val
+                await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "session_id": sid, "note": _note})
         # ── code.author / prose.author / code.edit missing `task`/`path` self-heal ──
         # A BUILD step ("Create index.html") reliably burns 3-4 cycles because the
         # specialist fumbles the authoring contract — observed live, EVERY run:

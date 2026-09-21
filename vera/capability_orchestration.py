@@ -10806,6 +10806,27 @@ _CLIENT_CONFIG_SNIPPET = (
 ).encode("utf-8")
 
 
+def client_config_snippet(headers) -> bytes:
+    """The snippet for one request: __VERA_BASE__ is the origin the browser
+    actually used (Host, or X-Forwarded-Host/Proto when a front such as the
+    netctl portal sits in between), so every panel's calls go back the way the
+    page came - through the front, never around it - and a page opened by IP is
+    not sent to a name the client cannot resolve. The configured base remains
+    the fallback when no Host arrives."""
+    try:
+        host = (headers.get("x-forwarded-host") or headers.get("host") or "").split(",")[0].strip()
+        proto = (headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    except Exception:  # pragma: no cover - a headers object without .get
+        host, proto = "", ""
+    if not host:
+        return _CLIENT_CONFIG_SNIPPET
+    if proto not in ("http", "https"):
+        proto = "https" if cfg.TLS_ENABLED else "http"
+    base = f"{proto}://{host}"
+    return ("<script>window.__VERA_DOMAIN__=%s;window.__VERA_BASE__=%s;</script>" % (
+        json.dumps(cfg.BACKEND_HOST), json.dumps(base))).encode("utf-8")
+
+
 @APP.middleware("http")
 async def _inject_client_config(request: Request, call_next):
     """Inject the configured domain into every served HTML page (see above)."""
@@ -10820,10 +10841,11 @@ async def _inject_client_config(request: Request, call_next):
         lower = body.lower()
         idx = lower.find(b"<head")
         gt = body.find(b">", idx) if idx != -1 else -1
+        snippet = client_config_snippet(request.headers)
         if gt != -1:
-            body = body[:gt + 1] + _CLIENT_CONFIG_SNIPPET + body[gt + 1:]
+            body = body[:gt + 1] + snippet + body[gt + 1:]
         else:
-            body = _CLIENT_CONFIG_SNIPPET + body
+            body = snippet + body
     headers = dict(response.headers)
     headers.pop("content-length", None)
     headers.pop("content-type", None)

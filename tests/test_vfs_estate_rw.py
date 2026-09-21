@@ -46,27 +46,31 @@ def test_the_share_reach_is_read_from_its_block_only():
     conf = "[estate]\n   path = /srv/vfs/estate\n   read only = yes\n   valid users = @vfs-admin\n\n[estate-rw]\n   path = /srv/vfs/estate-rw\n   read only = no\n   valid users = @vfs-admin\n\n[models]\n   hosts allow = 1.2.3.4\n"
     r = rw.share_reach(conf)
     assert r == {"found": True, "hosts_allow": None, "valid_users": "@vfs-admin", "door_only": False}
-    conf2 = conf.replace("   read only = no\n", "   read only = no\n   hosts allow = 10.55.55.0/24 127.0.0.1\n   hosts deny = ALL\n")
+    conf2 = conf.replace("   read only = no\n", "   read only = no\n   hosts allow = 10.66.66.0/24 127.0.0.1\n   hosts deny = ALL\n")
     r2 = rw.share_reach(conf2)
-    assert r2["hosts_allow"] == ["10.55.55.0/24", "127.0.0.1"] and r2["door_only"] is True
+    assert r2["hosts_allow"] == ["10.66.66.0/24", "127.0.0.1"] and r2["door_only"] is True
+    assert rw.share_reach(conf2, door_cidr="10.9.9.0/24")["door_only"] is False, "judged against the door the mesh reports"
     assert rw.share_reach("[x]\n")["found"] is False
     # the reader hands share_reach the sed slice that already begins at the header - a
     # second header in front made the block empty and the share read as open
     caps = read("vera", "vfs", "vfs_capabilities.py")
-    assert "_rw.share_reach(smb, _rw.SHARE)" in caps and '"[" + _rw.SHARE + "]' not in caps
+    assert "_rw.share_reach(smb, _rw.SHARE, await _door_cidr())" in caps and '"[" + _rw.SHARE + "]' not in caps
 
 
 def test_door_only_is_backed_up_testparm_gated_and_reloads_without_dropping_sessions():
     p = rw.door_only_plan(True)
     c = p["commands"]
     assert c[0].startswith("cp -a /etc/samba/smb.conf /etc/samba/smb.conf.bak-")
-    assert "python3 - <<'PY'" in c[1] and "hosts allow = 10.55.55.0/24 127.0.0.1" in c[1] and "hosts deny = ALL" in c[1]
+    assert "python3 - <<'PY'" in c[1] and "hosts allow = 10.66.66.0/24 127.0.0.1" in c[1] and "hosts deny = ALL" in c[1]
+    assert "hosts allow = 10.77.0.0/16 127.0.0.1" in rw.door_only_plan(True, door_cidr="10.77.0.0/16")["commands"][1]
     assert c[2] == "testparm -s /etc/samba/smb.conf >/dev/null", "nothing reloads unless Samba accepts the file"
     assert c[3] == "smbcontrol all reload-config"
     assert c.index("testparm -s /etc/samba/smb.conf >/dev/null") < c.index("smbcontrol all reload-config")
     assert any("even at home" in w for w in p["warnings"])
     off = rw.door_only_plan(False)
-    assert "hosts allow = 10.55.55.0/24" not in off["commands"][1] and "hosts allow" in off["commands"][1]
+    assert "hosts allow = 10.66.66.0/24" not in off["commands"][1] and "hosts allow" in off["commands"][1]
+    caps = read("vera", "vfs", "vfs_capabilities.py")
+    assert "await _door_cidr()" in caps and '"netsec.mesh.members"' in caps, "the cidr is the door's, never a constant guessed here"
     # set -e: a rejected testparm stops before the reload
     assert rw.script(c).startswith("set -e\n")
 
