@@ -221,9 +221,16 @@ async def _layer_ner_fabric(ctx: Dict) -> Dict:
     return {"cards": _entity_cards(ents, ctx, "ner", by), "by": by, "where": "host"}
 
 
+def _relation_cards(ctx: Dict) -> List[Dict]:
+    """The cards a relation stands between: the fabric's entities, plus the node tier's for the names the fabric
+    did not find (a node card that MATCHES a fabric card is that entity already — the fabric card stands for it)."""
+    matched = {e["from"] for e in ctx["edges"] if e.get("kind") == "MATCHES"}
+    return [c for c in ctx["cards"] if c.get("layer") == "ner" or (c.get("layer") == "ner.node" and c["id"] not in matched)]
+
+
 async def _layer_rel_typed(ctx: Dict) -> Dict:
     """Sentence-scoped typed relations between adjacent entities (a cue between them → typed and
-    exact; a DATED / RELATED_TO without a cue → heuristic)."""
+    exact; a DATED / RELATED_TO without a cue → heuristic), over every engine's entities."""
     ents = ctx.get("ent_list") or []
     if not ents:
         return {"edges": []}
@@ -231,7 +238,9 @@ async def _layer_rel_typed(ctx: Dict) -> Dict:
     if fn is None:
         return {"error": "no relation extractor"}
     rels = await asyncio.get_running_loop().run_in_executor(None, fn, ents, ctx["text"]) or []
-    by_norm = {c["_norm"]: c["id"] for c in ctx["cards"] if c.get("layer") == "ner" and c.get("_norm")}
+    by_norm: Dict[str, str] = {}
+    for c in _relation_cards(ctx):
+        by_norm.setdefault(c["_norm"], c["id"])
     edges = []
     for r in rels:
         a = by_norm.get(((r.get("from_name") or "").lower()))
@@ -251,7 +260,7 @@ async def _layer_rel_cooccur(ctx: Dict) -> Dict:
     """Two entities first mentioned in ONE sentence, not already related by the typed layer: a
     CO_OCCURS run, heuristic by definition. Keeps the diagram readable when the cue engine finds
     little, without claiming more than it knows."""
-    cards = [c for c in ctx["cards"] if c.get("layer") == "ner"]
+    cards = _relation_cards(ctx)
     have = {(e["from"], e["to"]) for e in ctx["edges"]} | {(e["to"], e["from"]) for e in ctx["edges"]}
     by_sent: Dict[int, List[Dict]] = {}
     for c in cards:
@@ -307,13 +316,37 @@ async def _layer_ner_node(ctx: Dict) -> Dict:
         for f in fabric:
             fs = f["span"]
             if fs["start"] < card["span"]["end"] and card["span"]["start"] < fs["end"]:
-                edges.append({"from": card["id"], "to": f["id"], "layer": "ner.node", "kind": "MATCHES",
-                              "resolution": "heuristic" if f["kind"] != etype else "exact",
-                              "label": "the same span" + ("" if f["kind"] == etype else " · typed " + f["kind"] + " there"), "by": "span overlap"})
+                same_span = fs["start"] == card["span"]["start"] and fs["end"] == card["span"]["end"]
+                # the fabric's fallback engines type a name as a bare "entity"; a node model that read the very same
+                # span at high confidence knows what it is — the card takes that type, and says who typed it (the
+                # correction the LLM pass makes at ingest, made here by the node tier for the price of one call)
+                if same_span and f["kind"] in ("entity", "named_entity") and etype not in ("entity",) and card["score"] >= 0.9:
+                    f["kind"] = etype
+                    f["subtitle"] = re.sub(r"^[A-Z_]+ ·", etype.upper() + " ·", f["subtitle"])
+                    f["by"] = (f.get("by") or "") + " · typed by " + str(res.get("model", "node NER"))
+                    f["badges"] = list(f.get("badges") or []) + ["retyped"]
+                    for ent in ctx.get("ent_list") or []:
+                        if int(ent.get("position", 0) or 0) + ctx["base"] == fs["start"] and (ent.get("name") or "") == f["title"]:
+                            ent["type"] = etype
+                    edges.append({"from": card["id"], "to": f["id"], "layer": "ner.node", "kind": "MATCHES", "resolution": "exact",
+                                  "label": "the same span · typed " + etype + " here", "by": "span match"})
+                else:
+                    edges.append({"from": card["id"], "to": f["id"], "layer": "ner.node", "kind": "MATCHES",
+                                  "resolution": "heuristic" if f["kind"] != etype else "exact",
+                                  "label": "the same span" + ("" if f["kind"] == etype else " · typed " + f["kind"] + " there"), "by": "span overlap"})
                 break
     for c in cards:
         n = c.pop("_n", 1)
         c["subtitle"] = "%s · %d mention%s · node NER" % (c["kind"].upper(), n, "" if n == 1 else "s")
+    # the node's entities join the list the relation layers read — positions in the TEXT's coordinates, like the
+    # fabric's — for the names the fabric did not find at all (a date, an amount, a weekday), so relations to them exist
+    have = {(int(e.get("position", 0) or 0), (e.get("name") or "").lower()) for e in ctx.get("ent_list") or []}
+    for c in cards:
+        pos = c["span"]["start"] - ctx["base"]
+        if (pos, c["title"].lower()) in have or any(abs(p - pos) < 2 and nm == c["title"].lower() for p, nm in have):
+            continue
+        ctx.setdefault("ent_list", []).append({"name": c["title"], "type": c["kind"], "normalised": c["title"].lower(), "position": pos,
+                                               "mention_count": 1, "confidence": c["score"], "_layer": "ner.node"})
     return {"cards": cards, "edges": edges, "by": res.get("model", "nlp.ner"), "where": res.get("node") or res.get("served_by") or "node tier"}
 
 
