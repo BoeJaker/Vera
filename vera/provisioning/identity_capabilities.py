@@ -526,10 +526,10 @@ async def cap_dns_records(zone: str = "", name: str = "", trace_id=None) -> Dict
     res, err = await _ipa_call(st, "dnsrecord_find", args=args, options={"sizelimit": 2000})
     if res is None:
         return {"error": err}
-    result = res.get("result", res) if isinstance(res, dict) else {}
-    rows = result.get("result", []) if isinstance(result, dict) else []
+    # _ipa_call already hands back IPA's `result` object: {"result": [rows], "count": n}
+    rows = res.get("result", []) if isinstance(res, dict) else (res or [])
     out = []
-    for r in rows:
+    for r in rows or []:
         label = r.get("idnsname", [""])[0] if isinstance(r.get("idnsname"), list) else r.get("idnsname", "")
         out.append({"name": str(label), "a": r.get("arecord", []), "aaaa": r.get("aaaarecord", []),
                     "cname": r.get("cnamerecord", []), "txt": r.get("txtrecord", [])})
