@@ -12,8 +12,9 @@ import asyncio
 import importlib.util
 import json
 import os
-import sys
 import types
+
+from orchestration_stub import stubbed_orchestration
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 
@@ -55,11 +56,9 @@ def _load():
     orch.APP = _App(); orch.capability = capability; orch.emit_event = emit_event
     orch.now_iso = lambda: "2026-09-11T00:00:%02d+00:00" % (len(orch.EVENTS) % 60)
     orch.register_ui = lambda *a, **k: orch.UI.append((a, k))
-    pkg = types.ModuleType("Vera"); pkg.__path__ = []
-    sub = types.ModuleType("Vera.vera"); sub.__path__ = []
-    sys.modules["Vera"] = pkg; sys.modules["Vera.vera"] = sub; sys.modules["Vera.vera.capability_orchestration"] = orch
     spec = importlib.util.spec_from_file_location("canvas_under_test", os.path.join(ROOT, "vera", "canvas", "canvas_capabilities.py"))
-    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    with stubbed_orchestration(orch):
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
     return mod, orch
 
 
