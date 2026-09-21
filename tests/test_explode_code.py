@@ -204,7 +204,8 @@ def test_the_capability_reads_repo_files_pulls_one_hop_of_imports_and_never_leav
     assert d0["source"]["paths"] == ["vera/agents/agents.py"] and ("_offload", "nlp_ner", "external", "") in _edges(d0, "CALLS"), "without the hop, our own unparsed module's name is a stub"
     stub = next(c for c in d0["cards"] if c["kind"] == "external" and c["title"] == "nlp_ner")
     assert stub["subtitle"] == "vera.research.nlp_capabilities · not in the parsed set"
-    assert ("cap_nlp_ner", "route", "external", "") in _edges(d0, "CALLS") and ("cap_nlp_ner", "httpx", "external", "") in _edges(d0, "CALLS")
+    assert ("cap_nlp_ner", "nlp_dispatch_core", "external", "") in _edges(d0, "CALLS"), "module.fn() through an unparsed module of our own: the stub is the module called through"
+    assert ("cap_nlp_ner", "httpx", "external", "") in _edges(d0, "CALLS")
     dd = _run(X.explode_code(path="vera/research", depth=0))
     assert sorted(dd["source"]["paths"]) == ["vera/research/code_explode_core.py", "vera/research/nlp_capabilities.py", "vera/research/nlp_dispatch_core.py"], "a directory lists its code files"
     out = _run(X.explode_code(path="../../etc/passwd"))
