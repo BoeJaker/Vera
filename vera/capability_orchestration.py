@@ -10354,6 +10354,9 @@ async def lifespan(app: FastAPI):
         # Schedules: when censuses, suites, tasks, pipeline steps, board items
         # may run; needs evolve/, board/ and census/ caps to exist first.
         os.path.join(_here, "evolve/schedule_capabilities.py"),
+        # The prod release, gated on the census (merge + restart only when no
+        # census goal is in flight, or forced).
+        os.path.join(_here, "evolve/release_capabilities.py"),
         # One task through time: reads the census archive AND the suite's run
         # records, so it must come after both census/ and evolve/ above.
         os.path.join(_here, "evolve/task_history_capabilities.py"),
