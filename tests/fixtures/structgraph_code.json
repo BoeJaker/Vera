@@ -1,0 +1,49 @@
+{
+  "kind": "code",
+  "source": { "path": "vera/", "label": "the NER dispatch path", "partial": false },
+  "layout": { "direction": "LR", "mode": "dependency" },
+  "layers": [
+    { "id": "code.symbols", "label": "symbols · tree-sitter", "by": "tree-sitter", "kind": "symbol", "on": true },
+    { "id": "code.calls", "label": "calls", "by": "tree-sitter", "kind": "relation", "on": true },
+    { "id": "code.imports", "label": "imports", "by": "tree-sitter", "kind": "relation", "on": true }
+  ],
+  "groups": [
+    { "id": "f1", "label": "vera/agents/agents.py", "kind": "file", "parent": null, "span": { "start": 0, "end": 51200 } },
+    { "id": "c1", "label": "class Agent", "kind": "class", "parent": "f1", "span": { "start": 2100, "end": 9800 } },
+    { "id": "f2", "label": "vera/research/nlp_capabilities.py", "kind": "file", "parent": null, "span": { "start": 0, "end": 14000 } },
+    { "id": "f3", "label": "vera/research/nlp_dispatch_core.py", "kind": "file", "parent": null, "span": { "start": 0, "end": 9000 } },
+    { "id": "ext", "label": "external", "kind": "external", "parent": null }
+  ],
+  "cards": [
+    { "id": "agents.Agent", "group": "c1", "layer": "code.symbols", "kind": "class", "title": "Agent", "subtitle": "class · 7 methods", "span": { "path": "vera/agents/agents.py", "start": 2100, "end": 9800 }, "fields": [{ "k": "bases", "v": "BaseAgent" }], "badges": ["external:1"] },
+    { "id": "agents.run_stream", "group": "c1", "layer": "code.symbols", "kind": "method", "title": "run_stream", "subtitle": "async · 412 lines", "span": { "path": "vera/agents/agents.py", "start": 2641, "end": 3053 }, "fields": [{ "k": "decorators", "v": "@capability(\"agent.run\")" }, { "k": "calls", "v": "14" }], "badges": [] },
+    { "id": "agents._offload", "group": "c1", "layer": "code.symbols", "kind": "method", "title": "_offload", "subtitle": "async · 38 lines", "span": { "path": "vera/agents/agents.py", "start": 6120, "end": 6580 }, "fields": [{ "k": "calls", "v": "2" }] },
+    { "id": "agents.cap_nlp_ner", "group": "f1", "layer": "code.symbols", "kind": "function", "title": "cap_nlp_ner", "subtitle": "async · 61 lines", "span": { "path": "vera/agents/agents.py", "start": 12040, "end": 12790 }, "fields": [{ "k": "decorators", "v": "@capability(\"nlp.ner\")" }, { "k": "calls", "v": "3" }], "score": 0.9 },
+    { "id": "nlp.nlp_ner", "group": "f2", "layer": "code.symbols", "kind": "function", "title": "nlp_ner", "subtitle": "async · 44 lines", "span": { "path": "vera/research/nlp_capabilities.py", "start": 3300, "end": 3910 }, "fields": [{ "k": "calls", "v": "1" }] },
+    { "id": "nlp._dispatch", "group": "f2", "layer": "code.symbols", "kind": "function", "title": "_dispatch", "subtitle": "async · 90 lines", "span": { "path": "vera/research/nlp_capabilities.py", "start": 800, "end": 2100 }, "fields": [{ "k": "calls", "v": "4" }], "badges": ["external:1"] },
+    { "id": "core.route", "group": "f3", "layer": "code.symbols", "kind": "function", "title": "route", "subtitle": "def · 52 lines", "span": { "path": "vera/research/nlp_dispatch_core.py", "start": 400, "end": 1200 }, "fields": [{ "k": "returns", "v": "(node, reason)" }] },
+    { "id": "core.chunk_text", "group": "f3", "layer": "code.symbols", "kind": "function", "title": "chunk_text", "subtitle": "def · 21 lines", "span": { "path": "vera/research/nlp_dispatch_core.py", "start": 1300, "end": 1700 } },
+    { "id": "core.merge_chunk_entities", "group": "f3", "layer": "code.symbols", "kind": "function", "title": "merge_chunk_entities", "subtitle": "def · 33 lines", "span": { "path": "vera/research/nlp_dispatch_core.py", "start": 1800, "end": 2400 } },
+    { "id": "ext.httpx", "group": "ext", "layer": "code.symbols", "kind": "external", "title": "httpx", "subtitle": "package · not in the parsed set", "span": { "path": "", "start": 0, "end": 0 }, "badges": ["external"] },
+    { "id": "ext.BaseAgent", "group": "ext", "layer": "code.symbols", "kind": "external", "title": "BaseAgent", "subtitle": "vera.agents.base · not parsed", "span": { "path": "", "start": 0, "end": 0 }, "badges": ["external"] }
+  ],
+  "edges": [
+    { "from": "agents.run_stream", "to": "agents.cap_nlp_ner", "layer": "code.calls", "kind": "CALLS", "resolution": "heuristic", "label": "by name", "by": "tree-sitter" },
+    { "from": "agents.cap_nlp_ner", "to": "agents._offload", "layer": "code.calls", "kind": "CALLS", "resolution": "exact" },
+    { "from": "agents._offload", "to": "nlp.nlp_ner", "layer": "code.calls", "kind": "CALLS", "resolution": "exact" },
+    { "from": "agents.cap_nlp_ner", "to": "nlp.nlp_ner", "layer": "code.imports", "kind": "IMPORTS", "resolution": "exact" },
+    { "from": "nlp.nlp_ner", "to": "nlp._dispatch", "layer": "code.calls", "kind": "CALLS", "resolution": "exact" },
+    { "from": "nlp._dispatch", "to": "core.route", "layer": "code.calls", "kind": "CALLS", "resolution": "exact" },
+    { "from": "nlp._dispatch", "to": "core.chunk_text", "layer": "code.calls", "kind": "CALLS", "resolution": "exact" },
+    { "from": "nlp._dispatch", "to": "core.merge_chunk_entities", "layer": "code.calls", "kind": "CALLS", "resolution": "exact" },
+    { "from": "nlp._dispatch", "to": "ext.httpx", "layer": "code.calls", "kind": "CALLS", "resolution": "external" },
+    { "from": "core.route", "to": "ext.httpx", "layer": "code.calls", "kind": "CALLS", "resolution": "external" },
+    { "from": "agents.Agent", "to": "ext.BaseAgent", "layer": "code.symbols", "kind": "INHERITS", "resolution": "external" },
+    { "from": "agents.Agent", "to": "agents.run_stream", "layer": "code.symbols", "kind": "CONTAINS", "resolution": "exact" },
+    { "from": "core.route", "to": "nlp._dispatch", "layer": "code.calls", "kind": "CALLS", "resolution": "heuristic", "label": "retry back through the dispatcher" }
+  ],
+  "assessments": [
+    { "key": "syntax", "label": "parses", "score": 1, "confidence": 1, "by": "tree-sitter", "on": "source" },
+    { "key": "tests", "label": "tested", "score": 0.58, "confidence": 0.8, "by": "code.calls", "on": "source" }
+  ]
+}
