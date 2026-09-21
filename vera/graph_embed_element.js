@@ -172,6 +172,7 @@
           else if (text) body.text = text;
           else { this._fail('nothing to explode — give record, text, code, path or src'); return null; }
           var ranges = this.getAttribute('ranges'); if (ranges) { try { body.ranges = JSON.parse(ranges); } catch (e) {} }
+          if (this.hasAttribute('assess')) body.assess = this.getAttribute('assess') || true;   // the verdict rail too
           var mode = this.getAttribute('mode'); if (mode && endpoint !== '/code/explode') body.mode = mode;
           var layers = this.getAttribute('layers'); if (layers && endpoint !== '/code/explode') body.layers = layers.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
           res = await fetch(base + endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

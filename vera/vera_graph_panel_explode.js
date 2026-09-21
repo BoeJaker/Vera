@@ -146,6 +146,8 @@
         '</select>' +
         '<div style="' + CSS_LABEL + '">Layers</div>' +
         '<div class="xp-layers" style="font-size:9px;line-height:1.7;font-family:var(--mono,monospace)">loading…</div>' +
+        '<div style="margin-top:6px;font-size:9px;color:var(--dim,#6a6058)"><label style="display:flex;gap:5px;align-items:center;cursor:pointer" title="Run the scorers too: readability · structure · sources · AI-likelihood (stylometric, low confidence) · trust for prose; complexity · smells · clones · tests · provenance · health for code. Every verdict says what produced it; click one for its evidence.">' +
+          '<input type="checkbox" class="xp-assess" checked style="margin:0">assess — a verdict rail with evidence</label></div>' +
         '<div style="margin-top:8px"><button class="xp-go" style="' + CSS_BTN + '">Explode</button></div>' +
         '<div class="xp-stat" style="font-size:8.5px;color:var(--dim,#6a6058);' +
           'font-family:var(--mono,monospace);margin-top:7px;line-height:1.5"></div>';
@@ -238,6 +240,13 @@
           ex.style.display = h ? '' : 'none';
           ex.innerHTML = h ? '<b style="color:var(--acc,#5a9e8f)">' + esc(d.card && d.card.title) + '</b> · ' + esc(d.card && d.card.kind) + ' — ' + h : '';
         });
+        sg.addEventListener('vera-explode-verdict', function (ev) {
+          var d = ev.detail || {}; var evs = (d.evidence || []).slice(0, 6);
+          ex.style.display = '';
+          ex.innerHTML = '<b style="color:var(--acc,#5a9e8f)">' + esc(d.label || d.key) + '</b> ' + (d.score != null ? Number(d.score).toFixed(2) : '') +
+            ' <span style="color:var(--dim,#6a6058)">· ' + esc(d.by || '') + (d.confidence != null ? ' · confidence ' + d.confidence : '') + '</span>' +
+            (evs.length ? '<div style="margin-top:4px">' + evs.map(function (e) { var h = excerpt(lastDoc, e.span); return '<div style="margin:2px 0"><span style="color:var(--dim,#6a6058)">' + esc(e.note || '') + '</span>' + (h ? ' — ' + h : '') + '</div>'; }).join('') + '</div>' : ' — no evidence spans: a composite, or a whole-text measure');
+        });
         sg.addEventListener('vera-explode-drill', function (ev) {
           var d = ev.detail || {}; if (!d.card || !d.card.title) return;
           textIn.value = String(d.card.title); whatSel.value = 'text'; syncWhat();
@@ -274,6 +283,7 @@
           if (modeSel.value) body.mode = modeSel.value;
           var L = chosenLayers(); if (L) body.layers = L;
         }
+        if ($('.xp-assess').checked) body.assess = true;
         say('exploding…');
         try {
           await ensureStruct();
