@@ -436,7 +436,7 @@
     const host = $('.vao-flowhost'); if (!host) return;
     const e = flowKey ? events.find(x => keyOf(x) === flowKey) : null;
     if (!e) { host.innerHTML = ''; return; }
-    const k = e.kind, x = e.extra || {}, ui = e.ui || {};
+    const k = e.kind, x = e.extra || {}, ui = e.ui || {}, intent = x.current_intent || {};
     const openUrl = ui.run_id ? '/activity/panel#' + encodeURIComponent('run:' + ui.run_id) : (ui.program_id ? '/activity/panel#' + encodeURIComponent('program:' + ui.program_id) : '');
     const nativeUrl = k === 'run' && ui.native_url ? ui.native_url + (x.workflow_id ? '?workflow_id=' + encodeURIComponent(x.workflow_id) : '') : '';
     const loopUrl = ui.reattach || (e.session_id && (k === 'loop_live' || k === 'v8_loop') ? '/workshop/agent_loop/reattach?session_id=' + encodeURIComponent(e.session_id) : '');
@@ -444,12 +444,18 @@
     const sub = [fmtTs(e.ts), e.status, e.cap, e.session_id ? 'session ' + String(e.session_id).slice(0, 14) : ''].filter(Boolean).join(' · ');
     host.innerHTML = `<div class="vao-flow"><div class="vao-fh"><i style="background:${hue(k)}"></i>${esc(e.title || '')}<b>${esc(sub)}</b><span class="vao-spacer"></span>` +
       (loopUrl ? `<a class="vao-fc" href="${esc(loopUrl.replace('/reattach', '/reattach'))}" target="_blank" rel="noopener" title="Re-attach to this loop's output (replays, then tails)">Re-run · attach ↗</a>` : '') +
-      (nativeUrl ? `<a class="vao-fc" href="${esc(nativeUrl)}" target="_blank" rel="noopener">Open in DAG workshop ↗</a>` : '') +
-      (openUrl ? `<a class="vao-fc" href="${esc(openUrl)}" target="_blank" rel="noopener">Open in Loop Lab ↗</a>` : '') +
+      /* the projection's identity links: the DAG workshop is the NATIVE authority for a run; the activity panel
+         (#run:<id>) is the full Run timeline the ticker is a projection of - named for what they are */
+      (nativeUrl ? `<a class="vao-fc" href="${esc(nativeUrl)}" target="_blank" rel="noopener" title="The run's native record - the DAG workshop is the authority the ticker projects">Open native DAG workshop ↗</a>` : '') +
+      (openUrl ? `<a class="vao-fc" href="${esc(openUrl)}" target="_blank" rel="noopener" title="Every event of this run, in the activity panel">Open full Run timeline ↗</a>` : '') +
       `<button class="vao-fc" type="button" data-close="1">Close</button></div>` +
       (flowBusy === flowKey && !flowSteps ? `<div class="vao-fnote">Reading the run…</div>` :
         steps.length ? `<div class="vao-fsteps">` + steps.map(s => `<div class="vao-fs ${esc(s.st)}"><span class="vao-fdot"></span><span class="vao-fn" title="${esc(s.n)}">${esc(s.n)}</span><span class="vao-fd" title="${esc(s.d)}">${esc(s.d)}</span><span class="vao-fio">${(s.io || []).slice(0, 3).map(p => `<span class="${esc(p[0])}">${esc(p[1])}</span>`).join('')}</span><span class="vao-fms">${esc(s.ms || '—')}</span></div>`).join('') + `</div>`
-        : `<div class="vao-fnote">Nothing recorded for this run yet.</div>`) + `</div>`;
+        : `<div class="vao-fnote">Nothing recorded for this run yet.</div>`) +
+      /* a narrator take carries its CURRENT intent - what it is watching and on what basis - which is metadata about
+         now, not a step of any run: shown beside the flow, stamped with when it was current, never as history */
+      (k === 'narrator' && (intent.evidence || intent.ts) ? `<div class="vao-fnote">${intent.evidence ? 'basis: ' + esc(intent.evidence) : ''}${intent.evidence && intent.ts ? ' · ' : ''}${intent.ts ? 'intent current as of ' + esc(fmtTs(intent.ts)) : ''}</div>` : '') +
+      `</div>`;
     const cb = host.querySelector('[data-close]'); if (cb) cb.addEventListener('click', ev => { ev.stopPropagation(); flowKey = null; flowSteps = null; render(); });
   }
 

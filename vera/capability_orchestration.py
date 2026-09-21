@@ -1385,8 +1385,27 @@ except Exception:  # pragma: no cover
     except Exception:
         _sg_upstream_url = lambda env=None: ""          # noqa: E731
         _sg_read_through_allowed = lambda name, method, env=None: False   # noqa: E731
-_READ_THROUGH_URL = _sg_upstream_url()   # '' outside a dev sandbox: the hook below is then never taken
+# Read-through is a property of a sandbox that SERVES pages, not of the module: it is armed by lifespan() once the
+# app starts (arm_read_through), and stays '' for every other way this module gets imported — pytest in the gate's
+# ephemeral container (started with VERA_IS_DEV_SANDBOX=1 like any sandbox), a script, a REPL. Armed at import, the
+# hook answered a test's monkeypatched readers and FakeRedis from prod's live estate: 25 red tests on the design edge
+# that were green on bleeding-edge, and five thousand gate tests reading prod. The prod process never arms (the guard
+# says '' outside a sandbox) and a served sandbox behaves exactly as before.
+_READ_THROUGH_URL = ""
 _READ_THROUGH_TIMEOUT_S = float(os.environ.get("VERA_UPSTREAM_READ_TIMEOUT_S") or 40)   # seconds prod gets to answer one reading
+
+
+def arm_read_through(env=None) -> str:
+    """Arm the sandbox read-through for this process — the app calls it when it starts serving. Returns the upstream
+    URL now in force ('' when this process must not read through: not a sandbox, or VERA_UPSTREAM_READ_URL=off)."""
+    global _READ_THROUGH_URL
+    _READ_THROUGH_URL = _sg_upstream_url(env) or ""
+    return _READ_THROUGH_URL
+
+
+def read_through_url() -> str:
+    """The upstream a read-through goes to right now; '' while the hook is disarmed."""
+    return _READ_THROUGH_URL
 
 
 async def _upstream_read(name: str, kw: dict):
@@ -5935,7 +5954,8 @@ def capability(
                     log.debug("estate guard skipped for %s: %s", name, _eg)
             # READ-THROUGH: a dev sandbox has no estate of its own (its Redis and SQLite are its own, empty); a read-only
             # estate capability is answered by prod, one way — see sandbox_guard.read_through_allowed. Prod itself
-            # never takes this branch (_READ_THROUGH_URL is '' outside a sandbox).
+            # never takes this branch, and neither does a process that merely imported this module (a test, a script):
+            # _READ_THROUGH_URL is '' until lifespan() arms it in a serving sandbox.
             if _READ_THROUGH_URL and not kw.get("_local") and _sg_read_through_allowed(name, http_method):   # the policy says which routes read
                 _rt = await _upstream_read(name, kw)
                 if _rt is not None:
@@ -10073,6 +10093,12 @@ async def _openbao_autounseal_boot():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global REDIS, PG_POOL, CHROMA, NEO
+
+    # A serving sandbox answers estate readings from prod (the read-through hook in @capability). Armed HERE, once
+    # the app is starting, so that a bare import of this module — the gate's pytest, a script — never reads through.
+    _rt_url = arm_read_through()
+    if _rt_url:
+        log.info("sandbox read-through armed: estate readings answered by %s", _rt_url)
 
     # Preload optional automatic telemetry during startup, never on the first
     # completed Run. Disabled mode imports nothing on the Run-recording path.
