@@ -451,6 +451,57 @@ async def cap_dns_record(name: str = "", ip: str = "", zone: str = "",
 
 
 @capability(
+    "identity.dns.records",
+    http_method="POST", http_path="/identity/dns/records", http_tags=["identity"],
+    memory="off", silent=True,
+    description="The records in a FreeIPA DNS zone (A/AAAA/CNAME/TXT...), optionally one "
+                "name. Inputs: zone (str - defaults to configured dns_zone), name (str - "
+                "host label to filter). Output: {zone, records:[{name, a:[..], aaaa:[..], "
+                "cname:[..], txt:[..]}], count} or {error}.",
+)
+async def cap_dns_records(zone: str = "", name: str = "", trace_id=None) -> Dict:
+    st = await _state_opened()
+    zone = zone or st.get("dns_zone", "")
+    if not zone:
+        return {"error": "no zone (set dns_zone in config or pass zone)"}
+    args = [zone] + ([name] if name else [])
+    res, err = await _ipa_call(st, "dnsrecord_find", args=args, options={"sizelimit": 2000})
+    if res is None:
+        return {"error": err}
+    result = res.get("result", res) if isinstance(res, dict) else {}
+    rows = result.get("result", []) if isinstance(result, dict) else []
+    out = []
+    for r in rows:
+        label = r.get("idnsname", [""])[0] if isinstance(r.get("idnsname"), list) else r.get("idnsname", "")
+        out.append({"name": str(label), "a": r.get("arecord", []), "aaaa": r.get("aaaarecord", []),
+                    "cname": r.get("cnamerecord", []), "txt": r.get("txtrecord", [])})
+    return {"zone": zone, "records": out, "count": len(out)}
+
+
+@capability(
+    "identity.dns.delete",
+    http_method="POST", http_path="/identity/dns/delete", http_tags=["identity"],
+    memory="on",
+    description="Remove ONE A record value from a name in FreeIPA DNS (other values on "
+                "the same name stay). Inputs: name (str! host label), ip (str! the A "
+                "value to remove), zone (str - defaults to configured dns_zone). "
+                "Output: {ok, name, removed} or {error}.",
+)
+async def cap_dns_delete(name: str = "", ip: str = "", zone: str = "", trace_id=None) -> Dict:
+    if not name or not ip:
+        return {"error": "name and ip required"}
+    st = await _state_opened()
+    zone = zone or st.get("dns_zone", "")
+    if not zone:
+        return {"error": "no zone (set dns_zone in config or pass zone)"}
+    res, err = await _ipa_call(st, "dnsrecord_del", args=[zone, name], options={"arecord": [ip]})
+    if res is None:
+        return {"error": err}
+    await emit_event({"type": "identity.dns.deleted", "name": name, "ip": ip, "zone": zone})
+    return {"ok": True, "name": name, "removed": ip}
+
+
+@capability(
     "identity.app.register",
     http_method="POST", http_path="/identity/app/register", http_tags=["identity"],
     memory="off",
