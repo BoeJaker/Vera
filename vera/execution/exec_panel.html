@@ -17,7 +17,7 @@
 [data-theme="ice"]  {--bg:#090f18;--s1:#0d1620;--s2:#121e2c;--s3:#182638;--bd:rgba(80,160,255,.1);--bd2:rgba(80,160,255,.2);--t1:#c0d8f0;--t2:#406880;--t3:#1e3850;--ac:#5ab0f0;--ac2:#38d0b0;--ac3:#e0b060;--ac4:#e06868;--ac5:#8070e0}
 
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;background:var(--bg);color:var(--t1);font:12px/1.5 'ui-monospace','SFMono-Regular','Menlo',monospace;overflow:hidden}
+html,body{height:100%;background:var(--bg);color:var(--t1);font:12px/1.5 var(--font-ui);overflow:hidden}
 button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 input,select,textarea{font:inherit;color:inherit;background:none;border:none;outline:none}
 ::-webkit-scrollbar{width:6px;height:6px}
@@ -383,7 +383,7 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
             <div class="fi" data-auth="password"><label>Password</label><input class="ip" id="f-password" type="password" placeholder="(unchanged if empty on edit)"></div>
             <div class="fi" data-auth="key"><label>Key path</label><input class="ip" id="f-key-path" placeholder="~/.ssh/id_ed25519"></div>
             <div class="fi" data-auth="key"><label>Passphrase</label><input class="ip" id="f-passphrase" type="password" placeholder="(empty for none)"></div>
-            <div class="fi"><label>Tags (csv)</label><input class="ip" id="f-tags" placeholder="pve, docker"></div>
+            <div class="fi"><label>Tags (csv)</label><input class="ip" id="f-tags" data-select="tags" data-select-new data-select-url="/exec/ssh/hosts" data-select-path="hosts[].tags[]" placeholder="pve, docker"></div>
           </div>
           <div class="actions">
             <button class="run-btn ghost" onclick="hostFormHide()">Cancel</button>
@@ -1294,6 +1294,7 @@ window.VeraExec = {setMode,setLayout,sshTo,sshToInline,loadHosts,runLocal,runSsh
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>

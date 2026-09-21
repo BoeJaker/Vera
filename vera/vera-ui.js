@@ -416,6 +416,17 @@
     if(vars['--ac3']) set('--accent3', vars['--ac3']);
     if(vars['--ac5']) set('--accent4', vars['--ac5']);
     if(vars['--ac4']) set('--accent5', vars['--ac4']);
+    // The vars a few panels grew on their own (--red/--green/--yellow,
+    // --line/--hi/--panel/--muted) never followed the theme: their buttons and
+    // borders stayed at their hardcoded colour on every switch. Each has a
+    // real themed source.
+    if(vars['--ac4']) set('--red', vars['--ac4']);
+    if(vars['--ac2']) set('--green', vars['--ac2']);
+    if(vars['--ac3']) set('--yellow', vars['--ac3']);
+    if(vars['--bd'])  set('--line', vars['--bd']);
+    if(vars['--s3'])  set('--hi', vars['--s3']);
+    if(vars['--s1'])  set('--panel', vars['--s1']);
+    if(vars['--t3'])  set('--muted', vars['--t3']);
     return out;
   }
 
@@ -454,6 +465,37 @@
       _hookedSetTheme = false;
     }
   }
+
+  // ── 2a. One baseline under every panel ────────────────────────────────────
+  // Zero-specificity (:where) rules: they fill what a panel never styled and
+  // lose to any rule the panel wrote, however plain. So every page gets the
+  // same font tokens, the same button vocabulary (.pri and .primary; danger
+  // as .danger/.red/.err-btn/.no; ok as .ok/.grn/.ok-btn) and the same form
+  // fields, while a panel that styled its own keeps its look.
+  (function baseline(){
+    if(document.getElementById('vera-ui-baseline')) return;
+    var st = document.createElement('style'); st.id = 'vera-ui-baseline';
+    st.textContent = [
+      ':root{--font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;--font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;--font-size:12px;--sans:var(--font-ui)}',
+      ':where(body){margin:0;font-family:var(--font-ui);font-size:var(--font-size);line-height:1.45;color:var(--text,var(--fg,#ddd));background:var(--bg0,var(--bg,#111))}',
+      ':where(code,pre,kbd,.mono){font-family:var(--font-mono)}',
+      ':where(.btn){display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:var(--ui-radius,5px);border:1px solid var(--border2,var(--border,#333));background:var(--bg2,#1a1a1a);color:var(--text,var(--fg,#ddd));font:inherit;font-size:11.5px;line-height:1.2;cursor:pointer;white-space:nowrap}',
+      ':where(.btn:hover){border-color:var(--acc,#4a9eff)}',
+      ':where(.btn:disabled){opacity:.45;cursor:default}',
+      ':where(.btn.sm,.btn.xs){padding:3px 7px;font-size:10.5px}',
+      ':where(.btn.pri,.btn.primary){background:var(--acc,#4a9eff);border-color:var(--acc,#4a9eff);color:var(--on-acc,#08131c);font-weight:600}',
+      ':where(.btn.danger,.btn.red,.btn.err-btn,.btn.no){color:var(--err,#e55);border-color:var(--err,#e55)}',
+      ':where(.btn.ok,.btn.grn,.btn.ok-btn){color:var(--ok,#2c8);border-color:var(--ok,#2c8)}',
+      ':where(.btn.warn,.btn.warn-btn,.btn.amber){color:var(--warn,#f5b341);border-color:var(--warn,#f5b341)}',
+      ':where(.btn.ghost,.btn.gho){background:transparent}',
+      ':where(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]),select,textarea){font:inherit;font-size:11.5px;padding:4px 7px;border-radius:var(--ui-radius,5px);border:1px solid var(--border2,var(--border,#333));background:var(--bg1,var(--bg,#111));color:var(--text,var(--fg,#ddd));box-sizing:border-box}',
+      ':where(input,select,textarea):focus{outline:none;border-color:var(--acc,#4a9eff)}',
+      ':where(.chip,.pill,.tag,.badge){display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:10px;font-size:10px;background:var(--bg3,#222);color:var(--dim2,#999);border:1px solid var(--border,#333)}',
+      ':where(table){border-collapse:collapse}',
+      ':where(th){font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim,#777);text-align:left;font-weight:600}'
+    ].join('\n');
+    (document.head || document.documentElement).appendChild(st);
+  })();
 
   // ── 2b. Instant paint from cache ───────────────────────────────────────────
   // Runs synchronously the moment this script is parsed — before DOMContentLoaded

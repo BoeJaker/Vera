@@ -51,8 +51,8 @@ html[data-blocks="off"] .vsel-m{background:var(--bg1);box-shadow:0 0 0 1px var(-
 textarea{resize:none}
 .btn{display:inline-flex;align-items:center;gap:3px;padding:3px 9px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:500;transition:all .14s;white-space:nowrap;cursor:pointer}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff)}
-.btn.danger{border-color:var(--err);color:var(--err)}
+.btn.pri,.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff)}
+.btn.danger,.btn.red,.btn.err-btn,.btn.no{border-color:var(--err);color:var(--err)}
 .btn.sm{padding:2px 6px;font-size:10px}
 .btn.xs{padding:1px 5px;font-size:9px}
 .btn.active,.btn.on{border-color:var(--acc2);color:var(--acc2);background:rgba(143,184,122,.1)}
@@ -2337,7 +2337,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
       Mirror agent baseline (Domain Capabilities)
     </label>
     <div class="row" style="gap:4px">
-      <textarea id="loopBaseCaps" rows="2" style="flex:1;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="exec.bash.run web.search ide.code.grep ide.code.replace browser.navigate fabric.skills.get" title="Caps always included in the loop's toolkit (space/comma separated). With mirror ON these are added to the agent baseline; with mirror OFF they are the full base set."></textarea>
+      <textarea id="loopBaseCaps" data-select="caps" data-select-sep=" " rows="2" style="flex:1;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="exec.bash.run web.search ide.code.grep ide.code.replace browser.navigate fabric.skills.get" title="Caps always included in the loop's toolkit (space/comma separated). With mirror ON these are added to the agent baseline; with mirror OFF they are the full base set."></textarea>
     </div>
     <div class="row" style="gap:4px;justify-content:flex-end">
       <button class="btn xs" type="button" onclick="CH.loopLoadAgentCaps()" title="Fill the box with the current agent's caps so you can see and prune what's available">Load agent caps</button>
@@ -2374,7 +2374,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
       Long-running HITL (ask first)
     </label>
     <label class="row numrow" title="(v4) Comma-separated extra caps to treat as long-running for this run (adds to the built-in detection).">
-      <input id="loopLongCaps" type="text" placeholder="e.g. mytool.run, scan.deep" style="flex:1;min-width:0;font-size:9px">
+      <input id="loopLongCaps" data-select="caps" type="text" placeholder="e.g. mytool.run, scan.deep" style="flex:1;min-width:0;font-size:9px">
       <span class="nlbl" style="flex:0 0 auto">Long-running caps</span>
     </label>
 
@@ -2474,9 +2474,9 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
         Push code versions to Gitea
       </label>
       <div style="font-size:8.5px;color:var(--dim);margin:4px 0 1px">Skill allow-list (only these skill ids are eligible; empty = all):</div>
-      <textarea id="loopSkillAllow" rows="1" style="width:100%;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="sys-dag-creation sys-fabric-query" title="Whitelist: if non-empty, ONLY these skill ids may be injected (space/comma separated)."></textarea>
+      <textarea id="loopSkillAllow" data-select="skills" data-select-new rows="1" style="width:100%;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="sys-dag-creation sys-fabric-query" title="Whitelist: if non-empty, ONLY these skill ids may be injected (space/comma separated)."></textarea>
       <div style="font-size:8.5px;color:var(--dim);margin:4px 0 1px">Skill deny-list (never inject these skill ids):</div>
-      <textarea id="loopSkillDeny" rows="1" style="width:100%;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="sys-ui-building" title="Blacklist: these skill ids are never injected (space/comma separated)."></textarea>
+      <textarea id="loopSkillDeny" data-select="skills" data-select-new rows="1" style="width:100%;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="sys-ui-building" title="Blacklist: these skill ids are never injected (space/comma separated)."></textarea>
     </div>
     </details>
 
@@ -19577,6 +19577,7 @@ window.addEventListener('DOMContentLoaded',()=>{
 </script>
 <script src="/ui/vera-lhm.js"></script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <!-- <vera-agent-loop-output> element: loaded from the standalone file.
      Single source of truth — no embedded copy to drift out of sync.
      Served by agent_loop_output_capabilities.py at /ui/elements/agent_loop_output.js.

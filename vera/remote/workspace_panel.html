@@ -1,6 +1,12 @@
 <!doctype html>
 <html>
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Workspaces</title>
@@ -22,7 +28,7 @@
   .btn{background:var(--bg2);color:var(--fg);border:1px solid var(--line);border-radius:7px;
     padding:5px 10px;font-size:12px;cursor:pointer}
   .btn:hover{border-color:var(--acc)}
-  .btn.pri{background:var(--acc);color:var(--on-acc,#04121f);border-color:var(--acc);font-weight:600}
+  .btn.pri,.btn.primary{background:var(--acc);color:var(--on-acc,#04121f);border-color:var(--acc);font-weight:600}
   .btn.sm{padding:3px 7px;font-size:11px}
   .btn.on{border-color:var(--acc);color:var(--acc)}
   .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -31,7 +37,7 @@
   #intFrame{display:none;flex:1;border:none;width:100%;height:100%;background:var(--bg0)}
   body.intmode #intFrame{display:block}
   body.intmode #side,body.intmode #empty,body.intmode #grid,body.intmode #wsRightBtns{display:none !important}
-  .btn.danger:hover{border-color:var(--stop);color:var(--stop)}
+  .btn.danger:hover,.btn.red:hover,.btn.err-btn:hover,.btn.no:hover{border-color:var(--stop);color:var(--stop)}
   .list{flex:1;overflow:auto;padding:6px}
   .wsrow{padding:8px 9px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;
     cursor:pointer;background:var(--bg0)}

@@ -56,10 +56,10 @@
     transition: all 0.15s;
   }
   .btn:hover { background: var(--bg3); color: var(--fg); border-color: var(--accent-dim); }
-  .btn.primary { background: var(--accent-dim); color: var(--fg); border-color: var(--accent); }
-  .btn.primary:hover { background: var(--accent); color: var(--bg0); }
-  .btn.danger { border-color: var(--red-dim); color: var(--red); }
-  .btn.danger:hover { background: var(--red-dim); }
+  .btn.primary,.btn.pri{ background: var(--accent-dim); color: var(--fg); border-color: var(--accent); }
+  .btn.primary:hover,.btn.pri:hover{ background: var(--accent); color: var(--bg0); }
+  .btn.danger,.btn.red,.btn.err-btn,.btn.no{ border-color: var(--red-dim); color: var(--red); }
+  .btn.danger:hover,.btn.red:hover,.btn.err-btn:hover,.btn.no:hover{ background: var(--red-dim); }
 
   /* ── Stats strip ── */
   .stats-strip {

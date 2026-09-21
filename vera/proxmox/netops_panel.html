@@ -19,14 +19,14 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
   --mono:ui-monospace,'SFMono-Regular','Menlo',monospace;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;background:var(--bg0);color:var(--text);font:12px/1.45 var(--mono)}
+html,body{height:100%;background:var(--bg0);color:var(--text);font:12px/1.45 var(--font-ui)}
 body{display:flex;overflow:hidden}
 button{font:inherit;cursor:pointer}
 .btn{display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border-radius:5px;background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-size:11px;white-space:nowrap}
 .btn:hover{border-color:var(--acc)}
 .btn.sm{padding:4px 8px;font-size:10px}
-.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#04231d);font-weight:700}
-.btn.danger{color:var(--err);border-color:var(--err);background:transparent}
+.btn.pri,.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#04231d);font-weight:700}
+.btn.danger,.btn.red,.btn.err-btn,.btn.no{color:var(--err);border-color:var(--err);background:transparent}
 #main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
 .topbar{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg1);border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0}
 .topbar select,.topbar input{background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font:inherit;font-size:11px;outline:none}

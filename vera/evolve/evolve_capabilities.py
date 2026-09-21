@@ -10203,26 +10203,101 @@ async def evolve_sandbox_down(remove_worktree: bool = False, name: str = "",
             return {"error": f"no spawned sandbox matching '{name or branch}'"}
         slug, d = target
         compose = d.get("compose", f"docker-compose.dev-{slug}.yml")
+        project_name = str(d.get("name") or "").strip()
+        if not project_name:
+            return {"ok": False, "dry_run": dry_run, "mutated": False,
+                    "error": "spawned sandbox descriptor has no project name",
+                    "code": "invalid_descriptor", "branch": d.get("branch")}
+        compose_path = _repo_root() / compose
+        try:
+            compose_path.stat()
+            compose_state = _pool_reconcile.PRESENT
+        except FileNotFoundError:
+            compose_state = _pool_reconcile.ABSENT
+        except OSError as exc:
+            log.warning("sandbox.down: could not inspect compose file %s: %s",
+                        compose_path, exc)
+            compose_state = _pool_reconcile.UNKNOWN
         if dry_run:
             return {"ok": True, "dry_run": True, "mutated": False,
                     "role": "spawned", "name": d.get("name"),
                     "branch": d.get("branch"), "worktree": d.get("worktree"),
                     "compose": compose, "container_action": "stop_remove",
+                    "container_method": ("compose" if compose_state == _pool_reconcile.PRESENT
+                                         else "compose_project_label" if compose_state == _pool_reconcile.ABSENT
+                                         else "refuse_unobservable_compose"),
                     "worktree_action": ("remove" if remove_worktree else "preserve")}
-        dn = await _sh(["docker", "compose", "-f", "docker-compose.yml", "-f", compose,
-                        "-p", d.get("name"), "down"], timeout=180)
+        if compose_state == _pool_reconcile.UNKNOWN:
+            return {"ok": False, "dry_run": False, "mutated": False,
+                    "error": "sandbox compose path is unobservable",
+                    "code": "compose_unobservable", "name": d.get("name"),
+                    "compose": compose}
+        if compose_state == _pool_reconcile.PRESENT:
+            dn = await _sh(["docker", "compose", "-f", "docker-compose.yml", "-f", compose,
+                            "-p", project_name, "down"], timeout=180)
+        else:
+            # A severed sandbox can outlive both its worktree and generated
+            # compose file. Reconcile that exact Compose project by Docker's
+            # own immutable project label; never broaden to a name substring.
+            listed = await _sh([
+                "docker", "ps", "-aq", "--filter",
+                f"label=com.docker.compose.project={project_name}",
+            ], timeout=30)
+            if not listed.get("ok"):
+                return {"ok": False, "dry_run": False, "mutated": False,
+                        "error": "docker project membership is unobservable",
+                        "code": "docker_unobservable", "name": d.get("name"),
+                        "detail": listed.get("err") or listed.get("out")}
+            networks = await _sh([
+                "docker", "network", "ls", "-q", "--filter",
+                f"label=com.docker.compose.project={project_name}",
+            ], timeout=30)
+            if not networks.get("ok"):
+                return {"ok": False, "dry_run": False, "mutated": False,
+                        "error": "docker project networks are unobservable",
+                        "code": "docker_unobservable", "name": d.get("name"),
+                        "detail": networks.get("err") or networks.get("out")}
+            container_ids = [line.strip() for line in
+                             (listed.get("out") or "").splitlines() if line.strip()]
+            dn = ({"ok": True, "out": "no project containers remain", "err": ""}
+                  if not container_ids else
+                  await _sh(["docker", "rm", "-f", *container_ids], timeout=180))
+            if dn.get("ok"):
+                network_ids = [line.strip() for line in
+                               (networks.get("out") or "").splitlines() if line.strip()]
+                if network_ids:
+                    dn = await _sh(["docker", "network", "rm", *network_ids],
+                                   timeout=60)
+        if not dn.get("ok"):
+            # The descriptor is still the only ownership/retry handle. Never
+            # discard it, or its worktree, after a partial/failed teardown.
+            return {"ok": False, "dry_run": False, "mutated": True,
+                    "error": "sandbox container teardown failed",
+                    "code": "container_teardown_failed", "name": d.get("name"),
+                    "detail": dn.get("err") or dn.get("out")}
         removed_wt = False
         if remove_worktree and d.get("worktree"):
             wr = await _remove_worktree_robust(d["worktree"])
             removed_wt = wr["ok"]
+            if not removed_wt:
+                return {"ok": False, "dry_run": False, "mutated": True,
+                        "error": "sandbox worktree removal failed",
+                        "code": "worktree_removal_failed", "name": d.get("name"),
+                        "detail": wr.get("detail", "")}
         r = _redis()
-        if r:
-            try:
-                await r.hdel(KEY_SANDBOX_POOL, slug)
-            except Exception:
-                pass
+        if not r:
+            return {"ok": False, "dry_run": False, "mutated": True,
+                    "error": "sandbox descriptor store is unavailable",
+                    "code": "descriptor_store_unavailable", "name": d.get("name")}
         try:
-            (_repo_root() / compose).unlink()
+            await r.hdel(KEY_SANDBOX_POOL, slug)
+        except Exception as exc:
+            return {"ok": False, "dry_run": False, "mutated": True,
+                    "error": "sandbox descriptor cleanup failed",
+                    "code": "descriptor_cleanup_failed", "name": d.get("name"),
+                    "detail": str(exc)[:300]}
+        try:
+            compose_path.unlink()
         except Exception:
             pass
         await _audit("sandbox.down", f"spawned {d.get('name')} torn down "

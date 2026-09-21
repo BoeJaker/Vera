@@ -42,12 +42,12 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc)}
 textarea{width:100%;resize:vertical;font-family:var(--sans);font-size:12.5px;line-height:1.45}
 .btn{background:var(--bg2);border:1px solid var(--border2);color:var(--text);border-radius:var(--radius-sm);padding:6px 12px;font-size:12px}
 .btn:hover{background:var(--bg3)}
-.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#0d0f12);font-weight:600}
-.btn.pri:hover{filter:brightness(1.08)}
+.btn.pri,.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#0d0f12);font-weight:600}
+.btn.pri:hover,.btn.primary:hover{filter:brightness(1.08)}
 .btn.sm{padding:3px 8px;font-size:11px}
 .btn.on{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#0d0f12);font-weight:600}
 .btn.warn{border-color:var(--warn);color:var(--warn)}
-.btn.danger{border-color:var(--err);color:var(--err)}
+.btn.danger,.btn.red,.btn.err-btn,.btn.no{border-color:var(--err);color:var(--err)}
 .btn:disabled{opacity:.5;cursor:default}
 .layout{flex:1;display:flex;min-height:0}
 .pane{flex:1;overflow:auto;padding:14px 16px;min-width:0}

@@ -27,9 +27,9 @@ body{overflow-y:auto;padding:12px}
 .status-hint{font-size:9px;color:var(--dim2);font-family:var(--mono);margin-left:auto}
 .btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-size:10.5px;font-weight:500;transition:all .14s}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
+.btn.primary,.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
 .btn.warn-btn{border-color:var(--warn);color:var(--warn)}
-.btn.err-btn{border-color:var(--err);color:var(--err)}
+.btn.err-btn,.btn.danger,.btn.red,.btn.no{border-color:var(--err);color:var(--err)}
 .btn.sm{padding:2px 7px;font-size:9.5px}
 .banner{background:var(--bg1);border:1px solid var(--border);border-left:3px solid var(--dim);border-radius:var(--radius);padding:8px 12px;font-size:10px;color:var(--dim2);font-family:var(--mono);margin-bottom:12px}
 .banner.on{border-left-color:var(--ok);color:var(--text)}

@@ -105,12 +105,12 @@ html.view-models #secNav [data-view="models"]{display:block}
 /* ── Buttons ── */
 .btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-family:var(--sans);font-size:10.5px;font-weight:500;transition:all .14s;white-space:nowrap}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
-.btn.primary:hover{filter:brightness(1.1);color:#fff}
+.btn.primary,.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
+.btn.primary:hover,.btn.pri:hover{filter:brightness(1.1);color:#fff}
 .btn.sm{padding:2px 7px;font-size:9.5px}
 .btn.gpu-btn{background:rgba(201,122,90,.1);border-color:var(--gpu);color:var(--gpu)}
 .btn.warn-btn{background:rgba(201,163,90,.1);border-color:var(--warn);color:var(--warn)}
-.btn.err-btn{border-color:var(--err);color:var(--err)}
+.btn.err-btn,.btn.danger,.btn.red,.btn.no{border-color:var(--err);color:var(--err)}
 .btn:disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
 
 /* ── Configurable widget grid (mirrors dashboard) ── */
@@ -455,18 +455,13 @@ html.view-models #secNav [data-view="models"]{display:block}
     <!-- ════════════════════════════════════════════════════════════════════
          WORKERS PANE
          ════════════════════════════════════════════════════════════════════ -->
-    <!-- OVERVIEW PANE — is the estate's infrastructure up? (estate.health): the
-         state store, stopped infrastructure containers on the Vera host, and
-         running Proxmox guests that will not start after a reboot. -->
-    <div class="pane on" id="pane-overview">
-      <div class="pane-tb">
-        <span class="pane-tb-title" style="color:var(--ok)">OVERVIEW</span>
-        <span class="tb-sep"></span>
-        <button class="btn sm" onclick="P.ovRefresh()">↻ Check now</button>
-        <span class="status-hint" id="ov-ts"></span>
-      </div>
-      <div class="ov-summary" id="ov-summary"><span class="ov-level">Checking</span><span>Checking the estate…</span></div>
-      <div id="ov-sections"></div>
+    <!-- OVERVIEW PANE — the estate as a dashboard (estate_overview_panel.html):
+         health findings, Vera itself, inference, resources over time, machines
+         and registration, backups, storage, mesh, trust, activity and the
+         background queue - one VeraDash grid over the readers that already
+         exist. Lazy iframe, like Storage. -->
+    <div class="pane on" id="pane-overview" style="padding:0;overflow:hidden">
+      <iframe id="overview-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
 
     <div class="pane" id="pane-workers">
@@ -685,8 +680,8 @@ html.view-models #secNav [data-view="models"]{display:block}
                  summarise, fast, big-context…). Shown in the model pickers. -->
             <div style="display:flex;gap:5px;align-items:center">
               <span style="font-size:9px;font-weight:600;color:var(--gpu)" title="Tag models by purpose — tags show in the model pickers and are readable via ollama.model_tags.get">🏷 Model tags</span>
-              <input id="mt-model" list="rr-model-list" placeholder="model" style="font-size:8.5px;width:130px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px">
-              <input id="mt-tags" placeholder="planning,code,fast" style="font-size:8.5px;flex:1;min-width:80px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px">
+              <input id="mt-model" data-select="models" data-select-single data-select-new list="rr-model-list" placeholder="model" style="font-size:8.5px;width:130px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px">
+              <input id="mt-tags" data-select="static" data-select-new placeholder="planning,code,fast" style="font-size:8.5px;flex:1;min-width:80px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px">
               <button class="btn sm" onclick="P.modelTagSave()">Save</button>
               <span id="mt-status" style="font-size:8px;color:var(--dim2);font-family:var(--mono)"></span>
             </div>
@@ -737,7 +732,7 @@ html.view-models #secNav [data-view="models"]{display:block}
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Embedding Config</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-embed-cfg')">×</button></span></div>
           <div class="w-body">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-              <div class="fld"><label>Embed Model</label><input id="emb-model" style="font-size:9.5px" placeholder="nomic-embed-text"></div>
+              <div class="fld"><label>Embed Model</label><input id="emb-model" data-select="models" data-select-single data-select-new style="font-size:9.5px" placeholder="nomic-embed-text"></div>
               <div class="fld"><label>Pin to Instance</label><select id="emb-pin" style="font-size:9.5px"><option value="">Auto (strategy)</option></select></div>
             </div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
@@ -1705,7 +1700,7 @@ html.view-models #secNav [data-view="models"]{display:block}
             <div id="sbx-cfg" style="display:none;padding:7px 10px;border-bottom:1px solid var(--line);background:var(--bg2);font-size:9px">
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
                 <label style="display:flex;gap:4px;align-items:center">Docker host
-                  <input id="sbx-cfg-host" placeholder="local" style="width:120px;font-size:9px"></label>
+                  <input id="sbx-cfg-host" data-select="docker-hosts" data-select-single data-select-new placeholder="local" style="width:120px;font-size:9px"></label>
                 <label style="display:flex;gap:4px;align-items:center">Base image
                   <input id="sbx-cfg-img" placeholder="python:3.12-slim" style="width:150px;font-size:9px"></label>
                 <label style="display:flex;gap:4px;align-items:center" title="Periodic auto-sync of active sandboxes to the store; 0 disables">Auto-sync (s)
@@ -1925,7 +1920,7 @@ html.view-models #secNav [data-view="models"]{display:block}
               <div class="field" id="conn-f-pw-wrap"><label style="font-size:9px;color:var(--dim2)">Password <span style="color:var(--dim)">(blank = keep existing)</span></label><input id="conn-f-password" type="password" placeholder="••••••"></div>
               <div class="field" id="conn-f-key-wrap" style="display:none"><label style="font-size:9px;color:var(--dim2)">Private key path (on the Vera host)</label><input id="conn-f-key" placeholder="/root/.ssh/id_ed25519"></div>
               <div class="field" id="conn-f-pass-wrap" style="display:none"><label style="font-size:9px;color:var(--dim2)">Key passphrase (optional)</label><input id="conn-f-passphrase" type="password"></div>
-              <div class="field"><label style="font-size:9px;color:var(--dim2)">Tags (comma-sep — e.g. proxmox,pve)</label><input id="conn-f-tags" placeholder="proxmox"></div>
+              <div class="field"><label style="font-size:9px;color:var(--dim2)">Tags (comma-sep — e.g. proxmox,pve)</label><input id="conn-f-tags" data-select="tags" data-select-new data-select-url="/exec/ssh/hosts" data-select-path="hosts[].tags[]" placeholder="proxmox"></div>
               <div style="display:flex;gap:8px;margin-top:4px">
                 <button class="btn" onclick="P.connProbe()" style="flex:0 0 auto">Test reach</button>
                 <span style="flex:1"></span>
@@ -6201,95 +6196,9 @@ function buildGo(pane, section){
   if(f&&f.src&&f.src!=='about:blank'){ try{ f.contentWindow.location.hash=section; }catch(e){ f.src=BASE+path+'#'+section; } }
 }
 
-// ── Overview: estate.health ─────────────────────────────────────────────────
-// One findings list: the state store, stopped infrastructure containers on the
-// Vera host, running Proxmox guests without autostart. Re-checks every 60 s
-// while the pane is open and the page is visible.
-let _ovBusy=false, _ovLast=null;
-const _ovNotesOpen={};
-const _OV_SEV={error:'Error',warn:'Check',info:'Note'};
-function _ovFacts(key,f){
-  f=f||{};
-  if(key==='state_store'){
-    return [f.url, f.version&&('redis '+f.version), f.executable,
-      f.keys!=null&&(Number(f.keys).toLocaleString()+' keys'),
-      f.expected_total&&(f.expected_present+' of '+f.expected_total+' estate keys')].filter(Boolean).join(' · ');
-  }
-  if(key==='containers'&&f.listed!=null){
-    return f.listed+' containers · '+f.not_running+' infrastructure not running · '+f.sandboxes_ignored+' sandboxes ignored';
-  }
-  if(key==='guests'&&f.records!=null){
-    return f.running_checked+' running guests checked · '+f.clusters+' cluster'+(f.clusters===1?'':'s')+' · '+f.records+' record'+(f.records===1?'':'s');
-  }
-  if(key==='backups'&&f.nodes!=null){
-    return f.enabled_jobs+' enabled job'+(f.enabled_jobs===1?'':'s')+' · '+f.guests_ok+' guest backups ok'
-      +(f.guests_failed?(' · '+f.guests_failed+' failed'):'')
-      +(f.latest_run_at?(' · latest '+_fmtDateTime(f.latest_run_at)):'');
-  }
-  if(key==='storage'&&f.disks!=null){
-    return f.disks+' disks · '+f.in_use+' in use'
-      +(f.docker_disk_used_pct!=null?(' · Docker data disk '+f.docker_disk_used_pct+'% used'):'');
-  }
-  if(key==='services'&&f.file_fabric){
-    return 'file server '+f.file_fabric+(f.estate_mounts!=null?(' · '+f.estate_mounts+' estate mounts'):'')
-      +' · directory '+f.directory;
-  }
-  if(key==='certificates'&&f.certificates!=null){
-    const so=f.soonest;
-    return f.certificates+' certificate'+(f.certificates===1?'':'s')
-      +(f.expired?(' · '+f.expired+' expired'):'')+(f.expiring?(' · '+f.expiring+' expiring'):'')
-      +(so?(' · soonest '+so.name+' in '+so.days_left+' day'+(so.days_left===1?'':'s')):'');
-  }
-  return '';
-}
-function _ovRow(f){
-  const chip=f.ref?' <span class="mc-ent" data-entity="'+esc(f.ref)+'" title="Everything the estate knows about this" tabindex="0">'+esc(f.subject||f.ref)+' ›</span>':'';
-  return '<div class="ov-row"><span class="ov-sev '+esc(f.severity)+'">'+esc(_OV_SEV[f.severity]||f.severity)+'</span>'
-    +'<span>'+esc(f.message)+chip+(f.detail?'<span class="ov-detail">'+esc(f.detail)+'</span>':'')+'</span></div>';
-}
-function ovRender(r){
-  const sum=$('ov-summary'), box=$('ov-sections'); if(!sum||!box) return;
-  if(!r||r.error||!r.sections){
-    sum.innerHTML='<span class="ov-level error">Unavailable</span><span>'+esc((r&&r.error)||'The estate health check did not answer.')+'</span>';
-    txt('ov-ts','');
-    return;
-  }
-  _ovLast=r;
-  const c=r.counts||{}, need=(c.error||0)+(c.warn||0);
-  const words={ok:'All clear',warn:'Needs a look',error:'Something is down'};
-  sum.innerHTML='<span class="ov-level '+esc(r.level)+'">'+esc(words[r.level]||r.level)+'</span><span>'
-    +(need?(need+' finding'+(need===1?' needs':'s need')+' attention'):'Nothing checked needs attention')
-    +(c.info?(' · '+c.info+' note'+(c.info===1?'':'s')):'')+'</span>';
-  let h='';
-  for(const key of Object.keys(r.sections)){
-    const s=r.sections[key]; if(!s) continue;
-    const all=s.findings||[], loud=all.filter(f=>f.severity!=='info'), notes=all.filter(f=>f.severity==='info');
-    const ms=s.elapsed_ms;
-    h+='<section class="ov-sec"><div class="ov-sec-h"><span>'+esc(s.label)+'</span><span class="ov-time">'
-      +(ms==null?'':(ms<1000?ms+' ms':(ms/1000).toFixed(1)+' s'))+'</span></div>';
-    const facts=_ovFacts(key,s.facts);
-    if(facts) h+='<div class="ov-facts">'+esc(facts)+'</div>';
-    h+='<div class="ov-list">'+(loud.length?loud.map(_ovRow).join(''):'<div class="ov-clear">No problems found.</div>');
-    if(notes.length){
-      h+=(_ovNotesOpen[key]?notes.map(_ovRow).join(''):'')
-        +'<div class="ov-more" onclick="P.ovNotes(\''+key+'\')">'
-        +(_ovNotesOpen[key]?'Hide notes':('Show '+notes.length+' note'+(notes.length===1?'':'s')))+'</div>';
-    }
-    h+='</div></section>';
-  }
-  box.innerHTML=h;
-  txt('ov-ts','checked '+_fmtDateTime(r.checked_at)+(r.cached?' · cached':''));
-}
-async function ovLoad(refresh){
-  if(_ovBusy) return;
-  _ovBusy=true;
-  if(refresh) txt('ov-ts','checking…');
-  try{ ovRender(await api('/estate/health'+(refresh?'?refresh=true':''))); }
-  finally{ _ovBusy=false; }
-}
-function ovNotes(key){ _ovNotesOpen[key]=!_ovNotesOpen[key]; if(_ovLast) ovRender(_ovLast); }
-setInterval(()=>{ const p=$('pane-overview'); if(p&&p.classList.contains('on')&&document.visibilityState==='visible') ovLoad(false); }, 60000);
-setTimeout(()=>{ const p=$('pane-overview'); if(_VIEW==='estate'&&p&&p.classList.contains('on')) ovLoad(false); }, 0);
+// ── Overview: the dashboard panel in its frame ───────────────────────────────
+function ovLoad(){ _mountFrame('overview-frame', BASE+'/estate/overview/panel'); }
+setTimeout(()=>{ const p=$('pane-overview'); if(_VIEW==='estate'&&p&&p.classList.contains('on')) ovLoad(); }, 0);
 
 // ── Machines: every machine in one list (estate.machines) ────────────────────
 // Actions use the same endpoints as the Proxmox, Nodes and Docker panes, but
@@ -6432,7 +6341,7 @@ function showPane(name, el){
   document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
   const pane=$('pane-'+name);
   if(pane) pane.classList.add('on');
-  if(name==='overview'){ ovLoad(false); }
+  if(name==='overview'){ ovLoad(); }
   if(name==='ollama'){ loadEmbedCfg(); }
   if(name==='docker'){ if(!Object.keys(_dkrHosts||{}).length) _dkrInitHosts(); dkrWorkerList(); sbxRefresh(); stkRefresh(); if(_dkrHostId) dkrRefresh(); }
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
@@ -6497,7 +6406,7 @@ const _ENTITY_PANE={guest:'machines',host:'machines','docker-host':'docker',cont
   pool:'storage',dataset:'storage',integration:'integrations',identity:'provision',mesh:'provision',
   'secret':'provision',cert:'provision','backup-job':'storage',model:'ollama'};   // pragma: allowlist secret (an entity kind, not a value)
 const _ENTITY_SUB={identity:'identity',mesh:'mesh','secret':'secrets',cert:'certs','backup-job':'estate'};   // pragma: allowlist secret
-const _PANE_FRAME={storage:'storage-frame',integrations:'integrations-frame',foundry:'foundry-frame',
+const _PANE_FRAME={overview:'overview-frame',storage:'storage-frame',integrations:'integrations-frame',foundry:'foundry-frame',
   software:'software-frame',platforms:'platforms-frame',remote:'remote-frame',estate:'estate-frame'};
 function entityParse(ref){ const i=String(ref||'').indexOf(':'); if(i<1) return null;
   const kind=String(ref).slice(0,i).toLowerCase(), id=String(ref).slice(i+1); return (_ENTITY_PANE[kind]&&id)?{kind,id}:null; }
@@ -8287,7 +8196,7 @@ function _bmRender(rec){
 
 // ── Public API ───────────────────────────────────────────────────────────────
 return {
-  show: showPane, ovRefresh: ()=>ovLoad(true), ovNotes, mcLoad, mcRender, mcKind, mcAct, refresh, autoToggle,
+  show: showPane, ovRefresh: ()=>{ const f=$('overview-frame'); if(f&&f.contentWindow) f.contentWindow.location.reload(); }, mcLoad, mcRender, mcKind, mcAct, refresh, autoToggle,
   wkFilter, wkSel, wkDrain, wkRemoveStale,
   wkSubTab, wkjTab, wkjFilter, oljTab, oljFilter,
   setStrat, olPing, olPingAll, olTogglePin, olTestGenerate,
@@ -8345,6 +8254,7 @@ return {
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-entity-drawer.js"></script>
 <script src="/ui/vera-estate.js"></script>
 <script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>

@@ -90,7 +90,7 @@ async def _ollama_with_options(
 ) -> str:
     import time as _time
     from Vera.vera.capability_orchestration import (
-        emit_event, _ollama_log_append, now_iso,
+        emit_event, _ollama_log_append, now_iso, _ollama_slot,
     )
 
     chosen = instance_id or pick_instance(prefer_gpu=prefer_gpu) or ""
@@ -163,7 +163,9 @@ async def _ollama_with_options(
     try:
         buf: List[str] = []
         _ntok = 0
-        async with _httpx_inspect.AsyncClient(timeout=_timeout) as c:
+        # Routed to a node and generates, so it belongs in the shared queue.
+        async with _ollama_slot(chosen):
+          async with _httpx_inspect.AsyncClient(timeout=_timeout) as c:
             async with c.stream("POST", f"{url}/api/generate", json=body) as r:
                 if r.status_code != 200:
                     err_body = ""

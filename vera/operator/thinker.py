@@ -30,6 +30,16 @@ from . import completion as _completion
 
 log = logging.getLogger("vera.operator.thinker")
 
+
+def _model_not_found(err) -> bool:
+    """Ollama's 404 for an unknown model, in either shape Vera surfaces it."""
+    try:
+        from ..dag.operator_model_arg_core import is_model_not_found_error
+        return is_model_not_found_error(err)
+    except Exception:
+        s = str(err or "").lower()
+        return "not found" in s and "model" in s
+
 _SYSTEM = (
     "You are Vera's web operator. You drive a real web browser to accomplish a "
     "GOAL by choosing ONE next action at a time. You are given the current page "
@@ -248,8 +258,32 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
     except Exception as e:
         return {"error": f"think LLM call failed: {e}", "provider": provider}
 
+    # A model the cluster does not serve 404s on EVERY think, and a thinker
+    # that cannot think leaves the operator clicking blind until its guards
+    # fire - census run57 lost 1257 s of `author-then-edit` to an executor
+    # that asked for `model: "fast"`. When Ollama says the model is not
+    # found and a model WAS named, ask once more with the routed default.
+    model_dropped = ""
+    if (isinstance(res, dict) and res.get("error") and model
+            and name in ("ollama", "vllm", "local", "cluster")
+            and _model_not_found(res.get("error"))):
+        log.warning("operator.think: model %r not served (%s) - retrying with the routed default",
+                    model, str(res.get("error"))[:120])
+        model_dropped, model = model, ""
+        try:
+            res = await call_cap(
+                "llm.generate", prompt=prompt["user"], system=prompt["system"],
+                model=None, job_type="code", caller="operator.think", think=think,
+                options={"num_predict": THINK_MAX_TOKENS},
+            )
+        except Exception as e:
+            return {"error": f"think LLM call failed: {e}", "provider": provider,
+                    "model_dropped": model_dropped}
     if isinstance(res, dict) and res.get("error"):
-        return {"error": res["error"], "provider": provider}
+        out = {"error": res["error"], "provider": provider}
+        if model_dropped:
+            out["model_dropped"] = model_dropped
+        return out
     text = (res or {}).get("text", "") if isinstance(res, dict) else str(res)
     # llm.generate reports whether the answer stopped because it ran out of
     # allowance. A parse failure means something different in that case - the
@@ -259,6 +293,8 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
     truncated = bool(res.get("truncated")) if isinstance(res, dict) else False
     decision = parse_decision(text)
     decision["provider"] = provider
+    if model_dropped:
+        decision["model_dropped"] = model_dropped
     if truncated:
         decision["truncated"] = True
     if decision.get("error"):

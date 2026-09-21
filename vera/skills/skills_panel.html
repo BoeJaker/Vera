@@ -26,10 +26,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc)}
 textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.55}
 .btn{display:inline-flex;align-items:center;gap:3px;padding:3px 10px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:500;cursor:pointer;transition:all .14s;white-space:nowrap}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff)}
-.btn.pri:hover{filter:brightness(1.1)}
+.btn.pri,.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff)}
+.btn.pri:hover,.btn.primary:hover{filter:brightness(1.1)}
 .btn.teal{background:rgba(143,184,122,.1);border-color:var(--acc2);color:var(--acc2)}
-.btn.danger{border-color:var(--err);color:var(--err)}
+.btn.danger,.btn.red,.btn.err-btn,.btn.no{border-color:var(--err);color:var(--err)}
 .btn.sm{padding:2px 7px;font-size:10px}
 .btn.xs{padding:1px 5px;font-size:9px}
 .btn:disabled{opacity:.35;pointer-events:none}
@@ -210,7 +210,7 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
               </div>
               <div class="field-group">
                 <div class="field-label">Tags</div>
-                <input id="f-tags" placeholder="comma, separated">
+                <input id="f-tags" data-select="static" data-select-new placeholder="comma, separated">
               </div>
               <div class="row" style="gap:8px;margin-top:4px">
                 <label class="label">Enabled</label>
@@ -316,7 +316,7 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
               <div class="field-group"><div class="field-label">Description (optional)</div>
                 <input id="b-desc" placeholder="auto-generated if blank"></div>
               <div class="field-group"><div class="field-label">Tags</div>
-                <input id="b-tags" placeholder="comma-separated"></div>
+                <input id="b-tags" data-select="static" data-select-new placeholder="comma-separated"></div>
             </div>
             <div>
               <div class="field-group"><div class="field-label">Datasets (multi-select)</div>
@@ -725,6 +725,7 @@ const SP = (() => {
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

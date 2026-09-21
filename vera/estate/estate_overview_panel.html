@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<title>Vera · Estate Overview</title>
+<!-- The Estate's Overview as a dashboard: one VeraDash grid whose widgets each
+     read one of the estate's existing readers (estate.health, registration,
+     backup.status, sysmon, the GPU gate, the mesh, certs, the background queue,
+     the activity timeline). Nothing here computes; it draws what the estate
+     already knows, and every name opens the entity drawer. -->
+<style>
+:root{
+  --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --bg3:#20262e;
+  --border:#232a33; --border2:#2e3742;
+  --fg:#d8dde3; --fg2:#9aa3ad; --dim:#5f6975; --dim2:#7d8792;
+  --acc:#4a9eff; --acc2:#28c28a; --ok:#28c28a; --warn:#f5b341; --err:#ef5b5b;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --radius-lg:8px; --shadow:0 1px 2px rgba(0,0,0,.25);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg0,var(--bg));color:var(--text,var(--fg));
+  font:12px/1.5 -apple-system,BlinkMacSystemFont,Inter,system-ui,sans-serif;height:100%}
+body{display:flex;flex-direction:column;min-height:100vh}
+#topbar{height:40px;flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg1);
+  padding:0 14px;display:flex;align-items:center;gap:8px}
+#topbar h1{margin:0;font-size:11px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;color:var(--ok)}
+#topbar .hint{font-size:10px;color:var(--dim)}
+#topbar .right{margin-left:auto;display:flex;gap:6px;align-items:center}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:5px;border:1px solid var(--border2);
+  background:var(--bg2);color:var(--text,var(--fg));font-size:11px;cursor:pointer;white-space:nowrap;font-family:inherit}
+.btn:hover{border-color:var(--acc)} .btn.sm{padding:3px 7px;font-size:10.5px}
+#content{flex:1;overflow:auto;padding:12px 14px 40px}
+#hidden-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+#hidden-chips:empty{display:none}
+
+/* ── VeraDash grid + widget chrome (the Estate panel's, kept identical) ── */
+.dash-grid{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:minmax(54px,auto);gap:9px;padding-bottom:90px}
+.dash-grid.editing{outline:1px dashed var(--border2);outline-offset:5px;border-radius:6px;padding-bottom:240px}
+.widget{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow);display:flex;flex-direction:column;min-width:0;overflow:hidden;position:relative;transition:border-color .15s}
+.widget:hover{border-color:var(--border2)}
+.widget.dragging{opacity:.45} .widget.drag-over{border-color:var(--acc)} .widget.hidden{display:none}
+.w-head{display:flex;align-items:center;gap:6px;padding:6px 10px 5px;border-bottom:1px solid var(--border);flex-shrink:0}
+.w-dot{width:6px;height:6px;border-radius:50%;background:var(--dim);flex-shrink:0}
+.w-dot.ok{background:var(--ok)} .w-dot.warn{background:var(--warn)} .w-dot.err{background:var(--err)}
+.w-title{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:1.1px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.w-title b{color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0}
+.w-actions{display:flex;gap:2px;align-items:center;opacity:0;transition:opacity .15s}
+.widget:hover .w-actions,.dash-grid.editing .w-actions{opacity:1}
+.w-iconbtn{width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:var(--dim2);cursor:pointer;border-radius:3px;font-size:11px;font-family:var(--mono)}
+.w-iconbtn:hover{background:var(--bg3);color:var(--text,var(--fg))}
+.w-grip{cursor:grab;user-select:none;color:var(--dim);font-size:11px;padding:0 2px;display:none}
+.dash-grid.editing .w-grip{display:inline-block} .dash-grid.editing .widget{cursor:move}
+.w-body{padding:8px 10px;display:flex;flex-direction:column;gap:6px;flex:1;min-height:0;overflow:auto}
+.w-resize{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;display:none}
+.dash-grid.editing .w-resize{display:flex}
+.w-resize::before{content:'';width:8px;height:8px;border-right:2px solid var(--border2);border-bottom:2px solid var(--border2);display:inline-block}
+.w-w2{grid-column:span 2}.w-w3{grid-column:span 3}.w-w4{grid-column:span 4}.w-w6{grid-column:span 6}.w-w8{grid-column:span 8}.w-w12{grid-column:span 12}
+.w-h1{grid-row:span 1}.w-h2{grid-row:span 2}.w-h3{grid-row:span 3}.w-h4{grid-row:span 4}.w-h5{grid-row:span 5}.w-h6{grid-row:span 6}
+@media(max-width:1100px){.w-w3,.w-w4{grid-column:span 6}}
+@media(max-width:720px){.widget{grid-column:span 12 !important}}
+
+/* ── widget contents ── */
+.kpis{display:flex;border:1px solid var(--border);border-radius:4px;overflow:hidden;flex-shrink:0}
+.kpi{flex:1;padding:6px 8px;border-right:1px solid var(--border);min-width:0}
+.kpi:last-child{border-right:none}
+.kpi-v{font-family:var(--mono);font-size:19px;font-weight:700;line-height:1;letter-spacing:-.5px;color:var(--acc)}
+.kpi-v.ok{color:var(--ok)} .kpi-v.warn{color:var(--warn)} .kpi-v.err{color:var(--err)} .kpi-v.dim{color:var(--dim2)}
+.kpi-s{font-size:9px;color:var(--dim2);font-family:var(--mono);letter-spacing:.3px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.list{display:flex;flex-direction:column;gap:0;font-size:11px}
+.row{display:flex;align-items:center;gap:7px;padding:3px 0;border-bottom:1px solid var(--border);min-width:0}
+.row:last-child{border-bottom:none}
+.row .k{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .v{color:var(--dim2);font-family:var(--mono);font-size:10px;white-space:nowrap;max-width:55%;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
+.sev{font-size:8.5px;padding:1px 5px;border-radius:3px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;flex-shrink:0}
+.sev.error{background:rgba(239,91,91,.15);color:var(--err)} .sev.warn{background:rgba(245,179,65,.15);color:var(--warn)} .sev.info{background:var(--bg3);color:var(--dim2)}
+.tag{font-size:9px;padding:1px 5px;border-radius:3px;background:var(--bg3);color:var(--dim2);white-space:nowrap}
+.tag.ok{color:var(--ok)} .tag.warn{color:var(--warn)} .tag.err{color:var(--err)} .tag.acc{color:var(--acc)}
+.ent{cursor:pointer;border-bottom:1px dotted currentColor}
+.ent:hover{color:var(--acc)}
+.bar{height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;flex:1;min-width:40px}
+.bar>i{display:block;height:100%;background:var(--acc)} .bar>i.ok{background:var(--ok)} .bar>i.warn{background:var(--warn)} .bar>i.err{background:var(--err)}
+.plane{display:flex;align-items:center;gap:8px;font-size:10.5px}
+.plane .n{width:74px;color:var(--dim2);flex-shrink:0}
+.plane .c{width:54px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--dim2);flex-shrink:0}
+.sparks{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.spark{display:flex;flex-direction:column}
+.spark .t{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px}
+/* a fixed height: the sparkline sizes its canvas to its box, so a growing box would grow forever */
+.spark vera-sparkline{display:block;height:96px;flex:none}
+.summary{display:flex;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg1)}
+.summary .lvl{font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;padding:2px 7px;border-radius:3px;background:var(--bg3)}
+.summary.ok .lvl{color:var(--ok)} .summary.warn .lvl{color:var(--warn)} .summary.error .lvl{color:var(--err)}
+.summary .t{flex:1;min-width:0}
+.summary .ts{font-size:10px;color:var(--dim)}
+.more{font-size:10px;color:var(--dim2);cursor:pointer;padding:3px 0}
+.more:hover{color:var(--acc)}
+.dots{display:flex;gap:10px;flex-wrap:wrap;font-size:10.5px}
+.dots span::before{content:'●';margin-right:4px;color:var(--dim)}
+.dots span.up::before{color:var(--ok)} .dots span.down::before{color:var(--err)}
+.empty{color:var(--dim);font-size:11px;padding:6px 0}
+a.go{color:var(--acc);text-decoration:none;font-size:10.5px;cursor:pointer}
+a.go:hover{text-decoration:underline}
+vera-activity-timeline{flex:1;min-height:0;display:block}
+</style>
+</head>
+<body>
+<div id="topbar">
+  <h1>Overview</h1>
+  <span class="hint" id="ts">loading…</span>
+  <div class="right">
+    <button class="btn sm" id="edit-btn" onclick="D.toggleEdit()" title="Move, resize and hide widgets">⚙ Configure</button>
+    <button class="btn sm" onclick="D.openLoader()" title="Add any registered panel as a widget">+ Add Widget</button>
+    <button class="btn sm" onclick="load(true)" title="Re-read every source now">↻ Check now</button>
+  </div>
+</div>
+<div id="content">
+  <div id="hidden-picker"></div>
+  <div id="hidden-chips"></div>
+  <div class="dash-grid" id="grid">
+
+    <div class="widget w-w6 w-h4" data-wid="health">
+      <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="d-health"></span>
+        <span class="w-title">Health <b id="h-health"></b></span>
+        <span class="w-actions"><button class="w-iconbtn" onclick="loadHealth(true)" title="Re-check">↻</button><button class="w-iconbtn" onclick="D.hide('health')" title="Hide">×</button></span></div>
+      <div class="w-body">
+        <div class="summary" id="health-summary"><span class="lvl">Checking</span><span class="t">Checking the estate…</span></div>
+        <div class="list" id="health-findings"></div>
+        <div class="more" id="health-more" style="display:none" onclick="toggleNotes()"></div>
+        <div class="list" id="health-notes" style="display:none"></div>
+      </div>
+      <span class="w-resize" data-resize></span>
+    </div>
+
+    <div class="widget w-w3 w-h4" data-wid="vera">
+      <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="d-vera"></span>
+        <span class="w-title">Vera</span>
+        <span class="w-actions"><button class="w-iconbtn" onclick="D.hide('vera')" title="Hide">×</button></span></div>
+      <div class="w-body">
+        <div class="kpis"><div class="kpi"><div class="kpi-v" id="k-caps">—</div><div class="kpi-s">caps</div></div>
+          <div class="kpi"><div class="kpi-v" id="k-workers">—</div><div class="kpi-s">workers</div></div>
+          <div class="kpi"><div class="kpi-v" id="k-procmem">—</div><div class="kpi-s">vera ram</div></div></div>
+        <div class="dots" id="vera-backends"></div>
+        <div class="list" id="vera-rows"></div>
+      </div>
+      <span class="w-resize" data-resize></span>
+    </div>
+
+    <div class="widget w-w3 w-h4" data-wid="inference">
+      <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="d-inf"></span>
+        <span class="w-title">Inference <b id="h-inf"></b></span>
+        <span class="w-actions"><button class="w-iconbtn" onclick="D.hide('inference')" title="Hide">×</button></span></div>
+      <div class="w-body">
+        <div class="kpis"><div class="kpi"><div class="kpi-v" id="k-nodes">—</div><div class="kpi-s">nodes up</div></div>
+          <div class="kpi"><div class="kpi-v" id="k-gate">—</div><div class="kpi-s">gpu slots</div></div>
+          <div class="kpi"><div class="kpi-v" id="k-busy">—</div><div class="kpi-s">busy</div></div></div>
+        <div class="list" id="inf-rows"></div>
+      </div>
+      <span class="w-resize" data-resize></span>
+    </div>
+
+    <div class="widget w-w6 w-h5" data-wid="resources">
+      <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span>
+        <span class="w-title">Resources <b>last ~hour</b></span>
+        <span class="w-actions"><button class="w-iconbtn" onclick="loadSparks()" title="Refresh">↻</button><button class="w-iconbtn" onclick="D.hide('resources')" title="Hide">×</button></span></div>
+      <div class="w-body">
+        <div class="sparks">
+          <div class="spark"><div class="t">Vera host cpu / ram</div><vera-sparkline id="sp-host"></vera-sparkline></div>
+          <div class="spark"><div class="t">Cluster ram</div><vera-sparkline id="sp-pmxmem"></vera-sparkline></div>
+          <div class="spark"><div class="t">Guests / containers / nodes</div><vera-sparkline id="sp-counts"></vera-sparkline></div>
+          <div class="spark"><div class="t">Hottest host</div><vera-sparkline id="sp-temp"></vera-sparkline></div>
+        </div>
+      </div>
+      <span class="w-resize" data-resize></span>
+    </div>
+
+    <div class="widget w-w3 w-h5" data-wid="machines">
+      <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="d-mach"></span>
+        <span class="w-title">Machines <b id="h-mach"></b></span>
+        <span class="w-actions"><button class="w-iconbtn" onclick="go('machines')" title="Open Machines">›</button><button class="w-iconbtn" onclick="D.hide('machines')" title="Hide">×</button></span></div>
+      <div class="w-body">
+        <div class="kpis"><div class="kpi"><div class="kpi-v" id="k-running">—</div><div class="kpi-s">running</div></div>
+          <div class="kpi"><div class="kpi-v" id="k-stopped">—</div><div class="kpi-s">stopped</div></div>
+          <div class="kpi"><div class="kpi-v" id="k-complete">—</div><div class="kpi-s">registered</div></div></div>
+        <div id="planes" class="list" style="gap:4px"></div>
+        <div class="list" id="stale-rows"></div>
+      </div>
+      <span class="w-resize" data-resize></span>
+    </div>
+
+    <div class="widget w-w3 w-h5" data-wid="backups">
+      <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="d-bk"></span>
+        <span class="w-title">Backups <b id="h-bk"></b></span>
+        <span class="w-actions"><button class="w-iconbtn" onclick="go('storage','estate')" title="Open Backups">›</button><button class="w-iconbtn" onclick="D.hide('backups')" title="Hide">×</button></span></div>
+      <div class="w-body">
+        <div class="kpis"><div class="kpi"><div class="kpi-v ok" id="k-bk-ok">—</div><div class="kpi-s">guests ok</div></div>
+          <div class="kpi"><div class="kpi-v warn" id="k-bk-gap">—</div><div class="kpi-s">stale·never</div></div>
+          <div class="kpi"><div class="kpi-v dim" id="k-bk-nc">—</div><div class="kpi-s">uncovered</div></div></div>
+        <div class="list" id="bk-rows"></div>
+      </div>
+      <span class="w-resize" data-resize></span>
+    </div>
+
+    <div class="widget w-w4 w-h4" data-wid="storage">
+      <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="d-sto"></span>
+        <span class="w-title">Storage</span>
+        <span class="w-actions"><button class="w-iconbtn" onclick="go('storage')" title="Open Storage">›</button><button class="w-iconbtn" onclick="D.hide('storage')" title="Hide">×</button></span></div>
+      <div class="w-body"><div class="list" id="sto-rows"></div><div class="list" id="dkr-rows"></div></div>
+      <span class="w-resize" data-resize></span>
+    </div>
+
+    <div class="widget w-w4 w-h4" data-wid="network">
+      <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="d-net"></span>
+        <span class="w-title">Mesh <b id="h-net"></b></span>
+        <span class="w-actions"><button class="w-iconbtn" onclick="go('provision','mesh')" title="Open Mesh">›</button><button class="w-iconbtn" onclick="D.hide('network')" title="Hide">×</button></span></div>
+      <div class="w-body"><div class="list" id="net-rows"></div></div>
+      <span class="w-resize" data-resize></span>
+    </div>
+
+    <div class="widget w-w4 w-h4" data-wid="trust">
+      <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="d-trust"></span>
+        <span class="w-title">Trust <b id="h-trust"></b></span>
+        <span class="w-actions"><button class="w-iconbtn" onclick="go('provision','certs')" title="Open Trust">›</button><button class="w-iconbtn" onclick="D.hide('trust')" title="Hide">×</button></span></div>
+      <div class="w-body">
+        <div class="kpis"><div class="kpi"><div class="kpi-v" id="k-certs">—</div><div class="kpi-s">certs</div></div>
+          <div class="kpi"><div class="kpi-v" id="k-soonest">—</div><div class="kpi-s" id="k-soonest-s">soonest</div></div>
+          <div class="kpi"><div class="kpi-v" id="k-secrets">—</div><div class="kpi-s">secrets</div></div></div>
+        <div class="list" id="trust-rows"></div>
+      </div>
+      <span class="w-resize" data-resize></span>
+    </div>
+
+    <div class="widget w-w8 w-h6" data-wid="activity">
+      <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span>
+        <span class="w-title">Activity <b>loops · dreams · pipelines · capability calls</b></span>
+        <span class="w-actions"><button class="w-iconbtn" onclick="D.hide('activity')" title="Hide">×</button></span></div>
+      <div class="w-body" style="padding:0"><vera-activity-timeline id="timeline" scope="all" auto="30" show-picker="false" compact></vera-activity-timeline></div>
+      <span class="w-resize" data-resize></span>
+    </div>
+
+    <div class="widget w-w4 w-h6" data-wid="background">
+      <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="d-bg"></span>
+        <span class="w-title">Background work <b id="h-bg"></b></span>
+        <span class="w-actions"><button class="w-iconbtn" onclick="D.hide('background')" title="Hide">×</button></span></div>
+      <div class="w-body">
+        <div class="kpis"><div class="kpi"><div class="kpi-v" id="k-queue">—</div><div class="kpi-s">queued</div></div>
+          <div class="kpi"><div class="kpi-v" id="k-census">—</div><div class="kpi-s">census</div></div>
+          <div class="kpi"><div class="kpi-v" id="k-quiet">—</div><div class="kpi-s">quiet for</div></div></div>
+        <div class="list" id="bg-rows"></div>
+      </div>
+      <span class="w-resize" data-resize></span>
+    </div>
+
+  </div>
+</div>
+
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-estate.js"></script>
+<script src="/ui/vera-entity-drawer.js"></script>
+<script src="/ui/vera-dashboard.js"></script>
+<script src="/ui/elements/sparkline.js"></script>
+<script src="/ui/elements/activity_timeline.js"></script>
+<script>
+const BASE=(window.__VERA_BASE__||(window.veraUI&&window.veraUI.BASE)||'').replace(/\/$/,'');
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path){ const r=await fetch(BASE+path,{cache:'no-store'}); return r.json(); }
+const chip=(ref,text)=>ref?`<span class="ent" data-entity="${esc(ref)}" title="Everything the estate knows about this">${esc(text)}</span>`:esc(text);
+const dot=(id,lvl)=>{ const d=$(id); if(d) d.className='w-dot '+(lvl||''); };
+const fmtAge=s=>{ s=Math.max(0,Math.round(s||0)); if(s<90) return s+'s'; if(s<5400) return Math.round(s/60)+'m'; if(s<172800) return Math.round(s/3600)+'h'; return Math.round(s/86400)+'d'; };
+const fmtB=n=>{ if(n==null) return '—'; const u=['B','K','M','G','T']; let i=0; n=Number(n); while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(n<10&&i>0?1:0)+u[i]; };
+const fmtWhen=s=>{ if(!s) return '—'; try{ return new Date(s).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){ return String(s); } };
+// A pane of the Estate panel (this page lives inside it); standalone, the URL.
+function go(pane,sub){
+  if(window.parent!==window){ try{ window.parent.postMessage({type:'vera:estate:open',pane,sub:sub||''},'*'); return; }catch(e){} }
+  location.href=BASE+'/workers/ollama/panel?pane='+encodeURIComponent(pane)+(sub?'&sub='+encodeURIComponent(sub):'');
+}
+
+// ── Health: estate.health ────────────────────────────────────────────────────
+let _health=null, _notesOpen=false;
+const SEV={error:'Error',warn:'Check',info:'Note'};
+function findingRow(f){
+  return `<div class="row"><span class="sev ${esc(f.severity)}">${SEV[f.severity]||esc(f.severity)}</span>`
+    +`<span class="k" title="${esc(f.detail||'')}">${esc(f.message)}${f.ref?' · '+chip(f.ref,f.subject||f.ref):''}</span>`
+    +`<span class="v">${esc(f.section||'')}</span></div>`;
+}
+function renderHealth(r){
+  _health=r;
+  const lvl=r.level||'warn', c=r.counts||{};
+  const s=$('health-summary'); s.className='summary '+lvl;
+  const loud=(c.error||0)+(c.warn||0);
+  s.innerHTML=`<span class="lvl">${lvl==='ok'?'All clear':lvl==='error'?'Something is down':'Needs a look'}</span>`
+    +`<span class="t">${loud?loud+' finding'+(loud===1?'':'s')+' need attention':'No problems found'}${c.info?' · '+c.info+' note'+(c.info===1?'':'s'):''}</span>`
+    +`<span class="ts">${r.cached?'cached · ':''}${fmtWhen(r.checked_at)}</span>`;
+  dot('d-health',lvl==='ok'?'ok':lvl==='error'?'err':'warn');
+  const secs=Object.keys(r.sections||{}).length; $('h-health').textContent=secs?secs+' sources':'';
+  const loudRows=(r.findings||[]).filter(f=>f.severity!=='info'), notes=(r.findings||[]).filter(f=>f.severity==='info');
+  $('health-findings').innerHTML=loudRows.map(findingRow).join('')||'<div class="empty">Every source answered and found nothing wrong.</div>';
+  $('health-more').style.display=notes.length?'':'none';
+  $('health-more').textContent=(_notesOpen?'Hide ':'Show ')+notes.length+' note'+(notes.length===1?'':'s');
+  $('health-notes').style.display=_notesOpen?'':'none';
+  $('health-notes').innerHTML=notes.map(findingRow).join('');
+}
+function toggleNotes(){ _notesOpen=!_notesOpen; if(_health) renderHealth(_health); }
+async function loadHealth(refresh){ try{ renderHealth(await api('/estate/health'+(refresh?'?refresh=true':''))); }catch(e){ dot('d-health','err'); $('health-summary').innerHTML='<span class="lvl">?</span><span class="t">'+esc(e.message)+'</span>'; } }
+
+// ── Vera + inference: /health, /sysmon/status, /ollama/gate ─────────────────
+function renderVera(h,sm){
+  const res=(sm&&sm.resources)||{};
+  $('k-caps').textContent=h.caps!=null?Number(h.caps).toLocaleString():'—';
+  $('k-workers').textContent=h.workers!=null?h.workers:'—';
+  $('k-procmem').textContent=res.proc_mb!=null?fmtB(res.proc_mb*1048576):'—';
+  const backs=['redis','postgres','chroma','neo4j'];
+  $('vera-backends').innerHTML=backs.map(b=>`<span class="${h[b]?'up':'down'}">${b}</span>`).join('');
+  const down=backs.filter(b=>!h[b]);
+  dot('d-vera',down.length?'err':'ok');
+  const rows=[];
+  if(res.cpu!=null) rows.push(['host cpu / ram', Math.round(res.cpu)+'% · '+Math.round(res.mem)+'%'+(res.ram_total_gb?' of '+res.ram_total_gb.toFixed(0)+' GB':'')]);
+  if(h.mode) rows.push(['mode', h.mode]);
+  if(h.mcp_servers!=null) rows.push(['mcp servers', h.mcp_servers]);
+  const top=((sm&&sm.top_processes)||[]).slice(0,3);
+  if(top.length) rows.push(['top processes', top.map(p=>p.name+' '+Math.round(p.mem_mb)+'M').join(' · ')]);
+  $('vera-rows').innerHTML=rows.map(([k,v])=>`<div class="row"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join('');
+}
+function renderInference(g,sm){
+  const o=(sm&&sm.ollama)||{};
+  $('k-nodes').textContent=(o.online!=null?o.online:'—')+(o.total!=null?'/'+o.total:'');
+  const gated=(g.nodes||[]).filter(n=>n.gated);
+  const held=gated.reduce((a,n)=>a+(n.held||0),0), cap=gated.reduce((a,n)=>a+(n.capacity||0),0);
+  $('k-gate').textContent=held+'/'+cap;
+  $('k-busy').textContent=o.in_use!=null?o.in_use:'—';
+  $('h-inf').textContent=g.enabled===false?'gate off':'';
+  dot('d-inf',o.total&&o.online<o.total?'warn':o.total?'ok':'');
+  $('inf-rows').innerHTML=(o.nodes||[]).map(n=>{
+    const addr=String(n.url||'').replace(/^[a-z]+:\/\//,'').replace(/[:/].*$/,'');
+    const m=window.veraEstate&&veraEstate.find({addr}); const ref=m?veraEstate.ref(m):'';
+    const gn=(g.nodes||[]).find(x=>x.node===n.id||x.node===n.label)||{};
+    const owners=(gn.owners||[]).map(w=>typeof w==='string'?w:(w.owner||w.id||'')).filter(Boolean);
+    return `<div class="row"><span class="k">${chip(ref,n.label||n.id)}${n.has_gpu?' <span class="tag acc">gpu</span>':''}</span>`
+      +`<span class="v">${n.status==='online'?(n.models||0)+' models'+(n.in_use?' · busy':''):'<span class="tag err">'+esc(n.status||'offline')+'</span>'}${owners.length?' · held by '+esc(owners.join(', ')):''}</span></div>`;
+  }).join('')||'<div class="empty">No inference nodes configured.</div>';
+}
+
+// ── Resources: /sysmon/history → sparklines ─────────────────────────────────
+async function loadSparks(){
+  let h; try{ h=await api('/sysmon/history?limit=60'); }catch(e){ return; }
+  if(!h||!h.samples) return;
+  const mk=f=>h.samples.map(s=>({t:s.t,v:s[f]==null?null:s[f]}));
+  const multi=(id,series)=>{ const el=$(id); if(el&&el.setMultiSeries) el.setMultiSeries(series.map(s=>({label:s.label,color:s.color,unit:s.unit||'',points:mk(s.field)}))); };
+  const single=(id,f,label,unit)=>{ const el=$(id); if(el&&el.setSeries){ el.setSeries(mk(f),label); if(unit) el.setUnit(unit); } };
+  multi('sp-host',[{field:'cpu',label:'cpu',color:'acc',unit:'%'},{field:'mem',label:'ram',color:'acc2',unit:'%'}]);
+  single('sp-pmxmem','pmx_mem_pct','cluster ram','%');
+  multi('sp-counts',[{field:'pmx_running',label:'guests',color:'acc'},{field:'dkr_running',label:'containers',color:'acc2'},{field:'oll_online',label:'nodes',color:'warn'}]);
+  single('sp-temp','pmx_temp_max','hottest host','°C');
+}
+
+// ── Machines: estate.registration ───────────────────────────────────────────
+const PLANES=[['ssh','SSH login'],['directory','Directory'],['mesh','Mesh'],['certificate','Certificate'],['backup','Backup']];
+function renderMachines(r){
+  const rows=r.rows||[];
+  const guests=rows.filter(x=>x.kind==='guest');
+  $('k-running').textContent=guests.filter(x=>x.status==='running').length;
+  $('k-stopped').textContent=guests.filter(x=>x.status==='stopped').length;
+  const pct=r.machines?Math.round(100*(r.complete||0)/r.machines):0;
+  $('k-complete').textContent=pct+'%';
+  $('h-mach').textContent=(r.machines||rows.length)+' machines';
+  $('planes').innerHTML=PLANES.map(([k,label])=>{
+    const c=(r.counts||{})[k]||{}; const yes=c.yes||0, applicable=(c.yes||0)+(c.no||0);
+    const p=applicable?Math.round(100*yes/applicable):0;
+    return `<div class="plane"><span class="n">${label}</span><span class="bar"><i class="${p>=80?'ok':p>=40?'warn':'err'}" style="width:${p}%"></i></span><span class="c">${yes}/${applicable}</span></div>`;
+  }).join('');
+  const stale=(r.stale||[]);
+  dot('d-mach',stale.some(s=>!s.unverified)?'warn':'ok');
+  $('stale-rows').innerHTML=stale.slice(0,4).map(s=>`<div class="row"><span class="sev ${s.unverified?'info':'warn'}">${s.unverified?'Unverified':'Stale'}</span><span class="k">${chip(s.kind&&s.id?s.kind+':'+s.id:'',s.label||s.id)}</span><span class="v" title="${esc(s.why||'')}">${esc((s.why||'').slice(0,40))}</span></div>`).join('');
+}
+
+// ── Backups: backup.status ──────────────────────────────────────────────────
+function renderBackups(b){
+  const c=b.counts||{};
+  $('k-bk-ok').textContent=c.ok||0;
+  $('k-bk-gap').textContent=(c.stale||0)+(c.never||0)+(c.failed||0);
+  $('k-bk-nc').textContent=c['not covered']||0;
+  const bad=(c.failed||0)+(c.never||0)+(c.stale||0);
+  dot('d-bk',c.failed?'err':bad?'warn':'ok');
+  const host=b.host||{};
+  const rows=[];
+  (b.schedules||[]).filter(s=>s.enabled).slice(0,4).forEach(s=>rows.push(`<div class="row"><span class="k">${chip('backup-job:'+s.id,s.what||s.id)}</span><span class="v">${esc(s.schedule||'')}${s.next_run?' · next '+fmtWhen(s.next_run*1000):''}</span></div>`));
+  if(host.enabled!=null) rows.push(`<div class="row"><span class="k">Vera host backup</span><span class="v">${host.running?'running':esc(host.result||host.exit_status||'—')}${host.last_end?' · '+fmtWhen(host.last_end*1000):''}</span></div>`);
+  (b.findings||[]).filter(f=>f.severity!=='info').slice(0,4).forEach(f=>rows.push(findingRow(f)));
+  $('h-bk').textContent=b.cached?'cached':'';
+  $('bk-rows').innerHTML=rows.join('')||'<div class="empty">No backup jobs found.</div>';
+}
+
+// ── Storage: the pools (pxstore.inventory, every 5 min - it walks zpool over SSH) + docker.disk.breakdown
+let _inv=null, _invAt=0, _cluster='';
+async function loadInventory(){
+  if(_inv&&Date.now()-_invAt<300000) return _inv;
+  try{
+    if(!_cluster){ const cl=await api('/proxmox/cluster/list'); _cluster=((cl.clusters||[])[0]||{}).id||''; }
+    if(!_cluster) return null;
+    const r=await fetch(BASE+'/pxstore/inventory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cluster_id:_cluster})});
+    _inv=await r.json(); _invAt=Date.now();
+  }catch(e){ _inv=null; }
+  return _inv;
+}
+function renderStorage(inv,b,dk){
+  const pools=(inv&&inv.pools)||[];
+  let worst=0;
+  const rows=pools.slice().sort((a,c)=>(c.cap_pct||0)-(a.cap_pct||0)).map(pl=>{
+    const p=pl.cap_pct!=null?pl.cap_pct:(pl.size?Math.round(100*(pl.alloc||0)/pl.size):0); worst=Math.max(worst,p);
+    const bad=pl.health&&pl.health!=='ONLINE';
+    return `<div class="row"><span class="k">${chip('pool:'+pl.name,pl.name)} <span class="tag ${bad?'err':''}" title="${esc(pl.layout||'')}">${esc(bad?pl.health:(pl.layout||'pool'))}</span></span><span class="bar"><i class="${p>=90?'err':p>=75?'warn':'ok'}" style="width:${p}%"></i></span><span class="v">${p}% · ${fmtB(pl.free)} free</span></div>`;
+  });
+  ((b&&b.storages)||[]).filter(s=>s.total&&s.type==='pbs').forEach(s=>{
+    const p=Math.round(100*s.used/s.total); worst=Math.max(worst,p);
+    rows.push(`<div class="row"><span class="k">${esc(s.name)} <span class="tag">backup server</span></span><span class="bar"><i class="${p>=90?'err':p>=75?'warn':'ok'}" style="width:${p}%"></i></span><span class="v">${p}% · ${fmtB(s.avail)} free</span></div>`);
+  });
+  if(inv&&inv.unallocated_bytes) rows.push(`<div class="row"><span class="k">Unallocated disk</span><span class="v">${fmtB(inv.unallocated_bytes)} not in any pool</span></div>`);
+  const pf=((inv&&inv.pool_findings)||[]).filter(f=>f.severity!=='info');
+  pf.slice(0,3).forEach(f=>rows.push(`<div class="row"><span class="sev ${esc(f.severity)}">${SEV[f.severity]||''}</span><span class="k">${chip('pool:'+f.pool,f.message)}</span></div>`));
+  const single=pools.filter(pl=>/no redundancy/.test(pl.layout||'')).length;
+  if(single) rows.push(`<div class="row"><span class="sev info">Note</span><span class="k">${single} of ${pools.length} pools have no redundancy</span></div>`);
+  $('sto-rows').innerHTML=rows.join('')||(inv?'<div class="empty">No pools reported.</div>':'<div class="empty">Storage inventory unavailable.</div>');
+  dot('d-sto',pools.some(pl=>pl.health&&pl.health!=='ONLINE')||worst>=90?'err':worst>=75||pf.length?'warn':'ok');
+  const br=(dk&&dk.breakdown)||null;
+  $('dkr-rows').innerHTML=br?`<div class="row"><span class="k">Docker on the Vera host</span><span class="v">${fmtB(br.layers_size)} images · ${fmtB(br.reclaimable_total)} reclaimable</span></div>`
+    +(br.findings||[]).slice(0,2).map(f=>`<div class="row"><span class="sev ${esc(f.severity||'info')}">${SEV[f.severity]||'Note'}</span><span class="k">${esc(f.message)}</span></div>`).join('')
+    :(dk&&dk.computing?'<div class="empty">Docker disk breakdown computing…</div>':'');
+}
+
+// ── Mesh: netsec.mesh.members ───────────────────────────────────────────────
+function renderMesh(m){
+  const mem=m.members||[], on=mem.filter(x=>x.connected).length;
+  $('h-net').textContent=on+'/'+mem.length+' connected'+(m.door&&m.door.up===false?' · door down':'');
+  dot('d-net',m.door&&m.door.up===false?'err':mem.length&&on<mem.length?'warn':'ok');
+  const rows=mem.map(x=>`<div class="row"><span class="k">${chip('mesh:'+x.host_id,x.label||x.host)}</span><span class="v">${esc(x.ip||'')} · ${x.connected?'<span class="tag ok">connected</span>':x.state==='up'?'<span class="tag warn">no handshake</span>':'<span class="tag err">'+esc(x.state||'down')+'</span>'}${x.last_handshake_s!=null?' · '+fmtAge(x.last_handshake_s)+' ago':''}</span></div>`);
+  if(m.door) rows.unshift(`<div class="row"><span class="k">Door <span class="tag">${esc(m.provider||'')}</span></span><span class="v">${esc(m.door.endpoint||'')} · ${m.door.devices!=null?m.door.devices+' devices':''} ${m.door.up?'<span class="tag ok">up</span>':'<span class="tag err">down</span>'}</span></div>`);
+  $('net-rows').innerHTML=rows.join('')||'<div class="empty">No mesh members.</div>';
+}
+
+// ── Trust: certs.list, identity.status, secrets.list ────────────────────────
+function renderTrust(c,idn,sec){
+  const n=(c.certs||[]).length; $('k-certs').textContent=n;
+  const so=c.soonest||null;
+  $('k-soonest').textContent=so?so.days_left+'d':'—'; $('k-soonest').className='kpi-v '+(so?(so.days_left<=7?'err':so.days_left<=30?'warn':'ok'):'dim');
+  $('k-soonest-s').textContent=so?so.name:'soonest'; $('k-soonest-s').title=so?(so.name+' · '+(so.where||'')):'';
+  $('k-secrets').textContent=sec&&sec.count!=null?sec.count:(sec&&sec.secrets?sec.secrets.length:'—');
+  const bad=(c.findings||[]).filter(f=>f.severity!=='info');
+  dot('d-trust',idn&&idn.configured&&!idn.reachable?'err':bad.length?'warn':'ok');
+  $('h-trust').textContent=idn?('directory '+(idn.reachable?'up':idn.configured?'unreachable':'not set up')+(idn.version?' · IPA '+idn.version:'')):'';
+  const rows=bad.slice(0,4).map(f=>`<div class="row"><span class="sev ${esc(f.severity)}">${SEV[f.severity]||''}</span><span class="k">${chip(f.subject?'cert:'+f.subject:'',f.message)}</span></div>`);
+  (c.certs||[]).filter(x=>x.days_left!=null).sort((a,b)=>a.days_left-b.days_left).slice(0,3).forEach(x=>rows.push(`<div class="row"><span class="k">${chip('cert:'+x.name,x.name)} <span class="tag">${esc(x.issuer_kind||'')}</span></span><span class="v">${x.days_left}d · ${esc(x.where||'')}</span></div>`));
+  $('trust-rows').innerHTML=rows.join('')||'<div class="empty">No certificates listed.</div>';
+}
+
+// ── Background: /background/status + /census/control ───────────────────────
+function renderBackground(bg,cs){
+  const q=bg.queue||{};
+  $('k-queue').textContent=q.depth!=null?q.depth:'—';
+  $('k-quiet').textContent=bg.quiet_for_s!=null?fmtAge(bg.quiet_for_s):'—';
+  const act=(cs&&cs.active)||{}; const st=(cs&&cs.state)||'';
+  $('k-census').textContent=st||'—'; $('k-census').className='kpi-v '+(st==='run'?'ok':st==='pause'||st==='yield'?'warn':'dim');
+  const runName=typeof bg.running==='string'?bg.running:(bg.running&&(bg.running.title||bg.running.name||bg.running.kind))||'';
+  $('h-bg').textContent=runName?('running '+runName):(bg.busy_reason||'');
+  dot('d-bg',q.blocked_reason?'warn':'ok');
+  const rows=[];
+  if(act.present) rows.push(`<div class="row"><span class="k">Census · ${esc(act.template||'')}${act.model?' · '+esc(act.model):''}</span><span class="v">${act.goals_done||0}/${act.goals_total||0} goals${act.stale?' · <span class="tag warn">stale</span>':act.live?' · <span class="tag ok">live</span>':''}</span></div>`);
+  if(runName) rows.push(`<div class="row"><span class="k">Now: ${esc(runName)}</span><span class="v">running</span></div>`);
+  (q.waiting||[]).slice(0,3).forEach(w=>rows.push(`<div class="row"><span class="k">Queued: ${esc(w.title||w.kind||w.id||'')}</span><span class="v">${w.wait_s!=null?fmtAge(w.wait_s):''}</span></div>`));
+  if(q.blocked_reason) rows.push(`<div class="row"><span class="sev warn">Held</span><span class="k">${esc(q.blocked_reason)}</span></div>`);
+  (bg.jobs||[]).slice(0,6).forEach(j=>rows.push(`<div class="row"><span class="k">${esc(j.name)}</span><span class="v">${j.runs||0} runs${j.defers?' · '+j.defers+' deferred':''}${j.last_ok?' · '+fmtWhen(j.last_ok):''}</span></div>`));
+  (bg.timeline||[]).slice(0,3).forEach(t=>rows.push(`<div class="row"><span class="k">Next: ${esc(t.title||t.kind)}</span><span class="v">in ${fmtAge(t.starts_in_s)}${t.provisional?' (est.)':''}</span></div>`));
+  $('bg-rows').innerHTML=rows.join('')||'<div class="empty">Nothing scheduled.</div>';
+}
+
+// ── Load everything the widgets need; each source fails alone ───────────────
+let _busy=false;
+const quiet=p=>p.catch(e=>({error:e.message||String(e)}));
+async function load(refresh){
+  if(_busy) return; _busy=true;
+  $('ts').textContent='reading…';
+  try{
+    if(window.veraEstate) await quiet(veraEstate.machines());
+    const [h,sm,g,reg,bk,dk,mesh,certs,idn,sec,bg,cs]=await Promise.all([
+      quiet(api('/health')), quiet(api('/sysmon/status')), quiet(api('/ollama/gate')),
+      quiet(api('/estate/registration')), quiet(api('/backup/status')), quiet(api('/docker/disk/breakdown?host_id=local')),
+      quiet(api('/netsec/mesh/members')), quiet(api('/certs/list')), quiet(api('/identity/status')),
+      quiet(fetch(BASE+'/secrets/list',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json())),
+      quiet(api('/background/status')), quiet(api('/census/control')),
+      loadHealth(refresh), loadSparks()]);
+    if(!h.error) renderVera(h,sm.error?null:sm); else dot('d-vera','err');
+    if(!g.error||!sm.error) renderInference(g.error?{}:g, sm.error?null:sm);
+    if(!reg.error) renderMachines(reg); else dot('d-mach','err');
+    if(!bk.error) renderBackups(bk); else dot('d-bk','err');
+    renderStorage(await loadInventory(), bk.error?null:bk, dk.error?null:dk);
+    if(!mesh.error) renderMesh(mesh); else dot('d-net','err');
+    if(!certs.error) renderTrust(certs, idn.error?null:idn, sec.error?null:sec); else dot('d-trust','err');
+    if(!bg.error) renderBackground(bg, cs.error?null:cs); else dot('d-bg','err');
+    $('ts').textContent='updated '+new Date().toLocaleTimeString();
+  }finally{ _busy=false; }
+}
+const D=VeraDash.init($('grid'),{key:'estate-overview',loader:true,popout:true,editBtn:'edit-btn',hiddenPicker:'hidden-picker',hiddenChips:'hidden-chips'});
+const tl=$('timeline'); if(tl&&tl.setApiBase&&BASE) tl.setApiBase(BASE);
+load(false);
+setInterval(()=>{ if(document.visibilityState==='visible') load(false); },60000);
+// The Estate panel may ask this frame to focus an entity: the drawer answers.
+window.addEventListener('message',e=>{
+  if(e.data&&e.data.type==='vera:entity:focus'&&e.data.ref&&window.veraEntityDrawer){
+    veraEntityDrawer.open(e.data.ref);
+    try{ e.source.postMessage({type:'vera:entity:focused',ref:e.data.ref},'*'); }catch(_){}
+  }
+});
+</script>
+</body>
+</html>

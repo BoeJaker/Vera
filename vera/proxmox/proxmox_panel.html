@@ -1,6 +1,12 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dusk">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Vera / Proxmox</title>
@@ -20,7 +26,7 @@
 <style>
 [data-theme="dusk"]{--bg:#0e0f12;--s1:#13151a;--s2:#1a1d24;--s3:#222630;--bd:rgba(255,255,255,.07);--bd2:rgba(255,255,255,.14);--t1:#d4dae4;--t2:#6b7585;--t3:#3b4252;--ac:#6ea8d8;--ok:#5ec9a0;--warn:#e09a55;--err:#e06060;--ac5:#a78bfa}
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;background:var(--bg);color:var(--t1);font:13px/1.45 'ui-monospace','SFMono-Regular','Menlo',monospace}
+html,body{height:100%;background:var(--bg);color:var(--t1);font:13px/1.45 var(--font-ui)}
 body{overflow:hidden}
 button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 input,select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--bd);border-radius:5px;padding:8px 10px;outline:none;width:100%}
@@ -37,10 +43,10 @@ a{color:var(--ac)}
 #top select{width:auto;min-width:120px;max-width:46vw}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:6px;background:var(--s3);border:1px solid var(--bd2);color:var(--t1);font-size:12px;white-space:nowrap}
 .btn:hover{border-color:var(--ac)}
-.btn.pri{background:var(--ac);border-color:var(--ac);color:#06121c;font-weight:700}
+.btn.pri,.btn.primary{background:var(--ac);border-color:var(--ac);color:#06121c;font-weight:700}
 .btn.gho{background:transparent}
 .btn.sm{padding:6px 9px;font-size:11px}
-.btn.danger{color:var(--err);border-color:var(--err)}
+.btn.danger,.btn.red,.btn.err-btn,.btn.no{color:var(--err);border-color:var(--err)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .spacer{flex:1}
 .iconbtn{padding:8px 10px;border-radius:6px;background:var(--s3);border:1px solid var(--bd2);font-size:14px;line-height:1}

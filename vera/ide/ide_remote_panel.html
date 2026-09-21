@@ -1,6 +1,12 @@
 <!DOCTYPE html>
 <html lang="en" data-panel="ide-remote-panel">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vera · Remote IDE</title>
@@ -40,9 +46,9 @@
   button.btn{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:8px;
        padding:7px 12px;cursor:pointer;font-size:12px;font-weight:500;white-space:nowrap}
   button.btn:hover{border-color:var(--accent-dim)}
-  button.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent,#fff)}
-  button.btn.primary:hover{filter:brightness(1.08)}
-  button.btn.danger:hover{border-color:var(--err);color:var(--err)}
+  button.btn.primary,button.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent,#fff)}
+  button.btn.primary:hover,button.btn.pri:hover{filter:brightness(1.08)}
+  button.btn.danger:hover,button.btn.red:hover,button.btn.err-btn:hover,button.btn.no:hover{border-color:var(--err);color:var(--err)}
   button.btn:disabled{opacity:.45;cursor:not-allowed}
   .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:2px 8px;border-radius:20px;
        background:var(--bg2);border:1px solid var(--line);color:var(--fg-dim)}

@@ -509,6 +509,15 @@ sandbox → the code pipeline holds for manual review instead of failing.
 | `evolve.sandbox.fs.list/read/write` | **File explorer** — browse/read/edit the worktree (path-jailed); writes land on the branch and reach main only via promote |
 | `evolve.sandbox.registry.reconstruct` | Dry-run and explicitly restore missing spawned-sandbox descriptors from matching Docker, Compose, port, mount, Git, Redis-slot, and broker-identity evidence; never changes containers or worktrees |
 
+Spawned-sandbox teardown remains exact even when an old descriptor has outlived
+its generated Compose file. In that case `sandbox.down` discovers containers
+and networks only through Docker's exact Compose-project label, removes that
+bounded set, and drops the descriptor only after teardown succeeds. If the
+Compose path or Docker project membership cannot be observed, or teardown
+fails, the descriptor and worktree are retained as the retry and ownership
+handle. A dry run reports whether normal Compose teardown or this labelled
+reconciliation path would be used.
+
 The Sandbox tab surfaces all of it: a **Changes on the branch** card (file list
 + coloured unified diff), a **VS Code on the branch** card embedding the
 sidecar, a **Terminal** card (container or worktree shell), and a **Files**
