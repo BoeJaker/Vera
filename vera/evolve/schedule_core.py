@@ -451,3 +451,81 @@ def weekday_census(template: str = "default", *, start: str = "05:00", end: str 
                       "days": list(DEFAULT_DAYS), "start": start, "end": end,
                       "timezone": timezone_name, "repeat": "continuous",
                       "at_window_end": "finish", "cooldown_minutes": 2}, now=now)
+
+
+# ── results on the calendar ───────────────────────────────────────────────────
+# A census run or a suite is a span of time with an outcome; laid on the same
+# calendar as the windows, the series reads at a glance - which days ran clean,
+# which capped, whether a change moved the numbers (asked 2026-09-22).
+
+RESULT_COLORS = {"good": "#6db87a", "mixed": "#c9a35a", "bad": "#c96b6b", "none": "#9aa0a6"}
+
+
+def result_grade(pass_rate: Optional[float]) -> str:
+    if pass_rate is None:
+        return "none"
+    try:
+        p = float(pass_rate)
+    except (TypeError, ValueError):
+        return "none"
+    return "good" if p >= 0.85 else ("mixed" if p >= 0.6 else "bad")
+
+
+def results_events(suites: Iterable[Dict[str, Any]], start: datetime, end: datetime, *,
+                   granularity: str = "runs", limit: int = MAX_PROJECTED_EVENTS) -> List[Dict[str, Any]]:
+    """Calendar events for archived census runs and suites (`evolve.suites`
+    records: suite_id, tag, template, started_at, ts (end), tasks_n, done,
+    capped, pass_rate, results[]). One event per run, or one per task when
+    `granularity` is "goals" (each task's end is placed by its elapsed time
+    from the run's start, in order). Read-only, coloured by pass rate."""
+    out: List[Dict[str, Any]] = []
+    for s in suites:
+        sid = str(s.get("suite_id") or "")
+        st = parse_iso(str(s.get("started_at") or ""))
+        en = parse_iso(str(s.get("ts") or "")) or (st + timedelta(hours=1) if st else None)
+        if not st and en:
+            st = en - timedelta(hours=1)
+        if not st or not en:
+            continue
+        if en < start or st > end:
+            continue
+        n = int(s.get("tasks_n") or len(s.get("results") or []) or 0)
+        done = s.get("done")
+        if done is None:
+            done = sum(1 for r in (s.get("results") or []) if str(r.get("status")) == "done")
+        capped = s.get("capped")
+        if capped is None:
+            capped = sum(1 for r in (s.get("results") or []) if r.get("hit_cap"))
+        pr = s.get("pass_rate")
+        grade = result_grade(pr)
+        tag = str(s.get("tag") or s.get("template") or "")
+        kind = "census" if (tag.startswith("census") or s.get("census_run")) else "suite"
+        pct = f" · {round(float(pr) * 100)}%" if pr is not None else ""
+        base = {"source": "results", "read_only": True, "kind": kind, "suite_id": sid, "tag": tag,
+                "grade": grade, "color": RESULT_COLORS[grade], "pass_rate": pr,
+                "done": done, "capped": capped, "tasks": n, "all_day": False}
+        if granularity == "goals":
+            cur = st
+            for r in s.get("results") or []:
+                el = float(r.get("elapsed_s") or 0)
+                r_end = cur + timedelta(seconds=el) if el else cur + timedelta(minutes=5)
+                st_r = str(r.get("status") or "")
+                g = "good" if st_r == "done" and not r.get("hit_cap") else ("mixed" if st_r == "done" else "bad")
+                out.append(dict(base, id=f"result:{sid}:{r.get('label') or r.get('task')}",
+                                title=f"{r.get('label') or r.get('task')} · {st_r}"
+                                      + (" (cap)" if r.get("hit_cap") else "") + (f" · {r.get('checks')}" if r.get("checks") else ""),
+                                start=iso(cur), end=iso(r_end), color=RESULT_COLORS[g], grade=g,
+                                task=r.get("task"), status=st_r, elapsed_s=el, checks=r.get("checks", "")))
+                cur = r_end
+                if len(out) >= limit:
+                    break
+        else:
+            out.append(dict(base, id=f"result:{sid}", title=f"{sid} · {done}/{n}{pct}" + (f" · {capped} capped" if capped else ""),
+                            start=iso(st), end=iso(en),
+                            rows=[{"label": r.get("label") or r.get("task"), "status": r.get("status"),
+                                   "checks": r.get("checks", ""), "elapsed_s": r.get("elapsed_s"),
+                                   "hit_cap": bool(r.get("hit_cap"))} for r in (s.get("results") or [])][:40]))
+        if len(out) >= limit:
+            break
+    out.sort(key=lambda e: e["start"])
+    return out

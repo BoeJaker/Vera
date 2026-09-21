@@ -655,7 +655,11 @@ with its census still running: let it **finish** (default), **yield** (park
 after the goal in flight) or **drop**. Everything the scheduler starts is a
 run record (`evolve.schedule.history`) and appears on the calendar beside
 the windows; the main Calendar panel can overlay both with
-`cal.events.list(include_loop_lab=true)`.
+`cal.events.list(include_loop_lab=true)`. The page's **results** mode lays
+every archived census run and suite on the same calendar as a span
+coloured by its pass rate (per run, or per goal placed by elapsed time),
+so the series reads over time; a chip opens the run's goals.
+(`evolve.schedule.events mode=results|both granularity=runs|goals`.)
 
 Capabilities: `evolve.schedule.list / get / upsert / delete / enable /
 run_now / tick / events / history / config.get / config.set`, and

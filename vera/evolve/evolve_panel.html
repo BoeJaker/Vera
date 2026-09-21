@@ -681,6 +681,10 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="card-h">
       <span class="card-t">SCHEDULE</span>
       <span class="hint" id="sch-state">—</span>
+      <select id="sch-mode" onchange="schMode()" title="what the calendar shows: the schedules' windows, the results of every census run and suite over time, or both">
+        <option value="windows">windows</option><option value="results">results</option><option value="both">both</option>
+      </select>
+      <label class="row" style="gap:4px" id="sch-gran-wrap" title="results mode: one chip per run, or one per goal placed by its elapsed time"><input type="checkbox" id="sch-gran" style="width:auto" onchange="schMode()"> per goal</label>
       <label class="row" style="gap:5px"><input type="checkbox" id="sch-enabled" style="width:auto" onchange="schCfgSave()"> scheduler on</label>
       <button class="btn sm" onclick="schTick()" title="Run the scheduler pass now: close a finished census, apply window-end controls, start what is due">tick now</button>
       <button class="btn sm primary" onclick="schOpen(null)">+ schedule</button>
@@ -1118,15 +1122,34 @@ async function schRunNow(id){toast('starting…');const d=await api('/evolve/sch
 async function schTick(){const d=await api('/evolve/schedule/tick',{method:'POST',body:'{}'});toast(d?('started '+((d.started||[]).length)+' · controls '+((d.controls||[]).length)):'tick failed');loadSchedule()}
 async function schSeed(){const d=await api('/evolve/schedule/seed_weekday_census',{method:'POST',body:'{}'});toast(d&&d.ok?(d.existing?'already there':'weekday census schedule added'):'failed');loadSchedule()}
 async function schCfgSave(){const d=await api('/evolve/schedule/config/set',{method:'POST',body:JSON.stringify({enabled:$('sch-enabled').checked})});toast(d&&d.ok?('scheduler '+(d.config.enabled?'on':'off')):'failed');loadSchedule()}
+// Results mode: every archived census run / suite as a span coloured by its
+// pass rate, so the series reads on the calendar; per goal places each task
+// by its elapsed time. Remembered per browser.
+function schMode(){
+  const cal=$('sch-cal'); if(!cal)return;
+  const mode=$('sch-mode').value, gran=$('sch-gran').checked?'goals':'runs';
+  try{localStorage.setItem('loop-lab.sch.mode',mode);localStorage.setItem('loop-lab.sch.gran',gran)}catch(_){}
+  cal.setAttribute('src','/evolve/schedule/events?mode='+mode+'&granularity='+gran);
+}
+function schResultModal(ev){
+  const rows=(ev.rows||[]).map(r=>'<tr><td>'+esc(r.label||'')+'</td><td>'+esc(r.status||'')+(r.hit_cap?' (cap)':'')+'</td><td>'+esc(r.checks||'')+'</td><td style="text-align:right">'+(r.elapsed_s!=null?Math.round(r.elapsed_s)+' s':'')+'</td></tr>').join('');
+  openModal('<div class="card-h"><span class="card-t">'+esc(ev.title||'')+'</span><button class="btn sm" onclick="closeModal()">✕</button></div>'
+    +'<div class="hint" style="margin-bottom:6px">'+esc(ev.kind||'')+' · '+esc(ev.tag||'')+' · '+esc(String(ev.start||'').replace('T',' ').slice(0,16))+' → '+esc(String(ev.end||'').replace('T',' ').slice(11,16))
+    +(ev.pass_rate!=null?' · pass rate '+Math.round(ev.pass_rate*100)+'%':'')+'</div>'
+    +(rows?'<table><thead><tr><th>goal</th><th>status</th><th>checks</th><th style="text-align:right">wall</th></tr></thead><tbody>'+rows+'</tbody></table>':'<div class="hint">'+esc(ev.status||'')+(ev.checks?' · '+esc(ev.checks):'')+'</div>')
+    +(ev.suite_id?'<div class="row" style="margin-top:8px"><button class="btn sm" onclick="closeModal();nav(\'work\')">open in Work</button></div>':''));
+}
 // The calendar: an empty slot makes a schedule there (a weekly window on that
-// weekday from that hour); a window chip opens its schedule.
+// weekday from that hour); a window chip opens its schedule; a results chip
+// opens the run.
 document.addEventListener('DOMContentLoaded',()=>{
   const cal=$('sch-cal'); if(!cal)return;
+  try{const m=localStorage.getItem('loop-lab.sch.mode');if(m&&$('sch-mode'))$('sch-mode').value=m;if($('sch-gran'))$('sch-gran').checked=localStorage.getItem('loop-lab.sch.gran')==='goals';if(m)schMode()}catch(_){}
   cal.addEventListener('slot-select',e=>{
     const d=e.detail; const dt=new Date(d.date+'T00:00:00'); const wd=(dt.getDay()+6)%7; const hh=String(d.hour).padStart(2,'0');
     schOpen(null,{days:[wd],start:hh+':00',end:(String(Math.min(23,d.hour+3)).padStart(2,'0'))+':00'});
   });
-  cal.addEventListener('event-open',e=>{const ev=e.detail.event||{};if(ev.schedule_id)schOpen(ev.schedule_id);else if(ev.detail)toast(ev.title+' · '+ev.detail)});
+  cal.addEventListener('event-open',e=>{const ev=e.detail.event||{};if(ev.source==='results')schResultModal(ev);else if(ev.schedule_id)schOpen(ev.schedule_id);else if(ev.detail)toast(ev.title+' · '+ev.detail)});
 });
 
 /* ═══ TEST GENERATION — LLM-propose pytest for a branch (route-forward M3.4) ═══ */

@@ -64,3 +64,9 @@ def test_element_is_reusable(element):
     assert "set events(" in element and "refresh()" in element
     for v in ("'month'", "'week'", "'day'"):
         assert v in element
+
+
+def test_results_mode_is_wired(src):
+    assert 'id="sch-mode"' in src and 'value="results"' in src and 'id="sch-gran"' in src
+    assert "function schMode(" in src and "mode='+mode+'&granularity='+gran" in src
+    assert "function schResultModal(" in src and "ev.source==='results'" in src
