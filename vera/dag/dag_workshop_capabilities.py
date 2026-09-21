@@ -8253,6 +8253,13 @@ _V5_WEB_GOAL_HINTS = (
     "lookup", "look up", "find out", "search", "investigate", "profile", "background",
     "reconnais", "recon", "intel", "online", "social", "news", "latest", "current",
     "company", "person", "people", "competitor",
+    # A report or summary WITH SOURCES is research even when the verb is
+    # "produce"/"write": census goal `research-report` ("Produce a short report on
+    # the Redis licensing change and the Valkey fork, with citations") never
+    # matched this list, so web.research was never offered and the run chained
+    # web.search -> web.fetch across 26 calls to the wall cap (runs 54-58, 2026-09-21).
+    "report on", "report about", "citation", "citing", "cite ", "sources", "state of",
+    "overview of", "summary of", "summarise", "summarize", "history of", "explain the",
 )
 # Infra/scan/host caps are IRRELEVANT to most goals — never auto-grant them as
 # recovery unless the step is itself in that domain (prevents the loop wandering
@@ -8278,7 +8285,11 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
     so the orchestrator isn't stuck with whatever semantic search surfaced."""
     seeds = list(_V5_CORE_SEED_CAPS)
     if _v5_goal_is_webby(goal):
-        seeds += list(_V5_WEB_RESEARCH_SEED_CAPS)
+        # The web caps go FIRST for a goal that needs the outside world: the
+        # catalog is read top-down and its first line was exec.bash.run /
+        # http.get, so a research plan reached for raw fetches before it ever
+        # saw web.research (2026-09-21, census research-report).
+        seeds = list(_V5_WEB_RESEARCH_SEED_CAPS) + [c for c in seeds if c not in _V5_WEB_RESEARCH_SEED_CAPS]
     # A goal whose OWN text asks for UI/HTML verification ("...then verify it
     # actually works by clicking the button...") never matches the research-y
     # web hints above, so operator.run/browser.navigate were never guaranteed
@@ -8415,7 +8426,12 @@ def _v5_deflood_catalog(catalog: List[str], goal: str, *, per_ns_cap: int = 6) -
 # and never a different intent (e.g. fs.read → fs.write would widen a read-only
 # step into a mutating one — that stays the planner's explicit choice).
 _V5_CAP_COHORTS = (
-    ("web.search", "web.fetch", "http.get"),   # live-web access: query → page → raw URL
+    # live-web access, in the order to reach for them: web.research (search AND
+    # read the top pages in one call) first; web.search to find one URL;
+    # web.fetch to read a URL already known; http.get for an API / raw body.
+    # web.research was missing from this cohort until 2026-09-21, so any goal
+    # that surfaced web.search got the slow chain and never the one-call tool.
+    ("web.research", "web.search", "web.fetch", "http.get"),
     ("exec.bash.run", "exec.python.run"),      # run a command vs a script — same act, diff syntax
 )
 
@@ -8622,7 +8638,11 @@ def _v5_apply_code_routing(tool: str, args: Any) -> bool:
 # step's recovery toolkit. Anti-verbs win (e.g. "fabric.objects.bucket_create").
 _V5_READONLY_TOKENS = ("search", "list", "get", "read", "describe", "query",
                        "inspect", "status", "fetch", "find", "lookup", "discover",
-                       "expand", "landscape", "seek", "map", "recall", "browse")
+                       "expand", "landscape", "seek", "map", "recall", "browse",
+                       # web.research / web.crawl READ the web; without these two
+                       # tokens they were filtered out of explore/verify phases
+                       # and read-only recovery while web.search stayed (2026-09-21).
+                       "research", "crawl")
 _V5_MUTATING_TOKENS = ("write", "create", "delete", "update", "set", "remove",
                        "run", "exec", "send", "build", "train", "deploy", "apply",
                        "install", "start", "stop", "kill", "save", "put", "post",
@@ -8852,6 +8872,10 @@ def _v5_split_compound_single_step(steps: List[Dict[str, Any]], goal: str) -> Li
 # the lean default so routine results don't bloat the working context.
 _V5_LONGFORM_PREFIXES = ("research.", "fabric.synthesize.", "fabric.discover.")
 _V5_LONGFORM_EXACT = {"web.fetch", "web.search_and_crawl", "llm.summarize",
+                      # web.research returns up to `results` pages of text
+                      # inline; at the 2000-char default preview the executor
+                      # saw a stub and re-fetched every page one by one.
+                      "web.research", "web.crawl",
                       # canonical retrieval caps self-size via max_chars — give
                       # them the longform budget so the loop never re-truncates
                       "memory.seek", "memory.read", "memory.browse"}
@@ -13303,13 +13327,15 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         "exec.python.run (+ maybe web.*/http.get), NOT llm.generate as the data source.\n"
         "INTERNAL DATA vs the LIVE WEB: memory.seek / fabric.query / fabric.entity_graph.query "
         "search only data ALREADY STORED in Vera's fabric — they do NOT browse the internet. For ANY "
-        "external lookup (a person, company, domain, website, news, current/online info) use the WEB "
-        "caps: web.search (search engine results), web.fetch / http.get (fetch a page as text), "
-        "browser.navigate (JS-heavy or cert-broken sites), "
+        "external lookup (a person, company, domain, website, news, current/online info) LEAD with "
+        "web.research: ONE call that searches AND reads the top pages, returning their text inline "
+        "(sources[].text) — one web.research step per question is the whole gathering phase. Use "
+        "web.search only to find ONE specific URL, web.fetch only to read a URL you already have, "
+        "http.get only for an API or a raw body, web.crawl to follow links on a known site, "
         + (_research_hint(suffix=" (broader managed research), ") or "")
-        + "fabric.discover.crawl (crawl & ingest a site). A web/OSINT goal should LEAD "
-        "with web.search and only use memory.seek to check what Vera already knows — never rely "
-        "on stored data alone for web presence.\n"
+        + "fabric.discover.crawl (crawl & ingest a site). Never plan web.search → web.fetch chains "
+        "for a question web.research answers in one step. Use memory.seek only to check what Vera "
+        "already knows — never rely on stored data alone for web presence.\n"
         "SCRIPTS (only when genuinely needed): a bash/python script is for steps whose work IS "
         "computation — parsing files, multi-command shell work, data wrangling, glue logic. If a "
         "step needs one, make it AUTHOR the script with code.author (the coding specialist "
@@ -14402,8 +14428,10 @@ def _v5_compose_executor_system(
                "GENERATE or transform text from what YOU put in the prompt. They CANNOT look things "
                "up, browse the web, run commands, read/write files, or query data — asked to "
                "'research' or 'find' something they will just INVENT a plausible-sounding answer. "
-               "To RESEARCH or get current/novel/factual information use web.search (then web.fetch / "
-               "http.get to read a result)"
+               "To RESEARCH or get current/novel/factual information use web.research (one call: "
+               "searches and reads the top pages — its sources[].text IS the material; do not "
+               "re-fetch those pages); web.search only to find one specific URL, web.fetch only "
+               "for a URL you already have, http.get only for an API or raw body"
                + (_research_hint(suffix="") and f" or {_research_hint()}" or "")
                + "; to RUN something use exec.*; to "
                "read stored data use fabric.query. If the right tool isn't in your toolkit, REQUEST "
@@ -16054,7 +16082,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 _no_grant_denied = [d for d in denied if d in _V5_NO_SILENT_GRANT_CAPS]
                 _gen_caution = ((" NOTE: generative caps (llm.*/ollama.*/agent.chat*) only write or "
                                  "transform text you supply — they CANNOT look up, browse, fetch, run, "
-                                 "or read. For research/lookup use web.search/web.fetch"
+                                 "or read. For research/lookup use web.research (web.search/web.fetch "
+                                 "only for a specific known URL)"
                                  + (_research_hint(suffix="") and f"/{_research_hint()}" or "")
                                  + "; for actions use exec.*/http.get.")
                                 if any(_v5_is_generative(c) for c in granted) else "")
@@ -16264,7 +16293,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                         "against reality, it only generates text from what you already put in the "
                         "prompt. Asked for a real API's base URL/endpoint/schema, it will confidently "
                         "INVENT one that may not exist. If you need that information, look it up for "
-                        "real: web.search for it, or web.fetch/http.get a URL you already know (e.g. "
+                        "real: web.research for it, or web.fetch/http.get a URL you already know (e.g. "
                         "the docs page). Allowed now: " + _avail + ".")
             elif tool == "chain" or tool.endswith(".chain"):
                 # A specific, common confusion, not a generic "unknown cap":
@@ -21143,6 +21172,11 @@ _V7_BUILD_VERBS = (
 # External-information signals — the model does NOT have this in its weights.
 _V7_RESEARCH_WORDS = (
     "research", "look up", "lookup", "find out", "investigate", "search for",
+    # a report or summary WITH SOURCES is research however it is verbed (the
+    # census goal "Produce a short report ... with citations" was 'build' in
+    # six censuses running, and got no research directive at all)
+    "report on", "report about", "with citations", "citing", "cite ", "sources",
+    "state of", "overview of", "history of",
     "latest", "current", "today", "news", "recent", "up to date", "up-to-date",
     "compare", "gather", "collect data", "dataset of", "real data", "statistics",
     "prices", "who is", "what is the latest", "trends", "reviews", "osint",
@@ -21336,8 +21370,10 @@ def _v7_intent_plan_directive(intent: str, *, max_steps: int = 8) -> str:
     if it == "research":
         return (
             "GOAL INTENT = RESEARCH. The goal needs EXTERNAL/CURRENT information you do not have.\n"
-            "  • Plan information-gathering FIRST (web.search → web.fetch/http.get), each step "
-            "ending in concrete notes. Never use llm.generate to 'look up' or invent facts.\n"
+            "  • Plan information-gathering FIRST with web.research — ONE step per question, each "
+            "returning the sources' text inline (sources[].text) as the notes. web.fetch only for a "
+            "URL you already know; web.search only to find one specific URL. Never plan a "
+            "web.search → web.fetch chain, and never use llm.generate to 'look up' or invent facts.\n"
             "  • THEN PLAN THE WRITE-UP AS ITS OWN FINAL STEP, and give that step `prose.author`. "
             "Research that was only FETCHED has not been DELIVERED — the deliverable is a FILE "
             "SOMEONE READS. That step passes the files the earlier steps produced as context_files, "
