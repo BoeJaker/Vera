@@ -632,6 +632,37 @@ automated regression harness for the loops and, via cap tasks, other systems.
 
 ---
 
+## 8b. Schedules — a calendar of censuses, suites, pipelines and board items
+
+The **Schedule** page is a calendar (`<vera-calendar>`, the reusable
+month/week/day element at `/ui/elements/calendar.js`) of when Loop Lab
+work may run. A schedule is one of six kinds — a **census** template (the
+off-repo harness, one template per run), a **suite** tag, a **task**, a
+**pipeline** step (`test`, `adopt` or `promote`, always to `bleeding-edge`,
+never `main`), a **board item** (`board.dispatch`) or any **capability**
+(fenced: nothing under `sys.`, `background.`, promotions to main) — on a
+weekly window (days, start–end, timezone; default Mon–Fri 05:00–17:00
+Europe/London) or once at a time. Inside a window it repeats **back to
+back** (a census: the next starts when the last has finished, after a short
+cooldown), **once per window**, or **every N minutes**.
+
+The scheduler is a 60 s job (`evolve.schedule.tick`, one orchestrator, never
+a dev sandbox). It starts work only when the box allows it: a census needs
+no census in flight, no agent loop running and no partial run files in the
+harness directory; every other kind waits for a census by default
+(`exclusive`). A census schedule can say what happens when its window closes
+with its census still running: let it **finish** (default), **yield** (park
+after the goal in flight) or **drop**. Everything the scheduler starts is a
+run record (`evolve.schedule.history`) and appears on the calendar beside
+the windows; the main Calendar panel can overlay both with
+`cal.events.list(include_loop_lab=true)`.
+
+Capabilities: `evolve.schedule.list / get / upsert / delete / enable /
+run_now / tick / events / history / config.get / config.set`, and
+`evolve.schedule.seed_weekday_census` for the standard weekday census
+schedule. Records and every decision live in `vera/evolve/schedule_core.py`
+(pure, `tests/test_schedule_core.py` in the critical tier).
+
 ## 9. Markets self-improving loop
 
 `vera/markets/markets_evolve_capabilities.py` applies the same idea to the

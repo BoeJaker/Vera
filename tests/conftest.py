@@ -218,6 +218,8 @@ _CRITICAL_MODULES = {
     "test_queue_status_core",  # a wait line must never claim a node is free - in_use only sees Vera (2026-09-20)
     "test_workdir_listing_core",  # the file-type gate saw only the top level: a package's .py files one dir down failed every step to the wall cap (2026-09-20)
     "test_operator_model_arg_core",  # an executor asked the operator for model "fast": Ollama 404'd every think and the goal was clicked away (2026-09-21)
+    "test_schedule_core",  # a scheduled census must never start beside a census or a loop, nor outside its window (2026-09-21)
+    "test_schedule_page_ui",  # the Schedule page's calendar, editor and tick controls must stay wired (2026-09-21)
 }
 
 

@@ -35,15 +35,15 @@ def _section(src, sec):
     return src[i:src.index("\n</div>\n", i)]
 
 
-# -- five pages ------------------------------------------------------------------
-def test_loop_lab_is_five_pages(src):
+# -- six pages (Schedule joined the five on 2026-09-21) ---------------------------
+def test_loop_lab_is_six_pages(src):
     secs = re.findall(r'<div class="sec" id="sec-([a-z]+)"', src)
-    assert sorted(secs) == ["agents", "mission", "settings", "ship", "work"], secs
+    assert sorted(secs) == ["agents", "mission", "schedule", "settings", "ship", "work"], secs
     rail = re.findall(r'data-sec="([a-z]+)"', src)
-    assert rail == ["work", "ship", "agents", "mission", "settings"], rail
+    assert rail == ["work", "ship", "agents", "mission", "schedule", "settings"], rail
     for sec in ("master", "test", "watch", "errors", "activity"):
         assert 'id="sec-%s"' % sec not in src, "section %s still in the DOM" % sec
-    assert 'class="rail-grp"' not in src[src.index('id="nav"'):src.index("</div>", src.index('id="nav"'))], "five pages need no groups"
+    assert 'class="rail-grp"' not in src[src.index('id="nav"'):src.index("</div>", src.index('id="nav"'))], "six pages need no groups"
     nav = src[src.index("VeraPanelBridge.registerNav(["):]
     nav = nav[:nav.index("]);")]
     assert "{id:'mission', label:'Mission control'}" in nav
