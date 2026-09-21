@@ -115,6 +115,38 @@ def test_a_record_slice_keeps_record_coordinates_and_records_become_lanes(fake_l
     assert "required" in _run(X.explode_prose())["error"]
 
 
+def test_the_node_tier_retypes_a_generic_fabric_entity_and_its_finds_join_the_relations(fake_layers, monkeypatch):
+    """A fallback engine types 'Alice Carter' as a bare entity; the node model reads the same span as PERSON at 0.99 —
+    the card takes that type and says who typed it. A name only the node found (a date) joins the list the relation
+    layers read, so a relation to it can exist."""
+    async def ner_generic(ctx):
+        ents = [{"name": "Alice Carter", "type": "named_entity", "normalised": "alice carter", "position": ctx["text"].find("Alice Carter"), "mention_count": 1, "confidence": 0.45},
+                {"name": "Bristol", "type": "location", "normalised": "bristol", "position": ctx["text"].find("Bristol"), "mention_count": 1, "confidence": 0.4}]
+        ctx["ent_list"] = ents
+        return {"cards": X._entity_cards(ents, ctx, "ner", "heuristic patterns")}
+
+    async def fake_nlp_ner(text="", task="ner", trace_id=None):
+        return {"ok": True, "model": "roberta-ontonotes", "node": "gpu-250", "entities": [
+            {"entity": "PERSON", "word": "Alice Carter", "score": 0.99, "start": text.find("Alice Carter"), "end": text.find("Alice Carter") + 12},
+            {"entity": "DATE", "word": "March 2024", "score": 0.98, "start": text.find("March 2024"), "end": text.find("March 2024") + 10}]}
+
+    monkeypatch.setitem(X.LAYERS["ner"], "fn", ner_generic)
+    monkeypatch.setitem(X.LAYERS["ner.node"], "fn", X._layer_ner_node)
+    monkeypatch.setitem(X.CAPABILITY_REGISTRY, "nlp.ner", {"func": fake_nlp_ner})
+    out = _run(X.explode_prose(text=TEXT, layers=["ner", "ner.node", "rel.cooccur"]))
+    cards = {(c["layer"], c["title"]): c for c in out["cards"]}
+    alice = cards[("ner", "Alice Carter")]
+    assert alice["kind"] == "person" and alice["subtitle"].startswith("PERSON ·") and "typed by roberta-ontonotes" in alice["by"] and "retyped" in alice["badges"]
+    m = [e for e in out["edges"] if e["kind"] == "MATCHES"]
+    assert len(m) == 1 and m[0]["resolution"] == "exact" and "typed person here" in m[0]["label"] and m[0]["to"] == alice["id"]
+    march = cards[("ner.node", "March 2024")]
+    co = [e for e in out["edges"] if e["kind"] == "CO_OCCURS"]
+    assert any(march["id"] in (e["from"], e["to"]) for e in co), "the node-only date is related like any other entity"
+    assert not any(cards[("ner.node", "Alice Carter")]["id"] in (e["from"], e["to"]) for e in co), "a matched node card does not stand twice"
+    rows = {r["id"]: r for r in out["layers"]}
+    assert rows["ner.node"]["where"] == "gpu-250" and rows["ner.node"]["by"] == "roberta-ontonotes"
+
+
 def test_the_layer_list_is_the_registry_in_order():
     rows = X.layer_list()
     assert [r["id"] for r in rows][:4] == ["ner", "ner.node", "rel.typed", "rel.cooccur"]
