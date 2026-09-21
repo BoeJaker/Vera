@@ -177,5 +177,7 @@ def test_noise_the_live_run_showed_is_kept_out(fake_layers, monkeypatch):
 
 def test_the_layer_list_is_the_registry_in_order():
     rows = X.layer_list()
-    assert [r["id"] for r in rows][:4] == ["ner", "ner.node", "rel.typed", "rel.cooccur"]
+    ids = [r["id"] for r in rows]
+    assert ids[:2] == ["ner", "ner.node"] and all(ids.index(e) < ids.index("rel.typed") for e in ids if e.startswith("ner")), "every entity engine runs before the relations that read them"
+    assert ids.index("rel.typed") < ids.index("rel.cooccur")
     assert all("fn" not in r for r in rows) and rows[0]["default_on"] and not {r["id"]: r for r in rows}["langid"]["default_on"]

@@ -160,8 +160,12 @@ def _eid(etype: str, norm: str) -> str:
     return "e:%s:%s" % (etype, hashlib.sha1((norm or "").encode()).hexdigest()[:10])
 
 
-_KIND_ALIAS = {"organisation": "org", "organization": "org", "company": "org", "place": "location",
-               "gpe": "location", "year": "date", "time": "date", "money": "amount", "named_entity": "entity"}
+_KIND_ALIAS = {"organisation": "org", "organization": "org", "company": "org", "government agency": "org", "place": "location",
+               "gpe": "location", "city": "location", "country": "location", "building": "location", "landmark": "location",
+               "geographic feature": "location", "year": "date", "time": "date", "money": "amount", "currency": "amount",
+               "creative work": "work", "book": "work", "film": "work", "song": "work", "game": "work", "work_of_art": "work",
+               "software": "product", "programming language": "product", "device": "product", "technology": "product",
+               "vehicle": "product", "job title": "role", "named_entity": "entity"}
 
 
 def _kind(etype: str) -> str:
@@ -255,7 +259,7 @@ def _relation_cards(ctx: Dict) -> List[Dict]:
     """The cards a relation stands between: the fabric's entities, plus the node tier's for the names the fabric
     did not find (a node card that MATCHES a fabric card is that entity already — the fabric card stands for it)."""
     matched = {e["from"] for e in ctx["edges"] if e.get("kind") == "MATCHES"}
-    return [c for c in ctx["cards"] if c.get("layer") == "ner" or (c.get("layer") == "ner.node" and c["id"] not in matched)]
+    return [c for c in ctx["cards"] if c.get("layer") == "ner" or (str(c.get("layer", "")).startswith("ner.") and c["id"] not in matched)]
 
 
 async def _layer_rel_typed(ctx: Dict) -> Dict:
@@ -321,11 +325,11 @@ _NODE_NER_KIND = {"PERSON": "person", "PER": "person", "ORG": "org", "GPE": "loc
                   "PRODUCT": "product", "WORK_OF_ART": "work", "LAW": "law", "NORP": "group", "LANGUAGE": "language"}
 
 
-async def _layer_ner_node(ctx: Dict) -> Dict:
-    """The node tier's NER (nlp.ner — OntoNotes RoBERTa on the compute nodes): a second engine
-    over the same text, as cards on its own layer, each MATCHED to the fabric entity whose span it
-    overlaps — so where the engines disagree, the disagreement is visible."""
-    res = await _call_cap("nlp.ner", text=ctx["text"])
+async def _node_ner(ctx: Dict, task: str, layer: str, suffix: str, label: str, **kw) -> Dict:
+    """One of the node tier's NER engines (nlp.ner task=…) over the same text, as cards on its own layer,
+    each MATCHED to the fabric entity whose span it overlaps — so where the engines disagree, the disagreement
+    is visible; an exact-span match at high confidence retypes a generic fabric entity."""
+    res = await _call_cap("nlp.ner", text=ctx["text"], task=task, **kw)
     if not res or res.get("error"):
         return {"error": (res or {}).get("error", "nlp.ner unavailable"), "cards": [], "edges": []}
     fabric = [c for c in ctx["cards"] if c.get("layer") == "ner"]
@@ -351,8 +355,8 @@ async def _layer_ner_node(ctx: Dict) -> Dict:
             seen[key]["_n"] += 1
             continue
         pi = _para_index(ctx["paragraphs"], start)
-        card = {"id": _eid(etype, norm) + ":node", "group": ctx["paragraphs"][pi]["id"] if ctx["paragraphs"] else None,
-                "layer": "ner.node", "kind": etype, "title": word, "subtitle": etype.upper() + " · node NER",
+        card = {"id": _eid(etype, norm) + ":" + suffix, "group": ctx["paragraphs"][pi]["id"] if ctx["paragraphs"] else None,
+                "layer": layer, "kind": etype, "title": word, "subtitle": etype.upper() + " · " + label,
                 "span": {"path": ctx.get("path", ""), "start": start, "end": start + len(word)},
                 "fields": [], "badges": [], "score": round(float(e.get("score") or 0), 3), "by": res.get("model", "nlp.ner"), "_n": 1}
         seen[key] = card
@@ -372,16 +376,16 @@ async def _layer_ner_node(ctx: Dict) -> Dict:
                     for ent in ctx.get("ent_list") or []:
                         if int(ent.get("position", 0) or 0) + ctx["base"] == fs["start"] and (ent.get("name") or "") == f["title"]:
                             ent["type"] = etype
-                    edges.append({"from": card["id"], "to": f["id"], "layer": "ner.node", "kind": "MATCHES", "resolution": "exact",
+                    edges.append({"from": card["id"], "to": f["id"], "layer": layer, "kind": "MATCHES", "resolution": "exact",
                                   "label": "the same span · typed " + etype + " here", "by": "span match"})
                 else:
-                    edges.append({"from": card["id"], "to": f["id"], "layer": "ner.node", "kind": "MATCHES",
+                    edges.append({"from": card["id"], "to": f["id"], "layer": layer, "kind": "MATCHES",
                                   "resolution": "heuristic" if f["kind"] != etype else "exact",
                                   "label": "the same span" + ("" if f["kind"] == etype else " · typed " + f["kind"] + " there"), "by": "span overlap"})
                 break
     for c in cards:
         n = c.pop("_n", 1)
-        c["subtitle"] = "%s · %d mention%s · node NER" % (c["kind"].upper(), n, "" if n == 1 else "s")
+        c["subtitle"] = "%s · %d mention%s · %s" % (c["kind"].upper(), n, "" if n == 1 else "s", label)
     # the node's entities join the list the relation layers read — positions in the TEXT's coordinates, like the
     # fabric's — for the names the fabric did not find at all (a date, an amount, a weekday), so relations to them exist
     have = {(int(e.get("position", 0) or 0), (e.get("name") or "").lower()) for e in ctx.get("ent_list") or []}
@@ -390,8 +394,108 @@ async def _layer_ner_node(ctx: Dict) -> Dict:
         if (pos, c["title"].lower()) in have or any(abs(p - pos) < 2 and nm == c["title"].lower() for p, nm in have):
             continue
         ctx.setdefault("ent_list", []).append({"name": c["title"], "type": c["kind"], "normalised": c["title"].lower(), "position": pos,
-                                               "mention_count": 1, "confidence": c["score"], "_layer": "ner.node"})
+                                               "mention_count": 1, "confidence": c["score"], "_layer": layer})
     return {"cards": cards, "edges": edges, "by": res.get("model", "nlp.ner"), "where": res.get("node") or res.get("served_by") or "node tier"}
+
+
+
+
+async def _layer_ner_node(ctx: Dict) -> Dict:
+    return await _node_ner(ctx, "ner", "ner.node", "node", "node NER")
+
+
+async def _layer_ner_multi(ctx: Dict) -> Dict:
+    return await _node_ner(ctx, "ner_multi", "ner.multi", "multi", "multilingual NER")
+
+
+async def _layer_ner_gliner_node(ctx: Dict) -> Dict:
+    """The fabric's own zero-shot engine, run on a node over the fabric's label set (the host's GLiNER is the
+    same model; on a host without it — a mirror, a sandbox — this is the only GLiNER there is)."""
+    return await _node_ner(ctx, "gliner", "ner.gliner", "gliner", "GLiNER · node", labels=list(_wa()._GLINER_LABELS_DEFAULT) if _has_wa() else None)
+
+
+async def _layer_ner_spacy_node(ctx: Dict) -> Dict:
+    return await _node_ner(ctx, "spacy", "ner.spacy", "spacy", "spaCy · node")
+
+
+def _has_wa() -> bool:
+    try:
+        _wa(); return True
+    except Exception:
+        return False
+
+
+_GENRES = ["news report", "opinion or commentary", "advertisement or marketing", "technical documentation",
+           "academic or research writing", "fiction or narrative", "instructions or how-to", "conversation or chat log"]
+
+
+async def _layer_genre(ctx: Dict) -> Dict:
+    """What kind of text this is — zero-shot on the node tier over a fixed set of genres; a verdict, not a card.
+    The labels are in the receipt so a caller can read what was asked."""
+    res = await _call_cap("nlp.zeroshot", text=ctx["text"][:1500], labels=_GENRES, multi_label=False)
+    if not res or res.get("error"):
+        return {"error": (res or {}).get("error", "nlp.zeroshot unavailable")}
+    top = (res.get("labels") or [{}])[0]
+    return {"assessments": [{"key": "genre", "label": "genre · " + str(top.get("label") or "?"), "score": round(float(top.get("score") or 0), 3),
+                             "confidence": round(float(top.get("score") or 0), 3), "by": "nlp.zeroshot · " + str(res.get("model") or ""), "on": "source",
+                             "evidence": [], "detail": {l.get("label"): round(float(l.get("score") or 0), 3) for l in (res.get("labels") or [])[:4]}}],
+            "where": res.get("node") or "node tier"}
+
+
+_QUESTIONS = [("who", "Who is this about?"), ("what", "What happened?"), ("when", "When did it happen?"), ("where", "Where did it happen?")]
+
+
+async def _layer_claims(ctx: Dict) -> Dict:
+    """Extractive QA on the node tier: who / what / when / where, per paragraph — each answer a CLAIM card standing at
+    its answer span, with the question it answers as a field. Off by default: four node calls per paragraph."""
+    cards = []
+    for p in ctx["paragraphs"][:12]:
+        for key, q in _QUESTIONS:
+            res = await _call_cap("nlp.qa", question=q, context=p["text"][:2000])
+            if not res or res.get("error"):
+                return {"error": (res or {}).get("error", "nlp.qa unavailable"), "cards": cards}
+            ans = (res.get("answer") or "").strip()
+            if not ans or res.get("start") is None or float(res.get("score") or 0) < 0.15:
+                continue
+            start = p["start"] + int(res["start"])
+            cards.append({"id": "claim:%s:%s" % (p["id"], key), "group": p["id"], "layer": "qa.claims", "kind": "claim", "title": ans[:80],
+                          "subtitle": "CLAIM · " + key, "span": {"path": ctx.get("path", ""), "start": start, "end": start + len(ans)},
+                          "fields": [{"k": "question", "v": q}], "badges": [], "score": round(float(res.get("score") or 0), 3), "by": res.get("model", "nlp.qa")})
+    return {"cards": cards, "by": "nlp.qa", "where": "node tier"}
+
+
+async def _layer_paragraphs(ctx: Dict) -> Dict:
+    """Every paragraph as a card of its own — the narrative's units — so similarity between paragraphs has ends to
+    run between. Off by default (the plates already show the paragraphs)."""
+    cards = []
+    for p in ctx["paragraphs"]:
+        head = re.sub(r"\s+", " ", p["text"])[:60]
+        cards.append({"id": "para:" + p["id"], "group": p["id"], "layer": "paragraphs", "kind": "paragraph", "title": head + ("…" if len(p["text"]) > 60 else ""),
+                      "subtitle": "paragraph · %d words" % len(p["text"].split()), "span": {"path": ctx.get("path", ""), "start": p["start"], "end": p["end"]},
+                      "fields": [], "badges": [], "by": "paragraphs_of"})
+    return {"cards": cards, "by": "paragraphs_of", "where": "host"}
+
+
+async def _layer_sim_embed(ctx: Dict) -> Dict:
+    """Which paragraphs say the same thing: sentence embeddings from the node tier (CPU, never GPU-routed), cosine
+    similarity, a MATCHES run between the paragraph cards above a threshold. Needs the paragraphs layer."""
+    paras = [c for c in ctx["cards"] if c.get("layer") == "paragraphs"]
+    if len(paras) < 2:
+        return {"edges": []}
+    res = await _call_cap("nlp.embed", texts=[ctx["text"][c["span"]["start"] - ctx["base"]:c["span"]["end"] - ctx["base"]][:1500] for c in paras])
+    if not res or res.get("error"):
+        return {"error": (res or {}).get("error", "nlp.embed unavailable")}
+    vecs = res.get("embeddings") or []
+    edges = []
+    for i in range(len(paras)):
+        for j in range(i + 1, len(paras)):
+            if i >= len(vecs) or j >= len(vecs):
+                continue
+            sim = sum(a * b for a, b in zip(vecs[i], vecs[j]))
+            if sim >= 0.6:
+                edges.append({"from": paras[i]["id"], "to": paras[j]["id"], "layer": "sim.embed", "kind": "MATCHES", "resolution": "exact" if sim >= 0.8 else "heuristic",
+                              "label": "similar · %.2f" % sim, "score": round(sim, 3), "by": res.get("model", "nlp.embed")})
+    return {"edges": edges, "by": res.get("model", "nlp.embed"), "where": res.get("node") or "node tier"}
 
 
 async def _layer_langid(ctx: Dict) -> Dict:
@@ -426,10 +530,17 @@ async def _layer_sentiment(ctx: Dict) -> Dict:
 
 register_layer("ner", "entities · fabric NER", "entity", _layer_ner_fabric, by="GLiNER / spaCy / heuristic", where="host")
 register_layer("ner.node", "entities · node NER", "entity", _layer_ner_node, by="nlp.ner", where="node tier", needs=["ner"])
+register_layer("ner.gliner", "entities · GLiNER (node)", "entity", _layer_ner_gliner_node, by="nlp.ner gliner", where="node tier", default_on=False, needs=["ner"])
+register_layer("ner.spacy", "entities · spaCy (node)", "entity", _layer_ner_spacy_node, by="nlp.ner spacy", where="node tier", default_on=False, needs=["ner"])
+register_layer("ner.multi", "entities · multilingual NER", "entity", _layer_ner_multi, by="nlp.ner ner_multi", where="node tier", default_on=False, needs=["ner"])
 register_layer("rel.typed", "relations · typed", "relation", _layer_rel_typed, by="sentence cues", where="host", needs=["ner"])
 register_layer("rel.cooccur", "co-occurrence", "relation", _layer_rel_cooccur, by="same sentence", where="host", needs=["ner"])
 register_layer("langid", "language", "assessment", _layer_langid, by="nlp.langid", where="node tier", default_on=False)
 register_layer("cls.sentiment", "sentiment", "assessment", _layer_sentiment, by="nlp.classify", where="node tier", default_on=False)
+register_layer("cls.genre", "genre", "assessment", _layer_genre, by="nlp.zeroshot", where="node tier", default_on=False)
+register_layer("qa.claims", "claims · who / what / when / where", "entity", _layer_claims, by="nlp.qa", where="node tier", default_on=False)
+register_layer("paragraphs", "paragraphs as cards", "entity", _layer_paragraphs, by="paragraphs_of", where="host", default_on=False)
+register_layer("sim.embed", "similar paragraphs", "relation", _layer_sim_embed, by="nlp.embed", where="node tier", default_on=False, needs=["paragraphs"])
 
 
 # ── assembling the contract ───────────────────────────────────────────────────────────────────────

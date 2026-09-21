@@ -284,19 +284,32 @@ if _CAP_AVAILABLE:
         "nlp.ner",
         http_method="POST", http_path="/nlp/ner", http_tags=["nlp", "onnx"],
         memory="on",
-        description=("Named-entity recognition with an ONNX token-classifier (ORT "
-                     "CPU). Input: text (str!). Output: {entities:[{entity, word, "
-                     "score, start, end}]}."),
+        description=("Named-entity recognition on the node tier. task: 'ner' (OntoNotes "
+                     "v5, English, has DATE) | 'ner_multi' (PER/ORG/LOC, ten languages) | "
+                     "'gliner' (zero-shot over `labels` — the fabric's 37 when none are given, "
+                     "at `threshold`) | 'spacy' (the statistical pipeline). Input: text (str!), "
+                     "task, labels (list — gliner), threshold (float=0.4 — gliner). Output: "
+                     "{entities:[{entity, word, score, start, end}], model, node}. gliner and "
+                     "spacy have no in-process path: they run only on a node."),
     )
-    async def cap_nlp_ner(text: str = "", task: str = "ner", trace_id=None):
+    async def cap_nlp_ner(text: str = "", task: str = "ner", labels: Optional[List[str]] = None,
+                          threshold: float = 0.4, trace_id=None):
         if not text:
             return {"error": "text is required"}
-        if task not in ("ner", "ner_multi"):
-            return {"error": "task must be 'ner' (OntoNotes, English) or "
-                             "'ner_multi' (multilingual)"}
+        if task not in ("ner", "ner_multi", "gliner", "spacy"):
+            return {"error": "task must be 'ner' (OntoNotes, English), 'ner_multi' "
+                             "(multilingual), 'gliner' (zero-shot) or 'spacy'"}
+        if isinstance(labels, str):
+            labels = [l.strip() for l in labels.split(",") if l.strip()]
+        body = {"text": text, "task": task}
+        if task == "gliner":
+            body["labels"] = list(labels or [])
+            body["threshold"] = float(threshold or 0.4)
+        if task in ("gliner", "spacy"):
+            return await _node_only("nlp.ner(%s)" % task, "/ner", body)
         # Off-host first. A node chunks the WHOLE document; the in-process path
         # below still truncates, because that is all it has ever been able to do.
-        handled, out = await _offload("/ner", {"text": text, "task": task})
+        handled, out = await _offload("/ner", body)
         if handled:
             return out
         if not HAS_ORT_CLASSIFY:
