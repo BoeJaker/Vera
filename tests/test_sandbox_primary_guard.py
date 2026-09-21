@@ -202,7 +202,7 @@ def test_primary_ownership_fails_closed_when_docker_is_unobservable(monkeypatch)
     assert conflict["current_branch"] == "(unknown)"
 
 
-def test_spawned_down_dry_run_preserves_worktree_by_default(monkeypatch):
+def test_spawned_down_dry_run_preserves_worktree_by_default(tmp_path, monkeypatch):
     spawned = {"branch": "feat/spawned", "name": "vera-dev-feat-spawned",
                "compose": "docker-compose.dev-feat-spawned.yml",
                "worktree": "/wt/spawned"}
@@ -214,6 +214,7 @@ def test_spawned_down_dry_run_preserves_worktree_by_default(monkeypatch):
         raise AssertionError("teardown dry run crossed a mutation boundary")
 
     monkeypatch.setattr(evolve, "_sandbox_pool", pool)
+    monkeypatch.setattr(evolve, "_repo_root", lambda: tmp_path)
     monkeypatch.setattr(evolve, "_sh", must_not_mutate)
     monkeypatch.setattr(evolve, "_remove_worktree_robust", must_not_mutate)
 
@@ -225,8 +226,145 @@ def test_spawned_down_dry_run_preserves_worktree_by_default(monkeypatch):
         "name": "vera-dev-feat-spawned", "branch": "feat/spawned",
         "worktree": "/wt/spawned",
         "compose": "docker-compose.dev-feat-spawned.yml",
-        "container_action": "stop_remove", "worktree_action": "preserve",
+        "container_action": "stop_remove",
+        "container_method": "compose_project_label",
+        "worktree_action": "preserve",
     }
+
+
+def test_spawned_down_missing_compose_uses_exact_project_label(tmp_path, monkeypatch):
+    spawned = {"branch": "feat/spawned", "name": "vera-dev-feat-spawned",
+               "compose": "docker-compose.dev-feat-spawned.yml",
+               "worktree": "/wt/spawned"}
+    calls = []
+    deleted = []
+
+    class Redis:
+        async def hdel(self, key, slug):
+            deleted.append((key, slug))
+
+    async def pool():
+        return {"feat-spawned": spawned}
+
+    async def sh(argv, **kwargs):
+        calls.append(argv)
+        if argv[:3] == ["docker", "ps", "-aq"]:
+            return {"ok": True, "out": "container-a\ncontainer-b\n", "err": ""}
+        if argv[:3] == ["docker", "network", "ls"]:
+            return {"ok": True, "out": "network-a\n", "err": ""}
+        if argv[:3] == ["docker", "rm", "-f"]:
+            return {"ok": True, "out": "removed", "err": ""}
+        if argv[:3] == ["docker", "network", "rm"]:
+            return {"ok": True, "out": "removed", "err": ""}
+        raise AssertionError(argv)
+
+    monkeypatch.setattr(evolve, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(evolve, "_sandbox_pool", pool)
+    monkeypatch.setattr(evolve, "_sh", sh)
+    monkeypatch.setattr(evolve, "_redis", lambda: Redis())
+
+    result = asyncio.run(evolve.evolve_sandbox_down.__wrapped__(
+        branch="feat/spawned"))
+
+    assert result["ok"] is True
+    assert calls[0] == ["docker", "ps", "-aq", "--filter",
+                        "label=com.docker.compose.project=vera-dev-feat-spawned"]
+    assert calls[1] == ["docker", "network", "ls", "-q", "--filter",
+                        "label=com.docker.compose.project=vera-dev-feat-spawned"]
+    assert calls[2] == ["docker", "rm", "-f", "container-a", "container-b"]
+    assert calls[3] == ["docker", "network", "rm", "network-a"]
+    assert deleted == [(evolve.KEY_SANDBOX_POOL, "feat-spawned")]
+
+
+def test_spawned_down_preserves_descriptor_when_docker_is_unobservable(
+        tmp_path, monkeypatch):
+    spawned = {"branch": "feat/spawned", "name": "vera-dev-feat-spawned",
+               "compose": "docker-compose.dev-feat-spawned.yml",
+               "worktree": "/wt/spawned"}
+    deleted = []
+
+    class Redis:
+        async def hdel(self, key, slug):
+            deleted.append((key, slug))
+
+    async def pool():
+        return {"feat-spawned": spawned}
+
+    async def unavailable(*args, **kwargs):
+        return {"ok": False, "out": "", "err": "permission denied"}
+
+    monkeypatch.setattr(evolve, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(evolve, "_sandbox_pool", pool)
+    monkeypatch.setattr(evolve, "_sh", unavailable)
+    monkeypatch.setattr(evolve, "_redis", lambda: Redis())
+
+    result = asyncio.run(evolve.evolve_sandbox_down.__wrapped__(
+        branch="feat/spawned"))
+
+    assert result["ok"] is False
+    assert result["code"] == "docker_unobservable"
+    assert result["mutated"] is False
+    assert deleted == []
+
+
+def test_spawned_down_preserves_descriptor_when_compose_teardown_fails(
+        tmp_path, monkeypatch):
+    compose = tmp_path / "docker-compose.dev-feat-spawned.yml"
+    compose.write_text("services: {}\n", encoding="utf-8")
+    spawned = {"branch": "feat/spawned", "name": "vera-dev-feat-spawned",
+               "compose": compose.name, "worktree": "/wt/spawned"}
+    deleted = []
+
+    class Redis:
+        async def hdel(self, key, slug):
+            deleted.append((key, slug))
+
+    async def pool():
+        return {"feat-spawned": spawned}
+
+    async def failed(*args, **kwargs):
+        return {"ok": False, "out": "", "err": "compose failed"}
+
+    monkeypatch.setattr(evolve, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(evolve, "_sandbox_pool", pool)
+    monkeypatch.setattr(evolve, "_sh", failed)
+    monkeypatch.setattr(evolve, "_redis", lambda: Redis())
+
+    result = asyncio.run(evolve.evolve_sandbox_down.__wrapped__(
+        branch="feat/spawned"))
+
+    assert result["ok"] is False
+    assert result["code"] == "container_teardown_failed"
+    assert result["mutated"] is True
+    assert compose.exists()
+    assert deleted == []
+
+
+def test_spawned_down_reports_unavailable_descriptor_store(tmp_path, monkeypatch):
+    spawned = {"branch": "feat/spawned", "name": "vera-dev-feat-spawned",
+               "compose": "docker-compose.dev-feat-spawned.yml",
+               "worktree": "/wt/spawned"}
+
+    async def pool():
+        return {"feat-spawned": spawned}
+
+    async def empty_project(argv, **kwargs):
+        if argv[:3] in (["docker", "ps", "-aq"],
+                       ["docker", "network", "ls"]):
+            return {"ok": True, "out": "", "err": ""}
+        raise AssertionError(argv)
+
+    monkeypatch.setattr(evolve, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(evolve, "_sandbox_pool", pool)
+    monkeypatch.setattr(evolve, "_sh", empty_project)
+    monkeypatch.setattr(evolve, "_redis", lambda: None)
+
+    result = asyncio.run(evolve.evolve_sandbox_down.__wrapped__(
+        branch="feat/spawned"))
+
+    assert result["ok"] is False
+    assert result["code"] == "descriptor_store_unavailable"
+    assert result["mutated"] is True
 
 
 def test_primary_down_dry_run_reports_explicit_worktree_removal(monkeypatch):
