@@ -147,6 +147,34 @@ def test_the_node_tier_retypes_a_generic_fabric_entity_and_its_finds_join_the_re
     assert rows["ner.node"]["where"] == "gpu-250" and rows["ner.node"]["by"] == "roberta-ontonotes"
 
 
+def test_noise_the_live_run_showed_is_kept_out(fake_layers, monkeypatch):
+    """Seen on the mirror 2026-09-21: a fallback 'name' running across a paragraph break, markdown punctuation kept
+    on a node entity, and bare numbers as entities. None of those is a thing the diagram is about."""
+    text = "## Summary\n\nSeptember was busy. **Claude Fable 5.1** shipped on day 14 of 20, and 5 teams used it."
+    async def ner_bad(ctx):
+        ents = [{"name": "Summary\n\nSeptember", "type": "named_entity", "normalised": "summary\n\nseptember", "position": 3, "mention_count": 1, "confidence": 0.45},
+                {"name": "September", "type": "date", "normalised": "september", "position": text.find("September"), "mention_count": 1, "confidence": 0.7}]
+        ctx["ent_list"] = ents
+        return {"cards": X._entity_cards(ents, ctx, "ner", "heuristic patterns")}
+
+    async def fake_nlp_ner(text="", task="ner", trace_id=None):
+        p = text.find("**Claude")
+        return {"ok": True, "model": "m", "entities": [
+            {"entity": "PRODUCT", "word": "**Claude Fable 5.1", "score": 0.97, "start": p, "end": p + 18},
+            {"entity": "CARDINAL", "word": "14", "score": 0.99, "start": text.find("14"), "end": text.find("14") + 2},
+            {"entity": "CARDINAL", "word": "5", "score": 0.99, "start": text.find(" 5 ") + 1, "end": text.find(" 5 ") + 2}]}
+
+    monkeypatch.setitem(X.LAYERS["ner"], "fn", ner_bad)
+    monkeypatch.setitem(X.LAYERS["ner.node"], "fn", X._layer_ner_node)
+    monkeypatch.setitem(X.CAPABILITY_REGISTRY, "nlp.ner", {"func": fake_nlp_ner})
+    out = _run(X.explode_prose(text=text, layers=["ner", "ner.node"]))
+    titles = [c["title"] for c in out["cards"]]
+    assert "Summary\n\nSeptember" not in titles and "September" in titles
+    assert "14" not in titles and "5" not in titles
+    claude = [c for c in out["cards"] if c["layer"] == "ner.node"][0]
+    assert claude["title"] == "Claude Fable 5.1" and text[claude["span"]["start"]:claude["span"]["end"]] == "Claude Fable 5.1"
+
+
 def test_the_layer_list_is_the_registry_in_order():
     rows = X.layer_list()
     assert [r["id"] for r in rows][:4] == ["ner", "ner.node", "rel.typed", "rel.cooccur"]
