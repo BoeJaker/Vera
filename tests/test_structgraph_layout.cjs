@@ -155,6 +155,14 @@ const BIG = (() => {
   t('a card carrying code is wider and taller than a plain one', code.w > stub.w && code.h > stub.h, JSON.stringify({ code: [code.w, code.h], stub: [stub.w, stub.h] }));
   const h = SG.sceneHtml(o);
   const lines = (h.match(/class="cl"/g) || []).length, nums = (h.match(/class="ln"/g) || []).length;
+  // a lint finding is a MARK on the line it names. Live on the design mirror, six cards of vera/web/scraper.py
+  // carried marks and not one marked line reached the DOM: the markup read them off the laid-out card, which only
+  // wraps the contract's card, so they were always undefined.
+  const MK = JSON.parse(JSON.stringify(BIG)); MK.cards[0].marks = { 2: [{ note: "bare 'except:'", sev: 'warn' }] };
+  const mh = SG.sceneHtml(SG.layout(MK, 3440, 900));
+  t('a lint finding marks the line it names, with its note on it',
+    /class="cl mk warn" data-line="2" title="bare &#39;except:&#39;"/.test(mh) || /class="cl mk warn"[^>]*title="[^"]*except/.test(mh),
+    (mh.match(/class="cl mk[^"]*"[^>]*/) || ['no mark in the markup'])[0]);
   t('the card draws its own source, line-numbered and tokenised, in the scene markup',
     lines >= 240 && nums === lines && /<i class="k">def<\/i>/.test(h) && / data-line="5"/.test(h),
     JSON.stringify({ lines, nums })); }
