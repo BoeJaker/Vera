@@ -37,6 +37,10 @@ try:
     from Vera.vera import ollama_node_fault_core as _node_fault_core
 except Exception:  # pragma: no cover - worktree / test layout
     from . import ollama_node_fault_core as _node_fault_core
+try:
+    from Vera.vera import model_tag_core as _model_tag_core
+except Exception:  # pragma: no cover - worktree / test layout
+    from . import model_tag_core as _model_tag_core
 from .capabilities.ctx_policy_core import (
     did_shift as _ctx_did_shift,
     keep_tokens as _ctx_keep_tokens,
@@ -2210,13 +2214,10 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
 
     def _has_model(inst, mdl):
         """Check if an instance has a model — flexible name matching."""
-        if not mdl: return True
-        models = inst.get("models", [])
-        mdl_base = mdl.split(":")[0]
-        for m in models:
-            if m == mdl or m.startswith(mdl + ":") or m.split(":")[0] == mdl_base:
-                return True
-        return False
+        # Exact tag, with `x` and `x:latest` treated as one model - the only
+        # equivalence Ollama applies. Matching the BASE name said a node
+        # holding only `qwen2.5:0.5b` could serve `qwen2.5:7b`.
+        return _model_tag_core.is_served(mdl, inst.get("models", []))
 
     def _pick_best(candidates):
         # Least busy first, then configured priority, then OBSERVED throughput
