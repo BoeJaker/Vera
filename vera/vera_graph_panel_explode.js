@@ -211,18 +211,33 @@
           + own.map(function(f){ return '<option value="' + esc(f.path) + '">' + esc(f.path.split('/').pop()) + ' \u00b7 ' + Math.round((f.bytes||0)/1024) + ' kB</option>'; }).join('');
         fileSel.disabled = !own.length;
       }
-      function syncSrc(){
+      /* The note says what the CURRENT pair of choices would draw. It never rebuilds the file list: doing that on
+         every change threw away the file the reader had just picked (seen live -- the path fell back to the
+         folder the instant a file was chosen), so the list is rebuilt only when the FOLDER changes. */
+      function saySrc(){
         var dir = dirSel.value;
         if(dir === WHOLE){
-          fileSel.innerHTML = '<option value="">every file \u2014 ' + TREE.files.length + '</option>'; fileSel.disabled = true;
-          codeIn.value = WHOLE;
           srcSay(TREE.files.length + ' files in the tree \u2014 the first ' + WHOLE_CAP + ' by path are exploded together; pick a folder for something readable');
           return;
         }
-        fillFiles(dir);
-        codeIn.value = fileSel.value || dir;
         var own = TREE.byDir[dir] || [];
-        srcSay(fileSel.value ? fileSel.value : (dir || '/') + ' \u00b7 ' + own.length + ' file' + (own.length===1?'':'s') + ' \u2014 its imports join them if the box below is ticked');
+        srcSay(fileSel.value
+          ? fileSel.value + ' \u2014 one file' + ($('.xp-code-hop').checked ? ', with the files it imports' : '')
+          : (dir || '/') + ' \u00b7 ' + own.length + ' file' + (own.length===1?'':'s') + ' \u2014 its imports join them if the box below is ticked');
+      }
+      function syncDir(){                                  // the folder changed: rebuild its files, start at "all of it"
+        var dir = dirSel.value;
+        if(dir === WHOLE){
+          fileSel.innerHTML = '<option value="">every file \u2014 ' + TREE.files.length + '</option>';
+          fileSel.disabled = true; codeIn.value = WHOLE; saySrc(); return;
+        }
+        fillFiles(dir);
+        codeIn.value = dir;
+        saySrc();
+      }
+      function syncFile(){                                 // the file changed: nothing is rebuilt, so it STAYS chosen
+        codeIn.value = fileSel.value || dirSel.value;
+        saySrc();
       }
       fetch(base + '/code/sources')
         .then(function(r){ return r.json(); })
@@ -235,11 +250,12 @@
             + TREE.folders.map(function(f){ return '<option value="' + esc(f.path) + '">' + esc(f.path || '/') + ' \u00b7 ' + f.files + '</option>'; }).join('');
           var want = TREE.folders.filter(function(f){ return /^vera\//.test(f.path); })[0] || TREE.folders[0];
           if(want){ dirSel.value = want.path; }
-          syncSrc();
+          syncDir();
         })
         .catch(function(){ dirSel.innerHTML = '<option value="">the tree is unavailable \u2014 type a path</option>'; });
-      dirSel.onchange = syncSrc;
-      fileSel.onchange = function(){ codeIn.value = fileSel.value || dirSel.value; syncSrc(); };
+      dirSel.onchange = syncDir;
+      fileSel.onchange = syncFile;
+      $('.xp-code-hop').addEventListener('change', saySrc);
 
       // ── the layers, from the registry ───────────────────────────────────────
       fetch(base + '/nlp/explode/layers')
