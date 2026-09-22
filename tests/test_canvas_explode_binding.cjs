@@ -64,4 +64,16 @@ t('the host\'s light outranks a stale hover and quiets the rest', /const ext = t
 t('clicking a card clears the host\'s light, so the diagram leads again', /this\._S\.sel = card\.dataset\.id; this\._extHit = null;/.test(SGSRC));
 t('the selected card is scrolled into view inside the diagram', /ext\.sel\) \{ const el = this\.querySelector\('\.sg-card\[data-id="'/.test(SGSRC) && /scrollIntoView\(\{ block: 'nearest'/.test(SGSRC));
 
+// -- what "it doesn't draw anything" actually was (owner, 2026-09-22) -------------------------------------------
+// Three things, none of them the diagram: the binding could not be WRITTEN from canvas.append (no key), the slot
+// was 140px however tall the diagram was asked to be, and an item bound to something that is not here sat at
+// "exploding..." for ever. The first is a capability (tests/test_canvas_explode_item.py); these two are here.
+t('the explode slot is as tall as the diagram was asked to be, not a 110px live slot',
+  /const h = Math\.max\(160, Math\.min\(900, parseInt\(c\.height, 10\) \|\| 300\)\);/.test(CANVAS)
+  && /data-live="explode" data-key="\$\{esc\(key\)\}" style="height:\$\{h\}px;min-height:\$\{h\}px"/.test(CANVAS));
+t('an item bound to something that is not on this canvas SAYS so, and asks for nothing',
+  /if \(c\.binds && !bound\)/.test(CANVAS) && /which is not an item on this canvas/.test(CANVAS)
+  && /\['code', 'path', 'text', 'record', 'lang', 'depth'\]\.forEach\(\(a\) => embed\.removeAttribute\(a\)\)/.test(CANVAS));
+t('the verdict rail can actually be asked for — set() reads \'\' as "remove"',
+  /if \(c\.assess\) \{ if \(!embed\.hasAttribute\('assess'\)\) embed\.setAttribute\('assess', '1'\); \}/.test(CANVAS));
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);

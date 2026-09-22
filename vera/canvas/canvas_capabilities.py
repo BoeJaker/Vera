@@ -336,7 +336,7 @@ async def cap_canvas_list(limit: int = 30, trace_id=None):
                 "over raw html so the UI stays consistent.",
 )
 async def cap_canvas_append(id: str = "", type: str = "markdown",
-                            content: Any = None, meta: Any = None, trace_id=None):
+                            content: Any = None, meta: Any = None, key: str = "", trace_id=None):
     doc = await _load(id)
     if not doc:
         return {"error": f"unknown canvas: {id}"}
@@ -357,6 +357,15 @@ async def cap_canvas_append(id: str = "", type: str = "markdown",
     block = {"id": _new_id("bk"), "type": v["type"], "ts": now_iso(),
              "content": v["content"], "meta": (meta if isinstance(meta, dict) else {}),
              "layout": {"order": len(blocks)}}
+    # A KEY IS HOW ONE ITEM NAMES ANOTHER. An explode item binds to a code item BY KEY, and this -- the obvious
+    # way to put both on a canvas -- had no key at all, so the binding could never resolve and the diagram drew
+    # nothing (owner, 2026-09-22: "the explode mode in the canvas doesnt draw anything"). A key given here is
+    # kept; one already taken is refused rather than silently doubled.
+    key = str(key or "").strip()
+    if key:
+        if _find_key(doc, key) is not None:
+            return {"error": "key already on this canvas: %s" % key, "key": key}
+        block["key"] = key
     blocks.append(block)
     await _save(doc)
     await _emit(id, "append", block=block)

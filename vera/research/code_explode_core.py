@@ -1166,6 +1166,30 @@ def _selector_matches(sel: str, el: Dict) -> Optional[str]:
     return None
 
 
+def _parse_one(path: str, text: str, lang: str, prefer_tree_sitter: bool = False) -> Dict:
+    """One source, by its language -- the engine each one gets, and the fallback each engine has."""
+    if lang == "python":
+        p = parse_python_ast(path, text) if not (prefer_tree_sitter and HAS_TREE_SITTER) else parse_tree_sitter(path, text, "python")
+        if p["errors"] and p["engine"] == "ast" and HAS_TREE_SITTER:
+            p = parse_tree_sitter(path, text, "python")      # broken code: the tolerant engine reads what it can
+        return p
+    if lang in ("javascript", "typescript"):
+        p = parse_tree_sitter(path, text, lang) if HAS_TREE_SITTER else parse_js_patterns(path, text)
+        if p["errors"] and p["engine"] == "tree-sitter" and not p["symbols"][1:]:
+            p = parse_js_patterns(path, text)
+        return p
+    if lang in _BRACE_EXT.values():
+        p = parse_tree_sitter(path, text, lang) if HAS_TREE_SITTER else parse_brace_patterns(path, text, lang)
+        if p["errors"] and p["engine"] == "tree-sitter" and not p["symbols"][1:]:
+            p = parse_brace_patterns(path, text, lang)
+        return p
+    if lang == "css":
+        return parse_css(path, text)
+    if lang == "html":
+        return parse_html(path, text)
+    return {"engine": "none", "path": path, "symbols": [], "imports": [], "errors": ["unknown language"], "aliases": {}}
+
+
 def explode_sources(sources: List[Dict], *, max_external: int = 40, prefer_tree_sitter: bool = False, label: str = "",
                     card_lines: int = 40) -> Dict:
     """sources: [{path, text, lang?}] → the Explode contract (kind 'code', or 'page' when HTML leads).
@@ -1180,24 +1204,20 @@ def explode_sources(sources: List[Dict], *, max_external: int = 40, prefer_tree_
         path = str(src.get("path") or "snippet")
         text = src.get("text") or ""
         lang = detect_lang(path, text, src.get("lang") or "")
-        if lang == "python":
-            p = parse_python_ast(path, text) if not (prefer_tree_sitter and HAS_TREE_SITTER) else parse_tree_sitter(path, text, "python")
-            if p["errors"] and p["engine"] == "ast" and HAS_TREE_SITTER:
-                p = parse_tree_sitter(path, text, "python")   # broken code: the tolerant engine reads what it can
-        elif lang in ("javascript", "typescript"):
-            p = parse_tree_sitter(path, text, lang) if HAS_TREE_SITTER else parse_js_patterns(path, text)
-            if p["errors"] and p["engine"] == "tree-sitter" and not p["symbols"][1:]:
-                p = parse_js_patterns(path, text)
-        elif lang in _BRACE_EXT.values():
-            p = parse_tree_sitter(path, text, lang) if HAS_TREE_SITTER else parse_brace_patterns(path, text, lang)
-            if p["errors"] and p["engine"] == "tree-sitter" and not p["symbols"][1:]:
-                p = parse_brace_patterns(path, text, lang)
-        elif lang == "css":
-            p = parse_css(path, text)
-        elif lang == "html":
-            p = parse_html(path, text)
-        else:
-            p = {"engine": "none", "path": path, "symbols": [], "imports": [], "errors": ["unknown language"], "aliases": {}}
+        said = str(src.get("lang") or "")
+        p = _parse_one(path, text, lang, prefer_tree_sitter)
+        # A FENCE CAN LIE. "```sh" over Python, "```js" over Go: the declared language reads nothing at all and the
+        # diagram is a single module card, which is what "it doesn't draw anything" looks like from the outside
+        # (owner, 2026-09-22). When a DECLARED language finds no symbols, the text is asked what it is, and the
+        # receipt says the fence was read as something else -- a guess that is stated is not a guess that hides.
+        if said and len(p.get("symbols") or []) <= 1:
+            sniff = detect_lang(path, text, "")
+            if sniff and sniff != lang:
+                alt = _parse_one(path, text, sniff, prefer_tree_sitter)
+                if len(alt.get("symbols") or []) > 1:
+                    alt["errors"] = list(alt.get("errors") or []) + [
+                        "read as %s; the source said %s" % (sniff, said)]
+                    p, lang = alt, sniff
         p["lang"] = lang; p["text"] = text
         parsed.append(p)
         r = receipts.setdefault(p["engine"], {"id": "code." + p["engine"].replace("-", ""), "label": "symbols · " + p["engine"], "by": p["engine"], "kind": "symbol", "on": True, "count": 0, "files": 0, "where": "host"})
