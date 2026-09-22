@@ -957,6 +957,11 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         this.innerHTML = '<div class="xp-ctl"><span class="c">explode</span><button data-m="cards">Cards</button><button data-m="front">Front</button><button data-m="iso">Iso</button><span class="sep"></span><button data-a="fit" title="Back to the whole scene">Fit</button><button data-a="close" title="Back to the flat transcript">Flatten</button><span class="sep"></span><span class="c iso-c" data-r="isoc">iso</span><button data-a="solo" title="Only this turn — the selected turn\'s plate alone (the board\'s single-layer iso)">Turn</button><button data-a="all" title="Every turn — the plates in a row">All</button><button data-a="stack" title="Stack — the stations on floors, one above the other">Stack</button><button data-a="wsz" title="The iso widgets\' size — S · M · L">M</button><button data-a="landw" title="The session canvas plate: a column wider, out along u (shift-click: narrower)">Canvas +</button><span class="sep"></span><button data-a="place" title="Place a widget from the registry onto this station\'s plate — it becomes one of the turn\'s items, tagged ⧉ with its template">+ Place</button><span class="sep"></span><input type="range" class="xp-scrub" data-r="scrub" min="0" max="0" value="0" title="Scrub through the session\'s turns (← → too)"></div><div class="xp-ctx" data-r="ctx"></div><div class="xp-dots" data-r="dots"></div><div class="xp-wrap" data-r="wrap"><div class="xp-view" data-r="view"></div></div><div class="xp-pz"><button data-a="zout" title="Zoom out">−</button><span class="z" data-r="zoom">100%</span><button data-a="zin" title="Zoom in">+</button><span class="sp"></span><button data-a="panl" title="Pan left">←</button><button data-a="panu" title="Pan up">↑</button><button data-a="pand" title="Pan down">↓</button><button data-a="panr" title="Pan right">→</button><span class="tl" data-r="tl"><span class="sp"></span><button data-a="tiltu" title="Tilt the view up — look down on the plane">⌃</button><span class="z" data-r="ang">30°</span><button data-a="tiltd" title="Tilt the view down — flatten the plane">⌄</button><button data-a="swl" title="Swing the view left">↺</button><button data-a="swr" title="Swing the view right">↻</button></span><span class="sp"></span><button data-a="fit" title="Back to fit">fit</button></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
         this.addEventListener('click', (e) => this._click(e));
+        /* THE INSIDE OF ONE CARD. The scene is the session's shape -- a turn, its reads, its products, its
+           capability calls. Double-clicking a card asks the other question: what is IN this one. The element
+           stays a scene and does not explode anything itself; it says what the card holds and the host draws it,
+           the way `vera:xpl:turn` and `vera:xpl:move` already work. */
+        this.addEventListener('dblclick', (e) => this._dive(e));
         /* the relation edges light under the pointer (defect 83). The scene's own runs are untouched; these are the
            `.rel` segments, each carrying the two records it joins. In Full they are drawn anyway, so this only
            shows itself in Hover and Zen - but the marking is the same in every tier, so nothing special-cases. */
@@ -1069,6 +1074,22 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         return out;
       }
       // the laid-out item behind a DOM id (a card or an iso widget), for the events that name one
+      _dive(e) {
+        const el = e.target.closest && e.target.closest('.xp-it,.xp-rc,.xit,.xig,.xnd');
+        if (!el || !el.dataset.id) return;
+        e.preventDefault();
+        const it = this._itemOf(el.dataset.id) || {};
+        const c = (it && it.card) || it || {};
+        const kind = String(c.kind || '').toLowerCase();
+        const body = typeof c.body === 'string' ? c.body : (typeof c.text === 'string' ? c.text : '');
+        const rec = c.record && typeof c.record === 'object' ? String(c.record.id || c.record.record_id || '')
+                  : (typeof c.record === 'string' ? c.record : '');
+        this.dispatchEvent(new CustomEvent('vera:xpl:explode', { bubbles: true, detail: {
+          id: el.dataset.id, mid: String(el.dataset.id).split(':')[0], kind: kind,
+          title: String(c.title || c.name || c.n || ''), record: rec, text: body,
+          code: /^(code|term|terminal|cap|capability|log)$/.test(kind), lang: String(c.lang || ''),
+        } }));
+      }
       _itemOf(id) { const o = this._last || {}; return (o.widgets || []).find((w) => w.id === id) || (o.cards || []).find((c) => c.id === id) || null; }
       widgetSize(s) { const L = ['s', 'm', 'l']; this._S.wsz = L.includes(s) ? s : L[(L.indexOf(this._S.wsz || 'm') + 1) % L.length]; this._schedule(); return this._S.wsz; }
       mode(name) { if (name && /^(cards|front|iso)$/.test(name)) { this._S.mode = name; this._S.pan = { x: 0, y: 0, z: 1, auto: true }; this._S.open = null; this._S.focus = null; this._frontKey = null; this._schedule(); } return this._S.mode; }
