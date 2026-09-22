@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dusk" data-style="standard">
+<head>
+<script>/* vera theme boot - paint the cached theme before CSS parses */
+(function(){try{var d=document.documentElement,S=window.localStorage;
+var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var st=S.getItem('vera:ui:style');if(st)d.setAttribute('data-style',st);
+var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<title>Vera · Live operations</title>
+<link rel="stylesheet" id="veraPackFonts" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Libre+Baskerville:wght@400;700&family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500;700&family=Pixelify+Sans:wght@400;500;600;700&family=Press+Start+2P&family=VT323&display=swap">
+<!-- Live operations (the design's Ops board): the whole estate as six planes of nodes on a lattice of domains, the
+     pipes between them, the requests in flight running along the pipes, and every node an action surface. The data
+     is ops.snapshot (vera/estate/ops_core.py assembles it from the estate's own readers); the placement, the pipes and
+     the 3D floors are drawn here with /ui/iso.js, the projection every iso scene in Vera shares. -->
+<style>
+:root{--bg:#0e0f12;--s1:#13151a;--s2:#1a1d24;--s3:#222630;--bd:rgba(255,255,255,.07);--bd2:rgba(255,255,255,.14);--t1:#d4dae4;--t2:#6b7585;--t3:#4d5768;--ac:#6ea8d8;--ac2:#5ec9a0;--ac3:#e09a55;--ac4:#e06060;--ac5:#a78bfa;--on-ac:#0b1119;
+  --dv1:#866ec5;--dv2:#54a863;--dv3:#3585c9;--dv4:#bb881a;--dv5:#b95c88;--dv6:#00aba4;--dv7:#bd6533;
+  --f-ui:'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif;--f-disp:var(--f-ui);--f-mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+  --ui-radius:12px;--r-sm:8px;--r-pill:999px;--pad:14px;--label-size:10.5px;--label-case:none;--label-track:.01em;--label-weight:500;--pri-bg:var(--ac);--pri-fg:var(--on-ac)}
+[data-theme="paperwhite"]{--dv1:#6e4fb1;--dv2:#2a9446;--dv3:#0069b6;--dv4:#ab7000;--dv5:#a2396f;--dv6:#009891;--dv7:#a74300}
+*{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--t3) 42%,transparent) transparent}
+*::-webkit-scrollbar{width:7px;height:7px}*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{border-radius:4px;background:color-mix(in srgb,var(--t3) 38%,transparent)}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none!important}
+html,body{height:100%;background:var(--bg)}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+.rt{--surf:color-mix(in srgb,var(--ac) 4%,var(--s1));--surf2:color-mix(in srgb,var(--ac) 6%,var(--s2));--surf3:color-mix(in srgb,var(--ac) 8%,var(--s3));
+  --elev:0 1px 2px rgba(0,0,0,.20),0 10px 30px -16px rgba(0,0,0,.60),inset 0 1px 0 color-mix(in srgb,var(--t1) 7%,transparent);
+  --elev-lo:0 1px 2px rgba(0,0,0,.14),inset 0 1px 0 color-mix(in srgb,var(--t1) 5%,transparent);
+  --glow:0 0 22px -6px color-mix(in srgb,var(--ac) 55%,transparent);--fill:color-mix(in srgb,var(--ac) 15%,transparent)}
+[data-style="pixel"] .rt{--elev:0 0 0 2px var(--bd2),5px 5px 0 0 rgba(0,0,0,.45);--elev-lo:0 0 0 2px var(--bd2)}
+[data-style="terminal"] .rt{--elev:0 0 0 1px var(--bd2),0 8px 24px -14px rgba(0,0,0,.55);--elev-lo:0 0 0 1px var(--bd)}
+[data-style="newspaper"] .rt{--elev:0 0 0 1px var(--bd),0 8px 26px -16px rgba(0,0,0,.5);--elev-lo:0 0 0 1px var(--bd)}
+[data-style="pixel"] *{image-rendering:pixelated;shape-rendering:crispEdges}
+.wash{position:absolute;left:0;right:0;top:0;height:300px;pointer-events:none;z-index:0;background:radial-gradient(120% 100% at 10% 0%,color-mix(in srgb,var(--ac) 12%,transparent),transparent 62%),radial-gradient(90% 80% at 92% 0%,color-mix(in srgb,var(--ac5) 8%,transparent),transparent 60%)}
+.rt{width:100%;height:100vh;min-height:640px;display:flex;flex-direction:column;overflow:hidden;position:relative;background:var(--bg);color:var(--t1);font-family:var(--f-ui);font-size:11.5px;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+.rt > *:not(.wash){position:relative;z-index:1}
+.sp{flex:1}.mono{font-family:var(--f-mono)}
+.lbl{font-size:var(--label-size);text-transform:var(--label-case);letter-spacing:var(--label-track);font-weight:var(--label-weight);color:var(--t2)}
+.hd{height:50px;flex-shrink:0;display:flex;align-items:center;gap:10px;padding:0 16px;background:color-mix(in srgb,var(--s1) 72%,transparent);backdrop-filter:blur(18px)}
+.wm{font-family:var(--f-mono);font-size:11px;font-weight:700;letter-spacing:3.4px;color:var(--ac)}
+.hd h1{font-size:15px;font-weight:600;letter-spacing:-.015em;white-space:nowrap}
+.hd > .lbl.mono{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.live{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 11px;border-radius:var(--r-pill);background:var(--fill);color:var(--ac);font-size:10.5px;white-space:nowrap}
+.live i{width:6px;height:6px;border-radius:50%;background:var(--ac);animation:pl 1.6s ease-in-out infinite}
+.live.stale{color:var(--ac3)}.live.stale i{background:var(--ac3);animation:none}
+@keyframes pl{0%,100%{opacity:1}50%{opacity:.3}}
+.seg{display:flex;background:var(--surf2);border-radius:var(--r-sm);padding:2px;gap:2px;box-shadow:var(--elev-lo);flex-shrink:0}
+.seg button{height:26px;padding:0 10px;font-size:10.5px;color:var(--t2);border-radius:calc(var(--r-sm) - 2px);white-space:nowrap}
+.seg button.on{background:var(--pri-bg);color:var(--pri-fg);font-weight:600}
+.seg button:disabled{opacity:.4;cursor:default}
+.bd{flex:1;display:flex;min-height:0;gap:10px;padding:0 12px 12px}
+.lstack{width:206px;flex-shrink:0;display:flex;flex-direction:column;gap:8px;min-height:0;overflow-y:auto;overflow-x:hidden}
+.lstack .card{flex-shrink:0}.lstack .card.sp{flex-shrink:1;min-height:44px}
+.card{background:var(--surf);border-radius:var(--ui-radius);box-shadow:var(--elev);padding:11px var(--pad);display:flex;flex-direction:column;gap:8px}
+.card h3{font-size:var(--label-size);text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3);display:flex;align-items:center;gap:6px}
+.card h3 .lbl{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:400}
+.plane{display:flex;align-items:center;gap:9px;height:28px;padding:0 10px;border-radius:var(--r-sm);cursor:pointer;color:var(--t2);font-size:11px;background:transparent;width:100%;text-align:left}
+.plane:hover{background:var(--surf2);color:var(--t1)}
+.plane.on{color:var(--t1);background:var(--surf2);box-shadow:inset 2px 0 0 var(--pc)}
+.plane.focus{box-shadow:inset 0 0 0 1.5px var(--pc)}.plane.faded{opacity:.45}
+.plane i{width:9px;height:9px;border-radius:2px;background:var(--pc);flex-shrink:0;opacity:.35}.plane.on i{opacity:1}
+.plane .n{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.plane .c{font-family:var(--f-mono);font-size:9.5px;color:var(--t3)}
+.kinds{display:flex;flex-direction:column;gap:5px}
+.kind{display:flex;align-items:center;gap:8px;font-size:10.5px;color:var(--t2)}
+.kind i{width:8px;height:8px;border-radius:50%;flex-shrink:0}.kind i.pipe{width:14px;height:3px;border-radius:2px}
+.kind .c{margin-left:auto;font-family:var(--f-mono);font-size:9.5px;color:var(--t1)}
+.ifr{display:grid;grid-template-columns:8px 64px 1fr 34px;align-items:center;gap:7px;height:22px;font-size:9.5px;color:var(--t2)}
+.ifr i{width:7px;height:7px;border-radius:50%}
+.ifr .k,.ifr .p{font-family:var(--f-mono);font-size:8.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ifr .k{color:var(--t1)}.ifr .p{color:var(--t3)}.ifr .e{font-family:var(--f-mono);font-size:8.5px;text-align:right;color:var(--t2)}
+.srcrow{display:flex;align-items:center;gap:7px;font-family:var(--f-mono);font-size:8.5px;color:var(--t3);height:16px}
+.srcrow i{width:6px;height:6px;border-radius:50%;background:var(--ac2);flex-shrink:0}.srcrow.bad i{background:var(--ac4)}.srcrow.bad{color:var(--ac3)}
+.srcrow .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stage{flex:1;min-width:0;background:var(--surf);border-radius:var(--ui-radius);box-shadow:var(--elev);display:flex;flex-direction:column;overflow:hidden}
+.stage-hd{flex-shrink:0;display:flex;align-items:center;gap:10px;padding:11px var(--pad) 0}
+.stage-hd h2{font-size:13px;font-weight:600}
+.axes{flex-shrink:0;display:flex;gap:16px;padding:6px var(--pad) 8px;flex-wrap:wrap}
+.axes span{font-size:10px;color:var(--t3)}.axes b{color:var(--t2);font-weight:500}
+.plot{flex:1;min-height:0;position:relative;overflow:hidden;margin:0 var(--pad) var(--pad);border-radius:var(--r-sm);background:var(--bg)}
+.pzv{position:absolute;inset:0;transform-origin:50% 50%;cursor:grab;transition:transform .38s cubic-bezier(.22,.68,.18,1)}
+.pzv.dragging{transition:none!important;cursor:grabbing}
+.pzc{position:absolute;right:10px;top:8px;z-index:44;display:flex;align-items:center;gap:3px;padding:4px 6px;border-radius:var(--r-sm);background:color-mix(in srgb,var(--s1) 90%,transparent);box-shadow:0 0 0 1px var(--bd);opacity:.45;transition:opacity .16s ease}
+.pzc:hover{opacity:1}
+.pzc button{font-family:var(--f-mono);font-size:11px;line-height:1;color:var(--t2);padding:4px 7px;border-radius:var(--r-sm)}
+.pzc button:hover{background:var(--s2);color:var(--t1)}
+.pzc .z{font-family:var(--f-mono);font-size:9px;color:var(--t3);min-width:34px;text-align:center}
+.pzc .sp{width:1px;height:14px;background:var(--bd);margin:0 3px;flex:none}
+.lsel{position:absolute;top:42px;right:12px;z-index:6;display:flex;flex-direction:column;gap:3px;background:color-mix(in srgb,var(--s1) 80%,transparent);border-radius:8px;padding:5px;box-shadow:0 0 0 1px var(--bd)}
+.lsel button{height:18px;padding:0 7px 0 4px;border-radius:4px;display:flex;align-items:center;gap:6px;font-size:9px;color:var(--t3)}
+.lsel button i{display:block;width:8px;height:8px;border-radius:2px;background:var(--pc);opacity:.45}
+.lsel button.on{box-shadow:inset 0 0 0 1.5px var(--pc);color:var(--t1)}.lsel button.on i{opacity:1}
+@keyframes fl-in{from{opacity:0;transform:translateY(14px)}}
+@keyframes ndo-in{from{opacity:0;transform:translate(-50%,-50%) scale(.4)}to{opacity:1;transform:translate(-50%,-50%) scale(var(--nsc,1))}}
+@keyframes lk-draw{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
+@keyframes lb-in{from{opacity:0}}
+.fresh .floor{animation:fl-in .5s cubic-bezier(.2,.8,.2,1) backwards}
+.fresh .band{animation:lb-in .45s ease backwards}
+.fresh .plabel,.fresh .dlabel{animation:lb-in .5s ease backwards;animation-delay:.3s}
+.fresh .nd{animation:ndo-in .44s cubic-bezier(.2,.8,.2,1) backwards;animation-delay:.3s}
+.fresh .link{animation:lk-draw .6s cubic-bezier(.35,.7,.25,1) backwards;animation-delay:.52s}
+.floor{position:absolute;pointer-events:none;background:color-mix(in srgb,var(--pc) 6%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pc) 26%,transparent);cursor:pointer}
+.floor.dim{display:none}.floor.focus{filter:brightness(1.25)}
+.band{position:absolute;left:0;right:0;pointer-events:none;background:color-mix(in srgb,var(--pc) 5%,transparent);border-top:1px solid color-mix(in srgb,var(--pc) 22%,transparent)}
+.plabel{position:absolute;font-size:9px;letter-spacing:.13em;text-transform:uppercase;font-weight:600;color:var(--pc);pointer-events:none;opacity:.9;white-space:nowrap}
+.plabel.dim{display:none}
+.dlabel{position:absolute;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);pointer-events:none;transform:translateX(-50%)}
+.link{position:absolute;height:2px;border-radius:2px;transform-origin:0 50%;background:var(--lc,var(--bd2));pointer-events:none;opacity:.85;box-shadow:0 0 7px -1px var(--lc,transparent)}
+.link.q{opacity:.42;box-shadow:none}.plot:hover .link.q{opacity:.55}
+.flow{position:absolute;transform-origin:0 50%;height:0;pointer-events:none;z-index:3}
+.flow i{position:absolute;top:-3px;left:0;width:6px;height:6px;border-radius:50%;animation:fl var(--dur,2.4s) linear infinite;animation-delay:var(--dl,0s)}
+@keyframes fl{from{transform:translateX(0);opacity:0}10%{opacity:1}90%{opacity:1}to{transform:translateX(var(--len));opacity:0}}
+.nd{position:absolute;transform:translate(-50%,-50%) scale(var(--nsc,1));display:flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:var(--r-sm);background:var(--surf2);font-size:10px;white-space:nowrap;cursor:pointer;z-index:2;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pc) 45%,transparent)}
+.nd:hover{background:var(--s3);z-index:6}
+.nd.dim{display:none}
+.iso .nd{height:22px;padding:0 8px;gap:5px}
+.iso .nd .mini,.iso .nd .tmp,.iso .nd .lb,.iso .nd .exp{display:none}
+.iso .nd:hover .mini,.iso .nd.sel .mini,.iso .nd:hover .tmp,.iso .nd.sel .tmp,.iso .nd:hover .exp,.iso .nd.sel .exp{display:flex}
+.nd .st{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.nd.sel{box-shadow:0 0 0 2px var(--ac),var(--glow)}
+.nd.busy{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pc) 45%,transparent),0 0 14px -2px color-mix(in srgb,var(--ac) 55%,transparent)}
+.nd .lb{font-family:var(--f-mono);font-size:9px;color:var(--t3)}
+.nd .mini{display:flex;align-items:flex-end;gap:1px;height:11px;width:24px;flex-shrink:0}
+.nd .mini i{flex:1;border-radius:1px;background:currentColor;opacity:.5}
+.nd .tmp{width:20px;height:4px;border-radius:2px;background:var(--s3);overflow:hidden;flex-shrink:0}
+.nd .tmp i{display:block;height:100%;border-radius:2px}
+.nd .err{min-width:15px;height:15px;padding:0 4px;border-radius:8px;background:var(--ac4);color:var(--on-ac);font-family:var(--f-mono);font-size:8.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.nd.hasErr{box-shadow:inset 0 0 0 1px var(--ac4),0 0 14px -3px var(--ac4)}
+.nd .exp{width:15px;height:15px;border-radius:3px;color:var(--t3);display:flex;align-items:center;justify-content:center;font-size:9px;flex-shrink:0;margin-left:2px}
+.nd .exp:hover{color:var(--ac);background:var(--s3)}
+.pin{position:absolute;width:12px;height:12px;border-radius:50%;background:transparent;pointer-events:none;z-index:5;transform:translate(-50%,-50%) var(--dtf,none);border:1.5px solid var(--pc);box-shadow:0 0 0 1px var(--bg),inset 0 0 0 1px var(--bg)}
+.pin::after{content:'';position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px 0 0 -2px;border-radius:50%;background:var(--pc);box-shadow:0 0 0 1px var(--bg)}
+.stem{position:absolute;height:1px;transform-origin:0 50%;pointer-events:none;z-index:8;background:linear-gradient(90deg,color-mix(in srgb,var(--pc) 95%,transparent),color-mix(in srgb,var(--pc) 40%,transparent))}
+.wedge{position:absolute;height:1.5px;transform-origin:0 50%;pointer-events:none;z-index:1;opacity:.9;background:repeating-linear-gradient(90deg,var(--pc) 0 4px,transparent 4px 7px)}
+.pin.dim,.stem.dim{display:none}
+.owf{position:absolute;display:block;z-index:7}
+.owf.t{box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
+.owf-n{position:absolute;height:2.5px;transform-origin:0 50%;background:var(--t1);border-radius:2px;z-index:8;box-shadow:0 0 6px 1px color-mix(in srgb,var(--ac3) 60%,transparent)}
+.owf-l{position:absolute;transform:translate(-50%,0);font-family:var(--f-mono);font-size:9px;z-index:8;text-shadow:0 1px 3px var(--bg);white-space:nowrap;pointer-events:none}
+.ndw{position:absolute;transform:translate(-50%,-50%);width:236px;border-radius:var(--ui-radius);background:var(--surf);box-shadow:var(--elev),0 0 0 1.5px var(--ac);z-index:7;overflow:hidden}
+.ndw.wide{width:330px}
+.ndw .h{display:flex;align-items:center;gap:8px;padding:10px 12px 0;font-size:11.5px;font-weight:600}
+.ndw .h .st{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.ndw .h .x{margin-left:auto;width:19px;height:19px;border-radius:var(--r-sm);color:var(--t3);display:flex;align-items:center;justify-content:center;font-size:11px}
+.ndw .h .x:hover{color:var(--t1);background:var(--s3)}
+.ndw .b{padding:8px 12px 12px;display:flex;flex-direction:column;gap:8px}
+.r{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--t2)}
+.r .k{width:52px;flex-shrink:0;font-family:var(--f-mono);font-size:9px;color:var(--t3)}
+.r .bar{flex:1;height:5px;border-radius:3px;background:var(--s3);overflow:hidden}.r .bar i{display:block;height:100%;border-radius:3px}
+.r .v{font-family:var(--f-mono);font-size:9.5px;color:var(--t1)}
+.sp2{height:36px}.sp2 svg{width:100%;height:36px;display:block}
+.hb{display:flex;align-items:flex-end;gap:2px;height:30px}.hb i{flex:1;border-radius:2px 2px 0 0;display:block;min-height:1px}
+.acts{display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 6px}
+.abtn{height:23px;padding:0 9px;border-radius:var(--r-sm);font-size:10px;color:var(--t2);background:var(--s2);white-space:nowrap;cursor:pointer}
+.abtn:hover{color:var(--t1);background:var(--s3)}.abtn.on{color:var(--on-ac);background:var(--ac)}
+.abtn.go{background:var(--ac);color:var(--on-ac);height:24px;padding:0 12px}.abtn.danger.on{background:var(--ac4)}
+.abtn:disabled{opacity:.45;cursor:default}
+.term{background:var(--bg);border-radius:var(--r-sm);padding:8px 9px;display:flex;flex-direction:column;gap:3px;font-family:var(--f-mono);font-size:9.5px;line-height:1.5;box-shadow:inset 0 0 0 1px var(--bd);max-height:240px;overflow:auto}
+.tl{color:var(--t2);white-space:pre-wrap;word-break:break-all}.tl.in{color:var(--t1)}.tl.ok{color:var(--ac2)}.tl.warn{color:var(--ac3)}.tl.err{color:var(--ac4)}.tl.dim{color:var(--t3)}
+.capl{display:flex;flex-direction:column;gap:1px;background:var(--bg);border-radius:var(--r-sm);padding:6px 7px;box-shadow:inset 0 0 0 1px var(--bd);max-height:220px;overflow:auto}
+.caprow{display:flex;align-items:center;gap:8px;height:21px;font-size:10px;color:var(--t2);padding:0 3px;border-radius:3px}
+.caprow .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--f-mono);font-size:9.5px}
+.caprow .c{font-family:var(--f-mono);font-size:9px;color:var(--t3)}
+.caprow i{width:6px;height:6px;border-radius:50%;background:var(--ac2);flex-shrink:0}
+.reqc{display:flex;flex-direction:column;gap:5px}
+.rlbl{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)}
+.rin{background:var(--bg);border-radius:var(--r-sm);padding:6px 8px;font-family:var(--f-mono);font-size:9.5px;color:var(--t1);box-shadow:inset 0 0 0 1px var(--bd);border:none;width:100%;resize:vertical;outline:none}
+.rin.body{color:var(--t2);line-height:1.5;white-space:pre-wrap;min-height:54px}
+.rin:focus{box-shadow:inset 0 0 0 1px var(--ac)}
+.rrow{display:flex;align-items:center;gap:8px;margin-top:1px}
+.rresp{font-family:var(--f-mono);font-size:9px;color:var(--ac2);word-break:break-all;white-space:pre-wrap;max-height:160px;overflow:auto}.rresp.err{color:var(--ac4)}
+.insp{width:272px;flex-shrink:0;display:flex;flex-direction:column;gap:8px;min-height:0;overflow-y:auto;overflow-x:hidden}
+.insp .card{flex-shrink:0}
+.irow{display:flex;align-items:center;gap:9px;min-height:24px;font-size:10.5px;color:var(--t2)}
+.irow .k{color:var(--t3);width:64px;flex-shrink:0;font-family:var(--f-mono);font-size:9.5px}
+.irow .v{color:var(--t1);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hero{display:flex;align-items:baseline;gap:8px;min-width:0}
+.hero b{font-family:var(--f-mono);font-size:24px;font-weight:700;letter-spacing:-.035em;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.wg{background:var(--surf2);border-radius:var(--r-sm);padding:9px 11px;display:flex;flex-direction:column;gap:7px;box-shadow:var(--elev-lo)}
+.wg .h{font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:var(--t3);font-weight:600;display:flex;align-items:center;gap:7px}
+.wg .h b{margin-left:auto;font-family:var(--f-mono);font-size:9.5px;color:var(--t1);font-weight:400}
+.wsp{height:38px}.wsp svg{width:100%;height:38px;display:block}
+.hbars{display:flex;align-items:flex-end;gap:2px;height:40px}.hbars i{flex:1;border-radius:2px 2px 0 0;display:block;min-height:1px}
+.arc{display:flex;align-items:center;gap:11px}.arc svg{flex-shrink:0}
+.arc .v{font-family:var(--f-mono);font-size:20px;font-weight:700;letter-spacing:-.03em}
+.tmpbar{width:auto;height:7px;border-radius:4px;background:var(--s3);overflow:hidden;display:block}.tmpbar i{display:block;height:100%;border-radius:4px}
+.errrow{display:flex;align-items:center;gap:8px;font-size:10px;min-height:23px;cursor:pointer;border-radius:4px;padding:0 3px}
+.errrow:hover{background:var(--surf2)}
+.errrow i{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.errrow .n{color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;font-family:var(--f-mono);font-size:9.5px}
+.errrow .c{margin-left:auto;font-family:var(--f-mono);font-size:9px;color:var(--t3);flex-shrink:0}
+.flist{display:flex;flex-direction:column;gap:2px;overflow:hidden}
+.frow{display:flex;align-items:center;gap:8px;height:24px;font-size:10px;color:var(--t2)}
+.frow i{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.frow .n{color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;font-family:var(--f-mono);font-size:9.5px}
+.frow .ms{margin-left:auto;font-family:var(--f-mono);font-size:9px;color:var(--t3)}
+.note{font-size:10px;color:var(--t3);line-height:1.5}.note b{color:var(--t2);font-weight:500}
+.cmw{position:fixed;inset:0;z-index:9999}
+.cmbg{position:fixed;inset:0}
+.cmenu{position:fixed;z-index:9999;min-width:216px;padding:5px;border-radius:var(--ui-radius);background:color-mix(in srgb,var(--s1) 97%,transparent);box-shadow:0 0 0 1px var(--bd),0 24px 48px -22px rgba(0,0,0,.95);display:flex;flex-direction:column;gap:1px;animation:cm-in .13s cubic-bezier(.2,.8,.2,1)}
+@keyframes cm-in{from{opacity:0;transform:translateY(-4px) scale(.98)}}
+.cm-h{display:flex;align-items:center;gap:7px;padding:5px 9px 7px;font-size:11px;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:inset 0 -1px 0 0 var(--bd);margin-bottom:3px}
+.cm-h i{width:7px;height:7px;border-radius:2px;flex-shrink:0}
+.cm-h b{margin-left:auto;font-family:var(--f-mono);font-size:9px;color:var(--t3);font-weight:400;text-transform:uppercase;letter-spacing:.1em}
+.cm-i{display:flex;align-items:center;gap:10px;width:100%;font-size:11px;color:var(--t2);text-align:left;padding:5px 9px;border-radius:var(--r-sm)}
+.cm-i:hover{background:var(--s2);color:var(--t1)}.cm-i.danger{color:var(--ac4)}
+.empty{padding:22px;font-size:11px;color:var(--t3);text-align:center;line-height:1.6}
+[data-style="pixel"] .hbars i,[data-style="pixel"] .mini i,[data-style="pixel"] .hb i{border-radius:0!important}
+[data-style="pixel"] .r .bar i,[data-style="pixel"] .tmpbar i,[data-style="pixel"] .nd .tmp i{border-radius:0!important;background-image:repeating-linear-gradient(90deg,rgba(0,0,0,.30) 0 1px,transparent 1px 4px)}
+[data-style="pixel"] .card h3::before,[data-style="pixel"] .wg .h::before{content:'\25AA';margin-right:6px;color:var(--ac)}
+[data-style="pixel"] polyline,[data-style="pixel"] polygon{stroke-width:3!important;stroke-linejoin:miter!important;stroke-linecap:butt!important;shape-rendering:crispEdges}
+[data-style="terminal"] .nd,[data-style="terminal"] .ndw,[data-style="terminal"] .abtn,[data-style="terminal"] .seg{border-radius:0}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="rt" id="rt">
+  <div class="wash"></div>
+  <header class="hd">
+    <div class="wm">VERA</div>
+    <h1>Live operations</h1>
+    <span class="live" id="liveChip"><i></i><span id="liveN">—</span> in flight</span>
+    <span class="lbl mono" id="estateLine">reading the estate…</span>
+    <div class="sp"></div>
+    <div class="seg"><button id="b2d" class="on">2D</button><button id="b3d">3D</button></div>
+    <div class="seg" id="segLayout"><button id="bStack" class="on" title="The planes as a stack, one above the other">Stacked</button><button id="bFlat" title="Every plane laid flat, side by side">All flat</button><button id="bOne" title="One layer at a time: the selected node's plane">One layer</button></div>
+    <div class="seg"><button id="bPipes" class="on" title="Runs follow the lanes of their plane, then go straight up or down">Pipes</button><button id="bDirect" title="Each edge as a straight chord">Direct</button></div>
+    <div class="seg"><button id="bWidgets" class="on" title="The iso widgets standing beside their nodes in 3D">Widgets</button></div>
+    <div class="seg"><button id="bRefresh" title="Read the estate again now">↻</button></div>
+  </header>
+  <div class="bd">
+    <aside class="lstack">
+      <div class="card"><h3>Planes</h3><div id="planes"></div>
+        <span class="note" id="planesNote"></span></div>
+      <div class="card"><h3>In flight now</h3><div class="kinds" id="kinds"></div></div>
+      <div class="card"><h3>Pipes</h3><div class="kinds" id="pipeKey"></div>
+        <span class="note">Runs follow each plane's own lanes, then go straight up or down between planes. Selecting a node lifts everything it is wired to.</span></div>
+      <div class="card sp"><h3>Requests in flight<span class="lbl mono" id="ifN"></span></h3><div class="flist" id="inflight"></div></div>
+      <div class="card"><h3>Sources<span class="lbl mono" id="srcN"></span></h3><div id="sources"></div>
+        <span class="note">Every node comes from one of the estate's own readers. A reader that fails is named here and its nodes are missing, not invented.</span></div>
+    </aside>
+    <section class="stage">
+      <div class="stage-hd"><h2 id="viewName">Flat — planes stacked bottom to top</h2><span class="lbl" id="viewNote"></span><div class="sp"></div><span class="lbl mono" id="counts"></span></div>
+      <div class="axes">
+        <span><b>Vertical</b> = plane, from physical devices up to work in flight</span>
+        <span><b>Horizontal</b> = estate domain: compute, data, storage, edge, dev</span>
+        <span><b>Moving dots</b> = requests in flight, coloured by kind</span>
+        <span><b>Glow</b> = node serving something now</span>
+      </div>
+      <div class="plot flat fresh" id="plot">
+        <div class="pzc" id="pzc">
+          <button data-pz="out" title="Zoom out">−</button><span class="z" id="pzLbl">100%</span><button data-pz="in" title="Zoom in">+</button>
+          <span class="sp"></span>
+          <button data-pz="l" title="Pan left">←</button><button data-pz="u" title="Pan up">↑</button><button data-pz="d" title="Pan down">↓</button><button data-pz="r" title="Pan right">→</button>
+          <span class="tl" id="pzTilt" hidden><button data-pz="tiltUp" title="Tilt up">⌃</button><span class="z" id="pzAngle"></span><button data-pz="tiltDn" title="Tilt down">⌄</button><button data-pz="rotL" title="Swing left">↺</button><button data-pz="rotR" title="Swing right">↻</button></span>
+          <span class="sp"></span><button data-pz="fit" title="Back to fit">fit</button>
+        </div>
+        <div class="lsel" id="lsel" hidden></div>
+        <div class="pzv" id="pzv"></div>
+      </div>
+    </section>
+    <aside class="insp" id="insp"></aside>
+  </div>
+</div>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/iso.js"></script>
+<script src="/ui/vera-estate.js"></script>
+<script>
+(function(){
+'use strict';
+const BASE = (window.__VERA_BASE__ || (window.veraUI && window.veraUI.BASE) || '').replace(/\/$/, '');
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const px = (v) => v.toFixed(1) + 'px';
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const PCOL = { work: 'var(--ac)', core: 'var(--dv1)', service: 'var(--dv6)', runtime: 'var(--dv3)', host: 'var(--dv4)', edge: 'var(--dv2)' };
+const KCOL = { 'llm.generate': 'var(--dv1)', 'embed': 'var(--dv6)', 'cap call': 'var(--dv3)', 'fabric write': 'var(--dv2)', 'git op': 'var(--dv4)', 'background': 'var(--dv7)' };
+const LCOL = { req: 'var(--dv3)', data: 'var(--dv6)', runs: 'var(--dv1)', repo: 'var(--dv4)', mesh: 'var(--dv2)' };
+const SC = { ok: 'var(--ac2)', run: 'var(--ac)', warn: 'var(--ac3)', down: 'var(--ac4)' };
+const ROWS = 5, SLOTS = { 1: [2], 2: [1, 3], 3: [1, 2, 3], 4: [0, 1, 3, 4], 5: [0, 1, 2, 3, 4] };
+const slotsFor = (n) => SLOTS[n] || Array.from({ length: n }, (_, i) => (ROWS - 1) * i / Math.max(n - 1, 1));
+const tempCol = (t) => t >= 70 ? 'var(--ac3)' : t >= 60 ? 'var(--dv4)' : 'var(--ac2)';
+const tc = (v) => v >= 70 ? 'var(--ac4)' : v >= 55 ? 'var(--ac3)' : 'var(--ac2)';
+
+// ── state ──
+const S = { view: '2d', layout3d: 'stack', focus: null, pipes: true, widgets: true, sel: null, exp: null, act: 'metrics', wact: 'metrics',
+  on: { work: true, core: true, service: true, runtime: true, host: true, edge: true },
+  vz: 1, vx: 0, vy: 0, tilt: null, azim: null, snap: null, err: '', cm: null, logs: {}, req: {}, drag: null, fresh: true, busy: false };
+const byId = () => { const m = {}; ((S.snap && S.snap.nodes) || []).forEach((n) => { m[n.id] = n; }); return m; };
+
+// ── the snapshot ──
+async function load(refresh){
+  if (S.busy) return; S.busy = true;
+  try {
+    const r = await fetch(BASE + '/ops/snapshot' + (refresh ? '?refresh=true' : ''), { cache: 'no-store' });
+    const j = await r.json(); const c = j && j.content !== undefined ? j.content : j;
+    if (!c || !Array.isArray(c.nodes)) throw new Error((c && c.error) || 'no snapshot');
+    S.snap = c; S.err = '';
+    if (S.sel && !byId()[S.sel]){ const q = String(S.sel).toLowerCase(); const hit = c.nodes.find((n) => n.label.toLowerCase() === q || n.ref === S.sel); S.sel = hit ? hit.id : null; }
+    if (!S.sel) S.sel = (c.nodes.find((n) => n.status === 'run') || c.nodes.find((n) => n.kind === 'ollama') || c.nodes[0] || {}).id || null;
+  } catch (e) { S.err = String(e && e.message || e); }
+  S.busy = false;
+  render();
+  S.fresh = false;
+}
+
+// ── layout: the lattice (2D bands, or iso floors carrying the same lattice) ──
+function layout(W, H){
+  const snap = S.snap, ISO = window.VeraISO;
+  const PL = snap.planes.filter((p) => S.on[p.id]);
+  const rowOf = {}; PL.forEach((p, i) => { rowOf[p.id] = i; });
+  const shown = snap.nodes.filter((n) => S.on[n.plane]);
+  const slot = {}; shown.forEach((n) => { const k = n.plane + ':' + n.domain; slot[k] = (slot[k] || 0) + 1; });
+  const used = {};
+  const AXIS = 30, rows = PL.length || 1;
+  // a band's height follows its fullest cell (a runtime plane of thirty guests gets more room than three hosts)
+  const cellMax = {}; Object.keys(slot).forEach((k) => { const pl = k.split(':')[0]; cellMax[pl] = Math.max(cellMax[pl] || 0, slot[k]); });
+  const weight = (pl) => Math.max(1, Math.sqrt((cellMax[pl] || 1) / 3)), wsum = PL.reduce((t, p) => t + weight(p.id), 0) || 1;
+  const bandHOf = {}, bandY = {}; let yy = 0; PL.forEach((p) => { bandY[p.id] = yy; bandHOf[p.id] = (H - AXIS) * weight(p.id) / wsum; yy += bandHOf[p.id]; });
+  const bandH = (H - AXIS) / rows;
+  const pos = {}, bands = [], floors = [], planeLabels = [], domLabels = [], L = {};
+  let route = null, G = null;
+  const DOM = snap.domains;
+  const LX = 104, RX = 12, colW = (W - LX - RX) / DOM.length, colX = (d) => LX + (d + 0.5) * colW;
+  if (S.view === '2d' || !ISO){
+    PL.forEach((p) => { const y = bandY[p.id]; bands.push({ y, h: bandHOf[p.id], col: PCOL[p.id] }); planeLabels.push({ x: 10, y: y + 8, col: PCOL[p.id], t: p.name }); });
+    DOM.forEach((d, i) => domLabels.push({ x: colX(i), y: H - AXIS + 9, t: d }));
+    shown.forEach((n) => {
+      const k = n.plane + ':' + n.domain; const idx = (used[k] = (used[k] || 0)); const total = slot[k]; used[k]++;
+      const bh = bandHOf[n.plane], R = clamp(Math.round((bh - 40) / 26), 5, 9), rowP = Math.min(32, Math.max(14, (bh - 40) / (R - 1)));
+      const sl = total <= 5 ? slotsFor(total)[idx] * (R - 1) / (ROWS - 1) : (R - 1) * idx / Math.max(total - 1, 1);
+      const y = bandY[n.plane] + bh / 2 + 6 + (sl - (R - 1) / 2) * rowP;
+      const stag = total > 8 ? ((idx % 3) - 1) * colW * .3 : total > 5 ? ((idx % 2) ? 1 : -1) * colW * .22 : 0;
+      pos[n.id] = { x: clamp(colX(n.domain) + stag, LX + 46, W - 70), y, col: PCOL[n.plane] };
+    });
+    route = (a, b) => [{ x: pos[a].x, y: pos[a].y }, { x: pos[b].x, y: pos[a].y }, { x: pos[b].x, y: pos[b].y }];
+  } else {
+    const TILT = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 12.6) : S.tilt, AZIM = clamp(S.azim == null ? 45 : S.azim, 32, 58);
+    const VS = 1.0, VH = 2 * VS + 0.45, TH = TILT * Math.PI / 180, FLAT = S.layout3d === 'flat';
+    const KI0 = (FLAT ? 0.74 : 1) * 76 / Math.cos(45 * Math.PI / 180), NHW = 52, FITM = 14;
+    const lay = (KI) => {
+      const uyStable = KI * Math.SQRT1_2 * Math.sin(TH), spanY = (4 + 4 * VS) * uyStable;
+      const zh = Math.min((H - AXIS - 34 - spanY) / Math.max(rows - 1, 1), spanY + 26);
+      const iso = ISO.proj(TILT, AZIM, KI, true);
+      const zOf = (pl) => FLAT ? 0 : (rows - 1 - rowOf[pl]) * zh, uOf = (pl) => FLAT ? (rowOf[pl] % 3) * 5.9 : 0, vOf2 = (pl) => FLAT ? Math.floor(rowOf[pl] / 3) * (2 * VH + 1.0) : 0;
+      const rawX = [], rawY = [], corners = [], rawNodes = [], LL = {}, usedL = {};
+      PL.forEach((p) => { const z = zOf(p.id), uo = uOf(p.id), vo = vOf2(p.id);
+        const c = [iso(-0.6 + uo, -VH + vo, z), iso(4.6 + uo, -VH + vo, z), iso(4.6 + uo, VH + vo, z), iso(-0.6 + uo, VH + vo, z)];
+        corners.push({ p, c }); c.forEach((q) => { rawX.push(q[0]); rawY.push(q[1]); }); });
+      shown.forEach((n) => { const k = n.plane + ':' + n.domain; const idx = (usedL[k] = (usedL[k] || 0)); const total = slot[k]; usedL[k]++;
+        const v = (slotsFor(total)[idx] - (ROWS - 1) / 2) * VS, z = zOf(n.plane), stag = total > 8 ? ((idx % 3) - 1) * .36 : total > 5 ? ((idx % 2) ? .34 : -.34) : 0;
+        const q = iso(n.domain + uOf(n.plane) + stag, v + vOf2(n.plane), z);
+        LL[n.id] = { u: n.domain + uOf(n.plane) + stag, v: v + vOf2(n.plane), z };
+        rawNodes.push({ id: n.id, x: q[0], y: q[1], col: PCOL[n.plane] }); rawX.push(q[0] - NHW, q[0] + NHW); rawY.push(q[1] - 40, q[1] + 12); });
+      const minX = Math.min.apply(null, rawX), maxX = Math.max.apply(null, rawX), minY = Math.min.apply(null, rawY), maxY = Math.max.apply(null, rawY);
+      return { iso, corners, rawNodes, LL, minX, maxX, minY, maxY };
+    };
+    let KI = KI0, R = lay(KI);
+    if (FLAT) for (let i = 0; i < 4; i++){ const s = Math.min(1, (W - 2 * FITM) / (R.maxX - R.minX), (H - AXIS - 2 * FITM) / (R.maxY - R.minY)); if (s > 0.995) break; KI *= s; R = lay(KI); }
+    const ox = (W - (R.maxX - R.minX)) / 2 - R.minX, oy = (H - AXIS - (R.maxY - R.minY)) / 2 - R.minY + 6;
+    G = { iso: R.iso, ox, oy, L: R.LL, FLAT, fitS: KI / KI0, TILT, AZIM };
+    R.corners.forEach((f) => { floors.push({ id: f.p.id, col: PCOL[f.p.id], clip: 'polygon(' + f.c.map((q) => (q[0] + ox).toFixed(0) + 'px ' + (q[1] + oy).toFixed(0) + 'px').join(',') + ')' });
+      const a = f.c[3]; planeLabels.push({ id: f.p.id, x: clamp(a[0] + ox - 2, 8, W - 96), y: clamp(a[1] + oy - 15, 10, H - 14), col: PCOL[f.p.id], t: f.p.name + (S.focus === f.p.id ? ' · in focus' : '') }); });
+    DOM.forEach((d, i) => { const q = R.iso(i, VH + 0.75, 0); domLabels.push({ x: clamp(q[0] + ox, 34, W - 34), y: clamp(q[1] + oy, 10, H - 12), t: d }); });
+    R.rawNodes.forEach((n) => { pos[n.id] = { x: n.x + ox, y: n.y + oy, col: n.col }; });
+    Object.assign(L, R.LL);
+    route = (a, b) => { const A = L[a], B = L[b]; const P = (u, v, z) => { const q = R.iso(u, v, z); return { x: q[0] + ox, y: q[1] + oy }; };
+      return [P(A.u, A.v, A.z), P(B.u, A.v, A.z), P(B.u, B.v, A.z), P(B.u, B.v, B.z)]; };
+  }
+  return { PL, shown, pos, bands, floors, planeLabels, domLabels, route, G, L, AXIS };
+}
+
+// ── the iso widgets beside their nodes (3D): dial for a load, tank for a store, thermometer for a temperature ──
+function isoWidgets(lay, W, H){
+  const ISO = window.VeraISO, out = { faces: [], labels: [], needles: [], edges: [], boxes: [] };
+  if (!ISO || !lay.G || !S.widgets) return out;
+  const { iso, ox, oy, L, FLAT, TILT, AZIM } = lay.G;
+  const Pg = (u, v, z) => { const q = iso(u, v, z); return [q[0] + ox, q[1] + oy]; };
+  const ws = FLAT ? Math.max(.62, Math.min(1, lay.G.fitS * 1.35)) : 1;
+  const sceneG = (g, boxes, key, k) => { const Pd = ISO.proj(TILT, AZIM, k); let u0 = Infinity, v0 = Infinity, u1 = -Infinity, v1 = -Infinity;
+    boxes.forEach((b) => { u0 = Math.min(u0, b.u); v0 = Math.min(v0, b.v); u1 = Math.max(u1, b.u + b.w); v1 = Math.max(v1, b.v + b.d); });
+    const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2; const f = ISO.scene(Pd, boxes.map((b) => Object.assign({}, b, { u: b.u - cu, v: b.v - cv })), key);
+    f.forEach((q) => { q.x += g[0]; q.y += g[1]; }); return { faces: ISO.px(f), at: (u, v, z) => { const p = Pd(u - cu, v - cv, z || 0); return [p[0] + g[0], p[1] + g[1]]; } }; };
+  const bboxOf = (faces) => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; faces.forEach((q) => { const x = parseFloat(q.x), y = parseFloat(q.y), w = parseFloat(q.w), h = parseFloat(q.h); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h); }); return { x0, y0, x1, y1 }; };
+  const BUILD = {
+    dial: (g, k, n) => { const N = 20, R = 2.0, pct = (n.load || 0) / 100, lit = Math.max(1, Math.round(N * pct)), boxes = [];
+      for (let i = 0; i < N; i++){ const a = Math.PI * .75 + (i / (N - 1)) * Math.PI * 1.5, on = i < lit; boxes.push({ u: Math.cos(a) * R - .17, v: Math.sin(a) * R - .17, z: 0, w: .34, d: .34, h: on ? .3 : .1, col: !on ? 'var(--s3)' : (i < N * .6 ? 'var(--ac2)' : i < N * .85 ? 'var(--ac3)' : 'var(--ac4)') }); }
+      boxes.push({ u: -.36, v: -.36, z: 0, w: .72, d: .72, h: .4, col: 'var(--s3)' });
+      const s = sceneG(g, boxes, (b) => (b.u + b.v) * 100 + b.z, k); const an = Math.PI * .75 + ((lit - 1) / (N - 1)) * Math.PI * 1.5, a = s.at(0, 0, .44), b2 = s.at(Math.cos(an) * R * .8, Math.sin(an) * R * .8, .32);
+      return { faces: s.faces, n: 'load ' + Math.round(n.load || 0) + '%', col: pct >= .85 ? 'var(--ac4)' : pct >= .6 ? 'var(--ac3)' : 'var(--ac2)', needle: ISO.segs([a, b2])[0] }; },
+    tank: (g, k, n) => { const HH = 3.2, lvl = Math.max(.06, (n.disk_pct || 0) / 100);
+      const s = sceneG(g, [{ u: -.1, v: -.1, z: -.14, w: 3.2, d: 3.2, h: .14, col: 'var(--s3)', key: 0 }, { u: .08, v: .08, z: 0, w: 2.84, d: 2.84, h: lvl * HH, col: 'var(--dv6)', key: 1 }, { u: 0, v: 0, z: 0, w: 3, d: 3, h: HH, col: 'color-mix(in srgb,var(--t1) 7%,transparent)', key: 3 }], (b) => b.key * 1000 + b.z, k);
+      return { faces: s.faces, n: 'disk ' + Math.round(n.disk_pct || 0) + '%', col: 'var(--dv6)' }; },
+    thermo: (g, k, n) => { const TB = 2.6, t0 = n.temp || 40, rows = [['gpu', t0], ['cpu', Math.max(30, t0 - 7)], ['nvme', Math.max(28, t0 - 12)]];
+      const s = sceneG(g, rows.flatMap((r, i) => { const u = i * 1.2, h = r[1] / 95 * TB; return [{ u, v: 0, z: 0, w: .62, d: .62, h: .28, col: 'var(--s3)' }, { u: u + .09, v: .09, z: .06, w: .44, d: .44, h: .28, col: tc(r[1]) }, { u: u + .15, v: .15, z: .28, w: .32, d: .32, h: TB, col: 'color-mix(in srgb,var(--t1) 9%,transparent)' }, { u: u + .15, v: .15, z: .28, w: .32, d: .32, h: Math.max(.06, h), col: tc(r[1]) }, { u: u + .13, v: .13, z: TB + .28, w: .36, d: .36, h: .06, col: 'var(--bd2)' }]; }), (b) => b.u + b.v + b.z, k);
+      return { faces: s.faces, n: Math.round(t0) + '° · ' + (t0 >= 70 ? 'hot' : t0 >= 55 ? 'warm' : 'cool'), col: tc(t0) }; }
+  };
+  const kindOf = (n) => n.kind === 'ollama' && n.load != null ? 'dial' : (n.temp != null && (n.kind === 'host' || n.kind === 'guest') ? 'thermo' : (n.disk_pct != null ? 'tank' : (n.kind === 'docker' && n.load != null ? 'dial' : null)));
+  lay.shown.forEach((n) => { const kind = kindOf(n), N = L[n.id]; if (!kind || !N) return; if (S.focus && n.plane !== S.focus) return;
+    const gu = N.u + 0.5, gv = N.v - 0.1, g = Pg(gu, gv, N.z), k = 9 * ws;
+    const b = BUILD[kind](g, k, n); const bb = bboxOf(b.faces); out.boxes.push(bb);
+    b.faces.forEach((q) => out.faces.push(q)); out.labels.push({ x: g[0], y: bb.y1 + 3, n: b.n, col: b.col });
+    if (b.needle) out.needles.push(b.needle);
+    ISO.segs([g, Pg(N.u, gv, N.z), Pg(N.u, N.v, N.z)]).forEach((sg) => { if (sg.len < .6) return; out.edges.push({ x: sg.x, y: sg.y, len: sg.len, deg: sg.deg, col: PCOL[n.plane] }); }); });
+  return out;
+}
+
+// ── render ──
+function render(){
+  const plot = $('plot'), v = $('pzv');
+  if (!S.snap){ v.innerHTML = '<div class="empty">' + (S.err ? 'The estate could not be read: ' + esc(S.err) : 'reading the estate…') + '</div>'; return; }
+  const snap = S.snap, ID = byId();
+  document.documentElement.classList.toggle('iso', S.view === '3d');
+  plot.classList.toggle('iso', S.view === '3d'); plot.classList.toggle('flat', S.view !== '3d'); plot.classList.toggle('fresh', S.fresh);
+  // header
+  $('liveN').textContent = String(snap.inflight_total || 0);
+  $('liveChip').classList.toggle('stale', !!S.err);
+  const cnt = snap.counts || {};
+  $('estateLine').textContent = (snap.nodes.length) + ' things provisioned by or for Vera' + (S.err ? ' · last read failed: ' + S.err : '') + (snap.cached ? '' : '');
+  $('b2d').classList.toggle('on', S.view === '2d'); $('b3d').classList.toggle('on', S.view === '3d');
+  $('bStack').classList.toggle('on', S.layout3d !== 'flat' && !S.focus); $('bFlat').classList.toggle('on', S.layout3d === 'flat' && !S.focus); $('bOne').classList.toggle('on', !!S.focus);
+  ['bStack', 'bFlat', 'bOne', 'bWidgets'].forEach((id) => { $(id).disabled = S.view !== '3d'; });
+  $('bWidgets').classList.toggle('on', S.widgets && S.view === '3d');
+  $('bPipes').classList.toggle('on', S.pipes); $('bDirect').classList.toggle('on', !S.pipes);
+  $('pzTilt').hidden = S.view !== '3d'; $('lsel').hidden = S.view !== '3d';
+  $('viewName').textContent = S.view === '2d' ? 'Flat — planes stacked bottom to top' : 'Isometric — one floor per plane';
+  const active = snap.planes.filter((p) => S.on[p.id]);
+  $('viewNote').textContent = active.length === snap.planes.length ? 'every plane' : active.length + ' of ' + snap.planes.length + ' planes';
+  // rail: planes
+  $('planes').innerHTML = snap.planes.map((p) => '<button class="plane ' + (S.on[p.id] ? 'on' : '') + (S.view === '3d' && S.focus === p.id ? ' focus' : '') + (S.view === '3d' && S.focus && S.focus !== p.id ? ' faded' : '') + '" data-plane="' + p.id + '" style="--pc:' + PCOL[p.id] + '" title="' + esc(p.title) + '"><i></i><span class="n">' + esc(p.name) + '</span><span class="c">' + p.count + '</span></button>').join('')
+    + '<button class="plane" data-plane="*" style="--pc:var(--t3)"><i></i><span class="n">Show every plane</span></button>';
+  $('planesNote').textContent = S.view === '3d' ? 'In 3D a plane is a layer: click one to look at it on its own; Stacked / All flat lays the layers out as the exploded views do.' : '';
+  $('kinds').innerHTML = Object.keys(snap.inflight_kinds || {}).map((k) => '<span class="kind"><i style="background:' + KCOL[k] + '"></i>' + esc(k) + '<span class="c">' + snap.inflight_kinds[k] + '</span></span>').join('');
+  $('pipeKey').innerHTML = (snap.link_kinds || []).map((k) => '<span class="kind"><i class="pipe" style="background:' + LCOL[k[0]] + '"></i>' + esc(k[1]) + '</span>').join('');
+  const fl = snap.inflight || [];
+  $('ifN').textContent = String(fl.length);
+  $('inflight').innerHTML = fl.length ? fl.slice(0, 14).map((f) => '<span class="ifr" title="' + esc(f.kind + ' · ' + f.a + ' → ' + f.b) + '"><i style="background:' + KCOL[f.kind] + '"></i><span class="k">' + esc(f.kind) + '</span><span class="p">' + esc((ID[f.a] || {}).label || f.a) + ' → ' + esc((ID[f.b] || {}).label || f.b) + '</span><span class="e">' + (f.age != null ? f.age.toFixed(0) + 's' : esc(f.label || '')) + '</span></span>').join('') : '<span class="note">nothing in flight right now</span>';
+  const srcs = Object.keys(snap.sources || {}); const bad = srcs.filter((k) => snap.sources[k] !== 'ok');
+  $('srcN').textContent = (srcs.length - bad.length) + ' of ' + srcs.length;
+  $('sources').innerHTML = srcs.map((k) => '<span class="srcrow ' + (snap.sources[k] === 'ok' ? '' : 'bad') + '" title="' + esc(snap.sources[k]) + '"><i></i><span class="n">' + esc(k) + '</span></span>').join('');
+  // the plot
+  const W = plot.clientWidth || 800, H = plot.clientHeight || 600;
+  const lay = layout(W, H), pos = lay.pos, shown = lay.shown;
+  const parts = [];
+  lay.bands.forEach((b) => parts.push('<div class="band" style="top:' + px(b.y) + ';height:' + px(b.h) + ';--pc:' + b.col + '"></div>'));
+  lay.floors.forEach((f) => parts.push('<div class="floor ' + (S.focus && S.focus !== f.id ? 'dim' : S.focus === f.id ? 'focus' : '') + '" data-floor="' + f.id + '" title="Click to look at this layer on its own" style="left:0;top:0;width:100%;height:100%;--pc:' + f.col + ';clip-path:' + f.clip + ';pointer-events:auto"></div>'));
+  lay.planeLabels.forEach((p) => parts.push('<div class="plabel ' + (S.focus && p.id && S.focus !== p.id ? 'dim' : '') + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';color:' + p.col + '">' + esc(p.t) + '</div>'));
+  lay.domLabels.forEach((d) => parts.push('<div class="dlabel" style="left:' + px(d.x) + ';top:' + px(d.y) + '">' + esc(d.t) + '</div>'));
+  // links + flows
+  const segsOf = (a, b) => { const pts = S.pipes && lay.route ? lay.route(a, b) : [{ x: pos[a].x, y: pos[a].y }, { x: pos[b].x, y: pos[b].y }]; const segs = [];
+    for (let i = 1; i < pts.length; i++){ const dx = pts[i].x - pts[i - 1].x, dy = pts[i].y - pts[i - 1].y, len = Math.hypot(dx, dy); if (len < .6) continue; segs.push({ x: pts[i - 1].x, y: pts[i - 1].y, len, deg: Math.atan2(dy, dx) * 180 / Math.PI }); } return segs; };
+  let nLinks = 0;
+  snap.links.forEach((l) => { if (!pos[l.a] || !pos[l.b]) return; if (S.view === '3d' && S.focus && (ID[l.a].plane !== S.focus || ID[l.b].plane !== S.focus)) return;
+    const dim = S.sel === l.a || S.sel === l.b ? '' : 'q'; nLinks++;
+    segsOf(l.a, l.b).forEach((s) => parts.push('<div class="link ' + dim + '" style="left:' + px(s.x) + ';top:' + px(s.y) + ';width:' + px(s.len) + ';transform:rotate(' + s.deg.toFixed(2) + 'deg);--lc:' + LCOL[l.kind] + '"></div>')); });
+  fl.slice(0, 12).forEach((f, fi) => { if (!pos[f.a] || !pos[f.b]) return; if (S.view === '3d' && S.focus && (ID[f.a].plane !== S.focus || ID[f.b].plane !== S.focus)) return;
+    const segs = segsOf(f.a, f.b), total = segs.reduce((t, s) => t + s.len, 0) || 1, cycle = 1.6 + (fi % 4) * .5; let run = 0;
+    segs.forEach((s) => { parts.push('<div class="flow" style="left:' + px(s.x) + ';top:' + px(s.y) + ';transform:rotate(' + s.deg.toFixed(2) + 'deg);--len:' + px(s.len) + ';--dur:' + (cycle * s.len / total).toFixed(2) + 's;--dl:' + (fi * .28 + cycle * run / total).toFixed(2) + 's"><i style="background:' + KCOL[f.kind] + ';box-shadow:0 0 8px ' + KCOL[f.kind] + '"></i></div>'); run += s.len; }); });
+  $('counts').textContent = shown.length + ' nodes · ' + nLinks + ' links';
+  // 3D: widgets, pins and stems; the chip floats above its pin
+  const chipAt = {}; let NSC = 1;
+  if (S.view === '3d' && lay.G){
+    const wd = isoWidgets(lay, W, H); const wboxes = wd.boxes.slice();
+    NSC = lay.G.FLAT ? Math.max(.68, Math.min(1, lay.G.fitS * 1.3)) : 1;
+    wd.edges.forEach((e) => parts.push('<span class="wedge" style="left:' + px(e.x) + ';top:' + px(e.y) + ';width:' + px(e.len) + ';transform:rotate(' + e.deg.toFixed(2) + 'deg);--pc:' + e.col + '"></span>'));
+    wd.faces.forEach((q) => parts.push('<i class="owf ' + (q.k || '') + '" style="left:' + q.x + ';top:' + q.y + ';width:' + q.w + ';height:' + q.h + ';clip-path:' + q.cp + ';background:' + q.col + '"></i>'));
+    wd.needles.forEach((n) => parts.push('<span class="owf-n" style="left:' + px(n.x) + ';top:' + px(n.y) + ';width:' + px(n.len) + ';transform:rotate(' + n.deg.toFixed(1) + 'deg)"></span>'));
+    wd.labels.forEach((l) => parts.push('<span class="owf-l" style="left:' + px(l.x) + ';top:' + px(l.y) + ';color:' + l.col + '">' + esc(l.n) + '</span>'));
+    const RAISE0 = lay.G.FLAT ? 18 : 22, dtf = window.VeraISO.discTf(lay.G.iso);
+    shown.forEach((n) => { const p = pos[n.id], col = PCOL[n.plane], hidden = !!(S.focus && n.plane !== S.focus);
+      const hw = NSC * (14 + 5.4 * Math.min(26, n.label.length) + (n.errors ? 20 : 0) + (n.inflight ? 12 : 0)) / 2 + 2, hh = 11 * NSC;
+      let raise = RAISE0 + (lay.G.FLAT && (n.domain % 2) ? 16 : 0), cx = p.x;
+      const hit = (x, y) => wboxes.filter((b) => x + hw > b.x0 - 2 && x - hw < b.x1 + 2 && y + hh > b.y0 - 2 && y - hh < b.y1 + 2)[0];
+      while (hit(cx, p.y - raise) && raise < 92) raise += 6;
+      const b = hit(cx, p.y - raise); if (b){ cx = b.x0 - hw - 4; raise = RAISE0; }
+      chipAt[n.id] = { x: cx, y: p.y - raise };
+      parts.push('<span class="pin ' + (hidden ? 'dim' : '') + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';--pc:' + col + ';--dtf:' + dtf + '"></span>');
+      const sg = window.VeraISO.segs([[p.x, p.y], [cx, p.y - raise + hh]])[0];
+      parts.push('<span class="stem ' + (hidden ? 'dim' : '') + '" style="left:' + px(sg.x) + ';top:' + px(sg.y) + ';width:' + px(sg.len) + ';transform:rotate(' + sg.deg.toFixed(2) + 'deg);--pc:' + col + '"></span>'); });
+  }
+  // nodes
+  shown.forEach((n) => { const at = chipAt[n.id] || pos[n.id], busy = n.inflight > 0 || n.status === 'run';
+    const spark = (S.snap.series[n.id] && (S.snap.series[n.id].tps || S.snap.series[n.id].cpu)) || null;
+    const bars = spark ? spark.slice(-5) : null; const hi = bars ? Math.max.apply(null, bars.concat([1])) : 1;
+    parts.push('<div class="nd ' + (S.view === '3d' && S.focus && n.plane !== S.focus ? 'dim ' : '') + (S.sel === n.id ? 'sel ' : '') + (busy ? 'busy ' : '') + (n.errors ? 'hasErr' : '') + '" data-node="' + esc(n.id) + '" title="' + esc(n.label + ' · ' + n.plane + ' · ' + n.detail + (n.inflight ? ' · ' + n.inflight + ' in flight' : '') + (n.errors ? ' · ' + n.errors + ' findings' : '') + (n.temp != null ? ' · ' + Math.round(n.temp) + '°' : '')) + '" style="left:' + px(at.x) + ';top:' + px(at.y) + ';--pc:' + PCOL[n.plane] + ';--nsc:' + NSC.toFixed(2) + '">'
+      + '<span class="st" style="background:' + SC[n.status] + '"></span>' + esc(n.label.length > 26 ? n.label.slice(0, 24) + '…' : n.label)
+      + (bars ? '<span class="mini" style="color:' + PCOL[n.plane] + '">' + bars.map((v) => '<i style="height:' + Math.max(2, 11 * v / hi).toFixed(0) + 'px"></i>').join('') + '</span>' : '')
+      + (n.temp != null ? '<span class="tmp" title="' + Math.round(n.temp) + '° · throttle at 83°"><i style="width:' + Math.min(100, n.temp / 90 * 100) + '%;background:' + tempCol(n.temp) + '"></i></span>' : '')
+      + (n.inflight ? '<span class="lb">' + n.inflight + '</span>' : '') + (n.errors ? '<span class="err">' + n.errors + '</span>' : '')
+      + '<span class="exp" data-exp="' + esc(n.id) + '" title="Open this node as a widget on the graph">⤢</span></div>'); });
+  // the expanded node: the box IS the action surface, parked beside its node
+  if (S.exp && ID[S.exp] && pos[S.exp]){ const n = ID[S.exp], p = pos[S.exp], wide = S.wact !== 'metrics', half = wide ? 165 : 118;
+    const wx = p.x > W / 2 ? p.x - (half + 26) : p.x + (half + 26);
+    parts.push('<div class="ndw ' + (wide ? 'wide' : '') + '" style="left:' + px(clamp(wx, half, W - half)) + ';top:' + px(clamp(p.y, 120, H - 150)) + '" data-stop="1"><div class="h"><span class="st" style="background:' + SC[n.status] + '"></span>' + esc(n.label) + '<span class="x" data-close="1">✕</span></div><div class="b">' + actionsHtml(n, S.wact, 'w') + '</div></div>'); }
+  v.innerHTML = parts.join('');
+  v.style.transform = 'translate(' + S.vx + 'px,' + S.vy + 'px) scale(' + S.vz + ')';
+  $('pzLbl').textContent = Math.round(S.vz * 100) + '%';
+  if (lay.G) $('pzAngle').textContent = Math.round(lay.G.TILT) + '°/' + Math.round(lay.G.AZIM) + '°';
+  $('lsel').innerHTML = snap.planes.map((p) => '<button data-layer="' + p.id + '" class="' + (S.focus === p.id ? 'on' : '') + '" style="--pc:' + PCOL[p.id] + '"><i></i><span>' + esc(p.name) + '</span></button>').join('');
+  renderInspector();
+}
+
+// ── the inspector: the selected node's metrics, its actions, the findings, the requests through it ──
+function sparkSvg(vals, w, h, col){ if (!vals || vals.length < 2) return '<div class="note">no history yet</div>';
+  const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals), r = (hi - lo) || 1, pad = 4;
+  const pts = vals.map((v, i) => ((i / (vals.length - 1)) * w).toFixed(1) + ',' + (pad + (1 - (v - lo) / r) * (h - pad * 2)).toFixed(1));
+  return '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><path d="M0,' + h + ' L' + pts.join(' L') + ' L' + w + ',' + h + ' Z" fill="' + col + '" fill-opacity=".18"/><polyline points="' + pts.join(' ') + '" fill="none" stroke="' + col + '" stroke-width="1.8" stroke-linejoin="round"/></svg>'; }
+function histBars(ms, col){ if (!ms || !ms.length) return '<div class="note">no requests logged for this node yet</div>';
+  const B = 12, hi = Math.max.apply(null, ms), lo = Math.min.apply(null, ms), r = (hi - lo) || 1, bins = new Array(B).fill(0);
+  ms.forEach((v) => { bins[Math.min(B - 1, Math.floor((v - lo) / r * B))]++; }); const top = Math.max.apply(null, bins) || 1;
+  return '<div class="hbars">' + bins.map((v, i) => '<i style="height:' + (v / top * 100).toFixed(0) + '%;background:' + (i < 5 ? col : i < 9 ? 'var(--dv4)' : 'var(--ac3)') + '"></i>').join('') + '</div>'; }
+function actionsFor(n){ const K = { ollama: ['req', 'caps', 'logs', 'term'], store: ['req', 'logs', 'term'], guest: ['term', 'files', 'logs', 'req', 'restart'], host: ['term', 'files', 'logs', 'req'], 'docker-host': ['term', 'logs', 'req'], docker: ['logs', 'req', 'term'], sandbox: ['term', 'logs', 'req', 'restart'], core: ['req', 'logs'], work: ['logs', 'req'], mesh: ['req', 'logs'] }; return K[n.kind] || ['logs', 'req']; }
+const ALABEL = { metrics: 'Metrics', term: 'Terminal', files: 'Files', req: 'Send request', logs: 'Logs', caps: 'Capabilities', restart: 'Restart' };
+const ANOTE = { metrics: "The node's own readings, drawn in place.", term: 'A shell opens in the estate, on the machine itself (the Estate\'s Machines page, its terminal).', files: 'The filesystem is browsed in the estate (Remote IDE for an enrolled host).', req: 'A capability request, sent through Vera\'s own bus; the default is a reading about this node. Nothing runs on the GPU unless you name a model capability.', logs: 'The last events that name this node, from the event ring.', caps: 'What this node serves.', restart: 'Restart asks once, then acts through the estate\'s own flow (a guest reboots through Proxmox; a sandbox through Loop Lab, dry run first).' };
+function actionsHtml(n, act, where){
+  const list = ['metrics'].concat(actionsFor(n)); const cur = list.indexOf(act) >= 0 ? act : 'metrics';
+  const btns = '<div class="acts">' + list.map((a) => '<button class="abtn ' + (a === cur ? 'on ' : '') + (a === 'restart' ? 'danger' : '') + '" data-act="' + a + '" data-where="' + where + '">' + ALABEL[a] + '</button>').join('') + '</div>';
+  const col = PCOL[n.plane]; let body = '';
+  if (cur === 'metrics'){ const ser = (S.snap.series[n.id] || {}); const vals = ser.tps || ser.cpu || null;
+    body = '<div style="display:flex;flex-direction:column;gap:7px"><span class="r"><span class="k">load</span><span class="bar"><i style="width:' + (n.load != null ? Math.min(100, n.load) : 0) + '%;background:' + col + '"></i></span><span class="v">' + (n.load != null ? Math.round(n.load) + '%' : '—') + '</span></span>'
+      + (n.mem_pct != null ? '<span class="r"><span class="k">memory</span><span class="bar"><i style="width:' + Math.min(100, n.mem_pct) + '%;background:var(--dv6)"></i></span><span class="v">' + Math.round(n.mem_pct) + '%</span></span>' : '')
+      + (n.disk_pct != null ? '<span class="r"><span class="k">disk</span><span class="bar"><i style="width:' + Math.min(100, n.disk_pct) + '%;background:var(--dv4)"></i></span><span class="v">' + Math.round(n.disk_pct) + '%</span></span>' : '')
+      + '<div class="sp2">' + sparkSvg(vals, 190, 36, col) + '</div>' + (n.latency ? histBars(n.latency, col) : '')
+      + '<span class="r"><span class="k">in flight</span><span class="v">' + (n.inflight || 0) + '</span><span class="k" style="margin-left:auto">p95</span><span class="v">' + (n.p95_ms != null ? Math.round(n.p95_ms) + 'ms' : '—') + '</span></span></div>'; }
+  else if (cur === 'term' || cur === 'files'){ body = '<div class="term"><span class="tl in">' + esc(n.label) + ' · ' + esc(n.plane) + ' · ' + esc(n.detail) + '</span>' + (n.ref ? '<span class="tl">' + (cur === 'term' ? 'a shell on this machine opens in the estate' : 'its files open in the estate') + '</span>' : '<span class="tl warn">' + (n.kind === 'ollama' || n.kind === 'store' ? 'this service has no machine of its own here: open the runtime it runs on' : 'no machine is enrolled for this node') + '</span>') + '</div>'
+      + '<div class="rrow">' + (n.ref ? '<button class="abtn go" data-open-entity="' + esc(n.ref) + '">Open in the estate</button>' : '') + (n.kind === 'ollama' || n.kind === 'store' ? '<button class="abtn" data-sel-runtime="' + esc(n.id) + '">Select its runtime</button>' : '') + '</div>'; }
+  else if (cur === 'req'){ const R = S.req[n.id] || { name: (n.req && n.req.name) || 'obs.health', body: JSON.stringify((n.req && n.req.arguments) || {}, null, 2), resp: '', err: false, busy: false };
+    S.req[n.id] = R;
+    body = '<div class="reqc"><span class="rlbl">capability</span><input class="rin" data-req="name" data-node="' + esc(n.id) + '" value="' + esc(R.name) + '"><span class="rlbl">payload</span><textarea class="rin body" data-req="body" data-node="' + esc(n.id) + '">' + esc(R.body) + '</textarea><div class="rrow"><button class="abtn go" data-send="' + esc(n.id) + '"' + (R.busy ? ' disabled' : '') + '>' + (R.busy ? 'sending…' : 'Send') + '</button><span class="lbl">through Vera\'s bus</span></div>' + (R.resp ? '<span class="rresp ' + (R.err ? 'err' : '') + '">' + esc(R.resp) + '</span>' : '') + '</div>'; }
+  else if (cur === 'logs'){ const Lg = S.logs[n.id]; if (!Lg) fetchLogs(n);
+    body = '<div class="term">' + (Lg && Lg.length ? Lg.map((e) => '<span class="tl ' + (/error|fail/i.test(e.type) ? 'err' : /ok|done/.test(e.type) ? 'ok' : '') + '">' + esc(e.ts + '  ' + e.type + ' ' + e.name + (e.text ? '  ' + e.text : '')) + '</span>').join('') : (Lg ? '<span class="tl dim">no recent event names this node</span>' : '<span class="tl dim">reading the events…</span>')) + '</div><div class="rrow"><button class="abtn" data-logs="' + esc(n.id) + '">Read again</button></div>'; }
+  else if (cur === 'caps'){ body = '<div class="capl">' + ((n.caps || []).length ? n.caps.map((c) => '<span class="caprow"><i></i><span class="n">' + esc(c) + '</span><span class="c">' + (n.kind === 'ollama' ? 'model' : '') + '</span></span>').join('') : '<span class="caprow"><span class="n">' + esc(n.detail || 'nothing listed') + '</span></span>') + '</div>'; }
+  else if (cur === 'restart'){ const can = n.kind === 'guest' && n.vmid != null || n.kind === 'sandbox';
+    body = '<div class="reqc"><div class="rin body">' + (n.kind === 'guest' ? 'Reboot ' + esc(n.label) + ' (vmid ' + n.vmid + ') through Proxmox? It asks once, then acts.' : n.kind === 'sandbox' ? 'Restart the sandbox ' + esc(n.label) + ' through Loop Lab? A dry run comes first.' : 'Restart is not wired for a ' + esc(n.kind) + ' yet: this page only restarts guests (Proxmox) and sandboxes (Loop Lab).') + '</div><div class="rrow"><button class="abtn go" data-restart="' + esc(n.id) + '"' + (can ? '' : ' disabled') + '>' + (n.kind === 'guest' ? 'Reboot' : 'Restart') + '</button></div></div>'; }
+  return btns + body + '<span class="note">' + esc(ANOTE[cur]) + '</span>';
+}
+function renderInspector(){
+  const ID = byId(), n = ID[S.sel]; const insp = $('insp'); if (!n){ insp.innerHTML = '<div class="card"><div class="note">Select a node on the map.</div></div>'; return; }
+  const col = PCOL[n.plane], arcLen = Math.PI * 23, loadPct = (n.load || 0) / 100; const plane = S.snap.planes.find((p) => p.id === n.plane) || {};
+  const ser = S.snap.series[n.id] || {}; const vals = ser.tps || ser.cpu || ser.ping || null;
+  const errs = (S.snap.errors || []).filter((e) => e.node === n.id); const list = errs.length ? errs : (S.snap.errors || []).slice(0, 8);
+  const through = n.through || [];
+  insp.innerHTML = '<div class="card"><h3>' + esc(plane.name || n.plane) + '<span class="lbl mono">' + esc(n.kind) + '</span></h3><div class="hero"><b style="color:' + col + '" title="' + esc(n.label) + '">' + esc(n.label) + '</b></div>'
+    + '<div class="irow"><span class="k">status</span><span class="v" style="color:' + SC[n.status] + '">' + esc(n.status) + '</span></div><div class="irow"><span class="k">detail</span><span class="v" title="' + esc(n.detail) + '">' + esc(n.detail || '—') + '</span></div>'
+    + (n.note ? '<div class="irow"><span class="k">note</span><span class="v" title="' + esc(n.note) + '">' + esc(n.note) + '</span></div>' : '')
+    + '<div class="wg"><span class="h">load<b>' + (n.load != null ? Math.round(n.load) + '%' : '—') + '</b></span><div class="arc"><svg width="58" height="36" viewBox="0 0 58 36"><path d="M6 32 A23 23 0 0 1 52 32" fill="none" stroke="var(--s3)" stroke-width="6" stroke-linecap="round"/><path d="M6 32 A23 23 0 0 1 52 32" fill="none" stroke="' + col + '" stroke-width="6" stroke-linecap="round" stroke-dasharray="' + (arcLen * loadPct).toFixed(1) + ' ' + arcLen.toFixed(1) + '"/></svg><span style="display:flex;flex-direction:column;gap:2px"><span class="v" style="color:' + col + '">' + (n.inflight || 0) + '</span><span class="lbl" style="font-size:9px">requests in flight</span></span></div></div>'
+    + '<div class="wg"><span class="h">' + (ser.tps ? 'throughput · tokens/s' : ser.cpu ? 'cpu · last 40 min' : 'history') + '<b>' + (vals && vals.length ? (ser.tps ? vals[vals.length - 1].toFixed(1) + '/s' : Math.round(vals[vals.length - 1]) + '%') : '—') + '</b></span><div class="wsp">' + sparkSvg(vals, 150, 38, col) + '</div></div>'
+    + '<div class="wg"><span class="h">latency spread<b>p95 ' + (n.p95_ms != null ? Math.round(n.p95_ms) + 'ms' : '—') + '</b></span>' + histBars(n.latency, col) + '</div>'
+    + (n.temp != null ? '<div class="wg"><span class="h">temperature<b>' + Math.round(n.temp) + '°</b></span><span class="tmpbar"><i style="width:' + Math.min(100, n.temp / 90 * 100) + '%;background:' + tempCol(n.temp) + '"></i></span><span class="lbl" style="font-size:9px">throttle at 83°</span></div>' : '')
+    + '</div>'
+    + '<div class="card"><h3>Actions<span class="lbl">' + esc(n.label) + '</span></h3>' + actionsHtml(n, S.act, 'i') + '</div>'
+    + '<div class="card"><h3>' + (errs.length ? 'Findings · ' + esc(n.label) : 'Findings') + '<span class="lbl mono">' + (S.snap.errors || []).length + '</span></h3>' + (list.length ? list.map((e) => '<span class="errrow" data-err-node="' + esc(e.node) + '" title="' + esc(e.section + (e.ref ? ' · ' + e.ref : '')) + '"><i style="background:' + (e.sev === 'error' ? 'var(--ac4)' : 'var(--ac3)') + '"></i><span class="n">' + esc(e.n) + '</span><span class="c">' + e.c + '</span></span>').join('') : '<span class="note">no findings</span>') + '<span class="note">Nodes carrying findings are ringed in red on the map with a count. Selecting one filters this list to it.</span></div>'
+    + '<div class="card sp"><h3>Requests through this node</h3><div class="flist">' + (through.length ? through.map((r) => '<span class="frow"><i style="background:' + KCOL[r.kind] + '"></i><span class="n">' + esc(r.n) + '</span><span class="ms">' + esc(r.ms || r.status) + '</span></span>').join('') : '<span class="note">' + (n.kind === 'ollama' ? 'nothing in the request log for this instance' : 'the request log names model instances; this node carries none') + '</span>') + '</div></div>';
+}
+
+// ── actions ──
+async function fetchLogs(n){ try { const r = await fetch(BASE + '/ops/node/events?node=' + encodeURIComponent(n.label) + '&limit=60', { cache: 'no-store' }); const j = await r.json(); const c = j && j.content !== undefined ? j.content : j; S.logs[n.id] = (c && c.events) || []; } catch (e) { S.logs[n.id] = []; } render(); }
+async function sendReq(nid){ const R = S.req[nid]; if (!R || R.busy) return; let args = {};
+  try { args = R.body.trim() ? JSON.parse(R.body) : {}; } catch (e) { R.resp = 'the payload is not JSON: ' + e.message; R.err = true; render(); return; }
+  R.busy = true; R.resp = ''; render(); const t0 = Date.now();
+  try { const r = await fetch(BASE + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: R.name, arguments: args, caller_kind: 'user' }) });
+    const j = await r.json(); const c = j && j.content !== undefined ? j.content : j; R.err = !r.ok || !!(c && c.error);
+    R.resp = r.status + ' · ' + (Date.now() - t0) + 'ms · ' + JSON.stringify(c).slice(0, 900); }
+  catch (e) { R.resp = String(e && e.message || e); R.err = true; }
+  R.busy = false; render(); }
+async function restart(nid){ const n = byId()[nid]; if (!n) return;
+  if (n.kind === 'guest' && window.veraEstate){ const r = await window.veraEstate.confirmRun('/proxmox/guest/action', { cluster_id: n.cluster_id, node: n.pve_node, guest_type: n.type, vmid: parseInt(n.vmid), action: 'reboot' }, 'Reboot ' + n.label + ' (vmid ' + n.vmid + ')?'); if (r && !r.cancelled) setTimeout(() => load(true), 2500); return; }
+  if (n.kind === 'sandbox'){ const post = (dry) => fetch(BASE + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'evolve.sandbox.restart', arguments: { branch: n.branch, dry_run: dry }, caller_kind: 'user' }) }).then((r) => r.json()).then((j) => (j && j.content !== undefined ? j.content : j));
+    const dry = await post(true); const text = 'Restart the sandbox ' + n.label + '?\n\n' + JSON.stringify(dry, null, 1).slice(0, 700) + '\n\nRun it?';
+    if (dry && dry.error){ alert(dry.error); return; } if (!confirm(text)) return; const r = await post(false); if (r && r.error) alert(r.error); setTimeout(() => load(true), 2500); return; }
+  alert('Restart is not wired for a ' + n.kind + ' yet.'); }
+function selectRuntime(nid){ const l = (S.snap.links || []).find((x) => x.a === nid && x.kind === 'runs'); if (l){ S.sel = l.b; S.act = 'term'; render(); } }
+function openMenu(e, n){ e.preventDefault(); e.stopPropagation(); S.cm = { node: n ? n.id : null, x: Math.min(e.clientX, window.innerWidth - 230), y: Math.min(e.clientY, window.innerHeight - 260) }; drawMenu(); }
+function drawMenu(){ let m = document.querySelector('.cmw'); if (m) m.remove(); if (!S.cm) return; const n = S.cm.node ? byId()[S.cm.node] : null;
+  const items = n ? [['Open as a widget', 'exp'], ['Metrics', 'metrics'], ['Send a request', 'req'], ['Capabilities', 'caps'], ['Logs', 'logs']].concat(actionsFor(n).indexOf('term') >= 0 ? [['Terminal', 'term']] : []).concat(n.ref ? [['Open in the estate', 'entity']] : []).concat(actionsFor(n).indexOf('restart') >= 0 ? [['Restart', 'restart', 'danger']] : [])
+    : [['Back to fit', 'fit'], [S.view === '2d' ? 'Switch to 3D' : 'Switch to 2D', 'view'], [S.pipes ? 'Direct edges' : 'Pipes', 'pipes'], ['Show every plane', 'all'], ['Read again', 'refresh']];
+  m = document.createElement('div'); m.className = 'cmw'; m.innerHTML = '<span class="cmbg"></span><div class="cmenu" style="left:' + S.cm.x + 'px;top:' + S.cm.y + 'px"><span class="cm-h"><i style="background:' + (n ? PCOL[n.plane] : 'var(--t3)') + '"></i>' + esc(n ? n.label : 'this view') + '<b>' + esc(n ? n.kind : 'view') + '</b></span>' + items.map((i) => '<button class="cm-i ' + (i[2] || '') + '" data-cm="' + i[1] + '">' + esc(i[0]) + '</button>').join('') + '</div>';
+  document.body.appendChild(m);
+  m.querySelector('.cmbg').onclick = () => { S.cm = null; drawMenu(); }; m.querySelector('.cmbg').oncontextmenu = (e) => { e.preventDefault(); S.cm = null; drawMenu(); };
+  m.querySelectorAll('[data-cm]').forEach((b) => { b.onclick = () => { const k = b.dataset.cm, nid = S.cm.node; S.cm = null; drawMenu();
+    if (k === 'exp'){ S.exp = nid; S.sel = nid; S.wact = 'metrics'; } else if (k === 'entity'){ const nn = byId()[nid]; if (nn && window.veraUI) window.veraUI.openEntity(nn.ref); return; }
+    else if (k === 'restart'){ S.sel = nid; S.act = 'restart'; } else if (['metrics', 'req', 'caps', 'logs', 'term'].indexOf(k) >= 0){ S.sel = nid; S.act = k; }
+    else if (k === 'fit'){ S.vz = 1; S.vx = 0; S.vy = 0; S.tilt = null; S.azim = null; } else if (k === 'view'){ S.view = S.view === '2d' ? '3d' : '2d'; } else if (k === 'pipes'){ S.pipes = !S.pipes; } else if (k === 'all'){ Object.keys(S.on).forEach((p) => { S.on[p] = true; }); S.focus = null; } else if (k === 'refresh'){ load(true); return; }
+    render(); }; }); }
+
+// ── wiring ──
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-plane],[data-node],[data-exp],[data-close],[data-act],[data-send],[data-logs],[data-restart],[data-open-entity],[data-sel-runtime],[data-err-node],[data-layer],[data-floor],[data-pz],[data-stop]');
+  if (!t) return;
+  if (t.dataset.plane !== undefined){ if (t.dataset.plane === '*'){ Object.keys(S.on).forEach((p) => { S.on[p] = true; }); S.focus = null; } else if (S.view === '3d'){ S.focus = S.focus === t.dataset.plane ? null : t.dataset.plane; } else { S.on[t.dataset.plane] = !S.on[t.dataset.plane]; if (!Object.keys(S.on).some((k) => S.on[k])) S.on[t.dataset.plane] = true; } render(); return; }
+  if (t.dataset.exp !== undefined){ e.stopPropagation(); S.exp = S.exp === t.dataset.exp ? null : t.dataset.exp; S.sel = t.dataset.exp; render(); return; }
+  if (t.dataset.close !== undefined){ S.exp = null; render(); return; }
+  if (t.dataset.act !== undefined){ if (t.dataset.where === 'w') S.wact = t.dataset.act; else S.act = t.dataset.act; render(); return; }
+  if (t.dataset.send !== undefined){ sendReq(t.dataset.send); return; }
+  if (t.dataset.logs !== undefined){ const n = byId()[t.dataset.logs]; if (n) fetchLogs(n); return; }
+  if (t.dataset.restart !== undefined){ restart(t.dataset.restart); return; }
+  if (t.dataset.openEntity !== undefined){ if (window.veraUI) window.veraUI.openEntity(t.dataset.openEntity); return; }
+  if (t.dataset.selRuntime !== undefined){ selectRuntime(t.dataset.selRuntime); return; }
+  if (t.dataset.errNode !== undefined){ if (t.dataset.errNode && byId()[t.dataset.errNode]){ S.sel = t.dataset.errNode; render(); } return; }
+  if (t.dataset.layer !== undefined){ S.focus = S.focus === t.dataset.layer ? null : t.dataset.layer; render(); return; }
+  if (t.dataset.floor !== undefined){ S.focus = S.focus === t.dataset.floor ? null : t.dataset.floor; render(); return; }
+  if (t.dataset.pz !== undefined){ const k = t.dataset.pz; if (k === 'in') S.vz = Math.min(4, S.vz * 1.25); else if (k === 'out') S.vz = Math.max(.4, S.vz / 1.25); else if (k === 'l') S.vx += 140; else if (k === 'r') S.vx -= 140; else if (k === 'u') S.vy += 110; else if (k === 'd') S.vy -= 110;
+    else if (k === 'fit'){ S.vz = 1; S.vx = 0; S.vy = 0; S.tilt = null; S.azim = null; } else { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 12.6) : S.tilt, A = S.azim == null ? 45 : S.azim; if (k === 'tiltUp') S.tilt = Math.min(60, T + 5); if (k === 'tiltDn') S.tilt = Math.max(4, T - 5); if (k === 'rotL') S.azim = Math.max(32, A - 6.5); if (k === 'rotR') S.azim = Math.min(58, A + 6.5); }
+    render(); return; }
+  if (t.dataset.node !== undefined){ if (t.dataset.stop) return; S.sel = t.dataset.node; render(); return; }
+});
+document.addEventListener('input', (e) => { const t = e.target; if (t.dataset && t.dataset.req){ const R = S.req[t.dataset.node]; if (R) R[t.dataset.req] = t.value; } });
+document.addEventListener('contextmenu', (e) => { const nd = e.target.closest('[data-node]'); if (nd){ openMenu(e, byId()[nd.dataset.node]); return; } if (e.target.closest('#plot')) openMenu(e, null); });
+$('b2d').onclick = () => { S.view = '2d'; render(); }; $('b3d').onclick = () => { S.view = '3d'; render(); };
+$('bStack').onclick = () => { S.layout3d = 'stack'; S.focus = null; render(); }; $('bFlat').onclick = () => { S.layout3d = 'flat'; S.focus = null; render(); };
+$('bOne').onclick = () => { if (S.focus){ S.focus = null; } else { const n = byId()[S.sel]; S.focus = n ? n.plane : 'work'; } render(); };
+$('bPipes').onclick = () => { S.pipes = true; render(); }; $('bDirect').onclick = () => { S.pipes = false; render(); };
+$('bWidgets').onclick = () => { S.widgets = !S.widgets; render(); };
+$('bRefresh').onclick = () => load(true);
+const v = $('pzv');
+v.addEventListener('mousedown', (e) => { if (e.button || e.target.closest('.nd,.ndw,button,input,textarea')) return; S.drag = { x0: e.clientX, y0: e.clientY, vx0: S.vx, vy0: S.vy }; v.classList.add('dragging'); });
+window.addEventListener('mousemove', (e) => { if (!S.drag) return; S.vx = S.drag.vx0 + (e.clientX - S.drag.x0); S.vy = S.drag.vy0 + (e.clientY - S.drag.y0); v.style.transform = 'translate(' + S.vx + 'px,' + S.vy + 'px) scale(' + S.vz + ')'; });
+window.addEventListener('mouseup', () => { if (S.drag){ S.drag = null; v.classList.remove('dragging'); } });
+$('plot').addEventListener('wheel', (e) => { if (e.target.closest('.ndw')) return; e.preventDefault(); S.vz = clamp(S.vz * (e.deltaY > 0 ? .88 : 1.14), .4, 4); v.style.transform = 'translate(' + S.vx + 'px,' + S.vy + 'px) scale(' + S.vz + ')'; $('pzLbl').textContent = Math.round(S.vz * 100) + '%'; }, { passive: false });
+let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(render, 120); });
+// an entity focus from the Estate (vera:entity:focus {kind, id, ref}): select the node that carries the reference
+window.addEventListener('message', (e) => { const d = e && e.data; if (!d || typeof d !== 'object') return;
+  if (d.type === 'vera:entity:focus' && d.ref){ const n = (S.snap ? S.snap.nodes : []).find((x) => x.ref === d.ref); if (n){ S.sel = n.id; render(); } try { e.source.postMessage({ type: 'vera:entity:focused', ref: d.ref, ok: !!n }, '*'); } catch (_) {} }
+  if (d.type === 'vera:theme' && d.vars){ const root = document.documentElement; Object.keys(d.vars).forEach((k) => root.style.setProperty(k, d.vars[k])); }
+  if (d.type === 'vera:style' && d.style){ document.documentElement.setAttribute('data-style', d.style); } });
+// ?node= on the URL selects a node by id or label
+try { const q = new URLSearchParams(location.search).get('node'); if (q) S.sel = q; } catch (_) {}
+load(false);
+setInterval(() => { if (!document.hidden) load(false); }, 6000);
+window.VeraOps = { state: S, load, render, layout };
+})();
+</script>
+</body>
+</html>

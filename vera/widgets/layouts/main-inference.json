@@ -72,7 +72,7 @@
      "body": "record",
      "unit": "%"
     },
-    "panel": "system-monitor"
+    "open": "estate/ops"
    },
    "at": [
     0,
@@ -114,7 +114,7 @@
      "palette": "load",
      "unit": "%"
     },
-    "panel": "system-monitor"
+    "open": "estate/ops"
    },
    "at": [
     4,
@@ -155,7 +155,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "system-monitor"
+    "open": "estate/ops"
    },
    "at": [
     8,
@@ -193,7 +193,8 @@
      "body": "record",
      "unit": "held",
      "cells": 4
-    }
+    },
+    "open": "models"
    },
    "at": [
     10,
@@ -233,7 +234,8 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "open": "estate/ops"
    },
    "at": [
     0,
@@ -271,7 +273,8 @@
      "body": "record",
      "unit": "done",
      "cells": 6
-    }
+    },
+    "open": "agents"
    },
    "at": [
     2,
@@ -312,7 +315,7 @@
      "throttle": 70,
      "limit": 5
     },
-    "panel": "perf-monitor"
+    "open": "estate/ops"
    },
    "at": [
     4,
@@ -351,7 +354,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "activity"
+    "open": "activity"
    },
    "at": [
     8,
@@ -473,7 +476,7 @@
       }
      }
     ],
-    "panel": "workers-ollama"
+    "open": "models"
    },
    "at": [
     0,
@@ -512,7 +515,7 @@
      "rows": 3,
      "unit": "ms"
     },
-    "panel": "workers-ollama"
+    "open": "models"
    },
    "at": [
     4,
@@ -551,7 +554,7 @@
      "rows": 3,
      "unit": "tok/s"
     },
-    "panel": "workers-ollama"
+    "open": "models"
    },
    "at": [
     4,
@@ -590,7 +593,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "workers-ollama"
+    "open": "models"
    },
    "at": [
     8,
@@ -629,7 +632,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "workers-ollama"
+    "open": "models"
    },
    "at": [
     8,
@@ -667,7 +670,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "workers-ollama"
+    "open": "models/routing"
    },
    "at": [
     0,
@@ -757,7 +760,7 @@
      }
     ],
     "layout": "report",
-    "panel": "workers-ollama"
+    "open": "models"
    },
    "at": [
     4,
@@ -794,7 +797,8 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "open": "estate/proxmox"
    },
    "at": [
     8,
@@ -836,7 +840,8 @@
       "deny_gpu",
       "model"
      ]
-    }
+    },
+    "open": "models/routing"
    },
    "at": [
     0,
@@ -924,7 +929,8 @@
       }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "open": "models/routing"
    },
    "at": [
     6,
@@ -1038,7 +1044,7 @@
      }
     ],
     "layout": "report",
-    "panel": "fabric-panel"
+    "open": "fabric"
    },
    "at": [
     0,
@@ -1078,7 +1084,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "fabric-panel"
+    "open": "fabric"
    },
    "at": [
     4,
@@ -1122,7 +1128,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "fabric-panel"
+    "open": "fabric"
    },
    "at": [
     8,
@@ -1167,7 +1173,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "fabric-panel"
+    "open": "fabric"
    },
    "at": [
     0,
@@ -1203,7 +1209,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "evolve"
+    "open": "evolve"
    },
    "at": [
     4,
@@ -1241,7 +1247,7 @@
      "body": "record",
      "unit": "%"
     },
-    "panel": "system-monitor"
+    "open": "estate/ops"
    },
    "at": [
     8,

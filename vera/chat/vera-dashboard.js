@@ -1301,20 +1301,30 @@
       act.insertBefore(b, act.firstChild);
     }
 
-    // drill through: a record that names the page its data lives on (record.panel) opens that page; the shell's
-    // switchTab knows a registered panel's tab as auto-<id>, a popped window is the fallback
-    function openPanelTab(pid) {
-      var sw = (typeof window.switchTab === 'function') ? window.switchTab : (window.parent && window.parent !== window && typeof window.parent.switchTab === 'function') ? window.parent.switchTab : null;
-      if (sw) { try { sw('auto-' + pid); return; } catch (e) { /* fall through to the window */ } }
-      window.open('/ui/panel/window?id=' + encodeURIComponent(pid), 'veraPanel_' + pid, 'width=1040,height=820,menubar=no,toolbar=no,location=no,status=no');
+    // drill through: a record opens the place its data lives on - its own `open`, else the place its SOURCE maps to
+    // (ui.places: one table in vera/ui/places_core.py). The shell's openPlace() does the opening; a popped window
+    // of a registered panel is the fallback when there is no shell.
+    function recordPlace(r) {
+      if (!r) return '';
+      var src = typeof r.source === 'string' ? r.source : ((r.reads && typeof r.reads.cap === 'string') ? r.reads.cap : '');
+      if (typeof window.placeFor === 'function') return window.placeFor(src, r.open || '');
+      return r.open || '';
+    }
+    function openPanelTab(place, r) {
+      if (typeof window.openPlace === 'function' && window.openPlace(place)) return;
+      if (window.veraUI && typeof window.veraUI.openPlace === 'function' && window.parent !== window) { window.veraUI.openPlace(place); return; }
+      var pid = (r && r.panel) ? String(r.panel) : '';
+      if (pid) window.open('/ui/panel/window?id=' + encodeURIComponent(pid), 'veraPanel_' + pid, 'width=1040,height=820,menubar=no,toolbar=no,location=no,status=no');
     }
     function ensureOpen(w, r) {
       var act = w.querySelector(':scope > .w-head .w-actions'); if (!act) return;
-      var b = act.querySelector('.vd-open'), pid = (r && r.form !== 'panel' && r.panel) ? String(r.panel) : '';
-      if (!pid) { if (b) b.remove(); return; }
+      var b = act.querySelector('.vd-open'), place = (r && r.form !== 'panel') ? recordPlace(r) : '';
+      if (!place) { if (b) b.remove(); return; }
       if (!b) { b = document.createElement('button'); b.className = 'w-iconbtn vd-open'; b.textContent = '\u2197'; var cfg = act.querySelector('.vd-cfg'); if (cfg && cfg.nextSibling) act.insertBefore(b, cfg.nextSibling); else act.insertBefore(b, act.firstChild); }
-      b.title = 'Open ' + pid + ' \u2014 the page this data lives on'; b.onclick = function (e) { e.stopPropagation(); openPanelTab(pid); };
+      b.title = 'Open ' + place + ' \u2014 the page this data lives on'; b.dataset.place = place; b.onclick = function (e) { e.stopPropagation(); openPanelTab(place, r); };
     }
+    // the places table lands after the first tiles drew: give every tile its arrow then
+    try { window.addEventListener('vera:places', function () { widgets().forEach(function (w) { var r = recordOf(w.dataset.wid); if (r) ensureOpen(w, r); }); }); } catch (_) {}
 
     /* ── the record draws the tile ──
        A record tile's <vera-widget> takes the record (with the form's sample when its source cannot be read). A page
@@ -1788,7 +1798,7 @@
       toggleEdit: toggleEdit, reset: reset, openLoader: openLoader,
       hide: hide, show: show, addWidget: addWidget, addRecord: addRecord, refresh: applyLayout,
       // the widget surface's paths: the picker of panels, a record placed, a tile's ⚙, a record saved, a tile drawn
-      openPanels: openPanels, openPanelTab: openPanelTab, placeRecord: placeRecord, configure: configure, applyRecord: applyRecord,
+      openPanels: openPanels, openPanelTab: openPanelTab, recordPlace: recordPlace, placeRecord: placeRecord, configure: configure, applyRecord: applyRecord,
       drawTile: function (wid, rec) { var w = byIdAnywhere(wid); if (w) drawTile(w, rec || recordOf(wid)); recordChip(w); return w; },
       recordOf: recordOf, editing: function () { return state.editing; },
       // the record side

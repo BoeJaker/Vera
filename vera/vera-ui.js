@@ -896,8 +896,23 @@
     return true;
   }
 
+  // A PLACE is a page the shell can open by name (ui.places: a tab, an Estate or
+  // Models pane, a view of a hosting panel, an element). From inside the tree the
+  // shell opens it; standalone, the Estate page opens with the pane on its URL.
+  function openPlace(name, entity){
+    name = String(name || '');
+    if(!name) return false;
+    if(window.parent && window.parent !== window){
+      try{ window.parent.postMessage({type:'vera:place:open', place: name, entity: entity || ''}, '*'); return true; }catch(e){}
+    }
+    if(typeof window.openPlace === 'function') return window.openPlace(name, entity || '');
+    try{ window.top.location.href = BASE + '/?place=' + encodeURIComponent(name); }catch(e){ location.href = BASE + '/?place=' + encodeURIComponent(name); }
+    return true;
+  }
+
   window.veraUI = {
     openEntity: openEntity,
+    openPlace: openPlace,
     setTheme: function(id){
       // Always call the API so the change is broadcast and we get vars back
       fetch(BASE + '/ui/theme/set', {
