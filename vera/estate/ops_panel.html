@@ -76,12 +76,12 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .srcrow{display:flex;align-items:center;gap:7px;font-family:var(--f-mono);font-size:8.5px;color:var(--t3);height:16px}
 .srcrow i{width:6px;height:6px;border-radius:50%;background:var(--ac2);flex-shrink:0}.srcrow.bad i{background:var(--ac4)}.srcrow.bad{color:var(--ac3)}
 .srcrow .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.stage{flex:1;min-width:0;background:var(--surf);border-radius:var(--ui-radius);box-shadow:var(--elev);display:flex;flex-direction:column;overflow:hidden}
+.stage{flex:1;min-width:0;background:var(--surf);border-radius:var(--ui-radius);box-shadow:var(--elev);display:flex;flex-direction:column;overflow:hidden auto}
 .stage-hd{flex-shrink:0;display:flex;align-items:center;gap:10px;padding:11px var(--pad) 0}
 .stage-hd h2{font-size:13px;font-weight:600}
 .axes{flex-shrink:0;display:flex;gap:16px;padding:6px var(--pad) 8px;flex-wrap:wrap}
 .axes span{font-size:10px;color:var(--t3)}.axes b{color:var(--t2);font-weight:500}
-.plot{flex:1;min-height:0;position:relative;overflow:hidden;margin:0 var(--pad) var(--pad);border-radius:var(--r-sm);background:var(--bg)}
+.plot{flex:1;min-height:var(--plot-min,720px);position:relative;overflow:hidden;margin:0 var(--pad) var(--pad);border-radius:var(--r-sm);background:var(--bg)}
 .pzv{position:absolute;inset:0;transform-origin:50% 50%;cursor:grab;transition:transform .38s cubic-bezier(.22,.68,.18,1)}
 .pzv.dragging{transition:none!important;cursor:grabbing}
 .pzc{position:absolute;right:10px;top:8px;z-index:44;display:flex;align-items:center;gap:3px;padding:4px 6px;border-radius:var(--r-sm);background:color-mix(in srgb,var(--s1) 90%,transparent);box-shadow:0 0 0 1px var(--bd);opacity:.45;transition:opacity .16s ease}
@@ -443,6 +443,8 @@ function render(){
   $('srcN').textContent = (srcs.length - bad.length) + ' of ' + srcs.length;
   $('sources').innerHTML = srcs.map((k) => '<span class="srcrow ' + (snap.sources[k] === 'ok' ? '' : 'bad') + '" title="' + esc(snap.sources[k]) + '"><i></i><span class="n">' + esc(k) + '</span></span>').join('');
   // the plot
+  const need = (() => { const cm = {}; snap.nodes.forEach((n) => { if (!S.on[n.plane]) return; const k = n.plane + ':' + n.domain; cm[k] = (cm[k] || 0) + 1; }); const per = {}; Object.keys(cm).forEach((k) => { const pl = k.split(':')[0]; per[pl] = Math.max(per[pl] || 0, cm[k]); }); return 30 + Object.keys(per).reduce((t, pl) => t + 46 + (clamp(per[pl], 1, 9) - 1) * 26, 0); })();
+  plot.style.setProperty('--plot-min', Math.max(560, need) + 'px');
   const W = plot.clientWidth || 800, H = plot.clientHeight || 600;
   const lay = layout(W, H), pos = lay.pos, shown = lay.shown;
   const parts = [];
