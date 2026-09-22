@@ -2508,6 +2508,31 @@ _OUTPUT_MAX_TOKENS_GPU = int(os.environ.get("VERA_OUTPUT_MAX_TOKENS_GPU", "0") o
 _OUTPUT_MAX_TOKENS_CPU = int(os.environ.get("VERA_OUTPUT_MAX_TOKENS_CPU", "3072") or 0)
 
 
+# One window per (GPU node, model). Rounding to steps was meant to stop
+# num_ctx jittering per call, but executor prompts range 8-30k chars, so a
+# goal's calls still landed on 24576 one call and 28672 the next - and on a
+# 12 GB card every change is a full runner reload (census run58
+# author-then-edit: 24 llama-server starts for 54 calls; the verification
+# probe on 2026-09-22 with every role pinned to 16384: 34 starts for 82,
+# because the pin is only a FLOOR under the fit). On a GPU node the window
+# is therefore the node-safe cap for that model, every call: the KV cache is
+# reserved once and the runner lives for the whole goal. CPU nodes keep the
+# fit (their memory is the constraint, and they never held a warm runner
+# across the loop's roles anyway).
+_CTX_STABLE_GPU = os.environ.get("VERA_CTX_STABLE_GPU", "1").strip().lower() in (
+    "1", "true", "yes", "on")
+
+
+def _stable_ctx(want: int, cap: int, *, has_gpu: bool, stable: bool = True) -> int:
+    """The window to ask for: `want` (fit/pin, already capped) on a CPU node or
+    with stability off; the node-safe `cap` itself on a GPU node, so every
+    call to this model on this node has the SAME window and the runner is
+    never re-created. A zero cap (probe failed) leaves `want` alone."""
+    if stable and has_gpu and cap and cap >= want:
+        return int(cap)
+    return int(want)
+
+
 def _round_ctx(n: int) -> int:
     """Round a needed-token count UP to a stable window so num_ctx doesn't jitter
     per call (a changing num_ctx forces ollama to re-init the KV cache)."""
@@ -3202,6 +3227,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         _want = max(_fit, _pinned)
         if _cap:
             _want = min(_want, _cap)
+        _want = _stable_ctx(_want, int(_cap or 0),
+                            has_gpu=bool((OLLAMA_INSTANCES.get(chosen) or {}).get("has_gpu")),
+                            stable=_CTX_STABLE_GPU)
         _merged_opts["num_ctx"] = max(_CTX_FLOOR, _want)
         # num_predict = the output room actually available in the window (bounded
         # by the sensible max), so a long generation can use it ALL but nothing

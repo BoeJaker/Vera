@@ -221,7 +221,8 @@ _CRITICAL_MODULES = {
     "test_schedule_core",  # a scheduled census must never start beside a census or a loop, nor outside its window (2026-09-21)
     "test_schedule_page_ui",  # the Schedule page's calendar, editor and tick controls must stay wired (2026-09-21)
     "test_release_core",  # a prod release must never restart prod under a census goal unless forced (2026-09-21)
-    "test_loop_web_research_first",  # the loop chained web.search -> web.fetch to the wall cap while web.research sat unnamed (2026-09-21)
+    "test_loop_web_research_first",
+    "test_stable_ctx",  # one context window per GPU node+model: the runner reloaded on nearly every call (2026-09-22)  # the loop chained web.search -> web.fetch to the wall cap while web.research sat unnamed (2026-09-21)
 }
 
 
