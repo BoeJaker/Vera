@@ -53,17 +53,30 @@ except Exception:  # pragma: no cover - optional dependency
 
 # ── languages and spans ───────────────────────────────────────────────────────────────────────────
 _EXT = {".py": "python", ".pyi": "python", ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
-        ".jsx": "javascript", ".ts": "typescript", ".tsx": "typescript", ".css": "css", ".html": "html", ".htm": "html"}
+        ".jsx": "javascript", ".ts": "typescript", ".tsx": "typescript", ".css": "css", ".html": "html", ".htm": "html",
+        ".go": "go", ".rs": "rust", ".java": "java"}
+
+
+_BRACE_EXT = {".go": "go", ".rs": "rust", ".java": "java"}
 
 
 def detect_lang(path: str = "", text: str = "", lang: str = "") -> str:
     if lang:
         l = lang.lower()
-        return {"py": "python", "js": "javascript", "ts": "typescript", "jsx": "javascript", "tsx": "typescript"}.get(l, l)
+        return {"py": "python", "js": "javascript", "ts": "typescript", "jsx": "javascript", "tsx": "typescript",
+                "golang": "go", "rs": "rust"}.get(l, l)
     ext = os.path.splitext(path or "")[1].lower()
     if ext in _EXT:
         return _EXT[ext]
     head = (text or "")[:400]
+    # the specific tests first: Go's `import (` reads as Python's `import`, and Rust's `pub struct S { .. }`
+    # reads as a CSS rule, so a general sniff run first would answer confidently and wrongly
+    if re.search(r"^\s*package\s+\w+\s*$|^\s*func\s+(\([^)]*\)\s*)?\w+\s*\(", head, re.M):
+        return "go"
+    if re.search(r"^\s*(pub\s+)?(fn|impl|mod)\s+\w|^\s*use\s+[\w:]+;", head, re.M):
+        return "rust"
+    if re.search(r"^\s*package\s+[\w.]+\s*;|^\s*(public|final|abstract)\s+(final\s+|abstract\s+)?class\s+\w", head, re.M):
+        return "java"
     if re.search(r"^\s*(def |class |import |from \S+ import )", head, re.M):
         return "python"
     if re.search(r"<!doctype html|<html|<div|<body", head, re.I):
@@ -482,6 +495,119 @@ def parse_js_patterns(path: str, text: str) -> Dict:
     return out
 
 
+# ── Go, Rust and Java through patterns ────────────────────────────────────────────────────────────────────
+# The estate's own code is Python and JS, but the point of explode is any code a reader has in front of them --
+# an LLM's reply, a cloned repo, a page's source. These three carry most of what gets cloned, and they share a
+# shape: a package line, imports, and named things whose bodies are braces. tree-sitter would read them properly
+# and is not installed here (checked 2026-09-22), so this is the same TOLERANT reading the JS path uses, and it
+# signs its cards `patterns` exactly as that one does -- a reader can see what read their code.
+
+_GO_IMPORT = re.compile(r'^[ \t]*import\s+(?:\(\s*([\s\S]*?)\s*\)|(?:(\w+)\s+)?"([^"]+)")', re.M)
+_GO_FUNC = re.compile(r'^[ \t]*func\s+(?:\(\s*\w+\s+\*?(\w+)\s*\)\s*)?(\w+)\s*\(', re.M)
+_GO_TYPE = re.compile(r'^[ \t]*type\s+(\w+)\s+(struct|interface)\s*\{', re.M)
+_RS_USE = re.compile(r'^[ \t]*(?:pub\s+)?use\s+([\w:{}, *]+);', re.M)
+_RS_FN = re.compile(r'^[ \t]*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)', re.M)
+_RS_TYPE = re.compile(r'^[ \t]*(?:pub(?:\([^)]*\))?\s+)?(struct|enum|trait|impl)\s+(?:<[^>]*>\s*)?(\w+)', re.M)
+_JV_IMPORT = re.compile(r'^[ \t]*import\s+(?:static\s+)?([\w.]+)\s*;', re.M)
+_JV_TYPE = re.compile(r'^[ \t]*(?:public|protected|private|final|abstract|static|sealed|\s)*\s*(class|interface|enum|record)\s+(\w+)([^{;]*)\{', re.M)
+_JV_METHOD = re.compile(r'^[ \t]+(?:@\w+\s+)*(?:public|protected|private|final|static|synchronized|abstract|native|default|\s)*'
+                        r'[\w<>\[\],.?\s]+?\s(\w+)\s*\(([^)]*)\)\s*(?:throws [\w.,\s]+)?\{', re.M)
+_BRACE_KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "else", "match", "loop", "unsafe", "new"}
+
+
+def parse_brace_patterns(path: str, text: str, lang: str) -> Dict:
+    """Go / Rust / Java: the module, what it imports, and the named things whose bodies are braces."""
+    L = _Lines(text)
+    out = {"engine": "patterns", "path": path, "symbols": [], "imports": [], "errors": [], "aliases": {}}
+    mod_id = _sid(path, "<module>")
+    out["symbols"].append({"id": mod_id, "kind": "module", "name": os.path.basename(path), "qual": "<module>", "path": path,
+                           "start": 0, "end": len(text), "line0": 1, "line1": L.line_of(max(0, len(text) - 1)),
+                           "parent": None, "fields": [], "calls": [], "bases": [], "decorators": [], "async": False})
+
+    def imp(module: str, line: int, alias: str = ""):
+        module = module.strip().strip('"').strip()
+        if not module:
+            return
+        out["imports"].append({"module": module, "name": "", "alias": alias or module.split("/")[-1].split(".")[-1], "line": line})
+        out["aliases"][alias or module.split("/")[-1].split(".")[-1]] = module
+
+    def sym(kind: str, name: str, start: int, end: int, parent: str, own: Optional[str] = None, bases=None):
+        q = (own + "." + name) if own else name
+        if any(x["qual"] == q for x in out["symbols"]):
+            return None
+        # A symbol's calls are what its BODY does. Reading from its start instead makes every symbol call itself
+        # (its own name is in its signature) and Go's methods call `func` -- so the scan begins at the brace that
+        # opens the body, which is what "before the body" means in all three languages. A type's calls belong to
+        # its methods, not to it.
+        line0 = L.line_of(start)
+        ob = text.find("{", start)
+        bs = ob if 0 <= ob < end else start
+        calls = [] if kind in ("class", "impl") else [
+            c for c in _js_calls(text[bs:end], L.line_of(bs)) if c["name"] not in _BRACE_KEYWORDS]
+        out["symbols"].append({"id": _sid(path, q), "kind": kind, "name": name, "qual": q, "path": path,
+                               "start": start, "end": end, "line0": line0, "line1": L.line_of(max(start, end - 1)),
+                               "parent": parent, "fields": [], "calls": calls,
+                               "bases": bases or [], "decorators": [], "async": False, "args": [], "own_class": own})
+        return _sid(path, q)
+
+    def body_end(at: int) -> int:
+        ob = text.find("{", at)
+        return _match_brace(text, ob) if ob >= 0 else min(len(text), text.find("\n", at) + 1 or len(text))
+
+    if lang == "go":
+        for m in _GO_IMPORT.finditer(text):
+            if m.group(1):
+                for line in m.group(1).split("\n"):
+                    line = line.strip()
+                    if not line or line.startswith("//"):
+                        continue
+                    parts = line.split()
+                    imp(parts[-1], L.line_of(m.start()), parts[0] if len(parts) > 1 else "")
+            else:
+                imp(m.group(3) or "", L.line_of(m.start()), m.group(2) or "")
+        for m in _GO_TYPE.finditer(text):
+            sym("class", m.group(1), m.start(), _match_brace(text, text.find("{", m.start())), mod_id)
+        for m in _GO_FUNC.finditer(text):
+            recv = m.group(1)
+            sym("method" if recv else "function", m.group(2), m.start(), body_end(m.end()), mod_id, recv)
+    elif lang == "rust":
+        for m in _RS_USE.finditer(text):
+            imp(m.group(1).split("{")[0].strip().rstrip(":"), L.line_of(m.start()))
+        for m in _RS_TYPE.finditer(text):
+            kind = "class" if m.group(1) in ("struct", "enum", "trait") else "impl"
+            end = body_end(m.end())
+            if kind == "impl":
+                # `impl Load for Store` implements Load ON Store: the methods are Store's
+                head = text[m.start(): text.find("{", m.start()) if text.find("{", m.start()) > 0 else m.end()]
+                forx = re.search(r"\bfor\s+(\w+)", head)
+                own = forx.group(1) if forx else m.group(2)
+                for mm in _RS_FN.finditer(text[m.start():end]):
+                    a = m.start() + mm.start()
+                    sym("method", mm.group(1), a, body_end(m.start() + mm.end()), mod_id, own)
+                continue
+            sym(kind, m.group(2), m.start(), end, mod_id)
+        for m in _RS_FN.finditer(text):
+            if any(x["kind"] == "method" and x["start"] <= m.start() < x["end"] for x in out["symbols"]):
+                continue
+            sym("function", m.group(1), m.start(), body_end(m.end()), mod_id)
+    else:                                                  # java
+        for m in _JV_IMPORT.finditer(text):
+            imp(m.group(1), L.line_of(m.start()))
+        for m in _JV_TYPE.finditer(text):
+            end = _match_brace(text, m.end() - 1)
+            bases = [b.strip() for b in re.split(r"\bextends\b|\bimplements\b", m.group(3) or "")[1:] if b.strip()]
+            cid = sym("class", m.group(2), m.start(), end, mod_id, None, bases)
+            own = m.group(2)
+            for mm in _JV_METHOD.finditer(text[m.end():end]):
+                if mm.group(1) in _BRACE_KEYWORDS:
+                    continue
+                a = m.end() + mm.start()
+                sym("method", mm.group(1), a, _match_brace(text, m.end() + mm.end() - 1), cid or mod_id, own)
+    if text.count("{") != text.count("}"):
+        out["errors"].append("unbalanced braces \u2014 partial")
+    return out
+
+
 # ── CSS and HTML through patterns ─────────────────────────────────────────────────────────────────
 _CSS_RULE = re.compile(r"([^{}]+?)\s*\{([^{}]*)\}", re.S)
 _HTML_TAG = re.compile(r"<(?!/|!|\?)([a-zA-Z][\w-]*)([^<>]*?)(/?)>", re.S)
@@ -674,6 +800,30 @@ def _js_lint(path: str, text: str, max_line: int = 0) -> List[Dict]:
     return out
 
 
+_BRACE_LINT = [
+    (re.compile(r"\bTODO\b|\bFIXME\b|\bXXX\b|\bHACK\b"), "T000", "left in the source", "info"),
+    (re.compile(r"\bpanic\(|\bunwrap\(\)|\bexpect\("), "B100", "panics rather than returning the error", "warn"),
+    (re.compile(r"\bprintln!\(|\bfmt\.Print|\bSystem\.out\.print"), "B101", "printing left in the source", "info"),
+    (re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}"), "B102", "an empty catch swallows the error", "warn"),
+]
+
+
+def _brace_lint(path: str, text: str, max_line: int = 0) -> List[Dict]:
+    """Go / Rust / Java: only what is true of all three and visible without a type checker -- the rest is a job
+    for that language's own linter, which this says rather than guesses at."""
+    out: List[Dict] = []
+    for i, ln in enumerate(text.split("\n"), 1):
+        code_part = re.sub(r"//.*$", "", _no_strings(ln))
+        for rx, code, note, sev in _BRACE_LINT:
+            m = rx.search(code_part if code != "T000" else _no_strings(ln))
+            if m:
+                out.append({"line": i, "col": m.start(), "code": code,
+                            "note": (m.group(0) + " " + note) if code == "T000" else note, "sev": sev})
+        if max_line and len(ln) > max_line:
+            out.append({"line": i, "col": max_line, "code": "E501", "note": "line is %d characters" % len(ln), "sev": "info"})
+    return out
+
+
 def lint_sources(sources: List[Dict], external: Optional[Dict[str, List[Dict]]] = None, max_line: int = 0) -> Dict[str, List[Dict]]:
     """{path: [finding]} for every source. `max_line` turns the
     line-length rule on (0 = off: this estate writes long lines on purpose, and 40 E501s would bury what matters).
@@ -690,6 +840,8 @@ def lint_sources(sources: List[Dict], external: Optional[Dict[str, List[Dict]]] 
                 found = _py_lint(path, text, max_line)
             elif lang in ("javascript", "typescript"):
                 found = _js_lint(path, text, max_line)
+            elif lang in _BRACE_EXT.values():
+                found = _brace_lint(path, text, max_line)
             else:
                 found = []
         except Exception as e:            # a lint failure is never the diagram's failure
@@ -1036,6 +1188,10 @@ def explode_sources(sources: List[Dict], *, max_external: int = 40, prefer_tree_
             p = parse_tree_sitter(path, text, lang) if HAS_TREE_SITTER else parse_js_patterns(path, text)
             if p["errors"] and p["engine"] == "tree-sitter" and not p["symbols"][1:]:
                 p = parse_js_patterns(path, text)
+        elif lang in _BRACE_EXT.values():
+            p = parse_tree_sitter(path, text, lang) if HAS_TREE_SITTER else parse_brace_patterns(path, text, lang)
+            if p["errors"] and p["engine"] == "tree-sitter" and not p["symbols"][1:]:
+                p = parse_brace_patterns(path, text, lang)
         elif lang == "css":
             p = parse_css(path, text)
         elif lang == "html":

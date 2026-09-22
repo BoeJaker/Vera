@@ -979,7 +979,8 @@ async def explode_prose(text: str = "", record_id: str = "", record_ids: Optiona
 
 
 # ── code: files of the repo, a snippet, a record — the pure extractor over what was read ───────────
-_CODE_EXT = (".py", ".pyi", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".css", ".html", ".htm")
+_CODE_EXT = (".py", ".pyi", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".css", ".html", ".htm",
+              ".go", ".rs", ".java")
 
 
 def _repo_root() -> str:
