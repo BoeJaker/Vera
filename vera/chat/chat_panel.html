@@ -7103,7 +7103,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     // page posts its anchor — the column alone knew no focused turn.
     try{ const fw=_focusedTurn(); let fm=fw?(fw.dataset.mid||''):''; if(fw&&fw.classList.contains('a')){ let p=fw.previousElementSibling; while(p&&!(p.classList&&p.classList.contains('mwrap')&&p.classList.contains('u'))) p=p.previousElementSibling; if(p&&p.dataset.mid) fm=p.dataset.mid; } if((cv.dataset.focusMid||'')!==fm) cv.dataset.focusMid=fm; }catch(_){}
     if(force||sig!==_cvStageSig){ _cvStageSig=sig; try{ cv.setTurns(turns, {height:msgs.scrollHeight}); }catch(_){} }
-    try{ cv.syncScroll(msgs.scrollTop, msgs.getBoundingClientRect().top); }catch(_){}
+    /* WHERE THE TRANSCRIPT IS — not where the column should be. The column places its items level with the turns
+       on screen and keeps its own scroll, so an item stays in view instead of being carried off with its turn, and
+       a tall item at the last turn can still be scrolled to (the canvas's final form §2). */
+    try{ (cv.setView||cv.syncScroll).call(cv, msgs.scrollTop, msgs.getBoundingClientRect().top); }catch(_){}
     try{ _cvScreenFocus(); }catch(_){}   // what is on screen decides what is in focus (defect 91)
     _cvRunsDraw();
   }
