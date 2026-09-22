@@ -373,6 +373,49 @@ def pronoun_mentions(text: str, base: int, head: Dict, others: List[Dict], limit
     return out[:12]
 
 
+def link_lanes(cards: List[Dict]) -> List[Dict]:
+    """Several records drawn as lanes are several diagrams until something joins them. The same entity in two
+    records is the REASON they were put side by side -- an entity's evidence is exactly 'the records that mention
+    it' -- so it is drawn: a COREF run between the two cards, `exact` where the names match and `heuristic` where
+    one is a surname or an acronym of the other (the same rules the in-lane fold uses, and the same caution:
+    a name that could be two people joins nothing).
+
+    Cards are LINKED across lanes, never merged: a record's card belongs to that record, and the point of lanes
+    is to see the same thing said twice."""
+    ents = [c for c in cards if str(c.get("layer", "")).startswith("ner") and c.get("span", {}).get("path")]
+    out: List[Dict] = []
+    seen = set()
+
+    def add(a: Dict, b: Dict, res: str, why: str):
+        if a["span"]["path"] == b["span"]["path"]:
+            return
+        k = tuple(sorted((a["id"], b["id"])))
+        if k in seen:
+            return
+        seen.add(k)
+        out.append({"from": a["id"], "to": b["id"], "kind": "COREF", "layer": "link.records",
+                    "resolution": res, "label": why, "by": "across records"})
+
+    by_name: Dict[str, List[Dict]] = {}
+    for c in ents:
+        key = str(c.get("kind", "")).lower() + "|" + (c.get("title") or "").strip().lower()
+        by_name.setdefault(key, []).append(c)
+    for key, group in by_name.items():
+        lanes = {}
+        for c in group:                                   # one card per lane: the first, as the lane's own mention
+            lanes.setdefault(c["span"]["path"], c)
+        rows = list(lanes.values())
+        for i in range(1, len(rows)):
+            add(rows[0], rows[i], "exact", "the same name")
+
+    for cid, info in coref_clusters(ents).items():        # a surname or an acronym, across records
+        a = next((c for c in ents if c["id"] == cid), None)
+        b = next((c for c in ents if c["id"] == info["head"]), None)
+        if a and b:
+            add(a, b, "heuristic", info["why"])
+    return out
+
+
 async def _layer_coref(ctx: Dict) -> Dict:
     """Fold the aliases of one entity into one card, move its relations with it, and attach the pronouns that
     stand for it. The only layer that takes cards AWAY -- so its chip counts what it changed, and turning it off
@@ -704,6 +747,15 @@ register_layer("coref", "coref · one entity, however it is written", "entity", 
                by="heuristic", where="host", default_on=True, needs=["ner"],
                note="folds a surname or an acronym into the full name, moves that entity's relations with it, "
                     "and attaches the pronouns that stand for it; ambiguity is left alone")
+async def _layer_link_records(ctx: Dict) -> Dict:
+    """Nothing within one text: the join is between lanes, and explode_prose runs it once they all exist."""
+    return {}
+
+
+register_layer("link.records", "the same entity in two records", "relation", _layer_link_records,
+               by="across records", where="host", default_on=False,
+               note="runs only when several records are drawn as lanes: a COREF run between the cards that stand "
+                    "for one entity, exact by name and heuristic by surname or acronym")
 register_layer("langid", "language", "assessment", _layer_langid, by="nlp.langid", where="node tier", default_on=False)
 register_layer("cls.sentiment", "sentiment", "assessment", _layer_sentiment, by="nlp.classify", where="node tier", default_on=False)
 register_layer("cls.genre", "genre", "assessment", _layer_genre, by="nlp.zeroshot", where="node tier", default_on=False)
@@ -886,6 +938,15 @@ async def explode_prose(text: str = "", record_id: str = "", record_ids: Optiona
         else:
             await run(lane, lane["text"], 0, prefix, parent)
 
+    if multi:
+        t0 = time.monotonic()
+        joins = link_lanes(cards)
+        edges.extend(joins)
+        receipts["link.records"] = {"id": "link.records", "label": LAYERS["link.records"]["label"],
+                                    "kind": "relation", "by": "across records", "where": "host", "on": True,
+                                    "count": len(joins), "ms": int((time.monotonic() - t0) * 1000),
+                                    "note": "%d entit%s stands in more than one of these records"
+                                            % (len(joins), "y" if len(joins) == 1 else "ies")}
     layer_rows = [receipts[i] for i in _ORDER if i in receipts]
     src = {"record_id": ids[0] if len(ids) == 1 else "", "record_ids": ids if multi else [],
            "ranges": rng, "partial": partial, "label": lanes[0]["label"] if not multi else "%d records" % len(lanes),
