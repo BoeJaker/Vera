@@ -166,4 +166,43 @@ const BIG = (() => {
   t('the card draws its own source, line-numbered and tokenised, in the scene markup',
     lines >= 240 && nums === lines && /<i class="k">def<\/i>/.test(h) && / data-line="5"/.test(h),
     JSON.stringify({ lines, nums })); }
+// -- R4: flow, the inside of one function ----------------------------------------------------------------------
+// The column is the step, the plates are the branches, and a band counts its OWN steps -- numbering every step on
+// one global axis made a 145-line function a 50,320px ribbon that fits an ultrawide at 0.07 (measured).
+const FLOW = (() => {
+  const cards = [{ id: 'f', title: 'outer', kind: 'function', layer: 'code.flow', group: 'fn', step: 0,
+                   span: { path: 'm.py', line: 1 } }];
+  const edges = [];
+  const mk = (i, group, title, kind) => { cards.push({ id: 's' + i, title, kind: kind || 'call', layer: 'code.flow',
+    group, step: i, span: { path: 'm.py', line: i } }); edges.push({ from: cards[cards.length - 2].id, to: 's' + i,
+    kind: 'CALLS', layer: 'code.flow', resolution: 'exact' }); };
+  for (let i = 1; i <= 8; i++) mk(i, 'fn', 'own' + i);            // the function's own body
+  for (let i = 9; i <= 16; i++) mk(i, 'b1', 'loop' + i);          // a loop band
+  for (let i = 17; i <= 20; i++) mk(i, 'b2', 'err' + i);          // an error path
+  mk(21, 'fn', 'return', 'return');
+  return { kind: 'code', source: { label: 'm.py' }, layout: { mode: 'flow', direction: 'LR' },
+    layers: [{ id: 'code.flow', label: 'flow' }],
+    groups: [{ id: 'fn', label: 'outer', kind: 'function', parent: null },
+             { id: 'b1', label: 'for r in rows', kind: 'branch', parent: 'fn' },
+             { id: 'b2', label: 'except ValueError', kind: 'branch', parent: 'b1' }],
+    cards, edges, assessments: [] };
+})();
+{ const o = SG.layout(FLOW, 3440, 900);
+  const byStep = o.cards.slice().sort((a, b) => (+a.card.step) - (+b.card.step));
+  let inOrder = true; const last = {};
+  byStep.forEach((k) => { if (last[k.plate] != null && k.x < last[k.plate] - 0.01) inOrder = false; last[k.plate] = k.x; });
+  t('flow: the steps of a band read left to right, in the order the source makes them', inOrder);
+  const own = o.cards.filter((k) => k.plate === 'fn'), loop = o.cards.filter((k) => k.plate === 'b1');
+  t('flow: a band counts its own steps, so a short branch is a short band',
+    Math.max.apply(null, loop.map((k) => k.col)) <= 7 && o.geom.columns <= 10,
+    JSON.stringify({ columns: o.geom.columns, loopCols: loop.map((k) => k.col) }));
+  const b1 = o.plates.find((p) => p.id === 'b1'), b2 = o.plates.find((p) => p.id === 'b2'), fn = o.plates.find((p) => p.id === 'fn');
+  t('flow: a branch is a plate inside the plate it is written in',
+    !!(fn && b1 && b2) && inside(rect(b2), rect(b1), 2) && inside(rect(b1), rect(fn), 2));
+  t('flow: every run still joins one step to the next, level or plumb',
+    o.edges.length > 0 && o.edges.every((e) => [0, 90, 180, -90].some((d) => near(e.deg, d, 0.01))));
+  const wide = SG.layout(FLOW, 3440, 900), narrow = SG.layout(FLOW, 1600, 900);
+  const zw = Math.min(1, 3424 / wide.size.w, 860 / wide.size.h);
+  t('flow: a function of 21 steps is readable on a stage, not a ribbon', zw >= 0.3 && wide.size.w < 8000,
+    JSON.stringify({ size: wide.size, zoom: +zw.toFixed(2) })); }
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);

@@ -118,8 +118,10 @@ def test_a_code_file_explodes_as_code_and_a_function_explodes_its_file():
     f = run(id="file_1")
     assert f["ok"] and f["what"] == "code" and f["cap"] == "code.explode" and f["args"]["path"] == REPO_FILE
     fn = run(id="func_1")
-    assert fn["ok"] and fn["what"] == "code" and fn["args"]["path"] == REPO_FILE
-    assert "score_readability" in fn["label"] and "card" in fn["why"]
+    # a function clicked on the graph asks what it DOES, so it resolves to its flow, not to its file
+    assert fn["ok"] and fn["what"] == "flow" and fn["args"]["path"] == REPO_FILE
+    assert fn["args"]["flow"] == "score_readability"
+    assert "score_readability" in fn["label"] and "source order" in fn["why"]
 
 
 def test_a_file_the_graph_knows_but_this_checkout_does_not_says_so():

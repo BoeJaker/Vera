@@ -42,7 +42,7 @@
     COREF: ['var(--xp-dv1)', 'coref dash', 'the same referent'], SUPPORTS: ['var(--xp-ac2)', 'supports', 'supports'], CONTRADICTS: ['var(--xp-red)', 'contradicts thick', 'contradicts']
   };
   const GLYPH = { function: 'ƒ', method: 'ƒ', class: '◆', module: '▦', file: '▤', variable: '·', external: '⇢', element: '⟨⟩', selector: '#', script: '⚙',
-    entity: '●', person: '●', org: '▲', organization: '▲', location: '⌂', date: '◷', event: '✦', claim: '❝', paragraph: '¶', sentence: '·' };
+    entity: '●', person: '●', org: '▲', organization: '▲', location: '⌂', date: '◷', event: '✦', claim: '❝', paragraph: '¶', sentence: '·', call: '\u2192', return: '\u21a9', raise: '\u26a0', step: '\u00b7'};
   const glyphOf = (k) => GLYPH[String(k || '').toLowerCase()] || '●';
   const kindCol = (k) => { const s = String(k || '').toLowerCase(); if (/class|inherit/.test(s)) return 'var(--xp-dv2)'; if (/module|file|import/.test(s)) return 'var(--xp-dv1)'; if (/external/.test(s)) return 'var(--xp-t3)';
     if (/person/.test(s)) return 'var(--xp-ac)'; if (/org/.test(s)) return 'var(--xp-dv2)'; if (/location|place/.test(s)) return 'var(--xp-dv3)'; if (/date|time/.test(s)) return 'var(--xp-ac2)'; if (/event/.test(s)) return 'var(--xp-dv1)'; if (/claim/.test(s)) return 'var(--xp-red)'; return 'var(--xp-ac)'; };
@@ -150,6 +150,21 @@
       const kinds = []; cards.forEach((c) => { const k = c.kind.toLowerCase(); if (kinds.indexOf(k) < 0) kinds.push(k); }); kinds.sort((a, b) => (TYPE_ORDER.indexOf(a) + 1 || 99) - (TYPE_ORDER.indexOf(b) + 1 || 99));
       cards.forEach((c) => { plateOf.set(c.id, platesOf(c)); colOf.set(c.id, kinds.indexOf(c.kind.toLowerCase())); });
       NC = Math.max(1, kinds.length); out.columns = kinds;
+    } else if (mode === 'flow') {
+      /* FLOW: the inside of ONE function -- its calls in the order the source makes them, each in the branch that
+         encloses it, so a reader follows it left to right and sees which calls only happen in the error path.
+         Nothing is ranked: the source already decided the order.
+
+         A band counts its OWN steps. Numbering every step on one global axis made a 145-line function a
+         50,320px ribbon that fits an ultrawide at 0.07 (measured), because step 120 sat in column 120 however
+         short its branch was. Each branch band now starts its own count, so a band is only as wide as the branch
+         it draws, and the steps still read left to right inside it; the runs carry the order between bands. */
+      const seq = {};
+      cards.slice().sort((a, b) => (+a.step || 0) - (+b.step || 0)).forEach((c) => {
+        const p = platesOf(c); plateOf.set(c.id, p);
+        colOf.set(c.id, (seq[p] = (seq[p] == null ? 0 : seq[p] + 1)));
+      });
+      NC = Math.max(1, Object.keys(seq).reduce((m, k) => Math.max(m, seq[k]), 0) + 1);
     } else {   // dependency: the groups as plates, the rank as the column
       const directed = edges.filter((e) => /^(CALLS|IMPORTS|INHERITS|REFERENCES|CONTAINS|RELATES|SUPPORTS|CONTRADICTS)$/.test(e.kind));
       const rk = R.rank(cards.map((c) => c.id), directed); out.back = rk.back.map((e) => e.from + '>' + e.to);

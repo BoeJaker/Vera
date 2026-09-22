@@ -748,6 +748,223 @@ def attach_lint(doc: Dict, findings: Dict[str, List[Dict]]) -> Dict:
     return doc
 
 
+# -- FLOW: the inside of ONE function ---------------------------------------------------------------------------
+# "id like to see better layouts of code and be able to see how it functions via the graph" (owner, 2026-09-22).
+# The dependency layout answers "what calls what" across a file; it cannot answer "what does THIS do". Flow reads
+# one function in SOURCE ORDER: every call it makes, in the order it makes them, each sitting in the branch that
+# encloses it (if / else / for / while / try / except / finally / with), with returns and raises marked. The
+# branches are the GROUPS the renderer draws as plates, the source order is the column, so a reader follows it
+# left to right and sees at a glance which calls only happen in the error path.
+#
+# Python only, and it says so: this needs a real parse of statements, which `ast` gives and the tolerant patterns
+# for JS/CSS/HTML do not. tree-sitter would extend it and is not installed on this host (checked 2026-09-22).
+
+_FLOW_STMT = ("If", "For", "AsyncFor", "While", "Try", "TryStar", "With", "AsyncWith")
+
+
+def _flow_label(node, L: "_Lines", text: str) -> str:
+    """A branch reads as its own first line: `if n > 0:`, `for row in rows:`, `except ValueError:`."""
+    import ast
+    try:
+        head = text[L.off(node.lineno, 0):L.off(node.lineno + 1, 0)] if node.lineno else ""
+    except Exception:
+        head = ""
+    head = head.strip().rstrip(":").strip()
+    if len(head) > 64:
+        head = head[:61] + "..."
+    if not head:
+        head = type(node).__name__.lower()
+    return head
+
+
+def flow_python(path: str, text: str, focus: str) -> Dict:
+    """The Explode contract for one function: {ok, cards, edges, groups, layers, source} or {error}.
+
+    `focus` names the function: its qualified name (`Agent.run`), its bare name (`run`), or its card id."""
+    import ast
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as e:
+        return {"error": "the file does not parse: %s (line %s)" % (e.msg, e.lineno)}
+    L = _Lines(text)
+    want = (focus or "").strip()
+
+    # the function meant: by qualified name, by bare name, or by the id the cards carry
+    found = []
+    def walk_defs(node, qual):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                q = (qual + "." if qual else "") + child.name
+                found.append((q, child))
+                walk_defs(child, q)
+            elif isinstance(child, ast.ClassDef):
+                walk_defs(child, (qual + "." if qual else "") + child.name)
+            elif isinstance(child, tuple(getattr(ast, n) for n in _FLOW_STMT if hasattr(ast, n)) + (ast.ExceptHandler,)):
+                walk_defs(child, qual)
+    walk_defs(tree, "")
+    fn = None
+    for q, node in found:
+        if want in (q, q.split(".")[-1], _sid(path, q)):
+            fn = (q, node)
+            break
+    if not fn:
+        return {"error": "no function '%s' in %s - it has: %s"
+                         % (want or "(none given)", path, ", ".join(q for q, _ in found[:24]) or "none")}
+    qual, node = fn
+
+    cards: List[Dict] = []
+    edges: List[Dict] = []
+    groups: List[Dict] = [{"id": "fn", "label": qual, "kind": "function", "parent": None}]
+    step = [0]
+
+    fid = _sid(path, qual)
+    head = text[L.off(node.lineno, 0):L.off(node.end_lineno + 1, 0)] if node.end_lineno else ""
+    hl = head.split("\n")
+    ind = min((len(x) - len(x.lstrip()) for x in hl if x.strip()), default=0)
+    cards.append({"id": fid, "group": "fn", "layer": "code.flow", "kind": "function", "title": qual.split(".")[-1],
+                  "subtitle": "%s - %d lines" % ("async def" if isinstance(node, ast.AsyncFunctionDef) else "def",
+                                                 (node.end_lineno or node.lineno) - node.lineno + 1),
+                  "code": "\n".join(x[ind:] if x.strip() else "" for x in hl[:1]),
+                  "code_line": node.lineno, "code_more": 0, "lang": "python",
+                  "span": {"path": path, "start": L.off(node.lineno, 0), "end": L.off((node.end_lineno or node.lineno) + 1, 0),
+                           "line": node.lineno, "line_end": node.end_lineno},
+                  "fields": [{"k": "args", "v": ", ".join(a.arg for a in node.args.args + node.args.kwonlyargs
+                                                          if a.arg not in ("self", "cls"))[:60]}],
+                  "badges": [], "by": "ast", "step": 0})
+    prev = [fid]
+
+    def add(kind: str, title: str, sub: str, gid: str, ln: int, end_ln: int, fields=None, badges=None) -> str:
+        step[0] += 1
+        cid = "%s#%d" % (fid, step[0])
+        st, en = L.off(ln, 0), L.off((end_ln or ln) + 1, 0)
+        seg = text[st:en].split("\n")
+        ind2 = min((len(x) - len(x.lstrip()) for x in seg if x.strip()), default=0)
+        cards.append({"id": cid, "group": gid, "layer": "code.flow", "kind": kind, "title": title, "subtitle": sub,
+                      "code": "\n".join(x[ind2:] if x.strip() else "" for x in seg[:3]), "code_line": ln,
+                      "code_more": max(0, len([x for x in seg if x.strip()]) - 3), "lang": "python",
+                      "span": {"path": path, "start": st, "end": en, "line": ln, "line_end": end_ln or ln},
+                      "fields": fields or [], "badges": badges or [], "by": "ast", "step": step[0]})
+        # the run from what came before: this is what "in source order" MEANS, so it is drawn, not implied
+        for src in prev:
+            edges.append({"from": src, "to": cid, "kind": "CALLS" if kind == "call" else "RELATES",
+                          "label": "line %d" % ln, "layer": "code.flow", "resolution": "exact"})
+        return cid
+
+    def calls_of(stmt) -> List:
+        """Every call the statement itself makes (not its body), in source order."""
+        out = []
+        skip = tuple(getattr(ast, n) for n in _FLOW_STMT if hasattr(ast, n))
+        def w(nd, top=False):
+            for sub in ast.iter_child_nodes(nd):
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    continue                                  # a nested def is its own flow
+                if not top and isinstance(sub, skip):
+                    continue
+                if isinstance(sub, ast.Call):
+                    t = _call_target(sub.func)
+                    if t:
+                        out.append((getattr(sub, "lineno", 0), getattr(sub, "col_offset", 0), t[0], t[1], sub))
+                w(sub)
+        # the head of a compound statement (its test / iterator / context) counts as its own
+        for fld in ("test", "iter", "items", "value", "exc", "func", "args", "returns"):
+            v = getattr(stmt, fld, None)
+            for nd in (v if isinstance(v, list) else [v]):
+                if isinstance(nd, ast.AST):
+                    if isinstance(nd, ast.Call):
+                        t = _call_target(nd.func)
+                        if t:
+                            out.append((getattr(nd, "lineno", 0), getattr(nd, "col_offset", 0), t[0], t[1], nd))
+                    w(nd)
+        if not isinstance(stmt, skip):
+            w(stmt, top=True)
+        out.sort(key=lambda x: (x[0], getattr(x[4], "end_lineno", x[0]) or x[0],
+                                getattr(x[4], "end_col_offset", 0) or 0, x[1]))
+        seen, uniq = set(), []
+        for ln, col, name, via, nd in out:
+            if (ln, col, name) in seen:
+                continue
+            seen.add((ln, col, name)); uniq.append((ln, col, name, via, nd))
+        return uniq
+
+    def run(stmts, gid: str):
+        """A branch's body, with the band kept visible even when nothing in it is a call."""
+        n0 = len(cards)
+        body(stmts, gid)
+        if len(cards) == n0 and gid != "fn":
+            first = next((x for x in stmts if x is not None), None)
+            ln = getattr(first, "lineno", 0) or 0
+            what = _flow_label(first, L, text) if first is not None else "pass"
+            cid = add("step", what[:40], "line %d - no call" % ln, gid, ln,
+                      getattr(first, "end_lineno", ln) or ln)
+            prev[:] = [cid]
+
+    def body(stmts, gid: str):
+        import ast as _a
+        for stmt in stmts:
+            if isinstance(stmt, (_a.FunctionDef, _a.AsyncFunctionDef, _a.ClassDef)):
+                continue
+            for ln, _col, name, via, nd in calls_of(stmt):
+                cid = add("call", name, "call - line %d" % ln, gid, ln, getattr(nd, "end_lineno", ln),
+                          [{"k": "via", "v": via}])
+                prev[:] = [cid]
+            if isinstance(stmt, (_a.Return, _a.Raise)):
+                kind = "return" if isinstance(stmt, _a.Return) else "raise"
+                cid = add(kind, kind, "line %d" % stmt.lineno, gid, stmt.lineno,
+                          getattr(stmt, "end_lineno", stmt.lineno), None, [kind])
+                prev[:] = [cid]
+                continue
+            if isinstance(stmt, tuple(getattr(_a, n) for n in _FLOW_STMT if hasattr(_a, n))):
+                ends = []
+                lab = _flow_label(stmt, L, text)
+                sub = "%s#b%d" % (gid, len(groups))
+                groups.append({"id": sub, "label": lab, "kind": "branch", "parent": gid})
+                before = list(prev)
+                run(getattr(stmt, "body", []) or [], sub)
+                ends.extend(prev)
+                for hnd in getattr(stmt, "handlers", []) or []:
+                    hid = "%s#b%d" % (gid, len(groups))
+                    groups.append({"id": hid, "label": _flow_label(hnd, L, text), "kind": "branch", "parent": gid})
+                    prev[:] = before
+                    run(hnd.body or [], hid)
+                    ends.extend(prev)
+                if getattr(stmt, "orelse", None):
+                    eid = "%s#b%d" % (gid, len(groups))
+                    groups.append({"id": eid, "label": "else", "kind": "branch", "parent": gid})
+                    prev[:] = before
+                    run(stmt.orelse, eid)
+                    ends.extend(prev)
+                if getattr(stmt, "finalbody", None):
+                    fbid = "%s#b%d" % (gid, len(groups))
+                    groups.append({"id": fbid, "label": "finally", "kind": "branch", "parent": gid})
+                    prev[:] = ends or before
+                    run(stmt.finalbody, fbid)
+                    ends = list(prev)
+                # after a branch, whatever comes next follows EVERY path that can reach it
+                prev[:] = list(dict.fromkeys(ends or before))
+
+    run(node.body, "fn")
+
+    n_calls = len([c for c in cards if c["kind"] == "call"])
+    return {"ok": True, "kind": "code", "focus": qual,
+            "source": {"paths": [path], "partial": False, "errors": [], "engines": ["ast"],
+                       "tree_sitter": False, "label": "%s - %s" % (path, qual), "text": text},
+            "layout": {"direction": "LR", "mode": "flow"},
+            "layers": [{"id": "code.flow", "label": "flow", "kind": "symbol", "by": "ast", "on": True,
+                        "count": len(cards), "where": "in-process",
+                        "note": "the calls of %s in source order, in the branch that encloses each" % qual}],
+            "groups": groups, "cards": cards, "edges": edges, "assessments": [],
+            "counts": {"cards": len(cards), "edges": len(edges), "calls": n_calls,
+                       "branches": len([g for g in groups if g["kind"] == "branch"])}}
+
+
+def flow_of(path: str, text: str, focus: str, lang: str = "") -> Dict:
+    lang = lang or detect_lang(path, text)
+    if lang != "python":
+        return {"error": "flow reads statements, which needs a real parse: python only today (this is %s). "
+                         "tree-sitter would extend it and is not installed on this host." % (lang or "unknown")}
+    return flow_python(path, text, focus)
+
+
 def import_targets(parsed_imports: List[Dict], from_path: str) -> List[str]:
     """The repo-relative paths a file's imports could name ('vera.research.x' → 'vera/research/x.py' or
     'vera/research/x/__init__.py'; './y.js' → 'dir/y.js'), for a caller that widens the parsed set by one hop."""
