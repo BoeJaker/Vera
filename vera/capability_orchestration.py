@@ -33,6 +33,10 @@ from .capability_enforcement import PolicyEnforcementDenied, enforcement_project
 # Pure context-budget decisions — window vs prompt vs output vs retained prefix.
 # Imports nothing from Vera, so it is safe this early and cannot cycle. Pinned by
 # tests/test_ctx_policy.py, which is the point: these were inline and untestable.
+try:
+    from Vera.vera import ollama_node_fault_core as _node_fault_core
+except Exception:  # pragma: no cover - worktree / test layout
+    from . import ollama_node_fault_core as _node_fault_core
 from .capabilities.ctx_policy_core import (
     did_shift as _ctx_did_shift,
     keep_tokens as _ctx_keep_tokens,
@@ -3586,9 +3590,14 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         # would otherwise cascade the whole node out of rotation and starve
         # every subsequent request. Only mark offline after repeated failures;
         # the health loop re-probes every 20s and clears errors on success.
-        inst["errors"] += 1
-        if inst["errors"] >= 3:
-            inst["status"] = "offline"
+        # And only for the NODE's faults: a 404 for a model the caller made up
+        # is answered by a healthy node in a millisecond - three of those in
+        # two seconds took gpu-250 offline and spilled the next 35 k-char
+        # executor call onto a CPU node for 45 min (census run59, 2026-09-22).
+        if _node_fault_core.is_node_fault(err_str):
+            inst["errors"] += 1
+            if inst["errors"] >= 3:
+                inst["status"] = "offline"
         req_entry.update({"status": "error", "elapsed_s": elapsed,
                           "error": err_str, **_failure_timing})
         _ollama_log_append(req_entry)
@@ -4008,7 +4017,8 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
         err_str = _err_text(e)
         log.error("ollama_embed [%s] FAILED after %.2fs inst=%s err=%s",
                   req_id, elapsed, chosen, err_str)
-        inst["errors"] = inst.get("errors", 0) + 1
+        if _node_fault_core.is_node_fault(err_str):
+            inst["errors"] = inst.get("errors", 0) + 1
         req_entry.update({"status": "error", "elapsed_s": elapsed,
                           "error": err_str})
         _ollama_log_append(req_entry)

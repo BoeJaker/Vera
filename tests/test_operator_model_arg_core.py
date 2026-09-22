@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from vera.dag.operator_model_arg_core import (  # noqa: E402
-    heal_model_arg, is_model_not_found_error, model_is_served,
+    heal_model_arg, is_model_not_found_error, model_is_served, split_provider,
 )
 
 SERVED = ["jaahas/qwen3.5-uncensored:latest", "jaahas/qwen3.5-uncensored:9b",
@@ -28,6 +28,25 @@ def test_the_census_case_drops_the_invented_model():
     edits = heal_model_arg("operator.run", args, SERVED)
     assert edits and edits[0][0] == "model" and edits[0][1] == ""
     assert "'fast'" in edits[0][2] and "dropped" in edits[0][2]
+
+
+def test_a_model_smuggled_in_through_provider_is_dropped_too():
+    """Census run59 (2026-09-22): `provider: "ollama:fast-preview"` - the
+    thinker splits provider on ":" and forwards the model; the heal must read
+    the same field or the 404s reach the node three times in two seconds."""
+    assert split_provider("ollama:fast-preview") == ("ollama", "fast-preview")
+    assert split_provider("local") == ("local", "")
+    assert split_provider(None) == ("", "")
+    args = {"url": "https://x/timer.html", "goal": "verify", "provider": "ollama:fast-preview"}
+    edits = heal_model_arg("operator.run", args, SERVED)
+    assert edits == [("provider", "ollama", edits[0][2])]
+    assert "'fast-preview'" in edits[0][2] and "no Ollama node serves" in edits[0][2]
+    # a served model named through provider is left exactly as written
+    assert heal_model_arg("operator.run", {"provider": "ollama:qwen2.5:7b"}, SERVED) == []
+    assert heal_model_arg("operator.run", {"provider": "anthropic:claude-x"}, SERVED)[0][1] == "anthropic"
+    # both fields wrong -> both healed
+    both = heal_model_arg("operator.run", {"provider": "local:fast", "model": "faster"}, SERVED)
+    assert [(f, v) for f, v, _ in both] == [("model", ""), ("provider", "local")]
 
 
 def test_a_served_model_survives_in_any_spelling():
@@ -79,6 +98,27 @@ def test_thinker_retries_once_without_the_model():
     assert d.get("action") == "click"
     assert [m for _, m in calls] == ["fast", None]
     assert d.get("model_dropped") == "fast"
+
+
+def test_thinker_retries_when_the_404_is_raised():
+    """llm.generate raised the 404 in run59; the early return skipped the retry."""
+    from vera.operator import thinker
+
+    calls = []
+
+    async def call_cap(name, **kw):
+        calls.append(kw.get("model"))
+        if kw.get("model") == "fast-preview":
+            raise Exception("ollama returned 404: {\"error\":\"model 'fast-preview' not found\"}")
+        return {"text": json.dumps({"thought": "t", "action": "done", "args": {}, "done": True})}
+
+    class Obs:
+        url = ""; title = ""; text = ""; elements = []; screenshot_b64 = ""; screenshot_path = ""
+
+    d = asyncio.new_event_loop().run_until_complete(
+        thinker.decide("g", Obs(), [], call_cap, provider="ollama:fast-preview"))
+    assert not d.get("error"), d
+    assert calls == ["fast-preview", None] and d.get("model_dropped") == "fast-preview"
 
 
 def test_thinker_does_not_retry_other_errors():
