@@ -3575,6 +3575,125 @@ const CH = (() => {
     if(btn) setTimeout(()=>{ btn.textContent=orig; btn.classList.remove('ok','err'); }, 1100);
   }
 
+
+  /* ═══ EXPLODE IN THE CHAT ═══════════════════════════════════════════════════════════════════════════════════
+     "im not seeing it in the chat at all, it should be in the canvas and it could also feature in the chats
+     existing exploded views ... any code or prose from the chat or any cap calls should equally be able to be
+     passed through this if the user want to explode it" (owner, 2026-09-22).
+
+     Three ways in, all the same diagram: a message's Explode action, a code fence's Explode button, and
+     /explode <what>. What a thing IS and how it explodes is the server's answer (explode.target), never a guess
+     made here — the graph panel used to guess, and answered "record ... not found" for a node that was never a
+     record. The diagram is <vera-graph-embed renderer="struct">, the same element the canvas and the fabric
+     panel host, so there is one renderer and one contract. */
+  let _XP_SEQ = 0, _XP_LIB = null;
+  function _xpLib(){                                    // the embed brings the structured renderer with it
+    if(_XP_LIB) return _XP_LIB;
+    _XP_LIB = new Promise((ok, no)=>{
+      if(window.customElements && customElements.get('vera-graph-embed')) return ok();
+      const sc=document.createElement('script'); sc.src=BASE+'/ui/vera-graph-embed.js'; sc.async=true;
+      sc.onload=()=>ok(); sc.onerror=()=>no(new Error('the graph embed did not load'));
+      document.head.appendChild(sc);
+    });
+    return _XP_LIB;
+  }
+  /* The panel a diagram lands in: a titled strip under whatever was exploded, closable, with the reason the
+     server gave for reading the thing that way. */
+  async function _xpPanel(host, attrs, label, why){
+    const id='xp'+(++_XP_SEQ);
+    const box=document.createElement('div');
+    box.className='xp-inline'; box.dataset.xp=id;
+    box.style.cssText='margin:6px 0 2px;border:1px solid var(--border,#2a2622);border-radius:4px;overflow:hidden;background:var(--bg1,#17140f)';
+    box.innerHTML='<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;font:9px var(--mono,monospace);color:var(--dim,#6a6058);border-bottom:1px solid var(--border,#2a2622)">'
+      + '<span style="color:var(--acc,#5a9e8f)">explode</span><span class="xp-l" style="color:var(--text,#d8d0c6)"></span>'
+      + '<span class="xp-w" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>'
+      + '<button class="cb-act xp-x" title="Close this diagram">close</button></div>'
+      + '<div class="xp-body" style="height:340px"></div>';
+    box.querySelector('.xp-l').textContent=label||'';
+    box.querySelector('.xp-w').textContent=why||'';
+    box.querySelector('.xp-x').onclick=()=>{ box.remove(); };
+    host.appendChild(box);
+    try{
+      await _xpLib();
+      const el=document.createElement('vera-graph-embed');
+      el.setAttribute('renderer','struct');
+      Object.keys(attrs||{}).forEach(k=>{ if(attrs[k]!=null && attrs[k]!=='') el.setAttribute(k, String(attrs[k])); });
+      el.setAttribute('height','330');
+      el.style.cssText='display:block;width:100%';
+      box.querySelector('.xp-body').appendChild(el);
+    }catch(e){
+      box.querySelector('.xp-body').innerHTML='<div style="padding:10px;font:10px var(--mono,monospace);color:var(--err,#c05b4d)">'+esc(String(e&&e.message||e))+'</div>';
+    }
+    try{ box.scrollIntoView({block:'nearest',behavior:'smooth'}); }catch(_){}
+    return box;
+  }
+  /* The fences of a reply, biggest first — a message with code in it is usually ABOUT that code. */
+  function _xpFences(text){
+    const out=[]; const re=/```([^\n`]*)\n([\s\S]*?)```/g; let m;
+    while((m=re.exec(String(text||'')))){
+      const info=(m[1]||'').trim(), body=m[2]||'';
+      if(body.trim()) out.push({lang:(info.split(/[\s:]/)[0]||'').toLowerCase(), code:body, lines:body.split('\n').length});
+    }
+    return out.sort((a,b)=>b.lines-a.lines);
+  }
+  async function _msgExplode(mid, btn){
+    const rec=_MSG_REGISTRY[mid]; if(!rec) return;
+    const wrap=document.querySelector('.mwrap[data-mid="'+mid+'"]'); if(!wrap) return;
+    const old=wrap.querySelector(':scope > .xp-inline'); if(old){ old.remove(); return; }   // the action toggles
+    const txt=String(rec.getContent()||'');
+    const fences=_xpFences(txt);
+    if(btn){ btn.classList.add('ok'); setTimeout(()=>btn.classList.remove('ok'), 900); }
+    if(fences.length && fences[0].lines>=3){
+      const f=fences[0];
+      await _xpPanel(wrap, {code:f.code, lang:f.lang}, (f.lang||'code')+' · '+f.lines+' lines',
+                     fences.length>1 ? 'the largest of '+fences.length+' code blocks in this message' : 'the code in this message');
+      return;
+    }
+    const prose=txt.replace(/```[\s\S]*?```/g,' ').trim();
+    if(prose.length<40){ appendSys('Nothing to explode in that message — it holds no passage and no code block.'); return; }
+    await _xpPanel(wrap, {text:prose}, 'passage · '+prose.length+' chars', 'the prose of this message');
+  }
+  async function _codeExplode(id, btn){
+    const blk=_CODE_BLOCKS[id]; if(!blk) return;
+    const card=document.querySelector('.code-card[data-cb="'+id+'"]'); if(!card) return;
+    const old=card.querySelector(':scope > .xp-inline'); if(old){ old.remove(); if(btn) btn.classList.remove('ok'); return; }
+    if(btn) btn.classList.add('ok');
+    await _xpPanel(card, {code:blk.code, lang:blk.lang, path:blk.filename||''},
+                   (blk.filename||blk.lang||'code')+' · '+blk.code.split('\n').length+' lines',
+                   'this code block');
+  }
+  /* /explode <what> — a path, a record id, a graph node id, or a passage. The server says what it is. */
+  async function _slashExplode(arg){
+    const what=String(arg||'').trim();
+    if(!what){
+      const wraps=[...document.querySelectorAll('.mwrap[data-mid]')];
+      const last=wraps.length?wraps[wraps.length-1]:null;
+      if(!last){ appendSys('Nothing to explode yet.'); return; }
+      return _msgExplode(last.dataset.mid, null);
+    }
+    let tg=null;
+    try{
+      const r=await fetch(BASE+'/explode/target',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(/\s/.test(what)&&what.length>60 ? {text:what} : {id:what, max_records:12})});
+      tg=await r.json();
+    }catch(e){ appendSys('explode.target failed: '+esc(String(e&&e.message||e))); return; }
+    if(!tg||!tg.ok){ appendSys(esc((tg&&tg.why)||('nothing to explode for '+what))); return; }
+    const a=tg.args||{}, attrs={};
+    if(tg.cap==='code.explode'){
+      if(a.path) attrs.path=a.path;
+      if(a.flow) attrs.flow=a.flow;
+      if(a.text){ attrs.code=a.text; attrs.lang=a.lang||''; }
+      if(a.depth!=null) attrs.depth=a.depth;
+    }else{
+      if(a.record_id) attrs.record=a.record_id;
+      else if(a.record_ids) attrs.records=a.record_ids.join(',');
+      else if(a.text) attrs.text=a.text;
+    }
+    const row=_mkMsg('agent','explode','');
+    BOX().appendChild(row.wrap);
+    await _xpPanel(row.body, attrs, tg.label||what, tg.why||'');
+    try{ scroll(true); }catch(_){}
+  }
   /* ── Save modal helpers ── */
   function _saveModalOpen(mode, title, content){
     const m = document.getElementById('saveModal');
@@ -3988,6 +4107,7 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
       : '';
     actions.innerHTML= editBtns
         + `<button class="mact" onclick="CH._msgCopy('${mid}',this)" title="Copy message text to clipboard">Copy</button>`
+      + `<button class="mact" onclick="CH._msgExplode('${mid}',this)" title="Explode this message into a structured diagram — its code, or its prose">Explode</button>`
       + `<button class="mact" onclick="CH._msgSaveToNotebook('${mid}')" title="Save this message as a cell in a notebook">+ Notebook</button>`
       + `<button class="mact" onclick="CH._msgSaveToIde('${mid}')" title="Save this message to a file via the IDE">+ IDE</button>`
       + `<button class="mact" onclick="CH._msgSaveToProject('${mid}')" title="Add this message to a project (or a new one) in the dream system">+ Project</button>`
@@ -7845,6 +7965,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
          + `<div class="code-bar"><span class="code-lang">${langLbl}</span>`
          +   `<div style="flex:1"></div>`
          +   `<button class="cb-act" onclick="CH._codeCopy('${id}',this)" title="Copy to clipboard">Copy</button>`
+         +   `<button class="cb-act" onclick="CH._codeExplode('${id}',this)" title="Explode this code into a structured diagram — symbols, calls, imports, lint">Explode</button>`
          +   saveBtn + previewBtn + runBtn + execBtn
          + `</div>`
          + `<pre><code${_langClass(lang)}>${highlightCode(raw, lang)}</code></pre>`
@@ -18122,6 +18243,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     {name:'dag', arg:'goal', desc:'Set up / build a DAG workflow', run:_slashDag},
     {name:'flow', alias:['builder'], desc:'Open the visual DAG flow builder', run:()=>cmdOpen({view:'flow-dag'})},
     {name:'graph', alias:['fabricgraph'], desc:'Query fabric records via the graph', run:()=>cmdOpen({view:'graph'})},
+    {name:'explode', alias:['xp'], arg:'path | record | node | passage', desc:'Explode something into a structured diagram — blank for the last message', run:_slashExplode},
     {name:'fabric', alias:['source'], arg:'url', desc:'Add a data-fabric source', run:(a)=>cmdOpen({view:'fabric',query:(a||'').trim()})},
     {name:'dream', alias:['think'], arg:'subject', desc:'Create a dream / thinking loop', run:(a)=>cmdOpen({view:'dream',query:(a||'').trim()})},
     {name:'panel', alias:['open'], arg:'panel', desc:'Open a UI panel', run:_slashOpenPanel},
@@ -19535,6 +19657,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _renderRailPanels,_loadUiPanelsForce,
     _scrollToBottom,
     _msgEdit,_msgEditCancel,_msgEditCommit,_msgResubmit,
+    _msgExplode,_codeExplode,
     _msgSaveToNotebook,_msgSaveToIde,_msgSaveToProject,_msgThinkLater,_msgPodcast,_msgHtmlReport,_msgRedeliver,_redeliverDo,_gallerySave,_chatSaveToNotebook,_chatSaveToIde,_msgCopy,
     _saveModalClose,_saveModalConfirm,_saveModalNbCellTypeChange,
     getActivePanelState,dispatchPanelAction,requestPanelState,
