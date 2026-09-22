@@ -133,7 +133,7 @@ def _machines(src: Mapping[str, Any], own_ips: Iterable[str], nodes: Dict[str, D
             n = _node(nid, label, "runtime", _domain_of(label, DEV), kind="guest", status="ok",
                       detail=(str(r.get("type") or "guest") + (" · " + " · ".join(hw[:2]) if hw else "")),
                       ref="guest:" + str(r["vmid"]) if r.get("vmid") is not None else "", vmid=r.get("vmid"),
-                      req={"name": "proxmox.guest.ip", "arguments": {"cluster_id": r.get("cluster_id") or "", "node": r.get("node") or "", "vmid": r.get("vmid")}},
+                      req={"name": "sysmon.status", "arguments": {}},
                       cluster_id=r.get("cluster_id") or "", pve_node=r.get("node") or "", type=r.get("type") or "")
             nodes[nid] = n
             if r.get("node"):
