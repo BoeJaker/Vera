@@ -1008,9 +1008,11 @@ async def _aux_rows(cypher: str, **params) -> List[Dict]:
 
 
 def _lang_of(path: str) -> str:
-    from vera.research import code_explode_core as _C
+    # through the loader's own accessor: this file is a flat `_module_files` entry point in the app, where
+    # `vera.research` is not an importable package at all ("No module named 'vera'", seen live 2026-09-22) --
+    # a test tree imports it happily, which is exactly why the fixtures could not show this.
     try:
-        return _C.detect_lang(path)
+        return _code_core().detect_lang(path)
     except Exception:
         return ""
 
