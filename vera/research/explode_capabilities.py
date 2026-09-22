@@ -1039,6 +1039,20 @@ async def resolve_target(id: str = "", text: str = "", lang: str = "", path: str
         kind = ls[0] if ls else "node"
         seen = {"type": kind, "labels": ls, "id": id}
 
+        if "FabricRecord" in ls:
+            # The graph is shared across the estate; the fabric's record STORE is per instance. A record this
+            # instance holds was resolved above, so reaching here means the graph knows the record and the local
+            # store does not hold its text -- a fact about WHERE to explode it, not a missing record. (Seen live
+            # on the design mirror, 2026-09-22: its store has 41k records, the graph 608k.)
+            title = props.get("title") if isinstance(props.get("title"), str) else ""
+            return {"ok": False, "what": "record", "cap": "nlp.explode.prose", "args": {"record_id": id},
+                    "label": "record %s%s" % (id[:12], (" - " + title[:50]) if title else ""),
+                    "why": "a fabric record of dataset '%s'. The graph knows it, but this instance's record store "
+                           "does not hold its text - the graph is shared across the estate, the records are per "
+                           "instance - so explode it where that fabric lives."
+                           % (props.get("dataset_id") or "?"),
+                    "seen": seen}
+
         if "CodeFile" in ls:
             fp = props.get("filepath") or props.get("path") or props.get("filename")
             if isinstance(fp, str) and _repo_has(fp):
