@@ -520,6 +520,15 @@
      late, which reads as the column resetting and dropping (Notes/42 defect 89). A drag already does this. */
   .stage[data-scrolling] .it{transition:none}
   .stage .it.resizing{transition:none}
+  /* HELD LAYOUT (the canvas's final form §2): an item taller than the column keeps its head and its rail and scrolls
+     its OWN body. It used to run off the end of a stage nobody could scroll, so the part of it you wanted — the
+     bottom of the last turn's item — could not be reached at all. */
+  .stage .it.capped{overflow:hidden}
+  .stage .it.capped .it-bd{max-height:none;overflow:auto}
+  /* folded because the COLUMN ran out of room, not because the tier folds it: the header line alone, and it opens
+     again the moment there is room. The weakest hold folds first, so what you are reading stays whole. */
+  .stage .it.overfold .it-bd,.stage .it.overfold .it-ft,.stage .it.overfold .rz{display:none}
+  .stage .it.overfold{cursor:pointer}
   :host([stage]) .body{position:relative;padding-top:0}
   :host([stage]) .band.pinned{padding-top:6px}
   /* the NOW bar stays in view under the add bar while the stage scrolls with the transcript */
@@ -740,23 +749,71 @@
   .vc-dgsrc{margin-top:6px;max-height:160px}
   vera-mermaid.vc-mm{display:block;min-height:120px;margin:.3em 0}`;
 
-  /* ── THE PLACER (Notes/38 §3.5), pure: items → a column and a top for each. An item sits level with the turn using it
-     now (the turn's measured top in the transcript's scroll frame) — or, for an item added by hand, the turn it was
-     added beside (its level, never a relation); items whose turn is not in view pack after; auto items never overlap —
-     a column's next item starts at max(its turn's top, the column's bottom + gap); the column chosen is the one that
-     lets it sit highest. ── */
+  /* ── THE PLACER (Notes/38 §3.5; the canvas's final form §2), pure: items → a column and a top for each. An item sits
+     level with the turn using it now — or, for an item added by hand, the turn it was added beside (its level, never a
+     relation); items whose turn is not in view pack after; auto items never overlap — a column's next item starts at
+     max(its level, the column's bottom + gap); the column chosen is the one that lets it sit highest.
+
+     THREE REGIMES, chosen by whether the caller gives the column its own VIEWPORT:
+
+       stage  (no viewport — the projection this started as, kept for every caller that does not measure): the level
+              is the turn's top in the TRANSCRIPT's scroll frame. The column is then as tall as the transcript and
+              somebody else drives its scroll.
+       held   (a viewport, and the set fits in it): the level is the turn's top ON SCREEN — its top less the
+              transcript's scroll — CLAMPED into the column's own viewport, so an item can never be carried off the
+              bottom by the turn it belongs to. This is what "stays in view" means, and the column keeps its own
+              scroll rather than being driven from the transcript's.
+       packed (a viewport, and the set does not fit even folded): the level ORDERS the items and nothing more; they
+              stack from the top and the column scrolls itself. An item taller than the viewport is not clipped —
+              the caller caps it and its own body scrolls.
+
+     FOLDING: when the set cannot fit, the least strongly held items fold to their header (`hFold`) until it does —
+     lowest weight first, and of two equals the lower one — so what you are reading stays whole. A pinned item never
+     folds. The placer decides; the caller applies it and hands back honest open heights (`h`) next time, which is
+     what keeps this from oscillating. ── */
   function place(items, turns, o) {
     o = o || {}; const cols = Math.max(1, Math.min(4, o.columns || 1)), gap = o.gap == null ? 10 : o.gap, cw = o.colWidth || 300, pad = o.pad || 0;
-    const view = Math.max(0, o.view || 0);   // the top of the window in view (stage y): an item with nothing to stand beside sits where you are looking
-    const T = turns || {}; const levelOf = (it) => it.mid || it.beside || ''; const known = (it) => { const m = levelOf(it); return !!(m && T[m] && typeof T[m].top === 'number'); };
-    const order = (items || []).map((it, i) => ({ it, i })).sort((a, b) => { const ka = known(a.it), kb = known(b.it); if (ka && kb) return (T[levelOf(a.it)].top - T[levelOf(b.it)].top) || (a.i - b.i); if (ka) return -1; if (kb) return 1; return a.i - b.i; });
+    const view = Math.max(0, o.view || 0);   // stage only: the top of the window in view — an item with nothing to stand beside sits where you are looking
+    const V = Math.max(0, o.viewport || 0);  // the column's own height; 0 keeps the old projection
+    const scroll = o.scrollTop || 0;         // the transcript's scroll, so a turn's top reads as a place ON SCREEN
+    const WT = o.weights || {};
+    const T = turns || {}; const list = (items || []).filter(Boolean);
+    const levelOf = (it) => it.mid || it.beside || ''; const known = (it) => { const m = levelOf(it); return !!(m && T[m] && typeof T[m].top === 'number'); };
+    const topOf = (it) => T[levelOf(it)].top - (V ? scroll : 0);
+    const rankOf = (it) => known(it) ? topOf(it) : Infinity;
+    const order = list.map((it, i) => ({ it, i })).sort((a, b) => { const ka = known(a.it), kb = known(b.it); if (ka && kb) return (topOf(a.it) - topOf(b.it)) || (a.i - b.i); if (ka) return -1; if (kb) return 1; return a.i - b.i; });
+    const fullH = (it) => Math.max(1, it.h || 1);
+    const foldH = (it) => Math.max(1, Math.min(it.hFold || fullH(it), fullH(it)));
+    const folded = new Set();
+    const need = () => list.reduce((s, it) => s + (folded.has(String(it.key)) ? foldH(it) : fullH(it)), 0) + gap * Math.max(0, list.length - 1);
+    const capacity = cols * Math.max(0, V - pad);
+    if (V && o.fold !== false) {
+      const wOf = (it) => { const w = WT[String(it.key)]; const n = (w && typeof w === 'object') ? w.score : w; return typeof n === 'number' ? n : 0.5; };
+      const cand = list.filter((it) => !it.pinned).sort((a, b) => (wOf(a) - wOf(b)) || (rankOf(b) - rankOf(a)));
+      /* FOLDING ONLY EVER RESCUES THE HELD REGIME. If the set cannot fit even with every candidate folded, folding
+         buys nothing — the column is going to scroll either way — and folding them anyway would leave the reader
+         scrolling a list of header lines. So: ask first whether it can be saved, and only then fold. */
+      cand.forEach((it) => folded.add(String(it.key)));
+      if (need() > capacity) folded.clear();
+      else { folded.clear(); for (let i = 0; i < cand.length && need() > capacity; i++) folded.add(String(cand[i].key)); }
+    }
+    const fits = !V || need() <= capacity;
+    const mode = !V ? 'stage' : (fits ? 'held' : 'packed');
+    const heightOf = (it) => folded.has(String(it.key)) ? foldH(it) : fullH(it);
     const bottoms = new Array(cols).fill(pad), used = new Array(cols).fill(false); const out = []; let maxB = pad;
-    order.forEach(({ it }) => { const ideal = known(it) ? Math.max(pad, T[levelOf(it)].top) : null; let best = 0, bestY = Infinity;
-      for (let c = 0; c < cols; c++) { const floor = used[c] ? bottoms[c] + gap : bottoms[c]; const y = ideal == null ? Math.max(floor, view + pad) : Math.max(ideal, floor); if (y < bestY) { bestY = y; best = c; } }
-      const h = Math.max(1, it.h || 1);
-      out.push({ key: it.key, mid: it.mid || '', col: best, x: best * (cw + gap), y: bestY, h, level: ideal != null && bestY === ideal });
+    order.forEach(({ it }) => {
+      const h = heightOf(it);
+      const ideal = (!known(it) || mode === 'packed') ? null
+        : mode === 'stage' ? Math.max(pad, topOf(it))
+        : Math.max(pad, Math.min(topOf(it), Math.max(pad, V - h)));   // held: level with its turn, never off the bottom
+      let best = 0, bestY = Infinity;
+      for (let c = 0; c < cols; c++) { const floor = used[c] ? bottoms[c] + gap : bottoms[c];
+        const y = ideal == null ? Math.max(floor, mode === 'stage' ? view + pad : pad) : Math.max(ideal, floor);
+        if (y < bestY) { bestY = y; best = c; } }
+      out.push({ key: it.key, mid: it.mid || '', col: best, x: best * (cw + gap), y: bestY, h,
+                 level: ideal != null && bestY === ideal, folded: folded.has(String(it.key)) });
       bottoms[best] = bestY + h; used[best] = true; maxB = Math.max(maxB, bottoms[best]); });
-    return { placements: out, height: maxB + pad + 8, columns: cols };
+    return { placements: out, height: maxB + pad + 8, columns: cols, mode, fits, viewport: V, folded: [...folded] };
   }
   /* ── THE CHECKER (the design's numeric check for the router): an axis-aligned route must not pass through any
      card it does not start or end on, and must join its two ends on their edges. ── */
@@ -1057,20 +1114,27 @@
       if (fm !== this._focusMid) { this._focusMid = fm; if (this._doc && this._doc.mode === 'session') { this.render(this._doc); return; } }
       if (this.hasAttribute('stage')) this._placeNow();
     }
-    syncScroll(msgsScrollTop, msgsTopClient) {
-      const body = this.shadowRoot.getElementById('body'), st = this.shadowRoot.getElementById('stage'); if (!body || !st) return;
+    /* WHERE THE TRANSCRIPT IS, WHICH IS NOT WHERE THE COLUMN IS. The host says how far the transcript has scrolled
+       and where its top sits; the column places its items level with the turns on screen and keeps its own scroll.
+       It used to be the other way round — the column's scrollTop was written from the transcript's on every frame,
+       which is why an item moved with its turn instead of staying in view, and why an item taller than the room
+       below its turn could not be scrolled to (the canvas's final form §0.2.2). */
+    setView(msgsScrollTop, msgsTopClient) {
+      const st = this.shadowRoot.getElementById('stage'); if (!st) return;
       if (this._rz) return;                                  // a resize in hand keeps the column still
       /* the transcript is moving: place instantly until it has been still for a beat (defect 89) */
       st.setAttribute('data-scrolling', '');
       if (this._scrollIdle) clearTimeout(this._scrollIdle);
       this._scrollIdle = setTimeout(() => { this._scrollIdle = null; try { st.removeAttribute('data-scrolling'); } catch (_) {} }, 140);
-      const br = body.getBoundingClientRect();
-      // an item at stage y = its turn's top lands at the turn's own client top
-      body.scrollTop = Math.max(0, Math.round(msgsScrollTop + st.offsetTop - (msgsTopClient - br.top)));
-      const first = this._view == null; this._view = Math.max(0, body.scrollTop - st.offsetTop);   // where you are looking, in STAGE y (the stage sits below the heads in flow) — the placer's floor for a turn-less item
-      // the first sync: an item with nothing to stand beside was placed before the view was known — once, it moves into view
-      if (first && this._placed && this._placed.placements.some((p) => !p.mid && !p.level)) this._placeNow();
+      const before = this._scrollTop;
+      this._scrollTop = Math.max(0, Math.round(msgsScrollTop || 0));
+      this._viewTop = msgsTopClient || 0;
+      if (this._view == null) this._view = 0;                // the stage regime's floor for a turn-less item
+      if (before !== this._scrollTop || this._placed == null) this._placeNow();
     }
+    /* the name the host used while the column was a projection of the transcript; kept so an older page still
+       works — it no longer moves the column, it only tells it where the transcript is. */
+    syncScroll(msgsScrollTop, msgsTopClient) { return this.setView(msgsScrollTop, msgsTopClient); }
     /* WHAT IS PARKED, AND WHICH MESSAGES IT BELONGS TO. A parked item is shelved, not deleted, and the host
        needs to know which turns it came from to decide whether scrolling back has made it relevant again -
        otherwise an item goes away for good the moment the conversation moves on, and the only way to see it is
@@ -1096,16 +1160,45 @@
       const st = this.shadowRoot.getElementById('stage'); if (!st) return;
       const cols = Math.max(1, Math.min(4, parseInt(this.getAttribute('columns') || '1', 10) || 1)); const W = st.clientWidth || 300, gap = 10; const w = Math.floor((W - gap * (cols - 1)) / cols);
       const cards = [...st.querySelectorAll('.it')]; cards.forEach((c) => { c.style.width = w + 'px'; });
-      const items = cards.map((c) => ({ key: c.dataset.key, h: c.offsetHeight, mid: c.dataset.mid || '', beside: c.dataset.beside || '' }));
       const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);   // the sticky heads overlay the stage's top: nothing is placed under them
       const body = this.shadowRoot.getElementById('body');
-      const P = place(items, this._turns || {}, { columns: cols, gap, colWidth: w, pad, view: this._view != null ? this._view : (body ? body.scrollTop : 0) });
+      const V = body ? body.clientHeight : 0;                                  // the column's OWN viewport — the held regime's bound
+      /* an item taller than the column is capped and scrolls its own body rather than running off the end. Written
+         in three passes — clear every cap, read every height, then set the caps — because this runs on every scroll
+         frame now, and a write/read per card in one loop is a layout flush per card. */
+      const capH = Math.max(120, V - pad - 10);
+      if (V) { cards.forEach((c) => { if (c.style.maxHeight) { c.style.maxHeight = ''; c.classList.remove('capped'); } });
+        const hs = cards.map((c) => c.offsetHeight);
+        cards.forEach((c, i) => { if (hs[i] > capH) { c.style.maxHeight = capH + 'px'; c.classList.add('capped'); } }); }
+      else cards.forEach((c) => { if (c.classList.contains('capped')) { c.style.maxHeight = ''; c.classList.remove('capped'); } });
+      this._fullH = this._fullH || {};
+      const items = cards.map((c) => { const k = c.dataset.key || ''; const hd = c.querySelector('.it-hd');
+        const isFolded = c.classList.contains('overfold'); const measured = c.offsetHeight;
+        if (!isFolded) this._fullH[k] = measured;                              // what it is when OPEN: the placer judges on that, so folding cannot oscillate
+        return { key: k, h: isFolded ? (this._fullH[k] || measured) : measured, hFold: hd ? hd.offsetHeight + 2 : 28,
+                 mid: c.dataset.mid || '', beside: c.dataset.beside || '',
+                 /* AN ITEM YOU OPENED IS NEVER FOLDED BY THE COLUMN, any more than a pinned one is: you asked for it
+                    open, and a room that shuts what you just opened is worse than a room that scrolls. */
+                 pinned: c.classList.contains('pinned') || c.classList.contains('openin') }; });
+      const weights = {}; const S = this._scores || {};
+      Object.keys(S).forEach((k) => { const v = S[k]; weights[k] = v && typeof v.score === 'number' ? v.score : 0.5; });
+      const P = place(items, this._turns || {}, { columns: cols, gap, colWidth: w, pad, viewport: V,
+        scrollTop: this._scrollTop || 0, weights, view: this._view != null ? this._view : (body ? body.scrollTop : 0) });
+      const foldSet = new Set(P.folded || []); let refold = false;
+      cards.forEach((c) => { const want = foldSet.has(c.dataset.key || '');
+        if (c.classList.contains('overfold') !== want) { c.classList.toggle('overfold', want); refold = true; } });
       P.placements.forEach((p) => { const c = cards.find((x) => x.dataset.key === p.key); if (!c) return; c.style.left = p.x + 'px'; c.style.top = p.y + 'px'; c.dataset.col = String(p.col); c.classList.toggle('level', !!p.level); });
-      // the stage is at least as tall as the transcript's scroll height, so the column can scroll in step with it
-      st.style.height = Math.max(P.height, (this._turnsH || 0) + 40) + 'px'; this._placed = P;
+      /* THE STAGE IS THE ITEMS' OWN HEIGHT, not the transcript's. It used to be made as tall as the whole transcript
+         so the column could be driven from the transcript's scrollTop — the projection this replaces. */
+      st.style.height = (P.mode === 'stage' ? Math.max(P.height, (this._turnsH || 0) + 40) : P.height) + 'px';
+      // nothing overflows: the column has no business being scrolled somewhere (it may have been, before this)
+      if (body && P.mode !== 'packed' && body.scrollTop && st.offsetHeight <= body.clientHeight) body.scrollTop = 0;
+      this._placed = P;
       this._liveLayout();
-      try { this.dispatchEvent(new CustomEvent('vera:canvas:placed', { bubbles: true, detail: { n: P.placements.length, level: P.placements.filter((p) => p.level).length, columns: cols, height: P.height } })); } catch (e) { /* observers are optional */ }
+      // the fold set changed: the heights it was judged on are stale by exactly those items — place once more
+      if (refold && !this._refolding) { this._refolding = 1; requestAnimationFrame(() => { this._refolding = 0; this._placeNow(); }); }
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:placed', { bubbles: true, detail: { n: P.placements.length, level: P.placements.filter((p) => p.level).length, columns: cols, height: P.height, mode: P.mode, folded: (P.folded || []).length } })); } catch (e) { /* observers are optional */ }
     }
 
     get canvasId() { return this.getAttribute('canvas-id') || ''; }

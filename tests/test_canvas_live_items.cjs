@@ -52,7 +52,10 @@ t('the bridge is asked through the same /mcp/call, its reply back on the item', 
 t('the cell runs through the notebook\'s exec SSE and its output lands on the cell and the item', SRC.includes("fetch(api + '/ide-api/exec/run'") && SRC.includes("'/cells/' + encodeURIComponent(c.cell_id), { method: 'PATCH'") && SRC.includes("return this.call('canvas.update', { key, content: Object.assign(c, { generated: text }) });"));
 t('the /mcp/call envelope is opened either way: prod {type, tool_name, content}, a stand-in {result}', V.unwrap({ type: 'tool_result', tool_name: 'panel.query', content: { ok: true, panels: [1] } }).panels.length === 1 && V.unwrap({ result: { ok: 1 } }).ok === 1 && V.unwrap({ ok: true, panels: [] }).ok === true);
 t('the host is asked for the panel\'s page after the item exists', SRC.includes("return this.call('canvas.add', args).then(() => { try { this.dispatchEvent(new CustomEvent('vera:canvas:panel-src'"));
-t('nothing is placed under the sticky heads: the placement floors at the add bar + NOW head', SRC.includes("const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);") && /\{ columns: cols, gap, colWidth: w, pad, view: [^}]+\}\);/.test(SRC));
+/* the two sticky heads are measured and handed to the placer as its floor. Pinned by the CLAIM, not by the literal
+   argument list: held layout (the canvas's final form §2) added the viewport, the transcript's scroll and the
+   weights to that call, and an assertion that spells the call out fails on a change that keeps its promise. */
+t('nothing is placed under the sticky heads: the placement floors at the add bar + NOW head', SRC.includes("const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);") && /place\(items, this\._turns \|\| \{\}, \{ columns: cols, gap, colWidth: w, pad,/.test(SRC));
 t('the host hears the live items', ['vera:canvas:live', 'vera:canvas:terminal', 'vera:canvas:cell', 'vera:canvas:panel', 'vera:canvas:panel-src', 'vera:canvas:open-notebook'].every(ev => SRC.includes(ev)));
 
 // ── a hand-added item is yours (live defect 11): the add bar and the panel picker anchor no turn, so no run is drawn ──
