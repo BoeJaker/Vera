@@ -55,3 +55,14 @@ def test_every_file_it_offers_can_actually_be_exploded():
     d = run(path="vera/research")
     read = X._read_repo_files([f["path"] for f in d["files"]], 40, 2000000)
     assert len(read["sources"]) == len(d["files"]) and not read["skipped"]
+
+
+def test_nothing_on_this_path_imports_vera_by_package_name():
+    """The app loads this file flat, where `vera.research` is not importable: `code.sources` answered
+    "No module named 'vera'" live while every test here passed, because a test tree HAS that package. Anything
+    reached from a capability goes through the loader's own accessors (_code_core, _assess, _call_cap)."""
+    import io
+    import inspect
+    src = io.open(inspect.getsourcefile(X), encoding="utf-8").read()
+    body = src[src.index("def _walk_sources"):]
+    assert "from vera." not in body and "import vera." not in body, "an app path imports vera.* by package name"
