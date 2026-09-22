@@ -249,10 +249,18 @@ def test_a_generative_model_is_preferred_even_when_listed_second():
     assert payload["options"]["num_predict"] == 1
 
 
-def test_the_probe_never_sends_num_ctx():
-    """Sending one would force a runner reload if it differed from the resident
-    window — the exact fault this whole diagnosis started from."""
+def test_the_probe_reuses_the_resident_window():
+    """A num_ctx that DIFFERED from the resident window would force a reload -
+    and so does sending none: Ollama then uses the model default (4096),
+    another runner from the loop's 28k one, and on the 12 GB card the probe
+    evicted the working model every 300 s (2026-09-22). /api/ps names the
+    resident window; the probe asks for exactly that, and for nothing when
+    the row does not carry it."""
+    _, _, payload = probe_call([dict(_GEN, context_length=28672)])
+    assert payload["options"]["num_ctx"] == 28672
     _, _, payload = probe_call([_GEN])
+    assert "num_ctx" not in (payload.get("options") or {})
+    _, _, payload = probe_call([dict(_GEN, context_length="bad")])
     assert "num_ctx" not in (payload.get("options") or {})
 
 
