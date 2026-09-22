@@ -228,8 +228,14 @@
     // lane the legs of one corridor: an order by insertion (fewest crossings, ties outer), then slots by overlap
     const lane = (legs, c0, c1) => { if (!legs.length) return 0;
       const L = legs.slice().sort((a, b) => (Math.abs(b.p1 - b.p0) - Math.abs(a.p1 - a.p0)) || (Math.min(a.p0, a.p1) - Math.min(b.p0, b.p1)));
+      /* The insertion below tries every position for every leg and counts the crossings of each against every leg
+         already placed: O(n^3) in ONE corridor's legs. A whole-module explode puts hundreds of runs through one
+         gutter (390 cards, 652 edges = 84s for a single layout, measured), and the user is left waiting on a frozen
+         page. Past LANEMAX the order falls back to the span sort the insertion starts from -- for a bundle that size
+         the lanes are decided by the slot packing below in any case, which is what the eye reads as parallel. */
       const ord = [];
-      L.forEach((leg) => { let best = 0, bestN = Infinity;
+      if (L.length > (G.laneMax || 64)) { L.forEach((leg) => ord.push(leg)); }
+      else L.forEach((leg) => { let best = 0, bestN = Infinity;
         for (let pos = 0; pos <= ord.length; pos++) { let n = 0; ord.forEach((o, i) => { n += cross(leg, pos - 0.5, o, i); }); if (n < bestN || (n === bestN && pos === ord.length)) { bestN = n; best = pos; } }
         ord.splice(best, 0, leg); });
       // slots: a leg takes the lowest slot no overlapping leg holds (overlap padded by the card halves it ends on)

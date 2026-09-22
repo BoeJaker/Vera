@@ -124,4 +124,38 @@ t('routes: rank is longest-path — a chain ranks 0..n, a diamond joins at the f
 t('routes: order lines a cell up with its neighbours', (() => { const y = { a: 10, b: 200, x: 0, y: 0 }; const o = RT.order([['x', 'y']], [{ from: 'x', to: 'b' }, { from: 'y', to: 'a' }], (id) => y[id]); return o[0].join(',') === 'y,x'; })());
 t('routes: the exploded scene draws with the same module (VeraRoutes) — cards and iso routers still exported', typeof RT.cardsRouter === 'function' && typeof RT.isoRouter === 'function' && typeof RT.channelRouter === 'function' && RT.version >= 1);
 t('the scene renders to markup — a div per plate, card, port and leg', (() => { const h = SG.sceneHtml(c); return (h.match(/class="sg-card /g) || []).length === c.cards.length && (h.match(/class="sg-e /g) || []).length === c.edges.length && (h.match(/class="sg-pl /g) || []).length === c.plates.length && /sg-vr/.test(h); })());
+// -- R2: the code on the cards, and the shape of the stage -----------------------------------------------------
+// A whole-module explode is the case the owner hit (2026-09-22): "looks broken on an ultrawide ... it becomes 1
+// line". A module's symbols are mostly rank 0 or 1, so ranked-as-columns the scene is a tall ribbon a couple of
+// columns wide, and the bottom band of external stubs is one card deep across the whole width.
+const BIG = (() => {
+  const cards = [], edges = [];
+  for (let i = 0; i < 120; i++) cards.push({ id: 's' + i, title: 'fn_' + i, kind: 'function', layer: 'code.symbols', group: 'mod',
+    span: { path: 'm.py', line: i * 4 + 1, end_line: i * 4 + 3 }, code: 'def fn_' + i + '(a, b):\n    return a + b\n', code_line: i * 4 + 1 });
+  for (let i = 0; i < 24; i++) cards.push({ id: 'x' + i, title: 'lib' + i, kind: 'external', layer: 'code.imports', group: 'ext' });
+  for (let i = 0; i < 24; i++) edges.push({ from: 's' + i, to: 'x' + i, kind: 'IMPORTS', layer: 'code.imports', resolution: 'external' });
+  for (let i = 0; i < 60; i++) edges.push({ from: 's' + i, to: 's' + (i + 60), kind: 'CALLS', layer: 'code.calls', resolution: 'exact' });
+  return { kind: 'code', source: { label: 'm.py' }, layout: { mode: 'dependency', direction: 'LR' },
+    layers: [{ id: 'code.symbols', label: 'symbols' }, { id: 'code.calls', label: 'calls' }, { id: 'code.imports', label: 'imports' }],
+    groups: [{ id: 'mod', label: 'm.py', kind: 'file' }, { id: 'ext', label: 'external', kind: 'external' }], cards, edges, assessments: [] };
+})();
+{ const t0 = Date.now(); const wide = SG.layout(BIG, 3440, 900), narrow = SG.layout(BIG, 1600, 900); const ms = Date.now() - t0;
+  const zoom = (o, w, h) => Math.min(1, (w - 16) / o.size.w, (h - 40) / o.size.h);
+  const zw = zoom(wide, 3440, 900), zn = zoom(narrow, 1600, 900);
+  t('a rank bigger than the stage wraps into adjacent columns instead of one tall ribbon',
+    wide.geom.columns > 3 && wide.size.h < wide.size.w, JSON.stringify({ columns: wide.geom.columns, size: wide.size }));
+  t('the fitted scene uses the width of an ultrawide stage, and fits BIGGER there than on a narrow one',
+    (wide.size.w * zw) / 3440 >= 0.8 && zw >= zn, JSON.stringify({ used: +((wide.size.w * zw) / 3440).toFixed(2), zw: +zw.toFixed(3), zn: +zn.toFixed(3) }));
+  const ext = wide.plates.find((q) => q.id === 'ext'), one = wide.cards.find((k) => k.id === 'x0');
+  t('the band of external stubs is a block, not a line one card tall',
+    !!ext && ext.h > one.h * 3 && ext.w < wide.size.w, JSON.stringify({ band: ext && { w: ext.w, h: ext.h }, card: one && one.h }));
+  // the corridor lane order was O(n^3) in its legs: 390 cards / 652 edges took 84s for ONE layout (measured)
+  t('a module-sized graph lays out in a fraction of a second, not a minute', ms < 5000, ms + 'ms for two layouts'); }
+{ const o = SG.layout(BIG, 3440, 900); const code = o.cards.find((k) => k.id === 's0'), stub = o.cards.find((k) => k.id === 'x0');
+  t('a card carrying code is wider and taller than a plain one', code.w > stub.w && code.h > stub.h, JSON.stringify({ code: [code.w, code.h], stub: [stub.w, stub.h] }));
+  const h = SG.sceneHtml(o);
+  const lines = (h.match(/class="cl"/g) || []).length, nums = (h.match(/class="ln"/g) || []).length;
+  t('the card draws its own source, line-numbered and tokenised, in the scene markup',
+    lines >= 240 && nums === lines && /<i class="k">def<\/i>/.test(h) && / data-line="5"/.test(h),
+    JSON.stringify({ lines, nums })); }
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);

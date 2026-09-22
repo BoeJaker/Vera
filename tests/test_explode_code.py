@@ -213,3 +213,80 @@ def test_the_capability_reads_repo_files_pulls_one_hop_of_imports_and_never_leav
     snip = _run(X.explode_code(text="def f():\n    return g()\n\ndef g():\n    return 1\n", lang="py"))
     assert snip["ok"] and snip["source"]["label"] == "pasted py" and ("f", "g", "exact", "") in _edges(snip, "CALLS") and snip["source"]["text"].startswith("def f")
     assert "required" in _run(X.explode_code())["error"]
+
+
+# ── R2: the code ON the cards, and the lint that marks it ──────────────────────────────────────────────────────
+# "in the code graph id actually like to be able to see the code per card and more details ... it needs to be
+# properly formatted and linted" (owner, 2026-09-22). A card carries its own source, trimmed to a budget that
+# shrinks as the module grows, and the linter's findings are marks on the line of the card that holds them.
+
+LINTY = """from __future__ import annotations
+import os
+import json
+
+
+def handler(items=[], flag=None):
+    try:
+        n = json.loads("{}")
+    except:
+        n = 0
+    if n is 1:
+        return n
+    # TODO: the real thing
+    note = "TODO: not this one, it is a string"
+    return note, items
+"""
+
+
+def test_a_symbols_own_source_rides_on_its_card_with_its_first_line_and_what_was_left_off():
+    doc = C.explode_sources([{"path": "a.py", "text": PKG_A, "lang": "python"}])
+    by = {c["title"]: c for c in doc["cards"]}
+    run = by["run_stream"]
+    assert run["code"].splitlines()[0].startswith("@capability") or run["code"].splitlines()[0].startswith("async def")
+    assert run["code_line"] == run["span"]["line"]                       # the card's gutter numbers the real file
+    assert not run["code"].splitlines()[0].startswith(" ")               # a method's common indent is stripped
+    cls = by["Agent"]
+    assert cls["code"].splitlines()[0].startswith("class Agent")         # a class shows its head, not its whole body
+    assert len(cls["code"].splitlines()) < len(PKG_A.split("class Agent")[1].splitlines())
+
+
+def test_the_budget_shrinks_as_the_module_grows_so_a_big_file_is_still_a_diagram():
+    small = "\n\n".join("def f%d():\n%s\n    return %d" % (i, "\n".join("    x = %d" % j for j in range(30)), i) for i in range(4))
+    big = "\n\n".join("def f%d():\n%s\n    return %d" % (i, "\n".join("    x = %d" % j for j in range(30)), i) for i in range(100))
+    ds = C.explode_sources([{"path": "s.py", "text": small, "lang": "python"}])
+    db = C.explode_sources([{"path": "b.py", "text": big, "lang": "python"}])
+    lines = lambda d: max(len((c.get("code") or "").splitlines()) for c in d["cards"] if c["kind"] == "function")
+    assert lines(ds) > lines(db) and lines(db) <= 6
+    more = [c for c in db["cards"] if c.get("code_more")]
+    assert more and all(c["code_more"] > 0 for c in more)                # and it says how much it left off
+
+
+def test_the_linter_finds_what_it_claims_and_never_inside_a_string_or_a_future_import():
+    found = C.lint_sources([{"path": "l.py", "text": LINTY, "lang": "python"}])["l.py"]
+    codes = {f["code"] for f in found}
+    assert {"F401", "E722", "B006", "F632", "T000"} <= codes, codes
+    assert not any(f["code"] == "F401" and "annotations" in f["note"] for f in found)   # __future__ is used by the compiler
+    assert not any(f["code"] == "E501" for f in found)                                  # line length is off by default
+    todo = [f for f in found if f["code"] == "T000"]
+    assert len(todo) == 1 and todo[0]["line"] == 13, todo                               # the comment, not the string below it
+    assert {f["code"] for f in found if f["sev"] == "error"} == set()
+
+
+def test_a_finding_marks_the_line_of_the_card_that_holds_it_and_the_card_wears_a_badge():
+    doc = C.explode_sources([{"path": "l.py", "text": LINTY, "lang": "python"}])
+    doc = C.attach_lint(doc, C.lint_sources([{"path": "l.py", "text": LINTY, "lang": "python"}]))
+    card = next(c for c in doc["cards"] if c["title"] == "handler")
+    marks = {int(k) for k in (card.get("marks") or {})}
+    assert {6, 9, 11, 13} <= marks, marks                                # the def, the bare except, the `is`, the TODO
+    assert any("lint" in str(b) or "warn" in str(b) for b in card.get("badges", []))
+    assert any(a.get("on") == card["id"] for a in doc["assessments"])
+    mod = next(c for c in doc["cards"] if c["kind"] == "module")
+    assert 2 in {int(k) for k in (mod.get("marks") or {})}               # the unused import belongs to the module
+
+
+def test_javascript_lint_reads_code_not_strings():
+    js = "var a = 1;\nif (a == 2) { debugger; }\nconst s = 'a == b';\ntry { a(); } catch (e) {}\n"
+    found = C.lint_sources([{"path": "a.js", "text": js, "lang": "javascript"}])["a.js"]
+    codes = [(f["line"], f["code"]) for f in found]
+    assert (1, "JS002") in codes and (2, "JS001") in codes and (2, "JS004") in codes and (4, "JS005") in codes
+    assert not any(ln == 3 for ln, _ in codes)                           # the '==' inside the string is not code

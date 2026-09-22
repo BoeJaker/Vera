@@ -787,8 +787,48 @@ def _read_repo_files(paths: List[str], max_files: int, max_bytes: int) -> Dict:
     return {"sources": out, "skipped": skipped, "chars": total}
 
 
+async def _external_lint(root: str, paths: List[str]) -> Dict[str, List[Dict]]:
+    """ruff / eslint output when the host actually has them — mapped to the same finding shape. The image carries
+    neither today (checked 2026-09-22), so this returns {} and the in-process rules stand alone; the moment a
+    linter is installed its findings lead, marked `external linter`."""
+    import json as _json
+    import os as _os
+    import shutil as _shutil
+    try:
+        from Vera.vera.execution.spawn_core import run_argv
+    except ImportError:
+        try:
+            from vera.execution.spawn_core import run_argv
+        except ImportError:
+            return {}
+    out: Dict[str, List[Dict]] = {}
+    py = [p for p in paths if p.endswith((".py", ".pyi"))]
+    if py and _shutil.which("ruff"):
+        r = await run_argv(["ruff", "check", "--output-format", "json", "--"] + py, timeout=60, cwd=root)
+        try:
+            for f in _json.loads(r.get("stdout") or "[]"):
+                rel = _os.path.relpath(f.get("filename", ""), root)
+                out.setdefault(rel, []).append({"line": (f.get("location") or {}).get("row", 1), "col": (f.get("location") or {}).get("column", 0),
+                                                "code": f.get("code") or "RUFF", "note": f.get("message", ""), "sev": "warn", "by": "ruff"})
+        except Exception:
+            pass
+    js = [p for p in paths if p.endswith((".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"))]
+    if js and _shutil.which("eslint"):
+        r = await run_argv(["eslint", "-f", "json", "--"] + js, timeout=60, cwd=root)
+        try:
+            for f in _json.loads(r.get("stdout") or "[]"):
+                rel = _os.path.relpath(f.get("filePath", ""), root)
+                for m in f.get("messages") or []:
+                    out.setdefault(rel, []).append({"line": m.get("line", 1), "col": m.get("column", 0), "code": m.get("ruleId") or "ESLINT",
+                                                    "note": m.get("message", ""), "sev": "error" if m.get("severity") == 2 else "warn", "by": "eslint"})
+        except Exception:
+            pass
+    return out
+
+
 async def explode_code(text: str = "", lang: str = "", path: str = "", paths: Optional[List[str]] = None, record_id: str = "",
-                       depth: int = 1, max_files: int = 40, max_bytes: int = 2000000, prefer_tree_sitter: bool = False, assess=None) -> Dict:
+                       depth: int = 1, max_files: int = 40, max_bytes: int = 2000000, prefer_tree_sitter: bool = False, assess=None,
+                       lint: bool = True, card_lines: int = 40, max_line: int = 0) -> Dict:
     # max_bytes: capability_orchestration.py alone is past 400k chars; a truncated file is a syntax error and every
     # symbol in it falls to a stub (seen live 2026-09-21) — 2M keeps the repo's biggest modules whole, and ast reads
     # them in well under a second
@@ -838,7 +878,12 @@ async def explode_code(text: str = "", lang: str = "", path: str = "", paths: Op
             if extra:
                 more = await loop.run_in_executor(None, _read_repo_files, extra[: max(0, max_files - len(sources))], max_files, max_bytes)
                 sources += more["sources"]; skipped += more["skipped"]
-    doc = await loop.run_in_executor(None, lambda: core.explode_sources(sources, prefer_tree_sitter=prefer_tree_sitter, label=label))
+    doc = await loop.run_in_executor(None, lambda: core.explode_sources(sources, prefer_tree_sitter=prefer_tree_sitter, label=label,
+                                                                        card_lines=int(card_lines or 0)))
+    if lint:
+        ext = await _external_lint(_repo_root(), [s["path"] for s in sources]) if (path or paths) else {}
+        found = await loop.run_in_executor(None, lambda: core.lint_sources(sources, ext, int(max_line or 0)))
+        doc = await loop.run_in_executor(None, lambda: core.attach_lint(doc, found))
     doc["source"]["skipped"] = skipped
     doc["source"]["text"] = {s["path"]: s["text"] for s in sources} if len(sources) > 1 else sources[0]["text"]
     want = _assess_arg(assess)
@@ -865,15 +910,20 @@ if _CAP_AVAILABLE:
                      "every card says which. One of: text + lang (a snippet), path / paths (repo-relative files or a "
                      "directory; depth=1 pulls in the repo files they import), record_id (a fabric record holding code). "
                      "assess (bool | list) runs the code scorers — complexity, smells, clones, tests, provenance, health. "
+                     "Each card carries its own SOURCE (card_lines=40, 0 for none) and, with lint=true (the default), "
+                     "the findings on its lines — ruff / eslint when this host has them, a set of ast-level rules "
+                     "otherwise, each finding naming the tool that produced it. max_line turns the line-length rule on. "
                      "Nothing is persisted. Output: {ok, kind: code|page, source:{paths, partial, errors, engines, "
                      "tree_sitter, text}, layout, layers, groups, cards, edges, assessments:[syntax, resolved], counts}."),
     )
     async def cap_code_explode(text: str = "", lang: str = "", path: str = "", paths: Optional[List[str]] = None, record_id: str = "",
-                               depth: int = 1, max_files: int = 40, prefer_tree_sitter: bool = False, assess=None, trace_id=None) -> Dict:
+                               depth: int = 1, max_files: int = 40, prefer_tree_sitter: bool = False, assess=None,
+                               lint: bool = True, card_lines: int = 40, max_line: int = 0, trace_id=None) -> Dict:
         if isinstance(paths, str):
             paths = [p.strip() for p in paths.split(",") if p.strip()]
         return await explode_code(text=text, lang=lang, path=path, paths=paths, record_id=record_id, depth=int(depth or 0),
-                                  max_files=max(1, min(200, int(max_files or 40))), prefer_tree_sitter=bool(prefer_tree_sitter), assess=assess)
+                                  max_files=max(1, min(200, int(max_files or 40))), prefer_tree_sitter=bool(prefer_tree_sitter), assess=assess,
+                                  lint=bool(lint), card_lines=int(card_lines or 0), max_line=int(max_line or 0))
 
     @capability(
         "nlp.explode.prose",
