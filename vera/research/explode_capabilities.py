@@ -416,6 +416,84 @@ def link_lanes(cards: List[Dict]) -> List[Dict]:
     return out
 
 
+# ── rel.model: a model types the relation, instead of a cue ──────────────────────────────────────────────────
+# `rel.typed` reads relations from CUES -- the words between two entities -- and `rel.cooccur` says only that two
+# names were in one sentence. Neither knows what the sentence MEANS. The node tier already serves a natural
+# language inference model (`nlp.zeroshot`, DeBERTa MNLI), and relation extraction is what NLI does when the
+# hypothesis is a relation: the sentence is the premise, "X acquired Y" the hypothesis.
+#
+# One call per SENTENCE, not per pair, because a sentence has one main relation far more often than it has
+# several, and a call per pair on a long record is a node tier held for minutes. The null label is there on
+# purpose: "named together, with no relation stated" is the honest answer for most sentences, and without it a
+# forced choice would invent a relation for every pair of names in a list.
+
+_REL_LABELS = [
+    "one acquired or bought the other",
+    "one works for or leads the other",
+    "one founded or created the other",
+    "one is located in the other",
+    "one is part of or owned by the other",
+    "the two agreed or partnered with each other",
+    "one approves or regulates the other",
+    "named together, with no relation stated",
+]
+_REL_NULL = _REL_LABELS[-1]
+_REL_SHORT = {_REL_LABELS[0]: "acquired", _REL_LABELS[1]: "works for", _REL_LABELS[2]: "founded",
+              _REL_LABELS[3]: "located in", _REL_LABELS[4]: "part of", _REL_LABELS[5]: "agreed with",
+              _REL_LABELS[6]: "regulates"}
+_REL_MAX_SENTENCES = 24
+_REL_MIN_SCORE = 0.45
+
+
+async def _layer_rel_model(ctx: Dict) -> Dict:
+    """The relation a sentence states, typed by a model rather than by a cue. Off by default: it is a call per
+    sentence on the node tier, and it says how many it made."""
+    cards = [c for c in _relation_cards(ctx) if c.get("span")]
+    if len(cards) < 2:
+        return {"count": 0, "note": "fewer than two entities"}
+    # A card stands at its FIRST mention, so a sentence that names an entity again -- by a repeat, a surname or a
+    # pronoun -- holds no card at all, and asking only about first mentions would skip most of a record. Every
+    # mention coref attached counts as the entity being named there.
+    spots = []
+    for c in cards:
+        spots.append((int(c["span"]["start"]), c))
+        for m in (c.get("mentions") or []):
+            if isinstance(m.get("start"), int):
+                spots.append((m["start"], c))
+    spots.sort(key=lambda x: x[0])
+    sents = ctx.get("sentences") or []
+    work = []
+    for sn in sents:
+        here, seen = [], set()
+        for pos, c in spots:
+            if sn["start"] <= pos < sn["end"] and c["id"] not in seen:
+                seen.add(c["id"])
+                here.append(c)
+        if len(here) >= 2:
+            work.append((sn, here[:3]))
+    asked, edges, model, node = 0, [], "", ""
+    for sn, here in work[:_REL_MAX_SENTENCES]:
+        res = await _call_cap("nlp.zeroshot", text=sn["text"][:600], labels=_REL_LABELS, multi_label=False)
+        asked += 1
+        if not res or res.get("error"):
+            return {"error": (res or {}).get("error", "nlp.zeroshot unavailable"), "count": len(edges)}
+        model = str(res.get("model") or model); node = str(res.get("node") or node)
+        top = (res.get("labels") or [{}])[0]
+        lab, score = str(top.get("label") or ""), float(top.get("score") or 0)
+        if lab == _REL_NULL or score < _REL_MIN_SCORE:
+            continue
+        a, b = here[0], here[1]
+        edges.append({"from": a["id"], "to": b["id"], "kind": "RELATES", "layer": "rel.model",
+                      "label": _REL_SHORT.get(lab, lab), "score": round(score, 3),
+                      "resolution": "exact" if score >= 0.6 else "heuristic",
+                      "by": "nlp.zeroshot \u00b7 " + (model or "mnli"),
+                      "span": {"path": ctx.get("path", ""), "start": sn["start"], "end": sn["end"]}})
+    return {"edges": edges, "count": len(edges), "by": "nlp.zeroshot \u00b7 " + (model or "mnli"),
+            "where": node or "node tier",
+            "note": "%d sentence%s with two or more entities asked, %d relation%s typed (the rest read as "
+                    "'named together')" % (asked, "" if asked == 1 else "s", len(edges), "" if len(edges) == 1 else "s")}
+
+
 async def _layer_coref(ctx: Dict) -> Dict:
     """Fold the aliases of one entity into one card, move its relations with it, and attach the pronouns that
     stand for it. The only layer that takes cards AWAY -- so its chip counts what it changed, and turning it off
@@ -752,6 +830,11 @@ async def _layer_link_records(ctx: Dict) -> Dict:
     return {}
 
 
+register_layer("rel.model", "relations \u00b7 typed by a model", "relation", _layer_rel_model,
+               by="nlp.zeroshot", where="node tier", default_on=False, needs=["ner"],
+               note="one call per sentence that names two entities: the sentence is the premise and a relation "
+                    "the hypothesis, with 'named together, with no relation stated' among the labels so most "
+                    "sentences can honestly come back empty")
 register_layer("link.records", "the same entity in two records", "relation", _layer_link_records,
                by="across records", where="host", default_on=False,
                note="runs only when several records are drawn as lanes: a COREF run between the cards that stand "
