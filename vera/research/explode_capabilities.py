@@ -182,13 +182,14 @@ _ORDER: List[str] = []
 
 
 def register_layer(id: str, label: str, kind: str, fn: Callable[[Dict], Awaitable[Dict]],
-                   by: str = "", where: str = "", default_on: bool = True, needs: Optional[List[str]] = None):
+                   by: str = "", where: str = "", default_on: bool = True, needs: Optional[List[str]] = None,
+                   note: str = ""):
     """Add (or replace) a layer. Layers run in registration order; one that `needs` another's
     output (`needs=["ner"]`) runs after it and is skipped, with a note, when it is off."""
     if id not in LAYERS:
         _ORDER.append(id)
     LAYERS[id] = {"id": id, "label": label, "kind": kind, "fn": fn, "by": by, "where": where,
-                  "default_on": bool(default_on), "needs": list(needs or [])}
+                  "default_on": bool(default_on), "needs": list(needs or []), "note": note}
     return LAYERS[id]
 
 
@@ -260,6 +261,170 @@ def _relation_cards(ctx: Dict) -> List[Dict]:
     did not find (a node card that MATCHES a fabric card is that entity already — the fabric card stands for it)."""
     matched = {e["from"] for e in ctx["edges"] if e.get("kind") == "MATCHES"}
     return [c for c in ctx["cards"] if c.get("layer") == "ner" or (str(c.get("layer", "")).startswith("ner.") and c["id"] not in matched)]
+
+
+# ── coref: one entity, however it is written ─────────────────────────────────────────────────────────────────
+# The extractor already gives one card per NORMALISED name, so "Northwind" twice is one card. What it cannot do
+# is see that "Alice Carter", "Carter" and "she" are the same person, or that "CMA" is the Competition and
+# Markets Authority -- so a three-paragraph passage draws six cards where there are three entities, and the
+# relations hang off whichever spelling happened to be in the sentence.
+#
+# This is a HEURISTIC, and it says so on every merge: `shortened` (a one-word name that is the last word of a
+# fuller one -- a surname, or a company without its suffix), `acronym` (the initials of a fuller name), each only
+# where the types agree. AMBIGUITY IS A REASON TO DO NOTHING: "Carter" with both "Alice Carter" and "Bob Carter"
+# present stays its own card. Pronouns are attached as MENTIONS of a head, never as cards of their own, and only
+# where no other candidate of the same type stands between them and the head.
+
+_CORP = ("ltd", "limited", "plc", "inc", "inc.", "llc", "corp", "corp.", "co", "co.", "gmbh", "sa", "ag", "nv",
+         "holdings", "group", "company", "technologies", "labs")
+_PRON = {"person": ("he", "she", "him", "her", "his", "hers", "himself", "herself"),
+         "org": ("it", "its", "itself", "they", "their", "them"),
+         "place": ("it", "its", "there"),
+         "plural": ("they", "their", "them", "themselves")}
+_PRON_ALL = tuple(sorted({w for v in _PRON.values() for w in v}))
+
+
+def _words(name: str) -> List[str]:
+    return [w for w in re.split(r"[^A-Za-z0-9']+", str(name or "")) if w]
+
+
+def _bare(name: str) -> List[str]:
+    """A name without its corporate tail: 'Northwind Ltd' -> ['northwind']."""
+    ws = [w.lower().strip(".'") for w in _words(name)]
+    while ws and ws[-1] in _CORP:
+        ws = ws[:-1]
+    return ws
+
+
+_SMALL = ("and", "of", "the", "for", "in", "on", "at", "to", "de", "la", "van", "von", "&")
+
+
+def _initials(name: str) -> str:
+    """CMA is the Competition and Markets Authority: the small words an acronym leaves out are left out here."""
+    return "".join(w[0] for w in _bare(name) if w and w not in _SMALL)
+
+
+def coref_clusters(cards: List[Dict]) -> Dict[str, Dict]:
+    """Which cards are the same entity as which. Returns {short_card_id: {head, why}} -- nothing is decided
+    about a name that could be two people."""
+    ents = [c for c in cards if c.get("span") and (c.get("kind") or "") not in ("paragraph", "claim")]
+    out: Dict[str, Dict] = {}
+    for c in ents:
+        cw = _bare(c.get("title") or "")
+        if len(cw) != 1:                                  # only a ONE-word name is ever folded into a fuller one
+            continue
+        word = cw[0]
+        kind = str(c.get("kind") or "").lower()
+        cands = []
+        for o in ents:
+            if o is c or o["id"] == c["id"]:
+                continue
+            # the head is always the FULLER name -- which keeps this a one-way fold and rules out a cycle.
+            # It is counted in raw words, because a name whose tail is a company suffix ("Northwind Ltd") bares
+            # down to one word and would otherwise never be a head at all.
+            if len(_words(o.get("title") or "")) <= len(_words(c.get("title") or "")):
+                continue
+            ow = _bare(o.get("title") or "")
+            if not ow:
+                continue
+            ok = str(o.get("kind") or "").lower()
+            if kind and ok and kind != ok and "entity" not in (kind, ok):
+                continue
+            if word == ow[-1] or word == ow[0]:
+                cands.append((o, "shortened"))
+            elif word == _initials(o.get("title") or "") and (c.get("title") or "").isupper() and len(word) > 1:
+                cands.append((o, "acronym"))
+        heads = {x[0]["id"] for x in cands}
+        if len(heads) != 1:                               # none, or ambiguous: leave it alone and say nothing
+            continue
+        head, why = cands[0]
+        if head["span"]["start"] > c["span"]["start"] and why == "shortened":
+            # the short form came FIRST: a passage that says "Carter" before "Alice Carter" is still one person,
+            # and the fuller name is the head because it is the one a reader can place
+            pass
+        out[c["id"]] = {"head": head["id"], "why": why}
+    return out
+
+
+def pronoun_mentions(text: str, base: int, head: Dict, others: List[Dict], limit: int = 320) -> List[Dict]:
+    """The pronouns that stand for a head entity: after one of its mentions, within `limit` characters, and only
+    while no other entity of the same type has been named in between."""
+    kind = str(head.get("kind") or "").lower()
+    group = "person" if kind == "person" else ("org" if kind in ("org", "organization", "organisation") else
+                                               ("place" if kind in ("place", "location", "gpe") else ""))
+    if not group:
+        return []
+    words = _PRON[group]
+    starts = [head["span"]["start"] - base] + [m["start"] - base for m in (head.get("mentions") or [])]
+    stops = sorted(o["span"]["start"] - base for o in others
+                   if str(o.get("kind") or "").lower() == kind and o["id"] != head["id"])
+    out, seen = [], set()
+    for st in starts:
+        if st < 0:
+            continue
+        window = text[st: st + limit]
+        stop = next((x - st for x in stops if st < x < st + limit), limit)
+        for m in re.finditer(r"\b(%s)\b" % "|".join(words), window[:stop], re.I):
+            a = base + st + m.start()
+            if a in seen or a <= head["span"]["start"]:
+                continue
+            seen.add(a)
+            out.append({"start": a, "end": a + len(m.group(0)), "text": m.group(0), "by": "pronoun"})
+    return out[:12]
+
+
+async def _layer_coref(ctx: Dict) -> Dict:
+    """Fold the aliases of one entity into one card, move its relations with it, and attach the pronouns that
+    stand for it. The only layer that takes cards AWAY -- so its chip counts what it changed, and turning it off
+    gives the separate cards straight back."""
+    cards = ctx["cards"]
+    by_id = {c["id"]: c for c in cards}
+    pairs = coref_clusters(cards)
+    merged = 0
+    for cid, info in pairs.items():
+        c, head = by_id.get(cid), by_id.get(info["head"])
+        if not c or not head or c is head:
+            continue
+        head.setdefault("mentions", []).append(dict(c["span"], text=c.get("title", ""), by=info["why"]))
+        for m in (c.get("mentions") or []):
+            head["mentions"].append(m)
+        names = [f["v"] for f in head.get("fields", []) if f["k"] == "also"]
+        also = sorted(set((names[0].split(", ") if names else []) + [c.get("title", "")]))
+        head["fields"] = [f for f in head.get("fields", []) if f["k"] != "also"] + [{"k": "also", "v": ", ".join(also)[:80]}]
+        merged += 1
+    gone = {cid: info["head"] for cid, info in pairs.items() if cid in by_id and info["head"] in by_id}
+    if gone:
+        ctx["cards"][:] = [c for c in cards if c["id"] not in gone]
+        seen = set()
+        kept = []
+        for e in ctx["edges"]:                            # a relation follows its entity, it does not dangle
+            e["from"], e["to"] = gone.get(e["from"], e["from"]), gone.get(e["to"], e["to"])
+            k = (e["from"], e["to"], e.get("kind"))
+            if e["from"] == e["to"] or k in seen:
+                continue
+            seen.add(k)
+            kept.append(e)
+        ctx["edges"][:] = kept
+    # the pronouns, once the aliases are one card
+    npron = 0
+    heads = [c for c in ctx["cards"] if c.get("span")]
+    for h in heads:
+        pr = pronoun_mentions(ctx["text"], ctx["base"], h, heads)
+        if pr:
+            h.setdefault("mentions", []).extend(pr)
+            npron += len(pr)
+    for h in heads:
+        ms = h.get("mentions") or []
+        if not ms:
+            continue
+        np = len([m for m in ms if m.get("by") == "pronoun"])
+        h["subtitle"] = "%s · %d mention%s%s" % (str(h.get("kind", "")).upper(), 1 + len(ms),
+                                                  "" if len(ms) == 0 else "s",
+                                                  (" (%d by pronoun)" % np) if np else "")
+    note = "%d alias%s folded in, %d pronoun%s attached" % (merged, "" if merged == 1 else "es",
+                                                            npron, "" if npron == 1 else "s")
+    return {"count": merged + npron, "note": note, "by": "heuristic · shortened / acronym / pronoun",
+            "where": "host"}
 
 
 async def _layer_rel_typed(ctx: Dict) -> Dict:
@@ -535,6 +700,10 @@ register_layer("ner.spacy", "entities · spaCy (node)", "entity", _layer_ner_spa
 register_layer("ner.multi", "entities · multilingual NER", "entity", _layer_ner_multi, by="nlp.ner ner_multi", where="node tier", default_on=False, needs=["ner"])
 register_layer("rel.typed", "relations · typed", "relation", _layer_rel_typed, by="sentence cues", where="host", needs=["ner"])
 register_layer("rel.cooccur", "co-occurrence", "relation", _layer_rel_cooccur, by="same sentence", where="host", needs=["ner"])
+register_layer("coref", "coref · one entity, however it is written", "entity", _layer_coref,
+               by="heuristic", where="host", default_on=True, needs=["ner"],
+               note="folds a surname or an acronym into the full name, moves that entity's relations with it, "
+                    "and attaches the pronouns that stand for it; ambiguity is left alone")
 register_layer("langid", "language", "assessment", _layer_langid, by="nlp.langid", where="node tier", default_on=False)
 register_layer("cls.sentiment", "sentiment", "assessment", _layer_sentiment, by="nlp.classify", where="node tier", default_on=False)
 register_layer("cls.genre", "genre", "assessment", _layer_genre, by="nlp.zeroshot", where="node tier", default_on=False)
@@ -617,7 +786,11 @@ async def explode_text(text: str, *, path: str = "", base: int = 0, layers: Opti
         ctx["cards"].extend(cards)
         ctx["edges"].extend(out.get("edges") or [])
         ctx["assessments"].extend(out.get("assessments") or [])
-        rec["count"] = len(cards) + len(out.get("edges") or []) + len(out.get("assessments") or [])
+        # a layer that CHANGES the picture rather than adding to it (coref merges cards) states its own count
+        rec["count"] = out["count"] if isinstance(out.get("count"), int) else (
+            len(cards) + len(out.get("edges") or []) + len(out.get("assessments") or []))
+        if out.get("note"):
+            rec["note"] = str(out["note"])[:160]
         receipts.append(rec)
     for c in ctx["cards"]:
         c.pop("_norm", None)
