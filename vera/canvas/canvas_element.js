@@ -194,10 +194,29 @@
       const head = `<div class="vc-codehead">${esc(c.filename || c.lang || 'code')}<span class="sp"></span>`
         + (PREVIEWABLE(c.lang) && key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
         + '</div>';
+      // Every line is ADDRESSABLE (data-line). An explode item bound to this one scrolls to a card's span and
+      // highlights those lines, and a selection here is read back as a line range — the two-way span binding
+      // (EXPLODE.md §8.3). The number sits in a gutter the selection does not reach, so copying still yields code.
+      const lines = String(c.code || '').replace(/\n$/, '').split('\n');
       const bodyHtml = prev
         ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>`
-        : `<pre class="vc-pre"><code>${esc(c.code || '')}</code></pre>`;
-      return `<div class="vc-codewrap">${head}${bodyHtml}</div>`;
+        : `<pre class="vc-pre vc-code"><code>${lines.map((l, i) => `<span class="vc-line" data-line="${i + 1}"><i class="vc-lno">${i + 1}</i>${esc(l) || ' '}</span>`).join('\n')}</code></pre>`;
+      return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${head}${bodyHtml}</div>`;
+    },
+
+    /* AN EXPLODE ITEM — the structured diagram of something, in the canvas beside what it is a diagram OF
+       (EXPLODE.md §8.3). content:
+         {binds?: the KEY of a code item in this canvas — its code is what gets exploded, and the two are bound
+                  by span BOTH ways: click a card, the code scrolls and lights; select lines, the covering card lights;
+          path/paths/depth · record/ranges/mode/layers · text+lang · assess · height · title}
+       The diagram itself is <vera-graph-embed renderer="struct">, mounted in the column's live layer the way a
+       diagram, a widget and a preview are — so its pan, zoom and selection survive a render of the column. */
+    explode: (c, size, key) => {
+      const src = c.binds ? 'bound to ' + String(c.binds) : (c.record ? 'record ' + String(c.record) : (c.path || (c.paths && [].concat(c.paths).join(', ')) || (c.text ? 'a passage' : (c.code ? 'a snippet' : 'nothing yet'))));
+      const head = `<div class="vc-th"><i class="dot on"></i><b>${esc(c.title || 'Explode')}</b><span class="mono">${esc(String(src).slice(0, 60))}</span><span class="sp"></span>`
+        + (c.binds ? '<button class="ib" data-act="xpsync" title="Light the whole of the bound source again">clear</button>' : '') + '</div>';
+      return `<div class="vc-xp" data-w="canvas.explode"${c.binds ? ` data-binds="${esc(c.binds)}"` : ''}>${head}`
+        + `<div class="vc-live" data-live="explode" data-key="${esc(key)}"><span class="vc-dim">exploding…</span></div></div>`;
     },
 
     /* a diagram item is a LIVE rendered diagram: the mermaid source drawn by the estate's own element (<vera-mermaid>,
@@ -412,6 +431,16 @@
   .vc-pre{background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);
     border-radius:6px;padding:7px 9px;overflow-x:auto;margin:.3em 0}
   .vc-pre code{white-space:pre}
+  /* a line of a code item: addressable, and lit when an explode card's span covers it */
+  .vc-code .vc-line{display:block;padding-left:2px;border-left:2px solid transparent;transition:background .12s}
+  .vc-code .vc-lno{display:inline-block;width:2.4em;margin-right:.5em;text-align:right;font-style:normal;
+    color:var(--dim,#6b7480);opacity:.5;user-select:none;-webkit-user-select:none}
+  .vc-code .vc-line.lit{background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent);
+    border-left-color:var(--acc,#5a9e8f)}
+  .vc-code .vc-line.lit .vc-lno{opacity:1;color:var(--acc,#5a9e8f)}
+  .vc-code .vc-line.tap{background:color-mix(in srgb,var(--acc,#5a9e8f) 9%,transparent)}
+  .vc-xp{display:flex;flex-direction:column;min-height:0}
+  .vc-xp .vc-live{min-height:140px}
   .vc-dim{opacity:.75}
   .vc-out{max-height:200px;overflow:auto}
   .vc-codehead{font-size:9.5px;color:var(--dim,#6b7480);margin-bottom:2px;
@@ -870,7 +899,7 @@
   const ADD_WHAT = { note: 'adds a note item — pick its shape', terminal: 'adds a terminal item — a live shell on the host you pick; a typed id or a blank one connects later', panel: 'adds a panel item — the panel\'s page in its frame, driven over the bridge', widget: 'adds a widget item — its form, source and size from the WidgetConfig sheet', chart: 'adds a chart — a series form (trace · bars · sparkline…) from the WidgetConfig sheet' };
   const seedName = (k) => k.n === 'chart' ? 'a trace chart' : k.n === 'widget' ? 'a widget frame' : 'a ' + k.n;
   const seedWhat = (k) => k.kind + ' item · ' + Object.keys(k.content || {}).filter((x) => x !== 'title').join(' · ');
-  const KIND_GLYPH = { note: '✎', markdown: 'MD', code: '{}', session: '>_', table: 'TB', widget: 'WG', loop: '⟳', diagram: '◇', image: '▣', schedule: '⏰', html: '<>', suggest: '✦', notebook: 'NB', panel: '▥' };
+  const KIND_GLYPH = { note: '✎', markdown: 'MD', code: '{}', explode: '✵', session: '>_', table: 'TB', widget: 'WG', loop: '⟳', diagram: '◇', image: '▣', schedule: '⏰', html: '<>', suggest: '✦', notebook: 'NB', panel: '▥' };
   const glyphOf = t => KIND_GLYPH[t] || String(t || '?').slice(0, 2).toUpperCase();
   const hhmm = ts => { if (!ts) return ''; const d = new Date(ts); if (isNaN(d.getTime())) return String(ts).slice(0, 5); const p = n => (n < 10 ? '0' : '') + n; return p(d.getHours()) + ':' + p(d.getMinutes()); };
   /* the decision an item carries — what this turn is waiting on: content.ask {question, options, why, answer}, or a
@@ -935,7 +964,7 @@
   function blockTitle(b) {
     const c = (b && b.content) || {}; const own = c.title || c.name || c.goal || c.filename || c.caption || c.widget || c.panel;
     if (own) return String(own);
-    if (b && b._bid) { const first = String(c[textFieldOf(b.type)] || '').split('\n').map(s => s.trim()).find(Boolean) || ''; const line = first.replace(/^#+\s*|^[-*]\s+\[.\]\s*|^[-*]\s+|\*\*/g, '').slice(0, 60); return line || ({ diagram: 'Diagram', table: 'Table', image: 'Image', code: 'Code', markdown: 'Text', note: 'Note', html: 'HTML' }[b.type] || String(b.type || 'block')); }
+    if (b && b._bid) { const first = String(c[textFieldOf(b.type)] || '').split('\n').map(s => s.trim()).find(Boolean) || ''; const line = first.replace(/^#+\s*|^[-*]\s+\[.\]\s*|^[-*]\s+|\*\*/g, '').slice(0, 60); return line || ({ diagram: 'Diagram', explode: 'Explode', table: 'Table', image: 'Image', code: 'Code', markdown: 'Text', note: 'Note', html: 'HTML' }[b.type] || String(b.type || 'block')); }
     return String(b && b.key ? String(b.key).split(':').slice(1).join(':') : '') || String((b && b.type) || 'block');
   }
   const EDITABLE = ['note', 'markdown', 'code', 'html'];
@@ -1270,12 +1299,20 @@
         if (cm && body.contains(cm)) { ev.stopPropagation(); this._calAct(cm.dataset.calKey, cm.dataset.calMv); return; }
         const cd = t.closest('[data-cal-day]');
         if (cd && body.contains(cd)) { ev.stopPropagation(); this._calAct(cd.dataset.calKey, cd.dataset.calDay); return; }
+        // a line of a code item: the card that covers it lights in every explode item bound to this one
+        const ln = t.closest('.vc-codewrap[data-code] .vc-line');
+        if (ln && body.contains(ln)) { const w = ln.closest('.vc-codewrap');
+          w.querySelectorAll('.vc-line.tap').forEach((x) => x.classList.remove('tap')); ln.classList.add('tap');
+          this._sourceToExplode(w); return; }
         const ch = t.closest('.chip[data-key]'); if (ch) { ev.stopPropagation(); this.call('canvas.add', { key: ch.dataset.key }); return; }
         const hd = t.closest('.it-hd'); const it = hd && hd.closest('.it[data-key]');
         if (it && !it.classList.contains('ghost')) { ev.stopPropagation(); this._toggleOpen(it.dataset.key); }
       });
       // hover: the host hears which item is under the pointer (the runs light up); in the Hover tier a folded item
       // opens in the layout while the pointer is on it — the column makes room, like a click in Zen
+      // a SELECTION of lines says more than a click: the card covering the whole range lights when the drag ends
+      body.addEventListener('mouseup', (ev) => { const w = ev.target.closest && ev.target.closest('.vc-codewrap[data-code]');
+        if (w) setTimeout(() => this._sourceToExplode(w), 0); });
       body.addEventListener('mouseover', (ev) => { const it = ev.target.closest && ev.target.closest('.it[data-key]'); const k = it ? it.dataset.key : null; if (k !== this._hovKey) { this._hovKey = k; this._hoverOpen(it); try { this.dispatchEvent(new CustomEvent('vera:canvas:hover', { bubbles: true, detail: { key: k } })); } catch (e) {} } });
       body.addEventListener('mouseleave', () => { if (this._hovKey) { this._hovKey = null; this._hoverOpen(null); try { this.dispatchEvent(new CustomEvent('vera:canvas:hover', { bubbles: true, detail: { key: null } })); } catch (e) {} } });
       // the corner grip: a drag sizes the item; the drop saves it as the item's size (s · m · l · xl)
@@ -1319,6 +1356,9 @@
     _act(btn, ev) {
       const act = btn.dataset.act; const it = btn.closest('.it[data-key]'); const key = it ? it.dataset.key : '';
       const focusMid = this.dataset.focusMid || '';
+      // an explode item's "clear": drop the pointer at both ends — every line unlit here, every card unlit there
+      if (act === 'xpsync') { const w = this._codeItemFor(key); if (w) w.querySelectorAll('.vc-line.lit,.vc-line.tap').forEach((x) => x.classList.remove('lit', 'tap'));
+        const L = this._live || {}; Object.keys(L).forEach((k) => { if (k !== key || L[k].dataset.kind !== 'explode') return; const sg = L[k].firstChild && L[k].firstChild.querySelector && L[k].firstChild.querySelector('vera-structgraph'); if (sg && sg.lightSpan) sg.lightSpan(null); }); return; }
       if (act === 'pin' || act === 'ctx') return this.call(it && it.classList.contains('pinned') ? 'canvas.add' : 'canvas.pin', { key });
       if (act === 'park') return this.call('canvas.park', { key });
       if (act === 'remove') return this.call('canvas.remove', this._ref(key));
@@ -1451,13 +1491,19 @@
           else if (kind === 'preview') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);
           inner.setAttribute('sandbox', 'allow-scripts');   // no network, no cookies, no same-origin: it only draws
           h.textContent = ''; const cc = this._contentOf(key) || {}; inner.srcdoc = previewDoc(h.dataset.lang || cc.lang, cc.code || ''); }
-        else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
+          else if (kind === 'explode') { inner = document.createElement('vera-graph-embed'); h.textContent = '';
+            ensureLib('/ui/vera-graph-embed.js', 'vera-graph-embed');
+            this._explodeAttrs(inner, key);
+            // the diagram answers the reader: a card click scrolls the bound code item to that span and lights it
+            inner.addEventListener('vera-graph-node', (ev) => this._explodeToSource(key, (ev.detail || {}).node)); }
+          else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
           el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);
           try { this.dispatchEvent(new CustomEvent('vera:canvas:live', { bubbles: true, detail: { key, kind, ws: h.dataset.ws || '', src: h.dataset.src || '' } })); } catch (e) {}
         } else if (kind === 'widget') { const inner = el.firstChild, rc = this._contentOf(key); const sz = h.dataset.size || 'm'; if (h.textContent) h.textContent = ''; if (inner && inner.getAttribute('size') !== sz) inner.setAttribute('size', sz); try { const j = JSON.stringify((rc && (rc.record || rc)) || null); if (inner && j && inner._recJson !== j) { inner._recJson = j; inner.record = rc.record || rc; } } catch (e) {}
         } else if (kind === 'mermaid') { if (h.textContent) h.textContent = ''; this._mermaidInto(el.firstChild, key); this._diagramGrew(key, el.firstChild);   // a re-rendered slot is new markup: the drawn diagram's height again
         } else if (kind === 'preview') { if (h.textContent) h.textContent = ''; const f = el.firstChild, cc = this._contentOf(key) || {};
           const doc = previewDoc(h.dataset.lang || cc.lang, cc.code || ''); if (f && f._doc !== doc) { f._doc = doc; f.srcdoc = doc; }
+        } else if (kind === 'explode') { if (h.textContent) h.textContent = ''; this._explodeAttrs(el.firstChild, key);
         } else if (kind === 'term' && h.dataset.ws) { const t = el.firstChild; if (t && t.getAttribute('ws') !== h.dataset.ws) { t.setAttribute('ws', h.dataset.ws); try { t.destroy && t.destroy(); t.connect(h.dataset.ws); } catch (e) {} } }
       });
       Object.keys(L).forEach((k) => { if (!body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]')) { try { L[k].remove(); } catch (e) {} delete L[k]; } });
@@ -1468,6 +1514,65 @@
       if (any && !this._liveTick) this._liveTick = setInterval(() => this._liveLayout(), 500);
       if (!any && this._liveTick) { clearInterval(this._liveTick); this._liveTick = null; }
       this._liveLayout();
+    }
+    /* ── the span binding between an explode item and the code item it is a diagram of ────────────────────
+       The contract's cards each carry the span they came from (EXPLODE.md §3), so the two directions are the
+       same fact read each way: a card's span → the lines to light here; a selection's lines → the card that
+       covers them. Nothing is persisted; this is a reader's pointer, not a document change. */
+    _explodeAttrs(embed, key) {
+      const c = this._contentOf(key) || {};
+      const set = (k, v) => { const s = v == null ? '' : String(v); if (s ? embed.getAttribute(k) !== s : embed.hasAttribute(k)) { if (s) embed.setAttribute(k, s); else embed.removeAttribute(k); } };
+      set('renderer', 'struct'); set('expand', 'off');
+      set('height', Math.max(140, parseInt(c.height, 10) || 300));
+      const bound = c.binds ? (this._contentOf(String(c.binds)) || null) : null;
+      // BOUND: the bound item's own code is what is exploded — a snippet that exists only on this canvas (an
+      // LLM's reply) explodes exactly as a repo file does, and the spans come back in ITS coordinates
+      if (bound && (bound.code || bound.path)) { if (bound.code) { set('code', bound.code); set('lang', bound.lang || ''); set('path', bound.path || bound.filename || ''); } else { set('path', bound.path); } }
+      else if (c.record) { set('record', c.record); set('ranges', c.ranges ? JSON.stringify(c.ranges) : ''); set('mode', c.mode || ''); }
+      else if (c.path || c.paths) { set('path', c.path || [].concat(c.paths)[0]); set('depth', c.depth == null ? '' : c.depth); }
+      else if (c.code) { set('code', c.code); set('lang', c.lang || ''); }
+      else if (c.text) { set('text', c.text); set('mode', c.mode || ''); }
+      if (c.layers) set('layers', [].concat(c.layers).join(','));
+      if (c.assess) set('assess', ''); else if (embed.hasAttribute('assess')) embed.removeAttribute('assess');
+      embed._boundKey = c.binds ? String(c.binds) : '';
+    }
+    _codeItemFor(key) {
+      const body = this.shadowRoot.getElementById('body'); if (!body) return null;
+      const c = this._contentOf(key) || {};
+      if (c.binds) return body.querySelector('.it[data-key="' + String(c.binds).replace(/"/g, '\\"') + '"] .vc-codewrap[data-code]');
+      return null;
+    }
+    _explodeToSource(key, node) {
+      const wrap = this._codeItemFor(key); const span = node && node.span; if (!wrap || !span) return;
+      const lines = wrap.querySelectorAll('.vc-line');
+      let l0 = span.line, l1 = span.line_end || span.line;
+      if (!l0 && span.start != null) {                      // a prose card: characters → the lines holding them
+        const text = ((this._contentOf(String((this._contentOf(key) || {}).binds)) || {}).code) || '';
+        l0 = text.slice(0, span.start).split('\n').length; l1 = text.slice(0, Math.max(span.start, span.end)).split('\n').length;
+      }
+      if (!l0) return;
+      let first = null;
+      lines.forEach((ln) => { const n = +ln.dataset.line; const on = n >= l0 && n <= l1; ln.classList.toggle('lit', on); if (on && !first) first = ln; });
+      if (first) { const it = wrap.closest('.it'); if (it) this._open.add(it.dataset.key);
+        try { first.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { try { first.scrollIntoView(); } catch (_) {} } }
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:explode:select', { bubbles: true, detail: { key, node, line: l0, line_end: l1 } })); } catch (e) {}
+    }
+    /* the other way: what the reader selected (or clicked) in a code item lights the card that covers it */
+    _sourceToExplode(wrap) {
+      const body = this.shadowRoot.getElementById('body'); if (!body || !wrap) return;
+      const it = wrap.closest('.it[data-key]'); if (!it) return;
+      const codeKey = it.dataset.key;
+      const sel = (this.shadowRoot.getSelection ? this.shadowRoot.getSelection() : (typeof window !== 'undefined' ? window.getSelection() : null));
+      let l0 = 0, l1 = 0;
+      const lineOf = (n) => { while (n && n !== wrap) { if (n.dataset && n.dataset.line) return +n.dataset.line; n = n.parentNode; } return 0; };
+      if (sel && sel.rangeCount && !sel.isCollapsed) { l0 = lineOf(sel.anchorNode); l1 = lineOf(sel.focusNode); if (l0 > l1) { const t = l0; l0 = l1; l1 = t; } }
+      if (!l0) { const hit = wrap.querySelector('.vc-line.tap'); if (hit) l0 = l1 = +hit.dataset.line; }
+      if (!l0) return;
+      const L = this._live || {};
+      Object.keys(L).forEach((k) => { const em = L[k].firstChild; if (!em || L[k].dataset.kind !== 'explode' || em._boundKey !== codeKey) return;
+        const sg = em.querySelector && em.querySelector('vera-structgraph');
+        if (sg && sg.lightSpan) sg.lightSpan({ line: l0, line_end: l1 }); });
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:source:select', { bubbles: true, detail: { key: codeKey, line: l0, line_end: l1 } })); } catch (e) {}
     }
     _liveLayout() {
       const L = this._live; if (!L) return; const body = this.shadowRoot.getElementById('body'); if (!body) return;

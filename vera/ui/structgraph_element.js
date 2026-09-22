@@ -226,6 +226,31 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
       layers(m) { if (m) Object.keys(m).forEach((k) => { this._S.layersOff[k] = !m[k]; }); this._schedule(); this.dispatchEvent(new CustomEvent('vera-explode-layers', { detail: Object.assign({}, this._S.layersOff), bubbles: true })); return this._S.layersOff; }
       mode(name) { if (name) { this._S.mode = name; this._S.fit = true; this._schedule(); } return this._S.mode; }
       fit() { this._S.fit = true; this._schedule(); }
+      /* ── the host's side of the span binding ─────────────────────────────
+         lightSpan({path, start, end} | {line, line_end}) — light every card whose span covers that part of the
+         source and quiet the rest, the way clicking a card lights its runs. The host (a canvas block beside a
+         code block, a chat turn beside its snippet) calls this when the READER moves in the source; the element
+         answers the other way with vera-explode-select. Character offsets when it has them, line numbers when it
+         does not (a code card carries both). Returns the ids it lit; null or no hit clears. */
+      lightSpan(span) {
+        const o = this._last;
+        if (!o) return [];
+        if (!span) { this._extHit = null; this._paint(); return []; }
+        const path = span.path == null ? null : String(span.path);
+        const hasCh = span.start != null && span.end != null;
+        const s = +span.start, e = +span.end, l0 = +(span.line || 0), l1 = +(span.line_end || span.line || 0);
+        const hit = o.cards.filter((k) => { const sp = (k.card && k.card.span) || {};
+          if (path != null && String(sp.path || '') !== path) return false;
+          if (hasCh && sp.start != null && sp.end != null) return sp.start < e && s < sp.end;
+          if (l0 && sp.line != null) return sp.line <= l1 && l0 <= (sp.line_end || sp.line);
+          return false; }).map((k) => k.id);
+        // the innermost card wins the selection: a method inside a class inside a file is what the reader meant
+        const inner = hit.slice().sort((a, b) => { const A = this._cardOf(a).card.span, B = this._cardOf(b).card.span;
+          return ((A.end - A.start) || 0) - ((B.end - B.start) || 0); })[0] || null;
+        this._extHit = { ids: new Set(hit), sel: inner };
+        this._paint();
+        return hit;
+      }
       state() { return Object.assign({}, this._S, { last: this._last }); }
       connectedCallback() {
         ensureCss(this.ownerDocument); ensureRoutes(this.ownerDocument, () => this._schedule()); if (this._built) { this._schedule(); return; } this._built = true;
@@ -240,7 +265,7 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
             this._last.cards.forEach((k) => { const s = k.card.span || {}; if (evs.some((e) => (e.span.path || '') === (s.path || '') && e.span.start < s.end && s.start < e.span.end)) hit.add(k.id); });
             this._S.sel = null; this._hover = null; this._paint(); this.querySelectorAll('.sg-card').forEach((c) => { c.classList.toggle('lit', hit.has(c.dataset.id)); c.classList.toggle('dim', evs.length > 0 && !hit.has(c.dataset.id)); });
             this.dispatchEvent(new CustomEvent('vera-explode-verdict', { detail: { key: a.key, label: a.label, score: a.score, confidence: a.confidence, by: a.by, evidence: evs }, bubbles: true })); return; }
-          const card = ev.target.closest('.sg-card'); if (card) { const k = this._cardOf(card.dataset.id); this._S.sel = card.dataset.id; this._paint(); this.dispatchEvent(new CustomEvent('vera-explode-select', { detail: { id: card.dataset.id, span: k && k.card.span, card: k && k.card }, bubbles: true })); return; }
+          const card = ev.target.closest('.sg-card'); if (card) { const k = this._cardOf(card.dataset.id); this._S.sel = card.dataset.id; this._extHit = null; this._paint(); this.dispatchEvent(new CustomEvent('vera-explode-select', { detail: { id: card.dataset.id, span: k && k.card.span, card: k && k.card }, bubbles: true })); return; }
           const e = ev.target.closest('.sg-e'); if (e) { const seg = this._last && this._last.edges.find((s) => String(s.run) === e.dataset.run); this.dispatchEvent(new CustomEvent('vera-explode-edge', { detail: { from: e.dataset.from, to: e.dataset.to, title: seg && seg.title, run: +e.dataset.run }, bubbles: true })); } });
         this.addEventListener('dblclick', (ev) => { const card = ev.target.closest('.sg-card'); if (!card) return; const k = this._cardOf(card.dataset.id); this.dispatchEvent(new CustomEvent('vera-explode-drill', { detail: { id: card.dataset.id, card: k && k.card }, bubbles: true })); });
         this.addEventListener('mouseover', (ev) => { const card = ev.target.closest('.sg-card'); this._hover = card ? card.dataset.id : null; this._paint(); });
@@ -283,7 +308,15 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
         this.dispatchEvent(new CustomEvent('vera-explode-rendered', { detail: { cards: o.cards.length, edges: o.runs, size: o.size, mode: o.mode }, bubbles: true }));
       }
       // hover / selection: the card's runs lit, everything else quiet
-      _paint() { const id = this._hover || this._S.sel; const segs = this.querySelectorAll('.sg-e'), cards = this.querySelectorAll('.sg-card'); if (!id) { segs.forEach((s) => s.classList.remove('lit', 'dim')); cards.forEach((c) => { c.classList.remove('lit', 'dim'); c.classList.toggle('sel', c.dataset.id === this._S.sel); }); return; }
+      _paint() { const segs = this.querySelectorAll('.sg-e'), cards = this.querySelectorAll('.sg-card');
+        // the host lit a part of the source (lightSpan): those cards lead, the rest are quiet — a reader's move in
+        // the source answered in the diagram, and it outranks a stale hover
+        const ext = this._extHit;
+        if (ext && !this._hover) { segs.forEach((s) => { const hit = ext.ids.has(s.dataset.from) && ext.ids.has(s.dataset.to); s.classList.toggle('lit', hit); s.classList.toggle('dim', !hit); });
+          cards.forEach((c) => { const hit = ext.ids.has(c.dataset.id); c.classList.toggle('lit', hit && c.dataset.id !== ext.sel); c.classList.toggle('dim', !hit); c.classList.toggle('sel', c.dataset.id === ext.sel); });
+          if (ext.sel) { const el = this.querySelector('.sg-card[data-id="' + (window.CSS && CSS.escape ? CSS.escape(ext.sel) : ext.sel) + '"]'); if (el && el.scrollIntoView) try { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {} }
+          return; }
+        const id = this._hover || this._S.sel; if (!id) { segs.forEach((s) => s.classList.remove('lit', 'dim')); cards.forEach((c) => { c.classList.remove('lit', 'dim'); c.classList.toggle('sel', c.dataset.id === this._S.sel); }); return; }
         const near = new Set([id]); segs.forEach((s) => { const hit = s.dataset.from === id || s.dataset.to === id; s.classList.toggle('lit', hit); s.classList.toggle('dim', !hit); if (hit) { near.add(s.dataset.from); near.add(s.dataset.to); } });
         cards.forEach((c) => { c.classList.toggle('lit', near.has(c.dataset.id) && c.dataset.id !== id); c.classList.toggle('dim', !near.has(c.dataset.id)); c.classList.toggle('sel', c.dataset.id === this._S.sel); }); }
     }
