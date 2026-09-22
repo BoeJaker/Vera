@@ -98,6 +98,13 @@ except ImportError:                                        # pragma: no cover
         from vera.dag import repeat_failure as _repeat_failure
     except ImportError:
         _repeat_failure = None
+try:
+    from Vera.vera.operator import operator_step_budget as _step_budget
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera.operator import operator_step_budget as _step_budget
+    except ImportError:
+        _step_budget = None
 # Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
 # have a module until it lands there, so a NEW sibling must fall back to the
 # plain package or this whole module fails to import.
@@ -15203,6 +15210,12 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     # Catches the reworded repeat the signature above cannot see; see repeat_failure.
     failed_outcomes: Dict[tuple, int] = {}
     failed_outcome_text: Dict[tuple, str] = {}
+    # step_id -> seconds this step has spent driving a browser. ONE allowance
+    # per STEP: the per-CALL cap cannot see a step that simply calls
+    # operator.run again (run61 build-browser-verified: 29 thinks, 1,109s, on a
+    # goal whose artifact was already correct). See operator_step_budget.
+    browser_seconds: Dict[str, float] = {}
+    browser_last_stop: Dict[str, str] = {}
     # Chain hops call `call_tool` directly (see _run_chain below) and never
     # consult `success_sigs` above — this is that same short-circuit, scoped
     # separately since a chain hop's cached value needs the raw `result`
@@ -16842,6 +16855,38 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # "repeating_action" - three identical answers for 1807s, on a goal
         # whose artifact was already correct after two cycles. This keys on the
         # target and the failure kind instead. See repeat_failure.
+        # -- one browser allowance per STEP ---------------------------------
+        # The per-CALL cap (operator_budget, 480s) cannot see a step that simply
+        # calls operator.run again after it fires. run61's build-browser-verified
+        # spent 1,109s over 29 thinks that way, on a goal whose artifact was
+        # already correct and scored 1.0.
+        if _step_budget is not None and _step_budget.exhausted(
+                browser_seconds, step_id, tool):
+            _spent_s = _step_budget.spent(browser_seconds, step_id)
+            _msg = _step_budget.describe(
+                tool, _spent_s, last_stop=browser_last_stop.get(str(step_id), ""))
+            tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)
+            outputs[tool] = _msg
+            history.append({"tool": tool, "ok": False, "preview": _msg[:2000],
+                            "args": args, "ms": 0})
+            # The run's warnings are DERIVED from the tool_done events below -
+            # the same route the repeat guard's refusal takes to reach a census
+            # row - so the error text there is what surfaces. (An earlier draft
+            # appended to a local `warnings` list that does not exist in this
+            # scope; tests/test_missing_module_import caught it before it could
+            # raise NameError on the first refusal.)
+            await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                              "args": args, "session_id": sid,
+                              "thought": "(the step's browser budget is spent)"})
+            await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                              "ok": False, "elapsed_ms": 0, "preview": _msg[:2000],
+                              "error": "the step's browser budget (%ds) is spent - %s already had %ds"
+                                       % (int(_step_budget.STEP_MAX_SECONDS), tool, int(_spent_s)),
+                              "session_id": sid})
+            continue
+
         if _repeat_failure is not None:
             _blk = _repeat_failure.blocked_kind(failed_outcomes, tool, args)
             if _blk:
@@ -17347,6 +17392,19 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             except Exception as e:
                 log.debug("v5 long-running await failed for %s: %s", tool, e)
         elapsed = round((time.monotonic() - t0) * 1000)
+
+        # Charge the STEP for browser time, whatever the call returned - a run
+        # that stopped on its own time_budget cost the same seconds as one that
+        # finished. Remember WHY it stopped, so the refusal can quote it.
+        if _step_budget is not None and _step_budget.is_browser_call(tool):
+            _step_budget.record(browser_seconds, step_id, tool, elapsed / 1000.0)
+            try:
+                _stop = str(((invoke or {}).get("result") or {}).get("stop_reason")
+                            or (invoke or {}).get("error") or "")
+            except Exception:
+                _stop = ""
+            if _stop:
+                browser_last_stop[str(step_id)] = _stop[:200]
 
         # Store a freshly-successful fetch into the URL cache (see the
         # URL-FETCH DEDUP gate above) so a LATER retry/phase within this same
