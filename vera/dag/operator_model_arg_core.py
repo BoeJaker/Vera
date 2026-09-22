@@ -25,16 +25,12 @@ OPERATOR_MODEL_CAPS = frozenset({
 })
 
 
-def _variants(name: str) -> set:
-    n = str(name or "").strip()
-    if not n:
-        return set()
-    out = {n}
-    if n.endswith(":latest"):
-        out.add(n[: -len(":latest")])
-    elif ":" not in n.rsplit("/", 1)[-1]:
-        out.add(n + ":latest")
-    return out
+# The same rule the routers use for "does this node have this model" - one
+# definition, so a name that routes cannot be a name the operator rejects.
+try:
+    from Vera.vera.model_tag_core import variants as _variants
+except Exception:  # pragma: no cover - worktree / test layout
+    from ..model_tag_core import variants as _variants
 
 
 def model_is_served(model: str, served: Iterable[str]) -> bool:

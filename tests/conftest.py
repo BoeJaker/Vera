@@ -31,6 +31,7 @@ _CRITICAL_MODULES = {
     "test_fenced_json",  # a fenced reply must survive losing its fence (2026-08-31)
     "test_v6_extract_paths",    # a capability name is not a file (2026-09-08)
     "test_author_browser_observable",  # a page a browser verifies must be readable by one (2026-09-08)
+    "test_node_choice_and_model_tags",  # one CPU node took 90% of every census's embeds; a 0.5b tag counted as a 7b (2026-09-22)
     "test_route_preference",   # soft node preference must stay SOFT (2026-09-08)
     "test_graph_panel_assets",  # a renamed panel JS serves a comment, silently (2026-09-20)
     "test_nlp_placement",      # the host must never silently run NLP (2026-09-20)
