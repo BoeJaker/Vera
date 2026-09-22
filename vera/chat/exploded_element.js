@@ -547,8 +547,47 @@
     if (!html) return '';
     return '<div class="xit-face' + (wd.sample ? ' sample' : '') + '" data-form="' + esc(wd.form) + '" data-size="' + sz + '" style="--fh:' + H + 'px">' + html + '</div>';
   }
+/* ── A CARD'S OWN STRUCTURE, drawn on the card ──────────────────────────────────────────────────────────────
+   "the chat exploded iso, cards and front modes could display the graphs" (owner, 2026-09-22). All three modes
+   draw one FACE per card, so one graph face serves all three: a card that holds code, a record or a passage can
+   show its structured diagram where its log or its meter would be.
+
+   Asked for, never assumed: a diagram is a server call, and a scene of forty cards is not forty calls. The card
+   carries a small affordance; pressing it asks the HOST for that card's contract (the element stays a scene and
+   knows nothing about endpoints, exactly as `vera:xpl:explode` does), and the host hands it back through
+   setCardGraph. The element is kept and re-attached across renders, so its pan and zoom survive one. */
+  const GRAPH_H = { s: 96, m: 168, l: 240 };
+  function graphable(c) {
+    if (!c) return false;
+    const k = String(c.kind || '').toLowerCase();
+    if (c.record && typeof c.record === 'object' && (c.record.id || c.record.record_id)) return true;
+    const body = typeof c.body === 'string' ? c.body : (typeof c.text === 'string' ? c.text : '');
+    if (/^(code|term|terminal|cap|capability|log)$/.test(k)) return body.trim().length > 20;
+    return body.trim().length >= 200;                    // a passage long enough to have a structure
+  }
+  function graphFaceHtml(id, state, wsz) {
+    const sz = wsz === 's' || wsz === 'l' ? wsz : 'm';
+    const H = GRAPH_H[sz] || GRAPH_H.m;
+    if (state === 'want') return '<div class="xit-face graph" data-size="' + sz + '" style="--fh:' + H + 'px">'
+      + '<span class="xp-gdim">drawing\u2026</span></div>';
+    if (state === 'error') return '<div class="xit-face graph" data-size="' + sz + '" style="--fh:' + H + 'px">'
+      + '<span class="xp-gdim">no diagram for this card</span></div>';
+    return '<div class="xit-face graph" data-graph="' + esc(id) + '" data-size="' + sz + '" style="--fh:' + H + 'px"></div>';
+  }
+  const graphBtn = (c, on) => (graphable(c)
+    ? '<button class="xit-graph' + (on ? ' on' : '') + '" data-graph-btn="1" title="'
+      + (on ? 'Back to the card' : 'Draw what is inside this card') + '">\u2318</button>' : '');
+
   // a diagram card's body: its mermaid drawn by the estate's own element (loaded once from the page when a scene needs it)
   const diagramHtml = (c) => { const src = String((c && (c.mermaid || (String(c.kind || '').toLowerCase() === 'diagram' && c.body))) || '').trim(); return src ? '<span class="xf-diag"><vera-mermaid bare title="diagram">' + esc(src) + '</vera-mermaid></span>' : ''; };
+  /* the structured renderer, fetched from the page the way the mermaid element is -- a scene that never asks for
+     a card's diagram never loads it */
+  function ensureStruct(doc) {
+    doc = doc || document;
+    if ((root.customElements && root.customElements.get('vera-structgraph')) || doc.getElementById('vera-structgraph-js')) return;
+    const sc = doc.createElement('script'); sc.id = 'vera-structgraph-js'; sc.src = '/ui/structgraph.js'; sc.async = true;
+    (doc.head || doc.documentElement).appendChild(sc);
+  }
   function ensureMermaid(doc) { doc = doc || document; if ((root.customElements && root.customElements.get('vera-mermaid')) || doc.getElementById('vera-mermaid-js')) return; const s = doc.createElement('script'); s.id = 'vera-mermaid-js'; s.src = '/ui/elements/vera_mermaid.js'; s.async = true; (doc.head || doc.documentElement).appendChild(s); }
   /* ── an ISO WIDGET GROUP: the widget as an object on the plate — a dial for a level, bars for a set or a series, a
      block for anything else — built through the ISO lib's box/face/scene about (0,0), the item's pin. Pure: the lib
@@ -649,6 +688,11 @@ vera-exploded .xp-ctx .c{font-size:9px;letter-spacing:.14em;text-transform:upper
 vera-exploded .xp-cb{display:flex;align-items:center;gap:5px;font:inherit;font-size:10px;color:var(--xp-t3);background:none;border:0;cursor:pointer;padding:3px 8px;border-radius:999px}vera-exploded .xp-cb i{width:6px;height:6px;border-radius:2px;background:var(--lc,var(--xp-t3));opacity:.35}vera-exploded .xp-cb b{font-family:var(--xp-mono);font-size:9px;font-weight:400;color:var(--xp-t3)}
 vera-exploded .xp-cb.on{color:var(--xp-t1);background:var(--xp-s2)}vera-exploded .xp-cb.on i{opacity:1}vera-exploded .xp-cb:hover{color:var(--xp-t1)}
 vera-exploded .xp-cbb{position:relative;font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3);margin-left:6px;padding-left:9px;box-shadow:inset 1px 0 0 0 var(--xp-bd)}vera-exploded .xp-cbb i{position:absolute;left:9px;right:0;bottom:-4px;height:2px;border-radius:1px;background:var(--xp-ac);opacity:.7;max-width:calc(100% - 9px)}
+vera-exploded .xit-graph{position:absolute;right:4px;top:3px;z-index:3;border:0;background:transparent;color:var(--xp-t3);font-size:11px;line-height:1;padding:2px 3px;cursor:pointer;opacity:.55}
+vera-exploded .xit-graph:hover,vera-exploded .xit-graph.on{opacity:1;color:var(--xp-ac)}
+vera-exploded .xit-face.graph{height:var(--fh);min-height:var(--fh);display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:4px;background:var(--xp-bg1,#12100e);border:1px solid var(--xp-bd)}
+vera-exploded .xit-face.graph vera-structgraph{flex:1;min-width:0}
+vera-exploded .xp-gdim{color:var(--xp-t3);font-size:9px;font-family:var(--xp-mono,monospace)}
 vera-exploded .xp-it .tpl,vera-exploded .xit .tpl{font-style:normal;color:var(--xp-ac);font-size:10px}
 vera-exploded .xp-scrub{width:96px;accent-color:var(--xp-ac);margin:0 2px 0 6px;cursor:pointer}
 vera-exploded .xp-g{position:absolute;z-index:8;border-radius:6px;background:var(--xp-s2);box-shadow:0 0 0 1px var(--xp-bd);padding:4px 6px;box-sizing:border-box;overflow:hidden}
@@ -1090,6 +1134,61 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
           code: /^(code|term|terminal|cap|capability|log)$/.test(kind), lang: String(c.lang || ''),
         } }));
       }
+      /* THE CARD'S DIAGRAM. `graph(id)` toggles it: on the way on it asks the host for the contract of whatever
+         that card holds (vera:xpl:graph, the same shape the deep dive asks with), and the host hands it back
+         through setCardGraph. The element is kept per card and re-attached after a render, so a render does not
+         throw away a reader's pan and zoom. */
+      graph(id) {
+        id = String(id || ''); if (!id) return this;
+        this._graph = this._graph || {};
+        if (this._graph[id]) {                                  // pressed again: the card comes back
+          delete this._graph[id];
+          const el = this._graphEls && this._graphEls[id]; if (el && el.parentNode) el.parentNode.removeChild(el);
+          this._schedule(); return this;
+        }
+        const it = this._itemOf(id) || {};
+        const c = (it && it.card) || it || {};
+        this._graph[id] = (this._graphDocs && this._graphDocs[id]) ? this._graphDocs[id] : 'want';
+        this._schedule();
+        if (this._graph[id] === 'want') {
+          const kind = String(c.kind || '').toLowerCase();
+          const body = typeof c.body === 'string' ? c.body : (typeof c.text === 'string' ? c.text : '');
+          const rec = c.record && typeof c.record === 'object' ? String(c.record.id || c.record.record_id || '') : '';
+          this.dispatchEvent(new CustomEvent('vera:xpl:graph', { bubbles: true, detail: {
+            id: id, kind: kind, title: String(c.title || c.n || ''), record: rec, text: body,
+            code: /^(code|term|terminal|cap|capability|log)$/.test(kind), lang: String(c.lang || ''),
+          } }));
+        }
+        return this;
+      }
+      setCardGraph(id, doc) {
+        id = String(id || ''); if (!id) return this;
+        this._graphDocs = this._graphDocs || {};
+        this._graph = this._graph || {};
+        if (!doc || doc.error) { this._graph[id] = 'error'; this._schedule(); return this; }
+        this._graphDocs[id] = doc;
+        if (this._graph[id]) this._graph[id] = doc;
+        const el = this._graphEls && this._graphEls[id];
+        if (el && typeof el.setDoc === 'function') el.setDoc(doc);
+        this._schedule(); return this;
+      }
+      _graphMount() {
+        const want = this.querySelectorAll('[data-graph]');
+        if (!want.length) return;
+        this._graphEls = this._graphEls || {};
+        want.forEach((slot) => {
+          const id = slot.dataset.graph; const doc = (this._graphDocs || {})[id];
+          if (!doc) return;
+          let el = this._graphEls[id];
+          if (!el) {
+            if (!(root.customElements && root.customElements.get('vera-structgraph'))) { ensureStruct(this.ownerDocument); return; }
+            el = this.ownerDocument.createElement('vera-structgraph');
+            el.setAttribute('bare', ''); el.style.cssText = 'display:flex;width:100%;height:100%';
+            this._graphEls[id] = el; el.setDoc(doc);
+          }
+          if (el.parentNode !== slot) { slot.textContent = ''; slot.appendChild(el); }
+        });
+      }
       _itemOf(id) { const o = this._last || {}; return (o.widgets || []).find((w) => w.id === id) || (o.cards || []).find((c) => c.id === id) || null; }
       widgetSize(s) { const L = ['s', 'm', 'l']; this._S.wsz = L.includes(s) ? s : L[(L.indexOf(this._S.wsz || 'm') + 1) % L.length]; this._schedule(); return this._S.wsz; }
       mode(name) { if (name && /^(cards|front|iso)$/.test(name)) { this._S.mode = name; this._S.pan = { x: 0, y: 0, z: 1, auto: true }; this._S.open = null; this._S.focus = null; this._frontKey = null; this._schedule(); } return this._S.mode; }
@@ -1132,6 +1231,8 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         const st = t.closest && t.closest('.xp-lb.station'); if (st) { this.select(st.dataset.mid); return; }
         const ph = t.closest && t.closest('.xp-cp-h'); if (ph) { this.focus(+ph.closest('.xp-cp').dataset.li); return; }   // a layer's header focuses the whole section; again puts it back
         const hit = t.closest && t.closest('.xp-lb.hit'); if (hit) { const v = this._r.view, x = parseFloat(hit.style.left) || 0; if (v && v.classList.contains('scroll')) v.scrollTo({ left: Math.max(0, x - 40), behavior: 'smooth' }); return; }   // a station caption frames its own column
+        const gb = t.closest && t.closest('[data-graph-btn]');
+        if (gb) { const it = gb.closest('[data-id]'); if (it) this.graph(it.dataset.id); return; }
         const card = t.closest && t.closest('.xp-it,.xp-rc,.xit,.xig,.xnd'); if (card) { const id = card.dataset.id; this._S.open = this._S.open === id ? null : id; const [mid, layer] = id.split(':'); this._schedule(); this.dispatchEvent(new CustomEvent('vera:xpl:pick', { detail: { mid, layer, card: id }, bubbles: true })); if (layer === 'say') this.dispatchEvent(new CustomEvent('vera:xpl:turn', { detail: { mid }, bubbles: true })); return; }
         const cp = t.closest && t.closest('.xp-cp'); if (cp) { this._S.layer = +cp.dataset.li; this._schedule(); }
       }
@@ -1141,8 +1242,10 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
          keyframe until the panels land. A new station (or a new room) rebuilds, and the panels swing in from flat. ── */
       _renderFront(o) {
         const S = this._S, view = this._r.view, P = o.panels; const PW = o.panel ? o.panel.w : 400, PH = o.panel ? o.panel.h : 472;
-        const rcFace = (c) => (c.card && (c.card.form || c.card.record || String(c.card.kind || '').toLowerCase() === 'widget') ? faceHtml(c.card, widgetOf(c.card), S.wsz) : '');   // a widget's own face on the carousel card
-        const rcHtml = (c) => '<div class="xp-rc' + (S.open === c.id ? ' open' : '') + (String(c.card.kind || '') === 'gen' ? ' gen' : '') + '" data-id="' + esc(c.id) + '" data-ci="' + c.ci + '" style="--cc:' + esc(c.col) + '" title="' + esc(c.card.n || '') + (c.card.d ? ' — ' + esc(c.card.d) : '') + ' · click for the record"><span class="n">' + (c.card.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.card.tpl) + '">⧉</i> ' : '') + esc(c.card.n || '') + '</span><span class="d">' + esc(c.card.d || '') + '</span>' + rcFace(c) + '<div class="b">' + cardBody(c.card) + '</div></div>';
+        const rcFace = (c) => (this._graph && this._graph[c.id]
+          ? graphFaceHtml(c.id, this._graph[c.id] === 'want' || this._graph[c.id] === 'error' ? this._graph[c.id] : '', S.wsz)
+          : c.card && (c.card.form || c.card.record || String(c.card.kind || '').toLowerCase() === 'widget') ? faceHtml(c.card, widgetOf(c.card), S.wsz) : '');   // a widget's own face on the carousel card
+        const rcHtml = (c) => '<div class="xp-rc' + (S.open === c.id ? ' open' : '') + (String(c.card.kind || '') === 'gen' ? ' gen' : '') + '" data-id="' + esc(c.id) + '" data-ci="' + c.ci + '" style="--cc:' + esc(c.col) + '" title="' + esc(c.card.n || '') + (c.card.d ? ' — ' + esc(c.card.d) : '') + ' · click for the record">' + graphBtn(c.card, !!(this._graph && this._graph[c.id])) + '<span class="n">' + (c.card.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.card.tpl) + '">⧉</i> ' : '') + esc(c.card.n || '') + '</span><span class="d">' + esc(c.card.d || '') + '</span>' + rcFace(c) + '<div class="b">' + cardBody(c.card) + '</div></div>';
         const bodyHtml = (p) => (p.graph && p.graph.nodes.length ? '<div class="xp-gp">' + graphHtml(p.graph, 200) + '</div>' : '') + p.cards.map(rcHtml).join('') + (p.cards.length || (p.graph && p.graph.nodes.length) ? '' : '<div class="d" style="color:var(--xp-t3);font-family:var(--xp-mono);font-size:9px">nothing here for this turn</div>');
         const key = (o.station ? o.station.mid : '') + '|' + P.map((p) => p.n).join(',') + '|' + PW + 'x' + PH;
         let car = view.querySelector('.xp-car');
@@ -1171,7 +1274,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         if (S.pan.auto) S.pan.z = o.fitZ || 1;   // the board's fit for the room, until the user zooms
         this._applyPan(); this._emit(o);
       }
-      _schedule() { if (this._raf || !this._built) return; this._raf = (root.requestAnimationFrame || setTimeout)(() => { this._raf = 0; this._render(); }); }
+      _schedule() { if (this._raf || !this._built) return; this._raf = (root.requestAnimationFrame || setTimeout)(() => { this._raf = 0; this._render(); try { this._graphMount(); } catch (e) {} }); }
       _render() {
         if (!routesLib()) { ensureRoutes(this.ownerDocument, () => this._schedule()); return; }   // the routers are on their way; draw when they land
         if (this._dragW && this._dragW.on) { this._renderHeld = true; return; }   // a widget is in the hand: nothing is rebuilt under it until the drop
@@ -1210,9 +1313,12 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         // a widget on the canvas plane can be picked up (dropped on another turn's plate, or before another item) and edited
         const dragAttr = (w) => (w.drag ? ' data-drag="1" data-mid="' + esc(w.mid) + '" data-key="' + esc(w.key || '') + '"' : '');
         const editBtn = (w) => (w.drag ? '<button class="xit-edit" data-edit="1" title="Edit this widget\u2019s record">\u2699</button>' : '');
+        // the card's own structure, on the card: pressed once it asks for the diagram, pressed again it gives
+        // the card back (the scene's three modes share this, because they share the face)
+        const gBtn = (x) => graphBtn(x.card || x, !!(this._graph && this._graph[x.id]));
         const xitHtml = (wg, face) => { const c = wg.card, open = S.open === wg.id; const wd = { form: wg.form, data: wg.data, sample: wg.sample }; const b = isoBody(c, face ? null : wd);   // the face says it all: no reading line beside it
           return '<div class="xit bb' + (wg.tight ? ' tight' : '') + (open ? ' open' : '') + (c.src ? ' has-img' : '') + (face ? ' face' : '') + (String(c.kind || '') === 'gen' ? ' gen' : '') + '" data-id="' + esc(wg.id) + '"' + dragAttr(wg) + ' title="' + esc(c.n || '') + (c.d ? ' — ' + esc(c.d) : '') + ' · click for the record" style="left:' + (wg.x - wg.cw / 2).toFixed(1) + 'px;top:' + (wg.y - wg.stem).toFixed(1) + 'px;width:' + wg.cw + 'px;--ih:' + wg.ch + 'px;--cc:' + esc(wg.col) + '">'
-            + '<span class="xit-n">' + tplTag(c) + esc(c.n || '') + '</span><span class="xit-d">' + esc(c.d || '') + '</span>' + editBtn(wg) + (face || '')
+            + '<span class="xit-n">' + tplTag(c) + esc(c.n || '') + '</span><span class="xit-d">' + esc(c.d || '') + '</span>' + editBtn(wg) + gBtn(wg) + (face || '')
             + (b.on ? '<span class="xit-body">' + b.on + '</span>' : '') + (c.src ? '<img class="xp-img" src="' + esc(c.src) + '" alt="" loading="lazy">' : '') + (b.x ? '<div class="xit-x">' + b.x + '</div>' : '') + '</div>'; };
         // a widget on the plate: ITS OWN FORM's face on the board's card (the widget element draws it — defect 37: the
         // record's form, not one object per shape); the iso group only when the element is not on the page
@@ -1222,7 +1328,9 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
            and produced widgets out of their cards too (defect 82). Off the canvas plane a widget is the board's card
            again. The face is drawn with proj:'iso' already, so on the plane it reads as an object. */
         const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const onPlane = wg.layer === 'land';
-          const face = faceHtml(c, widgetOf(c), S.wsz, { plane: onPlane }); const pw = onPlane ? Math.round(planeSize(wg.form, S.wsz || 'm').w) : wg.cw;
+          const face = (this._graph && this._graph[c.id])
+          ? graphFaceHtml(c.id, this._graph[c.id] === 'want' || this._graph[c.id] === 'error' ? this._graph[c.id] : '', S.wsz)
+          : faceHtml(c, widgetOf(c), S.wsz, { plane: onPlane }); const pw = onPlane ? Math.round(planeSize(wg.form, S.wsz || 'm').w) : wg.cw;
           if (face && !onPlane) return xitHtml(wg, face);   // read · the exchange · produced: the board's card, as before
           const g = face ? null : groupOf(wg, ISO, { tilt: S.tilt || 30, azim: S.azim || 45 }); const b = isoBody(c, null);
           const cap = '<div class="xit frameless' + (open ? ' open' : '') + '" data-id="' + esc(wg.id) + '"' + dragAttr(wg) + ' title="' + esc(c.n || '') + (c.d ? ' — ' + esc(c.d) : '') + ' · click for the detail" style="left:' + (wg.x - wg.cw / 2).toFixed(1) + 'px;top:' + (wg.y + 6).toFixed(1) + 'px;width:' + wg.cw + 'px;--cc:' + esc(wg.col) + '"><span class="xit-n">' + tplTag(c) + esc(c.n || '') + '</span>' + (wg.value ? '<span class="xit-cv">' + esc(wg.value) + '</span>' : '') + '<span class="xit-d">' + esc(c.d || '') + '</span>' + editBtn(wg)
@@ -1235,10 +1343,13 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
             + (g.needle ? '<span class="xiw-n" style="left:' + g.needle.x + ';top:' + g.needle.y + ';width:' + g.needle.len + ';transform:rotate(' + g.needle.deg + ')"></span>' : '')
             + (g.big ? '<span class="xiw-b" style="left:' + g.big.x + ';top:' + g.big.y + '">' + esc(g.big.n) + '</span>' : '') + '</div>' + cap; };
         // CARDS: the same card, top-anchored on its row line — name · meta · the body by kind · its chips; the record (the rest of the body, the layer, the turn) behind a click
-        const ctHtml = (c) => { const card = c.card, open = S.open === c.id; const wd = widgetOf(card); const face = (card.form || card.record || String(card.kind || '').toLowerCase() === 'widget') ? faceHtml(card, wd, S.wsz) : ''; const b0 = isoBody(card, face ? null : wd); const relOn = card.score != null && /xf-score/.test(b0.on); const b = { on: relOn ? b0.on.replace(/<span class="xf-score">[\s\S]*?<\/b><\/span>/, '') : b0.on, x: b0.x };
+        const ctHtml = (c) => { const card = c.card, open = S.open === c.id; const wd = widgetOf(card);
+          const face = (this._graph && this._graph[c.id])
+            ? graphFaceHtml(c.id, this._graph[c.id] === 'want' || this._graph[c.id] === 'error' ? this._graph[c.id] : '', S.wsz)
+            : (card.form || card.record || String(card.kind || '').toLowerCase() === 'widget') ? faceHtml(card, wd, S.wsz) : ''; const b0 = isoBody(card, face ? null : wd); const relOn = card.score != null && /xf-score/.test(b0.on); const b = { on: relOn ? b0.on.replace(/<span class="xf-score">[\s\S]*?<\/b><\/span>/, '') : b0.on, x: b0.x };
           const rel = relOn ? '<span class="xf-rel"><i><b style="width:' + Math.round(Math.max(0, Math.min(1, +card.score)) * 100) + '%"></b></i>' + (/\d\.\d\d\s*$/.test(String(card.d || '')) ? '' : '<em>' + (+card.score).toFixed(2) + '</em>') + '</span>' : '';   // the number only when the meta does not already end with it
           return '<div class="xit ct' + (open ? ' open' : '') + (card.src ? ' has-img' : '') + (face ? ' face' : '') + (String(card.kind || '') === 'gen' ? ' gen' : '') + '" data-id="' + esc(c.id) + '"' + dragAttr(c) + ' title="' + esc(card.n || '') + (card.d ? ' — ' + esc(card.d) : '') + ' · click for the record" style="' + st(c.x, c.y) + 'width:' + c.w + 'px;--ih:' + c.ih + 'px;--cc:' + esc(c.col) + '">'
-            + '<span class="xit-n">' + tplTag(card) + esc(card.n || '') + '</span><span class="xit-d">' + esc(card.d || '') + rel + '</span>' + editBtn(c) + face
+            + '<span class="xit-n">' + tplTag(card) + esc(card.n || '') + '</span><span class="xit-d">' + esc(card.d || '') + rel + '</span>' + editBtn(c) + gBtn(c) + face
             + (b.on ? '<span class="xit-body">' + b.on + '</span>' : '') + (card.src ? '<img class="xp-img" src="' + esc(card.src) + '" alt="" loading="lazy">' : '')
             + (c.badge ? '<span class="xit-m"><span class="xit-b">' + esc(c.badge) + '</span></span>' : '')
             + '<div class="xit-x">' + b.x + '<span class="xit-xr">layer<b>' + esc(c.layer) + '</b></span><span class="xit-xr">turn<b>' + esc(c.turn) + '</b></span>' + (card.kind ? '<span class="xit-xr">kind<b>' + esc(card.kind) + '</b></span>' : '') + '</div></div>'; };

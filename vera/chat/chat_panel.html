@@ -3657,6 +3657,32 @@ const CH = (() => {
     if(txt.trim().length >= 40) return _xpPanel(host, { text: txt }, name + ' \u00b7 ' + txt.length + ' chars', 'the text this card holds');
     appendSys('Nothing to explode in that card \u2014 it holds no record, no code and no passage.');
   }
+  /* What a card holds, as a CONTRACT rather than a panel: the same resolution the deep dive uses, handed back to
+     the scene so the card can draw its own structure in cards, front or iso. */
+  async function _xpContractFor(d){
+    const txt = String(d.text || '');
+    let body = null, url = '/nlp/explode/prose';
+    if(d.record){
+      const tg = await resolveTarget({ id: d.record, max_records: 12 });
+      if(!tg || !tg.ok) return { error: (tg && tg.why) || 'nothing to explode' };
+      const a = tg.args || {};
+      if(tg.cap === 'code.explode'){ url = '/code/explode'; body = a; }
+      else body = a;
+    } else if(d.code && txt.trim()){ url = '/code/explode'; body = { text: txt, lang: d.lang || '' }; }
+    else if(txt.trim().length >= 40){ body = { text: txt }; }
+    else return { error: 'this card holds no record, no code and no passage' };
+    try{
+      const r = await fetch(BASE + url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const doc = await r.json();
+      return (doc && !doc.error) ? doc : { error: (doc && doc.error) || 'explode failed' };
+    }catch(e){ return { error: String(e && e.message || e) }; }
+  }
+  async function _xplCardGraph(d){
+    if(!_xplEl || !d.id) return;
+    const doc = await _xpContractFor(d);
+    try{ _xplEl.setCardGraph(d.id, doc); }catch(_){}
+    if(doc && doc.error) appendSys('No diagram for that card \u2014 ' + esc(doc.error));
+  }
   async function _msgExplode(mid, btn){
     const rec=_MSG_REGISTRY[mid]; if(!rec) return;
     const wrap=document.querySelector('.mwrap[data-mid="'+mid+'"]'); if(!wrap) return;
@@ -17487,6 +17513,8 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _xplEl.addEventListener('vera:xpl:move', ev=>_xplMove(ev.detail||{}));
     // a card double-clicked in the scene: the structured diagram of what that card HOLDS, under the scene
     _xplEl.addEventListener('vera:xpl:explode', ev=>_xplDeepDive(ev.detail||{}));
+    // a card asking to BE its diagram, in whichever mode the scene is in: the same question, answered onto the card
+    _xplEl.addEventListener('vera:xpl:graph', ev=>_xplCardGraph(ev.detail||{}));
     _xplEl.addEventListener('vera:xpl:edit', ev=>_xplEdit(ev.detail||{}));
     // a turn selected in the exploded scene (the turn dots, the scrubber, ← →, a station caption, the exchange) is the focused turn
     // everywhere: the grown context graph at that turn's frame, the mini graph re-drawn, the canvas with that turn's items in focus
