@@ -180,10 +180,13 @@
         var t = String(n.type || (n.labels && n.labels[0]) || '');
         return (/record/i.test(t) || n.props && n.props.record_id) ? String((n.props && n.props.record_id) || n.id) : String(n.id || '');
       }
-      $('.xp-pick').onclick = function () {
+      $('.xp-pick').onclick = async function () {
         var id = selectedId();
-        if (!id) { say('select a record on the graph first', true); return; }
-        recIn.value = id; whatSel.value = 'record'; syncWhat(); say('record ' + id);
+        if (!id) { say('select something on the graph first', true); return; }
+        recIn.value = id; whatSel.value = 'record'; syncWhat();
+        say('reading ' + id + '…');
+        var tg = await resolveTarget({ id: id, max_records: 12 });          // say what it is BEFORE exploding it
+        say(tg && tg.ok ? esc(tg.label || id) + ' — ' + esc(tg.why || '') : esc((tg && tg.why) || id), !(tg && tg.ok));
       };
       if (!recIn.value) recIn.value = selectedId();
 
@@ -207,6 +210,21 @@
         var out = [];
         boxes.forEach(function (b) { if (b.checked) out.push(b.dataset.l); });
         return out;
+      }
+
+      // ── what IS the thing that was clicked? ─────────────────────────────────
+      // The panel used to assume every id on the graph was a fabric record id and post it as one, so clicking a
+      // Dataset node answered "explode failed: record topic_… not found" for something that was never a record
+      // (owner, 2026-09-22 — it holds four records). explode.target resolves it server-side and says both what it
+      // is and how it explodes: a record, a dataset's records as lanes, an entity's evidence, a memory's own text,
+      // a code file. Nothing explodable is a sentence about the thing, not an error.
+      async function resolveTarget(q) {
+        try {
+          var r = await fetch(base + '/explode/target', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(q),
+          });
+          return await r.json();
+        } catch (e) { return { ok: false, why: String(e) }; }
       }
 
       // ── the diagram, over the stage ─────────────────────────────────────────
@@ -258,12 +276,19 @@
       // ── Explode ─────────────────────────────────────────────────────────────
       $('.xp-go').onclick = async function () {
         var body = { include_text: true };
-        var w = whatSel.value, label = '';
+        var w = whatSel.value, label = '', why = '';
         if (w === 'record') {
           var id = recIn.value.trim() || selectedId();
           if (!id) { say('a record id is needed — or select one on the graph', true); return; }
-          body.record_id = id; label = 'record ' + id;
-          var rg = parseRanges(rangesIn.value); if (rg.length) { body.ranges = rg; label += ' · ' + rg.map(function (r) { return r[0] + '–' + r[1]; }).join(', '); }
+          say('resolving ' + id + '…');
+          var tg = await resolveTarget({ id: id, max_records: 12 });
+          if (!tg || !tg.ok) { say((tg && tg.why) || ('nothing to explode for ' + id), true); return; }
+          if (tg.cap === 'code.explode') w = 'code';
+          body = tg.args || {};
+          if (w !== 'code') body.include_text = true;
+          label = tg.label || id; why = tg.why || '';
+          var rg = parseRanges(rangesIn.value);
+          if (rg.length && body.record_id) { body.ranges = rg; label += ' · ' + rg.map(function (r) { return r[0] + '–' + r[1]; }).join(', '); }
         } else if (w === 'records') {
           var ids = recsIn.value.split(/\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
           if (ids.length < 2) { say('two or more record ids, one per line', true); return; }
@@ -297,7 +322,8 @@
           var rows = (doc.layers || []).map(function (l) {
             return (l.on ? (l.error ? '✗ ' : '✓ ') : '· ') + esc(l.label || l.id) + (l.on && !l.error ? ' ' + l.count + (l.ms ? ' · ' + l.ms + ' ms' : '') + (l.where ? ' · ' + esc(l.where) : '') : '') + (l.error ? ' — ' + esc(l.error) : '');
           });
-          say((doc.counts ? doc.counts.cards + ' cards, ' + doc.counts.edges + ' runs, ' + (doc.counts.paragraphs != null ? doc.counts.paragraphs + ' paragraphs' : doc.counts.files + ' file' + (doc.counts.files === 1 ? '' : 's') + (doc.counts.external ? ', ' + doc.counts.external + ' external' : '')) : '') +
+          say((why ? esc(why) + '<br>' : '') +
+              (doc.counts ? doc.counts.cards + ' cards, ' + doc.counts.edges + ' runs, ' + (doc.counts.paragraphs != null ? doc.counts.paragraphs + ' paragraphs' : doc.counts.files + ' file' + (doc.counts.files === 1 ? '' : 's') + (doc.counts.external ? ', ' + doc.counts.external + ' external' : '')) : '') +
               (doc.source && doc.source.engines ? ' · ' + doc.source.engines.join(' + ') + (doc.source.tree_sitter === false ? ' (tree-sitter not installed)' : '') : '') +
               (doc.source && doc.source.partial ? ' · partial' : '') + ' · not persisted<br>' + rows.join('<br>'));
         } catch (e) {

@@ -652,7 +652,8 @@ async def explode_prose(text: str = "", record_id: str = "", record_ids: Optiona
         for rid in ids:
             rec = await loop.run_in_executor(None, _read_record, rid)
             if not rec:
-                return {"error": "record %s not found" % rid}
+                return {"error": "record %s not found - if this is a graph node or a path, ask "
+                                 "explode.target what it is and it will say how it explodes" % rid}
             t = (rec.get("text") or "")
             if len(t) > max_chars:
                 t = t[:max_chars]
@@ -897,6 +898,204 @@ async def explode_code(text: str = "", lang: str = "", path: str = "", paths: Op
 
 
 # ── capabilities ──────────────────────────────────────────────────────────────────────────────────
+# ── explode.target: what IS this thing, and how would it explode? ─────────────────────────────────────────────
+# "if i try to explode a record by clicking it i get the error: explode failed: record
+# topic_memgraph_repo_helm_charts not found" (owner, 2026-09-22). It was never a record. Checked live against the
+# graph: it is a **Dataset** node that CONTAINS four FabricRecords -- so the honest answer is not an error at all,
+# it is "four records, as lanes". A graph node, a repo file, a canvas block and a pasted passage are all
+# explodable, each in its own way, and only the server can tell which; so ONE resolver answers the question and
+# every surface -- the panel, the chat, the canvas -- asks it instead of guessing that an id is a record id.
+#
+# What the estate actually holds (counted on the live graph, 2026-09-22):
+#   FabricRecord 608k   a record            -> its text
+#   Dataset        5k   CONTAINS records    -> its records, as lanes          (590k such edges)
+#   Entity       267k   MENTIONED_IN records-> the records that mention it     (1.4M such edges)
+#   Memory       343k   human_text/summary  -> that text
+#   Session/Response    text + topic        -> that text
+#   CodeFile       5k   filepath + language -> code.explode on that file
+#   CodeFunction   4k   inside a CodeFile   -> its file's code (the function is a card in it)
+# A node with none of those is not an error either: it is told what it is and what it would take.
+
+_TEXT_PROPS = ("text", "human_text", "content", "body", "summary", "docstring", "topic")
+_MIN_TEXT = 40          # shorter than this is a LABEL, not a passage
+
+
+def _prop_text(props: Dict) -> tuple:
+    """The longest text-bearing property of a node, and which one it was. Graph properties are untyped -- a
+    Memory's `human_text` comes back as a boolean on some rows -- so every value is checked, never assumed."""
+    best, key = "", ""
+    for k in _TEXT_PROPS:
+        v = props.get(k)
+        if isinstance(v, str) and len(v.strip()) > len(best):
+            best, key = v.strip(), k
+    return best, key
+
+
+async def _aux_rows(cypher: str, **params) -> List[Dict]:
+    """Read-only Cypher through the fabric's own guarded capability (never a driver of our own)."""
+    out = await _call_cap("fabric.aux_graph.query", cypher=cypher, params=params or {})
+    if not isinstance(out, dict) or out.get("error"):
+        return []
+    return out.get("rows") or []
+
+
+def _lang_of(path: str) -> str:
+    from vera.research import code_explode_core as _C
+    try:
+        return _C.detect_lang(path)
+    except Exception:
+        return ""
+
+
+def _repo_has(rel: str) -> bool:
+    import os
+    rel = str(rel or "").replace("\\", "/").lstrip("/")
+    if not rel:
+        return False
+    root = _repo_root()
+    full = os.path.abspath(os.path.join(root, rel))
+    return (full == root or full.startswith(root + os.sep)) and os.path.isfile(full)
+
+
+def _hit(what: str, cap: str, args: Dict, label: str, why: str, seen: Optional[Dict] = None) -> Dict:
+    return {"ok": True, "what": what, "cap": cap, "args": args, "label": label, "why": why, "seen": seen or {}}
+
+
+def _miss(label: str, why: str, seen: Optional[Dict] = None) -> Dict:
+    """Not explodable -- and SAYS SO in a sentence about the thing itself. Never 'record X not found' for
+    something that was never a record."""
+    return {"ok": False, "what": "nothing", "cap": "", "args": {}, "label": label, "why": why, "seen": seen or {}}
+
+
+async def resolve_target(id: str = "", text: str = "", lang: str = "", path: str = "",
+                         canvas_id: str = "", key: str = "", max_records: int = 8) -> Dict:
+    """Resolve anything a reader can click into the explode call that suits it."""
+    id = (id or "").strip()
+    max_records = max(1, min(24, int(max_records or 8)))
+
+    # ── what the caller already holds: a passage, a snippet, a path ───────────────────────────────────────────
+    if text:
+        if lang or (path and str(path).lower().endswith(_CODE_EXT)):
+            return _hit("code", "code.explode", {"text": text, "lang": lang, "path": path},
+                        "%s snippet - %d chars" % (lang or "code", len(text)), "the caller passed code")
+        return _hit("text", "nlp.explode.prose", {"text": text},
+                    "passage - %d chars" % len(text), "the caller passed a passage")
+    if path:
+        rel = str(path).replace("\\", "/").lstrip("/")
+        if not _repo_has(rel):
+            return _miss(rel, "no file at '%s' in the repo - a path is repo-relative (vera/research/...)" % rel)
+        return _hit("code", "code.explode", {"path": rel, "depth": 1}, rel,
+                    "a repo file, exploded with one hop of the files it imports")
+
+    # ── a canvas block ───────────────────────────────────────────────────────────────────────────────────────
+    if canvas_id:
+        doc = await _call_cap("canvas.get", id=canvas_id)
+        if not isinstance(doc, dict) or doc.get("error"):
+            return _miss(canvas_id, "no canvas '%s'" % canvas_id)
+        blocks = doc.get("blocks") or []
+        b = next((x for x in blocks if key and (x.get("key") == key or x.get("id") == key)), None)
+        if key and not b:
+            return _miss(key, "the canvas has no item '%s' - its items are: %s"
+                         % (key, ", ".join(str(x.get("key") or x.get("id")) for x in blocks[:12]) or "none"))
+        if not b:
+            b = next((x for x in blocks if x.get("type") in ("code", "markdown", "note")), None)
+        if not b:
+            return _miss(canvas_id, "nothing on this canvas holds code or prose")
+        c = b.get("content") or {}
+        nm = str(b.get("key") or b.get("id") or "")
+        if b.get("type") == "code" and isinstance(c.get("code"), str):
+            return _hit("code", "code.explode",
+                        {"text": c["code"], "lang": c.get("lang") or "", "path": c.get("filename") or ""},
+                        "canvas code - %s" % (c.get("filename") or nm), "a code item on the canvas")
+        body = c.get("md") if isinstance(c.get("md"), str) else c.get("text")
+        if isinstance(body, str) and body.strip():
+            return _hit("text", "nlp.explode.prose", {"text": body}, "canvas text - %s" % nm,
+                        "a %s item on the canvas" % b.get("type"))
+        return _miss(nm, "the canvas item '%s' is a %s - it holds no code or prose" % (nm, b.get("type")))
+
+    if not id:
+        return _miss("", "nothing to explode: pass an id (a record, a graph node, a canvas item), "
+                         "a repo path, or the text itself")
+
+    # ── a fabric record ──────────────────────────────────────────────────────────────────────────────────────
+    loop = asyncio.get_running_loop()
+    rec = await loop.run_in_executor(None, _read_record, id)
+    if rec:
+        t = (rec.get("text") or "").strip()
+        head = (t.split("\n", 1)[0][:60] or id) if t else id
+        return _hit("record", "nlp.explode.prose", {"record_id": id}, "record %s - %s" % (id, head),
+                    "a fabric record in dataset '%s'" % (rec.get("dataset_id") or "?"),
+                    {"type": "FabricRecord", "chars": len(t)})
+
+    # ── a graph node ─────────────────────────────────────────────────────────────────────────────────────────
+    rows = await _aux_rows(
+        "MATCH (n {id:$id}) OPTIONAL MATCH (f:CodeFile)-[]->(n) "
+        "RETURN properties(n) AS props, labels(n) AS ls, f.filepath AS parent_path, "
+        "f.language AS parent_lang LIMIT 1", id=id)
+    if rows:
+        r = rows[0] or {}
+        props = r.get("props") or {}
+        ls = [str(x) for x in (r.get("ls") or [])]
+        kind = ls[0] if ls else "node"
+        seen = {"type": kind, "labels": ls, "id": id}
+
+        if "CodeFile" in ls:
+            fp = props.get("filepath") or props.get("path") or props.get("filename")
+            if isinstance(fp, str) and _repo_has(fp):
+                return _hit("code", "code.explode", {"path": fp, "depth": 1}, fp,
+                            "a code file of the project graph", seen)
+            if isinstance(fp, str) and fp:
+                return _miss(fp, "the graph has this file as '%s', which is not in this checkout - "
+                                 "explode it by path from a checkout that has it" % fp, seen)
+
+        if "CodeFunction" in ls or "Method" in ls or "Function" in ls:
+            fp, fname = r.get("parent_path"), props.get("function_name") or props.get("name") or id
+            if isinstance(fp, str) and _repo_has(fp):
+                return _hit("code", "code.explode", {"path": fp, "depth": 0},
+                            "%s - %s" % (fp, fname),
+                            "a function of %s: the file is exploded and '%s' is a card in it" % (fp, fname), seen)
+
+        body, which = _prop_text(props)
+        if len(body) >= _MIN_TEXT:
+            return _hit("text", "nlp.explode.prose", {"text": body},
+                        "%s %s - %d chars" % (kind, id, len(body)),
+                        "a %s node: its own `%s` is the passage" % (kind, which), seen)
+
+        rids = props.get("record_ids")
+        if isinstance(rids, (list, tuple)) and rids:
+            got = [str(x) for x in rids][:max_records]
+            return _hit("records", "nlp.explode.prose", {"record_ids": got},
+                        "%s %s - %d records" % (kind, id, len(got)),
+                        "a %s node: the records it names, as lanes" % kind, seen)
+
+        recs = await _aux_rows(
+            "MATCH ({id:$id})-[r]->(m:FabricRecord) RETURN m.id AS rid, type(r) AS rel LIMIT $k",
+            id=id, k=max_records)
+        if recs:
+            got = [str(x.get("rid")) for x in recs if x.get("rid")]
+            rel = str((recs[0] or {}).get("rel") or "")
+            if got:
+                return _hit("records", "nlp.explode.prose", {"record_ids": got},
+                            "%s %s - %d records" % (kind, id, len(got)),
+                            "a %s node holds no text of its own; the %d records it %s are the evidence, "
+                            "and explode as lanes" % (kind, len(got), rel.replace("_", " ").lower() or "links to"),
+                            seen)
+
+        have = ", ".join(sorted(k for k, v in props.items() if v not in (None, "", [], {}))) or "nothing"
+        return _miss("%s %s" % (kind, id),
+                     "a %s node. It carries %s - no text long enough to read and no records linked to it, so "
+                     "there is nothing here to explode. Open a record that mentions it, or explode the passage "
+                     "it came from." % (kind, have), seen)
+
+    # ── a repo path given as an id ───────────────────────────────────────────────────────────────────────────
+    if ("/" in id or id.lower().endswith(_CODE_EXT)) and _repo_has(id):
+        return _hit("code", "code.explode", {"path": id.replace("\\", "/").lstrip("/"), "depth": 1}, id,
+                    "a repo file")
+
+    return _miss(id, "nothing with the id '%s': no fabric record, no graph node, no repo file. If this is text, "
+                     "pass it as text; if it is a canvas item, pass canvas_id and key." % id)
+
+
 if _CAP_AVAILABLE:
     @capability(
         "code.explode",
@@ -924,6 +1123,28 @@ if _CAP_AVAILABLE:
         return await explode_code(text=text, lang=lang, path=path, paths=paths, record_id=record_id, depth=int(depth or 0),
                                   max_files=max(1, min(200, int(max_files or 40))), prefer_tree_sitter=bool(prefer_tree_sitter), assess=assess,
                                   lint=bool(lint), card_lines=int(card_lines or 0), max_line=int(max_line or 0))
+
+    @capability(
+        "explode.target",
+        http_method="POST", http_path="/explode/target", http_tags=["graph", "nlp", "code"],
+        memory="off",
+        description=("What IS this thing, and how would it explode? Resolves anything a reader can click into the "
+                     "explode call that suits it, so no surface has to guess that an id is a record id: a fabric "
+                     "record -> its text; a Dataset node -> the records it CONTAINS, as lanes; an Entity -> the "
+                     "records that MENTION it (the evidence); a Memory / Session / Response -> its own text; a "
+                     "CodeFile -> code.explode on its path; a CodeFunction -> its file (the function is a card in "
+                     "it); a canvas item (canvas_id + key) -> its code or its prose; a repo path -> the file; text "
+                     "-> itself. A thing with no text and no records is NOT an error: the answer says what the "
+                     "node is and what it would take. Input: id (record id, graph node id or repo path), or text "
+                     "(+ lang), or path, or canvas_id + key; max_records. Output: {ok, what: record | records | "
+                     "text | code | nothing, cap (the capability to call), args (ready to post to it), label, "
+                     "why, seen}."),
+    )
+    async def cap_explode_target(id: str = "", text: str = "", lang: str = "", path: str = "",
+                                 canvas_id: str = "", key: str = "", max_records: int = 8,
+                                 trace_id=None) -> Dict:
+        return await resolve_target(id=id, text=text, lang=lang, path=path, canvas_id=canvas_id,
+                                    key=key, max_records=int(max_records or 8))
 
     @capability(
         "nlp.explode.prose",
