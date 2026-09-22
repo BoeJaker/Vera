@@ -16869,8 +16869,12 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             outputs[tool] = _msg
             history.append({"tool": tool, "ok": False, "preview": _msg[:2000],
                             "args": args, "ms": 0})
-            warnings.append("step %s: %s REFUSED - the step's browser budget "
-                            "(%ds) is spent" % (step_id, tool, int(_spent_s)))
+            # The run's warnings are DERIVED from the tool_done events below -
+            # the same route the repeat guard's refusal takes to reach a census
+            # row - so the error text there is what surfaces. (An earlier draft
+            # appended to a local `warnings` list that does not exist in this
+            # scope; tests/test_missing_module_import caught it before it could
+            # raise NameError on the first refusal.)
             await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                               "args": args, "session_id": sid,
@@ -16878,7 +16882,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                               "ok": False, "elapsed_ms": 0, "preview": _msg[:2000],
-                              "error": "step browser budget spent", "session_id": sid})
+                              "error": "the step's browser budget (%ds) is spent - %s already had %ds"
+                                       % (int(_step_budget.STEP_MAX_SECONDS), tool, int(_spent_s)),
+                              "session_id": sid})
             continue
 
         if _repeat_failure is not None:
