@@ -264,7 +264,13 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
                 max_tokens=max_tokens, caller="operator.think",
             )
     except Exception as e:
-        return {"error": f"think LLM call failed: {e}", "provider": provider}
+        # llm.generate can RAISE the 404 rather than return it (census run59,
+        # 2026-09-22: every `fast-preview` think came back this way and the
+        # retry below never ran). Same answer either way: a not-found model is
+        # dropped and the routed default asked once.
+        if not (model and name in ("ollama", "vllm", "local", "cluster") and _model_not_found(e)):
+            return {"error": f"think LLM call failed: {e}", "provider": provider}
+        res = {"error": f"think LLM call failed: {e}"}
 
     # A model the cluster does not serve 404s on EVERY think, and a thinker
     # that cannot think leaves the operator clicking blind until its guards
