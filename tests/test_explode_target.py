@@ -45,6 +45,9 @@ def graph(monkeypatch):
                       "ls": ["Surface"], "parent_path": None, "parent_lang": None},
         "ent_listed": {"props": {"id": "ent_listed", "record_ids": ["r9", "r8"]},
                        "ls": ["Entity"], "parent_path": None, "parent_lang": None},
+        "rec_elsewhere": {"props": {"id": "rec_elsewhere", "dataset_id": "topic_helm",
+                                    "title": "Memgraph configMap for configuration"},
+                          "ls": ["FabricRecord"], "parent_path": None, "parent_lang": None},
     }
     contains = {"topic_memgraph_repo_helm_charts": [{"rid": "2989ed8c", "rel": "CONTAINS"},
                                                     {"rid": "8b81e3bc", "rel": "CONTAINS"},
@@ -161,3 +164,16 @@ def test_a_canvas_item_resolves_to_its_code_or_its_prose_and_a_wrong_key_lists_t
 def test_nothing_at_all_asks_for_something_explodable():
     d = run()
     assert not d["ok"] and "repo path" in d["why"] and "text" in d["why"]
+
+
+
+def test_a_record_the_graph_knows_but_this_instance_does_not_hold_is_still_a_record():
+    """Live on the design mirror: its record store has 41k records, the shared graph 608k. A record node from the
+    far side of that gap used to come back as "nothing to explode", which is false twice over -- it IS a record,
+    and it IS explodable, just not here."""
+    d = run(id="rec_elsewhere")
+    assert d["what"] == "record" and d["args"] == {"record_id": "rec_elsewhere"}
+    assert not d["ok"]                                   # not HERE: this instance has no text for it
+    assert "per instance" in d["why"] and "topic_helm" in d["why"]
+    assert "not found" not in d["why"]
+    assert "Memgraph configMap" in d["label"]
