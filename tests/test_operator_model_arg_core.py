@@ -96,3 +96,21 @@ def test_thinker_does_not_retry_other_errors():
     d = asyncio.new_event_loop().run_until_complete(
         thinker.decide("g", Obs(), [], call_cap, provider="ollama", model="qwen2.5:7b"))
     assert d.get("error") and calls == ["qwen2.5:7b"]
+
+
+def test_thinker_runs_as_the_executor_role():
+    """The think must share the loop executor's runner (model + num_ctx): as
+    job "code" it reloaded the model on the 12 GB card nearly every call."""
+    from vera.operator import thinker
+
+    seen = []
+
+    async def call_cap(name, **kw):
+        seen.append(kw.get("job_type"))
+        return {"text": json.dumps({"thought": "t", "action": "done", "args": {}, "done": True})}
+
+    class Obs:
+        url = ""; title = ""; text = ""; elements = []; screenshot_b64 = ""; screenshot_path = ""
+
+    asyncio.new_event_loop().run_until_complete(thinker.decide("g", Obs(), [], call_cap))
+    assert seen == ["loop_executor"] and thinker.THINK_JOB_TYPE == "loop_executor"

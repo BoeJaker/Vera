@@ -215,6 +215,14 @@ def parse_decision(text: str) -> Dict[str, Any]:
 #: unparseable decision as fatal either (see operator_loop), so the cap being
 #: slightly wrong again costs one step rather than one run.
 THINK_MAX_TOKENS = max(64, int(os.getenv("VERA_OPERATOR_THINK_TOKENS", "2048") or 2048))
+# The job type the think step is routed under. It was "code" - a job with no
+# role rule, so the think ran on the default model at an auto-fitted context
+# window while the loop's executor ran the same weights at another window;
+# on the 12 GB V100 every switch is a runner reload (census run58,
+# author-then-edit: 24 llama-server starts for 54 calls, thinks at 3 tok/s
+# beside executor calls at 10-25). As the executor ROLE the think shares the
+# executor's model, pin and num_ctx - one runner, no reload. Plan item 1.
+THINK_JOB_TYPE = (os.getenv("VERA_OPERATOR_THINK_JOB", "loop_executor") or "loop_executor").strip()
 
 
 def _split_provider(provider: str) -> tuple:
@@ -240,7 +248,7 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
         if name in ("ollama", "vllm", "local", "cluster"):
             res = await call_cap(
                 "llm.generate", prompt=prompt["user"], system=prompt["system"],
-                model=model or None, job_type="code", caller="operator.think",
+                model=model or None, job_type=THINK_JOB_TYPE, caller="operator.think",
                 think=think,
                 # Bounded output. See THINK_MAX_TOKENS - without this the call
                 # inherits llm.generate's full 16384 window for a one-object
@@ -273,7 +281,7 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
         try:
             res = await call_cap(
                 "llm.generate", prompt=prompt["user"], system=prompt["system"],
-                model=None, job_type="code", caller="operator.think", think=think,
+                model=None, job_type=THINK_JOB_TYPE, caller="operator.think", think=think,
                 options={"num_predict": THINK_MAX_TOKENS},
             )
         except Exception as e:
