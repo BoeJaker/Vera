@@ -1317,7 +1317,11 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         // the card's own structure, on the card: pressed once it asks for the diagram, pressed again it gives
         // the card back (the scene's three modes share this, because they share the face)
         const gBtn = (x) => graphBtn(x.card || x, !!(this._graph && this._graph[x.id]));
-        const xitHtml = (wg, face) => { const c = wg.card, open = S.open === wg.id; const wd = { form: wg.form, data: wg.data, sample: wg.sample }; const b = isoBody(c, face ? null : wd);   // the face says it all: no reading line beside it
+        const xitHtml = (wg, face) => { const c = wg.card, open = S.open === wg.id;
+          // a plain card in iso arrives here with NO face at all, so this is where a card asked to be its
+          // diagram has to be answered -- the affordance was drawn and the card kept its old body
+          if (this._graph && this._graph[wg.id]) face = graphFaceHtml(wg.id,
+            this._graph[wg.id] === 'want' || this._graph[wg.id] === 'error' ? this._graph[wg.id] : '', S.wsz); const wd = { form: wg.form, data: wg.data, sample: wg.sample }; const b = isoBody(c, face ? null : wd);   // the face says it all: no reading line beside it
           return '<div class="xit bb' + (wg.tight ? ' tight' : '') + (open ? ' open' : '') + (c.src ? ' has-img' : '') + (face ? ' face' : '') + (String(c.kind || '') === 'gen' ? ' gen' : '') + '" data-id="' + esc(wg.id) + '"' + dragAttr(wg) + ' title="' + esc(c.n || '') + (c.d ? ' — ' + esc(c.d) : '') + ' · click for the record" style="left:' + (wg.x - wg.cw / 2).toFixed(1) + 'px;top:' + (wg.y - wg.stem).toFixed(1) + 'px;width:' + wg.cw + 'px;--ih:' + wg.ch + 'px;--cc:' + esc(wg.col) + '">'
             + '<span class="xit-n">' + tplTag(c) + esc(c.n || '') + '</span><span class="xit-d">' + esc(c.d || '') + '</span>' + editBtn(wg) + gBtn(wg) + (face || '')
             + (b.on ? '<span class="xit-body">' + b.on + '</span>' : '') + (c.src ? '<img class="xp-img" src="' + esc(c.src) + '" alt="" loading="lazy">' : '') + (b.x ? '<div class="xit-x">' + b.x + '</div>' : '') + '</div>'; };
