@@ -130,3 +130,22 @@ def test_the_clusters_are_a_pure_function_anyone_can_check():
     cl = X.coref_clusters(cards)
     assert cl == {"e2": {"head": "e1", "why": "shortened"}}
     assert X.coref_clusters([card("e1", "Alice Carter", "person")]) == {}
+
+
+def test_a_fold_belongs_within_a_layer():
+    """Two engines both find "Alice Carter", so a bare "Carter" has two candidates and was left alone as
+    ambiguous -- live on the mirror that was EVERY fold in the passage (0 folded, with 2 NER layers on). A
+    layer's cards are that tool's finding, and turning the tool off must not take away the card another layer's
+    fold leans on."""
+    a = card("e1", "Alice Carter", "person"); a["layer"] = "ner"
+    b = card("e2", "Alice Carter", "person"); b["layer"] = "ner.node"
+    c = card("e3", "Carter", "person"); c["layer"] = "ner.node"
+    cl = X.coref_clusters([a, b, c])
+    assert cl == {"e3": {"head": "e2", "why": "shortened"}}          # its OWN layer's fuller name, not the other's
+
+
+def test_an_acronym_is_a_form_not_a_type():
+    """The fabric types CMA as `acronym` while the body it stands for is an org."""
+    a = card("e1", "Competition and Markets Authority", "org")
+    b = card("e2", "CMA", "acronym")
+    assert X.coref_clusters([a, b]) == {"e2": {"head": "e1", "why": "acronym"}}

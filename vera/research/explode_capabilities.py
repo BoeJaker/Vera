@@ -315,9 +315,16 @@ def coref_clusters(cards: List[Dict]) -> Dict[str, Dict]:
             continue
         word = cw[0]
         kind = str(c.get("kind") or "").lower()
+        layer = str(c.get("layer") or "")
         cands = []
         for o in ents:
             if o is c or o["id"] == c["id"]:
+                continue
+            # A FOLD BELONGS WITHIN A LAYER. Two engines both find "Alice Carter", so a bare "Carter" saw two
+            # candidates and was left alone as ambiguous -- on the live mirror that was every fold in the passage
+            # (0 folded, 2 layers). A layer's cards are that tool's finding, and turning the tool off must not
+            # take away the card another layer's fold leans on.
+            if str(o.get("layer") or "") != layer:
                 continue
             # the head is always the FULLER name -- which keeps this a one-way fold and rules out a cycle.
             # It is counted in raw words, because a name whose tail is a company suffix ("Northwind Ltd") bares
@@ -328,7 +335,9 @@ def coref_clusters(cards: List[Dict]) -> Dict[str, Dict]:
             if not ow:
                 continue
             ok = str(o.get("kind") or "").lower()
-            if kind and ok and kind != ok and "entity" not in (kind, ok):
+            # "acronym" is a statement about the FORM of a name, not about what it names: the fabric types CMA
+            # that way while the body it stands for is an org
+            if kind and ok and kind != ok and not ({"entity", "acronym"} & {kind, ok}):
                 continue
             if word == ow[-1] or word == ow[0]:
                 cands.append((o, "shortened"))
