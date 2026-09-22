@@ -53,4 +53,10 @@ t('a record goes through the resolver, code and prose go straight to their cap',
   /async function _xpContractFor\(d\)/.test(CHAT) && /resolveTarget\(\{ id: d\.record/.test(CHAT)
   && /url = '\/code\/explode'/.test(CHAT));
 
+// -- what the live run caught: two modes had the affordance and drew nothing -----------------------------------
+t('iso looks the graph up under the ITEM\'s id, which is what data-id carries',
+  /const face = \(this\._graph && this\._graph\[wg\.id\]\)/.test(SCENE)
+  && /graphFaceHtml\(wg\.id, this\._graph\[wg\.id\]/.test(SCENE));
+t('front rebuilds its carousel when a card is asked to be its diagram — it is built once per station otherwise',
+  /\+ '\|' \+ Object\.keys\(this\._graph \|\| \{\}\)\.sort\(\)\.join\(','\)/.test(SCENE));
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);
