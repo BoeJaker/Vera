@@ -95,6 +95,30 @@ t('prose: crossings are few — at most 4 on this passage', crossings(p) <= 4, '
   const h = SG.sceneHtml(v);
   t('the rail marks a verdict that carries evidence as clickable', /class="has-ev"[^>]*>no smells/.test(h) && /<i class="warn">cc 23<\/i>/.test(h) && /<i class="ok">tested<\/i>/.test(h)); }
 
+// ── the stage pans, and a chip says what is drawn (owner, 2026-09-22: panning was dead once the scene
+//    outgrew the stage, and every chip read the contract's own count whatever was hidden)
+{ const SRC = fs.readFileSync(path.join(__dirname, '..', 'vera', 'ui', 'structgraph_element.js'), 'utf8');
+  t('the drag pans whatever the size — no early return for a scrolling wrap', /pointerdown'[^\n]*closest\('\.sg-card,\.sg-vr,button'\)\) return;/.test(SRC) && !/pointerdown[^\n]*classList\.contains\('scroll'\)/.test(SRC));
+  t('a drag that moved is not a click on the card under it', /if \(!drag\.moved && Math\.abs\(dx\) \+ Math\.abs\(dy\) < 3\) return;/.test(SRC) && /this\._dragEnded && Date\.now\(\) - this\._dragEnded < 250\) return;/.test(SRC));
+  t('a drag takes over from the scrollbars rather than fighting them', /wrap\.scrollLeft \|\| wrap\.scrollTop\) \{ drag\.px -= wrap\.scrollLeft/.test(SRC));
+  t('the wheel zooms about the pointer, shift slides sideways, and a bare embed leaves the page alone', /if \(ev\.shiftKey\) \{ this\._S\.px -= \(ev\.deltaY \|\| ev\.deltaX\)/.test(SRC) && /hasAttribute\('bare'\) && !ev\.ctrlKey\) return;/.test(SRC));
+  t('fit shows the whole scene — no half-scale floor stranding a big one', /S\.zoom = Math\.max\(0\.25, z\)/.test(SRC) && !/S\.zoom = Math\.max\(0\.5, z\)/.test(SRC)); }
+{ // the counts: what is drawn, and what is hidden by which other layer
+  const off = SG.layout(CODE, 1400, 900, { layersOff: { 'code.symbols': false } });
+  const rows = (o) => { const m = {}; o.layers.forEach((l) => { m[l.id] = l; }); return m; };
+  const on = rows(SG.layout(CODE, 1400, 900));
+  t('a chip counts the cards and runs actually drawn, not the contract\'s own number',
+    on['code.calls'].drawn === c.edges.filter((e) => /\bcalls\b/.test(e.cls)).map((e) => e.run).filter((v, i, a) => a.indexOf(v) === i).length,
+    JSON.stringify({ says: on['code.calls'].drawn }));
+  const hid = rows(SG.layout(CODE, 1400, 900, { layersOff: { 'code.symbols': true } }));
+  t('hiding the layer that owns the OTHER END of a run takes the run with it, and the chip says so',
+    hid['code.calls'].drawn === 0 && hid['code.calls'].hidden > 0 && hid['code.symbols'].on === false,
+    JSON.stringify({ drawn: hid['code.calls'].drawn, hidden: hid['code.calls'].hidden, by: hid['code.calls'].hiddenBy }));
+  t('and it names the layer that is hiding it', (hid['code.calls'].hiddenBy || []).length > 0, JSON.stringify(hid['code.calls'].hiddenBy));
+  t('an off layer offers what it would bring back — its cards AND its runs',
+    hid['code.symbols'].hidden === CODE.cards.filter((x) => x.layer === 'code.symbols').length + CODE.edges.filter((x) => x.layer === 'code.symbols').length,
+    JSON.stringify({ hidden: hid['code.symbols'].hidden })); }
+
 // ── the shared library
 t('routes: rank is longest-path — a chain ranks 0..n, a diamond joins at the far side, a cycle\'s back edge is reported', (() => { const r = RT.rank(['a', 'b', 'c', 'd'], [{ from: 'a', to: 'b' }, { from: 'a', to: 'c' }, { from: 'b', to: 'd' }, { from: 'c', to: 'd' }, { from: 'b', to: 'c' }, { from: 'd', to: 'a' }]); return r.rank.get('a') === 0 && r.rank.get('b') === 1 && r.rank.get('c') === 2 && r.rank.get('d') === 3 && r.depth === 4 && r.back.length === 1 && r.back[0].from === 'd'; })());
 t('routes: order lines a cell up with its neighbours', (() => { const y = { a: 10, b: 200, x: 0, y: 0 }; const o = RT.order([['x', 'y']], [{ from: 'x', to: 'b' }, { from: 'y', to: 'a' }], (id) => y[id]); return o[0].join(',') === 'y,x'; })());

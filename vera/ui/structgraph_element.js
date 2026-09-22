@@ -72,11 +72,27 @@
     o = o || {}; const D = normalise(doc); const R = routesLib(); if (!R) throw new Error('vera/ui/routes.js is not loaded');
     const off = o.layersOff || {}; const onLayer = {}; D.layers.forEach((l) => { onLayer[l.id] = !off[l.id] && l.on !== false; });
     const cards = D.cards.filter((c) => onLayer[c.layer] !== false); const cid = new Map(cards.map((c) => [c.id, c]));
+    /* WHAT IS DRAWN, per layer — never the contract's own count. A chip that reads "imports 2" while both runs are
+       hidden (their other end is an external stub that was switched off) tells the reader about something they
+       cannot see, and they go looking for it (owner, 2026-09-22). So: count after filtering, and name the layer
+       that is hiding the rest. */
+    const drawn = {}; const D_ = (id) => (drawn[id] = drawn[id] || { cards: 0, edges: 0, hidden: 0, by: {} });
+    D.layers.forEach((l) => D_(l.id));
+    D.cards.forEach((c) => { const d = D_(c.layer); if (onLayer[c.layer] !== false) d.cards++; else d.hidden++; });
     // a verdict on a card (complexity, a smell, a clone, tested, provenance) is a badge on it — sized in before layout
     D.assessments.forEach((a) => { const c = a.on && a.on !== 'source' ? cid.get(a.on) : null; if (!c) return; const b = String(a.badge || a.label || a.key); if (c.badges.indexOf(b) < 0) c.badges = c.badges.concat([b]); });
-    const edges = D.edges.filter((e) => onLayer[e.layer] !== false && cid.has(e.from) && cid.has(e.to) && e.from !== e.to);
+    const edges = D.edges.filter((e) => { const d = D_(e.layer);
+      if (onLayer[e.layer] === false) { d.hidden++; return false; }
+      if (e.from === e.to) return false;
+      // an edge whose other END is hidden is hidden too — and the chip says which layer took it
+      const gone = [e.from, e.to].filter((id) => !cid.has(id));
+      if (gone.length) { d.hidden++; gone.forEach((id) => { const c = D.cards.find((x) => x.id === id); if (c) d.by[c.layer] = (d.by[c.layer] || 0) + 1; }); return false; }
+      d.edges++; return true; });
     const mode = o.mode || D.layout.mode || (D.kind === 'code' ? 'dependency' : 'position'), dir = (o.direction || D.layout.direction || 'LR').toUpperCase();
-    const out = { kind: D.kind, mode, direction: dir, plates: [], cards: [], edges: [], ports: [], labels: [], legend: [], layers: D.layers.map((l) => Object.assign({}, l, { on: onLayer[l.id] !== false })), scorers: D.scorers, assessments: D.assessments.filter((a) => !a.on || a.on === 'source'), size: { w: W, h: H }, runs: 0, back: [] };
+    const out = { kind: D.kind, mode, direction: dir, plates: [], cards: [], edges: [], ports: [], labels: [], legend: [], layers: D.layers.map((l) => { const d = drawn[l.id] || { cards: 0, edges: 0, hidden: 0, by: {} };
+      const byLabel = Object.keys(d.by).map((k) => { const src = D.layers.find((x) => x.id === k); return (src && src.label) || k; });
+      return Object.assign({}, l, { on: onLayer[l.id] !== false, drawn: d.cards + d.edges, hidden: d.hidden,
+        hiddenBy: byLabel, count: l.count }); }), scorers: D.scorers, assessments: D.assessments.filter((a) => !a.on || a.on === 'source'), size: { w: W, h: H }, runs: 0, back: [] };
     if (!cards.length) return out;
     // ── bands and columns by mode
     const G = new Map(D.groups.map((g) => [g.id, g])); const topOf = (gid) => { let g = G.get(gid), guard = 0; while (g && g.parent != null && G.has(g.parent) && guard++ < 32) g = G.get(g.parent); return g ? g.id : null; };
@@ -168,13 +184,13 @@ vera-structgraph .sg-ctl .c{font-size:9px;letter-spacing:.14em;text-transform:up
 vera-structgraph .sg-ctl button{font:inherit;font-size:10px;color:var(--xp-t2);background:none;border:0;cursor:pointer;padding:3px 10px;border-radius:999px}
 vera-structgraph .sg-ctl button.on{background:var(--xp-ac);color:var(--xp-bg)}vera-structgraph .sg-ctl .sep{width:1px;height:14px;background:var(--xp-bd);margin:0 3px}
 vera-structgraph .sg-chip{display:inline-flex;align-items:center;gap:5px;font:inherit;font-size:10px;color:var(--xp-t3);background:none;border:0;cursor:pointer;padding:3px 8px;border-radius:999px}vera-structgraph .sg-chip i{width:6px;height:6px;border-radius:2px;background:var(--lc,var(--xp-ac));opacity:.35}vera-structgraph .sg-chip b{font-family:var(--xp-mono);font-size:9px;font-weight:400;color:var(--xp-t3)}
-vera-structgraph .sg-chip.on{color:var(--xp-t1);background:var(--xp-s2)}vera-structgraph .sg-chip.on i{opacity:1}vera-structgraph .sg-chip:hover{color:var(--xp-t1)}
+vera-structgraph .sg-chip.on{color:var(--xp-t1);background:var(--xp-s2)}vera-structgraph .sg-chip.off b{color:var(--xp-t3)}vera-structgraph .sg-chip .hid{font-style:normal;color:var(--xp-dv2);margin-left:3px;font-size:10px}vera-structgraph .sg-chip.on i{opacity:1}vera-structgraph .sg-chip:hover{color:var(--xp-t1)}
 vera-structgraph .sg-key{position:absolute;right:12px;bottom:10px;z-index:30;display:flex;flex-direction:column;gap:3px;padding:6px 9px;border-radius:8px;background:color-mix(in srgb,var(--xp-s1) 92%,transparent);box-shadow:0 0 0 1px var(--xp-bd);font-size:9.5px;color:var(--xp-t2)}
 vera-structgraph .sg-key .c{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--xp-t3)}vera-structgraph .sg-key span{display:flex;align-items:center;gap:7px}vera-structgraph .sg-key span i{display:inline-block;width:22px;height:0;border-top:1.5px solid var(--kc)}vera-structgraph .sg-key span.dash i{border-top-style:dashed}vera-structgraph .sg-key span.dot i{border-top-style:dotted}vera-structgraph .sg-key span.thick i{border-top-width:3px}vera-structgraph .sg-key span b{font-family:var(--xp-mono);font-weight:400;color:var(--xp-t3)}
 vera-structgraph .sg-wrap{flex:1;min-height:0;position:relative;overflow:hidden;cursor:grab;touch-action:none;user-select:none}vera-structgraph .sg-wrap.dragging{cursor:grabbing}
 vera-structgraph .sg-view{position:absolute;left:0;top:0;transform-origin:0 0}
 vera-structgraph .sg-space{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none}
-vera-structgraph .sg-wrap.scroll{overflow:auto;scrollbar-width:thin;cursor:default}
+vera-structgraph .sg-wrap.scroll{overflow:auto;scrollbar-width:thin}   /* a keyboard/trackpad fallback; the drag still pans */
 vera-structgraph .sg-pl{position:absolute;pointer-events:none;border-radius:8px;--pc:var(--xp-ac);background:color-mix(in srgb,var(--pc) 5%,var(--xp-s1));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pc) 22%,transparent)}
 vera-structgraph .sg-pl.d1{--pc:var(--xp-dv1);background:color-mix(in srgb,var(--pc) 5%,transparent)}vera-structgraph .sg-pl.d2{--pc:var(--xp-dv3);background:color-mix(in srgb,var(--pc) 4%,transparent)}
 vera-structgraph .sg-pl.k-type,vera-structgraph .sg-pl.k-paragraph{--pc:var(--xp-ac2)}
@@ -265,22 +281,38 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
             this._last.cards.forEach((k) => { const s = k.card.span || {}; if (evs.some((e) => (e.span.path || '') === (s.path || '') && e.span.start < s.end && s.start < e.span.end)) hit.add(k.id); });
             this._S.sel = null; this._hover = null; this._paint(); this.querySelectorAll('.sg-card').forEach((c) => { c.classList.toggle('lit', hit.has(c.dataset.id)); c.classList.toggle('dim', evs.length > 0 && !hit.has(c.dataset.id)); });
             this.dispatchEvent(new CustomEvent('vera-explode-verdict', { detail: { key: a.key, label: a.label, score: a.score, confidence: a.confidence, by: a.by, evidence: evs }, bubbles: true })); return; }
+          if (this._dragEnded && Date.now() - this._dragEnded < 250) return;   // the pointer came up from a pan
           const card = ev.target.closest('.sg-card'); if (card) { const k = this._cardOf(card.dataset.id); this._S.sel = card.dataset.id; this._extHit = null; this._paint(); this.dispatchEvent(new CustomEvent('vera-explode-select', { detail: { id: card.dataset.id, span: k && k.card.span, card: k && k.card }, bubbles: true })); return; }
           const e = ev.target.closest('.sg-e'); if (e) { const seg = this._last && this._last.edges.find((s) => String(s.run) === e.dataset.run); this.dispatchEvent(new CustomEvent('vera-explode-edge', { detail: { from: e.dataset.from, to: e.dataset.to, title: seg && seg.title, run: +e.dataset.run }, bubbles: true })); } });
         this.addEventListener('dblclick', (ev) => { const card = ev.target.closest('.sg-card'); if (!card) return; const k = this._cardOf(card.dataset.id); this.dispatchEvent(new CustomEvent('vera-explode-drill', { detail: { id: card.dataset.id, card: k && k.card }, bubbles: true })); });
         this.addEventListener('mouseover', (ev) => { const card = ev.target.closest('.sg-card'); this._hover = card ? card.dataset.id : null; this._paint(); });
         this.addEventListener('mouseleave', () => { this._hover = null; this._paint(); });
-        // pan by drag, zoom by wheel — about the pointer
-        let drag = null; wrap.addEventListener('pointerdown', (ev) => { if (ev.button !== 0 || ev.target.closest('.sg-card') || wrap.classList.contains('scroll')) return; drag = { x: ev.clientX, y: ev.clientY, px: this._S.px, py: this._S.py }; wrap.classList.add('dragging'); try { wrap.setPointerCapture(ev.pointerId); } catch (_) {} });
-        wrap.addEventListener('pointermove', (ev) => { if (!drag) return; this._S.px = drag.px + ev.clientX - drag.x; this._S.py = drag.py + ev.clientY - drag.y; this._S.fit = false; this._place(); });
-        wrap.addEventListener('pointerup', () => { drag = null; wrap.classList.remove('dragging'); }); wrap.addEventListener('pointercancel', () => { drag = null; wrap.classList.remove('dragging'); });
-        wrap.addEventListener('wheel', (ev) => { if ((this.hasAttribute('bare') || wrap.classList.contains('scroll')) && !ev.ctrlKey) return; ev.preventDefault(); const r = wrap.getBoundingClientRect(); this._zoomBy(ev.deltaY < 0 ? 1.12 : 1 / 1.12, ev.clientX - r.left, ev.clientY - r.top); }, { passive: false });
+        /* THE STAGE: drag pans, always. A big scene used to put the wrap into a scroll container and the drag
+           returned early — so panning died exactly when the diagram was large enough to need it (owner, 2026-09-22).
+           A diagram is a surface you move, not a page you scroll: the drag always pans, the wheel always zooms about
+           the pointer, shift+wheel slides sideways, and the scrollbars stay only as a keyboard/trackpad fallback —
+           any drag cancels the scroll offset so the two never fight. */
+        let drag = null;
+        wrap.addEventListener('pointerdown', (ev) => { if (ev.button !== 0 || ev.target.closest('.sg-card,.sg-vr,button')) return;
+          drag = { x: ev.clientX, y: ev.clientY, px: this._S.px, py: this._S.py, moved: false };
+          wrap.classList.add('dragging'); try { wrap.setPointerCapture(ev.pointerId); } catch (_) {} });
+        wrap.addEventListener('pointermove', (ev) => { if (!drag) return;
+          const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+          if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 3) return;          // a click is not a pan
+          if (!drag.moved) { drag.moved = true; if (wrap.scrollLeft || wrap.scrollTop) { drag.px -= wrap.scrollLeft; drag.py -= wrap.scrollTop; wrap.scrollLeft = 0; wrap.scrollTop = 0; } }
+          this._S.px = drag.px + dx; this._S.py = drag.py + dy; this._S.fit = false; this._place(); });
+        const endDrag = () => { if (!drag) return; const moved = drag.moved; drag = null; wrap.classList.remove('dragging'); if (moved) this._dragEnded = Date.now(); };
+        wrap.addEventListener('pointerup', endDrag); wrap.addEventListener('pointercancel', endDrag);
+        wrap.addEventListener('wheel', (ev) => { if (this.hasAttribute('bare') && !ev.ctrlKey) return;   // in a chat turn the page scrolls, unless ctrl says otherwise
+          ev.preventDefault(); const r = wrap.getBoundingClientRect();
+          if (ev.shiftKey) { this._S.px -= (ev.deltaY || ev.deltaX); this._S.fit = false; this._place(); return; }   // shift: slide sideways, as a map does
+          this._zoomBy(ev.deltaY < 0 ? 1.12 : 1 / 1.12, ev.clientX - r.left, ev.clientY - r.top); }, { passive: false });
         if (root.ResizeObserver) { this._ro = new ResizeObserver(() => this._schedule()); this._ro.observe(this); }
         this._schedule();
       }
       disconnectedCallback() { if (this._ro) { try { this._ro.disconnect(); } catch (_) {} } }
       _cardOf(id) { return this._last && this._last.cards.find((k) => k.id === id); }
-      _zoomBy(f, ax, ay) { const wrap = this.querySelector('[data-r="wrap"]'); const r = wrap.getBoundingClientRect(); ax = ax == null ? r.width / 2 : ax; ay = ay == null ? r.height / 2 : ay; const z0 = this._S.zoom, z1 = Math.max(0.15, Math.min(4, z0 * f)); this._S.px = ax - (ax - this._S.px) * (z1 / z0); this._S.py = ay - (ay - this._S.py) * (z1 / z0); this._S.zoom = z1; this._S.fit = false; this._place(); }
+      _zoomBy(f, ax, ay) { const wrap = this.querySelector('[data-r="wrap"]'); const r = wrap.getBoundingClientRect(); ax = ax == null ? r.width / 2 : ax; ay = ay == null ? r.height / 2 : ay; const z0 = this._S.zoom, z1 = Math.max(0.08, Math.min(4, z0 * f)); this._S.px = ax - (ax - this._S.px) * (z1 / z0); this._S.py = ay - (ay - this._S.py) * (z1 / z0); this._S.zoom = z1; this._S.fit = false; this._place(); }
       _place() { const v = this.querySelector('[data-r="view"]'), z = this.querySelector('[data-r="zoom"]'), sp = this.querySelector('[data-r="space"]'), wrap = this.querySelector('[data-r="wrap"]');
         if (v) v.style.transform = 'translate(' + px(this._S.px) + 'px,' + px(this._S.py) + 'px) scale(' + this._S.zoom.toFixed(3) + ')'; if (z) z.textContent = Math.round(this._S.zoom * 100) + '%';
         // the spacer gives the wrap its scroll extent: the scene at its scale plus the offset it stands at
@@ -298,12 +330,17 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
         // in full mode the toolbar floats over the top of the wrap: the scene starts under it, so the verdict rail
         // and the first plate's caption are never covered
         const top = this.hasAttribute('bare') ? 8 : Math.max(34, (this.querySelector('.sg-ctl') || {}).offsetHeight || 0) + 16;   // the bar is empty on the first pass
-        if (S.fit) { const z = Math.min(1, (W - 16) / Math.max(1, o.size.w), (H - top - 8) / Math.max(1, o.size.h)); S.zoom = Math.max(0.5, z); S.px = Math.max(8, (W - o.size.w * S.zoom) / 2); S.py = Math.max(top, (H - o.size.h * S.zoom) / 2); S.fit = false; }
+        if (S.fit) { const z = Math.min(1, (W - 16) / Math.max(1, o.size.w), (H - top - 8) / Math.max(1, o.size.h));
+          // fit to the room and let the reader zoom in — the old half-scale floor pushed a big scene off the stage
+          // and (with the pan bug) stranded it there. 0.25 keeps text findable; the readout says where you are.
+          S.zoom = Math.max(0.25, z); S.px = Math.max(8, (W - o.size.w * S.zoom) / 2); S.py = Math.max(top, (H - o.size.h * S.zoom) / 2); S.fit = false; }
         this._place(); this._paint();
         // the toolbar: the modes this kind of graph has, the layer chips with their counts
         const modes = o.kind === 'code' ? [['dependency', 'Dependency']] : [['position', 'Position'], ['type', 'Type']];
         $('ctl').innerHTML = '<span class="c">explode</span>' + modes.map((m) => '<button data-m="' + m[0] + '"' + (o.mode === m[0] ? ' class="on"' : '') + '>' + m[1] + '</button>').join('') + '<span class="sep"></span><span class="c">layers</span>' +
-          o.layers.map((l) => '<button class="sg-chip' + (l.on ? ' on' : '') + '" data-l="' + esc(l.id) + '" title="' + esc((l.by || '') + (l.where ? ' · ' + l.where : '') + (l.ms ? ' · ' + l.ms + ' ms' : '')) + '" style="--lc:' + (l.kind === 'entity' ? 'var(--xp-ac)' : l.kind === 'relation' ? 'var(--xp-ac2)' : 'var(--xp-dv1)') + '"><i></i>' + esc(l.label) + '<b>' + (l.count || 0) + '</b></button>').join('');
+          o.layers.map((l) => { const n = l.on ? (l.drawn || 0) : (l.hidden || 0);
+            const why = l.on && l.hidden ? l.hidden + ' of ' + ((l.drawn || 0) + l.hidden) + ' hidden' + (l.hiddenBy && l.hiddenBy.length ? ' with ' + l.hiddenBy.join(' · ') : '') : '';
+            return '<button class="sg-chip' + (l.on ? ' on' : ' off') + (why ? ' part' : '') + '" data-l="' + esc(l.id) + '" title="' + esc((l.by || '') + (l.where ? ' · ' + l.where : '') + (l.ms ? ' · ' + l.ms + ' ms' : '') + (why ? ' — ' + why : (l.on ? '' : ' — off; click to bring back ' + n))) + '" style="--lc:' + (l.kind === 'entity' ? 'var(--xp-ac)' : l.kind === 'relation' ? 'var(--xp-ac2)' : 'var(--xp-dv1)') + '"><i></i>' + esc(l.label) + '<b>' + (l.on ? '' : '+') + n + '</b>' + (why ? '<em class="hid" title="' + esc(why) + '">!</em>' : '') + '</button>'; }).join('');
         $('key').innerHTML = o.legend.length ? '<span class="c">runs</span>' + o.legend.map((l) => '<span class="' + l.cls + '" style="--kc:' + l.col + '"><i></i>' + esc(l.label) + '<b>' + l.n + '</b></span>').join('') + '<span class="dot" style="--kc:var(--xp-t3)"><i></i>heuristic</span><span style="--kc:var(--xp-t3);opacity:.5"><i></i>external</span>' : '';
         this.dispatchEvent(new CustomEvent('vera-explode-rendered', { detail: { cards: o.cards.length, edges: o.runs, size: o.size, mode: o.mode }, bubbles: true }));
       }
