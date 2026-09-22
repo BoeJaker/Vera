@@ -215,8 +215,12 @@
       const src = c.binds ? 'bound to ' + String(c.binds) : (c.record ? 'record ' + String(c.record) : (c.path || (c.paths && [].concat(c.paths).join(', ')) || (c.text ? 'a passage' : (c.code ? 'a snippet' : 'nothing yet'))));
       const head = `<div class="vc-th"><i class="dot on"></i><b>${esc(c.title || 'Explode')}</b><span class="mono">${esc(String(src).slice(0, 60))}</span><span class="sp"></span>`
         + (c.binds ? '<button class="ib" data-act="xpsync" title="Light the whole of the bound source again">clear</button>' : '') + '</div>';
+      // the slot is as tall as the diagram was asked to be: a live slot is 110px by default, so a 300px diagram
+      // drew into a 140px sliver and looked like nothing at all
+      const h = Math.max(160, Math.min(900, parseInt(c.height, 10) || 300));
       return `<div class="vc-xp" data-w="canvas.explode"${c.binds ? ` data-binds="${esc(c.binds)}"` : ''}>${head}`
-        + `<div class="vc-live" data-live="explode" data-key="${esc(key)}"><span class="vc-dim">exploding…</span></div></div>`;
+        + `<div class="vc-live" data-live="explode" data-key="${esc(key)}" style="height:${h}px;min-height:${h}px">`
+        + `<span class="vc-dim">exploding…</span></div></div>`;
     },
 
     /* a diagram item is a LIVE rendered diagram: the mermaid source drawn by the estate's own element (<vera-mermaid>,
@@ -1643,6 +1647,15 @@
       set('renderer', 'struct'); set('expand', 'off');
       set('height', Math.max(140, parseInt(c.height, 10) || 300));
       const bound = c.binds ? (this._contentOf(String(c.binds)) || null) : null;
+      // BOUND TO NOTHING is the difference between "wait" and "there is nothing coming": an explode item whose
+      // code item is not on this canvas used to sit at "exploding…" for ever (owner: "doesnt draw anything")
+      const slot = this.shadowRoot && this.shadowRoot.querySelector('.vc-live[data-live="explode"][data-key="' + String(key).replace(/"/g, '\\"') + '"]');
+      if (c.binds && !bound) {
+        if (slot) slot.innerHTML = '<span class="vc-dim">nothing to explode \u2014 this is bound to <b>' + esc(String(c.binds))
+          + '</b>, which is not an item on this canvas</span>';
+        ['code', 'path', 'text', 'record', 'lang', 'depth'].forEach((a) => embed.removeAttribute(a));
+        return;
+      }
       // BOUND: the bound item's own code is what is exploded — a snippet that exists only on this canvas (an
       // LLM's reply) explodes exactly as a repo file does, and the spans come back in ITS coordinates
       if (bound && (bound.code || bound.path)) { if (bound.code) { set('code', bound.code); set('lang', bound.lang || ''); set('path', bound.path || bound.filename || ''); } else { set('path', bound.path); } }
@@ -1651,7 +1664,9 @@
       else if (c.code) { set('code', c.code); set('lang', c.lang || ''); }
       else if (c.text) { set('text', c.text); set('mode', c.mode || ''); }
       if (c.layers) set('layers', [].concat(c.layers).join(','));
-      if (c.assess) set('assess', ''); else if (embed.hasAttribute('assess')) embed.removeAttribute('assess');
+      // `set` treats '' as "remove", so `set('assess','')` was a no-op that could never turn the rail on
+      if (c.assess) { if (!embed.hasAttribute('assess')) embed.setAttribute('assess', '1'); }
+      else if (embed.hasAttribute('assess')) embed.removeAttribute('assess');
       embed._boundKey = c.binds ? String(c.binds) : '';
     }
     _codeItemFor(key) {
