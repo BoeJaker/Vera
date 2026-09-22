@@ -921,6 +921,51 @@ async def explode_code(text: str = "", lang: str = "", path: str = "", paths: Op
 
 
 # ── capabilities ──────────────────────────────────────────────────────────────────────────────────
+# ── code.sources: the repo's own tree, for picking instead of typing ─────────────────────────────────────────
+# "could you add a drop selector to explode graph for veras source in-whole or in-part (i.e. 1 folder or file or
+# the entire thing) - just to make it easier" (owner, 2026-09-22). Typing `vera/research/explode_capabilities.py`
+# was the only way in. This lists what there is to explode, with the SIZE of each choice, because "the entire
+# thing" is 1,000+ files and a reader deserves to know that before they ask for it -- never outside the repo,
+# the same guard code.explode reads files through.
+
+_SRC_SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".pytest_cache",
+             ".loop-lab-worktrees", ".vera-work", "site-packages", ".mypy_cache", ".ruff_cache"}
+
+
+def _walk_sources(rel: str = "", max_files: int = 4000) -> Dict:
+    """Every code file under a repo-relative directory, with its folders. Pure, and inside the repo only."""
+    import os
+    root = _repo_root()
+    rel = str(rel or "").replace("\\", "/").strip("/")
+    base = os.path.abspath(os.path.join(root, rel)) if rel else root
+    if not (base == root or base.startswith(root + os.sep)) or not os.path.isdir(base):
+        return {"error": "no directory '%s' in the repo" % (rel or "/")}
+    files, folders, n = [], {}, 0
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(d for d in dirnames if d not in _SRC_SKIP and not d.startswith("."))
+        here = os.path.relpath(dirpath, root).replace("\\", "/")
+        here = "" if here == "." else here
+        own = 0
+        for name in sorted(filenames):
+            if not name.lower().endswith(_CODE_EXT):
+                continue
+            if n >= max_files:
+                break
+            fp = (here + "/" + name) if here else name
+            try:
+                size = os.path.getsize(os.path.join(dirpath, name))
+            except OSError:
+                size = 0
+            files.append({"path": fp, "lang": _lang_of(fp), "bytes": size})
+            own += 1
+            n += 1
+        if own:
+            folders[here] = folders.get(here, 0) + own
+    rows = [{"path": k, "files": v, "label": (k or "/") + "  (%d)" % v} for k, v in sorted(folders.items())]
+    return {"ok": True, "root": rel or "", "folders": rows, "files": files,
+            "counts": {"folders": len(rows), "files": len(files), "capped": n >= max_files}}
+
+
 # ── explode.target: what IS this thing, and how would it explode? ─────────────────────────────────────────────
 # "if i try to explode a record by clicking it i get the error: explode failed: record
 # topic_memgraph_repo_helm_charts not found" (owner, 2026-09-22). It was never a record. Checked live against the
@@ -1187,6 +1232,21 @@ if _CAP_AVAILABLE:
                                   max_files=max(1, min(200, int(max_files or 40))), prefer_tree_sitter=bool(prefer_tree_sitter), assess=assess,
                                   lint=bool(lint), card_lines=int(card_lines or 0), max_line=int(max_line or 0),
                                   flow=str(flow or ""))
+
+    @capability(
+        "code.sources",
+        http_method="GET", http_path="/code/sources", http_tags=["code", "graph"],
+        memory="off", silent=True,
+        description=("The repo's own code tree, for picking a thing to explode instead of typing its path: every "
+                     "folder that holds code with how many files it has, and every file with its language and "
+                     "size. Inside the repo only (the same guard code.explode reads through), skipping .git, "
+                     "node_modules, __pycache__, virtualenvs, build output and the worktrees. Input: path "
+                     "(repo-relative directory, blank = the whole repo), max_files. Output: {ok, root, folders: "
+                     "[{path, files, label}], files: [{path, lang, bytes}], counts}."),
+    )
+    async def cap_code_sources(path: str = "", max_files: int = 4000, trace_id=None) -> Dict:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _walk_sources, path, max(1, min(20000, int(max_files or 4000))))
 
     @capability(
         "explode.target",
