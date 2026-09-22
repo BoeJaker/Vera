@@ -193,6 +193,7 @@ _CRITICAL_MODULES = {
     "test_executor_compose_callsite",  # Phase 4 - every prompt block reaches the executor, unswapped (a drop/swap is silent)
     "test_godseye_core",       # vendored-app static serving: a path-guard hole serves arbitrary host files; git argv must reject option/ext:: injection
     "test_operator_arg_key_noise",
+    "test_edit_gutter_core",  # the editor copied the view back as a markdown table; neither gutter stripper saw the leading pipe (2026-09-22)
     "test_edit_blocks_and_target",
     "test_operator_says_done",
     "test_probe_backoff",
