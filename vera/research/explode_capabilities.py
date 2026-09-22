@@ -829,7 +829,7 @@ async def _external_lint(root: str, paths: List[str]) -> Dict[str, List[Dict]]:
 
 async def explode_code(text: str = "", lang: str = "", path: str = "", paths: Optional[List[str]] = None, record_id: str = "",
                        depth: int = 1, max_files: int = 40, max_bytes: int = 2000000, prefer_tree_sitter: bool = False, assess=None,
-                       lint: bool = True, card_lines: int = 40, max_line: int = 0) -> Dict:
+                       lint: bool = True, card_lines: int = 40, max_line: int = 0, flow: str = "") -> Dict:
     # max_bytes: capability_orchestration.py alone is past 400k chars; a truncated file is a syntax error and every
     # symbol in it falls to a stub (seen live 2026-09-21) — 2M keeps the repo's biggest modules whole, and ast reads
     # them in well under a second
@@ -841,6 +841,29 @@ async def explode_code(text: str = "", lang: str = "", path: str = "", paths: Op
     sources: List[Dict] = []
     skipped: List[Dict] = []
     label = ""
+    if flow:
+        # FLOW: the inside of one function, in source order, its branches as bands. One file, one function.
+        if text:
+            src, where = text[:max_bytes], (path or "snippet." + (lang or "py"))
+        else:
+            want = (path or (list(paths or []) or [""])[0])
+            if not want:
+                return {"error": "flow needs the file the function is in: pass path (or text + lang)"}
+            read = await loop.run_in_executor(None, _read_repo_files, [want], 1, max_bytes)
+            if not read["sources"]:
+                return {"error": "nothing readable at %s" % want, "skipped": read["skipped"]}
+            src, where = read["sources"][0]["text"], read["sources"][0]["path"]
+        doc = await loop.run_in_executor(None, core.flow_of, where, src, flow, lang)
+        if doc.get("error"):
+            return doc
+        want = _assess_arg(assess)
+        if want is not None:                        # the same shape the whole-file path uses: receipts are layers
+            res = await _assess().assess_code_doc(doc, {where: src}, want or None, "" if text else _repo_root())
+            doc["assessments"] = res["assessments"]
+            doc["layers"] = list(doc["layers"]) + res["receipts"]
+            doc["counts"]["assessments"] = len(doc["assessments"])
+        return doc
+
     if text:
         sources.append({"path": path or ("snippet." + (lang or "txt")), "text": text[:max_bytes], "lang": lang})
         label = path or "pasted " + (lang or "code")
@@ -1080,9 +1103,11 @@ async def resolve_target(id: str = "", text: str = "", lang: str = "", path: str
         if "CodeFunction" in ls or "Method" in ls or "Function" in ls:
             fp, fname = r.get("parent_path"), props.get("function_name") or props.get("name") or id
             if isinstance(fp, str) and _repo_has(fp):
-                return _hit("code", "code.explode", {"path": fp, "depth": 0},
+                # a function clicked on the graph asks "what does this DO", which is exactly flow's question
+                return _hit("flow", "code.explode", {"path": fp, "flow": str(fname), "depth": 0},
                             "%s - %s" % (fp, fname),
-                            "a function of %s: the file is exploded and '%s' is a card in it" % (fp, fname), seen)
+                            "a function of %s: its flow - every call it makes, in source order, in the branch "
+                            "that encloses it" % fp, seen)
 
         body, which = _prop_text(props)
         if len(body) >= _MIN_TEXT:
@@ -1144,17 +1169,24 @@ if _CAP_AVAILABLE:
                      "Each card carries its own SOURCE (card_lines=40, 0 for none) and, with lint=true (the default), "
                      "the findings on its lines — ruff / eslint when this host has them, a set of ast-level rules "
                      "otherwise, each finding naming the tool that produced it. max_line turns the line-length rule on. "
+                     "flow=<function> answers a different question: not what calls what across a file, but what ONE "
+                     "function DOES — every call it makes in SOURCE ORDER, each in the branch that encloses it "
+                     "(if / else / for / while / try / except / finally / with), returns and raises marked, drawn "
+                     "left to right so the calls that only happen in the error path are plain. Python only (it "
+                     "needs a real parse of statements) and it says so for anything else. "
                      "Nothing is persisted. Output: {ok, kind: code|page, source:{paths, partial, errors, engines, "
                      "tree_sitter, text}, layout, layers, groups, cards, edges, assessments:[syntax, resolved], counts}."),
     )
     async def cap_code_explode(text: str = "", lang: str = "", path: str = "", paths: Optional[List[str]] = None, record_id: str = "",
                                depth: int = 1, max_files: int = 40, prefer_tree_sitter: bool = False, assess=None,
-                               lint: bool = True, card_lines: int = 40, max_line: int = 0, trace_id=None) -> Dict:
+                               lint: bool = True, card_lines: int = 40, max_line: int = 0, flow: str = "",
+                               trace_id=None) -> Dict:
         if isinstance(paths, str):
             paths = [p.strip() for p in paths.split(",") if p.strip()]
         return await explode_code(text=text, lang=lang, path=path, paths=paths, record_id=record_id, depth=int(depth or 0),
                                   max_files=max(1, min(200, int(max_files or 40))), prefer_tree_sitter=bool(prefer_tree_sitter), assess=assess,
-                                  lint=bool(lint), card_lines=int(card_lines or 0), max_line=int(max_line or 0))
+                                  lint=bool(lint), card_lines=int(card_lines or 0), max_line=int(max_line or 0),
+                                  flow=str(flow or ""))
 
     @capability(
         "explode.target",
