@@ -249,9 +249,24 @@ def probe_call(models: Optional[List[Dict]]) -> Tuple[str, str, Dict]:
     if gen:
         name = str(gen[0].get("name") or gen[0].get("model") or "")
         if name:
+            opts: Dict = {"num_predict": 1}
+            # Ask for the RESIDENT runner's own window. Ollama keys a runner by
+            # (model, num_ctx): a probe with no num_ctx gets the model default
+            # (4096), which is a different runner from the loop's 28k one - so
+            # on a 12 GB card the probe EVICTED the working model every 300 s
+            # and the loop reloaded it (2026-09-22 verification probe: 11
+            # llama-server starts in 30 min, three-call bursts every 5 min
+            # from prod and two sandboxes, each at ctx 4096). /api/ps reports
+            # the resident window as context_length; reuse it, omit when absent.
+            try:
+                ctx = int(gen[0].get("context_length") or 0)
+            except (TypeError, ValueError):
+                ctx = 0
+            if ctx > 0:
+                opts["num_ctx"] = ctx
             return name, "/api/generate", {
                 "model": name, "prompt": "ping", "stream": False,
-                "options": {"num_predict": 1},
+                "options": opts,
             }
     name = str(rows[0].get("name") or rows[0].get("model") or "")
     if not name:

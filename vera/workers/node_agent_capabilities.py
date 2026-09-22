@@ -550,7 +550,11 @@ async def _reap_tick() -> None:
 
 
 try:
-    schedule(_reap_tick, 300, name="nodes_runner_reap")
+    # One orchestrator probes the nodes. Every dev sandbox ran this tick too,
+    # so gpu-250 saw three probe bursts per 5 min (prod + two sandboxes) -
+    # each one a runner eviction on the 12 GB card until the probe reused the
+    # resident window (2026-09-22).
+    schedule(_reap_tick, 300, name="nodes_runner_reap", skip_in_sandbox=True, singleton=True)
 except Exception as _e:  # pragma: no cover
     log.debug("could not register node reaper: %s", _e)
 
