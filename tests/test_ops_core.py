@@ -76,6 +76,7 @@ def test_planes_nodes_and_lattice():
     assert ids["guest:246"]["domain"] == oc.COMPUTE and ids["guest:246"]["role"] == "serves CPU A"
     assert ids["guest:138"]["role"] == "runs Vera" and ids["guest:138"]["domain"] == oc.COMPUTE
     assert ids["guest:250"]["ref"] == "guest:250" and ids["guest:250"]["vmid"] == 250
+    assert ids["guest:250"]["req"] == {"name": "sysmon.status", "arguments": {}}   # a reading that reads through (proxmox.guest.ip did not)
     # the Vera process's own machine is the guest that carries its IP; the localhost SSH host folds into it
     assert "host:vera" not in ids and "Vera runs here" in ids["guest:138"]["detail"]
     # hosts and the docker runtimes
