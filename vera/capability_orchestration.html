@@ -7323,8 +7323,29 @@ function _scaleControlEl(){
   return wrap;
 }
 
+// the appearance rows of the Aa menu: the style pack and the density tier (vera-ui owns the setting and the broadcast)
+function _appearanceRowsEl(){
+  const vu = window.veraUI || {};
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:5px;padding:5px 6px 8px;margin-bottom:5px;border-bottom:1px solid var(--border2)';
+  const row = (label, opts, get, set) => {
+    const r = document.createElement('div'); r.style.cssText = 'display:flex;align-items:center;gap:3px';
+    const lab = document.createElement('span'); lab.textContent = label; lab.style.cssText = 'font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim2);min-width:52px'; r.appendChild(lab);
+    const paint = () => { r.querySelectorAll('button').forEach(b => { const on = b.dataset.v === get(); b.style.background = on ? 'var(--acc)' : 'var(--bg3)'; b.style.color = on ? 'var(--on-acc,#fff)' : 'var(--dim2)'; }); };
+    opts.forEach(o => { const b = document.createElement('button'); b.type = 'button'; b.dataset.v = o[0]; b.textContent = o[1]; b.title = o[2] || '';
+      b.style.cssText = 'font:inherit;font-size:10px;padding:3px 8px;border:1px solid var(--border2);border-radius:4px;cursor:pointer';
+      b.onclick = (e) => { e.stopPropagation(); set(o[0]); paint(); }; r.appendChild(b); });
+    paint(); return r;
+  };
+  const root = document.documentElement;
+  wrap.appendChild(row('Style', [['standard', 'Standard'], ['newspaper', 'News'], ['terminal', 'Term'], ['pixel', 'Pixel']], () => root.getAttribute('data-style') || 'standard', (v) => { if (vu.setStyle) vu.setStyle(v); else root.setAttribute('data-style', v); }));
+  wrap.appendChild(row('UI size', [['full', 'Full', 'Every control shown'], ['hover', 'Hover', 'Controls appear on hover'], ['zen', 'Zen', 'The page alone']], () => root.getAttribute('data-den') || 'full', (v) => { if (vu.setDensity) vu.setDensity(v); else root.setAttribute('data-den', v); }));
+  wrap.appendChild(row('Blocks', [['on', 'On'], ['off', 'Off']], () => root.getAttribute('data-blocks') || 'on', (v) => { if (vu.setBlocks) vu.setBlocks(v === 'on'); else root.setAttribute('data-blocks', v); }));
+  return wrap;
+}
 function _buildThemeMenuRows(menu, themes){
   menu.innerHTML = '';
+  menu.appendChild(_appearanceRowsEl());
   menu.appendChild(_scaleControlEl());
   Object.keys(themes).forEach(tid=>{
     const t = themes[tid], active = tid === _currentTheme;
@@ -7344,7 +7365,8 @@ function openThemeMenu(ev){
   ev && ev.stopPropagation();
   const existing = document.getElementById('themeMenu');
   if(existing){ existing.remove(); return; }
-  const btn = document.getElementById('themeBtn');
+  // anchored to the control that was pressed: the header's Aa; the old #themeBtn (hidden in the sheet) is the fallback
+  const btn = (ev && ev.currentTarget && ev.currentTarget.getBoundingClientRect && ev.currentTarget.offsetParent) ? ev.currentTarget : document.getElementById('themeBtn');
   if(!btn) return;
   const menu = document.createElement('div');
   menu.id = 'themeMenu';
