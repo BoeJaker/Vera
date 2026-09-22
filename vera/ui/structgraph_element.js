@@ -508,7 +508,10 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
           S.zoom = Math.max(0.25, z); S.px = Math.max(8, (W - o.size.w * S.zoom) / 2); S.py = Math.max(top, (H - o.size.h * S.zoom) / 2); S.fit = false; }
         this._place(); this._paint();
         // the toolbar: the modes this kind of graph has, the layer chips with their counts
-        const modes = o.kind === 'code' ? [['dependency', 'Dependency']] : [['position', 'Position'], ['type', 'Type']];
+        // the chip names the mode you are IN. A flow contract holds a function's steps, not a file's symbols, so
+        // it cannot be switched to dependency here -- that is a different explode, and the host asks for it.
+        const modes = o.kind === 'code' ? (o.mode === 'flow' ? [['flow', 'Flow']] : [['dependency', 'Dependency']])
+                                       : [['position', 'Position'], ['type', 'Type']];
         $('ctl').innerHTML = '<span class="c">explode</span>' + modes.map((m) => '<button data-m="' + m[0] + '"' + (o.mode === m[0] ? ' class="on"' : '') + '>' + m[1] + '</button>').join('') + '<span class="sep"></span><span class="c">layers</span>' +
           o.layers.map((l) => { const n = l.on ? (l.drawn || 0) : (l.hidden || 0);
             const why = l.on && l.hidden ? l.hidden + ' of ' + ((l.drawn || 0) + l.hidden) + ' hidden' + (l.hiddenBy && l.hiddenBy.length ? ' with ' + l.hiddenBy.join(' · ') : '') : '';

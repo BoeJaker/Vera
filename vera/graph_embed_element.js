@@ -47,6 +47,8 @@
  *   <vera-graph-embed renderer="struct" text="…a pasted passage…">
  *   <vera-graph-embed renderer="struct" src="/some/contract.json">
  *   <vera-graph-embed renderer="struct" path="vera/research/explode_capabilities.py" depth="1">   a repo file (+ its imports)
+ *   <vera-graph-embed renderer="struct" path="vera/research/assess_core.py" flow="readability">   ONE function, in source order
+ *   <vera-graph-embed renderer="struct" records="rec-1,rec-2,rec-3">                              several records, as lanes
  *   <vera-graph-embed renderer="struct" code="def f(): …" lang="python">                           a snippet (an LLM's, a page's)
  *   el.setDoc(contract)                      a contract the host already has
  *
@@ -168,8 +170,12 @@
             if (code) { body.text = code; body.lang = this.getAttribute('lang') || ''; if (cpath) body.path = cpath; }
             else body.path = cpath;
             var depth = this.getAttribute('depth'); if (depth != null) body.depth = parseInt(depth, 10) || 0;
+            // flow="<function>": not what calls what across the file, but what ONE function DOES, in source order
+            var flow = this.getAttribute('flow'); if (flow) body.flow = flow;
           } else if (rec) body.record_id = rec;
-          else if (text) body.text = text;
+          else if (this.getAttribute('records')) {      // several records, as lanes — an entity's evidence
+            body.record_ids = this.getAttribute('records').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+          } else if (text) body.text = text;
           else { this._fail('nothing to explode — give record, text, code, path or src'); return null; }
           var ranges = this.getAttribute('ranges'); if (ranges) { try { body.ranges = JSON.parse(ranges); } catch (e) {} }
           if (this.hasAttribute('assess')) body.assess = this.getAttribute('assess') || true;   // the verdict rail too

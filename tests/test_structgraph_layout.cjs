@@ -204,5 +204,6 @@ const FLOW = (() => {
   const wide = SG.layout(FLOW, 3440, 900), narrow = SG.layout(FLOW, 1600, 900);
   const zw = Math.min(1, 3424 / wide.size.w, 860 / wide.size.h);
   t('flow: a function of 21 steps is readable on a stage, not a ribbon', zw >= 0.3 && wide.size.w < 8000,
-    JSON.stringify({ size: wide.size, zoom: +zw.toFixed(2) })); }
+    JSON.stringify({ size: wide.size, zoom: +zw.toFixed(2) }));
+  t('flow: the mode chip names the mode you are in', o.mode === 'flow' && SG.layout(CODE, 1400, 900).mode === 'dependency'); }
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);
