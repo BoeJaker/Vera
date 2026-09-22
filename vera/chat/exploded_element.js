@@ -1247,7 +1247,8 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
           : c.card && (c.card.form || c.card.record || String(c.card.kind || '').toLowerCase() === 'widget') ? faceHtml(c.card, widgetOf(c.card), S.wsz) : '');   // a widget's own face on the carousel card
         const rcHtml = (c) => '<div class="xp-rc' + (S.open === c.id ? ' open' : '') + (String(c.card.kind || '') === 'gen' ? ' gen' : '') + '" data-id="' + esc(c.id) + '" data-ci="' + c.ci + '" style="--cc:' + esc(c.col) + '" title="' + esc(c.card.n || '') + (c.card.d ? ' — ' + esc(c.card.d) : '') + ' · click for the record">' + graphBtn(c.card, !!(this._graph && this._graph[c.id])) + '<span class="n">' + (c.card.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.card.tpl) + '">⧉</i> ' : '') + esc(c.card.n || '') + '</span><span class="d">' + esc(c.card.d || '') + '</span>' + rcFace(c) + '<div class="b">' + cardBody(c.card) + '</div></div>';
         const bodyHtml = (p) => (p.graph && p.graph.nodes.length ? '<div class="xp-gp">' + graphHtml(p.graph, 200) + '</div>' : '') + p.cards.map(rcHtml).join('') + (p.cards.length || (p.graph && p.graph.nodes.length) ? '' : '<div class="d" style="color:var(--xp-t3);font-family:var(--xp-mono);font-size:9px">nothing here for this turn</div>');
-        const key = (o.station ? o.station.mid : '') + '|' + P.map((p) => p.n).join(',') + '|' + PW + 'x' + PH;
+        const key = (o.station ? o.station.mid : '') + '|' + P.map((p) => p.n).join(',') + '|' + PW + 'x' + PH
+          + '|' + Object.keys(this._graph || {}).sort().join(',');   // a card asked to BE its diagram is a rebuild
         let car = view.querySelector('.xp-car');
         if (!car || this._frontKey !== key) {
           this._frontKey = key;
@@ -1328,8 +1329,10 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
            and produced widgets out of their cards too (defect 82). Off the canvas plane a widget is the board's card
            again. The face is drawn with proj:'iso' already, so on the plane it reads as an object. */
         const xigHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const onPlane = wg.layer === 'land';
-          const face = (this._graph && this._graph[c.id])
-          ? graphFaceHtml(c.id, this._graph[c.id] === 'want' || this._graph[c.id] === 'error' ? this._graph[c.id] : '', S.wsz)
+          // the ITEM's id, which is what `data-id` carries and what graph(id) is keyed by -- the card's own id
+          // is a different thing, and looking the graph up under it found nothing every time
+          const face = (this._graph && this._graph[wg.id])
+          ? graphFaceHtml(wg.id, this._graph[wg.id] === 'want' || this._graph[wg.id] === 'error' ? this._graph[wg.id] : '', S.wsz)
           : faceHtml(c, widgetOf(c), S.wsz, { plane: onPlane }); const pw = onPlane ? Math.round(planeSize(wg.form, S.wsz || 'm').w) : wg.cw;
           if (face && !onPlane) return xitHtml(wg, face);   // read · the exchange · produced: the board's card, as before
           const g = face ? null : groupOf(wg, ISO, { tilt: S.tilt || 30, azim: S.azim || 45 }); const b = isoBody(c, null);
