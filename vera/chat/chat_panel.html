@@ -3603,7 +3603,7 @@ const CH = (() => {
     const id='xp'+(++_XP_SEQ);
     const box=document.createElement('div');
     box.className='xp-inline'; box.dataset.xp=id;
-    box.style.cssText='margin:6px 0 2px;border:1px solid var(--border,#2a2622);border-radius:4px;overflow:hidden;background:var(--bg1,#17140f)';
+    box.style.cssText='flex:0 0 auto;margin:6px 0 2px;border:1px solid var(--border,#2a2622);border-radius:4px;overflow:hidden;background:var(--bg1,#17140f)';
     box.innerHTML='<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;font:9px var(--mono,monospace);color:var(--dim,#6a6058);border-bottom:1px solid var(--border,#2a2622)">'
       + '<span style="color:var(--acc,#5a9e8f)">explode</span><span class="xp-l" style="color:var(--text,#d8d0c6)"></span>'
       + '<span class="xp-w" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>'
@@ -3635,6 +3635,27 @@ const CH = (() => {
       if(body.trim()) out.push({lang:(info.split(/[\s:]/)[0]||'').toLowerCase(), code:body, lines:body.split('\n').length});
     }
     return out.sort((a,b)=>b.lines-a.lines);
+  }
+  /* The inside of one card of the exploded scene. The scene says what the card holds; what that MEANS is the
+     server's answer where it is an id, and plain where the card carries the text itself. */
+  async function _xplDeepDive(d){
+    const host = document.getElementById('xplHost'); if(!host) return;
+    const old = host.querySelector(':scope > .xp-inline'); if(old) old.remove();   // one dive at a time
+    const name = d.title || d.kind || 'card';
+    if(d.record){
+      var tg = await resolveTarget({ id: d.record, max_records: 12 });
+      if(!tg || !tg.ok){ appendSys(esc((tg && tg.why) || ('nothing to explode in ' + name))); return; }
+      const a = tg.args || {}, attrs = {};
+      if(tg.cap === 'code.explode'){ if(a.path) attrs.path = a.path; if(a.flow) attrs.flow = a.flow; if(a.depth != null) attrs.depth = a.depth; }
+      else if(a.record_id) attrs.record = a.record_id;
+      else if(a.record_ids) attrs.records = a.record_ids.join(',');
+      else if(a.text) attrs.text = a.text;
+      return _xpPanel(host, attrs, tg.label || name, tg.why || '');
+    }
+    const txt = String(d.text || '');
+    if(d.code && txt.trim()) return _xpPanel(host, { code: txt, lang: d.lang || '' }, name + ' \u00b7 ' + txt.split('\n').length + ' lines', 'the ' + (d.kind || 'card') + ' this card holds');
+    if(txt.trim().length >= 40) return _xpPanel(host, { text: txt }, name + ' \u00b7 ' + txt.length + ' chars', 'the text this card holds');
+    appendSys('Nothing to explode in that card \u2014 it holds no record, no code and no passage.');
   }
   async function _msgExplode(mid, btn){
     const rec=_MSG_REGISTRY[mid]; if(!rec) return;
@@ -17461,6 +17482,8 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     try{ const st=_xplEl.state(); _xplLayers=Object.assign({}, _xplLayers, st.layers||{}, { galaxy:!!st.galaxy }); }catch(_){}
     // a widget picked up and dropped on another turn's plate (or before another item) is re-anchored; a gear edits its record
     _xplEl.addEventListener('vera:xpl:move', ev=>_xplMove(ev.detail||{}));
+    // a card double-clicked in the scene: the structured diagram of what that card HOLDS, under the scene
+    _xplEl.addEventListener('vera:xpl:explode', ev=>_xplDeepDive(ev.detail||{}));
     _xplEl.addEventListener('vera:xpl:edit', ev=>_xplEdit(ev.detail||{}));
     // a turn selected in the exploded scene (the turn dots, the scrubber, ← →, a station caption, the exchange) is the focused turn
     // everywhere: the grown context graph at that turn's frame, the mini graph re-drawn, the canvas with that turn's items in focus

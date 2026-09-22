@@ -929,6 +929,31 @@
     docS.forEach(s => push(s, focusMid));
     (blocks || []).forEach((b) => { if (!b || !b.key || (b.state || 'now') === 'hidden') return; const c = b.content || {}; const arr = Array.isArray(c.suggestions) ? c.suggestions : Array.isArray(c.can_also) ? c.can_also : [];
       const a = b.anchor && typeof b.anchor === 'object' ? String(b.anchor.turn || b.anchor.mid || '') : ''; arr.forEach(s => push(s, a || focusMid)); });
+    /* CODE ON THE CANVAS OFFERS ITS OWN DIAGRAM -- offered, never forced ("the system proposes; the reader
+       decides"). A code item of more than a screenful, and a passage long enough to have structure, add
+       themselves to "Vera can also"; taking one builds the explode item BOUND to it, so the diagram and the
+       source light each other by span. Anything already exploded does not ask again, and at most two ask at
+       once so the rail stays a rail. */
+    let offered = 0;
+    (blocks || []).forEach((b) => {
+      if (offered >= 2 || !b || !b.key || (b.state || 'now') === 'hidden') return;
+      const c = b.content || {}; const k = String(b.key);
+      if (have.has('explode:' + k)) return;
+      if ((blocks || []).some(x => x && x.type === 'explode' && x.content && String(x.content.binds || '') === k)) return;
+      const at = b.anchor && typeof b.anchor === 'object' ? String(b.anchor.turn || b.anchor.mid || '') : '';
+      const code = b.type === 'code' && typeof c.code === 'string' ? c.code : '';
+      const prose = (b.type === 'markdown' && typeof c.md === 'string') ? c.md
+                  : (b.type === 'note' && typeof c.text === 'string') ? c.text : '';
+      if (code && code.split('\n').length >= 12) {
+        offered++;
+        push({ n: 'Explode this code', kind: 'explode', key: 'explode:' + k,
+               content: { binds: k, title: String(c.filename || c.title || 'code') + ' - exploded' } }, at || focusMid);
+      } else if (prose && prose.length >= 800) {
+        offered++;
+        push({ n: 'Explode this passage', kind: 'explode', key: 'explode:' + k,
+               content: { text: prose.slice(0, 20000), title: String(c.title || 'passage') + ' - exploded' } }, at || focusMid);
+      }
+    });
     const seen = new Set(); return out.filter(s => !seen.has(s.key) && seen.add(s.key)).slice(0, 8);
   }
   /* the NOW bar's words: what this turn is waiting on, else what is live */
