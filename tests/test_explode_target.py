@@ -43,6 +43,8 @@ def graph(monkeypatch):
                    "parent_path": REPO_FILE, "parent_lang": "python"},
         "surface_1": {"props": {"id": "surface_1", "name": "vera.int", "url": "https://vera.int", "kind": "host"},
                       "ls": ["Surface"], "parent_path": None, "parent_lang": None},
+        "resp_short": {"props": {"id": "resp_short", "text": "tool\nfocus code analysis", "topic": "", "type": "response"},
+                       "ls": ["Entity", "Response"], "parent_path": None, "parent_lang": None},
         "ent_listed": {"props": {"id": "ent_listed", "record_ids": ["r9", "r8"]},
                        "ls": ["Entity"], "parent_path": None, "parent_lang": None},
         "rec_elsewhere": {"props": {"id": "rec_elsewhere", "dataset_id": "topic_helm",
@@ -177,3 +179,20 @@ def test_a_record_the_graph_knows_but_this_instance_does_not_hold_is_still_a_rec
     assert "per instance" in d["why"] and "topic_helm" in d["why"]
     assert "not found" not in d["why"]
     assert "Memgraph configMap" in d["label"]
+
+
+
+def test_the_answer_reads_as_english_because_the_sentence_IS_the_feature():
+    """Live on the mirror the answers read "a Entity node" for a Response, and "the 5 records it mentioned in".
+    The whole point of the resolver is the sentence a reader gets instead of a false error."""
+    ent = run(id="ent_bristol")
+    # labels ["Entity", "ExtractedEntity", "GPE"]: the last one is the one worth saying
+    assert "a GPE node" in ent["why"] and "the 2 records it is mentioned in" in ent["why"]
+    assert "an Entity node" in run(id="ent_listed")["why"]          # and the article follows the word
+    ds = run(id="topic_memgraph_repo_helm_charts")
+    assert "a Dataset node" in ds["why"] and "the 4 records it contains" in ds["why"]
+    # Neo4j gives labels general-first, so the LAST one is the informative one
+    short = run(id="resp_short")
+    assert not short["ok"] and short["label"].startswith("Response ")
+    assert "a Response node" in short["why"]
+    assert "too short to have structure" in short["why"]        # not "no text": it HAS text, just not enough
