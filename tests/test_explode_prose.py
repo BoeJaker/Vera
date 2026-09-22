@@ -111,7 +111,9 @@ def test_a_record_slice_keeps_record_coordinates_and_records_become_lanes(fake_l
     assert [g["id"] for g in tops] == ["rec:r1", "rec:r2"] and all(g["kind"] == "record" for g in tops)
     assert all(g["parent"] in ("rec:r1", "rec:r2") for g in lanes["groups"] if g["kind"] == "paragraph")
     assert {c["span"]["path"] for c in lanes["cards"]} == {"r1", "r2"} and lanes["source"]["record_ids"] == ["r1", "r2"]
-    assert _run(X.explode_prose(record_id="nope"))["error"] == "record nope not found"
+    # the dead end names the thing AND the way out of it (R5): anything that is not a record has a resolver
+    err = _run(X.explode_prose(record_id="nope"))["error"]
+    assert err.startswith("record nope not found") and "explode.target" in err
     assert "required" in _run(X.explode_prose())["error"]
 
 
