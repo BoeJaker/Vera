@@ -94,11 +94,11 @@
     while ((m = TOK.exec(code))) {
       out += esc(code.slice(last, m.index));
       const t = m[0];
-      if (m[1]) out += '<i class="c">' + esc(t) + '</i>';
-      else if (m[2]) out += '<i class="s">' + esc(t) + '</i>';
-      else if (m[3]) out += '<i class="n">' + esc(t) + '</i>';
-      else if (kw.test(t)) out += '<i class="k">' + esc(t) + '</i>';
-      else if (code[m.index + t.length] === '(') out += '<i class="f">' + esc(t) + '</i>';
+      if (m[1]) out += '<i class="xt-c">' + esc(t) + '</i>';
+      else if (m[2]) out += '<i class="xt-s">' + esc(t) + '</i>';
+      else if (m[3]) out += '<i class="xt-n">' + esc(t) + '</i>';
+      else if (kw.test(t)) out += '<i class="xt-k">' + esc(t) + '</i>';
+      else if (code[m.index + t.length] === '(') out += '<i class="xt-f">' + esc(t) + '</i>';
       else out += esc(t);
       last = m.index + t.length;
     }
@@ -355,15 +355,19 @@ vera-structgraph .sg-card .m{font-family:var(--xp-mono);font-size:9px;color:var(
 vera-structgraph .sg-card .f{display:grid;grid-template-columns:auto 1fr;gap:0 8px;margin-top:3px;font-family:var(--xp-mono);font-size:9px;line-height:13px;color:var(--xp-t2)}vera-structgraph .sg-card .f b{font-weight:400;color:var(--xp-t3)}vera-structgraph .sg-card .f span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 vera-structgraph .sg-card .b{display:flex;gap:4px;margin-top:3px;flex-wrap:nowrap;overflow:hidden}vera-structgraph .sg-card .b i{font-style:normal;font-size:8.5px;font-family:var(--xp-mono);padding:1px 5px;border-radius:999px;background:var(--xp-s3);color:var(--xp-t2);white-space:nowrap}vera-structgraph .sg-card .b i.warn{background:color-mix(in srgb,var(--xp-dv2) 25%,var(--xp-s3));color:var(--xp-dv2)}vera-structgraph .sg-card .b i.ok{background:color-mix(in srgb,var(--xp-ac2) 22%,var(--xp-s3));color:var(--xp-ac2)}
 vera-structgraph .sg-card .code{margin-top:5px;padding-top:4px;border-top:1px solid var(--xp-bd);font-family:var(--xp-mono);font-size:9.5px;line-height:12px;white-space:pre;overflow:hidden}
-vera-structgraph .sg-card .code .cl{display:block;color:var(--xp-t2)}
+vera-structgraph .sg-card .code .cl{display:block;color:var(--xp-t2);float:none;width:auto;min-width:0;padding:0;margin:0}
 vera-structgraph .sg-card .code .ln{display:inline-block;width:2.2em;margin-right:.6em;text-align:right;font-style:normal;color:var(--xp-t3);opacity:.45;user-select:none}
 vera-structgraph .sg-card .code .cl.more{color:var(--xp-t3);font-style:italic;opacity:.7;padding-left:2.8em}
-vera-structgraph .sg-card .code i{font-style:normal}
-vera-structgraph .sg-card .code .c{color:var(--xp-t3);opacity:.8}
-vera-structgraph .sg-card .code .s{color:var(--xp-ac2)}
-vera-structgraph .sg-card .code .k{color:var(--xp-dv1)}
-vera-structgraph .sg-card .code .n{color:var(--xp-dv2)}
-vera-structgraph .sg-card .code .f{color:var(--xp-ac)}
+/* A TOKEN IS A TOKEN, whatever page hosts the diagram. The tokeniser's classes were single letters, and in the
+   chat '.f' is display:grid (measured live, 2026-09-22) — so every function name became a full-width block and
+   one line of source drew as three, 40px tall where 12 was laid out for it. The classes are namespaced, and the
+   tokens are reset besides: nothing a host page says about an <i> should reach inside the code on a card. */
+vera-structgraph .sg-card .code i{font-style:normal;display:inline;float:none;margin:0;padding:0;border:0;min-width:0;width:auto;height:auto;background:none;position:static;flex:none}
+vera-structgraph .sg-card .code .xt-c{color:var(--xp-t3);opacity:.8}
+vera-structgraph .sg-card .code .xt-s{color:var(--xp-ac2)}
+vera-structgraph .sg-card .code .xt-k{color:var(--xp-dv1)}
+vera-structgraph .sg-card .code .xt-n{color:var(--xp-dv2)}
+vera-structgraph .sg-card .code .xt-f{color:var(--xp-ac)}
 /* a lint finding marks its own line, and says what it is on hover */
 vera-structgraph .sg-card .code .cl.mk{background:color-mix(in srgb,var(--xp-dv2) 14%,transparent);border-left:2px solid var(--xp-dv2);margin-left:-2px}
 vera-structgraph .sg-card .code .cl.mk.error{background:color-mix(in srgb,var(--xp-red) 16%,transparent);border-left-color:var(--xp-red)}
