@@ -113,6 +113,10 @@
           '<option value="code">Code — a repo file, directory or snippet</option>' +
         '</select>' +
         '<div class="xp-w-code" style="display:none">' +
+          '<div style="' + CSS_LABEL + '">Vera\u2019s source</div>' +
+          '<select class="xp-src-dir" style="' + CSS_FIELD + '"><option value="">loading the tree\u2026</option></select>' +
+          '<select class="xp-src-file" style="' + CSS_FIELD + ';margin-top:4px" disabled><option value="">\u2014</option></select>' +
+          '<div class="xp-src-note" style="font-size:9px;color:var(--dim,#6a6058);margin-top:3px"></div>' +
           '<div style="' + CSS_LABEL + '">Repo path (file or directory)</div>' +
           '<input class="xp-code-path" placeholder="vera/research/explode_capabilities.py" style="' + CSS_FIELD + '">' +
           '<div style="display:flex;gap:6px;align-items:center;margin-top:4px;font-size:9px;color:var(--dim,#6a6058)">' +
@@ -154,7 +158,8 @@
 
       var $ = function (sel) { return bodyEl.querySelector(sel); };
       var whatSel = $('.xp-what'), recIn = $('.xp-record'), rangesIn = $('.xp-ranges'), recsIn = $('.xp-records'),
-          textIn = $('.xp-text'), modeSel = $('.xp-mode'), layersEl = $('.xp-layers'), stat = $('.xp-stat');
+          textIn = $('.xp-text'), modeSel = $('.xp-mode'), layersEl = $('.xp-layers'), stat = $('.xp-stat'),
+          codeIn = $('.xp-code-path');
 
       function say(msg, bad) {
         if (!stat) return;
@@ -189,6 +194,52 @@
         say(tg && tg.ok ? esc(tg.label || id) + ' — ' + esc(tg.why || '') : esc((tg && tg.why) || id), !(tg && tg.ok));
       };
       if (!recIn.value) recIn.value = selectedId();
+
+      /* ── Vera's source, as a picker ─────────────────────────────────────────
+         "a drop selector ... for veras source in-whole or in-part (i.e. 1 folder or file or the entire thing) -
+         just to make it easier" (owner, 2026-09-22). Typing a repo path was the only way in. Every choice says
+         how much it is about to draw, because the whole tree is over a thousand files and a reader should know
+         that before asking for it. */
+      var dirSel = $('.xp-src-dir'), fileSel = $('.xp-src-file'), srcNote = $('.xp-src-note');
+      var TREE = { folders: [], files: [], byDir: {} };
+      var WHOLE = '*';                                  // the sentinel for "the entire thing"
+      var WHOLE_CAP = 60;                               // and what that honestly means at once
+      function srcSay(msg){ if(srcNote) srcNote.textContent = msg || ''; }
+      function fillFiles(dir){
+        var own = TREE.byDir[dir] || [];
+        fileSel.innerHTML = '<option value="">the whole folder \u2014 ' + own.length + ' file' + (own.length===1?'':'s') + '</option>'
+          + own.map(function(f){ return '<option value="' + esc(f.path) + '">' + esc(f.path.split('/').pop()) + ' \u00b7 ' + Math.round((f.bytes||0)/1024) + ' kB</option>'; }).join('');
+        fileSel.disabled = !own.length;
+      }
+      function syncSrc(){
+        var dir = dirSel.value;
+        if(dir === WHOLE){
+          fileSel.innerHTML = '<option value="">every file \u2014 ' + TREE.files.length + '</option>'; fileSel.disabled = true;
+          codeIn.value = WHOLE;
+          srcSay(TREE.files.length + ' files in the tree \u2014 the first ' + WHOLE_CAP + ' by path are exploded together; pick a folder for something readable');
+          return;
+        }
+        fillFiles(dir);
+        codeIn.value = fileSel.value || dir;
+        var own = TREE.byDir[dir] || [];
+        srcSay(fileSel.value ? fileSel.value : (dir || '/') + ' \u00b7 ' + own.length + ' file' + (own.length===1?'':'s') + ' \u2014 its imports join them if the box below is ticked');
+      }
+      fetch(base + '/code/sources')
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if(!d || d.error){ dirSel.innerHTML = '<option value="">the tree is unavailable \u2014 type a path</option>'; return; }
+          TREE.folders = d.folders || []; TREE.files = d.files || []; TREE.byDir = {};
+          TREE.files.forEach(function(f){ var dir = f.path.indexOf('/') < 0 ? '' : f.path.slice(0, f.path.lastIndexOf('/'));
+            (TREE.byDir[dir] = TREE.byDir[dir] || []).push(f); });
+          dirSel.innerHTML = '<option value="' + WHOLE + '">Vera \u2014 the whole tree (' + TREE.files.length + ' files)</option>'
+            + TREE.folders.map(function(f){ return '<option value="' + esc(f.path) + '">' + esc(f.path || '/') + ' \u00b7 ' + f.files + '</option>'; }).join('');
+          var want = TREE.folders.filter(function(f){ return /^vera\//.test(f.path); })[0] || TREE.folders[0];
+          if(want){ dirSel.value = want.path; }
+          syncSrc();
+        })
+        .catch(function(){ dirSel.innerHTML = '<option value="">the tree is unavailable \u2014 type a path</option>'; });
+      dirSel.onchange = syncSrc;
+      fileSel.onchange = function(){ codeIn.value = fileSel.value || dirSel.value; syncSrc(); };
 
       // ── the layers, from the registry ───────────────────────────────────────
       fetch(base + '/nlp/explode/layers')
@@ -297,6 +348,14 @@
           var cpath = $('.xp-code-path').value.trim(), ctext = ($('.xp-code-text').value || '').trim();
           body = {};
           if (ctext) { body.text = ctext; body.lang = $('.xp-code-lang').value; body.path = cpath; label = 'code · ' + (body.lang || 'detected') + ' · ' + ctext.length + ' chars'; }
+          else if (cpath === WHOLE) {
+            // the entire thing: what that means is said, not implied — the cap is the panel's, and it shows
+            var all = TREE.files.map(function (f) { return f.path; });
+            if (!all.length) { say('the tree is not loaded yet', true); return; }
+            body.paths = all.slice(0, WHOLE_CAP); body.depth = 0;
+            label = 'Vera · ' + body.paths.length + ' of ' + all.length + ' files';
+            why = 'the whole tree is ' + all.length + ' files; this is the first ' + body.paths.length + ' by path';
+          }
           else if (cpath) { body.path = cpath; body.depth = $('.xp-code-hop').checked ? 1 : 0; label = cpath; }
           else { say('a repo path or a snippet is needed', true); return; }
         } else {
