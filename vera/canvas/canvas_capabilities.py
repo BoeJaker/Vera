@@ -60,6 +60,13 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
                  "content": "{code:str, lang:str, filename?:str}"},
     "diagram":  {"desc": "A Mermaid diagram.",
                  "content": "{mermaid:str, caption?:str}"},
+    "explode":  {"desc": "A STRUCTURED diagram of code or prose — the Explode contract drawn as bands, "
+                         "columns, cards and routed runs. `binds` names a code item in this canvas: its code "
+                         "is what gets exploded, and the two are bound by SPAN both ways — click a card and "
+                         "that code scrolls and lights; select lines and the covering card lights.",
+                 "content": "{binds?:str(item key), path?:str, paths?:[str], depth?:int, record?:str, "
+                            "ranges?:[[int,int]], text?:str, code?:str, lang?:str, mode?:str, layers?:[str], "
+                            "assess?:bool, title?:str, height?:int}"},
     "image":    {"desc": "An image (URL or data URI) with optional caption.",
                  "content": "{url:str, alt?:str, caption?:str}"},
     "note":     {"desc": "A short user/agent note or annotation.",
