@@ -72,7 +72,7 @@
      "body": "record",
      "unit": "%"
     },
-    "panel": "system-monitor"
+    "open": "estate/ops"
    },
    "at": [
     0,
@@ -114,7 +114,7 @@
      "palette": "load",
      "unit": "%"
     },
-    "panel": "system-monitor"
+    "open": "estate/ops"
    },
    "at": [
     4,
@@ -155,7 +155,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "system-monitor"
+    "open": "estate/ops"
    },
    "at": [
     8,
@@ -193,7 +193,8 @@
      "body": "record",
      "unit": "held",
      "cells": 4
-    }
+    },
+    "open": "models"
    },
    "at": [
     10,
@@ -233,7 +234,8 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "open": "estate/ops"
    },
    "at": [
     0,
@@ -271,7 +273,8 @@
      "body": "record",
      "unit": "done",
      "cells": 6
-    }
+    },
+    "open": "agents"
    },
    "at": [
     2,
@@ -312,7 +315,7 @@
      "throttle": 70,
      "limit": 5
     },
-    "panel": "perf-monitor"
+    "open": "estate/ops"
    },
    "at": [
     4,
@@ -351,7 +354,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "activity"
+    "open": "activity"
    },
    "at": [
     8,
@@ -473,7 +476,7 @@
       }
      }
     ],
-    "panel": "workers-ollama"
+    "open": "models"
    },
    "at": [
     0,
@@ -512,7 +515,7 @@
      "rows": 3,
      "unit": "ms"
     },
-    "panel": "workers-ollama"
+    "open": "models"
    },
    "at": [
     4,
@@ -551,7 +554,7 @@
      "rows": 3,
      "unit": "tok/s"
     },
-    "panel": "workers-ollama"
+    "open": "models"
    },
    "at": [
     4,
@@ -590,7 +593,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "workers-ollama"
+    "open": "models"
    },
    "at": [
     8,
@@ -629,7 +632,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "workers-ollama"
+    "open": "models"
    },
    "at": [
     8,
@@ -667,7 +670,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "workers-ollama"
+    "open": "models/routing"
    },
    "at": [
     0,
@@ -757,7 +760,7 @@
      }
     ],
     "layout": "report",
-    "panel": "workers-ollama"
+    "open": "models"
    },
    "at": [
     4,
@@ -794,7 +797,8 @@
     },
     "draw": {
      "body": "record"
-    }
+    },
+    "open": "estate/proxmox"
    },
    "at": [
     8,
@@ -836,7 +840,8 @@
       "deny_gpu",
       "model"
      ]
-    }
+    },
+    "open": "models/routing"
    },
    "at": [
     0,
@@ -924,7 +929,8 @@
       }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "open": "models/routing"
    },
    "at": [
     6,
@@ -1064,7 +1070,7 @@
       }
      }
     ],
-    "panel": "system-monitor"
+    "open": "estate/proxmox"
    },
    "at": [
     0,
@@ -1168,7 +1174,7 @@
       }
      }
     ],
-    "panel": "system-monitor"
+    "open": "estate/docker"
    },
    "at": [
     4,
@@ -1295,7 +1301,7 @@
      }
     ],
     "layout": "report",
-    "panel": "system-monitor"
+    "open": "estate"
    },
    "at": [
     8,
@@ -1459,7 +1465,7 @@
      }
     ],
     "layout": "report",
-    "panel": "system-monitor"
+    "open": "estate/storage"
    },
    "at": [
     8,
@@ -1547,7 +1553,7 @@
      }
     ],
     "layout": "report",
-    "panel": "workers-ollama"
+    "open": "estate/workers"
    },
    "at": [
     0,
@@ -1623,7 +1629,8 @@
       }
      }
     ],
-    "layout": "report"
+    "layout": "report",
+    "open": "estate/storage"
    },
    "at": [
     4,
@@ -1667,7 +1674,8 @@
       "net in",
       "net out"
      ]
-    }
+    },
+    "open": "estate/network/traffic"
    },
    "at": [
     8,
@@ -1707,7 +1715,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "system-monitor"
+    "open": "estate/proxmox"
    },
    "at": [
     0,
@@ -1745,7 +1753,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "system-monitor"
+    "open": "estate/proxmox"
    },
    "at": [
     4,
@@ -1784,7 +1792,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "system-monitor"
+    "open": "estate/docker"
    },
    "at": [
     8,
@@ -1898,7 +1906,7 @@
      }
     ],
     "layout": "report",
-    "panel": "fabric-panel"
+    "open": "fabric"
    },
    "at": [
     0,
@@ -1938,7 +1946,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "fabric-panel"
+    "open": "fabric"
    },
    "at": [
     4,
@@ -1982,7 +1990,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "fabric-panel"
+    "open": "fabric"
    },
    "at": [
     8,
@@ -2027,7 +2035,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "fabric-panel"
+    "open": "fabric"
    },
    "at": [
     0,
@@ -2063,7 +2071,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "evolve"
+    "open": "evolve"
    },
    "at": [
     4,
@@ -2101,7 +2109,7 @@
      "body": "record",
      "unit": "%"
     },
-    "panel": "system-monitor"
+    "open": "estate/ops"
    },
    "at": [
     8,
@@ -2168,7 +2176,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "evolve"
+    "open": "agents"
    },
    "at": [
     0,
@@ -2257,7 +2265,7 @@
      }
     ],
     "layout": "report",
-    "panel": "evolve"
+    "open": "evolve"
    },
    "at": [
     4,
@@ -2345,7 +2353,7 @@
      }
     ],
     "layout": "report",
-    "panel": "activity"
+    "open": "activity"
    },
    "at": [
     8,
@@ -2383,7 +2391,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "evolve"
+    "open": "estate/sandbox"
    },
    "at": [
     0,
@@ -2471,7 +2479,7 @@
      }
     ],
     "layout": "report",
-    "panel": "dream-panel"
+    "open": "dream"
    },
    "at": [
     4,
@@ -2574,7 +2582,7 @@
      }
     ],
     "layout": "report",
-    "panel": "agent-registry"
+    "open": "agents"
    },
    "at": [
     8,
@@ -2739,7 +2747,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "mesh"
+    "open": "mesh"
    },
    "at": [
     0,
@@ -2783,7 +2791,7 @@
       "user"
      ]
     },
-    "panel": "mesh"
+    "open": "estate/machines"
    },
    "at": [
     4,
@@ -2881,7 +2889,7 @@
      }
     ],
     "layout": "report",
-    "panel": "mesh"
+    "open": "mesh"
    },
    "at": [
     0,
@@ -2986,7 +2994,7 @@
      }
     ],
     "layout": "report",
-    "panel": "godseye"
+    "open": "estate/network"
    },
    "at": [
     4,
@@ -3104,7 +3112,7 @@
      }
     ],
     "layout": "report",
-    "panel": "ide-panel"
+    "open": "estate/connections"
    },
    "at": [
     8,
@@ -3169,7 +3177,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "ha-panel"
+    "open": "automations/home"
    },
    "at": [
     0,
@@ -3207,7 +3215,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "n8n-panel"
+    "open": "automations/n8n"
    },
    "at": [
     4,
@@ -3245,7 +3253,7 @@
     "draw": {
      "body": "record"
     },
-    "panel": "calendar-panel"
+    "open": "elements/calendar"
    },
    "at": [
     8,

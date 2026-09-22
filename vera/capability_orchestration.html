@@ -2049,6 +2049,71 @@ function _estateOpen(pid, pane, sub, entity){
     if (++tries < 25) setTimeout(send, 400);
   })();
 }
+// ── places: where a reading lives, opened by name ─────────────────────────────
+// ui.places is ONE table (vera/ui/places_core.py): a place is a tab, a pane
+// and sub-tab of the Estate or Models panel, a view of a hosting panel, or an
+// element of the Elements switcher. The dashboard's ↗ and any panel's
+// veraUI.openPlace(name) come here, so a moved pane is fixed in the table.
+let _PLACES = null;
+async function _placesLoad(){
+  if (_PLACES) return _PLACES;
+  try { const r = await fetch(base() + '/ui/places', { cache: 'no-store' }); const j = await r.json(); const c = j && j.content !== undefined ? j.content : j; _PLACES = (c && c.places) ? c : { places: {}, rules: [] }; }
+  catch (_) { _PLACES = { places: {}, rules: [] }; }
+  try { window.dispatchEvent(new CustomEvent('vera:places')); } catch (_) {}
+  return _PLACES;
+}
+_placesLoad().then(() => { try { const q = new URLSearchParams(location.search).get('place'); if (q) setTimeout(() => openPlace(q), 900); } catch (_) {} });
+function placeFor(source, explicit){
+  const T = _PLACES || { places: {}, rules: [] };
+  if (explicit && T.places[explicit]) return explicit;
+  const s = String(source || '');
+  for (const r of (T.rules || [])) if (s.startsWith(r[0])) return r[1];
+  return '';
+}
+function _mediaShow(mid){
+  const tab = document.querySelector('.media-tab[data-mid="' + mid + '"]');
+  if (tab) { tab.click(); return true; }
+  return false;
+}
+// the Elements tab is out of the bar by default; a place that lives there puts it back for the session
+function _mediaTabEnsure(){
+  const bar = document.getElementById('tabBar'); if (!bar || bar.querySelector('.tab[data-tab="media"]')) return;
+  const t = document.createElement('div'); t.className = 'tab'; t.dataset.tab = 'media'; t.textContent = 'Elements';
+  const more = bar.querySelector('.tab.more'), ctl = bar.querySelector('.tab-controls');
+  bar.insertBefore(t, more || ctl || null);
+}
+function openPlace(p, entity){
+  const T = _PLACES || { places: {} };
+  if (typeof p === 'string') p = T.places[p] || (document.getElementById('panel-auto-' + p) ? { panel: p } : null);
+  if (!p || typeof p !== 'object') return false;
+  const tabName = p.tab ? p.tab : (p.panel ? 'auto-' + p.panel : '');
+  if (!tabName) return false;
+  if (p.tab === 'media') _mediaTabEnsure();
+  if (p.tab && !document.querySelector('#tabBar .tab[data-tab="' + tabName + '"]')) return false;
+  if (!p.tab && !document.getElementById('panel-' + tabName)) return false;
+  switchTab(tabName);
+  if (p.media) _mediaShow(p.media);
+  if (p.pane) _estateOpen(tabName, p.pane, p.sub || '', entity || '');
+  else if (entity) _entityOpenIn(tabName, entity);
+  if (p.nav) _lhmNavSelect(tabName, p.nav);
+  return true;
+}
+function _entityOpenIn(pid, ref){
+  let tries = 0;
+  const done = ev => { if (ev.data && ev.data.type === 'vera:entity:opened' && ev.data.ref === ref) { tries = 99; window.removeEventListener('message', done); } };
+  window.addEventListener('message', done);
+  (function send(){
+    const f = _panelFrame(pid);
+    if (f && f.contentWindow) f.contentWindow.postMessage({type:'vera:entity:open', ref}, '*');
+    if (++tries < 25) setTimeout(send, 400); else window.removeEventListener('message', done);
+  })();
+}
+window.addEventListener('message', e => {
+  const d = e && e.data; if (!d || typeof d !== 'object') return;
+  if (d.type === 'vera:place:open' && d.place) { _placesLoad().then(() => openPlace(d.place, d.entity || '')); }
+  // an entity opened from a panel that is not inside the Estate tab reaches the shell: the Estate tab answers it
+  else if (d.type === 'vera:entity:open' && d.ref) { _placesLoad().then(() => openPlace({ panel: (_PLACES && _PLACES.estate_panel) || 'workers-ollama' }, String(d.ref))); }
+});
 function switchTab(name){
   const r = _tabRedirects[name];
   if (r) {

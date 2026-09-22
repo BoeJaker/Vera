@@ -418,6 +418,7 @@ html.view-models #secNav [data-view="models"]{display:block}
     <div class="snav on" data-pane="overview" data-view="estate" onclick="P.show('overview',this)">Overview</div>
     <div class="snav" data-pane="estate" data-view="estate" onclick="P.show('estate',this)">Map</div>
     <div class="snav" data-pane="observe" data-view="estate" onclick="P.show('observe',this)">Observe</div>
+    <div class="snav" data-pane="ops" data-view="estate" onclick="P.show('ops',this)" title="Live operations - the whole estate as planes of nodes, the requests in flight running the pipes between them">Live ops</div>
     <div class="navdiv" data-view="estate"></div>
     <div class="nsec" data-view="estate">Machines</div>
     <div class="snav" data-pane="machines" data-view="estate" onclick="P.show('machines',this)">All</div>
@@ -1229,6 +1230,9 @@ html.view-models #secNav [data-view="models"]{display:block}
     <!-- ══════════════════════════════════════════════════════════════════════
          OBSERVE PANE — Events (dash grid) / ⚡ Perf (lazy iframe) sub-tabs
          ══════════════════════════════════════════════════════════════════════ -->
+    <div class="pane" id="pane-ops" style="padding:0;overflow:hidden">
+      <iframe id="ops-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
     <div class="pane" id="pane-observe" style="padding:0;overflow:hidden">
       <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
       <div class="pane-tb" style="flex-shrink:0;padding:12px 12px 0;margin-bottom:8px">
@@ -6342,6 +6346,7 @@ function showPane(name, el){
   const pane=$('pane-'+name);
   if(pane) pane.classList.add('on');
   if(name==='overview'){ ovLoad(); }
+  if(name==='ops'){ _mountFrame('ops-frame', BASE+'/ops/panel'); }
   if(name==='ollama'){ loadEmbedCfg(); }
   if(name==='docker'){ if(!Object.keys(_dkrHosts||{}).length) _dkrInitHosts(); dkrWorkerList(); sbxRefresh(); stkRefresh(); if(_dkrHostId) dkrRefresh(); }
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
@@ -6393,6 +6398,7 @@ function estateOpen(pane, sub, entity){
   showPane(pane, document.querySelector('.snav[data-pane="'+pane+'"]'));
   if(sub&&pane==='provision') provSub(sub);
   if(sub&&pane==='network') netSub(sub);
+  if(sub&&pane==='observe') obsSub(sub);
   if(entity) entityFocus(pane, sub, String(entity));
   return true;
 }
@@ -6406,7 +6412,7 @@ const _ENTITY_PANE={guest:'machines',host:'machines','docker-host':'docker',cont
   pool:'storage',dataset:'storage',integration:'integrations',identity:'provision',mesh:'provision',
   'secret':'provision',cert:'provision','backup-job':'storage',model:'ollama'};   // pragma: allowlist secret (an entity kind, not a value)
 const _ENTITY_SUB={identity:'identity',mesh:'mesh','secret':'secrets',cert:'certs','backup-job':'estate'};   // pragma: allowlist secret
-const _PANE_FRAME={overview:'overview-frame',storage:'storage-frame',integrations:'integrations-frame',foundry:'foundry-frame',
+const _PANE_FRAME={overview:'overview-frame',ops:'ops-frame',storage:'storage-frame',integrations:'integrations-frame',foundry:'foundry-frame',
   software:'software-frame',platforms:'platforms-frame',remote:'remote-frame',estate:'estate-frame'};
 function entityParse(ref){ const i=String(ref||'').indexOf(':'); if(i<1) return null;
   const kind=String(ref).slice(0,i).toLowerCase(), id=String(ref).slice(i+1); return (_ENTITY_PANE[kind]&&id)?{kind,id}:null; }
