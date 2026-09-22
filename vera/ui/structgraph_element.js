@@ -373,7 +373,8 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
     if (c.badges.length) h += '<div class="b">' + c.badges.slice(0, 5).map((b) => '<i class="' + (/^(partial|error|warn|smell|clone|cc )/i.test(String(b)) ? 'warn' : /^(tested|retyped)/i.test(String(b)) ? 'ok' : '') + '">' + esc(b) + '</i>').join('') + '</div>';
     if (c.score != null) h += '<div class="bar"><i style="width:' + Math.round(Math.max(0, Math.min(1, +c.score)) * 100) + '%"></i></div>';
     if (c.code) { const lines = String(c.code).split('\n').slice(0, K.CODEMAX); const l0 = c.code_line || 1;
-      const marks = k.marks || {};                    // line number -> [{note, sev}], from the lint layer
+      const marks = c.marks || k.marks || {};         // line number -> [{note, sev}], from the lint layer
+                                                      // (on the CARD of the contract: the laid-out card only wraps it)
       h += '<div class="code" data-lang="' + esc(c.lang || '') + '">' + lines.map((l, i) => { const n = l0 + i; const mk = marks[n];
         return '<span class="cl' + (mk ? ' mk ' + esc(mk[0].sev || 'warn') : '') + '" data-line="' + n + '"'
           + (mk ? ' title="' + esc(mk.map((x) => x.note).join(' · ')) + '"' : '') + '><i class="ln">' + n + '</i>' + tokenise(l, c.lang) + '</span>';
