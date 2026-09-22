@@ -11729,7 +11729,17 @@ async def _v5_load_current(path: str, session_id: str = "", repo: str = "") -> s
     return ""
 
 
-_V5_GUTTER_RE = re.compile(r"^\s*\d+\s*\|\s?", re.M)
+try:
+    from Vera.vera.dag import edit_gutter_core as _gutter_core
+except Exception:                                     # pragma: no cover
+    from . import edit_gutter_core as _gutter_core
+
+#: The shape lives in edit_gutter_core now, shared with the block parser:
+#: the two carried separate copies of one pattern and the same blind spot,
+#: and run62 showed the editor copying its OWN markdown-table rendering of
+#: the numbered view (`| 18 | text`), which neither copy recognised.
+#: Multiline flavour here for the `search` test below.
+_V5_GUTTER_RE = re.compile(_gutter_core.GUTTER_RE.pattern, re.M)
 
 
 def _v5_strip_gutter(text: str) -> str:
@@ -11740,7 +11750,7 @@ def _v5_strip_gutter(text: str) -> str:
     first real call: find='    1 | for i in range(1, 4):', which of course
     appears nowhere in the file. Prompting alone does not reliably prevent it;
     stripping does."""
-    return _V5_GUTTER_RE.sub("", text or "")
+    return _gutter_core.strip_text(text)
 
 
 # Edit-anchor hints (what to say when a find/replace anchor is not in the file).
