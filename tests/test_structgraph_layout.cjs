@@ -163,8 +163,11 @@ const BIG = (() => {
   t('a lint finding marks the line it names, with its note on it',
     /class="cl mk warn" data-line="2" title="bare &#39;except:&#39;"/.test(mh) || /class="cl mk warn"[^>]*title="[^"]*except/.test(mh),
     (mh.match(/class="cl mk[^"]*"[^>]*/) || ['no mark in the markup'])[0]);
+  // a host page's own `.f` (display:grid in the chat, measured live) once reshaped every function-name token
+  t('the tokeniser\'s classes are namespaced, so a host page cannot reshape the code on a card',
+    !/<i class="[cksnf]">/.test(h) && /<i class="xt-f">/.test(h));
   t('the card draws its own source, line-numbered and tokenised, in the scene markup',
-    lines >= 240 && nums === lines && /<i class="k">def<\/i>/.test(h) && / data-line="5"/.test(h),
+    lines >= 240 && nums === lines && /<i class="xt-k">def<\/i>/.test(h) && / data-line="5"/.test(h),
     JSON.stringify({ lines, nums })); }
 // -- R4: flow, the inside of one function ----------------------------------------------------------------------
 // The column is the step, the plates are the branches, and a band counts its OWN steps -- numbering every step on
