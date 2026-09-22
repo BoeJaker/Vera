@@ -64,8 +64,46 @@
   }
 
   /* ── geometry at k = 1 ────────────────────────────────────────────────────────────────────────────────── */
-  const K = { CW: 220, CH: 44, FIELD: 13, MAXF: 4, BADGE: 16, VP: 10, HEAD: 26, PAD: 12, INSET: 10, GMIN: 44, LP: 9, CMIN: 30, MX: 26, MY: 26, RAIL: 22 };
-  const cardH = (c) => K.CH + (c.subtitle ? 0 : -12) + K.FIELD * Math.min(K.MAXF, c.fields.length) + (c.badges.length ? K.BADGE : 0) + (c.score != null ? 6 : 0);
+  const K = { CW: 220, CH: 44, FIELD: 13, MAXF: 4, BADGE: 16, VP: 10, HEAD: 26, PAD: 12, INSET: 10, GMIN: 44, LP: 9, CMIN: 30, MX: 26, MY: 26, RAIL: 22,
+              CODEW: 300, CODELH: 12, CODEMAX: 22, CODEPAD: 10 };
+  /* A CODE CARD SHOWS ITS CODE (owner, 2026-09-22: "id actually like to be able to see the code per card"). The
+     extractor puts a symbol's own source on the card (card.code, card.code_line, card.code_more); the card grows to
+     it up to CODEMAX lines and says how many it kept back. A card with code is wider — a line of code needs room a
+     title does not. */
+  const codeLines = (c) => (c && c.code ? Math.min(K.CODEMAX, String(c.code).split('\n').length) : 0);
+  const cardW = (c) => (codeLines(c) ? K.CODEW : K.CW);
+  const cardH = (c) => K.CH + (c.subtitle ? 0 : -12) + K.FIELD * Math.min(K.MAXF, c.fields.length) + (c.badges.length ? K.BADGE : 0) + (c.score != null ? 6 : 0)
+    + (codeLines(c) ? K.CODEPAD + K.CODELH * codeLines(c) + (c.code_more ? K.CODELH : 0) : 0);
+
+  /* A TINY TOKENISER — comment · string · keyword · number · call. No library: a card needs those five, and a
+     highlighter pulled from a CDN is not a thing this estate does. It escapes as it goes, so the output is safe. */
+  const KW = {
+    python: /^(?:def|class|return|if|elif|else|for|while|try|except|finally|with|as|import|from|raise|yield|assert|lambda|pass|break|continue|global|nonlocal|async|await|in|is|not|and|or|None|True|False|self|cls)$/,
+    javascript: /^(?:function|return|if|else|for|while|try|catch|finally|switch|case|break|continue|const|let|var|new|class|extends|import|export|from|default|await|async|yield|typeof|instanceof|this|null|undefined|true|false|throw|delete|in|of)$/,
+  };
+  KW.typescript = KW.javascript; KW.css = /^(?:import|media|supports|keyframes|from|to)$/; KW.html = /^(?:div|span|script|link|body|head|html|section|nav|header|footer|main|form|table)$/;
+  const TOK = new RegExp([
+    '(/\\*[\\s\\S]*?\\*/|//[^\\n]*|#[^\\n]*)',                                  // comment
+    '("""[\\s\\S]*?"""|\'\'\'[\\s\\S]*?\'\'\'|"(?:[^"\\\\\\n]|\\\\.)*"|\'(?:[^\'\\\\\\n]|\\\\.)*\'|`(?:[^`\\\\]|\\\\.)*`)',   // string
+    '(\\b\\d[\\w.]*\\b)',                                                        // number
+    '([A-Za-z_$][\\w$]*)',                                                      // name
+  ].join('|'), 'g');
+  function tokenise(code, lang) {
+    const kw = KW[String(lang || '').toLowerCase()] || KW.python;
+    let out = '', last = 0, m; TOK.lastIndex = 0;
+    while ((m = TOK.exec(code))) {
+      out += esc(code.slice(last, m.index));
+      const t = m[0];
+      if (m[1]) out += '<i class="c">' + esc(t) + '</i>';
+      else if (m[2]) out += '<i class="s">' + esc(t) + '</i>';
+      else if (m[3]) out += '<i class="n">' + esc(t) + '</i>';
+      else if (kw.test(t)) out += '<i class="k">' + esc(t) + '</i>';
+      else if (code[m.index + t.length] === '(') out += '<i class="f">' + esc(t) + '</i>';
+      else out += esc(t);
+      last = m.index + t.length;
+    }
+    return out + esc(code.slice(last));
+  }
 
   /* ── the layout, pure ─────────────────────────────────────────────────────────────────────────────────── */
   function layout(doc, W, H, o) {
@@ -99,7 +137,7 @@
     const chainOf = (gid) => { const ch = []; let g = G.get(gid), guard = 0; while (g && guard++ < 32) { ch.unshift(g.id); g = g.parent != null ? G.get(g.parent) : null; } return ch; };
     let plates = [];   // {id, label, kind, parent, depth, children:[], cells:{col:[cardId]}}
     const P = new Map(); const plate = (id, label, kind, parent) => { if (P.has(id)) return P.get(id); const p = { id, label, kind, parent, depth: parent ? P.get(parent).depth + 1 : 0, children: [], cells: {}, h: 0 }; P.set(id, p); if (parent) P.get(parent).children.push(p); else plates.push(p); return p; };
-    const colOf = new Map(), plateOf = new Map(); let NC = 1;
+    const colOf = new Map(), plateOf = new Map(); let NC = 1, wrapped = 0;
     // the plates a card stands in: its group's chain from the top (parents made before children); none → one bare plate
     const platesOf = (c) => { const ch = c.group != null && G.has(c.group) ? chainOf(c.group) : []; ch.forEach((gid, i) => plate(gid, G.get(gid).label, G.get(gid).kind, i ? ch[i - 1] : null)); return ch.length ? ch[ch.length - 1] : plate('·', '', 'group', null).id; };
     if (mode === 'type') {
@@ -117,6 +155,35 @@
       const rk = R.rank(cards.map((c) => c.id), directed); out.back = rk.back.map((e) => e.from + '>' + e.to);
       cards.forEach((c) => { plateOf.set(c.id, platesOf(c)); colOf.set(c.id, rk.rank.get(c.id) || 0); });
       NC = Math.max(1, rk.depth);
+      /* A RANK IS NOT A COLUMN when the rank is big. A module of 390 symbols is mostly rank 0 or 1, so two columns
+         hold nearly every card and the scene is a 28,000px-tall ribbon: on an ultrawide that fits at 0.03 zoom with
+         dead air either side, which is the "looks broken on an ultrawide ... it becomes 1 line" the owner reported
+         (2026-09-22). Each rank is therefore WRAPPED into as many adjacent columns as it needs to keep its stack
+         under one height, chosen so the scene comes out the shape of the STAGE: with a stack of length L (the cards'
+         own heights), sub-columns of height T and width w, the scene is (L/T)*w wide by T tall, so T = sqrt(L*w/A)
+         for a stage of aspect A. The sub-columns of a rank are adjacent and in order, every later rank shifts right,
+         and a rank that already fits is left exactly as it was -- so left-to-right still reads as depth and the
+         runs still travel the gutters between columns. */
+      const A = Math.max(0.5, o.aspect || (dir === 'TB' ? (H || 900) / Math.max(1, W || 1600) : (W || 1600) / Math.max(1, H || 900)));
+      const byRank = new Map(); cards.forEach((c) => { const r = colOf.get(c.id); if (!byRank.has(r)) byRank.set(r, []); byRank.get(r).push(c); });
+      const L = cards.reduce((t, c) => t + cardH(c) + K.VP, 0);
+      const wide = cards.reduce((t, c) => Math.max(t, cardW(c)), K.CW) + K.GMIN;   // a column is as wide as its widest card
+      const nb = Math.max(1, new Set(cards.map((c) => plateOf.get(c.id))).size);   // the bands STACK: each adds its own T
+      const T = Math.max(3 * (K.CH + K.VP), Math.sqrt(L * wide / (A * nb)));
+      if (o.wrap !== false && L > T * 1.2) {
+        wrapped = 1;
+        // a rank wraps PER BAND: two bands' cards in one column sit in different bands, so the column is as tall as
+        // the taller of them, not the two together
+        const ranks = Array.from(byRank.keys()).sort((a2, b2) => a2 - b2);
+        let base = 0;
+        ranks.forEach((r) => { const acc = {}; const col = {}; let used = 0;
+          byRank.get(r).forEach((c) => { const b = plateOf.get(c.id), h = cardH(c) + K.VP;
+            if (col[b] == null) { col[b] = 0; acc[b] = 0; }
+            if (acc[b] && acc[b] + h > T && col[b] < 40) { col[b]++; acc[b] = 0; }
+            acc[b] += h; used = Math.max(used, col[b] + 1); colOf.set(c.id, base + col[b]); });
+          base += Math.max(1, used); });
+        NC = Math.max(1, base);
+      }
     }
     // a plate with nothing in it and no child with anything is not drawn
     const has = (p) => Object.keys(p.cells).length > 0 || p.children.some(has);
@@ -127,17 +194,31 @@
     const pos = new Map();   // card id → {x, y, w, h}
     const place = (need) => {
       const gw = [], ch = []; for (let g = 0; g <= NC; g++) gw.push(Math.max(K.GMIN, ((need && need.gutters[g]) || 0) * K.LP + 16)); for (let c = 0; c <= plates.length; c++) ch.push(Math.max(K.CMIN, ((need && need.channels[c]) || 0) * K.LP + 14));
-      const xc = []; let x = K.MX; for (let c = 0; c < NC; c++) { x += gw[c]; xc.push(x); x += K.CW; } const totalW = x + gw[NC] + K.MX;
+      // a column is as wide as the widest card in it: a column of code cards is wide, a column of stubs is not
+      const colW = []; for (let c = 0; c < NC; c++) colW.push(K.CW);
+      cards.forEach((c) => { const col = colOf.get(c.id); colW[col] = Math.max(colW[col] || K.CW, cardW(c)); });
+      const xc = []; let x = K.MX; for (let c = 0; c < NC; c++) { x += gw[c]; xc.push(x); x += colW[c]; } const totalW = x + gw[NC] + K.MX;
       const railH = out.assessments.length ? K.RAIL : 0;
       const stackH = (ids) => ids.reduce((s, id, i) => s + cardH(cid.get(id)) + (i ? K.VP : 0), 0);
       const measure = (p) => { const own = Math.max.apply(null, [0].concat(Object.keys(p.cells).map((col) => stackH(p.cells[col])))); p.children.forEach(measure); p.own = own; p.h = K.HEAD + own + (own && p.children.length ? K.VP : 0) + p.children.reduce((s, q) => s + q.h + K.VP, 0) - (p.children.length ? K.VP : 0) + K.PAD; return p.h; };
-      const lay = (p, y0) => { const ins = K.MX - 12 + p.depth * K.INSET; p.x = ins; p.y = y0; p.w = totalW - 2 * ins; let y = y0 + K.HEAD;
-        Object.keys(p.cells).forEach((col) => { let yy = y; p.cells[col].forEach((id) => { const c = cid.get(id), h = cardH(c); pos.set(id, { x: xc[+col], y: yy, w: K.CW, h }); yy += h + K.VP; }); });
+      // the columns a plate actually occupies, its own and its children's — what its width is made of
+      const colsOf = (p) => { const out2 = []; const walk = (q) => { Object.keys(q.cells).forEach((c2) => { if (q.cells[c2].length) out2.push(+c2); }); q.children.forEach(walk); }; walk(p); return out2; };
+      const lay = (p, y0) => { const ins = K.MX - 12 + p.depth * K.INSET; const cs = colsOf(p);
+        if (cs.length) { const a2 = Math.min.apply(null, cs), b2 = Math.max.apply(null, cs);
+          p.x = Math.max(ins, xc[a2] - K.PAD); p.w = Math.min(totalW - p.x - ins, xc[b2] + colW[b2] + K.PAD - p.x); }
+        else { p.x = ins; p.w = totalW - 2 * ins; }
+        p.y = y0; let y = y0 + K.HEAD;
+        Object.keys(p.cells).forEach((col) => { let yy = y; p.cells[col].forEach((id) => { const c = cid.get(id), h = cardH(c); pos.set(id, { x: xc[+col], y: yy, w: cardW(c), h }); yy += h + K.VP; }); });
         y += p.own + (p.own && p.children.length ? K.VP : 0); p.children.forEach((q) => { lay(q, y); y += q.h + K.VP; }); };
       let y = K.MY + railH; const gutters = [], channels = [];
       plates.forEach((b, bi) => { measure(b); channels.push({ y0: y, y1: y + ch[bi] }); y += ch[bi]; lay(b, y); y += b.h; });
       channels.push({ y0: y, y1: y + ch[plates.length] }); const totalH = y + ch[plates.length] + K.MY;
-      for (let g = 0; g <= NC; g++) gutters.push(g < NC ? { x0: xc[g] - gw[g], x1: xc[g] } : { x0: xc[NC - 1] + K.CW, x1: xc[NC - 1] + K.CW + gw[NC] });
+      /* AN ULTRAWIDE STAGE (owner, 2026-09-22: "looks broken on an ultrawide"). One tall stack of bands in a 3440-wide
+         window is a narrow strip with 435px of dead air each side, fitted to a zoom the height forced. When the room is
+         much wider than the stack wants, the bands FLOW into columns of bands — chosen to be the count that leaves the
+         least waste at the zoom it would fit at. Nothing inside a band moves: a band is placed as a whole, so every
+         run it holds keeps its routing. */
+      for (let g = 0; g <= NC; g++) gutters.push(g < NC ? { x0: xc[g] - gw[g], x1: xc[g] } : { x0: xc[NC - 1] + colW[NC - 1], x1: xc[NC - 1] + colW[NC - 1] + gw[NC] });
       return { gutters, channels, totalW, totalH, xc, gw, ch };
     };
     // ── route: the boxes, the router, the segments
@@ -155,6 +236,51 @@
     { const cells = []; const walk = (p) => { Object.keys(p.cells).forEach((col) => cells.push({ p, col, ids: p.cells[col] })); p.children.forEach(walk); }; plates.forEach(walk);
       for (let pass = 0; pass < 2; pass++) { const yOf = (id) => { const q = pos.get(id); return q ? q.y + q.h / 2 : NaN; }; const ordered = R.order(cells.map((c) => c.ids), edges, yOf); cells.forEach((c, i) => { c.p.cells[c.col] = ordered[i]; }); geo = place(null); } }
     const need = route(geo); geo = place(need); route(geo);
+    /* THE STAGE'S SHAPE. One tall stack in a wide window is a narrow strip with dead air either side, fitted to a
+       zoom the HEIGHT forced (owner: "looks broken on an ultrawide"). If the room is much wider than the stack
+       wants, the top-level bands flow into columns of bands: each band moves as a WHOLE — its cards, its labels and
+       every leg of every run inside it shift with it — so no routing is redone and nothing inside a band changes.
+       Runs that cross bands are re-routed afterwards, since their ends have moved. */
+    let flowed = 1;
+    if (o.flow !== false && plates.length > 1 && W > 0 && H > 0) {
+      const fitZoom = (w, h) => Math.min(1, (W - 16) / Math.max(1, w), (H - 40) / Math.max(1, h));
+      const bands = plates.map((b) => ({ id: b.id, h: b.h, y: b.y }));
+      const totalH0 = geo.totalH, totalW0 = geo.totalW;
+      let best = { cols: 1, zoom: fitZoom(totalW0, totalH0), w: totalW0, h: totalH0, rows: null };
+      for (let cols = 2; cols <= Math.min(5, plates.length); cols++) {
+        // fill a column until adding the next band would take it past the target height — the tallest column is
+        // what the fit is decided by, so the aim is the lowest tallest column, not equal columns
+        const target = totalH0 / cols;
+        const rows = []; let cur = [], acc = 0;
+        bands.forEach((b) => { if (cur.length && acc + b.h > target && rows.length < cols - 1) { rows.push(cur); cur = []; acc = 0; }
+          cur.push(b); acc += b.h + K.VP; });
+        if (cur.length) rows.push(cur);
+        if (rows.length < 2) continue;
+        const colH = rows.map((r) => r.reduce((t2, b) => t2 + b.h + K.VP, 0));
+        const w = totalW0 * rows.length + K.MX * (rows.length - 1), h = Math.max.apply(null, colH) + K.MY * 2;
+        const z = fitZoom(w, h);
+        if (z > best.zoom * 1.02) best = { cols: rows.length, zoom: z, w, h, rows };
+      }
+      if (best.rows) {
+        /* each band moves as a WHOLE: its plate subtree and every card position inside it get one offset, so
+           nothing inside a band is re-laid-out. The runs are routed again afterwards over the moved ends. */
+        const top = K.MY + (out.assessments.length ? K.RAIL : 0);
+        const dxOf = {}, dyOf = {}, colGut = [], colChan = [{ y0: 0, y1: top }];
+        best.rows.forEach((col, ci) => { const dx = ci * (totalW0 + K.MX); let yy = top;
+          geo.gutters.forEach((g) => colGut.push({ x0: g.x0 + dx, x1: g.x1 + dx }));
+          col.forEach((b) => { dxOf[b.id] = dx; dyOf[b.id] = yy - b.y; yy += b.h + K.VP; colChan.push({ y0: yy - K.VP, y1: yy }); }); });
+        plates.forEach((b) => { const dx = dxOf[b.id] || 0, dy = dyOf[b.id] || 0;
+          const walk = (p) => { p.x += dx; p.y += dy;
+            Object.keys(p.cells).forEach((c2) => p.cells[c2].forEach((id) => { const q = pos.get(id); if (q) { q.x += dx; q.y += dy; } }));
+            p.children.forEach(walk); };
+          walk(b); });
+        const seen = {}, chan = colChan.filter((c2) => { const k2 = c2.y0 + ':' + c2.y1; if (seen[k2]) return false; seen[k2] = 1; return true; });
+        geo = { gutters: colGut.sort((a2, b2) => a2.x0 - b2.x0), channels: chan.sort((a2, b2) => a2.y0 - b2.y0),
+                totalW: best.w, totalH: best.h, xc: geo.xc, gw: geo.gw, ch: geo.ch };
+        route(geo);
+        flowed = best.rows.length;
+      }
+    }
     // ── the scene
     const walkPlates = (p) => { out.plates.push({ id: p.id, label: p.label, kind: p.kind, depth: p.depth, x: px(p.x), y: px(p.y), w: px(p.w), h: px(p.h), cls: 'sg-pl d' + p.depth + ' k-' + p.kind.replace(/[^a-z0-9_-]/gi, '_') });
       out.labels.push({ plate: p.id, x: px(p.x + 12), y: px(p.y + 8), n: p.label || p.id, k: p.kind, depth: p.depth }); p.children.forEach(walkPlates); };
@@ -162,9 +288,19 @@
     cards.forEach((c) => { const p = pos.get(c.id); out.cards.push({ id: c.id, x: px(p.x), y: px(p.y), w: p.w, h: px(p.h), col: colOf.get(c.id), band: bandOf.get(c.id), plate: plateOf.get(c.id), card: c, glyph: glyphOf(c.kind), colr: kindCol(c.kind), cls: 'sg-card k-' + c.kind.toLowerCase().replace(/[^a-z0-9_-]/g, '_') + ' l-' + c.layer.replace(/[^a-z0-9_-]/gi, '_') + (c.kind.toLowerCase() === 'external' ? ' ext' : '') }); });
     out.verdicts = {};   // per-card assessments, by card id — the element shows them on hover
     D.assessments.forEach((a) => { if (a.on && a.on !== 'source' && cid.has(a.on)) (out.verdicts[a.on] = out.verdicts[a.on] || []).push(a); });
-    if (mode === 'position' && out.columns) out.columns.forEach((k, i) => out.labels.push({ column: i, x: px(geo.xc[i]), y: px(K.MY + (out.assessments.length ? K.RAIL : 0) + 6), n: k, k: 'column' }));
+    if (mode === 'position' && out.columns && flowed === 1) out.columns.forEach((k, i) => out.labels.push({ column: i, x: px(geo.xc[i]), y: px(K.MY + (out.assessments.length ? K.RAIL : 0) + 6), n: k, k: 'column' }));
     const kinds = {}; edges.forEach((e) => { kinds[e.kind] = (kinds[e.kind] || 0) + 1; }); out.legend = Object.keys(kinds).map((k) => ({ kind: k, n: kinds[k], col: (KIND[k] || KIND.RELATES)[0], cls: (KIND[k] || KIND.RELATES)[1], label: (KIND[k] || KIND.RELATES)[2] }));
-    out.size = { w: px(geo.totalW), h: px(geo.totalH) }; out.geom = { columns: NC, bands: plates.length, gutters: geo.gw, channels: geo.ch, xc: geo.xc };
+    out.size = { w: px(geo.totalW), h: px(geo.totalH) }; out.geom = { columns: NC, bands: plates.length, bandColumns: flowed, gutters: geo.gw, channels: geo.ch, xc: geo.xc };
+    /* ONE CORRECTION PASS. The wrap aims the scene at the shape of the stage, but a band's height is not known
+       until the runs are routed: the channels between the bands widen to the demand of what crosses them, and on a
+       busy graph that is hundreds of pixels the aim never saw. So if the scene came out well off the shape it was
+       aimed at, aim once more with the miss divided out. Once only, and only when the wrap is what decided the
+       shape -- a scene that is one column of cards is the shape it is. */
+    if (wrapped && !o._aimed) {
+      const want = dir === 'TB' ? (H || 900) / Math.max(1, W || 1600) : (W || 1600) / Math.max(1, H || 900);
+      const got = geo.totalW / Math.max(1, geo.totalH);
+      if (got / want < 0.85 || got / want > 1.25) return layout(doc, W, H, Object.assign({}, o, { _aimed: 1, aspect: want * want / got }));
+    }
     if (dir === 'TB') transpose(out);
     return out;
   }
@@ -203,6 +339,20 @@ vera-structgraph .sg-card .n{display:flex;align-items:baseline;gap:6px;font-size
 vera-structgraph .sg-card .m{font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
 vera-structgraph .sg-card .f{display:grid;grid-template-columns:auto 1fr;gap:0 8px;margin-top:3px;font-family:var(--xp-mono);font-size:9px;line-height:13px;color:var(--xp-t2)}vera-structgraph .sg-card .f b{font-weight:400;color:var(--xp-t3)}vera-structgraph .sg-card .f span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 vera-structgraph .sg-card .b{display:flex;gap:4px;margin-top:3px;flex-wrap:nowrap;overflow:hidden}vera-structgraph .sg-card .b i{font-style:normal;font-size:8.5px;font-family:var(--xp-mono);padding:1px 5px;border-radius:999px;background:var(--xp-s3);color:var(--xp-t2);white-space:nowrap}vera-structgraph .sg-card .b i.warn{background:color-mix(in srgb,var(--xp-dv2) 25%,var(--xp-s3));color:var(--xp-dv2)}vera-structgraph .sg-card .b i.ok{background:color-mix(in srgb,var(--xp-ac2) 22%,var(--xp-s3));color:var(--xp-ac2)}
+vera-structgraph .sg-card .code{margin-top:5px;padding-top:4px;border-top:1px solid var(--xp-bd);font-family:var(--xp-mono);font-size:9.5px;line-height:12px;white-space:pre;overflow:hidden}
+vera-structgraph .sg-card .code .cl{display:block;color:var(--xp-t2)}
+vera-structgraph .sg-card .code .ln{display:inline-block;width:2.2em;margin-right:.6em;text-align:right;font-style:normal;color:var(--xp-t3);opacity:.45;user-select:none}
+vera-structgraph .sg-card .code .cl.more{color:var(--xp-t3);font-style:italic;opacity:.7;padding-left:2.8em}
+vera-structgraph .sg-card .code i{font-style:normal}
+vera-structgraph .sg-card .code .c{color:var(--xp-t3);opacity:.8}
+vera-structgraph .sg-card .code .s{color:var(--xp-ac2)}
+vera-structgraph .sg-card .code .k{color:var(--xp-dv1)}
+vera-structgraph .sg-card .code .n{color:var(--xp-dv2)}
+vera-structgraph .sg-card .code .f{color:var(--xp-ac)}
+/* a lint finding marks its own line, and says what it is on hover */
+vera-structgraph .sg-card .code .cl.mk{background:color-mix(in srgb,var(--xp-dv2) 14%,transparent);border-left:2px solid var(--xp-dv2);margin-left:-2px}
+vera-structgraph .sg-card .code .cl.mk.error{background:color-mix(in srgb,var(--xp-red) 16%,transparent);border-left-color:var(--xp-red)}
+vera-structgraph .sg-card .code .cl.mk .ln{opacity:1;color:var(--xp-dv2)}
 vera-structgraph .sg-card .bar{height:3px;border-radius:2px;background:var(--xp-s3);margin-top:4px;overflow:hidden}vera-structgraph .sg-card .bar i{display:block;height:100%;background:var(--cc)}
 vera-structgraph .sg-e{position:absolute;height:0;border-top:1.5px solid var(--ec);transform-origin:0 0;pointer-events:auto;z-index:2;opacity:.85}
 vera-structgraph .sg-e::after{content:"";position:absolute;left:0;right:0;top:-5px;height:10px}
@@ -222,6 +372,12 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
     if (c.fields.length) h += '<div class="f">' + c.fields.slice(0, K.MAXF).map((f) => '<b>' + esc(f.k) + '</b><span>' + esc(f.v) + '</span>').join('') + '</div>';
     if (c.badges.length) h += '<div class="b">' + c.badges.slice(0, 5).map((b) => '<i class="' + (/^(partial|error|warn|smell|clone|cc )/i.test(String(b)) ? 'warn' : /^(tested|retyped)/i.test(String(b)) ? 'ok' : '') + '">' + esc(b) + '</i>').join('') + '</div>';
     if (c.score != null) h += '<div class="bar"><i style="width:' + Math.round(Math.max(0, Math.min(1, +c.score)) * 100) + '%"></i></div>';
+    if (c.code) { const lines = String(c.code).split('\n').slice(0, K.CODEMAX); const l0 = c.code_line || 1;
+      const marks = k.marks || {};                    // line number -> [{note, sev}], from the lint layer
+      h += '<div class="code" data-lang="' + esc(c.lang || '') + '">' + lines.map((l, i) => { const n = l0 + i; const mk = marks[n];
+        return '<span class="cl' + (mk ? ' mk ' + esc(mk[0].sev || 'warn') : '') + '" data-line="' + n + '"'
+          + (mk ? ' title="' + esc(mk.map((x) => x.note).join(' · ')) + '"' : '') + '><i class="ln">' + n + '</i>' + tokenise(l, c.lang) + '</span>';
+      }).join('') + (c.code_more ? '<span class="cl more">' + c.code_more + ' more lines</span>' : '') + '</div>'; }
     return h; }
   function sceneHtml(o) { let h = '';
     o.plates.forEach((p) => { h += '<div class="' + p.cls + '" style="left:' + p.x + 'px;top:' + p.y + 'px;width:' + p.w + 'px;height:' + p.h + 'px"></div>'; });
