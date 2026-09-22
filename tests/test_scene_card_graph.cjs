@@ -57,6 +57,8 @@ t('a record goes through the resolver, code and prose go straight to their cap',
 t('iso looks the graph up under the ITEM\'s id, which is what data-id carries',
   /const face = \(this\._graph && this\._graph\[wg\.id\]\)/.test(SCENE)
   && /graphFaceHtml\(wg\.id, this\._graph\[wg\.id\]/.test(SCENE));
+t('a plain card in iso is answered where it is actually drawn — xitHtml, which gets no face at all',
+  /const xitHtml = \(wg, face\) => \{[\s\S]{0,400}?if \(this\._graph && this\._graph\[wg\.id\]\) face = graphFaceHtml\(wg\.id,/.test(SCENE));
 t('front rebuilds its carousel when a card is asked to be its diagram — it is built once per station otherwise',
   /\+ '\|' \+ Object\.keys\(this\._graph \|\| \{\}\)\.sort\(\)\.join\(','\)/.test(SCENE));
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);
