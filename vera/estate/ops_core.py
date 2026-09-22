@@ -181,6 +181,9 @@ def _machines(src: Mapping[str, Any], own_ips: Iterable[str], nodes: Dict[str, D
     elif localhost_row is not None and localhost_row.get("ssh_host_id") and out["self"]:
         out["by_ssh"][str(localhost_row["ssh_host_id"])] = out["self"]
         nodes[out["self"]]["detail"] = (nodes[out["self"]]["detail"] + " · Vera runs here").strip(" ·")
+    if out["self"] in nodes:
+        nodes[out["self"]]["domain"] = COMPUTE
+        nodes[out["self"]]["role"] = "runs Vera"
     return out
 
 
@@ -207,6 +210,13 @@ def _docker(src: Mapping[str, Any], M: Mapping[str, Any], nodes: Dict[str, Dict[
                 links.append({"a": nid, "b": M["self"], "kind": "runs"})
         elif "dockerhost:" + hid in nodes:
             links.append({"a": nid, "b": "dockerhost:" + hid, "kind": "runs"})
+        else:
+            m = re.search(r"(\d+\.\d+\.\d+\.\d+)", hid)
+            owner = M.get("by_ip", {}).get(m.group(1)) if m else None
+            if owner and owner in nodes:
+                links.append({"a": nid, "b": owner, "kind": "runs"})
+                if nodes[owner].get("kind") == "guest" and nodes[owner]["domain"] == DEV:
+                    nodes[owner]["role"] = "docker host"
     return stack_host
 
 
@@ -258,6 +268,9 @@ def _services(src: Mapping[str, Any], M: Mapping[str, Any], stack_host: str, nod
         host = M.get("by_ip", {}).get(m.group(1)) if m else None
         if host:
             links.append({"a": nid, "b": host, "kind": "runs"})
+            if host in nodes and nodes[host].get("kind") == "guest":
+                nodes[host]["domain"] = COMPUTE          # the role decides the lane, not the name
+                nodes[host]["role"] = "serves " + str(q.get("label") or iid)
 
 
 def _core(src: Mapping[str, Any], stack_host: str, nodes: Dict[str, Dict[str, Any]], links: List[Dict[str, Any]]) -> None:

@@ -24,6 +24,7 @@ def _src():
             {"id": "pve:c:250", "label": "Ollama", "kind": "guest", "status": "running", "addr": "192.168.0.250", "ips": ["192.168.0.250"], "node": "corp", "vmid": 250, "type": "lxc", "template": False, "cluster_id": "c", "ssh_host_id": "ssh-250", "hardware": ["8 cores"]},
             {"id": "pve:c:138", "label": "LLM", "kind": "guest", "status": "running", "addr": "192.168.0.138", "ips": [], "node": "corp", "vmid": 138, "type": "qemu", "template": False, "cluster_id": "c"},
             {"id": "pve:c:160", "label": "VFS-02", "kind": "guest", "status": "running", "addr": "192.168.0.160", "ips": ["192.168.0.160"], "node": "corp", "vmid": 160, "type": "lxc", "template": False, "cluster_id": "c"},
+            {"id": "pve:c:246", "label": "box-9", "kind": "guest", "status": "running", "addr": "192.168.0.246", "ips": ["192.168.0.246"], "node": "corp", "vmid": 246, "type": "lxc", "template": False, "cluster_id": "c"},
             {"id": "pve:c:999", "label": "old", "kind": "guest", "status": "stopped", "node": "corp", "vmid": 999, "type": "lxc", "template": False},
             {"id": "pve:c:900", "label": "tpl", "kind": "guest", "status": "template", "node": "corp", "vmid": 900, "type": "lxc", "template": True},
             {"id": "lh", "label": "localhost", "kind": "host", "status": "", "addr": "localhost", "ssh_host_id": "ssh-local"},
@@ -71,6 +72,9 @@ def test_planes_nodes_and_lattice():
     # running guests only, never templates or stopped ones
     assert "guest:250" in ids and "guest:160" in ids and "guest:999" not in ids and "guest:900" not in ids
     assert ids["guest:250"]["domain"] == oc.COMPUTE and ids["guest:160"]["domain"] == oc.STORAGE
+    # the role decides the lane: a guest with no hint in its name that serves a model instance is compute, and says so
+    assert ids["guest:246"]["domain"] == oc.COMPUTE and ids["guest:246"]["role"] == "serves CPU A"
+    assert ids["guest:138"]["role"] == "runs Vera" and ids["guest:138"]["domain"] == oc.COMPUTE
     assert ids["guest:250"]["ref"] == "guest:250" and ids["guest:250"]["vmid"] == 250
     # the Vera process's own machine is the guest that carries its IP; the localhost SSH host folds into it
     assert "host:vera" not in ids and "Vera runs here" in ids["guest:138"]["detail"]
@@ -101,6 +105,7 @@ def test_pipes_metrics_and_inflight():
     L = {(l["a"], l["b"], l["kind"]) for l in s["links"]}
     assert ("guest:250", "pve:corp", "runs") in L
     assert ("ollama:gpu-250", "guest:250", "runs") in L          # the instance runs on the guest that owns its IP
+    assert ("docker:192.168.0.250-(vera-worker)", "guest:250", "runs") in L or ("docker:192.168.0.250-(vera-worker)", "dockerhost:192.168.0.250-(vera-worker)", "runs") in L
     assert ("svc:redis", "docker:local", "runs") in L
     assert ("docker:local", "guest:138", "runs") in L             # the stack runs on the machine Vera runs on
     assert ("sbx:vera-dev", "docker:local", "runs") in L
