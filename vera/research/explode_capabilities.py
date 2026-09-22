@@ -957,6 +957,21 @@ def _repo_has(rel: str) -> bool:
     return (full == root or full.startswith(root + os.sep)) and os.path.isfile(full)
 
 
+# How the answer READS is the feature: it is the sentence a reader gets instead of a false error, so it is built
+# to be read. Neo4j hands labels general-first (["Entity", "File", "CodeFile"], ["Entity", "Response"]), so the
+# LAST one is the informative one -- "a Response node", not "a Entity node".
+_REL_SAYS = {"CONTAINS": "it contains", "MENTIONED_IN": "it is mentioned in", "HAS_RECORD": "it holds",
+             "DERIVED_FROM": "it derives from", "REFERENCES": "it references", "LINKS_TO": "it links to"}
+
+
+def _kind_of(ls: List[str]) -> str:
+    return (ls[-1] if ls else "node")
+
+
+def _an(word: str) -> str:
+    return ("an " if str(word)[:1].upper() in "AEIOU" else "a ") + str(word)
+
+
 def _hit(what: str, cap: str, args: Dict, label: str, why: str, seen: Optional[Dict] = None) -> Dict:
     return {"ok": True, "what": what, "cap": cap, "args": args, "label": label, "why": why, "seen": seen or {}}
 
@@ -1036,7 +1051,7 @@ async def resolve_target(id: str = "", text: str = "", lang: str = "", path: str
         r = rows[0] or {}
         props = r.get("props") or {}
         ls = [str(x) for x in (r.get("ls") or [])]
-        kind = ls[0] if ls else "node"
+        kind = _kind_of(ls)
         seen = {"type": kind, "labels": ls, "id": id}
 
         if "FabricRecord" in ls:
@@ -1073,14 +1088,14 @@ async def resolve_target(id: str = "", text: str = "", lang: str = "", path: str
         if len(body) >= _MIN_TEXT:
             return _hit("text", "nlp.explode.prose", {"text": body},
                         "%s %s - %d chars" % (kind, id, len(body)),
-                        "a %s node: its own `%s` is the passage" % (kind, which), seen)
+                        "%s node: its own `%s` is the passage" % (_an(kind), which), seen)
 
         rids = props.get("record_ids")
         if isinstance(rids, (list, tuple)) and rids:
             got = [str(x) for x in rids][:max_records]
             return _hit("records", "nlp.explode.prose", {"record_ids": got},
                         "%s %s - %d records" % (kind, id, len(got)),
-                        "a %s node: the records it names, as lanes" % kind, seen)
+                        "%s node: the records it names, as lanes" % _an(kind), seen)
 
         recs = await _aux_rows(
             "MATCH ({id:$id})-[r]->(m:FabricRecord) RETURN m.id AS rid, type(r) AS rel LIMIT $k",
@@ -1089,17 +1104,20 @@ async def resolve_target(id: str = "", text: str = "", lang: str = "", path: str
             got = [str(x.get("rid")) for x in recs if x.get("rid")]
             rel = str((recs[0] or {}).get("rel") or "")
             if got:
+                says = _REL_SAYS.get(rel, "it links to" + (" by %s" % rel if rel else ""))
                 return _hit("records", "nlp.explode.prose", {"record_ids": got},
                             "%s %s - %d records" % (kind, id, len(got)),
-                            "a %s node holds no text of its own; the %d records it %s are the evidence, "
-                            "and explode as lanes" % (kind, len(got), rel.replace("_", " ").lower() or "links to"),
-                            seen)
+                            "%s node holds no text of its own; the %d records %s are the evidence, and explode "
+                            "as lanes" % (_an(kind), len(got), says), seen)
 
         have = ", ".join(sorted(k for k, v in props.items() if v not in (None, "", [], {}))) or "nothing"
+        short = _prop_text(props)[0]
         return _miss("%s %s" % (kind, id),
-                     "a %s node. It carries %s - no text long enough to read and no records linked to it, so "
-                     "there is nothing here to explode. Open a record that mentions it, or explode the passage "
-                     "it came from." % (kind, have), seen)
+                     "%s node. It carries %s - %s and no records linked to it, so there is nothing here to "
+                     "explode. Open a record that mentions it, or explode the passage it came from."
+                     % (_an(kind), have,
+                        ("its text is %d characters, too short to have structure" % len(short)) if short
+                        else "no text"), seen)
 
     # ── a repo path given as an id ───────────────────────────────────────────────────────────────────────────
     if ("/" in id or id.lower().endswith(_CODE_EXT)) and _repo_has(id):
