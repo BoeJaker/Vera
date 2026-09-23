@@ -272,6 +272,31 @@ def test_an_embedding_only_node_is_probed_with_embed_not_generate():
     assert "input" in payload
 
 
+_EMB = {"name": "nomic-embed-text:latest", "model": "nomic-embed-text:latest",
+        "details": {"family": "nomic-bert"}, "context_length": 2048}
+
+
+def test_the_probe_sends_the_nodes_thread_count_on_both_shapes():
+    """A probe with no num_thread asked a 12-CPU node for the host's 24 threads
+    and restarted the embed runner every 300 s while every real client sent 6
+    (cpu-246, 2026-09-23 20:23). It must ask for what the node runs."""
+    _, path, payload = probe_call([dict(_GEN, context_length=28672)], num_thread=6)
+    assert path == "/api/generate"
+    assert payload["options"]["num_thread"] == 6
+    assert payload["options"]["num_ctx"] == 28672          # the window survives too
+    _, path, payload = probe_call([_EMB], num_thread=6)
+    assert path == "/api/embed"
+    assert payload["options"] == {"num_thread": 6}
+
+
+def test_the_probe_sends_no_thread_count_for_a_gpu_node():
+    """threads_for gives a GPU node 0, and 0 means leave the runner alone."""
+    _, _, payload = probe_call([dict(_GEN, context_length=28672)], num_thread=0)
+    assert "num_thread" not in payload["options"]
+    _, _, payload = probe_call([_EMB])
+    assert "options" not in payload
+
+
 def test_probe_call_is_safe_on_junk():
     for bad in (None, [], [None], [{}], ["nope"]):
         model, path, payload = probe_call(bad)

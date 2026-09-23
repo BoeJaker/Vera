@@ -265,7 +265,17 @@ async def _probe_dispatch(nid: str, inst: Dict) -> DispatchProbe:
         # normal and unbounded. Not a wedge, and not something to probe for.
         return p
 
-    model, path, payload = probe_call(models)
+    # The same thread count every other client of this node sends - a probe
+    # that differs restarts the runner (see probe_call).
+    try:
+        from Vera.vera import node_threads_core as _nt_core
+        from Vera.vera.capability_orchestration import _CPU_NODE_THREADS as _nt_default
+    except Exception:  # pragma: no cover - agent-side layout
+        _nt_core, _nt_default = None, 0
+    _nt = (_nt_core.threads_for(has_gpu=bool(inst.get("has_gpu")),
+                                node_num_thread=inst.get("num_thread"), default=_nt_default)
+           if _nt_core is not None else 0)
+    model, path, payload = probe_call(models, num_thread=_nt)
     if not model:
         p.skipped = "resident model has no usable name"
         return p
