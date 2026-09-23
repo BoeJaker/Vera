@@ -2034,6 +2034,16 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="row"><label style="min-width:70px">Ref images</label><input type="checkbox" id="cfgRefImages" onchange="CH._persistMediaCfg()" title="Vera may search the web for reference images (media.image.search) and show them in the chat"></div>
     <div class="row"><label style="min-width:70px">Live render</label><input type="checkbox" id="cfgAutoRender" checked onchange="CH._persistMediaCfg()" title="Vera may render mermaid diagrams, charts, HTML widgets and UI panels in the chat / as floating pop-outs (render.* caps + ```mermaid fences)"></div>
     <div class="row"><label style="min-width:70px">Run own code</label><input type="checkbox" id="cfgCodeRun" onchange="CH._persistMediaCfg()" title="Vera may execute code she writes in the same turn (exec.code.run) and auto test-and-fix it (exec.code.iterate); results feed back automatically"></div>
+    <!-- THE CANVAS'S OWN SETTINGS. Three readings the canvas cannot make for you: how an item is aligned with the
+         turn that made it, whether an HTML item draws or shows its source, and how freely the canvas offers to
+         explode what is on it. Each is a preference of YOURS, kept per browser like the rest of this sheet. -->
+    <div class="sec" style="margin-top:5px">Session canvas</div>
+    <div class="row"><label style="min-width:70px" title="Held: an item is kept inside the canvas column, level with its turn while there is room — it never scrolls away with the turn, and a tall item can always be reached. Strict: the column is the transcript's own frame, so an item is always exactly level with its turn and moves with it, off the bottom included.">Alignment</label>
+      <select id="cfgCvAlign" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="held">Held in view</option><option value="strict">Strict — level with the turn</option></select></div>
+    <div class="row"><label style="min-width:70px" title="Whether an HTML item, and a code block that is a whole page, draw themselves or show their source. Drawing happens in a sandboxed frame — no network, no cookies, no reach into this page — and each item keeps its own switch either way.">HTML items</label>
+      <select id="cfgCvPreview" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Draw them</option><option value="off">Show the source</option></select></div>
+    <div class="row"><label style="min-width:70px" title="Whether the canvas offers to explode what is on it into a structured diagram. It is always an offer, never automatic, and the other ways in (a message's Explode, a fence's button, /explode) are unaffected.">Offer explode</label>
+      <select id="cfgCvExplode" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="both">Code and prose</option><option value="code">Code only</option><option value="never">Never</option></select></div>
     <div style="font-size:9px;color:var(--dim2);margin:4px 0 2px">Thinking phrases — theme for the rolling status lines</div>
     <label class="row numrow" title="Theme used to generate a fresh set of thinking phrases (e.g. 'nautical', 'wizardry', 'dry sysadmin humour'). Leave blank for the defaults.">
       <input id="cfgThinkTheme" placeholder="e.g. cosmic voyage" style="flex:1;min-width:0;font-size:10px">
@@ -5632,6 +5642,28 @@ IMPORTANT:
   }
   _restoreMediaCfg();
 
+  /* ── THE CANVAS'S OWN SETTINGS (the owner's decisions, 2026-09-23) ─────────────────────────────────────────────
+     Three selects, kept per browser beside the rest of this sheet, and handed to the element as attributes — the
+     canvas reads its own behaviour off itself rather than the page reaching inside it. Defaults are what the canvas
+     does today: held alignment, HTML drawn, explode offered on code and prose. */
+  const _CV_CFG_KEY='vera_canvas_cfg';
+  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'] };
+  function _cvCfg(id){ const el=document.getElementById(id); const v=el&&el.value?String(el.value):''; return v||_CV_CFG[id][1]; }
+  function _cvApplyCfg(){
+    const el=document.querySelector('#canvasColumnBody vera-canvas'); if(!el) return;
+    Object.keys(_CV_CFG).forEach(id=>{ const a=_CV_CFG[id][0], v=_cvCfg(id); if(el.getAttribute(a)!==v) el.setAttribute(a,v); });
+  }
+  function _persistCanvasCfg(){
+    try{ const o={}; Object.keys(_CV_CFG).forEach(id=>{o[id]=_cvCfg(id);}); localStorage.setItem(_CV_CFG_KEY,JSON.stringify(o)); }catch(_){}
+    _cvApplyCfg();
+  }
+  function _restoreCanvasCfg(){
+    try{ const o=JSON.parse(localStorage.getItem(_CV_CFG_KEY)||'null')||{};
+      Object.keys(_CV_CFG).forEach(id=>{ const el=document.getElementById(id); if(el) el.value=(id in o)?String(o[id]):_CV_CFG[id][1]; });
+    }catch(_){}
+  }
+  _restoreCanvasCfg();
+
   /* ── Rolling thinking phrases ─────────────────────────────────────── */
   const _THINK_DEFAULTS=[
     'thinking','lining up the pieces','consulting the fabric','tracing the threads',
@@ -7111,6 +7143,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       const msgsEl=document.getElementById('msgs');
       if(msgsEl&&!msgsEl._cvRelBound){ msgsEl._cvRelBound=true; msgsEl.addEventListener('scroll', _cvRelFocus, {passive:true}); msgsEl.addEventListener('click', _cvRelFocus); }
       _cvColsSync();
+      try{ _cvApplyCfg(); }catch(_){}   // the reader's own canvas settings, onto the element that just mounted
       el.addEventListener('vera:canvas:rendered', ev=>{ const d=ev.detail||{}; const s=document.getElementById('cvColSub'); if(s) s.textContent=(d.pinned?d.pinned+' pinned · ':'')+(d.parked?d.parked+' parked · ':'')+'rev '+(d.revision||0); _cvStageSync(true); }); }
     if(el.getAttribute('canvas-id')!==cid) el.setAttribute('canvas-id', cid);
     try{ window._veraBase=BASE; }catch(_){}
@@ -19754,7 +19787,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _cmpChip,_cmpSync,_paOpen,_paCopy,
     _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
-    _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
+    _persistMediaCfg,_persistCanvasCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
     setContext:txt=>{_parentCtx=txt;},
     setBase:url=>{BASE=url;},

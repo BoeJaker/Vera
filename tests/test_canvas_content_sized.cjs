@@ -18,7 +18,7 @@ t('the shares rise with the size: a glance, the working face, the whole thing',
   (() => { const f = ['s', 'm', 'l'].map((sz) => +(SRC.match(new RegExp('\\.it\\[data-size="' + sz + '"\\] \\.it-bd\\{max-height:clamp\\([0-9]+px,calc\\((\\.[0-9]+)'))[1]));
     return f[0] < f[1] && f[1] < f[2] && f[2] < 1; })());
 t('the column publishes the viewport the shares are of, and only when it changes',
-  /if \(V && this\._vh !== V\) \{ this\._vh = V; this\.style\.setProperty\('--vc-vh', V \+ 'px'\); \}/.test(SRC));
+  /if \(VH && this\._vh !== VH\) \{ this\._vh = VH; this\.style\.setProperty\('--vc-vh', VH \+ 'px'\); \}/.test(SRC));
 t('an element that never measures still has sensible numbers (the fallback)', /var\(--vc-vh,460px\)/.test(SRC));
 t('a size change glides rather than jumping, and is instant under reduced motion or a scrolling transcript',
   /\.it-bd\{[^}]*transition:max-height \.24s/.test(SRC) &&

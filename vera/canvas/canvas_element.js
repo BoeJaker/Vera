@@ -189,7 +189,8 @@
       // a whole page starts drawn; anything else starts as source until the toggle says otherwise. What it
       // actually settled on is remembered, so the toggle flips what you can SEE rather than an unset flag.
       const pset = key && el && el._prevOn && Object.prototype.hasOwnProperty.call(el._prevOn, key);
-      const prev = PREVIEWABLE(c.lang) && (pset ? !!el._prevOn[key] : WHOLE_PAGE(c.lang, c.code));
+      const pdef = !el || typeof el.previewOn !== 'function' || el.previewOn();   // the canvas's Preview setting
+      const prev = PREVIEWABLE(c.lang) && (pset ? !!el._prevOn[key] : (pdef && WHOLE_PAGE(c.lang, c.code)));
       if (key && el) { el._prevSeen = el._prevSeen || {}; el._prevSeen[key] = prev; }
       const head = `<div class="vc-codehead">${esc(c.filename || c.lang || 'code')}<span class="sp"></span>`
         + (PREVIEWABLE(c.lang) && key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
@@ -352,9 +353,27 @@
     schedule: c => `<div class="vc-stub"><span class="vc-badge">when</span>
         ${esc(c.when || '')} — ${esc(c.what || '')}</div>`,
 
-    // The escape hatch is the one place canvas content becomes live markup, and
-    // only ever inside this element's shadow root.
-    html: c => c.html || '',
+    /* AN HTML ITEM DRAWS, IN A SANDBOXED FRAME (owner, 2026-09-23: "html items preview by default"). It used to be
+       injected straight into this element's shadow root as live markup — which renders, but inside the page's own
+       origin, where an inline handler or an <img onerror> in something a capability answered with is running in the
+       chat. The frame the code items already preview into is sandboxed with allow-scripts alone: no network, no
+       cookies, no same-origin. Same drawing, none of that reach.
+       The head carries the switch, and the Preview setting decides which way it starts. */
+    html: (c, size, key, el) => {
+      const src = String(c.html || '');
+      if (!src) return '<div class="vc-dim">nothing to draw yet</div>';
+      const pset = key && el && el._prevOn && Object.prototype.hasOwnProperty.call(el._prevOn, key);
+      const pdef = !el || typeof el.previewOn !== 'function' || el.previewOn();
+      const prev = key ? (pset ? !!el._prevOn[key] : pdef) : pdef;
+      if (key && el) { el._prevSeen = el._prevSeen || {}; el._prevSeen[key] = prev; }
+      const head = `<div class="vc-codehead">${esc(c.title || 'html')}<span class="sp"></span>`
+        + (key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Draw it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
+        + '</div>';
+      const body = prev && key
+        ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="html"><span class="vc-dim">drawing…</span></div>`
+        : `<pre class="vc-pre vc-code"><code>${esc(src)}</code></pre>`;
+      return `<div class="vc-codewrap">${head}${body}</div>`;
+    },
   };
 
   const CSS = `
@@ -1014,7 +1033,8 @@
   }
   /* what Vera can also do: the document's suggestions and those any live item carries; each names the kind and content
      it becomes; one already on the canvas (its key exists) is 'taken' */
-  function suggestionsOf(doc, blocks, focusMid) {
+  function suggestionsOf(doc, blocks, focusMid, o) {
+    const offer = String((o && o.explodeOffer) || 'both').toLowerCase();   // both · code · never (the canvas's setting)
     const out = []; const have = new Set((blocks || []).filter(b => b && b.key).map(b => String(b.key)));
     const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'item';
     const push = (s, mid) => { if (!s) return; const o = typeof s === 'string' ? { n: s } : s; const n = String(o.n || o.title || o.text || o.label || ''); if (!n) return;
@@ -1028,9 +1048,10 @@
        decides"). A code item of more than a screenful, and a passage long enough to have structure, add
        themselves to "Vera can also"; taking one builds the explode item BOUND to it, so the diagram and the
        source light each other by span. Anything already exploded does not ask again, and at most two ask at
-       once so the rail stays a rail. */
+       once so the rail stays a rail. How much it offers is the reader's own setting — both, code alone, or never
+       (owner, 2026-09-23); "never" still leaves every other way in (the message action, the fence button, /explode). */
     let offered = 0;
-    (blocks || []).forEach((b) => {
+    if (offer !== 'never') (blocks || []).forEach((b) => {
       if (offered >= 2 || !b || !b.key || (b.state || 'now') === 'hidden') return;
       const c = b.content || {}; const k = String(b.key);
       if (have.has('explode:' + k)) return;
@@ -1043,7 +1064,7 @@
         offered++;
         push({ n: 'Explode this code', kind: 'explode', key: 'explode:' + k,
                content: { binds: k, title: String(c.filename || c.title || 'code') + ' - exploded' } }, at || focusMid);
-      } else if (prose && prose.length >= 800) {
+      } else if (prose && prose.length >= 800 && offer === 'both') {
         offered++;
         push({ n: 'Explode this passage', kind: 'explode', key: 'explode:' + k,
                content: { text: prose.slice(0, 20000), title: String(c.title || 'passage') + ' - exploded' } }, at || focusMid);
@@ -1101,7 +1122,15 @@
   const EDITABLE = ['note', 'markdown', 'code', 'html'];
 
   class VeraCanvas extends (typeof HTMLElement !== 'undefined' ? HTMLElement : class {}) {
-    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks']; }
+    /* align · preview · explode-offer are the canvas's SETTINGS (the owner's four decisions, 2026-09-23), handed down
+       from the page's Settings rather than decided here:
+         align="held|strict"        held (the default) holds an item in the column's own viewport; strict keeps the old
+                                    projection — always exactly level with its turn, the column scrolled in step,
+                                    which is what somebody watching one long turn wants.
+         preview="on|off"           whether an HTML item, and a code block that is a whole page, DRAW by default or
+                                    show their source. Either way the drawing is a sandboxed frame.
+         explode-offer="both|code|never"  whether the canvas offers to explode a code item, a prose item, or neither. */
+    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer']; }
 
     constructor() {
       super();
@@ -1153,7 +1182,14 @@
       if (name === 'columns' && this._doc) this.render(this._doc);
       if (name === 'rail' && this.shadowRoot.childElementCount) { if (this.hasAttribute('rail')) this._railMount(); else { const r = this.shadowRoot.getElementById('rail'); if (r) r.hidden = true; if (this._railTimer) { clearInterval(this._railTimer); this._railTimer = null; } } }
       if (name === 'session-id' && this._railTimer) this._railRefresh();
+      // a setting changed: preview and the explode offer are drawn, alignment is placed
+      if ((name === 'preview' || name === 'explode-offer') && this._doc) this.render(this._doc);
+      if (name === 'align' && this.hasAttribute('stage')) { this._view = null; this._placeNow(); }
     }
+    /* held (the default) or strict: the one place the two regimes are named, so nothing else has to ask twice */
+    strictAlign() { return String(this.getAttribute('align') || 'held').toLowerCase() === 'strict'; }
+    previewOn() { return String(this.getAttribute('preview') || 'on').toLowerCase() !== 'off'; }
+    explodeOffer() { const v = String(this.getAttribute('explode-offer') || 'both').toLowerCase(); return ['both', 'code', 'never'].indexOf(v) >= 0 ? v : 'both'; }
     /* ── the stage (the column's split projection): the host hands the transcript's turn tops ({mid:{top,height}} in
        the transcript's scroll frame) and keeps the column's scroll in step; the element places and reports. ── */
     setTurns(turns, o) {
@@ -1179,6 +1215,16 @@
       this._scrollTop = Math.max(0, Math.round(msgsScrollTop || 0));
       this._viewTop = msgsTopClient || 0;
       if (this._view == null) this._view = 0;                // the stage regime's floor for a turn-less item
+      /* STRICT ALIGNMENT (align="strict"): the column IS the transcript's scroll frame — an item is always exactly
+         level with its turn, so the column has to be scrolled in step, and an item can be carried off the bottom
+         with the turn it belongs to. That is the whole point of asking for it, and it is the mode this element was
+         before held layout; it is kept because watching one long turn is a real way to work (owner, 2026-09-23). */
+      if (this.strictAlign()) {
+        const body = this.shadowRoot.getElementById('body');
+        if (body) { const br = body.getBoundingClientRect();
+          body.scrollTop = Math.max(0, Math.round(this._scrollTop + st.offsetTop - ((msgsTopClient || 0) - br.top)));
+          this._view = Math.max(0, body.scrollTop - st.offsetTop); }
+      }
       if (before !== this._scrollTop || this._placed == null) this._placeNow();
     }
     /* the name the host used while the column was a projection of the transcript; kept so an older page still
@@ -1212,13 +1258,19 @@
       const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);   // the sticky heads overlay the stage's top: nothing is placed under them
       const body = this.shadowRoot.getElementById('body');
-      const V = body ? body.clientHeight : 0;                                  // the column's OWN viewport — the held regime's bound
-      /* and the bound every item's size is a share of (§3.2): published once here, so the CSS can size a face
-         against the column rather than against a number picked when the column was 460px tall */
-      if (V && this._vh !== V) { this._vh = V; this.style.setProperty('--vc-vh', V + 'px'); }
+      /* the column's OWN height. Two different uses, and only one of them is about the regime:
+           VH — what a size's ceiling is a share of (§3.2). The column is this tall whichever way items are aligned.
+           V  — what the HELD regime bounds a position against. Strict hands the placer none, which is exactly its
+                old projection (place()'s `stage` regime): one flag, two behaviours, no second placer. */
+      const strict = this.strictAlign();
+      const VH = body ? body.clientHeight : 0;
+      const V = strict ? 0 : VH;
+      if (VH && this._vh !== VH) { this._vh = VH; this.style.setProperty('--vc-vh', VH + 'px'); }
       /* an item taller than the column is capped and scrolls its own body rather than running off the end. Written
          in three passes — clear every cap, read every height, then set the caps — because this runs on every scroll
-         frame now, and a write/read per card in one loop is a layout flush per card. */
+         frame now, and a write/read per card in one loop is a layout flush per card.
+         Strict alignment caps nothing (V is 0 there): an item is level with its turn and as tall as it is, and the
+         column scrolls the whole transcript — which is the regime the reader asked for. */
       const capH = Math.max(120, V - pad - 10);
       if (V) { cards.forEach((c) => { if (c.style.maxHeight) { c.style.maxHeight = ''; c.classList.remove('capped'); } });
         const hs = cards.map((c) => c.offsetHeight);
@@ -1244,8 +1296,9 @@
       /* THE STAGE IS THE ITEMS' OWN HEIGHT, not the transcript's. It used to be made as tall as the whole transcript
          so the column could be driven from the transcript's scrollTop — the projection this replaces. */
       st.style.height = (P.mode === 'stage' ? Math.max(P.height, (this._turnsH || 0) + 40) : P.height) + 'px';
-      // nothing overflows: the column has no business being scrolled somewhere (it may have been, before this)
-      if (body && P.mode !== 'packed' && body.scrollTop && st.offsetHeight <= body.clientHeight) body.scrollTop = 0;
+      // nothing overflows: the column has no business being scrolled somewhere (it may have been, before this).
+      // Never in strict, where the scroll is the transcript's and setView has just written it.
+      if (body && !strict && P.mode !== 'packed' && body.scrollTop && st.offsetHeight <= body.clientHeight) body.scrollTop = 0;
       this._placed = P;
       this._liveLayout();
       // the fold set changed: the heights it was judged on are stale by exactly those items — place once more
@@ -1334,7 +1387,7 @@
       // Vera can also do (the suggestions the document and the live items carry)
       const decisions = now.concat(pinned).map(b => ({ b, d: decisionOf(b) })).filter(x => x.d);
       const decision = (decisions.find(x => !x.d.answer) || decisions[0] || {}).d || null;
-      const suggs = suggestionsOf(doc, keyed, focusMid); this._suggs = suggs;
+      const suggs = suggestionsOf(doc, keyed, focusMid, { explodeOffer: this.explodeOffer() }); this._suggs = suggs;
       const nowTxt = plainDoc ? (now.length ? now.length + (now.length === 1 ? ' block' : ' blocks') : 'nothing yet') + ' · ' + (doc.mode || 'static') + (decision && !decision.answer ? ' · waiting on you' : '') : nowText(now, decision, suggs);
       const titleOf = b => blockTitle(b);
       const askHtml = d => `<div class="askb" data-w="canvas.decision">
@@ -1668,7 +1721,8 @@
           else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = ''; }
           else if (kind === 'preview') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);
           inner.setAttribute('sandbox', 'allow-scripts');   // no network, no cookies, no same-origin: it only draws
-          h.textContent = ''; const cc = this._contentOf(key) || {}; inner.srcdoc = previewDoc(h.dataset.lang || cc.lang, cc.code || ''); }
+          // a code item previews its code; an html item previews the page it IS (its content field is `html`)
+          h.textContent = ''; const cc = this._contentOf(key) || {}; inner.srcdoc = previewDoc(h.dataset.lang || cc.lang, cc.code || cc.html || ''); }
           else if (kind === 'explode') { inner = document.createElement('vera-graph-embed'); h.textContent = '';
             ensureLib('/ui/vera-graph-embed.js', 'vera-graph-embed');
             this._explodeAttrs(inner, key);

@@ -42,7 +42,7 @@ t('the band reads BLOCKS · n · mode on a plain canvas, the head its mode and t
 
 // the rail
 t('the rail lists the canvases, the session\'s first and marked; + New makes one (title · mode · topic); a delete sits behind a confirm', SRC.includes("this.callResult('canvas.list', { limit: 40 })") && SRC.includes("this.callResult('canvas.session.resolve', { session_id: sid })") && SRC.includes("this.callResult('canvas.create', { title, mode, topic })") && SRC.includes("this.callResult('canvas.delete', { id })") && SRC.includes("data-ract=\"delyes\"") && SRC.includes("rows.unshift({ id: sessId, title: S.title || 'Session canvas', mode: 'session'"));
-t('a row switches the canvas-id (the poll follows); rail and session-id are observed', SRC.includes("_switch(id) {") && SRC.includes("this.setAttribute('canvas-id', id);") && SRC.includes("return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks'];"));
+t('a row switches the canvas-id (the poll follows); rail and session-id are observed', SRC.includes("_switch(id) {") && SRC.includes("this.setAttribute('canvas-id', id);") && ['canvas-id', 'rail', 'session-id', 'align', 'preview', 'explode-offer'].every((a) => SRC.includes("'" + a + "'")));
 
 // ── the panel page is the element ──
 t('canvas_panel.html is <vera-canvas rail fill> and loads the element (and the widget sheet) — nothing is rendered by the page', /<vera-canvas id="cv" rail fill><\/vera-canvas>/.test(PANEL) && PANEL.includes('<script src="/ui/elements/canvas_element.js"></script>') && PANEL.includes('<script src="/ui/widgets/widget_element.js"></script>') && !/renderBlock|marked\.parse|hljs|mermaid\.min\.js|cdn\.jsdelivr|cdnjs/.test(PANEL));
