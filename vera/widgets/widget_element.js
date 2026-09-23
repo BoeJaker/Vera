@@ -72,7 +72,7 @@
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
   const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'matrix', matrix: 'matrix', donut: 'parts',
                   stack: 'items', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages', globe: 'points',
-                  calendar: 'calendar', string: 'string', kv: 'values', pipes: 'graph', context_graph: 'graph', scatter: 'points', panel: 'panel', composite: 'composite',
+                  calendar: 'calendar', string: 'string', kv: 'values', pipes: 'graph', context_graph: 'graph', structgraph: 'graph', scatter: 'points', panel: 'panel', composite: 'composite',
                   // the Widgets board's still forms, drawn in their own right
                   feed: 'events', gallery: 'items', terminal: 'string', agenda: 'calendar', people: 'items', links: 'items', announcement: 'string', board: 'items', hero: 'level', gauge: 'level', carousel: 'items',
                   'small-multiples': 'series', ring: 'level', area: 'series', histogram: 'values', waterfall: 'values', treemap: 'parts', radar: 'values', gantt: 'stages', flow: 'graph', bullet: 'values',
@@ -226,6 +226,19 @@
     kv: () => ({ status: 'serving', node: 'ct126', model: 'qwen3:30b', in_flight: 4, waiting: 'step 5' }),
     pills: () => [['redis', 'ok'], ['neo4j', 'ok'], ['ollama', 'running'], ['ct130', 'down'], ['gate', 'ok']].map((r) => ({ name: r[0], status: r[1] })),
     context_graph: () => { const g = SAMPLE.graph(); return { nodes: g.nodes, rels: g.links.map((l) => ({ from: l.from, to: l.to, kind: l.kind })) }; },
+    /* a structured graph's sample is a small, HONEST Explode contract — every card carries its span and the layer
+       and engine that found it, every edge its resolution — because the gallery draws a form from its sample, and a
+       sample that breaks the contract's own rules would teach the wrong shape to whoever copies it */
+    structgraph: () => ({ kind: 'code', source: { path: 'vera/evolve/ollama_gate.py', label: 'ollama_gate.py' },
+      layout: { direction: 'LR', mode: 'dependency' },
+      layers: [{ id: 'symbols', label: 'Symbols', kind: 'entity', by: 'code_explode_core', on: true }],
+      groups: [{ id: 'g1', label: 'ollama_gate.py' }],
+      cards: [{ id: 'c1', kind: 'function', label: 'acquire', span: [40, 320], line: 3, line_end: 14, group: 'g1', layer: 'symbols', by: 'code_explode_core' },
+              { id: 'c2', kind: 'function', label: 'release', span: [330, 520], line: 16, line_end: 24, group: 'g1', layer: 'symbols', by: 'code_explode_core' },
+              { id: 'c3', kind: 'class', label: 'Lease', span: [540, 980], line: 26, line_end: 58, group: 'g1', layer: 'symbols', by: 'code_explode_core' }],
+      edges: [{ from: 'c1', to: 'c3', label: 'RETURNS', resolution: 'exact', layer: 'symbols' },
+              { from: 'c2', to: 'c3', label: 'TAKES', resolution: 'exact', layer: 'symbols' }],
+      assessments: [] }),
     // ── the boards' forms: a face each, the board's own demo made data (so the gallery and the pickers show the form as drawn) ──
     feed: () => [['system', 'Digest gate landed — 312caef', 'The second boot skipped the pull entirely. Four re-embeds became none; boot is 18 s again.', 'aide', '14:44'], ['dream', 'Nightly review: three writers still touch the tree', 'state_paths, the notebook exporter and the media mirror write inside the repo.', 'dream director', '06:02'], ['team', 'ct130 is back — for now', 'Brought up after the connect timeout; the prober has it on backoff.', 'boejaker', 'yesterday'], ['markets', 'BTC · the March gap filled', 'QChart flagged the fill at 14:41. The backtest waiting on it is unblocked.', 'markets.watch', '14:41']].map((r) => ({ kind: r[0], title: r[1], body: r[2], who: r[3], when: r[4] })),
     table: () => [['ct126', 62, 71, 4], ['ct121', 41, 54, 1], ['ct118', 18, 48, 0], ['pxstore', 12, 42, 0], ['workstation', 33, 51, 2], ['ct130', 0, 0, 0]].map((r) => ({ node: r[0], load: r[1], temp: r[2], in_flight: r[3] })),
@@ -352,6 +365,8 @@
     if (form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'stack' || form === 'matrix') { const kv = keyed(d); return kv.length ? kv.length + ' · ' + esc(kv[0][0]) + ' ' + fmt(kv[0][1]) : ''; }
     if (form === 'stepper') { const st = (d.stages || d.steps || d); const arr = Array.isArray(st) ? st : []; const done = arr.filter((s) => s && (s.done || s.state === 'done' || s.status === 'done')).length; return arr.length ? done + ' / ' + arr.length : ''; }
     if (form === 'string') return esc(String(typeof d === 'string' ? d : (d.text ?? d.value ?? d.title ?? '')).slice(0, 24));
+    // a structured graph at sticker size: what it found, which is the only thing that fits
+    if (form === 'structgraph') { const c = (d && (d.contract || d.doc || d)) || {}; const n = (c.cards || []).length; return n ? n + (n === 1 ? ' card' : ' cards') : ''; }
     if (DRAWN[form] === 'ohlcv') { const r = rows(d); return r.length ? fmt(num(r[r.length - 1].close ?? r[r.length - 1].c)) : ''; }
     if (DRAWN[form] === 'matrix' || DRAWN[form] === 'calendar') { const r = rows(d); const n = r.length || ((d && typeof d === 'object') ? Object.keys(d).length : 0); return n ? n + ' rows' : ''; }
     const r = rows(d); return r.length ? r.length + (r.length === 1 ? ' row' : ' rows') : (typeof d === 'string' ? esc(d.slice(0, 24)) : '');
@@ -570,6 +585,32 @@
     const pid = (o && o.panel) || (d && typeof d === 'object' && d.panel) || (typeof d === 'string' ? d : '');
     if (!pid) return EMPTY('a panel widget names a registered panel (panel:<id>)');
     return '<iframe class="vw-panel" src="' + esc((o && o.base) || '') + '/ui/panel/window?id=' + encodeURIComponent(pid) + '" style="height:' + Math.max(H, 160) + 'px" title="' + esc(pid) + '"></iframe>';
+  };
+  /* THE EXPLODE CONTRACT, AS A WIDGET (the canvas's final form §3.6a). The data IS the contract — {kind, source,
+     layout, layers, groups, cards, edges, assessments} — and the face is the estate's own renderer, which the chat,
+     the canvas and the fabric panel all already host: one contract, one drawing of it. A widget wrapper buys the
+     contract the things a bespoke drawer never had: five sizes, a source it can read again (code.explode ·
+     nlp.explode.prose), and a place in any board a widget can stand in.
+     At the small sizes a diagram is not readable, so they answer what it FOUND; from m up the renderer is mounted
+     into a slot (hydrate below), the way the context graph and mermaid already are. */
+  const sgDoc = (d) => { const c = (d && typeof d === 'object') ? (d.contract || d.doc || d) : null;
+    return (c && (Array.isArray(c.cards) || Array.isArray(c.edges))) ? c : null; };
+  const sgCounts = (c) => ({ cards: (c.cards || []).length, edges: (c.edges || []).length,
+    layers: (c.layers || []).filter((l) => l && l.on !== false).length, kind: String(c.kind || '') });
+  R.structgraph = (d, H, o) => {
+    o = o || {}; const c = sgDoc(d);
+    if (!c) return EMPTY('a structured graph needs an Explode contract');
+    const n = sgCounts(c);
+    if (!n.cards && !n.edges) return EMPTY('nothing was found in this source');
+    const words = n.cards + (n.cards === 1 ? ' card' : ' cards') + (n.edges ? ' · ' + n.edges + (n.edges === 1 ? ' relation' : ' relations') : '');
+    /* xs and s never reach here: the element draws every form's sticker and chip itself, from glyphOf + figure()
+       (below), and a form inventing its own small face would be the one that looked unlike all the others. */
+    const attrs = ['renderer="struct"'];
+    if (o.mode || (c.layout && c.layout.mode)) attrs.push('mode="' + esc(String(o.mode || c.layout.mode)) + '"');
+    /* the counts stand in until the renderer is mounted — NOT the empty state: `wempty` is how the element and its
+       tests say "this form has no face", and this one has a face, it is just a moment away from being drawn */
+    return '<div class="vw-sg" data-sg="' + esc(JSON.stringify(c)) + '" data-sg-attrs="' + esc(attrs.join(' ')) +
+      '" style="position:relative;height:' + Math.max(H, 180) + 'px"><span class="vw-sg-w">' + esc(words) + '</span></div>';
   };
   R.composite = (d, H, o) => {
     const rec = (o && o.record) || {}; const kids = Array.isArray(rec.children) ? rec.children : [];
@@ -1458,6 +1499,17 @@
     if (cgs.length && window.customElements && customElements.get('vera-context-graph')) cgs.forEach((slot) => { slot.dataset.live = '1'; let d = {}; try { d = JSON.parse(slot.dataset.cg || '{}'); } catch (_) {}
       const el = document.createElement('vera-context-graph'); el.style.cssText = 'position:absolute;inset:0'; slot.innerHTML = ''; slot.appendChild(el);
       try { el.setContext((d.nodes || []).map((x) => Object.assign({ source: x.source || x.family || x.lane || 'context' }, x)), (d.rels || d.edges || []).map((e) => ({ from: e.from, to: e.to, label: e.kind || e.label || '' })), { focus: (d.nodes || []).filter((x) => x.included !== false).map((x) => x.id) }); } catch (_) {} n++; });
+    /* a structured graph (the Explode contract): the estate's own embed, handed the contract the widget already
+       holds — setDoc, never a re-fetch, because the widget's source has done the reading (§3.6a) */
+    const sgs = R0.querySelectorAll ? R0.querySelectorAll('.vw-sg[data-sg]:not([data-live])') : [];
+    if (sgs.length && window.customElements && customElements.get('vera-graph-embed')) sgs.forEach((slot) => { slot.dataset.live = '1';
+      let doc = null; try { doc = JSON.parse(slot.dataset.sg || 'null'); } catch (_) {}
+      const el = document.createElement('vera-graph-embed');
+      String(slot.dataset.sgAttrs || '').split(' ').filter(Boolean).forEach((a) => { const i = a.indexOf('='); if (i < 0) return;
+        try { el.setAttribute(a.slice(0, i), a.slice(i + 1).replace(/^"|"$/g, '')); } catch (_) {} });
+      el.setAttribute('bare', ''); el.style.cssText = 'position:absolute;inset:0';
+      slot.innerHTML = ''; slot.appendChild(el);
+      try { if (doc && typeof el.setDoc === 'function') el.setDoc(doc); } catch (_) {} n++; });
     const slots = R0.querySelectorAll ? R0.querySelectorAll('.vw-mm[data-mm-code]:not([data-live])') : [];
     if (!slots.length || !(window.customElements && customElements.get('vera-mermaid'))) return n;
     slots.forEach((slot) => { slot.dataset.live = '1'; const el = document.createElement('vera-mermaid'); el.setAttribute('bare', ''); el.setAttribute('fill', ''); slot.innerHTML = ''; slot.appendChild(el); try { el.render(slot.dataset.mmCode); } catch (_) {} n++; });
@@ -1510,6 +1562,10 @@ span.vw-sampled{opacity:.85}
 .vw-str{white-space:pre-wrap;font-size:10.5px;line-height:1.5;color:var(--text,#d8dce4);width:100%}
 .vw-mm{width:100%;min-height:70px;height:100%;display:flex;align-items:center;justify-content:center}.vw-mm small{color:var(--dim2,#8a92a0);font-family:var(--mono,ui-monospace,monospace);font-size:9px}.vw-mm vera-mermaid{display:block;width:100%;height:100%}
 .vw-panel{width:100%;border:none;background:transparent;display:block}
+/* a structured graph: the slot the estate's embed is mounted into, and the counts it stands in for until then */
+.vw-sg{width:100%;display:block;overflow:hidden}
+.vw-sg vera-graph-embed{display:block;width:100%;height:100%}
+.vw-sg>.vw-sg-w{position:absolute;left:7px;top:6px;color:var(--dim2,#8a92a0);font-size:9.5px;font-family:var(--mono,ui-monospace,monospace)}
 .vw-l{display:grid;grid-template-columns:1fr 160px;gap:10px;width:100%;align-items:start}.vw-xl{display:grid;grid-template-columns:1fr 180px;gap:10px;width:100%;align-items:start}.vw-xl .vw-xltable{grid-column:1/-1}
 .vw-main{min-width:0}.vw-detail{display:flex;flex-direction:column;gap:3px;font-size:9.5px;border-left:1px solid var(--border,rgba(255,255,255,.09));padding-left:10px}.vw-detail div{display:flex;justify-content:space-between;gap:8px;color:var(--text,#d8dce4)}.vw-detail span{color:var(--dim2,#8a92a0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-detail b{font-family:var(--mono,ui-monospace,monospace);font-weight:400}
 .vw-comp{display:grid;gap:8px;width:100%;grid-template-columns:1fr 1fr}.vw-comp-rows,.vw-comp-report{grid-template-columns:1fr}.vw-comp-rail{grid-template-columns:1fr}.vw-comp-2x2{grid-template-columns:1fr 1fr}

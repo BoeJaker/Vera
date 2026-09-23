@@ -152,6 +152,13 @@ FORMS: List[Dict[str, Any]] = [
     _F("pipes", "graph", ("flat", "iso"), glyph="pipes", motion=True, options=("flow", "idle"), name="Pipes", boards=("motion",)),
     _F("topology", "graph", ("flat", "iso"), glyph="topology", options=("floors",), name="Topology", boards=("widgets",)),
     _F("diagram", "graph", glyph="diagram", name="Diagram", boards=("reply",)),
+    # The Explode contract as a widget (the canvas's final form §3.6a): code or prose read as a STRUCTURED graph -
+    # bands, columns, cards with spans, edges with resolutions, assessments, each card and edge carrying the layer
+    # and the engine that found it. The face is the estate's own <vera-graph-embed renderer="struct">, so this form
+    # is a wrapper over one contract and one renderer, never a second drawing of either. Its data is the contract;
+    # its source is code.explode / nlp.explode.prose, which is what gives an exploded item a refresh.
+    _F("structgraph", "graph", glyph="structgraph", options=("mode", "layers", "assess"),
+       name="Structured graph", boards=("widgets",)),
     _F("city", "graph", ("iso",), glyph="city", motion=True, options=("footprint", "height", "colour", "lamp"), name="City", boards=("motion",)),
     _F("orbit", "items", glyph="orbit", motion=True, options=("rings", "size"), name="Orbit", boards=("motion",)),
     _F("context_graph", "graph", glyph="context_graph", options=("lanes", "labels")),
