@@ -68,9 +68,9 @@ t('the selected card is scrolled into view inside the diagram', /ext\.sel\) \{ c
 // Three things, none of them the diagram: the binding could not be WRITTEN from canvas.append (no key), the slot
 // was 140px however tall the diagram was asked to be, and an item bound to something that is not here sat at
 // "exploding..." for ever. The first is a capability (tests/test_canvas_explode_item.py); these two are here.
-t('the explode slot is as tall as the diagram was asked to be, not a 110px live slot',
-  /const h = Math\.max\(160, Math\.min\(900, parseInt\(c\.height, 10\) \|\| 300\)\);/.test(CANVAS)
-  && /data-live="explode" data-key="\$\{esc\(key\)\}" style="height:\$\{h\}px;min-height:\$\{h\}px"/.test(CANVAS));
+t('the slot takes what the ITEM can give it — a slot taller than its item is cut off, because an item hides its overflow',
+  /\.vc-xp \.vc-live\{flex:1 1 auto;height:auto;min-height:140px\}/.test(CANVAS)
+  && !/style="height:\$\{h\}px/.test(CANVAS));
 t('an item bound to something that is not on this canvas SAYS so, and asks for nothing',
   /if \(c\.binds && !bound\)/.test(CANVAS) && /which is not an item on this canvas/.test(CANVAS)
   && /\['code', 'path', 'text', 'record', 'lang', 'depth'\]\.forEach\(\(a\) => embed\.removeAttribute\(a\)\)/.test(CANVAS));

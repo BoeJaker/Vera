@@ -215,11 +215,12 @@
       const src = c.binds ? 'bound to ' + String(c.binds) : (c.record ? 'record ' + String(c.record) : (c.path || (c.paths && [].concat(c.paths).join(', ')) || (c.text ? 'a passage' : (c.code ? 'a snippet' : 'nothing yet'))));
       const head = `<div class="vc-th"><i class="dot on"></i><b>${esc(c.title || 'Explode')}</b><span class="mono">${esc(String(src).slice(0, 60))}</span><span class="sp"></span>`
         + (c.binds ? '<button class="ib" data-act="xpsync" title="Light the whole of the bound source again">clear</button>' : '') + '</div>';
-      // the slot is as tall as the diagram was asked to be: a live slot is 110px by default, so a 300px diagram
-      // drew into a 140px sliver and looked like nothing at all
-      const h = Math.max(160, Math.min(900, parseInt(c.height, 10) || 300));
+      /* The slot takes what the ITEM can give it. Forcing the asked-for height here made the slot taller than
+         the item that holds it (320 in a 242 box, measured in the page), and an item is `overflow:hidden` -- so
+         the bottom of every diagram was cut off. An item's height is its SIZE, which is the canvas's own model
+         and what a reader drags; `height` on the content is a hint that picks that size when the item is made. */
       return `<div class="vc-xp" data-w="canvas.explode"${c.binds ? ` data-binds="${esc(c.binds)}"` : ''}>${head}`
-        + `<div class="vc-live" data-live="explode" data-key="${esc(key)}" style="height:${h}px;min-height:${h}px">`
+        + `<div class="vc-live" data-live="explode" data-key="${esc(key)}">`
         + `<span class="vc-dim">exploding…</span></div></div>`;
     },
 
@@ -457,7 +458,8 @@
   .vc-code .vc-line.lit .vc-lno{opacity:1;color:var(--acc,#5a9e8f)}
   .vc-code .vc-line.tap{background:color-mix(in srgb,var(--acc,#5a9e8f) 9%,transparent)}
   .vc-xp{display:flex;flex-direction:column;min-height:0}
-  .vc-xp .vc-live{min-height:140px}
+  .vc-xp{flex:1 1 auto}
+  .vc-xp .vc-live{flex:1 1 auto;height:auto;min-height:140px}
   .vc-dim{opacity:.75}
   .vc-out{max-height:200px;overflow:auto}
   .vc-codehead{font-size:9.5px;color:var(--dim,#6b7480);margin-bottom:2px;
