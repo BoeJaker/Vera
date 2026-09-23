@@ -654,11 +654,23 @@
   .it-a button.on{color:var(--acc,#5a9e8f)}
   .it-a button.ctx{margin-left:auto}
   .it-a button.ctx.on{color:var(--acc2,#5ec9a0)}
-  .it-bd{padding:2px 8px 6px;overflow:auto;flex:1 1 auto;min-height:0}
-  .it[data-size="s"] .it-bd{max-height:72px}
-  .it[data-size="m"] .it-bd{max-height:180px}
-  .it[data-size="l"] .it-bd{max-height:340px}
+  /* A SIZE IS A BOUND, AND THE CONTENT DECIDES INSIDE IT (the canvas's final form §3.2). An item has always taken
+     only the height its content needs; what was fixed was the CEILING — 72 · 180 · 340 flat pixels, whatever the
+     column. In a tall column that made every item a letterbox with its own scrollbar while the column below it sat
+     empty, and in a short one an "l" item filled the whole thing. The ceiling is a share of the column's own
+     viewport now (--vc-vh, measured and set by _placeNow), held between a floor and a cap so a very short or very
+     tall column still reads: a small item is a glance, a medium one the working face, a large one the whole of a
+     diagram or a page. --vc-vh has a fallback, so an element that never measures (the panel, a test) keeps
+     sensible numbers.
+     The ceilings are a TRANSITION, so growing or shrinking an item glides rather than jumping (§4.3). */
+  .it-bd{padding:2px 8px 6px;overflow:auto;flex:1 1 auto;min-height:0;transition:max-height .24s cubic-bezier(.2,.7,.3,1)}
+  .it[data-size="s"] .it-bd{max-height:clamp(56px,calc(.16 * var(--vc-vh,460px)),170px)}
+  .it[data-size="m"] .it-bd{max-height:clamp(120px,calc(.34 * var(--vc-vh,460px)),430px)}
+  .it[data-size="l"] .it-bd{max-height:clamp(210px,calc(.58 * var(--vc-vh,460px)),780px)}
   .it[data-size="xl"] .it-bd{max-height:none}
+  @media (prefers-reduced-motion:reduce){.it-bd{transition:none}}
+  /* while the transcript is scrolling, a size change is a correction, not a move (the rule .stage already keeps) */
+  .stage[data-scrolling] .it-bd{transition:none}
   /* the edit rail — the canvas is a document you can change */
   .it-ft{display:flex;align-items:center;gap:4px;padding:3px 6px 5px;margin-top:auto;border-top:1px solid rgba(255,255,255,.04);flex:0 0 auto}
   /* what this turn is waiting on: the decision, its answers */
@@ -1051,8 +1063,15 @@
     if (decision) return (hhmm(decision.answered) ? hhmm(decision.answered) + ' · ' : '') + 'answered' + (ns ? ' · ' + ns + ' suggested' : '');
     return ns ? ns + ' suggested' : '';
   }
-  /* a dragged height, as the size record it becomes */
-  function sizeOfHeight(h) { h = Number(h) || 0; return h <= 96 ? 's' : h <= 210 ? 'm' : h <= 380 ? 'l' : 'xl'; }
+  /* A DRAGGED HEIGHT, AS THE SIZE RECORD IT BECOMES. The thresholds follow the same bounds the faces are drawn to
+     (§3.2), so dragging an item to "about a third of the column" records `m` in a tall column and in a short one
+     alike; without a viewport they are the numbers this always used. */
+  function sizeOfHeight(h, vh) {
+    h = Number(h) || 0; vh = Number(vh) || 0;
+    if (!vh) return h <= 96 ? 's' : h <= 210 ? 'm' : h <= 380 ? 'l' : 'xl';
+    const at = (f, lo, hi) => Math.max(lo, Math.min(f * vh, hi));
+    return h <= at(.16, 56, 170) + 24 ? 's' : h <= at(.34, 120, 430) + 30 ? 'm' : h <= at(.58, 210, 780) + 40 ? 'l' : 'xl';
+  }
   /* the turns in order of their measured tops; an item is aged when its turn is more than `back` turns behind the focus */
   function turnOrder(turns) { const T = turns || {}; return Object.keys(T).filter(k => T[k] && typeof T[k].top === 'number').sort((a, b) => T[a].top - T[b].top); }
   function isAged(mid, focusMid, order, back) {
@@ -1194,6 +1213,9 @@
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);   // the sticky heads overlay the stage's top: nothing is placed under them
       const body = this.shadowRoot.getElementById('body');
       const V = body ? body.clientHeight : 0;                                  // the column's OWN viewport — the held regime's bound
+      /* and the bound every item's size is a share of (§3.2): published once here, so the CSS can size a face
+         against the column rather than against a number picked when the column was 460px tall */
+      if (V && this._vh !== V) { this._vh = V; this.style.setProperty('--vc-vh', V + 'px'); }
       /* an item taller than the column is capped and scrolls its own body rather than running off the end. Written
          in three passes — clear every cap, read every height, then set the caps — because this runs on every scroll
          frame now, and a write/read per card in one loop is a layout flush per card. */
@@ -1479,7 +1501,7 @@
         if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
       doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._open.add(key);
-        const size = sizeOfHeight(r.h);
+        const size = sizeOfHeight(r.h, this._vh || 0);   // against the column you dragged it in, not a fixed number
         try { this.dispatchEvent(new CustomEvent('vera:canvas:resized', { bubbles: true, detail: { key, height: r.h, size } })); } catch (e) {}
         if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage')) this._placeNow(); });
       // a picker's search box: the rows that do not carry the words are hidden, a group with none left with them
