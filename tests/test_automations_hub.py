@@ -80,7 +80,7 @@ def _code_only(js):
 
 def test_every_subtab_has_a_pane():
     markup = _markup(_read(PANEL))
-    subtabs = re.findall(r'class="subtab" data-k="([\w-]+)"', markup)
+    subtabs = re.findall(r'class="[^"]*\bnav-btn\b[^"]*" data-k="([\w-]+)"', markup)
     assert len(subtabs) >= 8, subtabs
     for key in subtabs:
         # the nav entry plus at least one pane carrying the same key
@@ -186,8 +186,8 @@ def test_the_workers_panel_nav_and_panes_still_line_up():
     """The removal above deletes a nav entry and its pane. If it ever deletes
     only one of the two, the panel gets a dead tab or an unreachable pane."""
     markup = _markup(_read(WORKERS))
-    navs = re.findall(r'class="snav" data-pane="([\w-]+)"', markup)
-    panes = re.findall(r'class="pane" id="pane-([\w-]+)"', markup)
+    navs = re.findall(r'class="[^"]*\bnav-btn\b[^"]*" data-pane="([\w-]+)"', markup)
+    panes = re.findall(r'class="[^"]*\bpane\b[^"]*" id="pane-([\w-]+)"', markup)
     assert navs, "no nav entries found - the selector drifted"
     missing = [n for n in navs if n not in panes]
     assert not missing, "nav entries with no pane: %s" % missing

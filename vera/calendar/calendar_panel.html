@@ -24,16 +24,12 @@ html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
 #root{ display:flex;height:100vh;min-height:0; }
 
 /* ══ LEFT-HAND MENU (LHM) ═══════════════════════════════ */
-#sidebar{ width:322px;flex-shrink:0;background:var(--bg1);
-  border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0; }
-#side-head{ padding:13px 14px 11px;border-bottom:1px solid var(--border);
-  display:flex;align-items:center;gap:8px;flex-shrink:0; }
-#side-head .ico{ width:24px;height:24px;background:var(--bg2);
-  border:1px solid var(--border2);border-radius:6px;display:flex;
-  align-items:center;justify-content:center;color:var(--acc);font-size:14px; }
-#side-head h1{ margin:0;font-size:12px;font-weight:600;letter-spacing:.04em; }
-#side-head .sub{ font-size:9px;color:var(--dim);letter-spacing:.12em;
-  text-transform:uppercase;margin-top:1px; }
+/* The menu's shell and its header are the shared ones — see /ui/vera-panel.css,
+   which this block was a verbatim copy of. What is the calendar's own is the
+   body below the header (tabs over layers, events and the agent, not a list of
+   sections) and the width that body needs, which is the shared file's knob. */
+:root{ --lhm-width:322px; }
+#sidebar[data-vera-lhm]{ min-height:0; }
 
 /* LHM section tabs */
 #lhm-tabs{ display:flex;gap:3px;padding:8px 8px 0;flex-shrink:0; }

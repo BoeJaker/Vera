@@ -35,70 +35,28 @@
 html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px;-webkit-font-smoothing:antialiased}
 html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 
-/* ── Shell layout ── */
+/* ── Shell layout ──
+   The left-hand menu is the shared one: canonical markup, chrome from
+   /ui/vera-panel.css, behaviour (collapse to an icon rail, publishing itself
+   to whichever shell hosts it, hiding when that shell says it is showing the
+   same menu) from /ui/vera-panel.js. It is not styled here — that is what
+   made this panel's menu read differently from every other one. */
 #shell{display:flex;height:100vh;overflow:hidden}
-#secNav{
-  width:42px;flex-shrink:0;display:flex;flex-direction:column;
-  align-items:center;padding:8px 0;gap:1px;
-  border-right:1px solid var(--border);background:var(--bg1);
-  overflow-y:auto;overflow-x:hidden;min-height:0;
-  scrollbar-width:thin;scrollbar-color:var(--bg3) transparent;
-}
-#secNav::-webkit-scrollbar{width:5px}
-/* Hidden once the host shell confirms it's rendering these same sections
-   as injected sub-menu items itself (VeraPanelBridge's registerNav() +
-   vpb-nav-hosted — see vera-panel-bridge.js). #panes already carries
-   flex:1 in the #shell flex row above, so it fills the freed width with
-   no other adjustment needed. Confirmation-driven, not assumed — opened
-   standalone or mounted somewhere that hasn't adopted nav injection keeps
-   this rail exactly as before. */
-html.vpb-nav-hosted #secNav{display:none}
-#secNav::-webkit-scrollbar-track{background:transparent}
-#secNav::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
-#secNav::-webkit-scrollbar-thumb:hover{background:var(--border2)}
-.snav{
-  writing-mode:vertical-rl;transform:rotate(180deg);
-  font-size:9px;font-weight:700;letter-spacing:1.5px;
-  text-transform:uppercase;font-family:var(--mono);
-  padding:12px 7px;border-radius:3px;cursor:pointer;
-  color:var(--dim2);border:1px solid transparent;
-  transition:all .15s;user-select:none;width:34px;text-align:center;
-}
-.snav:hover{color:var(--text)}
-.snav.on{border-color:var(--border);background:var(--bg2)}
-.snav[data-pane="overview"].on{color:var(--ok)}
-.snav[data-pane="workers"].on{color:var(--acc)}
-.snav[data-pane="nodes"].on{color:#6fd68b}
-.snav[data-pane="ollama"].on{color:var(--gpu)}
-.snav[data-pane="jobs"].on{color:var(--acc3)}
-.snav[data-pane="observe"].on{color:var(--acc4)}
-.snav[data-pane="proxmox"].on{color:#e36b2d}
-.snav[data-pane="storage"].on{color:#d9a441}
-.snav[data-pane="network"].on{color:#4cc9b0}
-.snav[data-pane="connections"].on{color:#9c8cf0}
-.snav[data-pane="docker"].on{color:#2496ed}
-.snav[data-pane="mimic"].on{color:var(--gpu)}
-.snav[data-pane="vllm"].on{color:var(--acc2)}
-.snav[data-pane="catalog"].on{color:#e6b800}
-.snav[data-pane="api"].on{color:var(--acc4)}
-.snav[data-pane="provision"].on{color:var(--acc3)}
-.snav[data-pane="remote"].on{color:#9c8cf0}
-.snav[data-pane="software"].on{color:var(--acc3)}
-.snav[data-pane="integrations"].on{color:#e6b800}
-.snav[data-pane="platforms"].on{color:#e6b800}
-.snav[data-pane="machines"].on{color:#6fd68b}
 .mc-kind{font-family:var(--mono);font-size:8.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--dim2);white-space:nowrap}
 .mc-state{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--dim2)}
 .mc-state.running{color:var(--ok)}.mc-state.unknown{color:var(--warn)}.mc-state.template{color:var(--acc4)}
 .mc-note{display:block;margin-top:1px;font-size:8.5px;color:var(--dim)}
 .mc-acts{display:flex;flex-wrap:wrap;gap:3px}
 .mc-acts .btn{font-size:8px;padding:1px 6px}
-.nsec{writing-mode:vertical-rl;transform:rotate(180deg);flex-shrink:0;width:34px;padding:8px 0 3px;text-align:center;font-family:var(--mono);font-size:7.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--dim);user-select:none}
-#secNav [data-view="models"]{display:none}
-html.view-models #secNav [data-view="estate"]{display:none}
-html.view-models #secNav [data-view="models"]{display:block}
-.navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
-#panes{flex:1;overflow:hidden;position:relative}
+/* This panel is two menus in one file: the Estate's pages, and the model
+   pages the Models tab opens with ?view=models. Only the current view's
+   items exist on screen, and vera-panel.js publishes only those. */
+#nav [data-view="models"]{display:none}
+html.view-models #nav [data-view="estate"]{display:none}
+html.view-models #nav .nav-btn[data-view="models"]{display:flex}
+html.view-models #nav .nav-grp[data-view="models"],
+html.view-models #nav .nav-div[data-view="models"]{display:block}
+#panes{flex:1;overflow:hidden;position:relative;min-width:0}
 .pane{position:absolute;inset:0;display:none;overflow-y:auto;padding:12px}
 .pane.on{display:block}
 
@@ -406,50 +364,52 @@ html.view-models #secNav [data-view="models"]{display:block}
 ::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:var(--border2)}
 </style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 <div id="shell">
-  <!-- Side navigation -->
-  <div id="secNav">
-    <!-- Estate: one list, grouped by the question each section answers. The
-         Models tab opens this same panel with ?view=models and lists only the
-         model panes. -->
-    <div class="nsec" data-view="estate">Overview</div>
-    <div class="snav on" data-pane="overview" data-view="estate" onclick="P.show('overview',this)">Overview</div>
-    <div class="snav" data-pane="estate" data-view="estate" onclick="P.show('estate',this)">Map</div>
-    <div class="snav" data-pane="observe" data-view="estate" onclick="P.show('observe',this)">Observe</div>
-    <div class="snav" data-pane="ops" data-view="estate" onclick="P.show('ops',this)" title="Live operations - the whole estate as planes of nodes, the requests in flight running the pipes between them">Live ops</div>
-    <div class="navdiv" data-view="estate"></div>
-    <div class="nsec" data-view="estate">Machines</div>
-    <div class="snav" data-pane="machines" data-view="estate" onclick="P.show('machines',this)">All</div>
-    <div class="snav" data-pane="workers" data-view="estate" onclick="P.show('workers',this)">Workers</div>
-    <div class="snav" data-pane="proxmox" data-view="estate" onclick="P.show('proxmox',this)">Proxmox</div>
-    <div class="snav" data-pane="docker" data-view="estate" onclick="P.show('docker',this)">Docker</div>
-    <div class="snav" data-pane="sandbox" data-view="estate" onclick="P.show('sandbox',this)">Sandbox</div>
-    <div class="snav" data-pane="connections" data-view="estate" onclick="P.show('connections',this)">Connections</div>
-    <div class="snav" data-pane="remote" data-view="estate" onclick="P.show('remote',this)">Remote</div>
-    <div class="navdiv" data-view="estate"></div>
-    <div class="snav" data-pane="storage" data-view="estate" onclick="P.show('storage',this)">Storage</div>
-    <div class="navdiv" data-view="estate"></div>
-    <div class="snav" data-pane="network" data-view="estate" onclick="P.show('network',this)">Network</div>
-    <div class="navdiv" data-view="estate"></div>
-    <div class="snav" data-pane="provision" data-view="estate" onclick="P.show('provision',this)">Trust</div>
-    <div class="navdiv" data-view="estate"></div>
-    <div class="nsec" data-view="estate">Build</div>
-    <div class="snav" data-pane="build" data-view="estate" onclick="P.show('build',this)">New</div>
-    <div class="snav" data-pane="foundry" data-view="estate" onclick="P.show('foundry',this)">Foundry</div>
-    <div class="snav" data-pane="software" data-view="estate" onclick="P.show('software',this)">Provision</div>
-    <div class="navdiv" data-view="estate"></div>
-    <div class="nsec" data-view="estate">Integrations</div>
-    <div class="snav" data-pane="integrations" data-view="estate" onclick="P.show('integrations',this)">Services</div>
-    <div class="snav" data-pane="platforms" data-view="estate" onclick="P.show('platforms',this)">Platforms</div>
-    <div class="snav" data-pane="ollama" data-view="models" onclick="P.show('ollama',this)">Ollama</div>
-    <div class="snav" data-pane="modelrouting" data-view="models" onclick="P.show('modelrouting',this)">Model Routing</div>
-    <div class="navdiv" data-view="models"></div>
-    <div class="snav" data-pane="mimic" data-view="models" onclick="P.show('mimic',this)">Mimic</div>
-    <div class="snav" data-pane="vllm" data-view="models" onclick="P.show('vllm',this)">vLLM</div>
-    <div class="snav" data-pane="api" data-view="models" onclick="P.show('api',this)">API</div>
-  </div>
+  <!-- The page's left-hand menu, in the one shape every panel uses.
+       Estate: one list, grouped by the question each section answers. The
+       Models tab opens this same panel with ?view=models and lists only the
+       model pages. -->
+  <aside id="sidebar" data-vera-lhm>
+    <div id="side-head">
+      <span class="ico">▦</span>
+      <div><h1 id="lhmTitle">Estate</h1><div class="sub" id="lhmSub">machines &middot; workers</div></div>
+    </div>
+    <nav id="nav">
+      <div class="nav-grp" data-view="estate">Overview</div>
+      <button type="button" class="nav-btn active" data-pane="overview" data-view="estate" title="Overview" onclick="P.show('overview',this)"><span class="gl">▦</span>Overview</button>
+      <button type="button" class="nav-btn" data-pane="estate" data-view="estate" title="Map" onclick="P.show('estate',this)"><span class="gl">⬡</span>Map</button>
+      <button type="button" class="nav-btn" data-pane="observe" data-view="estate" title="Observe" onclick="P.show('observe',this)"><span class="gl">◎</span>Observe</button>
+      <button type="button" class="nav-btn" data-pane="ops" data-view="estate" title="Live ops" onclick="P.show('ops',this)"><span class="gl">✦</span>Live ops</button>
+      <div class="nav-grp" data-view="estate">Machines</div>
+      <button type="button" class="nav-btn" data-pane="machines" data-view="estate" title="All" onclick="P.show('machines',this)"><span class="gl">▤</span>All</button>
+      <button type="button" class="nav-btn" data-pane="workers" data-view="estate" title="Workers" onclick="P.show('workers',this)"><span class="gl">⚙</span>Workers</button>
+      <button type="button" class="nav-btn" data-pane="proxmox" data-view="estate" title="Proxmox" onclick="P.show('proxmox',this)"><span class="gl">▣</span>Proxmox</button>
+      <button type="button" class="nav-btn" data-pane="docker" data-view="estate" title="Docker" onclick="P.show('docker',this)"><span class="gl">◧</span>Docker</button>
+      <button type="button" class="nav-btn" data-pane="sandbox" data-view="estate" title="Sandbox" onclick="P.show('sandbox',this)"><span class="gl">◱</span>Sandbox</button>
+      <button type="button" class="nav-btn" data-pane="connections" data-view="estate" title="Connections" onclick="P.show('connections',this)"><span class="gl">⇄</span>Connections</button>
+      <button type="button" class="nav-btn" data-pane="remote" data-view="estate" title="Remote" onclick="P.show('remote',this)"><span class="gl">↗</span>Remote</button>
+      <div class="nav-div" data-view="estate"></div>
+      <button type="button" class="nav-btn" data-pane="storage" data-view="estate" title="Storage" onclick="P.show('storage',this)"><span class="gl">▥</span>Storage</button>
+      <button type="button" class="nav-btn" data-pane="network" data-view="estate" title="Network" onclick="P.show('network',this)"><span class="gl">⌗</span>Network</button>
+      <button type="button" class="nav-btn" data-pane="provision" data-view="estate" title="Trust" onclick="P.show('provision',this)"><span class="gl">⚿</span>Trust</button>
+      <div class="nav-grp" data-view="estate">Build</div>
+      <button type="button" class="nav-btn" data-pane="build" data-view="estate" title="New" onclick="P.show('build',this)"><span class="gl">＋</span>New</button>
+      <button type="button" class="nav-btn" data-pane="foundry" data-view="estate" title="Foundry" onclick="P.show('foundry',this)"><span class="gl">⚗</span>Foundry</button>
+      <button type="button" class="nav-btn" data-pane="software" data-view="estate" title="Provision" onclick="P.show('software',this)"><span class="gl">⇩</span>Provision</button>
+      <div class="nav-grp" data-view="estate">Integrations</div>
+      <button type="button" class="nav-btn" data-pane="integrations" data-view="estate" title="Services" onclick="P.show('integrations',this)"><span class="gl">◈</span>Services</button>
+      <button type="button" class="nav-btn" data-pane="platforms" data-view="estate" title="Platforms" onclick="P.show('platforms',this)"><span class="gl">▩</span>Platforms</button>
+      <button type="button" class="nav-btn" data-pane="ollama" data-view="models" title="Ollama" onclick="P.show('ollama',this)"><span class="gl">◍</span>Ollama</button>
+      <button type="button" class="nav-btn" data-pane="modelrouting" data-view="models" title="Model Routing" onclick="P.show('modelrouting',this)"><span class="gl">⇉</span>Model Routing</button>
+      <div class="nav-div" data-view="models"></div>
+      <button type="button" class="nav-btn" data-pane="mimic" data-view="models" title="Mimic" onclick="P.show('mimic',this)"><span class="gl">◑</span>Mimic</button>
+      <button type="button" class="nav-btn" data-pane="vllm" data-view="models" title="vLLM" onclick="P.show('vllm',this)"><span class="gl">◐</span>vLLM</button>
+      <button type="button" class="nav-btn" data-pane="api" data-view="models" title="API" onclick="P.show('api',this)"><span class="gl">⌸</span>API</button>
+    </nav>
+  </aside>
 
   <div id="panes">
 
@@ -1734,7 +1694,7 @@ html.view-models #secNav [data-view="models"]{display:block}
           <span class="tb-sep"></span>
           <span class="status-hint">Gates exec.*, IDE Run and docker CLI calls</span>
           <span style="flex:1"></span>
-          <button class="btn sm" onclick="P.show('docker',document.querySelector('.snav[data-pane=docker]'))" title="Session sandbox containers are listed in the Docker pane">📦 Sandbox containers → Docker</button>
+          <button class="btn sm" onclick="P.show('docker',document.querySelector('#nav .nav-btn[data-pane=docker]'))" title="Session sandbox containers are listed in the Docker pane">📦 Sandbox containers → Docker</button>
         </div>
         <vera-sandbox-controls id="wk-sandbox-ctl" style="display:block;flex:1;min-height:0"></vera-sandbox-controls>
       </div>
@@ -6192,7 +6152,7 @@ function _mountFrame(id, url){
 // iframe's page as a fragment change (no reload); a fresh mount carries it.
 const _buildFrames={foundry:['foundry-frame','/foundry/panel'],software:['software-frame','/provision/panel']};
 function buildGo(pane, section){
-  const nav=document.querySelector('.snav[data-pane="'+pane+'"]');
+  const nav=document.querySelector('#nav .nav-btn[data-pane="'+pane+'"]');
   const [fid,path]=_buildFrames[pane]||[];
   const f=fid&&$(fid);
   if(f&&(!f.src||f.src==='about:blank')) f.src=BASE+path+'#'+section;
@@ -6328,20 +6288,20 @@ async function mcAct(idx, action){
 
 function showPane(name, el){
   if(name==='nodes'){ // folded into Machines: the same list, plus Provision and Switch backend per row
-    return showPane('machines', document.querySelector('.snav[data-pane="machines"]'));
+    return showPane('machines', document.querySelector('#nav .nav-btn[data-pane="machines"]'));
   }
   if(name==='perf'){ // legacy alias — Perf now lives as a sub-tab of Observe
-    showPane('observe', document.querySelector('.snav[data-pane="observe"]'));
+    showPane('observe', document.querySelector('#nav .nav-btn[data-pane="observe"]'));
     obsSub('perf');
     return;
   }
   if(name==='catalog'){ // legacy alias — Catalog now lives as a sub-tab of Ollama
-    showPane('ollama', document.querySelector('.snav[data-pane="ollama"]'));
+    showPane('ollama', document.querySelector('#nav .nav-btn[data-pane="ollama"]'));
     olSubTab('catalog');
     return;
   }
-  document.querySelectorAll('.snav').forEach(n=>n.classList.remove('on'));
-  if(el) el.classList.add('on');
+  document.querySelectorAll('#nav .nav-btn').forEach(n=>n.classList.remove('active'));
+  if(el) el.classList.add('active');
   document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
   const pane=$('pane-'+name);
   if(pane) pane.classList.add('on');
@@ -6368,34 +6328,25 @@ function showPane(name, el){
   if(name==='integrations'){ _mountFrame('integrations-frame', BASE+'/integrations/panel'); }
   if(name==='platforms'){ _mountFrame('platforms-frame', BASE+'/platform/panel'); }
   if(name==='software'){ _mountFrame('software-frame', BASE+'/provision/panel'); }
-  // Keep the outer shell's injected top-level sub-menu in sync when this
-  // panel changes pane on its own (a direct click here, not one relayed
-  // from an injected item) — see registerNav() below. The 'perf'/'catalog'
-  // legacy aliases above recurse into this function with a real pane name
-  // before returning, so they still land here correctly.
-  if(window.VeraPanelBridge) VeraPanelBridge.setNavActive(name);
+  // The outer shell's copy of this menu follows the .active class the lines
+  // above set — the shared /ui/vera-panel.js watches for it — so there is no
+  // setNavActive of our own to keep in step. The 'perf'/'catalog' legacy
+  // aliases recurse into this function with a real pane name before
+  // returning, so they still mark the right item.
 }
-// Pilot rollout of nav unification (2nd panel, after Loop Lab) — every
-// button above already carries data-pane, which VeraPanelBridge's generic
-// nav_select fallback matches directly, so no selectFn is needed here
-// either. Excludes the 'perf'/'catalog' legacy aliases (they're sub-tabs
-// of Observe/Ollama, not real top-level panes of their own).
 // This panel serves two top-level tabs: Estate, and Models (?view=models).
-// Each lists only its own panes; ?pane=<id>&sub=<id> opens a pane directly,
-// and the shell sends vera:estate:open for a retired tab.
+// Each lists only its own pages; ?pane=<id>&sub=<id> opens one directly, and
+// the shell sends vera:estate:open for a retired tab. The class below is what
+// hides the other view's items — and the shared /ui/vera-panel.js publishes
+// only the items on screen, so the shell is handed this view's menu and not
+// both. It hands the bridge the button itself for each id, which is what the
+// 'estate' map page needs: its pane id collides with the view name, and a
+// lookup by attribute used to land on a section heading instead.
 const _VIEW=(new URLSearchParams(location.search).get('view')==='models')?'models':'estate';
 if(_VIEW==='models') document.documentElement.classList.add('view-models');
-// The select callback is not optional here, whatever the bridge's fallback
-// does: this panel's pane ids share their namespace with data-view, and the
-// map pane ('estate') collides with the view name, so a lookup by attribute
-// can land on a section heading instead of the item.
-if(window.VeraPanelBridge) VeraPanelBridge.registerNav(
-  [...document.querySelectorAll('#secNav .snav[data-view="'+_VIEW+'"]')]
-    .map(el=>({id:el.dataset.pane, label:el.textContent.trim()})),
-  id=>showPane(id, document.querySelector('#secNav .snav[data-pane="'+id+'"]')));
 function estateOpen(pane, sub, entity){
   if(!$('pane-'+pane)) return false;
-  showPane(pane, document.querySelector('.snav[data-pane="'+pane+'"]'));
+  showPane(pane, document.querySelector('#nav .nav-btn[data-pane="'+pane+'"]'));
   if(sub&&pane==='provision') provSub(sub);
   if(sub&&pane==='network') netSub(sub);
   if(sub&&pane==='observe') obsSub(sub);
@@ -8260,6 +8211,7 @@ return {
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-entity-drawer.js"></script>
 <script src="/ui/vera-estate.js"></script>

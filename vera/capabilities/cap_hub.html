@@ -33,29 +33,12 @@
 
 html, body { height: 100%; width: 100%; overflow: hidden; background: var(--bg0); color: var(--text); font-family: var(--sans); font-size: 13px; }
 
-/* ── Shell: page rail + panes (the same idiom as the Estate and Agents panels) ── */
+/* ── Shell: the shared left-hand menu + panes (the same idiom as every other
+   panel). The menu's markup is the canonical one, its chrome comes from
+   /ui/vera-panel.css and its behaviour from /ui/vera-panel.js — including
+   hiding itself once the Vera shell confirms it lists these pages in its own
+   menu (vpb-nav-hosted). Nothing about it is styled here. ── */
 #shell { display: flex; height: 100vh; overflow: hidden; }
-#secNav {
-  width: 42px; flex-shrink: 0; display: flex; flex-direction: column;
-  align-items: center; padding: 8px 0; gap: 1px;
-  border-right: 1px solid var(--border); background: var(--bg1);
-  overflow-y: auto; overflow-x: hidden; min-height: 0;
-}
-/* Hidden once the Vera shell confirms it lists these pages in its own menu
-   (VeraPanelBridge.registerNav + vpb-nav-hosted). Opened standalone, the rail
-   stays. */
-html.vpb-nav-hosted #secNav { display: none; }
-.snav {
-  writing-mode: vertical-rl; transform: rotate(180deg);
-  font-size: 9px; font-weight: 700; letter-spacing: 1.5px;
-  text-transform: uppercase; font-family: var(--mono);
-  padding: 12px 7px; border-radius: 3px; cursor: pointer;
-  color: var(--dim2); border: 1px solid transparent; flex-shrink: 0;
-  transition: all .15s; user-select: none; width: 34px; text-align: center;
-}
-.snav:hover { color: var(--text); }
-.snav.on { border-color: var(--border); background: var(--bg2); color: var(--acc); }
-.navdiv { width: 24px; height: 1px; background: var(--border); margin: 3px 0; flex-shrink: 0; }
 #panes { flex: 1; overflow: hidden; position: relative; min-width: 0; }
 .pane { position: absolute; inset: 0; display: none; flex-direction: column; overflow: hidden; }
 .pane.on { display: flex; }
@@ -524,17 +507,22 @@ select option { background: var(--bg2); }
 
 <div id="shell">
 
-  <!-- Page rail. The Vera shell lists the same pages in its own menu, and this
-       rail then hides (vpb-nav-hosted); opened standalone, it stays. -->
-  <div id="secNav">
-    <div class="snav on" data-pane="browse"   onclick="show('browse')">Browse</div>
-    <div class="snav"    data-pane="tracking" onclick="show('tracking')">Tracking</div>
-    <div class="navdiv"></div>
-    <div class="snav"    data-pane="ontology" onclick="show('ontology')">Ontology</div>
-    <div class="snav"    data-pane="mcp"      onclick="show('mcp')">MCP Servers</div>
-    <div class="navdiv"></div>
-    <div class="snav"    data-pane="modules"  onclick="show('modules')">Modules</div>
-  </div>
+  <!-- The page's left-hand menu, in the one shape every panel uses. The Vera
+       shell lists the same pages in its own menu, and this one then hides
+       (vpb-nav-hosted); opened standalone, it stays. -->
+  <aside id="sidebar" data-vera-lhm>
+    <div id="side-head">
+      <span class="ico">⬡</span>
+      <div><h1>Capabilities</h1><div class="sub">what Vera can do</div></div>
+    </div>
+    <nav id="nav">
+      <button type="button" class="nav-btn active" data-pane="browse"   title="Browse"      onclick="show('browse')"><span class="gl">⌕</span>Browse</button>
+      <button type="button" class="nav-btn"        data-pane="tracking" title="Tracking"    onclick="show('tracking')"><span class="gl">◎</span>Tracking</button>
+      <button type="button" class="nav-btn"        data-pane="ontology" title="Ontology"    onclick="show('ontology')"><span class="gl">⬡</span>Ontology</button>
+      <button type="button" class="nav-btn"        data-pane="mcp"      title="MCP Servers" onclick="show('mcp')"><span class="gl">▤</span>MCP Servers</button>
+      <button type="button" class="nav-btn"        data-pane="modules"  title="Modules"     onclick="show('modules')"><span class="gl">▦</span>Modules</button>
+    </nav>
+  </aside>
 
   <div id="panes">
 
@@ -954,12 +942,11 @@ let _mcpSub = 'catalog';
 
 function show(name) {
   if (!PANES.includes(name)) name = 'browse';
-  document.querySelectorAll('#secNav .snav').forEach(n => n.classList.toggle('on', n.dataset.pane === name));
+  document.querySelectorAll('#nav .nav-btn').forEach(n => n.classList.toggle('active', n.dataset.pane === name));
   document.querySelectorAll('#panes > .pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + name));
   if (name === 'ontology') _mountFrame(document.querySelector('#pane-ontology > iframe'));
   if (name === 'mcp') mcpSub(_mcpSub);
   if (name === 'modules') loadModules();
-  if (window.VeraPanelBridge) VeraPanelBridge.setNavActive(name);
 }
 
 function mcpSub(name) {
@@ -2274,11 +2261,9 @@ async function autoGroupForSelected() {
 // ═══════════════════════════════════════════════════════════════════════════
 // BOOT
 // ═══════════════════════════════════════════════════════════════════════════
-if (window.VeraPanelBridge) VeraPanelBridge.registerNav([
-  {id: 'browse', label: 'Browse'}, {id: 'tracking', label: 'Tracking'},
-  {id: 'ontology', label: 'Ontology'}, {id: 'mcp', label: 'MCP Servers'},
-  {id: 'modules', label: 'Modules'},
-]);
+// The shell's copy of this menu — the pages and which one is current — is
+// published by the shared /ui/vera-panel.js off the canonical markup above,
+// so there is no registerNav / setNavActive of our own to keep in step.
 
 window.addEventListener('message', e => {
   const d = e.data;
