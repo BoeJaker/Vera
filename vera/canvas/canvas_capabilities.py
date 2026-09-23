@@ -336,7 +336,8 @@ async def cap_canvas_list(limit: int = 30, trace_id=None):
                 "over raw html so the UI stays consistent.",
 )
 async def cap_canvas_append(id: str = "", type: str = "markdown",
-                            content: Any = None, meta: Any = None, key: str = "", trace_id=None):
+                            content: Any = None, meta: Any = None, key: str = "", size: str = "",
+                            trace_id=None):
     doc = await _load(id)
     if not doc:
         return {"error": f"unknown canvas: {id}"}
@@ -361,6 +362,20 @@ async def cap_canvas_append(id: str = "", type: str = "markdown",
     # way to put both on a canvas -- had no key at all, so the binding could never resolve and the diagram drew
     # nothing (owner, 2026-09-22: "the explode mode in the canvas doesnt draw anything"). A key given here is
     # kept; one already taken is refused rather than silently doubled.
+    # AN ITEM'S HEIGHT IS ITS SIZE. A diagram asking for 320px in an "m" item (110px of slot) was cut off at the
+    # bottom, so an explode item lands at the size that can hold what it asked for -- and a caller can still say.
+    size = str(size or "").strip().lower()
+    if size not in ("s", "m", "l", "xl"):
+        size = ""
+    if not size and v["type"] == "explode":
+        want = 0
+        try:
+            want = int((v["content"] or {}).get("height") or 0)
+        except Exception:
+            want = 0
+        size = "xl" if want >= 340 else ("l" if want >= 180 else "m")
+    if size:
+        block["size"] = size
     key = str(key or "").strip()
     if key:
         if _find_key(doc, key) is not None:

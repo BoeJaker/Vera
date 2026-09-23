@@ -74,3 +74,18 @@ def test_the_explode_block_still_takes_what_it_always_did(canvas):
         assert not out.get("error"), (content, out)
     doc = run(CV.cap_canvas_get(id=canvas))
     assert len([b for b in doc["blocks"] if b["type"] == "explode"]) == 5
+
+
+def test_an_explode_item_lands_at_a_size_that_can_hold_what_it_asked_for(canvas):
+    """A diagram asking for 320px in an "m" item (a 110px slot) was cut off at the bottom -- measured in the
+    page: a 320 slot inside a 242 item, which hides its overflow."""
+    run(CV.cap_canvas_append(id=canvas, type="explode", key="tall", content={"text": "x" * 80, "height": 360}))
+    run(CV.cap_canvas_append(id=canvas, type="explode", key="mid", content={"text": "x" * 80, "height": 300}))
+    run(CV.cap_canvas_append(id=canvas, type="explode", key="small", content={"text": "x" * 80}))
+    run(CV.cap_canvas_append(id=canvas, type="explode", key="said", content={"text": "x" * 80, "height": 360}, size="s"))
+    got = {b["key"]: b.get("size") for b in run(CV.cap_canvas_get(id=canvas))["blocks"]}
+    assert got["tall"] == "xl" and got["mid"] == "l" and got["small"] == "m"
+    assert got["said"] == "s"                       # a caller who says a size gets that size
+    # and nothing else is given one it did not ask for
+    run(CV.cap_canvas_append(id=canvas, type="note", key="n", content={"text": "hi"}))
+    assert next(b for b in run(CV.cap_canvas_get(id=canvas))["blocks"] if b["key"] == "n").get("size") is None
