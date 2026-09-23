@@ -17,6 +17,7 @@ _CRITICAL_MODULES = {
     "test_operator_session_sweep",  # a cancelled run must not leak its browser context (2026-09-16)
     "test_gpu_residency",  # media models must not sit on the LLM's GPU while idle (2026-09-16)
     "test_node_runner_reap",  # stop a runner nothing is waiting for; spare a busy one (2026-09-16)
+    "test_node_threads_core",  # CPU-node runners ran 24 threads on 12 CPUs: 0.24 tok/s on a 0.5b, 4-6 s per embed (2026-09-23)
     "test_ctx_ceiling_and_utility_model",  # llm.generate's default window was a floor; a naming rule with no model took the 9b onto a CPU node (2026-09-23)
     "test_ctx_output_room",  # a five-word chat title got a 24,576-token window on a CPU node (2026-09-23)
     "test_ctx_policy",  # output must fit the window it is generated into (2026-09-16)
