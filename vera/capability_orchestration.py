@@ -2516,6 +2516,18 @@ _OUTPUT_MAX_TOKENS = int(os.environ.get("VERA_OUTPUT_MAX_TOKENS", "16384") or 0)
 _OUTPUT_MAX_TOKENS_GPU = int(os.environ.get("VERA_OUTPUT_MAX_TOKENS_GPU", "0") or 0)
 _OUTPUT_MAX_TOKENS_CPU = int(os.environ.get("VERA_OUTPUT_MAX_TOKENS_CPU", "3072") or 0)
 
+# Threads a CPU node's runner should use. Ollama sizes runner threads from the
+# HOST's physical cores and ignores the container's cgroup: inside a 12-CPU LXC
+# every runner ran 24 threads (`n_threads = 24 / 12`), and llama.cpp's
+# busy-waiting pool collapsed to 0.24 tok/s on a 0.5b - 45 s a call. Sending
+# num_thread 6 made the same call 2 s (60 tok/s). See node_threads_core.
+try:
+    from Vera.vera import node_threads_core as _node_threads_core
+except Exception:  # pragma: no cover - worktree / test layout
+    from . import node_threads_core as _node_threads_core
+_CPU_NODE_THREADS = int(os.environ.get("VERA_CPU_NODE_THREADS",
+                                       str(_node_threads_core.DEFAULT_CPU_THREADS)) or 0)
+
 
 # One window per (GPU node, model). Rounding to steps was meant to stop
 # num_ctx jittering per call, but executor prompts range 8-30k chars, so a
@@ -3304,6 +3316,13 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
             if _keep:
                 _merged_opts["num_keep"] = _keep
     if _merged_opts:
+        # A CPU node's runner must not spin more threads than the node has.
+        _nt = _node_threads_core.threads_for(
+            has_gpu=bool((OLLAMA_INSTANCES.get(chosen) or {}).get("has_gpu")),
+            node_num_thread=(OLLAMA_INSTANCES.get(chosen) or {}).get("num_thread"),
+            default=_CPU_NODE_THREADS, pinned=_merged_opts.get("num_thread"))
+        if _nt:
+            _merged_opts["num_thread"] = _nt
         body["options"] = _merged_opts
     # Surface the ACTUAL sampling + window the model is called with, so the loop
     # UI can show it per-card (model/node already ride routing_info; add the knobs
@@ -3840,6 +3859,19 @@ async def ollama_embed(text: str, model: Optional[str] = None,
             fut.set_result(None)
 
 
+def _embed_body(mdl: str, text: str, node: Optional[dict]) -> dict:
+    """The /api/embed request for a node - with num_thread for a CPU node, so
+    the embed runner does not spin the host's 24 threads on 12 CPUs (4-6 s per
+    137M embedding before; see node_threads_core)."""
+    body = {"model": mdl, "input": text[:4096]}
+    nt = _node_threads_core.threads_for(
+        has_gpu=bool((node or {}).get("has_gpu")),
+        node_num_thread=(node or {}).get("num_thread"), default=_CPU_NODE_THREADS)
+    if nt:
+        body["options"] = {"num_thread": nt}
+    return body
+
+
 async def _ollama_embed_impl(text: str, model: Optional[str] = None,
                        instance_id: Optional[str] = None,
                        prefer_gpu: bool = False,
@@ -3960,7 +3992,7 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_emb_timeout) as c:
             # Try new endpoint first (Ollama ≥0.4)
             r = await c.post(f"{url}/api/embed",
-                             json={"model": mdl, "input": text[:4096]})
+                             json=_embed_body(mdl, text, inst))
             if r.status_code != 200:
                 # Fall back to legacy endpoint
                 r = await c.post(f"{url}/api/embeddings",
@@ -4072,7 +4104,7 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
                 log.info("ollama_embed_fallback [%s] trying %s", req_id, fb_id)
                 async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_emb_timeout) as c:
                     r = await c.post(f"{fb_inst['url']}/api/embed",
-                                     json={"model": mdl, "input": text[:4096]})
+                                     json=_embed_body(mdl, text, fb_inst))
                     if r.status_code != 200:
                         r = await c.post(f"{fb_inst['url']}/api/embeddings",
                                          json={"model": mdl, "prompt": text[:4096]})
