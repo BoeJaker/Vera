@@ -175,6 +175,31 @@ def safe_chars_per_token(measured: Optional[float], *,
     return max(float(floor), float(measured) * float(discount))
 
 
+def output_room(*, global_max: int, node_ceiling: int, want_predict: int = 0,
+                reserve: int = 1024, margin: int = DEFAULT_MARGIN) -> int:
+    """Tokens of OUTPUT the window must be sized to hold for THIS call.
+
+    The auto-fit used to reserve the flat global maximum (16,384) on every
+    call, so any prompt at all rounded up to a 24,576-token window - and a
+    five-word chat title loaded a 0.5b model on a CPU box with a 24k KV cache
+    and an 8 GB prompt cache (54 s, 2026-09-23). The node's own ceiling and the
+    caller's pinned `num_predict` were only applied to num_predict AFTERWARDS,
+    once the window had already been sized for a report.
+
+    So: the smallest of the global max, the node's ceiling, and - when the
+    caller pinned a positive num_predict - that pin plus a margin. Never below
+    `reserve`, so a call that states no intent still gets real room. A pinned
+    num_ctx is handled by the caller as a FLOOR on the whole window, so a role
+    that deliberately wants a big window keeps it.
+    """
+    cands = [int(c) for c in (global_max, node_ceiling) if c and int(c) > 0]
+    room = min(cands) if cands else int(reserve)
+    want = int(want_predict or 0)
+    if want > 0:
+        room = min(room, want + int(margin))
+    return max(int(reserve), room)
+
+
 def output_bound(*, num_ctx: int, prompt_tokens: int, ceiling: int,
                  margin: int = DEFAULT_MARGIN, floor: int = 512) -> int:
     """num_predict that fits: window - prompt - margin, under the ceiling.
