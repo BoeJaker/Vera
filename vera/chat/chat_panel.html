@@ -1335,7 +1335,18 @@ html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !imp
 .drv-ribbon b{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--acc3,#d4a96a)}
 .drv-ribbon .who,.drv-ribbon .pol{font-family:var(--mono);font-size:8.5px;color:var(--dim2)}
 .drv-ribbon .btn.xs{font-size:8.5px;padding:0 6px}
-#canvasColumn .tri-hd .drv-ribbon{margin-left:8px;max-width:60%;overflow:hidden}
+/* ONE BANNER (the canvas's final form §4.2): the canvas column has no header row of its own — these controls are
+   slotted into the canvas element's add bar. They stay light-DOM nodes of this document, so they are styled here;
+   the element only decides where in the row they sit. The .tri-hd rules above still serve the graph column. */
+.cv-bn{display:inline-flex;align-items:center;gap:6px;min-width:0;font-size:11px;color:var(--text)}
+.cv-bn b{font-weight:600;white-space:nowrap}
+.cv-bn .lbl{font-size:9.5px;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cv-bn .nowbar{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;color:var(--dim2);border:1px solid var(--border);border-radius:10px;padding:1px 8px 1px 6px;white-space:nowrap}
+.cv-bn .nowbar i{width:6px;height:6px;border-radius:50%;background:var(--acc3,#e09a55);animation:pr 2.2s infinite}
+.cv-bn .drv-ribbon{max-width:46%;overflow:hidden}
+/* the stand-in row while there is no session, and so no element to carry the banner */
+.cv-nobanner{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:11px;border-bottom:1px solid var(--border)}
+.cv-nobanner .sp{flex:1}
 /* the design's COLS segment in the column's one title row */
 #cvColCols{display:inline-flex;align-items:center;gap:2px}
 #cvColCols .cols-k{font-size:8.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7280));font-weight:600;margin-right:3px}
@@ -2843,11 +2854,15 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <svg id="ctxRunsOverlay" aria-hidden="true"></svg>
     <svg id="cvRunsOverlay" aria-hidden="true"></svg>
     <div id="canvasColumn" class="tri-col" data-col="canvas">
-      <div class="tri-hd"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span id="cvDrvRibbon" class="drv-ribbon" style="display:none" data-w="driven ribbon · canvas"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button class="btn xs" onclick="CH._cvDrvUndo()" title="Undo the directive that placed this">undo</button><button class="btn xs" onclick="CH._drvLog()" title="The directive log, the policy, the asks — the Driven panel">log</button><button class="btn xs" onclick="CH._cvDrvRibbon(null)" title="Dismiss">&#215;</button></span><span class="sp"></span>
-        <span class="nowbar" title="Items in the NOW band"><i></i><b>NOW</b><span id="cvColNow">0</span></span>
-        <span class="xmseg" id="cvColCols" title="Columns on the stage — items pack around the pinned ones"><b class="cols-k">COLS</b><button class="btn xs" data-cols="1" onclick="CH._cvColumns(1)">1</button><button class="btn xs" data-cols="2" onclick="CH._cvColumns(2)">2</button><button class="btn xs" data-cols="3" onclick="CH._cvColumns(3)">3</button><button class="btn xs" data-cols="4" onclick="CH._cvColumns(4)">4</button></span>
-        <button class="btn xs" data-runs="cv" onclick="CH._runsToggle('cv')" title="The runs between the turns and the items they made or read — the same switch as the ⋯ sheet's">Runs</button>
-        <button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></div>
+      <!-- ONE BANNER (the canvas's final form §4.2). This column has no header row of its own any more: the canvas
+           element's add bar IS the header, and these controls are SLOTTED into it, so "Session canvas · rev 12" sits
+           on the same line as the kinds you can add instead of owning 32px above them. They stay light-DOM nodes of
+           this document, so every id this page looks up (#cvColSub, #cvColNow, #cvColCols, #cvDrvRibbon), every
+           handler on them and the driven ribbon all work exactly as before. Cloned in by _canvasColumnMount. -->
+      <template id="cvBannerTpl">
+        <span slot="banner-start" class="cv-bn"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span id="cvDrvRibbon" class="drv-ribbon" style="display:none" data-w="driven ribbon · canvas"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button class="btn xs" onclick="CH._cvDrvUndo()" title="Undo the directive that placed this">undo</button><button class="btn xs" onclick="CH._drvLog()" title="The directive log, the policy, the asks — the Driven panel">log</button><button class="btn xs" onclick="CH._cvDrvRibbon(null)" title="Dismiss">&#215;</button></span></span>
+        <span slot="banner-end" class="cv-bn"><span class="nowbar" title="Items in the NOW band"><i></i><b>NOW</b><span id="cvColNow">0</span></span><span class="xmseg" id="cvColCols" title="Columns on the stage — items pack around the pinned ones"><b class="cols-k">COLS</b><button class="btn xs" data-cols="1" onclick="CH._cvColumns(1)">1</button><button class="btn xs" data-cols="2" onclick="CH._cvColumns(2)">2</button><button class="btn xs" data-cols="3" onclick="CH._cvColumns(3)">3</button><button class="btn xs" data-cols="4" onclick="CH._cvColumns(4)">4</button></span><button class="btn xs" data-runs="cv" onclick="CH._runsToggle('cv')" title="The runs between the turns and the items they made or read — the same switch as the ⋯ sheet's">Runs</button><button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></span>
+      </template>
       <div class="tri-bd" id="canvasColumnBody"></div>
     </div>
     <div id="graphColumn" class="tri-col" data-col="graph">
@@ -7071,14 +7086,17 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   async function _canvasColumnMount(){
     const host=document.getElementById('canvasColumnBody'); if(!host) return;
     if(!_cvColTimer) _cvColTimer=setInterval(()=>{ if(_pages.has('canvas')&&SID&&SID!==_cvColSid) _canvasColumnMount(); }, 2000);
-    if(!SID){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The session canvas appears once a session starts.</div>'; return; }
+    /* NO SESSION YET, AND THE COLUMN MUST STILL BE CLOSEABLE. The banner belongs to the element (§4.2) and there is
+       no element before there is a canvas, so this stands in for it - otherwise dropping the old header row left the
+       column with no × at all until a session started. */
+    if(!SID){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="cv-nobanner"><b>Session canvas</b><span class="sp"></span><button class="btn xs" onclick="CH.togglePage(\'canvas\')" title="Close the canvas column">&#215;</button></div><div class="sys-msg" style="padding:12px">The session canvas appears once a session starts.</div>'; return; }
     if(SID===_cvColSid && host.querySelector('vera-canvas')){ _cvStageSync(); return; }
     _cvColSid=SID;
     let cid='';
     try{ const r=await _capCall('canvas.session.resolve',{session_id:SID}); cid=(r&&r.id)||''; }catch(_){}
     if(!cid) cid='cv_session_'+String(SID).replace(/[^A-Za-z0-9_.-]/g,'_').slice(0,64);
     let el=host.querySelector('vera-canvas');
-    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); el.setAttribute('bare','');   /* the column's own .tri-hd IS the head (defect 74) */ el.setAttribute('blocks', (document.documentElement.getAttribute('data-blocks')==='off')?'off':'on'); try{ el.setAttribute('nb-api', _NB_API_BASE()); }catch(_){} host.appendChild(el);
+    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); el.setAttribute('bare','');   /* one banner: the element's add bar IS the head, and these controls are slotted into it (§4.2) */ el.setAttribute('blocks', (document.documentElement.getAttribute('data-blocks')==='off')?'off':'on'); try{ el.setAttribute('nb-api', _NB_API_BASE()); }catch(_){} /* the column's controls, into the banner (§4.2): a <template>, so their ids exist ONCE and only while this element is on the page - a second copy would shadow #cvColNow and the counts would stop moving. This whole line stays ONE line of live code (defect 81). */ try{ const tpl=document.getElementById('cvBannerTpl'); if(tpl&&tpl.content) el.appendChild(tpl.content.cloneNode(true)); }catch(_){} host.appendChild(el);
       // the stage follows the transcript: its turn tops, its scroll, its reflow
       el.addEventListener('vera:canvas:placed', ()=>_cvRunsDraw());
       /* 'placed' is the start of the items' .32s glide, not the end of it, so the runs follow the glide itself —

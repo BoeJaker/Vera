@@ -58,7 +58,12 @@ def test_the_canvas_column_carries_the_driven_ribbon():
     assert "function _cvDrvRibbon(res){" in src and "async function _cvDrvUndo(){" in src
     assert "try{ _cvDrvRibbon(content); }catch(_){} }" in src, "the chip and the ribbon come from one answer"
     assert "_drvUndoRow,_cvDrvRibbon,_cvDrvUndo" in src
-    assert "#canvasColumn .tri-hd .drv-ribbon{margin-left:8px;max-width:60%;overflow:hidden}" in src
+    # and it is BOUNDED where it sits, so a long "driven by" cannot push the column's own controls off the row.
+    # Pinned by the claim rather than by one selector: the ribbon moved from the column's own header row into the
+    # canvas element's banner when the two rows became one (the canvas's final form §4.2).
+    assert ".cv-bn .drv-ribbon{max-width:46%;overflow:hidden}" in src
+    assert 'slot="banner-start"' in src and 'id="cvDrvRibbon"' in src.split('slot="banner-end"')[0], \
+        "the ribbon rides with the canvas's name, not with its controls"
 
 
 def test_a_directive_lands_as_the_boards_chip_with_undo():
