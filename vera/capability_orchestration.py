@@ -3021,6 +3021,18 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # A routing rule may pin a lighter model for this job type (e.g. naming /
     # summarize). The caller's explicit model always wins over the rule's.
     eff_model = model or (eff_rule or {}).get("model") or None
+    # A utility job whose rule names no model must not take the instance
+    # default - the 9b - onto a CPU node: a sandbox's saved profile did exactly
+    # that for a chat title (2026-09-23). See ctx_policy_core.utility_model.
+    if eff_model is None:
+        try:
+            _um = _ctx_policy_core.utility_model(
+                eff_job_type, "",
+                [m for _i in OLLAMA_INSTANCES.values() for m in ((_i or {}).get("models") or [])])
+        except Exception:
+            _um = ""
+        if _um:
+            eff_model = _um
     # ── vLLM delegation: a rule/profile pin of "vllm:<id>" (or "vllm:*" for
     # any node) sends this request to the vLLM backend instead of Ollama — the
     # router treats vLLM servers as routable targets. A caller-explicit
@@ -3243,10 +3255,16 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         _want = max(_fit, _pinned)
         if _cap:
             _want = min(_want, _cap)
+        # A caller's `num_ctx_max` is an "at most", not a pin: it bounds the
+        # window from above and never raises it. llm.generate's generous
+        # default rides in here now instead of as a num_ctx floor - which gave a
+        # five-word chat title a 16k window on a CPU box (2026-09-23).
+        _want = _ctx_policy_core.apply_ceiling(_want, int(_merged_opts.get("num_ctx_max") or 0))
         _want = _stable_ctx(_want, int(_cap or 0),
                             has_gpu=bool((OLLAMA_INSTANCES.get(chosen) or {}).get("has_gpu")),
                             stable=_CTX_STABLE_GPU)
         _merged_opts["num_ctx"] = max(_CTX_FLOOR, _want)
+        _merged_opts.pop("num_ctx_max", None)
         # num_predict = the output room actually available in the window (bounded
         # by the sensible max), so a long generation can use it ALL but nothing
         # decodes PAST the window. Only when the caller pinned no positive value.

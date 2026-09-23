@@ -1996,7 +1996,11 @@ async def llm_generate(
         #
         # Leaving it unset lets that block do its job. output_budget below still
         # tightens further when the request STATES a length.
-        _gen_opts = {"num_ctx": _ctx}
+        # A CEILING, not a pin. Passed as num_ctx this became a floor the
+        # auto-fit could raise but never lower, so a five-word chat title got a
+        # 16k window on a CPU box (2026-09-23). The fit sizes the window to the
+        # prompt and the output the call can produce; this only bounds it.
+        _gen_opts = {"num_ctx_max": _ctx}
     except Exception:
         _ctx = _want_ctx
         _gen_opts = {}

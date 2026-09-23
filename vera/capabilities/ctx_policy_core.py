@@ -60,7 +60,7 @@ resident copy. `num_predict` is free to vary per request.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Iterable, Dict, Optional
 
 #: Characters per token when no tokenizer is available. Deliberately LOW (a
 #: conservative estimate OVER-counts tokens, which shrinks num_predict and stays
@@ -198,6 +198,49 @@ def output_room(*, global_max: int, node_ceiling: int, want_predict: int = 0,
     if want > 0:
         room = min(room, want + int(margin))
     return max(int(reserve), room)
+
+
+#: Job types whose whole output is a few words. A routing rule for one of these
+#: that names NO model lets the instance default through - the 9b - and a
+#: sandbox's saved profile did exactly that onto a CPU node: one chat title ran
+#: for nine hours (2026-09-23, judgement 18). Every node carries the 0.5b.
+UTILITY_JOB_TYPES = frozenset({"naming"})
+UTILITY_DEFAULT_MODEL = "qwen2.5:0.5b"
+
+
+def utility_model(job_type: str, rule_model: str, served: "Iterable[str]" = ()) -> str:
+    """The model a utility job should use when its rule names none.
+
+    Only for UTILITY_JOB_TYPES, only when the rule left `model` empty, and only
+    when the small model is actually served (an empty `served` means unknown
+    and is trusted). Anything else returns "" and the caller's own default
+    applies - a deliberate model choice is never overridden.
+    """
+    if str(job_type or "") not in UTILITY_JOB_TYPES:
+        return ""
+    if str(rule_model or "").strip():
+        return ""
+    names = [str(x) for x in (served or ())]
+    if names and not any(n == UTILITY_DEFAULT_MODEL or n.startswith(UTILITY_DEFAULT_MODEL + ":")
+                         for n in names):
+        return ""
+    return UTILITY_DEFAULT_MODEL
+
+
+def apply_ceiling(want: int, ceiling: int) -> int:
+    """A caller's `num_ctx_max` bounds the window from ABOVE.
+
+    `llm.generate` used to pass its generous default (16,384) as `num_ctx`,
+    and the auto-fit treats a caller's num_ctx as a FLOOR - the right reading
+    for a role that deliberately wants a big window, the wrong one for a
+    default meant as "at most". So a five-word chat title got a 16k window on a
+    CPU box. A ceiling can only lower; 0 means none.
+    """
+    w = int(want or 0)
+    c = int(ceiling or 0)
+    if c <= 0:
+        return w
+    return min(w, c)
 
 
 def output_bound(*, num_ctx: int, prompt_tokens: int, ceiling: int,
