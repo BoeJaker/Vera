@@ -41,6 +41,7 @@ try:
     from Vera.vera import model_tag_core as _model_tag_core
 except Exception:  # pragma: no cover - worktree / test layout
     from . import model_tag_core as _model_tag_core
+from .capabilities import ctx_policy_core as _ctx_policy_core
 from .capabilities.ctx_policy_core import (
     did_shift as _ctx_did_shift,
     keep_tokens as _ctx_keep_tokens,
@@ -691,7 +692,10 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # Keep them off the embedding node (avoid_embed) so they land on an idle CPU
     # node instead of queueing behind embedding traffic — a summarize stuck
     # behind embeds on the same node stalled every message in a long chat.
-    "naming":    _rule("naming",    deny_gpu=True, prefer="cpu-247"),
+    # A chat title is 3-8 tokens. With no model here a sandbox took the instance
+    # default - the 9b - onto a CPU node, where one such call held the node for
+    # 9 hours (2026-09-23, judgement 18). Every node carries the 0.5b.
+    "naming":    _rule("naming",    deny_gpu=True, prefer="cpu-247", model="qwen2.5:0.5b"),
     # summarize is GPU-ONLY. It runs INLINE - the caller is blocked awaiting it -
     # so a CPU summarise does not overlap anything: the GPU sits idle while the
     # slower box works, and the caller just waits longer. Verified safe: the gate
@@ -3219,7 +3223,14 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         # _route_chars_per_token).
         _cpt = _route_chars_per_token(mdl, chosen, eff_job_type)
         _prompt_tok = int((len(prompt) + len(system)) / max(_cpt, 1.0))
-        _out_room = _OUTPUT_MAX_TOKENS if _OUTPUT_MAX_TOKENS > 0 else _CTX_RESERVE_OUT
+        # The room is what THIS call can actually produce - the node's ceiling
+        # and the caller's pinned num_predict, not the flat global maximum,
+        # which sized every window for a 16k-token report and gave a five-word
+        # chat title a 24,576-token window on a CPU box. See output_room.
+        _out_room = _ctx_policy_core.output_room(
+            global_max=_OUTPUT_MAX_TOKENS, node_ceiling=_output_ceiling_for(chosen),
+            want_predict=int(_merged_opts.get("num_predict") or 0),
+            reserve=_CTX_RESERVE_OUT)
         _fit = _round_ctx(_prompt_tok + _out_room)
         if _cap:
             _fit = min(_fit, _cap)
