@@ -364,11 +364,24 @@
     background:var(--bg1,#15181d);overflow:hidden}
   /* Blocks off: the whole chat drops its surfaces and the session canvas has to go with it - the board turns the
      canvas column, its head and its items flat (Canvas.dc.html 655). A rule on <html> cannot cross a shadow root,
-     so the host carries the tier and the element answers to it here (Notes/42 defect 85). The GROUNDS go; the
-     structure - the lines that say where one item ends and the next begins - stays. */
+     so the host carries the tier and the element answers to it here (Notes/42 defect 85).
+     AN ITEM LOSES ITS CONTAINER ENTIRELY (the canvas's final form §4.1; owner, 2026-09-22: "if blocks is off, they
+     could loose their containers"). This used to keep a 55%-opacity border - the grounds went, the boxes stayed -
+     and a column of empty rectangles is the thing blocks-off is meant to get rid of. What says where an item ends
+     is now its own HEADER LINE, and its rail appears when you are on it. A hairline BETWEEN items is not available
+     to us: on the stage items are absolutely placed and moved, so there is no "next item" to draw a line against. */
   :host([blocks="off"]) .wrap{background:transparent;border-color:transparent}
   :host([blocks="off"]) .head{background:transparent;border-bottom-color:color-mix(in srgb,var(--border,#2a2f37) 55%,transparent)}
-  :host([blocks="off"]) .it{background:transparent;box-shadow:none;border-color:color-mix(in srgb,var(--border,#2a2f37) 55%,transparent)}
+  :host([blocks="off"]) .it{background:transparent;box-shadow:none;border-color:transparent}
+  :host([blocks="off"]) .it > .it-hd{border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 45%,transparent)}
+  :host([blocks="off"]) .it > .it-ft{opacity:0;transition:opacity .15s}
+  :host([blocks="off"]) .it:hover > .it-ft,:host([blocks="off"]) .it:focus-within > .it-ft{opacity:1}
+  /* the states that MEAN something keep their ring: blocks off is about grounds, not about hiding that this turn is
+     waiting on you, that you opened an item, or that one is being dragged to a size */
+  :host([blocks="off"]) .it.now{box-shadow:0 0 0 1.5px rgba(224,154,85,.45)}
+  :host([blocks="off"]) .it.openin{box-shadow:0 0 0 1.5px rgba(90,158,143,.6)}
+  :host([blocks="off"]) .it.hovopen{box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
+  :host([blocks="off"]) .it.ghost{border:1px dashed color-mix(in srgb,var(--dim,#6b7480) 70%,transparent)}
   /* THE ADD BAR KEEPS ITS BACKGROUND WHATEVER "blocks" SAYS. Blocks off means "do not paint a background behind
      each item" - a density preference about the items. The add bar is not an item: it is STICKY, so with nothing
      behind it the canvas scrolls under the buttons and they become unreadable over whatever passes beneath. That
@@ -472,6 +485,13 @@
   .addbar{position:sticky;top:0;z-index:6;display:flex;align-items:center;gap:5px;flex-wrap:wrap;
     padding:6px 0 6px;margin-bottom:2px;background:var(--bg1,#15181d);border-bottom:1px solid var(--border,#2a2f37)}
   .addbar .lbl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);margin-right:2px}
+  /* THE ONE BANNER (§4.2): what this canvas is, the kinds you can add, then the host's own controls at the far end.
+     The host's nodes are slotted, so they are styled by the host's stylesheet - only their PLACE is ours. */
+  ::slotted([slot="banner-end"]){margin-left:auto}
+  ::slotted([slot="banner-start"]){display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:52%}
+  /* ONE thing may claim the free space, and it is the controls at the end. The hidden-items button used to take it,
+     which in a banner leaves it floating in the middle of the row; it belongs beside the kinds it restores. */
+  .addbar .hidwrap{margin-left:6px}
   .add{display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 9px;border-radius:11px;
     background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);font:inherit;font-size:9.5px;
     color:var(--fg2,#c3cad4);cursor:pointer;line-height:1}
@@ -1372,9 +1392,16 @@
         return `<span class="chip" data-key="${esc(b.key)}" title="Parked — click to bring it back"><i></i>${esc(title)}</span>`;
       };
       let html = '';
-      // the add bar, fixed at the top of the column: each kind adds an item through canvas.add; hidden items are its popover
-      html += `<div class="addbar" data-w="canvas.add"><span class="lbl">Add</span>${ADD_KINDS.map(k => `<button class="add" data-act="add" data-kind="${k.n}" title="Add a ${k.n} to the session canvas (a ${k.kind} item)"><b>${esc(k.ik)}</b>${k.n}</button>`).join('')}` +
-        (hidden.length ? `<span class="hidwrap"><button class="hidbtn" data-act="hid" title="Hidden items — a click brings one back">hidden · ${hidden.length} ▾</button><div class="hidpop" hidden>${hidden.map(chip).join('')}</div></span>` : '') + '</div>';
+      /* ONE BANNER (the canvas's final form §4.2). The add bar IS the column's header row: what this canvas is and
+         which revision it is at, then the kinds you can add, then whatever the host hangs beside them. It used to be
+         two rows — the host drew a title row and the element drew the add bar under it — which spent 32px of a narrow
+         column saying "Session canvas" on a line of its own.
+         The host's own controls come through SLOTS rather than being redrawn here: they stay light-DOM nodes of the
+         host, so the ids it looks them up by, the handlers on them and the driven ribbon it shows all keep working.
+         `banner-start` carries what this canvas is; `banner-end` its controls. */
+      html += `<div class="addbar" data-w="canvas.add"><slot name="banner-start"></slot><span class="lbl">Add</span>${ADD_KINDS.map(k => `<button class="add" data-act="add" data-kind="${k.n}" title="Add a ${k.n} to the session canvas (a ${k.kind} item)"><b>${esc(k.ik)}</b>${k.n}</button>`).join('')}` +
+        (hidden.length ? `<span class="hidwrap"><button class="hidbtn" data-act="hid" title="Hidden items — a click brings one back">hidden · ${hidden.length} ▾</button><div class="hidpop" hidden>${hidden.map(chip).join('')}</div></span>` : '') +
+        `<slot name="banner-end"></slot></div>`;
       if (pinned.length) html += `<div class="band pinned"><div class="band-h">pinned · ${pinned.length}</div>${pinned.map(card).join('')}</div>`;
       // the NOW band: what this turn is waiting on first (the decision, then what Vera can also do), then the live items, newest
       // first; on the stage they are placed level with their turns (absolute, after a measure); in the flow they stack
