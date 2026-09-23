@@ -383,7 +383,21 @@ vera-structgraph .sg-vr span{display:inline-flex;align-items:center;gap:5px;font
 vera-structgraph .sg-pz{position:absolute;right:12px;top:10px;z-index:30;display:flex;align-items:center;gap:2px;padding:3px 6px;border-radius:8px;background:color-mix(in srgb,var(--xp-s1) 92%,transparent);box-shadow:0 0 0 1px var(--xp-bd)}vera-structgraph .sg-pz button{font:inherit;font-size:11px;color:var(--xp-t2);background:none;border:0;cursor:pointer;padding:1px 7px;border-radius:6px}vera-structgraph .sg-pz .z{font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3);min-width:34px;text-align:center}
 vera-structgraph .sg-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--xp-t3);font-size:11px}
 vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[bare] .sg-key{display:none}`;
-  function ensureCss(doc) { doc = doc || document; if (doc.getElementById('vera-structgraph-css')) return; const s = doc.createElement('style'); s.id = 'vera-structgraph-css'; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s); }
+  /* THE STYLESHEET GOES WHERE THE ELEMENT IS. This put its <style> in the DOCUMENT, and a document's styles do
+     not cross a shadow boundary -- so drawn inside the canvas's shadow root the diagram was completely
+     unstyled: wrap, view and every card computed `position: static`, the scene laid out in normal flow, and the
+     cards fell hundreds of pixels below a box that showed nothing. That is the canvas's "blank area", for code
+     and for prose alike, from the day it was built (owner, 2026-09-22; measured in the page 2026-09-23:
+     0 stylesheets in the shadow root, card position static there against absolute in the light DOM).
+     A ShadowRoot takes a <style> child exactly as a document head does, so the root is asked, not assumed. */
+  function ensureCss(where) {
+    const r = where && where.nodeType === 11 ? where : ((where && where.ownerDocument) || where || document);
+    const has = r.getElementById ? r.getElementById('vera-structgraph-css') : r.querySelector('#vera-structgraph-css');
+    if (has) return;
+    const doc = r.ownerDocument || r;
+    const s = doc.createElement('style'); s.id = 'vera-structgraph-css'; s.textContent = CSS;
+    (r.head || r).appendChild(s);
+  }
   function ensureRoutes(doc, onload) { doc = doc || document; if (root.VeraRoutes || doc.getElementById('vera-routes-lib')) return; const s = doc.createElement('script'); s.id = 'vera-routes-lib'; s.src = '/ui/routes.js'; s.async = true; s.onload = () => { try { onload && onload(); } catch (_) {} }; (doc.head || doc.documentElement).appendChild(s); }
 
   function cardHtml(k) { const c = k.card; let h = '<div class="n"><span class="g">' + esc(k.glyph) + '</span><span>' + esc(c.title) + '</span></div>';
@@ -445,7 +459,9 @@ vera-structgraph[bare] .sg-ctl,vera-structgraph[bare] .sg-pz,vera-structgraph[ba
       }
       state() { return Object.assign({}, this._S, { last: this._last }); }
       connectedCallback() {
-        ensureCss(this.ownerDocument); ensureRoutes(this.ownerDocument, () => this._schedule()); if (this._built) { this._schedule(); return; } this._built = true;
+        ensureCss(this.getRootNode ? this.getRootNode() : this.ownerDocument);
+        // the ROUTES are a <script>: a script appended to a shadow root never runs, so that one stays on the document
+        ensureRoutes(this.ownerDocument, () => this._schedule()); if (this._built) { this._schedule(); return; } this._built = true;
         this._S.mode = this.getAttribute('mode') || ''; this._S.direction = this.getAttribute('direction') || '';
         this.innerHTML = '<div class="sg-ctl" data-r="ctl"></div><div class="sg-pz"><button data-a="zout" title="Zoom out">−</button><span class="z" data-r="zoom">100%</span><button data-a="zin" title="Zoom in">+</button><button data-a="fit" title="Fit the whole diagram">fit</button></div><div class="sg-wrap" data-r="wrap"><div class="sg-space" data-r="space"></div><div class="sg-view" data-r="view"></div></div><div class="sg-key" data-r="key"></div>';
         const $ = (r) => this.querySelector('[data-r="' + r + '"]'); const wrap = $('wrap');

@@ -76,4 +76,16 @@ t('an item bound to something that is not on this canvas SAYS so, and asks for n
   && /\['code', 'path', 'text', 'record', 'lang', 'depth'\]\.forEach\(\(a\) => embed\.removeAttribute\(a\)\)/.test(CANVAS));
 t('the verdict rail can actually be asked for — set() reads \'\' as "remove"',
   /if \(c\.assess\) \{ if \(!embed\.hasAttribute\('assess'\)\) embed\.setAttribute\('assess', '1'\); \}/.test(CANVAS));
+// -- why the canvas drew a blank area, for code and for prose, from the day it was built --------------------
+// Measured in the page (2026-09-23): 0 structgraph stylesheets inside the canvas's shadow root, and wrap / view
+// / card all computing `position: static` there against `absolute` in the light DOM. A document's styles do not
+// cross a shadow boundary, so the diagram laid out in normal flow and fell hundreds of pixels below a box that
+// showed nothing.
+t('the structgraph puts its stylesheet in the ROOT it is drawn in, not the document',
+  /function ensureCss\(where\) \{/.test(SGSRC) && /where\.nodeType === 11 \? where/.test(SGSRC)
+  && /\(r\.head \|\| r\)\.appendChild\(s\)/.test(SGSRC));
+t('and the element asks its own root, which is a shadow root when the canvas draws it',
+  /ensureCss\(this\.getRootNode \? this\.getRootNode\(\) : this\.ownerDocument\)/.test(SGSRC));
+t('the routes script still goes on the document — a script in a shadow root never runs',
+  /a script appended to a shadow root never runs/.test(SGSRC) && /ensureRoutes\(this\.ownerDocument/.test(SGSRC));
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);
