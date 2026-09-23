@@ -234,13 +234,21 @@ def is_embedding_model(m: Dict) -> bool:
             or any("bert" in f for f in fams))
 
 
-def probe_call(models: Optional[List[Dict]]) -> Tuple[str, str, Dict]:
+def probe_call(models: Optional[List[Dict]], num_thread: int = 0) -> Tuple[str, str, Dict]:
     """(model, path, payload) for the cheapest call a RESIDENT model can serve.
 
     Prefers a generative model: a completion exercises the same scheduler path
     real work uses. Falls back to /api/embed for an embedding-only node, so a
     node serving only nomic-embed-text is still probed meaningfully instead of
     being asked to do something it cannot and failing for the wrong reason.
+
+    `num_thread`, when positive, goes on BOTH shapes. It is a runner parameter:
+    Ollama restarts the runner when it differs from the resident one's, and
+    every other client of a CPU node now sends 6 (node_threads_core). A probe
+    that sends none asked for the host's 24 on a 12-CPU box, restarted the
+    embed runner every 300 s, and the next real embed restarted it back
+    (cpu-246, 2026-09-23 20:23, one 24-thread start on a five-minute boundary
+    with every other start at 6). The probe must ask for what the node runs.
     """
     rows = [m for m in (models or []) if isinstance(m, dict)]
     if not rows:
@@ -264,6 +272,8 @@ def probe_call(models: Optional[List[Dict]]) -> Tuple[str, str, Dict]:
                 ctx = 0
             if ctx > 0:
                 opts["num_ctx"] = ctx
+            if int(num_thread or 0) > 0:
+                opts["num_thread"] = int(num_thread)
             return name, "/api/generate", {
                 "model": name, "prompt": "ping", "stream": False,
                 "options": opts,
@@ -271,7 +281,10 @@ def probe_call(models: Optional[List[Dict]]) -> Tuple[str, str, Dict]:
     name = str(rows[0].get("name") or rows[0].get("model") or "")
     if not name:
         return "", "", {}
-    return name, "/api/embed", {"model": name, "input": "ping"}
+    body: Dict = {"model": name, "input": "ping"}
+    if int(num_thread or 0) > 0:
+        body["options"] = {"num_thread": int(num_thread)}
+    return name, "/api/embed", body
 
 
 def dispatch_finding(p: Optional[DispatchProbe]) -> Optional[Dict]:
