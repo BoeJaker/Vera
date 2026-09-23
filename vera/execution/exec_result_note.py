@@ -99,9 +99,56 @@ NO_TESTS_NOTE = (
     "point the runner at the tests directory or a file that matches the "
     "runner's discovery pattern (`test_*.py`).")
 
+#: A TEST FILE run directly as a script. `python test_stats.py` does not run
+#: the tests - it runs the module's top level, usually a `main()` the model
+#: wrote into it - and any exception comes back as a plain traceback with no
+#: runner summary, so the runner notes above never fire. Census run67,
+#: build-multifile: eleven `exec.python.run FAILED`, every one a Traceback out of
+#: `test_stats.py ... main()`, retried with small variations because nothing said
+#: what was actually wrong with the CALL.
+SCRIPT_RUN_NOTE = (
+    "you ran the test file `{name}` directly as a script, so its tests did not "
+    "run - only the module's top level did, and that is what raised. A test "
+    "file is run by a runner: `python -m pytest -q {name}` (or "
+    "`python -m unittest {module}`) from the directory that contains the "
+    "package. Re-running it as a script will raise the same thing.")
+
 #: How much of the command to carry back. Enough to identify the call, not
 #: enough to bloat every result.
 MAX_COMMAND = 300
+
+#: `python test_x.py`, `python3 ./tests/test_x.py`, `python -u path/test_x.py`.
+#: NOT `python -m pytest test_x.py` (a runner) and NOT `python -m test_x`.
+_SCRIPT_RUN = re.compile(
+    r"(?:^|[\s;&|])(?:python[0-9.]*|py)\s+(?:-[a-zA-Z]\s+)*((?:[\w./-]*/)?test_[\w-]+\.py)\b")
+_TRACEBACK = re.compile(r"Traceback \(most recent call last\)")
+
+
+def script_run_of_test_file(res: Any) -> str:
+    """The test file a command ran as a script, or "" when this is not that.
+
+    Needs all three: the command names a `test_*.py` given straight to the
+    interpreter (no `-m`), the run failed, and the output is a traceback with
+    no runner summary in it - a runner's own failure is the runner's to
+    explain, and `test_run_summary` already does.
+    """
+    if not looks_like_exec_result(res):
+        return ""
+    rc = _rc_of(res)
+    if rc in (None, 0):
+        return ""
+    cmd = _txt(res.get("command"))
+    if " -m " in " " + cmd + " " or "pytest" in cmd or "unittest" in cmd:
+        return ""
+    m = _SCRIPT_RUN.search(cmd)
+    if not m:
+        return ""
+    blob = _txt(res.get("stdout")) + "\n" + _txt(res.get("stderr"))
+    if not _TRACEBACK.search(blob):
+        return ""
+    if test_run_summary(res):
+        return ""
+    return m.group(1)
 
 #: pytest's own summary line: "3 failed, 5 passed in 0.42s". Counted by outcome
 #: so the note can quote real numbers rather than say "some".
@@ -272,10 +319,16 @@ def annotate(res: Any, command: Any = "") -> Any:
     # knows more about the specific command than this does.
     if not _txt(res.get("note")).strip():
         _tests = test_run_summary(res)
+        # The command is looked up on the result AS ANNOTATED, so a caller that
+        # passed it in `command=` is seen here too.
+        _script = script_run_of_test_file(dict(res, command=cmd or _txt(res.get("command"))))
         if _tests and not _tests["ran"]:
             add["note"] = NO_TESTS_NOTE.format(summary=_tests["text"])
         elif _tests and _rc_of(res) not in (None, 0):
             add["note"] = TEST_FAILED_NOTE.format(summary=_tests["text"])
+        elif _script:
+            _mod = _script.rsplit("/", 1)[-1][:-3]
+            add["note"] = SCRIPT_RUN_NOTE.format(name=_script, module=_mod)
         elif is_silent_success(res):
             add["note"] = NOTE
         elif is_silent_failure(res):

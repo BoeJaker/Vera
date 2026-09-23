@@ -191,7 +191,8 @@ _CRITICAL_MODULES = {
     "test_operator_repeat_guard",  # O19 - hammering one element on one page must stop; different elements must not
     "test_pythonpath_under_timeout",  # L5's PYTHONPATH fix was dead under the timeout wrapper (2026-08-30)
     "test_exec_result_note",
-    "test_exec_result_note_test_runs",  # pytest exits non-zero when tests fail; the loop read that as a broken command and inflated the goal (2026-09-22)    # rc=0 + empty stdout must read as a result, not as no-information (2026-08-30)
+    "test_exec_result_note_test_runs",
+    "test_exec_result_note_script_run",  # python test_x.py runs the module, not the tests; eleven identical tracebacks in run67 (2026-09-23)  # pytest exits non-zero when tests fail; the loop read that as a broken command and inflated the goal (2026-09-22)    # rc=0 + empty stdout must read as a result, not as no-information (2026-08-30)
     "test_role_profile_merge",   # a USER routing override must not silently discard declared sampling/num_ctx (2026-08-24)
     "test_executor_compose_callsite",  # Phase 4 - every prompt block reaches the executor, unswapped (a drop/swap is silent)
     "test_godseye_core",       # vendored-app static serving: a path-guard hole serves arbitrary host files; git argv must reject option/ext:: injection
