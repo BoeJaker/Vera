@@ -37,7 +37,11 @@ def test_the_two_columns_sit_beside_the_chat_stack_inside_the_chat_column():
     assert col < stack < cv < gr < host < end, "siblings of #chatStack, before the untouched panel host"
     _once(HTML, 'id="canvasColumnBody"')
     _once(HTML, 'id="graphColumnBody"')
-    assert '<b>Session canvas</b>' in HTML and 'id="cvColNow"' in HTML, "the board's header: Session canvas · NOW"
+    # the board's header: the canvas's name and its revision, on the one banner row with the add buttons. The NOW
+    # counter that used to sit beside them is gone (owner, 2026-09-23): it counted items that are in the column
+    # below it, countable by eye.
+    assert '<b>Session canvas</b>' in HTML and 'id="cvColSub"' in HTML, "the board's header: Session canvas · rev"
+    assert 'id="cvColNow"' not in HTML, "the NOW counter was removed from the banner"
 
 
 def test_the_panel_host_is_untouched():
