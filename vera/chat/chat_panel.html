@@ -1341,8 +1341,6 @@ html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !imp
 .cv-bn{display:inline-flex;align-items:center;gap:6px;min-width:0;font-size:11px;color:var(--text)}
 .cv-bn b{font-weight:600;white-space:nowrap}
 .cv-bn .lbl{font-size:9.5px;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.cv-bn .nowbar{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;color:var(--dim2);border:1px solid var(--border);border-radius:10px;padding:1px 8px 1px 6px;white-space:nowrap}
-.cv-bn .nowbar i{width:6px;height:6px;border-radius:50%;background:var(--acc3,#e09a55);animation:pr 2.2s infinite}
 .cv-bn .drv-ribbon{max-width:46%;overflow:hidden}
 /* the stand-in row while there is no session, and so no element to carry the banner */
 .cv-nobanner{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:11px;border-bottom:1px solid var(--border)}
@@ -2861,7 +2859,8 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
            handler on them and the driven ribbon all work exactly as before. Cloned in by _canvasColumnMount. -->
       <template id="cvBannerTpl">
         <span slot="banner-start" class="cv-bn"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span id="cvDrvRibbon" class="drv-ribbon" style="display:none" data-w="driven ribbon · canvas"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button class="btn xs" onclick="CH._cvDrvUndo()" title="Undo the directive that placed this">undo</button><button class="btn xs" onclick="CH._drvLog()" title="The directive log, the policy, the asks — the Driven panel">log</button><button class="btn xs" onclick="CH._cvDrvRibbon(null)" title="Dismiss">&#215;</button></span></span>
-        <span slot="banner-end" class="cv-bn"><span class="nowbar" title="Items in the NOW band"><i></i><b>NOW</b><span id="cvColNow">0</span></span><span class="xmseg" id="cvColCols" title="Columns on the stage — items pack around the pinned ones"><b class="cols-k">COLS</b><button class="btn xs" data-cols="1" onclick="CH._cvColumns(1)">1</button><button class="btn xs" data-cols="2" onclick="CH._cvColumns(2)">2</button><button class="btn xs" data-cols="3" onclick="CH._cvColumns(3)">3</button><button class="btn xs" data-cols="4" onclick="CH._cvColumns(4)">4</button></span><button class="btn xs" data-runs="cv" onclick="CH._runsToggle('cv')" title="The runs between the turns and the items they made or read — the same switch as the ⋯ sheet's">Runs</button><button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></span>
+        <!-- no NOW counter here: the items it counted are in the column under it, countable by eye (owner, 2026-09-23) -->
+        <span slot="banner-end" class="cv-bn"><span class="xmseg" id="cvColCols" title="Columns on the stage — items pack around the pinned ones"><b class="cols-k">COLS</b><button class="btn xs" data-cols="1" onclick="CH._cvColumns(1)">1</button><button class="btn xs" data-cols="2" onclick="CH._cvColumns(2)">2</button><button class="btn xs" data-cols="3" onclick="CH._cvColumns(3)">3</button><button class="btn xs" data-cols="4" onclick="CH._cvColumns(4)">4</button></span><button class="btn xs" data-runs="cv" onclick="CH._runsToggle('cv')" title="The runs between the turns and the items they made or read — the same switch as the ⋯ sheet's">Runs</button><button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></span>
       </template>
       <div class="tri-bd" id="canvasColumnBody"></div>
     </div>
@@ -7112,7 +7111,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       const msgsEl=document.getElementById('msgs');
       if(msgsEl&&!msgsEl._cvRelBound){ msgsEl._cvRelBound=true; msgsEl.addEventListener('scroll', _cvRelFocus, {passive:true}); msgsEl.addEventListener('click', _cvRelFocus); }
       _cvColsSync();
-      el.addEventListener('vera:canvas:rendered', ev=>{ const d=ev.detail||{}; const n=document.getElementById('cvColNow'); if(n) n.textContent=String(d.now||0); const s=document.getElementById('cvColSub'); if(s) s.textContent=(d.pinned?d.pinned+' pinned · ':'')+(d.parked?d.parked+' parked · ':'')+'rev '+(d.revision||0); _cvStageSync(true); }); }
+      el.addEventListener('vera:canvas:rendered', ev=>{ const d=ev.detail||{}; const s=document.getElementById('cvColSub'); if(s) s.textContent=(d.pinned?d.pinned+' pinned · ':'')+(d.parked?d.parked+' parked · ':'')+'rev '+(d.revision||0); _cvStageSync(true); }); }
     if(el.getAttribute('canvas-id')!==cid) el.setAttribute('canvas-id', cid);
     try{ window._veraBase=BASE; }catch(_){}
   }

@@ -1040,12 +1040,16 @@
     const seen = new Set(); return out.filter(s => !seen.has(s.key) && seen.add(s.key)).slice(0, 8);
   }
   /* the NOW bar's words: what this turn is waiting on, else what is live */
-  function nowText(now, decision, suggs, inFocus) {
-    const n = (now || []).length, ns = (suggs || []).length;
+  /* WHAT THE BAND SAYS, WHICH IS ONLY EVER SOMETHING TO ACT ON. It used to count: "3 now · 2 in focus", over a
+     column in which those three items are visible and countable by eye — a readout of the obvious, and the owner
+     asked for it to go (2026-09-23). What is left is what the items themselves cannot tell you: that this turn is
+     waiting on an answer from you, that the answer went, and what else Vera could put here. When there is none of
+     that, the bar says nothing at all and the caller does not draw it. */
+  function nowText(now, decision, suggs) {
+    const ns = (suggs || []).length;
     if (decision && !decision.answer) return (hhmm(decision.since) ? hhmm(decision.since) + ' · ' : '') + 'waiting on you · 1 input' + (ns ? ' · ' + ns + ' suggested' : '');
-    if (decision) return (hhmm(decision.answered) ? hhmm(decision.answered) + ' · ' : '') + 'answered · ' + n + ' now' + (ns ? ' · ' + ns + ' suggested' : '');
-    if (!n && !ns) return 'nothing waiting on you';
-    return n + ' now' + (inFocus != null ? ' · ' + inFocus + ' in focus' : '') + (ns ? ' · ' + ns + ' suggested' : '');
+    if (decision) return (hhmm(decision.answered) ? hhmm(decision.answered) + ' · ' : '') + 'answered' + (ns ? ' · ' + ns + ' suggested' : '');
+    return ns ? ns + ' suggested' : '';
   }
   /* a dragged height, as the size record it becomes */
   function sizeOfHeight(h) { h = Number(h) || 0; return h <= 96 ? 's' : h <= 210 ? 'm' : h <= 380 ? 'l' : 'xl'; }
@@ -1309,8 +1313,7 @@
       const decisions = now.concat(pinned).map(b => ({ b, d: decisionOf(b) })).filter(x => x.d);
       const decision = (decisions.find(x => !x.d.answer) || decisions[0] || {}).d || null;
       const suggs = suggestionsOf(doc, keyed, focusMid); this._suggs = suggs;
-      const inFocusN = F ? keyed.filter(b => F.has(String(b.key))).length : null;
-      const nowTxt = plainDoc ? (now.length ? now.length + (now.length === 1 ? ' block' : ' blocks') : 'nothing yet') + ' · ' + (doc.mode || 'static') + (decision && !decision.answer ? ' · waiting on you' : '') : nowText(now, decision, suggs, inFocusN);
+      const nowTxt = plainDoc ? (now.length ? now.length + (now.length === 1 ? ' block' : ' blocks') : 'nothing yet') + ' · ' + (doc.mode || 'static') + (decision && !decision.answer ? ' · waiting on you' : '') : nowText(now, decision, suggs);
       const titleOf = b => blockTitle(b);
       const askHtml = d => `<div class="askb" data-w="canvas.decision">
             <span class="why">surfaced because <b>${esc(d.why)}</b></span>
@@ -1409,7 +1412,9 @@
       // first; on the stage they are placed level with their turns (absolute, after a measure); in the flow they stack
       const nowOrder = now.slice().sort((x, y) => { const dx = decisionOf(x), dy = decisionOf(y); const wx = dx && !dx.answer ? 0 : dx ? 1 : 2, wy = dy && !dy.answer ? 0 : dy ? 1 : 2; return wx - wy; });
       const nowCards = (nowOrder.length ? nowOrder.slice(0, 1).map(card).join('') : '') + ghost + nowOrder.slice(1).map(card).join('');
-      html += `<div class="band now"><div class="band-h"><span class="nowbar ${decision && !decision.answer ? 'wait' : 'ok'}" data-w="canvas.now" title="${plainDoc ? 'The canvas, in its order' : 'What this turn is waiting on'}"><i></i><b>${plainDoc ? 'BLOCKS' : 'NOW'}</b> ${esc(nowTxt)}</span></div>` +
+      /* the band's header is drawn only when it HAS something to say (see nowText): an empty "NOW" over a column of
+         visible items is a label on a label. A named canvas keeps its BLOCKS line, which is that document's state. */
+      html += `<div class="band now">${(plainDoc || nowTxt) ? `<div class="band-h"><span class="nowbar ${decision && !decision.answer ? 'wait' : 'ok'}" data-w="canvas.now" title="${plainDoc ? 'The canvas, in its order' : 'What this turn is waiting on'}"><i></i><b>${plainDoc ? 'BLOCKS' : 'NOW'}</b> ${esc(nowTxt)}</span></div>` : ''}` +
         (nowCards ? (stage ? '<div class="stage" id="stage">' + nowCards + '</div>' : nowCards) : plainDoc ? '<div class="empty">Nothing on this canvas — add a block above, or let an agent fill it.</div>' : '<div class="empty">Nothing in the NOW band — nothing is waiting on you; items land here as the conversation uses them.</div>') + '</div>';
       if (parked.length) html += `<div class="band parked"><div class="band-h">parked · ${parked.length}</div><div class="chips">${parked.map(chip).join('')}</div></div>`;
       if (plain.length) html += plain.map(b => {

@@ -26,19 +26,21 @@ t('its controls are a template, cloned into the element so their ids exist exact
   t('the clone and the append are on the mount line itself, still live code end to end',
     mk.includes("tpl.content.cloneNode(true)") && mk.includes('host.appendChild(el);') && !/\/\/[^*]*$/.test(mk)); }
 // the ids and handlers the page looks up must survive the move, or the counts stop moving and the ribbon goes dead
-['cvColSub', 'cvColNow', 'cvColCols', 'cvDrvRibbon'].forEach((id) => {
+['cvColSub', 'cvColCols', 'cvDrvRibbon'].forEach((id) => {
   const inTpl = new RegExp('<template id="cvBannerTpl">[\\s\\S]*?id="' + id + '"[\\s\\S]*?<\\/template>').test(CHAT);
   t('the banner still carries #' + id + ', so the page can still find it', inTpl);
 });
 t('and it is in the template exactly once — a second copy would shadow the first',
-  ['cvColSub', 'cvColNow', 'cvColCols', 'cvDrvRibbon'].every((id) => (CHAT.match(new RegExp('id="' + id + '"', 'g')) || []).length === 1));
+  ['cvColSub', 'cvColCols', 'cvDrvRibbon'].every((id) => (CHAT.match(new RegExp('id="' + id + '"', 'g')) || []).length === 1));
+t('the NOW counter is off the banner — the items it counted are in the column below it',
+  !/id="cvColNow"/.test(CHAT) && !/\.cv-bn \.nowbar\{/.test(CHAT));
 t('the title and the revision are in the SAME slotted span as each other',
   /slot="banner-start"[^>]*><b>Session canvas<\/b><span class="lbl" id="cvColSub">/.test(CHAT));
-t('Runs, COLS, NOW and the close button are in the other one',
-  /slot="banner-end"[\s\S]*?id="cvColNow"[\s\S]*?id="cvColCols"[\s\S]*?data-runs="cv"[\s\S]*?togglePage\('canvas'\)[\s\S]*?<\/span>/.test(CHAT));
+t('Runs, COLS and the close button are in the other one',
+  /slot="banner-end"[\s\S]*?id="cvColCols"[\s\S]*?data-runs="cv"[\s\S]*?togglePage\('canvas'\)[\s\S]*?<\/span>/.test(CHAT));
 t('the column can still be closed before a session exists, when there is no element to carry the banner',
   /class="cv-nobanner"[\s\S]{0,200}togglePage\(\\?'canvas\\?'\)/.test(CHAT) && /\.cv-nobanner\{/.test(CHAT));
-t('the slotted controls are styled by the host, since they are the host\'s nodes', /^\.cv-bn\{/m.test(CHAT) && /\.cv-bn \.nowbar\{/.test(CHAT) && /\.cv-bn \.drv-ribbon\{/.test(CHAT));
+t('the slotted controls are styled by the host, since they are the host\'s nodes', /^\.cv-bn\{/m.test(CHAT) && /\.cv-bn \.lbl\{/.test(CHAT) && /\.cv-bn \.drv-ribbon\{/.test(CHAT));
 t('the graph column keeps its own header row and its rules', /<div class="tri-hd"><b>Graph<\/b>/.test(CHAT) && /^\.tri-hd\{/m.test(CHAT));
 
 /* ── blocks off: no ground under the canvas, no container round an item, but the banner keeps its background ──── */
