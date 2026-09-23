@@ -9,7 +9,7 @@ const CHAT = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_pa
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 
 // ── the canvas's offer, as a function ────────────────────────────────────────────────────────────────────────
-const src = CANVAS.match(/function suggestionsOf\(doc, blocks, focusMid\) \{[\s\S]*?\n  \}/);
+const src = CANVAS.match(/function suggestionsOf\(doc, blocks, focusMid(?:, o)?\) \{[\s\S]*?\n  \}/);
 t('the canvas\'s suggestion rule is there to be tested', !!src);
 const suggestionsOf = src ? eval('(' + src[0] + ')') : () => [];
 

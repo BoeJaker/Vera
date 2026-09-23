@@ -183,7 +183,12 @@ def test_the_element_renders_the_session_projection():
     assert '<div class="vc-rec"><b>' in EL, "the record card when there is no drawer"
     assert "fetch(base + '/mcp/call'" in EL and "Object.assign({ id: this.canvasId }, args || {})" in EL
     assert "const rev = doc.revision != null ? doc.revision : doc.rev != null ? doc.rev" in EL
-    assert "static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks']; }" in EL   # the rail, the session, bare (defect 74) and blocks: the tier cannot cross a shadow root (defect 85)
+    # the rail, the session, bare (defect 74) and blocks (the tier cannot cross a shadow root, defect 85), and the
+    # canvas's own settings (align / preview / explode-offer, 2026-09-23). Pinned as "each of these is observed"
+    # rather than as the whole list, which grows by one every time the canvas gains a reading of its own.
+    for _attr in ("canvas-id", "rail", "session-id", "bare", "blocks", "align", "preview", "explode-offer"):
+        assert "'%s'" % _attr in EL.split("observedAttributes")[1][:260], _attr + " is not observed"
+
     assert "if (this.hasAttribute('compact')) this.style.setProperty('--vc-max', '240px');" in EL
     assert "this._timer = setInterval(() => this.refresh(), 3000);" in EL
     # the plain projection is what it was
