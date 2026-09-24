@@ -236,10 +236,15 @@ integration without claiming that it was queried.
 The current general-purpose `fabric.query` capability searches live indexes;
 it does not yet accept an immutable snapshot ID or return revision-qualified
 citations. It is therefore not represented as snapshot-pinned Fabric evidence.
-Native Fabric graph/vector, Qdrant, GraphRAG, analytical, and JEPA adapters may
-join the execution layer only when they can prove those same snapshot and
-citation guarantees. This is a deliberate evidence boundary, not an indication
-that an unavailable provider scored zero.
+Native Fabric graph/vector, Qdrant, GraphRAG, and analytical adapters may join
+the execution layer only when they can prove those same snapshot and citation
+guarantees. JEPA Worldview has a dedicated binding and query path:
+`worldview.retrieval.bind` pins the complete index to a `DatasetSnapshot` and
+checkpoint `ModelPackage`, while `JepaWorldviewRetrievalAdapter` rejects any
+live receipt that drifts from those identities. An unbound legacy JEPA
+checkpoint remains explicitly unavailable to the comparison. This is a
+deliberate evidence boundary, not an indication that an unavailable provider
+scored zero.
 
 Supported evidence profiles distinguish Fabric graph/vector retrieval, Qdrant,
 GraphRAG, analytical retrieval, and **JEPA Worldview evidence**. “Worldview” is
