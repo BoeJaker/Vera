@@ -399,7 +399,7 @@
   /* the states that MEAN something keep their ring: blocks off is about grounds, not about hiding that this turn is
      waiting on you, that you opened an item, or that one is being dragged to a size */
   /* (no ring for the NOW band here either — see the note on .it.now below) */
-  :host([blocks="off"]) .it.openin{box-shadow:0 0 0 1.5px rgba(90,158,143,.6)}
+  /* (no ring for an opened item here either — see .it.openin below) */
   :host([blocks="off"]) .it.hovopen{box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
   :host([blocks="off"]) .it.ghost{border:1px dashed color-mix(in srgb,var(--dim,#6b7480) 70%,transparent)}
   /* THE ADD BAR KEEPS ITS BACKGROUND WHATEVER "blocks" SAYS. Blocks off means "do not paint a background behind
@@ -559,8 +559,11 @@
   /* compact: the header line only; the body, the rail and the grip held back */
   .it.compact .it-bd,.it.compact .it-ft,.it.compact .rz{display:none}
   .it.compact{transition:height .18s ease}
-  /* opened in place: the item takes its own height, the column makes room */
-  .it.openin{box-shadow:0 0 0 1.5px rgba(90,158,143,.6)}
+  /* ⛔ OPENED IN PLACE DRAWS NO RING EITHER. A resize marks the item open (it has an explicit height now), so the
+     ring appeared the moment you finished dragging and stayed until you clicked the item — "if i resize a canvas
+     element the boarder comes back and does not go unless i click the element after the resize" (owner,
+     2026-09-24). An item being open is visible from the fact that it is open: it is showing you its content. */
+  .it.openin{}
   .it.openin .it-bd{max-height:none!important}
   /* ⛔ WHAT YOU DRAGGED IS WHAT THE CONTENT FILLS. The live kinds — a widget, a diagram, a preview, a terminal, an
      explode — are NOT inside the card: they are mounted in the column's overlay, and _liveLayout sizes them to the

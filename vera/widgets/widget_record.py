@@ -63,9 +63,14 @@ NO_SOURCE_FORMS = ("header", "button", "rail", "controls", "panel", "composite",
 # the gallery shows; the chat's own nine (trace, radial, thermo, heat, log, lane, pipes, table, files) are among them.
 # name: what the board calls the form (the sheet's row, the gallery's card); boards: which of the three galleries draw it
 # (widgets · motion · iso), "spec" for the WidgetSpec/WidgetConfig additions, "reply" for the chat's own and the chrome.
-_F = lambda id, shape, proj=("flat",), glyph="", motion=False, sizes=SIZES, options=(), name="", boards=(): {  # noqa: E731
+# `derived`: this form's DATA is produced by a capability and cannot be written by hand — a structured graph is the
+# Explode contract, not something you can type. Such a form is drawn like any other, but it is kept out of the lists
+# people and models PICK from: offered as a menu choice it is picked for ordinary charts and renders its empty state,
+# which is how one added form broke every widget the model wrote (owner, 2026-09-24).
+_F = lambda id, shape, proj=("flat",), glyph="", motion=False, sizes=SIZES, options=(), name="", boards=(), derived=False: {  # noqa: E731
     "id": id, "shape": shape, "proj": list(proj), "glyph": glyph or id, "motion": bool(motion),
-    "sizes": list(sizes), "options": list(options), "name": name or id, "boards": list(boards)}
+    "sizes": list(sizes), "options": list(options), "name": name or id, "boards": list(boards),
+    "derived": bool(derived)}
 FORMS: List[Dict[str, Any]] = [
     # ── levels and rates ──
     _F("counter", "level", glyph="123", options=("unit", "delta", "digits"), name="Counter", boards=("widgets",)),
@@ -158,7 +163,7 @@ FORMS: List[Dict[str, Any]] = [
     # is a wrapper over one contract and one renderer, never a second drawing of either. Its data is the contract;
     # its source is code.explode / nlp.explode.prose, which is what gives an exploded item a refresh.
     _F("structgraph", "graph", glyph="structgraph", options=("mode", "layers", "assess"),
-       name="Structured graph", boards=("widgets",)),
+       name="Structured graph", boards=("widgets",), derived=True),
     _F("city", "graph", ("iso",), glyph="city", motion=True, options=("footprint", "height", "colour", "lamp"), name="City", boards=("motion",)),
     _F("orbit", "items", glyph="orbit", motion=True, options=("rings", "size"), name="Orbit", boards=("motion",)),
     _F("context_graph", "graph", glyph="context_graph", options=("lanes", "labels")),

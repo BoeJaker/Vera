@@ -40,7 +40,9 @@ const CONTRACT = {
 
 /* ── the form is declared, beside the graphs, and says what it is ────────────────────────────────────────────── */
 t('the registry carries a structgraph form, shaped as a graph, on the widgets board',
-  /_F\("structgraph", "graph", glyph="structgraph", options=\("mode", "layers", "assess"\),\s*\n\s*name="Structured graph", boards=\("widgets",\)\)/.test(REC));
+  /_F\("structgraph", "graph", glyph="structgraph", options=\("mode", "layers", "assess"\),\s*\n\s*name="Structured graph", boards=\("widgets",\), derived=True\)/.test(REC));
+t('and it declares that its data is DERIVED — a contract, not something a model can type into a fence',
+  /derived=True\)/.test(REC));
 t('it sits with the other graphs, not off on its own', REC.indexOf('_F("structgraph"') > REC.indexOf('# ── graphs ──') && REC.indexOf('_F("structgraph"') < REC.indexOf('_F("orbit"'));
 {
   const { VW } = element([]);

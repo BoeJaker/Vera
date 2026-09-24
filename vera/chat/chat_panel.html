@@ -5961,8 +5961,13 @@ IMPORTANT:
   }
   function _widgetKey(rec){ return rec.draw.form+' '+rec.reads.cap+' '+JSON.stringify(rec.reads.args||{}); }
   // the registry's forms (widget_element.js), for the record builder and the model's hint; the nine chat drawers without it
-  function _widgetForms(){ try{ if(window.VeraWidget&&typeof VeraWidget.forms==='function'){ const ids=VeraWidget.forms().map(f=>f.id).filter(Boolean); if(ids.length) return ids; } }catch(_){} return _W_DRAWS.slice(); }
-  function _widgetFormKnown(f){ return _widgetForms().includes(String(f||'').toLowerCase()); }
+  /* THE FORMS A REPLY MAY BE WRITTEN IN. This list goes into the model's own briefing as the menu it picks from, so
+     a form whose DATA cannot be written by hand must not be on it: a derived form (a structured graph IS an Explode
+     contract) gets picked for an ordinary chart and draws its empty state, in the reply AND on the canvas — which
+     is how adding one form broke every widget the model wrote (owner, 2026-09-24). Drawing one is still fine:
+     _widgetFormKnown stays the full list, so a record that arrives carrying a derived form still renders. */
+  function _widgetForms(){ try{ if(window.VeraWidget&&typeof VeraWidget.forms==='function'){ const ids=VeraWidget.forms().filter(f=>f&&!f.derived).map(f=>f.id).filter(Boolean); if(ids.length) return ids; } }catch(_){} return _W_DRAWS.slice(); }
+  function _widgetFormKnown(f){ f=String(f||'').toLowerCase(); try{ if(window.VeraWidget&&typeof VeraWidget.forms==='function'){ const all=VeraWidget.forms().map(x=>x&&x.id).filter(Boolean); if(all.length) return all.includes(f); } }catch(_){} return _widgetForms().includes(f); }
   // may the block read its source on its own? only quiet, read-shaped capabilities; anything else waits for a click
   function _widgetReadable(cap){ return /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs)|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.)/.test(cap)&&!/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert)\b/.test(cap); }
   function _widgetBlock(rec, by, data){
@@ -6904,19 +6909,50 @@ IMPORTANT:
     if(k==='calendar') return 'm';  // a month grid in a small item is a row of grey squares
     return 's';
   }
+  /* ── THE CANVAS KEEPS UP WITH THE REPLY, not with the end of it ───────────────────────────────────────────────
+     The harvest used to run once, on the finished message, so a diagram the chat had been drawing line by line
+     arrived on the canvas complete and late — "mermaid charts [should be] streamed to the canvas just like in chat
+     instead of being sent at the end of the message" (owner, 2026-09-24). It runs on the STREAM now: the same
+     hooks, over the body as it is being painted, throttled so a token does not cost a write. An item is keyed by
+     its turn and its place in the reply, so the one that is still growing UPDATES rather than landing twice — that
+     is the whole of streaming parity, and it is why the key had to be stable before this could work. ── */
+  const _CV_SIG={};                                     // what we last sent for a key: a growing block is an update
+  let _cvLiveAt=0, _cvLiveBusy=false;
+  function _cvLandLive(bubEl){
+    if(!SID||!bubEl||!_pages.has('canvas')) return;     // nothing to keep up with if the column is closed
+    if(_cvLiveBusy||Date.now()-_cvLiveAt<450) return;   // a token is not an event; a beat is
+    _cvLiveAt=Date.now(); _cvLiveBusy=true;
+    Promise.resolve(_cvLandFrom(bubEl, _cvRelMid, (bubEl.dataset&&bubEl.dataset.mid)||_cvRelMid))
+      .catch(()=>{}).then(()=>{ _cvLiveBusy=false; });
+  }
   async function _cvLandReply(mid){
     if(!SID||!mid) return 0; const q=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); if(!q) return 0;
     let w=q.nextElementSibling; while(w&&!(w.classList&&w.classList.contains('mwrap')&&w.classList.contains('a'))) w=w.nextElementSibling;
     const body=w&&w.querySelector('.msg-body'); if(!body||body.querySelector('.think-throb')) return 0;
+    return _cvLandFrom(body, mid, (w&&w.dataset&&w.dataset.mid)||mid);
+  }
+  async function _cvLandFrom(body, mid, from){
+    if(!SID||!mid||!body) return 0;
     const made=_cvHarvest(body); if(!made.length) return 0; let n=0;
     for(let i=0;i<made.length;i++){ const m=made[i];
       /* an item may name its OWN key, and a source does: it is keyed by the page, not by where in the reply it
          was found. Without that the same page lands twice - once as the run announced it, once as the reply
          mentioned it - and again on every later turn that cites it. The turn key stays the default, because for
          everything else the turn IS the identity. */
-      const key=m.key||('turn:'+mid+':'+m.k+':'+i); if(_CV_LANDED[key]) continue;
+      const key=m.key||('turn:'+mid+':'+m.k+':'+i);
+      let sig=''; try{ sig=JSON.stringify(m.content); }catch(_){ sig=String(i); }
+      /* ALREADY THERE: if what it holds has changed since we sent it — the fence has another three lines, the
+         diagram another branch — the item is UPDATED where it stands. Same key, same place on the canvas, no
+         second copy, and the reader watches it fill in rather than waiting for the end of the message. */
+      if(_CV_LANDED[key]){
+        if(_CV_SIG[key]===sig) continue;
+        _CV_SIG[key]=sig;
+        try{ await _capCall('canvas.update',{session_id:SID, key, content:m.content}); n++; }catch(_){}
+        continue;
+      }
       // the reply is the maker: the run leaves ITS block, while the turn stays the question the station is keyed by
-      try{ const r=await _capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid, from:(w&&w.dataset&&w.dataset.mid)||mid}});
+      try{ const r=await _capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid, from:from||mid}});
+        if(r&&r.ok) _CV_SIG[key]=sig;
         if(!(r&&r.ok)) continue; _CV_LANDED[key]=true; n++;
         (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:m.n, d:'canvas · '+(r.resolved==='shown'?'already there':'lifted out of the reply'), col:m.col, kind:m.k, key, form:m.kind==='widget'?(m.content.widget||''):undefined, mermaid:m.kind==='diagram'?m.content.mermaid:undefined, record:m.kind==='widget'?(m.content.record||undefined):undefined});
       }catch(_){}
@@ -11051,6 +11087,7 @@ Your task: decide what to do next to advance toward the goal.
                 atEnd:(p.scrollHeight-p.scrollTop-p.clientHeight)<40};
       });
       _paintStream(bubEl, fullText);
+      try{ _cvLandLive(bubEl); }catch(_){}   // and the canvas keeps up with it, item by item as they appear
       bubEl.querySelectorAll('.code-card pre').forEach((p,i)=>{
         const s=_sc[i];
         const streaming=!!p.closest('.code-card[data-incomplete]');
