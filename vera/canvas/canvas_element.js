@@ -540,7 +540,8 @@
      rings that MEAN something (this turn is waiting on you · you opened it · it is a suggestion) still draw, and an
      item you are pointing at lifts a little; everything else is just what it holds. */
   .it{border:0;border-radius:0;background:none;margin:2px 0 10px;
-    overflow:hidden;position:relative;display:flex;flex-direction:column;box-sizing:border-box}
+    overflow:hidden;position:relative;display:flex;flex-direction:column;box-sizing:border-box;
+    container-type:inline-size}   /* its own width is a query: a fused pair stacks when the card is too narrow to halve */
   .it:hover{background:color-mix(in srgb,var(--bg2,#1c2026) 42%,transparent)}
   .it.pinned{box-shadow:inset 2px 0 0 0 color-mix(in srgb,var(--acc,#5a9e8f) 70%,transparent)}
   /* ⛔ "now" IS A BAND, NOT A STATE. Every live item carries it (the class is the item's state: now · pinned ·
@@ -741,6 +742,42 @@
   @media (prefers-reduced-motion:reduce){.it-bd{transition:none}}
   /* while the transcript is scrolling, a size change is a correction, not a move (the rule .stage already keeps) */
   .stage[data-scrolling] .it-bd{transition:none}
+  /* ── FUSED: one element holding two or more (fuseOf). The panes are laid out INSIDE the body, so the card, its
+        header, its rail and its ceiling are the group's — which is the whole point: it reads as one thing.
+        beside — the lead and its diagram side by side, and the pair falls back to a stack when the column is
+                 too narrow to give either of them a readable half.
+        over   — the figure, then the rows it is drawn from.
+        strip  — indicators flowed along the row, each as wide as it needs, no column of its own. */
+  .it-bd.fu{display:flex;gap:9px;align-items:stretch}
+  .it-bd.fu>*{min-width:0}
+  .it-bd.fu-beside{flex-direction:row}
+  .it-bd.fu-over{flex-direction:column}
+  .it-bd.fu-strip{flex-direction:row;flex-wrap:wrap;align-items:flex-start;gap:7px}
+  .it-bd.fu-beside>*{flex:1 1 0}
+  .it-bd.fu-strip>*{flex:0 1 auto}
+  .it[data-fuse] .it-bd{max-height:clamp(180px,calc(.52 * var(--vc-vh,460px)),720px)}
+  /* a pane: its own label and nothing else — no border, no card. The hairline is the join, not a frame. */
+  .fu-p{display:flex;flex-direction:column;min-height:0;min-width:0}
+  .it-bd.fu-beside>.fu-p{border-left:1px solid rgba(255,255,255,.055);padding-left:9px}
+  .it-bd.fu-over>.fu-p{border-top:1px solid rgba(255,255,255,.055);padding-top:6px}
+  .fu-t{display:flex;align-items:center;gap:5px;font-size:9.5px;letter-spacing:.05em;color:var(--dim,#6b7480);
+    margin-bottom:3px;flex:0 0 auto}
+  .fu-t b{font-weight:600;color:var(--fg2,#c3cad4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fu-t .ic{flex:0 0 auto}
+  .fu-t button{margin-left:auto;opacity:0;transition:opacity .15s;background:none;border:0;padding:0 2px;
+    color:var(--dim,#6b7480);font:inherit;font-size:9px;cursor:pointer}
+  .fu-p:hover .fu-t button,.fu-t button:focus{opacity:1}
+  .fu-t button:hover{color:var(--acc,#5a9e8f)}
+  .fu-b{flex:1 1 auto;min-height:0;overflow:auto}
+  /* the strip's panes are as wide as their content, not a share of a column */
+  .it-bd.fu-strip>.fu-p{max-width:100%}
+  .it-bd.fu-strip .fu-b{overflow:visible}
+  /* how many are fused in, on the header line that already says what the thing is */
+  .fu-w{font-size:9px;color:var(--acc,#5a9e8f);background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent);
+    border-radius:6px;padding:0 5px;margin-left:4px;flex:0 0 auto}
+  /* narrow: a reading pane beside another one is two unreadable columns */
+  @container (max-width: 420px){.it-bd.fu-beside{flex-direction:column}
+    .it-bd.fu-beside>.fu-p{border-left:0;padding-left:0;border-top:1px solid rgba(255,255,255,.055);padding-top:6px}}
   /* the edit rail — the canvas is a document you can change */
   .it-ft{display:flex;align-items:center;gap:4px;padding:3px 6px 5px;margin-top:auto;border-top:1px solid rgba(255,255,255,.04);flex:0 0 auto}
   /* what this turn is waiting on: the decision, its answers */
@@ -895,6 +932,9 @@
     d = d || {};
     if (d.folded) return 1 / 3;              // folded to its header line it is a chip, whatever kind it is
     if (d.open) return 4;                    // opened in place or dragged: it asked for the stage
+    // a FUSED group is one element holding two or more: a strip of indicators is a column wide, anything with a
+    // pane beside or under it is a reading width, whatever the lead on its own would have asked for
+    if (d.fuse) return d.fuse === 'strip' ? 1 : 2;
     const sz = d.size || 'm', ty = d.type || '';
     if (sz === 'xl') return 4;
     if (WIDE[ty] || sz === 'l') return 2;
@@ -920,6 +960,61 @@
     const area = list.reduce((a, d) => a + Math.min(2, unitsOf(d)), 0);
     const want = Math.max(1, Math.ceil(area / per));
     return Math.max(1, Math.min(fit, list.length, want));
+  }
+
+  /* ── FUSING (owner, 2026-09-24: "i wanted to fuse elements and use them together not just display a grid") ──
+     Items that are about the same thing are drawn as ONE element with panes in it, not as neighbours in a grid.
+     Three bindings, every one of them read off the document rather than guessed at:
+
+       beside — an explode item is a DIAGRAM OF another item (content.binds). The source and its structure graph
+                belong in one element, side by side; the item's own graph switch then opens a pane in place instead
+                of putting a second card on the stage.
+       over   — one figure and one table from the SAME message: the chart over the rows it is a chart of.
+       strip  — three or more glanceable items (a share of a column each) from the same message: one strip of
+                indicators under one header, instead of three cards each repeating where they came from.
+
+     The LEAD is the item the group is drawn as; a MEMBER loses its own card and keeps its key, so every live slot,
+     every run drawn to it and every capability that addresses it go on working. Nothing is written: this is a way
+     of drawing the canvas, never a change to it. Pure — blocks in, groups out. ── */
+  const FIGURE = { widget: 1, diagram: 1, image: 1, chart: 1 };
+  function fuseOf(blocks, o) {
+    o = o || {}; const except = o.except || {};
+    const list = (blocks || []).filter((b) => b && b.key != null);
+    const out = { of: {}, groups: {} };
+    if (o.off || list.length < 2) return out;
+    const K = (b) => String(b.key);
+    const free = (b) => !out.of[K(b)] && !except[K(b)];
+    const join = (lead, member, layout, why) => {
+      const lk = K(lead), mk = K(member);
+      const g = out.groups[lk] || (out.groups[lk] = { lead: lk, members: [], layout, why });
+      g.members.push(mk); g.layout = layout; g.why = why; out.of[mk] = lk; out.of[lk] = lk;
+    };
+    // WHICH MESSAGE an item came from, preferring the reply block over the turn: two replies in one turn are two
+    // groups, not one pile
+    const msgOf = (b) => { const a = b.anchor && typeof b.anchor === 'object' ? b.anchor : null;
+      return a ? String(a.from || a.mid || a.turn || '') : ''; };
+    const by = {}; list.forEach((b) => { const m = msgOf(b); if (m) (by[m] = by[m] || []).push(b); });
+
+    // 1. a diagram OF another item, bound by key — the one binding the document states outright
+    list.forEach((b) => {
+      if (b.type !== 'explode' || !free(b)) return;
+      const bind = b.content && b.content.binds ? String(b.content.binds) : ''; if (!bind) return;
+      const src = list.find((x) => K(x) === bind && free(x)); if (!src) return;
+      join(src, b, 'beside', 'its structure, beside it');
+    });
+    // 2. one figure and one table out of the same message: the same rows, drawn and listed
+    Object.keys(by).forEach((m) => {
+      const tables = by[m].filter((b) => b.type === 'table' && free(b));
+      const figs = by[m].filter((b) => FIGURE[b.type] && free(b));
+      if (tables.length === 1 && figs.length === 1) join(figs[0], tables[0], 'over', 'the rows it is drawn from');
+    });
+    // 3. three or more glanceable things from one message: a strip, not a stack of cards
+    Object.keys(by).forEach((m) => {
+      const small = by[m].filter((b) => free(b) && unitsOf({ type: b.type, size: b.size || 'm' }) < 1);
+      if (small.length < 3) return;
+      small.slice(1).forEach((x) => join(small[0], x, 'strip', small.length + ' at a glance'));
+    });
+    return out;
   }
 
   function place(items, turns, o) {
@@ -1286,7 +1381,7 @@
          preview="on|off"           whether an HTML item, and a code block that is a whole page, DRAW by default or
                                     show their source. Either way the drawing is a sandboxed frame.
          explode-offer="both|code|never"  whether the canvas offers to explode a code item, a prose item, or neither. */
-    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer']; }
+    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse']; }
 
     constructor() {
       super();
@@ -1340,7 +1435,7 @@
       if (name === 'rail' && this.shadowRoot.childElementCount) { if (this.hasAttribute('rail')) this._railMount(); else { const r = this.shadowRoot.getElementById('rail'); if (r) r.hidden = true; if (this._railTimer) { clearInterval(this._railTimer); this._railTimer = null; } } }
       if (name === 'session-id' && this._railTimer) this._railRefresh();
       // a setting changed: preview and the explode offer are drawn, alignment is placed
-      if ((name === 'preview' || name === 'explode-offer') && this._doc) this.render(this._doc);
+      if ((name === 'preview' || name === 'explode-offer' || name === 'fuse') && this._doc) this.render(this._doc);
       if (name === 'align' && this.hasAttribute('stage')) { this._view = null; this._placeNow(); }
     }
     /* held (the default) or strict: the one place the two regimes are named, so nothing else has to ask twice */
@@ -1420,7 +1515,7 @@
       this._stageW = W;
       const cards = [...st.querySelectorAll('.it')];
       /* what each card wants, read off the card and independent of the count — so the count can be chosen from it */
-      const descOf = (c) => ({ type: c.dataset.type || '', size: c.dataset.size || 'm',
+      const descOf = (c) => ({ type: c.dataset.type || '', size: c.dataset.size || 'm', fuse: c.dataset.fuse || '',
         folded: c.classList.contains('compact') || c.classList.contains('overfold'),
         open: c.classList.contains('openin') || c.classList.contains('sized') });
       /* THE COUNT IS THE STAGE'S OWN, not a number somebody typed. `columns` absent or "auto" (the default) lets the
@@ -1582,6 +1677,16 @@
       const focusMid = this.dataset.focusMid || ''; this._focusMid = focusMid;
       const order = turnOrder(this._turns || {});
       const stage = this.hasAttribute('stage');
+      /* FUSED GROUPS (fuseOf, above). Worked out per band over the items as the document has them; a MEMBER is then
+         drawn as a pane of its LEAD instead of a card of its own, so two things about the same thing are one element.
+         `fuse="off"` (the reader's own setting) turns it off; `split` on a pane takes that one item back out of its
+         group for this session, which is a way of looking at the canvas and not a change to it. */
+      const fuseOff = String(this.getAttribute('fuse') || 'on').toLowerCase() === 'off';
+      const except = {}; (this._split || new Set()).forEach((k) => { except[String(k)] = 1; });
+      const FU = fuseOf(now, { off: fuseOff, except }), FUP = fuseOf(pinned, { off: fuseOff, except });
+      const byKey = {}; keyed.forEach((b) => { byKey[String(b.key)] = b; });
+      const groupOf = (b) => FU.groups[String(b.key)] || FUP.groups[String(b.key)] || null;
+      const isMember = (b) => { const k = String(b.key); const l = FU.of[k] || FUP.of[k]; return !!l && l !== k; };
       // the NOW band's two parts: the decision this turn waits on (the first live item that carries one) and what
       // Vera can also do (the suggestions the document and the live items carry)
       const decisions = now.concat(pinned).map(b => ({ b, d: decisionOf(b) })).filter(x => x.d);
@@ -1597,6 +1702,14 @@
       const editHtml = b => { const c = b.content || {}; const ask = c.ask && typeof c.ask === 'object' && !c[textFieldOf(b.type)]; const f = ask ? 'ask.question' : textFieldOf(b.type); const v = ask ? (c.ask.question || '') : (c[f] || '');   // a decision's editor edits its question
         return `<div class="edit" data-w="canvas.update"><textarea class="ta${b.type === 'code' || b.type === 'html' ? ' code' : ''}" data-field="${f}" spellcheck="false">${esc(v)}</textarea>
           <div class="edit-a"><button class="ib" data-act="save">Done</button><button class="ib" data-act="cancel">Cancel</button><span class="vc-dim">${esc(b.type)} · ${f}</span></div></div>`; };
+      /* A PANE: a fused member, drawn inside its lead's body. Its own drawer, its own key (so its live slot, its
+         runs and every capability that addresses it are unchanged) — and one control, to take it back out. */
+      const paneHtml = m => {
+        const fn = BLOCK[m.type] || BLOCK.note; let ih;
+        try { ih = fn(m.content || {}, m.size, String(m.key), this); }
+        catch (e) { ih = `<div class="err">Could not render a ${esc(m.type)} block.</div>`; }
+        return `<div class="fu-p" data-key="${esc(m.key)}" data-type="${esc(m.type)}"><span class="fu-t"><i class="ic vc-badge" data-kind="${esc(m.type)}">${esc(glyphOf(m.type))}</i><b>${esc(blockTitle(m))}</b><button data-act="split" title="Take it out of this element — its own card again">split</button></span><div class="fu-b">${ih}</div></div>`;
+      };
       const card = b => {
         // out of focus: greyed in Full, revealed on hover in Hover, gone in Zen; a pinned item is never out
         const inF = !F || F.has(String(b.key)) || b.state === 'pinned';
@@ -1654,13 +1767,16 @@
            that the offer lives where the thing does, and reads as a view of it rather than another card. */
         const xplodable = !bid && !!canExplode(b, this.explodeOffer());
         const xploded = xplodable && xplodedKeys.has(String(b.key));
-        const cls = 'it ' + esc(b.state || 'now') + fcls + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '');
-        return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}>
+        // what is fused INTO this one: drawn as panes of its body, so the two read as one thing
+        const g = groupOf(b);
+        const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
+        const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '');
+        return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}>
           ${ownHead && !compact ? `<span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>`
             : `<div class="it-hd"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
-            <span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
-          <div class="it-bd">${inner}</div>
+            ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
+          <div class="it-bd${panes.length ? ' fu fu-' + esc(g.layout) : ''}">${inner}${panes.map(paneHtml).join('')}</div>
           <div class="it-ft" data-w="canvas.item.rail"><span class="it-a">
               ${xplodable ? `<button data-act="explode" class="${xploded ? 'on' : ''}" title="${xploded ? 'Back to the source alone — the diagram goes' : 'See it as a structured diagram, bound to this item by span'}">${xploded ? 'source' : 'graph'}</button>` : ''}
               ${editable ? `<button data-act="edit" class="${editing ? 'on' : ''}" title="Edit its text — saved through canvas.update">${editing ? 'Editing' : 'Edit'}</button>` : ''}
@@ -1706,10 +1822,11 @@
            you said to keep, so they are kept; a second click within the beat clears those too. */
         (keyed.length ? `<button class="hidbtn" data-act="clear" title="Clear the canvas — pinned items stay; click again to clear those too">clear</button>` : '') +
         `<slot name="banner-end"></slot></div>`;
-      if (pinned.length) html += `<div class="band pinned"><div class="band-h">pinned · ${pinned.length}</div>${pinned.map(card).join('')}</div>`;
+      // a FUSED MEMBER is drawn inside its lead, never again as a card of its own
+      if (pinned.length) html += `<div class="band pinned"><div class="band-h">pinned · ${pinned.length}</div>${pinned.filter(b => !isMember(b)).map(card).join('')}</div>`;
       // the NOW band: what this turn is waiting on first (the decision, then what Vera can also do), then the live items, newest
       // first; on the stage they are placed level with their turns (absolute, after a measure); in the flow they stack
-      const nowOrder = now.slice().sort((x, y) => { const dx = decisionOf(x), dy = decisionOf(y); const wx = dx && !dx.answer ? 0 : dx ? 1 : 2, wy = dy && !dy.answer ? 0 : dy ? 1 : 2; return wx - wy; });
+      const nowOrder = now.filter(b => !isMember(b)).slice().sort((x, y) => { const dx = decisionOf(x), dy = decisionOf(y); const wx = dx && !dx.answer ? 0 : dx ? 1 : 2, wy = dy && !dy.answer ? 0 : dy ? 1 : 2; return wx - wy; });
       const nowCards = (nowOrder.length ? nowOrder.slice(0, 1).map(card).join('') : '') + ghost + nowOrder.slice(1).map(card).join('');
       /* the band's header is drawn only when it HAS something to say (see nowText): an empty "NOW" over a column of
          visible items is a label on a label. A named canvas keeps its BLOCKS line, which is that document's state. */
@@ -1810,8 +1927,20 @@
     /* every action on the column — the old per-item controls (pin · park · size · remove) and the board's new ones
        (add · open · edit · answer · take · in context) — one dispatcher */
     _act(btn, ev) {
-      const act = btn.dataset.act; const it = btn.closest('.it[data-key]'); const key = it ? it.dataset.key : '';
+      const act = btn.dataset.act; const it = btn.closest('.it[data-key]');
+      /* WHOSE BUTTON IT IS. A fused member is drawn inside its lead's card, so a control its own drawer put there
+         (a code item's preview switch, say) would otherwise act on the LEAD's key. The nearest pane wins. */
+      const pane = btn.closest('.fu-p[data-key]');
+      const key = pane ? pane.dataset.key : it ? it.dataset.key : '';
       const focusMid = this.dataset.focusMid || '';
+      /* a fused pane's own control: take THIS item out of the group it was drawn into and give it its card back.
+         A reader's choice about how the canvas is drawn, so it is kept here and written nowhere. */
+      if (act === 'split') {
+        if (!pane) return;
+        (this._split || (this._split = new Set())).add(String(pane.dataset.key));
+        if (this._doc) this.render(this._doc);
+        return;
+      }
       // an explode item's "clear": drop the pointer at both ends — every line unlit here, every card unlit there
       if (act === 'xpsync') { const w = this._codeItemFor(key); if (w) w.querySelectorAll('.vc-line.lit,.vc-line.tap').forEach((x) => x.classList.remove('lit', 'tap'));
         const L = this._live || {}; Object.keys(L).forEach((k) => { if (k !== key || L[k].dataset.kind !== 'explode') return; const sg = L[k].firstChild && L[k].firstChild.querySelector && L[k].firstChild.querySelector('vera-structgraph'); if (sg && sg.lightSpan) sg.lightSpan(null); }); return; }
@@ -2425,7 +2554,7 @@
     }
   }
 
-  const api = { place, autoCols, unitsOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 6 };
+  const api = { place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {
