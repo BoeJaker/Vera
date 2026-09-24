@@ -11947,6 +11947,7 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
     working file, which is far worse than a rejected edit the model can retry."""
     out = content or ""
     applied, errors, already = [], [], []
+    reanchored: List[Dict[str, Any]] = []
     for i, e in enumerate(edits or []):
         if not isinstance(e, dict):
             continue
@@ -11990,6 +11991,17 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
             if _span:
                 find = _span
                 n = out.count(find)
+        if n == 0 and _edit_anchor_hint is not None and hasattr(_edit_anchor_hint, "nearest_unique_span"):
+            # A stale anchor: the model quoted a line from an earlier version it
+            # edited itself. When ONE region is a close match and nothing else
+            # comes near, that is the line it meant - anchor there and say so,
+            # rather than refuse with a hint the retry re-types wrong (11 such
+            # refusals in run70-73, 2026-09-24). Still exactly once below.
+            _span = _edit_anchor_hint.nearest_unique_span(out, find)
+            if _span and out.count(_span) == 1:
+                reanchored.append({"edit": i + 1, "from": find[:80], "to": _span[:80]})
+                find = _span
+                n = 1
         if n == 0:
             # Naming what IS there turns a dead end into a next move - the same
             # reasoning already applied to the n>1 branch below. Echoing the
@@ -12015,7 +12027,9 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
                           "matches exactly once")
             continue
         out = out.replace(find, repl, 1)
-        applied.append({"find_preview": find[:80], "removed": len(find), "added": len(repl)})
+        applied.append({"find_preview": find[:80], "removed": len(find), "added": len(repl),
+                        **({"reanchored_from": reanchored[-1]["from"]}
+                           if reanchored and reanchored[-1]["edit"] == i + 1 else {})})
     # An edit that was already in place counts toward success: the file says
     # what the caller asked for, which is the only thing `ok` is about. A batch
     # of nothing BUT already-applied edits is still ok - re-running it would
