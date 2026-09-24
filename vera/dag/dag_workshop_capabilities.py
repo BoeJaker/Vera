@@ -75,6 +75,10 @@ from Vera.vera.capability_orchestration import (
 
 from Vera.vera.dag import chain_deps as _chain_deps
 try:
+    from Vera.vera.dag import steer_core as _steer_core
+except ImportError:                                        # pragma: no cover
+    from vera.dag import steer_core as _steer_core
+try:
     from Vera.vera.dag import step_summary_core as _step_summary_core
 except ImportError:                                        # pragma: no cover
     from vera.dag import step_summary_core as _step_summary_core
@@ -9956,7 +9960,7 @@ def _v5_navigate_goal_fallback(step: Dict[str, Any]) -> str:
     cut = _V5_RECOVERY_NARRATIVE_RE.search(goal)
     if cut:
         goal = goal[:cut.start()].strip()
-    return goal[:300]
+    return _steer_core.strip_steer(goal)[:300]
 
 
 _V5_AUTHOR_TOOLS = ("code.author", "prose.author", "code.edit")
@@ -9981,7 +9985,9 @@ def _v5_heal_author_args(tool: str, args: Any,
         return out
     has_content = bool(str(args.get("content") or args.get("text") or "").strip())
     if not str(args.get("task") or "").strip() and not has_content:
-        sg = str(step.get("goal") or step.get("title") or "").strip()
+        # Without the controller steer: it is context for the executor, not
+        # part of the file's task (six steered tasks in run70-73, 24 Sep 2026).
+        sg = _steer_core.strip_steer(str(step.get("goal") or step.get("title") or "")).strip()
         if sg:
             out.append(("task", sg[:600], f"task (missing) → step goal: {sg[:80]}"))
     if tool in ("code.author", "prose.author") and not str(args.get("path") or "").strip():
@@ -16636,6 +16642,18 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                               "session_id": sid, "note": _note})
+        # The executor copies its steered step goal into an authoring `task` or a
+        # browser `goal`; the steer is the controller talking to the executor,
+        # not a requirement of the file or the page. Strip it before the cap
+        # sees it (run70-73: verify_statistical_output.py and friends).
+        if isinstance(args, dict) and (tool in _V5_AUTHOR_TOOLS or tool in _OPERATOR_MODEL_CAPS):
+            for _sf in ("task", "goal"):
+                if _steer_core.has_steer(args.get(_sf)):
+                    args[_sf] = _steer_core.strip_steer(args[_sf])
+                    await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                      "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                      "session_id": sid,
+                                      "note": f"{_sf}: controller steer removed (it is context, not the task)"})
         # ── RUN-BEFORE-AUTHOR guard ─────────────────────────────────────────
         # The self-heal above only rescues a path whose basename WAS saved this
         # run. The other half of the failure is running a script that does not
