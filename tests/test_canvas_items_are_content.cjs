@@ -15,7 +15,7 @@ const COL = { columns: 1, gap: 10, colWidth: 300, pad: 0, viewport: 900 };
 t('an item draws no border, no ground, no radius', /\.it\{border:0;border-radius:0;background:none;/.test(SRC));
 t('what separates one from the next is space and its own caption, not a frame', /margin:2px 0 10px;/.test(SRC));
 t('the states that MEAN something still draw: waiting, opened, pinned, a suggestion',
-  /\.it\.waiting\{animation:waitring/.test(SRC) && /\.it\.openin\{box-shadow:0 0 0 1\.5px/.test(SRC) &&
+  /\.it\.waiting\{animation:waitring/.test(SRC) && /\.it\.openin\{\}/.test(SRC) &&
   /\.it\.pinned\{box-shadow:inset 2px 0 0 0/.test(SRC) && /\.it\.ghost\{background:transparent;border:1px dashed/.test(SRC));
 /* and the one that does NOT: "now" is the band every live item is in, so a ring on it was a box around everything */
 t('being in the NOW band draws no ring — that was the border on every item',

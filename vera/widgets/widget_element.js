@@ -1458,7 +1458,11 @@
     const table = (kv.length || rw.length) && !TABLE_FORMS.has(f) ? R.table(rw.length ? rw : kv.map((x) => ({ name: x[0], value: x[1] })), 140, { size: 'l' }) : '';
     return '<div class="vw-xl"><div class="vw-main">' + body + '</div>' + detail + (table ? '<div class="vw-xltable">' + table + '</div>' : '') + '</div>';
   }
-  function forms() { return Object.keys(DRAWN).map((id) => ({ id, shape: DRAWN[id], sizes: SIZES.slice(), drawn: true, iso: !!R[id + '@iso'] || ISO_ONLY.has(id) })).concat(Object.keys(ALIAS).filter((id) => !DRAWN[id]).map((id) => ({ id, shape: DRAWN[ALIAS[id]] || '', sizes: SIZES.slice(), drawn: true, as: ALIAS[id] }))); }
+  /* DERIVED forms: drawn like any other, but their DATA comes from a capability and cannot be written by hand — a
+     structured graph is the Explode contract. They are marked here so the lists people and models pick from can
+     leave them out; offered as a menu choice, one gets picked for an ordinary chart and draws its empty state. */
+  const DERIVED = new Set(['structgraph']);
+  function forms() { return Object.keys(DRAWN).map((id) => ({ id, shape: DRAWN[id], sizes: SIZES.slice(), drawn: true, derived: DERIVED.has(id), iso: !!R[id + '@iso'] || ISO_ONLY.has(id) })).concat(Object.keys(ALIAS).filter((id) => !DRAWN[id]).map((id) => ({ id, shape: DRAWN[ALIAS[id]] || '', sizes: SIZES.slice(), drawn: true, as: ALIAS[id] }))); }
   const ISO_ONLY = new Set(['dial', 'tank', 'stacks', 'conveyor', 'city', 'shelf', 'stack', 'sweep', 'meter-panel', 'pipes', 'library', 'pages', 'approvals', 'wiki', 'notices', 'devices', 'notebook', 'hosts', 'containers', 'models', 'datasets', 'sandboxes', 'activity', 'frame', 'racks']);
 
   /* ── the record, in one shape (widget_record.py's rules, as far as a renderer needs them) ── */

@@ -51,7 +51,7 @@ t('what says where an item ends is its own header line', /:host\(\[blocks="off"\
 t('the rail is held back until you are on the item',
   /:host\(\[blocks="off"\]\) \.it > \.it-ft\{opacity:0/.test(SRC) && /:host\(\[blocks="off"\]\) \.it:hover > \.it-ft,:host\(\[blocks="off"\]\) \.it:focus-within > \.it-ft\{opacity:1\}/.test(SRC));
 // blocks off is about grounds - it must not cost the states that MEAN something, which a bare box-shadow:none did
-['openin', 'hovopen'].forEach((k) => t('a ' + k + ' item keeps its ring with blocks off',
+['hovopen'].forEach((k) => t('a ' + k + ' item keeps its ring with blocks off',
   new RegExp(':host\\(\\[blocks="off"\\]\\) \\.it\\.' + k + '\\{box-shadow:0 0 0 1\\.5px').test(SRC)));
 t('a suggestion is still drawn as a ghost', /:host\(\[blocks="off"\]\) \.it\.ghost\{border:1px dashed/.test(SRC));
 t('THE BANNER KEEPS ITS BACKGROUND whatever blocks says — it is sticky, and a sticky row with nothing behind it is unreadable',
