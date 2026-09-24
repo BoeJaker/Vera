@@ -166,6 +166,20 @@ def test_a_hosted_panel_hides_its_own_menu():
         "the differently-id'd hosts are no longer covered"
 
 
+def test_a_panel_rule_that_must_beat_the_shared_one_carries_the_id():
+    """The shared chrome is written as `#sidebar[data-vera-lhm] .nav-btn`,
+    which is (1,2,0). A panel rule meant to override it — the Estate hiding
+    the view it is not showing — has to be at least that specific or it
+    silently does nothing, which is how the Estate menu came to list its
+    Models pages as well as its own."""
+    estate = _read(*PANELS["Estate"])
+    filters = re.findall(r"^[^\n{]*\[data-view=\"(?:models|estate)\"\][^\n{]*\{", estate, re.M)
+    assert filters, "the Estate's view filter is gone"
+    for sel in filters:
+        assert "#sidebar[data-vera-lhm]" in sel, \
+            f"too weak to beat the shared .nav-btn rule: {sel.strip()}"
+
+
 def test_the_shared_behaviour_publishes_only_real_menu_items():
     """A heading or a rule that carries data-view (the Estate groups its items
     that way) is not a target, and a button the panel's own rules hide is not

@@ -50,12 +50,17 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 .mc-acts .btn{font-size:8px;padding:1px 6px}
 /* This panel is two menus in one file: the Estate's pages, and the model
    pages the Models tab opens with ?view=models. Only the current view's
-   items exist on screen, and vera-panel.js publishes only those. */
-#nav [data-view="models"]{display:none}
-html.view-models #nav [data-view="estate"]{display:none}
-html.view-models #nav .nav-btn[data-view="models"]{display:flex}
-html.view-models #nav .nav-grp[data-view="models"],
-html.view-models #nav .nav-div[data-view="models"]{display:block}
+   items exist on screen, and vera-panel.js publishes only those.
+
+   Every selector here carries #sidebar[data-vera-lhm] on purpose. The shared
+   rule it has to beat is `#sidebar[data-vera-lhm] .nav-btn{display:flex}`;
+   a plain `#nav [data-view=...]` is less specific than that, so the filter
+   did not fire at all and the Estate menu listed the model pages too. */
+#sidebar[data-vera-lhm] #nav [data-view="models"]{display:none}
+html.view-models #sidebar[data-vera-lhm] #nav [data-view="estate"]{display:none}
+html.view-models #sidebar[data-vera-lhm] #nav .nav-btn[data-view="models"]{display:flex}
+html.view-models #sidebar[data-vera-lhm] #nav .nav-grp[data-view="models"],
+html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{display:block}
 #panes{flex:1;overflow:hidden;position:relative;min-width:0}
 .pane{position:absolute;inset:0;display:none;overflow-y:auto;padding:12px}
 .pane.on{display:block}
