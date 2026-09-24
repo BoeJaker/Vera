@@ -215,6 +215,32 @@ remains `null` rather than being confused with zero. The comparator does not
 construct a composite score, choose a winner, invoke a backend, or authorize a
 deployment.
 
+`vera.fabric.retrieval_execution` is the bounded invocation layer that feeds
+that offline comparator. A `RetrievalQueryBinding` holds query text only for
+the duration of execution and verifies it against the case digest; neither the
+binding representation, evidence, nor report serialises the text. The executor
+runs at most 16 explicitly configured adapters over at most 200 identical cases,
+with a bounded per-operation deadline, cooperative cancellation, redacted error
+codes, and deliberately sequential provider pressure. Timeouts, cancellation,
+missing integrations, and malformed provider citations remain visible outcomes
+rather than silently disappearing or falling back to another backend.
+
+`QueryProviderRetrievalAdapter` connects providers that already honour
+`DatasetSnapshot` and `QueryRequest`. Because provider query pages identify
+matches by snapshot-local record index, the adapter also requires a complete
+immutable index-to-`(record_id, revision_id)` map for that exact snapshot. It
+rejects snapshot mismatches, incomplete citation maps, and invalid indexes.
+`UnavailableRetrievalAdapter` records an intentionally configured but absent
+integration without claiming that it was queried.
+
+The current general-purpose `fabric.query` capability searches live indexes;
+it does not yet accept an immutable snapshot ID or return revision-qualified
+citations. It is therefore not represented as snapshot-pinned Fabric evidence.
+Native Fabric graph/vector, Qdrant, GraphRAG, analytical, and JEPA adapters may
+join the execution layer only when they can prove those same snapshot and
+citation guarantees. This is a deliberate evidence boundary, not an indication
+that an unavailable provider scored zero.
+
 Supported evidence profiles distinguish Fabric graph/vector retrieval, Qdrant,
 GraphRAG, analytical retrieval, and **JEPA Worldview evidence**. “Worldview” is
 not accepted as an ambiguous provider kind: the older non-JEPA Worldview and
