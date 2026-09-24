@@ -76,10 +76,12 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.dag import chain_deps as _chain_deps
 try:
     from Vera.vera.dag.operator_model_arg_core import (
-        heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS)
+        heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS,
+        names_a_model as _names_a_model)
 except ImportError:                                        # pragma: no cover
     from vera.dag.operator_model_arg_core import (
-        heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS)
+        heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS,
+        names_a_model as _names_a_model)
 try:
     from Vera.vera.dag import loop_prompt_rules as _loop_rules
 except ImportError:                                        # pragma: no cover
@@ -16539,7 +16541,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # and goal of that very call were repaired above; the model was not.
         # Drop a model no Ollama node serves so the routed default applies.
         # A served model is never touched, and with no catalogue nothing is.
-        if tool in _OPERATOR_MODEL_CAPS and isinstance(args, dict) and args.get("model"):
+        # `names_a_model` reads `model` AND a "<name>:<model>" provider - the
+        # heal always did, but this gate read only `model`, so a name carried
+        # by provider alone walked past it (operator census run3, 2026-09-24:
+        # `fast-8b`, three 404 thinks, run dead in 8 s).
+        if tool in _OPERATOR_MODEL_CAPS and _names_a_model(args):
             try:
                 _served = sorted({str(m) for _i in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values()
                                   for m in ((_i or {}).get("models") or [])})
