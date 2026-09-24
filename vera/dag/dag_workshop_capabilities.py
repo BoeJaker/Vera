@@ -17920,6 +17920,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 # code.author had already parser-verified (2026-08-24 runs, every
                 # language). code.author's result carries no content, so read it back
                 # from the file it just wrote — once, locally, off the event loop.
+                _cbody = ""
                 _cfs = str(_cres.get("fs_path") or "")
                 if _cfs:
                     def _slurp(p: str) -> str:
@@ -17947,6 +17948,25 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 _crec["fs_path"] = str(_cres.get("fs_path") or _crec.get("fs_path", ""))
                 _crec.pop("ran_ok", None)
                 _crec.pop("ran_at_hash", None)
+                # Show the executor what it just wrote. code.author's result is
+                # metadata (path, bytes, syntax_ok) and was shown JSON-encoded
+                # and cut at the preview budget, so the next cycle could not see
+                # the file it had just authored and read it back to find out -
+                # 42 read-backs of a parser-verified authored file in run70-73
+                # (24 Sep 2026), each a full executor turn. The generative path
+                # already shows a written document in full for the same reason;
+                # this does the same for authored code, from the registry copy.
+                if _cbody and invoke_ok:
+                    _shown = (_cbody if len(_cbody) <= _V5_GEN_INSTEP_MAX
+                              else _v5_head_tail(_cbody, _V5_GEN_INSTEP_MAX))
+                    _chk = (f"verified by {_cres.get('checked_with') or 'a parser'}"
+                            if _cres.get("syntax_ok") else "NOT parser-verified")
+                    preview = (f"{tool} wrote {_cpath} ({len(_cbody):,} chars, {_chk}). Its content "
+                               "is shown here IN FULL - do NOT read it back with sandbox.session.fs.read, "
+                               "cat or ls; act on it:\n\n" + _shown)
+                    _budget = max(_budget, len(preview))
+                    outputs[tool] = preview
+                    success_sigs[_call_sig] = preview
 
         # A file that has just been READ enters the registry with its shape and
         # parse status established — so the NEXT step is told what is in it
