@@ -33,6 +33,12 @@ def test_two_candidates_equally_close_means_no_guess():
     assert nearest_unique_span(content2, "def meanx(x):") is None
 
 
+def test_a_short_tag_whose_closer_moved_still_lands():
+    content = '<input id="email" required onblur="validateEmail()">\nconst seconds = 90;\n'
+    assert nearest_unique_span(content, '<input id="email" required>') == '<input id="email" required onblur="validateEmail()">'
+    assert nearest_unique_span("total = f(a, b)\n", "total = f(a)") == "total = f(a, b)"
+
+
 def test_a_far_miss_is_refused():
     assert nearest_unique_span(FILE, "function totallyDifferent() {") is None
 
