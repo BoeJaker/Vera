@@ -67,7 +67,7 @@ t('a kind you READ rather than glance at spans columns when there are columns to
   /const WIDE = \{ code: 1, html: 1, explode: 1, markdown: 1, panel: 1, session: 1, table: 1 \};/.test(SRC) &&
   /if \(WIDE\[ty\] \|\| sz === 'l'\) return 2;/.test(SRC));
 t('the width is applied before the height is measured, or every height is a different item\'s',
-  /WIDTH BEFORE HEIGHT/.test(SRC) && /cards\.forEach\(\(c\) => \{ const ww = wantOf\(c\);/.test(SRC) &&
+  /WIDTH BEFORE HEIGHT/.test(SRC) && /cards\.forEach\(\(c, i\) => \{ const ww = wants\[i\];/.test(SRC) &&
   /c\.style\.width = \(ww < 1 \? Math\.round\(ww \* w\) - gap : span \* w \+ \(span - 1\) \* gap\) \+ 'px'/.test(SRC));
 t('and the placed width is applied back to the card', /if \(p\.w > 0\) c\.style\.width = p\.w \+ 'px';/.test(SRC));
 

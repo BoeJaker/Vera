@@ -1532,9 +1532,30 @@
       /* over 1 = a number of COLUMNS to span, clamped to the columns there are: a kind you read takes the stage when
          there is more than one column to take; an l or xl item of any kind takes two. */
       const wantOf = (c) => { const u = unitsOf(descOf(c)); return u > 1 ? Math.max(1, Math.min(cols, Math.round(u))) : u; };
-      cards.forEach((c) => { const ww = wantOf(c);
+      const wants = cards.map(wantOf);
+      cards.forEach((c, i) => { const ww = wants[i];
         const span = ww > 1 ? Math.min(cols, Math.round(ww)) : 1;
         c.style.width = (ww < 1 ? Math.round(ww * w) - gap : span * w + (span - 1) * gap) + 'px'; });
+      /* ⛔ AND AN ITEM WHOSE CONTENT HAS A WIDTH OF ITS OWN IS NEVER WIDER THAN THAT. A sticker-sized widget drew a
+         90px chip in the third of a column it was given and left the rest of it blank (owner, 2026-09-24: "canvas
+         items that are smaller than a column have large blank areas i.e. widgets"). The face reports its real width
+         (vera-widget.naturalWidth via _widgetFit; the faces meant to fill report nothing), and the card is cut down
+         to it — so what comes next can sit beside it instead of after the blank.
+         Read every card, then write every card: the natural width is measured against the share just applied, and
+         a read/write per card in one loop is a layout flush per card. An item you opened or dragged is left alone,
+         as everywhere else — you asked for that room. */
+      const natural = cards.map((c, i) => {
+        if (wants[i] >= 1 || c.classList.contains('openin') || c.classList.contains('sized') || c.classList.contains('compact')) return 0;
+        const s = c.querySelector('.vc-live[data-natw]'); if (!s) return 0;
+        const nat = parseInt(s.dataset.natw, 10); if (!(nat > 0)) return 0;
+        const chrome = Math.max(0, c.clientWidth - s.clientWidth);   // the card's own padding, measured rather than assumed
+        const px = nat + chrome; const share = c.clientWidth;
+        return px > 40 && px < share - 8 ? px : 0;                   // only when it really is narrower than its share
+      });
+      cards.forEach((c, i) => { if (!natural[i]) return;
+        c.style.width = natural[i] + 'px';
+        wants[i] = Math.max(0.08, (natural[i] + gap) / (w + gap));   // and the placer flows the rest of the row against THAT
+      });
       const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);   // the sticky heads overlay the stage's top: nothing is placed under them
       const body = this.shadowRoot.getElementById('body');
@@ -1564,11 +1585,11 @@
         cards.forEach((c, i) => { if (hs[i] > capH && !asked(c)) { c.style.maxHeight = capH + 'px'; c.classList.add('capped'); } }); }
       else cards.forEach((c) => { if (c.classList.contains('capped')) { c.style.maxHeight = ''; c.classList.remove('capped'); } });
       this._fullH = this._fullH || {};
-      const items = cards.map((c) => { const k = c.dataset.key || ''; const hd = c.querySelector('.it-hd');
+      const items = cards.map((c, ci) => { const k = c.dataset.key || ''; const hd = c.querySelector('.it-hd');
         const isFolded = c.classList.contains('overfold'); const measured = c.offsetHeight;
         if (!isFolded) this._fullH[k] = measured;                              // what it is when OPEN: the placer judges on that, so folding cannot oscillate
         return { key: k, h: isFolded ? (this._fullH[k] || measured) : measured, hFold: hd ? hd.offsetHeight + 2 : 28,
-                 want: wantOf(c), mid: c.dataset.mid || '', beside: c.dataset.beside || '',
+                 want: wants[ci], mid: c.dataset.mid || '', beside: c.dataset.beside || '',
                  /* AN ITEM YOU OPENED IS NEVER FOLDED BY THE COLUMN, any more than a pinned one is: you asked for it
                     open, and a room that shuts what you just opened is worse than a room that scrolls. */
                  pinned: c.classList.contains('pinned') || c.classList.contains('openin') }; });
@@ -2098,7 +2119,9 @@
             inner.addEventListener('vm:rendered', () => this._diagramGrew(key, inner)); this._mermaidInto(inner, key); }
           // `bare`: the widget draws its figure and nothing else. Its own frame inside a canvas item was a box in a
           // box — and it lives in a second shadow root, so no rule of ours could reach it (owner, 2026-09-24).
-          else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); inner.setAttribute('bare', ''); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = ''; }
+          else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); inner.setAttribute('bare', ''); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = '';
+            // a chip-faced widget is as wide as its face: the card takes that width and the rest of the row is free
+            inner.addEventListener('widget:rendered', () => this._widgetFit(key, inner)); }
           else if (kind === 'preview') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);
           inner.setAttribute('sandbox', 'allow-scripts');   // no network, no cookies, no same-origin: it only draws
           // a code item previews its code; an html item previews the page it IS (its content field is `html`)
@@ -2112,6 +2135,7 @@
           el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);
           try { this.dispatchEvent(new CustomEvent('vera:canvas:live', { bubbles: true, detail: { key, kind, ws: h.dataset.ws || '', src: h.dataset.src || '' } })); } catch (e) {}
         } else if (kind === 'widget') { const inner = el.firstChild, rc = this._contentOf(key); const sz = h.dataset.size || 'm'; if (h.textContent) h.textContent = ''; if (inner && inner.getAttribute('size') !== sz) inner.setAttribute('size', sz); try { const j = JSON.stringify((rc && (rc.record || rc)) || null); if (inner && j && inner._recJson !== j) { inner._recJson = j; inner.record = rc.record || rc; } } catch (e) {}
+          this._widgetFit(key, inner);   // a re-rendered slot is a fresh face: its own width again
         } else if (kind === 'mermaid') { if (h.textContent) h.textContent = ''; this._mermaidInto(el.firstChild, key); this._diagramGrew(key, el.firstChild);   // a re-rendered slot is new markup: the drawn diagram's height again
         } else if (kind === 'preview') { if (h.textContent) h.textContent = ''; const f = el.firstChild, cc = this._contentOf(key) || {};
           const doc = previewDoc(h.dataset.lang || cc.lang, cc.code || ''); if (f && f._doc !== doc) { f._doc = doc; f.srcdoc = doc; }
@@ -2216,6 +2240,23 @@
       const dh = Math.max(60, Math.round(nat)) + 'px'; if (h.style.getPropertyValue('--dh') === dh) return;
       h.style.setProperty('--dh', dh); h.dataset.natural = String(Math.round(nat));
       requestAnimationFrame(() => { this._liveLayout(); if (this.hasAttribute('stage')) this._placeNow(); });
+    }
+    /* ── the widget's face has a width of its own: the CARD takes it ──────────────────────────────────────────
+       A sticker-sized widget was given a share of a column (a third, a half) and drew a 90px chip in it, leaving
+       the rest of that share blank — the "large blank areas" the owner reported. The element answers how wide its
+       face really is (vera-widget.naturalWidth, 0 for the faces that are meant to fill), the slot carries it, and
+       the placer gives the card exactly that much and lets whatever is next sit beside it.
+       Nothing is written and no size record changes: this is the card fitting its content. ────────────────────── */
+    _widgetFit(key, inner) {
+      const body = this.shadowRoot.getElementById('body');
+      const h = body && body.querySelector('#items .vc-live[data-key="' + String(key).replace(/"/g, '\\"') + '"]');
+      if (!h || !inner || typeof inner.naturalWidth !== 'function') return;
+      let nw = 0; try { nw = inner.naturalWidth() || 0; } catch (e) { nw = 0; }
+      const was = h.dataset.natw || '';
+      const now = nw > 0 ? String(Math.round(nw)) : '';
+      if (was === now) return;
+      if (now) h.dataset.natw = now; else delete h.dataset.natw;
+      if (this.hasAttribute('stage')) requestAnimationFrame(() => { if (this.hasAttribute('stage')) this._placeNow(); });
     }
     /* the diagram's source into the estate's mermaid element (loaded once from the page); a changed source redraws it;
        the host's own window.mermaid draws when the element cannot be had, the source shows when nothing can */
