@@ -13245,6 +13245,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                                phase_policy: str = "sparingly",
                                allowed_phases: Optional[List[str]] = None,
                                intent: str = "mixed",
+                               plan_note: str = "",
                                sid: str = "", stream_id: str = "") -> Dict[str, Any]:
     """ONE LLM call: decompose the goal into an ordered step plan. Each step names
     only the few caps and skills it needs. Folds triage+step-select+plan into a
@@ -13313,7 +13314,8 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             + '}'
         )
         prompt = (f"GOAL: {goal}\n\nAVAILABLE CAPABILITIES (name — description):\n{cap_lines}\n\n"
-                  "Produce the steps JSON object.")
+                  "Produce the steps JSON object."
+                  + (f"\n\n{plan_note}" if plan_note else ""))
         if plan_persona:
             sys = plan_persona + "\n\n" + sys
         steps = []
@@ -13575,7 +13577,8 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
               + (f"RECON FINDINGS (already gathered — use these to inform the plan):\n{recon_findings}\n\n"
                  if recon_findings else "")
               + f"AVAILABLE CAPABILITIES (name — description [suggested skills]):\n{cap_lines}\n\n"
-              f"AVAILABLE SKILLS (id — description):\n{skill_lines}\n\nProduce the plan.")
+              f"AVAILABLE SKILLS (id — description):\n{skill_lines}\n\nProduce the plan."
+              + (f"\n\n{plan_note}" if plan_note else ""))
     if plan_persona:
         sys = plan_persona + "\n\n" + sys
     steps: List[Dict[str, Any]] = []
@@ -13876,6 +13879,29 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _plan_shape = None
         log.warning("plan_shape_core unavailable — under-decomposition guard off")
+
+# Plan hygiene (a plan holds only what the goal asked for; item 22, 2026-09-24).
+try:
+    from Vera.vera.dag import plan_hygiene_core as _plan_hygiene
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import plan_hygiene_core as _plan_hygiene
+    except Exception:
+        _plan_hygiene = None
+        log.warning("plan_hygiene_core unavailable — plan hygiene off")
+
+
+def _v6_goal_implies_document(text: str) -> bool:
+    """Does the goal name a DOCUMENT deliverable? "Report the disk usage" and
+    "then report their mean" are the verb - an instruction to tell the user -
+    and the completion gate appending "Write and save the report" to them
+    (run71/72 operate-exec, 2026-09-24) was the gate misreading it."""
+    if _plan_hygiene is not None:
+        try:
+            return bool(_plan_hygiene.implies_document(text))
+        except Exception:
+            pass
+    return bool(_V5_PROSE_STEP_NOUN_RE.search(text or ""))
 
 
 async def _emit_stage_context(stage: str, *, system: str = "", prompt: str = "",
@@ -20030,7 +20056,7 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
     # run incomplete means this one has nothing to add.
     _prose_check_goal = raw_goal or goal
     if (complete and session_id
-            and _V5_PROSE_STEP_NOUN_RE.search(f"{_prose_check_goal}\n{done_when}")):
+            and _v6_goal_implies_document(f"{_prose_check_goal}\n{done_when}")):
         _has_doc = bool(_wf) and any(
             str(f).lower().endswith((".md", ".markdown", ".txt", ".html", ".htm", ".pdf", ".rst"))
             for f in _wf)
@@ -21629,8 +21655,12 @@ def _v7_intent_plan_directive(intent: str, *, max_steps: int = 8) -> str:
     if it == "action":
         return (
             "GOAL INTENT = ACTION. The goal is to run/operate/inspect a system. Plan concrete exec.* / "
-            "http.* / infra steps that actually perform and then VERIFY the operation (a read-only check "
-            "of the resulting state). Do not pad with research or authoring the task did not ask for.\n")
+            "http.* / infra steps that actually perform the operation; each step's `success` IS the "
+            "read-only check of the resulting state - do NOT add a separate verify step. A goal that "
+            "is one command's output (report disk usage, list the largest files, show a status) is "
+            "ONE step whose success is that output; do NOT add a step to parse, format or 'report' "
+            "it - the output is the report. Do not pad with research or authoring the task did not "
+            "ask for.\n")
     return ""   # mixed → no narrowing; the planner's general guidance applies
 
 
@@ -23499,6 +23529,47 @@ async def cap_dag_agent_loop_v6(
                 steps = _fsteps
         except Exception as _e:
             log.debug("v6 drift re-plan failed: %s", _e)
+    # PLAN HYGIENE — a plan holds only what the goal asked for (item 22). In
+    # run70-73 17 of 40 plans carried a "Verify ..." step re-checking settled
+    # work, 9 criteria added features the goal never named (pause/reset/reload
+    # for a countdown), and one-command goals were planned as run + parse +
+    # "report" (1,800 s, q=0). Added requirements go back to the planner ONCE
+    # with a note; the re-check steps and the parse/format steps are then
+    # removed deterministically. See plan_hygiene_core.
+    if _plan_hygiene is not None and steps:
+        try:
+            _added = _plan_hygiene.added_requirements(_orig_goal, steps)
+            if _added:
+                _re2 = await _v5_orchestrate_plan(
+                    _orig_goal, catalog_names, skills, cap_skill_map,
+                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                    max_steps=max_steps, minimal=True, want_success=True,
+                    phase_policy=phase_policy, allowed_phases=allowed_phases,
+                    intent=intent, plan_note=_plan_hygiene.hygiene_note(_added),
+                    sid=sid, stream_id=stream_id)
+                _r2 = (_re2 or {}).get("steps") or []
+                _added2 = _plan_hygiene.added_requirements(_orig_goal, _r2) if _r2 else list(_added)
+                _took2 = bool(_r2) and len(_added2) < len(_added) and not _plan_drifted(_orig_goal, _r2)
+                await emit_event({"type": "agent_loop_v6.plan_hygiene_replan",
+                                  "session_id": sid, "stream_id": stream_id,
+                                  "added": _added[:12], "accepted": _took2,
+                                  "remaining": (_added2 if _took2 else _added)[:12],
+                                  "titles": [str(x.get("title") or "")[:80] for x in _r2][:8]})
+                if _took2:
+                    steps = _r2
+            steps, _dropped = _plan_hygiene.drop_verify_steps(_orig_goal, steps)
+            _merged = ""
+            if _plan_hygiene.is_single_command_goal(
+                    _orig_goal, steps,
+                    has_seam=lambda g: len(_V5_COMPOUND_SEAM_RE.split(g, maxsplit=1)) > 1):
+                steps, _merged = _plan_hygiene.merge_exec_plan(_orig_goal, steps)
+            if _dropped or _merged:
+                await emit_event({"type": "agent_loop_v6.plan_hygiene",
+                                  "session_id": sid, "stream_id": stream_id,
+                                  "dropped": _dropped[:8], "merged": _merged,
+                                  "titles": [str(x.get("title") or "")[:80] for x in steps][:8]})
+        except Exception as _e:
+            log.debug("v6 plan hygiene failed: %s", _e)
     # Enforce the phase policy on the plan: none when phases are off, else keep only
     # the phases the user allowed (phase_set) in canonical order.
     for s in steps:
