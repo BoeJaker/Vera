@@ -8961,6 +8961,12 @@ _V5_PREVIEW_FILEREAD = int(os.getenv("V5_PREVIEW_FILEREAD", "8000") or 8000)
 _V5_CTX_PER_STEP = 3000             # prior-step summary carried into a dependent step
 _V5_CTX_TOTAL = 12000              # cap on the whole prior-context slice
 _V5_DONE_SUMMARY = 6000            # a step's own `done` summary (flows to later steps)
+#: Tool NAMES the executor uses when it means "this step is answered". The
+#: contract is a top-level `done` field, but a model that has finished reaches
+#: for a tool called `done` (5 times in run70-73, 24 Sep 2026), was told there
+#: is no such capability, and spent the next cycles re-issuing refused calls.
+#: The intent is unambiguous; it is taken as the step's done summary.
+_V5_DONE_TOOL_ALIASES = frozenset({"done", "finish", "finished", "stop", "complete", "completed", "end", "final"})
 
 # Args that don't change WHAT a call does — only how long it may run or where it
 # runs. A specialist that re-issues the SAME command with only a different
@@ -16091,6 +16097,22 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         if not isinstance(tu, dict):
             tu = {}
         tool = (tu.get("name") or action.get("tool") or action.get("capability") or "").strip()
+        # `done` as a TOOL NAME: the step is answered. Taken as the done summary
+        # (the call's summary/result field, else the thought, else the last
+        # useful output) instead of being refused as an unknown capability.
+        if tool.lower() in _V5_DONE_TOOL_ALIASES:
+            _dargs = tu.get("input") or action.get("args") or action.get("arguments") or {}
+            _dsum = ""
+            if isinstance(_dargs, dict):
+                _dsum = str(_dargs.get("summary") or _dargs.get("result") or _dargs.get("answer")
+                            or _dargs.get("message") or _dargs.get("text") or "").strip()
+            _dsum = _dsum or thought or (list(outputs.values())[-1] if outputs else "")
+            result_summary = str(_dsum)[:_V5_DONE_SUMMARY]
+            ok = bool(had_useful or outputs)
+            await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                              "cycle": (gc + 1), "step_id": step_id, "session_id": sid,
+                              "thought": f"(`{tool}` was given as a tool name - taken as the step's done summary)"})
+            break
         # Normalise underscore/hyphen tool names (web_search → web.search) so a
         # perfectly-available cap isn't rejected as 'not in scope'.
         if tool:
