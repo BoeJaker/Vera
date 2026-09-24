@@ -3694,7 +3694,25 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 log.debug("ollama_fallback [%s] skipping %s — model '%s' not available", req_id, fb_id, mdl)
                 continue
             try:
-                log.info("ollama_fallback [%s] trying %s", req_id, fb_id)
+                # The body was built for the node that failed. Refit it for
+                # THIS one: thread count from this node (a GPU gets none), the
+                # window clamped to what this node can hold. Sending the GPU's
+                # body to a CPU node started the 9b at 24 threads on 12 CPUs
+                # for four minutes, twice, on 2026-09-24 (run73).
+                try:
+                    _fb_cap = await asyncio.wait_for(
+                        effective_num_ctx(mdl, fb_id, prefer_gpu), timeout=4.0)
+                except Exception:
+                    _fb_cap = 0
+                _fb_opts = _node_threads_core.refit_for_node(
+                    body.get("options"), has_gpu=bool(fb_inst.get("has_gpu")),
+                    node_num_thread=fb_inst.get("num_thread"), default=_CPU_NODE_THREADS,
+                    node_ctx_max=_fb_cap)
+                fb_body = {k: v for k, v in body.items() if k != "options"}
+                if _fb_opts:
+                    fb_body["options"] = _fb_opts
+                log.info("ollama_fallback [%s] trying %s (num_thread=%s num_ctx=%s)", req_id, fb_id,
+                         _fb_opts.get("num_thread"), _fb_opts.get("num_ctx"))
                 # Route the fallback through the SAME per-instance semaphore +
                 # in_use accounting as a primary request, so it honours the
                 # "one in-flight request per node" contract instead of piling an
@@ -3711,7 +3729,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                     async with _ollama_slot(fb_id, timeout=timeout) as _gate_act:
                         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=httpx.Timeout(gen_timeout, connect=15.0)) as c:
                             async with c.stream("POST", f"{fb_inst['url']}/api/generate",
-                                                json={**body, "stream": True}) as r:
+                                                json={**fb_body, "stream": True}) as r:
                                 if r.status_code != 200:
                                     err_detail = (await r.aread()).decode("utf-8", errors="replace")[:300]
                                     log.warning("ollama_fallback [%s] %s returned %d: %s", req_id, fb_id, r.status_code, err_detail)
