@@ -11,19 +11,19 @@ const CHAT = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_pa
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 
 /* ── the settings exist, with the defaults being what the canvas already did ─────────────────────────────────── */
-t('the element takes the three settings as attributes', /'bare', 'blocks', 'align', 'preview', 'explode-offer'\]/.test(SRC));
+t('the element takes the settings as attributes', /'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse'\]/.test(SRC));
 t('each is read in ONE place, and defaults to today\'s behaviour',
   /strictAlign\(\) \{ return String\(this\.getAttribute\('align'\) \|\| 'held'\)/.test(SRC) &&
   /previewOn\(\) \{ return String\(this\.getAttribute\('preview'\) \|\| 'on'\)[^}]*!== 'off'/.test(SRC) &&
   /explodeOffer\(\) \{ const v = String\(this\.getAttribute\('explode-offer'\) \|\| 'both'\)/.test(SRC));
-t('a changed setting is acted on: preview and the offer redraw, alignment re-places',
-  /\(name === 'preview' \|\| name === 'explode-offer'\) && this\._doc\) this\.render/.test(SRC) &&
+t('a changed setting is acted on: preview, the offer and fusing redraw, alignment re-places',
+  /\(name === 'preview' \|\| name === 'explode-offer' \|\| name === 'fuse'\) && this\._doc\) this\.render/.test(SRC) &&
   /name === 'align' && this\.hasAttribute\('stage'\)\) \{ this\._view = null; this\._placeNow\(\); \}/.test(SRC));
 t('the page offers them in Settings, each with its own persisted value',
   /id="cfgCvAlign"[\s\S]*?value="held"[\s\S]*?value="strict"/.test(CHAT) &&
   /id="cfgCvPreview"[\s\S]*?value="on"[\s\S]*?value="off"/.test(CHAT) &&
   /id="cfgCvExplode"[\s\S]*?value="both"[\s\S]*?value="code"[\s\S]*?value="never"/.test(CHAT) &&
-  /_CV_CFG=\{ cfgCvAlign:\['align','held'\], cfgCvPreview:\['preview','on'\], cfgCvExplode:\['explode-offer','both'\], cfgCvWhere:\['', 'canvas'\] \}/.test(CHAT));
+  /_CV_CFG=\{ cfgCvAlign:\['align','held'\], cfgCvPreview:\['preview','on'\], cfgCvExplode:\['explode-offer','both'\], cfgCvWhere:\['', 'canvas'\], cfgCvFuse:\['fuse','on'\] \}/.test(CHAT));
 // and WHERE a canvas-compatible element is drawn while the column is open — a page-side setting (empty attribute name),
 // because the element draws its items either way: what changes is whether the REPLY draws them a second time
 t('...including where they are drawn, which the element knows nothing about',
