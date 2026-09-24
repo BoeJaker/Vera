@@ -1955,6 +1955,19 @@ span.vw-sampled{opacity:.85}
       if (size !== 'xs' && size !== 's' && this._measured !== size) { const b = this._sh.querySelector('.vw-body') || (this.hasAttribute('bare') ? this : null); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0; if (hb > 0 || wb > 0) this._measured = size; if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
       this.dispatchEvent(new CustomEvent('widget:rendered', { bubbles: true, composed: true, detail: { form, size, sample: sampled, empty: readEmpty, stale } }));
     }
+    /* ── THE FACE'S OWN WIDTH, when it has one ────────────────────────────────────────────────────────────────
+       A chip face (xs · s) is an inline-flex, nowrap thing: it is exactly as wide as its glyph and its figure and
+       no wider. A host that hands it a share of a column therefore leaves the rest of that share blank — which is
+       what a sticker-sized widget on the session canvas looked like (owner, 2026-09-24: "canvas items that are
+       smaller than a column have large blank areas i.e. widgets").
+       Every other face is width:100% by design and answers 0, which means "as wide as you like". Read only:
+       nothing here changes what is drawn. ───────────────────────────────────────────────────────────────────── */
+    naturalWidth() {
+      const r = this._sh; if (!r) return 0;
+      const f = r.querySelector('.vw-root > .vw-xs, .vw-root > .vw-chip'); if (!f) return 0;
+      const w = Math.ceil((f.getBoundingClientRect && f.getBoundingClientRect().width) || f.scrollWidth || 0);
+      return w > 0 ? w : 0;
+    }
   }
   if (window.customElements && !customElements.get('vera-widget')) customElements.define('vera-widget', VeraWidgetEl);
   window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, version: 5 };
