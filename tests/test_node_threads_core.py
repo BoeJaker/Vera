@@ -115,3 +115,15 @@ def test_the_embed_body_shape():
     assert cpu == {"model": "nomic-embed-text", "input": "hello", "options": {"num_thread": 6}}
     assert gpu == {"model": "nomic-embed-text", "input": "hello"}
     assert ns["_embed_body"]("m", "x" * 5000, None)["input"] == "x" * 4096
+
+
+def test_the_mimic_proxy_refits_proxied_bodies_too():
+    """Non-Vera clients (n8n, Open WebUI) reach the nodes through prod's Ollama-mimic
+    proxy, which forwarded their bodies untouched - no num_thread, so every embed
+    they made started a 24-thread runner on a 12-CPU node (2026-09-24 02:30-03:11Z)."""
+    src = (ROOT / "vera/workers/cluster.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fwd = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "_forward")
+    body = ast.get_source_segment(src, fwd)
+    assert "refit_for_node(" in body
+    assert body.index("refit_for_node(") < body.index("_proxy_active += 1")   # before any send
