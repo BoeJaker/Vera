@@ -16,7 +16,8 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from vera.dag.operator_model_arg_core import (  # noqa: E402
-    heal_model_arg, is_model_not_found_error, model_is_served, split_provider,
+    heal_model_arg, is_model_not_found_error, model_is_served, names_a_model,
+    split_provider,
 )
 
 SERVED = ["jaahas/qwen3.5-uncensored:latest", "jaahas/qwen3.5-uncensored:9b",
@@ -47,6 +48,26 @@ def test_a_model_smuggled_in_through_provider_is_dropped_too():
     # both fields wrong -> both healed
     both = heal_model_arg("operator.run", {"provider": "local:fast", "model": "faster"}, SERVED)
     assert [(f, v) for f, v, _ in both] == [("model", ""), ("provider", "local")]
+
+
+def test_the_gate_sees_a_model_carried_by_provider_alone():
+    """Operator census run3 (2026-09-24), operator-form-validation: the loop
+    ran the heal only when args had a `model` key, so `provider:
+    "ollama:fast-8b"` with no `model` reached Ollama and 404'd every think."""
+    args = {"url": "https://x/form.html", "goal": "verify", "provider": "ollama:fast-8b"}
+    assert names_a_model(args)
+    edits = heal_model_arg("operator.run", args, SERVED)
+    assert edits and edits[0][0] == "provider" and edits[0][1] == "ollama"
+    assert "'fast-8b'" in edits[0][2]
+
+
+def test_the_gate_is_quiet_when_no_model_is_named():
+    assert not names_a_model({"url": "https://x", "goal": "g"})
+    assert not names_a_model({"url": "https://x", "goal": "g", "provider": "ollama"})
+    assert not names_a_model({"model": "   ", "provider": "local"})
+    assert not names_a_model(None)
+    assert names_a_model({"model": "fast"})
+    assert names_a_model({"provider": "anthropic:claude-x"})   # named; the heal decides
 
 
 def test_a_served_model_survives_in_any_spelling():

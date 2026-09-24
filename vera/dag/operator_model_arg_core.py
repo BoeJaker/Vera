@@ -56,6 +56,21 @@ def split_provider(provider: Any) -> Tuple[str, str]:
     return p, ""
 
 
+def names_a_model(args: Optional[Dict[str, Any]]) -> bool:
+    """True when the step named a model at all - in `model`, or inside
+    `provider` as "<name>:<model>". The loop's call site used to ask only
+    `args.get("model")` before running the heal, so a model carried by
+    `provider` alone was never looked at: operator census run3 (2026-09-24),
+    `operator-form-validation` - `fast-8b` reached Ollama, 404'd three thinks
+    in five seconds, and the run died `think_error` with nothing observed.
+    heal_model_arg already read both shapes; the gate in front of it did not."""
+    if not isinstance(args, dict):
+        return False
+    if str(args.get("model") or "").strip():
+        return True
+    return bool(split_provider(args.get("provider"))[1])
+
+
 def heal_model_arg(tool: str, args: Optional[Dict[str, Any]],
                    served: Iterable[str]) -> List[Tuple[str, Any, str]]:
     """Return [(field, new_value, note)] edits for `args` of `tool`.
