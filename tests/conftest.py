@@ -24,6 +24,7 @@ _CRITICAL_MODULES = {
     "test_authored_file_shown",  # 42 read-backs of a parser-verified authored file, one executor turn each (2026-09-24)
     "test_steer_core",  # the controller steer was copied into authoring tasks; scripts were written to satisfy it (2026-09-24)
     "test_ctx_output_room",  # a five-word chat title got a 24,576-token window on a CPU node (2026-09-23)
+    "test_verify_evidence_core",  # a step "run the tests" was verified met on a cat of the test file after pytest reported failures (2026-09-24)
     "test_ctx_policy",  # output must fit the window it is generated into (2026-09-16)
     "test_sandbox_reap_plan",  # an archived row IS the restore handle - never reap it (2026-09-16)
     "test_stall_trace_core",  # name the frame someone can act on, not a stdlib line (2026-09-16)

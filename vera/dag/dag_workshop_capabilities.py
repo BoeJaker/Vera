@@ -82,6 +82,9 @@ try:
     from Vera.vera.dag import steer_core as _steer_core
 except ImportError:                                        # pragma: no cover
     from vera.dag import steer_core as _steer_core
+    from Vera.vera.dag import verify_evidence_core as _verify_evidence
+except ImportError:                                        # pragma: no cover
+    from vera.dag import verify_evidence_core as _verify_evidence
 try:
     from Vera.vera.dag import step_summary_core as _step_summary_core
 except ImportError:                                        # pragma: no cover
@@ -20289,6 +20292,15 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
             f"{str(h.get('preview') or '')[:500]}" if _sf else
             f"- {h.get('tool')} ok: {str(h.get('preview') or '')[:500]}")
     hist = "\n".join(_lines)
+    # A criterion about tests PASSING is settled by the last test-shaped run in
+    # this step, not by a judge reading a `cat` of the test file: run72
+    # build-multifile (24 Sep 2026) was verified met that way after pytest had
+    # reported three failures, and the goal scored 1.0 with tests that never
+    # passed. No run, or a failing run, is NOT met; a clean run still goes to
+    # the judge for the rest of the criterion. See verify_evidence_core.
+    _settled = _verify_evidence.settle_test_criterion(crit, _calls)
+    if _settled is not None:
+        return _settled
     # THE END STATE IS WHAT COUNTS. A step re-attempts its work, so an early
     # success can be superseded by a later attempt that overwrote the file and
     # broke it. Observed live: an act phase printed "SUCCESS: Processed 151
@@ -20485,7 +20497,8 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
            "the step away from its original literal wording, has changed what 'met' means for "
            "THIS run — do not fail the step for not doing the thing the user said to skip, and do "
            "not weigh an EARLIER failed attempt at that thing against it either.\n"
-           'Respond ONLY with JSON: {"met":true,"reason":"<one sentence of evidence>"}')
+           + _verify_evidence.EVIDENCE_RULE + "\n"
+           'Respond ONLY with JSON: {"met":true,"reason":"<one sentence quoting the evidence>"}')
     _clar = res.get("user_clarifications") or []
     clar_block = ""
     if _clar:
@@ -20502,7 +20515,8 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
               + (last_block or "")
               + (exist_block or "")
               + (f"OUTPUTS:\n{outs}\n" if outs else "")
-              + f"RESULT SUMMARY (last cycle only):\n{(res.get('summary') or '')[:2000]}\n\n"
+              + f"RESULT SUMMARY (last cycle only - the executor's OWN ACCOUNT, not evidence; the tool "
+                f"results above win where they disagree):\n{(res.get('summary') or '')[:2000]}\n\n"
                 "Was the criterion met?")
     try:
         try:
