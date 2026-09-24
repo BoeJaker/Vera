@@ -60,3 +60,54 @@ async def test_empty_backend_result_is_explicit_and_never_saved():
     assert result["error_code"] == "empty_generation"
     assert result["error"]
     assert "path" not in result
+
+
+@pytest.mark.asyncio
+async def test_an_empty_generation_names_the_reason_the_transport_gave():
+    """Operator census run3 (2026-09-24): a thinker asked for `fast-8b`, Ollama
+    404'd, and llm.generate said only "no usable text" - so the thinker's
+    retry-without-the-model, which looks for the 404, never ran."""
+    from vera.dag.operator_model_arg_core import is_model_not_found_error
+    scope = boundary()
+    why = "Exception: ollama returned 404: {\"error\":\"model 'fast-8b' not found\"}"
+
+    async def generate(prompt, **kwargs):
+        kwargs["meta_out"]["error"] = why
+        return ""
+
+    async def context(*args, **kwargs):
+        return 32
+
+    scope.update(os=SimpleNamespace(getenv=lambda *args: "32"),
+                 _ollama_caller_info=lambda: {"caller_func": "test"},
+                 _output_budget=None, effective_num_ctx=context,
+                 ollama_generate=generate, _llm_save_output=lambda *a: _none(),
+                 OLLAMA_MODEL="fixture")
+    result = await scope["llm_generate"]("fixture", backend="ollama", model="fast-8b")
+    assert result["error_code"] == "empty_generation"
+    assert result["error"].startswith("Generation returned no usable text")
+    assert "fast-8b" in result["error"] and "404" in result["error"]
+    assert is_model_not_found_error(result["error"])      # what the thinker keys on
+
+
+@pytest.mark.asyncio
+async def test_an_empty_generation_with_no_reason_reads_as_before():
+    scope = boundary()
+
+    async def generate(prompt, **kwargs):
+        return ""
+
+    async def context(*args, **kwargs):
+        return 32
+
+    scope.update(os=SimpleNamespace(getenv=lambda *args: "32"),
+                 _ollama_caller_info=lambda: {"caller_func": "test"},
+                 _output_budget=None, effective_num_ctx=context,
+                 ollama_generate=generate, _llm_save_output=lambda *a: _none(),
+                 OLLAMA_MODEL="fixture")
+    result = await scope["llm_generate"]("fixture", backend="ollama")
+    assert result["error"] == "Generation returned no usable text; inspect the provider request log."
+
+
+async def _none():
+    return {}
