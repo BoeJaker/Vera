@@ -2712,7 +2712,9 @@ function _lhmNativeRender(host){
   // absorb path drew stays above it (side() clears what it is given)
   const box = document.createElement('div'); box.className = 'lhm-side-host'; box.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'; host.appendChild(box);
   VeraLHM.side(box, {
-    top: { title: 'Vera', sub: ((_uiPanelCache || []).length || rows.length) + ' panels · ⌘K', toggle: () => tabToggleLhm(), toggleTitle: 'Switch to horizontal tabs (the same menu, as tabs and strips)' },
+    // '⌘K' used to ride along here; the search button on the same row says it
+    // now (and so does the registered row), so the count keeps the space.
+    top: { title: 'Vera', sub: ((_uiPanelCache || []).length || rows.length) + ' panels', toggle: () => tabToggleLhm(), toggleTitle: 'Switch to horizontal tabs (the same menu, as tabs and strips)' },
     search: { label: 'Find a panel', hint: '⌘K', open: () => openTabPicker() }, edit: true, id: 'harness-main',
     open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() },
     onPanel: (pid, ev) => { if(ev && (ev.ctrlKey || ev.metaKey)) splitTab(pid); else switchTab(pid); _tabFireLoader(pid); _lhmNavSync(); },
