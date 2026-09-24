@@ -548,6 +548,10 @@
   /* opened in place: the item takes its own height, the column makes room */
   .it.openin{box-shadow:0 0 0 1.5px rgba(90,158,143,.6)}
   .it.openin .it-bd{max-height:none!important}
+  /* A DRAGGED ITEM'S BODY FILLS THE HEIGHT YOU DRAGGED. The card grew and the body kept the size's ceiling, so the
+     item was tall with its content still in a letterbox and blank space under it — the drag appeared to do nothing
+     to what you were trying to see (owner, 2026-09-24). Its own height is the bound now. */
+  .it.sized .it-bd{max-height:none!important}
   .it.hovopen{z-index:5;box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
   .it.sized .rz{opacity:.45}
   .it.resizing{transition:none!important;user-select:none}
@@ -1271,10 +1275,17 @@
          frame now, and a write/read per card in one loop is a layout flush per card.
          Strict alignment caps nothing (V is 0 there): an item is level with its turn and as tall as it is, and the
          column scrolls the whole transcript — which is the regime the reader asked for. */
+      /* ⛔ AND AN ITEM YOU EXPANDED IS NEVER CAPPED. The cap is for items nobody asked to be big — it stops one
+         running off the end of the column. An item you OPENED IN PLACE or DRAGGED TALLER is the opposite: you asked
+         for the room, and "the column makes room" is what its own button promises. Capping those made both gestures
+         do nothing at all — the card grew and was clamped back inside the same frame, so the visible area never
+         changed (owner, 2026-09-24: "re-sizing the canvas items doesnt function", "open in place doesnt do
+         anything"). The column scrolls for them instead, which is what the packed regime is for. */
       const capH = Math.max(120, V - pad - 10);
+      const asked = (c) => c.classList.contains('openin') || c.classList.contains('sized');
       if (V) { cards.forEach((c) => { if (c.style.maxHeight) { c.style.maxHeight = ''; c.classList.remove('capped'); } });
         const hs = cards.map((c) => c.offsetHeight);
-        cards.forEach((c, i) => { if (hs[i] > capH) { c.style.maxHeight = capH + 'px'; c.classList.add('capped'); } }); }
+        cards.forEach((c, i) => { if (hs[i] > capH && !asked(c)) { c.style.maxHeight = capH + 'px'; c.classList.add('capped'); } }); }
       else cards.forEach((c) => { if (c.classList.contains('capped')) { c.style.maxHeight = ''; c.classList.remove('capped'); } });
       this._fullH = this._fullH || {};
       const items = cards.map((c) => { const k = c.dataset.key || ''; const hd = c.querySelector('.it-hd');
@@ -1479,8 +1490,16 @@
          The host's own controls come through SLOTS rather than being redrawn here: they stay light-DOM nodes of the
          host, so the ids it looks them up by, the handlers on them and the driven ribbon it shows all keep working.
          `banner-start` carries what this canvas is; `banner-end` its controls. */
+      /* PARKED ITEMS ARE REACHED FROM THE BANNER, not from the foot of the stage. They were a band after the items,
+         sticky to the bottom of a body as tall as the transcript — so the only way to see what you had parked was to
+         scroll to the very end of the column, and a thing you cannot find is a thing you lost (owner, 2026-09-24: "i
+         cant find the parked items once parked"). Park is meant to be a shelf you can take something back off.
+         Same popover the hidden items already use, beside it, in the one row that is always in view. */
+      const shelf = (n, label, title, items) => items.length
+        ? `<span class="hidwrap"><button class="hidbtn" data-act="${n}" title="${title}">${label} · ${items.length} ▾</button><div class="hidpop" hidden>${items.map(chip).join('')}</div></span>` : '';
       html += `<div class="addbar" data-w="canvas.add"><slot name="banner-start"></slot><span class="lbl">Add</span>${ADD_KINDS.map(k => `<button class="add" data-act="add" data-kind="${k.n}" title="Add a ${k.n} to the session canvas (a ${k.kind} item)"><b>${esc(k.ik)}</b>${k.n}</button>`).join('')}` +
-        (hidden.length ? `<span class="hidwrap"><button class="hidbtn" data-act="hid" title="Hidden items — a click brings one back">hidden · ${hidden.length} ▾</button><div class="hidpop" hidden>${hidden.map(chip).join('')}</div></span>` : '') +
+        shelf('parkpop', 'parked', 'Parked items — shelved, not gone; a click brings one back into view', stage ? parked : []) +
+        shelf('hid', 'hidden', 'Hidden items — a click brings one back', hidden) +
         `<slot name="banner-end"></slot></div>`;
       if (pinned.length) html += `<div class="band pinned"><div class="band-h">pinned · ${pinned.length}</div>${pinned.map(card).join('')}</div>`;
       // the NOW band: what this turn is waiting on first (the decision, then what Vera can also do), then the live items, newest
@@ -1491,7 +1510,8 @@
          visible items is a label on a label. A named canvas keeps its BLOCKS line, which is that document's state. */
       html += `<div class="band now">${(plainDoc || nowTxt) ? `<div class="band-h"><span class="nowbar ${decision && !decision.answer ? 'wait' : 'ok'}" data-w="canvas.now" title="${plainDoc ? 'The canvas, in its order' : 'What this turn is waiting on'}"><i></i><b>${plainDoc ? 'BLOCKS' : 'NOW'}</b> ${esc(nowTxt)}</span></div>` : ''}` +
         (nowCards ? (stage ? '<div class="stage" id="stage">' + nowCards + '</div>' : nowCards) : plainDoc ? '<div class="empty">Nothing on this canvas — add a block above, or let an agent fill it.</div>' : '<div class="empty">Nothing in the NOW band — nothing is waiting on you; items land here as the conversation uses them.</div>') + '</div>';
-      if (parked.length) html += `<div class="band parked"><div class="band-h">parked · ${parked.length}</div><div class="chips">${parked.map(chip).join('')}</div></div>`;
+      // on the stage the shelf is in the banner (above); in the flow projection the band still reads bottom-to-top
+      if (parked.length && !stage) html += `<div class="band parked"><div class="band-h">parked · ${parked.length}</div><div class="chips">${parked.map(chip).join('')}</div></div>`;
       if (plain.length) html += plain.map(b => {
         const fn = BLOCK[b.type] || BLOCK.note; let inner;
         try { inner = fn(b.content || {}); } catch (e) { inner = `<div class="err">Could not render a ${esc(b.type)} block.</div>`; }
@@ -1600,7 +1620,9 @@
         return this.call('canvas.move', { block_id: String(b.id), order: j });
       }
       if (act === 'open') return this._toggleOpen(key);
-      if (act === 'hid') { const pop = btn.parentElement && btn.parentElement.querySelector('.hidpop'); if (pop) pop.hidden = !pop.hidden; return; }
+      // the banner's shelves (parked · hidden): the button opens its own popover. 'park' on an ITEM parks that item;
+      // these are the shelves those items went to, so they carry their own act rather than sharing one.
+      if (act === 'hid' || act === 'parkpop') { const pop = btn.parentElement && btn.parentElement.querySelector('.hidpop'); if (pop) pop.hidden = !pop.hidden; return; }
       if (act === 'edit') { this._editKey = this._editKey === key ? null : key; this._editFocused = false; if (this._doc) this.render(this._doc); return; }
       if (act === 'cancel') { this._editKey = null; this._editFocused = false; if (this._doc) this.render(this._doc); return; }
       if (act === 'save') {

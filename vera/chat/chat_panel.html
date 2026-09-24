@@ -5653,6 +5653,19 @@ IMPORTANT:
     const el=document.querySelector('#canvasColumnBody vera-canvas'); if(!el) return;
     Object.keys(_CV_CFG).forEach(id=>{ const a=_CV_CFG[id][0], v=_cvCfg(id); if(el.getAttribute(a)!==v) el.setAttribute(a,v); });
   }
+  /* THE BLOCKS TIER, FOLLOWED RATHER THAN SAMPLED ONCE. The canvas is in a shadow root, so a rule on <html> cannot
+     reach it and the element carries the tier as an attribute (defect 85). That attribute was set once, at mount,
+     from `data-blocks` on <html> — which the appearance runtime has not necessarily written yet, and only a later
+     appearance PATCH updated it. On an instance whose appearance is blocks-off (this one is), the canvas therefore
+     mounted as blocks-on and stayed there: every item kept the box the tier says to drop (owner, 2026-09-24: "every
+     item in the canvas is still displayed inside a box"). One observer on <html> keeps every canvas in step, whether
+     the tier arrives from the seed, a patch, or another tab. */
+  function _cvSyncBlocks(){
+    try{ const on=document.documentElement.getAttribute('data-blocks')!=='off';
+      document.querySelectorAll('vera-canvas').forEach(cv=>{ const v=on?'on':'off'; if(cv.getAttribute('blocks')!==v) cv.setAttribute('blocks',v); });
+    }catch(_){}
+  }
+  try{ new MutationObserver(_cvSyncBlocks).observe(document.documentElement,{attributes:true,attributeFilter:['data-blocks']}); }catch(_){}
   function _persistCanvasCfg(){
     try{ const o={}; Object.keys(_CV_CFG).forEach(id=>{o[id]=_cvCfg(id);}); localStorage.setItem(_CV_CFG_KEY,JSON.stringify(o)); }catch(_){}
     _cvApplyCfg();
@@ -7144,6 +7157,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       if(msgsEl&&!msgsEl._cvRelBound){ msgsEl._cvRelBound=true; msgsEl.addEventListener('scroll', _cvRelFocus, {passive:true}); msgsEl.addEventListener('click', _cvRelFocus); }
       _cvColsSync();
       try{ _cvApplyCfg(); }catch(_){}   // the reader's own canvas settings, onto the element that just mounted
+      try{ _cvSyncBlocks(); }catch(_){}  // and the blocks tier as it stands NOW, not as it stood when this line ran
       el.addEventListener('vera:canvas:rendered', ev=>{ const d=ev.detail||{}; const s=document.getElementById('cvColSub'); if(s) s.textContent=(d.pinned?d.pinned+' pinned · ':'')+(d.parked?d.parked+' parked · ':'')+'rev '+(d.revision||0); _cvStageSync(true); }); }
     if(el.getAttribute('canvas-id')!==cid) el.setAttribute('canvas-id', cid);
     try{ window._veraBase=BASE; }catch(_){}

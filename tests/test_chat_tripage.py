@@ -236,7 +236,10 @@ def test_the_canvas_columns_stage_places_items_level_with_their_turns_and_routes
     # P3/P5: the placer takes measured turn tops, the column scrolls with the transcript, the runs go down the gutter, the checker
     assert "function place(items, turns, o) {" in EL and "function checkRoutes(routes, rects) {" in EL and "root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);" in EL
     assert "setTurns(turns, o) {" in EL and "syncScroll(msgsScrollTop, msgsTopClient) {" in EL and "itemRects() {" in EL and "_placeNow() {" in EL
-    assert '<div class="stage" id="stage">' in EL and 'class="hidbtn" data-act="hid"' in EL and "vera:canvas:placed" in EL and "vera:canvas:hover" in EL
+    # the shelves (parked · hidden) are built by one helper now and live in the banner, so the control is pinned as
+    # the helper plus the two shelves it makes — a parked item you cannot reach is a parked item you have lost.
+    assert '<div class="stage" id="stage">' in EL and "vera:canvas:placed" in EL and "vera:canvas:hover" in EL
+    assert 'class="hidbtn" data-act="${n}"' in EL and "shelf('hid', 'hidden'," in EL and "shelf('parkpop', 'parked'," in EL
     assert "el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols()));" in HTML
     assert "function _cvTurnTops(){" in HTML and "top:Math.round(r.top-mr.top+msgs.scrollTop)" in HTML, "measured tops in the transcript's scroll frame"
     assert "new ResizeObserver(()=>_cvStageSync(true))" in HTML and "msgs.addEventListener('scroll', ()=>_cvStageSync(), {passive:true})" in HTML
