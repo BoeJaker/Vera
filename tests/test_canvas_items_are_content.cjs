@@ -15,8 +15,11 @@ const COL = { columns: 1, gap: 10, colWidth: 300, pad: 0, viewport: 900 };
 t('an item draws no border, no ground, no radius', /\.it\{border:0;border-radius:0;background:none;/.test(SRC));
 t('what separates one from the next is space and its own caption, not a frame', /margin:2px 0 10px;/.test(SRC));
 t('the states that MEAN something still draw: waiting, opened, pinned, a suggestion',
-  /\.it\.now\{box-shadow:0 0 0 1\.5px/.test(SRC) && /\.it\.openin\{box-shadow:0 0 0 1\.5px/.test(SRC) &&
+  /\.it\.waiting\{animation:waitring/.test(SRC) && /\.it\.openin\{box-shadow:0 0 0 1\.5px/.test(SRC) &&
   /\.it\.pinned\{box-shadow:inset 2px 0 0 0/.test(SRC) && /\.it\.ghost\{background:transparent;border:1px dashed/.test(SRC));
+/* and the one that does NOT: "now" is the band every live item is in, so a ring on it was a box around everything */
+t('being in the NOW band draws no ring — that was the border on every item',
+  !/\.it\.now\{box-shadow/.test(SRC) && !/:host\(\[blocks="off"\]\) \.it\.now\{box-shadow/.test(SRC));
 t('the item you are pointing at lifts, so the surface is still readable', /\.it:hover\{background:color-mix/.test(SRC));
 t('the live slot is a hole, not a plate — no ground behind a widget or a graph',
   /\.vc-live\{flex:1 1 auto;min-height:40px;height:110px;border-radius:0;background:none;/.test(SRC) &&
@@ -52,7 +55,9 @@ t('an item that asks for nothing takes the column, exactly as before',
   (() => { const p = at(V.place([{ key: 'a', h: 50, mid: 'm1' }, { key: 'b', h: 90, mid: 'm1' }], turns, { columns: 1, gap: 10, colWidth: 300, pad: 0 }));
     return p.a.w === 300 && p.b.y === 60 && !p.a.beside; })());
 t('and one you opened or dragged takes the column too, whatever its size record says',
-  /\(c\.classList\.contains\('openin'\) \|\| c\.classList\.contains\('sized'\) \|\| c\.classList\.contains\('overfold'\)\) \? 1/.test(SRC));
+  /\(c\.classList\.contains\('openin'\) \|\| c\.classList\.contains\('sized'\)\) \? 1/.test(SRC));
+t('an item folded to its header line is a chip, and chips sit three to a row',
+  /\(c\.classList\.contains\('compact'\) \|\| c\.classList\.contains\('overfold'\)\) \? \(1 \/ 3\)/.test(SRC));
 t('the width is applied before the height is measured, or every height is a different item\'s',
   /WIDTH BEFORE HEIGHT/.test(SRC) && /cards\.forEach\(\(c\) => \{ const ww = wantOf\(c\); c\.style\.width =/.test(SRC));
 t('and the placed width is applied back to the card', /if \(p\.w > 0\) c\.style\.width = p\.w \+ 'px';/.test(SRC));

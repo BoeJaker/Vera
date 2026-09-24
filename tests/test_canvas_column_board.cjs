@@ -40,7 +40,14 @@ t('but what Vera could also put here is always worth a line', V.nowText([1, 2], 
 const order = V.turnOrder({ m1: { top: 0 }, m3: { top: 400 }, m2: { top: 120 }, m4: { top: 600 }, m5: { top: 800 } });
 t('turns in order of their measured tops', order.join(',') === 'm1,m2,m3,m4,m5');
 t('an item from a turn more than two behind the focus has aged; a nearer one has not', V.isAged('m1', 'm4', order) && !V.isAged('m2', 'm4', order) && !V.isAged('m4', 'm4', order) && !V.isAged('', 'm4', order) && !V.isAged('m1', 'zz', order));
-t('Full keeps items open; Hover and Zen fold them; an aged item folds in every tier', !V.foldOf({ tier: 'full' }) && V.foldOf({ tier: 'hover' }) && V.foldOf({ tier: 'zen' }) && V.foldOf({ tier: 'full', aged: true }));
+/* A TIER IS ABOUT WHAT THE CONVERSATION HAS MOVED ON FROM, not an instruction to fold the canvas. Hover and Zen
+   used to fold EVERY item, so a canvas of eight things was eight identical header bars (owner, 2026-09-24: "its
+   still a rigid grid"). They fold what has aged, and what is outside a focus set when there is one. */
+t('an aged item folds in every tier; Full never folds anything else',
+  V.foldOf({ tier: 'full', aged: true }) && !V.foldOf({ tier: 'full' }) && !V.foldOf({ tier: 'full', hasFocus: true, inFocus: true }));
+t('Hover and Zen fold what is OUT of the focus set, and nothing when there is no focus set',
+  V.foldOf({ tier: 'hover', hasFocus: true, inFocus: false }) && V.foldOf({ tier: 'zen', hasFocus: true, inFocus: false }) &&
+  !V.foldOf({ tier: 'hover' }) && !V.foldOf({ tier: 'zen' }));
 t('an opened, a hovered or a NOW item never folds', !V.foldOf({ tier: 'zen', open: true }) && !V.foldOf({ tier: 'hover', hovered: true }) && !V.foldOf({ tier: 'zen', aged: true, now: true }));
 t('a dragged height becomes the size record', V.sizeOfHeight(60) === 's' && V.sizeOfHeight(150) === 'm' && V.sizeOfHeight(300) === 'l' && V.sizeOfHeight(500) === 'xl');
 
