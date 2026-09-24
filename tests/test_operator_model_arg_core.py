@@ -175,3 +175,19 @@ def test_thinker_runs_as_the_executor_role():
 
     asyncio.new_event_loop().run_until_complete(thinker.decide("g", Obs(), [], call_cap))
     assert seen == ["loop_executor"] and thinker.THINK_JOB_TYPE == "loop_executor"
+
+
+def test_the_error_recovery_path_runs_the_heal_too():
+    """Operator census run3 (2026-09-24): `_attempt_arg_recovery` rebuilds a
+    failed call from its own LLM answer and healed only url/goal, so a
+    `model: "fast-8b"` it invented reached Ollama. The recovery path must
+    call the same heal the executor's call site does. Checked at source
+    level: the module is 26k lines and imports the whole runtime."""
+    import ast as _ast
+    src_path = os.path.join(os.path.dirname(__file__), "..", "vera", "dag", "dag_workshop_capabilities.py")
+    tree = _ast.parse(open(src_path, encoding="utf-8").read())
+    fn = next(n for n in tree.body
+              if isinstance(n, _ast.AsyncFunctionDef) and n.name == "_attempt_arg_recovery")
+    called = {getattr(c.func, "id", getattr(c.func, "attr", "")) for c in _ast.walk(fn)
+              if isinstance(c, _ast.Call)}
+    assert "_heal_model_arg" in called and "_names_a_model" in called, sorted(called)

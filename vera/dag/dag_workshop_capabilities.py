@@ -4770,6 +4770,17 @@ def _is_arg_error(error_text: str) -> bool:
     return any(p in e for p in RECOVERABLE)
 
 
+def _served_model_names() -> List[str]:
+    """Every model tag some Ollama node reports serving - the catalogue the
+    made-up-model heal reads. Empty when the node table is empty, and the
+    heal does nothing on an empty catalogue by design."""
+    try:
+        return sorted({str(m) for _i in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values()
+                       for m in ((_i or {}).get("models") or [])})
+    except Exception:
+        return []
+
+
 def _build_recovery_prompt(*, cap_name: str, failed_args: Dict[str, Any],
                              error_text: str, attempt: int,
                              max_attempts: int,
@@ -4973,6 +4984,26 @@ async def _attempt_arg_recovery(*, cap_name: str, failed_args: Dict[str, Any],
                 coerced[_rec_url_arg] = _v5_sandbox_preview_url(session_id, _rum.group(1))
             if not str(coerced.get("goal") or "").strip() and goal:
                 coerced["goal"] = goal
+
+        # The made-up-model heal the executor's own call runs (run57/run59)
+        # never ran HERE either - this path rebuilds the call from its own
+        # LLM answer. Operator census run3 (2026-09-24, operator-form-
+        # validation): the recovery answer carried `provider: "local",
+        # model: "fast-8b"`; Ollama 404'd all three thinks in five seconds
+        # and the attempt died `think_error` having observed nothing.
+        if cap_name in _OPERATOR_MODEL_CAPS and isinstance(coerced, dict) and _names_a_model(coerced):
+            for _fld, _val, _note in _heal_model_arg(cap_name, coerced, _served_model_names()):
+                coerced[_fld] = _val
+                if emit_fn:
+                    try:
+                        await emit_fn({
+                            "type": "agent_loop.error_recovery_arg_correction",
+                            "tool": cap_name, "attempt": attempt_i, "note": _note,
+                            "cycle": cycle, "session_id": session_id,
+                            "stream_id": stream_id,
+                        })
+                    except Exception:
+                        pass
 
         if emit_fn:
             try:
@@ -16546,12 +16577,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # by provider alone walked past it (operator census run3, 2026-09-24:
         # `fast-8b`, three 404 thinks, run dead in 8 s).
         if tool in _OPERATOR_MODEL_CAPS and _names_a_model(args):
-            try:
-                _served = sorted({str(m) for _i in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values()
-                                  for m in ((_i or {}).get("models") or [])})
-            except Exception:
-                _served = []
-            for _fld, _val, _note in _heal_model_arg(tool, args, _served):
+            for _fld, _val, _note in _heal_model_arg(tool, args, _served_model_names()):
                 args[_fld] = _val
                 await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
                                   "cycle": cur_cycle, "step_id": step_id, "tool": tool,
