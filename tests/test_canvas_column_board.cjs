@@ -30,11 +30,13 @@ t('one already on the canvas is taken (its key exists)', S[1].taken === true && 
    column in which those three are visible — and the owner asked for that to go (2026-09-23); an empty bar is not
    drawn at all. What is still worth a line: this turn is waiting on you, the answer went, and what else Vera could
    put here. */
-t('waiting: the time, the input, the suggestions', /^14:41 · waiting on you · 1 input · 3 suggested$/.test(V.nowText([loopWait], d, S)));
+t('waiting: the time and the input — and it counts nothing else', /^14:41 · waiting on you · 1 input$/.test(V.nowText([loopWait], d)));
 t('answered says so, and no longer counts what is on the canvas', V.nowText([loopWait], Object.assign({}, d, { answer: 'boot', answered: '' }), []) === 'answered');
 t('live items without a decision: nothing to say, so the bar is not drawn', V.nowText([1, 2, 3], null, []) === '');
 t('nothing live either: still nothing to say', V.nowText([], null, []) === '');
-t('but what Vera could also put here is always worth a line', V.nowText([1, 2], null, S) === '3 suggested');
+/* not even the suggestions: "NOW · 1 suggested" was a line above a card that says the same thing (owner,
+   2026-09-24). The offer to explode moved onto the item it is about, so there is nothing left to count. */
+t('nothing waiting means no line at all', V.nowText([1, 2], null) === '' && V.nowText([], null) === '');
 
 // ── folding, ageing, the grip's size ──
 const order = V.turnOrder({ m1: { top: 0 }, m3: { top: 400 }, m2: { top: 120 }, m4: { top: 600 }, m5: { top: 800 } });

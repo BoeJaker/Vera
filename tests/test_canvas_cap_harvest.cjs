@@ -199,9 +199,11 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   /* the add bar is STICKY, so with no background the canvas scrolls under the buttons and they become
      unreadable. "blocks off" is a preference about ITEMS; it cannot be allowed to take the floor out from
      under a toolbar - and it bit because the server's appearance seed has blocks off for every new device. */
-  t('the add bar keeps a background even with blocks off',
-    !/:host\(\[blocks="off"\]\) \.addbar\{background:transparent\}/.test(cv)
-    && /:host\(\[blocks="off"\]\) \.addbar\{border-bottom-color/.test(cv));
+  /* THE BANNER LOSES ITS GROUND WITH BLOCKS OFF and keeps a blur instead (owner, 2026-09-24). It is sticky, so
+   something must hold it readable over what scrolls beneath — but a plate is a block, and blocks-off means none. */
+  t('the add bar has a ground by default, and a blur rather than one when blocks are off',
+    /\.addbar\{position:sticky;[^}]*background:var\(--bg1/.test(cv) &&
+    /:host\(\[blocks="off"\]\) \.addbar\{background:none;backdrop-filter:blur/.test(cv));
   t('what comes back is written into the item, so the second look is free', /canvas\.update', \{ key, content: Object\.assign\(\{\}, c, \{ text:/.test(cv));
   t('a second press is only the fold, not a second fetch', /if \(c\.text\) \{ this\._srcOpen\[key\] = !this\._srcOpen\[key\]/.test(cv));
   t('a source that would not load says so rather than being tidied away', /c\.failed \? `<span class="vc-src-n bad">did not load<\/span>`/.test(cv));

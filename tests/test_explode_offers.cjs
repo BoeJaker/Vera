@@ -16,23 +16,31 @@ const suggestionsOf = src ? eval('(' + src[0] + ')') : () => [];
 const codeBlock = (key, lines, extra) => Object.assign({ key, type: 'code', state: 'now',
   content: { code: Array.from({ length: lines }, (_, i) => 'x = ' + i).join('\n'), filename: key + '.py' } }, extra || {});
 
-{ const s = suggestionsOf({}, [codeBlock('a', 30)], 'm1');
-  t('a code item of more than a screenful offers its own diagram',
-    s.length === 1 && s[0].kind === 'explode' && /Explode this code/.test(s[0].n), JSON.stringify(s));
-  t('and the offer is BOUND to that item, so the diagram and the source light each other',
-    s[0].content.binds === 'a' && s[0].key === 'explode:a', JSON.stringify(s[0].content));
-  t('a short snippet is its own best picture — it does not ask',
-    suggestionsOf({}, [codeBlock('b', 6)], 'm1').length === 0);
-  const already = suggestionsOf({}, [codeBlock('a', 30), { key: 'explode:a', type: 'explode', content: { binds: 'a' } }], 'm1');
-  t('what is already exploded does not ask again', already.length === 0, JSON.stringify(already));
-  const many = suggestionsOf({}, [codeBlock('a', 30), codeBlock('b', 30), codeBlock('c', 30), codeBlock('d', 30)], 'm1');
-  t('a canvas of code offers at most two at once — the rail stays a rail', many.length === 2, String(many.length));
-  const prose = suggestionsOf({}, [{ key: 'p', type: 'markdown', content: { md: 'a passage. '.repeat(120) } }], 'm1');
-  t('a passage long enough to have structure offers too, as text rather than a binding',
-    prose.length === 1 && /passage/.test(prose[0].n) && typeof prose[0].content.text === 'string' && !prose[0].content.binds);
-  t('a short note does not', suggestionsOf({}, [{ key: 'n', type: 'note', content: { text: 'remember this' } }], 'm1').length === 0);
-  t('the document\'s own suggestions still come first, and none of this changes them',
-    suggestionsOf({ suggestions: [{ n: 'Draw the plan', kind: 'diagram' }] }, [codeBlock('a', 30)], 'm1')[0].n === 'Draw the plan'); }
+/* ⛔ THE OFFER IS ON THE ITEM, NOT IN A CARD. It used to arrive as a ghost item in the NOW band — a card, in the
+   reader's way, about another card (owner, 2026-09-24). `canExplode` is the same rule; what changed is where it is
+   drawn: the item that can be exploded carries the switch, and taking it still builds the bound explode item. */
+{ const src2 = CANVAS.match(/function canExplode\(b, offer\) \{[\s\S]*?\n  \}/);
+  t('the rule is there to be tested', !!src2);
+  const canExplode = src2 ? eval('(' + src2[0] + ')') : () => '';
+  t('a code item of more than a screenful can be exploded', canExplode(codeBlock('a', 30), 'both') === 'code');
+  t('a short snippet is its own best picture — it does not offer', canExplode(codeBlock('b', 6), 'both') === '');
+  t('a passage long enough to have structure offers too',
+    canExplode({ key: 'p', type: 'markdown', content: { md: 'a passage. '.repeat(120) } }, 'both') === 'prose');
+  t('a short note does not', canExplode({ key: 'n', type: 'note', content: { text: 'remember this' } }, 'both') === '');
+  t('the reader\'s setting still narrows it, and "never" silences it',
+    canExplode({ key: 'p', type: 'markdown', content: { md: 'a passage. '.repeat(120) } }, 'code') === '' &&
+    canExplode(codeBlock('a', 30), 'never') === '');
+  // and the switch is drawn on the item, toggling the SAME bound explode item as before
+  t('the item carries the switch, and knows which way round it is',
+    /const xplodable = !bid && !!canExplode\(b, this\.explodeOffer\(\)\);/.test(CANVAS) &&
+    /const xploded = xplodable && xplodedKeys\.has\(String\(b\.key\)\);/.test(CANVAS) &&
+    /data-act="explode"/.test(CANVAS));
+  t('taking it builds the bound item, and taking it back removes it',
+    /this\.call\('canvas\.add', \{ kind: 'explode', key: 'explode:' \+ key, content, at: 'now', size: 'l' \}\)/.test(CANVAS) &&
+    /if \(bound\) return this\.call\('canvas\.remove'/.test(CANVAS));
+  t('the document\'s own suggestions are untouched by any of it',
+    suggestionsOf({ suggestions: [{ n: 'Draw the plan', kind: 'diagram' }] }, [codeBlock('a', 30)], 'm1')[0].n === 'Draw the plan');
+  t('and an item no longer adds itself to the band', suggestionsOf({}, [codeBlock('a', 30)], 'm1').length === 0); }
 
 // ── the scene's deep dive ────────────────────────────────────────────────────────────────────────────────────
 t('a card double-clicked asks what is IN it', /this\.addEventListener\('dblclick', \(e\) => this\._dive\(e\)\)/.test(SCENE));

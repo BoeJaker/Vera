@@ -73,18 +73,18 @@ t('a whole-page code block also answers the setting', /const prev = PREVIEWABLE\
 t('an html item with nothing in it says so rather than drawing an empty frame', /nothing to draw yet/.test(SRC));
 
 /* ── the explode offer is the reader's ───────────────────────────────────────────────────────────────────────── */
+/* the setting still decides how freely the canvas offers to explode — the offer just lives ON THE ITEM now
+   (owner, 2026-09-24), so the rule to drive is canExplode rather than the band's suggestions. */
 {
-  const codeItem = { key: 'code:a', type: 'code', content: { code: Array(20).fill('x = 1').join('\n') } };
-  const proseItem = { key: 'note:b', type: 'markdown', content: { md: 'a'.repeat(900) } };
-  const names = (o) => V.suggestionsOf({}, [codeItem, proseItem], '', o).map((s) => s.n);
-  t('both (the default): code and prose are each offered', JSON.stringify(names({ explodeOffer: 'both' })) === JSON.stringify(['Explode this code', 'Explode this passage']), JSON.stringify(names({ explodeOffer: 'both' })));
-  t('the default when nothing is passed is still both', JSON.stringify(names(undefined)) === JSON.stringify(['Explode this code', 'Explode this passage']));
-  t('code: the passage is not offered', JSON.stringify(names({ explodeOffer: 'code' })) === JSON.stringify(['Explode this code']), JSON.stringify(names({ explodeOffer: 'code' })));
-  t('never: neither is', names({ explodeOffer: 'never' }).length === 0, JSON.stringify(names({ explodeOffer: 'never' })));
-  // a document's own suggestions are not the explode offer and are never suppressed by it
-  t('the document\'s own suggestions survive "never"',
-    V.suggestionsOf({ suggestions: [{ n: 'Open the diary', kind: 'calendar' }] }, [codeItem], '', { explodeOffer: 'never' }).map((s) => s.n).join('') === 'Open the diary');
-  t('the element hands its own setting in', /suggestionsOf\(doc, keyed, focusMid, \{ explodeOffer: this\.explodeOffer\(\) \}\)/.test(SRC));
+  const code = { key: 'code:a', type: 'code', content: { code: Array(20).fill('x = 1').join('\n') } };
+  const prose = { key: 'note:b', type: 'markdown', content: { md: 'a'.repeat(900) } };
+  t('both (the default): code and prose can each be exploded', V.canExplode(code, 'both') === 'code' && V.canExplode(prose, 'both') === 'prose');
+  t('the default when nothing is passed is still both', V.canExplode(code) === 'code' && V.canExplode(prose) === 'prose');
+  t('code: the passage is not offered', V.canExplode(code, 'code') === 'code' && V.canExplode(prose, 'code') === '');
+  t('never: neither is', V.canExplode(code, 'never') === '' && V.canExplode(prose, 'never') === '');
+  t('the document\'s own suggestions are never suppressed by it',
+    V.suggestionsOf({ suggestions: [{ n: 'Open the diary', kind: 'calendar' }] }, [code], '', { explodeOffer: 'never' }).map((s) => s.n).join('') === 'Open the diary');
+  t('the item asks the element for the reader\'s setting', /canExplode\(b, this\.explodeOffer\(\)\)/.test(SRC));
 }
 
 console.log(fails ? fails + ' FAILED' : 'all passed');

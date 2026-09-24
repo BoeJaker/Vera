@@ -402,12 +402,12 @@
   /* (no ring for an opened item here either — see .it.openin below) */
   :host([blocks="off"]) .it.hovopen{box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
   :host([blocks="off"]) .it.ghost{border:1px dashed color-mix(in srgb,var(--dim,#6b7480) 70%,transparent)}
-  /* THE ADD BAR KEEPS ITS BACKGROUND WHATEVER "blocks" SAYS. Blocks off means "do not paint a background behind
-     each item" - a density preference about the items. The add bar is not an item: it is STICKY, so with nothing
-     behind it the canvas scrolls under the buttons and they become unreadable over whatever passes beneath. That
-     is a legibility floor, not a decoration, and it bit because the server's appearance seed has blocks off, so
-     every device that has never chosen one gets it. The border is the part that can go. */
-  :host([blocks="off"]) .addbar{border-bottom-color:color-mix(in srgb,var(--border,#2a2f37) 55%,transparent)}
+  /* THE BANNER LOSES ITS GROUND TOO (owner, 2026-09-24: "the top session canvas header/control bar should loose
+     its background if blocks mode is off"). It is sticky, so something has to keep it readable over whatever
+     scrolls beneath — that is a blur rather than a plate: the colour underneath still shows, the text does not
+     fight it. (The earlier note here argued for keeping the ground; the owner's call is the ground goes.) */
+  :host([blocks="off"]) .addbar{background:none;backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);
+    border-bottom-color:color-mix(in srgb,var(--border,#2a2f37) 40%,transparent)}
   /* bare: the HOST draws the head. The tri-page column has its own title row - name, revision, the NOW count, the
    columns, the switches - and the element drawing a second "Session canvas" line inside it put two headers on top of
    each other and pushed the items down the column (Notes/42 defect 74). The widget element makes the same bargain. */
@@ -558,6 +558,18 @@
   .it.ghost{background:transparent;border:1px dashed var(--dim,#6b7480);box-shadow:none}
   /* compact: the header line only; the body, the rail and the grip held back */
   .it.compact .it-bd,.it.compact .it-ft,.it.compact .rz{display:none}
+  /* A HEADER BELONGS TO FULL. In Hover and Zen an item is its content and nothing else; its name, its key and its
+     controls come back when you are on it (owner, 2026-09-24: "they should only be displayed in the full view mode
+     the hover and zen should act accordingly"). A FOLDED item is exempt: its header line is the whole item. */
+  :host([data-tier="hover"]) .it:not(.compact):not(:hover):not(:focus-within) > .it-hd,
+  :host([data-tier="zen"]) .it:not(.compact):not(:hover):not(:focus-within) > .it-hd,
+  :host([data-tier="hover"]) .it:not(.compact):not(:hover):not(:focus-within) > .it-ft,
+  :host([data-tier="zen"]) .it:not(.compact):not(:hover):not(:focus-within) > .it-ft{display:none}
+  :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-codehead,
+  :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-th{opacity:.35}
+  /* the solo expand of an item whose drawer draws its own head: a corner mark, not a row of its own */
+  .xp.solo{position:absolute;right:4px;top:3px;z-index:3;font-size:10px;color:var(--dim,#6b7480);cursor:pointer;opacity:0;transition:opacity .15s}
+  .it:hover > .xp.solo,.it:focus-within > .xp.solo{opacity:.8}
   .it.compact{transition:height .18s ease}
   /* ⛔ OPENED IN PLACE DRAWS NO RING EITHER. A resize marks the item open (it has an explicit height now), so the
      ring appeared the moment you finished dragging and stayed until you clicked the item — "if i resize a canvas
@@ -715,6 +727,17 @@
   .it[data-size="m"] .it-bd{max-height:clamp(120px,calc(.34 * var(--vc-vh,460px)),430px)}
   .it[data-size="l"] .it-bd{max-height:clamp(210px,calc(.58 * var(--vc-vh,460px)),780px)}
   .it[data-size="xl"] .it-bd{max-height:none}
+  /* SOME KINDS NEED THE ROOM. A share of the column suits a figure, a table, a note — things that read at a glance.
+     Code, a page and a structured graph do not: they are the thing you are reading, and at a third of a column they
+     are a letterbox with a scrollbar (owner, 2026-09-24: "canvas items are often not tall enough for their content
+     - things like code and prose exploded"). They take a larger share, and a floor deep enough to be worth opening
+     at all; past that the item's own scroll, the grip and Open in place are still there. */
+  .it[data-type="code"] .it-bd,.it[data-type="html"] .it-bd,.it[data-type="explode"] .it-bd,.it[data-type="markdown"] .it-bd{
+    max-height:clamp(220px,calc(.62 * var(--vc-vh,460px)),900px)}
+  .it[data-size="s"][data-type="code"] .it-bd,.it[data-size="s"][data-type="explode"] .it-bd{max-height:clamp(150px,calc(.3 * var(--vc-vh,460px)),320px)}
+  .it[data-size="xl"][data-type="code"] .it-bd,.it[data-size="xl"][data-type="explode"] .it-bd,.it[data-size="xl"][data-type="markdown"] .it-bd{max-height:none}
+  /* and a structured graph's slot is drawn at the height it asked for: it is a diagram, not a strip */
+  .it[data-type="explode"] .vc-live{min-height:260px}
   @media (prefers-reduced-motion:reduce){.it-bd{transition:none}}
   /* while the transcript is scrolling, a size change is a correction, not a move (the rule .stage already keeps) */
   .stage[data-scrolling] .it-bd{transition:none}
@@ -897,7 +920,8 @@
        (`want`, a fraction: a sticker a third, a small item a half, everything else the whole) and the placer flows
        them: an item that fits beside the one before it sits beside it, and the row's height is the tallest in it.
        Nothing else changes — the level, the fold, the regimes are all as they were. */
-    const wantOf = (it) => { const w = +it.want; return w > 0 && w <= 1 ? w : 1; };
+    // a fraction of one column, or a NUMBER OF COLUMNS to span (capped at what the stage has)
+    const wantOf = (it) => { const w = +it.want; if (!(w > 0)) return 1; return w <= 1 ? w : Math.min(cols, Math.round(w)); };
     const bottoms = new Array(cols).fill(pad), used = new Array(cols).fill(false); const out = []; let maxB = pad;
     const row = { y: 0, x: 0, h: 0, col: -1, on: false, chip: false };   // the flow row in progress
     order.forEach(({ it }) => {
@@ -909,6 +933,25 @@
          already moved past that row and every item is pushed underneath, which is the full-width column this is
          replacing. It goes beside only when the row has the width for it and its own level is not below the row:
          an item is never dragged off its level to make a row look tidy. */
+      /* AN ITEM MAY SPAN COLUMNS. A `want` above 1 is a number of COLUMNS: a page, a diagram or a structured graph
+         is not readable in a third of a three-column stage, and the columns are there to let small things sit
+         together, not to cut big ones into strips (owner, 2026-09-24: "canvas items should be able to span
+         columns"). A span takes the first run of columns wide enough for it, level with its turn like anything
+         else, and ends the row in progress — nothing sits beside a thing that wide. */
+      if (want > 1 && cols > 1) {
+        const span = Math.max(1, Math.min(cols, Math.round(want)));
+        let bcol = 0, by = Infinity;
+        for (let c = 0; c + span <= cols; c++) {
+          let floor = pad; for (let k = c; k < c + span; k++) floor = Math.max(floor, used[k] ? bottoms[k] + gap : bottoms[k]);
+          const y = ideal == null ? Math.max(floor, mode === 'stage' ? view + pad : pad) : Math.max(ideal, floor);
+          if (y < by) { by = y; bcol = c; }
+        }
+        out.push({ key: it.key, mid: it.mid || '', col: bcol, span, x: bcol * (cw + gap), y: by, h,
+                   w: span * cw + (span - 1) * gap, want,
+                   level: ideal != null && by === ideal, folded: folded.has(String(it.key)), beside: false });
+        for (let k = bcol; k < bcol + span; k++) { bottoms[k] = by + h; used[k] = true; }
+        maxB = Math.max(maxB, by + h); row.on = false; return;
+      }
       /* HOW FAR AN ITEM WILL COME TO JOIN A ROW. Level-with-the-turn is a preference, and for a CHIP — an item
          folded to its header line, or a sticker — it is worth almost nothing: every canvas item belongs to a
          different turn, so a rule of "same level only" meant chips NEVER shared a row and the canvas was a stack of
@@ -1113,28 +1156,26 @@
        themselves to "Vera can also"; taking one builds the explode item BOUND to it, so the diagram and the
        source light each other by span. Anything already exploded does not ask again, and at most two ask at
        once so the rail stays a rail. How much it offers is the reader's own setting — both, code alone, or never
-       (owner, 2026-09-23); "never" still leaves every other way in (the message action, the fence button, /explode). */
-    let offered = 0;
-    if (offer !== 'never') (blocks || []).forEach((b) => {
-      if (offered >= 2 || !b || !b.key || (b.state || 'now') === 'hidden') return;
-      const c = b.content || {}; const k = String(b.key);
-      if (have.has('explode:' + k)) return;
-      if ((blocks || []).some(x => x && x.type === 'explode' && x.content && String(x.content.binds || '') === k)) return;
-      const at = b.anchor && typeof b.anchor === 'object' ? String(b.anchor.turn || b.anchor.mid || '') : '';
-      const code = b.type === 'code' && typeof c.code === 'string' ? c.code : '';
-      const prose = (b.type === 'markdown' && typeof c.md === 'string') ? c.md
-                  : (b.type === 'note' && typeof c.text === 'string') ? c.text : '';
-      if (code && code.split('\n').length >= 12) {
-        offered++;
-        push({ n: 'Explode this code', kind: 'explode', key: 'explode:' + k,
-               content: { binds: k, title: String(c.filename || c.title || 'code') + ' - exploded' } }, at || focusMid);
-      } else if (prose && prose.length >= 800 && offer === 'both') {
-        offered++;
-        push({ n: 'Explode this passage', kind: 'explode', key: 'explode:' + k,
-               content: { text: prose.slice(0, 20000), title: String(c.title || 'passage') + ' - exploded' } }, at || focusMid);
-      }
-    });
+       (owner, 2026-09-23); "never" still leaves every other way in (the message action, the fence button, /explode).
+
+       ⛔ AND IT IS NO LONGER A CARD OF ITS OWN. "Explode this code" arrived as a ghost item in the NOW band — a
+       card, in the reader's way, about another card (owner, 2026-09-24: "instead of a separate Vera can also card
+       id like a smoother mechanism to change to the exploded mode built into the existing element"). The offer
+       belongs to the thing it is about: the item that CAN be exploded carries the switch, and `explodeOffer` still
+       decides whether it is drawn at all (see `canExplode` where the card is built). What is left here is the
+       document's own suggestions, which are about the canvas rather than about one item. */
     const seen = new Set(); return out.filter(s => !seen.has(s.key) && seen.add(s.key)).slice(0, 8);
+  }
+  /* what an item can be turned into, where the item itself can offer it: code with enough of it to have a shape, a
+     passage long enough to have structure. The reader's setting narrows it; "never" leaves every other way in. */
+  function canExplode(b, offer) {
+    offer = String(offer || 'both').toLowerCase(); if (offer === 'never' || !b || !b.key) return '';
+    const c = b.content || {};
+    if (b.type === 'code' && typeof c.code === 'string' && c.code.split('\n').length >= 12) return 'code';
+    if (offer !== 'both') return '';
+    const prose = (b.type === 'markdown' && typeof c.md === 'string') ? c.md
+                : (b.type === 'note' && typeof c.text === 'string') ? c.text : '';
+    return (prose && prose.length >= 800) ? 'prose' : '';
   }
   /* the NOW bar's words: what this turn is waiting on, else what is live */
   /* WHAT THE BAND SAYS, WHICH IS ONLY EVER SOMETHING TO ACT ON. It used to count: "3 now · 2 in focus", over a
@@ -1142,11 +1183,13 @@
      asked for it to go (2026-09-23). What is left is what the items themselves cannot tell you: that this turn is
      waiting on an answer from you, that the answer went, and what else Vera could put here. When there is none of
      that, the bar says nothing at all and the caller does not draw it. */
-  function nowText(now, decision, suggs) {
-    const ns = (suggs || []).length;
-    if (decision && !decision.answer) return (hhmm(decision.since) ? hhmm(decision.since) + ' · ' : '') + 'waiting on you · 1 input' + (ns ? ' · ' + ns + ' suggested' : '');
-    if (decision) return (hhmm(decision.answered) ? hhmm(decision.answered) + ' · ' : '') + 'answered' + (ns ? ' · ' + ns + ' suggested' : '');
-    return ns ? ns + ' suggested' : '';
+  function nowText(now, decision) {
+    /* and it counts nothing at all now — not even the suggestions. "NOW · 1 suggested" was a line above a card
+       that says the same thing, doing nothing you could act on (owner, 2026-09-24). What is left is the only
+       state the items cannot show for themselves: this turn is waiting on an answer from you, or it got one. */
+    if (decision && !decision.answer) return (hhmm(decision.since) ? hhmm(decision.since) + ' · ' : '') + 'waiting on you · 1 input';
+    if (decision) return (hhmm(decision.answered) ? hhmm(decision.answered) + ' · ' : '') + 'answered';
+    return '';
   }
   /* A DRAGGED HEIGHT, AS THE SIZE RECORD IT BECOMES. The thresholds follow the same bounds the faces are drawn to
      (§3.2), so dragging an item to "about a third of the column" records `m` in a tall column and in a short one
@@ -1193,6 +1236,9 @@
     return String(b && b.key ? String(b.key).split(':').slice(1).join(':') : '') || String((b && b.type) || 'block');
   }
   const EDITABLE = ['note', 'markdown', 'code', 'html'];
+  /* the kinds whose drawer already draws a head — name, state and the controls that belong to that kind. The card
+     does not draw a second one over them; see "ONE HEADER PER ITEM" where the card is built. */
+  const OWN_HEAD = new Set(['code', 'html', 'explode', 'session', 'diagram', 'notebook', 'panel']);
 
   class VeraCanvas extends (typeof HTMLElement !== 'undefined' ? HTMLElement : class {}) {
     /* align · preview · explode-offer are the canvas's SETTINGS (the owner's four decisions, 2026-09-23), handed down
@@ -1331,11 +1377,21 @@
          or every height here is the height of a different item than the one drawn. */
       /* AN ITEM FOLDED TO ITS HEADER LINE IS A CHIP, AND CHIPS SIT TOGETHER. Folded items each took a full row, so a
          canvas of folded items was a stack of identical bars — the shape the owner keeps calling a rigid grid. */
-      const wantOf = (c) => (c.classList.contains('openin') || c.classList.contains('sized')) ? 1
-        : (c.classList.contains('compact') || c.classList.contains('overfold')) ? (1 / 3)
-        : (c.dataset.size === 'xs' ? (1 / 3) : c.dataset.size === 's' ? 0.5 : 1);
+      /* over 1 = a number of COLUMNS to span. A kind you read rather than glance at takes the stage when there is
+         more than one column to take; an l or xl item of any kind takes two. */
+      const WIDE = { code: 1, html: 1, explode: 1, markdown: 1, panel: 1, session: 1, table: 1 };
+      const wantOf = (c) => {
+        if (c.classList.contains('compact') || c.classList.contains('overfold')) return 1 / 3;
+        const sz = c.dataset.size || 'm', ty = c.dataset.type || '';
+        if (c.classList.contains('openin') || c.classList.contains('sized')) return Math.max(1, cols);
+        if (sz === 'xl') return Math.max(1, cols);
+        if (WIDE[ty] || sz === 'l') return Math.min(cols, 2);
+        return sz === 'xs' ? (1 / 3) : sz === 's' ? 0.5 : 1;
+      };
       const cards = [...st.querySelectorAll('.it')];
-      cards.forEach((c) => { const ww = wantOf(c); c.style.width = (ww < 1 ? Math.round(ww * w) - gap : w) + 'px'; });
+      cards.forEach((c) => { const ww = wantOf(c);
+        const span = ww > 1 ? Math.min(cols, Math.round(ww)) : 1;
+        c.style.width = (ww < 1 ? Math.round(ww * w) - gap : span * w + (span - 1) * gap) + 'px'; });
       const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);   // the sticky heads overlay the stage's top: nothing is placed under them
       const body = this.shadowRoot.getElementById('body');
@@ -1471,6 +1527,10 @@
       if (head) head.textContent = plainDoc ? keyed.length + (keyed.length === 1 ? ' block' : ' blocks') : now.length + ' now · ' + pinned.length + ' pinned · ' + parked.length + ' parked';
       const modeEl = this.shadowRoot.getElementById('mode'); if (modeEl) { modeEl.hidden = !plainDoc; modeEl.textContent = String(doc.mode || 'static') + (doc.topic ? ' · ' + doc.topic : ''); modeEl.className = 'pill mode-' + esc(doc.mode || 'static'); modeEl.title = doc.mode === 'dynamic' ? 'dynamic — it tracks its topic; agents fill it in' : 'static — a working area'; }
       const tier = this.tier(), F = this._focus;
+      // the tier onto the host, so the CSS can answer it: a rule on <html> cannot cross a shadow root (defect 85)
+      if (this.dataset.tier !== tier) this.dataset.tier = tier;
+      // which items already have their diagram open, so each can draw its switch the right way round
+      const xplodedKeys = new Set(((doc && doc.blocks) || []).filter((x) => x && x.type === 'explode' && x.content && x.content.binds).map((x) => String(x.content.binds)));
       const focusMid = this.dataset.focusMid || ''; this._focusMid = focusMid;
       const order = turnOrder(this._turns || {});
       const stage = this.hasAttribute('stage');
@@ -1479,7 +1539,7 @@
       const decisions = now.concat(pinned).map(b => ({ b, d: decisionOf(b) })).filter(x => x.d);
       const decision = (decisions.find(x => !x.d.answer) || decisions[0] || {}).d || null;
       const suggs = suggestionsOf(doc, keyed, focusMid, { explodeOffer: this.explodeOffer() }); this._suggs = suggs;
-      const nowTxt = plainDoc ? (now.length ? now.length + (now.length === 1 ? ' block' : ' blocks') : 'nothing yet') + ' · ' + (doc.mode || 'static') + (decision && !decision.answer ? ' · waiting on you' : '') : nowText(now, decision, suggs);
+      const nowTxt = plainDoc ? (now.length ? now.length + (now.length === 1 ? ' block' : ' blocks') : 'nothing yet') + ' · ' + (doc.mode || 'static') + (decision && !decision.answer ? ' · waiting on you' : '') : nowText(now, decision);
       const titleOf = b => blockTitle(b);
       const askHtml = d => `<div class="askb" data-w="canvas.decision">
             <span class="why">surfaced because <b>${esc(d.why)}</b></span>
@@ -1535,13 +1595,26 @@
         const px = this._px[key];
         const editable = EDITABLE.includes(b.type);
         const bid = b._bid ? String(b.id) : '';   // a keyless block: addressed by its id (canvas.update · canvas.remove · canvas.move)
-        const cls = 'it ' + esc(b.state || 'now') + fcls + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '');
+        /* ONE HEADER PER ITEM. Several kinds draw a head of their own — a code item its filename and its preview
+           switch, a terminal its host and its dot, an explode item what it is bound to — and the card drew ANOTHER
+           one above it with the same name. Two rows saying what a thing is, one of them with the controls (owner,
+           2026-09-24: "canvas items have 2 header elements ... combine them"). The card's own header is dropped for
+           those kinds: the drawer's head IS the header, and it is the one with the controls on it. */
+        const ownHead = OWN_HEAD.has(b.type);
+        /* the switch into the exploded view, ON THE ITEM it is about — no ghost card in the band offering it. It is
+           the same bound explode item as before (keyed explode:<key>, bound by span both ways); the difference is
+           that the offer lives where the thing does, and reads as a view of it rather than another card. */
+        const xplodable = !bid && !!canExplode(b, this.explodeOffer());
+        const xploded = xplodable && xplodedKeys.has(String(b.key));
+        const cls = 'it ' + esc(b.state || 'now') + fcls + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}>
-          <div class="it-hd"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
+          ${ownHead && !compact ? `<span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>`
+            : `<div class="it-hd"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
-            <span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>
+            <span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
           <div class="it-bd">${inner}</div>
           <div class="it-ft" data-w="canvas.item.rail"><span class="it-a">
+              ${xplodable ? `<button data-act="explode" class="${xploded ? 'on' : ''}" title="${xploded ? 'Back to the source alone — the diagram goes' : 'See it as a structured diagram, bound to this item by span'}">${xploded ? 'source' : 'graph'}</button>` : ''}
               ${editable ? `<button data-act="edit" class="${editing ? 'on' : ''}" title="Edit its text — saved through canvas.update">${editing ? 'Editing' : 'Edit'}</button>` : ''}
               ${plainDoc ? '<button data-act="up" title="Move it up — canvas.move">↑</button><button data-act="down" title="Move it down — canvas.move">↓</button>' : ''}
               ${bid ? '' : `<button data-act="pin" class="${b.state === 'pinned' ? 'on' : ''}" title="${b.state === 'pinned' ? 'Unpin — back into the flow' : 'Pin above the flow'}">${b.state === 'pinned' ? 'unpin' : 'pin'}</button>
@@ -1694,6 +1767,18 @@
       // an explode item's "clear": drop the pointer at both ends — every line unlit here, every card unlit there
       if (act === 'xpsync') { const w = this._codeItemFor(key); if (w) w.querySelectorAll('.vc-line.lit,.vc-line.tap').forEach((x) => x.classList.remove('lit', 'tap'));
         const L = this._live || {}; Object.keys(L).forEach((k) => { if (k !== key || L[k].dataset.kind !== 'explode') return; const sg = L[k].firstChild && L[k].firstChild.querySelector && L[k].firstChild.querySelector('vera-structgraph'); if (sg && sg.lightSpan) sg.lightSpan(null); }); return; }
+      /* the item's own switch into its diagram, and back. Forward: the bound explode item, keyed off this one, so
+         the two light each other by span. Back: the diagram goes and the source stays — a view you can leave. */
+      if (act === 'explode') {
+        const b = this._blockOf(key); if (!b) return;
+        const bound = ((this._doc && this._doc.blocks) || []).find((x) => x && x.type === 'explode' && x.content && String(x.content.binds || '') === key);
+        if (bound) return this.call('canvas.remove', bound.key ? { key: String(bound.key) } : { block_id: String(bound.id) });
+        const c = b.content || {}; const what = canExplode(b, this.explodeOffer());
+        const content = what === 'code'
+          ? { binds: key, title: String(c.filename || c.title || 'code') + ' — exploded' }
+          : { binds: key, text: String(c.md || c.text || '').slice(0, 20000), title: String(c.title || 'passage') + ' — exploded' };
+        return this.call('canvas.add', { kind: 'explode', key: 'explode:' + key, content, at: 'now', size: 'l' });
+      }
       if (act === 'pin' || act === 'ctx') return this.call(it && it.classList.contains('pinned') ? 'canvas.add' : 'canvas.pin', { key });
       if (act === 'park') return this.call('canvas.park', { key });
       if (act === 'remove') return this.call('canvas.remove', this._ref(key));
@@ -2285,7 +2370,7 @@
     }
   }
 
-  const api = { place, checkRoutes, decisionOf, suggestionsOf, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 6 };
+  const api = { place, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {
