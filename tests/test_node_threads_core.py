@@ -56,6 +56,38 @@ def test_with_threads_copies_and_sets():
     assert T.with_threads(None, 0) == {}
 
 
+def test_a_failover_to_a_cpu_node_refits_threads_and_window():
+    """run73 (2026-09-24): the GPU's body - no num_thread, num_ctx 28672 - was
+    re-sent to both CPU nodes; each started the 9b at 24 threads for 4 min."""
+    gpu_body_opts = {"num_ctx": 28672, "num_predict": 4096, "temperature": 0.2}
+    out = T.refit_for_node(gpu_body_opts, has_gpu=False, node_ctx_max=8192)
+    assert out == {"num_ctx": 8192, "num_predict": 4096, "temperature": 0.2, "num_thread": 6}
+    assert gpu_body_opts == {"num_ctx": 28672, "num_predict": 4096, "temperature": 0.2}  # a copy
+
+
+def test_a_failover_to_a_gpu_node_drops_the_thread_count():
+    out = T.refit_for_node({"num_ctx": 4096, "num_thread": 6}, has_gpu=True)
+    assert out == {"num_ctx": 4096}
+
+
+def test_a_node_without_a_known_cap_keeps_the_window():
+    out = T.refit_for_node({"num_ctx": 28672}, has_gpu=False, node_ctx_max=0)
+    assert out == {"num_ctx": 28672, "num_thread": 6}
+    assert T.refit_for_node(None, has_gpu=False, node_num_thread=4) == {"num_thread": 4}
+    assert T.refit_for_node(None, has_gpu=True) == {}
+
+
+def test_the_generate_failover_refits_its_body():
+    src = (ROOT / "vera/capability_orchestration.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    gen = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef)
+               and n.name == "ollama_generate")
+    body = ast.get_source_segment(src, gen)
+    assert "_node_threads_core.refit_for_node(" in body
+    assert 'json={**fb_body, "stream": True}' in body
+    assert 'json={**body, "stream": True}' not in body
+
+
 def test_both_request_builders_send_it():
     """Generate and embed - the embed runner was the one starving the census."""
     src = (ROOT / "vera/capability_orchestration.py").read_text(encoding="utf-8")
