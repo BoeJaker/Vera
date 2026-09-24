@@ -3759,6 +3759,15 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                     fb_inst["in_use"] = max(0, fb_inst.get("in_use", 1) - 1)
                     _inflight_release(fb_inst, _fb_slot_id)
             except Exception: pass
+        # Nothing served the request. Leave the reason where the caller can
+        # read it: llm.generate turns this "" into an empty_generation error,
+        # and without the reason a 404 for a made-up model looked identical
+        # to a stalled stream - the operator's thinker could not tell it had
+        # named a model nobody serves, so its retry-without-the-model never
+        # ran (operator census run3, 2026-09-24: `fast-8b`, three thinks,
+        # run dead in 8 s).
+        if meta_out is not None:
+            meta_out["error"] = err_str
         return ""
     except asyncio.CancelledError:
         # Caller cancelled us (loop/dream preemption, client abort, a wrapping

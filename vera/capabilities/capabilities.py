@@ -2035,7 +2035,13 @@ async def llm_generate(
         options=_gen_opts, meta_out=_meta,
     )
     if not isinstance(text, str) or not text.strip():
-        return {"error": "Generation returned no usable text; inspect the provider request log.",
+        # Say WHY when the transport knows: "no usable text" alone hid a 404
+        # for a model nobody serves behind the same words as a stalled stream,
+        # and the operator's thinker keys its retry on the 404's text.
+        _why = str(_meta.get("error") or "").strip()
+        return {"error": ("Generation returned no usable text"
+                          + (f" - {_why[:240]}" if _why else "")
+                          + "; inspect the provider request log."),
                 "error_code": "empty_generation", "text": "", "backend": "ollama",
                 "model": _meta.get("model") or model or OLLAMA_MODEL,
                 "tokens": len(tokens_collected),
