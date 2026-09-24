@@ -170,8 +170,16 @@ def nearest_unique_span(content: str, find: str, *, min_ratio: float = REANCHOR_
     want = _norm(find)
     if not want or not lines or height > len(lines):
         return None
+    # The closer moves when something is appended inside a tag or call:
+    # `required>` became `required onblur=...>`, `f(a)` became `f(a, b)`.
+    # A short anchor then fails both containment and similarity, so also
+    # try it without its trailing closer.
+    wants = [want]
+    stripped = want.rstrip(">;),]}").rstrip()
+    if stripped and stripped != want and len(stripped) >= 8:
+        wants.append(stripped)
     contained = [i for i in range(len(lines) - height + 1)
-                 if want in _norm("".join(lines[i:i + height]))]
+                 if any(w in _norm("".join(lines[i:i + height])) for w in wants)]
     if len(contained) > 1:
         return None
     if len(contained) == 1:
