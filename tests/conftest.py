@@ -54,6 +54,7 @@ _CRITICAL_MODULES = {
     "test_operator_budget",
     "test_recovery_identity_core",  # error recovery moved a sandbox browser run onto prod's own UI with destructive actions allowed (2026-09-24)
     "test_edit_reanchor",  # 11 stale anchors were refused with the right line named; the retry re-typed it wrong (2026-09-24)
+    "test_plan_hygiene_core",  # 17 of 40 plans re-checked settled work, 9 criteria added features the goal never named (2026-09-24)
     "test_operator_step_budget",  # one step called operator.run again after its 480s cap fired: 29 thinks, 1109s, on a correct artifact (2026-09-22)  # an operator run needs a clock (2026-09-01)
     "test_two_tier_chat",  # answer first, continue with context (2026-09-01)
     "test_two_tier_decider",  # who decides the second pass is needed (2026-09-01)
