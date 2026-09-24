@@ -60,9 +60,10 @@
  *
  *   Once a host confirms it's actually rendering the injected menu, it
  *   sends back `{type:'vera:panel:nav_hosted'}`, which the shim turns into
- *   a `vpb-nav-hosted` class on <html> — a panel's OWN stylesheet uses that
- *   to hide its now-redundant internal rail, e.g.:
- *     html.vpb-nav-hosted #secNav{display:none}
+ *   a `vpb-nav-hosted` class on <html>, which hides the panel's own
+ *   now-redundant menu. Every panel gets that for free from the shared
+ *   /ui/vera-panel.css:
+ *     html.vpb-nav-hosted [data-vera-lhm]{display:none}
  *   This is confirmation-driven, never assumed from "am I in an iframe" —
  *   a panel opened standalone, or mounted somewhere that hasn't adopted nav
  *   injection (today: the chat side-rail), never gets this class and keeps

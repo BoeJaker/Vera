@@ -9,6 +9,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Vera — Business Ops</title>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 <style>
 :root{
   --bg0:#141312;--bg1:#1b1917;--bg2:#242120;--bg3:#2e2a28;
@@ -24,17 +25,21 @@
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px}
-body{display:flex;flex-direction:column;overflow:hidden}
+/* The menu is the leftmost thing on the page, the way it is everywhere else;
+   the header strip, the content and the dock share the column beside it. */
+body{display:flex;flex-direction:row;overflow:hidden}
+.colmain{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
 button{font-family:var(--sans);cursor:pointer}
 a{color:var(--acc)}
 ::-webkit-scrollbar{width:8px;height:8px}
 ::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:4px}
 ::-webkit-scrollbar-track{background:transparent}
 
-/* One combined single-line bar: brand + scrolling section tabs + chips + controls */
+/* The figures and the controls. The sections used to scroll along this bar
+   too, which is why this page read nothing like the rest of Vera; they are
+   in the left-hand menu now, where every other panel keeps them. */
 .hdr{display:flex;align-items:center;gap:10px;padding:5px 14px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0;flex-wrap:nowrap;min-width:0}
-.hdr .brand{font-size:14px;font-weight:700;color:var(--acc);letter-spacing:.3px;white-space:nowrap;flex-shrink:0}
-.hdr .chips{display:flex;gap:8px;flex-wrap:nowrap;margin-left:auto;align-items:center;min-width:0;overflow-x:auto;scrollbar-width:none}
+.hdr .chips{display:flex;gap:8px;flex-wrap:nowrap;margin-right:auto;align-items:center;min-width:0;overflow-x:auto;scrollbar-width:none}
 .hdr .chips::-webkit-scrollbar{height:0}
 .chip{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--dim2);white-space:nowrap;flex-shrink:0}
 .chip b{color:var(--text);font-family:var(--mono)}
@@ -45,18 +50,9 @@ body.sim .simtag{display:inline-block}
 .hdr>.btn{flex-shrink:0}
 
 .layout{flex:1;display:flex;min-height:0}
-nav.side{display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;gap:2px;min-width:0;flex:1 1 auto;
-  overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-ms-overflow-style:none;scroll-behavior:smooth;overscroll-behavior-x:contain}
-nav.side::-webkit-scrollbar{height:0}
-/* fade hints: only shown on the side(s) that actually have off-screen tabs */
-nav.side.sc-l{-webkit-mask-image:linear-gradient(to right,transparent 0,#000 22px);mask-image:linear-gradient(to right,transparent 0,#000 22px)}
-nav.side.sc-r{-webkit-mask-image:linear-gradient(to left,transparent 0,#000 22px);mask-image:linear-gradient(to left,transparent 0,#000 22px)}
-nav.side.sc-l.sc-r{-webkit-mask-image:linear-gradient(to right,transparent 0,#000 22px,#000 calc(100% - 22px),transparent 100%);mask-image:linear-gradient(to right,transparent 0,#000 22px,#000 calc(100% - 22px),transparent 100%)}
-nav.side .grp{align-self:stretch;width:1px;padding:0;margin:2px 4px;background:var(--border);font-size:0;flex-shrink:0}
-nav.side button{background:none;border:none;color:var(--dim2);text-align:left;padding:6px 11px;border-radius:var(--radius);font-size:12.5px;display:flex;align-items:center;gap:7px;white-space:nowrap;flex-shrink:0}
-nav.side button:hover{background:var(--bg2);color:var(--text)}
-nav.side button.active{background:var(--bg2);color:var(--acc);font-weight:600}
-nav.side button .ic{width:16px;text-align:center}
+/* The menu is the shared left-hand menu — see /ui/vera-panel.css. What is
+   this page's own is the row that leaves a store and goes back to them all. */
+#sidebar[data-vera-lhm] .nav-btn.back{color:var(--acc);font-weight:600}
 main.content{flex:1;overflow:auto;padding:16px 18px;min-width:0}
 
 /* Agent dock */
@@ -153,10 +149,16 @@ tr:hover td{background:var(--bg1)}
 </style>
 </head>
 <body>
+  <aside id="sidebar" data-vera-lhm>
+    <div id="side-head">
+      <span class="ico">¤</span>
+      <div><h1 id="lhmTitle">Business Ops</h1><div class="sub" id="lhmSub">money &middot; stores</div></div>
+    </div>
+    <nav id="nav"></nav>
+  </aside>
+  <div class="colmain">
   <div class="hdr">
-    <span class="brand">Business Ops</span>
     <span class="simtag">SIMULATION</span>
-    <nav class="side" id="nav"></nav>
     <div class="chips" id="hdrChips"></div>
     <label class="toggle" title="View simulated business instead of live"><input type="checkbox" id="simToggle"> Sim view</label>
     <button class="btn sm" onclick="render()">↻</button>
@@ -183,6 +185,7 @@ tr:hover td{background:var(--bg1)}
         </div>
       </div>
     </aside>
+  </div>
   </div>
 
   <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
@@ -257,44 +260,34 @@ const ALL_SECTIONS = NAV.flatMap(g=>g.items.map(i=>i[0]));
 let current = location.hash.slice(1) || 'dashboard';
 if(!ALL_SECTIONS.includes(current)) current='dashboard';
 
-// The tab strip lives on the header line and scrolls horizontally when it
-// overruns; keep the fade hints and the active tab in sync with its scroll.
-function _navFades(){ const n=$('#nav'); if(!n) return;
-  const max=n.scrollWidth-n.clientWidth;
-  n.classList.toggle('sc-l', n.scrollLeft>4);
-  n.classList.toggle('sc-r', max>4 && n.scrollLeft<max-4); }
-function navScrollUX(){ const n=$('#nav'); if(!n) return;
-  if(!n._scrollUX){ n._scrollUX=1;
-    n.addEventListener('scroll',_navFades,{passive:true});
-    n.addEventListener('wheel',e=>{                       // vertical wheel → sideways
-      if(Math.abs(e.deltaY)<=Math.abs(e.deltaX)) return;
-      if(n.scrollWidth-n.clientWidth<=0) return;
-      e.preventDefault(); n.scrollLeft+=e.deltaY; },{passive:false});
-    addEventListener('resize',_navFades);
-  }
-  const a=n.querySelector('button.active');
-  if(a) a.scrollIntoView({block:'nearest',inline:'nearest'});
-  _navFades(); }
-
+// The menu's head says where you are: the business, or the store you opened
+// inside it. One title, in the one place every panel puts it.
+function _lhmHead(title, sub){
+  const t=$('#lhmTitle'), s=$('#lhmSub');
+  if(t) t.textContent=title; if(s) s.textContent=sub;
+}
+function _navBtn(id, ic, label, active, onclick, cls){
+  const b=el('button',{type:'button',class:'nav-btn'+(active?' active':'')+(cls?' '+cls:''),title:label,onclick});
+  b.dataset.section=id;
+  b.append(el('span',{class:'gl'},ic), label);
+  return b;
+}
 function buildNav(){ const n=$('#nav'); n.innerHTML='';
   if(STORE_OPEN){
-    // Store mode: the header tabs become the store's tabs.
-    n.append(el('button',{title:'Back to all stores',onclick:closeStore},'←'),
-      el('span',{style:'font-weight:700;color:var(--acc);padding:0 4px;white-space:nowrap;flex-shrink:0'},
-        (STORE_OPEN.icon||'▣')+' '+(STORE_OPEN.name||'Store')),
-      el('div',{class:'grp'}));
+    // Store mode: the menu becomes the store's, with the way back at the top.
+    _lhmHead(STORE_OPEN.name||'Store', 'store');
+    n.append(_navBtn('__back','←','All stores',false,closeStore,'back'));
+    n.append(el('div',{class:'nav-div'}));
     for(const [id,ic,label] of STORE_SECTIONS)
-      n.append(el('button',{class:id===storeCur?'active':'',onclick:()=>storeGo(id)},
-        el('span',{class:'ic'},ic), label));
-    navScrollUX();
+      n.append(_navBtn(id, ic, label, id===storeCur, ()=>storeGo(id)));
     return;
   }
-  for(const g of NAV){ n.append(el('div',{class:'grp'},g.grp));
+  _lhmHead('Business Ops', 'money · stores');
+  for(const g of NAV){ n.append(el('div',{class:'nav-grp'},g.grp));
     for(const [id,ic,label] of g.items){
-      n.append(el('button',{class:id===current?'active':'',onclick:()=>{current=id;location.hash=id;render();}},
-        el('span',{class:'ic'},ic), label)); }
+      n.append(_navBtn(id, ic, label, id===current,
+        ()=>{ current=id; location.hash=id; render(); })); }
   }
-  navScrollUX();
 }
 function loading(){ $('#content').innerHTML='<div class="vera-loading">Loading…</div>'; }
 function setContent(...nodes){ const c=$('#content'); c.innerHTML=''; c.append(...nodes); }
@@ -1082,5 +1075,7 @@ window.addEventListener('hashchange',()=>{ const h=location.hash.slice(1);
 setDock('chat'); render();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

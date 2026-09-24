@@ -21,25 +21,8 @@ html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
   font:12px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif;height:100%;overflow:hidden; }
 #root{ display:flex;height:100vh;min-height:0; }
 
-#sidebar{ width:184px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);display:flex;flex-direction:column; }
-#side-head{ padding:14px 14px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px; }
-#side-head .ico{ width:24px;height:24px;background:var(--bg2);border:1px solid var(--border2);border-radius:6px;
-  display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:14px; }
-#side-head h1{ margin:0;font-size:12px;font-weight:600;letter-spacing:.04em; }
-#side-head .sub{ font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;margin-top:1px; }
-#nav{ flex:1;padding:8px 6px; }
-.nav-btn{ display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;background:transparent;
-  border:1px solid transparent;color:var(--fg2);border-radius:5px;font:inherit;font-size:11px;cursor:pointer;text-align:left;margin-bottom:2px; }
-.nav-btn:hover{ background:var(--bg2);color:var(--fg); }
-.nav-btn.active{ background:var(--bg2);border-color:var(--border2);color:var(--acc); }
-.nav-btn .gl{ width:15px;text-align:center;opacity:.85; }
-#status-tile{ margin:6px;padding:10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:10px; }
-#status-tile .lbl{ color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-size:9px;margin-bottom:5px; }
-#status-tile .row{ display:flex;align-items:center;gap:6px;margin-top:4px; }
-.dot{ width:7px;height:7px;border-radius:50%;background:var(--dim);flex-shrink:0; }
-.dot.on{ background:var(--acc2);box-shadow:0 0 6px rgba(40,194,138,.5); }
-.dot.off{ background:var(--err); }
-.dot.warn{ background:var(--warn); }
+/* The left-hand menu is the shared one — see /ui/vera-panel.css, which this
+   block was a verbatim copy of, dots and all. */
 
 #main{ flex:1;min-width:0;display:flex;flex-direction:column; }
 #topbar{ height:42px;flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg1);

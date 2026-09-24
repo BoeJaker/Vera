@@ -9,7 +9,9 @@ section heading and nothing happened, while every other item in the same menu
 worked (18 Sep 2026).
 
 Two guards: the bridge tries the attributes one at a time, most specific first;
-and the panel registers a select callback so it never depends on that fallback.
+and the panel never depends on that fallback, because the shared
+/ui/vera-panel.js hands the bridge the BUTTON it registered for each id, so
+there is nothing to look up.
 """
 import os
 import re
@@ -34,12 +36,13 @@ const m = SRC.match(/var ATTRS = \[([\s\S]*?)\];/);
 if(!m) { console.log(JSON.stringify({error: 'ATTRS list is gone'})); process.exit(0); }
 const attrs = m[1].split(',').map(s => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
 
-// A stand-in for the panel's nav: a heading and the items, in document order.
+// A stand-in for the panel's menu as it is shaped today: a group heading and
+// the items, in document order.
 const dom = [
-  {tag: 'DIV', cls: 'nsec',  attrs: {'data-view': 'estate'}, text: 'Overview'},
-  {tag: 'DIV', cls: 'snav',  attrs: {'data-pane': 'overview', 'data-view': 'estate'}, text: 'Overview'},
-  {tag: 'DIV', cls: 'snav',  attrs: {'data-pane': 'estate',   'data-view': 'estate'}, text: 'Map'},
-  {tag: 'DIV', cls: 'snav',  attrs: {'data-pane': 'docker',   'data-view': 'estate'}, text: 'Docker'},
+  {tag: 'DIV',    cls: 'nav-grp', attrs: {'data-view': 'estate'}, text: 'Overview'},
+  {tag: 'BUTTON', cls: 'nav-btn', attrs: {'data-pane': 'overview', 'data-view': 'estate'}, text: 'Overview'},
+  {tag: 'BUTTON', cls: 'nav-btn', attrs: {'data-pane': 'estate',   'data-view': 'estate'}, text: 'Map'},
+  {tag: 'BUTTON', cls: 'nav-btn', attrs: {'data-pane': 'docker',   'data-view': 'estate'}, text: 'Docker'},
 ];
 function resolve(id){
   for(const a of attrs){
@@ -74,7 +77,7 @@ def _resolved():
 def test_the_item_wins_over_a_heading_that_shares_its_name():
     out = _resolved()
     assert not out.get("error"), out.get("error")
-    assert out["map"]["text"] == "Map" and out["map"]["cls"] == "snav", \
+    assert out["map"]["text"] == "Map" and out["map"]["cls"] == "nav-btn", \
         "selecting the map still lands on the section heading"
     assert out["overview"]["attrs"]["data-pane"] == "overview"
     assert out["docker"]["attrs"]["data-pane"] == "docker"
@@ -99,12 +102,22 @@ def test_the_bridge_resolves_one_attribute_at_a_time():
         "back to one combined selector list, where document order decides"
 
 
-def test_the_estate_panel_registers_its_own_select_callback():
-    """Belt and braces: this panel must not depend on the bridge's fallback,
-    because its pane ids and its data-view values share a namespace."""
+PANEL_JS = os.path.join(ROOT, "vera", "vera-panel.js")
+
+
+def test_a_select_callback_is_registered_for_every_panel_not_just_this_one():
+    """Belt and braces, and it no longer has to be written per panel: the
+    Estate's pane ids share a namespace with its data-view values, and the
+    shared menu script — which every panel now uses — registers a callback
+    that clicks the exact button it published for that id, so no panel depends
+    on the bridge's attribute fallback."""
+    js = open(PANEL_JS, encoding="utf-8").read()
+    assert "window.VeraPanelBridge.registerNav(items, function (id) {" in js, \
+        "the shared menu script no longer passes a select callback"
+    assert "if (idOf(btns[i]) === String(id)) { btns[i].click(); return; }" in js, \
+        "the callback no longer clicks the button it registered"
     html = open(PANEL, encoding="utf-8").read()
-    call = re.search(r"VeraPanelBridge\.registerNav\((.+?)\);", html, re.S)
-    assert call, "the panel no longer registers its nav"
-    args = call.group(1)
-    assert "showPane(" in args and "data-pane=" in args, \
-        "registerNav no longer passes a select callback that maps an id to its pane"
+    assert 'class="nav-btn" data-pane="estate" data-view="estate"' in html, \
+        "the collision this guards is gone from the panel; re-check what this test is for"
+    assert "VeraPanelBridge.registerNav(" not in html, \
+        "the panel registers its nav by hand again, beside the shared one"

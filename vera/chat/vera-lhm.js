@@ -159,22 +159,24 @@
     '.lhm-absorbed .lhm-tabs .lhm-ttl{font-family:var(--sans);font-size:11px;font-weight:600;color:var(--text);padding:4px 8px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     /* the top-level SIDE menu — the harness\'s main LHM (the Harness board): search, Open now, the panels with their sections, widgets */
     '.lhm-side{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}',
-    '.lhm-side .lhm-s-hd{padding:10px 10px 6px;flex-shrink:0;display:flex;align-items:center;gap:6px}',
-    '.lhm-side .lhm-s-top{height:36px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 8px;border-bottom:1px solid var(--border)}',
+    /* ONE header row. It used to be two — the ☰/title bar and, under it, a
+       search field with the ✎ beside it — which read as two headers on a menu
+       that has one. Everything they carried is on this row. */
+    '.lhm-side .lhm-s-top{height:36px;flex-shrink:0;display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;border-bottom:1px solid var(--border)}',
     '.lhm-side .lhm-s-tb{width:26px;height:26px;border-radius:6px;border:none;background:transparent;color:var(--dim2);font:inherit;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer}',
     '.lhm-side .lhm-s-tb:hover{color:var(--text);background:var(--bg2)}.lhm-side .lhm-s-tb.on{color:var(--acc);background:color-mix(in srgb,var(--acc) 14%,transparent)}',
-    '.lhm-side .lhm-s-top .nm{font-size:11px;font-weight:600;color:var(--text)}',
-    '.lhm-side .lhm-s-top .mono{font-family:var(--mono);font-size:9px;color:var(--dim2);margin-left:auto}',
+    '.lhm-side .lhm-s-top .nm{flex:1 1 auto;min-width:0;font-size:11px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.lhm-side .lhm-s-top .mono{flex:0 1 auto;min-width:0;font-family:var(--mono);font-size:9px;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.lhm-side .lhm-s-wm{cursor:default}.lhm-side .lhm-s-wm + .lhm-s-wbar{margin-bottom:4px}',
     '.lhm-side .lhm-s-wbar{height:5px;border-radius:3px;background:var(--bg3,var(--bg0));overflow:hidden}',
     '.lhm-side .lhm-s-wbar i{display:block;height:100%;border-radius:3px;background:var(--acc)}',
-    '.lhm-side .lhm-s-srch{flex:1;min-width:0}',
-    '.lhm-side .lhm-s-edit{flex:0 0 auto;font:inherit;font-size:12px;height:28px;width:28px;border:1px solid var(--border);border-radius:var(--r-sm,6px);background:var(--bg2);color:var(--dim2);cursor:pointer}',
-    '.lhm-side .lhm-s-edit.on{color:var(--acc);border-color:var(--acc)}',
     '.lhm-side > .lhm-wcfg{max-height:46%;border-top:1px solid var(--border)}',
-    '.lhm-side .lhm-s-srch{display:flex;align-items:center;gap:8px;height:28px;padding:0 9px;border-radius:var(--r-sm,6px);background:var(--bg2);color:var(--dim2);font-size:10.5px;cursor:pointer;border:1px solid transparent}',
-    '.lhm-side .lhm-s-srch:hover{color:var(--text);border-color:var(--border)}',
-    '.lhm-side .lhm-s-srch .k{margin-left:auto;font-family:var(--mono);font-size:9px}',
+    /* search and ✎ sit in the header row as the ☰ does: an icon each, the
+       label carried by the title, so one row still holds all three. */
+    '.lhm-side .lhm-s-srch,.lhm-side .lhm-s-edit{flex:0 0 auto;width:26px;height:26px;padding:0;display:flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:var(--r-sm,6px);background:transparent;color:var(--dim2);font:inherit;font-size:12px;cursor:pointer}',
+    '.lhm-side .lhm-s-srch:hover,.lhm-side .lhm-s-edit:hover{color:var(--text);background:var(--bg2)}',
+    '.lhm-side .lhm-s-edit.on{color:var(--acc);border-color:var(--acc)}',
+    '.lhm-side .lhm-s-srch .k,.lhm-side .lhm-s-srch > span:not(.k){display:none}',
     '.lhm-side .lhm-s-bd{flex:1;overflow-y:auto;overflow-x:hidden;padding:2px 8px 8px;display:flex;flex-direction:column;gap:1px;min-height:0}',
     '.lhm-side .lhm-s-grp{font-family:var(--mono);font-size:8px;text-transform:uppercase;letter-spacing:1px;font-weight:600;color:var(--dim);padding:12px 6px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.lhm-side .lhm-s-row{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:var(--r-sm,6px);color:var(--dim2);font-size:11px;white-space:nowrap;overflow:hidden;cursor:pointer;border-left:2px solid transparent}',
@@ -759,22 +761,26 @@ function _ebar(title, onAdd, onDone){
     host.innerHTML = '';
     var wrap = _el('div', 'lhm-side');
     host._lhmEditKey = cfg.id || ''; host._lhmSideCfg = cfg; if(_sideEditOn[host._lhmEditKey]) host._lhmEditing = true;
-    // the top row (the Harness board): ☰ swaps this list for the open UI's own menu (or the tabs), the title, the count
-    if(cfg.top){ var top = _el('div', 'lhm-s-top'); top.setAttribute('data-w', 'top row · header');
+    // ONE header row (the Harness board): ☰ swaps this list for the open UI's
+    // own menu (or the tabs), then the title, the count, search and ✎. There
+    // used to be a second row under it holding the last two — two headers on a
+    // menu that has one — so they moved up here and it went.
+    var top = _el('div', 'lhm-s-top'); top.setAttribute('data-w', 'header · header');
+    if(cfg.top){
       var tb = _el('button', 'lhm-s-tb' + (cfg.top.on ? ' on' : ''), '☰'); tb.type = 'button'; tb.title = cfg.top.toggleTitle || 'Swap this menu'; tb.addEventListener('click', function(ev){ ev.stopPropagation(); if(cfg.top.toggle) cfg.top.toggle(ev); }); top.appendChild(tb);
       top.appendChild(_el('span', 'nm', cfg.top.title || 'Vera')); if(cfg.top.sub) top.appendChild(_el('span', 'mono', cfg.top.sub));
-      wrap.appendChild(top); }
-    var hd = _el('div', 'lhm-s-hd');
+    }
     if(cfg.search){
-      var s = _el('div', 'lhm-s-srch'); s.setAttribute('data-w', 'search · search');
+      var s = _el('button', 'lhm-s-srch'); s.type = 'button'; s.setAttribute('data-w', 'search · search');
+      s.title = (cfg.search.label || 'Find a panel') + ' · ' + (cfg.search.hint || '⌘K');
       s.innerHTML = '<svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4.2"/><path d="m9.3 9.3 3 3"/></svg>';
-      s.appendChild(_el('span', '', cfg.search.label || 'Find a panel')); s.appendChild(_el('span', 'k', cfg.search.hint || '⌘K'));
       s.addEventListener('click', function(){ if(cfg.search.open) cfg.search.open(); });
-      hd.appendChild(s);
+      if(!cfg.top) top.appendChild(_el('span', 'nm', ''));   // keep the row's shape when there is no title
+      top.appendChild(s);
     }
     // ✎ — this menu's edit mode: every part is a widget (its record behind ⚙, ⧉ saves it as a template)
-    if(cfg.edit !== false){ var ed = _el('button', 'lhm-s-edit' + (host._lhmEditing ? ' on' : ''), '✎'); ed.type = 'button'; ed.title = 'Edit this menu — every part is a widget: ⚙ its record, ⧉ save it as a template'; ed.addEventListener('click', function(){ sideEdit(host); }); hd.appendChild(ed); }
-    if(hd.childNodes.length) wrap.appendChild(hd);
+    if(cfg.edit !== false){ var ed = _el('button', 'lhm-s-edit' + (host._lhmEditing ? ' on' : ''), '✎'); ed.type = 'button'; ed.title = 'Edit this menu — every part is a widget: ⚙ its record, ⧉ save it as a template'; ed.addEventListener('click', function(){ sideEdit(host); }); top.appendChild(ed); }
+    if(top.childNodes.length) wrap.appendChild(top);
     if(cfg.edit !== false) wrap.appendChild(_ebar((cfg.top && cfg.top.title) || 'this menu', function(){ sideAdd(host, cfg); }, function(){ sideEdit(host, false); }));
     var bd = _el('div', 'lhm-s-bd');
     // ONE set of open panels: opened by you or by the aide, wherever they sit

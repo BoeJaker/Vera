@@ -58,26 +58,26 @@ html.vpb-nav-hosted [data-vera-lhm] { display: none; }
 /* ── Sidebar ──────────────────────────────────────────────────────────── */
 #sidebar[data-vera-lhm] {
   width: var(--lhm-width); flex-shrink: 0;
-  background: var(--bg1); border-right: 1px solid var(--border);
+  background: var(--bg1, #16181d); border-right: 1px solid var(--border, rgba(255,255,255,.09));
   display: flex; flex-direction: column;
   transition: width .16s ease;
   overflow: hidden;
 }
 #sidebar[data-vera-lhm] #side-head {
   padding: 14px 14px 10px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.09));
   display: flex; align-items: center; gap: 8px;
   position: relative;
 }
 #sidebar[data-vera-lhm] #side-head .ico {
   width: 24px; height: 24px; flex-shrink: 0;
-  background: var(--bg2); border: 1px solid var(--border2);
+  background: var(--bg2, #1a1f26); border: 1px solid var(--border2, rgba(255,255,255,.16));
   border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
-  color: var(--acc); font-size: 14px;
+  color: var(--acc, #5a9e8f); font-size: 14px;
 }
 #sidebar[data-vera-lhm] #side-head h1 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; white-space: nowrap; }
-#sidebar[data-vera-lhm] #side-head .sub { font-size: 9px; color: var(--dim); letter-spacing: .12em; text-transform: uppercase; margin-top: 1px; white-space: nowrap; }
+#sidebar[data-vera-lhm] #side-head .sub { font-size: 9px; color: var(--dim, #6b7280); letter-spacing: .12em; text-transform: uppercase; margin-top: 1px; white-space: nowrap; }
 
 /* Collapse chevron injected by vera-panel.js */
 #sidebar[data-vera-lhm] #lhm-toggle {
@@ -85,10 +85,10 @@ html.vpb-nav-hosted [data-vera-lhm] { display: none; }
   width: 18px; height: 18px; padding: 0;
   display: flex; align-items: center; justify-content: center;
   background: transparent; border: 1px solid transparent;
-  border-radius: 4px; color: var(--dim); cursor: pointer;
+  border-radius: 4px; color: var(--dim, #6b7280); cursor: pointer;
   transition: color .14s, background .14s;
 }
-#sidebar[data-vera-lhm] #lhm-toggle:hover { color: var(--fg); background: var(--bg2); }
+#sidebar[data-vera-lhm] #lhm-toggle:hover { color: var(--fg, var(--text, #d8dde3)); background: var(--bg2, #1a1f26); }
 #sidebar[data-vera-lhm] #lhm-toggle svg { width: 12px; height: 12px; transition: transform .16s; }
 
 #sidebar[data-vera-lhm] #nav { flex: 1; padding: 8px 6px; overflow-y: auto; }
@@ -103,26 +103,50 @@ html.vpb-nav-hosted [data-vera-lhm] { display: none; }
   white-space: nowrap; overflow: hidden;
   transition: background .12s, color .12s, border-color .12s;
 }
-#sidebar[data-vera-lhm] .nav-btn:hover { background: var(--bg2); color: var(--fg); }
+#sidebar[data-vera-lhm] .nav-btn:hover { background: var(--bg2, #1a1f26); color: var(--fg, var(--text, #d8dde3)); }
 #sidebar[data-vera-lhm] .nav-btn.active {
-  background: var(--bg2); border-color: var(--border2); color: var(--acc);
+  background: var(--bg2, #1a1f26); border-color: var(--border2, rgba(255,255,255,.16)); color: var(--acc, #5a9e8f);
 }
 #sidebar[data-vera-lhm] .nav-btn svg { width: 14px; height: 14px; flex-shrink: 0; opacity: .82; }
 #sidebar[data-vera-lhm] .nav-btn.active svg { opacity: 1; }
 #sidebar[data-vera-lhm] .nav-btn .gl { width: 15px; flex-shrink: 0; text-align: center; opacity: .85; font-size: 13px; }
+#sidebar[data-vera-lhm] .nav-btn .ct {
+  margin-left: auto; flex-shrink: 0;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 9px;
+  color: var(--dim, #6b7280); padding: 1px 6px; border-radius: 99px; background: var(--bg3, var(--bg2, #1a1f26));
+}
+
+/* ── Groups inside the nav ────────────────────────────────────────────────
+   A menu long enough to need headings says so here rather than inventing a
+   rail of its own: .nav-grp is the heading, .nav-div a plain rule. Both read
+   as labels, never as targets — vera-panel.js publishes only .nav-btn. */
+#sidebar[data-vera-lhm] #nav .nav-grp {
+  font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--dim, #6b7280); padding: 12px 10px 4px; white-space: nowrap; overflow: hidden;
+  user-select: none;
+}
+#sidebar[data-vera-lhm] #nav .nav-grp:first-child { padding-top: 4px; }
+#sidebar[data-vera-lhm] #nav .nav-div { height: 1px; background: var(--border, rgba(255,255,255,.09)); margin: 6px 10px; }
+/* Collapsed, a heading has no room for its words — it becomes the rule it
+   was already acting as, so the groups still read as groups. */
+body.lhm-collapsed #sidebar[data-vera-lhm] #nav .nav-grp {
+  font-size: 0; padding: 0; height: 1px; background: var(--border, rgba(255,255,255,.09)); margin: 7px 6px;
+}
+body.lhm-collapsed #sidebar[data-vera-lhm] #nav .nav-div { margin: 7px 6px; }
+body.lhm-collapsed #sidebar[data-vera-lhm] .nav-btn .ct { display: none; }
 
 /* ── Status tile ──────────────────────────────────────────────────────── */
 #sidebar[data-vera-lhm] #status-tile {
   margin: 6px; padding: 10px;
-  background: var(--bg2); border: 1px solid var(--border);
+  background: var(--bg2, #1a1f26); border: 1px solid var(--border, rgba(255,255,255,.09));
   border-radius: 6px; font-size: 10px;
 }
-#sidebar[data-vera-lhm] #status-tile .lbl { color: var(--dim); text-transform: uppercase; letter-spacing: .08em; font-size: 9px; margin-bottom: 5px; }
+#sidebar[data-vera-lhm] #status-tile .lbl { color: var(--dim, #6b7280); text-transform: uppercase; letter-spacing: .08em; font-size: 9px; margin-bottom: 5px; }
 #sidebar[data-vera-lhm] #status-tile .row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
-#sidebar[data-vera-lhm] .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex-shrink: 0; }
-#sidebar[data-vera-lhm] .dot.on   { background: var(--acc2); box-shadow: 0 0 6px rgba(40,194,138,.5); }
-#sidebar[data-vera-lhm] .dot.off  { background: var(--err); }
-#sidebar[data-vera-lhm] .dot.warn { background: var(--warn); }
+#sidebar[data-vera-lhm] .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim, #6b7280); flex-shrink: 0; }
+#sidebar[data-vera-lhm] .dot.on   { background: var(--acc2, var(--acc, #5a9e8f)); box-shadow: 0 0 6px rgba(40,194,138,.5); }
+#sidebar[data-vera-lhm] .dot.off  { background: var(--err, #c96b6b); }
+#sidebar[data-vera-lhm] .dot.warn { background: var(--warn, #c9a35a); }
 
 /* ── Collapsed icon-rail state ────────────────────────────────────────────
    font-size:0 collapses bare text-node labels (panels use <button>Icon Label
@@ -148,8 +172,8 @@ body.lhm-collapsed #sidebar[data-vera-lhm] #lhm-toggle svg { transform: rotate(1
    vera-panel.js upgrades headers marked [data-collapsible] into clickable
    toggles with a caret, wrapping following siblings in .sec-body. */
 .sec-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; border-radius: 4px; margin: 0 -3px; padding: 2px 3px; transition: color .14s, background .14s; }
-.sec-toggle:hover { color: var(--fg); background: var(--bg2); }
-.sec-caret { display: inline-block; font-size: 8px; line-height: 1; color: var(--dim2, var(--dim)); transition: transform .16s; transform: rotate(90deg); }
+.sec-toggle:hover { color: var(--fg, var(--text, #d8dde3)); background: var(--bg2, #1a1f26); }
+.sec-caret { display: inline-block; font-size: 8px; line-height: 1; color: var(--dim2, var(--dim, #6b7280)); transition: transform .16s; transform: rotate(90deg); }
 .sec-toggle.collapsed .sec-caret { transform: rotate(0deg); }
 .sec-body { display: flex; flex-direction: column; gap: 6px; padding: 2px 0 3px; }
 .sec-body.collapsed { display: none; }
@@ -165,15 +189,15 @@ body.lhm-collapsed #sidebar[data-vera-lhm] #lhm-toggle svg { transform: rotate(1
 .field input[type=password], .field input[type=search],
 .field select, .field textarea {
   width: 100%;
-  background: var(--bg2); border: 1px solid var(--border);
-  border-radius: var(--ui-radius, 6px); color: var(--fg, var(--text));
+  background: var(--bg2, #1a1f26); border: 1px solid var(--border, rgba(255,255,255,.09));
+  border-radius: var(--ui-radius, 6px); color: var(--fg, var(--text, #d8dde3));
   font: inherit; font-size: 11px; padding: 6px 9px; outline: none;
   transition: border-color .13s, background .13s;
 }
 .vp-controls input:hover, .vp-controls select:hover, .vp-controls textarea:hover,
-.field input:hover, .field select:hover, .field textarea:hover { border-color: var(--border2); background: var(--bg3, var(--bg2)); }
+.field input:hover, .field select:hover, .field textarea:hover { border-color: var(--border2, rgba(255,255,255,.16)); background: var(--bg3, var(--bg2, #1a1f26)); }
 .vp-controls input:focus, .vp-controls select:focus, .vp-controls textarea:focus,
-.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--acc); background: var(--bg2); }
+.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--acc, #5a9e8f); background: var(--bg2, #1a1f26); }
 .vp-controls select, .field select {
   cursor: pointer; appearance: none; -webkit-appearance: none; padding-right: 22px;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'><path d='M1 2.5L4 5.5L7 2.5' stroke='%238a8a8a' fill='none' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/></svg>");
@@ -183,18 +207,18 @@ body.lhm-collapsed #sidebar[data-vera-lhm] #lhm-toggle svg { transform: rotate(1
 
 /* ── Option cards — multiselect-list look for related toggles ────────────── */
 .optlist { display: flex; flex-direction: column; gap: 5px; }
-.opt { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); cursor: pointer; transition: border-color .13s, background .13s; }
-.opt:hover { border-color: var(--border2); background: var(--bg3, var(--bg2)); }
+.opt { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border: 1px solid var(--border, rgba(255,255,255,.09)); border-radius: 6px; background: var(--bg2, #1a1f26); cursor: pointer; transition: border-color .13s, background .13s; }
+.opt:hover { border-color: var(--border2, rgba(255,255,255,.16)); background: var(--bg3, var(--bg2, #1a1f26)); }
 .opt > input { position: absolute; opacity: 0; width: 0; height: 0; margin: 0; pointer-events: none; }
-.opt .opt-tick { flex-shrink: 0; width: 16px; height: 16px; margin-top: 1px; border: 1.5px solid var(--border2); border-radius: 5px; display: flex; align-items: center; justify-content: center; transition: background .13s, border-color .13s; background: var(--bg, var(--bg0)); }
+.opt .opt-tick { flex-shrink: 0; width: 16px; height: 16px; margin-top: 1px; border: 1.5px solid var(--border2, rgba(255,255,255,.16)); border-radius: 5px; display: flex; align-items: center; justify-content: center; transition: background .13s, border-color .13s; background: var(--bg, var(--bg0, #0e0f12)); }
 .opt .opt-tick::after { content: ''; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg) scale(0); transition: transform .13s; margin-top: -1px; }
-.opt > input:checked ~ .opt-tick { background: var(--acc2, var(--acc)); border-color: var(--acc2, var(--acc)); }
+.opt > input:checked ~ .opt-tick { background: var(--acc2, var(--acc, #5a9e8f)); border-color: var(--acc2, var(--acc, #5a9e8f)); }
 .opt > input:checked ~ .opt-tick::after { transform: rotate(45deg) scale(1); }
-.opt:has(> input:checked) { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 8%, transparent); }
+.opt:has(> input:checked) { border-color: var(--acc, #5a9e8f); background: color-mix(in srgb, var(--acc, #5a9e8f) 8%, transparent); }
 .opt-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.opt-name { font-size: 11px; font-weight: 600; color: var(--dim2, var(--dim)); line-height: 1.2; }
-.opt > input:checked ~ .opt-main .opt-name { color: var(--fg, var(--text)); }
-.opt-desc { font-size: 9px; color: var(--dim); line-height: 1.4; }
+.opt-name { font-size: 11px; font-weight: 600; color: var(--dim2, var(--dim, #6b7280)); line-height: 1.2; }
+.opt > input:checked ~ .opt-main .opt-name { color: var(--fg, var(--text, #d8dde3)); }
+.opt-desc { font-size: 9px; color: var(--dim, #6b7280); line-height: 1.4; }
 .opt > input:disabled ~ .opt-tick { opacity: .45; }
 .opt.disabled, .opt:has(> input:disabled) { opacity: .5; cursor: not-allowed; }
 
@@ -226,7 +250,7 @@ body.lhm-collapsed #sidebar[data-vera-lhm] #lhm-toggle svg { transform: rotate(1
 
 /* ── Chip multiselect ─────────────────────────────────────────────────── */
 .chips { display: flex; flex-wrap: wrap; gap: 5px; }
-.chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 14px; border: 1px solid var(--border); background: var(--bg2); color: var(--dim2, var(--dim)); font-size: 10px; cursor: pointer; user-select: none; transition: border-color .13s, background .13s, color .13s; }
-.chip:hover { border-color: var(--border2); color: var(--fg, var(--text)); }
-.chip.on { border-color: var(--acc); color: var(--acc); background: color-mix(in srgb, var(--acc) 15%, transparent); }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 14px; border: 1px solid var(--border, rgba(255,255,255,.09)); background: var(--bg2, #1a1f26); color: var(--dim2, var(--dim, #6b7280)); font-size: 10px; cursor: pointer; user-select: none; transition: border-color .13s, background .13s, color .13s; }
+.chip:hover { border-color: var(--border2, rgba(255,255,255,.16)); color: var(--fg, var(--text, #d8dde3)); }
+.chip.on { border-color: var(--acc, #5a9e8f); color: var(--acc, #5a9e8f); background: color-mix(in srgb, var(--acc, #5a9e8f) 15%, transparent); }
 .chip.on::before { content: '\2713'; font-size: 9px; line-height: 1; }

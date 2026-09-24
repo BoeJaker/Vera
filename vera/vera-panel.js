@@ -43,7 +43,7 @@
   }
 
   function initCollapse() {
-    var sidebar = document.querySelector('#sidebar[data-vera-lhm]');
+    var sidebar = document.querySelector('[data-vera-lhm]');
     var head = sidebar ? sidebar.querySelector('#side-head') : null;
     if (!head || !sidebar || document.getElementById('lhm-toggle')) return;
 
@@ -120,7 +120,19 @@
     if (!host || host._vpNavBridged) return;
     var nav = (host.id === 'nav') ? host : (host.querySelector('#nav') || host);
     var SEL = '[data-section], [data-sec], [data-s], [data-view], [data-tab], [data-nav], [data-pane], [data-go], [data-k]';
-    var btns = nav.querySelectorAll(SEL);
+    // Canonical markup first: .nav-btn is the menu's only target, so a heading
+    // or a rule that happens to carry data-view (the Estate groups its items
+    // that way) is never mistaken for one. The loose list stays for a panel
+    // that opted in before this shape existed.
+    var btns = nav.querySelectorAll('.nav-btn');
+    if (!btns.length) btns = nav.querySelectorAll(SEL);
+    // A button the panel's own rules hide (a view filter — the Estate's
+    // ?view=models shows only the model pages) is not part of the menu it is
+    // publishing. A sidebar hidden in its ENTIRETY is a different thing: that
+    // is the shell already hosting this menu, and the items still stand.
+    btns = Array.prototype.filter.call(btns, function (b) {
+      return nav.offsetParent === null || b.offsetParent !== null;
+    });
     if (!btns.length) return;
     host._vpNavBridged = true;
 
@@ -129,13 +141,13 @@
              b.getAttribute('data-view') || b.getAttribute('data-tab') || b.getAttribute('data-nav') ||
              b.getAttribute('data-pane') || b.getAttribute('data-go') || b.getAttribute('data-k');
     }
-    // title attribute first — it's already clean text with no icon glyph.
-    // Failing that, a couple of panels wrap the label in its own child
-    // element (.lbl, .fab-nb-label) rather than a bare trailing text node
-    // (the shape the collapse CSS above relies on to hide just the label
-    // in icon-rail mode) — check those explicitly before falling back to
-    // whatever plain text nodes exist, then the whole button's text as a
-    // last resort (icon glyph and all).
+    // title attribute first — it's already clean text with no icon glyph, and
+    // the canonical markup carries one on every item. Failing that, a panel
+    // that wraps its label in a child element rather than a bare trailing
+    // text node (the shape the collapse CSS above relies on to hide just the
+    // label in icon-rail mode) gets those checked explicitly, then whatever
+    // plain text nodes exist, then the whole button's text as a last resort
+    // (icon glyph and all).
     function labelOf(b) {
       var t = (b.getAttribute('title') || '').trim();
       if (t) return t;
@@ -147,8 +159,8 @@
       return txt || (b.textContent || '').trim() || idOf(b);
     }
     var items = Array.prototype.map.call(btns, function (b) { return { id: idOf(b), label: labelOf(b) }; });
-    // ".on" (markets_studio_panel.html's own railBtn convention, among
-    // others) alongside the canonical ".active" — scoped to just these nav
+    // ".active" is the canonical mark; ".on" is still accepted for a panel
+    // that has not moved to this markup yet — scoped to just these nav
     // buttons, so it's never ambiguous with an unrelated "on" state
     // elsewhere in the panel.
     function currentActive() {
@@ -162,7 +174,17 @@
         if (tries > 0) setTimeout(function () { ready(tries - 1); }, 200);
         return;
       }
-      window.VeraPanelBridge.registerNav(items);
+      // Hand the bridge the exact button for each id rather than leaving it to
+      // re-find one by attribute: two items can carry the same value on
+      // different attributes (the Estate's data-pane="estate" map beside every
+      // data-view="estate" item), and the loser of that race is a dead menu
+      // entry. We already hold the element, so there is nothing to guess.
+      window.VeraPanelBridge.registerNav(items, function (id) {
+        for (var i = 0; i < btns.length; i++) {
+          if (idOf(btns[i]) === String(id)) { btns[i].click(); return; }
+        }
+        throw new Error('no menu item ' + id);
+      });
       window.VeraPanelBridge.setNavActive(currentActive());
       var mo = new MutationObserver(function () {
         window.VeraPanelBridge.setNavActive(currentActive());
