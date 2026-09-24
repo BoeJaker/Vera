@@ -75,6 +75,10 @@ from Vera.vera.capability_orchestration import (
 
 from Vera.vera.dag import chain_deps as _chain_deps
 try:
+    from Vera.vera.dag import recovery_identity_core as _recovery_identity
+except ImportError:                                        # pragma: no cover
+    from vera.dag import recovery_identity_core as _recovery_identity
+try:
     from Vera.vera.dag import steer_core as _steer_core
 except ImportError:                                        # pragma: no cover
     from vera.dag import steer_core as _steer_core
@@ -5009,6 +5013,25 @@ async def _attempt_arg_recovery(*, cap_name: str, failed_args: Dict[str, Any],
         # validation): the recovery answer carried `provider: "local",
         # model: "fast-8b"`; Ollama 404'd all three thinks in five seconds
         # and the attempt died `think_error` having observed nothing.
+        # Recovery may reshape WHAT the call asks for, never WHERE it runs or
+        # WHAT IT MAY DO: the original's kind/target/provider/allowlist/
+        # destructive flag and the url's host are restored, and permissions the
+        # original never had are dropped (run70-73: `kind: live` onto prod's own
+        # UI, `allow_destructive: true`, `allowlist: ["*"]`, provider
+        # `playwright`). See recovery_identity_core.
+        if isinstance(coerced, dict) and isinstance(failed_args, dict):
+            coerced, _id_notes = _recovery_identity.keep_identity(failed_args, coerced)
+            for _n in _id_notes:
+                if emit_fn:
+                    try:
+                        await emit_fn({
+                            "type": "agent_loop.error_recovery_arg_correction",
+                            "tool": cap_name, "attempt": attempt_i, "note": _n,
+                            "cycle": cycle, "session_id": session_id,
+                            "stream_id": stream_id,
+                        })
+                    except Exception:
+                        pass
         if cap_name in _OPERATOR_MODEL_CAPS and isinstance(coerced, dict) and _names_a_model(coerced):
             for _fld, _val, _note in _heal_model_arg(cap_name, coerced, _served_model_names()):
                 coerced[_fld] = _val
