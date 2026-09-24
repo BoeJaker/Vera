@@ -20,6 +20,7 @@ _CRITICAL_MODULES = {
     "test_node_threads_core",  # CPU-node runners ran 24 threads on 12 CPUs: 0.24 tok/s on a 0.5b, 4-6 s per embed (2026-09-23)
     "test_ctx_ceiling_and_utility_model",  # llm.generate's default window was a floor; a naming rule with no model took the 9b onto a CPU node (2026-09-23)
     "test_ctx_output_room",  # a five-word chat title got a 24,576-token window on a CPU node (2026-09-23)
+    "test_verify_evidence_core",  # a step "run the tests" was verified met on a cat of the test file after pytest reported failures (2026-09-24)
     "test_ctx_policy",  # output must fit the window it is generated into (2026-09-16)
     "test_sandbox_reap_plan",  # an archived row IS the restore handle - never reap it (2026-09-16)
     "test_stall_trace_core",  # name the frame someone can act on, not a stdlib line (2026-09-16)
