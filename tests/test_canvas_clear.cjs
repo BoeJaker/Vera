@@ -33,7 +33,7 @@ t('and what you opened, hovered or made this turn never folds',
   !V.foldOf({ tier: 'zen', open: true }) && !V.foldOf({ tier: 'zen', fresh: true }) && !V.foldOf({ tier: 'zen', hovered: true, hasFocus: true, inFocus: false }));
 
 /* ── folded items are chips, and chips share a row ───────────────────────────────────────────────────────────── */
-t('a folded item asks for a third of the width', /\(c\.classList\.contains\('compact'\) \|\| c\.classList\.contains\('overfold'\)\) \? \(1 \/ 3\)/.test(SRC));
+t('a folded item asks for a third of the width', /if \(c\.classList\.contains\('compact'\) \|\| c\.classList\.contains\('overfold'\)\) return 1 \/ 3;/.test(SRC));
 {
   const turns = { m1: { top: 0, height: 300 }, m2: { top: 60, height: 300 }, m3: { top: 120, height: 300 } };
   // three folded items of three DIFFERENT turns, close together: they still flow, because a chip is a chip
