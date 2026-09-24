@@ -128,10 +128,15 @@
     if (!btns.length) btns = nav.querySelectorAll(SEL);
     // A button the panel's own rules hide (a view filter — the Estate's
     // ?view=models shows only the model pages) is not part of the menu it is
-    // publishing. A sidebar hidden in its ENTIRETY is a different thing: that
-    // is the shell already hosting this menu, and the items still stand.
+    // publishing. Ask for the button's OWN computed display, never its
+    // offsetParent: a panel is routinely still in a hidden container when this
+    // runs (the shell builds a tab before it shows it), which makes every
+    // offsetParent null and would let the whole menu through — the Estate
+    // published its Models pages into its Estate menu that way. Computed
+    // display is 'none' only when a rule aimed at this element says so, and is
+    // unaffected by an ancestor being hidden.
     btns = Array.prototype.filter.call(btns, function (b) {
-      return nav.offsetParent === null || b.offsetParent !== null;
+      try { return getComputedStyle(b).display !== 'none'; } catch (e) { return true; }
     });
     if (!btns.length) return;
     host._vpNavBridged = true;

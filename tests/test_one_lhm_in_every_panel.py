@@ -172,7 +172,19 @@ def test_the_shared_behaviour_publishes_only_real_menu_items():
     part of the menu it is publishing."""
     assert "var btns = nav.querySelectorAll('.nav-btn');" in JS
     assert "if (!btns.length) btns = nav.querySelectorAll(SEL);" in JS
-    assert "return nav.offsetParent === null || b.offsetParent !== null;" in JS
+    assert "try { return getComputedStyle(b).display !== 'none'; } catch (e) { return true; }" in JS
+
+
+def test_hidden_items_are_judged_by_their_own_style_not_by_layout():
+    """offsetParent is null for EVERY element while the panel sits in a hidden
+    container, which the shell routinely does before it shows a tab — so a
+    layout-based test lets the whole menu through. The Estate published its
+    Models pages (Ollama, Model Routing, Mimic, vLLM, API) into its Estate
+    menu exactly that way. (Comments may name it; code may not.)"""
+    code = re.sub(r"/\*.*?\*/", "", JS, flags=re.S)
+    code = re.sub(r"^\s*//.*$", "", code, flags=re.M)
+    assert "offsetParent" not in code, \
+        "the visible-item filter is back on layout, which is null before the tab is shown"
 
 
 def test_the_shared_behaviour_hands_the_bridge_the_button_itself():
