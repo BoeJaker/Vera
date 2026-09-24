@@ -180,8 +180,10 @@ def test_hidden_items_are_judged_by_their_own_style_not_by_layout():
     container, which the shell routinely does before it shows a tab — so a
     layout-based test lets the whole menu through. The Estate published its
     Models pages (Ollama, Model Routing, Mimic, vLLM, API) into its Estate
-    menu exactly that way."""
-    assert "offsetParent" not in JS, \
+    menu exactly that way. (Comments may name it; code may not.)"""
+    code = re.sub(r"/\*.*?\*/", "", JS, flags=re.S)
+    code = re.sub(r"^\s*//.*$", "", code, flags=re.M)
+    assert "offsetParent" not in code, \
         "the visible-item filter is back on layout, which is null before the tab is shown"
 
 
