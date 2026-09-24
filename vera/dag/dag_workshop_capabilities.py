@@ -75,6 +75,20 @@ from Vera.vera.capability_orchestration import (
 
 from Vera.vera.dag import chain_deps as _chain_deps
 try:
+    from Vera.vera.dag import step_summary_core as _step_summary_core
+except ImportError:                                        # pragma: no cover
+    from vera.dag import step_summary_core as _step_summary_core
+
+
+def _v5_sentence(tool: str, preview: str, reason: str = "") -> str:
+    """A step summary in words. Every path that ends a step FOR the executor
+    used to summarise with the last tool preview verbatim - 300 characters of
+    a result's JSON - which is what the verifier and the next step then read
+    (65 of 130 summaries in run70-73, 24 Sep 2026). See step_summary_core."""
+    if not preview:
+        return ""
+    return _step_summary_core.sentence(tool, preview, reason)
+try:
     from Vera.vera.dag.operator_model_arg_core import (
         heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS,
         names_a_model as _names_a_model)
@@ -16650,7 +16664,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                       "error": f"{_p} does not exist — author it first",
                                       "session_id": sid})
                     if missing_path_calls >= _MAX_MISSING_PATH:
-                        result_summary = ((list(outputs.values())[-1] if outputs else "")
+                        result_summary = (_v5_sentence(list(outputs)[-1] if outputs else tool,
+                                               list(outputs.values())[-1] if outputs else "",
+                                               "The loop ended this step (a stall guard fired).")
                                           or ("STEP STALLED: tried to run a file that does not "
                                               f"exist {missing_path_calls}× without ever authoring "
                                               "it."))[:_V5_DONE_SUMMARY]
@@ -16756,7 +16772,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             # on the first of those (instead of burning a 2nd identical cycle)
             # saves a wasted turn every time this happens.
             if empty_exec_calls >= _MAX_EMPTY_EXEC or (had_useful and empty_exec_calls >= 1):
-                result_summary = ((list(outputs.values())[-1] if outputs else "")
+                result_summary = (_v5_sentence(list(outputs)[-1] if outputs else tool,
+                                               list(outputs.values())[-1] if outputs else "",
+                                               "The loop ended this step (a stall guard fired).")
                                   or ("STEP STALLED: called an exec cap with nothing to run "
                                       f"{empty_exec_calls}× and never supplied code or a path."))[:_V5_DONE_SUMMARY]
                 ok = ok or had_useful
@@ -16798,7 +16816,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                               "error": "", "note": "duplicate call — served the earlier result",
                               "session_id": sid})
             if dup_call_hits >= _MAX_DUP_HITS:
-                result_summary = _cached_preview[:_V5_DONE_SUMMARY]
+                result_summary = _v5_sentence(
+                    tool, _cached_preview,
+                    f"The loop ended this step: `{tool}` was re-issued unchanged and its result was already in hand.")[:_V5_DONE_SUMMARY]
                 await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
                                   "cycle": (gc + 1), "step_id": step_id,
                                   "thought": (f"(auto-completed: `{tool}` already produced this "
@@ -16968,7 +16988,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                               "error": "repeat of an identical failed call — not re-run",
                               "session_id": sid})
             if repeat_fail_calls >= _MAX_REPEAT_FAIL:
-                result_summary = ((list(outputs.values())[-1] if outputs else "")
+                result_summary = (_v5_sentence(list(outputs)[-1] if outputs else tool,
+                                               list(outputs.values())[-1] if outputs else "",
+                                               "The loop ended this step (a stall guard fired).")
                                   or (f"STEP STALLED: re-issued the same failing `{tool}` call "
                                       f"{repeat_fail_calls}× without changing anything.\n"
                                       f"Last error:\n{_failed_before[:600]}"))[:_V5_DONE_SUMMARY]
@@ -18029,7 +18051,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         _tool_call_n = tool_calls.get(tool, 0)
         if _tool_call_n >= _MAX_SAME_TOOL:
             _got = outputs.get(tool)
-            result_summary = (_got or preview)[:_V5_DONE_SUMMARY]
+            result_summary = _v5_sentence(
+                tool, _got or preview,
+                f"The loop ended this step after {_tool_call_n} calls to `{tool}`.")[:_V5_DONE_SUMMARY]
             ok = ok or had_useful
             if _got:
                 _wrap = (f"(auto-completed: `{tool}` already returned a usable result — ending the "
@@ -18046,9 +18070,13 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     if not result_summary:
         if outputs:
             # Prefer the last genuinely useful tool output over a trailing error.
-            result_summary = list(outputs.values())[-1][:_V5_DONE_SUMMARY]
+            result_summary = _v5_sentence(
+                list(outputs)[-1], list(outputs.values())[-1],
+                "The step ended without a `done` summary; its last useful result:")[:_V5_DONE_SUMMARY]
         elif history:
-            result_summary = history[-1]["preview"][:_V5_DONE_SUMMARY]
+            result_summary = _v5_sentence(
+                str(history[-1].get("tool") or ""), history[-1]["preview"],
+                "The step ended without a `done` summary; its last call:")[:_V5_DONE_SUMMARY]
         elif all_thoughts:
             if not caps:
                 # A reasoning-only step (no caps assigned) never calls a tool —
