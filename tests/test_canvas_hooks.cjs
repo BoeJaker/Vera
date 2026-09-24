@@ -26,7 +26,10 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_pan
   t('every rule the harvest had is in it', names.join(',') === 'capability,code,diagram,table,widget,widget-element,image,timeline',
     names.join(','));
   t('and the harvest is now a loop over them',
-    /CV_HOOKS\.forEach\(h=>\{/.test(src) && /body\.querySelectorAll\(h\.sel\)\.forEach\(\(el, i\)=>\{ try\{ h\.take\(el, out, i, body\); \}/.test(src));
+    /CV_HOOKS\.forEach\(h=>\{/.test(src) && /body\.querySelectorAll\(h\.sel\)\.forEach\(\(el, i\)=>\{/.test(src)
+    && /try\{ h\.take\(el, out, i, body\); \}catch\(_\)\{\}/.test(src));
+  // and each item remembers the element it came from, so the chat can say "it is on the canvas" instead of drawing it twice
+  t('every item knows which piece of the reply made it', /for\(let j=before;j<out\.length;j\+\+\) if\(out\[j\] && !out\[j\]\._el\) out\[j\]\._el=el;/.test(src));
   /* a hook that throws must not take the rest of the turn down with it - a bad rule should cost its own item,
      not every item */
   t('one hook throwing does not lose the others', (src.match(/\}catch\(_\)\{\}/g) || []).length >= 2

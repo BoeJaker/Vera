@@ -41,8 +41,8 @@ t('a structured graph\'s slot is a diagram\'s height, not a strip', /\.it\[data-
   t('nothing sits beside a spanning item', V.place([{ key: 'code', h: 300, mid: 'm1', want: 2 }, { key: 'a', h: 24, mid: 'm1', want: 1 / 3 }],
     turns, { columns: 3, gap: 10, colWidth: 200, pad: 0 }).placements[1].beside === false);
   t('the kinds you READ ask for the span, and an opened item asks for the stage',
-    /if \(c\.classList\.contains\('openin'\) \|\| c\.classList\.contains\('sized'\)\) return Math\.max\(1, cols\);/.test(SRC) &&
-    /if \(WIDE\[ty\] \|\| sz === 'l'\) return Math\.min\(cols, 2\);/.test(SRC));
+    /if \(d\.open\) return 4;/.test(SRC) && /if \(WIDE\[ty\] \|\| sz === 'l'\) return 2;/.test(SRC) &&
+    /const u = unitsOf\(descOf\(c\)\); return u > 1 \? Math\.max\(1, Math\.min\(cols, Math\.round\(u\)\)\) : u;/.test(SRC));
 }
 
 /* ── the NOW line, and the banner's ground ───────────────────────────────────────────────────────────────────── */
