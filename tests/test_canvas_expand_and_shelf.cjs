@@ -20,8 +20,14 @@ t('...and it skips those cards, so the gesture is not clamped back inside the sa
   /if \(hs\[i\] > capH && !asked\(c\)\) \{ c\.style\.maxHeight = capH \+ 'px'; c\.classList\.add\('capped'\); \}/.test(SRC));
 t('an item that was NOT asked for is still capped — the cap is why a tall item can be reached at all',
   /const capH = Math\.max\(120, V - pad - 10\);/.test(SRC) && /hs\[i\] > capH/.test(SRC));
-t('an opened item\'s body is unbounded, and so is a dragged one\'s',
-  /\.it\.openin \.it-bd\{max-height:none!important\}/.test(SRC) && /\.it\.sized \.it-bd\{max-height:none!important\}/.test(SRC));
+/* and the body is not just unbounded — it FLEXES, so the live slot inside it can take the room the card gained.
+   Unbounding alone left the content its old size with blank space under it (owner, 2026-09-24). */
+t('an opened or dragged item\'s body is unbounded AND fills the card',
+  /\.it\.openin \.it-bd\{max-height:none!important\}/.test(SRC) &&
+  /\.it\.sized \.it-bd,\.it\.openin \.it-bd\{max-height:none!important;display:flex;flex-direction:column;min-height:0\}/.test(SRC));
+t('...and its live slot grows with it, which is what the overlay is sized to',
+  /\.it\.sized \.vc-live,\.it\.openin \.vc-live\{flex:1 1 auto;min-height:60px;height:auto\}/.test(SRC) &&
+  !/\.it\.sized \.vc-live\{height:auto\}/.test(SRC));
 // the point of the exemption: the COLUMN takes the strain, which is the packed regime the placer already has
 t('nothing else had to change for it: an over-tall set already makes the column scroll',
   /const mode = !V \? 'stage' : \(fits \? 'held' : 'packed'\);/.test(SRC));

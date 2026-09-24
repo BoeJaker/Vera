@@ -465,8 +465,11 @@
   .vc-md h1{font-size:1.35em}.vc-md h2{font-size:1.2em}.vc-md h3{font-size:1.08em}
   .vc-md p{margin:.35em 0}.vc-md ul{margin:.35em 0;padding-left:1.2em}
   code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.92em}
-  .vc-pre{background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);
-    border-radius:6px;padding:7px 9px;overflow-x:auto;margin:.3em 0}
+  /* the parts an item draws for itself carry the same rule as the item: content, not chrome. Code keeps a ground
+     because a monospace block IS a surface — but a hairline of one, not a boxed card inside a boxed card. */
+  .vc-pre{background:color-mix(in srgb,var(--bg2,#1c2026) 55%,transparent);border:0;
+    border-left:2px solid color-mix(in srgb,var(--border,#2a2f37) 80%,transparent);
+    border-radius:0;padding:6px 9px;overflow-x:auto;margin:.3em 0}
   .vc-pre code{white-space:pre}
   /* a line of a code item: addressable, and lit when an explode card's span covers it */
   .vc-code .vc-line{display:block;padding-left:2px;border-left:2px solid transparent;transition:background .12s}
@@ -530,8 +533,16 @@
   .band-h{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);
     display:flex;align-items:center;gap:6px;margin:4px 0;min-width:0}
   .band-h::after{content:"";flex:1;height:1px;background:var(--border,#2a2f37)}
-  .it{border:1px solid var(--border,#2a2f37);border-radius:8px;background:var(--bg2,#1c2026);margin:6px 0;
+  /* ⛔ AN ITEM IS ITS CONTENT, NOT A TILE (owner, 2026-09-24: "every item in the canvas is still displayed inside a
+     box - id like the elements to feel more homogeneous instead of a rigid tile layout", "its still a rigid grid").
+     No border, no ground, no radius, no shadow — BY DEFAULT, not when a setting says so. What separates one item
+     from the next is its own caption line and the space around it, the way paragraphs are separated on a page. The
+     rings that MEAN something (this turn is waiting on you · you opened it · it is a suggestion) still draw, and an
+     item you are pointing at lifts a little; everything else is just what it holds. */
+  .it{border:0;border-radius:0;background:none;margin:2px 0 10px;
     overflow:hidden;position:relative;display:flex;flex-direction:column;box-sizing:border-box}
+  .it:hover{background:color-mix(in srgb,var(--bg2,#1c2026) 42%,transparent)}
+  .it.pinned{box-shadow:inset 2px 0 0 0 color-mix(in srgb,var(--acc,#5a9e8f) 70%,transparent)}
   .it.now{box-shadow:0 0 0 1.5px rgba(224,154,85,.45)}
   .it.waiting{animation:waitring 2.2s ease-in-out infinite}
   @keyframes waitring{0%,100%{box-shadow:0 0 0 1.5px rgba(224,154,85,.45)}50%{box-shadow:0 0 0 3px rgba(224,154,85,.24)}}
@@ -548,10 +559,17 @@
   /* opened in place: the item takes its own height, the column makes room */
   .it.openin{box-shadow:0 0 0 1.5px rgba(90,158,143,.6)}
   .it.openin .it-bd{max-height:none!important}
-  /* A DRAGGED ITEM'S BODY FILLS THE HEIGHT YOU DRAGGED. The card grew and the body kept the size's ceiling, so the
-     item was tall with its content still in a letterbox and blank space under it — the drag appeared to do nothing
-     to what you were trying to see (owner, 2026-09-24). Its own height is the bound now. */
-  .it.sized .it-bd{max-height:none!important}
+  /* ⛔ WHAT YOU DRAGGED IS WHAT THE CONTENT FILLS. The live kinds — a widget, a diagram, a preview, a terminal, an
+     explode — are NOT inside the card: they are mounted in the column's overlay, and _liveLayout sizes them to the
+     rect of a PLACEHOLDER slot left in the card. So the slot is what has to grow. The old rule (sized → height auto)
+     did the opposite: the placeholder is empty (its content lives in the overlay), so auto collapsed it to nothing
+     and the overlay was sized to nothing — the content SHRANK as you dragged, which is exactly what the owner
+     reported twice (2026-09-24). Dragging an item must make its slot take the room the card gained. */
+  .it.sized .it-bd,.it.openin .it-bd{max-height:none!important;display:flex;flex-direction:column;min-height:0}
+  .it.sized .vc-live,.it.openin .vc-live{flex:1 1 auto;min-height:60px;height:auto}
+  .it.sized .vc-codewrap,.it.openin .vc-codewrap,.it.sized .vc-diag,.it.openin .vc-diag,
+  .it.sized .vc-xp,.it.openin .vc-xp,.it.sized .vc-term,.it.openin .vc-term{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  .it.sized .vc-pre,.it.openin .vc-pre{flex:1 1 auto;min-height:0;max-height:none}
   .it.hovopen{z-index:5;box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
   .it.sized .rz{opacity:.45}
   .it.resizing{transition:none!important;user-select:none}
@@ -746,7 +764,11 @@
   .body{position:relative}
   #items{position:relative;min-height:1px}
   #live{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;z-index:4}
-  #live .lv{position:absolute;box-sizing:border-box;border-radius:6px;overflow:hidden;background:#000}
+  /* the live layer draws the thing itself — no ground of its own. A terminal and a rendered page bring their own
+     (they are surfaces); a widget, a diagram and a graph are marks on the canvas, and a black plate behind them is
+     the tile this canvas is getting rid of. */
+  #live .lv{position:absolute;box-sizing:border-box;border-radius:0;overflow:hidden;background:none}
+  #live .lv[data-kind="term"],#live .lv[data-kind="preview"],#live .lv[data-kind="panel"]{background:#000;border-radius:4px}
   #live .lv > *{display:block;width:100%;height:100%}
   #live iframe.vc-pframe{border:0;background:var(--s1,var(--bg1,#15181d))}
 #live .lv[data-kind="widget"]{background:transparent}#live .lv vera-widget{display:block;width:100%;height:100%}
@@ -764,9 +786,11 @@
   .ti.sm{flex:0 1 84px}.ti:focus{outline:none;border-color:var(--ac,var(--acc,#5a9e8f))}
   .vc-term,.vc-panel,.vc-nb{display:flex;flex-direction:column;min-height:0;height:100%}
   .vc-tconnect,.vc-bridge .row,.addpop .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:4px 0}
-  .vc-live{flex:1 1 auto;min-height:40px;height:110px;border-radius:6px;background:var(--s3,var(--bg3,#0f1114));display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--t3,var(--dim,#6b7480))}
+  /* the slot the overlay is sized to: a hole, not a plate (the ground it used to paint showed through as a tile
+     behind every live item, and behind the ones whose content does not fill it, as a large blank area) */
+  .vc-live{flex:1 1 auto;min-height:40px;height:110px;border-radius:0;background:none;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--t3,var(--dim,#6b7480))}
   .it[data-size="s"] .vc-live{height:40px}.it[data-size="l"] .vc-live{height:230px}.it[data-size="xl"] .vc-live{height:440px}
-  .it.sized .vc-live{height:auto}
+  /* (the old rule collapsed the slot — see "WHAT YOU DRAGGED IS WHAT THE CONTENT FILLS" above, which replaces it) */
   /* A RENDERED PAGE NEEDS ROOM. The preview slot is a .vc-live, and a code item lands at size "s" (_cvLandSize
      gives 's' to everything that is not a diagram, table or image) - so a whole HTML document, which previews
      itself on sight, was drawn into a 620x40 strip: measured on the canvas, slotHeight 40, frameHeight 40. One
@@ -861,19 +885,41 @@
     const fits = !V || need() <= capacity;
     const mode = !V ? 'stage' : (fits ? 'held' : 'packed');
     const heightOf = (it) => folded.has(String(it.key)) ? foldH(it) : fullH(it);
+    /* ⛔ A SMALL ITEM DOES NOT TAKE A WHOLE ROW. Every item used to be as wide as the column, so a counter, a
+       sticker or a short note sat in a full-width slot with a field of nothing beside it — the "large blank areas"
+       the owner reported, and half of why this reads as a rigid grid. An item declares how much width it WANTS
+       (`want`, a fraction: a sticker a third, a small item a half, everything else the whole) and the placer flows
+       them: an item that fits beside the one before it sits beside it, and the row's height is the tallest in it.
+       Nothing else changes — the level, the fold, the regimes are all as they were. */
+    const wantOf = (it) => { const w = +it.want; return w > 0 && w <= 1 ? w : 1; };
     const bottoms = new Array(cols).fill(pad), used = new Array(cols).fill(false); const out = []; let maxB = pad;
+    const row = { y: 0, x: 0, h: 0, col: -1, on: false };   // the flow row in progress, per column
     order.forEach(({ it }) => {
-      const h = heightOf(it);
+      const h = heightOf(it), want = wantOf(it);
       const ideal = (!known(it) || mode === 'packed') ? null
         : mode === 'stage' ? Math.max(pad, topOf(it))
         : Math.max(pad, Math.min(topOf(it), Math.max(pad, V - h)));   // held: level with its turn, never off the bottom
-      let best = 0, bestY = Infinity;
-      for (let c = 0; c < cols; c++) { const floor = used[c] ? bottoms[c] + gap : bottoms[c];
-        const y = ideal == null ? Math.max(floor, mode === 'stage' ? view + pad : pad) : Math.max(ideal, floor);
-        if (y < bestY) { bestY = y; best = c; } }
-      out.push({ key: it.key, mid: it.mid || '', col: best, x: best * (cw + gap), y: bestY, h,
-                 level: ideal != null && bestY === ideal, folded: folded.has(String(it.key)) });
-      bottoms[best] = bestY + h; used[best] = true; maxB = Math.max(maxB, bottoms[best]); });
+      /* DOES IT GO BESIDE THE ONE BEFORE IT? The row in progress is tried FIRST — otherwise the column's bottom has
+         already moved past that row and every item is pushed underneath, which is the full-width column this is
+         replacing. It goes beside only when the row has the width for it and its own level is not below the row:
+         an item is never dragged off its level to make a row look tidy. */
+      const canBeside = row.on && want < 1 && row.x + want <= 1.0001 && (ideal == null || ideal <= row.y + 0.5);
+      let best, bestY, beside = false;
+      if (canBeside) { best = row.col; bestY = row.y; beside = true; }
+      else {
+        best = 0; bestY = Infinity;
+        for (let c = 0; c < cols; c++) { const floor = used[c] ? bottoms[c] + gap : bottoms[c];
+          const y = ideal == null ? Math.max(floor, mode === 'stage' ? view + pad : pad) : Math.max(ideal, floor);
+          if (y < bestY) { bestY = y; best = c; } }
+      }
+      const x0 = beside ? row.x : 0;
+      out.push({ key: it.key, mid: it.mid || '', col: best, x: best * (cw + gap) + Math.round(x0 * cw), y: bestY, h,
+                 w: want < 1 ? Math.round(want * cw) - gap : cw, want,
+                 level: ideal != null && bestY === ideal, folded: folded.has(String(it.key)), beside });
+      if (beside) { row.x += want; row.h = Math.max(row.h, h); }
+      else { row.y = bestY; row.x = want; row.h = h; row.col = best; row.on = want < 1; }
+      bottoms[best] = Math.max(bottoms[best], row.y === bestY ? bestY + row.h : bestY + h);
+      used[best] = true; maxB = Math.max(maxB, bottoms[best]); });
     return { placements: out, height: maxB + pad + 8, columns: cols, mode, fits, viewport: V, folded: [...folded] };
   }
   /* ── THE CHECKER (the design's numeric check for the router): an axis-aligned route must not pass through any
@@ -1258,7 +1304,12 @@
     _placeNow() {
       const st = this.shadowRoot.getElementById('stage'); if (!st) return;
       const cols = Math.max(1, Math.min(4, parseInt(this.getAttribute('columns') || '1', 10) || 1)); const W = st.clientWidth || 300, gap = 10; const w = Math.floor((W - gap * (cols - 1)) / cols);
-      const cards = [...st.querySelectorAll('.it')]; cards.forEach((c) => { c.style.width = w + 'px'; });
+      /* WIDTH BEFORE HEIGHT. An item that flows beside its neighbour is measured at the width it will actually have,
+         or every height here is the height of a different item than the one drawn. */
+      const wantOf = (c) => (c.classList.contains('openin') || c.classList.contains('sized') || c.classList.contains('overfold')) ? 1
+        : (c.dataset.size === 'xs' ? (1 / 3) : c.dataset.size === 's' ? 0.5 : 1);
+      const cards = [...st.querySelectorAll('.it')];
+      cards.forEach((c) => { const ww = wantOf(c); c.style.width = (ww < 1 ? Math.round(ww * w) - gap : w) + 'px'; });
       const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);   // the sticky heads overlay the stage's top: nothing is placed under them
       const body = this.shadowRoot.getElementById('body');
@@ -1292,7 +1343,7 @@
         const isFolded = c.classList.contains('overfold'); const measured = c.offsetHeight;
         if (!isFolded) this._fullH[k] = measured;                              // what it is when OPEN: the placer judges on that, so folding cannot oscillate
         return { key: k, h: isFolded ? (this._fullH[k] || measured) : measured, hFold: hd ? hd.offsetHeight + 2 : 28,
-                 mid: c.dataset.mid || '', beside: c.dataset.beside || '',
+                 want: wantOf(c), mid: c.dataset.mid || '', beside: c.dataset.beside || '',
                  /* AN ITEM YOU OPENED IS NEVER FOLDED BY THE COLUMN, any more than a pinned one is: you asked for it
                     open, and a room that shuts what you just opened is worse than a room that scrolls. */
                  pinned: c.classList.contains('pinned') || c.classList.contains('openin') }; });
@@ -1303,7 +1354,10 @@
       const foldSet = new Set(P.folded || []); let refold = false;
       cards.forEach((c) => { const want = foldSet.has(c.dataset.key || '');
         if (c.classList.contains('overfold') !== want) { c.classList.toggle('overfold', want); refold = true; } });
-      P.placements.forEach((p) => { const c = cards.find((x) => x.dataset.key === p.key); if (!c) return; c.style.left = p.x + 'px'; c.style.top = p.y + 'px'; c.dataset.col = String(p.col); c.classList.toggle('level', !!p.level); });
+      P.placements.forEach((p) => { const c = cards.find((x) => x.dataset.key === p.key); if (!c) return;
+        c.style.left = p.x + 'px'; c.style.top = p.y + 'px'; c.dataset.col = String(p.col);
+        if (p.w > 0) c.style.width = p.w + 'px';                 // the width it flowed at
+        c.classList.toggle('level', !!p.level); c.classList.toggle('beside', !!p.beside); });
       /* THE STAGE IS THE ITEMS' OWN HEIGHT, not the transcript's. It used to be made as tall as the whole transcript
          so the column could be driven from the transcript's scrollTop — the projection this replaces. */
       st.style.height = (P.mode === 'stage' ? Math.max(P.height, (this._turnsH || 0) + 40) : P.height) + 'px';
@@ -1740,7 +1794,9 @@
           if (kind === 'term') { inner = document.createElement('vera-terminal'); inner.setAttribute('ws', h.dataset.ws || ''); ensureLib('/ui/vera-terminal.js', 'vera-terminal'); }
           else if (kind === 'mermaid') { inner = document.createElement('vera-mermaid'); inner.setAttribute('bare', ''); inner.setAttribute('fill', ''); inner.setAttribute('title', h.dataset.title || 'diagram'); h.textContent = '';
             inner.addEventListener('vm:rendered', () => this._diagramGrew(key, inner)); this._mermaidInto(inner, key); }
-          else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = ''; }
+          // `bare`: the widget draws its figure and nothing else. Its own frame inside a canvas item was a box in a
+          // box — and it lives in a second shadow root, so no rule of ours could reach it (owner, 2026-09-24).
+          else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); inner.setAttribute('bare', ''); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = ''; }
           else if (kind === 'preview') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);
           inner.setAttribute('sandbox', 'allow-scripts');   // no network, no cookies, no same-origin: it only draws
           // a code item previews its code; an html item previews the page it IS (its content field is `html`)
