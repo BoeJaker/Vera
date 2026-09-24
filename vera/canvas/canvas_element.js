@@ -398,7 +398,7 @@
   :host([blocks="off"]) .it:hover > .it-ft,:host([blocks="off"]) .it:focus-within > .it-ft{opacity:1}
   /* the states that MEAN something keep their ring: blocks off is about grounds, not about hiding that this turn is
      waiting on you, that you opened an item, or that one is being dragged to a size */
-  :host([blocks="off"]) .it.now{box-shadow:0 0 0 1.5px rgba(224,154,85,.45)}
+  /* (no ring for the NOW band here either — see the note on .it.now below) */
   :host([blocks="off"]) .it.openin{box-shadow:0 0 0 1.5px rgba(90,158,143,.6)}
   :host([blocks="off"]) .it.hovopen{box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
   :host([blocks="off"]) .it.ghost{border:1px dashed color-mix(in srgb,var(--dim,#6b7480) 70%,transparent)}
@@ -543,7 +543,10 @@
     overflow:hidden;position:relative;display:flex;flex-direction:column;box-sizing:border-box}
   .it:hover{background:color-mix(in srgb,var(--bg2,#1c2026) 42%,transparent)}
   .it.pinned{box-shadow:inset 2px 0 0 0 color-mix(in srgb,var(--acc,#5a9e8f) 70%,transparent)}
-  .it.now{box-shadow:0 0 0 1.5px rgba(224,154,85,.45)}
+  /* ⛔ "now" IS A BAND, NOT A STATE. Every live item carries it (the class is the item's state: now · pinned ·
+     parked), so a ring on .it.now drew an amber box around EVERY item on the canvas — the "border" the owner kept
+     reporting after the tile was already gone, and the reason this still read as a grid of cards. What is actually
+     worth a ring is an item WAITING on you, and that is .it.waiting, which pulses one below. */
   .it.waiting{animation:waitring 2.2s ease-in-out infinite}
   @keyframes waitring{0%,100%{box-shadow:0 0 0 1.5px rgba(224,154,85,.45)}50%{box-shadow:0 0 0 3px rgba(224,154,85,.24)}}
   .it.dim{opacity:.5;transition:opacity .15s}.it.dim:hover{opacity:1}
@@ -893,7 +896,7 @@
        Nothing else changes — the level, the fold, the regimes are all as they were. */
     const wantOf = (it) => { const w = +it.want; return w > 0 && w <= 1 ? w : 1; };
     const bottoms = new Array(cols).fill(pad), used = new Array(cols).fill(false); const out = []; let maxB = pad;
-    const row = { y: 0, x: 0, h: 0, col: -1, on: false };   // the flow row in progress, per column
+    const row = { y: 0, x: 0, h: 0, col: -1, on: false, chip: false };   // the flow row in progress
     order.forEach(({ it }) => {
       const h = heightOf(it), want = wantOf(it);
       const ideal = (!known(it) || mode === 'packed') ? null
@@ -903,7 +906,15 @@
          already moved past that row and every item is pushed underneath, which is the full-width column this is
          replacing. It goes beside only when the row has the width for it and its own level is not below the row:
          an item is never dragged off its level to make a row look tidy. */
-      const canBeside = row.on && want < 1 && row.x + want <= 1.0001 && (ideal == null || ideal <= row.y + 0.5);
+      /* HOW FAR AN ITEM WILL COME TO JOIN A ROW. Level-with-the-turn is a preference, and for a CHIP — an item
+         folded to its header line, or a sticker — it is worth almost nothing: every canvas item belongs to a
+         different turn, so a rule of "same level only" meant chips NEVER shared a row and the canvas was a stack of
+         one-line bars (owner, 2026-09-24: "not letting the items sit next to each other - they still occupy an
+         entire column"). A chip will come up to a third of the column to join a run of chips; anything larger keeps
+         its level, because a big item in the wrong place is a real loss and a chip in the wrong row is not. */
+      const chip = h <= 46 && want <= 0.5;
+      const reach = chip && row.chip ? Math.max(90, (V || 600) / 3) : 0.5;
+      const canBeside = row.on && want < 1 && row.x + want <= 1.0001 && (ideal == null || ideal <= row.y + reach);
       let best, bestY, beside = false;
       if (canBeside) { best = row.col; bestY = row.y; beside = true; }
       else {
@@ -916,8 +927,8 @@
       out.push({ key: it.key, mid: it.mid || '', col: best, x: best * (cw + gap) + Math.round(x0 * cw), y: bestY, h,
                  w: want < 1 ? Math.round(want * cw) - gap : cw, want,
                  level: ideal != null && bestY === ideal, folded: folded.has(String(it.key)), beside });
-      if (beside) { row.x += want; row.h = Math.max(row.h, h); }
-      else { row.y = bestY; row.x = want; row.h = h; row.col = best; row.on = want < 1; }
+      if (beside) { row.x += want; row.h = Math.max(row.h, h); row.chip = row.chip && chip; }
+      else { row.y = bestY; row.x = want; row.h = h; row.col = best; row.on = want < 1; row.chip = chip; }
       bottoms[best] = Math.max(bottoms[best], row.y === bestY ? bestY + row.h : bestY + h);
       used[best] = true; maxB = Math.max(maxB, bottoms[best]); });
     return { placements: out, height: maxB + pad + 8, columns: cols, mode, fits, viewport: V, folded: [...folded] };
@@ -1152,7 +1163,16 @@
   /* compact = a header line: Hover and Zen fold everything not opened; an aged item folds in every tier; the NOW
      items (the decision, the suggestions), a hovered one, the turn in view's own and anything the relevance pass holds
      IN FOCUS never fold — the band says "in focus", so the item is open (a placed widget folded away one turn later) */
-  function foldOf(o) { o = o || {}; if (o.now || o.open || o.hovered || o.fresh || o.inFocus) return false; return !!(o.aged || (o.tier && o.tier !== 'full')); }
+  /* WHAT FOLDS TO A HEADER LINE. A tier is a preference about items the conversation has MOVED ON from, not an
+     instruction to fold the whole canvas: in Zen every item folded, so a canvas of eight things was eight identical
+     bars — a list of titles, which is exactly the "rigid grid" the owner keeps reporting. An item folds when it has
+     aged, or when a focus set exists and it is not in it. With no focus and no ageing (a canvas open on its own,
+     every item as current as the next) nothing folds, whatever the tier. */
+  function foldOf(o) {
+    o = o || {}; if (o.now || o.open || o.hovered || o.fresh || o.inFocus) return false;
+    if (o.aged) return true;
+    return !!(o.tier && o.tier !== 'full' && o.hasFocus && !o.inFocus);
+  }
   const textFieldOf = t => t === 'markdown' ? 'md' : t === 'code' ? 'code' : t === 'html' ? 'html' : 'text';
   /* the rail's rows (pure): the session's own canvas first ("this session"), the named canvases by recency, then the
      other sessions' canvases ("session · <id>") — every session canvas is titled "Session canvas", so the id tells them apart */
@@ -1306,7 +1326,10 @@
       const cols = Math.max(1, Math.min(4, parseInt(this.getAttribute('columns') || '1', 10) || 1)); const W = st.clientWidth || 300, gap = 10; const w = Math.floor((W - gap * (cols - 1)) / cols);
       /* WIDTH BEFORE HEIGHT. An item that flows beside its neighbour is measured at the width it will actually have,
          or every height here is the height of a different item than the one drawn. */
-      const wantOf = (c) => (c.classList.contains('openin') || c.classList.contains('sized') || c.classList.contains('overfold')) ? 1
+      /* AN ITEM FOLDED TO ITS HEADER LINE IS A CHIP, AND CHIPS SIT TOGETHER. Folded items each took a full row, so a
+         canvas of folded items was a stack of identical bars — the shape the owner keeps calling a rigid grid. */
+      const wantOf = (c) => (c.classList.contains('openin') || c.classList.contains('sized')) ? 1
+        : (c.classList.contains('compact') || c.classList.contains('overfold')) ? (1 / 3)
         : (c.dataset.size === 'xs' ? (1 / 3) : c.dataset.size === 's' ? 0.5 : 1);
       const cards = [...st.querySelectorAll('.it')];
       cards.forEach((c) => { const ww = wantOf(c); c.style.width = (ww < 1 ? Math.round(ww * w) - gap : w) + 'px'; });
@@ -1503,7 +1526,8 @@
         const aged = isAged(mid, focusMid, order) && !(F && F.has(key)) && b.state !== 'pinned';
         const hovered = this._hovKey === key && (tier === 'hover' || aged);
         const fresh = !!mid && mid === focusMid;                                    // the turn in view produced it: open, in every tier
-        const wouldFold = foldOf({ tier, aged, open, now: isNow, fresh, inFocus: !!F && F.has(key) });   // a header line, until opened
+        // a header line, until opened. `hasFocus`: with no focus set there is nothing to be out of, so nothing folds
+        const wouldFold = foldOf({ tier, aged, open, now: isNow, fresh, hasFocus: !!F, inFocus: !!F && F.has(key) });
         const compact = wouldFold && !hovered;
         const px = this._px[key];
         const editable = EDITABLE.includes(b.type);
@@ -1554,6 +1578,9 @@
       html += `<div class="addbar" data-w="canvas.add"><slot name="banner-start"></slot><span class="lbl">Add</span>${ADD_KINDS.map(k => `<button class="add" data-act="add" data-kind="${k.n}" title="Add a ${k.n} to the session canvas (a ${k.kind} item)"><b>${esc(k.ik)}</b>${k.n}</button>`).join('')}` +
         shelf('parkpop', 'parked', 'Parked items — shelved, not gone; a click brings one back into view', stage ? parked : []) +
         shelf('hid', 'hidden', 'Hidden items — a click brings one back', hidden) +
+        /* START AGAIN. A working area you cannot empty fills up until you stop trusting it. Pinned items are what
+           you said to keep, so they are kept; a second click within the beat clears those too. */
+        (keyed.length ? `<button class="hidbtn" data-act="clear" title="Clear the canvas — pinned items stay; click again to clear those too">clear</button>` : '') +
         `<slot name="banner-end"></slot></div>`;
       if (pinned.length) html += `<div class="band pinned"><div class="band-h">pinned · ${pinned.length}</div>${pinned.map(card).join('')}</div>`;
       // the NOW band: what this turn is waiting on first (the decision, then what Vera can also do), then the live items, newest
@@ -1677,6 +1704,16 @@
       // the banner's shelves (parked · hidden): the button opens its own popover. 'park' on an ITEM parks that item;
       // these are the shelves those items went to, so they carry their own act rather than sharing one.
       if (act === 'hid' || act === 'parkpop') { const pop = btn.parentElement && btn.parentElement.querySelector('.hidpop'); if (pop) pop.hidden = !pop.hidden; return; }
+      /* clear: the first press keeps what you pinned and says so; a second press within a few seconds takes those
+         too. No dialog — the shelf is not where a confirmation belongs, and every item it removes is recoverable
+         from the canvas's own timeline. */
+      if (act === 'clear') {
+        const pinnedKeys = ((this._doc && this._doc.blocks) || []).filter((b) => b && b.key && b.state === 'pinned').map((b) => String(b.key));
+        const again = this._clearAt && (Date.now() - this._clearAt) < 4000;
+        this._clearAt = again ? 0 : Date.now();
+        btn.textContent = again ? 'clearing…' : (pinnedKeys.length ? 'clear all?' : 'clearing…');
+        return this.call('canvas.clear', { keep: again ? '' : pinnedKeys.join(',') });
+      }
       if (act === 'edit') { this._editKey = this._editKey === key ? null : key; this._editFocused = false; if (this._doc) this.render(this._doc); return; }
       if (act === 'cancel') { this._editKey = null; this._editFocused = false; if (this._doc) this.render(this._doc); return; }
       if (act === 'save') {

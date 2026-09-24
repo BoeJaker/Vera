@@ -506,6 +506,27 @@ async def cap_canvas_remove(id: str = "", block_id: str = "", key: str = "",
 
 
 @capability(
+    "canvas.clear", memory="off",
+    http_method="POST", http_path="/canvas/clear", http_tags=["canvas"],
+    description="Clear a canvas: every item goes, the canvas itself stays (its id, its title, its history). "
+                "The session canvas is the chat's own working area and is never deleted — this is how you "
+                "start it again. Inputs: id (str) or session_id (str); keep (str, comma-separated keys to "
+                "leave behind, e.g. the items you pinned).",
+)
+async def cap_canvas_clear(id: str = "", session_id: str = "", keep: str = "", trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    keys = {k.strip() for k in str(keep or "").split(",") if k.strip()}
+    before = len(doc.get("blocks", []))
+    # a kept key survives; everything else goes, including the keyless blocks of an agent's canvas
+    doc["blocks"] = [b for b in doc.get("blocks", []) if b.get("key") and str(b.get("key")) in keys]
+    rev = await _write(doc, "clear", ",".join(sorted(keys)) or "all")
+    return {"ok": True, "id": doc["id"], "cleared": before - len(doc["blocks"]),
+            "kept": len(doc["blocks"]), "revision": rev}
+
+
+@capability(
     "canvas.delete", memory="off",
     http_method="POST", http_path="/canvas/delete", http_tags=["canvas"],
     description="Delete an entire canvas. Input: id (str!).",
@@ -1000,7 +1021,7 @@ register_ui(
 </div>""",
     "",
     ui_caps=["canvas.create", "canvas.get", "canvas.list", "canvas.append",
-             "canvas.update", "canvas.move", "canvas.remove", "canvas.delete",
+             "canvas.update", "canvas.move", "canvas.remove", "canvas.clear", "canvas.delete",
              "canvas.block_types",
              "canvas.session.resolve", "canvas.add", "canvas.pin", "canvas.park", "canvas.size",
              "canvas.recall", "canvas.timeline", "canvas.session.room", "canvas.session.relevance", "canvas.ask"],
