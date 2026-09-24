@@ -54,13 +54,18 @@ t('an item of a LATER turn never joins an earlier row — a row is not worth dra
 t('an item that asks for nothing takes the column, exactly as before',
   (() => { const p = at(V.place([{ key: 'a', h: 50, mid: 'm1' }, { key: 'b', h: 90, mid: 'm1' }], turns, { columns: 1, gap: 10, colWidth: 300, pad: 0 }));
     return p.a.w === 300 && p.b.y === 60 && !p.a.beside; })());
+// what an item wants is read off the card in COLUMN UNITS (unitsOf) and then clamped to the columns there are, so the
+// same widths the placer lays out at are the widths the column COUNT is chosen from (autoCols)
 t('and one you opened or dragged takes the stage, whatever its size record says',
-  /if \(c\.classList\.contains\('openin'\) \|\| c\.classList\.contains\('sized'\)\) return Math\.max\(1, cols\);/.test(SRC));
+  /if \(d\.open\) return 4;/.test(SRC) &&
+  /open: c\.classList\.contains\('openin'\) \|\| c\.classList\.contains\('sized'\)/.test(SRC) &&
+  /const u = unitsOf\(descOf\(c\)\); return u > 1 \? Math\.max\(1, Math\.min\(cols, Math\.round\(u\)\)\) : u;/.test(SRC));
 t('an item folded to its header line is a chip, and chips sit three to a row',
-  /if \(c\.classList\.contains\('compact'\) \|\| c\.classList\.contains\('overfold'\)\) return 1 \/ 3;/.test(SRC));
+  /if \(d\.folded\) return 1 \/ 3;/.test(SRC) &&
+  /folded: c\.classList\.contains\('compact'\) \|\| c\.classList\.contains\('overfold'\)/.test(SRC));
 t('a kind you READ rather than glance at spans columns when there are columns to span',
   /const WIDE = \{ code: 1, html: 1, explode: 1, markdown: 1, panel: 1, session: 1, table: 1 \};/.test(SRC) &&
-  /if \(WIDE\[ty\] \|\| sz === 'l'\) return Math\.min\(cols, 2\);/.test(SRC));
+  /if \(WIDE\[ty\] \|\| sz === 'l'\) return 2;/.test(SRC));
 t('the width is applied before the height is measured, or every height is a different item\'s',
   /WIDTH BEFORE HEIGHT/.test(SRC) && /cards\.forEach\(\(c\) => \{ const ww = wantOf\(c\);/.test(SRC) &&
   /c\.style\.width = \(ww < 1 \? Math\.round\(ww \* w\) - gap : span \* w \+ \(span - 1\) \* gap\) \+ 'px'/.test(SRC));

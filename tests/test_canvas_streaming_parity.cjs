@@ -39,7 +39,7 @@ t('an item already on the canvas is UPDATED when what it holds has changed, not 
   /if\(_CV_SIG\[key\]===sig\) continue;/.test(CHAT) && /_capCall\('canvas\.update',\{session_id:SID, key, content:m\.content\}\)/.test(CHAT));
 t('...and an unchanged item costs nothing', /let sig=''; try\{ sig=JSON\.stringify\(m\.content\); \}catch\(_\)\{ sig=String\(i\); \}/.test(CHAT));
 t('the signature is remembered when the item first lands, or the first update would be a no-op',
-  /if\(r&&r\.ok\) _CV_SIG\[key\]=sig;/.test(CHAT));
+  /if\(r&&r\.ok\)\{ _CV_SIG\[key\]=sig;/.test(CHAT));
 t('the key is the turn and the place in the reply, which is what makes an update possible at all',
   /const key=m\.key\|\|\('turn:'\+mid\+':'\+m\.k\+':'\+i\);/.test(CHAT));
 

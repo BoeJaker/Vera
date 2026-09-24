@@ -885,6 +885,43 @@
      lowest weight first, and of two equals the lower one — so what you are reading stays whole. A pinned item never
      folds. The placer decides; the caller applies it and hands back honest open heights (`h`) next time, which is
      what keeps this from oscillating. ── */
+  /* ── WHAT AN ITEM WANTS, IN COLUMN UNITS, before there is a column count to want it of ──
+     under 1 = a share of one column (it flows beside its neighbours) · 1 = a column · 2 = a reading width · 4 = the
+     stage. Both the placer's caller (which clamps this to the columns that exist) and autoCols (which CHOOSES how
+     many exist) read the widths here, so the count and the widths can never disagree. A kind you read rather than
+     glance at wants a reading width; a kind you glance at wants a share. ── */
+  const WIDE = { code: 1, html: 1, explode: 1, markdown: 1, panel: 1, session: 1, table: 1 };
+  function unitsOf(d) {
+    d = d || {};
+    if (d.folded) return 1 / 3;              // folded to its header line it is a chip, whatever kind it is
+    if (d.open) return 4;                    // opened in place or dragged: it asked for the stage
+    const sz = d.size || 'm', ty = d.type || '';
+    if (sz === 'xl') return 4;
+    if (WIDE[ty] || sz === 'l') return 2;
+    return sz === 'xs' ? (1 / 3) : sz === 's' ? 0.5 : 1;
+  }
+  /* ── HOW MANY COLUMNS: the width says how many FIT, the content says how many are WANTED, and the answer is the
+     smaller (owner, 2026-09-24: "i want the canvas to choose its column count from the width, and the content").
+
+       fit   — a column narrower than `min` stops being readable (a line of code, a paragraph), so the stage holds
+               floor((W+gap)/(min+gap)) of them, four at the most.
+       want  — the content's own area in column units (`unitsOf`, an xl counted as the reading width it reads as).
+               About `per` units per column: one diagram wants one column, a dozen chips want two, a wall of code
+               and tables wants everything the width allows. Never more columns than there are items — three
+               columns with two things in them is the empty grid this is here to stop being.
+
+     Pure, exported, and the only place the count is decided: the element measures, this chooses. ── */
+  function autoCols(width, items, o) {
+    o = o || {};
+    const gap = o.gap == null ? 10 : o.gap, min = o.min || 300, max = Math.max(1, o.max || 4), per = o.per || 3;
+    const fit = Math.max(1, Math.min(max, Math.floor(((width || 0) + gap) / (min + gap))));
+    const list = (items || []).filter(Boolean);
+    if (!list.length) return 1;
+    const area = list.reduce((a, d) => a + Math.min(2, unitsOf(d)), 0);
+    const want = Math.max(1, Math.ceil(area / per));
+    return Math.max(1, Math.min(fit, list.length, want));
+  }
+
   function place(items, turns, o) {
     o = o || {}; const cols = Math.max(1, Math.min(4, o.columns || 1)), gap = o.gap == null ? 10 : o.gap, cw = o.colWidth || 300, pad = o.pad || 0;
     const view = Math.max(0, o.view || 0);   // stage only: the top of the window in view — an item with nothing to stand beside sits where you are looking
@@ -1291,6 +1328,7 @@
       this._timer = null;
       if (this._railTimer) { clearInterval(this._railTimer); this._railTimer = null; }
       if (this._liveTick) { clearInterval(this._liveTick); this._liveTick = null; }
+      if (this._stageRO) { try { this._stageRO.disconnect(); } catch (e) {} this._stageRO = null; }
     }
 
     attributeChangedCallback(name) {
@@ -1372,23 +1410,33 @@
     }
     _placeNow() {
       const st = this.shadowRoot.getElementById('stage'); if (!st) return;
-      const cols = Math.max(1, Math.min(4, parseInt(this.getAttribute('columns') || '1', 10) || 1)); const W = st.clientWidth || 300, gap = 10; const w = Math.floor((W - gap * (cols - 1)) / cols);
+      const W = st.clientWidth || 300, gap = 10;
+      /* THE STAGE'S WIDTH IS AN INPUT NOW, so a change to it has to re-place: dragging the chat|canvas handle, opening
+         the graph column, a window resize. Width only — the height this very pass writes would otherwise loop. */
+      if (!this._stageRO) { try { this._stageRO = new ResizeObserver(() => {
+          const s = this.shadowRoot.getElementById('stage'); const ww = s ? s.clientWidth : 0;
+          if (ww && ww !== this._stageW) this._placeNow();
+        }); this._stageRO.observe(st); } catch (e) { /* no observer: the host still drives placement */ } }
+      this._stageW = W;
+      const cards = [...st.querySelectorAll('.it')];
+      /* what each card wants, read off the card and independent of the count — so the count can be chosen from it */
+      const descOf = (c) => ({ type: c.dataset.type || '', size: c.dataset.size || 'm',
+        folded: c.classList.contains('compact') || c.classList.contains('overfold'),
+        open: c.classList.contains('openin') || c.classList.contains('sized') });
+      /* THE COUNT IS THE STAGE'S OWN, not a number somebody typed. `columns` absent or "auto" (the default) lets the
+         width and the content decide it; 1-4 pins it, which is what the banner's COLS buttons are for. */
+      const attr = String(this.getAttribute('columns') || 'auto').trim().toLowerCase();
+      const pinned = attr && attr !== 'auto' ? Math.max(1, Math.min(4, parseInt(attr, 10) || 0)) : 0;
+      const cols = pinned || autoCols(W, cards.map(descOf), { gap });
+      const w = Math.floor((W - gap * (cols - 1)) / cols);
+      if ((this.dataset.cols || '') !== String(cols)) this.dataset.cols = String(cols);   // what the column actually chose, readable by the page
       /* WIDTH BEFORE HEIGHT. An item that flows beside its neighbour is measured at the width it will actually have,
          or every height here is the height of a different item than the one drawn. */
       /* AN ITEM FOLDED TO ITS HEADER LINE IS A CHIP, AND CHIPS SIT TOGETHER. Folded items each took a full row, so a
          canvas of folded items was a stack of identical bars — the shape the owner keeps calling a rigid grid. */
-      /* over 1 = a number of COLUMNS to span. A kind you read rather than glance at takes the stage when there is
-         more than one column to take; an l or xl item of any kind takes two. */
-      const WIDE = { code: 1, html: 1, explode: 1, markdown: 1, panel: 1, session: 1, table: 1 };
-      const wantOf = (c) => {
-        if (c.classList.contains('compact') || c.classList.contains('overfold')) return 1 / 3;
-        const sz = c.dataset.size || 'm', ty = c.dataset.type || '';
-        if (c.classList.contains('openin') || c.classList.contains('sized')) return Math.max(1, cols);
-        if (sz === 'xl') return Math.max(1, cols);
-        if (WIDE[ty] || sz === 'l') return Math.min(cols, 2);
-        return sz === 'xs' ? (1 / 3) : sz === 's' ? 0.5 : 1;
-      };
-      const cards = [...st.querySelectorAll('.it')];
+      /* over 1 = a number of COLUMNS to span, clamped to the columns there are: a kind you read takes the stage when
+         there is more than one column to take; an l or xl item of any kind takes two. */
+      const wantOf = (c) => { const u = unitsOf(descOf(c)); return u > 1 ? Math.max(1, Math.min(cols, Math.round(u))) : u; };
       cards.forEach((c) => { const ww = wantOf(c);
         const span = ww > 1 ? Math.min(cols, Math.round(ww)) : 1;
         c.style.width = (ww < 1 ? Math.round(ww * w) - gap : span * w + (span - 1) * gap) + 'px'; });
@@ -1450,7 +1498,7 @@
       this._liveLayout();
       // the fold set changed: the heights it was judged on are stale by exactly those items — place once more
       if (refold && !this._refolding) { this._refolding = 1; requestAnimationFrame(() => { this._refolding = 0; this._placeNow(); }); }
-      try { this.dispatchEvent(new CustomEvent('vera:canvas:placed', { bubbles: true, detail: { n: P.placements.length, level: P.placements.filter((p) => p.level).length, columns: cols, height: P.height, mode: P.mode, folded: (P.folded || []).length } })); } catch (e) { /* observers are optional */ }
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:placed', { bubbles: true, detail: { n: P.placements.length, level: P.placements.filter((p) => p.level).length, columns: cols, auto: !pinned, height: P.height, mode: P.mode, folded: (P.folded || []).length } })); } catch (e) { /* observers are optional */ }
     }
 
     get canvasId() { return this.getAttribute('canvas-id') || ''; }
@@ -2047,6 +2095,13 @@
       ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid').then((ok) => {
         if (!inner.isConnected) return;
         if (typeof inner.render !== 'function' && typeof customElements !== 'undefined' && customElements.get('vera-mermaid')) { try { customElements.upgrade(inner); } catch (e) {} }
+        /* ⛔ STREAM IT, the way the chat does. A diagram arrives on the canvas a line at a time now (the harvest
+           runs on the stream), and `render` can only draw a COMPLETE diagram — a half-written one throws, so the
+           item sat blank until the last token and the whole thing appeared at once: "it still goes to the canvas
+           after its been fully rendered in chat" (owner, 2026-09-24), even though the writes were arriving all
+           along. `stream` draws the complete lines and holds the partial one, which is exactly what the chat's own
+           live fence does. A finished diagram is just the case where no line is partial. */
+        if (typeof inner.stream === 'function') { try { inner.stream(code); } catch (e) { try { inner.render(code); } catch (_) {} } return; }
         if (typeof inner.render === 'function') { try { inner.render(code); } catch (e) {} return; }
         if (!ok && window.mermaid && typeof window.mermaid.render === 'function') { try { Promise.resolve(window.mermaid.render('vc-mm-' + Math.random().toString(36).slice(2, 8), code)).then((r) => { inner.innerHTML = (r && r.svg) || ''; }).catch(() => { inner.textContent = code; }); } catch (e) { inner.textContent = code; } return; }
         inner.textContent = code;
@@ -2370,7 +2425,7 @@
     }
   }
 
-  const api = { place, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 6 };
+  const api = { place, autoCols, unitsOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {

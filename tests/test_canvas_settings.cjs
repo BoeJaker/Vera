@@ -19,11 +19,16 @@ t('each is read in ONE place, and defaults to today\'s behaviour',
 t('a changed setting is acted on: preview and the offer redraw, alignment re-places',
   /\(name === 'preview' \|\| name === 'explode-offer'\) && this\._doc\) this\.render/.test(SRC) &&
   /name === 'align' && this\.hasAttribute\('stage'\)\) \{ this\._view = null; this\._placeNow\(\); \}/.test(SRC));
-t('the page offers the three in Settings, each with its own persisted value',
+t('the page offers them in Settings, each with its own persisted value',
   /id="cfgCvAlign"[\s\S]*?value="held"[\s\S]*?value="strict"/.test(CHAT) &&
   /id="cfgCvPreview"[\s\S]*?value="on"[\s\S]*?value="off"/.test(CHAT) &&
   /id="cfgCvExplode"[\s\S]*?value="both"[\s\S]*?value="code"[\s\S]*?value="never"/.test(CHAT) &&
-  /_CV_CFG=\{ cfgCvAlign:\['align','held'\], cfgCvPreview:\['preview','on'\], cfgCvExplode:\['explode-offer','both'\] \}/.test(CHAT));
+  /_CV_CFG=\{ cfgCvAlign:\['align','held'\], cfgCvPreview:\['preview','on'\], cfgCvExplode:\['explode-offer','both'\], cfgCvWhere:\['', 'canvas'\] \}/.test(CHAT));
+// and WHERE a canvas-compatible element is drawn while the column is open — a page-side setting (empty attribute name),
+// because the element draws its items either way: what changes is whether the REPLY draws them a second time
+t('...including where they are drawn, which the element knows nothing about',
+  /id="cfgCvWhere"[\s\S]*?value="canvas"[\s\S]*?value="both"/.test(CHAT)
+  && /const a=_CV_CFG\[id\]\[0\]; if\(!a\) return;/.test(CHAT) && /try\{ _cvOneplaceSync\(\); \}catch\(_\)\{\}   \/\/ "draw them" is the page's own/.test(CHAT));
 t('and they are handed to the element as attributes, on change and on mount',
   /function _cvApplyCfg\(\)/.test(CHAT) && /el\.setAttribute\(a,v\)/.test(CHAT) && /try\{ _cvApplyCfg\(\); \}catch\(_\)\{\}/.test(CHAT) && /_persistCanvasCfg,/.test(CHAT));
 

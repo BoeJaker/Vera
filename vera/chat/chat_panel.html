@@ -365,6 +365,13 @@ html[data-blocks="off"] .msg-body blockquote,html[data-blocks="off"] .msg-body .
 .wblk .wheat div{aspect-ratio:1.6;border-radius:3px;background:var(--acc);display:flex;align-items:flex-end;padding:2px 4px;font-family:var(--mono);font-size:8px;color:var(--text);overflow:hidden}
 .wblk .wb .mm-slot{width:100%;height:100%;min-height:70px}
 html[data-blocks="off"] .wblk{background:transparent}
+/* a piece of the reply that is being drawn on the canvas instead: hidden, never removed, and a line in its place
+   that takes you to it. Closing the canvas brings every one of them straight back (_cvRestoreInline). */
+.cv-elsewhere{display:none!important}
+.cv-moved{display:inline-flex;align-items:center;gap:6px;margin:4px 0;padding:2px 9px;font:inherit;font-size:9.5px;
+  color:var(--dim2);background:none;border:1px dashed var(--border);border-radius:11px;cursor:pointer;max-width:100%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv-moved:hover{color:var(--text);border-color:var(--acc,#5a9e8f)}
 @media (max-width:640px){.wblk{grid-template-columns:1fr}.wblk .wr{border-left:none;border-top:1px solid var(--border)}}
 .mtime{font-size:8px;color:var(--dim);margin-top:1px;font-family:var(--mono);padding-left:62px}
 .think-box{font-size:10px;color:var(--acc4);font-style:italic;background:rgba(158,143,160,.04);border-left:2px solid rgba(158,143,160,.3);padding:4px 8px;margin:3px 0 3px 62px;white-space:pre-wrap;word-break:break-word;max-height:120px;overflow-y:auto}
@@ -2042,6 +2049,8 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
       <select id="cfgCvAlign" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="held">Held in view</option><option value="strict">Strict — level with the turn</option></select></div>
     <div class="row"><label style="min-width:70px" title="Whether an HTML item, and a code block that is a whole page, draw themselves or show their source. Drawing happens in a sandboxed frame — no network, no cookies, no reach into this page — and each item keeps its own switch either way.">HTML items</label>
       <select id="cfgCvPreview" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Draw them</option><option value="off">Show the source</option></select></div>
+    <div class="row"><label style="min-width:70px" title="Where a thing that can live on the canvas is drawn while the canvas is open. On the canvas: the reply keeps a line saying where it went, and a click brings it into view there. In both: it is drawn in the reply as well. Close the canvas and everything comes back inline either way — nothing is ever removed from the reply.">Draw them</label>
+      <select id="cfgCvWhere" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="canvas">On the canvas, while it is open</option><option value="both">In the chat as well</option></select></div>
     <div class="row"><label style="min-width:70px" title="Whether the canvas offers to explode what is on it into a structured diagram. It is always an offer, never automatic, and the other ways in (a message's Explode, a fence's button, /explode) are unaffected.">Offer explode</label>
       <select id="cfgCvExplode" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="both">Code and prose</option><option value="code">Code only</option><option value="never">Never</option></select></div>
     <div style="font-size:9px;color:var(--dim2);margin:4px 0 2px">Thinking phrases — theme for the rolling status lines</div>
@@ -2870,7 +2879,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
       <template id="cvBannerTpl">
         <span slot="banner-start" class="cv-bn"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span id="cvDrvRibbon" class="drv-ribbon" style="display:none" data-w="driven ribbon · canvas"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button class="btn xs" onclick="CH._cvDrvUndo()" title="Undo the directive that placed this">undo</button><button class="btn xs" onclick="CH._drvLog()" title="The directive log, the policy, the asks — the Driven panel">log</button><button class="btn xs" onclick="CH._cvDrvRibbon(null)" title="Dismiss">&#215;</button></span></span>
         <!-- no NOW counter here: the items it counted are in the column under it, countable by eye (owner, 2026-09-23) -->
-        <span slot="banner-end" class="cv-bn"><span class="xmseg" id="cvColCols" title="Columns on the stage — items pack around the pinned ones"><b class="cols-k">COLS</b><button class="btn xs" data-cols="1" onclick="CH._cvColumns(1)">1</button><button class="btn xs" data-cols="2" onclick="CH._cvColumns(2)">2</button><button class="btn xs" data-cols="3" onclick="CH._cvColumns(3)">3</button><button class="btn xs" data-cols="4" onclick="CH._cvColumns(4)">4</button></span><button class="btn xs" data-runs="cv" onclick="CH._runsToggle('cv')" title="The runs between the turns and the items they made or read — the same switch as the ⋯ sheet's">Runs</button><button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></span>
+        <span slot="banner-end" class="cv-bn"><span class="xmseg" id="cvColCols" title="Columns on the stage — auto reads the stage's width and what is on it; 1-4 pin the count"><b class="cols-k">COLS</b><button class="btn xs" data-cols="auto" onclick="CH._cvColumns('auto')" title="Let the canvas choose, from its width and its content">auto</button><button class="btn xs" data-cols="1" onclick="CH._cvColumns(1)">1</button><button class="btn xs" data-cols="2" onclick="CH._cvColumns(2)">2</button><button class="btn xs" data-cols="3" onclick="CH._cvColumns(3)">3</button><button class="btn xs" data-cols="4" onclick="CH._cvColumns(4)">4</button></span><button class="btn xs" data-runs="cv" onclick="CH._runsToggle('cv')" title="The runs between the turns and the items they made or read — the same switch as the ⋯ sheet's">Runs</button><button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></span>
       </template>
       <div class="tri-bd" id="canvasColumnBody"></div>
     </div>
@@ -5647,11 +5656,12 @@ IMPORTANT:
      canvas reads its own behaviour off itself rather than the page reaching inside it. Defaults are what the canvas
      does today: held alignment, HTML drawn, explode offered on code and prose. */
   const _CV_CFG_KEY='vera_canvas_cfg';
-  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'] };
+  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'] };
   function _cvCfg(id){ const el=document.getElementById(id); const v=el&&el.value?String(el.value):''; return v||_CV_CFG[id][1]; }
   function _cvApplyCfg(){
-    const el=document.querySelector('#canvasColumnBody vera-canvas'); if(!el) return;
-    Object.keys(_CV_CFG).forEach(id=>{ const a=_CV_CFG[id][0], v=_cvCfg(id); if(el.getAttribute(a)!==v) el.setAttribute(a,v); });
+    const el=document.querySelector('#canvasColumnBody vera-canvas');
+    if(el) Object.keys(_CV_CFG).forEach(id=>{ const a=_CV_CFG[id][0]; if(!a) return; const v=_cvCfg(id); if(el.getAttribute(a)!==v) el.setAttribute(a,v); });
+    try{ _cvOneplaceSync(); }catch(_){}   // "draw them" is the page's own, not the element's: it is about the REPLY
   }
   /* THE BLOCKS TIER, FOLLOWED RATHER THAN SAMPLED ONCE. The canvas is in a shadow root, so a rule on <html> cannot
      reach it and the element carries the tier as an attribute (defect 85). That attribute was set once, at mount,
@@ -6427,6 +6437,8 @@ IMPORTANT:
     _PAGE_NAMES.forEach(n=>{ const b=document.getElementById(n==='canvas'?'colCanvasBtn':'colGraphBtn'); if(b) b.classList.toggle('col-on', _pages.has(n)); });
     try{ localStorage.setItem(_PAGES_KEY, JSON.stringify(_pagesOpen())); }catch(_){}
     if(_pages.has('canvas')) _canvasColumnMount(); else _canvasColumnIdle();
+    // opened or closed, the reply follows: one place while the column is open, everything inline once it is not
+    try{ _cvOneplaceSync(); }catch(_){}
     _cvResizeMount();
     if(_pages.has('graph')) _graphColumnMount();
     try{ window.dispatchEvent(new CustomEvent('vera:panel-mounted',{detail:{placement:'column', pages:_pagesOpen()}})); }catch(_){}
@@ -6889,7 +6901,14 @@ IMPORTANT:
     const out=[]; if(!body) return out;
     CV_HOOKS.forEach(h=>{
       try{
-        if(h.sel) body.querySelectorAll(h.sel).forEach((el, i)=>{ try{ h.take(el, out, i, body); }catch(_){} });
+        if(h.sel) body.querySelectorAll(h.sel).forEach((el, i)=>{
+          const before=out.length;
+          try{ h.take(el, out, i, body); }catch(_){}
+          /* WHICH PIECE OF THE REPLY EACH ITEM CAME FROM. Without it the chat cannot know what it has already put
+             on the canvas, and "show it in one place" is impossible to answer (owner, 2026-09-24). A hook that
+             reads the whole body (the timeline) has no one element and is left alone. */
+          for(let j=before;j<out.length;j++) if(out[j] && !out[j]._el) out[j]._el=el;
+        });
         else h.take(body, out, 0, body);
       }catch(_){}
     });
@@ -6918,6 +6937,36 @@ IMPORTANT:
      is the whole of streaming parity, and it is why the key had to be stable before this could work. ── */
   const _CV_SIG={};                                     // what we last sent for a key: a growing block is an update
   let _cvLiveAt=0, _cvLiveBusy=false;
+  /* ── ONE PLACE OR TWO (owner, 2026-09-24: "id like there to be the option to display canvas compatible elements
+     only in the canvas and not display them in the chat if the canvas is open ... if the canvas is closed
+     everything can move back into the chat inline") ──────────────────────────────────────────────────────────
+     A thing that is on the canvas does not need drawing a second time three inches to the left. When the column is
+     open, the piece of the reply that made an item is replaced by a line saying where it went — click it and the
+     canvas brings that item into view. CLOSE the column and every one of them comes back inline: nothing was
+     removed, only hidden, so this is a view of the reply and never an edit of it. */
+  function _cvOneplace(){ const s=document.getElementById('cfgCvWhere'); return (s&&s.value)||'canvas'; }
+  function _cvOnCanvas(m, key){
+    try{
+      const el=m&&m._el; if(!el||!el.classList) return;
+      if(_cvOneplaceOff()) return;
+      el.classList.add('cv-elsewhere'); el.dataset.cvKey=key;
+      if(!el.nextElementSibling||!el.nextElementSibling.classList.contains('cv-moved')){
+        const chip=document.createElement('button'); chip.className='cv-moved'; chip.type='button';
+        chip.dataset.cvKey=key; chip.title='On the session canvas — click to bring it into view there';
+        chip.textContent=(m.n?String(m.n).slice(0,48):'item')+' · on the canvas ↗';
+        chip.addEventListener('click',()=>{ try{ _capCall('canvas.add',{session_id:SID, key}); }catch(_){}
+          try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} });
+        el.parentNode&&el.parentNode.insertBefore(chip, el.nextSibling);
+      }
+    }catch(_){}
+  }
+  function _cvOneplaceOff(){ return !_pages.has('canvas') || _cvOneplace()==='both'; }
+  /* the column closed (or the reader asked for both): everything the canvas was holding comes back into the reply */
+  function _cvRestoreInline(){
+    try{ document.querySelectorAll('#msgs .cv-elsewhere').forEach(el=>el.classList.remove('cv-elsewhere'));
+      document.querySelectorAll('#msgs .cv-moved').forEach(el=>el.remove()); }catch(_){}
+  }
+  function _cvOneplaceSync(){ if(_cvOneplaceOff()) _cvRestoreInline(); else { try{ _cvLandReply(_cvRelMid); }catch(_){} } }
   function _cvLandLive(bubEl){
     if(!SID||!bubEl||!_pages.has('canvas')) return;     // nothing to keep up with if the column is closed
     if(_cvLiveBusy||Date.now()-_cvLiveAt<450) return;   // a token is not an event; a beat is
@@ -6945,6 +6994,7 @@ IMPORTANT:
          diagram another branch — the item is UPDATED where it stands. Same key, same place on the canvas, no
          second copy, and the reader watches it fill in rather than waiting for the end of the message. */
       if(_CV_LANDED[key]){
+        _cvOnCanvas(m, key);                    // it is over there: the reply says so rather than drawing it twice
         if(_CV_SIG[key]===sig) continue;
         _CV_SIG[key]=sig;
         try{ await _capCall('canvas.update',{session_id:SID, key, content:m.content}); n++; }catch(_){}
@@ -6952,7 +7002,7 @@ IMPORTANT:
       }
       // the reply is the maker: the run leaves ITS block, while the turn stays the question the station is keyed by
       try{ const r=await _capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid, from:from||mid}});
-        if(r&&r.ok) _CV_SIG[key]=sig;
+        if(r&&r.ok){ _CV_SIG[key]=sig; _cvOnCanvas(m, key); }
         if(!(r&&r.ok)) continue; _CV_LANDED[key]=true; n++;
         (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:m.n, d:'canvas · '+(r.resolved==='shown'?'already there':'lifted out of the reply'), col:m.col, kind:m.k, key, form:m.kind==='widget'?(m.content.widget||''):undefined, mermaid:m.kind==='diagram'?m.content.mermaid:undefined, record:m.kind==='widget'?(m.content.record||undefined):undefined});
       }catch(_){}
@@ -7178,7 +7228,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     let el=host.querySelector('vera-canvas');
     if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); el.setAttribute('bare','');   /* one banner: the element's add bar IS the head, and these controls are slotted into it (§4.2) */ el.setAttribute('blocks', (document.documentElement.getAttribute('data-blocks')==='off')?'off':'on'); try{ el.setAttribute('nb-api', _NB_API_BASE()); }catch(_){} /* the column's controls, into the banner (§4.2): a <template>, so their ids exist ONCE and only while this element is on the page - a second copy would shadow #cvColSub and the revision would stop moving. This whole line stays ONE line of live code (defect 81). */ try{ const tpl=document.getElementById('cvBannerTpl'); if(tpl&&tpl.content) el.appendChild(tpl.content.cloneNode(true)); }catch(_){} host.appendChild(el);
       // the stage follows the transcript: its turn tops, its scroll, its reflow
-      el.addEventListener('vera:canvas:placed', ()=>_cvRunsDraw());
+      // and AUTO shows the count it landed on, refreshed only when that count actually moves
+      el.addEventListener('vera:canvas:placed', ev=>{ const n=(ev.detail||{}).columns; if(n!==_cvColShown){ _cvColShown=n; _cvColsSync(); } _cvRunsDraw(); });
       /* 'placed' is the start of the items' .32s glide, not the end of it, so the runs follow the glide itself —
          from inside the shadow root the items live in, which a document listener cannot be relied on to see */
       try{ if(el.shadowRoot) el.shadowRoot.addEventListener('transitionstart', _runsGlide, true); }catch(_){}
@@ -7215,11 +7266,21 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      scroll follows the transcript so a level item stays level; the runs are drawn over the chat column from the
      turn's right edge, down the gutter at the column's edge, into the item's left edge — never diagonally, never
      across a card — and the checker counts crossings and missed joins (zero by construction in one column). ── */
-  let _cvStageTimer=null, _cvStageRO=null, _cvStageSig='', _cvHoverKey=null, _cvHoverMid=null, _cvLastCheck=null;
-  // the element has placed into 1-4 columns all along; the control was the only thing that stopped at 2 (defect 77)
-  function _cvCols(){ let n=1; try{ n=parseInt(localStorage.getItem('vera:canvas:cols')||'1',10)||1; }catch(_){} return Math.max(1, Math.min(4, n)); }
-  function _cvColsSync(){ try{ const n=_cvCols(); document.querySelectorAll('#cvColCols button[data-cols]').forEach(b=>b.classList.toggle('on', +b.dataset.cols===n)); }catch(_){} }
-  function _cvColumns(n){ n=Math.max(1, Math.min(4, parseInt(n,10)||1)); try{ localStorage.setItem('vera:canvas:cols', String(n)); }catch(_){} _cvColsSync(); const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv) cv.setAttribute('columns', String(n)); try{ _cvRunsDraw(); }catch(_){} }
+  let _cvStageTimer=null, _cvStageRO=null, _cvStageSig='', _cvHoverKey=null, _cvHoverMid=null, _cvLastCheck=null, _cvColShown=null;
+  /* the element has placed into 1-4 columns all along; the control was the only thing that stopped at 2 (defect 77).
+     AUTO is the default and the element decides it from the stage's width AND the content on it (VeraCanvas.autoCols);
+     1-4 pin it. The pinned count is remembered, so turning AUTO off returns you to the count you last chose. */
+  function _cvCols(){ let v='auto'; try{ v=localStorage.getItem('vera:canvas:cols')||'auto'; }catch(_){} if(String(v)==='auto') return 'auto'; const n=parseInt(v,10)||1; return Math.max(1, Math.min(4, n)); }
+  function _cvColsSync(){ try{ const v=_cvCols(), cv=document.querySelector('#canvasColumnBody vera-canvas');
+      document.querySelectorAll('#cvColCols button[data-cols]').forEach(b=>b.classList.toggle('on', b.dataset.cols==='auto' ? v==='auto' : +b.dataset.cols===v));
+      // AUTO says what it chose, so the count is never a mystery
+      const a=document.querySelector('#cvColCols button[data-cols="auto"]');
+      if(a) a.textContent = v==='auto' ? ('auto'+((cv&&cv.dataset.cols)?' '+cv.dataset.cols:'')) : 'auto';
+    }catch(_){} }
+  function _cvColumns(n){ const auto=String(n)==='auto'; const v=auto?'auto':String(Math.max(1, Math.min(4, parseInt(n,10)||1)));
+    try{ localStorage.setItem('vera:canvas:cols', v); }catch(_){}
+    const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv) cv.setAttribute('columns', v);
+    _cvColsSync(); try{ _cvRunsDraw(); }catch(_){} }
   function _cvTurnTops(){ const msgs=document.getElementById('msgs'); if(!msgs) return {}; const mr=msgs.getBoundingClientRect(); const out={}; msgs.querySelectorAll('.mwrap[data-mid]').forEach(w=>{ const r=w.getBoundingClientRect(); out[w.dataset.mid]={top:Math.round(r.top-mr.top+msgs.scrollTop), height:Math.round(r.height)}; }); return out; }
   function _cvStageSync(force){
     const cv=document.querySelector('#canvasColumnBody vera-canvas'); const msgs=document.getElementById('msgs'); if(!cv||!msgs||!_pages.has('canvas')) return;
