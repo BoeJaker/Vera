@@ -143,6 +143,29 @@ def test_the_shared_stylesheet_does_not_require_vars_a_panel_may_not_define():
     assert not bare, f"no fallback on: {sorted(set(bare))}"
 
 
+def test_the_stylesheet_parses_as_css():
+    """Comment markers balance and every block closes. A stray `*/` silently
+    kills the rest of the file, and the menu loses its chrome everywhere."""
+    assert CSS.count("/*") == CSS.count("*/"), "unbalanced comments"
+    stripped = re.sub(r"/\*.*?\*/", "", CSS, flags=re.S)
+    assert "*/" not in stripped and "/*" not in stripped, "a stray comment marker"
+    assert stripped.count("{") == stripped.count("}"), "unbalanced braces"
+
+
+def test_a_hosted_panel_hides_its_own_menu():
+    """When the shell says it is showing this menu, the panel must not show it
+    too. `#sidebar[data-vera-lhm]` is an ID selector and sets display:flex, so
+    an attribute-only hiding rule loses to it and the page ends up with the
+    menu twice, side by side — which is what the Estate did."""
+    rule = re.search(r"(html\.vpb-nav-hosted[^{]*)\{\s*display:\s*none", CSS)
+    assert rule, "nothing hides a hosted panel's own menu"
+    selectors = [s.strip() for s in rule.group(1).split(",")]
+    assert any("#sidebar[data-vera-lhm]" in s for s in selectors), \
+        "the hiding rule cannot outrank #sidebar[data-vera-lhm]; it will not hide"
+    assert any(s.endswith("[data-vera-lhm]") and "#" not in s for s in selectors), \
+        "the differently-id'd hosts are no longer covered"
+
+
 def test_the_shared_behaviour_publishes_only_real_menu_items():
     """A heading or a rule that carries data-view (the Estate groups its items
     that way) is not a target, and a button the panel's own rules hide is not

@@ -52,7 +52,13 @@
    or mounted somewhere that hasn't adopted nav injection (the chat side-
    rail, today), never receives the class and keeps its sidebar exactly as
    before. Every panel using this file gets this for free — no per-panel
-   CSS needed. */
+   CSS needed.
+
+   The #sidebar form is spelled out beside the bare attribute on purpose: the
+   sidebar's own rule below is `#sidebar[data-vera-lhm]{display:flex}`, an id
+   selector, and an attribute-only rule here loses to it — the panel kept its
+   menu on screen beside the shell's copy of it. Hosted has to win. */
+html.vpb-nav-hosted #sidebar[data-vera-lhm],
 html.vpb-nav-hosted [data-vera-lhm] { display: none; }
 
 /* ── Sidebar ──────────────────────────────────────────────────────────── */
