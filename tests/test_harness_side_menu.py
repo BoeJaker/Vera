@@ -41,10 +41,13 @@ def test_the_side_menu_has_one_header_row_not_two():
         assert line in LIB, line
     # the search is an icon button on the row, so its label rides the tooltip
     assert "s.title = (cfg.search.label || 'Find a panel') + ' · ' + (cfg.search.hint || '⌘K');" in LIB
+    # and the name never gives way to the count beside it — the row is for the name
+    assert "'.lhm-side .lhm-s-top .nm{flex:0 0 auto;" in LIB
+    assert "'.lhm-side .lhm-s-top .mono{flex:1 1 auto;min-width:0;" in LIB
 
 
 def test_the_harness_passes_the_top_row_and_its_meters_and_wears_the_boards_surfaces():
-    assert "top: { title: 'Vera', sub: ((_uiPanelCache || []).length || rows.length) + ' panels · ⌘K', toggle: () => tabToggleLhm()," in HTML
+    assert "top: { title: 'Vera', sub: ((_uiPanelCache || []).length || rows.length) + ' panels', toggle: () => tabToggleLhm()," in HTML
     assert "function _lhmMetersWidget(){" in HTML and "label: 'GPU · Ollama'" in HTML and "label: 'Queue'" in HTML
     assert "    _lhmMetersWidget(),\n    _lhmLoopsWidget(),\n    feed ? { title: 'Live events'" in HTML, "meters · running loops · live events, in the board's order"
     for css in (".lhm-nav{width:186px;background:var(--s1", "#lhmNav .lhm-side .lhm-s-row{height:32px", "#lhmNav .lhm-side .lhm-s-row.on{", "#lhmNav .lhm-side .lhm-s-w{background:var(--surf2", "#lhmNav .lhm-nav-foot{"):

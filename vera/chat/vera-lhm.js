@@ -165,8 +165,10 @@
     '.lhm-side .lhm-s-top{height:36px;flex-shrink:0;display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;border-bottom:1px solid var(--border)}',
     '.lhm-side .lhm-s-tb{width:26px;height:26px;border-radius:6px;border:none;background:transparent;color:var(--dim2);font:inherit;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer}',
     '.lhm-side .lhm-s-tb:hover{color:var(--text);background:var(--bg2)}.lhm-side .lhm-s-tb.on{color:var(--acc);background:color-mix(in srgb,var(--acc) 14%,transparent)}',
-    '.lhm-side .lhm-s-top .nm{flex:1 1 auto;min-width:0;font-size:11px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-    '.lhm-side .lhm-s-top .mono{flex:0 1 auto;min-width:0;font-family:var(--mono);font-size:9px;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    /* the name never shrinks — it is what the row is for; the count beside it
+       gives way first, and the two icons hold their size */
+    '.lhm-side .lhm-s-top .nm{flex:0 0 auto;font-size:11px;font-weight:600;color:var(--text);white-space:nowrap}',
+    '.lhm-side .lhm-s-top .mono{flex:1 1 auto;min-width:0;font-family:var(--mono);font-size:9px;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.lhm-side .lhm-s-wm{cursor:default}.lhm-side .lhm-s-wm + .lhm-s-wbar{margin-bottom:4px}',
     '.lhm-side .lhm-s-wbar{height:5px;border-radius:3px;background:var(--bg3,var(--bg0));overflow:hidden}',
     '.lhm-side .lhm-s-wbar i{display:block;height:100%;border-radius:3px;background:var(--acc)}',
