@@ -34,7 +34,7 @@ t('the harvest runs on the STREAM, from the paint that draws each token', /_pain
 t('it is throttled to a beat, and never runs two at once', /if\(_cvLiveBusy\|\|Date\.now\(\)-_cvLiveAt<450\) return;/.test(CHAT) && /_cvLiveBusy=true;/.test(CHAT));
 t('it does nothing when the canvas column is closed', /if\(!SID\|\|!bubEl\|\|!_pages\.has\('canvas'\)\) return;/.test(CHAT));
 t('one function lands from either source — the stream and the finished reply cannot drift apart',
-  /async function _cvLandFrom\(body, mid, from\)\{/.test(CHAT) && /return _cvLandFrom\(body, mid, \(w&&w\.dataset&&w\.dataset\.mid\)\|\|mid\);/.test(CHAT));
+  /async function _cvLandFrom\(body, mid, from, live\)\{/.test(CHAT) && /return _cvLandFrom\(body, mid, \(w&&w\.dataset&&w\.dataset\.mid\)\|\|mid\);/.test(CHAT));
 t('an item already on the canvas is UPDATED when what it holds has changed, not landed twice',
   /if\(_CV_SIG\[key\]===sig\) continue;/.test(CHAT) && /_capCall\('canvas\.update',\{session_id:SID, key, content:m\.content\}\)/.test(CHAT));
 t('...and an unchanged item costs nothing', /let sig=''; try\{ sig=JSON\.stringify\(m\.content\); \}catch\(_\)\{ sig=String\(i\); \}/.test(CHAT));

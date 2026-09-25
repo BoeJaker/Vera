@@ -43,7 +43,10 @@ t('the add bar: the terminal seeds a host-less terminal, the panel picks from th
 t('notebook and panel items carry their glyphs', V.KIND_GLYPH.notebook === 'NB' && V.KIND_GLYPH.panel === '▥');
 
 // ── the live layer, in the source ──
-t('the render writes the items layer, never the live layer', SRC.includes("this._layers(body).items.innerHTML = html;") && SRC.includes("live.id = 'live'") && !SRC.includes("      body.innerHTML = html;\n      if (!stage) body.scrollTop = keepTop;"));
+t('the render writes the items layer, never the live layer', SRC.includes("layers.items.innerHTML = html;") && SRC.includes("live.id = 'live'") && !SRC.includes("      body.innerHTML = html;\n      if (!stage) body.scrollTop = keepTop;"));
+// and it does not write markup identical to the markup already there: a streamed write changes the LIVE content, which
+// is not in this markup at all, and rebuilding every placeholder several times a second made the items blink
+t('markup that has not changed is not rewritten', SRC.includes("if (this._html !== mark || !layers.items.childElementCount) {"));
 t('the live elements are mounted after the placement and placed again after every placement, scroll and resize', SRC.includes("if (stage) this._placeNow();\n      this._mountLive(body);") && SRC.includes("this._placed = P;\n      this._liveLayout();") && SRC.includes("body.addEventListener('scroll', () => this._liveLayout())") && SRC.includes("this._liveRO = new ResizeObserver(() => this._liveLayout())"));
 t('a live element is wrapped (the estate element keeps its own styles) and is never re-created by a render', SRC.includes("el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);") && SRC.includes("let el = L[key];"));
 t('a folded item hides its live element, still connected', SRC.includes("if (!h || !h.getClientRects().length) { el.style.display = 'none'; return; }"));
