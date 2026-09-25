@@ -71,6 +71,16 @@ t('an empty column is always written, whatever the cache says', /!layers\.items\
 t('the reader\'s scroll is still kept when it IS rewritten', /if \(!stage\) body\.scrollTop = keepTop;/.test(SRC));
 
 /* ── 3. the chat swaps the element for a line ONCE, when the message is finished ─────────────────────────────── */
+// THE HOOK SELECTS A NODE THE STREAM RECREATES. _paintStream rebuilds the whole bubble on every token and survives
+// that by keeping ONE vera-mermaid and re-appending it to the fresh .mm-slot — and .mm-slot is what the diagram hook
+// hands the lander. Hiding it made the diagram vanish on the harvest's beat and come back on the next token.
+t('the diagram hook really does select the node the stream rebuilds', /cvHook\('diagram', '\.mm-slot\[data-mm\]'/.test(CHAT)
+  && /bubEl\.innerHTML=html\+'<span class="cur"><\/span>';/.test(CHAT) && /slot\.appendChild\(el\);/.test(CHAT));
+t('so nothing is ever hidden inside a bubble that still carries the streaming cursor, whoever asks',
+  /const bub=el\.closest&&el\.closest\('\.msg-body'\); if\(bub&&bub\.querySelector\('\.cur,\.think-throb'\)\) return;/.test(CHAT));
+t('...and that guard is inside _cvOnCanvas, where the hiding is done — not only at the call site',
+  CHAT.indexOf('function _cvOnCanvas') < CHAT.indexOf("if(bub&&bub.querySelector('.cur,.think-throb')) return;")
+  && CHAT.indexOf("if(bub&&bub.querySelector('.cur,.think-throb')) return;") < CHAT.indexOf("el.classList.add('cv-elsewhere')"));
 t('a live land does not touch the reply — it is still being written',
   /Promise\.resolve\(_cvLandFrom\(bubEl, _cvRelMid, \(bubEl\.dataset&&bubEl\.dataset\.mid\)\|\|_cvRelMid, true\)\)/.test(CHAT)
   && /async function _cvLandFrom\(body, mid, from, live\)\{/.test(CHAT));
