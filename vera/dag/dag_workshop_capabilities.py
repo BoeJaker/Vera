@@ -82,6 +82,11 @@ try:
     from Vera.vera.dag import steer_core as _steer_core
 except ImportError:                                        # pragma: no cover
     from vera.dag import steer_core as _steer_core
+# A merge (2026-09-24, items 18 and 20 cut from the same base) folded this
+# import into the steer_core except-branch, so prod never bound the alias and
+# every step verify died with NameError (op-run4, 25 Sep: four wall caps).
+# tests/test_core_aliases_are_bound.py now holds every such alias to a try body.
+try:
     from Vera.vera.dag import verify_evidence_core as _verify_evidence
 except ImportError:                                        # pragma: no cover
     from vera.dag import verify_evidence_core as _verify_evidence
