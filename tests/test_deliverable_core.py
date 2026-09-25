@@ -71,6 +71,24 @@ def test_finish_reports_what_it_changed():
     assert "Lead with the direct answer" not in out
 
 
+def test_the_runs_research_results_are_the_sources_of_last_resort():
+    results = [
+        {"id": 1, "history": [
+            {"tool": "web.research", "ok": True,
+             "preview": "sources: https://redis.io/blog/redis-adopts-dual-source-available-licensing/ and "
+                        "https://valkey.io/blog/valkey-8/ (see https://www.google.com/search?q=valkey)"},
+            {"tool": "web.fetch", "ok": False, "preview": "https://broken.example/x timed out"},
+            {"tool": "http.get", "ok": True, "preview": "https://localhost:8999/remote/sandbox/preview/abc/x.html 200"},
+        ]},
+        {"id": 2, "history": [{"tool": "prose.author", "ok": True, "preview": "wrote report.md https://not-a-source.example/"}]},
+    ]
+    assert D.evidence_urls(results) == [
+        "https://redis.io/blog/redis-adopts-dual-source-available-licensing/", "https://valkey.io/blog/valkey-8/"]
+    assert D.goal_wants_sources("Produce a short report on the Redis licensing change, with citations.")
+    assert D.goal_wants_sources("write a short summary citing your sources")
+    assert not D.goal_wants_sources("Create clock.html with a live digital clock")
+
+
 def _src():
     return open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
 
@@ -84,5 +102,7 @@ def test_the_delivery_stage_reads_the_deliverable_and_finishes_the_answer():
     assert "_v6_read_artifact_text(session_id, _rel" in body
     assert "DELIVERABLE FILE(S) - compose the Result from these" in body
     assert "_deliverable.finish(" in body
+    assert "_deliverable.evidence_urls(results)" in body
+    assert "SOURCES THIS RUN GATHERED" in body
     assert "NEVER paste a code file's source" in body
     assert "session_id=sid," in src and "agent_loop_v6.deliverable_shaped" in src
