@@ -22695,7 +22695,14 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
             _docs.append((_rel, _txt))
     _file_urls = (_deliverable.urls_in("\n".join(t for _, t in _docs))
                   if (_docs and _deliverable is not None) else [])
+    # No citation in the file either? The research tools' results ARE the
+    # sources (run74 research-report: 26 URLs gathered, none in the report,
+    # none in the answer). Offer them to the delivery agent and, if it still
+    # cites none, `finish` appends them.
+    if (not _file_urls and _deliverable is not None and _deliverable.goal_wants_sources(goal)):
+        _file_urls = _deliverable.evidence_urls(results)
     doc_block = "\n\n".join(f"FILE {p_}:\n{t_}" for p_, t_ in _docs)
+    src_block = "\n".join(f"- {u}" for u in _file_urls[:10])
     sys = (
         "You are the DELIVERY agent - the last stage of an agentic run. You take the GOAL "
         "and the full run evidence and produce the definitive FINAL DELIVERABLE the user "
@@ -22726,6 +22733,8 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
               + f"\nRUN EVIDENCE:\n{block}\n\nARTIFACTS RECORDED:\n{art_block}\n"
               + (f"\nDELIVERABLE FILE(S) - compose the Result from these:\n{doc_block}\n"
                  if doc_block else "")
+              + (f"\nSOURCES THIS RUN GATHERED - cite the ones the Result relies on, by URL:\n{src_block}\n"
+                 if src_block else "")
               + (f"\nDRAFT ANSWER (from the synthesiser - improve on it, don't just copy "
                  f"it):\n{final[:3000]}\n" if final else "")
               + "\nWrite the final markdown deliverable.")

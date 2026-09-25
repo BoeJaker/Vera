@@ -51,6 +51,13 @@ SOURCE_HINT_RE = re.compile(
 URL_RE = re.compile(r"https?://[^\s<>()\[\]\"']+")
 DUMP_MIN_LINES = 12
 DUMP_MIN_CHARS = 700
+#: Tools whose results ARE the run's sources.
+RESEARCH_TOOLS = ("web.research", "web.fetch", "web.search", "http.get", "web.crawl")
+GOAL_WANTS_SOURCES_RE = re.compile(r"\b(cit\w+|sources?|references?)\b", re.I)
+#: Not a source anyone can follow: the run's own sandbox, a search engine's results page.
+NOT_A_SOURCE_RE = re.compile(
+    r"^https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|[^/]*\.local)(?::\d+)?/"
+    r"|^https?://(?:www\.)?(?:google|bing|duckduckgo|startpage)\.[a-z.]+/(?:search|html)?", re.I)
 
 
 def document_files(output_keys: Iterable[str]) -> List[str]:
@@ -72,6 +79,37 @@ def urls_in(text: str) -> List[str]:
         u = m.group(0).rstrip(".,;:!?'\"")
         if u and u not in out:
             out.append(u)
+    return out
+
+
+def goal_wants_sources(goal: str) -> bool:
+    return bool(GOAL_WANTS_SOURCES_RE.search(goal or ""))
+
+
+def evidence_urls(results, *, limit: int = 10) -> List[str]:
+    """The URLs the run's research tools returned, in order of first appearance.
+
+    run74 research-report (25 Sep 2026): the research steps carried 26 URLs in
+    one web.research result alone, the written report cited none, and the
+    delivered answer cited none - q=0.75 on "cites at least one source". The
+    sources were in the run's own evidence the whole time.
+    """
+    out: List[str] = []
+    for r in results or []:
+        if not isinstance(r, dict):
+            continue
+        for h in (r.get("history") or []):
+            if not isinstance(h, dict) or not h.get("ok"):
+                continue
+            tool = str(h.get("tool") or "")
+            if not any(tool == t or tool.startswith(t + ".") for t in RESEARCH_TOOLS):
+                continue
+            for u in urls_in(str(h.get("preview") or "")):
+                if NOT_A_SOURCE_RE.search(u) or u in out:
+                    continue
+                out.append(u)
+                if len(out) >= limit:
+                    return out
     return out
 
 
