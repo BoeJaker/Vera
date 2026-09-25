@@ -15419,6 +15419,12 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     # and how many re-issues were served from it. See browser_done_core.
     browser_done: Dict[str, str] = {}
     browser_done_served: Dict[str, int] = {}
+    # basename -> the preview of a SUCCESSFUL author call for it this step, and
+    # whether any call has failed since (then a rewrite may be warranted).
+    # See author_done_core.reauthor_note (item 17d).
+    authored_here: Dict[str, str] = {}
+    failed_since_author = False
+    reauthor_hits = 0
     # Chain hops call `call_tool` directly (see _run_chain below) and never
     # consult `success_sigs` above — this is that same short-circuit, scoped
     # separately since a chain hop's cached value needs the raw `result`
@@ -16978,6 +16984,40 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         #    cached result, tell it firmly to move on, and don't count it as a
         #    fresh attempt. After a second redundant repeat, end the step as
         #    DONE (the needed result is already in hand). ──────────────────────
+        # -- a file this step already wrote is not written again (item 17d) --
+        if (_author_done is not None and tool in _author_done.AUTHOR_TOOLS and isinstance(args, dict)):
+            _apath = str(args.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1]
+            _note17d = _author_done.reauthor_note(
+                tool, _apath, authored_here.get(_apath, ""), failed_since=failed_since_author)
+            if _note17d:
+                reauthor_hits += 1
+                _perturb_next = True
+                tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)
+                outputs[tool] = authored_here[_apath]
+                had_useful = True
+                ok = True
+                await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
+                                  "thought": f"(re-author of {_apath}, already written this step - served the earlier result)",
+                                  "repeat": True, "session_id": sid})
+                await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": True,
+                                  "elapsed_ms": 0, "preview": authored_here[_apath][:2000], "error": "",
+                                  "note": "re-author of a file this step already wrote - served the earlier result",
+                                  "session_id": sid})
+                if reauthor_hits >= 2:
+                    result_summary = _v5_sentence(
+                        tool, authored_here[_apath],
+                        f"The loop ended this step: `{tool}` was re-issued for {_apath}, which it had already written.")[:_V5_DONE_SUMMARY]
+                    await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                      "cycle": (gc + 1), "step_id": step_id,
+                                      "thought": (f"(auto-completed: {_apath} was already written this step and "
+                                                  f"`{tool}` kept re-issuing it - ending the step on the file.)"),
+                                      "session_id": sid})
+                    break
+                pending_note = _note17d
+                continue
+
         _call_sig = _v5_call_sig(tool, args)
         _cached_preview = success_sigs.get(_call_sig)
         if _cached_preview is not None:
@@ -18239,6 +18279,13 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                             "with grep -n / sed -n '<a>,<b>p' / head / tail on the path.")
 
         entry_ok = invoke_ok and not unhelpful
+        if _author_done is not None and tool in _author_done.AUTHOR_TOOLS and isinstance(args, dict):
+            _apath2 = str(args.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1]
+            if entry_ok and _apath2:
+                authored_here[_apath2] = preview[:_budget]
+                failed_since_author = False
+        elif not entry_ok and authored_here:
+            failed_since_author = True
         history.append({"tool": tool, "ok": entry_ok, "preview": preview[:_budget],
                         "args": args, "ms": elapsed})
         await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
@@ -18294,7 +18341,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         if _author_done is not None and invoke_ok and tool in _author_done.AUTHOR_TOOLS:
             try:
                 _ans, _why = _author_done.step_is_answered(
-                    caps, f"{step.get('title') or ''}\n{step.get('goal') or ''}", tool,
+                    step.get("caps") or caps, f"{step.get('title') or ''}\n{step.get('goal') or ''}", tool,
                     (invoke or {}).get("result"),
                     has_seam=lambda g: len(_V5_COMPOUND_SEAM_RE.split(g, maxsplit=1)) > 1)
             except Exception as _e:

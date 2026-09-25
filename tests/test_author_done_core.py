@@ -50,6 +50,25 @@ def test_the_authored_file_must_be_the_named_one():
     assert A.files_named("Create /workspace/statkit/stats.py providing mean") == ["stats.py"]
 
 
+def test_the_steer_and_journal_tail_is_not_the_steps_text():
+    """run76 research-web: the goal carried the controller steer and the run
+    journal, with URLs and other steps' files, so the one-file test refused."""
+    goal = ("Draft summary document citing sources\nWrite a short markdown report citing the URLs found in step 1."
+            "\n\nCONTROLLER STEER (after step 1, alignment: advances): Proceed to draft the summary using prose.author, "
+            "then verify it.\n\nRUN JOURNAL (structured context already produced by earlier steps - reuse these outputs):"
+            " step 1 wrote notes.md and read https://caniuse.com/webgpu.html and https://developer.mozilla.org/x.md")
+    assert A.files_named(A.own_text(goal)) == []
+    ans, why = A.step_is_answered(["prose.author"], goal, "prose.author", {"ok": True, "path": "summary.md"})
+    assert ans, why
+
+
+def test_a_file_this_step_wrote_is_not_written_again():
+    note = A.reauthor_note("prose.author", "summary.md", '{"ok": true, "path": "summary.md", "bytes": 4173}', failed_since=False)
+    assert "ALREADY written summary.md" in note and "code.edit" in note and "4173" in note
+    assert A.reauthor_note("prose.author", "summary.md", "", failed_since=False) == ""          # first write
+    assert A.reauthor_note("prose.author", "summary.md", "earlier", failed_since=True) == ""    # a failure since: rewrite may be needed
+
+
 def test_the_executor_ends_the_step_before_the_stuck_loop_guard():
     src = open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
     fn = next(n for n in ast.parse(src).body
@@ -58,4 +77,7 @@ def test_the_executor_ends_the_step_before_the_stuck_loop_guard():
     assert "_author_done.step_is_answered(" in body
     assert body.index("_author_done.step_is_answered(") < body.index("_tool_call_n = tool_calls.get(tool, 0)")
     assert "agent_loop_v5.author_answered_step" in body
+    assert 'step.get("caps") or caps' in body                       # 17c judges the PLANNED caps
+    assert body.index("_author_done.reauthor_note(") < body.index("_call_sig = _v5_call_sig(tool, args)")
+    assert "authored_here[_apath2] = preview[:_budget]" in body
     assert "author_done_core as _author_done" in src
