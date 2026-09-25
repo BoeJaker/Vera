@@ -132,6 +132,14 @@ except ImportError:                                        # pragma: no cover
         from vera.operator import operator_step_budget as _step_budget
     except ImportError:
         _step_budget = None
+# A browser result that says done closes the step's browser work (item 24a).
+try:
+    from Vera.vera.operator import browser_done_core as _browser_done
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera.operator import browser_done_core as _browser_done
+    except ImportError:
+        _browser_done = None
 # Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
 # have a module until it lands there, so a NEW sibling must fall back to the
 # plain package or this whole module fails to import.
@@ -15392,6 +15400,10 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     # goal whose artifact was already correct). See operator_step_budget.
     browser_seconds: Dict[str, float] = {}
     browser_last_stop: Dict[str, str] = {}
+    # step_id -> the summary of a browser result that reported the goal DONE,
+    # and how many re-issues were served from it. See browser_done_core.
+    browser_done: Dict[str, str] = {}
+    browser_done_served: Dict[str, int] = {}
     # Chain hops call `call_tool` directly (see _run_chain below) and never
     # consult `success_sigs` above — this is that same short-circuit, scoped
     # separately since a chain hop's cached value needs the raw `result`
@@ -17064,6 +17076,47 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # "repeating_action" - three identical answers for 1807s, on a goal
         # whose artifact was already correct after two cycles. This keys on the
         # target and the failure kind instead. See repeat_failure.
+        # -- the browser already answered this step (item 24a) ---------------
+        # After an operator result with done: true the executor re-issued the
+        # browser in every census browser goal (run71-73): four refused turns in
+        # a row, and twice a REAL second run (234 s, 552 s) for the same answer.
+        # The done result is the answer: serve it back once with a note, and
+        # end the step on it if the browser is re-issued again. Checked before
+        # the time budget so the note says "done", not "out of time".
+        if (_browser_done is not None and _step_budget is not None
+                and _step_budget.is_browser_call(tool) and str(step_id) in browser_done):
+            _dsum = browser_done[str(step_id)]
+            browser_done_served[str(step_id)] = browser_done_served.get(str(step_id), 0) + 1
+            _perturb_next = True
+            tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)
+            outputs[tool] = _dsum
+            had_useful = True
+            ok = True
+            history.append({"tool": tool, "ok": True, "preview": _dsum[:2000], "args": args,
+                            "ms": 0, "note": "the browser already answered this step"})
+            await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                              "args": args, "repeat": True, "session_id": sid,
+                              "thought": "(the browser already answered this step - served its done result)"})
+            await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                              "ok": True, "elapsed_ms": 0, "preview": _dsum[:2000], "error": "",
+                              "note": "browser already done - served the done result",
+                              "session_id": sid})
+            if _browser_done.should_end(browser_done_served[str(step_id)]):
+                result_summary = _v5_sentence(
+                    tool, _dsum,
+                    f"The loop ended this step: the browser had already reported the goal done and `{tool}` was re-issued.")[:_V5_DONE_SUMMARY]
+                await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                  "cycle": (gc + 1), "step_id": step_id,
+                                  "thought": (f"(auto-completed: `{tool}` had already reported this step "
+                                              "done - ending the step on that result instead of "
+                                              "driving the browser again.)"),
+                                  "session_id": sid})
+                break
+            pending_note = _browser_done.describe(tool, _dsum)
+            continue
+
         # -- one browser allowance per STEP ---------------------------------
         # The per-CALL cap (operator_budget, 480s) cannot see a step that simply
         # calls operator.run again after it fires. run61's build-browser-verified
@@ -17616,6 +17669,10 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 _stop = ""
             if _stop:
                 browser_last_stop[str(step_id)] = _stop[:200]
+            if _browser_done is not None:
+                _dsum = _browser_done.done_summary((invoke or {}).get("result"))
+                if _dsum:
+                    browser_done[str(step_id)] = _dsum
 
         # Store a freshly-successful fetch into the URL cache (see the
         # URL-FETCH DEDUP gate above) so a LATER retry/phase within this same
