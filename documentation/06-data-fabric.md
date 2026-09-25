@@ -236,8 +236,18 @@ integration without claiming that it was queried.
 The current general-purpose `fabric.query` capability searches live indexes;
 it does not yet accept an immutable snapshot ID or return revision-qualified
 citations. It is therefore not represented as snapshot-pinned Fabric evidence.
-Native Fabric graph/vector, Qdrant, GraphRAG, and analytical adapters may join
-the execution layer only when they can prove those same snapshot and citation
+`NativeFabricSnapshotProjection` provides the separate admissible vector path:
+it reconstructs and verifies the complete `DatasetSnapshot`, requires exactly
+one vector per record, and reuses Fabric's canonical `EmbeddingSpace` and
+`ProjectionSpec` identities to pin the model package, dimension, preprocessing,
+metric, backend and schema. The projection is isolated in memory, integrity is
+checked before and after every query, and its receipt reports index time,
+storage and idempotent teardown without record or query content. Its adapter
+returns only exact `(record_id, revision_id)` citations and grants no activation
+authority. It never reads, writes or relabels the mutable shared indexes.
+
+Native Fabric graph, Qdrant, GraphRAG, and analytical adapters may join the
+execution layer only when they can prove the same snapshot and citation
 guarantees. JEPA Worldview has a dedicated binding and query path:
 `worldview.retrieval.bind` pins the complete index to a `DatasetSnapshot` and
 checkpoint `ModelPackage`, while `JepaWorldviewRetrievalAdapter` rejects any
