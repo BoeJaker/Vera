@@ -13964,6 +13964,16 @@ except Exception:                                     # pragma: no cover
         _author_done = None
         log.warning("author_done_core unavailable - authoring steps run to the executor's own done")
 
+# A research-only step with its sources in hand is answered (item 17e, 2026-09-25).
+try:
+    from Vera.vera.dag import research_done_core as _research_done
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import research_done_core as _research_done
+    except Exception:
+        _research_done = None
+        log.warning("research_done_core unavailable - research steps run to the executor's own done")
+
 
 def _v6_goal_implies_document(text: str) -> bool:
     """Does the goal name a DOCUMENT deliverable? "Report the disk usage" and
@@ -15425,6 +15435,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     authored_here: Dict[str, str] = {}
     failed_since_author = False
     reauthor_hits = 0
+    # Successful web.research results this step, the latest one's preview, and
+    # how many further research calls were served from it (item 17e).
+    research_ok = 0
+    research_latest = ""
+    research_served = 0
     # Chain hops call `call_tool` directly (see _run_chain below) and never
     # consult `success_sigs` above — this is that same short-circuit, scoped
     # separately since a chain hop's cached value needs the raw `result`
@@ -16984,6 +16999,41 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         #    cached result, tell it firmly to move on, and don't count it as a
         #    fresh attempt. After a second redundant repeat, end the step as
         #    DONE (the needed result is already in hand). ──────────────────────
+        # -- a research-only step with its sources in hand is answered (item 17e) --
+        # run74-76: 14 / 3 / 27 web.* calls per set AFTER web.research had
+        # returned its sources, each an executor turn. See research_done_core.
+        if _research_done is not None:
+            _note17e = _research_done.saturated_note(
+                step.get("caps") or caps, tool, research_ok, research_latest)
+            if _note17e:
+                research_served += 1
+                _perturb_next = True
+                tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)
+                outputs[tool] = research_latest
+                had_useful = True
+                ok = True
+                await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
+                                  "thought": "(the step's sources are already in hand - served the latest research result)",
+                                  "repeat": True, "session_id": sid})
+                await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": True,
+                                  "elapsed_ms": 0, "preview": research_latest[:2000], "error": "",
+                                  "note": "sources in hand - served the latest web.research result",
+                                  "session_id": sid})
+                if _research_done.should_end(research_served):
+                    result_summary = _v5_sentence(
+                        "web.research", research_latest,
+                        f"The loop ended this step: its sources were in hand after {research_ok} web.research results and `{tool}` kept being re-issued.")[:_V5_DONE_SUMMARY]
+                    await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                      "cycle": (gc + 1), "step_id": step_id,
+                                      "thought": (f"(auto-completed: the sources were in hand after {research_ok} "
+                                                  "web.research results - ending the step on them.)"),
+                                      "session_id": sid})
+                    break
+                pending_note = _note17e
+                continue
+
         # -- a file this step already wrote is not written again (item 17d) --
         if (_author_done is not None and tool in _author_done.AUTHOR_TOOLS and isinstance(args, dict)):
             _apath = str(args.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1]
@@ -18286,6 +18336,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 failed_since_author = False
         elif not entry_ok and authored_here:
             failed_since_author = True
+        if entry_ok and tool == "web.research":
+            research_ok += 1
+            research_latest = preview[:_budget]
         history.append({"tool": tool, "ok": entry_ok, "preview": preview[:_budget],
                         "args": args, "ms": elapsed})
         await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
