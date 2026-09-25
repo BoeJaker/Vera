@@ -246,9 +246,18 @@ storage and idempotent teardown without record or query content. Its adapter
 returns only exact `(record_id, revision_id)` citations and grants no activation
 authority. It never reads, writes or relabels the mutable shared indexes.
 
-Native Fabric graph, Qdrant, GraphRAG, and analytical adapters may join the
-execution layer only when they can prove the same snapshot and citation
-guarantees. JEPA Worldview has a dedicated binding and query path:
+The native graph path follows the same boundary. `SnapshotGraphEdge` accepts
+only bounded, unique edges whose endpoints exist in the exact snapshot.
+`NativeFabricSnapshotGraphProjection` reuses the canonical graph
+`ProjectionSpec`, content-identifies all nodes, revisions, edges and traversal
+limits, and uses deterministic lexical seeds plus a bounded one-to-eight-hop
+traversal. Directed edges are never traversed backwards. Integrity is checked
+around every query, results contain only revision citations, and teardown clears
+the isolated node/edge material. Shared Neo4j remains untouched.
+
+Qdrant, GraphRAG, and analytical adapters may join the execution layer only
+when they can prove the same snapshot and citation guarantees. JEPA Worldview
+has a dedicated binding and query path:
 `worldview.retrieval.bind` pins the complete index to a `DatasetSnapshot` and
 checkpoint `ModelPackage`, while `JepaWorldviewRetrievalAdapter` rejects any
 live receipt that drifts from those identities. An unbound legacy JEPA
