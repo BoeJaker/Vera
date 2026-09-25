@@ -20513,6 +20513,17 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     # missing deliverable) rather than pass on a claim.
     _authored = _v6_authored_path(_last)
     if _authored:
+        # The verdict is for the file the criterion NAMES (item 18c): run76
+        # build-simple-code authored index.html for a step asking for clock.html
+        # and this fast path ruled it met; the controller then replanned a
+        # rename that took six cycles. A different file is a deterministic miss.
+        try:
+            _wrong = _verify_evidence.wrong_file_authored(
+                _v6_extract_paths(crit), _authored)
+        except Exception:
+            _wrong = None
+        if _wrong:
+            return {"met": False, "reason": _wrong}
         _ex = await _v6_check_paths_exist(session_id, [_authored]) if session_id else {_authored: True}
         if _ex.get(_authored, True):
             return {"met": True,
