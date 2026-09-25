@@ -57,6 +57,31 @@ def threads_for(*, has_gpu: bool, node_num_thread: Any = None,
     return d if d > 0 else 0
 
 
+def refit_for_node(options: Optional[dict], *, has_gpu: bool, node_num_thread: Any = None,
+                   default: int = DEFAULT_CPU_THREADS, node_ctx_max: Any = None) -> dict:
+    """`options` refitted for the node a request FALLS OVER to; a copy.
+
+    The failover used to re-send the body built for the ORIGINAL node. A
+    controller call that timed out on the GPU (2026-09-24 17:08Z, run73) was
+    retried on cpu-246 and then cpu-247 with the GPU's body - no num_thread,
+    a 28,672 window - so each CPU node started the 9b at 24 threads on 12
+    CPUs, ran four minutes and failed, and the next real request restarted
+    the runner back to 6. The thread count is derived from the NEW node (a
+    GPU node gets none), and the window is clamped to the new node's cap
+    when one is known. Everything else in `options` is untouched.
+    """
+    out = dict(options or {})
+    nt = threads_for(has_gpu=has_gpu, node_num_thread=node_num_thread, default=default)
+    if nt > 0:
+        out["num_thread"] = nt
+    else:
+        out.pop("num_thread", None)
+    cap = _int(node_ctx_max)
+    if cap > 0 and _int(out.get("num_ctx")) > cap:
+        out["num_ctx"] = cap
+    return out
+
+
 def with_threads(options: Optional[dict], threads: int) -> dict:
     """`options` with num_thread set when `threads` is positive; a copy."""
     out = dict(options or {})

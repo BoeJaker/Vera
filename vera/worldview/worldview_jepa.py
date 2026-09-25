@@ -67,6 +67,7 @@ Capabilities registered
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -98,6 +99,8 @@ from Vera.vera.capability_orchestration import (
     capability, APP, emit_event, now_iso, schedule, ollama_generate, register_ui,
 )
 from Vera.vera.config import cfg
+from Vera.vera.worldview.retrieval_provenance import JepaRetrievalProvenance
+from Vera.vera.fabric.dataset_provider import DatasetSnapshot
 
 # ── Optional heavy imports (graceful degradation) ─────────────────────────────
 try:
@@ -122,7 +125,26 @@ try:
         except RuntimeError:
             pass  # already set
 except ImportError:
-    torch = nn = F = None
+    class _UnavailableTorch:
+        @staticmethod
+        def no_grad():
+            def decorate(fn):
+                return fn
+            return decorate
+
+    class _UnavailableModule:
+        pass
+
+    class _UnavailableNN:
+        Module = _UnavailableModule
+
+    # Class definitions below use nn.Module and @torch.no_grad even though the
+    # WorldView constructor correctly disables itself without PyTorch. Minimal
+    # definition-time shims let the module register honest "not ready" caps in
+    # lightweight sandboxes; no tensor operation is made available.
+    torch = _UnavailableTorch()
+    nn = _UnavailableNN()
+    F = None
     HAS_TORCH = False
 
 try:
@@ -1352,6 +1374,65 @@ def _get_fabric():
 # ─────────────────────────────────────────────────────────────────────────────
 
 WV_BLOB_KEY = os.getenv("WORLDVIEW_BLOB_KEY", "worldview_v2")
+WORLDVIEW_PROVIDER_REVISION = "worldview-jepa-v2"
+MAX_PROVENANCE_JSON_BYTES = 16 * 1024 * 1024
+_WV_RETRIEVAL_PROVENANCE: Optional[JepaRetrievalProvenance] = None
+
+
+def _decode_checkpoint_meta(value: Any) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        if len(value.encode("utf-8")) > MAX_PROVENANCE_JSON_BYTES:
+            return {}
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _active_index_record_ids() -> Tuple[str, ...]:
+    return tuple(str(item) for item in getattr(WV_INDEX, "_ids", ()))
+
+
+def _restore_retrieval_provenance(meta: Dict[str, Any], blob: bytes) -> bool:
+    global _WV_RETRIEVAL_PROVENANCE
+    raw = meta.get("retrieval_provenance") if isinstance(meta, dict) else None
+    if not isinstance(raw, dict):
+        _WV_RETRIEVAL_PROVENANCE = None
+        return False
+    try:
+        binding = JepaRetrievalProvenance.from_dict(raw)
+    except (TypeError, ValueError):
+        _WV_RETRIEVAL_PROVENANCE = None
+        return False
+    if not binding.verifies_runtime(
+            checkpoint_blob=blob,
+            indexed_record_ids=_active_index_record_ids()):
+        _WV_RETRIEVAL_PROVENANCE = None
+        return False
+    _WV_RETRIEVAL_PROVENANCE = binding
+    return True
+
+
+def _verified_retrieval_provenance(
+        blob: Optional[bytes] = None) -> Optional[JepaRetrievalProvenance]:
+    binding = _WV_RETRIEVAL_PROVENANCE
+    if binding is None or not MODEL.ready or not WV_INDEX.available:
+        return None
+    try:
+        current = blob if blob is not None else MODEL.serialize_bytes()
+    except Exception:
+        return None
+    if not current or not binding.verifies_runtime(
+            checkpoint_blob=current,
+            indexed_record_ids=_active_index_record_ids()):
+        return None
+    return binding
 
 async def _fabric_store_checkpoint(blob: bytes, meta: Dict) -> Dict:
     fab = _get_fabric()
@@ -1434,6 +1515,44 @@ async def _fabric_load_checkpoint() -> Optional[bytes]:
         return None
 
 
+async def _fabric_load_checkpoint_meta() -> Dict[str, Any]:
+    """Load optional metadata without changing the legacy blob load contract."""
+    fab = _get_fabric()
+    if not fab:
+        return {}
+    pg = getattr(fab, "FABRIC_PG", None)
+    if pg is not None and getattr(pg, "available", False) and getattr(pg, "_pool", None):
+        try:
+            async with pg._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT meta FROM worldview_checkpoints WHERE key=$1", WV_BLOB_KEY)
+                if row:
+                    meta = _decode_checkpoint_meta(row["meta"])
+                    if meta:
+                        return meta
+        except Exception as e:
+            log.debug("worldview: Postgres checkpoint metadata load skipped: %s", e)
+    try:
+        loop = asyncio.get_running_loop()
+        def _r():
+            conn = fab._sqlite_conn() if callable(getattr(fab, "_sqlite_conn", None)) else None
+            if not conn:
+                return {}
+            try:
+                cur = conn.execute(
+                    "SELECT meta FROM worldview_checkpoints WHERE key=?", (WV_BLOB_KEY,))
+                row = cur.fetchone()
+                return _decode_checkpoint_meta(row[0]) if row else {}
+            except sqlite3.OperationalError:
+                return {}
+            finally:
+                conn.close()
+        return await loop.run_in_executor(None, _r)
+    except Exception as e:
+        log.debug("worldview: SQLite checkpoint metadata load failed: %s", e)
+        return {}
+
+
 async def _persist_to_fabric() -> Dict:
     if not MODEL.ready:
         return {"ok": False, "error": "model not ready"}
@@ -1449,6 +1568,9 @@ async def _persist_to_fabric() -> Dict:
         "embed_dim": MODEL.embed_dim, "records": len(MODEL.record_concepts),
         "saved_at": now_iso(),
     }
+    binding = _verified_retrieval_provenance(blob)
+    if binding is not None:
+        meta["retrieval_provenance"] = binding.to_dict()
     res = await _fabric_store_checkpoint(blob, meta)
     if res.get("sqlite") or res.get("postgres"):
         MODEL.last_fabric_persist = now_iso()
@@ -1499,6 +1621,14 @@ async def _worldview_startup_load():
         # Still load loss history even if model came from local file
         await _load_loss_history()
         _restore_index_from_cached_latents()
+        try:
+            local_blob = MODEL.serialize_bytes()
+            _restore_retrieval_provenance(
+                await _fabric_load_checkpoint_meta(), local_blob)
+        except Exception:
+            # A legacy local checkpoint remains usable, but not as pinned
+            # retrieval-comparison evidence.
+            _restore_retrieval_provenance({}, b"")
         _wv_startup_done = True
         await _maybe_autostart_stream()
         return
@@ -1513,6 +1643,9 @@ async def _worldview_startup_load():
                  MODEL.train_steps.get("gnn", 0), len(MODEL.record_concepts))
     await _load_loss_history()
     _restore_index_from_cached_latents()
+    if blob:
+        _restore_retrieval_provenance(
+            await _fabric_load_checkpoint_meta(), blob)
     _wv_startup_done = True
     await _maybe_autostart_stream()
 
@@ -3909,6 +4042,179 @@ async def cap_worldview_query(
     }
 
 
+def _bounded_json_input(raw: str, label: str) -> Any:
+    if not isinstance(raw, str) or not raw:
+        raise ValueError(f"{label} is required")
+    if len(raw.encode("utf-8")) > MAX_PROVENANCE_JSON_BYTES:
+        raise ValueError(f"{label} exceeds the bounded input size")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} must be valid JSON") from exc
+
+
+def _dataset_snapshot_from_dict(value: Any) -> DatasetSnapshot:
+    if not isinstance(value, dict):
+        raise ValueError("snapshot_json must contain an object")
+    try:
+        return DatasetSnapshot(
+            dataset_id=value["dataset_id"],
+            snapshot_id=value["snapshot_id"],
+            created_at=value["created_at"],
+            record_count=value["record_count"],
+            schema=value["schema"],
+            provenance=value["provenance"],
+            schema_version=value.get("schema_version", "vera.dataset-snapshot/v1"),
+        )
+    except (KeyError, TypeError) as exc:
+        raise ValueError("snapshot_json is missing required fields") from exc
+
+
+@capability(
+    "worldview.retrieval.bind",
+    http_method="POST", http_path="/worldview/retrieval/bind",
+    http_tags=["worldview", "retrieval"], memory="off",
+    description="Bind the active JEPA checkpoint and complete index membership "
+                "to one immutable DatasetSnapshot and revision-qualified record "
+                "manifest. Persists the exact checkpoint plus provenance. Inputs: "
+                "snapshot_json, records_json, provider_revision, training_run_id.",
+    contract={
+        "canonical_task": "worldview.retrieval.bind", "aliases": [],
+        "effects": ["write", "filesystem"], "output_schema": {"type": "object"},
+        "approval": {"status": "explicit_call"},
+        "trust": {"status": "content_verified"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "checkpoint_store"},
+        "network": {"status": "optional_postgres"},
+        "tenant": {"status": "dataset_snapshot"},
+        "idempotency": {"status": "content_addressed"},
+        "cancellation": {"status": "between_serialise_and_store"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["cpu", "disk"]},
+        "owner": "worldview",
+    },
+)
+async def cap_worldview_retrieval_bind(
+    snapshot_json: str,
+    records_json: str,
+    provider_revision: str = WORLDVIEW_PROVIDER_REVISION,
+    training_run_id: str = "",
+    trace_id=None,
+) -> Dict:
+    global _WV_RETRIEVAL_PROVENANCE
+    if not MODEL.ready or not WV_INDEX.available:
+        return {"ok": False, "eligible": False,
+                "error_code": "worldview_not_ready"}
+    try:
+        snapshot = _dataset_snapshot_from_dict(
+            _bounded_json_input(snapshot_json, "snapshot_json"))
+        records = _bounded_json_input(records_json, "records_json")
+        if not isinstance(records, list):
+            raise ValueError("records_json must contain a list")
+        blob = await asyncio.to_thread(MODEL.serialize_bytes)
+        binding = JepaRetrievalProvenance.create(
+            snapshot=snapshot,
+            snapshot_records=records,
+            checkpoint_blob=blob,
+            indexed_record_ids=_active_index_record_ids(),
+            provider_revision=provider_revision,
+            framework_version=(getattr(torch, "__version__", "") if torch else ""),
+            training_run_id=training_run_id,
+        )
+    except (TypeError, ValueError) as exc:
+        log.info("worldview retrieval provenance rejected: %s", exc)
+        return {"ok": False, "eligible": False,
+                "error_code": "provenance_validation_failed"}
+    meta = {
+        "train_steps": MODEL.train_steps,
+        "num_concepts": MODEL.num_concepts,
+        "embed_dim": MODEL.embed_dim,
+        "records": len(MODEL.record_concepts),
+        "saved_at": now_iso(),
+        "retrieval_provenance": binding.to_dict(),
+    }
+    stored = await _fabric_store_checkpoint(blob, meta)
+    if not (stored.get("sqlite") or stored.get("postgres")):
+        return {"ok": False, "eligible": False,
+                "error_code": "checkpoint_store_failed"}
+    _WV_RETRIEVAL_PROVENANCE = binding
+    MODEL.last_fabric_persist = now_iso()
+    return {
+        "ok": True,
+        "eligible": True,
+        "stores": stored,
+        "provenance": binding.receipt(),
+        "model_package": binding.checkpoint.to_dict(),
+    }
+
+
+@capability(
+    "worldview.retrieval.status",
+    http_method="GET", http_path="/worldview/retrieval/status",
+    http_tags=["worldview", "retrieval"], memory="off", silent=True,
+    description="Report whether the active JEPA checkpoint and index still match "
+                "their immutable retrieval provenance binding.",
+)
+async def cap_worldview_retrieval_status(trace_id=None) -> Dict:
+    binding = await asyncio.to_thread(_verified_retrieval_provenance)
+    if binding is None:
+        return {"ok": True, "eligible": False,
+                "error_code": "provenance_unavailable"}
+    return {"ok": True, "eligible": True,
+            "provenance": binding.receipt()}
+
+
+@capability(
+    "worldview.retrieval.query",
+    http_method="POST", http_path="/worldview/retrieval/query",
+    http_tags=["worldview", "retrieval"], memory="off",
+    description="Run JEPA nearest-neighbour retrieval only when the active "
+                "checkpoint and full index still match a persisted DatasetSnapshot "
+                "and ModelPackage. Returns revision-qualified citations and a "
+                "provenance receipt; never returns query text. Inputs: text, top_k, "
+                "snapshot_id.",
+)
+async def cap_worldview_retrieval_query(
+    text: str,
+    top_k: int = 10,
+    snapshot_id: str = "",
+    trace_id=None,
+) -> Dict:
+    if not isinstance(text, str) or not text:
+        return {"ok": False, "error_code": "query_required"}
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or not 1 <= top_k <= 1000:
+        return {"ok": False, "error_code": "invalid_limit"}
+    binding = await asyncio.to_thread(_verified_retrieval_provenance)
+    if binding is None:
+        return {"ok": False, "eligible": False,
+                "error_code": "provenance_unavailable"}
+    if snapshot_id and snapshot_id != binding.snapshot.snapshot_id:
+        return {"ok": False, "eligible": False,
+                "error_code": "snapshot_mismatch"}
+    result = await cap_worldview_query(
+        text=text, top_k=top_k, dataset_id=binding.snapshot.dataset_id)
+    try:
+        citations = binding.citations_for_result(result, limit=top_k)
+    except (TypeError, ValueError):
+        return {"ok": False, "eligible": False,
+                "error_code": "query_evidence_invalid"}
+    safe_results = [{
+        key: row[key] for key in (
+            "id", "score", "dataset_id", "concept", "concept_label")
+        if key in row
+    } for row in result.get("results", ())]
+    return {
+        "ok": True,
+        "eligible": True,
+        "query_digest": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "results": safe_results,
+        "citations": [item.to_dict() for item in citations],
+        "provenance": binding.receipt(),
+        "effect": "none",
+        "activation_authority": False,
+    }
+
+
 @capability(
     "worldview.anomalies",
     http_method="POST", http_path="/worldview/anomalies",
@@ -5317,11 +5623,14 @@ async def cap_worldview_load_from_fabric(rebuild_index: bool = True, trace_id=No
             indexed = await _rebuild_index_from_fabric("", limit=_WV_CONFIG.get("max_nodes", MAX_NODES))
         except Exception as e:
             log.warning("load_from_fabric index rebuild: %s", e)
+    provenance_ready = _restore_retrieval_provenance(
+        await _fabric_load_checkpoint_meta(), blob)
     return {
         "ok": True, "restored": True,
         "train_steps": MODEL.train_steps,
         "records": len(MODEL.record_concepts),
         "indexed": indexed,
+        "retrieval_provenance_ready": provenance_ready,
     }
 
 

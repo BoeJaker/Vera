@@ -665,6 +665,23 @@ async def _forward(target_id: str, path: str, body: dict, stream: bool):
     # single JSON object. Ollama defaults a missing "stream" to True, so we
     # set it explicitly to avoid getting NDJSON back and failing r.json().
     body = {**body, "stream": stream}
+    # A proxied client sends whatever it sends; the NODE decides the thread
+    # count and the window it can hold. Forwarding bodies untouched put a
+    # 24-thread nomic runner on a 12-CPU node for every embed a non-Vera
+    # client made (n8n / Open WebUI overnight, 2026-09-24: 1-2 min each).
+    # Same refit the generate failover applies; a GPU node gets no thread
+    # count, a caller's smaller one is kept.
+    try:
+        _refit = _orch._node_threads_core.refit_for_node(
+            body.get("options") if isinstance(body.get("options"), dict) else None,
+            has_gpu=bool(inst.get("has_gpu")), node_num_thread=inst.get("num_thread"),
+            default=_orch._CPU_NODE_THREADS, node_ctx_max=inst.get("num_ctx_max"))
+        if _refit:
+            body["options"] = _refit
+        else:
+            body.pop("options", None)
+    except Exception as _re:                       # pragma: no cover - never block a proxy call
+        log.debug("proxy refit skipped: %s", _re)
     inst["in_use"] = inst.get("in_use", 0) + 1
     _proxy_active += 1
     _t0 = time.time()

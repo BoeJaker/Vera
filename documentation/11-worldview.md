@@ -153,6 +153,37 @@ snapshot and citation fixtures. They report quality, latency, failures, storage,
 and lifecycle costs separately. Comparison evidence cannot activate JEPA as a
 ranker or imply that the non-JEPA/Godseye product is a JEPA implementation.
 
+### Provenance-qualified retrieval
+
+The historical `worldview.query` remains the general interactive latent search.
+Its result IDs alone are not sufficient for a provider comparison: an index can
+outlive or drift from the checkpoint and it does not identify canonical record
+revisions.
+
+`worldview.retrieval.bind` establishes the stricter comparison boundary. It
+accepts a complete record manifest that must reproduce one immutable
+`DatasetSnapshot`; every record must carry a unique `record_id` and
+`revision_id`, and the manifest membership must exactly equal the active JEPA
+index. Vera serialises the active checkpoint, content-identifies it as a
+`ModelPackage`, and persists the checkpoint and binding together. Partial
+indexes, changed records, duplicate identities, and legacy checkpoints without
+this binding fail closed.
+
+`worldview.retrieval.status` rechecks the current checkpoint bytes and complete
+index membership against the persisted binding. `worldview.retrieval.query`
+runs only while that check succeeds and requires the requested snapshot ID. Its
+response contains a query digest, revision-qualified citations, and the exact
+snapshot/package/provider receipt; it omits query text and member text. A model
+update, streaming index change, checkpoint swap, or snapshot mismatch makes the
+path unavailable until an explicit new binding is created.
+
+`JepaWorldviewRetrievalAdapter` verifies that live receipt again before handing
+citations to the provider-neutral comparison executor. The adapter reports
+unavailable or failed evidence on identity drift and cannot choose a winner or
+activate JEPA. Existing local checkpoints remain usable through the historical
+JEPA UI and capabilities, but they are not silently upgraded into comparison
+evidence.
+
 ## Operational checks
 
 Before training, verify optional dependencies/device, bounded Fabric inputs,
@@ -169,6 +200,9 @@ dangling edges merely to obtain a green report.
 | `worldview.predict` / `worldview.rollout` | Predict concept transitions |
 | `worldview.counterfactual` | Roll out after a concept swap |
 | `worldview.query` | Query latent neighbours |
+| `worldview.retrieval.bind` | Bind a checkpoint and complete JEPA index to an immutable snapshot and revision manifest |
+| `worldview.retrieval.status` | Verify that the active runtime still matches the binding |
+| `worldview.retrieval.query` | Return snapshot/package-pinned, revision-qualified retrieval evidence |
 | `worldview.anomalies` | Produce anomaly evidence |
 | `worldview.snapshot` | Produce a visualization projection |
 | `worldview.concepts` | Inspect concept labels and populations |
@@ -184,6 +218,8 @@ dangling edges merely to obtain a green report.
 - `vera/worldview/worldview_shadow_parity.py` — parity report.
 - `vera/worldview/worldview_shadow_evidence.py` — evidence window.
 - `vera/worldview/reranking_shadow.py` — exact-identity context comparison only.
+- `vera/worldview/retrieval_provenance.py` — immutable snapshot/checkpoint/index binding.
+- `vera/worldview/retrieval_adapter.py` — live receipt validation for retrieval comparison.
 
 ## Related guides
 
