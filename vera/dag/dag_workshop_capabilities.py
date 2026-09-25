@@ -13974,6 +13974,16 @@ except Exception:                                     # pragma: no cover
         _research_done = None
         log.warning("research_done_core unavailable - research steps run to the executor's own done")
 
+# A failure that two fix steps did not change ends the run (item 28, 2026-09-25).
+try:
+    from Vera.vera.dag import fix_loop_core as _fix_loop
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import fix_loop_core as _fix_loop
+    except Exception:
+        _fix_loop = None
+        log.warning("fix_loop_core unavailable - a persistent test failure runs to the wall cap")
+
 
 def _v6_goal_implies_document(text: str) -> bool:
     """Does the goal name a DOCUMENT deliverable? "Report the disk usage" and
@@ -20052,7 +20062,7 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
                          base_id: int, steps_left: int, model: str,
                          instance_id: str, prefer_gpu: bool,
                          session_id: str = "", raw_goal: str = "",
-                         file_register: Any = "") -> Dict[str, Any]:
+                         file_register: Any = "", bounded_failure: str = "") -> Dict[str, Any]:
     """Final completion gate: verify the whole GOAL is met (against `done_when`)
     before synthesising the answer. If it is not — and there is step budget left —
     return follow-up steps to close the gap. Returns {complete, missing,
@@ -20074,6 +20084,12 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
     but this one had no filesystem input at all. The actual working-directory
     listing now goes in as ground truth, so "produce X" cannot pass when nothing
     was produced."""
+    # The run already stopped on a failure it could not fix (item 28): the gate
+    # does not ask a judge or append follow-ups - the verdict is incomplete,
+    # with the failure named, and the deliverable reports it.
+    if bounded_failure:
+        return {"complete": False, "missing": [str(bounded_failure)[:400]], "follow_up": [],
+                "bounded": True}
     ledger = _v6_build_ledger(goal, done_when, results, [], per_step=_V6_GATE_PER_STEP,
                               include_outputs=True, total=_V6_GATE_LEDGER_TOTAL)
     _wf = None
@@ -23900,6 +23916,7 @@ async def cap_dag_agent_loop_v6(
                       "reason": plan.get("reason", ""),
                       "complexity": plan.get("complexity", ""),
                       "done_when": done_when})
+    fix_loop_bound = ""      # the failure signature that ended the run early (item 28)
 
     # ── Execute over a shared ledger with an adaptive controller ──────────────
     blackboard: Dict[int, Dict[str, Any]] = {}
@@ -24455,6 +24472,18 @@ async def cap_dag_agent_loop_v6(
                                    for r in results],
                           "pending": [{"id": s["id"], "title": s["title"]} for s in queue]})
 
+        # -- a failure two fix steps did not change ends the run (item 28) --
+        # run77 build-multifile: 43 cycles over three steps chasing one failing
+        # test; every verify honest, no ceiling. See fix_loop_core.
+        if _fix_loop is not None:
+            _streak, _sig = _fix_loop.same_failure_streak(results)
+            if _fix_loop.should_stop(_streak):
+                fix_loop_bound = _fix_loop.report(_sig, _streak)
+                await emit_event({"type": "agent_loop_v6.fix_loop_bound", "session_id": sid,
+                                  "stream_id": stream_id, "after_step": step["id"],
+                                  "signature": _sig, "streak": _streak, "note": fix_loop_bound})
+                break
+
         # ── Adaptive controller: assess after EVERY step and steer. ──────────
         if enable_adaptive and executed < hard_cap:
             steps_left = hard_cap - executed
@@ -24534,7 +24563,7 @@ async def cap_dag_agent_loop_v6(
             valid_skill_ids=valid_skill_ids, base_id=max_id,
             steps_left=hard_cap - executed, model=model,
             instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
-            raw_goal=_orig_goal,
+            raw_goal=_orig_goal, bounded_failure=fix_loop_bound,
             file_register=lambda _d: _v6_file_register_block(artifacts, _d))
         await emit_event({"type": "agent_loop_v6.gate", "session_id": sid,
                           "stream_id": stream_id, "complete": bool(gate.get("complete")),
