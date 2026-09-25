@@ -23942,6 +23942,7 @@ async def cap_dag_agent_loop_v6(
                       "complexity": plan.get("complexity", ""),
                       "done_when": done_when})
     fix_loop_bound = ""      # the failure signature that ended the run early (item 28)
+    verify_reasons_by_step: Dict[str, List[str]] = {}   # every attempt's verdict, per step (28b)
 
     # ── Execute over a shared ledger with an adaptive controller ──────────────
     blackboard: Dict[int, Dict[str, Any]] = {}
@@ -24142,6 +24143,11 @@ async def cap_dag_agent_loop_v6(
                                   instance_id=instance_id, prefer_gpu=prefer_gpu)
         res["met"] = v["met"]
         res["met_reason"] = v["reason"]
+        # Every attempt's reason, per step: the fix-loop bound reads the failure
+        # a step named in ANY attempt, not only the last (item 28b).
+        _vr = verify_reasons_by_step.setdefault(str(step.get("id")), [])
+        _vr.append(str(v.get("reason") or ""))
+        res["verify_reasons"] = list(_vr)
         # `ok` on a VERIFY event must be the VERDICT, not the step's own flag.
         # Emitting res["ok"] made the trace read "verify ok=True" beside a reason
         # saying the deliverable was never created — so a run that was correctly

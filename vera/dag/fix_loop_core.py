@@ -39,20 +39,45 @@ def failure_signature(reason: object) -> str:
     return ""
 
 
+def result_signatures(r: Dict[str, Any]) -> list:
+    """Every failure signature a result's attempts named, in order, deduped.
+
+    run78 build-multifile (25 Sep 2026): the step-completion re-attempts ended
+    each step on a DIFFERENT reason ("no test run happened", "ERROR: Traceback",
+    "Tests failed.") while the first attempt of every step named the same test
+    (test_median FAILED); read from the final reason alone the streak never
+    reached 3 and the run hit its wall cap. The runner now keeps each step's
+    attempt reasons in `verify_reasons`; the final reason is the fallback."""
+    reasons = r.get("verify_reasons") or [r.get("met_reason") or r.get("reason") or ""]
+    out: list = []
+    for x in reasons:
+        s = failure_signature(x)
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
 def same_failure_streak(results: Iterable[Dict[str, Any]]) -> Tuple[int, str]:
-    """(count, signature): how many unmet results in a row carry the same failure."""
-    streak, sig = 0, ""
-    for r in results or []:
-        if not isinstance(r, dict) or r.get("met") is not False:
-            continue
-        s = failure_signature(r.get("met_reason") or r.get("reason") or "")
-        if not s:
-            continue
-        if s == sig:
-            streak += 1
-        else:
-            streak, sig = 1, s
-    return streak, sig
+    """(count, signature): how many unmet results in a row carry the latest failure.
+
+    A result CARRIES a failure when any of its attempts named it; an unmet
+    result that named no test failure at all is neutral (skipped)."""
+    unmet = [r for r in (results or []) if isinstance(r, dict) and r.get("met") is False]
+    sigs = [result_signatures(r) for r in unmet]
+    last = next((s for s in reversed(sigs) if s), [])
+    best, best_sig = 0, ""
+    for cand in reversed(last):            # the most recent result's failures, latest first
+        streak = 0
+        for s in reversed(sigs):
+            if not s:
+                continue
+            if cand in s:
+                streak += 1
+            else:
+                break
+        if streak > best:
+            best, best_sig = streak, cand
+    return best, best_sig
 
 
 def should_stop(streak: int, bound: int = BOUND) -> bool:
