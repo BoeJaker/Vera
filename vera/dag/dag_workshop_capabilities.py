@@ -13891,6 +13891,57 @@ except Exception:                                     # pragma: no cover
         log.warning("plan_hygiene_core unavailable — plan hygiene off")
 
 
+# The delivered answer is composed from the deliverable (item 23, 2026-09-25).
+try:
+    from Vera.vera.dag import deliverable_core as _deliverable
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import deliverable_core as _deliverable
+    except Exception:
+        _deliverable = None
+        log.warning("deliverable_core unavailable - the delivery stage composes from summaries only")
+
+
+async def _v6_read_artifact_text(session_id: str, rel: str, *, max_chars: int = 6000) -> str:
+    """The text of one file this run wrote, from the session's sandbox or its host
+    artifact dir (the same two places `artifact_download` looks). '' when it
+    cannot be read - the delivery stage then composes from the evidence alone."""
+    if not session_id or not rel:
+        return ""
+    try:
+        import importlib as _il
+        _ex = _il.import_module("Vera.vera.execution.exec_capabilities")
+        base = await _ex.artifact_dir_async(session_id=session_id, create=False)
+        rel = str(rel)
+        if base and rel.startswith(str(base).rstrip("/") + "/"):
+            rel = rel[len(str(base).rstrip("/")) + 1:]
+        elif rel.startswith("/workspace/"):
+            rel = rel[len("/workspace/"):]
+        safe = [x for x in re.split(r"[\\/]+", rel) if x and x not in (".", "..")]
+        if not safe:
+            return ""
+        sb = _sandbox_mod()
+        if base and str(base).startswith("/workspace") and sb is not None and hasattr(sb, "route_fs_read"):
+            try:
+                res = await sb.route_fs_read(session_id, str(base).rstrip("/") + "/" + "/".join(safe),
+                                             max_bytes=max(4096, max_chars * 4))
+            except Exception:
+                res = None
+            if res and not res.get("error"):
+                return str(res.get("content") or "")[:max_chars]
+        if not base or not os.path.isdir(str(base)):
+            base = _ex.artifact_dir(session_id=session_id, create=False)
+        if base and os.path.isdir(str(base)):
+            root = os.path.normpath(str(base))
+            target = os.path.normpath(os.path.join(root, *safe))
+            if target.startswith(root) and os.path.isfile(target):
+                with open(target, encoding="utf-8", errors="replace") as fh:
+                    return fh.read(max_chars)
+    except Exception as e:
+        log.debug("v6 artifact text read failed for %s: %s", rel, e)
+    return ""
+
+
 def _v6_goal_implies_document(text: str) -> bool:
     """Does the goal name a DOCUMENT deliverable? "Report the disk usage" and
     "then report their mean" are the verb - an instruction to tell the user -
@@ -22537,11 +22588,12 @@ async def _v7_send_progress(goal: str, tier: str, report: str, *, channel: str,
 
 _V6_DELIVER_EVIDENCE_MAX = 14000   # chars of run evidence fed to the delivery agent
 _V6_DELIVER_OUT_MAX      = 16000   # cap on the produced deliverable
+_V6_DELIVER_DOC_MAX      = 6000    # chars of each deliverable FILE shown to the delivery agent
 
 
 async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
                       final: str, *, model: str, instance_id: str,
-                      prefer_gpu: bool) -> str:
+                      prefer_gpu: bool, session_id: str = "", emit_fn=None) -> str:
     """DELIVERY stage — a dedicated final agent that turns the whole run (goal,
     per-step evidence, artifacts) into the definitive user-facing deliverable in
     MARKDOWN. Where the cap calls themselves were the point (code edits, deploys)
@@ -22566,33 +22618,71 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
                 artifacts.append(f"{str(k)[5:]} — {str(v)[:150]}")
     block = "\n\n".join(lines)[:_V6_DELIVER_EVIDENCE_MAX] or "(no steps executed)"
     art_block = "\n".join(f"- {a}" for a in dict.fromkeys(artifacts)) or "(none recorded)"
+    # The deliverable FILE is the answer's source (item 23). research-web's
+    # summary cited its sources in the file in every census run and the
+    # delivered answer never carried one URL (q=0.667 x3): this stage only ever
+    # saw the step summaries. Read the document(s) the run wrote and compose
+    # from them; deliverable_core then removes an echoed template, a pasted
+    # source file, and restores the file's URLs if the answer dropped them.
+    _doc_rels = (_deliverable.document_files([k for r in results for k in (r.get("outputs") or {})])
+                 if _deliverable is not None else [])
+    _docs = []
+    for _rel in _doc_rels[:2]:
+        _txt = await _v6_read_artifact_text(session_id, _rel, max_chars=_V6_DELIVER_DOC_MAX)
+        if _txt.strip():
+            _docs.append((_rel, _txt))
+    _file_urls = (_deliverable.urls_in("\n".join(t for _, t in _docs))
+                  if (_docs and _deliverable is not None) else [])
+    doc_block = "\n\n".join(f"FILE {p_}:\n{t_}" for p_, t_ in _docs)
     sys = (
-        "You are the DELIVERY agent — the last stage of an agentic run. You take the GOAL "
+        "You are the DELIVERY agent - the last stage of an agentic run. You take the GOAL "
         "and the full run evidence and produce the definitive FINAL DELIVERABLE the user "
         "will read, in clean MARKDOWN.\n"
-        "Structure (omit a section when it has no content):\n"
-        "  ## Result — lead with the direct answer/outcome of the goal: the substance, "
-        "not the process. If the goal was not fully achieved, say so plainly here.\n"
-        "  ## What was done — a faithful, concrete account of the actions taken, step by "
-        "step in plain language: what ran, what it found or changed, and any failures and "
-        "how they were worked around. Do NOT gloss over failed steps.\n"
-        "  ## Artifacts — files/outputs produced, with their paths.\n"
-        "  ## Usage — ONLY if the run produced code, configuration, or something deployed: "
-        "a brief practical guide for a developer on how to run/use what was built.\n"
-        "Use only facts from the evidence — NEVER invent results, file paths, or details "
-        "the run did not produce."
+        "Use exactly these section headings, each alone on its line with nothing after it "
+        "(leave a section out when it has no content):\n"
+        "## Result\n## What was done\n## Artifacts\n## Usage\n"
+        "What each holds:\n"
+        "  Result: the direct answer or outcome of the goal - the substance, not the process. "
+        "If the goal was not fully achieved, say so plainly.\n"
+        "  What was done: a faithful, concrete account of the actions taken, step by step in "
+        "plain language: what ran, what it found or changed, and any failures and how they "
+        "were worked around. Do NOT gloss over failed steps.\n"
+        "  Artifacts: files/outputs produced, with their paths.\n"
+        "  Usage: ONLY if the run produced code, configuration, or something deployed - a "
+        "brief practical guide for a developer on how to run/use what was built.\n"
+        "When a DELIVERABLE FILE is shown, the Result is composed FROM it: keep its substance "
+        "and its sections, and carry over EVERY source URL it cites - a summary whose file "
+        "cites sources must cite them in the answer.\n"
+        "NEVER paste a code file's source (HTML/JS/CSS/Python/...) into the deliverable: name "
+        "the file under Artifacts and say what it does. A snippet of a few lines is fine; a "
+        "whole file is not.\n"
+        "Use only facts from the evidence - NEVER invent results, file paths, or details "
+        "the run did not produce. These instructions are not part of the output."
     )
     prompt = (f"GOAL: {goal}\n"
               + (f"DONE WHEN: {done_when}\n" if done_when else "")
               + f"\nRUN EVIDENCE:\n{block}\n\nARTIFACTS RECORDED:\n{art_block}\n"
-              + (f"\nDRAFT ANSWER (from the synthesiser — improve on it, don't just copy "
+              + (f"\nDELIVERABLE FILE(S) - compose the Result from these:\n{doc_block}\n"
+                 if doc_block else "")
+              + (f"\nDRAFT ANSWER (from the synthesiser - improve on it, don't just copy "
                  f"it):\n{final[:3000]}\n" if final else "")
               + "\nWrite the final markdown deliverable.")
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=False)
-        return _strip_think(raw or "")[0].strip()[:_V6_DELIVER_OUT_MAX]
+        md = _strip_think(raw or "")[0].strip()[:_V6_DELIVER_OUT_MAX]
+        if md and _deliverable is not None:
+            md, _notes = _deliverable.finish(
+                md, goal=goal, files=[a_.split(" ", 1)[0] for a_ in artifacts],
+                file_urls=_file_urls)
+            if _notes and emit_fn is not None:
+                try:
+                    await emit_fn({"type": "agent_loop_v6.deliverable_shaped",
+                                   "notes": _notes[:8], "docs": [p_ for p_, _ in _docs]})
+                except Exception:
+                    pass
+        return md
     except Exception as e:
         log.debug("v6 delivery stage failed: %s", e)
         return ""
@@ -24342,7 +24432,12 @@ async def cap_dag_agent_loop_v6(
                               "label": "📦 Writing the final deliverable…"})
         deliverable = await _v6_deliver(
             goal, done_when, results, final,
-            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            session_id=sid,
+            emit_fn=lambda ev: emit_event({
+                "type": str(ev.get("type") or "agent_loop_v6.deliverable_shaped"),
+                "session_id": sid, "stream_id": stream_id,
+                "notes": ev.get("notes"), "docs": ev.get("docs")}))
         if deliverable:
             await emit_event({"type": "agent_loop_v6.deliverable", "session_id": sid,
                               "stream_id": stream_id, "markdown": deliverable,
