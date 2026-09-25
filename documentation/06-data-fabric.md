@@ -255,9 +255,23 @@ traversal. Directed edges are never traversed backwards. Integrity is checked
 around every query, results contain only revision citations, and teardown clears
 the isolated node/edge material. Shared Neo4j remains untouched.
 
-Qdrant, GraphRAG, and analytical adapters may join the execution layer only
-when they can prove the same snapshot and citation guarantees. JEPA Worldview
-has a dedicated binding and query path:
+Qdrant and GraphRAG now have an injected-driver evidence boundary in
+`vera.fabric.external_retrieval`. `ExternalSnapshotBinding` recreates the
+complete immutable snapshot and content-identifies the provider revision,
+projection revision, retrieval mode, and full revision-qualified citation
+manifest. Query and lifecycle receipts must reproduce every one of those
+identities; drift, citations outside the snapshot, duplicates, excessive
+results, malformed lifecycle measures, and another snapshot all fail closed.
+Qdrant modes are explicit (`dense`, `sparse`, `hybrid`, `multivector`) and
+GraphRAG modes are explicit (`local`, `global`, `drift`). The core runtime does
+not import or install either library. An integration host must inject the
+driver, and a missing driver produces provider-specific unavailable evidence
+without falling back to Fabric or another index. This is a conformance seam,
+not proof that either backend has been deployed or measured live.
+
+Analytical adapters may join the execution layer only when they can prove the
+same snapshot and citation guarantees. JEPA Worldview has a dedicated binding
+and query path:
 `worldview.retrieval.bind` pins the complete index to a `DatasetSnapshot` and
 checkpoint `ModelPackage`, while `JepaWorldviewRetrievalAdapter` rejects any
 live receipt that drifts from those identities. An unbound legacy JEPA
