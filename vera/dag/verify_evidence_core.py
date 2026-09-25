@@ -79,16 +79,55 @@ def last_test_run(calls: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     return {"found": True, "passed": None, "line": _first_line(pv)}
 
 
+AUTHOR_TOOLS = ("code.author", "code.edit")
+
+
+def edit_after_last_test_run(calls: Iterable[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The last successful author/edit call that came AFTER the step's last test
+    run, or None. run75 build-multifile (25 Sep 2026): pytest failed, code.edit
+    changed stats.py, and the verifier ruled the step met on the edit's parser
+    verdict - the tests never ran again on the file that was delivered."""
+    calls = list(calls)
+    last_run = -1
+    for i, h in enumerate(calls):
+        tool = str(h.get("tool") or "")
+        if tool.startswith("(") or not tool.startswith("exec."):
+            continue
+        if is_test_run(h.get("preview")):
+            last_run = i
+    if last_run < 0:
+        return None
+    edit = None
+    for h in calls[last_run + 1:]:
+        if str(h.get("tool") or "") in AUTHOR_TOOLS and h.get("ok"):
+            edit = h
+    return edit
+
+
 def settle_test_criterion(criterion: object, calls: Iterable[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """A deterministic verdict for a test-outcome criterion, or None when the
-    judge should decide (the run passed, or the criterion is not about tests)."""
-    if not wants_test_outcome(criterion):
-        return None
-    r = last_test_run(list(calls))
-    if not r["found"]:
-        return {"met": False, "reason": "the criterion asks for a test outcome but no test run happened in this step"}
-    if r["passed"] is False:
-        return {"met": False, "reason": f'the last test run in this step reported failures: "{r["line"]}"'}
+    judge should decide (the run passed, or the criterion is not about tests).
+
+    Two rules. (1) A criterion about tests passing is settled by the last
+    test-shaped run: none, or a failing one, is NOT met. (2) An author/edit
+    call AFTER the last test run leaves the step unverified - the file that
+    would be delivered is not the file the tests ran on - unless the run had
+    passed and the criterion is not about tests at all."""
+    calls = list(calls)
+    wants = wants_test_outcome(criterion)
+    r = last_test_run(calls)
+    if wants:
+        if not r["found"]:
+            return {"met": False, "reason": "the criterion asks for a test outcome but no test run happened in this step"}
+        if r["passed"] is False:
+            return {"met": False, "reason": f'the last test run in this step reported failures: "{r["line"]}"'}
+    edit = edit_after_last_test_run(calls)
+    if edit is not None and (wants or r["passed"] is not True):
+        path = str((edit.get("args") or {}).get("path") or "the file")
+        return {"met": False,
+                "reason": (f'{edit.get("tool")} changed {path} AFTER the last test run '
+                           f'("{r["line"] or "outcome not shown"}") - the fix is unverified until the '
+                           "tests run again on the edited file; run them now")}
     return None
 
 
