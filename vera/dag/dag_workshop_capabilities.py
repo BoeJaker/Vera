@@ -105,6 +105,12 @@ def _v5_sentence(tool: str, preview: str, reason: str = "") -> str:
         return ""
     return _step_summary_core.sentence(tool, preview, reason)
 try:
+    from Vera.vera.dag.loop_output_bound_core import (
+        bound_options as _bound_loop_options, DEFAULT_LOOP_NUM_PREDICT as _DEFAULT_LOOP_NUM_PREDICT)
+except ImportError:                                        # pragma: no cover
+    from vera.dag.loop_output_bound_core import (
+        bound_options as _bound_loop_options, DEFAULT_LOOP_NUM_PREDICT as _DEFAULT_LOOP_NUM_PREDICT)
+try:
     from Vera.vera.dag.operator_model_arg_core import (
         heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS,
         names_a_model as _names_a_model)
@@ -2549,6 +2555,13 @@ def _now_context_line() -> str:
 # Loop LLM determinism — see _safe_ollama_generate_dw. Off via
 # VERA_LOOP_DETERMINISTIC=0; VERA_LOOP_TEMP / VERA_LOOP_SEED tune it.
 _LOOP_DETERMINISTIC = os.getenv("VERA_LOOP_DETERMINISTIC", "1").strip() not in ("0", "false", "no")
+# Output bound for every loop generation that does not pin its own - see
+# loop_output_bound_core (run72: one controller call = 16,384 tokens, 1,055 s).
+# VERA_LOOP_NUM_PREDICT=0 turns it off.
+try:
+    _LOOP_NUM_PREDICT = int(os.getenv("VERA_LOOP_NUM_PREDICT", str(_DEFAULT_LOOP_NUM_PREDICT)) or 0)
+except Exception:
+    _LOOP_NUM_PREDICT = _DEFAULT_LOOP_NUM_PREDICT
 try:
     _LOOP_TEMP = float(os.getenv("VERA_LOOP_TEMP", "0") or 0)
 except Exception:
@@ -2657,6 +2670,11 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
         if not (profile or role):
             _opts.setdefault("temperature", _LOOP_TEMP)
             _opts.setdefault("top_p", 1.0)
+    # Bounded output. A loop call answers with a decision, a plan or a tool
+    # call, not a report; with no bound the window was the only limit and one
+    # controller call generated to it (run72, 2026-09-24: 16,384 tokens in
+    # 1,055 s). A caller's own num_predict (code.edit's, a role's) still wins.
+    _opts = _bound_loop_options(_opts, _LOOP_NUM_PREDICT)
     _gen_kwargs = dict(system=system, json_mode=use_json,
                        model=model or None, instance_id=instance_id or None,
                        prefer_gpu=bool(prefer_gpu), think=think)
