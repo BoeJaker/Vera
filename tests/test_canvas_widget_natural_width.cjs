@@ -59,8 +59,8 @@ t('and the placer flows the rest of the row against the width it actually got',
   && /want: wants\[ci\],/.test(SRC));
 t('read every card, then write every card — a read and a write per card in one loop is a flush per card',
   SRC.indexOf('const natural = cards.map((c, i) => {') < SRC.indexOf('cards.forEach((c, i) => { if (!natural[i]) return;'));
-t('an item that asks for a column or more is not narrowed, and neither is one you opened or dragged',
-  /if \(wants\[i\] >= 1 \|\| c\.classList\.contains\('openin'\) \|\| c\.classList\.contains\('sized'\) \|\| c\.classList\.contains\('compact'\)\) return 0;/.test(SRC));
+t('an item that asks for a column or more is not narrowed, and neither is one you opened, dragged or sized by hand',
+  /if \(pws\[i\] \|\| wants\[i\] >= 1 \|\| c\.classList\.contains\('openin'\) \|\| c\.classList\.contains\('sized'\) \|\| c\.classList\.contains\('compact'\)\) return 0;/.test(SRC));
 t('nothing is written to the canvas: no size record changes, the card just fits its content',
   !/_widgetFit[\s\S]{0,700}?canvas\.update/.test(SRC));
 

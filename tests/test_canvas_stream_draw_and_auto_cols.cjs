@@ -38,8 +38,11 @@ t('landing an item on the canvas hides the piece of the reply that made it', /el
   && /\.cv-elsewhere\{display:none!important\}/.test(CHAT));
 t('...and leaves a line in its place that takes you to it on the canvas',
   /chip\.textContent=\(m\.n\?String\(m\.n\)\.slice\(0,48\):'item'\)\+' · on the canvas ↗';/.test(CHAT));
-t('both an ADD and an UPDATE go through it, so the second write does not redraw the reply',
-  /_cvOnCanvas\(m, key\);\s+\/\/ it is over there/.test(CHAT) && /if\(r&&r\.ok\)\{ _CV_SIG\[key\]=sig; _cvOnCanvas\(m, key\); \}/.test(CHAT));
+// both an add and an update go through it — but only once the reply is FINISHED: swapping the element for a line while
+// the stream rebuilds that markup on every token is what made both columns flicker (owner, 2026-09-25)
+t('both an ADD and an UPDATE go through it, and neither does while the reply is still streaming',
+  /if\(!live\) _cvOnCanvas\(m, key\);          \/\/ finished: it is over there/.test(CHAT)
+  && /if\(r&&r\.ok\)\{ _CV_SIG\[key\]=sig; if\(!live\) _cvOnCanvas\(m, key\); \}/.test(CHAT));
 t('nothing is hidden while the column is CLOSED, or the reply would lose elements with no canvas to show them',
   /function _cvOneplaceOff\(\)\{ return !_pages\.has\('canvas'\) \|\| _cvOneplace\(\)==='both'; \}/.test(CHAT));
 t('closing the column brings every one of them back inline — a view of the reply, never an edit of it',

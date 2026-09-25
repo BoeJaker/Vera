@@ -6952,6 +6952,13 @@ IMPORTANT:
     try{
       const el=m&&m._el; if(!el||!el.classList) return;
       if(_cvOneplaceOff()) return;
+      /* ⛔ NEVER A BUBBLE THAT IS STILL BEING WRITTEN, whoever asks. _paintStream rebuilds the whole bubble on every
+         token and survives it by keeping ONE vera-mermaid and re-appending it to the fresh .mm-slot — and .mm-slot is
+         exactly what the diagram harvest hands us. Hiding it made the diagram vanish on the harvest's beat and come
+         back on the next token, several times a second, with the live element streaming into a hidden box in between
+         (owner, 2026-09-25: "the chat is still flickering the mermaid render as its streamed - it didnt do this
+         before you added the canvas streaming"). The cursor span is the streaming bubble's own mark. */
+      const bub=el.closest&&el.closest('.msg-body'); if(bub&&bub.querySelector('.cur,.think-throb')) return;
       el.classList.add('cv-elsewhere'); el.dataset.cvKey=key;
       if(!el.nextElementSibling||!el.nextElementSibling.classList.contains('cv-moved')){
         const chip=document.createElement('button'); chip.className='cv-moved'; chip.type='button';
@@ -6974,7 +6981,11 @@ IMPORTANT:
     if(!SID||!bubEl||!_pages.has('canvas')) return;     // nothing to keep up with if the column is closed
     if(_cvLiveBusy||Date.now()-_cvLiveAt<450) return;   // a token is not an event; a beat is
     _cvLiveAt=Date.now(); _cvLiveBusy=true;
-    Promise.resolve(_cvLandFrom(bubEl, _cvRelMid, (bubEl.dataset&&bubEl.dataset.mid)||_cvRelMid))
+    /* live: the reply is still being written, so it keeps drawing in the chat. Hiding it WHILE it streams is what
+       made both columns flicker (owner, 2026-09-25): the reply's markup is rebuilt on every token, so the hide and
+       the "on the canvas" line were destroyed and re-made several times a second. The swap happens once, when the
+       message is finished — until then you watch it fill in where you always did. */
+    Promise.resolve(_cvLandFrom(bubEl, _cvRelMid, (bubEl.dataset&&bubEl.dataset.mid)||_cvRelMid, true))
       .catch(()=>{}).then(()=>{ _cvLiveBusy=false; });
   }
   async function _cvLandReply(mid){
@@ -6983,7 +6994,7 @@ IMPORTANT:
     const body=w&&w.querySelector('.msg-body'); if(!body||body.querySelector('.think-throb')) return 0;
     return _cvLandFrom(body, mid, (w&&w.dataset&&w.dataset.mid)||mid);
   }
-  async function _cvLandFrom(body, mid, from){
+  async function _cvLandFrom(body, mid, from, live){
     if(!SID||!mid||!body) return 0;
     const made=_cvHarvest(body); if(!made.length) return 0; let n=0;
     for(let i=0;i<made.length;i++){ const m=made[i];
@@ -6997,7 +7008,7 @@ IMPORTANT:
          diagram another branch — the item is UPDATED where it stands. Same key, same place on the canvas, no
          second copy, and the reader watches it fill in rather than waiting for the end of the message. */
       if(_CV_LANDED[key]){
-        _cvOnCanvas(m, key);                    // it is over there: the reply says so rather than drawing it twice
+        if(!live) _cvOnCanvas(m, key);          // finished: it is over there, and the reply says so rather than drawing it twice
         if(_CV_SIG[key]===sig) continue;
         _CV_SIG[key]=sig;
         try{ await _capCall('canvas.update',{session_id:SID, key, content:m.content}); n++; }catch(_){}
@@ -7005,7 +7016,7 @@ IMPORTANT:
       }
       // the reply is the maker: the run leaves ITS block, while the turn stays the question the station is keyed by
       try{ const r=await _capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid, from:from||mid}});
-        if(r&&r.ok){ _CV_SIG[key]=sig; _cvOnCanvas(m, key); }
+        if(r&&r.ok){ _CV_SIG[key]=sig; if(!live) _cvOnCanvas(m, key); }
         if(!(r&&r.ok)) continue; _CV_LANDED[key]=true; n++;
         (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:m.n, d:'canvas · '+(r.resolved==='shown'?'already there':'lifted out of the reply'), col:m.col, kind:m.k, key, form:m.kind==='widget'?(m.content.widget||''):undefined, mermaid:m.kind==='diagram'?m.content.mermaid:undefined, record:m.kind==='widget'?(m.content.record||undefined):undefined});
       }catch(_){}

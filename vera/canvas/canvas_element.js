@@ -1054,10 +1054,19 @@
        Nothing else changes — the level, the fold, the regimes are all as they were. */
     // a fraction of one column, or a NUMBER OF COLUMNS to span (capped at what the stage has)
     const wantOf = (it) => { const w = +it.want; if (!(w > 0)) return 1; return w <= 1 ? w : Math.min(cols, Math.round(w)); };
+    /* A WIDTH IN PIXELS, when the item has one (dragged, or content that has its own width). It is NOT rounded to a
+       share or to a whole number of columns — that rounding is what made a resized item snap back to the full stage —
+       so an item like this covers the columns it happens to cover and keeps the width it was given. */
+    const stageW = cols * cw + (cols - 1) * gap;
+    const pxOf = (it) => { const p = +it.wpx; return p > 0 ? Math.min(p, stageW) : 0; };
     const bottoms = new Array(cols).fill(pad), used = new Array(cols).fill(false); const out = []; let maxB = pad;
     const row = { y: 0, x: 0, h: 0, col: -1, on: false, chip: false };   // the flow row in progress
     order.forEach(({ it }) => {
-      const h = heightOf(it), want = wantOf(it);
+      /* a pixel width DEFINES the want, rather than sitting beside one: a caller that sends both (the element sends
+         the fraction it worked out for its own sizing pass) cannot then disagree with itself about how many columns
+         the item covers. */
+      const h = heightOf(it), wpx = pxOf(it);
+      const want = wpx ? Math.min(cols, (wpx + gap) / (cw + gap)) : wantOf(it);
       const ideal = (!known(it) || mode === 'packed') ? null
         : mode === 'stage' ? Math.max(pad, topOf(it))
         : Math.max(pad, Math.min(topOf(it), Math.max(pad, V - h)));   // held: level with its turn, never off the bottom
@@ -1071,7 +1080,8 @@
          columns"). A span takes the first run of columns wide enough for it, level with its turn like anything
          else, and ends the row in progress — nothing sits beside a thing that wide. */
       if (want > 1 && cols > 1) {
-        const span = Math.max(1, Math.min(cols, Math.round(want)));
+        // the columns it COVERS (a dragged width covers the partial one it reaches into), never what it is cut to
+        const span = Math.max(1, Math.min(cols, wpx ? Math.ceil(want - 0.02) : Math.round(want)));
         let bcol = 0, by = Infinity;
         for (let c = 0; c + span <= cols; c++) {
           let floor = pad; for (let k = c; k < c + span; k++) floor = Math.max(floor, used[k] ? bottoms[k] + gap : bottoms[k]);
@@ -1079,7 +1089,7 @@
           if (y < by) { by = y; bcol = c; }
         }
         out.push({ key: it.key, mid: it.mid || '', col: bcol, span, x: bcol * (cw + gap), y: by, h,
-                   w: span * cw + (span - 1) * gap, want,
+                   w: wpx || (span * cw + (span - 1) * gap), want,
                    level: ideal != null && by === ideal, folded: folded.has(String(it.key)), beside: false });
         for (let k = bcol; k < bcol + span; k++) { bottoms[k] = by + h; used[k] = true; }
         maxB = Math.max(maxB, by + h); row.on = false; return;
@@ -1103,7 +1113,7 @@
       }
       const x0 = beside ? row.x : 0;
       out.push({ key: it.key, mid: it.mid || '', col: best, x: best * (cw + gap) + Math.round(x0 * cw), y: bestY, h,
-                 w: want < 1 ? Math.round(want * cw) - gap : cw, want,
+                 w: wpx || (want < 1 ? Math.round(want * cw) - gap : cw), want,
                  level: ideal != null && bestY === ideal, folded: folded.has(String(it.key)), beside });
       if (beside) { row.x += want; row.h = Math.max(row.h, h); row.chip = row.chip && chip; }
       else { row.y = bestY; row.x = want; row.h = h; row.col = best; row.on = want < 1; row.chip = chip; }
@@ -1390,6 +1400,7 @@
       this._timer = null;
       this._open = new Set();     // items opened in place
       this._px = {};              // a dragged height per item, within its size record
+      this._pw = {};              // and a dragged WIDTH: pixels, not a share of a column (owner, 2026-09-25)
       this._editKey = null;       // the item whose text is being edited
       this._rzT = 0;
     }
@@ -1532,8 +1543,20 @@
       /* over 1 = a number of COLUMNS to span, clamped to the columns there are: a kind you read takes the stage when
          there is more than one column to take; an l or xl item of any kind takes two. */
       const wantOf = (c) => { const u = unitsOf(descOf(c)); return u > 1 ? Math.max(1, Math.min(cols, Math.round(u))) : u; };
-      const wants = cards.map(wantOf);
+      /* ⛔ A WIDTH YOU DRAGGED IS A NUMBER OF PIXELS, and it outranks every share and every span. The drag in progress
+         counts as much as one already dropped, or the placer would fight the mouse: it set the card back to the share
+         its kind asks for on the very next frame, which is why dragging left did nothing at all. Bounded by the
+         stage: a card cannot be dragged wider than the columns there are. */
+      const stageW = cols * w + (cols - 1) * gap;
+      const pwOf = (c) => {
+        const live = this._rz && this._rz.el === c ? this._rz.w : 0;
+        const saved = live || parseInt(c.dataset.pw || '0', 10) || 0;
+        return saved > 0 ? Math.max(120, Math.min(saved, stageW)) : 0;
+      };
+      const pws = cards.map(pwOf);
+      const wants = cards.map((c, i) => pws[i] ? Math.min(cols, (pws[i] + gap) / (w + gap)) : wantOf(c));
       cards.forEach((c, i) => { const ww = wants[i];
+        if (pws[i]) { c.style.width = pws[i] + 'px'; return; }
         const span = ww > 1 ? Math.min(cols, Math.round(ww)) : 1;
         c.style.width = (ww < 1 ? Math.round(ww * w) - gap : span * w + (span - 1) * gap) + 'px'; });
       /* ⛔ AND AN ITEM WHOSE CONTENT HAS A WIDTH OF ITS OWN IS NEVER WIDER THAN THAT. A sticker-sized widget drew a
@@ -1545,7 +1568,7 @@
          a read/write per card in one loop is a layout flush per card. An item you opened or dragged is left alone,
          as everywhere else — you asked for that room. */
       const natural = cards.map((c, i) => {
-        if (wants[i] >= 1 || c.classList.contains('openin') || c.classList.contains('sized') || c.classList.contains('compact')) return 0;
+        if (pws[i] || wants[i] >= 1 || c.classList.contains('openin') || c.classList.contains('sized') || c.classList.contains('compact')) return 0;
         const s = c.querySelector('.vc-live[data-natw]'); if (!s) return 0;
         const nat = parseInt(s.dataset.natw, 10); if (!(nat > 0)) return 0;
         const chrome = Math.max(0, c.clientWidth - s.clientWidth);   // the card's own padding, measured rather than assumed
@@ -1589,7 +1612,7 @@
         const isFolded = c.classList.contains('overfold'); const measured = c.offsetHeight;
         if (!isFolded) this._fullH[k] = measured;                              // what it is when OPEN: the placer judges on that, so folding cannot oscillate
         return { key: k, h: isFolded ? (this._fullH[k] || measured) : measured, hFold: hd ? hd.offsetHeight + 2 : 28,
-                 want: wants[ci], mid: c.dataset.mid || '', beside: c.dataset.beside || '',
+                 want: wants[ci], wpx: pws[ci] || 0, mid: c.dataset.mid || '', beside: c.dataset.beside || '',
                  /* AN ITEM YOU OPENED IS NEVER FOLDED BY THE COLUMN, any more than a pinned one is: you asked for it
                     open, and a room that shuts what you just opened is worse than a room that scrolls. */
                  pinned: c.classList.contains('pinned') || c.classList.contains('openin') }; });
@@ -1775,6 +1798,9 @@
         const wouldFold = foldOf({ tier, aged, open, now: isNow, fresh, hasFocus: !!F, inFocus: !!F && F.has(key) });
         const compact = wouldFold && !hovered;
         const px = this._px[key];
+        /* the WIDTH you dragged it to, as a data attribute rather than a style: the placer applies it (it is the one
+           thing that knows the columns it has to fit into), and it must survive the markup being rewritten */
+        const pw = this._pw[key];
         const editable = EDITABLE.includes(b.type);
         const bid = b._bid ? String(b.id) : '';   // a keyless block: addressed by its id (canvas.update · canvas.remove · canvas.move)
         /* ONE HEADER PER ITEM. Several kinds draw a head of their own — a code item its filename and its preview
@@ -1792,7 +1818,7 @@
         const g = groupOf(b);
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
         const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '');
-        return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}>
+        return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
           ${ownHead && !compact ? `<span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>`
             : `<div class="it-hd"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
@@ -1860,9 +1886,22 @@
         try { inner = fn(b.content || {}); } catch (e) { inner = `<div class="err">Could not render a ${esc(b.type)} block.</div>`; }
         return `<div class="blk" data-type="${esc(b.type)}">${inner}</div>`;
       }).join('');
+      /* ⛔ THE SAME MARKUP IS NOT REDRAWN. A streamed diagram or widget arrives as a write every beat, and every one
+         of those bumped the revision and brought us here — where the whole column's innerHTML was replaced with a
+         string identical to the one already in it. Every placeholder was destroyed and rebuilt, so the live overlay
+         had to be re-laid over new boxes several times a second: the item blinked on every token (owner, 2026-09-25:
+         "they flicker in the chat and canvas as it streams in and its nowhere near as smooth as it was in chat").
+         What CHANGED in those writes is the live content, which does not live in this markup at all — it lives in
+         the overlay, and _mountLive below hands it to the element that is already mounted. So: write the markup only
+         when the markup is different, and let the live layer take the update. */
       const keepTop = body.scrollTop;
-      this._layers(body).items.innerHTML = html;
-      if (!stage) body.scrollTop = keepTop;
+      const layers = this._layers(body);
+      const mark = this.canvasId + '\u0000' + html;    // another canvas's identical markup is not this canvas's
+      if (this._html !== mark || !layers.items.childElementCount) {
+        this._html = mark;
+        layers.items.innerHTML = html;
+        if (!stage) body.scrollTop = keepTop;
+      }
       this._bind(body);
       if (stage) this._placeNow();
       this._mountLive(body);
@@ -1911,12 +1950,22 @@
       body.addEventListener('mouseleave', () => { if (this._hovKey) { this._hovKey = null; this._hoverOpen(null); try { this.dispatchEvent(new CustomEvent('vera:canvas:hover', { bubbles: true, detail: { key: null } })); } catch (e) {} } });
       // the corner grip: a drag sizes the item; the drop saves it as the item's size (s · m · l · xl)
       body.addEventListener('mousedown', (ev) => { const g = ev.target.closest && ev.target.closest('.rz'); if (!g) return; const it = g.closest('.it[data-key]'); if (!it) return;
-        ev.preventDefault(); ev.stopPropagation(); it.classList.add('sized', 'resizing'); this._rz = { key: it.dataset.key, el: it, y0: ev.clientY, h0: it.offsetHeight, h: it.offsetHeight }; });
+        ev.preventDefault(); ev.stopPropagation(); it.classList.add('sized', 'resizing');
+        /* BOTH AXES. The grip's cursor has always said nwse-resize, but only clientY was ever read: the height
+           followed the mouse and the width was whatever the placer handed out — and since a dragged item asked for
+           the stage, that was every column of it. So an item you resized went full width and no amount of dragging
+           left brought it back (owner, 2026-09-25: "if i resize an element in the canvas it takes the full width and
+           cant be shrunk in width"). The width is now a pixel fact of the item, like its height. */
+        this._rz = { key: it.dataset.key, el: it, y0: ev.clientY, h0: it.offsetHeight, h: it.offsetHeight,
+                     x0: ev.clientX, w0: it.offsetWidth, w: it.offsetWidth }; });
       const doc = this.ownerDocument || document;
-      doc.addEventListener('mousemove', (ev) => { const r = this._rz; if (!r) return; const h = Math.max(40, r.h0 + (ev.clientY - r.y0)); r.h = h; r.el.style.height = h + 'px'; r.el.classList.add('openin');
+      doc.addEventListener('mousemove', (ev) => { const r = this._rz; if (!r) return;
+        const h = Math.max(40, r.h0 + (ev.clientY - r.y0)); r.h = h; r.el.style.height = h + 'px';
+        const w = Math.max(120, r.w0 + (ev.clientX - r.x0)); r.w = w; r.el.style.width = w + 'px';
+        r.el.classList.add('openin');
         if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
       doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
-        const key = r.key; this._px[key] = r.h; this._open.add(key);
+        const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
         const size = sizeOfHeight(r.h, this._vh || 0);   // against the column you dragged it in, not a fixed number
         try { this.dispatchEvent(new CustomEvent('vera:canvas:resized', { bubbles: true, detail: { key, height: r.h, size } })); } catch (e) {}
         if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage')) this._placeNow(); });
@@ -1980,7 +2029,7 @@
       if (act === 'pin' || act === 'ctx') return this.call(it && it.classList.contains('pinned') ? 'canvas.add' : 'canvas.pin', { key });
       if (act === 'park') return this.call('canvas.park', { key });
       if (act === 'remove') return this.call('canvas.remove', this._ref(key));
-      if (act === 'size') { const i = ITEM_SIZES.indexOf(it.dataset.size); delete this._px[key]; return this._setSize(key, ITEM_SIZES[(i + 1) % ITEM_SIZES.length]); }
+      if (act === 'size') { const i = ITEM_SIZES.indexOf(it.dataset.size); delete this._px[key]; delete this._pw[key]; return this._setSize(key, ITEM_SIZES[(i + 1) % ITEM_SIZES.length]); }
       if (act === 'up' || act === 'down') {   // a plain canvas keeps the document's order: canvas.move by block id
         const b = this._blockOf(key); if (!b) return; const bl = ((this._doc && this._doc.blocks) || []).filter(Boolean).slice().sort((x, y) => ((x.layout && x.layout.order) || 0) - ((y.layout && y.layout.order) || 0));
         const i = bl.indexOf(b), j = act === 'up' ? i - 1 : i + 1; if (i < 0 || j < 0 || j >= bl.length) return;
@@ -2581,7 +2630,7 @@
       try { this.dispatchEvent(new CustomEvent('vera:canvas:created', { bubbles: true, detail: { id: r.id, title, mode, topic } })); } catch (e) {}
       this._switch(r.id); return this._railRefresh();
     }
-    _switch(id) { id = String(id || ''); if (!id) return; this._open = new Set(); this._px = {}; this._editKey = null; this.setAttribute('canvas-id', id); this._railMark(); try { this.dispatchEvent(new CustomEvent('vera:canvas:switch', { bubbles: true, detail: { id } })); } catch (e) {} }
+    _switch(id) { id = String(id || ''); if (!id) return; this._open = new Set(); this._px = {}; this._pw = {}; this._editKey = null; this.setAttribute('canvas-id', id); this._railMark(); try { this.dispatchEvent(new CustomEvent('vera:canvas:switch', { bubbles: true, detail: { id } })); } catch (e) {} }
     /* Every per-item action is the capability the chat and the model use — one implementation — through the
        same /mcp/call the chat uses; the element only asks for a repaint afterwards. */
     async call(name, args) {
