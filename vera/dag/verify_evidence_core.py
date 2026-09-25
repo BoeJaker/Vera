@@ -131,6 +131,27 @@ def settle_test_criterion(criterion: object, calls: Iterable[Dict[str, Any]]) ->
     return None
 
 
+def wrong_file_authored(named_files, authored_path: object) -> Optional[str]:
+    """A reason when the author wrote a file OTHER than one the criterion names,
+    else None (no file named, or the authored one is among them).
+
+    run76 build-simple-code (25 Sep 2026): the step asked for clock.html, the
+    author wrote index.html, and the parser-verdict fast path ruled the step met
+    - "code.author produced index.html" - so the controller had to replan a
+    rename that took six cycles. The author's verdict is for the file the step
+    asked for, not for any file."""
+    authored = str(authored_path or "").replace("\\", "/").rsplit("/", 1)[-1].strip().lower()
+    names = []
+    for n in named_files or []:
+        b = str(n or "").replace("\\", "/").rsplit("/", 1)[-1].strip().lower()
+        if b and "." in b and b not in names:
+            names.append(b)
+    if not authored or not names or authored in names:
+        return None
+    return (f"the author wrote {authored} but the criterion names {', '.join(names)}: "
+            "the deliverable is not the file the step asked for")
+
+
 def _first_line(s: str, n: int = 200) -> str:
     t = s.strip()
     return (t.splitlines()[0].strip() if t else "")[:n]

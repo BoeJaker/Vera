@@ -90,11 +90,22 @@ def test_an_edit_before_the_run_or_after_a_passing_run_is_fine():
     assert V.edit_after_last_test_run([edit]) is None
 
 
+def test_the_authors_verdict_is_for_the_named_file():
+    """run76 build-simple-code: index.html authored for a step naming clock.html."""
+    r = V.wrong_file_authored(["clock.html"], "index.html")
+    assert r and "index.html" in r and "clock.html" in r
+    assert V.wrong_file_authored(["clock.html"], "/workspace/clock.html") is None
+    assert V.wrong_file_authored(["statkit/stats.py", "test_stats.py"], "stats.py") is None
+    assert V.wrong_file_authored([], "index.html") is None
+    assert V.wrong_file_authored(["/workspace"], "index.html") is None       # not a file name
+
+
 def test_the_verifier_applies_the_rules():
     src = open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
     i = src.index("async def _v6_verify_step(")
     body = src[i:i + 40000]
     assert "_settled = _verify_evidence.settle_test_criterion(crit, _calls)" in body
+    assert body.index("_verify_evidence.wrong_file_authored(") < body.index("no LLM re-check")
     assert "_verify_evidence.EVIDENCE_RULE" in body
     assert "the executor's OWN ACCOUNT, not evidence" in body
     assert body.index("_settled = ") < body.index("_authored = _v6_authored_path(_last)")   # before the fast path
