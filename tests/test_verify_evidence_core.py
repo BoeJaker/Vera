@@ -65,6 +65,31 @@ def test_meta_entries_and_non_exec_calls_are_not_test_runs():
     assert V.last_test_run(calls)["found"] is False
 
 
+def test_an_edit_after_a_failing_run_is_unverified():
+    """run75 build-multifile: pytest failed, code.edit changed stats.py, the step
+    was ruled met on the edit's parser verdict. The tests never ran again."""
+    calls = [
+        {"tool": "exec.bash.run", "ok": False,
+         "preview": "============================= test session starts ==============================\\nplatform linux"},
+        {"tool": "code.edit", "ok": True, "args": {"path": "statkit/stats.py"}, "preview": '{"ok": true, "syntax_ok": true}'},
+    ]
+    v = V.settle_test_criterion("stats.py is fixed so the package imports", calls)
+    assert v and v["met"] is False and "AFTER the last test run" in v["reason"] and "statkit/stats.py" in v["reason"]
+    v2 = V.settle_test_criterion("all tests pass", calls)
+    assert v2 and v2["met"] is False
+
+
+def test_an_edit_before_the_run_or_after_a_passing_run_is_fine():
+    passing = {"tool": "exec.bash.run", "ok": True, "preview": "3 passed in 0.02s"}
+    edit = {"tool": "code.edit", "ok": True, "args": {"path": "stats.py"}, "preview": "{}"}
+    assert V.settle_test_criterion("stats.py exists with mean/median/mode", [edit, passing]) is None
+    assert V.settle_test_criterion("stats.py exists with mean/median/mode", [passing, edit]) is None
+    # ... but a criterion ABOUT the tests wants them re-run on the edited file
+    v = V.settle_test_criterion("the tests pass", [passing, edit])
+    assert v and v["met"] is False
+    assert V.edit_after_last_test_run([edit]) is None
+
+
 def test_the_verifier_applies_the_rules():
     src = open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
     i = src.index("async def _v6_verify_step(")
