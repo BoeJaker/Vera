@@ -24434,7 +24434,10 @@ async def cap_dag_agent_loop_v6(
             goal, done_when, results, final,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
             session_id=sid,
-            emit_fn=lambda ev: emit_event({**ev, "session_id": sid, "stream_id": stream_id}))
+            emit_fn=lambda ev: emit_event({
+                "type": str(ev.get("type") or "agent_loop_v6.deliverable_shaped"),
+                "session_id": sid, "stream_id": stream_id,
+                "notes": ev.get("notes"), "docs": ev.get("docs")}))
         if deliverable:
             await emit_event({"type": "agent_loop_v6.deliverable", "session_id": sid,
                               "stream_id": stream_id, "markdown": deliverable,
