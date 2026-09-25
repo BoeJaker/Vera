@@ -27,6 +27,25 @@ STEP_CAPS_OK = frozenset({"code.author", "prose.author", "code.edit",
                           "sandbox.session.fs.read", "code.read", "ide.fs.read"})
 FILE_RE = re.compile(r"\b[\w./-]+\.(?:html?|py|js|ts|css|md|txt|json|sh|yaml|yml|csv|rst)\b", re.I)
 SEAM_RE = re.compile(r"\b(?:then|after that|afterwards?|followed by|next,|and then)\b", re.I)
+URL_RE = re.compile(r"https?://\S+", re.I)
+#: The runner appends the controller's steer and the run journal to a step's
+#: goal before execution. run76 research-web (25 Sep 2026): that tail carried
+#: source URLs and other steps' files, so the one-file test refused a step
+#: whose own text named one file - and prose.author then rewrote it twice more
+#: (1,016 s). Only the step's OWN text is judged.
+TAIL_MARKERS = ("\n\nCONTROLLER STEER", "\n\nRUN JOURNAL", "\nCONTROLLER STEER (", "\nRUN JOURNAL (",
+                "\n\n[[", "\n\nRECON FINDINGS", "\n\nPRIOR STEP")
+
+
+def own_text(step_text: str) -> str:
+    """The step's own title/goal, without the steer/journal tail and without URLs."""
+    t = str(step_text or "")
+    cut = len(t)
+    for m in TAIL_MARKERS:
+        i = t.find(m)
+        if i >= 0:
+            cut = min(cut, i)
+    return URL_RE.sub(" ", t[:cut])
 
 
 def files_named(text: str) -> list:
@@ -36,6 +55,25 @@ def files_named(text: str) -> list:
         if name not in out:
             out.append(name)
     return out
+
+
+def reauthor_note(tool: str, path: str, earlier: str, *, failed_since: bool) -> str:
+    """The note that replaces a second author call for a file this step already
+    wrote successfully - '' when the call should run (no earlier write, or a
+    call has failed since it, so the file may well need rewriting).
+
+    run74 research-report c19, run76 research-web c7 and c8 (25 Sep 2026):
+    prose.author rewrote the same file with the identical thought each time
+    ("I now need to create the markdown report") - the deterministic-sampling
+    fixation the duplicate short-circuit cannot see because every rewrite's
+    content differs. 200-400 s per rewrite on the writer role."""
+    if not path or not earlier or failed_since:
+        return ""
+    name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
+    return (f"you have ALREADY written {name} with `{tool}` in this step and it succeeded - the "
+            "result is shown below. Writing it again from scratch produces another whole draft, "
+            "not progress. If something in it must change, make a TARGETED change with code.edit; "
+            "otherwise the file is done - emit `done` with what it contains.\n\n" + str(earlier)[:1500])
 
 
 def step_is_answered(step_caps: Iterable[str], step_text: str, tool: str, result: Any,
@@ -54,7 +92,7 @@ def step_is_answered(step_caps: Iterable[str], step_text: str, tool: str, result
         return False, "the author call named no file"
     if tool == "code.author" and not result.get("syntax_ok"):
         return False, "the file was not parser-verified"
-    text = step_text or ""
+    text = own_text(step_text)
     seam = has_seam(text) if has_seam is not None else bool(SEAM_RE.search(text))
     if seam:
         return False, "the step has a second part after the authoring"
