@@ -57,6 +57,7 @@ _CRITICAL_MODULES = {
     "test_plan_hygiene_core",  # 17 of 40 plans re-checked settled work, 9 criteria added features the goal never named (2026-09-24)
     "test_deliverable_core",  # the delivered answer dropped the file's citations every run and echoed its own template (2026-09-25)
     "test_browser_done_core",  # the executor re-ran the browser after it reported the step done, in every census browser goal (2026-09-25)
+    "test_core_aliases_are_bound",  # a merge bound _verify_evidence only in an except branch; every verify died with NameError (2026-09-25)
     "test_operator_step_budget",  # one step called operator.run again after its 480s cap fired: 29 thinks, 1109s, on a correct artifact (2026-09-22)  # an operator run needs a clock (2026-09-01)
     "test_two_tier_chat",  # answer first, continue with context (2026-09-01)
     "test_two_tier_decider",  # who decides the second pass is needed (2026-09-01)
