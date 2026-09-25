@@ -13954,6 +13954,16 @@ async def _v6_read_artifact_text(session_id: str, rel: str, *, max_chars: int = 
         log.debug("v6 artifact text read failed for %s: %s", rel, e)
     return ""
 
+# An authoring-only step is answered by its author call (item 17c, 2026-09-25).
+try:
+    from Vera.vera.dag import author_done_core as _author_done
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import author_done_core as _author_done
+    except Exception:
+        _author_done = None
+        log.warning("author_done_core unavailable - authoring steps run to the executor's own done")
+
 
 def _v6_goal_implies_document(text: str) -> bool:
     """Does the goal name a DOCUMENT deliverable? "Report the disk usage" and
@@ -18275,6 +18285,35 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 else:
                     pending_note = ("The last call did not yield a usable result — try a different "
                                     "query/URL, or request another capability via need_caps.")
+
+        # -- an authoring-only step is answered by its author call (item 17c) --
+        # run74: ten re-checks after a parser-verified author (read-backs,
+        # "serve it", "run it"), each an executor turn. When the step's planned
+        # work is the authoring of the one file it names, the author's ok
+        # result is the step's answer; the verifier takes that verdict anyway.
+        if _author_done is not None and invoke_ok and tool in _author_done.AUTHOR_TOOLS:
+            try:
+                _ans, _why = _author_done.step_is_answered(
+                    caps, f"{step.get('title') or ''}\n{step.get('goal') or ''}", tool,
+                    (invoke or {}).get("result"),
+                    has_seam=lambda g: len(_V5_COMPOUND_SEAM_RE.split(g, maxsplit=1)) > 1)
+            except Exception as _e:
+                _ans, _why = False, ""
+                log.debug("author_done check failed: %s", _e)
+            if _ans:
+                result_summary = _v5_sentence(
+                    tool, outputs.get(tool) or preview,
+                    f"The loop ended this step: {_why}.")[:_V5_DONE_SUMMARY]
+                ok = True
+                had_useful = True
+                await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                  "cycle": (gc + 1), "step_id": step_id,
+                                  "thought": f"(auto-completed: {_why}.)",
+                                  "session_id": sid})
+                await emit_event({"type": "agent_loop_v5.author_answered_step", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "why": _why, "session_id": sid})
+                break
 
         # Stuck-loop guard: the specialist keeps hammering one cap. Stop the step
         # and keep the best result it produced. The message distinguishes the two
