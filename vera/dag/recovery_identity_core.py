@@ -28,6 +28,32 @@ IDENTITY_FIELDS = ("kind", "target", "base_url", "provider", "allowlist", "allow
 PERMISSION_FIELDS = ("allow_destructive", "allowlist", "kind", "provider")
 
 
+#: A call that RAN and stopped on its own limit is not an argument error: the
+#: browser's time budget, no-progress and repeating-action stops, an exec wall
+#: cap. run77 long-horizon (25 Sep 2026): operator.run stopped on its 511 s
+#: budget, and the recovery sub-cycle re-ran the browser twice more inside the
+#: same tool call - 1,554 s for one call, then the step's browser budget refused
+#: the next. The stop text mentions "expected"/"got", which read as a schema error.
+RUN_STOP_MARKERS = (
+    "time_budget", "no_progress", "repeating_action", "too_many_errors",
+    "stopped after", "wall cap", "wall-cap", "budget is spent", "time limit",
+    "having taken", "step(s) without reaching",
+)
+#: Caps whose one call is a long run of its own (a browser session): never re-run by recovery.
+LONG_RUN_TOOLS = ("operator.run", "operator.act", "operator.step", "operator.observe")
+
+
+def is_run_stop(error_text: object) -> bool:
+    """True when the error says the call ran and stopped on a limit - not fixable by other args."""
+    e = str(error_text or "").lower()
+    return any(m in e for m in RUN_STOP_MARKERS)
+
+
+def is_long_run_tool(tool: object) -> bool:
+    t = str(tool or "")
+    return t in LONG_RUN_TOOLS or t.startswith("operator.")
+
+
 def _host(url: object) -> str:
     try:
         return (urlsplit(str(url or "")).netloc or "").lower()

@@ -4784,6 +4784,12 @@ def _is_arg_error(error_text: str) -> bool:
     if not error_text:
         return False
     e = str(error_text).lower()
+    # A call that RAN and stopped on its own limit (the browser's time budget,
+    # no-progress, an exec wall cap) is not an argument error - its text says
+    # "expected"/"got" and used to read as one (run77 long-horizon: three
+    # 511 s browser runs inside one tool call). See recovery_identity_core.
+    if _recovery_identity.is_run_stop(e):
+        return False
     # Hard rejects — narrowly worded to avoid false positives (e.g. "timeout"
     # matching a parameter named timeout, "401" appearing inside a payload).
     NON_RECOVERABLE = (
@@ -17746,6 +17752,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         if (not invoke.get("ok") and _v5_rec_max > 0
                 and _is_arg_error(invoke.get("error", ""))
                 and not _v5_is_generative(tool)
+                and not _recovery_identity.is_long_run_tool(tool)
                 and tool not in ("code.author", "prose.author", "code.edit")):
             _rec = await _attempt_arg_recovery(
                 cap_name=tool,
