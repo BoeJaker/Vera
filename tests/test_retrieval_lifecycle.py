@@ -14,6 +14,9 @@ from vera.fabric.retrieval_execution import (
 from vera.fabric.retrieval_lifecycle import evaluate_retrieval_lifecycle
 
 
+pytestmark = pytest.mark.critical
+
+
 def snapshot():
     return DatasetSnapshot.create(
         dataset_id="lifecycle", created_at="2026-09-26T00:00:00Z",
