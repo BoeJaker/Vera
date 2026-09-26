@@ -215,6 +215,18 @@ remains `null` rather than being confused with zero. The comparator does not
 construct a composite score, choose a winner, invoke a backend, or authorize a
 deployment.
 
+`vera.fabric.retrieval_lifecycle` preserves lifecycle evidence that the query
+executor cannot express in numeric fields alone. For each exact-snapshot
+adapter it records completed, unavailable, failed, cancelled, timed-out,
+unsupported, and not-requested phases separately. Recovery and teardown are
+explicit opt-in phases, run sequentially with the same bounded deadline.
+Recovery is successful only after a fresh lifecycle observation; teardown is
+successful only when its receipt names the exact snapshot, reports the
+projection inactive, and supplies a non-negative deletion measurement. Backend
+exception text is never retained. The report chooses no winner or fallback and
+grants no activation authority. Deterministic validation uses injected adapters;
+live outage/recovery/deletion trials remain separate evidence.
+
 `vera.fabric.retrieval_execution` is the bounded invocation layer that feeds
 that offline comparator. A `RetrievalQueryBinding` holds query text only for
 the duration of execution and verifies it against the case digest; neither the
