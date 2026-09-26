@@ -306,6 +306,17 @@ do not cross the comparison boundary. Recovery requires a fresh complete
 lifecycle observation, while teardown must prove that the same workspace is
 inactive. Runtime failures are redacted and never trigger another provider.
 
+`vera.fabric.retrieval_trial` joins query-quality evidence and the explicit
+lifecycle coordinator into one common-corpus receipt. The same immutable
+snapshot, digest-bound cases and adapter instances are used for both phases,
+and provider profile or snapshot drift is rejected. Synthesis reports query
+completion, failure, cancellation and unavailability separately from baseline,
+recovery and deletion status. A provider is evidence-complete only when every
+requested dimension is complete; missing integrations remain visible and are
+never converted into zero scores. The receipt contains no query text, chooses
+no winner or fallback, and grants no activation authority. External/model-backed
+trials remain a separate, explicitly scheduled operation.
+
 The analytical participant reuses the existing read-only QueryProvider rather
 than introducing SQL or a second query authority. DuckDB artifact providers may
 now bind an explicit DatasetSnapshot ID and read a designated stable record-index
