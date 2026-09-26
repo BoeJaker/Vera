@@ -284,6 +284,26 @@ class ExternalSnapshotRetrievalAdapter:
         except (TypeError, ValueError) as exc:
             raise RetrievalProviderFailure("invalid_lifecycle_receipt") from exc
 
+    async def recover(self, snapshot: DatasetSnapshot,
+                      cancellation: CancellationSignal) -> None:
+        self._assert_snapshot(snapshot)
+        recover = getattr(self._driver, "recover", None)
+        if not callable(recover):
+            raise RetrievalProviderUnavailable("recovery_unavailable")
+        await _invoke(recover, self.binding, cancellation)
+
+    async def teardown(self, cancellation: CancellationSignal | None = None
+                       ) -> Mapping[str, Any]:
+        signal = cancellation or CancellationSignal()
+        signal.checkpoint()
+        teardown = getattr(self._driver, "teardown", None)
+        if not callable(teardown):
+            raise RetrievalProviderUnavailable("teardown_unavailable")
+        receipt = await _invoke(teardown, self.binding, cancellation=signal)
+        if not isinstance(receipt, Mapping):
+            raise RetrievalProviderFailure("invalid_teardown_receipt")
+        return receipt
+
 
 def external_adapter(
     *, binding: ExternalSnapshotBinding, driver: ExternalRetrievalDriver | None,
