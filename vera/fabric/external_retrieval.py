@@ -1,4 +1,4 @@
-"""Fail-closed external retrieval adapters for W5-04 comparison evidence.
+"""Fail-closed external retrieval adapters for comparison evidence.
 
 The adapters in this module do not import, install, select, or activate an
 external backend.  A caller must inject a driver that has already materialised
