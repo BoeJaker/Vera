@@ -269,9 +269,18 @@ driver, and a missing driver produces provider-specific unavailable evidence
 without falling back to Fabric or another index. This is a conformance seam,
 not proof that either backend has been deployed or measured live.
 
-Analytical adapters may join the execution layer only when they can prove the
-same snapshot and citation guarantees. JEPA Worldview has a dedicated binding
-and query path:
+The analytical participant reuses the existing read-only QueryProvider rather
+than introducing SQL or a second query authority. DuckDB artifact providers may
+now bind an explicit DatasetSnapshot ID and read a designated stable record-index
+column, so filtered result rows resolve to their original snapshot revisions
+rather than to filtered-page offsets. `AnalyticalSnapshotRetrievalAdapter`
+selects a bounded, predeclared structured filter plan by the digest-bound case
+ID; query text is never translated into SQL and row data is never returned to
+the comparator. The provider, dataset and snapshot must match exactly, and
+missing plans, index drift, invalid/duplicate indexes and backend errors fail
+closed. Live DuckDB/Parquet execution remains separate evidence.
+
+JEPA Worldview has a dedicated binding and query path:
 `worldview.retrieval.bind` pins the complete index to a `DatasetSnapshot` and
 checkpoint `ModelPackage`, while `JepaWorldviewRetrievalAdapter` rejects any
 live receipt that drifts from those identities. An unbound legacy JEPA
