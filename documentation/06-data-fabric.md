@@ -279,7 +279,8 @@ GraphRAG modes are explicit (`local`, `global`, `drift`). The core runtime does
 not import or install either library. An integration host must inject the
 driver, and a missing driver produces provider-specific unavailable evidence
 without falling back to Fabric or another index. This is a conformance seam,
-not proof that either backend has been deployed or measured live.
+not runtime evidence by itself; deployments and measurements are recorded
+separately.
 
 The optional Qdrant runtime driver in `vera.fabric.qdrant_retrieval` uses the
 REST API directly through a bounded standard-library transport, so Qdrant does
@@ -291,6 +292,19 @@ shapes. Every query filters the exact snapshot and requests only citation
 payloads. Lifecycle, recovery and deletion operate on that same collection;
 teardown reports it inactive and grants no activation authority. Credentials,
 shared collections and implicit fallback are outside this driver.
+
+The optional GraphRAG runtime driver in `vera.fabric.graphrag_retrieval`
+separates Vera's evidence contract from GraphRAG's model and index
+configuration. An integration host supplies a configured runtime implementing
+index, query, inspection and deletion; Vera does not import GraphRAG, resolve
+its credentials, or start model work implicitly. The driver sends the complete
+revision-bound document manifest into one deterministic workspace and accepts
+an active index only when the runtime returns the same snapshot, projection,
+provider revision, mode, record count and complete citation manifest. Local,
+global and DRIFT queries request citation fields only; answer and context bodies
+do not cross the comparison boundary. Recovery requires a fresh complete
+lifecycle observation, while teardown must prove that the same workspace is
+inactive. Runtime failures are redacted and never trigger another provider.
 
 The analytical participant reuses the existing read-only QueryProvider rather
 than introducing SQL or a second query authority. DuckDB artifact providers may
