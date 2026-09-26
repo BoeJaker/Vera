@@ -281,6 +281,17 @@ driver, and a missing driver produces provider-specific unavailable evidence
 without falling back to Fabric or another index. This is a conformance seam,
 not proof that either backend has been deployed or measured live.
 
+The optional Qdrant runtime driver in `vera.fabric.qdrant_retrieval` uses the
+REST API directly through a bounded standard-library transport, so Qdrant does
+not become a core Python dependency. It provisions one deterministic isolated
+collection per external snapshot binding, uploads deterministic point IDs with
+exact snapshot/record/revision payloads, verifies the resulting point count,
+and supports explicit dense, sparse, RRF-hybrid and max-sim multivector query
+shapes. Every query filters the exact snapshot and requests only citation
+payloads. Lifecycle, recovery and deletion operate on that same collection;
+teardown reports it inactive and grants no activation authority. Credentials,
+shared collections and implicit fallback are outside this driver.
+
 The analytical participant reuses the existing read-only QueryProvider rather
 than introducing SQL or a second query authority. DuckDB artifact providers may
 now bind an explicit DatasetSnapshot ID and read a designated stable record-index
