@@ -157,7 +157,12 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   // the guards
   t('one link is not a reading list', SRC({ results: [{ url: 'https://only.one/x', title: 'x' }] }) === null);
   t('rows with no addresses are left to the table', SRC({ rows: [{ name: 'a', cpu: 1 }, { name: 'b', cpu: 2 }] }) === null);
-  t('a search is capped, the canvas is not a results page', SRC({ results: Array.from({ length: 40 }, (_, i) => ({ url: 'https://x.io/' + i, title: 't' + i })) }).length === 10);
+  /* a long search is ONE records browser holding every page - it used to land ten source cards and drop the rest,
+     so the eleventh result could not be reached from the canvas at all */
+  { const big = SRC({ results: Array.from({ length: 40 }, (_, i) => ({ url: 'https://x.io/' + i, title: 't' + i })) });
+    t('a long search is one records browser, not a pile of cards', !!big && !Array.isArray(big) && big.kind === 'records', JSON.stringify(big && big.kind));
+    t('and it holds every page, none dropped', !!big && big.content.items.length === 40 && big.content.items[39].url === 'https://x.io/39'); }
+  t('five pages are still five source cards', SRC({ results: Array.from({ length: 5 }, (_, i) => ({ url: 'https://x.io/' + i, title: 't' + i })) }).length === 5);
   /* the chain of ifs this used to pin is a registry now - the claim is the same one, that a page with an address
      is a source before it is a row, and it is made by the ORDER of the table rather than by the order of ||s */
   t('sources are tried BEFORE the table', REG.map((a) => a.name).indexOf('sources') < REG.map((a) => a.name).indexOf('table'));

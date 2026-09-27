@@ -124,6 +124,16 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
                  "content": "{fields:{str:any}|[[str,any]], title?:str}"},
     "chat":     {"desc": "An exchange - who asked and who answered, each message rendered as Markdown.",
                  "content": "{messages:[{role:'user'|'assistant', text:str, name?:str}], title?:str}"},
+    "records":  {"desc": "MANY records to look through - web or news results, research sources, the fabric's records, any "
+                         "list - as a browser: a filter box, sort (relevance, newest, title), list / cards / table views, "
+                         "pages, and each record opening in place (a page read through browser.content, a fabric record "
+                         "read in pages through memory.read, a url landed as its own source item). Nothing is cut: the "
+                         "browser pages; `next` names the read that fetches more. Landed by canvas.enrich and by the "
+                         "chat when an answer is a list of links.",
+                 "content": "{title?:str, source?:str(cap), args?:obj, query?:str, kind?:'web'|'news'|'memory'|"
+                            "'research'|'rows', items:[{id:str, title:str, url?:str, domain?:str, snippet?:str, "
+                            "when?:str, score?:num, meta?:{str:str}, ref?:{record_id, dataset_id}}], total?:int, "
+                            "next?:{cap:str, args:obj}, why?:str}"},
     "loop":     {"desc": "An agentic run as an item: its goal, status and steps (each a "
                          "capability) — written by the chat and by the loop itself (P7).",
                  "content": "{goal:str, status:str, steps:[{n:str, cap?:str, status?:str, ms?:str}], run?:str}"},

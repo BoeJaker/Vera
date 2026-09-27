@@ -3059,7 +3059,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
       <template id="cvBannerTpl">
         <span slot="banner-start" class="cv-bn"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span id="cvDrvRibbon" class="drv-ribbon" style="display:none" data-w="driven ribbon · canvas"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button class="btn xs" onclick="CH._cvDrvUndo()" title="Undo the directive that placed this">undo</button><button class="btn xs" onclick="CH._drvLog()" title="The directive log, the policy, the asks — the Driven panel">log</button><button class="btn xs" onclick="CH._cvDrvRibbon(null)" title="Dismiss">&#215;</button></span></span>
         <!-- no NOW counter here: the items it counted are in the column under it, countable by eye (owner, 2026-09-23) -->
-        <span slot="banner-end" class="cv-bn"><span class="xmseg" id="cvColCols" title="Columns on the stage — auto reads the stage's width and what is on it; 1-4 pin the count"><b class="cols-k">COLS</b><button class="btn xs" data-cols="auto" onclick="CH._cvColumns('auto')" title="Let the canvas choose, from its width and its content">auto</button><button class="btn xs" data-cols="1" onclick="CH._cvColumns(1)">1</button><button class="btn xs" data-cols="2" onclick="CH._cvColumns(2)">2</button><button class="btn xs" data-cols="3" onclick="CH._cvColumns(3)">3</button><button class="btn xs" data-cols="4" onclick="CH._cvColumns(4)">4</button></span><button class="btn xs" data-runs="cv" onclick="CH._runsToggle('cv')" title="The runs between the turns and the items they made or read — the same switch as the ⋯ sheet's">Runs</button><button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></span>
+        <span slot="banner-end" class="cv-bn"><span class="xmseg" id="cvColCols" title="Columns on the stage — auto reads the stage's width and what is on it; 1-4 pin the count"><b class="cols-k">COLS</b><button class="btn xs" data-cols="auto" onclick="CH._cvColumns('auto')" title="Let the canvas choose, from its width and its content">auto</button><button class="btn xs" data-cols="1" onclick="CH._cvColumns(1)">1</button><button class="btn xs" data-cols="2" onclick="CH._cvColumns(2)">2</button><button class="btn xs" data-cols="3" onclick="CH._cvColumns(3)">3</button><button class="btn xs" data-cols="4" onclick="CH._cvColumns(4)">4</button></span><button class="btn xs" id="cvEnrichBtn" onclick="CH._cvEnrichToggle(this)" title="Enrich: after each reply, bring forth what else is relevant - the dashboard reads, news, web results, the fabric's records - as widgets and browsers beside it (no model is called). Click to turn it off or on.">&#10022; enrich</button><button class="btn xs" data-runs="cv" onclick="CH._runsToggle('cv')" title="The runs between the turns and the items they made or read — the same switch as the ⋯ sheet's">Runs</button><button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></span>
       </template>
       <div class="tri-bd" id="canvasColumnBody"></div>
     </div>
@@ -6691,6 +6691,26 @@ IMPORTANT:
     if(r&&typeof r==='object') r.recalledByChat=recalled;
     return r;
   }
+  /* CANVAS ENRICHMENT: after a reply, what ELSE on the estate is relevant to the turn comes forth beside it -
+     canvas.enrich picks from the turn's words (the market overview and its news for a markets question, a web
+     search for a question about the world or about now, the fabric's records always, the dashboard reads
+     caps.search finds relevant and safe to run unasked) and lands each answer as a widget or a records browser,
+     keyed so the same turn asked twice recalls rather than doubles. No model is called. Off with
+     localStorage 'vera:canvas:enrich' = '0' (the canvas column's ✦ button). */
+  function _cvEnrichOn(){ try{ return localStorage.getItem('vera:canvas:enrich')!=='0'; }catch(_){ return true; } }
+  async function _cvEnrich(mid, userText, reply){
+    const t=String(userText||'').trim(); _cvEnrichPaint();
+    if(!SID||!_cvEnrichOn()||t.length<4||/^\s*[\/!]/.test(t)) return null;
+    let r=null;
+    try{ r=await _capCall('canvas.enrich',{session_id:SID, text:t.slice(0,800), reply:String(reply||'').slice(0,800), mid:String(mid||'')}); }catch(_){ return null; }
+    try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&r&&r.items&&r.items.length){ cv._rev=null; cv.refresh(); } }catch(_){}
+    try{ document.dispatchEvent(new CustomEvent('vera:canvas:enriched',{detail:{mid, result:r}})); }catch(_){}
+    return r;
+  }
+  function _cvEnrichToggle(btn){ const on=!_cvEnrichOn(); try{ localStorage.setItem('vera:canvas:enrich', on?'1':'0'); }catch(_){} _cvEnrichPaint(btn); }
+  function _cvEnrichPaint(btn){ const b=btn||document.getElementById('cvEnrichBtn'); if(!b) return; const on=_cvEnrichOn(); b.classList.toggle('on',on); b.style.opacity=on?'':'.55'; b.setAttribute('aria-pressed',on?'true':'false'); }
+  setTimeout(()=>_cvEnrichPaint(),0);
+  window.veraCanvasEnrich=function(on){ try{ if(on!=null) localStorage.setItem('vera:canvas:enrich', on?'1':'0'); }catch(_){} return _cvEnrichOn(); };
   // a parked item the turn brings into focus comes back through the resolver (canvas.add with its key: recall over
   // recreate), anchored to the turn; the pass itself moved nothing
   async function _cvRecall(cv, focus, mid){
@@ -6959,7 +6979,17 @@ IMPORTANT:
     }).filter(Boolean);
     // one page is a link, not a reading list; and a row set with no addresses is simply a table
     if(src.length<2) return null;
-    return src.slice(0,10).map(x=>({ kind:'source', n:x.title||x.domain||x.url, k:'source', col:'#7aa2d6',
+    /* A LONG list is one thing to browse, not a pile of cards: past five pages the answer lands as ONE records item
+       holding EVERY page (a filter, the domains as facets, sort, pages, each opening in place) - it used to land ten
+       source cards and drop the rest, so a search's eleventh result could not be reached from the canvas at all. */
+    if(src.length>5){
+      const items=rows.map((r,i)=>{ const u=String((r&&(r.url||r.link||r.href))||''); if(!/^https?:/i.test(u)) return null; let d=''; try{ d=new URL(u).host.replace(/^www\./,''); }catch(_){}
+        return { id:u||String(i), url:u, domain:d, title:String((r&&(r.title||r.name||r.heading))||u), snippet:String((r&&(r.snippet||r.summary||r.description||r.text||r.content))||'').slice(0,1200),
+                 when:(r&&(r.published||r.published_at||r.date||r.ts))||undefined, score:(r&&typeof r.score==='number')?r.score:undefined }; }).filter(Boolean);
+      return { kind:'records', n:items.length+' pages', k:'records', col:'#7aa2d6', d:'records \u00b7 '+items.length,
+               content:{ title:'Pages', kind:'web', items, total:items.length } };
+    }
+    return src.map(x=>({ kind:'source', n:x.title||x.domain||x.url, k:'source', col:'#7aa2d6',
       d:'source \u00b7 '+(x.domain||'web'), key:'source:'+x.url.replace(/^https?:\/\//,'').slice(0,120), content:x }));
   };
   const _cvCapTable=(c,name)=>{
@@ -7200,6 +7230,7 @@ IMPORTANT:
     // a terminal is a scrollback: at 's' it shows a prompt and two lines, which is not the output you asked for
     if(k==='session') return 'm';
     if(k==='source') return 's';   // a card to scan; it earns its height when you open the page
+    if(k==='records') return 'l';  // a list you move through: a filter, facets, pages - it needs the room to be one
     if(k==='html') return 'm';     // a rendered page in a letterbox is the squash this set out to fix
     if(k==='prose') return 'm';    // a report IS the deliverable; it is not a footnote to itself
     if(k==='calendar') return 'm';  // a month grid in a small item is a row of grey squares
@@ -11723,6 +11754,9 @@ Your task: decide what to do next to advance toward the goal.
     // the reply landed: what it MADE lands on the session canvas (keyed to the turn, through the resolver), then what is
     // in focus now (parks · recalls)
     try{ _cvLandReply(_cvRelMid).then(()=>{ try{ _cvRelevance(_cvRelMid, _cvRelText+'\n'+String(fullText||'').slice(0,1500)); }catch(_){} }); }catch(_){ try{ _cvRelevance(_cvRelMid, _cvRelText+'\n'+String(fullText||'').slice(0,1500)); }catch(__){} }
+    // and what ELSE on the estate is relevant to the turn - a dashboard read as its widget, the news, the web, the
+    // fabric's records as browsers (canvas.enrich; no model is called). Its own items, keyed and anchored to the turn.
+    try{ _cvEnrich(_cvRelMid, _cvRelText, String(fullText||'')); }catch(_){}
 
     // NOTE: NO /memory/record/turn call here — handled server-side by agents.py
 
@@ -20424,7 +20458,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,_cvLandReply,_studioHint,_cvDirectiveShape,_chromeFold,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvEnrichToggle,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_persistCanvasCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},

@@ -10481,6 +10481,10 @@ async def lifespan(app: FastAPI):
         # board, fleet) as capabilities the canvas draws - after evolve/,
         # board/ and dag/ (reads their stores through sys.modules).
         os.path.join(_here, "evolve/ci_capabilities.py"),
+        # canvas.enrich: what else is relevant to a turn, onto its canvas - after
+        # canvas/, widgets/, web/, fabric/, markets/ and dag/ (caps.search), which it
+        # calls through the registry.
+        os.path.join(_here, "canvas/enrich_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),
         # Operator: general observe→think→act web/computer operator (drives any
