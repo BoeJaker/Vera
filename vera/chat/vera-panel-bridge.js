@@ -90,6 +90,46 @@
   // come in named groups (the Estate: Overview, Machines, ...) gets a rail icon per group and that group's items as the
   // list; a flat one gets a rail icon per item and the whole list beside it. Menu ids are '\u00a7g<n>' (a group) and
   // '\u00a7i<n>' (an item); a pick is '<menu>' or '<menu>/<item id>', resolved back to an item id by _navResolve.
+
+  // ── NESTED PANELS (owner, 2026-09-27: "the comms and estate storage menus and any other deep LHMs needs fully absorbing
+  // into the new chat/harness ui based unified LHM system"). A panel that shows other panels in frames - Comms (its
+  // Calendar, Email, Telegram ...), the Estate (its Storage, its map) - hears the menu each child publishes (their
+  // bridges post to this page, their parent). The child that is SHOWN has its sections listed under the item that shows
+  // it (depth 1 in the docked menu), its current section lit; a pick on one is sent down to the child as its own
+  // nav_select; while this menu is docked the child is told it is hosted, so its own sidebar folds away; and when this
+  // page has no top bar of its own, the shown child's bar is offered up in its place. ──
+  var _kids = [], _hostedUp = false, _hdrKid = null;
+  // only a panel IN the harness nests: never the harness itself (it hosts every panel) nor the chat (its side panel is its own)
+  function _nestOn(){ try{ return window.parent && window.parent !== window && !document.documentElement.hasAttribute('data-harness'); }catch(e){ return false; } }
+  function _kidOf(win){
+    for(var i = 0; i < _kids.length; i++) if(_kids[i].win === win) return _kids[i];
+    var fr = null; try{ var fs = document.querySelectorAll('iframe'); for(var j = 0; j < fs.length; j++) if(fs[j].contentWindow === win){ fr = fs[j]; break; } }catch(e){}
+    if(!fr) return null; var k = { win: win, frame: fr, nav: null, hdr: null }; _kids.push(k); return k;
+  }
+  function _kidShown(k){ try{ return !!(k.frame && k.frame.isConnected && (k.frame.offsetWidth || k.frame.offsetHeight)); }catch(e){ return false; } }
+  function _activeKid(){ for(var i = _kids.length - 1; i >= 0; i--){ var k = _kids[i]; if(_kidShown(k) && k.nav && k.nav.items && k.nav.items.length) return k; } return null; }
+  function _kidsHosted(on){ _hostedUp = !!on; _kids.forEach(function(k){ try{ k.win.postMessage({ type: on ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){} }); }
+  window.addEventListener('message', function(ev){
+    if(!_nestOn()) return;
+    var d = ev.data; if(!d || typeof d !== 'object' || !ev.source || ev.source === window) return;
+    try{ if(ev.source === window.parent) return; }catch(e){}
+    if(d.type !== 'vera:panel:state' && d.type !== 'vera:hdr:offer') return;
+    var k = _kidOf(ev.source); if(!k) return;
+    if(d.type === 'vera:panel:state'){
+      var nv = d.state && d.state.nav; k.nav = (nv && Array.isArray(nv.items)) ? { items: nv.items.slice(0, 60), active: String(nv.active || '') } : null;
+      try{ ev.source.postMessage({ type: _hostedUp ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){}
+      publishStateDebounced();
+    } else { k.hdr = d; _hdrRelay(); }
+  });
+  // what is shown changes as this page switches its own item: look again, cheaply
+  setInterval(function(){ if(!_nestOn()) return; var k = _activeKid(); var sig = k ? k.frame.getAttribute('src') + '|' + k.nav.active : ''; if(sig !== _kidSig){ _kidSig = sig; publishStateDebounced(); _hdrRelay(); } }, 1000);
+  var _kidSig = '';
+  function _hdrRelay(){
+    if(typeof _hdrBar !== 'undefined' && _hdrBar) return;   // this page has its own bar
+    var k = null; for(var i = _kids.length - 1; i >= 0; i--){ if(_kidShown(_kids[i]) && _kids[i].hdr){ k = _kids[i]; break; } }
+    _hdrKid = k; if(!k) return;
+    try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: k.hdr.title || document.title || '', groups: k.hdr.groups || [] }, '*'); }catch(e){}
+  }
   var _navLhmOpts = null;
   function _navIcon(it){ var t = String(it.icon || '').trim(); if(t) return t; return (String(it.label || it.id || '').trim().charAt(0) || '\u2022').toUpperCase(); }
   function _navLhm(){
@@ -108,6 +148,13 @@
         return { id: id, icon: _navIcon(it), label: it.label, title: title || 'Sections', tabs: all }; });
     }
     if(!act.menu && menus.length) act.menu = menus[0].id;
+    var kid = (typeof _activeKid === 'function') ? _activeKid() : null;
+    if(kid && act.menu){
+      var sub = kid.nav.items.map(function(it){ return { id: 'c:' + it.id, label: String(it.label || it.id), depth: 1 }; });
+      menus.forEach(function(m){ if(m.id !== act.menu) return; var at = -1; m.tabs.forEach(function(tb, i){ if(tb.id === _navActiveId) at = i; });
+        m.tabs = m.tabs.slice(0, at + 1).concat(sub, m.tabs.slice(at + 1)); });
+      if(kid.nav.active) act.tab = 'c:' + kid.nav.active;
+    }
     return { title: title, active: act, menus: menus, open: [] };
   }
   function _navResolve(id){
@@ -397,6 +444,9 @@
     var id = (p || {}).id;
     if(id == null) return {ok: false, error: 'nav_select requires {id}'};
     id = _navResolve(String(id));
+    if(id.indexOf('c:') === 0){ var kid = _activeKid(); if(!kid) return {ok: false, error: 'no nested panel is shown'};
+      try{ kid.win.postMessage({type: 'vera:panel:action', action: 'nav_select', action_id: 'nest-' + Date.now(), payload: {id: id.slice(2)}}, '*'); }catch(e){}
+      kid.nav.active = id.slice(2); publishStateDebounced(); return {ok: true}; }
     if(_navSelectFn){
       try{ _navSelectFn(id); }catch(e){ return {ok: false, error: String(e)}; }
       _navActiveId = id; publishStateDebounced();
@@ -605,12 +655,14 @@
       // today's chat side-rail) never receives this, so its own rail stays
       // visible there — this is never assumed, only confirmed by the host.
       document.documentElement.classList.add('vpb-nav-hosted');
+      _kidsHosted(true);
     } else if(t === 'vera:panel:nav_unhosted'){
       // The inverse — the host's own top-level menu just stopped reliably
       // covering these sections (its "keep inner nav visible while the main
       // menu is auto-hiding" opt-in, or the host isn't hosting this panel's
       // nav at all right now), so un-hide this panel's own rail again.
       document.documentElement.classList.remove('vpb-nav-hosted');
+      _kidsHosted(false);
     } else if(t === 'vera:panel:query'){
       // Explicit freshness ping — bypass the changed-state dedupe. Without
       // this, an idle panel whose state hasn't changed republishes NOTHING,
@@ -734,6 +786,7 @@
     try{ var st = document.createElement('style'); st.textContent = 'html.vpb-hdr-absorbed [data-vpb-hdr-bar]{display:none!important}'; (document.head || document.documentElement).appendChild(st); }catch(e){}
     window.addEventListener('message', function(ev){
       var d = ev.data; if(!d || typeof d !== 'object' || ev.source !== window.parent) return;
+      if(!_hdrBar && _hdrKid && (d.type === 'vera:hdr:absorbed' || d.type === 'vera:hdr:act')){ try{ _hdrKid.win.postMessage(d, '*'); }catch(e){} return; }
       if(d.type === 'vera:hdr:absorbed'){ document.documentElement.classList.toggle('vpb-hdr-absorbed', !!d.on); if(d.on) _hdrOffer(true); return; }
       if(d.type !== 'vera:hdr:act' || !_hdrBar) return;
       var el = _hdrBar.querySelector('[data-vpb-hid="' + String(d.hid || '').replace(/["\\]/g, '') + '"]'); if(!el) return;

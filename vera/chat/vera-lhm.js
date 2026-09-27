@@ -152,6 +152,9 @@
     'html.vpb-nav-hosted .lhm-rail,html.vpb-nav-hosted .lhm-det .ctx-tab-bar{display:none!important}',
     /* an absorbed menu in a host */
     '.lhm-absorbed{display:flex;flex-direction:row;min-height:0;flex:1}',
+    /* a nested panel's sections (Comms \u203a Calendar \u203a ...), under the item that shows them */
+    '.lhm-absorbed .lhm-tab.sub{padding-left:24px;font-size:11px}',
+    '.lhm-absorbed .lhm-tab.sub::before{content:"\u203a";margin-right:7px;opacity:.5}',
     /* a docked menu's widgets (owner, 2026-09-27: "make sure that any lhm for any panel can be configured to include widgets
        just like the chat ui"): \u270e in its head, the chat's edit bar, the records drawn live under its list */
     '.lhm-absorbed .lhm-tabs .lhm-ttl{position:relative;padding-right:30px}',
@@ -814,7 +817,7 @@ function _ebar(title, onAdd, onDone){
     if(cur){
       tabs.appendChild(_el('div', 'lhm-ttl', cur.title || cur.label));
       (cur.tabs || []).forEach(function(t){
-        var e = _el('div', 'lhm-tab' + (t.id === act.tab ? ' on' : ''), t.label); e.title = t.label;
+        var e = _el('div', 'lhm-tab' + (t.id === act.tab ? ' on' : '') + (t.depth ? ' sub' : ''), t.label); e.title = t.label;
         e.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(cur.id + '/' + t.id); else pickFn(cur.id + '/' + t.id); });
         e.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(cur.id + '/' + t.id); } });
         if(opts.onSplit) _beside(e, function(){ opts.onSplit(cur.id + '/' + t.id); });
