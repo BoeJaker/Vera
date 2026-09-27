@@ -273,6 +273,12 @@ async def serve_explode_panel_js(trace_id=None):
 # inline view and the full view would stop agreeing about what a graph looks
 # like.
 
+# the display modes (the exploded scene, the estate 3D and 2D) - vera-graph.js loads this itself
+@APP.get("/ui/vera-graph-modes.js", include_in_schema=False)
+async def _serve_graph_modes_js():
+    return Response(content=_read("vera_graph_modes.js"), media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+
 @APP.get("/ui/vera-graph-embed.js", include_in_schema=False)
 async def _serve_graph_embed_js():
     return Response(
