@@ -661,6 +661,8 @@ header .hp-btn:hover{color:var(--t1,var(--text,#d8dce4))}
 header .hp-btn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
 header .hp-grp .hp-btn.hp-sess{max-width:220px;overflow:hidden;text-overflow:ellipsis;font-weight:600;font-size:11.5px;color:var(--t1,var(--text,#d8dce4));background:transparent}
 header .hp-grp .hp-btn.hp-more{font-size:15px;line-height:1;padding:0 9px;background:transparent}
+header .hp-in{height:28px;width:170px;border:0;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t1,var(--text,#d8dce4));font:inherit;font-size:11px;padding:0 9px}
+header .hp-in:focus{outline:none;box-shadow:inset 0 0 0 1px var(--ac,var(--acc,#5a9e8f))}
 header .hp-sel{height:28px;max-width:170px;border:0;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t1,var(--text,#d8dce4));font:inherit;font-size:11px;padding:0 8px;cursor:pointer}
 header .hp-meter{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 10px;border:0;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;cursor:pointer;white-space:nowrap}
 header .hp-meter i{display:block;width:56px;height:4px;border-radius:2px;background:var(--s3,var(--bg3,#22262e));overflow:hidden}
@@ -2720,7 +2722,9 @@ function _hdrSync(){
   document.body.classList.toggle('dash-open', pid === 'dashboard');
   hdr.classList.toggle('absorbing', !!off);
   _hdrDrawerPlace(!!off);
-  const host = _hdrPanelHost(hdr); host.innerHTML = '';
+  const host = _hdrPanelHost(hdr);
+  const _foc = (document.activeElement && host.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') ? { hid: document.activeElement.dataset.hid, v: document.activeElement.value } : null;
+  host.innerHTML = '';
   if(!off){ host.hidden = true; return; }
   host.hidden = false;
   let moreGrp = null;
@@ -2733,6 +2737,11 @@ function _hdrSync(){
         el = document.createElement('select'); el.className = 'hp-sel';
         (it.options || []).forEach(o => { const op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; el.appendChild(op); });
         el.value = it.value || ''; el.addEventListener('change', () => _hdrAct(pid, it.hid, el.value));
+      } else if(it.kind === 'input'){
+        el = document.createElement('input'); el.className = 'hp-in'; el.type = it.type === 'number' ? 'number' : 'search';
+        el.value = (_foc && _foc.hid === it.hid) ? _foc.v : (it.value || ''); el.placeholder = it.placeholder || '';
+        let t = 0; el.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => _hdrAct(pid, it.hid, el.value), 250); });
+        el.addEventListener('keydown', ev => { if(ev.key === 'Enter'){ clearTimeout(t); _hdrAct(pid, it.hid, { value: el.value, enter: true }); } });
       } else if(it.kind === 'meter'){
         el = document.createElement('button'); el.type = 'button'; el.className = 'hp-meter';
         el.innerHTML = '<i><b style="width:' + Math.max(0, Math.min(100, +it.pct || 0)) + '%"></b></i><span></span>'; el.querySelector('span').textContent = it.label || '';
@@ -2743,11 +2752,13 @@ function _hdrSync(){
         el.textContent = it.label || '\u00b7'; el.addEventListener('click', () => _hdrAct(pid, it.hid));
       }
       if(it.title) el.title = it.title;
+      el.dataset.hid = String(it.hid || '');
       G.appendChild(el);
     });
     if(g.grp === 'more') moreGrp = G; else host.appendChild(G);
   });
   if(moreGrp) host.appendChild(moreGrp);   // the panel's own ⋯ ends its controls: everything that did not fit is in there
+  if(_foc){ const n = host.querySelector('input[data-hid="' + CSS.escape(_foc.hid || '') + '"]'); if(n){ n.focus(); try{ n.setSelectionRange(n.value.length, n.value.length); }catch(_){} } }
   requestAnimationFrame(() => _hdrFit(host));
 }
 // every change of tab goes through _tabRender: the bar follows the tab that is open

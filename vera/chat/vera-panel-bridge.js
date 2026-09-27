@@ -660,6 +660,100 @@
   ['click', 'change', 'input'].forEach(function(t){ document.addEventListener(t, publishStateDebounced, {passive: true, capture: true}); });
   setInterval(publishStateDebounced, 30000);
 
+
+  // ── THE PANEL'S TOP BAR, IN THE HARNESS'S (owner, 2026-09-27: "i need all ui panels top bars to absorb into the harness
+  // top bar like the chat ui does"). The chat offers its own bar; every other panel's is found and offered here, over the
+  // same protocol: its controls go up as proxies (vera:hdr:offer), the harness says when it holds them (vera:hdr:absorbed)
+  // and the bar folds away, and a press on a proxy is a press on the panel's own control (vera:hdr:act). A panel names its
+  // bar with data-vera-topbar (="keep" keeps it in the panel); otherwise the usual names count only when the element IS the
+  // page's top bar - at the top, across most of the width, holding controls - so a toolbar inside a pane is never taken.
+  var _HDR_SEL = '#topbar, #topBar, .topbar, .top-bar, .panel-topbar, body > header, .hdr, .header, .tb';
+  var _hdrBar = null, _hdrSig = '', _hdrT = null, _hdrHid = 0;
+  function _hdrEmbedded(){ try{ return !!(window.parent && window.parent !== window); }catch(e){ return false; } }
+  function _hdrFindBar(){
+    var named = document.querySelector('[data-vera-topbar]');
+    if(named) return named.getAttribute('data-vera-topbar') === 'keep' ? null : named;
+    var c = document.querySelectorAll(_HDR_SEL), W = window.innerWidth || document.documentElement.clientWidth || 0;
+    for(var i = 0; i < c.length; i++){
+      var r = c[i].getBoundingClientRect();
+      if(r.width < 1 || r.top > 90 || r.height < 18 || r.height > 96 || r.width < W * 0.4) continue;
+      if(!c[i].querySelector('button, select, input')) continue;
+      return c[i];
+    }
+    return null;
+  }
+  // shown by its OWN rules: the bar itself is folded away while the harness holds it, and that must not count
+  function _hdrShownIn(el, bar){
+    for(var n = el; n && n !== bar.parentNode; n = n.parentElement){
+      if(n.hidden) return false; var cs = getComputedStyle(n);
+      if(n !== bar && cs.display === 'none') return false; if(cs.visibility === 'hidden') return false;
+    }
+    return true;
+  }
+  function _hdrText(el){ return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim(); }
+  function _hdrItems(bar){
+    var groups = [], gi = 0;
+    var ttl = bar.querySelector('.ttl, .title, #sec-title, .panel-title, h1, h2, h3');
+    if(ttl && _hdrText(ttl)) groups.push({ grp: 'title', prio: 1, items: [{ hid: 'title', kind: 'text', label: _hdrText(ttl).slice(0, 60), title: _hdrText(ttl).slice(0, 160) }] });
+    Array.prototype.forEach.call(bar.children, function(ch){
+      var ctl = (ch.matches && ch.matches('button, select, input')) ? [ch] : Array.prototype.slice.call(ch.querySelectorAll('button, select, input'));
+      ctl = ctl.filter(function(el){ return el.type !== 'hidden' && _hdrShownIn(el, bar); });
+      if(!ctl.length) return;
+      gi++;
+      var g = { grp: 'g' + gi, prio: 2 + Math.min(gi, 7), title: String(ch.title || '').slice(0, 80), items: [] };
+      ctl.slice(0, 16).forEach(function(el){
+        var id = el.getAttribute('data-vpb-hid'); if(!id){ id = 'p' + (++_hdrHid); el.setAttribute('data-vpb-hid', id); }
+        var tag = el.tagName, ty = String(el.type || '').toLowerCase(), t = String(el.title || el.getAttribute('aria-label') || '').slice(0, 160);
+        if(tag === 'SELECT') g.items.push({ hid: id, kind: 'select', value: el.value, title: t, options: Array.prototype.slice.call(el.options, 0, 80).map(function(o){ return [o.value, _hdrText(o).slice(0, 40)]; }) });
+        else if(tag === 'INPUT' && (ty === 'checkbox' || ty === 'radio')){ var lb = el.closest('label'); g.items.push({ hid: id, kind: 'btn', label: (_hdrText(lb) || el.name || t || 'toggle').slice(0, 24), title: t, on: !!el.checked }); }
+        else if(tag === 'INPUT' && /^(|text|search|number|url|email)$/.test(ty)) g.items.push({ hid: id, kind: 'input', type: ty === 'number' ? 'number' : 'search', value: String(el.value || '').slice(0, 200), placeholder: String(el.placeholder || t || '').slice(0, 60), title: t });
+        else if(tag === 'BUTTON') g.items.push({ hid: id, kind: 'btn', label: (_hdrText(el) || t || '\u00b7').slice(0, 24), title: t, on: /\b(on|active|selected)\b/.test(String(el.className || '')) || el.getAttribute('aria-pressed') === 'true' });
+      });
+      if(g.items.length) groups.push(g);
+    });
+    return groups;
+  }
+  function _hdrOffer(force){
+    if(!_hdrBar || !document.contains(_hdrBar)) return;
+    var groups = _hdrItems(_hdrBar), sig = JSON.stringify(groups);
+    if(!force && sig === _hdrSig) return; _hdrSig = sig;
+    try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: document.title || '', groups: groups }, '*'); }catch(e){}
+  }
+  function _hdrSoon(){ if(_hdrT) return; _hdrT = setTimeout(function(){ _hdrT = null; _hdrOffer(); }, 160); }
+  function _hdrFind(){
+    if(_hdrBar && document.contains(_hdrBar)) return;
+    var b = _hdrFindBar(); if(!b) return;
+    _hdrBar = b; b.setAttribute('data-vpb-hdr-bar', '');
+    try{ new MutationObserver(_hdrSoon).observe(b, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'title', 'disabled'] }); }catch(e){}
+    b.addEventListener('change', _hdrSoon, true); b.addEventListener('input', _hdrSoon, true);
+    _hdrOffer(true);
+  }
+  function _hdrStart(){
+    // the chat speaks for its own bar (it marks itself data-harness); the harness itself is never embedded
+    if(!_hdrEmbedded() || document.documentElement.hasAttribute('data-harness')) return;
+    try{ var st = document.createElement('style'); st.textContent = 'html.vpb-hdr-absorbed [data-vpb-hdr-bar]{display:none!important}'; (document.head || document.documentElement).appendChild(st); }catch(e){}
+    window.addEventListener('message', function(ev){
+      var d = ev.data; if(!d || typeof d !== 'object' || ev.source !== window.parent) return;
+      if(d.type === 'vera:hdr:absorbed'){ document.documentElement.classList.toggle('vpb-hdr-absorbed', !!d.on); if(d.on) _hdrOffer(true); return; }
+      if(d.type !== 'vera:hdr:act' || !_hdrBar) return;
+      var el = _hdrBar.querySelector('[data-vpb-hid="' + String(d.hid || '').replace(/["\\]/g, '') + '"]'); if(!el) return;
+      var v = d.value;
+      if(el.tagName === 'SELECT'){ el.value = String(v == null ? '' : v); el.dispatchEvent(new Event('change', { bubbles: true })); }
+      else if(el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) el.click();
+      else if(el.tagName === 'INPUT'){
+        var val = (v && typeof v === 'object') ? v.value : v; el.value = String(val == null ? '' : val);
+        el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
+        if(v && typeof v === 'object' && v.enter) ['keydown', 'keypress', 'keyup'].forEach(function(k){ el.dispatchEvent(new KeyboardEvent(k, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true })); });
+      }
+      else el.click();
+      _hdrSoon();
+    });
+    // a panel in a tab not yet shown has no size to measure: look again until its bar is found, then keep it current
+    _hdrFind();
+    setInterval(function(){ if(!_hdrBar || !document.contains(_hdrBar)){ _hdrBar = null; _hdrFind(); } else _hdrOffer(); }, 2500);
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _hdrStart); else setTimeout(_hdrStart, 0);
+
   window.VeraPanelBridge = {
     registerStateProvider: function(fn){ _stateProvider = fn; publishStateDebounced(); },
     registerActionHandler: function(name, fn){ _actionHandlers[String(name)] = fn; },
