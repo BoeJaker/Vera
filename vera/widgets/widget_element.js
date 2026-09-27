@@ -63,6 +63,7 @@
   const TEXT_SCALE_CSS = 'html{--vw-fmin:10px;--vw-fx:1}html[data-text="compact"]{--vw-fmin:0px;--vw-fx:1}html[data-text="large"]{--vw-fmin:11px;--vw-fx:1.1}html[data-text="larger"]{--vw-fmin:12px;--vw-fx:1.22}'
     /* a dashboard is read from across the room (owner, 2026-09-27: "the font on lots of widgets is still too small like the
        warnings and live events widgets it should be larger on the dashboards"): a higher floor there, at each setting */
+    + '.vw-vgraph-host.min .vg-bottom-area{display:none!important}'
     + '.dash-grid vera-widget{--vw-fmin:11.5px}html[data-text="compact"] .dash-grid vera-widget{--vw-fmin:9px}html[data-text="large"] .dash-grid vera-widget{--vw-fmin:12.5px}html[data-text="larger"] .dash-grid vera-widget{--vw-fmin:13.5px}';
   try { if (typeof document !== 'undefined' && document.head && !document.getElementById('vw-text-scale')) { const st = document.createElement('style'); st.id = 'vw-text-scale'; st.textContent = TEXT_SCALE_CSS; document.head.appendChild(st); } } catch (_) {}
   const textKOf = (el) => { try { const cs = getComputedStyle(el); const fmin = parseFloat(cs.getPropertyValue('--vw-fmin')), fx = parseFloat(cs.getPropertyValue('--vw-fx')) || 1; return Math.max(1, Math.max(isFinite(fmin) ? fmin : 10, 9.5) * fx / 9.5); } catch (_) { return 1; } };
@@ -718,7 +719,7 @@
     const floorOf = (c) => { const f = canon((c && c.record && typeof c.record === 'object' && c.record.form) || ''); return /^(counter|hero|string|pills|numbers)$/.test(f) ? 62 : /^(kv)$/.test(f) ? 78 : /^(rows|list|table|log|feed|temps|thermo|files|checklist|ranked|bullet)$/.test(f) ? 88 : /^(ring|dial|gauge)$/.test(f) ? 96 : 72; };
     /* a list (rows, a table, a log, chips ...) takes a whole row of the composite - in a quarter of the card it showed two
        words of each line (owner, 2026-09-27); the figures and charts pack their rows above, in their order */
-    const isList = (c) => ncol > 1 && /^(rows|list|table|log|feed|cards|files|checklist|timeline|lane|people|links|spark-table|temps|thermo|ranked|hosts|pills|stack)$/.test(canon((c && c.record && typeof c.record === 'object' && c.record.form) || ''));
+    const isList = (c) => { if (ncol < 2) return false; const r = (c && c.record && typeof c.record === 'object') ? c.record : {}, f = canon(r.form || ''); return /^(rows|list|table|log|feed|cards|files|checklist|timeline|lane|people|links|spark-table|temps|thermo|ranked|hosts|pills|stack)$/.test(f) || (f === 'kv' && !!(r.read && r.read.map && Array.isArray(r.read.map.keys) && r.read.map.keys.length >= 4)); };
     const packed = [], lists = []; shown.forEach((c, i) => (isList(c) ? lists : packed).push({ c, i }));
     const rowsP = []; for (let q = 0; q < packed.length; q += ncol) rowsP.push(packed.slice(q, q + ncol)); lists.forEach((x) => rowsP.push([x]));
     const plan = []; rowsP.forEach((rw, ri) => { const base = Math.floor(ncol / rw.length), extra = ncol - base * rw.length; rw.forEach((x, j) => plan.push({ c: x.c, i: x.i, ri, sp: base + (j < extra ? 1 : 0) })); });
@@ -825,7 +826,7 @@
     return cols.slice(0, max || 6);
   };
   const tableSort = (rw, cols, o) => { const sortBy = String(ui(o, 'sort', (o && o.draw && o.draw.sort) || '')), dir = +ui(o, 'dir', -1) || -1; if (sortBy && cols.includes(sortBy)) rw = rw.slice().sort((a, b) => { const x = a[sortBy], y = b[sortBy]; return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''))) * dir; }); return { rw, sortBy, dir }; };
-  const tableCell = (r, c, lit) => { const v = r[c]; const n = typeof v === 'number'; const hot = lit != null && n && v >= num(lit); const st = !n && /^(status|state|health)$/i.test(c); return '<span class="c' + (n ? ' num' : '') + (hot ? ' dn' : '') + '" title="' + esc(String(v ?? '')) + '">' + (st ? '<i class="st" style="background:' + stCol(v) + '"></i>' : '') + esc(v == null ? '' : (n ? fmt(v) : String(v))) + '</span>'; };
+  const tableCell = (r, c, lit) => { const v = r[c]; const n = typeof v === 'number'; const hot = lit != null && n && v >= num(lit); const st = !n && /^(status|state|health)$/i.test(c), yn = typeof v === 'boolean'; return '<span class="c' + (n ? ' num' : '') + (hot ? ' dn' : '') + '" title="' + esc(c + ' \u00b7 ' + String(v ?? '')) + '">' + (st ? '<i class="st" style="background:' + stCol(v) + '"></i>' : '') + (yn ? (st ? '' : (v ? '\u2713' : '\u2013')) : esc(v == null ? '' : (n ? fmt(v) : String(v)))) + '</span>'; };   /* a yes/no is a mark (a dot for a status, else a tick or a dash) - it read 'true' / 'false' */
   const gridCols = (cols) => cols.map((c, i) => i ? 'minmax(40px,auto)' : '1fr').join(' ');
   R.table = (d, H, o) => {
     let all = rows(d); if (!all.length) return EMPTY('no rows');
@@ -1969,10 +1970,10 @@
     if (_vgLoad) return _vgLoad; _vgLoad = new Promise((ok) => { const s = document.createElement('script'); s.src = (base || '') + '/ui/vera-graph.js'; s.onload = () => ok(window.veraUI && window.veraUI.Graph); s.onerror = () => { _vgLoad = null; ok(null); }; document.head.appendChild(s); }); return _vgLoad; };
   function mountVeraGraph(el, rec, data, size) {
     const draw0 = (rec && rec.draw) || {}, mode = String(draw0.mode || 'graph'), layer = draw0.layer ? String(draw0.layer) : '';
-    let host = el._vgHost; if (!host) { host = document.createElement('div'); host.setAttribute('slot', 'vgraph'); host.className = 'vw-vgraph-host'; host.style.cssText = 'width:100%;height:100%;min-height:80px;position:relative;display:flex;flex-direction:column'; el.appendChild(host); el._vgHost = host; }
+    const minC = draw0.chrome === 'min'; let host = el._vgHost; if (!host) { host = document.createElement('div'); host.setAttribute('slot', 'vgraph'); host.className = 'vw-vgraph-host' + (minC ? ' min' : ''); host.style.cssText = 'width:100%;height:100%;min-height:80px;position:relative;display:flex;flex-direction:column'; el.appendChild(host); el._vgHost = host; }
     return ensureVeraGraph(el.base).then((Gr) => { if (!Gr || el._rec !== rec) return;
       let g = el._vg; const big = size === 'l' || size === 'xl';
-      if (!g || el._vgBig !== big) { if (g && g.destroy) { try { g.destroy(); } catch (_) {} } host.innerHTML = ''; g = el._vg = Gr.create(host, { height: 'fill', showSearch: big, showLegend: size === 'xl', showLeftPanel: size === 'xl', sidebar: false, actionsEnabled: false, subscribeLiveEvents: false, apiBase: el.base || '',
+      if (!g || el._vgBig !== big) { if (g && g.destroy) { try { g.destroy(); } catch (_) {} } host.innerHTML = ''; g = el._vg = Gr.create(host, { height: 'fill', showSearch: big, showLegend: size === 'xl' && !minC, showLeftPanel: size === 'xl' && !minC, sidebar: false, actionsEnabled: false, subscribeLiveEvents: false, apiBase: el.base || '',
           // a node is an item like any other: on a host with the drawer, a click opens the drawer on the node's own data
           onNodeClick: (node) => { if (!el.hasAttribute('item-drawer')) return; const it = (node && node.props && typeof node.props === 'object') ? node.props : node; const rec2 = recOf(el), detail = { record: rec2, item: it, path: 'node ' + (node && node.id), ref: rowRef(it), data: el._data, host: el };
             let go = true; try { go = el.dispatchEvent(new CustomEvent('widget:item', { bubbles: true, composed: true, cancelable: true, detail })); } catch (_) {} if (go) drawer(detail); return false; } }); el._vgBig = big; el._vgSig = ''; }

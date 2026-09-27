@@ -656,45 +656,6 @@
   },
   {
    "record": {
-    "id": "node-tps",
-    "form": "small-multiples",
-    "source": "bench.node_perf.history",
-    "title": "Node throughput · tokens/s",
-    "read": {
-     "refresh": "30s",
-     "map": {
-      "series": "series",
-      "v": "tps"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record",
-     "rows": 3,
-     "unit": "tok/s"
-    },
-    "open": "models"
-   },
-   "at": [
-    4,
-    10
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "30s",
-   "floated": false
-  },
-  {
-   "record": {
     "id": "requests-rate",
     "form": "pulse",
     "source": "ollama.request_log",
@@ -730,6 +691,45 @@
    ],
    "hidden": false,
    "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "node-tps",
+    "form": "small-multiples",
+    "source": "bench.node_perf.history",
+    "title": "Node throughput · tokens/s",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "series",
+      "v": "tps"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "rows": 3,
+     "unit": "tok/s"
+    },
+    "open": "models"
+   },
+   "at": [
+    4,
+    10
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
    "floated": false
   },
   {
@@ -1481,52 +1481,6 @@
    "floated": false
   },
   {
-   "at": [
-    0,
-    28
-   ],
-   "record": {
-    "id": "ops-live",
-    "form": "vgraph",
-    "source": "ops.snapshot",
-    "title": "Live operations",
-    "read": {
-     "refresh": "15s",
-     "map": {
-      "nodes": "nodes",
-      "links": "links",
-      "type": "plane"
-     }
-    },
-    "frame": {
-     "size": "l",
-     "span": [
-      8,
-      6
-     ]
-    },
-    "draw": {
-     "body": "record",
-     "mode": "estate-3d"
-    },
-    "open": "estate/ops",
-    "place": "dashboard",
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "note": "the Live operations page (the estate as planes of nodes on a lattice of domains, what is in flight) as a tile - a version of the stack topology"
-   },
-   "span": [
-    8,
-    6
-   ],
-   "hidden": false,
-   "refresh": "15s",
-   "floated": false
-  },
-  {
    "record": {
     "id": "backups",
     "form": "composite",
@@ -1653,6 +1607,53 @@
    "floated": false
   },
   {
+   "at": [
+    0,
+    28
+   ],
+   "record": {
+    "id": "ops-live",
+    "form": "vgraph",
+    "source": "ops.snapshot",
+    "title": "Live operations",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "nodes": "nodes",
+      "links": "links",
+      "type": "plane"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      8,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "mode": "estate-3d",
+     "chrome": "min"
+    },
+    "open": "estate/ops",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "note": "the Live operations page (the estate as planes of nodes on a lattice of domains, what is in flight) as a tile - a version of the stack topology"
+   },
+   "span": [
+    8,
+    6
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
    "record": {
     "id": "node-agents",
     "place": "dashboard",
@@ -1692,6 +1693,51 @@
    "at": [
     8,
     28
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "traffic",
+    "form": "numbers",
+    "source": "netmon.snapshot",
+    "title": "Traffic",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "guests": "totals.guests",
+       "running": "totals.running",
+       "net in": "totals.netin",
+       "net out": "totals.netout"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "bytes": [
+      "net in",
+      "net out"
+     ]
+    },
+    "open": "estate/network/traffic"
+   },
+   "at": [
+    8,
+    30
    ],
    "span": [
     4,
@@ -1776,51 +1822,6 @@
    ],
    "hidden": false,
    "refresh": "60s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "traffic",
-    "form": "numbers",
-    "source": "netmon.snapshot",
-    "title": "Traffic",
-    "read": {
-     "refresh": "30s",
-     "map": {
-      "pick": {
-       "guests": "totals.guests",
-       "running": "totals.running",
-       "net in": "totals.netin",
-       "net out": "totals.netout"
-      }
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record",
-     "bytes": [
-      "net in",
-      "net out"
-     ]
-    },
-    "open": "estate/network/traffic"
-   },
-   "at": [
-    8,
-    30
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "30s",
    "floated": false
   },
   {
@@ -2520,276 +2521,6 @@
   },
   {
    "record": {
-    "id": "background",
-    "place": "dashboard",
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "form": "composite",
-    "source": "background.status",
-    "title": "Background jobs",
-    "read": {
-     "refresh": "30s"
-    },
-    "open": "activity",
-    "layout": "grid",
-    "children": [
-     {
-      "slot": "a",
-      "record": {
-       "form": "meter",
-       "source": "$subject",
-       "title": "quiet · until jobs may run",
-       "read": {
-        "map": {
-         "value": "quiet_for_s",
-         "max": "min_quiet_s"
-        }
-       },
-       "draw": {
-        "unit": "s"
-       }
-      }
-     },
-     {
-      "slot": "b",
-      "record": {
-       "form": "kv",
-       "source": "$subject",
-       "title": "state",
-       "read": {
-        "map": {
-         "keys": [
-          "busy_reason",
-          "running"
-         ]
-        }
-       }
-      }
-     },
-     {
-      "slot": "c",
-      "record": {
-       "form": "rows",
-       "source": "$subject",
-       "title": "jobs · runs · defers",
-       "read": {
-        "map": {
-         "rows": "jobs",
-         "name": "name",
-         "value": "defers",
-         "status": "last_ok"
-        }
-       },
-       "draw": {
-        "limit": 4
-       }
-      }
-     },
-     {
-      "slot": "d",
-      "record": {
-       "form": "rows",
-       "source": "$subject",
-       "title": "waiting",
-       "read": {
-        "map": {
-         "rows": "queue.waiting",
-         "name": "title",
-         "value": "waiting_for_s",
-         "status": "state"
-        }
-       },
-       "draw": {
-        "limit": 4,
-        "unit": "s"
-       }
-      }
-     }
-    ],
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      5
-     ]
-    },
-    "draw": {
-     "body": "record"
-    }
-   },
-   "at": [
-    0,
-    55
-   ],
-   "span": [
-    4,
-    5
-   ],
-   "hidden": false,
-   "refresh": "30s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "sandboxes",
-    "place": "dashboard",
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "form": "sandboxes",
-    "source": "evolve.sandbox.list",
-    "title": "Sandboxes",
-    "read": {
-     "refresh": "30s",
-     "map": {
-      "rows": "sandboxes",
-      "name": "name",
-      "status": "running"
-     }
-    },
-    "open": "estate/sandbox",
-    "draw": {
-     "body": "record",
-     "max": 48
-    },
-    "frame": {
-     "size": "l",
-     "span": [
-      6,
-      4
-     ]
-    }
-   },
-   "at": [
-    6,
-    49
-   ],
-   "span": [
-    6,
-    4
-   ],
-   "hidden": false,
-   "refresh": "30s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "minds",
-    "place": "dashboard",
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "form": "composite",
-    "source": "dream.scheduler.status",
-    "title": "Dream · narrator",
-    "read": {
-     "refresh": "60s"
-    },
-    "open": "dream",
-    "layout": "grid",
-    "children": [
-     {
-      "slot": "a",
-      "record": {
-       "form": "meter",
-       "source": "$subject",
-       "title": "idle · until it dreams",
-       "read": {
-        "map": {
-         "value": "idle_minutes",
-         "max": "min_idle_minutes"
-        }
-       },
-       "draw": {
-        "unit": "min"
-       }
-      }
-     },
-     {
-      "slot": "b",
-      "record": {
-       "form": "kv",
-       "source": "$subject",
-       "title": "dream",
-       "read": {
-        "map": {
-         "keys": [
-          "scheduler_running",
-          "enabled",
-          "in_cycle",
-          "background_loops"
-         ]
-        }
-       }
-      }
-     },
-     {
-      "slot": "c",
-      "record": {
-       "form": "kv",
-       "source": "dream.director.status",
-       "title": "director",
-       "read": {
-        "map": {
-         "keys": [
-          "running",
-          "conversational",
-          "cpu_pressure"
-         ]
-        }
-       }
-      }
-     },
-     {
-      "slot": "d",
-      "record": {
-       "form": "kv",
-       "source": "system.narrator.status",
-       "title": "narrator",
-       "read": {
-        "map": {
-         "keys": [
-          "enabled",
-          "loop_running",
-          "model"
-         ]
-        }
-       }
-      }
-     }
-    ],
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      5
-     ]
-    },
-    "draw": {
-     "body": "record"
-    }
-   },
-   "at": [
-    4,
-    55
-   ],
-   "span": [
-    4,
-    5
-   ],
-   "hidden": false,
-   "refresh": "60s",
-   "floated": false
-  },
-  {
-   "record": {
     "id": "agents",
     "place": "dashboard",
     "actions": [
@@ -2928,6 +2659,391 @@
   },
   {
    "record": {
+    "id": "sandboxes",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "sandboxes",
+    "source": "evolve.sandbox.list",
+    "title": "Sandboxes",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "rows": "sandboxes",
+      "name": "name",
+      "status": "running"
+     }
+    },
+    "open": "estate/sandbox",
+    "draw": {
+     "body": "record",
+     "max": 48
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      4
+     ]
+    }
+   },
+   "at": [
+    6,
+    49
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-goals",
+    "form": "pills",
+    "source": "goals.list",
+    "title": "Goals",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "goals",
+      "name": "name",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "agents"
+   },
+   "at": [
+    6,
+    53
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "background",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "composite",
+    "source": "background.status",
+    "title": "Background jobs",
+    "read": {
+     "refresh": "30s"
+    },
+    "open": "activity",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "meter",
+       "source": "$subject",
+       "title": "quiet · until jobs may run",
+       "read": {
+        "map": {
+         "value": "quiet_for_s",
+         "max": "min_quiet_s"
+        }
+       },
+       "draw": {
+        "unit": "s"
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "state",
+       "read": {
+        "map": {
+         "keys": [
+          "busy_reason",
+          "running"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "jobs · runs · defers",
+       "read": {
+        "map": {
+         "rows": "jobs",
+         "name": "name",
+         "value": "defers",
+         "status": "last_ok"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "waiting",
+       "read": {
+        "map": {
+         "rows": "queue.waiting",
+         "name": "title",
+         "value": "waiting_for_s",
+         "status": "state"
+        }
+       },
+       "draw": {
+        "limit": 4,
+        "unit": "s"
+       }
+      }
+     }
+    ],
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      5
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    55
+   ],
+   "span": [
+    4,
+    5
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "minds",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "composite",
+    "source": "dream.scheduler.status",
+    "title": "Dream · narrator",
+    "read": {
+     "refresh": "60s"
+    },
+    "open": "dream",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "meter",
+       "source": "$subject",
+       "title": "idle · until it dreams",
+       "read": {
+        "map": {
+         "value": "idle_minutes",
+         "max": "min_idle_minutes"
+        }
+       },
+       "draw": {
+        "unit": "min"
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "dream",
+       "read": {
+        "map": {
+         "keys": [
+          "scheduler_running",
+          "enabled",
+          "in_cycle",
+          "background_loops"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "dream.director.status",
+       "title": "director",
+       "read": {
+        "map": {
+         "keys": [
+          "running",
+          "conversational",
+          "cpu_pressure"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "kv",
+       "source": "system.narrator.status",
+       "title": "narrator",
+       "read": {
+        "map": {
+         "keys": [
+          "enabled",
+          "loop_running",
+          "model"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      5
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    4,
+    55
+   ],
+   "span": [
+    4,
+    5
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-programmes",
+    "form": "ranked",
+    "source": "loops.program.list",
+    "title": "Programmes · loops each",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "programs",
+      "name": "name",
+      "value": "loops.length"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "agents"
+   },
+   "at": [
+    8,
+    55
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-runs",
+    "form": "column",
+    "source": "evolve.runs",
+    "title": "Loop runs per day · last 50",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "values": "runs",
+      "count": "ts",
+      "span": "day"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "accent"
+    },
+    "open": "evolve"
+   },
+   "at": [
+    8,
+    57
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
     "id": "scheduler",
     "form": "table",
     "source": "obs.scheduler",
@@ -3023,121 +3139,6 @@
    ],
    "hidden": false,
    "refresh": "10s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "agent-programmes",
-    "form": "ranked",
-    "source": "loops.program.list",
-    "title": "Programmes · loops each",
-    "read": {
-     "refresh": "60s",
-     "map": {
-      "values": "programs",
-      "name": "name",
-      "value": "loops.length"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "open": "agents"
-   },
-   "at": [
-    8,
-    55
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "60s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "agent-runs",
-    "form": "column",
-    "source": "evolve.runs",
-    "title": "Loop runs per day · last 50",
-    "read": {
-     "refresh": "5m",
-     "map": {
-      "values": "runs",
-      "count": "ts",
-      "span": "day"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      3
-     ]
-    },
-    "draw": {
-     "body": "record",
-     "palette": "accent"
-    },
-    "open": "evolve"
-   },
-   "at": [
-    8,
-    57
-   ],
-   "span": [
-    4,
-    3
-   ],
-   "hidden": false,
-   "refresh": "5m",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "agent-goals",
-    "form": "pills",
-    "source": "goals.list",
-    "title": "Goals",
-    "read": {
-     "refresh": "60s",
-     "map": {
-      "values": "goals",
-      "name": "name",
-      "status": "status"
-     }
-    },
-    "frame": {
-     "size": "l",
-     "span": [
-      6,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "open": "agents"
-   },
-   "at": [
-    6,
-    53
-   ],
-   "span": [
-    6,
-    2
-   ],
-   "hidden": false,
-   "refresh": "60s",
    "floated": false
   },
   {

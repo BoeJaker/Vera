@@ -17,6 +17,6 @@ t('the Sandboxes iso draws every sandbox (23), not six', (hi.match(/sb-\d+/g) ||
 const byId = (id) => M.widgets.find((w) => w.record && w.record.id === id);
 t('the weak tiles are infographics now', ['programmes', 'looplab', 'background', 'minds', 'agents'].every((id) => byId(id).record.form === 'composite' && byId(id).record.layout === 'grid' && byId(id).record.children.some((c) => /^(donut|meter|ring|counter|column)$/.test(c.record.form))));
 t('Node agents is one table of every node', byId('node-agents').record.form === 'table' && byId('node-agents').record.draw.columns.includes('mem_available_mb'));
-t('Live operations is a tile, after the stack topology', byId('ops-live').record.source === 'ops.snapshot' && byId('ops-live').record.draw.mode === 'estate-3d' && M.widgets.findIndex((w) => w.record && w.record.id === 'ops-live') === M.widgets.findIndex((w) => w.record && w.record.id === 'topology-map') + 1);
+t('Live operations is a tile, just below the stack topology', byId('ops-live').record.source === 'ops.snapshot' && byId('ops-live').record.draw.mode === 'estate-3d' && byId('ops-live').at[1] === byId('topology-map').at[1] + byId('topology-map').span[1]);
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
