@@ -14021,6 +14021,17 @@ except Exception:                                     # pragma: no cover
         _fix_loop = None
         log.warning("fix_loop_core unavailable - a persistent test failure runs to the wall cap")
 
+# The executor shows its last four results in full; this lists the calls older
+# than those, one line each, so a long step still sees what it already tried.
+try:
+    from Vera.vera.dag import step_call_ledger_core as _call_ledger
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import step_call_ledger_core as _call_ledger
+    except Exception:
+        _call_ledger = None
+        log.warning("step_call_ledger_core unavailable - a long step sees only its last four calls")
+
 
 def _v6_goal_implies_document(text: str) -> bool:
     """Does the goal name a DOCUMENT deliverable? "Report the disk usage" and
@@ -16098,6 +16109,17 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
 
         obs = "\n\n".join(_obs_line(i, h) for i, h in enumerate(history[-4:])) \
             or "(no tool calls yet — make your first call or emit done)"
+        # The calls older than the four above - '' until there are any, so a
+        # short step's prompt is unchanged. Census 70-78: 10-18 cycle steps
+        # re-ran calls that had already failed once they scrolled out of view.
+        _earlier = ""
+        if _call_ledger is not None:
+            try:
+                _earlier = _call_ledger.earlier_calls_block(history, summarise=_call_summary)
+            except Exception as _le:                   # pragma: no cover
+                log.debug("earlier-calls block skipped: %s", _le)
+        if _earlier:
+            obs = _earlier + "\n\n" + obs
         _rep_tool = next((t for t, n in tool_calls.items() if n >= 2), "")
         _rep_hint = (f"\n\nNOTE: you have already called {_rep_tool} {tool_calls.get(_rep_tool,0)}× — "
                      "do NOT call it again with reworded args. Either try a DIFFERENT capability "
@@ -16187,6 +16209,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 session_id=session_id, stream_id=stream_id, cycle=turns, step_id=step_id,
                 runtime={"caps": caps, "caps_count": len(caps or []),
                          "context_chars": len(ctx_slice or ""),
+                         "earlier_calls": (max(0, len(history) - 4) if _earlier else 0),
                          "skills": [s.get("id", "") for s in (loaded_skills or [])]})
         except Exception as _ae:                       # pragma: no cover
             log.debug("executor stage-context emit skipped: %s", _ae)
