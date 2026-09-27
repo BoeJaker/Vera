@@ -676,6 +676,17 @@ header .hp-meter i b{display:block;height:100%;background:var(--ac,var(--acc,#5a
 #lhmNav.railed #lhmEventsFeed{display:none!important}
 .body-wrap.lhm .main.autohide-reserve-v.railed{padding-left:54px!important}
 .body-wrap.lhm .main.autohide-reserve-v.chatmenu.railed{padding-left:47px!important}
+/* THE CHAT'S PANEL IS SEE-THROUGH over the harness's glow: the wrapper the chat's frame sits in painted an opaque ground
+   over it (owner: "the chat ui has an extra flat background above the glow background") */
+body.chat-open .panels .panel.active,body.chat-open .panels .panel.active > div{background:transparent!important}
+/* BLOCKS OFF: the menu has no ground of its own - except a menu revealed from auto-hide, which floats over the page */
+html[data-blocks="off"] #lhmNav.lhm-nav:not(.show),html[data-blocks="off"] body.chat-open #lhmNav.chatmenu:not(.show){background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;border-right-color:transparent}
+/* AUTO-HIDE LEAVES THE RAIL (owner: "its not leaving a rail when the lhm hides/collapses"): hidden, the menu is its icons;
+   pointed at, it opens to its full width over the page, as before */
+.body-wrap.lhm .lhm-nav.autohide:not(.show){transform:none;opacity:1;pointer-events:auto;width:54px!important;min-width:54px!important;overflow:hidden}
+.body-wrap.lhm .lhm-nav.autohide.chatmenu:not(.show){width:47px!important;min-width:47px!important}
+.body-wrap.lhm .main.ah-rail:not(.autohide-reserve-v){padding-left:54px}
+.body-wrap.lhm .main.ah-rail.chatmenu:not(.autohide-reserve-v){padding-left:47px}
 #hdrDrawerBtn[hidden]{display:none}
 #hdrDrawerBtn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
 #hdrDrawer{position:absolute;right:14px;top:calc(100% + 6px);z-index:900;display:none;flex-direction:column;align-items:flex-start;gap:12px;padding:12px 14px;border-radius:var(--ui-radius,10px);background:var(--s1,var(--bg1,#151719));box-shadow:var(--elev,0 10px 30px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));max-width:min(620px,calc(100vw - 28px))}
@@ -2669,7 +2680,7 @@ function _hdrSync(){
   const off = pid ? _hdrOffers[pid] : null;
   Object.keys(_hdrOffers).forEach(k => { const o = _hdrOffers[k], on = (k === pid);
     if(o.absorbed !== on){ o.absorbed = on; try{ o.src.postMessage({ type: 'vera:hdr:absorbed', on }, '*'); }catch(_){} } });
-  let chat = false; try{ chat = !!(pid && _chatFrameFor(pid)); }catch(_){}
+  let chat = false; try{ chat = !!(pid && (_chatFrameFor(pid) || document.querySelector('#panel-' + CSS.escape(pid) + ' iframe[src*="chat_panel"]'))); }catch(_){}
   document.body.classList.toggle('chat-open', chat);
   hdr.classList.toggle('absorbing', !!off);
   _hdrDrawerPlace(!!off);
@@ -3088,6 +3099,7 @@ function _tabApplyAutohide(){
   // defeating the point of auto-hide in both orientations.
   document.getElementById('main')?.classList.remove('autohide-reserve-h','autohide-reserve-v');
 
+  document.getElementById('main')?.classList.toggle('ah-rail', !!(_autohide && _lhmMode));   // the rail stays: the page keeps its width
   if(_autohide){
     const el = _autohideEl(); if(!el) return;
     el.classList.add('autohide');
@@ -3125,6 +3137,11 @@ function _tabScheduleHide(){
   }, 100);
 }
 
+// the side list draws as the rail whenever the menu is folded - by « or by auto-hide while it is not pointed at
+function _lhmRailSync(){ const nav = document.getElementById('lhmNav'); if(!nav) return; const hidden = nav.classList.contains('autohide') && !nav.classList.contains('show');
+  const side = nav.querySelector('.lhm-side'); if(side) side.classList.toggle('railed', !!_lhmRailed || hidden); }
+{ const nav = document.getElementById('lhmNav'), tabs = document.getElementById('lhmNavTabs');
+  if(window.MutationObserver){ if(nav) new MutationObserver(_lhmRailSync).observe(nav, { attributes:true, attributeFilter:['class'] }); if(tabs) new MutationObserver(_lhmRailSync).observe(tabs, { childList:true }); } }
 // Init on load
 _tabLoadPrefs();
 
