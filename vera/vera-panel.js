@@ -166,7 +166,7 @@
     if (!idAttr) {
       var at0 = btns[0].attributes || [];
       for (var ai = 0; ai < at0.length && !idAttr; ai++) {
-        var nm = at0[ai].name; if (!/^data-/.test(nm) || /^data-(w|tip|title|label|i18n|vera-|rcm-)/.test(nm)) continue;
+        var nm = at0[ai].name; if (!/^data-/.test(nm) || /^data-(w|tip|title|label|i18n|vera-|rcm-|icon|lhm-)/.test(nm)) continue;   /* data-icon is the glyph, never the id */
         var seen2 = {}, ok = true;
         for (var bj = 0; bj < btns.length; bj++) { var v2 = btns[bj].getAttribute(nm); if (!v2 || seen2[v2]) { ok = false; break; } seen2[v2] = 1; }
         if (ok) idAttr = nm;
