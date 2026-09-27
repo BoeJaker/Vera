@@ -14032,6 +14032,16 @@ except Exception:                                     # pragma: no cover
         _call_ledger = None
         log.warning("step_call_ledger_core unavailable - a long step sees only its last four calls")
 
+# A step that needs step N also reads the recovery step that finished N's work.
+try:
+    from Vera.vera.dag import step_deps_core as _step_deps
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import step_deps_core as _step_deps
+    except Exception:
+        _step_deps = None
+        log.warning("step_deps_core unavailable - a dependent step reads only the failed attempt")
+
 
 def _v6_goal_implies_document(text: str) -> bool:
     """Does the goal name a DOCUMENT deliverable? "Report the disk usage" and
@@ -14961,7 +14971,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
 
     # Curated context slice — outputs of the steps this one depends on.
     needs = step.get("needs") or []
-    rel = [blackboard[n] for n in needs if n in blackboard]
+    # A needed step that failed its bar may have been finished by a recovery
+    # step with a new id; follow that link so this step reads the work that was
+    # actually done, not only the failed attempt (step_deps_core).
+    rel = (_step_deps.dependency_results(blackboard, needs) if _step_deps is not None
+           else [blackboard[n] for n in needs if n in blackboard])
     if not rel:
         rel = list(blackboard.values())  # no explicit deps → all prior results
     # Recon (step 0) is everyone's dependency: `needs` only ever names PLAN step
@@ -21124,6 +21138,8 @@ def _v6_make_recovery_step(failed_step: Dict[str, Any], failed_res: Dict[str, An
         "needs": [], "complex": False, "phases": [],
         "success": crit,
         "_recovery": True,
+        "_recovers": (_step_deps.recovers_id(failed_step) if _step_deps is not None
+                      else failed_step.get("id")),
         "_prereq_done": True,   # context is already embedded; skip prestep-info
         "_recovery_history": lineage,
     }
@@ -21242,6 +21258,7 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
         "success": crit or str(obj.get("success") or "")[:240],
         "_recovery": True,
         "_adjusted": True,
+        "_recovers": fallback.get("_recovers"),
         "_prereq_done": True,
         "_recovery_history": lineage,
     }
@@ -24491,6 +24508,10 @@ async def cap_dag_agent_loop_v6(
         # Carry the step's success criterion onto the result so the ledger/controller
         # can judge it against the bar the planner set.
         res["success"] = step.get("success", "")
+        # A recovery step's result names the step it finished, so a later step
+        # that needs that step reads this result too (step_deps_core).
+        if step.get("_recovers") is not None:
+            res["_recovers"] = step["_recovers"]
         await _finalize_one(step, res)
         await _verify_one(step, res)
         gcycle = res.get("cycle_end", gcycle)
