@@ -4403,6 +4403,29 @@ def _guard_filter_catalog(session_id: str, names: List[str]) -> List[str]:
         return names
 
 
+try:
+    from Vera.vera.dag import cap_relevance_core as _cap_relevance
+except ImportError:                                   # pragma: no cover
+    from vera.dag import cap_relevance_core as _cap_relevance
+
+#: Name parts that mark a capability a planner should never be OFFERED by
+#: discovery: secrets, credentials and host provisioning. Measured 2026-09-27:
+#: the lexical search put ide.vscode.password.reveal / .set and
+#: pxstore.store.writer.provision into the catalogue for "write an explainer of
+#: a race condition". They stay callable (and an explicit base toolkit can still
+#: name one); they are just not discovered into a loop's catalogue.
+_PLANNER_SENSITIVE_PARTS = frozenset({
+    "password", "passwords", "secret", "secrets", "credential", "credentials",
+    "vault", "token", "tokens", "provision", "reveal",
+})
+
+
+def _planner_catalog_sensitive(name: str) -> bool:
+    n = str(name or "").lower()
+    parts = set(n.replace("_", ".").split("."))
+    return bool(parts & _PLANNER_SENSITIVE_PARTS) or n.endswith(".config.set")
+
+
 async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
                               categories: Optional[List[str]] = None,
                               keywords: List[str], top_k: int = 16,
@@ -4445,9 +4468,10 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
     toolkit: List[str] = []
     seen: set = set()
 
-    def add(name: str):
+    def add(name: str, explicit: bool = False):
         if name and name in CAPABILITY_REGISTRY and name not in seen \
-                and name not in blacklist:
+                and name not in blacklist \
+                and (explicit or not _planner_catalog_sensitive(name)):
             toolkit.append(name)
             seen.add(name)
 
@@ -4473,7 +4497,7 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
     #    are never truncated and are the floor when triage can't narrow things.
     base_list = [c.strip() for c in (base_caps or []) if c and c.strip()]
     for c in base_list:
-        add(c)
+        add(c, explicit=True)
     n_base = len(toolkit)  # everything up to here is protected from the size cap
 
     # 1. Discovery caps — always present (bypass pool)
@@ -4541,16 +4565,23 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
         kw_query = " ".join(query_parts).strip()
         if cap_index is not None and kw_query:
             hits = await cap_index.relevance_search(kw_query, top_k=top_k * 2)
-            for entry in hits or []:
-                name = entry[0] if isinstance(entry, tuple) else (
-                    entry.get("name") if isinstance(entry, dict) else None
-                )
-                if not name or name in seen:
-                    continue
+            ranked = [n for n in (
+                (e[0] if isinstance(e, tuple) else (e.get("name") if isinstance(e, dict) else None))
+                for e in (hits or [])) if n]
+            # A SHORT tail that must be earned (cap_relevance_core.select_tail):
+            # the best few by relevance, then only caps whose domain the goal
+            # names. Replayed on the census goals: a markets backtest goal gets
+            # markets.backtest.*, a browser goal browser.*, a generic goal 3
+            # extras instead of 15-20 unrelated ones.
+            _idx = getattr(cap_index, "_index", {}) or {}
+            for name in _cap_relevance.select_tail(
+                    ranked, kw_query, exclude=seen,
+                    tags_of=lambda n: (_idx.get(n) or {}).get("tags") or (),
+                    max_tail=min(_cap_relevance.MAX_TAIL, semantic_budget)):
+                before = len(seen)
                 add(name)
-                semantic_added += 1
-                if semantic_added >= semantic_budget:
-                    break
+                if len(seen) > before:
+                    semantic_added += 1
     except Exception:
         pass
 
@@ -12840,12 +12871,13 @@ def _v5_minimal_plan_primary() -> bool:
 
 
 def _v5_brief_cap_line(name: str) -> str:
-    """One-line 'name — description' for the orchestrator catalog (no schema)."""
+    """One-line 'name — description' for the orchestrator catalog (no schema):
+    whole sentences, plus the description's when-to-use guidance
+    (cap_relevance_core.brief_line - it used to be a 120-char mid-sentence cut)."""
     cap = CAPABILITY_REGISTRY.get(name)
     if not cap:
         return name
-    desc = (cap.get("description") or "").strip().replace("\n", " ")[:120]
-    return f"{name} — {desc}" if desc else name
+    return _cap_relevance.brief_line(name, cap.get("description") or "")
 
 
 def _v5_cap_skill_map(skills: List[Dict[str, Any]]) -> Dict[str, List[str]]:
