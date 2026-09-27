@@ -3315,6 +3315,14 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # num_ctx); the caller's explicit options always win key-by-key.
     _rule_opts = (eff_rule or {}).get("options") or {}
     _merged_opts = {**_rule_opts, **(dict(options) if options else {})}
+    # A ROUTE may keep its model resident: `keep_alive` in a routing rule's
+    # options (e.g. planning_style/enrich keeps cpu-247's selected brief model
+    # warm - a 35B MoE takes 62 s to load cold, 2026-09-27). It is a request
+    # field, not a sampling option, so it is lifted out of the options; a
+    # caller's explicit keep_alive still wins.
+    _route_ka = _merged_opts.pop("keep_alive", None)
+    if keep_alive is None and _route_ka not in (None, ""):
+        body["keep_alive"] = _route_ka
     # AUTO-FIT num_ctx to the prompt when nobody pinned one. Without this a big
     # prompt is silently truncated to ollama's ~2048 default (qwen3.5:9b actually
     # declares 262144), so the model loses its system prompt / instructions — the

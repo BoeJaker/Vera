@@ -54,13 +54,20 @@ try:
             #   the stream's steps when it lands. Held off the GPU; its job type
             #   plan_enrich prefers the long-horizon CPU node (cpu-247) and keeps
             #   off the embedding/worker node (cpu-246), and broad issues these
-            #   one at a time. qwen2.5:7b until a higher-quality CPU model is
-            #   measured (2026-09-27: ~7 tok/s decode, ~25 tok/s prompt read).
+            #   one at a time. Model qwen3.6:35b-a3b (user's pick, 2026-09-27):
+            #   measured on idle cpu-247 it decodes 9.8 tok/s and reads 37.5
+            #   tok/s - faster than qwen2.5:7b (7.2 / 24.7) as a MoE with ~3B
+            #   active - and its briefs were the more accurate; but it loads in
+            #   62 s cold (~22 GB), so the route keeps its model WARM (keep_alive
+            #   2h - whichever model is selected here, or per run in the loop's
+            #   Brief model setting). Probe: shared-planning/compute-roles/
+            #   cpu247-model-probe-2026-09-27.md.
             "stream": {"job_type": "planning_lens", "prefer_gpu": True,
                        "options": {"temperature": 0.3}},
             "enrich": {"job_type": "plan_enrich", "deny_gpu": True,
-                       "model": "qwen2.5:7b",
-                       "options": {"temperature": 0.3, "num_ctx": 8192}},
+                       "model": "qwen3.6:35b-a3b",
+                       "options": {"temperature": 0.3, "num_ctx": 8192,
+                                   "keep_alive": "2h"}},
         })
 except Exception as e:                       # pragma: no cover - never block load
     log.debug("register planning_style profile: %s", e)
