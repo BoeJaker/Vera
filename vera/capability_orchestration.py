@@ -654,6 +654,9 @@ OLLAMA_JOB_TYPES: List[str] = [
     # The dream DIRECTOR (ambient thought orchestrator) runs continuously on
     # CPU nodes — it must never contend with user-facing GPU work.
     "dream_director",
+    # The broad planning style's per-work-stream briefs: long CPU generations
+    # that run BESIDE the GPU plan (compute-roles), one at a time.
+    "plan_enrich",
     # Media services served by the GPU inference server(s) (edge/GPU_inference.py):
     # routed across MEDIA_INSTANCES by resolve_media(), not pick_instance().
     "stt", "tts", "imagegen",
@@ -725,6 +728,12 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # holding that node's single generation slot starved every embed call
     # (and vice versa — director thoughts queued behind embedding bursts).
     "dream_director":   _rule("dream_director",   deny_gpu=True, prefer="cpu-247"),
+    # Planning enrichment (broad style): a long generation on the long-horizon
+    # node, cpu-247, never on the GPU and kept off cpu-246 - the embedding /
+    # worker node - so a brief never holds the node embeddings and system work
+    # need. The broad style issues these ONE AT A TIME, so the soft `prefer` is
+    # never pushed onto cpu-246 by its own second call.
+    "plan_enrich":      _rule("plan_enrich",      deny_gpu=True, prefer="cpu-247"),
     # Media services — GPU-first across the media nodes that actually have the
     # service installed (resolve_media checks each node's /health service list).
     "stt":      _rule("stt",      prefer_gpu=True),
@@ -7443,6 +7452,38 @@ async def mcp_call_endpoint(name: str, arguments: str = "", trace_id=None):
     return {"type": "tool_result", "tool_name": name, "trace_id": tid, "content": result}
 
 
+def _mcp_call_accepted(cap: Dict[str, Any]) -> set:
+    """The argument names /mcp/call lets through to `cap`.
+
+    A capability's own schema - EXCEPT for one whose function ends in **kwargs
+    and names the capability it forwards them to (`delegates_to`): its derived
+    schema is incomplete by construction. dag.agent_loop_v7 declares only `goal`
+    and forwards everything else to dag.agent_loop_v6 (71 parameters), so this
+    filter silently threw away every argument an explicit caller passed to v7 -
+    plan_style, model, enable_dream_persistence (found 2026-09-27: four runs
+    asked for four planning styles and all ran as auto). An explicit caller's
+    arguments are widened by the delegate's schema, exactly as engine_params
+    already does for loops.run; profile bodies are not this path.
+    Empty set = no schema = no filtering (unchanged)."""
+    own = set(((cap or {}).get("schema") or {}).get("properties", {}).keys())
+    fn = (cap or {}).get("func")
+    delegate = str(getattr(fn, "delegates_to", "") or "")
+    if not (own and delegate):
+        return own
+    try:
+        from Vera.vera.dag import engine_params as _ep
+    except Exception:                                        # pragma: no cover
+        try:
+            from vera.dag import engine_params as _ep
+        except Exception:
+            return own
+    dcap = CAPABILITY_REGISTRY.get(delegate) or {}
+    dprops = list(((dcap.get("schema") or {}).get("properties") or {}).keys())
+    # trace_id is supplied by the handler itself; a caller's copy would collide.
+    return set(_ep.caller_accepted(own, has_var_keyword=_ep.takes_var_keyword(fn),
+                                   delegate_props=dprops)) - {"trace_id"}
+
+
 def _make_mcp_call_handler():
     """
     Dedicated handler for POST /mcp/call.
@@ -7471,8 +7512,12 @@ def _make_mcp_call_handler():
             raise HTTPException(404, f"Unknown capability: {name}")
 
         # Filter args to accepted params — prevents unexpected kwarg errors
-        accepted = set(cap.get("schema", {}).get("properties", {}).keys())
+        accepted = _mcp_call_accepted(cap)
         if accepted:
+            _gone = sorted(k for k in args if k not in accepted)
+            if _gone:
+                log.warning("/mcp/call %s: dropped argument(s) the capability does not "
+                            "accept: %s", name, ", ".join(_gone[:12]))
             args = {k: v for k, v in args.items() if k in accepted}
 
         # Server-side type coercion using the cap schema.
@@ -7530,7 +7575,14 @@ def _make_mcp_call_handler():
         if not session_id and isinstance(_raw_args, dict):
             session_id = str(_raw_args.get("session_id") or "").strip()
         if session_id:
-            if "session_id" in accepted:
+            # Injected only when the capability ITSELF declares session_id. The
+            # delegate widening (_mcp_call_accepted) admits session_id for a
+            # **kwargs engine so a caller can pass one EXPLICITLY in arguments;
+            # the top-level session_id is the caller's attribution id, and
+            # injecting it into dag.agent_loop_v7 made every run from one caller
+            # share ONE loop session (found 2026-09-27, before it reached main).
+            _own = ((cap.get("schema") or {}).get("properties") or {})
+            if "session_id" in _own:
                 args.setdefault("session_id", session_id)
             try:
                 _vera_syslog = sys.modules.get("syslog")

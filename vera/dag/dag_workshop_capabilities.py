@@ -13306,7 +13306,8 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                                allowed_phases: Optional[List[str]] = None,
                                intent: str = "mixed",
                                plan_note: str = "",
-                               sid: str = "", stream_id: str = "") -> Dict[str, Any]:
+                               sid: str = "", stream_id: str = "",
+                               route_profile: str = "", route_role: str = "") -> Dict[str, Any]:
     """ONE LLM call: decompose the goal into an ordered step plan. Each step names
     only the few caps and skills it needs. Folds triage+step-select+plan into a
     single call so the loop starts working almost immediately.
@@ -13338,6 +13339,16 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
     # deterministic floor), so a re-plan differs from a plan that drifted.
     plan_opts = _planner_sampling(_pa.get("options"))
     plan_persona = _pa.get("persona") or ""
+    # A ROUTE OVERRIDE (the broad style's per-stream calls) sends this call to
+    # another routing role - and then the planner agent's pinned model and
+    # options (its num_ctx) must not follow it: a CPU stream would otherwise load
+    # the planner's GPU-sized model and window on a CPU node. The role's own rule
+    # supplies model and sampling. No override = exactly the call as before.
+    _plan_profile = route_profile or LOOP_ROUTING_PROFILE
+    _plan_role = route_role or "planner"
+    if route_role:
+        plan_model = model or ""
+        plan_opts = _planner_sampling(None)
     cap_line_parts = []
     for n in catalog_names:
         line = "  " + _v5_brief_cap_line(n)
@@ -13388,7 +13399,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                 await _emit_stage_context(
                     "planner", variant="minimal", system=sys, prompt=prompt,
                     rule_ids=_RULES.rule_ids_for("planner:minimal"),
-                    model=plan_model, role="planner",
+                    model=plan_model, role=_plan_role,
                     session_id=sid, stream_id=stream_id, cycle=None,
                     runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
             except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
@@ -13396,7 +13407,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             raw = await _safe_ollama_generate_dw(
                 prompt, system=sys, model=plan_model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
-                profile=LOOP_ROUTING_PROFILE, role="planner",
+                profile=_plan_profile, role=_plan_role,
                 request_stage="planner")
             valid_skill_ids = {s["id"] for s in skills}
             _pp = _v5_parse_plan(raw or "")
@@ -13671,7 +13682,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             await _emit_stage_context(
                 "planner", variant="full", system=sys, prompt=prompt,
                 rule_ids=_RULES.rule_ids_for("planner:full"),
-                model=plan_model, role="planner",
+                model=plan_model, role=_plan_role,
                 session_id=sid, stream_id=stream_id, cycle=None,
                 runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
         except Exception as _ae:      # pragma: no cover â€” instrumentation must never break a run
@@ -13679,7 +13690,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=plan_model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
-            profile=LOOP_ROUTING_PROFILE, role="planner", timeout=_V5_PLANNER_TIMEOUT_S,
+            profile=_plan_profile, role=_plan_role, timeout=_V5_PLANNER_TIMEOUT_S,
             request_stage="planner",
             stream_cb=(_plan_stream_cb if stream_id else None))
         _pp = _v5_parse_plan(raw or "")
@@ -14041,6 +14052,18 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _step_deps = None
         log.warning("step_deps_core unavailable - a dependent step reads only the failed attempt")
+
+# Planning styles: the table that says what plan_style=<id> means for the loop's
+# planning phase (vera/planning/planner_styles.LOOP_STYLES). Unavailable -> every
+# run plans as 'auto', which is the behaviour from before styles existed.
+try:
+    from Vera.vera.planning import planner_styles as _plan_styles
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.planning import planner_styles as _plan_styles
+    except Exception:
+        _plan_styles = None
+        log.warning("planner_styles unavailable - plan_style is ignored, every run plans as auto")
 
 
 def _v6_goal_implies_document(text: str) -> bool:
@@ -19102,6 +19125,168 @@ async def _v5_plan_master_piecewise(goal: str, catalog_names: List[str],
             "deferred_pieces": deferred_pieces}
 
 
+async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[str, Any]],
+                         cap_skill_map: Optional[Dict[str, List[str]]], *,
+                         model: str = "", instance_id: str = "", prefer_gpu: bool = True,
+                         max_steps: int = 8, phase_policy: str = "sparingly",
+                         intent: str = "mixed", sid: str = "",
+                         stream_id: str = "") -> Dict[str, Any]:
+    """The BROAD planning style (planner_styles.LOOP_STYLES['broad']).
+
+    Research-shaped, placed by the compute-roles rule (GPU = the core plan the
+    run waits on; CPU nodes = parallel planning work merged in, like the
+    research analyst beside the writer):
+    1. ONE call on the loop's planner role splits the goal into work-streams.
+    2. GPU: every stream's step plan (_v5_orchestrate_plan with a [PIECEWISE]
+       directive, planning_style/stream route) - seconds each.
+    3. CPU, concurrently from the moment the streams exist: a deeper brief per
+       stream (planning_style/enrich route). Planning waits a bounded grace
+       after the GPU plan for them; each brief is applied to its stream's steps
+       before they run (by the loop, so a late brief still reaches the stream's
+       remaining steps) - never a reason to hold the run.
+    4. The sub-plans are merged host-side (merge_streams, dedupe_across_streams).
+    Returns the loop's plan shape plus `broad` detail and `_enrich_tasks`
+    ({stream id: task}); steps == [] means the caller falls back to its own
+    planner (and the tasks are cancelled)."""
+    PSx = _plan_styles
+    empty = {"steps": [], "reason": "", "complexity": "", "recon": [], "done_when": ""}
+    if PSx is None:
+        return {**empty, "broad": {"error": "planner_styles unavailable"}}
+    t0 = time.monotonic()
+    cat_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:40])
+    streams: List[Dict[str, Any]] = []
+    try:
+        raw = await _safe_ollama_generate_dw(
+            PSx.broad_brief_prompt(goal, cat_lines),
+            system=PSx.BROAD_BRIEF_SYSTEM.format(n=PSx.MAX_STREAMS),
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=True,
+            options=_planner_sampling(), profile=LOOP_ROUTING_PROFILE, role="planner",
+            request_stage="plan_broad_brief")
+        streams = PSx.parse_streams(_extract_json(_strip_think(raw or "")[0]) or {},
+                                    catalog=catalog_names)
+    except Exception as e:
+        log.warning("broad style: stream brief failed: %s", e)
+    brief_s = round(time.monotonic() - t0, 1)
+    if not streams:
+        return {**empty, "broad": {"streams": 0, "brief_s": brief_s,
+                                   "error": "the goal did not split into work-streams"}}
+    await emit_event({"type": "agent_loop_v6.broad_streams", "session_id": sid,
+                      "stream_id": stream_id, "brief_s": brief_s,
+                      "streams": [{k: s[k] for k in ("id", "title", "deliverable",
+                                                    "dependencies", "caps")} for s in streams]})
+    per_stream = max(2, min(max_steps, (max_steps * 2) // len(streams) + 1))
+
+    # CPU: the deeper per-stream briefs start NOW, beside the GPU planning.
+    async def _enrich(s: Dict[str, Any]) -> str:
+        t1 = time.monotonic()
+        text, err = "", ""
+        try:
+            raw = await _safe_ollama_generate_dw(
+                PSx.enrich_prompt(goal, streams, s), system=PSx.ENRICH_SYSTEM,
+                json_mode=False, model="", instance_id="", prefer_gpu=False, think=False,
+                profile="planning_style", role=PSx.ENRICH_ROLE, request_stage="plan_enrich",
+                timeout=900)
+            text = PSx.enrich_note(_strip_think(raw or "")[0])
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"[:160]
+        try:
+            await emit_event({"type": "agent_loop_v6.broad_stream_enriched", "session_id": sid,
+                              "stream_id": stream_id, "stream": s["id"], "title": s["title"],
+                              "role": PSx.ENRICH_ROLE, "elapsed_s": round(time.monotonic() - t1, 1),
+                              "chars": len(text), "error": err})
+        except Exception:
+            pass
+        return text
+
+    # ONE heavy CPU generation at a time (user, 2026-09-27): the briefs run
+    # sequentially, in stream order, on the long-horizon node - two at once
+    # would spill the second onto the embedding node. Streams execute in that
+    # order too, so a later stream's brief has longer to arrive. Each stream gets
+    # a future the loop can poll; the runner task is kept under "__runner__".
+    _loop = asyncio.get_running_loop()
+    enrich_tasks: Dict[Any, Any] = {s["id"]: _loop.create_future() for s in streams}
+
+    async def _enrich_runner() -> None:
+        for s in streams:
+            fut = enrich_tasks[s["id"]]
+            if fut.done():
+                continue
+            try:
+                txt = await _enrich(s)
+            except asyncio.CancelledError:
+                for f in enrich_tasks.values():
+                    if isinstance(f, asyncio.Future) and not f.done():
+                        f.cancel()
+                raise
+            if not fut.done():
+                fut.set_result(txt)
+
+    enrich_tasks["__runner__"] = asyncio.create_task(_enrich_runner())
+
+    # GPU: every stream's step plan - the core plan the run is waiting on.
+    async def _one(s: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        t1 = time.monotonic()
+        try:
+            sub = await _v5_orchestrate_plan(
+                goal, list(catalog_names), skills, cap_skill_map, model="", instance_id="",
+                prefer_gpu=True, max_steps=per_stream,
+                master_plan=PSx.stream_directive(goal, streams, s), want_success=True,
+                phase_policy=phase_policy, intent=intent, sid=sid, stream_id="",
+                route_profile="planning_style", route_role=PSx.PLAN_ROLE)
+            steps = list(sub.get("steps") or [])
+            err = ""
+        except Exception as e:
+            steps, err = [], f"{type(e).__name__}: {e}"[:160]
+        rec = {"stream": s["id"], "title": s["title"], "role": PSx.PLAN_ROLE,
+               "elapsed_s": round(time.monotonic() - t1, 1), "steps": len(steps)}
+        if err:
+            rec["error"] = err
+        await emit_event({"type": "agent_loop_v6.broad_stream_planned", "session_id": sid,
+                          "stream_id": stream_id, **rec,
+                          "titles": [str(x.get("title") or "")[:80] for x in steps][:8]})
+        return steps, rec
+
+    results = await asyncio.gather(*(_one(s) for s in streams))
+    gpu_s = round(time.monotonic() - t0, 1)
+    # Bounded grace for the CPU briefs, like the research analyst's bounded wait.
+    _briefs = [f for k, f in enrich_tasks.items() if k != "__runner__"]
+    # Wait (bounded) only for the brief of the stream that runs FIRST: every
+    # later stream starts after it, and its brief is applied when it starts.
+    # Waiting for all of them held planning for the full grace - live
+    # 2026-09-27, 75 s of a 98.6 s planning phase for a brief whose stream
+    # was not due for minutes.
+    _first = enrich_tasks.get(streams[0]["id"])
+    if _first is not None and not _first.done():
+        await asyncio.wait([_first], timeout=PSx.ENRICH_GRACE_S)
+    enriched_in_time = sum(1 for f in _briefs
+                           if f.done() and not f.cancelled() and not f.exception() and f.result())
+    merged = PSx.merge_streams(streams, [r[0] for r in results],
+                               hard_cap=max(max_steps * 2, 16))
+    # Streams are planned in isolation and repeat each other's work (a report's
+    # research was planned in three streams, 2026-09-27): drop the repeats.
+    merged, _dupes = PSx.dedupe_across_streams(merged)
+    if _dupes:
+        await emit_event({"type": "agent_loop_v6.broad_deduped", "session_id": sid,
+                          "stream_id": stream_id, "dropped": _dupes[:12]})
+    detail = {"streams": len(streams), "brief_s": brief_s, "gpu_plan_s": gpu_s,
+              "total_s": round(time.monotonic() - t0, 1),
+              "per_stream": [r[1] for r in results],
+              "duplicates_dropped": len(_dupes),
+              "enriched_before_run": enriched_in_time}
+    if not merged:
+        for t in enrich_tasks.values():
+            t.cancel()
+        return {**empty, "broad": {**detail, "error": "no stream produced steps"}}
+    return {"steps": merged,
+            "reason": "broad style: %d work-streams planned on the GPU -> %d steps; %d/%d CPU "
+                      "stream briefs ready before the run" % (len(streams), len(merged),
+                                                            enriched_in_time, len(streams)),
+            "complexity": "", "recon": [], "done_when": "", "broad": detail,
+            "_enrich_tasks": enrich_tasks}
+
+
 def _v5_piece_fallback_step(piece: Dict[str, Any], goal: str,
                             catalog_names: List[str]) -> Dict[str, Any]:
     """When the planner returns NO steps for a master-plan piece (an intermittent
@@ -19908,7 +20093,7 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
                       *, catalog_names: List[str], valid_skill_ids: set,
                       base_id: int, steps_left: int, model: str, instance_id: str,
                       prefer_gpu: bool, session_id: str = "",
-                      file_register: Any = "") -> Dict[str, Any]:
+                      file_register: Any = "", style_note: str = "") -> Dict[str, Any]:
     """ONE cheap controller call after a step: read the ledger, weigh what the
     step actually FOUND against the goal, and decide the next move. Returns
     {assessment, findings, goal_alignment, direction, goal_met, action, steps}.
@@ -20035,7 +20220,10 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         "of what was found (the key values/ids/counts, not a raw dump) so the next step reads "
         "exactly the signal it needs.\n"
         f"You have room for about {max(0, steps_left)} more step(s).\n"
-        "AVAILABLE CAPABILITIES (name — description):\n" + cap_lines + "\n"
+        # A planning style's instruction (stepwise: plan ONE next step). Empty for
+        # every other style, so their controller prompt is unchanged.
+        + (style_note or "")
+        + "AVAILABLE CAPABILITIES (name — description):\n" + cap_lines + "\n"
         'Respond ONLY with JSON:\n'
         '{"findings":"<key facts the last step produced>",'
         '"goal_alignment":"advances|neutral|off_track|blocker",'
@@ -23023,6 +23211,13 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
         "Inherits v5's recon, sub-plans, per-step phases, code autosave, long-running awaiting, "
         "and self-correcting steps (need_caps / auto-recovery). "
         "Inputs: goal (str!), allowed_caps (csv), base_toolkit (csv), max_steps (int default 8), "
+        "plan_style (str default 'auto' — HOW the plan is produced: 'auto' tier/intent decide; "
+        "'flat' one plan, no master-plan escalation or recon; 'stepwise' no upfront plan, the "
+        "controller plans one step at a time from evidence; 'detailed' a multi-lens brief is "
+        "handed to the planner first; 'broad' the goal is split into work-streams, each planned "
+        "concurrently across the nodes, merged into one plan. The style used is emitted as "
+        "agent_loop_v6.plan_style and "
+        "returned as plan_style), "
         "step_cycle_budget (int default 6), catalog_size (int default 40), enable_adaptive "
         "(bool default True — run the controller after each step), enable_step_verify (bool "
         "default True — one cheap judge call per step checks its success criterion was "
@@ -23133,6 +23328,11 @@ async def cap_dag_agent_loop_v6(
     enable_master_planner: bool = True,
     enable_tiering:     bool = False,      # V7-defining (see note above); v7 turns on
     plan_tier:          str  = "auto",
+    # HOW the plan is produced: auto|flat|stepwise|detailed|broad (see
+    # vera/planning/planner_styles.LOOP_STYLES, which is the whole contract).
+    # 'auto' is the behaviour from before styles existed. The style the run
+    # actually used is emitted as agent_loop_v6.plan_style and returned.
+    plan_style:         str  = "auto",
     auto_escalate:      bool = True,
     enable_fast_path:   bool = False,      # V7-defining; v7 turns on ('single' tier shortcut)
     clarify_level:      int  = 1,          # sliding-scale consultation (0-3); back-compat when clarify_mode is ''
@@ -23209,6 +23409,18 @@ async def cap_dag_agent_loop_v6(
     # An explicit strategy wins; otherwise fall back to the legacy enable_branching
     # flag so existing callers keep their behaviour. `enable_branching` is then kept
     # in sync so the branch code path only engages when 'branch' is selected.
+    # Planning style: resolved once, read at each planning call site below.
+    _plan_style_req = str(plan_style or "auto").strip().lower() or "auto"
+    if _plan_styles is not None:
+        _plan_style_eff, _pstyle, _plan_style_why = _plan_styles.resolve_loop_style(_plan_style_req)
+    else:
+        _plan_style_eff, _plan_style_why = "auto", "planner_styles unavailable"
+        _pstyle = {"run_planner": True, "master_plan": True, "recon": True,
+                   "shape_guards": True, "lens_brief": False, "stepwise_controller": False}
+    # An explicitly chosen style is honoured over the single-cap fast path,
+    # which would otherwise skip planning altogether.
+    if _plan_style_eff != "auto":
+        enable_fast_path = False
     failure_strategy = (failure_strategy or "").strip().lower()
     if failure_strategy not in ("extra_step", "branch", "default"):
         failure_strategy = "branch" if enable_branching else "default"
@@ -23660,25 +23872,88 @@ async def cap_dag_agent_loop_v6(
     # ── Orchestrate (want_success=True so steps carry success criteria) ───────
     _plan_hb_stop = asyncio.Event()
     _plan_hb_task = asyncio.create_task(_v5_planning_heartbeat(sid, stream_id, _plan_hb_stop))
-    plan = await _v5_orchestrate_plan(
-        plan_goal, catalog_names, skills, cap_skill_map,
-        model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
-        max_steps=max_steps, want_success=True, phase_policy=phase_policy,
-        allowed_phases=allowed_phases, intent=intent, sid=sid, stream_id=stream_id)
-    if not plan.get("steps"):
-        retry = await _v5_orchestrate_plan(
+    # Planning style switches (planner_styles.LOOP_STYLES). 'auto' = all on and
+    # no lens brief, which is exactly the path this block took before styles.
+    _style_note = ""
+    _style_detail: Dict[str, Any] = {}
+    if _pstyle.get("lens_brief") and _plan_styles is not None:
+        # DETAILED: several short independent looks at the goal (steps,
+        # artifacts, risks, criteria, caps), merged host-side, handed to the
+        # planner as context. Lenses go through the loop's own generate
+        # (cancel-aware) on the planning_style/lens route.
+        async def _lens_gen(prompt, system=""):
+            return await _safe_ollama_generate_dw(
+                prompt, system=system, json_mode=False, model="",
+                instance_id="", prefer_gpu=True, think=False,
+                profile="planning_style", role="lens", request_stage="plan_lens")
+        try:
+            _dplan = await _plan_styles.plan_detailed(
+                plan_goal, _lens_gen, catalog=list(catalog_names),
+                max_steps=max_steps, timeout_s=600.0)
+            _brief = _dplan.get("brief") or {}
+            _style_note = _plan_styles.render_brief(_brief)
+            _style_detail = {"lenses_answered": list(_brief.get("answered") or []),
+                             "lenses_missing": list(_brief.get("missing") or []),
+                             "rejected_criteria": len(_brief.get("rejected_criteria") or [])}
+        except Exception as _le:
+            log.warning("detailed style: lens brief failed: %s", _le)
+            _style_detail = {"error": f"{type(_le).__name__}: {_le}"[:200]}
+        if not _style_note:
+            # No lens answered: the planner runs without a brief, i.e. as auto.
+            _plan_style_why = "detailed: no lens answered - planned without a brief"
+            _plan_style_eff = "auto"
+        if _style_note:
+            _style_note = (_style_note + "\n\nUse the brief above as evidence about the goal; "
+                           "the steps, their sizing and their capabilities are still yours to "
+                           "decide under the rules.")
+    _broad_fell_back = False
+    # BROAD's CPU stream briefs ({stream id: task}), applied to each stream's
+    # steps as they come up (see the step loop) and cancelled at the run's end.
+    _enrich_tasks: Dict[Any, Any] = {}
+    if _pstyle.get("broad"):
+        # BROAD: the GPU plans every work-stream, the CPU nodes brief them in parallel.
+        plan = await _v6_plan_broad(
             plan_goal, catalog_names, skills, cap_skill_map,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
-            max_steps=max_steps, minimal=True, want_success=True,
-            phase_policy=phase_policy, intent=intent)
-        if retry.get("steps"):
-            plan = retry
+            max_steps=max_steps, phase_policy=phase_policy, intent=intent,
+            sid=sid, stream_id=stream_id)
+        _style_detail = {"broad": plan.pop("broad", {})}
+        _enrich_tasks = plan.pop("_enrich_tasks", {}) or {}
+        if not plan.get("steps"):
+            for _t in _enrich_tasks.values():
+                _t.cancel()
+            _enrich_tasks = {}
+            _broad_fell_back = True
+            _plan_style_why = ("broad: %s - planned as auto"
+                               % (_style_detail["broad"].get("error") or "no steps"))
+            _plan_style_eff = "auto"
+    if (_pstyle.get("run_planner", True) and not _pstyle.get("broad")) or _broad_fell_back:
+        plan = await _v5_orchestrate_plan(
+            plan_goal, catalog_names, skills, cap_skill_map,
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            max_steps=max_steps, want_success=True, phase_policy=phase_policy,
+            allowed_phases=allowed_phases, intent=intent, plan_note=_style_note,
+            sid=sid, stream_id=stream_id)
+        if not plan.get("steps"):
+            retry = await _v5_orchestrate_plan(
+                plan_goal, catalog_names, skills, cap_skill_map,
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                max_steps=max_steps, minimal=True, want_success=True,
+                phase_policy=phase_policy, intent=intent, plan_note=_style_note)
+            if retry.get("steps"):
+                plan = retry
+    elif not _pstyle.get("broad"):
+        # STEPWISE: no upfront plan. The empty plan falls into the stepwise
+        # bootstrap below, and the controller plans each next step. (A broad
+        # plan that produced steps is kept as it is.)
+        plan = {"steps": [], "reason": "", "complexity": "", "recon": [], "done_when": ""}
     # Fall-through "complex planning mode": both plan passes yielded no usable
     # steps — escalate to a long-form master plan and re-break it into steps (a
     # weak planner decomposes a concrete document far more reliably than an
     # abstract goal). Distinct from the complexity=="extreme" opt-in below.
     _master_ran = False
-    if not plan.get("steps") and enable_master_planner:
+    _master_ok = enable_master_planner and bool(_pstyle.get("master_plan", True))
+    if not plan.get("steps") and _master_ok:
         try:
             catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
             mp = await _v5_master_plan(goal, catalog_brief, model=model,
@@ -23713,7 +23988,7 @@ async def cap_dag_agent_loop_v6(
     # the latter, which almost never triggered — the whole reason complex planning
     # wasn't firing.) It drafts a domain-expert long-form plan and re-breaks it.
     # Skipped if the no-steps fall-through above already ran it.
-    if (enable_master_planner and not _master_ran and plan.get("steps")
+    if (_master_ok and not _master_ran and plan.get("steps")
             and (tier_wants_master or complexity == "extreme")):
         try:
             catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
@@ -23791,7 +24066,7 @@ async def cap_dag_agent_loop_v6(
     # planning and can be seeded into the blackboard as a step-0 result below.
     recon_artifacts: List[Dict[str, Any]] = []
     recon_digest = ""
-    if enable_recon and recon and recon_max_rounds > 0:
+    if enable_recon and _pstyle.get("recon", True) and recon and recon_max_rounds > 0:
         catalog_set_for_recon = set(catalog_names)
         accumulated: List[str] = []
         rnd = 0
@@ -23840,14 +24115,24 @@ async def cap_dag_agent_loop_v6(
         # evidence — exactly the incremental recovery the loop is built for.
         steps = [_v5_stepwise_bootstrap_step(goal, catalog_names)]
         plan["steps"] = steps
+        _chosen_stepwise = bool(_pstyle.get("stepwise_controller"))
         plan["reason"] = plan.get("reason") or (
+            "STEPWISE style chosen — no upfront plan; running from a bootstrap step and "
+            "the controller plans each next step from evidence" if _chosen_stepwise else
             "planning could not decompose the goal — running STEPWISE from a "
             "bootstrap step; the controller will plan each next step from evidence")
         await emit_event({"type": "agent_loop_v5.planning", "session_id": sid,
                           "stream_id": stream_id, "elapsed_s": 0,
-                          "note": "plan escalations exhausted — entering STEPWISE mode"})
+                          "note": ("stepwise style — planning one step at a time"
+                                   if _chosen_stepwise else
+                                   "plan escalations exhausted — entering STEPWISE mode")})
 
-    steps = _v5_split_compound_single_step(steps, goal)
+    # Shape guards (compound-step split, under-decomposition, drift, hygiene) all
+    # REPLAN toward a fuller upfront plan - which a stepwise run declines on
+    # purpose. Every other style keeps them.
+    _shape_guards = bool(_pstyle.get("shape_guards", True))
+    if _shape_guards:
+        steps = _v5_split_compound_single_step(steps, goal)
     # DRIFT GUARD — does this plan actually address the goal that was asked?
     # A prompt can always be talked past, so the check is deterministic: if the
     # plan's titles share essentially no vocabulary with the PRISTINE goal, the
@@ -23862,7 +24147,7 @@ async def cap_dag_agent_loop_v6(
     # rebuilds the plan a step at a time and the run hits its wall cap — 1500s
     # against 420s for the same goal planned properly. Same prompt, different
     # answer, so this is a shape check on the RESULT, not more prompt.
-    _under, _why = ((False, "") if _plan_shape is None else
+    _under, _why = ((False, "") if (_plan_shape is None or not _shape_guards) else
                     _plan_shape.is_underdecomposed(
                         tier_rank=_v7_tier_rank(tier),
                         complex_rank=_v7_tier_rank("complex"), steps=steps))
@@ -23895,7 +24180,7 @@ async def cap_dag_agent_loop_v6(
         except Exception as _e:
             log.debug("v6 under-decomposition re-plan failed: %s", _e)
 
-    if _plan_drifted(_orig_goal, steps):
+    if _shape_guards and _plan_drifted(_orig_goal, steps):
         await emit_event({"type": "agent_loop_v6.plan_drift", "session_id": sid,
                           "stream_id": stream_id,
                           "goal": _orig_goal[:200],
@@ -23941,7 +24226,7 @@ async def cap_dag_agent_loop_v6(
     # "report" (1,800 s, q=0). Added requirements go back to the planner ONCE
     # with a note; the re-check steps and the parse/format steps are then
     # removed deterministically. See plan_hygiene_core.
-    if _plan_hygiene is not None and steps:
+    if _plan_hygiene is not None and steps and _shape_guards:
         try:
             _added = _plan_hygiene.added_requirements(_orig_goal, steps)
             if _added:
@@ -23994,6 +24279,14 @@ async def cap_dag_agent_loop_v6(
                       "reason": plan.get("reason", ""),
                       "complexity": plan.get("complexity", ""),
                       "done_when": done_when})
+    # Which planning style this run asked for and which it actually used (they
+    # differ when a style falls back, e.g. detailed with no lens answering). The
+    # trace digest and census rows read this event.
+    _plan_style_rec = {"requested": _plan_style_req, "effective": _plan_style_eff,
+                       "reason": _plan_style_why, "master_ran": bool(_master_ran),
+                       "planned_steps": len(steps), **_style_detail}
+    await emit_event({"type": "agent_loop_v6.plan_style", "session_id": sid,
+                      "stream_id": stream_id, **_plan_style_rec})
     fix_loop_bound = ""      # the failure signature that ended the run early (item 28)
     verify_reasons_by_step: Dict[str, List[str]] = {}   # every attempt's verdict, per step (28b)
 
@@ -24504,6 +24797,17 @@ async def cap_dag_agent_loop_v6(
         # Fork snapshot = the ancestor chain WITHOUT this step's attempt. A branch
         # spawned on failure inherits this and never sees the failed try (or siblings).
         pre_bb = dict(blackboard)
+        # BROAD: this stream's CPU brief, if it has arrived, goes in with the step.
+        # Checked per step, so a brief that landed after planning still reaches
+        # the stream's remaining steps.
+        if _enrich_tasks and step.get("piece") in _enrich_tasks and not step.get("_stream_brief"):
+            _et = _enrich_tasks[step["piece"]]
+            if _et.done() and not _et.cancelled() and not _et.exception() and _et.result():
+                step["goal"] = str(step.get("goal") or "") + _et.result()
+                step["_stream_brief"] = True
+                await emit_event({"type": "agent_loop_v6.broad_brief_applied", "session_id": sid,
+                                  "stream_id": stream_id, "step_id": step.get("id"),
+                                  "stream": step.get("piece")})
         res = await _run_one(step, gcycle)
         # Carry the step's success criterion onto the result so the ledger/controller
         # can judge it against the bar the planner set.
@@ -24587,7 +24891,10 @@ async def cap_dag_agent_loop_v6(
                 catalog_names=catalog_names, valid_skill_ids=valid_skill_ids,
                 base_id=max_id, steps_left=steps_left, model=model,
                 instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
-                file_register=lambda _d: _v6_file_register_block(artifacts, _d))
+                file_register=lambda _d: _v6_file_register_block(artifacts, _d),
+                style_note=(_plan_styles.STEPWISE_CONTROLLER_NOTE
+                            if (_pstyle.get("stepwise_controller") and _plan_styles is not None)
+                            else ""))
             await emit_event({"type": "agent_loop_v6.assess", "session_id": sid,
                               "stream_id": stream_id, "after_step": step["id"],
                               "assessment": ctrl.get("assessment", ""),
@@ -24818,6 +25125,10 @@ async def cap_dag_agent_loop_v6(
         except Exception:
             pass
 
+    # BROAD: a CPU brief still running when the run is over enriches nothing.
+    for _t in (_enrich_tasks or {}).values():
+        if not _t.done():
+            _t.cancel()
     return {
         "goal": goal, "steps": results,
         "blackboard": {str(k): v for k, v in blackboard.items()},
@@ -24826,6 +25137,7 @@ async def cap_dag_agent_loop_v6(
         "final": final, "summary": final, "handover_output": handover_output,
         "deliverable": deliverable,
         "done_when": done_when, "tier": tier, "phase_policy": phase_policy,
+        "plan_style": _plan_style_rec,
         "journal": journal,
         "stream_id": stream_id, "session_id": sid, "done": True,
     }
@@ -24856,7 +25168,8 @@ async def cap_dag_agent_loop_v6(
         "self-correcting steps). Extra inputs over v6: enable_tiering/plan_tier/auto_escalate, "
         "enable_step_finalize, enable_branching/branch_fanout/max_branches/branch_parallel, "
         "enable_dream_persistence, enable_journal (structured run journal → data fabric for "
-        "complex/long-term goals). Output: same shape as v6."),
+        "complex/long-term goals). plan_style (auto|flat|stepwise|detailed|broad, default auto) "
+        "chooses HOW the plan is produced — see dag.agent_loop_v6. Output: same shape as v6."),
 )
 async def cap_dag_agent_loop_v7(goal: str, **kwargs):
     """V7 delegates to the shared v6 runner with the V7-defining features ON. Keeping
@@ -25116,6 +25429,7 @@ async def workshop_agent_loop_stream(request: Request):
                                      "extra_step" if _v7_default else "") or "").strip().lower()
     v6_enable_tiering    = bool(body.get("enable_tiering", _v7_default))
     v6_plan_tier         = (body.get("plan_tier", "auto") or "auto").strip().lower()
+    v6_plan_style        = (body.get("plan_style", "auto") or "auto").strip().lower()
     v6_auto_escalate     = bool(body.get("auto_escalate", True))
     v6_enable_fast_path  = bool(body.get("enable_fast_path", _v7_default))
     v6_clarify_level     = int(body.get("clarify_level", 1) or 0)
@@ -25263,6 +25577,7 @@ async def workshop_agent_loop_stream(request: Request):
             failure_strategy=v6_failure_strategy,
             enable_tiering=v6_enable_tiering,
             plan_tier=v6_plan_tier,
+            plan_style=v6_plan_style,
             auto_escalate=v6_auto_escalate,
             enable_fast_path=v6_enable_fast_path,
             clarify_level=v6_clarify_level,

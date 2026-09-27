@@ -1495,6 +1495,26 @@
         return;
       }
 
+      // ── v6/V7: which planning STYLE produced the plan (asked vs used) ──
+      if(t === 'agent_loop_v6.plan_style'){
+        const PS = {auto:{ic:'◎',lbl:'auto'}, flat:{ic:'▭',lbl:'flat'},
+                    stepwise:{ic:'⇢',lbl:'stepwise'}, detailed:{ic:'❖',lbl:'detailed'},
+                    broad:{ic:'⫘',lbl:'broad'}};
+        const ps = PS[ev.effective] || {ic:'•', lbl:ev.effective||'?'};
+        const fell = (ev.requested && ev.requested !== ev.effective)
+          ? ` <span style="color:var(--warn,#c7a15a)" title="${_esc(ev.reason||'')}">asked ${_esc(ev.requested)}</span>` : '';
+        const bits = [];
+        if(ev.planned_steps != null) bits.push(_esc(String(ev.planned_steps))+' step(s) planned');
+        if(ev.master_ran) bits.push('master plan');
+        if(Array.isArray(ev.lenses_answered)) bits.push('lenses '+ev.lenses_answered.length+'/'+(ev.lenses_answered.length+(ev.lenses_missing||[]).length));
+        if(ev.broad && ev.broad.streams) bits.push(_esc(String(ev.broad.streams))+' streams · '+_esc(String(ev.broad.total_s||'?'))+'s');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">${ps.ic} Planning style · ${_esc(ps.lbl)}${fell}</span>
+          <span class="alo-cycle-status">${bits.join(' · ')}</span>
+        </div>${(ev.reason && ev.reason!=='requested' && ev.reason!=='default')?`<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.reason)}</div>`:''}`, 'plan');
+        return;
+      }
+
       // ── V7 fast path: a 'single' goal resolved by ONE cap, no orchestration ──
       if(t === 'agent_loop_v6.fast_path'){
         this._cycleEl(`<div class="alo-cycle-h">

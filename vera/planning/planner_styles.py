@@ -458,3 +458,324 @@ def style_ids() -> List[str]:
 
 def get_style(style_id: Any) -> Optional[Dict[str, Any]]:
     return STYLES.get(str(style_id or "").strip().lower())
+
+
+# ── The loop's planning-style selector ───────────────────────────────────────
+#
+# The agentic loop (dag.agent_loop_v6/v7) takes a `plan_style` and asks this
+# table what that style means for ITS planning phase. The table is the whole
+# contract: the loop reads these switches at its own call sites and does not
+# branch on style names anywhere else, so a style's behaviour can be read here
+# in one place and tested without booting the loop.
+#
+#   auto      the loop's behaviour before styles existed: tier + intent pick
+#             the path (one-shot plan, master-plan escalation for strategic
+#             goals, recon, the shape guards).
+#   flat      ONE plan from the loop's planner (plus its empty-plan retry) and
+#             nothing else - no master-plan escalation, no recon rounds.
+#   stepwise  NO upfront plan. The run starts from one bootstrap step and the
+#             adaptive controller plans each next step from the evidence so far.
+#             The shape guards are off: they would "repair" the one-step start.
+#   detailed  the multi-lens brief (plan_detailed's lenses, merged host-side)
+#             is handed to the loop's planner as context, which then writes the
+#             steps under its own sizing and cap-routing rules. The lenses alone
+#             over-decompose (a one-line sum became six steps, 2026-09-10).
+LOOP_STYLES: Dict[str, Dict[str, Any]] = {
+    "auto": {"label": "Auto (tier & intent decide)",
+             "run_planner": True, "master_plan": True, "recon": True,
+             "shape_guards": True, "lens_brief": False, "stepwise_controller": False},
+    "flat": {"label": "Flat (one plan, no escalation)",
+             "run_planner": True, "master_plan": False, "recon": False,
+             "shape_guards": True, "lens_brief": False, "stepwise_controller": False},
+    "stepwise": {"label": "Stepwise (plan each step from evidence)",
+                 "run_planner": False, "master_plan": False, "recon": False,
+                 "shape_guards": False, "lens_brief": False, "stepwise_controller": True},
+    "detailed": {"label": "Detailed (multi-lens brief, then plan)",
+                 "run_planner": True, "master_plan": True, "recon": True,
+                 "shape_guards": True, "lens_brief": True, "stepwise_controller": False},
+    # BROAD: research-shaped. One call splits the goal into work-streams; every
+    # stream is planned CONCURRENTLY as a piece of the whole (on the
+    # planning_style stream / stream_cpu routes, so the GPU and both CPU nodes
+    # can each take one); the sub-plans are merged host-side with cross-stream
+    # `needs`. It replaces the single planner call (run_planner off) and falls
+    # back to it when no stream plans.
+    "broad": {"label": "Broad (work-streams planned in parallel)",
+              "run_planner": False, "master_plan": False, "recon": False,
+              "shape_guards": True, "lens_brief": False, "stepwise_controller": False,
+              "broad": True},
+}
+DEFAULT_LOOP_STYLE = "auto"
+
+
+def loop_style_ids() -> List[str]:
+    return list(LOOP_STYLES)
+
+
+def resolve_loop_style(requested: Any) -> Tuple[str, Dict[str, Any], str]:
+    """(effective id, switches, reason). An unknown or empty request runs as
+    `auto` and SAYS so - a typo must not silently become a different style."""
+    req = str(requested or "").strip().lower()
+    if not req or req == DEFAULT_LOOP_STYLE:
+        return DEFAULT_LOOP_STYLE, dict(LOOP_STYLES[DEFAULT_LOOP_STYLE]), "default"
+    if req in LOOP_STYLES:
+        return req, dict(LOOP_STYLES[req]), "requested"
+    return (DEFAULT_LOOP_STYLE, dict(LOOP_STYLES[DEFAULT_LOOP_STYLE]),
+            "unknown style %r - ran as %s (known: %s)"
+            % (req[:40], DEFAULT_LOOP_STYLE, ", ".join(LOOP_STYLES)))
+
+
+# ── BROAD: work-streams, planned concurrently, merged on the host ────────────
+
+MAX_STREAMS = 5
+#: Routing roles (profile planning_style), placed by the compute-roles rule
+#: (.git/vera-work/shared-planning/compute-roles/PLAN.md): the GPU carries the
+#: core plan, the CPU nodes plan IN PARALLEL and enrich it - the research
+#: pipeline's writer/analyst split.
+#:   stream  - each stream's step plan. GPU: the run is waiting on it, and the
+#:             GPU does it in seconds. (First design alternated streams onto the
+#:             CPU nodes: measured 2026-09-27 a CPU stream took 199-251 s against
+#:             6-17 s on the GPU - the CPU node WAS the planning time.)
+#:   enrich  - a deeper per-stream brief (inputs, pitfalls, what a complete
+#:             deliverable holds) on a CPU node, concurrently; added to that
+#:             stream's steps when it arrives.
+PLAN_ROLE = "stream"
+ENRICH_ROLE = "enrich"
+#: How long planning waits, after the GPU plan is ready, for the CPU briefs. A
+#: brief that arrives later is still applied to its stream's steps that have not
+#: run yet - it enriches the run, it never holds it.
+ENRICH_GRACE_S = 75.0
+MAX_BRIEF_CHARS = 1400
+
+BROAD_BRIEF_SYSTEM = (
+    "You split an agentic GOAL into its WORK-STREAMS: the distinct, substantial bodies of "
+    "work a thorough plan would cover. Each stream will be planned in detail separately, "
+    "in parallel, so each must stand on its own. Rules:\n"
+    "  - use the FEWEST streams the goal genuinely has, at most {n}. A short document or a "
+    "small app is at most TWO streams (gather what it needs, then produce it); ONE stream "
+    "if there is nothing to gather. Never invent streams to fill a count.\n"
+    "  - a stream is a kind of work (gather the facts, build the thing, write it up), NOT a "
+    "single command, and never a separate stream for citations, formatting or review of "
+    "another stream's output - that belongs to the stream that produces it\n"
+    "  - never add a stream for a deliverable the goal did not ask for (a format "
+    "conversion, an HTML version, a dashboard, a test suite)\n"
+    "  - `dependencies` lists ids of EARLIER streams whose deliverable this one consumes\n"
+    "  - `caps`: up to 6 capability names from the list, exact names only\n"
+    "  - `deliverable`: the concrete file or result that marks the stream done - never a "
+    "value you worked out yourself\n"
+    'Respond ONLY with JSON: {{"streams":[{{"id":1,"title":"<short>","objective":"<what this '
+    'stream must achieve, 1-3 sentences>","deliverable":"<file or result>","dependencies":[],'
+    '"caps":["cap.name"]}}]}}')
+
+
+def broad_brief_prompt(goal: str, catalog_lines: str) -> str:
+    return ("GOAL: %s\n\nAVAILABLE CAPABILITIES (name - description):\n%s\n\n"
+            "Split the goal into its work-streams." % (goal, catalog_lines or "  (none)"))
+
+
+def parse_streams(obj: Any, catalog: Optional[Iterable[str]] = None,
+                  max_streams: int = MAX_STREAMS) -> List[Dict[str, Any]]:
+    """The model's streams, validated: ids renumbered 1..n in the order given,
+    dependencies kept only when they point at an EARLIER stream (a cycle or a
+    forward reference is dropped, not trusted), caps filtered to the catalog."""
+    raw = (obj or {}).get("streams") if isinstance(obj, dict) else obj
+    if not isinstance(raw, list):
+        return []
+    allow = set(catalog or [])
+    keep: List[Dict[str, Any]] = []
+    old_to_new: Dict[Any, int] = {}
+    for s in raw:
+        if not isinstance(s, dict):
+            continue
+        title = str(s.get("title") or "").strip()
+        objective = str(s.get("objective") or "").strip()
+        if not (title or objective):
+            continue
+        new_id = len(keep) + 1
+        old_to_new[s.get("id", new_id)] = new_id
+        caps = [str(c).strip() for c in (s.get("caps") or []) if str(c).strip()]
+        if allow:
+            caps = [c for c in caps if c in allow]
+        keep.append({"id": new_id, "title": (title or objective)[:120],
+                     "objective": (objective or title)[:600],
+                     "deliverable": str(s.get("deliverable") or "")[:240],
+                     "_deps_raw": list(s.get("dependencies") or []),
+                     "caps": list(dict.fromkeys(caps))[:6]})
+        if len(keep) >= max(1, int(max_streams)):
+            break
+    for s in keep:
+        deps = []
+        for d in s.pop("_deps_raw"):
+            nd = old_to_new.get(d)
+            if nd is None:
+                try:
+                    nd = old_to_new.get(int(d))
+                except (TypeError, ValueError):
+                    nd = None
+            if nd is not None and nd < s["id"] and nd not in deps:
+                deps.append(nd)
+        s["dependencies"] = deps
+    return keep
+
+
+def stream_directive(goal: str, streams: Sequence[Dict[str, Any]],
+                     stream: Dict[str, Any]) -> str:
+    """The `[PIECEWISE]` master_plan text for ONE stream's planner call: the whole
+    stream map as context, then this stream to plan and nothing else."""
+    lines = []
+    for s in streams:
+        dep = (" (uses: %s)" % ", ".join("stream %d" % d for d in s["dependencies"])
+               if s.get("dependencies") else "")
+        lines.append("  %d. %s - %s -> %s%s" % (s["id"], s["title"], s["objective"],
+                                               s.get("deliverable") or "?", dep))
+    deps = [x for x in streams if x["id"] in (stream.get("dependencies") or [])]
+    dep_txt = ("DEPENDS ON: " + "; ".join("stream %d %s -> %s" % (d["id"], d["title"],
+                                                                 d.get("deliverable") or "?")
+                                          for d in deps)
+               + "\nThose deliverables WILL ALREADY EXIST when this stream starts. READ and use "
+               "them; do NOT plan any step that gathers, researches, fetches or derives what "
+               "they already provide.\n") if deps else ""
+    caps_txt = ("SUGGESTED CAPS for this stream: %s\n" % ", ".join(stream["caps"])
+                if stream.get("caps") else "")
+    return ("[PIECEWISE]WORK-STREAMS OF THIS GOAL (planned separately, in parallel - "
+            "context only):\n" + "\n".join(lines) + "\n\n"
+            ">>> PLAN ONLY STREAM %d of %d: %s\nOBJECTIVE: %s\nDELIVERABLE: %s\n%s%s"
+            "Turn THIS stream into concrete, ordered steps that end in its deliverable. Do "
+            "NOT plan the other streams' work - they are planned separately."
+            % (stream["id"], len(streams), stream["title"], stream["objective"],
+               stream.get("deliverable") or "(not stated)", dep_txt, caps_txt))
+
+
+ENRICH_SYSTEM = (
+    "You are the ANALYST beside an agentic loop's planner. The planner is writing the steps; "
+    "you give the depth it has no time for. For ONE work-stream of the goal, write a short "
+    "brief with three parts, as plain bullet lines:\n"
+    "NEEDS: the facts, inputs or files this stream must have before it can finish\n"
+    "PITFALLS: the specific ways an automated agent gets this stream wrong\n"
+    "COMPLETE MEANS: what its deliverable must contain to count as done\n"
+    "Be specific to this goal. Never state a numeric result you worked out yourself. "
+    "No preamble, no headings beyond the three labels, at most 12 lines.")
+
+
+def enrich_prompt(goal: str, streams: Sequence[Dict[str, Any]],
+                  stream: Dict[str, Any]) -> str:
+    others = "\n".join("  %d. %s -> %s" % (s["id"], s["title"], s.get("deliverable") or "?")
+                       for s in streams)
+    return ("GOAL: %s\n\nWORK-STREAMS:\n%s\n\nBRIEF THIS STREAM: %d. %s\nOBJECTIVE: %s\n"
+            "DELIVERABLE: %s" % (goal, others, stream["id"], stream["title"],
+                                 stream["objective"], stream.get("deliverable") or "(not stated)"))
+
+
+def enrich_note(text: Any) -> str:
+    """A CPU brief as the block appended to a stream's step goal, bounded; '' if
+    the brief is empty. (The invented-value filter is for SUCCESS CRITERIA; a
+    brief is evidence, and its 4-digit numbers are mostly years.)"""
+    lines = clean_lines(text) if text else []
+    if not lines:
+        return ""
+    body = "\n".join("  - %s" % ln for ln in lines)[:MAX_BRIEF_CHARS]
+    return ("\n\nSTREAM BRIEF (a deeper review of this work-stream, prepared in parallel - "
+            "use it as evidence, the step goal above still decides the work):\n" + body)
+
+
+def merge_streams(streams: Sequence[Dict[str, Any]],
+                  sub_steps: Sequence[Sequence[Dict[str, Any]]],
+                  hard_cap: int = 16) -> List[Dict[str, Any]]:
+    """Every stream's steps as ONE plan: stream order, ids renumbered, `needs`
+    inside a stream remapped, and each stream's first step needing the LAST step
+    of every stream it depends on (the piecewise rule). A stream that planned
+    nothing contributes nothing and breaks no link - its dependents fall back to
+    the streams before it."""
+    out: List[Dict[str, Any]] = []
+    last_of: Dict[int, int] = {}
+    for s, subs in zip(streams, sub_steps):
+        subs = [x for x in (subs or []) if isinstance(x, dict)]
+        if not subs or len(out) >= hard_cap:
+            continue
+        offset = len(out)
+        local = {}
+        for i, st in enumerate(subs):
+            local[st.get("id", i + 1)] = offset + i + 1
+        first_needs = [last_of[d] for d in (s.get("dependencies") or []) if d in last_of]
+        for i, st in enumerate(subs):
+            if len(out) >= hard_cap:
+                break
+            ns = dict(st)
+            ns["id"] = offset + i + 1
+            ns["needs"] = [local[n] for n in (st.get("needs") or [])
+                           if n in local and local[n] < ns["id"]]
+            if i == 0:
+                ns["needs"] = sorted(set(ns["needs"]) | set(first_needs))
+            ns["piece"] = s["id"]
+            ns["piece_title"] = s["title"]
+            out.append(ns)
+        if out and out[-1].get("piece") == s["id"]:
+            last_of[s["id"]] = out[-1]["id"]
+    return out
+
+
+_DEDUPE_STOP = {"and", "the", "from", "with", "for", "into", "its", "their", "this", "that",
+                "all", "any", "using", "via", "about", "details", "information", "data"}
+
+
+def _step_words(st: Dict[str, Any]) -> set:
+    return {w for w in _words("%s %s" % (st.get("title") or "", st.get("goal") or ""))
+            if w not in _DEDUPE_STOP and "." not in w}
+
+
+def dedupe_across_streams(steps: Sequence[Dict[str, Any]],
+                          threshold: float = 0.5) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """(kept, dropped). Streams are planned in isolation, so two of them plan the
+    same work - observed 2026-09-27: a report goal's plan researched the topic in
+    three streams. A step is dropped when an EARLIER step from ANOTHER stream
+    shares most of its words (Jaccard >= threshold) AND at least one capability
+    (or neither names one) - word overlap alone would merge 'fetch the data' with
+    'write about the data'. Steps are renumbered; a `needs` that pointed at a
+    dropped step points at the step it duplicated. Within a stream nothing is
+    touched: the stream's own planner decided that order."""
+    kept: List[Dict[str, Any]] = []
+    dropped: List[Dict[str, Any]] = []
+    alias: Dict[Any, Any] = {}
+    for st in steps or []:
+        w = _step_words(st)
+        caps = set(st.get("caps") or [])
+        twin = None
+        for k in kept:
+            if k.get("piece") == st.get("piece"):
+                continue
+            kw = _step_words(k)
+            if not w or not kw:
+                continue
+            j = len(w & kw) / float(len(w | kw))
+            kcaps = set(k.get("caps") or [])
+            if j >= threshold and ((caps & kcaps) or not (caps or kcaps)):
+                twin = k
+                break
+        if twin is not None:
+            alias[st.get("id")] = twin.get("id")
+            dropped.append({"id": st.get("id"), "title": st.get("title"),
+                            "piece": st.get("piece"), "duplicate_of": twin.get("id")})
+        else:
+            kept.append(dict(st))
+    renum = {k.get("id"): i + 1 for i, k in enumerate(kept)}
+    for k in kept:
+        needs = []
+        for n in k.get("needs") or []:
+            target = alias.get(n, n)
+            if target in renum and renum[target] not in needs:
+                needs.append(renum[target])
+        k["id"] = renum[k.get("id")]
+        k["needs"] = sorted(n for n in needs if n < k["id"])
+    for d in dropped:
+        d["duplicate_of"] = renum.get(d["duplicate_of"])
+    return kept, dropped
+
+
+#: The controller's extra instruction in a stepwise run. Without it the
+#: controller's only move on an empty queue is "continue" - and the run ends
+#: after the bootstrap step.
+STEPWISE_CONTROLLER_NOTE = (
+    "STEPWISE MODE: this run has NO upfront plan - you are its planner, one step at a "
+    "time. When PENDING STEPS is empty and the GOAL (see DONE WHEN) is not yet "
+    "demonstrably met, choose \"insert\" with exactly ONE next step: the single most "
+    "useful concrete action given what the ledger shows. Choose \"stop\" only when the "
+    "goal is met. Never plan several steps ahead.\n")

@@ -191,6 +191,12 @@ def digest_events(events: Sequence[Dict[str, Any]],
             plan["tier"] = e.get("tier")
         elif t.endswith(".intent"):
             plan["intent"] = e.get("intent")
+        elif t.endswith(".plan_style"):
+            # The planning style the run asked for and the one it used - they
+            # differ on a fallback (detailed with no lens answering runs as auto).
+            plan["style"] = e.get("effective")
+            plan["style_requested"] = e.get("requested")
+            plan["style_reason"] = _clip(e.get("reason"), 200)
         elif t.endswith(".fast_path"):
             # The single-cap shortcut. Recorded so a reader can tell "no plan was
             # made" apart from "planning produced nothing".
