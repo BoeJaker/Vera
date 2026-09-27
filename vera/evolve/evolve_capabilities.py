@@ -4599,7 +4599,7 @@ async def evolve_code_queue(session_id: str = "", index: int = 0, trace_id=None)
 
 KEY_PIPELINES = "vera:evolve:pipelines"       # list of pipeline records (newest first)
 KEY_PIPELINE  = "vera:evolve:pipeline:"       # + id -> full record
-PIPELINES_CAP = 100
+PIPELINES_CAP = 1000   # the CI/CD history reaches back this many pipelines (was 100: ~a week)
 BRANCH_PREFIX = "loop-lab/"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5273,7 +5273,7 @@ async def _save_pipeline(rec: Dict[str, Any]):
         return
     try:
         await r.set(KEY_PIPELINE + rec["id"], json.dumps(rec, default=str))
-        await r.expire(KEY_PIPELINE + rec["id"], 60 * 86400)
+        await r.expire(KEY_PIPELINE + rec["id"], 400 * 86400)   # a year+ of drill-down
         rows = await r.lrange(KEY_PIPELINES, 0, PIPELINES_CAP - 1)
         compact = {k: rec.get(k) for k in
                    ("id", "kind", "profile", "status", "decision", "created_at",
@@ -5298,7 +5298,9 @@ async def _save_pipeline(rec: Dict[str, Any]):
 
 def _pstep(rec: Dict[str, Any], stage: str, ok: bool, detail: str = ""):
     rec.setdefault("steps", []).append(
-        {"stage": stage, "ok": bool(ok), "detail": str(detail)[:400], "ts": now_iso()})
+        # 4000, not 400: the critical-tests step's detail names the failing tests and
+        # 400 cut the list mid-name — the drill-down showed a run failed, not why
+        {"stage": stage, "ok": bool(ok), "detail": str(detail)[:4000], "ts": now_iso()})
 
 
 async def _pipeline_worker(rec: Dict[str, Any]):
@@ -8476,7 +8478,7 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
         return {"error": "ephemeral test container failed to run pytest",
                 "detail": combined[-1500:], "code": res.get("code", -1)}
     parsed = _ut_parse(combined)
-    label = branch or tgt.get("container") or "primary"
+    label = branch or "primary"
     await _audit("unittest.run", f"[{label}] {parsed['summary']}", ok=parsed["ok"])
     await _record_unittest_run(parsed, branch=branch, markers=markers,
                                paths=paths, label=label, pipeline_id=pipeline_id)
@@ -8516,8 +8518,20 @@ async def _record_unittest_run(parsed: Dict[str, Any], *, branch: str = "",
     if r is None or _ut_hist is None:
         return
     try:
+        controller = session_id = ""
+        if pipeline_id:
+            try:
+                raw = await r.get(KEY_PIPELINE + pipeline_id)
+                prec = json.loads(raw) if raw else {}
+                controller = prec.get("controller") or prec.get("via") or ""
+                session_id = prec.get("session_id") or ""
+            except Exception:
+                pass
+        controller = controller or _triggered_by()
         row = _ut_hist.record(parsed, branch=branch, markers=markers, paths=paths,
-                              ts=now_iso(), label=label, pipeline_id=pipeline_id)
+                              ts=now_iso(), label=label, pipeline_id=pipeline_id,
+                              controller=controller, session_id=session_id,
+                              repo=DEFAULT_REPO_ID)
         await r.lpush(KEY_UT_HISTORY, json.dumps(row, default=str))
         await r.ltrim(KEY_UT_HISTORY, 0, _ut_hist.HISTORY_CAP - 1)
     except Exception as e:                                 # pragma: no cover
@@ -8552,12 +8566,17 @@ async def _get_unittest_history(limit: int = 200) -> List[Dict[str, Any]]:
                         "race (the most recent red→green transition and how many "
                         "runs it took), regressions (runs that went GREEN ON FEWER "
                         "TESTS — coverage that stopped being collected, which the "
-                        "gate reports as PASS)}. Query: limit (int=200), branch "
-                        "(str filter), markers (str filter, e.g. 'critical').")
+                        "gate reports as PASS)}. Each run carries `failures` (the "
+                        "failing tests' node ids + descriptions) and its controller. "
+                        "Query: limit (int=200, up to the kept 5000), branch "
+                        "(str filter), markers (str filter, e.g. 'critical'), lanes "
+                        "(int=40 cells; 0 = one per run returned).")
 async def evolve_unittest_history(limit: int = 200, branch: str = "",
-                                  markers: str = "", trace_id=None):
+                                  markers: str = "", lanes: int = 40,
+                                  trace_id=None):
     if _ut_hist is None:                                   # pragma: no cover
         return {"error": "unittest_history module unavailable"}
+    limit = max(1, min(_ut_hist.HISTORY_CAP, int(limit or 200)))
     rows = await _get_unittest_history(limit)
     if branch:
         rows = [r for r in rows if r.get("branch") == branch]
@@ -8565,7 +8584,8 @@ async def evolve_unittest_history(limit: int = 200, branch: str = "",
         rows = [r for r in rows if r.get("markers") == markers]
     return {"ok": True, "count": len(rows),
             "runs": _ut_hist.newest_first(rows),
-            "lanes": _ut_hist.lanes(rows, limit=40),
+            "lanes": _ut_hist.lanes(rows, limit=(int(lanes) if int(lanes or 0) > 0
+                                                 else max(1, len(rows)))),
             "trend": _ut_hist.trend(rows),
             "race": _ut_hist.race_to_green(rows),
             "regressions": _ut_hist.regressions(rows)}

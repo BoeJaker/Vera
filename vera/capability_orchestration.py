@@ -10477,6 +10477,10 @@ async def lifespan(app: FastAPI):
         # Mission control's one table: a row per event from the audit log, the
         # errors queue and the gates, with the live strip - after task_history/.
         os.path.join(_here, "evolve/mission_capabilities.py"),
+        # ci.* / loop.ci.*: the Loop Lab pictures (matrix, race, tests, run,
+        # board, fleet) as capabilities the canvas draws - after evolve/,
+        # board/ and dag/ (reads their stores through sys.modules).
+        os.path.join(_here, "evolve/ci_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),
         # Operator: general observe→think→act web/computer operator (drives any

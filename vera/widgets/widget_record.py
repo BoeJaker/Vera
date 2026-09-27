@@ -233,6 +233,17 @@ FORMS: List[Dict[str, Any]] = [
     _F("schedule", "calendar", glyph="schedule", options=("group",), name="Schedule", boards=("widgets", "spec")),
     _F("calnav", "calendar", glyph="calnav", sizes=("s", "m", "l"), options=("group", "views", "view"), name="Calendar controls", boards=("widgets", "spec")),
     _F("vgraph", "graph", glyph="vgraph", options=("mode", "layer"), name="Vera graph", boards=("widgets", "spec")),
+    # the Loop Lab's pictures (ci_view_core): automated development work - gate runs, pipelines, the board, the fleet,
+    # the agentic loop - one payload, drawn the same on the canvas, a dashboard and the Loop Lab page
+    _F("status-matrix", "matrix", glyph="status-matrix", options=("cols", "order", "group"), name="Status matrix", boards=("widgets", "spec", "reply")),
+    _F("race-green", "matrix", glyph="race-green", motion=True, options=("cols", "group"), name="Race to green", boards=("widgets", "motion", "reply")),
+    _F("test-grid", "matrix", glyph="test-grid", options=("cols",), name="Tests across runs", boards=("widgets", "spec", "reply")),
+    _F("ci-board", "items", glyph="ci-board", options=("include_done",), name="Work board", boards=("widgets", "reply")),
+    _F("run-track", "stages", glyph="run-track", motion=True, name="Run track", boards=("widgets", "motion", "reply")),
+    _F("run-compare", "values", glyph="run-compare", name="Run compare", boards=("widgets", "reply")),
+    _F("ci-pulse", "values", glyph="ci-pulse", options=("buckets",), name="CI pulse", boards=("widgets", "reply")),
+    _F("ci-fleet", "items", glyph="ci-fleet", name="Agent fleet", boards=("widgets", "reply")),
+    _F("ci-run", "values", glyph="ci-run", name="Run drill-down", boards=("widgets", "reply")),
 ]
 _FORM_BY_ID = {f["id"]: f for f in FORMS}
 # the context graph's line above is held verbatim by the chat's explode test; its name and board ride in here

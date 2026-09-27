@@ -31,8 +31,8 @@ CAP_HINTS: Dict[str, Dict[str, Any]] = {
     "ollama.route_stats": {"form": "ranked", "map": {"values": "stats", "count": "model", "sum": "n"}},
     "obs.node_temps": {"form": "temps", "map": {"values": "hosts", "name": "label", "value": "max_c"}},
     "evolve.activity": {"form": "area", "map": {"series": "buckets", "split": ["pass", "fail"], "t": "hour"}},
-    "evolve.pipeline.list": {"form": "table", "map": {"rows": "pipelines"}, "draw": {"columns": ["branch", "status", "decision", "created_at"]}},
-    "evolve.unittest.history": {"form": "trace", "map": {"series": "runs", "v": "passed", "t": "ts", "reverse": True}},
+    "evolve.pipeline.list": {"form": "status-matrix"},
+    "evolve.unittest.history": {"form": "race-green"},
     "perf.stalls": {"form": "column", "map": {"values": "events", "value": "stalled_ms", "reverse": True}},
     "syslog.errors": {"form": "log", "map": {"events": "warnings", "t": "ts", "kind": "cap_group", "text": "message"}},
     "dash.health.summary": {"form": "pills", "map": {"values": "$", "entries": "status"}},
@@ -46,7 +46,16 @@ CAP_HINTS: Dict[str, Dict[str, Any]] = {
     "topology.snapshot": {"form": "vgraph"}, "mesh.topology": {"form": "vgraph"}, "cal.events.list": {"form": "schedule"},
     "exec.bash.run": {"form": "terminal"}, "code.read": {"form": "code"}, "code.diff": {"form": "diff"},
     "evolve.pipeline.diff": {"form": "diff"}, "evolve.sandbox.diff": {"form": "diff"},
+    # the Loop Lab's pictures: ci.* (code work), loop.ci.* (the agentic loop), and the Loop Lab's own capabilities
+    "ci.matrix": {"form": "status-matrix"}, "ci.race": {"form": "race-green"}, "ci.tests": {"form": "test-grid"},
+    "ci.board": {"form": "ci-board"}, "ci.track": {"form": "run-track"}, "ci.compare": {"form": "run-compare"},
+    "ci.pulse": {"form": "ci-pulse"}, "ci.fleet": {"form": "ci-fleet"}, "ci.run": {"form": "ci-run"},
+    "loop.ci.matrix": {"form": "status-matrix"}, "loop.ci.race": {"form": "race-green"}, "loop.ci.board": {"form": "ci-board"},
+    "evolve.pipeline.get": {"form": "run-track"}, "evolve.tasks.overview": {"form": "status-matrix"},
+    "workshop.agent_loop.trace": {"form": "status-matrix"}, "board.items": {"form": "ci-board"},
 }
+#: the CI forms draw their answer whole (ci_view_core's payload): no rows companion beside them
+CI_FORMS = ("status-matrix", "race-green", "test-grid", "ci-board", "run-track", "run-compare", "ci-pulse", "ci-fleet", "ci-run")
 _ROW_KEYS = ("data", "result", "items", "rows", "results", "entries", "events", "points", "series", "values")
 _TIME = ("t", "ts", "time", "when", "at", "timestamp", "created_at", "started_at", "hour", "date")
 _TEXT = ("text", "msg", "message", "line", "event", "summary", "title")
@@ -209,7 +218,8 @@ def from_cap_result(cap: str, result: Any, args: Optional[dict] = None, title: s
     h = _hint(cap)
     if h:
         r = mk(h["form"], c, "the " + cap + " hint", h.get("map"), h.get("draw"))
-        companion(c, r)
+        if h["form"] not in CI_FORMS:
+            companion(c, r)
         return done()
     rw, rk = _rows(c), _rows_key(c)
     # 7 progress
