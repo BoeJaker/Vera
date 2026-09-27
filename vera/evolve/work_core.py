@@ -165,6 +165,10 @@ def run_row(r: Dict[str, Any]) -> Dict[str, Any]:
         "warnings": 0, "reruns": 0,
         "source": str(r.get("source") or ""), "task": str(r.get("task") or ""), "run_id": str(r.get("run_id") or ""),
         "where": str(r.get("where") or ""), "variant": str(r.get("variant") or ""),
+        # A recorded agent loop (source=loop, loop_record_core): who started it
+        # and how it planned, so Loop Lab can compare loops like with like.
+        "origin": str(r.get("origin") or ""), "engine": str(r.get("engine") or ""),
+        "plan_style": str(r.get("plan_style") or ""),
         "error": err[:200],
         "commits": [c for c in (r.get("commits") or []) if isinstance(c, dict)],
         "open": {"kind": "run", "id": str(r.get("run_id") or "")},

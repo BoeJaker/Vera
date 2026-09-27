@@ -2835,9 +2835,11 @@ function renderCensusTable(){
   const others=(_cenStatusF==='live'||_cenStatusF==='operator')?[]:_workRows.filter(x=>!(x.kind==='census'&&x.census)).filter(x=>{
     if(_workKind&&x.kind!==_workKind)return false;
     if(_cenTemplate&&(x.kind!=='census'||(x.template||'')!==_cenTemplate))return false;
-    // A scoreboard-only census row carries no rows to read a style from.
-    if(_cenStyle)return false;
+    // A scoreboard-only census row carries no rows to read a style from; a
+    // recorded loop carries its own (none = the auto path).
+    if(_cenStyle&&!(_wkIsLoop(x)&&(x.plan_style||'auto')===_cenStyle))return false;
     if(_workSrc&&x.kind==='run'&&x.source!==_workSrc)return false;
+    if(_workOrigin&&!(_wkIsLoop(x)&&x.origin===_workOrigin))return false;
     if(_cenStatusF==='usable'&&x.excluded)return false;
     if(_cenStatusF==='excluded'&&!x.excluded)return false;
     if(_cenStatusF==='problems'&&!((x.failed||0)>0||(x.capped||0)>0||x.excluded||x.status==='error'))return false;
@@ -2853,7 +2855,10 @@ function renderCensusTable(){
   const kindBar='<label style="display:flex;gap:4px;align-items:center">kind <select onchange="setWorkKind(this.value)" style="width:auto"><option value="">all</option>'
     +['census','suite','improve','run'].map(k=>'<option value="'+k+'"'+(_workKind===k?' selected':'')+'>'+k+(kinds[k]?(' ('+kinds[k]+')'):'')+'</option>').join('')+'</select></label>'
     +(_workKind==='run'?('<label style="display:flex;gap:4px;align-items:center">source <select onchange="setWorkSrc(this.value)" style="width:auto"><option value="">every source</option>'
-      +['run','manual','goal','captest','ide'].map(v=>'<option value="'+v+'"'+(_workSrc===v?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'):'');
+      +['run','manual','goal','captest','ide','loop'].map(v=>'<option value="'+v+'"'+(_workSrc===v?' selected':'')+'>'+(v==='loop'?'loop (every recorded agent loop)':v)+'</option>').join('')+'</select></label>'):'')
+    +(_workKind==='run'&&_workSrc==='loop'?('<label style="display:flex;gap:4px;align-items:center" title="who started the loop">origin <select onchange="setWorkOrigin(this.value)" style="width:auto"><option value="">every origin</option>'
+      +[...new Set(_workRows.filter(_wkIsLoop).map(x=>x.origin||''))].filter(Boolean).sort().map(v=>'<option value="'+esc(v)+'"'+(_workOrigin===v?' selected':'')+'>'+esc(v)+' ('+_workRows.filter(x=>_wkIsLoop(x)&&x.origin===v).length+')</option>').join('')
+      +'</select></label>'):'');
   const bar='<div class="hint" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 6px">'
     +'<input id="cen-text" placeholder="filter: run, template, operator, model, node, task" value="'+esc(_cenText)+'" oninput="setCensusText(this.value)" style="width:230px">'
     +kindBar
@@ -3199,7 +3204,12 @@ function setWorkMode(m){
   if(_workMode==='tasks')loadWorkTasks(); else renderCensusTable();
 }
 function setWorkKind(v){ _workKind=String(v||''); renderCensusTable(); }
-function setWorkSrc(v){ _workSrc=String(v||''); renderCensusTable(); }
+function setWorkSrc(v){ _workSrc=String(v||''); if(_workSrc!=='loop')_workOrigin=''; renderCensusTable(); }
+/* Recorded agent loops (source=loop): who started them - the chat and API
+   (interactive), the dream system, a v8 program. */
+let _workOrigin='';
+function setWorkOrigin(v){ _workOrigin=String(v||''); renderCensusTable(); }
+function _wkIsLoop(x){ return x&&x.kind==='run'&&x.source==='loop'; }
 /* Something finished somewhere (an event, a poll that saw a change): refresh
    whichever view is on screen. Cheap to call; it only fetches when Work is
    the section on screen. */
@@ -3237,7 +3247,7 @@ function _wkRow(d){
   const open=!!_cenOpen[d.id];
   const name='<span class="mono">'+(open?'▾':'▸')+' '+_wkKindTag(d.kind)+' '+eid(d.kind==='improve'?'session':(d.kind==='census'?'census':d.kind),d.id)+'</span>'+(d.status==='running'?' <span style="color:#3cb371">●</span>':'')+(d.excluded?' <span class="tag">'+esc(d.excluded)+'</span>':'');
   const st=(d.status==='error'||d.status==='failed')?'<span style="color:#c96b6b">'+esc(d.status)+'</span>':(d.status==='running'?'<span style="color:#3cb371">running</span>':esc(d.status||''));
-  const model=d.kind==='improve'?('critic '+esc(d.critic||'?')+' · editor '+esc(d.editor||'?')+(d.best_variant?(' · best '+esc(d.best_variant)):'')):(d.variant?('variant '+esc(d.variant)):(d.critic?('critic '+esc(d.critic)):(d.where?esc(d.where):'')));
+  const model=_wkIsLoop(d)?[d.origin,d.engine,(d.plan_style||'auto')+' planning',d.where].filter(Boolean).map(esc).join(' · '):d.kind==='improve'?('critic '+esc(d.critic||'?')+' · editor '+esc(d.editor||'?')+(d.best_variant?(' · best '+esc(d.best_variant)):'')):(d.variant?('variant '+esc(d.variant)):(d.critic?('critic '+esc(d.critic)):(d.where?esc(d.where):'')));
   const wall=d.wall_total_s!=null?_cenSec(d.wall_total_s):'—';
   return '<tr class="clk cen-run" data-run="'+esc(d.id)+'" onclick="toggleWorkDriver(\''+esc(d.kind)+'\',\''+esc(d.id)+'\')">'
     +'<td>'+name+'</td>'
