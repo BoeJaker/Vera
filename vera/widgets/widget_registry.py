@@ -124,6 +124,43 @@ _LHM_BUILTINS: List[Dict[str, Any]] = [
      "frame": "one line", "draw": {"form": "button", "size": "XS"},
      "can": ["new session", "refresh the context", "loop settings", "open a panel", "open the terminal", "full settings"],
      "placed": ["LHM"]},
+    # the calendar panel's parts as widgets (the widget review, round 3 - the owner: "any lhm items that can be made into
+    # widgets ... like the calendar controls and even the calendar from the comms ui itself - and the different parts of
+    # it like the schedule view on the right"). The calendar panel (and the comms UI, which frames it) reads
+    # cal.events.list for a range; these read the same, their range following the month shown.
+    {"id": "cal:month", "name": "Month calendar", "form": "month",
+     "reads": {"cap": "cal.events.list", "args": {"start": "@month_start", "end": "@month_end"}, "every": "5m", "note": "the month's events, the range following the month shown"},
+     "frame": "month . days . events . today", "draw": {"form": "month", "size": "L"},
+     "can": ["previous . next . today", "choose a day", "open an event in the drawer"], "placed": ["dashboard", "canvas", "LHM"]},
+    {"id": "cal:schedule", "name": "Schedule", "form": "schedule",
+     "reads": {"cap": "cal.events.list", "args": {"start": "@today", "end": "@today+14d"}, "every": "5m", "note": "what is coming, by day"},
+     "frame": "day . time . title . where", "draw": {"form": "schedule", "size": "M"},
+     "can": ["follow the chosen day", "open an event in the drawer"], "placed": ["dashboard", "canvas", "LHM"]},
+    {"id": "cal:controls", "name": "Calendar controls", "form": "calnav",
+     "reads": {"cap": "", "args": {}, "note": "drives the month and the schedule of its group on the same page"},
+     "frame": "previous . month . next . today . view", "draw": {"form": "calnav", "size": "S"},
+     "can": ["move the month", "back to today", "switch the view"], "placed": ["dashboard", "canvas", "LHM"]},
+    {"id": "cal:todos", "name": "Todos", "form": "checklist",
+     "reads": {"cap": "cal.todos.list", "args": {"include_done": False}, "every": "5m", "note": "the calendar's todos"},
+     "frame": "title . due . done", "draw": {"form": "checklist", "size": "M"},
+     "can": ["open a todo in the drawer"], "placed": ["dashboard", "canvas", "LHM"]},
+    # the graphs as widgets: the estate's own graph (veraUI.Graph) in a tile, in any of its display modes
+    {"id": "graph:fabric", "name": "Fabric graph", "form": "vgraph",
+     "reads": {"cap": "fabric.graphs.snapshot", "args": {"graph": "fabric", "limit": 200}, "every": "5m"},
+     "frame": "nodes . edges . modes", "draw": {"form": "vgraph", "size": "L", "motion": ""},
+     "can": ["switch the mode", "open a node"], "placed": ["dashboard", "canvas"]},
+    {"id": "graph:memory", "name": "Memory graph · Vera graph", "form": "vgraph",
+     "reads": {"cap": "memory.graph_full", "args": {"limit_nodes": 300, "limit_edges": 1500}, "every": "5m"},
+     "frame": "memories . entities . relations . modes", "draw": {"form": "vgraph", "size": "L"},
+     "can": ["switch the mode", "open a node"], "placed": ["dashboard", "canvas"]},
+    {"id": "graph:topology", "name": "Stack topology graph", "form": "vgraph",
+     "reads": {"cap": "topology.snapshot", "args": {}, "every": "2m"},
+     "frame": "the estate as a graph . estate-2d / 3d", "draw": {"form": "vgraph", "size": "L"},
+     "can": ["switch the mode", "open a node"], "placed": ["dashboard", "canvas"]},
+    {"id": "graph:mesh", "name": "Mesh graph", "form": "vgraph",
+     "reads": {"cap": "mesh.topology", "args": {}, "every": "2m"},
+     "frame": "the mesh's nodes and links", "draw": {"form": "vgraph", "size": "M"},
+     "can": ["switch the mode", "open a node"], "placed": ["dashboard", "canvas"]},
 ]
 
 

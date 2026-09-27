@@ -42,6 +42,8 @@ CAP_HINTS: Dict[str, Dict[str, Any]] = {
     "docker.ps": {"form": "containers", "map": {"rows": "containers", "name": "Names", "status": "State", "host": "host_id"}},
     "evolve.sandbox.list": {"form": "sandboxes", "map": {"rows": "sandboxes", "name": "name", "status": "running"}},
     "dream.history": {"form": "table", "map": {"rows": "history"}, "draw": {"columns": ["label", "title", "started_at", "signal"]}},
+    "fabric.graphs.snapshot": {"form": "vgraph"}, "fabric.entity_graph.snapshot": {"form": "vgraph"}, "memory.graph_full": {"form": "vgraph"},
+    "topology.snapshot": {"form": "vgraph"}, "mesh.topology": {"form": "vgraph"}, "cal.events.list": {"form": "schedule"},
     "exec.bash.run": {"form": "terminal"}, "code.read": {"form": "code"}, "code.diff": {"form": "diff"},
     "evolve.pipeline.diff": {"form": "diff"}, "evolve.sandbox.diff": {"form": "diff"},
 }

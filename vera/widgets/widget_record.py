@@ -55,7 +55,7 @@ COMPOSITIONS = {
 }
 
 # forms that need no source (chrome, containers, the panel form reads a panel id)
-NO_SOURCE_FORMS = ("header", "button", "rail", "controls", "panel", "composite", "announcement", "links", "form")
+NO_SOURCE_FORMS = ("header", "button", "rail", "controls", "panel", "composite", "announcement", "links", "form", "calnav")
 
 # ── the forms (the Widgets · WidgetsMotion · WidgetsIso galleries and the reply's own) ──
 # id · shape · projections · glyph · motion · sizes · options · the board's name · the boards it is on. Every form the three
@@ -225,6 +225,14 @@ FORMS: List[Dict[str, Any]] = [
     _F("media", "string", glyph="media", name="Media", boards=("reply", "spec")),
     _F("error", "string", glyph="error", name="Error", boards=("reply", "spec")),
     _F("markdown", "string", glyph="markdown", name="Markdown", boards=("reply", "spec")),
+    # ── the calendar and the Vera graph as forms (the widget review, round 3): the calendar panel's month, its schedule
+    #    and its controls (they read cal.events.list with arguments that follow the month: '@month_start' . '@month_end'
+    #    . '@today' . '@today+14d'; calnav drives every month and schedule of its draw.group on the page), and the estate's
+    #    own graph in a tile (draw.mode: graph . exploded . estate-3d . estate-2d . mermaid; draw.layer when it reads itself) ──
+    _F("month", "calendar", glyph="month", options=("controls", "group"), name="Month calendar", boards=("widgets", "spec")),
+    _F("schedule", "calendar", glyph="schedule", options=("group",), name="Schedule", boards=("widgets", "spec")),
+    _F("calnav", "calendar", glyph="calnav", sizes=("s", "m", "l"), options=("group", "views", "view"), name="Calendar controls", boards=("widgets", "spec")),
+    _F("vgraph", "graph", glyph="vgraph", options=("mode", "layer"), name="Vera graph", boards=("widgets", "spec")),
 ]
 _FORM_BY_ID = {f["id"]: f for f in FORMS}
 # the context graph's line above is held verbatim by the chat's explode test; its name and board ride in here

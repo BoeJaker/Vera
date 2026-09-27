@@ -99,7 +99,9 @@
                   // the table family (defect 50)
                   rows: 'items', cards: 'items', temps: 'values',
                   // the capability-output forms (the widget review, round 2)
-                  json: 'values', diff: 'string', code: 'string', progress: 'stages', status: 'values', media: 'string', error: 'string', markdown: 'string' };
+                  json: 'values', diff: 'string', code: 'string', progress: 'stages', status: 'values', media: 'string', error: 'string', markdown: 'string',
+                  // the calendar forms and the Vera graph form (the widget review, round 3)
+                  month: 'calendar', schedule: 'calendar', calnav: 'calendar', vgraph: 'graph' };
   const canon = (form) => { const f = String(form || '').toLowerCase(); return DRAWN[f] ? f : (ALIAS[f] || f); };
 
   /* ── the data a form draws ────────────────────────────────────────────── */
@@ -132,7 +134,7 @@
   function dataFor(x, form, depth) {
     depth = depth || 0; if (x == null || depth > 2) return x;
     form = canon(form);
-    if (/^(json|diff|code|progress|status|media|error|markdown)$/.test(form)) return x;   // a result form reads the answer whole
+    if (/^(json|diff|code|progress|status|media|error|markdown|month|schedule|calnav|vgraph)$/.test(form)) return x;   // a result form reads the answer whole
     if (Array.isArray(x)) return x;
     if (typeof x === 'object') {
       if (/^(radial|counter|bar|hero|meter|level|ring|gauge|dial|tank)$/.test(form) && typeof x.value === 'number') return x;   // a level with its trend beside it is the level, not its trend
@@ -281,6 +283,10 @@
     status: () => ({ status: 'degraded', message: '1 of 4 checks needs a look', checks: [{ name: 'redis', status: 'ok' }, { name: 'neo4j', status: 'ok' }, { name: 'gate', status: 'warn' }, { name: 'ct126', status: 'ok' }] }),
     media: () => ({ url: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNjAiIGhlaWdodD0iOTAiPjxyZWN0IHdpZHRoPSIxNjAiIGhlaWdodD0iOTAiIGZpbGw9IiMyMjI2MzAiLz48Y2lyY2xlIGN4PSI4MCIgY3k9IjQ1IiByPSIyNCIgZmlsbD0iIzZlYThkOCIvPjwvc3ZnPg==', title: 'a drawing' }),
     error: () => ({ ok: false, error: 'ct130 did not answer in 25 s', detail: 'ConnectTimeout: 192.168.0.130:11435' }),
+    month: () => { const t = new Date(), k = (n, h) => ymdOf(addDays(t, n)) + (h ? 'T' + h + ':00' : ''); return { events: [[0, '09:00', '10:00', 'digest', '#6ea8d8'], [0, '14:00', '15:30', 'loop v7 · step 5', '#a78bfa'], [1, '11:30', '12:00', 'sweep · fabric', '#5ec9a0'], [3, '', '', 'benchmark', '#e09a55'], [-2, '16:00', '17:00', 'review', '#e07a9a'], [6, '09:00', '09:30', 'digest', '#6ea8d8']].map((r, i) => ({ id: 's' + i, title: r[3], start: r[1] ? k(r[0], r[1]) : k(r[0]), end: r[2] ? k(r[0], r[2]) : k(r[0] + 1), all_day: !r[1], color: r[4], location: i === 1 ? 'the lab' : '' })) }; },
+    schedule: () => FORM_SAMPLE.month(),
+    calnav: () => ({ calendar: true }),
+    vgraph: () => SAMPLE.graph(),
     markdown: () => '## Digest\nFour of four boots **clean**. The gate held `ct126` twice.\n- sweep the estate\n- verify on the mirror',
     pills: () => [['redis', 'ok'], ['neo4j', 'ok'], ['ollama', 'running'], ['ct130', 'down'], ['gate', 'ok']].map((r) => ({ name: r[0], status: r[1] })),
     context_graph: () => { const g = SAMPLE.graph(); return { nodes: g.nodes, rels: g.links.map((l) => ({ from: l.from, to: l.to, kind: l.kind })) }; },
@@ -502,9 +508,9 @@
     const cols0 = ['var(--acc,#5a9e8f)', 'var(--acc2,#8fb87a)', 'var(--acc3,#d4a96a)', '#a78bfa', '#e07a9a', '#5ab0d8', '#c9a35a', '#7ac9b0'];
     const cols = (o && o.draw && o.draw.palette === 'status') ? kv.map((x, i) => { const sc = stCol(x[0]); return sc === B.t3 ? cols0[(i + 5) % cols0.length] : sc; }) : cols0;
     const sw = Math.max(6, Math.round(D / 11)), pc = (v) => Math.round(Math.abs(v) / tot * 100) + '%';
-    const arcs = kv.map((x, i) => { const f = Math.abs(x[1]) / tot; const el = '<circle class="vw-arc" data-b="p' + i + '" data-tip="' + esc(x[0] + '\n' + fmt(x[1]) + ' · ' + pc(x[1]) + ' of ' + fmt(tot)) + '" cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="' + cols[i % cols.length] + '" stroke-width="' + sw + '" stroke-dasharray="' + Math.max(0, f * c - 2).toFixed(1) + ' ' + (c - f * c + 2).toFixed(1) + '" stroke-dashoffset="' + (-acc * c).toFixed(1) + '" transform="rotate(-90 ' + s + ' ' + s + ')"></circle>'; acc += f; return el; }).join('');
+    const arcs = kv.map((x, i) => { const f = Math.abs(x[1]) / tot; const el = '<circle class="vw-arc" data-b="p' + i + '"' + itemAttr({ name: x[0], value: x[1], share: Math.round(f * 1000) / 10, of: tot }, 'slice') + ' data-tip="' + esc(x[0] + '\n' + fmt(x[1]) + ' · ' + pc(x[1]) + ' of ' + fmt(tot)) + '" cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="' + cols[i % cols.length] + '" stroke-width="' + sw + '" stroke-dasharray="' + Math.max(0, f * c - 2).toFixed(1) + ' ' + (c - f * c + 2).toFixed(1) + '" stroke-dashoffset="' + (-acc * c).toFixed(1) + '" transform="rotate(-90 ' + s + ' ' + s + ')"></circle>'; acc += f; return el; }).join('');
     const mid = '<text x="' + s + '" y="' + s + '" class="vw-dtot" text-anchor="middle" dominant-baseline="central">' + esc(fmt(tot)) + '</text>';
-    return '<div class="vw-donut"><svg class="vw-svg" viewBox="0 0 ' + D + ' ' + D + '" style="height:' + D + 'px;width:' + D + 'px;flex:none">' + arcs + mid + '</svg><div class="vw-legend vw-legend-col">' + kv.map((x, i) => '<span data-b="p' + i + '"><i style="background:' + cols[i % cols.length] + '"></i><em>' + esc(x[0]) + '</em><b>' + esc(fmt(x[1])) + '</b><small>' + pc(x[1]) + '</small></span>').join('') + '</div></div>';
+    return '<div class="vw-donut"><svg class="vw-svg" viewBox="0 0 ' + D + ' ' + D + '" style="height:' + D + 'px;width:' + D + 'px;flex:none">' + arcs + mid + '</svg><div class="vw-legend vw-legend-col">' + kv.map((x, i) => '<span data-b="p' + i + '"' + itemAttr({ name: x[0], value: x[1], share: Math.round(Math.abs(x[1]) / tot * 1000) / 10, of: tot }, 'slice') + '><i style="background:' + cols[i % cols.length] + '"></i><em>' + esc(x[0]) + '</em><b>' + esc(fmt(x[1])) + '</b><small>' + pc(x[1]) + '</small></span>').join('') + '</div></div>';
   };
   R.stack = (d) => {
     const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('parts need { name: number }');
@@ -807,7 +813,7 @@
     const lim = (o && o.draw && o.draw.limit) || fitRows(o, size, 17, 40 + (size === 'xl' ? 24 : 0)); const { rw, sortBy, dir } = tableSort(all, cols, o);
     const page = Math.max(0, +ui(o, 'page', 0) || 0), pages = Math.max(1, Math.ceil(rw.length / lim)), pg = Math.min(page, pages - 1), shown = rw.slice(pg * lim, pg * lim + lim);
     const head = '<div class="vb-dgr h" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => '<button class="' + (sortBy === c ? 'on' : '') + '"' + set('sort', c) + (sortBy === c ? ' data-vb-set2="dir:' + (-dir) + '"' : ' data-vb-set2="dir:-1"') + '>' + esc(c.replace(/_/g, ' ')) + '<span>' + (sortBy === c ? (dir < 0 ? '↓' : '↑') : '') + '</span></button>').join('') + '</div>';
-    const body = shown.map((r) => '<div class="vb-dgr" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('');
+    const body = shown.map((r) => '<div class="vb-dgr"' + itemAttr(r, 'row') + ' style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('');
     const search = size === 'xl' ? '<div class="vb-tsearch"><span>⌕</span><input type="search" value="' + esc(q) + '" placeholder="find in ' + all.length + ' rows" data-vb-input="q"></div>' : '';
     const foot = size === 'l' || size === 'xl' || pages > 1 ? '<div class="vb-dgf"><span>' + (sortBy ? 'sorted by ' + esc(sortBy) + (dir < 0 ? ' · high first' : ' · low first') : rw.length + ' rows') + '</span><span style="margin-left:auto">' + (rw.length ? (pg * lim + 1) + '–' + Math.min(rw.length, pg * lim + lim) + ' of ' + rw.length : '0 of 0') + '</span><button' + set('page', Math.max(0, pg - 1)) + '>‹</button><button' + set('page', Math.min(pages - 1, pg + 1)) + '>›</button></div>' : '';
     return wrap('table', search + head + (body || '<span class="vb-lbl">' + (q ? 'nothing matches "' + esc(q) + '"' : 'no rows') + '</span>') + foot, 'vb-tf');
@@ -816,16 +822,16 @@
     const all = rows(d); const str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const rw0 = all.length ? all : str.map((s) => ({ name: s })); if (!rw0.length) return EMPTY('no rows');
     const size = (o && o.size) || 'm'; const cols = tableCols(rw0, o, 4); let lim = (o && o.draw && o.draw.limit) || fitRows(o, size, 17, 18); if (!(o && o.draw && o.draw.limit) && rw0.length > lim) lim = fitRows(o, size, 17, 34);   // room for the '+ n more' line
     const { rw } = tableSort(rw0, cols, o); const lit = o && o.draw && o.draw.lit != null ? o.draw.lit : null;
-    return wrap('rows', rw.slice(0, lim).map((r) => '<div class="vb-dgr" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('') + (rw.length > lim ? '<span class="vb-lbl">+ ' + (rw.length - lim) + ' more</span>' : ''), 'vb-tf');
+    return wrap('rows', rw.slice(0, lim).map((r) => '<div class="vb-dgr"' + itemAttr(r, 'row') + ' style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('') + (rw.length > lim ? '<span class="vb-lbl">+ ' + (rw.length - lim) + ' more</span>' : ''), 'vb-tf');
   };
   R.cards = (d, H, o) => {
     const rw = rows(d); if (!rw.length) return EMPTY('cards need rows'); const size = (o && o.size) || 'm'; const ncol = { s: 1, m: 2, l: 3, xl: 4 }[size] || 2; const lim = (o && o.draw && o.draw.limit) || ncol * (o && o.height ? Math.max(1, Math.floor(o.height / 66)) : (size === 'xl' ? 3 : 2)); const cols = tableCols(rw, o, 5); const nameC = cols.find((c) => /^(name|title|label|id|host|hostname|node)$/i.test(c)) || cols[0]; const rest = cols.filter((c) => c !== nameC && !/^(status|state|health)$/i.test(c)).slice(0, 2); const stC = cols.find((c) => /^(status|state|health)$/i.test(c));
-    return wrap('cards', '<div class="vb-cards" style="grid-template-columns:repeat(' + ncol + ',minmax(0,1fr))">' + rw.slice(0, lim).map((r) => '<div class="vb-card">' + (stC ? '<i style="background:' + stCol(r[stC]) + '" title="' + esc(String(r[stC] ?? '')) + '"></i>' : '') + '<b>' + esc(String(r[nameC] ?? '')) + '</b>' + rest.map((c) => '<span><small>' + esc(c.replace(/_/g, ' ')) + '</small>' + esc(typeof r[c] === 'number' ? fmt(r[c]) : String(r[c] ?? '')) + '</span>').join('') + '</div>').join('') + '</div>' + (rw.length > lim ? cap('+ ' + (rw.length - lim) + ' more') : ''));
+    return wrap('cards', '<div class="vb-cards" style="grid-template-columns:repeat(' + ncol + ',minmax(0,1fr))">' + rw.slice(0, lim).map((r) => '<div' + itemAttr(r, 'card') + ' class="vb-card">' + (stC ? '<i style="background:' + stCol(r[stC]) + '" title="' + esc(String(r[stC] ?? '')) + '"></i>' : '') + '<b>' + esc(String(r[nameC] ?? '')) + '</b>' + rest.map((c) => '<span><small>' + esc(c.replace(/_/g, ' ')) + '</small>' + esc(typeof r[c] === 'number' ? fmt(r[c]) : String(r[c] ?? '')) + '</span>').join('') + '</div>').join('') + '</div>' + (rw.length > lim ? cap('+ ' + (rw.length - lim) + ' more') : ''));
   };
   R.temps = (d, H, o) => {
     let kv = keyed(d); if (!kv.length) return EMPTY('a temp list needs named values'); const size = (o && o.size) || 'm'; const lim = (o && o.draw && o.draw.limit) || TABLE_ROWS[size] || 4;
     const max = num(o && o.draw && o.draw.max) || Math.max(95, ...kv.map((x) => x[1])), thr = num(o && o.draw && o.draw.throttle) || 70, unit = (o && o.draw && o.draw.unit) || '°'; if ((o && o.draw && o.draw.sort) !== 'name') kv = kv.slice().sort((a, b) => b[1] - a[1]);
-    return wrap('temps', kv.slice(0, lim).map((x) => { const col = x[1] >= thr ? B.ac4 : x[1] >= thr * .78 ? B.ac3 : B.ac2; return '<span class="vb-rw"><span class="n" title="' + esc(x[0]) + '">' + esc(x[0]) + '</span><span class="tr"><i style="width:' + pct(x[1], max).toFixed(1) + '%;background:' + col + '"></i><em style="left:' + pct(thr, max).toFixed(1) + '%"></em></span><span class="v" style="color:' + col + '">' + esc(fmt(x[1]) + unit) + '</span></span>'; }).join('') + (kv.length > lim ? '<span class="vb-lbl">+ ' + (kv.length - lim) + ' more · throttle ' + thr + esc(unit) + '</span>' : cap('throttle ' + thr + esc(unit) + ' · hottest first')), 'vb-tf');
+    return wrap('temps', kv.slice(0, lim).map((x) => { const col = x[1] >= thr ? B.ac4 : x[1] >= thr * .78 ? B.ac3 : B.ac2; return '<span class="vb-rw"' + itemAttr({ name: x[0], value: x[1], throttle: thr }, 'reading') + '><span class="n" title="' + esc(x[0]) + '">' + esc(x[0]) + '</span><span class="tr"><i style="width:' + pct(x[1], max).toFixed(1) + '%;background:' + col + '"></i><em style="left:' + pct(thr, max).toFixed(1) + '%"></em></span><span class="v" style="color:' + col + '">' + esc(fmt(x[1]) + unit) + '</span></span>'; }).join('') + (kv.length > lim ? '<span class="vb-lbl">+ ' + (kv.length - lim) + ' more · throttle ' + thr + esc(unit) + '</span>' : cap('throttle ' + thr + esc(unit) + ' · hottest first')), 'vb-tf');
   };
   R.gallery = (d, H, o) => {
     const rw = rows(d); const str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const items = rw.length ? rw : str.map((s) => ({ src: s, name: s.split('/').pop() })); if (!items.length) return EMPTY('a gallery needs items');
@@ -847,7 +853,7 @@
     let cur = ev.findIndex((r) => r.now || r.current || r.cls === 'now'); if (cur < 0) { let best = -1; ev.forEach((r, i) => { const m = mins(r); if (m >= 0 && m <= nowH) best = i; }); cur = best; }
     // as many bookings as the body holds (a booking is ~31 px), from the one that is on now - a two-row tile cut its third in half
     const fit = Math.max(1, Math.min(8, Math.floor((H || 96) / 31))), from = cur > 0 ? Math.min(cur, Math.max(0, ev.length - fit)) : 0;
-    return wrap('agenda', ev.slice(from, from + fit).map((r, j, _a, i = j + from) => '<div class="vb-ag' + (i === cur ? ' now' : '') + '"><span class="t">' + esc(hhmm(r.when ?? r.t ?? r.start ?? r.time)) + '</span><i style="background:' + (r.col || r.color || (stCol(r.status) === B.t3 ? DV(i) : stCol(r.status))) + '"></i><span class="n">' + esc(String(r.title ?? r.name ?? txt(r))) + (r.detail || r.d || r.who ? '<small>' + esc(String(r.detail ?? r.d ?? r.who)) + '</small>' : '') + '</span><span class="w">' + esc(String(r.duration ?? r.w ?? (i === cur ? 'now' : ''))) + '</span></div>').join(''));
+    return wrap('agenda', ev.slice(from, from + fit).map((r, j, _a, i = j + from) => '<div class="vb-ag' + (i === cur ? ' now' : '') + '"' + itemAttr(r, 'booking') + '><span class="t">' + esc(hhmm(r.when ?? r.t ?? r.start ?? r.time)) + '</span><i style="background:' + (r.col || r.color || (stCol(r.status) === B.t3 ? DV(i) : stCol(r.status))) + '"></i><span class="n">' + esc(String(r.title ?? r.name ?? txt(r))) + (r.detail || r.d || r.who ? '<small>' + esc(String(r.detail ?? r.d ?? r.who)) + '</small>' : '') + '</span><span class="w">' + esc(String(r.duration ?? r.w ?? (i === cur ? 'now' : ''))) + '</span></div>').join(''));
   };
   R.people = (d, H, o) => {
     const rw = rows(d); if (!rw.length) return EMPTY('people need rows');
@@ -964,7 +970,7 @@
     // named columns say the first and the last name they span (dreams per day: 2026-06-28 → 2026-07-19); a bar's own title
     // is its own name (it was the name of the bar lim places earlier once there were more than lim)
     const span = kv.length > 1 ? esc(String(kv[from][0])) + ' → ' + esc(String(kv[kv.length - 1][0])) + ' · ' : '';
-    return wrap('column', '<div class="vb-chart" style="height:' + chH(H, 22) + 'px"><div class="vb-colbars gap">' + vals.slice(from).map((v, i) => '<i style="height:' + pct(v, hi).toFixed(0) + '%;background:' + pal(i, v, hi) + '" title="' + esc(kv[from + i] ? String(kv[from + i][0]) + ' · ' : '') + fmt(v) + '"></i>').join('') + '</div></div>' + cap((d && d.note) ? esc(String(d.note)) : span + 'last ' + Math.min(vals.length, lim) + ' · peak ' + esc(fmt(hi))));
+    return wrap('column', '<div class="vb-chart" style="height:' + chH(H, 22) + 'px"><div class="vb-colbars gap">' + vals.slice(from).map((v, i) => '<i' + itemAttr(kv[from + i] ? { name: kv[from + i][0], value: v } : { index: from + i, value: v }, 'bar') + ' style="height:' + pct(v, hi).toFixed(0) + '%;background:' + pal(i, v, hi) + '" title="' + esc(kv[from + i] ? String(kv[from + i][0]) + ' · ' : '') + fmt(v) + '"></i>').join('') + '</div></div>' + cap((d && d.note) ? esc(String(d.note)) : span + 'last ' + Math.min(vals.length, lim) + ' · peak ' + esc(fmt(hi))));
   };
   // the rows a bar list holds in its body (a bar row is ~13 px with the 6 px gap) - six rows in room for four cut two off
   const barRowsFit = (H) => Math.max(2, Math.floor(((H || 96) + 6) / 19));
@@ -975,7 +981,7 @@
   R.ranked = (d, H, o) => {
     const kv = keyed(d).slice().sort((a, b) => b[1] - a[1]).slice(0, (o && o.draw && o.draw.limit) || barRowsFit(H)); if (!kv.length) return EMPTY('ranked bars need values'); const hi = kv[0][1] || 1, pal = palOf(o); const rw = rows(d);
     const lbl = shortLabels(kv.map((x) => x[0]));
-    return wrap('ranked', kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<span class="vb-rw"><span class="n" title="' + esc(x[0]) + '">' + esc(lbl[i]) + '</span><span class="tr"><i style="width:' + pct(x[1], hi).toFixed(1) + '%;background:' + (r.col || pal(i)) + '"></i></span><span class="v">' + esc(String(r.text ?? r.size ?? fmt(x[1]))) + '</span></span>'; }).join(''));
+    return wrap('ranked', kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<span class="vb-rw"' + itemAttr(Object.keys(r).length ? r : { name: x[0], value: x[1] }, 'bar') + '><span class="n" title="' + esc(x[0]) + '">' + esc(lbl[i]) + '</span><span class="tr"><i style="width:' + pct(x[1], hi).toFixed(1) + '%;background:' + (r.col || pal(i)) + '"></i></span><span class="v">' + esc(String(r.text ?? r.size ?? fmt(x[1]))) + '</span></span>'; }).join(''));
   };
   R.lollipop = (d, H, o) => {
     const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('a lollipop needs values'); const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, pal = palOf(o);
@@ -1002,7 +1008,7 @@
   };
   R.bullet = (d, H, o) => {
     const kv = keyed(d).slice(0, Math.min(6, (o && o.draw && +o.draw.limit) || 6, barRowsFit(H))); if (!kv.length) return EMPTY('bullet bars need values'); const rw = rows(d); const hi = Math.max(...kv.map((x) => x[1]), ...rw.map((r) => num(r.max ?? r.target ?? 0))) || 1, pal = palOf(o, 'status');
-    return wrap('bullet', kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; const tg = r.target ?? (o && o.draw && o.draw.target); return '<span class="vb-rw"><span class="n">' + esc(x[0]) + '</span><span class="tr"><i style="width:' + pct(x[1], num(r.max) || hi).toFixed(1) + '%;background:' + (r.col || (r.status ? stCol(r.status) : DV(i))) + '"></i>' + (tg != null ? '<em style="left:' + pct(num(tg), num(r.max) || hi).toFixed(1) + '%"></em>' : '') + '</span><span class="v">' + esc(String(r.text ?? fmt(x[1]))) + '</span></span>'; }).join(''));
+    return wrap('bullet', kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; const tg = r.target ?? (o && o.draw && o.draw.target); return '<span class="vb-rw"' + itemAttr(Object.keys(r).length ? r : { name: x[0], value: x[1] }, 'bar') + '><span class="n">' + esc(x[0]) + '</span><span class="tr"><i style="width:' + pct(x[1], num(r.max) || hi).toFixed(1) + '%;background:' + (r.col || (r.status ? stCol(r.status) : DV(i))) + '"></i>' + (tg != null ? '<em style="left:' + pct(num(tg), num(r.max) || hi).toFixed(1) + '%"></em>' : '') + '</span><span class="v">' + esc(String(r.text ?? fmt(x[1]))) + '</span></span>'; }).join(''));
   };
   R.threshold = (d, H, o) => {
     const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('a threshold scale needs values'); const max = num(o && o.draw && o.draw.max) || Math.max(90, ...kv.map((x) => x[1])); const bands = (o && o.draw && Array.isArray(o.draw.bands)) ? o.draw.bands.map(num) : [70, 85]; const unit = (o && o.draw && o.draw.unit) || '°';
@@ -1022,7 +1028,7 @@
     // the figures in one row when the body is wide enough for them (four in a 4-wide tile), else two a row, smaller - two
     // rows of 30 px figures and their labels were taller than a two-row tile's body
     const perRow = (o && o.width && o.width / kv.length >= 95) ? kv.length : Math.min(2, kv.length), nRows = Math.ceil(kv.length / perRow);
-    return wrap('numbers', '<div class="vb-bigs' + (nRows > 1 ? ' tworow' : '') + '" style="grid-template-columns:repeat(' + perRow + ',1fr)">' + kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<div><b style="color:' + (r.col || (i === 0 ? B.ac : i === 1 ? B.ac2 : i === 2 ? B.ac3 : B.t1)) + '">' + esc(String(r.text ?? (bytes.has(x[0]) ? fmtBytes(x[1]) : fmt(x[1])))) + '</b><span>' + esc(x[0]) + '</span></div>'; }).join('') + '</div>');
+    return wrap('numbers', '<div class="vb-bigs' + (nRows > 1 ? ' tworow' : '') + '" style="grid-template-columns:repeat(' + perRow + ',1fr)">' + kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<div' + itemAttr(Object.keys(r).length ? r : (bytes.has(x[0]) ? { name: x[0], value: fmtBytes(x[1]), unit: 'bytes' } : { name: x[0], value: x[1] }), 'figure') + '><b style="color:' + (r.col || (i === 0 ? B.ac : i === 1 ? B.ac2 : i === 2 ? B.ac3 : B.t1)) + '">' + esc(String(r.text ?? (bytes.has(x[0]) ? fmtBytes(x[1]) : fmt(x[1])))) + '</b><span>' + esc(x[0]) + '</span></div>'; }).join('') + '</div>');
   };
   // how many pills of these labels the body holds (a pill is 22 px tall with a 5 px gap; ~5.6 px a character at 9.5 px,
   // plus its padding, dot and figure): the rest become one "+ N" pill, never a third row cut in half
@@ -1032,8 +1038,8 @@
   const pillMore = (k, st) => k > 0 ? '<span class="more" title="' + esc(st) + '">+ ' + k + '</span>' : '';
   R.pills = (d, H, o) => {
     const kv = keyed(d); const st = rows(d); const W = o && o.width;
-    if (st.length && st.some((r) => r.status != null || r.state != null)) { const n = pillsFit(st.map((r) => nameOf(r)), H, W); return wrap('pills', '<div class="vb-pillw">' + st.slice(0, n).map((r) => { const s = String(r.status ?? r.state ?? ''); return '<span title="' + esc(nameOf(r) + ' · ' + s) + '"><i style="background:' + stCol(s) + '"></i>' + esc(nameOf(r)) + '</span>'; }).join('') + pillMore(st.length - n, st.slice(n).map((r) => nameOf(r)).join(', ')) + '</div>'); }
-    if (kv.length) { const n = pillsFit(kv.map((x) => x[0] + ' ' + fmt(x[1])), H, W); return wrap('pills', '<div class="vb-pillw">' + kv.slice(0, n).map((x, i) => '<span><i style="background:' + DV(i) + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '</b></span>').join('') + pillMore(kv.length - n, kv.slice(n).map((x) => x[0]).join(', ')) + '</div>'); }
+    if (st.length && st.some((r) => r.status != null || r.state != null)) { const n = pillsFit(st.map((r) => nameOf(r)), H, W); return wrap('pills', '<div class="vb-pillw">' + st.slice(0, n).map((r) => { const s = String(r.status ?? r.state ?? ''); return '<span' + itemAttr(r, 'pill') + ' title="' + esc(nameOf(r) + ' · ' + s) + '"><i style="background:' + stCol(s) + '"></i>' + esc(nameOf(r)) + '</span>'; }).join('') + pillMore(st.length - n, st.slice(n).map((r) => nameOf(r)).join(', ')) + '</div>'); }
+    if (kv.length) { const n = pillsFit(kv.map((x) => x[0] + ' ' + fmt(x[1])), H, W); return wrap('pills', '<div class="vb-pillw">' + kv.slice(0, n).map((x, i) => '<span' + itemAttr({ name: x[0], value: x[1] }, 'pill') + '><i style="background:' + DV(i) + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '</b></span>').join('') + pillMore(kv.length - n, kv.slice(n).map((x) => x[0]).join(', ')) + '</div>'); }
     return EMPTY('pills need rows with a status or { name: number }');
   };
 
@@ -1075,7 +1081,7 @@
       const load = o && o.draw && o.draw.palette === 'load', lpal = palOf(o, 'load'), tot = !(o && o.draw && o.draw.total === false), wide = !o || !o.width || o.width / Math.max(1, m.cols.length || m.rows[0].v.length) >= 60;
       const cols = m.cols.length ? m.cols.length : m.rows[0].v.length, grid = 'grid-template-columns:repeat(' + cols + ',1fr)';
       const head = hd ? '<span class="vb-heatrow hd"><span></span><span class="vb-heat" style="' + grid + '">' + m.cols.map((c) => '<b title="' + esc(String(c)) + '">' + esc(String(c)) + '</b>').join('') + '</span>' + (tot ? '<span></span>' : '') + '</span>' : '';
-      return wrap('heat', head + m.rows.slice(0, nr).map((r, ri) => '<span class="vb-heatrow' + (tot ? '' : ' nt') + '"><span class="vb-lbl" title="' + esc(r.n) + '">' + esc(r.n) + '</span><span class="vb-heat" style="' + grid + '">' + r.v.map((x, ci) => '<i style="height:' + cellH + 'px;aspect-ratio:auto;background:' + (load ? mix(lpal(ci, num(x), hi <= 100 ? 100 : hi), 80, 'transparent') : mix(pal(ri), Math.round(8 + num(x) / hi * 88), 'transparent')) + '" title="' + esc(r.n) + (m.cols[ci] ? ' · ' + esc(String(m.cols[ci])) : '') + ' · ' + fmt(x) + '">' + (wide && cellH >= 14 ? esc(fmt(x)) : '') + '</i>').join('') + '</span>' + (tot ? '<span class="v">' + esc(fmt(r.t != null ? r.t : r.v.reduce((s, x) => s + num(x), 0))) + '</span>' : '') + '</span>').join(''), 'vb-heatfit'); }
+      return wrap('heat', head + m.rows.slice(0, nr).map((r, ri) => '<span class="vb-heatrow' + (tot ? '' : ' nt') + '"' + itemAttr(m.cols.length ? r.v.reduce((o3, x, ci) => { o3[m.cols[ci] || ('c' + ci)] = x; return o3; }, { name: r.n }) : { name: r.n, values: r.v }, 'row') + '><span class="vb-lbl" title="' + esc(r.n) + '">' + esc(r.n) + '</span><span class="vb-heat" style="' + grid + '">' + r.v.map((x, ci) => '<i style="height:' + cellH + 'px;aspect-ratio:auto;background:' + (load ? mix(lpal(ci, num(x), hi <= 100 ? 100 : hi), 80, 'transparent') : mix(pal(ri), Math.round(8 + num(x) / hi * 88), 'transparent')) + '" title="' + esc(r.n) + (m.cols[ci] ? ' · ' + esc(String(m.cols[ci])) : '') + ' · ' + fmt(x) + '">' + (wide && cellH >= 14 ? esc(fmt(x)) : '') + '</i>').join('') + '</span>' + (tot ? '<span class="v">' + esc(fmt(r.t != null ? r.t : r.v.reduce((s, x) => s + num(x), 0))) + '</span>' : '') + '</span>').join(''), 'vb-heatfit'); }
     if (!kv.length) return EMPTY('a heat map needs rows of numbers');
     const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, cols = Math.min(12, Math.max(4, kv.length)); const pal = palOf(o, 'load');
     return wrap('heat', '<div class="vb-heatstrip" style="grid-template-columns:repeat(' + cols + ',1fr)">' + kv.slice(0, 48).map((x, i) => '<i style="background:' + pal(i, x[1], hi) + ';opacity:' + (0.25 + 0.75 * Math.abs(x[1]) / hi).toFixed(2) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + '"></i>').join('') + '</div>');
@@ -1144,7 +1150,7 @@
     const n = (o && o.draw && (o.draw.limit || o.draw.tail)) || Math.max(3, Math.floor(H / 15));
     const tOf = (r) => { const v = r.t ?? r.ts ?? r.time ?? r.when; const x = typeof v === 'number' ? v : Date.parse(String(v || '')); return isFinite(x) ? x : NaN; };
     const newestFirst = rw.length > 1 && tOf(rw[0]) > tOf(rw[rw.length - 1]);
-    return wrap('log', '<div class="vb-log">' + (newestFirst ? rw.slice(0, n) : rw.slice(-n)).map((r) => { const k = String(r.kind ?? r.level ?? r.type ?? ''); return '<span style="color:' + (r.col || kc(k)) + '"><span class="t">' + esc(hhmm(r.t ?? r.ts ?? r.time ?? r.when)) + '</span> ' + (k ? '<span class="k">' + esc(k) + '</span> ' : '') + esc(txt(r)) + '</span>'; }).join('') + '</div>');
+    return wrap('log', '<div class="vb-log">' + (newestFirst ? rw.slice(0, n) : rw.slice(-n)).map((r) => { const k = String(r.kind ?? r.level ?? r.type ?? ''); return '<span' + itemAttr(r, 'line') + ' style="color:' + (r.col || kc(k)) + '"><span class="t">' + esc(hhmm(r.t ?? r.ts ?? r.time ?? r.when)) + '</span> ' + (k ? '<span class="k">' + esc(k) + '</span> ' : '') + esc(txt(r)) + '</span>'; }).join('') + '</div>');
   };
   R.lane = (d, H, o) => {
     const rw = evsOf(d); if (!rw.length) return EMPTY('a lane needs events'); const by = {}, order = []; rw.forEach((r) => { const k = String(r.kind ?? r.level ?? r.type ?? r.lane ?? 'other'); if (!by[k]) { by[k] = []; order.push(k); } by[k].push(r); });
@@ -1294,7 +1300,7 @@
     const keys = TIP_FIRST.filter((k) => k in r && ok(k)).concat(Object.keys(r).filter((k) => !TIP_FIRST.includes(k) && ok(k)));
     return [head].concat(keys.slice(0, 9).map((k) => k.replace(/_/g, ' ') + ': ' + tipVal(k, r[k]))).join('\n'); };
   const fmtBytesS = (v) => { let n = Math.abs(num(v)); const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return (i ? Math.round(n * 10) / 10 : Math.round(n)) + ' ' + u[i]; };
-  const blockAttrs = (b) => b ? ' data-b="' + esc(String(b.id)) + '"' + (b.tip ? ' data-tip="' + esc(b.tip) + '" title="' + esc(b.tip) + '"' : '') + (b.ref ? ' data-ref="' + esc(b.ref) + '"' : '') + (b.g ? ' data-g="' + esc(b.g) + '"' : '') + (b.name ? ' data-name="' + esc(b.name) + '"' : '') : '';
+  const blockAttrs = (b) => b ? ' data-b="' + esc(String(b.id)) + '"' + (b.tip ? ' data-tip="' + esc(b.tip) + '" title="' + esc(b.tip) + '"' : '') + (b.ref ? ' data-ref="' + esc(b.ref) + '"' : '') + (b.g ? ' data-g="' + esc(b.g) + '"' : '') + (b.name ? ' data-name="' + esc(b.name) + '"' : '') + (b.item ? itemAttr(b.item, 'block') : '') : '';
   const fpx = (f) => '<i class="f ' + f.k + (f.cls ? ' ' + f.cls : '') + '" style="left:' + f.x + ';top:' + f.y + ';width:' + f.w + ';height:' + f.h + ';clip-path:' + f.cp + ';background:' + f.col + ';--i:' + f.i + ';--n:' + (f.n || 0) + '"' + (f.info ? blockAttrs(f.info) : (f.t ? ' title="' + esc(f.t) + '"' : '')) + '></i>';
   const epx = (e) => '<span class="isoe' + (e.cls ? ' ' + e.cls : '') + '" style="left:' + e.x + ';top:' + e.y + ';width:' + e.len + ';transform:rotate(' + e.deg + ');background:' + e.col + '"></span>';
   const lpx = (l) => '<span class="isol' + (l.cls ? ' ' + l.cls : '') + '" style="left:' + l.x + ';top:' + l.y + ';color:' + l.col + '">' + esc(l.n) + '</span>';
@@ -1303,7 +1309,7 @@
   const isoBuild = (boxes, k, W, H, key, tilt, azim, o) => { const I = ISO(); o = o || {};
     const info = {}; let nb = 0;
     boxes = (boxes || []).map((b) => { if (!b || !(b.row || b.t)) return b; const n = ++nb; const nm = b.row ? (nameOf(b.row) || String(b.t || '')) : String(b.t || '');
-      info[n] = { id: n, name: nm, tip: b.tip || (b.row ? rowTip(b.row, nm) : String(b.t)), ref: b.ref || (b.row ? rowRef(b.row) : ''), g: b.g != null ? String(b.g) : (b.row ? rowGroup(b.row) : '') }; return Object.assign({}, b, { n }); });
+      info[n] = { id: n, name: nm, tip: b.tip || (b.row ? rowTip(b.row, nm) : String(b.t)), ref: b.ref || (b.row ? rowRef(b.row) : ''), g: b.g != null ? String(b.g) : (b.row ? rowGroup(b.row) : ''), item: b.row || null }; return Object.assign({}, b, { n }); });
     const T = tilt == null ? 30 : tilt, A = azim == null ? 45 : azim;
     const k2 = I.isoFitK(boxes, k, W, H, key, T, A, o); const Pj = I.proj(T, A, k2); const f = I.scene(Pj, boxes, key);
     const sh = I.fit(f, W, H - (o.padb == null ? 18 : o.padb) + (o.padt == null ? 8 : o.padt));
@@ -1613,7 +1619,7 @@
     const dur = (s) => { const v = s.elapsed_s ?? s.duration_s ?? s.seconds ?? (s.elapsed_ms != null ? s.elapsed_ms / 1000 : (s.ms != null ? s.ms / 1000 : null)); return v == null ? '' : (v >= 60 ? Math.round(v / 60) + 'm' : (Math.round(num(v) * 10) / 10) + 's'); };
     const lim = Math.max(3, Math.floor(((H || 120) - 24) / 20)), cur = Math.max(0, S.indexOf('running')), from = Math.max(0, Math.min(rw.length - lim, cur - 1));
     return wrap('progress', '<div class="vb-pgb"><i style="width:' + (done / rw.length * 100).toFixed(1) + '%;background:' + (failed ? B.ac4 : B.ac2) + '"></i></div><span class="vb-lbl">' + done + ' of ' + rw.length + (failed ? ' · failed at ' + esc(nameOf(rw[S.indexOf('failed')]) || 'a step') : (S.includes('running') ? ' · ' + esc(nameOf(rw[cur]) || 'running') : '')) + '</span>'
-      + rw.slice(from, from + lim).map((s, j) => { const k = S[from + j]; return '<span class="vb-ps ' + k + '"' + ' data-tip="' + esc(rowTip(s, nameOf(s) || String(s.step ?? s.stage ?? ''))) + '"><i>' + ic[k] + '</i><em>' + esc(String(nameOf(s) || s.step || s.stage || s.text || s.message || '')) + '</em><small>' + esc(String(s.detail ?? s.message ?? s.note ?? '').slice(0, 80)) + '</small><b>' + esc(dur(s)) + '</b></span>'; }).join(''));
+      + rw.slice(from, from + lim).map((s, j) => { const k = S[from + j]; return '<span class="vb-ps ' + k + '"' + itemAttr(s, 'step') + ' data-tip="' + esc(rowTip(s, nameOf(s) || String(s.step ?? s.stage ?? ''))) + '"><i>' + ic[k] + '</i><em>' + esc(String(nameOf(s) || s.step || s.stage || s.text || s.message || '')) + '</em><small>' + esc(String(s.detail ?? s.message ?? s.note ?? '').slice(0, 80)) + '</small><b>' + esc(dur(s)) + '</b></span>'; }).join(''));
   };
   // status: the verdict large, the checks under it
   const verdictOf = (d) => { if (!isObj(d)) return String(d ?? ''); const v = d.status ?? d.level ?? d.state ?? d.health ?? (d.ok === true ? 'ok' : d.ok === false ? 'failed' : (d.healthy === true ? 'healthy' : d.healthy === false ? 'unhealthy' : '')); return String(v ?? ''); };
@@ -1626,7 +1632,7 @@
     const msg = isObj(d) ? String(d.message ?? d.summary ?? d.detail ?? d.reason ?? '') : '';
     const lim = Math.max(2, Math.floor(((H || 120) - 48) / 18));
     return wrap('status', '<div class="vb-stv"><i style="background:' + col + '"></i><b style="color:' + col + '">' + esc(v || (ck.length + ' checks')) + '</b>' + (msg ? '<span>' + esc(msg.slice(0, 140)) + '</span>' : '') + '</div>'
-      + ck.slice(0, lim).map((c) => { const s = c.status ?? c.state ?? c.severity ?? c.ok ?? ''; return '<span class="vb-stc" data-tip="' + esc(rowTip(c)) + '"><i style="background:' + stCol(s) + '"></i><em>' + esc(nameOf(c) || String(c.message ?? '').slice(0, 40)) + '</em><small>' + esc(String(typeof s === 'boolean' ? (s ? 'ok' : 'no') : s)) + '</small></span>'; }).join('') + (ck.length > lim ? '<span class="vb-lbl">+ ' + (ck.length - lim) + ' more</span>' : ''));
+      + ck.slice(0, lim).map((c) => { const s = c.status ?? c.state ?? c.severity ?? c.ok ?? ''; return '<span class="vb-stc"' + itemAttr(c, 'check') + ' data-tip="' + esc(rowTip(c)) + '"><i style="background:' + stCol(s) + '"></i><em>' + esc(nameOf(c) || String(c.message ?? '').slice(0, 40)) + '</em><small>' + esc(String(typeof s === 'boolean' ? (s ? 'ok' : 'no') : s)) + '</small></span>'; }).join('') + (ck.length > lim ? '<span class="vb-lbl">+ ' + (ck.length - lim) + ' more</span>' : ''));
   };
   // media: an image (an address or base64), a video, a sound - the first large, the count of the rest
   const mediaOf = (x) => { if (!x) return null; if (typeof x === 'string') return /^data:|^https?:|^\//.test(x) ? { url: x } : null; if (!isObj(x)) return null;
@@ -1712,7 +1718,8 @@
     'obs.modules': { form: 'treemap', map: { parts: 'modules', name: 'name', value: 'caps_added' } }, 'estate.health': { form: 'status' }, 'perf.scan': { form: 'status' },
     'obs.health': { form: 'status' }, 'backup.status': { form: 'table', map: { rows: 'guests' }, draw: { columns: ['name', 'status', 'state', 'backups'] } }, 'docker.ps': { form: 'containers', map: { rows: 'containers', name: 'Names', status: 'State', host: 'host_id' } },
     'evolve.sandbox.list': { form: 'sandboxes', map: { rows: 'sandboxes', name: 'name', status: 'running' } }, 'dream.history': { form: 'table', map: { rows: 'history' }, draw: { columns: ['label', 'title', 'started_at', 'signal'] } },
-    'exec.bash.run': { form: 'terminal' }, 'code.read': { form: 'code' }, 'code.diff': { form: 'diff' }, 'evolve.pipeline.diff': { form: 'diff' }, 'evolve.sandbox.diff': { form: 'diff' } };
+    'fabric.graphs.snapshot': { form: 'vgraph' }, 'fabric.entity_graph.snapshot': { form: 'vgraph' }, 'memory.graph_full': { form: 'vgraph' }, 'topology.snapshot': { form: 'vgraph' }, 'mesh.topology': { form: 'vgraph' },
+    'cal.events.list': { form: 'schedule' }, 'exec.bash.run': { form: 'terminal' }, 'code.read': { form: 'code' }, 'code.diff': { form: 'diff' }, 'evolve.pipeline.diff': { form: 'diff' }, 'evolve.sandbox.diff': { form: 'diff' } };
   const hintOf = (cap) => { const n = String(cap || ''); if (CAP_HINTS[n]) return CAP_HINTS[n]; if (/\.(diff|patch)$/.test(n)) return { form: 'diff' }; if (/\.(health|healthz)$/.test(n)) return { form: 'status' }; return null; };
   const rowsOfAny = (c) => { if (Array.isArray(c)) return c; if (!isObj(c)) return null; const ok = (v) => Array.isArray(v) && v.length && isObj(v[0]);
     for (const k of ['data', 'result', 'items', 'rows', 'results', 'entries', 'events', 'points', 'series', 'values']) if (ok(c[k])) return c[k]; for (const k of Object.keys(c)) if (ok(c[k])) return c[k]; return null; };
@@ -1823,6 +1830,130 @@
     return sink;
   }
 
+  /* ══ ITEMS, THE CALENDAR FORMS, THE VERA GRAPH FORM (the widget review, round 3) ═════════════════════════════════
+     "click an item in a dashboard to see full data in a right hand drawer ... down to the block in iso widgets and per
+     widget or section of a widget for standard widgets" · "any lhm items that can be made into widgets ... like the
+     calendar controls and even the calendar ... and the schedule view" · "widgetise [the graphs] so they are even more
+     re-usable" (the owner).
+     ITEMS. Every part a reader can point at carries the thing it draws, whole: data-item holds the row (or the part's
+     own object: a donut slice {name, value, share}, a bar {name, value}, a day {date, events}) as JSON, capped at
+     ITEM_MAX characters (a bigger row keeps its plain fields and says _trimmed). The element hands it on as a
+     'widget:item' event - {record, item, path, ref, data} - and, on a host that asks for it (item-drawer), opens the
+     DATA DRAWER on the right of the page that holds the widget. */
+  const ITEM_MAX = 6000;
+  const itemAttr = (o, path) => { if (o === undefined) return ''; let s = ''; try { s = JSON.stringify(o); } catch (_) { return ''; }
+    if (s && s.length > ITEM_MAX && o && typeof o === 'object' && !Array.isArray(o)) { const sh = {}; Object.keys(o).forEach((k) => { const v = o[k]; if (v == null || typeof v !== 'object') sh[k] = typeof v === 'string' ? v.slice(0, 400) : v; }); sh._trimmed = true; s = JSON.stringify(sh); }
+    if (!s || s.length > ITEM_MAX * 2) return ''; return ' data-item="' + esc(s) + '"' + (path ? ' data-path="' + esc(String(path)) + '"' : ''); };
+
+  /* ── the calendar: a month, the schedule beside it, and the controls that drive both ──
+     month     the month as a grid of days (Monday first): each day's events as chips in their calendar's colour, today
+               ringed, the chosen day lit; ‹ › and Today in its head (draw.controls false hides them); a day and an event
+               are items (click → the drawer: the day with all its events, or the event whole)
+     schedule  what is coming, grouped by day (Today · Tomorrow · Mon 29 Sep): time, title, where, the calendar's colour
+     calnav    the controls alone - ‹ Today › and the view - driving every month and schedule of its group (draw.group,
+               'cal' by default) on the same page: they move together
+     They read cal.events.list (the calendar panel's own read) with arguments that follow the month shown:
+     '@month_start' · '@month_end' (the grid's first and last day), '@today', '@today+14d' - resolved at every read. */
+  const pad2 = (n) => (n < 10 ? '0' : '') + n;
+  const ymdOf = (d) => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  const monthAt = (off) => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth() + (+off || 0), 1); };
+  const gridFrom = (m) => { const d = new Date(m); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; };
+  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const WDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  // an argument that follows the calendar: '@today', '@today+14d', '@today-7d', '@month', '@month_start', '@month_end'
+  function resolveArgs(args, u) {
+    if (!args || typeof args !== 'object') return {}; const off = +((u && u.off) || 0) || 0, out = {};
+    Object.keys(args).forEach((k) => { const v = args[k]; if (typeof v !== 'string' || v[0] !== '@') { out[k] = v; return; }
+      const m = v.match(/^@today([+-]\d+)d$/); if (m) { out[k] = ymdOf(addDays(new Date(), +m[1])); return; }
+      const g = gridFrom(monthAt(off));
+      out[k] = v === '@today' ? ymdOf(new Date()) : v === '@month' ? ymdOf(monthAt(off)) : v === '@month_start' ? ymdOf(g) : v === '@month_end' ? ymdOf(addDays(g, 42)) : v; });
+    return out; }
+  const hasArgTokens = (rec) => !!(rec && rec.read && rec.read.args && Object.values(rec.read.args).some((v) => typeof v === 'string' && v[0] === '@'));
+  const calEvents = (d) => { const L = Array.isArray(d) ? d : (d && typeof d === 'object' ? (d.events || d.items || d.rows || []) : []); return L.filter((e) => e && typeof e === 'object' && (e.start != null || e.when != null || e.date != null)); };
+  const evWhen = (e) => String(e.start ?? e.when ?? e.date ?? '');
+  const dayOfEv = (s) => { const m = String(s).match(/^(\d{4}-\d{2}-\d{2})/); if (m) return m[1]; const d = new Date(s); return isFinite(d) ? ymdOf(d) : ''; };
+  const hmOf = (s) => { const m = String(s).match(/T(\d{2}):(\d{2})/); return m ? m[1] + ':' + m[2] : ''; };
+  const evCol = (e, i) => e.color || e.colour || e.col || DV(i || 0);
+  // every day an event covers (an all-day event's end is the day after it), at most 31
+  const evDays = (e) => { const a = dayOfEv(evWhen(e)); if (!a) return []; const endS = String(e.end ?? ''); let b = endS ? dayOfEv(endS) : a; if (!b) b = a;
+    if (e.all_day && b > a) b = ymdOf(addDays(new Date(b + 'T00:00:00'), -1)); const out = [a]; let d = new Date(a + 'T00:00:00'); for (let i = 0; i < 31 && ymdOf(d) < b; i++) { d = addDays(d, 1); out.push(ymdOf(d)); } return out; };
+  const byDay = (evs) => { const m = {}; evs.forEach((e) => evDays(e).forEach((k) => { (m[k] = m[k] || []).push(e); })); Object.keys(m).forEach((k) => m[k].sort((x, y) => (x.all_day ? -1 : 0) - (y.all_day ? -1 : 0) || evWhen(x).localeCompare(evWhen(y)))); return m; };
+  const calHead = (off, o, cls) => { const m = monthAt(off); return '<div class="vb-calh' + (cls ? ' ' + cls : '') + '"><button' + set('off', off - 1) + ' data-calnav="' + (off - 1) + '" title="the month before">‹</button><b>' + MONTHS[m.getMonth()] + ' ' + m.getFullYear() + '</b><button' + set('off', off + 1) + ' data-calnav="' + (off + 1) + '" title="the month after">›</button>' + (off ? '<button class="today"' + set('off', 0) + ' data-calnav="0">Today</button>' : '') + '</div>'; };
+  R.month = (d, H, o) => {
+    const off = +ui(o, 'off', 0) || 0, sel = String(ui(o, 'sel', '')), today = ymdOf(new Date()); const m = monthAt(off), g = gridFrom(m);
+    const evs = calEvents(d), map = byDay(evs); const ctl = !(o && o.draw && o.draw.controls === false);
+    const weeks = ymdOf(addDays(g, 35)).slice(0, 7) === ymdOf(m).slice(0, 7) ? 6 : 5, hd = ctl ? 26 : 0, cellH = Math.max(18, Math.floor(((H || 200) - hd - 16) / weeks) - 2), chips = Math.max(0, Math.floor((cellH - 15) / 13));
+    let cells = '';
+    for (let i = 0; i < weeks * 7; i++) { const day = addDays(g, i), k = ymdOf(day), list = map[k] || [], out = day.getMonth() !== m.getMonth();
+      cells += '<div class="vb-mday' + (out ? ' out' : '') + (k === today ? ' today' : '') + (k === sel ? ' sel' : '') + (list.length ? ' has' : '') + '" style="height:' + cellH + 'px"' + itemAttr({ date: k, weekday: WDAYS[(day.getDay() + 6) % 7], count: list.length, events: list.slice(0, 40) }, 'day ' + k) + ' data-vb-sel="sel:' + k + '" data-tip="' + esc(k + (list.length ? '\n' + list.slice(0, 8).map((e) => (hmOf(evWhen(e)) || 'all day') + ' ' + String(e.title ?? e.name ?? '')).join('\n') + (list.length > 8 ? '\n+ ' + (list.length - 8) + ' more' : '') : '\nnothing on')) + '">'
+        + '<span class="n">' + day.getDate() + '</span>' + (chips ? list.slice(0, chips).map((e, j) => '<i class="ev"' + itemAttr(e, 'event') + ' style="--c:' + evCol(e, j) + '">' + esc(String(e.title ?? e.name ?? '')) + '</i>').join('') + (list.length > chips ? '<i class="more">+ ' + (list.length - chips) + '</i>' : '') : (list.length ? '<i class="dot" style="background:' + evCol(list[0], 0) + '"></i>' : '')) + '</div>'; }
+    return wrap('month', (ctl ? calHead(off, o) : '') + '<div class="vb-mgrid">' + WDAYS.map((w) => '<span class="wd">' + w + '</span>').join('') + cells + '</div>');
+  };
+  const dayLabel = (k) => { const t = ymdOf(new Date()), tm = ymdOf(addDays(new Date(), 1)); if (k === t) return 'Today'; if (k === tm) return 'Tomorrow'; const d = new Date(k + 'T00:00:00'); return isFinite(d) ? WDAYS[(d.getDay() + 6) % 7] + ' ' + d.getDate() + ' ' + MONTHS[d.getMonth()].slice(0, 3) : k; };
+  R.schedule = (d, H, o) => {
+    const evs = calEvents(d); if (!evs.length) return EMPTY('a schedule needs events');
+    const sel = String(ui(o, 'sel', '')), from = sel || ymdOf(new Date()); const map = byDay(evs); const days = Object.keys(map).filter((k) => k >= from).sort();
+    if (!days.length) return wrap('schedule', '<span class="vb-lbl">nothing on from ' + esc(dayLabel(from)) + '</span>');
+    let room = Math.max(3, Math.floor(((H || 200) - 4) / 22)); const parts = [];
+    for (const k of days) { if (room < 2) break; parts.push('<div class="vb-sdh' + (k === ymdOf(new Date()) ? ' today' : '') + '"' + itemAttr({ date: k, events: map[k].slice(0, 40) }, 'day ' + k) + '>' + esc(dayLabel(k)) + '<small>' + map[k].length + '</small></div>'); room--;
+      for (const e of map[k]) { if (room < 1) break; const a = hmOf(evWhen(e)), b = hmOf(String(e.end ?? '')); parts.push('<div class="vb-sde"' + itemAttr(e, 'event') + ' style="--c:' + evCol(e, 0) + '"><span class="t">' + esc(e.all_day || !a ? 'all day' : a + (b ? '–' + b : '')) + '</span><span class="x"><b>' + esc(String(e.title ?? e.name ?? '')) + '</b>' + (e.location ? '<small>' + esc(String(e.location).split(',')[0]) + '</small>' : '') + '</span></div>'); room--; } }
+    return wrap('schedule', parts.join(''));
+  };
+  R.calnav = (d, H, o) => { const off = +ui(o, 'off', 0) || 0, view = String(ui(o, 'view', (o && o.draw && o.draw.view) || 'month'));
+    const views = (o && o.draw && Array.isArray(o.draw.views)) ? o.draw.views : ['month', 'schedule'];
+    return wrap('calnav', calHead(off, o, 'big') + (views.length > 1 ? '<div class="vb-calv">' + views.map((v) => '<button class="' + (v === view ? 'on' : '') + '"' + set('view', v) + ' data-calview="' + esc(v) + '">' + esc(v) + '</button>').join('') + '</div>' : '') + '<span class="vb-lbl">drives the calendars of group ' + esc(String((o && o.draw && o.draw.group) || 'cal')) + '</span>'); };
+
+  /* ── the Vera graph as a widget form (vgraph) ──
+     The estate's own graph (window.veraUI.Graph, /ui/vera-graph.js, loaded the first time a vgraph draws) inside the
+     tile: from the record's source (any answer with nodes and edges - a fabric snapshot, a memory graph read, a
+     topology) or, with no source, from a layer the graph fetches itself (draw.layer: fabric · entity · memory), shown
+     in a display MODE (draw.mode: graph · exploded · estate-3d · estate-2d · mermaid - whatever veraUI.Graph.listModes()
+     has registered). The graph lives in the element's light DOM (a slot), so the page's graph styles reach it, and it
+     is kept across refreshes (a new answer is loaded into it only when its nodes or edges changed). Without the element
+     (VeraWidget.draw alone) the slot shows the flat node graph as its fallback. */
+  const toVeraGraph = (d) => { const src = d && typeof d === 'object' ? d : {}; const N = Array.isArray(src) ? src : (src.nodes || src.vertices || []);
+    const E = src.edges || src.links || src.rels || src.relationships || [];
+    // a node's words: a Neo4j-shaped node (labels[]) keeps its TYPE in label and its words in name/text; a topology node's
+    // label is its words and kind its type
+    const nodes = (Array.isArray(N) ? N : []).filter((n) => n && typeof n === 'object').map((n) => { const id = String(n.id ?? n.name ?? n.key ?? ''); const typed = Array.isArray(n.labels);
+      const words = n.name ?? n.title ?? (typed ? null : n.label) ?? n.text ?? n.summary ?? n.label ?? id;
+      return { id, label: String(words ?? id).slice(0, 60), type: String(n.type ?? n.kind ?? (typed ? n.labels[0] : '') ?? n.record_type ?? n.family ?? 'Node') || 'Node', props: n }; }).filter((n) => n.id);
+    const edges = (Array.isArray(E) ? E : []).filter((e) => e && typeof e === 'object').map((e) => ({ from: String(e.from ?? e.from_id ?? e.source ?? e.a ?? e.start ?? ''), to: String(e.to ?? e.to_id ?? e.target ?? e.b ?? e.end ?? ''), rel: String(e.rel ?? e.relation ?? e.type ?? e.kind ?? e.label ?? '') })).filter((e) => e.from && e.to);
+    return { nodes, edges }; };
+  R.vgraph = (d, H, o) => { const G = toVeraGraph(d); const layer = o && o.draw && o.draw.layer; if (!G.nodes.length && !layer) return EMPTY('a graph needs nodes (and edges), or draw.layer');
+    const mode = String((o && o.draw && o.draw.mode) || 'graph'), h = Math.max(90, (H || 200) - 14);
+    let fb = ''; try { fb = G.nodes.length ? R.graph({ nodes: G.nodes.map((n) => ({ id: n.id, label: n.label, family: n.type })), links: G.edges.map((e) => ({ source: e.from, target: e.to, from: e.from, to: e.to })) }, h, o) : ''; } catch (_) { fb = ''; }
+    return wrap('vgraph', '<div class="vb-vgraph" style="height:' + h + 'px"><slot name="vgraph">' + fb + '</slot></div><span class="vb-lbl">' + (G.nodes.length ? G.nodes.length + ' nodes · ' + G.edges.length + ' edges' : 'the ' + esc(layer) + ' graph') + ' · ' + esc(mode) + '</span>'); };
+  let _vgLoad = null;
+  const ensureVeraGraph = (base) => { if (window.veraUI && window.veraUI.Graph && window.veraUI.Graph.create) return Promise.resolve(window.veraUI.Graph);
+    if (_vgLoad) return _vgLoad; _vgLoad = new Promise((ok) => { const s = document.createElement('script'); s.src = (base || '') + '/ui/vera-graph.js'; s.onload = () => ok(window.veraUI && window.veraUI.Graph); s.onerror = () => { _vgLoad = null; ok(null); }; document.head.appendChild(s); }); return _vgLoad; };
+  function mountVeraGraph(el, rec, data, size) {
+    const draw0 = (rec && rec.draw) || {}, mode = String(draw0.mode || 'graph'), layer = draw0.layer ? String(draw0.layer) : '';
+    let host = el._vgHost; if (!host) { host = document.createElement('div'); host.setAttribute('slot', 'vgraph'); host.className = 'vw-vgraph-host'; host.style.cssText = 'width:100%;height:100%;min-height:80px;position:relative;display:flex;flex-direction:column'; el.appendChild(host); el._vgHost = host; }
+    return ensureVeraGraph(el.base).then((Gr) => { if (!Gr || el._rec !== rec) return;
+      let g = el._vg; const big = size === 'l' || size === 'xl';
+      if (!g || el._vgBig !== big) { if (g && g.destroy) { try { g.destroy(); } catch (_) {} } host.innerHTML = ''; g = el._vg = Gr.create(host, { height: 'fill', showSearch: big, showLegend: size === 'xl', showLeftPanel: size === 'xl', sidebar: false, actionsEnabled: false, subscribeLiveEvents: false, apiBase: el.base || '',
+          // a node is an item like any other: on a host with the drawer, a click opens the drawer on the node's own data
+          onNodeClick: (node) => { if (!el.hasAttribute('item-drawer')) return; const it = (node && node.props && typeof node.props === 'object') ? node.props : node; const rec2 = recOf(el), detail = { record: rec2, item: it, path: 'node ' + (node && node.id), ref: rowRef(it), data: el._data, host: el };
+            let go = true; try { go = el.dispatchEvent(new CustomEvent('widget:item', { bubbles: true, composed: true, cancelable: true, detail })); } catch (_) {} if (go) drawer(detail); return false; } }); el._vgBig = big; el._vgSig = ''; }
+      if (layer && !rec.source) { const sig = 'layer:' + layer + ':' + JSON.stringify(resolveArgs(rec.read && rec.read.args, el._ui)); if (sig !== el._vgSig) { el._vgSig = sig; try { g.fetchSnapshot(layer, resolveArgs(rec.read && rec.read.args, el._ui)); } catch (_) {} } }
+      else { const G = toVeraGraph(data); const sig = G.nodes.length + ':' + G.edges.length + ':' + G.nodes.slice(0, 50).map((n) => n.id).join(','); if (sig !== el._vgSig) { el._vgSig = sig; try { g.load(G); } catch (_) {} } }
+      try { if (g.setMode && (g.getMode ? g.getMode() : '') !== mode) g.setMode(mode); } catch (_) {}
+      try { g.resize && g.resize(); } catch (_) {}
+      return g; }); }
+  function unmountVeraGraph(el) { if (el._vg && el._vg.destroy) { try { el._vg.destroy(); } catch (_) {} } el._vg = null; if (el._vgHost) { el._vgHost.remove(); el._vgHost = null; } el._vgSig = ''; }
+
+  const FORMS3_CSS = '.vb-calh{display:flex;align-items:center;gap:6px;flex:none}.vb-calh b{font-size:12px;font-weight:600;flex:1;text-align:center}.vb-calh button{width:22px;height:20px;border-radius:5px;color:var(--b-t2);box-shadow:inset 0 0 0 1px var(--b-bd)}.vb-calh button:hover{color:var(--b-t1);box-shadow:inset 0 0 0 1px var(--b-ac)}.vb-calh button.today{width:auto;padding:0 8px;font-size:10px}.vb-calh.big b{font-size:14px}'
+    + '.vb-mgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;flex:1;min-height:0;align-content:start}.vb-mgrid .wd{font-size:9px;color:var(--b-t3);text-align:center;text-transform:uppercase;letter-spacing:.05em}'
+    + '.vb-mday{position:relative;border-radius:4px;background:color-mix(in srgb,var(--b-t1) 5%,transparent);padding:2px 3px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column;gap:1px;min-width:0}.vb-mday .n{font-size:10px;color:var(--b-t2);font-family:var(--b-mono)}.vb-mday.out{opacity:.45}.vb-mday.today{box-shadow:inset 0 0 0 1.5px var(--b-ac)}.vb-mday.today .n{color:var(--b-ac);font-weight:700}.vb-mday.sel{background:color-mix(in srgb,var(--b-ac) 22%,transparent)}.vb-mday:hover{background:color-mix(in srgb,var(--b-t1) 10%,transparent)}'
+    + '.vb-mday .ev{display:block;font-style:normal;font-size:9.5px;line-height:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:4px;border-left:2px solid var(--c);color:var(--b-t1);border-radius:1px}.vb-mday .ev:hover{background:color-mix(in srgb,var(--c) 25%,transparent)}.vb-mday .more{font-style:normal;font-size:9px;color:var(--b-t3)}.vb-mday .dot{width:5px;height:5px;border-radius:50%;margin:0 auto}'
+    + '.vb-sdh{display:flex;align-items:baseline;gap:6px;font-size:10.5px;font-weight:600;color:var(--b-t2);text-transform:uppercase;letter-spacing:.05em;padding:4px 0 2px;border-bottom:1px solid var(--b-bd);cursor:pointer}.vb-sdh.today{color:var(--b-ac)}.vb-sdh small{margin-left:auto;font-weight:400;color:var(--b-t3)}'
+    + '.vb-sde{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;align-items:baseline;padding:3px 0 3px 8px;border-left:3px solid var(--c);cursor:pointer;border-radius:2px}.vb-sde:hover{background:var(--b-s2)}.vb-sde .t{font-family:var(--b-mono);font-size:10px;color:var(--b-t2)}.vb-sde .x{min-width:0}.vb-sde b{display:block;font-weight:500;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-sde small{display:block;font-size:10px;color:var(--b-t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.vb-calv{display:flex;gap:3px;justify-content:center}.vb-calv button{padding:2px 10px;border-radius:999px;font-size:10.5px;color:var(--b-t2);box-shadow:inset 0 0 0 1px var(--b-bd)}.vb-calv button.on{background:var(--b-ac);color:var(--b-on);box-shadow:none}'
+    + '.vb-vgraph{position:relative;width:100%;flex:1;min-height:80px;border-radius:var(--b-r);overflow:hidden}.vb-vgraph > slot{display:block;width:100%;height:100%}'
+    + '[data-item]{cursor:pointer}';
+
   /* ── draw at a size: the composition around the form ─────────────────── */
   const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞' };
   // the glyph a size below M carries (the Sizes board): a ring for a level or a share, a spark for a series, a tube for
@@ -1849,7 +1980,7 @@
     const d = dataFor(data, f);
     // nothing to draw yet (no result, an empty one, or a placeholder string handed to a form that draws numbers): the
     // form's SAMPLE face, marked — never "no data yet" (opts.sample === false keeps the bare answer for a caller that asks)
-    if (f !== 'panel' && f !== 'composite' && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
+    if (f !== 'panel' && f !== 'composite' && f !== 'calnav' && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
       if (opts.sample === false) { let own = ''; try { own = R[fi](d == null || typeof d === 'string' ? [] : d, H, Object.assign({ size: size }, opts)); } catch (_) { own = ''; } return (typeof own === 'string' && own) ? own : EMPTY('no data yet'); }
       return sampleFace(draw(f0, sample(f), size, Object.assign({}, opts, { sample: false, map: false })), size, opts.sampleTag);
     }
@@ -1859,9 +1990,9 @@
     }
     if (size === 'xs') return '<span class="vw-xs" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i>' + (figure(f, data) || '—') + '</span>';
     if (size === 's' && (DRAWN[f] === 'items' || f === 'kv' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f, d, opts); if (cs) return cs; }
-    if (size === 's') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
+    if (size === 's' && f !== 'calnav') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
-    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
+    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv|month|schedule|calnav|vgraph)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
     // L: the form plus its detail list beside it; XL: the form, its table, its log
     // the detail list beside the form holds the rows its body has room for (~16 px a row) - eight in a two-row tile ran
     // past its foot - and a form that already names every value it draws (ranked bars, pills, a number grid, a
@@ -1906,7 +2037,7 @@
       skin: String(o.skin || 'inherit').toLowerCase(), subject: String(o.subject || ''), projection: String(o.projection || drawIn.proj || drawIn.projection || '').toLowerCase(), actions: Array.isArray(o.actions) ? o.actions : ['dive', 'pin', 'ask'],
       children: Array.isArray(o.children) ? o.children : undefined, layout: o.layout, data: o.data };
   }
-  const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top|instances|sources|request_log|keys|results|installed|config|models|list_models|route_stats|embed_config)|_stats$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.|^redis\.|^proxmox\.|^mesh\.|^estate\.|^backup\.|^bench\.|^catalog\.|^background\.|^topology\.|^jobs\.|^memory\.stats|^ollama\.(gate\.status|instances|list_models|route_stats|request_log|routing\.get|embed_config|model_tags\.get)|^evolve\.(sandbox\.list|pipeline\.list|activity|tasks\.overview)$|^activity\.(sessions|pipelines)$|^syslog\.errors$|^dream\.(sensor\.cap_calls|last|hitl\.pending)$)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert|pull|install|activate|acquire|release|enqueue|cancel|spawn|prune|reap)\b/.test(cap);   // the dashboard's own readings read on their own (route_stats / results / config tails were left waiting for a click)
+  const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top|instances|sources|request_log|keys|results|installed|config|models|list_models|route_stats|embed_config)|_stats$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.|^redis\.|^proxmox\.|^mesh\.|^estate\.|^backup\.|^bench\.|^catalog\.|^background\.|^topology\.|^jobs\.|^memory\.stats|^ollama\.(gate\.status|instances|list_models|route_stats|request_log|routing\.get|embed_config|model_tags\.get)|^evolve\.(sandbox\.list|pipeline\.list|activity|tasks\.overview)$|^activity\.(sessions|pipelines)$|^syslog\.errors$|^dream\.(sensor\.cap_calls|last|hitl\.pending)$|^memory\.graph_full$|^cal\.(events|todos|notes)\.list$)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert|pull|install|activate|acquire|release|enqueue|cancel|spawn|prune|reap)\b/.test(cap);   // the dashboard's own readings read on their own (route_stats / results / config tails were left waiting for a click)
   const key = (rec) => { const n = normalise(rec); return n.form + ' ' + (n.source || (n.panel ? 'panel:' + n.panel : '')) + ' ' + JSON.stringify(n.read.args || {}); };
   // the form that can draw THIS data: the chosen one, else what its shape picks, else the key · value list
   function formFor(rec, data) {
@@ -2189,7 +2320,7 @@ span.vw-sampled{opacity:.85}
 .vb-cmpr{display:grid;grid-template-columns:1fr 70px 1fr;gap:8px;align-items:center;font-size:10px}.vb-cmpr .n{grid-column:2;text-align:center;color:var(--b-t2);order:2;white-space:nowrap;overflow:hidden}.vb-cmpr .side{display:flex;align-items:center;gap:6px;height:12px}.vb-cmpr .side.l{order:1;justify-content:flex-end}.vb-cmpr .side.r{order:3}.vb-cmpr .side i{display:block;height:8px;border-radius:4px}.vb-cmpr .side b{font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);width:34px;text-align:right}.vb-cmpr .side.r b{text-align:left}
 .vb-carp{flex:1;min-height:0;display:flex;align-items:center;gap:12px}.vb-carp .vb-dial{width:64px;height:64px}.vb-carp .vb-dial > span{font-size:13px}
 .vb-flist{flex:1;display:flex;flex-direction:column;gap:1px;font-size:9.5px;min-width:0}.vb-flist > span{display:grid;grid-template-columns:1fr 46px 50px 36px;gap:6px;align-items:center;height:19px}.vb-flist span i{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}.vb-flist .h{color:var(--b-t3);font-size:8px;text-transform:uppercase;letter-spacing:.08em}.vb-flist .m{font-family:var(--b-mono);color:var(--b-t2);text-align:right;white-space:nowrap;overflow:hidden}
-.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}` + CAPOUT_CSS);
+.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}` + CAPOUT_CSS + FORMS3_CSS);
   function ensureCss(root) {
     const host = root && root.head ? root.head : root;
     if (!host || !host.querySelector) return;
@@ -2371,15 +2502,23 @@ span.vw-sampled{opacity:.85}
       if (el !== cur) { cur = el; light(root, el); }
       if (!el) { const t = root._vwTip; if (t) t.hidden = true; return; }
       const ref = el.getAttribute('data-ref'), rec = recOf(host);
-      const act = ref ? 'click · open ' + ref : ((el.hasAttribute('data-b') && (rec.open || rec.source)) ? 'click · open where it lives' : (host.hasAttribute('dive-on-click') ? 'click · the deep dive' : ''));
+      const act = host.hasAttribute('item-drawer') ? 'click · its data' + (ref ? ' (then open ' + ref + ')' : '') : (ref ? 'click · open ' + ref : ((el.hasAttribute('data-b') && (rec.open || rec.source)) ? 'click · open where it lives' : (host.hasAttribute('dive-on-click') ? 'click · the deep dive' : '')));
       showTip(root, el.getAttribute('data-tip') || el.getAttribute('data-name') || '', e.clientX, e.clientY, act);
     });
     root.addEventListener('pointerleave', () => { cur = null; light(root, null); const t = root._vwTip; if (t) t.hidden = true; });
     host.addEventListener('pointerleave', () => { cur = null; light(root, null); const t = root._vwTip; if (t) t.hidden = true; });
     root.addEventListener('click', (e) => {
-      if (e.target.closest && e.target.closest('button,a,input,select,textarea,[data-vb-set],[data-read],[data-act]')) return;
-      const el = partAt(root, e.target);
-      if (el && el.hasAttribute('data-b')) { if (openBlock(host, recOf(host), el.getAttribute('data-ref') || '', el.getAttribute('data-name') || (el.getAttribute('data-tip') || '').split('\n')[0])) { e.stopPropagation(); return; } }
+      if (e.target.closest && e.target.closest('button,a,input,select,textarea,summary,[data-vb-set],[data-read],[data-act]')) return;
+      if (host._vgHost && host._vgHost.contains(e.target)) return;   // the Vera graph handles its own clicks (a node opens the drawer through onNodeClick)
+      // a day of a month: chosen (its group's schedules follow), then the drawer on it
+      const selEl = e.target.closest && e.target.closest('[data-vb-sel]'); if (selEl && root.contains(selEl)) { const kv = selEl.getAttribute('data-vb-sel'), i = kv.indexOf(':'); host._ui[kv.slice(0, i)] = kv.slice(i + 1); host._calMove ? host._calMove(kv) : host.render(); }
+      const hit = itemAt(host, e.target), rec = recOf(host);
+      const ref = hit.ref || (hit.item && typeof hit.item === 'object' && !Array.isArray(hit.item) ? rowRef(hit.item) : '');
+      const detail = { record: rec, item: hit.item, path: hit.path, ref, data: host._data, host };
+      let go = true; try { go = host.dispatchEvent(new CustomEvent('widget:item', { bubbles: true, composed: true, cancelable: true, detail })); } catch (_) {}
+      if (!go) { e.stopPropagation(); return; }
+      if (host.hasAttribute('item-drawer') && !(host.closest && host.closest('.dash-grid.editing'))) { e.stopPropagation(); drawer(detail); return; }
+      const el = hit.part; if (el && el.hasAttribute('data-b')) { if (openBlock(host, rec, el.getAttribute('data-ref') || '', el.getAttribute('data-name') || (el.getAttribute('data-tip') || '').split('\n')[0])) { e.stopPropagation(); return; } }
       if (host.hasAttribute('dive-on-click') && !(host.closest && host.closest('.dash-grid.editing'))) { e.stopPropagation(); dive(host); }
     });
   }
@@ -2459,6 +2598,106 @@ span.vw-sampled{opacity:.85}
     return sc;
   }
 
+  /* ══ THE DATA DRAWER (the widget review, round 3) ════════════════════════════════════════════════════════════════
+     VeraWidget.drawer({record, item, path, ref, data, host}) - a panel on the right of the page that holds the widget
+     (in an embedded panel frame, that frame's page): the item whole - every field, nested values folded open - where
+     it came from (the record's source, its arguments, the part of the answer), the items RELATED to it (other rows of
+     the same answer that share an id, a name, a host, a node, a ref with it - click one to follow it; ‹ goes back), and
+     its actions: open its entity (the estate drawer), open its place, the deep dive, copy its JSON.
+     THE GESTURE, on every dashboard (VeraDash sets item-drawer on its tiles):
+       click a part (an iso block, a table row, a bar, a slice, a pill, a day, an event, a composite's section)
+                                           → the drawer, on that part
+       click the tile's face anywhere else  → the drawer, on the whole answer
+       in the drawer: Open <ref>            → the entity (the estate drawer; vera:entity:open to the harness)
+                      Open <place>          → where the data lives; Deep dive → the dive sheet; Copy JSON
+       ⤢ in the tile's head                 → the deep dive
+     A host without item-drawer (a chat reply, a canvas item) keeps the old gesture: a block with a ref opens its entity.
+     Every click still dispatches 'widget:item' (bubbling, composed, cancelable) first; a host that handles it itself
+     calls preventDefault(). */
+  const REL_KEYS = ['id', 'name', 'host', 'host_id', 'node', 'vmid', 'ref', 'ssh_host_id', 'session_id', 'branch', 'label', 'Names', 'Image', 'calendar', 'trigger', 'instance', 'model', 'source', 'owner', 'uid'];
+  function relatedTo(answer, item, max) {
+    max = max || 24; if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const want = {}; REL_KEYS.forEach((k) => { const v = item[k]; if ((typeof v === 'string' || typeof v === 'number') && String(v).length >= 2 && !/^(true|false|null|none|unknown|local|0)$/i.test(String(v))) want[k] = String(v); });
+    const vals = new Set(Object.values(want)); if (!vals.size) return [];
+    const self = (() => { try { return JSON.stringify(item); } catch (_) { return ''; } })(); const hits = [], share = {}; let rowsN = 0, seen = 0;
+    const walk = (x, path, depth) => { if (depth > 5 || x == null || typeof x !== 'object' || ++seen > 20000) return;
+      if (Array.isArray(x)) { x.forEach((v, i) => walk(v, path + '[' + i + ']', depth + 1)); return; }
+      rowsN++; const via = REL_KEYS.filter((k) => (typeof x[k] === 'string' || typeof x[k] === 'number') && vals.has(String(x[k])));
+      via.forEach((k) => { const key = k + '=' + x[k]; share[key] = (share[key] || 0) + 1; });
+      if (via.length && path) { let j = ''; try { j = JSON.stringify(x); } catch (_) {} if (j !== self && j.length < 200000) hits.push({ path, row: x, via }); }
+      Object.keys(x).forEach((k) => { const v = x[k]; if (v && typeof v === 'object') walk(v, path ? path + '.' + k : k, depth + 1); }); };
+    walk(answer, '', 0);
+    // a value most of the answer shares (every guest on node corp, every event in one calendar) says nothing: it is not a link
+    const common = (k, v) => { const n = share[k + '=' + v] || 0; return n > 3 && (n > rowsN * .3 || n > hits.length * .5); };
+    return hits.map((h) => ({ path: h.path, row: h.row, via: h.via.filter((k) => !common(k, h.row[k])).map((k) => k + ' ' + h.row[k]) })).filter((h) => h.via.length)
+      .sort((a, b2) => b2.via.length - a.via.length).slice(0, max); }
+  const DRAWER_CSS = '.vw-drawer{position:fixed;top:0;right:0;bottom:0;z-index:9400;width:min(460px,94vw);display:flex;flex-direction:column;background:var(--s1,var(--bg1,#15171c));color:var(--t1,var(--text,#d8dce4));box-shadow:-18px 0 50px -20px rgba(0,0,0,.65),-1px 0 0 var(--bd2,rgba(255,255,255,.12));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:12px;animation:vw-drin .2s cubic-bezier(.2,.7,.2,1)}@keyframes vw-drin{from{transform:translateX(24px);opacity:0}}'
+    + '.vw-drawer header{display:flex;align-items:flex-start;gap:8px;padding:12px 14px 10px;border-bottom:1px solid var(--bd,rgba(255,255,255,.08))}.vw-drawer header .tt{flex:1;min-width:0}.vw-drawer header b{display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-drawer header small{display:block;font-family:var(--f-mono,var(--mono,monospace));font-size:10.5px;color:var(--t3,var(--dim,#6b7280));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+    + '.vw-drawer button{font:inherit;font-size:11.5px;color:inherit;background:var(--s2,var(--bg2,#1f232b));border:1px solid var(--bd2,rgba(255,255,255,.12));border-radius:6px;padding:4px 9px;cursor:pointer}.vw-drawer button:hover{border-color:var(--acc,#6ea8d8)}.vw-drawer button.x,.vw-drawer button.bk{padding:2px 8px}.vw-drawer button.pri{border-color:var(--acc,#6ea8d8);color:var(--acc,#6ea8d8)}'
+    + '.vw-dr-acts{display:flex;flex-wrap:wrap;gap:6px;padding:8px 14px;border-bottom:1px solid var(--bd,rgba(255,255,255,.08))}.vw-dr-bd{flex:1;min-height:0;overflow:auto;padding:4px 14px 18px}'
+    + '.vw-dr-bd h4{margin:14px 0 6px;font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--t2,var(--dim2,#8a92a0))}'
+    + '.vw-dr-kv{display:grid;grid-template-columns:minmax(90px,34%) minmax(0,1fr);gap:1px 10px}.vw-dr-kv > span{padding:3px 0;border-bottom:1px solid var(--bd,rgba(255,255,255,.06));min-width:0;overflow-wrap:anywhere}.vw-dr-kv > span.k{color:var(--t2,var(--dim2,#8a92a0));font-size:11px}.vw-dr-kv > span.v{font-family:var(--f-mono,var(--mono,monospace));font-size:11.5px}.vw-dr-kv i.st{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px}'
+    + '.vw-dr-rel{display:flex;flex-direction:column;gap:3px}.vw-dr-rel > div{display:flex;gap:8px;align-items:baseline;padding:5px 8px;border-radius:6px;background:var(--s2,var(--bg2,#1f232b));cursor:pointer}.vw-dr-rel > div:hover{box-shadow:inset 0 0 0 1px var(--acc,#6ea8d8)}.vw-dr-rel b{font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-dr-rel small{font-family:var(--f-mono,var(--mono,monospace));font-size:10px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap}'
+    + '.vw-dr-src{font-family:var(--f-mono,var(--mono,monospace));font-size:11px;color:var(--t2,var(--dim2,#8a92a0));white-space:pre-wrap;overflow-wrap:anywhere}';
+  const isPlain = (v) => v == null || typeof v !== 'object';
+  const fieldVal = (k, v) => { if (v === null || v === undefined) return '<i style="opacity:.5">—</i>'; if (typeof v === 'boolean') return '<i class="st" style="background:' + (v ? 'var(--ok,#28c28a)' : 'var(--warn,#f5b341)') + '"></i>' + (v ? 'yes' : 'no');
+    if (typeof v === 'number') return esc(TIP_RAW.test(k) ? String(v) : ((/(^|_)(created|updated|started|ended|at|ts|time|last_run|next_run)$/i.test(k) && v > 1e9 && v < 4e10) ? new Date(v * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' · ' + v : (/bytes?$|_b$/.test(k) ? fmtBytesS(v) + ' · ' + v : fmt(v))));
+    const s = String(v); if (/^(status|state|health|level|severity)$/i.test(k)) return '<i class="st" style="background:' + stCol(s).replace(/var\(--b-(ac\d?|t3)\)/, (m, x) => ({ ac: 'var(--acc,#6ea8d8)', ac2: 'var(--ok,#28c28a)', ac3: 'var(--warn,#f5b341)', ac4: 'var(--err,#ef5b5b)', t3: 'var(--dim,#6b7280)' }[x] || m)) + '"></i>' + esc(s);
+    if (/^https?:\/\//.test(s)) return '<a href="' + esc(s) + '" target="_blank" rel="noopener" style="color:var(--acc,#6ea8d8)">' + esc(s) + '</a>'; return esc(s.length > 2000 ? s.slice(0, 2000) + '…' : s); };
+  const itemName = (it, fb) => (it && typeof it === 'object' && !Array.isArray(it)) ? String(nameOf(it) || it.date || it.title || fb || 'item') : (Array.isArray(it) ? (fb || 'the answer') + ' · ' + it.length + ' items' : String(it ?? fb ?? 'item'));
+  let _drawer = null;
+  function drawer(detail) {
+    if (typeof document === 'undefined' || !detail) return null;
+    const doc = (detail.host && detail.host.ownerDocument) || document;
+    if (!doc.getElementById('vw-drawer-css')) { const st = doc.createElement('style'); st.id = 'vw-drawer-css'; st.textContent = fontScale(DRAWER_CSS); doc.head.appendChild(st); }
+    ensureCss(doc);
+    if (!_drawer || !_drawer.el.isConnected) {
+      const el = doc.createElement('aside'); el.className = 'vw-drawer'; el.setAttribute('role', 'complementary'); el.setAttribute('aria-label', 'the item\'s data');
+      _drawer = { el, stack: [] }; doc.body.appendChild(el);
+      doc.addEventListener('keydown', (e) => { if (e.key === 'Escape' && _drawer && _drawer.el.isConnected && !doc.querySelector('.vw-dive-scrim')) { _drawer.el.remove(); } }, true);
+    }
+    _drawer.stack.push(detail); if (_drawer.stack.length > 30) _drawer.stack.shift();
+    paintDrawer(); return _drawer.el;
+  }
+  function paintDrawer() {
+    const D = _drawer, el = D.el, cur = D.stack[D.stack.length - 1]; if (!cur) { el.remove(); return; }
+    const rec = cur.record || {}, it = cur.item, host = cur.host || null; const name = itemName(it, rec.title || rec.form);
+    const ref = cur.ref || (it && typeof it === 'object' && !Array.isArray(it) ? rowRef(it) : ''); const src = typeof rec.source === 'string' ? rec.source : '';
+    const place = rec.open || (typeof window.placeFor === 'function' ? window.placeFor(src, '') : '');
+    const obj = (it && typeof it === 'object') ? it : { value: it };
+    const plain = Array.isArray(obj) ? [] : Object.keys(obj).filter((k) => isPlain(obj[k])), nested = Array.isArray(obj) ? ['(items)'] : Object.keys(obj).filter((k) => !isPlain(obj[k]));
+    const rel = cur.data !== undefined && !Array.isArray(it) ? relatedTo(cur.data, it) : [];
+    const args = rec.read && rec.read.args && Object.keys(rec.read.args).length ? JSON.stringify(resolveArgs(rec.read.args, host && host._ui), null, 1) : '';
+    el.innerHTML = '<header>' + (D.stack.length > 1 ? '<button class="bk" data-dr="back" title="back">‹</button>' : '') + '<div class="tt"><b title="' + esc(name) + '">' + esc(name) + '</b><small>' + esc([rec.title, cur.path, rec.form, src].filter(Boolean).join(' · ')) + '</small></div><button class="x" data-dr="close" title="close (Esc)">✕</button></header>'
+      + '<div class="vw-dr-acts">' + (ref ? '<button class="pri" data-dr="entity">Open ' + esc(ref) + ' ↗</button>' : '') + (place ? '<button data-dr="place">Open ' + esc(place) + '</button>' : '') + '<button data-dr="dive">Deep dive ⤢</button><button data-dr="copy">Copy JSON</button></div>'
+      + '<div class="vw-dr-bd">'
+      + (plain.length ? '<h4>Fields · ' + (plain.length + nested.length) + '</h4><div class="vw-dr-kv">' + plain.map((k) => '<span class="k">' + esc(k.replace(/_/g, ' ')) + '</span><span class="v">' + fieldVal(k, obj[k]) + '</span>').join('') + '</div>' : '')
+      + (nested.length ? '<h4>' + (plain.length ? 'Nested' : 'Everything') + '</h4>' + draw('json', Array.isArray(obj) ? obj : nested.reduce((o2, k) => { o2[k] = obj[k]; return o2; }, {}), 'l', { sample: false }) : '')
+      + (rel.length ? '<h4>Related · ' + rel.length + ' in the same answer</h4><div class="vw-dr-rel">' + rel.map((r, i) => '<div data-dr-rel="' + i + '"><b>' + esc(itemName(r.row, r.path)) + '</b><small>' + esc(r.via.join(' · ')) + '</small></div>').join('') + '</div>' : '')
+      + '<h4>Where it comes from</h4><div class="vw-dr-src">' + esc((src ? src : 'the record\'s own data') + (args ? '\nargs ' + args : '') + (cur.path ? '\npart ' + cur.path : '') + (rec.id ? '\nrecord ' + rec.id : '')) + '</div>'
+      + '</div>';
+    el.onclick = (e) => { const b = e.target.closest && e.target.closest('[data-dr],[data-dr-rel]'); if (!b) return;
+      if (b.hasAttribute('data-dr-rel')) { const r = rel[+b.getAttribute('data-dr-rel')]; if (r) { D.stack.push({ record: rec, item: r.row, path: r.path, ref: rowRef(r.row), data: cur.data, host }); paintDrawer(); } return; }
+      const a = b.getAttribute('data-dr');
+      if (a === 'close') { el.remove(); D.stack = []; }
+      else if (a === 'back') { D.stack.pop(); paintDrawer(); }
+      else if (a === 'entity') openBlock(host || el, rec, ref, name);
+      else if (a === 'place') openBlock(host || el, rec, '', name);
+      else if (a === 'dive') dive(host && host._rec ? host : { record: rec, data: cur.data });
+      else if (a === 'copy') { let j = ''; try { j = JSON.stringify(it, null, 2); } catch (_) { j = String(it); } try { navigator.clipboard.writeText(j); b.textContent = 'Copied'; } catch (_) { b.textContent = 'Copy failed'; } } };
+  }
+  // what a click is on: a part carrying its item, a composite's section, a block, or the tile itself
+  function itemAt(host, target) {
+    const root = host._sh; const part = target && target.closest ? target.closest('[data-item],[data-slot],[data-b]') : null;
+    if (part && root.contains(part)) {
+      const raw = part.getAttribute('data-item');
+      if (raw) { try { return { item: JSON.parse(raw), path: part.getAttribute('data-path') || '', ref: part.getAttribute('data-ref') || '', part }; } catch (_) {} }
+      if (part.hasAttribute('data-slot')) { const slot = part.getAttribute('data-slot'), k = host._kids && host._kids[slot]; const ttl = part.querySelector('.vw-slot-h,.k'); return { item: k && k.__read ? k.data : (k && !k.__pending ? k : undefined), path: 'section ' + (ttl ? ttl.textContent.trim().split('\n')[0] : slot), ref: '', part }; }
+      if (part.hasAttribute('data-b')) return { item: { name: part.getAttribute('data-name') || (part.getAttribute('data-tip') || '').split('\n')[0], detail: part.getAttribute('data-tip') || '' }, path: 'block', ref: part.getAttribute('data-ref') || '', part };
+    }
+    return { item: host._data, path: '', ref: '', part: null };
+  }
+
   class VeraWidgetEl extends HTMLElement {
     constructor() { super(); this._sh = this.attachShadow({ mode: 'open' }); this._rec = null; this._data = undefined; this._empty = false; this._drawn = ''; this._timer = null; this._ro = null; this._auto = 'm'; this._kids = {}; this._ui = {}; wireParts(this); }
     static get observedAttributes() { return ['record', 'size', 'base', 'template-id', 'bare']; }
@@ -2471,12 +2710,15 @@ span.vw-sampled{opacity:.85}
     get size() { const s = this.getAttribute('size'); return s && s !== 'auto' && SIZES.includes(s) ? s : (s === 'auto' ? this._auto : (this._rec ? this._rec.frame.size : 'm')); }
     connectedCallback() {
       INSTANCES.add(this); ensureIso(this.base);
+      // the calendar controls of this widget's group move it (vera:calnav on the document: {group, off, view})
+      if (!this._calL) { this._calL = (e) => { const r = this._rec, dt = e.detail || {}; if (!r || e.target === this || !/^(month|schedule|calnav|agenda)$/.test(canon(r.form))) return; if (String((r.draw && r.draw.group) || 'cal') !== String(dt.group || 'cal')) return;
+        if (dt.off != null) this._ui.off = +dt.off; if (dt.view) this._ui.view = dt.view; if (dt.sel !== undefined) this._ui.sel = dt.sel; if (hasArgTokens(r) && r.source) this.read(true); else this.render(); }; document.addEventListener('vera:calnav', this._calL); }
       const a = this.getAttribute('record'); if (a && !this._rec) { try { this.record = JSON.parse(a); } catch (_) { this._rec = normalise({}); } }
       if (window.ResizeObserver && !this._rz) { let last = 0; this._rz = new ResizeObserver(() => { const h = this.clientHeight || 0; if (Math.abs(h - last) > 12) { last = h; this._measured = ''; if (this._rec) this.render(); } }); this._rz.observe(this); }
       if (this.getAttribute('size') === 'auto' && window.ResizeObserver && !this._ro) { this._ro = new ResizeObserver(() => { const s = sizeForWidth(this.clientWidth || 300); if (s !== this._auto) { this._auto = s; this.render(); this.dispatchEvent(new CustomEvent('widget:resize', { bubbles: true, composed: true, detail: { size: s } })); } }); this._ro.observe(this); }
       this._boot();
     }
-    disconnectedCallback() { INSTANCES.delete(this); if (this._timer) { clearInterval(this._timer); this._timer = null; } if (this._retry) { clearTimeout(this._retry); this._retry = null; } if (this._ro) { this._ro.disconnect(); this._ro = null; } if (this._rz) { this._rz.disconnect(); this._rz = null; } }
+    disconnectedCallback() { INSTANCES.delete(this); if (this._calL) { document.removeEventListener('vera:calnav', this._calL); this._calL = null; } if (this._timer) { clearInterval(this._timer); this._timer = null; } if (this._retry) { clearTimeout(this._retry); this._retry = null; } if (this._ro) { this._ro.disconnect(); this._ro = null; } if (this._rz) { this._rz.disconnect(); this._rz = null; } }
     attributeChangedCallback(n, _o, v) {
       if (n === 'record' && v != null) { try { this.record = JSON.parse(v); } catch (_) {} }
       else if (n === 'template-id' && v) { this._fromTemplate(v); }
@@ -2506,7 +2748,7 @@ span.vw-sampled{opacity:.85}
       let subj; const wants = kids.some((k) => k.r && /^\$subject/.test(k.r.source));
       // before anything has answered, every child that will be read says "reading…" (its slot never shows sample values)
       if (!this._kids || !Object.keys(this._kids).length) { const pend = {}; kids.forEach((k) => { if (k.r && !k.own && k.r.source && (/^\$subject/.test(k.r.source) ? (rec.source && readable(rec.source)) : readable(k.r.source))) pend[k.slot] = { __pending: true }; }); if (Object.keys(pend).length) { this._kids = pend; this.render(); } }
-      if (wants && rec.source && readable(rec.source)) { try { subj = await this._call(rec.source, rec.read.args || {}); if (subj && typeof subj === 'object' && subj.error && Object.keys(subj).length <= 2) { this._err = String(subj.error).slice(0, 120); subj = undefined; } else this._err = ''; } catch (e) { subj = undefined; this._err = String(e && e.message || e).slice(0, 120); } }
+      if (wants && rec.source && readable(rec.source)) { try { subj = await this._call(rec.source, resolveArgs(rec.read.args, this._ui)); if (subj && typeof subj === 'object' && subj.error && Object.keys(subj).length <= 2) { this._err = String(subj.error).slice(0, 120); subj = undefined; } else this._err = ''; } catch (e) { subj = undefined; this._err = String(e && e.message || e).slice(0, 120); } }
       const out = Object.assign({}, this._kids || {});
       const keep = (slot, v, err) => { const prev = out[slot] && out[slot].__read ? out[slot] : null; out[slot] = { __read: true, data: err ? (prev ? prev.data : undefined) : v, err: err || '' }; };
       // what the subject answers is drawn now; every child that reads on its own is drawn as it lands
@@ -2514,7 +2756,7 @@ span.vw-sampled{opacity:.85}
       kids.forEach((k) => { if (!k.r || k.own || !/^\$subject/.test(k.r.source)) return; if (subj !== undefined) keep(k.slot, pick(subj, k.r.source.replace(/^\$subject\.?/, ''))); else if (this._err) keep(k.slot, undefined, this._err); });
       show();
       await Promise.all(kids.map(async (k) => { if (!k.r || k.own || /^\$subject/.test(k.r.source)) return;
-        if (k.r.source && readable(k.r.source)) { try { const v = await this._call(k.r.source, k.r.read.args || {}); if (v && typeof v === 'object' && v.error && Object.keys(v).length <= 2) keep(k.slot, undefined, String(v.error).slice(0, 120)); else keep(k.slot, v); } catch (e) { keep(k.slot, undefined, String(e && e.message || e).slice(0, 120)); } show(); } }));
+        if (k.r.source && readable(k.r.source)) { try { const v = await this._call(k.r.source, resolveArgs(k.r.read.args, this._ui)); if (v && typeof v === 'object' && v.error && Object.keys(v).length <= 2) keep(k.slot, undefined, String(v.error).slice(0, 120)); else keep(k.slot, v); } catch (e) { keep(k.slot, undefined, String(e && e.message || e).slice(0, 120)); } show(); } }));
       if (this._rec !== rec) return; this._kids = out; if (subj !== undefined) this._data = subj; this.render();
       // a child (or the subject) that failed before it ever answered is asked again soon, not at the next full refresh
       if (Object.keys(out).some((s) => out[s] && out[s].err && out[s].data === undefined) || (wants && subj === undefined && this._err)) this._retrySoon(() => this._readKids());
@@ -2523,7 +2765,7 @@ span.vw-sampled{opacity:.85}
     async read(forced) {
       const cap = this._rec && this._rec.source; if (!cap) return;
       if (!forced && !readable(cap)) return;
-      let res; try { res = await this._call(cap, this._rec.read.args || {}); } catch (e) { res = { error: String(e && e.message || e) }; }
+      let res; try { res = await this._call(cap, resolveArgs(this._rec.read.args, this._ui)); } catch (e) { res = { error: String(e && e.message || e) }; }
       // a read that failed keeps the last reading, else the sample face (marked) — a tile never empties on a refresh
       if (res && typeof res === 'object' && res.error && Object.keys(res).length <= 2) { this._err = String(res.error).slice(0, 120); if (this._data === undefined) this._retrySoon(() => this.read()); this._read = this._data !== undefined; this.render(); return; }
       const got = !isEmpty(mapped(this._rec, this._rec.form, res));
@@ -2534,6 +2776,11 @@ span.vw-sampled{opacity:.85}
       this.dispatchEvent(new CustomEvent('widget:refresh', { bubbles: true, composed: true, detail: { record: this._rec, data: res } }));
     }
     refresh() { return this.read(true); }
+    // a month or a view chosen here: this widget re-reads when its arguments follow the month, and every calendar of its
+    // group on the page follows (vera:calnav)
+    _calMove(kv) { const r = this._rec; if (!r) return; if (/^off:/.test(kv)) this._ui.sel = '';
+      if (hasArgTokens(r) && r.source) this.read(true); else this.render();
+      try { document.dispatchEvent(new CustomEvent('vera:calnav', { detail: { group: String((r.draw && r.draw.group) || 'cal'), off: +(this._ui.off || 0), view: this._ui.view || undefined, sel: this._ui.sel } })); } catch (_) {} }
     // one retry at a time, soon (RETRY_S), for a reading that failed before it ever answered - its next full refresh may be
     // minutes away (a backup census reads every five), and until then the tile would have nothing true to show
     _retrySoon(fn) { if (this._retry || !this.isConnected) return; this._retry = setTimeout(() => { this._retry = null; if (this.isConnected) fn(); }, RETRY_S * 1000); }
@@ -2582,11 +2829,12 @@ span.vw-sampled{opacity:.85}
       const rb = this._sh.querySelector('[data-read]'); if (rb) rb.addEventListener('click', () => this.read(true));
       this._sh.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => this._act(b.dataset.act)));
       const setUi = (kv) => { const i = kv.indexOf(':'); if (i < 0) return; const k = kv.slice(0, i), v = kv.slice(i + 1); this._ui[k] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v; };
-      this._sh.querySelectorAll('[data-vb-set]').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); setUi(b.dataset.vbSet); if (b.dataset.vbSet2) setUi(b.dataset.vbSet2); this.render(); }));
+      this._sh.querySelectorAll('[data-vb-set]').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); setUi(b.dataset.vbSet); if (b.dataset.vbSet2) setUi(b.dataset.vbSet2); if (/^(off|view):/.test(b.dataset.vbSet) && /^(month|schedule|calnav|agenda)$/.test(canon(this._rec.form))) this._calMove(b.dataset.vbSet); else this.render(); }));
       this._sh.querySelectorAll('[data-vb-input]').forEach((i) => i.addEventListener('input', () => { this._ui[i.dataset.vbInput] = /^-?\d+(\.\d+)?$/.test(i.value) ? Number(i.value) : i.value; this.render(); }));
       this._sh.querySelectorAll('[data-vb-link]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); this.dispatchEvent(new CustomEvent('widget:open', { bubbles: true, composed: true, detail: { record: this._rec, href: a.dataset.vbLink, key: key(this._rec) } })); }));
       hydrate(this._sh);
       motionAfter(this._sh, was);
+      if (canon(form) === 'vgraph' && (have || (rec.draw && rec.draw.layer))) mountVeraGraph(this, rec, dataM, size); else if (this._vg || this._vgHost) unmountVeraGraph(this);
       // the entry motion plays once, on the first real reading (a refresh redraws without it)
       if (state === 'live' && !this.hasAttribute('data-entered') && !this._entering) { this._entering = true; setTimeout(() => { this.setAttribute('data-entered', ''); this._entering = false; }, 900); }
       // a bare element (a dashboard tile's body) measures too: its host sizes it, and the forms fit what they are given
@@ -2609,7 +2857,8 @@ span.vw-sampled{opacity:.85}
   }
   if (window.customElements && !customElements.get('vera-widget')) customElements.define('vera-widget', VeraWidgetEl);
   window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, version: 5 };
-  Object.assign(window.VeraWidget, { dive, openBlock, rowTip, rowRef, fontScale, fromCapResult, fromCapStream, capForms: () => CAP_FORMS.slice(), capHints: () => Object.assign({}, CAP_HINTS) });   // the widget review, round 2: blocks, the deep dive, the text-size setting
+  Object.assign(window.VeraWidget, { dive, openBlock, rowTip, rowRef, fontScale, fromCapResult, fromCapStream, capForms: () => CAP_FORMS.slice(), capHints: () => Object.assign({}, CAP_HINTS),
+    drawer, relatedTo, resolveArgs, toVeraGraph, itemAt, ensureVeraGraph });   // round 3: the data drawer, the calendar's arguments, the Vera graph form   // the widget review, round 2: blocks, the deep dive, the text-size setting
 
   /* ── THE WIDGET SURFACE — window.VeraWidgetConfig (the WidgetConfig board; the pickers of the Canvas, Harness and
      Dashboard boards) ─────────────────────────────────────────────────────────────────────────────────────────────
