@@ -7051,6 +7051,13 @@ IMPORTANT:
                key:'calendar:month', content:{ title:'Calendar', month:_cvCalMonth(evs), selected:'', events:evs } }; });
 
   // rows of the same shape: a table with real columns
+  /* ── the answer as the widget that fits it (the shared mapping, VeraWidget.fromCapResult): progress, a status, a series,
+     a list, a metric ... A table it hands to the chat's own table rule below (real columns); json/text to the generics ── */
+  cvAdapter('capview',
+    (c,ctx)=>!!(window.VeraWidget&&typeof VeraWidget.fromCapResult==='function'),
+    (c,ctx)=>{ const rs=VeraWidget.fromCapResult(ctx.cap, c, {args:ctx.args}); const r=rs&&rs[0]; if(!r||!r.form||/^(json|text|table|record|kv)$/.test(r.form)) return null;
+      const title=r.title||ctx.cap||r.form; return { kind:'widget', n:String(title).slice(0,52), k:'widget', col:'#a78bfa', d:'widget \u00b7 '+r.form,
+        content:Object.assign({}, r, {widget:r.form, form:r.form, title, record:r}) }; });
   cvAdapter('table', (c,ctx)=>!!_cvCapTable(c,ctx.cap), (c,ctx)=>_cvCapTable(c,ctx.cap));
 
   // a shape the chat's own widget rule recognises IS that chart
@@ -7077,14 +7084,6 @@ IMPORTANT:
       const first=v.replace(/^#+\s*/,'').split('\n').find(x=>x.trim())||'note';
       return { kind:'markdown', n:first.slice(0,52), k:'prose', col:'var(--acc2)', d:'written',
                content:{ md:v.slice(0,20000) } }; });
-
-  /* ── the answer as the widget that fits it (the shared mapping, VeraWidget.fromCapResult): a diff, progress, a status, a
-     series, a list, an error ... - before the older generic rules below, which stay as the fallback ── */
-  cvAdapter('capview',
-    (c,ctx)=>!!(window.VeraWidget&&typeof VeraWidget.fromCapResult==='function'),
-    (c,ctx)=>{ const rs=VeraWidget.fromCapResult(ctx.cap, c, {args:ctx.args}); const r=rs&&rs[0]; if(!r||!r.form||/^(json|text)$/.test(r.form)) return null;
-      const title=r.title||ctx.cap||r.form; return { kind:'widget', n:String(title).slice(0,52), k:'widget', col:'#a78bfa', d:'widget \u00b7 '+r.form,
-        content:Object.assign({}, r, {widget:r.form, form:r.form, title, record:r}) }; });
 
   /* ── what a result is when none of the above - added 2026-09-27 so every answer lands as an ELEMENT that fits it
      rather than as its own JSON pasted into a code fence (owner: "caps need to be able to return results to the canvas
