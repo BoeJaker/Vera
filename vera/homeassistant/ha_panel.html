@@ -97,11 +97,11 @@ tr:hover td{ background:var(--bg2); }
   </div>
   <div id="content"><div class="wrap">
 
-    <div class="tabs">
-      <div class="tab on" data-t="control" onclick="tab('control')">Control</div>
-      <div class="tab" data-t="entities" onclick="tab('entities')">Entities</div>
-      <div class="tab" data-t="notify" onclick="tab('notify')">Notify</div>
-      <div class="tab" data-t="config" onclick="tab('config')">Connection</div>
+    <div class="tabs" data-vera-lhm>
+      <div class="tab on" data-t="control" data-icon="⏻" onclick="tab('control')">Control</div>
+      <div class="tab" data-t="entities" data-icon="▤" onclick="tab('entities')">Entities</div>
+      <div class="tab" data-t="notify" data-icon="✉" onclick="tab('notify')">Notify</div>
+      <div class="tab" data-t="config" data-icon="⚙" onclick="tab('config')">Connection</div>
     </div>
 
     <!-- ── CONTROL ─────────────────────────────────────────────────────── -->
@@ -415,5 +415,6 @@ async function refresh(){
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

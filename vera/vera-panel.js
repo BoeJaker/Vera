@@ -126,7 +126,7 @@
     // that opted in before this shape existed.
     var btns = nav.querySelectorAll('.nav-btn');
     if (!btns.length) btns = nav.querySelectorAll(SEL);
-    if (!nav.querySelector('.nav-btn')) btns = Array.prototype.filter.call(btns, function (b) { return !!(b.matches && b.matches('button, a, [role="button"], [onclick]')); });
+    if (!nav.querySelector('.nav-btn')) btns = Array.prototype.filter.call(btns, function (b) { return !!(b.matches && (b.matches('button, a, [role="button"], [onclick]') || b.matches('[role="tab"], .tab'))); });   /* a tab drawn as a div (its click bound in script) is an item too */
     // a menu in markup of its own (Research's icon rail: buttons with a title and an onclick, no data attribute): its
     // clickable things with a name are the items - never what sits under [data-lhm-skip] (Research's theme palette)
     if (!btns.length) btns = Array.prototype.filter.call(nav.querySelectorAll('button, a, [role="button"], [onclick]'), function (b) {
@@ -192,6 +192,7 @@
     // plain text nodes exist, then the whole button's text as a last resort
     // (icon glyph and all).
     function labelOf(b) {
+      var dl = (b.getAttribute('data-label') || '').trim(); if (dl) return dl;   /* a title that is a description does not name the item */
       var t = (b.getAttribute('title') || '').trim();
       if (t) return t;
       var lblEl = b.querySelector('.lbl, .fab-nb-label, .nav-label');
