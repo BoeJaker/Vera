@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,9 @@ REPORT_SCHEMA = "vera.evaluation-corpus-report/v1"
 RESOLVER_CORPUS_SCHEMA = "vera.resolver-shadow-corpus/v1"
 RESOLVER_REPORT_SCHEMA = "vera.resolver-shadow-report/v1"
 LANES = {"deterministic", "queued_live"}
+DETERMINISTIC_FIXTURE_RE = re.compile(
+    r"^tests/[A-Za-z0-9_./-]+\.py(?:::[A-Za-z0-9_.\[\]-]+)?$"
+)
 
 
 def canonical_fingerprint(corpus: Mapping[str, Any]) -> str:
@@ -67,6 +71,18 @@ def validate_corpus(corpus: Mapping[str, Any]) -> dict[str, Any]:
         expected = case.get("expected")
         if not isinstance(expected, Mapping) or not expected:
             issues.append({"code": "case.expected_required", "path": f"{path}.expected"})
+        fixture_ref = str(case.get("fixture_ref") or "").strip()
+        if not fixture_ref:
+            issues.append({"code": "case.fixture_ref_required",
+                           "path": f"{path}.fixture_ref"})
+        elif lane == "deterministic":
+            if fixture_ref.startswith("planned:"):
+                issues.append({"code": "case.deterministic_fixture_unresolved",
+                               "path": f"{path}.fixture_ref"})
+            elif (not DETERMINISTIC_FIXTURE_RE.fullmatch(fixture_ref)
+                  or ".." in Path(fixture_ref.partition("::")[0]).parts):
+                issues.append({"code": "case.deterministic_fixture_invalid",
+                               "path": f"{path}.fixture_ref"})
         budget = case.get("budget")
         if lane == "queued_live" and not isinstance(budget, Mapping):
             issues.append({"code": "case.live_budget_required", "path": f"{path}.budget"})
