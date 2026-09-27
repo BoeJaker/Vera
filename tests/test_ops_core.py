@@ -166,3 +166,21 @@ def test_empty_sources_build_an_empty_but_well_formed_snapshot():
     assert all(l["a"].startswith("core:") and l["b"].startswith("core:") for l in s["links"])
     assert s["inflight_total"] == 0 and s["errors"] == []
     assert [p["id"] for p in s["planes"]] == ["work", "core", "service", "runtime", "host", "edge"]
+
+
+def test_registration_addresses_and_logins_ride_on_machine_nodes():
+    src = _src()
+    src["estate.registration"] = {"rows": [{"ref": "guest:250", "planes": {"ssh": {"state": "yes", "detail": "login"}, "backup": {"state": "no", "detail": "excluded"}, "mesh": {"state": "n/a", "detail": ""}}, "complete": False}]}
+    s = oc.build(src, own_ips=["192.168.0.138"], now=NOW)
+    ids = {n["id"]: n for n in s["nodes"]}
+    g = ids["guest:250"]
+    assert g["reg"]["complete"] is False
+    assert g["reg"]["planes"]["ssh"]["state"] == "yes" and g["reg"]["planes"]["mesh"]["state"] == "n/a"
+    assert g["ips"][0] == "192.168.0.250" and g["ssh_host_id"] == "ssh-250"
+    assert ids["pve:corp"]["ssh_host_id"] == "ssh-pve"
+    assert ids["docker:local"]["dhost"] == "local"
+    assert "reg" not in ids["guest:160"]
+    # a failed registration reader leaves the nodes bare, never invented
+    src["estate.registration"] = {"error": "took too long"}
+    s = oc.build(src, own_ips=["192.168.0.138"], now=NOW)
+    assert all("reg" not in n for n in s["nodes"])

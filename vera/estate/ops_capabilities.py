@@ -35,7 +35,7 @@ READERS: Dict[str, float] = {
     "docker.stack.status": 8.0, "fabric.health": 6.0, "dream.scheduler.status": 6.0,
     "background.status": 6.0, "evolve.sandbox.list": 8.0, "evolve.pipeline.list": 8.0,
     "loops.program.list": 6.0, "mesh.nodes": 6.0, "estate.health": 20.0,
-    "evolve.errors.list": 8.0, "bench.node_perf.history": 6.0,
+    "evolve.errors.list": 8.0, "bench.node_perf.history": 6.0, "estate.registration": 12.0,
 }
 CACHE_S = 5.0
 _cache: Dict[str, Any] = {"at": 0.0, "out": None, "inflight": None}
