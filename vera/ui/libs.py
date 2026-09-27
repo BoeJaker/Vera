@@ -57,6 +57,12 @@ async def _serve_design_css():
     return _style("design.css")
 
 
+# the chat UI as an element (<vera-chat agent system session title>) any page can place
+@APP.get("/ui/chat.js", include_in_schema=False)
+async def _serve_chat_js():
+    return _script("chat.js")
+
+
 # the runtime every page draws the menu with (window.VeraRCM): its targets, the menu, the runner, thermal print
 @APP.get("/ui/rcm.js", include_in_schema=False)
 async def _serve_rcm_js():

@@ -36,13 +36,13 @@ html:root body::before {
 html:root body > :is(#main, main, .main, #app, .app, #panes, .panes, #content, .content) { background-color: transparent; }
 
 /* ── 3. blocks ON: the parts of a page are raised surfaces, rounded by the pack ── */
-html:root:not([data-blocks="off"]) :is(.card, .box, .tile, .panel-card, .sec-card, .kpi, .stat-card, .twrap, #status-tile) {
+html:root:not([data-blocks="off"]) :is(.card, .box, .tile, .panel-card, .sec-card, .kpi, .stat-card, .twrap, #status-tile, .dash-grid > .widget) {
   border-radius: var(--ui-radius, 8px);
   box-shadow: var(--elev);
   border-color: color-mix(in srgb, var(--border, rgba(255,255,255,.09)) 60%, transparent);
 }
 /* ── 4. blocks OFF: no surfaces of their own - the page (and its glow) is the ground ── */
-html:root[data-blocks="off"] :is(.card, .box, .tile, .panel-card, .sec-card, .kpi, .stat-card, .twrap, .note, .topbar, #topbar, #status-tile) {
+html:root[data-blocks="off"] :is(.card, .box, .tile, .panel-card, .sec-card, .kpi, .stat-card, .twrap, .note, .topbar, #topbar, #status-tile, .dash-grid > .widget) {
   background: transparent !important; box-shadow: none !important; border-color: transparent !important;
 }
 html:root[data-blocks="off"] #sidebar[data-vera-lhm] { background: transparent; border-right-color: transparent; }

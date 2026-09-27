@@ -1441,7 +1441,7 @@ html[data-blocks="off"] .cmp-strip{background:transparent;border-color:transpare
 html[data-blocks="off"] .pa-att{background:transparent}
 </style>
 <script>/* the chat embedded in parts (the Canvas board): ?only=menu is the rail + quick menus alone (a host's LHM slot); ?only=chat is everything but them; harness=yes = the host's ☰ above the rail does the top-level menu */
-(function(){ try{ var q=new URLSearchParams(location.search); var o=q.get('only')||''; if(o==='menu'||o==='chat') document.documentElement.setAttribute('data-only', o); if(q.get('harness')==='yes') document.documentElement.setAttribute('data-harness','yes'); var de=document.documentElement; de.classList.add('vboot'); document.addEventListener('DOMContentLoaded', function(){ setTimeout(function(){ de.classList.remove('vboot'); }, 5000); }); if(q.get('harness')==='yes'&&o==='chat') de.classList.add('hdr-absorbed'); try{ var mo=JSON.parse(localStorage.getItem('vera:chat:motion')||'{}')||{}; de.setAttribute('data-cursor', mo.cursor||'bar'); de.setAttribute('data-reply', mo.reply||'rise'); de.setAttribute('data-capanim', mo.caps||'slide'); if((mo.run||'shimmer')!=='dot') de.setAttribute('data-caprun', mo.run||'shimmer'); }catch(_){} }catch(e){} })();</script>
+(function(){ try{ var q=new URLSearchParams(location.search); var o=q.get('only')||''; if(o==='menu'||o==='chat') document.documentElement.setAttribute('data-only', o); if(q.get('harness')==='yes') document.documentElement.setAttribute('data-harness','yes'); if(q.get('embed')==='1') document.documentElement.setAttribute('data-embed',''); var de=document.documentElement; de.classList.add('vboot'); document.addEventListener('DOMContentLoaded', function(){ setTimeout(function(){ de.classList.remove('vboot'); }, 5000); }); if(q.get('harness')==='yes'&&o==='chat') de.classList.add('hdr-absorbed'); try{ var mo=JSON.parse(localStorage.getItem('vera:chat:motion')||'{}')||{}; de.setAttribute('data-cursor', mo.cursor||'bar'); de.setAttribute('data-reply', mo.reply||'rise'); de.setAttribute('data-capanim', mo.caps||'slide'); if((mo.run||'shimmer')!=='dot') de.setAttribute('data-caprun', mo.run||'shimmer'); }catch(_){} }catch(e){} })();</script>
 <style id="designChrome">
 /* ═══ THE CHAT'S CHROME AS THE CANVAS BOARD DRAWS IT (the design landing) ═══════════════════════════════════════
    The board's own rules ([data-board="main"] …) on this page's markup: the theme carries the tokens (--t1..3, --s1..3,
@@ -1675,6 +1675,7 @@ html[data-blocks="off"] #veraWash{opacity:.7}
    without initially displaying in the chat panel"): the page is not shown until its layout is assembled - the legacy
    markup it is parsed from never paints - and then fades in. The head's first script sets vboot; a failsafe lifts it. */
 html.vboot body{opacity:0}
+html[data-embed] #topBar{display:none!important}
 body{transition:opacity .32s ease}
 /* ═══ LEGIBLE (owner: "some fonts/text are faint others are way too small - ... the chat ui lhm [a] prime offender"):
    the menu's secondary text is the theme's second tone, not its faintest, and never smaller than 10px */
@@ -5130,7 +5131,8 @@ IMPORTANT:
     if(defSel) defSel.value=AGENTS.find(a=>a.name===defName)?defName:(AGENTS[0]?.name||'');
     // Pick the active agent: keep a GENUINE prior user selection, else the
     // configured default agent, else the first in the list.
-    const target=(prevVal && AGENTS.find(a=>a.name===prevVal))?prevVal
+    const target=(_EMBED_CHAT.agent && AGENTS.find(a=>a.name===_EMBED_CHAT.agent))?_EMBED_CHAT.agent   // the placement names its agent
+               :(prevVal && AGENTS.find(a=>a.name===prevVal))?prevVal
                :(AGENTS.find(a=>a.name===defName)?defName:(AGENTS[0]?.name||''));
     if(target){
       ['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=target;});
@@ -11479,7 +11481,7 @@ Your task: decide what to do next to advance toward the goal.
           think:!!(document.getElementById('cfgThink')?.checked||(a?.think)),
           tts:useTts,
           output_format:outFmt,  // shared format profile (vera.output_formats)
-          system_prefix:ctxBlock||undefined,  // injected before agent's system prompt
+          system_prefix:((_EMBED_CHAT.system?_EMBED_CHAT.system+'\n\n':'')+(ctxBlock||''))||undefined,  // the placement's prompt, then the context - before the agent's own
           // Quick opener: checked forces on; unchecked leaves it to the agent record
           quick_opener:document.getElementById('cfgQuickOpener')?.checked||undefined,
           // Two-tier reply: blank leaves it to the agent record, so a chat-side
@@ -15185,6 +15187,9 @@ Your task: decide what to do next to advance toward the goal.
    and the CHAT instance (only=chat) — are one chat: the session follows localStorage (the same origin), and the actions
    that belong to the chat (grow the graph, a page, explode, a new session) travel from the menu to the chat over a
    BroadcastChannel. Standalone, nothing changes. ── */
+/* a placement of the chat (<vera-chat>, /ui/chat.js): ?agent= ?system= ?session= ?title= ?embed=1 */
+var _EMBED_CHAT=(function(){ try{ const q=new URLSearchParams(location.search); return { agent:q.get('agent')||'', system:String(q.get('system')||'').slice(0,8000), session:q.get('session')||'', title:q.get('title')||'', embed:q.get('embed')==='1' }; }catch(_){ return { agent:'', system:'', session:'', title:'', embed:false }; } })();
+try{ if(_EMBED_CHAT.title) document.title=_EMBED_CHAT.title; }catch(_){}
 const _EMBED=(function(){ try{ const q=new URLSearchParams(location.search); return { only:q.get('only')||'', harness:q.get('harness')==='yes' }; }catch(_){ return { only:'', harness:false }; } })();
 const _LHMBC=(function(){ try{ return new BroadcastChannel('vera:chat:lhm'); }catch(_){ return null; } })();
 function _lhmPost(act, args){ try{ if(_LHMBC) _LHMBC.postMessage({ act, args:args||{}, sid:SID||'', from:_EMBED.only||'full', t:Date.now() }); }catch(_){} }
@@ -20164,7 +20169,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     if(msgs && msgs.children.length===1 && msgs.firstElementChild?.classList.contains('sys-msg')){
       msgs.innerHTML='<div class="min-welcome">What can I help with?</div>';
     }
-    initSid(opts.sessionId);setupResize();checkConn();setInterval(checkConn,20000);
+    initSid(opts.sessionId||_EMBED_CHAT.session||undefined);setupResize();checkConn();setInterval(checkConn,20000);
     _initStickListeners();
     _initComposerReveal();
     _initRailUX();
