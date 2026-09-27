@@ -26,12 +26,13 @@ t('the dashboard menu is declared after _dashCtl (no temporal dead zone at boot)
 {
   const a = BR.indexOf('  var _navLhmOpts = null;'), b = BR.indexOf('  // ── DOM helpers');
   t('the bridge builds the spec', a > 0 && b > a);
-  const ctx = { document: { title: 'Estate' } }; vm.createContext(ctx);
+  const ctx = { document: { title: 'Vera \u2014 Estate' } }; vm.createContext(ctx);
   vm.runInContext('var _navItems = null, _navActiveId = "";\n' + BR.slice(a, b) + '\nthis.lhm=_navLhm; this.res=_navResolve; this.set=function(i,a){ _navItems=i; _navActiveId=a; };', ctx);
   ctx.set([{ id: 'overview', label: 'Overview', group: 'Overview', icon: '\u25a6' }, { id: 'ops', label: 'Live ops', group: 'Overview', icon: '\u2726' }, { id: 'machines', label: 'All', group: 'Machines', icon: '\u25a4' }, { id: 'docker', label: 'Docker', group: 'Machines', icon: '\u25e7' }], 'docker');
   let s = ctx.lhm();
   t('grouped: a rail icon per group, its items as the list', s.menus.length === 2 && s.menus[1].label === 'Machines' && s.menus[1].tabs.length === 2 && s.menus[0].icon === '\u25a6', JSON.stringify(s.menus.map((m) => m.label)));
   t('the open item lights its group and itself', s.active.menu === '\u00a7g1' && s.active.tab === 'docker');
+  t('titled with the panel\'s name, not its page title', s.title === 'Estate', s.title);
   t('a pick in the list selects that item', ctx.res('\u00a7g0/ops') === 'ops');
   t('a group icon stays on the open item when it is in the group, else its first', ctx.res('\u00a7g1') === 'docker' && ctx.res('\u00a7g0') === 'overview');
   t('a plain item id still selects as before', ctx.res('ops') === 'ops');
