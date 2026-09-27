@@ -117,6 +117,9 @@
                 A('remove', 'Remove from canvas', '⌫', 'danger'), C('goals.detail', { goal:nm })],
     stat:     (nm) => [A('open', 'Deep dive', '↵'), A('trend', 'Trend it'), A('alert', 'Alert on it'),
                 A('remove', 'Remove from canvas', '⌫', 'danger'), C('obs.provenance', { entity:nm })],
+    /* a selection of text, anywhere */
+    text:     (nm) => [A('copy', 'Copy', '⌘C'), A('print', 'Print on the thermal printer', '🖨'), A('ask', 'Ask Vera about this', '?'),
+                C('fabric.query', { q:nm })],
     /* the surfaces themselves */
     canvas:   (nm) => [A('add', 'Add an item…'), A('fit', 'Fit to view'), A('edges', 'Toggle edges'), A('tidy', 'Tidy the layout'),
                 A('export', 'Export'), C('notebook.append', { note:'canvas snapshot' })],
@@ -127,7 +130,7 @@
   // the same tail on every kind
   const tail = (nm) => [A('ask', 'Ask Vera about this · with its context', '?'), A('pin', 'Pin to the canvas', '⌘P'),
     C('chat.ask', { about:nm, question:q }), C('obs.provenance', { entity:nm, depth:2 }),
-    C('print.card', { item:nm, printer:'thermal-01', width:'58mm' }), A('copy', 'Copy reference', '⌘C')];
+    C('print.card', { item:nm, printer:'thermal-01', width:'58mm' }), A('print', 'Print on the thermal printer', '🖨'), A('copy', 'Copy reference', '⌘C')];
   const generic = (nm) => [A('open', 'Open', '↵'), A('expand', 'Expand'), A('trace', 'Trace to source'),
     A('filter', 'Filter to this'), C('fabric.query', { entity:nm, hops:2 })];
   // the names surfaces use for a kind → the registry's kinds

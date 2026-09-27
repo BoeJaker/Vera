@@ -40,6 +40,8 @@
 <script src="/ui/pwa/pwa.js" defer></script>
 <script src="/ui/vera-ui.js?v=scale2"></script>
 <script src="/ui/vera-lhm.js"></script>
+<script src="/ui/menus.js"></script>
+<script src="/ui/rcm.js"></script>
 <script src="/ui/widgets/widget_element.js"></script>
 <!-- Fonts loaded non-render-blocking: the shell paints immediately with the
      system fallbacks in the CSS var stacks, then swaps in the web fonts if/when
@@ -8341,6 +8343,33 @@ function _mediaLoad(cont){
   _ensurePanelLoaded(cont);
 }
 { const __tabRender3 = _tabRender; _tabRender = function(){ const r = __tabRender3.apply(this, arguments); try{ if(_openTabs.has('media')) _mediaLoad(document.querySelector('#mediaContents .media-content.active')); }catch(_){} return r; }; }
+
+// ═══ THE RIGHT-CLICK MENU, HERE TOO (owner, 2026-09-27): the design's menu (/ui/rcm.js over the one registry) on the
+// harness - a tab, a row of the menu, a dashboard tile - besides everything the runtime already knows on any page ═══
+function _rcmAttach(){
+  if(!window.VeraRCM){ return setTimeout(_rcmAttach, 300); }
+  VeraRCM.attach({
+    target: t => {
+      const q = s => t.closest && t.closest(s); let el;
+      if((el = q('#tabBar .tab[data-tab]'))) return ['panel', [...el.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('') || el.dataset.tab, el, { pid: el.dataset.tab }];
+      if((el = q('#lhmNav .lhm-s-row'))){ const nm = String(((el.querySelector('.nm > span') || el.querySelector('.nm') || el).textContent) || '').trim(); const row = _lhmTabRows().find(r => r.label === nm); return ['panel', nm, el, { pid: row ? row.pid : '' }]; }
+      if((el = q('#dashGrid > .widget'))) return ['widget', String(((el.querySelector('.w-title') || {}).textContent) || el.dataset.wid).trim(), el, { wid: el.dataset.wid, text: String(el.innerText || '').slice(0, 3000) }];
+      return null;
+    },
+    act: (id, kind, name, el, x) => {
+      if(kind === 'panel' && x.pid){
+        if(id === 'open'){ switchTab(x.pid); _tabFireLoader(x.pid); return true; }
+        if(id === 'standalone'){ switchTab(x.pid); _tabFireLoader(x.pid); try{ openActiveStandalone(); }catch(_){} return true; }
+        if(id === 'refresh'){ const f = _panelFrame(x.pid); if(f){ try{ f.contentWindow.location.reload(); }catch(_){ f.setAttribute('src', f.getAttribute('src')); } } return true; }
+      }
+      if(kind === 'widget' && x.wid){
+        if(id === 'open'){ const b = el.querySelector('.w-body vera-widget, .w-body'); if(b) b.click(); return true; }
+        if(id === 'remove' && _dashCtl && _dashCtl.hide){ _dashCtl.hide(x.wid); return true; }
+      }
+      return false;
+    } });
+}
+_rcmAttach();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CROSS-FRAME WIDGET POP-OUT — embedded dashboards (Dream, Workers & Ollama, …)
