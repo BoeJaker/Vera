@@ -2496,6 +2496,242 @@
   function forms() { return Object.keys(DRAWN).map((id) => ({ id, shape: DRAWN[id], sizes: SIZES.slice(), drawn: true, derived: DERIVED.has(id), iso: !!R[id + '@iso'] || ISO_ONLY.has(id) })).concat(Object.keys(ALIAS).filter((id) => !DRAWN[id]).map((id) => ({ id, shape: DRAWN[ALIAS[id]] || '', sizes: SIZES.slice(), drawn: true, as: ALIAS[id] }))); }
   const ISO_ONLY = new Set(['dial', 'tank', 'stacks', 'conveyor', 'city', 'shelf', 'stack', 'sweep', 'meter-panel', 'pipes', 'library', 'pages', 'approvals', 'wiki', 'notices', 'devices', 'notebook', 'hosts', 'containers', 'models', 'datasets', 'sandboxes', 'activity', 'frame', 'racks']);
 
+  /* ══ THE IMAGE STUDIO'S FORMS (owner, 2026-09-27: "can we have a widget for displaying sprites and characters and images
+     from the image studio") ═══════════════════════════════════════════════════════════════════════════════════════════
+       images     a justified grid of real thumbnails: each tile as wide as its image's aspect (width · height from the row,
+                  else square), lazy-loaded, its prompt or title on hover; a row that is not an image (an html report) is a
+                  tile of its kind. Every tile carries its row, so a click opens the drawer - with the image large.
+       sprite     one sprite sheet animated: its frames stepped at the sheet's own fps (CSS steps, no script), pixel-crisp on
+                  a checkerboard; it plays by itself and holds still under the pointer (draw.play 'hover' plays it only
+                  there); the strip under it is its animations - a click shows that one. It reads a spritegen record
+                  (sheets + urls), a character's sheet, a list of either (draw.id picks one, else the first with a sheet)
+                  or a bare sheet {url, columns, rows, count, fps, frame_width, frame_height}; frames with no sheet flip.
+       sprites    the sprite library: a card per sprite character, its idle (else first) animation playing under the
+                  pointer, its name, what it has (animations · size); the ones with nothing drawn yet are counted
+       character  a character card: the portrait, the name and what it is, its traits as chips, its numbers (stats) as
+                  bars, its expressions and its sprites as strips; a list draws the one draw.id names (else the first) - or
+                  with draw.roster every one as a small card
+     Motion is off when the record says frame.motion false (and under prefers-reduced-motion): a sprite shows its first
+     frame. Addresses the studio answers with ('/images/file/…', '/spritegen/asset?…') are read against the host's base. */
+  const stAbs = (u, o) => { const s = String(u == null ? '' : u).trim(); if (!s) return ''; if (/^(data:|https?:|blob:)/i.test(s)) return s; const b = String((o && o.base) || '').replace(/\/$/, ''); return s.charAt(0) === '/' ? b + s : s; };
+  const cssUrl = (u) => String(u).replace(/["\\\n\r]/g, (c) => encodeURIComponent(c));
+  const IMG_RE = /\.(png|jpe?g|gif|webp|avif|svg|bmp)(\?|#|$)|^data:image\/|\/images\/file\/|\/(spritegen|character)\/asset\?/i;
+  const stStill = (o) => !!((o && o.record && o.record.frame && o.record.frame.motion === false) || (o && o.draw && o.draw.motion === false));
+  // the picture a row is: a thumbnail first, else an address that is an image, else a studio record's own portrait
+  function imgOf(r) {
+    if (!r) return ''; if (typeof r === 'string') return IMG_RE.test(r) ? r : '';
+    if (typeof r !== 'object' || Array.isArray(r)) return '';
+    const b = r.image_b64 || r.b64; if (typeof b === 'string' && b.length > 32) { const m = mediaOf({ image_b64: b }); if (m) return m.url; }
+    for (const k of ['thumb', 'thumbnail', 'thumb_url', 'preview', 'portrait', 'image_url', 'image', 'src', 'url']) { const v = r[k];
+      if (typeof v !== 'string' || !v) continue;
+      if (IMG_RE.test(v) || (/^(thumb|thumbnail|thumb_url|preview|portrait)$/.test(k) && /^(\/|https?:)/.test(v)) || ((k === 'url' || k === 'src') && /image/i.test(String(r.kind ?? r.mime ?? r.content_type ?? '')))) return v; }
+    const u = r.urls; if (u && typeof u === 'object' && typeof u.reference === 'string' && u.reference) return u.reference;
+    const f = r.frame_urls; if (f && typeof f === 'object') { const v = f.neutral || f[Object.keys(f)[0]]; if (typeof v === 'string' && v) return v; }
+    return '';
+  }
+  // every animation a record carries, one shape: {name, url | frames, cols, rows, n, fps, fw, fh, loop}
+  function spriteAnims(r) {
+    const out = []; if (!r || typeof r !== 'object' || Array.isArray(r)) return out;
+    const push = (name, g, url, frames) => { if (out.some((x) => x.name === String(name))) return; g = g || {};
+      const fl = Array.isArray(frames) ? frames.filter((x) => typeof x === 'string' && x) : null;
+      const n = Math.max(1, Math.round(num(g.count ?? g.frame_count ?? (typeof g.frames === 'number' ? g.frames : 0)) || (fl ? fl.length : 1)));
+      const cols = Math.max(1, Math.round(num(g.columns ?? g.cols) || (fl ? 1 : n))), rws = Math.max(1, Math.round(num(g.rows) || Math.ceil(n / cols)));
+      out.push({ name: String(name), url: url || '', frames: url ? null : fl, n: fl && !url ? fl.length : n, cols, rows: rws, fps: Math.max(1, Math.min(60, num(g.fps) || 8)), fw: num(g.frame_width ?? g.fw), fh: num(g.frame_height ?? g.fh), loop: g.loop !== false }); };
+    // a spritegen record: its sheets (geometry) and their addresses, its animations' frames where no sheet was built
+    const sh = (r.sheets && typeof r.sheets === 'object' && !Array.isArray(r.sheets)) ? r.sheets : {}, us = (r.urls && r.urls.sheets) || {}, uf = (r.urls && r.urls.frames) || {};
+    const an = (r.animations && typeof r.animations === 'object' && !Array.isArray(r.animations)) ? r.animations : {};
+    [...new Set(Object.keys(an).concat(Object.keys(sh), Object.keys(uf)))].forEach((k) => { const g = Object.assign({}, an[k] || {}, sh[k] || {});
+      const u = (us[k] && (us[k].png || us[k].url)) || (sh[k] && typeof sh[k].url === 'string' ? sh[k].url : ''); const fr = Array.isArray(uf[k]) && uf[k].length ? uf[k] : null;
+      if (u || fr) push(k, g, u, fr); });
+    // a companion character's sheet (character.list: sheet.animations, each with its address)
+    const cs = (r.sheet && typeof r.sheet === 'object') ? r.sheet : null;
+    if (cs) { const A = (cs.animations && typeof cs.animations === 'object') ? cs.animations : null;
+      if (A) Object.keys(A).forEach((k) => { if (A[k] && typeof A[k].url === 'string' && A[k].url) push(k, A[k], A[k].url, null); });
+      else if (typeof cs.url === 'string' && cs.url) push(cs.anim || 'sheet', cs, cs.url, null); }
+    // a bare sheet, or a bare list of frames
+    if (!out.length) { const u = typeof r.sheet === 'string' ? r.sheet : (((typeof r.url === 'string' && r.url) || (typeof r.src === 'string' && r.src)) && (r.columns || r.count || r.frame_width) ? (r.url || r.src) : '');
+      if (u) push(r.anim || r.animation || 'sheet', r, u, null);
+      else if (Array.isArray(r.frames) && r.frames.length && typeof r.frames[0] === 'string' && IMG_RE.test(r.frames[0])) push(r.anim || r.animation || 'frames', r, '', r.frames); }
+    return out;
+  }
+  // the keyframes that step a sheet: one per frame, held (step-end) until the next - named by the grid, so one set serves every sheet of that grid
+  const kfName = (a) => 'vwsp-' + a.cols + 'x' + a.rows + 'n' + a.n;
+  function kfCss(a) {
+    const pos = (k) => { const c = k % a.cols, rr = Math.floor(k / a.cols); return (a.cols > 1 ? c / (a.cols - 1) * 100 : 0).toFixed(3) + '% ' + (a.rows > 1 ? rr / (a.rows - 1) * 100 : 0).toFixed(3) + '%'; };
+    let s = '@keyframes ' + kfName(a) + '{'; for (let k = 0; k < a.n; k++) s += (k / a.n * 100).toFixed(3) + '%{background-position:' + pos(k) + '}';
+    return s + '100%{background-position:' + pos(a.n - 1) + '}}';
+  }
+  // one animation at a height (no wider than maxW): the sheet as a background stepped through its frames, or its frames
+  // stacked and flipped; its keyframes ride with the markup, so any host that draws it animates it
+  function spriteBox(a, h, o, play, cls, maxW) {
+    let ar = (a.fw > 0 && a.fh > 0) ? a.fw / a.fh : 1; h = Math.max(8, Math.round(h)); let w = Math.round(h * ar);
+    if (maxW && w > maxW) { w = Math.round(maxW); h = Math.max(8, Math.round(w / ar)); }
+    const mv = !stStill(o) && a.n > 1, dur = a.n / a.fps, box = '<span class="vw-spr' + (cls ? ' ' + cls : '') + '" data-play="' + (play === 'hover' ? 'hover' : 'auto') + '" style="width:' + w + 'px;height:' + h + 'px">';
+    if (a.url) return box + (mv ? '<style>' + kfCss(a) + '</style>' : '') + '<i style="background-image:url(&quot;' + esc(cssUrl(stAbs(a.url, o))) + '&quot;);background-size:' + (a.cols * 100) + '% ' + (a.rows * 100) + '%' + (mv ? ';animation:' + kfName(a) + ' ' + dur.toFixed(3) + 's step-end infinite' : '') + '"></i></span>';
+    const fr = (a.frames || []).slice(0, 64), n = fr.length;
+    return box + (mv ? '<style>@keyframes vwfl-' + n + '{0%{opacity:1}' + (100 / n).toFixed(3) + '%{opacity:0}100%{opacity:0}}</style>' : '')
+      + fr.map((f, i) => '<img src="' + esc(stAbs(f, o)) + '" alt="" loading="lazy" decoding="async"' + (i ? ' class="nx"' : '') + (mv ? ' style="animation:vwfl-' + n + ' ' + dur.toFixed(3) + 's step-end infinite;animation-delay:' + (-(n - i) / n * dur).toFixed(3) + 's"' : '') + '>').join('') + '</span>';
+  }
+  // the record a single-thing form draws out of what it was handed: the record itself, or from a list (an envelope's one
+  // list of records) the one draw.id names, else the first that has something to draw
+  function pickRec(d, o, has) {
+    let L = Array.isArray(d) ? d : null;
+    if (!L && d && typeof d === 'object') { const ks = Object.keys(d).filter((k) => Array.isArray(d[k]) && d[k].some((x) => x && typeof x === 'object' && !Array.isArray(x))); if (ks.length === 1) L = d[ks[0]]; else return d; }
+    if (!L) return null; const rw = L.filter((x) => x && typeof x === 'object' && !Array.isArray(x)); const id = String((o && o.draw && (o.draw.id ?? o.draw.pick)) ?? '');
+    return (id && rw.find((x) => [x.char_id, x.agent_id, x.id, x.name, x.display_name, x.label].some((v) => v != null && String(v) === id))) || rw.find(has || (() => true)) || rw[0] || null;
+  }
+  // an envelope that answered with nothing ({characters: [], count: 0}): every list in it empty and nothing else but figures -
+  // the form says no data, as the element does for a list form (the fallback to a key . value list drew 'count 0')
+  const emptyEnv = (d) => (Array.isArray(d) && !d.some((x) => x && typeof x === 'object')) || (!!d && typeof d === 'object' && !Array.isArray(d) && Object.keys(d).some((k) => Array.isArray(d[k])) && Object.keys(d).every((k) => (Array.isArray(d[k]) ? !d[k].length : (d[k] == null || typeof d[k] !== 'object'))));
+  const noneRead = (o) => NODATA((o && o.record && o.record.source) || '', (o && o.size) || 'm');
+  const recName = (r) => String(r.display_name || r.name || r.label || r.title || r.char_id || r.agent_id || r.id || '');
+  // what a click on a sprite hands the drawer: the sprite in plain fields (the drawer draws the sheet from them, animated)
+  const spriteItem = (r, a) => { const A = spriteAnims(r); return { name: recName(r), id: String(r.char_id || r.agent_id || r.id || ''), animation: a.name, frames: a.n, fps: a.fps,
+    frame: a.fw && a.fh ? a.fw + '×' + a.fh : '', sheet: a.url || '', sheet_grid: a.url ? a.cols + '×' + a.rows : '', animations: A.map((x) => x.name).join(', '), brief: String(r.brief || r.description || ''),
+    style: r.style || '', sprite_size: r.sprite_size, preview: imgOf(r) || '', updated_at: r.updated_at || r.created_at || '' }; };
+  const charItem = (r) => { const A = spriteAnims(r); return { name: recName(r), id: String(r.agent_id || r.char_id || r.id || ''), description: String(r.description || r.brief || ''), style: r.style || '', render_mode: r.render_mode || '',
+    voice: r.voice || '', states: Array.isArray(r.states) ? r.states.join(', ') : '', animations: A.map((x) => x.name).join(', '), preview: imgOf(r) || '', prompt: String(r.base_prompt || '').slice(0, 400), updated_at: r.updated_at || r.created_at || '' }; };
+  R.images = (d, H, o) => {
+    const all = rows(d), str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const items = all.length ? all : str.map((s) => ({ url: s, name: s.split(/[/?]/).filter(Boolean).pop() || s }));
+    if (!items.length) return EMPTY('images need rows with an image address');
+    const size = (o && o.size) || 'm', th = Math.max(28, num(o && o.draw && o.draw.thumb) || ({ m: 64, l: 84, xl: 112 }[size] || 64)), gap = 4;
+    const body = Math.max(th, (H || HEIGHT[size] || 96) - 4), W = Math.max(th, (o && o.width) || ({ m: 300, l: 460, xl: 720 }[size] || 300));
+    const arOf = (r) => { const w = num(r.width ?? r.w), h = num(r.height ?? r.h); return w > 0 && h > 0 ? Math.max(0.4, Math.min(2.5, w / h)) : 1; };
+    // as many as the rows the body holds take (a row's count is its images' widths at the tile height); XL scrolls to 60;
+    // draw.limit says otherwise
+    let lim = Math.round(num(o && o.draw && o.draw.limit));
+    if (!lim) { const nRows = Math.max(1, Math.floor((body + gap) / (th + gap))); let acc = 0, row = 0, i = 0;
+      for (; i < items.length; i++) { const tw = th * arOf(items[i]) + gap; if (acc > 0 && acc + tw > W + gap) { row++; acc = 0; } if (row >= nRows) break; acc += tw; }
+      lim = size === 'xl' ? Math.max(i, Math.min(items.length, 60)) : i; }
+    const shown = items.slice(0, Math.max(1, lim)), more = items.length - shown.length;
+    const tile = (r, i) => { const src = imgOf(r), ar = arOf(r), ttl = String(r.prompt ?? r.title ?? r.caption ?? r.name ?? r.label ?? '').trim();
+      const meta = [(r.width && r.height) ? r.width + '×' + r.height : '', r.source ?? r.kind ?? '', r.model ?? '', dayOf(r.created_at ?? r.created ?? r.when ?? '')].filter((x) => x && String(x).trim()).join(' · ');
+      return '<figure class="vw-im' + (src ? '' : ' doc') + '"' + itemAttr(r, 'image') + ' data-tip="' + esc((ttl || 'image').slice(0, 160) + (meta ? '\n' + meta : '')) + '" style="flex:' + ar.toFixed(3) + ' 1 ' + Math.round(th * ar) + 'px;height:' + th + 'px">'
+        + (src ? '<img src="' + esc(stAbs(src, o)) + '" alt="' + esc(ttl.slice(0, 80)) + '" loading="lazy" decoding="async">' : '<b>' + esc(String(r.kind ?? r.ext ?? r.type ?? 'file').replace(/_/g, ' ')) + '</b>')
+        + (ttl ? '<figcaption>' + esc(ttl.slice(0, 70)) + '</figcaption>' : '') + (more > 0 && i === shown.length - 1 ? '<em>+ ' + more + '</em>' : '') + '</figure>'; };
+    return wrap('images', '<div class="vw-ims" style="gap:' + gap + 'px">' + shown.map(tile).join('') + '<i class="vw-imfill"></i></div>', '', size === 'xl' ? 'overflow:auto' : '');
+  };
+  R.sprite = (d, H, o) => {
+    if (typeof d !== 'string' && emptyEnv(d)) return noneRead(o);
+    const r = typeof d === 'string' ? { sheet: d } : pickRec(d, o, (x) => spriteAnims(x).length > 0);
+    const A = spriteAnims(r); if (!A.length) return EMPTY('a sprite needs a sheet (url · columns · count · fps) or its frames');
+    const want = String(ui(o, 'anim', '') || (o && o.draw && o.draw.anim) || ''), a = A.find((x) => x.name === want) || A.find((x) => /^idle/i.test(x.name)) || A[0];
+    const size = (o && o.size) || 'm', max = size === 'xl' ? 24 : 12, strip = A.length > 1 && !(o && o.draw && o.draw.strip === false), sh = strip ? (size === 'xl' ? 44 : 30) : 0;
+    const W = (o && o.width) || ({ m: 300, l: 460, xl: 720 }[size] || 300), h = Math.max(24, Math.min(num(o && o.draw && o.draw.max) || 512, (H || HEIGHT[size] || 96) - sh - 24));
+    const name = recName(r), play = (o && o.draw && o.draw.play) === 'hover' ? 'hover' : 'auto', meta = a.n + ' frames · ' + a.fps + ' fps' + (a.fw ? ' · ' + a.fw + '×' + a.fh : '');
+    const stage = '<div class="vw-sprst vw-chk"' + itemAttr(spriteItem(r, a), 'sprite') + ' data-tip="' + esc((name ? name + ' · ' : '') + a.name + '\n' + meta) + '">' + spriteBox(a, h, o, play, '', W - 8) + '</div>';
+    const head = '<div class="vw-sprcap"><b>' + esc(name || 'sprite') + '</b><span>' + esc(a.name) + '</span><small>' + esc(meta) + '</small></div>';
+    const strp = strip ? '<div class="vw-sprstrip">' + A.slice(0, max).map((x) => '<button class="vw-sprt' + (x === a ? ' on' : '') + '"' + set('anim', x.name) + ' title="' + esc(x.name + ' · ' + x.n + ' frames · ' + x.fps + ' fps') + '">' + spriteBox(x, sh - 12, o, 'hover', '', 2 * (sh - 12)) + '<small>' + esc(x.name.slice(0, 16)) + '</small></button>').join('') + (A.length > max ? '<span class="vb-lbl">+ ' + (A.length - max) + '</span>' : '') + '</div>' : '';
+    return wrap('sprite', stage + head + strp);
+  };
+  R.sprites = (d, H, o) => {
+    const all = rows(d); if (!all.length) return EMPTY('a sprite library needs sprite records');
+    const size = (o && o.size) || 'm', drawn = all.filter((r) => spriteAnims(r).length || imgOf(r)), rest = all.length - drawn.length; if (!drawn.length) return EMPTY(all.length + ' sprites · none has a sheet or frames yet');
+    const ch = { m: 70, l: 84, xl: 104 }[size] || 70, cw = Math.round(ch * 0.95), gap = 6, W = (o && o.width) || ({ m: 300, l: 460, xl: 720 }[size] || 300);
+    const cols = Math.max(1, Math.floor((W + gap) / (cw + gap))), fitR = Math.max(1, Math.floor(((H || HEIGHT[size] || 96) + gap - 14) / (ch + gap)));
+    const lim = Math.round(num(o && o.draw && o.draw.limit)) || (size === 'xl' ? Math.min(drawn.length, 60) : cols * fitR);
+    const card = (r) => { const A = spriteAnims(r), a = A.find((x) => /^idle/i.test(x.name)) || A[0], nm = recName(r) || 'unnamed', sub = [A.length ? A.length + (A.length === 1 ? ' anim' : ' anims') : 'still', r.sprite_size ? r.sprite_size + 'px' : ''].filter(Boolean).join(' · ');
+      const img = a ? spriteBox(a, ch - 28, o, 'hover', '', cw - 8) : '<img class="vw-sprimg" src="' + esc(stAbs(imgOf(r), o)) + '" alt="" loading="lazy" decoding="async" style="height:' + (ch - 28) + 'px">';
+      return '<div class="vw-sprc"' + itemAttr(a ? spriteItem(r, a) : charItem(r), 'sprite') + ' data-tip="' + esc(nm + '\n' + sub + (r.brief ? '\n' + String(r.brief).slice(0, 90) : '')) + '"><span class="vw-chk">' + img + '</span><b>' + esc(nm) + '</b><small>' + esc(sub) + '</small></div>'; };
+    const left = drawn.length - Math.min(lim, drawn.length);
+    return wrap('sprites', '<div class="vw-sprg" style="grid-template-columns:repeat(auto-fill,minmax(' + cw + 'px,1fr));gap:' + gap + 'px">' + drawn.slice(0, lim).map(card).join('') + '</div>'
+      + ((left > 0 || rest > 0) ? cap([left > 0 ? '+ ' + left + ' more' : '', rest > 0 ? rest + ' with nothing drawn yet' : ''].filter(Boolean).join(' · ')) : ''), '', size === 'xl' ? 'overflow:auto' : '');
+  };
+  R.character = (d, H, o) => {
+    const size = (o && o.size) || 'm', Hh = H || HEIGHT[size] || 96;
+    if (emptyEnv(d)) return noneRead(o);
+    if (o && o.draw && o.draw.roster) {
+      const L = Array.isArray(d) ? d : ((d && typeof d === 'object') ? (Object.keys(d).map((k) => d[k]).find((v) => Array.isArray(v) && v.some((x) => x && typeof x === 'object' && !Array.isArray(x))) || [d]) : []);
+      const all = rows(L); if (!all.length) return EMPTY('a roster needs character records');
+      const ph = { m: 48, l: 64, xl: 84 }[size] || 48;
+      return wrap('character', '<div class="vw-chrr" style="grid-template-columns:repeat(auto-fill,minmax(' + Math.round(ph * 2.6) + 'px,1fr))">' + all.slice(0, Math.round(num(o.draw.limit)) || 60).map((r) => { const u = imgOf(r), A = spriteAnims(r);
+        const face = u ? '<img src="' + esc(stAbs(u, o)) + '" alt="" loading="lazy" decoding="async">' : (A.length ? spriteBox(A[0], ph - 4, o, 'hover', '', ph - 4) : '<b>' + esc(recName(r).slice(0, 1).toUpperCase() || '?') + '</b>');
+        const chips = [r.style, r.render_mode, r.voice].filter(Boolean).slice(0, 3);
+        return '<div class="vw-chrm"' + itemAttr(charItem(r), 'character') + ' data-tip="' + esc(recName(r) + (r.description || r.brief ? '\n' + String(r.description || r.brief).slice(0, 100) : '')) + '"><span class="vw-chrp vw-chk" style="width:' + ph + 'px;height:' + ph + 'px">' + face + '</span><span class="t"><b>' + esc(recName(r) || 'unnamed') + '</b><small>' + esc(String(r.description || r.brief || '').slice(0, 60)) + '</small><span class="vw-chips2">' + chips.map((c) => '<i>' + esc(String(c)) + '</i>').join('') + '</span></span></div>'; }).join('') + '</div>', '', 'overflow:auto');
+    }
+    const r = pickRec(d, o, (x) => !!(imgOf(x) || spriteAnims(x).length)); if (!r || typeof r !== 'object') return EMPTY('a character needs a record');
+    const A = spriteAnims(r), u = imgOf(r), nm = recName(r) || 'character', about = String(r.description || r.brief || '').trim(), prompt = String(r.base_prompt || '').trim();
+    const strips = Hh >= 190 ? 2 : (Hh >= 128 ? 1 : 0), sh = size === 'xl' ? 46 : 36, ph = Math.max(48, Math.min(200, Hh - strips * (sh + 6) - 4));
+    const face = u ? '<img src="' + esc(stAbs(u, o)) + '" alt="' + esc(nm) + '" decoding="async">' : (A.length ? spriteBox(A.find((x) => /^idle/i.test(x.name)) || A[0], ph - 6, o, 'auto', '', ph - 6) : '<b>' + esc(nm.slice(0, 1).toUpperCase()) + '</b>');
+    const traits = [['style', r.style], ['mode', r.render_mode], ['voice', r.voice], ['size', r.sprite_size ? r.sprite_size + 'px' : ''], ['colours', r.colors], ['palette', r.palette], ['tier', r.sd_tier_used],
+      ['expressions', Array.isArray(r.states) && r.states.length ? r.states.length : ''], ['animations', A.length || '']].filter((x) => x[1] !== '' && x[1] != null && x[1] !== false);
+    const extra = Array.isArray(r.traits) ? r.traits.map((x) => ['', x]) : (r.traits && typeof r.traits === 'object' ? Object.keys(r.traits).map((k) => [k, r.traits[k]]) : []);
+    const chips = traits.concat(extra, (Array.isArray(r.tags) ? r.tags : []).map((x) => ['', x])).slice(0, size === 'xl' ? 14 : 8);
+    const st = (r.stats && typeof r.stats === 'object') ? r.stats : ((r.attributes && typeof r.attributes === 'object') ? r.attributes : null), sk = st ? Object.keys(st).filter((k) => typeof st[k] === 'number') : [];
+    const smax = num(o && o.draw && o.draw.max) || Math.max(10, ...sk.map((k) => st[k]));
+    const bars = sk.length ? '<div class="vw-chrs">' + sk.slice(0, size === 'm' ? 3 : 6).map((k) => '<span' + itemAttr({ name: k, value: st[k], of: smax, character: nm }, 'stat') + '><em>' + esc(k) + '</em><i><u style="width:' + pct(st[k], smax).toFixed(1) + '%"></u></i><b>' + esc(fmt(st[k])) + '</b></span>').join('') + '</div>' : '';
+    const fu = (r.frame_urls && typeof r.frame_urls === 'object') ? Object.keys(r.frame_urls).filter((k) => typeof r.frame_urls[k] === 'string' && r.frame_urls[k]) : [];
+    const exprs = fu.length > 1 ? '<div class="vw-chrx">' + fu.slice(0, 12).map((k) => '<span class="vw-chk"' + itemAttr({ name: nm + ' · ' + k, state: k, character: nm, preview: r.frame_urls[k], prompt: (r.expression_prompts && r.expression_prompts[k]) || '' }, 'expression') + ' data-tip="' + esc(k) + '"><img src="' + esc(stAbs(r.frame_urls[k], o)) + '" alt="' + esc(k) + '" loading="lazy" decoding="async" style="height:' + (sh - 4) + 'px;width:' + (sh - 4) + 'px"></span>').join('') + '</div>' : '';
+    const sprs = A.length ? '<div class="vw-chrx">' + A.slice(0, 12).map((a) => '<span class="vw-chk"' + itemAttr(spriteItem(r, a), 'sprite') + ' data-tip="' + esc(a.name + '\n' + a.n + ' frames · ' + a.fps + ' fps') + '">' + spriteBox(a, sh - 4, o, 'hover', '', 2 * sh) + '</span>').join('') + (A.length > 12 ? '<span class="vb-lbl">+ ' + (A.length - 12) + '</span>' : '') + '</div>' : '';
+    const stripsH = [exprs, sprs].filter(Boolean).slice(0, strips).join('');
+    return wrap('character', '<div class="vw-chr"><div class="vw-chrp vw-chk"' + itemAttr(charItem(r), 'character') + ' data-tip="' + esc(nm + (about ? '\n' + about.slice(0, 100) : '')) + '" style="width:' + ph + 'px;height:' + ph + 'px">' + face + '</div>'
+      + '<div class="vw-chrt"><b>' + esc(nm) + '</b>' + (about || prompt ? '<p>' + esc((about || prompt).slice(0, 220)) + '</p>' : '')
+      + (chips.length ? '<span class="vw-chips2">' + chips.map((c) => '<i' + (c[0] ? ' title="' + esc(c[0]) + '"' : '') + '>' + (c[0] ? '<small>' + esc(c[0]) + '</small> ' : '') + esc(String(c[1]).slice(0, 24)) + '</i>').join('') + '</span>' : '') + bars + '</div></div>' + stripsH);
+  };
+  /* the drawer's picture: an item that is an image shows it large; one that is a sprite (sheet · sheet_grid · frames ·
+     fps, as spriteItem writes it) plays it */
+  function drMedia(obj, host) {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return '';
+    const o = { base: (host && host.base) || '' };
+    if (typeof obj.sheet === 'string' && obj.sheet && /^\d+×\d+$/.test(String(obj.sheet_grid || ''))) { const g = String(obj.sheet_grid).split('×'), fr = String(obj.frame || '').split('×');
+      const a = { name: String(obj.animation || ''), url: obj.sheet, frames: null, cols: +g[0] || 1, rows: +g[1] || 1, n: Math.max(1, num(obj.frames)), fps: Math.max(1, num(obj.fps) || 8), fw: +fr[0] || 0, fh: +fr[1] || 0, loop: true };
+      return '<div class="vw-dr-media vw-chk">' + spriteBox(a, 180, o, 'auto', '', 300) + '</div>'; }
+    const u = imgOf(obj); if (!u) return ''; const abs = stAbs(u, o);
+    return '<div class="vw-dr-media vw-chk"><img src="' + esc(abs) + '" alt="" decoding="async"></div>' + (/^data:/.test(abs) ? '' : '<a class="vw-dr-open" href="' + esc(abs) + '" target="_blank" rel="noopener">open the full image ↗</a>');
+  }
+  const STUDIO_CSS = '.vb-images,.vb-sprite,.vb-sprites,.vb-character{align-self:stretch}'
+    + '.vw-chk{background:repeating-conic-gradient(var(--b-s3,var(--bg3,#262b33)) 0 25%,var(--b-s2,var(--bg2,#1d2129)) 0 50%) 0 0/10px 10px}'
+    + '.vw-spr{position:relative;display:inline-block;flex:none;vertical-align:middle}.vw-spr > i{position:absolute;inset:0;background-repeat:no-repeat;background-position:0 0;image-rendering:pixelated}'
+    + '.vw-spr > img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;image-rendering:pixelated}.vw-spr > img.nx{opacity:0}'
+    + '.vw-spr[data-play="hover"] > *{animation-play-state:paused!important}.vw-spr[data-play="hover"]:hover > *,.vw-sprc:hover .vw-spr > *,.vw-sprt:hover .vw-spr > *,.vw-chrx > span:hover .vw-spr > *{animation-play-state:running!important}.vw-spr[data-play="auto"]:hover > *{animation-play-state:paused!important}'
+    + '@media (prefers-reduced-motion: reduce){.vw-spr > *{animation:none!important}}'
+    + '.vw-ims{display:flex;flex-wrap:wrap;align-content:flex-start;width:100%}.vw-imfill{flex:1000 1 0;height:0}'
+    + '.vw-im{margin:0;position:relative;overflow:hidden;border-radius:5px;background:var(--b-s2);cursor:pointer;min-width:0;box-shadow:inset 0 0 0 1px var(--b-bd)}.vw-im img{display:block;width:100%;height:100%;object-fit:cover;transition:transform .25s ease}'
+    + '.vw-im:hover img{transform:scale(1.04)}.vw-im.hot{box-shadow:0 0 0 2px var(--b-ac)}.vw-im figcaption{position:absolute;left:0;right:0;bottom:0;padding:10px 6px 3px;font-size:10px;line-height:1.25;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.72));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transition:opacity .15s}'
+    + '.vw-im:hover figcaption{opacity:1}.vw-im.doc{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;text-align:center}.vw-im.doc b{font-family:var(--b-mono);font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--b-ac)}.vw-im.doc figcaption{position:static;opacity:1;background:none;color:var(--b-t2);padding:0;white-space:normal;max-height:3.8em}'
+    + '.vw-im em{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-style:normal;font-family:var(--b-mono);font-size:13px;color:#fff;background:rgba(0,0,0,.55)}'
+    + '.vb-sprite{align-items:stretch;gap:5px}.vw-sprst{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;border-radius:6px;box-shadow:inset 0 0 0 1px var(--b-bd);cursor:pointer}'
+    + '.vw-sprcap{display:flex;align-items:baseline;gap:6px;min-width:0;flex:none}.vw-sprcap b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-sprcap span{font-size:10.5px;color:var(--b-ac)}.vw-sprcap small{margin-left:auto;font-family:var(--b-mono);font-size:10px;color:var(--b-t3);white-space:nowrap}'
+    + '.vw-sprstrip{display:flex;gap:4px;overflow-x:auto;flex:none;scrollbar-width:thin}.vw-sprt{display:inline-flex!important;align-items:center;gap:4px;padding:2px 6px!important;border-radius:6px;background:var(--b-s2)!important;box-shadow:inset 0 0 0 1px var(--b-bd);flex:none}'
+    + '.vw-sprt small{font-size:10px;color:var(--b-t2)}.vw-sprt.on{box-shadow:inset 0 0 0 1px var(--b-ac)}.vw-sprt.on small{color:var(--b-ac)}'
+    + '.vw-sprg{display:grid;width:100%;align-content:start}.vw-sprc{display:flex;flex-direction:column;align-items:center;gap:1px;min-width:0;padding:4px;border-radius:7px;background:var(--b-s2);box-shadow:inset 0 0 0 1px var(--b-bd);cursor:pointer}'
+    + '.vw-sprc > span{display:flex;align-items:center;justify-content:center;width:100%;flex:1;min-height:0;border-radius:5px;overflow:hidden}.vw-sprc b{font-size:11px;font-weight:600;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-sprc small{font-size:10px;color:var(--b-t3);white-space:nowrap}.vw-sprc.hot{box-shadow:inset 0 0 0 1px var(--b-ac)}'
+    + '.vw-sprimg{max-width:100%;object-fit:contain;image-rendering:pixelated}'
+    + '.vw-chr{display:flex;gap:10px;min-height:0;flex:1}.vw-chrp{flex:none;display:flex;align-items:center;justify-content:center;border-radius:8px;overflow:hidden;box-shadow:inset 0 0 0 1px var(--b-bd);cursor:pointer}.vw-chrp img{width:100%;height:100%;object-fit:contain}.vw-chrp > b{font-size:22px;color:var(--b-t2)}'
+    + '.vw-chrt{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;overflow:hidden}.vw-chrt > b{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-chrt p{margin:0;font-size:11px;line-height:1.35;color:var(--b-t2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}'
+    + '.vw-chips2{display:flex;flex-wrap:wrap;gap:3px}.vw-chips2 i{font-style:normal;font-size:10px;padding:1px 7px;border-radius:99px;background:var(--b-s3);color:var(--b-t1);white-space:nowrap}.vw-chips2 i small{color:var(--b-t3);font-size:10px}'
+    + '.vw-chrs{display:flex;flex-direction:column;gap:2px}.vw-chrs > span{display:grid;grid-template-columns:minmax(0,70px) 1fr auto;gap:6px;align-items:center;font-size:10px}.vw-chrs em{font-style:normal;color:var(--b-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-chrs i{height:6px;border-radius:3px;background:var(--b-s3);overflow:hidden}.vw-chrs u{display:block;height:100%;background:var(--b-ac)}.vw-chrs b{font-family:var(--b-mono);font-weight:400}'
+    + '.vw-chrx{display:flex;gap:4px;overflow-x:auto;flex:none;scrollbar-width:thin}.vw-chrx > span{flex:none;display:flex;align-items:center;justify-content:center;padding:2px;border-radius:5px;box-shadow:inset 0 0 0 1px var(--b-bd);cursor:pointer}.vw-chrx img{object-fit:contain;display:block}.vw-chrx > span.hot{box-shadow:inset 0 0 0 1px var(--b-ac)}'
+    + '.vw-chrr{display:grid;gap:6px;width:100%;align-content:start}.vw-chrm{display:flex;gap:7px;align-items:center;min-width:0;padding:4px;border-radius:8px;background:var(--b-s2);box-shadow:inset 0 0 0 1px var(--b-bd);cursor:pointer}.vw-chrm.hot{box-shadow:inset 0 0 0 1px var(--b-ac)}'
+    + '.vw-chrm .t{display:flex;flex-direction:column;gap:2px;min-width:0}.vw-chrm .t b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-chrm .t small{font-size:10px;color:var(--b-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.vw-dr-media{display:flex;align-items:center;justify-content:center;min-height:120px;max-height:360px;border-radius:8px;overflow:hidden;margin:4px 0 6px;box-shadow:inset 0 0 0 1px var(--border,rgba(255,255,255,.1))}.vw-dr-media img{display:block;max-width:100%;max-height:360px;object-fit:contain}'
+    + '.vw-dr-open{display:inline-block;margin:0 0 8px;font-size:11px;color:var(--acc,#6ea8d8);text-decoration:none}'
+    + '.vw-im.hot,.vw-sprst.hot,.vw-chrp.hot,.vw-chrx > span.hot{filter:none}'
+    /* blocks off: the cards lose their ground - on the page, and in the element's shadow on a rule of its own (a selector
+       list holding :host-context is dropped whole where :host-context means nothing, on the page) */
+    + 'html[data-blocks="off"] .vw-sprc,html[data-blocks="off"] .vw-chrm,html[data-blocks="off"] .vw-sprt{background:transparent!important}'
+    + ':host-context(html[data-blocks="off"]) .vw-sprc,:host-context(html[data-blocks="off"]) .vw-chrm,:host-context(html[data-blocks="off"]) .vw-sprt{background:transparent!important}';
+  // the registrations: the forms drawn, their shapes, their sample faces, their glyphs; each takes its body whole at L and XL
+  Object.assign(DRAWN, { images: 'items', sprites: 'items', sprite: 'string', character: 'string' });
+  ['images', 'sprites', 'sprite', 'character'].forEach((f) => TABLE_FORMS.add(f));
+  Object.assign(GLYPH, { images: '▣', sprites: '◳', sprite: '◳', character: '☺' });
+  /* the sample faces: drawn here, so the gallery and the pickers show the forms with nothing read - a pixel figure's
+     sheet (four frames of idle, six of walk) and a few pictures of different shapes */
+  const SPR_SAMPLE = (() => { const fig = (k, n, walk) => { const bob = walk ? 0 : (k % 2), sw = walk ? Math.round(Math.sin(k / n * Math.PI * 2) * 2) : 0, x = k * 16;
+      const px = (c, xx, yy, w, h) => "<rect x='" + (x + xx) + "' y='" + (yy + bob) + "' width='" + w + "' height='" + h + "' fill='" + c + "'/>";
+      return px('#f2c89b', 5, 1, 6, 5) + px('#2b2f3a', 6, 3, 1, 1) + px('#2b2f3a', 9, 3, 1, 1) + px('#5aa0e8', 4, 6, 8, 5) + px('#f2c89b', 3 - Math.max(0, sw), 7, 1, 3) + px('#f2c89b', 12 + Math.min(0, sw), 7, 1, 3) + px('#3a4b6b', 5 + sw, 11, 2, 4) + px('#3a4b6b', 9 - sw, 11, 2, 4); };
+    const sheet = (n, walk) => 'data:image/svg+xml,' + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='" + (16 * n) + "' height='16' shape-rendering='crispEdges'>" + Array.from({ length: n }, (_, k) => fig(k, n, walk)).join('') + '</svg>');
+    return { idle: { url: sheet(4, false), columns: 4, rows: 1, count: 4, fps: 4, frame_width: 16, frame_height: 16, loop: true }, walk: { url: sheet(6, true), columns: 6, rows: 1, count: 6, fps: 8, frame_width: 16, frame_height: 16, loop: true } }; })();
+  const PIC = (w, h, a, b, t) => 'data:image/svg+xml,' + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='" + w + "' height='" + h + "'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='" + a + "'/><stop offset='1' stop-color='" + b + "'/></linearGradient></defs><rect width='100%' height='100%' fill='url(#g)'/>" + (t === 'sun' ? "<circle cx='" + w * .7 + "' cy='" + h * .35 + "' r='" + Math.min(w, h) * .14 + "' fill='#ffe3a3'/><path d='M0 " + h + " L" + w * .35 + ' ' + h * .55 + ' L' + w * .6 + ' ' + h * .8 + ' L' + w * .8 + ' ' + h * .6 + ' L' + w + ' ' + h + " Z' fill='#1d2433' opacity='.8'/>" : "<circle cx='" + w / 2 + "' cy='" + h / 2 + "' r='" + Math.min(w, h) * .28 + "' fill='#ffffff' opacity='.25'/>") + '</svg>');
+  Object.assign(FORM_SAMPLE, {
+    images: () => [[512, 512, '#6ea8d8', '#a78bfa', 'sun', 'a lighthouse at dusk, cinematic'], [768, 512, '#e09a55', '#5a2b6b', 'sun', 'desert canyon, golden hour'], [512, 768, '#5ec9a0', '#1f3b4d', '', 'portrait of a fox in a scarf'], [512, 512, '#e07a9a', '#2b2f3a', '', 'cyber sloth, anime'], [640, 480, '#3585c9', '#0b1119', 'sun', 'harbour at night'], [512, 512, '#bb881a', '#54a863', '', 'a duck, watercolour'], [768, 432, '#866ec5', '#00aba4', 'sun', 'aurora over a lake']].map((r, i) => ({ url: PIC(r[0] / 8, r[1] / 8, r[2], r[3], r[4]), prompt: r[5], width: r[0], height: r[1], source: i === 3 ? 'img2img' : 'txt2img', created_at: '2026-09-2' + (7 - (i % 5)) + 'T1' + i + ':00:00Z' })),
+    sprite: () => ({ name: 'Pip', char_id: 'sample', style: 'pixel', sprite_size: 16, sheet: { animations: SPR_SAMPLE } }),
+    sprites: () => ['Pip', 'Moss', 'Rook', 'Wren', 'Ash', 'Bolt'].map((n, i) => ({ name: n, char_id: 's' + i, style: 'pixel', sprite_size: 16, sheet: { animations: i % 2 ? { walk: SPR_SAMPLE.walk, idle: SPR_SAMPLE.idle } : { idle: SPR_SAMPLE.idle, walk: SPR_SAMPLE.walk } } })),
+    character: () => ({ display_name: 'Vera', agent_id: 'sample', description: 'the house assistant: calm, exact, a little dry', style: 'pixel', render_mode: 'spritesheet', voice: 'af_heart', states: ['neutral', 'talking', 'thinking', 'happy'],
+      frame_urls: { neutral: PIC(64, 64, '#6ea8d8', '#2b2f3a', ''), talking: PIC(64, 64, '#5ec9a0', '#2b2f3a', ''), thinking: PIC(64, 64, '#a78bfa', '#2b2f3a', ''), happy: PIC(64, 64, '#e09a55', '#2b2f3a', '') },
+      stats: { warmth: 7, focus: 9, humour: 5 }, sheet: { animations: SPR_SAMPLE } }),
+  });
+
   /* ── the record, in one shape (widget_record.py's rules, as far as a renderer needs them) ── */
   function normalise(src) {
     const o = (src && typeof src === 'object') ? src : {};
@@ -2552,7 +2788,7 @@
   }
 
   /* ── the styles (host-injected once; the element carries them in its shadow) ── */
-  const CSS = fontScale(`
+  const CSS = fontScale(STUDIO_CSS + `
 .wempty{color:var(--dim2,#8a92a0);font-size:9.5px;font-family:var(--mono,ui-monospace,monospace)}
 .vw-nodata{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;width:100%;height:100%;min-height:34px;text-align:center}
 .vw-nodata > b{font-family:var(--mono,ui-monospace,monospace);font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a92a0)}
@@ -3242,6 +3478,7 @@ span.vw-sampled{opacity:.85}
     el.innerHTML = '<header>' + (D.stack.length > 1 ? '<button class="bk" data-dr="back" title="back">‹</button>' : '') + '<div class="tt"><b title="' + esc(name) + '">' + esc(name) + '</b><small>' + esc([rec.title, cur.path, rec.form, src].filter(Boolean).join(' · ')) + '</small></div><button class="x" data-dr="close" title="close (Esc)">✕</button></header>'
       + '<div class="vw-dr-acts">' + (ref ? '<button class="pri" data-dr="entity">Open ' + esc(ref) + ' ↗</button>' : '') + (place ? '<button data-dr="place">Open ' + esc(place) + '</button>' : '') + '<button data-dr="dive">Deep dive ⤢</button><button data-dr="view" class="' + (D.view === 'json' ? 'on' : '') + '" title="Show the item as fields or as JSON">{ } JSON</button><button data-dr="copy">Copy JSON</button></div>'
       + '<div class="vw-dr-bd">'
+      + drMedia(obj, host)
       + (D.view === 'json' ? '<h4>The item · JSON</h4>' + drJson(it) : '')
       + (D.view !== 'json' && plain.length ? '<h4>Fields · ' + (plain.length + nested.length) + '</h4><div class="vw-dr-kv">' + plain.map((k) => '<span class="k">' + esc(k.replace(/_/g, ' ')) + '</span><span class="v">' + fieldVal(k, obj[k]) + '</span>').join('') + '</div>' : '')
       + (D.view !== 'json' && nested.length ? '<h4>' + (plain.length ? 'Nested' : 'Everything') + '</h4>' + drJson(Array.isArray(obj) ? obj : nested.reduce((o2, k) => { o2[k] = obj[k]; return o2; }, {})) : '')
@@ -3457,6 +3694,9 @@ span.vw-sampled{opacity:.85}
   window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, version: 5 };
   Object.assign(window.VeraWidget, { dive, openBlock, rowTip, rowRef, fontScale, fromCapResult, fromCapStream, capForms: () => CAP_FORMS.slice(), capHints: () => Object.assign({}, CAP_HINTS),
     drawer, relatedTo, resolveArgs, toVeraGraph, itemAt, ensureVeraGraph });   // round 3: the data drawer, the calendar's arguments, the Vera graph form   // the widget review, round 2: blocks, the deep dive, the text-size setting
+
+  // the image studio's readers: the picture a row is, the animations a record carries, the drawer's picture
+  Object.assign(window.VeraWidget, { studio: { imgOf, spriteAnims, drMedia } });
 
   /* ── THE WIDGET SURFACE — window.VeraWidgetConfig (the WidgetConfig board; the pickers of the Canvas, Harness and
      Dashboard boards) ─────────────────────────────────────────────────────────────────────────────────────────────
