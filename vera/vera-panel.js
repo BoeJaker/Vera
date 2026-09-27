@@ -164,15 +164,18 @@
     /* none of those names every item apart: any data-* attribute that does is the id (the Estate's Storage says data-p;
        2026-09-27, it nested as seven 'null' items no pick could reach) - and failing even that, the item's place */
     if (!idAttr) {
+      // each item's own element id first (Research: nv-r, nv-p ...; Cap Ontology: vt-matrix ...) - set on purpose, where a
+      // data attribute may be anyone's (the bridge tags a top bar's buttons data-vpb-hid p1, p2 ... when it offers the bar)
+      if (!idAttr) { var seen3 = {}, ok3 = true; for (var bk = 0; bk < btns.length; bk++) { var v3 = btns[bk].getAttribute('id'); if (!v3 || seen3[v3]) { ok3 = false; break; } seen3[v3] = 1; } if (ok3) idAttr = 'id'; }
+    }
+    if (!idAttr) {
       var at0 = btns[0].attributes || [];
       for (var ai = 0; ai < at0.length && !idAttr; ai++) {
-        var nm = at0[ai].name; if (!/^data-/.test(nm) || /^data-(w|tip|title|label|i18n|vera-|rcm-|icon|lhm-)/.test(nm)) continue;   /* data-icon is the glyph, never the id */
+        var nm = at0[ai].name; if (!/^data-/.test(nm) || /^data-(w|tip|title|label|i18n|vera-|rcm-|icon|lhm-|vpb-)/.test(nm)) continue;   /* data-icon is the glyph, never the id */
         var seen2 = {}, ok = true;
         for (var bj = 0; bj < btns.length; bj++) { var v2 = btns[bj].getAttribute(nm); if (!v2 || seen2[v2]) { ok = false; break; } seen2[v2] = 1; }
         if (ok) idAttr = nm;
       }
-      // ... or each item's own element id (Research: nv-r, nv-p ...), when every item has one of its own
-      if (!idAttr) { var seen3 = {}, ok3 = true; for (var bk = 0; bk < btns.length; bk++) { var v3 = btns[bk].getAttribute('id'); if (!v3 || seen3[v3]) { ok3 = false; break; } seen3[v3] = 1; } if (ok3) idAttr = 'id'; }
     }
     function idOf(b) {
       if (idAttr) return b.getAttribute(idAttr);
