@@ -36,6 +36,7 @@ READERS: Dict[str, float] = {
     "background.status": 6.0, "evolve.sandbox.list": 8.0, "evolve.pipeline.list": 8.0,
     "loops.program.list": 6.0, "mesh.nodes": 6.0, "estate.health": 20.0,
     "evolve.errors.list": 8.0, "bench.node_perf.history": 6.0, "estate.registration": 12.0,
+    "activity.sessions": 6.0, "ide.remote.instances": 6.0, "vfs.peer.list": 8.0,
 }
 CACHE_S = 5.0
 _cache: Dict[str, Any] = {"at": 0.0, "out": None, "inflight": None}
@@ -73,10 +74,36 @@ def _own_ips() -> List[str]:
     return out
 
 
+def _connections() -> Dict[str, Any]:
+    """The peers holding TCP connections to Vera's own port right now - the process's own view, nothing is scanned."""
+    import os as _os
+    try:
+        import psutil
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"psutil is not available: {e}"}
+    port = int(_os.getenv("ORCHESTRATOR_PORT", "8999") or 8999)
+    peers: Dict[str, int] = {}
+    try:
+        for cn in psutil.net_connections(kind="tcp"):
+            if cn.status != psutil.CONN_ESTABLISHED or not cn.laddr or not cn.raddr or cn.laddr.port != port:
+                continue
+            ip = str(cn.raddr.ip)
+            if ip.startswith("::ffff:"):
+                ip = ip[7:]
+            peers[ip] = peers.get(ip, 0) + 1
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
+    return {"port": port, "peers": [{"ip": k, "n": v} for k, v in sorted(peers.items(), key=lambda kv: -kv[1])]}
+
+
 async def _gather() -> Dict[str, Any]:
     names = list(READERS)
     answers = await asyncio.gather(*(_read(n, READERS[n]) for n in names))
     src = dict(zip(names, answers))
+    t0 = time.monotonic()
+    src["ops.connections"] = await asyncio.to_thread(_connections)
+    _timing["ops.connections"] = int((time.monotonic() - t0) * 1000)
+    names.append("ops.connections")
     out = core.build(src, own_ips=_own_ips())
     # how long each reader took this time, slowest first - the page's Sources card shows it
     out["timing"] = dict(sorted(((n, _timing.get(n, 0)) for n in names), key=lambda kv: -kv[1]))

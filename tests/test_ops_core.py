@@ -68,7 +68,7 @@ def _src():
 def test_planes_nodes_and_lattice():
     s = oc.build(_src(), own_ips=["192.168.0.138"], now=NOW)
     ids = {n["id"]: n for n in s["nodes"]}
-    assert [p["id"] for p in s["planes"]] == ["work", "core", "service", "runtime", "host", "edge"]
+    assert [p["id"] for p in s["planes"]] == ["client", "work", "core", "service", "runtime", "host", "edge"]
     # running guests only, never templates or stopped ones
     assert "guest:250" in ids and "guest:160" in ids and "guest:999" not in ids and "guest:900" not in ids
     assert ids["guest:250"]["domain"] == oc.COMPUTE and ids["guest:160"]["domain"] == oc.STORAGE
@@ -165,7 +165,7 @@ def test_empty_sources_build_an_empty_but_well_formed_snapshot():
     assert all(n["plane"] == "core" for n in s["nodes"])           # the router and the bus are always there
     assert all(l["a"].startswith("core:") and l["b"].startswith("core:") for l in s["links"])
     assert s["inflight_total"] == 0 and s["errors"] == []
-    assert [p["id"] for p in s["planes"]] == ["work", "core", "service", "runtime", "host", "edge"]
+    assert [p["id"] for p in s["planes"]] == ["client", "work", "core", "service", "runtime", "host", "edge"]
 
 
 def test_registration_addresses_and_logins_ride_on_machine_nodes():
@@ -184,3 +184,30 @@ def test_registration_addresses_and_logins_ride_on_machine_nodes():
     src["estate.registration"] = {"error": "took too long"}
     s = oc.build(src, own_ips=["192.168.0.138"], now=NOW)
     assert all("reg" not in n for n in s["nodes"])
+
+
+def test_clients_are_who_is_connected_now():
+    src = _src()
+    src["ops.connections"] = {"port": 8999, "peers": [{"ip": "192.168.0.250", "n": 3}, {"ip": "172.20.0.13", "n": 1}, {"ip": "127.0.0.1", "n": 2}, {"ip": "192.168.0.190", "n": 1}]}
+    src["activity.sessions"] = {"sessions": [
+        {"actor": "agent:claude-code", "count": 500, "areas": ["Workers"], "last_ts": "2026-09-21T23:29:00Z"},
+        {"actor": "agent:claude-code", "count": 54, "areas": ["IDE"], "last_ts": "2026-09-21T23:10:00Z"},
+        {"actor": "user", "count": 3, "last_ts": "2026-09-21T20:00:00Z"}]}
+    src["ide.remote.instances"] = {"instances": [{"id": "vsc-1", "label": "DESK · Vera", "kind": "vscode-client", "last_seen": "2026-09-21T23:00:00Z"},
+                                                 {"id": "cs-1", "label": "server", "kind": "code-server", "last_seen": "2026-09-21T23:00:00Z"}]}
+    s = oc.build(src, own_ips=["192.168.0.138"], now=NOW)
+    ids = {n["id"]: n for n in s["nodes"]}
+    assert s["planes"][0]["id"] == "client"
+    peer = ids["client:ip:192.168.0.250"]
+    assert peer["plane"] == "client" and peer["label"] == "Ollama" and peer["conns"] == 3
+    L = {(l["a"], l["b"], l["kind"]) for l in s["links"]}
+    assert ("client:ip:192.168.0.250", "guest:250", "runs") in L and ("client:ip:192.168.0.250", "core:router", "req") in L
+    assert ids["client:ip:172.20.0.13"]["label"] == "a container on this host"
+    assert "client:ip:127.0.0.1" not in ids and ids["client:ip:192.168.0.190"]["label"] == "192.168.0.190"
+    cc = [n for n in s["nodes"] if n["id"].startswith("client:actor:")]
+    assert len(cc) == 1 and cc[0]["ckind"] == "agent" and cc[0]["detail"].startswith("554 calls") and cc[0]["status"] == "run"
+    assert "client:ide:vsc-1" in ids and "client:ide:cs-1" not in ids
+    # a failed connections read names itself and invents nothing
+    src["ops.connections"] = {"error": "psutil is not available"}
+    s = oc.build(src, own_ips=["192.168.0.138"], now=NOW)
+    assert not [n for n in s["nodes"] if n["id"].startswith("client:ip:")] and s["sources"]["ops.connections"] != "ok"
