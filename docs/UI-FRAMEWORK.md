@@ -28,7 +28,7 @@ What the page then gets for free:
 | --- | --- | --- |
 | **The one design** (`vera/ui/design.css`) | vera-ui.js adds it | Use the shared tokens (`--bg0..3`, `--text`, `--dim`, `--acc`, `--font-ui`, `--mono`, `--ui-radius`); mark surfaces `.card`/`.tile`/`.box`/`.twrap` so blocks on/off applies. Change the look of every panel in design.css, not per panel. |
 | **Themes and style packs** | vera-ui.js paints `data-theme`, `data-style` on `<html>`; packs are tokens (`theme_defs.py STYLE_PACKS`) | Nothing, as long as the page uses the tokens. |
-| **Blocks, density, text, contrast, motion** | `data-blocks`, `data-den` (full/hover/zen), `data-text`, `data-contrast` on `<html>` | Nothing; small px font sizes are raised to the text-size floor by vera-ui.js. |
+| **Blocks, density, text, contrast, motion** | `data-blocks`, `data-den` (full/hover/zen), `data-text`, `data-contrast` on `<html>` | Name surfaces by their role (`…sidebar`, `…rail`, `…-bar`, `…toolbar`, `…tabs`, `…card`, `…tile`, `…detail`, `…-panel`) — design.css turns them see-through with blocks off and raises cards/tiles with blocks on; popovers, menus, dialogs, tips, code and fields keep their ground. Small px font sizes are raised to the text-size floor by vera-ui.js. |
 | **The LHM** | vera-panel.js publishes the sidebar's `.nav-btn` items (grouped by the `.nav-grp` headings before them, iconed by their `.gl` glyph) through the bridge; the harness docks them as a rail + list, as the chat's menu | Use the canonical sidebar: `<aside id="sidebar" data-vera-lhm><nav id="nav"><div class="nav-grp">Group</div><button class="nav-btn" data-section="x" title="Label"><span class="gl">▦</span>Label</button>…` |
 | **Widgets in the LHM** | A docked menu's ✎ adds any widget (the widget sheet), kept per panel and menu | Nothing. |
 | **Side by side** | Ctrl/⌘/middle-click or the hover ⧉ on any LHM option opens it beside what is open — a second instance when the panel is open already | Nothing. |
@@ -86,7 +86,15 @@ section}` — `at: "harness"` opens it side by side in the harness (a second ins
 already), `section` opens it at one of its menu items — `panel.dispatch`, `panel.query`,
 `panel.close`, the `canvas.*` family and `lhm.focus`.
 
-## 5. Checklist
+## 5. Everything is a panel or a widget
+
+A full page (its own route, its own menu) is a **panel**: the includes of §1, the shell sidebar, a top bar, docked by the
+harness. A panel that shows other panels in frames (Comms) lifts the shown one's menu into its own. Anything smaller
+that shows data is a **widget**: a form in the registry, a record naming its source, drawn by `<vera-widget>` — on a
+dashboard, the canvas, a docked menu or inside a panel. A panel's sidebar content that is not navigation (the
+Calendar's layers, events, assistant) is on its way to being widgets so it can live in the LHM (W4-11).
+
+## 6. Checklist
 
 - New panel: shell markup, the four includes, tokens not hard-coded colours, `.card`-style
   surfaces, a `data-vera-topbar` bar with real controls, `data-entity` on things, no polling while
