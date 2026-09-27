@@ -1068,6 +1068,121 @@
   },
   {
    "record": {
+    "id": "agent-programmes",
+    "form": "ranked",
+    "source": "loops.program.list",
+    "title": "Programmes · loops each",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "programs",
+      "name": "name",
+      "value": "loops.length"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "agents"
+   },
+   "at": [
+    0,
+    16
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-runs",
+    "form": "column",
+    "source": "evolve.runs",
+    "title": "Loop runs per day · last 50",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "values": "runs",
+      "count": "ts",
+      "span": "day"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "accent"
+    },
+    "open": "evolve"
+   },
+   "at": [
+    4,
+    16
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-goals",
+    "form": "pills",
+    "source": "goals.list",
+    "title": "Goals",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "goals",
+      "name": "name",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "agents"
+   },
+   "at": [
+    8,
+    16
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
     "id": "sec-looplab",
     "form": "section",
     "source": "",
@@ -1085,7 +1200,7 @@
    },
    "at": [
     0,
-    16
+    18
    ],
    "span": [
     12,
@@ -1127,7 +1242,7 @@
    },
    "at": [
     0,
-    17
+    19
    ],
    "span": [
     8,
@@ -1165,7 +1280,7 @@
    },
    "at": [
     8,
-    17
+    19
    ],
    "span": [
     4,
@@ -1232,7 +1347,7 @@
    },
    "at": [
     0,
-    19
+    21
    ],
    "span": [
     4,
@@ -1276,7 +1391,7 @@
    },
    "at": [
     4,
-    19
+    21
    ],
    "span": [
     4,
@@ -1313,7 +1428,7 @@
    },
    "at": [
     8,
-    19
+    21
    ],
    "span": [
     4,
@@ -1342,7 +1457,7 @@
    },
    "at": [
     0,
-    21
+    23
    ],
    "span": [
     12,
@@ -1378,7 +1493,7 @@
    },
    "at": [
     0,
-    22
+    24
    ],
    "span": [
     4,
@@ -1416,7 +1531,7 @@
    },
    "at": [
     4,
-    22
+    24
    ],
    "span": [
     4,
@@ -1454,7 +1569,7 @@
    },
    "at": [
     8,
-    22
+    24
    ],
    "span": [
     4,
@@ -1493,7 +1608,7 @@
    },
    "at": [
     0,
-    24
+    26
    ],
    "span": [
     12,

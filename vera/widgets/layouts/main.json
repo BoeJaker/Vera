@@ -2825,6 +2825,121 @@
   },
   {
    "record": {
+    "id": "agent-programmes",
+    "form": "ranked",
+    "source": "loops.program.list",
+    "title": "Programmes · loops each",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "programs",
+      "name": "name",
+      "value": "loops.length"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "agents"
+   },
+   "at": [
+    0,
+    45
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-runs",
+    "form": "column",
+    "source": "evolve.runs",
+    "title": "Loop runs per day · last 50",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "values": "runs",
+      "count": "ts",
+      "span": "day"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "accent"
+    },
+    "open": "evolve"
+   },
+   "at": [
+    4,
+    45
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-goals",
+    "form": "pills",
+    "source": "goals.list",
+    "title": "Goals",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "goals",
+      "name": "name",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "agents"
+   },
+   "at": [
+    8,
+    45
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
     "id": "sec-looplab",
     "form": "section",
     "source": "",
@@ -2842,7 +2957,7 @@
    },
    "at": [
     0,
-    45
+    47
    ],
    "span": [
     12,
@@ -2884,7 +2999,7 @@
    },
    "at": [
     0,
-    46
+    48
    ],
    "span": [
     8,
@@ -2922,7 +3037,7 @@
    },
    "at": [
     8,
-    46
+    48
    ],
    "span": [
     4,
@@ -2989,7 +3104,7 @@
    },
    "at": [
     0,
-    48
+    50
    ],
    "span": [
     4,
@@ -3033,7 +3148,7 @@
    },
    "at": [
     4,
-    48
+    50
    ],
    "span": [
     4,
@@ -3070,7 +3185,7 @@
    },
    "at": [
     8,
-    48
+    50
    ],
    "span": [
     4,
@@ -3099,7 +3214,7 @@
    },
    "at": [
     0,
-    50
+    52
    ],
    "span": [
     12,
@@ -3137,7 +3252,7 @@
    },
    "at": [
     0,
-    51
+    53
    ],
    "span": [
     4,
@@ -3174,7 +3289,7 @@
    },
    "at": [
     4,
-    51
+    53
    ],
    "span": [
     4,
@@ -3212,7 +3327,7 @@
    },
    "at": [
     8,
-    51
+    53
    ],
    "span": [
     4,
@@ -3252,7 +3367,7 @@
    },
    "at": [
     0,
-    53
+    55
    ],
    "span": [
     4,
@@ -3288,7 +3403,7 @@
    },
    "at": [
     4,
-    53
+    55
    ],
    "span": [
     2,
@@ -3325,7 +3440,7 @@
    },
    "at": [
     6,
-    53
+    55
    ],
    "span": [
     2,
@@ -3366,7 +3481,7 @@
    },
    "at": [
     8,
-    53
+    55
    ],
    "span": [
     4,
@@ -3395,7 +3510,7 @@
    },
    "at": [
     0,
-    55
+    57
    ],
    "span": [
     12,
@@ -3432,7 +3547,7 @@
    },
    "at": [
     0,
-    56
+    58
    ],
    "span": [
     4,
@@ -3476,7 +3591,7 @@
    },
    "at": [
     4,
-    56
+    58
    ],
    "span": [
     8,
@@ -3574,7 +3689,7 @@
    },
    "at": [
     0,
-    60
+    62
    ],
    "span": [
     4,
@@ -3679,7 +3794,7 @@
    },
    "at": [
     4,
-    60
+    62
    ],
    "span": [
     4,
@@ -3797,7 +3912,7 @@
    },
    "at": [
     8,
-    60
+    62
    ],
    "span": [
     4,
@@ -3826,7 +3941,7 @@
    },
    "at": [
     0,
-    63
+    65
    ],
    "span": [
     12,
@@ -3862,7 +3977,7 @@
    },
    "at": [
     0,
-    64
+    66
    ],
    "span": [
     4,
@@ -3900,7 +4015,7 @@
    },
    "at": [
     4,
-    64
+    66
    ],
    "span": [
     4,
@@ -3938,7 +4053,7 @@
    },
    "at": [
     8,
-    64
+    66
    ],
    "span": [
     4,
@@ -3977,7 +4092,7 @@
    },
    "at": [
     0,
-    66
+    68
    ],
    "span": [
     12,

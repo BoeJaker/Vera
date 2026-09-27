@@ -70,7 +70,8 @@ t('the element reads the review\'s sources on its own', ['evolve.activity', 'evo
 const main = JSON.parse(fs.readFileSync(path.join(R, 'vera', 'widgets', 'layouts', 'main.json'), 'utf8'));
 const recs = {}; main.widgets.forEach((w) => { if (w.record && typeof w.record === 'object') recs[w.record.id] = w; });
 t('the overview has the Loop Lab and Capabilities bands and a third Now row', recs['sec-looplab'] && recs['sec-caps'] && ['subsystems', 'loop-stalls', 'warnings'].every((id) => recs[id] && recs[id].at[1] > recs['sec-now'].at[1] && recs[id].at[1] < recs['sec-inference'].at[1]));
-const NEWIDS = ['subsystems', 'loop-stalls', 'warnings', 'lab-runs', 'lab-decisions', 'lab-suite', 'lab-lanes', 'lab-actions', 'cap-modules', 'cap-called', 'cap-callers', 'cap-latency', 'cap-count', 'cap-ontology', 'cap-stream'];
+const NEWIDS = ['subsystems', 'loop-stalls', 'warnings', 'lab-runs', 'lab-decisions', 'lab-suite', 'lab-lanes', 'lab-actions', 'cap-modules', 'cap-called', 'cap-callers', 'cap-latency', 'cap-count', 'cap-ontology', 'cap-stream',
+  'agent-programmes', 'agent-runs', 'agent-goals'];
 t('every new tile is a record over a readable source, drawn by the element, opening its place', NEWIDS.every((id) => { const r = recs[id] && recs[id].record; return r && r.draw.body === 'record' && W.readable(r.source) && r.open; }), NEWIDS.filter((id) => !(recs[id] && W.readable(recs[id].record.source))).join(' '));
 // each new record, drawn at its own size against an answer shaped like its source's (taken from prod, trimmed)
 const FIX = {
@@ -86,7 +87,10 @@ const FIX = {
   'activity.sessions': { sessions: [{ actor: 'unknown', count: 449 }, { actor: 'agent:claude-code', count: 11 }] },
   'obs.health': { caps: 2554, workers: 2 },
   'cap_ontology.stats': { covered_caps: 87, total_caps: 2554 },
-  'jobs.stats': { stream: { length: 34, pending_total: 0, consumer_count: 1 }, stats: { total_orphan_reclaimed: 2 } } };
+  'jobs.stats': { stream: { length: 34, pending_total: 0, consumer_count: 1 }, stats: { total_orphan_reclaimed: 2 } },
+  'loops.program.list': { programs: [{ name: 'wifi-pos-fix', status: 'active', loops: [{}, {}, {}] }, { name: 'MarketDataIngestion', status: 'done', loops: [{}] }] },
+  'evolve.runs': { runs: [{ ts: '2026-09-27T01:32:24Z' }, { ts: '2026-09-26T07:50:00Z' }, { ts: '2026-09-26T07:47:00Z' }] },
+  'goals.list': { goals: [{ name: 'earn income', status: 'active' }] } };
 const sizeH = { s: 24, m: 90, l: 90, xl: 90 };
 NEWIDS.forEach((id) => { const w = recs[id], r = w.record; const d = FIX[r.source];
   let h;
