@@ -64,10 +64,12 @@ try:
             #   cpu247-model-probe-2026-09-27.md.
             "stream": {"job_type": "planning_lens", "prefer_gpu": True,
                        "options": {"temperature": 0.3}},
+            #   The window and keep-alive are the long-horizon model's SHARED
+            #   ones, so a brief reuses the runner the dream director and chat
+            #   insights keep warm instead of reloading it at another window.
             "enrich": {"job_type": "plan_enrich", "deny_gpu": True,
-                       "model": "qwen3.6:35b-a3b",
-                       "options": {"temperature": 0.3, "num_ctx": 8192,
-                                   "keep_alive": "2h"}},
+                       "model": _orch.LONG_HORIZON_CPU_MODEL,
+                       "options": {"temperature": 0.3, **_orch.LONG_HORIZON_CPU_OPTIONS}},
         })
 except Exception as e:                       # pragma: no cover - never block load
     log.debug("register planning_style profile: %s", e)
