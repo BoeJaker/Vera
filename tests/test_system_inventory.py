@@ -4,6 +4,7 @@ import pytest
 
 from vera.inventory.system_inventory import (
     _declared_database_schema,
+    _observed_caller_graph,
     build_system_inventory,
     summarize_system_inventory,
 )
@@ -70,6 +71,59 @@ def test_inventory_fingerprint_is_order_and_time_stable(tmp_path):
     assert first["capabilities"][1]["compatibility_alias_for"] == "task.execute"
     assert [route["path"] for route in first["http_routes"]] == ["/a", "/z"]
     assert "runs" not in first["schedules"][0]["metadata"]
+
+
+def test_runtime_caller_observations_do_not_change_structural_fingerprint(tmp_path):
+    inputs = _inputs(tmp_path)
+    baseline = build_system_inventory(**inputs, captured_at="one")
+    inputs["runtime_events"] = [
+        {"type": "cap.ok", "name": "task.run", "via": "codex",
+         "session_id": "private-session", "trace_id": "private-trace",
+         "preview": "must not leak", "result": {"token": "must not leak"}},
+    ]
+    observed = build_system_inventory(**inputs, captured_at="two")
+
+    assert observed["fingerprint_sha256"] == baseline["fingerprint_sha256"]
+    assert observed["observed_caller_graph"] == [{
+        "caller": "agent:codex", "caller_class": "agent",
+        "capability": "task.run", "outcome": "ok", "observations": 1,
+        "basis": "bounded_runtime_telemetry",
+    }]
+    encoded = str(observed["observed_caller_graph"])
+    assert "private-session" not in encoded
+    assert "private-trace" not in encoded
+    assert "must not leak" not in encoded
+
+
+def test_observed_callers_use_canonical_attribution_and_registered_caps_only():
+    capabilities = [{"name": "task.run"}]
+    events = [
+        {"type": "cap.ok", "name": "task.run", "via": ""},
+        {"type": "cap.ok", "name": "task.run", "via": "user"},
+        {"type": "cap.ok", "name": "task.run", "via": "codex"},
+        {"type": "cap.error", "name": "task.run", "via": "claude"},
+        {"type": "cap.ok", "name": "task.run", "via": "codex"},
+        {"type": "cap.ok", "name": "task.run", "via": "codex",
+         "session_id": "loop-123"},
+        {"type": "cap.ok", "name": "unknown.cap", "via": "codex"},
+        {"type": "cap.ok", "name": "task.run"},
+        {"type": "other", "name": "task.run", "via": "codex"},
+    ]
+
+    assert _observed_caller_graph(events, capabilities) == [
+        {"caller": "agent:claude-code", "caller_class": "agent",
+         "capability": "task.run", "outcome": "error", "observations": 1,
+         "basis": "bounded_runtime_telemetry"},
+        {"caller": "agent:codex", "caller_class": "agent",
+         "capability": "task.run", "outcome": "ok", "observations": 2,
+         "basis": "bounded_runtime_telemetry"},
+        {"caller": "system:loop", "caller_class": "system",
+         "capability": "task.run", "outcome": "ok", "observations": 1,
+         "basis": "bounded_runtime_telemetry"},
+        {"caller": "ui:browser", "caller_class": "ui",
+         "capability": "task.run", "outcome": "ok", "observations": 2,
+         "basis": "bounded_runtime_telemetry"},
+    ]
 
 
 def test_inventory_keeps_optional_module_errors_and_closes_declared_coverage(tmp_path):
