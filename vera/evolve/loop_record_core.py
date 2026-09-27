@@ -140,6 +140,7 @@ def run_record_from_events(session_id: str, events: Sequence[Dict[str, Any]], di
         "plan_style": plan.get("style"),
         "plan_style_requested": plan.get("style_requested"),
         "fast_path": bool(plan.get("fast_path")),
+        "entity_coverage": (plan.get("entity_coverage") or {}).get("ratio"),
         "planned": counters.get("planned_steps"),
         "executed": counters.get("executed_steps"),
         "inserted": counters.get("inserted_steps"),

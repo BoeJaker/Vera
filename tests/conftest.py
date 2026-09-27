@@ -252,6 +252,7 @@ _CRITICAL_MODULES = {
     "test_chat_insights",  # optional long-horizon second look at a chat reply: CPU route, one at a time, a card not a message (2026-09-27)
     "test_census_plan_style_filter",  # census runs compared per planning style, and startable with one from Loop Lab (2026-09-27)
     "test_work_loop_rows",  # recorded loops reach Loop Lab's driver list with origin/engine/style (2026-09-27)
+    "test_entity_coverage",  # the loop measures how much of the goal's named entities its final output carries (NER on the NLP nodes) (2026-09-27)
     "test_loop_record_core",  # only census/task loops reached Loop Lab's run store; chat/dream/program/API loops left no record (2026-09-27)
     "test_routing_parity_core",  # a sandbox ran the code-default models, not prod's routing - its measurements measured other models (2026-09-27)
     "test_step_deps_core",  # a step that needed a failed step read the failed attempt, never the recovery that finished it (2026-09-27)

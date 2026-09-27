@@ -1565,11 +1565,22 @@
         return;
       }
 
+      // ── v6/V7: did the final output carry what the goal named? (NER) ──
+      if(t === 'agent_loop_v6.entity_coverage'){
+        const n = ev.entities||0, got = (ev.covered||[]).length, miss = ev.missing||[];
+        const col = miss.length ? 'var(--warn,#c7a15a)' : 'var(--ok,#3cb371)';
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">⌗ Goal entities covered · <span style="color:${col}">${_esc(String(got))}/${_esc(String(n))}</span></span>
+          <span class="alo-cycle-status" title="named in the goal (NER on an NLP node) and checked against the final output - a measure, not a pass/fail">measured</span>
+        </div>${miss.length?`<div class="alo-cycle-preview">not in the final output: ${miss.map(m=>_esc(m)).join(', ')}</div>`:''}`, 'plan');
+        return;
+      }
+
       // ── v6/V7: which planning STYLE produced the plan (asked vs used) ──
       if(t === 'agent_loop_v6.plan_style'){
         const PS = {auto:{ic:'◎',lbl:'auto'}, flat:{ic:'▭',lbl:'flat'},
                     stepwise:{ic:'⇢',lbl:'stepwise'}, detailed:{ic:'❖',lbl:'detailed'},
-                    broad:{ic:'⫘',lbl:'broad'}};
+                    broad:{ic:'⫘',lbl:'broad'}, 'broad-stepwise':{ic:'⫘⇢',lbl:'broad-stepwise'}};
         const ps = PS[ev.effective] || {ic:'•', lbl:ev.effective||'?'};
         const fell = (ev.requested && ev.requested !== ev.effective)
           ? ` <span style="color:var(--warn,#c7a15a)" title="${_esc(ev.reason||'')}">asked ${_esc(ev.requested)}</span>` : '';

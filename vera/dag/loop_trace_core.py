@@ -197,6 +197,12 @@ def digest_events(events: Sequence[Dict[str, Any]],
             plan["style"] = e.get("effective")
             plan["style_requested"] = e.get("requested")
             plan["style_reason"] = _clip(e.get("reason"), 200)
+        elif t.endswith(".entity_coverage"):
+            # Did the final output carry what the goal named (NER, measured -
+            # entity_coverage_core)? Reported, never a success criterion.
+            plan["entity_coverage"] = {"entities": e.get("entities"),
+                                       "ratio": e.get("ratio"),
+                                       "missing": list(e.get("missing") or [])[:12]}
         elif t.endswith(".fast_path"):
             # The single-cap shortcut. Recorded so a reader can tell "no plan was
             # made" apart from "planning produced nothing".
