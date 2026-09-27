@@ -52,8 +52,8 @@ t('the stored choices are painted before the page draws', /de\.setAttribute\('da
 // ── a smoother fold ─────────────────────────────────────────────────────────────────────────────────────────────
 t('the fold applies in place (no redraw)', /toggle: \(\) => \{ _lhmRailed = !_lhmRailed; try\{ localStorage\.setItem\('vera:lhm:rail', _lhmRailed \? '1' : '0'\); \}catch\(_\)\{\} _lhmRailApply\(\); \}/.test(HAR));
 t('labels fade as the width closes', /'\.lhm-side \.lhm-s-row > :not\(\.ico\)\{transition:opacity \.22s ease\}'/.test(LHM));
-t('auto-hide eases open over the page without moving it', /\.body-wrap\.lhm #lhmNav\.lhm-nav\.autohide\{transition:width \.34s/.test(HAR) && /\.body-wrap\.lhm \.main\.ah-rail\{padding-left:54px!important\}/.test(HAR));
-t('blocks off: the whole menu is see-through at any width, auto-hide reveal included', /html\[data-blocks="off"\] #lhmNav\.lhm-nav,html\[data-blocks="off"\] body\.chat-open #lhmNav\.chatmenu,html\[data-blocks="off"\] \.body-wrap\.lhm #lhmNav\.lhm-nav\.autohide\.show\{background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important/.test(HAR) && /html:not\(\[data-blocks="off"\]\) \.body-wrap\.lhm #lhmNav\.lhm-nav\.autohide\.show\{/.test(HAR));
+t('auto-hide eases open (and, since 2026-09-27, pushes the page: test_lhm_push_dash_menu_panels)', /\.body-wrap\.lhm #lhmNav\.lhm-nav\.autohide\{transition:width \.34s/.test(HAR));
+t('blocks off: the whole menu is see-through at any width, auto-hide reveal included', /html\[data-blocks="off"\] #lhmNav\.lhm-nav,html\[data-blocks="off"\] body\.chat-open #lhmNav\.chatmenu,html\[data-blocks="off"\] \.body-wrap\.lhm #lhmNav\.lhm-nav\.autohide\.show\{background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important/.test(HAR));
 t('the chat menu\'s content fades as it folds', /#rightRail\.lhm-host\.slim > \.lhm-det > \*\{opacity:0;transition:opacity \.1s ease\}/.test(CHAT));
 
 console.log(fails ? fails + ' FAILED' : 'all passed');

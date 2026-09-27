@@ -687,16 +687,27 @@ html[data-blocks="off"] #lhmNav.lhm-nav:not(.show),html[data-blocks="off"] body.
 .body-wrap.lhm #lhmNav.lhm-nav.autohide.chatmenu:not(.show),.body-wrap.lhm #lhmNav.lhm-nav.absorbed.chatmenu.autohide:not(.show){width:47px!important;min-width:47px!important}
 .body-wrap.lhm .main.ah-rail:not(.autohide-reserve-v){padding-left:54px}
 .body-wrap.lhm .main.ah-rail.chatmenu:not(.autohide-reserve-v){padding-left:47px}
-/* THE MENU FOLDS SMOOTHLY: auto-hide's reveal eases its width like the fold does, floats over the page with a shadow
-   (the page no longer jumps sideways to make room for it), and the rail's width is what the page keeps */
+/* THE MENU FOLDS SMOOTHLY: auto-hide's reveal eases its width like the fold does (and pushes the page - below) */
 .body-wrap.lhm #lhmNav.lhm-nav.autohide{transition:width .34s cubic-bezier(.2,.8,.2,1),box-shadow .3s ease,background .3s ease}
-html:not([data-blocks="off"]) .body-wrap.lhm #lhmNav.lhm-nav.autohide.show{box-shadow:0 18px 50px -12px rgba(0,0,0,.6),1px 0 0 var(--bd,var(--border,rgba(255,255,255,.09)))}
 /* BLOCKS OFF, AT ANY WIDTH (owner, 2026-09-27: "if the chat menu expands it still has an opaque background - only the rail
    is transparent. i want the entire lhm - when opened any amount, to be transparent with blocks off"): folded, open, or
    revealed from auto-hide over the page - no ground, no glass, no shadow */
 html[data-blocks="off"] #lhmNav.lhm-nav,html[data-blocks="off"] body.chat-open #lhmNav.chatmenu,html[data-blocks="off"] .body-wrap.lhm #lhmNav.lhm-nav.autohide.show{background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;border-right-color:transparent!important}
-.body-wrap.lhm .main.ah-rail{padding-left:54px!important}
-.body-wrap.lhm .main.ah-rail.chatmenu{padding-left:47px!important}
+/* THE MENU PUSHES, IT NEVER COVERS (owner, 2026-09-27: "the chat lhm needs to push and squeeze the other elements on the x
+   axis so its not open over the top of them - same for the menu in the harness and all of the other panels too"). Auto-hide
+   keeps the menu IN the row, as its rail; revealed, its width eases open and the page beside it narrows in the same
+   motion - the chat's menu, a panel's absorbed menu and the harness's own list alike, since they are all this one slot.
+   Every other change of its width (the fold, the chat's graph and Settings growing it) eases the same way. */
+.body-wrap.lhm #lhmNav.lhm-nav{transition:width .34s cubic-bezier(.2,.8,.2,1),min-width .34s cubic-bezier(.2,.8,.2,1),background .3s ease}
+.body-wrap.lhm #lhmNav.lhm-nav.autohide{position:relative;top:auto;left:auto;bottom:auto;transform:none;opacity:1;pointer-events:auto;flex-shrink:0;z-index:2}
+.body-wrap.lhm .main.ah-rail,.body-wrap.lhm .main.ah-rail.chatmenu,.body-wrap.lhm .main.autohide-reserve-v,.body-wrap.lhm .main.autohide-reserve-v.absorbed,.body-wrap.lhm .main.autohide-reserve-v.absorbed.chatmenu,.body-wrap.lhm .main.autohide-reserve-v.railed,.body-wrap.lhm .main.autohide-reserve-v.chatmenu.railed{padding-left:0!important}
+/* THE DASHBOARD ON THE CHAT'S GROUND (owner: "can the harness dashboard have the same background and menu setup as the chat
+   ui"): the one wash behind it, the page's ground see-through over it, the menu a translucent surface - the chat's rules */
+body.dash-open #veraWashH{opacity:1}
+body.dash-open .body-wrap{position:relative;z-index:1;background:transparent}
+body.dash-open .main,body.dash-open .panels,body.dash-open .panels .panel.active{background:transparent!important}
+body.dash-open #lhmNav.lhm-nav{background:color-mix(in srgb,var(--s1,var(--bg1,#151719)) 52%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15);border-right-color:transparent}
+body.dash-open #dashHealthStrip{background:color-mix(in srgb,var(--bg0,#0e0f12) 55%,transparent)!important;border-color:transparent!important}
 #hdrDrawerBtn[hidden]{display:none}
 #hdrDrawerBtn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
 #hdrDrawer{position:absolute;right:14px;top:calc(100% + 6px);z-index:900;display:none;flex-direction:column;align-items:flex-start;gap:12px;padding:12px 14px;border-radius:var(--ui-radius,10px);background:var(--s1,var(--bg1,#151719));box-shadow:var(--elev,0 10px 30px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));max-width:min(620px,calc(100vw - 28px))}
@@ -2564,7 +2575,9 @@ function _panelFrame(pid){
   const el = document.getElementById('panel-' + pid);
   return el ? el.querySelector('iframe') : null;
 }
+var _localLhm = {};   // a tab whose menu the harness draws itself (the dashboard) → its pick handler
 function _lhmNavSelect(pid, itemId){
+  if(_localLhm[pid]){ _localLhm[pid](itemId); return; }
   const f = _panelFrame(pid);
   const aid = (crypto.randomUUID ? crypto.randomUUID() : 'nav-' + Date.now() + '-' + Math.random().toString(36).slice(2));
   if(f && f.contentWindow) f.contentWindow.postMessage(
@@ -2692,6 +2705,7 @@ function _hdrSync(){
     if(o.absorbed !== on){ o.absorbed = on; try{ o.src.postMessage({ type: 'vera:hdr:absorbed', on }, '*'); }catch(_){} } });
   let chat = false; try{ chat = !!(pid && (_chatFrameFor(pid) || document.querySelector('#panel-' + CSS.escape(pid) + ' iframe[src*="chat_panel"]'))); }catch(_){}
   document.body.classList.toggle('chat-open', chat);
+  document.body.classList.toggle('dash-open', pid === 'dashboard');
   hdr.classList.toggle('absorbing', !!off);
   _hdrDrawerPlace(!!off);
   const host = _hdrPanelHost(hdr); host.innerHTML = '';
@@ -2820,6 +2834,7 @@ window.addEventListener('message', e => {
 // Sync the LHM nav tab list from the top tabBar
 function _lhmNavSync(){
   const host = document.getElementById('lhmNavTabs'); if(!host) return;
+  if(document.body) document.body.classList.toggle('dash-open', ([..._openTabs][0] || '') === 'dashboard');
   // the live-events feed lives in a widget inside this list now: lift it out before the list is rebuilt
   try{ const fe = document.getElementById('lhmEventsFeed'); if(fe && host.contains(fe)) host.parentNode.insertBefore(fe, host.nextSibling); }catch(_){}
   host.innerHTML = '';
@@ -8146,6 +8161,72 @@ function _dashPlacedStart(){ if(_dashPlacedTimer) return; setTimeout(_dashPlaced
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',go,{once:true});
   else go();
+})();
+
+/* ═══ THE DASHBOARD'S MENU (owner, 2026-09-27: "can the harness dashboard have the same background and menu setup as the chat
+   ui"). While the dashboard is the open tab the LHM is ITS menu, as the chat's menu is the chat's: a rail of its menus -
+   its layouts, its sections, its widgets, arranging it, keeping it live - with the open one's list beside it, and ☰ to
+   swap the every-tab list back. It is published into the same cache a panel's menu arrives in and drawn by the same
+   absorb; every pick goes to VeraDash's own controller or the toolbar's own handler, so nothing here is a copy. ═══ */
+var _dashLhmAct = { menu: 'layouts', tab: '' };
+function _dashLhmSpec(){
+  const ctl = _dashCtl; if(!ctl) return null;
+  let st = {}; try{ st = ctl.state() || {}; }catch(_){}
+  const presets = Array.isArray(ctl.presets) ? ctl.presets : [];
+  let saved = {}; try{ saved = ctl.layouts() || {}; }catch(_){}
+  const cur = String(st.name || 'default');
+  const curTab = cur === 'default' ? ('p:' + (presets[0] ? presets[0].key : 'main')) : (cur.indexOf('preset:') === 0 ? 'p:' + cur.slice(7) : 'l:' + cur);
+  const grid = document.getElementById('dashGrid');
+  const secs = grid ? [...grid.querySelectorAll(':scope > .widget.w-section:not(.hidden)')].map(w => ({ id: 's:' + w.dataset.wid, label: String((w.querySelector('.w-title') || w).textContent || '').trim().replace(/\s+/g, ' ').slice(0, 48) || 'section' })) : [];
+  const editing = !!(grid && grid.classList.contains('editing'));
+  const hidden = Array.isArray(st.hidden) ? st.hidden.length : 0;
+  const auto = /\bon\b/i.test(String((document.getElementById('dashAutoBtn') || {}).textContent || ''));
+  const menus = [
+    { id: 'layouts', icon: '\u25a6', label: 'Layouts', title: 'Layouts \u00b7 the dashboards', tabs: presets.map(p => ({ id: 'p:' + p.key, label: p.name || p.key })).concat(Object.keys(saved).map(n => ({ id: 'l:' + n, label: n + ' \u00b7 saved' }))) },
+    { id: 'sections', icon: '\u2261', label: 'Sections', title: 'Sections \u00b7 on this layout', tabs: secs.length ? secs : [{ id: 'top', label: 'The top' }] },
+    { id: 'widgets', icon: '\u229e', label: 'Widgets', title: 'Widgets', badge: hidden, tabs: [{ id: 'add', label: 'Add a widget' }, { id: 'hidden', label: 'Hidden widgets \u00b7 ' + hidden }] },
+    { id: 'arrange', icon: '\u2699', label: 'Arrange', title: 'Arrange', tabs: [{ id: 'edit', label: editing ? 'Done arranging' : 'Arrange \u00b7 resize \u00b7 hide' }, { id: 'manage', label: 'Save or manage layouts' }, { id: 'reset', label: 'Reset to the default' }] },
+    { id: 'live', icon: '\u25c9', label: 'Live', title: 'Live', tabs: [{ id: 'refresh', label: 'Refresh now' }, { id: 'auto', label: 'Auto-refresh \u00b7 ' + (auto ? 'on' : 'off') }, { id: 'diag', label: 'Diagnostics' }] },
+  ];
+  const act = { menu: _dashLhmAct.menu, tab: _dashLhmAct.tab };
+  if(act.menu === 'layouts') act.tab = curTab;
+  if(act.menu === 'arrange') act.tab = editing ? 'edit' : '';
+  return { title: 'Dashboard', active: act, menus, open: [] };
+}
+function _dashLhmPublish(){
+  const spec = _dashLhmSpec(); if(!spec) return;
+  const nav = { items: spec.menus.map(m => ({ id: m.id, label: m.label })), active: spec.active.menu, lhm: spec };
+  if(JSON.stringify(nav) === JSON.stringify(_panelNavCache.dashboard || null)) return;
+  _panelNavCache.dashboard = nav; _lhmNavSync();
+}
+var _dashLhmT = 0;
+function _dashLhmSoon(ms){ clearTimeout(_dashLhmT); _dashLhmT = setTimeout(_dashLhmPublish, ms == null ? 250 : ms); }
+_localLhm.dashboard = function(id){
+  const s = String(id || ''), i = s.indexOf('/'), menu = i < 0 ? s : s.slice(0, i), tab = i < 0 ? '' : s.slice(i + 1);
+  if(!menu || menu === '\u2630') return;
+  _dashLhmAct = { menu, tab };
+  const ctl = _dashCtl;
+  try{
+    if(menu === 'layouts' && tab && ctl){ if(tab.indexOf('p:') === 0) Promise.resolve(ctl.loadPreset(tab.slice(2))).then(() => _dashLhmSoon(60)); else if(tab.indexOf('l:') === 0) ctl.loadLayout(tab.slice(2)); }
+    else if(menu === 'sections' && tab){ const w = tab === 'top' ? document.getElementById('panel-dashboard') : document.querySelector('#dashGrid > [data-wid="' + CSS.escape(tab.slice(2)) + '"]'); if(w) w.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    else if(menu === 'widgets' && tab === 'add') dashOpenWidgetLoader();
+    else if(menu === 'widgets' && tab === 'hidden'){ const g = document.getElementById('dashGrid'); if(g && !g.classList.contains('editing')) dashToggleEdit(); const hp = document.getElementById('dashHiddenPicker'); if(hp) hp.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    else if(menu === 'arrange' && tab === 'edit') dashToggleEdit();
+    else if(menu === 'arrange' && tab === 'manage' && ctl && ctl.openLayouts) ctl.openLayouts();
+    else if(menu === 'arrange' && tab === 'reset') dashResetLayout();
+    else if(menu === 'live' && tab === 'refresh') document.querySelector('#panel-dashboard .dash-toolbar .btn.sm')?.click();
+    else if(menu === 'live' && tab === 'auto') clusterAutoRefresh();
+    else if(menu === 'live' && tab === 'diag') loadDiagnostics();
+  }catch(e){ console.warn('dashboard menu', e); }
+  _dashLhmSoon();
+};
+(function _dashLhmMount(){
+  if(!_dashCtl) return setTimeout(_dashLhmMount, 250);
+  _dashLhmPublish();
+  const g = document.getElementById('dashGrid');
+  if(g && window.MutationObserver) new MutationObserver(() => _dashLhmSoon(400)).observe(g, { childList: true, attributes: true, attributeFilter: ['class'] });
+  if(g) g.addEventListener('vera:dash:preset', () => _dashLhmSoon(60));
+  const ab = document.getElementById('dashAutoBtn'); if(ab && window.MutationObserver) new MutationObserver(() => _dashLhmSoon(60)).observe(ab, { childList: true, characterData: true, subtree: true });
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────

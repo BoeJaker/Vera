@@ -84,6 +84,42 @@
   var _navActiveId = '';
   var _navSelectFn = null;
 
+  // ── A PANEL'S MENU AS THE CHAT'S (owner, 2026-09-27: "can each internal ui panel drop into its lhm menu like the chat").
+  // The items a panel registered are published as a full LHM spec too (state.nav.lhm), so the harness draws the panel's
+  // menu IN its LHM - a rail of icons, the open one's list beside it - exactly as it draws the chat's. A panel whose items
+  // come in named groups (the Estate: Overview, Machines, ...) gets a rail icon per group and that group's items as the
+  // list; a flat one gets a rail icon per item and the whole list beside it. Menu ids are '\u00a7g<n>' (a group) and
+  // '\u00a7i<n>' (an item); a pick is '<menu>' or '<menu>/<item id>', resolved back to an item id by _navResolve.
+  var _navLhmOpts = null;
+  function _navIcon(it){ var t = String(it.icon || '').trim(); if(t) return t; return (String(it.label || it.id || '').trim().charAt(0) || '\u2022').toUpperCase(); }
+  function _navLhm(){
+    if(!_navItems || !_navItems.length || (_navLhmOpts && _navLhmOpts.lhm === false)) return null;
+    var title = (_navLhmOpts && _navLhmOpts.title) || document.title || '';
+    var groups = [], at = {};
+    _navItems.forEach(function(it){ var g = it.group || ''; if(!(g in at)){ at[g] = groups.length; groups.push({ name: g, items: [] }); } groups[at[g]].items.push(it); });
+    var act = { menu: '', tab: '' }, menus;
+    if(groups.filter(function(g){ return g.name; }).length >= 2){
+      menus = groups.map(function(g, gi){ var id = '\u00a7g' + gi; g.items.forEach(function(it){ if(it.id === _navActiveId){ act.menu = id; act.tab = it.id; } });
+        return { id: id, icon: _navIcon(g.items[0]), label: g.name || 'More', title: g.name || 'More', tabs: g.items.map(function(it){ return { id: it.id, label: it.label }; }) }; });
+    } else {
+      var all = _navItems.map(function(it){ return { id: it.id, label: it.label }; });
+      menus = _navItems.map(function(it, i){ var id = '\u00a7i' + i; if(it.id === _navActiveId){ act.menu = id; act.tab = it.id; }
+        return { id: id, icon: _navIcon(it), label: it.label, title: title || 'Sections', tabs: all }; });
+    }
+    if(!act.menu && menus.length) act.menu = menus[0].id;
+    return { title: title, active: act, menus: menus, open: [] };
+  }
+  function _navResolve(id){
+    var s = String(id);
+    if(s.charAt(0) !== '\u00a7') return s;                          // an item id, as before
+    var slash = s.indexOf('/'); if(slash > 0) return s.slice(slash + 1);   // '<menu>/<item>': the item
+    var spec = _navLhm(); if(!spec) return s;
+    var m = spec.menus.filter(function(x){ return x.id === s; })[0]; if(!m) return s;
+    if(s.charAt(1) === 'i'){ var it = _navItems[+s.slice(2)]; return it ? it.id : s; }   // a flat menu's icon: its item
+    if(m.tabs.some(function(t){ return t.id === _navActiveId; })) return _navActiveId;   // a group's icon: stay if already in it
+    return m.tabs.length ? m.tabs[0].id : s;                                                // ... else its first item
+  }
+
   // ── DOM helpers ───────────────────────────────────────────────────────
   function _elById(id){ return id ? document.getElementById(id) : null; }
 
@@ -146,7 +182,7 @@
     // sun (.on, .active, .selected, .current...), so a guess would either
     // miss real panels or misfire on unrelated "active" elements that have
     // nothing to do with top-level section nav.
-    if(_navItems) st.nav = {items: _navItems, active: _navActiveId};
+    if(_navItems){ st.nav = {items: _navItems, active: _navActiveId}; var _lhm = _navLhm(); if(_lhm) st.nav.lhm = _lhm; }
     try{
       var focused = document.activeElement;
       if(focused && focused !== document.body && focused.id) st.focused_id = focused.id;
@@ -359,7 +395,7 @@
   function _navSelect(p){
     var id = (p || {}).id;
     if(id == null) return {ok: false, error: 'nav_select requires {id}'};
-    id = String(id);
+    id = _navResolve(String(id));
     if(_navSelectFn){
       try{ _navSelectFn(id); }catch(e){ return {ok: false, error: String(e)}; }
       _navActiveId = id; publishStateDebounced();
@@ -653,7 +689,7 @@
     // switch didn't originate from an injected click.
     registerNav: function(items, selectFn){
       _navItems = (items || []).map(function(it){
-        return {id: String(it.id), label: String(it.label || it.id)};
+        return {id: String(it.id), label: String(it.label || it.id), group: it.group ? String(it.group) : '', icon: it.icon ? String(it.icon) : ''};
       });
       if(typeof selectFn === 'function') _navSelectFn = selectFn;
       publishStateDebounced();

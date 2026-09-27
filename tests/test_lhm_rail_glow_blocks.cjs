@@ -12,7 +12,7 @@ t('the chat\'s menu frame keeps its rail when folded, over the hosted-menu rule 
   /html\[data-only="menu"\] body #rightRail\.lhm-host\.slim\{width:100% !important;min-width:0 !important\}/.test(CHAT)
   && i(CHAT, 'html[data-only="menu"] body #rightRail.lhm-host.slim') > i(CHAT, 'html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0'));
 t('auto-hide leaves the rail rather than sliding the menu away', /\.body-wrap\.lhm #lhmNav\.lhm-nav\.autohide:not\(\.show\)\{transform:none;opacity:1;pointer-events:auto;width:54px!important/.test(HAR));
-t('the page keeps the rail\'s width', /classList\.toggle\('ah-rail', !!\(_autohide && _lhmMode\)\)/.test(HAR) && /\.body-wrap\.lhm \.main\.ah-rail:not\(\.autohide-reserve-v\)\{padding-left:54px\}/.test(HAR));
+t('the rail stays in the row (the menu is in it; the page keeps no padding for it)', /classList\.toggle\('ah-rail', !!\(_autohide && _lhmMode\)\)/.test(HAR) && /\.body-wrap\.lhm #lhmNav\.lhm-nav\.autohide\{position:relative;/.test(HAR));
 t('and the list draws as the rail while hidden', /side\.classList\.toggle\('railed', !!_lhmRailed \|\| hidden\)/.test(HAR));
 
 // the glow
