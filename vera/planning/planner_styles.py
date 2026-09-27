@@ -503,6 +503,18 @@ LOOP_STYLES: Dict[str, Dict[str, Any]] = {
               "run_planner": False, "master_plan": False, "recon": False,
               "shape_guards": True, "lens_brief": False, "stepwise_controller": False,
               "broad": True},
+    # BROAD-STEPWISE (user, 2026-09-27: "a type of plan that blends broad and
+    # stepwise"): broad's split into work-streams and its CPU briefs, but each
+    # stream is planned as ONE opening step and then grown one step at a time by
+    # the controller from what the stream has found (stepwise). Broad's up-front
+    # plans were its weak point in census run1 (coarse 2-step plans that missed
+    # parts of the goal); stepwise's evidence-led steps were its strength (12/12).
+    # `stream_steps` caps each stream's up-front plan; the shape guards are off
+    # for the stepwise reason - they would "repair" the one-step openings.
+    "broad-stepwise": {"label": "Broad-stepwise (work-streams, each grown step by step)",
+                       "run_planner": False, "master_plan": False, "recon": False,
+                       "shape_guards": False, "lens_brief": False, "stepwise_controller": True,
+                       "broad": True, "stream_steps": 1},
 }
 DEFAULT_LOOP_STYLE = "auto"
 
@@ -618,9 +630,11 @@ def parse_streams(obj: Any, catalog: Optional[Iterable[str]] = None,
 
 
 def stream_directive(goal: str, streams: Sequence[Dict[str, Any]],
-                     stream: Dict[str, Any]) -> str:
+                     stream: Dict[str, Any], first_step_only: bool = False) -> str:
     """The `[PIECEWISE]` master_plan text for ONE stream's planner call: the whole
-    stream map as context, then this stream to plan and nothing else."""
+    stream map as context, then this stream to plan and nothing else. With
+    `first_step_only` (broad-stepwise) only the step that STARTS the stream -
+    the rest is planned from its results."""
     lines = []
     for s in streams:
         dep = (" (uses: %s)" % ", ".join("stream %d" % d for d in s["dependencies"])
@@ -636,13 +650,17 @@ def stream_directive(goal: str, streams: Sequence[Dict[str, Any]],
                "they already provide.\n") if deps else ""
     caps_txt = ("SUGGESTED CAPS for this stream: %s\n" % ", ".join(stream["caps"])
                 if stream.get("caps") else "")
+    ask = ("Plan ONLY this stream's FIRST concrete step - the one action that starts it. "
+           "Its later steps are planned one at a time from what this step finds: do NOT "
+           "plan them now, and do NOT plan the other streams' work."
+           if first_step_only else
+           "Turn THIS stream into concrete, ordered steps that end in its deliverable. Do "
+           "NOT plan the other streams' work - they are planned separately.")
     return ("[PIECEWISE]WORK-STREAMS OF THIS GOAL (planned separately, in parallel - "
             "context only):\n" + "\n".join(lines) + "\n\n"
-            ">>> PLAN ONLY STREAM %d of %d: %s\nOBJECTIVE: %s\nDELIVERABLE: %s\n%s%s"
-            "Turn THIS stream into concrete, ordered steps that end in its deliverable. Do "
-            "NOT plan the other streams' work - they are planned separately."
+            ">>> PLAN ONLY STREAM %d of %d: %s\nOBJECTIVE: %s\nDELIVERABLE: %s\n%s%s%s"
             % (stream["id"], len(streams), stream["title"], stream["objective"],
-               stream.get("deliverable") or "(not stated)", dep_txt, caps_txt))
+               stream.get("deliverable") or "(not stated)", dep_txt, caps_txt, ask))
 
 
 ENRICH_SYSTEM = (
@@ -809,3 +827,43 @@ STEPWISE_CONTROLLER_NOTE = (
     "demonstrably met, choose \"insert\" with exactly ONE next step: the single most "
     "useful concrete action given what the ledger shows. Choose \"stop\" only when the "
     "goal is met. Never plan several steps ahead.\n")
+
+#: broad-stepwise: the controller grows each work-stream from its evidence.
+#: Inserted steps run next (ahead of the other streams' pending openings), so a
+#: stream keeps the floor until the controller judges its deliverable done.
+BROAD_STEPWISE_CONTROLLER_NOTE = (
+    "BROAD-STEPWISE MODE: this goal is split into WORK-STREAMS. Each was started with "
+    "ONE opening step; you grow each stream one step at a time from what it finds:\n"
+    "%s\n"
+    "After each step, look at the work-stream that step belongs to. If that stream's "
+    "deliverable does not exist yet or is incomplete, choose \"insert\" with exactly ONE "
+    "next step for THAT stream - it runs before the other streams' pending steps. When "
+    "its deliverable exists and is complete, choose \"continue\" so the next stream's "
+    "opening step runs. Choose \"stop\" only when every stream is done and the GOAL is "
+    "met. Never plan several steps ahead, and never do another stream's work in a "
+    "stream's step.\n")
+
+
+def controller_note(switches: Dict[str, Any], streams: Sequence[Dict[str, Any]] = (),
+                    steps: Sequence[Dict[str, Any]] = ()) -> str:
+    """The controller's style instruction for a run, or "" when the style has
+    none. broad-stepwise gets the run's own stream map - each stream's
+    deliverable and the step that opens it - so it can tell which stream a
+    step belongs to and when that stream is done."""
+    sw = switches or {}
+    if not sw.get("stepwise_controller"):
+        return ""
+    if not (sw.get("broad") and streams):
+        return STEPWISE_CONTROLLER_NOTE
+    opens: Dict[Any, Dict[str, Any]] = {}
+    for st in steps or []:
+        if isinstance(st, dict) and st.get("piece") is not None:
+            opens.setdefault(st.get("piece"), st)
+    lines = []
+    for s in streams:
+        op = opens.get(s.get("id"))
+        lines.append("  stream %s: %s -> deliverable: %s%s" % (
+            s.get("id"), s.get("title") or "?", s.get("deliverable") or "(not stated)",
+            (" (opens with step %s \"%s\")" % (op.get("id"), str(op.get("title") or "")[:80])
+             if op else " (no opening step)")))
+    return BROAD_STEPWISE_CONTROLLER_NOTE % "\n".join(lines)

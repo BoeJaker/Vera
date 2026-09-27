@@ -19134,8 +19134,11 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
                          model: str = "", instance_id: str = "", prefer_gpu: bool = True,
                          max_steps: int = 8, phase_policy: str = "sparingly",
                          intent: str = "mixed", sid: str = "",
-                         stream_id: str = "", enrich_model: str = "") -> Dict[str, Any]:
-    """The BROAD planning style (planner_styles.LOOP_STYLES['broad']).
+                         stream_id: str = "", enrich_model: str = "",
+                         stream_steps: int = 0) -> Dict[str, Any]:
+    """The BROAD planning style (planner_styles.LOOP_STYLES['broad']), and
+    broad-stepwise when `stream_steps` is 1: each stream is then planned as its
+    opening step only, and the controller grows it from the evidence.
 
     Research-shaped, placed by the compute-roles rule (GPU = the core plan the
     run waits on; CPU nodes = parallel planning work merged in, like the
@@ -19203,7 +19206,9 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
                       "stream_id": stream_id, "brief_s": brief_s,
                       "streams": [{k: s[k] for k in ("id", "title", "deliverable",
                                                     "dependencies", "caps")} for s in streams]})
-    per_stream = max(2, min(max_steps, (max_steps * 2) // len(streams) + 1))
+    per_stream = (max(1, int(stream_steps)) if stream_steps
+                  else max(2, min(max_steps, (max_steps * 2) // len(streams) + 1)))
+    first_step_only = per_stream == 1
 
     # CPU: the deeper per-stream briefs start NOW, beside the GPU planning.
     async def _enrich(s: Dict[str, Any]) -> str:
@@ -19265,7 +19270,9 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
             sub = await _v5_orchestrate_plan(
                 goal, list(catalog_names), skills, cap_skill_map, model="", instance_id="",
                 prefer_gpu=True, max_steps=per_stream,
-                master_plan=PSx.stream_directive(goal, streams, s), want_success=True,
+                master_plan=PSx.stream_directive(goal, streams, s,
+                                                 first_step_only=first_step_only),
+                want_success=True,
                 phase_policy=phase_policy, intent=intent, sid=sid, stream_id="",
                 route_profile="planning_style", route_role=PSx.PLAN_ROLE,
                 token_cb=_live("agent_loop_v6.broad_stream_token", stream=s["id"],
@@ -19330,7 +19337,11 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
               "duplicates_dropped": len(_dupes),
               "enriched_before_run": enriched_in_time,
               "quick_brief": bool(gpu_briefs),
-              "enrich_model": enrich_model or "(route default)"}
+              "enrich_model": enrich_model or "(route default)",
+              "per_stream_steps": per_stream,
+              # The stream map the broad-stepwise controller steers by.
+              "stream_map": [{k: s.get(k) for k in ("id", "title", "deliverable")}
+                             for s in streams]}
     if not merged:
         for t in enrich_tasks.values():
             t.cancel()
@@ -23386,7 +23397,7 @@ async def cap_dag_agent_loop_v6(
     enable_master_planner: bool = True,
     enable_tiering:     bool = False,      # V7-defining (see note above); v7 turns on
     plan_tier:          str  = "auto",
-    # HOW the plan is produced: auto|flat|stepwise|detailed|broad (see
+    # HOW the plan is produced: auto|flat|stepwise|detailed|broad|broad-stepwise (see
     # vera/planning/planner_styles.LOOP_STYLES, which is the whole contract).
     # 'auto' is the behaviour from before styles existed. The style the run
     # actually used is emitted as agent_loop_v6.plan_style and returned.
@@ -23973,14 +23984,17 @@ async def cap_dag_agent_loop_v6(
     # steps as they come up (see the step loop) and cancelled at the run's end.
     _enrich_tasks: Dict[Any, Any] = {}
     _gpu_briefs: Dict[Any, str] = {}      # BROAD: the GPU's quick first brief per stream
+    _broad_opening_steps: List[Dict[str, Any]] = []
     if _pstyle.get("broad"):
         # BROAD: the GPU plans every work-stream, the CPU nodes brief them in parallel.
         plan = await _v6_plan_broad(
             plan_goal, catalog_names, skills, cap_skill_map,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
             max_steps=max_steps, phase_policy=phase_policy, intent=intent,
-            sid=sid, stream_id=stream_id, enrich_model=(enrich_model or "").strip())
+            sid=sid, stream_id=stream_id, enrich_model=(enrich_model or "").strip(),
+            stream_steps=int(_pstyle.get("stream_steps") or 0))
         _style_detail = {"broad": plan.pop("broad", {})}
+        _broad_opening_steps = [dict(s) for s in (plan.get("steps") or [])]
         _enrich_tasks = plan.pop("_enrich_tasks", {}) or {}
         _gpu_briefs = plan.pop("_gpu_briefs", {}) or {}
         if not plan.get("steps"):
@@ -23988,6 +24002,10 @@ async def cap_dag_agent_loop_v6(
                 _t.cancel()
             _enrich_tasks = {}
             _broad_fell_back = True
+            # The fallback plan is a full up-front plan: guard it and steer it as
+            # broad's own fallback does (a no-op for broad; broad-stepwise turned
+            # these off only for its one-step stream openings).
+            _pstyle = {**_pstyle, "shape_guards": True, "stepwise_controller": False}
             _plan_style_why = ("broad: %s - planned as auto"
                                % (_style_detail["broad"].get("error") or "no steps"))
             _plan_style_eff = "auto"
@@ -24011,6 +24029,14 @@ async def cap_dag_agent_loop_v6(
         # bootstrap below, and the controller plans each next step. (A broad
         # plan that produced steps is kept as it is.)
         plan = {"steps": [], "reason": "", "complexity": "", "recon": [], "done_when": ""}
+    # The controller's style instruction (planner_styles.controller_note): the
+    # stepwise note, broad-stepwise's stream map, or none. A broad run that fell
+    # back planned as auto and is steered as auto.
+    _ctrl_style_note = ""
+    if _plan_styles is not None and not _broad_fell_back:
+        _bd = (_style_detail.get("broad") if isinstance(_style_detail, dict) else None) or {}
+        _ctrl_style_note = _plan_styles.controller_note(
+            _pstyle, streams=_bd.get("stream_map") or [], steps=_broad_opening_steps)
     # Fall-through "complex planning mode": both plan passes yielded no usable
     # steps — escalate to a long-form master plan and re-break it into steps (a
     # weak planner decomposes a concrete document far more reliably than an
@@ -24965,9 +24991,7 @@ async def cap_dag_agent_loop_v6(
                 base_id=max_id, steps_left=steps_left, model=model,
                 instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
                 file_register=lambda _d: _v6_file_register_block(artifacts, _d),
-                style_note=(_plan_styles.STEPWISE_CONTROLLER_NOTE
-                            if (_pstyle.get("stepwise_controller") and _plan_styles is not None)
-                            else ""))
+                style_note=_ctrl_style_note)
             await emit_event({"type": "agent_loop_v6.assess", "session_id": sid,
                               "stream_id": stream_id, "after_step": step["id"],
                               "assessment": ctrl.get("assessment", ""),
@@ -25241,7 +25265,7 @@ async def cap_dag_agent_loop_v6(
         "self-correcting steps). Extra inputs over v6: enable_tiering/plan_tier/auto_escalate, "
         "enable_step_finalize, enable_branching/branch_fanout/max_branches/branch_parallel, "
         "enable_dream_persistence, enable_journal (structured run journal → data fabric for "
-        "complex/long-term goals). plan_style (auto|flat|stepwise|detailed|broad, default auto) "
+        "complex/long-term goals). plan_style (auto|flat|stepwise|detailed|broad|broad-stepwise, default auto) "
         "chooses HOW the plan is produced — see dag.agent_loop_v6. Output: same shape as v6."),
 )
 async def cap_dag_agent_loop_v7(goal: str, **kwargs):
