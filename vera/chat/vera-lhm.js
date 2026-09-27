@@ -170,6 +170,21 @@
     '.lhm-side .lhm-s-top .nm{flex:0 0 auto;font-size:11px;font-weight:600;color:var(--text);white-space:nowrap}',
     '.lhm-side .lhm-s-top .mono{flex:1 1 auto;min-width:0;font-family:var(--mono);font-size:9px;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.lhm-side .lhm-s-wm{cursor:default}.lhm-side .lhm-s-wm + .lhm-s-wbar{margin-bottom:4px}',
+    '/* THE MENU FOLDS TO A RAIL (owner, 2026-09-27: "can the LHM in the chat ui and the overall lhm collapse to a rail with icons"): the side menu keeps its panels as icons - the one that is open lit - and its header as the two toggles */',
+    '.lhm-side .lhm-s-rl{flex:0 0 auto;width:26px;height:26px;padding:0;display:flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:var(--r-sm,6px);background:transparent;color:var(--dim2);font:inherit;font-size:12px;cursor:pointer}',
+    '.lhm-side .lhm-s-rl:hover{color:var(--text);background:var(--bg2)}',
+    '.lhm-side.railed .lhm-s-top{flex-direction:column;height:auto;padding:6px 0;gap:4px}',
+    '.lhm-side.railed .lhm-s-top > :not(.lhm-s-tb):not(.lhm-s-rl){display:none}',
+    '.lhm-side.railed .lhm-s-bd{padding:6px 0;align-items:center;gap:2px}',
+    '.lhm-side.railed .lhm-s-grp,.lhm-side.railed .lhm-s-empty,.lhm-side.railed .lhm-s-sec,.lhm-side.railed .lhm-s-w,.lhm-side.railed .lhm-s-reg,.lhm-side.railed .lhm-s-now,.lhm-side.railed .lhm-ebar,.lhm-side.railed .lhm-s-note{display:none!important}',
+    '.lhm-side.railed .lhm-s-row{width:36px;height:34px;padding:0;justify-content:center;border-left:0;border-radius:8px;flex-shrink:0}',
+    '.lhm-side.railed .lhm-s-row > :not(.ico){display:none}',
+    '.lhm-side.railed .lhm-s-row .ico{width:auto;font-size:14px;display:block!important;opacity:1!important}',
+    '.lhm-side.railed .lhm-s-row.on{box-shadow:inset 2px 0 0 var(--acc)}',
+    '/* ICONS BY TIER (owner: "respect the full - hover - zen styles only displaying the icons inline to the menu options in full mode"): Full draws a menu option\'s icon beside it; Hover shows it when the option is pointed at; Zen leaves the words. A folded rail is its icons, whatever the tier. */',
+    'html[data-den="zen"] .lhm-side:not(.railed) .lhm-s-row .ico,html[data-den="zen"] .lhm-top .lhm-row .lhm-ri{display:none}',
+    'html[data-den="hover"] .lhm-side:not(.railed) .lhm-s-row .ico,html[data-den="hover"] .lhm-top .lhm-row .lhm-ri{opacity:0;transition:opacity .15s}',
+    'html[data-den="hover"] .lhm-side:not(.railed) .lhm-s-row:hover .ico,html[data-den="hover"] .lhm-top .lhm-row:hover .lhm-ri{opacity:1}',
     '.lhm-side .lhm-s-wbar{height:5px;border-radius:3px;background:var(--bg3,var(--bg0));overflow:hidden}',
     '.lhm-side .lhm-s-wbar i{display:block;height:100%;border-radius:3px;background:var(--acc)}',
     '.lhm-side > .lhm-wcfg{max-height:46%;border-top:1px solid var(--border)}',
@@ -782,6 +797,9 @@ function _ebar(title, onAdd, onDone){
       top.appendChild(s);
     }
     // ✎ — this menu's edit mode: every part is a widget (its record behind ⚙, ⧉ saves it as a template)
+    // « folds the menu to its icons, » opens it again (the host keeps the state: cfg.rail {on, toggle})
+    if(cfg.rail){ var rl = _el('button', 'lhm-s-rl', cfg.rail.on ? '\u00bb' : '\u00ab'); rl.type = 'button'; rl.setAttribute('data-w', 'fold · control'); rl.title = cfg.rail.on ? 'Open the menu' : 'Fold the menu to its icons'; rl.addEventListener('click', function(ev){ ev.stopPropagation(); if(cfg.rail.toggle) cfg.rail.toggle(); }); top.appendChild(rl); }
+    if(cfg.rail && cfg.rail.on) wrap.classList.add('railed');
     if(cfg.edit !== false){ var ed = _el('button', 'lhm-s-edit' + (host._lhmEditing ? ' on' : ''), '✎'); ed.type = 'button'; ed.title = 'Edit this menu — every part is a widget: ⚙ its record, ⧉ save it as a template'; ed.addEventListener('click', function(){ sideEdit(host); }); top.appendChild(ed); }
     if(top.childNodes.length) wrap.appendChild(top);
     if(cfg.edit !== false) wrap.appendChild(_ebar((cfg.top && cfg.top.title) || 'this menu', function(){ sideAdd(host, cfg); }, function(){ sideEdit(host, false); }));
@@ -791,7 +809,7 @@ function _ebar(title, onAdd, onDone){
     var g1 = _el('div', 'lhm-s-grp', 'Open now · ' + open.length + ' · one set, one bridge'); g1.setAttribute('data-w', 'open now · list'); bd.appendChild(g1);
     if(!open.length) bd.appendChild(_el('div', 'lhm-s-empty', 'Nothing open. Pick a panel below, or the aide can open one here.'));
     open.forEach(function(o){
-      var r = _el('div', 'lhm-s-row open' + (o.active ? ' on' : '')); r.title = 'opened by ' + (o.origin || 'you') + (o.placement ? ' · ' + o.placement : '');
+      var r = _el('div', 'lhm-s-row lhm-s-now open' + (o.active ? ' on' : '')); r.title = 'opened by ' + (o.origin || 'you') + (o.placement ? ' · ' + o.placement : '');
       r.appendChild(_el('span', 'ico', o.icon || '▭'));
       var nm = _el('span', 'nm'); nm.appendChild(_el('span', '', o.label || o.id)); nm.appendChild(_el('em', '', [o.origin || 'you', o.placement || ''].filter(Boolean).join(' · '))); r.appendChild(nm);
       if(o.close){ var x = _el('span', 'x', '✕'); x.title = 'Close'; x.addEventListener('click', function(ev){ ev.stopPropagation(); try{ o.close(); }catch(e){} }); r.appendChild(x); }
@@ -802,7 +820,7 @@ function _ebar(title, onAdd, onDone){
     var g2 = _el('div', 'lhm-s-grp', 'Panels'); g2.setAttribute('data-w', 'panels · tree'); bd.appendChild(g2);
     (cfg.panels || []).forEach(function(p){
       var pan = _el('div', 'lhm-s-pan' + (p.active ? ' on' : ''));
-      var r = _el('div', 'lhm-s-row' + (p.active ? ' on' : p.open ? ' open' : '')); r.setAttribute('data-w', 'panel · ' + (p.label || p.id));
+      var r = _el('div', 'lhm-s-row' + (p.active ? ' on' : p.open ? ' open' : '')); r.setAttribute('data-w', 'panel · ' + (p.label || p.id)); r.title = p.label || p.id;
       r.appendChild(_el('span', 'ico', p.icon || '▭')); var nm = _el('span', 'nm'); nm.appendChild(_el('span', '', p.label || p.id)); r.appendChild(nm);
       if(p.ct) r.appendChild(_el('span', 'ct', String(p.ct)));
       r.addEventListener('click', function(ev){ if(cfg.onPanel) cfg.onPanel(p.id, ev); });

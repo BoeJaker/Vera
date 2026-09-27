@@ -141,7 +141,20 @@
     if (!btns.length) return;
     host._vpNavBridged = true;
 
+    /* AN ID NAMES ONE ITEM. The first attribute in this order that a button carried used to be its id, and the Estate
+       marks every one of its items data-view="estate" (the view that owns it) beside a data-pane that names it: all
+       nineteen published as "estate", the host lit them all, and picking any of them - Live ops, Docker - sent an id
+       that meant none of them (owner, 2026-09-27: "i cant select sub menu options for things like the estate"). The
+       id is now the first attribute, in the same order, that EVERY item carries with a DIFFERENT value; a panel whose
+       ids were already unique keeps exactly the ids it had. */
+    var ID_ATTRS = ['data-section', 'data-sec', 'data-s', 'data-view', 'data-tab', 'data-nav', 'data-pane', 'data-go', 'data-k'];
+    var idAttr = ID_ATTRS.filter(function (a) {
+      var seen = {};
+      for (var i = 0; i < btns.length; i++) { var v = btns[i].getAttribute(a); if (!v || seen[v]) return false; seen[v] = 1; }
+      return true;
+    })[0] || '';
     function idOf(b) {
+      if (idAttr) return b.getAttribute(idAttr);
       return b.getAttribute('data-section') || b.getAttribute('data-sec') || b.getAttribute('data-s') ||
              b.getAttribute('data-view') || b.getAttribute('data-tab') || b.getAttribute('data-nav') ||
              b.getAttribute('data-pane') || b.getAttribute('data-go') || b.getAttribute('data-k');
