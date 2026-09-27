@@ -914,65 +914,139 @@ header .hdr-right{margin-left:0;gap:6px}
 </head>
 <body>
 
-<!-- Sandbox-session indicator (C6): a dev container serves the SAME UI as prod,
-     so make it unmistakable. Detected client-side by port — prod is :8999, any
-     other explicit port is a dev sandbox (an empty/default port, i.e. prod behind
-     a proxy, is NOT flagged). Branch comes from /obs/provenance. No backend flag. -->
+<!-- Sandbox menu (C6): a dev container serves the SAME UI as prod, so make it
+     unmistakable - and make it the place to see what this branch IS. Detected
+     client-side by port: prod is :8999, any other explicit port is a dev sandbox
+     (an empty/default port, i.e. prod behind a proxy, is NOT flagged).
+     The badge is pinned top-left; its menu reads ci.branch from PROD (a sandbox has
+     its own private Redis, so its own pipeline list is empty - prod holds the
+     pipelines, the gate history, the board and the ingested conversations) and
+     falls back to this origin. Tabs: overview (the gate lane's race, the head),
+     merged (every branch merged in, with its pipeline, agent, gate, conversation),
+     conversations (every session that drove the branch or a merged one - click to
+     read it whole), board (linked items with body and thread), pipelines (each
+     one's track). Nothing is cut short: long lists scroll. -->
 <script>(function(){
   try{
     var port=location.port;
-    if(!port || port==='8999') return;              // prod — no banner
-    var BR='';
-    function E(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+    if(!port || port==='8999') return;              // prod - no banner
+    var BR='', DATA=null, TAB='overview', OPEN={}, Q='';
+    var PROD=location.protocol+'//'+location.hostname+':8999';
+    function E(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    function ago(t){var x=Date.parse(t);if(!isFinite(x))return '';var s=(Date.now()-x)/1000;return s<90?Math.round(s)+'s ago':s<5400?Math.round(s/60)+'m ago':s<172800?Math.round(s/3600)+'h ago':Math.round(s/86400)+'d ago';}
+    var AG={claude:'#d97757',codex:'#6ea8d8',vera:'#8fb87a',user:'#b39ddb'};
+    function ag(a){return a?'<span class="sbx-ag" style="--ag:'+(AG[a]||'#9e8fa0')+'">'+E(a)+'</span>':'';}
+    function gate(g){return g?'<i class="sbx-g g-'+E(g)+'" title="gate '+E(g)+'"></i>':'';}
+    function getJSON(u){return fetch(u,{credentials:'omit'}).then(function(r){if(!r.ok)throw new Error(r.status);return r.json();});}
+    // prod first (it holds the history); this origin when prod is unreachable
+    function ask(path){return getJSON(PROD+path).then(function(d){d.__from='prod';return d;}).catch(function(){return getJSON(path).then(function(d){d.__from='sandbox';return d;});});}
+    var CSS='#sbxBadge{display:inline-flex;align-items:center;gap:7px;background:#d9a441;color:#1a1512;font:700 11px/1 system-ui,sans-serif;padding:6px 10px;border-radius:7px;margin-right:8px;letter-spacing:.03em;flex-shrink:0;white-space:nowrap;cursor:pointer;box-shadow:0 0 0 2px rgba(217,164,65,.25)}'
+      +'#sbxBadge .st{width:8px;height:8px;border-radius:50%;background:#1a1512;opacity:.35}#sbxBadge .st.green{background:#2f8f4e;opacity:1}#sbxBadge .st.red{background:#b3261e;opacity:1}#sbxBadge .st.racing{background:#1f6fb2;opacity:1;animation:sbxP 1.2s infinite}#sbxBadge small{font-weight:600;opacity:.75}'
+      +'@keyframes sbxP{50%{opacity:.35}}'
+      +'#sbxInfo{position:fixed;top:46px;left:8px;z-index:100000;width:min(820px,96vw);max-height:84vh;display:flex;flex-direction:column;background:#1b1917;border:1.5px solid #d9a441;border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.6);color:#ddd5c8;font:12.5px/1.5 system-ui,sans-serif;overflow:hidden}'
+      +'#sbxInfo .hd{display:flex;align-items:center;gap:10px;padding:10px 14px;background:linear-gradient(90deg,rgba(217,164,65,.16),transparent 70%);border-bottom:1px solid #3a3530}#sbxInfo .hd b{color:#d9a441;font-size:13px}#sbxInfo .hd .mono{font-family:ui-monospace,monospace;font-size:11px;opacity:.75}#sbxInfo .hd .sp{flex:1}'
+      +'#sbxInfo button{background:#302c29;color:#ddd5c8;border:1px solid #4a4540;border-radius:6px;cursor:pointer;padding:3px 9px;font:inherit;font-size:11.5px}#sbxInfo button:hover{border-color:#d9a441}'
+      +'#sbxInfo .tabs{display:flex;gap:2px;padding:6px 10px 0;border-bottom:1px solid #3a3530;flex-wrap:wrap}#sbxInfo .tabs a{padding:6px 11px;border-radius:7px 7px 0 0;cursor:pointer;color:#a89c8e;font-size:12px;text-decoration:none}#sbxInfo .tabs a.on{background:#272421;color:#ddd5c8;box-shadow:inset 0 2px 0 #d9a441}#sbxInfo .tabs a em{font-style:normal;font-size:10.5px;opacity:.7;margin-left:4px}'
+      +'#sbxInfo .flt{margin-left:auto;margin-bottom:4px;background:#272421;border:1px solid #4a4540;border-radius:6px;color:#ddd5c8;padding:3px 8px;font:inherit;font-size:11.5px;width:180px}'
+      +'#sbxInfo .bd{overflow:auto;padding:10px 14px;flex:1;min-height:120px}#sbxInfo .sec{color:#d9a441;font-weight:600;margin:12px 0 5px;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em}#sbxInfo .sec:first-child{margin-top:0}'
+      +'#sbxInfo .row{display:grid;grid-template-columns:minmax(0,1.4fr) auto auto minmax(0,1fr);gap:10px;align-items:center;padding:5px 8px;border-radius:7px;cursor:pointer}#sbxInfo .row:hover{background:#272421}#sbxInfo .row .n{font-family:ui-monospace,monospace;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#sbxInfo .row .d{font-size:11px;opacity:.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#sbxInfo .row .m{display:flex;gap:6px;align-items:center;white-space:nowrap}'
+      +'#sbxInfo .sbx-ag{font:700 9px/1 system-ui;text-transform:uppercase;letter-spacing:.06em;padding:3px 6px;border-radius:4px;color:var(--ag);background:color-mix(in srgb,var(--ag) 18%,transparent)}#sbxInfo .sbx-g{display:inline-block;width:8px;height:8px;border-radius:50%;background:#6a6058}#sbxInfo .sbx-g.g-pass{background:#6db87a}#sbxInfo .sbx-g.g-fail{background:#c96b6b}'
+      +'#sbxInfo .chip{font-size:10px;padding:1px 7px;border-radius:999px;background:#302c29;color:#b8ad9f;white-space:nowrap}#sbxInfo .chip.lane-done{color:#6db87a}#sbxInfo .chip.lane-in_progress{color:#6ea8d8}#sbxInfo .chip.lane-blocked{color:#c96b6b}'
+      +'#sbxInfo .more{padding:6px 10px 10px 18px;border-left:2px solid #4a4540;margin:2px 0 8px 10px}#sbxInfo .turn{margin:6px 0;padding:6px 9px;border-radius:7px;background:#23201d;white-space:pre-wrap;word-break:break-word;font-size:12px}#sbxInfo .turn.user{background:#2b2620;border-left:2px solid #d9a441}#sbxInfo .turn .who{font-size:10px;text-transform:uppercase;letter-spacing:.06em;opacity:.6;display:block}'
+      +'#sbxInfo pre{white-space:pre-wrap;word-break:break-word;font:11.5px/1.45 ui-monospace,monospace;margin:4px 0;color:#cfc6b8}#sbxInfo .kpis{display:flex;gap:18px;flex-wrap:wrap}#sbxInfo .kpis span{display:flex;flex-direction:column}#sbxInfo .kpis b{font:600 18px ui-monospace,monospace}#sbxInfo .kpis small{font-size:10px;opacity:.6;text-transform:uppercase;letter-spacing:.06em}'
+      +'#sbxInfo vera-widget{display:block;height:auto;min-height:60px}#sbxInfo .empty{opacity:.6;padding:6px 0}#sbxInfo .src{font-size:10px;opacity:.55}';
+    function style(){ if(document.getElementById('sbxCss')) return; var st=document.createElement('style'); st.id='sbxCss'; st.textContent=CSS; document.head.appendChild(st); }
     function paint(branch){
-      BR=branch||BR;
+      BR=branch||BR; style();
       var h=document.querySelector('header'); if(!h) return;
       h.style.borderBottom='3px solid #d9a441';
       h.style.background='linear-gradient(90deg, rgba(217,164,65,.20), transparent 55%)';
       var s=document.getElementById('sbxBadge');
       if(!s){ s=document.createElement('div'); s.id='sbxBadge';
-        s.title='Loop Lab DEV SANDBOX (not prod) — click for branch stats, pipelines & Claude sessions';
-        s.style.cssText='background:#d9a441;color:#1a1512;font:700 11px/1 system-ui,sans-serif;'
-          +'padding:6px 9px;border-radius:6px;margin-right:8px;letter-spacing:.03em;flex-shrink:0;white-space:nowrap;cursor:pointer';
+        s.title='Loop Lab DEV SANDBOX (not prod) - click for the branch: its race to green, merged branches, conversations, board items and pipelines';
         s.onclick=toggleInfo;
         h.insertBefore(s, h.firstChild);
       }
-      s.textContent='⚠ SANDBOX'+(BR?' · '+BR:'')+' · :'+port+' ▾';
+      var sm=DATA&&DATA.summary||{};
+      s.innerHTML='<i class="st '+E(sm.state||'')+'"></i>⚠ SANDBOX'+(BR?' · '+E(BR):'')+' · :'+E(port)
+        +(DATA?' <small>'+(sm.merged||0)+' merged · '+(sm.conversations||0)+' chats</small>':'')+' ▾';
       document.title='⚠ '+(BR||'SANDBOX')+' — Vera';
+    }
+    function widget(el, form, data, size){
+      var ok=function(){ var w=document.createElement('vera-widget'); w.setAttribute('item-drawer',''); el.innerHTML=''; el.appendChild(w);
+        try{ w.record={form:form,title:'',data:data,frame:{size:size||'l'}}; }catch(e){ el.textContent='(widget failed: '+e.message+')'; } };
+      if(window.customElements && customElements.get('vera-widget')) return ok();
+      var sc=document.getElementById('sbxWidgetJs');
+      if(!sc){ sc=document.createElement('script'); sc.id='sbxWidgetJs'; sc.src='/ui/widgets/widget_element.js'; document.head.appendChild(sc); }
+      sc.addEventListener('load', ok, {once:true});
+    }
+    function match(o){ if(!Q) return true; return JSON.stringify(o).toLowerCase().indexOf(Q)>=0; }
+    function render(){
+      var bd=document.getElementById('sbxInfoBody'); if(!bd) return;
+      var d=DATA; if(!d){ bd.innerHTML='<div class="empty">loading…</div>'; return; }
+      if(d.error){ bd.innerHTML='<div class="empty">'+E(d.error)+'</div>'; return; }
+      var sm=d.summary||{}, tabs=document.getElementById('sbxTabs');
+      var T=[['overview','Overview',''],['merged','Merged',sm.merged],['conversations','Conversations',sm.conversations],['board','Board',sm.board_items],['pipelines','Pipelines',sm.pipelines]];
+      tabs.innerHTML=T.map(function(t){return '<a data-t="'+t[0]+'" class="'+(TAB===t[0]?'on':'')+'">'+t[1]+(t[2]!==''&&t[2]!=null?'<em>'+t[2]+'</em>':'')+'</a>';}).join('')+'<input class="flt" placeholder="filter…" value="'+E(Q)+'">';
+      tabs.querySelectorAll('a').forEach(function(a){a.onclick=function(){TAB=a.getAttribute('data-t');render();};});
+      var fi=tabs.querySelector('.flt'); fi.oninput=function(){Q=fi.value.trim().toLowerCase(); var p=fi.selectionStart; render(); var f2=document.querySelector('#sbxTabs .flt'); if(f2){f2.focus();try{f2.setSelectionRange(p,p);}catch(_){}}};
+      var b='';
+      if(TAB==='overview'){
+        var hd=d.head||{}, pv=d.__prov||{};
+        b+='<div class="kpis"><span><b>'+(sm.runs||0)+'</b><small>gate runs</small></span><span><b>'+(sm.pipelines||0)+'</b><small>pipelines</small></span><span><b>'+(sm.merged||0)+'</b><small>merged in</small></span><span><b>'+(sm.conversations||0)+'</b><small>conversations</small></span><span><b>'+(sm.board_items||0)+'</b><small>board items</small></span></div>';
+        b+='<div class="sec">head</div><div class="mono" style="font-family:ui-monospace,monospace">'+E(hd.sha)+' · '+E(hd.subject)+' <span class="d" style="opacity:.6">· '+E(hd.author)+' · '+E(ago(hd.ts))+'</span></div>';
+        if(pv.git_sha_short) b+='<div style="font-family:ui-monospace,monospace;opacity:.75">this sandbox serves '+E(pv.git_sha_short)+(pv.dirty?' · <span style="color:#d9a441">dirty</span>':' · clean')+'</div>';
+        b+='<div class="sec">gate race to green</div><div id="sbxRace">'+(d.lane?'':'<div class="empty">no gate run on this branch yet</div>')+'</div>';
+        if((d.merged||[]).length){ b+='<div class="sec">merged in, newest first</div><div id="sbxMergedMx"></div>'; }
+      } else if(TAB==='merged'){
+        var ms=(d.merged||[]).filter(match);
+        b+= ms.length? ms.map(function(m,i){ var k='m'+i; return '<div class="row" data-open="'+k+'"><span class="n" title="'+E(m.branch)+'">'+E(m.branch)+'</span><span class="m">'+ag(m.controller)+gate(m.gate)+(m.merges>1?'<span class="chip">×'+m.merges+'</span>':'')+'</span><span class="m"><span class="chip">'+E(m.decision||'merged')+'</span>'+(m.session_id?'<span class="chip" data-conv="'+E(m.session_id)+'">💬</span>':'')+'</span><span class="d">'+E(ago(m.ts))+' · '+E(m.pipeline_id||m.sha)+'</span></div>'
+            +(OPEN[k]?'<div class="more"><pre>'+E(m.subject)+'</pre><div class="d">'+E(m.sha)+' · '+E(m.ts)+' · '+E(m.author)+(m.pipeline_id?' · pipeline '+E(m.pipeline_id):'')+(m.session_id?' · session '+E(m.session_id):'')+'</div>'+(m.pipeline_id?'<div id="sbxTrk_'+k+'" data-pipe="'+E(m.pipeline_id)+'"></div>':'')+'</div>':''); }).join('')
+          : '<div class="empty">nothing merged into this branch'+(Q?' matches':'')+'</div>';
+        if(d.more) b+='<div class="empty">history goes further back - ask ci.branch with a bigger limit</div>';
+      } else if(TAB==='conversations'){
+        var cs=(d.conversations||[]).filter(match);
+        b+= cs.length? cs.map(function(c){ var k='c'+c.session_id; return '<div class="row" data-open="'+E(k)+'"><span class="n" title="'+E(c.session_id)+'">'+E(c.title||c.preview||c.session_id)+'</span><span class="m">'+ag(c.controller||c.agent)+(c.turns!=null?'<span class="chip">'+E(c.turns)+' turns</span>':'')+(c.ingested===false?'<span class="chip" title="this session is not ingested on prod yet">not ingested</span>':'')+'</span><span class="m">'+(c.branches||[]).slice(0,2).map(function(x){return '<span class="chip">'+E(x)+'</span>';}).join('')+((c.branches||[]).length>2?'<span class="chip">+'+((c.branches||[]).length-2)+'</span>':'')+'</span><span class="d">'+E(ago(c.session_last_ts||c.last_ts))+'</span></div>'
+            +(OPEN[k]?'<div class="more"><div class="d">session '+E(c.session_id)+' · pipelines '+E((c.pipelines||[]).join(', '))+' · branches '+E((c.branches||[]).join(', '))+'</div><div id="sbxConv_'+E(c.session_id)+'" class="empty">loading the conversation…</div></div>':''); }).join('')
+          : '<div class="empty">no conversation is linked to this branch'+(Q?' that matches':'')+' - pipelines record the session that began them</div>';
+      } else if(TAB==='board'){
+        var its=(d.board_items||[]).filter(match);
+        b+= its.length? its.map(function(it){ var k='b'+it.id; return '<div class="row" data-open="'+E(k)+'"><span class="n" title="'+E(it.title)+'">'+E(it.title)+'</span><span class="m"><span class="chip lane-'+E(it.lane)+'">'+E(String(it.lane||'').replace(/_/g,' '))+'</span>'+ag(it.agent)+'</span><span class="m">'+(it.comments&&it.comments.length?'<span class="chip">💬 '+it.comments.length+'</span>':'')+'</span><span class="d">'+E(it.id)+' · '+E(it.branch||'')+' · '+E(ago(it.updated_at))+'</span></div>'
+            +(OPEN[k]?'<div class="more">'+(it.body?'<pre>'+E(it.body)+'</pre>':'<div class="empty">no body</div>')+((it.comments||[]).length?'<div class="sec">thread</div>'+(it.comments||[]).map(function(cm){return '<div class="turn"><span class="who">'+E(cm.kind||'')+' · '+E(cm.from||'')+(cm.to?' → '+E(cm.to):'')+' · '+E(ago(cm.ts||cm.created_at))+'</span>'+E(cm.body||'')+'</div>';}).join(''):'')+'</div>':''); }).join('')
+          : '<div class="empty">no board item names this branch, a merged branch or their pipelines</div>';
+      } else if(TAB==='pipelines'){
+        var ps=(d.pipelines||[]).filter(match);
+        b+= ps.length? ps.map(function(p){ var k='p'+p.id; return '<div class="row" data-open="'+E(k)+'"><span class="n">'+E(p.id)+'</span><span class="m">'+ag(p.controller)+gate(p.gate_passed===true?'pass':p.gate_passed===false?'fail':'')+'</span><span class="m"><span class="chip">'+E(p.decision||p.status||'')+'</span></span><span class="d">'+E(ago(p.created_at))+(p.session_id?' · '+E(String(p.session_id).slice(0,8)):'')+'</span></div>'
+            +(OPEN[k]?'<div class="more"><div id="sbxTrk_'+E(k)+'" data-pipe="'+E(p.id)+'"></div></div>':''); }).join('')
+          : '<div class="empty">no pipeline on this branch yet</div>';
+      }
+      b+='<div class="src">read from '+E(d.__from||'?')+' · ci.branch</div>';
+      bd.innerHTML=b;
+      bd.querySelectorAll('[data-open]').forEach(function(r){r.onclick=function(ev){ var cv=ev.target.closest('[data-conv]'); if(cv){ TAB='conversations'; OPEN={}; OPEN['c'+cv.getAttribute('data-conv')]=1; render(); return; } var k=r.getAttribute('data-open'); OPEN[k]=!OPEN[k]; render(); };});
+      var rc=document.getElementById('sbxRace'); if(rc&&d.lane) widget(rc,'race-green',{kind:'ci',view:'race',title:BR,lanes:[d.lane],summary:{lanes:1,runs:(d.lane.cells||[]).length}},'l');
+      var mm=document.getElementById('sbxMergedMx'); if(mm){ var cards=(d.merged||[]).map(function(m){return {id:m.pipeline_id||m.sha,title:m.branch,agent:m.controller,gate:m.gate,branch:m.branch,pipeline:m.pipeline_id,lane:m.decision||'merged'};}); widget(mm,'ci-board',{kind:'ci',view:'board',columns:[{name:'merged',items:cards}]},'xl'); }
+      bd.querySelectorAll('[data-pipe]').forEach(function(el){ ask('/ci/track?id='+encodeURIComponent(el.getAttribute('data-pipe'))).then(function(t){ if(t&&!t.error) widget(el,'run-track',t,'xl'); else el.innerHTML='<div class="empty">'+E((t&&t.error)||'no track')+'</div>'; }).catch(function(){ el.innerHTML='<div class="empty">track unavailable</div>'; }); });
+      bd.querySelectorAll('[id^="sbxConv_"]').forEach(function(el){ var sid=el.id.slice(8); ask('/ide/claude_sessions/history?claude_session_id='+encodeURIComponent(sid)).then(function(h){ var ts=(h&&h.turns)||[]; el.className=''; el.innerHTML= ts.length? '<div class="d">'+ts.length+' turns, in full</div>'+ts.map(function(t){return '<div class="turn '+E(t.role)+'"><span class="who">'+E(t.role)+' · '+E(ago(t.ts))+'</span>'+E(t.text)+'</div>';}).join('') : '<div class="empty">'+E((h&&h.error)||'no turns ingested for this session')+'</div>'; }).catch(function(){ el.textContent='conversation unavailable'; }); });
+    }
+    function load(){
+      return Promise.all([
+        ask('/ci/branch?branch='+encodeURIComponent(BR)),
+        getJSON('/obs/provenance').catch(function(){return {};})
+      ]).then(function(r){ DATA=r[0]||{}; DATA.__prov=r[1]||{}; paint(); render(); })
+        .catch(function(e){ DATA={error:'could not read ci.branch from prod or this sandbox ('+(e&&e.message||e)+')'}; render(); });
     }
     function toggleInfo(){
       var ov=document.getElementById('sbxInfo'); if(ov){ ov.remove(); return; }
       ov=document.createElement('div'); ov.id='sbxInfo';
-      ov.style.cssText='position:fixed;top:44px;left:50%;transform:translateX(-50%);z-index:100000;'
-        +'width:min(680px,94vw);max-height:78vh;overflow:auto;background:#1f1d1a;border:2px solid #d9a441;'
-        +'border-radius:10px;box-shadow:0 10px 44px rgba(0,0,0,.6);padding:14px;color:#ddd5c8;'
-        +'font:12.5px/1.5 system-ui,sans-serif';
-      ov.innerHTML='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
-        +'<b style="color:#d9a441">⚠ SANDBOX · '+E(BR)+'</b> <span style="opacity:.6">:'+E(port)+'</span>'
-        +'<span style="flex:1"></span><button onclick="this.closest(\'#sbxInfo\').remove()" '
-        +'style="background:#302c29;color:#ddd5c8;border:1px solid #4a4540;border-radius:5px;cursor:pointer;padding:3px 8px">✕</button></div>'
-        +'<div id="sbxInfoBody" style="white-space:pre-wrap">loading…</div>';
+      ov.innerHTML='<div class="hd"><b>⚠ SANDBOX</b><span class="mono">'+E(BR)+' · :'+E(port)+'</span><span class="sp"></span><button data-act="reload" title="read again">↻</button><button data-act="close">✕</button></div><div class="tabs" id="sbxTabs"></div><div class="bd" id="sbxInfoBody"></div>';
       document.body.appendChild(ov);
-      var hd=function(t){return '<div style="color:#d9a441;font-weight:600;margin:10px 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:.04em">'+t+'</div>';};
-      Promise.all([
-        fetch('/obs/provenance').then(function(r){return r.json();}).catch(function(){return {};}),
-        fetch('/evolve/pipeline/list?limit=60').then(function(r){return r.json();}).catch(function(){return {};}),
-        fetch('/ide/claude_sessions/list_sessions?max_sessions=8').then(function(r){return r.json();}).catch(function(){return {};})
-      ]).then(function(res){
-        var prov=res[0]||{}, pipes=(res[1]&&res[1].pipelines)||[], sess=(res[2]&&res[2].sessions)||[];
-        var mine=pipes.filter(function(p){return p.branch===BR;});
-        var b=hd('provenance')+'<div style="font-family:monospace">'+E(prov.git_sha_short||'?')+' · branch '+E(prov.branch||'?')
-          +(prov.dirty?' · <span style="color:#d9a441">dirty</span>':' · clean')+'</div>';
-        b+=hd('Loop Lab pipelines on this branch ('+mine.length+')');
-        b+= mine.length? mine.slice(0,10).map(function(p){return '<div style="font-family:monospace">'+E(p.id)+' · '+E(p.decision||p.status||'')+' · '+E(p.controller||'')+'</div>';}).join('') : '<div style="opacity:.6">none yet</div>';
-        b+=hd('recent Claude Code sessions ('+sess.length+')');
-        b+= sess.length? sess.slice(0,8).map(function(s){return '<div style="font-family:monospace">'+E((s.claude_session_id||'').slice(0,14))+'… · '+E(String(s.turn_count||s.turns||s.count||''))+' turns</div>';}).join('') : '<div style="opacity:.6">none ingested</div>';
-        var bd=document.getElementById('sbxInfoBody'); if(bd) bd.innerHTML=b;
-      });
+      ov.querySelector('[data-act=close]').onclick=function(){ov.remove();};
+      ov.querySelector('[data-act=reload]').onclick=function(){DATA=null;render();load();};
+      document.addEventListener('keydown',function esc(e){ if(e.key==='Escape'){ var o=document.getElementById('sbxInfo'); if(o) o.remove(); document.removeEventListener('keydown',esc); } });
+      render(); if(!DATA||DATA.error) load(); else render();
     }
     function go(){ paint('');
-      fetch('/obs/provenance').then(function(r){return r.json();})
-        .then(function(p){ if(p&&p.branch) paint(p.branch); }).catch(function(){});
+      getJSON('/obs/provenance').then(function(p){ if(p&&p.branch){ paint(p.branch); load(); } }).catch(function(){});
     }
     if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',go,{once:true});
     else go();

@@ -186,3 +186,17 @@ def test_history_row_keeps_failures_and_marks_truncation():
     assert row["controller"] == "claude" and row["session_id"] == "s"
     lanes = UH.lanes([row])
     assert lanes[0]["failing"] == ["t::x"]
+
+
+def test_parse_merges_reads_loop_lab_and_git_merges():
+    log = "\n".join([
+        "a1\x1f2026-09-27T20:00:00Z\x1fBoeJaker\x1fLoop Lab: merge feat/x (pipeline 1a2b3c4d)",
+        "b2\x1f2026-09-27T19:00:00Z\x1fBoeJaker\x1fMerge branch 'bleeding-edge-design' into loop-lab/mirror",
+        "c3\x1f2026-09-26T19:00:00Z\x1fBoeJaker\x1fLoop Lab: merge feat/x (pipeline 9f9f9f9f)",
+        "d4\x1f2026-09-25T19:00:00Z\x1fBoeJaker\x1fMerge remote-tracking branch 'origin/main'",
+        "e5\x1f2026-09-24T19:00:00Z\x1fBoeJaker\x1fsomething else",
+    ])
+    rows = {m["branch"]: m for m in cv.parse_merges(log)}
+    assert set(rows) == {"feat/x", "bleeding-edge-design", "main"}
+    assert rows["feat/x"]["pipeline_id"] == "1a2b3c4d" and rows["feat/x"]["merges"] == 2
+    assert rows["bleeding-edge-design"]["pipeline_id"] == ""

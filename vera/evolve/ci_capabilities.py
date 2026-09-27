@@ -23,7 +23,9 @@ registers modules by bare filename).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 import sys
 import types
 from typing import Any, Dict, List, Optional
@@ -87,7 +89,6 @@ def _attribute(rows: List[Dict[str, Any]], pipes: List[Dict[str, Any]]) -> List[
             r = dict(r)
             r["controller"] = p.get("controller") or ""
             r["via"] = p.get("via") or ""
-            r.setdefault("session_id", p.get("session_id") or "")
             if not r.get("session_id"):
                 r["session_id"] = p.get("session_id") or ""
         out.append(r)
@@ -388,3 +389,118 @@ async def loop_ci_board(session_id: str = "", trace_id=None):
     if t.get("error"):
         return t
     return cv.loop_board(t)
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ci.branch — everything behind one branch (the sandbox menu's one call)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@capability(
+    "ci.branch", memory="off", silent=True,
+    http_method="GET", http_path="/ci/branch", http_tags=["ci", "evolve"],
+    description=("EVERYTHING BEHIND ONE BRANCH — the sandbox menu's one call. The branch's own "
+                 "pipelines (every one kept), its gate lane and race to green, EVERY branch merged "
+                 "into it (Loop Lab merges with their pipeline, controller, session and gate; plain "
+                 "git merges too), the CONVERSATIONS that drove it and its merged branches (Claude / "
+                 "Codex sessions joined from the pipelines, with title, turns and time span), and the "
+                 "board items linked to any of them WITH their body and comment thread. Inputs: "
+                 "branch (str!), repo (str=vera), limit (int=2000 merge commits to read; the answer "
+                 "says `more` when history went further). Output: {kind:'ci', view:'branch', branch, "
+                 "head, pipelines, lane, merged, conversations, board_items, summary}."))
+async def ci_branch(branch: str = "", repo: str = "vera", limit: int = 2000, trace_id=None):
+    branch = (branch or "").strip()
+    if not branch:
+        return {"error": "branch required"}
+    ev = _ev()
+    if ev is None:
+        return {"error": "evolve not loaded"}
+    root = await ev._resolve_repo_root(repo or "vera")
+    if not (await ev._git("rev-parse", "--verify", f"refs/heads/{branch}", repo_root=root))["ok"]:
+        return {"error": f"unknown branch: {branch}"}
+    limit = max(1, min(20000, int(limit or 2000)))
+    head = await ev._git("log", "-1", "--format=%H%x1f%cI%x1f%an%x1f%s", branch, repo_root=root)
+    hp = (head.get("out") or "").split("\x1f")
+    lg = await ev._git("log", "--merges", f"-n{limit + 1}", "--format=%H%x1f%cI%x1f%an%x1f%s",
+                       branch, repo_root=root, timeout=120)
+    lines = (lg.get("out") or "").splitlines()
+    more = len(lines) > limit
+    merged = [m for m in cv.parse_merges("\n".join(lines[:limit])) if m["branch"] != branch]
+
+    pipes = await _pipelines()
+    by_id = {str(p.get("id")): p for p in pipes}
+    by_branch: Dict[str, List[Dict[str, Any]]] = {}
+    for p in pipes:
+        by_branch.setdefault(str(p.get("branch") or ""), []).append(p)
+    for m in merged:
+        p = by_id.get(m["pipeline_id"]) or (by_branch.get(m["branch"]) or [None])[0] or {}
+        m.update({"pipeline_id": m["pipeline_id"] or str(p.get("id") or ""),
+                  "controller": cv.controller_of(p.get("controller"), p.get("via")),
+                  "session_id": str(p.get("session_id") or ""),
+                  "gate": ("pass" if p.get("gate_passed") is True else
+                           "fail" if p.get("gate_passed") is False else ""),
+                  "decision": str(p.get("decision") or "")})
+    mine = by_branch.get(branch, [])
+
+    # conversations: every session that drove this branch or one merged into it
+    convs: Dict[str, Dict[str, Any]] = {}
+
+    def _conv(sid: str, ctl: str, br: str, pid: str, ts: str) -> None:
+        if not sid:
+            return
+        c = convs.setdefault(sid, {"session_id": sid, "controller": ctl, "branches": [],
+                                   "pipelines": [], "first_ts": ts, "last_ts": ts})
+        if br and br not in c["branches"]:
+            c["branches"].append(br)
+        if pid and pid not in c["pipelines"]:
+            c["pipelines"].append(pid)
+        c["controller"] = c["controller"] or ctl
+        if ts:
+            c["first_ts"] = min(c["first_ts"] or ts, ts)
+            c["last_ts"] = max(c["last_ts"] or ts, ts)
+    for p in mine:
+        _conv(str(p.get("session_id") or ""), cv.controller_of(p.get("controller"), p.get("via")),
+              branch, str(p.get("id") or ""), str(p.get("created_at") or ""))
+    for m in merged:
+        _conv(m["session_id"], m["controller"], m["branch"], m["pipeline_id"], m["ts"])
+    if convs:
+        ls = await _call("ide.claude_sessions.list_sessions", max_sessions=500)
+        known = {str(s.get("claude_session_id") or ""): s
+                 for s in (((ls or {}).get("sessions") or []) if isinstance(ls, dict) else [])}
+        for sid, c in convs.items():
+            s = known.get(sid)
+            if s:
+                c.update({"title": s.get("title") or "", "turns": s.get("turns"),
+                          "agent": s.get("agent") or "", "preview": s.get("last_preview") or "",
+                          "session_first_ts": s.get("first_ts"), "session_last_ts": s.get("last_ts"),
+                          "ingested": True})
+            else:
+                c["ingested"] = False
+
+    # board items linked to the branch, a merged branch, or any of their pipelines
+    brs = {branch} | {m["branch"] for m in merged}
+    pids = {str(p.get("id")) for p in mine} | {m["pipeline_id"] for m in merged if m["pipeline_id"]}
+    bres = await _call("board.items")
+    linked = [it for it in (((bres or {}).get("items") or []) if isinstance(bres, dict) else [])
+              if (it.get("branch") and it.get("branch") in brs)
+              or (it.get("pipeline") and it.get("pipeline") in pids)]
+    full: List[Dict[str, Any]] = []
+    if linked:
+        got = await asyncio.gather(*[_call("board.item.get", id=it.get("id")) for it in linked],
+                                   return_exceptions=True)
+        for it, g in zip(linked, got):
+            item = (g or {}).get("item") if isinstance(g, dict) else None
+            full.append(item or it)
+
+    rows = [r for r in _attribute(await _history(), pipes) if r.get("branch") == branch]
+    lane = next(iter(cv.lanes_of(rows)), None)
+    merged.sort(key=lambda m: m["ts"], reverse=True)
+    return {"kind": cv.KIND, "view": "branch", "title": branch, "branch": branch, "repo": repo or "vera",
+            "head": {"sha": hp[0][:10] if hp and hp[0] else "", "ts": hp[1] if len(hp) > 1 else "",
+                     "author": hp[2] if len(hp) > 2 else "", "subject": hp[3] if len(hp) > 3 else ""},
+            "pipelines": mine, "lane": lane, "merged": merged, "more": more,
+            "conversations": sorted(convs.values(), key=lambda c: c.get("last_ts") or "", reverse=True),
+            "board_items": full,
+            "summary": {"pipelines": len(mine), "merged": len(merged), "conversations": len(convs),
+                        "board_items": len(full), "runs": len(rows),
+                        "state": (lane or {}).get("state", "none")}}

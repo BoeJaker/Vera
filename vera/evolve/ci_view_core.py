@@ -27,6 +27,7 @@ Pure: rows in, payloads out. No I/O, no clock except what the rows carry.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -783,3 +784,39 @@ def loops_matrix(sessions: Optional[Iterable[Dict[str, Any]]], *, title: str = "
                             else None)})
     m = matrix(rows, title=title or "Agentic loops", source="workshop.agent_loop.sessions")
     return m
+
+
+# merged branches, read from git log (ci.branch)
+
+#: "Loop Lab: merge feat/x (pipeline 1a2b3c4d)" — the pipeline's own merge commit
+_LL_MERGE = re.compile(r"merge\s+(\S+)\s+\(pipeline\s+([0-9a-f]{6,})\)", re.I)
+#: "Merge branch 'x' into y" / "Merge remote-tracking branch 'origin/x'" / "Merge x into y"
+_GIT_MERGE = re.compile(r"^Merge (?:remote-tracking )?branch '([^']+)'|^Merge (\S+) into \S+", re.I)
+
+
+def parse_merges(log_out: str) -> List[Dict[str, Any]]:
+    """`git log --merges --format=%H%x1f%cI%x1f%an%x1f%s` → one row per merged
+    branch (newest merge wins, `merges` counts them all), with the pipeline id
+    when Loop Lab made the merge."""
+    seen: Dict[str, Dict[str, Any]] = {}
+    for line in (log_out or "").splitlines():
+        parts = line.split("\x1f")
+        if len(parts) < 4:
+            continue
+        sha, ts, author, subject = parts[0], parts[1], parts[2], "\x1f".join(parts[3:])
+        m = _LL_MERGE.search(subject)
+        br, pid = (m.group(1), m.group(2)) if m else ("", "")
+        if not br:
+            g = _GIT_MERGE.search(subject)
+            br = (g.group(1) or g.group(2)) if g else ""
+        br = br.strip().rstrip(",")
+        if br.startswith("origin/"):
+            br = br[len("origin/"):]
+        if not br:
+            continue
+        if br in seen:
+            seen[br]["merges"] += 1
+            continue
+        seen[br] = {"branch": br, "pipeline_id": pid, "sha": sha[:10], "ts": ts,
+                    "author": author, "subject": subject, "merges": 1}
+    return list(seen.values())
