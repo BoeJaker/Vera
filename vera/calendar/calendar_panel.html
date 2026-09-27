@@ -117,12 +117,14 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
 /* ── Calendar month grid ─────────────────────────────── */
 #cal-toolbar{ display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-shrink:0; }
 #cal-title{ font-size:15px;font-weight:600;min-width:150px; }
-.cal-grid{ display:grid;grid-template-columns:repeat(7,1fr);gap:1px;
+/* minmax(0,1fr): a column never grows to its longest chip - with the shell's pill .chip (inline, unclipped) the month
+   ran off the right edge after Thursday (owner, 2026-09-27) */
+.cal-grid{ display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px;
   background:var(--border);border:1px solid var(--border);border-radius:8px;
   overflow:hidden; }
 .cal-dow{ background:var(--bg1);padding:7px 8px;font-size:9px;letter-spacing:.1em;
   text-transform:uppercase;color:var(--dim);text-align:center; }
-.cal-cell{ background:var(--bg);min-height:96px;padding:6px;cursor:pointer;
+.cal-cell{ background:var(--bg);min-height:96px;padding:6px;cursor:pointer;min-width:0;
   position:relative;transition:background .1s; }
 .cal-cell:hover{ background:var(--bg1); }
 .cal-cell.other{ background:#0a0c0f;color:var(--dim); }
@@ -135,12 +137,14 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
   background:var(--bg2);border-left:3px solid var(--acc);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;cursor:pointer; }
 .chip .ct{ color:var(--fg); }
+/* the shell (vera-panel.css) draws .chip as an inline pill that never clips: in a day it is a line, cut to the cell */
+.cal-grid .cal-cell .chip{ display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
 .more{ font-size:9px;color:var(--dim);margin-top:3px; }
 .cal-cell.sel{ box-shadow:inset 0 0 0 1px var(--acc); }
 
 /* ── Week view ───────────────────────────────────────── */
 #view-week{ flex:1;display:flex;flex-direction:column;min-height:0; }
-#week-head{ display:grid;grid-template-columns:56px repeat(7,1fr);flex-shrink:0;
+#week-head{ display:grid;grid-template-columns:56px repeat(7,minmax(0,1fr));flex-shrink:0;
   border:1px solid var(--border);border-bottom:none;border-radius:8px 8px 0 0;
   background:var(--bg1);overflow:hidden; }
 .wk-h{ padding:6px 8px;border-left:1px solid var(--border);text-align:center;
@@ -153,7 +157,7 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
   border-radius:3px;background:var(--bg2);border-left:2px solid var(--acc);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left; }
 #week-body{ flex:1;overflow-y:auto;display:grid;
-  grid-template-columns:56px repeat(7,1fr);border:1px solid var(--border);
+  grid-template-columns:56px repeat(7,minmax(0,1fr));border:1px solid var(--border);
   border-radius:0 0 8px 8px;background:var(--bg);min-height:0; }
 #wk-hours{ position:relative;height:1440px; }
 #wk-hours .hl{ position:absolute;right:6px;transform:translateY(-50%);
