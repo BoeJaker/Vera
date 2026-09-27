@@ -14069,6 +14069,61 @@ except Exception:                                     # pragma: no cover
         _plan_styles = None
         log.warning("planner_styles unavailable - plan_style is ignored, every run plans as auto")
 
+# Entity coverage (roadmap B4): does the final output carry what the goal named?
+# Measured from the NLP nodes' NER, reported - never a success criterion.
+try:
+    from Vera.vera.dag import entity_coverage_core as _entity_cov
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import entity_coverage_core as _entity_cov
+    except Exception:
+        _entity_cov = None
+
+#: The NER call runs on an NLP node beside the run, started with it; this only
+#: bounds the wait for it at the end, when it has long finished in practice.
+_ENTITY_NER_TIMEOUT_S = 20.0
+
+
+async def _v6_goal_entities(goal: str) -> List[Dict[str, str]]:
+    """The goal's checkable entities (entity_coverage_core.goal_entities) from
+    nlp.ner, or [] when NER is unavailable or slow. Calls the cap's raw
+    function: a measurement must not write memories. Never raises."""
+    if _entity_cov is None or not (goal or "").strip():
+        return []
+    cap = CAPABILITY_REGISTRY.get("nlp.ner") or {}
+    fn = cap.get("raw") or cap.get("func")
+    if not fn:
+        return []
+    try:
+        res = await asyncio.wait_for(fn(text=str(goal)[:4000]), timeout=_ENTITY_NER_TIMEOUT_S)
+    except Exception as e:
+        log.debug("goal entities: nlp.ner unavailable: %s", e)
+        return []
+    if not isinstance(res, dict) or res.get("error"):
+        return []
+    return _entity_cov.goal_entities(res)
+
+
+async def _v6_entity_coverage(task: Any, output: str, *, sid: str, stream_id: str) -> None:
+    """Emit agent_loop_v6.entity_coverage for the run's final output. Best effort."""
+    if task is None or _entity_cov is None:
+        return
+    try:
+        ents = await asyncio.wait_for(asyncio.shield(task), timeout=_ENTITY_NER_TIMEOUT_S)
+    except Exception:
+        if not task.done():
+            task.cancel()
+        return
+    if not ents:
+        return
+    cov = _entity_cov.coverage(ents, output or "")
+    try:
+        await emit_event({"type": "agent_loop_v6.entity_coverage", "session_id": sid,
+                          "stream_id": stream_id, **cov,
+                          "labels": {e["text"]: e["label"] for e in ents}})
+    except Exception:
+        pass
+
 
 def _v6_goal_implies_document(text: str) -> bool:
     """Does the goal name a DOCUMENT deliverable? "Report the disk usage" and
@@ -23490,6 +23545,10 @@ async def cap_dag_agent_loop_v6(
         _plan_style_eff, _plan_style_why = "auto", "planner_styles unavailable"
         _pstyle = {"run_planner": True, "master_plan": True, "recon": True,
                    "shape_guards": True, "lens_brief": False, "stepwise_controller": False}
+    # The goal's named entities, from an NLP node, beside the run: checked
+    # against the final output at the end (entity_coverage).
+    _goal_ents_task = (asyncio.ensure_future(_v6_goal_entities(goal))
+                       if _entity_cov is not None else None)
     # An explicitly chosen style is honoured over the single-cap fast path,
     # which would otherwise skip planning altogether.
     if _plan_style_eff != "auto":
@@ -25213,6 +25272,9 @@ async def cap_dag_agent_loop_v6(
         except Exception as _e:
             log.debug("v6 progress report failed: %s", _e)
 
+    # Before .done, so the trace digest and the Loop Lab record include it.
+    await _v6_entity_coverage(_goal_ents_task, deliverable or final, sid=sid,
+                              stream_id=stream_id)
     await emit_event({"type": "agent_loop_v6.done", "stream_id": stream_id, "session_id": sid,
                       "summary": final, "cycles": gcycle, "steps_run": len(results),
                       "reason": "complete"})
@@ -26062,6 +26124,7 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v6.broad_stream_enriched",
             "agent_loop_v6.broad_brief_applied",
             "agent_loop_v6.broad_deduped",
+            "agent_loop_v6.entity_coverage",
             # V7 tier/branching + strategic persistence
             "agent_loop_v6.tier",
             "agent_loop_v6.fast_path",
