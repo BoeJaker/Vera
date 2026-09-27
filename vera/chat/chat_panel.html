@@ -1668,6 +1668,34 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
   background:radial-gradient(120% 100% at 10% 0%,color-mix(in srgb,var(--acc,#5a9e8f) 12%,transparent),transparent 62%),
              radial-gradient(90% 80% at 92% 0%,color-mix(in srgb,var(--acc2,var(--acc,#5a9e8f)) 9%,transparent),transparent 60%)}
 html[data-blocks="off"] #veraWash{opacity:.7}
+/* THE GLOW STAYS VISIBLE UNDER THE MENU (owner, 2026-09-27: "when the lhm is opened id like it to display over the top
+   of that so you can see the glow behind it ... when the lhm expands out it should expand over the glow background").
+   The menu's panel is a translucent surface over the page's wash - at rest and grown - rather than a slab on it; the
+   rail sits above the wash. In the harness the harness draws the one wash behind both frames, so this page's own wash
+   and ground step aside there. */
+#rightRail.lhm-host{position:relative;z-index:2}
+#rightRail.lhm-host .lhm-det{background:color-mix(in srgb,var(--surf) 68%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15)}
+html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:color-mix(in srgb,var(--surf) 34%,transparent)}
+html[data-harness] body{background:transparent}
+html[data-harness] #veraWash{display:none}
+html[data-harness][data-only="menu"] #rightRail.lhm-host .lhm-det{background:color-mix(in srgb,var(--surf) 46%,transparent)}
+/* SMOOTHER (owner: "the lhm expanding and collapsing animations need to be smoother"): the panel opens, folds and grows
+   by its WIDTH on one easing - it used to fold by a display switch (no motion at all) and grow in a jump. Never while a
+   hand is dragging its edge: the width then follows the mouse, not a curve. */
+#rightRail.lhm-host > .lhm-det{transition:width .36s cubic-bezier(.2,.8,.2,1),flex-basis .36s cubic-bezier(.2,.8,.2,1),opacity .24s ease,margin .36s cubic-bezier(.2,.8,.2,1),background .3s ease}
+#rightRail.lhm-host.slim > .lhm-det{display:flex!important;width:0!important;flex-basis:0!important;min-width:0!important;opacity:0;overflow:hidden;margin-right:0;margin-left:0;pointer-events:none;box-shadow:none}
+body.dragging-split #rightRail.lhm-host > .lhm-det{transition:none}
+/* THE COLUMNS ARRIVE (owner: "id like the chat canvas and graph buttons to trigger nice animations so the sections dont
+   simply flash in"): the canvas column opens from the edge - its width grows as it fades and slides in, so the chat
+   gives way rather than jumping - and leaves the same way before it is taken out (togglePage: animated from the column's
+   MEASURED width, since a width it has not got yet cannot be a keyframe). The graph is the menu growing, above. */
+@keyframes triFade{from{opacity:0}to{opacity:1}}
+body[data-cols~="canvas"] #cvResize{animation:triFade .44s ease}
+@media (prefers-reduced-motion:reduce){ #rightRail.lhm-host > .lhm-det{transition:none} body[data-cols~="canvas"] #cvResize{animation:none} }
+/* ONE TOP BAR IN THE HARNESS: while the harness holds this bar's controls, the bar folds away. It is hidden, not taken
+   out of the layout - the ⋯ sheet hangs from it, and still opens from here. */
+html.hdr-absorbed #topBar{height:0!important;min-height:0!important;padding-top:0!important;padding-bottom:0!important;border:0!important;overflow:visible!important;visibility:hidden}
+html.hdr-absorbed #topBar #toolsSheet{visibility:visible}
 /* the drawing, in the block that wrote it (defect 90) */
 .code-card .cb-prev{display:none}
 .code-card.prev .cb-prev{display:block;border-top:1px solid var(--border,rgba(255,255,255,.09))}
@@ -6533,7 +6561,19 @@ IMPORTANT:
     try{ window.dispatchEvent(new CustomEvent('vera:panel-mounted',{detail:{placement:'column', pages:_pagesOpen()}})); }catch(_){}
     try{ _uiEvent('pages',{pages:_pagesOpen()}); }catch(_){}
   }
-  function togglePage(name){ if(!_PAGE_NAMES.includes(name)) return false; if(_EMBED.only==='menu'&&name!=='graph'){ _lhmPost('page',{ name }); return true; } if(name==='graph') return _ctxGrow(); if(_pages.has(name)) _pages.delete(name); else _pages.add(name); _pagesApply(); return _pages.has(name); }
+  function togglePage(name){ if(!_PAGE_NAMES.includes(name)) return false; if(_EMBED.only==='menu'&&name!=='graph'){ _lhmPost('page',{ name }); return true; } if(name==='graph') return _ctxGrow();
+    /* THE CANVAS COLUMN ARRIVES AND LEAVES: from nothing to the width it will have, and back - measured, because the
+       width is the flex layout's to decide and a keyframe cannot know it in advance */
+    if(name==='canvas'){ const col=document.getElementById('canvasColumn'); let still=false; try{ still=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(_){}
+      const anim=!!(col&&!still&&typeof col.animate==='function');
+      if(_pages.has(name)){ if(anim){ if(col._leaving) return false; col._leaving=true; const w=col.getBoundingClientRect().width;
+          const a=col.animate([{ maxWidth:w+'px', opacity:1, transform:'none' }, { maxWidth:'0px', opacity:0, transform:'translateX(28px)' }], { duration:300, easing:'cubic-bezier(.4,0,.2,1)', fill:'forwards' });
+          a.onfinish=()=>{ col._leaving=false; if(_pages.has(name)){ _pages.delete(name); _pagesApply(); } try{ a.cancel(); }catch(_){} }; return false; }
+        _pages.delete(name); _pagesApply(); return false; }
+      _pages.add(name); _pagesApply();
+      if(anim){ const w=col.getBoundingClientRect().width; if(w>0) col.animate([{ maxWidth:'0px', opacity:0, transform:'translateX(28px)' }, { maxWidth:w+'px', opacity:1, transform:'none' }], { duration:440, easing:'cubic-bezier(.2,.8,.2,1)' }); }
+      return true; }
+    if(_pages.has(name)) _pages.delete(name); else _pages.add(name); _pagesApply(); return _pages.has(name); }
   // a rail icon while the graph column is open: fold the graph back into the quick menu (the pick itself opens it)
   document.addEventListener('click', ev=>{ try{ if(!_ctxGrown) return; const ico=ev.target&&ev.target.closest&&ev.target.closest('#rightRail .lhm-rail .lhm-ico'); if(ico&&!ico.classList.contains('top')&&ico.getAttribute('data-menu')!=='context') _ctxGrow(false); }catch(_){} }, true);
   function openPage(name){ if(!_PAGE_NAMES.includes(name)||_pages.has(name)) return false; _pages.add(name); _pagesApply(); return true; }
@@ -15253,7 +15293,7 @@ function _embedMount(){
          the same bands, the same widths, and three levels instead of two — so a budget bar beneath it was the
          same reading twice, and the lower one was the poorer of the two: it could only switch a source on or
          off. The mini keeps its bar, because the mini's plot has no meter of its own. */
-      if(!document.getElementById('ctxGrown')){ el.innerHTML='<div id="ctxGrown" class="wid" data-w="context graph · graph" data-tpl="lhm:ctx-galaxy"></div>'; }
+      if(!document.getElementById('ctxGrown')){ _dkRelease(el); el.innerHTML='<div id="ctxGrown" class="wid" data-w="context graph · graph" data-tpl="lhm:ctx-galaxy"></div>'; }
       _graphColumnMount(); return; }
     const views=[['galaxy','galaxy'],['iso','iso'],['flow','flow'],['timeline','time']];
     // The RENDERER is part of the key. A body composed before /ui/context_graph_element.js has loaded draws the
@@ -15507,6 +15547,8 @@ function _embedMount(){
   let _dkSetOpen=(function(){ try{ return JSON.parse(localStorage.getItem('vera_lhm_setopen')||'{}')||{}; }catch(_){ return {}; } })();
   function _dkSetSave(){ try{ localStorage.setItem('vera_lhm_setopen', JSON.stringify(_dkSetOpen)); }catch(_){} }
   function _dkReturn(id){ const h=_dkHome[id]; if(!h||!h.mark.parentNode) return; if(h.el.previousSibling!==h.mark) h.mark.parentNode.insertBefore(h.el, h.mark.nextSibling); }
+  // before a body that holds docked panes is replaced: every pane in it goes home, so it is never out of the document
+  function _dkRelease(el){ Object.keys(_dkHome).forEach(id=>{ const h=_dkHome[id]; if(h&&el&&el.contains(h.el)) _dkReturn(id); }); }
   // 'menu:<id>' — the cards a menu governs; 'row:<id>' — one section of the page's index
   function _dkCardsOf(spec){
     const i=String(spec||'').indexOf(':'); if(i<0) return []; const k=spec.slice(0,i), v=spec.slice(i+1);
@@ -15587,6 +15629,63 @@ function _embedMount(){
   // the quick bodies follow the chat's state: a light tick re-draws only when a body's signature changed
   let _quickTimer=null;
   function _quickTick(){ try{ const a=VeraLHM.active; if(!a||a.top) return; const host=document.getElementById('rightRail'); if(!host||host.classList.contains('slim')||!host.classList.contains('lhm-quickmode')) return; VeraLHM.render(); }catch(_){} }
+  /* ═══ ONE TOP BAR IN THE HARNESS (owner, 2026-09-27: "id like for the harness to be able to absorb controls for the
+     current open panel into the top bar - much like the lhm can absorb menus. so there would be one top bar"). Inside
+     the harness this page OFFERS its top bar's controls - described, never moved: the harness draws proxies, and a press
+     comes back here as the same click on the same element, so every handler and every state class stays this page's.
+     What the harness already has (the logo, the connection dot, Aa) is not offered. While the harness holds them this
+     bar folds away (html.hdr-absorbed); its ⋯ sheet still opens from here. ═══ */
+  const _HDR_PRIO={ 'Execution behaviour':3, 'Context and tool integrations':6, 'Audio I/O':7, 'Special agent modes':8, 'Save chat':9, 'Panel layout':9 };
+  let _hdrSig='', _hdrT=null;
+  // shown by its OWN rules - the bar itself may be folded away while the harness holds it, and that must not count
+  function _hdrShown(el){ const bar=document.getElementById('topBar'); for(let n=el; n&&n!==bar; n=n.parentElement){ if(n.hidden||getComputedStyle(n).display==='none') return false; } return true; }
+  function _hdrBtn(b, hid){ b.dataset.hid=hid; return { hid, kind:'btn', label:String(b.textContent||'').replace(/\s+/g,' ').trim().slice(0,24), title:String(b.title||'').slice(0,160), on:/\b(on|active|col-on|council-on|sd-on)\b/.test(String(b.className||'')) }; }
+  function _hdrItems(){
+    const bar=document.getElementById('topBar'); if(!bar) return [];
+    const out=[]; let gi=0;
+    [...bar.children].forEach(el=>{
+      const id=el.id||'';
+      if(el.classList.contains('tb-logo')||id==='connDot'||el.classList.contains('tb-sep')||id==='hdrAa'||id==='toolsSheet'||el.classList.contains('tb-hold')) return;
+      if(!_hdrShown(el)) return;
+      if(el.tagName==='DIV'&&!el.className&&!id) return;   // the spacer
+      if(id==='hdrMore'){ el.dataset.hid='more'; out.push({ grp:'more', prio:0, items:[{ hid:'more', kind:'more', label:'\u22ef', title:el.title||'All chat tools', on:el.classList.contains('on') }] }); return; }
+      if(el.classList.contains('agent')){ const s=el.querySelector('select'); if(!s) return; s.dataset.hid='agent';
+        out.push({ grp:'agent', prio:1, items:[{ hid:'agent', kind:'select', value:s.value, title:String(((document.getElementById('agentMeta')||{}).textContent)||el.title||'').slice(0,160),
+          options:[...s.options].slice(0,80).map(o=>[o.value, String(o.textContent||'').trim().slice(0,40)]) }] }); return; }
+      if(el.classList.contains('sess')){ const n=document.getElementById('sessionName'); if(!n) return; n.dataset.hid='session';
+        out.push({ grp:'session', prio:1, items:[{ hid:'session', kind:'text', label:String(n.textContent||'').trim().slice(0,60), title:'Rename the session \u00b7 '+String(((document.getElementById('sessMeta')||{}).textContent)||'').trim() }] }); return; }
+      if(id==='ctxMeter'){ el.dataset.hid='meter'; const lbl=String(((document.getElementById('ctxMeterLabel')||{}).textContent)||'').trim();
+        let pct=0; const m=lbl.match(/([\d.]+)\s*k?\s*\/\s*([\d.]+)\s*k?/i); if(m&&+m[2]>0) pct=+m[1]/+m[2]*100; else { const f=document.getElementById('ctxMeterFill'); pct=parseFloat(f&&f.style.width)||0; }
+        out.push({ grp:'meter', prio:2, items:[{ hid:'meter', kind:'meter', label:lbl.slice(0,40), pct:Math.max(0,Math.min(100,Math.round(pct))), title:el.title||'Context window' }] }); return; }
+      const btns=el.tagName==='BUTTON'?[el]:[...el.querySelectorAll('button')].filter(_hdrShown);
+      if(!btns.length) return;
+      const g='g'+(gi++);
+      // what each group IS, by the controls in it (a group's title is the chat's to reword)
+      const has=(re)=>btns.some(b=>re.test(b.id||''));
+      const prio=el.classList.contains('pseg')?2:has(/^(autoActBtn|autoLoopBtn)$/)?3:(id==='xplSeg'||id==='xplBtn')?4:id==='denGroup'?5:(id==='blocksBtn'||has(/^(capsBtn|panelsBtn|webSearchBtn)$/))?6:has(/^(ttsBtn|micBtn)$/)?7:(_HDR_PRIO[el.title]||8);
+      out.push({ grp:g, prio, title:String(el.title||'').slice(0,80), items:btns.map((b,i)=>_hdrBtn(b, b.id||(g+'-'+i))) });
+    });
+    return out;
+  }
+  function _hdrOffer(force){ const groups=_hdrItems(); const sig=JSON.stringify(groups); if(!force&&sig===_hdrSig) return; _hdrSig=sig;
+    try{ window.parent.postMessage({ type:'vera:hdr:offer', title:'Chat', groups }, '*'); }catch(_){} }
+  function _hdrOfferSoon(){ if(_hdrT) return; _hdrT=setTimeout(()=>{ _hdrT=null; _hdrOffer(); }, 160); }
+  function _hdrOfferMount(){
+    const bar=document.getElementById('topBar'); if(!bar||bar._hdrOffer) return; bar._hdrOffer=true;
+    try{ new MutationObserver(_hdrOfferSoon).observe(bar, { subtree:true, childList:true, characterData:true, attributes:true, attributeFilter:['class','style','hidden','title'] }); }catch(_){}
+    bar.addEventListener('change', _hdrOfferSoon, true);
+    setInterval(()=>_hdrOffer(), 4000);   // a cheap re-read: the signature decides whether anything is sent
+    window.addEventListener('message', ev=>{
+      const d=ev.data; if(!d||typeof d!=='object'||ev.source!==window.parent) return;
+      if(d.type==='vera:hdr:absorbed'){ document.documentElement.classList.toggle('hdr-absorbed', !!d.on); if(d.on) _hdrOffer(true); return; }
+      if(d.type!=='vera:hdr:act') return;
+      const el=bar.querySelector('[data-hid="'+String(d.hid||'').replace(/["\\]/g,'')+'"]'); if(!el) return;
+      if(el.tagName==='SELECT'){ el.value=String(d.value==null?'':d.value); el.dispatchEvent(new Event('change', { bubbles:true })); }
+      else el.click();
+      _hdrOfferSoon();
+    });
+    _hdrOffer(true);
+  }
   function _lhmMount(){
     if(!window.VeraLHM) return;
     const host=document.getElementById('rightRail'); if(!host||host.classList.contains('lhm-host')) return;
@@ -19913,6 +20012,8 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     // …then the LHM: the rail of quick menus around that unified strip (nothing removed, the 13 tabs grouped).
     // Never fatal: a chat without its LHM is still a chat.
     try{ _lhmMount(); }catch(e){ console.warn('LHM: mount failed', e); }
+    // inside the harness: the harness's top bar takes this page's controls (one bar, not two)
+    try{ if(_EMBED.harness&&_EMBED.only==='chat') _hdrOfferMount(); }catch(e){ console.warn('header offer failed', e); }
     // …and the one panel set: what this chat holds, reported for ui.panels.open
     try{ _panelsOpenStart(); }catch(e){ console.warn('panel set: report failed', e); }
     // …and the scripts hear that a session started

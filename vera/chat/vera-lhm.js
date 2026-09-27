@@ -262,7 +262,7 @@
       ico.setAttribute('data-menu', m.id);
       var badge = 0; try{ badge = m.badge ? +m.badge() : 0; }catch(e){}
       if(badge){ ico.appendChild(_el('span', 'lhm-badge', String(badge))); }
-      ico.addEventListener('click', function(){ if(m.id === _active && !_topMode && _cfg.onCollapse && _det && _det.getClientRects().length){ try{ _cfg.onCollapse(); }catch(e){} return; } pick(m.id); });   // the active icon folds the menu to the rail
+      ico.addEventListener('click', function(){ if(m.id === _active && !_topMode && _cfg.onCollapse && _det && _det.getBoundingClientRect().width > 4){ try{ _cfg.onCollapse(); }catch(e){} return; } pick(m.id); });   // the active icon folds the menu to the rail
       _rail.appendChild(ico);
     });
     _rail.appendChild(_el('div', 'lhm-sp'));
