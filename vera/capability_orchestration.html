@@ -633,6 +633,60 @@ header .seg button{height:26px;padding:0 11px;font:inherit;font-size:10.5px;colo
 header .seg button.on{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri-fg,var(--on-acc,#fff));font-weight:600;box-shadow:inset 0 0 0 1px var(--pri-bd,transparent)}
 header .swp{width:24px;height:24px;border-radius:var(--r-sm,6px);cursor:pointer;position:relative;overflow:hidden;box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));flex-shrink:0}
 header .swp.on{box-shadow:0 0 0 2px var(--ac,var(--acc,#5a9e8f))}
+/* ── THE CHAT'S GLOW, UNDER ITS MENU (owner, 2026-09-27). The chat and its menu are two frames here, so neither can
+   show a glow behind the other: the harness draws the one wash behind both while the chat is the open tab, the frames
+   are transparent over it, and the menu's slot is a translucent surface - so the glow shows through the menu at rest
+   and as it grows. ── */
+#veraWashH{position:fixed;left:0;right:0;top:0;height:360px;pointer-events:none;z-index:0;opacity:0;transition:opacity .45s ease;
+  background:radial-gradient(120% 100% at 10% 0%,color-mix(in srgb,var(--acc,#5a9e8f) 12%,transparent),transparent 62%),
+             radial-gradient(90% 80% at 92% 0%,color-mix(in srgb,var(--acc2,var(--acc,#5a9e8f)) 9%,transparent),transparent 60%)}
+body.chat-open #veraWashH{opacity:1}
+body > header{z-index:3}
+body.chat-open .body-wrap{position:relative;z-index:1;background:transparent}
+body.chat-open .main{background:transparent}
+body.chat-open #lhmNav.chatmenu{background:color-mix(in srgb,var(--s1,var(--bg1,#151719)) 52%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15);border-right-color:transparent}
+/* the menu's slot opens, grows (the graph) and shrinks on one easing, and the tab beside it follows */
+.lhm-nav{transition:width .36s cubic-bezier(.2,.8,.2,1),background .3s ease}
+.main{transition:padding .36s cubic-bezier(.2,.8,.2,1)}
+@media (prefers-reduced-motion:reduce){ .lhm-nav,.main{transition:none} }
+/* ── ONE TOP BAR: the open panel's controls, drawn here (the panel offers them; a press goes back to the panel) ── */
+header #hdrPanel{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;overflow:hidden;margin-left:6px}
+header #hdrPanel[hidden]{display:none}
+header.absorbing .hsp{flex:0 0 6px}
+header .hp-grp{display:inline-flex;align-items:center;gap:2px;flex-shrink:0}
+header .hp-grp.seg{background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:2px}
+header .hp-btn{height:26px;padding:0 9px;border:0;background:transparent;color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:10.5px;border-radius:calc(var(--r-sm,6px) - 2px);cursor:pointer;white-space:nowrap}
+header .hp-grp:not(.seg) .hp-btn{height:28px;background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px)}
+header .hp-btn:hover{color:var(--t1,var(--text,#d8dce4))}
+header .hp-btn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+header .hp-grp .hp-btn.hp-sess{max-width:220px;overflow:hidden;text-overflow:ellipsis;font-weight:600;font-size:11.5px;color:var(--t1,var(--text,#d8dce4));background:transparent}
+header .hp-grp .hp-btn.hp-more{font-size:15px;line-height:1;padding:0 9px;background:transparent}
+header .hp-sel{height:28px;max-width:170px;border:0;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t1,var(--text,#d8dce4));font:inherit;font-size:11px;padding:0 8px;cursor:pointer}
+header .hp-meter{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 10px;border:0;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;cursor:pointer;white-space:nowrap}
+header .hp-meter i{display:block;width:56px;height:4px;border-radius:2px;background:var(--s3,var(--bg3,#22262e));overflow:hidden}
+header .hp-meter i b{display:block;height:100%;background:var(--ac,var(--acc,#5a9e8f))}
+/* ...and the harness's own readings step into a drawer while they do */
+#hdrDrawerBtn[hidden]{display:none}
+#hdrDrawerBtn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+#hdrDrawer{position:absolute;right:14px;top:calc(100% + 6px);z-index:900;display:none;flex-direction:column;align-items:flex-start;gap:12px;padding:12px 14px;border-radius:var(--ui-radius,10px);background:var(--s1,var(--bg1,#151719));box-shadow:var(--elev,0 10px 30px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));max-width:min(620px,calc(100vw - 28px))}
+#hdrDrawer.on{display:flex}
+#hdrDrawer::before{content:'The harness \u00b7 stats, activity, style and theme';font-size:var(--label-size,9px);text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280))}
+#hdrDrawer #hdrPills,#hdrDrawer #hdrMetrics{flex-wrap:wrap;max-width:none;overflow:visible}
+#hdrDrawer #hdrSwatches{display:flex!important;gap:6px;flex-wrap:wrap}
+/* ── ONE DASHBOARD HEADER (owner: "on the dashboard ... 2 top header bars - this needs to be combined into one"): the
+   toolbar is one row - the health readings sit in it as chips, and what does not fit goes behind ⋯ ── */
+#panel-dashboard .dash-toolbar{flex-wrap:nowrap;min-width:0;position:relative}
+#panel-dashboard .dash-toolbar .dash-title{flex-shrink:0;margin-right:0}
+#panel-dashboard .dash-toolbar .dsp{flex:1 1 0;min-width:4px}
+#panel-dashboard .dash-toolbar .dlbl,#panel-dashboard .dash-toolbar .dash-meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto}
+#panel-dashboard .dash-toolbar > .btn,#panel-dashboard .dash-toolbar .live{flex-shrink:0;white-space:nowrap}
+#panel-dashboard .dash-toolbar #dashHealthStrip{display:flex!important;flex-wrap:nowrap!important;gap:6px!important;padding:0!important;margin:0!important;background:transparent!important;border:0!important;min-width:0;overflow:hidden;flex:0 1 auto}
+#panel-dashboard .dash-toolbar #dashHealthStrip:empty{display:none!important}
+#panel-dashboard .dash-toolbar #dashHealthStrip > span{padding:3px 8px!important;min-width:0!important;box-shadow:none!important;background:var(--s2,var(--bg2,#1a1c20))!important;white-space:nowrap;flex-shrink:0}
+#panel-dashboard .dash-toolbar .dash-more-wrap{position:relative;flex-shrink:0}
+#panel-dashboard .dash-toolbar .dash-more-pop{position:absolute;right:0;top:calc(100% + 6px);z-index:60;display:none;flex-direction:column;align-items:stretch;gap:4px;padding:8px;border-radius:var(--ui-radius,10px);background:var(--s1,var(--bg1,#151719));box-shadow:var(--elev,0 10px 30px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+#panel-dashboard .dash-toolbar .dash-more-pop.on{display:flex}
+#panel-dashboard .dash-toolbar .dash-more-pop > *{justify-content:flex-start}
 header .swp i{position:absolute;left:0;right:0;bottom:0;height:6px}
 header .ico{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:var(--r-sm,6px);border:none;background:transparent;color:var(--t2,var(--dim2,#8a92a0));font:inherit;cursor:pointer}
 header .ico:hover,header .ico.on{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
@@ -2540,6 +2594,143 @@ function _lhmRenderAbsorbed(host, pid, nav){
   host.appendChild(abs);
   return true;
 }
+
+// ═══ ONE TOP BAR (owner, 2026-09-27: "id like for the harness to be able to absorb controls for the current open panel
+// into the top bar - much like the lhm can absorb menus ... the harness top bar can adapt and possibly hide its stats in
+// a drawer"). The open panel OFFERS its bar (vera:hdr:offer — groups of controls, described, with a priority); this
+// header draws them as proxies, tells the panel it holds them (vera:hdr:absorbed, so the panel folds its own bar away)
+// and sends every press back (vera:hdr:act) to the panel's own element. The harness's stats, activity, style and theme
+// step into a drawer while it does. What does not fit is left in the panel's own ⋯, lowest priority first. ═══
+const _hdrOffers = {};   // panel id → { src, title, groups, absorbed }
+window.addEventListener('message', e => {
+  const d = e.data; if(!d || typeof d !== 'object' || d.type !== 'vera:hdr:offer' || !e.source) return;
+  const pid = _panelIdOfSource(e.source); if(!pid) return;
+  const prev = _hdrOffers[pid] || {};
+  _hdrOffers[pid] = { src: e.source, title: String(d.title || ''), groups: Array.isArray(d.groups) ? d.groups.slice(0, 40) : [], absorbed: prev.absorbed };
+  _hdrSync();
+});
+function _hdrAct(pid, hid, value){ const o = _hdrOffers[pid]; if(!o) return; try{ o.src.postMessage({ type: 'vera:hdr:act', hid, value }, '*'); }catch(_){} }
+function _hdrPanelHost(hdr){
+  let h = document.getElementById('hdrPanel');
+  if(!h){ h = document.createElement('div'); h.id = 'hdrPanel'; h.hidden = true; h.setAttribute('data-w', "the open panel's controls · header"); hdr.insertBefore(h, hdr.querySelector('.hsp') || null); }
+  return h;
+}
+const _HDR_DRAWER_IDS = ['hdrPills', 'hdrMetrics', 'hdrMetricCfgWrap', 'vao-pill', 'hdrStyleSeg', 'hdrSwatches'];
+function _hdrDrawerPlace(on){
+  const hdr = document.querySelector('body > header'); if(!hdr) return;
+  let btn = document.getElementById('hdrDrawerBtn'), dr = document.getElementById('hdrDrawer');
+  if(!btn){
+    dr = document.createElement('div'); dr.id = 'hdrDrawer'; dr.setAttribute('data-w', 'header drawer'); hdr.appendChild(dr);
+    btn = document.createElement('button'); btn.id = 'hdrDrawerBtn'; btn.type = 'button'; btn.className = 'ico'; btn.hidden = true;
+    btn.title = "The harness's stats, activity, style and theme - tucked away while the open panel's controls are in this bar";
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 13.5V9M7 13.5V5M11 13.5V8M15 13.5V3.5"/></svg>';
+    btn.addEventListener('click', ev => { ev.stopPropagation(); const v = !dr.classList.contains('on'); dr.classList.toggle('on', v); btn.classList.toggle('on', v); });
+    hdr.insertBefore(btn, document.getElementById('hdrMore') || null);
+    document.addEventListener('click', ev => { if(dr.classList.contains('on') && !dr.contains(ev.target) && !btn.contains(ev.target)){ dr.classList.remove('on'); btn.classList.remove('on'); } });
+  }
+  btn.hidden = !on; if(!on){ dr.classList.remove('on'); btn.classList.remove('on'); }
+  _HDR_DRAWER_IDS.forEach(id => { const el = document.getElementById(id); if(!el || !el.parentNode) return;
+    if(!el._hdrMark && el.parentNode !== dr){ const mkr = document.createComment('hdr:' + id); el.parentNode.insertBefore(mkr, el); el._hdrMark = mkr; }
+    if(on){ if(el.parentNode !== dr) dr.appendChild(el); }
+    else if(el.parentNode === dr && el._hdrMark && el._hdrMark.parentNode){ el._hdrMark.parentNode.insertBefore(el, el._hdrMark.nextSibling); }
+  });
+}
+// what does not fit goes, lowest priority first (the panel's own ⋯ still has everything)
+function _hdrFit(host){
+  const grps = [...host.querySelectorAll('.hp-grp')]; grps.forEach(g => { g.style.display = ''; });
+  const over = () => host.scrollWidth > host.clientWidth + 1;
+  let guard = 40;
+  while(over() && guard--){
+    const vis = grps.filter(g => g.style.display !== 'none' && +g.dataset.prio > 1); if(!vis.length) break;
+    let worst = vis[0]; vis.forEach(g => { if(+g.dataset.prio >= +worst.dataset.prio) worst = g; });
+    worst.style.display = 'none';
+  }
+  // and back in, most important first, whatever fits in the room that is left
+  grps.filter(g => g.style.display === 'none').sort((a, b) => (+a.dataset.prio) - (+b.dataset.prio)).forEach(g => { g.style.display = ''; if(over()) g.style.display = 'none'; });
+}
+// the header's width is an input: a window, a drawer, the fonts arriving
+{ let q = 0; const ro = window.ResizeObserver ? new ResizeObserver(() => { if(q) return; q = requestAnimationFrame(() => { q = 0; const h = document.getElementById('hdrPanel'); if(h && !h.hidden) _hdrFit(h); }); }) : null;
+  const hook = () => { const hdr = document.querySelector('body > header'); if(hdr && ro) ro.observe(hdr); };
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hook, { once: true }); else hook(); }
+function _hdrSync(){
+  const hdr = document.querySelector('body > header'); if(!hdr) return;
+  Object.keys(_hdrOffers).forEach(k => { if(!_panelIdOfSource(_hdrOffers[k].src)) delete _hdrOffers[k]; });   // its frame is gone
+  const pid = [..._openTabs][0] || '';
+  const off = pid ? _hdrOffers[pid] : null;
+  Object.keys(_hdrOffers).forEach(k => { const o = _hdrOffers[k], on = (k === pid);
+    if(o.absorbed !== on){ o.absorbed = on; try{ o.src.postMessage({ type: 'vera:hdr:absorbed', on }, '*'); }catch(_){} } });
+  let chat = false; try{ chat = !!(pid && _chatFrameFor(pid)); }catch(_){}
+  document.body.classList.toggle('chat-open', chat);
+  hdr.classList.toggle('absorbing', !!off);
+  _hdrDrawerPlace(!!off);
+  const host = _hdrPanelHost(hdr); host.innerHTML = '';
+  if(!off){ host.hidden = true; return; }
+  host.hidden = false;
+  let moreGrp = null;
+  off.groups.forEach(g => {
+    const G = document.createElement('span'); G.className = 'hp-grp' + ((g.items || []).length > 1 ? ' seg' : ''); G.dataset.prio = String(g.prio == null ? 8 : g.prio); G.dataset.grp = String(g.grp || '');
+    if(g.title) G.title = g.title;
+    (g.items || []).forEach(it => {
+      let el;
+      if(it.kind === 'select'){
+        el = document.createElement('select'); el.className = 'hp-sel';
+        (it.options || []).forEach(o => { const op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; el.appendChild(op); });
+        el.value = it.value || ''; el.addEventListener('change', () => _hdrAct(pid, it.hid, el.value));
+      } else if(it.kind === 'meter'){
+        el = document.createElement('button'); el.type = 'button'; el.className = 'hp-meter';
+        el.innerHTML = '<i><b style="width:' + Math.max(0, Math.min(100, +it.pct || 0)) + '%"></b></i><span></span>'; el.querySelector('span').textContent = it.label || '';
+        el.addEventListener('click', () => _hdrAct(pid, it.hid));
+      } else {
+        el = document.createElement('button'); el.type = 'button';
+        el.className = 'hp-btn' + (it.kind === 'text' ? ' hp-sess' : '') + (it.kind === 'more' ? ' hp-more' : '') + (it.on ? ' on' : '');
+        el.textContent = it.label || '\u00b7'; el.addEventListener('click', () => _hdrAct(pid, it.hid));
+      }
+      if(it.title) el.title = it.title;
+      G.appendChild(el);
+    });
+    if(g.grp === 'more') moreGrp = G; else host.appendChild(G);
+  });
+  if(moreGrp) host.appendChild(moreGrp);   // the panel's own ⋯ ends its controls: everything that did not fit is in there
+  requestAnimationFrame(() => _hdrFit(host));
+}
+// every change of tab goes through _tabRender: the bar follows the tab that is open
+{ const __tabRender = _tabRender; _tabRender = function(){ const r = __tabRender.apply(this, arguments); try{ _hdrSync(); }catch(_){} return r; }; }
+window.addEventListener('resize', () => { const h = document.getElementById('hdrPanel'); if(h && !h.hidden) _hdrFit(h); _dashToolbarFit(); });
+// what the activity overlay adds to the header later still goes into the drawer while a panel holds the bar
+setInterval(() => { const hdr = document.querySelector('body > header'); if(hdr && hdr.classList.contains('absorbing')) _hdrDrawerPlace(true); }, 3000);
+// the wash behind both of the chat's frames
+function _washMount(){ if(document.getElementById('veraWashH') || !document.body) return; const w = document.createElement('div'); w.id = 'veraWashH'; w.setAttribute('aria-hidden', 'true'); document.body.insertBefore(w, document.body.firstChild); }
+// ── the dashboard's header is one row: the health readings join it, and what does not fit goes behind ⋯ ──
+function _dashToolbarFit(){
+  const tb = document.querySelector('#panel-dashboard .dash-toolbar'); if(!tb || !tb.offsetWidth) return;
+  const hs = document.getElementById('dashHealthStrip'); const live = document.getElementById('dashLive');
+  if(hs && hs.parentNode !== tb) tb.insertBefore(hs, (live && live.parentNode === tb) ? live.nextSibling : tb.querySelector('.dsp'));
+  let more = tb.querySelector('.dash-more-wrap');
+  if(!more){
+    more = document.createElement('span'); more.className = 'dash-more-wrap';
+    more.innerHTML = '<button class="btn sm dash-more" type="button" title="More dashboard actions">\u22ef</button><div class="dash-more-pop"></div>';
+    tb.appendChild(more);
+    const b = more.querySelector('.dash-more'), pop0 = more.querySelector('.dash-more-pop');
+    b.addEventListener('click', ev => { ev.stopPropagation(); pop0.classList.toggle('on'); });
+    document.addEventListener('click', ev => { if(!more.contains(ev.target)) pop0.classList.remove('on'); });
+  }
+  const pop = more.querySelector('.dash-more-pop');
+  [...pop.children].forEach(el => { if(el._dashMark && el._dashMark.parentNode) el._dashMark.parentNode.insertBefore(el, el._dashMark.nextSibling); });   // everything home first
+  more.style.display = 'none';
+  if(tb.scrollWidth <= tb.clientWidth + 1) return;
+  more.style.display = '';
+  // folded from the end of the row, the add button last of all: it is the one the toolbar is for
+  const btns = [...tb.querySelectorAll(':scope > button.btn, :scope > .dash-layouts, :scope > .mbtn')].filter(b => b.offsetParent !== null || b.getClientRects().length);
+  const order = btns.filter(b => !/add widget/i.test(b.textContent || '')).reverse().concat(btns.filter(b => /add widget/i.test(b.textContent || '')));
+  for(const b of order){
+    if(tb.scrollWidth <= tb.clientWidth + 1) break;
+    if(!b._dashMark){ const mkr = document.createComment('dash-tb'); b.parentNode.insertBefore(mkr, b); b._dashMark = mkr; }
+    pop.appendChild(b);
+  }
+}
+{ const go = () => { _washMount(); try{ _hdrSync(); }catch(_){} _dashToolbarFit(); setTimeout(_dashToolbarFit, 1500); setTimeout(_dashToolbarFit, 5000);
+    try{ const tb = document.querySelector('#panel-dashboard .dash-toolbar'); if(tb && window.ResizeObserver){ let q = 0; new ResizeObserver(() => { if(q) return; q = requestAnimationFrame(() => { q = 0; _dashToolbarFit(); }); }).observe(tb); } }catch(_){} };
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); else go(); }
 
 // ── THE ONE PANEL SET (UI redesign, Notes/40 §9) ─────────────────────────────
 // The harness reports the tabs it holds around the chat (ui.panels.open lists them with the panel beside the chat),
