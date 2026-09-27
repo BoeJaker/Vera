@@ -132,7 +132,7 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
 // ── and the fallback is still reachable, which is the point of it ──────────────────────────────────────────────
 {
   const shapeless = { ok: true, note: 'nothing to draw here' };
-  t('a result with no shape matches no recogniser', T(shapeless) === null && TBL(shapeless, 'x') === null && W(shapeless, 'x', {}) === null);
+  t('a result with no richer shape matches none of THESE recognisers', T(shapeless) === null && TBL(shapeless, 'x') === null && W(shapeless, 'x', {}) === null);
   t('so the harvest still falls through to markdown', /out\.push\(\{kind:'markdown', n:n\.split\(' '\)\[0\]/.test(src));
   t('and a card from a restored session, with no kept result, falls through too',
     /const cap = el\.__cap \|\| null/.test(src) && /if\(made\)\{ out\.push\(made\); return; \}/.test(src));
@@ -222,7 +222,7 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   /* the order IS the behaviour, so it is pinned - a rule that moves above another changes what results become.
      calendar sits above table because the diary drawn as rows of id/title/start/end is the data and not the
      answer; prose sits last because almost every result carries some string. */
-  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,sources,html,image,calendar,table,widget,prose',
+  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,error,sources,html,image,code,diff,calendar,table,widget,chat,prose,kv,json,text',
     REG.map((a) => a.name).join(','));
 
   // and it routes, by shape alone, with no capability named anywhere
@@ -234,7 +234,18 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   t('html goes to the html block', kind('render.html', { html: '<h1>hi</h1>' }) === 'html');
   t('an image goes to an image', kind('browser.screenshot', { image_b64: 'iVBORw0KG' }) === 'image');
   t('a written report goes to markdown, not a code fence', kind('research.report', { report: 'x'.repeat(400) }) === 'markdown');
-  t('and a shapeless result matches nothing at all', kind('some.cap', { ok: true, note: 'done' }) === null);
+  /* 2026-09-27 (owner: "caps need to be able to return results to the canvas via the appropriate elements"): a
+     result with no richer shape is no longer dropped to a JSON dump in a code fence - a flat record is its fields,
+     anything with structure a tree. The markdown fallback remains for what cannot be read at all. */
+  t('a shapeless record is drawn as its fields', kind('some.cap', { ok: true, note: 'done' }) === 'kv');
+  t('a nested one as a tree', kind('some.cap', { a: { b: [1, 2] }, c: [{ x: { y: 1 } }] }) === 'json');
+  t('a file a cap read is a code item', kind('fs.read', { path: '/w/app.py', content: 'print(1)\n' }) === 'code');
+  t('code a cap wrote is a code item', kind('code.author', { code: 'def f():\n  return 1', lang: 'python' }) === 'code');
+  t('a diff is code in the diff language', (AD('git.diff', { diff: '--- a\n+++ b\n+x' }, {}) || {}).content.lang === 'diff');
+  t('an answer to a question is an exchange', kind('agent.consult', { question: 'why?', answer: 'because' }) === 'chat');
+  t('a failure is said once, as a failure', kind('x.y', { ok: false, error: 'no route to host' }) === 'note');
+  t('a failing COMMAND is still a terminal with its stderr', kind('exec.bash.run', { ok: false, command: 'ls /x', stderr: 'nope', rc: 2 }) === 'session');
+  t('a bare line of text is a note', kind('x.y', 'done') === 'note');
 }
 
 // ---- the declaration is a hint, never the decision -------------------------------------------------------------
@@ -244,7 +255,7 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   const m = AD('exec.bash.run', { command: 'true', stdout: '', stderr: '', rc: 0 }, {});
   t('a cap that SAYS it returns stdout is a command even when it printed nothing', !!m && m.kind === 'session', JSON.stringify(m && m.kind));
   // ...and a short string from a cap that declares no report is not dressed up as one
-  t('a short status line is not made into a document', AD('quiet.status', { ok: true, text: 'done' }, {}) === null);
+  t('a short status line is not made into a document', (AD('quiet.status', { ok: true, text: 'done' }, {}) || {}).kind === 'kv');
   t('but a long one is the document it plainly is', (AD('quiet.status', { ok: true, text: 'y'.repeat(300) }, {}) || {}).kind === 'markdown');
   t('the declaration cannot overrule the bytes', (AD('research.report', { hosts: [{ a: 1, b: 2 }, { a: 3, b: 4 }] }, {}) || {}).kind === 'table');
 }

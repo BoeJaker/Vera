@@ -65,6 +65,87 @@
     return s.replace(/\u0000F(\d+)\u0000/g, (_, i) => fences[+i] || '');
   }
 
+
+  /* ── CODE AS THE CHAT DRAWS IT: the chat's own highlighter and linter (window.VeraCode, published by the chat page),
+     so a code item and a code fence are coloured and checked by ONE implementation. Where the page has none (the
+     standalone Canvas panel) the item draws plain numbered lines, as it always did. ── */
+  // highlighted markup split into lines, closing every span open at a newline and reopening it on the next line, so a
+  // comment or a string that runs across lines is still coloured on each of them
+  function splitHl(html) {
+    const out = []; const open = []; let cur = '';
+    const re = /(<span\b[^>]*>)|(<\/span>)|(\n)|([^<\n]+)|(<)/g; let m;
+    while ((m = re.exec(String(html || '')))) {
+      if (m[1]) { open.push(m[1]); cur += m[1]; }
+      else if (m[2]) { open.pop(); cur += m[2]; }
+      else if (m[3]) { cur += '</span>'.repeat(open.length); out.push(cur); cur = open.join(''); }
+      else cur += m[0];
+    }
+    out.push(cur); return out;
+  }
+  /* the lint strip: always the summary (lines · bytes · a raw fence or an envelope that should not be there · JSON
+     validity), and the diagnostics once the code has SETTLED. A code item still being streamed is half a brace, and
+     flagging it on every beat is noise - the chat lints only closed fences for the same reason. */
+  function codeLintHtml(c, key, el) {
+    const VC = root.VeraCode; if (!VC || typeof VC.summary !== 'function') return '';
+    const code = String(c.code || ''); const lang = String(c.lang || '');
+    if (!code.trim()) return '';
+    let settled = true;
+    if (key && el) {
+      el._codeAt = el._codeAt || {}; const prev = el._codeAt[key]; const now = Date.now();
+      if (!prev) el._codeAt[key] = { code, t: 0 };                       // first sight: a finished item, not a stream
+      else if (prev.code !== code) { el._codeAt[key] = { code, t: now }; settled = false; }
+      else settled = !prev.t || now - prev.t >= 1400;
+      if (!settled && !el._lintT) el._lintT = setTimeout(() => { el._lintT = null; if (el._doc) el.render(el._doc); }, 1600);
+    }
+    let sum = null; try { sum = VC.summary(lang, code); } catch (e) { sum = null; }
+    let diags = []; if (settled && typeof VC.lint === 'function') { try { diags = VC.lint(lang, code) || []; } catch (e) { diags = []; } }
+    const cls = diags.some((d) => d && d.sev === 'err') || (sum && sum.cls === 'err') ? 'err' : (diags.length || (sum && sum.cls === 'warn') ? 'warn' : 'ok');
+    const parts = (sum && Array.isArray(sum.parts) ? sum.parts : []).map((p) => esc(String(p)));
+    return '<div class="vc-lint ' + cls + '" data-w="canvas.code.lint">' + parts.join(' <b>\u00b7</b> ') + (settled ? '' : ' <i>\u00b7 linting when it settles</i>') + '</div>'
+      + diags.slice(0, 8).map((d) => '<div class="vc-lint-d ' + (d.sev === 'err' ? 'err' : 'warn') + '">' + (d.sev === 'err' ? '\u26a0 ' : '\u25cf ') + esc((d.line ? 'L' + d.line + ': ' : '') + String(d.msg || '')) + '</div>').join('');
+  }
+  /* ── A CAPABILITY'S RESULT, AS THE ELEMENT THAT FITS IT. The chat publishes its adapter registry (terminal · sources
+     · html · image · code · table · widget · chat · prose · a record's fields · a JSON tree …) as
+     window.VeraCanvasAdapt; a result item asks it what the answer IS and draws that. Without the chat, the element's
+     own reading: a record's fields, a JSON tree, text. Cached by the answer, because a render is not a new answer. ── */
+  const _RV = new Map();
+  function genericView(res) {
+    if (res == null) return { kind: 'note', content: { text: '(no result)' } };
+    if (typeof res === 'string') return res.length > 200 || res.indexOf('\n') >= 0 ? { kind: 'markdown', content: { md: res } } : { kind: 'note', content: { text: res } };
+    if (typeof res !== 'object') return { kind: 'note', content: { text: String(res) } };
+    const ks = Array.isArray(res) ? [] : Object.keys(res);
+    const flat = !Array.isArray(res) && ks.length > 0 && ks.length <= 24 && ks.every((k) => res[k] == null || typeof res[k] !== 'object');
+    return flat ? { kind: 'kv', content: { fields: res } } : { kind: 'json', content: { data: res } };
+  }
+  function resultView(c) {
+    c = c || {}; const res = c.result; let sig = '';
+    try { sig = String(c.cap || '') + '\u0000' + JSON.stringify(res === undefined ? null : res); } catch (e) { sig = ''; }
+    if (sig && _RV.has(sig)) return _RV.get(sig);
+    let v = null; const A = root.VeraCanvasAdapt;
+    if (typeof A === 'function') {
+      try { const m = A(String(c.cap || ''), res, c.args || {});
+        if (Array.isArray(m)) v = m.length ? { kind: '_many', content: { items: m } } : null;
+        else if (m && m.kind && m.kind !== 'result') v = { kind: String(m.kind), content: m.content || {} };
+      } catch (e) { v = null; }
+    }
+    if (!v) v = genericView(res);
+    if (sig) { if (_RV.size > 80) _RV.clear(); _RV.set(sig, v); }
+    return v;
+  }
+  // a JSON value as a tree you can open: the first two levels open, long strings cut, wide arrays counted
+  function jsonTree(v, d) {
+    if (v === null || v === undefined) return '<span class="j-null">null</span>';
+    if (typeof v === 'string') return '<span class="j-str">"' + esc(v.length > 400 ? v.slice(0, 400) + '\u2026' : v) + '"</span>';
+    if (typeof v !== 'object') return '<span class="j-num">' + esc(String(v)) + '</span>';
+    const arr = Array.isArray(v); const keys = arr ? v.map((_, i) => i) : Object.keys(v);
+    if (!keys.length) return '<span class="j-null">' + (arr ? '[]' : '{}') + '</span>';
+    if (d > 6) return '<span class="j-more">' + (arr ? '[\u2026 ' + keys.length + ']' : '{\u2026}') + '</span>';
+    const shown = keys.slice(0, 200);
+    const rows = shown.map((k) => '<div class="j-row"><span class="j-k">' + esc(String(k)) + '</span>' + jsonTree(v[k], d + 1) + '</div>').join('')
+      + (keys.length > shown.length ? '<div class="j-more">\u2026 ' + (keys.length - shown.length) + ' more</div>' : '');
+    return '<details class="j-node"' + (d < 2 ? ' open' : '') + '><summary>' + (arr ? '[' + keys.length + ']' : '{' + keys.length + '}') + '</summary>' + rows + '</details>';
+  }
+
   const BLOCK = {
     markdown: c => `<div class="vc-md">${md(c.md || c.text || '')}</div>`,
 
@@ -199,10 +280,13 @@
       // highlights those lines, and a selection here is read back as a line range — the two-way span binding
       // (EXPLODE.md §8.3). The number sits in a gutter the selection does not reach, so copying still yields code.
       const lines = String(c.code || '').replace(/\n$/, '').split('\n');
+      // coloured by the chat's own highlighter when the page has it; a line count that disagrees is plain text instead
+      let hl = null; const VC = root.VeraCode;
+      if (!prev && VC && typeof VC.highlight === 'function') { try { hl = splitHl(VC.highlight(String(c.code || '').replace(/\n$/, ''), c.lang)); if (hl.length !== lines.length) hl = null; } catch (e) { hl = null; } }
       const bodyHtml = prev
         ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>`
-        : `<pre class="vc-pre vc-code"><code>${lines.map((l, i) => `<span class="vc-line" data-line="${i + 1}"><i class="vc-lno">${i + 1}</i>${esc(l) || ' '}</span>`).join('\n')}</code></pre>`;
-      return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${head}${bodyHtml}</div>`;
+        : `<pre class="vc-pre vc-code"><code>${lines.map((l, i) => `<span class="vc-line" data-line="${i + 1}"><i class="vc-lno">${i + 1}</i>${hl ? (hl[i] || ' ') : (esc(l) || ' ')}</span>`).join('')}</code></pre>`;
+      return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${head}${bodyHtml}${codeLintHtml(c, key, el)}</div>`;
     },
 
     /* AN EXPLODE ITEM — the structured diagram of something, in the canvas beside what it is a diagram OF
@@ -348,6 +432,50 @@
       return `<div class="vc-loop"><div class="vc-loop-h"><span class="vc-badge st-${esc(st)}">${esc(st)}</span><b>${esc(c.goal || c.title || 'agentic loop')}</b><span class="vc-dim">${done}/${steps.length} steps</span></div>
         <ol class="vc-steps">${steps.map(s => `<li class="${esc((s && s.status) || '')}"><i></i><span>${esc((s && s.n) || '')}</span>${s && s.cap ? `<code>${esc(s.cap)}</code>` : ''}${s && s.ms ? `<em>${esc(s.ms)}</em>` : ''}</li>`).join('')}</ol>
         ${c.run ? `<div class="vc-dim vc-run">run ${esc(c.run)}</div>` : ''}</div>`;
+    },
+
+
+    /* ── elements for what a capability answers with (canvas.run, and the chat's adapter) ────────────────────── */
+    // a nested answer as a tree you can open and close, rather than a wall of braces in a code fence
+    json: (c) => {
+      const data = c && c.data !== undefined ? c.data : c;
+      return '<div class="vc-json" data-w="canvas.json">' + (c && c.title ? '<div class="vc-json-t">' + esc(c.title) + '</div>' : '') + jsonTree(data, 0) + '</div>';
+    },
+    // a record: its fields, name beside value
+    kv: (c) => {
+      const f = (c && (c.fields || c.data)) || {};
+      const rows = Array.isArray(f) ? f : Object.keys(f).map((k) => [k, f[k]]);
+      return '<div class="vc-kv" data-w="canvas.kv">' + (c && c.title ? '<div class="vc-json-t">' + esc(c.title) + '</div>' : '')
+        + rows.slice(0, 80).map((r) => { const v = r && r[1]; const s = v == null ? '\u2014' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+          return '<div class="kv-r"><span class="kv-k">' + esc(String(r && r[0])) + '</span><span class="kv-v' + (v === true ? ' yes' : v === false ? ' no' : '') + '">' + esc(s.slice(0, 600)) + '</span></div>'; }).join('')
+        + '</div>';
+    },
+    // an exchange: who asked, who answered - a model's or an agent's answer is a conversation, not a paragraph
+    chat: (c) => {
+      const ms = Array.isArray(c && c.messages) ? c.messages : [];
+      return '<div class="vc-chat" data-w="canvas.chat">' + (c && c.title ? '<div class="vc-json-t">' + esc(c.title) + '</div>' : '')
+        + (ms.slice(-40).map((m) => { const r = String((m && m.role) || 'assistant'); const t = String((m && (m.text || m.content)) || '');
+          return '<div class="vc-msg ' + (r === 'user' ? 'u' : 'a') + '"><span class="vc-who">' + esc(String((m && m.name) || r)) + '</span><div class="vc-md">' + md(t) + '</div></div>'; }).join('')
+          || '<div class="vc-dim">no messages</div>') + '</div>';
+    },
+    // several items from one answer (a search's pages): each drawn as its own kind, without per-item state
+    _many: (c, size, key, el) => (((c && c.items) || []).map((m) => { const fn = BLOCK[m && m.kind] || BLOCK.note;
+      try { return '<div class="vc-many">' + fn((m && m.content) || {}, 's', '', el) + '</div>'; } catch (e) { return ''; } }).join('')),
+    /* A RESULT: the capability that ran, with what, how it went - and the answer drawn as the element that fits it.
+       Keyed by the cap and its arguments, so "run again" updates this item instead of landing a second one. */
+    result: (c, size, key, el) => {
+      c = c || {}; const cap = String(c.cap || 'capability'); const ok = c.ok !== false && !c.error;
+      const a = c.args && typeof c.args === 'object' ? c.args : {};
+      const args = Object.keys(a).slice(0, 4).map((k) => k + '=' + String(typeof a[k] === 'object' ? JSON.stringify(a[k]) : a[k]).slice(0, 40)).join(' \u00b7 ');
+      const ms = typeof c.ms === 'number' ? (c.ms >= 1000 ? (c.ms / 1000).toFixed(1) + ' s' : c.ms + ' ms') : '';
+      const v = ok ? resultView(c) : null;
+      const head = '<div class="vc-res-h"><i class="dot' + (ok ? ' on' : ' bad') + '"></i><code>' + esc(cap) + '</code><span class="mono">' + esc(args) + '</span><span class="sp"></span>'
+        + (v ? '<span class="vc-badge">' + esc(v.kind === '_many' ? 'items' : v.kind) + '</span>' : '') + (ms ? '<span class="mono">' + esc(ms) + '</span>' : '')
+        + (key ? '<button class="ib" data-act="rerun" title="Run it again - this item updates in place">run again</button>' : '') + '</div>';
+      let inner = '';
+      if (!ok) inner = '<div class="vc-res-err">' + esc(String(c.error || 'the capability failed')) + '</div>';
+      else { const fn = BLOCK[v.kind]; try { inner = fn ? fn(v.content || {}, size, key, el) : jsonTree(c.result, 0); } catch (e) { inner = '<div class="vc-json">' + jsonTree(c.result, 0) + '</div>'; } }
+      return '<div class="vc-res" data-as="' + esc(v ? v.kind : 'error') + '" data-w="canvas.result">' + head + inner + '</div>';
     },
 
     schedule: c => `<div class="vc-stub"><span class="vc-badge">when</span>
@@ -837,6 +965,43 @@
   #live .lv[data-kind="term"],#live .lv[data-kind="preview"],#live .lv[data-kind="panel"]{background:#000;border-radius:4px}
   #live .lv > *{display:block;width:100%;height:100%}
   #live iframe.vc-pframe{border:0;background:var(--s1,var(--bg1,#15181d))}
+  /* the chat's syntax colours, inside this shadow root (a rule of the page cannot reach it) */
+  .vc-code .hl-kw{color:var(--acc,#5a9e8f);font-weight:600}.vc-code .hl-str{color:var(--acc2,#8fb87a)}.vc-code .hl-com{color:var(--dim,#6b7480);font-style:italic}
+  .vc-code .hl-num{color:var(--acc3,#c9955a)}.vc-code .hl-fn,.vc-code .hl-type{color:var(--acc4,#7aa2d6)}.vc-code .hl-tag{color:var(--acc,#5a9e8f)}.vc-code .hl-attr{color:var(--acc2,#8fb87a)}
+  .vc-code .hl-add{background:rgba(95,207,154,.14);color:var(--acc2,#8fb87a)}.vc-code .hl-del{background:rgba(232,112,107,.14);color:var(--err,#c96b6b)}.vc-code .hl-hunk{color:var(--acc,#5a9e8f)}
+  .vc-lint{font:10px/1.5 var(--mono,ui-monospace,monospace);padding:3px 8px;border-top:1px solid var(--border,#2a2f37);color:var(--ok,#8fb87a)}
+  .vc-lint.warn{color:#d8a03a}.vc-lint.err{color:var(--err,#c96b6b)}.vc-lint b{font-weight:400;color:var(--dim,#6b7480)}.vc-lint i{font-style:normal;color:var(--dim,#6b7480)}
+  .vc-lint-d{font:10px/1.5 var(--mono,ui-monospace,monospace);padding:1px 8px}.vc-lint-d.err{color:var(--err,#c96b6b)}.vc-lint-d.warn{color:#d8a03a}
+  /* results, and the elements they are drawn as */
+  .vc-res-h{display:flex;align-items:center;gap:6px;font-size:10.5px;padding:2px 0 6px;min-width:0}
+  .vc-res-h code{font:10.5px var(--mono,ui-monospace,monospace);color:var(--fg,#dce1e8)}
+  .vc-res-h .mono{font:9.5px var(--mono,ui-monospace,monospace);color:var(--dim,#6b7480);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .vc-res-h .sp{flex:1}.vc-res-h .dot{width:7px;height:7px;border-radius:50%;background:var(--dim,#6b7480);flex:0 0 auto}.vc-res-h .dot.on{background:var(--ok,#8fb87a)}.vc-res-h .dot.bad{background:var(--err,#c96b6b)}
+  .vc-res-err{font:11px/1.5 var(--mono,ui-monospace,monospace);color:var(--err,#c96b6b);white-space:pre-wrap;word-break:break-word}
+  .vc-json,.vc-kv{font:11px/1.55 var(--mono,ui-monospace,monospace)}.vc-json-t{font:600 11px system-ui,sans-serif;margin:0 0 4px}
+  .vc-json details{margin-left:2px}.vc-json summary{cursor:pointer;color:var(--dim,#6b7480);list-style:none}.vc-json summary::before{content:'\u25b8 ';font-size:9px}.vc-json details[open] > summary::before{content:'\u25be '}
+  .vc-json .j-row{display:flex;gap:6px;padding-left:12px;min-width:0}.vc-json .j-k{color:var(--acc4,#7aa2d6);flex:0 0 auto}.vc-json .j-k::after{content:':'}
+  .vc-json .j-str{color:var(--acc2,#8fb87a);word-break:break-word}.vc-json .j-num{color:var(--acc3,#c9955a)}.vc-json .j-null,.vc-json .j-more{color:var(--dim,#6b7480)}
+  .vc-kv .kv-r{display:grid;grid-template-columns:minmax(80px,38%) 1fr;gap:8px;padding:2px 0;border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 50%,transparent)}
+  .vc-kv .kv-k{color:var(--dim,#6b7480);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vc-kv .kv-v{word-break:break-word}.vc-kv .kv-v.yes{color:var(--ok,#8fb87a)}.vc-kv .kv-v.no{color:var(--err,#c96b6b)}
+  .vc-chat{display:flex;flex-direction:column;gap:6px}.vc-msg{border-radius:8px;padding:5px 8px;background:var(--s2,var(--bg2,#1a1c20))}.vc-msg.u{background:color-mix(in srgb,var(--acc,#5a9e8f) 12%,transparent)}
+  .vc-who{display:block;font:600 9px system-ui,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--dim,#6b7480);margin-bottom:2px}
+  .vc-many + .vc-many{margin-top:6px}
+  /* MAXIMISED: the item takes the canvas and stays there, fixed, until it is restored */
+  .mx{font-size:10px;color:var(--dim,#6b7480);flex:0 0 auto;cursor:pointer;padding:0 2px}
+  .it:hover .it-hd .mx{color:var(--fg,#dce1e8)}.mx.on{color:var(--acc,#5a9e8f)!important}
+  .mx.solo{position:absolute;right:20px;top:3px;z-index:3;opacity:0;transition:opacity .15s}
+  .it:hover > .mx.solo,.it:focus-within > .mx.solo,.it.maxed > .mx.solo{opacity:.8}
+  .it.maxed{z-index:8!important;display:flex;flex-direction:column;background:var(--s1,var(--bg1,#15181d))!important;box-shadow:0 12px 40px rgba(0,0,0,.45),0 0 0 1px var(--acc,#5a9e8f)!important;transition:none!important;border-radius:8px}
+  .it.maxed > .it-bd{max-height:none!important;flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:auto}
+  .it.maxed > .it-bd > *{flex:1 1 auto;min-height:0}
+  .it.maxed .vc-codewrap,.it.maxed .vc-diag,.it.maxed .vc-wid,.it.maxed .vc-xp,.it.maxed .vc-term,.it.maxed .vc-panel,.it.maxed .vc-res{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
+  .it.maxed .vc-live{flex:1 1 auto;height:auto!important;min-height:180px}
+  .it.maxed .vc-pre{max-height:none!important;flex:1 1 auto;overflow:auto}
+  :host([data-maxed]) #body{overflow:hidden!important}
+  :host(:not([stage])) .it.maxed{position:sticky;top:0;height:calc(var(--vc-vh,560px) - 16px)}
+  /* a preview being redrawn loads BEHIND the one on screen and takes its place when it has painted - never a blank frame */
+  #live .lv > iframe.vc-pnext{position:absolute;left:0;top:0;opacity:0;pointer-events:none}
 #live .lv[data-kind="widget"]{background:transparent}#live .lv vera-widget{display:block;width:100%;height:100%}
 .vc-wid{display:flex;flex-direction:column;gap:4px}.vc-wid .vc-cap{font-size:9.5px;color:var(--t3,var(--dim,#6b7480))}
   .vc-th{display:flex;align-items:center;gap:8px;min-height:24px;padding:2px 0 6px;font-size:11px;color:var(--t1,var(--fg,#dce1e8))}
@@ -1262,7 +1427,7 @@
   const ADD_WHAT = { note: 'adds a note item — pick its shape', terminal: 'adds a terminal item — a live shell on the host you pick; a typed id or a blank one connects later', panel: 'adds a panel item — the panel\'s page in its frame, driven over the bridge', widget: 'adds a widget item — its form, source and size from the WidgetConfig sheet', chart: 'adds a chart — a series form (trace · bars · sparkline…) from the WidgetConfig sheet' };
   const seedName = (k) => k.n === 'chart' ? 'a trace chart' : k.n === 'widget' ? 'a widget frame' : 'a ' + k.n;
   const seedWhat = (k) => k.kind + ' item · ' + Object.keys(k.content || {}).filter((x) => x !== 'title').join(' · ');
-  const KIND_GLYPH = { note: '✎', markdown: 'MD', code: '{}', explode: '✵', session: '>_', table: 'TB', widget: 'WG', loop: '⟳', diagram: '◇', image: '▣', schedule: '⏰', html: '<>', suggest: '✦', notebook: 'NB', panel: '▥' };
+  const KIND_GLYPH = { note: '✎', markdown: 'MD', code: '{}', explode: '✵', session: '>_', table: 'TB', widget: 'WG', loop: '⟳', diagram: '◇', image: '▣', schedule: '⏰', html: '<>', suggest: '✦', notebook: 'NB', panel: '▥', result: '\u21b3', json: '{\u2026}', kv: 'KV', chat: '\u275d' };
   const glyphOf = t => KIND_GLYPH[t] || String(t || '?').slice(0, 2).toUpperCase();
   const hhmm = ts => { if (!ts) return ''; const d = new Date(ts); if (isNaN(d.getTime())) return String(ts).slice(0, 5); const p = n => (n < 10 ? '0' : '') + n; return p(d.getHours()) + ':' + p(d.getMinutes()); };
   /* the decision an item carries — what this turn is waiting on: content.ask {question, options, why, answer}, or a
@@ -1372,7 +1537,7 @@
   }
   /* a block's title (pure): the content's own, else — a keyless block of an agent's canvas — its first line, else its kind */
   function blockTitle(b) {
-    const c = (b && b.content) || {}; const own = c.title || c.name || c.goal || c.filename || c.caption || c.widget || c.panel;
+    const c = (b && b.content) || {}; const own = c.title || c.name || c.goal || c.filename || c.caption || c.widget || c.panel || c.cap;
     if (own) return String(own);
     if (b && b._bid) { const first = String(c[textFieldOf(b.type)] || '').split('\n').map(s => s.trim()).find(Boolean) || ''; const line = first.replace(/^#+\s*|^[-*]\s+\[.\]\s*|^[-*]\s+|\*\*/g, '').slice(0, 60); return line || ({ diagram: 'Diagram', explode: 'Explode', table: 'Table', image: 'Image', code: 'Code', markdown: 'Text', note: 'Note', html: 'HTML' }[b.type] || String(b.type || 'block')); }
     return String(b && b.key ? String(b.key).split(':').slice(1).join(':') : '') || String((b && b.type) || 'block');
@@ -1524,7 +1689,8 @@
           if (ww && ww !== this._stageW) this._placeNow();
         }); this._stageRO.observe(st); } catch (e) { /* no observer: the host still drives placement */ } }
       this._stageW = W;
-      const cards = [...st.querySelectorAll('.it')];
+      const maxCard = this._max ? st.querySelector('.it.maxed') : null;   // placed on its own, below
+      const cards = [...st.querySelectorAll('.it')].filter((c) => c !== maxCard);
       /* what each card wants, read off the card and independent of the count — so the count can be chosen from it */
       const descOf = (c) => ({ type: c.dataset.type || '', size: c.dataset.size || 'm', fuse: c.dataset.fuse || '',
         folded: c.classList.contains('compact') || c.classList.contains('overfold'),
@@ -1630,6 +1796,12 @@
       /* THE STAGE IS THE ITEMS' OWN HEIGHT, not the transcript's. It used to be made as tall as the whole transcript
          so the column could be driven from the transcript's scrollTop — the projection this replaces. */
       st.style.height = (P.mode === 'stage' ? Math.max(P.height, (this._turnsH || 0) + 40) : P.height) + 'px';
+      /* the maximised item: the whole width of the stage and the height of the column's view, where the column is
+         scrolled to - and the column does not scroll while it is up (:host([data-maxed]) #body), so it stays there */
+      if (maxCard && body) { const vis = Math.max(pad, st.offsetTop - body.scrollTop);   // where the visible area starts under the sticky heads, from the column's top
+        const mtop = Math.max(0, body.scrollTop + vis - st.offsetTop) + 4; const mh = Math.max(180, (VH || 420) - vis - 12);
+        maxCard.style.left = '0px'; maxCard.style.top = mtop + 'px'; maxCard.style.width = stageW + 'px'; maxCard.style.height = mh + 'px'; maxCard.style.maxHeight = ''; maxCard.classList.remove('capped', 'overfold');
+        if ((parseInt(st.style.height, 10) || 0) < mtop + mh + 8) st.style.height = (mtop + mh + 8) + 'px'; }
       // nothing overflows: the column has no business being scrolled somewhere (it may have been, before this).
       // Never in strict, where the scroll is the transcript's and setView has just written it.
       if (body && !strict && P.mode !== 'packed' && body.scrollTop && st.offsetHeight <= body.clientHeight) body.scrollTop = 0;
@@ -1706,6 +1878,10 @@
       const byOrder = arr => arr.slice().sort((a, b) => ((a.layout && a.layout.order) || 0) - ((b.layout && b.layout.order) || 0));
       const view = plainDoc ? byOrder(blocks.filter(Boolean)).map(b => b.key ? b : Object.assign({}, b, { key: 'blk:' + b.id, _bid: true, state: 'now', size: b.size || (b.meta && b.meta.size) || 'm' })) : blocks;
       const keyed = view.filter(b => b && b.key);
+      // THE ITEM YOU MAXIMISED stays maximised, per canvas, until you restore it - or until it is no longer on show
+      if (this._maxFor !== this.canvasId) { this._maxFor = this.canvasId; try { this._max = localStorage.getItem('vera:canvas:max:' + this.canvasId) || ''; } catch (e) { this._max = ''; } }
+      if (this._max && !keyed.some((b) => String(b.key) === this._max && ['now', 'pinned'].indexOf(b.state || 'now') >= 0)) this._max = '';
+      if (this._max) this.dataset.maxed = '1'; else delete this.dataset.maxed;
       const plain = view.filter(b => !(b && b.key));
       const by = st => keyed.filter(b => (b.state || 'now') === st);
       const newest = arr => plainDoc ? byOrder(arr) : arr.slice().sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
@@ -1790,7 +1966,8 @@
         const from = a && a.from ? String(a.from) : '';
         // an item added by hand: yours, level with the turn it was added beside, related to no turn (no run, never aged)
         const beside = a && !mid ? String(a.beside || '') : ''; const yours = !!(a && a.origin === 'you' && !mid);
-        const open = this._open.has(key) || editing;
+        const open = this._open.has(key) || editing || this._max === key;   // a maximised item is open
+        const maxed = this._max === key;
         const aged = isAged(mid, focusMid, order) && !(F && F.has(key)) && b.state !== 'pinned';
         const hovered = this._hovKey === key && (tier === 'hover' || aged);
         const fresh = !!mid && mid === focusMid;                                    // the turn in view produced it: open, in every tier
@@ -1817,12 +1994,12 @@
         // what is fused INTO this one: drawn as panes of its body, so the two read as one thing
         const g = groupOf(b);
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
-        const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '');
+        const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
-          ${ownHead && !compact ? `<span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>`
+          ${ownHead && !compact ? `<span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>`
             : `<div class="it-hd"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
-            ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
+            ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="mx${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
           <div class="it-bd${panes.length ? ' fu fu-' + esc(g.layout) : ''}">${inner}${panes.map(paneHtml).join('')}</div>
           <div class="it-ft" data-w="canvas.item.rail"><span class="it-a">
               ${xplodable ? `<button data-act="explode" class="${xploded ? 'on' : ''}" title="${xploded ? 'Back to the source alone — the diagram goes' : 'See it as a structured diagram, bound to this item by span'}">${xploded ? 'source' : 'graph'}</button>` : ''}
@@ -1904,6 +2081,13 @@
       }
       this._bind(body);
       if (stage) this._placeNow();
+      /* ⛔ THE COLUMN STAYS WHERE THE READER LEFT IT. Replacing the items' markup empties the stage for a moment, the
+         browser clamps the column's scroll to the top, and on the stage nothing ever put it back - so every redraw
+         threw the reader to the top: opening an item in place, a new message, the turn in view changing (which is
+         what the context tracking does on every scroll), a focus change (owner, 2026-09-27: "the double arrow make
+         the canvas scroll to the top", "new messages in the chat also make the canvas scroll to the top"). Strict
+         alignment is the exception: there the transcript owns the column's scroll and setView has just written it. */
+      if (stage && !this.strictAlign() && body.scrollTop !== keepTop) body.scrollTop = Math.min(keepTop, Math.max(0, body.scrollHeight - body.clientHeight));
       this._mountLive(body);
       if (this._editKey) { const ta = body.querySelector('.it[data-key="' + this._editKey.replace(/"/g, '\\"') + '"] textarea'); if (ta && !this._editFocused) { this._editFocused = true; try { ta.focus(); } catch (e) {} } }
       if (body.querySelector('vera-mermaid')) ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid');
@@ -1990,6 +2174,16 @@
       try { this.dispatchEvent(new CustomEvent('vera:canvas:open', { bubbles: true, detail: { key, open: this._open.has(key) } })); } catch (e) {}
       if (this._doc) this.render(this._doc);
     }
+    _toggleMax(key) {
+      const body = this.shadowRoot.getElementById('body');
+      if (this._max !== key && body) this._maxTop = body.scrollTop;   // where the reader was, for when it is restored
+      const back = this._max === key; this._max = back ? '' : key;
+      try { const k = 'vera:canvas:max:' + this.canvasId; if (this._max) localStorage.setItem(k, this._max); else localStorage.removeItem(k); } catch (e) {}
+      if (this._max) this.dataset.maxed = '1'; else delete this.dataset.maxed;
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:max', { bubbles: true, detail: { key, max: this._max === key } })); } catch (e) {}
+      if (this._doc) this.render(this._doc);
+      if (back && body && this._maxTop != null) { body.scrollTop = this._maxTop; this._maxTop = null; }
+    }
     _blockOf(key) { const bl = (this._doc && this._doc.blocks) || []; key = String(key); return bl.find(b => b && b.key != null && String(b.key) === key) || (key.startsWith('blk:') ? bl.find(b => b && !b.key && String(b.id) === key.slice(4)) : null) || null; }
     /* how a write names the block: the resolver's key, or — a keyless block of an agent's canvas — its block_id */
     _bidOf(key) { const b = this._blockOf(key); return b && !b.key ? String(b.id) : ''; }
@@ -2036,6 +2230,8 @@
         return this.call('canvas.move', { block_id: String(b.id), order: j });
       }
       if (act === 'open') return this._toggleOpen(key);
+      if (act === 'max') return this._toggleMax(key);
+      if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026'; return this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }); }
       // the banner's shelves (parked · hidden): the button opens its own popover. 'park' on an ITEM parks that item;
       // these are the shelves those items went to, so they carry their own act rather than sharing one.
       if (act === 'hid' || act === 'parkpop') { const pop = btn.parentElement && btn.parentElement.querySelector('.hidpop'); if (pop) pop.hidden = !pop.hidden; return; }
@@ -2174,7 +2370,7 @@
           else if (kind === 'preview') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);
           inner.setAttribute('sandbox', 'allow-scripts');   // no network, no cookies, no same-origin: it only draws
           // a code item previews its code; an html item previews the page it IS (its content field is `html`)
-          h.textContent = ''; const cc = this._contentOf(key) || {}; inner.srcdoc = previewDoc(h.dataset.lang || cc.lang, cc.code || cc.html || ''); }
+          h.textContent = ''; const cc = this._contentOf(key) || {}; const pd = previewDoc(h.dataset.lang || cc.lang, cc.code || cc.html || ''); inner._doc = pd; inner.srcdoc = pd; }
           else if (kind === 'explode') { inner = document.createElement('vera-graph-embed'); h.textContent = '';
             ensureLib('/ui/vera-graph-embed.js', 'vera-graph-embed');
             this._explodeAttrs(inner, key);
@@ -2186,12 +2382,20 @@
         } else if (kind === 'widget') { const inner = el.firstChild, rc = this._contentOf(key); const sz = h.dataset.size || 'm'; if (h.textContent) h.textContent = ''; if (inner && inner.getAttribute('size') !== sz) inner.setAttribute('size', sz); try { const j = JSON.stringify((rc && (rc.record || rc)) || null); if (inner && j && inner._recJson !== j) { inner._recJson = j; inner.record = rc.record || rc; } } catch (e) {}
           this._widgetFit(key, inner);   // a re-rendered slot is a fresh face: its own width again
         } else if (kind === 'mermaid') { if (h.textContent) h.textContent = ''; this._mermaidInto(el.firstChild, key); this._diagramGrew(key, el.firstChild);   // a re-rendered slot is new markup: the drawn diagram's height again
-        } else if (kind === 'preview') { if (h.textContent) h.textContent = ''; const f = el.firstChild, cc = this._contentOf(key) || {};
-          const doc = previewDoc(h.dataset.lang || cc.lang, cc.code || ''); if (f && f._doc !== doc) { f._doc = doc; f.srcdoc = doc; }
+        } else if (kind === 'preview') { if (h.textContent) h.textContent = ''; const cc = this._contentOf(key) || {};
+          /* an html item's page is its `html`, not `code` - reading only `code` redrew every html item as an empty page on
+             its first update; and the redraw is double-buffered (_previewSwap) so there is never a blank frame */
+          this._previewSwap(el, previewDoc(h.dataset.lang || cc.lang, cc.code || cc.html || ''));
         } else if (kind === 'explode') { if (h.textContent) h.textContent = ''; this._explodeAttrs(el.firstChild, key);
         } else if (kind === 'term' && h.dataset.ws) { const t = el.firstChild; if (t && t.getAttribute('ws') !== h.dataset.ws) { t.setAttribute('ws', h.dataset.ws); try { t.destroy && t.destroy(); t.connect(h.dataset.ws); } catch (e) {} } }
       });
-      Object.keys(L).forEach((k) => { if (!body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]')) { try { L[k].remove(); } catch (e) {} delete L[k]; } });
+      /* a PREVIEW whose slot has gone for a moment - its item folded to a header line as the turn in view moved, a tier
+         change - is kept, hidden, for a while rather than destroyed: coming back it would be a NEW frame, and a new frame
+         is a blank one until its page paints (the flicker the owner saw as the chat streamed on). Anything else goes. */
+      Object.keys(L).forEach((k) => { const lv = L[k];
+        if (body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]')) { lv._goneAt = 0; return; }
+        if (lv.dataset.kind === 'preview' && !(lv._goneAt && Date.now() - lv._goneAt > 15000)) { lv._goneAt = lv._goneAt || Date.now(); lv.style.display = 'none'; return; }
+        try { lv.remove(); } catch (e) {} delete L[k]; });
       // the slots move after a render (placement, fonts, a frame's load): every slot is observed, and a slow tick
       // catches what no observer reports, only while live elements exist
       try { if (this._liveRO) body.querySelectorAll('#items .vc-live[data-live], #items .it').forEach((n) => this._liveRO.observe(n)); } catch (e) {}
@@ -2270,10 +2474,38 @@
         if (sg && sg.lightSpan) sg.lightSpan({ line: l0, line_end: l1 }); });
       try { this.dispatchEvent(new CustomEvent('vera:canvas:source:select', { bubbles: true, detail: { key: codeKey, line: l0, line_end: l1 } })); } catch (e) {}
     }
+    /* ⛔ A PREVIEW IS NEVER BLANKED TO BE REDRAWN. Setting srcdoc on the frame on screen unloads it, and the frame is
+       empty - white, then the page's own dark ground - until the new document paints: an html item flickered
+       black/white on every streamed beat, and kept flickering while the chat streamed on after it (owner,
+       2026-09-27). The next document loads in a second frame BEHIND the one on screen and replaces it once it has
+       painted; while one is loading only the newest document is kept, and a swap is at most every half second. */
+    _previewSwap(wrap, doc) {
+      if (!wrap) return;
+      const shown = () => [...wrap.querySelectorAll(':scope > iframe.vc-pframe')].filter((f) => !f._pending).pop() || null;
+      const cur0 = shown();
+      if (wrap._want === doc || (wrap._want === undefined && cur0 && cur0._doc === doc)) return;
+      wrap._want = doc;
+      if (wrap._busy) return;
+      const go = () => {
+        const d = wrap._want; const cur = shown();
+        if (cur && cur._doc === d) { wrap._busy = false; return; }
+        wrap._busy = true; const t0 = Date.now();
+        const nf = document.createElement('iframe'); nf.className = 'vc-pframe vc-pnext'; nf.setAttribute('sandbox', 'allow-scripts');
+        nf.setAttribute('title', (cur && cur.getAttribute('title')) || ''); nf._pending = true; nf._doc = d;
+        nf.addEventListener('load', () => { requestAnimationFrame(() => requestAnimationFrame(() => {
+          nf._pending = false; nf.classList.remove('vc-pnext');
+          wrap.querySelectorAll(':scope > iframe.vc-pframe').forEach((f) => { if (f !== nf) f.remove(); });
+          setTimeout(() => { wrap._busy = false; if (wrap._want !== d) go(); }, Math.max(0, 500 - (Date.now() - t0)));
+        })); }, { once: true });
+        nf.srcdoc = d; wrap.appendChild(nf);
+      };
+      go();
+    }
     _liveLayout() {
       const L = this._live; if (!L) return; const body = this.shadowRoot.getElementById('body'); if (!body) return;
       const B = body.getBoundingClientRect();
       Object.keys(L).forEach((k) => {
+        if (this._max && k !== this._max) { L[k].style.display = 'none'; return; }   // a maximised item covers the column
         const el = L[k]; const h = body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]');
         if (!h || !h.getClientRects().length) { el.style.display = 'none'; return; }
         const r = h.getBoundingClientRect(); const w = Math.max(0, Math.round(r.width)), ht = Math.max(0, Math.round(r.height));
@@ -2427,7 +2659,7 @@
       return this.call('canvas.update', { key, content: next });
     }
     _sid() { return String((this._doc && this._doc.session) || this.getAttribute('session-id') || ''); }
-    _contentOf(key) { const b = this._blockOf(key); return b ? Object.assign({}, b.content || {}) : null; }
+    _contentOf(key) { const b = this._blockOf(key); if (!b) return null; if (b.type === 'result') { const v = resultView(b.content || {}); return Object.assign({}, (v && v.content) || {}); } return Object.assign({}, b.content || {}); }   // a result's live slot is the element it is drawn as
     _readout(key, obj) { this._pq = this._pq || {}; let text = ''; try { text = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 1); } catch (e) { text = String(obj); } this._pq[key] = { text: String(text).slice(0, 4000) }; if (this._doc) this.render(this._doc); }
     /* the add bar's seed: the kind's own content as an item, yours, beside the turn in view */
     _addSeed(k) {
@@ -2644,7 +2876,7 @@
     }
   }
 
-  const api = { place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 6 };
+  const api = { place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {

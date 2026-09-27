@@ -9,8 +9,8 @@ let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 
 
 /* ── one header ──────────────────────────────────────────────────────────────────────────────────────────────── */
 t('the kinds whose drawer draws its own head are named', /const OWN_HEAD = new Set\(\['code', 'html', 'explode', 'session', 'diagram', 'notebook', 'panel'\]\);/.test(SRC));
-t('the card does not draw a second header over them — only a corner expand',
-  /\$\{ownHead && !compact \? `<span class="xp solo" data-act="open"/.test(SRC) && /\.xp\.solo\{position:absolute/.test(SRC));
+t('the card does not draw a second header over them — only the corner controls (maximise, expand)',
+  /\$\{ownHead && !compact \? `<span class="mx solo[^`]*?<span class="xp solo" data-act="open"/.test(SRC) && /\.xp\.solo\{position:absolute/.test(SRC));
 t('a FOLDED item keeps the card header, because then it is the whole item', /ownHead && !compact/.test(SRC));
 t('the expand mark is there when you are on the item, not always', /\.it:hover > \.xp\.solo,\.it:focus-within > \.xp\.solo\{opacity:\.8\}/.test(SRC));
 

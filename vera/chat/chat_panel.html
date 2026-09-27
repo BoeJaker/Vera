@@ -6874,6 +6874,12 @@ IMPORTANT:
       return { kind:'session', n:cmd.slice(0,52)||'output', k:'term', col:'#7dd3fc', d:'terminal',
                content:{ command:cmd, output:out.slice(0,16000) } }; })());
 
+  /* A FAILED ANSWER is a failure, said once - not a record of {ok:false, error} drawn as data. After the terminal, so
+     a command that failed still shows its stderr. */
+  cvAdapter('error',
+    (c)=>!!(c&&typeof c==='object'&&!Array.isArray(c)&&c.ok===false&&(typeof c.error==='string'||typeof c.message==='string')),
+    (c,ctx)=>({ kind:'note', n:((ctx&&ctx.cap)||'capability')+' failed', k:'error', col:'var(--err)', d:'failed',
+                content:{ text:'\u2717 '+String(c.error||c.message).slice(0,2000), author:String((ctx&&ctx.cap)||'') } }));
   // pages, with addresses: a reading list, not a grid of truncated cells
   cvAdapter('sources', (c)=>!!_cvCapSources(c), (c)=>_cvCapSources(c));
 
@@ -6893,6 +6899,20 @@ IMPORTANT:
       return { kind:'image', n:String(c.title||'image'), k:'image', col:'#e879f9', d:'image',
                content:{ url, alt:String(c.title||''), caption:String(c.caption||'') } }; });
 
+  /* CODE a cap wrote or read - code.author, fs.read, a file's content - is a code item: coloured, linted, previewable,
+     explodable. It was going to prose (or a JSON dump) with its newlines flattened. */
+  const _cvExtLang=(p)=>{ const m=String(p||'').toLowerCase().match(/\.([a-z0-9]+)$/); const e=m?m[1]:''; return ({py:'python',js:'javascript',mjs:'javascript',cjs:'javascript',ts:'typescript',tsx:'tsx',jsx:'jsx',sh:'bash',bash:'bash',yml:'yaml',md:'markdown',rs:'rust',rb:'ruby',kt:'kotlin',h:'c',hpp:'cpp',cc:'cpp'})[e]||e; };
+  cvAdapter('code',
+    (c)=>!!(c&&typeof c==='object'&&!Array.isArray(c)&&((typeof c.code==='string'&&c.code.trim())||(typeof c.content==='string'&&c.content.trim()&&(c.path||c.filename||c.file)))),
+    (c)=>{ const code=String(typeof c.code==='string'&&c.code.trim()?c.code:c.content); const p=String(c.path||c.filename||c.file||'');
+      const lang=String(c.lang||c.language||_cvExtLang(p)||'');
+      return { kind:'code', n:(p?p.split('/').pop():(lang||'code'))+' \u00b7 '+code.split('\n').length+' lines', k:'code', col:'#fb923c', d:'code',
+               content:{ code:code.slice(0,120000), lang, filename:p?p.split('/').pop():'', path:p } }; });
+  // a DIFF is code in the diff language: its additions and removals coloured, not a paragraph of + and -
+  cvAdapter('diff',
+    (c)=>!!(c&&typeof c==='object'&&!Array.isArray(c)&&((typeof c.diff==='string'&&c.diff.trim())||(typeof c.patch==='string'&&c.patch.trim()))),
+    (c)=>{ const d=String(c.diff||c.patch); return { kind:'code', n:'diff \u00b7 '+d.split('\n').length+' lines', k:'code', col:'#fb923c', d:'diff',
+      content:{ code:d.slice(0,120000), lang:'diff', filename:String(c.path||c.file||'') } }; });
   /* A LIST OF DATED THINGS WITH TITLES IS A MONTH. The table rule below would draw the diary as a grid of
      truncated cells - id, title, start, end, all_day, location, source, colour - which is the data and not the
      answer to "what have I got on". Before the table, after the terminal. */
@@ -6913,6 +6933,17 @@ IMPORTANT:
   // a shape the chat's own widget rule recognises IS that chart
   cvAdapter('widget', (c,ctx)=>!!_cvCapWidget(c,ctx.cap,ctx.args), (c,ctx)=>_cvCapWidget(c,ctx.cap,ctx.args));
 
+  /* AN ANSWER TO A QUESTION is an exchange - a model's or another agent's reply is a conversation, and drawn as one
+     the question stays next to what it answered. Before prose, so an answer is not mistaken for a report. */
+  cvAdapter('chat',
+    (c,ctx)=>{ const a=_cvStr(c,['answer','response','reply','completion']); if(!a) return false;
+      const q=_cvStr(c,['question','prompt','query','message'])||_cvStr((ctx&&ctx.args)||{},['question','prompt','query','message','goal']);
+      return !!q; },
+    (c,ctx)=>{ const a=_cvStr(c,['answer','response','reply','completion']);
+      const q=_cvStr(c,['question','prompt','query','message'])||_cvStr((ctx&&ctx.args)||{},['question','prompt','query','message','goal']);
+      const who=String(c.agent||c.model||c.name||(ctx&&ctx.cap)||'assistant');
+      return { kind:'chat', n:q.replace(/\s+/g,' ').slice(0,52), k:'chat', col:'#5eead4', d:'exchange \u00b7 '+who,
+               content:{ title:'', messages:[{ role:'user', text:q.slice(0,4000) }, { role:'assistant', name:who, text:a.slice(0,20000) }] } }; });
   /* PROSE a cap wrote - a report, a summary, a note. Long text is the deliverable itself and was being fenced
      into a code block, which is the one drawing that makes writing unreadable. Last of the rules, because almost
      every result carries SOME string and this must never take one off a table or a terminal. */
@@ -6923,6 +6954,29 @@ IMPORTANT:
       const first=v.replace(/^#+\s*/,'').split('\n').find(x=>x.trim())||'note';
       return { kind:'markdown', n:first.slice(0,52), k:'prose', col:'var(--acc2)', d:'written',
                content:{ md:v.slice(0,20000) } }; });
+
+  /* ── what a result is when none of the above - added 2026-09-27 so every answer lands as an ELEMENT that fits it
+     rather than as its own JSON pasted into a code fence (owner: "caps need to be able to return results to the canvas
+     via the appropriate elements"). They run after prose, which keeps its place: a report is still a document. ── */
+  // a record: a flat object of a handful of fields is its fields, name beside value
+  cvAdapter('kv',
+    (c)=>{ if(!c||typeof c!=='object'||Array.isArray(c)) return false; const ks=Object.keys(c);
+      return ks.length>=2&&ks.length<=24&&ks.every(k=>c[k]==null||typeof c[k]!=='object'); },
+    (c,ctx)=>({ kind:'kv', n:(ctx&&ctx.cap)||'record', k:'kv', col:'#94a3b8', d:'record \u00b7 '+Object.keys(c).length+' fields',
+                content:{ title:String((ctx&&ctx.cap)||''), fields:c } }));
+  // anything else with structure: a tree you can open, not braces in a fence
+  cvAdapter('json',
+    (c)=>!!(c&&typeof c==='object'&&(Array.isArray(c)?c.length:Object.keys(c).length)),
+    (c,ctx)=>({ kind:'json', n:(ctx&&ctx.cap)||'result', k:'json', col:'#94a3b8', d:'data', content:{ title:String((ctx&&ctx.cap)||''), data:c } }));
+  // a bare string: prose when it is long, a note when it is a line
+  cvAdapter('text',
+    (c)=>typeof c==='string'&&!!c.trim(),
+    (c)=>c.length>200||c.indexOf('\n')>=0
+      ? { kind:'markdown', n:c.replace(/^#+\s*/,'').split('\n').find(x=>x.trim()).slice(0,52), k:'prose', col:'var(--acc2)', d:'written', content:{ md:c.slice(0,20000) } }
+      : { kind:'note', n:c.slice(0,52), k:'note', col:'var(--acc2)', d:'text', content:{ text:c } });
+  /* the canvas element asks this registry what a RESULT item is (canvas.run lands the raw answer; the element draws
+     it through the same rules the harvest uses), so there is one reading of an answer, not two */
+  try{ window.VeraCanvasAdapt=_cvAdapt; }catch(_){}
 
   /* ═══ THE HOOKS ═════════════════════════════════════════════════════════════════════════════════════════════
      The canvas is not a second place to render a reply. It is a working area, and it is kept by two hands: the
@@ -7015,6 +7069,7 @@ IMPORTANT:
     if(k==='html') return 'm';     // a rendered page in a letterbox is the squash this set out to fix
     if(k==='prose') return 'm';    // a report IS the deliverable; it is not a footnote to itself
     if(k==='calendar') return 'm';  // a month grid in a small item is a row of grey squares
+    if(k==='code'||k==='json'||k==='chat') return 'm';   // a file, a tree and an exchange are read, not glanced at
     return 's';
   }
   /* ── THE CANVAS KEEPS UP WITH THE REPLY, not with the end of it ───────────────────────────────────────────────
@@ -8087,6 +8142,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       L.push('- Widgets IN the reply (a live figure as part of the message): emit a ```widget fenced block holding one JSON record — { "form": "<one of: '+_widgetForms().join('|')+'>", "title": "…", "size": "xs|s|m|l", and EITHER "source": "<a read-only capability, e.g. obs.health>", "args": {…}, "window": "1h", "refresh": 30 (the chat reads the source and draws it, re-reading every "refresh" seconds) OR the data inline: "data": {"value":62,"min":0,"max":100,"unit":"%"} for gauge|radial|dial|meter|counter|level|tank, {"name":number,…} for thermo|bars|donut|ring|pills, [{"t":…,"v":…},…] for trace|area|sparkline, [{"col":"val",…},…] rows for table|rows|cards|list|ranked|kv }. One fence per figure (three figures = three fences). Say what each shows in one line; do not narrate the record.');
       L.push('- Live HTML: a self-contained widget/mini-UI/animation: [[cap:render.html {'+sidArg+'"title":"…","html":"<!doctype html>…","popout":false}]] (popout:true floats it over the UI). After building a panel with ui.panel.create, show it with [[cap:render.screen {'+sidArg+'"panel_id":"…"}]].');
       L.push('- THE SESSION CANVAS (the column beside this chat; "the canvas", "my canvas", "put it on the canvas"): everything visual in your reply is lifted onto it automatically — each ```widget fence, each ```mermaid fence, each markdown table, code block and image becomes an item anchored to this turn. So to put a widget, a chart or a table on the canvas, WRITE IT IN THE REPLY as that fence/table — never only describe it, and do not use canvas.create/append/show for it. To place or update an item without showing it in the reply, write one directive per item: ⟦canvas.add {"kind":"widget","key":"widget:gpu","content":{"form":"gauge","title":"GPU","data":{"value":62,"min":0,"max":100,"unit":"%"}}}⟧ (content = the same record a widget fence holds) · ⟦canvas.add {"kind":"table","key":"table:hosts","content":{"columns":["host","cpu %"],"rows":[["a",12],["b",40]],"caption":"…"}}⟧ · ⟦canvas.add {"kind":"diagram","key":"diagram:boot","content":{"title":"Boot","mermaid":"graph LR\\n start-->load-->embed-->done"}}⟧ · kinds note {"text"} · markdown {"md"} · code {"code","lang"}. The same key updates the item in place; ⟦canvas.show {"key":"…"}⟧ brings it back into view, ⟦canvas.pin {"key"}⟧ / ⟦canvas.park {"key"}⟧ hold or shelve it, ⟦canvas.size {"key","size":"s|m|l"}⟧ resizes it.');
+      L.push('- A CAPABILITY\'S ANSWER ONTO THE CANVAS, as the element that fits it (a command → a terminal, rows → a table, numbers → a widget, a file → a code item, a record → its fields, anything else → a JSON tree): [[cap:canvas.run {'+sidArg+'"cap":"docker.hosts","args":{}}]]. It runs the capability and lands its result; running the same cap with the same args again UPDATES that item. Use it when the user wants the result to work with on the canvas rather than read in the reply.');
       L.push('- A pinned canvas DOCUMENT (a board that outlives this session — a research board, a plan kept over days): create with [[cap:canvas.create {"title":"…"}]], add blocks with [[cap:canvas.append {"id":"cv_…","type":"markdown|code|diagram|image|note|table","content":{…}}]], show it with [[cap:canvas.show {'+sidArg+'"id":"cv_…","pinned":true}]] — it opens in the Canvas panel and updates live; keep appending to the same document instead of re-posting it. Only when the user asks for such a board; the session canvas is the default.');
     }
     if(run){
@@ -8522,6 +8578,13 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   function _codeLint(lang, code){
     const bar=document.getElementById('codeLintBar');
     if(!bar) return;
+    const r=_codeSummary(lang, code);
+    bar.style.color = r.cls==='err'?'var(--err)':r.cls==='warn'?'#d8a03a':'var(--ok)';
+    bar.textContent = r.parts.join('   ·   ');
+  }
+  /* the reading itself, with no bar: what a code view says about the code under it. The code pane shows it in its bar;
+     the session canvas's code items show it under their code (window.VeraCode, below). */
+  function _codeSummary(lang, code){
     const s=String(code==null?'':code);
     const l=(lang||'').toLowerCase();
     const lines=s?s.split('\n').length:0;
@@ -8548,9 +8611,11 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     }
     parts.push(lines+' lines · '+bytes.toLocaleString()+' bytes');
     if(bytes>=1048576) { cls=cls==='err'?'err':'warn'; parts.push('⚠ read may be capped at 1 MB'); }
-    bar.style.color = cls==='err'?'var(--err)':cls==='warn'?'#d8a03a':'var(--ok)';
-    bar.textContent = parts.join('   ·   ');
+    return { cls, parts };
   }
+  /* ONE HIGHLIGHTER AND ONE LINTER for every code view in this page: the transcript's fences, the code pane and the
+     session canvas's code items (a shadow root, which cannot call into this script - so it is handed them). */
+  try{ window.VeraCode={ highlight:(code, lang)=>highlightCode(code, lang), lint:(lang, code)=>_lintCode(lang, code), summary:(lang, code)=>_codeSummary(lang, code) }; }catch(_){}
 
   /* A code block previewed here is a bare string with no real URL behind it
      (srcdoc, base "about:srcdoc") — unlike the sandbox-file preview
