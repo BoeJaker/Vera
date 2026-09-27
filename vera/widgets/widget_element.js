@@ -97,7 +97,9 @@
                   orbit: 'items', shelf: 'items', racks: 'items', stacks: 'parts', 'meter-panel': 'values', conveyor: 'stages', approvals: 'stages', city: 'graph', topology: 'graph', diagram: 'graph',
                   library: 'items', pages: 'items', wiki: 'items', devices: 'items', notebook: 'items', hosts: 'items', containers: 'items', models: 'items', datasets: 'items', sandboxes: 'items',
                   // the table family (defect 50)
-                  rows: 'items', cards: 'items', temps: 'values' };
+                  rows: 'items', cards: 'items', temps: 'values',
+                  // the capability-output forms (the widget review, round 2)
+                  json: 'values', diff: 'string', code: 'string', progress: 'stages', status: 'values', media: 'string', error: 'string', markdown: 'string' };
   const canon = (form) => { const f = String(form || '').toLowerCase(); return DRAWN[f] ? f : (ALIAS[f] || f); };
 
   /* ── the data a form draws ────────────────────────────────────────────── */
@@ -130,9 +132,10 @@
   function dataFor(x, form, depth) {
     depth = depth || 0; if (x == null || depth > 2) return x;
     form = canon(form);
+    if (/^(json|diff|code|progress|status|media|error|markdown)$/.test(form)) return x;   // a result form reads the answer whole
     if (Array.isArray(x)) return x;
     if (typeof x === 'object') {
-      if ((form === 'radial' || form === 'counter' || form === 'bar') && typeof x.value === 'number') return x;
+      if (/^(radial|counter|bar|hero|meter|level|ring|gauge|dial|tank)$/.test(form) && typeof x.value === 'number') return x;   // a level with its trend beside it is the level, not its trend
       if ((form === 'pipes' || form === 'context_graph') && Array.isArray(x.nodes)) return x;
       if (form === 'globe' && ['points', 'pins', 'hosts', 'events', 'nodes', 'items', 'rows'].some((k) => Array.isArray(x[k]))) return x;   // the globe reads its record whole: the points AND the links, the night, the page size
       if (form === 'stepper' && (Array.isArray(x.stages) || Array.isArray(x.steps))) return x;
@@ -271,6 +274,14 @@
     files: () => [['/srv/vera/fabric.py', '12 KB', '14:41'], ['/srv/vera/gate.py', '4 KB', '14:38'], ['/notes/42-plan.md', '9 KB', '13:02'], ['/out/report.html', '31 KB', '12:48']].map((r) => ({ path: r[0], size: r[1], changed: r[2] })),
     checklist: () => [{ text: 'gate passed', done: true }, { text: 'sweep the estate', done: true }, { text: 'verify on the mirror' }, { text: 'land', due: 'today' }],
     kv: () => ({ status: 'serving', node: 'ct126', model: 'qwen3:30b', in_flight: 4, waiting: 'step 5' }),
+    json: () => ({ ok: true, node: 'ct126', models: ['qwen3:30b', 'nomic-embed-text'], gate: { held: 1, capacity: 1 } }),
+    diff: () => ({ diff: 'diff --git a/vera/gate.py b/vera/gate.py\n--- a/vera/gate.py\n+++ b/vera/gate.py\n@@ -12,3 +12,4 @@ def acquire():\n-    wait = 5\n+    wait = 2\n+    log.info("lease")\n     return lease' }),
+    code: () => ({ path: 'vera/gate.py', code: 'def acquire(node):\n    lease = gate.take(node)\n    return lease\n' }),
+    progress: () => ({ steps: [{ name: 'recall', status: 'done', elapsed_s: 1.2 }, { name: 'read', status: 'done', elapsed_s: 3.4 }, { name: 'author', status: 'running' }, { name: 'verify', status: 'waiting' }] }),
+    status: () => ({ status: 'degraded', message: '1 of 4 checks needs a look', checks: [{ name: 'redis', status: 'ok' }, { name: 'neo4j', status: 'ok' }, { name: 'gate', status: 'warn' }, { name: 'ct126', status: 'ok' }] }),
+    media: () => ({ url: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNjAiIGhlaWdodD0iOTAiPjxyZWN0IHdpZHRoPSIxNjAiIGhlaWdodD0iOTAiIGZpbGw9IiMyMjI2MzAiLz48Y2lyY2xlIGN4PSI4MCIgY3k9IjQ1IiByPSIyNCIgZmlsbD0iIzZlYThkOCIvPjwvc3ZnPg==', title: 'a drawing' }),
+    error: () => ({ ok: false, error: 'ct130 did not answer in 25 s', detail: 'ConnectTimeout: 192.168.0.130:11435' }),
+    markdown: () => '## Digest\nFour of four boots **clean**. The gate held `ct126` twice.\n- sweep the estate\n- verify on the mirror',
     pills: () => [['redis', 'ok'], ['neo4j', 'ok'], ['ollama', 'running'], ['ct130', 'down'], ['gate', 'ok']].map((r) => ({ name: r[0], status: r[1] })),
     context_graph: () => { const g = SAMPLE.graph(); return { nodes: g.nodes, rels: g.links.map((l) => ({ from: l.from, to: l.to, kind: l.kind })) }; },
     /* a structured graph's sample is a small, HONEST Explode contract — every card carries its span and the layer
@@ -1544,6 +1555,274 @@
   R.ticker = (d, H, o) => R.counter(d, H, o);
   R.topology = (d, H, o) => R.graph(d, H, o);   // flat: the node graph; iso: the floors and pipes
 
+  /* ══ CAPABILITY OUTPUT WIDGETS (the widget review, round 2: "we need to better define good widgets for cap outputs and
+     make caps output to widgets and have a broad set of widgets to display results and streams of operation") ═══════
+     The result forms - what a capability's ANSWER is drawn as, wherever it lands (a chat reply, a canvas item, a
+     dashboard tile, a deep dive):
+       kv        a record: its fields, name beside value                  (existing)
+       table     rows of the same shape: sortable, searchable, paged       (existing)
+       list      a list of plain things                                    (existing)
+       json      anything else with structure: a tree you open             (new)
+       log       a stream of lines, newest in view (follow)                (existing; fromCapStream appends)
+       terminal  a command and what it printed                             (existing)
+       diff      a patch: files, hunks, additions and removals coloured    (new)
+       code      source with line numbers and its language                 (new)
+       progress  steps with their state (done · running · failed · waiting), how far, how long   (new)
+       hero      a number with its trend                                   (existing)
+       trace · area · column   a series; several series stacked; counts    (existing)
+       status    a health answer: its verdict large, its checks under it   (new)
+       files     paths (a tree of files)                                   (existing)
+       media     an image, a video, a sound - or several                   (new)
+       error     a failed answer: what failed, said once, the detail folded (new)
+       markdown  prose a cap wrote: headings, lists, code, emphasis        (new)
+     Each is drawn by VeraWidget.draw like every other form, and has a sample face. */
+  const CAP_FORMS = ['kv', 'table', 'list', 'json', 'log', 'terminal', 'diff', 'code', 'progress', 'hero', 'trace', 'area', 'column', 'status', 'files', 'media', 'error', 'markdown'];
+  const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
+  const isScalar = (v) => v == null || typeof v !== 'object';
+  // json: a tree you open - objects and arrays fold (the first level open), scalars coloured by kind, big ones capped
+  R.json = (d, H, o) => {
+    if (d === undefined) return EMPTY('nothing to show'); let budget = 400;
+    const leaf = (v) => v === null ? '<i class="jn">null</i>' : typeof v === 'number' ? '<i class="jnum">' + esc(String(v)) + '</i>' : typeof v === 'boolean' ? '<i class="jb">' + v + '</i>' : '<i class="js">"' + esc(String(v).slice(0, 300)) + (String(v).length > 300 ? '…' : '') + '"</i>';
+    const node = (k, v, depth) => { if (--budget < 0) return ''; const key = k == null ? '' : '<b>' + esc(String(k)) + '</b>';
+      if (!v || typeof v !== 'object') return '<div class="jl">' + key + leaf(v) + '</div>';
+      const arr = Array.isArray(v), ks = arr ? v.map((_, i) => i) : Object.keys(v), n = ks.length;
+      const kids = ks.slice(0, 200).map((kk) => node(arr ? kk : kk, v[kk], depth + 1)).join('') + (n > 200 ? '<div class="jl"><i class="jn">… ' + (n - 200) + ' more</i></div>' : '');
+      return '<details' + (depth < 1 ? ' open' : '') + '><summary>' + key + '<i class="jt">' + (arr ? '[' + n + ']' : '{' + n + '}') + '</i></summary>' + kids + '</details>'; };
+    return wrap('json', '<div class="vb-json">' + node(null, d, 0) + '</div>');
+  };
+  // diff: the patch's files and hunks, + and - coloured, a count of each at the head
+  R.diff = (d, H, o) => {
+    const txt0 = typeof d === 'string' ? d : (isObj(d) ? String(d.diff ?? d.patch ?? d.text ?? '') : ''); if (!txt0.trim()) return EMPTY('a diff needs a patch');
+    const L = txt0.split('\n'); const add = L.filter((l) => /^\+(?!\+\+)/.test(l)).length, del = L.filter((l) => /^-(?!--)/.test(l)).length, files = L.filter((l) => /^diff --git|^\+\+\+ /.test(l)).length;
+    const cls = (l) => /^(diff --git|index |\+\+\+ |--- )/.test(l) ? 'df' : /^@@/.test(l) ? 'dh' : /^\+/.test(l) ? 'da' : /^-/.test(l) ? 'dd' : '';
+    return wrap('diff', '<div class="vb-dhd"><b class="da">+' + add + '</b><b class="dd">−' + del + '</b><span>' + (files ? Math.ceil(files / 2) + ' file' + (files > 2 ? 's' : '') : '') + '</span></div><pre class="vb-code vb-diff">' + L.slice(0, 1500).map((l) => '<span class="' + cls(l) + '">' + esc(l) + '</span>').join('\n') + '</pre>');
+  };
+  // code: numbered lines and the language
+  R.code = (d, H, o) => {
+    const code = typeof d === 'string' ? d : (isObj(d) ? String(d.code ?? d.content ?? d.source ?? d.text ?? '') : ''); if (!code.trim()) return EMPTY('code needs source');
+    const path = isObj(d) ? String(d.path ?? d.filename ?? d.file ?? '') : ''; const lang = (isObj(d) && (d.lang || d.language)) || ((o && o.draw && o.draw.lang) || (path.match(/\.([a-z0-9]+)$/i) || [])[1] || '');
+    const L = code.split('\n');
+    return wrap('code', '<div class="vb-dhd"><span>' + esc(path ? path.split('/').pop() : 'code') + '</span><span>' + esc(String(lang)) + ' · ' + L.length + ' lines</span></div><pre class="vb-code">' + L.slice(0, 2000).map((l, i) => '<span><u>' + (i + 1) + '</u>' + esc(l) + '</span>').join('\n') + '</pre>');
+  };
+  // progress: every step with its state, how long it took; the bar is done of all
+  const stepState = (s) => { const k = String(s.status ?? s.state ?? (s.done ? 'done' : (s.current || s.now ? 'running' : ''))).toLowerCase(); return /fail|error|crash|abort/.test(k) ? 'failed' : /done|ok|pass|success|complete|finish|merged/.test(k) ? 'done' : /run|active|current|now|progress|work/.test(k) ? 'running' : /skip/.test(k) ? 'skipped' : 'waiting'; };
+  R.progress = (d, H, o) => {
+    const st = isObj(d) && Array.isArray(d.steps || d.stages || d.items || d.events) ? (d.steps || d.stages || d.items || d.events) : (Array.isArray(d) ? d : []);
+    const rw = st.map((s) => (s && typeof s === 'object') ? s : { name: String(s) }); if (!rw.length) return EMPTY('progress needs steps');
+    const S = rw.map(stepState), done = S.filter((x) => x === 'done' || x === 'skipped').length, failed = S.includes('failed'), ic = { done: '✓', running: '●', failed: '✗', waiting: '○', skipped: '–' };
+    const dur = (s) => { const v = s.elapsed_s ?? s.duration_s ?? s.seconds ?? (s.elapsed_ms != null ? s.elapsed_ms / 1000 : (s.ms != null ? s.ms / 1000 : null)); return v == null ? '' : (v >= 60 ? Math.round(v / 60) + 'm' : (Math.round(num(v) * 10) / 10) + 's'); };
+    const lim = Math.max(3, Math.floor(((H || 120) - 24) / 20)), cur = Math.max(0, S.indexOf('running')), from = Math.max(0, Math.min(rw.length - lim, cur - 1));
+    return wrap('progress', '<div class="vb-pgb"><i style="width:' + (done / rw.length * 100).toFixed(1) + '%;background:' + (failed ? B.ac4 : B.ac2) + '"></i></div><span class="vb-lbl">' + done + ' of ' + rw.length + (failed ? ' · failed at ' + esc(nameOf(rw[S.indexOf('failed')]) || 'a step') : (S.includes('running') ? ' · ' + esc(nameOf(rw[cur]) || 'running') : '')) + '</span>'
+      + rw.slice(from, from + lim).map((s, j) => { const k = S[from + j]; return '<span class="vb-ps ' + k + '"' + ' data-tip="' + esc(rowTip(s, nameOf(s) || String(s.step ?? s.stage ?? ''))) + '"><i>' + ic[k] + '</i><em>' + esc(String(nameOf(s) || s.step || s.stage || s.text || s.message || '')) + '</em><small>' + esc(String(s.detail ?? s.message ?? s.note ?? '').slice(0, 80)) + '</small><b>' + esc(dur(s)) + '</b></span>'; }).join(''));
+  };
+  // status: the verdict large, the checks under it
+  const verdictOf = (d) => { if (!isObj(d)) return String(d ?? ''); const v = d.status ?? d.level ?? d.state ?? d.health ?? (d.ok === true ? 'ok' : d.ok === false ? 'failed' : (d.healthy === true ? 'healthy' : d.healthy === false ? 'unhealthy' : '')); return String(v ?? ''); };
+  const checksOf = (d) => { if (!isObj(d)) return []; const c = d.checks || d.findings || d.components || d.services || d.results || d.backends; if (Array.isArray(c)) return c.filter(isObj);
+    if (isObj(c)) return Object.keys(c).map((k) => isObj(c[k]) ? Object.assign({ name: k }, c[k]) : { name: k, status: c[k] });
+    return Object.keys(d).filter((k) => typeof d[k] === 'boolean' || (typeof d[k] === 'string' && /^(ok|up|down|err|error|warn|healthy|unhealthy|running|stopped|serving|failed|pass|fail)$/i.test(d[k]))).filter((k) => !/^(ok|status|state|level|health|healthy)$/.test(k)).map((k) => ({ name: k, status: d[k] })); };
+  R.status = (d, H, o) => {
+    const v = verdictOf(d); const ck = checksOf(d); if (!v && !ck.length) return EMPTY('a status needs a verdict or checks');
+    const col = stCol(v || (ck.every((c) => stCol(c.status ?? c.state ?? c.severity ?? c.ok) === B.ac2) ? 'ok' : 'warn'));
+    const msg = isObj(d) ? String(d.message ?? d.summary ?? d.detail ?? d.reason ?? '') : '';
+    const lim = Math.max(2, Math.floor(((H || 120) - 48) / 18));
+    return wrap('status', '<div class="vb-stv"><i style="background:' + col + '"></i><b style="color:' + col + '">' + esc(v || (ck.length + ' checks')) + '</b>' + (msg ? '<span>' + esc(msg.slice(0, 140)) + '</span>' : '') + '</div>'
+      + ck.slice(0, lim).map((c) => { const s = c.status ?? c.state ?? c.severity ?? c.ok ?? ''; return '<span class="vb-stc" data-tip="' + esc(rowTip(c)) + '"><i style="background:' + stCol(s) + '"></i><em>' + esc(nameOf(c) || String(c.message ?? '').slice(0, 40)) + '</em><small>' + esc(String(typeof s === 'boolean' ? (s ? 'ok' : 'no') : s)) + '</small></span>'; }).join('') + (ck.length > lim ? '<span class="vb-lbl">+ ' + (ck.length - lim) + ' more</span>' : ''));
+  };
+  // media: an image (an address or base64), a video, a sound - the first large, the count of the rest
+  const mediaOf = (x) => { if (!x) return null; if (typeof x === 'string') return /^data:|^https?:|^\//.test(x) ? { url: x } : null; if (!isObj(x)) return null;
+    const b = x.image_b64 || x.b64 || x.base64; if (b) { const s = String(b); const mime = /^\/9j\//.test(s) ? 'image/jpeg' : /^R0lGOD/.test(s) ? 'image/gif' : /^UklGR/.test(s) ? 'image/webp' : 'image/png'; return { url: 'data:' + mime + ';base64,' + s, alt: x.title || x.caption || '' }; }
+    const u = x.url || x.src || x.image || x.path || x.file; return (u && /^(data:(image|video|audio)\/|https?:|\/)/i.test(String(u))) ? { url: String(u), alt: String(x.title || x.caption || x.name || ''), kind: x.kind || x.mime || '' } : null; };
+  R.media = (d, H, o) => {
+    const list = Array.isArray(d) ? d : (isObj(d) && Array.isArray(d.images || d.media || d.files || d.items) ? (d.images || d.media || d.files || d.items) : [d]);
+    const M = list.map(mediaOf).filter(Boolean); if (!M.length) return EMPTY('media needs an image, a video or a sound');
+    const m = M[0], u = m.url, k = String(m.kind || '') + ' ' + u; const h = Math.max(60, (H || 120) - 18);
+    const el = /video|\.(mp4|webm|mov)(\?|$)/i.test(k) ? '<video src="' + esc(u) + '" controls style="max-height:' + h + 'px"></video>' : /audio|\.(mp3|wav|ogg|m4a)(\?|$)/i.test(k) ? '<audio src="' + esc(u) + '" controls></audio>' : '<img src="' + esc(u) + '" alt="' + esc(m.alt || '') + '" style="max-height:' + h + 'px" loading="lazy">';
+    return wrap('media', '<div class="vb-media">' + el + '</div>' + cap(esc(String(m.alt || '')) + (M.length > 1 ? ' · + ' + (M.length - 1) + ' more' : '')));
+  };
+  // error: what failed, said once; the detail (a trace, a stderr) folded under it
+  R.error = (d, H, o) => {
+    const msg = typeof d === 'string' ? d : (isObj(d) ? String(d.error ?? d.message ?? d.detail ?? d.reason ?? 'failed') : 'failed'); const det = isObj(d) ? String(d.traceback ?? d.trace ?? d.stderr ?? d.stack ?? (d.detail !== msg ? d.detail ?? '' : '')) : '';
+    const who = (o && o.record && o.record.source) || (isObj(d) && d.capability) || '';
+    return wrap('error', '<div class="vb-err"><i>✗</i><div><b>' + esc(who ? who + ' failed' : 'failed') + '</b><span>' + esc(msg.slice(0, 600)) + '</span></div></div>' + (det ? '<details class="vb-errd"><summary>detail</summary><pre>' + esc(det.slice(0, 8000)) + '</pre></details>' : ''));
+  };
+  // markdown: prose a capability wrote - headings, lists, fenced code, emphasis, links (escaped first, then marked up)
+  const md = (s) => { const out = []; let inCode = false, list = '';
+    const inl = (t) => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|\W)\*([^*]+)\*(?=\W|$)/g, '$1<em>$2</em>').replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    String(s).split('\n').forEach((l) => { if (/^```/.test(l)) { if (list) { out.push('</' + list + '>'); list = ''; } out.push(inCode ? '</pre>' : '<pre>'); inCode = !inCode; return; }
+      if (inCode) { out.push(esc(l)); return; }
+      const h = l.match(/^(#{1,4})\s+(.*)$/), li = l.match(/^\s*[-*]\s+(.*)$/), ol = l.match(/^\s*\d+[.)]\s+(.*)$/);
+      if ((li || ol) && list !== (li ? 'ul' : 'ol')) { if (list) out.push('</' + list + '>'); list = li ? 'ul' : 'ol'; out.push('<' + list + '>'); }
+      if (!(li || ol) && list) { out.push('</' + list + '>'); list = ''; }
+      if (h) out.push('<h' + (h[1].length + 2) + '>' + inl(h[2]) + '</h' + (h[1].length + 2) + '>'); else if (li || ol) out.push('<li>' + inl((li || ol)[1]) + '</li>'); else if (l.trim()) out.push('<p>' + inl(l) + '</p>'); });
+    if (list) out.push('</' + list + '>'); if (inCode) out.push('</pre>'); return out.join(''); };
+  R.markdown = (d, H, o) => { const s = typeof d === 'string' ? d : (isObj(d) ? String(d.markdown ?? d.md ?? d.report ?? d.summary ?? d.text ?? d.content ?? '') : ''); if (!s.trim()) return EMPTY('nothing written'); return wrap('markdown', '<div class="vb-md">' + md(s.slice(0, 40000)) + '</div>'); };
+  const CAPOUT_CSS = '.vb-json{font-family:var(--b-mono);font-size:11px;line-height:1.5;overflow:auto;min-height:0;flex:1}.vb-json details{padding-left:12px}.vb-json > details{padding-left:0}.vb-json summary{cursor:pointer;list-style:none}.vb-json summary::before{content:"▸ ";color:var(--b-t3)}.vb-json details[open] > summary::before{content:"▾ "}'
+    + '.vb-json b{font-weight:400;color:var(--b-t2);margin-right:6px}.vb-json b::after{content:":"}.vb-json .jl{padding-left:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-json i{font-style:normal}.vb-json .js{color:var(--b-ac2)}.vb-json .jnum{color:var(--b-ac)}.vb-json .jb{color:var(--b-ac3)}.vb-json .jn,.vb-json .jt{color:var(--b-t3);margin-left:4px}'
+    + '.vb-code{margin:0;flex:1;min-height:0;overflow:auto;font-family:var(--b-mono);font-size:11px;line-height:1.55;color:var(--b-t1);background:var(--b-s2);border-radius:var(--b-r);padding:6px 8px;white-space:pre;tab-size:2}.vb-code u{display:inline-block;width:3.2em;text-decoration:none;color:var(--b-t3);text-align:right;margin-right:10px;user-select:none}'
+    + '.vb-diff .da{color:var(--b-ac2);background:' + 'color-mix(in srgb,var(--b-ac2) 10%,transparent)' + '}.vb-diff .dd{color:var(--b-ac4);background:color-mix(in srgb,var(--b-ac4) 10%,transparent)}.vb-diff .dh{color:var(--b-ac)}.vb-diff .df{color:var(--b-t1);font-weight:600}.vb-diff span{display:inline-block;min-width:100%}'
+    + '.vb-dhd{display:flex;gap:10px;align-items:center;font-family:var(--b-mono);font-size:10.5px;color:var(--b-t2)}.vb-dhd .da{color:var(--b-ac2)}.vb-dhd .dd{color:var(--b-ac4)}.vb-dhd span:last-child{margin-left:auto}'
+    + '.vb-pgb{height:6px;border-radius:3px;background:var(--b-s3);overflow:hidden;flex:none}.vb-pgb i{display:block;height:100%;border-radius:3px}'
+    + '.vb-ps{display:grid;grid-template-columns:16px minmax(0,auto) minmax(0,1fr) auto;gap:8px;align-items:baseline;font-size:11px;line-height:1.35}.vb-ps i{font-style:normal;text-align:center}.vb-ps em{font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-ps small{color:var(--b-t3);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-ps b{font-family:var(--b-mono);font-weight:400;font-size:10px;color:var(--b-t3)}'
+    + '.vb-ps.done i{color:var(--b-ac2)}.vb-ps.failed i,.vb-ps.failed em{color:var(--b-ac4)}.vb-ps.running i{color:var(--b-ac);animation:vw-kread 1.2s ease-in-out infinite}.vb-ps.running em{color:var(--b-t1);font-weight:600}.vb-ps.waiting{color:var(--b-t3)}'
+    + '.vb-stv{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.vb-stv > i{width:12px;height:12px;border-radius:50%;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 12%,transparent)}.vb-stv b{font-size:18px;font-weight:700;text-transform:capitalize}.vb-stv span{font-size:11px;color:var(--b-t2);flex-basis:100%}'
+    + '.vb-stc{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:11px}.vb-stc i{width:7px;height:7px;border-radius:50%}.vb-stc em{font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-stc small{font-family:var(--b-mono);font-size:10px;color:var(--b-t2)}'
+    + '.vb-media{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}.vb-media img,.vb-media video{max-width:100%;object-fit:contain;border-radius:var(--b-r)}.vb-media audio{width:100%}'
+    + '.vb-err{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:var(--b-r);background:color-mix(in srgb,var(--b-ac4) 10%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--b-ac4) 35%,transparent)}.vb-err > i{font-style:normal;color:var(--b-ac4);font-size:16px;line-height:1}.vb-err b{display:block;color:var(--b-ac4);font-size:12px}.vb-err span{font-size:11px;color:var(--b-t1);white-space:pre-wrap;word-break:break-word}'
+    + '.vb-errd summary{cursor:pointer;font-size:10.5px;color:var(--b-t2)}.vb-errd pre{margin:4px 0 0;max-height:200px;overflow:auto;font-family:var(--b-mono);font-size:10.5px;color:var(--b-t2);white-space:pre-wrap}'
+    + '.vb-md{flex:1;min-height:0;overflow:auto;font-size:12px;line-height:1.55;color:var(--b-t1)}.vb-md h3,.vb-md h4,.vb-md h5,.vb-md h6{margin:6px 0 3px;font-size:13px}.vb-md p{margin:0 0 6px}.vb-md ul,.vb-md ol{margin:0 0 6px;padding-left:18px}.vb-md code{font-family:var(--b-mono);font-size:11px;background:var(--b-s3);padding:0 4px;border-radius:3px}.vb-md pre{font-family:var(--b-mono);font-size:11px;background:var(--b-s2);padding:6px 8px;border-radius:var(--b-r);overflow:auto}.vb-md a{color:var(--b-ac)}';
+
+  /* ── THE ONE MAPPING: a capability's answer → the widget record(s) that draw it ─────────────────────────────────────
+     VeraWidget.fromCapResult(capName, result, opts?) → [record, ...]   (best first; [] for nothing to draw)
+       capName  the capability that answered ('' when unknown) - it names the source and picks a per-cap hint
+       result   what it answered: the capability's content (an MCP envelope {type:'tool_result', content} is opened)
+       opts     { args: the call's arguments (kept as read.args so the widget can read again), title, size,
+                  max: how many records at most (default 3) }
+     Every record is a full widget record: { id, form, title, source: capName, read: { args, map }, frame: { size },
+     data: <the part of the answer it draws>, why: '<the rule that chose it>' } - it draws at once (it carries its data)
+     and, placed where the source is readable, refreshes on its own. The first record is the answer's best drawing; the
+     ones after it are companions (a chart beside a table of numbers, the checks beside a verdict).
+     The rules, in order (the first that matches decides the first record):
+       1 error      {ok:false, error} · {error:"..."} with little else            → error
+       2 terminal   {command, stdout|stderr}                                      → terminal
+       3 media      image_b64 · an image/video/audio url · {images:[...]}         → media
+       4 diff       {diff} · {patch} · a string that is a unified diff           → diff
+       5 code       {code} · {content, path}                                       → code
+       6 hint       the capability's own hint (CAP_HINTS: the dashboard's reads)  → its form and map
+       7 progress   {steps|stages:[{name, status}]} · rows of step + state        → progress
+       8 events     rows with a time and a line of text                           → log
+       9 series     rows with a time and numbers · {history|samples:[...]}        → trace (one number) · area (several)
+      10 level      {value, max} → ring · {value} → hero (with its trend when the answer has one)
+      11 files      rows with a path                                              → files
+      12 status     {status|ok|healthy|level, + checks|findings|components}       → status (+ its checks as a table)
+      13 table      rows of the same shape                                        → table (+ ranked when a row has a name and a number)
+      14 list       a list of plain things                                        → list
+      15 numbers    {name: number, ...}                                           → numbers (≤ 6) · ranked
+      16 prose      report · markdown · summary · a long text                     → markdown
+      17 record     a flat object of up to 24 plain fields                        → kv
+      18 json       anything else with structure                                  → json
+      19 string     a short text                                                  → string
+     The python catalogue mirrors it (widget_cap_output.py, widget.from_result) so an agent can ask for the same answer. */
+  const CAP_HINTS = {
+    'sysmon.history': { form: 'trace', map: { series: 'samples', v: 'cpu' } }, 'sysmon.status': { form: 'numbers', map: { pick: { cpu: 'resources.cpu', memory: 'resources.mem', guests: 'proxmox.running', containers: 'docker.running' } } },
+    'obs.events': { form: 'log', map: { events: '$', t: 'ts', kind: 'type', text: 'name' } }, 'ollama.request_log': { form: 'log', map: { events: 'entries', t: 'ts', kind: 'instance', text: 'model' } },
+    'ollama.route_stats': { form: 'ranked', map: { values: 'stats', count: 'model', sum: 'n' } }, 'obs.node_temps': { form: 'temps', map: { values: 'hosts', name: 'label', value: 'max_c' } },
+    'evolve.activity': { form: 'area', map: { series: 'buckets', split: ['pass', 'fail'], t: 'hour' } }, 'evolve.pipeline.list': { form: 'table', map: { rows: 'pipelines' }, draw: { columns: ['branch', 'status', 'decision', 'created_at'] } },
+    'evolve.unittest.history': { form: 'trace', map: { series: 'runs', v: 'passed', t: 'ts', reverse: true } }, 'perf.stalls': { form: 'column', map: { values: 'events', value: 'stalled_ms', reverse: true } },
+    'syslog.errors': { form: 'log', map: { events: 'warnings', t: 'ts', kind: 'cap_group', text: 'message' } }, 'dash.health.summary': { form: 'pills', map: { values: '$', entries: 'status' } },
+    'obs.modules': { form: 'treemap', map: { parts: 'modules', name: 'name', value: 'caps_added' } }, 'estate.health': { form: 'status' }, 'perf.scan': { form: 'status' },
+    'obs.health': { form: 'status' }, 'backup.status': { form: 'table', map: { rows: 'guests' }, draw: { columns: ['name', 'status', 'state', 'backups'] } }, 'docker.ps': { form: 'containers', map: { rows: 'containers', name: 'Names', status: 'State', host: 'host_id' } },
+    'evolve.sandbox.list': { form: 'sandboxes', map: { rows: 'sandboxes', name: 'name', status: 'running' } }, 'dream.history': { form: 'table', map: { rows: 'history' }, draw: { columns: ['label', 'title', 'started_at', 'signal'] } },
+    'exec.bash.run': { form: 'terminal' }, 'code.read': { form: 'code' }, 'code.diff': { form: 'diff' }, 'evolve.pipeline.diff': { form: 'diff' }, 'evolve.sandbox.diff': { form: 'diff' } };
+  const hintOf = (cap) => { const n = String(cap || ''); if (CAP_HINTS[n]) return CAP_HINTS[n]; if (/\.(diff|patch)$/.test(n)) return { form: 'diff' }; if (/\.(health|healthz)$/.test(n)) return { form: 'status' }; return null; };
+  const rowsOfAny = (c) => { if (Array.isArray(c)) return c; if (!isObj(c)) return null; const ok = (v) => Array.isArray(v) && v.length && isObj(v[0]);
+    for (const k of ['data', 'result', 'items', 'rows', 'results', 'entries', 'events', 'points', 'series', 'values']) if (ok(c[k])) return c[k]; for (const k of Object.keys(c)) if (ok(c[k])) return c[k]; return null; };
+  const rowsKey = (c) => { if (!isObj(c)) return '$'; for (const k of ['data', 'result', 'items', 'rows', 'results', 'entries', 'events', 'points', 'series', 'values']) if (Array.isArray(c[k]) && c[k].length && isObj(c[k][0])) return k; for (const k of Object.keys(c)) if (Array.isArray(c[k]) && c[k].length && isObj(c[k][0])) return k; return '$'; };
+  const TIMEK = ['t', 'ts', 'time', 'when', 'at', 'timestamp', 'created_at', 'started_at', 'hour', 'date'], TEXTK = ['text', 'msg', 'message', 'line', 'event', 'summary', 'title'];
+  const firstKey = (r, ks) => ks.find((k) => r[k] != null && r[k] !== '');
+  const numKeys = (r) => Object.keys(r).filter((k) => typeof r[k] === 'number' && !/^(id|pid|port|vmid|index|idx|i|n_?id)$/i.test(k) && !TIMEK.includes(k));
+  const isDiffText = (s) => typeof s === 'string' && /^(diff --git |--- |\+\+\+ |@@ )/m.test(s) && /^[+-]/m.test(s);
+  const isMediaUrl = (s) => typeof s === 'string' && /^(data:image\/|data:video\/|https?:.*\.(png|jpe?g|gif|webp|svg|mp4|webm|mov|mp3|wav|ogg)(\?|$))/i.test(s);
+  function fromCapResult(capName, result, opts) {
+    opts = opts || {}; let c = result;
+    if (isObj(c) && c.type === 'tool_result' && 'content' in c) c = c.content;
+    if (c === undefined || c === null || c === '') return [];
+    const cap = String(capName || ''), max = Math.max(1, +opts.max || 3), title = opts.title || cap || 'result', out = [];
+    const mk = (form, data, why, extra) => { const r = Object.assign({ id: (cap || 'result').replace(/[^a-z0-9]+/gi, '-') + '-' + form, form, title: (extra && extra.title) || title, source: cap, read: { args: opts.args || {}, map: (extra && extra.map) || {} }, frame: { size: opts.size || 'l' }, data, why }, extra && extra.draw ? { draw: extra.draw } : {}); out.push(r); return r; };
+    const done = () => out.slice(0, max);
+    // 1 error
+    if (isObj(c) && ((c.ok === false && (typeof c.error === 'string' || typeof c.message === 'string')) || (typeof c.error === 'string' && c.error && Object.keys(c).length <= 3))) { mk('error', c, 'a failed answer: ok false, or an error and little else'); return done(); }
+    // 2 terminal
+    if (isObj(c) && (c.stdout != null || c.stderr != null) && (c.command != null || c.cmd != null || c.rc != null || c.returncode != null)) { const lines = [c.command || c.cmd ? '$ ' + String(c.command || c.cmd) : ''].concat(String(c.stdout || '').split('\n')).concat(String(c.stderr || '').split('\n')).filter((l, i) => i > 0 || l);
+      mk('terminal', { lines, state: c.rc != null ? 'rc ' + c.rc : (c.returncode != null ? 'rc ' + c.returncode : '') }, 'a command and what it printed'); if (c.rc && c.rc !== 0 && c.stderr) mk('error', { error: String(c.stderr).split('\n').filter(Boolean).slice(-1)[0] || 'rc ' + c.rc, stderr: c.stderr }, 'the command failed'); return done(); }
+    // 3 media
+    if (isMediaUrl(c) || (isObj(c) && (c.image_b64 || c.b64 || isMediaUrl(c.url) || isMediaUrl(c.src) || isMediaUrl(c.image) || (Array.isArray(c.images) && c.images.length)))) { mk('media', c, 'an image, a video or a sound'); return done(); }
+    // 4 diff · 5 code
+    if (isDiffText(c) || (isObj(c) && (isDiffText(c.diff) || isDiffText(c.patch) || (typeof c.diff === 'string' && c.diff.trim())))) { mk('diff', c, 'a patch'); return done(); }
+    if (isObj(c) && ((typeof c.code === 'string' && c.code.trim()) || (typeof c.content === 'string' && c.content.trim() && (c.path || c.filename || c.file)))) { mk('code', c, 'source: code, or a file\'s content'); return done(); }
+    // 6 the capability's own hint
+    const h = hintOf(cap); if (h) { const r = mk(h.form, c, 'the ' + cap + ' hint', { map: h.map, draw: h.draw }); const drawn = mapped(r, h.form, c); if (!isEmpty(dataFor(drawn, h.form))) { rowsCompanion(c, r); return done(); } out.pop(); }
+    const rw = rowsOfAny(c), rk = rowsKey(c);
+    // 7 progress
+    if (isObj(c) && Array.isArray(c.steps || c.stages) && (c.steps || c.stages).length) { mk('progress', c, 'steps with their state'); return done(); }
+    if (rw && rw.length && rw.every((r) => isObj(r) && (r.step != null || r.stage != null || r.phase != null) && (r.status != null || r.state != null || r.done != null))) { mk('progress', { steps: rw }, 'rows of step and state'); return done(); }
+    if (rw && rw.length && isObj(rw[0])) {
+      const r0 = rw[0], tk = firstKey(r0, TIMEK), xk = firstKey(r0, TEXTK), nk = numKeys(r0);
+      // 8 events
+      if (tk && xk && rw.every((r) => isObj(r))) { mk('log', c, 'rows with a time and a line of text', { map: { events: rk, t: tk, text: xk, kind: firstKey(r0, ['kind', 'level', 'type', 'severity', 'source']) || '' } }); if (rw.length > 1 && rw.some((r) => /err|fail|warn/i.test(String(r.level ?? r.kind ?? r.severity ?? '')))) mk('pareto', c, 'the lines counted by kind', { map: { values: rk, count: firstKey(r0, ['kind', 'level', 'type', 'severity']) || 'kind' }, title: title + ' · by kind' }); return done(); }
+      // 9 series
+      if (tk && nk.length && rw.length >= 3 && Object.keys(r0).filter((k) => typeof r0[k] !== 'object').length <= nk.length + 3) { if (nk.length === 1) mk('trace', c, 'a series: a time and a number', { map: { series: rk, t: tk, v: nk[0] } }); else mk('area', c, 'series: a time and ' + nk.length + ' numbers', { map: { series: rk, t: tk, split: nk.slice(0, 4) } }); mk('table', c, 'the readings', { map: { rows: rk }, title: title + ' · readings' }); return done(); }
+      // 11 files
+      if (rw.every((r) => isObj(r) && (r.path != null || r.file != null))) { mk('files', c, 'rows with a path', { map: { rows: rk } }); return done(); }
+    }
+    // 10 level
+    if (isObj(c) && typeof c.value === 'number') { const tr = Array.isArray(c.history || c.trend || c.series) ? (c.history || c.trend || c.series) : null; if (c.max != null && !tr) mk('ring', c, 'a value of a maximum'); else mk('hero', c, 'a value' + (tr ? ' with its trend' : '')); return done(); }
+    // 12 status
+    // 16 prose first: {ok:true, report:"..."} is a report that succeeded, not a verdict
+    if (isObj(c)) { const pk = ['report', 'markdown', 'md', 'summary', 'text', 'answer', 'content'].find((k) => typeof c[k] === 'string' && c[k].trim()); if (pk && (c[pk].length >= 200 || /^#|\n[-*] |\n\n/.test(c[pk]))) { mk('markdown', c[pk], 'prose: ' + pk); const rest = Object.keys(c).filter((k) => k !== pk && isScalar(c[k])); if (rest.length > 1) mk('kv', c, 'the rest of the answer', { map: { keys: rest.slice(0, 12) }, title: title + ' · fields' }); return done(); } }
+    const hasVerdict = isObj(c) && ['status', 'state', 'level', 'health', 'healthy'].some((k) => c[k] != null && isScalar(c[k]));
+    if (isObj(c) && verdictOf(c) && ((hasVerdict && checksOf(c).length) || (hasVerdict && /^(ok|up|down|healthy|unhealthy|degraded|warn|error|failed|serving|running|stopped)$/i.test(verdictOf(c))) || (c.ok != null && checksOf(c).length >= 2))) { mk('status', c, 'a verdict and its checks'); const ck = checksOf(c); if (ck.length > 6) mk('table', ck, 'every check', { title: title + ' · checks' }); return done(); }
+    // 13 table
+    if (rw && rw.length && isObj(rw[0])) { const cols = Object.keys(rw[0]).filter((k) => isScalar(rw[0][k])); if (cols.length >= 2 || rw.length > 1) { const r = mk('table', c, 'rows of the same shape', { map: { rows: rk } }); rowsCompanion(c, r); return done(); } }
+    // 14 list
+    if (Array.isArray(c) && c.length && c.every((x) => isScalar(x))) { mk('list', c.map((x) => ({ name: String(x) })), 'a list of plain things'); return done(); }
+    if (isObj(c)) { const ks = Object.keys(c);
+      // 15 numbers
+      const nums = ks.filter((k) => typeof c[k] === 'number'); if (nums.length >= 2 && nums.length === ks.length) { mk(nums.length <= 6 ? 'numbers' : 'ranked', c, 'named numbers'); return done(); }
+      // 16 prose
+      const pk = ['report', 'markdown', 'md', 'summary', 'text', 'answer', 'content'].find((k) => typeof c[k] === 'string' && c[k].trim()); if (pk && (c[pk].length >= 200 || /^#|\n[-*] |\n\n/.test(c[pk]))) { mk('markdown', c[pk], 'prose: ' + pk); if (ks.length > 1) mk('kv', c, 'the rest of the answer', { map: { keys: ks.filter((k) => k !== pk && isScalar(c[k])).slice(0, 12) }, title: title + ' · fields' }); return done(); }
+      // 17 record
+      if (ks.length >= 1 && ks.length <= 24 && ks.every((k) => isScalar(c[k]))) { mk('kv', c, 'a record: plain fields'); return done(); }
+      // 18 json
+      mk('json', c, 'structure: a tree to open'); if (rw && rw.length) mk('table', c, 'its rows', { map: { rows: rk }, title: title + ' · ' + rk }); return done(); }
+    if (Array.isArray(c) && c.length) { mk('json', c, 'a list of mixed things'); return done(); }
+    // 16 · 19 text
+    if (typeof c === 'string') { if (isDiffText(c)) mk('diff', c, 'a patch'); else if (c.length >= 200 || /\n/.test(c)) mk('markdown', c, 'prose'); else mk('string', c, 'a short text'); return done(); }
+    if (typeof c === 'number') { mk('hero', { value: c }, 'a number'); return done(); }
+    if (typeof c === 'boolean') { mk('status', { status: c ? 'ok' : 'failed' }, 'yes or no'); return done(); }
+    return done();
+    // a companion for rows that carry a name and a number: the same rows ranked by that number
+    function rowsCompanion(c0, r) { const R0 = rowsOfAny(c0); if (!R0 || !R0.length || R0.length > 60 || !isObj(R0[0])) return; const nm = ['name', 'title', 'label', 'id', 'key'].find((k) => R0[0][k] != null); const nk0 = numKeys(R0[0]).filter((k) => !/_at$|ts$/.test(k)); if (!nm || !nk0.length || r.form === 'ranked') return;
+      mk('ranked', c0, 'the rows ranked by ' + nk0[0], { map: { values: rowsKey(c0), name: nm, value: nk0[0] }, title: title + ' · by ' + nk0[0].replace(/_/g, ' ') }); }
+  }
+  /* ── A STREAM OF OPERATION → a widget that grows as it arrives ──────────────────────────────────────────────────
+     const sink = VeraWidget.fromCapStream(capName, opts?)
+       sink.push(event)      one event of the stream: a step {step|stage|name, status|state, ...} · a line {text|msg|
+                             message|line, ts?, level?} · a sample {t|ts, v|value|<numbers>} · a token/chunk {delta|token|
+                             chunk: "..."} · a string. The first events decide what the stream IS (steps → progress,
+                             chunks → markdown, samples → trace, anything else → log, newest in view)
+       sink.end(result?)     the stream finished; its final answer (if any) is drawn through fromCapResult beside it
+       sink.record()         the live record now: { form, title, source, data, why, stream: true }
+       sink.records()        the live record + the final answer's records
+       sink.subscribe(fn)    fn(record, sink) after every change (a host redraws; returns an unsubscribe)
+       sink.attach(el)       a <vera-widget> that follows the stream (its record set at most once a frame)
+     opts: { title, max (events kept, default 500), args } */
+  function fromCapStream(capName, opts) {
+    opts = opts || {}; const cap = String(capName || ''), max = Math.max(20, +opts.max || 500);
+    const S = { kind: '', steps: [], stepIx: {}, lines: [], samples: [], text: '', final: [], ended: false, subs: [], els: [] };
+    const kindOf = (e) => { if (typeof e === 'string') return 'lines'; if (!isObj(e)) return 'lines'; if ((e.step != null || e.stage != null || e.phase != null) && (e.status != null || e.state != null || e.done != null)) return 'steps';
+      if (typeof (e.delta ?? e.token ?? e.chunk) === 'string') return 'text'; if ((e.t != null || e.ts != null) && (typeof e.v === 'number' || typeof e.value === 'number' || numKeys(e).length) && !firstKey(e, TEXTK)) return 'samples'; return 'lines'; };
+    const record = () => { const base = { id: (cap || 'stream').replace(/[^a-z0-9]+/gi, '-') + '-stream', title: opts.title || cap || 'stream', source: cap, read: { args: opts.args || {}, map: {} }, frame: { size: 'l' }, stream: true, ended: S.ended };
+      if (S.kind === 'steps') return Object.assign(base, { form: 'progress', data: { steps: S.steps.slice() }, why: 'a stream of steps' });
+      if (S.kind === 'text') return Object.assign(base, { form: 'markdown', data: S.text, why: 'a stream of text' });
+      if (S.kind === 'samples') { const nk = S.samples.length ? numKeys(S.samples[0]) : []; return nk.length > 1 && !('v' in (S.samples[0] || {})) ? Object.assign(base, { form: 'area', data: S.samples.slice(), read: Object.assign(base.read, { map: { series: '$', split: nk.slice(0, 4) } }), why: 'a stream of samples' }) : Object.assign(base, { form: 'trace', data: S.samples.map((s) => ({ t: s.t ?? s.ts, v: num(s.v ?? s.value ?? s[nk[0]]) })), why: 'a stream of samples' }); }
+      return Object.assign(base, { form: 'log', data: S.lines.slice(), why: 'a stream of lines (newest in view)' }); };
+    let raf = 0; const notify = () => { const r = record(); S.subs.forEach((f) => { try { f(r, sink); } catch (_) {} });
+      if (S.els.length && !raf) { const go = () => { raf = 0; const rr = record(); S.els.forEach((el) => { try { el.setAttribute('record', JSON.stringify(rr)); } catch (_) {} }); }; raf = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame(go) : setTimeout(go, 16); } };
+    const sink = {
+      push(e) { if (S.ended) return sink; const k = kindOf(e); if (!S.kind) S.kind = k;
+        if (k === 'steps') { const id = String(e.step ?? e.stage ?? e.phase ?? e.name); const row = Object.assign({ name: id }, e); if (S.stepIx[id] != null) S.steps[S.stepIx[id]] = Object.assign(S.steps[S.stepIx[id]], row); else { S.stepIx[id] = S.steps.length; S.steps.push(row); } if (S.kind !== 'steps') S.lines.push({ ts: e.ts || new Date().toISOString(), kind: 'step', text: id + ' · ' + String(e.status ?? e.state ?? '') }); }
+        else if (k === 'text') { S.text += String(e.delta ?? e.token ?? e.chunk); if (S.kind !== 'text') S.lines.push({ ts: new Date().toISOString(), kind: 'text', text: String(e.delta ?? e.token ?? e.chunk) }); }
+        else if (k === 'samples') { S.samples.push(e); if (S.samples.length > max) S.samples.shift(); }
+        else { const l = typeof e === 'string' ? { ts: new Date().toISOString(), text: e } : Object.assign({ ts: e.ts || e.t || new Date().toISOString() }, e, { text: e.text ?? e.msg ?? e.message ?? e.line ?? e.event ?? JSON.stringify(e).slice(0, 300) }); S.lines.push(l); if (S.lines.length > max) S.lines.shift(); if (S.kind === 'steps' || S.kind === 'samples') { /* a line inside a step or sample stream rides as the step's detail */ } }
+        notify(); return sink; },
+      end(result) { S.ended = true; if (result !== undefined) S.final = fromCapResult(cap, result, { args: opts.args, title: (opts.title || cap || 'result') + ' · result' }); notify(); return sink; },
+      record, records() { return [record()].concat(S.final); },
+      subscribe(fn) { S.subs.push(fn); return () => { S.subs = S.subs.filter((f) => f !== fn); }; },
+      attach(el) { if (el && S.els.indexOf(el) < 0) { S.els.push(el); try { el.setAttribute('record', JSON.stringify(record())); } catch (_) {} } return sink; },
+      get kind() { return S.kind; }, get ended() { return S.ended; } };
+    return sink;
+  }
+
   /* ── draw at a size: the composition around the form ─────────────────── */
   const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞' };
   // the glyph a size below M carries (the Sizes board): a ring for a level or a share, a spark for a series, a tube for
@@ -1582,7 +1861,7 @@
     if (size === 's' && (DRAWN[f] === 'items' || f === 'kv' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f, d, opts); if (cs) return cs; }
     if (size === 's') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
-    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || f === 'composite' || DRAWN[f] === 'events') return body;   // a composite, a table, a feed: the body is the composition
+    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
     // L: the form plus its detail list beside it; XL: the form, its table, its log
     // the detail list beside the form holds the rows its body has room for (~16 px a row) - eight in a two-row tile ran
     // past its foot - and a form that already names every value it draws (ranked bars, pills, a number grid, a
@@ -1910,7 +2189,7 @@ span.vw-sampled{opacity:.85}
 .vb-cmpr{display:grid;grid-template-columns:1fr 70px 1fr;gap:8px;align-items:center;font-size:10px}.vb-cmpr .n{grid-column:2;text-align:center;color:var(--b-t2);order:2;white-space:nowrap;overflow:hidden}.vb-cmpr .side{display:flex;align-items:center;gap:6px;height:12px}.vb-cmpr .side.l{order:1;justify-content:flex-end}.vb-cmpr .side.r{order:3}.vb-cmpr .side i{display:block;height:8px;border-radius:4px}.vb-cmpr .side b{font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);width:34px;text-align:right}.vb-cmpr .side.r b{text-align:left}
 .vb-carp{flex:1;min-height:0;display:flex;align-items:center;gap:12px}.vb-carp .vb-dial{width:64px;height:64px}.vb-carp .vb-dial > span{font-size:13px}
 .vb-flist{flex:1;display:flex;flex-direction:column;gap:1px;font-size:9.5px;min-width:0}.vb-flist > span{display:grid;grid-template-columns:1fr 46px 50px 36px;gap:6px;align-items:center;height:19px}.vb-flist span i{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}.vb-flist .h{color:var(--b-t3);font-size:8px;text-transform:uppercase;letter-spacing:.08em}.vb-flist .m{font-family:var(--b-mono);color:var(--b-t2);text-align:right;white-space:nowrap;overflow:hidden}
-.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}`);
+.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}` + CAPOUT_CSS);
   function ensureCss(root) {
     const host = root && root.head ? root.head : root;
     if (!host || !host.querySelector) return;
@@ -2328,7 +2607,7 @@ span.vw-sampled{opacity:.85}
   }
   if (window.customElements && !customElements.get('vera-widget')) customElements.define('vera-widget', VeraWidgetEl);
   window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, version: 5 };
-  Object.assign(window.VeraWidget, { dive, openBlock, rowTip, rowRef, fontScale });   // the widget review, round 2: blocks, the deep dive, the text-size setting
+  Object.assign(window.VeraWidget, { dive, openBlock, rowTip, rowRef, fontScale, fromCapResult, fromCapStream, capForms: () => CAP_FORMS.slice(), capHints: () => Object.assign({}, CAP_HINTS) });   // the widget review, round 2: blocks, the deep dive, the text-size setting
 
   /* ── THE WIDGET SURFACE — window.VeraWidgetConfig (the WidgetConfig board; the pickers of the Canvas, Harness and
      Dashboard boards) ─────────────────────────────────────────────────────────────────────────────────────────────
