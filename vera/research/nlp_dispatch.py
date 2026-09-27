@@ -34,11 +34,11 @@ from typing import Any, Dict, List, Optional, Tuple
 # the app on sys.path.
 try:
     from Vera.vera.research.nlp_dispatch_core import (
-        FAIL, LOCAL, REMOTE, pick_nlp_node, resolve_placement,
+        FAIL, LOCAL, REMOTE, normalize_node_inventory, pick_nlp_node, resolve_placement,
     )
 except ImportError:  # pragma: no cover - test/standalone import path
     from vera.research.nlp_dispatch_core import (
-        FAIL, LOCAL, REMOTE, pick_nlp_node, resolve_placement,
+        FAIL, LOCAL, REMOTE, normalize_node_inventory, pick_nlp_node, resolve_placement,
     )
 
 log = logging.getLogger("vera.nlp.dispatch")
@@ -178,10 +178,12 @@ async def discover(force: bool = False) -> List[Dict[str, Any]]:
         if not health or not health.get("ok"):
             continue
         facts = dict(agent_facts.get(str(nid)) or {})
+        inventory = normalize_node_inventory(health)
+        # Keep task detail for inventory consumers and derive the two compact
+        # compatibility summaries used by older routing/UI readers.
         facts.update({"node_id": str(nid), "nlp_url": url,
                       "threads": health.get("threads"),
-                      "models": health.get("models") or {},
-                      "loaded": health.get("loaded") or {}})
+                      **inventory})
         found.append(facts)
 
     _discovery_cache["at"] = now

@@ -427,6 +427,19 @@ if _CAP_AVAILABLE:
             except Exception as e:
                 placement = {"error": f"{type(e).__name__}: {e}"}
         remote_ok = placement.get("where") == "remote"
+        inventory = {"schema": "vera.nlp-model-inventory/v1", "packages": [],
+                     "candidates": [], "conflicts": [],
+                     "counts": {"packages": 0, "candidates": 0}}
+        if HAS_DISPATCH:
+            try:
+                try:
+                    from Vera.vera.models.nlp_inventory import project_nlp_inventory
+                except ImportError:  # standalone/test import path
+                    from vera.models.nlp_inventory import project_nlp_inventory
+                inventory = project_nlp_inventory(await _dispatch.discover())
+            except Exception as e:
+                inventory = {**inventory,
+                             "error": f"{type(e).__name__}: {e}"}
         return {"rerank_available":   HAS_RERANK or remote_ok,
                 "rerank_model":   RERANK_MODEL,
                 "classify_available": HAS_ORT_CLASSIFY or remote_ok,
@@ -437,7 +450,8 @@ if _CAP_AVAILABLE:
                 "host_classify": HAS_ORT_CLASSIFY,
                 "host_ner":      HAS_ORT_CLASSIFY,
                 "placement": placement,
-                "providers": providers}
+                "providers": providers,
+                "model_package_inventory": inventory}
 
     log.info("nlp_capabilities ready — rerank=%s classify/ner=%s",
              HAS_RERANK, HAS_ORT_CLASSIFY)
