@@ -53,6 +53,18 @@ def test_coverage_is_whole_token_and_case_blind():
     assert C.coverage([], "anything")["ratio"] is None
 
 
+def test_a_quantity_span_counts_when_its_tokens_are_there():
+    # nlp.ner on the census author-then-edit goal returned ONE span for this
+    # (measured 2026-09-27): the answer words it its own way.
+    ents = C.goal_entities({"entities": [{"entity": "TIME", "word": " 60 to 90 seconds", "score": 0.98}]})
+    assert [e["text"] for e in ents] == ["60 to 90 seconds"]
+    assert C.coverage(ents, "The countdown now runs 90 seconds (it was 60), to match.")["ratio"] == 1.0
+    assert C.coverage(ents, "The countdown now runs 60 seconds.")["missing"] == ["60 to 90 seconds"]
+    # a NAME still has to appear as the phrase
+    names = [{"text": "March Madness", "norm": "march madness", "label": "EVENT"}]
+    assert C.coverage(names, "madness in march")["missing"] == ["March Madness"]
+
+
 def test_the_trace_digest_and_the_loop_record_carry_it():
     events = [{"type": "agent_loop_v6.entity_coverage", "entities": 4, "ratio": 0.75,
                "covered": ["Redis"], "missing": ["Valkey"]},

@@ -64,15 +64,33 @@ def goal_entities(ner: Any, *, max_entities: int = MAX_ENTITIES) -> List[Dict[st
     return out
 
 
+def _mentioned(ent: Dict[str, str], hay: str, hay_tokens: set) -> bool:
+    """A NAME must appear as the phrase ("Valkey", "March Madness"); a quantity
+    or date counts when every one of its tokens appears - NER hands back spans
+    like "60 to 90 seconds" (measured on the census's author-then-edit goal)
+    that an answer rightly words differently."""
+    n = str(ent.get("norm") or _norm(ent.get("text")))
+    if not n:
+        return False
+    if str(ent.get("label") or "") in NUMERIC:
+        return all(t in hay_tokens for t in n.split())
+    return (" %s " % n) in hay
+
+
 def coverage(entities: Sequence[Dict[str, str]], output: str) -> Dict[str, Any]:
-    """Which entities the output mentions (normalised, whole-token match), which
-    it never does, and the covered ratio (None when there was nothing to check)."""
-    hay = " %s " % _norm(output)
+    """Which entities the output mentions (see _mentioned), which it never does,
+    and the covered ratio (None when there was nothing to check). It sees what
+    NER sees - names, dates, quantities - never features or verbs ("add and
+    delete items" yields no entity at all), so it cannot say a feature is
+    missing."""
+    norm_out = _norm(output)
+    hay = " %s " % norm_out
+    hay_tokens = set(norm_out.split())
     covered: List[str] = []
     missing: List[str] = []
     for e in entities or []:
         n = str(e.get("norm") or _norm(e.get("text")))
-        (covered if n and (" %s " % n) in hay else missing).append(str(e.get("text") or n))
+        (covered if _mentioned(e, hay, hay_tokens) else missing).append(str(e.get("text") or n))
     total = len(covered) + len(missing)
     return {"entities": total, "covered": covered, "missing": missing,
             "ratio": (round(len(covered) / total, 3) if total else None)}
