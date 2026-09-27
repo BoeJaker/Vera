@@ -3,6 +3,7 @@
 from .onnx_import import ONNXImportReceipt, inspect_and_register_onnx
 from .model_package_store import (
     AdmittedModelActivation, ModelActivationReceipt, SQLiteModelPackageRegistry)
+from .model_inventory import MODEL_INVENTORY_SCHEMA, project_model_inventory
 from .legacy_binding import LegacyModelCapabilityBinding, legacy_onnx_bindings
 from .admission import (
     ModelAdmissionReceipt, ModelDeploymentTarget, ModelPackageAdmissionRejected,
@@ -116,6 +117,7 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "optimizer_profile_from_dict", "optimizer_proposal_from_dict",
            "prompt_optimization_candidate_from_dict",
            "SQLiteModelPackageRegistry", "inspect_and_register_onnx",
+           "MODEL_INVENTORY_SCHEMA", "project_model_inventory",
            "evaluate_model_admission", "evaluation_report_from_dict",
            "evaluation_request_from_dict", "legacy_onnx_bindings",
            "consume_inference", "inference_event_from_dict",

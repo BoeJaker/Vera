@@ -126,6 +126,21 @@ can replay candidate decisions at an explicit time and rejects stale,
 foreign-provider, or undeclared-package evidence. It still does not probe a
 runtime or select, retry, balance, or fail over providers.
 
+### Portable model inventory
+
+`model.inventory` (`GET /models/inventory`) is the read-only join across the
+portable model boundary. It projects registered `ModelPackage` records, aliases,
+admission and activation receipts, inference deployments and observations, and
+provider descriptors without executing any of them. Source-owned inventories,
+including NLP/NER deployments, may contribute only schema-valid packages;
+legacy name-only deployments remain visible as unresolved candidates with their
+blockers and placement evidence.
+
+The NLP panel's **Models** view consumes this projection. Empty or unavailable
+stores remain explicit source states, and dangling aliases, deployments or
+providers appear as conflicts. This makes migration progress observable without
+turning the inventory into a router, model loader, or activation authority.
+
 Adapter parity can be checked offline from already-collected inference
 transcripts. Conformance expectations compare content hashes, terminal state,
 stable outage codes, and optional usage counters while keeping output values out
