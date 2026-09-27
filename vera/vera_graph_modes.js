@@ -11,6 +11,8 @@
  *   estate-3d  the one isometric projection (/ui/iso.js, window.VeraISO) - a plate per group (the host a node runs on
  *              when it says, else its type), a block per node, height by how connected it is, colour the graph's
  *   estate-2d  the same blocks seen straight down (the projection at 90°) - the plan
+ *   mermaid    <vera-mermaid> (/ui/elements/vera_mermaid.js) - the nodes as a flowchart, a subgraph per type, the
+ *              edges with their relation as the label (the diagram technique the chat and the canvas draw with)
  * Hover a block: it lights and says what it is. Click: the graph's detail drawer for that node.
  * A new mode is one registerMode() call (see vera_graph.js, "Display modes").
  */
@@ -116,7 +118,31 @@
     return { update: draw, destroy: function(){} };
   }
 
+  // ── mermaid: the graph as a flowchart ──────────────────────────────────
+  function mermaid(host, graph, api){
+    var el = null;
+    function code(){
+      var N = api.nodes().slice(0, 120), E = api.edges(), ids = {}, byT = {};
+      N.forEach(function(n, i){ ids[n.id] = 'n' + i; var t = typeOf(n); (byT[t] = byT[t] || []).push(n); });
+      var q = function(s){ return String(s == null ? '' : s).replace(/["\[\]{}()<>|#;]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40); };
+      var lines = ['graph LR'];
+      Object.keys(byT).forEach(function(t){ lines.push('subgraph ' + (q(t).replace(/\s+/g, '_') || 'nodes')); byT[t].forEach(function(n){ lines.push('  ' + ids[n.id] + '["' + (q(nameOf(n)) || 'node') + '"]'); }); lines.push('end'); });
+      E.slice(0, 300).forEach(function(e){ var a = ids[e.from], b = ids[e.to]; if (!a || !b) return; var r = q(e.rel || ''); lines.push('  ' + a + (r ? ' -->|' + r + '| ' : ' --> ') + b); });
+      return lines.join('\n');
+    }
+    function draw(){
+      need('/ui/elements/vera_mermaid.js', function(){ return !!(window.customElements && customElements.get('vera-mermaid')); }).then(function(ok){
+        if (!ok) { host.textContent = 'the mermaid renderer (/ui/elements/vera_mermaid.js) did not load'; return; }
+        if (!el) { el = document.createElement('vera-mermaid'); el.setAttribute('fill', ''); el.setAttribute('bare', ''); el.style.cssText = 'position:absolute;inset:0;display:block'; host.appendChild(el); }
+        try { el.render(code()); } catch(e){}
+      });
+    }
+    draw();
+    return { update: draw, destroy: function(){} };
+  }
+
   G.registerMode({ id: 'exploded',  label: 'Exploded',     order: 10, mount: exploded });
   G.registerMode({ id: 'estate-3d', label: 'Estate · 3D', order: 20, mount: estate(30) });
   G.registerMode({ id: 'estate-2d', label: 'Estate · 2D', order: 30, mount: estate(90) });
+  G.registerMode({ id: 'mermaid',   label: 'Mermaid',      order: 40, mount: mermaid });
 })();
