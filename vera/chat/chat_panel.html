@@ -760,6 +760,10 @@ body.composer-focus #ctxStrip{display:flex}
   border:1px solid var(--border);border-radius:3px;color:var(--text2);padding:1px 6px}
 #memGraphCtrl .btn.xs:hover{border-color:var(--acc);color:var(--acc)}
 #memGraphCtrl .btn.xs.on{border-color:var(--acc);color:var(--acc);background:rgba(90,158,143,.12)}
+/* the memory graph is a Vera graph (the SVG below is its fallback): themed, see-through with blocks off (vera_graph.js) */
+#memGraphVG{display:none;flex:1;min-height:0;position:relative;flex-direction:column}
+#paneMemGraph.vg #memGraphVG{display:flex}#paneMemGraph.vg #memGraphSvg,#paneMemGraph.vg #memLegend{display:none}
+html[data-blocks="off"] #paneMemGraph #memGraphSvg{background:transparent}
 #memGraphSvg{flex:1;width:100%;display:block;min-height:0;background:
   radial-gradient(circle at 1px 1px, rgba(255,255,255,.03) 1px, transparent 0) 0 0/22px 22px,
   var(--bg0)}
@@ -13403,7 +13407,37 @@ Your task: decide what to do next to advance toward the goal.
     return{c:'var(--border2)',w:1,dash:''};
   }
 
+
+  /* ═══ THE MEMORY GRAPH IS A VERA GRAPH (owner, 2026-09-27: "the memory graph from the chat ui could probably be improved and
+     made more in-keeping with the new design - blocks off = background transparent etc" · "would it make sense for the
+     mermaid graphing technique to also live in vera graph and the memory graph and other graphs from the chat ui? so they
+     all have one home"). The session's memory nodes and edges are loaded into the one graph (/ui/vera-graph.js): themed by
+     the tokens, see-through with blocks off, its detail drawer on a click, and its display modes - Exploded, Estate 3D/2D,
+     Mermaid. The SVG drawing below stays only as the fallback while the library loads or if it cannot. ═══ */
+  let _memVG=null, _memVGLoading=null;
+  function _memVGEnsure(){
+    if(window.veraUI&&veraUI.Graph) return Promise.resolve(true);
+    if(_memVGLoading) return _memVGLoading;
+    _memVGLoading=new Promise(res=>{ const s=document.createElement('script'); s.src=BASE+'/ui/vera-graph.js'; s.onload=()=>res(!!(window.veraUI&&veraUI.Graph)); s.onerror=()=>res(false); document.head.appendChild(s); });
+    return _memVGLoading;
+  }
+  function _memVGDraw(nodes, edges){
+    const pane=document.getElementById('paneMemGraph'); if(!pane||!(window.veraUI&&veraUI.Graph)) return false;
+    let host=document.getElementById('memGraphVG');
+    if(!host){ host=document.createElement('div'); host.id='memGraphVG'; host.setAttribute('data-w','memory graph · graph'); const svg=document.getElementById('memGraphSvg'); if(svg&&svg.parentNode) svg.parentNode.insertBefore(host, svg.nextSibling); else pane.appendChild(host); }
+    try{
+      if(!_memVG) _memVG=veraUI.Graph.create(host, { apiBase:BASE, height:'fill', showLeftPanel:false, sidebar:false, actionsEnabled:false });
+      const label=(n)=>String(n.label||n.name||n.title||n.text||n.content||n.id||'').replace(/\s+/g,' ').trim().slice(0,48);
+      _memVG.load({ nodes:nodes.map(n=>({ id:String(n.id), name:label(n), type:String(n.type||n.node_type||n.kind||'memory'), props:n })),
+                    edges:edges.map(e=>({ from:String(e.from_id||e.from), to:String(e.to_id||e.to), rel:String(e.relation||e.type||'') })) });
+      pane.classList.add('vg');
+      return true;
+    }catch(e){ console.warn('memory graph: vera-graph', e); pane.classList.remove('vg'); return false; }
+  }
   function _renderMemGraph(nodes,allEdges){
+    { const fe=allEdges.filter(e=>!_memEdgeHideTypes.has(e.relation||e.type||''));
+      if(window.veraUI&&veraUI.Graph){ if(_memVGDraw(nodes, fe)) return; }
+      else _memVGEnsure().then(ok=>{ if(ok) _memVGDraw(nodes, fe); }); }
     const svg=document.getElementById('memGraphSvg');const nG=document.getElementById('memNG');const eG=document.getElementById('memEG');
     if(!svg||!nG||!eG)return;
 
@@ -13579,7 +13613,7 @@ Your task: decide what to do next to advance toward the goal.
     window.addEventListener('mouseup',()=>MEM_DRG=null);
   }
   function _applyMemPan(){const g=document.getElementById('memGG');if(g)g.setAttribute('transform',`translate(${MEM_PAN.x},${MEM_PAN.y}) scale(${MEM_PAN.s})`);}
-  function memGraphFit(){_memAutoFit();}
+  function memGraphFit(){ if(_memVG&&document.getElementById('paneMemGraph')?.classList.contains('vg')){ try{ _memVG.fit(); }catch(_){} return; } _memAutoFit(); }
 
   /* ═══ DAG GRAPH ═══ */
   let _currentDagLogIdx=-1; // tracks the SESSION_DAG_LOG entry for the active DAG

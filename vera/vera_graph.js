@@ -630,6 +630,8 @@
       '.vg-sp{font-family:var(--mono,monospace);font-size:8.5px;padding:3px 6px;border:1px solid var(--border,#3a3530);border-radius:3px;margin-bottom:2px;background:var(--bg2,#272421);cursor:pointer;transition:all .12s}',
       '.vg-sp:hover{border-color:var(--acc,#5a9e8f)} .vg-sp.on{border-color:var(--acc2,#8fb87a);background:rgba(143,184,122,.1)}',
       '.vg-canvas-area{flex:1;min-width:0;display:flex;flex-direction:column;position:relative;background:var(--bg0,#181614)}',
+      /* blocks off (the one design's mode): no ground of the graph's own - the page and its glow show through, as the chat's parts do */
+      'html[data-blocks="off"] .vg-canvas-area,html[data-blocks="off"] .vg-canvas,html[data-blocks="off"] .vg-mode-host{background:transparent!important;border-color:transparent!important}',
       // ── Detail drawer tabs ──────────────────────────────────────────────
       '.vg-dtabs{display:flex;gap:2px;padding:4px 8px 0;border-bottom:1px solid var(--border,#3a3530);background:var(--bg1,#1f1d1a)}',
       '.vg-dtab{font-family:var(--mono,monospace);font-size:9px;padding:3px 10px;border-radius:3px 3px 0 0;border:1px solid transparent;border-bottom:none;color:var(--dim,#6a6058);cursor:pointer;user-select:none;transition:all .12s}',
@@ -6067,7 +6069,7 @@
       var hdr = container.querySelector('.vg-header'), wrap = container.querySelector('.vg-canvas-wrap');
       _modeSel = document.createElement('select'); _modeSel.className = 'vg-mode';
       _modeSel.title = 'Display mode - the same nodes and edges drawn another way';
-      _modeSel.style.cssText = 'font-size:10px;padding:2px 6px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:3px';
+      _modeSel.style.cssText = 'font-size:10px;padding:2px 6px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:3px;max-width:150px;flex:0 0 auto';
       _modeSel.innerHTML = '<option value="graph">Graph</option>';
       _modeSel.onchange = function(){ instance.setMode(_modeSel.value); };
       if (hdr) hdr.insertBefore(_modeSel, hdr.querySelector('.vg-meta') || null);
