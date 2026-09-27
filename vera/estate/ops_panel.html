@@ -159,7 +159,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .dlabel{position:absolute;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);pointer-events:none;transform:translateX(-50%) scale(var(--ui,1));transform-origin:50% 0}
 .link{position:absolute;height:calc(2px * var(--ui,1));border-radius:2px;transform-origin:0 50%;background:var(--lc,var(--bd2));pointer-events:none;opacity:.85;box-shadow:0 0 7px -1px var(--lc,transparent)}
 .link.q{opacity:.42;box-shadow:none}.plot:hover .link.q{opacity:.55}
-.flow{position:absolute;transform-origin:0 50%;height:0;pointer-events:none;z-index:3}
+.flow{position:absolute;transform-origin:0 50%;height:0;pointer-events:none;z-index:8}
 .flow i{position:absolute;top:calc(-3px * var(--ui,1));left:0;width:calc(6px * var(--ui,1));height:calc(6px * var(--ui,1));border-radius:50%;animation:fl var(--dur,2.4s) linear infinite;animation-delay:var(--dl,0s)}
 @keyframes fl{from{transform:translateX(0);opacity:0}10%{opacity:1}90%{opacity:1}to{transform:translateX(var(--len));opacity:0}}
 .nd{position:absolute;transform:translate(-50%,-50%) scale(calc(var(--nsc,1) * var(--ui,1)));display:flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:var(--r-sm);background:var(--surf2);font-size:10px;white-space:nowrap;cursor:pointer;z-index:2;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pc) 45%,transparent)}
@@ -198,6 +198,12 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .owf-l{position:absolute;transform:translate(-50%,0) scale(var(--ui,1));transform-origin:50% 0;font-family:var(--f-mono);font-size:9px;z-index:8;text-shadow:0 1px 3px var(--bg);white-space:nowrap;pointer-events:none}
 .owf-hit{position:absolute;z-index:9;border-radius:6px;cursor:pointer}
 .pivot{position:absolute;width:0;height:0;pointer-events:none}
+.owf-svg line.pipe{stroke:var(--lc,var(--bd2));stroke-width:2;stroke-linecap:round;opacity:.85}
+.owf-svg line.pipe.q{opacity:.42}.owf-svg line.pipe.q2{opacity:.12}.owf-svg line.pipe.q3,.link.q3{opacity:.06;box-shadow:none}
+.owf-svg line.pipe.hot{opacity:1;stroke-width:3.4}
+.owf-svg polygon.busd{fill:var(--bg);stroke:var(--t3);stroke-width:1.5}
+.owf-svg g.wq{opacity:.3}
+.owf-svg line.ent,.owf-svg polygon.busd.ent{animation:opsFade .6s ease-out both;animation-delay:var(--ed,0s)}
 .nd .vit{display:inline-flex;align-items:flex-end;gap:1px;height:12px;flex:none}.nd .vit i{width:3px;border-radius:1px;display:block}
 .nd .regd{display:inline-flex;gap:2px;flex:none}.nd .regd i{width:5px;height:5px;border-radius:50%;display:block}
 .regd i.y{background:var(--ac2)}.regd i.n{background:var(--ac4)}.regd i.na{background:var(--s3)}
@@ -334,7 +340,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     <div class="seg" id="segGap" title="How far apart the floors stand (3D)"><span class="cap">gap</span><input type="range" id="rGap" min="0.5" max="3" step="0.1" value="1"><span class="z" id="rGapV">1.0</span></div>
     <div class="seg" id="segSpread" title="How far apart the lanes and rows stand"><span class="cap">spread</span><input type="range" id="rSpread" min="0.8" max="2.2" step="0.1" value="1"><span class="z" id="rSpreadV">1.0</span></div>
     <div class="seg wsz" id="segWsz" title="The size of the iso widgets on the planes (they keep it while the view zooms)"><span class="cap">▣</span><button data-wsz="0.75">S</button><button data-wsz="1" class="on">M</button><button data-wsz="1.35">L</button><button data-wsz="1.8">XL</button></div>
-    <div class="seg"><button id="bPipes" class="on" title="Runs follow the lanes of their plane, then go straight up or down">Pipes</button><button id="bDirect" title="Each edge as a straight chord">Direct</button></div>
+    <div class="seg"><button id="bPipes" class="on" title="Runs follow the lanes of their plane, then go straight up or down">Pipes</button><button id="bDirect" title="Each edge as a straight chord">Direct</button><button id="bActive" title="Light only the routes carrying requests right now; everything else fades">Active</button></div>
     <div class="seg" id="segLbl" title="What stands on the planes in 3D"><button data-lbl="labels" title="Billboard labels only">Labels</button><button data-lbl="both" class="on" title="Billboards and the iso widgets">Both</button><button data-lbl="widgets" title="The iso widgets alone - no billboards; a widget names its node">Widgets</button></div>
     <div class="seg" id="segLens" title="Look at the estate through one concern"><span class="cap">lens</span><button data-lens="all" class="on" title="Every plane in its own colour">All</button><button data-lens="net" title="Machines by subnet with their addresses; requests and mesh radio stay lit">Network</button><button data-lens="sec" title="Machines by how much of their registration is in place: SSH login, directory, mesh door, certificate, backup">Security</button></div>
     <div class="seg"><button id="bRefresh" title="Read the estate again now">↻</button></div>
@@ -427,12 +433,12 @@ const regOf = (n) => { const r = n.reg; if (!r || !r.planes) return null; const 
 const S = { view: '2d', layout3d: 'stack', focus: null, pipes: true, widgets: true, sel: null, exp: null, act: 'metrics', wact: 'overview',
   on: { client: true, work: true, core: true, service: true, runtime: true, host: true, edge: true },
   vz: 1, vx: 0, vy: 0, tilt: null, azim: null, zgap: 1, spread: 1, wsz: 1, lbl: 'both', wl: {}, wpick: null, wadd: null, wsec: true, lens: 'all', term: {},
-  snap: null, err: '', cm: null, logs: {}, req: {}, dive: {}, drag: null, fresh: true, busy: false, fp: '', seenN: {}, seenW: {}, enterKey: '', rt: null, moved: false };
+  snap: null, err: '', cm: null, logs: {}, req: {}, dive: {}, drag: null, fresh: true, busy: false, fp: '', seenN: {}, seenW: {}, enterKey: '', rt: null, moved: false, active: false };
 // the widget overrides: {node: {off, items:[{k, s}]}} (an older {k, s, off} is read as one item)
 try { const w = JSON.parse(localStorage.getItem('vera:ops:widgets') || 'null'); if (w && typeof w === 'object') Object.keys(w).forEach((id) => { const o = w[id] || {}; S.wl[id] = Array.isArray(o.items) ? { off: !!o.off, items: o.items } : { off: !!o.off, items: o.k ? [{ k: o.k, s: o.s || 1 }] : null }; }); } catch (_) {}
-try { const v = JSON.parse(localStorage.getItem('vera:ops:view') || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); if (S.wsz === 1.3) S.wsz = 1.35; if (S.wsz === 1.6) S.wsz = 1.8; if (['labels', 'both', 'widgets'].indexOf(v.lbl) >= 0) S.lbl = v.lbl; if (['all', 'net', 'sec'].indexOf(v.lens) >= 0) S.lens = v.lens; S.widgets = S.lbl !== 'labels'; } } catch (_) {}
+try { const v = JSON.parse(localStorage.getItem('vera:ops:view') || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); if (S.wsz === 1.3) S.wsz = 1.35; if (S.wsz === 1.6) S.wsz = 1.8; if (['labels', 'both', 'widgets'].indexOf(v.lbl) >= 0) S.lbl = v.lbl; if (['all', 'net', 'sec'].indexOf(v.lens) >= 0) S.lens = v.lens; S.active = !!v.active; S.widgets = S.lbl !== 'labels'; } } catch (_) {}
 const saveW = () => { try { localStorage.setItem('vera:ops:widgets', JSON.stringify(S.wl)); } catch (_) {} };
-const saveV = () => { try { localStorage.setItem('vera:ops:view', JSON.stringify({ zgap: S.zgap, spread: S.spread, wsz: S.wsz, lbl: S.lbl, lens: S.lens })); } catch (_) {} };
+const saveV = () => { try { localStorage.setItem('vera:ops:view', JSON.stringify({ zgap: S.zgap, spread: S.spread, wsz: S.wsz, lbl: S.lbl, lens: S.lens, active: S.active })); } catch (_) {} };
 const byId = () => { const m = {}; ((S.snap && S.snap.nodes) || []).forEach((n) => { m[n.id] = n; }); return m; };
 
 // ── the page left open outlives a sandbox restart: when the served page is newer, reload once (never while typing) ──
@@ -559,7 +565,7 @@ function layout(W, H){
     const KI0 = (FLAT ? 0.74 : 1) * 60 / Math.cos(45 * Math.PI / 180), NHW = 52, FITM = 14;
     const uOff = {}, vOff = {}; { const rowsD = [];
       PL.forEach((p, i) => { const r = Math.floor(i / 3); rowsD[r] = Math.max(rowsD[r] || 0, VHof[p.id]); });
-      PL.forEach((p, i) => { const c = i % 3, r = Math.floor(i / 3); uOff[p.id] = c * (UW + 1.2 * SP); let v = 0; for (let j = 0; j < r; j++) v += 2 * rowsD[j] + 1.4 * SP; vOff[p.id] = v + (rowsD[r] - VHof[p.id]); }); }
+      PL.forEach((p, i) => { const c = i % 3, r = Math.floor(i / 3); uOff[p.id] = c * (UW + 3.0 * SP); let v = 0; for (let j = 0; j < r; j++) v += 2 * rowsD[j] + 3.8 * SP; vOff[p.id] = v + (rowsD[r] - VHof[p.id]); }); }
     // where the risers stand: a bus line along the BACK edge of the planes, outside every plate (the front is left to the nodes)
     const vBusOf = (pl) => -((FLAT ? VHof[pl] : VMAX) + 0.45 * SP);
     const lay = (KI) => {
@@ -571,8 +577,10 @@ function layout(W, H){
       const zOf = (pl) => FLAT ? 0 : (rows - 1 - rowOf[pl]) * zh, uOf = (pl) => FLAT ? uOff[pl] : 0, vOf2 = (pl) => FLAT ? vOff[pl] : 0;
       const rawX = [], rawY = [], corners = [], rawNodes = [], LL = {}, usedL = {}, pcs = [];
       PL.forEach((p) => { const z = zOf(p.id), uo = uOf(p.id), vo = vOf2(p.id), VH = VHof[p.id], vb = vBusOf(p.id) - 1.7 * SP;
-        const c = [iso(-0.3 * SP + uo, -VH + vo, z), iso(UW + uo, -VH + vo, z), iso(UW + uo, VH + vo, z), iso(-0.3 * SP + uo, VH + vo, z)];
-        corners.push({ p, c }); pcs.push([(UW - 0.3 * SP) / 2 + uo, vo, z]); c.concat([iso(uo, vb + vo, z), iso(UW + uo, vb + vo, z)]).forEach((q) => { rawX.push(q[0]); rawY.push(q[1]); }); });
+        // the plate holds its routes: the gutters left of the first column, the bus lanes along the back
+        const uL = -1.7 * SP, vBk = vBusOf(p.id) - 1.8 * SP;
+        const c = [iso(uL + uo, vBk + vo, z), iso(UW + uo, vBk + vo, z), iso(UW + uo, VH + vo, z), iso(uL + uo, VH + vo, z)];
+        corners.push({ p, c }); pcs.push([(UW + uL) / 2 + uo, (vBk + VH) / 2 + vo, z]); c.concat([iso(uo, vb + vo, z), iso(UW + uo, vb + vo, z)]).forEach((q) => { rawX.push(q[0]); rawY.push(q[1]); }); });
       shown.forEach((n) => { const k = n.plane + ':' + n.domain; const idx = (usedL[k] = (usedL[k] || 0)); usedL[k]++; const g = grid[k];
         const c = idx % g.cols, r = Math.floor(idx / g.cols);
         const u = domU[n.domain] + (c - (g.cols - 1) / 2) * cellW(n.plane) + uOf(n.plane), vv = (r - (g.rows - 1) / 2) * rowV(n.plane) + vOf2(n.plane), z = zOf(n.plane);
@@ -597,7 +605,7 @@ function layout(W, H){
     // pipes: within a plane along its lanes; between planes out to the plane's front bus, along it to a riser that stands
     // outside every plate, straight up or down, and in along the other plane's bus - no riser crosses a node or a stem.
     // Risers from one column fan out beside each other; their feet are the planes' bus points.
-    const P = (u, v, z) => { const q = R.iso(u, v, z); return { x: q[0] + ox, y: q[1] + oy }; };
+    const P = (u, v, z) => { const q = R.iso(u, v, z); return { x: q[0] + ox, y: q[1] + oy }; }; G.P = P;
     // every pipe keeps a lane of its own - within a plane a small step off the row, on the bus a line further back - so no two
     // runs lie on top of each other and a selected route can be followed end to end
     const riserN = {}, riserOf = {}, laneN = {}, laneOf = {};
@@ -612,17 +620,19 @@ function layout(W, H){
       const LN = 0.15 * SP, ZS = 4.5 / Math.max(0.2, Math.cos(TH));
       const la = lane('s:' + a, key), lbn = lane('d:' + b, key), zA = (1 + la) * ZS, zB = (1 + lbn) * ZS;
       const gA = A.u - 0.72 * SP - (la - 3.5) * LN, gB = B.u - 0.72 * SP - (lbn - 3.5) * LN;   // aside and up add on screen, never cancel
-      const at = (pts) => pts.map((q) => P(q[0], q[1], q[2]));
+      // points as [u, v, plate z, lift]; each keeps its world place (w) so the 3D pipes can be depth-sorted with the widgets
+      const at = (pts) => pts.map((q) => { const o = P(q[0], q[1], q[2] + q[3]); o.w = [q[0], q[1], q[2] + q[3], q[2]]; return o; });
       if (A.pl === B.pl){
-        if (Math.abs(A.u - B.u) < 1e-6) return at([[A.u, A.v, A.z], [A.u, A.v, A.z + zA], [gA, A.v, A.z + zA], [gA, B.v, A.z + zA], [B.u, B.v, B.z + zA], [B.u, B.v, B.z]]);
+        if (Math.abs(A.u - B.u) < 1e-6) return at([[A.u, A.v, A.z, 0], [A.u, A.v, A.z, zA], [gA, A.v, A.z, zA], [gA, B.v, A.z, zA], [B.u, B.v, B.z, zA], [B.u, B.v, B.z, 0]]);
         const hv = A.v - A.rv / 2 - (lane('r:' + A.pl + ':' + Math.round(A.v * 10), key) - 3.5) * LN;
-        return at([[A.u, A.v, A.z], [A.u, A.v, A.z + zA], [gA, A.v, A.z + zA], [gA, hv, A.z + zA], [gB, hv, A.z + zA], [gB, hv, B.z + zB], [gB, B.v, B.z + zB], [B.u, B.v, B.z + zB], [B.u, B.v, B.z]]); }
+        return at([[A.u, A.v, A.z, 0], [A.u, A.v, A.z, zA], [gA, A.v, A.z, zA], [gA, hv, A.z, zA], [gB, hv, A.z, zA], [gB, hv, B.z, zB], [gB, B.v, B.z, zB], [B.u, B.v, B.z, zB], [B.u, B.v, B.z, 0]]); }
       const lb = lane('bus', key) * 0.2 * SP, va = A.vb - lb, vbB = B.vb - lb;
+      const bp = (u, v, zb, lift) => { const o = P(u, v, zb + lift); o.w = [u, v, zb + lift, zb]; return o; };
       if (riserOf[key] == null){ const col = A.pl + ':' + Math.round(A.u * 10); const n = (riserN[col] = (riserN[col] || 0) + 1) - 1; riserOf[key] = gA + (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.26 * SP;
-        busPts.push(P(riserOf[key], va, A.z + zA), P(riserOf[key], FLAT ? vbB : va, B.z + zB)); }
+        busPts.push(bp(riserOf[key], va, A.z, zA), bp(riserOf[key], FLAT ? vbB : va, B.z, zB)); }
       const uR = riserOf[key];
-      if (FLAT) return at([[A.u, A.v, A.z], [A.u, A.v, A.z + zA], [gA, A.v, A.z + zA], [gA, va, A.z + zA], [gB, va, A.z + zA], [gB, va, B.z + zB], [gB, vbB, B.z + zB], [gB, B.v, B.z + zB], [B.u, B.v, B.z + zB], [B.u, B.v, B.z]]);
-      return at([[A.u, A.v, A.z], [A.u, A.v, A.z + zA], [gA, A.v, A.z + zA], [gA, va, A.z + zA], [uR, va, A.z + zA], [uR, va, B.z + zB], [gB, vbB, B.z + zB], [gB, B.v, B.z + zB], [B.u, B.v, B.z + zB], [B.u, B.v, B.z]]); };
+      if (FLAT) return at([[A.u, A.v, A.z, 0], [A.u, A.v, A.z, zA], [gA, A.v, A.z, zA], [gA, va, A.z, zA], [gB, va, A.z, zA], [gB, va, B.z, zB], [gB, vbB, B.z, zB], [gB, B.v, B.z, zB], [B.u, B.v, B.z, zB], [B.u, B.v, B.z, 0]]);
+      return at([[A.u, A.v, A.z, 0], [A.u, A.v, A.z, zA], [gA, A.v, A.z, zA], [gA, va, A.z, zA], [uR, va, A.z, zA], [uR, va, B.z, zB], [gB, vbB, B.z, zB], [gB, B.v, B.z, zB], [B.u, B.v, B.z, zB], [B.u, B.v, B.z, 0]]); };
   }
   return { PL, shown, pos, bands, floors, planeLabels, domLabels, route, G, L, AXIS, cellMax, ladder, busPts };
 }
@@ -749,7 +759,7 @@ function isoWidgets(lay, W, H){
       const gu = N.u + run, gv = N.v + 0.08 * SP, g = Pg(gu, gv, N.z), k = 16 * ws * (w.s || 1); run += st / 2;
       const b = w.k === 'term' ? termFrame(g, k, n) : (BUILD[w.k] || BUILD.chip)(g, k, n); const bb = bboxOf(b.faces); out.boxes.push(bb);
       if (b.frame) out.frames.push(Object.assign({ id: n.id }, b.frame));
-      out.groups.push({ id: n.id, key: n.id + ':' + i + ':' + w.k, i, a: out.faces.length, b: out.faces.length + b.faces.length });
+      out.groups.push({ id: n.id, key: n.id + ':' + i + ':' + w.k, i, a: out.faces.length, b: out.faces.length + b.faces.length, k: N.z * 1000 + gu + gv });
       b.faces.forEach((q) => out.faces.push(q));
       if (i === 0 && (n.status === 'down' || n.errors || (b.beacon && n.status === 'warn'))){ const at = b.beacon || [(bb.x0 + bb.x1) / 2, bb.y0];
         out.boxes.push({ x0: at[0] - 30, x1: at[0] + 30, y0: at[1] - 20, y1: at[1] });
@@ -785,7 +795,7 @@ function render(opts){
   ['segGap', 'segWsz'].forEach((id) => { $(id).hidden = !is3d; });
   $('rGap').value = S.zgap; $('rGapV').textContent = S.zgap.toFixed(1); $('rSpread').value = S.spread; $('rSpreadV').textContent = S.spread.toFixed(1);
   document.querySelectorAll('[data-wsz]').forEach((b) => b.classList.toggle('on', parseFloat(b.dataset.wsz) === S.wsz));
-  $('bPipes').classList.toggle('on', S.pipes); $('bDirect').classList.toggle('on', !S.pipes);
+  $('bPipes').classList.toggle('on', S.pipes); $('bDirect').classList.toggle('on', !S.pipes); $('bActive').classList.toggle('on', S.active);
   $('pzTilt').hidden = !is3d; $('lsel').hidden = !is3d; $('axRot').hidden = !is3d;
   $('viewName').textContent = !is3d ? 'Flat — planes stacked bottom to top' : 'Isometric — one floor per plane';
   const active = snap.planes.filter((p) => S.on[p.id]);
@@ -836,20 +846,27 @@ function render(opts){
   lay.domLabels.forEach((d) => parts.push('<div class="dlabel' + (replay ? ' ent' : '') + '" style="left:' + px(d.x) + ';top:' + px(d.y) + (replay ? ';--ed:.8s' : '') + '">' + esc(d.t) + '</div>'));
   const segsOf = (a, b) => { const pts = S.pipes && lay.route ? lay.route(a, b) : [{ x: pos[a].x, y: pos[a].y }, { x: pos[b].x, y: pos[b].y }]; const segs = [];
     for (let i = 1; i < pts.length; i++){ const dx = pts[i].x - pts[i - 1].x, dy = pts[i].y - pts[i - 1].y, len = Math.hypot(dx, dy); if (len < .6) continue; segs.push({ x: pts[i - 1].x, y: pts[i - 1].y, len, deg: Math.atan2(dy, dx) * 180 / Math.PI }); } return segs; };
-  let nLinks = 0; const RT = routesFrom(S.rt, snap.links, ID);
-  // the lit route names itself on the plot with a way out (Esc and a click on empty space do the same)
-  { const pill = $('rtPill'), rn = S.rt && ID[S.rt]; pill.hidden = !rn;
-    if (rn) pill.innerHTML = '<i style="background:' + PCOL[rn.plane] + '"></i>Routes from <b>' + esc(rn.label.length > 28 ? rn.label.slice(0, 26) + '…' : rn.label) + '</b><span class="c">' + (RT && RT.any ? (RT.down.length + RT.up.length) + (RT.down.length + RT.up.length === 1 ? ' end' : ' ends') : 'nothing wired') + '</span><button data-clear-route="1" title="Put every pipe back (Esc, or a click on empty space)">✕ Clear</button>'; }
-  snap.links.forEach((l) => { if (!pos[l.a] || !pos[l.b]) return; if (is3d && S.focus && (ID[l.a].plane !== S.focus || ID[l.b].plane !== S.focus)) return;
-    // a selected node lights the shortest route to each of its ends and fades the rest; the network lens keeps requests and radio lit
-    const hot = RT && RT.any && RT.edges[l.a + '>' + l.b];
-    const dim = (RT && RT.any ? (hot ? 'hot' : 'q2') : (S.rt && S.rt !== l.a && S.rt !== l.b ? 'q' : '')) + (!hot && S.lens === 'net' && l.kind !== 'mesh' && l.kind !== 'req' ? ' q2' : ''); nLinks++;
+  let nLinks = 0; const RT = routesFrom(S.rt, snap.links, ID), AS = S.active && !S.rt ? activeSet(ID) : null;
+  pill(RT, AS, ID);
+  // 3D pipes go into the widgets' svg, cut into short pieces and sorted by depth with the widgets: a pipe passes behind a widget
+  // nearer the viewer and in front of one further away - never through one it is not wired to. 2D (and direct chords) stay divs.
+  const svgPipes = is3d && lay.G && S.pipes, pipeItems = [];
+  const chunks = (pts, cls, lc, ed, li) => { const P3 = lay.G.P;
+    for (let i = 1; i < pts.length; i++){ const a0 = pts[i - 1].w, b0 = pts[i].w; if (!a0 || !b0) continue;
+      const dl = Math.hypot(b0[0] - a0[0], b0[1] - a0[1]); if (dl < 1e-6 && Math.abs(b0[2] - a0[2]) < 0.5) continue;
+      const n = Math.max(1, Math.ceil(dl / 0.8)), zb = Math.min(a0[3], b0[3]);
+      for (let j = 0; j < n; j++){ const t0 = j / n, t1 = (j + 1) / n, lerp = (t) => [a0[0] + (b0[0] - a0[0]) * t, a0[1] + (b0[1] - a0[1]) * t, a0[2] + (b0[2] - a0[2]) * t], A1 = lerp(t0), B1 = lerp(t1);
+        const A2 = P3(A1[0], A1[1], A1[2]), B2 = P3(B1[0], B1[1], B1[2]);
+        pipeItems.push({ k: zb * 1000 + (A1[0] + A1[1] + B1[0] + B1[1]) / 2, h: '<line class="pipe ' + cls + '" data-l="' + li + '" x1="' + A2.x.toFixed(1) + '" y1="' + A2.y.toFixed(1) + '" x2="' + B2.x.toFixed(1) + '" y2="' + B2.y.toFixed(1) + '" style="--lc:' + lc + ed + '"/>' }); } } };
+  snap.links.forEach((l, li) => { if (!pos[l.a] || !pos[l.b]) return; if (is3d && S.focus && (ID[l.a].plane !== S.focus || ID[l.b].plane !== S.focus)) return;
+    const dim = pipeCls(l, RT, AS); nLinks++;
     // a pipe between planes wears its origin plane's colour; within a plane, its kind's
     const lc = ID[l.a].plane !== ID[l.b].plane ? PCOL[ID[l.a].plane] : LCOL[l.kind];
     const el = EL(l.a, l.b);
-    segsOf(l.a, l.b).forEach((s) => parts.push('<div class="link ' + dim + el[0] + '" style="left:' + px(s.x) + ';top:' + px(s.y) + ';width:' + px(s.len) + ';transform:rotate(' + s.deg.toFixed(2) + 'deg);--lc:' + lc + el[1] + '"></div>')); });
+    if (svgPipes){ chunks(lay.route(l.a, l.b), dim + el[0], lc, el[1], li); return; }
+    segsOf(l.a, l.b).forEach((s) => parts.push('<div class="link ' + dim + el[0] + '" data-l="' + li + '" style="left:' + px(s.x) + ';top:' + px(s.y) + ';width:' + px(s.len) + ';transform:rotate(' + s.deg.toFixed(2) + 'deg);--lc:' + lc + el[1] + '"></div>')); });
   const late = replay ? ';--ed:' + (Math.min(1.4, lay.PL.length * 0.1 + 0.9)).toFixed(2) + 's' : '';
-  if (is3d && S.pipes) lay.busPts.forEach((b) => parts.push('<span class="bus' + (replay ? ' ent' : '') + '" style="left:' + px(b.x) + ';top:' + px(b.y) + ';--pc:var(--t3)' + late + '"></span>'));
+  if (svgPipes) lay.busPts.forEach((b) => { if (!b.w) return; pipeItems.push({ k: b.w[3] * 1000 + b.w[0] + b.w[1] + 0.01, h: '<polygon class="busd' + (replay ? ' ent' : '') + '" points="' + [[0, -4.5], [4.5, 0], [0, 4.5], [-4.5, 0]].map((d) => (b.x + d[0]).toFixed(1) + ',' + (b.y + d[1]).toFixed(1)).join(' ') + '" style="' + late.slice(1) + '"/>' }); });
   fl.slice(0, 12).forEach((f, fi) => { if (!pos[f.a] || !pos[f.b]) return; if (is3d && S.focus && (ID[f.a].plane !== S.focus || ID[f.b].plane !== S.focus)) return;
     const segs = segsOf(f.a, f.b), total = segs.reduce((t, s) => t + s.len, 0) || 1, cycle = 1.6 + (fi % 4) * .5; let run = 0;
     segs.forEach((s) => { parts.push('<div class="flow' + (replay ? ' ent' : '') + '" style="' + late + ';left:' + px(s.x) + ';top:' + px(s.y) + ';transform:rotate(' + s.deg.toFixed(2) + 'deg);--len:' + px(s.len) + ';--dur:' + (cycle * s.len / total).toFixed(2) + 's;--dl:' + (fi * .28 + cycle * run / total).toFixed(2) + 's"><i style="background:' + KCOL[f.kind] + ';box-shadow:0 0 8px ' + KCOL[f.kind] + '"></i></div>'); run += s.len; }); });
@@ -861,8 +878,10 @@ function render(opts){
     wd.edges.forEach((e) => { const en = E(e.id, 0.35); parts.push('<span class="wedge' + en[0] + '" style="left:' + px(e.x) + ';top:' + px(e.y) + ';width:' + px(e.len) + ';transform:rotate(' + e.deg.toFixed(2) + 'deg);--pc:' + e.col + en[1] + '"></span>'); });
     // every face as a polygon of one svg: the compositor paints one layer, not thousands of clipped boxes
     // one group per widget: it drops onto the plate when its node enters (one after the other), or on its own when it is added
-    parts.push('<svg class="owf-svg" width="' + W + '" height="' + H + '">' + wd.groups.map((gq) => { const nw = entD[gq.id] != null ? entD[gq.id] + 0.12 + gq.i * 0.07 : (!S.seenW[gq.key] && !replay ? 0 : null);
-      return '<g' + (nw != null ? ' class="ent" style="--ed:' + nw.toFixed(2) + 's"' : '') + '>' + wd.faces.slice(gq.a, gq.b).map(polyOf).join('') + '</g>'; }).join('') + '</svg>');
+    const items = wd.groups.map((gq) => { const nw = entD[gq.id] != null ? entD[gq.id] + 0.12 + gq.i * 0.07 : (!S.seenW[gq.key] && !replay ? 0 : null);
+      return { k: gq.k, h: '<g data-n="' + esc(gq.id) + '"' + (nw != null || (AS && !AS.nodes[gq.id]) ? ' class="' + (nw != null ? 'ent' : '') + (AS && !AS.nodes[gq.id] ? ' wq' : '') + '"' : '') + (nw != null ? ' style="--ed:' + nw.toFixed(2) + 's"' : '') + '>' + wd.faces.slice(gq.a, gq.b).map(polyOf).join('') + '</g>' }; }).concat(pipeItems);
+    items.sort((a, b) => a.k - b.k);
+    parts.push('<svg class="owf-svg" width="' + W + '" height="' + H + '">' + items.map((x) => x.h).join('') + '</svg>');
     wd.needles.forEach((n) => parts.push('<span class="owf-n" style="left:' + px(n.x) + ';top:' + px(n.y) + ';width:' + px(n.len) + ';transform:rotate(' + n.deg.toFixed(1) + 'deg)"></span>'));
     // captions clear each other: front to back, a caption that meets one already placed steps down a line (twice), else it
     // stays in its widget's tooltip - dense rows no longer print over each other
@@ -896,7 +915,7 @@ function render(opts){
     const spark = (S.snap.series[n.id] && (S.snap.series[n.id].tps || S.snap.series[n.id].cpu)) || null;
     const bars = spark ? spark.slice(-5) : null; const hi = bars ? Math.max.apply(null, bars.concat([1])) : 1;
     const lc = lensCol(n), lt = lensTag(n), en = E(n.id, is3d ? 0.18 : 0);
-    parts.push('<div class="nd ' + (bb ? 'bb ' : '') + (n.status === 'down' ? 'isdown ' : '') + (en[0] ? 'ent ' : '') + (is3d && S.focus && n.plane !== S.focus ? 'dim ' : '') + (S.sel === n.id ? 'sel ' : '') + (lensDim(n) ? 'ldim ' : '') + (RT && RT.nodes[n.id] && n.id !== S.rt ? 'onpath ' : '') + (busy ? 'busy ' : '') + (n.errors ? 'hasErr' : '') + '" data-node="' + esc(n.id) + '" title="' + esc(n.label + ' · ' + n.plane + ' · ' + n.detail + (n.inflight ? ' · ' + n.inflight + ' in flight' : '') + (n.errors ? ' · ' + n.errors + ' findings' : '') + (n.temp != null ? ' · ' + Math.round(n.temp) + '°' : '')) + '" style="left:' + px(at.x) + ';top:' + px(at.y) + ';--pc:' + (lc || PCOL[n.plane]) + ';--nsc:' + NSC.toFixed(2) + (bb ? ';--r:' + chipAt[n.id].r : '') + en[1] + '">'
+    parts.push('<div class="nd ' + (bb ? 'bb ' : '') + (n.status === 'down' ? 'isdown ' : '') + (en[0] ? 'ent ' : '') + (is3d && S.focus && n.plane !== S.focus ? 'dim ' : '') + (S.sel === n.id ? 'sel ' : '') + (lensDim(n) ? 'ldim ' : '') + ((RT && RT.nodes[n.id] && n.id !== S.rt) || (AS && AS.nodes[n.id]) ? 'onpath ' : '') + (busy ? 'busy ' : '') + (n.errors ? 'hasErr' : '') + '" data-node="' + esc(n.id) + '" title="' + esc(n.label + ' · ' + n.plane + ' · ' + n.detail + (n.inflight ? ' · ' + n.inflight + ' in flight' : '') + (n.errors ? ' · ' + n.errors + ' findings' : '') + (n.temp != null ? ' · ' + Math.round(n.temp) + '°' : '')) + '" style="left:' + px(at.x) + ';top:' + px(at.y) + ';--pc:' + (lc || PCOL[n.plane]) + ';--nsc:' + NSC.toFixed(2) + (bb ? ';--r:' + chipAt[n.id].r : '') + en[1] + '">'
       + '<span class="st" style="background:' + SC[n.status] + '"></span>' + esc(n.label.length > 26 ? n.label.slice(0, 24) + '…' : n.label)
       + (n.status === 'down' ? '<span class="dn">DOWN</span>' : '')
       + (lt ? '<span class="lz" style="--lzc:' + (lt.c || 'var(--t3)') + '">' + esc(lt.t) + '</span>' : '')
@@ -928,6 +947,33 @@ function render(opts){
   if (!opts.plotOnly) renderInspector();
 }
 
+// ── a pipe's look: a lit route (hot / faded), the active routes (hot / all but gone), the network lens ──
+function pipeCls(l, RT, AS){ const hot = RT && RT.any && RT.edges[l.a + '>' + l.b];
+  if (RT && RT.any) return (hot ? 'hot' : 'q2');
+  if (S.rt) return S.rt !== l.a && S.rt !== l.b ? 'q' : '';
+  if (AS) return AS.edges[l.a + '>' + l.b] ? 'hot' : 'q3';
+  return S.lens === 'net' && l.kind !== 'mesh' && l.kind !== 'req' ? 'q2' : ''; }
+// the routes carrying requests now: for each request in flight, the shortest run of pipes between its two ends
+let ACT = null, ACT_OF = null;
+function activeSet(ID){ if (ACT_OF === S.snap && ACT) return ACT; const edges = {}, nodes = {}, adj = {};
+  (S.snap.links || []).forEach((l) => { if (!ID[l.a] || !ID[l.b]) return; (adj[l.a] = adj[l.a] || []).push(l); (adj[l.b] = adj[l.b] || []).push(l); });
+  (S.snap.inflight || []).forEach((f) => { if (!ID[f.a] || !ID[f.b]) return; const prev = {}, seen = {}, q = [f.a]; seen[f.a] = 1;
+    while (q.length && !seen[f.b]){ const x = q.shift(); (adj[x] || []).forEach((l) => { const y = l.a === x ? l.b : l.a; if (!seen[y]){ seen[y] = 1; prev[y] = l; q.push(y); } }); }
+    if (!seen[f.b]) return; let x = f.b; nodes[x] = 1; while (x !== f.a){ const l = prev[x]; edges[l.a + '>' + l.b] = 1; x = l.a === x ? l.b : l.a; nodes[x] = 1; } });
+  (S.snap.nodes || []).forEach((n) => { if (n.inflight > 0) nodes[n.id] = 1; });
+  ACT_OF = S.snap; ACT = { edges, nodes, n: (S.snap.inflight || []).length }; return ACT; }
+// the lit route (or the active mode) names itself on the plot with a way out
+function pill(RT, AS, ID){ const el = $('rtPill'), rn = S.rt && ID[S.rt];
+  if (rn){ el.hidden = false; el.innerHTML = '<i style="background:' + PCOL[rn.plane] + '"></i>Routes from <b>' + esc(rn.label.length > 28 ? rn.label.slice(0, 26) + '…' : rn.label) + '</b><span class="c">' + (RT && RT.any ? (RT.down.length + RT.up.length) + (RT.down.length + RT.up.length === 1 ? ' end' : ' ends') : 'nothing wired') + '</span><button data-clear-route="1" title="Put every pipe back (Esc, or a click on empty space)">✕ Clear</button>'; return; }
+  if (AS){ el.hidden = false; el.innerHTML = '<i style="background:var(--ac)"></i>Active routes<span class="c">' + AS.n + ' in flight · ' + Object.keys(AS.edges).length + ' pipes</span><button data-clear-active="1" title="Light every pipe again">✕ Show all</button>'; return; }
+  el.hidden = true; }
+// lighting or clearing a route changes classes only - no redraw of thousands of elements
+function applyRoute(){ if (!S.snap) return; const ID = byId(), RT = routesFrom(S.rt, S.snap.links, ID), AS = S.active && !S.rt ? activeSet(ID) : null, links = S.snap.links;
+  document.querySelectorAll('#pzv [data-l]').forEach((e) => { const l = links[+e.dataset.l]; if (!l) return; e.classList.remove('hot', 'q', 'q2', 'q3', 'ent'); const c = pipeCls(l, RT, AS); if (c) e.classList.add(c); });
+  document.querySelectorAll('#pzv .nd[data-node]').forEach((e) => { const id = e.dataset.node; e.classList.toggle('sel', S.sel === id); e.classList.toggle('onpath', !!((RT && RT.nodes[id] && id !== S.rt) || (AS && AS.nodes[id]))); });
+  document.querySelectorAll('#pzv .owf-svg g[data-n]').forEach((g) => { g.classList.toggle('wq', !!(AS && !AS.nodes[g.dataset.n])); });
+  $('bActive').classList.toggle('on', S.active); pill(RT, AS, ID); }
+function lightRefresh(){ applyRoute(); renderInspector(); }
 // ── routes: from a node, the shortest run to every end it reaches - down its links to the metal, up them to the work ──
 function routesFrom(sel, links, ID){ if (!sel || !ID[sel]) return null;
   const out = {}, inn = {};
@@ -1237,12 +1283,13 @@ function setWidget(nid, k, idx){ const w = widgetsOf(nid); if (!w) return;
 
 // ── wiring ──
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-plane],[data-node],[data-exp],[data-asg],[data-close],[data-act],[data-send],[data-logs],[data-restart],[data-open-entity],[data-open-place],[data-sel-runtime],[data-err-node],[data-layer],[data-floor],[data-pz],[data-wk],[data-wadd],[data-wsel],[data-wsz-node],[data-woff],[data-wrestore],[data-wsz],[data-drawer],[data-ref],[data-wnode],[data-lens],[data-term-run],[data-term-clear],[data-cap-use],[data-clear-route],[data-route-toggle],[data-wreset-all],#wsecH,[data-stop]');
+  const t = e.target.closest('[data-plane],[data-node],[data-exp],[data-asg],[data-close],[data-act],[data-send],[data-logs],[data-restart],[data-open-entity],[data-open-place],[data-sel-runtime],[data-err-node],[data-layer],[data-floor],[data-pz],[data-wk],[data-wadd],[data-wsel],[data-wsz-node],[data-woff],[data-wrestore],[data-wsz],[data-drawer],[data-ref],[data-wnode],[data-lens],[data-term-run],[data-term-clear],[data-cap-use],[data-clear-route],[data-route-toggle],[data-clear-active],[data-wreset-all],#wsecH,[data-stop]');
   // a click on empty plot (not the end of a drag) clears a lit route
   if (!t){ if (e.target.closest && e.target.closest('#pzv') && !S.moved) clearRoute(); return; }
   if (t.dataset.clearRoute !== undefined){ clearRoute(); return; }
   if (t.dataset.wresetAll !== undefined){ S.wl = {}; saveW(); render(); return; }
-  if (t.dataset.routeToggle !== undefined){ S.rt = S.rt === t.dataset.routeToggle ? null : t.dataset.routeToggle; render(); return; }
+  if (t.dataset.routeToggle !== undefined){ S.rt = S.rt === t.dataset.routeToggle ? null : t.dataset.routeToggle; lightRefresh(); return; }
+  if (t.dataset.clearActive !== undefined){ S.active = false; saveV(); applyRoute(); return; }
   if (t.id === 'wsecH'){ S.wsec = !S.wsec; renderRail(); return; }
   // a widget opens its node's card (a terminal's on its shell); the card stands above the graph
   if (t.dataset.wnode !== undefined){ const id = t.dataset.wnode; S.sel = id; S.rt = id; S.exp = id; S.wact = t.dataset.wkind === 'term' ? 'term' : t.dataset.wkind === 'alarm' ? 'logs' : 'overview'; if (S.wpick && S.wpick !== id) S.wpick = null; render(); return; }
@@ -1270,13 +1317,13 @@ document.addEventListener('click', (e) => {
   if (t.dataset.openPlace !== undefined){ if (window.veraUI && window.veraUI.openPlace) window.veraUI.openPlace(t.dataset.openPlace); return; }
   if (t.dataset.ref !== undefined && t.dataset.ref){ e.preventDefault(); selectRef(t.dataset.ref); return; }
   if (t.dataset.selRuntime !== undefined){ selectRuntime(t.dataset.selRuntime); return; }
-  if (t.dataset.errNode !== undefined){ if (t.dataset.errNode && byId()[t.dataset.errNode]){ S.sel = t.dataset.errNode; if (S.rt) S.rt = t.dataset.errNode; render(); } return; }
+  if (t.dataset.errNode !== undefined){ if (t.dataset.errNode && byId()[t.dataset.errNode]){ S.sel = t.dataset.errNode; if (S.rt) S.rt = t.dataset.errNode; lightRefresh(); } return; }
   if (t.dataset.layer !== undefined){ S.focus = S.focus === t.dataset.layer ? null : t.dataset.layer; render(); return; }
   if (t.dataset.floor !== undefined){ if (!S.moved) clearRoute(); return; }   // a single click on a floor only clears a lit route; a double click focuses the layer
   if (t.dataset.pz !== undefined){ const k = t.dataset.pz; if (k === 'in') S.vz = Math.min(4, S.vz * 1.25); else if (k === 'out') S.vz = Math.max(.4, S.vz / 1.25); else if (k === 'l') S.vx += 140; else if (k === 'r') S.vx -= 140; else if (k === 'u') S.vy += 110; else if (k === 'd') S.vy -= 110;
     else if (k === 'fit'){ S.vz = 1; S.vx = 0; S.vy = 0; S.tilt = null; S.azim = null; } else { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 12.6) : S.tilt, A = S.azim == null ? 45 : S.azim; if (k === 'tiltUp') S.tilt = Math.min(60, T + 5); if (k === 'tiltDn') S.tilt = Math.max(4, T - 5); if (k === 'rotL') S.azim = Math.min(64, A + 6.5); if (k === 'rotR') S.azim = Math.max(26, A - 6.5); }
     if (['in', 'out', 'l', 'r', 'u', 'd'].indexOf(k) >= 0) applyZoom(); else if (k === 'fit') render(); else keepPivot(() => render()); return; }
-  if (t.dataset.node !== undefined){ if (t.dataset.stop) return; S.sel = t.dataset.node; S.rt = t.dataset.node; if (S.wpick && S.wpick !== t.dataset.node) S.wpick = null; render(); return; }
+  if (t.dataset.node !== undefined){ if (t.dataset.stop) return; S.sel = t.dataset.node; S.rt = t.dataset.node; if (S.wpick && S.wpick !== t.dataset.node){ S.wpick = null; render(); return; } lightRefresh(); return; }
 });
 document.addEventListener('input', (e) => { const t = e.target; if (t.dataset && t.dataset.req){ const R = S.req[t.dataset.node]; if (R) R[t.dataset.req] = t.value; }
   if (t.dataset && t.dataset.termIn){ const T = termOf(t.dataset.termIn); T.cmd = t.value; T.where = t.closest('.ndw') ? 'w' : 'i'; }
@@ -1291,6 +1338,7 @@ document.addEventListener('contextmenu', (e) => { const nd = e.target.closest('[
 $('b2d').onclick = () => { S.view = '2d'; S.wpick = null; render(); }; $('b3d').onclick = () => { S.view = '3d'; render(); };
 $('bStack').onclick = () => { S.layout3d = 'stack'; S.focus = null; render(); }; $('bFlat').onclick = () => { S.layout3d = 'flat'; S.focus = null; render(); };
 $('bOne').onclick = () => { if (S.focus){ S.focus = null; } else { const n = byId()[S.sel]; S.focus = n ? n.plane : 'work'; } render(); };
+$('bActive').onclick = () => { S.active = !S.active; saveV(); applyRoute(); };
 $('bPipes').onclick = () => { S.pipes = true; render(); }; $('bDirect').onclick = () => { S.pipes = false; render(); };
 document.querySelectorAll('[data-lbl]').forEach((b) => { b.onclick = () => { S.lbl = b.dataset.lbl; S.widgets = S.lbl !== 'labels'; saveV(); render(); }; });
 $('bRefresh').onclick = () => load(true);
@@ -1302,7 +1350,7 @@ function keepPivot(fn){ const pz = $('pzv'); pz.classList.add('rotating');   // 
   if (a && m1){ const b = m1.getBoundingClientRect(); S.vx -= b.left - a.left; S.vy -= b.top - a.top; applyZoom(); }
   if (!S.drag || S.drag.mode !== 'rot'){ void pz.offsetWidth; pz.classList.remove('rotating'); } }
 const rafRot = () => { if (rafId) return; rafId = requestAnimationFrame(() => { rafId = 0; keepPivot(() => render({ plotOnly: true })); }); };
-function clearRoute(){ if (!S.rt) return false; S.rt = null; render(); return true; }
+function clearRoute(){ if (!S.rt) return false; S.rt = null; lightRefresh(); return true; }
 // a double click on a floor looks at that layer on its own (again: every layer)
 document.addEventListener('dblclick', (e) => { const f = e.target.closest && e.target.closest('[data-floor]'); if (!f || S.view !== '3d') return; e.preventDefault(); S.focus = S.focus === f.dataset.floor ? null : f.dataset.floor; render(); });
 // Esc clears a lit route, else closes the node's card
