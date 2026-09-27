@@ -8420,6 +8420,25 @@ window.addEventListener('message', e => { const d = e.data; if(!d || typeof d !=
 // the browser's six connections per host they queued the dashboard's own reads for over a minute, which is why every tile
 // sat on its sample). A frame put into a panel that is not showing is parked (its src kept in data-lazy-src) and loads the
 // first time its tab is shown, through the same lazy path the tab panels already use. ═══
+/* ═══ EVERY PANEL SPEAKS TO THE HARNESS (owner, 2026-09-27: "the top bars of lots of the uis are not being absorbed into the
+   harness top bar - they should - like the chat"). A sweep of 58 panels found 25 that never load the panel bridge - n8n,
+   Integrations, Godseye, the Galaxy, Workspaces, Activity, the MCP and Platform catalogues ... - so their bars, menus and
+   right-click could never reach the harness. When a panel's frame loads on this origin without it, the harness brings
+   the bridge; the panel then offers its bar and docks its menu like any other (its init follows the load). ═══ */
+function _bridgeInto(f){
+  try{
+    if(!f || f.tagName !== 'IFRAME' || !f.closest('.panels .panel')) return;
+    const w = f.contentWindow, d = f.contentDocument; if(!w || !d || !d.documentElement) return;
+    if(String(w.location.href).indexOf(location.origin + '/') !== 0) return;
+    if(w.VeraPanelBridge || d.querySelector('script[src*="vera-panel-bridge.js"]')) return;
+    const s = d.createElement('script'); s.src = '/ui/vera-panel-bridge.js'; s.setAttribute('data-vpb-injected', '');
+    s.onload = () => { const p = f.closest('.panel'); const pid = p ? _panelIdFromEl(p) : ''; if(pid){ try{ w.postMessage({ type: 'vera:panel:init', panel_id: pid, session_id: '' }, '*'); }catch(_){} } };
+    (d.head || d.documentElement).appendChild(s);
+  }catch(_){}
+}
+document.addEventListener('load', e => { const t = e.target; if(t && t.tagName === 'IFRAME') _bridgeInto(t); }, true);
+setTimeout(() => { document.querySelectorAll('.panels .panel iframe').forEach(f => { try{ if(f.contentDocument && f.contentDocument.readyState === 'complete') _bridgeInto(f); }catch(_){} }); }, 1500);
+
 function _framePark(f){
   try{
     if(!f || f.tagName !== 'IFRAME' || f.closest('.media-content')) return;   // the Elements tab parks its own (see _mediaLoad)

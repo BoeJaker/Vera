@@ -742,7 +742,9 @@
   // and the bar folds away, and a press on a proxy is a press on the panel's own control (vera:hdr:act). A panel names its
   // bar with data-vera-topbar (="keep" keeps it in the panel); otherwise the usual names count only when the element IS the
   // page's top bar - at the top, across most of the width, holding controls - so a toolbar inside a pane is never taken.
-  var _HDR_SEL = '#topbar, #topBar, .topbar, .top-bar, .panel-topbar, body > header, .hdr, .header, .tb';
+  /* the names a page's top bar goes by - a sweep of 58 panels found Stack Monitor's .pane-tb, Research's #toolbar, Perf's
+     and the Gallery's .bar, a header inside the page's wrapper - still only at the top, across the page, holding controls */
+  var _HDR_SEL = '#topbar, #topBar, .topbar, .top-bar, .panel-topbar, body > header, .hdr, .header, .tb, .pane-tb, #tb, #toolbar, .toolbar, .bar, header, .page-head, .panel-head';
   var _hdrBar = null, _hdrSig = '', _hdrT = null, _hdrHid = 0;
   function _hdrEmbedded(){ try{ return !!(window.parent && window.parent !== window); }catch(e){ return false; } }
   function _hdrFindBar(){

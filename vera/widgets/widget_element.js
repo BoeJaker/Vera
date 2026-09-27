@@ -60,8 +60,12 @@
     return String(css).replace(/font-size:\s*([0-9.]+)px/g, (m, n) => (+n >= 13 ? m : 'font-size:' + f(n)))
       .replace(/font-size:\s*clamp\(([0-9.]+)px,/g, (m, n) => 'font-size:clamp(' + f(n) + ',');
   }
-  const TEXT_SCALE_CSS = 'html{--vw-fmin:10px;--vw-fx:1}html[data-text="compact"]{--vw-fmin:0px;--vw-fx:1}html[data-text="large"]{--vw-fmin:11px;--vw-fx:1.1}html[data-text="larger"]{--vw-fmin:12px;--vw-fx:1.22}';
+  const TEXT_SCALE_CSS = 'html{--vw-fmin:10px;--vw-fx:1}html[data-text="compact"]{--vw-fmin:0px;--vw-fx:1}html[data-text="large"]{--vw-fmin:11px;--vw-fx:1.1}html[data-text="larger"]{--vw-fmin:12px;--vw-fx:1.22}'
+    /* a dashboard is read from across the room (owner, 2026-09-27: "the font on lots of widgets is still too small like the
+       warnings and live events widgets it should be larger on the dashboards"): a higher floor there, at each setting */
+    + '.dash-grid vera-widget{--vw-fmin:11.5px}html[data-text="compact"] .dash-grid vera-widget{--vw-fmin:9px}html[data-text="large"] .dash-grid vera-widget{--vw-fmin:12.5px}html[data-text="larger"] .dash-grid vera-widget{--vw-fmin:13.5px}';
   try { if (typeof document !== 'undefined' && document.head && !document.getElementById('vw-text-scale')) { const st = document.createElement('style'); st.id = 'vw-text-scale'; st.textContent = TEXT_SCALE_CSS; document.head.appendChild(st); } } catch (_) {}
+  const textKOf = (el) => { try { const cs = getComputedStyle(el); const fmin = parseFloat(cs.getPropertyValue('--vw-fmin')), fx = parseFloat(cs.getPropertyValue('--vw-fx')) || 1; return Math.max(1, Math.max(isFinite(fmin) ? fmin : 10, 9.5) * fx / 9.5); } catch (_) { return 1; } };
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return isFinite(n) ? n : 0; };
   const fmt = (v) => { const n = num(v); return Math.abs(n) >= 100 ? Math.round(n).toLocaleString() : (Math.round(n * 10) / 10).toString(); };
@@ -712,16 +716,21 @@
     // the least a slot can be and still show its child whole: a figure, three rows, a chart's floor - a row of slots
     // gets at least its tallest floor, the rest of the body is shared by weight (a list over a figure)
     const floorOf = (c) => { const f = canon((c && c.record && typeof c.record === 'object' && c.record.form) || ''); return /^(counter|hero|string|pills|numbers)$/.test(f) ? 62 : /^(kv)$/.test(f) ? 78 : /^(rows|list|table|log|feed|temps|thermo|files|checklist|ranked|bullet)$/.test(f) ? 88 : /^(ring|dial|gauge)$/.test(f) ? 96 : 72; };
-    const wts = [], fls = []; for (let i = 0; i < shown.length; i += ncol) { const rw = shown.slice(i, i + ncol); wts.push(Math.max(...rw.map(need))); fls.push(Math.max(...rw.map(floorOf))); } const wsum = wts.reduce((a, b) => a + b, 0) || 1;
-    const bodyH = (o && o.height && !chip) ? o.height : 0, free = Math.max(0, bodyH - (nrows - 1) * 8 - fls.reduce((a, b) => a + b, 0));
+    /* a list (rows, a table, a log, chips ...) takes a whole row of the composite - in a quarter of the card it showed two
+       words of each line (owner, 2026-09-27); the figures and charts pack their rows above, in their order */
+    const isList = (c) => ncol > 1 && /^(rows|list|table|log|feed|cards|files|checklist|timeline|lane|people|links|spark-table|temps|thermo|ranked|hosts|pills|stack)$/.test(canon((c && c.record && typeof c.record === 'object' && c.record.form) || ''));
+    const packed = [], lists = []; shown.forEach((c, i) => (isList(c) ? lists : packed).push({ c, i }));
+    const rowsP = []; for (let q = 0; q < packed.length; q += ncol) rowsP.push(packed.slice(q, q + ncol)); lists.forEach((x) => rowsP.push([x]));
+    const plan = []; rowsP.forEach((rw, ri) => { const base = Math.floor(ncol / rw.length), extra = ncol - base * rw.length; rw.forEach((x, j) => plan.push({ c: x.c, i: x.i, ri, sp: base + (j < extra ? 1 : 0) })); });
+    const wts = rowsP.map((rw) => Math.max(...rw.map((x) => need(x.c)))), fls = rowsP.map((rw) => Math.max(...rw.map((x) => floorOf(x.c)))); const wsum = wts.reduce((a, b) => a + b, 0) || 1;
+    const bodyH = (o && o.height && !chip) ? o.height : 0, free = Math.max(0, bodyH - (rowsP.length - 1) * 8 - fls.reduce((a, b) => a + b, 0));
     const slotHOf = (ri) => bodyH ? Math.max(44, (fls[ri] || 44) + Math.floor(free * (wts[ri] || 1) / wsum)) : 0;
-    const rest = shown.length % ncol, firstOfLast = shown.length - rest, spanOf = (i) => { if (!rest || i < firstOfLast || shown.length < 2) return 1; const j = i - firstOfLast, base = Math.floor(ncol / rest), extra = ncol - base * rest; return base + (j < extra ? 1 : 0); };
-    return '<div class="vw-comp vw-comp-' + esc(layout) + '"' + (!chip && ncol !== 2 ? ' style="grid-template-columns:repeat(' + ncol + ',1fr)"' : (chip && o && o.height ? ' style="height:' + o.height + 'px"' : '')) + '>' + shown.map((c, i) => {
-      const slotH = slotHOf(Math.floor(i / ncol)), kidH = slotH ? Math.max(24, slotH - 36) : Math.max(44, Math.round(H * 0.8)), sp = spanOf(i);
+    return '<div class="vw-comp vw-comp-' + esc(layout) + '"' + (!chip && ncol !== 2 ? ' style="grid-template-columns:repeat(' + ncol + ',1fr)"' : (chip && o && o.height ? ' style="height:' + o.height + 'px"' : '')) + '>' + plan.map(({ c, i, ri, sp }) => {
+      const slotH = slotHOf(ri), kidH = slotH ? Math.max(24, slotH - 36) : Math.max(44, Math.round(H * 0.8));
       const slotStyle = (slotH || sp > 1) ? ' style="' + (slotH ? 'height:' + slotH + 'px;' : '') + (sp > 1 ? 'grid-column:span ' + sp + ';' : '') + '"' : '';
       const r0 = c && typeof c.record === 'object' ? c.record : null; const slot = String((c && c.slot) || String.fromCharCode(97 + i));
       if (!r0) return '<div class="vw-slot" data-slot="' + esc(slot) + '"><small class="wempty">' + esc(String(c && c.record || '')) + '</small></div>';
-      const n = normalise(r0); const k = kd[slot]; const wasRead = !!(k && typeof k === 'object' && k.__read); const data = r0.data !== undefined ? r0.data : (wasRead ? k.data : k); const kopts = { record: n, draw: n.draw, bare: true, sample: wasRead ? false : undefined };
+      const n = normalise(r0); const k = kd[slot]; const wasRead = !!(k && typeof k === 'object' && k.__read); const data = r0.data !== undefined ? r0.data : (wasRead ? k.data : k); const kopts = { record: n, draw: n.draw, bare: true, sample: wasRead ? false : undefined, textK: o && o.textK, width: (o && o.width && !chip) ? Math.max(120, Math.floor((o.width - (ncol - 1) * 8) * sp / ncol) - 16) : undefined };
       // a child whose reading is still on its way says so - its slot never shows the form's sample values as though they
       // were the estate's (the review found "serving · ct126 · qwen3:30b" standing in for the narrator, the identity
       // server, OpenClaw and telegram while their reads were queued)
@@ -1041,14 +1050,14 @@
   };
   // how many pills of these labels the body holds (a pill is 22 px tall with a 5 px gap; ~5.6 px a character at 9.5 px,
   // plus its padding, dot and figure): the rest become one "+ N" pill, never a third row cut in half
-  const pillsFit = (labels, H, W) => { const rowsN = Math.max(1, Math.floor(((H || 96) + 5) / 27)), w = Math.max(120, W || 300); let row = 0, x = 0, n = 0;
-    for (let i = 0; i < labels.length; i++) { const pw = Math.min(w, 32 + labels[i].length * 5.6); if (x && x + pw > w) { row++; x = 0; } if (row >= rowsN) break; x += pw + 5; n++; }
+  const pillsFit = (labels, H, W, k) => { k = k || 1; const rowsN = Math.max(1, Math.floor(((H || 96) + 5) / (27 * k))), w = Math.max(120, W || 300); let row = 0, x = 0, n = 0;
+    for (let i = 0; i < labels.length; i++) { const pw = Math.min(w, 32 * k + labels[i].length * 5.6 * k); if (x && x + pw > w) { row++; x = 0; } if (row >= rowsN) break; x += pw + 5 * k; n++; }
     return n >= labels.length ? n : Math.max(1, n - 1); };
   const pillMore = (k, st) => k > 0 ? '<span class="more" title="' + esc(st) + '">+ ' + k + '</span>' : '';
   R.pills = (d, H, o) => {
     const kv = keyed(d); const st = rows(d); const W = o && o.width;
-    if (st.length && st.some((r) => r.status != null || r.state != null)) { const n = pillsFit(st.map((r) => nameOf(r)), H, W); return wrap('pills', '<div class="vb-pillw">' + st.slice(0, n).map((r) => { const s = String(r.status ?? r.state ?? ''); return '<span' + itemAttr(r, 'pill') + ' title="' + esc(nameOf(r) + ' · ' + s) + '"><i style="background:' + stCol(s) + '"></i>' + esc(nameOf(r)) + '</span>'; }).join('') + pillMore(st.length - n, st.slice(n).map((r) => nameOf(r)).join(', ')) + '</div>'); }
-    if (kv.length) { const n = pillsFit(kv.map((x) => x[0] + ' ' + fmt(x[1])), H, W); return wrap('pills', '<div class="vb-pillw">' + kv.slice(0, n).map((x, i) => '<span' + itemAttr({ name: x[0], value: x[1] }, 'pill') + '><i style="background:' + DV(i) + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '</b></span>').join('') + pillMore(kv.length - n, kv.slice(n).map((x) => x[0]).join(', ')) + '</div>'); }
+    if (st.length && st.some((r) => r.status != null || r.state != null)) { const n = pillsFit(st.map((r) => nameOf(r)), H, W, o && o.textK); return wrap('pills', '<div class="vb-pillw">' + st.slice(0, n).map((r) => { const s = String(r.status ?? r.state ?? ''); return '<span' + itemAttr(r, 'pill') + ' title="' + esc(nameOf(r) + ' · ' + s) + '"><i style="background:' + stCol(s) + '"></i>' + esc(nameOf(r)) + '</span>'; }).join('') + pillMore(st.length - n, st.slice(n).map((r) => nameOf(r)).join(', ')) + '</div>'); }
+    if (kv.length) { const n = pillsFit(kv.map((x) => x[0] + ' ' + fmt(x[1])), H, W, o && o.textK); return wrap('pills', '<div class="vb-pillw">' + kv.slice(0, n).map((x, i) => '<span' + itemAttr({ name: x[0], value: x[1] }, 'pill') + '><i style="background:' + DV(i) + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '</b></span>').join('') + pillMore(kv.length - n, kv.slice(n).map((x) => x[0]).join(', ')) + '</div>'); }
     return EMPTY('pills need rows with a status or { name: number }');
   };
 
@@ -1156,7 +1165,7 @@
     const kc = (k) => /err|fail|crit/i.test(k) ? B.ac4 : /warn/i.test(k) ? B.ac3 : /loop|step|run/i.test(k) ? B.t1 : B.t2;
     // as many lines as the body holds (a line is ~15 px: 9 px type at 1.55 + the gap) - sixteen lines in a two-row tile were
     // squashed onto each other - and the NEWEST of them, whichever end of the list the source keeps its newest at
-    const n = (o && o.draw && (o.draw.limit || o.draw.tail)) || Math.max(3, Math.floor(H / 15));
+    const n = (o && o.draw && (o.draw.limit || o.draw.tail)) || Math.max(3, Math.floor(H / (15 * ((o && o.textK) || 1))));
     const tOf = (r) => { const v = r.t ?? r.ts ?? r.time ?? r.when; const x = typeof v === 'number' ? v : Date.parse(String(v || '')); return isFinite(x) ? x : NaN; };
     const newestFirst = rw.length > 1 && tOf(rw[0]) > tOf(rw[rw.length - 1]);
     return wrap('log', '<div class="vb-log">' + (newestFirst ? rw.slice(0, n) : rw.slice(-n)).map((r) => { const k = String(r.kind ?? r.level ?? r.type ?? ''); return '<span' + itemAttr(r, 'line') + ' style="color:' + (r.col || kc(k)) + '"><span class="t">' + esc(hhmm(r.t ?? r.ts ?? r.time ?? r.when)) + '</span> ' + (k ? '<span class="k">' + esc(k) + '</span> ' : '') + esc(txt(r)) + '</span>'; }).join('') + '</div>');
@@ -3159,7 +3168,7 @@ span.vw-sampled{opacity:.85}
       const rec = this._rec || normalise({}); const size = this.size; const form0 = this._drawn || rec.form;
       if (this._viewAs === undefined) { try { this._viewAs = localStorage.getItem('vera.widget.as.' + key(rec)) || ''; } catch (_) { this._viewAs = ''; } }
       const form = (this._viewAs && viewsFor(rec, form0, this._data).includes(this._viewAs)) ? this._viewAs : form0;
-      const opts = { record: rec, draw: rec.draw, title: rec.title, panel: rec.panel, base: this.base, kids: this._kids || {}, ui: this._ui, height: this._bodyH || undefined, width: this._bodyW || undefined, projection: rec.projection };   // L and XL compose around the form
+      const opts = { record: rec, draw: rec.draw, title: rec.title, panel: rec.panel, base: this.base, kids: this._kids || {}, ui: this._ui, height: this._bodyH || undefined, width: this._bodyW || undefined, projection: rec.projection, textK: textKOf(this) };   // L and XL compose around the form
       // nothing read yet — no source, a source that waits for a click, a read in flight, a read that failed — draws the
       // form's SAMPLE face, marked, and says why in the caption; the widget always has a face (never "no data yet")
       const wasRead = !!this._read, dataM = mapped(rec, form, this._data), have = this._data !== undefined && !isEmpty(dataFor(dataM, form));   // what the form would draw of the answer
