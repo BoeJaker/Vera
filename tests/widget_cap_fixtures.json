@@ -1079,9 +1079,9 @@
 ],
 "count": 30
 },
-"form": "table",
+"form": "status-matrix",
 "second": null,
-"note": ""
+"note": "the Loop Lab picture: lanes of pipelines, one cell per pipeline"
 },
 {
 "cap": "estate.health",
@@ -2632,5 +2632,201 @@
 "form": null,
 "second": null,
 "note": ""
+},
+{
+"cap": "ci.matrix",
+"result": {
+"kind": "ci",
+"view": "matrix",
+"title": "Status matrix",
+"lanes": [
+{
+"id": "feat/a",
+"name": "feat/a",
+"cells": [
+{
+"id": "p1",
+"ts": "2026-09-27T10:00:00Z",
+"o": "fail",
+"passed": 9,
+"failed": 1,
+"total": 10
+},
+{
+"id": "p2",
+"ts": "2026-09-27T10:20:00Z",
+"o": "pass",
+"passed": 10,
+"failed": 0,
+"total": 10
+}
+],
+"hidden": 0,
+"race": {
+"state": "green",
+"streak": 1,
+"laps": [
+{
+"attempts": 2,
+"red_runs": 1,
+"seconds": 1200
+}
+]
+},
+"state": "green",
+"controllers": [
+"claude"
+]
+}
+],
+"summary": {
+"lanes": 1,
+"runs": 2,
+"pass_rate": 0.5
+}
+},
+"form": "status-matrix",
+"second": null,
+"note": "ci payload, drawn whole - no ranked companion"
+},
+{
+"cap": "ci.race",
+"result": {
+"kind": "ci",
+"view": "race",
+"title": "Race to green",
+"lanes": [
+{
+"id": "feat/a",
+"name": "feat/a",
+"cells": [
+{
+"id": "p1",
+"ts": "2026-09-27T10:00:00Z",
+"o": "fail",
+"passed": 9,
+"failed": 1,
+"total": 10
+},
+{
+"id": "p2",
+"ts": "2026-09-27T10:20:00Z",
+"o": "pass",
+"passed": 10,
+"failed": 0,
+"total": 10
+}
+],
+"hidden": 0,
+"race": {
+"state": "green",
+"streak": 1,
+"laps": [
+{
+"attempts": 2,
+"red_runs": 1,
+"seconds": 1200
+}
+]
+},
+"state": "green",
+"controllers": [
+"claude"
+]
+}
+],
+"summary": {
+"lanes": 1
+}
+},
+"form": "race-green",
+"second": null,
+"note": ""
+},
+{
+"cap": "ci.tests",
+"result": {
+"kind": "ci",
+"view": "tests",
+"columns": [
+{
+"id": "p1"
+},
+{
+"id": "p2"
+}
+],
+"tests": [
+{
+"id": "t::x",
+"cells": [
+"fail",
+"pass"
+],
+"class": "fixed",
+"fails": 1
+}
+],
+"summary": {
+"tests": 1,
+"runs": 2
+}
+},
+"form": "test-grid",
+"second": null,
+"note": ""
+},
+{
+"cap": "loop.ci.board",
+"result": {
+"kind": "ci",
+"view": "board",
+"columns": [
+{
+"name": "done",
+"items": [
+{
+"id": "1",
+"title": "step one"
+}
+]
+}
+]
+},
+"form": "ci-board",
+"second": null,
+"note": ""
+},
+{
+"cap": "evolve.unittest.history",
+"result": {
+"ok": true,
+"count": 2,
+"runs": [
+{
+"ts": "2026-09-27T10:20:00Z",
+"branch": "feat/a",
+"ok": true,
+"passed": 10,
+"failed": 0,
+"total": 10
+},
+{
+"ts": "2026-09-27T10:00:00Z",
+"branch": "feat/a",
+"ok": false,
+"passed": 9,
+"failed": 1,
+"total": 10
+}
+],
+"lanes": [],
+"trend": {},
+"race": {},
+"regressions": []
+},
+"form": "race-green",
+"second": null,
+"note": "the gate history drawn as the race, adapted in the element"
 }
 ]

@@ -509,7 +509,7 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="card-h"><span class="card-t">⛨ Regression guard</span>
       <span class="hint">every task × its own recent runs — a persistent, live-updating matrix</span></div>
     <vera-task-matrix id="task-matrix" cols="8"></vera-task-matrix>
-    <script>document.getElementById('task-matrix').addEventListener('taskmatrix:opencell',e=>{const d=(e&&e.detail)||{};if(d.task&&typeof openTaskHistory==='function')openTaskHistory(d.task)});</script>
+    <script>document.getElementById('task-matrix').addEventListener('taskmatrix:opencell',e=>{const d=(e&&e.detail)||{};if(d.run_id&&typeof openRun==='function')openRun(d.run_id);else if(d.task&&typeof openTaskHistory==='function')openTaskHistory(d.task)});</script>
   </div>
   <div class="card">
     <div class="card-h"><span class="card-t">▦ Test activity</span>
@@ -534,6 +534,15 @@ html.vpb-nav-hosted body{padding-left:0}
      drew are the same elements below the table; their controls are modals and
      the header bar. -->
 <div class="sec" id="sec-ship" style="display:none">
+  <!-- The CI command centre: every gate run, pipeline, test, board item, sandbox and agentic loop - whoever drove it -
+       as a status matrix, a race to green, the tests across runs, two runs compared, the board and the loops; any cell
+       opens the run whole (its failing tests, every pipeline step, its lane, its board items, its conversation). One
+       filter bar over all of it; live on the page's event bus. Drawn by <vera-widget>'s CI forms - the same faces the
+       chat canvas lands when an agent calls ci.* / loop.ci.* - from ci_view_core, so nothing is cut short. -->
+  <div class="card" id="ci-card">
+    <div class="card-h"><span class="card-t">CI command centre</span><span class="hint">gate runs &middot; pipelines &middot; tests &middot; board &middot; fleet &middot; loops &mdash; claude &middot; codex &middot; vera &middot; people</span></div>
+    <vera-ci-ops id="ci-ops" height="520"></vera-ci-ops>
+  </div>
   <div class="card" id="ship-card">
     <div class="card-h"><span class="card-t">Ship</span><div class="seg" id="ship-mode" style="margin-left:10px"><button class="on" data-mode="branches" onclick="setShipMode('branches')" title="every branch: its latest pipeline, review, sandbox, tests">branches</button><button data-mode="pipelines" onclick="setShipMode('pipelines')" title="every pipeline run, newest first">pipelines</button></div>
       <span class="hint" id="ship-status">&hellip;</span>
@@ -714,6 +723,8 @@ window._veraSubscribe=fn=>{_busSubs.add(fn);return ()=>_busSubs.delete(fn)};
 <script src="/ui/elements/test_activity_timeline.js"></script>
 <script src="/ui/elements/author_map.js"></script>
 <script src="/ui/elements/git_graph.js"></script>
+<script src="/ui/widgets/widget_element.js"></script>
+<script src="/ui/elements/ci_ops.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script>
 const $=id=>document.getElementById(id);
@@ -999,8 +1010,8 @@ let _utMatrix=null;
 async function loadUnitTests(){
   const el=$('ut-matrix-body');if(!el)return;
   const [m,pl,uh]=await Promise.all([api('/evolve/tests/matrix').catch(()=>null),
-                                  api('/evolve/pipeline/list?limit=40').catch(()=>null),
-                                  api('/evolve/unittest/history?limit=200').catch(()=>null)]);
+                                  api('/evolve/pipeline/list?limit=200').catch(()=>null),
+                                  api('/evolve/unittest/history?limit=600&lanes=0').catch(()=>null)]);
   _utMatrix=(m&&m.ok)?m:null;
   if(_utMatrix){
     if($('ut-matrix-status'))$('ut-matrix-status').textContent=m.total_tests+' tests · '+m.total_modules+' modules';
@@ -1023,6 +1034,11 @@ async function loadUnitTests(){
    red, got fixed and went green was a single green cell: the race was the one
    thing it could not show. Falls back to the old per-pipeline view while the
    history is still empty, so a fresh deploy isn't a blank card. */
+function _utOpenRun(c){
+  const ops=document.getElementById('ci-ops');
+  if(ops&&typeof ops.openRun==='function'){ops.openRun(c);return}
+  if(c.pipeline_id)openPipe(c.pipeline_id);
+}
 function _utLanes(uh,pl){
   const lanes=$('ut-lanes'); if(!lanes)return;
   const cells=(uh&&uh.lanes)||[];
@@ -1049,10 +1065,12 @@ function _utLanes(uh,pl){
     const d=c.delta>0?('+'+c.delta):(c.delta<0?String(c.delta):'±0');
     const t=(c.ok?'PASS':'FAIL')+' · '+(c.passed||0)+' passed, '+(c.failed||0)+' failed'
            +' · '+(c.total||0)+' tests ('+d+') · '+(c.branch||'')+' · '+(c.ts||'');
-    const click=c.pipeline_id?(' onclick="openPipe(\''+esc(c.pipeline_id)+'\')" style="cursor:pointer;'):(' style="');
+    // the run whole (ci.run: its failing tests, its pipeline's steps, its conversation) in the command centre;
+    // openPipe when that element is not on the page
+    const click=' onclick="_utOpenRun('+esc(JSON.stringify({ts:c.ts,pipeline_id:c.pipeline_id||'',o:c.ok?'pass':'fail',label:c.branch||''}))+')" style="cursor:pointer;';
     return '<span title="'+esc(t)+'"'+click+'width:11px;height:'+h+'px;border-radius:2px;background:'+col+';display:inline-block"></span>';
   }).join('')+'</div>'
-   +'<div class="hint" style="margin-top:5px">bar height = test count · green = passed · red = failed. Hover for counts, click to open the pipeline.</div>';
+   +'<div class="hint" style="margin-top:5px">bar height = test count · green = passed · red = failed · '+cells.length+' runs. Hover for counts, click for the run whole.</div>';
   const t=(uh&&uh.trend)||{}, race=(uh&&uh.race)||{};
   if(tr){
     let s=(t.passed||0)+' passing';
@@ -1067,7 +1085,7 @@ function _utLanes(uh,pl){
   const regs=(uh&&uh.regressions)||[];
   if(rg)rg.innerHTML=regs.length
     ?'<div class="hint" style="color:var(--warn,#d0902a)">⚠ '+regs.length+' run(s) went GREEN ON FEWER TESTS — coverage stopped being collected:</div>'
-      +regs.slice(-4).map(r=>'<div class="hint mono" style="font-size:10.5px">'+esc((r.ts||'')+' '+(r.branch||'')+' — '+r.was+' → '+r.now+' ('+r.lost+' lost)')+'</div>').join('')
+      +'<div style="max-height:140px;overflow:auto">'+regs.slice().reverse().map(r=>'<div class="hint mono" style="font-size:10.5px">'+esc((r.ts||'')+' '+(r.branch||'')+' — '+r.was+' → '+r.now+' ('+r.lost+' lost)')+'</div>').join('')+'</div>'
     :'';
 }
 function _utRender(){
@@ -4648,7 +4666,7 @@ async function openPipe(id){
     for(const c of p.commits)h+='<div class="mono" style="font-size:10px;padding:1px 0;color:var(--dim2)">'+esc(c)+'</div>';
   }
   if(p.changed_files&&p.changed_files.length){
-    h+='<div class="hint" style="margin-top:4px">'+p.changed_files.length+' file(s): '+esc(p.changed_files.slice(0,8).join(', '))+(p.changed_files.length>8?' …':'')+'</div>';
+    h+='<details style="margin-top:4px"><summary class="hint">'+p.changed_files.length+' file(s)</summary><div class="hint mono" style="white-space:pre-wrap">'+esc(p.changed_files.join('\n'))+'</div></details>';
   }
   h+='<label class="fld" style="margin-top:8px">stages</label>';
   for(const st of p.steps||[])h+='<div class="mono" style="font-size:10px;padding:2px 0;color:'+(st.ok?'var(--ok)':'var(--err)')+'">'+(st.ok?'✓':'✗')+' '+esc(st.stage)+' — <span style="color:var(--dim2)">'+esc(st.detail)+'</span></div>';

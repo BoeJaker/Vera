@@ -129,3 +129,11 @@ def test_tasks_overview_gives_one_line_per_task_with_a_series():
     assert [p["driver"] for p in a["series"]] == ["run1", "run2"]     # oldest first for a sparkline
     ov2 = th.tasks_overview(rows, task_ids=["census-default-zzz"])
     assert ov2[0]["runs"] == 0 and ov2[0]["last"] is None
+
+
+def test_tasks_overview_series_is_the_newest_24_oldest_first():
+    rows = [{"task_id": "t", "ts": "2026-09-%02dT10:00:00Z" % (d + 1), "ok": True, "status": "done",
+             "driver": {"id": "r%02d" % d}} for d in range(30)]
+    a = th.tasks_overview(rows)[0]
+    got = [p["driver"] for p in a["series"]]
+    assert got[0] == "r06" and got[-1] == "r29" and len(got) == 24, got
