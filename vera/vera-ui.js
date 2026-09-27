@@ -440,11 +440,14 @@
   // every mapped orchestrator/IDE alias). setThemeLocal caches this so the
   // in-panel head snippet can repaint from a single flat object with no mapping
   // logic of its own.
+  // every var applyVars wrote inline on <html>: an inline value outranks the [data-theme] stylesheet, so a switch that
+  // reads the new theme from the stylesheet must lift these first (see setThemeLocal)
+  var _inlineThemeKeys = {};
   function applyVars(vars){
     if(!vars || typeof vars !== 'object') return null;
     var root = document.documentElement;
     var out = {};
-    function set(key, val){ root.style.setProperty(key, val); out[key] = val; }
+    function set(key, val){ root.style.setProperty(key, val); out[key] = val; _inlineThemeKeys[key] = 1; }
     var k;
     // Set all theme vars directly — except the layout radius while a style pack
     // is active: the pack's [data-style] block owns --ui-radius then.
@@ -537,6 +540,11 @@
     } else {
       // Vars not provided — read them from computed style after data-theme was set
       // (the themes.css stylesheet defines them per [data-theme])
+      // ...but first lift the last theme's inline vars: they outrank that stylesheet, so reading with them in place read
+      // the OLD theme back and re-applied it - a switch by name alone (the chat's own picker telling the harness, a
+      // relay without vars) left the menus in the old theme (owner, 2026-09-27: "the theme doesnt change over properly")
+      Object.keys(_inlineThemeKeys).forEach(function(k){ document.documentElement.style.removeProperty(k); });
+      _inlineThemeKeys = {};
       var cs = getComputedStyle(document.documentElement);
       var readVars = {};
       ['--bg','--s1','--s2','--s3','--bd','--bd2',
