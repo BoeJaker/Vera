@@ -2316,7 +2316,9 @@ function _tabDrivenMark(){
 }
 // the one panel set, read back: a panel the aide opened as a harness tab (ui.panels.open says who and where) is
 // opened here as a tab alongside the others and marked; the harness's own report keeps who opened what
-async function _panelsSetSync(){
+let _panelsSetBusy = false;
+async function _panelsSetSync(){ if(_panelsSetBusy || document.hidden) return; _panelsSetBusy = true; try{ await _panelsSetSync0(); } finally { _panelsSetBusy = false; } }
+async function _panelsSetSync0(){
   let r = null; try{ r = await api('/mcp/call', 'POST', { name: 'ui.panels.open', arguments: { session_id: _veraSessionId } }); }catch(_){ return; }
   const c = r && r.content !== undefined ? r.content : r; const panels = (c && c.panels) || [];
   let changed = false;
@@ -2640,7 +2642,7 @@ function _lhmRenderAbsorbed(host, pid, nav){
   bar.appendChild(tb); bar.appendChild(tt); host.appendChild(bar);
   // the chat: its menu IS this menu — the chat board embedded menu-only; nothing here is a copy
   const chatFrame = _chatFrameFor(pid);
-  if(chatFrame){ const navEl = document.getElementById('lhmNav'); if(navEl) navEl.classList.add('chatmenu'); tt.textContent = 'Chat · menu'; _lhmMenuFrame(navEl, chatFrame.getAttribute('src') || chatFrame.getAttribute('data-lazy-src') || '/chat_panel'); return true; }
+  if(chatFrame){ const navEl = document.getElementById('lhmNav'); if(navEl) navEl.classList.add('chatmenu'); tt.textContent = 'Chat · menu'; _lhmMenuFrame(navEl, chatFrame.getAttribute('data-lazy-src') || chatFrame.getAttribute('src') || '/chat_panel'); return true; }
   const abs = document.createElement('div'); abs.className = 'lhm-abs';
   VeraLHM.absorb(abs, nav.lhm, id => {
     _lhmNavSelect(pid, id);
@@ -5139,7 +5141,7 @@ function _showPanelLoadError(panelEl, ov) {
   if (btn) btn.onclick = () => {
     // Re-park: move current src back to data-lazy-src so _ensurePanelLoaded reloads.
     panelEl.querySelectorAll('iframe[data-lazy="1"]').forEach(f => {
-      const src = f.getAttribute('src') || f.getAttribute('data-lazy-src');
+      const src = f.getAttribute('data-lazy-src') || f.getAttribute('src');
       if (src) { f.setAttribute('data-lazy-src', src); f.removeAttribute('src'); }
     });
     ov.remove();
@@ -5177,7 +5179,7 @@ function _parkPanel(panelEl) {
     } catch (_) {}
   }
   frames.forEach(f => {
-    const src = f.getAttribute('src') || f.getAttribute('data-lazy-src');
+    const src = f.getAttribute('data-lazy-src') || f.getAttribute('src');
     if (src) f.setAttribute('data-lazy-src', src);
     f.removeAttribute('src');   // stops the panel's JS + timers
   });
@@ -5309,6 +5311,7 @@ async function loadAllPanels() {
           document.querySelectorAll('.media-content').forEach(c => c.classList.remove('active'));
           tab.classList.add('active');
           document.getElementById(`mc_${p.id}`)?.classList.add('active');
+          _mediaLoad(document.getElementById(`mc_${p.id}`));
         };
         tabsEl.appendChild(tab);
 
@@ -5316,6 +5319,8 @@ async function loadAllPanels() {
         cont.className = 'media-content media-panel' + (idx === 0 ? ' active' : '');
         cont.id        = `mc_${p.id}`;
         cont.innerHTML = p.html || '';
+        _deferPanelIframes(cont);   // parked while detached: nothing loads until its sub-tab is shown (_mediaLoad)
+        cont.querySelectorAll('iframe[data-lazy-src]').forEach(f => { f.setAttribute('data-media-src', f.getAttribute('data-lazy-src')); f.removeAttribute('data-lazy-src'); });
         contEl.appendChild(cont);
         _injectPanelJs(p);
       });
@@ -8277,7 +8282,7 @@ function _lhmOpenBeside(pid, navId){
 function _tabClone(pid){
   const src = document.getElementById('panel-' + pid); if(!src) return null;
   const f = src.querySelector('iframe');
-  let url = f ? (f.getAttribute('src') || f.getAttribute('data-lazy-src') || '') : '';
+  let url = f ? (f.getAttribute('data-lazy-src') || f.getAttribute('src') || '') : '';
   if(!url && /^auto-/.test(pid)) url = '/ui/panels/' + pid.slice(5);
   if(!url) return null;
   let n = 2; while(document.getElementById('panel-' + pid + '--' + n)) n++;
@@ -8311,6 +8316,31 @@ window.addEventListener('message', e => { const d = e.data; if(!d || typeof d !=
   const pid = tab ? _tabToPanelId(tab) : (document.getElementById('panel-' + id) ? id : (document.getElementById('panel-auto-' + id) ? 'auto-' + id : ''));
   if(!pid) return; if(d.by) _tabOrigin[pid] = String(d.by);
   _lhmOpenBeside(pid, String(d.section || '')); });
+
+// ═══ FRAMES LOAD WHEN THEY ARE SHOWN (the widget review, 2026-09-27: a fresh harness loaded 20 panel frames nobody was
+// looking at - 15 in the Elements tab, the Estate/Models/Agents mount scripts, a second chat - and each then polled; with
+// the browser's six connections per host they queued the dashboard's own reads for over a minute, which is why every tile
+// sat on its sample). A frame put into a panel that is not showing is parked (its src kept in data-lazy-src) and loads the
+// first time its tab is shown, through the same lazy path the tab panels already use. ═══
+function _framePark(f){
+  try{
+    if(!f || f.tagName !== 'IFRAME' || f.closest('.media-content')) return;   // the Elements tab parks its own (see _mediaLoad)
+    const p = f.closest('.panels > .panel'); if(!p) return;
+    if(p.classList.contains('active') || _openTabs.has(_panelIdFromEl(p))) return;
+    const src = f.getAttribute('src'); if(!src || src === 'about:blank') return;
+    f.setAttribute('data-lazy-src', src); f.setAttribute('data-lazy', '1'); f.setAttribute('src', 'about:blank');
+  }catch(_){}
+}
+{ const root = document.querySelector('.panels');
+  if(root){ root.querySelectorAll('iframe').forEach(_framePark);
+    try{ new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if(!n || n.nodeType !== 1) return; if(n.tagName === 'IFRAME') _framePark(n); else if(n.querySelectorAll) n.querySelectorAll('iframe').forEach(_framePark); }))).observe(root, { childList: true, subtree: true }); }catch(_){} } }
+// the Elements tab: each of its pages loads when its own sub-tab is shown, not all of them when the tab is
+function _mediaLoad(cont){
+  if(!cont) return;
+  cont.querySelectorAll('iframe[data-media-src]').forEach(f => { f.setAttribute('data-lazy-src', f.getAttribute('data-media-src')); f.removeAttribute('data-media-src'); });
+  _ensurePanelLoaded(cont);
+}
+{ const __tabRender3 = _tabRender; _tabRender = function(){ const r = __tabRender3.apply(this, arguments); try{ if(_openTabs.has('media')) _mediaLoad(document.querySelector('#mediaContents .media-content.active')); }catch(_){} return r; }; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CROSS-FRAME WIDGET POP-OUT — embedded dashboards (Dream, Workers & Ollama, …)

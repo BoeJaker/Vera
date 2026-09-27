@@ -509,9 +509,10 @@ async def _parse_engine_json(body: bytes, default):
     http_method="POST", http_path="/workers/docker/ps", http_tags=["docker"],
     memory="off",
     description="List containers on a host (Engine /containers/json). "
-                "Input: host_id (str), all (bool=true). Output: {containers: [...], count}.",
+                "Input: host_id (str), all (bool=true), slim (bool=false - only Id/Names/Image/State/Status/Created/project per "
+                "container: a dashboard's reading, not the full Engine record). Output: {containers: [...], count}.",
 )
-async def cap_docker_ps(host_id: str = "", all: bool = True, trace_id=None) -> Dict:
+async def cap_docker_ps(host_id: str = "", all: bool = True, slim: bool = False, trace_id=None) -> Dict:
     rec = _get_host(host_id)
     if not rec:
         return {"error": f"unknown host: {host_id}", "containers": []}
@@ -521,7 +522,18 @@ async def cap_docker_ps(host_id: str = "", all: bool = True, trace_id=None) -> D
     rows = await _parse_engine_json(body, [])
     if not isinstance(rows, list):
         rows = []
+    if slim:
+        rows = [_docker_ps_slim(r) for r in rows if isinstance(r, dict)]
     return {"host_id": rec["id"], "containers": rows, "count": len(rows)}
+
+
+def _docker_ps_slim(r: Dict) -> Dict:
+    """A container as a dashboard reads it: ~650 KB for 300 full Engine records on the busy host became the containers
+    tile's every-30-s read (the widget review, 2026-09-27); these are the fields a tile names."""
+    labels = r.get("Labels") or {}
+    return {"Id": str(r.get("Id") or "")[:12], "Names": r.get("Names") or [], "Image": r.get("Image") or "",
+            "State": r.get("State") or "", "Status": r.get("Status") or "", "Created": r.get("Created") or 0,
+            "project": labels.get("com.docker.compose.project", "") if isinstance(labels, dict) else ""}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -70,7 +70,9 @@ READ_THROUGH_GROUPS = (
     "nodes", "activity", "health", "workers", "gpu", "census", "mesh", "backup",
     "perf", "jobs", "background", "catalog", "netmap", "proxmox", "docker",
     "autoenroll", "netsec", "provision", "evolve", "sandbox", "memory", "fabric",
-    "markets", "ide", "openclaw", "vfs", "netmon", "identity", "dream", "loops", "research", "providers", "vllm", "ha", "n8n", "cal", "sched", "worldview", "agent", "project", "workshop", "system", "tg", "netscan", "print", "llm")
+    "markets", "ide", "openclaw", "vfs", "netmon", "identity", "dream", "loops", "research", "providers", "vllm", "ha", "n8n", "cal", "sched", "worldview", "agent", "project", "workshop", "system", "tg", "netscan", "print", "llm",
+    # the dashboard's warnings, ontology coverage and subsystem health (2026-09-27: drawn from the sandbox's own, empty stores)
+    "syslog", "cap", "dash")
 # a reading that is about THIS process, not the estate: stays local
 READ_THROUGH_LOCAL = ("evolve.sandbox.status", "obs.diagnostics", "obs.modules", "obs.pending",
                       "llm.formats", "sandbox.session.list",
@@ -113,7 +115,8 @@ def read_through_groups(env: Optional[Dict[str, str]] = None) -> tuple:
 
 # the reading names: a capability ending in one of these is a read whatever its route (its arguments name what to read)
 READ_WORDS = frozenset(("status", "stats", "health", "snapshot", "summary", "list", "get", "history", "topology", "results",
-                        "nodes", "installed", "info", "config", "overview", "usage", "scan", "report", "metrics", "recent", "top", "ps"))
+                        "nodes", "installed", "info", "config", "overview", "usage", "scan", "report", "metrics", "recent", "top", "ps",
+                        "errors"))
 
 
 def read_through_allowed(name: str, http_method: Optional[str],
