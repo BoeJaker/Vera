@@ -198,6 +198,14 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .owf-l{position:absolute;transform:translate(-50%,0) scale(var(--ui,1));transform-origin:50% 0;font-family:var(--f-mono);font-size:9px;z-index:8;text-shadow:0 1px 3px var(--bg);white-space:nowrap;pointer-events:none}
 .owf-hit{position:absolute;z-index:9;border-radius:6px;cursor:pointer}
 .pivot{position:absolute;width:0;height:0;pointer-events:none}
+.nd .vit{display:inline-flex;align-items:flex-end;gap:1px;height:12px;flex:none}.nd .vit i{width:3px;border-radius:1px;display:block}
+.nd .regd{display:inline-flex;gap:2px;flex:none}.nd .regd i{width:5px;height:5px;border-radius:50%;display:block}
+.regd i.y{background:var(--ac2)}.regd i.n{background:var(--ac4)}.regd i.na{background:var(--s3)}
+.sub2,.ovw .sub{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-top:6px}
+.ovw{display:flex;flex-direction:column;gap:3px}
+.ovh{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--t2);min-width:0}.ovh b{color:var(--t1)}.ovh .st{width:7px;height:7px;border-radius:50%;flex:none}
+.ovh span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ndw.wide .b{max-height:440px;overflow:auto}
 .rtpill{position:absolute;left:10px;top:8px;z-index:44;display:flex;align-items:center;gap:7px;padding:4px 5px 4px 9px;border-radius:var(--r-sm);background:color-mix(in srgb,var(--s1) 92%,transparent);box-shadow:0 0 0 1px var(--bd);font-size:10.5px;color:var(--t2)}
 .rtpill[hidden]{display:none}
 .rtpill i{width:7px;height:7px;border-radius:50%;flex:none}.rtpill b{color:var(--t1);font-weight:600}.rtpill .c{font-family:var(--f-mono);font-size:9.5px;color:var(--t3)}
@@ -325,7 +333,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     <div class="seg" id="segLayout"><button id="bStack" class="on" title="The planes as a stack, one above the other">Stacked</button><button id="bFlat" title="Every plane laid flat, side by side">All flat</button><button id="bOne" title="One layer at a time: the selected node's plane">One layer</button></div>
     <div class="seg" id="segGap" title="How far apart the floors stand (3D)"><span class="cap">gap</span><input type="range" id="rGap" min="0.5" max="3" step="0.1" value="1"><span class="z" id="rGapV">1.0</span></div>
     <div class="seg" id="segSpread" title="How far apart the lanes and rows stand"><span class="cap">spread</span><input type="range" id="rSpread" min="0.8" max="2.2" step="0.1" value="1"><span class="z" id="rSpreadV">1.0</span></div>
-    <div class="seg wsz" id="segWsz" title="The size of the iso widgets on the planes (they keep it while the view zooms)"><span class="cap">▣</span><button data-wsz="0.75">S</button><button data-wsz="1" class="on">M</button><button data-wsz="1.3">L</button><button data-wsz="1.6">XL</button></div>
+    <div class="seg wsz" id="segWsz" title="The size of the iso widgets on the planes (they keep it while the view zooms)"><span class="cap">▣</span><button data-wsz="0.75">S</button><button data-wsz="1" class="on">M</button><button data-wsz="1.35">L</button><button data-wsz="1.8">XL</button></div>
     <div class="seg"><button id="bPipes" class="on" title="Runs follow the lanes of their plane, then go straight up or down">Pipes</button><button id="bDirect" title="Each edge as a straight chord">Direct</button></div>
     <div class="seg" id="segLbl" title="What stands on the planes in 3D"><button data-lbl="labels" title="Billboard labels only">Labels</button><button data-lbl="both" class="on" title="Billboards and the iso widgets">Both</button><button data-lbl="widgets" title="The iso widgets alone - no billboards; a widget names its node">Widgets</button></div>
     <div class="seg" id="segLens" title="Look at the estate through one concern"><span class="cap">lens</span><button data-lens="all" class="on" title="Every plane in its own colour">All</button><button data-lens="net" title="Machines by subnet with their addresses; requests and mesh radio stay lit">Network</button><button data-lens="sec" title="Machines by how much of their registration is in place: SSH login, directory, mesh door, certificate, backup">Security</button></div>
@@ -394,10 +402,13 @@ const tc = (v) => v >= 70 ? 'var(--ac4)' : v >= 55 ? 'var(--ac3)' : 'var(--ac2)'
 const SZ = [0.75, 1, 1.3], szLbl = (s) => '×' + (s === 1 ? '1' : String(s).replace(/^0/, ''));
 // the widget kinds: [kind, name, what it reads]
 const WKINDS = [['server', 'server', 'a machine: drives lit by its load, a lamp for its state'], ['dial', 'dial', 'load'], ['tank', 'tank', 'disk'], ['thermo', 'thermometer', 'temperature'], ['tower', 'tower', 'load as height'],
-  ['crates', 'crates', 'containers'], ['chip', 'chip', 'studs lit by work'], ['mast', 'mast', 'signal'], ['conveyor', 'conveyor', 'work in flight'], ['stack', 'stack', 'a pipeline'], ['term', 'terminal', 'a shell on the machine: its last lines; click to type'], ['client', 'client', 'a client of Vera: a screen, lit by who it is']];
+  ['crates', 'crates', 'containers'], ['chip', 'chip', 'studs lit by work'], ['mast', 'mast', 'signal'], ['conveyor', 'conveyor', 'work in flight'], ['stack', 'stack', 'a pipeline'], ['term', 'terminal', 'a shell on the machine: its last lines; click to type'], ['client', 'client', 'a client of Vera: a screen, lit by who it is'],
+  ['mem', 'memory', 'memory in use, stick by stick'], ['bars', 'history', 'the last readings as columns'], ['hist', 'latency', 'how long its requests took'],
+  ['shield', 'registration', 'SSH login, directory, mesh door, certificate, backup'], ['gpu', 'GPU card', 'a GPU, its fans lit while it works'], ['models', 'models', 'the models it holds'],
+  ['db', 'database', 'a store, lit while it works'], ['queue', 'queue', 'work in flight through it'], ['nic', 'network', 'its pipes or connections as port lights']];
 const WNAME = {}; WKINDS.forEach((k) => { WNAME[k[0]] = k[1]; });
 // the widgets of a node stand in one line beside its pin; each takes this much of the lane (ground units), its size included
-const wstep = (w) => (w.k === 'term' ? 2.0 : 0.72) * S.wsz * (w.s || 1);
+const wstep = (w) => (w.k === 'term' ? 2.6 : 1.0) * S.wsz * (w.s || 1);
 // how much of the screen the chrome may take as the view zooms: chips, labels and cards hold between these
 const UI_MIN = 0.8, UI_MAX = 1.35;
 const uiScale = (vz) => clamp(vz, UI_MIN, UI_MAX) / vz;
@@ -407,16 +418,18 @@ const ipOf = (n) => (n.ips || []).find((i) => /^\d+\.\d+\.\d+\.\d+$/.test(i)) ||
 const subnetOf = (n) => { const ip = ipOf(n); return ip ? ip.split('.').slice(0, 3).join('.') + '.0/24' : ''; };
 const REGP = ['ssh', 'directory', 'mesh', 'certificate', 'backup'];
 const regYes = (st) => /^(yes|ok|done|enrolled|present|on)$/.test(String(st || '').toLowerCase());
+let DEG = null, DEG_OF = null;
+const degOf = (id) => { if (DEG_OF !== S.snap){ DEG_OF = S.snap; DEG = {}; ((S.snap && S.snap.links) || []).forEach((l) => { DEG[l.a] = (DEG[l.a] || 0) + 1; DEG[l.b] = (DEG[l.b] || 0) + 1; }); } return DEG[id] || 0; };
 const regOf = (n) => { const r = n.reg; if (!r || !r.planes) return null; const ks = Object.keys(r.planes).filter((k) => r.planes[k].state !== 'n/a'); return { yes: ks.filter((k) => regYes(r.planes[k].state)).length, of: ks.length, complete: !!r.complete, missing: ks.filter((k) => !regYes(r.planes[k].state)) }; };
 
 // ── state ──
-const S = { view: '2d', layout3d: 'stack', focus: null, pipes: true, widgets: true, sel: null, exp: null, act: 'metrics', wact: 'metrics',
+const S = { view: '2d', layout3d: 'stack', focus: null, pipes: true, widgets: true, sel: null, exp: null, act: 'metrics', wact: 'overview',
   on: { client: true, work: true, core: true, service: true, runtime: true, host: true, edge: true },
   vz: 1, vx: 0, vy: 0, tilt: null, azim: null, zgap: 1, spread: 1, wsz: 1, lbl: 'both', wl: {}, wpick: null, wadd: null, wsec: true, lens: 'all', term: {},
   snap: null, err: '', cm: null, logs: {}, req: {}, dive: {}, drag: null, fresh: true, busy: false, fp: '', seenN: {}, seenW: {}, enterKey: '', rt: null, moved: false };
 // the widget overrides: {node: {off, items:[{k, s}]}} (an older {k, s, off} is read as one item)
 try { const w = JSON.parse(localStorage.getItem('vera:ops:widgets') || 'null'); if (w && typeof w === 'object') Object.keys(w).forEach((id) => { const o = w[id] || {}; S.wl[id] = Array.isArray(o.items) ? { off: !!o.off, items: o.items } : { off: !!o.off, items: o.k ? [{ k: o.k, s: o.s || 1 }] : null }; }); } catch (_) {}
-try { const v = JSON.parse(localStorage.getItem('vera:ops:view') || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); if (['labels', 'both', 'widgets'].indexOf(v.lbl) >= 0) S.lbl = v.lbl; if (['all', 'net', 'sec'].indexOf(v.lens) >= 0) S.lens = v.lens; S.widgets = S.lbl !== 'labels'; } } catch (_) {}
+try { const v = JSON.parse(localStorage.getItem('vera:ops:view') || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); if (S.wsz === 1.3) S.wsz = 1.35; if (S.wsz === 1.6) S.wsz = 1.8; if (['labels', 'both', 'widgets'].indexOf(v.lbl) >= 0) S.lbl = v.lbl; if (['all', 'net', 'sec'].indexOf(v.lens) >= 0) S.lens = v.lens; S.widgets = S.lbl !== 'labels'; } } catch (_) {}
 const saveW = () => { try { localStorage.setItem('vera:ops:widgets', JSON.stringify(S.wl)); } catch (_) {} };
 const saveV = () => { try { localStorage.setItem('vera:ops:view', JSON.stringify({ zgap: S.zgap, spread: S.spread, wsz: S.wsz, lbl: S.lbl, lens: S.lens })); } catch (_) {} };
 const byId = () => { const m = {}; ((S.snap && S.snap.nodes) || []).forEach((n) => { m[n.id] = n; }); return m; };
@@ -444,21 +457,33 @@ async function load(refresh){
 }
 
 // ── the widgets on a node: what it is, then its readings; the rail overrides the list ──
+// what a node wears by default: what it is, then every reading the estate has for it (the rail overrides the list)
 function wdefaults(n){ const L = []; const st = (k, s) => L.push({ k, s: s || 1 });
-  if (n.kind === 'guest'){ st('server'); if (n.load != null) st('dial', .75); if (n.temp != null) st('thermo', .75); if (n.disk_pct != null) st('tank', .75); }
-  else if (n.kind === 'host' || n.kind === 'docker-host'){ st('server'); if (n.temp != null) st('thermo', .75); if (n.disk_pct != null) st('tank', .75); if (n.load != null) st('dial', .75); }
-  else if (n.kind === 'docker'){ st('server'); st('crates', .75); }
-  else if (n.kind === 'ollama'){ st('dial'); }
-  else if (n.kind === 'store' || n.kind === 'core'){ st('chip'); }
-  else if (n.kind === 'sandbox'){ st('crates'); }
-  else if (n.kind === 'mesh'){ st('mast'); }
+  const ser = (S.snap && S.snap.series && S.snap.series[n.id]) || {}, hist = !!((ser.cpu && ser.cpu.length > 1) || (ser.tps && ser.tps.length > 1) || (ser.ping && ser.ping.length > 1));
+  if (n.kind === 'guest' || n.kind === 'host' || n.kind === 'docker-host'){ st('server'); if (n.load != null) st('dial', .8); if (n.mem_pct != null) st('mem', .8); if (n.disk_pct != null) st('tank', .8);
+    if (n.temp != null) st('thermo', .8); if (hist) st('bars', .8); if (n.reg) st('shield', .8); if (n.kind === 'docker-host') st('crates', .8); }
+  else if (n.kind === 'docker'){ st('server'); st('crates', .8); st('nic', .8); }
+  else if (n.kind === 'ollama'){ st(/gpu/i.test(n.label + ' ' + n.detail) ? 'gpu' : 'chip'); st('dial', .8); if ((n.caps || []).length) st('models', .8); if (n.latency && n.latency.length) st('hist', .8); if (hist) st('bars', .8); }
+  else if (n.kind === 'store'){ st('db'); st('queue', .8); }
+  else if (n.kind === 'core'){ st('chip'); st('queue', .8); if (hist) st('bars', .8); }
+  else if (n.kind === 'sandbox'){ st('server'); st('crates', .8); }
+  else if (n.kind === 'mesh'){ st('mast'); if (hist) st('bars', .8); }
   else if (n.id.indexOf('pipe:') === 0){ st('stack'); }
-  else if (n.kind === 'work'){ st('conveyor'); }
-  else if (n.kind === 'client'){ st('client'); }
+  else if (n.kind === 'work'){ st('conveyor'); st('tower', .8); }
+  else if (n.kind === 'client'){ st('client'); st('nic', .8); }
   else st('chip');
   return L; }
 function wspec(n){ const o = S.wl[n.id]; if (o && o.off) return []; if (o && Array.isArray(o.items)) return o.items; return wdefaults(n); }
 function wcaption(n, k){ if (k === 'term'){ const T = S.term[n.id]; return T && T.lines.length ? 'shell · ' + T.lines.length + ' lines' : 'shell'; }
+  if (k === 'mem') return 'mem ' + Math.round(n.mem_pct || 0) + '%';
+  if (k === 'bars'){ const s = (S.snap.series || {})[n.id] || {}; return s.tps ? 'tokens/s' : s.cpu ? 'cpu · 40 min' : s.ping ? 'ping' : 'history'; }
+  if (k === 'hist') return 'p95 ' + (n.p95_ms != null ? Math.round(n.p95_ms) + 'ms' : '—');
+  if (k === 'shield'){ const r = regOf(n); return r ? 'reg ' + r.yes + '/' + r.of : 'no registration'; }
+  if (k === 'gpu') return n.inflight ? n.inflight + ' working' : 'idle';
+  if (k === 'models') return (n.caps || []).length + ' models';
+  if (k === 'db') return n.status + (n.inflight ? ' · ' + n.inflight + ' busy' : '');
+  if (k === 'queue') return (n.inflight || 0) + ' in flight';
+  if (k === 'nic') return n.conns ? n.conns + ' connections' : degOf(n.id) + ' pipes';
   if (k === 'client') return String(n.detail || n.ckind || 'client').split(' · ').slice(0, 2).join(' · ');
   if (k === 'server') return (n.status === 'down' ? 'DOWN · ' : n.errors ? n.errors + (n.errors === 1 ? ' finding · ' : ' findings · ') : '') + (n.kind === 'docker' ? 'docker · ' + String(n.detail).replace(' running', '') : (n.type === 'qemu' ? 'VM' : n.kind === 'guest' ? 'CT' : n.kind === 'docker-host' ? 'docker host' : 'host') + ' · ' + (n.load != null ? 'load ' + Math.round(n.load) + '%' : n.status));
   if (k === 'dial') return 'load ' + Math.round(n.load || 0) + '%'; if (k === 'tank') return (n.disk_pct != null ? 'disk ' + Math.round(n.disk_pct) : 'load ' + Math.round(n.load || 0)) + '%';
@@ -472,6 +497,9 @@ function layout(W, H){
   const PL = snap.planes.filter((p) => S.on[p.id]);
   const rowOf = {}; PL.forEach((p, i) => { rowOf[p.id] = i; });
   const shown = snap.nodes.filter((n) => S.on[n.plane]);
+  // a plane's label says how many stand on it, how many are down and how many findings they carry
+  const psum = (pid) => { const ns = shown.filter((n) => n.plane === pid), dn = ns.filter((n) => n.status === 'down').length, fd = ns.reduce((t, n) => t + (n.errors || 0), 0);
+    return ' · ' + ns.length + (dn ? ' · ' + dn + ' down' : '') + (fd ? ' · ' + fd + (fd === 1 ? ' finding' : ' findings') : ''); };
   const slot = {}; shown.forEach((n) => { const k = n.plane + ':' + n.domain; slot[k] = (slot[k] || 0) + 1; });
   const cellMax = {}; Object.keys(slot).forEach((k) => { const pl = k.split(':')[0]; cellMax[pl] = Math.max(cellMax[pl] || 0, slot[k]); });
   const used = {};
@@ -489,7 +517,7 @@ function layout(W, H){
     const bandNeed = (pl) => 60 + (ladder(pl) - 1) * 40 * SP, needSum = PL.reduce((t, p) => t + bandNeed(p.id), 0) || 1;
     const scale = Math.max(1, (H - AXIS) / needSum);
     const bandHOf = {}, bandY = {}; let yy = 0; PL.forEach((p) => { bandY[p.id] = yy; bandHOf[p.id] = bandNeed(p.id) * scale; yy += bandHOf[p.id]; });
-    PL.forEach((p) => { const y = bandY[p.id]; bands.push({ y, h: bandHOf[p.id], col: PCOL[p.id] }); planeLabels.push({ x: 10, y: y + 8, col: PCOL[p.id], t: p.name }); });
+    PL.forEach((p) => { const y = bandY[p.id]; bands.push({ y, h: bandHOf[p.id], col: PCOL[p.id] }); planeLabels.push({ x: 10, y: y + 8, col: PCOL[p.id], t: p.name + psum(p.id) }); });
     DOM.forEach((d, i) => domLabels.push({ x: colX(i), y: yy + 9, t: d }));
     shown.forEach((n) => {
       const k = n.plane + ':' + n.domain; const idx = (used[k] = (used[k] || 0)); const total = slot[k]; used[k]++;
@@ -552,7 +580,7 @@ function layout(W, H){
     const ox = (W - (R.maxX - R.minX)) / 2 - R.minX, oy = Math.max(FITM - R.minY, (H - AXIS - (R.maxY - R.minY)) / 2 - R.minY);
     G = { pivot: { x: R.pv[0] + ox, y: R.pv[1] + oy }, iso: R.iso, ox, oy, L: R.LL, FLAT, fitS: KI / KI0, TILT, AZIM, SP, height: R.maxY - R.minY + AXIS + 2 * FITM, width: R.maxX - R.minX + 2 * FITM };
     R.corners.forEach((f) => { floors.push({ id: f.p.id, col: PCOL[f.p.id], pts: f.c.map((q) => (q[0] + ox).toFixed(1) + ',' + (q[1] + oy).toFixed(1)).join(' ') });
-      const a = f.c[3]; planeLabels.push({ id: f.p.id, x: clamp(a[0] + ox - 2, 8, W - 96), y: clamp(a[1] + oy - 15, 10, Math.max(H, G.height) - 14), col: PCOL[f.p.id], t: f.p.name + (S.focus === f.p.id ? ' · in focus' : '') }); });
+      const a = f.c[3]; planeLabels.push({ id: f.p.id, x: clamp(a[0] + ox - 2, 8, W - 96), y: clamp(a[1] + oy - 15, 10, Math.max(H, G.height) - 14), col: PCOL[f.p.id], t: f.p.name + psum(f.p.id) + (S.focus === f.p.id ? ' · in focus' : '') }); });
     const vAx = VMAX + 1.0 * SP;
     DOM.forEach((d, i) => { const q = R.iso(domU[i], vAx, 0); domLabels.push({ x: clamp(q[0] + ox, 34, W - 34), y: q[1] + oy, t: d }); });
     R.rawNodes.forEach((n) => { pos[n.id] = { x: n.x + ox, y: n.y + oy, col: n.col }; });
@@ -628,6 +656,45 @@ function isoWidgets(lay, W, H){
         { u: -1.4, v: -.16, z: .8, w: 2.8, d: .2, h: 1.7, col: 'var(--surf3)' }, { u: -1.26, v: .04, z: .94, w: 2.52, d: .04, h: 1.42, col },
         { u: -1.1, v: .7, z: 0, w: 2.2, d: .62, h: .08, col: 'var(--s3)' }];
       const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col }; },
+    // memory: six sticks standing on a board, lit by the share in use
+    mem: (g, k, n) => { const pct = Math.max(0, Math.min(100, n.mem_pct || 0)), lit = Math.round(pct / 100 * 6), c = pct >= 90 ? 'var(--ac4)' : pct >= 75 ? 'var(--ac3)' : 'var(--dv6)', boxes = [{ u: -1.6, v: -.7, z: 0, w: 3.2, d: 1.4, h: .14, col: 'var(--s3)' }];
+      for (let i = 0; i < 6; i++) boxes.push({ u: -1.4 + i * .5, v: -.45, z: .14, w: .24, d: .9, h: 1.5, col: i < lit ? c : 'var(--bd2)' });
+      const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col: c }; },
+    // history: the last eight readings as columns, the newest lit
+    bars: (g, k, n) => { const ser = (S.snap.series || {})[n.id] || {}, vals = (ser.tps || ser.cpu || ser.ping || []).slice(-8), hi = Math.max.apply(null, vals.concat([1])), boxes = [{ u: -2.1, v: -.6, z: 0, w: 4.2, d: 1.2, h: .12, col: 'var(--s3)' }];
+      vals.forEach((v, i) => boxes.push({ u: -1.95 + i * .5, v: -.3, z: .12, w: .36, d: .6, h: .15 + (v / hi) * 2.4, col: i === vals.length - 1 ? 'var(--ac)' : 'var(--dv3)' }));
+      const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col: 'var(--dv3)' }; },
+    // latency: its requests' times as a histogram, quick to slow
+    hist: (g, k, n) => { const ms = n.latency || [], B = 8, lo = Math.min.apply(null, ms.concat([0])), hi = Math.max.apply(null, ms.concat([1])), r = (hi - lo) || 1, bins = new Array(B).fill(0);
+      ms.forEach((v) => { bins[Math.min(B - 1, Math.floor((v - lo) / r * B))]++; }); const top = Math.max.apply(null, bins.concat([1])), boxes = [{ u: -2.1, v: -.6, z: 0, w: 4.2, d: 1.2, h: .12, col: 'var(--s3)' }];
+      bins.forEach((c, i) => boxes.push({ u: -1.95 + i * .5, v: -.3, z: .12, w: .36, d: .6, h: .08 + c / top * 2.2, col: i < 4 ? 'var(--ac2)' : i < 6 ? 'var(--dv4)' : 'var(--ac3)' }));
+      const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col: 'var(--dv4)' }; },
+    // registration: five pillars - SSH login, directory, mesh door, certificate, backup - tall and green when in place
+    shield: (g, k, n) => { const r = (n.reg && n.reg.planes) || {}, boxes = [{ u: -1.5, v: -.6, z: 0, w: 3, d: 1.2, h: .14, col: 'var(--s3)' }]; let yes = 0, of = 0;
+      REGP.forEach((pn, i) => { const st = (r[pn] || {}).state, y = regYes(st), na = !st || st === 'n/a'; if (!na){ of++; if (y) yes++; }
+        boxes.push({ u: -1.3 + i * .56, v: -.25, z: .14, w: .38, d: .5, h: na ? .15 : y ? 1.6 : .55, col: na ? 'var(--bd2)' : y ? 'var(--ac2)' : 'var(--ac4)' }); });
+      const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col: of && yes === of ? 'var(--ac2)' : yes * 2 >= of ? 'var(--ac3)' : 'var(--ac4)' }; },
+    // a GPU card on its bracket, two fans lit while it works
+    gpu: (g, k, n) => { const busy = (n.inflight || 0) > 0, down = n.status === 'down', boxes = [{ u: -1.8, v: -.3, z: 0, w: 3.6, d: .6, h: .2, col: 'var(--s3)' }, { u: -1.7, v: -.2, z: .2, w: 3.4, d: .4, h: 1.5, col: down ? 'var(--s3)' : 'var(--surf3)' }];
+      [-1.0, .35].forEach((u) => boxes.push({ u, v: .2, z: .45, w: .9, d: .06, h: .9, col: down ? 'var(--ac4)' : busy ? 'var(--ac)' : 'var(--bd2)' }));
+      boxes.push({ u: -1.7, v: -.2, z: 1.7, w: 3.4, d: .4, h: .08, col: 'var(--dv1)' });
+      const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col: down ? 'var(--ac4)' : busy ? 'var(--ac)' : 'var(--dv1)' }; },
+    // models: one cartridge per model it holds, stacked
+    models: (g, k, n) => { const c = Math.min(8, (n.caps || []).length), boxes = [{ u: -1, v: -1, z: 0, w: 2, d: 2, h: .12, col: 'var(--s3)' }];
+      for (let i = 0; i < c; i++) boxes.push({ u: -.8, v: -.8, z: .12 + i * .26, w: 1.6, d: 1.6, h: .2, col: i % 2 ? 'var(--dv1)' : 'var(--dv5)' });
+      const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col: 'var(--dv1)' }; },
+    // a database: three platters, the top one lit while it works, red when it is down
+    db: (g, k, n) => { const down = n.status === 'down', lit = (n.inflight || 0) > 0, boxes = [];
+      for (let i = 0; i < 3; i++) boxes.push({ u: -1.1, v: -1.1, z: i * .75, w: 2.2, d: 2.2, h: .6, col: down ? 'var(--ac4)' : i === 2 && lit ? 'var(--ac)' : 'var(--surf3)' }, { u: -1.15, v: -1.15, z: i * .75 + .6, w: 2.3, d: 2.3, h: .06, col: 'var(--dv6)' });
+      const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col: down ? 'var(--ac4)' : 'var(--dv6)' }; },
+    // a queue: eight slots, filled by the work in flight through it
+    queue: (g, k, n) => { const c = Math.min(8, n.inflight || 0), boxes = [{ u: -2, v: -.5, z: 0, w: 4, d: 1, h: .16, col: 'var(--s3)' }];
+      for (let i = 0; i < 8; i++) boxes.push({ u: -1.85 + i * .48, v: -.3, z: .16, w: .36, d: .6, h: i < c ? .5 : .08, col: i < c ? 'var(--ac)' : 'var(--bd2)' });
+      const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col: c ? 'var(--ac)' : 'var(--t3)' }; },
+    // network: a switch, a port light per pipe (or per connection, for a client)
+    nic: (g, k, n) => { const d = Math.min(8, n.conns || degOf(n.id)), boxes = [{ u: -1.8, v: -.6, z: 0, w: 3.6, d: 1.2, h: .55, col: 'var(--surf3)' }];
+      for (let i = 0; i < 8; i++) boxes.push({ u: -1.6 + i * .42, v: .6, z: .18, w: .26, d: .06, h: .2, col: i < d ? 'var(--ac2)' : 'var(--s3)' });
+      const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col: 'var(--dv3)' }; },
     dial: (g, k, n) => { const N = 20, R = 2.0, pct = (n.load || 0) / 100, lit = Math.max(1, Math.round(N * pct)), boxes = [];
       for (let i = 0; i < N; i++){ const a = Math.PI * .75 + (i / (N - 1)) * Math.PI * 1.5, on = i < lit; boxes.push({ u: Math.cos(a) * R - .17, v: Math.sin(a) * R - .17, z: 0, w: .34, d: .34, h: on ? .3 : .1, col: !on ? 'var(--s3)' : (i < N * .6 ? 'var(--ac2)' : i < N * .85 ? 'var(--ac3)' : 'var(--ac4)') }); }
       boxes.push({ u: -.36, v: -.36, z: 0, w: .72, d: .72, h: .4, col: 'var(--s3)' });
@@ -665,7 +732,7 @@ function isoWidgets(lay, W, H){
     // the widgets stand in one line beside the pin, along the plane's lanes, each as far from the last as their sizes ask
     let run = 0.42 * Math.min(1, SP);
     wspec(n).forEach((w, i) => { const st = wstep(w); run += st / 2;
-      const gu = N.u + run, gv = N.v + 0.08 * SP, g = Pg(gu, gv, N.z), k = 9 * ws * (w.s || 1); run += st / 2;
+      const gu = N.u + run, gv = N.v + 0.08 * SP, g = Pg(gu, gv, N.z), k = 12 * ws * (w.s || 1); run += st / 2;
       const b = w.k === 'term' ? termFrame(g, k, n) : (BUILD[w.k] || BUILD.chip)(g, k, n); const bb = bboxOf(b.faces); out.boxes.push(bb);
       if (b.frame) out.frames.push(Object.assign({ id: n.id }, b.frame));
       out.groups.push({ id: n.id, key: n.id + ':' + i + ':' + w.k, i, a: out.faces.length, b: out.faces.length + b.faces.length });
@@ -728,6 +795,7 @@ function render(opts){
   const need = 30 + Object.keys(per).reduce((t, pl) => t + 60 + (clamp(per[pl], 1, is3d ? 9 : 12) - 1) * (is3d ? 26 : 40 * S.spread), 0);
   plot.style.setProperty('--plot-min', Math.max(560, is3d ? need * Math.max(1, S.zgap * 1.15) * (S.layout3d === 'flat' ? .8 : 1) : need) + 'px');
   plot.style.setProperty('--plot-minw', '0px');   // reset before measuring: a view that grew the plot sideways must not centre the next one
+  const stg = plot.closest('.stage'), stgF = stg ? [(stg.scrollLeft + stg.clientWidth / 2) / Math.max(1, stg.scrollWidth), (stg.scrollTop + stg.clientHeight / 2) / Math.max(1, stg.scrollHeight)] : [0.5, 0];
   let W = plot.clientWidth || 800, H = plot.clientHeight || 600;
   let lay = layout(W, H);
   // a stack taller than the plot (a wide gap, a large spread) asks for its height: nothing is cut, the stage scrolls
@@ -739,7 +807,7 @@ function render(opts){
   const parts = [];
   // entering: a new view (2D, 3D stacked or flat, one layer) builds plane by plane; afterwards a node or widget that was not
   // on the graph before enters on its own. A redraw of what is already there (a poll, a rotation) animates nothing.
-  const ek = is3d ? '3d:' + S.layout3d + ':' + (S.focus || '') : '2d', replay = ek !== S.enterKey;
+  const ek = is3d ? '3d:' + S.layout3d : '2d', replay = ek !== S.enterKey;
   if (replay){ S.enterKey = ek; S.seenN = {}; S.seenW = {}; }
   const pIdx = {}; lay.PL.forEach((pl, i) => { pIdx[pl.id] = i; });
   const entD = {}, perPl = {}; shown.slice().sort((a, b) => pos[a.id].x - pos[b.id].x).forEach((n) => { if (S.seenN[n.id]) return;
@@ -749,7 +817,7 @@ function render(opts){
   const EP = (id) => replay ? [' ent', ';--ed:' + ((pIdx[id] || 0) * 0.1).toFixed(2) + 's'] : ['', ''];
   lay.bands.forEach((b, i) => parts.push('<div class="band' + (replay ? ' ent' : '') + '" style="top:' + px(b.y) + ';height:' + px(b.h) + ';--pc:' + b.col + (replay ? ';--ed:' + (i * 0.1).toFixed(2) + 's' : '') + '"></div>'));
   // the floors as polygons of one svg that overflows the plot's box: a floor is never clipped by its own frame
-  if (lay.floors.length) parts.push('<svg class="floors-svg" width="' + W + '" height="' + H + '">' + lay.floors.map((f) => '<polygon class="' + (S.focus && S.focus !== f.id ? 'dim' : S.focus === f.id ? 'focus' : '') + EP(f.id)[0] + '" data-floor="' + f.id + '" points="' + f.pts + '" style="--pc:' + f.col + EP(f.id)[1] + '"><title>Click to look at this layer on its own</title></polygon>').join('') + '</svg>');
+  if (lay.floors.length) parts.push('<svg class="floors-svg" width="' + W + '" height="' + H + '">' + lay.floors.map((f) => '<polygon class="' + (S.focus && S.focus !== f.id ? 'dim' : S.focus === f.id ? 'focus' : '') + EP(f.id)[0] + '" data-floor="' + f.id + '" points="' + f.pts + '" style="--pc:' + f.col + EP(f.id)[1] + '"><title>Double-click to look at this layer on its own (again for every layer)</title></polygon>').join('') + '</svg>');
   lay.planeLabels.forEach((p, i) => parts.push('<div class="plabel ' + (S.focus && p.id && S.focus !== p.id ? 'dim' : '') + (replay ? ' ent' : '') + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';color:' + p.col + (replay ? ';--ed:' + (i * 0.1 + 0.2).toFixed(2) + 's' : '') + '">' + esc(p.t) + '</div>'));
   lay.domLabels.forEach((d) => parts.push('<div class="dlabel' + (replay ? ' ent' : '') + '" style="left:' + px(d.x) + ';top:' + px(d.y) + (replay ? ';--ed:.8s' : '') + '">' + esc(d.t) + '</div>'));
   const segsOf = (a, b) => { const pts = S.pipes && lay.route ? lay.route(a, b) : [{ x: pos[a].x, y: pos[a].y }, { x: pos[b].x, y: pos[b].y }]; const segs = [];
@@ -801,9 +869,9 @@ function render(opts){
       const en = E(n.id); parts.push('<span class="pin ' + (hidden ? 'dim' : '') + (lensDim(n) ? ' ldim' : '') + en[0] + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';--pc:' + col + ';--dtf:' + dtf + en[1] + '"></span>');
       if (S.lbl === 'widgets' && wspec(n).length) return;   // widgets only: the widget names its node
       // the chip stands straight above its pin; it is lifted (in screen px, at most 64) only as far as the widgets over its column ask
-      const hw = (14 + 5.4 * Math.min(26, n.label.length) + (n.errors ? 20 : 0) + (n.inflight ? 12 : 0)) / 2 * ui, hh = 22 * ui;
+      const hw = (14 + 5.4 * Math.min(26, n.label.length) + (n.errors ? 20 : 0) + (n.inflight ? 12 : 0) + (n.load != null || n.mem_pct != null || n.disk_pct != null ? 16 : 0)) / 2 * ui, hh = 22 * ui;
       const over = (r, b) => p.x + hw > b.x0 && p.x - hw < b.x1 && p.y - r * ui > b.y0 - 2 && p.y - r * ui - hh < b.y1 + 2;
-      const hit = (r) => (r < 64 && wboxes.some((b) => over(r, b))) || (!hidden && placed.some((b) => over(r, b)));
+      const hit = (r) => (r < 110 && wboxes.some((b) => over(r, b))) || (!hidden && placed.some((b) => over(r, b)));
       let raise = RAISE0; while (hit(raise) && raise < 120) raise += 8;
       if (!hidden) placed.push({ x0: p.x - hw, x1: p.x + hw, y0: p.y - raise * ui - hh, y1: p.y - raise * ui });
       chipAt[n.id] = { x: p.x, y: p.y, r: raise };
@@ -819,6 +887,7 @@ function render(opts){
       + (n.status === 'down' ? '<span class="dn">DOWN</span>' : '')
       + (lt ? '<span class="lz" style="--lzc:' + (lt.c || 'var(--t3)') + '">' + esc(lt.t) + '</span>' : '')
       + (bars ? '<span class="mini" style="color:' + PCOL[n.plane] + '">' + bars.map((v) => '<i style="height:' + Math.max(2, 11 * v / hi).toFixed(0) + 'px"></i>').join('') + '</span>' : '')
+      + vitHtml(n) + (!is3d ? regDots(n) : '')
       + (n.temp != null ? '<span class="tmp" title="' + Math.round(n.temp) + '° · throttle at 83°"><i style="width:' + Math.min(100, n.temp / 90 * 100) + '%;background:' + tempCol(n.temp) + '"></i></span>' : '')
       + (n.inflight ? '<span class="lb">' + n.inflight + '</span>' : '') + (n.errors ? '<span class="err">' + n.errors + '</span>' : '')
       + '<span class="exp" data-exp="' + esc(n.id) + '" title="Open this node as a widget on the graph">⤢</span><span class="asg ' + (S.wpick === n.id ? 'on' : '') + '" data-asg="' + esc(n.id) + '" title="Add or change the iso widgets on this node">⊕</span></div>'); });
@@ -836,6 +905,10 @@ function render(opts){
   v.innerHTML = parts.join('');
   applyZoom(); termScroll();
   shown.forEach((n) => { S.seenN[n.id] = 1; wspec(n).forEach((w, i) => { S.seenW[n.id + ':' + i + ':' + w.k] = 1; }); });
+  // the stage keeps the same middle in view as the lattice grows or shrinks; a new 3D view opens on the middle of the planes
+  if (stg){ const cx = replay && is3d ? 0.5 : stgF[0], cy = stgF[1];
+    if (stg.scrollWidth > stg.clientWidth + 4) stg.scrollLeft = Math.round(cx * stg.scrollWidth - stg.clientWidth / 2);
+    if (!replay && stg.scrollHeight > stg.clientHeight + 4) stg.scrollTop = Math.round(cy * stg.scrollHeight - stg.clientHeight / 2); }
   if (lay.G) $('pzAngle').textContent = Math.round(lay.G.TILT) + '°/' + Math.round(lay.G.AZIM) + '°';
   $('lsel').innerHTML = snap.planes.map((p) => '<button data-layer="' + p.id + '" class="' + (S.focus === p.id ? 'on' : '') + '" style="--pc:' + PCOL[p.id] + '"><i></i><span>' + esc(p.name) + '</span></button>').join('');
   if (!opts.plotOnly) renderInspector();
@@ -970,13 +1043,14 @@ function histBars(ms, col){ if (!ms || !ms.length) return '<div class="note">no 
   ms.forEach((v) => { bins[Math.min(B - 1, Math.floor((v - lo) / r * B))]++; }); const top = Math.max.apply(null, bins) || 1;
   return '<div class="hbars">' + bins.map((v, i) => '<i style="height:' + (v / top * 100).toFixed(0) + '%;background:' + (i < 5 ? col : i < 9 ? 'var(--dv4)' : 'var(--ac3)') + '"></i>').join('') + '</div>'; }
 function actionsFor(n){ const K = { ollama: ['req', 'caps', 'logs', 'term'], store: ['req', 'logs', 'term'], guest: ['term', 'files', 'logs', 'req', 'restart'], host: ['term', 'files', 'logs', 'req'], 'docker-host': ['term', 'logs', 'req'], docker: ['logs', 'req', 'term', 'restart'], sandbox: ['term', 'logs', 'req', 'restart'], core: ['req', 'logs'], work: ['logs', 'req'], mesh: ['req', 'logs'] }; const L = (K[n.kind] || ['logs', 'req']).slice(); if (L.indexOf('caps') < 0) L.push('caps'); return L; }
-const ALABEL = { metrics: 'Metrics', term: 'Terminal', files: 'Files', req: 'Send request', logs: 'Logs', caps: 'Capabilities', restart: 'Restart' };
-const ANOTE = { metrics: "The node's own readings, drawn in place.", term: 'Commands run on the machine through the estate\'s own capability: SSH with the stored login, else the Proxmox guest agent or pct exec, docker exec for a container. The first command asks once. Pin a terminal widget with ⊕ to keep its last lines on the plane.', files: 'The filesystem is browsed in the estate (Remote IDE for an enrolled host).', req: 'A capability request, sent through Vera\'s own bus; the default is a reading about this node. Nothing runs on the GPU unless you name a model capability.', logs: 'The last events that name this node, from the event ring.', caps: 'The estate capabilities that act on this node, its identifiers filled in. Pick one to load it into Send request: a reading runs at once, anything that changes the estate asks first.', restart: 'Restart asks once, then acts through the estate\'s own flow (a guest reboots through Proxmox; a sandbox through Loop Lab, dry run first; a docker host opens its containers in the estate).' };
+const ALABEL = { overview: 'Overview', metrics: 'Metrics', term: 'Terminal', files: 'Files', req: 'Send request', logs: 'Logs', caps: 'Capabilities', restart: 'Restart' };
+const ANOTE = { overview: 'What the estate knows about this node: who it is, its registration, its record, its findings and every pipe to it.', metrics: "The node's own readings, drawn in place.", term: 'Commands run on the machine through the estate\'s own capability: SSH with the stored login, else the Proxmox guest agent or pct exec, docker exec for a container. The first command asks once. Pin a terminal widget with ⊕ to keep its last lines on the plane.', files: 'The filesystem is browsed in the estate (Remote IDE for an enrolled host).', req: 'A capability request, sent through Vera\'s own bus; the default is a reading about this node. Nothing runs on the GPU unless you name a model capability.', logs: 'The last events that name this node, from the event ring.', caps: 'The estate capabilities that act on this node, its identifiers filled in. Pick one to load it into Send request: a reading runs at once, anything that changes the estate asks first.', restart: 'Restart asks once, then acts through the estate\'s own flow (a guest reboots through Proxmox; a sandbox through Loop Lab, dry run first; a docker host opens its containers in the estate).' };
 function actionsHtml(n, act, where){
-  const list = ['metrics'].concat(actionsFor(n)); const cur = list.indexOf(act) >= 0 ? act : 'metrics';
+  const list = (where === 'w' ? ['overview', 'metrics'] : ['metrics']).concat(actionsFor(n)); const cur = list.indexOf(act) >= 0 ? act : list[0];
   const btns = '<div class="acts">' + list.map((a) => '<button class="abtn ' + (a === cur ? 'on ' : '') + (a === 'restart' ? 'danger' : '') + '" data-act="' + a + '" data-where="' + where + '">' + ALABEL[a] + '</button>').join('') + '</div>';
   const col = PCOL[n.plane]; let body = '';
-  if (cur === 'metrics'){ const ser = (S.snap.series[n.id] || {}); const vals = ser.tps || ser.cpu || null;
+  if (cur === 'overview'){ body = overviewHtml(n); }
+  else if (cur === 'metrics'){ const ser = (S.snap.series[n.id] || {}); const vals = ser.tps || ser.cpu || null;
     body = '<div style="display:flex;flex-direction:column;gap:7px"><span class="r"><span class="k">load</span><span class="bar"><i style="width:' + (n.load != null ? Math.min(100, n.load) : 0) + '%;background:' + col + '"></i></span><span class="v">' + (n.load != null ? Math.round(n.load) + '%' : '—') + '</span></span>'
       + (n.mem_pct != null ? '<span class="r"><span class="k">memory</span><span class="bar"><i style="width:' + Math.min(100, n.mem_pct) + '%;background:var(--dv6)"></i></span><span class="v">' + Math.round(n.mem_pct) + '%</span></span>' : '')
       + (n.disk_pct != null ? '<span class="r"><span class="k">disk</span><span class="bar"><i style="width:' + Math.min(100, n.disk_pct) + '%;background:var(--dv4)"></i></span><span class="v">' + Math.round(n.disk_pct) + '%</span></span>' : '')
@@ -1031,7 +1105,35 @@ async function dive(n){ const D = S.dive[n.id] || (S.dive[n.id] = { at: 0 }); if
   if (n.ref) tasks.push(fetch(BASE + '/estate/entity/resolve?ref=' + encodeURIComponent(n.ref), { cache: 'no-store' }).then((r) => r.json()).then((j) => { const c = j && j.content !== undefined ? j.content : j; D.ent = c && (c.found || c.title) ? c : { error: (c && c.error) || 'not found' }; }).catch((e) => { D.ent = { error: String(e && e.message || e) }; }));
   if (n.req && n.req.name) tasks.push(fetch(BASE + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: n.req.name, arguments: n.req.arguments || {}, caller_kind: 'user' }) }).then((r) => r.json()).then((j) => { const c = j && j.content !== undefined ? j.content : j; D.read = c; D.readName = n.req.name; }).catch((e) => { D.read = { error: String(e && e.message || e) }; }));
   try { await Promise.all(tasks); } catch (_) {}
-  D.busy = false; D.at = Date.now(); if (S.sel === n.id) renderInspector(); }
+  D.busy = false; D.at = Date.now(); const ae = document.activeElement, typing = ae && ae.matches && ae.matches('input,textarea');
+  if (S.exp === n.id && !typing) render(); else if (S.sel === n.id) renderInspector(); }
+// ── what the estate knows about a node, for the card's Overview and the right panel ──
+function vitHtml(n){ const b = []; if (n.load != null) b.push(['cpu', n.load]); if (n.mem_pct != null) b.push(['mem', n.mem_pct]); if (n.disk_pct != null) b.push(['disk', n.disk_pct]);
+  return b.length ? '<span class="vit" title="' + esc(b.map((x) => x[0] + ' ' + Math.round(x[1]) + '%').join(' · ')) + '">' + b.map((x) => '<i style="height:' + Math.max(2, Math.min(100, x[1]) / 100 * 12).toFixed(0) + 'px;background:' + tc(x[1] * .8) + '"></i>').join('') + '</span>' : ''; }
+function regDots(n){ const r = n.reg; if (!r || !r.planes) return '';
+  return '<span class="regd" title="' + esc(REGP.map((k) => k + ': ' + ((r.planes[k] || {}).state || '—')).join(' · ')) + '">' + REGP.map((k) => { const st = (r.planes[k] || {}).state; return '<i class="' + (regYes(st) ? 'y' : !st || st === 'n/a' ? 'na' : 'n') + '"></i>'; }).join('') + '</span>'; }
+function identityHtml(n){ const pn = ((S.snap.planes || []).find((p) => p.id === n.plane) || {}).name || n.plane;
+  const rows = [['kind', n.kind + (n.type ? ' · ' + n.type : '') + (n.ckind ? ' · ' + n.ckind : '')], ['plane', pn + ' · ' + ((S.snap.domains || [])[n.domain] || '')], ['address', (n.ips || []).filter(Boolean).join(', ')],
+    ['guest', n.vmid != null ? 'vmid ' + n.vmid + (n.pve_node ? ' on ' + n.pve_node : '') : ''], ['login', n.ssh_host_id ? 'SSH login stored' : (n.kind === 'guest' || n.kind === 'host') ? 'no SSH login' : ''],
+    ['docker', n.dhost || ''], ['branch', n.branch || ''], ['role', n.role || ''], ['estate', n.ref || ''], ['pipes', String(degOf(n.id))], ['findings', n.errors ? String(n.errors) : '']];
+  return rows.filter((r) => r[1]).map((r) => '<div class="irow"><span class="k">' + esc(r[0]) + '</span><span class="v" title="' + esc(r[1]) + '">' + esc(r[1]) + '</span></div>').join(''); }
+function regHtml(n){ const r = n.reg; if (!r || !r.planes) return '';
+  return '<div class="planes">' + REGP.filter((k) => r.planes[k]).map((k) => { const st = r.planes[k].state; return '<span class="pl ' + (regYes(st) ? 'yes' : st === 'n/a' ? 'na' : 'no') + '" title="' + esc(r.planes[k].detail || '') + '">' + esc(k) + ' · ' + esc(st) + '</span>'; }).join('') + '</div>'; }
+function neighboursHtml(n, ID){ const ls = (S.snap.links || []).filter((l) => (l.a === n.id || l.b === n.id) && ID[l.a] && ID[l.b]); if (!ls.length) return '<span class="note">no pipes to this node</span>';
+  const KL = {}; (S.snap.link_kinds || []).forEach((k) => { KL[k[0]] = k[1]; });
+  return ls.slice(0, 16).map((l) => { const out = l.a === n.id, o = ID[out ? l.b : l.a], pn = ((S.snap.planes || []).find((p) => p.id === o.plane) || {}).name || o.plane;
+    return '<span class="rtrow" data-err-node="' + esc(o.id) + '" title="Select ' + esc(o.label) + '"><span class="lsw" style="background:' + LCOL[l.kind] + '"></span><span class="p">' + (out ? '→ ' : '← ') + '<b>' + esc(o.label) + '</b> · ' + esc(KL[l.kind] || l.kind) + ' · ' + esc(pn) + '</span><span class="d" style="width:auto;color:' + SC[o.status] + '">' + esc(o.status) + '</span></span>'; }).join('')
+    + (ls.length > 16 ? '<span class="note">+ ' + (ls.length - 16) + ' more</span>' : ''); }
+function overviewHtml(n){ const D = S.dive[n.id]; if (!D || !D.at) dive(n);
+  const e = D && D.ent && !D.ent.error ? D.ent : null, fnd = (S.snap.errors || []).filter((x) => x.node === n.id);
+  return '<div class="ovw"><div class="ovh"><span class="st" style="background:' + SC[n.status] + '"></span><b>' + esc(n.status) + '</b><span title="' + esc(n.detail || '') + '">' + esc(n.detail || '') + '</span></div>'
+    + '<div class="sub">identity</div>' + identityHtml(n)
+    + (n.reg ? '<div class="sub">registration</div>' + regHtml(n) : '')
+    + (e && e.facts && e.facts.length ? '<div class="sub">the estate record · ' + esc(e.title || '') + '</div>' + e.facts.slice(0, 8).map((f) => '<div class="kvr"><span class="k">' + esc(f.label) + '</span><span class="v">' + esc(fmtV(f.value)) + '</span></div>').join('')
+      : n.ref ? '<div class="note">' + (D && D.ent && D.ent.error ? 'the estate has no record for ' + esc(n.ref) : 'reading the estate record…') + '</div>' : '')
+    + (fnd.length ? '<div class="sub">findings · ' + fnd.length + '</div>' + fnd.slice(0, 6).map((x) => '<span class="errrow" title="' + esc(x.section || '') + '"><i style="background:' + (x.sev === 'error' ? 'var(--ac4)' : 'var(--ac3)') + '"></i><span class="n">' + esc(x.n) + '</span><span class="c">' + esc(x.c) + '</span></span>').join('') : '')
+    + '<div class="sub">pipes · ' + degOf(n.id) + '</div>' + neighboursHtml(n, byId())
+    + (n.ref ? '<div class="rrow"><button class="abtn go" data-drawer="' + esc(n.ref) + '">Everything about this</button><button class="abtn" data-open-entity="' + esc(n.ref) + '">Open in the estate</button></div>' : '') + '</div>'; }
 function diveHtml(n){ const D = S.dive[n.id]; if (!D || (!D.ent && !D.read && D.busy)) return '<div class="note">reading what the estate knows…</div>';
   let h = '';
   if (D.ent && !D.ent.error){ const e = D.ent;
@@ -1065,8 +1167,10 @@ function renderInspector(){
     + '<div class="wg"><span class="h">latency spread<b>p95 ' + (n.p95_ms != null ? Math.round(n.p95_ms) + 'ms' : '—') + '</b></span>' + histBars(n.latency, col) + '</div>'
     + (n.temp != null ? '<div class="wg"><span class="h">temperature<b>' + Math.round(n.temp) + '°</b></span><span class="tmpbar"><i style="width:' + Math.min(100, n.temp / 90 * 100) + '%;background:' + tempCol(n.temp) + '"></i></span><span class="lbl" style="font-size:9px">throttle at 83°</span></div>' : '')
     + '</div>'
+    + '<div class="card"><h3>Identity<span class="lbl mono">' + esc(n.id) + '</span></h3>' + identityHtml(n) + (n.reg ? '<div class="sub2">registration</div>' + regHtml(n) : '') + '</div>'
     + '<div class="card"><h3>Deep dive<span class="lbl mono">' + esc(n.ref || (n.req && n.req.name) || '') + '</span></h3><div class="dive">' + diveHtml(n) + '</div></div>'
     + '<div class="card"><h3>Routes<span class="lbl">to every end it reaches</span></h3>' + routesHtml(n, ID) + '<div class="rrow"><button class="abtn' + (S.rt === n.id ? '' : ' go') + '" data-route-toggle="' + esc(n.id) + '">' + (S.rt === n.id ? 'Clear the route' : 'Light the route on the map') + '</button></div></div>'
+    + '<div class="card"><h3>Pipes<span class="lbl mono">' + degOf(n.id) + '</span></h3>' + neighboursHtml(n, ID) + '</div>'
     + '<div class="card"><h3>Actions<span class="lbl">' + esc(n.label) + '</span></h3>' + actionsHtml(n, S.act, 'i') + '</div>'
     + '<div class="card"><h3>' + (errs.length ? 'Findings · ' + esc(n.label) : 'Findings') + '<span class="lbl mono">' + (S.snap.errors || []).length + '</span></h3>' + (list.length ? list.map((e) => '<span class="errrow" data-err-node="' + esc(e.node) + '" title="' + esc(e.section + (e.ref ? ' · ' + e.ref : '')) + '"><i style="background:' + (e.sev === 'error' ? 'var(--ac4)' : 'var(--ac3)') + '"></i><span class="n">' + esc(e.n) + '</span><span class="c">' + e.c + '</span></span>').join('') : '<span class="note">no findings</span>') + '<span class="note">Nodes carrying findings are ringed in red on the map with a count. Selecting one filters this list to it.</span></div>'
     + '<div class="card sp"><h3>Requests through this node</h3><div class="flist">' + (through.length ? through.map((r) => '<span class="frow"><i style="background:' + KCOL[r.kind] + '"></i><span class="n">' + esc(r.n) + '</span><span class="ms">' + esc(r.ms || r.status) + '</span></span>').join('') : '<span class="note">' + (n.kind === 'ollama' ? 'nothing in the request log for this instance' : 'the request log names model instances; this node carries none') + '</span>') + '</div></div>';
@@ -1100,7 +1204,7 @@ function drawMenu(){ let m = document.querySelector('.cmw'); if (m) m.remove(); 
   document.body.appendChild(m);
   m.querySelector('.cmbg').onclick = () => { S.cm = null; drawMenu(); }; m.querySelector('.cmbg').oncontextmenu = (e) => { e.preventDefault(); S.cm = null; drawMenu(); };
   m.querySelectorAll('[data-cm]').forEach((b) => { b.onclick = () => { const k = b.dataset.cm, nid = S.cm.node; S.cm = null; drawMenu();
-    if (k === 'exp'){ S.exp = nid; S.sel = nid; S.wact = 'metrics'; } else if (k === 'entity'){ const nn = byId()[nid]; if (nn && window.veraUI) window.veraUI.openEntity(nn.ref); return; }
+    if (k === 'exp'){ S.exp = nid; S.sel = nid; S.wact = 'overview'; } else if (k === 'entity'){ const nn = byId()[nid]; if (nn && window.veraUI) window.veraUI.openEntity(nn.ref); return; }
     else if (k === 'drawer'){ const nn = byId()[nid]; if (nn && window.veraEntityDrawer) window.veraEntityDrawer.open(nn.ref); return; }
     else if (k === 'wpick'){ S.sel = nid; S.wpick = nid; } else if (k === 'restart'){ S.sel = nid; S.act = 'restart'; } else if (['metrics', 'req', 'caps', 'logs', 'term'].indexOf(k) >= 0){ S.sel = nid; S.act = k; }
     else if (k === 'fit'){ S.vz = 1; S.vx = 0; S.vy = 0; S.tilt = null; S.azim = null; } else if (k === 'view'){ S.view = S.view === '2d' ? '3d' : '2d'; } else if (k === 'pipes'){ S.pipes = !S.pipes; } else if (k === 'all'){ Object.keys(S.on).forEach((p) => { S.on[p] = true; }); S.focus = null; } else if (k === 'refresh'){ load(true); return; } else if (k === 'clearroute'){ S.rt = null; }
@@ -1125,7 +1229,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.routeToggle !== undefined){ S.rt = S.rt === t.dataset.routeToggle ? null : t.dataset.routeToggle; render(); return; }
   if (t.id === 'wsecH'){ S.wsec = !S.wsec; renderRail(); return; }
   // a widget opens its node's card (a terminal's on its shell); the card stands above the graph
-  if (t.dataset.wnode !== undefined){ const id = t.dataset.wnode; S.sel = id; S.rt = id; S.exp = id; S.wact = t.dataset.wkind === 'term' ? 'term' : t.dataset.wkind === 'alarm' ? 'logs' : 'metrics'; if (S.wpick && S.wpick !== id) S.wpick = null; render(); return; }
+  if (t.dataset.wnode !== undefined){ const id = t.dataset.wnode; S.sel = id; S.rt = id; S.exp = id; S.wact = t.dataset.wkind === 'term' ? 'term' : t.dataset.wkind === 'alarm' ? 'logs' : 'overview'; if (S.wpick && S.wpick !== id) S.wpick = null; render(); return; }
   if (t.dataset.lens !== undefined){ S.lens = t.dataset.lens; saveV(); render(); return; }
   if (t.dataset.termRun !== undefined){ const T = termOf(t.dataset.termRun); T.where = t.closest('.ndw') ? 'w' : 'i'; runTerm(t.dataset.termRun); return; }
   if (t.dataset.termClear !== undefined){ termOf(t.dataset.termClear).lines = []; render(); return; }
@@ -1152,7 +1256,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.selRuntime !== undefined){ selectRuntime(t.dataset.selRuntime); return; }
   if (t.dataset.errNode !== undefined){ if (t.dataset.errNode && byId()[t.dataset.errNode]){ S.sel = t.dataset.errNode; if (S.rt) S.rt = t.dataset.errNode; render(); } return; }
   if (t.dataset.layer !== undefined){ S.focus = S.focus === t.dataset.layer ? null : t.dataset.layer; render(); return; }
-  if (t.dataset.floor !== undefined){ if (S.moved) return; if (clearRoute()) return; S.focus = S.focus === t.dataset.floor ? null : t.dataset.floor; render(); return; }   // a lit route clears first
+  if (t.dataset.floor !== undefined){ if (!S.moved) clearRoute(); return; }   // a single click on a floor only clears a lit route; a double click focuses the layer
   if (t.dataset.pz !== undefined){ const k = t.dataset.pz; if (k === 'in') S.vz = Math.min(4, S.vz * 1.25); else if (k === 'out') S.vz = Math.max(.4, S.vz / 1.25); else if (k === 'l') S.vx += 140; else if (k === 'r') S.vx -= 140; else if (k === 'u') S.vy += 110; else if (k === 'd') S.vy -= 110;
     else if (k === 'fit'){ S.vz = 1; S.vx = 0; S.vy = 0; S.tilt = null; S.azim = null; } else { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 12.6) : S.tilt, A = S.azim == null ? 45 : S.azim; if (k === 'tiltUp') S.tilt = Math.min(60, T + 5); if (k === 'tiltDn') S.tilt = Math.max(4, T - 5); if (k === 'rotL') S.azim = Math.min(64, A + 6.5); if (k === 'rotR') S.azim = Math.max(26, A - 6.5); }
     if (['in', 'out', 'l', 'r', 'u', 'd'].indexOf(k) >= 0) applyZoom(); else if (k === 'fit') render(); else keepPivot(() => render()); return; }
@@ -1183,6 +1287,8 @@ function keepPivot(fn){ const pz = $('pzv'); pz.classList.add('rotating');   // 
   if (!S.drag || S.drag.mode !== 'rot'){ void pz.offsetWidth; pz.classList.remove('rotating'); } }
 const rafRot = () => { if (rafId) return; rafId = requestAnimationFrame(() => { rafId = 0; keepPivot(() => render({ plotOnly: true })); }); };
 function clearRoute(){ if (!S.rt) return false; S.rt = null; render(); return true; }
+// a double click on a floor looks at that layer on its own (again: every layer)
+document.addEventListener('dblclick', (e) => { const f = e.target.closest && e.target.closest('[data-floor]'); if (!f || S.view !== '3d') return; e.preventDefault(); S.focus = S.focus === f.dataset.floor ? null : f.dataset.floor; render(); });
 // Esc clears a lit route, else closes the node's card
 document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || S.cm || (e.target.matches && e.target.matches('input,textarea'))) return; if (clearRoute()) return; if (S.exp){ S.exp = null; render(); } });
 const v = $('pzv');
