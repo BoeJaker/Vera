@@ -126,11 +126,30 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 @keyframes ndo-in{from{opacity:0;transform:translate(-50%,-50%) scale(.4)}to{opacity:1;transform:translate(-50%,-50%) scale(calc(var(--nsc,1) * var(--ui,1)))}}
 @keyframes lk-draw{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
 @keyframes lb-in{from{opacity:0}}
-.fresh .floor{animation:fl-in .5s cubic-bezier(.2,.8,.2,1) backwards}
-.fresh .band{animation:lb-in .45s ease backwards}
-.fresh .plabel,.fresh .dlabel{animation:lb-in .5s ease backwards;animation-delay:.3s}
-.fresh .nd{animation:ndo-in .44s cubic-bezier(.2,.8,.2,1) backwards;animation-delay:.3s}
-.fresh .link{animation:lk-draw .6s cubic-bezier(.35,.7,.25,1) backwards;animation-delay:.52s}
+/* entering: a view builds plane by plane (floors rise, pins land, stems grow, chips pop, widgets drop onto the plate, pipes
+   draw last); later a new node or widget enters on its own. --ed is its delay. */
+@keyframes opsIn{from{opacity:0;translate:0 12px;scale:.7}}
+@keyframes opsFade{from{opacity:0}}
+@keyframes opsDrop{from{opacity:0;transform:translateY(-26px)}}
+@keyframes opsStem{from{clip-path:inset(100% 0 0 0)}}
+@keyframes opsFloor{from{opacity:0;transform:translateY(34px)}}
+@keyframes opsPin{from{opacity:0;scale:2.6}}
+@keyframes opsBand{from{opacity:0;transform:translateX(-18px)}}
+.nd.ent{animation:opsIn .55s cubic-bezier(.2,.9,.25,1.25) both;animation-delay:var(--ed,0s)}
+.pin.ent{animation:opsPin .5s ease-out both;animation-delay:var(--ed,0s)}
+.stem.ent{animation:opsStem .45s ease-out both;animation-delay:calc(var(--ed,0s) + .08s)}
+.owf-svg g.ent{animation:opsDrop .6s cubic-bezier(.2,.9,.3,1.2) both;animation-delay:var(--ed,0s)}
+.floors-svg polygon.ent{animation:opsFloor .7s cubic-bezier(.2,.8,.2,1) both;animation-delay:var(--ed,0s);transform-box:fill-box}
+.band.ent{animation:opsBand .55s cubic-bezier(.2,.8,.2,1) both;animation-delay:var(--ed,0s)}
+.flow.ent,.owf-l.ent,.owf-fr.ent,.owf-alarm.ent,.wedge.ent,.link.ent,.bus.ent,.plabel.ent,.dlabel.ent{animation:opsFade .6s ease-out both;animation-delay:var(--ed,0s)}
+/* trouble: a badge over the node's first widget (DOWN pulses), a ring round a down chip */
+@keyframes alarmPulse{0%{opacity:.95;transform:scale(1)}100%{opacity:0;transform:scale(1.7)}}
+.owf-alarm{position:absolute;z-index:10;transform:translate(-50%,-100%) scale(var(--ui,1));transform-origin:50% 100%;font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.06em;color:#fff;background:var(--ac4);padding:1px 5px;border-radius:3px;cursor:pointer;white-space:nowrap;box-shadow:0 0 12px -2px var(--ac4)}
+.owf-alarm.warn{background:var(--ac3);color:#1a1300;box-shadow:0 0 10px -2px var(--ac3)}
+.owf-alarm.down::before{content:'';position:absolute;inset:-4px;border-radius:6px;border:1.5px solid var(--ac4);animation:alarmPulse 1.6s ease-out infinite;pointer-events:none}
+.nd.isdown::after{content:'';position:absolute;inset:-4px;border-radius:inherit;border:1.5px solid var(--ac4);animation:alarmPulse 1.6s ease-out infinite;pointer-events:none}
+.nd.isdown{box-shadow:inset 0 0 0 1.5px var(--ac4),0 0 16px -3px var(--ac4)}
+.nd .dn{font-family:var(--f-mono);font-size:8.5px;font-weight:700;color:#fff;background:var(--ac4);padding:0 4px;border-radius:3px;letter-spacing:.05em}
 .floor{position:absolute;pointer-events:none;background:color-mix(in srgb,var(--pc) 6%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pc) 26%,transparent);cursor:pointer}
 .floor.dim{display:none}.floor.focus{filter:brightness(1.25)}
 .band{position:absolute;left:0;right:0;pointer-events:none;background:color-mix(in srgb,var(--pc) 5%,transparent);border-top:1px solid color-mix(in srgb,var(--pc) 22%,transparent)}
@@ -167,7 +186,6 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .stem{position:absolute;width:calc(1.5px * var(--ui,1));height:calc(var(--r,20) * var(--ui,1) * 1px);transform:translate(-50%,-100%);pointer-events:none;z-index:9;background:linear-gradient(0deg,color-mix(in srgb,var(--pc) 95%,transparent),color-mix(in srgb,var(--pc) 45%,transparent))}
 /* a billboard: the chip stands straight above its pin, the lift held in screen px while the view zooms */
 .nd.bb{transform-origin:50% 100%;transform:translate(-50%,-100%) translateY(calc(var(--r,20) * var(--ui,1) * -1px)) scale(calc(var(--nsc,1) * var(--ui,1)));z-index:11}
-.fresh .nd.bb{animation:none}
 .floors-svg{position:absolute;left:0;top:0;overflow:visible;z-index:0}
 .floors-svg polygon{fill:color-mix(in srgb,var(--pc) 6%,transparent);stroke:color-mix(in srgb,var(--pc) 26%,transparent);stroke-width:1;cursor:pointer;pointer-events:visiblePainted}
 .floors-svg polygon.focus{fill:color-mix(in srgb,var(--pc) 11%,transparent)}.floors-svg polygon.dim{display:none}
@@ -358,7 +376,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const px = (v) => v.toFixed(1) + 'px';
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const PCOL = { work: 'var(--ac)', core: 'var(--dv1)', service: 'var(--dv6)', runtime: 'var(--dv3)', host: 'var(--dv4)', edge: 'var(--dv2)' };
+const PCOL = { client: 'var(--dv5)', work: 'var(--ac)', core: 'var(--dv1)', service: 'var(--dv6)', runtime: 'var(--dv3)', host: 'var(--dv4)', edge: 'var(--dv2)' };
 const KCOL = { 'llm.generate': 'var(--dv1)', 'embed': 'var(--dv6)', 'cap call': 'var(--dv3)', 'fabric write': 'var(--dv2)', 'git op': 'var(--dv4)', 'background': 'var(--dv7)' };
 const LCOL = { req: 'var(--dv3)', data: 'var(--dv6)', runs: 'var(--dv1)', repo: 'var(--dv4)', mesh: 'var(--dv2)' };
 const SC = { ok: 'var(--ac2)', run: 'var(--ac)', warn: 'var(--ac3)', down: 'var(--ac4)' };
@@ -369,7 +387,7 @@ const tc = (v) => v >= 70 ? 'var(--ac4)' : v >= 55 ? 'var(--ac3)' : 'var(--ac2)'
 const SZ = [0.75, 1, 1.3], szLbl = (s) => '×' + (s === 1 ? '1' : String(s).replace(/^0/, ''));
 // the widget kinds: [kind, name, what it reads]
 const WKINDS = [['server', 'server', 'a machine: drives lit by its load, a lamp for its state'], ['dial', 'dial', 'load'], ['tank', 'tank', 'disk'], ['thermo', 'thermometer', 'temperature'], ['tower', 'tower', 'load as height'],
-  ['crates', 'crates', 'containers'], ['chip', 'chip', 'studs lit by work'], ['mast', 'mast', 'signal'], ['conveyor', 'conveyor', 'work in flight'], ['stack', 'stack', 'a pipeline'], ['term', 'terminal', 'a shell on the machine: its last lines; click to type']];
+  ['crates', 'crates', 'containers'], ['chip', 'chip', 'studs lit by work'], ['mast', 'mast', 'signal'], ['conveyor', 'conveyor', 'work in flight'], ['stack', 'stack', 'a pipeline'], ['term', 'terminal', 'a shell on the machine: its last lines; click to type'], ['client', 'client', 'a client of Vera: a screen, lit by who it is']];
 const WNAME = {}; WKINDS.forEach((k) => { WNAME[k[0]] = k[1]; });
 // the widgets of a node stand in one line beside its pin; each takes this much of the lane (ground units), its size included
 const wstep = (w) => (w.k === 'term' ? 2.0 : 0.72) * S.wsz * (w.s || 1);
@@ -386,9 +404,9 @@ const regOf = (n) => { const r = n.reg; if (!r || !r.planes) return null; const 
 
 // ── state ──
 const S = { view: '2d', layout3d: 'stack', focus: null, pipes: true, widgets: true, sel: null, exp: null, act: 'metrics', wact: 'metrics',
-  on: { work: true, core: true, service: true, runtime: true, host: true, edge: true },
+  on: { client: true, work: true, core: true, service: true, runtime: true, host: true, edge: true },
   vz: 1, vx: 0, vy: 0, tilt: null, azim: null, zgap: 1, spread: 1, wsz: 1, lbl: 'both', wl: {}, wpick: null, wadd: null, wsec: true, lens: 'all', term: {},
-  snap: null, err: '', cm: null, logs: {}, req: {}, dive: {}, drag: null, fresh: true, busy: false, fp: '' };
+  snap: null, err: '', cm: null, logs: {}, req: {}, dive: {}, drag: null, fresh: true, busy: false, fp: '', seenN: {}, seenW: {}, enterKey: '' };
 // the widget overrides: {node: {off, items:[{k, s}]}} (an older {k, s, off} is read as one item)
 try { const w = JSON.parse(localStorage.getItem('vera:ops:widgets') || 'null'); if (w && typeof w === 'object') Object.keys(w).forEach((id) => { const o = w[id] || {}; S.wl[id] = Array.isArray(o.items) ? { off: !!o.off, items: o.items } : { off: !!o.off, items: o.k ? [{ k: o.k, s: o.s || 1 }] : null }; }); } catch (_) {}
 try { const v = JSON.parse(localStorage.getItem('vera:ops:view') || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); if (['labels', 'both', 'widgets'].indexOf(v.lbl) >= 0) S.lbl = v.lbl; if (['all', 'net', 'sec'].indexOf(v.lens) >= 0) S.lens = v.lens; S.widgets = S.lbl !== 'labels'; } } catch (_) {}
@@ -429,11 +447,13 @@ function wdefaults(n){ const L = []; const st = (k, s) => L.push({ k, s: s || 1 
   else if (n.kind === 'mesh'){ st('mast'); }
   else if (n.id.indexOf('pipe:') === 0){ st('stack'); }
   else if (n.kind === 'work'){ st('conveyor'); }
+  else if (n.kind === 'client'){ st('client'); }
   else st('chip');
   return L; }
 function wspec(n){ const o = S.wl[n.id]; if (o && o.off) return []; if (o && Array.isArray(o.items)) return o.items; return wdefaults(n); }
 function wcaption(n, k){ if (k === 'term'){ const T = S.term[n.id]; return T && T.lines.length ? 'shell · ' + T.lines.length + ' lines' : 'shell'; }
-  if (k === 'server') return (n.kind === 'docker' ? 'docker · ' + String(n.detail).replace(' running', '') : (n.type === 'qemu' ? 'VM' : n.kind === 'guest' ? 'CT' : n.kind === 'docker-host' ? 'docker host' : 'host') + ' · ' + (n.load != null ? 'load ' + Math.round(n.load) + '%' : n.status));
+  if (k === 'client') return String(n.detail || n.ckind || 'client').split(' · ').slice(0, 2).join(' · ');
+  if (k === 'server') return (n.status === 'down' ? 'DOWN · ' : n.errors ? n.errors + (n.errors === 1 ? ' finding · ' : ' findings · ') : '') + (n.kind === 'docker' ? 'docker · ' + String(n.detail).replace(' running', '') : (n.type === 'qemu' ? 'VM' : n.kind === 'guest' ? 'CT' : n.kind === 'docker-host' ? 'docker host' : 'host') + ' · ' + (n.load != null ? 'load ' + Math.round(n.load) + '%' : n.status));
   if (k === 'dial') return 'load ' + Math.round(n.load || 0) + '%'; if (k === 'tank') return (n.disk_pct != null ? 'disk ' + Math.round(n.disk_pct) : 'load ' + Math.round(n.load || 0)) + '%';
   if (k === 'thermo') return Math.round(n.temp || 0) + '° · ' + ((n.temp || 0) >= 70 ? 'hot' : (n.temp || 0) >= 55 ? 'warm' : 'cool'); if (k === 'tower') return (n.load != null ? 'load ' + Math.round(n.load) + '%' : n.status);
   if (k === 'crates') return n.kind === 'docker' ? String(n.detail).replace(' running', '') : n.kind === 'sandbox' ? (n.detail || 'sandbox').split(' · ')[0] : (n.inflight || 0) + ' in flight';
@@ -468,9 +488,12 @@ function layout(W, H){
       const k = n.plane + ':' + n.domain; const idx = (used[k] = (used[k] || 0)); const total = slot[k]; used[k]++;
       const bh = bandHOf[n.plane], R = ladder(n.plane), rowP = (bh - 40) / (R - 1);
       const y = bandY[n.plane] + bh / 2 + 6 + (slotOf(total, idx, R) - (R - 1) / 2) * rowP;
-      pos[n.id] = { x: clamp(colX(n.domain) + stagOf(total, idx) * colW * (total > 8 ? .3 : .22), LX + 46, W - 70), y, col: PCOL[n.plane] };
+      pos[n.id] = { x: clamp(colX(n.domain) + stagOf(total, idx) * colW * (total > 8 ? .3 : .22), LX + 46, W - 70), y, col: PCOL[n.plane], d: n.domain };
     });
-    route = (a, b) => [{ x: pos[a].x, y: pos[a].y }, { x: pos[b].x, y: pos[a].y }, { x: pos[b].x, y: pos[b].y }];
+    // a pipe leaves its chip sideways, runs down the gutter at the left of the target's domain column (a lane each) and enters
+    const laneOf2 = {}, laneN2 = {}; const lane2 = (grp, key) => { const k = grp + '|' + key; if (laneOf2[k] == null){ const n = (laneN2[grp] = (laneN2[grp] || 0) + 1) - 1; laneOf2[k] = n % 6; } return laneOf2[k]; };
+    route = (a, b) => { const A = pos[a], B = pos[b], key = a + '>' + b, gx = LX + B.d * colW + 8 + (lane2('g' + B.d, key) - 2.5) * 4, yo = (lane2('y' + a, key) - 2.5) * 2.5;
+      return [{ x: A.x, y: A.y }, { x: A.x, y: A.y + yo }, { x: gx, y: A.y + yo }, { x: gx, y: B.y }, { x: B.x, y: B.y }]; };
   } else {
     const TILT = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 12.6) : S.tilt, AZIM = clamp(S.azim == null ? 45 : S.azim, 26, 64);
     const TH = TILT * Math.PI / 180, FLAT = S.layout3d === 'flat';
@@ -503,13 +526,13 @@ function layout(W, H){
       const iso = ISO.proj(TILT, AZIM, KI, true);
       const zOf = (pl) => FLAT ? 0 : (rows - 1 - rowOf[pl]) * zh, uOf = (pl) => FLAT ? uOff[pl] : 0, vOf2 = (pl) => FLAT ? vOff[pl] : 0;
       const rawX = [], rawY = [], corners = [], rawNodes = [], LL = {}, usedL = {};
-      PL.forEach((p) => { const z = zOf(p.id), uo = uOf(p.id), vo = vOf2(p.id), VH = VHof[p.id], vb = vBusOf(p.id) - .55 * SP;
+      PL.forEach((p) => { const z = zOf(p.id), uo = uOf(p.id), vo = vOf2(p.id), VH = VHof[p.id], vb = vBusOf(p.id) - .6 * SP;
         const c = [iso(-0.3 * SP + uo, -VH + vo, z), iso(UW + uo, -VH + vo, z), iso(UW + uo, VH + vo, z), iso(-0.3 * SP + uo, VH + vo, z)];
         corners.push({ p, c }); c.concat([iso(uo, vb + vo, z), iso(UW + uo, vb + vo, z)]).forEach((q) => { rawX.push(q[0]); rawY.push(q[1]); }); });
       shown.forEach((n) => { const k = n.plane + ':' + n.domain; const idx = (usedL[k] = (usedL[k] || 0)); usedL[k]++; const g = grid[k];
         const c = idx % g.cols, r = Math.floor(idx / g.cols);
         const u = domU[n.domain] + (c - (g.cols - 1) / 2) * cellW(n.plane) + uOf(n.plane), vv = (r - (g.rows - 1) / 2) * rowV(n.plane) + vOf2(n.plane), z = zOf(n.plane);
-        const q = iso(u, vv, z); LL[n.id] = { u, v: vv, z, pl: n.plane, vb: vBusOf(n.plane) + vOf2(n.plane) };
+        const q = iso(u, vv, z); LL[n.id] = { u, v: vv, z, pl: n.plane, vb: vBusOf(n.plane) + vOf2(n.plane), rv: rowV(n.plane) };
         rawNodes.push({ id: n.id, x: q[0], y: q[1], col: PCOL[n.plane] }); rawX.push(q[0] - NHW, q[0] + NHW); rawY.push(q[1] - 90, q[1] + 16); });
       const minX = Math.min.apply(null, rawX), maxX = Math.max.apply(null, rawX), minY = Math.min.apply(null, rawY), maxY = Math.max.apply(null, rawY);
       return { iso, corners, rawNodes, LL, minX, maxX, minY, maxY };
@@ -533,22 +556,30 @@ function layout(W, H){
     // every pipe keeps a lane of its own - within a plane a small step off the row, on the bus a line further back - so no two
     // runs lie on top of each other and a selected route can be followed end to end
     const riserN = {}, riserOf = {}, laneN = {}, laneOf = {};
-    const lane = (grp, key) => { const k = grp + '|' + key; if (laneOf[k] == null){ const n = (laneN[grp] = (laneN[grp] || 0) + 1) - 1; laneOf[k] = n % 6; } return laneOf[k]; };
+    const lane = (grp, key) => { const k = grp + '|' + key; if (laneOf[k] == null){ const n = (laneN[grp] = (laneN[grp] || 0) + 1) - 1; laneOf[k] = n % 8; } return laneOf[k]; };
+    // a pipe runs in the channels between the nodes: out of its pin to the gutter at the left of its column (the widgets stand
+    // to the right), along the gap behind a row, and in to the other pin from ITS gutter - it never crosses a pin, a widget or
+    // a stem. Between planes it takes its gutter straight back to the plane's back bus. Every channel gives each pipe a lane.
     route = (a, b) => { const A = L[a], B = L[b], key = a + '>' + b;
-      if (A.pl === B.pl){ const o = (lane(A.pl, key) - 2.5) * 0.07 * SP; return [P(A.u, A.v, A.z), P(A.u, A.v + o, A.z), P(B.u, A.v + o, A.z), P(B.u, B.v, B.z)]; }
-      const lb = lane('bus', key) * 0.09 * SP, va = A.vb - lb, vbB = B.vb - lb;
-      if (riserOf[key] == null){ const col = A.pl + ':' + Math.round(A.u * 10); const n = (riserN[col] = (riserN[col] || 0) + 1) - 1; riserOf[key] = A.u + (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.16 * SP + 0.08 * SP;
+      const ln = (grp) => (lane(grp, key) - 3.5) * 0.034 * SP;
+      const gA = A.u - 0.29 * SP + ln('g:' + A.pl + ':' + Math.round(A.u * 10)), gB = B.u - 0.29 * SP + ln('g:' + B.pl + ':' + Math.round(B.u * 10));
+      if (A.pl === B.pl){
+        if (Math.abs(A.u - B.u) < 1e-6) return [P(A.u, A.v, A.z), P(gA, A.v, A.z), P(gA, B.v, A.z), P(B.u, B.v, B.z)];
+        const hv = A.v - A.rv / 2 + ln('r:' + A.pl + ':' + Math.round(A.v * 10));
+        return [P(A.u, A.v, A.z), P(gA, A.v, A.z), P(gA, hv, A.z), P(gB, hv, A.z), P(gB, B.v, B.z), P(B.u, B.v, B.z)]; }
+      const lb = lane('bus', key) * 0.075 * SP, va = A.vb - lb, vbB = B.vb - lb;
+      if (riserOf[key] == null){ const col = A.pl + ':' + Math.round(A.u * 10); const n = (riserN[col] = (riserN[col] || 0) + 1) - 1; riserOf[key] = gA + (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.16 * SP;
         busPts.push(P(riserOf[key], va, A.z), P(riserOf[key], FLAT ? vbB : va, B.z)); }
       const uR = riserOf[key];
-      if (FLAT) return [P(A.u, A.v, A.z), P(A.u, va, A.z), P(uR, va, A.z), P(B.u, va, A.z), P(B.u, vbB, B.z), P(B.u, B.v, B.z)];
-      return [P(A.u, A.v, A.z), P(A.u, va, A.z), P(uR, va, A.z), P(uR, va, B.z), P(B.u, vbB, B.z), P(B.u, B.v, B.z)]; };
+      if (FLAT) return [P(A.u, A.v, A.z), P(gA, A.v, A.z), P(gA, va, A.z), P(gB, va, A.z), P(gB, vbB, B.z), P(gB, B.v, B.z), P(B.u, B.v, B.z)];
+      return [P(A.u, A.v, A.z), P(gA, A.v, A.z), P(gA, va, A.z), P(uR, va, A.z), P(uR, va, B.z), P(gB, vbB, B.z), P(gB, B.v, B.z), P(B.u, B.v, B.z)]; };
   }
   return { PL, shown, pos, bands, floors, planeLabels, domLabels, route, G, L, AXIS, cellMax, ladder, busPts };
 }
 
 // ── the iso widgets beside their nodes (3D): several per node, built from boxes with the map's own projection ──
 function isoWidgets(lay, W, H){
-  const ISO = window.VeraISO, out = { faces: [], labels: [], needles: [], edges: [], boxes: [], hits: [], frames: [] };
+  const ISO = window.VeraISO, out = { faces: [], labels: [], needles: [], edges: [], boxes: [], hits: [], frames: [], groups: [], alarms: [] };
   if (!ISO || !lay.G || !S.widgets) return out;
   const { iso, ox, oy, L, FLAT, TILT, AZIM, SP } = lay.G;
   const Pg = (u, v, z) => { const q = iso(u, v, z); return [q[0] + ox, q[1] + oy]; };
@@ -577,8 +608,18 @@ function isoWidgets(lay, W, H){
       for (let i = 0; i < 4; i++) boxes.push({ u: .3 + i * .62, v: Dd, z: .16, w: .44, d: .12, h: Hh * .45, col: i < lit ? (n.temp != null && n.temp >= 70 ? 'var(--ac3)' : 'var(--dv3)') : 'var(--bd2)' });   // drive bays on the front
       boxes.push({ u: Wd - .42, v: Dd, z: Hh * .62, w: .18, d: .1, h: .16, col: SC[n.status] });                     // the power lamp
       if (vm) boxes.push({ u: .18, v: .18, z: Hh, w: Wd - .36, d: Dd - .36, h: .16, col: 'color-mix(in srgb,var(--t1) 9%,transparent)' });   // the hypervisor's layer
-      if (n.errors) boxes.push({ u: Wd - .5, v: .2, z: Hh + (vm ? .16 : 0), w: .26, d: .26, h: .26, col: 'var(--ac4)' });
-      const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col: down ? 'var(--ac4)' : lid }; },
+      // trouble shows from across the room: a beacon on the lid (red when down or carrying findings, amber when warning),
+      // red rails under a machine that is down; the caption says which and a badge stands over it
+      const top = Hh + (vm ? .16 : 0), bcol = down || n.errors ? 'var(--ac4)' : n.status === 'warn' ? 'var(--ac3)' : '';
+      if (bcol) boxes.push({ u: Wd / 2 - .26, v: Dd / 2 - .26, z: top, w: .52, d: .52, h: .1, col: 'var(--s3)' }, { u: Wd / 2 - .17, v: Dd / 2 - .17, z: top + .1, w: .34, d: .34, h: .62, col: bcol });
+      if (down) boxes[0].col = 'var(--ac4)';
+      const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col: bcol || lid, beacon: bcol ? s.at(Wd / 2, Dd / 2, top + .8) : null }; },
+    // a client: a screen on a stand with a keyboard before it, the screen lit by who it is (agent, person, editor, door device, machine)
+    client: (g, k, n) => { const col = n.status === 'down' ? 'var(--ac4)' : ({ agent: 'var(--dv1)', person: 'var(--ac)', editor: 'var(--dv3)', door: 'var(--dv2)' })[n.ckind] || 'var(--dv5)';
+      const boxes = [{ u: -.9, v: -.5, z: 0, w: 1.8, d: 1, h: .1, col: 'var(--s3)' }, { u: -.12, v: -.12, z: .1, w: .24, d: .24, h: .7, col: 'var(--bd2)' },
+        { u: -1.4, v: -.16, z: .8, w: 2.8, d: .2, h: 1.7, col: 'var(--surf3)' }, { u: -1.26, v: .04, z: .94, w: 2.52, d: .04, h: 1.42, col },
+        { u: -1.1, v: .7, z: 0, w: 2.2, d: .62, h: .08, col: 'var(--s3)' }];
+      const s = sceneG(g, boxes, stackKey, k); return { faces: s.faces, col }; },
     dial: (g, k, n) => { const N = 20, R = 2.0, pct = (n.load || 0) / 100, lit = Math.max(1, Math.round(N * pct)), boxes = [];
       for (let i = 0; i < N; i++){ const a = Math.PI * .75 + (i / (N - 1)) * Math.PI * 1.5, on = i < lit; boxes.push({ u: Math.cos(a) * R - .17, v: Math.sin(a) * R - .17, z: 0, w: .34, d: .34, h: on ? .3 : .1, col: !on ? 'var(--s3)' : (i < N * .6 ? 'var(--ac2)' : i < N * .85 ? 'var(--ac3)' : 'var(--ac4)') }); }
       boxes.push({ u: -.36, v: -.36, z: 0, w: .72, d: .72, h: .4, col: 'var(--s3)' });
@@ -619,13 +660,17 @@ function isoWidgets(lay, W, H){
       const gu = N.u + run, gv = N.v + 0.08 * SP, g = Pg(gu, gv, N.z), k = 9 * ws * (w.s || 1); run += st / 2;
       const b = w.k === 'term' ? termFrame(g, k, n) : (BUILD[w.k] || BUILD.chip)(g, k, n); const bb = bboxOf(b.faces); out.boxes.push(bb);
       if (b.frame) out.frames.push(Object.assign({ id: n.id }, b.frame));
+      out.groups.push({ id: n.id, key: n.id + ':' + i + ':' + w.k, i, a: out.faces.length, b: out.faces.length + b.faces.length });
       b.faces.forEach((q) => out.faces.push(q));
+      if (i === 0 && (n.status === 'down' || n.errors || (b.beacon && n.status === 'warn'))){ const at = b.beacon || [(bb.x0 + bb.x1) / 2, bb.y0];
+        out.boxes.push({ x0: at[0] - 30, x1: at[0] + 30, y0: at[1] - 20, y1: at[1] });
+        out.alarms.push({ id: n.id, x: at[0], y: at[1] - 2, sev: n.status === 'down' ? 'down' : n.errors ? 'err' : 'warn', t: n.status === 'down' ? 'DOWN' : n.errors ? n.errors + (n.errors === 1 ? ' finding' : ' findings') : 'warning' }); }
       // the first widget says its reading; the readings beside it speak when the node is selected (their titles always)
-      if (i === 0 || S.sel === n.id) out.labels.push({ x: g[0], y: bb.y1 + 3, n: (S.lbl === 'widgets' && i === 0 ? (n.label.length > 22 ? n.label.slice(0, 20) + '…' : n.label) + ' · ' : '') + wcaption(n, w.k), col: b.col });
+      if (i === 0 || S.sel === n.id) out.labels.push({ id: n.id, x: g[0], y: bb.y1 + 3, n: (S.lbl === 'widgets' && i === 0 ? (n.label.length > 22 ? n.label.slice(0, 20) + '…' : n.label) + ' · ' : '') + wcaption(n, w.k), col: b.col });
       out.hits.push({ x: bb.x0 - 3, y: bb.y0 - 3, w: bb.x1 - bb.x0 + 6, h: bb.y1 - bb.y0 + 6, id: n.id, k: w.k, title: WNAME[w.k] + ' on ' + n.label + ' · ' + wcaption(n, w.k) });
       if (b.needle) out.needles.push(b.needle);
       // each widget is joined to the node's pin along the plane's lanes
-      ISO.segs([g, Pg(N.u, gv, N.z), Pg(N.u, N.v, N.z)]).forEach((sg) => { if (sg.len < .6) return; out.edges.push({ x: sg.x, y: sg.y, len: sg.len, deg: sg.deg, col: PCOL[n.plane] }); }); }); });
+      ISO.segs([g, Pg(N.u, gv, N.z), Pg(N.u, N.v, N.z)]).forEach((sg) => { if (sg.len < .6) return; out.edges.push({ id: n.id, x: sg.x, y: sg.y, len: sg.len, deg: sg.deg, col: PCOL[n.plane] }); }); }); });
   return out;
 }
 
@@ -684,11 +729,21 @@ function render(opts){
     W = Math.max(plot.clientWidth || 0, lay.G.width > W + 4 ? Math.ceil(lay.G.width) : W); H = Math.max(plot.clientHeight || 0, lay.G.height > H + 4 ? Math.ceil(lay.G.height) : H); lay = layout(W, H); }
   const pos = lay.pos, shown = lay.shown;
   const parts = [];
-  lay.bands.forEach((b) => parts.push('<div class="band" style="top:' + px(b.y) + ';height:' + px(b.h) + ';--pc:' + b.col + '"></div>'));
+  // entering: a new view (2D, 3D stacked or flat, one layer) builds plane by plane; afterwards a node or widget that was not
+  // on the graph before enters on its own. A redraw of what is already there (a poll, a rotation) animates nothing.
+  const ek = is3d ? '3d:' + S.layout3d + ':' + (S.focus || '') : '2d', replay = ek !== S.enterKey;
+  if (replay){ S.enterKey = ek; S.seenN = {}; S.seenW = {}; }
+  const pIdx = {}; lay.PL.forEach((pl, i) => { pIdx[pl.id] = i; });
+  const entD = {}, perPl = {}; shown.slice().sort((a, b) => pos[a.id].x - pos[b.id].x).forEach((n) => { if (S.seenN[n.id]) return;
+    const k = perPl[n.plane] = (perPl[n.plane] || 0) + 1; entD[n.id] = replay ? Math.min(1.4, pIdx[n.plane] * 0.1 + 0.15 + k * 0.014) : 0; });
+  const E = (id, extra) => entD[id] == null ? ['', ''] : [' ent', ';--ed:' + (entD[id] + (extra || 0)).toFixed(2) + 's'];
+  const EL = (a, b) => (entD[a] == null && entD[b] == null) ? ['', ''] : [' ent', ';--ed:' + (Math.max(entD[a] || 0, entD[b] || 0) + 0.3).toFixed(2) + 's'];
+  const EP = (id) => replay ? [' ent', ';--ed:' + ((pIdx[id] || 0) * 0.1).toFixed(2) + 's'] : ['', ''];
+  lay.bands.forEach((b, i) => parts.push('<div class="band' + (replay ? ' ent' : '') + '" style="top:' + px(b.y) + ';height:' + px(b.h) + ';--pc:' + b.col + (replay ? ';--ed:' + (i * 0.1).toFixed(2) + 's' : '') + '"></div>'));
   // the floors as polygons of one svg that overflows the plot's box: a floor is never clipped by its own frame
-  if (lay.floors.length) parts.push('<svg class="floors-svg" width="' + W + '" height="' + H + '">' + lay.floors.map((f) => '<polygon class="' + (S.focus && S.focus !== f.id ? 'dim' : S.focus === f.id ? 'focus' : '') + '" data-floor="' + f.id + '" points="' + f.pts + '" style="--pc:' + f.col + '"><title>Click to look at this layer on its own</title></polygon>').join('') + '</svg>');
-  lay.planeLabels.forEach((p) => parts.push('<div class="plabel ' + (S.focus && p.id && S.focus !== p.id ? 'dim' : '') + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';color:' + p.col + '">' + esc(p.t) + '</div>'));
-  lay.domLabels.forEach((d) => parts.push('<div class="dlabel" style="left:' + px(d.x) + ';top:' + px(d.y) + '">' + esc(d.t) + '</div>'));
+  if (lay.floors.length) parts.push('<svg class="floors-svg" width="' + W + '" height="' + H + '">' + lay.floors.map((f) => '<polygon class="' + (S.focus && S.focus !== f.id ? 'dim' : S.focus === f.id ? 'focus' : '') + EP(f.id)[0] + '" data-floor="' + f.id + '" points="' + f.pts + '" style="--pc:' + f.col + EP(f.id)[1] + '"><title>Click to look at this layer on its own</title></polygon>').join('') + '</svg>');
+  lay.planeLabels.forEach((p, i) => parts.push('<div class="plabel ' + (S.focus && p.id && S.focus !== p.id ? 'dim' : '') + (replay ? ' ent' : '') + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';color:' + p.col + (replay ? ';--ed:' + (i * 0.1 + 0.2).toFixed(2) + 's' : '') + '">' + esc(p.t) + '</div>'));
+  lay.domLabels.forEach((d) => parts.push('<div class="dlabel' + (replay ? ' ent' : '') + '" style="left:' + px(d.x) + ';top:' + px(d.y) + (replay ? ';--ed:.8s' : '') + '">' + esc(d.t) + '</div>'));
   const segsOf = (a, b) => { const pts = S.pipes && lay.route ? lay.route(a, b) : [{ x: pos[a].x, y: pos[a].y }, { x: pos[b].x, y: pos[b].y }]; const segs = [];
     for (let i = 1; i < pts.length; i++){ const dx = pts[i].x - pts[i - 1].x, dy = pts[i].y - pts[i - 1].y, len = Math.hypot(dx, dy); if (len < .6) continue; segs.push({ x: pts[i - 1].x, y: pts[i - 1].y, len, deg: Math.atan2(dy, dx) * 180 / Math.PI }); } return segs; };
   let nLinks = 0; const RT = routesFrom(S.sel, snap.links, ID);
@@ -698,19 +753,23 @@ function render(opts){
     const dim = (RT && RT.any ? (hot ? 'hot' : 'q2') : (S.sel === l.a || S.sel === l.b ? '' : 'q')) + (!hot && S.lens === 'net' && l.kind !== 'mesh' && l.kind !== 'req' ? ' q2' : ''); nLinks++;
     // a pipe between planes wears its origin plane's colour; within a plane, its kind's
     const lc = ID[l.a].plane !== ID[l.b].plane ? PCOL[ID[l.a].plane] : LCOL[l.kind];
-    segsOf(l.a, l.b).forEach((s) => parts.push('<div class="link ' + dim + '" style="left:' + px(s.x) + ';top:' + px(s.y) + ';width:' + px(s.len) + ';transform:rotate(' + s.deg.toFixed(2) + 'deg);--lc:' + lc + '"></div>')); });
-  if (is3d && S.pipes) lay.busPts.forEach((b) => parts.push('<span class="bus" style="left:' + px(b.x) + ';top:' + px(b.y) + ';--pc:var(--t3)"></span>'));
+    const el = EL(l.a, l.b);
+    segsOf(l.a, l.b).forEach((s) => parts.push('<div class="link ' + dim + el[0] + '" style="left:' + px(s.x) + ';top:' + px(s.y) + ';width:' + px(s.len) + ';transform:rotate(' + s.deg.toFixed(2) + 'deg);--lc:' + lc + el[1] + '"></div>')); });
+  const late = replay ? ';--ed:' + (Math.min(1.4, lay.PL.length * 0.1 + 0.9)).toFixed(2) + 's' : '';
+  if (is3d && S.pipes) lay.busPts.forEach((b) => parts.push('<span class="bus' + (replay ? ' ent' : '') + '" style="left:' + px(b.x) + ';top:' + px(b.y) + ';--pc:var(--t3)' + late + '"></span>'));
   fl.slice(0, 12).forEach((f, fi) => { if (!pos[f.a] || !pos[f.b]) return; if (is3d && S.focus && (ID[f.a].plane !== S.focus || ID[f.b].plane !== S.focus)) return;
     const segs = segsOf(f.a, f.b), total = segs.reduce((t, s) => t + s.len, 0) || 1, cycle = 1.6 + (fi % 4) * .5; let run = 0;
-    segs.forEach((s) => { parts.push('<div class="flow" style="left:' + px(s.x) + ';top:' + px(s.y) + ';transform:rotate(' + s.deg.toFixed(2) + 'deg);--len:' + px(s.len) + ';--dur:' + (cycle * s.len / total).toFixed(2) + 's;--dl:' + (fi * .28 + cycle * run / total).toFixed(2) + 's"><i style="background:' + KCOL[f.kind] + ';box-shadow:0 0 8px ' + KCOL[f.kind] + '"></i></div>'); run += s.len; }); });
+    segs.forEach((s) => { parts.push('<div class="flow' + (replay ? ' ent' : '') + '" style="' + late + ';left:' + px(s.x) + ';top:' + px(s.y) + ';transform:rotate(' + s.deg.toFixed(2) + 'deg);--len:' + px(s.len) + ';--dur:' + (cycle * s.len / total).toFixed(2) + 's;--dl:' + (fi * .28 + cycle * run / total).toFixed(2) + 's"><i style="background:' + KCOL[f.kind] + ';box-shadow:0 0 8px ' + KCOL[f.kind] + '"></i></div>'); run += s.len; }); });
   $('counts').textContent = shown.length + ' nodes · ' + nLinks + ' links';
   const chipAt = {}; let NSC = 1;
   if (is3d && lay.G){
     const wd = isoWidgets(lay, W, H); const wboxes = wd.boxes.slice();
     NSC = lay.G.FLAT ? Math.max(.68, Math.min(1, lay.G.fitS * 1.3)) : 1;
-    wd.edges.forEach((e) => parts.push('<span class="wedge" style="left:' + px(e.x) + ';top:' + px(e.y) + ';width:' + px(e.len) + ';transform:rotate(' + e.deg.toFixed(2) + 'deg);--pc:' + e.col + '"></span>'));
+    wd.edges.forEach((e) => { const en = E(e.id, 0.35); parts.push('<span class="wedge' + en[0] + '" style="left:' + px(e.x) + ';top:' + px(e.y) + ';width:' + px(e.len) + ';transform:rotate(' + e.deg.toFixed(2) + 'deg);--pc:' + e.col + en[1] + '"></span>'); });
     // every face as a polygon of one svg: the compositor paints one layer, not thousands of clipped boxes
-    parts.push('<svg class="owf-svg" width="' + W + '" height="' + H + '">' + wd.faces.map(polyOf).join('') + '</svg>');
+    // one group per widget: it drops onto the plate when its node enters (one after the other), or on its own when it is added
+    parts.push('<svg class="owf-svg" width="' + W + '" height="' + H + '">' + wd.groups.map((gq) => { const nw = entD[gq.id] != null ? entD[gq.id] + 0.12 + gq.i * 0.07 : (!S.seenW[gq.key] && !replay ? 0 : null);
+      return '<g' + (nw != null ? ' class="ent" style="--ed:' + nw.toFixed(2) + 's"' : '') + '>' + wd.faces.slice(gq.a, gq.b).map(polyOf).join('') + '</g>'; }).join('') + '</svg>');
     wd.needles.forEach((n) => parts.push('<span class="owf-n" style="left:' + px(n.x) + ';top:' + px(n.y) + ';width:' + px(n.len) + ';transform:rotate(' + n.deg.toFixed(1) + 'deg)"></span>'));
     // captions clear each other: front to back, a caption that meets one already placed steps down a line (twice), else it
     // stays in its widget's tooltip - dense rows no longer print over each other
@@ -718,15 +777,17 @@ function render(opts){
       wd.labels.slice().sort((a, b) => b.y - a.y).forEach((l) => { const w = (String(l.n).length * 5.6 + 6) * uiC, h = 12 * uiC; let y = l.y, ok = false;
         for (let t = 0; t < 3 && !ok; t++){ const bx = { x0: l.x - w / 2, x1: l.x + w / 2, y0: y, y1: y + h };
           if (!capPlaced.some((b) => bx.x0 < b.x1 && bx.x1 > b.x0 && bx.y0 < b.y1 && bx.y1 > b.y0)){ capPlaced.push(bx); ok = true; } else y += h; }
-        if (ok) parts.push('<span class="owf-l" style="left:' + px(l.x) + ';top:' + px(y) + ';color:' + l.col + '">' + esc(l.n) + '</span>'); }); }
+        const en = E(l.id, 0.45); if (ok) parts.push('<span class="owf-l' + en[0] + '" style="left:' + px(l.x) + ';top:' + px(y) + ';color:' + l.col + en[1] + '">' + esc(l.n) + '</span>'); }); }
+    // trouble: a badge over the node's first widget - DOWN pulses; a click opens the node's card on its events
+    wd.alarms.forEach((a) => { const en = E(a.id, 0.5); parts.push('<span class="owf-alarm ' + a.sev + en[0] + '" data-wnode="' + esc(a.id) + '" data-wkind="alarm" title="' + esc(((ID[a.id] || {}).label || a.id) + ' · ' + a.t + ' — click for its card') + '" style="left:' + px(a.x) + ';top:' + px(a.y) + en[1] + '">' + esc(a.t) + '</span>'); });
     // a terminal's screen carries its last lines; a click on any widget opens its node's card (a terminal's on its shell)
     wd.frames.forEach((f) => { const T = S.term[f.id], ls = T && T.lines.length ? T.lines.slice(-7) : [{ c: 'p', t: '$ _' }, { c: 'dim', t: 'click to open a shell' }];
-      parts.push('<div class="owf-fr" data-wnode="' + esc(f.id) + '" data-wkind="term" title="A shell on ' + esc((ID[f.id] || {}).label || f.id) + ' — click to type" style="left:' + px(f.x) + ';top:' + px(f.y) + ';width:' + f.w + 'px;height:' + f.h + 'px;transform:' + f.tf + '">' + ls.map((l) => '<span class="' + (l.c || '') + '">' + esc(String(l.t).slice(0, 64)) + '</span>').join('') + '</div>'); });
+      parts.push('<div class="owf-fr' + E(f.id, 0.4)[0] + '" data-wnode="' + esc(f.id) + '" data-wkind="term" title="A shell on ' + esc((ID[f.id] || {}).label || f.id) + ' — click to type" style="left:' + px(f.x) + ';top:' + px(f.y) + ';width:' + f.w + 'px;height:' + f.h + 'px;transform:' + f.tf + E(f.id, 0.4)[1] + '">' + ls.map((l) => '<span class="' + (l.c || '') + '">' + esc(String(l.t).slice(0, 64)) + '</span>').join('') + '</div>'); });
     wd.hits.forEach((h) => { if (h.k === 'term') return; parts.push('<span class="owf-hit" data-wnode="' + esc(h.id) + '" data-wkind="' + esc(h.k) + '" title="' + esc(h.title) + ' — click to open its card, ⊕ on the node to add or change widgets" style="left:' + px(h.x) + ';top:' + px(h.y) + ';width:' + px(h.w) + ';height:' + px(h.h) + '"></span>'); });
     const RAISE0 = 22, dtf = window.VeraISO.discTf(lay.G.iso), ui = uiScale(S.vz);
     const placed = [];
     shown.slice().sort((a, b) => pos[b.id].y - pos[a.id].y).forEach((n) => { const p = pos[n.id], col = lensCol(n) || PCOL[n.plane], hidden = !!(S.focus && n.plane !== S.focus);
-      parts.push('<span class="pin ' + (hidden ? 'dim' : '') + (lensDim(n) ? ' ldim' : '') + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';--pc:' + col + ';--dtf:' + dtf + '"></span>');
+      const en = E(n.id); parts.push('<span class="pin ' + (hidden ? 'dim' : '') + (lensDim(n) ? ' ldim' : '') + en[0] + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';--pc:' + col + ';--dtf:' + dtf + en[1] + '"></span>');
       if (S.lbl === 'widgets' && wspec(n).length) return;   // widgets only: the widget names its node
       // the chip stands straight above its pin; it is lifted (in screen px, at most 64) only as far as the widgets over its column ask
       const hw = (14 + 5.4 * Math.min(26, n.label.length) + (n.errors ? 20 : 0) + (n.inflight ? 12 : 0)) / 2 * ui, hh = 22 * ui;
@@ -735,15 +796,16 @@ function render(opts){
       let raise = RAISE0; while (hit(raise) && raise < 120) raise += 8;
       if (!hidden) placed.push({ x0: p.x - hw, x1: p.x + hw, y0: p.y - raise * ui - hh, y1: p.y - raise * ui });
       chipAt[n.id] = { x: p.x, y: p.y, r: raise };
-      parts.push('<span class="stem ' + (hidden ? 'dim' : '') + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';--r:' + raise + ';--pc:' + col + '"></span>'); });
+      parts.push('<span class="stem ' + (hidden ? 'dim' : '') + en[0] + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';--r:' + raise + ';--pc:' + col + en[1] + '"></span>'); });
   }
   shown.forEach((n) => { if (is3d && lay.G && !chipAt[n.id]) return;
     const at = chipAt[n.id] || pos[n.id], busy = n.inflight > 0 || n.status === 'run', bb = chipAt[n.id] && chipAt[n.id].r != null;
     const spark = (S.snap.series[n.id] && (S.snap.series[n.id].tps || S.snap.series[n.id].cpu)) || null;
     const bars = spark ? spark.slice(-5) : null; const hi = bars ? Math.max.apply(null, bars.concat([1])) : 1;
-    const lc = lensCol(n), lt = lensTag(n);
-    parts.push('<div class="nd ' + (bb ? 'bb ' : '') + (is3d && S.focus && n.plane !== S.focus ? 'dim ' : '') + (S.sel === n.id ? 'sel ' : '') + (lensDim(n) ? 'ldim ' : '') + (RT && RT.nodes[n.id] && n.id !== S.sel ? 'onpath ' : '') + (busy ? 'busy ' : '') + (n.errors ? 'hasErr' : '') + '" data-node="' + esc(n.id) + '" title="' + esc(n.label + ' · ' + n.plane + ' · ' + n.detail + (n.inflight ? ' · ' + n.inflight + ' in flight' : '') + (n.errors ? ' · ' + n.errors + ' findings' : '') + (n.temp != null ? ' · ' + Math.round(n.temp) + '°' : '')) + '" style="left:' + px(at.x) + ';top:' + px(at.y) + ';--pc:' + (lc || PCOL[n.plane]) + ';--nsc:' + NSC.toFixed(2) + (bb ? ';--r:' + chipAt[n.id].r : '') + '">'
+    const lc = lensCol(n), lt = lensTag(n), en = E(n.id, is3d ? 0.18 : 0);
+    parts.push('<div class="nd ' + (bb ? 'bb ' : '') + (n.status === 'down' ? 'isdown ' : '') + (en[0] ? 'ent ' : '') + (is3d && S.focus && n.plane !== S.focus ? 'dim ' : '') + (S.sel === n.id ? 'sel ' : '') + (lensDim(n) ? 'ldim ' : '') + (RT && RT.nodes[n.id] && n.id !== S.sel ? 'onpath ' : '') + (busy ? 'busy ' : '') + (n.errors ? 'hasErr' : '') + '" data-node="' + esc(n.id) + '" title="' + esc(n.label + ' · ' + n.plane + ' · ' + n.detail + (n.inflight ? ' · ' + n.inflight + ' in flight' : '') + (n.errors ? ' · ' + n.errors + ' findings' : '') + (n.temp != null ? ' · ' + Math.round(n.temp) + '°' : '')) + '" style="left:' + px(at.x) + ';top:' + px(at.y) + ';--pc:' + (lc || PCOL[n.plane]) + ';--nsc:' + NSC.toFixed(2) + (bb ? ';--r:' + chipAt[n.id].r : '') + en[1] + '">'
       + '<span class="st" style="background:' + SC[n.status] + '"></span>' + esc(n.label.length > 26 ? n.label.slice(0, 24) + '…' : n.label)
+      + (n.status === 'down' ? '<span class="dn">DOWN</span>' : '')
       + (lt ? '<span class="lz" style="--lzc:' + (lt.c || 'var(--t3)') + '">' + esc(lt.t) + '</span>' : '')
       + (bars ? '<span class="mini" style="color:' + PCOL[n.plane] + '">' + bars.map((v) => '<i style="height:' + Math.max(2, 11 * v / hi).toFixed(0) + 'px"></i>').join('') + '</span>' : '')
       + (n.temp != null ? '<span class="tmp" title="' + Math.round(n.temp) + '° · throttle at 83°"><i style="width:' + Math.min(100, n.temp / 90 * 100) + '%;background:' + tempCol(n.temp) + '"></i></span>' : '')
@@ -761,6 +823,7 @@ function render(opts){
     parts.push('<div class="ndw ' + (wide ? 'wide' : '') + '" style="left:' + px(clamp(wx, vis.L + hw + 8, vis.R - hw - 8)) + ';top:' + px(clamp(p.y, vis.T + hh + 8, vis.B - hh - 8)) + '" data-stop="1"><div class="h"><span class="st" style="background:' + SC[n.status] + '"></span>' + esc(n.label) + '<span class="x" data-close="1">✕</span></div><div class="b">' + actionsHtml(n, S.wact, 'w') + '</div></div>'); }
   v.innerHTML = parts.join('');
   applyZoom(); termScroll();
+  shown.forEach((n) => { S.seenN[n.id] = 1; wspec(n).forEach((w, i) => { S.seenW[n.id + ':' + i + ':' + w.k] = 1; }); });
   if (lay.G) $('pzAngle').textContent = Math.round(lay.G.TILT) + '°/' + Math.round(lay.G.AZIM) + '°';
   $('lsel').innerHTML = snap.planes.map((p) => '<button data-layer="' + p.id + '" class="' + (S.focus === p.id ? 'on' : '') + '" style="--pc:' + PCOL[p.id] + '"><i></i><span>' + esc(p.name) + '</span></button>').join('');
   if (!opts.plotOnly) renderInspector();
@@ -853,7 +916,7 @@ async function loadCaps(){ if (CAPS || CAPS_BUSY) return; CAPS_BUSY = true;
   CAPS_BUSY = false; render(); }
 const CAPFAM = { guest: ['proxmox.guest.', 'exec.ssh.run', 'exec.ssh.probe', 'sysmon.', 'backup.guest', 'backup.status', 'provision.detect', 'provision.targets', 'estate.registration', 'estate.entity.resolve'],
   host: ['proxmox.', 'exec.ssh.', 'sysmon.', 'provision.', 'obs.node_temps', 'estate.registration', 'backup.status'], 'docker-host': ['docker.', 'exec.ssh.run', 'exec.ssh.probe'], docker: ['docker.'],
-  ollama: ['ollama.', 'bench.'], sandbox: ['evolve.sandbox.'], store: ['fabric.', 'obs.health'], core: ['obs.', 'fabric.health'], work: ['loops.', 'evolve.pipeline.', 'background.', 'dream.'], mesh: ['mesh.'] };
+  ollama: ['ollama.', 'bench.'], sandbox: ['evolve.sandbox.'], client: ['activity.', 'ide.remote.', 'vfs.peer.'], store: ['fabric.', 'obs.health'], core: ['obs.', 'fabric.health'], work: ['loops.', 'evolve.pipeline.', 'background.', 'dream.'], mesh: ['mesh.'] };
 const READISH = /\.(list|status|get|ps|ping|health|stats|top|logs|probe|detect|overview|ip|diff|history|images|catalog|instances|targets|components|stores|resolve|read|show|info|check|search|snapshot|drift|breakdown|route_stats|request_log|registration|effective|config|events|nodes|node_temps|model_ctx)$/;
 const isRead = (name) => READISH.test(name) || /^(sysmon|obs)\./.test(name);
 function capsFor(n){ if (!CAPS || CAPS.__err) return []; const fam = CAPFAM[n.kind] || ['obs.'];
@@ -1047,7 +1110,7 @@ document.addEventListener('click', (e) => {
   if (!t) return;
   if (t.id === 'wsecH'){ S.wsec = !S.wsec; renderRail(); return; }
   // a widget opens its node's card (a terminal's on its shell); the card stands above the graph
-  if (t.dataset.wnode !== undefined){ const id = t.dataset.wnode; S.sel = id; S.exp = id; S.wact = t.dataset.wkind === 'term' ? 'term' : 'metrics'; if (S.wpick && S.wpick !== id) S.wpick = null; render(); return; }
+  if (t.dataset.wnode !== undefined){ const id = t.dataset.wnode; S.sel = id; S.exp = id; S.wact = t.dataset.wkind === 'term' ? 'term' : t.dataset.wkind === 'alarm' ? 'logs' : 'metrics'; if (S.wpick && S.wpick !== id) S.wpick = null; render(); return; }
   if (t.dataset.lens !== undefined){ S.lens = t.dataset.lens; saveV(); render(); return; }
   if (t.dataset.termRun !== undefined){ const T = termOf(t.dataset.termRun); T.where = t.closest('.ndw') ? 'w' : 'i'; runTerm(t.dataset.termRun); return; }
   if (t.dataset.termClear !== undefined){ termOf(t.dataset.termClear).lines = []; render(); return; }

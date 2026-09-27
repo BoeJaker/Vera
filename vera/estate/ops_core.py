@@ -5,8 +5,8 @@ Pure functions over the readers' answers (tests/test_ops_core.py runs them
 without Vera). `build(src)` takes {reader name: answer | {error}} and returns
 the page's snapshot:
 
-  planes   the six planes, top to bottom: work in flight, Vera core, services,
-           runtimes, hosts, devices & mesh - each with its count
+  planes   the seven planes, top to bottom: clients, work in flight, Vera core,
+           services, runtimes, hosts, devices & mesh - each with its count
   nodes    {id, label, plane, domain, status, detail, load, inflight, errors,
             temp, ref, kind, ...} - the domain is the x lattice (compute, data,
             storage, edge, dev), the plane the y
@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 PLANES: List[Tuple[str, str, str]] = [
+    ("client", "Clients", "who is connected to Vera now: machines holding connections to it, the agents and people calling its capabilities, editors, door devices"),
     ("work", "Work in flight", "loops, programmes, pipelines, dreams, the census, background jobs"),
     ("core", "Vera core", "router, scheduler, capability bus, fabric, workers, dream, Loop Lab"),
     ("service", "Services", "ollama instances, redis, postgres, chroma, neo4j, the stack's services"),
@@ -557,6 +558,76 @@ def _series(src: Mapping[str, Any], M: Mapping[str, Any]) -> Dict[str, Dict[str,
     return out
 
 
+CLIENT_RECENT_S = 1800      # an agent or person who called a capability in the last half hour is a client now
+
+
+def _clients(src: Mapping[str, Any], M: Mapping[str, Any], now: Optional[datetime], nodes: Dict[str, Dict[str, Any]], links: List[Dict[str, Any]]) -> None:
+    """Who is connected to Vera now: the machines holding connections to its port (by address; one that is an estate
+    machine is joined to it), the agents and people who called capabilities lately, VS Code clients, door devices."""
+    router = "core:router" if "core:router" in nodes else ""
+    bus = "core:cap-bus" if "core:cap-bus" in nodes else router
+    conn = _ok(src, "ops.connections") or {}
+    for p in (conn.get("peers") or []) if isinstance(conn, Mapping) else []:
+        ip, n = str(p.get("ip") or ""), int(_num(p.get("n"), 0) or 0)
+        if not ip or ip.startswith("127.") or ip == "::1":
+            continue
+        owner = M.get("by_ip", {}).get(ip)
+        label = nodes[owner]["label"] if owner in nodes else ("a container on this host" if ip.startswith("172.") else ip)
+        nid = "client:ip:" + ip
+        nodes[nid] = _node(nid, label, "client", EDGE if not ip.startswith("172.") else DEV, kind="client", ckind="peer",
+                           detail=f"{ip} · {n} connection{'s' if n != 1 else ''} to Vera", ips=[ip], conns=n)
+        if router:
+            links.append({"a": nid, "b": router, "kind": "req"})
+        if owner in nodes:
+            links.append({"a": nid, "b": owner, "kind": "runs"})
+    act = _ok(src, "activity.sessions") or {}
+    agg: Dict[str, Dict[str, Any]] = {}
+    for s in (act.get("sessions") or []) if isinstance(act, Mapping) else []:
+        if not isinstance(s, Mapping):
+            continue
+        age = _age_s(s.get("last_ts"), now)
+        if age is None or age > CLIENT_RECENT_S:
+            continue
+        actor = str(s.get("actor") or "unknown")
+        a = agg.setdefault(actor, {"count": 0, "age": age, "areas": []})
+        a["count"] += int(_num(s.get("count"), 0) or 0)
+        a["age"] = min(a["age"], age)
+        a["areas"] += [str(x) for x in (s.get("areas") or []) if x and str(x) not in a["areas"]]
+    for actor, a in agg.items():
+        agent = actor.startswith("agent:")
+        name = actor.split(":", 1)[-1].replace("-", " ").replace("_", " ") or actor
+        nid = "client:actor:" + _norm(actor)
+        nodes[nid] = _node(nid, name, "client", DEV if agent else EDGE, kind="client", ckind="agent" if agent else "person",
+                           status="run" if a["age"] < 120 else "ok",
+                           detail=f"{a['count']} calls · last {int(a['age'])} s ago" + (" · " + ", ".join(a["areas"][:3]) if a["areas"] else ""))
+        if bus:
+            links.append({"a": nid, "b": bus, "kind": "req"})
+    ide = _ok(src, "ide.remote.instances") or {}
+    for i in (ide.get("instances") or []) if isinstance(ide, Mapping) else []:
+        if not isinstance(i, Mapping) or i.get("kind") != "vscode-client":
+            continue
+        age = _age_s(i.get("last_seen"), now)
+        if age is None or age > 30 * 86400:
+            continue
+        nid = "client:ide:" + str(i.get("id") or "")
+        idle = f"idle {int(age // 86400)} d" if age >= 86400 else f"last seen {int(age // 60)} min ago"
+        nodes[nid] = _node(nid, str(i.get("label") or "VS Code"), "client", DEV, kind="client", ckind="editor",
+                           detail="VS Code client · " + idle)
+        if router:
+            links.append({"a": nid, "b": router, "kind": "req"})
+    vp = _ok(src, "vfs.peer.list") or {}
+    door = next((k for k, v in nodes.items() if str(v.get("label", "")).upper().startswith("NWM-02")), "")
+    for p in (vp.get("peers") or []) if isinstance(vp, Mapping) else []:
+        if not isinstance(p, Mapping):
+            continue
+        name = str(p.get("name") or p.get("id") or "device")
+        addr = str(p.get("address") or p.get("ip") or p.get("tunnel_ip") or "")
+        nid = "client:door:" + _norm(name)
+        nodes[nid] = _node(nid, name, "client", STORAGE, kind="client", ckind="door",
+                           detail="door device" + (" · " + addr if addr else ""), ips=[addr.split("/")[0]] if addr else [])
+        links.append({"a": nid, "b": door or router, "kind": "req"})
+
+
 def _registration(src: Mapping[str, Any], nodes: Dict[str, Dict[str, Any]]) -> None:
     """Each machine's registration - SSH login, directory, mesh door, certificate, backup - by its estate ref."""
     reg = _ok(src, "estate.registration")
@@ -583,6 +654,7 @@ def build(src: Mapping[str, Any], own_ips: Iterable[str] = (), now: Optional[dat
     _mesh(src, now, nodes, links)
     _metrics(src, M, nodes)
     _registration(src, nodes)
+    _clients(src, M, now, nodes, links)
     inflight, through, lat = _requests(src, now, nodes)
     events, open_calls = _events(src, now)
     errors = _errors(src, nodes)
