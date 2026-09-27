@@ -83,19 +83,6 @@ async def _gather() -> Dict[str, Any]:
     return out
 
 
-@capability(
-    "ops.snapshot",
-    http_method="GET", http_path="/ops/snapshot", http_tags=["estate", "ops"],
-    memory="off", silent=True,
-    description="Live operations: the estate as six planes of nodes (work in flight, Vera core, "
-                "services, runtimes, hosts, devices & mesh) placed on a lattice of domains "
-                "(compute, data, storage, edge, dev), the pipes between them (requests, reads + "
-                "writes, runs on, repo + build, mesh radio), what is in flight right now, the "
-                "findings pinned to their nodes, the last events, and per-node series. Assembled "
-                "from the existing readers, each with its own timeout; a reader that fails is "
-                "named in `sources`. Cached 5 s. Output: {planes, nodes, links, inflight, "
-                "inflight_kinds, errors, events, series, counts, sources, ts}.",
-)
 def _start_gather() -> "asyncio.Future":
     if _cache["inflight"] is None:
         fut = asyncio.ensure_future(_gather())
@@ -109,6 +96,19 @@ def _start_gather() -> "asyncio.Future":
     return _cache["inflight"]
 
 
+@capability(
+    "ops.snapshot",
+    http_method="GET", http_path="/ops/snapshot", http_tags=["estate", "ops"],
+    memory="off", silent=True,
+    description="Live operations: the estate as six planes of nodes (work in flight, Vera core, "
+                "services, runtimes, hosts, devices & mesh) placed on a lattice of domains "
+                "(compute, data, storage, edge, dev), the pipes between them (requests, reads + "
+                "writes, runs on, repo + build, mesh radio), what is in flight right now, the "
+                "findings pinned to their nodes, the last events, and per-node series. Assembled "
+                "from the existing readers, each with its own timeout; a reader that fails is "
+                "named in `sources`. Cached 5 s. Output: {planes, nodes, links, inflight, "
+                "inflight_kinds, errors, events, series, counts, sources, ts}.",
+)
 async def ops_snapshot(refresh: bool = False, trace_id=None) -> Dict[str, Any]:
     # stale-while-revalidate: the last snapshot answers at once (gathering takes seconds - the estate's readers run
     # side by side, the slowest decides); a fresh one is gathered in the background when it is older than CACHE_S.
