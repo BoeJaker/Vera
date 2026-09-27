@@ -158,6 +158,12 @@
     /* a docked menu's widgets (owner, 2026-09-27: "make sure that any lhm for any panel can be configured to include widgets
        just like the chat ui"): \u270e in its head, the chat's edit bar, the records drawn live under its list */
     '.lhm-absorbed .lhm-tabs .lhm-ttl{position:relative;padding-right:30px}',
+      /* one rhythm for the rail and the list ("the icons on the left in the rail dont line up with their items"): the title and
+         the rail's spacer are 28 px, an item is as tall as an icon (34 px), both columns 2 px apart */
+      '.lhm-absorbed .lhm-rsp{height:28px;flex:0 0 28px}',
+      '.lhm-absorbed .lhm-tabs .lhm-ttl{height:28px;box-sizing:border-box;line-height:18px}',
+      '.lhm-absorbed .lhm-tabs{gap:2px}',
+      '.lhm-absorbed .lhm-tab{height:34px;box-sizing:border-box;line-height:20px}',
     '.lhm-a-edit{position:absolute;right:2px;top:50%;transform:translateY(-50%);width:24px;height:24px;border:0;border-radius:6px;background:transparent;color:var(--t3,var(--dim));font-size:12px;cursor:pointer}',
     '.lhm-a-edit:hover,.lhm-a-edit.on{color:var(--ac,var(--acc));background:var(--fill,var(--bg2))}',
     '.lhm-a-ws{display:flex;flex-direction:column;gap:6px;padding:8px 4px 4px;margin-top:6px;border-top:1px solid var(--bd,var(--border))}',
@@ -808,9 +814,12 @@ function _ebar(title, onAdd, onDone){
     host.innerHTML = '';
     var wrap = _el('div', 'lhm-absorbed');
     var rail = _el('div', 'lhm-rail'); rail.setAttribute('data-w', 'rail · absorbed · ' + (spec.menus || []).length + ' icons');
-    var top = _el('div', 'lhm-ico top' + (opts.topOn ? ' on' : ''), '☰'); top.title = opts.topTitle || 'This page\'s own menu';
-    top.addEventListener('click', function(){ if(opts.onTop) opts.onTop(); });
-    rail.appendChild(top);
+    /* no ☰ of its own (owner, 2026-09-27: "a redundant burger button the 'its own top level list'" - the harness's head goes
+       back); a spacer as tall as the list's title instead, so each rail icon stands level with its item */
+    if(opts.topIcon){ var top = _el('div', 'lhm-ico top' + (opts.topOn ? ' on' : ''), '☰'); top.title = opts.topTitle || 'This page\'s own menu';
+      top.addEventListener('click', function(){ if(opts.onTop) opts.onTop(); });
+      rail.appendChild(top); }
+    else rail.appendChild(_el('div', 'lhm-rsp'));
     var act = spec.active || {};
     (spec.menus || []).forEach(function(m){
       var ico = _el('div', 'lhm-ico' + (m.id === act.menu ? ' on' : ''), m.icon || '•'); ico.title = m.label;
