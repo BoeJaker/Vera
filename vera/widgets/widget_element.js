@@ -2612,7 +2612,9 @@ span.vw-sampled{opacity:.85}
        in the drawer: Open <ref>            → the entity (the estate drawer; vera:entity:open to the harness)
                       Open <place>          → where the data lives; Deep dive → the dive sheet; Copy JSON
        ⤢ in the tile's head                 → the deep dive
-     A host without item-drawer (a chat reply, a canvas item) keeps the old gesture: a block with a ref opens its entity.
+     Every surface sets item-drawer: the dashboards, the canvas's items, the chat's and the docked menus' widgets. A host
+     without it (the widget sheet's preview, the gallery) keeps the old gesture: a block with a ref opens its entity. A
+     frame too narrow for the drawer hands it up to the page around it (the chat's menu → the harness).
      Every click still dispatches 'widget:item' (bubbling, composed, cancelable) first; a host that handles it itself
      calls preventDefault(). */
   const REL_KEYS = ['id', 'name', 'host', 'host_id', 'node', 'vmid', 'ref', 'ssh_host_id', 'session_id', 'branch', 'label', 'Names', 'Image', 'calendar', 'trigger', 'instance', 'model', 'source', 'owner', 'uid'];
@@ -2650,6 +2652,12 @@ span.vw-sampled{opacity:.85}
   function drawer(detail) {
     if (typeof document === 'undefined' || !detail) return null;
     const doc = (detail.host && detail.host.ownerDocument) || document;
+    /* a frame too narrow for the drawer (the chat's menu, a docked side) hands it to the page around it when that page
+       draws widgets too (the harness does) - the item, its record and its answer as plain data; else it draws here */
+    try { const win = doc.defaultView, up = win && win.parent;
+      if (up && up !== win && (win.innerWidth || 0) < 560 && up.VeraWidget && typeof up.VeraWidget.drawer === 'function') {
+        const plain = (v) => { try { const j = JSON.stringify(v); return j === undefined || j.length > 400000 ? undefined : JSON.parse(j); } catch (_) { return undefined; } };
+        return up.VeraWidget.drawer({ record: plain(detail.record) || {}, item: plain(detail.item), path: detail.path || '', ref: detail.ref || '', data: plain(detail.data), host: null }); } } catch (_) {}
     if (!doc.getElementById('vw-drawer-css')) { const st = doc.createElement('style'); st.id = 'vw-drawer-css'; st.textContent = fontScale(DRAWER_CSS); doc.head.appendChild(st); }
     ensureCss(doc);
     if (!_drawer || !_drawer.el.isConnected) {
