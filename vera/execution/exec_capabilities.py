@@ -4217,7 +4217,7 @@ def _netmap_db():
         if fn:
             return fn()
     import sqlite3
-    db_path = Path(cfg.get("VERA_DATA_DIR", "/tmp/vera")) / "vera.db"
+    db_path = Path(os.getenv("VERA_DATA_DIR") or (Path.home() / ".vera")) / "vera.db"   # VeraConfig has no .get
     db_path.parent.mkdir(parents=True, exist_ok=True)
     return sqlite3.connect(str(db_path), check_same_thread=False)
 
