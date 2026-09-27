@@ -64,13 +64,41 @@ async def _call(name: str, **kw) -> Any:
     return await ev._call(name, **kw)
 
 
+def _orch():
+    return sys.modules.get("Vera.vera.capability_orchestration") or sys.modules.get("capability_orchestration")
+
+
+def _in_sandbox() -> bool:
+    o = _orch()
+    return bool(o is not None and getattr(o, "_READ_THROUGH_URL", ""))
+
+
+async def _read(name: str, **kw) -> Any:
+    """A reading of the estate's CI state. In a dev sandbox it comes from PROD: a sandbox has its own private,
+    empty Redis, so reading it locally drew every picture empty (27 Sep: "none of the tabs return results" -
+    evolve.unittest.history read through on its own, but ci.* read the store directly, and board.* is not a
+    read-through group). Prod answers through the same door the dashboard's reads use; when it cannot, the
+    sandbox answers for itself. Outside a sandbox this is the local capability."""
+    o = _orch()
+    up = getattr(o, "_upstream_read", None) if (o is not None and getattr(o, "_READ_THROUGH_URL", "")) else None
+    if up is not None:
+        try:
+            r = await up(name, kw)
+        except Exception:                             # pragma: no cover
+            r = None
+        if isinstance(r, dict) and not (r.get("error") and len(r) <= 3):
+            return r
+    return await _call(name, **kw)
+
+
 async def _history(limit: int = HISTORY_N) -> List[Dict[str, Any]]:
     ev = _ev()
-    if ev is None:
-        return []
     n = max(1, min(HISTORY_N, int(limit or HISTORY_N)))
 
     async def read():
+        if _in_sandbox() or ev is None:
+            res = await _read("evolve.unittest.history", limit=n)
+            return list((res or {}).get("runs") or []) if isinstance(res, dict) else []
         try:
             return await ev._get_unittest_history(n)
         except Exception as e:                        # pragma: no cover
@@ -81,7 +109,7 @@ async def _history(limit: int = HISTORY_N) -> List[Dict[str, Any]]:
 
 async def _pipelines(limit: int = PIPELINES_N) -> List[Dict[str, Any]]:
     async def read():
-        res = await _call("evolve.pipeline.list", limit=limit)
+        res = await _read("evolve.pipeline.list", limit=limit)
         return list((res or {}).get("pipelines") or []) if isinstance(res, dict) else []
     return list(await _READS.get(("pipelines", int(limit)), read))
 
@@ -250,7 +278,7 @@ async def ci_track(id: str = "", branch: str = "", trace_id=None):
         id = (p or {}).get("id", "")
     if not id:
         return {"error": "id or branch required"}
-    res = await _call("evolve.pipeline.get", id=id)
+    res = await _read("evolve.pipeline.get", id=id)
     p = (res or {}).get("pipeline") if isinstance(res, dict) else None
     if not p:
         return {"error": f"pipeline not found: {id}"}
@@ -266,13 +294,27 @@ async def ci_track(id: str = "", branch: str = "", trace_id=None):
                  "summary}."))
 async def ci_board(include_done: bool = True, label: str = "", agent: str = "", repo: str = "",
                    text: str = "", trace_id=None):
-    res = await _call("board.items", label=label, agent=agent, repo=repo, text=text)
+    res = await _read("board.items", label=label, agent=agent, repo=repo, text=text)
     items = (res or {}).get("items") or [] if isinstance(res, dict) else []
     inc = include_done if isinstance(include_done, bool) else str(include_done).lower() not in ("0", "false", "no")
     return cv.board(items, await _pipelines(), include_done=inc)
 
 
 async def _loop_sessions(limit: int = 100) -> List[Dict[str, Any]]:
+    o = _orch()
+    url = str(getattr(o, "_READ_THROUGH_URL", "") or "") if o is not None else ""
+    if url.endswith("/mcp/call"):                     # a sandbox: prod's loop history, not the sandbox's empty one
+        try:
+            import httpx
+            async with httpx.AsyncClient(verify=False, timeout=20) as c:
+                r = await c.get(url[:-len("/mcp/call")] + "/workshop/agent_loop/sessions",
+                                params={"limit": str(max(1, min(100, limit)))})
+            if r.status_code == 200:
+                ss = (r.json() or {}).get("sessions") or []
+                if ss:
+                    return list(ss)
+        except Exception as e:                        # pragma: no cover
+            log.debug("ci: prod loop sessions: %s", e)
     mod = sys.modules.get("dag_workshop_capabilities")
     fn = getattr(mod, "workshop_loop_sessions", None) if mod else None
     if fn is None:
@@ -299,7 +341,7 @@ async def _conversations() -> List[Dict[str, Any]]:
                  "owner and how many conversations drove the branch. Drawn as the ci-fleet widget. "
                  "Output: {kind:'ci', view:'fleet', cards, summary}."))
 async def ci_fleet(trace_id=None):
-    sb = await _call("evolve.sandbox.list")
+    sb = await _read("evolve.sandbox.list")
     boxes = (sb or {}).get("sandboxes") or [] if isinstance(sb, dict) else []
     return cv.fleet(boxes, await _pipelines(), await _conversations())
 
@@ -321,14 +363,14 @@ async def ci_run(ref: str = "", pipeline: str = "", trace_id=None):
     branch = (run or {}).get("branch") or ""
     p = None
     if pid:
-        res = await _call("evolve.pipeline.get", id=pid)
+        res = await _read("evolve.pipeline.get", id=pid)
         p = (res or {}).get("pipeline") if isinstance(res, dict) else None
         branch = branch or (p or {}).get("branch") or ""
     if run is None and p is None:
         return {"error": f"run not found: {ref or pipeline}"}
     lane = next(iter(cv.lanes_of([r for r in rows if r.get("branch") == branch])), None) if branch else None
     items = []
-    bres = await _call("board.items")
+    bres = await _read("board.items")
     for it in ((bres or {}).get("items") or []) if isinstance(bres, dict) else []:
         if (pid and it.get("pipeline") == pid) or (branch and it.get("branch") == branch):
             items.append(it)
@@ -348,7 +390,7 @@ async def ci_run(ref: str = "", pipeline: str = "", trace_id=None):
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _trace(session_id: str) -> Dict[str, Any]:
-    res = await _call("workshop.agent_loop.trace", session_id=session_id)
+    res = await _read("workshop.agent_loop.trace", session_id=session_id)
     return res if isinstance(res, dict) else {}
 
 
@@ -479,7 +521,7 @@ async def ci_branch(branch: str = "", repo: str = "vera", limit: int = 2000, tra
     for m in merged:
         _conv(m["session_id"], m["controller"], m["branch"], m["pipeline_id"], m["ts"])
     if convs:
-        ls = await _call("ide.claude_sessions.list_sessions", max_sessions=500)
+        ls = await _read("ide.claude_sessions.list_sessions", max_sessions=500)
         known = {str(s.get("claude_session_id") or ""): s
                  for s in (((ls or {}).get("sessions") or []) if isinstance(ls, dict) else [])}
         for sid, c in convs.items():
@@ -495,13 +537,13 @@ async def ci_branch(branch: str = "", repo: str = "vera", limit: int = 2000, tra
     # board items linked to the branch, a merged branch, or any of their pipelines
     brs = {branch} | {m["branch"] for m in merged}
     pids = {str(p.get("id")) for p in mine} | {m["pipeline_id"] for m in merged if m["pipeline_id"]}
-    bres = await _call("board.items")
+    bres = await _read("board.items")
     linked = [it for it in (((bres or {}).get("items") or []) if isinstance(bres, dict) else [])
               if (it.get("branch") and it.get("branch") in brs)
               or (it.get("pipeline") and it.get("pipeline") in pids)]
     full: List[Dict[str, Any]] = []
     if linked:
-        got = await asyncio.gather(*[_call("board.item.get", id=it.get("id")) for it in linked],
+        got = await asyncio.gather(*[_read("board.item.get", id=it.get("id")) for it in linked],
                                    return_exceptions=True)
         for it, g in zip(linked, got):
             item = (g or {}).get("item") if isinstance(g, dict) else None

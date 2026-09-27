@@ -200,3 +200,8 @@ def test_parse_merges_reads_loop_lab_and_git_merges():
     assert set(rows) == {"feat/x", "bleeding-edge-design", "main"}
     assert rows["feat/x"]["pipeline_id"] == "1a2b3c4d" and rows["feat/x"]["merges"] == 2
     assert rows["bleeding-edge-design"]["pipeline_id"] == ""
+
+
+def test_test_grid_says_when_runs_recorded_counts_only():
+    g = cv.test_grid([{"ts": "1", "branch": "b", "ok": False, "failed": 1, "total": 3}])
+    assert g["tests"] == [] and g["summary"]["listed"] == 0 and g["summary"]["red_runs"] == 1

@@ -483,7 +483,11 @@ def test_grid(rows: Optional[Iterable[Dict[str, Any]]], *, cols: int = 0,
     return {"kind": KIND, "view": "tests", "title": title or "Tests across runs",
             "source": source, "columns": columns, "tests": tests, "hidden": hidden,
             "summary": {"tests": len(tests), "runs": len(runs), "shown": len(col_runs),
-                        "classes": counts}}
+                        "classes": counts,
+                        # runs that recorded WHICH tests failed (older history, and an instance still on the old
+                        # writer, record counts only - an empty grid over those proves nothing)
+                        "listed": sum(1 for r in runs if "failures" in r),
+                        "red_runs": sum(1 for r in runs if outcome(r) in ("fail", "error"))}}
 
 
 def compare(a: Dict[str, Any], b: Dict[str, Any], *, title: str = "") -> Dict[str, Any]:

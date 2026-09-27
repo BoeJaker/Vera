@@ -2102,7 +2102,8 @@
       + (lanes.length > shown.length ? '<div class="ci-foot">+' + (lanes.length - shown.length) + ' more lanes</div>' : '') + '</div>', 'ci');
   };
   R['test-grid'] = (d, H, o) => {
-    const p = ciOf(d, 'test-grid'); if (!p || !Array.isArray(p.tests)) return EMPTY('a test grid needs tests across runs'); if (!p.tests.length) return wrap('test-grid', '<div class="ci-allgreen">' + ciRing(1, 34) + '<span><b>No failing test in ' + ((p.summary && p.summary.runs) || 0) + ' runs</b><small>every run listed its failures, and none did</small></span></div>', 'ci');
+    const p = ciOf(d, 'test-grid'); if (!p || !Array.isArray(p.tests)) return EMPTY('a test grid needs tests across runs'); if (!p.tests.length) { const sm = p.summary || {}; if (sm.red_runs && !sm.listed) return wrap('test-grid', '<div class="ci-allgreen"><span><b>' + sm.red_runs + ' red runs, no test names recorded</b><small>these runs kept counts only; which tests failed is recorded from this version on</small></span></div>', 'ci');
+      return wrap('test-grid', '<div class="ci-allgreen">' + ciRing(1, 34) + '<span><b>No failing test in ' + (sm.runs || 0) + ' runs</b><small>' + (sm.listed < (sm.runs || 0) ? sm.listed + ' of them listed their failures' : 'every run listed its failures, and none did') + '</small></span></div>', 'ci'); }
     const sz = (o && o.size) || 'm', big = sz === 'l' || sz === 'xl', n = sz === 'xl' ? p.tests.length : ciRows(H, big ? 19 : 16, sz === 'm' ? 20 : 44), cl = (p.summary && p.summary.classes) || {};
     const cols = (p.columns || []), keep = sz === 'm' ? 18 : sz === 'l' ? 32 : cols.length;
     const off = Math.max(0, cols.length - keep);
