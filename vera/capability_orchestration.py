@@ -699,6 +699,14 @@ def _rule(job_type: str, *, prefer_gpu: bool = False, deny_gpu: bool = False,
 # a prompt that needs more); keep_alive is lifted into the request.
 LONG_HORIZON_CPU_MODEL = "qwen3.6:35b-a3b"
 LONG_HORIZON_CPU_OPTIONS = {"num_ctx": 16384, "keep_alive": "2h"}
+# ...and they QUEUE on the long-horizon node rather than spill. Generation on a
+# node is already one at a time in-process (OLLAMA_CONCURRENCY=1), but `prefer`
+# is soft: while cpu-247 was busy, the next caller routed to cpu-246 - the
+# embedding/worker node - and loaded ~23 GB there beside the embedder (user,
+# 2026-09-27: one CPU node does heavy generation; the other keeps embeddings
+# and system work moving). A rule pin holds while the node is online and falls
+# back to normal routing only when it is not (pick_instance).
+LONG_HORIZON_CPU_NODE = "cpu-247"
 
 # Built-in default routing — always shown in the UI as the baseline. Embeddings
 # are CPU-only (light, should never tie up a GPU); generative work prefers GPU.
@@ -750,7 +758,7 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # own model run the long-horizon model (user, 2026-09-27), in the shared
     # window so they reuse the runner broad's briefs keep warm.
     "dream_director":   _rule("dream_director",   deny_gpu=True, prefer="cpu-247",
-                              model=LONG_HORIZON_CPU_MODEL,
+                              pin=LONG_HORIZON_CPU_NODE, model=LONG_HORIZON_CPU_MODEL,
                               options=LONG_HORIZON_CPU_OPTIONS),
     # Planning enrichment (broad style): a long generation on the long-horizon
     # node, cpu-247, never on the GPU and kept off cpu-246 - the embedding /
@@ -758,11 +766,11 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # need. The broad style issues these ONE AT A TIME, so the soft `prefer` is
     # never pushed onto cpu-246 by its own second call.
     "plan_enrich":      _rule("plan_enrich",      deny_gpu=True, prefer="cpu-247",
-                              options=LONG_HORIZON_CPU_OPTIONS),
+                              pin=LONG_HORIZON_CPU_NODE, options=LONG_HORIZON_CPU_OPTIONS),
     # Chat insights (user, 2026-09-27): the long-horizon model on the long-
     # horizon node, in the shared window - the reply already came from the GPU.
     "chat_enrich":      _rule("chat_enrich",      deny_gpu=True, prefer="cpu-247",
-                              model=LONG_HORIZON_CPU_MODEL,
+                              pin=LONG_HORIZON_CPU_NODE, model=LONG_HORIZON_CPU_MODEL,
                               options=LONG_HORIZON_CPU_OPTIONS),
     # Media services — GPU-first across the media nodes that actually have the
     # service installed (resolve_media checks each node's /health service list).

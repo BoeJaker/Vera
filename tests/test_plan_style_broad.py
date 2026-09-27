@@ -372,6 +372,35 @@ def test_the_enrich_route_is_the_long_horizon_cpu_job_type():
 
 
 @needs_app
+def test_long_horizon_jobs_queue_on_cpu247_and_never_spill_to_the_embedder(monkeypatch):
+    """User 2026-09-27: one CPU node does heavy generation; the other keeps
+    embeddings and system work moving. A busy cpu-247 must make a 35B job WAIT
+    for it (generation there is one at a time), not load ~23 GB onto cpu-246 -
+    only an offline cpu-247 lets the job route elsewhere."""
+    from Vera.vera import capability_orchestration as O
+    monkeypatch.setattr(O, "_inflight_sweep", lambda: None)
+
+    def _nodes(c247_status="online", c247_busy=1):
+        return {
+            "gpu-250": {"has_gpu": True, "enabled": True, "status": "online", "in_use": 0,
+                        "priority": 0, "models": ["qwen3.6:35b-a3b"]},
+            "cpu-246": {"has_gpu": False, "enabled": True, "status": "online", "in_use": 0,
+                        "priority": 1, "models": ["qwen3.6:35b-a3b", "nomic-embed-text"]},
+            "cpu-247": {"has_gpu": False, "enabled": True, "status": c247_status,
+                        "in_use": c247_busy, "priority": 2,
+                        "models": ["qwen3.6:35b-a3b", "nomic-embed-text"]},
+        }
+    for jt in ("dream_director", "plan_enrich", "chat_enrich"):
+        assert O.DEFAULT_ROUTING_RULES[jt]["pin"] == O.LONG_HORIZON_CPU_NODE == "cpu-247"
+        monkeypatch.setattr(O, "OLLAMA_INSTANCES", _nodes())
+        assert O.pick_instance(job_type=jt, model="qwen3.6:35b-a3b") == "cpu-247"   # busy: waits
+        monkeypatch.setattr(O, "OLLAMA_INSTANCES", _nodes(c247_status="offline"))
+        assert O.pick_instance(job_type=jt, model="qwen3.6:35b-a3b") == "cpu-246"   # down: falls back
+    # the embedder's own routing is untouched: still soft, still cpu-246 first
+    assert not O.DEFAULT_ROUTING_RULES["embedding"].get("pin")
+
+
+@needs_app
 def test_every_long_horizon_caller_shares_one_runner():
     """User 2026-09-27: the dream director and narrator run the long-horizon model
     too. On a CPU node a different window is a different runner - a 62 s reload
