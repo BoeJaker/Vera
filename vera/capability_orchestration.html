@@ -683,8 +683,8 @@ body.chat-open .panels .panel.active,body.chat-open .panels .panel.active > div{
 html[data-blocks="off"] #lhmNav.lhm-nav:not(.show),html[data-blocks="off"] body.chat-open #lhmNav.chatmenu:not(.show){background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;border-right-color:transparent}
 /* AUTO-HIDE LEAVES THE RAIL (owner: "its not leaving a rail when the lhm hides/collapses"): hidden, the menu is its icons;
    pointed at, it opens to its full width over the page, as before */
-.body-wrap.lhm .lhm-nav.autohide:not(.show){transform:none;opacity:1;pointer-events:auto;width:54px!important;min-width:54px!important;overflow:hidden}
-.body-wrap.lhm .lhm-nav.autohide.chatmenu:not(.show){width:47px!important;min-width:47px!important}
+.body-wrap.lhm #lhmNav.lhm-nav.autohide:not(.show){transform:none;opacity:1;pointer-events:auto;width:54px!important;min-width:54px!important;overflow:hidden}
+.body-wrap.lhm #lhmNav.lhm-nav.autohide.chatmenu:not(.show),.body-wrap.lhm #lhmNav.lhm-nav.absorbed.chatmenu.autohide:not(.show){width:47px!important;min-width:47px!important}
 .body-wrap.lhm .main.ah-rail:not(.autohide-reserve-v){padding-left:54px}
 .body-wrap.lhm .main.ah-rail.chatmenu:not(.autohide-reserve-v){padding-left:47px}
 #hdrDrawerBtn[hidden]{display:none}
