@@ -20,6 +20,395 @@
  "note": "The Cluster Overview as planned (Notes/44): nine SECTION bands - Now, Inference, Estate, Memory, Agents, Loop Lab, Capabilities, Network, Studio - each tile a record over a real source, one form per kind of data (numbers for counts, thermo for temperatures, small multiples for a fleet of series, pulse for a rate, ranked for a distribution, pareto for a triage, treemap for a share, agenda for a calendar, graph for a graph, stack for programmes, the iso sandboxes), reports for the small composites; every band fills the twelve columns. read.map: container <- path; dict of things <- rows named by key; other keys <- a field of each row; pick {label: path}; keys [...]. The page tiles this layout replaced are named hidden at the end. The widget review (2026-09-27) added the Loop Lab and Capabilities bands and a third Now row (subsystems, event-loop stalls, warnings), and the map words that make them: count/sum (a list counted by a field), split (one series per field), reverse, entries (a dict of plain values as rows), fields, of/total/where (a count or a sum over a list as one figure).",
  "widgets": [
   {
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "id": "sec-ops",
+    "form": "section",
+    "title": "Operations · what is running and where",
+    "source": "",
+    "frame": {
+     "size": "l",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   }
+  },
+  {
+   "at": [
+    0,
+    1
+   ],
+   "span": [
+    6,
+    6
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "id": "ops-inflight",
+    "form": "composite",
+    "source": "ops.snapshot",
+    "title": "In flight now",
+    "read": {
+     "refresh": "15s"
+    },
+    "open": "estate/ops",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "counter",
+       "source": "$subject",
+       "title": "in flight",
+       "read": {
+        "map": {
+         "value": "inflight_total"
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "donut",
+       "source": "$subject",
+       "title": "by kind",
+       "read": {
+        "map": {
+         "parts": "inflight_kinds"
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "work in flight",
+       "read": {
+        "map": {
+         "rows": "nodes",
+         "where": {
+          "plane": "work"
+         },
+         "name": "label",
+         "status": "status",
+         "value": "inflight"
+        }
+       },
+       "draw": {
+        "limit": 8
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "calls and ops open",
+       "read": {
+        "map": {
+         "rows": "inflight",
+         "name": "label",
+         "status": "kind"
+        }
+       },
+       "draw": {
+        "limit": 6
+       }
+      }
+     }
+    ],
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   }
+  },
+  {
+   "at": [
+    6,
+    1
+   ],
+   "span": [
+    6,
+    6
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "id": "ops-routing",
+    "form": "composite",
+    "source": "ollama.request_log",
+    "title": "Routing · requests to workers",
+    "read": {
+     "refresh": "15s",
+     "args": {
+      "limit": 200
+     }
+    },
+    "open": "models",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "ranked",
+       "source": "$subject",
+       "title": "requests by worker · last 200",
+       "read": {
+        "map": {
+         "values": "entries",
+         "count": "instance"
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "ranked",
+       "source": "$subject",
+       "title": "by model",
+       "read": {
+        "map": {
+         "values": "entries",
+         "count": "model"
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "latest requests",
+       "read": {
+        "map": {
+         "rows": "entries",
+         "name": "model",
+         "status": "status",
+         "value": "elapsed_s"
+        }
+       },
+       "draw": {
+        "limit": 6,
+        "unit": "s",
+        "detail": "instance"
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "ops.snapshot",
+       "title": "runtimes · load",
+       "read": {
+        "map": {
+         "rows": "nodes",
+         "where": {
+          "plane": "runtime"
+         },
+         "name": "label",
+         "status": "status",
+         "value": "load"
+        }
+       },
+       "draw": {
+        "limit": 6
+       }
+      }
+     }
+    ],
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   }
+  },
+  {
+   "at": [
+    0,
+    7
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "id": "ops-workers",
+    "form": "rows",
+    "source": "obs.workers",
+    "title": "Workers · what each is running",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "rows": "$",
+      "fields": [
+       "cpu_pct",
+       "ram_pct",
+       "current_task",
+       "tasks_done",
+       "tasks_failed"
+      ],
+      "value": "cpu_pct"
+     }
+    },
+    "open": "estate/workers",
+    "draw": {
+     "body": "record",
+     "unit": "%",
+     "detail": "current_task"
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      3
+     ]
+    }
+   }
+  },
+  {
+   "at": [
+    6,
+    7
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "id": "ops-stream",
+    "form": "composite",
+    "source": "jobs.stats",
+    "title": "Job stream",
+    "read": {
+     "refresh": "15s"
+    },
+    "open": "estate/workers",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "numbers",
+       "source": "$subject",
+       "title": "the stream",
+       "read": {
+        "map": {
+         "pick": {
+          "length": "stream.length",
+          "pending": "stream.pending_total",
+          "running": "running_tracked",
+          "consumers": "stream.consumer_count"
+         }
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "consumers · pending",
+       "read": {
+        "map": {
+         "rows": "stream.consumers",
+         "name": "name",
+         "value": "pending"
+        }
+       },
+       "draw": {
+        "limit": 5
+       }
+      }
+     }
+    ],
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   }
+  },
+  {
    "record": {
     "id": "sec-now",
     "form": "section",
@@ -38,7 +427,7 @@
    },
    "at": [
     0,
-    0
+    10
    ],
    "span": [
     12,
@@ -76,7 +465,7 @@
    },
    "at": [
     0,
-    1
+    11
    ],
    "span": [
     4,
@@ -118,7 +507,7 @@
    },
    "at": [
     4,
-    1
+    11
    ],
    "span": [
     4,
@@ -159,7 +548,7 @@
    },
    "at": [
     8,
-    1
+    11
    ],
    "span": [
     2,
@@ -198,7 +587,7 @@
    },
    "at": [
     10,
-    1
+    11
    ],
    "span": [
     2,
@@ -239,7 +628,7 @@
    },
    "at": [
     0,
-    3
+    13
    ],
    "span": [
     2,
@@ -278,7 +667,7 @@
    },
    "at": [
     2,
-    3
+    13
    ],
    "span": [
     2,
@@ -319,7 +708,7 @@
    },
    "at": [
     4,
-    3
+    13
    ],
    "span": [
     4,
@@ -358,7 +747,7 @@
    },
    "at": [
     8,
-    3
+    13
    ],
    "span": [
     4,
@@ -406,7 +795,7 @@
    },
    "at": [
     0,
-    5
+    15
    ],
    "span": [
     4,
@@ -444,7 +833,7 @@
    },
    "at": [
     4,
-    5
+    15
    ],
    "span": [
     4,
@@ -483,7 +872,7 @@
    },
    "at": [
     8,
-    5
+    15
    ],
    "span": [
     4,
@@ -512,7 +901,7 @@
    },
    "at": [
     0,
-    7
+    17
    ],
    "span": [
     12,
@@ -605,7 +994,7 @@
    },
    "at": [
     0,
-    8
+    18
    ],
    "span": [
     4,
@@ -644,7 +1033,7 @@
    },
    "at": [
     4,
-    8
+    18
    ],
    "span": [
     4,
@@ -683,7 +1072,7 @@
    },
    "at": [
     8,
-    8
+    18
    ],
    "span": [
     4,
@@ -722,7 +1111,7 @@
    },
    "at": [
     4,
-    10
+    20
    ],
    "span": [
     4,
@@ -761,7 +1150,7 @@
    },
    "at": [
     8,
-    10
+    20
    ],
    "span": [
     4,
@@ -799,7 +1188,7 @@
    },
    "at": [
     0,
-    12
+    22
    ],
    "span": [
     4,
@@ -889,7 +1278,7 @@
    },
    "at": [
     4,
-    12
+    22
    ],
    "span": [
     4,
@@ -927,7 +1316,7 @@
    },
    "at": [
     8,
-    12
+    22
    ],
    "span": [
     4,
@@ -970,7 +1359,7 @@
    },
    "at": [
     0,
-    14
+    24
    ],
    "span": [
     6,
@@ -1059,7 +1448,7 @@
    },
    "at": [
     6,
-    14
+    24
    ],
    "span": [
     6,
@@ -1088,7 +1477,7 @@
    },
    "at": [
     0,
-    16
+    26
    ],
    "span": [
     12,
@@ -1199,7 +1588,7 @@
    },
    "at": [
     0,
-    17
+    27
    ],
    "span": [
     4,
@@ -1303,7 +1692,7 @@
    },
    "at": [
     4,
-    17
+    27
    ],
    "span": [
     4,
@@ -1430,7 +1819,7 @@
    },
    "at": [
     8,
-    17
+    27
    ],
    "span": [
     4,
@@ -1470,7 +1859,7 @@
    },
    "at": [
     0,
-    23
+    33
    ],
    "span": [
     8,
@@ -1596,7 +1985,7 @@
    },
    "at": [
     8,
-    23
+    33
    ],
    "span": [
     4,
@@ -1609,7 +1998,7 @@
   {
    "at": [
     0,
-    28
+    38
    ],
    "record": {
     "id": "ops-live",
@@ -1692,7 +2081,7 @@
    },
    "at": [
     8,
-    28
+    38
    ],
    "span": [
     4,
@@ -1737,7 +2126,7 @@
    },
    "at": [
     8,
-    30
+    40
    ],
    "span": [
     4,
@@ -1814,7 +2203,7 @@
    },
    "at": [
     8,
-    32
+    42
    ],
    "span": [
     4,
@@ -1854,7 +2243,7 @@
    },
    "at": [
     0,
-    34
+    44
    ],
    "span": [
     4,
@@ -1892,7 +2281,7 @@
    },
    "at": [
     4,
-    34
+    44
    ],
    "span": [
     4,
@@ -1934,7 +2323,7 @@
    },
    "at": [
     8,
-    34
+    44
    ],
    "span": [
     4,
@@ -1963,7 +2352,7 @@
    },
    "at": [
     0,
-    38
+    48
    ],
    "span": [
     12,
@@ -2048,7 +2437,7 @@
    },
    "at": [
     0,
-    39
+    49
    ],
    "span": [
     4,
@@ -2088,7 +2477,7 @@
    },
    "at": [
     4,
-    39
+    49
    ],
    "span": [
     4,
@@ -2132,7 +2521,7 @@
    },
    "at": [
     8,
-    39
+    49
    ],
    "span": [
     4,
@@ -2177,7 +2566,7 @@
    },
    "at": [
     0,
-    41
+    51
    ],
    "span": [
     4,
@@ -2213,7 +2602,7 @@
    },
    "at": [
     4,
-    41
+    51
    ],
    "span": [
     4,
@@ -2251,7 +2640,7 @@
    },
    "at": [
     8,
-    41
+    51
    ],
    "span": [
     4,
@@ -2280,7 +2669,7 @@
    },
    "at": [
     0,
-    43
+    53
    ],
    "span": [
     12,
@@ -2388,7 +2777,7 @@
    },
    "at": [
     0,
-    44
+    54
    ],
    "span": [
     6,
@@ -2509,7 +2898,7 @@
    },
    "at": [
     6,
-    44
+    54
    ],
    "span": [
     6,
@@ -2647,7 +3036,7 @@
    },
    "at": [
     0,
-    49
+    59
    ],
    "span": [
     6,
@@ -2692,7 +3081,7 @@
    },
    "at": [
     6,
-    49
+    59
    ],
    "span": [
     6,
@@ -2730,7 +3119,7 @@
    },
    "at": [
     6,
-    53
+    63
    ],
    "span": [
     6,
@@ -2844,7 +3233,7 @@
    },
    "at": [
     0,
-    55
+    65
    ],
    "span": [
     4,
@@ -2955,7 +3344,7 @@
    },
    "at": [
     4,
-    55
+    65
    ],
    "span": [
     4,
@@ -2993,7 +3382,7 @@
    },
    "at": [
     8,
-    55
+    65
    ],
    "span": [
     4,
@@ -3032,7 +3421,7 @@
    },
    "at": [
     8,
-    57
+    67
    ],
    "span": [
     4,
@@ -3081,7 +3470,7 @@
    },
    "at": [
     0,
-    60
+    70
    ],
    "span": [
     6,
@@ -3131,7 +3520,7 @@
    },
    "at": [
     6,
-    60
+    70
    ],
    "span": [
     6,
@@ -3160,7 +3549,7 @@
    },
    "at": [
     0,
-    63
+    73
    ],
    "span": [
     12,
@@ -3202,7 +3591,7 @@
    },
    "at": [
     0,
-    64
+    74
    ],
    "span": [
     9,
@@ -3240,7 +3629,7 @@
    },
    "at": [
     9,
-    64
+    74
    ],
    "span": [
     3,
@@ -3307,7 +3696,7 @@
    },
    "at": [
     0,
-    66
+    76
    ],
    "span": [
     4,
@@ -3351,7 +3740,7 @@
    },
    "at": [
     4,
-    66
+    76
    ],
    "span": [
     4,
@@ -3388,7 +3777,7 @@
    },
    "at": [
     8,
-    66
+    76
    ],
    "span": [
     4,
@@ -3417,7 +3806,7 @@
    },
    "at": [
     0,
-    68
+    78
    ],
    "span": [
     12,
@@ -3455,7 +3844,7 @@
    },
    "at": [
     0,
-    69
+    79
    ],
    "span": [
     4,
@@ -3492,7 +3881,7 @@
    },
    "at": [
     4,
-    69
+    79
    ],
    "span": [
     4,
@@ -3530,7 +3919,7 @@
    },
    "at": [
     8,
-    69
+    79
    ],
    "span": [
     4,
@@ -3570,7 +3959,7 @@
    },
    "at": [
     0,
-    71
+    81
    ],
    "span": [
     4,
@@ -3606,7 +3995,7 @@
    },
    "at": [
     4,
-    71
+    81
    ],
    "span": [
     2,
@@ -3643,7 +4032,7 @@
    },
    "at": [
     6,
-    71
+    81
    ],
    "span": [
     2,
@@ -3684,7 +4073,7 @@
    },
    "at": [
     8,
-    71
+    81
    ],
    "span": [
     4,
@@ -3713,7 +4102,7 @@
    },
    "at": [
     0,
-    73
+    83
    ],
    "span": [
     12,
@@ -3750,7 +4139,7 @@
    },
    "at": [
     0,
-    74
+    84
    ],
    "span": [
     4,
@@ -3794,7 +4183,7 @@
    },
    "at": [
     4,
-    74
+    84
    ],
    "span": [
     8,
@@ -3892,7 +4281,7 @@
    },
    "at": [
     0,
-    78
+    88
    ],
    "span": [
     4,
@@ -3997,7 +4386,7 @@
    },
    "at": [
     4,
-    78
+    88
    ],
    "span": [
     4,
@@ -4115,7 +4504,7 @@
    },
    "at": [
     8,
-    78
+    88
    ],
    "span": [
     4,
@@ -4144,7 +4533,7 @@
    },
    "at": [
     0,
-    81
+    91
    ],
    "span": [
     12,
@@ -4180,7 +4569,7 @@
    },
    "at": [
     0,
-    82
+    92
    ],
    "span": [
     4,
@@ -4218,7 +4607,7 @@
    },
    "at": [
     4,
-    82
+    92
    ],
    "span": [
     4,
@@ -4256,7 +4645,7 @@
    },
    "at": [
     8,
-    82
+    92
    ],
    "span": [
     4,
@@ -4295,7 +4684,7 @@
    },
    "at": [
     0,
-    84
+    94
    ],
    "span": [
     12,
