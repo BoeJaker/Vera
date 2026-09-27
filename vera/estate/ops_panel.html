@@ -550,8 +550,8 @@ function layout(W, H){
     // the room a node takes: its pin and chip, and the widgets that stand beside it (up to three wide)
     // the widgets stand in a line along u, each as long as its size asks: the fullest line of a plane sets its lanes and rows
     const wline = {}, maxL = {}; shown.forEach((n) => { wline[n.id] = S.widgets ? wspec(n).reduce((t, w) => t + wstep(w), 0) : 0; maxL[n.plane] = Math.max(maxL[n.plane] || 0, wline[n.id]); });
-    const cellW = (pl) => 1.8 * SP + (maxL[pl] || 0);   // the pin's gutter (1.4 wide) holds eight pipe lanes                              // u between two nodes of a cell
-    const rowV = (pl) => Math.max(1.1 * SP, 0.8 * SP + 0.55 * (maxL[pl] || 0));   // v between two rows of a cell
+    const cellW = (pl) => 3.0 * SP + (maxL[pl] || 0);   // the pin's gutter (1.4 wide) holds eight pipe lanes                              // u between two nodes of a cell
+    const rowV = (pl) => Math.max(1.1 * SP, 0.8 * SP + 0.55 * (maxL[pl] || 0)) + 2.0 * SP;   // + the row gap, eight pipe tracks   // v between two rows of a cell
     // a crowded cell is a grid, not one ladder: six rows at most, then another column
     const ROWCAP = 6, grid = {};
     Object.keys(slot).forEach((k) => { const t = slot[k], cols = Math.max(1, Math.ceil(t / ROWCAP)); grid[k] = { cols, rows: Math.ceil(t / cols) }; });
@@ -565,7 +565,7 @@ function layout(W, H){
     const KI0 = (FLAT ? 0.74 : 1) * 60 / Math.cos(45 * Math.PI / 180), NHW = 52, FITM = 14;
     const uOff = {}, vOff = {}; { const rowsD = [];
       PL.forEach((p, i) => { const r = Math.floor(i / 3); rowsD[r] = Math.max(rowsD[r] || 0, VHof[p.id]); });
-      PL.forEach((p, i) => { const c = i % 3, r = Math.floor(i / 3); uOff[p.id] = c * (UW + 3.0 * SP); let v = 0; for (let j = 0; j < r; j++) v += 2 * rowsD[j] + 3.8 * SP; vOff[p.id] = v + (rowsD[r] - VHof[p.id]); }); }
+      PL.forEach((p, i) => { const c = i % 3, r = Math.floor(i / 3); uOff[p.id] = c * (UW + 4.2 * SP); let v = 0; for (let j = 0; j < r; j++) v += 2 * rowsD[j] + 5.4 * SP; vOff[p.id] = v + (rowsD[r] - VHof[p.id]); }); }
     // where the risers stand: a bus line along the BACK edge of the planes, outside every plate (the front is left to the nodes)
     const vBusOf = (pl) => -((FLAT ? VHof[pl] : VMAX) + 0.45 * SP);
     const lay = (KI) => {
@@ -576,9 +576,9 @@ function layout(W, H){
       const iso = ISO.proj(TILT, AZIM, KI, true);
       const zOf = (pl) => FLAT ? 0 : (rows - 1 - rowOf[pl]) * zh, uOf = (pl) => FLAT ? uOff[pl] : 0, vOf2 = (pl) => FLAT ? vOff[pl] : 0;
       const rawX = [], rawY = [], corners = [], rawNodes = [], LL = {}, usedL = {}, pcs = [];
-      PL.forEach((p) => { const z = zOf(p.id), uo = uOf(p.id), vo = vOf2(p.id), VH = VHof[p.id], vb = vBusOf(p.id) - 1.7 * SP;
+      PL.forEach((p) => { const z = zOf(p.id), uo = uOf(p.id), vo = vOf2(p.id), VH = VHof[p.id], vb = vBusOf(p.id) - 3.2 * SP;
         // the plate holds its routes: the gutters left of the first column, the bus lanes along the back
-        const uL = -1.7 * SP, vBk = vBusOf(p.id) - 1.8 * SP;
+        const uL = -2.8 * SP, vBk = vBusOf(p.id) - 3.3 * SP;
         const c = [iso(uL + uo, vBk + vo, z), iso(UW + uo, vBk + vo, z), iso(UW + uo, VH + vo, z), iso(uL + uo, VH + vo, z)];
         corners.push({ p, c }); pcs.push([(UW + uL) / 2 + uo, (vBk + VH) / 2 + vo, z]); c.concat([iso(uo, vb + vo, z), iso(UW + uo, vb + vo, z)]).forEach((q) => { rawX.push(q[0]); rawY.push(q[1]); }); });
       shown.forEach((n) => { const k = n.plane + ':' + n.domain; const idx = (usedL[k] = (usedL[k] || 0)); usedL[k]++; const g = grid[k];
@@ -593,7 +593,7 @@ function layout(W, H){
     // fit the width always (a wide lattice would be cut at the plot's edge); fit the height too when the planes lie flat -
     // a stack asks the plot for its height instead (render grows the plot and the stage scrolls)
     let KI = KI0, R = lay(KI);
-    for (let i = 0; i < 5; i++){ const s = Math.min(1, (W - 2 * FITM) / (R.maxX - R.minX), FLAT ? (H - AXIS - 2 * FITM) / (R.maxY - R.minY) : 1); if (s > 0.995) break; KI = Math.max(KI0 * (FLAT || !S.widgets ? 0.45 : 0.72), KI * s); R = lay(KI); }
+    for (let i = 0; i < 5; i++){ const s = Math.min(1, (W - 2 * FITM) / (R.maxX - R.minX), FLAT ? (H - AXIS - 2 * FITM) / (R.maxY - R.minY) : 1); if (s > 0.995) break; KI = Math.max(KI0 * (FLAT ? 0.45 : !S.widgets ? 0.6 : 0.9), KI * s); R = lay(KI); }
     const ox = (W - (R.maxX - R.minX)) / 2 - R.minX, oy = Math.max(FITM - R.minY, (H - AXIS - (R.maxY - R.minY)) / 2 - R.minY);
     G = { pivot: { x: R.pv[0] + ox, y: R.pv[1] + oy }, iso: R.iso, ox, oy, L: R.LL, FLAT, fitS: KI / KI0, TILT, AZIM, SP, height: R.maxY - R.minY + AXIS + 2 * FITM, width: R.maxX - R.minX + 2 * FITM };
     R.corners.forEach((f) => { floors.push({ id: f.p.id, col: PCOL[f.p.id], pts: f.c.map((q) => (q[0] + ox).toFixed(1) + ',' + (q[1] + oy).toFixed(1)).join(' ') });
@@ -613,26 +613,39 @@ function layout(W, H){
     // a pipe runs in the channels between the nodes: out of its pin to the gutter at the left of its column (the widgets stand
     // to the right), along the gap behind a row, and in to the other pin from ITS gutter - it never crosses a pin, a widget or
     // a stem. Between planes it takes its gutter straight back to the plane's back bus. Every channel gives each pipe a lane.
-    route = (a, b) => { const A = L[a], B = L[b], key = a + '>' + b;
-      // each END of a pipe keeps a lane of its own among the pipes that share that end - a gutter lane (side by side) and a
-      // height (a floor seen nearly edge-on squashes side-by-side lanes to a pixel or two; height stays a few pixels) - so the
-      // pipes converging on a hub fan out instead of stacking. The riser, or a short jog, takes up the change of height.
-      const LN = 0.15 * SP, ZS = 4.5 / Math.max(0.2, Math.cos(TH));
-      const la = lane('s:' + a, key), lbn = lane('d:' + b, key), zA = (1 + la) * ZS, zB = (1 + lbn) * ZS;
-      const gA = A.u - 0.72 * SP - (la - 3.5) * LN, gB = B.u - 0.72 * SP - (lbn - 3.5) * LN;   // aside and up add on screen, never cancel
+    // channel routing: every pipe run is a TRACK in a channel - a gutter (left of a column of pins, along v), a row gap (behind a
+    // row, along u) or a plane's back bus (along u). Tracks are dealt per channel by interval: two runs that overlap along the
+    // channel never share a track; runs that do not, may. Each END of a pipe also keeps a height tier among the pipes sharing it
+    // (a floor seen nearly edge-on squashes side-by-side tracks; height does not squash), so pipes into a hub fan out.
+    const LN = 0.28 * SP, LB = 0.38 * SP, ZS = 7 / Math.max(0.2, Math.cos(TH)), GUT = 1.25 * SP, NT = 8;
+    let TR = null;
+    const gx = (N) => N.u - GUT, gkey = (N) => 'g:' + N.pl + ':' + Math.round(N.u * 10), rkey = (N) => 'r:' + N.pl + ':' + Math.round(N.v * 10);
+    const buildTracks = () => { TR = {}; const ch = {};
+      const use = (c, key, part, lo, hi) => { (ch[c] = ch[c] || []).push({ key, part, lo: Math.min(lo, hi), hi: Math.max(lo, hi) }); };
+      (S.snap.links || []).forEach((l) => { const A = L[l.a], B = L[l.b]; if (!A || !B) return; const key = l.a + '>' + l.b; if (TR[key]) return; TR[key] = {};
+        if (A.pl === B.pl){ if (Math.abs(A.u - B.u) < 1e-6){ use(gkey(A), key, 'gA', A.v, B.v); return; }
+          const hv = A.v - A.rv / 2; use(gkey(A), key, 'gA', A.v, hv); use(rkey(A), key, 'r', gx(A), gx(B)); use(gkey(B), key, 'gB', hv, B.v); return; }
+        use(gkey(A), key, 'gA', A.v, A.vb); use(gkey(B), key, 'gB', B.vb, B.v);
+        if (FLAT) use('b:' + A.pl, key, 'bA', gx(A), gx(B)); else { use('b:' + A.pl, key, 'bA', gx(A) - 0.6 * SP, gx(A) + 0.6 * SP); use('b:' + B.pl, key, 'bB', gx(A), gx(B)); } });
+      Object.keys(ch).forEach((c) => { const ends = [];
+        ch[c].sort((x, y) => x.lo - y.lo || y.hi - x.hi).forEach((r) => { let k = ends.findIndex((e) => e < r.lo - 0.15 * SP); if (k < 0){ k = ends.length; ends.push(r.hi); } else ends[k] = r.hi; TR[r.key][r.part] = k; }); }); };
+    route = (a, b) => { const A = L[a], B = L[b], key = a + '>' + b; if (!TR) buildTracks(); const T = TR[key] || {};
+      const tr = (x) => (T[x] || 0) % NT;
+      const zA = (1 + lane('s:' + a, key)) * ZS, zB = (1 + lane('d:' + b, key)) * ZS;
+      const gA = gx(A) - (tr('gA') - 3.5) * LN, gB = gx(B) - (tr('gB') - 3.5) * LN;   // a track's step aside and its tier add on screen
       // points as [u, v, plate z, lift]; each keeps its world place (w) so the 3D pipes can be depth-sorted with the widgets
       const at = (pts) => pts.map((q) => { const o = P(q[0], q[1], q[2] + q[3]); o.w = [q[0], q[1], q[2] + q[3], q[2]]; return o; });
       if (A.pl === B.pl){
         if (Math.abs(A.u - B.u) < 1e-6) return at([[A.u, A.v, A.z, 0], [A.u, A.v, A.z, zA], [gA, A.v, A.z, zA], [gA, B.v, A.z, zA], [B.u, B.v, B.z, zA], [B.u, B.v, B.z, 0]]);
-        const hv = A.v - A.rv / 2 - (lane('r:' + A.pl + ':' + Math.round(A.v * 10), key) - 3.5) * LN;
+        const hv = A.v - A.rv / 2 - (tr('r') - 3.5) * LN;
         return at([[A.u, A.v, A.z, 0], [A.u, A.v, A.z, zA], [gA, A.v, A.z, zA], [gA, hv, A.z, zA], [gB, hv, A.z, zA], [gB, hv, B.z, zB], [gB, B.v, B.z, zB], [B.u, B.v, B.z, zB], [B.u, B.v, B.z, 0]]); }
-      const lb = lane('bus', key) * 0.2 * SP, va = A.vb - lb, vbB = B.vb - lb;
+      const va = A.vb - tr('bA') * LB, vbB = FLAT ? B.vb : B.vb - tr('bB') * LB;
       const bp = (u, v, zb, lift) => { const o = P(u, v, zb + lift); o.w = [u, v, zb + lift, zb]; return o; };
-      if (riserOf[key] == null){ const col = A.pl + ':' + Math.round(A.u * 10); const n = (riserN[col] = (riserN[col] || 0) + 1) - 1; riserOf[key] = gA + (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.26 * SP;
-        busPts.push(bp(riserOf[key], va, A.z, zA), bp(riserOf[key], FLAT ? vbB : va, B.z, zB)); }
+      if (riserOf[key] == null){ const col = A.pl + ':' + Math.round(A.u * 10); const n = (riserN[col] = (riserN[col] || 0) + 1) - 1; riserOf[key] = gA + (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.45 * SP;
+        busPts.push(bp(riserOf[key], va, A.z, zA), bp(riserOf[key], FLAT ? vbB : vbB, B.z, zB)); }
       const uR = riserOf[key];
       if (FLAT) return at([[A.u, A.v, A.z, 0], [A.u, A.v, A.z, zA], [gA, A.v, A.z, zA], [gA, va, A.z, zA], [gB, va, A.z, zA], [gB, va, B.z, zB], [gB, vbB, B.z, zB], [gB, B.v, B.z, zB], [B.u, B.v, B.z, zB], [B.u, B.v, B.z, 0]]);
-      return at([[A.u, A.v, A.z, 0], [A.u, A.v, A.z, zA], [gA, A.v, A.z, zA], [gA, va, A.z, zA], [uR, va, A.z, zA], [uR, va, B.z, zB], [gB, vbB, B.z, zB], [gB, B.v, B.z, zB], [B.u, B.v, B.z, zB], [B.u, B.v, B.z, 0]]); };
+      return at([[A.u, A.v, A.z, 0], [A.u, A.v, A.z, zA], [gA, A.v, A.z, zA], [gA, va, A.z, zA], [uR, va, A.z, zA], [uR, va, B.z, zB], [uR, vbB, B.z, zB], [gB, vbB, B.z, zB], [gB, B.v, B.z, zB], [B.u, B.v, B.z, zB], [B.u, B.v, B.z, 0]]); };
   }
   return { PL, shown, pos, bands, floors, planeLabels, domLabels, route, G, L, AXIS, cellMax, ladder, busPts };
 }
