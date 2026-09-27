@@ -268,6 +268,101 @@
     return a;
   }
 
+  // ── 0d. Text size and contrast (owner, 2026-09-27: "review the text visibility throughout the ui and add some kind of
+  // control on size ... some fonts/text are faint others are way too small - the widgets and the chat ui lhm are prime
+  // offenders"). ZOOM scales everything, so text that is small beside its neighbours stays small; this raises the SMALL
+  // text to a floor and leaves the layout alone. It rewrites the px font sizes below 13px in this page's stylesheets, its
+  // inline styles and every open shadow root (the widgets, the canvas) - remembering each original, so Compact puts back
+  // exactly what was there. CONTRAST re-derives the faint text tokens from the theme's own text colour, on <body>, so it
+  // follows any theme, light or dark. Same storage and broadcast as the rest of the appearance.
+  var TEXT_KEY = 'vera:ui:text', CONTRAST_KEY = 'vera:ui:contrast';
+  var TEXT_STEPS = { compact:{ floor:0, factor:1 }, 'default':{ floor:10, factor:1 }, large:{ floor:11, factor:1.1 }, larger:{ floor:12, factor:1.22 } };
+  var TEXT_NAMES = [['compact','Compact','As designed - the smallest text is not raised'], ['default','Default','Small text raised to a readable floor'], ['large','Large','Larger small text'], ['larger','Larger','The largest']];
+  var CONTRASTS = [['theme','Theme','The theme\'s own faint text'], ['clear','Clear','Faint text made clearer'], ['high','High','The most contrast']];
+  function _readText(){ try{ var v = localStorage.getItem(TEXT_KEY); return TEXT_STEPS[v] ? v : 'default'; }catch(e){ return 'default'; } }
+  function _readContrast(){ try{ var v = localStorage.getItem(CONTRAST_KEY); return (v === 'theme' || v === 'high') ? v : 'clear'; }catch(e){ return 'clear'; } }
+  var _textStep = TEXT_STEPS['default'], _textName = 'default';
+  var _fsOrig = new WeakMap();
+  function _fsAdjust(decl){
+    if(!decl) return;
+    var o = _fsOrig.get(decl);
+    if(o === undefined){ var v = decl.fontSize; o = (v && /^[\d.]+px$/.test(v)) ? parseFloat(v) : null; _fsOrig.set(decl, o); }
+    if(o == null) return;
+    var n = o >= 13 ? o : Math.max(_textStep.floor, o * _textStep.factor);
+    n = Math.round(n * 10) / 10;
+    if(parseFloat(decl.fontSize) !== n){ try{ decl.setProperty('font-size', n + 'px', decl.getPropertyPriority('font-size')); }catch(e){} }
+  }
+  function _walkRules(rules){ if(!rules) return; for(var i = 0; i < rules.length; i++){ var r = rules[i]; if(r.style) _fsAdjust(r.style); if(r.cssRules) _walkRules(r.cssRules); } }
+  function _textRoot(root){
+    var sheets = []; try{ sheets = Array.prototype.slice.call(root.styleSheets || []); }catch(e){}
+    try{ if(root.adoptedStyleSheets) sheets = sheets.concat(Array.prototype.slice.call(root.adoptedStyleSheets)); }catch(e){}
+    sheets.forEach(function(sh){ try{ _walkRules(sh.cssRules); }catch(e){ /* a cross-origin sheet: not ours to read */ } });
+    try{ Array.prototype.forEach.call(root.querySelectorAll('[style*="font-size"]'), function(el){ _fsAdjust(el.style); }); }catch(e){}
+  }
+  var _shadowRoots = [];
+  try{ var _as = Element.prototype.attachShadow; if(_as && !_as.__veraText){ Element.prototype.attachShadow = function(){ var r = _as.apply(this, arguments); try{ _shadowRoots.push(r); setTimeout(function(){ _textRoot(r); }, 0); setTimeout(function(){ _textRoot(r); }, 600); }catch(e){} return r; }; Element.prototype.attachShadow.__veraText = true; } }catch(e){}
+  function _textAll(){
+    _textRoot(document);
+    try{ Array.prototype.forEach.call(document.querySelectorAll('*'), function(el){ if(el.shadowRoot && _shadowRoots.indexOf(el.shadowRoot) < 0) _shadowRoots.push(el.shadowRoot); }); }catch(e){}
+    _shadowRoots.forEach(_textRoot);
+  }
+  // new markup: its inline sizes, a new stylesheet, a new shadow root - handled as it arrives, in one batch per frame
+  var _textQ = [], _textT = 0;
+  function _textQueue(nodes){
+    Array.prototype.push.apply(_textQ, nodes); if(_textT) return;
+    _textT = setTimeout(function(){ _textT = 0; var q = _textQ; _textQ = []; var sheets = false;
+      q.forEach(function(n){ if(!n || n.nodeType !== 1) return;
+        if(n.tagName === 'STYLE' || n.tagName === 'LINK'){ sheets = true; if(n.tagName === 'LINK') n.addEventListener('load', function(){ _textRoot(document); }, { once:true }); return; }
+        if(n.style && n.getAttribute && /font-size/.test(n.getAttribute('style') || '')) _fsAdjust(n.style);
+        try{ Array.prototype.forEach.call(n.querySelectorAll('[style*="font-size"]'), function(el){ _fsAdjust(el.style); }); }catch(e){}
+        try{ if(n.shadowRoot){ if(_shadowRoots.indexOf(n.shadowRoot) < 0) _shadowRoots.push(n.shadowRoot); _textRoot(n.shadowRoot); } }catch(e){} });
+      if(sheets) _textRoot(document); }, 120);
+  }
+  var _textMO = null;
+  function _textWatch(){ if(_textMO || !window.MutationObserver) return; try{ _textMO = new MutationObserver(function(ms){ var add = []; ms.forEach(function(m){ if(m.addedNodes) Array.prototype.push.apply(add, m.addedNodes); }); if(add.length) _textQueue(add); }); _textMO.observe(document.documentElement, { childList:true, subtree:true }); }catch(e){} }
+  var CONTRAST_CSS = 'html[data-contrast="clear"] body{--dim:color-mix(in srgb,var(--text,#d8dce4) 54%,var(--bg0,#0e0f12));--dim2:color-mix(in srgb,var(--text,#d8dce4) 70%,var(--bg0,#0e0f12));--t3:color-mix(in srgb,var(--t1,var(--text,#d8dce4)) 54%,var(--bg,var(--bg0,#0e0f12)));--t2:color-mix(in srgb,var(--t1,var(--text,#d8dce4)) 74%,var(--bg,var(--bg0,#0e0f12)))}'
+    + 'html[data-contrast="high"] body{--dim:color-mix(in srgb,var(--text,#d8dce4) 68%,var(--bg0,#0e0f12));--dim2:color-mix(in srgb,var(--text,#d8dce4) 84%,var(--bg0,#0e0f12));--t3:color-mix(in srgb,var(--t1,var(--text,#d8dce4)) 68%,var(--bg,var(--bg0,#0e0f12)));--t2:color-mix(in srgb,var(--t1,var(--text,#d8dce4)) 86%,var(--bg,var(--bg0,#0e0f12)))}';
+  function _ensureContrastCss(){ try{ if(document.getElementById('veraContrastCss')) return; var st = document.createElement('style'); st.id = 'veraContrastCss'; st.textContent = CONTRAST_CSS; (document.head || document.documentElement).appendChild(st); }catch(e){} }
+  function _paintText(text, contrast){
+    _textName = TEXT_STEPS[text] ? text : 'default'; _textStep = TEXT_STEPS[_textName];
+    var d = document.documentElement;
+    try{ d.setAttribute('data-text', _textName); d.setAttribute('data-contrast', contrast === 'theme' || contrast === 'high' ? contrast : 'clear'); }catch(e){}
+    _ensureContrastCss();
+    if(document.body) _textAll(); else document.addEventListener('DOMContentLoaded', _textAll, { once:true });
+    _textWatch();
+  }
+  function _textBroadcast(){
+    var msg = { type:'vera:text', text:_readText(), contrast:_readContrast() };
+    try{ window.parent.postMessage(msg, '*'); }catch(e){}
+    try{ var fr = document.querySelectorAll('iframe'); for(var i = 0; i < fr.length; i++){ try{ fr[i].contentWindow.postMessage(msg, '*'); }catch(e2){} } }catch(e3){}
+  }
+  function setText(t){ if(!TEXT_STEPS[t]) return _textName; try{ localStorage.setItem(TEXT_KEY, t); }catch(e){} _paintText(t, _readContrast()); _textBroadcast(); return t; }
+  function setContrast(c){ c = (c === 'theme' || c === 'high') ? c : 'clear'; try{ localStorage.setItem(CONTRAST_KEY, c); }catch(e){} _paintText(_readText(), c); _textBroadcast(); return c; }
+  window.addEventListener('message', function(e){ var m = e.data; if(!m || m.type !== 'vera:text') return;
+    if(m.text === _textName && m.contrast === document.documentElement.getAttribute('data-contrast')) return;
+    _paintText(m.text, m.contrast);
+    try{ var fr = document.querySelectorAll('iframe'); for(var i = 0; i < fr.length; i++){ if(fr[i].contentWindow !== e.source){ try{ fr[i].contentWindow.postMessage(m, '*'); }catch(e2){} } } }catch(e3){} });
+  window.addEventListener('storage', function(e){ if(e.key === TEXT_KEY || e.key === CONTRAST_KEY) _paintText(_readText(), _readContrast()); });
+  // the Text and Contrast rows: one control, used by the harness's Aa menu, the chat's Settings and the floating picker
+  function _makeTextControl(){
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;padding:5px 6px 8px';
+    function row(label, opts, get, set){
+      var r = document.createElement('div'); r.style.cssText = 'display:flex;align-items:center;gap:3px;flex-wrap:wrap';
+      var lab = document.createElement('span'); lab.textContent = label; lab.style.cssText = 'font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--t2,var(--dim2,#999));min-width:64px'; r.appendChild(lab);
+      function paint(){ Array.prototype.forEach.call(r.querySelectorAll('button'), function(b){ var on = b.getAttribute('data-v') === get(); b.style.background = on ? 'var(--ac,var(--acc,#5a9e8f))' : 'var(--s3,var(--bg3,#222))'; b.style.color = on ? 'var(--on-ac,var(--on-acc,#fff))' : 'var(--t2,var(--dim2,#bbb))'; }); }
+      opts.forEach(function(o){ var b = document.createElement('button'); b.type = 'button'; b.setAttribute('data-v', o[0]); b.textContent = o[1]; b.title = o[2] || '';
+        b.style.cssText = 'font:inherit;font-size:11px;padding:3px 9px;border:0;border-radius:5px;cursor:pointer';
+        b.onclick = function(e){ e.stopPropagation(); set(o[0]); paint(); }; r.appendChild(b); });
+      paint(); return r;
+    }
+    wrap.appendChild(row('Text', TEXT_NAMES, function(){ return _textName; }, setText));
+    wrap.appendChild(row('Contrast', CONTRASTS, function(){ return document.documentElement.getAttribute('data-contrast') || 'clear'; }, setContrast));
+    return wrap;
+  }
+  // a frame follows its parent's setting as soon as it loads, then by message; standalone, its own stored one
+  (function(){ var t = _readText(), c = _readContrast(); try{ var pr = window.parent && window.parent !== window && window.parent.document && window.parent.document.documentElement; if(pr && pr.getAttribute('data-text')){ t = pr.getAttribute('data-text'); c = pr.getAttribute('data-contrast') || c; } }catch(e){} _paintText(t, c); })();
+
   // ── 0c. Truthful-animation primitive ───────────────────────────────────────
   // The one rule every new infographic in this app must follow: animation
   // reflects a REAL event that just happened, never decorative perpetual
@@ -658,7 +753,9 @@
           });
           setThemeLocal(theme, Object.keys(vars).length ? vars : null);
         }
-      }).observe(parentRoot, {attributes:true, attributeFilter:['data-theme', 'data-style', 'data-den', 'data-blocks']});
+        var pt = parentRoot.getAttribute('data-text'), pc = parentRoot.getAttribute('data-contrast');
+        if(pt && (pt !== _textName || pc !== document.documentElement.getAttribute('data-contrast'))) _paintText(pt, pc);
+      }).observe(parentRoot, {attributes:true, attributeFilter:['data-theme', 'data-style', 'data-den', 'data-blocks', 'data-text', 'data-contrast']});
     }
   }catch(e){/* cross-origin */}
 
@@ -726,7 +823,7 @@
     row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 6px 8px;margin-bottom:5px;'+
       'border-bottom:1px solid var(--bd2,var(--border2,rgba(128,128,128,.3)))';
     var lbl = document.createElement('span');
-    lbl.textContent = 'UI size';
+    lbl.textContent = 'Zoom';
     lbl.style.cssText = 'flex:1;color:var(--t2,var(--dim,#999))';
     function mk(txt, title){
       var b = document.createElement('button');
@@ -791,6 +888,7 @@
         var themes = (data && data.themes) || {};
         menu.innerHTML = '';
         menu.appendChild(_makeScaleControl());
+        menu.appendChild(_makeTextControl());
         menu.appendChild(_makeStyleControl());
         Object.keys(themes).forEach(function(tid){
           var t = themes[tid];
@@ -953,6 +1051,7 @@
     STYLES: STYLES, DENSITIES: DENSITIES,
     // UI scale (global zoom)
     setScale: setScale,
+    setText: setText, getText: function(){ return _textName; }, setContrast: setContrast, getContrast: function(){ return document.documentElement.getAttribute('data-contrast') || 'clear'; }, makeTextControl: _makeTextControl,
     getScale: _readScale,
     nudgeScale: function(d){ return setScale(_readScale() + (d||0)); },
     applyScale: _paintScale,

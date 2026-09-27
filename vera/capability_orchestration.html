@@ -687,6 +687,16 @@ html[data-blocks="off"] #lhmNav.lhm-nav:not(.show),html[data-blocks="off"] body.
 .body-wrap.lhm #lhmNav.lhm-nav.autohide.chatmenu:not(.show),.body-wrap.lhm #lhmNav.lhm-nav.absorbed.chatmenu.autohide:not(.show){width:47px!important;min-width:47px!important}
 .body-wrap.lhm .main.ah-rail:not(.autohide-reserve-v){padding-left:54px}
 .body-wrap.lhm .main.ah-rail.chatmenu:not(.autohide-reserve-v){padding-left:47px}
+/* THE MENU FOLDS SMOOTHLY: auto-hide's reveal eases its width like the fold does, floats over the page with a shadow
+   (the page no longer jumps sideways to make room for it), and the rail's width is what the page keeps */
+.body-wrap.lhm #lhmNav.lhm-nav.autohide{transition:width .34s cubic-bezier(.2,.8,.2,1),box-shadow .3s ease,background .3s ease}
+html:not([data-blocks="off"]) .body-wrap.lhm #lhmNav.lhm-nav.autohide.show{box-shadow:0 18px 50px -12px rgba(0,0,0,.6),1px 0 0 var(--bd,var(--border,rgba(255,255,255,.09)))}
+/* BLOCKS OFF, AT ANY WIDTH (owner, 2026-09-27: "if the chat menu expands it still has an opaque background - only the rail
+   is transparent. i want the entire lhm - when opened any amount, to be transparent with blocks off"): folded, open, or
+   revealed from auto-hide over the page - no ground, no glass, no shadow */
+html[data-blocks="off"] #lhmNav.lhm-nav,html[data-blocks="off"] body.chat-open #lhmNav.chatmenu,html[data-blocks="off"] .body-wrap.lhm #lhmNav.lhm-nav.autohide.show{background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;border-right-color:transparent!important}
+.body-wrap.lhm .main.ah-rail{padding-left:54px!important}
+.body-wrap.lhm .main.ah-rail.chatmenu{padding-left:47px!important}
 #hdrDrawerBtn[hidden]{display:none}
 #hdrDrawerBtn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
 #hdrDrawer{position:absolute;right:14px;top:calc(100% + 6px);z-index:900;display:none;flex-direction:column;align-items:flex-start;gap:12px;padding:12px 14px;border-radius:var(--ui-radius,10px);background:var(--s1,var(--bg1,#151719));box-shadow:var(--elev,0 10px 30px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));max-width:min(620px,calc(100vw - 28px))}
@@ -2896,7 +2906,7 @@ function _lhmNativeLegacy(host){
 let _lhmSecOpen = {};                 // panel id → the section open in its accordion / strip
 // the menu folded to its icons: the harness's own list (remembered), and the chat's menu (the chat says when it folds)
 let _lhmRailed = (function(){ try{ return localStorage.getItem('vera:lhm:rail') === '1'; }catch(_){ return false; } })(), _lhmChatRailed = false;
-window.addEventListener('message', e => { const d = e.data; if(!d || d.type !== 'vera:lhm:rail') return; _lhmChatRailed = !!d.on; _lhmNavSync(); });
+window.addEventListener('message', e => { const d = e.data; if(!d || d.type !== 'vera:lhm:rail') return; _lhmChatRailed = !!d.on; _lhmRailApply(); });
 // a panel's sections: what it registered (register_ui sections, from /ui/panels) and, as one more section, the nav
 // items it published through the bridge (registerNav) — the same tree in the side menu and the strips
 function _panelSectionsFor(pid){
@@ -2934,7 +2944,7 @@ function _lhmNativeRender(host){
     // now (and so does the registered row), so the count keeps the space.
     top: { title: 'Vera', sub: ((_uiPanelCache || []).length || rows.length) + ' panels', toggle: () => tabToggleLhm(), toggleTitle: 'Switch to horizontal tabs (the same menu, as tabs and strips)' },
     search: { label: 'Find a panel', hint: '⌘K', open: () => openTabPicker() }, edit: true, id: 'harness-main',
-    rail: { on: _lhmRailed, toggle: () => { _lhmRailed = !_lhmRailed; try{ localStorage.setItem('vera:lhm:rail', _lhmRailed ? '1' : '0'); }catch(_){} _lhmNavSync(); } },
+    rail: { on: _lhmRailed, toggle: () => { _lhmRailed = !_lhmRailed; try{ localStorage.setItem('vera:lhm:rail', _lhmRailed ? '1' : '0'); }catch(_){} _lhmRailApply(); } },
     open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() },
     onPanel: (pid, ev) => { if(ev && (ev.ctrlKey || ev.metaKey)) splitTab(pid); else switchTab(pid); _tabFireLoader(pid); _lhmNavSync(); },
     onSection: (pid, sid, i) => { _lhmSecOpen[pid] = i; _lhmNavSync(); },
@@ -3142,6 +3152,10 @@ function _lhmRailSync(){ const nav = document.getElementById('lhmNav'); if(!nav)
   const side = nav.querySelector('.lhm-side'); if(side) side.classList.toggle('railed', !!_lhmRailed || hidden); }
 { const nav = document.getElementById('lhmNav'), tabs = document.getElementById('lhmNavTabs');
   if(window.MutationObserver){ if(nav) new MutationObserver(_lhmRailSync).observe(nav, { attributes:true, attributeFilter:['class'] }); if(tabs) new MutationObserver(_lhmRailSync).observe(tabs, { childList:true }); } }
+// the fold, applied to the menu that is there: nothing is redrawn, so the width eases and the labels fade
+function _lhmRailApply(){ const nav = document.getElementById('lhmNav'); if(!nav) return; const chatOpen = nav.classList.contains('chatmenu');
+  const railed = chatOpen ? _lhmChatRailed : _lhmRailed; nav.classList.toggle('railed', railed); document.querySelector('.main')?.classList.toggle('railed', railed); _lhmRailSync();
+  const rl = nav.querySelector('.lhm-s-rl'); if(rl){ rl.textContent = _lhmRailed ? '\u00bb' : '\u00ab'; rl.title = _lhmRailed ? 'Open the menu' : 'Fold the menu to its icons'; } }
 // Init on load
 _tabLoadPrefs();
 
@@ -7533,7 +7547,7 @@ function _scaleControlEl(){
   wrap.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 6px 8px;margin-bottom:5px;'+
     'border-bottom:1px solid var(--border2)';
   const lbl = document.createElement('span');
-  lbl.textContent = 'UI size'; lbl.style.cssText = 'flex:1;color:var(--dim2)';
+  lbl.textContent = 'Zoom'; lbl.style.cssText = 'flex:1;color:var(--dim2)';
   const mk = (t,ti)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.title=ti;
     b.style.cssText='width:22px;height:22px;padding:0;line-height:1;border-radius:5px;cursor:pointer;'+
       'border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px'; return b; };
@@ -7564,7 +7578,7 @@ function _appearanceRowsEl(){
   };
   const root = document.documentElement;
   wrap.appendChild(row('Style', [['standard', 'Standard'], ['newspaper', 'News'], ['terminal', 'Term'], ['pixel', 'Pixel']], () => root.getAttribute('data-style') || 'standard', (v) => { if (vu.setStyle) vu.setStyle(v); else root.setAttribute('data-style', v); }));
-  wrap.appendChild(row('UI size', [['full', 'Full', 'Every control shown'], ['hover', 'Hover', 'Controls appear on hover'], ['zen', 'Zen', 'The page alone']], () => root.getAttribute('data-den') || 'full', (v) => { if (vu.setDensity) vu.setDensity(v); else root.setAttribute('data-den', v); }));
+  wrap.appendChild(row('Detail', [['full', 'Full', 'Every control shown'], ['hover', 'Hover', 'Controls appear on hover'], ['zen', 'Zen', 'The page alone']], () => root.getAttribute('data-den') || 'full', (v) => { if (vu.setDensity) vu.setDensity(v); else root.setAttribute('data-den', v); }));
   wrap.appendChild(row('Blocks', [['on', 'On'], ['off', 'Off']], () => root.getAttribute('data-blocks') || 'on', (v) => { if (vu.setBlocks) vu.setBlocks(v === 'on'); else root.setAttribute('data-blocks', v); }));
   return wrap;
 }
@@ -7572,6 +7586,7 @@ function _buildThemeMenuRows(menu, themes){
   menu.innerHTML = '';
   menu.appendChild(_appearanceRowsEl());
   menu.appendChild(_scaleControlEl());
+  try{ if(window.veraUI && typeof veraUI.makeTextControl === 'function'){ const tc = veraUI.makeTextControl(); tc.style.borderBottom = '1px solid var(--border2)'; tc.style.marginBottom = '5px'; menu.appendChild(tc); } }catch(_){}
   Object.keys(themes).forEach(tid=>{
     const t = themes[tid], active = tid === _currentTheme;
     const row = document.createElement('div');

@@ -1441,7 +1441,7 @@ html[data-blocks="off"] .cmp-strip{background:transparent;border-color:transpare
 html[data-blocks="off"] .pa-att{background:transparent}
 </style>
 <script>/* the chat embedded in parts (the Canvas board): ?only=menu is the rail + quick menus alone (a host's LHM slot); ?only=chat is everything but them; harness=yes = the host's ☰ above the rail does the top-level menu */
-(function(){ try{ var q=new URLSearchParams(location.search); var o=q.get('only')||''; if(o==='menu'||o==='chat') document.documentElement.setAttribute('data-only', o); if(q.get('harness')==='yes') document.documentElement.setAttribute('data-harness','yes'); }catch(e){} })();</script>
+(function(){ try{ var q=new URLSearchParams(location.search); var o=q.get('only')||''; if(o==='menu'||o==='chat') document.documentElement.setAttribute('data-only', o); if(q.get('harness')==='yes') document.documentElement.setAttribute('data-harness','yes'); var de=document.documentElement; de.classList.add('vboot'); setTimeout(function(){ de.classList.remove('vboot'); }, 9000); if(q.get('harness')==='yes'&&o==='chat') de.classList.add('hdr-absorbed'); try{ var mo=JSON.parse(localStorage.getItem('vera:chat:motion')||'{}')||{}; de.setAttribute('data-cursor', mo.cursor||'bar'); de.setAttribute('data-reply', mo.reply||'rise'); de.setAttribute('data-capanim', mo.caps||'slide'); if((mo.run||'shimmer')!=='dot') de.setAttribute('data-caprun', mo.run||'shimmer'); }catch(_){} }catch(e){} })();</script>
 <style id="designChrome">
 /* ═══ THE CHAT'S CHROME AS THE CANVAS BOARD DRAWS IT (the design landing) ═══════════════════════════════════════
    The board's own rules ([data-board="main"] …) on this page's markup: the theme carries the tokens (--t1..3, --s1..3,
@@ -1671,6 +1671,65 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
   background:radial-gradient(120% 100% at 10% 0%,color-mix(in srgb,var(--acc,#5a9e8f) 12%,transparent),transparent 62%),
              radial-gradient(90% 80% at 92% 0%,color-mix(in srgb,var(--acc2,var(--acc,#5a9e8f)) 9%,transparent),transparent 60%)}
 html[data-blocks="off"] #veraWash{opacity:.7}
+/* ═══ SEAMLESS LOAD (owner, 2026-09-27: "the chat ui [should] seamlessly load the new layout and the menus be absorbed
+   without initially displaying in the chat panel"): the page is not shown until its layout is assembled - the legacy
+   markup it is parsed from never paints - and then fades in. The head's first script sets vboot; a failsafe lifts it. */
+html.vboot body{opacity:0}
+body{transition:opacity .32s ease}
+/* ═══ LEGIBLE (owner: "some fonts/text are faint others are way too small - ... the chat ui lhm [a] prime offender"):
+   the menu's secondary text is the theme's second tone, not its faintest, and never smaller than 10px */
+#rightRail.lhm-host .lhm-quick .grp{font-size:10px;color:var(--t2,var(--dim2,#8a92a0))}
+#rightRail.lhm-host .lhm-quick .lrow .nm{font-size:11.5px}
+#rightRail.lhm-host .lhm-quick .lrow .nm small{font-size:10px;color:var(--t2,var(--dim2,#8a92a0))}
+#rightRail.lhm-host .lhm-quick .lrow .rt-n{font-size:10px}
+#rightRail.lhm-host .lhm-quick .lhm-empty,#rightRail.lhm-host .lhm-quick .qnote{font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0))}
+/* ═══ THE MENU FOLDS AND OPENS SMOOTHLY: its content fades out first as it folds, and back in once it has room */
+#rightRail.lhm-host > .lhm-det > *{transition:opacity .2s ease .12s}
+#rightRail.lhm-host.slim > .lhm-det > *{opacity:0;transition:opacity .1s ease}
+/* ═══ THE COMPOSER'S CONTROLS (owner: "the context controls above the chat input ... better integrated into the menu below
+   chat input"): the context strip - sources, depth, frames - opens from the Context chip, over the composer */
+#cmpCtxPop{position:absolute;left:10px;right:10px;bottom:calc(100% + 8px);z-index:40;display:none;flex-direction:column;gap:8px;padding:10px 12px;border-radius:var(--ui-radius,10px);background:var(--surf,var(--bg1,#151719));box-shadow:var(--elev,0 10px 30px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+#cmpCtxPop.on{display:flex;animation:ctxPopIn .18s cubic-bezier(.2,.8,.2,1)}
+@keyframes ctxPopIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+#cmpCtxPop .ccp-h{display:flex;align-items:center;gap:8px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t2,var(--dim2,#8a92a0))}
+#cmpCtxPop .ccp-h .sp{flex:1}
+#cmpCtxPop .ccp-h button{font:inherit;font-size:10.5px;text-transform:none;letter-spacing:0;font-weight:400;border:0;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));padding:3px 9px;cursor:pointer}
+#cmpCtxPop #ctxStrip{display:flex!important;position:static!important;flex-wrap:wrap;gap:6px;padding:0!important;margin:0!important;border:0!important;background:transparent!important;min-height:0;font-size:10.5px;box-shadow:none!important;width:auto!important;max-width:none!important;transform:none!important}
+#cmpCtxPop #ctxStrip #ctxStripTxt{max-width:none!important;font-size:10.5px!important}
+#cmpCtxPop #ctxStrip #fStrip{flex:1 1 100%!important}
+#cmpChipCtx .ccn{margin-left:5px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--ac,var(--acc,#5a9e8f))}
+#cmpChipCtx.pop{color:var(--ac,var(--acc,#5a9e8f));box-shadow:inset 0 0 0 1px var(--ac,var(--acc,#5a9e8f))}
+/* notices sit under the composer they belong to, centred on it, and read centred in the transcript too */
+#chatStack > #noticeDock{left:50%}
+#msgs > .sys-msg{text-align:center}
+/* ═══ MOTION (owner: "better animations of chat output and cap activity - ideally configurable (cursor, animation style)").
+   Set in Settings → Motion; painted as data-cursor · data-reply · data-capanim · data-caprun on <html>. ═══ */
+@keyframes curPulse{0%,100%{opacity:.25}50%{opacity:1}}
+@keyframes curDot{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+html[data-cursor] .cur{animation:curPulse 1.05s ease-in-out infinite}
+html[data-cursor="bar"] .cur{width:2px;height:1.1em;border-radius:1px;vertical-align:-.15em}
+html[data-cursor="underscore"] .cur{width:.62em;height:2px;vertical-align:baseline}
+html[data-cursor="dot"] .cur{width:7px;height:7px;border-radius:50%;vertical-align:middle;margin-left:3px;animation:curDot 1s ease-in-out infinite}
+html[data-cursor="glow"] .cur{width:7px;height:1.05em;border-radius:3px;vertical-align:-.15em;box-shadow:0 0 12px 1px var(--acc2,var(--acc,#8fb87a))}
+html[data-cursor="none"] .cur{display:none}
+@keyframes replyRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes replyFade{from{opacity:0}to{opacity:1}}
+html[data-reply="rise"] #msgs > .mwrap{animation:replyRise .36s cubic-bezier(.2,.8,.2,1) both}
+html[data-reply="fade"] #msgs > .mwrap{animation:replyFade .32s ease both}
+/* a capability card arrives once the reply around it has stopped streaming (a streaming reply is redrawn every token,
+   and an entrance on every redraw would be a flicker) */
+@keyframes capSlide{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}
+@keyframes capPop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}
+html[data-capanim="slide"] #msgs .msg-body:not(:has(.cur)) .cap-inline{animation:capSlide .3s cubic-bezier(.2,.8,.2,1) both}
+html[data-capanim="fade"] #msgs .msg-body:not(:has(.cur)) .cap-inline{animation:replyFade .3s ease both}
+html[data-capanim="pop"] #msgs .msg-body:not(:has(.cur)) .cap-inline{animation:capPop .26s cubic-bezier(.2,.8,.2,1) both}
+/* a capability that is still running says so: a light running along its top edge, or its edge breathing */
+@keyframes capShim{from{background-position:-45% 0}to{background-position:145% 0}}
+@keyframes capBreathe{0%,100%{box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14)),inset 2px 0 0 var(--ac2,var(--acc2,#8fb87a))}50%{box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14)),inset 2px 0 0 var(--ac2,var(--acc2,#8fb87a)),0 0 0 1px color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 55%,transparent)}}
+html[data-caprun="shimmer"] #msgs .cap-inline:not(.done):not(.error){position:relative}
+html[data-caprun="shimmer"] #msgs .cap-inline:not(.done):not(.error)::after{content:'';position:absolute;left:0;right:0;top:0;height:2px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--ac,var(--acc,#5a9e8f)),transparent);background-size:45% 100%;background-repeat:no-repeat;animation:capShim 1.25s linear infinite}
+html[data-caprun="breathe"] #msgs .cap-inline:not(.done):not(.error){animation:capBreathe 1.6s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){ html[data-reply] #msgs > .mwrap,html[data-capanim] #msgs .cap-inline,html[data-caprun] #msgs .cap-inline,html[data-caprun] #msgs .cap-inline::after,#cmpCtxPop.on{animation:none!important} }
 /* icons beside a menu option: Full shows them, Hover when the option is pointed at, Zen not at all */
 html[data-den="zen"] #rightRail.lhm-host .lhm-quick .tm-r{grid-template-columns:1fr auto}
 html[data-den="zen"] #rightRail.lhm-host .lhm-quick .tm-r .ico{display:none}
@@ -2143,6 +2202,11 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="row"><label style="min-width:56px">STT</label><input type="checkbox" id="cfgStt" checked></div>
     <div class="row"><label style="min-width:56px">Auto-play</label><input type="checkbox" id="cfgAutoPlay" checked></div>
     <div class="row"><label style="min-width:56px" title="Silence that ends your turn and submits">Mic pause</label><input type="number" id="cfgVadPause" value="2.0" min="0.8" max="10" step="0.1" style="width:58px" title="Seconds of silence before the mic stops and submits"></div>
+    <div class="sec" style="margin-top:5px">Motion</div>
+    <label class="row numrow" title="The cursor at the end of a reply while it is being written"><select id="cfgMotionCursor" style="flex:1;min-width:0"><option value="bar">Bar - a thin line that breathes</option><option value="block">Block</option><option value="underscore">Underscore</option><option value="dot">Dot</option><option value="glow">Glow</option><option value="none">None</option></select><span class="nlbl" style="flex:0 0 auto">Cursor</span></label>
+    <label class="row numrow" title="How a new message arrives in the transcript"><select id="cfgMotionReply" style="flex:1;min-width:0"><option value="rise">Rise - slides up as it fades in</option><option value="fade">Fade in</option><option value="none">None</option></select><span class="nlbl" style="flex:0 0 auto">Messages</span></label>
+    <label class="row numrow" title="How a capability's card arrives"><select id="cfgMotionCaps" style="flex:1;min-width:0"><option value="slide">Slide in</option><option value="fade">Fade in</option><option value="pop">Pop</option><option value="none">None</option></select><span class="nlbl" style="flex:0 0 auto">Capabilities</span></label>
+    <label class="row numrow" title="How a capability that is still running shows it"><select id="cfgMotionCapRun" style="flex:1;min-width:0"><option value="shimmer">Shimmer - a light along its top edge</option><option value="breathe">Breathe - its edge pulses</option><option value="dot">The dot only</option></select><span class="nlbl" style="flex:0 0 auto">Running</span></label>
     <div class="sec" style="margin-top:5px">Media &amp; rendering</div>
     <div class="row"><label style="min-width:70px">Illustrate</label><input type="checkbox" id="cfgIllustrate" onchange="CH._persistMediaCfg()" title="Vera may generate demonstrative/illustrative images with Stable Diffusion (media.illustrate) and show them in the chat"></div>
     <div class="row"><label style="min-width:70px">Ref images</label><input type="checkbox" id="cfgRefImages" onchange="CH._persistMediaCfg()" title="Vera may search the web for reference images (media.image.search) and show them in the chat"></div>
@@ -4574,7 +4638,7 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
       let dock=document.getElementById('noticeDock');
       if(!dock){
         dock=document.createElement('div');dock.id='noticeDock';
-        document.getElementById('centre')?.appendChild(dock);
+        (document.getElementById('chatStack')||document.getElementById('centre'))?.appendChild(dock);
       }
       dock.appendChild(d);dock.scrollTop=dock.scrollHeight;return;
     }
@@ -8088,7 +8152,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     _cmpSync();
   }
   function _cmpChip(k){
-    if(k==='context'){ try{ if(window.VeraLHM){ VeraLHM.pick('context/ctx'); const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); } }catch(_){} return; }
+    if(k==='context'){ const pop=document.getElementById('cmpCtxPop'), chip=document.getElementById('cmpChipCtx');
+      if(pop){ const on=!pop.classList.contains('on'); pop.classList.toggle('on', on); if(chip) chip.classList.toggle('pop', on); if(on){ try{ ctxFetch(true); }catch(_){} } return; }
+      try{ if(window.VeraLHM){ VeraLHM.pick('context/ctx'); const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); } }catch(_){} return; }
     if(k==='web'){ toggleWebSearch(); }
     else if(k==='attach'){ const ed=document.getElementById('docEditor'); if(_DOCS.length&&ed&&ed.style.display==='none') _docEditorOpen(_DOCS[0].id); else _paPickFiles(); }
     else if(k==='voice'){ toggleMic(); }
@@ -9315,7 +9381,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       let dock=document.getElementById('noticeDock');
       if(!dock){
         dock=document.createElement('div');dock.id='noticeDock';
-        document.getElementById('centre')?.appendChild(dock);
+        (document.getElementById('chatStack')||document.getElementById('centre'))?.appendChild(dock);
       }
       dock.appendChild(d);dock.scrollTop=dock.scrollHeight;return;
     }
@@ -15017,6 +15083,7 @@ Your task: decide what to do next to advance toward the goal.
     {grp:'Chat', rows:[
       {id:'agent', n:'Agent & model', from:[['rpCfg','Execution modes'],['rpCfg','Agent'],['rpCfg','Model override'],['rpLoop','Model override'],['rpCfg','Agent capabilities'],['rpCfg','DAG']], note:'who answers, on what, with which capabilities'},
       {id:'format', n:'Output format', from:[['rpCfg','Output format']], note:'markdown · thinking · the throbber'},
+      {id:'motion', n:'Motion', from:[['rpCfg','Motion']], note:'the cursor, how messages and capabilities arrive'},
       {id:'media', n:'Media & rendering', from:[['rpCfg','Media & rendering'],['rpCfg','Output']], note:'images · artifacts · live render · speech'},
       {id:'web', n:'Web search', from:[['rpCfg','Web Search']], note:'search before answering'},
       {id:'research', n:'Research streaming', from:[['rpCfg','Research Streaming']], note:'the researcher API'},
@@ -15069,6 +15136,10 @@ Your task: decide what to do next to advance toward the goal.
           const c2=document.createElement('div'); c2.className='sp-card'; c2.dataset.row=r.id; c2.setAttribute('data-w','theme · card'); c2.innerHTML='<div class="sec">Theme</div><div class="sp-look-theme" id="spThemePick"></div><div class="lbl">the theme sets colour — every panel follows</div>';
           const ob=c1.querySelector('#spOpenAppearance'); if(ob) ob.addEventListener('click',ev=>{ try{ _appearanceSheet(ev); }catch(_){} });
           _SP_CARDS.push({ card:c2, grid, title:'Theme', row:r.id }); grid.appendChild(c2); n++; gn++;
+          // text size and contrast: small text raised to a floor, faint text made clearer - every panel follows
+          const c3=document.createElement('div'); c3.className='sp-card'; c3.dataset.row=r.id; c3.setAttribute('data-w','text · card'); c3.innerHTML='<div class="sec">Text</div><div class="sp-look-text"></div><div class="lbl">small text raised to a readable floor, faint text made clearer - zoom (above) scales everything instead</div>';
+          try{ if(window.veraUI&&typeof veraUI.makeTextControl==='function') c3.querySelector('.sp-look-text').appendChild(veraUI.makeTextControl()); }catch(_){}
+          _SP_CARDS.push({ card:c3, grid, title:'Text', row:r.id }); grid.appendChild(c3); n++; gn++;
         }
       });
       if(!grid.children.length){ const e=document.createElement('div'); e.className='lbl'; e.textContent='nothing to move here yet'; grid.appendChild(e); }
@@ -15691,7 +15762,7 @@ function _embedMount(){
     setInterval(()=>_hdrOffer(), 4000);   // a cheap re-read: the signature decides whether anything is sent
     window.addEventListener('message', ev=>{
       const d=ev.data; if(!d||typeof d!=='object'||ev.source!==window.parent) return;
-      if(d.type==='vera:hdr:absorbed'){ document.documentElement.classList.toggle('hdr-absorbed', !!d.on); if(d.on) _hdrOffer(true); return; }
+      if(d.type==='vera:hdr:absorbed'){ _hdrAck=true; document.documentElement.classList.toggle('hdr-absorbed', !!d.on); if(d.on) _hdrOffer(true); return; }
       if(d.type!=='vera:hdr:act') return;
       const el=bar.querySelector('[data-hid="'+String(d.hid||'').replace(/["\\]/g,'')+'"]'); if(!el) return;
       if(el.tagName==='SELECT'){ el.value=String(d.value==null?'':d.value); el.dispatchEvent(new Event('change', { bubbles:true })); }
@@ -15699,6 +15770,36 @@ function _embedMount(){
       _hdrOfferSoon();
     });
     _hdrOffer(true);
+    // the head started this chat absorbed so its bar never flashed; a harness that does not answer gives it back
+    setTimeout(()=>{ if(!_hdrAck) document.documentElement.classList.remove('hdr-absorbed'); }, 6000);
+  }
+  let _hdrAck=false;
+  /* ═══ MOTION: the reader's choices for the cursor, how messages and capabilities arrive, and how a running capability
+     shows it - kept per browser, painted on <html> (the head paints the stored ones before the page draws) ═══ */
+  const _MOTION_KEY='vera:chat:motion', _MOTION_DEF={ cursor:'bar', reply:'rise', caps:'slide', run:'shimmer' };
+  const _MOTION_FIELDS={ cursor:['cfgMotionCursor','data-cursor'], reply:['cfgMotionReply','data-reply'], caps:['cfgMotionCaps','data-capanim'], run:['cfgMotionCapRun','data-caprun'] };
+  function _motionRead(){ let m={}; try{ m=JSON.parse(localStorage.getItem(_MOTION_KEY)||'{}')||{}; }catch(_){} return Object.assign({}, _MOTION_DEF, m); }
+  function _motionPaint(m){ const d=document.documentElement; Object.keys(_MOTION_FIELDS).forEach(k=>{ const v=String(m[k]||_MOTION_DEF[k]); if(k==='run'&&v==='dot') d.removeAttribute('data-caprun'); else d.setAttribute(_MOTION_FIELDS[k][1], v); }); }
+  function _motionMount(){
+    const m=_motionRead(); _motionPaint(m);
+    Object.keys(_MOTION_FIELDS).forEach(k=>{ const el=document.getElementById(_MOTION_FIELDS[k][0]); if(!el) return; el.value=m[k];
+      el.addEventListener('change',()=>{ const cur=_motionRead(); cur[k]=el.value; try{ localStorage.setItem(_MOTION_KEY, JSON.stringify(cur)); }catch(_){} _motionPaint(cur); }); });
+  }
+  /* ═══ THE CONTEXT CONTROLS, IN THE COMPOSER'S MENU: the strip that sat above the input (sources, depth, frames) opens
+     from the Context chip in the menu below it - the same elements, their ids and handlers untouched - and the chip
+     carries the reading ("Context · 12"). The Context menu is still one press away, from the popover's head. ═══ */
+  function _cmpCtxMount(){
+    const bar=document.getElementById('inputBar'), strip=document.getElementById('ctxStrip'), chip=document.getElementById('cmpChipCtx'); if(!bar||!strip||!chip||document.getElementById('cmpCtxPop')) return;
+    const pop=document.createElement('div'); pop.id='cmpCtxPop'; pop.setAttribute('data-w','context · controls');
+    pop.innerHTML='<div class="ccp-h"><span>Context for this message</span><span class="sp"></span><button type="button" data-a="menu" title="The Context menu - the graph, what is in the prompt, its settings">Open the Context menu</button><button type="button" data-a="close" title="Close">\u2715</button></div>';
+    pop.appendChild(strip); bar.appendChild(pop);
+    pop.querySelector('[data-a="menu"]').addEventListener('click',ev=>{ ev.stopPropagation(); pop.classList.remove('on'); chip.classList.remove('pop'); try{ if(window.VeraLHM){ VeraLHM.pick('context/ctx'); const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); } }catch(_){} });
+    pop.querySelector('[data-a="close"]').addEventListener('click',ev=>{ ev.stopPropagation(); pop.classList.remove('on'); chip.classList.remove('pop'); });
+    document.addEventListener('click',ev=>{ if(pop.classList.contains('on')&&!pop.contains(ev.target)&&!chip.contains(ev.target)){ pop.classList.remove('on'); chip.classList.remove('pop'); } });
+    // the chip carries the reading the strip shows
+    const txt=document.getElementById('ctxStripTxt'); const n=document.createElement('span'); n.className='ccn'; chip.appendChild(n);
+    const read=()=>{ const t=String((txt&&txt.textContent)||'').trim(); const m=t.match(/(\d+)/); n.textContent=(m&&!/^no /i.test(t))?m[1]:''; };
+    read(); try{ if(txt) new MutationObserver(read).observe(txt,{ childList:true, characterData:true, subtree:true }); }catch(_){}
   }
   function _lhmMount(){
     if(!window.VeraLHM) return;
@@ -20062,6 +20163,9 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _initStickListeners();
     _initComposerReveal();
     _initRailUX();
+    try{ _motionMount(); }catch(e){ console.warn('motion', e); }
+    try{ _cmpCtxMount(); }catch(e){ console.warn('composer context', e); }
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{ document.documentElement.classList.remove('vboot'); }));   // assembled: now it may be seen
     _initRawContextDep();
     // loadModels FIRST — populates cfgModel options before loadAgents calls updateAgentMeta
     await loadModels();
