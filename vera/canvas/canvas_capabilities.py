@@ -23,6 +23,9 @@ build on top of these caps.
 """
 from typing import Any, Dict, List, Optional
 from pathlib import Path
+import asyncio
+import hashlib
+import inspect
 import json
 import re
 import time
@@ -111,6 +114,16 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
                          "so a run that reads forty pages does not fetch forty screenshots.",
                  "content": "{url:str, title?:str, domain?:str, snippet?:str, chars?:int, "
                             "text?:str, shot?:str, failed?:bool, query?:str}"},
+    "result":   {"desc": "A capability's RESULT (canvas.run): the cap, its arguments, how it went, and the answer - drawn "
+                         "as the element that fits it (terminal, table, widget, code, html, image, a record's fields, "
+                         "a JSON tree). Keyed by the cap and its arguments, so running it again updates it.",
+                 "content": "{cap:str, args:obj, result:any, ok:bool, error?:str, ms?:int, ts?:str}"},
+    "json":     {"desc": "Structured data as a tree you can open and close.",
+                 "content": "{data:any, title?:str}"},
+    "kv":       {"desc": "A record: its fields, name beside value.",
+                 "content": "{fields:{str:any}|[[str,any]], title?:str}"},
+    "chat":     {"desc": "An exchange - who asked and who answered, each message rendered as Markdown.",
+                 "content": "{messages:[{role:'user'|'assistant', text:str, name?:str}], title?:str}"},
     "loop":     {"desc": "An agentic run as an item: its goal, status and steps (each a "
                          "capability) — written by the chat and by the loop itself (P7).",
                  "content": "{goal:str, status:str, steps:[{n:str, cap?:str, status?:str, ms?:str}], run?:str}"},
@@ -990,6 +1003,121 @@ async def cap_canvas_show(id: str = "", session_id: str = "", title: str = "",
     return out
 
 
+# ── canvas.run: a capability's answer, as an item ─────────────────────────────────────────────────────────────────
+_RUN_MAX_CHARS = 300_000
+
+
+def _json_safe(v: Any) -> Any:
+    """What a capability answered, as something the canvas can store: JSON, strings for what is not, and bounded -
+    an answer too big to keep is kept as the start of its text rather than dropped."""
+    try:
+        s = json.dumps(v, default=str)
+    except Exception:
+        s = json.dumps(str(v))
+    if len(s) > _RUN_MAX_CHARS:
+        return {"_truncated": True, "chars": len(s), "text": s[:_RUN_MAX_CHARS]}
+    return json.loads(s)
+
+
+def _args_key(args: Dict[str, Any]) -> str:
+    """The same cap with the same arguments is the same item: a short, stable digest of the arguments."""
+    try:
+        raw = json.dumps(args or {}, sort_keys=True, default=str)
+    except Exception:
+        raw = str(args)
+    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:10]
+
+
+@capability(
+    "canvas.run", memory="off",
+    http_method="POST", http_path="/canvas/run", http_tags=["canvas"],
+    description="RUN a capability and put its RESULT on the session canvas as the element that fits it - a command's "
+                "output as a terminal, rows as a table, numbers as a widget, a file as a code item, a page as html, "
+                "a record as its fields, anything else as a JSON tree. The item is keyed by the cap and its "
+                "arguments, so running it again UPDATES the same item (its 'run again' button does exactly that). "
+                "Inputs: cap (str! - the capability to run; canvas.* is refused), args (obj - its arguments), id or "
+                "session_id (the canvas), key (str - default result:<cap>:<digest of args>), at, size, anchor "
+                "({turn, mid}), timeout_s (default 120, at most 900). Output: {ok, key, cap_ok, cap_error?, ms, "
+                "resolved: 'added'|'updated', id, revision}.",
+)
+async def cap_canvas_run(cap: str = "", args: Any = None, id: str = "", session_id: str = "", key: str = "",
+                         at: str = "", size: str = "", anchor: Any = None, timeout_s: float = 120.0, trace_id=None):
+    name = str(cap or "").strip()
+    if not name:
+        return {"ok": False, "error": "cap is required"}
+    if name.startswith("canvas."):
+        return {"ok": False, "error": "canvas.* capabilities describe the canvas; they are not run onto it"}
+    entry = CAPABILITY_REGISTRY.get(name) or {}
+    fn = entry.get("func") or entry.get("raw")
+    if not fn:
+        return {"ok": False, "error": f"unknown capability: {name}"}
+    a = _as_obj(args) if args not in (None, "") else {}
+    if not isinstance(a, dict):
+        return {"ok": False, "error": "args must be an object"}
+    a = {k: v for k, v in a.items() if k != "trace_id"}
+    doc = await _target(id, session_id)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id or '(no id or session_id)'}"}
+    try:
+        limit = max(1.0, min(float(timeout_s or 120.0), 900.0))
+    except Exception:
+        limit = 120.0
+    t0 = time.time()
+    err = ""
+    res: Any = None
+    try:
+        if inspect.iscoroutinefunction(fn):
+            res = await asyncio.wait_for(fn(**a, trace_id=trace_id), timeout=limit)
+        else:
+            # a synchronous capability runs off the event loop, so a slow one cannot stall the server
+            res = await asyncio.wait_for(asyncio.to_thread(lambda: fn(**a, trace_id=trace_id)), timeout=limit)
+            if inspect.isawaitable(res):
+                res = await asyncio.wait_for(res, timeout=limit)
+    except asyncio.TimeoutError:
+        err = f"timed out after {int(limit)} s"
+    except TypeError as e:
+        err = f"bad arguments for {name}: {e}"
+    except Exception as e:  # the canvas says what happened; it never takes the chat down with it
+        err = f"{type(e).__name__}: {e}"
+    ms = int((time.time() - t0) * 1000)
+    safe = _json_safe(res)
+    failed = bool(err) or (isinstance(safe, dict) and safe.get("ok") is False)
+    content: Dict[str, Any] = {"cap": name, "args": a, "result": safe, "ok": not failed, "ms": ms, "ts": now_iso()}
+    if err:
+        content["error"] = err
+    elif failed and isinstance(safe, dict) and (safe.get("error") or safe.get("message")):
+        content["error"] = str(safe.get("error") or safe.get("message"))
+    k = str(key or "").strip() or f"result:{name}:{_args_key(a)}"
+    hit = _find_key(doc, k)
+    if hit is not None:
+        hit["type"] = "result"
+        hit["content"] = content
+        hit["state"] = at if at in ITEM_STATES else "now"
+        hit["ts"] = now_iso()
+        if size in ITEM_SIZES:
+            hit["size"] = size
+        _add_anchor(hit, anchor)
+        rev = await _write(doc, "update", k, turn=_anchor_turn(anchor))
+        resolved = "updated"
+    else:
+        blocks = doc.setdefault("blocks", [])
+        if len(blocks) >= _MAX_BLOCKS:
+            return {"ok": False, "error": f"canvas is full ({_MAX_BLOCKS} blocks)"}
+        block = {"id": _new_id("bk"), "type": "result", "ts": now_iso(), "content": content, "meta": {},
+                 "layout": {"order": len(blocks)}, "key": k,
+                 "state": at if at in ITEM_STATES else "now",
+                 "size": size if size in ITEM_SIZES else "m"}
+        _add_anchor(block, anchor)
+        blocks.append(block)
+        rev = await _write(doc, "add", k, turn=_anchor_turn(anchor))
+        resolved = "added"
+    out: Dict[str, Any] = {"ok": True, "key": k, "cap_ok": not failed, "ms": ms, "resolved": resolved,
+                           "id": doc["id"], "revision": rev}
+    if content.get("error"):
+        out["cap_error"] = content["error"]
+    return out
+
+
 _ELEMENT_JS = Path(__file__).parent / "canvas_element.js"
 
 
@@ -1024,7 +1152,8 @@ register_ui(
              "canvas.update", "canvas.move", "canvas.remove", "canvas.clear", "canvas.delete",
              "canvas.block_types",
              "canvas.session.resolve", "canvas.add", "canvas.pin", "canvas.park", "canvas.size",
-             "canvas.recall", "canvas.timeline", "canvas.session.room", "canvas.session.relevance", "canvas.ask"],
+             "canvas.recall", "canvas.timeline", "canvas.session.room", "canvas.session.relevance", "canvas.ask",
+             "canvas.run"],
     mode="tab",
     tab_order=60,
 )
