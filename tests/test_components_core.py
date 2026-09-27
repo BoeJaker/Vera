@@ -34,7 +34,9 @@ def test_native_worker_cmd_fixes_layout_cwd_and_durability():
     assert "python -u -m Vera.vera.capability_orchestration" in cmd
     # DURABLE: systemd unit installed, with a nohup fallback for non-systemd hosts
     assert "/etc/systemd/system/vera-worker.service" in cmd
-    assert "systemctl enable --now vera-worker" in cmd
+    assert "systemctl enable vera-worker" in cmd
+    # restart, not `enable --now`: a re-provision must leave the OLD commit
+    assert "systemctl restart vera-worker" in cmd
     assert "nohup" in cmd
     # backend env carried through — incl. Chroma, which the old code dropped entirely
     assert "REDIS_URL" in cmd and "CHROMA_HOST" in cmd and "POSTGRES_URL" in cmd

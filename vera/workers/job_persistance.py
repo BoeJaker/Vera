@@ -425,6 +425,17 @@ async def _recover_orphans():
             if idle_ms < RECOVERY_IDLE_MS:
                 continue
 
+            # Idle is time since DELIVERY, not since the consumer was last seen:
+            # a worker on another node running a long task holds its entry
+            # pending the whole time. Its registration (vera:workers:<id>, the
+            # consumer name, refreshed every loop with a 120 s TTL) says it is
+            # alive - reclaiming would run the task twice.
+            try:
+                if consumer and await r.exists(f"vera:workers:{consumer}"):
+                    continue
+            except Exception:
+                pass
+
             log.warning("recovery: orphan %s idle=%dms consumer=%s deliveries=%d",
                         msg_id, idle_ms, consumer, delivery_count)
 

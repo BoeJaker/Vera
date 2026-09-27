@@ -46,8 +46,10 @@ from Vera.vera.integrations.infrastructure_effects import observe_infrastructure
 from Vera.vera.provisioning.components_core import (
     rewrite_host, native_worker_cmd,
     EDGE_DIR_CANDIDATES as _EDGE_DIR_CANDIDATES,
+    WORKER_DIR_CANDIDATES as _WORKER_DIR_CANDIDATES,
     edge_dir_probe_cmd, parse_edge_dir, pidfile_lookup_cmd,
 )
+from Vera.vera.workers import worker_placement_core as _placement
 
 log = logging.getLogger("vera.provision.components")
 _HERE = Path(__file__).parent
@@ -539,6 +541,42 @@ async def cap_component_stop(host_id: str = "", component: str = "",
 # ═════════════════════════════════════════════════════════════════════════════
 #  VERA WORKER  — docker container (reuse docker.worker.spawn) OR native process
 # ═════════════════════════════════════════════════════════════════════════════
+async def _host_bundle() -> Dict[str, Any]:
+    """This host's checked-out commit as base64 tar.gz (vera/ + requirements.txt).
+
+    Shipping the host's own commit — rather than cloning from a remote — means a
+    node worker runs exactly the code the host runs, and the node needs no git
+    credentials (the nodes have none). Spawned through spawn_core: an asyncio
+    subprocess under uvloop forks the whole server."""
+    try:
+        from Vera.vera.execution import spawn_core as _spawn
+    except Exception:                                  # pragma: no cover
+        from vera.execution import spawn_core as _spawn
+    repo = shlex.quote(str(_REPO))
+    git = f"git -c safe.directory='*' -C {repo}"
+    head = await _spawn.run_argv(["sh", "-c", f"{git} rev-parse HEAD"], timeout=30)
+    if not head.get("ok"):
+        return {"ok": False, "error": "cannot read this host's commit: "
+                + (head.get("stderr") or head.get("error") or "")[:300]}
+    arc = await _spawn.run_argv(
+        ["sh", "-c", f"{git} archive --format=tar.gz HEAD vera requirements.txt | base64 -w0"],
+        timeout=180, max_output=256_000_000)
+    if not arc.get("ok") or not (arc.get("stdout") or "").strip():
+        return {"ok": False, "error": "git archive failed: "
+                + (arc.get("stderr") or arc.get("error") or "")[:300]}
+    return {"ok": True, "commit": (head.get("stdout") or "").strip(),
+            "b64": arc["stdout"].strip()}
+
+
+def _ssh_stored_with_input():
+    """exec's stdin-capable runner, from the module that actually registered
+    exec.ssh.run (importing it by path again could load a second copy)."""
+    import sys as _sys
+    fn = _cap("exec.ssh.run")
+    mod = _sys.modules.get(getattr(fn, "__module__", "") or "")
+    return getattr(mod, "ssh_run_stored", None)
+
+
 @capability(
     "provision.worker",
     http_method="POST", http_path="/provision/worker", http_tags=["provision"],
@@ -546,17 +584,24 @@ async def cap_component_stop(host_id: str = "", component: str = "",
     description="Provision a Vera worker that joins the cluster (consumes the task "
                 "stream via the shared REDIS_URL). Inputs: host_id (str!), mode "
                 "('docker'|'native'), name (str), image (str — docker), gpus (str "
-                "— 'all'), repo_url (str — native: git URL, else env VERA_REPO_URL), "
-                "port (int=8990 — native orchestrator port), redis_url (str — "
-                "default this orchestrator's), timeout (int=1200). "
+                "— 'all'), source (str — native: 'host' ships THIS host's checked-out "
+                "commit over SSH (default), 'git' clones repo_url / VERA_REPO_URL), "
+                "repo_url (str), port (int=8990 — native orchestrator port), "
+                "redis_url (str — default this orchestrator's), threads (int=2 — "
+                "native: the worker's BLAS/OpenMP pool size), timeout (int=1200). "
                 "docker → registers the host as an SSH Docker host then "
-                "docker.worker.spawn. native → git-clone Vera + venv + run "
-                "'python -m Vera.vera.capability_orchestration'. Output: {ok, mode, ...}.",
+                "docker.worker.spawn. native → installs under the first writable of "
+                "/opt/vera/worker, /var/lib/vera/worker, $HOME/.vera/worker, as a "
+                "systemd unit in the NODE-WORKER role (VERA_IS_WORKER=1: node-safe "
+                "caps only, no ambient scheduler), at lower CPU priority than the "
+                "node's own services. Re-running refreshes the code and restarts it. "
+                "Output: {ok, mode, ...}.",
 )
 async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
                      image: str = "", gpus: str = "", repo_url: str = "",
                      port: int = 8990, redis_url: str = "", timeout: int = 1200,
-                     backend_host: str = "", trace_id=None) -> Dict:
+                     backend_host: str = "", source: str = "", threads: int = 0,
+                     trace_id=None) -> Dict:
     rec = await _host_rec(host_id)
     if not rec:
         return {"ok": False, "error": f"host_id not found: {host_id}"}
@@ -579,11 +624,15 @@ async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
         return {"ok": bool(sp.get("ok")), "mode": "docker", "docker_host": dhost, "spawn": sp}
 
     if mode == "native":
+        src_kind = (source or ("git" if repo_url else "host")).strip().lower()
         repo = repo_url or os.getenv("VERA_REPO_URL", "")
-        if not repo:
+        if src_kind not in ("host", "git"):
             return {"ok": False, "mode": "native",
-                    "error": "native mode needs a git repo_url (or set VERA_REPO_URL on the Vera host). "
-                             "Provide the URL of your Vera repository."}
+                    "error": f"unknown source: {source} (use 'host' or 'git')"}
+        if src_kind == "git" and not repo:
+            return {"ok": False, "mode": "native",
+                    "error": "source=git needs a repo_url (or VERA_REPO_URL on the Vera host); "
+                             "source=host ships this host's own commit instead."}
         # A remote worker can't reach the orchestrator's own localhost stores — re-point
         # every backend URL at a LAN-reachable address (this box's IP, or backend_host).
         bh = (backend_host or os.getenv("VERA_ADVERTISE_HOST", "") or _primary_lan_ip())
@@ -592,18 +641,65 @@ async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
         for k in ("POSTGRES_URL", "NEO4J_URI", "NEO4J_USER", "NEO4J_PASS",
                   "CHROMA_HOST", "CHROMA_PORT", "OLLAMA_BASE_URL", "OLLAMA_GPU_URL",
                   "OLLAMA_CPU_A_URL", "OLLAMA_CPU_B_URL", "OLLAMA_EMBED_URL",
-                  "OLLAMA_MODEL", "VERA_COORD_REDIS_DB"):
+                  "OLLAMA_MODEL", "VERA_COORD_REDIS_DB", "VERA_CPU_NODE_THREADS"):
             v = os.getenv(k)
             if v:
                 backend_kv[k] = rewrite_host(v, bh)
+
+        # Where to install. Never assume $HOME: /root on these unprivileged LXC
+        # nodes is nobody:root 0700 (see components_core.WORKER_DIR_CANDIDATES).
+        probe = await _ssh(host_id, edge_dir_probe_cmd(_WORKER_DIR_CANDIDATES), timeout=40)
+        root = parse_edge_dir(probe.get("stdout") or "")
+        if not root:
+            return {"ok": False, "mode": "native",
+                    "error": ("could not probe the target over SSH: "
+                              f"{probe.get('error') or probe.get('stderr') or 'no response'}")
+                    if not probe.get("ok") else
+                    ("no writable install directory on the target (tried "
+                     f"{', '.join(_WORKER_DIR_CANDIDATES)})")}
+
+        bundle: Dict[str, Any] = {}
+        if src_kind == "host":
+            bundle = await _host_bundle()
+            if not bundle.get("ok"):
+                return {"ok": False, "mode": "native", "error": bundle.get("error")}
+            runner = _ssh_stored_with_input()
+            if runner is None:
+                return {"ok": False, "mode": "native",
+                        "error": "exec module has no ssh_run_stored (stdin transport)"}
+
+        extra_env = {
+            # the node-worker role: node-safe caps only, no ambient scheduler
+            "VERA_IS_WORKER": "1",
+            # A worker talks to the cluster through Redis only. Its HTTP app
+            # would otherwise serve every capability on the LAN from each node;
+            # loopback keeps it for local diagnosis. (Later Environment= lines
+            # win in systemd, so this overrides native_worker_cmd's 0.0.0.0.)
+            "ORCHESTRATOR_HOST": "127.0.0.1",
+            # /root is unreachable on these nodes; anything defaulting a cache
+            # under $HOME would die with a permission error
+            "HOME": "/",
+            **_placement.worker_thread_env(int(threads or _placement.DEFAULT_WORKER_THREADS)),
+        }
+        if bundle.get("commit"):
+            extra_env["VERA_WORKER_COMMIT"] = bundle["commit"]
         # native_worker_cmd handles the repo's vera/ package layout, a neutral cwd (so
         # vera/operator can't shadow stdlib operator), and a durable systemd unit.
-        cmd = native_worker_cmd(root="$HOME/.vera/worker", repo=repo, redis_url=redis_url,
-                                backend_kv=backend_kv, port=int(port))
-        res = await _ssh(host_id, cmd, timeout=int(timeout or 1200))
+        cmd = native_worker_cmd(root=root, repo=repo, redis_url=redis_url,
+                                backend_kv=backend_kv, port=int(port),
+                                bundle=(src_kind == "host"), extra_env=extra_env,
+                                nice=_placement.WORKER_NICE,
+                                cpu_weight=_placement.WORKER_CPU_WEIGHT)
+        if src_kind == "host":
+            res = await runner(host_id, cmd, timeout=int(timeout or 1200),
+                               input=bundle["b64"])
+        else:
+            res = await _ssh(host_id, cmd, timeout=int(timeout or 1200))
         ok = bool(res.get("ok")) and "VERA_LAUNCHED" in (res.get("stdout", "") or "")
-        await emit_event({"type": "provision.worker", "mode": "native", "host": rec.get("host", ""), "ok": ok})
-        return {"ok": ok, "mode": "native", "port": int(port), "backend_host": bh,
+        await emit_event({"type": "provision.worker", "mode": "native", "host": rec.get("host", ""),
+                          "ok": ok, "source": src_kind, "commit": bundle.get("commit", "")})
+        return {"ok": ok, "mode": "native", "source": src_kind, "root": root,
+                "commit": bundle.get("commit", ""), "port": int(port), "backend_host": bh,
                 "log": ((res.get("stdout", "") or "") + "\n" + (res.get("stderr", "") or ""))[-3000:],
                 "error": "" if ok else (res.get("stderr") or res.get("error") or "native worker launch failed")}
 
