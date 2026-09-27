@@ -558,6 +558,30 @@ def _series(src: Mapping[str, Any], M: Mapping[str, Any]) -> Dict[str, Dict[str,
     return out
 
 
+def proc_tcp_peers(text: str, port: int, v6: bool = False) -> Dict[str, int]:
+    """Parse /proc/net/tcp (or tcp6): remote address -> count of ESTABLISHED sockets whose local port is `port`."""
+    import ipaddress
+    out: Dict[str, int] = {}
+    for row in text.splitlines()[1:]:
+        f = row.split()
+        if len(f) < 4 or f[3] != "01":
+            continue
+        try:
+            if int(f[1].split(":")[1], 16) != port:
+                continue
+            rhex = f[2].split(":")[0]
+            raw = bytes.fromhex(rhex)
+            if v6:
+                a6 = ipaddress.IPv6Address(b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4)))
+                ip = str(a6.ipv4_mapped) if a6.ipv4_mapped else str(a6)
+            else:
+                ip = str(ipaddress.IPv4Address(raw[::-1]))
+        except (ValueError, IndexError):
+            continue
+        out[ip] = out.get(ip, 0) + 1
+    return out
+
+
 CLIENT_RECENT_S = 1800      # an agent or person who called a capability in the last half hour is a client now
 
 
@@ -595,7 +619,7 @@ def _clients(src: Mapping[str, Any], M: Mapping[str, Any], now: Optional[datetim
         a["areas"] += [str(x) for x in (s.get("areas") or []) if x and str(x) not in a["areas"]]
     for actor, a in agg.items():
         agent = actor.startswith("agent:")
-        name = actor.split(":", 1)[-1].replace("-", " ").replace("_", " ") or actor
+        name = "unattributed callers" if actor in ("unknown", "") else (actor.split(":", 1)[-1].replace("-", " ").replace("_", " ") or actor)
         nid = "client:actor:" + _norm(actor)
         nodes[nid] = _node(nid, name, "client", DEV if agent else EDGE, kind="client", ckind="agent" if agent else "person",
                            status="run" if a["age"] < 120 else "ok",
