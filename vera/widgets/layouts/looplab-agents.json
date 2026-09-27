@@ -1,0 +1,196 @@
+{
+ "v": 2,
+ "dashboard": "looplab-agents",
+ "layout": "default",
+ "key": "looplab-agents",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "name": "Agents & board",
+ "note": "Who is doing what: the board by lane with each card's gate, the fleet, who wrote which commits, and the gate record split by agent.",
+ "widgets": [
+  {
+   "record": {
+    "id": "looplab-agents-board",
+    "form": "ci-board",
+    "source": "ci.board",
+    "shape": "items",
+    "title": "Board",
+    "read": {
+     "refresh": "60s",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      5
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    12,
+    5
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-agents-fleet",
+    "form": "ci-fleet",
+    "source": "ci.fleet",
+    "shape": "items",
+    "title": "Fleet",
+    "read": {
+     "refresh": "20s",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    5
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "20s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-agents-authors",
+    "form": "element",
+    "source": "",
+    "shape": "panel",
+    "title": "Authorship",
+    "read": {
+     "refresh": "",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "tag": "vera-author-map",
+     "attrs": {}
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    5
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-agents-by-agent",
+    "form": "race-green",
+    "source": "ci.race",
+    "shape": "matrix",
+    "title": "Gate runs by agent",
+    "read": {
+     "refresh": "60s",
+     "args": {
+      "group": "controller"
+     },
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    9
+   ],
+   "span": [
+    12,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  }
+ ]
+}

@@ -55,7 +55,7 @@ COMPOSITIONS = {
 }
 
 # forms that need no source (chrome, containers, the panel form reads a panel id)
-NO_SOURCE_FORMS = ("header", "button", "rail", "controls", "panel", "composite", "announcement", "links", "form", "calnav")
+NO_SOURCE_FORMS = ("header", "button", "rail", "controls", "panel", "composite", "announcement", "links", "form", "calnav", "element")
 
 # ── the forms (the Widgets · WidgetsMotion · WidgetsIso galleries and the reply's own) ──
 # id · shape · projections · glyph · motion · sizes · options · the board's name · the boards it is on. Every form the three
@@ -244,6 +244,9 @@ FORMS: List[Dict[str, Any]] = [
     _F("ci-pulse", "values", glyph="ci-pulse", options=("buckets",), name="CI pulse", boards=("widgets", "reply")),
     _F("ci-fleet", "items", glyph="ci-fleet", name="Agent fleet", boards=("widgets", "reply")),
     _F("ci-run", "values", glyph="ci-run", name="Run drill-down", boards=("widgets", "reply")),
+    _F("census-commits", "matrix", glyph="census-commits", options=("template",), name="Census \u00d7 commits", boards=("widgets", "reply")),
+    # a page's own custom element (draw.tag) placed as a widget: the Loop Lab's commit graph, authorship, test activity...
+    _F("element", "panel", glyph="element", sizes=("s", "m", "l", "xl"), options=("tag", "attrs"), name="Page element", boards=("widgets",)),
 ]
 _FORM_BY_ID = {f["id"]: f for f in FORMS}
 # the context graph's line above is held verbatim by the chat's explode test; its name and board ride in here

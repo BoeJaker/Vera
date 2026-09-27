@@ -104,7 +104,7 @@
                   month: 'calendar', schedule: 'calendar', calnav: 'calendar', vgraph: 'graph' };
   const canon = (form) => { const f = String(form || '').toLowerCase(); return DRAWN[f] ? f : (ALIAS[f] || f); };
   // the Loop Lab's pictures (see the CI section): each draws the ci payload whole, at every size
-  const CI_FORMS = /^(status-matrix|race-green|test-grid|ci-board|run-track|run-compare|ci-pulse|ci-fleet|ci-run)$/;
+  const CI_FORMS = /^(status-matrix|race-green|test-grid|ci-board|run-track|run-compare|ci-pulse|ci-fleet|ci-run|census-commits|element)$/;
 
   /* ── the data a form draws ────────────────────────────────────────────── */
   // a capability result's SHAPE → its default form, deterministically (the Formats board's table)
@@ -1727,7 +1727,7 @@
     'cal.events.list': { form: 'schedule' }, 'exec.bash.run': { form: 'terminal' }, 'code.read': { form: 'code' }, 'code.diff': { form: 'diff' }, 'evolve.pipeline.diff': { form: 'diff' }, 'evolve.sandbox.diff': { form: 'diff' },
     // the Loop Lab's pictures: ci.* (code work), loop.ci.* (the agentic loop), and the Loop Lab's own capabilities
     'ci.matrix': { form: 'status-matrix' }, 'ci.race': { form: 'race-green' }, 'ci.tests': { form: 'test-grid' }, 'ci.board': { form: 'ci-board' }, 'ci.track': { form: 'run-track' },
-    'ci.compare': { form: 'run-compare' }, 'ci.pulse': { form: 'ci-pulse' }, 'ci.fleet': { form: 'ci-fleet' }, 'ci.run': { form: 'ci-run' },
+    'ci.compare': { form: 'run-compare' }, 'ci.pulse': { form: 'ci-pulse' }, 'ci.fleet': { form: 'ci-fleet' }, 'ci.run': { form: 'ci-run' }, 'ci.census': { form: 'census-commits' },
     'loop.ci.matrix': { form: 'status-matrix' }, 'loop.ci.race': { form: 'race-green' }, 'loop.ci.board': { form: 'ci-board' },
     'evolve.pipeline.get': { form: 'run-track' }, 'evolve.tasks.overview': { form: 'status-matrix' }, 'workshop.agent_loop.trace': { form: 'status-matrix' }, 'board.items': { form: 'ci-board' } };
   const hintOf = (cap) => { const n = String(cap || ''); if (CAP_HINTS[n]) return CAP_HINTS[n]; if (/\.(diff|patch)$/.test(n)) return { form: 'diff' }; if (/\.(health|healthz)$/.test(n)) return { form: 'status' }; return null; };
@@ -2028,7 +2028,7 @@
       const lanes = steps.map((s) => { const cells = s.calls.map((c) => ({ id: s.id + '.' + (c.cycle || ''), ts: '', o: c.ok ? 'pass' : c.ok === false ? 'fail' : 'unknown', label: String(c.tool || ''), ms: +c.ms || 0, summary: String(c.args || ''), controller: 'vera' })); const race = ciRace(cells); race.state = s.ok ? 'green' : s.ok === false ? 'red' : s.executed ? 'racing' : 'none'; return { id: s.id, name: s.title, cells, hidden: 0, race, state: race.state, controllers: ['vera'], total: cells.length }; });
       if (Array.isArray(d.gates) && d.gates.length) { const cells = d.gates.filter(isObj).map((g) => ({ id: 'gate.' + g.round, ts: '', o: g.complete ? 'pass' : 'fail', label: 'round ' + g.round, summary: (g.missing || []).join('; ') || 'complete' })); const race = ciRace(cells); lanes.unshift({ id: 'gate', name: 'completion gate', cells, hidden: 0, race, state: race.state, controllers: ['vera'], total: cells.length }); }
       return mx(lanes, { title: (d.run && d.run.goal) || 'Loop', session_id: d.session_id, source: 'workshop.agent_loop.trace' }); }
-    if (Array.isArray(d.tasks) && d.tasks.length && isObj(d.tasks[0]) && ('series' in d.tasks[0] || 'stats' in d.tasks[0])) { const lanes = d.tasks.filter(isObj).map((t) => { const s = Array.isArray(t.series) ? t.series : []; const cells = s.map((v, i) => { if (isObj(v) && (v.ok != null || v.status)) return { id: String(v.run_id || (t.task_id || '') + ':' + i), ts: String(v.ts || ''), o: ciO(v), label: String(v.driver || ''), summary: [v.status, v.wall_s != null ? Math.round(v.wall_s) + 's' : '', v.code ? '@' + v.code : ''].filter(Boolean).join(' · '), controller: ciCtl(v.driver) }; const x = num(isObj(v) ? (v.score ?? v.v ?? v.value) : v); return { id: (t.task_id || '') + ':' + i, ts: '', o: x >= 0.999 ? 'pass' : x <= 0 ? 'fail' : 'warn', score: x, controller: '' }; }); const race = ciRace(cells); return { id: String(t.task_id || t.name || ''), name: String((t.task && (t.task.name || t.task.title)) || t.name || t.task_id || ''), cells, hidden: 0, race, state: race.state, controllers: [], total: cells.length, last_ts: String((t.last && (t.last.ts || t.last.at)) || '') }; }); return mx(lanes, { title: 'Tasks', source: 'evolve.tasks.overview' }); }
+    if (Array.isArray(d.tasks) && d.tasks.length && isObj(d.tasks[0]) && ('series' in d.tasks[0] || 'stats' in d.tasks[0])) { const lanes = d.tasks.filter(isObj).map((t) => { const s = Array.isArray(t.series) ? t.series : []; const cells = s.map((v, i) => { if (isObj(v) && (v.ok != null || v.status)) return { id: String(v.run_id || (t.task_id || '') + ':' + i), ts: String(v.ts || ''), o: ciO(v), label: String(v.driver || ''), summary: [v.status, v.wall_s != null ? Math.round(v.wall_s) + 's' : '', v.code ? '@' + v.code : ''].filter(Boolean).join(' · '), controller: ciCtl(v.driver) }; const x = num(isObj(v) ? (v.score ?? v.v ?? v.value) : v); return { id: (t.task_id || '') + ':' + i, ts: '', o: x >= 0.999 ? 'pass' : x <= 0 ? 'fail' : 'warn', score: x, controller: '' }; }); const race = ciRace(cells); return { id: String(t.task_id || t.name || ''), name: String((t.task && (t.task.name || t.task.title)) || t.name || t.task_id || ''), cells, hidden: 0, race, state: race.state, controllers: [...new Set(cells.map((c) => c.controller).filter(Boolean))], last_ts: String((t.last && (t.last.ts || t.last.at)) || '') }; }); return mx(lanes, { title: 'Tasks', source: 'evolve.tasks.overview' }); }
     if (Array.isArray(d.items) && d.items.length && isObj(d.items[0]) && 'lane' in d.items[0]) { const by = {}; d.items.filter(isObj).forEach((it) => { const k = String(it.lane || 'inbox'); (by[k] = by[k] || []).push({ id: it.id, title: it.title, lane: k, agent: ciCtl(it.agent) || it.agent, branch: it.branch || '', pipeline: it.pipeline || '', session: it.session || '', labels: it.labels || [], comments: +it.comment_count || 0, updated_at: it.updated_at || it.created_at || '' }); });
       const order = ['inbox', 'ready', 'queued_vera', 'in_progress', 'in_progress_vera', 'blocked', 'needs_review', 'review', 'done', 'dropped']; const names = order.filter((k) => by[k]).concat(Object.keys(by).filter((k) => !order.includes(k)).sort()); return { kind: 'ci', view: 'board', title: 'Board', columns: names.map((k) => ({ name: k, items: by[k] })) }; }
     if (Array.isArray(d.sandboxes)) { const cards = d.sandboxes.filter(isObj).map((s) => ({ name: s.name, branch: s.branch, role: s.role, running: !!s.running, pinned: !!s.pinned, port: s.port, url: s.url, owner: ciCtl(s.owner) || s.owner || '', last_activity: s.last_activity || '', gate: '', conversations: 0 })); return { kind: 'ci', view: 'fleet', title: 'Fleet', cards, summary: { sandboxes: cards.length, running: cards.filter((c) => c.running).length } }; }
@@ -2136,11 +2136,15 @@
   R['ci-pulse'] = (d, H, o) => {
     const p = ciOf(d, 'ci-pulse') || (d && Array.isArray(d.buckets) ? { kind: 'ci', view: 'pulse', title: 'Activity', series: d.buckets.map((b) => ({ t: b.hour, runs: (+b.pass || 0) + (+b.fail || 0), pass: +b.pass || 0, red: +b.fail || 0, rate: ((+b.pass || 0) + (+b.fail || 0)) ? (+b.pass || 0) / ((+b.pass || 0) + (+b.fail || 0)) : null })), summary: {} } : null);
     if (!p || !Array.isArray(p.series)) return EMPTY('a pulse needs runs over time'); const sz = (o && o.size) || 'm', s = p.summary || {}, se = p.series.slice(sz === 'm' ? -14 : sz === 'l' ? -30 : -90);
-    const hi = Math.max(1, ...se.map((x) => +x.runs || 0)), W = 100, Hc = chH(H, sz === 'm' ? 40 : 58), bw = W / Math.max(1, se.length);
+    const hi = Math.max(1, ...se.map((x) => +x.runs || 0)), W = 100, bw = W / Math.max(1, se.length);
+    // the chart draws in a fixed 100-unit space and CSS fills whatever height the tile gives it: sized from the
+    // measured body it grew the body it was measured from, and a dashboard tile re-measured and re-drew until the
+    // bars were 33 million px tall (the Live lens, 2026-09-27)
+    const Hc = 100;
     const bars = se.map((x, i) => { const hp = (+x.pass || 0) / hi * (Hc - 4), hr = (+x.red || 0) / hi * (Hc - 4); return '<g><title>' + esc(x.t + ' · ' + x.runs + ' runs · ' + x.pass + ' green · ' + x.red + ' red' + (x.rate != null ? ' · ' + ciPct(x.rate) : '')) + '</title><rect x="' + (i * bw + bw * .15).toFixed(2) + '" y="' + (Hc - hp).toFixed(1) + '" width="' + (bw * .7).toFixed(2) + '" height="' + hp.toFixed(1) + '" rx=".6" fill="var(--b-ac2)" opacity=".85"/><rect x="' + (i * bw + bw * .15).toFixed(2) + '" y="' + (Hc - hp - hr).toFixed(1) + '" width="' + (bw * .7).toFixed(2) + '" height="' + hr.toFixed(1) + '" rx=".6" fill="var(--b-ac4)" opacity=".85"/></g>'; }).join('');
     const rl = se.map((x, i) => x.rate == null ? null : ((i + .5) * bw).toFixed(2) + ',' + (4 + (1 - x.rate) * (Hc - 8)).toFixed(1)).filter(Boolean).join(' ');
     return wrap('ci-pulse', '<div class="ci-pl">' + '<div class="ci-kpis">' + ciRing(s.pass_rate, sz === 'm' ? 40 : 52) + '<span><b>' + fmt(s.runs || se.reduce((a, x) => a + (+x.runs || 0), 0)) + '</b><small>runs</small></span>' + (s.median_seconds_to_green != null ? '<span><b>' + ciDur(s.median_seconds_to_green) + '</b><small>to green</small></span>' : '') + (s.median_attempts != null ? '<span><b>' + fmt(s.median_attempts) + '</b><small>tries</small></span>' : '') + (s.states ? '<span><b class="' + (s.states.red ? 'bad' : 'ok') + '">' + (s.states.red || 0) + '</b><small>red lanes</small></span>' : '') + '</div>'
-      + '<svg class="ci-bars" viewBox="0 0 ' + W + ' ' + Hc + '" preserveAspectRatio="none" style="height:' + Hc + 'px">' + bars + (rl ? '<polyline points="' + rl + '" fill="none" stroke="var(--b-ac)" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>' : '') + '</svg>'
+      + '<svg class="ci-bars" viewBox="0 0 ' + W + ' ' + Hc + '" preserveAspectRatio="none">' + bars + (rl ? '<polyline points="' + rl + '" fill="none" stroke="var(--b-ac)" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>' : '') + '</svg>'
       + '<div class="ci-axis"><span>' + esc(String((se[0] || {}).t || '')) + '</span>' + ciAgents(s.controllers) + '<span>' + esc(String((se[se.length - 1] || {}).t || '')) + '</span></div></div>', 'ci');
   };
   R['ci-fleet'] = (d, H, o) => {
@@ -2195,9 +2199,89 @@
     + '.ci-cmp{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;flex:none}.ci-side{display:flex;flex-direction:column;gap:2px;padding:6px 8px;border-radius:7px;background:var(--b-surf2);border-left:3px solid var(--b-t3)}.ci-side.o-pass{border-left-color:var(--b-ac2)}.ci-side.o-fail,.ci-side.o-error{border-left-color:var(--b-ac4)}.ci-side small{font-size:9px;color:var(--b-t3)}.ci-side>b{font:600 15px var(--b-mono)}.ci-side>b i{font-style:normal;font-size:10px;color:var(--b-t3);font-weight:400}.ci-side span{display:flex;gap:5px;align-items:center;font-size:9.5px}.ci-side em{font-style:normal}'
     + '.ci-arrow{display:flex;flex-direction:column;align-items:center;font-size:16px;color:var(--b-t3)}.ci-arrow small{font:9px var(--b-mono)}.ci-dls{display:flex;gap:6px;flex:none}.ci-dl{flex:1;display:flex;flex-direction:column;align-items:center;padding:3px;border-radius:5px;background:var(--b-surf2)}.ci-dl b{font:600 12px var(--b-mono)}.ci-dl small{font-size:8.5px;color:var(--b-t3)}.ci-dl.ok b{color:var(--b-ac2)}.ci-dl.bad b{color:var(--b-ac4)}'
     + '.ci-cmpl{display:flex;flex-direction:column;gap:4px;min-height:0;overflow:auto;flex:1}.vb-ci-run .vb-run-track{height:auto;flex:none}.ci-cl{display:flex;flex-wrap:wrap;gap:3px;align-items:center}.ci-cl .h{font:600 9px var(--b-ui);text-transform:uppercase;letter-spacing:.06em;margin-right:4px}.ci-cl.ok .h{color:var(--b-ac2)}.ci-cl.bad .h{color:var(--b-ac4)}.ci-cl.warn .h{color:var(--b-ac3)}.ci-cl code{font-size:9px;padding:1px 5px;border-radius:3px;background:var(--b-surf2);color:var(--b-t1);cursor:default}.ci-note{font-size:9px;color:var(--b-ac3)}'
-    + '.ci-pl{display:flex;flex-direction:column;gap:6px;height:100%;min-height:0}.ci-kpis{display:flex;align-items:center;gap:14px;flex:none}.ci-kpis span{display:flex;flex-direction:column}.ci-kpis b{font:600 15px/1.1 var(--b-mono);color:var(--b-t1)}.ci-kpis small{font-size:9px;color:var(--b-t3);text-transform:uppercase;letter-spacing:.06em}.ci-bars{width:100%;display:block;flex:1;min-height:30px}.ci-axis{display:flex;align-items:center;gap:8px;font:9px var(--b-mono);color:var(--b-t3);flex:none}.ci-axis .ci-agbar{flex:1;max-width:none}'
+    + '.ci-pl{display:flex;flex-direction:column;gap:6px;height:100%;min-height:0}.ci-kpis{display:flex;align-items:center;gap:14px;flex:none}.ci-kpis span{display:flex;flex-direction:column}.ci-kpis b{font:600 15px/1.1 var(--b-mono);color:var(--b-t1)}.ci-kpis small{font-size:9px;color:var(--b-t3);text-transform:uppercase;letter-spacing:.06em}.ci-bars{width:100%;display:block;flex:1 1 0;min-height:48px;height:auto}.ci-axis{display:flex;align-items:center;gap:8px;font:9px var(--b-mono);color:var(--b-t3);flex:none}.ci-axis .ci-agbar{flex:1;max-width:none}'
     + '.ci-fl{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:5px;align-content:start;min-height:0;overflow:auto;flex:1}.ci-box{display:flex;flex-direction:column;gap:4px;padding:6px 8px;border-radius:7px;background:var(--b-surf2);box-shadow:inset 0 2px 0 var(--ag);cursor:pointer;min-width:0;opacity:.72}.ci-box.up{opacity:1}.ci-box:hover{box-shadow:inset 0 2px 0 var(--ag),0 0 0 1px var(--b-ac)}.ci-box .h{display:flex;align-items:center;gap:5px;min-width:0}.ci-box .h b{font:500 10px var(--b-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--b-t1)}.ci-up{width:7px;height:7px;border-radius:50%;background:var(--b-t3);flex:none}.ci-box.up .ci-up{background:var(--b-ac2);box-shadow:0 0 6px var(--b-ac2)}'
     + '.ci-lane.solo{grid-template-columns:minmax(60px,22%) minmax(0,1fr)}.ci-fails{display:flex;flex-direction:column;gap:3px;min-height:0}.ci-fails>div{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:8px;align-items:baseline;padding:3px 6px;border-radius:4px;background:' + mix(B.ac4, 9) + ';border-left:2px solid var(--b-ac4)}.ci-fails code{font-size:9.5px;color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46ch}.ci-fails span{font-size:9.5px;color:var(--b-t2);white-space:pre-wrap;word-break:break-word}.ci-its{display:flex;flex-wrap:wrap;gap:4px}.ci-card.mini{flex-direction:row;align-items:baseline;gap:6px;padding:3px 7px}.ci-conv{font-size:9.5px;color:var(--b-t2);cursor:pointer}';
+
+
+  /* CENSUS × COMMITS: what the census measured, run by run, beside what landed on main before each run (ci.census).
+     One column a run, oldest to newest: its goals done (green) and capped (red) as a bar, a mark over it for its
+     change against the run before - ▲/▼ when the change clears the measured noise floor, a dot when it does not -
+     the commits that landed before it as a stack (a ring is a merge), and each goal's outcome in its row. A column
+     whose change was a real improvement is lit green, a real regression red: the commits in a lit column are the
+     ones to read. XL lists the signals with the commits that preceded each. */
+  R['census-commits'] = (d, H, o) => {
+    const p = (d && d.kind === 'ci' && d.view === 'census') ? d : null; if (!p) return EMPTY('census × commits reads ci.census');
+    const all = p.runs || []; if (!all.length) return NODATA('ci.census', 'm');
+    const sz = (o && o.size) || 'm', big = sz === 'l' || sz === 'xl';
+    const keep = sz === 'm' ? 20 : sz === 'l' ? 36 : all.length, off = Math.max(0, all.length - keep), runs = all.slice(off);
+    const s = p.summary || {}, gmax = Math.max(1, ...runs.map((r) => r.goals || 0));
+    const col = (r) => r.verdict === 'signal' ? (r.direction === 'up' ? ' up' : r.direction === 'down' ? ' dn' : '') : '';
+    const mark = (r) => r.verdict == null ? '' : r.verdict === 'signal' ? (r.direction === 'up' ? '▲' : r.direction === 'down' ? '▼' : '◆') : '·';
+    const tip = (r) => [r.id, r.done + '/' + r.goals + ' done' + (r.capped ? ' · ' + r.capped + ' capped' : ''), Math.round((r.wall_s || 0) / 60) + ' min wall', r.quality != null ? 'quality ' + fmt(r.quality) : '',
+      r.delta_done != null ? ((r.delta_done > 0 ? '+' : '') + r.delta_done + ' done, ' + (r.delta_wall > 0 ? '+' : '') + Math.round((r.delta_wall || 0) * 100) + '% wall · ' + (r.verdict === 'signal' ? 'SIGNAL' : 'within noise')) : '',
+      r.commit_count ? r.commit_count + ' commits landed before it' + (r.merges ? ' (' + r.merges + ' merges)' : '') : 'nothing landed before it',
+      (r.commits || []).slice(0, 8).map((c) => (c.merge ? '⭘ ' : '• ') + c.subject).join('\n')].filter(Boolean).join('\n');
+    const BH = sz === 'm' ? 40 : sz === 'l' ? 56 : 84, cmax = sz === 'm' ? 4 : 7;
+    const cols = runs.map((r) => {
+      const dh = Math.round((r.done || 0) / gmax * BH), ch = Math.round((r.capped || 0) / gmax * BH);
+      const dots = (r.commits || []).slice(0, cmax).map((c) => '<i class="' + (c.merge ? 'mg' : '') + (c.during_run ? ' dr' : '') + '"></i>').join('') + (r.commit_count > cmax ? '<em>+' + (r.commit_count - cmax) + '</em>' : '');
+      return '<div class="cc-col' + col(r) + '" title="' + esc(tip(r)) + '"' + itemAttr({ run: r.id, done: r.done, goals: r.goals, verdict: r.verdict, direction: r.direction, delta_done: r.delta_done, delta_wall: r.delta_wall, commits: (r.commits || []).map((c) => c.sha + ' ' + c.subject) }, 'run ' + r.id) + ' data-ci-ref="' + esc(r.id) + '">'
+        + '<span class="cc-mk">' + mark(r) + '</span><span class="cc-bar" style="height:' + BH + 'px"><i class="cp" style="height:' + ch + 'px"></i><i class="dn" style="height:' + dh + 'px"></i></span>'
+        + '<span class="cc-cm">' + dots + '</span></div>';
+    }).join('');
+    const goals = big ? (p.goals || []) : [];
+    const grid = goals.length ? '<div class="cc-goals">' + goals.map((g) => '<div class="cc-gr"><span class="n" title="' + esc(g.id) + '">' + esc(g.name) + '</span><span class="cc-gc" style="grid-template-columns:repeat(' + runs.length + ',1fr)">' + (g.cells || []).slice(off).map((c, i) => '<i class="g-' + (c || 'none') + '" title="' + esc(g.name + ' · ' + runs[i].id + ' · ' + (c || 'not run')) + '"></i>').join('') + '</span><span class="v">' + g.pass + '/' + g.runs + '</span></div>').join('') + '</div>' : '';
+    const sig = sz === 'xl' ? all.filter((r) => r.verdict === 'signal').slice(-8).reverse() : [];
+    const sigs = sig.length ? '<div class="cc-sigs">' + sig.map((r) => '<div class="cc-sg ' + (r.direction === 'up' ? 'up' : 'dn') + '"' + itemAttr({ run: r.id, commits: (r.commits || []).map((c) => c.sha + ' ' + c.subject) }, 'run ' + r.id) + '><b>' + (r.direction === 'up' ? '▲' : '▼') + ' ' + esc(r.id) + '</b><small>' + (r.delta_done > 0 ? '+' : '') + r.delta_done + ' done · ' + (r.delta_wall > 0 ? '+' : '') + Math.round((r.delta_wall || 0) * 100) + '% wall · ' + r.commit_count + ' commits before it</small>' + (r.commits || []).slice(0, 4).map((c) => '<code>' + esc(c.sha) + '</code><span>' + esc(c.subject) + '</span>').join('') + '</div>').join('') + '</div>' : '';
+    return wrap('census-commits', '<div class="ci-hd"><span class="ci-hdt"><b>' + esc(p.title || 'Census × commits') + ' · ' + esc(p.template || '') + '</b><small>' + (s.runs || 0) + ' runs · latest ' + esc(s.latest || '') + ' ' + (s.latest_done != null ? s.latest_done + '/' + (s.goals || '') : '') + ' · ' + (s.commits || 0) + ' commits · ' + (s.signals_up || 0) + ' real gains, ' + ((s.signals || 0) - (s.signals_up || 0)) + ' real losses · noise = ±1 goal / 13% wall' + (off ? ' · newest ' + runs.length + ' drawn' : '') + '</small></span></div>'
+      + '<div class="cc-plot"><div class="cc-lbl"><span style="height:14px"></span><span style="height:' + BH + 'px">done</span><span>landed</span></div><div class="cc-cols" style="grid-template-columns:repeat(' + runs.length + ',1fr)">' + cols + '</div></div>'
+      + grid + sigs, 'ci');
+  };
+  /* A LOOP LAB ELEMENT, AS A WIDGET: the page's own custom elements (the commit graph, the author map, the test
+     activity, the error radar, the branch pipeline, the task matrix, the bench compare, the routing map, the CI
+     command centre) mounted into the widget's slot - so each is a tile a dashboard, the canvas or a lens can place,
+     drawn by the element that already draws it on the page. draw.tag names it (draw.attrs its attributes); the
+     script is fetched once from /ui/elements/. At XS/S it says what it is. */
+  const EL_SRC = { 'vera-git-graph': 'git_graph', 'vera-author-map': 'author_map', 'vera-test-activity-timeline': 'test_activity_timeline', 'vera-error-radar': 'error_radar',
+    'vera-branch-pipeline': 'branch_pipeline', 'vera-task-matrix': 'task_matrix', 'vera-bench-compare': 'bench_compare', 'vera-ollama-map': 'ollama_map', 'vera-ci-ops': 'ci_ops', 'vera-agent-loop-output': 'agent_loop_output' };
+  const EL_NAME = { 'vera-git-graph': 'commit graph', 'vera-author-map': 'authorship', 'vera-test-activity-timeline': 'test activity', 'vera-error-radar': 'error radar', 'vera-branch-pipeline': 'branch pipeline', 'vera-task-matrix': 'task matrix', 'vera-bench-compare': 'bench compare', 'vera-ollama-map': 'routing map', 'vera-ci-ops': 'CI command centre' };
+  const elOf = (d, o) => { const dr = (o && o.draw) || (o && o.record && o.record.draw) || {}; const tag = String(dr.tag || (d && d.tag) || '').toLowerCase(); return { tag, attrs: dr.attrs || (d && d.attrs) || {} }; };
+  R.element = (d, H, o) => { const e = elOf(d, o); if (!/^vera-[a-z0-9-]+$/.test(e.tag)) return wrap('element', '<div class="vb-el-pick"><b>A page element</b><span>draw.tag names it:</span>' + Object.keys(EL_NAME).map((t) => '<code>' + esc(t) + '</code><i>' + esc(EL_NAME[t]) + '</i>').join('') + '</div>');
+    return wrap('element', '<div class="vb-el" style="height:' + Math.max(90, (H || 200) - 4) + 'px"><slot name="el"><span class="vb-lbl">' + esc(EL_NAME[e.tag] || e.tag) + '</span></slot></div>'); };
+  function mountElement(el, rec) {
+    const e = elOf(null, { record: rec }); if (!/^vera-[a-z0-9-]+$/.test(e.tag)) return;
+    const sig = e.tag + '|' + JSON.stringify(e.attrs);
+    if (el._elHost && el._elSig === sig) return;
+    if (el._elHost) { el._elHost.remove(); el._elHost = null; }
+    const host = document.createElement('div'); host.setAttribute('slot', 'el'); host.style.cssText = 'width:100%;height:100%;overflow:auto;min-height:0';
+    const go = () => { const x = document.createElement(e.tag); Object.keys(e.attrs || {}).forEach((k) => x.setAttribute(k, String(e.attrs[k]))); x.style.display = 'block'; host.appendChild(x); };
+    const base = (el.base || '').replace(/\/$/, ''), src = EL_SRC[e.tag];
+    if (window.customElements && customElements.get(e.tag)) go();
+    else if (src) { let sc = document.querySelector('script[data-vw-el="' + e.tag + '"]'); if (!sc) { sc = document.createElement('script'); sc.src = base + '/ui/elements/' + src + '.js'; sc.setAttribute('data-vw-el', e.tag); document.head.appendChild(sc); }
+      if (window.customElements && customElements.whenDefined) customElements.whenDefined(e.tag).then(go); else sc.addEventListener('load', go, { once: true }); }
+    el.appendChild(host); el._elHost = host; el._elSig = sig;
+  }
+  Object.assign(DRAWN, { 'census-commits': 'matrix', element: 'panel' });
+  Object.assign(CI_GLYPH, { 'census-commits': '⨯' });
+  Object.assign(FORM_SAMPLE, {
+    'census-commits': () => { const runs = Array.from({ length: 14 }, (_, i) => { const done = [9, 10, 9, 11, 10, 12, 11, 10, 12, 12, 11, 10, 12, 11][i]; return { id: 'run' + (64 + i), goals: 12, done, capped: 12 - done, wall_s: 8000 + (i % 4) * 700, commit_count: [2, 0, 5, 3, 0, 9, 1, 0, 6, 2, 0, 4, 11, 1][i], merges: i % 3, commits: Array.from({ length: [2, 0, 5, 3, 0, 9, 1, 0, 6, 2, 0, 4, 11, 1][i] }, (_, k) => ({ sha: 'c' + i + k, subject: k % 2 ? 'Loop Lab: merge feat/x' + k : 'loop: a fix ' + k, merge: k % 2 === 1 })) }; });
+      runs.forEach((r, i) => { if (i) { const pr = runs[i - 1]; r.delta_done = r.done - pr.done; r.delta_wall = (r.wall_s - pr.wall_s) / pr.wall_s; r.verdict = Math.abs(r.delta_done) > 1 ? 'signal' : 'noise'; r.direction = r.delta_done > 0 ? 'up' : r.delta_done < 0 ? 'down' : 'flat'; } });
+      const goals = ['trivial-chat', 'research-web', 'build-multifile', 'long-horizon', 'operate-exec', 'analyse-data'].map((n, gi) => ({ id: 'census-default-' + n, name: n, cells: runs.map((r, i) => ((i + gi) % 5 === 0 ? 'cap' : 'pass')), pass: 11, runs: 14 }));
+      return { kind: 'ci', view: 'census', title: 'Census × commits', template: 'default', runs, goals, summary: { runs: 14, latest: 'run77', latest_done: 11, goals: 12, commits: 44, signals: 4, signals_up: 3 } }; },
+    element: () => ({ tag: 'vera-git-graph' }),
+  });
+  const CC_CSS = '.vb-census-commits{display:flex;flex-direction:column;gap:8px;min-height:0;height:100%;overflow:auto}'
+    + '.cc-plot{display:grid;grid-template-columns:54px minmax(0,1fr);gap:6px;align-items:end}.cc-lbl{display:flex;flex-direction:column;gap:3px;font:9px var(--b-mono);color:var(--b-t3);text-align:right}.cc-lbl span{display:flex;align-items:flex-end;justify-content:flex-end}'
+    + '.cc-cols{display:grid;gap:3px;align-items:end}.cc-col{display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:5px;padding:2px 0;cursor:pointer;min-width:0}.cc-col:hover{background:var(--b-surf2)}'
+    + '.cc-col.up{background:' + mix(B.ac2, 13) + ';box-shadow:inset 0 -2px 0 var(--b-ac2)}.cc-col.dn{background:' + mix(B.ac4, 13) + ';box-shadow:inset 0 -2px 0 var(--b-ac4)}'
+    + '.cc-mk{font-size:9px;line-height:12px;height:12px;color:var(--b-t3)}.cc-col.up .cc-mk{color:var(--b-ac2)}.cc-col.dn .cc-mk{color:var(--b-ac4)}'
+    + '.cc-bar{width:70%;max-width:14px;display:flex;flex-direction:column;justify-content:flex-end;background:var(--b-surf2);border-radius:3px;overflow:hidden}.cc-bar .dn{background:var(--b-ac2)}.cc-bar .cp{background:var(--b-ac4);opacity:.85}'
+    + '.cc-cm{display:flex;flex-direction:column-reverse;align-items:center;gap:2px;min-height:14px}.cc-cm i{width:6px;height:6px;border-radius:50%;background:var(--b-dv1)}.cc-cm i.mg{background:transparent;box-shadow:inset 0 0 0 1.5px var(--b-dv2);width:7px;height:7px}.cc-cm i.dr{outline:1px dashed var(--b-ac3)}.cc-cm em{font:8px var(--b-mono);color:var(--b-t3);font-style:normal}'
+    + '.cc-goals{display:flex;flex-direction:column;gap:2px}.cc-gr{display:grid;grid-template-columns:54px minmax(0,1fr) 40px;gap:6px;align-items:center}.cc-gr .n{font:9px var(--b-mono);color:var(--b-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}.cc-gr .v{font:9px var(--b-mono);color:var(--b-t3)}'
+    + '.cc-gc{display:grid;gap:3px}.cc-gc i{height:9px;border-radius:2px;background:var(--b-surf2)}.cc-gc i.g-pass{background:var(--b-ac2)}.cc-gc i.g-cap{background:var(--b-ac3)}.cc-gc i.g-fail{background:var(--b-ac4)}.cc-gc i.g-none{background:transparent;box-shadow:inset 0 0 0 1px var(--b-bd)}'
+    + '.cc-sigs{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px}.cc-sg{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 8px;padding:7px 9px;border-radius:7px;background:var(--b-surf2);border-left:3px solid var(--b-ac2);cursor:pointer}.cc-sg.dn{border-left-color:var(--b-ac4)}.cc-sg b{grid-column:1/-1;font:600 11px var(--b-mono)}.cc-sg small{grid-column:1/-1;font-size:9.5px;color:var(--b-t3);margin-bottom:3px}.cc-sg code{font:9px var(--b-mono);color:var(--b-t3)}.cc-sg span{font-size:10px;color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.vb-el-pick{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:10px;color:var(--b-t2)}.vb-el-pick b,.vb-el-pick span{grid-column:1/-1}.vb-el-pick code{font:9.5px var(--b-mono);color:var(--b-t1)}.vb-el-pick i{font-style:normal;color:var(--b-t3)}.vb-element{height:100%;min-height:0}.vb-el{position:relative;width:100%;overflow:hidden;border-radius:var(--b-r)}.vb-el>slot{display:block;width:100%;height:100%}';
 
   const FORMS3_CSS = '.vb-calh{display:flex;align-items:center;gap:6px;flex:none}.vb-calh b{font-size:12px;font-weight:600;flex:1;text-align:center}.vb-calh button{width:22px;height:20px;border-radius:5px;color:var(--b-t2);box-shadow:inset 0 0 0 1px var(--b-bd)}.vb-calh button:hover{color:var(--b-t1);box-shadow:inset 0 0 0 1px var(--b-ac)}.vb-calh button.today{width:auto;padding:0 8px;font-size:10px}.vb-calh.big b{font-size:14px}'
     + '.vb-mgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;flex:1;min-height:0;align-content:start}.vb-mgrid .wd{font-size:9px;color:var(--b-t3);text-align:center;text-transform:uppercase;letter-spacing:.05em}'
@@ -2236,7 +2320,7 @@
     const d = dataFor(data, f);
     // nothing to draw yet (no result, an empty one, or a placeholder string handed to a form that draws numbers): the
     // form's SAMPLE face, marked — never "no data yet" (opts.sample === false keeps the bare answer for a caller that asks)
-    if (f !== 'panel' && f !== 'composite' && f !== 'calnav' && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
+    if (f !== 'panel' && f !== 'composite' && f !== 'calnav' && f !== 'element' && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
       if (opts.sample === false) { let own = ''; try { own = R[fi](d == null || typeof d === 'string' ? [] : d, H, Object.assign({ size: size }, opts)); } catch (_) { own = ''; } return (typeof own === 'string' && own) ? own : EMPTY('no data yet'); }
       return sampleFace(draw(f0, sample(f), size, Object.assign({}, opts, { sample: false, map: false })), size, opts.sampleTag);
     }
@@ -2293,7 +2377,7 @@
       skin: String(o.skin || 'inherit').toLowerCase(), subject: String(o.subject || ''), projection: String(o.projection || drawIn.proj || drawIn.projection || '').toLowerCase(), actions: Array.isArray(o.actions) ? o.actions : ['dive', 'pin', 'ask'],
       children: Array.isArray(o.children) ? o.children : undefined, layout: o.layout, data: o.data };
   }
-  const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top|instances|sources|request_log|keys|results|installed|config|models|list_models|route_stats|embed_config)|_stats$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.|^redis\.|^proxmox\.|^mesh\.|^estate\.|^backup\.|^bench\.|^catalog\.|^background\.|^topology\.|^jobs\.|^memory\.stats|^ollama\.(gate\.status|instances|list_models|route_stats|request_log|routing\.get|embed_config|model_tags\.get)|^evolve\.(sandbox\.list|pipeline\.list|activity|tasks\.overview)$|^activity\.(sessions|pipelines)$|^syslog\.errors$|^dream\.(sensor\.cap_calls|last|hitl\.pending)$|^memory\.graph_full$|^cal\.(events|todos|notes)\.list$)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert|pull|install|activate|acquire|release|enqueue|cancel|spawn|prune|reap)\b/.test(cap);   // the dashboard's own readings read on their own (route_stats / results / config tails were left waiting for a click)
+  const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top|instances|sources|request_log|keys|results|installed|config|models|list_models|route_stats|embed_config)|_stats$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.|^redis\.|^proxmox\.|^mesh\.|^estate\.|^backup\.|^bench\.|^catalog\.|^background\.|^topology\.|^jobs\.|^memory\.stats|^ollama\.(gate\.status|instances|list_models|route_stats|request_log|routing\.get|embed_config|model_tags\.get)|^evolve\.(sandbox\.list|pipeline\.list|activity|tasks\.overview|unittest\.history|tests\.matrix|mission\.events|agents\.rows|authors|ship\.branches|git\.graph)$|^ci\.(matrix|race|tests|pulse|fleet|board|census|compare|track)$|^loop\.ci\.(matrix|race|board)$|^census\.(runs|landed|live|board)$|^activity\.(sessions|pipelines)$|^syslog\.errors$|^dream\.(sensor\.cap_calls|last|hitl\.pending)$|^memory\.graph_full$|^cal\.(events|todos|notes)\.list$)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert|pull|install|activate|acquire|release|enqueue|cancel|spawn|prune|reap)\b/.test(cap);   // the dashboard's own readings read on their own (route_stats / results / config tails were left waiting for a click)
   const key = (rec) => { const n = normalise(rec); return n.form + ' ' + (n.source || (n.panel ? 'panel:' + n.panel : '')) + ' ' + JSON.stringify(n.read.args || {}); };
   // the form that can draw THIS data: the chosen one, else what its shape picks, else the key · value list
   function formFor(rec, data) {
@@ -2576,7 +2660,7 @@ span.vw-sampled{opacity:.85}
 .vb-cmpr{display:grid;grid-template-columns:1fr 70px 1fr;gap:8px;align-items:center;font-size:10px}.vb-cmpr .n{grid-column:2;text-align:center;color:var(--b-t2);order:2;white-space:nowrap;overflow:hidden}.vb-cmpr .side{display:flex;align-items:center;gap:6px;height:12px}.vb-cmpr .side.l{order:1;justify-content:flex-end}.vb-cmpr .side.r{order:3}.vb-cmpr .side i{display:block;height:8px;border-radius:4px}.vb-cmpr .side b{font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);width:34px;text-align:right}.vb-cmpr .side.r b{text-align:left}
 .vb-carp{flex:1;min-height:0;display:flex;align-items:center;gap:12px}.vb-carp .vb-dial{width:64px;height:64px}.vb-carp .vb-dial > span{font-size:13px}
 .vb-flist{flex:1;display:flex;flex-direction:column;gap:1px;font-size:9.5px;min-width:0}.vb-flist > span{display:grid;grid-template-columns:1fr 46px 50px 36px;gap:6px;align-items:center;height:19px}.vb-flist span i{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}.vb-flist .h{color:var(--b-t3);font-size:8px;text-transform:uppercase;letter-spacing:.08em}.vb-flist .m{font-family:var(--b-mono);color:var(--b-t2);text-align:right;white-space:nowrap;overflow:hidden}
-.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}` + CAPOUT_CSS + FORMS3_CSS + CI_CSS);
+.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}` + CAPOUT_CSS + FORMS3_CSS + CI_CSS + CC_CSS);
   function ensureCss(root) {
     const host = root && root.head ? root.head : root;
     if (!host || !host.querySelector) return;
@@ -2643,7 +2727,7 @@ span.vw-sampled{opacity:.85}
   // seconds) batch among themselves, so a fast reading is never held by a slow one. A server without widget.read
   // (a 404) is asked one reading at a time, as before.
   const COST = new Map(), BATCH_MAX = 24, BATCH_MS = 40, PENDING = { fast: [], slow: [] }, TIMERS = {}; let BATCH_OFF = false;
-  const SLOW_NAMES = /^(estate\.health|backup\.status|fabric\.health|topology\.snapshot|mesh\.topology|perf\.scan|evolve\.errors\.list|dash\.health\.summary)$/;
+  const SLOW_NAMES = /^(estate\.health|backup\.status|fabric\.health|topology\.snapshot|mesh\.topology|perf\.scan|evolve\.errors\.list|dash\.health\.summary|evolve\.tests\.matrix|census\.landed|ci\.census)$/;   // tests.matrix collects the suite (~14 s) - batched with the Gates lens it held every tile at reading
   const isSlow = (name) => SLOW_NAMES.test(String(name || '')) || (COST.get(name) || 0) > 4000;
   const opened = (j) => (j && j.type === 'tool_result') ? j.content : (j && j.result !== undefined ? j.result : (j && j.content !== undefined ? j.content : j));
   /* A READING THAT NEVER ANSWERS must not hold its tile forever (the widget review, 2026-09-27). The browser gives a
@@ -3159,7 +3243,7 @@ span.vw-sampled{opacity:.85}
       // nothing read yet — no source, a source that waits for a click, a read in flight, a read that failed — draws the
       // form's SAMPLE face, marked, and says why in the caption; the widget always has a face (never "no data yet")
       const wasRead = !!this._read, dataM = mapped(rec, form, this._data), have = this._data !== undefined && !isEmpty(dataFor(dataM, form));   // what the form would draw of the answer
-      const sampled = !wasRead && !have && form !== 'panel' && form !== 'composite';      // the sample face: no source, or never read
+      const sampled = !wasRead && !have && form !== 'panel' && form !== 'composite' && form !== 'element';   // an element draws itself: it is never a sample      // the sample face: no source, or never read
       const readEmpty = wasRead && !have && !this._err, stale = wasRead && !!this._err && have;
       // the face's STATE, on the host (data-state) and in widget:rendered: reading (a read is on its way - the sample face
       // is drawn faint, never as though it were the reading) · failed (a read that never answered) · sample (nothing to
@@ -3204,6 +3288,8 @@ span.vw-sampled{opacity:.85}
       this._viewAsWire(form0, form, rec);
       motionAfter(this._sh, was);
       if (canon(form) === 'vgraph' && (have || (rec.draw && rec.draw.layer))) mountVeraGraph(this, rec, dataM, size); else if (this._vg || this._vgHost) unmountVeraGraph(this);
+      // a Loop Lab element placed as a widget: mounted into the slot from M up (XS/S say what it is)
+      if (canon(form) === 'element' && size !== 'xs' && size !== 's') mountElement(this, rec); else if (this._elHost) { this._elHost.remove(); this._elHost = null; this._elSig = ''; }
       // the entry motion plays once, on the first real reading (a refresh redraws without it)
       if (state === 'live' && !this.hasAttribute('data-entered') && !this._entering) { this._entering = true; setTimeout(() => { this.setAttribute('data-entered', ''); this._entering = false; }, 900); }
       // a bare element (a dashboard tile's body) measures too: its host sizes it, and the forms fit what they are given
@@ -3600,7 +3686,7 @@ span.vw-sampled{opacity:.85}
     row(id, 'Projection', seg(projs.map((p) => [p, p]), rec.projection || projs[0], (p) => { rec.projection = p; changed(true); }));
     row(id, 'Skin', seg(PACKS.map((p) => [p[0], p[0] === 'inherit' ? 'inherit' : p[1].toLowerCase()]), rec.skin || 'inherit', setSkin));
     // Source
-    const needsNone = rec.form === 'panel' || rec.form === 'composite';
+    const needsNone = rec.form === 'panel' || rec.form === 'composite' || rec.form === 'element';
     const so = sec('Source', 'anything of shape <b>' + esc(shape) + '</b>' + (S.sources ? '' : ' · loading…'));
     if (rec.form === 'panel') { row(so, 'Panel', inp(rec.panel || rec.source.replace(/^panel:/, ''), (v) => { rec.panel = v; rec.source = v ? 'panel:' + v : ''; changed(false); }, 'a registered panel id')); }
     else if (!needsNone) {

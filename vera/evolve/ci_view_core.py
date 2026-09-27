@@ -824,3 +824,89 @@ def parse_merges(log_out: str) -> List[Dict[str, Any]]:
         seen[br] = {"branch": br, "pipeline_id": pid, "sha": sha[:10], "ts": ts,
                     "author": author, "subject": subject, "merges": 1}
     return list(seen.values())
+
+# census x commits: what the census measured, run by run, and what landed between the runs
+
+#: the measured noise floor of a census (runs 49/50, identical code): one capped goal and 13% of total wall time.
+#: A change inside it is reported as noise, never as an improvement - "best run yet" is not a result.
+NOISE_DONE = 1
+NOISE_WALL = 0.13
+
+
+def _run_outcome(r: Dict[str, Any]) -> str:
+    st = _s(r.get("status")).lower()
+    if r.get("ok") is True or st in ("done", "pass", "ok"):
+        return "pass"
+    if "cap" in st or "timeout" in st:
+        return "cap"
+    if r.get("ok") is False or st:
+        return "fail"
+    return "unknown"
+
+
+def census_view(runs: Iterable[Dict[str, Any]], landed: Optional[Dict[str, Any]] = None,
+                goal_results: Optional[Dict[str, Iterable[Dict[str, Any]]]] = None,
+                *, template: str = "default", title: str = "") -> Dict[str, Any]:
+    """The census, run by run, beside the commits that landed before each run.
+
+    runs          census.runs rows (run_id, ended_at, goals, done, wall_capped, wall_total_s, quality_mean, ...)
+    landed        census.landed's by_run: {run_id: {commits[], count, merges, window_from, window_to}}
+    goal_results  {goal_id: [task-history results with driver (the run id), ok, status, wall_s]}
+
+    Each run carries its deltas against the previous run and a verdict - `signal` when the change clears the
+    noise floor, `noise` when it does not - so the view can point at the commits that preceded a REAL change
+    and say plainly when a change was not one."""
+    rs = [r for r in _rows(runs) if not template or _s(r.get("template") or "default") == template]
+    rs.sort(key=lambda r: _s(r.get("ended_at")) or _s(r.get("run_id")))
+    by_run = (landed or {}).get("by_run", landed or {}) if isinstance(landed, dict) else {}
+    out: List[Dict[str, Any]] = []
+    prev = None
+    for r in rs:
+        rid = _s(r.get("run_id"))
+        goals = _i(r.get("goals"))
+        done = _i(r.get("done"))
+        wall = float(r.get("wall_total_s") or 0)
+        land = by_run.get(rid) or {}
+        commits = [{"sha": _s(c.get("sha")), "ts": c.get("ts"), "subject": _s(c.get("subject")),
+                    "branch": _s(c.get("branch")), "pipeline": _s(c.get("pipeline")),
+                    "merge": bool(c.get("is_merge")), "during_run": bool(c.get("during_run"))}
+                   for c in _rows(land.get("commits"))]
+        row = {"id": rid, "ended_at": _s(r.get("ended_at")), "goals": goals, "done": done,
+               "capped": _i(r.get("wall_capped")), "wall_s": round(wall, 1),
+               "quality": r.get("quality_mean"), "checks": [_i(r.get("checks_passed")), _i(r.get("checks_total"))],
+               "codes": list(((r.get("code") or {}).get("codes") or [])),
+               "commits": commits, "commit_count": len(commits),
+               "merges": sum(1 for c in commits if c["merge"])}
+        if prev is not None:
+            dd = done - prev["done"]
+            dw = (wall - prev["wall_s"]) / prev["wall_s"] if prev["wall_s"] else 0.0
+            row["delta_done"] = dd
+            row["delta_wall"] = round(dw, 3)
+            sig_done = abs(dd) > NOISE_DONE
+            sig_wall = abs(dw) > NOISE_WALL and dd == 0
+            row["verdict"] = "signal" if (sig_done or sig_wall) else "noise"
+            better = dd > 0 or (dd == 0 and dw < 0)
+            row["direction"] = "up" if better and (dd or dw) else ("down" if (dd < 0 or (dd == 0 and dw > 0)) else "flat")
+        out.append(row)
+        prev = row
+    goals_out: List[Dict[str, Any]] = []
+    ids = [x["id"] for x in out]
+    for gid, results in sorted((goal_results or {}).items()):
+        cells = {}
+        for res in _rows(results):
+            drv = res.get("driver")
+            drv = _s(drv.get("id") if isinstance(drv, dict) else drv)
+            if drv in ids and drv not in cells:
+                cells[drv] = _run_outcome(res)
+        name = gid.split("census-%s-" % template, 1)[-1] if template else gid
+        goals_out.append({"id": gid, "name": name, "cells": [cells.get(i, "") for i in ids],
+                          "pass": sum(1 for v in cells.values() if v == "pass"), "runs": len(cells)})
+    sig = [x for x in out if x.get("verdict") == "signal"]
+    latest = out[-1] if out else {}
+    return {"kind": KIND, "view": "census", "title": title or "Census \u00d7 commits", "template": template,
+            "runs": out, "goals": goals_out,
+            "summary": {"runs": len(out), "latest": latest.get("id", ""), "latest_done": latest.get("done"),
+                        "goals": latest.get("goals"), "best_done": max((x["done"] for x in out), default=None),
+                        "signals": len(sig), "signals_up": sum(1 for x in sig if x.get("direction") == "up"),
+                        "commits": sum(x["commit_count"] for x in out),
+                        "noise": {"done": NOISE_DONE, "wall": NOISE_WALL}}}
