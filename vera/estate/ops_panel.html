@@ -167,8 +167,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .stem{position:absolute;height:calc(1px * var(--ui,1));transform-origin:0 50%;pointer-events:none;z-index:8;background:linear-gradient(90deg,color-mix(in srgb,var(--pc) 95%,transparent),color-mix(in srgb,var(--pc) 40%,transparent))}
 .wedge{position:absolute;height:calc(1.5px * var(--ui,1));transform-origin:0 50%;pointer-events:none;z-index:1;opacity:.9;background:repeating-linear-gradient(90deg,var(--pc) 0 4px,transparent 4px 7px)}
 .pin.dim,.stem.dim{display:none}
-.owf{position:absolute;display:block;z-index:7}
-.owf.t{box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
+.owf-svg{position:absolute;left:0;top:0;overflow:visible;z-index:7;pointer-events:none}
+.owf-svg polygon.t{stroke:rgba(255,255,255,.1);stroke-width:1}
 .owf-n{position:absolute;height:2.5px;transform-origin:0 50%;background:var(--t1);border-radius:2px;z-index:8;box-shadow:0 0 6px 1px color-mix(in srgb,var(--ac3) 60%,transparent)}
 .owf-l{position:absolute;transform:translate(-50%,0) scale(var(--ui,1));transform-origin:50% 0;font-family:var(--f-mono);font-size:9px;z-index:8;text-shadow:0 1px 3px var(--bg);white-space:nowrap;pointer-events:none}
 .owf-hit{position:absolute;z-index:9;border-radius:6px;cursor:pointer}.owf-hit:hover{box-shadow:0 0 0 1.5px color-mix(in srgb,var(--ac) 60%,transparent)}
@@ -359,7 +359,7 @@ const uiScale = (vz) => clamp(vz, UI_MIN, UI_MAX) / vz;
 const S = { view: '2d', layout3d: 'stack', focus: null, pipes: true, widgets: true, sel: null, exp: null, act: 'metrics', wact: 'metrics',
   on: { work: true, core: true, service: true, runtime: true, host: true, edge: true },
   vz: 1, vx: 0, vy: 0, tilt: null, azim: null, zgap: 1, spread: 1, wsz: 1, wl: {}, wpick: null, wadd: null, wsec: true,
-  snap: null, err: '', cm: null, logs: {}, req: {}, dive: {}, drag: null, fresh: true, busy: false };
+  snap: null, err: '', cm: null, logs: {}, req: {}, dive: {}, drag: null, fresh: true, busy: false, fp: '' };
 // the widget overrides: {node: {off, items:[{k, s}]}} (an older {k, s, off} is read as one item)
 try { const w = JSON.parse(localStorage.getItem('vera:ops:widgets') || 'null'); if (w && typeof w === 'object') Object.keys(w).forEach((id) => { const o = w[id] || {}; S.wl[id] = Array.isArray(o.items) ? { off: !!o.off, items: o.items } : { off: !!o.off, items: o.k ? [{ k: o.k, s: o.s || 1 }] : null }; }); } catch (_) {}
 try { const v = JSON.parse(localStorage.getItem('vera:ops:view') || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); } } catch (_) {}
@@ -374,7 +374,10 @@ async function load(refresh){
     const r = await fetch(BASE + '/ops/snapshot' + (refresh ? '?refresh=true' : ''), { cache: 'no-store' });
     const j = await r.json(); const c = j && j.content !== undefined ? j.content : j;
     if (!c || !Array.isArray(c.nodes)) throw new Error((c && c.error) || 'no snapshot');
-    S.snap = c; S.err = '';
+    // the same estate as last time draws nothing again (a redraw costs the view its scroll, a card its state, an input its focus)
+    const fp = c.nodes.map((n) => [n.id, n.status, Math.round(n.load || 0), n.inflight, n.errors, Math.round(n.temp || 0), n.detail].join('|')).join(';') + '#' + c.links.length + '#' + (c.inflight || []).length + '#' + (c.errors || []).length;
+    if (S.snap && fp === S.fp){ S.busy = false; return; }
+    S.fp = fp; S.snap = c; S.err = '';
     if (S.sel && !byId()[S.sel]){ const q = String(S.sel).toLowerCase(); const hit = c.nodes.find((n) => n.label.toLowerCase() === q || n.ref === S.sel); S.sel = hit ? hit.id : null; }
     if (!S.sel) S.sel = (c.nodes.find((n) => n.status === 'run') || c.nodes.find((n) => n.kind === 'ollama') || c.nodes[0] || {}).id || null;
   } catch (e) { S.err = String(e && e.message || e); }
@@ -417,7 +420,7 @@ function layout(W, H){
   let route = null, G = null;
   const DOM = snap.domains;
   const LX = 104, RX = 12, colW = (W - LX - RX) / DOM.length, colX = (d) => LX + (d + 0.5) * colW;
-  const ladder = (pl) => clamp(Math.ceil((cellMax[pl] || 1)), 5, 9);
+  const ladder = (pl) => clamp(Math.ceil((cellMax[pl] || 1)), 5, S.view === '2d' ? 12 : 9);
   const slotOf = (total, idx, R) => total <= 5 ? slotsFor(total)[idx] * (R - 1) / (ROWS - 1) : (R - 1) * idx / Math.max(total - 1, 1);
   const stagOf = (total, idx) => total > 8 ? ((idx % 3) - 1) : total > 5 ? ((idx % 2) ? 1 : -1) : 0;
   if (S.view === '2d' || !ISO){
@@ -552,8 +555,12 @@ function isoWidgets(lay, W, H){
 }
 
 // ── render ──
+// a face (x, y, w, h and a clip-path polygon in local px) as an svg polygon in plot px
+const polyOf = (q) => { const x0 = parseFloat(q.x), y0 = parseFloat(q.y); const pts = String(q.cp).slice(8, -1).split(',').map((pt) => { const ab = pt.trim().split(/\s+/); return (x0 + parseFloat(ab[0])).toFixed(1) + ',' + (y0 + parseFloat(ab[1])).toFixed(1); }).join(' ');
+  return '<polygon points="' + pts + '"' + (q.k === 't' ? ' class="t"' : '') + ' style="fill:' + q.col + '"/>'; };
 function applyZoom(){ const v = $('pzv'); v.style.transform = 'translate(' + S.vx + 'px,' + S.vy + 'px) scale(' + S.vz + ')'; v.style.setProperty('--ui', uiScale(S.vz).toFixed(3)); $('pzLbl').textContent = Math.round(S.vz * 100) + '%'; }
-function render(){
+function render(opts){
+  opts = opts || {};
   const plot = $('plot'), v = $('pzv');
   if (!S.snap){ v.innerHTML = '<div class="empty">' + (S.err ? 'The estate could not be read: ' + esc(S.err) : 'reading the estate…') + '</div>'; return; }
   const snap = S.snap, ID = byId(), is3d = S.view === '3d';
@@ -585,10 +592,10 @@ function render(){
   const srcs = Object.keys(snap.sources || {}); const bad = srcs.filter((k) => snap.sources[k] !== 'ok');
   $('srcN').textContent = (srcs.length - bad.length) + ' of ' + srcs.length;
   $('sources').innerHTML = srcs.map((k) => '<span class="srcrow ' + (snap.sources[k] === 'ok' ? '' : 'bad') + '" title="' + esc(snap.sources[k]) + '"><i></i><span class="n">' + esc(k) + '</span></span>').join('');
-  renderRail();
+  if (!opts.plotOnly) renderRail();
   // the room the lattice asks for: a row slot per node up to nine a band (a 2D band 30 px × spread a row); the stage scrolls
   const cm = {}; snap.nodes.forEach((n) => { if (!S.on[n.plane]) return; const k = n.plane + ':' + n.domain; cm[k] = (cm[k] || 0) + 1; }); const per = {}; Object.keys(cm).forEach((k) => { const pl = k.split(':')[0]; per[pl] = Math.max(per[pl] || 0, cm[k]); });
-  const need = 30 + Object.keys(per).reduce((t, pl) => t + 52 + (clamp(per[pl], 1, 9) - 1) * (is3d ? 26 : 30 * S.spread), 0);
+  const need = 30 + Object.keys(per).reduce((t, pl) => t + 52 + (clamp(per[pl], 1, is3d ? 9 : 12) - 1) * (is3d ? 26 : 30 * S.spread), 0);
   plot.style.setProperty('--plot-min', Math.max(560, is3d ? need * Math.max(1, S.zgap * 1.15) * (S.layout3d === 'flat' ? .8 : 1) : need) + 'px');
   const W = plot.clientWidth || 800, H = plot.clientHeight || 600;
   const lay = layout(W, H), pos = lay.pos, shown = lay.shown;
@@ -612,7 +619,8 @@ function render(){
     const wd = isoWidgets(lay, W, H); const wboxes = wd.boxes.slice();
     NSC = lay.G.FLAT ? Math.max(.68, Math.min(1, lay.G.fitS * 1.3)) : 1;
     wd.edges.forEach((e) => parts.push('<span class="wedge" style="left:' + px(e.x) + ';top:' + px(e.y) + ';width:' + px(e.len) + ';transform:rotate(' + e.deg.toFixed(2) + 'deg);--pc:' + e.col + '"></span>'));
-    wd.faces.forEach((q) => parts.push('<i class="owf ' + (q.k || '') + '" style="left:' + q.x + ';top:' + q.y + ';width:' + q.w + ';height:' + q.h + ';clip-path:' + q.cp + ';background:' + q.col + '"></i>'));
+    // every face as a polygon of one svg: the compositor paints one layer, not thousands of clipped boxes
+    parts.push('<svg class="owf-svg" width="' + W + '" height="' + H + '">' + wd.faces.map(polyOf).join('') + '</svg>');
     wd.needles.forEach((n) => parts.push('<span class="owf-n" style="left:' + px(n.x) + ';top:' + px(n.y) + ';width:' + px(n.len) + ';transform:rotate(' + n.deg.toFixed(1) + 'deg)"></span>'));
     wd.labels.forEach((l) => parts.push('<span class="owf-l" style="left:' + px(l.x) + ';top:' + px(l.y) + ';color:' + l.col + '">' + esc(l.n) + '</span>'));
     wd.hits.forEach((h) => parts.push('<span class="owf-hit" data-node="' + esc(h.id) + '" title="' + esc(h.title) + ' — click to select, ⊕ on the node to add or change widgets" style="left:' + px(h.x) + ';top:' + px(h.y) + ';width:' + px(h.w) + ';height:' + px(h.h) + '"></span>'));
@@ -646,7 +654,7 @@ function render(){
   applyZoom();
   if (lay.G) $('pzAngle').textContent = Math.round(lay.G.TILT) + '°/' + Math.round(lay.G.AZIM) + '°';
   $('lsel').innerHTML = snap.planes.map((p) => '<button data-layer="' + p.id + '" class="' + (S.focus === p.id ? 'on' : '') + '" style="--pc:' + PCOL[p.id] + '"><i></i><span>' + esc(p.name) + '</span></button>').join('');
-  renderInspector();
+  if (!opts.plotOnly) renderInspector();
 }
 
 // ── the widget rail: what stands on each plane, sizable, removable, addable ──
@@ -751,7 +759,9 @@ function diveHtml(n){ const D = S.dive[n.id]; if (!D || (!D.ent && !D.read && D.
   if (!n.ref && !(n.req && n.req.name)) h += '<div class="note">this node has no reading of its own; its plane\'s reading stands in.</div>';
   return h || '<div class="note">nothing to dive into yet</div>'; }
 function renderInspector(){
-  const ID = byId(), n = ID[S.sel]; const insp = $('insp'); if (!n){ insp.innerHTML = '<div class="card"><div class="note">Select a node on the map.</div></div>'; return; }
+  const ID = byId(), n = ID[S.sel]; const insp = $('insp');
+  const ae = document.activeElement; if (ae && insp.contains(ae) && ae.matches && ae.matches('input,textarea')) return;
+  if (!n){ insp.innerHTML = '<div class="card"><div class="note">Select a node on the map.</div></div>'; return; }
   const col = PCOL[n.plane], arcLen = Math.PI * 23, loadPct = (n.load || 0) / 100; const plane = S.snap.planes.find((p) => p.id === n.plane) || {};
   const ser = S.snap.series[n.id] || {}; const vals = ser.tps || ser.cpu || ser.ping || null;
   const errs = (S.snap.errors || []).filter((e) => e.node === n.id); const list = errs.length ? errs : (S.snap.errors || []).slice(0, 8);
@@ -859,7 +869,7 @@ $('bPipes').onclick = () => { S.pipes = true; render(); }; $('bDirect').onclick 
 $('bWidgets').onclick = () => { S.widgets = !S.widgets; render(); };
 $('bRefresh').onclick = () => load(true);
 // drag pans; ctrl (or ⌘) + drag rotates the 3D view - the azimuth swings with x, the tilt with y
-let rafId = 0; const rafRender = () => { if (rafId) return; rafId = requestAnimationFrame(() => { rafId = 0; render(); }); };
+let rafId = 0; const rafRender = () => { if (rafId) return; rafId = requestAnimationFrame(() => { rafId = 0; render({ plotOnly: true }); }); };
 const v = $('pzv');
 v.addEventListener('mousedown', (e) => { if (e.button || e.target.closest((e.ctrlKey || e.metaKey) ? '.ndw,.wpk,button,input,textarea' : '.nd,.ndw,.wpk,button,input,textarea')) return;   // ctrl + drag rotates from anywhere on the plot, a chip included
   const rot = (e.ctrlKey || e.metaKey) && S.view === '3d';
@@ -881,7 +891,7 @@ window.addEventListener('message', (e) => { const d = e && e.data; if (!d || typ
   if (d.type === 'vera:style' && d.style){ document.documentElement.setAttribute('data-style', d.style); } });
 try { const q = new URLSearchParams(location.search).get('node'); if (q) S.sel = q; } catch (_) {}
 load(false);
-setInterval(() => { if (!document.hidden && !S.drag) load(false); }, 6000);
+setInterval(() => { if (!document.hidden && !S.drag && !(document.activeElement && document.activeElement.matches && document.activeElement.matches('input,textarea'))) load(false); }, 10000);
 window.VeraOps = { state: S, load, render, layout, setWidget, wspec, wdefaults, uiScale, applyZoom };
 })();
 </script>

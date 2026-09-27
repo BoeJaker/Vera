@@ -38,6 +38,7 @@ PLANES: List[Tuple[str, str, str]] = [
 DOMAINS = ["compute", "data", "storage", "edge", "dev"]
 COMPUTE, DATA, STORAGE, EDGE, DEV = 0, 1, 2, 3, 4
 
+PIPELINES_SHOWN = 6          # the newest pipelines still in flight stand on the work plane; the rest are a count
 LINK_KINDS = [("req", "requests"), ("data", "reads + writes"), ("runs", "runs on"), ("repo", "repo + build"), ("mesh", "mesh radio")]
 INFLIGHT_KINDS = ["llm.generate", "embed", "cap call", "fabric write", "git op", "background"]
 
@@ -365,12 +366,14 @@ def _work(src: Mapping[str, Any], nodes: Dict[str, Dict[str, Any]], links: List[
                            req={"name": "loops.program.list", "arguments": {}})
         links.append({"a": nid, "b": "core:router", "kind": "req"})
     pp = _ok(src, "evolve.pipeline.list") or {}
-    for q in pp.get("pipelines") or []:
-        if not isinstance(q, Mapping):
-            continue
+    live = [q for q in (pp.get("pipelines") or []) if isinstance(q, Mapping)
+            and str(q.get("status") or "").lower() not in ("adopted", "merged", "closed", "rejected", "promoted", "abandoned", "failed", "done")]
+    live.sort(key=lambda q: str(q.get("created_at") or ""), reverse=True)
+    if len(live) > PIPELINES_SHOWN and "core:looplab" in nodes:
+        nodes["core:looplab"]["detail"] += f" · {len(live) - PIPELINES_SHOWN} more pipelines in flight"
+        nodes["core:looplab"]["pipelines_more"] = len(live) - PIPELINES_SHOWN
+    for q in live[:PIPELINES_SHOWN]:
         st = str(q.get("status") or "").lower()
-        if st in ("adopted", "merged", "closed", "rejected", "promoted", "abandoned", "failed", "done"):
-            continue
         nid = "pipe:" + str(q.get("id"))
         nodes[nid] = _node(nid, "pipeline " + str(q.get("id")), "work", DEV, kind="work",
                            status="warn" if st in ("review", "blocked") else "run",
