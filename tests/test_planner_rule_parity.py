@@ -37,7 +37,7 @@ SKILLS = [{"id": "sys-exec-fileio", "description": "file io",
            "applies_to_caps": ["exec.bash.run"]}]
 
 
-def _compose(minimal: bool):
+def _compose(minimal: bool, **extra):
     """Return the (system, prompt) the planner would actually send."""
     captured = {}
 
@@ -57,7 +57,7 @@ def _compose(minimal: bool):
             "Build a habit tracker web app as a single self-contained index.html",
             CATALOG, SKILLS, max_steps=8, minimal=minimal, want_success=True,
             intent="build", sid="parity-test", stream_id="",
-            model="", instance_id="", prefer_gpu=True))
+            model="", instance_id="", prefer_gpu=True, **extra))
     finally:
         M._safe_ollama_generate_dw = real
         if prev is None:
@@ -94,6 +94,84 @@ def test_both_variants_carry_the_identical_rule_set():
     assert in_min == in_full, (
         f"planner rule drift — minimal-only: {sorted(in_min - in_full)}, "
         f"full-only: {sorted(in_full - in_min)}")
+
+
+PIECE = ("[PIECEWISE]FULL STRATEGIC MASTER PLAN: phase-one-marker\n"
+         ">>> CURRENT PIECE (2 of 3): piece-two-marker")
+MASTER = "strategic-master-marker: research, then build, then document"
+RECON = "recon-findings-marker: /workspace holds data.csv (3 columns)"
+
+
+@pytest.mark.parametrize("variant,minimal", [("minimal", True), ("full", False)])
+def test_a_piecewise_directive_reaches_this_variant(variant, minimal):
+    """Each piece of a strategic plan is expanded by passing its directive as
+    `master_plan`. The minimal body - the primary on every run - never read it, so
+    every piece re-planned the WHOLE goal. The piece must be in the prompt, and
+    the [PIECEWISE] tag is routing, not text: it must not reach the model."""
+    _, prompt = _compose(minimal, master_plan=PIECE)
+    assert "piece-two-marker" in prompt and "phase-one-marker" in prompt, (
+        f"{variant}: the piece directive never reached the planner prompt")
+    assert "[PIECEWISE]" not in prompt
+    assert "STRATEGIC MASTER PLAN (a specialist planner" not in prompt
+
+
+@pytest.mark.parametrize("variant,minimal", [("minimal", True), ("full", False)])
+def test_a_master_plan_reaches_this_variant(variant, minimal):
+    _, prompt = _compose(minimal, master_plan=MASTER)
+    assert "STRATEGIC MASTER PLAN (a specialist planner" in prompt
+    assert "strategic-master-marker" in prompt, f"{variant}: master plan dropped"
+
+
+@pytest.mark.parametrize("variant,minimal", [("minimal", True), ("full", False)])
+def test_recon_findings_reach_this_variant(variant, minimal):
+    _, prompt = _compose(minimal, recon_findings=RECON)
+    assert "RECON FINDINGS" in prompt and "recon-findings-marker" in prompt, (
+        f"{variant}: recon findings dropped")
+
+
+@pytest.mark.parametrize("variant,minimal", [("minimal", True), ("full", False)])
+def test_planner_context_sits_between_goal_and_catalog(variant, minimal):
+    """Same place in both bodies, so the model reads the plan before choosing caps."""
+    _, prompt = _compose(minimal, master_plan=MASTER, recon_findings=RECON)
+    g, m, r, c = (prompt.index(s) for s in
+                  ("GOAL:", "strategic-master-marker", "recon-findings-marker",
+                   "AVAILABLE CAPABILITIES"))
+    assert g < m < r < c
+
+
+def test_each_piece_of_a_strategic_plan_is_planned_as_that_piece():
+    """End to end through _v5_plan_master_piecewise on the DEFAULT (minimal)
+    primary: two pieces must produce two planner calls, each naming its OWN piece.
+    Before the fix both calls sent the identical goal-only prompt, so the
+    'sub-plans' were two plans of the whole goal concatenated."""
+    prompts = []
+
+    async def _stub(prompt, system=None, **kw):
+        prompts.append(prompt or "")
+        return ('{"steps":[{"id":1,"title":"t","goal":"g","caps":["code.author"],'
+                '"needs":[]}],"done_when":"d"}')
+
+    async def _split(goal, long_form, **kw):
+        return [{"id": 1, "title": "Gather-alpha", "objective": "collect alpha"},
+                {"id": 2, "title": "Build-beta", "objective": "build beta"}]
+
+    real_gen, real_split = M._safe_ollama_generate_dw, M._v5_split_master_plan
+    prev = os.environ.get("VERA_LOOP_MINIMAL_PLAN")
+    M._safe_ollama_generate_dw, M._v5_split_master_plan = _stub, _split
+    os.environ.pop("VERA_LOOP_MINIMAL_PLAN", None)          # the real default
+    try:
+        plan = asyncio.run(M._v5_plan_master_piecewise(
+            "grow a newsletter", CATALOG, SKILLS, None, long_form="the long form",
+            max_steps=8, want_success=True))
+    finally:
+        M._safe_ollama_generate_dw, M._v5_split_master_plan = real_gen, real_split
+        if prev is not None:
+            os.environ["VERA_LOOP_MINIMAL_PLAN"] = prev
+    assert len(prompts) == 2
+    assert "Gather-alpha" in prompts[0] and "CURRENT PIECE (1 of 2)" in prompts[0]
+    assert "Build-beta" in prompts[1] and "CURRENT PIECE (2 of 2)" in prompts[1]
+    assert "the long form" in prompts[0] and "the long form" in prompts[1]
+    assert [s["piece"] for s in plan["steps"]] == [1, 2]
 
 
 def test_the_shared_set_is_not_empty():
