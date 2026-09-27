@@ -1369,7 +1369,7 @@
         while (body.firstChild) holder.appendChild(body.firstChild);
         body.appendChild(holder);
       }
-      if (!el) { el = document.createElement('vera-widget'); el.className = 'vd-draw'; el.setAttribute('bare', ''); el.setAttribute('dive-on-click', ''); body.appendChild(el); }   // the tile's own head carries the title (the board's tile is one head)
+      if (!el) { el = document.createElement('vera-widget'); el.className = 'vd-draw'; el.setAttribute('bare', ''); el.setAttribute('dive-on-click', ''); el.setAttribute('item-drawer', ''); body.appendChild(el); }   // a click on the face: the data drawer (item-drawer), ⤢ the deep dive   // the tile's own head carries the title (the board's tile is one head)
       var sp = spanOf(w); el.setAttribute('size', sizeForSpan(sp[0], sp[1]));
       el.setAttribute('record', JSON.stringify(shown));
       w.dataset.converted = '1';
@@ -1549,7 +1549,8 @@
       }
       var el = document.createElement('vera-widget');
       el.setAttribute('bare', '');   // the tile's own head carries the title and the record chip (the board's tile is one head)
-      el.setAttribute('dive-on-click', '');   // a click on the face opens its deep dive (a block that names an entity opens that)
+      el.setAttribute('dive-on-click', '');
+      el.setAttribute('item-drawer', '');   // a click on a part - a block, a row, a bar, a slice, a day - or on the face opens the data drawer on it; ⤢ the deep dive
       var sp0 = spanOf(widget);
       el.setAttribute('size', sizeForSpan(sp0[0], sp0[1]));   // the span picks the size (the Sizes board), not the pixels
       var shown = withSample(record); if (shown.sample) widget.dataset.sample = '1';   // no readable source: the form's sample, said so
