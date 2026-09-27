@@ -16209,6 +16209,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 session_id=session_id, stream_id=stream_id, cycle=turns, step_id=step_id,
                 runtime={"caps": caps, "caps_count": len(caps or []),
                          "context_chars": len(ctx_slice or ""),
+                         "earlier_calls": (max(0, len(history) - 4) if _earlier else 0),
                          "skills": [s.get("id", "") for s in (loaded_skills or [])]})
         except Exception as _ae:                       # pragma: no cover
             log.debug("executor stage-context emit skipped: %s", _ae)
