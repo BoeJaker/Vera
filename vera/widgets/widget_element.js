@@ -971,7 +971,7 @@
   /* ── values: columns, ranked, lollipop, waterfall, pareto, box, diverging, bullet, threshold, radar, numbers, pills ── */
   R.column = (d, H, o) => {
     const kv = keyed(d); const vals = kv.length ? kv.map((x) => x[1]) : series(d); if (!vals.length) return EMPTY('columns need values');
-    const hi = Math.max(...vals) || 1, pal = palOf(o, 'load'), lim = (o && o.draw && o.draw.limit) || 24, from = Math.max(0, vals.length - lim);
+    const pal = palOf(o, 'load'), lim = (o && o.draw && o.draw.limit) || 24, from = Math.max(0, vals.length - lim), hi = Math.max(...vals.slice(from)) || 1;   /* the drawn window's peak: the whole history's hid every bar under one old spike */
     // named columns say the first and the last name they span (dreams per day: 2026-06-28 → 2026-07-19); a bar's own title
     // is its own name (it was the name of the bar lim places earlier once there were more than lim)
     const span = kv.length > 1 ? esc(String(kv[from][0])) + ' → ' + esc(String(kv[kv.length - 1][0])) + ' · ' : '';
