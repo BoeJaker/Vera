@@ -2891,8 +2891,9 @@ if _CAP_AVAILABLE:
         log.info("ml_training ready — numpy=%s httpx=%s", HAS_NP, HAS_HTTPX)
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(_training_startup())
+        # Through the orchestrator, so a node worker skips it unless it is
+        # on the worker allow-list (worker_placement_core).
+        import Vera.vera.capability_orchestration as _co_start
+        _co_start.start_at_import(_training_startup, "ml_training_startup")
     except Exception:
         pass

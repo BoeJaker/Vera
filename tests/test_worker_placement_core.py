@@ -82,6 +82,31 @@ def test_worker_runs_no_periodic_job_and_only_loading_hooks():
         assert not wp.scheduler_may_run(hook, S, is_worker=True), hook
 
 
+def test_no_module_starts_its_startup_behind_the_gates_back():
+    """Modules load with the loop running, and a startup created straight from
+    import skipped the worker gate entirely (cpu-246, 2026-09-27: cluster loops,
+    cap-index embedding, job recovery, the OpenBao unseal all ran on a node).
+    Every import-time start must go through start_at_import."""
+    import re
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "vera"))
+    pat = re.compile(r"create_task\(\s*(_\w*start\w*)\(\)\s*\)")
+    offenders = []
+    for dirpath, _, files in os.walk(root):
+        for f in files:
+            if not f.endswith(".py") or f == "capability_orchestration.py":
+                continue
+            p = os.path.join(dirpath, f)
+            with open(p, encoding="utf-8", errors="replace") as fh:
+                for n, line in enumerate(fh, 1):
+                    if pat.search(line) and not line.lstrip().startswith("#"):
+                        offenders.append(f"{os.path.relpath(p, root)}:{n}: {line.strip()}")
+    assert not offenders, "\n".join(offenders)
+
+
+def test_memory_hooks_run_on_a_worker():
+    assert wp.scheduler_may_run("memory_hooks_startup", wp.STARTUP_INTERVAL, is_worker=True)
+
+
 def test_worker_thread_env_caps_every_pool():
     env = wp.worker_thread_env(3)
     assert set(env) == set(wp.THREAD_ENV_VARS) and set(env.values()) == {"3"}

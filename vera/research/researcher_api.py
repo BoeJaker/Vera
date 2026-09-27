@@ -10323,10 +10323,11 @@ if _VERA_MODE:
 
     # Schedule startup — runs as soon as the event loop ticks after module load
     try:
-        asyncio.get_event_loop().create_task(_research_startup())
-    except RuntimeError:
-        # No running loop yet — will be called when orchestrator starts
-        # via the module's presence in the lifespan load sequence
+        # Through the orchestrator, so a node worker skips it unless it is
+        # on the worker allow-list (worker_placement_core).
+        import Vera.vera.capability_orchestration as _co_start
+        _co_start.start_at_import(_research_startup, "research_startup", queue=True)
+    except Exception:
         pass
 
     # ── Pipeline ──────────────────────────────────────────────────────────────

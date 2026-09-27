@@ -2259,8 +2259,9 @@ Respond ONLY with a JSON object in this exact format (no markdown):
                  len(_MODULES), HAS_NP, HAS_TORCH)
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(_ml_startup())
+        # Through the orchestrator, so a node worker skips it unless it is
+        # on the worker allow-list (worker_placement_core).
+        import Vera.vera.capability_orchestration as _co_start
+        _co_start.start_at_import(_ml_startup, "ml_workshop_startup")
     except Exception:
         pass

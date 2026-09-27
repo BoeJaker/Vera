@@ -4985,9 +4985,10 @@ async def _startup():
 
 
 try:
-    _loop = asyncio.get_event_loop()
-    if _loop.is_running():
-        _loop.create_task(_startup())
+    # Through the orchestrator, so a node worker skips it unless it is
+    # on the worker allow-list (worker_placement_core).
+    import Vera.vera.capability_orchestration as _co_start
+    _co_start.start_at_import(_startup, "exec_startup")
 except Exception:
     pass
 
