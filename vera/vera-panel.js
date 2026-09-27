@@ -127,6 +127,10 @@
     var btns = nav.querySelectorAll('.nav-btn');
     if (!btns.length) btns = nav.querySelectorAll(SEL);
     if (!nav.querySelector('.nav-btn')) btns = Array.prototype.filter.call(btns, function (b) { return !!(b.matches && b.matches('button, a, [role="button"], [onclick]')); });
+    // a menu in markup of its own (Research's icon rail: buttons with a title and an onclick, no data attribute): its
+    // clickable things with a name are the items - never what sits under [data-lhm-skip] (Research's theme palette)
+    if (!btns.length) btns = Array.prototype.filter.call(nav.querySelectorAll('button, a, [role="button"], [onclick]'), function (b) {
+      return !(b.closest && b.closest('[data-lhm-skip]')) && !!((b.getAttribute('title') || b.textContent || '').trim()); });
     // A button the panel's own rules hide (a view filter — the Estate's
     // ?view=models shows only the model pages) is not part of the menu it is
     // publishing. Ask for the button's OWN computed display, never its
@@ -167,6 +171,8 @@
         for (var bj = 0; bj < btns.length; bj++) { var v2 = btns[bj].getAttribute(nm); if (!v2 || seen2[v2]) { ok = false; break; } seen2[v2] = 1; }
         if (ok) idAttr = nm;
       }
+      // ... or each item's own element id (Research: nv-r, nv-p ...), when every item has one of its own
+      if (!idAttr) { var seen3 = {}, ok3 = true; for (var bk = 0; bk < btns.length; bk++) { var v3 = btns[bk].getAttribute('id'); if (!v3 || seen3[v3]) { ok3 = false; break; } seen3[v3] = 1; } if (ok3) idAttr = 'id'; }
     }
     function idOf(b) {
       if (idAttr) return b.getAttribute(idAttr);
@@ -204,7 +210,7 @@
       var g = b.closest && b.closest('[data-nav-group]');
       return g ? String(g.getAttribute('data-nav-group') || '').slice(0, 40) : '';
     }
-    function iconOf(b) { var g = b.querySelector('.gl'); return g ? Array.from((g.textContent || '').trim()).slice(0, 2).join('') : ''; }
+    function iconOf(b) { var di = b.getAttribute && b.getAttribute('data-icon'); if (di) return Array.from(di.trim()).slice(0, 2).join(''); var g = b.querySelector('.gl'); return g ? Array.from((g.textContent || '').trim()).slice(0, 2).join('') : ''; }
     var items = Array.prototype.map.call(btns, function (b) { return { id: idOf(b), label: labelOf(b), group: groupOf(b), icon: iconOf(b) }; });
     // ".active" is the canonical mark; ".on" is still accepted for a panel
     // that has not moved to this markup yet — scoped to just these nav

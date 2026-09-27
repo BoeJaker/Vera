@@ -507,10 +507,10 @@ select option { background: var(--bg2); }
 <div id="topbar">
   <div class="tb-title">◇ CAP ONTOLOGY</div>
 
-  <div class="view-tabs">
-    <button class="view-tab on" id="vt-matrix" onclick="setView('matrix')">⊞ Matrix</button>
-    <button class="view-tab"    id="vt-graph"  onclick="setView('graph')">◉ Graph</button>
-    <button class="view-tab"    id="vt-list"   onclick="setView('list')">≡ List</button>
+  <div class="view-tabs" data-vera-lhm>
+    <button class="view-tab on" id="vt-matrix" title="Matrix" data-icon="⊞" onclick="setView('matrix')">⊞ Matrix</button>
+    <button class="view-tab"    id="vt-graph" title="Graph" data-icon="◉" onclick="setView('graph')">◉ Graph</button>
+    <button class="view-tab"    id="vt-list" title="List" data-icon="≡" onclick="setView('list')">≡ List</button>
   </div>
 
   <div class="tb-pill">CAPS <span class="v" id="tp-caps">—</span></div>
