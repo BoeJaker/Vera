@@ -94,7 +94,8 @@
   function _navIcon(it){ var t = String(it.icon || '').trim(); if(t) return t; return (String(it.label || it.id || '').trim().charAt(0) || '\u2022').toUpperCase(); }
   function _navLhm(){
     if(!_navItems || !_navItems.length || (_navLhmOpts && _navLhmOpts.lhm === false)) return null;
-    var title = (_navLhmOpts && _navLhmOpts.title) || document.title || '';
+    // the panel's name: its page title carries the product's name first ("Vera — Estate"), which the menu's head does not need
+    var title = String((_navLhmOpts && _navLhmOpts.title) || document.title || '').replace(/^\s*Vera\s*[\u2014\u2013\-\u00b7|:]\s*/i, '').trim();
     var groups = [], at = {};
     _navItems.forEach(function(it){ var g = it.group || ''; if(!(g in at)){ at[g] = groups.length; groups.push({ name: g, items: [] }); } groups[at[g]].items.push(it); });
     var act = { menu: '', tab: '' }, menus;
