@@ -116,8 +116,8 @@
     if(d.type !== 'vera:panel:state' && d.type !== 'vera:hdr:offer') return;
     var k = _kidOf(ev.source); if(!k) return;
     if(d.type === 'vera:panel:state'){
-      var nv = d.state && d.state.nav; k.nav = (nv && Array.isArray(nv.items)) ? { items: nv.items.slice(0, 60), active: String(nv.active || '') } : null;
-      try{ ev.source.postMessage({ type: _hostedUp ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){}
+      var nv = d.state && d.state.nav; k.nav = (nv && Array.isArray(nv.items)) ? { items: nv.items.slice(0, 60).map(function(it){ return { id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48) }; }), active: String(nv.active || '') } : null;
+      try{ ev.source.postMessage({ type: (_hostedUp || document.documentElement.classList.contains('vpb-nav-hosted')) ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){}
       publishStateDebounced();
     } else { k.hdr = d; _hdrRelay(); }
   });
@@ -837,7 +837,7 @@
     // switch didn't originate from an injected click.
     registerNav: function(items, selectFn){
       _navItems = (items || []).map(function(it){
-        return {id: String(it.id), label: String(it.label || it.id), group: it.group ? String(it.group) : '', icon: it.icon ? String(it.icon) : ''};
+        return {id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48), group: it.group ? String(it.group) : '', icon: it.icon ? String(it.icon) : ''};
       });
       if(typeof selectFn === 'function') _navSelectFn = selectFn;
       publishStateDebounced();

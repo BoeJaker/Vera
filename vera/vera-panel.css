@@ -60,6 +60,11 @@
    menu on screen beside the shell's copy of it. Hosted has to win. */
 html.vpb-nav-hosted #sidebar[data-vera-lhm],
 html.vpb-nav-hosted [data-vera-lhm] { display: none; }
+/* A sidebar that CARRIES content (panes of its own - the Calendar's layers, events, assistant, dump) keeps its content
+   column when docked: only its header and tab strip fold into the harness's menu, which now switches the panes
+   (2026-09-27, "deep LHMs ... fully absorbing"). vera-panel.js marks such a sidebar .vp-has-content. */
+html.vpb-nav-hosted #sidebar[data-vera-lhm].vp-has-content { display: flex; }
+html.vpb-nav-hosted #sidebar[data-vera-lhm].vp-has-content > :is(#side-head, #nav, #lhm-tabs, .lhm-tabs) { display: none; }
 
 /* ── Sidebar ──────────────────────────────────────────────────────────── */
 #sidebar[data-vera-lhm] {
