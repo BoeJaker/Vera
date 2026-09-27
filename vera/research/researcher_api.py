@@ -952,6 +952,7 @@ async def query_redis(query: str) -> list[Citation]:
         r = aioredis.Redis(
             host=src.config.get("host",_BACKEND_HOST),
             port=int(src.config.get("port",6379)),
+            username=src.config.get("username") or None,   # a Redis ACL user
             password=src.config.get("password") or None,
             db=int(src.config.get("db",0)),
             decode_responses=True,
@@ -7809,7 +7810,8 @@ async def test_source(req: SourceTestRequest):
         try:
             import redis.asyncio as aioredis  # type:ignore
             r=aioredis.Redis(host=cfg.get("host","localhost"),port=int(cfg.get("port",6379)),
-                password=cfg.get("password") or None,db=int(cfg.get("db",0)),decode_responses=True)
+                username=cfg.get("username") or None,password=cfg.get("password") or None,
+                db=int(cfg.get("db",0)),decode_responses=True)
             await r.ping()
             prefix=cfg.get("prefix","vera:")
             count=await r.dbsize()

@@ -508,6 +508,11 @@ try:
     from Vera.vera.workers import worker_placement_core as _placement
 except Exception:                                     # pragma: no cover
     from vera.workers import worker_placement_core as _placement
+try:
+    # REDIS_URL can carry an ACL password (config.py) - log it redacted only
+    from Vera.vera.security import redis_auth_core as _redis_auth
+except Exception:                                     # pragma: no cover
+    from vera.security import redis_auth_core as _redis_auth
 
 TASK_STREAM   = _placement.TASK_STREAM
 # Tasks for host-bound caps (see worker_placement_core.HOST_BOUND). Only a
@@ -1607,7 +1612,7 @@ async def _ensure_coord_redis():
                                     socket_connect_timeout=4, socket_timeout=4)
             await _cr.ping()
             COORD_REDIS = _cr
-            log.info("✓ Ollama gate coord Redis (explicit): %s", _resolved)
+            log.info("✓ Ollama gate coord Redis (explicit): %s", _redis_auth.redact_url(_resolved))
             await _maybe_sweep_gate_leases()
             return COORD_REDIS
         if data_db == COORD_REDIS_DB and REDIS is not None:
@@ -1621,7 +1626,7 @@ async def _ensure_coord_redis():
         await _cr.ping()
         COORD_REDIS = _cr
         log.info("✓ Ollama gate coord Redis connected: %s (data DB %d)",
-                 coord_url, data_db)
+                 _redis_auth.redact_url(coord_url), data_db)
         await _maybe_sweep_gate_leases()
     except Exception as e:
         log.warning("coord Redis connect failed — Ollama gate stays a no-op: %s", e)
@@ -5311,7 +5316,7 @@ async def worker_loop(worker_id: str):
     # ── Wait for Redis (retry indefinitely) ──────────────────────────────────
     while not REDIS:
         log.warning("Worker %s: Redis not connected — retrying in 5s "
-                    "(check REDIS_URL=%s, Redis bind-address, and requirepass)", worker_id, REDIS_URL)
+                    "(check REDIS_URL=%s, Redis bind-address, and requirepass)", worker_id, _redis_auth.redact_url(REDIS_URL))
         await asyncio.sleep(5)
         if not REDIS and HAS_REDIS:
             try:
@@ -10533,7 +10538,7 @@ async def lifespan(app: FastAPI):
                 info = await _r.info("server")
                 REDIS = _r
                 log.info("✓ Redis connected (attempt %d): %s v%s",
-                         _attempt, REDIS_URL, info.get("redis_version", "?"))
+                         _attempt, _redis_auth.redact_url(REDIS_URL), info.get("redis_version", "?"))
                 await emit_event({"type": "backend.connected", "backend": "redis"})
                 await _ensure_coord_redis()
                 return
@@ -10543,7 +10548,7 @@ async def lifespan(app: FastAPI):
                         "✗ Redis not ready yet (will retry every 5s): %s\n"
                         "  URL  : %s\n"
                         "  Hint : check bind address in redis.conf, requirepass, firewall",
-                        e, REDIS_URL,
+                        e, _redis_auth.redact_url(REDIS_URL),
                     )
                 await asyncio.sleep(5)
 
@@ -10719,6 +10724,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "estate/estate_entity_capabilities.py"),
         os.path.join(_here, "estate/registration_capabilities.py"),
         os.path.join(_here, "security/secrets_capabilities.py"),
+        os.path.join(_here, "security/redis_auth_capabilities.py"),
         os.path.join(_here, "security/certs_capabilities.py"),
         os.path.join(_here, "execution/ssh_cleanup_capabilities.py"),
         os.path.join(_here, "workers/nodes_capabilities.py"),

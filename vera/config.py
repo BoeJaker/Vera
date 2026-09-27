@@ -63,6 +63,59 @@ def _load_dotenv_files() -> None:
 _load_dotenv_files()
 
 
+def _apply_local_redis_credentials() -> None:
+    """Give REDIS_URL the Vera host's Redis credential, from its local sealed copy.
+
+    The shared Redis uses ACL users (security/redis_auth_core.py). The host
+    cannot fetch its password from OpenBao first - OpenBao's own token lives in
+    Redis - so it keeps a Fernet-sealed copy in a 0600 file, opened here with
+    the key Vera already keeps outside Redis. The result is written back to
+    os.environ as well, so every later os.getenv("REDIS_URL") (worker spawns,
+    foundry, evolve) sees the same URL.
+
+    Nothing happens when the URL already carries credentials, or when there is
+    no copy (sandboxes, node workers, a fresh install) - behaviour is then
+    exactly what it was. A copy that will not open is logged, never guessed at:
+    Redis will then refuse the connection with NOAUTH, which names the problem.
+    """
+    url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    try:
+        try:
+            from Vera.vera.security import redis_auth_core as _rac
+        except Exception:                               # pragma: no cover
+            from vera.security import redis_auth_core as _rac
+        path = _rac.local_file()
+        if _rac.has_credentials(url) or not os.path.isfile(path):
+            return
+        try:
+            from Vera.vera.security import secrets as _vs
+        except Exception:                               # pragma: no cover
+            from vera.security import secrets as _vs
+        with open(path, encoding="ascii") as fh:
+            user, pw = _rac.open_payload(_vs.open_secret(fh.read().strip()))
+        if not (user and pw):
+            import logging
+            logging.getLogger("vera.config").error(
+                "redis credential copy %s did not open - REDIS_URL left without "
+                "credentials (expect NOAUTH)", path)
+            return
+        os.environ["REDIS_URL"] = _rac.with_credentials(url, user, pw)
+    except Exception as e:                              # never block startup here
+        import logging
+        logging.getLogger("vera.config").error("redis credentials: %s", e)
+
+
+_apply_local_redis_credentials()
+
+
+def _redact_url(url: str) -> str:
+    try:
+        from Vera.vera.security import redis_auth_core as _rac
+    except Exception:                                   # pragma: no cover
+        from vera.security import redis_auth_core as _rac
+    return _rac.redact_url(url)
+
+
 class VeraConfig:
     # ── Network / Hosts ────────────────────────────────────────────────────────
     # Single internal-domain variable. Host-derived defaults across the codebase
@@ -235,7 +288,7 @@ class VeraConfig:
 
     def __repr__(self):
         return (
-            f"VeraConfig(redis={self.REDIS_URL!r}, "
+            f"VeraConfig(redis={_redact_url(self.REDIS_URL)!r}, "
             f"pg={self.POSTGRES_URL!r}, "
             f"chroma={self.CHROMA_HOST}:{self.CHROMA_PORT}, "
             f"neo4j={self.NEO4J_URI!r}, "
