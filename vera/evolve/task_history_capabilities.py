@@ -35,10 +35,12 @@ try:
     from Vera.vera.evolve import task_history_core as th
     from Vera.vera.evolve import result_ingest_core as ric
     from Vera.vera.evolve import work_core as wc
+    from Vera.vera.evolve import loop_record_core as lrc
 except ImportError:                                   # pragma: no cover
     from vera.evolve import task_history_core as th
     from vera.evolve import result_ingest_core as ric
     from vera.evolve import work_core as wc
+    from vera.evolve import loop_record_core as lrc
 
 log = logging.getLogger("vera.evolve.task_history")
 
@@ -211,11 +213,14 @@ def insert_position(rows: List[Dict[str, Any]], ts: str, cap: int) -> Optional[i
     return None if len(rows) >= cap else len(rows)
 
 
-async def _upsert_run(ev, compact: Dict[str, Any], detail: Dict[str, Any]) -> str:
+async def _upsert_run(ev, compact: Dict[str, Any], detail: Dict[str, Any],
+                      may_replace=None) -> str:
     """Store a run record: replaced in place when the list already holds its
     run_id (the harness may post a goal twice: once live, again from the
-    archive), otherwise inserted at its place by time. Returns 'added' |
-    'replaced' | 'beyond_window' | '' (no store)."""
+    archive), otherwise inserted at its place by time. `may_replace(existing)`
+    returning False keeps the stored record (a loop record never replaces the
+    census record of the same session). Returns 'added' | 'replaced' | 'kept'
+    | 'beyond_window' | '' (no store)."""
     r = ev._redis()
     if not r:
         return ""
@@ -230,6 +235,8 @@ async def _upsert_run(ev, compact: Dict[str, Any], detail: Dict[str, Any]) -> st
     body = json.dumps(compact, default=str)
     for i, rec in enumerate(recs):
         if rec.get("run_id") == rid:
+            if may_replace is not None and not may_replace(rec):
+                return "kept"
             await r.lset(ev.KEY_RUNS, i, body)
             await r.set(ev.KEY_RUN + rid, json.dumps(detail, default=str))
             await r.expire(ev.KEY_RUN + rid, _DETAIL_TTL_S)
@@ -403,6 +410,76 @@ async def cap_evolve_result_ingest(template: str = "", census_run: str = "", row
              template, census_run, len(run_ids), added, replaced, skipped_old,
              (" + suite %s" % out.get("suite")) if want_suite else "")
     return out
+
+
+def _decode_events(raws) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for raw in raws or []:
+        try:
+            e = json.loads(_rd(raw))
+        except Exception:
+            continue
+        if isinstance(e, dict):
+            out.append(e)
+    return out
+
+
+@capability(
+    "evolve.loop.record", memory="off", silent=True,
+    http_method="POST", http_path="/evolve/loop/record", http_tags=["evolve", "loop"],
+    description=(
+        "Record a finished agent loop in Loop Lab's run store, whoever started it "
+        "(chat, dream, a v8 program, the API). Built from the loop's own event log "
+        "(vera:loop:events:<session>) with the census's trace digest: engine, origin, "
+        "tier, intent, plan style, planned/executed/inserted steps, tool calls, "
+        "warnings, wall time, status. run_id = the loop session, source=loop, "
+        "task=loop:<origin>. Called automatically when a loop ends; callable by hand "
+        "to record a session still inside the event window (7 days). Never replaces "
+        "a census or task record of the same session, and skips evolve:<run> "
+        "sessions (Loop Lab tasks record themselves). Inputs: session_id (str!), "
+        "where (str - the Vera process that ran it). Output: {ok, outcome "
+        "(added|replaced|kept|beyond_window|skipped), run_id, origin}."),
+)
+async def cap_evolve_loop_record(session_id: str = "", where: str = "", trace_id=None) -> Dict[str, Any]:
+    sid = str(session_id or "").strip()
+    if not sid:
+        return {"error": "session_id is required"}
+    if lrc.is_self_recording(sid):
+        return {"ok": True, "outcome": "skipped", "run_id": sid,
+                "reason": "a Loop Lab task records its own run"}
+    _, ev = _mods()
+    if ev is None or not ev._redis():
+        return {"error": "the suite store (evolve_capabilities) or its Redis is not available"}
+    r = ev._redis()
+    raws = await r.lrange("vera:loop:events:%s" % sid, 0, -1)
+    events = _decode_events(raws)
+    if not events:
+        return {"ok": True, "outcome": "skipped", "run_id": sid, "reason": "no events for this session"}
+    state_raw = await r.hgetall("vera:loop:run:%s" % sid) or {}
+    run_state = {_rd(k): _rd(v) for k, v in state_raw.items()}
+    try:
+        from Vera.vera.dag import loop_trace_core as ltc
+    except ImportError:                                   # pragma: no cover
+        from vera.dag import loop_trace_core as ltc
+    # The digest folds a few thousand events - off the event loop.
+    digest = await asyncio.to_thread(ltc.digest_events, events)
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    built = lrc.run_record_from_events(sid, events, digest, run_state=run_state,
+                                       where=where, ingested_at=now)
+    if not built:
+        return {"ok": True, "outcome": "skipped", "run_id": sid, "reason": "the loop has not finished"}
+    compact, detail = built
+    outcome = await _upsert_run(ev, compact, detail, may_replace=lrc.may_replace)
+    if outcome == "added":
+        try:
+            await ev.emit_event({"type": "evolve.run.done", "run_id": compact["run_id"],
+                                 "task": compact["task"], "pass_rate": compact["pass_rate"],
+                                 "combined": compact["combined"], "elapsed_s": compact["elapsed_s"],
+                                 "where": compact["where"], "error": compact["error"][:120],
+                                 "source": lrc.SOURCE, "origin": compact["origin"]})
+        except Exception:
+            pass
+    return {"ok": True, "outcome": outcome, "run_id": sid, "origin": compact["origin"]}
 
 
 @capability(

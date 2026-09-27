@@ -4862,9 +4862,47 @@ async def _persist_loop_event(event: dict, ev_json: str):
         pipe.zadd(_LOOP_HIST_INDEX, {sid: time.time()})
         await pipe.execute()
         await _loop_history_trim()
+        if etype.endswith(".done") or etype.endswith(".error"):
+            _schedule_loop_record(sid)
     except Exception as e:
         if "MISCONF" not in str(e):
             log.debug("resume persist: %s", e)
+
+
+# Every finished loop becomes a Loop Lab run record (evolve.loop.record), not
+# only the ones a census or a Loop Lab task started. Session -> "record again
+# when done": a v7 run emits v6's .done and then its own, and the later one
+# must win without two writers racing on the same run list.
+_LOOP_RECORD_PENDING: Dict[str, bool] = {}
+_LOOP_RECORD_SETTLE_S = 5.0
+
+
+def _schedule_loop_record(sid: str) -> None:
+    if sid in _LOOP_RECORD_PENDING:
+        _LOOP_RECORD_PENDING[sid] = True
+        return
+    _LOOP_RECORD_PENDING[sid] = False
+    asyncio.ensure_future(_record_loop_run(sid))
+
+
+async def _record_loop_run(sid: str) -> None:
+    try:
+        while True:
+            await asyncio.sleep(_LOOP_RECORD_SETTLE_S)
+            _LOOP_RECORD_PENDING[sid] = False
+            cap = CAPABILITY_REGISTRY.get("evolve.loop.record")
+            fn = (cap.get("raw") or cap.get("func")) if cap else None
+            if not fn:
+                return
+            res = await fn(session_id=sid, where=_ORIGIN_NODE.get("node", ""))
+            if isinstance(res, dict) and res.get("error"):
+                log.debug("loop record %s: %s", sid, res["error"])
+            if not _LOOP_RECORD_PENDING.get(sid):
+                return
+    except Exception as e:
+        log.debug("loop record %s: %s", sid, e)
+    finally:
+        _LOOP_RECORD_PENDING.pop(sid, None)
 
 
 try:
