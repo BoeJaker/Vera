@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import subprocess
 
 import pytest
 
@@ -295,5 +296,15 @@ async def test_observation_rejects_native_job_and_request_spoofing():
 
 
 def test_adapter_import_does_not_pull_ml_framework_or_workshop_runtime():
-    forbidden = {"numpy", "torch", "tensorflow", "onnxruntime", "vera.ml_training"}
-    assert forbidden.isdisjoint(sys.modules)
+    probe = """
+import sys
+before = set(sys.modules)
+import vera.models.ml_workshop_training_adapter
+loaded = set(sys.modules) - before
+forbidden = {'numpy', 'torch', 'tensorflow', 'onnxruntime', 'vera.ml_training'}
+raise SystemExit(1 if forbidden & loaded else 0)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", probe], check=False, capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
