@@ -237,3 +237,15 @@ def test_loop_perf_splits_the_time_and_counts_a_repeated_step_once():
     assert r["calls"] == 2 and r["fails"] == 0 and r["repeats"] == 1 and r["tool_ms"] == 350
     assert r["by_tool"][0] == {"tool": "exec.bash.run", "ms": 300} and r["llm_calls"] == 5 and r["gate_rounds"] == 1
     assert p["summary"]["runs"] == 1 and p["summary"]["pass_rate"] == 1.0 and p["summary"]["wall_median"] == 300.0
+
+
+def test_a_slim_driver_row_keeps_what_the_table_draws():
+    from vera.evolve import work_core as wc
+    helpers = [{"name": "restart.sh", "path": "/tmp/x", "purpose": "restart prod " * 40, "by": "claude"}] * 5
+    row = {"id": "run77", "provenance": {"operator": "claude", "helpers": helpers, "attributed": True},
+           "census": {"done": 10, "template": "default", "provenance": {"helpers": helpers}}}
+    s = wc.slim_driver(row)
+    assert s["provenance"]["operator"] == "claude" and len(s["provenance"]["helpers"]) == 5
+    assert set(s["provenance"]["helpers"][0]) == {"name", "purpose"} and len(s["provenance"]["helpers"][0]["purpose"]) == 160
+    assert "provenance" not in s["census"] and s["census"]["template"] == "default"
+    assert row["census"]["provenance"]                       # the source row is not changed

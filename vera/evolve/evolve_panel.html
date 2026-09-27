@@ -748,6 +748,7 @@ window._veraSubscribe=fn=>{_busSubs.add(fn);return ()=>_busSubs.delete(fn)};
 <script src="/ui/widgets/widget_element.js"></script>
 <script src="/ui/elements/ci_ops.js"></script>
 <script src="/ui/vera-dashboard.js"></script>
+<script src="/ui/elements/looplab_tables.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script>
 const $=id=>document.getElementById(id);
@@ -2561,7 +2562,7 @@ async function loadCensusRuns(){
   const el=$('census-runs');if(!el)return;
   // One call for every driver kind (evolve.work.drivers); the census rows
   // carry their full summary, which the census renderer reads as before.
-  const [d,op]=await Promise.all([api('/evolve/work/drivers?include_excluded=true'),api('/census/operator/runs')]);
+  const [d,op]=await Promise.all([api('/evolve/work/drivers?include_excluded=true&slim=1'),api('/census/operator/runs')]);
   _workRows=(d&&d.drivers)||[];
   _workMeta=d||{};
   _cenRunsAll=_workRows.filter(x=>x.kind==='census'&&x.census).map(x=>x.census);

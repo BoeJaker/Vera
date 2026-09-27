@@ -552,11 +552,12 @@ async def _safe(coro, default):
         "- a run that belongs to a suite, session or census run is not a row). A census "
         "run the harness also posted as a scoreboard is ONE row (also_in_store=true). "
         "This is the Work page's runs view. Filters: kind (census|suite|improve|run), "
-        "template, source, text, include_excluded (bool=true), limit (int=400). "
+        "template, source, text, include_excluded (bool=true), limit (int=400), slim (bool - drop "
+        "the census rollup's duplicate provenance and cut helpers to name + purpose: ~1.2 MB -> ~0.2 MB). "
         "Output: {drivers[], count, kinds{}, templates[], census_meta}."),
 )
 async def cap_evolve_work_drivers(kind: str = "", template: str = "", source: str = "", text: str = "",
-                                  include_excluded: Any = True, limit: int = 400,
+                                  include_excluded: Any = True, limit: int = 400, slim: Any = False,
                                   trace_id=None) -> Dict[str, Any]:
     cc, ev = _mods()
     census = await _safe(cc.cap_census_runs(include_partial=True), {}) if cc is not None else {}
@@ -579,7 +580,10 @@ async def cap_evolve_work_drivers(kind: str = "", template: str = "", source: st
         kinds[r["kind"]] = kinds.get(r["kind"], 0) + 1
     templates = sorted({r["template"] for r in rows if r.get("template")})
     meta = {k: v for k, v in census.items() if k != "runs"}
-    return {"drivers": shown[:max(1, int(limit))], "count": len(shown), "total": len(rows),
+    out = shown[:max(1, int(limit))]
+    if str(slim).strip().lower() in ("1", "true", "yes", "on"):
+        out = [wc.slim_driver(r) for r in out]
+    return {"drivers": out, "count": len(shown), "total": len(rows),
             "kinds": kinds, "templates": templates, "census_meta": meta}
 
 
