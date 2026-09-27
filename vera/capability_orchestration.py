@@ -1221,8 +1221,12 @@ async def _load_ollama_persistence() -> None:
     if not REDIS:
         log.info("ollama persistence: Redis unavailable, using in-memory defaults")
         return
+    # Which user routing layers this process's Redis actually holds - a sandbox
+    # seeds the ABSENT ones from prod at the end (see _seed_routing_parity).
+    _present = {"routing": False, "cap_routing": False, "role_profiles": False}
     try:
         raw = await REDIS.get(KEY_OLLAMA_ROUTING)
+        _present["routing"] = raw is not None
         if raw:
             doc = json.loads(raw)
             if isinstance(doc, dict) and doc.get("profiles"):
@@ -1263,6 +1267,7 @@ async def _load_ollama_persistence() -> None:
         log.warning("load embed config: %s", e)
     try:
         raw = await REDIS.get(KEY_OLLAMA_CAP_ROUTING)
+        _present["cap_routing"] = raw is not None
         if raw:
             doc = json.loads(raw)
             if isinstance(doc, dict):
@@ -1278,6 +1283,7 @@ async def _load_ollama_persistence() -> None:
         log.warning("load cap routing: %s", e)
     try:
         raw = await REDIS.get(KEY_OLLAMA_ROLE_PROFILES)
+        _present["role_profiles"] = raw is not None
         if raw:
             doc = json.loads(raw)
             if isinstance(doc, dict):
@@ -1337,9 +1343,88 @@ async def _load_ollama_persistence() -> None:
                 })
     except Exception as e:
         log.debug("load interactive priority: %s", e)
+    try:
+        await _seed_routing_parity(_present)
+    except Exception as e:                                   # pragma: no cover
+        log.warning("routing parity: seeding skipped: %s", e)
     log.info("ollama persistence: hydrated (profile=%s, %d nodes, %d cap rules, %d stat keys)",
              ROUTING.get("active_profile"), len(OLLAMA_INSTANCES),
              len(CAP_ROUTING_USER), len(_ROUTE_STATS))
+
+
+try:
+    from Vera.vera.workers import routing_parity_core as _routing_parity
+except Exception:                                            # pragma: no cover
+    try:
+        from vera.workers import routing_parity_core as _routing_parity
+    except Exception:
+        _routing_parity = None
+
+
+async def _seed_routing_parity(present: Dict[str, bool]) -> List[str]:
+    """In a dev sandbox, seed each user routing layer its own Redis has never held
+    from prod's (routing_parity_core), then save it - so the sandbox routes to the
+    same models as prod and never re-seeds over its own later edits. Read-only GETs
+    against prod, short timeout; any failure leaves the code defaults, exactly as
+    before. Runs from _load_ollama_persistence (lifespan), never at import.
+    Returns the layers it seeded."""
+    if _routing_parity is None or not _routing_parity.enabled(os.environ):
+        return []
+    missing = _routing_parity.missing_layers(present)
+    if not missing:
+        return []
+    base = _routing_parity.prod_base_url(os.environ)
+    if not base:
+        log.info("routing parity: no prod URL (VERA_PROD_URL / VERA_GATE_BROKER_URL) - "
+                 "keeping code defaults for %s", ", ".join(missing))
+        return []
+    docs: Dict[str, Any] = {}
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=8) as _cl:
+            for layer in missing:
+                resp = await _cl.get(base + _routing_parity.PATHS[layer])
+                resp.raise_for_status()
+                docs[layer] = resp.json()
+    except Exception as e:
+        log.warning("routing parity: prod at %s not readable (%s) - keeping code defaults",
+                    base, type(e).__name__)
+        return []
+    layers = _routing_parity.user_layers(docs.get("routing"), docs.get("cap_routing"),
+                                         docs.get("role_profiles"))
+    seeded: List[str] = []
+    if "routing" in docs and layers["routing"]["profiles"]:
+        ROUTING["profiles"] = layers["routing"]["profiles"]
+        ROUTING["active_profile"] = layers["routing"]["active_profile"]
+        await _save_routing()
+        seeded.append("routing")
+    if "cap_routing" in docs:
+        CAP_ROUTING_USER.clear()
+        for pat, r in layers["cap_routing"].items():
+            CAP_ROUTING_USER[pat] = _cap_rule(pat, **{
+                k: r.get(k) for k in ("job_type", "label", "prefer_gpu", "deny_gpu", "pin",
+                                      "allow", "deny", "model", "escalate_chars", "escalate")
+                if r.get(k) is not None})
+        await _save_cap_routing()
+        seeded.append("cap_routing")
+    if "role_profiles" in docs:
+        ROLE_PROFILES_USER.clear()
+        for name, prof in layers["role_profiles"].items():
+            ROLE_PROFILES_USER[name] = {
+                "label": prof.get("label", name),
+                "owner": prof.get("owner", "user"),
+                "roles": {r: _role_rule(name, r, v)
+                          for r, v in (prof.get("roles") or {}).items() if isinstance(v, dict)},
+            }
+        await _save_role_profiles()
+        seeded.append("role_profiles")
+    if seeded:
+        log.info("routing parity: seeded %s from prod (%s)", ", ".join(seeded), base)
+        try:
+            await emit_event({"type": "ollama.routing.parity_seeded",
+                              "layers": seeded, "source": base})
+        except Exception:
+            pass
+    return seeded
 
 # Per-instance concurrency semaphores for Ollama — limits simultaneous
 # in-flight requests per node to 1 (Ollama queues internally but multiple
