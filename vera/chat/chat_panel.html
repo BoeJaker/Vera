@@ -1697,7 +1697,6 @@ body{transition:opacity .32s ease}
 #cmpCtxPop #ctxStrip{display:flex!important;position:static!important;flex-wrap:wrap;gap:6px;padding:0!important;margin:0!important;border:0!important;background:transparent!important;min-height:0;font-size:10.5px;box-shadow:none!important;width:auto!important;max-width:none!important;transform:none!important}
 #cmpCtxPop #ctxStrip #ctxStripTxt{max-width:none!important;font-size:10.5px!important}
 #cmpCtxPop #ctxStrip #fStrip{flex:1 1 100%!important}
-#cmpChipCtx .ccn{margin-left:5px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--ac,var(--acc,#5a9e8f))}
 #cmpChipCtx.pop{color:var(--ac,var(--acc,#5a9e8f));box-shadow:inset 0 0 0 1px var(--ac,var(--acc,#5a9e8f))}
 /* notices sit under the composer they belong to, centred on it, and read centred in the transcript too */
 #chatStack > #noticeDock{left:50%}
@@ -15786,8 +15785,8 @@ function _embedMount(){
       el.addEventListener('change',()=>{ const cur=_motionRead(); cur[k]=el.value; try{ localStorage.setItem(_MOTION_KEY, JSON.stringify(cur)); }catch(_){} _motionPaint(cur); }); });
   }
   /* ═══ THE CONTEXT CONTROLS, IN THE COMPOSER'S MENU: the strip that sat above the input (sources, depth, frames) opens
-     from the Context chip in the menu below it - the same elements, their ids and handlers untouched - and the chip
-     carries the reading ("Context · 12"). The Context menu is still one press away, from the popover's head. ═══ */
+     from the Context chip in the menu below it - the same elements, their ids and handlers untouched (the chip keeps
+     its own count of what is in context). The Context menu is still one press away, from the popover's head. ═══ */
   function _cmpCtxMount(){
     const bar=document.getElementById('inputBar'), strip=document.getElementById('ctxStrip'), chip=document.getElementById('cmpChipCtx'); if(!bar||!strip||!chip||document.getElementById('cmpCtxPop')) return;
     const pop=document.createElement('div'); pop.id='cmpCtxPop'; pop.setAttribute('data-w','context · controls');
@@ -15796,10 +15795,6 @@ function _embedMount(){
     pop.querySelector('[data-a="menu"]').addEventListener('click',ev=>{ ev.stopPropagation(); pop.classList.remove('on'); chip.classList.remove('pop'); try{ if(window.VeraLHM){ VeraLHM.pick('context/ctx'); const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); } }catch(_){} });
     pop.querySelector('[data-a="close"]').addEventListener('click',ev=>{ ev.stopPropagation(); pop.classList.remove('on'); chip.classList.remove('pop'); });
     document.addEventListener('click',ev=>{ if(pop.classList.contains('on')&&!pop.contains(ev.target)&&!chip.contains(ev.target)){ pop.classList.remove('on'); chip.classList.remove('pop'); } });
-    // the chip carries the reading the strip shows
-    const txt=document.getElementById('ctxStripTxt'); const n=document.createElement('span'); n.className='ccn'; chip.appendChild(n);
-    const read=()=>{ const t=String((txt&&txt.textContent)||'').trim(); const m=t.match(/(\d+)/); n.textContent=(m&&!/^no /i.test(t))?m[1]:''; };
-    read(); try{ if(txt) new MutationObserver(read).observe(txt,{ childList:true, characterData:true, subtree:true }); }catch(_){}
   }
   function _lhmMount(){
     if(!window.VeraLHM) return;
