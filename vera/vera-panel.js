@@ -157,11 +157,23 @@
       for (var i = 0; i < btns.length; i++) { var v = btns[i].getAttribute(a); if (!v || seen[v]) return false; seen[v] = 1; }
       return true;
     })[0] || '';
+    /* none of those names every item apart: any data-* attribute that does is the id (the Estate's Storage says data-p;
+       2026-09-27, it nested as seven 'null' items no pick could reach) - and failing even that, the item's place */
+    if (!idAttr) {
+      var at0 = btns[0].attributes || [];
+      for (var ai = 0; ai < at0.length && !idAttr; ai++) {
+        var nm = at0[ai].name; if (!/^data-/.test(nm) || /^data-(w|tip|title|label|i18n|vera-|rcm-)/.test(nm)) continue;
+        var seen2 = {}, ok = true;
+        for (var bj = 0; bj < btns.length; bj++) { var v2 = btns[bj].getAttribute(nm); if (!v2 || seen2[v2]) { ok = false; break; } seen2[v2] = 1; }
+        if (ok) idAttr = nm;
+      }
+    }
     function idOf(b) {
       if (idAttr) return b.getAttribute(idAttr);
       return b.getAttribute('data-section') || b.getAttribute('data-sec') || b.getAttribute('data-s') ||
              b.getAttribute('data-view') || b.getAttribute('data-tab') || b.getAttribute('data-nav') ||
-             b.getAttribute('data-pane') || b.getAttribute('data-go') || b.getAttribute('data-k') || b.getAttribute('data-t');
+             b.getAttribute('data-pane') || b.getAttribute('data-go') || b.getAttribute('data-k') || b.getAttribute('data-t') ||
+             ('n' + Array.prototype.indexOf.call(btns, b));
     }
     // title attribute first — it's already clean text with no icon glyph, and
     // the canonical markup carries one on every item. Failing that, a panel
@@ -178,6 +190,9 @@
       var txt = '';
       Array.prototype.forEach.call(b.childNodes, function (n) { if (n.nodeType === 3) txt += n.textContent; });
       txt = txt.trim();
+      // the label in a span beside its .gl glyph: the text without the glyph
+      var gl = !txt && b.querySelector('.gl');
+      if (gl) { Array.prototype.forEach.call(b.childNodes, function (n) { if (n !== gl) txt += n.textContent || ''; }); txt = txt.replace(/\s+/g, ' ').trim(); }
       return txt || (b.textContent || '').trim() || idOf(b);
     }
     // the group an item sits under (the nearest .nav-grp heading before it) and its glyph: the harness draws the
