@@ -168,7 +168,8 @@
          match first; max: true is the whole list's count (busy workers OF all of them) */
       if (map.of != null && map.total != null) { let L = pick(x, map.of); if (L && typeof L === 'object' && !Array.isArray(L)) L = Object.values(L);
         if (Array.isArray(L)) { const all = L.filter((r) => r && typeof r === 'object'), w = (map.where && typeof map.where === 'object') ? map.where : null;
-          const sel = w ? all.filter((r) => Object.keys(w).every((k) => { const got = String(pick(r, k)); return Array.isArray(w[k]) ? w[k].map(String).includes(got) : String(w[k]) === got; })) : all;
+          const like = (want, got) => { const s = String(want); return s.endsWith('*') ? got.startsWith(s.slice(0, -1)) : s === got; };   // 'running*' is any status that begins so
+          const sel = w ? all.filter((r) => Object.keys(w).every((k) => { const got = String(pick(r, k)); return (Array.isArray(w[k]) ? w[k] : [w[k]]).some((x) => like(x, got)); })) : all;
           o.value = map.total === true ? sel.length : sel.reduce((s, r) => s + num(pick(r, map.total)), 0); if (map.max === true) o.max = all.length; hit = true; } }
       ['value', 'rate', 'min', 'max', 'unit', 'delta', 'trend'].forEach((k) => { if (map[k] == null || map[k] === true || (k === 'value' && map.of != null && map.total != null)) return; const v = pick(x, map[k]); if (v !== undefined) { o[k === 'rate' ? 'value' : k] = v; hit = true; } });
       return hit ? o : x; }
@@ -390,7 +391,9 @@
     else { const rw = rows(d); const firstNum = (r) => { const k = Object.keys(r).find((q) => typeof r[q] === 'number' && !/^(id|rssi_raw)$/.test(q)); return k ? r[k] : undefined; };
       ents = rw.map((r) => ({ n: nameOf(r), v: r.value ?? r.v ?? r.count ?? r.n ?? r.latency_ms ?? r.port ?? r.age_h ?? r.runs ?? r.size_gb ?? firstNum(r), st: r.status ?? r.state ?? r.health ?? r.decision ?? r.severity ?? '' })); }   // a row with no named value shows its first number
     ents = ents.filter((e) => e.n !== '' && e.n != null); if (!ents.length) return '';
-    const chip = (e) => '<span class="vw-chip" title="' + esc(e.n + (e.v != null ? ' ' + fmt(e.v) : '') + (e.st ? ' ' + e.st : '')) + '">' + (e.st ? '<i class="st" style="background:' + stCol(e.st) + '"></i>' : '') + '<small>' + esc(String(e.n).slice(0, 22)) + '</small>' + (e.v != null && e.v !== '' ? '<b>' + esc(typeof e.v === 'number' ? (inBytes ? fmtBytes(e.v) : fmt(e.v) + (unit ? ' ' + unit : '')) : String(e.v).slice(0, 14)) + '</b>' : (e.st ? '<b>' + esc(String(e.st).slice(0, 12)) + '</b>' : '')) + '</span>';
+    // a yes/no status (a backend up, a lane green) is the dot's colour and the name, in full - "r true · p… true" said nothing
+    const yesNo = (s) => s === true || s === false || /^(true|false)$/i.test(String(s));
+    const chip = (e) => (e.st !== '' && e.st != null && yesNo(e.st) && (e.v == null || e.v === '')) ? '<span class="vw-chip" title="' + esc(e.n + ' · ' + e.st) + '"><i class="st" style="background:' + stCol(e.st) + '"></i><b>' + esc(String(e.n).slice(0, 22)) + '</b></span>' : '<span class="vw-chip" title="' + esc(e.n + (e.v != null ? ' ' + fmt(e.v) : '') + (e.st ? ' ' + e.st : '')) + '">' + (e.st ? '<i class="st" style="background:' + stCol(e.st) + '"></i>' : '') + '<small>' + esc(String(e.n).slice(0, 22)) + '</small>' + (e.v != null && e.v !== '' ? '<b>' + esc(typeof e.v === 'number' ? (inBytes ? fmtBytes(e.v) : fmt(e.v) + (unit ? ' ' + unit : '')) : String(e.v).slice(0, 14)) + '</b>' : (e.st ? '<b>' + esc(String(e.st).slice(0, 12)) + '</b>' : '')) + '</span>';
     return '<span class="vw-chips">' + ents.slice(0, lim).map(chip).join('') + (ents.length > lim ? '<span class="vw-chip more">+ ' + (ents.length - lim) + '</span>' : '') + '</span>';
   }
   function figure(form, data) {
@@ -464,10 +467,12 @@
     const val = (v) => typeof v === 'number' ? v : (v === true || /^(ok|up|green|pass)$/i.test(String(v)) ? 1 : (v === false || /^(down|fail|red|error)$/i.test(String(v)) ? 0 : 0.5));
     return '<div class="vw-matrix" style="grid-template-columns:auto repeat(' + cols.length + ',1fr)"><i></i>' + cols.map((c) => '<i>' + esc(c) + '</i>').join('') + rws.slice(0, 12).map((r) => '<b>' + esc(r[0]) + '</b>' + cols.map((c) => { const v = val(r[1][c]); return '<span style="background:color-mix(in srgb,var(--acc,#5a9e8f) ' + Math.round(v * 80 + 10) + '%,var(--bg2,#1a1c20))" title="' + esc(r[0]) + ' · ' + esc(c) + ' · ' + esc(String(r[1][c])) + '"></span>'; }).join('')).join('') + '</div>';
   };
-  R.donut = (d, H) => {
+  R.donut = (d, H, o) => {
     const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('parts need { name: number }');
     const tot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1, r = Math.max(14, (H - 8) / 2), c = 2 * Math.PI * r, s = H / 2 + 2; let acc = 0;
-    const cols = ['var(--acc,#5a9e8f)', 'var(--acc2,#8fb87a)', 'var(--acc3,#d4a96a)', '#a78bfa', '#e07a9a', '#5ab0d8', '#c9a35a', '#7ac9b0'];
+    // palette status colours a part by its name (running green, stopped red, pending amber) - a share of states reads at a glance
+    const cols0 = ['var(--acc,#5a9e8f)', 'var(--acc2,#8fb87a)', 'var(--acc3,#d4a96a)', '#a78bfa', '#e07a9a', '#5ab0d8', '#c9a35a', '#7ac9b0'];
+    const cols = (o && o.draw && o.draw.palette === 'status') ? kv.map((x, i) => { const sc = stCol(x[0]); return sc === B.t3 ? cols0[(i + 5) % cols0.length] : sc; }) : cols0;
     const arcs = kv.map((x, i) => { const f = Math.abs(x[1]) / tot; const el = '<circle cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="' + cols[i % cols.length] + '" stroke-width="8" stroke-dasharray="' + Math.max(0, f * c - 2).toFixed(1) + ' ' + (c - f * c + 2).toFixed(1) + '" stroke-dashoffset="' + (-acc * c).toFixed(1) + '" transform="rotate(-90 ' + s + ' ' + s + ')"><title>' + esc(x[0]) + ' · ' + esc(fmt(x[1])) + '</title></circle>'; acc += f; return el; }).join('');
     return '<div class="vw-donut"><svg class="vw-svg" viewBox="0 0 ' + (s * 2) + ' ' + (s * 2) + '" style="height:' + H + 'px;width:auto">' + arcs + '</svg><div class="vw-legend">' + kv.map((x, i) => '<span><i style="background:' + cols[i % cols.length] + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '</b></span>').join('') + '</div></div>';
   };
@@ -657,7 +662,8 @@
     // the frame's height (opts.height is the element's measured body) shared among the rows of slots: a 2 × 2 of four
     // children gets two rows, each slot a fixed height, its body scrolling — the composite fills its tile and never grows it
     const shown = kids.slice(0, 12), wide = !!(o && o.width && o.width >= 560);
-    const ncol = chip ? 1 : Math.max(1, Math.min(4, (rec.draw && +rec.draw.cols) || (wide && shown.length >= 3 ? 3 : 2))), nrows = Math.max(1, Math.ceil(shown.length / ncol));
+    // a 'rows' composite is one column (its CSS stacks the slots): each slot takes its share of the height, not all of it
+    const ncol = (chip || layout === 'rows') ? 1 : Math.max(1, Math.min(4, (rec.draw && +rec.draw.cols) || (wide && shown.length >= 3 ? 3 : 2))), nrows = Math.max(1, Math.ceil(shown.length / ncol));
     // a slot's share of the frame follows what its child needs: a figure (counter, ring, kv) takes less than a list or a
     // chart; each row of slots is as tall as its neediest child, the measured body split by those weights; the last row
     // fills its width (three children are two slots and a wide one, not a slot and a hole) - no half-empty row, no scrolling slot
@@ -924,8 +930,11 @@
   /* ── values: columns, ranked, lollipop, waterfall, pareto, box, diverging, bullet, threshold, radar, numbers, pills ── */
   R.column = (d, H, o) => {
     const kv = keyed(d); const vals = kv.length ? kv.map((x) => x[1]) : series(d); if (!vals.length) return EMPTY('columns need values');
-    const hi = Math.max(...vals) || 1, pal = palOf(o, 'load'), lim = (o && o.draw && o.draw.limit) || 24;
-    return wrap('column', '<div class="vb-chart" style="height:' + chH(H, 22) + 'px"><div class="vb-colbars gap">' + vals.slice(-lim).map((v, i) => '<i style="height:' + pct(v, hi).toFixed(0) + '%;background:' + pal(i, v, hi) + '" title="' + esc(kv[i] ? String(kv[i][0]) + ' · ' : '') + fmt(v) + '"></i>').join('') + '</div></div>' + cap(esc(String((d && d.note) || ('last ' + Math.min(vals.length, lim) + ' · peak ' + fmt(hi))))));
+    const hi = Math.max(...vals) || 1, pal = palOf(o, 'load'), lim = (o && o.draw && o.draw.limit) || 24, from = Math.max(0, vals.length - lim);
+    // named columns say the first and the last name they span (dreams per day: 2026-06-28 → 2026-07-19); a bar's own title
+    // is its own name (it was the name of the bar lim places earlier once there were more than lim)
+    const span = kv.length > 1 ? esc(String(kv[from][0])) + ' → ' + esc(String(kv[kv.length - 1][0])) + ' · ' : '';
+    return wrap('column', '<div class="vb-chart" style="height:' + chH(H, 22) + 'px"><div class="vb-colbars gap">' + vals.slice(from).map((v, i) => '<i style="height:' + pct(v, hi).toFixed(0) + '%;background:' + pal(i, v, hi) + '" title="' + esc(kv[from + i] ? String(kv[from + i][0]) + ' · ' : '') + fmt(v) + '"></i>').join('') + '</div></div>' + cap((d && d.note) ? esc(String(d.note)) : span + 'last ' + Math.min(vals.length, lim) + ' · peak ' + esc(fmt(hi))));
   };
   // the rows a bar list holds in its body (a bar row is ~13 px with the 6 px gap) - six rows in room for four cut two off
   const barRowsFit = (H) => Math.max(2, Math.floor(((H || 96) + 6) / 19));
@@ -1029,7 +1038,14 @@
   R.heat = (d, H, o) => {
     const kv = keyed(d); const m = kv.length ? { rows: [], cols: [] } : cellsOf(d);
     if (m.rows.length && m.rows.some((r) => r.v.some((x) => typeof x === 'number'))) { const hi = Math.max(...m.rows.flatMap((r) => r.v.map((x) => num(x)))) || 1; const pal = palOf(o);
-      return wrap('heat', m.rows.slice(0, 8).map((r, ri) => '<span class="vb-heatrow"><span class="vb-lbl">' + esc(r.n) + '</span><span class="vb-heat" style="grid-template-columns:repeat(' + r.v.length + ',1fr)">' + r.v.map((x, ci) => '<i style="background:' + mix(pal(ri), Math.round(8 + num(x) / hi * 88), 'transparent') + '" title="' + esc(r.n) + (m.cols[ci] ? ' · ' + esc(String(m.cols[ci])) : '') + ' · ' + fmt(x) + '"></i>').join('') + '</span><span class="v">' + esc(fmt(r.t != null ? r.t : r.v.reduce((s, x) => s + num(x), 0))) + '</span></span>').join('')); }
+      // the cells share the body's height (square cells three to a row were 130 px tall and ran off the tile), the columns are
+      // named over the grid, a cell wide enough says its value; palette load colours a cell by its own value (a percent
+      // against 100); draw.total false drops the row sums (cpu + ram + disk adds up to nothing)
+      const nr = Math.min(8, m.rows.length), hd = m.cols.length ? 14 : 0, cellH = Math.max(8, Math.min(26, Math.floor(((H || 96) - hd) / nr) - 4));
+      const load = o && o.draw && o.draw.palette === 'load', lpal = palOf(o, 'load'), tot = !(o && o.draw && o.draw.total === false), wide = !o || !o.width || o.width / Math.max(1, m.cols.length || m.rows[0].v.length) >= 60;
+      const cols = m.cols.length ? m.cols.length : m.rows[0].v.length, grid = 'grid-template-columns:repeat(' + cols + ',1fr)';
+      const head = hd ? '<span class="vb-heatrow hd"><span></span><span class="vb-heat" style="' + grid + '">' + m.cols.map((c) => '<b title="' + esc(String(c)) + '">' + esc(String(c)) + '</b>').join('') + '</span>' + (tot ? '<span></span>' : '') + '</span>' : '';
+      return wrap('heat', head + m.rows.slice(0, nr).map((r, ri) => '<span class="vb-heatrow' + (tot ? '' : ' nt') + '"><span class="vb-lbl" title="' + esc(r.n) + '">' + esc(r.n) + '</span><span class="vb-heat" style="' + grid + '">' + r.v.map((x, ci) => '<i style="height:' + cellH + 'px;aspect-ratio:auto;background:' + (load ? mix(lpal(ci, num(x), hi <= 100 ? 100 : hi), 80, 'transparent') : mix(pal(ri), Math.round(8 + num(x) / hi * 88), 'transparent')) + '" title="' + esc(r.n) + (m.cols[ci] ? ' · ' + esc(String(m.cols[ci])) : '') + ' · ' + fmt(x) + '">' + (wide && cellH >= 14 ? esc(fmt(x)) : '') + '</i>').join('') + '</span>' + (tot ? '<span class="v">' + esc(fmt(r.t != null ? r.t : r.v.reduce((s, x) => s + num(x), 0))) + '</span>' : '') + '</span>').join(''), 'vb-heatfit'); }
     if (!kv.length) return EMPTY('a heat map needs rows of numbers');
     const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, cols = Math.min(12, Math.max(4, kv.length)); const pal = palOf(o, 'load');
     return wrap('heat', '<div class="vb-heatstrip" style="grid-template-columns:repeat(' + cols + ',1fr)">' + kv.slice(0, 48).map((x, i) => '<i style="background:' + pal(i, x[1], hi) + ';opacity:' + (0.25 + 0.75 * Math.abs(x[1]) / hi).toFixed(2) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + '"></i>').join('') + '</div>');
@@ -1521,7 +1537,12 @@
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
     if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || f === 'composite' || DRAWN[f] === 'events') return body;   // a composite, a table, a feed: the body is the composition
     // L: the form plus its detail list beside it; XL: the form, its table, its log
-    const kv = keyed(d).slice(0, 8); const rw = rows(d);
+    // the detail list beside the form holds the rows its body has room for (~16 px a row) - eight in a two-row tile ran
+    // past its foot - and a form that already names every value it draws (ranked bars, pills, a number grid, a
+    // legend) has none: the list only repeated it
+    const dRows = Math.max(2, Math.min(8, Math.floor(((opts.height || HEIGHT[size]) - 4) / 16)));
+    const LABELLED = /^(ranked|bullet|lollipop|temps|pills|numbers|kv|funnel|stacked-bar|treemap|donut|waffle|gauge|threshold|diverging|radar|pareto|histogram|column|bars|heat|matrix|small-multiples|spark-table|horizon)$/;
+    const kv = LABELLED.test(f) ? [] : keyed(d).slice(0, dRows); const rw = LABELLED.test(f) ? [] : rows(d).slice(0, dRows);
     const detail = kv.length ? '<div class="vw-detail">' + kv.map((x) => '<div><span>' + esc(x[0]) + '</span><b>' + esc(fmt(x[1])) + '</b></div>').join('') + '</div>'
       : (rw.length ? '<div class="vw-detail">' + rw.slice(0, 8).map((r) => '<div><span>' + esc(String(r.name ?? r.title ?? r.text ?? r.path ?? r.id ?? '')) + '</span><b>' + esc(String(r.value ?? r.v ?? r.status ?? r.count ?? '')) + '</b></div>').join('') + '</div>'
       : (Array.isArray(d) && d.length ? '<div class="vw-detail"><div><span>points</span><b>' + d.length + '</b></div><div><span>last</span><b>' + esc(fmt(series(d).slice(-1)[0])) + '</b></div><div><span>min · max</span><b>' + esc(fmt(Math.min(...series(d)))) + ' · ' + esc(fmt(Math.max(...series(d)))) + '</b></div></div>' : ''));
@@ -1559,7 +1580,7 @@
       skin: String(o.skin || 'inherit').toLowerCase(), subject: String(o.subject || ''), projection: String(o.projection || drawIn.proj || drawIn.projection || '').toLowerCase(), actions: Array.isArray(o.actions) ? o.actions : ['dive', 'pin', 'ask'],
       children: Array.isArray(o.children) ? o.children : undefined, layout: o.layout, data: o.data };
   }
-  const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top|instances|sources|request_log|keys|results|installed|config|models|list_models|route_stats|embed_config)|_stats$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.|^redis\.|^proxmox\.|^mesh\.|^estate\.|^backup\.|^bench\.|^catalog\.|^background\.|^topology\.|^jobs\.|^memory\.stats|^ollama\.(gate\.status|instances|list_models|route_stats|request_log|routing\.get|embed_config|model_tags\.get)|^evolve\.(sandbox\.list|pipeline\.list|activity|tasks\.overview)$|^activity\.(sessions|pipelines)$|^syslog\.errors$|^dream\.(sensor\.cap_calls|last)$)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert|pull|install|activate|acquire|release|enqueue|cancel|spawn|prune|reap)\b/.test(cap);   // the dashboard's own readings read on their own (route_stats / results / config tails were left waiting for a click)
+  const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top|instances|sources|request_log|keys|results|installed|config|models|list_models|route_stats|embed_config)|_stats$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.|^redis\.|^proxmox\.|^mesh\.|^estate\.|^backup\.|^bench\.|^catalog\.|^background\.|^topology\.|^jobs\.|^memory\.stats|^ollama\.(gate\.status|instances|list_models|route_stats|request_log|routing\.get|embed_config|model_tags\.get)|^evolve\.(sandbox\.list|pipeline\.list|activity|tasks\.overview)$|^activity\.(sessions|pipelines)$|^syslog\.errors$|^dream\.(sensor\.cap_calls|last|hitl\.pending)$)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert|pull|install|activate|acquire|release|enqueue|cancel|spawn|prune|reap)\b/.test(cap);   // the dashboard's own readings read on their own (route_stats / results / config tails were left waiting for a click)
   const key = (rec) => { const n = normalise(rec); return n.form + ' ' + (n.source || (n.panel ? 'panel:' + n.panel : '')) + ' ' + JSON.stringify(n.read.args || {}); };
   // the form that can draw THIS data: the chosen one, else what its shape picks, else the key · value list
   function formFor(rec, data) {
@@ -1808,7 +1829,7 @@ span.vw-sampled{opacity:.85}
 .vb-stackbar{display:flex;height:26px;border-radius:5px;overflow:hidden;gap:1px;background:var(--b-s3);width:100%}.vb-stackbar i{display:block;height:100%}
 .vb-tmap{flex:none;min-height:40px;display:flex;flex-wrap:wrap;gap:2px;align-content:stretch}.vb-tmap span{border-radius:3px;display:flex;align-items:flex-end;padding:4px 5px;font-family:var(--b-mono);font-size:8px;color:var(--b-on);overflow:hidden;white-space:nowrap}
 /* matrices and calendars */
-.vb-heatrow{display:grid;grid-template-columns:46px 1fr 32px;align-items:center;gap:8px}.vb-heatrow .v{font-family:var(--b-mono);font-size:9px;text-align:right}.vb-heat{display:grid;gap:2px;align-content:center}.vb-heat i{aspect-ratio:1;border-radius:2px;display:block}
+.vb-heatrow{display:grid;grid-template-columns:46px 1fr 32px;align-items:center;gap:8px}.vb-heatrow.nt{grid-template-columns:46px 1fr}.vb-heatfit{gap:3px;justify-content:center}.vb-heatrow.hd .vb-heat b{font-family:var(--b-mono);font-size:8px;font-weight:400;color:var(--b-t3);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-heatfit .vb-heat i{display:flex;align-items:center;justify-content:center;font-family:var(--b-mono);font-size:8.5px;font-style:normal;color:var(--b-t1)}.vb-heatfit .vb-lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-heatrow .v{font-family:var(--b-mono);font-size:9px;text-align:right}.vb-heat{display:grid;gap:2px;align-content:center}.vb-heat i{aspect-ratio:1;border-radius:2px;display:block}
 .vb-heatstrip{display:grid;gap:2px;flex:1;min-height:0;align-content:center}.vb-heatstrip i{aspect-ratio:1;border-radius:2px;max-width:44px;justify-self:center;width:100%}
 .vb-mxh,.vb-mxr{display:grid;gap:4px;align-items:center}.vb-mxh span{font-family:var(--b-mono);font-size:8px;color:var(--b-t3);text-align:center;white-space:nowrap;overflow:hidden}.vb-mxr .n{font-size:9.5px;color:var(--b-t2);white-space:nowrap;overflow:hidden}.vb-mxr i{height:17px;border-radius:3px;display:block}
 .vb-dots{display:grid;grid-template-columns:repeat(20,1fr);gap:3px;flex:1;min-height:0;align-content:center}.vb-dots i{aspect-ratio:1;border-radius:50%;display:block}

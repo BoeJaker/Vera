@@ -45,7 +45,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: a live stream (not a capability the element can read) with its own controls"
    },
    "at": [
     0,
@@ -118,7 +119,8 @@
        "shape": "string"
       }
      }
-    ]
+    ],
+    "note": "stays the page's: a live stream (not a capability the element can read) with its own controls"
    },
    "at": [
     6,

@@ -1158,7 +1158,8 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "palette": "status"
     },
     "open": "evolve"
    },

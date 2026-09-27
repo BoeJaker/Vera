@@ -17,7 +17,7 @@
    12
   ]
  },
- "note": "Every widget of the ollama-jobs grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here.",
+ "note": "Every widget of the ollama-jobs grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here. The widget review (2026-09-27): the two figures jobs.stats answers draw as records; the rest reads the page's own tracker, so it stays the page's.",
  "widgets": [
   {
    "record": {
@@ -45,7 +45,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the count comes from the page's own job tracker (a route that is not a capability)"
    },
    "at": [
     0,
@@ -85,7 +86,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the count comes from the page's own job tracker (a route that is not a capability)"
    },
    "at": [
     3,
@@ -125,7 +127,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the count comes from the page's own job tracker (a route that is not a capability)"
    },
    "at": [
     6,
@@ -165,7 +168,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the count comes from the page's own job tracker (a route that is not a capability)"
    },
    "at": [
     9,
@@ -205,7 +209,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the count comes from the page's own job tracker (a route that is not a capability)"
    },
    "at": [
     0,
@@ -227,7 +232,10 @@
     "shape": "level",
     "title": "Stream Pending",
     "read": {
-     "refresh": "5s"
+     "refresh": "15s",
+     "map": {
+      "value": "stream.pending_total"
+     }
     },
     "frame": {
      "size": "s",
@@ -238,7 +246,8 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "unit": "unacked"
     },
     "actions": [
      "dive",
@@ -256,7 +265,7 @@
     1
    ],
    "hidden": false,
-   "refresh": "5s",
+   "refresh": "15s",
    "floated": false
   },
   {
@@ -267,7 +276,10 @@
     "shape": "level",
     "title": "Recovered",
     "read": {
-     "refresh": "5s"
+     "refresh": "30s",
+     "map": {
+      "value": "stats.total_orphan_reclaimed"
+     }
     },
     "frame": {
      "size": "s",
@@ -278,7 +290,8 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "unit": "recovered"
     },
     "actions": [
      "dive",
@@ -296,7 +309,7 @@
     1
    ],
    "hidden": false,
-   "refresh": "5s",
+   "refresh": "30s",
    "floated": false
   },
   {
@@ -325,7 +338,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: tabs, search and row actions over the page's job tracker"
    },
    "at": [
     0,
@@ -365,7 +379,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: tabs, search and row actions over the page's job tracker"
    },
    "at": [
     0,
@@ -448,7 +463,8 @@
        "shape": "values"
       }
      }
-    ]
+    ],
+    "note": "stays the page's: tabs, search and row actions over the page's job tracker"
    },
    "at": [
     0,

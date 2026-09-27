@@ -114,7 +114,7 @@ FORMS: List[Dict[str, Any]] = [
     _F("box", "values", glyph="box", name="Box plot", boards=("widgets",)),
     _F("radar", "values", glyph="radar", name="Radar", boards=("widgets",)),
     _F("thermo", "values", ("flat", "iso"), glyph="thermo", motion=True, options=("unit", "max", "throttle", "scale"), name="Thermometers", boards=("motion", "reply")),
-    _F("heat", "matrix", ("flat", "iso"), glyph="heat", options=("palette", "bands"), name="Heat map", boards=("widgets", "motion")),
+    _F("heat", "matrix", ("flat", "iso"), glyph="heat", options=("palette", "bands", "total"), name="Heat map", boards=("widgets", "motion")),
     _F("matrix", "matrix", glyph="matrix", name="Status matrix", boards=("widgets",)),
     _F("dots", "matrix", glyph="dots", name="Dot matrix", boards=("widgets",)),
     _F("waffle", "parts", ("flat", "iso"), glyph="waffle", options=("cells",), name="Waffle", boards=("widgets",)),

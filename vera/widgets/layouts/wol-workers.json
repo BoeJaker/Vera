@@ -17,17 +17,21 @@
    12
   ]
  },
- "note": "Every widget of the workers grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here.",
+ "note": "Every widget of the workers grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here. The widget review (2026-09-27): the figures, the ollama ring and the resources heat map read obs.cluster (and obs.health) and draw as records; the queue, the detail and the cards stay the page's - each record says why.",
  "widgets": [
   {
    "record": {
     "id": "w-total",
     "form": "counter",
-    "source": "cluster.workers",
+    "source": "obs.cluster",
     "shape": "level",
     "title": "Workers",
     "read": {
-     "refresh": "5s"
+     "refresh": "15s",
+     "map": {
+      "of": "workers",
+      "total": true
+     }
     },
     "frame": {
      "size": "s",
@@ -38,7 +42,8 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "unit": "workers"
     },
     "actions": [
      "dive",
@@ -56,18 +61,29 @@
     1
    ],
    "hidden": false,
-   "refresh": "5s",
+   "refresh": "15s",
    "floated": false
   },
   {
    "record": {
     "id": "w-busy",
-    "form": "counter",
-    "source": "cluster.workers",
+    "form": "level",
+    "source": "obs.cluster",
     "shape": "level",
     "title": "Busy",
     "read": {
-     "refresh": "5s"
+     "refresh": "15s",
+     "map": {
+      "of": "workers",
+      "total": true,
+      "where": {
+       "status": [
+        "busy",
+        "running*"
+       ]
+      },
+      "max": true
+     }
     },
     "frame": {
      "size": "s",
@@ -78,7 +94,8 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "unit": "busy"
     },
     "actions": [
      "dive",
@@ -96,18 +113,21 @@
     1
    ],
    "hidden": false,
-   "refresh": "5s",
+   "refresh": "15s",
    "floated": false
   },
   {
    "record": {
     "id": "w-caps",
     "form": "counter",
-    "source": "cluster.workers",
+    "source": "obs.health",
     "shape": "level",
     "title": "Capabilities",
     "read": {
-     "refresh": "5s"
+     "refresh": "60s",
+     "map": {
+      "value": "caps"
+     }
     },
     "frame": {
      "size": "s",
@@ -118,7 +138,8 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "unit": "caps"
     },
     "actions": [
      "dive",
@@ -136,18 +157,22 @@
     1
    ],
    "hidden": false,
-   "refresh": "5s",
+   "refresh": "60s",
    "floated": false
   },
   {
    "record": {
     "id": "w-tasks",
     "form": "counter",
-    "source": "cluster.jobs",
+    "source": "obs.cluster",
     "shape": "level",
     "title": "Tasks Done",
     "read": {
-     "refresh": "5s"
+     "refresh": "15s",
+     "map": {
+      "of": "workers",
+      "total": "tasks_done"
+     }
     },
     "frame": {
      "size": "s",
@@ -158,7 +183,8 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "unit": "done"
     },
     "actions": [
      "dive",
@@ -176,7 +202,7 @@
     1
    ],
    "hidden": false,
-   "refresh": "5s",
+   "refresh": "15s",
    "floated": false
   },
   {
@@ -205,7 +231,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: it counts the page's own job tracker (the jobs pending, from a route that is not a capability)"
    },
    "at": [
     8,
@@ -222,12 +249,23 @@
   {
    "record": {
     "id": "w-ollama",
-    "form": "counter",
-    "source": "cluster.ollama",
+    "form": "ring",
+    "source": "obs.cluster",
     "shape": "level",
     "title": "Ollama Nodes",
     "read": {
-     "refresh": "5s"
+     "refresh": "15s",
+     "map": {
+      "of": "ollama",
+      "total": true,
+      "where": {
+       "status": [
+        "online",
+        "ok"
+       ]
+      },
+      "max": true
+     }
     },
     "frame": {
      "size": "s",
@@ -238,7 +276,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -256,18 +294,26 @@
     1
    ],
    "hidden": false,
-   "refresh": "5s",
+   "refresh": "15s",
    "floated": false
   },
   {
    "record": {
     "id": "w-resources",
-    "form": "meter-panel",
-    "source": "cluster.workers",
-    "shape": "values",
-    "title": "Cluster Resources",
+    "form": "heat",
+    "source": "obs.cluster",
+    "shape": "matrix",
+    "title": "Cluster Resources · cpu · ram · disk %",
     "read": {
-     "refresh": "5s"
+     "refresh": "15s",
+     "map": {
+      "cells": "workers",
+      "fields": [
+       "cpu_pct",
+       "ram_pct",
+       "disk_pct"
+      ]
+     }
     },
     "frame": {
      "size": "l",
@@ -278,7 +324,9 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "palette": "load",
+     "total": false
     },
     "actions": [
      "dive",
@@ -296,7 +344,7 @@
     2
    ],
    "hidden": false,
-   "refresh": "5s",
+   "refresh": "15s",
    "floated": false
   },
   {
@@ -326,7 +374,8 @@
      "ask"
     ],
     "place": "dashboard",
-    "subject": "$selected"
+    "subject": "$selected",
+    "note": "stays the page's: it shows the worker a click on a card picked"
    },
    "at": [
     6,
@@ -366,7 +415,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: filterable cards (GPU · CPU · LIGHT) whose click opens the worker's detail"
    },
    "at": [
     0,
