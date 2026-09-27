@@ -222,7 +222,7 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   /* the order IS the behaviour, so it is pinned - a rule that moves above another changes what results become.
      calendar sits above table because the diary drawn as rows of id/title/start/end is the data and not the
      answer; prose sits last because almost every result carries some string. */
-  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,error,sources,html,image,code,diff,calendar,table,widget,chat,prose,kv,json,text',
+  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,error,sources,html,image,code,diff,calendar,table,widget,chat,prose,capview,kv,json,text',   /* capview: the shared mapping (VeraWidget.fromCapResult), before the old generics */
     REG.map((a) => a.name).join(','));
 
   // and it routes, by shape alone, with no capability named anywhere

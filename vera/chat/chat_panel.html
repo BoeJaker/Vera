@@ -1675,6 +1675,7 @@ html[data-blocks="off"] #veraWash{opacity:.7}
    without initially displaying in the chat panel"): the page is not shown until its layout is assembled - the legacy
    markup it is parsed from never paints - and then fades in. The head's first script sets vboot; a failsafe lifts it. */
 html.vboot body{opacity:0}
+.cap-vw{margin:0 0 6px}.cap-vw vera-widget{display:block;width:100%;min-height:56px}
 html[data-embed] #topBar{display:none!important}
 body{transition:opacity .32s ease}
 /* ═══ LEGIBLE (owner: "some fonts/text are faint others are way too small - ... the chat ui lhm [a] prime offender"):
@@ -7077,6 +7078,14 @@ IMPORTANT:
       return { kind:'markdown', n:first.slice(0,52), k:'prose', col:'var(--acc2)', d:'written',
                content:{ md:v.slice(0,20000) } }; });
 
+  /* ── the answer as the widget that fits it (the shared mapping, VeraWidget.fromCapResult): a diff, progress, a status, a
+     series, a list, an error ... - before the older generic rules below, which stay as the fallback ── */
+  cvAdapter('capview',
+    (c,ctx)=>!!(window.VeraWidget&&typeof VeraWidget.fromCapResult==='function'),
+    (c,ctx)=>{ const rs=VeraWidget.fromCapResult(ctx.cap, c, {args:ctx.args}); const r=rs&&rs[0]; if(!r||!r.form||/^(json|text)$/.test(r.form)) return null;
+      const title=r.title||ctx.cap||r.form; return { kind:'widget', n:String(title).slice(0,52), k:'widget', col:'#a78bfa', d:'widget \u00b7 '+r.form,
+        content:Object.assign({}, r, {widget:r.form, form:r.form, title, record:r}) }; });
+
   /* ── what a result is when none of the above - added 2026-09-27 so every answer lands as an ELEMENT that fits it
      rather than as its own JSON pasted into a code fence (owner: "caps need to be able to return results to the canvas
      via the appropriate elements"). They run after prose, which keeps its place: a report is still a document. ── */
@@ -9980,13 +9989,18 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       const structured=(!imgGallery)?_capStructuredView(content):null;
       // by rule: the result's shape picks a default form — a widget above the tree, and the block says so
       let ruleWidget='';
-      try{ if(!_rep&&!imgGallery&&content&&typeof content==='object'){ const f=_widgetFormByShape(content); if(f) ruleWidget=_widgetBlock(_widgetRecord({form:f,source:capName,args:capArgs,name:capName},'rule'),'rule',content); } }catch(_){ ruleWidget=''; }
+      /* the answer as the widget that fits it - the one shared mapping (VeraWidget.fromCapResult, /ui/widgets/widget_element.js);
+         owner, 2026-09-27: "make caps output to widgets and have a broad set of widgets to display results". A plain
+         json/text/record adds nothing over the tree below it, so those keep the older shape rule. */
+      try{ if(!_rep&&!imgGallery&&content!=null&&window.VeraWidget&&typeof VeraWidget.fromCapResult==='function'){ const rs=VeraWidget.fromCapResult(capName, content, {args:capArgs}); const r0=rs&&rs[0];
+        if(r0&&r0.form&&!/^(json|text|record|kv)$/.test(r0.form)) ruleWidget='<div class="cap-vw" data-w="result · widget"><vera-widget bare size="'+esc((r0.frame&&r0.frame.size)||'m')+'" record="'+esc(JSON.stringify(r0))+'"></vera-widget></div>'; } }catch(_){ ruleWidget=''; }
+      if(!ruleWidget) try{ if(!_rep&&!imgGallery&&content&&typeof content==='object'){ const f=_widgetFormByShape(content); if(f) ruleWidget=_widgetBlock(_widgetRecord({form:f,source:capName,args:capArgs,name:capName},'rule'),'rule',content); } }catch(_){ ruleWidget=''; }
       const rawStyle='font-family:var(--mono);font-size:9.5px;white-space:pre-wrap;margin:0';
       const bodyInner=_rep
         ? `<button class="cap-raw-btn" onclick="const w=this.parentNode,m=w.querySelector('.cap-md'),r=w.querySelector('.cap-raw');const toRaw=r.style.display==='none';m.style.display=toRaw?'none':'block';r.style.display=toRaw?'block':'none';this.textContent=toRaw?'report':'{ } raw';">{ } raw</button><div class="cap-md md">${renderMd(_rep)}</div><pre class="cap-raw" style="${rawStyle};display:none">${esc(previewClean.slice(0,8000))}</pre>`
         : structured
         ? `${ruleWidget}<button class="cap-raw-btn" onclick="const w=this.parentNode,j=w.querySelector('.cap-json'),r=w.querySelector('.cap-raw');const toRaw=r.style.display==='none';j.style.display=toRaw?'none':'block';r.style.display=toRaw?'block':'none';this.textContent=toRaw?'tree':'{ } raw';">{ } raw</button>${structured}<pre class="cap-raw" style="${rawStyle};display:none">${esc(previewClean.slice(0,8000))}</pre>`
-        : `<pre style="${rawStyle}">${esc(previewClean.slice(0,8000))}</pre>`;
+        : `${ruleWidget}<pre style="${rawStyle}">${esc(previewClean.slice(0,8000))}</pre>`;
       el.className='cap-inline'+(isErr?' error':' done');
       // Single compact header: cap · args · status · toggle — no sparse standalone
       // "OK" row (that left a big empty band on short results). When collapsed, a
