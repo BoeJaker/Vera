@@ -99,6 +99,14 @@ class SQLiteModelPackageRegistry:
                 "SELECT package_id FROM model_packages ORDER BY package_id")]
         return tuple(self.get(package_id) for package_id in ids)  # type: ignore[arg-type]
 
+    def aliases(self) -> tuple[dict[str, str], ...]:
+        """Return stable alias bindings without resolving or activating them."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT alias,package_id FROM model_package_aliases "
+                "ORDER BY alias,package_id").fetchall()
+        return tuple({"alias": row[0], "package_id": row[1]} for row in rows)
+
     def alias(self, name: str, package_id: str, *, expected_package_id: str = "") -> None:
         from .model_package import _identifier
         name = _identifier(name, "alias")

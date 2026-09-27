@@ -205,11 +205,18 @@ Artifact identity belongs to the provider-neutral `ModelPackage` registry.
 Legacy bindings can associate both current invocation forms with one immutable
 package without changing execution. This separation lets discovery present
 models as catalog data while keeping existing MCP, DAG, and HTTP callers
-working. It does not authorize removal of dynamic capabilities: stored
+working. `model.inventory` (`GET /models/inventory`) now presents registered
+packages, aliases, admission receipts, deployments, current observations and
+source-owned candidates as one read-only projection. The projection validates
+package schemas and exposes dangling or conflicting references instead of
+silently inventing identities. It never downloads, hashes, loads, activates,
+routes or executes a model.
+
+It does not authorize removal of dynamic capabilities: stored
 definitions, external consumers, runtime calls, and inference parity must be
 measured before any routing or retirement decision. The current system
-inventory exposes artifact-provider interfaces but does not yet enumerate
-model-package instances.
+inventory still treats dynamic capabilities as compatibility surfaces rather
+than package authority.
 
 ### Verified parity
 
@@ -244,6 +251,12 @@ The ML Workshop panel ([`ml_workshop_panel.html`](../vera/machine%20learning/ml_
 has a **⬇ ONNX** toolbar button and an **ONNX** right-tab: export the current
 module, browse artifacts, and one-click **Verify** (shows `max|Δ|` + pass/fail +
 provider) or **Delete**.
+
+The NLP panel adds a **Models** read view backed by the portable inventory. It
+distinguishes content-verified ModelPackages from unresolved node candidates,
+shows placement evidence and blockers, and reports whether the package registry,
+deployment registry, and NLP discovery sources are available. Viewing this page
+does not warm or execute any model.
 
 ---
 
