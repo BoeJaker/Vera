@@ -1,0 +1,266 @@
+{
+  "baseline_id": "dcb_cc31af20a77735a5957d8e12b20c53a792a776512af107a255deead10e755056",
+  "schema": "vera.discovery-context-baseline/v1",
+  "components": [
+    {
+      "component_id": "agent.rag",
+      "role": "retrieve",
+      "source": "vera/agents/agents.py",
+      "boundary": "capability",
+      "execution": "async_local",
+      "resource": "storage",
+      "data_contract": "vera.agent-rag-native.v1",
+      "enriches": [
+        "context.portable"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "context.portable",
+      "role": "context",
+      "source": "vera/context_provider.py",
+      "boundary": "context_provider",
+      "execution": "provider_injected",
+      "resource": "cpu",
+      "data_contract": "vera.context-item.v1",
+      "enriches": [],
+      "live_required": false
+    },
+    {
+      "component_id": "context.registry",
+      "role": "route",
+      "source": "vera/context_registry.py",
+      "boundary": "internal",
+      "execution": "async_local",
+      "resource": "cpu",
+      "data_contract": "vera.context-component-manifest.v1",
+      "enriches": [
+        "context.portable"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "fabric.analytical",
+      "role": "retrieve",
+      "source": "vera/fabric/analytical_retrieval.py",
+      "boundary": "native_adapter",
+      "execution": "provider_injected",
+      "resource": "cpu",
+      "data_contract": "vera.retrieval-result.v1",
+      "enriches": [
+        "fabric.query"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "fabric.artifact",
+      "role": "data",
+      "source": "vera/fabric/artifact_provider.py",
+      "boundary": "artifact_provider",
+      "execution": "provider_injected",
+      "resource": "storage",
+      "data_contract": "vera.artifact-stat.v1",
+      "enriches": [],
+      "live_required": false
+    },
+    {
+      "component_id": "fabric.dataset",
+      "role": "data",
+      "source": "vera/fabric/dataset_provider.py",
+      "boundary": "dataset_provider",
+      "execution": "provider_injected",
+      "resource": "storage",
+      "data_contract": "vera.dataset-snapshot.v1",
+      "enriches": [],
+      "live_required": false
+    },
+    {
+      "component_id": "fabric.discovery",
+      "role": "discover",
+      "source": "vera/fabric/discovery.py",
+      "boundary": "capability",
+      "execution": "async_local",
+      "resource": "network",
+      "data_contract": "vera.fabric-discovery-native.v1",
+      "enriches": [
+        "fabric.dataset",
+        "fabric.memory"
+      ],
+      "live_required": true
+    },
+    {
+      "component_id": "fabric.external-snapshot",
+      "role": "retrieve",
+      "source": "vera/fabric/external_retrieval.py",
+      "boundary": "native_adapter",
+      "execution": "provider_injected",
+      "resource": "network",
+      "data_contract": "vera.retrieval-result.v1",
+      "enriches": [
+        "fabric.query"
+      ],
+      "live_required": true
+    },
+    {
+      "component_id": "fabric.memory",
+      "role": "retrieve",
+      "source": "vera/fabric/memory_provider.py",
+      "boundary": "memory_provider",
+      "execution": "provider_injected",
+      "resource": "storage",
+      "data_contract": "vera.memory-page.v1",
+      "enriches": [
+        "context.portable"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "fabric.memory-context",
+      "role": "context",
+      "source": "vera/fabric/memory_context_provider.py",
+      "boundary": "context_provider",
+      "execution": "provider_injected",
+      "resource": "cpu",
+      "data_contract": "vera.context-item.v1",
+      "enriches": [
+        "context.portable"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "fabric.native-vector",
+      "role": "retrieve",
+      "source": "vera/fabric/native_retrieval.py",
+      "boundary": "native_adapter",
+      "execution": "provider_injected",
+      "resource": "cpu",
+      "data_contract": "vera.retrieval-result.v1",
+      "enriches": [
+        "fabric.query"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "fabric.query",
+      "role": "retrieve",
+      "source": "vera/fabric/dataset_provider.py",
+      "boundary": "query_provider",
+      "execution": "provider_injected",
+      "resource": "storage",
+      "data_contract": "vera.query-page.v1",
+      "enriches": [
+        "context.portable"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "godseye.geospatial",
+      "role": "data",
+      "source": "vera/godseye/godseye_core.py",
+      "boundary": "native_adapter",
+      "execution": "async_local",
+      "resource": "storage",
+      "data_contract": "vera.godseye-native.v1",
+      "enriches": [],
+      "live_required": true
+    },
+    {
+      "component_id": "nlp.dispatch",
+      "role": "enrich",
+      "source": "vera/research/nlp_dispatch_core.py",
+      "boundary": "native_adapter",
+      "execution": "remote_http",
+      "resource": "cpu",
+      "data_contract": "vera.nlp.text.v1",
+      "enriches": [
+        "fabric.dataset"
+      ],
+      "live_required": true
+    },
+    {
+      "component_id": "nlp.model-inventory",
+      "role": "data",
+      "source": "vera/models/nlp_inventory.py",
+      "boundary": "model_package",
+      "execution": "provider_injected",
+      "resource": "none",
+      "data_contract": "vera.model-package.v1",
+      "enriches": [
+        "nlp.dispatch"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "workers.node-choice",
+      "role": "route",
+      "source": "vera/workers/node_choice.py",
+      "boundary": "internal",
+      "execution": "inline",
+      "resource": "none",
+      "data_contract": "vera.worker-choice-native.v1",
+      "enriches": [],
+      "live_required": false
+    },
+    {
+      "component_id": "worldview.jepa-evidence",
+      "role": "enrich",
+      "source": "vera/worldview/evidence_provider.py",
+      "boundary": "evidence_provider",
+      "execution": "provider_injected",
+      "resource": "cpu_or_gpu_gated",
+      "data_contract": "vera.worldview-evidence.v1",
+      "enriches": [
+        "context.portable"
+      ],
+      "live_required": true
+    },
+    {
+      "component_id": "worldview.jepa-model",
+      "role": "enrich",
+      "source": "vera/worldview/worldview_jepa.py",
+      "boundary": "native_adapter",
+      "execution": "async_local",
+      "resource": "cpu_or_gpu_gated",
+      "data_contract": "vera.jepa-worldview-native.v1",
+      "enriches": [],
+      "live_required": true
+    },
+    {
+      "component_id": "worldview.jepa-projection",
+      "role": "data",
+      "source": "vera/worldview/worldview_projection_adapter.py",
+      "boundary": "native_adapter",
+      "execution": "provider_injected",
+      "resource": "storage",
+      "data_contract": "vera.worldview-projection.v1",
+      "enriches": [
+        "worldview.jepa-evidence"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "worldview.jepa-ranker",
+      "role": "enrich",
+      "source": "vera/worldview/context_ranker.py",
+      "boundary": "context_provider",
+      "execution": "provider_injected",
+      "resource": "cpu",
+      "data_contract": "vera.context-ranking-evidence.v1",
+      "enriches": [
+        "context.portable"
+      ],
+      "live_required": false
+    }
+  ],
+  "gaps": [
+    "no_portable_discovery_request_or_source_candidate_contract",
+    "no_portable_collection_option_or_collection_receipt_contract",
+    "discovery_does_not_share_context_registry_selection",
+    "agent_rag_uses_a_native_result_shape",
+    "worker_selection_is_not_a_discovery_execution_plan",
+    "cross_system_enrichment_has_no_shared_lineage_or_cycle_contract",
+    "no_common_speed_and_relevance_benchmark_contract",
+    "non_jepa_worldview_and_godseye_data_have_no_portable_dataset_boundary",
+    "live_source_and_accelerator_evidence_is_not_part_of_this_offline_baseline"
+  ]
+}
