@@ -274,7 +274,7 @@
     if(_topMode){ h2.textContent = _cfg.title || 'Vera'; var np = 0; try{ np = ((_cfg.panels && _cfg.panels()) || []).length; }catch(e){} meta.textContent = (np ? np + ' panels · ⌘K' : (_cfg.menus || []).length + ' menus') + ' · ' + _openNow().length + ' open'; }
     else { h2.textContent = m ? (m.title || m.label) : ''; var s = ''; try{ s = m && m.meta ? String(m.meta() || '') : ''; }catch(e){} meta.textContent = s; }
     ed.classList.toggle('on', _editing);
-    var dp = _hd.querySelector('.lhm-deep'); if(dp){ var hasQ = !!(m && typeof m.quick === 'function' && !_topMode); dp.classList.toggle('has', hasQ); dp.textContent = (m && m._deep) ? '◂ Quick' : 'Full ▸'; dp.title = (m && m._deep) ? 'Back to the quick menu' : 'The full ' + (m ? (m.label || m.id) : '') + ' panel, in this same place'; }
+    var dp = _hd.querySelector('.lhm-deep'); if(dp){ var hasQ = !!(m && typeof m.quick === 'function' && !_topMode && !(_cfg && _cfg.noDeep)); dp.classList.toggle('has', hasQ); dp.textContent = (m && m._deep) ? '◂ Quick' : 'Full ▸'; dp.title = (m && m._deep) ? 'Back to the quick menu' : 'The full ' + (m ? (m.label || m.id) : '') + ' panel, in this same place'; }
   }
   function _renderTabs(){
     // only the current menu's tabs show in the owner's strip; the others stay in the DOM with their handlers
@@ -427,7 +427,8 @@ function _ebar(title, onAdd, onDone){
         var b = _el('button', 'padd', '+ Add'); b.type = 'button'; b.addEventListener('click', function(ev){ ev.stopPropagation(); qs.added.push(Object.assign({ label:it.n, c:it.c }, it.add || {})); _qsave(m); closePicker(); render(); }); r.appendChild(b); bd.appendChild(r); }); });
     if(!any) bd.appendChild(_el('div', 'lhm-empty', groups.length ? 'Nothing matches.' : 'Loading the registry…'));
   }
-  function deep(on){ var m = _menu(_active); if(!m) return false; m._deep = (on == null) ? !m._deep : !!on; render(); return m._deep; }
+  function deep(on){ var m = _menu(_active); if(!m) return false; if(_cfg && _cfg.noDeep){ if(m._deep){ m._deep = false; render(); } return false; }   // noDeep: every feature is on the menu itself
+    m._deep = (on == null) ? !m._deep : !!on; render(); return m._deep; }
   function _renderCta(){
     if(!_cta) return;
     var m = _menu(_active);
