@@ -48,6 +48,28 @@ html:root[data-blocks="off"] :is(.card, .box, .tile, .panel-card, .sec-card, .kp
 html:root[data-blocks="off"] #sidebar[data-vera-lhm] { background: transparent; border-right-color: transparent; }
 html:root[data-blocks="off"] #sidebar[data-vera-lhm] .nav-btn.active { background: var(--fill, color-mix(in srgb, var(--acc, #5a9e8f) 14%, transparent)); border-color: transparent; }
 
+/* ── 4b. blocks, by ROLE, on every panel (owner, 2026-09-27: "the blocks view mode system should be transferred to all other
+   ui panels"). Measured on 20 panels with blocks off: each names its surfaces its own way (#sidebar #left #right #rail
+   #pages-sidebar · #bottom-bar #config-bar .toolbar .editor-bar #ctxbar .tabs · #dive-panel #hub-right .graph-detail ·
+   .chart .stack .result .gate #sync-tile .cal-cell ...), and an id rule outranks any class rule. So the design reads the
+   ROLE from the name - a sidebar, a rail, a bar, a detail pane, a card, a tile, a panel - and says it firmly. What must
+   keep a ground to stay readable keeps it: popovers, menus, dialogs, tips, code, fields, buttons. ── */
+html:root[data-blocks="off"] body :is(aside, nav, header, footer,
+    [id*="sidebar"], [class*="sidebar"], [id*="rail"], [id="left"], [id="right"], [id$="-left"], [id$="-right"],
+    [id$="bar"], [class$="bar"], [class*="-bar"], [class*="toolbar"], [class*="tabs"],
+    [class*="card"], [class*="tile"], [id*="tile"], [class*="detail"], [id*="-panel"], [class*="-panel"],
+    .chart, .stack, .result, .section, .sec, .group, .pane-tb, .kpi, .stat)
+  :not(:is([class*="pop"], [id*="pop"], [class*="modal"], [class*="dialog"], [role="dialog"], [role="menu"], [class*="menu"],
+           [class*="dropdown"], [class*="tooltip"], .vw-tip, .cmenu, .crun, pre, code, input, select, textarea, button, .btn,
+           [class*="progress"], [id*="progress"], [class*="meter"], [class*="fill"], [class*="spark"], [class*="gauge"])) {
+  background: transparent !important; box-shadow: none !important;
+}
+html:root:not([data-blocks="off"]) body :is([class$="-card"], [class$="-tile"], .chart, .stack, .result, .kpi, .stat)
+  :not(:is([class*="pop"], [class*="menu"], [class*="tooltip"], button, .btn)) {
+  border-radius: var(--ui-radius, 8px);
+  box-shadow: var(--elev);
+}
+
 /* ── 5. the density tiers: Full shows the icons beside the words; Hover shows them when pointed at; Zen hides them and
    the hints (a folded rail always keeps its icons) ── */
 html:root[data-den="zen"] body:not(.lhm-collapsed) #sidebar[data-vera-lhm] .nav-btn :is(.gl, svg) { display: none; }
