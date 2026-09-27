@@ -2588,8 +2588,12 @@ async def memory_backfill_vectors(confirm: bool = False, limit: int = 0,
 
 async def _startup():
     await MEMORY.startup()
-    # Start the Redis promoter background task
-    asyncio.create_task(_memory_promoter())
+    # Start the Redis promoter background task - on the host only. It reads
+    # the promotion stream with plain XREAD (no consumer group), so every
+    # process running it promotes every event: a node worker would store each
+    # memory a second time.
+    if not getattr(_orch, "_IS_WORKER", False):
+        asyncio.create_task(_memory_promoter())
     log.info("vera_memory ready — backends: %s", MEMORY.backends)
 
 # Schedule startup to run once after the event loop is running

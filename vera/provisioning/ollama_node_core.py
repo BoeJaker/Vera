@@ -29,6 +29,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
+try:
+    from Vera.vera.node_threads_core import DEFAULT_CPU_THREADS
+except Exception:                                    # worktree / app-free import
+    from vera.node_threads_core import DEFAULT_CPU_THREADS
+
 DEFAULT_OLLAMA_PORT = 11434
 DONE_MARKER = "VERA_PROVISION_DONE"
 # Ollama's own installer writes /etc/systemd/system/ollama.service; a drop-in is
@@ -123,6 +128,28 @@ def registration_plan(instances: Dict[str, dict], addr: str, port: int,
     iid = preferred_id or ("node-%s-%d" % (str(addr).replace(".", "-"), int(port)))
     return {"action": "create", "instance_id": iid, "url": url,
             "has_gpu": bool(has_gpu), "reason": "no registered node answers on this URL"}
+
+
+def registration_threads(has_gpu: bool, requested: Any = None) -> int:
+    """`num_thread` to record for a node at registration, or 0 for none.
+
+    Ollama 0.32 has no server-side thread setting (`ollama serve --help` lists
+    none), so the count can only travel on each request - and every request
+    path reads it from the node's registry entry (node_threads_core). A node
+    registered without it falls back to one process-wide env default, which is
+    how three nodes with different core layouts ended up sharing one number.
+
+    A GPU node gets none (its runner barely uses CPU threads). A CPU node gets
+    what was asked for, else the measured default: six, because cpu-246 and
+    cpu-247 are the two hyperthreads of the SAME twelve physical cores
+    (CPUs 0-11 and 24-35 on socket 0), so six each is six real cores each."""
+    if has_gpu:
+        return 0
+    try:
+        n = int(requested or 0)
+    except (TypeError, ValueError):
+        n = 0
+    return n if n > 0 else DEFAULT_CPU_THREADS
 
 
 def install_succeeded(stdout: Any) -> bool:

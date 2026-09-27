@@ -2077,6 +2077,7 @@ async def _ssh_run_on(
     port: int = 22, user: str = "",
     password: str = "", key_path: str = "", passphrase: str = "",
     timeout: int = _DEFAULT_TIMEOUT,
+    input: Optional[str] = None,
 ) -> Dict[str, Any]:
     if not HAS_ASYNCSSH:
         return {"ok": False, "error": "asyncssh not installed",
@@ -2089,7 +2090,7 @@ async def _ssh_run_on(
         )
         async with asyncssh.connect(**kw) as conn:
             result = await asyncio.wait_for(
-                conn.run(command, check=False), timeout=timeout)
+                conn.run(command, check=False, input=input), timeout=timeout)
             so = (result.stdout or "")[:_MAX_OUTPUT] if isinstance(result.stdout, str) \
                 else (result.stdout.decode("utf-8", "replace")[:_MAX_OUTPUT] if result.stdout else "")
             se = (result.stderr or "")[:_MAX_OUTPUT] if isinstance(result.stderr, str) \
@@ -2117,6 +2118,38 @@ async def _resolve_host_record(host_id: str) -> Optional[dict]:
     return hosts.get(host_id)
 
 
+async def ssh_run_stored(host_id: str, command: str, *,
+                         timeout: int = _DEFAULT_TIMEOUT,
+                         input: Optional[str] = None) -> Dict[str, Any]:
+    """Run `command` on a STORED host, optionally feeding `input` on stdin.
+
+    Not a capability on purpose: stdin is how provisioning ships a payload too
+    large for a command line (Linux caps one argument at 128 KB, and the whole
+    command reaches the remote shell as one argument), and exposing that as a
+    tool would add nothing an agent needs. exec.ssh.run resolves through here."""
+    rec = await _resolve_host_record(host_id)
+    if not rec:
+        return {"ok": False, "error": f"host_id not found: {host_id}",
+                "rc": -1, "stdout": "", "stderr": ""}
+    host = rec.get("host", "")
+    if not host:
+        return {"ok": False, "error": "no host provided",
+                "rc": -1, "stdout": "", "stderr": ""}
+    if not (command or "").strip():
+        return {"ok": False, "error": "empty command",
+                "rc": -1, "stdout": "", "stderr": ""}
+    if rec.get("auth", "password") == "password":
+        password, passphrase = _deobfuscate(rec.get("password_obf", "")), ""
+    else:
+        password, passphrase = "", _deobfuscate(rec.get("passphrase_obf", ""))
+    return await _ssh_run_on(
+        host, command,
+        port=int(rec.get("port", 22) or 22), user=rec.get("user", ""),
+        password=password, key_path=rec.get("key_path", "") or "",
+        passphrase=passphrase, timeout=timeout, input=input,
+    )
+
+
 @capability(
     "exec.ssh.run",
     http_method="POST", http_path="/exec/ssh/run", http_tags=["exec"],
@@ -2141,20 +2174,7 @@ async def cap_ssh_run(
 ) -> Dict:
     # Resolve from store if host_id given
     if host_id:
-        rec = await _resolve_host_record(host_id)
-        if not rec:
-            return {"ok": False, "error": f"host_id not found: {host_id}",
-                    "rc": -1, "stdout": "", "stderr": ""}
-        host       = rec.get("host", "")
-        port       = int(rec.get("port", 22) or 22)
-        user       = rec.get("user", "")
-        key_path   = rec.get("key_path", "") or ""
-        if rec.get("auth", "password") == "password":
-            password   = _deobfuscate(rec.get("password_obf", ""))
-            passphrase = ""
-        else:
-            password   = ""
-            passphrase = _deobfuscate(rec.get("passphrase_obf", ""))
+        return await ssh_run_stored(host_id, command, timeout=timeout)
     if not host:
         return {"ok": False, "error": "no host provided",
                 "rc": -1, "stdout": "", "stderr": ""}

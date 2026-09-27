@@ -504,11 +504,26 @@ _EMBED_CACHE_TTL = float(os.environ.get("OLLAMA_EMBED_CACHE_TTL", "120") or 120)
 # would on a shared GPU. Fully overridable via env.
 OLLAMA_KEEP_ALIVE  = os.environ.get("OLLAMA_KEEP_ALIVE", "10m")
 
-TASK_STREAM   = "vera:tasks"
+try:
+    from Vera.vera.workers import worker_placement_core as _placement
+except Exception:                                     # pragma: no cover
+    from vera.workers import worker_placement_core as _placement
+
+TASK_STREAM   = _placement.TASK_STREAM
+# Tasks for host-bound caps (see worker_placement_core.HOST_BOUND). Only a
+# process that is NOT a worker reads it, so a node worker can never pick one up.
+HOST_TASK_STREAM = _placement.HOST_TASK_STREAM
 RESULT_STREAM = "vera:results"
 EVENT_STREAM  = "vera:events"
 GROUP_WORKERS = "workers"
 GROUP_RESULTS = "orchestrator"
+
+# A node worker (VERA_IS_WORKER=1): a task runner joined to the shared stream,
+# not a second copy of the host. It takes only node-safe caps, never claims the
+# scheduler lease, and runs only the state-loading startup hooks. Computed ONCE
+# at import - it cannot change without a restart.
+_IS_WORKER = str(os.environ.get("VERA_IS_WORKER", "")).strip().lower() in (
+    "1", "true", "yes", "on")
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
 CAPABILITY_REGISTRY: Dict[str, dict]           = {}
@@ -1250,7 +1265,9 @@ async def _save_nodes() -> None:
                           "label": i.get("label", iid),
                           "url": i.get("url", ""),
                           "has_gpu": i.get("has_gpu", False),
-                          "num_ctx": i.get("num_ctx", 4096)}
+                          "num_ctx": i.get("num_ctx", 4096),
+                          # 0 = not set (the env default applies)
+                          "num_thread": int(i.get("num_thread") or 0)}
                     for iid, i in OLLAMA_INSTANCES.items()}
         await REDIS.set(KEY_OLLAMA_NODES, json.dumps(snapshot))
     except Exception as e:
@@ -1293,11 +1310,14 @@ async def _load_ollama_persistence() -> None:
                         "label": cfg.get("label", OLLAMA_INSTANCES[iid].get("label", iid)),
                         "num_ctx": cfg.get("num_ctx", OLLAMA_INSTANCES[iid].get("num_ctx", 4096)),
                     })
+                    if int(cfg.get("num_thread") or 0) > 0:
+                        OLLAMA_INSTANCES[iid]["num_thread"] = int(cfg["num_thread"])
                 elif cfg.get("url"):
                     # Restore a previously-added node that isn't in the defaults.
                     add_ollama_instance(iid, cfg["url"],
                                         has_gpu=cfg.get("has_gpu", False),
-                                        label=cfg.get("label", iid))
+                                        label=cfg.get("label", iid),
+                                        num_thread=int(cfg.get("num_thread") or 0))
                     OLLAMA_INSTANCES[iid]["enabled"] = cfg.get("enabled", True)
                     OLLAMA_INSTANCES[iid]["priority"] = cfg.get("priority", OLLAMA_INSTANCES[iid]["priority"])
     except Exception as e:
@@ -1919,10 +1939,15 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None,
         sem.release()
 
 
-def add_ollama_instance(iid: str, url: str, has_gpu: bool = False, label: str = ""):
+def add_ollama_instance(iid: str, url: str, has_gpu: bool = False, label: str = "",
+                        num_thread: int = 0):
     OLLAMA_INSTANCES[iid] = {"url":url,"label":label or iid,"has_gpu":has_gpu,"enabled":True,
                               "priority":len(OLLAMA_INSTANCES),"status":"unknown",
                               "latency_ms":None,"models":[],"in_use":0,"last_check":None,"errors":0}
+    # The node's own runner thread count (node_threads_core). Absent = the
+    # process-wide VERA_CPU_NODE_THREADS default.
+    if int(num_thread or 0) > 0:
+        OLLAMA_INSTANCES[iid]["num_thread"] = int(num_thread)
 
 async def _ping_instance(iid: str, inst: dict):
     t0 = time.monotonic()
@@ -5107,7 +5132,9 @@ async def dispatch_task(cap_name: str, payload: dict, trace_id: str,
     task_id=new_id()
     rec={"id":task_id,"capability":cap_name,"payload":json.dumps(payload),"trace_id":trace_id,"ts":now_iso()}
     if bg: rec["bg"]=str(bg)
-    if REDIS: await REDIS.xadd(TASK_STREAM,rec,maxlen=5000,approximate=True)
+    # A host-bound cap goes where only the host reads, so a node worker never
+    # sees it (worker_placement_core). Everything else is on the shared stream.
+    if REDIS: await REDIS.xadd(_placement.stream_for(cap_name),rec,maxlen=5000,approximate=True)
     else:
         cap=CAPABILITY_REGISTRY.get(cap_name)
         if cap: asyncio.create_task(_run_local(cap,task_id,payload,trace_id,bg=bg))
@@ -5298,11 +5325,19 @@ async def worker_loop(worker_id: str):
                 log.warning("Worker %s: Redis reconnect failed: %s", worker_id, e)
 
     # ── Register in shared Redis hash (visible to ALL hosts) ─────────────────
+    # A node worker advertises only the caps it will actually run: the
+    # "another worker has it" hand-off below reads this list, and a host-bound
+    # cap advertised by a node would send tasks looking for it here.
+    _streams = _placement.streams_to_read(is_worker=_IS_WORKER)
+    _advertised = [c for c in CAPABILITY_REGISTRY
+                   if _placement.may_run_here(c, is_worker=_IS_WORKER)[0]]
     reg = {
         "id":           worker_id,
         "status":       "starting",
-        "capabilities": json.dumps(list(CAPABILITY_REGISTRY.keys())),
-        "cap_count":    len(CAPABILITY_REGISTRY),
+        "role":         "node-worker" if _IS_WORKER else "host",
+        "streams":      json.dumps(list(_streams)),
+        "capabilities": json.dumps(_advertised),
+        "cap_count":    len(_advertised),
         "tasks_done":   0,
         "tasks_failed": 0,
         "started":      now_iso(),
@@ -5322,13 +5357,22 @@ async def worker_loop(worker_id: str):
     except Exception as e:
         log.warning("Worker registry push failed: %s", e)
 
-    try:
-        await REDIS.xgroup_create(TASK_STREAM, GROUP_WORKERS, id="$", mkstream=True)
-    except Exception:
-        pass   # group already exists
+    for _s in _streams:
+        try:
+            # "$" skips anything queued before the group existed. For the host
+            # stream that would drop a task dispatched during the first boot
+            # that creates it; only Vera writes that stream, so "0" replays
+            # nothing but real work. The shared stream keeps "$" (unchanged).
+            await REDIS.xgroup_create(_s, GROUP_WORKERS,
+                                      id="0" if _s == HOST_TASK_STREAM else "$",
+                                      mkstream=True)
+        except Exception:
+            pass   # group already exists
 
     WORKER_REGISTRY[worker_id]["status"] = "idle"
-    log.info("Worker %s ready (%d caps)", worker_id, len(CAPABILITY_REGISTRY))
+    log.info("Worker %s ready (%d of %d caps, role=%s, streams=%s)", worker_id,
+             len(_advertised), len(CAPABILITY_REGISTRY),
+             "node-worker" if _IS_WORKER else "host", ",".join(_streams))
 
     while True:
         # Refresh TTL and write all live fields — not just status
@@ -5348,7 +5392,7 @@ async def worker_loop(worker_id: str):
 
         try:
             resp = await REDIS.xreadgroup(
-                GROUP_WORKERS, worker_id, {TASK_STREAM: ">"}, count=1, block=5000
+                GROUP_WORKERS, worker_id, {_s: ">" for _s in _streams}, count=1, block=5000
             )
         except Exception as e:
             err_str = str(e)
@@ -5368,7 +5412,10 @@ async def worker_loop(worker_id: str):
         if not resp:
             continue
 
-        for _, messages in resp:
+        for _stream_raw, messages in resp:
+            # Ack on the stream the message came FROM - a host reads two.
+            _stream = (_stream_raw.decode() if isinstance(_stream_raw, (bytes, bytearray))
+                       else str(_stream_raw))
             for msg_id, data in messages:
                 task_id  = data[b"id"].decode()
                 cap_name = data[b"capability"].decode()
@@ -5380,13 +5427,30 @@ async def worker_loop(worker_id: str):
                 # Queued-cancel guard: if this task was stopped before a worker
                 # picked it up, ack + discard it instead of running.
                 if await _is_task_cancelled(task_id):
-                    await REDIS.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
-                    await REDIS.xdel(TASK_STREAM, msg_id)
+                    await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                    await REDIS.xdel(_stream, msg_id)
                     await REDIS.xadd(RESULT_STREAM, {
                         "id": task_id, "error": "cancelled", "trace_id": trace_id,
                     })
                     await emit_event({"type": "worker.cancelled",
                                       "worker": worker_id, "task": task_id})
+                    continue
+
+                # A host-bound task on the shared stream (queued by a process
+                # running older code) is handed to the host stream, never run
+                # here. Moving it is final: only the host reads that stream, so
+                # it cannot bounce between node workers.
+                _may, _why = _placement.may_run_here(cap_name, is_worker=_IS_WORKER)
+                if not _may:
+                    await REDIS.xadd(HOST_TASK_STREAM, {
+                        "id": task_id, "capability": cap_name,
+                        "payload": json.dumps(payload), "trace_id": trace_id,
+                        "ts": now_iso(), **({"bg": bg_label} if bg_label else {}),
+                    }, maxlen=5000, approximate=True)
+                    await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                    await REDIS.xdel(_stream, msg_id)
+                    log.info("Worker %s: %s is host-bound (%s) - handed to %s",
+                             worker_id, cap_name, _why, HOST_TASK_STREAM)
                     continue
 
                 WORKER_REGISTRY[worker_id]["status"] = f"running:{cap_name}"
@@ -5426,10 +5490,10 @@ async def worker_loop(worker_id: str):
                     if other_has_cap:
                         log.debug("Worker %s: skipping %s — another worker has it", worker_id, cap_name)
                         await asyncio.sleep(0.1)
-                        await REDIS.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
-                        await REDIS.xdel(TASK_STREAM, msg_id)
+                        await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                        await REDIS.xdel(_stream, msg_id)
                         # Re-add so another consumer picks it up
-                        await REDIS.xadd(TASK_STREAM, {
+                        await REDIS.xadd(_stream, {
                             "id": task_id, "capability": cap_name,
                             "payload": json.dumps(payload), "trace_id": trace_id, "ts": now_iso(),
                             **({"bg": bg_label} if bg_label else {}),
@@ -5439,8 +5503,8 @@ async def worker_loop(worker_id: str):
                         await REDIS.xadd(RESULT_STREAM, {
                             "id": task_id, "error": f"no_worker_for:{cap_name}", "trace_id": trace_id,
                         })
-                        await REDIS.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
-                        await REDIS.xdel(TASK_STREAM, msg_id)
+                        await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                        await REDIS.xdel(_stream, msg_id)
                 else:
                     # Run the cap as a separate task so cluster.job.stop can
                     # cancel it cooperatively (cancel() interrupts at next await).
@@ -5455,6 +5519,19 @@ async def worker_loop(worker_id: str):
                         return await cap["raw"](**payload, trace_id=trace_id)
                     inner = asyncio.ensure_future(_run_cap())
                     RUNNING_TASKS[task_id] = inner
+
+                    # The registration's TTL is refreshed once per loop turn,
+                    # and a turn blocks here for the whole task - so a task
+                    # longer than 120 s made a busy worker look dead, and orphan
+                    # recovery (which skips live consumers) could run it twice.
+                    async def _heartbeat(_wid=worker_id):
+                        while True:
+                            await asyncio.sleep(30)
+                            try:
+                                await REDIS.expire(f"vera:workers:{_wid}", 120)
+                            except Exception:
+                                pass
+                    _hb = asyncio.create_task(_heartbeat())
                     try:
                         result = await inner
                         await REDIS.xadd(RESULT_STREAM, {
@@ -5480,9 +5557,10 @@ async def worker_loop(worker_id: str):
                             "task": task_id, "error": str(e),
                         })
                     finally:
+                        _hb.cancel()
                         RUNNING_TASKS.pop(task_id, None)
-                        await REDIS.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
-                        await REDIS.xdel(TASK_STREAM, msg_id)
+                        await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                        await REDIS.xdel(_stream, msg_id)
 
                 WORKER_REGISTRY[worker_id]["status"] = "idle"
                 WORKER_REGISTRY[worker_id]["current_task"] = ""
@@ -6782,8 +6860,7 @@ except Exception:                                     # pragma: no cover
 
 # Computed ONCE at import: neither can change without a restart, and re-stat'ing
 # the estate directory on every scheduler tick would be pointless I/O.
-_IS_WORKER = str(os.environ.get("VERA_IS_WORKER", "")).strip().lower() in (
-    "1", "true", "yes", "on")
+# (_IS_WORKER is defined beside the task streams - the worker loop reads it too.)
 _ESTATE_PRESENT = (_estate_role.estate_is_present(
                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                    if _estate_role is not None else True)
@@ -6902,9 +6979,20 @@ async def scheduler_loop():
     from Vera.vera import scheduler_leadership as _lead
     while True:
         now=datetime.utcnow()
-        if not _sandbox:
+        # A worker never takes the lease: it would then run the singleton sweeps
+        # against an estate it does not host.
+        if not _sandbox and not _IS_WORKER:
             await _refresh_scheduler_leadership()
         for task in SCHEDULED_TASKS:
+            # A worker runs no periodic job and only the startup hooks that load
+            # state its caps need - not the pollers (telegram, email), promoters,
+            # proxies or sweeps a second copy of the host would duplicate.
+            if not _placement.scheduler_may_run(task["name"], task["int"],
+                                                is_worker=_IS_WORKER):
+                if task["name"] not in _SANDBOX_SKIP_LOGGED:
+                    _SANDBOX_SKIP_LOGGED.add(task["name"])
+                    log.info("worker: skipping scheduled job '%s'", task["name"])
+                continue
             if not _lead.may_run(task, is_leader=bool(_LEADER_STATE["is_leader"])):
                 continue
             # Only the estate's OWNER may sweep it. The primary test is
@@ -8899,14 +8987,21 @@ async def cap_ollama_instances(trace_id=None):
                  "enabled":i.get("enabled", True),
                  "status":i["status"],"latency_ms":i["latency_ms"],"models":i["models"],
                  "in_use":i["in_use"],"errors":i["errors"],"last_check":i["last_check"],
-                 "num_ctx":i.get("num_ctx", 4096)}
+                 "num_ctx":i.get("num_ctx", 4096),
+                 # what a request to this node actually carries (0 = none: GPU node)
+                 "num_thread":_node_threads_core.threads_for(
+                     has_gpu=bool(i.get("has_gpu")), node_num_thread=i.get("num_thread"),
+                     default=_CPU_NODE_THREADS)}
             for iid,i in OLLAMA_INSTANCES.items()}
 
 @capability("ollama.add_instance", memory="off",
             http_method="POST", http_path="/ollama/instances/add", http_tags=["ollama"],
-            description="Dynamically add an Ollama instance to the cluster.")
-async def cap_add_instance(id: str, url: str, has_gpu: bool = False, label: str = "", trace_id=None):
-    add_ollama_instance(id,url,has_gpu=has_gpu,label=label)
+            description="Dynamically add an Ollama instance to the cluster. Fields: id (str!), "
+                        "url (str!), has_gpu (bool), label (str), num_thread (int — the "
+                        "node's runner threads; omit for a GPU node, which gets none).")
+async def cap_add_instance(id: str, url: str, has_gpu: bool = False, label: str = "",
+                           num_thread: int = 0, trace_id=None):
+    add_ollama_instance(id,url,has_gpu=has_gpu,label=label,num_thread=num_thread)
     await _ping_instance(id,OLLAMA_INSTANCES[id])
     await _save_nodes()       # persist so the added node survives a reboot
     return OLLAMA_INSTANCES[id]
@@ -8916,10 +9011,14 @@ async def cap_add_instance(id: str, url: str, has_gpu: bool = False, label: str 
 @capability("ollama.node.config", memory="off",
             http_method="POST", http_path="/ollama/node/config", http_tags=["ollama"],
             description="Configure an Ollama node: enable/disable it (disabled nodes are "
-                        "skipped by all routing), set priority or label. Persists across "
-                        "reboot. Fields: id (str!), enabled (bool), priority (int), label (str).")
+                        "skipped by all routing), set priority, label or its runner thread "
+                        "count. Persists across reboot. Fields: id (str!), enabled (bool), "
+                        "priority (int), label (str), num_thread (int — sent as "
+                        "options.num_thread on every request to a CPU node; 0 clears it "
+                        "back to VERA_CPU_NODE_THREADS; ignored for GPU nodes).")
 async def cap_ollama_node_config(id: str, enabled: Optional[bool] = None,
                                   priority: Optional[int] = None, label: str = "",
+                                  num_thread: Optional[int] = None,
                                   trace_id=None):
     inst = OLLAMA_INSTANCES.get(id)
     if not inst:
@@ -8930,11 +9029,18 @@ async def cap_ollama_node_config(id: str, enabled: Optional[bool] = None,
         inst["priority"] = int(priority)
     if label:
         inst["label"] = label
+    if num_thread is not None:
+        if int(num_thread) > 0:
+            inst["num_thread"] = int(num_thread)
+        else:
+            inst.pop("num_thread", None)
     await _save_nodes()
     await emit_event({"type": "ollama.node.config", "id": id,
-                      "enabled": inst.get("enabled", True), "priority": inst.get("priority")})
+                      "enabled": inst.get("enabled", True), "priority": inst.get("priority"),
+                      "num_thread": inst.get("num_thread")})
     return {"ok": True, "id": id, "enabled": inst.get("enabled", True),
-            "priority": inst.get("priority"), "label": inst.get("label")}
+            "priority": inst.get("priority"), "label": inst.get("label"),
+            "num_thread": inst.get("num_thread")}
 
 
 @capability("ollama.interactive.get", memory="off", silent=True,
