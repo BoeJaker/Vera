@@ -156,7 +156,7 @@ svg.chart{width:100%;height:120px;display:block;cursor:crosshair}
       this._wire();
       this._connectWs();
       if (this._onScreen()) this.refresh();
-      this._pollTimer = setInterval(() => { if (this._onScreen()) this.refresh(); }, parseInt(this.getAttribute('poll-ms') || '20000', 10));
+      this._pollTimer = setInterval(() => { if (this._onScreen() && !document.hidden) this.refresh(); }, parseInt(this.getAttribute('poll-ms') || '60000', 10));   // 500 runs a read: was every 20 s
       if (this._autoplay === 'scroll' && !reducedMotion()) {
         this._io = new IntersectionObserver(entries => {
           entries.forEach(e => {

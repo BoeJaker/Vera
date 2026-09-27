@@ -2702,7 +2702,7 @@ try:
     from Vera.vera.evolve.ttl_cache import TTLCache as _TTLCache
 except Exception:                                          # pragma: no cover
     from vera.evolve.ttl_cache import TTLCache as _TTLCache
-_AUTHORS_CACHE = _TTLCache(60.0)
+_AUTHORS_CACHE = _TTLCache(300.0)   # 16-27 s to compute (2026-09-28); authorship moves at commit speed
 
 
 async def _evolve_authors_uncached(hours: int, branch: str):

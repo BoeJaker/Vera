@@ -98,7 +98,7 @@
       sel.value = String(this._hours);
       sel.addEventListener('change', () => { this._hours = parseInt(sel.value, 10); this.refresh(); });
       if (this._onScreen()) this.refresh();
-      this._pollTimer = setInterval(() => { if (this._onScreen()) this.refresh(); }, 20000);
+      this._pollTimer = setInterval(() => { if (this._onScreen() && !document.hidden) this.refresh(); }, 120000);   // was 20000 ms, and ran in a background tab
     }
 
     /* Poll only while on screen. offsetParent is null inside a hidden

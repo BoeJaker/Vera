@@ -606,3 +606,33 @@ async def ci_census(template: str = "default", trace_id=None):
         v["summary"]["goal_ids"] = len(names)
         return v
     return await _CENSUS.get(("census", template), build)
+
+
+_PERF = TTLCache(30.0, max_entries=8)
+
+
+@capability(
+    "loop.ci.perf", memory="off", silent=True,
+    http_method="GET", http_path="/loop/ci/perf", http_tags=["ci", "workshop"],
+    description=("AGENTIC LOOP PERFORMANCE: the newest loop runs, each as its wall time, planned vs executed steps, "
+                 "tool calls (failed, repeated), the tool time split by tool, the model calls by loop stage, gate "
+                 "rounds and recoveries - so a slow loop says whether its time went to tools, the model or retries. "
+                 "Drawn as the loop-perf widget; a row opens the loop. Inputs: limit (int=16 runs, up to 40), "
+                 "status (str - e.g. done). Output: {kind:'ci', view:'loop-perf', rows:[{id, goal, status, wall_s, "
+                 "steps, calls, fails, repeats, tool_ms, by_tool[], llm_calls, stages[]}], summary}."))
+async def loop_ci_perf(limit: int = 16, status: str = "", trace_id=None):
+    n = max(1, min(40, int(limit or 16)))
+
+    async def build():
+        ss = await _loop_sessions(100)
+        if status:
+            ss = [s for s in ss if str(s.get("status") or "") == status]
+        ss = ss[:n]
+        sem = asyncio.Semaphore(4)
+
+        async def one(s):
+            async with sem:
+                return s, await _trace(str(s.get("session_id") or ""))
+        pairs = await asyncio.gather(*[one(s) for s in ss if s.get("session_id")])
+        return cv.loop_perf([(s, t) for s, t in pairs if isinstance(t, dict) and not t.get("error")])
+    return await _PERF.get(("perf", n, status), build)

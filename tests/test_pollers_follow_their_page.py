@@ -36,7 +36,7 @@ def test_the_element_polls_only_on_screen(name):
     # offsetParent alone missed a closed <details> (Chromium keeps its contents
     # laid out, content-visibility: hidden); checkVisibility() sees it (2026-09-10).
     assert "_onScreen() { return this.offsetParent !== null && (typeof this.checkVisibility !== 'function' || this.checkVisibility()); }" in src
-    assert re.search(r"setInterval\(\(\) => \{ if \(this\._onScreen\(\)\) this\.refresh\(\); \}", src), name
+    assert re.search(r"setInterval\(\(\) => \{ if \(this\._onScreen\(\)( && !document\.hidden)?\) this\.refresh\(\); \}", src), name
     assert "if (this._onScreen()) this.refresh();" in src, "the first read too"
     assert not re.search(r"setInterval\(\(\) => this\.refresh\(\)", src), "an unguarded tick remains"
 
@@ -77,7 +77,7 @@ def test_the_panel_refreshes_a_pages_elements_when_it_opens():
     assert "_fleetT" not in src
     # CI/CD and Review are the Ship page since slice 5: one poller for the
     # table, the full pipeline list's own only while its fold is open.
-    assert "if(r.any_live&&$('ship-follow')&&$('ship-follow').checked&&_curSec()==='ship')window._shipT=setTimeout(loadShip,6000)" in src
+    assert "if(r.any_live&&$('ship-follow')&&$('ship-follow').checked&&_curSec()==='ship')window._shipT=setTimeout(loadShip,document.hidden?60000:15000)" in src
     assert "_pipeT" not in src and "function loadPipelines(" not in src, "the pipeline list is a mode of the Ship table; one poller"
     assert "_reviewT" not in src
 

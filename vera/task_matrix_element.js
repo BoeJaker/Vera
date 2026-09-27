@@ -105,7 +105,7 @@ td.rowhead{text-align:left;font-family:var(--mono,monospace);font-size:9.5px;
       this._tag = this.getAttribute('tag') || '';
       this._connectWs();
       if (this._onScreen()) this.refresh();
-      this._pollTimer = setInterval(() => { if (this._onScreen()) this.refresh(); }, 10000);
+      this._pollTimer = setInterval(() => { if (this._onScreen() && !document.hidden) this.refresh(); }, 30000);   // was 10000 ms, and ran in a background tab
     }
 
     /* Poll only while on screen. offsetParent is null inside a hidden
