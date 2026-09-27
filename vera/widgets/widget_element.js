@@ -2641,11 +2641,42 @@ span.vw-sampled{opacity:.85}
     + '.vw-dr-bd h4{margin:14px 0 6px;font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--t2,var(--dim2,#8a92a0))}'
     + '.vw-dr-kv{display:grid;grid-template-columns:minmax(90px,34%) minmax(0,1fr);gap:1px 10px}.vw-dr-kv > span{padding:3px 0;border-bottom:1px solid var(--bd,rgba(255,255,255,.06));min-width:0;overflow-wrap:anywhere}.vw-dr-kv > span.k{color:var(--t2,var(--dim2,#8a92a0));font-size:11px}.vw-dr-kv > span.v{font-family:var(--f-mono,var(--mono,monospace));font-size:11.5px}.vw-dr-kv i.st{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px}'
     + '.vw-dr-rel{display:flex;flex-direction:column;gap:3px}.vw-dr-rel > div{display:flex;gap:8px;align-items:baseline;padding:5px 8px;border-radius:6px;background:var(--s2,var(--bg2,#1f232b));cursor:pointer}.vw-dr-rel > div:hover{box-shadow:inset 0 0 0 1px var(--acc,#6ea8d8)}.vw-dr-rel b{font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-dr-rel small{font-family:var(--f-mono,var(--mono,monospace));font-size:10px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap}'
-    + '.vw-dr-src{font-family:var(--f-mono,var(--mono,monospace));font-size:11px;color:var(--t2,var(--dim2,#8a92a0));white-space:pre-wrap;overflow-wrap:anywhere}';
+    + '.vw-dr-src{font-family:var(--f-mono,var(--mono,monospace));font-size:11px;color:var(--t2,var(--dim2,#8a92a0));white-space:pre-wrap;overflow-wrap:anywhere}'
+    + '.vw-dr-json{font-family:var(--f-mono,var(--mono,monospace));font-size:11.5px;line-height:1.6;padding:8px 10px 8px 22px;border-radius:7px;background:var(--s2,var(--bg2,#1f232b));box-shadow:inset 0 0 0 1px var(--bd,rgba(255,255,255,.06));overflow-x:auto}'
+    + '.vw-dr-json .l{white-space:pre-wrap;overflow-wrap:anywhere}.vw-dr-json details > .in{padding-left:16px;margin-left:2px;border-left:1px dashed var(--bd,rgba(255,255,255,.1))}'
+    + '.vw-dr-json summary{cursor:pointer;list-style:none;border-radius:3px}.vw-dr-json summary::-webkit-details-marker{display:none}.vw-dr-json summary:hover{background:var(--s3,rgba(255,255,255,.04))}'
+    + '.vw-dr-json summary::before{content:"\\25BE";display:inline-block;width:14px;margin-left:-14px;color:var(--t3,var(--dim,#6b7280))}.vw-dr-json details:not([open]) > summary::before{content:"\\25B8"}.vw-dr-json details:not([open]) > summary::after{content:" \\2026";color:var(--t3,var(--dim,#6b7280))}'
+    + '.vw-dr-json i{font-style:normal}.vw-dr-json .k{color:var(--t1,var(--text,#d8dce4))}.vw-dr-json .s{color:var(--ok,#5fc49a)}.vw-dr-json .m{color:var(--acc,#6ea8d8)}.vw-dr-json .b{color:var(--warn,#f5b341)}.vw-dr-json .n,.vw-dr-json .p{color:var(--t3,var(--dim,#6b7280))}'
+    + '.vw-dr-json .c{color:var(--t3,var(--dim,#6b7280));font-size:10px;margin-left:8px;font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}.vw-dr-json .t{font-size:9px;letter-spacing:.06em;text-transform:uppercase;margin-right:6px;padding:0 5px;border-radius:3px;color:var(--acc,#6ea8d8);box-shadow:inset 0 0 0 1px var(--acc,#6ea8d8)}'
+    + '.vw-dr-kv .vw-dr-json{padding:4px 6px 4px 18px;font-size:11px}.vw-dr-argl{margin:8px 0 4px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7280))}.vw-drawer button.on{border-color:var(--acc,#6ea8d8);color:var(--acc,#6ea8d8)}';
+
+  /* THE DRAWER'S JSON (owner, 2026-09-27: "prettyfy all the json properly in the right hand details panel"). The tile's json
+     form, drawn into the page, lost its styles (they live in the widget's shadow root) and cut every value to a line. This
+     is JSON's own shape - keys quoted, braces and commas - coloured by kind, strings wrapped whole, a string that holds
+     JSON shown as the JSON it holds, the first two levels open and the rest a click away. */
+  function drJson(root) {
+    let left = 4000;
+    const inJson = (s) => { if (typeof s !== 'string' || s.length < 2 || !/^\s*[\[{]/.test(s)) return undefined; try { const o = JSON.parse(s); return o && typeof o === 'object' ? o : undefined; } catch (_) { return undefined; } };
+    const leaf = (v) => v === null ? '<i class="n">null</i>' : typeof v === 'number' ? '<i class="m">' + esc(String(v)) + '</i>' : typeof v === 'boolean' ? '<i class="b">' + v + '</i>' : '<i class="s">' + esc(JSON.stringify(String(v).length > 20000 ? String(v).slice(0, 20000) + '…' : String(v))) + '</i>';
+    const node = (k, v, depth, last) => {
+      if (--left < 0) return depth ? '' : '<div class="l"><i class="n">…</i></div>';
+      let key = typeof k === 'string' ? '<i class="k">' + esc(JSON.stringify(k)) + '</i><i class="p">: </i>' : '';
+      const comma = last ? '' : '<i class="p">,</i>';
+      const held = inJson(v); if (held !== undefined) { v = held; key += '<i class="t" title="a string holding JSON, shown as that JSON">json</i>'; }
+      if (v === null || typeof v !== 'object') return '<div class="l">' + key + leaf(v) + comma + '</div>';
+      const arr = Array.isArray(v), ks = arr ? v.map((_, i) => i) : Object.keys(v), n = ks.length, o = arr ? '[' : '{', c = arr ? ']' : '}';
+      if (!n) return '<div class="l">' + key + '<i class="p">' + o + c + '</i>' + comma + '</div>';
+      const shown = Math.min(n, 500);
+      const kids = ks.slice(0, shown).map((kk, i) => node(arr ? i : kk, v[kk], depth + 1, i === shown - 1 && n <= 500)).join('') + (n > 500 ? '<div class="l"><i class="n">… ' + (n - 500) + ' more</i></div>' : '');
+      return '<details' + (depth < 2 ? ' open' : '') + '><summary>' + key + '<i class="p">' + o + '</i><i class="c">' + n + (arr ? (n === 1 ? ' item' : ' items') : (n === 1 ? ' key' : ' keys')) + '</i></summary><div class="in">' + kids + '</div><div class="l"><i class="p">' + c + '</i>' + comma + '</div></details>';
+    };
+    return '<div class="vw-dr-json">' + node(null, root, 0, true) + '</div>';
+  }
   const isPlain = (v) => v == null || typeof v !== 'object';
   const fieldVal = (k, v) => { if (v === null || v === undefined) return '<i style="opacity:.5">—</i>'; if (typeof v === 'boolean') return '<i class="st" style="background:' + (v ? 'var(--ok,#28c28a)' : 'var(--warn,#f5b341)') + '"></i>' + (v ? 'yes' : 'no');
     if (typeof v === 'number') return esc(TIP_RAW.test(k) ? String(v) : ((/(^|_)(created|updated|started|ended|at|ts|time|last_run|next_run)$/i.test(k) && v > 1e9 && v < 4e10) ? new Date(v * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' · ' + v : (/bytes?$|_b$/.test(k) ? fmtBytesS(v) + ' · ' + v : fmt(v))));
     const s = String(v); if (/^(status|state|health|level|severity)$/i.test(k)) return '<i class="st" style="background:' + stCol(s).replace(/var\(--b-(ac\d?|t3)\)/, (m, x) => ({ ac: 'var(--acc,#6ea8d8)', ac2: 'var(--ok,#28c28a)', ac3: 'var(--warn,#f5b341)', ac4: 'var(--err,#ef5b5b)', t3: 'var(--dim,#6b7280)' }[x] || m)) + '"></i>' + esc(s);
+    if (/^\s*[\[{]/.test(s)) { try { const o = JSON.parse(s); if (o && typeof o === 'object') return drJson(o); } catch (_) {} }
     if (/^https?:\/\//.test(s)) return '<a href="' + esc(s) + '" target="_blank" rel="noopener" style="color:var(--acc,#6ea8d8)">' + esc(s) + '</a>'; return esc(s.length > 2000 ? s.slice(0, 2000) + '…' : s); };
   const itemName = (it, fb) => (it && typeof it === 'object' && !Array.isArray(it)) ? String(nameOf(it) || it.date || it.title || fb || 'item') : (Array.isArray(it) ? (fb || 'the answer') + ' · ' + it.length + ' items' : String(it ?? fb ?? 'item'));
   let _drawer = null;
@@ -2662,7 +2693,8 @@ span.vw-sampled{opacity:.85}
     ensureCss(doc);
     if (!_drawer || !_drawer.el.isConnected) {
       const el = doc.createElement('aside'); el.className = 'vw-drawer'; el.setAttribute('role', 'complementary'); el.setAttribute('aria-label', 'the item\'s data');
-      _drawer = { el, stack: [] }; doc.body.appendChild(el);
+      let view = ''; try { view = localStorage.getItem('vera.drawer.view') || ''; } catch (_) {}
+      _drawer = { el, stack: [], view }; doc.body.appendChild(el);
       doc.addEventListener('keydown', (e) => { if (e.key === 'Escape' && _drawer && _drawer.el.isConnected && !doc.querySelector('.vw-dive-scrim')) { _drawer.el.remove(); } }, true);
     }
     _drawer.stack.push(detail); if (_drawer.stack.length > 30) _drawer.stack.shift();
@@ -2678,18 +2710,20 @@ span.vw-sampled{opacity:.85}
     const rel = cur.data !== undefined && !Array.isArray(it) ? relatedTo(cur.data, it) : [];
     const args = rec.read && rec.read.args && Object.keys(rec.read.args).length ? JSON.stringify(resolveArgs(rec.read.args, host && host._ui), null, 1) : '';
     el.innerHTML = '<header>' + (D.stack.length > 1 ? '<button class="bk" data-dr="back" title="back">‹</button>' : '') + '<div class="tt"><b title="' + esc(name) + '">' + esc(name) + '</b><small>' + esc([rec.title, cur.path, rec.form, src].filter(Boolean).join(' · ')) + '</small></div><button class="x" data-dr="close" title="close (Esc)">✕</button></header>'
-      + '<div class="vw-dr-acts">' + (ref ? '<button class="pri" data-dr="entity">Open ' + esc(ref) + ' ↗</button>' : '') + (place ? '<button data-dr="place">Open ' + esc(place) + '</button>' : '') + '<button data-dr="dive">Deep dive ⤢</button><button data-dr="copy">Copy JSON</button></div>'
+      + '<div class="vw-dr-acts">' + (ref ? '<button class="pri" data-dr="entity">Open ' + esc(ref) + ' ↗</button>' : '') + (place ? '<button data-dr="place">Open ' + esc(place) + '</button>' : '') + '<button data-dr="dive">Deep dive ⤢</button><button data-dr="view" class="' + (D.view === 'json' ? 'on' : '') + '" title="Show the item as fields or as JSON">{ } JSON</button><button data-dr="copy">Copy JSON</button></div>'
       + '<div class="vw-dr-bd">'
-      + (plain.length ? '<h4>Fields · ' + (plain.length + nested.length) + '</h4><div class="vw-dr-kv">' + plain.map((k) => '<span class="k">' + esc(k.replace(/_/g, ' ')) + '</span><span class="v">' + fieldVal(k, obj[k]) + '</span>').join('') + '</div>' : '')
-      + (nested.length ? '<h4>' + (plain.length ? 'Nested' : 'Everything') + '</h4>' + draw('json', Array.isArray(obj) ? obj : nested.reduce((o2, k) => { o2[k] = obj[k]; return o2; }, {}), 'l', { sample: false }) : '')
+      + (D.view === 'json' ? '<h4>The item · JSON</h4>' + drJson(it) : '')
+      + (D.view !== 'json' && plain.length ? '<h4>Fields · ' + (plain.length + nested.length) + '</h4><div class="vw-dr-kv">' + plain.map((k) => '<span class="k">' + esc(k.replace(/_/g, ' ')) + '</span><span class="v">' + fieldVal(k, obj[k]) + '</span>').join('') + '</div>' : '')
+      + (D.view !== 'json' && nested.length ? '<h4>' + (plain.length ? 'Nested' : 'Everything') + '</h4>' + drJson(Array.isArray(obj) ? obj : nested.reduce((o2, k) => { o2[k] = obj[k]; return o2; }, {})) : '')
       + (rel.length ? '<h4>Related · ' + rel.length + ' in the same answer</h4><div class="vw-dr-rel">' + rel.map((r, i) => '<div data-dr-rel="' + i + '"><b>' + esc(itemName(r.row, r.path)) + '</b><small>' + esc(r.via.join(' · ')) + '</small></div>').join('') + '</div>' : '')
-      + '<h4>Where it comes from</h4><div class="vw-dr-src">' + esc((src ? src : 'the record\'s own data') + (args ? '\nargs ' + args : '') + (cur.path ? '\npart ' + cur.path : '') + (rec.id ? '\nrecord ' + rec.id : '')) + '</div>'
+      + '<h4>Where it comes from</h4><div class="vw-dr-src">' + esc((src ? src : 'the record\'s own data') + (cur.path ? '\npart ' + cur.path : '') + (rec.id ? '\nrecord ' + rec.id : '')) + '</div>' + (args ? '<div class="vw-dr-argl">args</div>' + drJson(JSON.parse(args)) : '')
       + '</div>';
     el.onclick = (e) => { const b = e.target.closest && e.target.closest('[data-dr],[data-dr-rel]'); if (!b) return;
       if (b.hasAttribute('data-dr-rel')) { const r = rel[+b.getAttribute('data-dr-rel')]; if (r) { D.stack.push({ record: rec, item: r.row, path: r.path, ref: rowRef(r.row), data: cur.data, host }); paintDrawer(); } return; }
       const a = b.getAttribute('data-dr');
       if (a === 'close') { el.remove(); D.stack = []; }
       else if (a === 'back') { D.stack.pop(); paintDrawer(); }
+      else if (a === 'view') { D.view = D.view === 'json' ? '' : 'json'; try { localStorage.setItem('vera.drawer.view', D.view); } catch (_) {} paintDrawer(); }
       else if (a === 'entity') openBlock(host || el, rec, ref, name);
       else if (a === 'place') openBlock(host || el, rec, '', name);
       else if (a === 'dive') dive(host && host._rec ? host : { record: rec, data: cur.data });

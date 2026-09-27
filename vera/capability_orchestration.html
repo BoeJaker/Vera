@@ -303,6 +303,13 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .panels{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:row}
 .panel{flex:1;overflow-y:auto;padding:0;display:none;min-width:0;position:relative}
 .panel.active{display:flex;flex-direction:column}
+/* a pane beside another names itself and closes (owner, 2026-09-27: a second panel opened with ⧉ from a menu "there
+   appears to be no way to close" it - in LHM mode the tab bar with its × is hidden). Its name docks its menu. */
+.pane-x{position:absolute;top:6px;right:8px;z-index:30;display:flex;align-items:center;gap:2px;padding:2px 2px 2px 9px;border-radius:999px;background:color-mix(in srgb,var(--bg2,#1f232b) 88%,transparent);border:1px solid var(--border,rgba(255,255,255,.1));font-size:11px;line-height:1;color:var(--dim2,#8a92a0);opacity:.75;transition:opacity .15s,border-color .15s;backdrop-filter:blur(6px)}
+.pane-x:hover{opacity:1}.pane-x.first{border-color:var(--acc,#6ea8d8);color:var(--text,#d8dce4)}
+.pane-x .pn{cursor:pointer;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 0}
+.pane-x .px{all:unset;cursor:pointer;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;font-size:14px;color:var(--dim,#6b7280)}
+.pane-x .px:hover{background:var(--bg3,#2a2f37);color:var(--err,#ef5b5b)}
 /* Multi-panel split divider — always col-resize since panels are always row-flex */
 .panel-divider{width:5px;background:var(--border);cursor:col-resize;flex-shrink:0;transition:background .15s;position:relative;z-index:10}
 .panel-divider:hover,.panel-divider.dragging{background:var(--acc)}
@@ -2237,6 +2244,11 @@ function switchTab(name){
 }
 
 // Open a tab alongside existing ones (Ctrl+click / middle-click)
+function _paneLabel(pid){
+  const t = document.querySelector('#tabBar .tab[data-tab="' + CSS.escape(pid) + '"]') || document.querySelector('#tabBar .tab[data-tab="' + CSS.escape(String(pid).replace(/^auto-/, '')) + '"]');
+  const s = t ? [...t.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('') : '';
+  return s || String(pid).replace(/^auto-/, '');
+}
 function splitTab(name){
   if(_openTabs.has(name)){
     // Already open — close it if there are others
@@ -2401,6 +2413,16 @@ function _tabRender(){
       _schedulePark(p);        // reclaim long-hidden tab iframes (stop their polling)
     }
   });
+
+  // 3b) each open pane names itself and closes while more than one is open: the tab bar is hidden in LHM mode, and a
+  //     pane opened beside (⧉ on a menu item, "Estate · 2") had no other close. Its name docks its menu (first pane).
+  try{ panelsEl.querySelectorAll('.panel').forEach(p => { const pid = _panelIdFromEl(p); let chip = p.querySelector(':scope > .pane-x');
+    if(!(visibleCount > 1 && _openTabs.has(pid))){ if(chip) chip.remove(); return; }
+    if(!chip){ chip = document.createElement('div'); chip.className = 'pane-x'; chip.innerHTML = '<span class="pn" title="Dock this pane\'s menu in the LHM"></span><button type="button" class="px" title="Close this pane">\u00d7</button>';
+      chip.querySelector('.px').addEventListener('click', ev => { ev.stopPropagation(); splitTab(pid); _lhmNavSync(); });
+      chip.querySelector('.pn').addEventListener('click', ev => { ev.stopPropagation(); const rest = [..._openTabs].filter(x => x !== pid); _openTabs.clear(); _openTabs.add(pid); rest.forEach(x => _openTabs.add(x)); _tabRender(); });
+      p.appendChild(chip); }
+    chip.querySelector('.pn').textContent = _paneLabel(pid); chip.classList.toggle('first', [..._openTabs][0] === pid); }); }catch(_){}
 
   // Let a bound mesh display follow the tab you're on (Markets open -> Markets
   // pad on the desk). Inert until you bind a node in the Mesh panel, and the
