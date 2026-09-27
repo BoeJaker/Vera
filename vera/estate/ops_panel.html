@@ -104,12 +104,12 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .wpk{position:absolute;z-index:12;transform:translate(-50%,0) scale(var(--ui,1));transform-origin:50% 0;background:color-mix(in srgb,var(--s1) 96%,transparent);border-radius:var(--r-sm);box-shadow:var(--elev),0 0 0 1px var(--bd);padding:7px 9px;display:flex;flex-direction:column;gap:5px;min-width:210px}
 .wpk .h{font-size:9.5px;color:var(--t2)}.wpk .h b{color:var(--t1)}
 .wpk .ks{display:flex;flex-wrap:wrap;gap:3px}
-.stage{flex:1;min-width:0;background:var(--surf);border-radius:var(--ui-radius);box-shadow:var(--elev);display:flex;flex-direction:column;overflow:hidden auto}
+.stage{flex:1;min-width:0;background:var(--surf);border-radius:var(--ui-radius);box-shadow:var(--elev);display:flex;flex-direction:column;overflow:auto}
 .stage-hd{flex-shrink:0;display:flex;align-items:center;gap:10px;padding:11px var(--pad) 0}
 .stage-hd h2{font-size:13px;font-weight:600}
 .axes{flex-shrink:0;display:flex;gap:16px;padding:6px var(--pad) 8px;flex-wrap:wrap}
 .axes span{font-size:10px;color:var(--t3)}.axes b{color:var(--t2);font-weight:500}
-.plot{flex:1;min-height:var(--plot-min,720px);position:relative;overflow:hidden;margin:0 var(--pad) var(--pad);border-radius:var(--r-sm);background:var(--bg)}
+.plot{flex:1 0 auto;min-height:var(--plot-min,720px);min-width:var(--plot-minw,0px);position:relative;overflow:hidden;margin:0 var(--pad) var(--pad);border-radius:var(--r-sm);background:var(--bg)}
 .pzv{position:absolute;inset:0;transform-origin:50% 50%;cursor:grab;transition:transform .38s cubic-bezier(.22,.68,.18,1);--ui:1}
 .pzv.dragging{transition:none!important;cursor:grabbing}.pzv.rotating{transition:none!important;cursor:move}
 .pzc{position:absolute;right:10px;top:8px;z-index:44;display:flex;align-items:center;gap:3px;padding:4px 6px;border-radius:var(--r-sm);background:color-mix(in srgb,var(--s1) 90%,transparent);box-shadow:0 0 0 1px var(--bd);opacity:.45;transition:opacity .16s ease}
@@ -164,7 +164,14 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .flat .nd .asg{display:none}
 .pin{position:absolute;width:12px;height:12px;border-radius:50%;background:transparent;pointer-events:none;z-index:5;transform:translate(-50%,-50%) var(--dtf,none) scale(var(--ui,1));border:1.5px solid var(--pc);box-shadow:0 0 0 1px var(--bg),inset 0 0 0 1px var(--bg)}
 .pin::after{content:'';position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px 0 0 -2px;border-radius:50%;background:var(--pc);box-shadow:0 0 0 1px var(--bg)}
-.stem{position:absolute;height:calc(1px * var(--ui,1));transform-origin:0 50%;pointer-events:none;z-index:8;background:linear-gradient(90deg,color-mix(in srgb,var(--pc) 95%,transparent),color-mix(in srgb,var(--pc) 40%,transparent))}
+.stem{position:absolute;width:calc(1.5px * var(--ui,1));height:calc(var(--r,20) * var(--ui,1) * 1px);transform:translate(-50%,-100%);pointer-events:none;z-index:9;background:linear-gradient(0deg,color-mix(in srgb,var(--pc) 95%,transparent),color-mix(in srgb,var(--pc) 45%,transparent))}
+/* a billboard: the chip stands straight above its pin, the lift held in screen px while the view zooms */
+.nd.bb{transform-origin:50% 100%;transform:translate(-50%,-100%) translateY(calc(var(--r,20) * var(--ui,1) * -1px)) scale(calc(var(--nsc,1) * var(--ui,1)));z-index:11}
+.fresh .nd.bb{animation:none}
+.floors-svg{position:absolute;left:0;top:0;overflow:visible;z-index:0}
+.floors-svg polygon{fill:color-mix(in srgb,var(--pc) 6%,transparent);stroke:color-mix(in srgb,var(--pc) 26%,transparent);stroke-width:1;cursor:pointer;pointer-events:visiblePainted}
+.floors-svg polygon.focus{fill:color-mix(in srgb,var(--pc) 11%,transparent)}.floors-svg polygon.dim{display:none}
+.bus{position:absolute;width:calc(7px * var(--ui,1));height:calc(7px * var(--ui,1));border-radius:2px;transform:translate(-50%,-50%) rotate(45deg);background:var(--bg);box-shadow:0 0 0 calc(1.5px * var(--ui,1)) var(--pc);z-index:4;pointer-events:none}
 .wedge{position:absolute;height:calc(1.5px * var(--ui,1));transform-origin:0 50%;pointer-events:none;z-index:1;opacity:.9;background:repeating-linear-gradient(90deg,var(--pc) 0 4px,transparent 4px 7px)}
 .pin.dim,.stem.dim{display:none}
 .owf-svg{position:absolute;left:0;top:0;overflow:visible;z-index:7;pointer-events:none}
@@ -283,7 +290,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     <div class="seg" id="segSpread" title="How far apart the lanes and rows stand"><span class="cap">spread</span><input type="range" id="rSpread" min="0.8" max="2.2" step="0.1" value="1"><span class="z" id="rSpreadV">1.0</span></div>
     <div class="seg wsz" id="segWsz" title="The size of the iso widgets on the planes (they keep it while the view zooms)"><span class="cap">▣</span><button data-wsz="0.75">S</button><button data-wsz="1" class="on">M</button><button data-wsz="1.3">L</button><button data-wsz="1.6">XL</button></div>
     <div class="seg"><button id="bPipes" class="on" title="Runs follow the lanes of their plane, then go straight up or down">Pipes</button><button id="bDirect" title="Each edge as a straight chord">Direct</button></div>
-    <div class="seg"><button id="bWidgets" class="on" title="The iso widgets standing beside their nodes in 3D">Widgets</button></div>
+    <div class="seg" id="segLbl" title="What stands on the planes in 3D"><button data-lbl="labels" title="Billboard labels only">Labels</button><button data-lbl="both" class="on" title="Billboards and the iso widgets">Both</button><button data-lbl="widgets" title="The iso widgets alone - no billboards; a widget names its node">Widgets</button></div>
     <div class="seg"><button id="bRefresh" title="Read the estate again now">↻</button></div>
   </header>
   <div class="bd">
@@ -292,7 +299,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
         <span class="note" id="planesNote"></span></div>
       <div class="card"><h3>In flight now</h3><div class="kinds" id="kinds"></div></div>
       <div class="card"><h3>Pipes</h3><div class="kinds" id="pipeKey"></div>
-        <span class="note">Runs follow each plane's own lanes, then go straight up or down between planes. Selecting a node lifts everything it is wired to.</span></div>
+        <span class="note">Runs follow each plane's own lanes. Between planes a run leaves by its plane's bus point on the front edge, rises or falls on a riser outside every plate, and wears its origin plane's colour. Selecting a node lifts everything it is wired to.</span></div>
       <div class="card"><h3 id="wsecH" style="cursor:pointer" title="The iso widgets standing on the planes">Widgets<span class="lbl mono" id="wCount"></span><span class="tw" id="wsecArrow">▾</span></h3>
         <div class="wplanes" id="wplanes"></div>
         <span class="note" id="wNote">A node carries several widgets: a server for a machine, and its readings — a dial for its load, a thermometer, a tank for its disk — each joined to the node on the plane. Select a node and press ⊕ to add one; the size button steps ×¾ · ×1 · ×1.3; ✕ takes one off.</span></div>
@@ -358,13 +365,13 @@ const uiScale = (vz) => clamp(vz, UI_MIN, UI_MAX) / vz;
 // ── state ──
 const S = { view: '2d', layout3d: 'stack', focus: null, pipes: true, widgets: true, sel: null, exp: null, act: 'metrics', wact: 'metrics',
   on: { work: true, core: true, service: true, runtime: true, host: true, edge: true },
-  vz: 1, vx: 0, vy: 0, tilt: null, azim: null, zgap: 1, spread: 1, wsz: 1, wl: {}, wpick: null, wadd: null, wsec: true,
+  vz: 1, vx: 0, vy: 0, tilt: null, azim: null, zgap: 1, spread: 1, wsz: 1, lbl: 'both', wl: {}, wpick: null, wadd: null, wsec: true,
   snap: null, err: '', cm: null, logs: {}, req: {}, dive: {}, drag: null, fresh: true, busy: false, fp: '' };
 // the widget overrides: {node: {off, items:[{k, s}]}} (an older {k, s, off} is read as one item)
 try { const w = JSON.parse(localStorage.getItem('vera:ops:widgets') || 'null'); if (w && typeof w === 'object') Object.keys(w).forEach((id) => { const o = w[id] || {}; S.wl[id] = Array.isArray(o.items) ? { off: !!o.off, items: o.items } : { off: !!o.off, items: o.k ? [{ k: o.k, s: o.s || 1 }] : null }; }); } catch (_) {}
-try { const v = JSON.parse(localStorage.getItem('vera:ops:view') || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); } } catch (_) {}
+try { const v = JSON.parse(localStorage.getItem('vera:ops:view') || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); if (['labels', 'both', 'widgets'].indexOf(v.lbl) >= 0) S.lbl = v.lbl; S.widgets = S.lbl !== 'labels'; } } catch (_) {}
 const saveW = () => { try { localStorage.setItem('vera:ops:widgets', JSON.stringify(S.wl)); } catch (_) {} };
-const saveV = () => { try { localStorage.setItem('vera:ops:view', JSON.stringify({ zgap: S.zgap, spread: S.spread, wsz: S.wsz })); } catch (_) {} };
+const saveV = () => { try { localStorage.setItem('vera:ops:view', JSON.stringify({ zgap: S.zgap, spread: S.spread, wsz: S.wsz, lbl: S.lbl })); } catch (_) {} };
 const byId = () => { const m = {}; ((S.snap && S.snap.nodes) || []).forEach((n) => { m[n.id] = n; }); return m; };
 
 // ── the snapshot ──
@@ -418,6 +425,7 @@ function layout(W, H){
   const AXIS = 30, rows = PL.length || 1, SP = S.spread;
   const pos = {}, bands = [], floors = [], planeLabels = [], domLabels = [], L = {};
   let route = null, G = null;
+  const busPts = [];
   const DOM = snap.domains;
   const LX = 104, RX = 12, colW = (W - LX - RX) / DOM.length, colX = (d) => LX + (d + 0.5) * colW;
   const ladder = (pl) => clamp(Math.ceil((cellMax[pl] || 1)), 5, S.view === '2d' ? 12 : 9);
@@ -425,7 +433,7 @@ function layout(W, H){
   const stagOf = (total, idx) => total > 8 ? ((idx % 3) - 1) : total > 5 ? ((idx % 2) ? 1 : -1) : 0;
   if (S.view === '2d' || !ISO){
     // a band is as tall as its ladder asks (a row every 30 px × spread), never less than a chip's worth; the stage scrolls
-    const bandNeed = (pl) => 52 + (ladder(pl) - 1) * 30 * SP, needSum = PL.reduce((t, p) => t + bandNeed(p.id), 0) || 1;
+    const bandNeed = (pl) => 60 + (ladder(pl) - 1) * 40 * SP, needSum = PL.reduce((t, p) => t + bandNeed(p.id), 0) || 1;
     const scale = Math.max(1, (H - AXIS) / needSum);
     const bandHOf = {}, bandY = {}; let yy = 0; PL.forEach((p) => { bandY[p.id] = yy; bandHOf[p.id] = bandNeed(p.id) * scale; yy += bandHOf[p.id]; });
     PL.forEach((p) => { const y = bandY[p.id]; bands.push({ y, h: bandHOf[p.id], col: PCOL[p.id] }); planeLabels.push({ x: 10, y: y + 8, col: PCOL[p.id], t: p.name }); });
@@ -439,45 +447,72 @@ function layout(W, H){
     route = (a, b) => [{ x: pos[a].x, y: pos[a].y }, { x: pos[b].x, y: pos[a].y }, { x: pos[b].x, y: pos[b].y }];
   } else {
     const TILT = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 12.6) : S.tilt, AZIM = clamp(S.azim == null ? 45 : S.azim, 26, 64);
-    const VS = 1.0 * SP, TH = TILT * Math.PI / 180, FLAT = S.layout3d === 'flat';
-    const VHof = {}; PL.forEach((p) => { VHof[p.id] = ((ladder(p.id) - 1) / 2) * VS + 0.45 * SP; });
-    const UW = 5.2 * SP;
-    const KI0 = (FLAT ? 0.74 : 1) * 76 / Math.cos(45 * Math.PI / 180), NHW = 52, FITM = 14;
+    const TH = TILT * Math.PI / 180, FLAT = S.layout3d === 'flat';
+    // the room a node takes: its pin and chip, and the widgets that stand beside it (up to three wide)
+    const wcount = {}, maxW = {}; shown.forEach((n) => { wcount[n.id] = S.widgets ? wspec(n).length : 0; maxW[n.plane] = Math.max(maxW[n.plane] || 0, wcount[n.id]); });
+    const cellW = (pl) => (1.6 + 0.6 * Math.min(3, maxW[pl] || 0)) * SP;    // u between two nodes of a cell
+    const rowV = (pl) => (1.1 + 0.35 * Math.min(3, maxW[pl] || 0)) * SP;   // v between two rows of a cell
+    // a crowded cell is a grid, not one ladder: six rows at most, then another column
+    const ROWCAP = 6, grid = {};
+    Object.keys(slot).forEach((k) => { const t = slot[k], cols = Math.max(1, Math.ceil(t / ROWCAP)); grid[k] = { cols, rows: Math.ceil(t / cols) }; });
+    // a domain column is as wide as its widest cell on any plane; the floors are as wide as their columns
+    const domW = DOM.map((d, i) => Math.max(1.2 * SP, Math.max.apply(null, [0].concat(PL.map((p) => { const g = grid[p.id + ':' + i]; return g ? g.cols * cellW(p.id) : 0; })))) + 0.5 * SP);
+    const domU = []; { let u = 0; domW.forEach((w) => { domU.push(u + w / 2); u += w; }); }
+    const UW = domW.reduce((t, w) => t + w, 0);
+    const rowsOf = (pl) => Math.max.apply(null, [3].concat(Object.keys(grid).filter((k) => k.split(':')[0] === pl).map((k) => grid[k].rows)));
+    const VHof = {}; PL.forEach((p) => { VHof[p.id] = ((rowsOf(p.id) - 1) / 2) * rowV(p.id) + 0.9 * SP; });
+    const VMAX = Math.max.apply(null, PL.map((p) => VHof[p.id]));
+    const KI0 = (FLAT ? 0.74 : 1) * 60 / Math.cos(45 * Math.PI / 180), NHW = 52, FITM = 14;
     const uOff = {}, vOff = {}; { const rowsD = [];
-      PL.forEach((p, i) => { const r = Math.floor(i / 3); if (!rowsD[r]) rowsD[r] = 0; rowsD[r] = Math.max(rowsD[r], VHof[p.id]); });
-      PL.forEach((p, i) => { const c = i % 3, r = Math.floor(i / 3); uOff[p.id] = c * (UW + 0.7 * SP); let v = 0; for (let j = 0; j < r; j++) v += 2 * rowsD[j] + 1.0 * SP; vOff[p.id] = v + (rowsD[r] - VHof[p.id]); }); }
+      PL.forEach((p, i) => { const r = Math.floor(i / 3); rowsD[r] = Math.max(rowsD[r] || 0, VHof[p.id]); });
+      PL.forEach((p, i) => { const c = i % 3, r = Math.floor(i / 3); uOff[p.id] = c * (UW + 1.2 * SP); let v = 0; for (let j = 0; j < r; j++) v += 2 * rowsD[j] + 1.4 * SP; vOff[p.id] = v + (rowsD[r] - VHof[p.id]); }); }
+    // where the risers stand: a bus line along the front edge of the planes, outside every plate
+    const vBusOf = (pl) => (FLAT ? VHof[pl] : VMAX) + 0.45 * SP;
     const lay = (KI) => {
       const uyStable = KI * Math.SQRT1_2 * Math.sin(TH);
-      const spanY = Math.max.apply(null, PL.map((p) => 2 * VHof[p.id] * uyStable + 4 * uyStable));
-      const zh = Math.min((H - AXIS - 34 - spanY) / Math.max(rows - 1, 1), spanY + 26) * S.zgap;
+      const spanY = 2 * VMAX * uyStable + 4 * uyStable;
+      const zh = Math.max(40, Math.min((H - AXIS - 34 - spanY) / Math.max(rows - 1, 1), spanY + 26)) * S.zgap;
       const iso = ISO.proj(TILT, AZIM, KI, true);
       const zOf = (pl) => FLAT ? 0 : (rows - 1 - rowOf[pl]) * zh, uOf = (pl) => FLAT ? uOff[pl] : 0, vOf2 = (pl) => FLAT ? vOff[pl] : 0;
       const rawX = [], rawY = [], corners = [], rawNodes = [], LL = {}, usedL = {};
-      PL.forEach((p) => { const z = zOf(p.id), uo = uOf(p.id), vo = vOf2(p.id), VH = VHof[p.id];
-        const c = [iso(-0.6 * SP + uo, -VH + vo, z), iso(4.6 * SP + uo, -VH + vo, z), iso(4.6 * SP + uo, VH + vo, z), iso(-0.6 * SP + uo, VH + vo, z)];
-        corners.push({ p, c }); c.forEach((q) => { rawX.push(q[0]); rawY.push(q[1]); }); });
-      shown.forEach((n) => { const k = n.plane + ':' + n.domain; const idx = (usedL[k] = (usedL[k] || 0)); const total = slot[k]; usedL[k]++;
-        const R = ladder(n.plane), v = (slotOf(total, idx, R) - (R - 1) / 2) * VS, z = zOf(n.plane), stag = stagOf(total, idx) * (total > 8 ? .36 : .34) * SP;
-        const u = n.domain * SP + uOf(n.plane) + stag, vv = v + vOf2(n.plane);
-        const q = iso(u, vv, z); LL[n.id] = { u, v: vv, z };
-        rawNodes.push({ id: n.id, x: q[0], y: q[1], col: PCOL[n.plane] }); rawX.push(q[0] - NHW, q[0] + NHW); rawY.push(q[1] - 40, q[1] + 12); });
+      PL.forEach((p) => { const z = zOf(p.id), uo = uOf(p.id), vo = vOf2(p.id), VH = VHof[p.id], vb = vBusOf(p.id) + .3 * SP;
+        const c = [iso(-0.3 * SP + uo, -VH + vo, z), iso(UW + uo, -VH + vo, z), iso(UW + uo, VH + vo, z), iso(-0.3 * SP + uo, VH + vo, z)];
+        corners.push({ p, c }); c.concat([iso(uo, vb + vo, z), iso(UW + uo, vb + vo, z)]).forEach((q) => { rawX.push(q[0]); rawY.push(q[1]); }); });
+      shown.forEach((n) => { const k = n.plane + ':' + n.domain; const idx = (usedL[k] = (usedL[k] || 0)); usedL[k]++; const g = grid[k];
+        const c = idx % g.cols, r = Math.floor(idx / g.cols);
+        const u = domU[n.domain] + (c - (g.cols - 1) / 2) * cellW(n.plane) + uOf(n.plane), vv = (r - (g.rows - 1) / 2) * rowV(n.plane) + vOf2(n.plane), z = zOf(n.plane);
+        const q = iso(u, vv, z); LL[n.id] = { u, v: vv, z, pl: n.plane, vb: vBusOf(n.plane) + vOf2(n.plane) };
+        rawNodes.push({ id: n.id, x: q[0], y: q[1], col: PCOL[n.plane] }); rawX.push(q[0] - NHW, q[0] + NHW); rawY.push(q[1] - 90, q[1] + 16); });
       const minX = Math.min.apply(null, rawX), maxX = Math.max.apply(null, rawX), minY = Math.min.apply(null, rawY), maxY = Math.max.apply(null, rawY);
       return { iso, corners, rawNodes, LL, minX, maxX, minY, maxY };
     };
+    // fit the width always (a wide lattice would be cut at the plot's edge); fit the height too when the planes lie flat -
+    // a stack asks the plot for its height instead (render grows the plot and the stage scrolls)
     let KI = KI0, R = lay(KI);
-    if (FLAT) for (let i = 0; i < 4; i++){ const s = Math.min(1, (W - 2 * FITM) / (R.maxX - R.minX), (H - AXIS - 2 * FITM) / (R.maxY - R.minY)); if (s > 0.995) break; KI *= s; R = lay(KI); }
-    const ox = (W - (R.maxX - R.minX)) / 2 - R.minX, oy = (H - AXIS - (R.maxY - R.minY)) / 2 - R.minY + 6;
-    G = { iso: R.iso, ox, oy, L: R.LL, FLAT, fitS: KI / KI0, TILT, AZIM, SP, height: R.maxY - R.minY };
-    R.corners.forEach((f) => { floors.push({ id: f.p.id, col: PCOL[f.p.id], clip: 'polygon(' + f.c.map((q) => (q[0] + ox).toFixed(0) + 'px ' + (q[1] + oy).toFixed(0) + 'px').join(',') + ')' });
-      const a = f.c[3]; planeLabels.push({ id: f.p.id, x: clamp(a[0] + ox - 2, 8, W - 96), y: clamp(a[1] + oy - 15, 10, H - 14), col: PCOL[f.p.id], t: f.p.name + (S.focus === f.p.id ? ' · in focus' : '') }); });
-    const vAx = Math.max.apply(null, PL.map((p) => VHof[p.id])) + 0.75 * SP;
-    DOM.forEach((d, i) => { const q = R.iso(i * SP, vAx, 0); domLabels.push({ x: clamp(q[0] + ox, 34, W - 34), y: clamp(q[1] + oy, 10, H - 12), t: d }); });
+    for (let i = 0; i < 5; i++){ const s = Math.min(1, (W - 2 * FITM) / (R.maxX - R.minX), FLAT ? (H - AXIS - 2 * FITM) / (R.maxY - R.minY) : 1); if (s > 0.995) break; KI = Math.max(KI0 * 0.45, KI * s); R = lay(KI); }
+    const ox = (W - (R.maxX - R.minX)) / 2 - R.minX, oy = Math.max(FITM - R.minY, (H - AXIS - (R.maxY - R.minY)) / 2 - R.minY);
+    G = { iso: R.iso, ox, oy, L: R.LL, FLAT, fitS: KI / KI0, TILT, AZIM, SP, height: R.maxY - R.minY + AXIS + 2 * FITM, width: R.maxX - R.minX + 2 * FITM };
+    R.corners.forEach((f) => { floors.push({ id: f.p.id, col: PCOL[f.p.id], pts: f.c.map((q) => (q[0] + ox).toFixed(1) + ',' + (q[1] + oy).toFixed(1)).join(' ') });
+      const a = f.c[3]; planeLabels.push({ id: f.p.id, x: clamp(a[0] + ox - 2, 8, W - 96), y: clamp(a[1] + oy - 15, 10, Math.max(H, G.height) - 14), col: PCOL[f.p.id], t: f.p.name + (S.focus === f.p.id ? ' · in focus' : '') }); });
+    const vAx = VMAX + 1.0 * SP;
+    DOM.forEach((d, i) => { const q = R.iso(domU[i], vAx, 0); domLabels.push({ x: clamp(q[0] + ox, 34, W - 34), y: q[1] + oy, t: d }); });
     R.rawNodes.forEach((n) => { pos[n.id] = { x: n.x + ox, y: n.y + oy, col: n.col }; });
     Object.assign(L, R.LL);
-    route = (a, b) => { const A = L[a], B = L[b]; const P = (u, v, z) => { const q = R.iso(u, v, z); return { x: q[0] + ox, y: q[1] + oy }; };
-      return [P(A.u, A.v, A.z), P(B.u, A.v, A.z), P(B.u, B.v, A.z), P(B.u, B.v, B.z)]; };
+    // pipes: within a plane along its lanes; between planes out to the plane's front bus, along it to a riser that stands
+    // outside every plate, straight up or down, and in along the other plane's bus - no riser crosses a node or a stem.
+    // Risers from one column fan out beside each other; their feet are the planes' bus points.
+    const P = (u, v, z) => { const q = R.iso(u, v, z); return { x: q[0] + ox, y: q[1] + oy }; };
+    const riserN = {}, riserOf = {};
+    route = (a, b) => { const A = L[a], B = L[b];
+      if (A.pl === B.pl) return [P(A.u, A.v, A.z), P(B.u, A.v, A.z), P(B.u, B.v, B.z)];
+      const key = a + '>' + b;
+      if (riserOf[key] == null){ const col = A.pl + ':' + Math.round(A.u * 10); const n = (riserN[col] = (riserN[col] || 0) + 1) - 1; riserOf[key] = A.u + (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.16 * SP + 0.08 * SP;
+        busPts.push(P(riserOf[key], A.vb, A.z), P(riserOf[key], FLAT ? B.vb : A.vb, B.z)); }
+      const uR = riserOf[key];
+      if (FLAT) return [P(A.u, A.v, A.z), P(A.u, A.vb, A.z), P(uR, A.vb, A.z), P(B.u, A.vb, A.z), P(B.u, B.vb, B.z), P(B.u, B.v, B.z)];
+      return [P(A.u, A.v, A.z), P(A.u, A.vb, A.z), P(uR, A.vb, A.z), P(uR, A.vb, B.z), P(B.u, B.vb, B.z), P(B.u, B.v, B.z)]; };
   }
-  return { PL, shown, pos, bands, floors, planeLabels, domLabels, route, G, L, AXIS, cellMax, ladder };
+  return { PL, shown, pos, bands, floors, planeLabels, domLabels, route, G, L, AXIS, cellMax, ladder, busPts };
 }
 
 // ── the iso widgets beside their nodes (3D): several per node, built from boxes with the map's own projection ──
@@ -546,7 +581,7 @@ function isoWidgets(lay, W, H){
       const b = (BUILD[w.k] || BUILD.chip)(g, k, n); const bb = bboxOf(b.faces); out.boxes.push(bb);
       b.faces.forEach((q) => out.faces.push(q));
       // the first widget says its reading; the readings beside it speak when the node is selected (their titles always)
-      if (i === 0 || S.sel === n.id) out.labels.push({ x: g[0], y: bb.y1 + 3, n: wcaption(n, w.k), col: b.col });
+      if (i === 0 || S.sel === n.id) out.labels.push({ x: g[0], y: bb.y1 + 3, n: (S.lbl === 'widgets' && i === 0 ? (n.label.length > 22 ? n.label.slice(0, 20) + '…' : n.label) + ' · ' : '') + wcaption(n, w.k), col: b.col });
       out.hits.push({ x: bb.x0 - 3, y: bb.y0 - 3, w: bb.x1 - bb.x0 + 6, h: bb.y1 - bb.y0 + 6, id: n.id, title: WNAME[w.k] + ' on ' + n.label + ' · ' + wcaption(n, w.k) });
       if (b.needle) out.needles.push(b.needle);
       // each widget is joined to the node's pin along the plane's lanes
@@ -571,11 +606,11 @@ function render(opts){
   $('estateLine').textContent = (snap.nodes.length) + ' things provisioned by or for Vera' + (S.err ? ' · last read failed: ' + S.err : '');
   $('b2d').classList.toggle('on', !is3d); $('b3d').classList.toggle('on', is3d);
   $('bStack').classList.toggle('on', S.layout3d !== 'flat' && !S.focus); $('bFlat').classList.toggle('on', S.layout3d === 'flat' && !S.focus); $('bOne').classList.toggle('on', !!S.focus);
-  ['bStack', 'bFlat', 'bOne', 'bWidgets'].forEach((id) => { $(id).disabled = !is3d; });
+  ['bStack', 'bFlat', 'bOne'].forEach((id) => { $(id).disabled = !is3d; });
+  document.querySelectorAll('[data-lbl]').forEach((b) => { b.disabled = !is3d; b.classList.toggle('on', is3d && b.dataset.lbl === S.lbl); });
   ['segGap', 'segWsz'].forEach((id) => { $(id).hidden = !is3d; });
   $('rGap').value = S.zgap; $('rGapV').textContent = S.zgap.toFixed(1); $('rSpread').value = S.spread; $('rSpreadV').textContent = S.spread.toFixed(1);
   document.querySelectorAll('[data-wsz]').forEach((b) => b.classList.toggle('on', parseFloat(b.dataset.wsz) === S.wsz));
-  $('bWidgets').classList.toggle('on', S.widgets && is3d);
   $('bPipes').classList.toggle('on', S.pipes); $('bDirect').classList.toggle('on', !S.pipes);
   $('pzTilt').hidden = !is3d; $('lsel').hidden = !is3d; $('axRot').hidden = !is3d;
   $('viewName').textContent = !is3d ? 'Flat — planes stacked bottom to top' : 'Isometric — one floor per plane';
@@ -595,13 +630,21 @@ function render(opts){
   if (!opts.plotOnly) renderRail();
   // the room the lattice asks for: a row slot per node up to nine a band (a 2D band 30 px × spread a row); the stage scrolls
   const cm = {}; snap.nodes.forEach((n) => { if (!S.on[n.plane]) return; const k = n.plane + ':' + n.domain; cm[k] = (cm[k] || 0) + 1; }); const per = {}; Object.keys(cm).forEach((k) => { const pl = k.split(':')[0]; per[pl] = Math.max(per[pl] || 0, cm[k]); });
-  const need = 30 + Object.keys(per).reduce((t, pl) => t + 52 + (clamp(per[pl], 1, is3d ? 9 : 12) - 1) * (is3d ? 26 : 30 * S.spread), 0);
+  const need = 30 + Object.keys(per).reduce((t, pl) => t + 60 + (clamp(per[pl], 1, is3d ? 9 : 12) - 1) * (is3d ? 26 : 40 * S.spread), 0);
   plot.style.setProperty('--plot-min', Math.max(560, is3d ? need * Math.max(1, S.zgap * 1.15) * (S.layout3d === 'flat' ? .8 : 1) : need) + 'px');
-  const W = plot.clientWidth || 800, H = plot.clientHeight || 600;
-  const lay = layout(W, H), pos = lay.pos, shown = lay.shown;
+  plot.style.setProperty('--plot-minw', '0px');   // reset before measuring: a view that grew the plot sideways must not centre the next one
+  let W = plot.clientWidth || 800, H = plot.clientHeight || 600;
+  let lay = layout(W, H);
+  // a stack taller than the plot (a wide gap, a large spread) asks for its height: nothing is cut, the stage scrolls
+  for (let i = 0; i < 3 && is3d && lay.G && (lay.G.height > H + 4 || lay.G.width > W + 4); i++){
+    if (lay.G.height > H + 4) plot.style.setProperty('--plot-min', Math.ceil(lay.G.height) + 'px');
+    if (lay.G.width > W + 4) plot.style.setProperty('--plot-minw', Math.ceil(lay.G.width) + 'px');
+    W = Math.max(plot.clientWidth || 0, lay.G.width > W + 4 ? Math.ceil(lay.G.width) : W); H = Math.max(plot.clientHeight || 0, lay.G.height > H + 4 ? Math.ceil(lay.G.height) : H); lay = layout(W, H); }
+  const pos = lay.pos, shown = lay.shown;
   const parts = [];
   lay.bands.forEach((b) => parts.push('<div class="band" style="top:' + px(b.y) + ';height:' + px(b.h) + ';--pc:' + b.col + '"></div>'));
-  lay.floors.forEach((f) => parts.push('<div class="floor ' + (S.focus && S.focus !== f.id ? 'dim' : S.focus === f.id ? 'focus' : '') + '" data-floor="' + f.id + '" title="Click to look at this layer on its own" style="left:0;top:0;width:100%;height:100%;--pc:' + f.col + ';clip-path:' + f.clip + ';pointer-events:auto"></div>'));
+  // the floors as polygons of one svg that overflows the plot's box: a floor is never clipped by its own frame
+  if (lay.floors.length) parts.push('<svg class="floors-svg" width="' + W + '" height="' + H + '">' + lay.floors.map((f) => '<polygon class="' + (S.focus && S.focus !== f.id ? 'dim' : S.focus === f.id ? 'focus' : '') + '" data-floor="' + f.id + '" points="' + f.pts + '" style="--pc:' + f.col + '"><title>Click to look at this layer on its own</title></polygon>').join('') + '</svg>');
   lay.planeLabels.forEach((p) => parts.push('<div class="plabel ' + (S.focus && p.id && S.focus !== p.id ? 'dim' : '') + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';color:' + p.col + '">' + esc(p.t) + '</div>'));
   lay.domLabels.forEach((d) => parts.push('<div class="dlabel" style="left:' + px(d.x) + ';top:' + px(d.y) + '">' + esc(d.t) + '</div>'));
   const segsOf = (a, b) => { const pts = S.pipes && lay.route ? lay.route(a, b) : [{ x: pos[a].x, y: pos[a].y }, { x: pos[b].x, y: pos[b].y }]; const segs = [];
@@ -609,7 +652,10 @@ function render(opts){
   let nLinks = 0;
   snap.links.forEach((l) => { if (!pos[l.a] || !pos[l.b]) return; if (is3d && S.focus && (ID[l.a].plane !== S.focus || ID[l.b].plane !== S.focus)) return;
     const dim = S.sel === l.a || S.sel === l.b ? '' : 'q'; nLinks++;
-    segsOf(l.a, l.b).forEach((s) => parts.push('<div class="link ' + dim + '" style="left:' + px(s.x) + ';top:' + px(s.y) + ';width:' + px(s.len) + ';transform:rotate(' + s.deg.toFixed(2) + 'deg);--lc:' + LCOL[l.kind] + '"></div>')); });
+    // a pipe between planes wears its origin plane's colour; within a plane, its kind's
+    const lc = ID[l.a].plane !== ID[l.b].plane ? PCOL[ID[l.a].plane] : LCOL[l.kind];
+    segsOf(l.a, l.b).forEach((s) => parts.push('<div class="link ' + dim + '" style="left:' + px(s.x) + ';top:' + px(s.y) + ';width:' + px(s.len) + ';transform:rotate(' + s.deg.toFixed(2) + 'deg);--lc:' + lc + '"></div>')); });
+  if (is3d && S.pipes) lay.busPts.forEach((b) => parts.push('<span class="bus" style="left:' + px(b.x) + ';top:' + px(b.y) + ';--pc:var(--t3)"></span>'));
   fl.slice(0, 12).forEach((f, fi) => { if (!pos[f.a] || !pos[f.b]) return; if (is3d && S.focus && (ID[f.a].plane !== S.focus || ID[f.b].plane !== S.focus)) return;
     const segs = segsOf(f.a, f.b), total = segs.reduce((t, s) => t + s.len, 0) || 1, cycle = 1.6 + (fi % 4) * .5; let run = 0;
     segs.forEach((s) => { parts.push('<div class="flow" style="left:' + px(s.x) + ';top:' + px(s.y) + ';transform:rotate(' + s.deg.toFixed(2) + 'deg);--len:' + px(s.len) + ';--dur:' + (cycle * s.len / total).toFixed(2) + 's;--dl:' + (fi * .28 + cycle * run / total).toFixed(2) + 's"><i style="background:' + KCOL[f.kind] + ';box-shadow:0 0 8px ' + KCOL[f.kind] + '"></i></div>'); run += s.len; }); });
@@ -622,30 +668,39 @@ function render(opts){
     // every face as a polygon of one svg: the compositor paints one layer, not thousands of clipped boxes
     parts.push('<svg class="owf-svg" width="' + W + '" height="' + H + '">' + wd.faces.map(polyOf).join('') + '</svg>');
     wd.needles.forEach((n) => parts.push('<span class="owf-n" style="left:' + px(n.x) + ';top:' + px(n.y) + ';width:' + px(n.len) + ';transform:rotate(' + n.deg.toFixed(1) + 'deg)"></span>'));
-    wd.labels.forEach((l) => parts.push('<span class="owf-l" style="left:' + px(l.x) + ';top:' + px(l.y) + ';color:' + l.col + '">' + esc(l.n) + '</span>'));
+    // captions clear each other: front to back, a caption that meets one already placed steps down a line (twice), else it
+    // stays in its widget's tooltip - dense rows no longer print over each other
+    { const uiC = uiScale(S.vz), capPlaced = [];
+      wd.labels.slice().sort((a, b) => b.y - a.y).forEach((l) => { const w = (String(l.n).length * 5.6 + 6) * uiC, h = 12 * uiC; let y = l.y, ok = false;
+        for (let t = 0; t < 3 && !ok; t++){ const bx = { x0: l.x - w / 2, x1: l.x + w / 2, y0: y, y1: y + h };
+          if (!capPlaced.some((b) => bx.x0 < b.x1 && bx.x1 > b.x0 && bx.y0 < b.y1 && bx.y1 > b.y0)){ capPlaced.push(bx); ok = true; } else y += h; }
+        if (ok) parts.push('<span class="owf-l" style="left:' + px(l.x) + ';top:' + px(y) + ';color:' + l.col + '">' + esc(l.n) + '</span>'); }); }
     wd.hits.forEach((h) => parts.push('<span class="owf-hit" data-node="' + esc(h.id) + '" title="' + esc(h.title) + ' — click to select, ⊕ on the node to add or change widgets" style="left:' + px(h.x) + ';top:' + px(h.y) + ';width:' + px(h.w) + ';height:' + px(h.h) + '"></span>'));
-    const RAISE0 = lay.G.FLAT ? 18 : 22, dtf = window.VeraISO.discTf(lay.G.iso);
-    shown.forEach((n) => { const p = pos[n.id], col = PCOL[n.plane], hidden = !!(S.focus && n.plane !== S.focus);
-      const hw = NSC * (14 + 5.4 * Math.min(26, n.label.length) + (n.errors ? 20 : 0) + (n.inflight ? 12 : 0)) / 2 + 2, hh = 11 * NSC;
-      let raise = RAISE0 + (lay.G.FLAT && (n.domain % 2) ? 16 : 0), cx = p.x;
-      const hit = (x, y) => wboxes.filter((b) => x + hw > b.x0 - 2 && x - hw < b.x1 + 2 && y + hh > b.y0 - 2 && y - hh < b.y1 + 2)[0];
-      while (hit(cx, p.y - raise) && raise < 92) raise += 6;
-      const b = hit(cx, p.y - raise); if (b){ cx = b.x0 - hw - 4; raise = RAISE0; }
-      chipAt[n.id] = { x: cx, y: p.y - raise };
+    const RAISE0 = 22, dtf = window.VeraISO.discTf(lay.G.iso), ui = uiScale(S.vz);
+    const placed = [];
+    shown.slice().sort((a, b) => pos[b.id].y - pos[a.id].y).forEach((n) => { const p = pos[n.id], col = PCOL[n.plane], hidden = !!(S.focus && n.plane !== S.focus);
       parts.push('<span class="pin ' + (hidden ? 'dim' : '') + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';--pc:' + col + ';--dtf:' + dtf + '"></span>');
-      const sg = window.VeraISO.segs([[p.x, p.y], [cx, p.y - raise + hh]])[0];
-      parts.push('<span class="stem ' + (hidden ? 'dim' : '') + '" style="left:' + px(sg.x) + ';top:' + px(sg.y) + ';width:' + px(sg.len) + ';transform:rotate(' + sg.deg.toFixed(2) + 'deg);--pc:' + col + '"></span>'); });
+      if (S.lbl === 'widgets' && wspec(n).length) return;   // widgets only: the widget names its node
+      // the chip stands straight above its pin; it is lifted (in screen px, at most 64) only as far as the widgets over its column ask
+      const hw = (14 + 5.4 * Math.min(26, n.label.length) + (n.errors ? 20 : 0) + (n.inflight ? 12 : 0)) / 2 * ui, hh = 22 * ui;
+      const over = (r, b) => p.x + hw > b.x0 && p.x - hw < b.x1 && p.y - r * ui > b.y0 - 2 && p.y - r * ui - hh < b.y1 + 2;
+      const hit = (r) => (r < 64 && wboxes.some((b) => over(r, b))) || (!hidden && placed.some((b) => over(r, b)));
+      let raise = RAISE0; while (hit(raise) && raise < 120) raise += 8;
+      if (!hidden) placed.push({ x0: p.x - hw, x1: p.x + hw, y0: p.y - raise * ui - hh, y1: p.y - raise * ui });
+      chipAt[n.id] = { x: p.x, y: p.y, r: raise };
+      parts.push('<span class="stem ' + (hidden ? 'dim' : '') + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';--r:' + raise + ';--pc:' + col + '"></span>'); });
   }
-  shown.forEach((n) => { const at = chipAt[n.id] || pos[n.id], busy = n.inflight > 0 || n.status === 'run';
+  shown.forEach((n) => { if (is3d && lay.G && !chipAt[n.id]) return;
+    const at = chipAt[n.id] || pos[n.id], busy = n.inflight > 0 || n.status === 'run', bb = chipAt[n.id] && chipAt[n.id].r != null;
     const spark = (S.snap.series[n.id] && (S.snap.series[n.id].tps || S.snap.series[n.id].cpu)) || null;
     const bars = spark ? spark.slice(-5) : null; const hi = bars ? Math.max.apply(null, bars.concat([1])) : 1;
-    parts.push('<div class="nd ' + (is3d && S.focus && n.plane !== S.focus ? 'dim ' : '') + (S.sel === n.id ? 'sel ' : '') + (busy ? 'busy ' : '') + (n.errors ? 'hasErr' : '') + '" data-node="' + esc(n.id) + '" title="' + esc(n.label + ' · ' + n.plane + ' · ' + n.detail + (n.inflight ? ' · ' + n.inflight + ' in flight' : '') + (n.errors ? ' · ' + n.errors + ' findings' : '') + (n.temp != null ? ' · ' + Math.round(n.temp) + '°' : '')) + '" style="left:' + px(at.x) + ';top:' + px(at.y) + ';--pc:' + PCOL[n.plane] + ';--nsc:' + NSC.toFixed(2) + '">'
+    parts.push('<div class="nd ' + (bb ? 'bb ' : '') + (is3d && S.focus && n.plane !== S.focus ? 'dim ' : '') + (S.sel === n.id ? 'sel ' : '') + (busy ? 'busy ' : '') + (n.errors ? 'hasErr' : '') + '" data-node="' + esc(n.id) + '" title="' + esc(n.label + ' · ' + n.plane + ' · ' + n.detail + (n.inflight ? ' · ' + n.inflight + ' in flight' : '') + (n.errors ? ' · ' + n.errors + ' findings' : '') + (n.temp != null ? ' · ' + Math.round(n.temp) + '°' : '')) + '" style="left:' + px(at.x) + ';top:' + px(at.y) + ';--pc:' + PCOL[n.plane] + ';--nsc:' + NSC.toFixed(2) + (bb ? ';--r:' + chipAt[n.id].r : '') + '">'
       + '<span class="st" style="background:' + SC[n.status] + '"></span>' + esc(n.label.length > 26 ? n.label.slice(0, 24) + '…' : n.label)
       + (bars ? '<span class="mini" style="color:' + PCOL[n.plane] + '">' + bars.map((v) => '<i style="height:' + Math.max(2, 11 * v / hi).toFixed(0) + 'px"></i>').join('') + '</span>' : '')
       + (n.temp != null ? '<span class="tmp" title="' + Math.round(n.temp) + '° · throttle at 83°"><i style="width:' + Math.min(100, n.temp / 90 * 100) + '%;background:' + tempCol(n.temp) + '"></i></span>' : '')
       + (n.inflight ? '<span class="lb">' + n.inflight + '</span>' : '') + (n.errors ? '<span class="err">' + n.errors + '</span>' : '')
       + '<span class="exp" data-exp="' + esc(n.id) + '" title="Open this node as a widget on the graph">⤢</span><span class="asg ' + (S.wpick === n.id ? 'on' : '') + '" data-asg="' + esc(n.id) + '" title="Add or change the iso widgets on this node">⊕</span></div>'); });
-  if (S.wpick && ID[S.wpick] && (chipAt[S.wpick] || pos[S.wpick])){ const at = chipAt[S.wpick] || pos[S.wpick], cur = wspec(ID[S.wpick]);
+  if (S.wpick && ID[S.wpick] && pos[S.wpick]){ const at = pos[S.wpick], cur = wspec(ID[S.wpick]);
     parts.push('<div class="wpk" data-stop="1" style="left:' + px(at.x) + ';top:' + px(at.y + 12 * NSC + 6) + '"><span class="h">widgets on <b>' + esc(ID[S.wpick].label) + '</b> · ' + cur.map((w) => esc(WNAME[w.k])).join(' · ') + '</span><span class="lbl" style="font-size:9px">add one:</span><div class="ks">' + WKINDS.map((k) => '<button class="kb" data-wk="' + k[0] + '" title="' + esc(k[1] + ' · ' + k[2]) + '">' + esc(k[1]) + '</button>').join('') + '</div><div class="ks">' + (cur.length ? '<button class="kb" data-wk="pop" title="Take the last widget off">remove last</button>' : '') + '<button class="kb" data-wk="off" title="Take every widget off this node">none</button><button class="kb" data-wk="reset" title="Back to the widgets its kind gets">defaults</button></div></div>'); }
   if (S.exp && ID[S.exp] && pos[S.exp]){ const n = ID[S.exp], p = pos[S.exp], wide = S.wact !== 'metrics', half = wide ? 165 : 118;
     const wx = p.x > W / 2 ? p.x - (half + 26) : p.x + (half + 26);
@@ -866,7 +921,7 @@ $('b2d').onclick = () => { S.view = '2d'; S.wpick = null; render(); }; $('b3d').
 $('bStack').onclick = () => { S.layout3d = 'stack'; S.focus = null; render(); }; $('bFlat').onclick = () => { S.layout3d = 'flat'; S.focus = null; render(); };
 $('bOne').onclick = () => { if (S.focus){ S.focus = null; } else { const n = byId()[S.sel]; S.focus = n ? n.plane : 'work'; } render(); };
 $('bPipes').onclick = () => { S.pipes = true; render(); }; $('bDirect').onclick = () => { S.pipes = false; render(); };
-$('bWidgets').onclick = () => { S.widgets = !S.widgets; render(); };
+document.querySelectorAll('[data-lbl]').forEach((b) => { b.onclick = () => { S.lbl = b.dataset.lbl; S.widgets = S.lbl !== 'labels'; saveV(); render(); }; });
 $('bRefresh').onclick = () => load(true);
 // drag pans; ctrl (or ⌘) + drag rotates the 3D view - the azimuth swings with x, the tilt with y
 let rafId = 0; const rafRender = () => { if (rafId) return; rafId = requestAnimationFrame(() => { rafId = 0; render({ plotOnly: true }); }); };
