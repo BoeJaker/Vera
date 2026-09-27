@@ -115,8 +115,12 @@ def project_model_inventory(
             detail = dict(conflict) if isinstance(conflict, Mapping) else {
                 "reason": str(conflict)
             }
-            conflicts.append({"kind": "external_conflict", "source": source_id,
-                              **{str(key): str(value) for key, value in detail.items()}})
+            conflicts.append({
+                "kind": "external_conflict",
+                "source": source_id,
+                "reason": str(detail.get("reason") or detail.get("kind") or
+                              "source_reported_conflict"),
+            })
 
     aliases_by_package: dict[str, list[str]] = defaultdict(list)
     normalized_aliases: list[dict[str, str]] = []
@@ -162,6 +166,7 @@ def project_model_inventory(
                    value.get("operation_id") or value.get("provider_id") or "record")
 
     admissions_by_package = group(normalized_admissions, "package_id")
+    activations_by_package = group(normalized_activations, "package_id")
     deployments_by_package = group(normalized_deployments, "package_id")
     bindings_by_package = group(normalized_bindings, "package_id")
     providers_by_package: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -197,6 +202,8 @@ def project_model_inventory(
             "aliases": sorted(set(aliases_by_package.get(package_id, ()))),
             "admissions": sorted(admissions_by_package.get(package_id, ()),
                                  key=lambda value: str(value.get("admission_id") or "")),
+            "activations": sorted(activations_by_package.get(package_id, ()),
+                                  key=lambda value: int(value.get("sequence") or 0)),
             "deployments": sorted(package_deployments,
                                   key=lambda value: str(value.get("deployment_id") or "")),
             "providers": sorted(providers_by_package.get(package_id, ()),

@@ -34,6 +34,10 @@ def test_inventory_joins_package_evidence_without_executing_it():
         packages=(package,),
         aliases=({"alias": "current-ner", "package_id": package.package_id},),
         admissions=({"admission_id": "adm_1", "package_id": package.package_id},),
+        activations=({
+            "sequence": 1, "operation_id": "activate_1",
+            "package_id": package.package_id,
+        },),
         deployments=({
             "deployment_id": "idep_1", "package_id": package.package_id,
             "provider_id": "onnx-cpu",
@@ -62,6 +66,7 @@ def test_inventory_joins_package_evidence_without_executing_it():
     assert entry["sources"] == ["registry"]
     assert entry["aliases"] == ["current-ner"]
     assert entry["deployments"][0]["observation"]["observed_state"] == "ready"
+    assert entry["activations"][0]["operation_id"] == "activate_1"
     assert entry["providers"][0]["provider_id"] == "onnx-cpu"
     assert entry["legacy_bindings"][0]["capability"] == "nlp.ner"
 
@@ -100,6 +105,16 @@ def test_external_inventory_fails_closed_on_bad_schema_and_package():
     assert result["packages"] == []
     assert [item["kind"] for item in result["conflicts"]] == [
         "invalid_package", "unsupported_external_inventory"]
+
+
+def test_external_conflict_cannot_overwrite_inventory_classification():
+    result = project_model_inventory(external_inventories=(("nlp", {
+        "schema": "vera.nlp-model-inventory/v1",
+        "packages": [], "candidates": [],
+        "conflicts": [{"kind": "spoofed", "source": "other", "reason": "collision"}],
+    }),))
+    assert result["conflicts"] == [{
+        "kind": "external_conflict", "source": "nlp", "reason": "collision"}]
 
 
 def test_dangling_references_are_visible_not_silently_dropped():

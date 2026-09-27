@@ -31,27 +31,35 @@ def _read_persisted_records() -> dict[str, Any]:
         "sources": {},
     }
     if package_path.is_file():
-        store = SQLiteModelPackageRegistry(package_path)
-        result.update({
-            "packages": store.list(),
-            "aliases": store.aliases(),
-            "admissions": store.admission_history(),
-            "activations": store.activation_history(),
-            "legacy_bindings": store.legacy_capability_bindings(),
-        })
-        result["sources"]["registry"] = {"status": "available"}
+        try:
+            store = SQLiteModelPackageRegistry(package_path)
+            result.update({
+                "packages": store.list(),
+                "aliases": store.aliases(),
+                "admissions": store.admission_history(),
+                "activations": store.activation_history(),
+                "legacy_bindings": store.legacy_capability_bindings(),
+            })
+            result["sources"]["registry"] = {"status": "available"}
+        except Exception as exc:
+            result["sources"]["registry"] = {
+                "status": "error", "reason": type(exc).__name__}
     else:
         result["sources"]["registry"] = {"status": "not_configured"}
 
     if deployment_path.is_file():
-        store = SQLiteInferenceDeploymentRegistry(deployment_path)
-        deployments = store.list()
-        result["deployments"] = deployments
-        result["observations"] = tuple(
-            observation for deployment in deployments
-            if (observation := store.current(deployment.deployment_id)) is not None
-        )
-        result["sources"]["deployments"] = {"status": "available"}
+        try:
+            store = SQLiteInferenceDeploymentRegistry(deployment_path)
+            deployments = store.list()
+            result["deployments"] = deployments
+            result["observations"] = tuple(
+                observation for deployment in deployments
+                if (observation := store.current(deployment.deployment_id)) is not None
+            )
+            result["sources"]["deployments"] = {"status": "available"}
+        except Exception as exc:
+            result["sources"]["deployments"] = {
+                "status": "error", "reason": type(exc).__name__}
     else:
         result["sources"]["deployments"] = {"status": "not_configured"}
     return result
@@ -67,7 +75,7 @@ async def _read_nlp_inventory() -> tuple[dict[str, Any] | None, dict[str, str]]:
     except Exception as exc:  # source outage is inventory data, not a 500
         return None, {
             "status": "unavailable",
-            "reason": f"{type(exc).__name__}:{exc}",
+            "reason": type(exc).__name__,
         }
 
 
@@ -86,15 +94,7 @@ async def _read_nlp_inventory() -> tuple[dict[str, Any] | None, dict[str, str]]:
     ),
 )
 async def model_inventory(trace_id=None) -> dict[str, Any]:
-    try:
-        records = _read_persisted_records()
-    except Exception as exc:
-        records = {
-            "packages": (), "aliases": (), "admissions": (), "activations": (),
-            "legacy_bindings": (), "deployments": (), "observations": (),
-            "sources": {"registry": {
-                "status": "error", "reason": f"{type(exc).__name__}:{exc}"}},
-        }
+    records = _read_persisted_records()
     nlp_inventory, nlp_status = await _read_nlp_inventory()
     sources = dict(records.pop("sources"))
     sources["nlp"] = nlp_status
