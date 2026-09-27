@@ -233,6 +233,13 @@ FORMS: List[Dict[str, Any]] = [
     _F("schedule", "calendar", glyph="schedule", options=("group",), name="Schedule", boards=("widgets", "spec")),
     _F("calnav", "calendar", glyph="calnav", sizes=("s", "m", "l"), options=("group", "views", "view"), name="Calendar controls", boards=("widgets", "spec")),
     _F("vgraph", "graph", glyph="vgraph", options=("mode", "layer"), name="Vera graph", boards=("widgets", "spec")),
+    # the image studio's forms (owner, 2026-09-27: "can we have a widget for displaying sprites and characters and images from
+    # the image studio"): real thumbnails in a justified grid, a sprite sheet animated at its own fps (the strip of its
+    # animations under it), the sprite library, a character card (portrait, traits, stats, expressions, sprites) or roster
+    _F("images", "items", glyph="images", options=("thumb", "limit"), name="Image grid", boards=("widgets", "spec")),
+    _F("sprite", "string", glyph="sprite", motion=True, options=("anim", "id", "play", "strip", "max"), name="Sprite", boards=("widgets", "motion", "spec")),
+    _F("sprites", "items", glyph="sprites", motion=True, options=("limit",), name="Sprite library", boards=("widgets", "spec")),
+    _F("character", "string", glyph="character", options=("id", "roster", "max", "limit"), name="Character card", boards=("widgets", "spec")),
     # the Loop Lab's pictures (ci_view_core): automated development work - gate runs, pipelines, the board, the fleet,
     # the agentic loop - one payload, drawn the same on the canvas, a dashboard and the Loop Lab page
     _F("status-matrix", "matrix", glyph="status-matrix", options=("cols", "order", "group"), name="Status matrix", boards=("widgets", "spec", "reply")),

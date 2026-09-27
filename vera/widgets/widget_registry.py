@@ -182,6 +182,46 @@ _LHM_BUILTINS: List[Dict[str, Any]] = [
     {"id":"fabric:kbs","name":"Knowledge","form":"rows","reads":{"cap":"fabric.kb.list","args":{},"every":"5m","note":"the knowledgebases built from the fabric"},"read":{"map":{"rows":"knowledgebases"}},"frame":"subject . facts . state","draw":{"form":"rows","size":"M","columns":["subject","fact_count","status"],"limit":8},"can":["open a knowledgebase in the drawer"],"placed":["dashboard","canvas","LHM"]},
     {"id":"fabric:graphs","name":"Fabric graphs","form":"pills","reads":{"cap":"fabric.graphs.list","args":{},"every":"5m","note":"the graphs registered on the fabric and whether each answers"},"read":{"map":{"values":"graphs","status":"available"}},"frame":"graph . available","draw":{"form":"pills","size":"M"},"can":["open a graph in the drawer"],"placed":["dashboard","canvas","LHM"]},
     {"id":"fabric:skills","name":"Fabric skills","form":"rows","reads":{"cap":"fabric.skills.list","args":{},"every":"5m","note":"the skills built over the fabric's datasets"},"read":{"map":{"rows":"skills"}},"frame":"skill . updated","draw":{"form":"rows","size":"M","columns":["name","updated_at"],"limit":6},"can":["open a skill in the drawer"],"placed":["dashboard","canvas","LHM"]},
+    # the image studio as widgets (owner, 2026-09-27: "can we have a widget for displaying sprites and characters and images
+    # from the image studio"). Each reads a capability the studio already answers - the stored generations (images.list),
+    # the gallery (gallery.list), the sprite characters (spritegen.list) and the companions (character.list) - and draws it
+    # with the studio's forms (images . sprite . sprites . character); every picture, sprite and character is an item, so a
+    # click opens it in the drawer, large. The Image Studio's Overview composes them (vera/widgets/layouts/studio.json).
+    {"id": "image:recent", "name": "Recent images", "form": "images",
+     "reads": {"cap": "images.list", "args": {"limit": 48}, "every": "2m", "note": "the latest generations, newest first"},
+     "read": {"map": {"rows": "images"}},
+     "frame": "thumbnails . prompt . size . source . when", "draw": {"form": "images", "size": "L"},
+     "can": ["open an image in the drawer", "view as a table"], "placed": ["dashboard", "canvas", "LHM"]},
+    {"id": "image:wall", "name": "Image wall", "form": "images",
+     "reads": {"cap": "images.list", "args": {"limit": 120}, "every": "5m", "note": "every stored generation, scrolling"},
+     "read": {"map": {"rows": "images"}},
+     "frame": "thumbnails . prompt . size . source . when", "draw": {"form": "images", "size": "XL", "thumb": 120},
+     "can": ["open an image in the drawer"], "placed": ["dashboard", "canvas"]},
+    {"id": "image:gallery", "name": "Gallery", "form": "images",
+     "reads": {"cap": "gallery.list", "args": {}, "every": "5m", "note": "what was saved to the gallery - pictures, and reports as tiles of their kind"},
+     "read": {"map": {"rows": "items"}},
+     "frame": "thumbnail or kind . title", "draw": {"form": "images", "size": "M"},
+     "can": ["open an item in the drawer"], "placed": ["dashboard", "canvas", "LHM"]},
+    {"id": "sprite:library", "name": "Sprite library", "form": "sprites",
+     "reads": {"cap": "spritegen.list", "args": {}, "every": "5m", "note": "every sprite character, its idle animation playing under the pointer"},
+     "frame": "sprite . name . animations . size", "draw": {"form": "sprites", "size": "L"},
+     "can": ["play a sprite under the pointer", "open a sprite in the drawer"], "placed": ["dashboard", "canvas"]},
+    {"id": "sprite:featured", "name": "Sprite", "form": "sprite",
+     "reads": {"cap": "spritegen.list", "args": {}, "every": "5m", "note": "one sprite animated (draw.id names it, else the first with a sheet)"},
+     "frame": "the sheet animated . its animations", "draw": {"form": "sprite", "size": "M", "play": "auto"},
+     "can": ["switch the animation", "hold a frame under the pointer", "open the sprite in the drawer"], "placed": ["dashboard", "canvas", "LHM"]},
+    {"id": "sprite:companion", "name": "Companion sprite", "form": "sprite",
+     "reads": {"cap": "character.list", "args": {}, "every": "5m", "note": "a companion character's sprite sheet, animated"},
+     "frame": "the sheet animated . its animations", "draw": {"form": "sprite", "size": "M", "play": "auto"},
+     "can": ["switch the animation", "open the sprite in the drawer"], "placed": ["dashboard", "canvas", "LHM"]},
+    {"id": "character:card", "name": "Character", "form": "character",
+     "reads": {"cap": "character.list", "args": {}, "every": "5m", "note": "one companion (draw.id names it, else the first with a portrait)"},
+     "frame": "portrait . name . traits . expressions . sprites", "draw": {"form": "character", "size": "L"},
+     "can": ["open the character, an expression or a sprite in the drawer"], "placed": ["dashboard", "canvas", "LHM"]},
+    {"id": "character:roster", "name": "Characters", "form": "character",
+     "reads": {"cap": "character.list", "args": {}, "every": "5m", "note": "every companion as a small card"},
+     "frame": "portrait . name . style . voice", "draw": {"form": "character", "size": "XL", "roster": True},
+     "can": ["open a character in the drawer"], "placed": ["dashboard", "canvas"]},
 ]
 
 
@@ -232,7 +272,7 @@ def _builtin_lhm() -> List[Dict[str, Any]]:
     out = []
     for b in _LHM_BUILTINS:
         t = _normalise(dict(b))
-        t["source"] = {"origin": "built-in", "from": "the data fabric" if t["id"].startswith("fabric:") else ("the Loop Lab" if t["id"].startswith("looplab:") else "the chat LHM"), "panel": ""}
+        t["source"] = {"origin": "built-in", "from": "the data fabric" if t["id"].startswith("fabric:") else ("the Loop Lab" if t["id"].startswith("looplab:") else ("the image studio" if t["id"].startswith(("image:", "sprite:", "character:")) else "the chat LHM")), "panel": ""}
         t["version"] = 1
         out.append(t)
     return out

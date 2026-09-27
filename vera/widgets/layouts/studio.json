@@ -1,0 +1,401 @@
+{
+ "v": 2,
+ "dashboard": "studio",
+ "layout": "default",
+ "key": "studio",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "The Image Studio overview (owner, 2026-09-27: \"can we have a widget for displaying sprites and characters and images from the image studio\"). Every tile is a record of an image:* / sprite:* / character:* widget template (vera/widgets/widget_registry.py) reading a capability the studio already answers - the stored generations, the gallery, the sprite characters and the companions - drawn with the studio's forms (images · sprite · sprites · character). Opened from the Image Studio's Overview; every picture, sprite and character opens in the drawer.",
+ "widgets": [
+  {
+   "record": {
+    "id": "sec-images",
+    "form": "section",
+    "source": "",
+    "title": "Images · what the studio made",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "studio-recent",
+    "template": "image:recent",
+    "form": "images",
+    "source": "images.list",
+    "title": "Recent images",
+    "read": {
+     "refresh": "2m",
+     "args": {
+      "limit": 48
+     },
+     "map": {
+      "rows": "images"
+     }
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      8,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    1
+   ],
+   "span": [
+    8,
+    4
+   ],
+   "hidden": false,
+   "refresh": "2m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "studio-gallery",
+    "template": "image:gallery",
+    "form": "images",
+    "source": "gallery.list",
+    "title": "Gallery",
+    "read": {
+     "refresh": "5m",
+     "args": {},
+     "map": {
+      "rows": "items"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    8,
+    1
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-sprites",
+    "form": "section",
+    "source": "",
+    "title": "Sprites · the sprite characters and their animations",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    5
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "studio-sprite",
+    "template": "sprite:featured",
+    "form": "sprite",
+    "source": "spritegen.list",
+    "title": "Sprite",
+    "read": {
+     "refresh": "5m",
+     "args": {}
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "play": "auto"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    6
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "studio-sprites",
+    "template": "sprite:library",
+    "form": "sprites",
+    "source": "spritegen.list",
+    "title": "Sprite library",
+    "read": {
+     "refresh": "5m",
+     "args": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      8,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    6
+   ],
+   "span": [
+    8,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-characters",
+    "form": "section",
+    "source": "",
+    "title": "Characters · the companions",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    10
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "studio-character",
+    "template": "character:card",
+    "form": "character",
+    "source": "character.list",
+    "title": "Character",
+    "read": {
+     "refresh": "5m",
+     "args": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    11
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "studio-companion-sprite",
+    "template": "sprite:companion",
+    "form": "sprite",
+    "source": "character.list",
+    "title": "Companion sprite",
+    "read": {
+     "refresh": "5m",
+     "args": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "play": "auto"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    11
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "studio-roster",
+    "template": "character:roster",
+    "form": "character",
+    "source": "character.list",
+    "title": "Characters",
+    "read": {
+     "refresh": "5m",
+     "args": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "roster": true
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    15
+   ],
+   "span": [
+    12,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  }
+ ]
+}
