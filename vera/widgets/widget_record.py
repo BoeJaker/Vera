@@ -325,7 +325,7 @@ def normalise_template(t: Dict[str, Any]) -> Dict[str, Any]:
     placed = t.get("placed") if isinstance(t.get("placed"), list) else []
     placed = [str(x.get("where") if isinstance(x, dict) else x)[:32] for x in placed if x]
     name = str(t.get("name") or "").strip()[:120]          # empty stays empty: template_problems() refuses a nameless record
-    return {
+    out = {
         "id": str(t.get("id") or _slug(name or "widget"))[:80],
         "name": name,
         "form": form_[:24],
@@ -341,6 +341,16 @@ def normalise_template(t: Dict[str, Any]) -> Dict[str, Any]:
         "created_at": str(t.get("created_at") or ""),
         "updated_at": str(t.get("updated_at") or ""),
     }
+    # a template may carry its read.map (the answer's envelope -> the form's shape) and its form's draw options (columns,
+    # sort, limit, palette ...): the element draws a template with both, so they ride along whenever they are present
+    rd = t.get("read") if isinstance(t.get("read"), dict) else {}
+    mp = rd.get("map") if isinstance(rd.get("map"), dict) else (reads.get("map") if isinstance(reads.get("map"), dict) else None)
+    if mp:
+        out["read"] = {"map": dict(mp)}
+    extra = {k: v for k, v in draw.items() if k not in ("form", "size", "motion")}
+    if extra:
+        out["draw"].update(extra)
+    return out
 
 
 def template_problems(t: Dict[str, Any], forms: Tuple[str, ...], wheres: Tuple[str, ...]) -> List[str]:
@@ -466,7 +476,8 @@ def to_template(record: Dict[str, Any]) -> Dict[str, Any]:
         "reads": {"cap": r["source"] if not r["source"].startswith("panel:") else "", "args": r["read"]["args"],
                   "every": r["read"]["refresh"], "note": (("window " + r["read"]["window"]) if r["read"]["window"] else "")},
         "frame": r["frame"].get("note") or "",
-        "draw": {"form": r["form"], "size": r["frame"]["size"].upper(), "motion": "motion" if r["frame"]["motion"] else ""},
+        "draw": dict(r.get("draw") or {}, form=r["form"], size=r["frame"]["size"].upper(), motion="motion" if r["frame"]["motion"] else ""),
+        "read": {"map": r["read"]["map"]},
         "can": r.get("can") if isinstance(r.get("can"), list) else list(r.get("actions") or []),
         "placed": r.get("placed") if isinstance(r.get("placed"), list) else (list(r.get("placement") or []) or ([r["place"]] if r.get("place") else [])),
         "source": origin, "version": r.get("version") or 1, "tags": r.get("tags") or [],
