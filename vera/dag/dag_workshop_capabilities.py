@@ -13271,6 +13271,29 @@ async def _v5_planner_agent_cfg() -> Dict[str, Any]:
     return {"model": "", "options": {}, "persona": ""}
 
 
+def _v5_plan_context_block(master_plan: str, recon_findings: str) -> str:
+    """The planner's CONTEXT — a master plan (strategic, or ONE `[PIECEWISE]` piece
+    with the whole plan and the earlier pieces' sub-plans) and any recon findings —
+    rendered once for BOTH prompt bodies.
+
+    The minimal body is the primary on every real run (VERA_LOOP_MINIMAL_PLAN) and
+    built its prompt from GOAL + catalog alone, so neither input ever reached it:
+    each piece of a strategic plan re-planned the WHOLE goal, and recon findings
+    were inert. Fourth planner input to reach one body and not the other (see
+    loop_prompt_rules). Empty inputs render '' so a plain plan's prompt is
+    byte-for-byte unchanged."""
+    master_plan = master_plan or ""
+    piecewise = master_plan.startswith("[PIECEWISE]")
+    if piecewise:
+        master_plan = master_plan[len("[PIECEWISE]"):]
+    return (((f"{master_plan}\n\n" if piecewise else
+              f"STRATEGIC MASTER PLAN (a specialist planner wrote this — BREAK IT INTO concrete, "
+              f"ordered, executable steps; keep its intent and sequencing):\n{master_plan}\n\n")
+             if master_plan else "")
+            + (f"RECON FINDINGS (already gathered — use these to inform the plan):\n{recon_findings}\n\n"
+               if recon_findings else ""))
+
+
 async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List[Dict[str, Any]],
                                cap_skill_map: Optional[Dict[str, List[str]]] = None,
                                *, model: str = "", instance_id: str = "",
@@ -13330,6 +13353,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
     # Stripped-down schema used as a RETRY when the full prompt yields no parseable
     # steps — small models handle this minimal instruction far more reliably.
     _intent_directive = _v7_intent_plan_directive(intent, max_steps=max_steps)
+    _plan_context = _v5_plan_context_block(master_plan, recon_findings)
     if minimal:
         sys = (
             (_intent_directive + "\n" if _intent_directive else "")
@@ -13350,7 +13374,8 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             + (',"done_when":"<one-line criterion for the WHOLE goal>"' if want_success else '')
             + '}'
         )
-        prompt = (f"GOAL: {goal}\n\nAVAILABLE CAPABILITIES (name — description):\n{cap_lines}\n\n"
+        prompt = (f"GOAL: {goal}\n\n" + _plan_context
+                  + f"AVAILABLE CAPABILITIES (name — description):\n{cap_lines}\n\n"
                   "Produce the steps JSON object."
                   + (f"\n\n{plan_note}" if plan_note else ""))
         if plan_persona:
@@ -13600,19 +13625,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         + ('"done_when":"<one-line whole-goal criterion>",' if want_success else '')
         + '"reason":"<one sentence>"}'
     )
-    # Piecewise mode: the caller is expanding ONE piece of the master plan at a
-    # time — the directive text already carries the full plan, the composed
-    # sub-plans from earlier pieces, and the "plan ONLY this piece" instruction.
-    _piecewise = bool(master_plan) and master_plan.startswith("[PIECEWISE]")
-    if _piecewise:
-        master_plan = master_plan[len("[PIECEWISE]"):]
-    prompt = (f"GOAL: {goal}\n\n"
-              + ((f"{master_plan}\n\n" if _piecewise else
-                  f"STRATEGIC MASTER PLAN (a specialist planner wrote this — BREAK IT INTO concrete, "
-                  f"ordered, executable steps; keep its intent and sequencing):\n{master_plan}\n\n")
-                 if master_plan else "")
-              + (f"RECON FINDINGS (already gathered — use these to inform the plan):\n{recon_findings}\n\n"
-                 if recon_findings else "")
+    prompt = (f"GOAL: {goal}\n\n" + _plan_context
               + f"AVAILABLE CAPABILITIES (name — description [suggested skills]):\n{cap_lines}\n\n"
               f"AVAILABLE SKILLS (id — description):\n{skill_lines}\n\nProduce the plan."
               + (f"\n\n{plan_note}" if plan_note else ""))
@@ -14007,6 +14020,27 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _fix_loop = None
         log.warning("fix_loop_core unavailable - a persistent test failure runs to the wall cap")
+
+# The executor shows its last four results in full; this lists the calls older
+# than those, one line each, so a long step still sees what it already tried.
+try:
+    from Vera.vera.dag import step_call_ledger_core as _call_ledger
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import step_call_ledger_core as _call_ledger
+    except Exception:
+        _call_ledger = None
+        log.warning("step_call_ledger_core unavailable - a long step sees only its last four calls")
+
+# A step that needs step N also reads the recovery step that finished N's work.
+try:
+    from Vera.vera.dag import step_deps_core as _step_deps
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import step_deps_core as _step_deps
+    except Exception:
+        _step_deps = None
+        log.warning("step_deps_core unavailable - a dependent step reads only the failed attempt")
 
 
 def _v6_goal_implies_document(text: str) -> bool:
@@ -14937,7 +14971,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
 
     # Curated context slice — outputs of the steps this one depends on.
     needs = step.get("needs") or []
-    rel = [blackboard[n] for n in needs if n in blackboard]
+    # A needed step that failed its bar may have been finished by a recovery
+    # step with a new id; follow that link so this step reads the work that was
+    # actually done, not only the failed attempt (step_deps_core).
+    rel = (_step_deps.dependency_results(blackboard, needs) if _step_deps is not None
+           else [blackboard[n] for n in needs if n in blackboard])
     if not rel:
         rel = list(blackboard.values())  # no explicit deps → all prior results
     # Recon (step 0) is everyone's dependency: `needs` only ever names PLAN step
@@ -16085,6 +16123,17 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
 
         obs = "\n\n".join(_obs_line(i, h) for i, h in enumerate(history[-4:])) \
             or "(no tool calls yet — make your first call or emit done)"
+        # The calls older than the four above - '' until there are any, so a
+        # short step's prompt is unchanged. Census 70-78: 10-18 cycle steps
+        # re-ran calls that had already failed once they scrolled out of view.
+        _earlier = ""
+        if _call_ledger is not None:
+            try:
+                _earlier = _call_ledger.earlier_calls_block(history, summarise=_call_summary)
+            except Exception as _le:                   # pragma: no cover
+                log.debug("earlier-calls block skipped: %s", _le)
+        if _earlier:
+            obs = _earlier + "\n\n" + obs
         _rep_tool = next((t for t, n in tool_calls.items() if n >= 2), "")
         _rep_hint = (f"\n\nNOTE: you have already called {_rep_tool} {tool_calls.get(_rep_tool,0)}× — "
                      "do NOT call it again with reworded args. Either try a DIFFERENT capability "
@@ -16174,6 +16223,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 session_id=session_id, stream_id=stream_id, cycle=turns, step_id=step_id,
                 runtime={"caps": caps, "caps_count": len(caps or []),
                          "context_chars": len(ctx_slice or ""),
+                         "earlier_calls": (max(0, len(history) - 4) if _earlier else 0),
                          "skills": [s.get("id", "") for s in (loaded_skills or [])]})
         except Exception as _ae:                       # pragma: no cover
             log.debug("executor stage-context emit skipped: %s", _ae)
@@ -21088,6 +21138,8 @@ def _v6_make_recovery_step(failed_step: Dict[str, Any], failed_res: Dict[str, An
         "needs": [], "complex": False, "phases": [],
         "success": crit,
         "_recovery": True,
+        "_recovers": (_step_deps.recovers_id(failed_step) if _step_deps is not None
+                      else failed_step.get("id")),
         "_prereq_done": True,   # context is already embedded; skip prestep-info
         "_recovery_history": lineage,
     }
@@ -21206,6 +21258,7 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
         "success": crit or str(obj.get("success") or "")[:240],
         "_recovery": True,
         "_adjusted": True,
+        "_recovers": fallback.get("_recovers"),
         "_prereq_done": True,
         "_recovery_history": lineage,
     }
@@ -24455,6 +24508,10 @@ async def cap_dag_agent_loop_v6(
         # Carry the step's success criterion onto the result so the ledger/controller
         # can judge it against the bar the planner set.
         res["success"] = step.get("success", "")
+        # A recovery step's result names the step it finished, so a later step
+        # that needs that step reads this result too (step_deps_core).
+        if step.get("_recovers") is not None:
+            res["_recovers"] = step["_recovers"]
         await _finalize_one(step, res)
         await _verify_one(step, res)
         gcycle = res.get("cycle_end", gcycle)
