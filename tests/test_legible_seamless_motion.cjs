@@ -40,7 +40,7 @@ t('and a harness that never answers gives it back', /setTimeout\(\(\)=>\{ if\(!_
 // ── the composer ────────────────────────────────────────────────────────────────────────────────────────────────
 t('notices dock under the composer, centred on it', (CHAT.match(/\(document\.getElementById\('chatStack'\)\|\|document\.getElementById\('centre'\)\)\?\.appendChild\(dock\);/g) || []).length === 2);
 t('the context strip opens from the Context chip', /function _cmpCtxMount\(\)/.test(CHAT) && /pop\.appendChild\(strip\); bar\.appendChild\(pop\);/.test(CHAT) && /const pop=document\.getElementById\('cmpCtxPop'\), chip=document\.getElementById\('cmpChipCtx'\);/.test(CHAT));
-t('the chip carries the reading', /n\.className='ccn'; chip\.appendChild\(n\);/.test(CHAT));
+t('the chip is not given a second count (it rewrites its own)', !/className='ccn'/.test(CHAT));
 
 // ── motion ──────────────────────────────────────────────────────────────────────────────────────────────────────
 t('Motion is a Settings section', /\{id:'motion', n:'Motion', from:\[\['rpCfg','Motion'\]\]/.test(CHAT) && /<div class="sec" style="margin-top:5px">Motion<\/div>/.test(CHAT));
