@@ -28,6 +28,34 @@ def rewrite_host(value: str, backend_host: str) -> str:
     return out
 
 
+#: Backend settings a remote worker must share with the host.
+WORKER_BACKEND_KEYS = ("POSTGRES_URL", "NEO4J_URI", "NEO4J_USER", "NEO4J_PASS",
+                       "CHROMA_HOST", "CHROMA_PORT", "OLLAMA_BASE_URL", "OLLAMA_GPU_URL",
+                       "OLLAMA_CPU_A_URL", "OLLAMA_CPU_B_URL", "OLLAMA_EMBED_URL",
+                       "OLLAMA_MODEL", "VERA_COORD_REDIS_DB", "VERA_CPU_NODE_THREADS")
+
+
+def worker_backend_env(env: Dict[str, str], cfg: Dict[str, object], backend_host: str,
+                       keys=WORKER_BACKEND_KEYS) -> Dict[str, str]:
+    """The backend settings to hand a remote worker: the host's environment
+    first, else the host's EFFECTIVE config value, re-pointed at `backend_host`.
+
+    Environment alone is not enough. Prod sets none of POSTGRES_URL, NEO4J_URI
+    or CHROMA_HOST - it runs on config.py's localhost defaults - so a worker
+    given only the environment got nothing, fell back to the same defaults on
+    ITS machine, and every store refused it (cpu-246, 2026-09-27: Postgres,
+    Chroma and Neo4j all "connection refused" on the node's own localhost)."""
+    out: Dict[str, str] = {}
+    for k in keys:
+        v = (env or {}).get(k)
+        if v in (None, ""):
+            v = (cfg or {}).get(k)
+        if v in (None, ""):
+            continue
+        out[k] = rewrite_host(str(v), backend_host)
+    return out
+
+
 def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str, str],
                       port: int = 8990, use_systemd: bool = True, *,
                       bundle: bool = False, extra_env: Optional[Dict[str, str]] = None,
