@@ -13271,6 +13271,29 @@ async def _v5_planner_agent_cfg() -> Dict[str, Any]:
     return {"model": "", "options": {}, "persona": ""}
 
 
+def _v5_plan_context_block(master_plan: str, recon_findings: str) -> str:
+    """The planner's CONTEXT — a master plan (strategic, or ONE `[PIECEWISE]` piece
+    with the whole plan and the earlier pieces' sub-plans) and any recon findings —
+    rendered once for BOTH prompt bodies.
+
+    The minimal body is the primary on every real run (VERA_LOOP_MINIMAL_PLAN) and
+    built its prompt from GOAL + catalog alone, so neither input ever reached it:
+    each piece of a strategic plan re-planned the WHOLE goal, and recon findings
+    were inert. Fourth planner input to reach one body and not the other (see
+    loop_prompt_rules). Empty inputs render '' so a plain plan's prompt is
+    byte-for-byte unchanged."""
+    master_plan = master_plan or ""
+    piecewise = master_plan.startswith("[PIECEWISE]")
+    if piecewise:
+        master_plan = master_plan[len("[PIECEWISE]"):]
+    return (((f"{master_plan}\n\n" if piecewise else
+              f"STRATEGIC MASTER PLAN (a specialist planner wrote this — BREAK IT INTO concrete, "
+              f"ordered, executable steps; keep its intent and sequencing):\n{master_plan}\n\n")
+             if master_plan else "")
+            + (f"RECON FINDINGS (already gathered — use these to inform the plan):\n{recon_findings}\n\n"
+               if recon_findings else ""))
+
+
 async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List[Dict[str, Any]],
                                cap_skill_map: Optional[Dict[str, List[str]]] = None,
                                *, model: str = "", instance_id: str = "",
@@ -13330,6 +13353,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
     # Stripped-down schema used as a RETRY when the full prompt yields no parseable
     # steps — small models handle this minimal instruction far more reliably.
     _intent_directive = _v7_intent_plan_directive(intent, max_steps=max_steps)
+    _plan_context = _v5_plan_context_block(master_plan, recon_findings)
     if minimal:
         sys = (
             (_intent_directive + "\n" if _intent_directive else "")
@@ -13350,7 +13374,8 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             + (',"done_when":"<one-line criterion for the WHOLE goal>"' if want_success else '')
             + '}'
         )
-        prompt = (f"GOAL: {goal}\n\nAVAILABLE CAPABILITIES (name — description):\n{cap_lines}\n\n"
+        prompt = (f"GOAL: {goal}\n\n" + _plan_context
+                  + f"AVAILABLE CAPABILITIES (name — description):\n{cap_lines}\n\n"
                   "Produce the steps JSON object."
                   + (f"\n\n{plan_note}" if plan_note else ""))
         if plan_persona:
@@ -13600,19 +13625,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         + ('"done_when":"<one-line whole-goal criterion>",' if want_success else '')
         + '"reason":"<one sentence>"}'
     )
-    # Piecewise mode: the caller is expanding ONE piece of the master plan at a
-    # time — the directive text already carries the full plan, the composed
-    # sub-plans from earlier pieces, and the "plan ONLY this piece" instruction.
-    _piecewise = bool(master_plan) and master_plan.startswith("[PIECEWISE]")
-    if _piecewise:
-        master_plan = master_plan[len("[PIECEWISE]"):]
-    prompt = (f"GOAL: {goal}\n\n"
-              + ((f"{master_plan}\n\n" if _piecewise else
-                  f"STRATEGIC MASTER PLAN (a specialist planner wrote this — BREAK IT INTO concrete, "
-                  f"ordered, executable steps; keep its intent and sequencing):\n{master_plan}\n\n")
-                 if master_plan else "")
-              + (f"RECON FINDINGS (already gathered — use these to inform the plan):\n{recon_findings}\n\n"
-                 if recon_findings else "")
+    prompt = (f"GOAL: {goal}\n\n" + _plan_context
               + f"AVAILABLE CAPABILITIES (name — description [suggested skills]):\n{cap_lines}\n\n"
               f"AVAILABLE SKILLS (id — description):\n{skill_lines}\n\nProduce the plan."
               + (f"\n\n{plan_note}" if plan_note else ""))
