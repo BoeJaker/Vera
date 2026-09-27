@@ -34,14 +34,23 @@ from Vera.vera.capability_orchestration import capability
 
 try:
     from Vera.vera.evolve import ci_view_core as cv
+    from Vera.vera.evolve.ttl_cache import TTLCache
 except ImportError:                                   # pragma: no cover
     from vera.evolve import ci_view_core as cv
+    from vera.evolve.ttl_cache import TTLCache
 
 log = logging.getLogger("vera.evolve.ci")
 
 #: how far back the pictures read by default: the whole kept history
 HISTORY_N = 5000
 PIPELINES_N = 1000
+
+#: The command centre asks for three pictures at once (pulse, fleet, the open
+#: tab) and a live page re-asks on every gate event: each read the whole kept
+#: history and the pipeline list again. The stores change at gate speed, not
+#: request speed, so they are read once per few seconds and shared (concurrent
+#: callers wait for the one read in flight).
+_READS = TTLCache(4.0, max_entries=8)
 
 
 def _ev():
@@ -59,16 +68,22 @@ async def _history(limit: int = HISTORY_N) -> List[Dict[str, Any]]:
     ev = _ev()
     if ev is None:
         return []
-    try:
-        return await ev._get_unittest_history(max(1, min(HISTORY_N, int(limit or HISTORY_N))))
-    except Exception as e:                            # pragma: no cover
-        log.info("ci: history read failed: %s", e)
-        return []
+    n = max(1, min(HISTORY_N, int(limit or HISTORY_N)))
+
+    async def read():
+        try:
+            return await ev._get_unittest_history(n)
+        except Exception as e:                        # pragma: no cover
+            log.info("ci: history read failed: %s", e)
+            return []
+    return list(await _READS.get(("history", n), read))
 
 
 async def _pipelines(limit: int = PIPELINES_N) -> List[Dict[str, Any]]:
-    res = await _call("evolve.pipeline.list", limit=limit)
-    return list((res or {}).get("pipelines") or []) if isinstance(res, dict) else []
+    async def read():
+        res = await _call("evolve.pipeline.list", limit=limit)
+        return list((res or {}).get("pipelines") or []) if isinstance(res, dict) else []
+    return list(await _READS.get(("pipelines", int(limit)), read))
 
 
 def _attribute(rows: List[Dict[str, Any]], pipes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

@@ -11424,6 +11424,8 @@ APP.get("/ui/elements/author_map.js", include_in_schema=False)(
     _serve_element_js_from("author_map_element.js", "vera-author-map element JS not found"))
 APP.get("/ui/elements/git_graph.js", include_in_schema=False)(
     _serve_element_js_from("git_graph_element.js", "vera-git-graph element JS not found"))
+APP.get("/ui/elements/ci_ops.js", include_in_schema=False)(
+    _serve_element_js_from("ci_ops_element.js", "vera-ci-ops element JS not found"))
 
 
 register_ui(
