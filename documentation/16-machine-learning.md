@@ -98,9 +98,27 @@ registration, alias mutation, deployment, or activation. DSPy and other
 optimizer execution remains an optional provider concern and is not enabled by
 these records.
 
-The current ML Workshop remains unchanged. DeepEval/Promptfoo adapters,
-Accelerate, PEFT, MLflow, DSPy, live judges, and training execution are
-subsequent gated slices.
+### Portable training boundary
+
+`MLWorkshopTrainingRuntime` provides an offline-testable boundary around the
+existing Workshop job API. A caller must explicitly bind a base
+`ModelPackage` to a Workshop module and the objectives it is allowed to train.
+Submissions carry the exact dataset revision, portable request/run identities,
+and scalar hyperparameters; the native runner must echo those identities on
+submit, observation, and cancellation. A response that drifts to a newer
+dataset, another request, or another native job is rejected.
+
+Portable training lifecycle is also projected into the common `Run` journal.
+A native completion is successful only when it includes a schema-valid,
+content-addressed `ModelPackage` whose `training_run_id` names that exact run.
+A checkpoint or Workshop job marked complete without that package is recorded
+as a failed portable run, rather than overstating interoperability. The adapter
+does not import an ML framework, load data, invoke training on import, redirect
+the existing `ml.train` capabilities, or select a runtime. A live runner bridge
+and parity testing remain separately gated operational work.
+
+DeepEval/Promptfoo adapters, Accelerate, PEFT, MLflow, DSPy, live judges, and
+native training cutover remain subsequent gated work.
 
 ### Portable batch inference
 
