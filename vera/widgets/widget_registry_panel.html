@@ -169,7 +169,7 @@ header .seg button.on{background:var(--pri-bg,var(--acc));color:var(--pri-fg,var
 </head>
 <body>
 <header>
-  <h1>Widgets</h1><span class="seg" id="view"><button class="on" onclick="wrView('templates')" title="Your saved records">Templates</button><button onclick="wrView('gallery')" title="Every form of the catalogue, drawn from its sample — the Widgets boards as one gallery">Gallery</button><button onclick="wrView('sources')" title="Every source a widget can read — the capability registry's quiet reads, by domain, with the shape each answers">Sources</button></span><span class="sub" id="count">…</span>
+  <h1>Widgets</h1><span class="seg" id="view" data-vera-lhm><button class="on" id="wv-templates" data-label="Templates" data-icon="▤" onclick="wrView('templates')" title="Your saved records">Templates</button><button id="wv-gallery" data-label="Gallery" data-icon="▦" onclick="wrView('gallery')" title="Every form of the catalogue, drawn from its sample — the Widgets boards as one gallery">Gallery</button><button id="wv-sources" data-label="Sources" data-icon="⁘" onclick="wrView('sources')" title="Every source a widget can read — the capability registry's quiet reads, by domain, with the shape each answers">Sources</button></span><span class="sub" id="count">…</span>
   <input id="q" placeholder="search name · reads · frame" oninput="wrLoad()" style="width:220px">
   <span class="sp"></span>
   <button class="primary" onclick="wrNew()" title="A new widget record through the widget config sheet (catalogue · record · live preview)">+ New widget…</button>
@@ -479,5 +479,6 @@ wrLoad();
 if(GAL.view === 'gallery' || GAL.view === 'sources') wrView(GAL.view);
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>
