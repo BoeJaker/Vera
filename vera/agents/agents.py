@@ -1547,6 +1547,70 @@ except Exception:                                     # pragma: no cover
         _two_tier = _tt_stream = None
         log.warning("two_tier unavailable - chat replies stay single-pass")
 
+try:
+    from Vera.vera.agents import chat_insights_core as _insights
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.agents import chat_insights_core as _insights
+    except Exception:
+        _insights = None
+
+# Chat insights (the chat's Insights toggle): after a reply has streamed, the
+# long-horizon model takes a second look and the chat shows what it adds in a
+# card under the reply. One pass at a time - it runs on the one long-horizon
+# CPU node, whose generation slot the dream director and broad's briefs share
+# (compute-roles: one heavy CPU generation at a time) - and a newer turn in the
+# same conversation supersedes one still waiting for the slot.
+_INSIGHT_SLOT = asyncio.Semaphore(1)
+_INSIGHT_LATEST: Dict[str, str] = {}
+_INSIGHT_TIMEOUT_S = 600.0
+
+
+async def _chat_insights(session_id: str, turn_id: str, message: str, reply: str,
+                         history: List[Dict[str, Any]]) -> None:
+    _INSIGHT_LATEST[session_id] = turn_id
+    t0 = time.monotonic()
+    meta: Dict[str, Any] = {}
+    try:
+        async with _INSIGHT_SLOT:
+            if _INSIGHT_LATEST.get(session_id) != turn_id:
+                return
+            raw = await ollama_generate(
+                _insights.build_prompt(message, reply, history),
+                system=_insights.SYSTEM, json_mode=True, prefer_gpu=False, think=False,
+                job_type=_insights.JOB_TYPE, request_stage="chat_insights",
+                timeout=_INSIGHT_TIMEOUT_S, meta_out=meta)
+    except Exception as e:
+        log.info("chat insights skipped (session %s): %s", (session_id or "")[:12], e)
+        return
+    finally:
+        if _INSIGHT_LATEST.get(session_id) == turn_id:
+            _INSIGHT_LATEST.pop(session_id, None)
+    parsed = _insights.parse(raw)
+    elapsed = round(time.monotonic() - t0, 1)
+    counts = {k: len(v) for k, v in parsed.items()}
+    try:
+        await emit_event({"type": "chat.insight", "session_id": session_id, "turn": turn_id,
+                          "model": meta.get("model") or "", "node": meta.get("instance") or "",
+                          "elapsed_s": elapsed, **counts})
+    except Exception:
+        pass
+    if _insights.is_empty(parsed):
+        return
+    _pd = CAPABILITY_REGISTRY.get("panel.dispatch")
+    _fn = (_pd.get("raw") or _pd.get("func")) if _pd else None
+    if not _fn:
+        return
+    try:
+        await _fn(session_id=session_id, action="__chat_insight__",
+                  payload={**parsed, "turn": turn_id,
+                           "question": " ".join((message or "").split())[:120],
+                           "model": meta.get("model") or "", "node": meta.get("instance") or "",
+                           "elapsed_s": elapsed},
+                  timeout_secs=8.0)
+    except Exception as e:
+        log.debug("chat insights delivery: %s", e)
+
 
 def _tt_token_text(chunk) -> str:
     """The text of an SSE token frame, or "" for any other frame."""
@@ -1731,6 +1795,12 @@ async def agent_chat_stream_endpoint(request: Request):
         if _two_tier is not None else "tier1")
     _tt_plan = ({"split": False} if _two_tier is None
                 else _two_tier.plan(_tt_level, _sys_prefix, history, _tt_decider))
+
+    # Insights: checked in the chat forces on for this turn; absent leaves it to
+    # the agent record (off unless an agent sets `insights`).
+    _ins_pref = body.get("insights", None)
+    _ins_enabled = _insights is not None and (
+        bool(getattr(agent, "insights", False)) if _ins_pref is None else bool(_ins_pref))
 
     _qo_pref = body.get("quick_opener", None)
     _qo_enabled = getattr(agent, "quick_opener", False) if _qo_pref is None else bool(_qo_pref)
@@ -2082,6 +2152,18 @@ async def agent_chat_stream_endpoint(request: Request):
                         level="info"))
             except Exception as _e:
                 log.debug("chat reply -> printer push failed: %s", _e)
+
+            # Insights: the long-horizon model's second look, fire-and-forget -
+            # the reply is already on screen and nothing waits on this.
+            if _ins_enabled and session_id:
+                try:
+                    _ins_reply = "".join(_resp_head).strip()
+                    if _insights.wanted(True, _ins_reply, use_tts):
+                        asyncio.create_task(_chat_insights(
+                            session_id, uuid.uuid4().hex[:10], message, _ins_reply,
+                            history if isinstance(history, list) else []))
+                except Exception as _e:
+                    log.debug("chat insights schedule failed: %s", _e)
 
     _ep_total = _time.monotonic() - _ep_t0
     if _ep_total > 1.5:
