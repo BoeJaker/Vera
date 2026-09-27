@@ -52,5 +52,9 @@ t('the donut is as wide as it is tall (the body\'s height), its total in the mid
 const mains = JSON.parse(fs.readFileSync(path.join(R, 'vera', 'widgets', 'layouts', 'main.json'), 'utf8')).widgets.filter((w) => w.record && w.record.form === 'donut');
 const eo = JSON.parse(fs.readFileSync(path.join(R, 'vera', 'widgets', 'layouts', 'estate-overview.json'), 'utf8')).widgets.filter((w) => w.record.form === 'donut');
 t('the donut tiles are three columns wide now (they were four)', mains.concat(eo).length >= 3 && mains.concat(eo).every((w) => w.span[0] === 3), mains.concat(eo).map((w) => w.record.id + ' ' + w.span).join('; '));
+// ── the containers tiles read docker.ps slim (the full Engine records were ~650 KB a read) ──
+{ const dps = []; ['main', 'main-estate', 'main-compute', 'main-inference', 'estate-overview', 'dream', 'wol-workers', 'wol-ollama', 'wol-jobs', 'wol-wkjobs', 'wol-observe'].forEach((k) => { const L = JSON.parse(fs.readFileSync(path.join(R, 'vera', 'widgets', 'layouts', k + '.json'), 'utf8'));
+    const walk = (r) => { if (!r || typeof r !== 'object') return; if (r.source === 'docker.ps') dps.push(k + ':' + r.id + ':' + JSON.stringify((r.read || {}).args || {})); (r.children || []).forEach((c) => walk(c.record)); }; L.widgets.forEach((w) => walk(w.record)); });
+  t('every record that reads docker.ps asks for it slim', dps.length >= 2 && dps.every((x) => /"slim":true/.test(x)), dps.join(' ')); }
 console.log((fails ? 'FAILED ' : 'passed ') + (fails ? fails + ' check(s)' : 'all checks'));
 process.exit(fails ? 1 : 0);

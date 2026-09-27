@@ -1331,6 +1331,9 @@
       "name": "Names",
       "status": "State",
       "host": "host_id"
+     },
+     "args": {
+      "slim": true
      }
     },
     "frame": {
