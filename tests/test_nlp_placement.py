@@ -210,6 +210,16 @@ def test_ner_default_is_an_ontonotes_model():
     assert "ontonotes" in C.DEFAULT_MODELS["ner"].lower()
 
 
+def test_node_health_task_inventory_is_not_lost_to_obsolete_field_names():
+    package = {"package_id": "mpkg_example"}
+    result = C.normalize_node_inventory({"tasks": {
+        "ner": {"model": "owner/model", "present": True, "loaded": True,
+                "model_package": package}}})
+    assert result["models"] == {"ner": "owner/model"}
+    assert result["loaded"] == {"ner": True}
+    assert result["tasks"]["ner"]["model_package"] == package
+
+
 def test_ontonotes_date_survives_the_merge():
     """The label set is the reason for the model change — guard it end to end."""
     pieces = [(0, [{"entity": "DATE", "word": "3 March 2024",

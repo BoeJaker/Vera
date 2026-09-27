@@ -2,12 +2,34 @@
 
 ## Portable ModelPackage boundary
 
-W2-06 begins with `vera.models.model_package`, an offline provider-neutral
+The portable boundary begins with `vera.models.model_package`, an offline provider-neutral
 identity contract. A package pins architecture and format; role-addressed
 artifact URIs with SHA-256 and size; tokenizer and preprocessing; framework and
 optional opset; source, licence, signature, training/evaluation lineage;
 hardware requirements; and typed task/input/output compatibility. Canonical
 ordering produces a stable `mpkg_…` identity.
+
+### Deployed NLP and NER inventory
+
+The off-host `nlp.*` services use pre-exported ONNX models from a read-only
+shared store. Their node health records now retain the complete task inventory
+(model, presence and loaded state) when they enter Vera's placement layer;
+previously that data was published as `tasks` but read as two obsolete
+top-level fields, so the models appeared absent.
+
+`nlp.models` projects those deployments through the same provider-neutral
+inventory boundary. A content-verified export manifest supplies a strict
+`ModelPackage`, including each artifact's relative store URI, SHA-256 and byte
+size plus task contracts and ONNX Runtime provenance. Identical packages from
+several nodes are deduplicated by `package_id`.
+
+Older deployments remain visible as unresolved candidates with the nodes on
+which they are present or loaded. They are not silently promoted from a model
+name into a package: without the content-verified manifest, the inventory says
+`missing_content_verified_manifest`. Re-running the existing export process
+creates the richer manifest without changing request-time behavior. Inventory
+discovery neither loads a model nor downloads, executes, activates, or hashes
+artifacts on a health request.
 
 The first registry is deliberately in-memory and non-executing. Registration is
 immutable and idempotent, aliases use compare-and-set semantics, and registering
