@@ -262,9 +262,19 @@ adapter profiles. `workflow.ir.migrate` normalizes IR 1.0 without changing its
 hash semantics and refuses unknown source or target versions. It never invents a
 migration. `workflow.ir.adapters` distinguishes schema availability from
 execution availability, while `workflow.ir.gaps` analyzes compatibility without
-loading a runtime. The LangGraph and Temporal names are reserved profiles marked
-unavailable with no claimed feature support; only a separately implemented and
-tested adapter may change those declarations.
+loading a runtime. LangGraph now has an available offline compiler for the
+proven task, flat-parallel, and state-truthy-condition subset. It produces a
+content-addressed node/edge plan, but remains explicitly non-executable until an
+operational runner is bound. Retry, timeout, effects, approval, schedules,
+structural nodes, and every other unpreserved contract remain blocking gaps.
+Temporal remains a reserved unavailable profile with no claimed feature support.
+
+`LangGraphWorkflowRuntimeAdapter` is the fail-closed seam for that future
+binding. An injected runner must echo the exact plan, workflow, and runtime
+identities and return an unambiguous terminal envelope. The adapter never imports
+LangGraph, builds an image, starts a bridge, resolves a reference, or grants
+effect authority. This allows deterministic conformance testing without
+mistaking compiler availability for operational readiness.
 
 ---
 
