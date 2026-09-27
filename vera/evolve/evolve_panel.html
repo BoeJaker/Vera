@@ -1051,6 +1051,12 @@ function schKindFields(kind,t){
   t=t||{};
   const f=(id,label,val,ph)=>'<div><label class="fld">'+label+'</label><input id="'+id+'" value="'+esc(val||'')+'" placeholder="'+esc(ph||'')+'" style="width:100%"></div>';
   if(kind==='census')return f('sch-t-template','Template',t.template||'default','default')
+    /* The loop's planning styles (planner_styles.LOOP_STYLES; the server
+       rejects any other). A forced style is its own archive series. */
+    +'<div><label class="fld">Planning style</label><select id="sch-t-style" style="width:100%" title="Forced on every goal; the run is archived in its own series (e.g. default-style-broad-runN) and compared only with runs of the same style">'
+    +[['','each goal’s own (auto) — the baseline series'],['auto','auto'],['flat','flat'],['stepwise','stepwise'],['detailed','detailed'],['broad','broad']]
+      .map(([v,l])=>'<option value="'+v+'"'+((t.plan_style||'')===v?' selected':'')+'>'+l+'</option>').join('')
+    +'</select></div>'
     +'<div><label class="fld">At window end</label><select id="sch-t-awe" style="width:100%"><option value="finish">let the census in flight finish</option><option value="yield">yield (park after the goal in flight)</option><option value="drop">drop the set</option></select></div>';
   if(kind==='suite')return f('sch-t-tag','Suite tag',t.tag,'e.g. nightly or census-default')+f('sch-t-profile','Profile (optional)',t.profile,'')
     +'<div><label class="row" style="gap:6px;margin-top:16px"><input type="checkbox" id="sch-t-assess" style="width:auto" '+(t.assess?'checked':'')+'> assess</label></div>';
@@ -1094,7 +1100,7 @@ function schOpen(id,prefill){
 function schKindChange(){const k=$('sch-kind').value;$('sch-target').innerHTML=schKindFields(k,{});if(k==='census')$('sch-repeat').value='continuous';else if($('sch-repeat').value==='continuous')$('sch-repeat').value='once_per_window'}
 function schReadTarget(kind){
   const v=id=>{const e=$(id);return e?e.value.trim():''};
-  if(kind==='census')return {template:v('sch-t-template')||'default'};
+  if(kind==='census')return {template:v('sch-t-template')||'default',plan_style:v('sch-t-style')};
   if(kind==='suite')return {tag:v('sch-t-tag'),profile:v('sch-t-profile'),assess:!!($('sch-t-assess')||{}).checked};
   if(kind==='task')return {id:v('sch-t-id'),assess:!!($('sch-t-assess')||{}).checked};
   if(kind==='pipeline')return {action:v('sch-t-action')||'test',id:v('sch-t-id'),branch:v('sch-t-branch')};
@@ -2690,7 +2696,17 @@ var _cenBase={};             // run_id -> compare-base run_id
 var _cenLanded=null;         // /census/landed by_run, fetched once per load
 var _cenBoard=null;          // /census/board by_run, fetched once per load
 var _cenRecCache={};         // run_id -> records (invalidated for 'current' when a goal lands)
+var _cenStyle='';            // planning style filter ('' = every style)
 function setCensusTemplate(v){ _cenTemplate=String(v||''); renderCensusTable(); }
+function setCensusStyle(v){ _cenStyle=String(v||''); renderCensusTable(); _cenRenderChartsForStyle(); }
+/* The charts follow the style filter too: a trend line through runs of
+   different styles would chart the style changes, not the code's. */
+function _cenRenderChartsForStyle(){
+  renderCensusCharts(_cenRunsAll.filter(s=>!s.excluded&&(!_cenStyle||_cenStyleOf(s)===_cenStyle)));
+}
+/* The planning style a census run measured (census_core.run_plan_style). Runs
+   written before styles existed planned the only way there was - auto. */
+function _cenStyleOf(s){ return (s&&s.plan_style)||'auto'; }
 function toggleCensusPartial(on){ _cenShowPartial=!!on; renderCensusTable(); }
 function setCensusText(v){ _cenText=String(v||'').trim().toLowerCase(); renderCensusTable(); }
 function setCensusStatus(v){ _cenStatusF=String(v||''); renderCensusTable(); }
@@ -2721,7 +2737,7 @@ async function loadCensusRuns(){
     ?(esc(t.from)+' → '+esc(t.to)+': '+t.done_from+' → '+t.done_to+'/'+t.of_goals+' done <b>('+(t.delta>=0?'+':'')+t.delta+')</b>'
       +' <span class="hint">'+(tr?'counters reconcile':'counters suspect')+'</span>')
     :(((r&&r.count)||_cenRunsAll.length)+' run(s) · '+((r&&r.complete_count)||0)+' usable — need 2 usable runs for a trend');
-  renderCensusCharts(_cenRunsAll.filter(s=>!s.excluded));
+  _cenRenderChartsForStyle();
   // Context per run (what landed before it, what the board says it found or
   // fixed) — fetched once and shown inside the expanded row.
   Promise.all([api('/census/landed').catch(()=>null),api('/census/board').catch(()=>null)]).then(([L,B])=>{
@@ -2731,10 +2747,13 @@ async function loadCensusRuns(){
 }
 var _cenRunsMeta={};
 
-/* The previous USABLE run of the same template - the honest default base for
-   a comparison. Runs of a different template are never compared. */
+/* The previous USABLE run of the same template AND the same planning style -
+   the honest default base for a comparison. Runs of a different template are
+   never compared, and a broad run against an auto run measures the style, not
+   the code. */
 function _cenDefaultBase(run){
-  const same=_cenRunsAll.filter(s=>s.run_id!==run.run_id&&!s.excluded&&(s.template||'')===(run.template||''));
+  const same=_cenRunsAll.filter(s=>s.run_id!==run.run_id&&!s.excluded&&(s.template||'')===(run.template||'')
+    &&_cenStyleOf(s)===_cenStyleOf(run));
   if(!same.length)return '';
   same.sort((a,b)=>(b.ended_at||0)-(a.ended_at||0));
   const older=same.filter(s=>(s.ended_at||0)<=(run.ended_at||Infinity));
@@ -2750,7 +2769,8 @@ function _cenRow(s){
   const name=live?('<span style="color:'+(isLive?'#3cb371':'#8a8a8a')+'">●</span> current'+(hz.template?(' <span class="hint">→ '+esc(hz.template)+' run</span>'):'')):eid('census',s.run_id);
   return '<tr class="clk cen-run" data-run="'+esc(s.run_id)+'" onclick="toggleCensusRun(\''+esc(s.run_id)+'\')">'
     +'<td class="mono">'+(open?'▾':'▸')+' '+name+excl+(s.reruns?(' <span class="tag" title="goals re-run after a pause or interruption">↻'+s.reruns+'</span>'):'')+'</td>'
-    +'<td class="mono hint">'+esc(s.template||(live&&hz.template)||'unlabelled')+'</td>'
+    +'<td class="mono hint">'+esc(s.template||(live&&hz.template)||'unlabelled')
+      +' <span class="tag" title="planning style this run measured - only runs of the same template AND style are comparable">'+esc(_cenStyleOf(s))+'</span></td>'
     +'<td>'+_cenCode(live&&!(s.code&&(s.code.codes||[]).length)&&hz.code?{codes:[(hz.code.sha_short||'')+'@'+(hz.code.branch||'')],segments:[{code:(hz.code.sha_short||'')+'@'+(hz.code.branch||''),first_goal:'(live)',goals:0}],changed:false,unknown_goals:0,recorded_goals:0}:s.code)+'</td>'
     +'<td class="mono hint">'+_cenWhen(s.ended_at)+'</td>'
     +'<td>'+s.goals+(live&&hz.goals_total?('<span class="hint">/'+hz.goals_total+'</span>'):'')+'</td>'
@@ -2795,6 +2815,7 @@ function renderCensusTable(){
   const onCommit=(codes)=>!filterCommit||(codes||[]).some(c=>{const sha=String(c||'').split('@')[0];return sha&&(sha.startsWith(filterCommit)||filterCommit.startsWith(sha))});
   const match=s=>{
     if(_cenTemplate&&(_cenTemplate===' unlabelled'?!!s.template:(s.template||'')!==_cenTemplate))return false;
+    if(_cenStyle&&_cenStyleOf(s)!==_cenStyle)return false;
     if(!_cenShowPartial&&s.excluded&&s.run_id!=='current')return false;
     if(_cenStatusF==='usable'&&s.excluded)return false;
     if(_cenStatusF==='excluded'&&!s.excluded)return false;
@@ -2802,11 +2823,11 @@ function renderCensusTable(){
     // problems: a goal hit its cap or errored, or the run is not usable history
     if(_cenStatusF==='problems'&&!((s.wall_capped||0)>0||(s.other||0)>0||s.excluded))return false;
     if(filterCommit&&!onCommit((s.code||{}).codes))return false;
-    if(q){const hay=[s.run_id,s.template,(s.provenance||{}).operator,(s.provenance||{}).tool,((s.routing||{}).coders||[]).join(' '),Object.keys((s.routing||{}).nodes||{}).join(' ')].join(' ').toLowerCase(); if(hay.indexOf(q)<0)return false}
+    if(q){const hay=[s.run_id,s.template,_cenStyleOf(s),(s.provenance||{}).operator,(s.provenance||{}).tool,((s.routing||{}).coders||[]).join(' '),Object.keys((s.routing||{}).nodes||{}).join(' ')].join(' ').toLowerCase(); if(hay.indexOf(q)<0)return false}
     return true;
   };
   const shown=runs.filter(match).sort((a,b)=>(a.run_id==='current')?-1:((b.run_id==='current')?1:((b.ended_at||0)-(a.ended_at||0))));
-  const ops=(_cenStatusF===''||_cenStatusF==='operator')&&!_cenTemplate&&(!q||'operator'.indexOf(q)>=0)?_cenOpRuns.slice().reverse():[];
+  const ops=(_cenStatusF===''||_cenStatusF==='operator')&&!_cenTemplate&&!_cenStyle&&(!q||'operator'.indexOf(q)>=0)?_cenOpRuns.slice().reverse():[];
   const hidden=_cenShowPartial?0:runs.filter(s=>s.excluded&&s.run_id!=='current').length;
   // The other driver kinds, through the same filters (kind, text, status).
   // A census run known only from the scoreboard the harness posted (no
@@ -2814,6 +2835,8 @@ function renderCensusTable(){
   const others=(_cenStatusF==='live'||_cenStatusF==='operator')?[]:_workRows.filter(x=>!(x.kind==='census'&&x.census)).filter(x=>{
     if(_workKind&&x.kind!==_workKind)return false;
     if(_cenTemplate&&(x.kind!=='census'||(x.template||'')!==_cenTemplate))return false;
+    // A scoreboard-only census row carries no rows to read a style from.
+    if(_cenStyle)return false;
     if(_workSrc&&x.kind==='run'&&x.source!==_workSrc)return false;
     if(_cenStatusF==='usable'&&x.excluded)return false;
     if(_cenStatusF==='excluded'&&!x.excluded)return false;
@@ -2838,6 +2861,10 @@ function renderCensusTable(){
     +'<option value="">all ('+runs.length+')</option>'
     +tmpls.map(t=>'<option value="'+esc(t)+'"'+(_cenTemplate===t?' selected':'')+'>'+esc(t)+' ('+runs.filter(x=>(x.template||'')===t).length+')</option>').join('')
     +(runs.some(x=>!x.template)?('<option value=" unlabelled"'+(_cenTemplate===' unlabelled'?' selected':'')+'>unlabelled ('+runs.filter(x=>!x.template).length+')</option>'):'')
+    +'</select></label>'
+    +'<label style="display:flex;gap:4px;align-items:center" title="planning style the run measured - compare runs of one style with each other">planning <select onchange="setCensusStyle(this.value)" style="width:auto">'
+    +'<option value="">every style</option>'
+    +[...new Set(runs.map(_cenStyleOf))].sort().map(v=>'<option value="'+esc(v)+'"'+(_cenStyle===v?' selected':'')+'>'+esc(v)+' ('+runs.filter(x=>_cenStyleOf(x)===v).length+')</option>').join('')
     +'</select></label>'
     +'<label style="display:flex;gap:4px;align-items:center">show <select onchange="setCensusStatus(this.value)" style="width:auto">'
     +['','usable','excluded','problems','live','operator'].map(v=>'<option value="'+v+'"'+(_cenStatusF===v?' selected':'')+'>'+(v||'everything')+'</option>').join('')
@@ -2916,7 +2943,9 @@ async function loadCensusGoals(run){
       +'<td>'+_cenCode(g.code_summary)+'</td>'
       +'<td class="mono"'+(hit?' style="color:#c9a35a" title="hit the '+Math.round(cap(g)/60)+'m cap"':'')+'>'+_cenSec(g.wall_s)+'<span class="hint">/'+_cenSec(cap(g))+'</span></td>'
       +'<td class="mono">'+(q.total?((q.passed||0)+'/'+q.total):'—')+((q.files_missing||[]).length?(' <span style="color:#c96b6b" title="declared files never produced: '+esc(q.files_missing.join(', '))+'">✗'+q.files_missing.length+'</span>'):'')+'</td>'
-      +'<td class="mono">'+(g.planned==null?'—':(g.planned+'/'+g.executed+(g.inserted?('+'+g.inserted):'')))+(g.unaccounted?' <span style="color:#c96b6b" title="a step no producer claims">⚠</span>':'')+'</td>'
+      +'<td class="mono">'+(g.planned==null?'—':(g.planned+'/'+g.executed+(g.inserted?('+'+g.inserted):'')))
+        +((g.plan_style&&g.plan_style_requested&&g.plan_style!==g.plan_style_requested)?(' <span class="tag" title="asked for '+esc(g.plan_style_requested)+' planning, ran '+esc(g.plan_style)+(g.plan_style_reason?(': '+esc(g.plan_style_reason)):'')+'">↩'+esc(g.plan_style)+'</span>'):'')
+        +(g.unaccounted?' <span style="color:#c96b6b" title="a step no producer claims">⚠</span>':'')+'</td>'
       +'<td class="mono">'+(g.tool_calls==null?'—':g.tool_calls)+'</td>'
       +'<td class="mono">'+(cyc||'—')+'</td>'
       +'<td>'+((g.warnings||[]).length||0)+'</td>'
@@ -2927,7 +2956,7 @@ async function loadCensusGoals(run){
   el.innerHTML='<div class="row" style="gap:8px;align-items:center;margin:6px 0 4px">'
     +'<span class="hint">'+recs.length+' goal(s) · click one for its record</span><span style="flex:1"></span>'
     +'<label class="hint" style="display:flex;gap:4px;align-items:center" onclick="event.stopPropagation()">Δ vs <select onchange="event.stopPropagation();_cenBase[\''+esc(run)+'\']=this.value;loadCensusCompare(\''+esc(run)+'\')" style="width:auto">'
-    +'<option value="">—</option>'+bases.map(b=>'<option value="'+esc(b.run_id)+'"'+(_cenBase[run]===b.run_id?' selected':'')+'>'+esc(b.run_id)+((b.template||'')!==(s.template||'')?' (other template)':'')+(b.excluded?' · not usable':'')+'</option>').join('')
+    +'<option value="">—</option>'+bases.map(b=>'<option value="'+esc(b.run_id)+'"'+(_cenBase[run]===b.run_id?' selected':'')+'>'+esc(b.run_id)+((b.template||'')!==(s.template||'')?' (other template)':'')+(_cenStyleOf(b)!==_cenStyleOf(s)?(' ('+esc(_cenStyleOf(b))+' planning)'):'')+(b.excluded?' · not usable':'')+'</option>').join('')
     +'</select></label></div>'
     +'<table><tr><th>goal</th><th>status</th><th title="the code this goal ran on; ≠ marks where it changed">code</th><th>wall / cap</th><th title="declared checks passed / total; ✗ files never produced">quality</th><th title="planned / executed (+inserted)">steps</th><th>tools</th><th>cycles</th><th>warns</th><th title="the model in force for every role of this goal, the nodes its calls hit, re-routes and CPU spills - hover for calls by role">models · nodes</th><th title="this goal in the base run, and the wall-time change - click a base cell to open that run\'s record">Δ vs base</th></tr>'
     +rows+'</table>';
