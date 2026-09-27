@@ -665,7 +665,8 @@ OLLAMA_JOB_TYPES: List[str] = [
 def _rule(job_type: str, *, prefer_gpu: bool = False, deny_gpu: bool = False,
           pin: str = "", allow: Optional[List[str]] = None,
           deny: Optional[List[str]] = None, model: str = "",
-          avoid_embed: bool = False, prefer: str = "") -> dict:
+          avoid_embed: bool = False, prefer: str = "",
+          options: Optional[dict] = None) -> dict:
     # `model` (optional) pins a specific model for this job type — lets light
     # work (naming, summarisation) run a smaller/faster model than chat/code.
     # `avoid_embed` steers this job type OFF whichever node currently serves
@@ -676,10 +677,25 @@ def _rule(job_type: str, *, prefer_gpu: bool = False, deny_gpu: bool = False,
     # has the arithmetic). Use it where `avoid_embed` is too blunt - a hard
     # exclusion collapsed naming/summarize/dream_director onto ONE cpu node,
     # because the excluded node is always whichever one serves embeddings.
-    return {"job_type": job_type, "prefer_gpu": prefer_gpu, "deny_gpu": deny_gpu,
-            "pin": pin, "allow": list(allow or []), "deny": list(deny or []),
-            "model": model or "", "avoid_embed": bool(avoid_embed),
-            "prefer": str(prefer or "")}
+    r = {"job_type": job_type, "prefer_gpu": prefer_gpu, "deny_gpu": deny_gpu,
+         "pin": pin, "allow": list(allow or []), "deny": list(deny or []),
+         "model": model or "", "avoid_embed": bool(avoid_embed),
+         "prefer": str(prefer or "")}
+    if options:
+        r["options"] = dict(options)
+    return r
+
+
+# The LONG-HORIZON CPU model (compute-roles: cpu-247 = long, high-quality
+# generation nothing is waiting on). Every job type that runs it - the dream
+# director and narrator, broad's per-stream briefs, chat insights - asks for the
+# SAME window and keeps it resident: on a CPU node the window otherwise follows
+# each prompt (4k/8k/16k steps, see _stable_ctx), and a different window is a
+# new runner - a 62 s cold load of ~23 GB (measured 2026-09-27) between two
+# callers of the same model. num_ctx is a floor (the fit may still raise it for
+# a prompt that needs more); keep_alive is lifted into the request.
+LONG_HORIZON_CPU_MODEL = "qwen3.6:35b-a3b"
+LONG_HORIZON_CPU_OPTIONS = {"num_ctx": 16384, "keep_alive": "2h"}
 
 # Built-in default routing — always shown in the UI as the baseline. Embeddings
 # are CPU-only (light, should never tie up a GPU); generative work prefers GPU.
@@ -727,13 +743,19 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # generations off the embedding node: a multi-minute director thought
     # holding that node's single generation slot starved every embed call
     # (and vice versa — director thoughts queued behind embedding bursts).
-    "dream_director":   _rule("dream_director",   deny_gpu=True, prefer="cpu-247"),
+    # The director's thoughts and every narrator tier that does not name its
+    # own model run the long-horizon model (user, 2026-09-27), in the shared
+    # window so they reuse the runner broad's briefs keep warm.
+    "dream_director":   _rule("dream_director",   deny_gpu=True, prefer="cpu-247",
+                              model=LONG_HORIZON_CPU_MODEL,
+                              options=LONG_HORIZON_CPU_OPTIONS),
     # Planning enrichment (broad style): a long generation on the long-horizon
     # node, cpu-247, never on the GPU and kept off cpu-246 - the embedding /
     # worker node - so a brief never holds the node embeddings and system work
     # need. The broad style issues these ONE AT A TIME, so the soft `prefer` is
     # never pushed onto cpu-246 by its own second call.
-    "plan_enrich":      _rule("plan_enrich",      deny_gpu=True, prefer="cpu-247"),
+    "plan_enrich":      _rule("plan_enrich",      deny_gpu=True, prefer="cpu-247",
+                              options=LONG_HORIZON_CPU_OPTIONS),
     # Media services — GPU-first across the media nodes that actually have the
     # service installed (resolve_media checks each node's /health service list).
     "stt":      _rule("stt",      prefer_gpu=True),

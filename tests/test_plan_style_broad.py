@@ -302,6 +302,28 @@ def test_the_enrich_route_is_the_long_horizon_cpu_job_type():
 
 
 @needs_app
+def test_every_long_horizon_caller_shares_one_runner():
+    """User 2026-09-27: the dream director and narrator run the long-horizon model
+    too. On a CPU node a different window is a different runner - a 62 s reload
+    of ~23 GB - so every job type that runs it must ask for the same window and
+    keep it resident."""
+    from Vera.vera import capability_orchestration as O
+    shared = O.LONG_HORIZON_CPU_OPTIONS
+    assert shared.get("num_ctx") and shared.get("keep_alive")
+    director = O.DEFAULT_ROUTING_RULES["dream_director"]
+    assert director["model"] == O.LONG_HORIZON_CPU_MODEL == "qwen3.6:35b-a3b"
+    assert director["deny_gpu"] and director["prefer"] == "cpu-247"
+    for jt in ("dream_director", "plan_enrich"):
+        opts = O.DEFAULT_ROUTING_RULES[jt].get("options") or {}
+        assert opts.get("num_ctx") == shared["num_ctx"] and opts.get("keep_alive") == shared["keep_alive"]
+    role = (O.ROLE_PROFILES_DECLARED.get("planning_style") or {}).get("roles", {}).get("enrich")
+    if role:
+        eff = O._merge_rule_over_base(role, O.DEFAULT_ROUTING_RULES["plan_enrich"])
+        assert eff["options"]["num_ctx"] == shared["num_ctx"]
+        assert eff["options"]["keep_alive"] == shared["keep_alive"]
+
+
+@needs_app
 def test_nothing_waits_for_a_cpu_brief(monkeypatch):
     """User 2026-09-27: the CPU node is a non-blocking supplicant. A 30 s CPU brief
     must not hold planning at all."""
