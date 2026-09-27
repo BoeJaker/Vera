@@ -14,7 +14,7 @@ let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 
 
 // ── the glow shows under the menu ───────────────────────────────────────────────────────────────────────────────
 t('the menu is a translucent surface over the wash', /#rightRail\.lhm-host \.lhm-det\{background:color-mix\(in srgb,var\(--surf\) 68%,transparent\);[^}]*backdrop-filter:blur/.test(CHAT));
-t('in the harness the frames step aside for the harness\'s one wash', /html\[data-harness\] body\{background:transparent\}/.test(CHAT) && /html\[data-harness\] #veraWash\{display:none\}/.test(CHAT));
+t('in the harness the frames step aside for the harness\'s one wash', /html\[data-harness\] body\{background:transparent\}/.test(CHAT) && /html\[data-harness\]\.hdr-absorbed #veraWash/.test(CHAT));
 t('the harness draws that wash while the chat is open', /#veraWashH\{position:fixed;/.test(HAR) && /body\.chat-open #veraWashH\{opacity:1\}/.test(HAR) && /function _washMount\(\)/.test(HAR));
 t('and its menu slot is translucent over it', /body\.chat-open #lhmNav\.chatmenu\{background:color-mix\(/.test(HAR));
 

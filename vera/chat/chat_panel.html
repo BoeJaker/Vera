@@ -1331,6 +1331,9 @@ html[data-style] .ib.send{background:var(--pri-bg,var(--acc));border-color:var(-
 #rightRail.lhm-host.slim{width:46px !important;min-width:46px !important}
 #rightRail.lhm-host.slim > .lhm-det{display:none}
 html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !important}
+/* ...except in the harness's menu frame, which IS the menu: folded, it keeps its rail (owner: "its not leaving a rail when
+   the lhm hides/collapses") - this outranks the rule above, which took the whole frame to nothing */
+html[data-only="menu"] body #rightRail.lhm-host.slim{width:100% !important;min-width:0 !important}
 #rightRail.lhm-host > .lhm-det > .ctx-tab-bar .ctab{padding:6px 9px}
 /* ═══ The composer's modes (chat-modes; the Canvas and Paste boards) — chips in the composer's foot, strips above
    it for voice · council · diffuse, attachments as cards in the question. The top-bar buttons stay; these mirror. ═══ */
@@ -1680,9 +1683,13 @@ html[data-den="hover"] #rightRail.lhm-host .lhm-quick .tm-r:hover .ico{opacity:1
    and ground step aside there. */
 #rightRail.lhm-host{position:relative;z-index:2}
 #rightRail.lhm-host .lhm-det{background:color-mix(in srgb,var(--surf) 68%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15)}
-html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:color-mix(in srgb,var(--surf) 34%,transparent)}
+/* blocks off: the menu has NO ground of its own and no glass - the page (and its glow) is what is behind it. This is the
+   rule the glass above had overridden; the second selector outranks the harness menu frame's glass too. */
+html[data-blocks="off"] #rightRail.lhm-host .lhm-det,html[data-blocks="off"][data-harness][data-only="menu"] #rightRail.lhm-host .lhm-det{background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none}
 html[data-harness] body{background:transparent}
-html[data-harness] #veraWash{display:none}
+/* the chat's own wash steps aside only when the harness HAS taken it over (hdr-absorbed) - hiding it on the promise of
+   the harness's left the chat with no glow at all whenever the harness had not (owner: "the glow effect seems to have gone") */
+html[data-harness].hdr-absorbed #veraWash,html[data-harness][data-only="menu"] #veraWash{display:none}
 html[data-harness][data-only="menu"] #rightRail.lhm-host .lhm-det{background:color-mix(in srgb,var(--surf) 46%,transparent)}
 /* SMOOTHER (owner: "the lhm expanding and collapsing animations need to be smoother"): the panel opens, folds and grows
    by its WIDTH on one easing - it used to fold by a display switch (no motion at all) and grow in a jump. Never while a
