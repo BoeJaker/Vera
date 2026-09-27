@@ -131,6 +131,21 @@
     _hdrKid = k; if(!k) return;
     try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: k.hdr.title || document.title || '', groups: k.hdr.groups || [] }, '*'); }catch(e){}
   }
+  // ── ANY PAGE'S MENU DOCKS (owner, 2026-09-27: "the research ui lhm needs integrating into the unified lhm and im sure
+  // there are more"). A page marks its menu data-vera-lhm - whatever its markup, a sidebar, an icon rail, a strip of view
+  // tabs - and the shell's nav code (/ui/vera-panel.js) publishes it; a page that does not load that code has it brought
+  // here. Docked, the marked menu folds away, firmly: a page's own #nav{display:...} would otherwise outrank the rule. ──
+  function _adoptLhm(){
+    try{
+      if(!document.querySelector('[data-vera-lhm]')) return;
+      if(!document.getElementById('vpb-lhm-css')){ var st = document.createElement('style'); st.id = 'vpb-lhm-css';
+        st.textContent = 'html.vpb-nav-hosted [data-vera-lhm]:not(.vp-has-content){display:none!important}';
+        (document.head || document.documentElement).appendChild(st); }
+      if(!window.veraPanel && !document.querySelector('script[src$="/ui/vera-panel.js"]')){ var s = document.createElement('script'); s.src = '/ui/vera-panel.js'; (document.head || document.documentElement).appendChild(s); }
+    }catch(e){}
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _adoptLhm); else _adoptLhm();
+
   var _navLhmOpts = null;
   // ── A PANEL'S MENU WIDGETS (owner, 2026-09-27: "any lhm items that can be made into widgets ... like the calendar controls
   // and even the calendar from the comms ui itself - and the different parts of it like the schedule view"). A page names
