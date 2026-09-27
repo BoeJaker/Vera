@@ -41,16 +41,22 @@ CACHE_S = 5.0
 _cache: Dict[str, Any] = {"at": 0.0, "out": None, "inflight": None}
 
 
+_timing: Dict[str, int] = {}
+
+
 async def _read(name: str, timeout: float, **kwargs: Any) -> Any:
     fn = (_orch.CAPABILITY_REGISTRY.get(name) or {}).get("func")
     if fn is None:
         return {"error": f"{name} is not loaded"}
+    t0 = time.monotonic()
     try:
         return await asyncio.wait_for(fn(**kwargs), timeout)
     except asyncio.TimeoutError:
         return {"error": f"{name} took longer than {timeout:.0f} s"}
     except Exception as e:  # a reader that raises is a reader that failed
         return {"error": f"{type(e).__name__}: {e}"}
+    finally:
+        _timing[name] = int((time.monotonic() - t0) * 1000)
 
 
 def _own_ips() -> List[str]:
@@ -71,7 +77,23 @@ async def _gather() -> Dict[str, Any]:
     names = list(READERS)
     answers = await asyncio.gather(*(_read(n, READERS[n]) for n in names))
     src = dict(zip(names, answers))
-    return core.build(src, own_ips=_own_ips())
+    out = core.build(src, own_ips=_own_ips())
+    # how long each reader took this time, slowest first - the page's Sources card shows it
+    out["timing"] = dict(sorted(((n, _timing.get(n, 0)) for n in names), key=lambda kv: -kv[1]))
+    return out
+
+
+def _start_gather() -> "asyncio.Future":
+    if _cache["inflight"] is None:
+        fut = asyncio.ensure_future(_gather())
+        def _done(f: "asyncio.Future") -> None:
+            _cache["inflight"] = None
+            if not f.cancelled() and f.exception() is None:
+                _cache["out"] = f.result()
+                _cache["at"] = time.monotonic()
+        fut.add_done_callback(_done)
+        _cache["inflight"] = fut
+    return _cache["inflight"]
 
 
 @capability(
@@ -88,18 +110,18 @@ async def _gather() -> Dict[str, Any]:
                 "inflight_kinds, errors, events, series, counts, sources, ts}.",
 )
 async def ops_snapshot(refresh: bool = False, trace_id=None) -> Dict[str, Any]:
+    # stale-while-revalidate: the last snapshot answers at once (gathering takes seconds - the estate's readers run
+    # side by side, the slowest decides); a fresh one is gathered in the background when it is older than CACHE_S.
+    # Only the very first call, with nothing cached, and an explicit refresh wait for the gather.
     now = time.monotonic()
-    if not refresh and _cache["out"] is not None and now - _cache["at"] < CACHE_S:
-        return dict(_cache["out"], cached=True)
-    if _cache["inflight"] is None:
-        _cache["inflight"] = asyncio.ensure_future(_gather())
-    try:
-        out = await _cache["inflight"]
-    finally:
-        _cache["inflight"] = None
-    _cache["out"] = out
-    _cache["at"] = time.monotonic()
-    return dict(out, cached=False)
+    have = _cache["out"] is not None
+    if have and not refresh:
+        age = now - _cache["at"]
+        if age >= CACHE_S:
+            _start_gather()
+        return dict(_cache["out"], cached=True, age_s=round(age, 1), refreshing=_cache["inflight"] is not None)
+    out = await _start_gather()
+    return dict(out, cached=False, age_s=0.0, refreshing=False)
 
 
 @capability(
