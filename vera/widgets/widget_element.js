@@ -2719,12 +2719,17 @@ span.vw-sampled{opacity:.85}
     return '<div class="vw-dr-json">' + node(null, root, 0, true) + '</div>';
   }
   const isPlain = (v) => v == null || typeof v !== 'object';
+  /* an item with no name field is named by what identifies it (a request log row: its model, else its id) - the drawer's
+     head and the hover card said the widget's title for every row */
+  const ID_KEYS = ['model', 'host', 'hostname', 'node', 'path', 'file', 'key', 'slug', 'url', 'email', 'cap', 'capability', 'req_id', 'request_id', 'job_id', 'run_id', 'uuid', 'id'];
+  const idName = (it) => { for (const k of ID_KEYS) { const v = it[k]; if ((typeof v === 'string' && v.trim()) || typeof v === 'number') return String(v).slice(0, 80); }
+    const k2 = Object.keys(it).find((k) => /_(id|name|key)$/.test(k) && (typeof it[k] === 'string' || typeof it[k] === 'number') && String(it[k]).trim()); return k2 ? String(it[k2]).slice(0, 80) : ''; };
   const fieldVal = (k, v) => { if (v === null || v === undefined) return '<i style="opacity:.5">—</i>'; if (typeof v === 'boolean') return '<i class="st" style="background:' + (v ? 'var(--ok,#28c28a)' : 'var(--warn,#f5b341)') + '"></i>' + (v ? 'yes' : 'no');
     if (typeof v === 'number') return esc(TIP_RAW.test(k) ? String(v) : ((/(^|_)(created|updated|started|ended|at|ts|time|last_run|next_run)$/i.test(k) && v > 1e9 && v < 4e10) ? new Date(v * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' · ' + v : (/bytes?$|_b$/.test(k) ? fmtBytesS(v) + ' · ' + v : fmt(v))));
     const s = String(v); if (/^(status|state|health|level|severity)$/i.test(k)) return '<i class="st" style="background:' + stCol(s).replace(/var\(--b-(ac\d?|t3)\)/, (m, x) => ({ ac: 'var(--acc,#6ea8d8)', ac2: 'var(--ok,#28c28a)', ac3: 'var(--warn,#f5b341)', ac4: 'var(--err,#ef5b5b)', t3: 'var(--dim,#6b7280)' }[x] || m)) + '"></i>' + esc(s);
     if (/^\s*[\[{]/.test(s)) { try { const o = JSON.parse(s); if (o && typeof o === 'object') return drJson(o); } catch (_) {} }
     if (/^https?:\/\//.test(s)) return '<a href="' + esc(s) + '" target="_blank" rel="noopener" style="color:var(--acc,#6ea8d8)">' + esc(s) + '</a>'; return esc(s.length > 2000 ? s.slice(0, 2000) + '…' : s); };
-  const itemName = (it, fb) => (it && typeof it === 'object' && !Array.isArray(it)) ? String(nameOf(it) || it.date || it.title || fb || 'item') : (Array.isArray(it) ? (fb || 'the answer') + ' · ' + it.length + ' items' : String(it ?? fb ?? 'item'));
+  const itemName = (it, fb) => (it && typeof it === 'object' && !Array.isArray(it)) ? String(nameOf(it) || it.date || it.title || idName(it) || fb || 'item') : (Array.isArray(it) ? (fb || 'the answer') + ' · ' + it.length + ' items' : String(it ?? fb ?? 'item'));
   let _drawer = null;
   function drawer(detail) {
     if (typeof document === 'undefined' || !detail) return null;
