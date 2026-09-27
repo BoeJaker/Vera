@@ -27,6 +27,12 @@ from Vera.vera.capability_orchestration import APP  # noqa: F401
 _HERE = Path(__file__).parent
 
 
+def _style(name: str):
+    from fastapi.responses import Response
+    p = _HERE / name
+    return Response(content=p.read_text(encoding="utf-8") if p.exists() else "/* %s not found */" % name, media_type="text/css")
+
+
 def _script(name: str):
     from fastapi.responses import Response
     p = _HERE / name
@@ -43,6 +49,12 @@ async def _serve_iso_js():
 @APP.get("/ui/menus.js", include_in_schema=False)
 async def _serve_menus_js():
     return _script("menus.js")
+
+
+# the ONE design every panel wears (vera-ui.js loads it): the chat's tokens, glow, blocks, density and common parts
+@APP.get("/ui/design.css", include_in_schema=False)
+async def _serve_design_css():
+    return _style("design.css")
 
 
 # the runtime every page draws the menu with (window.VeraRCM): its targets, the menu, the runner, thermal print
