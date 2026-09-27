@@ -251,7 +251,13 @@
     }
   }
 
+  // one read at a time, and none while the page is hidden: a slow timeline used to stack a new request every 4 s
+  let polling = false;
   async function poll() {
+    if (polling || document.hidden) return; polling = true;
+    try { await poll0(); } finally { polling = false; }
+  }
+  async function poll0() {
     try {
       const r = await fetch(location.origin + '/activity/timeline?scope=all&limit=60',
         { headers: { 'Accept': 'application/json' } });
