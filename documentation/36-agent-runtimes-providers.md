@@ -248,6 +248,11 @@ a content-addressed plan, and an injected conformance seam verifies that a futur
 runner echoes the exact plan and workflow identities. This compiler is not wired
 to `langgraph.run`: it cannot launch a container, call a model, authorize an
 effect, or imply that richer Workflow IR semantics are supported.
+Temporal has the same offline compiler and conformance boundary, with a distinct
+plan schema and identity. It does not import the Temporal SDK, contact a server,
+start a worker, or claim Temporal-specific retry, scheduling, compensation, or
+durability semantics. Both profiles share one compiler/terminal-result contract
+so adding an engine does not duplicate Vera's workflow safety boundary.
 Active runs can be cancelled by validated run ID through the runner's owned
 process registry. Cancellation, timeout, malformed output, and normal completion
 converge on one terminal event and release the shared resource gate. Protocol

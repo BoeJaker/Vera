@@ -324,7 +324,10 @@ def test_adapter_profiles_distinguish_offline_compilers_from_uninstalled_runtime
     assert profiles["profiles"]["langgraph"]["executable"] is False
     assert profiles["profiles"]["langgraph"]["supports"] == [
         "tasks", "parallel", "conditions"]
-    assert profiles["profiles"]["temporal"]["supports"] == []
+    assert profiles["profiles"]["temporal"]["available"] is True
+    assert profiles["profiles"]["temporal"]["executable"] is False
+    assert profiles["profiles"]["temporal"]["supports"] == [
+        "tasks", "parallel", "conditions"]
 
 
 def test_langgraph_adapter_analysis_uses_offline_compiler_without_runtime_import():
