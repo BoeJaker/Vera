@@ -7,5 +7,6 @@ t('blocks off: surfaces by role go see-through, firmly (ids outrank classes)', /
 t('what must stay readable keeps its ground', /:not\(:is\(\[class\*="pop"\], \[id\*="pop"\], \[class\*="modal"\]/.test(D) && /pre, code, input, select, textarea, button, \.btn,/.test(D));
 t('blocks on: cards and tiles are raised', /html:root:not\(\[data-blocks="off"\]\) body :is\(\[class\$="-card"\], \[class\$="-tile"\]/.test(D));
 t('meters and bars that are data keep their fill', /\[class\*="progress"\], \[id\*="progress"\], \[class\*="meter"\], \[class\*="fill"\]/.test(D));
+t('the :not() is joined to the :is() (a space would make it a descendant rule)', !/\)\s*\n\s*:not\(:is\(/.test(D) && /\):not\(:is\(\[class\*="pop"\], \[id\*="pop"\]/.test(D));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
