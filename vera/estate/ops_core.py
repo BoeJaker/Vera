@@ -572,9 +572,8 @@ def proc_tcp_peers(text: str, port: int, v6: bool = False) -> Dict[str, int]:
             rhex = f[2].split(":")[0]
             raw = bytes.fromhex(rhex)
             if v6:
-                ip = str(ipaddress.IPv6Address(b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4))))
-                if ip.startswith("::ffff:"):
-                    ip = ip[7:]
+                a6 = ipaddress.IPv6Address(b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4)))
+                ip = str(a6.ipv4_mapped) if a6.ipv4_mapped else str(a6)
             else:
                 ip = str(ipaddress.IPv4Address(raw[::-1]))
         except (ValueError, IndexError):
