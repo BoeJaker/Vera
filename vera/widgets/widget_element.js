@@ -2466,21 +2466,67 @@ span.vw-sampled{opacity:.85}
   }
   const TIP_CSS = '.vw-tip{position:fixed;z-index:2147483000;pointer-events:none;max-width:320px;padding:7px 9px;border-radius:7px;background:var(--s1,var(--bg1,#15171c));color:var(--t1,var(--text,#d8dce4));box-shadow:0 8px 28px -8px rgba(0,0,0,.6),0 0 0 1px var(--bd2,rgba(255,255,255,.14));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px;line-height:1.45;white-space:normal}'
     + '.vw-tip b{display:block;font-size:12px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-tip span{display:block;color:var(--t2,var(--dim2,#8a92a0));font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
-    + '.vw-tip em{display:block;margin-top:4px;font-style:normal;font-size:10px;color:var(--acc,#6ea8d8)}';
+    + '.vw-tip em{display:block;margin-top:4px;font-style:normal;font-size:10px;color:var(--acc,#6ea8d8)}'
+    + '.vw-tip{max-width:360px}.vw-tip .vw-tkv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:1px 10px;margin:4px 0 2px}.vw-tip .vw-tkv > i{font-style:normal;color:var(--t2,var(--dim2,#8a92a0));font-size:10.5px;white-space:nowrap}'
+    + '.vw-tip .vw-tkv > u{text-decoration:none;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-tip .vw-tkv i.st{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:1px}'
+    + '.vw-tip small{display:block;margin-top:5px;padding-top:4px;border-top:1px solid var(--bd,rgba(255,255,255,.08));font-size:9.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-tip a{color:inherit;text-decoration:none}'
+    + ':host{position:relative}.vw-as{position:absolute;top:4px;right:4px;z-index:6;opacity:0;transition:opacity .15s}:host(:hover) .vw-as,.vw-as.open{opacity:1}:host-context(.dash-grid.editing) .vw-as{display:none}'
+    + '.vw-as-b{all:unset;cursor:pointer;width:22px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;font-size:12px;color:var(--b-t2,#8a92a0);background:var(--b-s2,#1f232b);box-shadow:inset 0 0 0 1px var(--b-bd,rgba(255,255,255,.12))}.vw-as-b:hover{color:var(--b-ac,#6ea8d8)}'
+    + '.vw-as-m{position:fixed;z-index:2147483001;min-width:170px;display:flex;flex-direction:column;padding:4px;border-radius:8px;background:var(--b-s1,var(--s1,#15171c));box-shadow:0 10px 30px -10px rgba(0,0,0,.65),inset 0 0 0 1px var(--b-bd,rgba(255,255,255,.12))}'
+    + '.vw-as-m > small{padding:3px 8px 4px;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--b-t3,#6b7280)}.vw-as-m button{all:unset;cursor:pointer;display:flex;gap:8px;align-items:center;padding:4px 8px;border-radius:5px;font-size:11.5px;color:var(--b-t1,#d8dce4)}'
+    + '.vw-as-m button:hover{background:var(--b-s2,#1f232b)}.vw-as-m button.on{color:var(--b-ac,#6ea8d8)}.vw-as-m button i{width:16px;height:14px;display:inline-flex;align-items:center;justify-content:center;font-style:normal;color:var(--b-t2,#8a92a0)}.vw-as-m button i svg{width:14px;height:14px}';
   const TIP_CSS_S = fontScale(TIP_CSS);
   // the card is kept on the root: ':scope > .vw-tip' matches nothing inside a shadow root, so looking it up made a new card on
   // every move and never hid one (found live, 2026-09-27: three moves, three cards, all shown after the pointer left)
   function tipOf(root) { let t = root._vwTip; if (!t || !t.isConnected) { t = document.createElement('div'); t.className = 'vw-tip'; t.hidden = true; root.appendChild(t); root._vwTip = t; } return t; }
-  function showTip(root, text, x, y, act) {
-    const t = tipOf(root); const L = String(text || '').split('\n'); if (!L[0] && L.length < 2) { t.hidden = true; return; }
-    t.innerHTML = '<b>' + esc(L[0]) + '</b>' + L.slice(1, 12).map((l) => '<span>' + esc(l) + '</span>').join('') + (act ? '<em>' + esc(act) + '</em>' : '');
+  function showTip(root, text, x, y, act, html) {
+    const t = tipOf(root); const L = String(text || '').split('\n');
+    if (html) t.innerHTML = html + (act ? '<em>' + esc(act) + '</em>' : '');
+    else { if (!L[0] && L.length < 2) { t.hidden = true; return; }
+    t.innerHTML = '<b>' + esc(L[0]) + '</b>' + L.slice(1, 12).map((l) => '<span>' + esc(l) + '</span>').join('') + (act ? '<em>' + esc(act) + '</em>' : ''); }
     t.hidden = false; const vw = window.innerWidth || 1200, vh = window.innerHeight || 800, r = t.getBoundingClientRect();
     t.style.left = Math.max(4, Math.min(vw - r.width - 6, x + 14)) + 'px'; t.style.top = Math.max(4, (y + 16 + r.height > vh) ? y - r.height - 10 : y + 16) + 'px';
   }
   // what the pointer is over: a block (data-b), else anything with a detail; a title is taken into data-tip once (the
   // browser's own tooltip would stand on top of the card)
+
+  /* THE HOVER CARD (owner, 2026-09-27: "even better coverage on detail when an item in a widget is hovered or clicked"). A
+     part that carries its item says what it is at a glance: its name, its fields formatted as the drawer formats them
+     (status dots, dates, bytes), the nested ones counted, how many more there are, the widget and source it belongs to,
+     and how many other items in the same answer share a value with it. Built once per part, not on every move. */
+  function tipCard(host, el) {
+    const raw = el.getAttribute('data-item'); let it; if (raw) { try { it = JSON.parse(raw); } catch (_) {} }
+    if (!it || typeof it !== 'object' || Array.isArray(it)) return '';
+    const rec = recOf(host), lines = String(el.getAttribute('data-tip') || el.getAttribute('data-name') || '').split('\n');
+    const head = lines[0] || itemName(it, rec.title || rec.form);
+    const ks = Object.keys(it).filter((k) => !/^_/.test(k) && it[k] !== '' && it[k] != null);
+    const plain = ks.filter((k) => isPlain(it[k])).slice(0, 10), nest = ks.filter((k) => !isPlain(it[k])).slice(0, 4);
+    const val = (k, v) => (typeof v === 'string' && /^\s*[\[{]/.test(v)) ? esc(v.slice(0, 60) + (v.length > 60 ? '…' : '')) : fieldVal(k, typeof v === 'string' && v.length > 90 ? v.slice(0, 90) + '…' : v);
+    let rel = 0; try { if (host._data !== undefined) rel = relatedTo(host._data, it).length; } catch (_) {}
+    const more = ks.length - plain.length - nest.length;
+    return '<b>' + esc(head) + '</b>'
+      + (plain.length ? '<div class="vw-tkv">' + plain.map((k) => '<i>' + esc(k.replace(/_/g, ' ')) + '</i><u>' + val(k, it[k]) + '</u>').join('') + '</div>' : lines.slice(1, 8).map((l) => '<span>' + esc(l) + '</span>').join(''))
+      + (nest.length ? '<span>' + nest.map((k) => esc(k.replace(/_/g, ' ')) + ' · ' + (Array.isArray(it[k]) ? it[k].length + (it[k].length === 1 ? ' item' : ' items') : Object.keys(it[k]).length + ' keys')).join('   ') + '</span>' : '')
+      + (more > 0 ? '<span>+ ' + more + ' more field' + (more === 1 ? '' : 's') + '</span>' : '')
+      + '<small>' + esc([rec.title || rec.form, typeof rec.source === 'string' ? rec.source : ''].filter(Boolean).join(' · ')) + (rel ? ' · ' + rel + ' related' : '') + '</small>';
+  }
+
+  /* VIEW AS (owner, 2026-09-27: "some widgets could transform to others to give a different view instead of haveing tonnes of
+     realted spread out widgets"). A widget offers the forms of its data's family - only those that would draw this answer -
+     and turns into the one chosen, in place; the choice is kept per widget, "as made" goes back. */
+  const NO_VIEW = /^(panel|composite|calnav|month|schedule|calendar|agenda|vgraph|terminal|media|diff|code|markdown|error|string|split-flap|frame|announcement|globe|candles|context_graph|structgraph)$/;
+  const VIEW_FAMILY = { series: ['trace', 'area', 'step', 'scope', 'bars', 'table', 'json'], values: ['bars', 'column', 'ranked', 'lollipop', 'donut', 'treemap', 'pills', 'kv', 'table', 'json'],
+    parts: ['donut', 'treemap', 'stacked-bar', 'waffle', 'bars', 'table', 'json'], items: ['table', 'rows', 'cards', 'list', 'stack', 'json'], events: ['log', 'lane', 'timeline', 'feed', 'table', 'json'],
+    level: ['radial', 'gauge', 'meter', 'dial', 'counter', 'hero', 'json'], stages: ['stepper', 'pipeline', 'progress', 'funnel', 'gantt', 'table', 'json'], points: ['scatter', 'table', 'json'],
+    matrix: ['heat', 'matrix', 'dots', 'table', 'json'], graph: ['graph', 'minigraph', 'pipes', 'json'], rate: ['turbine', 'ticker', 'json'] };
+  function viewsFor(rec, form0, data) {
+    const f0 = canon(form0), shape = DRAWN[f0]; if (!shape || NO_VIEW.test(f0) || data === undefined) return [];
+    const out = [f0];
+    (VIEW_FAMILY[shape] || ['table', 'json']).forEach((f) => { if (out.includes(f) || typeof R[f] !== 'function') return; try { if (!isEmpty(dataFor(mapped(rec, f, data), f))) out.push(f); } catch (_) {} });
+    return out.slice(0, 9);
+  }
   function partAt(root, target) {
-    let el = target && target.closest ? target.closest('[data-b],[data-tip],[title]') : null; if (!el || !root.contains(el) || el.classList.contains('vw-tip')) return null;
+    let el = target && target.closest ? target.closest('[data-b],[data-tip],[title],[data-item]') : null; if (!el || !root.contains(el) || el.classList.contains('vw-tip')) return null;
     if (el.hasAttribute('title')) { if (!el.hasAttribute('data-tip')) el.setAttribute('data-tip', el.getAttribute('title')); el.removeAttribute('title'); }
     return el;
   }
@@ -2500,11 +2546,11 @@ span.vw-sampled{opacity:.85}
     const root = host._sh; let cur = null;
     root.addEventListener('pointermove', (e) => {
       const el = partAt(root, e.target);
-      if (el !== cur) { cur = el; light(root, el); }
+      if (el !== cur) { cur = el; light(root, el); host._tipHtml = el ? tipCard(host, el) : ''; }
       if (!el) { const t = root._vwTip; if (t) t.hidden = true; return; }
       const ref = el.getAttribute('data-ref'), rec = recOf(host);
       const act = host.hasAttribute('item-drawer') ? 'click · its data' + (ref ? ' (then open ' + ref + ')' : '') : (ref ? 'click · open ' + ref : ((el.hasAttribute('data-b') && (rec.open || rec.source)) ? 'click · open where it lives' : (host.hasAttribute('dive-on-click') ? 'click · the deep dive' : '')));
-      showTip(root, el.getAttribute('data-tip') || el.getAttribute('data-name') || '', e.clientX, e.clientY, act);
+      showTip(root, el.getAttribute('data-tip') || el.getAttribute('data-name') || '', e.clientX, e.clientY, act, host._tipHtml);
     });
     root.addEventListener('pointerleave', () => { cur = null; light(root, null); const t = root._vwTip; if (t) t.hidden = true; });
     host.addEventListener('pointerleave', () => { cur = null; light(root, null); const t = root._vwTip; if (t) t.hidden = true; });
@@ -2748,7 +2794,7 @@ span.vw-sampled{opacity:.85}
     set record(v) {
       let j = ''; try { j = JSON.stringify(v); } catch (_) { j = ''; }
       if (j && j === this._recJson && this._rec) return;   // the same record again (a layout re-applied): keep the reading, the children and the timer
-      this._recJson = j; this._raw = (v && typeof v === 'object') ? v : null; this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._empty = false; this._drawn = ''; this._kids = {}; this._read = false; this._err = ''; if (this.isConnected) this._boot(); }
+      this._recJson = j; this._raw = (v && typeof v === 'object') ? v : null; this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._empty = false; this._drawn = ''; this._viewAs = undefined; this._kids = {}; this._read = false; this._err = ''; if (this.isConnected) this._boot(); }
     get base() { return this.getAttribute('base') || window._veraBase || ''; }
     get size() { const s = this.getAttribute('size'); return s && s !== 'auto' && SIZES.includes(s) ? s : (s === 'auto' ? this._auto : (this._rec ? this._rec.frame.size : 'm')); }
     connectedCallback() {
@@ -2828,8 +2874,27 @@ span.vw-sampled{opacity:.85}
     // minutes away (a backup census reads every five), and until then the tile would have nothing true to show
     _retrySoon(fn) { if (this._retry || !this.isConnected) return; this._retry = setTimeout(() => { this._retry = null; if (this.isConnected) fn(); }, RETRY_S * 1000); }
     _act(id) { this.dispatchEvent(new CustomEvent('widget:' + id, { bubbles: true, composed: true, detail: { record: this._rec, data: this._data, key: key(this._rec) } })); }
+    // the ⇄ control: the forms of the data's family that would draw this answer; the pick redraws in place
+    _viewAsWire(form0, form, rec) {
+      if (this.hasAttribute('no-view-as') || (/^(xs|s)$/.test(this.size) && !this.hasAttribute('bare'))) return;
+      const alts = viewsFor(rec, form0, this._data); if (alts.length < 2) return;
+      const box = document.createElement('div'); box.className = 'vw-as';
+      box.innerHTML = '<button type="button" class="vw-as-b" title="View this as another form">\u21c4</button><div class="vw-as-m" hidden><small>view as</small>'
+        + alts.map((f) => '<button type="button" data-as="' + esc(f) + '" class="' + (f === form ? 'on' : '') + '"><i>' + glyphOf(f, this._data) + '</i>' + esc(f) + (f === canon(form0) ? ' \u00b7 as made' : '') + '</button>').join('') + '</div>';
+      const m = box.querySelector('.vw-as-m'), b = box.querySelector('.vw-as-b');
+      const close = () => { m.hidden = true; box.classList.remove('open'); document.removeEventListener('click', close, true); };
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); if (!m.hidden) { close(); return; } const r = b.getBoundingClientRect(); m.hidden = false; box.classList.add('open');
+        const mw = m.offsetWidth || 170, mh = m.offsetHeight || 200; m.style.left = Math.max(4, Math.min((window.innerWidth || 1200) - mw - 4, r.right - mw)) + 'px'; m.style.top = ((r.bottom + 4 + mh > (window.innerHeight || 800)) ? Math.max(4, r.top - mh - 4) : r.bottom + 4) + 'px';
+        setTimeout(() => document.addEventListener('click', close, true), 0); });
+      m.addEventListener('click', (ev) => { const x = ev.target.closest && ev.target.closest('[data-as]'); if (!x) return; ev.stopPropagation(); const f = x.getAttribute('data-as');
+        this._viewAs = f === canon(form0) ? '' : f; try { if (this._viewAs) localStorage.setItem('vera.widget.as.' + key(rec), this._viewAs); else localStorage.removeItem('vera.widget.as.' + key(rec)); } catch (_) {}
+        close(); this.render(); this.dispatchEvent(new CustomEvent('widget:view-as', { bubbles: true, composed: true, detail: { record: rec, form: this._viewAs || form0 } })); });
+      this._sh.appendChild(box);
+    }
     render() {
-      const rec = this._rec || normalise({}); const size = this.size; const form = this._drawn || rec.form;
+      const rec = this._rec || normalise({}); const size = this.size; const form0 = this._drawn || rec.form;
+      if (this._viewAs === undefined) { try { this._viewAs = localStorage.getItem('vera.widget.as.' + key(rec)) || ''; } catch (_) { this._viewAs = ''; } }
+      const form = (this._viewAs && viewsFor(rec, form0, this._data).includes(this._viewAs)) ? this._viewAs : form0;
       const opts = { record: rec, draw: rec.draw, title: rec.title, panel: rec.panel, base: this.base, kids: this._kids || {}, ui: this._ui, height: this._bodyH || undefined, width: this._bodyW || undefined, projection: rec.projection };   // L and XL compose around the form
       // nothing read yet — no source, a source that waits for a click, a read in flight, a read that failed — draws the
       // form's SAMPLE face, marked, and says why in the caption; the widget always has a face (never "no data yet")
@@ -2867,7 +2932,7 @@ span.vw-sampled{opacity:.85}
       const was = (this._twKey === key(rec) && rec.frame.motion !== false) ? motionBefore(this._sh) : null; this._twKey = key(rec);
       this._sh.innerHTML = '<style>' + ELEMENT_CSS + CSS + TIP_CSS_S + '</style><div class="vw-root" data-form="' + esc(form) + '" data-size="' + size + '"' + (sampled ? ' data-sample="1"' : '') + (readEmpty ? ' data-empty="1"' : '') + (stale ? ' data-stale="1"' : '') + (rec.frame.motion === false ? ' data-motion="0"' : '') + (rec.frame.legend ? ' data-legend="1"' : '') + '>'
         + (small ? body : '<div class="vw-hd"><i></i>' + esc(rec.title) + (figureTxt && (form === 'radial' || form === 'counter' || form === 'bar' || form === 'trace') ? '<b>' + figureTxt + '</b>' : '') + '</div><div class="vw-body">' + body + '</div>'
-          + '<div class="vw-cap">' + cap + '<span class="sp"></span>' + (this._drawn && this._drawn !== rec.form ? 'drawn as ' + esc(this._drawn) + ' · ' : '') + esc(rec.form) + ' · ' + size + '</div>' + acts)
+          + '<div class="vw-cap">' + cap + '<span class="sp"></span>' + (form !== form0 ? 'viewed as ' + esc(form) + ' · ' : '') + (this._drawn && this._drawn !== rec.form ? 'drawn as ' + esc(this._drawn) + ' · ' : '') + esc(rec.form) + ' · ' + size + '</div>' + acts)
         + '</div>';
       const rb = this._sh.querySelector('[data-read]'); if (rb) rb.addEventListener('click', () => this.read(true));
       this._sh.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => this._act(b.dataset.act)));
@@ -2876,6 +2941,7 @@ span.vw-sampled{opacity:.85}
       this._sh.querySelectorAll('[data-vb-input]').forEach((i) => i.addEventListener('input', () => { this._ui[i.dataset.vbInput] = /^-?\d+(\.\d+)?$/.test(i.value) ? Number(i.value) : i.value; this.render(); }));
       this._sh.querySelectorAll('[data-vb-link]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); this.dispatchEvent(new CustomEvent('widget:open', { bubbles: true, composed: true, detail: { record: this._rec, href: a.dataset.vbLink, key: key(this._rec) } })); }));
       hydrate(this._sh);
+      this._viewAsWire(form0, form, rec);
       motionAfter(this._sh, was);
       if (canon(form) === 'vgraph' && (have || (rec.draw && rec.draw.layer))) mountVeraGraph(this, rec, dataM, size); else if (this._vg || this._vgHost) unmountVeraGraph(this);
       // the entry motion plays once, on the first real reading (a refresh redraws without it)
