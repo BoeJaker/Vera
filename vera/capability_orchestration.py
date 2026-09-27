@@ -654,6 +654,9 @@ OLLAMA_JOB_TYPES: List[str] = [
     # The dream DIRECTOR (ambient thought orchestrator) runs continuously on
     # CPU nodes — it must never contend with user-facing GPU work.
     "dream_director",
+    # The broad planning style's per-work-stream briefs: long CPU generations
+    # that run BESIDE the GPU plan (compute-roles), one at a time.
+    "plan_enrich",
     # Media services served by the GPU inference server(s) (edge/GPU_inference.py):
     # routed across MEDIA_INSTANCES by resolve_media(), not pick_instance().
     "stt", "tts", "imagegen",
@@ -725,6 +728,12 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # holding that node's single generation slot starved every embed call
     # (and vice versa — director thoughts queued behind embedding bursts).
     "dream_director":   _rule("dream_director",   deny_gpu=True, prefer="cpu-247"),
+    # Planning enrichment (broad style): a long generation on the long-horizon
+    # node, cpu-247, never on the GPU and kept off cpu-246 - the embedding /
+    # worker node - so a brief never holds the node embeddings and system work
+    # need. The broad style issues these ONE AT A TIME, so the soft `prefer` is
+    # never pushed onto cpu-246 by its own second call.
+    "plan_enrich":      _rule("plan_enrich",      deny_gpu=True, prefer="cpu-247"),
     # Media services — GPU-first across the media nodes that actually have the
     # service installed (resolve_media checks each node's /health service list).
     "stt":      _rule("stt",      prefer_gpu=True),

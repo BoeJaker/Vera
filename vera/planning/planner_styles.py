@@ -527,14 +527,24 @@ def resolve_loop_style(requested: Any) -> Tuple[str, Dict[str, Any], str]:
 # ── BROAD: work-streams, planned concurrently, merged on the host ────────────
 
 MAX_STREAMS = 5
-#: Routing roles (profile planning_style) the streams alternate over: `stream`
-#: prefers the GPU, `stream_cpu` is held off it, so a 3-stream plan puts one
-#: planner call on the GPU and one on each CPU node at once. Both are editable
-#: on the Model Routing page. Measured 2026-09-27: qwen2.5:7b on a CPU node
-#: decodes ~7 tok/s (~6 with both nodes busy) but reads a prompt at only ~25
-#: tok/s, so a CPU stream is SLOWER than the GPU at planning - the spread frees
-#: the GPU, it does not speed planning up. Point stream_cpu at the GPU to trade.
-STREAM_ROLES = ("stream", "stream_cpu")
+#: Routing roles (profile planning_style), placed by the compute-roles rule
+#: (.git/vera-work/shared-planning/compute-roles/PLAN.md): the GPU carries the
+#: core plan, the CPU nodes plan IN PARALLEL and enrich it - the research
+#: pipeline's writer/analyst split.
+#:   stream  - each stream's step plan. GPU: the run is waiting on it, and the
+#:             GPU does it in seconds. (First design alternated streams onto the
+#:             CPU nodes: measured 2026-09-27 a CPU stream took 199-251 s against
+#:             6-17 s on the GPU - the CPU node WAS the planning time.)
+#:   enrich  - a deeper per-stream brief (inputs, pitfalls, what a complete
+#:             deliverable holds) on a CPU node, concurrently; added to that
+#:             stream's steps when it arrives.
+PLAN_ROLE = "stream"
+ENRICH_ROLE = "enrich"
+#: How long planning waits, after the GPU plan is ready, for the CPU briefs. A
+#: brief that arrives later is still applied to its stream's steps that have not
+#: run yet - it enriches the run, it never holds it.
+ENRICH_GRACE_S = 75.0
+MAX_BRIEF_CHARS = 1400
 
 BROAD_BRIEF_SYSTEM = (
     "You split an agentic GOAL into its WORK-STREAMS: the distinct, substantial bodies of "
@@ -635,9 +645,36 @@ def stream_directive(goal: str, streams: Sequence[Dict[str, Any]],
                stream.get("deliverable") or "(not stated)", dep_txt, caps_txt))
 
 
-def stream_roles(n: int) -> List[str]:
-    """Route role per stream, alternating GPU / CPU: 1->stream, 2->stream_cpu, ..."""
-    return [STREAM_ROLES[i % len(STREAM_ROLES)] for i in range(max(0, int(n)))]
+ENRICH_SYSTEM = (
+    "You are the ANALYST beside an agentic loop's planner. The planner is writing the steps; "
+    "you give the depth it has no time for. For ONE work-stream of the goal, write a short "
+    "brief with three parts, as plain bullet lines:\n"
+    "NEEDS: the facts, inputs or files this stream must have before it can finish\n"
+    "PITFALLS: the specific ways an automated agent gets this stream wrong\n"
+    "COMPLETE MEANS: what its deliverable must contain to count as done\n"
+    "Be specific to this goal. Never state a numeric result you worked out yourself. "
+    "No preamble, no headings beyond the three labels, at most 12 lines.")
+
+
+def enrich_prompt(goal: str, streams: Sequence[Dict[str, Any]],
+                  stream: Dict[str, Any]) -> str:
+    others = "\n".join("  %d. %s -> %s" % (s["id"], s["title"], s.get("deliverable") or "?")
+                       for s in streams)
+    return ("GOAL: %s\n\nWORK-STREAMS:\n%s\n\nBRIEF THIS STREAM: %d. %s\nOBJECTIVE: %s\n"
+            "DELIVERABLE: %s" % (goal, others, stream["id"], stream["title"],
+                                 stream["objective"], stream.get("deliverable") or "(not stated)"))
+
+
+def enrich_note(text: Any) -> str:
+    """A CPU brief as the block appended to a stream's step goal, bounded; '' if
+    the brief is empty. (The invented-value filter is for SUCCESS CRITERIA; a
+    brief is evidence, and its 4-digit numbers are mostly years.)"""
+    lines = clean_lines(text) if text else []
+    if not lines:
+        return ""
+    body = "\n".join("  - %s" % ln for ln in lines)[:MAX_BRIEF_CHARS]
+    return ("\n\nSTREAM BRIEF (a deeper review of this work-stream, prepared in parallel - "
+            "use it as evidence, the step goal above still decides the work):\n" + body)
 
 
 def merge_streams(streams: Sequence[Dict[str, Any]],

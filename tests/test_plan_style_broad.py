@@ -75,9 +75,25 @@ def test_a_directive_names_its_own_stream_and_is_piecewise():
     assert "stream 1 Gather -> notes.md" in d and "stream 2 Build -> app.html" in d
 
 
-def test_streams_alternate_gpu_and_cpu_routes():
-    assert PS.stream_roles(3) == ["stream", "stream_cpu", "stream"]
-    assert PS.stream_roles(0) == []
+def test_the_core_plan_goes_to_the_gpu_route_and_the_briefs_to_the_cpu_route():
+    """compute-roles: the plan the run waits on is GPU work; CPU plans in parallel."""
+    assert PS.PLAN_ROLE == "stream" and PS.ENRICH_ROLE == "enrich"
+    assert 0 < PS.ENRICH_GRACE_S <= 120
+
+
+def test_a_brief_becomes_a_bounded_evidence_block_and_keeps_its_years():
+    note = PS.enrich_note("NEEDS:\n- the March 2024 licence text\n- Valkey's first release date\n"
+                          "PITFALLS:\n- confusing SSPL with RSAL\n" + "- x%d\n" * 0)
+    assert note.startswith("\n\nSTREAM BRIEF") and "March 2024" in note
+    assert "confusing SSPL with RSAL" in note
+    assert len(PS.enrich_note("\n".join("- line %d %s" % (i, "y" * 150) for i in range(40)))) \
+        <= PS.MAX_BRIEF_CHARS + 200
+    assert PS.enrich_note("") == "" and PS.enrich_note(None) == ""
+
+
+def test_the_enrich_prompt_names_the_one_stream_to_brief():
+    p = PS.enrich_prompt("goal", STREAMS, STREAMS[0])
+    assert "BRIEF THIS STREAM: 1. Gather" in p and "3. Write -> report.md" in p
 
 
 def test_the_merge_renumbers_and_links_streams_by_their_dependencies():
@@ -149,38 +165,64 @@ def test_a_dependent_stream_is_told_not_to_regather():
 needs_app = pytest.mark.skipif(M is None, reason="app module not importable here")
 
 
-def _run_broad(monkeypatch, brief_json):
-    seen = {"calls": [], "in_flight": 0, "max_in_flight": 0}
-    both_started = asyncio.Event()
+def _run_broad(monkeypatch, brief_json, enrich_delay=0.0, enrich_fail=False, grace=5.0):
+    seen = {"plans": [], "enrich": [], "in_flight": 0, "max_in_flight": 0, "events": [],
+            "enrich_started_before_plans_done": False}
+    plans_done = {"n": 0}
 
     async def _gen(prompt, system="", **kw):
+        if kw.get("role") == "enrich":
+            seen["enrich"].append({"profile": kw.get("profile"), "prefer_gpu": kw.get("prefer_gpu")})
+            seen["enrich_in_flight"] = seen.get("enrich_in_flight", 0) + 1
+            seen["enrich_max"] = max(seen.get("enrich_max", 0), seen["enrich_in_flight"])
+            if plans_done["n"] < 2:
+                seen["enrich_started_before_plans_done"] = True
+            try:
+                if enrich_fail:
+                    raise RuntimeError("cpu node down")
+                await asyncio.sleep(enrich_delay or 0.02)
+                return "NEEDS:\n- the 2024 licence text\nPITFALLS:\n- mixing up SSPL and RSAL"
+            finally:
+                seen["enrich_in_flight"] -= 1
         return brief_json
+
+    both_started = asyncio.Event()
 
     async def _orch(goal, cat, skills, csm, **kw):
         seen["in_flight"] += 1
         seen["max_in_flight"] = max(seen["max_in_flight"], seen["in_flight"])
-        seen["calls"].append({"role": kw.get("route_role"), "profile": kw.get("route_profile"),
-                              "cat": list(cat), "directive": kw.get("master_plan", "")})
+        seen["plans"].append({"role": kw.get("route_role"), "profile": kw.get("route_profile"),
+                              "prefer_gpu": kw.get("prefer_gpu"), "directive": kw.get("master_plan", "")})
         if seen["in_flight"] >= 2:
             both_started.set()
-        # Concurrency proof: a sequential implementation deadlocks here and the
-        # wait_for below fails the test instead of hanging it.
         await asyncio.wait_for(both_started.wait(), timeout=5)
+        await asyncio.sleep(0.05)
         seen["in_flight"] -= 1
-        n = len(seen["calls"])
+        plans_done["n"] += 1
+        n = len(seen["plans"])
         return {"steps": [{"id": 1, "title": "s%d-a" % n, "caps": [], "needs": []},
                           {"id": 2, "title": "s%d-b" % n, "caps": [], "needs": [1]}]}
 
     async def _emit(ev):
-        seen.setdefault("events", []).append(ev)
+        seen["events"].append(ev)
 
     monkeypatch.setattr(M, "_safe_ollama_generate_dw", _gen)
     monkeypatch.setattr(M, "_v5_orchestrate_plan", _orch)
     monkeypatch.setattr(M, "emit_event", _emit)
-    plan = asyncio.run(M._v6_plan_broad(
-        "research small LLMs and write a report", CAT + ["x.%d" % i for i in range(30)],
-        [], {}, max_steps=8, sid="t", stream_id=""))
-    return plan, seen
+    monkeypatch.setattr(PS, "ENRICH_GRACE_S", grace)
+    monkeypatch.setattr(M._plan_styles, "ENRICH_GRACE_S", grace)
+
+    async def _go():
+        plan = await M._v6_plan_broad(
+            "research small LLMs and write a report", CAT, [], {}, max_steps=8, sid="t", stream_id="")
+        tasks = plan.pop("_enrich_tasks", {})
+        done = {k: (t.done() and not t.cancelled() and not t.exception() and t.result())
+                for k, t in tasks.items() if k != "__runner__"}
+        for t in tasks.values():
+            t.cancel()
+        return plan, done
+    plan, done = asyncio.run(_go())
+    return plan, seen, done
 
 
 BRIEF = ('{"streams":[{"id":1,"title":"Gather","objective":"find facts","caps":["web.research"],'
@@ -189,36 +231,77 @@ BRIEF = ('{"streams":[{"id":1,"title":"Gather","objective":"find facts","caps":[
 
 
 @needs_app
-def test_broad_plans_every_stream_at_the_same_time(monkeypatch):
-    plan, seen = _run_broad(monkeypatch, BRIEF)
+def test_every_stream_is_planned_on_the_gpu_route_concurrently(monkeypatch):
+    plan, seen, _ = _run_broad(monkeypatch, BRIEF)
     assert seen["max_in_flight"] == 2
-    assert [c["role"] for c in seen["calls"]] == ["stream", "stream_cpu"]
-    assert all(c["profile"] == "planning_style" for c in seen["calls"])
+    assert [p["role"] for p in seen["plans"]] == ["stream", "stream"]
+    assert all(p["profile"] == "planning_style" and p["prefer_gpu"] for p in seen["plans"])
+
+
+@needs_app
+def test_the_cpu_briefs_run_beside_the_gpu_plan_on_the_enrich_route(monkeypatch):
+    plan, seen, done = _run_broad(monkeypatch, BRIEF)
+    assert len(seen["enrich"]) == 2
+    assert all(e["profile"] == "planning_style" and e["prefer_gpu"] is False for e in seen["enrich"])
+    assert seen["enrich_started_before_plans_done"]
+    assert plan["broad"]["enriched_before_run"] == 2
+    assert all("STREAM BRIEF" in v and "2024" in v for v in done.values())
+
+
+@needs_app
+def test_only_one_heavy_cpu_generation_runs_at_a_time(monkeypatch):
+    """User 2026-09-27: one CPU node does heavy generation, one at a time, so the
+    embedding/worker node is never taken - two briefs at once would push the
+    second off the long-horizon node."""
+    _, seen, done = _run_broad(monkeypatch, BRIEF, enrich_delay=0.2)
+    assert len(seen["enrich"]) == 2 and seen["enrich_max"] == 1
+    assert all(done.values())
+
+
+@needs_app
+def test_the_enrich_route_is_the_long_horizon_cpu_job_type():
+    from Vera.vera import capability_orchestration as O
+    rule = O.DEFAULT_ROUTING_RULES["plan_enrich"]
+    assert rule["deny_gpu"] and rule["prefer"] == "cpu-247"          # not the embedder, cpu-246
+    assert O.DEFAULT_ROUTING_RULES["embedding"]["prefer"] == "cpu-246"
+    assert "plan_enrich" in O.OLLAMA_JOB_TYPES
+    role = (O.ROLE_PROFILES_DECLARED.get("planning_style") or {}).get("roles", {}).get("enrich")
+    if role:                                                          # planning module loaded
+        assert role["job_type"] == "plan_enrich" and role["deny_gpu"]
+
+
+@needs_app
+def test_planning_never_waits_past_the_grace_for_a_slow_cpu_brief(monkeypatch):
+    import time as _t
+    t0 = _t.monotonic()
+    plan, _, done = _run_broad(monkeypatch, BRIEF, enrich_delay=30.0, grace=0.3)
+    assert _t.monotonic() - t0 < 10
+    assert plan["steps"] and plan["broad"]["enriched_before_run"] == 0
+    assert not any(done.values())                       # still running: applied later by the loop
+
+
+@needs_app
+def test_a_failed_cpu_brief_costs_the_plan_nothing(monkeypatch):
+    plan, seen, done = _run_broad(monkeypatch, BRIEF, enrich_fail=True)
+    assert len(plan["steps"]) == 4 and not any(done.values())
+    errs = [e for e in seen["events"] if e["type"] == "agent_loop_v6.broad_stream_enriched"]
+    assert len(errs) == 2 and all("cpu node down" in e["error"] for e in errs)
 
 
 @needs_app
 def test_each_stream_is_planned_as_its_own_piece(monkeypatch):
-    _, seen = _run_broad(monkeypatch, BRIEF)
-    dirs = sorted(c["directive"] for c in seen["calls"])
+    _, seen, _ = _run_broad(monkeypatch, BRIEF)
+    dirs = [p["directive"] for p in seen["plans"]]
     assert any("PLAN ONLY STREAM 1 of 2: Gather" in d for d in dirs)
     assert any("PLAN ONLY STREAM 2 of 2: Write" in d for d in dirs)
 
 
 @needs_app
-def test_a_cpu_stream_sees_a_trimmed_catalog(monkeypatch):
-    _, seen = _run_broad(monkeypatch, BRIEF)
-    cpu = next(c for c in seen["calls"] if c["role"] == "stream_cpu")
-    gpu = next(c for c in seen["calls"] if c["role"] == "stream")
-    assert len(cpu["cat"]) <= 16 < len(gpu["cat"])
-    assert "prose.author" in cpu["cat"]                         # its own caps survive the trim
-
-
-@needs_app
 def test_the_merged_plan_links_the_write_up_to_the_gathering(monkeypatch):
-    plan, seen = _run_broad(monkeypatch, BRIEF)
+    plan, seen, _ = _run_broad(monkeypatch, BRIEF)
     steps = plan["steps"]
     assert len(steps) == 4 and plan["broad"]["streams"] == 2
-    assert steps[2]["needs"] == [2]                             # Write's first step needs Gather's last
+    assert steps[2]["needs"] == [2]
     kinds = [e["type"] for e in seen["events"]]
     assert "agent_loop_v6.broad_streams" in kinds
     assert kinds.count("agent_loop_v6.broad_stream_planned") == 2
@@ -226,7 +309,7 @@ def test_the_merged_plan_links_the_write_up_to_the_gathering(monkeypatch):
 
 @needs_app
 def test_no_streams_means_no_steps_so_the_loop_falls_back(monkeypatch):
-    plan, _ = _run_broad(monkeypatch, '{"streams": []}')
+    plan, _, _ = _run_broad(monkeypatch, '{"streams": []}')
     assert plan["steps"] == [] and "did not split" in plan["broad"]["error"]
 
 
@@ -253,3 +336,24 @@ def test_the_planner_route_override_defaults_to_the_old_route():
     assert '_plan_profile = route_profile or LOOP_ROUTING_PROFILE' in b
     assert '_plan_role = route_role or "planner"' in b
     assert b.count("profile=_plan_profile, role=_plan_role") == 2
+
+
+def test_the_loop_applies_a_brief_to_each_step_of_its_stream_before_it_runs():
+    b = _body("cap_dag_agent_loop_v6")
+    apply_at = b.index('step["goal"] = str(step.get("goal") or "") + _et.result()')
+    run_at = b.index("res = await _run_one(step, gcycle)")
+    assert apply_at < run_at
+    assert '_enrich_tasks = plan.pop("_enrich_tasks", {}) or {}' in b
+
+
+def test_leftover_briefs_are_cancelled_when_v6_ends_or_broad_falls_back():
+    b = _body("cap_dag_agent_loop_v6")
+    ret = b.rindex('"plan_style": _plan_style_rec,')
+    assert b.rindex("_t.cancel()", 0, ret) > b.index("# BROAD: a CPU brief still running")
+    assert "for _t in _enrich_tasks.values():\n                _t.cancel()" in b
+
+
+def test_v5_never_touches_broads_tasks():
+    """The v5 and v6 returns open with the same lines; a cleanup once landed in v5
+    by mistake, where _enrich_tasks does not exist - every v5 run would crash."""
+    assert "_enrich_tasks" not in _body("cap_dag_agent_loop_v5")

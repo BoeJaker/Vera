@@ -44,18 +44,23 @@ try:
             # between two of the loop planner's own calls; the prompts are tiny.
             "lens": {"job_type": "planning_lens", "prefer_gpu": True,
                      "options": {"temperature": 0.3}},
-            # The BROAD style's per-stream planner calls alternate these two so a
-            # 3-stream plan puts one call on the GPU and one on each CPU node.
-            # `stream` sets no num_ctx for the lens's reason above. `stream_cpu`
-            # is held off the GPU and pinned to qwen2.5:7b (every node carries
-            # it; measured 2026-09-27 on the CPU nodes: ~7 tok/s decode, ~25
-            # tok/s prompt read, 8 s load) with a window that fits a trimmed
-            # planner prompt. Point it at the GPU here to make broad GPU-only.
+            # The BROAD style, placed by the compute-roles rule
+            # (.git/vera-work/shared-planning/compute-roles/PLAN.md):
+            # `stream` - each work-stream's step plan: the plan the run waits on,
+            #   so the GPU (seconds; a CPU node took 199-251 s, 2026-09-27). No
+            #   num_ctx, for the lens's reason above.
+            # `enrich` - a deeper per-stream brief planned IN PARALLEL on a CPU
+            #   node, like the research analyst beside the writer; merged into
+            #   the stream's steps when it lands. Held off the GPU; its job type
+            #   plan_enrich prefers the long-horizon CPU node (cpu-247) and keeps
+            #   off the embedding/worker node (cpu-246), and broad issues these
+            #   one at a time. qwen2.5:7b until a higher-quality CPU model is
+            #   measured (2026-09-27: ~7 tok/s decode, ~25 tok/s prompt read).
             "stream": {"job_type": "planning_lens", "prefer_gpu": True,
                        "options": {"temperature": 0.3}},
-            "stream_cpu": {"job_type": "planning_lens", "deny_gpu": True,
-                           "model": "qwen2.5:7b",
-                           "options": {"temperature": 0.3, "num_ctx": 8192}},
+            "enrich": {"job_type": "plan_enrich", "deny_gpu": True,
+                       "model": "qwen2.5:7b",
+                       "options": {"temperature": 0.3, "num_ctx": 8192}},
         })
 except Exception as e:                       # pragma: no cover - never block load
     log.debug("register planning_style profile: %s", e)

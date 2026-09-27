@@ -19133,16 +19133,21 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
                          stream_id: str = "") -> Dict[str, Any]:
     """The BROAD planning style (planner_styles.LOOP_STYLES['broad']).
 
+    Research-shaped, placed by the compute-roles rule (GPU = the core plan the
+    run waits on; CPU nodes = parallel planning work merged in, like the
+    research analyst beside the writer):
     1. ONE call on the loop's planner role splits the goal into work-streams.
-    2. Every stream is planned CONCURRENTLY as a piece of the whole
-       (_v5_orchestrate_plan with a [PIECEWISE] directive), alternating the
-       planning_style `stream` (GPU) and `stream_cpu` (CPU) routes, so up to all
-       three nodes plan at once. A CPU stream sees a trimmed catalog (its own
-       caps + the goal's seed caps) to keep its prompt short: a CPU node reads a
-       prompt at ~25 tok/s.
-    3. The sub-plans are merged host-side (planner_styles.merge_streams).
-    Returns the loop's plan shape plus `broad` detail; steps == [] means the
-    caller falls back to its own planner."""
+    2. GPU: every stream's step plan (_v5_orchestrate_plan with a [PIECEWISE]
+       directive, planning_style/stream route) - seconds each.
+    3. CPU, concurrently from the moment the streams exist: a deeper brief per
+       stream (planning_style/enrich route). Planning waits a bounded grace
+       after the GPU plan for them; each brief is applied to its stream's steps
+       before they run (by the loop, so a late brief still reaches the stream's
+       remaining steps) - never a reason to hold the run.
+    4. The sub-plans are merged host-side (merge_streams, dedupe_across_streams).
+    Returns the loop's plan shape plus `broad` detail and `_enrich_tasks`
+    ({stream id: task}); steps == [] means the caller falls back to its own
+    planner (and the tasks are cancelled)."""
     PSx = _plan_styles
     empty = {"steps": [], "reason": "", "complexity": "", "recon": [], "done_when": ""}
     if PSx is None:
@@ -19169,30 +19174,72 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
                       "stream_id": stream_id, "brief_s": brief_s,
                       "streams": [{k: s[k] for k in ("id", "title", "deliverable",
                                                     "dependencies", "caps")} for s in streams]})
-    roles = PSx.stream_roles(len(streams))
     per_stream = max(2, min(max_steps, (max_steps * 2) // len(streams) + 1))
-    seed = [c for c in _v5_seed_caps_for(goal) if c in set(catalog_names)]
-    catalog_set = set(catalog_names)
 
-    async def _one(s: Dict[str, Any], role: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    # CPU: the deeper per-stream briefs start NOW, beside the GPU planning.
+    async def _enrich(s: Dict[str, Any]) -> str:
         t1 = time.monotonic()
-        if role == "stream_cpu":
-            cat = list(dict.fromkeys([c for c in s.get("caps") or [] if c in catalog_set]
-                                     + seed))[:16] or list(catalog_names)[:16]
-        else:
-            cat = list(catalog_names)
+        text, err = "", ""
+        try:
+            raw = await _safe_ollama_generate_dw(
+                PSx.enrich_prompt(goal, streams, s), system=PSx.ENRICH_SYSTEM,
+                json_mode=False, model="", instance_id="", prefer_gpu=False, think=False,
+                profile="planning_style", role=PSx.ENRICH_ROLE, request_stage="plan_enrich",
+                timeout=900)
+            text = PSx.enrich_note(_strip_think(raw or "")[0])
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"[:160]
+        try:
+            await emit_event({"type": "agent_loop_v6.broad_stream_enriched", "session_id": sid,
+                              "stream_id": stream_id, "stream": s["id"], "title": s["title"],
+                              "role": PSx.ENRICH_ROLE, "elapsed_s": round(time.monotonic() - t1, 1),
+                              "chars": len(text), "error": err})
+        except Exception:
+            pass
+        return text
+
+    # ONE heavy CPU generation at a time (user, 2026-09-27): the briefs run
+    # sequentially, in stream order, on the long-horizon node - two at once
+    # would spill the second onto the embedding node. Streams execute in that
+    # order too, so a later stream's brief has longer to arrive. Each stream gets
+    # a future the loop can poll; the runner task is kept under "__runner__".
+    _loop = asyncio.get_running_loop()
+    enrich_tasks: Dict[Any, Any] = {s["id"]: _loop.create_future() for s in streams}
+
+    async def _enrich_runner() -> None:
+        for s in streams:
+            fut = enrich_tasks[s["id"]]
+            if fut.done():
+                continue
+            try:
+                txt = await _enrich(s)
+            except asyncio.CancelledError:
+                for f in enrich_tasks.values():
+                    if isinstance(f, asyncio.Future) and not f.done():
+                        f.cancel()
+                raise
+            if not fut.done():
+                fut.set_result(txt)
+
+    enrich_tasks["__runner__"] = asyncio.create_task(_enrich_runner())
+
+    # GPU: every stream's step plan - the core plan the run is waiting on.
+    async def _one(s: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        t1 = time.monotonic()
         try:
             sub = await _v5_orchestrate_plan(
-                goal, cat, skills, cap_skill_map, model="", instance_id="",
-                prefer_gpu=(role != "stream_cpu"), max_steps=per_stream,
+                goal, list(catalog_names), skills, cap_skill_map, model="", instance_id="",
+                prefer_gpu=True, max_steps=per_stream,
                 master_plan=PSx.stream_directive(goal, streams, s), want_success=True,
                 phase_policy=phase_policy, intent=intent, sid=sid, stream_id="",
-                route_profile="planning_style", route_role=role)
+                route_profile="planning_style", route_role=PSx.PLAN_ROLE)
             steps = list(sub.get("steps") or [])
             err = ""
         except Exception as e:
             steps, err = [], f"{type(e).__name__}: {e}"[:160]
-        rec = {"stream": s["id"], "title": s["title"], "role": role,
+        rec = {"stream": s["id"], "title": s["title"], "role": PSx.PLAN_ROLE,
                "elapsed_s": round(time.monotonic() - t1, 1), "steps": len(steps)}
         if err:
             rec["error"] = err
@@ -19201,7 +19248,15 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
                           "titles": [str(x.get("title") or "")[:80] for x in steps][:8]})
         return steps, rec
 
-    results = await asyncio.gather(*(_one(s, r) for s, r in zip(streams, roles)))
+    results = await asyncio.gather(*(_one(s) for s in streams))
+    gpu_s = round(time.monotonic() - t0, 1)
+    # Bounded grace for the CPU briefs, like the research analyst's bounded wait.
+    _briefs = [f for k, f in enrich_tasks.items() if k != "__runner__"]
+    _pending = [f for f in _briefs if not f.done()]
+    if _pending:
+        await asyncio.wait(_pending, timeout=PSx.ENRICH_GRACE_S)
+    enriched_in_time = sum(1 for f in _briefs
+                           if f.done() and not f.cancelled() and not f.exception() and f.result())
     merged = PSx.merge_streams(streams, [r[0] for r in results],
                                hard_cap=max(max_steps * 2, 16))
     # Streams are planned in isolation and repeat each other's work (a report's
@@ -19210,16 +19265,21 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
     if _dupes:
         await emit_event({"type": "agent_loop_v6.broad_deduped", "session_id": sid,
                           "stream_id": stream_id, "dropped": _dupes[:12]})
-    detail = {"streams": len(streams), "brief_s": brief_s,
+    detail = {"streams": len(streams), "brief_s": brief_s, "gpu_plan_s": gpu_s,
               "total_s": round(time.monotonic() - t0, 1),
               "per_stream": [r[1] for r in results],
-              "duplicates_dropped": len(_dupes)}
+              "duplicates_dropped": len(_dupes),
+              "enriched_before_run": enriched_in_time}
     if not merged:
+        for t in enrich_tasks.values():
+            t.cancel()
         return {**empty, "broad": {**detail, "error": "no stream produced steps"}}
     return {"steps": merged,
-            "reason": "broad style: %d work-streams planned in parallel -> %d steps"
-                      % (len(streams), len(merged)),
-            "complexity": "", "recon": [], "done_when": "", "broad": detail}
+            "reason": "broad style: %d work-streams planned on the GPU -> %d steps; %d/%d CPU "
+                      "stream briefs ready before the run" % (len(streams), len(merged),
+                                                            enriched_in_time, len(streams)),
+            "complexity": "", "recon": [], "done_when": "", "broad": detail,
+            "_enrich_tasks": enrich_tasks}
 
 
 def _v5_piece_fallback_step(piece: Dict[str, Any], goal: str,
@@ -23842,15 +23902,22 @@ async def cap_dag_agent_loop_v6(
                            "the steps, their sizing and their capabilities are still yours to "
                            "decide under the rules.")
     _broad_fell_back = False
+    # BROAD's CPU stream briefs ({stream id: task}), applied to each stream's
+    # steps as they come up (see the step loop) and cancelled at the run's end.
+    _enrich_tasks: Dict[Any, Any] = {}
     if _pstyle.get("broad"):
-        # BROAD: work-streams planned concurrently across the nodes, merged here.
+        # BROAD: the GPU plans every work-stream, the CPU nodes brief them in parallel.
         plan = await _v6_plan_broad(
             plan_goal, catalog_names, skills, cap_skill_map,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
             max_steps=max_steps, phase_policy=phase_policy, intent=intent,
             sid=sid, stream_id=stream_id)
         _style_detail = {"broad": plan.pop("broad", {})}
+        _enrich_tasks = plan.pop("_enrich_tasks", {}) or {}
         if not plan.get("steps"):
+            for _t in _enrich_tasks.values():
+                _t.cancel()
+            _enrich_tasks = {}
             _broad_fell_back = True
             _plan_style_why = ("broad: %s - planned as auto"
                                % (_style_detail["broad"].get("error") or "no steps"))
@@ -24725,6 +24792,17 @@ async def cap_dag_agent_loop_v6(
         # Fork snapshot = the ancestor chain WITHOUT this step's attempt. A branch
         # spawned on failure inherits this and never sees the failed try (or siblings).
         pre_bb = dict(blackboard)
+        # BROAD: this stream's CPU brief, if it has arrived, goes in with the step.
+        # Checked per step, so a brief that landed after planning still reaches
+        # the stream's remaining steps.
+        if _enrich_tasks and step.get("piece") in _enrich_tasks and not step.get("_stream_brief"):
+            _et = _enrich_tasks[step["piece"]]
+            if _et.done() and not _et.cancelled() and not _et.exception() and _et.result():
+                step["goal"] = str(step.get("goal") or "") + _et.result()
+                step["_stream_brief"] = True
+                await emit_event({"type": "agent_loop_v6.broad_brief_applied", "session_id": sid,
+                                  "stream_id": stream_id, "step_id": step.get("id"),
+                                  "stream": step.get("piece")})
         res = await _run_one(step, gcycle)
         # Carry the step's success criterion onto the result so the ledger/controller
         # can judge it against the bar the planner set.
@@ -25042,6 +25120,10 @@ async def cap_dag_agent_loop_v6(
         except Exception:
             pass
 
+    # BROAD: a CPU brief still running when the run is over enriches nothing.
+    for _t in (_enrich_tasks or {}).values():
+        if not _t.done():
+            _t.cancel()
     return {
         "goal": goal, "steps": results,
         "blackboard": {str(k): v for k, v in blackboard.items()},
