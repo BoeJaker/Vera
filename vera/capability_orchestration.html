@@ -2648,7 +2648,7 @@ function _lhmRenderAbsorbed(host, pid, nav){
     const lhm = Object.assign({}, nav.lhm, { active: Object.assign({}, nav.lhm.active, { menu, tab: tab || (nav.lhm.active && nav.lhm.active.menu === menu ? nav.lhm.active.tab : '') }) });
     _panelNavCache[pid] = Object.assign({}, nav, { active: menu, lhm });   // optimistic; the panel's publish confirms
     _lhmNavSync();
-  }, { topOn: false, topTitle: 'Its own top-level list', onTop: () => _lhmNavSelect(pid, '☰') });
+  }, { topOn: false, topTitle: 'Its own top-level list', onTop: () => _lhmNavSelect(pid, '☰'), onSplit: _localLhm[pid] ? null : (id => _lhmOpenBeside(pid.replace(/--\d+$/, ''), id)) });
   host.appendChild(abs);
   return true;
 }
@@ -2958,7 +2958,7 @@ function _panelSectionsFor(pid){
 function _lhmTabRows(){
   return [...document.querySelectorAll('#tabBar .tab')].map(t => { const pid = _tabToPanelId(t); if(!pid) return null;
     const label = Array.from(t.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('') || pid;
-    const reg = (_uiPanelCache || []).find(p => p.id === pid.replace(/^auto-/, '')) || null;
+    const reg = (_uiPanelCache || []).find(p => p.id === pid.replace(/^auto-/, '').replace(/--\d+$/, '')) || null;
     const isOpen = _openTabs.has(pid), active = isOpen && ([..._openTabs][0] === pid || _openTabs.size === 1);
     return { pid, label, icon: (reg && reg.icon) || '', open: isOpen, active }; }).filter(Boolean);
 }
@@ -2992,6 +2992,7 @@ function _lhmNativeRender(host){
     open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() },
     onPanel: (pid, ev) => { if(ev && (ev.ctrlKey || ev.metaKey)) splitTab(pid); else switchTab(pid); _tabFireLoader(pid); _lhmNavSync(); },
     onSection: (pid, sid, i) => { _lhmSecOpen[pid] = i; _lhmNavSync(); },
+    onBeside: (pid, sec, tab) => { _lhmOpenBeside(pid, tab ? (sec.nav ? tab.id : (sec.id + '/' + tab.id)) : ''); },
     onTab: (pid, sec, tab) => { _lhmNavSelect(pid, sec.nav ? tab.id : (sec.id + '/' + tab.id)); if(sec.nav){ const nav = _panelNavCache[pid]; if(nav) _panelNavCache[pid] = Object.assign({}, nav, { active: tab.id }); } _lhmNavSync(); },
     widgets, note: 'One menu, everywhere: this side menu, the strips under the tabs and the chat\'s rail are one component. Open a UI and its menu is this menu; ☰ at the top swaps it for this list, in place.' });
 }
@@ -8259,6 +8260,54 @@ _localLhm.dashboard = function(id){
   if(g) g.addEventListener('vera:dash:preset', () => _dashLhmSoon(60));
   const ab = document.getElementById('dashAutoBtn'); if(ab && window.MutationObserver) new MutationObserver(() => _dashLhmSoon(60)).observe(ab, { childList: true, characterData: true, subtree: true });
 })();
+
+// ═══ SIDE BY SIDE, FROM ANY MENU (owner, 2026-09-27: "can any option in any of the lhms be opened in the side-by-side mode
+// like the top level panels can so you could have 2 estate panels side-by side or opened by the chat panel bridge"). An
+// option opens its panel beside what is open, at that option; when the panel is open already, a SECOND instance of it
+// opens beside the first (Estate \u00b7 2): its own tab and frame, the same page, its own section. An instance is gone when
+// it is closed. The chat's bridge asks for the same with vera:lhm:tab (panel.open at 'harness' / 'beside'). ═══
+function _lhmOpenBeside(pid, navId){
+  if(!pid || _localLhm[pid]) return null;          // the dashboard is drawn by the harness itself: one of it
+  let target = pid;
+  if(_openTabs.has(pid)){ target = _tabClone(pid); if(!target) return null; }
+  _openTabs.add(target); _tabRender(); try{ _tabFireLoader(target); }catch(_){}
+  if(navId) _navSelectWhenReady(target, navId);
+  _lhmNavSync(); return target;
+}
+function _tabClone(pid){
+  const src = document.getElementById('panel-' + pid); if(!src) return null;
+  const f = src.querySelector('iframe');
+  let url = f ? (f.getAttribute('src') || f.getAttribute('data-lazy-src') || '') : '';
+  if(!url && /^auto-/.test(pid)) url = '/ui/panels/' + pid.slice(5);
+  if(!url) return null;
+  let n = 2; while(document.getElementById('panel-' + pid + '--' + n)) n++;
+  const cid = pid + '--' + n;
+  const tab = document.querySelector('#tabBar .tab[data-tab="' + CSS.escape(pid) + '"]');
+  const label = tab ? (Array.from(tab.childNodes).filter(x => x.nodeType === 3).map(x => x.textContent.trim()).join('') || pid) : pid;
+  if(tab){ const t2 = document.createElement('div'); t2.className = 'tab'; t2.dataset.tab = cid; t2.dataset.cloneOf = pid; t2.textContent = label + ' \u00b7 ' + n; tab.parentNode.insertBefore(t2, tab.nextSibling); }
+  const p = document.createElement('div'); p.className = 'panel'; p.id = 'panel-' + cid; p.dataset.cloneOf = pid;
+  const box = document.createElement('div'); box.style.cssText = 'height:100%;display:flex;flex-direction:column';
+  const fr = document.createElement('iframe'); fr.style.cssText = 'flex:1;border:none;width:100%;height:100%'; fr.setAttribute('allow', 'clipboard-read; clipboard-write');
+  fr.addEventListener('load', () => { try{ fr.contentWindow.postMessage({ type: 'vera:panel:init', panel_id: cid, session_id: '' }, '*'); }catch(_){} });
+  fr.src = url; box.appendChild(fr); p.appendChild(box); src.parentNode.appendChild(p);
+  return cid;
+}
+// a section is chosen once the panel has loaded and published its menu (the bridge's nav_select)
+function _navSelectWhenReady(pid, navId){
+  let n = 0;
+  (function go(){ const f = _panelFrame(pid); if(f && f.contentWindow && _panelNavCache[pid]){ _lhmNavSelect(pid, navId); return; } if(++n < 60) setTimeout(go, 400); })();
+}
+// an instance is gone when it is closed: its tab and its frame
+function _tabClonesPrune(){
+  document.querySelectorAll('.panels > .panel[data-clone-of]').forEach(p => { const id = _panelIdFromEl(p); if(_openTabs.has(id)) return;
+    p.remove(); document.querySelector('#tabBar .tab[data-tab="' + CSS.escape(id) + '"]')?.remove(); delete _panelNavCache[id]; delete _hdrOffers[id]; });
+}
+{ const __tabRender2 = _tabRender; _tabRender = function(){ const r = __tabRender2.apply(this, arguments); try{ _tabClonesPrune(); }catch(_){} return r; }; }
+// the chat's panel bridge: panel.open at 'harness' / 'beside' (a section with it)
+window.addEventListener('message', e => { const d = e.data; if(!d || typeof d !== 'object' || d.type !== 'vera:lhm:tab' || !d.id) return;
+  const id = String(d.id); const tab = document.querySelector('#tabBar .tab[data-tab="' + CSS.escape(id) + '"]') || document.querySelector('#tabBar .tab[data-tab="auto-' + CSS.escape(id) + '"]');
+  if(!tab) return; const pid = _tabToPanelId(tab); if(d.by) _tabOrigin[pid] = String(d.by);
+  _lhmOpenBeside(pid, String(d.section || '')); });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CROSS-FRAME WIDGET POP-OUT — embedded dashboards (Dream, Workers & Ollama, …)

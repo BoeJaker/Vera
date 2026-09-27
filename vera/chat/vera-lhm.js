@@ -152,6 +152,12 @@
     'html.vpb-nav-hosted .lhm-rail,html.vpb-nav-hosted .lhm-det .ctx-tab-bar{display:none!important}',
     /* an absorbed menu in a host */
     '.lhm-absorbed{display:flex;flex-direction:row;min-height:0;flex:1}',
+    /* \u29c9 on a row: open it side by side (Ctrl/\u2318/middle-click does the same) */
+    '.lhm-bs{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:5px;font-size:11px;color:var(--t2,var(--dim2));background:var(--s3,var(--bg3));opacity:0;transition:opacity .15s;cursor:pointer}',
+    '.lhm-bs:hover{color:var(--t1,var(--text));background:var(--fill,var(--bg2))}',
+    '.lhm-absorbed .lhm-tab,.lhm-side .lhm-s-opt,.lhm-side .lhm-s-row{position:relative}',
+    '.lhm-absorbed .lhm-tab:hover .lhm-bs,.lhm-side .lhm-s-opt:hover .lhm-bs,.lhm-side .lhm-s-row:hover .lhm-bs{opacity:1}',
+    '.lhm-side.railed .lhm-bs{display:none}',
     '.lhm-absorbed .lhm-tabs{flex:1;display:flex;flex-direction:column;gap:1px;padding:6px 4px;min-width:0;overflow-y:auto}',
     '.lhm-absorbed .lhm-tab{padding:7px 9px;border-radius:var(--r-sm,6px);font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11.5px;line-height:1.3;color:var(--t2,var(--dim2,#8a92a0));cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;transition:background .15s,color .15s}',
     '.lhm-absorbed .lhm-tab:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}',
@@ -736,6 +742,8 @@ function _ebar(title, onAdd, onDone){
 
   // ── the host side: draw another page's menu from its spec ──────────────
   // host: an element to fill; spec: what the owner published (state.nav.lhm); pick(id): send it back
+  function _splitKey(ev){ return !!(ev && (ev.ctrlKey || ev.metaKey || ev.button === 1)); }
+  function _beside(row, fn, title){ var b = _el('span', 'lhm-bs', '\u29c9'); b.title = title || 'Open side by side (Ctrl/\u2318-click does the same)'; b.addEventListener('click', function(ev){ ev.stopPropagation(); fn(); }); row.appendChild(b); return b; }
   function absorb(host, spec, pickFn, opts){
     if(!host || !spec) return null;
     opts = opts || {}; _css(host.ownerDocument);
@@ -749,7 +757,8 @@ function _ebar(title, onAdd, onDone){
     (spec.menus || []).forEach(function(m){
       var ico = _el('div', 'lhm-ico' + (m.id === act.menu ? ' on' : ''), m.icon || '•'); ico.title = m.label;
       if(m.badge) ico.appendChild(_el('span', 'lhm-badge', String(m.badge)));
-      ico.addEventListener('click', function(){ pickFn(m.id); });
+      ico.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(m.id); else pickFn(m.id); });
+      ico.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(m.id); } });
       rail.appendChild(ico);
     });
     rail.appendChild(_el('div', 'lhm-sp'));
@@ -760,7 +769,9 @@ function _ebar(title, onAdd, onDone){
       tabs.appendChild(_el('div', 'lhm-ttl', cur.title || cur.label));
       (cur.tabs || []).forEach(function(t){
         var e = _el('div', 'lhm-tab' + (t.id === act.tab ? ' on' : ''), t.label); e.title = t.label;
-        e.addEventListener('click', function(){ pickFn(cur.id + '/' + t.id); });
+        e.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(cur.id + '/' + t.id); else pickFn(cur.id + '/' + t.id); });
+        e.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(cur.id + '/' + t.id); } });
+        if(opts.onSplit) _beside(e, function(){ opts.onSplit(cur.id + '/' + t.id); });
         tabs.appendChild(e);
       });
     }
@@ -824,13 +835,18 @@ function _ebar(title, onAdd, onDone){
       r.appendChild(_el('span', 'ico', p.icon || '▭')); var nm = _el('span', 'nm'); nm.appendChild(_el('span', '', p.label || p.id)); r.appendChild(nm);
       if(p.ct) r.appendChild(_el('span', 'ct', String(p.ct)));
       r.addEventListener('click', function(ev){ if(cfg.onPanel) cfg.onPanel(p.id, ev); });
+      if(cfg.onBeside) _beside(r, function(){ cfg.onBeside(p.id); }, 'Open this panel side by side - a second one when it is open already');
       pan.appendChild(r);
       (p.sections || []).forEach(function(sec, i){
         var se = _el('div', 'lhm-s-sec' + (sec.on ? ' on' : ''));
         var h = _el('div', 'lhm-s-sech'); h.appendChild(_el('i')); h.appendChild(_el('span', '', sec.label || sec.id));
         h.addEventListener('click', function(ev){ ev.stopPropagation(); if(cfg.onSection) cfg.onSection(p.id, sec.id, i); });
         se.appendChild(h);
-        if(sec.on) (sec.tabs || []).forEach(function(t){ var o = _el('div', 'lhm-s-opt' + (t.on ? ' on' : ''), t.label || t.id); o.addEventListener('click', function(ev){ ev.stopPropagation(); if(cfg.onTab) cfg.onTab(p.id, sec, t); }); se.appendChild(o); });
+        if(sec.on) (sec.tabs || []).forEach(function(t){ var o = _el('div', 'lhm-s-opt' + (t.on ? ' on' : ''), t.label || t.id);
+      o.addEventListener('click', function(ev){ ev.stopPropagation(); if(_splitKey(ev) && cfg.onBeside) cfg.onBeside(p.id, sec, t); else if(cfg.onTab) cfg.onTab(p.id, sec, t); });
+      o.addEventListener('auxclick', function(ev){ if(ev.button === 1 && cfg.onBeside){ ev.preventDefault(); ev.stopPropagation(); cfg.onBeside(p.id, sec, t); } });
+      if(cfg.onBeside) _beside(o, function(){ cfg.onBeside(p.id, sec, t); });
+      se.appendChild(o); });
         pan.appendChild(se);
       });
       bd.appendChild(pan);
