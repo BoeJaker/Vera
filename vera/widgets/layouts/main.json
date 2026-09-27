@@ -1111,7 +1111,7 @@
      "size": "m",
      "span": [
       4,
-      4
+      6
      ]
     },
     "draw": {
@@ -1203,7 +1203,7 @@
    ],
    "span": [
     4,
-    4
+    6
    ],
    "hidden": false,
    "refresh": "10s",
@@ -1222,7 +1222,7 @@
      "size": "m",
      "span": [
       4,
-      4
+      6
      ]
     },
     "draw": {
@@ -1307,7 +1307,7 @@
    ],
    "span": [
     4,
-    4
+    6
    ],
    "hidden": false,
    "refresh": "10s",
@@ -1326,7 +1326,7 @@
      "size": "m",
      "span": [
       4,
-      4
+      6
      ]
     },
     "draw": {
@@ -1434,7 +1434,7 @@
    ],
    "span": [
     4,
-    4
+    6
    ],
    "hidden": false,
    "refresh": "60s",
@@ -1451,10 +1451,10 @@
      "refresh": "2m"
     },
     "frame": {
-     "size": "xl",
+     "size": "l",
      "span": [
       8,
-      4
+      5
      ]
     },
     "draw": {
@@ -1470,14 +1470,60 @@
    },
    "at": [
     0,
-    21
+    23
    ],
    "span": [
     8,
-    4
+    5
    ],
    "hidden": false,
    "refresh": "30s",
+   "floated": false
+  },
+  {
+   "at": [
+    0,
+    28
+   ],
+   "record": {
+    "id": "ops-live",
+    "form": "vgraph",
+    "source": "ops.snapshot",
+    "title": "Live operations",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "nodes": "nodes",
+      "links": "links",
+      "type": "plane"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      8,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "mode": "estate-3d"
+    },
+    "open": "estate/ops",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "note": "the Live operations page (the estate as planes of nodes on a lattice of domains, what is in flight) as a tile - a version of the stack topology"
+   },
+   "span": [
+    8,
+    6
+   ],
+   "hidden": false,
+   "refresh": "15s",
    "floated": false
   },
   {
@@ -1493,7 +1539,7 @@
      "size": "m",
      "span": [
       4,
-      4
+      5
      ]
     },
     "draw": {
@@ -1596,11 +1642,11 @@
    },
    "at": [
     8,
-    21
+    23
    ],
    "span": [
     4,
-    4
+    5
    ],
    "hidden": false,
    "refresh": "60s",
@@ -1609,11 +1655,31 @@
   {
    "record": {
     "id": "node-agents",
-    "form": "composite",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "table",
     "source": "nodes.agent.status",
     "title": "Node agents",
     "read": {
-     "refresh": "30s"
+     "refresh": "30s",
+     "map": {
+      "rows": "nodes",
+      "name": "node"
+     }
+    },
+    "open": "estate/workers",
+    "draw": {
+     "body": "record",
+     "columns": [
+      "node",
+      "cores",
+      "mem_available_mb",
+      "runners"
+     ]
     },
     "frame": {
      "size": "m",
@@ -1621,70 +1687,11 @@
       4,
       2
      ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "children": [
-     {
-      "slot": "a",
-      "record": {
-       "form": "rows",
-       "source": "$subject.nodes",
-       "title": "cores",
-       "read": {
-        "map": {
-         "name": "node",
-         "value": "cores"
-        }
-       },
-       "draw": {
-        "limit": 3
-       }
-      }
-     },
-     {
-      "slot": "b",
-      "record": {
-       "form": "rows",
-       "source": "$subject.nodes",
-       "title": "memory free",
-       "read": {
-        "map": {
-         "name": "node",
-         "value": "mem_available_mb"
-        }
-       },
-       "draw": {
-        "unit": "MB",
-        "limit": 3
-       }
-      }
-     },
-     {
-      "slot": "c",
-      "record": {
-       "form": "rows",
-       "source": "$subject.nodes",
-       "title": "runners",
-       "read": {
-        "map": {
-         "name": "node",
-         "value": "runners"
-        }
-       },
-       "draw": {
-        "limit": 3
-       }
-      }
-     }
-    ],
-    "layout": "report",
-    "open": "estate/workers"
+    }
    },
    "at": [
-    0,
-    25
+    8,
+    28
    ],
    "span": [
     4,
@@ -1760,8 +1767,8 @@
     "open": "estate/storage"
    },
    "at": [
-    4,
-    25
+    8,
+    32
    ],
    "span": [
     4,
@@ -1806,7 +1813,7 @@
    },
    "at": [
     8,
-    25
+    30
    ],
    "span": [
     4,
@@ -1846,7 +1853,7 @@
    },
    "at": [
     0,
-    27
+    34
    ],
    "span": [
     4,
@@ -1884,7 +1891,7 @@
    },
    "at": [
     4,
-    27
+    34
    ],
    "span": [
     4,
@@ -1926,7 +1933,7 @@
    },
    "at": [
     8,
-    27
+    34
    ],
    "span": [
     4,
@@ -1955,7 +1962,7 @@
    },
    "at": [
     0,
-    31
+    38
    ],
    "span": [
     12,
@@ -2040,7 +2047,7 @@
    },
    "at": [
     0,
-    32
+    39
    ],
    "span": [
     4,
@@ -2080,7 +2087,7 @@
    },
    "at": [
     4,
-    32
+    39
    ],
    "span": [
     4,
@@ -2124,7 +2131,7 @@
    },
    "at": [
     8,
-    32
+    39
    ],
    "span": [
     4,
@@ -2169,7 +2176,7 @@
    },
    "at": [
     0,
-    34
+    41
    ],
    "span": [
     4,
@@ -2205,7 +2212,7 @@
    },
    "at": [
     4,
-    34
+    41
    ],
    "span": [
     4,
@@ -2243,7 +2250,7 @@
    },
    "at": [
     8,
-    34
+    41
    ],
    "span": [
     4,
@@ -2272,7 +2279,7 @@
    },
    "at": [
     0,
-    36
+    43
    ],
    "span": [
     12,
@@ -2285,36 +2292,106 @@
   {
    "record": {
     "id": "programmes",
-    "form": "pills",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "composite",
     "source": "loops.program.list",
     "title": "Programmes",
     "read": {
-     "refresh": "60s",
-     "map": {
-      "values": "programs",
-      "name": "name",
-      "status": "status"
-     }
+     "refresh": "60s"
     },
+    "open": "agents",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "donut",
+       "source": "$subject",
+       "title": "by status",
+       "read": {
+        "map": {
+         "parts": "programs",
+         "count": "status"
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "counter",
+       "source": "$subject",
+       "title": "programmes",
+       "read": {
+        "map": {
+         "of": "programs",
+         "total": true
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "column",
+       "source": "$subject",
+       "title": "started per day",
+       "read": {
+        "map": {
+         "values": "programs",
+         "count": "created",
+         "span": "day"
+        }
+       },
+       "draw": {
+        "limit": 21
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "programmes",
+       "read": {
+        "map": {
+         "rows": "programs",
+         "name": "name",
+         "status": "status",
+         "value": "horizon_days"
+        }
+       },
+       "draw": {
+        "limit": 6,
+        "unit": "d"
+       }
+      }
+     }
+    ],
     "frame": {
-     "size": "m",
+     "size": "l",
      "span": [
-      4,
-      2
+      6,
+      5
      ]
     },
     "draw": {
      "body": "record"
-    },
-    "open": "agents"
+    }
    },
    "at": [
     0,
-    37
+    44
    ],
    "span": [
-    4,
-    2
+    6,
+    5
    ],
    "hidden": false,
    "refresh": "60s",
@@ -2323,36 +2400,31 @@
   {
    "record": {
     "id": "looplab",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
     "form": "composite",
     "source": "evolve.sandbox.list",
     "title": "Loop Lab",
     "read": {
      "refresh": "30s"
     },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
+    "open": "evolve",
+    "layout": "grid",
     "children": [
      {
       "slot": "a",
       "record": {
-       "form": "kv",
-       "source": "$subject.capacity",
-       "title": "capacity",
+       "form": "ring",
+       "source": "$subject",
+       "title": "free slots",
        "read": {
         "map": {
-         "keys": [
-          "available_slots",
-          "port_capacity",
-          "redis_db_capacity"
-         ]
+         "value": "capacity.available_slots",
+         "max": "capacity.port_capacity"
         }
        }
       }
@@ -2368,11 +2440,11 @@
          "rows": "sandboxes",
          "name": "name",
          "status": "running",
-         "value": "port"
+         "value": "branch"
         }
        },
        "draw": {
-        "limit": 3
+        "limit": 6
        }
       }
      },
@@ -2393,18 +2465,54 @@
         "limit": 4
        }
       }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "donut",
+       "source": "$subject",
+       "title": "sandboxes by role",
+       "read": {
+        "map": {
+         "parts": "sandboxes",
+         "count": "role"
+        }
+       }
+      }
+     },
+     {
+      "slot": "e",
+      "record": {
+       "form": "donut",
+       "source": "evolve.pipeline.list",
+       "title": "pipelines by decision",
+       "read": {
+        "map": {
+         "parts": "pipelines",
+         "count": "decision"
+        }
+       }
+      }
      }
     ],
-    "layout": "report",
-    "open": "evolve"
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      5
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
    },
    "at": [
-    4,
-    37
+    6,
+    44
    ],
    "span": [
-    4,
-    2
+    6,
+    5
    ],
    "hidden": false,
    "refresh": "30s",
@@ -2413,25 +2521,40 @@
   {
    "record": {
     "id": "background",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
     "form": "composite",
     "source": "background.status",
     "title": "Background jobs",
     "read": {
      "refresh": "30s"
     },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
+    "open": "activity",
+    "layout": "grid",
     "children": [
      {
       "slot": "a",
+      "record": {
+       "form": "meter",
+       "source": "$subject",
+       "title": "quiet · until jobs may run",
+       "read": {
+        "map": {
+         "value": "quiet_for_s",
+         "max": "min_quiet_s"
+        }
+       },
+       "draw": {
+        "unit": "s"
+       }
+      }
+     },
+     {
+      "slot": "b",
       "record": {
        "form": "kv",
        "source": "$subject",
@@ -2439,24 +2562,24 @@
        "read": {
         "map": {
          "keys": [
-          "running",
-          "quiet_for_s",
-          "min_quiet_s"
+          "busy_reason",
+          "running"
          ]
         }
        }
       }
      },
      {
-      "slot": "b",
+      "slot": "c",
       "record": {
        "form": "rows",
-       "source": "$subject.jobs",
-       "title": "jobs",
+       "source": "$subject",
+       "title": "jobs · runs · defers",
        "read": {
         "map": {
+         "rows": "jobs",
          "name": "name",
-         "value": "runs",
+         "value": "defers",
          "status": "last_ok"
         }
        },
@@ -2466,33 +2589,44 @@
       }
      },
      {
-      "slot": "c",
+      "slot": "d",
       "record": {
-       "form": "kv",
-       "source": "$subject.queue",
-       "title": "queue",
+       "form": "rows",
+       "source": "$subject",
+       "title": "waiting",
        "read": {
         "map": {
-         "keys": [
-          "depth",
-          "oldest_wait_s",
-          "note"
-         ]
+         "rows": "queue.waiting",
+         "name": "title",
+         "value": "waiting_for_s",
+         "status": "state"
         }
+       },
+       "draw": {
+        "limit": 4,
+        "unit": "s"
        }
       }
      }
     ],
-    "layout": "report",
-    "open": "activity"
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      5
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
    },
    "at": [
-    8,
-    37
+    0,
+    55
    ],
    "span": [
     4,
-    2
+    5
    ],
    "hidden": false,
    "refresh": "30s",
@@ -2501,6 +2635,12 @@
   {
    "record": {
     "id": "sandboxes",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
     "form": "sandboxes",
     "source": "evolve.sandbox.list",
     "title": "Sandboxes",
@@ -2512,25 +2652,26 @@
       "status": "running"
      }
     },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      3
-     ]
-    },
+    "open": "estate/sandbox",
     "draw": {
-     "body": "record"
+     "body": "record",
+     "max": 48
     },
-    "open": "estate/sandbox"
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      4
+     ]
+    }
    },
    "at": [
-    0,
-    39
+    6,
+    49
    ],
    "span": [
-    4,
-    3
+    6,
+    4
    ],
    "hidden": false,
    "refresh": "30s",
@@ -2539,25 +2680,40 @@
   {
    "record": {
     "id": "minds",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
     "form": "composite",
     "source": "dream.scheduler.status",
     "title": "Dream · narrator",
     "read": {
      "refresh": "60s"
     },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      3
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
+    "open": "dream",
+    "layout": "grid",
     "children": [
      {
       "slot": "a",
+      "record": {
+       "form": "meter",
+       "source": "$subject",
+       "title": "idle · until it dreams",
+       "read": {
+        "map": {
+         "value": "idle_minutes",
+         "max": "min_idle_minutes"
+        }
+       },
+       "draw": {
+        "unit": "min"
+       }
+      }
+     },
+     {
+      "slot": "b",
       "record": {
        "form": "kv",
        "source": "$subject",
@@ -2567,15 +2723,15 @@
          "keys": [
           "scheduler_running",
           "enabled",
-          "idle_minutes",
-          "in_cycle"
+          "in_cycle",
+          "background_loops"
          ]
         }
        }
       }
      },
      {
-      "slot": "b",
+      "slot": "c",
       "record": {
        "form": "kv",
        "source": "dream.director.status",
@@ -2592,7 +2748,7 @@
       }
      },
      {
-      "slot": "c",
+      "slot": "d",
       "record": {
        "form": "kv",
        "source": "system.narrator.status",
@@ -2609,16 +2765,24 @@
       }
      }
     ],
-    "layout": "report",
-    "open": "dream"
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      5
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
    },
    "at": [
     4,
-    39
+    55
    ],
    "span": [
     4,
-    3
+    5
    ],
    "hidden": false,
    "refresh": "60s",
@@ -2627,40 +2791,65 @@
   {
    "record": {
     "id": "agents",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
     "form": "composite",
     "source": "agent.list",
     "title": "Agents · projects",
     "read": {
      "refresh": "60s"
     },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      3
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
+    "open": "agents",
+    "layout": "grid",
     "children": [
      {
       "slot": "a",
       "record": {
-       "form": "kv",
+       "form": "counter",
        "source": "$subject",
        "title": "agents",
        "read": {
         "map": {
-         "keys": [
-          "count"
-         ]
+         "of": "agents",
+         "total": true
         }
        }
       }
      },
      {
       "slot": "b",
+      "record": {
+       "form": "counter",
+       "source": "project.list",
+       "title": "projects",
+       "read": {
+        "map": {
+         "of": "projects",
+         "total": true
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "donut",
+       "source": "project.list",
+       "title": "projects by status",
+       "read": {
+        "map": {
+         "parts": "projects",
+         "count": "status"
+        }
+       }
+      }
+     },
+     {
+      "slot": "d",
       "record": {
        "form": "rows",
        "source": "project.list",
@@ -2669,16 +2858,35 @@
         "map": {
          "rows": "projects",
          "name": "name",
-         "status": "status"
+         "status": "status",
+         "value": "updated_at"
         }
        },
        "draw": {
-        "limit": 3
+        "limit": 5
        }
       }
      },
      {
-      "slot": "c",
+      "slot": "e",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "agents · context",
+       "read": {
+        "map": {
+         "rows": "agents",
+         "name": "label",
+         "value": "num_ctx"
+        }
+       },
+       "draw": {
+        "limit": 5
+       }
+      }
+     },
+     {
+      "slot": "f",
       "record": {
        "form": "rows",
        "source": "workshop.list_loop_variants",
@@ -2693,35 +2901,26 @@
         "limit": 4
        }
       }
-     },
-     {
-      "slot": "d",
-      "record": {
-       "form": "rows",
-       "source": "$subject.agents",
-       "title": "agents",
-       "read": {
-        "map": {
-         "name": "name",
-         "value": "num_ctx"
-        }
-       },
-       "draw": {
-        "limit": 4
-       }
-      }
      }
     ],
-    "layout": "report",
-    "open": "agents"
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
    },
    "at": [
-    8,
-    39
+    0,
+    49
    ],
    "span": [
-    4,
-    3
+    6,
+    6
    ],
    "hidden": false,
    "refresh": "60s",
@@ -2741,7 +2940,7 @@
      }
     },
     "frame": {
-     "size": "xl",
+     "size": "l",
      "span": [
       6,
       3
@@ -2766,7 +2965,7 @@
    },
    "at": [
     0,
-    42
+    60
    ],
    "span": [
     6,
@@ -2790,7 +2989,7 @@
      }
     },
     "frame": {
-     "size": "xl",
+     "size": "l",
      "span": [
       6,
       3
@@ -2816,7 +3015,7 @@
    },
    "at": [
     6,
-    42
+    60
    ],
    "span": [
     6,
@@ -2853,8 +3052,8 @@
     "open": "agents"
    },
    "at": [
-    0,
-    45
+    8,
+    55
    ],
    "span": [
     4,
@@ -2882,7 +3081,7 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -2892,12 +3091,12 @@
     "open": "evolve"
    },
    "at": [
-    4,
-    45
+    8,
+    57
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "5m",
@@ -2918,9 +3117,9 @@
      }
     },
     "frame": {
-     "size": "m",
+     "size": "l",
      "span": [
-      4,
+      6,
       2
      ]
     },
@@ -2930,11 +3129,11 @@
     "open": "agents"
    },
    "at": [
-    8,
-    45
+    6,
+    53
    ],
    "span": [
-    4,
+    6,
     2
    ],
    "hidden": false,
@@ -2960,7 +3159,7 @@
    },
    "at": [
     0,
-    47
+    63
    ],
    "span": [
     12,
@@ -3002,7 +3201,7 @@
    },
    "at": [
     0,
-    48
+    64
    ],
    "span": [
     9,
@@ -3040,7 +3239,7 @@
    },
    "at": [
     9,
-    48
+    64
    ],
    "span": [
     3,
@@ -3107,7 +3306,7 @@
    },
    "at": [
     0,
-    50
+    66
    ],
    "span": [
     4,
@@ -3151,7 +3350,7 @@
    },
    "at": [
     4,
-    50
+    66
    ],
    "span": [
     4,
@@ -3188,7 +3387,7 @@
    },
    "at": [
     8,
-    50
+    66
    ],
    "span": [
     4,
@@ -3217,7 +3416,7 @@
    },
    "at": [
     0,
-    52
+    68
    ],
    "span": [
     12,
@@ -3255,7 +3454,7 @@
    },
    "at": [
     0,
-    53
+    69
    ],
    "span": [
     4,
@@ -3292,7 +3491,7 @@
    },
    "at": [
     4,
-    53
+    69
    ],
    "span": [
     4,
@@ -3330,7 +3529,7 @@
    },
    "at": [
     8,
-    53
+    69
    ],
    "span": [
     4,
@@ -3370,7 +3569,7 @@
    },
    "at": [
     0,
-    55
+    71
    ],
    "span": [
     4,
@@ -3406,7 +3605,7 @@
    },
    "at": [
     4,
-    55
+    71
    ],
    "span": [
     2,
@@ -3443,7 +3642,7 @@
    },
    "at": [
     6,
-    55
+    71
    ],
    "span": [
     2,
@@ -3484,7 +3683,7 @@
    },
    "at": [
     8,
-    55
+    71
    ],
    "span": [
     4,
@@ -3513,7 +3712,7 @@
    },
    "at": [
     0,
-    57
+    73
    ],
    "span": [
     12,
@@ -3550,7 +3749,7 @@
    },
    "at": [
     0,
-    58
+    74
    ],
    "span": [
     4,
@@ -3594,7 +3793,7 @@
    },
    "at": [
     4,
-    58
+    74
    ],
    "span": [
     8,
@@ -3692,7 +3891,7 @@
    },
    "at": [
     0,
-    62
+    78
    ],
    "span": [
     4,
@@ -3797,7 +3996,7 @@
    },
    "at": [
     4,
-    62
+    78
    ],
    "span": [
     4,
@@ -3915,7 +4114,7 @@
    },
    "at": [
     8,
-    62
+    78
    ],
    "span": [
     4,
@@ -3944,7 +4143,7 @@
    },
    "at": [
     0,
-    65
+    81
    ],
    "span": [
     12,
@@ -3980,7 +4179,7 @@
    },
    "at": [
     0,
-    66
+    82
    ],
    "span": [
     4,
@@ -4018,7 +4217,7 @@
    },
    "at": [
     4,
-    66
+    82
    ],
    "span": [
     4,
@@ -4056,7 +4255,7 @@
    },
    "at": [
     8,
-    66
+    82
    ],
    "span": [
     4,
@@ -4095,7 +4294,7 @@
    },
    "at": [
     0,
-    68
+    84
    ],
    "span": [
     12,

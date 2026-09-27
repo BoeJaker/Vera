@@ -740,6 +740,13 @@
       const kHave = wasRead && k.data !== undefined && !isEmpty(dataFor(mapped(n, n.form, k.data), canon(n.form)));   // what the child's form would draw of the answer
       const kerr = wasRead && k.err ? '<i class="vw-kerr" title="' + esc(k.err) + '">' + (kHave ? 'last reading' : 'read failed') + '</i>' : (wasRead && !kHave ? '<i class="vw-kempty">read · empty</i>' : '');
       const stale = wasRead && k.err && kHave ? ' vw-stale' : '';
+      /* a report's list or key/values is a BLOCK with its rows (owner, 2026-09-27: "most of the chips in the table cards like
+         estate health, backups and node properties could be more informative" - a list drawn as a chip said "4 rows"); only
+         a single figure stays a chip in its row */
+      if (chip && /^(rows|list|table|log|feed|cards|files|checklist|timeline|lane|kv|pills|ranked|hosts|temps|thermo|people|links)$/.test(canon(n.form))) {
+        const tk = (o && o.textK) || 1, lim = +(n.draw && n.draw.limit) || 4, keysN = (n.read && n.read.map && Array.isArray(n.read.map.keys)) ? n.read.map.keys.length : 4;
+        const bh = Math.round((canon(n.form) === 'kv' ? keysN * 19 : canon(n.form) === 'pills' ? 52 : lim * 21 + 8) * tk);
+        return '<div class="vw-slot vw-slot-block' + stale + '" data-slot="' + esc(slot) + '"><span class="vw-slot-h">' + esc(n.title || n.form) + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: bh, title: n.title }, kopts, { width: (o && o.width) ? Math.max(160, o.width - 20) : undefined })) + '</div></div>'; }
       if (chip) return '<div class="vw-slot vw-slot-row' + stale + '" data-slot="' + esc(slot) + '"><span class="k" title="' + esc(n.title || n.form) + '">' + esc(n.title || n.form) + '</span><span class="vw-slot-c">' + draw(n.form, data, 's', Object.assign({}, kopts, { title: '' })) + kerr + '</span></div>';
       const fig = /^(counter|hero|string|level|ring|meter|gauge|dial|tank|numbers)$/.test(canon(n.form)) ? '' : figure(n.form, mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data));
       return '<div class="vw-slot' + stale + '" data-slot="' + esc(slot) + '"' + slotStyle + '><span class="vw-slot-h">' + esc(n.title || n.form) + (fig ? '<b>' + fig + '</b>' : '') + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: kidH, title: n.title }, kopts)) + '</div></div>'; }).join('') + '</div>';
@@ -1544,8 +1551,17 @@
     return isoForm('models', [plate(rw.length * .92 + .2, 2)].concat(rw.map((m, i) => { const p = num(m.params ?? m.b ?? m.size ?? 1); const s = .5 + Math.log10(p + 1) * .5; return Bx(i * .92, .5, 0, s * .9, s * .9, s, m.resident || m.loaded ? B.ac : B.bd2, '', nameOf(m), m); })), o, H); };
   R.activity = (d, H, o) => { const ev = evsOf(d).slice(-18); if (!ev.length) return EMPTY('activity needs events'); const dur = (r) => num(r.duration ?? r.ms ?? r.seconds ?? 0); const hi = Math.max(...ev.map(dur)) || 1;
     return isoForm('activity', [Bx(0, .5, 0, ev.length * .38 + .2, .3, .08, B.bd2)].concat(ev.map((r, i) => Bx(i * .38, .45, .08, .28, .4, .2 + (dur(r) ? dur(r) / hi * .7 : rng(i * 3) * .7), /err|fail/i.test(String(r.kind ?? r.level ?? '')) ? B.ac4 : DV(String(r.kind ?? '').length + i), '', txt(r), r))), o, H); };
-  R.sandboxes = (d, H, o) => { const rw = rows(d).slice(0, 6); if (!rw.length) return EMPTY('sandboxes need rows'); const P = [[.6, .6], [2.4, .9], [3.7, 1.9], [.8, 2.0], [2.6, 2.3], [1.6, 1.4]];
-    return isoForm('sandboxes', [Bx(0, 0, 0, 5.2, .18, .5, B.bd2), Bx(0, 3, 0, 5.2, .18, .5, B.bd2), Bx(0, 0, 0, .18, 3.2, .5, B.bd2), Bx(5, 0, 0, .18, 3.2, .5, B.bd2), Bx(.18, .18, -.1, 4.8, 2.8, .1, B.s3)].concat(rw.flatMap((s, i) => { const idle = /idle|paused|stopped/.test(String(s.status ?? s.state ?? '')); const sz = idle ? 1 : 1.2; return [Bx(P[i][0], P[i][1], 0, sz, sz, idle ? .5 : .8, idle ? B.t3 : DV(i + 2), '', nameOf(s), s)].concat(s.pinned ? [Bx(P[i][0] + .5, P[i][1] + .5, .8, .08, .08, 1.1, B.t2), Bx(P[i][0] + .55, P[i][1] + .5, 1.6, .5, .05, .3, B.ac2)] : []); })), o, H, { tilt: 30 }); };
+  /* every sandbox, up to draw.max (48) - it drew the first six at six fixed places (owner, 2026-09-27: "could actually display
+     all the sandboxes - iso elements should be able to scale up to a max number of participant objects"): a grid that fills
+     the plate, each block as big as the count allows, coloured by its role, low and grey when it is not running */
+  const isoGrid = (n, W0, D0) => { const cols = Math.max(1, Math.ceil(Math.sqrt(n * W0 / D0))), rowsN = Math.max(1, Math.ceil(n / cols)); return { cols, cell: Math.min(W0 / cols, D0 / rowsN) }; };
+  R.sandboxes = (d, H, o) => { const all = rows(d); if (!all.length) return EMPTY('sandboxes need rows');
+    const rw = all.slice(0, Math.max(1, +(o && o.draw && o.draw.max) || 48)), g = isoGrid(rw.length, 4.8, 2.8), roles = [];
+    const roleCol = (r) => { const k = String(r || ''); let i = roles.indexOf(k); if (i < 0) { roles.push(k); i = roles.length - 1; } return DV(i + 2); };
+    const blocks = rw.flatMap((s, i) => { const st = String(s.status ?? s.state ?? s.running ?? ''); const idle = s.running === false || /^(idle|paused|stopped|false|no|off)$/i.test(st);
+      const sz = g.cell * (idle ? .62 : .78), x = .18 + (i % g.cols) * g.cell + (g.cell - sz) / 2, y = .18 + Math.floor(i / g.cols) * g.cell + (g.cell - sz) / 2, h = Math.max(.2, Math.min(1, g.cell * .9)) * (idle ? .55 : 1);
+      return [Bx(x, y, 0, sz, sz, h, idle ? B.t3 : roleCol(s.role), '', nameOf(s), s)].concat(s.pinned ? [Bx(x + sz * .42, y + sz * .42, h, .06, .06, .5 * h + .3, B.t2)] : []); });
+    return isoForm('sandboxes', [Bx(0, 0, 0, 5.2, .18, .5, B.bd2), Bx(0, 3, 0, 5.2, .18, .5, B.bd2), Bx(0, 0, 0, .18, 3.2, .5, B.bd2), Bx(5, 0, 0, .18, 3.2, .5, B.bd2), Bx(.18, .18, -.1, 4.8, 2.8, .1, B.s3)].concat(blocks), o, H, { tilt: 30 }); };
 
   /* ── the ISO FRAME: real markup on the plane — a screen standing on the plate or a sheet lying on it ── */
   const XIF_KIND = { terminal: 'term', term: 'term', page: 'page', notebook: 'nb', panel: 'panel', web: 'web', browser: 'web', chart: 'chart', image: 'img', img: 'img', chat: 'chat', dashboard: 'dash', dash: 'dash', form: 'form', list: 'list' };
@@ -2483,7 +2499,7 @@ span.vw-sampled{opacity:.85}
 .vw-sg>.vw-sg-w{position:absolute;left:7px;top:6px;color:var(--dim2,#8a92a0);font-size:9.5px;font-family:var(--mono,ui-monospace,monospace)}
 .vw-l{display:grid;grid-template-columns:1fr 160px;gap:10px;width:100%;align-items:start}.vw-xl{display:grid;grid-template-columns:1fr 180px;gap:10px;width:100%;align-items:start}.vw-xl .vw-xltable{grid-column:1/-1}
 .vw-main{min-width:0}.vw-detail{display:flex;flex-direction:column;gap:3px;font-size:9.5px;border-left:1px solid var(--border,rgba(255,255,255,.09));padding-left:10px}.vw-detail div{display:flex;justify-content:space-between;gap:8px;color:var(--text,#d8dce4)}.vw-detail span{color:var(--dim2,#8a92a0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-detail b{font-family:var(--mono,ui-monospace,monospace);font-weight:400}
-.vw-comp{display:grid;gap:8px;width:100%;grid-template-columns:1fr 1fr}.vw-comp-rows,.vw-comp-report{grid-template-columns:1fr}.vw-comp-rail{grid-template-columns:1fr}.vw-comp-2x2{grid-template-columns:1fr 1fr}
+.vw-comp{display:grid;gap:8px;width:100%;grid-template-columns:1fr 1fr}.vw-comp-rows,.vw-comp-report{grid-template-columns:1fr}.vw-comp-report{overflow-y:auto;align-content:start}.vw-comp-report .vw-slot-block{flex-shrink:0}.vw-comp-report .vw-slot-block .vw-slot-b{overflow:visible}.vw-comp-rail{grid-template-columns:1fr}.vw-comp-2x2{grid-template-columns:1fr 1fr}
 .vw-slot{min-width:0;min-height:0;box-sizing:border-box;overflow:hidden;background:var(--surf2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:7px 9px 8px;display:flex;flex-direction:column;gap:4px;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
 .vw-slot-h{display:flex;align-items:baseline;gap:6px;font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t3,var(--dim,#6b7280));flex-shrink:0;white-space:nowrap;overflow:hidden}.vw-slot-h b{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:11px;color:var(--t1,var(--text,#d8dce4));font-weight:400;text-transform:none;letter-spacing:0}
 .vw-slot-b{flex:1;min-height:0;display:flex;align-items:safe center;overflow:auto}.vw-slot-b > *{width:100%}
