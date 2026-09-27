@@ -117,6 +117,7 @@
     var k = _kidOf(ev.source); if(!k) return;
     if(d.type === 'vera:panel:state'){
       var nv = d.state && d.state.nav; k.nav = (nv && Array.isArray(nv.items)) ? { items: nv.items.slice(0, 60).map(function(it){ return { id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48) }; }), active: String(nv.active || '') } : null;
+      if(k.nav && nv.lhm && Array.isArray(nv.lhm.widgets)) k.nav.widgets = nv.lhm.widgets.slice(0, 8).map(String);   // the child's menu widgets ride up with its sections
       try{ ev.source.postMessage({ type: (_hostedUp || document.documentElement.classList.contains('vpb-nav-hosted')) ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){}
       publishStateDebounced();
     } else { k.hdr = d; _hdrRelay(); }
@@ -131,6 +132,12 @@
     try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: k.hdr.title || document.title || '', groups: k.hdr.groups || [] }, '*'); }catch(e){}
   }
   var _navLhmOpts = null;
+  // ── A PANEL'S MENU WIDGETS (owner, 2026-09-27: "any lhm items that can be made into widgets ... like the calendar controls
+  // and even the calendar from the comms ui itself - and the different parts of it like the schedule view"). A page names
+  // the widgets its docked menu carries on any element: data-lhm-widgets="cal:controls cal:month@m" - template ids, @size
+  // optional. They ride in the lhm spec (spec.widgets); a nesting page passes its shown child's up with the child's sections.
+  function _navWidgets(){ try{ var el = document.querySelector('[data-lhm-widgets]'); if(!el) return [];
+    return String(el.getAttribute('data-lhm-widgets') || '').split(/[\s,]+/).filter(function(s){ return /^[\w.:-]+(@(xs|s|m|l|xl))?$/.test(s); }).slice(0, 8); }catch(e){ return []; } }
   function _navIcon(it){ var t = String(it.icon || '').trim(); if(t) return t; return (String(it.label || it.id || '').trim().charAt(0) || '\u2022').toUpperCase(); }
   function _navLhm(){
     if(!_navItems || !_navItems.length || (_navLhmOpts && _navLhmOpts.lhm === false)) return null;
@@ -155,7 +162,8 @@
         m.tabs = m.tabs.slice(0, at + 1).concat(sub, m.tabs.slice(at + 1)); });
       if(kid.nav.active) act.tab = 'c:' + kid.nav.active;
     }
-    return { title: title, active: act, menus: menus, open: [] };
+    var wd = _navWidgets(); if(kid && kid.nav.widgets) kid.nav.widgets.forEach(function(w){ if(wd.indexOf(w) < 0) wd.push(w); });
+    return { title: title, active: act, menus: menus, open: [], widgets: wd };
   }
   function _navResolve(id){
     var s = String(id);
