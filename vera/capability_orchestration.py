@@ -657,6 +657,9 @@ OLLAMA_JOB_TYPES: List[str] = [
     # The broad planning style's per-work-stream briefs: long CPU generations
     # that run BESIDE the GPU plan (compute-roles), one at a time.
     "plan_enrich",
+    # Chat insights: the long-horizon model's second look at a finished chat
+    # reply (optional, the chat's Insights toggle). Nothing waits on it.
+    "chat_enrich",
     # Media services served by the GPU inference server(s) (edge/GPU_inference.py):
     # routed across MEDIA_INSTANCES by resolve_media(), not pick_instance().
     "stt", "tts", "imagegen",
@@ -755,6 +758,11 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # need. The broad style issues these ONE AT A TIME, so the soft `prefer` is
     # never pushed onto cpu-246 by its own second call.
     "plan_enrich":      _rule("plan_enrich",      deny_gpu=True, prefer="cpu-247",
+                              options=LONG_HORIZON_CPU_OPTIONS),
+    # Chat insights (user, 2026-09-27): the long-horizon model on the long-
+    # horizon node, in the shared window - the reply already came from the GPU.
+    "chat_enrich":      _rule("chat_enrich",      deny_gpu=True, prefer="cpu-247",
+                              model=LONG_HORIZON_CPU_MODEL,
                               options=LONG_HORIZON_CPU_OPTIONS),
     # Media services — GPU-first across the media nodes that actually have the
     # service installed (resolve_media checks each node's /health service list).
