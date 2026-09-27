@@ -2336,7 +2336,9 @@ span.vw-sampled{opacity:.85}
     + '.vw-tip b{display:block;font-size:12px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-tip span{display:block;color:var(--t2,var(--dim2,#8a92a0));font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
     + '.vw-tip em{display:block;margin-top:4px;font-style:normal;font-size:10px;color:var(--acc,#6ea8d8)}';
   const TIP_CSS_S = fontScale(TIP_CSS);
-  function tipOf(root) { let t = root.querySelector(':scope > .vw-tip'); if (!t) { t = document.createElement('div'); t.className = 'vw-tip'; t.hidden = true; root.appendChild(t); } return t; }
+  // the card is kept on the root: ':scope > .vw-tip' matches nothing inside a shadow root, so looking it up made a new card on
+  // every move and never hid one (found live, 2026-09-27: three moves, three cards, all shown after the pointer left)
+  function tipOf(root) { let t = root._vwTip; if (!t || !t.isConnected) { t = document.createElement('div'); t.className = 'vw-tip'; t.hidden = true; root.appendChild(t); root._vwTip = t; } return t; }
   function showTip(root, text, x, y, act) {
     const t = tipOf(root); const L = String(text || '').split('\n'); if (!L[0] && L.length < 2) { t.hidden = true; return; }
     t.innerHTML = '<b>' + esc(L[0]) + '</b>' + L.slice(1, 12).map((l) => '<span>' + esc(l) + '</span>').join('') + (act ? '<em>' + esc(act) + '</em>' : '');
@@ -2367,13 +2369,13 @@ span.vw-sampled{opacity:.85}
     root.addEventListener('pointermove', (e) => {
       const el = partAt(root, e.target);
       if (el !== cur) { cur = el; light(root, el); }
-      if (!el) { const t = root.querySelector(':scope > .vw-tip'); if (t) t.hidden = true; return; }
+      if (!el) { const t = root._vwTip; if (t) t.hidden = true; return; }
       const ref = el.getAttribute('data-ref'), rec = recOf(host);
       const act = ref ? 'click · open ' + ref : ((el.hasAttribute('data-b') && (rec.open || rec.source)) ? 'click · open where it lives' : (host.hasAttribute('dive-on-click') ? 'click · the deep dive' : ''));
       showTip(root, el.getAttribute('data-tip') || el.getAttribute('data-name') || '', e.clientX, e.clientY, act);
     });
-    root.addEventListener('pointerleave', () => { cur = null; light(root, null); const t = root.querySelector(':scope > .vw-tip'); if (t) t.hidden = true; });
-    host.addEventListener('pointerleave', () => { cur = null; light(root, null); const t = root.querySelector(':scope > .vw-tip'); if (t) t.hidden = true; });
+    root.addEventListener('pointerleave', () => { cur = null; light(root, null); const t = root._vwTip; if (t) t.hidden = true; });
+    host.addEventListener('pointerleave', () => { cur = null; light(root, null); const t = root._vwTip; if (t) t.hidden = true; });
     root.addEventListener('click', (e) => {
       if (e.target.closest && e.target.closest('button,a,input,select,textarea,[data-vb-set],[data-read],[data-act]')) return;
       const el = partAt(root, e.target);
