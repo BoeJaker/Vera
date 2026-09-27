@@ -110,7 +110,7 @@
     if (!window.MENUS) return false;
     ev.preventDefault(); ev.stopPropagation(); close(); css(); x = x || {}; _lastX = ev.clientX; _lastY = ev.clientY;
     var seen = {};
-    var rows = MENUS.rows(kind, name, { noPin: !x.canPin }).filter(function(r){ var k = r.t === 'act' ? 'a:' + String(r.n || r.id) : r.t === 'cap' ? 'c:' + String(r.cap) : 's' + Math.random(); if (seen[k]) return false; seen[k] = 1; return true; });
+    var rows = MENUS.rows(kind, name, { noPin: !x.canPin }).filter(function(r){ if (r.t === 'act' && r.id === 'remove' && !x.canRemove) return false; var k = r.t === 'act' ? 'a:' + String(r.id || r.n) : r.t === 'cap' ? 'c:' + String(r.cap) : 's' + Math.random(); if (seen[k]) return false; seen[k] = 1; return true; });
     var col = COL[MENUS.kindOf(kind) || kind] || 'var(--t3,#6b7280)';
     var w = document.createElement('div'); w.className = 'cmw';
     var bg = document.createElement('span'); bg.className = 'cmbg'; bg.addEventListener('click', close); bg.addEventListener('contextmenu', function(e){ e.preventDefault(); close(); }); w.appendChild(bg);

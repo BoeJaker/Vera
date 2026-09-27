@@ -1,0 +1,68 @@
+/* vera/ui/design.css — the ONE design, on every Vera panel (served /ui/design.css; vera-ui.js loads it into every page).
+   ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Owner, 2026-09-27: "you need to make the chat ui styling (with the glow background and blocks styling and zen, hover,
+   full, themes, styles like pixel newspaper etc) to all of the ui panels and unify them all under one design approach so
+   its easier to make changes to them all uniformly moving forward".
+
+   How it is one design:
+     • COLOUR comes from the theme (themes.css + vera-ui.js applyVars, which writes the design's names AND the panels'
+       older names: --bg/--bg0, --s1/--bg1, --t1/--text, --ac/--acc ...). Unchanged here.
+     • FORM comes from the style pack (theme_defs.py STYLE_PACKS -> [data-style=...] on <html>: --f-ui, --f-mono,
+       --f-prose, --ui-radius, --r-sm ...). Section 1 below makes the panels' font names follow the pack's.
+     • THE LOOK the chat wears is sections 2-6: the glow behind the page, blocks on/off, the density tiers, and the
+       common parts (tables, scrollbars, focus, selection). They follow the same <html> attributes the chat's do:
+       data-theme, data-style, data-blocks, data-den, data-text, data-contrast (vera-ui.js paints them everywhere).
+   A page that draws the design itself (the chat, the harness) sets data-design-own on <html> and this file is not
+   loaded there. To change the look of every panel: change it HERE.                                                */
+
+/* ── 1. the pack's type and form, under the panels' own names ── */
+html:root {
+  --font-ui: var(--f-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif);
+  --sans: var(--font-ui);
+  --font-mono: var(--f-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  --mono: var(--font-mono);
+  --elev: var(--elev-pack, 0 1px 2px rgba(0,0,0,.18), 0 10px 28px -16px rgba(0,0,0,.55));
+}
+html:root body { font-family: var(--font-ui); }
+html:root :where(code, pre, kbd, samp, .mono) { font-family: var(--font-mono); }
+
+/* ── 2. the glow behind the page (the chat's wash) ── */
+html:root body::before {
+  content: ''; position: fixed; left: 0; right: 0; top: 0; height: 360px; pointer-events: none; z-index: -1;
+  background: radial-gradient(120% 100% at 10% 0%, color-mix(in srgb, var(--acc, #5a9e8f) 12%, transparent), transparent 62%),
+              radial-gradient(90% 80% at 92% 0%, color-mix(in srgb, var(--acc2, var(--acc, #5a9e8f)) 9%, transparent), transparent 60%);
+}
+/* the page's own containers are see-through over it (their panels and cards keep their ground) */
+html:root body > :is(#main, main, .main, #app, .app, #panes, .panes, #content, .content) { background-color: transparent; }
+
+/* ── 3. blocks ON: the parts of a page are raised surfaces, rounded by the pack ── */
+html:root:not([data-blocks="off"]) :is(.card, .box, .tile, .panel-card, .sec-card, .kpi, .stat-card, .twrap, #status-tile) {
+  border-radius: var(--ui-radius, 8px);
+  box-shadow: var(--elev);
+  border-color: color-mix(in srgb, var(--border, rgba(255,255,255,.09)) 60%, transparent);
+}
+/* ── 4. blocks OFF: no surfaces of their own - the page (and its glow) is the ground ── */
+html:root[data-blocks="off"] :is(.card, .box, .tile, .panel-card, .sec-card, .kpi, .stat-card, .twrap, .note, .topbar, #topbar, #status-tile) {
+  background: transparent !important; box-shadow: none !important; border-color: transparent !important;
+}
+html:root[data-blocks="off"] #sidebar[data-vera-lhm] { background: transparent; border-right-color: transparent; }
+html:root[data-blocks="off"] #sidebar[data-vera-lhm] .nav-btn.active { background: var(--fill, color-mix(in srgb, var(--acc, #5a9e8f) 14%, transparent)); border-color: transparent; }
+
+/* ── 5. the density tiers: Full shows the icons beside the words; Hover shows them when pointed at; Zen hides them and
+   the hints (a folded rail always keeps its icons) ── */
+html:root[data-den="zen"] body:not(.lhm-collapsed) #sidebar[data-vera-lhm] .nav-btn :is(.gl, svg) { display: none; }
+html:root[data-den="zen"] :is(.hint, .help, .help-text, .opt-desc, .field-hint) { display: none; }
+html:root[data-den="hover"] body:not(.lhm-collapsed) #sidebar[data-vera-lhm] .nav-btn :is(.gl, svg) { opacity: 0; transition: opacity .15s; }
+html:root[data-den="hover"] body:not(.lhm-collapsed) #sidebar[data-vera-lhm] .nav-btn:is(:hover, .active) :is(.gl, svg) { opacity: 1; }
+
+/* ── 6. the common parts, as the chat draws them ── */
+html:root :where(table) { border-collapse: collapse; }
+html:root :where(tbody tr) { transition: background .12s; }
+html:root :where(tbody tr:hover) { background: color-mix(in srgb, var(--acc, #5a9e8f) 7%, transparent); }
+html:root :where(:focus-visible) { outline: 2px solid color-mix(in srgb, var(--acc, #5a9e8f) 70%, transparent); outline-offset: 1px; }
+html:root ::selection { background: color-mix(in srgb, var(--acc, #5a9e8f) 32%, transparent); }
+html:root * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text, #d8dce4) 22%, transparent) transparent; }
+html:root ::-webkit-scrollbar { width: 9px; height: 9px; }
+html:root ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text, #d8dce4) 18%, transparent); border-radius: 99px; border: 2px solid transparent; background-clip: padding-box; }
+html:root ::-webkit-scrollbar-track { background: transparent; }
+@media (prefers-reduced-motion: reduce) { html:root * { transition-duration: 0s !important; } }

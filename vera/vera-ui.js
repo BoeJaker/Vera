@@ -423,6 +423,14 @@
     document.head.appendChild(link);
   }
 
+  // ── 1a. The ONE design (vera/ui/design.css): the chat's look on every panel - its tokens under the panels' names, the
+  // glow, blocks on/off, Full/Hover/Zen, the common parts. A page that draws the design itself (data-design-own: the
+  // chat, the harness) is left alone.
+  if(!document.getElementById('vera-design-css') && !document.documentElement.hasAttribute('data-design-own')){
+    var dl = document.createElement('link'); dl.id = 'vera-design-css'; dl.rel = 'stylesheet'; dl.href = BASE + '/ui/design.css';
+    document.head.appendChild(dl);
+  }
+
   // ── 1b. Load the configurable loading animation ────────────────────────────
   // Auto-upgrades any .vera-loading overlay to the configured animation
   // (default: an evolving node/edge graph). Additive — panels that never show a
