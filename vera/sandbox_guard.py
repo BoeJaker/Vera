@@ -72,7 +72,10 @@ READ_THROUGH_GROUPS = (
     "autoenroll", "netsec", "provision", "evolve", "sandbox", "memory", "fabric",
     "markets", "ide", "openclaw", "vfs", "netmon", "identity", "dream", "loops", "research", "providers", "vllm", "ha", "n8n", "cal", "sched", "worldview", "agent", "project", "workshop", "system", "tg", "netscan", "print", "llm",
     # the dashboard's warnings, ontology coverage and subsystem health (2026-09-27: drawn from the sandbox's own, empty stores)
-    "syslog", "cap", "dash")
+    "syslog", "cap", "dash",
+    # the work board and the CI pictures over it (2026-09-27: the Loop Lab command centre and the sandbox menu read
+    # the board from the sandbox's own, empty store); board writes carry a writing word and never read through
+    "board", "ci")
 # a reading that is about THIS process, not the estate: stays local
 READ_THROUGH_LOCAL = ("evolve.sandbox.status", "obs.diagnostics", "obs.modules", "obs.pending",
                       "llm.formats", "sandbox.session.list",
