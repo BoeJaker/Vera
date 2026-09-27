@@ -484,11 +484,9 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
               <span id="test-name" style="font-size:10px;font-family:var(--mono);color:var(--acc3)">—</span>
               <button class="btn xs" style="margin-left:auto" onclick="AP.testClear()">Clear</button>
             </div>
-            <div id="test-history" style="flex:1;overflow-y:auto;background:var(--bg1);border:1px solid var(--border);border-radius:4px;padding:10px;display:flex;flex-direction:column;gap:8px;min-height:120px;max-height:calc(100vh - 300px)">
-              <div data-ph style="color:var(--dim);font-size:10.5px;align-self:center;margin:auto">Send a message to start testing</div>
-            </div>
-            <div class="status" id="test-status" style="margin-top:4px"></div>
-            <div style="display:flex;gap:6px;align-items:flex-end;margin-top:6px">
+            <!-- the test chat is THE chat (<vera-chat>, /ui/chat.js): the agent being edited, a test session of its own -->
+            <vera-chat id="test-chat" session="agent-panel-test" title="Agent test" style="flex:1;min-height:420px;height:calc(100vh - 260px);border-radius:var(--ui-radius,8px);overflow:hidden"></vera-chat>
+            <div style="display:none">
               <textarea id="test-in" placeholder="Message&hellip; (Enter to send, Shift+Enter for newline)" style="resize:none;min-height:38px;max-height:100px;font-family:var(--sans);font-size:11px;line-height:1.5;padding:7px 10px;flex:1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();AP.testSend()}"></textarea>
               <button class="btn pri" onclick="AP.testSend()" style="align-self:flex-end;flex-shrink:0">Send</button>
             </div>
@@ -631,7 +629,7 @@ const AP = (() => {
     document.getElementById('rt-status').textContent='';
     const notesEl=document.getElementById('agent-notes-el');
     if(notesEl){ if(a.name) notesEl.setAttribute('ref-id',a.name); else notesEl.removeAttribute('ref-id'); }
-    document.getElementById('test-name').textContent=a.name||'assistant';
+    document.getElementById('test-name').textContent=a.name||'assistant'; document.getElementById('test-chat')?.setAttribute('agent', a.name||'assistant');
     document.getElementById('del-btn').style.display=a.id?'inline-flex':'none';
     document.getElementById('save-status').textContent='';
     document.getElementById('mem-result').style.display='none';
@@ -1291,6 +1289,7 @@ const AP = (() => {
 
   function testClear(){
     testHist=[];
+    document.getElementById('test-chat')?.setAttribute('session', 'agent-panel-test-' + Date.now());   // a fresh conversation
     const h=document.getElementById('test-history');
     if(h)h.innerHTML='<div data-ph style="color:var(--dim);font-size:10.5px;align-self:center;margin:auto">Send a message to start testing</div>';
     const s=document.getElementById('test-status');if(s){s.textContent='';s.className='status';}
@@ -1344,5 +1343,6 @@ const AP = (() => {
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/chat.js"></script>
 </body>
 </html>
