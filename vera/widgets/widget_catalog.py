@@ -256,6 +256,25 @@ async def widget_render_spec(record: Optional[dict] = None, trace_id=None):
             "problems": problems, "warnings": warnings}
 
 
+# ── a capability's answer as widgets (the widget review, round 2) ───────────────────────────────────────────
+_capout = _sibling("widget_cap_output")
+
+
+@capability(
+    "widget.from_result", memory="off", silent=True,
+    http_method="POST", http_path="/ui/widgets/from_result", http_tags=["ui", "widgets"],
+    description="What a capability's ANSWER should be drawn as: the widget record(s) for it, best first - the same rules "
+                "as VeraWidget.fromCapResult in the page (error, terminal, media, diff, code, the capability's hint, "
+                "progress, events, series, files, level, prose, status, table, list, numbers, record, json, text). Each "
+                "record carries its data, so it draws at once; with args it can read again. Input: cap (str - the "
+                "capability that answered), result (any! - what it answered), args (object - the call's arguments), "
+                "title (str), max (int, 3). Output: {ok, records:[{id, form, title, source, read:{args, map}, frame, data, "
+                "why}], forms[] (the result forms), count}.")
+async def widget_from_result(cap: str = "", result: Any = None, args: Optional[dict] = None, title: str = "", max: int = 3, trace_id=None):
+    recs = _capout.from_cap_result(cap, result, args=args if isinstance(args, dict) else None, title=title, max_records=max)
+    return {"ok": True, "records": recs, "count": len(recs), "forms": list(_capout.CAP_FORMS)}
+
+
 # ── the dashboards' layouts (UI redesign M5, Notes/40 section 4; the Dashboard board) ─────────────────────────
 # One file per VeraDash grid: {dashboard, layout, key, user, grid{cols, row, gap, widths}, widgets:[{record, at,
 # span, hidden, refresh}]} - every widget of the grid as a record. The page fetches its file on boot (VeraDash

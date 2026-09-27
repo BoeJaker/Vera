@@ -1,0 +1,2636 @@
+[
+{
+"cap": "exec.bash.run",
+"result": {
+"ok": true,
+"rc": 0,
+"command": "ls /app",
+"stdout": "Vera\nnotes\n",
+"stderr": "",
+"elapsed_ms": 12
+},
+"form": "terminal",
+"second": null,
+"note": ""
+},
+{
+"cap": "exec.bash.run",
+"result": {
+"ok": true,
+"rc": 2,
+"command": "ls /nope",
+"stdout": "",
+"stderr": "ls: cannot access '/nope': No such file or directory"
+},
+"form": "terminal",
+"second": "error",
+"note": ""
+},
+{
+"cap": "some.cap",
+"result": {
+"ok": false,
+"error": "ct130 did not answer"
+},
+"form": "error",
+"second": null,
+"note": ""
+},
+{
+"cap": "browser.screenshot",
+"result": {
+"ok": true,
+"image_b64": "iVBORw0KGgo=",
+"title": "page"
+},
+"form": "media",
+"second": null,
+"note": ""
+},
+{
+"cap": "evolve.pipeline.diff",
+"result": {
+"ok": true,
+"diff": "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n"
+},
+"form": "diff",
+"second": null,
+"note": ""
+},
+{
+"cap": "fs.read",
+"result": {
+"path": "vera/x.py",
+"content": "print(1)\n"
+},
+"form": "code",
+"second": null,
+"note": ""
+},
+{
+"cap": "sysmon.history",
+"result": {
+"samples": [
+{
+"t": 1790517448.3,
+"cpu": 26.8,
+"mem": 81.5,
+"proc_mb": 2087.6,
+"proc_cpu": 2.7,
+"pmx_running": 22,
+"pmx_guests": 56,
+"pmx_nodes": 1,
+"pmx_mem_pct": 63.3,
+"dkr_running": 67,
+"dkr_containers": 498,
+"dkr_hosts": 1,
+"oll_online": 3,
+"oll_total": 3,
+"oll_inuse": 0,
+"temp_max": 76.0,
+"pmx_temp_max": 76.0,
+"caps": 2554,
+"workers": 4,
+"queue": 0
+},
+{
+"t": 1790517458.2,
+"cpu": 26.8,
+"mem": 81.7,
+"proc_mb": 2087.6,
+"proc_cpu": 3.0,
+"pmx_running": 22,
+"pmx_guests": 56,
+"pmx_nodes": 1,
+"pmx_mem_pct": 63.3,
+"dkr_running": 67,
+"dkr_containers": 498,
+"dkr_hosts": 1,
+"oll_online": 3,
+"oll_total": 3,
+"oll_inuse": 0,
+"temp_max": 76.0,
+"pmx_temp_max": 76.0,
+"caps": 2554,
+"workers": 4,
+"queue": 0
+},
+{
+"t": 1790517468.3,
+"cpu": 18.5,
+"mem": 81.6,
+"proc_mb": 2087.6,
+"proc_cpu": 3.7,
+"pmx_running": 22,
+"pmx_guests": 56,
+"pmx_nodes": 1,
+"pmx_mem_pct": 63.3,
+"dkr_running": 67,
+"dkr_containers": 498,
+"dkr_hosts": 1,
+"oll_online": 3,
+"oll_total": 3,
+"oll_inuse": 0,
+"temp_max": 76.0,
+"pmx_temp_max": 76.0,
+"caps": 2554,
+"workers": 4,
+"queue": 0
+},
+{
+"t": 1790517478.3,
+"cpu": 64.6,
+"mem": 81.7,
+"proc_mb": 2087.6,
+"proc_cpu": 3.3,
+"pmx_running": 22,
+"pmx_guests": 56,
+"pmx_nodes": 1,
+"pmx_mem_pct": 63.5,
+"dkr_running": 67,
+"dkr_containers": 498,
+"dkr_hosts": 1,
+"oll_online": 3,
+"oll_total": 3,
+"oll_inuse": 0,
+"temp_max": 77.0,
+"pmx_temp_max": 76.0,
+"caps": 2554,
+"workers": 4,
+"queue": 0
+},
+{
+"t": 1790517488.7,
+"cpu": 56.5,
+"mem": 81.7,
+"proc_mb": 2087.6,
+"proc_cpu": 3.7,
+"pmx_running": 22,
+"pmx_guests": 56,
+"pmx_nodes": 1,
+"pmx_mem_pct": 63.6,
+"dkr_running": 67,
+"dkr_containers": 498,
+"dkr_hosts": 1,
+"oll_online": 3,
+"oll_total": 3,
+"oll_inuse": 0,
+"temp_max": 77.0,
+"pmx_temp_max": 77.0,
+"caps": 2554,
+"workers": 4,
+"queue": 0
+},
+{
+"t": 1790517498.3,
+"cpu": 20.6,
+"mem": 81.6,
+"proc_mb": 2087.6,
+"proc_cpu": 3.8,
+"pmx_running": 22,
+"pmx_guests": 56,
+"pmx_nodes": 1,
+"pmx_mem_pct": 65.3,
+"dkr_running": 67,
+"dkr_containers": 498,
+"dkr_hosts": 1,
+"oll_online": 3,
+"oll_total": 3,
+"oll_inuse": 0,
+"temp_max": 77.0,
+"pmx_temp_max": 77.0,
+"caps": 2554,
+"workers": 4,
+"queue": 0
+},
+{
+"t": 1790517509.1,
+"cpu": 27.2,
+"mem": 81.5,
+"proc_mb": 2087.6,
+"proc_cpu": 3.0,
+"pmx_running": 22,
+"pmx_guests": 56,
+"pmx_nodes": 1,
+"pmx_mem_pct": 67.4,
+"dkr_running": 67,
+"dkr_containers": 498,
+"dkr_hosts": 1,
+"oll_online": 3,
+"oll_total": 3,
+"oll_inuse": 0,
+"temp_max": 77.0,
+"pmx_temp_max": 77.0,
+"caps": 2554,
+"workers": 4,
+"queue": 0
+},
+{
+"t": 1790517519.8,
+"cpu": 26.9,
+"mem": 81.7,
+"proc_mb": 2087.6,
+"proc_cpu": 5.9,
+"pmx_running": 22,
+"pmx_guests": 56,
+"pmx_nodes": 1,
+"pmx_mem_pct": 67.4,
+"dkr_running": 67,
+"dkr_containers": 498,
+"dkr_hosts": 1,
+"oll_online": 3,
+"oll_total": 3,
+"oll_inuse": 0,
+"temp_max": 77.0,
+"pmx_temp_max": 77.0,
+"caps": 2554,
+"workers": 4,
+"queue": 0
+},
+{
+"t": 1790517530.1,
+"cpu": 25.2,
+"mem": 81.8,
+"proc_mb": 2087.6,
+"proc_cpu": 4.1,
+"pmx_running": 22,
+"pmx_guests": 56,
+"pmx_nodes": 1,
+"pmx_mem_pct": 67.5,
+"dkr_running": 67,
+"dkr_containers": 498,
+"dkr_hosts": 1,
+"oll_online": 3,
+"oll_total": 3,
+"oll_inuse": 0,
+"temp_max": 77.0,
+"pmx_temp_max": 77.0,
+"caps": 2554,
+"workers": 4,
+"queue": 0
+},
+{
+"t": 1790517539.2,
+"cpu": 35.3,
+"mem": 81.6,
+"proc_mb": 2087.6,
+"proc_cpu": 3.1,
+"pmx_running": 22,
+"pmx_guests": 56,
+"pmx_nodes": 1,
+"pmx_mem_pct": 67.5,
+"dkr_running": 67,
+"dkr_containers": 498,
+"dkr_hosts": 1,
+"oll_online": 3,
+"oll_total": 3,
+"oll_inuse": 0,
+"temp_max": 79.0,
+"pmx_temp_max": 77.0,
+"caps": 2554,
+"workers": 4,
+"queue": 0
+},
+{
+"t": 1790517549.6,
+"cpu": 35.6,
+"mem": 81.6,
+"proc_mb": 2087.6,
+"proc_cpu": 3.9,
+"pmx_running": 22,
+"pmx_guests": 56,
+"pmx_nodes": 1,
+"pmx_mem_pct": 67.6,
+"dkr_running": 67,
+"dkr_containers": 498,
+"dkr_hosts": 1,
+"oll_online": 3,
+"oll_total": 3,
+"oll_inuse": 0,
+"temp_max": 79.0,
+"pmx_temp_max": 79.0,
+"caps": 2554,
+"workers": 4,
+"queue": 0
+},
+{
+"t": 1790517559.4,
+"cpu": 24.1,
+"mem": 81.8,
+"proc_mb": 2087.6,
+"proc_cpu": 3.7,
+"pmx_running": 22,
+"pmx_guests": 56,
+"pmx_nodes": 1,
+"pmx_mem_pct": 67.6,
+"dkr_running": 67,
+"dkr_containers": 498,
+"dkr_hosts": 1,
+"oll_online": 3,
+"oll_total": 3,
+"oll_inuse": 0,
+"temp_max": 79.0,
+"pmx_temp_max": 79.0,
+"caps": 2554,
+"workers": 4,
+"queue": 0
+}
+],
+"count": 240,
+"interval_s": 10.0,
+"psutil": true
+},
+"form": "trace",
+"second": null,
+"note": ""
+},
+{
+"cap": "obs.events",
+"result": [
+{
+"type": "cap.ok",
+"name": "ollama.instances",
+"trace_id": "666473df-64ca-491a-be48-b25a32cb8042",
+"session_id": "",
+"group": "ollama",
+"elapsed_ms": 3,
+"preview": "",
+"ts": "2026-09-27T14:37:29.848460Z",
+"ver": "08adda981a",
+"br": "main",
+"dirty": false,
+"via": "claude"
+},
+{
+"type": "cap.call",
+"name": "ollama.instances",
+"attempt": 0,
+"trace_id": "666473df-64ca-491a-be48-b25a32cb8042",
+"session_id": "",
+"trigger_id": "666473df-64ca-491a-be48-b25a32cb8042",
+"trigger_cap": "ollama.instances",
+"group": "ollama",
+"args_preview": "",
+"policy": {
+"schema": "vera.capability-policy-shadow/v1",
+"mode": "shadow",
+"name": "ollama.instances",
+"verdict": "indeterminate",
+"authorized": false,
+"executed": false,
+"declared_effects": [],
+"allowed_effects": [
+"none",
+"read"
+],
+"missing_effect_grants": [],
+"approval": {
+"status": "unknown",
+"required": false,
+"present": false
+},
+"scope": {
+"tenant": "unknown",
+"session_present": false,
+"tenant_present": false
+},
+"secrets": {
+"status": "unknown",
+"opaque_refs_confirmed": false
+},
+"reasons": [
+{
+"code": "contract_unknown"
+},
+{
+"code": "effects_unknown"
+}
+],
+"trusted_context": {
+"present": false
+},
+"enforcement": {
+"schema": "vera.capability-enforcement/v1",
+"mode": "shadow",
+"config_valid": true,
+"selected": false,
+"supported_family": "",
+"configured_families": [],
+"unsupported_families": [],
+"policy_verdict": "indeterminate",
+"would_block": false,
+"blocked": false,
+"executed": false,
+"rollback": "set VERA_POLICY_MODE=shadow or clear VERA_POLICY_ENFORCE_FAMILIES"
+}
+},
+"ts": "2026-09-27T14:37:29.843322Z",
+"ver": "08adda981a",
+"br": "main",
+"dirty": false,
+"via": "claude"
+},
+{
+"type": "cap.ok",
+"name": "obs.cluster",
+"trace_id": "3cad4feb-c0ba-4740-93af-66e353a8847a",
+"session_id": "",
+"group": "obs",
+"elapsed_ms": 16,
+"preview": "",
+"ts": "2026-09-27T14:37:29.654108Z",
+"ver": "08adda981a",
+"br": "main",
+"dirty": false,
+"via": "claude"
+},
+{
+"type": "cap.call",
+"name": "obs.cluster",
+"attempt": 0,
+"trace_id": "3cad4feb-c0ba-4740-93af-66e353a8847a",
+"session_id": "",
+"trigger_id": "3cad4feb-c0ba-4740-93af-66e353a8847a",
+"trigger_cap": "obs.cluster",
+"group": "obs",
+"args_preview": "",
+"policy": {
+"schema": "vera.capability-policy-shadow/v1",
+"mode": "shadow",
+"name": "obs.cluster",
+"verdict": "indeterminate",
+"authorized": false,
+"executed": false,
+"declared_effects": [],
+"allowed_effects": [
+"none",
+"read"
+],
+"missing_effect_grants": [],
+"approval": {
+"status": "unknown",
+"required": false,
+"present": false
+},
+"scope": {
+"tenant": "unknown",
+"session_present": false,
+"tenant_present": false
+},
+"secrets": {
+"status": "unknown",
+"opaque_refs_confirmed": false
+},
+"reasons": [
+{
+"code": "contract_unknown"
+},
+{
+"code": "effects_unknown"
+}
+],
+"trusted_context": {
+"present": false
+},
+"enforcement": {
+"schema": "vera.capability-enforcement/v1",
+"mode": "shadow",
+"config_valid": true,
+"selected": false,
+"supported_family": "",
+"configured_families": [],
+"unsupported_families": [],
+"policy_verdict": "indeterminate",
+"would_block": false,
+"blocked": false,
+"executed": false,
+"rollback": "set VERA_POLICY_MODE=shadow or clear VERA_POLICY_ENFORCE_FAMILIES"
+}
+},
+"ts": "2026-09-27T14:37:29.635786Z",
+"ver": "08adda981a",
+"br": "main",
+"dirty": false,
+"via": "claude"
+},
+{
+"type": "cap.ok",
+"name": "n8n.workflow.list",
+"trace_id": "9e2c723f-885e-4ed0-b207-39280f29b9e0",
+"session_id": "",
+"group": "n8n",
+"elapsed_ms": 146,
+"preview": "",
+"ts": "2026-09-27T14:37:28.848437Z",
+"ver": "08adda981a",
+"br": "main",
+"dirty": false,
+"via": "claude"
+},
+{
+"type": "cap.call",
+"name": "n8n.workflow.list",
+"attempt": 0,
+"trace_id": "9e2c723f-885e-4ed0-b207-39280f29b9e0",
+"session_id": "",
+"trigger_id": "9e2c723f-885e-4ed0-b207-39280f29b9e0",
+"trigger_cap": "n8n.workflow.list",
+"group": "n8n",
+"args_preview": "",
+"policy": {
+"schema": "vera.capability-policy-shadow/v1",
+"mode": "shadow",
+"name": "n8n.workflow.list",
+"verdict": "indeterminate",
+"authorized": false,
+"executed": false,
+"declared_effects": [],
+"allowed_effects": [
+"none",
+"read"
+],
+"missing_effect_grants": [],
+"approval": {
+"status": "unknown",
+"required": false,
+"present": false
+},
+"scope": {
+"tenant": "unknown",
+"session_present": false,
+"tenant_present": false
+},
+"secrets": {
+"status": "unknown",
+"opaque_refs_confirmed": false
+},
+"reasons": [
+{
+"code": "contract_unknown"
+},
+{
+"code": "effects_unknown"
+}
+],
+"trusted_context": {
+"present": false
+},
+"enforcement": {
+"schema": "vera.capability-enforcement/v1",
+"mode": "shadow",
+"config_valid": true,
+"selected": false,
+"supported_family": "",
+"configured_families": [],
+"unsupported_families": [],
+"policy_verdict": "indeterminate",
+"would_block": false,
+"blocked": false,
+"executed": false,
+"rollback": "set VERA_POLICY_MODE=shadow or clear VERA_POLICY_ENFORCE_FAMILIES"
+}
+},
+"ts": "2026-09-27T14:37:28.700044Z",
+"ver": "08adda981a",
+"br": "main",
+"dirty": false,
+"via": "claude"
+},
+{
+"type": "cap.ok",
+"name": "docker.ps",
+"trace_id": "5f6cf8a7-801f-44bd-bf71-dd414fbc6354",
+"session_id": "",
+"group": "docker",
+"elapsed_ms": 214,
+"preview": "",
+"ts": "2026-09-27T14:37:26.422060Z",
+"ver": "08adda981a",
+"br": "main",
+"dirty": false,
+"via": "sandbox-read"
+},
+{
+"type": "cluster.ollama_snapshot",
+"instances": {
+"gpu-250": {
+"status": "online",
+"in_use": 0,
+"vram": 7.63,
+"running": 1
+},
+"cpu-246": {
+"status": "online",
+"in_use": 0,
+"vram": 0.0,
+"running": 2
+},
+"cpu-247": {
+"status": "online",
+"in_use": 0,
+"vram": 0.0,
+"running": 1
+}
+},
+"ts": "2026-09-27T14:37:26.337864Z",
+"ver": "08adda981a",
+"br": "main",
+"dirty": false
+},
+{
+"type": "cap.ok",
+"name": "docker.ps",
+"trace_id": "45e52554-ba6e-4985-b78e-5975b9d722df",
+"session_id": "",
+"group": "docker",
+"elapsed_ms": 32,
+"preview": "HTTP 502",
+"ts": "2026-09-27T14:37:26.225360Z",
+"ver": "08adda981a",
+"br": "main",
+"dirty": false,
+"via": "sandbox-read"
+},
+{
+"type": "cap.ok",
+"name": "exec.ssh.run",
+"trace_id": "3a611c82-82ca-42a4-bf08-1a2170fe3ccd",
+"session_id": "",
+"group": "exec",
+"elapsed_ms": 13,
+"preview": "host_id not found: 22701a57-f684-4203-aa46-21e6cb458abe",
+"ts": "2026-09-27T14:37:26.220243Z",
+"ver": "08adda981a",
+"br": "main",
+"dirty": false,
+"via": "sandbox-read"
+},
+{
+"type": "cap.call",
+"name": "exec.ssh.run",
+"attempt": 0,
+"trace_id": "3a611c82-82ca-42a4-bf08-1a2170fe3ccd",
+"session_id": "",
+"trigger_id": "45e52554-ba6e-4985-b78e-5975b9d722df",
+"trigger_cap": "docker.ps",
+"group": "exec",
+"args_preview": "command=curl -s -m 15 -X GET --unix-socket /var/run/docker.sock 'http://localhost/containers/json?all=true', host_id=22701a57-f684-4203-aa46-21e6cb458abe, timeout=19",
+"policy": {
+"schema": "vera.capability-policy-shadow/v1",
+"mode": "shadow",
+"name": "exec.ssh.run",
+"verdict": "indeterminate",
+"authorized": false,
+"executed": false,
+"declared_effects": [],
+"allowed_effects": [
+"none",
+"read"
+],
+"missing_effect_grants": [],
+"approval": {
+"status": "unknown",
+"required": false,
+"present": false
+},
+"scope": {
+"tenant": "unknown",
+"session_present": false,
+"tenant_present": false
+},
+"secrets": {
+"status": "unknown",
+"opaque_refs_confirmed": false
+},
+"reasons": [
+{
+"code": "contract_unknown"
+},
+{
+"code": "effects_unknown"
+}
+],
+"trusted_context": {
+"present": false
+},
+"enforcement": {
+"schema": "vera.capability-enforcement/v1",
+"mode": "shadow",
+"config_valid": true,
+"selected": false,
+"supported_family": "",
+"configured_families": [],
+"unsupported_families": [],
+"policy_verdict": "indeterminate",
+"would_block": false,
+"blocked": false,
+"executed": false,
+"rollback": "set VERA_POLICY_MODE=shadow or clear VERA_POLICY_ENFORCE_FAMILIES"
+}
+},
+"ts": "2026-09-27T14:37:26.205796Z",
+"ver": "08adda981a",
+"br": "main",
+"dirty": false,
+"via": "sandbox-read"
+},
+{
+"type": "cap.call",
+"name": "docker.ps",
+"attempt": 0,
+"trace_id": "5f6cf8a7-801f-44bd-bf71-dd414fbc6354",
+"session_id": "",
+"trigger_id": "5f6cf8a7-801f-44bd-bf71-dd414fbc6354",
+"trigger_cap": "docker.ps",
+"group": "docker",
+"args_preview": "host_id=local, all=true",
+"policy": {
+"schema": "vera.capability-policy-shadow/v1",
+"mode": "shadow",
+"name": "docker.ps",
+"verdict": "indeterminate",
+"authorized": false,
+"executed": false,
+"declared_effects": [],
+"allowed_effects": [
+"none",
+"read"
+],
+"missing_effect_grants": [],
+"approval": {
+"status": "unknown",
+"required": false,
+"present": false
+},
+"scope": {
+"tenant": "unknown",
+"session_present": false,
+"tenant_present": false
+},
+"secrets": {
+"status": "unknown",
+"opaque_refs_confirmed": false
+},
+"reasons": [
+{
+"code": "contract_unknown"
+},
+{
+"code": "effects_unknown"
+}
+],
+"trusted_context": {
+"present": false
+},
+"enforcement": {
+"schema": "vera.capability-enforcement/v1",
+"mode": "shadow",
+"config_valid": true,
+"selected": false,
+"supported_family": "",
+"configured_families": [],
+"unsupported_families": [],
+"policy_verdict": "indeterminate",
+"would_block": false,
+"blocked": false,
+"executed": false,
+"rollback": "set VERA_POLICY_MODE=shadow or clear VERA_POLICY_ENFORCE_FAMILIES"
+}
+},
+"ts": "2026-09-27T14:37:26.191257Z",
+"ver": "08adda981a",
+"br": "main",
+"dirty": false,
+"via": "sandbox-read"
+}
+],
+"form": "log",
+"second": null,
+"note": ""
+},
+{
+"cap": "evolve.pipeline.list",
+"result": {
+"pipelines": [
+{
+"id": "a4d68604",
+"kind": "code",
+"profile": "adopted",
+"status": "adopted",
+"decision": "promoted",
+"created_at": "2026-09-27T14:29:27.251506Z",
+"ended_at": "",
+"branch": "fix/live-ops-loads-at-once",
+"variant_id": "",
+"baseline_score": null,
+"candidate_score": null,
+"gate_delta": null,
+"gate_passed": false,
+"repo": "vera",
+"controller": "claude_code",
+"review_requested": true,
+"adopted": true,
+"session_id": "adf5869f-4f70-46e1-baad-8e15b324007a",
+"via": "claude",
+"live": false
+},
+{
+"id": "6f713d53",
+"kind": "code",
+"profile": "adopted",
+"status": "adopted",
+"decision": "held",
+"created_at": "2026-09-27T14:14:57.195256Z",
+"ended_at": "",
+"branch": "fix/live-ops-loads-at-once",
+"variant_id": "",
+"baseline_score": null,
+"candidate_score": null,
+"gate_delta": null,
+"gate_passed": false,
+"repo": "vera",
+"controller": "claude_code",
+"review_requested": true,
+"adopted": true,
+"session_id": "adf5869f-4f70-46e1-baad-8e15b324007a",
+"via": "claude",
+"live": false
+},
+{
+"id": "07902a3a",
+"kind": "code",
+"profile": "adopted",
+"status": "adopted",
+"decision": "promoted",
+"created_at": "2026-09-27T14:06:46.915370Z",
+"ended_at": "",
+"branch": "fix/lhm-absorbed-legible",
+"variant_id": "",
+"baseline_score": null,
+"candidate_score": null,
+"gate_delta": null,
+"gate_passed": true,
+"repo": "vera",
+"controller": "claude_code",
+"review_requested": false,
+"adopted": true,
+"session_id": "20a11d36-830f-4e98-b6e2-0fa2a5a27888",
+"via": "mcp",
+"live": false
+},
+{
+"id": "94ae90a9",
+"kind": "code",
+"profile": "adopted",
+"status": "adopted",
+"decision": "promoted",
+"created_at": "2026-09-27T13:47:06.981365Z",
+"ended_at": "",
+"branch": "feat/lhm-push-dash-menu-panels",
+"variant_id": "",
+"baseline_score": null,
+"candidate_score": null,
+"gate_delta": null,
+"gate_passed": true,
+"repo": "vera",
+"controller": "claude_code",
+"review_requested": false,
+"adopted": true,
+"session_id": "20a11d36-830f-4e98-b6e2-0fa2a5a27888",
+"via": "mcp",
+"live": false
+},
+{
+"id": "3b57a8de",
+"kind": "code",
+"profile": "adopted",
+"status": "adopted",
+"decision": "promoted",
+"created_at": "2026-09-27T13:26:13.925890Z",
+"ended_at": "",
+"branch": "feat/live-ops-room-billboards-buses",
+"variant_id": "",
+"baseline_score": null,
+"candidate_score": null,
+"gate_delta": null,
+"gate_passed": true,
+"repo": "vera",
+"controller": "claude_code",
+"review_requested": true,
+"adopted": true,
+"session_id": "adf5869f-4f70-46e1-baad-8e15b324007a",
+"via": "claude",
+"live": false
+},
+{
+"id": "7a98569b",
+"kind": "code",
+"profile": "adopted",
+"status": "adopted",
+"decision": "promoted",
+"created_at": "2026-09-27T13:13:19.086496Z",
+"ended_at": "",
+"branch": "fix/ctx-chip-count",
+"variant_id": "",
+"baseline_score": null,
+"candidate_score": null,
+"gate_delta": null,
+"gate_passed": true,
+"repo": "vera",
+"controller": "claude_code",
+"review_requested": false,
+"adopted": true,
+"session_id": "20a11d36-830f-4e98-b6e2-0fa2a5a27888",
+"via": "mcp",
+"live": false
+},
+{
+"id": "9c8a726b",
+"kind": "code",
+"profile": "adopted",
+"status": "adopted",
+"decision": "promoted",
+"created_at": "2026-09-27T13:06:23.373646Z",
+"ended_at": "",
+"branch": "feat/legibility-seamless-load-animations",
+"variant_id": "",
+"baseline_score": null,
+"candidate_score": null,
+"gate_delta": null,
+"gate_passed": true,
+"repo": "vera",
+"controller": "claude_code",
+"review_requested": false,
+"adopted": true,
+"session_id": "20a11d36-830f-4e98-b6e2-0fa2a5a27888",
+"via": "mcp",
+"live": false
+},
+{
+"id": "1da867c6",
+"kind": "code",
+"profile": "adopted",
+"status": "adopted",
+"decision": "promoted",
+"created_at": "2026-09-27T12:31:09.173033Z",
+"ended_at": "",
+"branch": "fix/live-ops-heavy-estate",
+"variant_id": "",
+"baseline_score": null,
+"candidate_score": null,
+"gate_delta": null,
+"gate_passed": false,
+"repo": "vera",
+"controller": "claude_code",
+"review_requested": true,
+"adopted": true,
+"session_id": "adf5869f-4f70-46e1-baad-8e15b324007a",
+"via": "claude",
+"live": false
+},
+{
+"id": "4f691bc4",
+"kind": "code",
+"profile": "adopted",
+"status": "adopted",
+"decision": "promoted",
+"created_at": "2026-09-27T12:33:02.237758Z",
+"ended_at": "",
+"branch": "fix/lhm-rail-glow-blocks",
+"variant_id": "",
+"baseline_score": null,
+"candidate_score": null,
+"gate_delta": null,
+"gate_passed": true,
+"repo": "vera",
+"controller": "claude_code",
+"review_requested": false,
+"adopted": true,
+"session_id": "20a11d36-830f-4e98-b6e2-0fa2a5a27888",
+"via": "claude",
+"live": false
+},
+{
+"id": "30bf3b3f",
+"kind": "code",
+"profile": "adopted",
+"status": "adopted",
+"decision": "promoted",
+"created_at": "2026-09-27T12:31:16.867909Z",
+"ended_at": "",
+"branch": "fix/lhm-rail-glow-blocks",
+"variant_id": "",
+"baseline_score": null,
+"candidate_score": null,
+"gate_delta": null,
+"gate_passed": true,
+"repo": "vera",
+"controller": "claude_code",
+"review_requested": false,
+"adopted": true,
+"session_id": "20a11d36-830f-4e98-b6e2-0fa2a5a27888",
+"via": "claude",
+"live": false
+},
+{
+"id": "3f6ea334",
+"kind": "code",
+"profile": "adopted",
+"status": "adopted",
+"decision": "promoted",
+"created_at": "2026-09-27T11:14:27.825630Z",
+"ended_at": "",
+"branch": "feat/lhm-rail-density-navids",
+"variant_id": "",
+"baseline_score": null,
+"candidate_score": null,
+"gate_delta": null,
+"gate_passed": true,
+"repo": "vera",
+"controller": "claude_code",
+"review_requested": false,
+"adopted": true,
+"session_id": "20a11d36-830f-4e98-b6e2-0fa2a5a27888",
+"via": "claude",
+"live": false
+},
+{
+"id": "3b6e28ea",
+"kind": "code",
+"profile": "adopted",
+"status": "drafting",
+"decision": "pending",
+"created_at": "2026-09-27T10:59:03.046857Z",
+"ended_at": "",
+"branch": "feat/feat-broad-planning-style-fans-work-stre",
+"variant_id": "",
+"baseline_score": null,
+"candidate_score": null,
+"gate_delta": null,
+"gate_passed": null,
+"repo": "vera",
+"controller": "claude_code",
+"review_requested": false,
+"adopted": true,
+"session_id": "3936f68e-50fc-4a7e-baeb-0278e164c8af",
+"via": "claude",
+"live": false
+}
+],
+"count": 30
+},
+"form": "table",
+"second": null,
+"note": ""
+},
+{
+"cap": "estate.health",
+"result": {
+"level": "warn",
+"counts": {
+"error": 0,
+"warn": 5,
+"info": 50
+},
+"sections": {
+"state_store": {
+"label": "State store",
+"facts": {
+"url": "redis://localhost:6379/0",
+"version": "7.4.8",
+"executable": "/data/redis-server",
+"keys": 4360,
+"expected_present": 4,
+"expected_total": 4
+},
+"elapsed_ms": 51,
+"error": "",
+"findings": []
+},
+"containers": {
+"label": "Containers on the Vera host",
+"facts": {
+"listed": 498,
+"sandboxes_ignored": 404,
+"not_running": 51
+},
+"elapsed_ms": 508,
+"error": "",
+"findings": [
+{
+"severity": "warn",
+"section": "containers",
+"subject": "doc_parser_nginx",
+"message": "doc_parser_nginx is stopped although it is set to restart.",
+"detail": "exit code 0, stopped 2026-02-24; restart policy unless-stopped; compose project pdf_pipeline",
+"ref": "container:local/doc_parser_nginx"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "agitated_kirch",
+"message": "agitated_kirch is stopped and has no restart policy.",
+"detail": "exit code 1, stopped 2026-02-10; not managed by compose",
+"ref": "container:local/agitated_kirch"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "c8c169d4d3c4_mongo",
+"message": "c8c169d4d3c4_mongo is stopped and has no restart policy.",
+"detail": "exit code 255, stopped 2026-03-30; compose project src",
+"ref": "container:local/c8c169d4d3c4_mongo"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "charming_jepsen",
+"message": "charming_jepsen is stopped and has no restart policy.",
+"detail": "exit code 1, stopped 2026-02-10; not managed by compose",
+"ref": "container:local/charming_jepsen"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "focused_lalande",
+"message": "focused_lalande is stopped and has no restart policy.",
+"detail": "exit code 255, stopped 2026-02-28; not managed by compose",
+"ref": "container:local/focused_lalande"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "godseye-build",
+"message": "godseye-build is stopped and has no restart policy.",
+"detail": "exit code 0, stopped 2026-08-31; not managed by compose",
+"ref": "container:local/godseye-build"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "grafana",
+"message": "grafana is stopped and has no restart policy.",
+"detail": "exit code 1, stopped 2026-09-02; compose project src",
+"ref": "container:local/grafana"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "gs-all-test",
+"message": "gs-all-test is stopped and has no restart policy.",
+"detail": "exit code 0, stopped 2026-08-30; not managed by compose",
+"ref": "container:local/gs-all-test"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "gs-ast",
+"message": "gs-ast is stopped and has no restart policy.",
+"detail": "exit code 0, stopped 2026-08-30; not managed by compose",
+"ref": "container:local/gs-ast"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "gs-bld-test",
+"message": "gs-bld-test is stopped and has no restart policy.",
+"detail": "exit code 0, stopped 2026-08-30; not managed by compose",
+"ref": "container:local/gs-bld-test"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "gs-bld2",
+"message": "gs-bld2 is stopped and has no restart policy.",
+"detail": "exit code 0, stopped 2026-08-30; not managed by compose",
+"ref": "container:local/gs-bld2"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "gs-bld3",
+"message": "gs-bld3 is stopped and has no restart policy.",
+"detail": "exit code 0, stopped 2026-08-30; not managed by compose",
+"ref": "container:local/gs-bld3"
+}
+]
+},
+"guests": {
+"label": "Proxmox guests",
+"facts": {
+"clusters": 1,
+"records": 1,
+"running_checked": 22
+},
+"elapsed_ms": 276,
+"error": "",
+"findings": [
+{
+"severity": "warn",
+"section": "guests",
+"subject": "147",
+"message": "kali-2020-4 (VM 147) is running but will not start after a host reboot.",
+"detail": "node corp; turn on Start at boot in its Proxmox options",
+"ref": "guest:147"
+},
+{
+"severity": "warn",
+"section": "guests",
+"subject": "903",
+"message": "ipa-rehearsal (CT 903) is running but will not start after a host reboot.",
+"detail": "node corp; turn on Start at boot in its Proxmox options",
+"ref": "guest:903"
+}
+]
+},
+"backups": {
+"label": "Backups",
+"facts": {
+"nodes": 1,
+"enabled_jobs": 1,
+"guests_ok": 20,
+"guests_failed": 0,
+"latest_run_at": 1790478652
+},
+"elapsed_ms": 3837,
+"error": "",
+"findings": []
+},
+"storage": {
+"label": "Disks and storage",
+"facts": {
+"disks": 10,
+"in_use": 9,
+"docker_disk_used_pct": 86.6
+},
+"elapsed_ms": 3346,
+"error": "",
+"findings": [
+{
+"severity": "warn",
+"section": "storage",
+"subject": "/mnt/dockerdata",
+"message": "The Docker data disk on the Vera host is 86.6% full.",
+"detail": "/mnt/dockerdata: 99G free of 738G (86.6% used) — low. Reap exited session sandboxes before it bites.",
+"ref": ""
+},
+{
+"severity": "warn",
+"section": "storage",
+"subject": "corp/sdj",
+"message": "Disk sdj (125 GB, Internal SD-CARD, USB) on corp holds a damaged pool mypool.",
+"detail": "mypool (UNAVAIL)",
+"ref": ""
+}
+]
+},
+"services": {
+"label": "File fabric and directory",
+"facts": {
+"file_fabric": "up",
+"estate_mounts": 87,
+"directory": "FreeIPA 4.13.1"
+},
+"elapsed_ms": 471,
+"error": "",
+"findings": []
+},
+"certificates": {
+"label": "Certificates",
+"facts": {
+"certificates": 23,
+"expired": 0,
+"expiring": 0,
+"soonest": {
+"name": "OCSP Subsystem",
+"where": "issued by FreeIPA",
+"days_left": 665
+}
+},
+"elapsed_ms": 43,
+"error": "",
+"findings": []
+}
+},
+"findings": [
+{
+"severity": "warn",
+"section": "containers",
+"subject": "doc_parser_nginx",
+"message": "doc_parser_nginx is stopped although it is set to restart.",
+"detail": "exit code 0, stopped 2026-02-24; restart policy unless-stopped; compose project pdf_pipeline",
+"ref": "container:local/doc_parser_nginx"
+},
+{
+"severity": "warn",
+"section": "guests",
+"subject": "147",
+"message": "kali-2020-4 (VM 147) is running but will not start after a host reboot.",
+"detail": "node corp; turn on Start at boot in its Proxmox options",
+"ref": "guest:147"
+},
+{
+"severity": "warn",
+"section": "guests",
+"subject": "903",
+"message": "ipa-rehearsal (CT 903) is running but will not start after a host reboot.",
+"detail": "node corp; turn on Start at boot in its Proxmox options",
+"ref": "guest:903"
+},
+{
+"severity": "warn",
+"section": "storage",
+"subject": "/mnt/dockerdata",
+"message": "The Docker data disk on the Vera host is 86.6% full.",
+"detail": "/mnt/dockerdata: 99G free of 738G (86.6% used) — low. Reap exited session sandboxes before it bites.",
+"ref": ""
+},
+{
+"severity": "warn",
+"section": "storage",
+"subject": "corp/sdj",
+"message": "Disk sdj (125 GB, Internal SD-CARD, USB) on corp holds a damaged pool mypool.",
+"detail": "mypool (UNAVAIL)",
+"ref": ""
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "agitated_kirch",
+"message": "agitated_kirch is stopped and has no restart policy.",
+"detail": "exit code 1, stopped 2026-02-10; not managed by compose",
+"ref": "container:local/agitated_kirch"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "c8c169d4d3c4_mongo",
+"message": "c8c169d4d3c4_mongo is stopped and has no restart policy.",
+"detail": "exit code 255, stopped 2026-03-30; compose project src",
+"ref": "container:local/c8c169d4d3c4_mongo"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "charming_jepsen",
+"message": "charming_jepsen is stopped and has no restart policy.",
+"detail": "exit code 1, stopped 2026-02-10; not managed by compose",
+"ref": "container:local/charming_jepsen"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "focused_lalande",
+"message": "focused_lalande is stopped and has no restart policy.",
+"detail": "exit code 255, stopped 2026-02-28; not managed by compose",
+"ref": "container:local/focused_lalande"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "godseye-build",
+"message": "godseye-build is stopped and has no restart policy.",
+"detail": "exit code 0, stopped 2026-08-31; not managed by compose",
+"ref": "container:local/godseye-build"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "grafana",
+"message": "grafana is stopped and has no restart policy.",
+"detail": "exit code 1, stopped 2026-09-02; compose project src",
+"ref": "container:local/grafana"
+},
+{
+"severity": "info",
+"section": "containers",
+"subject": "gs-all-test",
+"message": "gs-all-test is stopped and has no restart policy.",
+"detail": "exit code 0, stopped 2026-08-30; not managed by compose",
+"ref": "container:local/gs-all-test"
+}
+],
+"checked_at": "2026-09-27T14:37:34.128103Z",
+"cached": false
+},
+"form": "status",
+"second": null,
+"note": ""
+},
+{
+"cap": "loop.run.steps",
+"result": {
+"steps": [
+{
+"name": "plan",
+"status": "done"
+},
+{
+"name": "act",
+"status": "running"
+}
+]
+},
+"form": "progress",
+"second": null,
+"note": ""
+},
+{
+"cap": "unknown.events",
+"result": {
+"entries": [
+{
+"ts": "2026-09-27T10:00:00Z",
+"level": "ERROR",
+"message": "boom"
+},
+{
+"ts": "2026-09-27T10:01:00Z",
+"level": "INFO",
+"message": "ok"
+}
+]
+},
+"form": "log",
+"second": "pareto",
+"note": ""
+},
+{
+"cap": "unknown.metrics",
+"result": {
+"samples": [
+{
+"t": 1,
+"cpu": 3,
+"mem": 4
+},
+{
+"t": 2,
+"cpu": 5,
+"mem": 4
+},
+{
+"t": 3,
+"cpu": 4,
+"mem": 6
+}
+]
+},
+"form": "area",
+"second": "table",
+"note": ""
+},
+{
+"cap": "unknown.series",
+"result": {
+"history": [
+{
+"ts": 1,
+"value": 3
+},
+{
+"ts": 2,
+"value": 5
+},
+{
+"ts": 3,
+"value": 4
+}
+]
+},
+"form": "trace",
+"second": "table",
+"note": ""
+},
+{
+"cap": "unknown.gauge",
+"result": {
+"value": 3,
+"max": 10
+},
+"form": "ring",
+"second": null,
+"note": ""
+},
+{
+"cap": "unknown.number",
+"result": {
+"value": 42,
+"history": [
+1,
+2,
+3
+]
+},
+"form": "hero",
+"second": null,
+"note": ""
+},
+{
+"cap": "fs.list",
+"result": {
+"files": [
+{
+"path": "a.py",
+"size": 3
+},
+{
+"path": "b.py",
+"size": 4
+}
+]
+},
+"form": "files",
+"second": null,
+"note": ""
+},
+{
+"cap": "svc.check",
+"result": {
+"status": "ok",
+"checks": [
+{
+"name": "redis",
+"status": "ok"
+},
+{
+"name": "db",
+"status": "warn"
+}
+]
+},
+"form": "status",
+"second": null,
+"note": ""
+},
+{
+"cap": "agent.list",
+"result": {
+"agents": [
+{
+"id": "27fa8ffc-123c-4b07-88dd-e8b274e96fe1",
+"name": "agentic-planner",
+"label": "Agentic Loop Planner",
+"description": "Orchestrator that decomposes a goal into a scoped agentic-loop step plan",
+"avatar": "⌖",
+"model": "",
+"instance_id": "",
+"prefer_gpu": true,
+"temperature": 0.15,
+"top_p": 0.9,
+"top_k": 40,
+"repeat_penalty": 1.05,
+"repeat_last_n": 64,
+"num_ctx": 16384,
+"num_predict": 1536,
+"seed": -1,
+"mirostat": 0,
+"mirostat_tau": 5.0,
+"mirostat_eta": 0.1,
+"tfs_z": 1.0,
+"stop": [],
+"system_prompt": "You are Vera's agentic-loop PLANNER. You decompose a GOAL into an ordered plan of small, scoped steps that specialist sub-agents then execute with REAL capabilities.\nPlan like an engineer: (1) what information must be gathered FIRST, (2) what each step must PRODUCE, (3) which capability actually PER",
+"greeting": "",
+"voice": "bm_george",
+"tts_speed": 1.0,
+"tts_engine": "",
+"domain_caps": [],
+"domain_description": "",
+"tool_mode": "",
+"routing_table": [],
+"think": false,
+"skill_ids": [],
+"ontology_ids": [],
+"created_at": "2026-08-19T23:08:22.174351Z",
+"updated_at": "2026-09-27T09:25:29.198813Z",
+"archived": false,
+"author": "user",
+"memory_enabled": true,
+"memory_inject": false,
+"memory_inject_limit": 5,
+"memory_tags": "",
+"notes_inject": true,
+"cap_ontology_inject": false,
+"quick_opener": false,
+"quick_opener_threshold": 1500,
+"quick_opener_model": "",
+"two_tier": "off",
+"two_tier_decider": "tier2",
+"knowledge_sources": [],
+"rag_enabled": false,
+"rag_inject_limit": 4,
+"rag_refresh_hours": 24.0,
+"rag_last_indexed": ""
+},
+{
+"id": "fac726f9-be82-4a9a-be6e-a5140ea4cef4",
+"name": "aide",
+"label": "Aide",
+"description": "Vera's flagship personal aide — Jarvis-style, wired into the whole estate: diary, email, Telegram, web research, markets, business ops, podcast, code execution and the IDE. The chat UI's default agent.",
+"avatar": "✦",
+"model": "",
+"instance_id": "",
+"prefer_gpu": true,
+"temperature": 0.5,
+"top_p": 0.9,
+"top_k": 40,
+"repeat_penalty": 1.05,
+"repeat_last_n": 64,
+"num_ctx": 16384,
+"num_predict": -1,
+"seed": -1,
+"mirostat": 0,
+"mirostat_tau": 5.0,
+"mirostat_eta": 0.1,
+"tfs_z": 1.0,
+"stop": [],
+"system_prompt": "You are Vera — the user's personal AI aide, wired into their whole system: part chief of staff, part systems operator. Think J.A.R.V.I.S.: composed, precise, anticipatory, quietly witty, never obsequious.\n\nCONDUCT\n• Lead with the answer or the completed action; keep the explanation tight.\n• Prefer D",
+"greeting": "Online and wired in. What are we doing today?",
+"voice": "af_heart",
+"tts_speed": 1.0,
+"tts_engine": "",
+"domain_caps": [
+"system.timestamp",
+"web.research",
+"web.search",
+"web.fetch",
+"http.get",
+"http.post",
+"research.quick_search",
+"research.run",
+"cal.assistant.briefing",
+"cal.assistant.handover",
+"cal.events.list",
+"cal.event.upsert"
+],
+"domain_description": "All-round personal assistant: diary, email, Telegram, web research, markets, business ops, podcast, code execution, IDE and protocol work",
+"tool_mode": "call",
+"routing_table": [],
+"think": false,
+"skill_ids": [
+"sys-exec-fileio",
+"sys-output-formatting",
+"sys-doc-writing",
+"sys-panel-dispatch"
+],
+"ontology_ids": [
+"sys-vera-meta"
+],
+"created_at": "2026-08-19T23:08:22.174242Z",
+"updated_at": "2026-09-27T09:25:29.199095Z",
+"archived": false,
+"author": "user",
+"memory_enabled": true,
+"memory_inject": true,
+"memory_inject_limit": 6,
+"memory_tags": "",
+"notes_inject": true,
+"cap_ontology_inject": true,
+"quick_opener": false,
+"quick_opener_threshold": 1500,
+"quick_opener_model": "",
+"two_tier": "off",
+"two_tier_decider": "tier2",
+"knowledge_sources": [],
+"rag_enabled": false,
+"rag_inject_limit": 4,
+"rag_refresh_hours": 24.0,
+"rag_last_indexed": ""
+},
+{
+"id": "52feaa6b-d961-46b4-8a5f-61b030361e91",
+"name": "analyst",
+"label": "Data Analyst",
+"description": "Analytical thinker focused on data and reasoning",
+"avatar": "∑",
+"model": "",
+"instance_id": "",
+"prefer_gpu": true,
+"temperature": 0.1,
+"top_p": 0.8,
+"top_k": 40,
+"repeat_penalty": 1.1,
+"repeat_last_n": 64,
+"num_ctx": 0,
+"num_predict": -1,
+"seed": -1,
+"mirostat": 0,
+"mirostat_tau": 5.0,
+"mirostat_eta": 0.1,
+"tfs_z": 1.0,
+"stop": [],
+"system_prompt": "You are a precise data analyst. Think step by step. Show your reasoning. Use concrete numbers when possible. Flag uncertainty explicitly. Prefer structured output.",
+"greeting": "",
+"voice": "am_adam",
+"tts_speed": 1.0,
+"tts_engine": "",
+"domain_caps": [
+"math.compute",
+"math.stats",
+"data.json_validate",
+"data.json_flatten",
+"llm.analyze",
+"llm.summarize"
+],
+"domain_description": "Data analysis, statistics, structured reasoning",
+"tool_mode": "call",
+"routing_table": [],
+"think": false,
+"skill_ids": [],
+"ontology_ids": [],
+"created_at": "2026-08-19T23:08:22.174420Z",
+"updated_at": "2026-09-27T09:25:29.198523Z",
+"archived": false,
+"author": "user",
+"memory_enabled": true,
+"memory_inject": false,
+"memory_inject_limit": 5,
+"memory_tags": "",
+"notes_inject": true,
+"cap_ontology_inject": false,
+"quick_opener": false,
+"quick_opener_threshold": 1500,
+"quick_opener_model": "",
+"two_tier": "off",
+"two_tier_decider": "tier2",
+"knowledge_sources": [],
+"rag_enabled": false,
+"rag_inject_limit": 4,
+"rag_refresh_hours": 24.0,
+"rag_last_indexed": ""
+},
+{
+"id": "0722b96c-0a2a-466f-8f9f-658ccb32af90",
+"name": "assistant",
+"label": "Vera",
+"description": "Vera's primary assistant — Jarvis-style: proactive, tool-using, time-aware, hands scheduling work to the specialist when it helps.",
+"avatar": "◈",
+"model": "",
+"instance_id": "",
+"prefer_gpu": true,
+"temperature": 0.6,
+"top_p": 0.9,
+"top_k": 40,
+"repeat_penalty": 1.05,
+"repeat_last_n": 64,
+"num_ctx": 0,
+"num_predict": -1,
+"seed": -1,
+"mirostat": 0,
+"mirostat_tau": 5.0,
+"mirostat_eta": 0.1,
+"tfs_z": 1.0,
+"stop": [],
+"system_prompt": "You are Vera — the user's personal AI: part chief of staff, part systems operator, quietly witty aide. Think J.A.R.V.I.S.: composed, precise, anticipatory, never obsequious.\n\nCONDUCT\n• Lead with the answer or the completed action; keep the explanation tight.\n• Prefer DOING over describing: when a ca",
+"greeting": "Online and at your service. What are we doing today?",
+"voice": "af_heart",
+"tts_speed": 1.0,
+"tts_engine": "",
+"domain_caps": [
+"cal.assistant.briefing",
+"cal.assistant.handover",
+"cal.events.list",
+"cal.event.upsert",
+"cal.event.delete",
+"cal.todos.list",
+"cal.todo.upsert",
+"cal.todo.toggle",
+"cal.notes.list",
+"cal.note.upsert",
+"cal.braindump",
+"system.timestamp"
+],
+"domain_description": "General assistance; diary/scheduling via cal.* or handover to the scheduling assistant",
+"tool_mode": "call",
+"routing_table": [],
+"think": false,
+"skill_ids": [],
+"ontology_ids": [],
+"created_at": "2026-08-19T23:08:22.174303Z",
+"updated_at": "2026-09-27T09:25:29.197839Z",
+"archived": false,
+"author": "user",
+"memory_enabled": true,
+"memory_inject": false,
+"memory_inject_limit": 5,
+"memory_tags": "",
+"notes_inject": true,
+"cap_ontology_inject": false,
+"quick_opener": false,
+"quick_opener_threshold": 1500,
+"quick_opener_model": "",
+"two_tier": "off",
+"two_tier_decider": "tier2",
+"knowledge_sources": [],
+"rag_enabled": false,
+"rag_inject_limit": 4,
+"rag_refresh_hours": 24.0,
+"rag_last_indexed": ""
+},
+{
+"id": "f2b55253-c65e-4500-99e4-4b150d5ed30c",
+"name": "azure-expert",
+"label": "Azure Expert",
+"description": "Cohort: infra. Microsoft Azure architecture & operations expert that keeps itself current: its knowledge sources (Azure updates, Well-Architected, Cloud Adoption Framework) are re-indexed daily into its private RAG dataset.",
+"avatar": "☁️",
+"model": "",
+"instance_id": "",
+"prefer_gpu": true,
+"temperature": 0.3,
+"top_p": 0.9,
+"top_k": 40,
+"repeat_penalty": 1.05,
+"repeat_last_n": 64,
+"num_ctx": 16384,
+"num_predict": -1,
+"seed": -1,
+"mirostat": 0,
+"mirostat_tau": 5.0,
+"mirostat_eta": 0.1,
+"tfs_z": 1.0,
+"stop": [],
+"system_prompt": "You are an AZURE EXPERT — a Microsoft Azure solutions architect current with the latest standards: the Well-Architected Framework pillars, the Cloud Adoption Framework, landing zones, and recent service updates/retirements.\n\nMETHOD\n1. Ground answers in your AGENT KNOWLEDGE excerpts (they come from y",
+"greeting": "Azure expert online — current with the latest standards. What are we building?",
+"voice": "af_heart",
+"tts_speed": 1.0,
+"tts_engine": "",
+"domain_caps": [
+"web.search",
+"web.fetch",
+"http.get",
+"fabric.query",
+"agent.rag.query",
+"llm.summarize",
+"system.timestamp"
+],
+"domain_description": "Microsoft Azure architecture, services, standards and updates",
+"tool_mode": "call",
+"routing_table": [],
+"think": false,
+"skill_ids": [],
+"ontology_ids": [],
+"created_at": "2026-07-06T03:57:20.531260Z",
+"updated_at": "2026-09-27T09:25:29.192114Z",
+"archived": false,
+"author": "user",
+"memory_enabled": true,
+"memory_inject": false,
+"memory_inject_limit": 5,
+"memory_tags": "",
+"notes_inject": true,
+"cap_ontology_inject": false,
+"quick_opener": false,
+"quick_opener_threshold": 1500,
+"quick_opener_model": "",
+"two_tier": "off",
+"two_tier_decider": "tier2",
+"knowledge_sources": [
+{
+"type": "web",
+"target": "https://azure.microsoft.com/en-us/updates/",
+"note": "Azure service updates — GA/preview/retirement announcements",
+"last_indexed": "2026-09-27T05:34:15.775598Z",
+"title": "Azure updates | Microsoft Azure",
+"search_recipe": "feed:https://www.microsoft.com/releasecommunications/api/v2/azure/rss",
+"ingest": "page"
+},
+{
+"type": "web",
+"target": "https://learn.microsoft.com/en-us/azure/well-architected/",
+"note": "Well-Architected Framework — current pillar guidance",
+"last_indexed": "2026-09-27T05:34:16.217578Z",
+"title": "Azure Well-Architected Framework - Microsoft Azure Well-Architected Framework | Microsoft Learn",
+"search_recipe": "web.search 'site:learn.microsoft.com <query>'",
+"ingest": "page"
+},
+{
+"type": "web",
+"target": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/",
+"note": "Cloud Adoption Framework — landing zones, governance",
+"last_indexed": "2026-09-27T05:34:17.693823Z",
+"title": "Cloud Adoption Framework for Microsoft - Cloud Adoption Framework | Microsoft Learn",
+"search_recipe": "web.search 'site:learn.microsoft.com <query>'",
+"ingest": "page"
+},
+{
+"type": "web",
+"target": "https://learn.microsoft.com/en-us/azure/architecture/",
+"note": "Azure Architecture Center — reference architectures",
+"last_indexed": "2026-09-27T05:34:18.864312Z",
+"title": "Azure Architecture Center",
+"search_recipe": "web.search 'site:learn.microsoft.com <query>'",
+"ingest": "page"
+}
+],
+"rag_enabled": true,
+"rag_inject_limit": 5,
+"rag_refresh_hours": 24.0,
+"rag_last_indexed": "2026-09-27T05:34:18.864327Z"
+},
+{
+"id": "60283673-fe9b-41c7-81d7-b3f2f683cd8e",
+"name": "business-operator",
+"label": "Business Operator",
+"description": "Cohort: business. Runs the Business tab end to end — income streams, money & ledger, inventory, gigs, content, bounties, marketing and operational tasks. Powers the Business panel's conversational dock and its agentic-loop / simulation runs.",
+"avatar": "¤",
+"model": "",
+"instance_id": "",
+"prefer_gpu": true,
+"temperature": 0.4,
+"top_p": 0.9,
+"top_k": 40,
+"repeat_penalty": 1.05,
+"repeat_last_n": 64,
+"num_ctx": 16384,
+"num_predict": -1,
+"seed": -1,
+"mirostat": 0,
+"mirostat_tau": 5.0,
+"mirostat_eta": 0.1,
+"tfs_z": 1.0,
+"stop": [],
+"system_prompt": "You are Vera's BUSINESS OPERATOR — a sharp, operations-minded chief of staff running a multi-stream small business for one human owner. You think in income streams: each is one way money comes in (an eBay shop, Fiverr gigs, a YouTube channel, a bug-bounty practice, a trading-card inventory) and each",
+"greeting": "Business is open. Want the state of play, or shall I get to work?",
+"voice": "af_heart",
+"tts_speed": 1.0,
+"tts_engine": "",
+"domain_caps": [
+"business.brief",
+"business.dashboard",
+"business.graph",
+"business.stream.list",
+"business.stream.upsert",
+"business.account.list",
+"business.account.upsert",
+"business.txn.add",
+"business.txn.list",
+"business.account.recalc",
+"business.inventory.list",
+"business.inventory.upsert"
+],
+"domain_description": "Business operations: income streams, money/ledger, inventory, gigs, content, bounties, marketing, tasks",
+"tool_mode": "call",
+"routing_table": [],
+"think": false,
+"skill_ids": [],
+"ontology_ids": [],
+"created_at": "2026-08-19T23:08:22.175033Z",
+"updated_at": "2026-09-27T09:25:29.200220Z",
+"archived": false,
+"author": "user",
+"memory_enabled": true,
+"memory_inject": false,
+"memory_inject_limit": 5,
+"memory_tags": "",
+"notes_inject": true,
+"cap_ontology_inject": false,
+"quick_opener": false,
+"quick_opener_threshold": 1500,
+"quick_opener_model": "",
+"two_tier": "off",
+"two_tier_decider": "tier2",
+"knowledge_sources": [],
+"rag_enabled": false,
+"rag_inject_limit": 4,
+"rag_refresh_hours": 24.0,
+"rag_last_indexed": ""
+},
+{
+"id": "d9bab04a-421e-4522-b1ad-55e579ebefa1",
+"name": "capability-smith",
+"label": "Meta · Capability Smith",
+"description": "Cohort: meta. Extends Vera itself — designs and scaffolds new capabilities, endpoints and UI panels.",
+"avatar": "⊞",
+"model": "",
+"instance_id": "",
+"prefer_gpu": true,
+"temperature": 0.2,
+"top_p": 0.9,
+"top_k": 40,
+"repeat_penalty": 1.1,
+"repeat_last_n": 64,
+"num_ctx": 16384,
+"num_predict": -1,
+"seed": -1,
+"mirostat": 0,
+"mirostat_tau": 5.0,
+"mirostat_eta": 0.1,
+"tfs_z": 1.0,
+"stop": [],
+"system_prompt": "You are the CAPABILITY SMITH of Vera's meta cohort — you extend Vera itself. You design new capabilities the right way: the @capability decorator + HTTP route, emit_event where useful, registration in _module_files, and a UI panel via register_ui when it needs a face. Follow the conventions of the e",
+"greeting": "",
+"voice": "bm_lewis",
+"tts_speed": 1.0,
+"tts_engine": "",
+"domain_caps": [
+"ide.code.tool_manifest",
+"exec.python.run",
+"exec.bash.run",
+"llm.generate",
+"llm.code_review"
+],
+"domain_description": "Authoring new Vera capabilities, endpoints and panels",
+"tool_mode": "call",
+"routing_table": [],
+"think": false,
+"skill_ids": [],
+"ontology_ids": [],
+"created_at": "2026-08-19T23:08:22.174988Z",
+"updated_at": "2026-09-27T09:25:29.196202Z",
+"archived": false,
+"author": "user",
+"memory_enabled": true,
+"memory_inject": false,
+"memory_inject_limit": 5,
+"memory_tags": "",
+"notes_inject": true,
+"cap_ontology_inject": false,
+"quick_opener": false,
+"quick_opener_threshold": 1500,
+"quick_opener_model": "",
+"two_tier": "off",
+"two_tier_decider": "tier2",
+"knowledge_sources": [],
+"rag_enabled": false,
+"rag_inject_limit": 4,
+"rag_refresh_hours": 24.0,
+"rag_last_indexed": ""
+},
+{
+"id": "dbf6053c-b4e3-4477-ac41-860f9d7c084a",
+"name": "code-editor",
+"label": "Coding · Editor",
+"description": "Cohort: coding. Makes surgical, line-level edits to existing files — reads the region, changes the minimum, re-reads to confirm.",
+"avatar": "⌥",
+"model": "",
+"instance_id": "",
+"prefer_gpu": true,
+"temperature": 0.15,
+"top_p": 0.9,
+"top_k": 40,
+"repeat_penalty": 1.1,
+"repeat_last_n": 64,
+"num_ctx": 16384,
+"num_predict": -1,
+"seed": -1,
+"mirostat": 0,
+"mirostat_tau": 5.0,
+"mirostat_eta": 0.1,
+"tfs_z": 1.0,
+"stop": [],
+"system_prompt": "You are the EDITOR of Vera's coding cohort. You change EXISTING code with the smallest possible edit. Method: locate the exact region (ide.code.grep / ide.code.read_lines), then apply the change via code.edit (find/replace anchors, versioned, syntax-checked) — the canonical surgical-edit tool, not r",
+"greeting": "",
+"voice": "bm_lewis",
+"tts_speed": 1.0,
+"tts_engine": "",
+"domain_caps": [
+"ide.code.read_lines",
+"ide.code.edit_lines",
+"ide.code.insert_at",
+"ide.code.replace",
+"ide.code.grep",
+"ide.code.list_files",
+"ide.fs.read",
+"code.edit",
+"code.save",
+"code.diff",
+"code.read"
+],
+"domain_description": "Surgical line-level code edits on existing files",
+"tool_mode": "call",
+"routing_table": [],
+"think": false,
+"skill_ids": [],
+"ontology_ids": [],
+"created_at": "2026-08-19T23:08:22.175096Z",
+"updated_at": "2026-09-27T09:25:29.195628Z",
+"archived": false,
+"author": "user",
+"memory_enabled": true,
+"memory_inject": false,
+"memory_inject_limit": 5,
+"memory_tags": "",
+"notes_inject": true,
+"cap_ontology_inject": false,
+"quick_opener": false,
+"quick_opener_threshold": 1500,
+"quick_opener_model": "",
+"two_tier": "off",
+"two_tier_decider": "tier2",
+"knowledge_sources": [],
+"rag_enabled": false,
+"rag_inject_limit": 4,
+"rag_refresh_hours": 24.0,
+"rag_last_indexed": ""
+},
+{
+"id": "9e70258a-534a-4fa2-b6ec-01e00ce1a02c",
+"name": "code-reviewer",
+"label": "Code Reviewer",
+"description": "Strict code reviewer with focus on quality and security",
+"avatar": "⌕",
+"model": "",
+"instance_id": "",
+"prefer_gpu": true,
+"temperature": 0.2,
+"top_p": 0.9,
+"top_k": 40,
+"repeat_penalty": 1.15,
+"repeat_last_n": 64,
+"num_ctx": 0,
+"num_predict": -1,
+"seed": -1,
+"mirostat": 0,
+"mirostat_tau": 5.0,
+"mirostat_eta": 0.1,
+"tfs_z": 1.0,
+"stop": [],
+"system_prompt": "You are a rigorous code reviewer. Examine code for bugs, security vulnerabilities, performance issues, and style problems. Be direct and specific. Rate issues as critical/high/medium/low. Suggest concrete fixes.",
+"greeting": "",
+"voice": "bm_lewis",
+"tts_speed": 1.0,
+"tts_engine": "",
+"domain_caps": [
+"llm.code_review",
+"llm.explain",
+"text.stats"
+],
+"domain_description": "Code analysis, security review, best practices",
+"tool_mode": "call",
+"routing_table": [],
+"think": false,
+"skill_ids": [],
+"ontology_ids": [],
+"created_at": "2026-08-19T23:08:22.174394Z",
+"updated_at": "2026-09-27T09:25:29.198671Z",
+"archived": false,
+"author": "user",
+"memory_enabled": true,
+"memory_inject": false,
+"memory_inject_limit": 5,
+"memory_tags": "",
+"notes_inject": true,
+"cap_ontology_inject": false,
+"quick_opener": false,
+"quick_opener_threshold": 1500,
+"quick_opener_model": "",
+"two_tier": "off",
+"two_tier_decider": "tier2",
+"knowledge_sources": [],
+"rag_enabled": false,
+"rag_inject_limit": 4,
+"rag_refresh_hours": 24.0,
+"rag_last_indexed": ""
+},
+{
+"id": "a8f0cdff-61b8-4418-984c-490ab4288707",
+"name": "code-tester",
+"label": "Coding · Tester",
+"description": "Cohort: coding. Runs tests and exercises code, reporting exactly what passed, what failed and the failing output.",
+"avatar": "⊨",
+"model": "",
+"instance_id": "",
+"prefer_gpu": true,
+"temperature": 0.2,
+"top_p": 0.9,
+"top_k": 40,
+"repeat_penalty": 1.05,
+"repeat_last_n": 64,
+"num_ctx": 16384,
+"num_predict": -1,
+"seed": -1,
+"mirostat": 0,
+"mirostat_tau": 5.0,
+"mirostat_eta": 0.1,
+"tfs_z": 1.0,
+"stop": [],
+"system_prompt": "You are the TESTER of Vera's coding cohort. You EXERCISE code and report the truth. Find or write the test, RUN it (exec.python.run / exec.bash.run), and read the real output. Report pass/fail counts and paste the failing output verbatim — never claim green without having run it. If there is no test",
+"greeting": "",
+"voice": "bm_lewis",
+"tts_speed": 1.0,
+"tts_engine": "",
+"domain_caps": [
+"exec.python.run",
+"exec.bash.run",
+"ide.fs.read",
+"ide.code.grep",
+"ide.code.list_files",
+"code.read"
+],
+"domain_description": "Running tests, exercising code, reporting real results",
+"tool_mode": "call",
+"routing_table": [],
+"think": false,
+"skill_ids": [],
+"ontology_ids": [],
+"created_at": "2026-08-19T23:08:22.175107Z",
+"updated_at": "2026-09-27T09:25:29.197106Z",
+"archived": false,
+"author": "user",
+"memory_enabled": true,
+"memory_inject": false,
+"memory_inject_limit": 5,
+"memory_tags": "",
+"notes_inject": true,
+"cap_ontology_inject": false,
+"quick_opener": false,
+"quick_opener_threshold": 1500,
+"quick_opener_model": "",
+"two_tier": "off",
+"two_tier_decider": "tier2",
+"knowledge_sources": [],
+"rag_enabled": false,
+"rag_inject_limit": 4,
+"rag_refresh_hours": 24.0,
+"rag_last_indexed": ""
+},
+{
+"id": "d02c98fc-e739-4163-855b-b1531a4b6453",
+"name": "code-verifier",
+"label": "Coding · Verifier",
+"description": "Cohort: coding. Reviews a change for correctness and regressions before it ships — reads the diff and reasons about failure modes.",
+"avatar": "⊢",
+"model": "",
+"instance_id": "",
+"prefer_gpu": true,
+"temperature": 0.1,
+"top_p": 0.9,
+"top_k": 40,
+"repeat_penalty": 1.1,
+"repeat_last_n": 64,
+"num_ctx": 16384,
+"num_predict": -1,
+"seed": -1,
+"mirostat": 0,
+"mirostat_tau": 5.0,
+"mirostat_eta": 0.1,
+"tfs_z": 1.0,
+"stop": [],
+"system_prompt": "You are the VERIFIER of Vera's coding cohort. Given a change, you decide whether it is CORRECT and safe to keep. Read the diff (code.diff / ide.code.grep), reason explicitly about failure modes, edge cases and regressions, and confirm the code actually does what it is supposed to — drive the affecte",
+"greeting": "",
+"voice": "bm_lewis",
+"tts_speed": 1.0,
+"tts_engine": "",
+"domain_caps": [
+"llm.code_review",
+"llm.explain",
+"ide.code.grep",
+"ide.fs.read",
+"exec.bash.run",
+"code.read",
+"code.diff",
+"code.versions"
+],
+"domain_description": "Correctness/regression review and verification of changes",
+"tool_mode": "call",
+"routing_table": [],
+"think": false,
+"skill_ids": [],
+"ontology_ids": [],
+"created_at": "2026-08-19T23:08:22.175118Z",
+"updated_at": "2026-09-27T09:25:29.195782Z",
+"archived": false,
+"author": "user",
+"memory_enabled": true,
+"memory_inject": false,
+"memory_inject_limit": 5,
+"memory_tags": "",
+"notes_inject": true,
+"cap_ontology_inject": false,
+"quick_opener": false,
+"quick_opener_threshold": 1500,
+"quick_opener_model": "",
+"two_tier": "off",
+"two_tier_decider": "tier2",
+"knowledge_sources": [],
+"rag_enabled": false,
+"rag_inject_limit": 4,
+"rag_refresh_hours": 24.0,
+"rag_last_indexed": ""
+},
+{
+"id": "8141737d-a714-4e67-8c11-acd62c23ca66",
+"name": "coder",
+"label": "Coding · Implementer",
+"description": "Cohort: coding. Writes and runs real code (python/bash) to accomplish a task, iterating until it works.",
+"avatar": "⌨",
+"model": "",
+"instance_id": "",
+"prefer_gpu": true,
+"temperature": 0.2,
+"top_p": 0.9,
+"top_k": 40,
+"repeat_penalty": 1.05,
+"repeat_last_n": 64,
+"num_ctx": 16384,
+"num_predict": -1,
+"seed": -1,
+"mirostat": 0,
+"mirostat_tau": 5.0,
+"mirostat_eta": 0.1,
+"tfs_z": 1.0,
+"stop": [],
+"system_prompt": "You are the IMPLEMENTER of Vera's coding cohort. You write real, running code — not pseudocode — and you EXECUTE it to verify it works. Prefer a short script run with exec.python.run / exec.bash.run over hand-waving. When a task needs glue, parsing, or multi-command shell work, generate a script (it",
+"greeting": "",
+"voice": "bm_lewis",
+"tts_speed": 1.0,
+"tts_engine": "",
+"domain_caps": [
+"exec.python.run",
+"exec.bash.run",
+"llm.generate",
+"ide.code.tool_manifest",
+"http.get",
+"code.author",
+"code.save",
+"code.versions"
+],
+"domain_description": "Implementation, scripting, running & iterating on code",
+"tool_mode": "call",
+"routing_table": [],
+"think": false,
+"skill_ids": [],
+"ontology_ids": [],
+"created_at": "2026-08-19T23:08:22.174466Z",
+"updated_at": "2026-09-27T09:25:29.198353Z",
+"archived": false,
+"author": "user",
+"memory_enabled": true,
+"memory_inject": false,
+"memory_inject_limit": 5,
+"memory_tags": "",
+"notes_inject": true,
+"cap_ontology_inject": false,
+"quick_opener": false,
+"quick_opener_threshold": 1500,
+"quick_opener_model": "",
+"two_tier": "off",
+"two_tier_decider": "tier2",
+"knowledge_sources": [],
+"rag_enabled": false,
+"rag_inject_limit": 4,
+"rag_refresh_hours": 24.0,
+"rag_last_indexed": ""
+}
+],
+"count": 57
+},
+"form": "table",
+"second": null,
+"note": ""
+},
+{
+"cap": "unknown.tags",
+"result": [
+"a",
+"b",
+"c"
+],
+"form": "list",
+"second": null,
+"note": ""
+},
+{
+"cap": "unknown.counts",
+"result": {
+"a": 1,
+"b": 2,
+"c": 3
+},
+"form": "numbers",
+"second": null,
+"note": ""
+},
+{
+"cap": "research.report",
+"result": {
+"ok": true,
+"report": "# Findings\n\nLorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ip",
+"sources": 3
+},
+"form": "markdown",
+"second": "kv",
+"note": ""
+},
+{
+"cap": "identity.status",
+"result": {
+"configured": true,
+"reachable": true,
+"version": "4.13.1"
+},
+"form": "kv",
+"second": null,
+"note": ""
+},
+{
+"cap": "unknown.nested",
+"result": {
+"a": {
+"b": {
+"c": 1
+}
+},
+"d": [
+1,
+{
+"e": 2
+}
+]
+},
+"form": "json",
+"second": null,
+"note": ""
+},
+{
+"cap": "unknown.text",
+"result": "hello world",
+"form": "string",
+"second": null,
+"note": ""
+},
+{
+"cap": "unknown.bool",
+"result": true,
+"form": "status",
+"second": null,
+"note": ""
+},
+{
+"cap": "ollama.route_stats",
+"result": {
+"stats": [
+{
+"model": "jaahas/qwen3.5-uncensored",
+"instance": "gpu-250",
+"job_type": "chat",
+"n": 6029,
+"ema_elapsed_s": 49.643,
+"ema_tokens": 899.9,
+"ema_tps": 14.1,
+"ema_prompt_chars": 5778.0,
+"last_ts": "2026-09-27T01:31:40.667224Z",
+"ema_chars_per_token": 3.76,
+"n_tok_measured": 2464,
+"n_ctx_measured": 2464
+},
+{
+"model": "jaahas/qwen3.5-uncensored",
+"instance": "gpu-250",
+"job_type": "loop_executor",
+"n": 5827,
+"ema_elapsed_s": 29.764,
+"ema_tokens": 526.9,
+"ema_tps": 17.69,
+"ema_prompt_chars": 2657.0,
+"last_ts": "2026-09-25T16:16:33.529491Z",
+"ema_chars_per_token": 3.633,
+"n_tok_measured": 688,
+"n_ctx_measured": 688
+},
+{
+"model": "jaahas/qwen3.5-uncensored:9b",
+"instance": "gpu-250",
+"job_type": "loop_executor",
+"n": 4655,
+"ema_elapsed_s": 33.499,
+"ema_tokens": 206.9,
+"ema_tps": 5.73,
+"ema_prompt_chars": 43750.0,
+"last_ts": "2026-09-26T21:14:29.967250Z",
+"ema_chars_per_token": 3.802,
+"n_tok_measured": 3825,
+"n_ctx_measured": 3825
+},
+{
+"model": "jaahas/qwen3.5-uncensored",
+"instance": "gpu-250",
+"job_type": "loop_planner",
+"n": 3184,
+"ema_elapsed_s": 23.029,
+"ema_tokens": 247.2,
+"ema_tps": 10.89,
+"ema_prompt_chars": 21832.0,
+"last_ts": "2026-09-26T21:15:23.108128Z",
+"ema_chars_per_token": 3.895,
+"n_tok_measured": 1331,
+"n_ctx_measured": 1331
+},
+{
+"model": "jaahas/qwen3.5-uncensored",
+"instance": "gpu-250",
+"job_type": "code",
+"n": 1580,
+"ema_elapsed_s": 29.635,
+"ema_tokens": 476.9,
+"ema_tps": 16.17,
+"ema_prompt_chars": 3457.0,
+"last_ts": "2026-09-22T00:24:24.272174Z",
+"ema_chars_per_token": 3.02,
+"n_tok_measured": 125,
+"n_ctx_measured": 125
+},
+{
+"model": "qwen2.5:7b",
+"instance": "gpu-250",
+"job_type": "loop_coder",
+"n": 802,
+"ema_elapsed_s": 19.596,
+"ema_tokens": 308.7,
+"ema_tps": 15.05,
+"ema_prompt_chars": 7090.0,
+"ema_chars_per_token": 3.879,
+"n_tok_measured": 802,
+"n_ctx_measured": 802,
+"last_ts": "2026-09-26T21:14:43.459902Z"
+},
+{
+"model": "qwen2.5-coder:14b",
+"instance": "gpu-250",
+"job_type": "loop_coder",
+"n": 662,
+"ema_elapsed_s": 456.782,
+"ema_tokens": 231.8,
+"ema_tps": 0.51,
+"ema_prompt_chars": 7939.0,
+"last_ts": "2026-09-10T10:36:19.018786Z"
+},
+{
+"model": "jaahas/qwen3.5-uncensored",
+"instance": "gpu-250",
+"job_type": "loop_writer",
+"n": 331,
+"ema_elapsed_s": 35.95,
+"ema_tokens": 746.5,
+"ema_tps": 20.96,
+"ema_prompt_chars": 3011.0,
+"last_ts": "2026-09-12T17:03:03.709438Z"
+},
+{
+"model": "jaahas/qwen3.5-uncensored",
+"instance": "gpu-250",
+"job_type": "default",
+"n": 304,
+"ema_elapsed_s": 11.231,
+"ema_tokens": 174.9,
+"ema_tps": 8.05,
+"ema_prompt_chars": 2630.0,
+"last_ts": "2026-09-26T20:40:36.150529Z",
+"ema_chars_per_token": 3.802,
+"n_tok_measured": 49,
+"n_ctx_measured": 49
+},
+{
+"model": "jaahas/qwen3.5-uncensored",
+"instance": "gpu-250",
+"job_type": "loop_coder",
+"n": 249,
+"ema_elapsed_s": 42.569,
+"ema_tokens": 1082.5,
+"ema_tps": 30.65,
+"ema_prompt_chars": 8325.0,
+"last_ts": "2026-09-12T16:58:07.050700Z"
+},
+{
+"model": "jaahas/qwen3.5-uncensored:9b",
+"instance": "gpu-250",
+"job_type": "loop_writer",
+"n": 223,
+"ema_elapsed_s": 88.938,
+"ema_tokens": 1301.7,
+"ema_tps": 15.42,
+"ema_prompt_chars": 24532.0,
+"last_ts": "2026-09-26T18:25:02.249945Z",
+"ema_chars_per_token": 4.151,
+"n_tok_measured": 209,
+"n_ctx_measured": 209
+},
+{
+"model": "jaahas/qwen3.5-uncensored:9b",
+"instance": "gpu-250",
+"job_type": "loop_coder",
+"n": 140,
+"ema_elapsed_s": 244.304,
+"ema_tokens": 3943.8,
+"ema_tps": 16.34,
+"ema_prompt_chars": 8346.0,
+"last_ts": "2026-09-21T00:53:17.109003Z",
+"ema_chars_per_token": 3.728,
+"n_tok_measured": 41,
+"n_ctx_measured": 41
+}
+],
+"keys": 27
+},
+"form": "ranked",
+"second": null,
+"note": ""
+},
+{
+"cap": "unknown.nothing",
+"result": null,
+"form": null,
+"second": null,
+"note": ""
+}
+]

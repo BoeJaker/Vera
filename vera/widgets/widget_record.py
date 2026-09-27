@@ -214,6 +214,17 @@ FORMS: List[Dict[str, Any]] = [
     _F("button", "string", glyph="button", sizes=("xs", "s"), name="Button", boards=("reply",)),
     _F("header", "string", glyph="header", sizes=("xs", "s"), name="Header", boards=("reply",)),
     _F("rail", "items", glyph="rail", sizes=("s",), options=("width", "slots"), name="Rail", boards=("motion",)),
+    # ── the capability-output forms (the widget review, round 2): what a capability's ANSWER is drawn as - the result
+    #    forms widget_cap_output.py (and VeraWidget.fromCapResult) pick from, beside kv, table, list, log, terminal,
+    #    hero, trace, area, column and files ──
+    _F("json", "values", glyph="json", name="JSON tree", boards=("reply", "spec")),
+    _F("diff", "string", glyph="diff", name="Diff", boards=("reply", "spec")),
+    _F("code", "string", glyph="code", options=("lang",), name="Code", boards=("reply", "spec")),
+    _F("progress", "stages", glyph="progress", name="Progress", boards=("reply", "spec")),
+    _F("status", "values", glyph="status", name="Status", boards=("reply", "spec")),
+    _F("media", "string", glyph="media", name="Media", boards=("reply", "spec")),
+    _F("error", "string", glyph="error", name="Error", boards=("reply", "spec")),
+    _F("markdown", "string", glyph="markdown", name="Markdown", boards=("reply", "spec")),
 ]
 _FORM_BY_ID = {f["id"]: f for f in FORMS}
 # the context graph's line above is held verbatim by the chat's explode test; its name and board ride in here

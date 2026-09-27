@@ -49,6 +49,19 @@
 (function () {
   'use strict';
   if (window.VeraWidget) return;
+  /* THE TEXT-SIZE SETTING (the widget review, round 2). vera-ui.js paints html[data-text] = compact | default | large |
+     larger and floors the small px font sizes it can reach; what it cannot reach - a size inside a clamp(), a style this
+     file builds, an SVG attribute - went on drawing at 6.5-9.5 px. Every font size under 13 px in this file's CSS is
+     written through fontScale(): calc(max(floor, size) * factor), the floor and the factor two variables the setting
+     sets on the document (--vw-fmin 0 / 10 / 11 / 12 px, --vw-fx 1 / 1 / 1.1 / 1.22), so every face - in a shadow
+     root or on the page - follows the setting and nothing is drawn below 10 px by default. */
+  function fontScale(css) {
+    const f = (n) => 'calc(max(var(--vw-fmin, 10px), ' + n + 'px) * var(--vw-fx, 1))';
+    return String(css).replace(/font-size:\s*([0-9.]+)px/g, (m, n) => (+n >= 13 ? m : 'font-size:' + f(n)))
+      .replace(/font-size:\s*clamp\(([0-9.]+)px,/g, (m, n) => 'font-size:clamp(' + f(n) + ',');
+  }
+  const TEXT_SCALE_CSS = 'html{--vw-fmin:10px;--vw-fx:1}html[data-text="compact"]{--vw-fmin:0px;--vw-fx:1}html[data-text="large"]{--vw-fmin:11px;--vw-fx:1.1}html[data-text="larger"]{--vw-fmin:12px;--vw-fx:1.22}';
+  try { if (typeof document !== 'undefined' && document.head && !document.getElementById('vw-text-scale')) { const st = document.createElement('style'); st.id = 'vw-text-scale'; st.textContent = TEXT_SCALE_CSS; document.head.appendChild(st); } } catch (_) {}
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return isFinite(n) ? n : 0; };
   const fmt = (v) => { const n = num(v); return Math.abs(n) >= 100 ? Math.round(n).toLocaleString() : (Math.round(n * 10) / 10).toString(); };
@@ -84,7 +97,9 @@
                   orbit: 'items', shelf: 'items', racks: 'items', stacks: 'parts', 'meter-panel': 'values', conveyor: 'stages', approvals: 'stages', city: 'graph', topology: 'graph', diagram: 'graph',
                   library: 'items', pages: 'items', wiki: 'items', devices: 'items', notebook: 'items', hosts: 'items', containers: 'items', models: 'items', datasets: 'items', sandboxes: 'items',
                   // the table family (defect 50)
-                  rows: 'items', cards: 'items', temps: 'values' };
+                  rows: 'items', cards: 'items', temps: 'values',
+                  // the capability-output forms (the widget review, round 2)
+                  json: 'values', diff: 'string', code: 'string', progress: 'stages', status: 'values', media: 'string', error: 'string', markdown: 'string' };
   const canon = (form) => { const f = String(form || '').toLowerCase(); return DRAWN[f] ? f : (ALIAS[f] || f); };
 
   /* ── the data a form draws ────────────────────────────────────────────── */
@@ -117,9 +132,10 @@
   function dataFor(x, form, depth) {
     depth = depth || 0; if (x == null || depth > 2) return x;
     form = canon(form);
+    if (/^(json|diff|code|progress|status|media|error|markdown)$/.test(form)) return x;   // a result form reads the answer whole
     if (Array.isArray(x)) return x;
     if (typeof x === 'object') {
-      if ((form === 'radial' || form === 'counter' || form === 'bar') && typeof x.value === 'number') return x;
+      if (/^(radial|counter|bar|hero|meter|level|ring|gauge|dial|tank)$/.test(form) && typeof x.value === 'number') return x;   // a level with its trend beside it is the level, not its trend
       if ((form === 'pipes' || form === 'context_graph') && Array.isArray(x.nodes)) return x;
       if (form === 'globe' && ['points', 'pins', 'hosts', 'events', 'nodes', 'items', 'rows'].some((k) => Array.isArray(x[k]))) return x;   // the globe reads its record whole: the points AND the links, the night, the page size
       if (form === 'stepper' && (Array.isArray(x.stages) || Array.isArray(x.steps))) return x;
@@ -258,6 +274,14 @@
     files: () => [['/srv/vera/fabric.py', '12 KB', '14:41'], ['/srv/vera/gate.py', '4 KB', '14:38'], ['/notes/42-plan.md', '9 KB', '13:02'], ['/out/report.html', '31 KB', '12:48']].map((r) => ({ path: r[0], size: r[1], changed: r[2] })),
     checklist: () => [{ text: 'gate passed', done: true }, { text: 'sweep the estate', done: true }, { text: 'verify on the mirror' }, { text: 'land', due: 'today' }],
     kv: () => ({ status: 'serving', node: 'ct126', model: 'qwen3:30b', in_flight: 4, waiting: 'step 5' }),
+    json: () => ({ ok: true, node: 'ct126', models: ['qwen3:30b', 'nomic-embed-text'], gate: { held: 1, capacity: 1 } }),
+    diff: () => ({ diff: 'diff --git a/vera/gate.py b/vera/gate.py\n--- a/vera/gate.py\n+++ b/vera/gate.py\n@@ -12,3 +12,4 @@ def acquire():\n-    wait = 5\n+    wait = 2\n+    log.info("lease")\n     return lease' }),
+    code: () => ({ path: 'vera/gate.py', code: 'def acquire(node):\n    lease = gate.take(node)\n    return lease\n' }),
+    progress: () => ({ steps: [{ name: 'recall', status: 'done', elapsed_s: 1.2 }, { name: 'read', status: 'done', elapsed_s: 3.4 }, { name: 'author', status: 'running' }, { name: 'verify', status: 'waiting' }] }),
+    status: () => ({ status: 'degraded', message: '1 of 4 checks needs a look', checks: [{ name: 'redis', status: 'ok' }, { name: 'neo4j', status: 'ok' }, { name: 'gate', status: 'warn' }, { name: 'ct126', status: 'ok' }] }),
+    media: () => ({ url: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNjAiIGhlaWdodD0iOTAiPjxyZWN0IHdpZHRoPSIxNjAiIGhlaWdodD0iOTAiIGZpbGw9IiMyMjI2MzAiLz48Y2lyY2xlIGN4PSI4MCIgY3k9IjQ1IiByPSIyNCIgZmlsbD0iIzZlYThkOCIvPjwvc3ZnPg==', title: 'a drawing' }),
+    error: () => ({ ok: false, error: 'ct130 did not answer in 25 s', detail: 'ConnectTimeout: 192.168.0.130:11435' }),
+    markdown: () => '## Digest\nFour of four boots **clean**. The gate held `ct126` twice.\n- sweep the estate\n- verify on the mirror',
     pills: () => [['redis', 'ok'], ['neo4j', 'ok'], ['ollama', 'running'], ['ct130', 'down'], ['gate', 'ok']].map((r) => ({ name: r[0], status: r[1] })),
     context_graph: () => { const g = SAMPLE.graph(); return { nodes: g.nodes, rels: g.links.map((l) => ({ from: l.from, to: l.to, kind: l.kind })) }; },
     /* a structured graph's sample is a small, HONEST Explode contract — every card carries its span and the layer
@@ -443,7 +467,7 @@
     if (o && o.draw && o.draw.sort !== false) kv = kv.slice().sort((a, b) => b[1] - a[1]);
     kv = kv.slice(0, (o && o.draw && o.draw.limit) || 12);
     const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, W = 300, bw = W / kv.length;
-    return '<svg class="vw-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="height:' + H + 'px">' + kv.map((x, i) => { const h = Math.max(1, (Math.abs(x[1]) / hi) * (H - 14)); return '<rect x="' + (i * bw + 2).toFixed(1) + '" y="' + (H - 12 - h).toFixed(1) + '" width="' + Math.max(1, bw - 4).toFixed(1) + '" height="' + h.toFixed(1) + '" rx="2" fill="var(--acc,#5a9e8f)"><title>' + esc(x[0]) + ' · ' + esc(fmt(x[1])) + '</title></rect><text x="' + (i * bw + bw / 2).toFixed(1) + '" y="' + (H - 2) + '" text-anchor="middle" font-size="8" fill="var(--dim2,#8a92a0)" font-family="var(--mono,monospace)">' + esc(String(x[0]).slice(0, 6)) + '</text>'; }).join('') + '</svg>';
+    return '<svg class="vw-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="height:' + H + 'px">' + kv.map((x, i) => { const h = Math.max(1, (Math.abs(x[1]) / hi) * (H - 14)); return '<rect x="' + (i * bw + 2).toFixed(1) + '" y="' + (H - 12 - h).toFixed(1) + '" width="' + Math.max(1, bw - 4).toFixed(1) + '" height="' + h.toFixed(1) + '" rx="2" fill="var(--acc,#5a9e8f)"><title>' + esc(x[0]) + ' · ' + esc(fmt(x[1])) + '</title></rect><text x="' + (i * bw + bw / 2).toFixed(1) + '" y="' + (H - 2) + '" text-anchor="middle" class="vw-svgt" fill="var(--dim2,#8a92a0)">' + esc(String(x[0]).slice(0, 6)) + '</text>'; }).join('') + '</svg>';
   };
   R.thermo = (d, H, o) => {
     const kv = keyed(d); if (!kv.length) return EMPTY('no numbers to draw');
@@ -467,14 +491,20 @@
     const val = (v) => typeof v === 'number' ? v : (v === true || /^(ok|up|green|pass)$/i.test(String(v)) ? 1 : (v === false || /^(down|fail|red|error)$/i.test(String(v)) ? 0 : 0.5));
     return '<div class="vw-matrix" style="grid-template-columns:auto repeat(' + cols.length + ',1fr)"><i></i>' + cols.map((c) => '<i>' + esc(c) + '</i>').join('') + rws.slice(0, 12).map((r) => '<b>' + esc(r[0]) + '</b>' + cols.map((c) => { const v = val(r[1][c]); return '<span style="background:color-mix(in srgb,var(--acc,#5a9e8f) ' + Math.round(v * 80 + 10) + '%,var(--bg2,#1a1c20))" title="' + esc(r[0]) + ' · ' + esc(c) + ' · ' + esc(String(r[1][c])) + '"></span>'; }).join('')).join('') + '</div>';
   };
+  /* the donut is as tall as its body and no wider than it is tall: the ring sized to the body (never past 140 px), its
+     total in the middle, the legend beside it as a short column of name + value + share - or under it when the tile
+     is narrow - so a donut tile can be three columns wide instead of four (the owner: "donut/ring charts take up too
+     much horizontal space"). Each part is a block: hovered it lights with its share, clicked it opens where it lives. */
   R.donut = (d, H, o) => {
     const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('parts need { name: number }');
-    const tot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1, r = Math.max(14, (H - 8) / 2), c = 2 * Math.PI * r, s = H / 2 + 2; let acc = 0;
+    const tot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1, D = Math.max(40, Math.min(140, (H || 96) - 6)), r = D / 2 - 6, c = 2 * Math.PI * r, s = D / 2; let acc = 0;
     // palette status colours a part by its name (running green, stopped red, pending amber) - a share of states reads at a glance
     const cols0 = ['var(--acc,#5a9e8f)', 'var(--acc2,#8fb87a)', 'var(--acc3,#d4a96a)', '#a78bfa', '#e07a9a', '#5ab0d8', '#c9a35a', '#7ac9b0'];
     const cols = (o && o.draw && o.draw.palette === 'status') ? kv.map((x, i) => { const sc = stCol(x[0]); return sc === B.t3 ? cols0[(i + 5) % cols0.length] : sc; }) : cols0;
-    const arcs = kv.map((x, i) => { const f = Math.abs(x[1]) / tot; const el = '<circle cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="' + cols[i % cols.length] + '" stroke-width="8" stroke-dasharray="' + Math.max(0, f * c - 2).toFixed(1) + ' ' + (c - f * c + 2).toFixed(1) + '" stroke-dashoffset="' + (-acc * c).toFixed(1) + '" transform="rotate(-90 ' + s + ' ' + s + ')"><title>' + esc(x[0]) + ' · ' + esc(fmt(x[1])) + '</title></circle>'; acc += f; return el; }).join('');
-    return '<div class="vw-donut"><svg class="vw-svg" viewBox="0 0 ' + (s * 2) + ' ' + (s * 2) + '" style="height:' + H + 'px;width:auto">' + arcs + '</svg><div class="vw-legend">' + kv.map((x, i) => '<span><i style="background:' + cols[i % cols.length] + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '</b></span>').join('') + '</div></div>';
+    const sw = Math.max(6, Math.round(D / 11)), pc = (v) => Math.round(Math.abs(v) / tot * 100) + '%';
+    const arcs = kv.map((x, i) => { const f = Math.abs(x[1]) / tot; const el = '<circle class="vw-arc" data-b="p' + i + '" data-tip="' + esc(x[0] + '\n' + fmt(x[1]) + ' · ' + pc(x[1]) + ' of ' + fmt(tot)) + '" cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="' + cols[i % cols.length] + '" stroke-width="' + sw + '" stroke-dasharray="' + Math.max(0, f * c - 2).toFixed(1) + ' ' + (c - f * c + 2).toFixed(1) + '" stroke-dashoffset="' + (-acc * c).toFixed(1) + '" transform="rotate(-90 ' + s + ' ' + s + ')"></circle>'; acc += f; return el; }).join('');
+    const mid = '<text x="' + s + '" y="' + s + '" class="vw-dtot" text-anchor="middle" dominant-baseline="central">' + esc(fmt(tot)) + '</text>';
+    return '<div class="vw-donut"><svg class="vw-svg" viewBox="0 0 ' + D + ' ' + D + '" style="height:' + D + 'px;width:' + D + 'px;flex:none">' + arcs + mid + '</svg><div class="vw-legend vw-legend-col">' + kv.map((x, i) => '<span data-b="p' + i + '"><i style="background:' + cols[i % cols.length] + '"></i><em>' + esc(x[0]) + '</em><b>' + esc(fmt(x[1])) + '</b><small>' + pc(x[1]) + '</small></span>').join('') + '</div></div>';
   };
   R.stack = (d) => {
     const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('parts need { name: number }');
@@ -882,7 +912,7 @@
   R.level = (d, H, o) => {
     const l = level(d); if (!l) return EMPTY('a level needs { value, max }');
     const cells = (o && o.draw && o.draw.cells) || 10, held = Math.round((l.v - l.lo) / ((l.hi - l.lo) || 1) * cells), warn = num(d && d.expiring) || 0;
-    return wrap('level', '<div class="vb-batt"><div class="cells">' + Array.from({ length: cells }, (_, i) => '<i class="' + (i < held ? (i >= held - warn ? 'on warn' : 'on') : '') + '"></i>').join('') + '</div><b></b></div><div class="vb-hero"><b>' + esc(fmt(l.v)) + '</b><span class="u">/ ' + esc(fmt(l.hi)) + ' ' + esc(l.unit || (d && d.what) || 'held') + '</span></div>' + ((H || 96) >= 100 || (d && d.note) ? cap(esc(String((d && d.note) || (fmt(l.hi - l.v) + ' free')))) : ''));   // "n free" only where there is room: the figure already says n of max
+    return wrap('level', '<div class="vb-batt"><div class="cells">' + Array.from({ length: cells }, (_, i) => '<i class="' + (i < held ? (i >= held - warn ? 'on warn' : 'on') : '') + '" data-tip="' + esc((i < held ? 'in use' : 'free') + '\n' + fmt(l.v) + ' of ' + fmt(l.hi) + ' ' + (l.unit || (d && d.what) || 'held') + ' · ' + fmt(l.hi - l.v) + ' free') + '"></i>').join('') + '</div><b></b></div><div class="vb-hero"><b>' + esc(fmt(l.v)) + '</b><span class="u">/ ' + esc(fmt(l.hi)) + ' ' + esc(l.unit || (d && d.what) || 'held') + '</span></div>' + ((H || 96) >= 100 || (d && d.note) ? cap(esc(String((d && d.note) || (fmt(l.hi - l.v) + ' free')))) : ''));   // "n free" only where there is room: the figure already says n of max
   };
 
   /* ── series: the stacked area, the histogram, the step chart, slope, horizon, bump, small multiples, the spark table ── */
@@ -1242,17 +1272,44 @@
      frame.motion false holds all of it still (data-motion on the root). */
   const ISO = () => (typeof window !== 'undefined' && window.VeraISO) || null;
   const ISO_WAIT = '<div class="vw-b vb-isowait"><span class="vb-lbl">loading the projection…</span></div>';
-  const fpx = (f) => '<i class="f ' + f.k + (f.cls ? ' ' + f.cls : '') + '" style="left:' + f.x + ';top:' + f.y + ';width:' + f.w + ';height:' + f.h + ';clip-path:' + f.cp + ';background:' + f.col + ';--i:' + f.i + ';--n:' + (f.n || 0) + '"' + (f.t ? ' title="' + esc(f.t) + '"' : '') + '></i>';
+  /* ── A BLOCK'S DETAIL (the widget review, round 2: "more detail on mouseover of the blocks in all of the iso widgets") ──
+     A box drawn for a row carries the row (Bx's last argument, or box.row); the scene numbers every box that has a row
+     or a title (iso.js carries a box's n through to its faces), and every face of that box is written with the block's
+     id (data-b), its detail (data-tip: the name, then the row's own fields), its entity (data-ref, when the row names
+     one the estate knows - guest:<vmid>, host:<id>, mesh:<host>) and its group (data-g: the host a container runs on, the
+     rack a guest sits in). The element lights the block and its group on hover, shows the detail, and opens the entity
+     or the record's place on a click. */
+  const TIP_SKIP = /^(name|title|label|id|key|col|color|cls|ref|u|v|z|w|h|d|t|row|g|_.*)$/;
+  const rowRef = (r) => { if (!r || typeof r !== 'object') return ''; const x = r.ref ?? r.entity ?? r.entity_ref; if (x) return String(x);
+    if (r.vmid != null && r.vmid !== '') return 'guest:' + r.vmid; if (r.ssh_host_id) return 'host:' + r.ssh_host_id; if (r.host_id && /mesh/i.test(String(r.kind ?? ''))) return 'mesh:' + r.host_id; return ''; };
+  const rowGroup = (r) => (r && typeof r === 'object') ? String(r.host ?? r.node ?? r.group ?? r.host_id ?? '') : '';
+  const TIP_RAW = /(^|_)(port|id|vmid|pid|db|year|uid|gid)$|^port$/i;   // a number that is a name (a port, an id) is not a quantity: no thousands comma
+  const tipVal = (k, v) => Array.isArray(v) ? (v.length && v.length <= 4 && v.every((x) => typeof x !== 'object') ? v.join(', ').slice(0, 64) : v.length + ' ' + (v.length === 1 ? 'item' : 'items')) : (typeof v === 'number' ? (TIP_RAW.test(k) ? String(v) : (/(^|_)(created|updated|started|ended|at|ts|time)$/i.test(k) && v > 1e9 && v < 4e10) ? new Date(v * 1000).toISOString().slice(0, 16).replace('T', ' ') : (/bytes?$|_b$/.test(k) ? fmtBytesS(v) : fmt(v)) + (/_pct$|pct$|percent/.test(k) ? '%' : (/_ms$/.test(k) ? ' ms' : (/_s$/.test(k) ? ' s' : '')))) : (typeof v === 'boolean' ? (v ? 'yes' : 'no') : String(v).slice(0, 64)));
+  // what a block's detail says first: its state, what it is, where it runs, what it uses - then the rest; hashes and
+  // long ids (a container's 64-hex Id, an image digest) say nothing to a reader and are left to the deep dive
+  const TIP_FIRST = ['status', 'state', 'Status', 'State', 'health', 'kind', 'type', 'role', 'host', 'node', 'Image', 'image', 'model', 'cpu', 'cpu_pct', 'load', 'mem', 'mem_pct', 'mem_mb', 'ram_pct', 'disk_pct', 'temp', 'max_c', 'value', 'count', 'size', 'port', 'branch', 'owner', 'last_activity', 'when', 'ts'];
+  const TIP_HASH = /^(sha256:)?[0-9a-f]{24,}$/i;
+  const rowTip = (r, title) => { if (!r || typeof r !== 'object') return String(title || ''); const head = String(title || nameOf(r) || '');
+    const ok = (k) => !TIP_SKIP.test(k) && r[k] != null && r[k] !== '' && (typeof r[k] !== 'object' || Array.isArray(r[k])) && !(typeof r[k] === 'string' && (TIP_HASH.test(r[k]) || r[k].length > 90));
+    const keys = TIP_FIRST.filter((k) => k in r && ok(k)).concat(Object.keys(r).filter((k) => !TIP_FIRST.includes(k) && ok(k)));
+    return [head].concat(keys.slice(0, 9).map((k) => k.replace(/_/g, ' ') + ': ' + tipVal(k, r[k]))).join('\n'); };
+  const fmtBytesS = (v) => { let n = Math.abs(num(v)); const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return (i ? Math.round(n * 10) / 10 : Math.round(n)) + ' ' + u[i]; };
+  const blockAttrs = (b) => b ? ' data-b="' + esc(String(b.id)) + '"' + (b.tip ? ' data-tip="' + esc(b.tip) + '" title="' + esc(b.tip) + '"' : '') + (b.ref ? ' data-ref="' + esc(b.ref) + '"' : '') + (b.g ? ' data-g="' + esc(b.g) + '"' : '') + (b.name ? ' data-name="' + esc(b.name) + '"' : '') : '';
+  const fpx = (f) => '<i class="f ' + f.k + (f.cls ? ' ' + f.cls : '') + '" style="left:' + f.x + ';top:' + f.y + ';width:' + f.w + ';height:' + f.h + ';clip-path:' + f.cp + ';background:' + f.col + ';--i:' + f.i + ';--n:' + (f.n || 0) + '"' + (f.info ? blockAttrs(f.info) : (f.t ? ' title="' + esc(f.t) + '"' : '')) + '></i>';
   const epx = (e) => '<span class="isoe' + (e.cls ? ' ' + e.cls : '') + '" style="left:' + e.x + ';top:' + e.y + ';width:' + e.len + ';transform:rotate(' + e.deg + ');background:' + e.col + '"></span>';
   const lpx = (l) => '<span class="isol' + (l.cls ? ' ' + l.cls : '') + '" style="left:' + l.x + ';top:' + l.y + ';color:' + l.col + '">' + esc(l.n) + '</span>';
   const isow = (W, H, inner, style) => '<div class="vb-isow" style="width:' + W + 'px;height:' + H + 'px;' + (style || '') + '">' + inner + '</div>';
   // build a scene and keep the projection + shift, so labels, pings and lines can be placed in the same frame as the faces
   const isoBuild = (boxes, k, W, H, key, tilt, azim, o) => { const I = ISO(); o = o || {};
+    const info = {}; let nb = 0;
+    boxes = (boxes || []).map((b) => { if (!b || !(b.row || b.t)) return b; const n = ++nb; const nm = b.row ? (nameOf(b.row) || String(b.t || '')) : String(b.t || '');
+      info[n] = { id: n, name: nm, tip: b.tip || (b.row ? rowTip(b.row, nm) : String(b.t)), ref: b.ref || (b.row ? rowRef(b.row) : ''), g: b.g != null ? String(b.g) : (b.row ? rowGroup(b.row) : '') }; return Object.assign({}, b, { n }); });
     const T = tilt == null ? 30 : tilt, A = azim == null ? 45 : azim;
     const k2 = I.isoFitK(boxes, k, W, H, key, T, A, o); const Pj = I.proj(T, A, k2); const f = I.scene(Pj, boxes, key);
     const sh = I.fit(f, W, H - (o.padb == null ? 18 : o.padb) + (o.padt == null ? 8 : o.padt));
     const at = (u, v, z) => { const p = Pj(u, v, z || 0); return [p[0] + sh.dx, p[1] + sh.dy]; };
-    return { faces: I.px(f), P: Pj, sh, at, k: k2 }; };
+    const faces = I.px(f); faces.forEach((fc) => { if (fc.n && info[fc.n]) fc.info = info[fc.n]; });
+    return { faces, P: Pj, sh, at, k: k2 }; };
   const lbl = (at, u, v, z, n, col, cls) => { const p = at(u, v, z); return { n, col: col || B.t2, cls: cls || '', x: p[0].toFixed(1) + 'px', y: p[1].toFixed(1) + 'px' }; };
   const segsAt = (at, pts, col, cls) => ISO().segs(pts.map((q) => at(q[0], q[1], q[2]))).map((s) => ({ x: s.x.toFixed(1) + 'px', y: s.y.toFixed(1) + 'px', len: s.len.toFixed(1) + 'px', deg: s.deg.toFixed(1) + 'deg', col, cls: cls || '' }));
   const tcol = (v, hi) => { const f = hi ? v / hi * 100 : v; return f >= 74 ? B.ac4 : f >= 58 ? B.ac3 : B.ac2; };
@@ -1316,7 +1373,8 @@
   /* ── the city: footprint is cores, height is load, colour is temperature, a lamp means an alert; roads are the links ── */
   R.city = (d, H, o) => { const g = graphOf(d); const ns = g.nodes.length ? g.nodes : rows(d); if (!ns.length) return EMPTY('a city needs nodes'); if (!ISO()) return ISO_WAIT; const W = wof(o), HH = hof(H);
     const cols = Math.ceil(Math.sqrt(ns.length)); const N = ns.map((n, i) => ({ id: String(n.id ?? n.name ?? i), cores: num(n.cores ?? n.cpu ?? 4), load: num(n.load ?? n.value ?? 0), temp: num(n.temp ?? n.temperature ?? 0), alert: !!(n.alert || n.down || /down|error/.test(String(n.status ?? ''))), u: n.u != null ? num(n.u) : (i % cols) * 2.4 + .6, v: n.v != null ? num(n.v) : Math.floor(i / cols) * 2.2 + .6, down: !!(n.down || /stopped|down|off/.test(String(n.status ?? ''))) }));
-    const CY = isoBuild(N.flatMap((n) => { const s = .5 + n.cores / 20, h = n.load ? .3 + n.load / 100 * 3 : .18; return [{ u: n.u - s / 2, v: n.v - s / 2, z: 0, w: s, d: s, h, col: n.down ? B.s3 : tcol(n.temp || n.load) }].concat(n.alert ? [{ u: n.u - .1, v: n.v - .1, z: h, w: .2, d: .2, h: .22, col: B.ac4, cls: 'lamp' }] : []); }), 40, W, HH, (b) => (b.u + b.v) * 100 + b.z, 32, 42);
+    N.forEach((x, i) => { x.row = ns[i]; });   // each building keeps its row: its hover detail and its deep dive
+    const CY = isoBuild(N.flatMap((n) => { const s = .5 + n.cores / 20, h = n.load ? .3 + n.load / 100 * 3 : .18; return [{ u: n.u - s / 2, v: n.v - s / 2, z: 0, w: s, d: s, h, col: n.down ? B.s3 : tcol(n.temp || n.load), row: n.row }].concat(n.alert ? [{ u: n.u - .1, v: n.v - .1, z: h, w: .2, d: .2, h: .22, col: B.ac4, cls: 'lamp' }] : []); }), 40, W, HH, (b) => (b.u + b.v) * 100 + b.z, 32, 42);
     const byId = {}; N.forEach((n) => { byId[n.id] = n; }); const E = g.links.flatMap((e) => { const a = byId[e.a], b = byId[e.b]; if (!a || !b) return []; return segsAt(CY.at, [[a.u, a.v, 0], [b.u, a.v, 0], [b.u, b.v, 0]], mix(B.ac, 40)); });
     const L = N.flatMap((n) => [lbl(CY.at, n.u, n.v + .55, 0, n.id, n.down ? B.ac4 : B.t2, 'dn sm')].concat(n.down ? [lbl(CY.at, n.u + .3, n.v - .3, .5, 'down', B.ac4, 'sm')] : []));
     return wrap('city', isow(W, HH, E.map(epx).join('') + CY.faces.map(fpx).join('') + L.map(lpx).join(''))); };
@@ -1421,49 +1479,49 @@
     const S = sceneOf('area', Array.from({ length: N }, (_, i) => { let z = 0; return ms.map((s, si) => { const h = (s.v[s.v.length - N + i] || 0) / hi * 3.3; const b = { u: i, v: 0, z, w: .8, d: 1.2, h, col: s.col || pal(si), t: s.n }; z += h; return b; }); }).flat(), 18, W, HH, (b) => b.u * 1000 + b.z); return typeof S === 'string' ? S : S.html; };
   // the racks (the Fleet carousel's third page): three racks, one slot per row, colour by state
   R.racks = (rw, H, o) => { if (!ISO()) return ISO_WAIT; const W = wof(o), HH = hof(H); const list = rows(rw).slice(0, 30); const per = 10;
-    const S = sceneOf('racks', list.map((r, i) => ({ u: Math.floor(i / per) * 1.7, v: 0, z: (i % per) * .34, w: 1, d: .9, h: .28, col: stCol(r.status ?? r.state), t: nameOf(r) + ' · ' + String(r.status ?? r.state ?? '') })), 21, W, HH, (b) => b.u * 1000 + b.z); return typeof S === 'string' ? S : '<div class="vb-carp">' + S.html + '</div>'; };
+    const S = sceneOf('racks', list.map((r, i) => ({ u: Math.floor(i / per) * 1.7, v: 0, z: (i % per) * .34, w: 1, d: .9, h: .28, col: stCol(r.status ?? r.state), t: nameOf(r) + ' · ' + String(r.status ?? r.state ?? ''), row: r, g: 'rack' + Math.floor(i / per) })), 21, W, HH, (b) => b.u * 1000 + b.z); return typeof S === 'string' ? S : '<div class="vb-carp">' + S.html + '</div>'; };
 
   /* ── the WidgetsIso board: a site's parts and Vera's suites as objects on a plate ── */
   const plate = (w, dd, col) => ({ u: -.3, v: -.3, z: -.12, w: w + .6, d: dd + .6, h: .12, col: col || B.s3 });
-  const Bx = (u, v, z, w, dd, h, col, cls, t) => ({ u, v, z, w, d: dd, h, col, cls: cls || '', t: t || '' });
+  const Bx = (u, v, z, w, dd, h, col, cls, t, row) => Object.assign({ u, v, z, w, d: dd, h, col, cls: cls || '', t: t || '' }, row && typeof row === 'object' ? { row } : {});   // a block drawn for a row carries it: its hover detail and its deep dive
   const rng = (i) => Math.abs(Math.sin(i * 12.9898) * 43758.5453) % 1;
   const isoForm = (form, boxes, o, H, opts) => { if (!ISO()) return ISO_WAIT; const W = wof(o), HH = hof(H); const S = sceneOf(form, boxes, 1, W, HH, (opts && opts.key) || byStack, Object.assign({ tilt: 32, azim: 42, padx: 8, padt: 6, padb: 6, max: 99 }, opts || {})); return typeof S === 'string' ? S : S.html; };
   R.library = (d, H, o) => { const rw = rows(d).slice(0, 12); if (!rw.length) return EMPTY('a library needs documents'); const docs = rw.filter((r) => !r.folder && !/folder|dir/.test(String(r.kind ?? ''))), folders = rw.filter((r) => r.folder || /folder|dir/.test(String(r.kind ?? '')));
-    return isoForm('library', [plate(6.4, 1.6)].concat(docs.slice(0, 9).map((r, i) => Bx(i * .62, .4, 0, .34, .08, .6 + (num(r.pages ?? r.size ?? 0) ? Math.min(1, num(r.pages ?? r.size) / 50) * .7 : rng(i) * .7), i % 3 === 0 ? DV(0) : B.t2, '', nameOf(r)))).concat(folders.length ? [Bx(5.8, .2, 0, .7, .9, .5, DV(2), '', folders.length + ' folders'), Bx(5.85, .25, .5, .3, .2, .1, DV(2))] : []), o, H); };
+    return isoForm('library', [plate(6.4, 1.6)].concat(docs.slice(0, 9).map((r, i) => Bx(i * .62, .4, 0, .34, .08, .6 + (num(r.pages ?? r.size ?? 0) ? Math.min(1, num(r.pages ?? r.size) / 50) * .7 : rng(i) * .7), i % 3 === 0 ? DV(0) : B.t2, '', nameOf(r), r))).concat(folders.length ? [Bx(5.8, .2, 0, .7, .9, .5, DV(2), '', folders.length + ' folders'), Bx(5.85, .25, .5, .3, .2, .1, DV(2))] : []), o, H); };
   R.pages = (d, H, o) => { const rw = rows(d).slice(0, 9); if (!rw.length) return EMPTY('site pages need items'); const home = Math.max(0, rw.findIndex((r) => r.home || r.current || /home|index/.test(String(r.name ?? r.path ?? ''))));
-    return isoForm('pages', [plate(4.6, 3)].concat(rw.map((r, i) => Bx((i % 3) * 1.55, Math.floor(i / 3) * 1.55, 0, 1.3, 1.2, i === home ? .32 : .08, i === home ? B.ac : B.t3, '', nameOf(r)))), o, H); };
+    return isoForm('pages', [plate(4.6, 3)].concat(rw.map((r, i) => Bx((i % 3) * 1.55, Math.floor(i / 3) * 1.55, 0, 1.3, 1.2, i === home ? .32 : .08, i === home ? B.ac : B.t3, '', nameOf(r), r))), o, H); };
   R['list@iso'] = (d, H, o) => { const rw = rows(d).slice(0, 8); const str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const items = rw.length ? rw : str.map((s) => ({ name: s })); if (!items.length) return EMPTY('no rows');
-    return isoForm('list', [plate(4.6, items.length * .52 + .2)].concat(items.flatMap((r, i) => [Bx(0, i * .52, 0, 3.6, .38, .1, i % 2 ? B.t3 : B.bd2, '', nameOf(r)), Bx(3.85, i * .52 + .04, 0, .3, .3, .3, stCol(r.status ?? r.state) === B.t3 ? B.ac2 : stCol(r.status ?? r.state))])), o, H); };
+    return isoForm('list', [plate(4.6, items.length * .52 + .2)].concat(items.flatMap((r, i) => [Bx(0, i * .52, 0, 3.6, .38, .1, i % 2 ? B.t3 : B.bd2, '', nameOf(r), r), Bx(3.85, i * .52 + .04, 0, .3, .3, .3, stCol(r.status ?? r.state) === B.t3 ? B.ac2 : stCol(r.status ?? r.state))])), o, H); };
   R['people@iso'] = (d, H, o) => { const rw = rows(d).slice(0, 12); if (!rw.length) return EMPTY('people need rows'); const lv = (r) => num(r.level ?? (r.reports_to || r.manager ? 1 : 0)); const L0 = rw.filter((r) => lv(r) === 0), L1 = rw.filter((r) => lv(r) === 1), L2 = rw.filter((r) => lv(r) >= 2);
-    return isoForm('people', [plate(6.2, 3.6)].concat(L0.slice(0, 3).map((r, i) => Bx(2.7 - (L0.length - 1) * .5 + i, 0, 0, .6, .6, 1.3, B.ac, '', nameOf(r)))).concat(L1.slice(0, 5).map((r, i) => Bx(.7 + i * (5 / Math.max(1, L1.length - 1) || 2), 1.3, 0, .55, .55, .95, DV(5), '', nameOf(r)))).concat(L2.slice(0, 6).map((r, i) => Bx(.2 + i * 1.05, 2.7, 0, .45, .45, .6, B.t2, '', nameOf(r)))).concat([Bx(.9, .6, 0, 4.4, .08, .05, B.bd2), Bx(.4, 1.95, 0, 5.4, .08, .05, B.bd2)]), o, H, { tilt: 30 }); };
+    return isoForm('people', [plate(6.2, 3.6)].concat(L0.slice(0, 3).map((r, i) => Bx(2.7 - (L0.length - 1) * .5 + i, 0, 0, .6, .6, 1.3, B.ac, '', nameOf(r), r))).concat(L1.slice(0, 5).map((r, i) => Bx(.7 + i * (5 / Math.max(1, L1.length - 1) || 2), 1.3, 0, .55, .55, .95, DV(5), '', nameOf(r), r))).concat(L2.slice(0, 6).map((r, i) => Bx(.2 + i * 1.05, 2.7, 0, .45, .45, .6, B.t2, '', nameOf(r), r))).concat([Bx(.9, .6, 0, 4.4, .08, .05, B.bd2), Bx(.4, 1.95, 0, 5.4, .08, .05, B.bd2)]), o, H, { tilt: 30 }); };
   R.notices = (d, H, o) => { const ev = evsOf(d).slice(0, 5); if (!ev.length) return EMPTY('notices need posts'); const P = [[.3, 1.6], [1.4, 1.9], [2.5, 1.5], [.5, .4], [2.2, .5]]; const newest = ev.findIndex((r) => r.new || r.unread) >= 0 ? ev.findIndex((r) => r.new || r.unread) : 0;
-    return isoForm('notices', [plate(4.4, .6), Bx(0, .2, 0, 4, .12, 2.6, B.bd2)].concat(ev.map((r, i) => Bx(P[i][0], .32, P[i][1], .8, .05, .7, i === newest ? B.ac3 : [B.t2, DV(0), DV(1), B.t2, DV(6)][i], '', txt(r)))), o, H, { tilt: 26 }); };
+    return isoForm('notices', [plate(4.4, .6), Bx(0, .2, 0, 4, .12, 2.6, B.bd2)].concat(ev.map((r, i) => Bx(P[i][0], .32, P[i][1], .8, .05, .7, i === newest ? B.ac3 : [B.t2, DV(0), DV(1), B.t2, DV(6)][i], '', txt(r), r))), o, H, { tilt: 26 }); };
   R.approvals = (d, H, o) => { const st = stagesOf(d).slice(0, 5); if (!st.length) return EMPTY('approvals need stages'); const waiting = st.findIndex((s) => s.st === 'now' || /wait/.test(String(s.status ?? '')));
-    return isoForm('approvals', [plate(st.length * 1.6, 1.6)].concat(st.flatMap((s, i) => { const col = s.st === 'done' ? B.ac2 : i === waiting ? B.ac3 : B.bd2; return [Bx(i * 1.6, .4, 0, .8, .8, .3, col, '', nameOf(s)), Bx(i * 1.6 + .2, .6, .3, .4, .4, .35, col, i === waiting ? 'lamp' : ''), i < st.length - 1 ? Bx(i * 1.6 + .85, .75, 0, .7, .1, .05, B.t3) : null].filter(Boolean); })), o, H); };
+    return isoForm('approvals', [plate(st.length * 1.6, 1.6)].concat(st.flatMap((s, i) => { const col = s.st === 'done' ? B.ac2 : i === waiting ? B.ac3 : B.bd2; return [Bx(i * 1.6, .4, 0, .8, .8, .3, col, '', nameOf(s), s), Bx(i * 1.6 + .2, .6, .3, .4, .4, .35, col, i === waiting ? 'lamp' : ''), i < st.length - 1 ? Bx(i * 1.6 + .85, .75, 0, .7, .1, .05, B.t3) : null].filter(Boolean); })), o, H); };
   R.wiki = (d, H, o) => { const rw = rows(d); const n = rw.length || num(d && d.pages) || 6; const open = (d && d.open) || (rw[0] && nameOf(rw[0])) || '';
     return isoForm('wiki', [plate(5.4, 3.2), Bx(0, .3, 0, 1.9, 2.4, .14, B.t2, '', open), Bx(2.1, .3, 0, 1.9, 2.4, .14, B.t2), Bx(1.9, .3, 0, .2, 2.4, .26, DV(4)), Bx(.3, .7, .14, 1.3, .1, .02, B.bd2), Bx(.3, 1.1, .14, 1.3, .1, .02, B.bd2), Bx(2.4, .7, .14, 1.3, .1, .02, B.bd2)].concat(Array.from({ length: Math.min(8, n) }, (_, i) => Bx(4.5, .4 + i * .4, 0, .5, .3, .12, B.t3))), o, H, { tilt: 34 }); };
   R['form@iso'] = (d, H, o) => { const kv = keyed(d); const rw = rows(d); const fields = rw.length ? rw.map((r) => ({ n: nameOf(r), req: !!(r.required || r.lit) })) : (kv.length ? kv.map((x) => ({ n: x[0] })) : Object.keys((d && typeof d === 'object' && !Array.isArray(d)) ? d : {}).map((k) => ({ n: k, req: false }))); if (!fields.length) return EMPTY('a form needs fields'); const req = Math.max(0, fields.findIndex((f) => f.req));
     return isoForm('form', [plate(3.6, fields.length * .75 + 1.1), Bx(0, 0, 0, 3, fields.length * .75 + .6, .1, B.bd2)].concat(fields.slice(0, 6).map((f, i) => Bx(.3, .3 + i * .75, .1, 2.4, .42, .08, i === req ? B.ac : B.t3, '', f.n))).concat([Bx(2.1, fields.length * .75 + .15, .1, .6, .35, .3, B.ac2, '', 'submit')]), o, H); };
   R.devices = (d, H, o) => { const rw = rows(d).slice(0, 8); if (!rw.length) return EMPTY('devices need rows'); const gw = rw.findIndex((r) => r.gateway || /gateway|hub/.test(String(r.kind ?? r.role ?? ''))); const nodes = rw.filter((_, i) => i !== gw);
-    return isoForm('devices', [plate(6.4, 1.8)].concat(nodes.slice(0, 6).flatMap((r, i) => [Bx(.2 + i * .95, .6, 0, .7, .5, .28, /stale|down|off/.test(String(r.status ?? r.state ?? '')) ? B.ac3 : DV(1), '', nameOf(r)), Bx(.5 + i * .95, .8, .28, .08, .08, .7, B.t2)])).concat(gw >= 0 ? [Bx(5.9, .3, 0, .4, 1.1, .8, DV(1), '', nameOf(rw[gw])), Bx(6.05, .8, .8, .08, .08, 1, B.t1)] : []), o, H); };
+    return isoForm('devices', [plate(6.4, 1.8)].concat(nodes.slice(0, 6).flatMap((r, i) => [Bx(.2 + i * .95, .6, 0, .7, .5, .28, /stale|down|off/.test(String(r.status ?? r.state ?? '')) ? B.ac3 : DV(1), '', nameOf(r), r), Bx(.5 + i * .95, .8, .28, .08, .08, .7, B.t2)])).concat(gw >= 0 ? [Bx(5.9, .3, 0, .4, 1.1, .8, DV(1), '', nameOf(rw[gw])), Bx(6.05, .8, .8, .08, .08, 1, B.t1)] : []), o, H); };
   R.notebook = (d, H, o) => { const rw = rows(d).slice(0, 9); if (!rw.length) return EMPTY('a notebook needs cells'); const isCode = (r) => /code|exec|python/.test(String(r.kind ?? r.type ?? r.cell_type ?? '')) || r.source != null; const running = rw.findIndex((r) => r.running || /running/.test(String(r.status ?? '')));
-    return isoForm('notebook', [plate(4.2, rw.length * .5 + .2)].concat(rw.map((r, i) => Bx(0, i * .5, 0, 3.6, .38, isCode(r) ? .3 : .08, i === running ? B.ac : isCode(r) ? B.ac2 : B.t3, '', String(r.title ?? r.source ?? r.text ?? '').slice(0, 40)))).concat(running >= 0 ? [Bx(3.75, running * .5, 0, .3, .3, .5, B.ac3)] : []), o, H); };
+    return isoForm('notebook', [plate(4.2, rw.length * .5 + .2)].concat(rw.map((r, i) => Bx(0, i * .5, 0, 3.6, .38, isCode(r) ? .3 : .08, i === running ? B.ac : isCode(r) ? B.ac2 : B.t3, '', String(r.title ?? r.source ?? r.text ?? '').slice(0, 40), r))).concat(running >= 0 ? [Bx(3.75, running * .5, 0, .3, .3, .5, B.ac3)] : []), o, H); };
   R['gallery@iso'] = (d, H, o) => { const rw = rows(d).slice(0, 8); if (!rw.length) return EMPTY('a gallery needs items');
-    return isoForm('gallery', [plate(5.2, 2.6)].concat(rw.flatMap((g, i) => { const u = (i % 4) * 1.25, v = Math.floor(i / 4) * 1.3; return [Bx(u, v + .4, 0, 1, .08, .9, g.pinned ? B.ac : B.bd2, '', nameOf(g)), Bx(u + .1, v + .36, .1, .8, .06, .7, DV(i))]; })), o, H, { tilt: 28 }); };
+    return isoForm('gallery', [plate(5.2, 2.6)].concat(rw.flatMap((g, i) => { const u = (i % 4) * 1.25, v = Math.floor(i / 4) * 1.3; return [Bx(u, v + .4, 0, 1, .08, .9, g.pinned ? B.ac : B.bd2, '', nameOf(g), g), Bx(u + .1, v + .36, .1, .8, .06, .7, DV(i))]; })), o, H, { tilt: 28 }); };
   R['pipeline@iso'] = (d, H, o) => { const st = stagesOf(d).slice(0, 5); if (!st.length) return EMPTY('a pipeline needs stages'); const runs = rows(d && d.runs || []).slice(0, 6); const SC = [DV(0), DV(5), B.ac3, B.ac2, DV(2)];
-    return isoForm('pipeline', st.map((s, i) => Bx(i * 1.6, .4, 0, 1.4, 1.6, .1, s.st === 'done' ? B.ac2 : s.st === 'now' ? B.ac3 : SC[i % 5], '', nameOf(s))).concat(runs.map((r, j) => { const si = Math.max(0, st.findIndex((s) => nameOf(s) === String(r.stage ?? r.status ?? ''))); return Bx(si * 1.6 + .3 + (j % 2) * .6, .7 + Math.floor(j / 2) * .6, .1, .4, .4, r.running || /running/.test(String(r.status ?? '')) ? .4 : .3, r.running ? B.ac : B.t2, '', nameOf(r)); })).concat([Bx(0, -.6, .6, st.length * 1.6, .5, .08, DV(4)), Bx(st.length * .7, -.5, .68, .3, .3, .3, DV(4))]), o, H); };
+    return isoForm('pipeline', st.map((s, i) => Bx(i * 1.6, .4, 0, 1.4, 1.6, .1, s.st === 'done' ? B.ac2 : s.st === 'now' ? B.ac3 : SC[i % 5], '', nameOf(s), s)).concat(runs.map((r, j) => { const si = Math.max(0, st.findIndex((s) => nameOf(s) === String(r.stage ?? r.status ?? ''))); return Bx(si * 1.6 + .3 + (j % 2) * .6, .7 + Math.floor(j / 2) * .6, .1, .4, .4, r.running || /running/.test(String(r.status ?? '')) ? .4 : .3, r.running ? B.ac : B.t2, '', nameOf(r), r); })).concat([Bx(0, -.6, .6, st.length * 1.6, .5, .08, DV(4)), Bx(st.length * .7, -.5, .68, .3, .3, .3, DV(4))]), o, H); };
   R.datasets = (d, H, o) => { const rw = rows(d).slice(0, 12); if (!rw.length) return EMPTY('datasets need rows'); const tier = (r) => Math.min(2, num(r.tier ?? r.shelf ?? 0)); const by = [0, 1, 2].map((t) => rw.filter((r) => tier(r) === t)); const hi = Math.max(...rw.map((r) => num(r.records ?? r.count ?? r.size ?? 1))) || 1;
-    return isoForm('datasets', [0, 1, 2].map((s) => Bx(0, 0, s * 1.1, 5.4, 1.2, .1, B.bd2)).concat(by.flatMap((list, s) => list.slice(0, 5).map((r, i) => Bx(.2 + i * 1.05, .3, s * 1.1 + .1, .7, .7, .55 + num(r.records ?? r.count ?? r.size ?? 1) / hi * .3, r.col || DV((s * 5 + i)), '', nameOf(r))))), o, H, { tilt: 30 }); };
+    return isoForm('datasets', [0, 1, 2].map((s) => Bx(0, 0, s * 1.1, 5.4, 1.2, .1, B.bd2)).concat(by.flatMap((list, s) => list.slice(0, 5).map((r, i) => Bx(.2 + i * 1.05, .3, s * 1.1 + .1, .7, .7, .55 + num(r.records ?? r.count ?? r.size ?? 1) / hi * .3, r.col || DV((s * 5 + i)), '', nameOf(r), r)))), o, H, { tilt: 30 }); };
   R.hosts = (d, H, o) => { const rw = rows(d).slice(0, 4); if (!rw.length) return EMPTY('hosts need rows');
-    return isoForm('hosts', [plate(rw.length * 2.1, 2.6)].concat(rw.flatMap((h, i) => [Bx(i * 2.1, 0, 0, 1.1, 1.1, 1.8, DV(3), '', nameOf(h))].concat((Array.isArray(h.guests) ? h.guests : Array.from({ length: num(h.guests ?? h.vms ?? 4) }, (_, g) => ({ name: 'guest ' + (g + 1) }))).slice(0, 6).map((g, gi) => Bx(i * 2.1 + (gi % 2) * .55, 1.4 + Math.floor(gi / 2) * .55, 0, .45, .45, .35, /down|stopped/.test(String((g && g.status) || '')) ? B.ac4 : DV(2), '', typeof g === 'object' ? nameOf(g) : String(g)))))), o, H); };
+    return isoForm('hosts', [plate(rw.length * 2.1, 2.6)].concat(rw.flatMap((h, i) => [Bx(i * 2.1, 0, 0, 1.1, 1.1, 1.8, DV(3), '', nameOf(h), h)].concat((Array.isArray(h.guests) ? h.guests : Array.from({ length: num(h.guests ?? h.vms ?? 4) }, (_, g) => ({ name: 'guest ' + (g + 1) }))).slice(0, 6).map((g, gi) => Bx(i * 2.1 + (gi % 2) * .55, 1.4 + Math.floor(gi / 2) * .55, 0, .45, .45, .35, /down|stopped/.test(String((g && g.status) || '')) ? B.ac4 : DV(2), '', typeof g === 'object' ? nameOf(g) : String(g), typeof g === 'object' ? g : null))))), o, H); };
   R.containers = (d, H, o) => { const rw = rows(d).slice(0, 18); if (!rw.length) return EMPTY('containers need rows'); const hosts = []; rw.forEach((r) => { const h = String(r.host ?? r.node ?? 'host'); if (!hosts.includes(h)) hosts.push(h); }); const per = {};
-    return isoForm('containers', [plate(hosts.length * 2.8, 2.6)].concat(rw.map((c, i) => { const h = hosts.indexOf(String(c.host ?? c.node ?? 'host')); const k = (per[h] = (per[h] || 0) + 1) - 1; const col = k % 3, row = Math.floor(k / 3); const stopped = /stopped|exited|dead/.test(String(c.status ?? c.state ?? '')); return Bx(h * 2.8 + col * .8, .4, row * .55, .7, 1.6, .5, stopped ? B.t3 : [DV(5), DV(0), DV(4)][(col + row) % 3], '', nameOf(c)); })), o, H, { tilt: 30 }); };
+    return isoForm('containers', [plate(hosts.length * 2.8, 2.6)].concat(rw.map((c, i) => { const h = hosts.indexOf(String(c.host ?? c.node ?? 'host')); const k = (per[h] = (per[h] || 0) + 1) - 1; const col = k % 3, row = Math.floor(k / 3); const stopped = /stopped|exited|dead/.test(String(c.status ?? c.state ?? '')); return Bx(h * 2.8 + col * .8, .4, row * .55, .7, 1.6, .5, stopped ? B.t3 : [DV(5), DV(0), DV(4)][(col + row) % 3], '', nameOf(c), c); })), o, H, { tilt: 30 }); };
   R.models = (d, H, o) => { const rw = rows(d).slice(0, 8); if (!rw.length) return EMPTY('models need rows');
-    return isoForm('models', [plate(rw.length * .92 + .2, 2)].concat(rw.map((m, i) => { const p = num(m.params ?? m.b ?? m.size ?? 1); const s = .5 + Math.log10(p + 1) * .5; return Bx(i * .92, .5, 0, s * .9, s * .9, s, m.resident || m.loaded ? B.ac : B.bd2, '', nameOf(m)); })), o, H); };
+    return isoForm('models', [plate(rw.length * .92 + .2, 2)].concat(rw.map((m, i) => { const p = num(m.params ?? m.b ?? m.size ?? 1); const s = .5 + Math.log10(p + 1) * .5; return Bx(i * .92, .5, 0, s * .9, s * .9, s, m.resident || m.loaded ? B.ac : B.bd2, '', nameOf(m), m); })), o, H); };
   R.activity = (d, H, o) => { const ev = evsOf(d).slice(-18); if (!ev.length) return EMPTY('activity needs events'); const dur = (r) => num(r.duration ?? r.ms ?? r.seconds ?? 0); const hi = Math.max(...ev.map(dur)) || 1;
-    return isoForm('activity', [Bx(0, .5, 0, ev.length * .38 + .2, .3, .08, B.bd2)].concat(ev.map((r, i) => Bx(i * .38, .45, .08, .28, .4, .2 + (dur(r) ? dur(r) / hi * .7 : rng(i * 3) * .7), /err|fail/i.test(String(r.kind ?? r.level ?? '')) ? B.ac4 : DV(String(r.kind ?? '').length + i), '', txt(r)))), o, H); };
+    return isoForm('activity', [Bx(0, .5, 0, ev.length * .38 + .2, .3, .08, B.bd2)].concat(ev.map((r, i) => Bx(i * .38, .45, .08, .28, .4, .2 + (dur(r) ? dur(r) / hi * .7 : rng(i * 3) * .7), /err|fail/i.test(String(r.kind ?? r.level ?? '')) ? B.ac4 : DV(String(r.kind ?? '').length + i), '', txt(r), r))), o, H); };
   R.sandboxes = (d, H, o) => { const rw = rows(d).slice(0, 6); if (!rw.length) return EMPTY('sandboxes need rows'); const P = [[.6, .6], [2.4, .9], [3.7, 1.9], [.8, 2.0], [2.6, 2.3], [1.6, 1.4]];
-    return isoForm('sandboxes', [Bx(0, 0, 0, 5.2, .18, .5, B.bd2), Bx(0, 3, 0, 5.2, .18, .5, B.bd2), Bx(0, 0, 0, .18, 3.2, .5, B.bd2), Bx(5, 0, 0, .18, 3.2, .5, B.bd2), Bx(.18, .18, -.1, 4.8, 2.8, .1, B.s3)].concat(rw.flatMap((s, i) => { const idle = /idle|paused|stopped/.test(String(s.status ?? s.state ?? '')); const sz = idle ? 1 : 1.2; return [Bx(P[i][0], P[i][1], 0, sz, sz, idle ? .5 : .8, idle ? B.t3 : DV(i + 2), '', nameOf(s))].concat(s.pinned ? [Bx(P[i][0] + .5, P[i][1] + .5, .8, .08, .08, 1.1, B.t2), Bx(P[i][0] + .55, P[i][1] + .5, 1.6, .5, .05, .3, B.ac2)] : []); })), o, H, { tilt: 30 }); };
+    return isoForm('sandboxes', [Bx(0, 0, 0, 5.2, .18, .5, B.bd2), Bx(0, 3, 0, 5.2, .18, .5, B.bd2), Bx(0, 0, 0, .18, 3.2, .5, B.bd2), Bx(5, 0, 0, .18, 3.2, .5, B.bd2), Bx(.18, .18, -.1, 4.8, 2.8, .1, B.s3)].concat(rw.flatMap((s, i) => { const idle = /idle|paused|stopped/.test(String(s.status ?? s.state ?? '')); const sz = idle ? 1 : 1.2; return [Bx(P[i][0], P[i][1], 0, sz, sz, idle ? .5 : .8, idle ? B.t3 : DV(i + 2), '', nameOf(s), s)].concat(s.pinned ? [Bx(P[i][0] + .5, P[i][1] + .5, .8, .08, .08, 1.1, B.t2), Bx(P[i][0] + .55, P[i][1] + .5, 1.6, .5, .05, .3, B.ac2)] : []); })), o, H, { tilt: 30 }); };
 
   /* ── the ISO FRAME: real markup on the plane — a screen standing on the plate or a sheet lying on it ── */
   const XIF_KIND = { terminal: 'term', term: 'term', page: 'page', notebook: 'nb', panel: 'panel', web: 'web', browser: 'web', chart: 'chart', image: 'img', img: 'img', chat: 'chat', dashboard: 'dash', dash: 'dash', form: 'form', list: 'list' };
@@ -1496,6 +1554,274 @@
     return wrap('split-flap', '<div class="flapw">' + lines.map(flap).join('') + (src.note ? '<div class="flapl"><span>' + esc(String(src.note)) + '</span></div>' : '') + '</div>'); };
   R.ticker = (d, H, o) => R.counter(d, H, o);
   R.topology = (d, H, o) => R.graph(d, H, o);   // flat: the node graph; iso: the floors and pipes
+
+  /* ══ CAPABILITY OUTPUT WIDGETS (the widget review, round 2: "we need to better define good widgets for cap outputs and
+     make caps output to widgets and have a broad set of widgets to display results and streams of operation") ═══════
+     The result forms - what a capability's ANSWER is drawn as, wherever it lands (a chat reply, a canvas item, a
+     dashboard tile, a deep dive):
+       kv        a record: its fields, name beside value                  (existing)
+       table     rows of the same shape: sortable, searchable, paged       (existing)
+       list      a list of plain things                                    (existing)
+       json      anything else with structure: a tree you open             (new)
+       log       a stream of lines, newest in view (follow)                (existing; fromCapStream appends)
+       terminal  a command and what it printed                             (existing)
+       diff      a patch: files, hunks, additions and removals coloured    (new)
+       code      source with line numbers and its language                 (new)
+       progress  steps with their state (done · running · failed · waiting), how far, how long   (new)
+       hero      a number with its trend                                   (existing)
+       trace · area · column   a series; several series stacked; counts    (existing)
+       status    a health answer: its verdict large, its checks under it   (new)
+       files     paths (a tree of files)                                   (existing)
+       media     an image, a video, a sound - or several                   (new)
+       error     a failed answer: what failed, said once, the detail folded (new)
+       markdown  prose a cap wrote: headings, lists, code, emphasis        (new)
+     Each is drawn by VeraWidget.draw like every other form, and has a sample face. */
+  const CAP_FORMS = ['kv', 'table', 'list', 'json', 'log', 'terminal', 'diff', 'code', 'progress', 'hero', 'trace', 'area', 'column', 'status', 'files', 'media', 'error', 'markdown'];
+  const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
+  const isScalar = (v) => v == null || typeof v !== 'object';
+  // json: a tree you open - objects and arrays fold (the first level open), scalars coloured by kind, big ones capped
+  R.json = (d, H, o) => {
+    if (d === undefined) return EMPTY('nothing to show'); let budget = 400;
+    const leaf = (v) => v === null ? '<i class="jn">null</i>' : typeof v === 'number' ? '<i class="jnum">' + esc(String(v)) + '</i>' : typeof v === 'boolean' ? '<i class="jb">' + v + '</i>' : '<i class="js">"' + esc(String(v).slice(0, 300)) + (String(v).length > 300 ? '…' : '') + '"</i>';
+    const node = (k, v, depth) => { if (--budget < 0) return ''; const key = k == null ? '' : '<b>' + esc(String(k)) + '</b>';
+      if (!v || typeof v !== 'object') return '<div class="jl">' + key + leaf(v) + '</div>';
+      const arr = Array.isArray(v), ks = arr ? v.map((_, i) => i) : Object.keys(v), n = ks.length;
+      const kids = ks.slice(0, 200).map((kk) => node(arr ? kk : kk, v[kk], depth + 1)).join('') + (n > 200 ? '<div class="jl"><i class="jn">… ' + (n - 200) + ' more</i></div>' : '');
+      return '<details' + (depth < 1 ? ' open' : '') + '><summary>' + key + '<i class="jt">' + (arr ? '[' + n + ']' : '{' + n + '}') + '</i></summary>' + kids + '</details>'; };
+    return wrap('json', '<div class="vb-json">' + node(null, d, 0) + '</div>');
+  };
+  // diff: the patch's files and hunks, + and - coloured, a count of each at the head
+  R.diff = (d, H, o) => {
+    const txt0 = typeof d === 'string' ? d : (isObj(d) ? String(d.diff ?? d.patch ?? d.text ?? '') : ''); if (!txt0.trim()) return EMPTY('a diff needs a patch');
+    const L = txt0.split('\n'); const add = L.filter((l) => /^\+(?!\+\+)/.test(l)).length, del = L.filter((l) => /^-(?!--)/.test(l)).length, files = L.filter((l) => /^diff --git|^\+\+\+ /.test(l)).length;
+    const cls = (l) => /^(diff --git|index |\+\+\+ |--- )/.test(l) ? 'df' : /^@@/.test(l) ? 'dh' : /^\+/.test(l) ? 'da' : /^-/.test(l) ? 'dd' : '';
+    return wrap('diff', '<div class="vb-dhd"><b class="da">+' + add + '</b><b class="dd">−' + del + '</b><span>' + (files ? Math.ceil(files / 2) + ' file' + (files > 2 ? 's' : '') : '') + '</span></div><pre class="vb-code vb-diff">' + L.slice(0, 1500).map((l) => '<span class="' + cls(l) + '">' + esc(l) + '</span>').join('\n') + '</pre>');
+  };
+  // code: numbered lines and the language
+  R.code = (d, H, o) => {
+    const code = typeof d === 'string' ? d : (isObj(d) ? String(d.code ?? d.content ?? d.source ?? d.text ?? '') : ''); if (!code.trim()) return EMPTY('code needs source');
+    const path = isObj(d) ? String(d.path ?? d.filename ?? d.file ?? '') : ''; const lang = (isObj(d) && (d.lang || d.language)) || ((o && o.draw && o.draw.lang) || (path.match(/\.([a-z0-9]+)$/i) || [])[1] || '');
+    const L = code.split('\n');
+    return wrap('code', '<div class="vb-dhd"><span>' + esc(path ? path.split('/').pop() : 'code') + '</span><span>' + esc(String(lang)) + ' · ' + L.length + ' lines</span></div><pre class="vb-code">' + L.slice(0, 2000).map((l, i) => '<span><u>' + (i + 1) + '</u>' + esc(l) + '</span>').join('\n') + '</pre>');
+  };
+  // progress: every step with its state, how long it took; the bar is done of all
+  const stepState = (s) => { const k = String(s.status ?? s.state ?? (s.done ? 'done' : (s.current || s.now ? 'running' : ''))).toLowerCase(); return /fail|error|crash|abort/.test(k) ? 'failed' : /done|ok|pass|success|complete|finish|merged/.test(k) ? 'done' : /run|active|current|now|progress|work/.test(k) ? 'running' : /skip/.test(k) ? 'skipped' : 'waiting'; };
+  R.progress = (d, H, o) => {
+    const st = isObj(d) && Array.isArray(d.steps || d.stages || d.items || d.events) ? (d.steps || d.stages || d.items || d.events) : (Array.isArray(d) ? d : []);
+    const rw = st.map((s) => (s && typeof s === 'object') ? s : { name: String(s) }); if (!rw.length) return EMPTY('progress needs steps');
+    const S = rw.map(stepState), done = S.filter((x) => x === 'done' || x === 'skipped').length, failed = S.includes('failed'), ic = { done: '✓', running: '●', failed: '✗', waiting: '○', skipped: '–' };
+    const dur = (s) => { const v = s.elapsed_s ?? s.duration_s ?? s.seconds ?? (s.elapsed_ms != null ? s.elapsed_ms / 1000 : (s.ms != null ? s.ms / 1000 : null)); return v == null ? '' : (v >= 60 ? Math.round(v / 60) + 'm' : (Math.round(num(v) * 10) / 10) + 's'); };
+    const lim = Math.max(3, Math.floor(((H || 120) - 24) / 20)), cur = Math.max(0, S.indexOf('running')), from = Math.max(0, Math.min(rw.length - lim, cur - 1));
+    return wrap('progress', '<div class="vb-pgb"><i style="width:' + (done / rw.length * 100).toFixed(1) + '%;background:' + (failed ? B.ac4 : B.ac2) + '"></i></div><span class="vb-lbl">' + done + ' of ' + rw.length + (failed ? ' · failed at ' + esc(nameOf(rw[S.indexOf('failed')]) || 'a step') : (S.includes('running') ? ' · ' + esc(nameOf(rw[cur]) || 'running') : '')) + '</span>'
+      + rw.slice(from, from + lim).map((s, j) => { const k = S[from + j]; return '<span class="vb-ps ' + k + '"' + ' data-tip="' + esc(rowTip(s, nameOf(s) || String(s.step ?? s.stage ?? ''))) + '"><i>' + ic[k] + '</i><em>' + esc(String(nameOf(s) || s.step || s.stage || s.text || s.message || '')) + '</em><small>' + esc(String(s.detail ?? s.message ?? s.note ?? '').slice(0, 80)) + '</small><b>' + esc(dur(s)) + '</b></span>'; }).join(''));
+  };
+  // status: the verdict large, the checks under it
+  const verdictOf = (d) => { if (!isObj(d)) return String(d ?? ''); const v = d.status ?? d.level ?? d.state ?? d.health ?? (d.ok === true ? 'ok' : d.ok === false ? 'failed' : (d.healthy === true ? 'healthy' : d.healthy === false ? 'unhealthy' : '')); return String(v ?? ''); };
+  const checksOf = (d) => { if (!isObj(d)) return []; const c = d.checks || d.findings || d.components || d.services || d.results || d.backends; if (Array.isArray(c)) return c.filter(isObj);
+    if (isObj(c)) return Object.keys(c).map((k) => isObj(c[k]) ? Object.assign({ name: k }, c[k]) : { name: k, status: c[k] });
+    return Object.keys(d).filter((k) => typeof d[k] === 'boolean' || (typeof d[k] === 'string' && /^(ok|up|down|err|error|warn|healthy|unhealthy|running|stopped|serving|failed|pass|fail)$/i.test(d[k]))).filter((k) => !/^(ok|status|state|level|health|healthy)$/.test(k)).map((k) => ({ name: k, status: d[k] })); };
+  R.status = (d, H, o) => {
+    const v = verdictOf(d); const ck = checksOf(d); if (!v && !ck.length) return EMPTY('a status needs a verdict or checks');
+    const col = stCol(v || (ck.every((c) => stCol(c.status ?? c.state ?? c.severity ?? c.ok) === B.ac2) ? 'ok' : 'warn'));
+    const msg = isObj(d) ? String(d.message ?? d.summary ?? d.detail ?? d.reason ?? '') : '';
+    const lim = Math.max(2, Math.floor(((H || 120) - 48) / 18));
+    return wrap('status', '<div class="vb-stv"><i style="background:' + col + '"></i><b style="color:' + col + '">' + esc(v || (ck.length + ' checks')) + '</b>' + (msg ? '<span>' + esc(msg.slice(0, 140)) + '</span>' : '') + '</div>'
+      + ck.slice(0, lim).map((c) => { const s = c.status ?? c.state ?? c.severity ?? c.ok ?? ''; return '<span class="vb-stc" data-tip="' + esc(rowTip(c)) + '"><i style="background:' + stCol(s) + '"></i><em>' + esc(nameOf(c) || String(c.message ?? '').slice(0, 40)) + '</em><small>' + esc(String(typeof s === 'boolean' ? (s ? 'ok' : 'no') : s)) + '</small></span>'; }).join('') + (ck.length > lim ? '<span class="vb-lbl">+ ' + (ck.length - lim) + ' more</span>' : ''));
+  };
+  // media: an image (an address or base64), a video, a sound - the first large, the count of the rest
+  const mediaOf = (x) => { if (!x) return null; if (typeof x === 'string') return /^data:|^https?:|^\//.test(x) ? { url: x } : null; if (!isObj(x)) return null;
+    const b = x.image_b64 || x.b64 || x.base64; if (b) { const s = String(b); const mime = /^\/9j\//.test(s) ? 'image/jpeg' : /^R0lGOD/.test(s) ? 'image/gif' : /^UklGR/.test(s) ? 'image/webp' : 'image/png'; return { url: 'data:' + mime + ';base64,' + s, alt: x.title || x.caption || '' }; }
+    const u = x.url || x.src || x.image || x.path || x.file; return (u && /^(data:(image|video|audio)\/|https?:|\/)/i.test(String(u))) ? { url: String(u), alt: String(x.title || x.caption || x.name || ''), kind: x.kind || x.mime || '' } : null; };
+  R.media = (d, H, o) => {
+    const list = Array.isArray(d) ? d : (isObj(d) && Array.isArray(d.images || d.media || d.files || d.items) ? (d.images || d.media || d.files || d.items) : [d]);
+    const M = list.map(mediaOf).filter(Boolean); if (!M.length) return EMPTY('media needs an image, a video or a sound');
+    const m = M[0], u = m.url, k = String(m.kind || '') + ' ' + u; const h = Math.max(60, (H || 120) - 18);
+    const el = /video|\.(mp4|webm|mov)(\?|$)/i.test(k) ? '<video src="' + esc(u) + '" controls style="max-height:' + h + 'px"></video>' : /audio|\.(mp3|wav|ogg|m4a)(\?|$)/i.test(k) ? '<audio src="' + esc(u) + '" controls></audio>' : '<img src="' + esc(u) + '" alt="' + esc(m.alt || '') + '" style="max-height:' + h + 'px" loading="lazy">';
+    return wrap('media', '<div class="vb-media">' + el + '</div>' + cap(esc(String(m.alt || '')) + (M.length > 1 ? ' · + ' + (M.length - 1) + ' more' : '')));
+  };
+  // error: what failed, said once; the detail (a trace, a stderr) folded under it
+  R.error = (d, H, o) => {
+    const msg = typeof d === 'string' ? d : (isObj(d) ? String(d.error ?? d.message ?? d.detail ?? d.reason ?? 'failed') : 'failed'); const det = isObj(d) ? String(d.traceback ?? d.trace ?? d.stderr ?? d.stack ?? (d.detail !== msg ? d.detail ?? '' : '')) : '';
+    const who = (o && o.record && o.record.source) || (isObj(d) && d.capability) || '';
+    return wrap('error', '<div class="vb-err"><i>✗</i><div><b>' + esc(who ? who + ' failed' : 'failed') + '</b><span>' + esc(msg.slice(0, 600)) + '</span></div></div>' + (det ? '<details class="vb-errd"><summary>detail</summary><pre>' + esc(det.slice(0, 8000)) + '</pre></details>' : ''));
+  };
+  // markdown: prose a capability wrote - headings, lists, fenced code, emphasis, links (escaped first, then marked up)
+  const md = (s) => { const out = []; let inCode = false, list = '';
+    const inl = (t) => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|\W)\*([^*]+)\*(?=\W|$)/g, '$1<em>$2</em>').replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    String(s).split('\n').forEach((l) => { if (/^```/.test(l)) { if (list) { out.push('</' + list + '>'); list = ''; } out.push(inCode ? '</pre>' : '<pre>'); inCode = !inCode; return; }
+      if (inCode) { out.push(esc(l)); return; }
+      const h = l.match(/^(#{1,4})\s+(.*)$/), li = l.match(/^\s*[-*]\s+(.*)$/), ol = l.match(/^\s*\d+[.)]\s+(.*)$/);
+      if ((li || ol) && list !== (li ? 'ul' : 'ol')) { if (list) out.push('</' + list + '>'); list = li ? 'ul' : 'ol'; out.push('<' + list + '>'); }
+      if (!(li || ol) && list) { out.push('</' + list + '>'); list = ''; }
+      if (h) out.push('<h' + (h[1].length + 2) + '>' + inl(h[2]) + '</h' + (h[1].length + 2) + '>'); else if (li || ol) out.push('<li>' + inl((li || ol)[1]) + '</li>'); else if (l.trim()) out.push('<p>' + inl(l) + '</p>'); });
+    if (list) out.push('</' + list + '>'); if (inCode) out.push('</pre>'); return out.join(''); };
+  R.markdown = (d, H, o) => { const s = typeof d === 'string' ? d : (isObj(d) ? String(d.markdown ?? d.md ?? d.report ?? d.summary ?? d.text ?? d.content ?? '') : ''); if (!s.trim()) return EMPTY('nothing written'); return wrap('markdown', '<div class="vb-md">' + md(s.slice(0, 40000)) + '</div>'); };
+  const CAPOUT_CSS = '.vb-json{font-family:var(--b-mono);font-size:11px;line-height:1.5;overflow:auto;min-height:0;flex:1}.vb-json details{padding-left:12px}.vb-json > details{padding-left:0}.vb-json summary{cursor:pointer;list-style:none}.vb-json summary::before{content:"▸ ";color:var(--b-t3)}.vb-json details[open] > summary::before{content:"▾ "}'
+    + '.vb-json b{font-weight:400;color:var(--b-t2);margin-right:6px}.vb-json b::after{content:":"}.vb-json .jl{padding-left:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-json i{font-style:normal}.vb-json .js{color:var(--b-ac2)}.vb-json .jnum{color:var(--b-ac)}.vb-json .jb{color:var(--b-ac3)}.vb-json .jn,.vb-json .jt{color:var(--b-t3);margin-left:4px}'
+    + '.vb-code{margin:0;flex:1;min-height:0;overflow:auto;font-family:var(--b-mono);font-size:11px;line-height:1.55;color:var(--b-t1);background:var(--b-s2);border-radius:var(--b-r);padding:6px 8px;white-space:pre;tab-size:2}.vb-code u{display:inline-block;width:3.2em;text-decoration:none;color:var(--b-t3);text-align:right;margin-right:10px;user-select:none}'
+    + '.vb-diff .da{color:var(--b-ac2);background:' + 'color-mix(in srgb,var(--b-ac2) 10%,transparent)' + '}.vb-diff .dd{color:var(--b-ac4);background:color-mix(in srgb,var(--b-ac4) 10%,transparent)}.vb-diff .dh{color:var(--b-ac)}.vb-diff .df{color:var(--b-t1);font-weight:600}.vb-diff span{display:inline-block;min-width:100%}'
+    + '.vb-dhd{display:flex;gap:10px;align-items:center;font-family:var(--b-mono);font-size:10.5px;color:var(--b-t2)}.vb-dhd .da{color:var(--b-ac2)}.vb-dhd .dd{color:var(--b-ac4)}.vb-dhd span:last-child{margin-left:auto}'
+    + '.vb-pgb{height:6px;border-radius:3px;background:var(--b-s3);overflow:hidden;flex:none}.vb-pgb i{display:block;height:100%;border-radius:3px}'
+    + '.vb-ps{display:grid;grid-template-columns:16px minmax(0,auto) minmax(0,1fr) auto;gap:8px;align-items:baseline;font-size:11px;line-height:1.35}.vb-ps i{font-style:normal;text-align:center}.vb-ps em{font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-ps small{color:var(--b-t3);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-ps b{font-family:var(--b-mono);font-weight:400;font-size:10px;color:var(--b-t3)}'
+    + '.vb-ps.done i{color:var(--b-ac2)}.vb-ps.failed i,.vb-ps.failed em{color:var(--b-ac4)}.vb-ps.running i{color:var(--b-ac);animation:vw-kread 1.2s ease-in-out infinite}.vb-ps.running em{color:var(--b-t1);font-weight:600}.vb-ps.waiting{color:var(--b-t3)}'
+    + '.vb-stv{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.vb-stv > i{width:12px;height:12px;border-radius:50%;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 12%,transparent)}.vb-stv b{font-size:18px;font-weight:700;text-transform:capitalize}.vb-stv span{font-size:11px;color:var(--b-t2);flex-basis:100%}'
+    + '.vb-stc{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:11px}.vb-stc i{width:7px;height:7px;border-radius:50%}.vb-stc em{font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-stc small{font-family:var(--b-mono);font-size:10px;color:var(--b-t2)}'
+    + '.vb-media{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}.vb-media img,.vb-media video{max-width:100%;object-fit:contain;border-radius:var(--b-r)}.vb-media audio{width:100%}'
+    + '.vb-err{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:var(--b-r);background:color-mix(in srgb,var(--b-ac4) 10%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--b-ac4) 35%,transparent)}.vb-err > i{font-style:normal;color:var(--b-ac4);font-size:16px;line-height:1}.vb-err b{display:block;color:var(--b-ac4);font-size:12px}.vb-err span{font-size:11px;color:var(--b-t1);white-space:pre-wrap;word-break:break-word}'
+    + '.vb-errd summary{cursor:pointer;font-size:10.5px;color:var(--b-t2)}.vb-errd pre{margin:4px 0 0;max-height:200px;overflow:auto;font-family:var(--b-mono);font-size:10.5px;color:var(--b-t2);white-space:pre-wrap}'
+    + '.vb-md{flex:1;min-height:0;overflow:auto;font-size:12px;line-height:1.55;color:var(--b-t1)}.vb-md h3,.vb-md h4,.vb-md h5,.vb-md h6{margin:6px 0 3px;font-size:13px}.vb-md p{margin:0 0 6px}.vb-md ul,.vb-md ol{margin:0 0 6px;padding-left:18px}.vb-md code{font-family:var(--b-mono);font-size:11px;background:var(--b-s3);padding:0 4px;border-radius:3px}.vb-md pre{font-family:var(--b-mono);font-size:11px;background:var(--b-s2);padding:6px 8px;border-radius:var(--b-r);overflow:auto}.vb-md a{color:var(--b-ac)}';
+
+  /* ── THE ONE MAPPING: a capability's answer → the widget record(s) that draw it ─────────────────────────────────────
+     VeraWidget.fromCapResult(capName, result, opts?) → [record, ...]   (best first; [] for nothing to draw)
+       capName  the capability that answered ('' when unknown) - it names the source and picks a per-cap hint
+       result   what it answered: the capability's content (an MCP envelope {type:'tool_result', content} is opened)
+       opts     { args: the call's arguments (kept as read.args so the widget can read again), title, size,
+                  max: how many records at most (default 3) }
+     Every record is a full widget record: { id, form, title, source: capName, read: { args, map }, frame: { size },
+     data: <the part of the answer it draws>, why: '<the rule that chose it>' } - it draws at once (it carries its data)
+     and, placed where the source is readable, refreshes on its own. The first record is the answer's best drawing; the
+     ones after it are companions (a chart beside a table of numbers, the checks beside a verdict).
+     The rules, in order (the first that matches decides the first record):
+       1 error      {ok:false, error} · {error:"..."} with little else            → error
+       2 terminal   {command, stdout|stderr}                                      → terminal
+       3 media      image_b64 · an image/video/audio url · {images:[...]}         → media
+       4 diff       {diff} · {patch} · a string that is a unified diff           → diff
+       5 code       {code} · {content, path}                                       → code
+       6 hint       the capability's own hint (CAP_HINTS: the dashboard's reads)  → its form and map
+       7 progress   {steps|stages:[{name, status}]} · rows of step + state        → progress
+       8 events     rows with a time and a line of text                           → log
+       9 series     rows with a time and numbers · {history|samples:[...]}        → trace (one number) · area (several)
+      10 level      {value, max} → ring · {value} → hero (with its trend when the answer has one)
+      11 files      rows with a path                                              → files
+      12 status     {status|ok|healthy|level, + checks|findings|components}       → status (+ its checks as a table)
+      13 table      rows of the same shape                                        → table (+ ranked when a row has a name and a number)
+      14 list       a list of plain things                                        → list
+      15 numbers    {name: number, ...}                                           → numbers (≤ 6) · ranked
+      16 prose      report · markdown · summary · a long text                     → markdown
+      17 record     a flat object of up to 24 plain fields                        → kv
+      18 json       anything else with structure                                  → json
+      19 string     a short text                                                  → string
+     The python catalogue mirrors it (widget_cap_output.py, widget.from_result) so an agent can ask for the same answer. */
+  const CAP_HINTS = {
+    'sysmon.history': { form: 'trace', map: { series: 'samples', v: 'cpu' } }, 'sysmon.status': { form: 'numbers', map: { pick: { cpu: 'resources.cpu', memory: 'resources.mem', guests: 'proxmox.running', containers: 'docker.running' } } },
+    'obs.events': { form: 'log', map: { events: '$', t: 'ts', kind: 'type', text: 'name' } }, 'ollama.request_log': { form: 'log', map: { events: 'entries', t: 'ts', kind: 'instance', text: 'model' } },
+    'ollama.route_stats': { form: 'ranked', map: { values: 'stats', count: 'model', sum: 'n' } }, 'obs.node_temps': { form: 'temps', map: { values: 'hosts', name: 'label', value: 'max_c' } },
+    'evolve.activity': { form: 'area', map: { series: 'buckets', split: ['pass', 'fail'], t: 'hour' } }, 'evolve.pipeline.list': { form: 'table', map: { rows: 'pipelines' }, draw: { columns: ['branch', 'status', 'decision', 'created_at'] } },
+    'evolve.unittest.history': { form: 'trace', map: { series: 'runs', v: 'passed', t: 'ts', reverse: true } }, 'perf.stalls': { form: 'column', map: { values: 'events', value: 'stalled_ms', reverse: true } },
+    'syslog.errors': { form: 'log', map: { events: 'warnings', t: 'ts', kind: 'cap_group', text: 'message' } }, 'dash.health.summary': { form: 'pills', map: { values: '$', entries: 'status' } },
+    'obs.modules': { form: 'treemap', map: { parts: 'modules', name: 'name', value: 'caps_added' } }, 'estate.health': { form: 'status' }, 'perf.scan': { form: 'status' },
+    'obs.health': { form: 'status' }, 'backup.status': { form: 'table', map: { rows: 'guests' }, draw: { columns: ['name', 'status', 'state', 'backups'] } }, 'docker.ps': { form: 'containers', map: { rows: 'containers', name: 'Names', status: 'State', host: 'host_id' } },
+    'evolve.sandbox.list': { form: 'sandboxes', map: { rows: 'sandboxes', name: 'name', status: 'running' } }, 'dream.history': { form: 'table', map: { rows: 'history' }, draw: { columns: ['label', 'title', 'started_at', 'signal'] } },
+    'exec.bash.run': { form: 'terminal' }, 'code.read': { form: 'code' }, 'code.diff': { form: 'diff' }, 'evolve.pipeline.diff': { form: 'diff' }, 'evolve.sandbox.diff': { form: 'diff' } };
+  const hintOf = (cap) => { const n = String(cap || ''); if (CAP_HINTS[n]) return CAP_HINTS[n]; if (/\.(diff|patch)$/.test(n)) return { form: 'diff' }; if (/\.(health|healthz)$/.test(n)) return { form: 'status' }; return null; };
+  const rowsOfAny = (c) => { if (Array.isArray(c)) return c; if (!isObj(c)) return null; const ok = (v) => Array.isArray(v) && v.length && isObj(v[0]);
+    for (const k of ['data', 'result', 'items', 'rows', 'results', 'entries', 'events', 'points', 'series', 'values']) if (ok(c[k])) return c[k]; for (const k of Object.keys(c)) if (ok(c[k])) return c[k]; return null; };
+  const rowsKey = (c) => { if (!isObj(c)) return '$'; for (const k of ['data', 'result', 'items', 'rows', 'results', 'entries', 'events', 'points', 'series', 'values']) if (Array.isArray(c[k]) && c[k].length && isObj(c[k][0])) return k; for (const k of Object.keys(c)) if (Array.isArray(c[k]) && c[k].length && isObj(c[k][0])) return k; return '$'; };
+  const TIMEK = ['t', 'ts', 'time', 'when', 'at', 'timestamp', 'created_at', 'started_at', 'hour', 'date'], TEXTK = ['text', 'msg', 'message', 'line', 'event', 'summary', 'title'];
+  const firstKey = (r, ks) => ks.find((k) => r[k] != null && r[k] !== '');
+  const numKeys = (r) => Object.keys(r).filter((k) => typeof r[k] === 'number' && !/^(id|pid|port|vmid|index|idx|i|n_?id)$/i.test(k) && !TIMEK.includes(k));
+  const isDiffText = (s) => typeof s === 'string' && /^(diff --git |--- |\+\+\+ |@@ )/m.test(s) && /^[+-]/m.test(s);
+  const isMediaUrl = (s) => typeof s === 'string' && /^(data:image\/|data:video\/|https?:.*\.(png|jpe?g|gif|webp|svg|mp4|webm|mov|mp3|wav|ogg)(\?|$))/i.test(s);
+  function fromCapResult(capName, result, opts) {
+    opts = opts || {}; let c = result;
+    if (isObj(c) && c.type === 'tool_result' && 'content' in c) c = c.content;
+    if (c === undefined || c === null || c === '') return [];
+    const cap = String(capName || ''), max = Math.max(1, +opts.max || 3), title = opts.title || cap || 'result', out = [];
+    const mk = (form, data, why, extra) => { const r = Object.assign({ id: (cap || 'result').replace(/[^a-z0-9]+/gi, '-') + '-' + form, form, title: (extra && extra.title) || title, source: cap, read: { args: opts.args || {}, map: (extra && extra.map) || {} }, frame: { size: opts.size || 'l' }, data, why }, extra && extra.draw ? { draw: extra.draw } : {}); out.push(r); return r; };
+    const done = () => out.slice(0, max);
+    // 1 error
+    if (isObj(c) && ((c.ok === false && (typeof c.error === 'string' || typeof c.message === 'string')) || (typeof c.error === 'string' && c.error && Object.keys(c).length <= 3))) { mk('error', c, 'a failed answer: ok false, or an error and little else'); return done(); }
+    // 2 terminal
+    if (isObj(c) && (c.stdout != null || c.stderr != null) && (c.command != null || c.cmd != null || c.rc != null || c.returncode != null)) { const lines = [c.command || c.cmd ? '$ ' + String(c.command || c.cmd) : ''].concat(String(c.stdout || '').split('\n')).concat(String(c.stderr || '').split('\n')).filter((l, i) => i > 0 || l);
+      mk('terminal', { lines, state: c.rc != null ? 'rc ' + c.rc : (c.returncode != null ? 'rc ' + c.returncode : '') }, 'a command and what it printed'); if (c.rc && c.rc !== 0 && c.stderr) mk('error', { error: String(c.stderr).split('\n').filter(Boolean).slice(-1)[0] || 'rc ' + c.rc, stderr: c.stderr }, 'the command failed'); return done(); }
+    // 3 media
+    if (isMediaUrl(c) || (isObj(c) && (c.image_b64 || c.b64 || isMediaUrl(c.url) || isMediaUrl(c.src) || isMediaUrl(c.image) || (Array.isArray(c.images) && c.images.length)))) { mk('media', c, 'an image, a video or a sound'); return done(); }
+    // 4 diff · 5 code
+    if (isDiffText(c) || (isObj(c) && (isDiffText(c.diff) || isDiffText(c.patch) || (typeof c.diff === 'string' && c.diff.trim())))) { mk('diff', c, 'a patch'); return done(); }
+    if (isObj(c) && ((typeof c.code === 'string' && c.code.trim()) || (typeof c.content === 'string' && c.content.trim() && (c.path || c.filename || c.file)))) { mk('code', c, 'source: code, or a file\'s content'); return done(); }
+    // 6 the capability's own hint
+    const h = hintOf(cap); if (h) { const r = mk(h.form, c, 'the ' + cap + ' hint', { map: h.map, draw: h.draw }); const drawn = mapped(r, h.form, c); if (!isEmpty(dataFor(drawn, h.form))) { rowsCompanion(c, r); return done(); } out.pop(); }
+    const rw = rowsOfAny(c), rk = rowsKey(c);
+    // 7 progress
+    if (isObj(c) && Array.isArray(c.steps || c.stages) && (c.steps || c.stages).length) { mk('progress', c, 'steps with their state'); return done(); }
+    if (rw && rw.length && rw.every((r) => isObj(r) && (r.step != null || r.stage != null || r.phase != null) && (r.status != null || r.state != null || r.done != null))) { mk('progress', { steps: rw }, 'rows of step and state'); return done(); }
+    if (rw && rw.length && isObj(rw[0])) {
+      const r0 = rw[0], tk = firstKey(r0, TIMEK), xk = firstKey(r0, TEXTK), nk = numKeys(r0);
+      // 8 events
+      if (tk && xk && rw.every((r) => isObj(r))) { mk('log', c, 'rows with a time and a line of text', { map: { events: rk, t: tk, text: xk, kind: firstKey(r0, ['kind', 'level', 'type', 'severity', 'source']) || '' } }); if (rw.length > 1 && rw.some((r) => /err|fail|warn/i.test(String(r.level ?? r.kind ?? r.severity ?? '')))) mk('pareto', c, 'the lines counted by kind', { map: { values: rk, count: firstKey(r0, ['kind', 'level', 'type', 'severity']) || 'kind' }, title: title + ' · by kind' }); return done(); }
+      // 9 series
+      if (tk && nk.length && rw.length >= 3 && Object.keys(r0).filter((k) => typeof r0[k] !== 'object').length <= nk.length + 3) { if (nk.length === 1) mk('trace', c, 'a series: a time and a number', { map: { series: rk, t: tk, v: nk[0] } }); else mk('area', c, 'series: a time and ' + nk.length + ' numbers', { map: { series: rk, t: tk, split: nk.slice(0, 4) } }); mk('table', c, 'the readings', { map: { rows: rk }, title: title + ' · readings' }); return done(); }
+      // 11 files
+      if (rw.every((r) => isObj(r) && (r.path != null || r.file != null))) { mk('files', c, 'rows with a path', { map: { rows: rk } }); return done(); }
+    }
+    // 10 level
+    if (isObj(c) && typeof c.value === 'number') { const tr = Array.isArray(c.history || c.trend || c.series) ? (c.history || c.trend || c.series) : null; if (c.max != null && !tr) mk('ring', c, 'a value of a maximum'); else mk('hero', c, 'a value' + (tr ? ' with its trend' : '')); return done(); }
+    // 12 status
+    // 16 prose first: {ok:true, report:"..."} is a report that succeeded, not a verdict
+    if (isObj(c)) { const pk = ['report', 'markdown', 'md', 'summary', 'text', 'answer', 'content'].find((k) => typeof c[k] === 'string' && c[k].trim()); if (pk && (c[pk].length >= 200 || /^#|\n[-*] |\n\n/.test(c[pk]))) { mk('markdown', c[pk], 'prose: ' + pk); const rest = Object.keys(c).filter((k) => k !== pk && isScalar(c[k])); if (rest.length > 1) mk('kv', c, 'the rest of the answer', { map: { keys: rest.slice(0, 12) }, title: title + ' · fields' }); return done(); } }
+    const hasVerdict = isObj(c) && ['status', 'state', 'level', 'health', 'healthy'].some((k) => c[k] != null && isScalar(c[k]));
+    if (isObj(c) && verdictOf(c) && ((hasVerdict && checksOf(c).length) || (hasVerdict && /^(ok|up|down|healthy|unhealthy|degraded|warn|error|failed|serving|running|stopped)$/i.test(verdictOf(c))) || (c.ok != null && checksOf(c).length >= 2))) { mk('status', c, 'a verdict and its checks'); const ck = checksOf(c); if (ck.length > 6) mk('table', ck, 'every check', { title: title + ' · checks' }); return done(); }
+    // 13 table
+    if (rw && rw.length && isObj(rw[0])) { const cols = Object.keys(rw[0]).filter((k) => isScalar(rw[0][k])); if (cols.length >= 2 || rw.length > 1) { const r = mk('table', c, 'rows of the same shape', { map: { rows: rk } }); rowsCompanion(c, r); return done(); } }
+    // 14 list
+    if (Array.isArray(c) && c.length && c.every((x) => isScalar(x))) { mk('list', c.map((x) => ({ name: String(x) })), 'a list of plain things'); return done(); }
+    if (isObj(c)) { const ks = Object.keys(c);
+      // 15 numbers
+      const nums = ks.filter((k) => typeof c[k] === 'number'); if (nums.length >= 2 && nums.length === ks.length) { mk(nums.length <= 6 ? 'numbers' : 'ranked', c, 'named numbers'); return done(); }
+      // 16 prose
+      const pk = ['report', 'markdown', 'md', 'summary', 'text', 'answer', 'content'].find((k) => typeof c[k] === 'string' && c[k].trim()); if (pk && (c[pk].length >= 200 || /^#|\n[-*] |\n\n/.test(c[pk]))) { mk('markdown', c[pk], 'prose: ' + pk); if (ks.length > 1) mk('kv', c, 'the rest of the answer', { map: { keys: ks.filter((k) => k !== pk && isScalar(c[k])).slice(0, 12) }, title: title + ' · fields' }); return done(); }
+      // 17 record
+      if (ks.length >= 1 && ks.length <= 24 && ks.every((k) => isScalar(c[k]))) { mk('kv', c, 'a record: plain fields'); return done(); }
+      // 18 json
+      mk('json', c, 'structure: a tree to open'); if (rw && rw.length) mk('table', c, 'its rows', { map: { rows: rk }, title: title + ' · ' + rk }); return done(); }
+    if (Array.isArray(c) && c.length) { mk('json', c, 'a list of mixed things'); return done(); }
+    // 16 · 19 text
+    if (typeof c === 'string') { if (isDiffText(c)) mk('diff', c, 'a patch'); else if (c.length >= 200 || /\n/.test(c)) mk('markdown', c, 'prose'); else mk('string', c, 'a short text'); return done(); }
+    if (typeof c === 'number') { mk('hero', { value: c }, 'a number'); return done(); }
+    if (typeof c === 'boolean') { mk('status', { status: c ? 'ok' : 'failed' }, 'yes or no'); return done(); }
+    return done();
+    // a companion for rows that carry a name and a number: the same rows ranked by that number
+    function rowsCompanion(c0, r) { const R0 = rowsOfAny(c0); if (!R0 || !R0.length || R0.length > 60 || !isObj(R0[0])) return; const nm = ['name', 'title', 'label', 'id', 'key'].find((k) => R0[0][k] != null); const nk0 = numKeys(R0[0]).filter((k) => !/_at$|ts$/.test(k)); if (!nm || !nk0.length || r.form === 'ranked') return;
+      mk('ranked', c0, 'the rows ranked by ' + nk0[0], { map: { values: rowsKey(c0), name: nm, value: nk0[0] }, title: title + ' · by ' + nk0[0].replace(/_/g, ' ') }); }
+  }
+  /* ── A STREAM OF OPERATION → a widget that grows as it arrives ──────────────────────────────────────────────────
+     const sink = VeraWidget.fromCapStream(capName, opts?)
+       sink.push(event)      one event of the stream: a step {step|stage|name, status|state, ...} · a line {text|msg|
+                             message|line, ts?, level?} · a sample {t|ts, v|value|<numbers>} · a token/chunk {delta|token|
+                             chunk: "..."} · a string. The first events decide what the stream IS (steps → progress,
+                             chunks → markdown, samples → trace, anything else → log, newest in view)
+       sink.end(result?)     the stream finished; its final answer (if any) is drawn through fromCapResult beside it
+       sink.record()         the live record now: { form, title, source, data, why, stream: true }
+       sink.records()        the live record + the final answer's records
+       sink.subscribe(fn)    fn(record, sink) after every change (a host redraws; returns an unsubscribe)
+       sink.attach(el)       a <vera-widget> that follows the stream (its record set at most once a frame)
+     opts: { title, max (events kept, default 500), args } */
+  function fromCapStream(capName, opts) {
+    opts = opts || {}; const cap = String(capName || ''), max = Math.max(20, +opts.max || 500);
+    const S = { kind: '', steps: [], stepIx: {}, lines: [], samples: [], text: '', final: [], ended: false, subs: [], els: [] };
+    const kindOf = (e) => { if (typeof e === 'string') return 'lines'; if (!isObj(e)) return 'lines'; if ((e.step != null || e.stage != null || e.phase != null) && (e.status != null || e.state != null || e.done != null)) return 'steps';
+      if (typeof (e.delta ?? e.token ?? e.chunk) === 'string') return 'text'; if ((e.t != null || e.ts != null) && (typeof e.v === 'number' || typeof e.value === 'number' || numKeys(e).length) && !firstKey(e, TEXTK)) return 'samples'; return 'lines'; };
+    const record = () => { const base = { id: (cap || 'stream').replace(/[^a-z0-9]+/gi, '-') + '-stream', title: opts.title || cap || 'stream', source: cap, read: { args: opts.args || {}, map: {} }, frame: { size: 'l' }, stream: true, ended: S.ended };
+      if (S.kind === 'steps') return Object.assign(base, { form: 'progress', data: { steps: S.steps.slice() }, why: 'a stream of steps' });
+      if (S.kind === 'text') return Object.assign(base, { form: 'markdown', data: S.text, why: 'a stream of text' });
+      if (S.kind === 'samples') { const nk = S.samples.length ? numKeys(S.samples[0]) : []; return nk.length > 1 && !('v' in (S.samples[0] || {})) ? Object.assign(base, { form: 'area', data: S.samples.slice(), read: Object.assign(base.read, { map: { series: '$', split: nk.slice(0, 4) } }), why: 'a stream of samples' }) : Object.assign(base, { form: 'trace', data: S.samples.map((s) => ({ t: s.t ?? s.ts, v: num(s.v ?? s.value ?? s[nk[0]]) })), why: 'a stream of samples' }); }
+      return Object.assign(base, { form: 'log', data: S.lines.slice(), why: 'a stream of lines (newest in view)' }); };
+    let raf = 0; const notify = () => { const r = record(); S.subs.forEach((f) => { try { f(r, sink); } catch (_) {} });
+      if (S.els.length && !raf) { const go = () => { raf = 0; const rr = record(); S.els.forEach((el) => { try { el.setAttribute('record', JSON.stringify(rr)); } catch (_) {} }); }; raf = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame(go) : setTimeout(go, 16); } };
+    const sink = {
+      push(e) { if (S.ended) return sink; const k = kindOf(e); if (!S.kind) S.kind = k;
+        if (k === 'steps') { const id = String(e.step ?? e.stage ?? e.phase ?? e.name); const row = Object.assign({ name: id }, e); if (S.stepIx[id] != null) S.steps[S.stepIx[id]] = Object.assign(S.steps[S.stepIx[id]], row); else { S.stepIx[id] = S.steps.length; S.steps.push(row); } if (S.kind !== 'steps') S.lines.push({ ts: e.ts || new Date().toISOString(), kind: 'step', text: id + ' · ' + String(e.status ?? e.state ?? '') }); }
+        else if (k === 'text') { S.text += String(e.delta ?? e.token ?? e.chunk); if (S.kind !== 'text') S.lines.push({ ts: new Date().toISOString(), kind: 'text', text: String(e.delta ?? e.token ?? e.chunk) }); }
+        else if (k === 'samples') { S.samples.push(e); if (S.samples.length > max) S.samples.shift(); }
+        else { const l = typeof e === 'string' ? { ts: new Date().toISOString(), text: e } : Object.assign({ ts: e.ts || e.t || new Date().toISOString() }, e, { text: e.text ?? e.msg ?? e.message ?? e.line ?? e.event ?? JSON.stringify(e).slice(0, 300) }); S.lines.push(l); if (S.lines.length > max) S.lines.shift(); if (S.kind === 'steps' || S.kind === 'samples') { /* a line inside a step or sample stream rides as the step's detail */ } }
+        notify(); return sink; },
+      end(result) { S.ended = true; if (result !== undefined) S.final = fromCapResult(cap, result, { args: opts.args, title: (opts.title || cap || 'result') + ' · result' }); notify(); return sink; },
+      record, records() { return [record()].concat(S.final); },
+      subscribe(fn) { S.subs.push(fn); return () => { S.subs = S.subs.filter((f) => f !== fn); }; },
+      attach(el) { if (el && S.els.indexOf(el) < 0) { S.els.push(el); try { el.setAttribute('record', JSON.stringify(record())); } catch (_) {} } return sink; },
+      get kind() { return S.kind; }, get ended() { return S.ended; } };
+    return sink;
+  }
 
   /* ── draw at a size: the composition around the form ─────────────────── */
   const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞' };
@@ -1535,7 +1861,7 @@
     if (size === 's' && (DRAWN[f] === 'items' || f === 'kv' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f, d, opts); if (cs) return cs; }
     if (size === 's') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
-    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || f === 'composite' || DRAWN[f] === 'events') return body;   // a composite, a table, a feed: the body is the composition
+    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
     // L: the form plus its detail list beside it; XL: the form, its table, its log
     // the detail list beside the form holds the rows its body has room for (~16 px a row) - eight in a two-row tile ran
     // past its foot - and a form that already names every value it draws (ranked bars, pills, a number grid, a
@@ -1615,7 +1941,7 @@
   }
 
   /* ── the styles (host-injected once; the element carries them in its shadow) ── */
-  const CSS = `
+  const CSS = fontScale(`
 .wempty{color:var(--dim2,#8a92a0);font-size:9.5px;font-family:var(--mono,ui-monospace,monospace)}
 .vw-nodata{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;width:100%;height:100%;min-height:34px;text-align:center}
 .vw-nodata > b{font-family:var(--mono,ui-monospace,monospace);font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a92a0)}
@@ -1648,7 +1974,14 @@ span.vw-sampled{opacity:.85}
 .vw-therm{display:flex;flex-direction:column;gap:4px;width:100%;font-size:9.5px}.vw-therm div{display:grid;grid-template-columns:90px 1fr 48px;gap:6px;align-items:center}.vw-therm label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text,#d8dce4)}.vw-therm span{display:block;height:8px;border-radius:4px;background:var(--bg2,#1a1c20);overflow:hidden}.vw-therm span i{display:block;height:100%;background:var(--acc,#5a9e8f);border-radius:4px}.vw-therm b{font-family:var(--mono,ui-monospace,monospace);font-weight:400;text-align:right;color:var(--text,#d8dce4)}
 .vw-heat{display:grid;gap:2px;width:100%}.vw-heat div{aspect-ratio:1.6;border-radius:3px;background:var(--acc,#5a9e8f);display:flex;align-items:flex-end;padding:2px 4px;font-family:var(--mono,ui-monospace,monospace);font-size:8px;color:var(--text,#d8dce4);overflow:hidden}
 .vw-matrix{display:grid;gap:2px;width:100%;font-size:8.5px;font-family:var(--mono,ui-monospace,monospace);align-items:center}.vw-matrix i{color:var(--dim2,#8a92a0);text-align:center;font-style:normal;overflow:hidden;white-space:nowrap}.vw-matrix b{color:var(--text,#d8dce4);font-weight:400;padding-right:6px;white-space:nowrap}.vw-matrix span{display:block;height:14px;border-radius:2px}
-.vw-donut{display:flex;align-items:center;gap:10px;width:100%}.vw-legend{display:flex;flex-direction:column;gap:2px;font-size:9.5px;min-width:0}.vw-legend span{display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;color:var(--text,#d8dce4)}.vw-legend i{width:8px;height:8px;border-radius:50%;flex-shrink:0}.vw-legend b{margin-left:auto;font-family:var(--mono,ui-monospace,monospace);font-weight:400;color:var(--dim2,#8a92a0)}
+.vw-donut{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px 12px;width:100%;height:100%}
+.vw-donut .vw-dtot{font-family:var(--mono,ui-monospace,monospace);font-size:13px;font-weight:600;fill:var(--text,#d8dce4)}
+.vw-legend.vw-legend-col{flex-direction:column;flex-wrap:nowrap;gap:3px;flex:0 1 auto;max-width:100%}
+.vw-legend-col span{display:grid;grid-template-columns:8px minmax(0,auto) auto auto;gap:6px;align-items:center}
+.vw-legend-col em{font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vw-legend-col b{margin-left:0}
+.vw-legend-col small{font-family:var(--mono,ui-monospace,monospace);font-size:9px;color:var(--dim,#6b7280)}.vw-legend{display:flex;flex-direction:column;gap:2px;font-size:9.5px;min-width:0}
+.vw-svgt{font-size:9px;font-family:var(--mono,monospace)}.vw-legend span{display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;color:var(--text,#d8dce4)}.vw-legend i{width:8px;height:8px;border-radius:50%;flex-shrink:0}.vw-legend b{margin-left:auto;font-family:var(--mono,ui-monospace,monospace);font-weight:400;color:var(--dim2,#8a92a0)}
 .vw-stack{display:flex;flex-direction:column;gap:6px;width:100%}.vw-stackbar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--bg2,#1a1c20)}.vw-stackbar i{display:block;height:100%}.vw-stack .vw-legend{flex-direction:row;flex-wrap:wrap;gap:4px 10px}
 .vw-pills{display:flex;flex-wrap:wrap;gap:5px;width:100%;height:100%;align-content:space-evenly}.vw-pill{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:12px;border:1px solid var(--border,rgba(255,255,255,.09));background:var(--bg2,#1a1c20);font-size:9.5px}.vw-pill small{color:var(--dim2,#8a92a0)}.vw-pill b{font-family:var(--mono,ui-monospace,monospace);font-weight:400;color:var(--text,#d8dce4)}.vw-pill.ok b{color:var(--acc2,#8fb87a)}.vw-pill.bad b{color:var(--err,#c96b6b)}
 .vw-log{display:flex;flex-direction:column;gap:2px;width:100%;font-family:var(--mono,ui-monospace,monospace);font-size:9px}.vw-log div{display:flex;gap:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text,#d8dce4)}.vw-log .t{color:var(--dim,#6b7280);flex-shrink:0}.vw-log .k{color:var(--acc,#5a9e8f);flex-shrink:0;min-width:48px}.vw-log .lane{color:var(--dim2,#8a92a0);text-transform:uppercase;letter-spacing:.08em;font-size:8px;margin-top:3px}
@@ -1856,7 +2189,7 @@ span.vw-sampled{opacity:.85}
 .vb-cmpr{display:grid;grid-template-columns:1fr 70px 1fr;gap:8px;align-items:center;font-size:10px}.vb-cmpr .n{grid-column:2;text-align:center;color:var(--b-t2);order:2;white-space:nowrap;overflow:hidden}.vb-cmpr .side{display:flex;align-items:center;gap:6px;height:12px}.vb-cmpr .side.l{order:1;justify-content:flex-end}.vb-cmpr .side.r{order:3}.vb-cmpr .side i{display:block;height:8px;border-radius:4px}.vb-cmpr .side b{font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);width:34px;text-align:right}.vb-cmpr .side.r b{text-align:left}
 .vb-carp{flex:1;min-height:0;display:flex;align-items:center;gap:12px}.vb-carp .vb-dial{width:64px;height:64px}.vb-carp .vb-dial > span{font-size:13px}
 .vb-flist{flex:1;display:flex;flex-direction:column;gap:1px;font-size:9.5px;min-width:0}.vb-flist > span{display:grid;grid-template-columns:1fr 46px 50px 36px;gap:6px;align-items:center;height:19px}.vb-flist span i{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}.vb-flist .h{color:var(--b-t3);font-size:8px;text-transform:uppercase;letter-spacing:.08em}.vb-flist .m{font-family:var(--b-mono);color:var(--b-t2);text-align:right;white-space:nowrap;overflow:hidden}
-.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}`;
+.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}` + CAPOUT_CSS);
   function ensureCss(root) {
     const host = root && root.head ? root.head : root;
     if (!host || !host.querySelector) return;
@@ -1865,8 +2198,24 @@ span.vw-sampled{opacity:.85}
   }
 
   /* ── the element ──────────────────────────────────────────────────────── */
-  const ELEMENT_CSS = `:host{display:block;color:var(--text,#d8dce4);font-family:var(--sans,system-ui,sans-serif);font-size:11px;min-width:0}
-:host([data-state="reading"]) .vw-sampled{opacity:.42;filter:saturate(.4)}:host([data-state="failed"]) .vw-sampled{opacity:.3;filter:grayscale(1)}
+  const ELEMENT_CSS = fontScale(`:host{display:block;color:var(--text,#d8dce4);font-family:var(--sans,system-ui,sans-serif);font-size:11px;min-width:0}
+:host([data-state="reading"]) .vw-sampled{opacity:.42;filter:saturate(.4)}
+[data-b],[data-tip]{transition:filter .14s ease,opacity .14s ease,stroke-width .14s ease}
+.vw-root.lit .vb-isow i.f[data-b]:not(.hot):not(.warm),.vw-root.lit .vw-arc:not(.hot){filter:brightness(.62) saturate(.7)}
+.vb-isow i.f.hot{filter:brightness(1.55) saturate(1.25) drop-shadow(0 0 3px rgba(255,255,255,.35))}.vb-isow i.f.warm{filter:brightness(1.18)}
+[data-b].hot,[data-tip].hot{filter:brightness(1.4)}.vw-arc.hot{filter:brightness(1.35) drop-shadow(0 0 2px rgba(255,255,255,.3))}
+[data-ref],:host([dive-on-click]) .vw-root{cursor:pointer}
+.vw-legend-col span.hot{color:var(--t1,#fff);filter:none}
+:host(:not([data-entered])) .vb-isow i.f{animation:vw-rise .55s cubic-bezier(.2,.7,.2,1) both;animation-delay:calc(min(var(--i), 90) * 5ms)}
+@keyframes vw-rise{from{opacity:0;transform:translateY(7px)}}
+:host(:not([data-entered])) .vb-rw .tr i,:host(:not([data-entered])) .vw-therm span i{animation:vw-grow .7s cubic-bezier(.2,.7,.2,1) both;transform-origin:0 50%}
+@keyframes vw-grow{from{transform:scaleX(0)}}
+:host(:not([data-entered])) .vb-colbars i{animation:vw-riseup .6s cubic-bezier(.2,.7,.2,1) both;transform-origin:50% 100%}
+@keyframes vw-riseup{from{transform:scaleY(0)}}
+:host(:not([data-entered])) .vw-arc{animation:vw-fadein .6s ease-out both}@keyframes vw-fadein{from{opacity:0}}
+.vw-root[data-motion="0"] *,.vw-root[data-motion="0"] *::before{animation:none!important;transition:none!important}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+:host([data-state="failed"]) .vw-sampled{opacity:.3;filter:grayscale(1)}
 .vw-root{display:flex;flex-direction:column;gap:5px;height:100%;min-width:0}
 .vw-hd{display:flex;align-items:center;gap:6px;font-family:var(--mono,ui-monospace,monospace);font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim,#6b7280);font-weight:600}
 .vw-hd i{width:6px;height:6px;border-radius:50%;background:var(--acc,#5a9e8f);flex-shrink:0}.vw-hd b{margin-left:auto;font-size:11px;color:var(--text,#d8dce4);font-weight:400;text-transform:none;letter-spacing:0}
@@ -1875,7 +2224,7 @@ span.vw-sampled{opacity:.85}
 .vw-acts{display:flex;gap:4px;flex-wrap:wrap}.vw-acts button{font-size:8.5px;color:var(--text,#d8dce4);background:var(--bg2,#1a1c20);border:1px solid var(--border,rgba(255,255,255,.09));border-radius:99px;padding:2px 7px;cursor:pointer;font-family:inherit}.vw-acts button:hover{color:var(--acc,#5a9e8f);border-color:var(--acc,#5a9e8f)}
 .vw-read{font-size:9px;padding:2px 8px;border:1px solid var(--border,rgba(255,255,255,.09));border-radius:4px;background:var(--bg2,#1a1c20);color:var(--dim2,#8a92a0);cursor:pointer;font-family:inherit}
 :host([size="xs"]) .vw-root,:host([size="s"]) .vw-root{display:inline-flex}:host([size="xs"]),:host([size="s"]){display:inline-block}
-.vw-root[data-motion="0"] *,.vw-root[data-motion="0"] *::before,.vw-root[data-motion="0"] *::after{animation:none!important;transition:none!important}`;
+.vw-root[data-motion="0"] *,.vw-root[data-motion="0"] *::before,.vw-root[data-motion="0"] *::after{animation:none!important;transition:none!important}`);
   const ACTIONS = { dive: 'Deep dive', pin: 'Pin to canvas', ask: 'Ask Vera', ops: 'Open in Ops', print: 'Print card', mute: 'Mute' };
   // the one projection library (/ui/iso.js — window.VeraISO): loaded once by the first element that needs it, every
   // connected element redrawn when it lands (a scene drawn before it says "loading the projection…")
@@ -1953,14 +2302,169 @@ span.vw-sampled{opacity:.85}
   const parseRefresh = (s) => { const m = String(s || '').match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/); if (!m) return 0; const n = parseFloat(m[1]); return m[2] === 'ms' ? n / 1000 : m[2] === 'm' ? n * 60 : m[2] === 'h' ? n * 3600 : n; };
   const sizeForWidth = (w) => w <= 120 ? 'xs' : w <= 220 ? 's' : w <= 380 ? 'm' : w <= 620 ? 'l' : 'xl';
 
+  /* ══ HOVER · CLICK · MOTION · THE DEEP DIVE (the widget review, round 2) ═══════════════════════════════════════════
+     "the iso widgets could provide more detail on mouseover of the blocks ... blocks could light up on mouseover ...
+     iso and other widgets could animate and be otherwise visibly interactive ... better deep dives" (the owner).
+       hover   any drawn part with a detail (data-tip, or a title the element turns into one) shows it in a floating
+               card; the part lights up - every face of the same block (data-b), its group dimmer (data-g), the rest of
+               the face dims
+       click   a part that names an entity (data-ref: guest:<vmid>, host:<id>, mesh:<host> ...) opens it in the entity
+               drawer; one that does not opens the place the record's data lives on, with the part's name as the
+               entity; a host that asks for it (dive-on-click) opens the DEEP DIVE on a click anywhere else
+       motion  a face rises in on its first real reading (iso faces in paint order, bars grow, columns rise); a figure
+               counts from its last reading to the new one and a bar slides to its new length; all of it off under
+               prefers-reduced-motion and when the record says frame.motion false
+       dive    VeraWidget.dive(el | {record, data}) - a sheet over the page: the record at its largest (XL, as tall as
+               the sheet allows), every row of what it read as a sortable, searchable table, the raw answer, and the
+               way to the place it lives on */
+  const reduceMotion = () => { try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (_) { return false; } };
+  const postTop = (m) => { try { const t = (window.top && window.top !== window) ? window.top : window; t.postMessage(m, '*'); } catch (_) { try { window.parent.postMessage(m, '*'); } catch (__) { /* no host to tell */ } } };
+  // open what a block is: its entity, else the record's place (with the block's name as the entity); true when something opened
+  function openBlock(host, rec, ref, name) {
+    try { host.dispatchEvent(new CustomEvent('widget:block', { bubbles: true, composed: true, detail: { record: rec, ref: ref || '', name: name || '' } })); } catch (_) {}
+    if (ref) {
+      if (window.veraEntityDrawer && typeof window.veraEntityDrawer.open === 'function') { try { window.veraEntityDrawer.open(ref); return true; } catch (_) {} }
+      postTop({ type: 'vera:entity:open', ref: String(ref) }); return true;
+    }
+    const src = rec && typeof rec.source === 'string' ? rec.source : '';
+    const place = (rec && rec.open) || (typeof window.placeFor === 'function' ? window.placeFor(src, '') : '');
+    if (!place) return false;
+    if (typeof window.openPlace === 'function') { try { if (window.openPlace(place, name || '')) return true; } catch (_) {} }
+    postTop({ type: 'vera:place:open', place: String(place), entity: String(name || '') }); return true;
+  }
+  const TIP_CSS = '.vw-tip{position:fixed;z-index:2147483000;pointer-events:none;max-width:320px;padding:7px 9px;border-radius:7px;background:var(--s1,var(--bg1,#15171c));color:var(--t1,var(--text,#d8dce4));box-shadow:0 8px 28px -8px rgba(0,0,0,.6),0 0 0 1px var(--bd2,rgba(255,255,255,.14));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px;line-height:1.45;white-space:normal}'
+    + '.vw-tip b{display:block;font-size:12px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-tip span{display:block;color:var(--t2,var(--dim2,#8a92a0));font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.vw-tip em{display:block;margin-top:4px;font-style:normal;font-size:10px;color:var(--acc,#6ea8d8)}';
+  const TIP_CSS_S = fontScale(TIP_CSS);
+  function tipOf(root) { let t = root.querySelector(':scope > .vw-tip'); if (!t) { t = document.createElement('div'); t.className = 'vw-tip'; t.hidden = true; root.appendChild(t); } return t; }
+  function showTip(root, text, x, y, act) {
+    const t = tipOf(root); const L = String(text || '').split('\n'); if (!L[0] && L.length < 2) { t.hidden = true; return; }
+    t.innerHTML = '<b>' + esc(L[0]) + '</b>' + L.slice(1, 12).map((l) => '<span>' + esc(l) + '</span>').join('') + (act ? '<em>' + esc(act) + '</em>' : '');
+    t.hidden = false; const vw = window.innerWidth || 1200, vh = window.innerHeight || 800, r = t.getBoundingClientRect();
+    t.style.left = Math.max(4, Math.min(vw - r.width - 6, x + 14)) + 'px'; t.style.top = Math.max(4, (y + 16 + r.height > vh) ? y - r.height - 10 : y + 16) + 'px';
+  }
+  // what the pointer is over: a block (data-b), else anything with a detail; a title is taken into data-tip once (the
+  // browser's own tooltip would stand on top of the card)
+  function partAt(root, target) {
+    let el = target && target.closest ? target.closest('[data-b],[data-tip],[title]') : null; if (!el || !root.contains(el) || el.classList.contains('vw-tip')) return null;
+    if (el.hasAttribute('title')) { if (!el.hasAttribute('data-tip')) el.setAttribute('data-tip', el.getAttribute('title')); el.removeAttribute('title'); }
+    return el;
+  }
+  function light(root, el) {
+    const wrap = root.querySelector('.vw-root') || root; root.querySelectorAll('.hot,.warm').forEach((x) => x.classList.remove('hot', 'warm'));
+    if (!el) { wrap.classList.remove('lit'); return; }
+    const b = el.getAttribute('data-b'), g = el.getAttribute('data-g');
+    (b ? root.querySelectorAll('[data-b="' + CSS_ESC(b) + '"]') : [el]).forEach((x) => x.classList.add('hot'));
+    // the block's group glows too (the host a container runs on) - unless the group is most of the face, when it says nothing
+    if (g) { const gs = root.querySelectorAll('[data-g="' + CSS_ESC(g) + '"]:not(.hot)'), all = root.querySelectorAll('[data-b]').length; if (gs.length < all * .6) gs.forEach((x) => x.classList.add('warm')); }
+    wrap.classList.add('lit');
+  }
+  const CSS_ESC = (s) => String(s).replace(/["\\]/g, '\\$&');
+  // the record as normalised, with the place it opens (normalise() keeps the schema's keys; `open` rides on the raw record)
+  const recOf = (host) => host && host._rec ? Object.assign({}, host._rec, { open: (host._raw && host._raw.open) || host._rec.open || '' }) : {};
+  function wireParts(host) {
+    const root = host._sh; let cur = null;
+    root.addEventListener('pointermove', (e) => {
+      const el = partAt(root, e.target);
+      if (el !== cur) { cur = el; light(root, el); }
+      if (!el) { const t = root.querySelector(':scope > .vw-tip'); if (t) t.hidden = true; return; }
+      const ref = el.getAttribute('data-ref'), rec = recOf(host);
+      const act = ref ? 'click · open ' + ref : ((el.hasAttribute('data-b') && (rec.open || rec.source)) ? 'click · open where it lives' : (host.hasAttribute('dive-on-click') ? 'click · the deep dive' : ''));
+      showTip(root, el.getAttribute('data-tip') || el.getAttribute('data-name') || '', e.clientX, e.clientY, act);
+    });
+    root.addEventListener('pointerleave', () => { cur = null; light(root, null); const t = root.querySelector(':scope > .vw-tip'); if (t) t.hidden = true; });
+    host.addEventListener('pointerleave', () => { cur = null; light(root, null); const t = root.querySelector(':scope > .vw-tip'); if (t) t.hidden = true; });
+    root.addEventListener('click', (e) => {
+      if (e.target.closest && e.target.closest('button,a,input,select,textarea,[data-vb-set],[data-read],[data-act]')) return;
+      const el = partAt(root, e.target);
+      if (el && el.hasAttribute('data-b')) { if (openBlock(host, recOf(host), el.getAttribute('data-ref') || '', el.getAttribute('data-name') || (el.getAttribute('data-tip') || '').split('\n')[0])) { e.stopPropagation(); return; } }
+      if (host.hasAttribute('dive-on-click') && !(host.closest && host.closest('.dash-grid.editing'))) { e.stopPropagation(); dive(host); }
+    });
+  }
+  // ── motion: what a render carries over from the one before it ──
+  const TWEEN_SEL = '.vb-hero b,.vb-bigs b,.vb-dial > span,.vw-dtot,.vb-rw .v,.vw-therm b,.vw-kv b';
+  const BAR_SEL = '.vb-rw .tr i,.vw-therm span i,.vb-bar2 i';
+  const numParts = (s) => { const m = String(s == null ? '' : s).trim().match(/^([^0-9-]*)(-?[0-9][0-9,]*(?:\.[0-9]+)?)(.*)$/); return m ? { pre: m[1], n: parseFloat(m[2].replace(/,/g, '')), dec: (m[2].split('.')[1] || '').length, comma: m[2].indexOf(',') >= 0, post: m[3] } : null; };
+  function motionBefore(root) { return { tw: [...root.querySelectorAll(TWEEN_SEL)].map((e) => e.textContent), bars: [...root.querySelectorAll(BAR_SEL)].map((e) => e.style.width) }; }
+  function motionAfter(root, was) {
+    if (!was || reduceMotion()) return;
+    const now = [...root.querySelectorAll(TWEEN_SEL)];
+    now.forEach((e, i) => { const a = numParts(was.tw[i]), b = numParts(e.textContent); if (!a || !b || a.pre !== b.pre || a.post !== b.post || a.n === b.n || !isFinite(a.n) || !isFinite(b.n)) return;
+      const t0 = performance.now(), D = 650; const show = (v) => { const s = v.toFixed(b.dec); e.textContent = b.pre + (b.comma ? Number(s).toLocaleString(undefined, { minimumFractionDigits: b.dec, maximumFractionDigits: b.dec }) : s) + b.post; };
+      const step = (t) => { const k = Math.min(1, (t - t0) / D), q = 1 - Math.pow(1 - k, 3); show(a.n + (b.n - a.n) * q); if (k < 1) requestAnimationFrame(step); };
+      show(a.n); requestAnimationFrame(step); });
+    const bars = [...root.querySelectorAll(BAR_SEL)];
+    bars.forEach((e, i) => { const w0 = was.bars[i], w1 = e.style.width; if (!w0 || !w1 || w0 === w1) return; e.style.transition = 'none'; e.style.width = w0; void e.offsetWidth; e.style.transition = 'width .6s cubic-bezier(.2,.7,.2,1)'; e.style.width = w1; });
+  }
+  // ── the deep dive ──
+  const DIVE_CSS = '.vw-dive-scrim{position:fixed;inset:0;z-index:9500;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;animation:vw-dfade .18s ease-out}@keyframes vw-dfade{from{opacity:0}}'
+    + '.vw-dive{width:min(1180px,calc(100vw - 32px));height:min(860px,calc(100vh - 32px));display:flex;flex-direction:column;background:var(--s1,var(--bg1,#15171c));color:var(--t1,var(--text,#d8dce4));border-radius:12px;box-shadow:0 30px 80px -20px rgba(0,0,0,.7),0 0 0 1px var(--bd2,rgba(255,255,255,.12));overflow:hidden;font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}'
+    + '.vw-dive-hd{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--bd,rgba(255,255,255,.08))}.vw-dive-hd h3{margin:0;font-size:15px;font-weight:600}.vw-dive-hd small{font-family:var(--f-mono,var(--mono,monospace));font-size:11px;color:var(--t3,var(--dim,#6b7280))}.vw-dive-hd .sp{flex:1}'
+    + '.vw-dive-hd button{font:inherit;font-size:12px;color:inherit;background:var(--s2,var(--bg2,#1f232b));border:1px solid var(--bd2,rgba(255,255,255,.12));border-radius:6px;padding:5px 10px;cursor:pointer}.vw-dive-hd button:hover{border-color:var(--acc,#6ea8d8)}'
+    + '.vw-dive-bd{flex:1;min-height:0;overflow:auto;padding:14px 16px;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:14px;align-content:start}'
+    + '.vw-dive-main{grid-column:1 / -1;height:min(46vh,420px);min-height:220px;background:var(--s0,var(--bg0,#101216));border-radius:10px;padding:12px;box-sizing:border-box}.vw-dive-main vera-widget{height:100%}'
+    + '.vw-dive-sec{min-width:0;background:var(--s0,var(--bg0,#101216));border-radius:10px;padding:10px 12px}.vw-dive-sec h4{margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--t2,var(--dim2,#8a92a0))}'
+    + '.vw-dive-sec pre{margin:0;max-height:340px;overflow:auto;font-family:var(--f-mono,var(--mono,monospace));font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:var(--t2,var(--dim2,#8a92a0))}.vw-dive-kids{grid-column:1 / -1;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.vw-dive-kids > div{height:220px;background:var(--s0,var(--bg0,#101216));border-radius:10px;padding:8px}';
+  // every row of an answer, as the form would read it: rows, else named values, else a dict of things, else its plain fields
+  function diveRows(rec, data) {
+    if (data == null) return [];
+    const form = canon(rec && rec.form); let d = mapped(rec || {}, form, data); d = dataFor(d, form);
+    let rw = rows(d); if (rw.length) return rw.slice(0, 500);
+    const kv = keyed(d); if (kv.length) return kv.map((x) => ({ name: x[0], value: x[1] }));
+    if (d && typeof d === 'object' && !Array.isArray(d)) { const ks = Object.keys(d);
+      if (ks.length && ks.every((k) => d[k] && typeof d[k] === 'object' && !Array.isArray(d[k]))) return ks.map((k) => Object.assign({ name: k }, d[k]));
+      return ks.filter((k) => d[k] == null || typeof d[k] !== 'object').map((k) => ({ name: k, value: d[k] })); }
+    if (Array.isArray(d)) return d.map((v, i) => ({ name: String(i), value: v }));
+    return [];
+  }
+  function dive(src) {
+    if (typeof document === 'undefined') return null;
+    const host = src && src._rec ? src : null; const rec = host ? recOf(host) : Object.assign(normalise((src && src.record) || src || {}), { open: ((src && src.record) || src || {}).open || '' });
+    const data = host ? host._data : (src && src.data); const kids = host ? host._kids : null;
+    if (!document.getElementById('vw-dive-css')) { const st = document.createElement('style'); st.id = 'vw-dive-css'; st.textContent = fontScale(DIVE_CSS + TIP_CSS); document.head.appendChild(st); }
+    const old = document.querySelector('.vw-dive-scrim'); if (old) old.remove();
+    const sc = document.createElement('div'); sc.className = 'vw-dive-scrim';
+    const place = rec.open || (typeof window.placeFor === 'function' ? window.placeFor(rec.source || '', '') : '');
+    sc.innerHTML = '<div class="vw-dive" role="dialog" aria-label="' + esc(rec.title || rec.form) + '"><div class="vw-dive-hd"><h3>' + esc(rec.title || rec.form || 'widget') + '</h3><small>' + esc(rec.form + (rec.source ? ' · ' + rec.source : '')) + '</small><span class="sp"></span>'
+      + (place ? '<button data-dv="place">Open ' + esc(place) + ' ↗</button>' : '') + '<button data-dv="refresh">↻ Read again</button><button data-dv="close">✕</button></div><div class="vw-dive-bd"><div class="vw-dive-main"></div></div></div>';
+    const bd = sc.querySelector('.vw-dive-bd');
+    // the record at its largest: its own element, XL, reading its own source
+    const big = document.createElement('vera-widget'); big.setAttribute('size', 'xl'); big.setAttribute('bare', ''); big.setAttribute('dive', '');
+    const r2 = Object.assign({}, rec, { frame: Object.assign({}, rec.frame, { size: 'xl', max_body: null }) }); if (data !== undefined && !rec.source) r2.data = data;
+    big.setAttribute('record', JSON.stringify(r2)); sc.querySelector('.vw-dive-main').appendChild(big);
+    const fill = (d) => {
+      bd.querySelectorAll('.vw-dive-sec,.vw-dive-kids').forEach((x) => x.remove());
+      if (rec.form === 'composite' && Array.isArray(rec.children)) { const g = document.createElement('div'); g.className = 'vw-dive-kids';
+        rec.children.forEach((c, i) => { const k = c && typeof c.record === 'object' ? c.record : null; if (!k) return; const slot = String(c.slot || String.fromCharCode(97 + i)); const cell = document.createElement('div'); const w = document.createElement('vera-widget'); w.setAttribute('size', 'l');
+          const kd = kids && kids[slot] && kids[slot].__read ? kids[slot].data : undefined; w.setAttribute('record', JSON.stringify(Object.assign({}, k, kd !== undefined ? { data: kd, source: '' } : {}, { title: k.title || slot }))); cell.appendChild(w); g.appendChild(cell); });
+        bd.appendChild(g); }
+      const rw = diveRows(rec, d);
+      const t = document.createElement('div'); t.className = 'vw-dive-sec'; t.innerHTML = '<h4>Every row · ' + rw.length + '</h4>' + (rw.length ? '' : '<i style="color:var(--dim)">nothing read yet</i>');
+      if (rw.length) { const tw = document.createElement('vera-widget'); tw.setAttribute('size', 'xl'); tw.setAttribute('bare', ''); tw.style.height = '360px'; tw.setAttribute('record', JSON.stringify({ form: 'table', title: 'Every row', data: rw, draw: { search: true } })); t.appendChild(tw); }
+      const j = document.createElement('div'); j.className = 'vw-dive-sec'; let raw = ''; try { raw = JSON.stringify(d, null, 2); } catch (_) { raw = String(d); }
+      j.innerHTML = '<h4>What ' + esc(rec.source || 'the record') + ' answered</h4><pre>' + esc(String(raw == null ? '—' : raw).slice(0, 60000)) + '</pre>';
+      bd.appendChild(t); bd.appendChild(j);
+    };
+    fill(data);
+    const close = () => { sc.remove(); document.removeEventListener('keydown', onKey, true); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    document.addEventListener('keydown', onKey, true);
+    sc.addEventListener('click', (e) => { if (e.target === sc) close(); const b = e.target.closest && e.target.closest('[data-dv]'); if (!b) return;
+      if (b.dataset.dv === 'close') close();
+      else if (b.dataset.dv === 'place') { if (typeof window.openPlace === 'function' && window.openPlace(place)) { close(); return; } postTop({ type: 'vera:place:open', place }); close(); }
+      else if (b.dataset.dv === 'refresh' && rec.source && readable(rec.source)) { b.disabled = true; call((host && host.base) || '', rec.source, (rec.read && rec.read.args) || {}).then((v) => { fill(v); try { big.refresh && big.refresh(); } catch (_) {} }, () => {}).then(() => { b.disabled = false; }); } });
+    document.body.appendChild(sc);
+    return sc;
+  }
+
   class VeraWidgetEl extends HTMLElement {
-    constructor() { super(); this._sh = this.attachShadow({ mode: 'open' }); this._rec = null; this._data = undefined; this._empty = false; this._drawn = ''; this._timer = null; this._ro = null; this._auto = 'm'; this._kids = {}; this._ui = {}; }
+    constructor() { super(); this._sh = this.attachShadow({ mode: 'open' }); this._rec = null; this._data = undefined; this._empty = false; this._drawn = ''; this._timer = null; this._ro = null; this._auto = 'm'; this._kids = {}; this._ui = {}; wireParts(this); }
     static get observedAttributes() { return ['record', 'size', 'base', 'template-id', 'bare']; }
     get record() { return this._rec; }
     set record(v) {
       let j = ''; try { j = JSON.stringify(v); } catch (_) { j = ''; }
       if (j && j === this._recJson && this._rec) return;   // the same record again (a layout re-applied): keep the reading, the children and the timer
-      this._recJson = j; this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._empty = false; this._drawn = ''; this._kids = {}; this._read = false; this._err = ''; if (this.isConnected) this._boot(); }
+      this._recJson = j; this._raw = (v && typeof v === 'object') ? v : null; this._rec = normalise(v); this._data = (v && v.data !== undefined) ? v.data : undefined; this._empty = false; this._drawn = ''; this._kids = {}; this._read = false; this._err = ''; if (this.isConnected) this._boot(); }
     get base() { return this.getAttribute('base') || window._veraBase || ''; }
     get size() { const s = this.getAttribute('size'); return s && s !== 'auto' && SIZES.includes(s) ? s : (s === 'auto' ? this._auto : (this._rec ? this._rec.frame.size : 'm')); }
     connectedCallback() {
@@ -2068,7 +2572,8 @@ span.vw-sampled{opacity:.85}
       this._skinned = !!skin;
       const cap = (why ? why + ' · ' : '') + (rec.read.window ? 'window ' + esc(rec.read.window) : (rec.source ? esc(rec.source) : (rec.panel ? 'panel ' + esc(rec.panel) : (sampled ? 'sample · no source' : ''))));
       const acts = size === 'xl' ? '<div class="vw-acts">' + rec.actions.filter((a) => ACTIONS[a]).map((a) => '<button data-act="' + a + '">' + ACTIONS[a] + '</button>').join('') + '</div>' : '';
-      this._sh.innerHTML = '<style>' + ELEMENT_CSS + CSS + '</style><div class="vw-root" data-form="' + esc(form) + '" data-size="' + size + '"' + (sampled ? ' data-sample="1"' : '') + (readEmpty ? ' data-empty="1"' : '') + (stale ? ' data-stale="1"' : '') + (rec.frame.motion === false ? ' data-motion="0"' : '') + (rec.frame.legend ? ' data-legend="1"' : '') + '>'
+      const was = (this._twKey === key(rec) && rec.frame.motion !== false) ? motionBefore(this._sh) : null; this._twKey = key(rec);
+      this._sh.innerHTML = '<style>' + ELEMENT_CSS + CSS + TIP_CSS_S + '</style><div class="vw-root" data-form="' + esc(form) + '" data-size="' + size + '"' + (sampled ? ' data-sample="1"' : '') + (readEmpty ? ' data-empty="1"' : '') + (stale ? ' data-stale="1"' : '') + (rec.frame.motion === false ? ' data-motion="0"' : '') + (rec.frame.legend ? ' data-legend="1"' : '') + '>'
         + (small ? body : '<div class="vw-hd"><i></i>' + esc(rec.title) + (figureTxt && (form === 'radial' || form === 'counter' || form === 'bar' || form === 'trace') ? '<b>' + figureTxt + '</b>' : '') + '</div><div class="vw-body">' + body + '</div>'
           + '<div class="vw-cap">' + cap + '<span class="sp"></span>' + (this._drawn && this._drawn !== rec.form ? 'drawn as ' + esc(this._drawn) + ' · ' : '') + esc(rec.form) + ' · ' + size + '</div>' + acts)
         + '</div>';
@@ -2079,6 +2584,9 @@ span.vw-sampled{opacity:.85}
       this._sh.querySelectorAll('[data-vb-input]').forEach((i) => i.addEventListener('input', () => { this._ui[i.dataset.vbInput] = /^-?\d+(\.\d+)?$/.test(i.value) ? Number(i.value) : i.value; this.render(); }));
       this._sh.querySelectorAll('[data-vb-link]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); this.dispatchEvent(new CustomEvent('widget:open', { bubbles: true, composed: true, detail: { record: this._rec, href: a.dataset.vbLink, key: key(this._rec) } })); }));
       hydrate(this._sh);
+      motionAfter(this._sh, was);
+      // the entry motion plays once, on the first real reading (a refresh redraws without it)
+      if (state === 'live' && !this.hasAttribute('data-entered') && !this._entering) { this._entering = true; setTimeout(() => { this.setAttribute('data-entered', ''); this._entering = false; }, 900); }
       // a bare element (a dashboard tile's body) measures too: its host sizes it, and the forms fit what they are given
       if (size !== 'xs' && size !== 's' && this._measured !== size) { const b = this._sh.querySelector('.vw-body') || (this.hasAttribute('bare') ? this : null); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0; if (hb > 0 || wb > 0) this._measured = size; if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
       this.dispatchEvent(new CustomEvent('widget:rendered', { bubbles: true, composed: true, detail: { form, size, sample: sampled, empty: readEmpty, stale } }));   // the state rides on the host: data-state
@@ -2099,6 +2607,7 @@ span.vw-sampled{opacity:.85}
   }
   if (window.customElements && !customElements.get('vera-widget')) customElements.define('vera-widget', VeraWidgetEl);
   window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, version: 5 };
+  Object.assign(window.VeraWidget, { dive, openBlock, rowTip, rowRef, fontScale, fromCapResult, fromCapStream, capForms: () => CAP_FORMS.slice(), capHints: () => Object.assign({}, CAP_HINTS) });   // the widget review, round 2: blocks, the deep dive, the text-size setting
 
   /* ── THE WIDGET SURFACE — window.VeraWidgetConfig (the WidgetConfig board; the pickers of the Canvas, Harness and
      Dashboard boards) ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -2110,7 +2619,7 @@ span.vw-sampled{opacity:.85}
      then — with the record's JSON under it). Resolves with the record widget.validate accepted, or null.
        VeraWidgetConfig.open({mode, record, into, title, anchor, sizes, shape, menuItems, templates, onChange, ok, base})
        → Promise<record | null>;  VeraWidgetConfig.close();  VeraWidgetConfig.version                                  */
-  const CFG_CSS = `
+  const CFG_CSS = fontScale(`
 .vwc-scrim{position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.42)}
 .vwc{position:fixed;z-index:9001;display:flex;flex-direction:column;width:min(1380px,calc(100vw - 24px));height:min(900px,calc(100vh - 24px));left:50%;top:50%;transform:translate(-50%,-50%);
   background:var(--s1,var(--bg1,#15171c));color:var(--t1,var(--text,#d8dce4));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px;border-radius:var(--ui-radius,10px);
@@ -2216,7 +2725,7 @@ span.vw-sampled{opacity:.85}
 .vwc-ft button:hover{color:var(--t1,var(--text,#d8dce4))}
 .vwc-ft button.pri{background:var(--pri-bg,var(--ac,var(--acc,#5a9e8f)));color:var(--pri-fg,var(--on-ac,#0b1119));font-weight:600;box-shadow:none}
 .vwc-ft .st{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
-.vwc-empty{color:var(--t3,var(--dim,#6b7280));font-size:10px;padding:10px 8px}`;
+.vwc-empty{color:var(--t3,var(--dim,#6b7280));font-size:10px;padding:10px 8px}`);
   // what each SHAPE is (the board's SHAPES table) and the fields a form of it draws (the mapping rows)
   const SHAPE_DESC = { level: 'one number in a range', series: 'numbers over time', values: 'a set of labelled numbers', events: 'things that happened, with a time', graph: 'nodes and the links between them',
     items: 'a list of things with fields', stages: 'an ordered sequence with a position', rate: 'a number per second', parts: 'shares of a whole', ohlcv: 'open, high, low, close, volume', matrix: 'rows by columns',
