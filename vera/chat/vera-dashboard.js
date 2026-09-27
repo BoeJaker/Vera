@@ -1838,4 +1838,74 @@
 
   window.VeraDash = { init: init, migrate: migrate, flow: flow, arrange: arrange, sizeForSpan: sizeForSpan, spanFor: spanFor, panelRecord: panelRecord, GRID: GRID,
     sizeLadder: sizeLadder, ladderSizes: ladderSizes, sample: sampleFor, withSample: withSample, slotAt: slotAt };
+
+  /* ── <vera-dashboard layout="key"> (owner, 2026-09-27: "a lot of the uis need improving and bringing up to the standard of
+     the chat ui, everything should be widgetised and highly polished, and configurable and reusable"). A page drops in a
+     dashboard of widget records with one tag: the layout file /ui/widgets/layouts/<key> is its default, the viewer's
+     arrangement persists (vera.dash.<storage>), and every mechanic of VeraDash comes with it - Configure (move, resize,
+     hide), + Widget (the widget sheet), Layouts, Arrange, the item drawer on every tile. It carries its own grid styles,
+     so a page needs no dashboard CSS of its own. Attributes: layout (the file's key), storage (defaults to panel-<layout>),
+     title, no-bar (no toolbar), no-popout. ── */
+  var ELEM_CSS = [
+    'vera-dashboard{display:flex;flex-direction:column;gap:10px;min-width:0}',
+    'vera-dashboard .vdb-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
+    'vera-dashboard .vdb-bar b{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--dim2,var(--t2,#8a92a0))}',
+    'vera-dashboard .vdb-bar .sp{flex:1}',
+    'vera-dashboard .vdb-bar button{font:inherit;font-size:11.5px;color:var(--text,#d8dce4);background:var(--bg2,#1f232b);border:1px solid var(--border,rgba(255,255,255,.1));border-radius:6px;padding:4px 10px;cursor:pointer}',
+    'vera-dashboard .vdb-bar button:hover{border-color:var(--acc,#6ea8d8)}vera-dashboard .vdb-bar button.primary{border-color:var(--acc,#6ea8d8);color:var(--acc,#6ea8d8)}',
+    'vera-dashboard .dash-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));grid-auto-rows:minmax(58px,auto);gap:10px;padding-bottom:40px}',
+    'vera-dashboard .dash-grid.editing{outline:1px dashed var(--border2,rgba(255,255,255,.18));outline-offset:5px;border-radius:8px;padding-bottom:200px}',
+    'vera-dashboard .widget{background:var(--bg2,#1a1d23);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:var(--radius-lg,10px);box-shadow:var(--shadow,0 6px 20px -12px rgba(0,0,0,.55));display:flex;flex-direction:column;min-width:0;overflow:hidden;position:relative;transition:border-color .15s}',
+    'vera-dashboard .widget:hover{border-color:var(--border2,rgba(255,255,255,.16))}vera-dashboard .widget.hidden{display:none}',
+    'vera-dashboard .widget.drag-over{border-color:var(--acc,#6ea8d8);box-shadow:0 0 0 1px var(--acc,#6ea8d8)}',
+    'vera-dashboard .w-head{display:flex;align-items:center;gap:6px;padding:7px 11px 6px;border-bottom:1px solid var(--border,rgba(255,255,255,.07));flex-shrink:0}',
+    'vera-dashboard .w-title{font-size:10.5px;color:var(--dim2,var(--t2,#8a92a0));text-transform:uppercase;letter-spacing:.09em;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    'vera-dashboard .w-actions{display:flex;gap:2px;align-items:center;opacity:0;transition:opacity .15s}vera-dashboard .widget:hover .w-actions,vera-dashboard .dash-grid.editing .w-actions{opacity:1}',
+    'vera-dashboard .w-iconbtn{width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:var(--dim2,#8a92a0);cursor:pointer;border-radius:4px;font-size:12px;line-height:1}vera-dashboard .w-iconbtn:hover{background:var(--bg3,#262b33);color:var(--text,#d8dce4)}',
+    'vera-dashboard .w-grip{cursor:grab;user-select:none;color:var(--dim,#6b7280);font-size:11px;display:none}vera-dashboard .dash-grid.editing .w-grip{display:inline-block}vera-dashboard .dash-grid.editing .widget{cursor:move}',
+    'vera-dashboard .w-body{padding:10px 12px;display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto}vera-dashboard .w-body.flush{padding:0}',
+    'vera-dashboard .w-resize{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;display:none}vera-dashboard .dash-grid.editing .w-resize{display:flex}',
+    'vera-dashboard .w-resize::before{content:"";width:8px;height:8px;border-right:2px solid var(--border2,rgba(255,255,255,.2));border-bottom:2px solid var(--border2,rgba(255,255,255,.2));display:inline-block}',
+    'vera-dashboard .w-w2{grid-column:span 2}vera-dashboard .w-w3{grid-column:span 3}vera-dashboard .w-w4{grid-column:span 4}vera-dashboard .w-w6{grid-column:span 6}vera-dashboard .w-w8{grid-column:span 8}vera-dashboard .w-w12{grid-column:span 12}',
+    'vera-dashboard .w-h1{grid-row:span 1}vera-dashboard .w-h2{grid-row:span 2}vera-dashboard .w-h3{grid-row:span 3}vera-dashboard .w-h4{grid-row:span 4}vera-dashboard .w-h5{grid-row:span 5}vera-dashboard .w-h6{grid-row:span 6}',
+    '@media(max-width:1100px){vera-dashboard .dash-grid{grid-template-columns:repeat(6,minmax(0,1fr))}vera-dashboard .w-w8,vera-dashboard .w-w12{grid-column:span 6}}',
+    '@media(max-width:680px){vera-dashboard .dash-grid{grid-template-columns:repeat(2,minmax(0,1fr))}vera-dashboard .widget{grid-column:span 2!important}}',
+    /* blocks off (the one design's mode): the tiles lose their ground, a hairline keeps their shape */
+    'html[data-blocks="off"] vera-dashboard .widget{background:transparent;box-shadow:none;border-color:color-mix(in srgb,var(--border,rgba(255,255,255,.1)) 70%,transparent)}'
+  ].join('\n');
+  var _vdbN = 0;
+  function ensureElemCss(doc) { if (doc.getElementById('vera-dashboard-el-css')) return; var s = doc.createElement('style'); s.id = 'vera-dashboard-el-css'; s.textContent = ELEM_CSS; (doc.head || doc.documentElement).appendChild(s); }
+  function ensureWidgetEl(doc, cb) {
+    if (window.customElements && customElements.get('vera-widget')) return cb();
+    var s = doc.querySelector('script[src$="/ui/widgets/widget_element.js"]');
+    if (!s) { s = doc.createElement('script'); s.src = '/ui/widgets/widget_element.js'; (doc.head || doc.documentElement).appendChild(s); }
+    var n = 0; (function wait() { if ((window.customElements && customElements.get('vera-widget')) || ++n > 60) return cb(); setTimeout(wait, 100); })();
+  }
+  if (window.customElements && !customElements.get('vera-dashboard')) {
+    customElements.define('vera-dashboard', class extends HTMLElement {
+      connectedCallback() {
+        if (this._booted) return; this._booted = true;
+        var self = this, doc = this.ownerDocument, layout = this.getAttribute('layout') || 'panel';
+        ensureElemCss(doc);
+        var n = ++_vdbN, editId = 'vdb-edit-' + n;
+        var bar = doc.createElement('div'); bar.className = 'vdb-bar';
+        var title = this.getAttribute('title');
+        bar.innerHTML = (title ? '<b></b>' : '') + '<span class="sp"></span><button type="button" data-a="add" title="Add a widget to this dashboard">\uff0b Widget</button><button type="button" id="' + editId + '" data-a="edit" title="Move, resize and hide the tiles">\u2699 Configure</button>';
+        if (title) bar.querySelector('b').textContent = title;
+        if (this.hasAttribute('no-bar')) bar.hidden = true;
+        var grid = doc.createElement('div'); grid.className = 'dash-grid'; grid.id = 'vdb-grid-' + n;
+        this.appendChild(bar); this.appendChild(grid);
+        ensureWidgetEl(doc, function () {
+          var ctl = init(grid, { key: self.getAttribute('storage') || ('panel-' + layout), layout: '/ui/widgets/layouts/' + encodeURIComponent(layout), loader: true, popout: !self.hasAttribute('no-popout'), editBtn: editId });
+          self._ctl = ctl;
+          bar.addEventListener('click', function (e) { var b = e.target.closest && e.target.closest('[data-a]'); if (!b) return;
+            var a = b.getAttribute('data-a'); if (a === 'edit') ctl.toggleEdit(); else if (a === 'add') ctl.openLoader(); });
+          try { self.dispatchEvent(new CustomEvent('vera:dashboard:ready', { bubbles: true, detail: { layout: layout, ctl: ctl } })); } catch (e) {}
+        });
+      }
+      get controller() { return this._ctl || null; }
+      /* every tile reads its source again (a page's own Refresh) */
+      reload() { Array.prototype.forEach.call(this.querySelectorAll('vera-widget'), function (w) { try { if (typeof w.read === 'function') w.read(true); } catch (e) {} }); }
+    });
+  }
 })();
