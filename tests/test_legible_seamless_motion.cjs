@@ -32,7 +32,7 @@ t('the rows are named for what they do', /row\('Detail', \[\['full'/.test(HAR) &
 t('the chat menu\'s small text is legible', /#rightRail\.lhm-host \.lhm-quick \.lrow \.nm small\{font-size:10px;color:var\(--t2/.test(CHAT) && /'\.lhm-side \.lhm-s-grp\{font-family:var\(--mono\);font-size:9\.5px;/.test(LHM));
 
 // ── seamless load ───────────────────────────────────────────────────────────────────────────────────────────────
-t('the page is hidden until assembled, with a failsafe', /de\.classList\.add\('vboot'\); setTimeout\(function\(\)\{ de\.classList\.remove\('vboot'\); \}, 9000\);/.test(CHAT) && /html\.vboot body\{opacity:0\}/.test(CHAT));
+t('the page is hidden until assembled, with a failsafe', /de\.classList\.add\('vboot'\); document\.addEventListener\('DOMContentLoaded', function\(\)\{ setTimeout\(function\(\)\{ de\.classList\.remove\('vboot'\); \}, 5000\); \}\);/.test(CHAT) && /html\.vboot body\{opacity:0\}/.test(CHAT));
 t('and shown once the layout is assembled', /_initRailUX\(\);\n[\s\S]{0,300}document\.documentElement\.classList\.remove\('vboot'\)/.test(CHAT));
 t('the harness\'s chat starts absorbed, so its bar never flashes', /if\(q\.get\('harness'\)==='yes'&&o==='chat'\) de\.classList\.add\('hdr-absorbed'\);/.test(CHAT));
 t('and a harness that never answers gives it back', /setTimeout\(\(\)=>\{ if\(!_hdrAck\) document\.documentElement\.classList\.remove\('hdr-absorbed'\); \}, 6000\);/.test(CHAT) && /_hdrAck=true;/.test(CHAT));

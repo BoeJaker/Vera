@@ -708,6 +708,18 @@ body.dash-open .body-wrap{position:relative;z-index:1;background:transparent}
 body.dash-open .main,body.dash-open .panels,body.dash-open .panels .panel.active{background:transparent!important}
 body.dash-open #lhmNav.lhm-nav{background:color-mix(in srgb,var(--s1,var(--bg1,#151719)) 52%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15);border-right-color:transparent}
 body.dash-open #dashHealthStrip{background:color-mix(in srgb,var(--bg0,#0e0f12) 55%,transparent)!important;border-color:transparent!important}
+/* THE ☰ IS REACHABLE (owner, 2026-09-27: "the lhm top left burger option in the harness lhm it is very hard to click"):
+   auto-hide's edge strip lay over the menu's left 28px - the ☰ under it - at a higher layer than the menu. In LHM mode the
+   menu keeps its rail and reveals itself on hover, so the strip is not used there at all. */
+.body-wrap.lhm .tab-hover-zone,.body-wrap.lhm .tab-hover-zone.active{display:none!important}
+/* FOLDED IS ICONS ONLY (owner: "the icons at the bottom need to hide when the menu is collapsed and some text on the top bar
+   is partially visible when the lhm is collapsed"): folded by « or held as auto-hide's rail, the menu is its icons - the
+   foot's controls, its header's words and a docked panel's list go until it opens */
+#lhmNav.folded .lhm-nav-foot,#lhmNav.folded #lhmEventsFeed{display:none!important}
+#lhmNav.folded .lhm-topbar .lhm-tt{display:none}
+#lhmNav.folded .lhm-topbar{justify-content:center;padding-left:0;padding-right:0}
+#lhmNav.folded .lhm-absorbed .lhm-tabs{display:none}
+.lhm-nav .lhm-topbar .lhm-tb{width:28px;height:28px}
 #hdrDrawerBtn[hidden]{display:none}
 #hdrDrawerBtn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
 #hdrDrawer{position:absolute;right:14px;top:calc(100% + 6px);z-index:900;display:none;flex-direction:column;align-items:flex-start;gap:12px;padding:12px 14px;border-radius:var(--ui-radius,10px);background:var(--s1,var(--bg1,#151719));box-shadow:var(--elev,0 10px 30px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));max-width:min(620px,calc(100vw - 28px))}
@@ -2616,6 +2628,7 @@ function _lhmMenuFrame(nav, src){
   hostEl.classList.add('on'); return hostEl;
 }
 function _lhmRenderAbsorbed(host, pid, nav){
+  if(_lhmAbsorbTop) return false;   // the every-tab list draws its ONE header, whose ☰ comes back here
   const bar = document.createElement('div'); bar.className = 'lhm-topbar';
   const tb = document.createElement('div'); tb.className = 'lhm-tb' + (_lhmAbsorbTop ? ' on' : ''); tb.textContent = '☰';
   tb.title = _lhmAbsorbTop ? "Back to the open panel's menu" : "This page's own menu — every tab";
@@ -2623,7 +2636,6 @@ function _lhmRenderAbsorbed(host, pid, nav){
   const tt = document.createElement('div'); tt.className = 'lhm-tt';
   tt.textContent = _lhmAbsorbTop ? 'Vera · every tab' : ((nav.lhm.title || 'panel') + ' · menu');
   bar.appendChild(tb); bar.appendChild(tt); host.appendChild(bar);
-  if(_lhmAbsorbTop) return false;           // the caller draws the ordinary tab list under the bar
   // the chat: its menu IS this menu — the chat board embedded menu-only; nothing here is a copy
   const chatFrame = _chatFrameFor(pid);
   if(chatFrame){ const navEl = document.getElementById('lhmNav'); if(navEl) navEl.classList.add('chatmenu'); tt.textContent = 'Chat · menu'; _lhmMenuFrame(navEl, chatFrame.getAttribute('src') || chatFrame.getAttribute('data-lazy-src') || '/chat_panel'); return true; }
@@ -2939,6 +2951,12 @@ function _lhmTabRows(){
     const isOpen = _openTabs.has(pid), active = isOpen && ([..._openTabs][0] === pid || _openTabs.size === 1);
     return { pid, label, icon: (reg && reg.icon) || '', open: isOpen, active }; }).filter(Boolean);
 }
+// swapped in by ☰ over an open panel's menu: this list's header ☰ is the way back to that menu (the one header)
+function _lhmTopBack(){
+  if(!_lhmAbsorbTop) return null; const a = _lhmAbsorbedFor(); if(!a) return null;
+  const name = _chatFrameFor(a.pid) ? 'the chat' : ((a.nav && a.nav.lhm && a.nav.lhm.title) || 'the open panel');
+  return { on: true, title: 'Vera', sub: 'every tab', toggle: () => { _lhmAbsorbTop = false; _lhmNavSync(); }, toggleTitle: 'Back to ' + name + '\'s menu' };
+}
 function _lhmNativeRender(host){
   const rows = _lhmTabRows();
   const open = rows.filter(r => r.open).map(r => ({ id: r.pid, label: r.label, icon: r.icon || '▭', origin: _tabOrigin[r.pid] || 'you', placement: _openTabs.size > 1 ? 'split' : 'tab', active: r.active,
@@ -2957,7 +2975,7 @@ function _lhmNativeRender(host){
   VeraLHM.side(box, {
     // '⌘K' used to ride along here; the search button on the same row says it
     // now (and so does the registered row), so the count keeps the space.
-    top: { title: 'Vera', sub: ((_uiPanelCache || []).length || rows.length) + ' panels', toggle: () => tabToggleLhm(), toggleTitle: 'Switch to horizontal tabs (the same menu, as tabs and strips)' },
+    top: _lhmTopBack() || { title: 'Vera', sub: ((_uiPanelCache || []).length || rows.length) + ' panels', toggle: () => tabToggleLhm(), toggleTitle: 'Switch to horizontal tabs (the same menu, as tabs and strips)' },
     search: { label: 'Find a panel', hint: '⌘K', open: () => openTabPicker() }, edit: true, id: 'harness-main',
     rail: { on: _lhmRailed, toggle: () => { _lhmRailed = !_lhmRailed; try{ localStorage.setItem('vera:lhm:rail', _lhmRailed ? '1' : '0'); }catch(_){} _lhmRailApply(); } },
     open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() },
@@ -3164,7 +3182,8 @@ function _tabScheduleHide(){
 
 // the side list draws as the rail whenever the menu is folded - by « or by auto-hide while it is not pointed at
 function _lhmRailSync(){ const nav = document.getElementById('lhmNav'); if(!nav) return; const hidden = nav.classList.contains('autohide') && !nav.classList.contains('show');
-  const side = nav.querySelector('.lhm-side'); if(side) side.classList.toggle('railed', !!_lhmRailed || hidden); }
+  const side = nav.querySelector('.lhm-side'); if(side) side.classList.toggle('railed', !!_lhmRailed || hidden);
+  nav.classList.toggle('folded', hidden || nav.classList.contains('railed')); }
 { const nav = document.getElementById('lhmNav'), tabs = document.getElementById('lhmNavTabs');
   if(window.MutationObserver){ if(nav) new MutationObserver(_lhmRailSync).observe(nav, { attributes:true, attributeFilter:['class'] }); if(tabs) new MutationObserver(_lhmRailSync).observe(tabs, { childList:true }); } }
 // the fold, applied to the menu that is there: nothing is redrawn, so the width eases and the labels fade
