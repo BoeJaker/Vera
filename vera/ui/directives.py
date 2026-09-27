@@ -39,7 +39,7 @@ from Vera.vera.capability_orchestration import (   # noqa: F401
 # by: 'panel' = the panel id, or a fixed class), undo (how the dispatcher
 # reverses it), event, what it does
 VOCAB: Dict[str, Dict[str, Any]] = {
-    "panel.open":          {"args": "{id, at}",                  "surface": "panels",   "policy": "panel",    "undo": "close",     "event": "panel.opened",           "doc": "open a panel: beside chat . floating . harness tab . on the canvas . in a reply - one set wherever it lands"},
+    "panel.open":          {"args": "{id, at, section}",         "surface": "panels",   "policy": "panel",    "undo": "close",     "event": "panel.opened",           "doc": "open a panel: beside chat . floating . harness tab . on the canvas . in a reply - one set wherever it lands; at=harness opens it side by side in the harness (a second instance when it is open already); section = one of its menu items to open it at"},
     "panel.dispatch":      {"args": "{id, action, args}",        "surface": "panels",   "policy": "panel",    "undo": "-",         "event": "panel:state",            "doc": "drive a panel through the bridge (handler:arg keys), whoever opened it"},
     "panel.query":         {"args": "{id, what}",                "surface": "panels",   "policy": "always",   "undo": "-",         "event": "-",                      "doc": "read a panel's state, nav or actions (the panel bridge)"},
     "panel.close":         {"args": "{id}",                      "surface": "panels",   "policy": "panel",    "undo": "reopen",    "event": "panel.closed",           "doc": "close it everywhere it shows"},

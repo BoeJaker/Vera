@@ -6461,6 +6461,10 @@ IMPORTANT:
     const who=by==='model'?'aide':by;
     const done=(note,extra)=>Object.assign({ok:true,outcome:'applied',note:note||''},extra||{});
     const later=(what)=>({ok:false,outcome:'unsupported',note:what+' — lands with a later slice'});
+    /* panel.open at 'harness' / 'tab' / 'beside': the harness opens it beside what is open there - a second instance when
+       it is open already - at the section asked for (owner, 2026-09-27: "... or opened by the chat panel bridge") */
+    if(name==='panel.open'){ const at=String(a.at||'').toLowerCase(), sec=String(a.section||a.nav||'');
+      if(/^(harness|tab|beside|split|side)/.test(at)&&window.parent&&window.parent!==window){ try{ window.parent.postMessage({ type:'vera:lhm:tab', id:String(a.id||''), section:sec, by:who }, '*'); }catch(_){} return done('opened beside, in the harness'+(sec?' at '+sec:'')); } }
     switch(name){
       case 'ui.ask': _uiAskChip(a.row||{}); return done('the ask chip is on the message');
       /* A PANEL OPENED IS A PANEL ON THE CANVAS TOO. "Open the calendar" opened a page beside the chat and the
@@ -6469,6 +6473,7 @@ IMPORTANT:
          well, keyed by the panel, which the resolver turns into a show rather than a second copy when it is
          already there. The page beside the chat still opens: this adds the canvas, it does not replace anything. */
       case 'panel.open': { const ok=await panelOpen(String(a.id||''), who);
+        { const sec=String(a.section||a.nav||''); if(ok&&sec){ (async()=>{ try{ if(typeof _awaitPanelReady==='function') await _awaitPanelReady(); }catch(_){} const fr=document.getElementById('chatPanelFrame'); try{ fr&&fr.contentWindow&&fr.contentWindow.postMessage({ type:'vera:panel:action', action:'nav_select', action_id:'sec-'+Date.now(), payload:{ id:sec } }, '*'); }catch(_){} })(); } }
         if(ok) try{ _cvLandPanel(String(a.id||''), a.title||a.label||'', _cvRelMid||''); }catch(_){}
         return ok?done('opened beside the chat'):{ok:false,outcome:'failed',note:'no panel '+a.id}; }
       case 'panel.close': {
