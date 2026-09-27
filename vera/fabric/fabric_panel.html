@@ -290,8 +290,10 @@ code{font-family:var(--mono);font-size:.9em}
     </div>
     <!-- RIGHT: record browser (or empty state) — fills remaining width, scrolls -->
     <div style="flex:1;min-width:0;display:flex;flex-direction:column;overflow-y:auto;padding:14px">
-      <div id="fabDsEmpty" style="display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;color:var(--dim);gap:10px">
-        <div style="font-size:34px;opacity:.18">◫</div><div style="font-size:12px">Select a dataset to browse</div>
+      <!-- no dataset chosen: the fabric at a glance (layouts/fabric-glance.json) - an empty pane is a glance, not a blank -->
+      <div id="fabDsEmpty" style="display:flex;flex-direction:column;flex:1;color:var(--dim);gap:8px">
+        <div style="font-size:11.5px;color:var(--dim2)">Choose a dataset on the left to browse its records - or read the fabric at a glance.</div>
+        <vera-dashboard layout="fabric-glance" title="The fabric at a glance" no-popout></vera-dashboard>
       </div>
     <div id="fabBrowser" style="display:none">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
@@ -6220,6 +6222,7 @@ window.addEventListener('vg:action', function(ev){
     .catch(()=>{});
 })();
 </script>
+<script src="/ui/vera-dashboard.js" data-fab-dash="1"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script>
 /* ── Chat ↔ panel bridge: curated Data Fabric actions ─────────────────────────
