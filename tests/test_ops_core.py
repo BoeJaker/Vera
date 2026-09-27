@@ -149,6 +149,17 @@ def test_findings_pin_to_nodes_and_failed_readers_are_named():
     assert {"a": "docker:local", "b": "host:vera", "kind": "runs"} in s2["links"]
 
 
+def test_only_the_newest_pipelines_stand_on_the_work_plane():
+    src = _src()
+    src["evolve.pipeline.list"] = {"pipelines": [{"id": f"p{i:02d}", "status": "tested" if i % 2 else "drafting", "branch": f"feat/x{i}", "created_at": f"2026-09-{10 + i:02d}T10:00:00Z"} for i in range(1, 16)]}
+    s = oc.build(src, own_ips=["192.168.0.138"], now=NOW)
+    pipes = [n for n in s["nodes"] if n["id"].startswith("pipe:")]
+    assert len(pipes) == oc.PIPELINES_SHOWN == 6
+    assert {n["id"] for n in pipes} == {"pipe:p15", "pipe:p14", "pipe:p13", "pipe:p12", "pipe:p11", "pipe:p10"}   # the newest
+    lab = next(n for n in s["nodes"] if n["id"] == "core:looplab")
+    assert lab["pipelines_more"] == 9 and "9 more pipelines in flight" in lab["detail"]
+
+
 def test_empty_sources_build_an_empty_but_well_formed_snapshot():
     s = oc.build({}, now=NOW)
     assert all(n["plane"] == "core" for n in s["nodes"])           # the router and the bus are always there
