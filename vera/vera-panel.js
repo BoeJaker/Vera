@@ -176,7 +176,17 @@
       txt = txt.trim();
       return txt || (b.textContent || '').trim() || idOf(b);
     }
-    var items = Array.prototype.map.call(btns, function (b) { return { id: idOf(b), label: labelOf(b) }; });
+    // the group an item sits under (the nearest .nav-grp heading before it) and its glyph: the harness draws the
+    // panel's menu in its LHM from these - a rail icon per group, or per item when the menu has no groups
+    function groupOf(b) {
+      for (var el = b.previousElementSibling; el; el = el.previousElementSibling) {
+        if (el.classList && el.classList.contains('nav-grp')) return (el.textContent || '').trim().slice(0, 40);
+      }
+      var g = b.closest && b.closest('[data-nav-group]');
+      return g ? String(g.getAttribute('data-nav-group') || '').slice(0, 40) : '';
+    }
+    function iconOf(b) { var g = b.querySelector('.gl'); return g ? Array.from((g.textContent || '').trim()).slice(0, 2).join('') : ''; }
+    var items = Array.prototype.map.call(btns, function (b) { return { id: idOf(b), label: labelOf(b), group: groupOf(b), icon: iconOf(b) }; });
     // ".active" is the canonical mark; ".on" is still accepted for a panel
     // that has not moved to this markup yet — scoped to just these nav
     // buttons, so it's never ambiguous with an unrelated "on" state
