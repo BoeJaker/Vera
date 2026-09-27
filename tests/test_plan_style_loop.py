@@ -31,7 +31,7 @@ SRC = (ROOT / "vera" / "dag" / "dag_workshop_capabilities.py").read_text(encodin
 # ── the table ────────────────────────────────────────────────────────────────
 
 def test_the_four_styles_exist_and_auto_is_the_default():
-    assert PS.loop_style_ids() == ["auto", "flat", "stepwise", "detailed", "broad"]
+    assert PS.loop_style_ids() == ["auto", "flat", "stepwise", "detailed", "broad", "broad-stepwise"]
     assert PS.resolve_loop_style("")[0] == "auto"
     assert PS.resolve_loop_style(None)[0] == "auto"
     assert PS.resolve_loop_style("auto")[2] == "default"
@@ -144,8 +144,14 @@ def test_the_run_emits_and_returns_the_style_it_used():
 
 
 def test_the_controller_is_told_about_stepwise_only_in_stepwise():
+    # The note is chosen by planner_styles.controller_note (stepwise note for
+    # stepwise, the stream map for broad-stepwise, "" otherwise - pinned in
+    # test_plan_style_broad), and handed to the controller.
     b = _body("cap_dag_agent_loop_v6")
-    assert "STEPWISE_CONTROLLER_NOTE" in b and 'stepwise_controller' in b
+    assert "_plan_styles.controller_note(" in b and "style_note=_ctrl_style_note" in b
+    assert PS.controller_note(PS.LOOP_STYLES["stepwise"]) == PS.STEPWISE_CONTROLLER_NOTE
+    assert all(PS.controller_note(PS.LOOP_STYLES[s]) == ""
+               for s in PS.LOOP_STYLES if not PS.LOOP_STYLES[s].get("stepwise_controller"))
 
 
 def test_an_explicit_style_skips_the_single_cap_fast_path():

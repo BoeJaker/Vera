@@ -188,7 +188,7 @@ needs_app = pytest.mark.skipif(M is None, reason="app module not importable here
 
 
 def _run_broad(monkeypatch, brief_json, enrich_delay=0.0, enrich_fail=False,
-               drain=False, enrich_model=""):
+               drain=False, enrich_model="", stream_steps=0):
     seen = {"plans": [], "enrich": [], "quick": [], "in_flight": 0, "max_in_flight": 0,
             "events": [], "enrich_started_before_plans_done": False}
     plans_done = {"n": 0}
@@ -220,7 +220,8 @@ def _run_broad(monkeypatch, brief_json, enrich_delay=0.0, enrich_fail=False,
         seen["in_flight"] += 1
         seen["max_in_flight"] = max(seen["max_in_flight"], seen["in_flight"])
         seen["plans"].append({"role": kw.get("route_role"), "profile": kw.get("route_profile"),
-                              "prefer_gpu": kw.get("prefer_gpu"), "directive": kw.get("master_plan", "")})
+                              "prefer_gpu": kw.get("prefer_gpu"), "directive": kw.get("master_plan", ""),
+                              "max_steps": kw.get("max_steps")})
         if seen["in_flight"] >= 2:
             both_started.set()
         await asyncio.wait_for(both_started.wait(), timeout=5)
@@ -241,7 +242,7 @@ def _run_broad(monkeypatch, brief_json, enrich_delay=0.0, enrich_fail=False,
     async def _go():
         plan = await M._v6_plan_broad(
             "research small LLMs and write a report", CAT, [], {}, max_steps=8, sid="t", stream_id="",
-            enrich_model=enrich_model)
+            enrich_model=enrich_model, stream_steps=stream_steps)
         tasks = plan.pop("_enrich_tasks", {})
         if drain and tasks.get("__runner__") is not None:
             # the loop keeps running while late briefs arrive; let them finish
@@ -258,6 +259,75 @@ def _run_broad(monkeypatch, brief_json, enrich_delay=0.0, enrich_fail=False,
 BRIEF = ('{"streams":[{"id":1,"title":"Gather","objective":"find facts","caps":["web.research"],'
          '"deliverable":"notes.md"},{"id":2,"title":"Write","objective":"write report",'
          '"dependencies":[1],"caps":["prose.author"],"deliverable":"report.md"}]}')
+
+
+# ── broad-stepwise: broad's streams, each grown one step at a time ───────────
+
+def test_broad_stepwise_is_broad_planning_with_the_stepwise_controller():
+    b = PS.LOOP_STYLES["broad-stepwise"]
+    assert b["broad"] and b["stepwise_controller"] and b["stream_steps"] == 1
+    assert not b["run_planner"] and not b["master_plan"] and not b["recon"]
+    assert not b["shape_guards"]           # they would "repair" the one-step openings
+    assert PS.resolve_loop_style("broad-stepwise")[0] == "broad-stepwise"
+
+
+def test_a_stream_can_be_asked_for_its_opening_step_only():
+    streams = PS.parse_streams({"streams": [{"id": 1, "title": "Gather", "objective": "facts"},
+                                            {"id": 2, "title": "Write", "objective": "report",
+                                             "dependencies": [1]}]})
+    one = PS.stream_directive("g", streams, streams[0], first_step_only=True)
+    full = PS.stream_directive("g", streams, streams[0])
+    assert "FIRST concrete step" in one and "do NOT plan them now" in one
+    assert "ordered steps that end in its deliverable" in full and "FIRST" not in full
+
+
+def test_controller_note_per_style():
+    streams = [{"id": 1, "title": "Gather", "deliverable": "notes.md"},
+               {"id": 2, "title": "Write", "deliverable": "report.md"}]
+    steps = [{"id": 1, "title": "Search the licence news", "piece": 1},
+             {"id": 2, "title": "Draft the report", "piece": 2}]
+    assert PS.controller_note(PS.LOOP_STYLES["auto"], streams, steps) == ""
+    assert PS.controller_note(PS.LOOP_STYLES["broad"], streams, steps) == ""
+    assert PS.controller_note(PS.LOOP_STYLES["stepwise"]) == PS.STEPWISE_CONTROLLER_NOTE
+    note = PS.controller_note(PS.LOOP_STYLES["broad-stepwise"], streams, steps)
+    assert note.startswith("BROAD-STEPWISE MODE")
+    assert 'stream 1: Gather -> deliverable: notes.md (opens with step 1 "Search the licence news")' in note
+    assert "stream 2: Write -> deliverable: report.md (opens with step 2" in note
+    # no stream map (the split failed before the note was built): plain stepwise
+    assert PS.controller_note(PS.LOOP_STYLES["broad-stepwise"]) == PS.STEPWISE_CONTROLLER_NOTE
+
+
+@needs_app
+def test_broad_stepwise_plans_each_stream_as_its_opening_step(monkeypatch):
+    plan, seen, _ = _run_broad(monkeypatch, BRIEF, stream_steps=1)
+    assert [p["max_steps"] for p in seen["plans"]] == [1, 1]
+    assert all("FIRST concrete step" in p["directive"] for p in seen["plans"])
+    assert all(p["role"] == "stream" and p["prefer_gpu"] for p in seen["plans"])   # still GPU
+    assert len(seen["enrich"]) >= 1                                          # still CPU briefs
+    d = plan["broad"]
+    assert d["per_stream_steps"] == 1
+    assert [s["title"] for s in d["stream_map"]] == ["Gather", "Write"]
+    assert d["stream_map"][1]["deliverable"] == "report.md"
+
+
+@needs_app
+def test_plain_broad_still_plans_whole_streams(monkeypatch):
+    plan, seen, _ = _run_broad(monkeypatch, BRIEF)
+    assert all(p["max_steps"] >= 2 for p in seen["plans"])
+    assert not any("FIRST concrete step" in p["directive"] for p in seen["plans"])
+    assert plan["broad"]["per_stream_steps"] >= 2
+
+
+@needs_app
+def test_the_loop_steers_by_the_style_controller_note():
+    """The controller's instruction comes from planner_styles.controller_note,
+    and a broad run that fell back to its own planner is steered as auto."""
+    import inspect
+    src = inspect.getsource(M)
+    assert "style_note=_ctrl_style_note" in src
+    assert "_plan_styles.controller_note(" in src
+    assert "stream_steps=int(_pstyle.get(\"stream_steps\") or 0)" in src
+    assert '"shape_guards": True, "stepwise_controller": False}' in src
 
 
 @needs_app
