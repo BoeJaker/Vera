@@ -654,6 +654,9 @@ OLLAMA_JOB_TYPES: List[str] = [
     # The dream DIRECTOR (ambient thought orchestrator) runs continuously on
     # CPU nodes — it must never contend with user-facing GPU work.
     "dream_director",
+    # The broad planning style's per-work-stream briefs: long CPU generations
+    # that run BESIDE the GPU plan (compute-roles), one at a time.
+    "plan_enrich",
     # Media services served by the GPU inference server(s) (edge/GPU_inference.py):
     # routed across MEDIA_INSTANCES by resolve_media(), not pick_instance().
     "stt", "tts", "imagegen",
@@ -725,6 +728,12 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # holding that node's single generation slot starved every embed call
     # (and vice versa — director thoughts queued behind embedding bursts).
     "dream_director":   _rule("dream_director",   deny_gpu=True, prefer="cpu-247"),
+    # Planning enrichment (broad style): a long generation on the long-horizon
+    # node, cpu-247, never on the GPU and kept off cpu-246 - the embedding /
+    # worker node - so a brief never holds the node embeddings and system work
+    # need. The broad style issues these ONE AT A TIME, so the soft `prefer` is
+    # never pushed onto cpu-246 by its own second call.
+    "plan_enrich":      _rule("plan_enrich",      deny_gpu=True, prefer="cpu-247"),
     # Media services — GPU-first across the media nodes that actually have the
     # service installed (resolve_media checks each node's /health service list).
     "stt":      _rule("stt",      prefer_gpu=True),
@@ -7566,7 +7575,14 @@ def _make_mcp_call_handler():
         if not session_id and isinstance(_raw_args, dict):
             session_id = str(_raw_args.get("session_id") or "").strip()
         if session_id:
-            if "session_id" in accepted:
+            # Injected only when the capability ITSELF declares session_id. The
+            # delegate widening (_mcp_call_accepted) admits session_id for a
+            # **kwargs engine so a caller can pass one EXPLICITLY in arguments;
+            # the top-level session_id is the caller's attribution id, and
+            # injecting it into dag.agent_loop_v7 made every run from one caller
+            # share ONE loop session (found 2026-09-27, before it reached main).
+            _own = ((cap.get("schema") or {}).get("properties") or {})
+            if "session_id" in _own:
                 args.setdefault("session_id", session_id)
             try:
                 _vera_syslog = sys.modules.get("syslog")

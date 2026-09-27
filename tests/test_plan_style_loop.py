@@ -31,7 +31,7 @@ SRC = (ROOT / "vera" / "dag" / "dag_workshop_capabilities.py").read_text(encodin
 # ── the table ────────────────────────────────────────────────────────────────
 
 def test_the_four_styles_exist_and_auto_is_the_default():
-    assert PS.loop_style_ids() == ["auto", "flat", "stepwise", "detailed"]
+    assert PS.loop_style_ids() == ["auto", "flat", "stepwise", "detailed", "broad"]
     assert PS.resolve_loop_style("")[0] == "auto"
     assert PS.resolve_loop_style(None)[0] == "auto"
     assert PS.resolve_loop_style("auto")[2] == "default"
@@ -125,7 +125,8 @@ def test_the_stream_endpoint_forwards_plan_style():
 
 def test_every_planning_site_reads_its_switch():
     b = _body("cap_dag_agent_loop_v6")
-    assert 'if _pstyle.get("run_planner", True):' in b
+    assert ('if (_pstyle.get("run_planner", True) and not _pstyle.get("broad")) '
+            'or _broad_fell_back:') in b
     assert '_master_ok = enable_master_planner and bool(_pstyle.get("master_plan", True))' in b
     assert b.count("_master_ok") >= 3                      # defined + both master branches
     assert 'enable_recon and _pstyle.get("recon", True)' in b
