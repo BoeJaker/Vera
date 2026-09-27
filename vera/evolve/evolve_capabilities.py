@@ -7849,8 +7849,14 @@ async def _refresh_standing_bleeding_edge_container(edge: str = "") -> Dict[str,
     except ValueError as err:
         return {"ok": False, "error": str(err)}
     mirror = await _refresh_bleeding_edge_mirror(edge=e["name"])
-    if mirror.get("error"):
-        return {"ok": False, "error": mirror["error"]}
+    # A refusal comes back as {ok: False, reason} (a mirror that is not a
+    # fast-forward of its edge, uncommitted changes) - not only as {error}.
+    # Checking `error` alone restarted the container on the OLD tree and
+    # reported "mirror refreshed", so every promote after the design mirror
+    # diverged (2026-09-24) looked landed on the mirror and was not.
+    if mirror.get("error") or mirror.get("ok") is False:
+        return {"ok": False, "error": mirror.get("error") or mirror.get("reason")
+                or "mirror not refreshed", "mirror": mirror}
     pool = await _sandbox_pool()
     entry = pool.get(e["slug"])
     if not entry or not entry.get("name"):

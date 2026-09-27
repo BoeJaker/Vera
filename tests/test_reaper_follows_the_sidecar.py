@@ -70,3 +70,12 @@ def test_the_sidecar_helper_only_moves_between_the_two_states():
     helper = _fn(_src(), "_sidecar_set_paused")
     assert 'if paused and cur == "running":' in helper and 'if not paused and cur == "paused":' in helper
     assert "sc = _sbx_redis.sidecar_name(name)" in helper
+
+
+def test_a_mirror_that_would_not_move_is_not_reported_refreshed():
+    # _refresh_loop_lab_mirror refuses with {ok: False, reason} (not a fast-forward,
+    # uncommitted changes); the standing refresh must stop there, not restart the
+    # container on the old tree and say "mirror refreshed".
+    refresh = _fn(_src(), "_refresh_standing_bleeding_edge_container")
+    assert 'mirror.get("ok") is False' in refresh
+    assert refresh.index('mirror.get("ok") is False') < refresh.index('"docker", "restart", name')
