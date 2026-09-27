@@ -383,8 +383,11 @@ async function load(refresh){
     if (!c || !Array.isArray(c.nodes)) throw new Error((c && c.error) || 'no snapshot');
     // the same estate as last time draws nothing again (a redraw costs the view its scroll, a card its state, an input its focus)
     const fp = c.nodes.map((n) => [n.id, n.status, Math.round(n.load || 0), n.inflight, n.errors, Math.round(n.temp || 0), n.detail].join('|')).join(';') + '#' + c.links.length + '#' + (c.inflight || []).length + '#' + (c.errors || []).length;
-    if (S.snap && fp === S.fp){ S.busy = false; return; }
+    if (S.snap && fp === S.fp){ S.busy = false; if (c.refreshing && !S.soon){ S.soon = setTimeout(() => { S.soon = 0; load(false); }, 2500); } return; }
     S.fp = fp; S.snap = c; S.err = '';
+    try { sessionStorage.setItem('vera:ops:last', JSON.stringify(c)); } catch (_) {}
+    // an answer served while a fresh one is being gathered: ask again shortly rather than at the next poll
+    if (c.refreshing && !S.soon){ S.soon = setTimeout(() => { S.soon = 0; load(false); }, 2500); }
     if (S.sel && !byId()[S.sel]){ const q = String(S.sel).toLowerCase(); const hit = c.nodes.find((n) => n.label.toLowerCase() === q || n.ref === S.sel); S.sel = hit ? hit.id : null; }
     if (!S.sel) S.sel = (c.nodes.find((n) => n.status === 'run') || c.nodes.find((n) => n.kind === 'ollama') || c.nodes[0] || {}).id || null;
   } catch (e) { S.err = String(e && e.message || e); }
@@ -626,7 +629,9 @@ function render(opts){
   $('inflight').innerHTML = fl.length ? fl.slice(0, 14).map((f) => '<span class="ifr" title="' + esc(f.kind + ' · ' + f.a + ' → ' + f.b) + '"><i style="background:' + KCOL[f.kind] + '"></i><span class="k">' + esc(f.kind) + '</span><span class="p">' + esc((ID[f.a] || {}).label || f.a) + ' → ' + esc((ID[f.b] || {}).label || f.b) + '</span><span class="e">' + (f.age != null ? f.age.toFixed(0) + 's' : esc(f.label || '')) + '</span></span>').join('') : '<span class="note">nothing in flight right now</span>';
   const srcs = Object.keys(snap.sources || {}); const bad = srcs.filter((k) => snap.sources[k] !== 'ok');
   $('srcN').textContent = (srcs.length - bad.length) + ' of ' + srcs.length;
-  $('sources').innerHTML = srcs.map((k) => '<span class="srcrow ' + (snap.sources[k] === 'ok' ? '' : 'bad') + '" title="' + esc(snap.sources[k]) + '"><i></i><span class="n">' + esc(k) + '</span></span>').join('');
+  const tm = snap.timing || {}; const ord = srcs.slice().sort((a, b) => (tm[b] || 0) - (tm[a] || 0));
+  $('sources').innerHTML = ord.map((k) => '<span class="srcrow ' + (snap.sources[k] === 'ok' ? '' : 'bad') + '" title="' + esc(snap.sources[k] + (tm[k] != null ? ' · ' + tm[k] + ' ms' : '')) + '"><i></i><span class="n">' + esc(k) + '</span>' + (tm[k] != null ? '<span class="n" style="flex:none;color:' + (tm[k] > 3000 ? 'var(--ac3)' : 'var(--t3)') + '">' + (tm[k] >= 1000 ? (tm[k] / 1000).toFixed(1) + ' s' : tm[k] + ' ms') + '</span>' : '') + '</span>').join('')
+    + (snap.age_s != null ? '<span class="srcrow"><span class="n">read ' + (snap.age_s < 1 ? 'just now' : Math.round(snap.age_s) + ' s ago') + (snap.refreshing ? ' · reading again' : '') + '</span></span>' : '');
   if (!opts.plotOnly) renderRail();
   // the room the lattice asks for: a row slot per node up to nine a band (a 2D band 30 px × spread a row); the stage scrolls
   const cm = {}; snap.nodes.forEach((n) => { if (!S.on[n.plane]) return; const k = n.plane + ':' + n.domain; cm[k] = (cm[k] || 0) + 1; }); const per = {}; Object.keys(cm).forEach((k) => { const pl = k.split(':')[0]; per[pl] = Math.max(per[pl] || 0, cm[k]); });
@@ -945,6 +950,8 @@ window.addEventListener('message', (e) => { const d = e && e.data; if (!d || typ
   if (d.type === 'vera:theme' && d.vars){ const root = document.documentElement; Object.keys(d.vars).forEach((k) => root.style.setProperty(k, d.vars[k])); }
   if (d.type === 'vera:style' && d.style){ document.documentElement.setAttribute('data-style', d.style); } });
 try { const q = new URLSearchParams(location.search).get('node'); if (q) S.sel = q; } catch (_) {}
+// the estate as this tab last saw it draws at once; the live one replaces it when it lands
+try { const last = JSON.parse(sessionStorage.getItem('vera:ops:last') || 'null'); if (last && Array.isArray(last.nodes)){ S.snap = last; S.err = ''; S.sel = S.sel || ((last.nodes.find((n) => n.status === 'run') || last.nodes[0] || {}).id || null); render(); S.fresh = false; } } catch (_) {}
 load(false);
 setInterval(() => { if (!document.hidden && !S.drag && !(document.activeElement && document.activeElement.matches && document.activeElement.matches('input,textarea'))) load(false); }, 10000);
 window.VeraOps = { state: S, load, render, layout, setWidget, wspec, wdefaults, uiScale, applyZoom };
