@@ -1708,6 +1708,66 @@ html[data-blocks="off"] #veraWash{opacity:.7}
 #rightRail.lhm-host .lhm-quick .lps-m{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
 #rightRail.lhm-host .lhm-quick .lps-x{grid-column:3 / span 2;grid-row:2;font-size:10px;color:var(--t3,var(--dim,#6b7280));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #rightRail.lhm-host .lhm-quick .lpp-ft{padding:10px 0 4px;font-size:9.5px;color:var(--t3,var(--dim,#6b7280));line-height:1.5}
+/* NOTHING BEHIND "FULL": a menu's panes docked at its top level (the same elements), and its settings as the Settings
+   page's cards — one look for every settings surface: the page, the menu's own section, the full list */
+#rightRail.lhm-host .lhm-quick .lhm-dk{display:flex;flex-direction:column;gap:6px}
+#rightRail.lhm-host .lhm-quick .lhm-dk-b{display:flex;flex-direction:column;min-width:0;border-radius:var(--r-sm,6px);background:var(--s1,var(--bg1,#151719));box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));overflow:hidden}
+#rightRail.lhm-host .lhm-quick .lhm-dk-b > *{display:flex!important;flex-direction:column;position:relative!important;inset:auto!important;width:auto!important;max-width:100%;flex:none!important;min-height:0;margin:0!important;border:0!important;background:transparent!important;padding:6px 8px!important;gap:5px;overflow:hidden}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .lhm-dk-b > *{height:var(--dk-h,280px)!important;padding:0!important;gap:0}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph svg{background:transparent!important}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-list .lhm-dk-b > *{height:auto!important;max-height:380px!important;overflow:auto!important}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-log .lhm-dk-b > *{height:240px!important;padding:0!important;gap:0}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-frame .lhm-dk-b > *{height:460px!important;padding:0!important;gap:0}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-caps .lhm-dk-b > *{height:480px!important}
+#rightRail.lhm-host .lhm-quick .lhm-dk-b > * > div[style*="border-bottom"],#rightRail.lhm-host .lhm-quick .lhm-dk-b > * > div[style*="border-top"]{background:transparent!important;border-color:var(--bd,var(--border,rgba(255,255,255,.09)))!important;padding:5px 8px!important}
+#rightRail.lhm-host .lhm-quick .lhm-dk-b #memGraphCtrl,#rightRail.lhm-host .lhm-quick .lhm-dk-b #dagGraphCtrl{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:6px 8px;border:0;background:transparent}
+#rightRail.lhm-host .lhm-quick .lhm-dk-b #memLegend{position:static;display:flex;flex-wrap:wrap;gap:4px 8px;padding:4px 8px 6px;background:transparent;border:0}
+#rightRail.lhm-host .lhm-quick .lhm-dk .btn,#rightRail.lhm-host .lhm-quick .lhm-dk .tb-btn,#rightRail.lhm-host .lhm-quick .lhm-dk .lbtn{font:inherit;font-size:10px!important;height:22px;padding:0 9px!important;border:0!important;border-radius:var(--r-pill,99px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));cursor:pointer;display:inline-flex;align-items:center;gap:4px;box-shadow:none;line-height:1;white-space:nowrap}
+#rightRail.lhm-host .lhm-quick .lhm-dk .btn:hover,#rightRail.lhm-host .lhm-quick .lhm-dk .tb-btn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+#rightRail.lhm-host .lhm-quick .lhm-dk .btn.pri{color:var(--on-ac,var(--on-acc,#fff));background:var(--ac,var(--acc,#5a9e8f))}
+#rightRail.lhm-host .lhm-quick .lhm-dk .btn.on,#rightRail.lhm-host .lhm-quick .lhm-dk .tb-btn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+#rightRail.lhm-host .lhm-quick .lhm-dk-b #memGraphCtrl::before{content:none}
+#rightRail.lhm-host .lhm-quick .lhm-dk-b #memGraphCtrl,#rightRail.lhm-host .lhm-quick .lhm-dk-b #dagGraphCtrl{font-family:var(--f-ui,inherit)}
+#rightRail.lhm-host .lhm-quick .lhm-dk .btn.danger{color:var(--dv6,#c96b6b)}
+#rightRail.lhm-host .lhm-quick .lhm-dk input:not([type]),#rightRail.lhm-host .lhm-quick .lhm-dk input[type="text"],#rightRail.lhm-host .lhm-quick .lhm-dk input[type="search"],#rightRail.lhm-host .lhm-quick .lhm-dk input[type="number"],#rightRail.lhm-host .lhm-quick .lhm-dk select{height:24px!important;border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))!important;border-radius:var(--r-sm,6px);background:var(--bg,var(--bg0,#0e0f12))!important;color:var(--t1,var(--text,#d8dce4));font:inherit;font-size:10.5px!important;padding:0 8px}
+#rightRail.lhm-host .lhm-quick .lhm-dk-b #monitorStream,#rightRail.lhm-host .lhm-quick .lhm-dk-b #chatLoopsList,#rightRail.lhm-host .lhm-quick .lhm-dk-b #chatGoalsList,#rightRail.lhm-host .lhm-quick .lhm-dk-b #rpCapList{font-size:10px}
+#rightRail.lhm-host .lhm-quick .lhm-dk vera-loop-graph{--lg-bg:transparent}
+#rightRail.lhm-host .lhm-quick .lhm-dk-b #chatLoopsList > div,#rightRail.lhm-host .lhm-quick .lhm-dk-b #chatGoalsList > div[style*="border"],#rightRail.lhm-host .lhm-quick .lhm-dk-b .rcap-row{border:0!important;border-radius:var(--r-sm,6px)!important;background:var(--s2,var(--bg2,#1a1c20))!important;margin:0 0 6px!important;padding:7px 9px!important}
+#rightRail.lhm-host .lhm-quick .lhm-dk-b .rcap-row{font-size:10px!important}
+#rightRail.lhm-host .lhm-quick .lhm-dk-b #chatLoopsList,#rightRail.lhm-host .lhm-quick .lhm-dk-b #chatGoalsList{padding:4px 0 0}
+#rightRail.lhm-host .lhm-quick .lhm-dk-b #chatLoopsList b,#rightRail.lhm-host .lhm-quick .lhm-dk-b #chatGoalsList b{font-weight:500;color:var(--t1,var(--text,#d8dce4))}
+#rightRail.lhm-host .lhm-quick .lhm-dk .mini-btn,#rightRail.lhm-host .lhm-quick .lhm-dk .rcap-row button{font:inherit;font-size:9.5px!important;height:20px;padding:0 9px!important;border:0!important;border-radius:var(--r-pill,99px);background:var(--surf,var(--bg1,#151719));color:var(--t2,var(--dim2,#8a92a0));cursor:pointer}
+#rightRail.lhm-host .lhm-quick .lhm-dk .mini-btn:hover,#rightRail.lhm-host .lhm-quick .lhm-dk .rcap-row button:hover{color:var(--ac,var(--acc,#5a9e8f))}
+#rightRail.lhm-host .lhm-quick .lhm-set-h{cursor:pointer}
+#rightRail.lhm-host .lhm-quick .lhm-set-h .caret{font-size:8px;width:8px;color:var(--t3,var(--dim,#6b7280))}
+#rightRail.lhm-host .lhm-quick .lhm-set.open .lhm-set-h .caret{color:var(--ac,var(--acc,#5a9e8f))}
+#rightRail.lhm-host .lhm-quick .lhm-set-b{display:flex;flex-direction:column;gap:8px}
+#rightRail.lhm-host .lhm-quick .lhm-set-b:empty{display:none}
+#rightRail.lhm-host .lhm-quick .lrow.sp-row + .lhm-set-b{margin:4px 0 10px}
+#rightRail.lhm-host .lhm-quick .lrow.sp-row .nm small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#rightRail.lhm-host .lhm-quick .sp-card{background:var(--s2,var(--bg2,#15181d));border-radius:var(--ui-radius,10px);box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.18));padding:10px 12px 12px;display:flex;flex-direction:column;gap:6px;min-width:0;font-size:11.5px;position:relative}
+#rightRail.lhm-host .lhm-quick .sp-card > .sec .sec-caret{display:none}#rightRail.lhm-host .lhm-quick .sp-card > .sec{font-size:var(--label-size,9.5px);text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t2,var(--dim2,#8a92a0));padding:0 0 6px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));margin-bottom:4px}
+#rightRail.lhm-host .lhm-quick .sp-card .row{display:flex;align-items:center;gap:8px;min-height:26px;flex-wrap:wrap}
+#rightRail.lhm-host .lhm-quick .sp-card select,#rightRail.lhm-host .lhm-quick .sp-card input[type="text"],#rightRail.lhm-host .lhm-quick .sp-card input[type="number"],#rightRail.lhm-host .lhm-quick .sp-card textarea{font:inherit;font-size:11px;color:var(--t1,var(--text,#d8dce4));background:var(--bg,var(--bg0,#0e0f12));border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,6px);padding:3px 7px}
+#rightRail.lhm-host .lhm-quick .sp-card input[type="number"]{width:64px;text-align:right;font-family:var(--f-mono,var(--mono,ui-monospace,monospace))}
+#rightRail.lhm-host .lhm-quick .sp-card .numrow{display:flex;align-items:center;gap:9px}#rightRail.lhm-host .lhm-quick .sp-card .nlbl{color:var(--t2,var(--dim2,#8a92a0))}
+#rightRail.lhm-host .lhm-quick .sp-card details{border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,6px);padding:4px 8px}
+#rightRail.lhm-host .lhm-quick .sp-card .opt{display:flex;align-items:flex-start;gap:10px;padding:4px 0;margin:0;background:transparent;border:0;box-shadow:none;border-radius:0;cursor:pointer}
+#rightRail.lhm-host .lhm-quick .sp-card .opt .opt-tick{display:none}
+#rightRail.lhm-host .lhm-quick .sp-card .opt>input[type="checkbox"]{position:static;opacity:1;pointer-events:auto;appearance:none;-webkit-appearance:none;width:30px;height:16px;border-radius:99px;background:var(--s3,var(--bg3,#1f2228));box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));position:relative;flex:0 0 auto;margin:2px 0 0;cursor:pointer;transition:background .15s}
+#rightRail.lhm-host .lhm-quick .sp-card .opt input[type="checkbox"]::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--t3,var(--dim,#6b7280));transition:left .15s,background .15s}
+#rightRail.lhm-host .lhm-quick .sp-card .opt input[type="checkbox"]:checked{background:color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 45%,transparent)}
+#rightRail.lhm-host .lhm-quick .sp-card .opt input[type="checkbox"]:checked::after{left:16px;background:var(--ac,var(--acc,#5a9e8f))}
+#rightRail.lhm-host .lhm-quick .sp-card .tb-group{display:flex!important;gap:2px;padding:2px;margin:0 0 4px!important;border:0!important;border-radius:var(--r-sm,6px);background:var(--s3,var(--bg3,#1f2228))!important;overflow:visible!important}
+#rightRail.lhm-host .lhm-quick .sp-card .tb-btn{flex:1;height:24px;border:0!important;border-radius:4px;background:transparent!important;color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:10.5px!important;letter-spacing:0;text-transform:none;cursor:pointer;justify-content:center}
+#rightRail.lhm-host .lhm-quick .sp-card .tb-btn:hover{color:var(--t1,var(--text,#d8dce4))}
+#rightRail.lhm-host .lhm-quick .sp-card .tb-btn.on{background:var(--surf,var(--bg1,#151719))!important;color:var(--ac,var(--acc,#5a9e8f));box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.18))}
+#rightRail.lhm-host .lhm-quick .sp-card .btn{font:inherit;font-size:10.5px!important;height:26px;padding:0 11px!important;border:0!important;border-radius:var(--r-sm,6px);background:var(--s3,var(--bg3,#1f2228));color:var(--t2,var(--dim2,#8a92a0));cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px}
+#rightRail.lhm-host .lhm-quick .sp-card .btn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+#rightRail.lhm-host .lhm-quick .sp-card .btn.danger{color:var(--dv6,#c96b6b)}
+#rightRail.lhm-host .lhm-quick .sp-card .opt .opt-main{display:flex;flex-direction:column;gap:1px;min-width:0}#rightRail.lhm-host .lhm-quick .sp-card .opt .opt-name{font-size:11.5px;color:var(--t1,var(--text,#d8dce4))}#rightRail.lhm-host .lhm-quick .sp-card .opt .opt-desc{font-size:10px;color:var(--t3,var(--dim,#6b7280))}
+#rightRail.lhm-host .lhm-quick .lhm-set-b .sp-card{padding:9px 10px 10px}
+#rightRail.lhm-host .lhm-quick .lhm-set-b .sp-card .sp-gone{display:none}
 #rightRail.lhm-host .lhm-quick .sbx-act{display:flex;gap:6px;flex-wrap:wrap}
 #rightRail.lhm-host .lhm-quick .sbx-tree{max-height:190px;overflow:auto;font-size:10.5px}
 #rightRail.lhm-host .lhm-quick .sbx-tree table{width:100%}
@@ -1813,6 +1873,13 @@ body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri
 #settingsPage .sp-card .opt input[type="checkbox"]::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--t3,var(--dim,#6b7280));transition:left .15s,background .15s}
 #settingsPage .sp-card .opt input[type="checkbox"]:checked{background:color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 45%,transparent)}
 #settingsPage .sp-card .opt input[type="checkbox"]:checked::after{left:16px;background:var(--ac,var(--acc,#5a9e8f))}
+#settingsPage .sp-card .tb-group{display:flex!important;gap:2px;padding:2px;margin:0 0 4px!important;border:0!important;border-radius:var(--r-sm,6px);background:var(--s3,var(--bg3,#1f2228))!important;overflow:visible!important}
+#settingsPage .sp-card .tb-btn{flex:1;height:24px;border:0!important;border-radius:4px;background:transparent!important;color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:10.5px!important;letter-spacing:0;text-transform:none;cursor:pointer;justify-content:center}
+#settingsPage .sp-card .tb-btn:hover{color:var(--t1,var(--text,#d8dce4))}
+#settingsPage .sp-card .tb-btn.on{background:var(--surf,var(--bg1,#151719))!important;color:var(--ac,var(--acc,#5a9e8f));box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.18))}
+#settingsPage .sp-card .btn{font:inherit;font-size:10.5px!important;height:26px;padding:0 11px!important;border:0!important;border-radius:var(--r-sm,6px);background:var(--s3,var(--bg3,#1f2228));color:var(--t2,var(--dim2,#8a92a0));cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px}
+#settingsPage .sp-card .btn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+#settingsPage .sp-card .btn.danger{color:var(--dv6,#c96b6b)}
 #settingsPage .sp-card .opt .opt-main{display:flex;flex-direction:column;gap:1px;min-width:0}#settingsPage .sp-card .opt .opt-name{font-size:11.5px;color:var(--t1,var(--text,#d8dce4))}#settingsPage .sp-card .opt .opt-desc{font-size:10px;color:var(--t3,var(--dim,#6b7280))}
 #settingsPage .sp-hd .sp-hd-pack{display:inline-flex;align-items:center}#settingsPage .sp-hd .sp-hd-pack .seg,#settingsPage .sp-hd .sp-hd-pack [class*="style"]{font-size:10.5px}
 #settingsPage .sp-look-pack,#settingsPage .sp-look-theme{display:flex;align-items:center;gap:8px;min-height:30px;flex-wrap:wrap}
@@ -2188,6 +2255,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="row"><label style="min-width:60px">On send</label><input type="checkbox" id="ctxOnSend" checked></div>
     <div class="row"><label style="min-width:60px" title="When the Worldview source is on, also pull records from the predicted next concepts">Rollout</label><input type="checkbox" id="ctxRollout" title="worldview.rollout — anticipate where the conversation is heading"></div>
     <div class="sec" style="margin-top:4px">Fabric dataset</div>
+    <label class="row numrow" title="Narrow the dataset list - the fabric can hold thousands"><input id="ctxFabDSQ" type="search" placeholder="find a dataset…" style="flex:1;min-width:0;font-size:10px"><span class="nlbl" id="ctxFabDSN" style="flex:0 0 auto"></span></label>
     <label class="row numrow" title="Restrict fabric retrieval to a single dataset">
       <select id="ctxFabDS" style="flex:1;min-width:0;font-size:10px"><option value="">All datasets</option></select>
       <span class="nlbl" style="flex:0 0 auto">Dataset</span>
@@ -4442,10 +4510,12 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     master.addEventListener('change',sync); sync();
   }
 
+  let _railUxDone=false;   // the rail's own passes (option cards, section folds) have run - the Settings cards are made from their output
   function _initRailUX(){
     try{ _enhanceRailOpts(); }catch(_){}
     try{ _enhanceMultiSelect(document.getElementById('loopStepsSel')); }catch(_){}
     try{ _initRailSections(); }catch(_){}
+    _railUxDone=true; try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}   // the menus can take their settings now
     // Auto-open defaults ON; only an explicit opt-out ('0') disables it.
     try{ const ap=document.getElementById('cfgAutoPreview'); if(ap) ap.checked=(localStorage.getItem('vera_auto_preview')!=='0'); }catch(_){}
     // Restore the top-bar Auto-loop toggle state.
@@ -5169,9 +5239,25 @@ IMPORTANT:
     sel.innerHTML=html;
   }
 
+  /* The fabric can hold thousands of datasets, and a VISIBLE <select> with thousands of options is laid out by
+     measuring every one of them: ~4.6 s per forced layout, twice when the Settings page opened at Context. The
+     list shows the largest datasets and whatever the filter matches, never more than _FABDS_MAX; the one chosen is
+     always kept, and ctxFabDS stays a <select> with the same value, so the retrieval that reads it is unchanged. */
+  let _fabDSAll=[]; const _FABDS_MAX=120;
+  function _fabDSFill(q){
+    const sel=document.getElementById('ctxFabDS'); if(!sel) return; const cur=sel.value; q=String(q||'').toLowerCase();
+    const hits=_fabDSAll.filter(d=>!q||String(d.dataset_id||'').toLowerCase().includes(q)); const shown=hits.slice(0,_FABDS_MAX);
+    if(cur&&!shown.some(d=>d.dataset_id===cur)){ const c=_fabDSAll.find(d=>d.dataset_id===cur); if(c) shown.unshift(c); }
+    sel.innerHTML='<option value="">All datasets</option>'+shown.map(d=>`<option value="${esc(d.dataset_id)}">${esc(d.dataset_id)} (${d.record_count||'?'})</option>`).join('')
+      +(hits.length>shown.length?`<option value="" disabled>\u2026 ${hits.length-shown.length} more \u2014 type to narrow</option>`:'');
+    sel.value=cur;
+    const n=document.getElementById('ctxFabDSN'); if(n) n.textContent=_fabDSAll.length?((q?hits.length+' of ':'')+_fabDSAll.length+' datasets'):'';
+  }
   async function loadFabDS(){
-    const res=await api('/fabric/datasets');const sel=document.getElementById('ctxFabDS');if(!sel)return;
-    sel.innerHTML='<option value="">All datasets</option>'+(res?.datasets||[]).map(d=>`<option value="${esc(d.dataset_id)}">${esc(d.dataset_id)} (${d.record_count||'?'})</option>`).join('');
+    const res=await api('/fabric/datasets'); if(!document.getElementById('ctxFabDS')) return;
+    _fabDSAll=(res?.datasets||[]).slice().sort((a,b)=>(b.record_count||0)-(a.record_count||0));
+    const q=document.getElementById('ctxFabDSQ'); if(q&&!q._fabBound){ q._fabBound=true; q.addEventListener('input',()=>_fabDSFill(q.value)); }
+    _fabDSFill(q?q.value:'');
   }
 
   async function loadSDLoRAs(){
@@ -8301,7 +8387,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      order, because pick() re-enters quick mode and would undo a deep() that came first. ctxTab stays for a shell that
      still has the old tab bar. */
   function _codePaneOpen(){
-    try{ if(window.VeraLHM){ VeraLHM.pick('sandbox/code'); VeraLHM.deep(true); } }catch(_){}
+    try{ if(window.VeraLHM){ VeraLHM.pick('sandbox/code'); _dkScroll('paneCode'); } }catch(_){}
     try{ ctxTab('code', null); }catch(_){}
     const r=document.getElementById('rightRail');
     if(r && r.classList.contains('slim')){
@@ -14815,7 +14901,8 @@ Your task: decide what to do next to advance toward the goal.
       {id:'media', n:'Media & rendering', from:[['rpCfg','Media & rendering'],['rpCfg','Output']], note:'images · artifacts · live render · speech'},
       {id:'web', n:'Web search', from:[['rpCfg','Web Search']], note:'search before answering'},
       {id:'research', n:'Research streaming', from:[['rpCfg','Research Streaming']], note:'the researcher API'},
-      {id:'sandbox', n:'Session container', from:[['rpCfg','Session container'],['rpCfg','Session']], note:'where this session runs'}]},
+      {id:'sandbox', n:'Session container', from:[['rpCfg','Session container'],['rpCfg','Session']], note:'where this session runs'},
+      {id:'canvas', n:'Session canvas', from:[['rpCfg','Session canvas']], note:'what lands beside the chat, and how'}]},
     {grp:'Context', rows:[
       {id:'sources', n:'Sources', from:[['rpCtx','Sources']], note:'what goes into the prompt'},
       {id:'injection', n:'Injection', from:[['rpCtx','Context Injection']], note:'skills · ontologies · caps'},
@@ -14825,6 +14912,8 @@ Your task: decide what to do next to advance toward the goal.
     {grp:'Appearance', rows:[
       {id:'look', n:'Style pack & theme', from:[], note:'the same Aa sheet', look:true}]}];
   let _spBuilt=false, _spOpen=false, _spCur='';
+  const _SP_CARDS=[];   // every card the page made: { card, grid (its home), title (the pane section it came from), row }
+  function _spHomeAll(){ _SP_CARDS.forEach(c=>c.grid.appendChild(c.card)); }   // every card back in the page, in the page's order
   // a .sec of a pane and everything after it up to the next .sec — the section's own rows
   function _spTake(paneId, title){
     const pane=document.getElementById(paneId); if(!pane) return [];
@@ -14850,15 +14939,17 @@ Your task: decide what to do next to advance toward the goal.
           const card=document.createElement('div'); card.className='sp-card'; card.dataset.row=r.id; card.dataset.from=pane; card.setAttribute('data-w', title.toLowerCase()+' · card');
           els.forEach(el=>card.appendChild(el)); card.querySelectorAll('.collapsed').forEach(x=>x.classList.remove('collapsed'));   // the page shows its rows open (the pane's fold stays a click)
           const sc=card.querySelector(':scope > .sec'); if(sc){ Array.from(sc.childNodes).forEach(nd=>{ if(nd.nodeType===3) nd.textContent=nd.textContent.replace(/^[s▸▾▶▼›»]+/,''); }); }   // the card's title, not the pane's fold glyph
-          grid.appendChild(card); n++; gn++; moved[pane]=(moved[pane]||0)+1; });
+          // two panes each had a "Model override"; side by side on one page (and in one menu) they need their own names
+          if(pane==='rpLoop'&&title==='Model override'){ const h=card.querySelector(':scope > .sec'); if(h) Array.from(h.childNodes).forEach(nd=>{ if(nd.nodeType===3&&nd.textContent.indexOf('Model override')>=0) nd.textContent=nd.textContent.replace('Model override','Loop model override'); }); }
+          card.dataset.title=title; _SP_CARDS.push({ card, grid, title, row:r.id }); grid.appendChild(card); n++; gn++; moved[pane]=(moved[pane]||0)+1; });
         if(r.look){
           // Appearance IN PLACE: the style pack segment and the theme picker are the same controls the Aa sheet uses
           const c1=document.createElement('div'); c1.className='sp-card'; c1.dataset.row=r.id; c1.setAttribute('data-w','style pack · card'); c1.innerHTML='<div class="sec">Style pack</div><div class="sp-look-pack"></div><div class="lbl">the pack sets form — type, radii, depth; the same segment as the header\'s</div>';
           try{ if(window.veraUI&&typeof veraUI.makeStyleControl==='function') c1.querySelector('.sp-look-pack').appendChild(veraUI.makeStyleControl()); else c1.querySelector('.sp-look-pack').innerHTML='<button class="btn" id="spOpenAppearance">Aa · Style pack &amp; theme…</button>'; }catch(_){}
-          grid.appendChild(c1); n++; gn++;
+          _SP_CARDS.push({ card:c1, grid, title:'Style pack', row:r.id }); grid.appendChild(c1); n++; gn++;
           const c2=document.createElement('div'); c2.className='sp-card'; c2.dataset.row=r.id; c2.setAttribute('data-w','theme · card'); c2.innerHTML='<div class="sec">Theme</div><div class="sp-look-theme" id="spThemePick"></div><div class="lbl">the theme sets colour — every panel follows</div>';
           const ob=c1.querySelector('#spOpenAppearance'); if(ob) ob.addEventListener('click',ev=>{ try{ _appearanceSheet(ev); }catch(_){} });
-          grid.appendChild(c2); n++; gn++;
+          _SP_CARDS.push({ card:c2, grid, title:'Theme', row:r.id }); grid.appendChild(c2); n++; gn++;
         }
       });
       if(!grid.children.length){ const e=document.createElement('div'); e.className='lbl'; e.textContent='nothing to move here yet'; grid.appendChild(e); }
@@ -14882,8 +14973,8 @@ Your task: decide what to do next to advance toward the goal.
   function _spFilter(q){ q=String(q||'').toLowerCase(); const page=document.getElementById('settingsPage'); if(!page) return; page.querySelectorAll('.sp-irow').forEach(r=>{ const sec=page.querySelector('.sp-sec[data-sec="'+r.dataset.sec+'"]'); const hit=!q||(r.textContent+' '+(sec?sec.textContent:'')).toLowerCase().indexOf(q)>=0; r.style.display=hit?'':'none'; }); }
   function _settingsPage(on, sec){
     on=(on==null)?!_spOpen:!!on; const page=document.getElementById('settingsPage'); if(!page) return false;
-    if(on){ _spBuild(); page.hidden=false; _spOpen=true; document.body.classList.add('settings-open'); if(sec) _spShow(sec); else _spCounts(); try{ const q=page.querySelector('.sp-srch input'); q&&q.focus(); }catch(_){} }
-    else { page.hidden=true; _spOpen=false; document.body.classList.remove('settings-open'); }
+    if(on){ _spBuild(); _spHomeAll(); page.hidden=false; _spOpen=true; document.body.classList.add('settings-open'); if(sec) _spShow(sec); else _spCounts(); try{ const q=page.querySelector('.sp-srch input'); q&&q.focus(); }catch(_){} }
+    else { page.hidden=true; _spOpen=false; document.body.classList.remove('settings-open'); _dkRedraw(); }   // the menus take their cards back
     // the menu instance is a 318 px slot in the shell: a page fixed to that frame showed its left edge and nothing else -
     // ask the shell for a page-wide slot while the page is open; when it closes the slot goes back to the menu, or to
     // the grown graph if that is open
@@ -15164,25 +15255,9 @@ function _embedMount(){
       +'<span class="rt-n">'+(_ctxRawLen()?_kfmt(_ctxRawLen())+' chars':'—')+'</span>'
       +'<button class="grp-act" data-a="raw-refresh" title="Re-assemble the context and read it back">↻</button></div>'
       +(_qRawOpen?'<pre class="ctx-raw-b">'+esc(_ctxRawText())+'</pre>':'')+'</div>'
-      /* WHAT DECIDED ALL OF THE ABOVE. Everything in this menu shows the context that WAS assembled; the settings
-         that decide what gets assembled - the sources, the injection, the session memory, k and the similarity
-         floor, the fabric dataset - moved out of the legacy Context pane and into the Settings page, and nothing
-         here said so. From the graph, the configuration had simply vanished. These rows are built FROM the
-         Settings page's own index (_SP_MAP's Context group), not from a second list beside it, so a section
-         renamed or added there appears here and the two cannot drift apart. Each row opens that exact section. */
-      +(function(){ try{
-          const g=(typeof _SP_MAP!=='undefined'?_SP_MAP:[]).find(x=>x.grp==='Context'); if(!g||!g.rows.length) return '';
-          /* FOLDED SHUT, like the raw prompt below it. Five rows standing open at the foot of the menu is five
-             rows of somewhere-else on a surface whose job is what IS in the prompt; it is a signpost, and a
-             signpost does not need to be a list until you are looking for it. */
-          return '<div class="wid ctx-cfg'+(_qCfgOpen?' open':'')+'" data-w="context settings \u00b7 list">'
-            +'<div class="grp" data-a="cfg-toggle" title="What decides the context above \u2014 these fields live on the Settings page (\u2318,)">'
-            +'<span class="caret">'+(_qCfgOpen?'\u25be':'\u25b8')+'</span>Context settings'
-            +'<span class="rt-n">'+g.rows.length+'</span>'
-            +'<button class="grp-act" data-a="cfg-open" title="Open the Settings page at Context">\u2699</button></div>'
-            +(_qCfgOpen?g.rows.map(r=>'<div class="lrow cfg" data-sec="'+esc(r.id)+'" title="'+esc(r.n+(r.note?' \u2014 '+r.note:'')+' \u00b7 opens the Settings page here')+'">'
-              +'<span class="caret">\u203a</span><span class="nm">'+esc(r.n)+'</span><span class="rt-n">'+esc(r.note||'')+'</span></div>').join(''):'')
-            +'</div>'; }catch(_){ return ''; } })();
+      /* WHAT DECIDED ALL OF THE ABOVE is this menu's own Settings section now: the Settings page's Context cards,
+         docked at the foot of the menu by _dockSync (the fields themselves, in place - not a list of links to them). */
+      ;
     el.querySelectorAll('.vseg button[data-view]').forEach(b=>b.addEventListener('click',()=>{ _qGalView=b.dataset.view; VeraLHM.render(); }));
     el.querySelectorAll('.gal-style button[data-style]').forEach(b=>b.addEventListener('click',()=>{ _qGalStyle=b.dataset.style; try{ localStorage.setItem('vera_ctx_mini_style', _qGalStyle); }catch(_){} VeraLHM.render(); }));
     el.querySelector('.gal-all').addEventListener('click',()=>{ _qGalAll=!_qGalAll; try{ if(_ctxCol&&typeof _ctxCol.allEdges==='function') _ctxCol.allEdges(_qGalAll); }catch(_){} VeraLHM.render(); });   // the grown graph follows
@@ -15235,10 +15310,6 @@ function _embedMount(){
     el.querySelectorAll('[data-add-id]').forEach(r=>r.addEventListener('click',ev=>{ ev.stopPropagation();
       _ctxAddPick(r.dataset.addFam, r.dataset.addId); }));
     el.querySelectorAll('[data-a="raw-toggle"]').forEach(h=>h.addEventListener('click',()=>{ _qRawOpen=!_qRawOpen; VeraLHM.render(); }));
-    // a configuration row opens the Settings page AT its section, not at the top of a long page
-    el.querySelectorAll('.ctx-cfg .lrow[data-sec]').forEach(r=>r.addEventListener('click',()=>{ try{ _settingsPage(true, r.dataset.sec); }catch(_){} }));
-    el.querySelectorAll('[data-a="cfg-open"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ _settingsPage(true,'sources'); }catch(_){} }));
-    el.querySelectorAll('[data-a="cfg-toggle"]').forEach(h=>h.addEventListener('click',()=>{ _qCfgOpen=!_qCfgOpen; VeraLHM.render(); }));
     el.querySelectorAll('[data-a="raw-refresh"]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation();
       _qRawOpen=true; Promise.resolve().then(()=>_ctxFcRefresh()).catch(()=>{}).then(()=>{ try{ VeraLHM.render(); }catch(_){} }); }));
     // opening a section lights its source on the plot too, so the list and the graph never say different things
@@ -15251,16 +15322,18 @@ function _embedMount(){
   // Sessions: search, today's sessions as rows (the history list's own records), the current one lit
   function _quickSessions(el){
     const list=(typeof SESSIONS!=='undefined'&&Array.isArray(SESSIONS))?SESSIONS:[]; const q=_qSessQ.toLowerCase();
-    const rows=list.filter(s=>!q||(s.displayName||s.name||s.session_id||'').toLowerCase().includes(q)||(s.preview||'').toLowerCase().includes(q)).slice(0,24);
+    const rows=list.filter(s=>!q||(s.displayName||s.name||s.session_id||'').toLowerCase().includes(q)||(s.preview||'').toLowerCase().includes(q)).slice(0,300);
   const titleOf=s=>String(s.displayName||s.name||(s.preview?String(s.preview).replace(/\s+/g,' ').trim().slice(0,64):'')||('session · '+String(s.session_id||'').slice(-8)));   // a session is its first question until it is named
     const sig=list.length+':'+q+':'+SID+':'+rows.map(s=>s.session_id).join(','); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
     const day=s=>{ const t=(s.first_ts||'').slice(0,10), today=new Date().toISOString().slice(0,10), yest=new Date(Date.now()-864e5).toISOString().slice(0,10); return t===today?'Today':t===yest?'Yesterday':(t||'Earlier'); };
     el.innerHTML='<div class="wid" data-w="search · search"><label class="wsearch">⌕<input placeholder="find a session · /" value="'+esc(_qSessQ)+'"></label></div>'
+      +'<div class="wid" data-w="session actions · controls"><div class="sbx-act"><button data-sa="new" title="Start a new session">+ New</button><button data-sa="refresh" title="Reload the session list">↻ Refresh</button><button data-sa="title" title="Auto-title every un-named chat (the light naming model)">Title all</button></div></div>'
       +'<div class="wid" data-w="sessions · list">'
       +(rows.length?rows.map((s,i)=>(i===0||day(rows[i-1])!==day(s)?'<div class="grp">'+esc(day(s))+(i===0?' · '+list.length:'')+'</div>':'')+'<div class="lrow'+(s.session_id===SID?' on':'')+'" data-sid="'+esc(s.session_id)+'" title="'+esc((s.agent||'?')+' · '+(s.count||0)+' msgs · '+(s.first_ts||'').slice(0,16))+'"><span class="nm">'+esc(titleOf(s))+'<small>'+esc((s.agent||'?')+' · '+(s.count||0)+' msgs')+'</small></span><span class="rt-n">'+esc(day(s)==='Today'?(s.first_ts||'').slice(11,16):(s.first_ts||'').slice(5,10))+'</span></div>').join('')
         :'<div class="lhm-empty">'+(list.length?'No session matches.':'No sessions yet.')+'</div>')+'</div>';
     const inp=el.querySelector('input'); inp.addEventListener('input',()=>{ _qSessQ=inp.value; VeraLHM.render(); const i2=el.querySelector('input'); if(i2){ i2.focus(); i2.selectionStart=i2.selectionEnd=i2.value.length; } });
     el.querySelectorAll('.lrow[data-sid]').forEach(r=>r.addEventListener('click',()=>{ try{ loadSession(r.dataset.sid); }catch(_){} }));
+    el.querySelectorAll('[data-sa]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.sa; try{ if(a==='new') newSession(); else if(a==='refresh') Promise.resolve(histLoad()).then(()=>{ delete el.dataset.sig; VeraLHM.render(); }); else if(a==='title') Promise.resolve(autoNameAll()).then(()=>{ delete el.dataset.sig; VeraLHM.render(); }); }catch(_){} }));
   }
   // Activity: the running loops (this session's runs as the canvas knows them) and the monitor's last lines
   function _quickActivity(el){
@@ -15270,7 +15343,7 @@ function _embedMount(){
     const row=r=>{ const c=_loopRunContent(r); const cur=c.steps.filter(s=>s.status==='run'||s.status==='running')[0]; const n=c.steps.length; return '<div class="lrow" data-rid="'+esc(r.rid)+'" title="'+esc(c.goal||'agentic loop')+'"><span class="tick" style="background:'+(r.status==='running'?'var(--ac,#5a9e8f)':r.status==='ok'?'var(--ac2,#8fb87a)':'var(--dv6,#c96b6b)')+'"></span><span class="nm">'+esc(c.goal||'agentic loop')+'<small>'+esc(cur?('step '+(c.steps.indexOf(cur)+1)+' of '+n+' · '+(cur.cap||cur.n||'')):(n?n+' steps · '+r.status:r.status))+'</small></span><span class="rt-n">'+esc(r.status==='running'?'live':r.status)+'</span></div>'; };
     el.innerHTML='<div class="wid" data-w="running loops · list"><div class="grp">Running · '+running.length+'</div>'+(running.length?running.map(row).join(''):'<div class="lhm-empty">No loop is running in this session. Auto-loop hands multi-step requests to one.</div>')+'</div>'
       +(done.length?'<div class="wid" data-w="recent loops · list"><div class="grp">Recent · '+done.length+'</div>'+done.slice(-4).reverse().map(row).join('')+'</div>':'')
-      +'<div class="wid" data-w="monitor · log"><div class="grp">Monitor · '+(mon?mon.children.length:0)+' lines</div>'+(lines.length?lines.map(l=>'<div class="lrow" title="'+esc(l.textContent)+'"><span class="nm" style="font-family:var(--f-mono,var(--mono));font-size:9.5px;color:var(--t2,var(--dim2))">'+esc(l.textContent.slice(0,90))+'</span></div>').join(''):'<div class="lhm-empty">Nothing on the monitor yet.</div>')+'</div>';
+      ;   // the monitor itself is docked below (the whole stream, not its last lines)
     el.querySelectorAll('.lrow[data-rid]').forEach(r=>r.addEventListener('click',()=>{ try{ VeraLHM.pick('loop'); }catch(_){} }));
   }
   // Loop: the running program — every step a capability call with what it read and what it left, the controls
@@ -15283,12 +15356,12 @@ function _embedMount(){
       +(steps.length?steps.slice(0,12).map((s,i)=>'<div class="lps '+st(s)+'"><span class="lps-d"></span><span class="lps-n">'+(i+1)+' '+esc(String(s.n||'').replace(/^\d+\s*/,'').slice(0,12))+'</span><span class="lps-c">'+esc(s.cap||'')+'</span><span class="lps-m">'+esc(s.ms?(typeof s.ms==='number'?(s.ms>=1000?(s.ms/1000).toFixed(1)+' s':s.ms+' ms'):String(s.ms)):'—')+'</span><span class="lps-x">'+esc(s.status||'')+'</span></div>').join('')
         :'<div class="lhm-empty">'+(R?'The run has not reported a step yet.':'No loop in this session yet. A goal in the composer with Auto-loop on, or the Loops tab, starts one.')+'</div>')
       +'<span class="lpp-ft">'+esc(R?((c.goal||'agentic loop')+' · '+R.status+(steps.length?' · '+steps.filter(s=>st(s)==='done').length+' of '+steps.length+' done':'')):_lhmTxt('loopVariantDesc').slice(0,120))+'</span></div>';
-    el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.act; try{ if(a==='settings'){ VeraLHM.deep(true); _loopCfgToggle(); } else if(a==='loops'){ VeraLHM.deep(true); VeraLHM.pick('loop/loops'); } else if(a==='goals'){ VeraLHM.deep(true); VeraLHM.pick('loop/goals'); } else if(a==='cancel'){ fetch(BASE+'/workshop/agent_loop/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:SID||'',run_id:R?R.rid:''})}).catch(()=>{}); } }catch(_){} }));
+    el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.act; try{ if(a==='settings'){ _dkSetOpen.loop=true; _dkSetSave(); VeraLHM.render(); _dkScroll('settings'); } else if(a==='loops'){ _dkScroll('paneLoops'); loadChatLoops(); } else if(a==='goals'){ _dkScroll('paneGoals'); loadChatGoals(); } else if(a==='cancel'){ fetch(BASE+'/workshop/agent_loop/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:SID||'',run_id:R?R.rid:''})}).catch(()=>{}); } }catch(_){} }));
   }
   // Workspace: what is open now (one set, one bridge), then the panels at hand
   function _quickWorkspace(el){
     const open=_lhmOpenNow(); const all=(typeof UI_PANELS!=='undefined'&&Array.isArray(UI_PANELS))?UI_PANELS.slice().sort((a,b)=>(a.tab_order||100)-(b.tab_order||100)):[]; const q=_qPanelQ.toLowerCase();
-    const rows=all.filter(p=>!q||(p.id||'').toLowerCase().includes(q)||(p.label||'').toLowerCase().includes(q)).slice(0,12);
+    const rows=all.filter(p=>!q||(p.id||'').toLowerCase().includes(q)||(p.label||'').toLowerCase().includes(q)).slice(0,400);
     const sig=open.map(o=>o.id).join(',')+'#'+q+'#'+all.length+'#'+(_activePanelId||''); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
     el.innerHTML='<div class="wid" data-w="search · search"><label class="wsearch">⌕<input placeholder="find a panel · '+all.length+' panels" value="'+esc(_qPanelQ)+'"></label></div>'
       +'<div class="wid" data-w="open now · list"><div class="grp">Open now · '+open.length+' · one set, one bridge</div>'+(open.length?open.map(o=>'<div class="tm-r on" data-open="'+esc(o.id)+'" title="Opened by '+esc(o.origin||'you')+' · '+esc(o.placement||'')+' — focus, or ✕ closes it here"><span class="ico">'+esc(o.icon||'▭')+'</span><span class="nm">'+esc(o.label||o.id)+'<span class="who">'+esc((o.origin||'you')+' · '+(o.placement||''))+'</span></span><span class="ct" data-close="'+esc(o.id)+'">✕</span></div>').join(''):'<div class="lhm-empty">Nothing open beside the chat. A row below, the aide or + Canvas / + Graph opens something here.</div>')+'</div>'
@@ -15330,7 +15403,7 @@ function _embedMount(){
     // the terminal element lives on: the same instance is moved back into its slot on every render
     if(term){ const slot=el.querySelector('.sbx-term'); if(!_sbxQ.el||_sbxQ.el.getAttribute('ws')!==term.ws){ try{ _sbxQ.el&&_sbxQ.el.remove(); }catch(_){} _sbxQ.el=document.createElement('vera-terminal'); _sbxQ.el.setAttribute('ws', term.ws); } if(slot&&_sbxQ.el.parentNode!==slot){ slot.innerHTML=''; slot.appendChild(_sbxQ.el); }
       if(!(window.customElements&&customElements.get('vera-terminal'))){ const s=document.createElement('script'); s.src='/ui/vera-terminal.js'; s.async=true; document.head.appendChild(s); } }
-    el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.act; try{ if(a==='on') _sessionSbxToggle(true); else if(a==='term') _sessionSbxTerminal(); else if(a==='vscode') _sessionSbxVscode(); else if(a==='code'){ VeraLHM.deep(true); VeraLHM.pick('sandbox/code'); } else if(a==='refresh'){ _sbxQ.sid=''; _sessionSbxRefresh(); } }catch(_){} }));
+    el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.act; try{ if(a==='on') _sessionSbxToggle(true); else if(a==='term') _sessionSbxTerminal(); else if(a==='vscode') _sessionSbxVscode(); else if(a==='code'){ _dkScroll('paneCode'); _artifactsRefresh(); } else if(a==='refresh'){ _sbxQ.sid=''; _sessionSbxRefresh(); } }catch(_){} }));
   }
   // Ops glance: the capability estate at a glance (loaded · in reach for this agent · queued) as the board's cards
   function _quickOps(el){
@@ -15339,19 +15412,113 @@ function _embedMount(){
     const sig=all.length+':'+reach+':'+badge; if(el.dataset.sig===sig) return; el.dataset.sig=sig;
     el.innerHTML='<div class="wcard" data-w="capabilities · counter"><span class="wc-h"><span class="mono">#</span><b>Capabilities</b><span class="mono">/mcp/tools</span></span><span class="wc-v"><b class="num">'+all.length+'</b><span class="u">loaded · '+reach+' in reach for this agent</span></span></div>'
       +'<div class="wcard" data-w="cap groups · bar"><span class="wc-h"><span class="mono">▬</span><b>Families</b><span class="mono">by prefix</span></span>'+(top.length?top.map(g=>'<span class="wc-v" style="min-height:16px"><span class="mono" style="font-family:var(--f-mono,var(--mono));font-size:9px;color:var(--t2,var(--dim2));width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(g[0])+'</span><span class="bar"><i style="width:'+(g[1]/all.length*100).toFixed(0)+'%"></i></span><span class="mono" style="font-family:var(--f-mono,var(--mono));font-size:9px;color:var(--t3,var(--dim))">'+g[1]+'</span></span>').join(''):'<span class="lhm-empty">No capabilities loaded yet.</span>')+'</div>'
-      +'<div class="qnote">The full list, the search, the run form and the inspector are behind Full ▸.</div>';
+      ;   // the full list, the search, the run form and the inspector are docked below
   }
-  // Settings: the frequent settings as rows (agent · model · format · loop variant · container · caps)
+  /* ═══ NOTHING BEHIND "FULL" — every feature of a menu is on the menu itself. A menu's panes (the memory graph, the
+     loop graph, the DAG, the monitor, the browser, the code pane, the capability list, loops, goals) are docked into
+     its quick body as sections: the SAME elements, their ids, handlers and renderers untouched. A menu's own settings
+     are the Settings page's cards, borrowed while the menu shows them and handed back the moment the page opens —
+     one look, one set of fields, reachable from the menu they govern, from the Settings menu's full list and from
+     the page. Anything docked is always in the document: what the open menu does not hold goes back where it came
+     from (the chat reads its cfg and ctx fields by id on every send). ═══ */
+  const _LHM_DOCK={
+    sessions: { cards:{ titles:['Session'] } },
+    context:  { panes:[{ id:'paneMemGraph', n:'Memory graph', tab:'memgraph', cls:'dk-graph', h:440, load:()=>memGraphLoad() }], cards:{ grp:'Context' } },
+    activity: { panes:[{ id:'paneDagGraph', n:'DAG graph', tab:'dag', cls:'dk-graph', h:300, load:()=>_renderDagGraph() },
+                       { id:'paneDagHistory', n:'DAG log', tab:'dag', cls:'dk-list', load:()=>renderDagHistory() },
+                       { id:'paneMonitor', n:'Monitor', tab:'monitor', cls:'dk-log' }], cards:{ titles:['Execution modes','DAG'] } },
+    loop:     { panes:[{ id:'paneLoopGraph', n:'Loop graph', tab:'loop', cls:'dk-graph', h:320, load:()=>{ try{ document.getElementById('loopGraphEl')?.fit(); }catch(_){} } },
+                       { id:'paneLoops', n:'Loops', tab:'loops', cls:'dk-list', load:()=>loadChatLoops() },
+                       { id:'paneGoals', n:'Goals', tab:'goals', cls:'dk-list', load:()=>loadChatGoals() }], cards:{ grp:'Agent loop' } },
+    workspace:{ panes:[{ id:'paneBrowser', n:'Browser', tab:'browser', cls:'dk-frame', load:()=>_renderBrowserCtxList() }], cards:{ titles:['Session canvas','Media & rendering'] } },
+    sandbox:  { panes:[{ id:'paneCode', n:'Artifacts & preview', tab:'code', cls:'dk-frame', load:()=>_artifactsRefresh() }], cards:{ titles:['Session container'] } },
+    ops:      { panes:[{ id:'rpCaps', n:'Capabilities', tab:'Caps', cls:'dk-caps', load:()=>_renderRailCaps() }], cards:{ titles:['Agent capabilities'] } },
+    settings: { all:true }
+  };
+  const _dkHome={};      // pane id -> { mark (a comment where it lived), el }
+  const _dkLoaded={};    // pane id -> { t, sid } of its loader's last run (a re-render re-docks, it does not re-fetch)
+  const _dkStale=id=>{ const l=_dkLoaded[id]; return !l||l.sid!==(SID||'')||Date.now()-l.t>15000; };   // a new session is always stale
+  const _dkMark=id=>{ _dkLoaded[id]={ t:Date.now(), sid:SID||'' }; };
+  let _dkSetOpen=(function(){ try{ return JSON.parse(localStorage.getItem('vera_lhm_setopen')||'{}')||{}; }catch(_){ return {}; } })();
+  function _dkSetSave(){ try{ localStorage.setItem('vera_lhm_setopen', JSON.stringify(_dkSetOpen)); }catch(_){} }
+  function _dkReturn(id){ const h=_dkHome[id]; if(!h||!h.mark.parentNode) return; if(h.el.previousSibling!==h.mark) h.mark.parentNode.insertBefore(h.el, h.mark.nextSibling); }
+  // 'menu:<id>' — the cards a menu governs; 'row:<id>' — one section of the page's index
+  function _dkCardsOf(spec){
+    const i=String(spec||'').indexOf(':'); if(i<0) return []; const k=spec.slice(0,i), v=spec.slice(i+1);
+    if(k==='row') return _SP_CARDS.filter(c=>c.row===v);
+    const c=((_LHM_DOCK[v]||{}).cards)||{}; const g=c.grp?(_SP_MAP.find(x=>x.grp===c.grp)||{rows:[]}).rows.map(r=>r.id):[];
+    return _SP_CARDS.filter(x=>g.includes(x.row)||(c.titles||[]).includes(x.title));
+  }
+  function _dkScroll(id){ setTimeout(()=>{ try{ const w=document.querySelector('#rightRail .lhm-quick .lhm-dk[data-dock="'+id+'"]'); if(w&&w.scrollIntoView) w.scrollIntoView({ block:'start', behavior:'smooth' }); }catch(_){} }, 60); }
+  function _dkRedraw(){ try{ const q=document.querySelector('#rightRail .lhm-quick'); if(q) delete q.dataset.sig; if(window.VeraLHM) VeraLHM.render(); }catch(_){} }
+  // a pick that names a tab (pick('loop/goals'), the aide, a harness link) lands on that tab's section; the menu's
+  // first tab is the menu itself. The pick's tab click has just run that pane's loader.
+  // Opening a menu refreshes what it docks (the memory graph docked at boot, before the session was known, read "No
+  // session" until something asked again); the picked tab's own click has just loaded its pane.
+  function _dkPicked(menuId, tabId){
+    const d=(_LHM_DOCK[menuId]||{}).panes||[];
+    // after the render has docked them - a graph that loads while still hidden lays itself out at zero size
+    setTimeout(()=>d.forEach(x=>{ if(x.tab===tabId&&SID){ _dkMark(x.id); return; } if(x.load&&_dkStale(x.id)){ _dkMark(x.id); try{ x.load(); }catch(_){} } }), 0);
+    const p=d.find(x=>x.tab===tabId); if(!p) return;
+    const m=LHM_MENUS.find(x=>x.id===menuId); if(m&&m.tabs&&m.tabs[0]&&m.tabs[0].id===tabId) return; _dkScroll(p.id);
+  }
+  function _dockSync(el, menuId){
+    if(!el||!el.isConnected) return;   // a harvest into a detached element (the picker, an "added" widget) never takes live panes
+    const spec=_LHM_DOCK[menuId]||{}; const mine={};
+    const skip=(menuId==='context'&&_ctxGrown);   // the grown graph owns the whole column
+    if(!skip) (spec.panes||[]).forEach(p=>{
+      const pane=_dkHome[p.id]?_dkHome[p.id].el:document.getElementById(p.id); if(!pane) return; mine[p.id]=1;
+      if(!_dkHome[p.id]){ const mk=document.createComment('lhm-dock '+p.id); pane.parentNode.insertBefore(mk, pane); _dkHome[p.id]={ mark:mk, el:pane }; }
+      let w=el.querySelector(':scope > .lhm-dk[data-dock="'+p.id+'"]');
+      if(!w){ w=document.createElement('div'); w.className='wid lhm-dk '+(p.cls||''); w.dataset.dock=p.id; w.setAttribute('data-w', p.n.toLowerCase()+' \u00b7 '+String(p.cls||'dk-pane').replace('dk-',''));
+        w.innerHTML='<div class="grp">'+esc(p.n)+'</div><div class="lhm-dk-b"></div>'; if(p.h) w.style.setProperty('--dk-h', p.h+'px'); el.appendChild(w); }   // a graph fits itself to its box when it loads, so the box is sized first
+      const b=w.querySelector('.lhm-dk-b');
+      if(pane.parentNode!==b) b.appendChild(pane);
+      if(p.load&&(_dkLoaded[p.id]||{}).sid!==(SID||'')){ _dkMark(p.id); try{ p.load(); }catch(_){} }   // docked, or the session changed under it
+    });
+    // the menu's own settings: a fold at its foot, the page's cards inside while it is open
+    const cardsOk=_railUxDone&&!_spOpen;   // never before the rail's own passes have shaped the fields; never out of an open page
+    if(cardsOk&&(spec.cards||spec.all)) _spBuild();
+    let setW=el.querySelector(':scope > .lhm-dk[data-dock="settings"]');
+    const nSet=(!skip&&cardsOk&&spec.cards)?_dkCardsOf('menu:'+menuId).length:0;
+    if(nSet){
+      if(!setW){ setW=document.createElement('div'); setW.className='wid lhm-dk lhm-set'; setW.dataset.dock='settings'; setW.setAttribute('data-w', menuId+' settings \u00b7 form');
+        setW.innerHTML='<div class="grp lhm-set-h" title="This menu\'s settings \u2014 the same fields the Settings page shows (\u2318,)"><span class="caret"></span><span class="lhm-set-t">Settings</span><button class="grp-act" data-a="set-page" title="Open the Settings page at these sections">\u2699 page</button></div><div class="lhm-set-b"></div>';
+        el.appendChild(setW);
+        setW.querySelector('.lhm-set-h').addEventListener('click',ev=>{ if(ev.target.closest&&ev.target.closest('[data-a="set-page"]')) return; _dkSetOpen[menuId]=!_dkSetOpen[menuId]; _dkSetSave(); _dockSync(el, menuId); });
+        setW.querySelector('[data-a="set-page"]').addEventListener('click',ev=>{ ev.stopPropagation(); const c=_dkCardsOf('menu:'+menuId)[0]; _settingsPage(true, c?c.row:undefined); }); }
+      const open=!!_dkSetOpen[menuId]; setW.classList.toggle('open', open);
+      setW.querySelector('.caret').textContent=open?'\u25be':'\u25b8'; setW.querySelector('.lhm-set-t').textContent='Settings \u00b7 '+nSet;
+      setW.querySelector('.lhm-set-b').dataset.cards=open?('menu:'+menuId):'';
+    }
+    // the cards: claimed by the bodies that ask for them, every other one at home in the page (in the document)
+    const claimed=new Set();
+    if(!skip&&cardsOk) el.querySelectorAll('[data-cards]').forEach(b=>{ const s=b.dataset.cards; if(!s) return; _dkCardsOf(s).forEach(c=>{ if(claimed.has(c.card)) return; claimed.add(c.card); if(c.card.parentNode!==b) b.appendChild(c.card); }); });
+    _SP_CARDS.forEach(c=>{ if(!claimed.has(c.card)&&c.card.parentNode!==c.grid) c.grid.appendChild(c.card); });
+    Object.keys(_dkHome).forEach(id=>{ if(!mine[id]) _dkReturn(id); });
+    if(setW&&!nSet) setW.remove();
+    if(skip) el.querySelectorAll(':scope > .lhm-dk').forEach(w=>w.remove());
+  }
+  // Settings: the frequent settings as rows, then EVERY section of the Settings page (its own index, so the two cannot
+  // drift) — a row opens its fields in place, the same cards the page shows; the page itself is one press away (⌘,)
+  let _qSpOpen=(function(){ try{ return JSON.parse(localStorage.getItem('vera_lhm_sprow')||'{}')||{}; }catch(_){ return {}; } })();
   function _quickSettings(el){
     const v=id=>{ const e=document.getElementById(id); if(!e) return ''; if(e.type==='checkbox') return e.checked?'on':'off'; if(e.tagName==='SELECT') return e.selectedOptions&&e.selectedOptions[0]?e.selectedOptions[0].textContent.trim():e.value; return e.value||''; };
     const rows=[['Agent','cfgAgent'],['Model override','cfgModel'],['Output format','cfgFormat'],['Thinking','cfgThink'],['Loop variant','loopVariant'],['Auto-loop','cfgAutoDeferLoop'],['Session container','cfgSessionSbx'],['Capabilities','cfgCapInteg'],['Auto-run caps','cfgCapAutoExec'],['Web interactive','cfgWebInteractive']].map(r=>[r[0],r[1],v(r[1])]).filter(r=>document.getElementById(r[1]));
-    const sig=rows.map(r=>r[2]).join('|'); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
-    el.innerHTML='<div class="wid" data-w="frequent settings · list"><div class="grp">Frequent</div>'+rows.map(r=>'<div class="lrow" data-for="'+r[1]+'" title="Change '+esc(r[0])+' in the full settings"><span class="nm">'+esc(r[0])+'</span><span class="rt-n">'+esc(String(r[2]||'—').slice(0,22))+'</span></div>').join('')+'</div>'
-      +'<div class="wid" data-w="appearance · controls"><div class="grp">Appearance</div><div class="sbx-act"><button data-act="aa" title="Theme, style pack and density">Aa Appearance</button><button data-act="tools" title="Every chat tool the header keeps behind ⋯">⋯ Tools</button></div></div>';
-    el.querySelectorAll('.lrow[data-for]').forEach(r=>r.addEventListener('click',()=>{ _settingsPage(true); setTimeout(()=>{ const e=document.getElementById(r.dataset.for); if(!e) return; const sec=e.closest('.sp-sec'); if(sec) _spShow(sec.dataset.sec); try{ e.scrollIntoView({block:'center'}); e.focus(); }catch(_){} },60); }));
-    el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',ev=>{ try{ if(b.dataset.act==='aa') _appearanceSheet(ev); else _toolsSheet(true); }catch(_){} }));
+    const sig=rows.map(r=>r[2]).join('|')+'#'+JSON.stringify(_qSpOpen); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    const all=_SP_MAP.map(g=>'<div class="grp">'+esc(g.grp)+'</div>'+g.rows.map(r=>{ const open=!!_qSpOpen[r.id];
+        return '<div class="lrow sp-row'+(open?' open on':'')+'" data-sprow="'+esc(r.id)+'" title="'+esc(r.n+(r.note?' \u2014 '+r.note:''))+'"><span class="caret">'+(open?'\u25be':'\u25b8')+'</span><span class="nm">'+esc(r.n)+'<small>'+esc(r.note||'')+'</small></span></div>'
+          +(open?'<div class="lhm-set-b" data-cards="row:'+esc(r.id)+'"></div>':''); }).join('')).join('');
+    el.innerHTML='<div class="wid" data-w="frequent settings \u00b7 list"><div class="grp">Frequent</div>'+rows.map(r=>'<div class="lrow" data-for="'+r[1]+'" title="Change '+esc(r[0])+' in the full settings"><span class="nm">'+esc(r[0])+'</span><span class="rt-n">'+esc(String(r[2]||'\u2014').slice(0,22))+'</span></div>').join('')+'</div>'
+      +'<div class="wid" data-w="all settings \u00b7 list"><div class="grp">All settings<button class="grp-act" data-act="page" title="The Settings page (\u2318,)">\u2699 page</button></div>'+all+'</div>'
+      +'<div class="wid" data-w="appearance \u00b7 controls"><div class="grp">Appearance</div><div class="sbx-act"><button data-act="aa" title="Theme, style pack and density">Aa Appearance</button><button data-act="tools" title="Every chat tool the header keeps behind \u22ef">\u22ef Tools</button></div></div>';
+    el.querySelectorAll('.lrow[data-for]').forEach(r=>r.addEventListener('click',()=>{ _settingsPage(true); setTimeout(()=>{ const e=document.getElementById(r.dataset.for); if(!e) return; const sec=e.closest('.sp-sec'); const card=e.closest('.sp-card'); _spShow(card&&card.dataset.row?card.dataset.row:(sec?sec.dataset.sec:'variant')); try{ e.scrollIntoView({block:'center'}); e.focus(); }catch(_){} },60); }));
+    el.querySelectorAll('.lrow[data-sprow]').forEach(r=>r.addEventListener('click',()=>{ const id=r.dataset.sprow; if(_qSpOpen[id]) delete _qSpOpen[id]; else _qSpOpen[id]=1; try{ localStorage.setItem('vera_lhm_sprow', JSON.stringify(_qSpOpen)); }catch(_){} VeraLHM.render(); }));
+    el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ const a=b.dataset.act; if(a==='aa') _appearanceSheet(ev); else if(a==='page') _settingsPage(true); else _toolsSheet(true); }catch(_){} }));
   }
   const _QUICK={context:_quickContext, sessions:_quickSessions, activity:_quickActivity, loop:_quickLoop, workspace:_quickWorkspace, sandbox:_quickSandbox, ops:_quickOps, settings:_quickSettings};
+  // every quick body docks its menu's panes and settings after it draws (and after an early return on an unchanged key)
+  Object.keys(_QUICK).forEach(k=>{ const f=_QUICK[k]; _QUICK[k]=function(el, api){ f(el, api); try{ _dockSync(el, k); }catch(e){ try{ console.warn('LHM dock: '+k, e); }catch(_){} } }; });
   // the quick bodies follow the chat's state: a light tick re-draws only when a body's signature changed
   let _quickTimer=null;
   function _quickTick(){ try{ const a=VeraLHM.active; if(!a||a.top) return; const host=document.getElementById('rightRail'); if(!host||host.classList.contains('slim')||!host.classList.contains('lhm-quickmode')) return; VeraLHM.render(); }catch(_){} }
@@ -15364,11 +15531,11 @@ function _embedMount(){
     LHM_MENUS.forEach(m=>{ if(_RAIL_SVG[m.id]) m.iconHtml=_RAIL_SVG[m.id]; if(_QUICK[m.id]) m.quick=_QUICK[m.id]; });
     if(!_quickTimer) _quickTimer=setInterval(_quickTick, 1500);
     VeraLHM.mount({host, title:'Vera', tabBar:'.ctx-tab-bar', menus:LHM_MENUS, tabEl:_lhmTabEl, tabIdOf:_lhmTabIdOf, openNow:_lhmOpenNow,
-      sessionId:()=>SID, initial, silentInitial:true,
+      sessionId:()=>SID, initial, silentInitial:true, noDeep:true,
       base:BASE,
       // every pane is a widget with a record in the registry (widget.template.get lhm:…); ⚙ in edit mode opens it
       panes:[{id:'rpHist',w:'sessions · list',tpl:'lhm:sessions'},{id:'rpCfg',w:'settings · form'},{id:'rpCaps',w:'capabilities · list'},{id:'rpPanels',w:'panels · list'},{id:'rpLoop',w:'loop program · form',tpl:'lhm:loop-graph'},{id:'ctxCanvas',w:'context galaxy · graph',tpl:'lhm:ctx-galaxy'},{id:'ctxMeter',w:'budget bar · meter',tpl:'lhm:ctx-budget'},{id:'paneLoopGraph',w:'loop graph · graph',tpl:'lhm:loop-graph'},{id:'paneMemGraph',w:'memory graph · graph',tpl:'lhm:memory-graph'},{id:'paneCode',w:'file tree · tree',tpl:'lhm:file-tree'},{id:'sbxSessionTools',w:'sandbox actions · controls',tpl:'lhm:actions'},{id:'paneBrowser',w:'browser · panel'},{id:'paneMonitor',w:'monitor · log'}],
-      onPick:()=>{ if(host.classList.contains('slim')) toggleRight(); },
+      onPick:(mid, tid)=>{ if(host.classList.contains('slim')) toggleRight(); try{ _dkPicked(mid, tid); }catch(_){} },
       onCollapse:()=>{ if(!host.classList.contains('slim')) toggleRight(); },   // the active rail icon, or ‹ in the header, folds the menu to the rail
       // "Save as menu…" (the ChatMenu board's edit mode): the composed menu becomes a record of yours through lhm.menu.save
       // the picker's registry groups: every drawable form, then the user's templates (the same reads + Place makes)
@@ -15604,6 +15771,11 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
 
   async function loadSession(sid){
     SID=sid;window._veraSessionId=sid;window._chatSessionId=sid;
+    /* The two instances on the board are one chat. A session picked in the MENU instance (the history list lives
+       there, the transcript does not) has to reach the CHAT instance, or the menu loads it into itself and the
+       conversation never changes; and a reload should come back to the session that was picked. The chat
+       instance posting back is harmless - the menu already holds that SID and ignores it. */
+    try{ localStorage.setItem('vera_session_id', sid); localStorage.setItem('vera_session_id_ts', String(Date.now())); if(_EMBED.only) _lhmPost('session',{ sid }); }catch(_){}
     try{ document.getElementById('ctxNotesEl')?.setAttribute('ref-id', SID); }catch(_){}
     try{ _sessionSbxRefresh(); }catch(_){}
     try{ _sessionSbxAutoEnsure(); }catch(_){}
