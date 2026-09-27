@@ -369,13 +369,13 @@
      "size": "m",
      "span": [
       3,
-      3
+      2
      ]
     }
    },
    "span": [
     3,
-    3
+    2
    ],
    "hidden": false,
    "refresh": "10s",
@@ -413,13 +413,13 @@
      "size": "m",
      "span": [
       3,
-      3
+      2
      ]
     }
    },
    "span": [
     3,
-    3
+    2
    ],
    "hidden": false,
    "refresh": "10s",
@@ -459,13 +459,13 @@
      "size": "m",
      "span": [
       3,
-      3
+      2
      ]
     }
    },
    "span": [
     3,
-    3
+    2
    ],
    "hidden": false,
    "refresh": "10s",
@@ -505,13 +505,13 @@
      "size": "m",
      "span": [
       3,
-      3
+      2
      ]
     }
    },
    "span": [
     3,
-    3
+    2
    ],
    "hidden": false,
    "refresh": "10s",
@@ -551,13 +551,13 @@
      "size": "m",
      "span": [
       3,
-      3
+      2
      ]
     }
    },
    "span": [
     3,
-    3
+    2
    ],
    "hidden": false,
    "refresh": "10s",
@@ -595,13 +595,13 @@
      "size": "m",
      "span": [
       3,
-      3
+      2
      ]
     }
    },
    "span": [
     3,
-    3
+    2
    ],
    "hidden": false,
    "refresh": "10s",
@@ -638,13 +638,13 @@
      "size": "l",
      "span": [
       6,
-      3
+      4
      ]
     }
    },
    "span": [
     6,
-    3
+    4
    ],
    "hidden": false,
    "refresh": "10s",
@@ -681,13 +681,13 @@
      "size": "m",
      "span": [
       3,
-      3
+      2
      ]
     }
    },
    "span": [
     3,
-    3
+    2
    ],
    "hidden": false,
    "refresh": "10s",

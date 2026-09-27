@@ -1860,6 +1860,10 @@
     'vera-dashboard .widget.drag-over{border-color:var(--acc,#6ea8d8);box-shadow:0 0 0 1px var(--acc,#6ea8d8)}',
     'vera-dashboard .w-head{display:flex;align-items:center;gap:6px;padding:7px 11px 6px;border-bottom:1px solid var(--border,rgba(255,255,255,.07));flex-shrink:0}',
     'vera-dashboard .w-title{font-size:10.5px;color:var(--dim2,var(--t2,#8a92a0));text-transform:uppercase;letter-spacing:.09em;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    /* a tile's title has its head: the record chip (form · source) shows on hover, while configuring, or when it carries
+       news (sample, reading, failed, problems) - it cut every title to "CPU · MEM..." (Stack Monitor, 2026-09-27) */
+    'vera-dashboard .w-head .vd-rec{max-width:0;opacity:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;transition:max-width .2s,opacity .2s;font-size:10px;color:var(--dim,#6b7280)}',
+    'vera-dashboard .widget:hover .vd-rec,vera-dashboard .dash-grid.editing .vd-rec,vera-dashboard .vd-rec:is(.sample,.reading,.failed,.bad,.checking){max-width:55%;opacity:1}',
     'vera-dashboard .w-actions{display:flex;gap:2px;align-items:center;opacity:0;transition:opacity .15s}vera-dashboard .widget:hover .w-actions,vera-dashboard .dash-grid.editing .w-actions{opacity:1}',
     'vera-dashboard .w-iconbtn{width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:var(--dim2,#8a92a0);cursor:pointer;border-radius:4px;font-size:12px;line-height:1}vera-dashboard .w-iconbtn:hover{background:var(--bg3,#262b33);color:var(--text,#d8dce4)}',
     'vera-dashboard .w-grip{cursor:grab;user-select:none;color:var(--dim,#6b7280);font-size:11px;display:none}vera-dashboard .dash-grid.editing .w-grip{display:inline-block}vera-dashboard .dash-grid.editing .widget{cursor:move}',
