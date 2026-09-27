@@ -1290,7 +1290,7 @@
       chip.classList.toggle('sample', sampled); chip.classList.toggle('reading', ws === 'reading'); chip.classList.toggle('failed', ws === 'failed'); chip.classList.toggle('checking', !!w.dataset.checking); chip.classList.toggle('bad', !!probs.length);
       chip.title = 'record ' + (r.id || w.dataset.wid) + ' · ' + text + (w.dataset.sample ? ' · drawn from the form\'s sample: the source cannot be read' : '')
         + (w.dataset.checking ? ' · widget.validate is checking this record' : '') + (probs.length ? '\nwidget.validate: ' + probs.join(' · ') : '');
-      ensureCfg(w); ensureOpen(w, r);
+      ensureCfg(w); ensureOpen(w, r); ensureDive(w);
       if (r.form) w.dataset.form = r.form;
       if (src) w.dataset.source = src; else if (r.panel) w.dataset.source = 'panel:' + r.panel;
       var mb = r.frame && r.frame.max_body, body = w.querySelector(':scope > .w-body');
@@ -1306,6 +1306,13 @@
       act.insertBefore(b, act.firstChild);
     }
 
+    // ⤢ the deep dive (the widget review, round 2): the record at its largest, every row it read as a table, the raw answer
+    function ensureDive(w) {
+      var act = w.querySelector(':scope > .w-head .w-actions'), el = w.querySelector(':scope > .w-body vera-widget'); if (!act) return;
+      var b = act.querySelector('.vd-dive'); if (!el) { if (b) b.remove(); return; }
+      if (!b) { b = document.createElement('button'); b.className = 'w-iconbtn vd-dive'; b.textContent = '\u2922'; b.title = 'Deep dive \u2014 the whole reading: the chart at its largest, every row, the raw answer'; act.insertBefore(b, act.firstChild); }
+      b.onclick = function (e) { e.stopPropagation(); var x = w.querySelector(':scope > .w-body vera-widget'); if (x && window.VeraWidget && typeof window.VeraWidget.dive === 'function') window.VeraWidget.dive(x); };
+    }
     // drill through: a record opens the place its data lives on - its own `open`, else the place its SOURCE maps to
     // (ui.places: one table in vera/ui/places_core.py). The shell's openPlace() does the opening; a popped window
     // of a registered panel is the fallback when there is no shell.
@@ -1362,7 +1369,7 @@
         while (body.firstChild) holder.appendChild(body.firstChild);
         body.appendChild(holder);
       }
-      if (!el) { el = document.createElement('vera-widget'); el.className = 'vd-draw'; el.setAttribute('bare', ''); body.appendChild(el); }   // the tile's own head carries the title (the board's tile is one head)
+      if (!el) { el = document.createElement('vera-widget'); el.className = 'vd-draw'; el.setAttribute('bare', ''); el.setAttribute('dive-on-click', ''); body.appendChild(el); }   // the tile's own head carries the title (the board's tile is one head)
       var sp = spanOf(w); el.setAttribute('size', sizeForSpan(sp[0], sp[1]));
       el.setAttribute('record', JSON.stringify(shown));
       w.dataset.converted = '1';
@@ -1542,6 +1549,7 @@
       }
       var el = document.createElement('vera-widget');
       el.setAttribute('bare', '');   // the tile's own head carries the title and the record chip (the board's tile is one head)
+      el.setAttribute('dive-on-click', '');   // a click on the face opens its deep dive (a block that names an entity opens that)
       var sp0 = spanOf(widget);
       el.setAttribute('size', sizeForSpan(sp0[0], sp0[1]));   // the span picks the size (the Sizes board), not the pixels
       var shown = withSample(record); if (shown.sample) widget.dataset.sample = '1';   // no readable source: the form's sample, said so

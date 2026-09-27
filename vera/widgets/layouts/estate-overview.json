@@ -710,7 +710,7 @@
     "frame": {
      "size": "m",
      "span": [
-      4,
+      3,
       3
      ],
      "max_body": null
@@ -732,7 +732,7 @@
     19
    ],
    "span": [
-    4,
+    3,
     3
    ],
    "hidden": false,
@@ -756,7 +756,7 @@
     "frame": {
      "size": "m",
      "span": [
-      4,
+      3,
       3
      ],
      "max_body": null
@@ -774,11 +774,11 @@
     "open": "estate/storage"
    },
    "at": [
-    4,
+    3,
     19
    ],
    "span": [
-    4,
+    3,
     3
    ],
    "hidden": false,
@@ -801,9 +801,9 @@
      }
     },
     "frame": {
-     "size": "m",
+     "size": "xl",
      "span": [
-      4,
+      6,
       3
      ],
      "max_body": null
@@ -822,11 +822,11 @@
     "open": "estate/ops"
    },
    "at": [
-    8,
+    6,
     19
    ],
    "span": [
-    4,
+    6,
     3
    ],
    "hidden": false,

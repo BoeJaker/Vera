@@ -67,7 +67,7 @@ t('dream: dreams per day, oldest first', JSON.stringify(fig('dream', 'dream-per-
 const heat = W.draw('heat', FIX['obs.cluster'], 'l', { bare: true, height: 90, width: 700, record: lay('wol-workers').widgets.find((w) => w.record.id === 'w-resources').record, draw: { palette: 'load', total: false } });
 t('the heat map\'s cells share the body\'s height, its columns are named, a wide cell says its value, no row sums', /height:(1[0-9]|2[0-6])px;aspect-ratio:auto/.test(heat) && /class="vb-heatrow hd"/.test(heat) && />cpu_pct</.test(heat) && />33\.6</.test(heat) && !/class="v">/.test(heat), text(heat).slice(0, 120));
 const don = W.draw('donut', { running: 22, stopped: 34 }, 'm', { draw: { palette: 'status' } });
-t('a donut of states in palette status is green for running and red for stopped', /stroke="var\(--b-ac2\)"[\s\S]*<title>running|<title>running[\s\S]*/.test(don) && /var\(--b-ac2\)/.test(don) && /var\(--b-ac4\)/.test(don));
+t('a donut of states in palette status is green for running and red for stopped', /data-tip="running/.test(don) && /var\(--b-ac2\)/.test(don) && /var\(--b-ac4\)/.test(don));
 const yes = W.draw('pills', [{ name: 'redis', status: true }, { name: 'neo4j', status: false }], 's', {});
 t('a yes/no chip is its dot and its full name, not "r true"', /<b>redis<\/b>/.test(yes) && !/true<\/b>/.test(yes), text(yes));
 const rows2 = W.draw('composite', null, 'm', { bare: true, height: 200, width: 700, record: { form: 'composite', layout: 'rows', children: [{ slot: 'a', record: { form: 'kv', data: { a: 1 } } }, { slot: 'b', record: { form: 'kv', data: { b: 2 } } }] } });
