@@ -916,7 +916,7 @@ try:
     from Vera.vera.evolve.ttl_cache import TTLCache as _TTLCache
 except Exception:                                          # pragma: no cover
     from vera.evolve.ttl_cache import TTLCache as _TTLCache
-_LIST_SESSIONS_CACHE = _TTLCache(45.0)
+_LIST_SESSIONS_CACHE = _TTLCache(120.0)   # ~25 s to build on prod (2026-09-28): the Agents page, the sandbox menu and ci.branch all read it; `fresh` still forces
 
 
 async def _list_sessions_uncached(scan_limit: int, max_sessions: int) -> dict:
