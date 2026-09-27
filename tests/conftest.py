@@ -245,6 +245,8 @@ _CRITICAL_MODULES = {
     "test_schedule_page_ui",  # the Schedule page's calendar, editor and tick controls must stay wired (2026-09-21)
     "test_release_core",  # a prod release must never restart prod under a census goal unless forced (2026-09-21)
     "test_loop_web_research_first",
+    "test_mcp_call_delegate_args",  # /mcp/call dropped every argument an explicit caller passed to v7 (plan_style, model, ...) (2026-09-27)
+    "test_plan_style_loop",  # the loop takes a planning style, logs the one it used, and every other style's planning/controller path is unchanged (2026-09-27)
     "test_routing_parity_core",  # a sandbox ran the code-default models, not prod's routing - its measurements measured other models (2026-09-27)
     "test_step_deps_core",  # a step that needed a failed step read the failed attempt, never the recovery that finished it (2026-09-27)
     "test_step_call_ledger_core",  # a 10-18 cycle step re-ran calls that had already failed once they left its last-4 window (2026-09-27)
