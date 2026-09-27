@@ -171,6 +171,13 @@ def _normalize_target(kind: str, t: Dict[str, Any]) -> Dict[str, Any]:
     if kind == "census":
         t["template"] = str(t.get("template") or "default").strip()
         t["mode"] = "harness"
+        # The planning style forced on every goal (the harness's
+        # CENSUS_PLAN_STYLE): its own archive series, default-style-<s>-runN.
+        # "" = each goal's own style (auto) - the baseline series.
+        style = str(t.get("plan_style") or "").strip().lower()
+        if style and style not in census_plan_styles():
+            raise ValueError("census plan_style must be one of: %s" % ", ".join(census_plan_styles()))
+        t["plan_style"] = style
     elif kind == "suite":
         if not str(t.get("tag") or "").strip():
             raise ValueError("a suite schedule needs target.tag")
@@ -219,13 +226,23 @@ def _normalize_target(kind: str, t: Dict[str, Any]) -> Dict[str, Any]:
     return t
 
 
+def census_plan_styles() -> List[str]:
+    """The loop's planning styles a census may force (planner_styles.LOOP_STYLES)."""
+    try:
+        from Vera.vera.planning import planner_styles as _ps
+    except Exception:                                  # pragma: no cover
+        from vera.planning import planner_styles as _ps
+    return list(_ps.LOOP_STYLES.keys())
+
+
 def cap_denied(name: str) -> bool:
     n = (name or "").strip()
     return any(n == p.rstrip(".") or n.startswith(p) for p in CAP_DENY_PREFIXES)
 
 
 def _default_title(kind: str, t: Dict[str, Any]) -> str:
-    return {"census": f"Census · {t.get('template', 'default')}",
+    return {"census": f"Census · {t.get('template', 'default')}"
+                      + (f" · {t['plan_style']} planning" if t.get("plan_style") else ""),
             "suite": f"Suite · {t.get('tag', '')}",
             "task": f"Task · {t.get('id', '')}",
             "pipeline": f"Pipeline {t.get('action', '')} · {t.get('id') or t.get('branch', '')}",

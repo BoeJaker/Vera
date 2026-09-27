@@ -250,6 +250,7 @@ _CRITICAL_MODULES = {
     "test_plan_style_broad",
     "test_broad_ui_stream",  # a loop event not in ALWAYS_FORWARD never reaches the UI - plan_style was dropped there (2026-09-27)  # broad plans every work-stream concurrently and a successful broad plan is never overwritten (2026-09-27)  # the loop takes a planning style, logs the one it used, and every other style's planning/controller path is unchanged (2026-09-27)
     "test_chat_insights",  # optional long-horizon second look at a chat reply: CPU route, one at a time, a card not a message (2026-09-27)
+    "test_census_plan_style_filter",  # census runs compared per planning style, and startable with one from Loop Lab (2026-09-27)
     "test_loop_record_core",  # only census/task loops reached Loop Lab's run store; chat/dream/program/API loops left no record (2026-09-27)
     "test_routing_parity_core",  # a sandbox ran the code-default models, not prod's routing - its measurements measured other models (2026-09-27)
     "test_step_deps_core",  # a step that needed a failed step read the failed attempt, never the recovery that finished it (2026-09-27)

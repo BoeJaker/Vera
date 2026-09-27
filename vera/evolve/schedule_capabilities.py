@@ -286,11 +286,18 @@ def _clear_own_control_sync() -> None:
                         _ctl.make_control("resume", reason="scheduler: clearing its own control before a new run", by=_BY))
 
 
-def _launch_census_sync(template: str) -> Dict[str, Any]:
+def _launch_census_sync(template: str, plan_style: str = "") -> Dict[str, Any]:
     d = Path(_CENSUS_DIR)
     _clear_own_control_sync()
     env = dict(os.environ)
     env["CENSUS_TEMPLATES"] = template or "default"
+    # A forced planning style: run_census.py applies it to every goal and
+    # reserves the run in its own series (census.<template>-style-<s>-runN),
+    # which census_all.sh archives under that reservation. Never inherited from
+    # this process: a census without one is the baseline series.
+    env.pop("CENSUS_PLAN_STYLE", None)
+    if plan_style:
+        env["CENSUS_PLAN_STYLE"] = plan_style
     try:
         p = subprocess.Popen(["sh", "census_all.sh"], cwd=str(d), env=env,
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -319,10 +326,12 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
             await _set_owner(own)
             return {"ok": bool((res or {}).get("ok")), "resumed": True,
                     "error": (res or {}).get("error", "")}
-        res = await asyncio.to_thread(_launch_census_sync, t.get("template", "default"))
+        res = await asyncio.to_thread(_launch_census_sync, t.get("template", "default"),
+                                      str(t.get("plan_style") or ""))
         if res.get("ok"):
             await _set_owner({"schedule_id": rec["id"], "started_at": core.iso(_now()),
-                              "pid": res.get("pid"), "template": t.get("template", "default")})
+                              "pid": res.get("pid"), "template": t.get("template", "default"),
+                              "plan_style": str(t.get("plan_style") or "")})
         return res
     if kind == "suite":
         return await _call("evolve.suite.start", tag=t.get("tag", ""), profile=t.get("profile", ""),
