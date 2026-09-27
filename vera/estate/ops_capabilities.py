@@ -164,9 +164,9 @@ async def ops_snapshot(refresh: bool = False, trace_id=None) -> Dict[str, Any]:
         age = now - _cache["at"]
         if age >= CACHE_S:
             _start_gather()
-        return dict(_cache["out"], cached=True, age_s=round(age, 1), refreshing=_cache["inflight"] is not None)
+        return dict(_cache["out"], cached=True, age_s=round(age, 1), refreshing=_cache["inflight"] is not None, page_ver=_page_ver())
     out = await _start_gather()
-    return dict(out, cached=False, age_s=0.0, refreshing=False)
+    return dict(out, cached=False, age_s=0.0, refreshing=False, page_ver=_page_ver())
 
 
 @capability(
@@ -200,8 +200,25 @@ async def ops_node_events(node: str = "", limit: int = 60, trace_id=None) -> Dic
 _PANEL = Path(__file__).parent / "ops_panel.html"
 
 
+_ver_cache: Dict[str, Any] = {"mtime": None, "ver": ""}
+
+
+def _page_ver() -> str:
+    """A short hash of the page as served now - an open page compares it with its own and reloads when they differ."""
+    try:
+        m = _PANEL.stat().st_mtime
+        if _ver_cache["mtime"] != m:
+            import hashlib
+            _ver_cache["ver"] = hashlib.sha1(_PANEL.read_bytes()).hexdigest()[:12]
+            _ver_cache["mtime"] = m
+        return _ver_cache["ver"]
+    except OSError:
+        return ""
+
+
 @_orch.APP.get("/ops/panel", include_in_schema=False)
 async def _ops_panel():
-    """Live operations - the Estate's Live ops pane, also standalone."""
-    return HTMLResponse(_PANEL.read_text(encoding="utf-8") if _PANEL.exists()
-                        else "<p style='color:red'>ops_panel.html not found</p>")
+    """Live operations - the Estate's Live ops pane, also standalone. The page carries its own version, never cached."""
+    if not _PANEL.exists():
+        return HTMLResponse("<p style='color:red'>ops_panel.html not found</p>")
+    return HTMLResponse(_PANEL.read_text(encoding="utf-8").replace("__OPS_VER__", _page_ver()), headers={"Cache-Control": "no-cache"})
