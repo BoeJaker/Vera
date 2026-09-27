@@ -146,7 +146,7 @@
      }
     },
     "frame": {
-     "size": "s",
+     "size": "m",
      "span": [
       2,
       2
@@ -183,7 +183,7 @@
      }
     },
     "frame": {
-     "size": "s",
+     "size": "m",
      "span": [
       2,
       2
@@ -226,7 +226,7 @@
      }
     },
     "frame": {
-     "size": "s",
+     "size": "m",
      "span": [
       2,
       2
@@ -263,7 +263,7 @@
      }
     },
     "frame": {
-     "size": "s",
+     "size": "m",
      "span": [
       2,
       2
@@ -370,6 +370,131 @@
   },
   {
    "record": {
+    "id": "subsystems",
+    "form": "pills",
+    "source": "dash.health.summary",
+    "title": "Subsystems",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "$",
+      "entries": "status",
+      "keys": [
+       "proxmox",
+       "docker",
+       "ollama",
+       "mesh",
+       "loop_lab",
+       "sandboxes",
+       "mimic",
+       "fabric",
+       "redis"
+      ]
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/observe"
+   },
+   "at": [
+    0,
+    5
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "loop-stalls",
+    "form": "column",
+    "source": "perf.stalls",
+    "title": "Event-loop stalls · ms each",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "events",
+      "value": "stalled_ms",
+      "reverse": true
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/perf"
+   },
+   "at": [
+    4,
+    5
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "warnings",
+    "form": "log",
+    "source": "syslog.errors",
+    "title": "Warnings · latest",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "events": "warnings",
+      "t": "ts",
+      "kind": "cap_group",
+      "text": "message"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "elements/syslog"
+   },
+   "at": [
+    8,
+    5
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
     "id": "sec-inference",
     "form": "section",
     "source": "",
@@ -387,7 +512,7 @@
    },
    "at": [
     0,
-    5
+    7
    ],
    "span": [
     12,
@@ -480,7 +605,7 @@
    },
    "at": [
     0,
-    6
+    8
    ],
    "span": [
     4,
@@ -519,7 +644,7 @@
    },
    "at": [
     4,
-    6
+    8
    ],
    "span": [
     4,
@@ -558,7 +683,7 @@
    },
    "at": [
     4,
-    8
+    10
    ],
    "span": [
     4,
@@ -597,7 +722,7 @@
    },
    "at": [
     8,
-    6
+    8
    ],
    "span": [
     4,
@@ -636,7 +761,7 @@
    },
    "at": [
     8,
-    8
+    10
    ],
    "span": [
     4,
@@ -656,8 +781,8 @@
      "refresh": "30s",
      "map": {
       "values": "stats",
-      "name": "model",
-      "value": "n"
+      "count": "model",
+      "sum": "n"
      }
     },
     "frame": {
@@ -674,7 +799,7 @@
    },
    "at": [
     0,
-    10
+    12
    ],
    "span": [
     4,
@@ -764,7 +889,7 @@
    },
    "at": [
     4,
-    10
+    12
    ],
    "span": [
     4,
@@ -802,7 +927,7 @@
    },
    "at": [
     8,
-    10
+    12
    ],
    "span": [
     4,
@@ -845,7 +970,7 @@
    },
    "at": [
     0,
-    12
+    14
    ],
    "span": [
     6,
@@ -934,7 +1059,7 @@
    },
    "at": [
     6,
-    12
+    14
    ],
    "span": [
     6,
@@ -963,7 +1088,7 @@
    },
    "at": [
     0,
-    14
+    16
    ],
    "span": [
     12,
@@ -1048,7 +1173,7 @@
    },
    "at": [
     0,
-    15
+    17
    ],
    "span": [
     4,
@@ -1088,7 +1213,7 @@
    },
    "at": [
     4,
-    15
+    17
    ],
    "span": [
     4,
@@ -1132,7 +1257,7 @@
    },
    "at": [
     8,
-    15
+    17
    ],
    "span": [
     4,
@@ -1177,7 +1302,7 @@
    },
    "at": [
     0,
-    17
+    19
    ],
    "span": [
     4,
@@ -1213,7 +1338,7 @@
    },
    "at": [
     4,
-    17
+    19
    ],
    "span": [
     4,
@@ -1251,7 +1376,7 @@
    },
    "at": [
     8,
-    17
+    19
    ],
    "span": [
     4,
@@ -1259,6 +1384,302 @@
    ],
    "hidden": false,
    "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-caps",
+    "form": "section",
+    "source": "",
+    "title": "Capabilities · calls · modules",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    21
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-modules",
+    "form": "treemap",
+    "source": "obs.modules",
+    "title": "Capabilities · by module",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "parts": "modules",
+      "name": "name",
+      "value": "caps_added"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    0,
+    22
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-called",
+    "form": "ranked",
+    "source": "dream.sensor.cap_calls",
+    "title": "Most called · last 50 calls",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "sample",
+      "count": "name"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    4,
+    22
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-callers",
+    "form": "ranked",
+    "source": "activity.sessions",
+    "title": "Who calls · by actor",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "sessions",
+      "count": "actor",
+      "sum": "count"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "activity"
+   },
+   "at": [
+    8,
+    22
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-latency",
+    "form": "trace",
+    "source": "dream.sensor.cap_calls",
+    "title": "Call time · last 50 calls",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "sample",
+      "v": "elapsed_ms",
+      "t": "ts",
+      "reverse": true
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "ms"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    0,
+    24
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-count",
+    "form": "counter",
+    "source": "obs.health",
+    "title": "Capabilities",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "value": "caps"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    4,
+    24
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-ontology",
+    "form": "ring",
+    "source": "cap_ontology.stats",
+    "title": "Ontology coverage",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "value": "covered_caps",
+      "max": "total_caps"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    6,
+    24
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-stream",
+    "form": "numbers",
+    "source": "jobs.stats",
+    "title": "Job stream",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "in stream": "stream.length",
+       "unacked": "stream.pending_total",
+       "consumers": "stream.consumer_count",
+       "recovered": "stats.total_orphan_reclaimed"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "elements/jobs"
+   },
+   "at": [
+    8,
+    24
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
    "floated": false
   }
  ]

@@ -193,6 +193,7 @@
       'text-overflow:ellipsis;max-width:38%;flex-shrink:1;margin-left:6px;letter-spacing:0;text-transform:none;font-weight:400}',
       '.dash-grid.editing .vd-rec{opacity:1;color:var(--acc)}',
       '.vd-rec.sample{font-style:italic}',
+      '.vd-rec.sample,.vd-rec.reading{opacity:.9;color:var(--acc3,#d4a96a)}.vd-rec.failed{opacity:.9;color:var(--err,#c96b6b)}',
       // a record placed before widget.validate answered (the staged Add): the chip says so, then says what it found
       '.vd-rec.checking{font-style:italic;opacity:.8}',
       '.vd-rec.bad{color:var(--err,#c96b6b);opacity:.9}',
@@ -1281,8 +1282,12 @@
         if (act) head.insertBefore(chip, act); else head.appendChild(chip);
       }
       var probs = w.dataset.problems ? w.dataset.problems.split('\n').filter(Boolean) : [];
-      chip.textContent = text + (w.dataset.sample ? ' · sample' : '') + (w.dataset.checking ? ' · checking…' : '') + (probs.length ? ' · ' + probs.length + ' problem' + (probs.length === 1 ? '' : 's') : '');
-      chip.classList.toggle('sample', !!w.dataset.sample); chip.classList.toggle('checking', !!w.dataset.checking); chip.classList.toggle('bad', !!probs.length);
+      // what the body's element says of its face (data-state, carried here by widget:rendered): the head says "reading…",
+      // "sample" or "read failed" so the body never needs a tag over its content
+      var ws = w.dataset.wstate || '', sampled = !!w.dataset.sample || ws === 'sample';
+      var sw = sampled ? 'sample' : (ws === 'reading' ? 'reading…' : (ws === 'failed' ? 'read failed' : ''));   // first, so a narrow head's ellipsis never hides it
+      chip.textContent = (sw ? sw + ' · ' : '') + text + (w.dataset.checking ? ' · checking…' : '') + (probs.length ? ' · ' + probs.length + ' problem' + (probs.length === 1 ? '' : 's') : '');
+      chip.classList.toggle('sample', sampled); chip.classList.toggle('reading', ws === 'reading'); chip.classList.toggle('failed', ws === 'failed'); chip.classList.toggle('checking', !!w.dataset.checking); chip.classList.toggle('bad', !!probs.length);
       chip.title = 'record ' + (r.id || w.dataset.wid) + ' · ' + text + (w.dataset.sample ? ' · drawn from the form\'s sample: the source cannot be read' : '')
         + (w.dataset.checking ? ' · widget.validate is checking this record' : '') + (probs.length ? '\nwidget.validate: ' + probs.join(' · ') : '');
       ensureCfg(w); ensureOpen(w, r);
@@ -1619,6 +1624,14 @@
     grid.addEventListener('dragenter', onDragEnter);
     grid.addEventListener('dragover', onGridDragOver); grid.addEventListener('drop', onGridDrop);
     grid.addEventListener('dragleave', function (e) { if (e.target === grid) grid.classList.remove('vd-drop-here'); });
+    // the body's element says what its face is (data-state: reading · failed · sample · empty · stale · live); the head's
+    // record chip says it, so a tile's body is never covered by a tag (the widget review, 2026-09-27)
+    grid.addEventListener('widget:rendered', function (e) {
+      var el = e.target; if (!el || el.tagName !== 'VERA-WIDGET') return;
+      var w = el.closest('.widget'); if (!w || !w.dataset.wid) return;
+      var st = el.getAttribute('data-state') || ''; if ((w.dataset.wstate || '') === st) return;
+      if (st) w.dataset.wstate = st; else delete w.dataset.wstate; recordChip(w);
+    });
     applyLayout();
     if (withLoader) restoreDynamic();
 

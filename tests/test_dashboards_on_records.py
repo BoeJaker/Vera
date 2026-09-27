@@ -324,7 +324,7 @@ def test_migrate_is_the_same_rule_as_veradash_migrate():
 def test_migrate_takes_the_page_tiles_from_the_grids_layout_file():
     L = MIG.migrate("dream", {"order": ["cycle", "scheduler"], "hidden": ["idle"]}, _layout("dream"))
     ids = [t["record"] for t in L["widgets"]]
-    assert ids[:2] == ["cycle", "scheduler"] and len(ids) == 9 and "idle" in ids
+    assert ids[:2] == ["cycle", "scheduler"] and len(ids) == 13 and "idle" in ids
     assert L["dashboard"] == "dream"
     assert [t for t in L["widgets"] if t["record"] == "idle"][0]["hidden"] is True
     assert [t for t in L["widgets"] if t["record"] == "last-dream"][0]["span"] == [6, 2], "an untouched tile keeps the file's span"

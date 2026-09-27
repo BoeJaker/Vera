@@ -17,17 +17,24 @@
    12
   ]
  },
- "note": "Every widget of the dream grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here.",
+ "note": "Every widget of the dream grid as a record, drawn by the element from its own source (the widget review, 2026-09-27): the six figures read dream.scheduler.status, dream.trigger.list, dream.history and dream.whitelist.list; the last dream is a report of dream.last; the trigger activity counts the last thirty dreams by trigger; four tiles fill the grid the page left open (waiting on you, signal, dreams per day, journals). The active project stays the page's (its note says why); the page's updaters go on writing into the retired markup, ids intact.",
  "widgets": [
   {
    "record": {
     "id": "scheduler",
-    "form": "counter",
-    "source": "dream.status",
-    "shape": "level",
+    "form": "pills",
+    "source": "dream.scheduler.status",
+    "shape": "values",
     "title": "Scheduler",
     "read": {
-     "refresh": "30s"
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "running": "scheduler_running",
+       "enabled": "enabled"
+      },
+      "entries": "status"
+     }
     },
     "frame": {
      "size": "s",
@@ -38,7 +45,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -62,12 +69,16 @@
   {
    "record": {
     "id": "idle",
-    "form": "counter",
-    "source": "dream.status",
+    "form": "ring",
+    "source": "dream.scheduler.status",
     "shape": "level",
     "title": "Idle",
     "read": {
-     "refresh": "30s"
+     "refresh": "30s",
+     "map": {
+      "value": "idle_minutes",
+      "max": "min_idle_minutes"
+     }
     },
     "frame": {
      "size": "s",
@@ -78,14 +89,16 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "unit": "min"
     },
     "actions": [
      "dive",
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "idle minutes toward the threshold a dream waits for (min_idle_minutes)"
    },
    "at": [
     2,
@@ -102,12 +115,18 @@
   {
    "record": {
     "id": "cycle",
-    "form": "counter",
-    "source": "dream.status",
-    "shape": "level",
+    "form": "kv",
+    "source": "dream.scheduler.status",
+    "shape": "values",
     "title": "Cycle",
     "read": {
-     "refresh": "30s"
+     "refresh": "30s",
+     "map": {
+      "keys": [
+       "in_cycle",
+       "background_loops"
+      ]
+     }
     },
     "frame": {
      "size": "s",
@@ -118,7 +137,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -142,12 +161,20 @@
   {
    "record": {
     "id": "triggers-kpi",
-    "form": "counter",
-    "source": "dream.status",
+    "form": "ring",
+    "source": "dream.trigger.list",
     "shape": "level",
     "title": "Triggers",
     "read": {
-     "refresh": "30s"
+     "refresh": "5m",
+     "map": {
+      "of": "triggers",
+      "total": true,
+      "where": {
+       "enabled": "true"
+      },
+      "max": true
+     }
     },
     "frame": {
      "size": "s",
@@ -158,14 +185,15 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "the triggers that are on, of all of them"
    },
    "at": [
     6,
@@ -176,7 +204,7 @@
     1
    ],
    "hidden": false,
-   "refresh": "30s",
+   "refresh": "5m",
    "floated": false
   },
   {
@@ -187,7 +215,13 @@
     "shape": "level",
     "title": "Total Dreams",
     "read": {
-     "refresh": "1m"
+     "refresh": "5m",
+     "args": {
+      "limit": 1
+     },
+     "map": {
+      "value": "total"
+     }
     },
     "frame": {
      "size": "s",
@@ -198,7 +232,8 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "unit": "dreams"
     },
     "actions": [
      "dive",
@@ -216,18 +251,21 @@
     1
    ],
    "hidden": false,
-   "refresh": "1m",
+   "refresh": "5m",
    "floated": false
   },
   {
    "record": {
     "id": "whitelist-kpi",
     "form": "counter",
-    "source": "dream.whitelist",
+    "source": "dream.whitelist.list",
     "shape": "level",
     "title": "Whitelist",
     "read": {
-     "refresh": "1m"
+     "refresh": "5m",
+     "map": {
+      "value": "count"
+     }
     },
     "frame": {
      "size": "s",
@@ -238,7 +276,8 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "unit": "caps"
     },
     "actions": [
      "dive",
@@ -256,7 +295,7 @@
     1
    ],
    "hidden": false,
-   "refresh": "1m",
+   "refresh": "5m",
    "floated": false
   },
   {
@@ -285,7 +324,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: its body carries the project's own buttons (All projects, Dream now) and its summary rendered from markdown"
    },
    "at": [
     0,
@@ -302,12 +342,12 @@
   {
    "record": {
     "id": "last-dream",
-    "form": "cards",
+    "form": "composite",
     "source": "dream.last",
-    "shape": "items",
+    "shape": "composite",
     "title": "Last Dream",
     "read": {
-     "refresh": "1m"
+     "refresh": "5m"
     },
     "frame": {
      "size": "l",
@@ -318,14 +358,65 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "string",
+       "source": "$subject",
+       "shape": "string",
+       "title": "dream",
+       "read": {
+        "map": {
+         "text": "title"
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "shape": "values",
+       "title": "run",
+       "read": {
+        "map": {
+         "keys": [
+          "label",
+          "ended_at",
+          "elapsed_s",
+          "signal"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "pills",
+       "source": "$subject",
+       "shape": "values",
+       "title": "delivered to",
+       "read": {
+        "map": {
+         "values": "delivered",
+         "entries": "status"
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report"
    },
    "at": [
     4,
@@ -336,18 +427,25 @@
     2
    ],
    "hidden": false,
-   "refresh": "1m",
+   "refresh": "5m",
    "floated": false
   },
   {
    "record": {
     "id": "trigger-activity",
-    "form": "bars",
+    "form": "ranked",
     "source": "dream.history",
     "shape": "values",
-    "title": "Trigger Activity",
+    "title": "Trigger Activity · last 30",
     "read": {
-     "refresh": "1m"
+     "refresh": "5m",
+     "args": {
+      "limit": 30
+     },
+     "map": {
+      "values": "history",
+      "count": "label"
+     }
     },
     "frame": {
      "size": "l",
@@ -358,7 +456,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -376,7 +474,194 @@
     2
    ],
    "hidden": false,
-   "refresh": "1m",
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "dream-hitl",
+    "form": "counter",
+    "source": "dream.hitl.pending",
+    "shape": "level",
+    "title": "Waiting on you",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "value": "count"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      2,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "unit": "questions"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    10,
+    1
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "dream-signal",
+    "form": "trace",
+    "source": "dream.history",
+    "shape": "series",
+    "title": "Signal · last 30 dreams",
+    "read": {
+     "refresh": "5m",
+     "args": {
+      "limit": 30
+     },
+     "map": {
+      "series": "history",
+      "v": "signal",
+      "t": "started_at",
+      "reverse": true
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    3
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "dream-per-day",
+    "form": "column",
+    "source": "dream.history",
+    "shape": "values",
+    "title": "Dreams per day · last 30",
+    "read": {
+     "refresh": "5m",
+     "args": {
+      "limit": 30
+     },
+     "map": {
+      "values": "history",
+      "count": "started_at",
+      "span": "day"
+     }
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      8,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "palette": "accent"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    5
+   ],
+   "span": [
+    8,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "dream-journals",
+    "form": "ranked",
+    "source": "dream.journal.list",
+    "shape": "values",
+    "title": "Journals · entries",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "values": "journals",
+      "name": "journal_id",
+      "value": "entries"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    8,
+    5
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
    "floated": false
   }
  ]

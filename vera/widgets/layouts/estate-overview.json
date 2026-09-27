@@ -1,0 +1,837 @@
+{
+ "v": 2,
+ "dashboard": "estate-overview",
+ "layout": "default",
+ "key": "estate-overview",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "The Estate's Overview as records (the widget review, 2026-09-27). The page had no layout file, so every tile was hand-drawn; now Vera, Resources and Background work are records the element draws, and a new row draws the guests and their backups by state and the hosts' temperatures. The tiles whose names open the entity drawer stay the page's - a record cannot carry a chip that opens the drawer yet - and each says why.",
+ "widgets": [
+  {
+   "record": {
+    "id": "health",
+    "title": "Health",
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "composite",
+    "source": "estate.health",
+    "shape": "composite",
+    "read": {
+     "refresh": "60s"
+    },
+    "draw": {
+     "body": "page"
+    },
+    "note": "stays the page's: its findings open the entity drawer (every name is a chip) and its notes fold"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "vera",
+    "title": "Vera",
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      4
+     ],
+     "max_body": null
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "composite",
+    "source": "obs.health",
+    "shape": "composite",
+    "read": {
+     "refresh": "30s"
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "numbers",
+       "source": "$subject",
+       "shape": "values",
+       "title": "counts",
+       "read": {
+        "map": {
+         "pick": {
+          "caps": "caps",
+          "workers": "workers",
+          "mcp": "mcp_servers"
+         }
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "pills",
+       "source": "$subject",
+       "shape": "values",
+       "title": "backends",
+       "read": {
+        "map": {
+         "pick": {
+          "redis": "redis",
+          "postgres": "postgres",
+          "chroma": "chroma",
+          "neo4j": "neo4j"
+         },
+         "entries": "status"
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "sysmon.status",
+       "shape": "values",
+       "title": "host",
+       "read": {
+        "map": {
+         "pick": {
+          "cpu %": "resources.cpu",
+          "ram %": "resources.mem",
+          "vera MB": "resources.proc_mb"
+         }
+        }
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "shape": "values",
+       "title": "mode",
+       "read": {
+        "map": {
+         "keys": [
+          "mode"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report"
+   },
+   "at": [
+    6,
+    0
+   ],
+   "span": [
+    3,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "inference",
+    "title": "Inference",
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      4
+     ],
+     "max_body": null
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "rows",
+    "source": "ollama.gate.status",
+    "shape": "items",
+    "read": {
+     "refresh": "60s"
+    },
+    "draw": {
+     "body": "page"
+    },
+    "note": "stays the page's: every node resolves to its machine (veraEstate.find) and opens the drawer; the gate's owners are merged in"
+   },
+   "at": [
+    9,
+    0
+   ],
+   "span": [
+    3,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "resources",
+    "title": "Resources · last ~hour",
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      5
+     ],
+     "max_body": null
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "composite",
+    "source": "sysmon.history",
+    "shape": "composite",
+    "read": {
+     "refresh": "60s",
+     "args": {
+      "limit": 60
+     }
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "small-multiples",
+       "source": "$subject",
+       "shape": "series",
+       "title": "Vera host · cpu · ram %",
+       "read": {
+        "map": {
+         "series": "samples",
+         "split": [
+          "cpu",
+          "mem"
+         ],
+         "t": "t"
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "trace",
+       "source": "$subject",
+       "shape": "series",
+       "title": "Cluster ram %",
+       "read": {
+        "map": {
+         "series": "samples",
+         "v": "pmx_mem_pct"
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "small-multiples",
+       "source": "$subject",
+       "shape": "series",
+       "title": "Guests · containers · nodes",
+       "read": {
+        "map": {
+         "series": "samples",
+         "split": [
+          "pmx_running",
+          "dkr_running",
+          "oll_online"
+         ],
+         "t": "t"
+        }
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "trace",
+       "source": "$subject",
+       "shape": "series",
+       "title": "Hottest host °C",
+       "read": {
+        "map": {
+         "series": "samples",
+         "v": "pmx_temp_max"
+        }
+       }
+      }
+     }
+    ]
+   },
+   "at": [
+    0,
+    4
+   ],
+   "span": [
+    6,
+    5
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "machines",
+    "title": "Machines",
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      5
+     ],
+     "max_body": null
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "table",
+    "source": "estate.registration",
+    "shape": "items",
+    "read": {
+     "refresh": "60s"
+    },
+    "draw": {
+     "body": "page"
+    },
+    "note": "stays the page's: the registration planes and the stale machines open the drawer"
+   },
+   "at": [
+    6,
+    4
+   ],
+   "span": [
+    3,
+    5
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "backups",
+    "title": "Backups",
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      5
+     ],
+     "max_body": null
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "composite",
+    "source": "backup.status",
+    "shape": "composite",
+    "read": {
+     "refresh": "60s"
+    },
+    "draw": {
+     "body": "page"
+    },
+    "note": "stays the page's: every job opens the drawer (backup-job:<id>)"
+   },
+   "at": [
+    9,
+    4
+   ],
+   "span": [
+    3,
+    5
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "storage",
+    "title": "Storage",
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ],
+     "max_body": null
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "rows",
+    "source": "backup.status",
+    "shape": "items",
+    "read": {
+     "refresh": "60s"
+    },
+    "draw": {
+     "body": "page"
+    },
+    "note": "stays the page's: the pools come from pxstore.inventory (a POST that walks zpool over SSH every five minutes) merged with the backup storages; every pool opens the drawer"
+   },
+   "at": [
+    0,
+    9
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "network",
+    "title": "Mesh",
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ],
+     "max_body": null
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "rows",
+    "source": "netsec.mesh.members",
+    "shape": "items",
+    "read": {
+     "refresh": "60s"
+    },
+    "draw": {
+     "body": "page"
+    },
+    "note": "stays the page's: every member opens the drawer (mesh:<host>)"
+   },
+   "at": [
+    4,
+    9
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "trust",
+    "title": "Trust",
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ],
+     "max_body": null
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "composite",
+    "source": "certs.list",
+    "shape": "composite",
+    "read": {
+     "refresh": "60s"
+    },
+    "draw": {
+     "body": "page"
+    },
+    "note": "stays the page's: three readers merged (certs, identity, secrets) and every certificate opens the drawer"
+   },
+   "at": [
+    8,
+    9
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "activity",
+    "title": "Activity",
+    "frame": {
+     "size": "xl",
+     "span": [
+      8,
+      6
+     ],
+     "max_body": null
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "timeline",
+    "source": "activity.timeline",
+    "shape": "events",
+    "read": {
+     "refresh": "60s"
+    },
+    "draw": {
+     "body": "page"
+    },
+    "note": "stays the page's: it is the estate's own <vera-activity-timeline> element, with its own scope picker"
+   },
+   "at": [
+    0,
+    13
+   ],
+   "span": [
+    8,
+    6
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "background",
+    "title": "Background work",
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      6
+     ],
+     "max_body": null
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "composite",
+    "source": "background.status",
+    "shape": "composite",
+    "read": {
+     "refresh": "30s"
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "numbers",
+       "source": "$subject",
+       "shape": "values",
+       "title": "now",
+       "read": {
+        "map": {
+         "pick": {
+          "queued": "queue.depth",
+          "quiet for s": "quiet_for_s"
+         }
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "obs.health",
+       "shape": "values",
+       "title": "census",
+       "read": {
+        "map": {
+         "pick": {
+          "state": "census.state",
+          "control": "census.control",
+          "goals done": "census.done"
+         }
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "shape": "items",
+       "title": "jobs",
+       "read": {
+        "map": {
+         "rows": "jobs",
+         "name": "name",
+         "value": "runs",
+         "status": "last_ok"
+        }
+       },
+       "draw": {
+        "limit": 6
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "shape": "items",
+       "title": "next",
+       "read": {
+        "map": {
+         "rows": "timeline",
+         "name": "title",
+         "value": "starts_in_s"
+        }
+       },
+       "draw": {
+        "unit": "s"
+       }
+      }
+     }
+    ],
+    "layout": "report"
+   },
+   "at": [
+    8,
+    13
+   ],
+   "span": [
+    4,
+    6
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "guests-state",
+    "form": "donut",
+    "source": "backup.status",
+    "shape": "parts",
+    "title": "Guests · running or stopped",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "parts": "guests",
+      "count": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "palette": "status"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "open": "estate/proxmox"
+   },
+   "at": [
+    0,
+    19
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "backup-state",
+    "form": "donut",
+    "source": "backup.status",
+    "shape": "parts",
+    "title": "Guests · backup state",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "parts": "guests",
+      "count": "state"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "palette": "status"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "open": "estate/storage"
+   },
+   "at": [
+    4,
+    19
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "host-temps",
+    "form": "temps",
+    "source": "obs.node_temps",
+    "shape": "values",
+    "title": "Temperatures · hottest first",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "hosts",
+      "name": "label",
+      "value": "max_c"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "unit": "°",
+     "throttle": 70
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "open": "estate/ops"
+   },
+   "at": [
+    8,
+    19
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  }
+ ]
+}

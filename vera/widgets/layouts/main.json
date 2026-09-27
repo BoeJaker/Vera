@@ -17,7 +17,7 @@
    12
   ]
  },
- "note": "The Cluster Overview as planned (Notes/44): seven SECTION bands - Now, Inference, Estate, Memory, Agents, Network, Studio - each tile a record over a real source, one form per kind of data (numbers for counts, thermo for temperatures, small multiples for a fleet of series, pulse for a rate, ranked for a distribution, pareto for a triage, treemap for a share, agenda for a calendar, graph for a graph, stack for programmes, the iso sandboxes), reports for the small composites; every band fills the twelve columns. read.map: container <- path; dict of things <- rows named by key; other keys <- a field of each row; pick {label: path}; keys [...]. The page tiles this layout replaced are named hidden at the end.",
+ "note": "The Cluster Overview as planned (Notes/44): nine SECTION bands - Now, Inference, Estate, Memory, Agents, Loop Lab, Capabilities, Network, Studio - each tile a record over a real source, one form per kind of data (numbers for counts, thermo for temperatures, small multiples for a fleet of series, pulse for a rate, ranked for a distribution, pareto for a triage, treemap for a share, agenda for a calendar, graph for a graph, stack for programmes, the iso sandboxes), reports for the small composites; every band fills the twelve columns. read.map: container <- path; dict of things <- rows named by key; other keys <- a field of each row; pick {label: path}; keys [...]. The page tiles this layout replaced are named hidden at the end. The widget review (2026-09-27) added the Loop Lab and Capabilities bands and a third Now row (subsystems, event-loop stalls, warnings), and the map words that make them: count/sum (a list counted by a field), split (one series per field), reverse, entries (a dict of plain values as rows), fields, of/total/where (a count or a sum over a list as one figure).",
  "widgets": [
   {
    "record": {
@@ -146,7 +146,7 @@
      }
     },
     "frame": {
-     "size": "s",
+     "size": "m",
      "span": [
       2,
       2
@@ -183,7 +183,7 @@
      }
     },
     "frame": {
-     "size": "s",
+     "size": "m",
      "span": [
       2,
       2
@@ -226,7 +226,7 @@
      }
     },
     "frame": {
-     "size": "s",
+     "size": "m",
      "span": [
       2,
       2
@@ -263,7 +263,7 @@
      }
     },
     "frame": {
-     "size": "s",
+     "size": "m",
      "span": [
       2,
       2
@@ -370,6 +370,131 @@
   },
   {
    "record": {
+    "id": "subsystems",
+    "form": "pills",
+    "source": "dash.health.summary",
+    "title": "Subsystems",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "$",
+      "entries": "status",
+      "keys": [
+       "proxmox",
+       "docker",
+       "ollama",
+       "mesh",
+       "loop_lab",
+       "sandboxes",
+       "mimic",
+       "fabric",
+       "redis"
+      ]
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/observe"
+   },
+   "at": [
+    0,
+    5
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "loop-stalls",
+    "form": "column",
+    "source": "perf.stalls",
+    "title": "Event-loop stalls · ms each",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "events",
+      "value": "stalled_ms",
+      "reverse": true
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/perf"
+   },
+   "at": [
+    4,
+    5
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "warnings",
+    "form": "log",
+    "source": "syslog.errors",
+    "title": "Warnings · latest",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "events": "warnings",
+      "t": "ts",
+      "kind": "cap_group",
+      "text": "message"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "elements/syslog"
+   },
+   "at": [
+    8,
+    5
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
     "id": "sec-inference",
     "form": "section",
     "source": "",
@@ -387,7 +512,7 @@
    },
    "at": [
     0,
-    5
+    7
    ],
    "span": [
     12,
@@ -480,7 +605,7 @@
    },
    "at": [
     0,
-    6
+    8
    ],
    "span": [
     4,
@@ -519,7 +644,7 @@
    },
    "at": [
     4,
-    6
+    8
    ],
    "span": [
     4,
@@ -558,7 +683,7 @@
    },
    "at": [
     4,
-    8
+    10
    ],
    "span": [
     4,
@@ -597,7 +722,7 @@
    },
    "at": [
     8,
-    6
+    8
    ],
    "span": [
     4,
@@ -636,7 +761,7 @@
    },
    "at": [
     8,
-    8
+    10
    ],
    "span": [
     4,
@@ -656,8 +781,8 @@
      "refresh": "30s",
      "map": {
       "values": "stats",
-      "name": "model",
-      "value": "n"
+      "count": "model",
+      "sum": "n"
      }
     },
     "frame": {
@@ -674,7 +799,7 @@
    },
    "at": [
     0,
-    10
+    12
    ],
    "span": [
     4,
@@ -764,7 +889,7 @@
    },
    "at": [
     4,
-    10
+    12
    ],
    "span": [
     4,
@@ -802,7 +927,7 @@
    },
    "at": [
     8,
-    10
+    12
    ],
    "span": [
     4,
@@ -845,7 +970,7 @@
    },
    "at": [
     0,
-    12
+    14
    ],
    "span": [
     6,
@@ -934,7 +1059,7 @@
    },
    "at": [
     6,
-    12
+    14
    ],
    "span": [
     6,
@@ -963,7 +1088,7 @@
    },
    "at": [
     0,
-    14
+    16
    ],
    "span": [
     12,
@@ -1074,7 +1199,7 @@
    },
    "at": [
     0,
-    15
+    17
    ],
    "span": [
     4,
@@ -1178,7 +1303,7 @@
    },
    "at": [
     4,
-    15
+    17
    ],
    "span": [
     4,
@@ -1305,7 +1430,7 @@
    },
    "at": [
     8,
-    15
+    17
    ],
    "span": [
     4,
@@ -1345,7 +1470,7 @@
    },
    "at": [
     0,
-    19
+    21
    ],
    "span": [
     8,
@@ -1401,7 +1526,8 @@
        "title": "schedules",
        "read": {
         "map": {
-         "name": "what",
+         "name": "storage",
+         "value": "schedule",
          "status": "enabled"
         }
        },
@@ -1423,7 +1549,8 @@
         }
        },
        "draw": {
-        "limit": 3
+        "limit": 3,
+        "bytes": true
        }
       }
      },
@@ -1469,7 +1596,7 @@
    },
    "at": [
     8,
-    19
+    21
    ],
    "span": [
     4,
@@ -1557,7 +1684,7 @@
    },
    "at": [
     0,
-    23
+    25
    ],
    "span": [
     4,
@@ -1634,7 +1761,7 @@
    },
    "at": [
     4,
-    23
+    25
    ],
    "span": [
     4,
@@ -1679,7 +1806,7 @@
    },
    "at": [
     8,
-    23
+    25
    ],
    "span": [
     4,
@@ -1719,7 +1846,7 @@
    },
    "at": [
     0,
-    25
+    27
    ],
    "span": [
     4,
@@ -1757,7 +1884,7 @@
    },
    "at": [
     4,
-    25
+    27
    ],
    "span": [
     4,
@@ -1796,7 +1923,7 @@
    },
    "at": [
     8,
-    25
+    27
    ],
    "span": [
     4,
@@ -1825,7 +1952,7 @@
    },
    "at": [
     0,
-    29
+    31
    ],
    "span": [
     12,
@@ -1910,7 +2037,7 @@
    },
    "at": [
     0,
-    30
+    32
    ],
    "span": [
     4,
@@ -1950,7 +2077,7 @@
    },
    "at": [
     4,
-    30
+    32
    ],
    "span": [
     4,
@@ -1994,7 +2121,7 @@
    },
    "at": [
     8,
-    30
+    32
    ],
    "span": [
     4,
@@ -2039,7 +2166,7 @@
    },
    "at": [
     0,
-    32
+    34
    ],
    "span": [
     4,
@@ -2075,7 +2202,7 @@
    },
    "at": [
     4,
-    32
+    34
    ],
    "span": [
     4,
@@ -2113,7 +2240,7 @@
    },
    "at": [
     8,
-    32
+    34
    ],
    "span": [
     4,
@@ -2142,7 +2269,7 @@
    },
    "at": [
     0,
-    34
+    36
    ],
    "span": [
     12,
@@ -2180,7 +2307,7 @@
    },
    "at": [
     0,
-    35
+    37
    ],
    "span": [
     4,
@@ -2237,6 +2364,7 @@
         "map": {
          "rows": "sandboxes",
          "name": "name",
+         "status": "running",
          "value": "port"
         }
        },
@@ -2254,7 +2382,7 @@
        "read": {
         "map": {
          "rows": "pipelines",
-         "name": "id",
+         "name": "branch",
          "status": "decision"
         }
        },
@@ -2269,7 +2397,7 @@
    },
    "at": [
     4,
-    35
+    37
    ],
    "span": [
     4,
@@ -2357,7 +2485,7 @@
    },
    "at": [
     8,
-    35
+    37
    ],
    "span": [
     4,
@@ -2395,7 +2523,7 @@
    },
    "at": [
     0,
-    37
+    39
    ],
    "span": [
     4,
@@ -2483,7 +2611,7 @@
    },
    "at": [
     4,
-    37
+    39
    ],
    "span": [
     4,
@@ -2586,7 +2714,7 @@
    },
    "at": [
     8,
-    37
+    39
    ],
    "span": [
     4,
@@ -2610,7 +2738,7 @@
      }
     },
     "frame": {
-     "size": "l",
+     "size": "xl",
      "span": [
       6,
       3
@@ -2635,7 +2763,7 @@
    },
    "at": [
     0,
-    40
+    42
    ],
    "span": [
     6,
@@ -2659,7 +2787,7 @@
      }
     },
     "frame": {
-     "size": "l",
+     "size": "xl",
      "span": [
       6,
       3
@@ -2685,7 +2813,7 @@
    },
    "at": [
     6,
-    40
+    42
    ],
    "span": [
     6,
@@ -2693,6 +2821,674 @@
    ],
    "hidden": false,
    "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-programmes",
+    "form": "ranked",
+    "source": "loops.program.list",
+    "title": "Programmes · loops each",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "programs",
+      "name": "name",
+      "value": "loops.length"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "agents"
+   },
+   "at": [
+    0,
+    45
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-runs",
+    "form": "column",
+    "source": "evolve.runs",
+    "title": "Loop runs per day · last 50",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "values": "runs",
+      "count": "ts",
+      "span": "day"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "accent"
+    },
+    "open": "evolve"
+   },
+   "at": [
+    4,
+    45
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-goals",
+    "form": "pills",
+    "source": "goals.list",
+    "title": "Goals",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "goals",
+      "name": "name",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "agents"
+   },
+   "at": [
+    8,
+    45
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-looplab",
+    "form": "section",
+    "source": "",
+    "title": "Loop Lab · pipelines · tests",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    47
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "lab-runs",
+    "form": "area",
+    "source": "evolve.activity",
+    "title": "Loop Lab · test runs per hour",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "series": "buckets",
+      "split": [
+       "pass",
+       "fail"
+      ],
+      "t": "hour"
+     }
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      8,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "status"
+    },
+    "open": "evolve"
+   },
+   "at": [
+    0,
+    48
+   ],
+   "span": [
+    8,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "lab-decisions",
+    "form": "donut",
+    "source": "evolve.pipeline.list",
+    "title": "Pipelines · decisions",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "parts": "pipelines",
+      "count": "decision"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "status"
+    },
+    "open": "evolve"
+   },
+   "at": [
+    8,
+    48
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "lab-suite",
+    "form": "composite",
+    "source": "evolve.unittest.history",
+    "title": "Unit suite",
+    "read": {
+     "refresh": "5m"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "numbers",
+       "source": "$subject",
+       "title": "now",
+       "read": {
+        "map": {
+         "pick": {
+          "passing": "trend.passed",
+          "failing": "trend.failed"
+         }
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "trace",
+       "source": "$subject",
+       "title": "passing · per run",
+       "read": {
+        "map": {
+         "series": "runs",
+         "v": "passed",
+         "t": "ts",
+         "reverse": true
+        }
+       }
+      }
+     }
+    ],
+    "open": "evolve"
+   },
+   "at": [
+    0,
+    50
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "lab-lanes",
+    "form": "rows",
+    "source": "evolve.unittest.history",
+    "title": "Unit lanes · by branch",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "rows": "lanes",
+      "name": "branch",
+      "status": "ok",
+      "value": "passed"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "columns": [
+      "name",
+      "status",
+      "value"
+     ]
+    },
+    "open": "evolve"
+   },
+   "at": [
+    4,
+    50
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "lab-actions",
+    "form": "ranked",
+    "source": "evolve.audit.list",
+    "title": "Loop Lab · actions",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "audit",
+      "count": "action"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "evolve"
+   },
+   "at": [
+    8,
+    50
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-caps",
+    "form": "section",
+    "source": "",
+    "title": "Capabilities · calls · modules",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    52
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-modules",
+    "form": "treemap",
+    "source": "obs.modules",
+    "title": "Capabilities · by module",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "parts": "modules",
+      "name": "name",
+      "value": "caps_added"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    0,
+    53
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-called",
+    "form": "ranked",
+    "source": "dream.sensor.cap_calls",
+    "title": "Most called · last 50 calls",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "sample",
+      "count": "name"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    4,
+    53
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-callers",
+    "form": "ranked",
+    "source": "activity.sessions",
+    "title": "Who calls · by actor",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "sessions",
+      "count": "actor",
+      "sum": "count"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "activity"
+   },
+   "at": [
+    8,
+    53
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-latency",
+    "form": "trace",
+    "source": "dream.sensor.cap_calls",
+    "title": "Call time · last 50 calls",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "sample",
+      "v": "elapsed_ms",
+      "t": "ts",
+      "reverse": true
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "ms"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    0,
+    55
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-count",
+    "form": "counter",
+    "source": "obs.health",
+    "title": "Capabilities",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "value": "caps"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    4,
+    55
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-ontology",
+    "form": "ring",
+    "source": "cap_ontology.stats",
+    "title": "Ontology coverage",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "value": "covered_caps",
+      "max": "total_caps"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    6,
+    55
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-stream",
+    "form": "numbers",
+    "source": "jobs.stats",
+    "title": "Job stream",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "in stream": "stream.length",
+       "unacked": "stream.pending_total",
+       "consumers": "stream.consumer_count",
+       "recovered": "stats.total_orphan_reclaimed"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "elements/jobs"
+   },
+   "at": [
+    8,
+    55
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
    "floated": false
   },
   {
@@ -2714,7 +3510,7 @@
    },
    "at": [
     0,
-    43
+    57
    ],
    "span": [
     12,
@@ -2751,7 +3547,7 @@
    },
    "at": [
     0,
-    44
+    58
    ],
    "span": [
     4,
@@ -2795,7 +3591,7 @@
    },
    "at": [
     4,
-    44
+    58
    ],
    "span": [
     8,
@@ -2893,7 +3689,7 @@
    },
    "at": [
     0,
-    48
+    62
    ],
    "span": [
     4,
@@ -2998,7 +3794,7 @@
    },
    "at": [
     4,
-    48
+    62
    ],
    "span": [
     4,
@@ -3116,7 +3912,7 @@
    },
    "at": [
     8,
-    48
+    62
    ],
    "span": [
     4,
@@ -3145,7 +3941,7 @@
    },
    "at": [
     0,
-    51
+    65
    ],
    "span": [
     12,
@@ -3181,7 +3977,7 @@
    },
    "at": [
     0,
-    52
+    66
    ],
    "span": [
     4,
@@ -3219,7 +4015,7 @@
    },
    "at": [
     4,
-    52
+    66
    ],
    "span": [
     4,
@@ -3257,7 +4053,7 @@
    },
    "at": [
     8,
-    52
+    66
    ],
    "span": [
     4,
@@ -3296,7 +4092,7 @@
    },
    "at": [
     0,
-    54
+    68
    ],
    "span": [
     12,

@@ -45,7 +45,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
    },
    "at": [
     0,
@@ -85,7 +86,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
    },
    "at": [
     2,
@@ -125,7 +127,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
    },
    "at": [
     4,
@@ -165,7 +168,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
    },
    "at": [
     6,
@@ -205,7 +209,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
    },
    "at": [
     8,
@@ -245,7 +250,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
    },
    "at": [
     10,
@@ -285,7 +291,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
    },
    "at": [
     0,
@@ -325,7 +332,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
    },
    "at": [
     0,
