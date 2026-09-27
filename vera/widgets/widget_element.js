@@ -713,7 +713,7 @@
     // a slot's share of the frame follows what its child needs: a figure (counter, ring, kv) takes less than a list or a
     // chart; each row of slots is as tall as its neediest child, the measured body split by those weights; the last row
     // fills its width (three children are two slots and a wide one, not a slot and a hole) - no half-empty row, no scrolling slot
-    const need = (c) => { const f = canon((c && c.record && typeof c.record === 'object' && c.record.form) || ''); return /^(counter|string|hero|level|ring|dial|gauge|meter|pills|numbers|kv|dots)$/.test(f) ? 0.62 : /^(rows|list|table|log|feed|cards|files|checklist|temps|thermo|bullet|ranked|hosts)$/.test(f) ? 1.15 : 1; };
+    const need = (c) => { const r0 = (c && c.record && typeof c.record === 'object') ? c.record : {}, f = canon(r0.form || ''); if (f === 'kv' && r0.read && r0.read.map && Array.isArray(r0.read.map.keys) && r0.read.map.keys.length >= 4) return 1.15; /* four key/values read as a list: a list's share */ return /^(counter|string|hero|level|ring|dial|gauge|meter|pills|numbers|kv|dots)$/.test(f) ? 0.62 : /^(rows|list|table|log|feed|cards|files|checklist|temps|thermo|bullet|ranked|hosts)$/.test(f) ? 1.15 : 1; };
     // the least a slot can be and still show its child whole: a figure, three rows, a chart's floor - a row of slots
     // gets at least its tallest floor, the rest of the body is shared by weight (a list over a figure)
     const floorOf = (c) => { const f = canon((c && c.record && typeof c.record === 'object' && c.record.form) || ''); return /^(counter|hero|string|pills|numbers)$/.test(f) ? 62 : /^(kv)$/.test(f) ? 78 : /^(rows|list|table|log|feed|temps|thermo|files|checklist|ranked|bullet)$/.test(f) ? 88 : /^(ring|dial|gauge)$/.test(f) ? 96 : 72; };
