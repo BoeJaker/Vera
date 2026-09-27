@@ -1858,6 +1858,12 @@
     'vera-dashboard .widget{background:var(--bg2,#1a1d23);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:var(--radius-lg,10px);box-shadow:var(--shadow,0 6px 20px -12px rgba(0,0,0,.55));display:flex;flex-direction:column;min-width:0;overflow:hidden;position:relative;transition:border-color .15s}',
     'vera-dashboard .widget:hover{border-color:var(--border2,rgba(255,255,255,.16))}vera-dashboard .widget.hidden{display:none}',
     'vera-dashboard .widget.drag-over{border-color:var(--acc,#6ea8d8);box-shadow:0 0 0 1px var(--acc,#6ea8d8)}',
+    /* a section tile is the band's heading, not an empty card (the harness's own rules, scoped to the element) */
+    'vera-dashboard .widget.w-section{background:transparent!important;border:none!important;box-shadow:none!important;border-radius:0;justify-content:flex-end;overflow:visible}',
+    'vera-dashboard .widget.w-section .w-head{padding:0 2px 4px;border-bottom:1px solid var(--bd2,var(--border2,rgba(255,255,255,.18)))}',
+    'vera-dashboard .widget.w-section .w-title{font-size:12px;letter-spacing:.12em;color:var(--t2,var(--dim2,#8a92a0))}',
+    'vera-dashboard .widget.w-section .w-title::after{content:attr(data-count);margin-left:10px;font-size:10px;letter-spacing:0;text-transform:none;color:var(--t3,var(--dim,#6b7280))}',
+    'vera-dashboard .widget.w-section .vd-rec,vera-dashboard .widget.w-section .w-resize,vera-dashboard .widget.w-section .w-body{display:none!important}',
     'vera-dashboard .w-head{display:flex;align-items:center;gap:6px;padding:7px 11px 6px;border-bottom:1px solid var(--border,rgba(255,255,255,.07));flex-shrink:0}',
     'vera-dashboard .w-title{font-size:10.5px;color:var(--dim2,var(--t2,#8a92a0));text-transform:uppercase;letter-spacing:.09em;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     /* a tile's title has its head: the record chip (form · source) shows on hover, while configuring, or when it carries
