@@ -76,6 +76,36 @@ def test_a_summariser_that_raises_does_not_take_the_step_down():
     assert "call 1: exec.bash.run -> ok" in out
 
 
+def test_the_executor_puts_the_block_into_the_prompt_it_sends():
+    """Wiring, parsed from source (the repo's call-site pattern - no app import).
+    The executor must call the formatter on its step `history` with the masking
+    summariser, fold the result into `obs`, and do both BEFORE `user_msg` is built
+    from `obs`. A formatter nobody splices in is the inert-input trap again."""
+    import ast
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "vera" / "dag" / "dag_workshop_capabilities.py")
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+    ex = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.AsyncFunctionDef) and n.name == "_v5_run_step_inner")
+    calls = [n for n in ast.walk(ex) if isinstance(n, ast.Call)
+             and getattr(n.func, "attr", None) == "earlier_calls_block"]
+    assert len(calls) == 1, "the executor must build the earlier-calls block once"
+    call = calls[0]
+    assert isinstance(call.args[0], ast.Name) and call.args[0].id == "history"
+    kw = {k.arg: k.value for k in call.keywords}
+    assert getattr(kw.get("summarise"), "id", None) == "_call_summary", (
+        "arguments must go through call_summary, which masks secrets")
+    splice = [n for n in ast.walk(ex) if isinstance(n, ast.Assign)
+              and any(getattr(t, "id", None) == "obs" for t in n.targets)
+              and any(isinstance(x, ast.Name) and x.id == "_earlier" for x in ast.walk(n.value))]
+    assert len(splice) == 1, "the block must be folded into `obs`"
+    user_msg = [n for n in ast.walk(ex) if isinstance(n, ast.Assign)
+                and any(getattr(t, "id", None) == "user_msg" for t in n.targets)
+                and any(isinstance(x, ast.Name) and x.id == "obs" for x in ast.walk(n.value))]
+    assert user_msg, "user_msg must be built from obs"
+    assert call.lineno < splice[0].lineno < min(u.lineno for u in user_msg)
+
+
 def test_junk_entries_are_ignored():
     hist = [None, "x", _h(1)] + [_h(i) for i in range(2, 6)]
     assert "call 1:" in L.earlier_calls_block(hist, summarise=_summ)
