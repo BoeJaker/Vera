@@ -135,7 +135,8 @@ def _machines(src: Mapping[str, Any], own_ips: Iterable[str], nodes: Dict[str, D
                       detail=(str(r.get("type") or "guest") + (" · " + " · ".join(hw[:2]) if hw else "")),
                       ref="guest:" + str(r["vmid"]) if r.get("vmid") is not None else "", vmid=r.get("vmid"),
                       req={"name": "sysmon.status", "arguments": {}},
-                      cluster_id=r.get("cluster_id") or "", pve_node=r.get("node") or "", type=r.get("type") or "")
+                      cluster_id=r.get("cluster_id") or "", pve_node=r.get("node") or "", type=r.get("type") or "",
+                      ips=ips[:4], ssh_host_id=str(r.get("ssh_host_id") or ""))
             nodes[nid] = n
             if r.get("node"):
                 links.append({"a": nid, "b": "pve:" + str(r["node"]), "kind": "runs"})
@@ -144,14 +145,16 @@ def _machines(src: Mapping[str, Any], own_ips: Iterable[str], nodes: Dict[str, D
             hw = [str(h) for h in (r.get("hardware") or [])]
             n = _node(nid, label, "host", COMPUTE, kind="host", detail=" · ".join(hw[:3]) or "proxmox node",
                       ref=("host:" + str(r["ssh_host_id"])) if r.get("ssh_host_id") else "",
-                      req={"name": "proxmox.status", "arguments": {}})
+                      req={"name": "proxmox.status", "arguments": {}},
+                      ips=ips[:4], ssh_host_id=str(r.get("ssh_host_id") or ""))
             nodes[nid] = n
             out["pve_nodes"][str(r.get("node") or "")] = nid
         elif kind == "docker-host":
             nid = "dockerhost:" + str(r.get("docker_host_id") or label)
             n = _node(nid, label, "host", DEV, kind="docker-host", detail="docker host",
                       ref=("host:" + str(r["id"])) if r.get("id") else "",
-                      req={"name": "docker.ping", "arguments": {"host_id": r.get("docker_host_id") or ""}})
+                      req={"name": "docker.ping", "arguments": {"host_id": r.get("docker_host_id") or ""}},
+                      ips=ips[:4], dhost=str(r.get("docker_host_id") or ""), ssh_host_id=str(r.get("ssh_host_id") or ""))
             nodes[nid] = n
         else:
             if str(r.get("addr") or "") in ("localhost", "127.0.0.1"):
@@ -160,7 +163,8 @@ def _machines(src: Mapping[str, Any], own_ips: Iterable[str], nodes: Dict[str, D
             nid = "host:" + _norm(label)
             n = _node(nid, label, "host", _domain_of(label, COMPUTE), kind="host", detail="ssh host",
                       ref=("host:" + str(r["ssh_host_id"])) if r.get("ssh_host_id") else "",
-                      req={"name": "nodes.list", "arguments": {}})
+                      req={"name": "nodes.list", "arguments": {}},
+                      ips=ips[:4], ssh_host_id=str(r.get("ssh_host_id") or ""))
             nodes[nid] = n
         for ip in ips:
             out["by_ip"][ip] = nid
@@ -175,7 +179,8 @@ def _machines(src: Mapping[str, Any], own_ips: Iterable[str], nodes: Dict[str, D
         nid = "host:vera"
         nodes[nid] = _node(nid, "Vera host", "host", COMPUTE, kind="host", detail="the machine Vera runs on",
                            ref=("host:" + str(localhost_row["ssh_host_id"])) if localhost_row.get("ssh_host_id") else "",
-                           req={"name": "sysmon.status", "arguments": {}})
+                           req={"name": "sysmon.status", "arguments": {}},
+                           ssh_host_id=str(localhost_row.get("ssh_host_id") or ""))
         out["self"] = nid
         if localhost_row.get("ssh_host_id"):
             out["by_ssh"][str(localhost_row["ssh_host_id"])] = nid
@@ -203,7 +208,7 @@ def _docker(src: Mapping[str, Any], M: Mapping[str, Any], nodes: Dict[str, Dict[
                   status="ok" if reach else "down",
                   detail=(f"{h.get('running', 0)} of {h.get('containers', 0)} running" if reach else str(h.get("error") or "unreachable")),
                   load=(100.0 * _num(h.get("running"), 0) / max(1.0, _num(h.get("containers"), 1))) if reach and h.get("containers") else None,
-                  req={"name": "docker.ps", "arguments": {"host_id": hid}})
+                  req={"name": "docker.ps", "arguments": {"host_id": hid}}, dhost=hid)
         nodes[nid] = n
         if hid == "local":
             stack_host = nid
@@ -552,6 +557,20 @@ def _series(src: Mapping[str, Any], M: Mapping[str, Any]) -> Dict[str, Dict[str,
     return out
 
 
+def _registration(src: Mapping[str, Any], nodes: Dict[str, Dict[str, Any]]) -> None:
+    """Each machine's registration - SSH login, directory, mesh door, certificate, backup - by its estate ref."""
+    reg = _ok(src, "estate.registration")
+    rows = (reg.get("rows") if isinstance(reg, Mapping) else None) or []
+    by_ref = {str(r.get("ref")): r for r in rows if isinstance(r, Mapping) and r.get("ref")}
+    for n in nodes.values():
+        r = by_ref.get(str(n.get("ref") or ""))
+        if not r:
+            continue
+        planes = {str(k): {"state": str(v.get("state") or ""), "detail": str(v.get("detail") or "")}
+                  for k, v in (r.get("planes") or {}).items() if isinstance(v, Mapping)}
+        n["reg"] = {"complete": bool(r.get("complete")), "planes": planes}
+
+
 def build(src: Mapping[str, Any], own_ips: Iterable[str] = (), now: Optional[datetime] = None) -> Dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     nodes: Dict[str, Dict[str, Any]] = {}
@@ -563,6 +582,7 @@ def build(src: Mapping[str, Any], own_ips: Iterable[str] = (), now: Optional[dat
     _work(src, nodes, links)
     _mesh(src, now, nodes, links)
     _metrics(src, M, nodes)
+    _registration(src, nodes)
     inflight, through, lat = _requests(src, now, nodes)
     events, open_calls = _events(src, now)
     errors = _errors(src, nodes)
