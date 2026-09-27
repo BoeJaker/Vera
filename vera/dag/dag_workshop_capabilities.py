@@ -13306,7 +13306,8 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                                allowed_phases: Optional[List[str]] = None,
                                intent: str = "mixed",
                                plan_note: str = "",
-                               sid: str = "", stream_id: str = "") -> Dict[str, Any]:
+                               sid: str = "", stream_id: str = "",
+                               route_profile: str = "", route_role: str = "") -> Dict[str, Any]:
     """ONE LLM call: decompose the goal into an ordered step plan. Each step names
     only the few caps and skills it needs. Folds triage+step-select+plan into a
     single call so the loop starts working almost immediately.
@@ -13338,6 +13339,16 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
     # deterministic floor), so a re-plan differs from a plan that drifted.
     plan_opts = _planner_sampling(_pa.get("options"))
     plan_persona = _pa.get("persona") or ""
+    # A ROUTE OVERRIDE (the broad style's per-stream calls) sends this call to
+    # another routing role - and then the planner agent's pinned model and
+    # options (its num_ctx) must not follow it: a CPU stream would otherwise load
+    # the planner's GPU-sized model and window on a CPU node. The role's own rule
+    # supplies model and sampling. No override = exactly the call as before.
+    _plan_profile = route_profile or LOOP_ROUTING_PROFILE
+    _plan_role = route_role or "planner"
+    if route_role:
+        plan_model = model or ""
+        plan_opts = _planner_sampling(None)
     cap_line_parts = []
     for n in catalog_names:
         line = "  " + _v5_brief_cap_line(n)
@@ -13388,7 +13399,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                 await _emit_stage_context(
                     "planner", variant="minimal", system=sys, prompt=prompt,
                     rule_ids=_RULES.rule_ids_for("planner:minimal"),
-                    model=plan_model, role="planner",
+                    model=plan_model, role=_plan_role,
                     session_id=sid, stream_id=stream_id, cycle=None,
                     runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
             except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
@@ -13396,7 +13407,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             raw = await _safe_ollama_generate_dw(
                 prompt, system=sys, model=plan_model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
-                profile=LOOP_ROUTING_PROFILE, role="planner",
+                profile=_plan_profile, role=_plan_role,
                 request_stage="planner")
             valid_skill_ids = {s["id"] for s in skills}
             _pp = _v5_parse_plan(raw or "")
@@ -13671,7 +13682,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             await _emit_stage_context(
                 "planner", variant="full", system=sys, prompt=prompt,
                 rule_ids=_RULES.rule_ids_for("planner:full"),
-                model=plan_model, role="planner",
+                model=plan_model, role=_plan_role,
                 session_id=sid, stream_id=stream_id, cycle=None,
                 runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
         except Exception as _ae:      # pragma: no cover â€” instrumentation must never break a run
@@ -13679,7 +13690,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=plan_model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
-            profile=LOOP_ROUTING_PROFILE, role="planner", timeout=_V5_PLANNER_TIMEOUT_S,
+            profile=_plan_profile, role=_plan_role, timeout=_V5_PLANNER_TIMEOUT_S,
             request_stage="planner",
             stream_cb=(_plan_stream_cb if stream_id else None))
         _pp = _v5_parse_plan(raw or "")
@@ -19114,6 +19125,96 @@ async def _v5_plan_master_piecewise(goal: str, catalog_names: List[str],
             "deferred_pieces": deferred_pieces}
 
 
+async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[str, Any]],
+                         cap_skill_map: Optional[Dict[str, List[str]]], *,
+                         model: str = "", instance_id: str = "", prefer_gpu: bool = True,
+                         max_steps: int = 8, phase_policy: str = "sparingly",
+                         intent: str = "mixed", sid: str = "",
+                         stream_id: str = "") -> Dict[str, Any]:
+    """The BROAD planning style (planner_styles.LOOP_STYLES['broad']).
+
+    1. ONE call on the loop's planner role splits the goal into work-streams.
+    2. Every stream is planned CONCURRENTLY as a piece of the whole
+       (_v5_orchestrate_plan with a [PIECEWISE] directive), alternating the
+       planning_style `stream` (GPU) and `stream_cpu` (CPU) routes, so up to all
+       three nodes plan at once. A CPU stream sees a trimmed catalog (its own
+       caps + the goal's seed caps) to keep its prompt short: a CPU node reads a
+       prompt at ~25 tok/s.
+    3. The sub-plans are merged host-side (planner_styles.merge_streams).
+    Returns the loop's plan shape plus `broad` detail; steps == [] means the
+    caller falls back to its own planner."""
+    PSx = _plan_styles
+    empty = {"steps": [], "reason": "", "complexity": "", "recon": [], "done_when": ""}
+    if PSx is None:
+        return {**empty, "broad": {"error": "planner_styles unavailable"}}
+    t0 = time.monotonic()
+    cat_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:40])
+    streams: List[Dict[str, Any]] = []
+    try:
+        raw = await _safe_ollama_generate_dw(
+            PSx.broad_brief_prompt(goal, cat_lines),
+            system=PSx.BROAD_BRIEF_SYSTEM.format(n=PSx.MAX_STREAMS),
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=True,
+            options=_planner_sampling(), profile=LOOP_ROUTING_PROFILE, role="planner",
+            request_stage="plan_broad_brief")
+        streams = PSx.parse_streams(_extract_json(_strip_think(raw or "")[0]) or {},
+                                    catalog=catalog_names)
+    except Exception as e:
+        log.warning("broad style: stream brief failed: %s", e)
+    brief_s = round(time.monotonic() - t0, 1)
+    if not streams:
+        return {**empty, "broad": {"streams": 0, "brief_s": brief_s,
+                                   "error": "the goal did not split into work-streams"}}
+    await emit_event({"type": "agent_loop_v6.broad_streams", "session_id": sid,
+                      "stream_id": stream_id, "brief_s": brief_s,
+                      "streams": [{k: s[k] for k in ("id", "title", "deliverable",
+                                                    "dependencies", "caps")} for s in streams]})
+    roles = PSx.stream_roles(len(streams))
+    per_stream = max(2, min(max_steps, (max_steps * 2) // len(streams) + 1))
+    seed = [c for c in _v5_seed_caps_for(goal) if c in set(catalog_names)]
+    catalog_set = set(catalog_names)
+
+    async def _one(s: Dict[str, Any], role: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        t1 = time.monotonic()
+        if role == "stream_cpu":
+            cat = list(dict.fromkeys([c for c in s.get("caps") or [] if c in catalog_set]
+                                     + seed))[:16] or list(catalog_names)[:16]
+        else:
+            cat = list(catalog_names)
+        try:
+            sub = await _v5_orchestrate_plan(
+                goal, cat, skills, cap_skill_map, model="", instance_id="",
+                prefer_gpu=(role != "stream_cpu"), max_steps=per_stream,
+                master_plan=PSx.stream_directive(goal, streams, s), want_success=True,
+                phase_policy=phase_policy, intent=intent, sid=sid, stream_id="",
+                route_profile="planning_style", route_role=role)
+            steps = list(sub.get("steps") or [])
+            err = ""
+        except Exception as e:
+            steps, err = [], f"{type(e).__name__}: {e}"[:160]
+        rec = {"stream": s["id"], "title": s["title"], "role": role,
+               "elapsed_s": round(time.monotonic() - t1, 1), "steps": len(steps)}
+        if err:
+            rec["error"] = err
+        await emit_event({"type": "agent_loop_v6.broad_stream_planned", "session_id": sid,
+                          "stream_id": stream_id, **rec,
+                          "titles": [str(x.get("title") or "")[:80] for x in steps][:8]})
+        return steps, rec
+
+    results = await asyncio.gather(*(_one(s, r) for s, r in zip(streams, roles)))
+    merged = PSx.merge_streams(streams, [r[0] for r in results],
+                               hard_cap=max(max_steps * 2, 16))
+    detail = {"streams": len(streams), "brief_s": brief_s,
+              "total_s": round(time.monotonic() - t0, 1),
+              "per_stream": [r[1] for r in results]}
+    if not merged:
+        return {**empty, "broad": {**detail, "error": "no stream produced steps"}}
+    return {"steps": merged,
+            "reason": "broad style: %d work-streams planned in parallel -> %d steps"
+                      % (len(streams), len(merged)),
+            "complexity": "", "recon": [], "done_when": "", "broad": detail}
+
+
 def _v5_piece_fallback_step(piece: Dict[str, Any], goal: str,
                             catalog_names: List[str]) -> Dict[str, Any]:
     """When the planner returns NO steps for a master-plan piece (an intermittent
@@ -23041,7 +23142,9 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
         "plan_style (str default 'auto' — HOW the plan is produced: 'auto' tier/intent decide; "
         "'flat' one plan, no master-plan escalation or recon; 'stepwise' no upfront plan, the "
         "controller plans one step at a time from evidence; 'detailed' a multi-lens brief is "
-        "handed to the planner first. The style used is emitted as agent_loop_v6.plan_style and "
+        "handed to the planner first; 'broad' the goal is split into work-streams, each planned "
+        "concurrently across the nodes, merged into one plan. The style used is emitted as "
+        "agent_loop_v6.plan_style and "
         "returned as plan_style), "
         "step_cycle_budget (int default 6), catalog_size (int default 40), enable_adaptive "
         "(bool default True — run the controller after each step), enable_step_verify (bool "
@@ -23153,7 +23256,7 @@ async def cap_dag_agent_loop_v6(
     enable_master_planner: bool = True,
     enable_tiering:     bool = False,      # V7-defining (see note above); v7 turns on
     plan_tier:          str  = "auto",
-    # HOW the plan is produced: auto|flat|stepwise|detailed (see
+    # HOW the plan is produced: auto|flat|stepwise|detailed|broad (see
     # vera/planning/planner_styles.LOOP_STYLES, which is the whole contract).
     # 'auto' is the behaviour from before styles existed. The style the run
     # actually used is emitted as agent_loop_v6.plan_style and returned.
@@ -23731,7 +23834,21 @@ async def cap_dag_agent_loop_v6(
             _style_note = (_style_note + "\n\nUse the brief above as evidence about the goal; "
                            "the steps, their sizing and their capabilities are still yours to "
                            "decide under the rules.")
-    if _pstyle.get("run_planner", True):
+    _broad_fell_back = False
+    if _pstyle.get("broad"):
+        # BROAD: work-streams planned concurrently across the nodes, merged here.
+        plan = await _v6_plan_broad(
+            plan_goal, catalog_names, skills, cap_skill_map,
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            max_steps=max_steps, phase_policy=phase_policy, intent=intent,
+            sid=sid, stream_id=stream_id)
+        _style_detail = {"broad": plan.pop("broad", {})}
+        if not plan.get("steps"):
+            _broad_fell_back = True
+            _plan_style_why = ("broad: %s - planned as auto"
+                               % (_style_detail["broad"].get("error") or "no steps"))
+            _plan_style_eff = "auto"
+    if (_pstyle.get("run_planner", True) and not _pstyle.get("broad")) or _broad_fell_back:
         plan = await _v5_orchestrate_plan(
             plan_goal, catalog_names, skills, cap_skill_map,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
@@ -23746,9 +23863,10 @@ async def cap_dag_agent_loop_v6(
                 phase_policy=phase_policy, intent=intent, plan_note=_style_note)
             if retry.get("steps"):
                 plan = retry
-    else:
+    elif not _pstyle.get("broad"):
         # STEPWISE: no upfront plan. The empty plan falls into the stepwise
-        # bootstrap below, and the controller plans each next step.
+        # bootstrap below, and the controller plans each next step. (A broad
+        # plan that produced steps is kept as it is.)
         plan = {"steps": [], "reason": "", "complexity": "", "recon": [], "done_when": ""}
     # Fall-through "complex planning mode": both plan passes yielded no usable
     # steps — escalate to a long-form master plan and re-break it into steps (a
@@ -23918,7 +24036,7 @@ async def cap_dag_agent_loop_v6(
         # evidence — exactly the incremental recovery the loop is built for.
         steps = [_v5_stepwise_bootstrap_step(goal, catalog_names)]
         plan["steps"] = steps
-        _chosen_stepwise = not _pstyle.get("run_planner", True)
+        _chosen_stepwise = bool(_pstyle.get("stepwise_controller"))
         plan["reason"] = plan.get("reason") or (
             "STEPWISE style chosen — no upfront plan; running from a bootstrap step and "
             "the controller plans each next step from evidence" if _chosen_stepwise else
@@ -24956,7 +25074,7 @@ async def cap_dag_agent_loop_v6(
         "self-correcting steps). Extra inputs over v6: enable_tiering/plan_tier/auto_escalate, "
         "enable_step_finalize, enable_branching/branch_fanout/max_branches/branch_parallel, "
         "enable_dream_persistence, enable_journal (structured run journal → data fabric for "
-        "complex/long-term goals). plan_style (auto|flat|stepwise|detailed, default auto) "
+        "complex/long-term goals). plan_style (auto|flat|stepwise|detailed|broad, default auto) "
         "chooses HOW the plan is produced — see dag.agent_loop_v6. Output: same shape as v6."),
 )
 async def cap_dag_agent_loop_v7(goal: str, **kwargs):

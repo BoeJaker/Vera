@@ -493,6 +493,16 @@ LOOP_STYLES: Dict[str, Dict[str, Any]] = {
     "detailed": {"label": "Detailed (multi-lens brief, then plan)",
                  "run_planner": True, "master_plan": True, "recon": True,
                  "shape_guards": True, "lens_brief": True, "stepwise_controller": False},
+    # BROAD: research-shaped. One call splits the goal into work-streams; every
+    # stream is planned CONCURRENTLY as a piece of the whole (on the
+    # planning_style stream / stream_cpu routes, so the GPU and both CPU nodes
+    # can each take one); the sub-plans are merged host-side with cross-stream
+    # `needs`. It replaces the single planner call (run_planner off) and falls
+    # back to it when no stream plans.
+    "broad": {"label": "Broad (work-streams planned in parallel)",
+              "run_planner": False, "master_plan": False, "recon": False,
+              "shape_guards": True, "lens_brief": False, "stepwise_controller": False,
+              "broad": True},
 }
 DEFAULT_LOOP_STYLE = "auto"
 
@@ -512,6 +522,151 @@ def resolve_loop_style(requested: Any) -> Tuple[str, Dict[str, Any], str]:
     return (DEFAULT_LOOP_STYLE, dict(LOOP_STYLES[DEFAULT_LOOP_STYLE]),
             "unknown style %r - ran as %s (known: %s)"
             % (req[:40], DEFAULT_LOOP_STYLE, ", ".join(LOOP_STYLES)))
+
+
+# ── BROAD: work-streams, planned concurrently, merged on the host ────────────
+
+MAX_STREAMS = 5
+#: Routing roles (profile planning_style) the streams alternate over: `stream`
+#: prefers the GPU, `stream_cpu` is held off it, so a 3-stream plan puts one
+#: planner call on the GPU and one on each CPU node at once. Both are editable
+#: on the Model Routing page. Measured 2026-09-27: qwen2.5:7b on a CPU node
+#: decodes ~7 tok/s (~6 with both nodes busy) but reads a prompt at only ~25
+#: tok/s, so a CPU stream is SLOWER than the GPU at planning - the spread frees
+#: the GPU, it does not speed planning up. Point stream_cpu at the GPU to trade.
+STREAM_ROLES = ("stream", "stream_cpu")
+
+BROAD_BRIEF_SYSTEM = (
+    "You split an agentic GOAL into its WORK-STREAMS: the distinct, substantial bodies of "
+    "work a thorough plan would cover. Each stream will be planned in detail separately, "
+    "in parallel, so each must stand on its own. Rules:\n"
+    "  - between 2 and {n} streams; ONE stream only if the goal genuinely has one kind of "
+    "work (then say so - do not invent streams to fill the count)\n"
+    "  - a stream is a kind of work (gather the facts, build the thing, write it up), NOT a "
+    "single command\n"
+    "  - `dependencies` lists ids of EARLIER streams whose deliverable this one consumes\n"
+    "  - `caps`: up to 6 capability names from the list, exact names only\n"
+    "  - `deliverable`: the concrete file or result that marks the stream done - never a "
+    "value you worked out yourself\n"
+    'Respond ONLY with JSON: {{"streams":[{{"id":1,"title":"<short>","objective":"<what this '
+    'stream must achieve, 1-3 sentences>","deliverable":"<file or result>","dependencies":[],'
+    '"caps":["cap.name"]}}]}}')
+
+
+def broad_brief_prompt(goal: str, catalog_lines: str) -> str:
+    return ("GOAL: %s\n\nAVAILABLE CAPABILITIES (name - description):\n%s\n\n"
+            "Split the goal into its work-streams." % (goal, catalog_lines or "  (none)"))
+
+
+def parse_streams(obj: Any, catalog: Optional[Iterable[str]] = None,
+                  max_streams: int = MAX_STREAMS) -> List[Dict[str, Any]]:
+    """The model's streams, validated: ids renumbered 1..n in the order given,
+    dependencies kept only when they point at an EARLIER stream (a cycle or a
+    forward reference is dropped, not trusted), caps filtered to the catalog."""
+    raw = (obj or {}).get("streams") if isinstance(obj, dict) else obj
+    if not isinstance(raw, list):
+        return []
+    allow = set(catalog or [])
+    keep: List[Dict[str, Any]] = []
+    old_to_new: Dict[Any, int] = {}
+    for s in raw:
+        if not isinstance(s, dict):
+            continue
+        title = str(s.get("title") or "").strip()
+        objective = str(s.get("objective") or "").strip()
+        if not (title or objective):
+            continue
+        new_id = len(keep) + 1
+        old_to_new[s.get("id", new_id)] = new_id
+        caps = [str(c).strip() for c in (s.get("caps") or []) if str(c).strip()]
+        if allow:
+            caps = [c for c in caps if c in allow]
+        keep.append({"id": new_id, "title": (title or objective)[:120],
+                     "objective": (objective or title)[:600],
+                     "deliverable": str(s.get("deliverable") or "")[:240],
+                     "_deps_raw": list(s.get("dependencies") or []),
+                     "caps": list(dict.fromkeys(caps))[:6]})
+        if len(keep) >= max(1, int(max_streams)):
+            break
+    for s in keep:
+        deps = []
+        for d in s.pop("_deps_raw"):
+            nd = old_to_new.get(d)
+            if nd is None:
+                try:
+                    nd = old_to_new.get(int(d))
+                except (TypeError, ValueError):
+                    nd = None
+            if nd is not None and nd < s["id"] and nd not in deps:
+                deps.append(nd)
+        s["dependencies"] = deps
+    return keep
+
+
+def stream_directive(goal: str, streams: Sequence[Dict[str, Any]],
+                     stream: Dict[str, Any]) -> str:
+    """The `[PIECEWISE]` master_plan text for ONE stream's planner call: the whole
+    stream map as context, then this stream to plan and nothing else."""
+    lines = []
+    for s in streams:
+        dep = (" (uses: %s)" % ", ".join("stream %d" % d for d in s["dependencies"])
+               if s.get("dependencies") else "")
+        lines.append("  %d. %s - %s -> %s%s" % (s["id"], s["title"], s["objective"],
+                                               s.get("deliverable") or "?", dep))
+    deps = [x for x in streams if x["id"] in (stream.get("dependencies") or [])]
+    dep_txt = ("DEPENDS ON (their deliverables will exist before this stream runs): "
+               + "; ".join("stream %d %s -> %s" % (d["id"], d["title"], d.get("deliverable") or "?")
+                           for d in deps) + "\n") if deps else ""
+    caps_txt = ("SUGGESTED CAPS for this stream: %s\n" % ", ".join(stream["caps"])
+                if stream.get("caps") else "")
+    return ("[PIECEWISE]WORK-STREAMS OF THIS GOAL (planned separately, in parallel - "
+            "context only):\n" + "\n".join(lines) + "\n\n"
+            ">>> PLAN ONLY STREAM %d of %d: %s\nOBJECTIVE: %s\nDELIVERABLE: %s\n%s%s"
+            "Turn THIS stream into concrete, ordered steps that end in its deliverable. Do "
+            "NOT plan the other streams' work - they are planned separately."
+            % (stream["id"], len(streams), stream["title"], stream["objective"],
+               stream.get("deliverable") or "(not stated)", dep_txt, caps_txt))
+
+
+def stream_roles(n: int) -> List[str]:
+    """Route role per stream, alternating GPU / CPU: 1->stream, 2->stream_cpu, ..."""
+    return [STREAM_ROLES[i % len(STREAM_ROLES)] for i in range(max(0, int(n)))]
+
+
+def merge_streams(streams: Sequence[Dict[str, Any]],
+                  sub_steps: Sequence[Sequence[Dict[str, Any]]],
+                  hard_cap: int = 16) -> List[Dict[str, Any]]:
+    """Every stream's steps as ONE plan: stream order, ids renumbered, `needs`
+    inside a stream remapped, and each stream's first step needing the LAST step
+    of every stream it depends on (the piecewise rule). A stream that planned
+    nothing contributes nothing and breaks no link - its dependents fall back to
+    the streams before it."""
+    out: List[Dict[str, Any]] = []
+    last_of: Dict[int, int] = {}
+    for s, subs in zip(streams, sub_steps):
+        subs = [x for x in (subs or []) if isinstance(x, dict)]
+        if not subs or len(out) >= hard_cap:
+            continue
+        offset = len(out)
+        local = {}
+        for i, st in enumerate(subs):
+            local[st.get("id", i + 1)] = offset + i + 1
+        first_needs = [last_of[d] for d in (s.get("dependencies") or []) if d in last_of]
+        for i, st in enumerate(subs):
+            if len(out) >= hard_cap:
+                break
+            ns = dict(st)
+            ns["id"] = offset + i + 1
+            ns["needs"] = [local[n] for n in (st.get("needs") or [])
+                           if n in local and local[n] < ns["id"]]
+            if i == 0:
+                ns["needs"] = sorted(set(ns["needs"]) | set(first_needs))
+            ns["piece"] = s["id"]
+            ns["piece_title"] = s["title"]
+            out.append(ns)
+        if out and out[-1].get("piece") == s["id"]:
+            last_of[s["id"]] = out[-1]["id"]
+    return out
 
 
 #: The controller's extra instruction in a stepwise run. Without it the

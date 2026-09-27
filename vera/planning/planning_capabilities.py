@@ -44,6 +44,18 @@ try:
             # between two of the loop planner's own calls; the prompts are tiny.
             "lens": {"job_type": "planning_lens", "prefer_gpu": True,
                      "options": {"temperature": 0.3}},
+            # The BROAD style's per-stream planner calls alternate these two so a
+            # 3-stream plan puts one call on the GPU and one on each CPU node.
+            # `stream` sets no num_ctx for the lens's reason above. `stream_cpu`
+            # is held off the GPU and pinned to qwen2.5:7b (every node carries
+            # it; measured 2026-09-27 on the CPU nodes: ~7 tok/s decode, ~25
+            # tok/s prompt read, 8 s load) with a window that fits a trimmed
+            # planner prompt. Point it at the GPU here to make broad GPU-only.
+            "stream": {"job_type": "planning_lens", "prefer_gpu": True,
+                       "options": {"temperature": 0.3}},
+            "stream_cpu": {"job_type": "planning_lens", "deny_gpu": True,
+                           "model": "qwen2.5:7b",
+                           "options": {"temperature": 0.3, "num_ctx": 8192}},
         })
 except Exception as e:                       # pragma: no cover - never block load
     log.debug("register planning_style profile: %s", e)
