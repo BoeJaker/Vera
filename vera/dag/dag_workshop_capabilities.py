@@ -19130,7 +19130,7 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
                          model: str = "", instance_id: str = "", prefer_gpu: bool = True,
                          max_steps: int = 8, phase_policy: str = "sparingly",
                          intent: str = "mixed", sid: str = "",
-                         stream_id: str = "") -> Dict[str, Any]:
+                         stream_id: str = "", enrich_model: str = "") -> Dict[str, Any]:
     """The BROAD planning style (planner_styles.LOOP_STYLES['broad']).
 
     Research-shaped, placed by the compute-roles rule (GPU = the core plan the
@@ -19139,15 +19139,18 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
     1. ONE call on the loop's planner role splits the goal into work-streams.
     2. GPU: every stream's step plan (_v5_orchestrate_plan with a [PIECEWISE]
        directive, planning_style/stream route) - seconds each.
-    3. CPU, concurrently from the moment the streams exist: a deeper brief per
-       stream (planning_style/enrich route). Planning waits a bounded grace
-       after the GPU plan for them; each brief is applied to its stream's steps
-       before they run (by the loop, so a late brief still reaches the stream's
-       remaining steps) - never a reason to hold the run.
-    4. The sub-plans are merged host-side (merge_streams, dedupe_across_streams).
-    Returns the loop's plan shape plus `broad` detail and `_enrich_tasks`
-    ({stream id: task}); steps == [] means the caller falls back to its own
-    planner (and the tasks are cancelled)."""
+    3. GPU, alongside the plans: a QUICK first brief for the first stream, so
+       step 1 never starts bare.
+    4. CPU, concurrently from the moment the streams exist and one at a time:
+       a deeper brief per stream (planning_style/enrich route; `enrich_model`
+       overrides the route's model for this run). NOTHING waits for them - the
+       loop applies each to its stream's steps that have not started when it
+       lands (user, 2026-09-27: a non-blocking supplicant).
+    5. The sub-plans are merged host-side (merge_streams, dedupe_across_streams).
+    Returns the loop's plan shape plus `broad` detail, `_enrich_tasks`
+    ({stream id: future, "__runner__": task}) and `_gpu_briefs` ({stream id:
+    note}); steps == [] means the caller falls back to its own planner (and the
+    tasks are cancelled)."""
     PSx = _plan_styles
     empty = {"steps": [], "reason": "", "complexity": "", "recon": [], "done_when": ""}
     if PSx is None:
@@ -19183,7 +19186,8 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
         try:
             raw = await _safe_ollama_generate_dw(
                 PSx.enrich_prompt(goal, streams, s), system=PSx.ENRICH_SYSTEM,
-                json_mode=False, model="", instance_id="", prefer_gpu=False, think=False,
+                json_mode=False, model=(enrich_model or ""), instance_id="",
+                prefer_gpu=False, think=False,
                 profile="planning_style", role=PSx.ENRICH_ROLE, request_stage="plan_enrich",
                 timeout=900)
             text = PSx.enrich_note(_strip_think(raw or "")[0])
@@ -19248,18 +19252,34 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
                           "titles": [str(x.get("title") or "")[:80] for x in steps][:8]})
         return steps, rec
 
-    results = await asyncio.gather(*(_one(s) for s in streams))
+    # GPU: a quick first brief for the first stream, so step 1 starts with one
+    # without waiting for the CPU node (a cold 35B load alone is 62 s).
+    async def _quick_brief(s: Dict[str, Any]) -> str:
+        t1 = time.monotonic()
+        try:
+            raw = await _safe_ollama_generate_dw(
+                PSx.enrich_prompt(goal, streams, s), system=PSx.ENRICH_SYSTEM,
+                json_mode=False, model="", instance_id="", prefer_gpu=True, think=False,
+                profile="planning_style", role=PSx.PLAN_ROLE, request_stage="plan_quick_brief")
+            txt = PSx.enrich_note(_strip_think(raw or "")[0], deep=False)
+        except Exception as e:
+            log.debug("broad style: quick brief failed: %s", e)
+            txt = ""
+        try:
+            await emit_event({"type": "agent_loop_v6.broad_stream_quick_brief", "session_id": sid,
+                              "stream_id": stream_id, "stream": s["id"], "role": PSx.PLAN_ROLE,
+                              "elapsed_s": round(time.monotonic() - t1, 1), "chars": len(txt)})
+        except Exception:
+            pass
+        return txt
+
+    _plans, _quick = await asyncio.gather(asyncio.gather(*(_one(s) for s in streams)),
+                                          _quick_brief(streams[0]))
+    results = list(_plans)
+    gpu_briefs = {streams[0]["id"]: _quick} if _quick else {}
     gpu_s = round(time.monotonic() - t0, 1)
-    # Bounded grace for the CPU briefs, like the research analyst's bounded wait.
+    # No wait for the CPU briefs - they are a non-blocking supplicant.
     _briefs = [f for k, f in enrich_tasks.items() if k != "__runner__"]
-    # Wait (bounded) only for the brief of the stream that runs FIRST: every
-    # later stream starts after it, and its brief is applied when it starts.
-    # Waiting for all of them held planning for the full grace - live
-    # 2026-09-27, 75 s of a 98.6 s planning phase for a brief whose stream
-    # was not due for minutes.
-    _first = enrich_tasks.get(streams[0]["id"])
-    if _first is not None and not _first.done():
-        await asyncio.wait([_first], timeout=PSx.ENRICH_GRACE_S)
     enriched_in_time = sum(1 for f in _briefs
                            if f.done() and not f.cancelled() and not f.exception() and f.result())
     merged = PSx.merge_streams(streams, [r[0] for r in results],
@@ -19274,17 +19294,19 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
               "total_s": round(time.monotonic() - t0, 1),
               "per_stream": [r[1] for r in results],
               "duplicates_dropped": len(_dupes),
-              "enriched_before_run": enriched_in_time}
+              "enriched_before_run": enriched_in_time,
+              "quick_brief": bool(gpu_briefs),
+              "enrich_model": enrich_model or "(route default)"}
     if not merged:
         for t in enrich_tasks.values():
             t.cancel()
         return {**empty, "broad": {**detail, "error": "no stream produced steps"}}
     return {"steps": merged,
-            "reason": "broad style: %d work-streams planned on the GPU -> %d steps; %d/%d CPU "
-                      "stream briefs ready before the run" % (len(streams), len(merged),
-                                                            enriched_in_time, len(streams)),
+            "reason": "broad style: %d work-streams planned on the GPU -> %d steps; quick GPU "
+                      "brief for stream 1: %s; CPU briefs arrive during the run"
+                      % (len(streams), len(merged), "yes" if gpu_briefs else "no"),
             "complexity": "", "recon": [], "done_when": "", "broad": detail,
-            "_enrich_tasks": enrich_tasks}
+            "_enrich_tasks": enrich_tasks, "_gpu_briefs": gpu_briefs}
 
 
 def _v5_piece_fallback_step(piece: Dict[str, Any], goal: str,
@@ -23215,9 +23237,11 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
         "'flat' one plan, no master-plan escalation or recon; 'stepwise' no upfront plan, the "
         "controller plans one step at a time from evidence; 'detailed' a multi-lens brief is "
         "handed to the planner first; 'broad' the goal is split into work-streams, each planned "
-        "concurrently across the nodes, merged into one plan. The style used is emitted as "
-        "agent_loop_v6.plan_style and "
-        "returned as plan_style), "
+        "on the GPU, merged into one plan, while the long-horizon CPU node writes a deeper "
+        "brief per stream that is added to the stream's steps as it lands. The style used is "
+        "emitted as agent_loop_v6.plan_style and "
+        "returned as plan_style), enrich_model (str — broad only: the CPU brief model, "
+        "'' = the planning_style/enrich route's), "
         "step_cycle_budget (int default 6), catalog_size (int default 40), enable_adaptive "
         "(bool default True — run the controller after each step), enable_step_verify (bool "
         "default True — one cheap judge call per step checks its success criterion was "
@@ -23333,6 +23357,10 @@ async def cap_dag_agent_loop_v6(
     # 'auto' is the behaviour from before styles existed. The style the run
     # actually used is emitted as agent_loop_v6.plan_style and returned.
     plan_style:         str  = "auto",
+    # BROAD only: the model the long-horizon CPU node writes stream briefs with
+    # ('' = the planning_style/enrich route's model). The route keeps whichever
+    # model it runs warm.
+    enrich_model:       str  = "",
     auto_escalate:      bool = True,
     enable_fast_path:   bool = False,      # V7-defining; v7 turns on ('single' tier shortcut)
     clarify_level:      int  = 1,          # sliding-scale consultation (0-3); back-compat when clarify_mode is ''
@@ -23910,15 +23938,17 @@ async def cap_dag_agent_loop_v6(
     # BROAD's CPU stream briefs ({stream id: task}), applied to each stream's
     # steps as they come up (see the step loop) and cancelled at the run's end.
     _enrich_tasks: Dict[Any, Any] = {}
+    _gpu_briefs: Dict[Any, str] = {}      # BROAD: the GPU's quick first brief per stream
     if _pstyle.get("broad"):
         # BROAD: the GPU plans every work-stream, the CPU nodes brief them in parallel.
         plan = await _v6_plan_broad(
             plan_goal, catalog_names, skills, cap_skill_map,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
             max_steps=max_steps, phase_policy=phase_policy, intent=intent,
-            sid=sid, stream_id=stream_id)
+            sid=sid, stream_id=stream_id, enrich_model=(enrich_model or "").strip())
         _style_detail = {"broad": plan.pop("broad", {})}
         _enrich_tasks = plan.pop("_enrich_tasks", {}) or {}
+        _gpu_briefs = plan.pop("_gpu_briefs", {}) or {}
         if not plan.get("steps"):
             for _t in _enrich_tasks.values():
                 _t.cancel()
@@ -24800,14 +24830,23 @@ async def cap_dag_agent_loop_v6(
         # BROAD: this stream's CPU brief, if it has arrived, goes in with the step.
         # Checked per step, so a brief that landed after planning still reaches
         # the stream's remaining steps.
-        if _enrich_tasks and step.get("piece") in _enrich_tasks and not step.get("_stream_brief"):
-            _et = _enrich_tasks[step["piece"]]
-            if _et.done() and not _et.cancelled() and not _et.exception() and _et.result():
-                step["goal"] = str(step.get("goal") or "") + _et.result()
-                step["_stream_brief"] = True
+        # Each step gets the BEST brief available as it starts: the CPU node's
+        # deeper review if it has landed, else the GPU's quick first look.
+        if (_enrich_tasks or _gpu_briefs) and not step.get("_stream_brief"):
+            _pc = step.get("piece")
+            _et = _enrich_tasks.get(_pc)
+            _brief, _kind = "", ""
+            if _et is not None and _et.done() and not _et.cancelled() \
+                    and not _et.exception() and _et.result():
+                _brief, _kind = _et.result(), "deep"
+            elif _gpu_briefs.get(_pc):
+                _brief, _kind = _gpu_briefs[_pc], "quick"
+            if _brief:
+                step["goal"] = str(step.get("goal") or "") + _brief
+                step["_stream_brief"] = _kind
                 await emit_event({"type": "agent_loop_v6.broad_brief_applied", "session_id": sid,
                                   "stream_id": stream_id, "step_id": step.get("id"),
-                                  "stream": step.get("piece")})
+                                  "stream": _pc, "kind": _kind})
         res = await _run_one(step, gcycle)
         # Carry the step's success criterion onto the result so the ledger/controller
         # can judge it against the bar the planner set.
@@ -25430,6 +25469,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_enable_tiering    = bool(body.get("enable_tiering", _v7_default))
     v6_plan_tier         = (body.get("plan_tier", "auto") or "auto").strip().lower()
     v6_plan_style        = (body.get("plan_style", "auto") or "auto").strip().lower()
+    v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
     v6_auto_escalate     = bool(body.get("auto_escalate", True))
     v6_enable_fast_path  = bool(body.get("enable_fast_path", _v7_default))
     v6_clarify_level     = int(body.get("clarify_level", 1) or 0)
@@ -25578,6 +25618,7 @@ async def workshop_agent_loop_stream(request: Request):
             enable_tiering=v6_enable_tiering,
             plan_tier=v6_plan_tier,
             plan_style=v6_plan_style,
+            enrich_model=v6_enrich_model,
             auto_escalate=v6_auto_escalate,
             enable_fast_path=v6_enable_fast_path,
             clarify_level=v6_clarify_level,

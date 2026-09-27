@@ -78,7 +78,7 @@ def test_a_directive_names_its_own_stream_and_is_piecewise():
 def test_the_core_plan_goes_to_the_gpu_route_and_the_briefs_to_the_cpu_route():
     """compute-roles: the plan the run waits on is GPU work; CPU plans in parallel."""
     assert PS.PLAN_ROLE == "stream" and PS.ENRICH_ROLE == "enrich"
-    assert 0 < PS.ENRICH_GRACE_S <= 120
+    assert not hasattr(PS, "ENRICH_GRACE_S")           # nothing waits for a CPU brief
 
 
 def test_a_brief_becomes_a_bounded_evidence_block_and_keeps_its_years():
@@ -165,15 +165,20 @@ def test_a_dependent_stream_is_told_not_to_regather():
 needs_app = pytest.mark.skipif(M is None, reason="app module not importable here")
 
 
-def _run_broad(monkeypatch, brief_json, enrich_delay=0.0, enrich_fail=False, grace=5.0,
-               drain=False):
-    seen = {"plans": [], "enrich": [], "in_flight": 0, "max_in_flight": 0, "events": [],
-            "enrich_started_before_plans_done": False}
+def _run_broad(monkeypatch, brief_json, enrich_delay=0.0, enrich_fail=False,
+               drain=False, enrich_model=""):
+    seen = {"plans": [], "enrich": [], "quick": [], "in_flight": 0, "max_in_flight": 0,
+            "events": [], "enrich_started_before_plans_done": False}
     plans_done = {"n": 0}
 
     async def _gen(prompt, system="", **kw):
+        if kw.get("request_stage") == "plan_quick_brief":
+            seen["quick"].append({"role": kw.get("role"), "prefer_gpu": kw.get("prefer_gpu"),
+                                  "profile": kw.get("profile")})
+            return "NEEDS:\n- the licence announcement\nPITFALLS:\n- secondary blogs"
         if kw.get("role") == "enrich":
-            seen["enrich"].append({"profile": kw.get("profile"), "prefer_gpu": kw.get("prefer_gpu")})
+            seen["enrich"].append({"profile": kw.get("profile"), "prefer_gpu": kw.get("prefer_gpu"),
+                                   "model": kw.get("model")})
             seen["enrich_in_flight"] = seen.get("enrich_in_flight", 0) + 1
             seen["enrich_max"] = max(seen.get("enrich_max", 0), seen["enrich_in_flight"])
             if plans_done["n"] < 2:
@@ -210,12 +215,11 @@ def _run_broad(monkeypatch, brief_json, enrich_delay=0.0, enrich_fail=False, gra
     monkeypatch.setattr(M, "_safe_ollama_generate_dw", _gen)
     monkeypatch.setattr(M, "_v5_orchestrate_plan", _orch)
     monkeypatch.setattr(M, "emit_event", _emit)
-    monkeypatch.setattr(PS, "ENRICH_GRACE_S", grace)
-    monkeypatch.setattr(M._plan_styles, "ENRICH_GRACE_S", grace)
 
     async def _go():
         plan = await M._v6_plan_broad(
-            "research small LLMs and write a report", CAT, [], {}, max_steps=8, sid="t", stream_id="")
+            "research small LLMs and write a report", CAT, [], {}, max_steps=8, sid="t", stream_id="",
+            enrich_model=enrich_model)
         tasks = plan.pop("_enrich_tasks", {})
         if drain and tasks.get("__runner__") is not None:
             # the loop keeps running while late briefs arrive; let them finish
@@ -248,7 +252,6 @@ def test_the_cpu_briefs_run_beside_the_gpu_plan_on_the_enrich_route(monkeypatch)
     assert len(seen["enrich"]) == 2
     assert all(e["profile"] == "planning_style" and e["prefer_gpu"] is False for e in seen["enrich"])
     assert seen["enrich_started_before_plans_done"]
-    assert plan["broad"]["enriched_before_run"] == 2
     assert all("STREAM BRIEF" in v and "2024" in v for v in done.values())
 
 
@@ -272,29 +275,39 @@ def test_the_enrich_route_is_the_long_horizon_cpu_job_type():
     role = (O.ROLE_PROFILES_DECLARED.get("planning_style") or {}).get("roles", {}).get("enrich")
     if role:                                                          # planning module loaded
         assert role["job_type"] == "plan_enrich" and role["deny_gpu"]
+        assert role["model"] == "qwen3.6:35b-a3b"                    # the user's pick
+        assert role["options"].get("keep_alive")                      # kept warm on cpu-247
 
 
 @needs_app
-def test_planning_waits_only_for_the_first_streams_brief(monkeypatch):
-    """Stream 2 runs after stream 1, so its brief can land during execution;
-    waiting for it held planning 75 s for nothing (live, 2026-09-27)."""
+def test_nothing_waits_for_a_cpu_brief(monkeypatch):
+    """User 2026-09-27: the CPU node is a non-blocking supplicant. A 30 s CPU brief
+    must not hold planning at all."""
     import time as _t
     t0 = _t.monotonic()
-    plan, seen, done = _run_broad(monkeypatch, BRIEF, enrich_delay=1.0, grace=30.0)
-    took = _t.monotonic() - t0
-    assert took < 2.6, took                             # ~1 s for brief 1, not ~2 s for both
-    assert plan["broad"]["enriched_before_run"] == 1
-
-
-@needs_app
-def test_planning_never_waits_past_the_grace_for_a_slow_cpu_brief(monkeypatch):
-    import time as _t
-    t0 = _t.monotonic()
-    plan, _, done = _run_broad(monkeypatch, BRIEF, enrich_delay=30.0, grace=0.3)
-    assert _t.monotonic() - t0 < 10
+    plan, _, done = _run_broad(monkeypatch, BRIEF, enrich_delay=30.0)
+    assert _t.monotonic() - t0 < 5
     assert plan["steps"] and plan["broad"]["enriched_before_run"] == 0
     assert not any(done.values())                       # still running: applied later by the loop
 
+
+@needs_app
+def test_step_one_starts_with_a_quick_gpu_brief(monkeypatch):
+    plan, seen, _ = _run_broad(monkeypatch, BRIEF, enrich_delay=30.0)
+    assert len(seen["quick"]) == 1
+    q = seen["quick"][0]
+    assert q["role"] == "stream" and q["prefer_gpu"] and q["profile"] == "planning_style"
+    note = plan["_gpu_briefs"][1]
+    assert note.startswith("\n\nSTREAM BRIEF (a quick first look") and plan["broad"]["quick_brief"]
+
+
+@needs_app
+def test_the_run_can_choose_the_brief_model(monkeypatch):
+    plan, seen, _ = _run_broad(monkeypatch, BRIEF, enrich_model="qwen2.5:7b", drain=True)
+    assert seen["enrich"] and all(e["model"] == "qwen2.5:7b" for e in seen["enrich"])
+    assert plan["broad"]["enrich_model"] == "qwen2.5:7b"
+    _, seen2, _ = _run_broad(monkeypatch, BRIEF, drain=True)
+    assert all(e["model"] == "" for e in seen2["enrich"])         # '' = the route's model
 
 @needs_app
 def test_a_failed_cpu_brief_costs_the_plan_nothing(monkeypatch):
@@ -356,7 +369,8 @@ def test_the_planner_route_override_defaults_to_the_old_route():
 
 def test_the_loop_applies_a_brief_to_each_step_of_its_stream_before_it_runs():
     b = _body("cap_dag_agent_loop_v6")
-    apply_at = b.index('step["goal"] = str(step.get("goal") or "") + _et.result()')
+    apply_at = b.index('step["goal"] = str(step.get("goal") or "") + _brief')
+    assert '_brief, _kind = _et.result(), "deep"' in b and "elif _gpu_briefs.get(_pc):" in b
     run_at = b.index("res = await _run_one(step, gcycle)")
     assert apply_at < run_at
     assert '_enrich_tasks = plan.pop("_enrich_tasks", {}) or {}' in b
@@ -373,3 +387,12 @@ def test_v5_never_touches_broads_tasks():
     """The v5 and v6 returns open with the same lines; a cleanup once landed in v5
     by mistake, where _enrich_tasks does not exist - every v5 run would crash."""
     assert "_enrich_tasks" not in _body("cap_dag_agent_loop_v5")
+
+def test_a_routes_keep_alive_is_lifted_out_of_the_sampling_options():
+    """keep_alive is an Ollama REQUEST field; left inside options it would be sent
+    as a bogus sampling option and the model would not be kept warm."""
+    src = (ROOT / "vera" / "capability_orchestration.py").read_text(encoding="utf-8")
+    lift = src.index('_route_ka = _merged_opts.pop("keep_alive", None)')
+    send = src.index('body["options"] = _merged_opts')
+    assert lift < send
+    assert 'if keep_alive is None and _route_ka not in (None, ""):' in src

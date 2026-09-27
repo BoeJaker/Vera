@@ -540,10 +540,10 @@ MAX_STREAMS = 5
 #:             stream's steps when it arrives.
 PLAN_ROLE = "stream"
 ENRICH_ROLE = "enrich"
-#: How long planning waits, after the GPU plan is ready, for the CPU briefs. A
-#: brief that arrives later is still applied to its stream's steps that have not
-#: run yet - it enriches the run, it never holds it.
-ENRICH_GRACE_S = 75.0
+#: Nothing waits for a CPU brief (user, 2026-09-27: the CPU node is a
+#: NON-BLOCKING supplicant). The GPU writes a quick first brief for the first
+#: stream alongside the plan, so step 1 never starts bare; each CPU brief is
+#: applied to its stream's steps that have not started when it lands.
 MAX_BRIEF_CHARS = 1400
 
 BROAD_BRIEF_SYSTEM = (
@@ -665,16 +665,20 @@ def enrich_prompt(goal: str, streams: Sequence[Dict[str, Any]],
                                  stream["objective"], stream.get("deliverable") or "(not stated)"))
 
 
-def enrich_note(text: Any) -> str:
-    """A CPU brief as the block appended to a stream's step goal, bounded; '' if
-    the brief is empty. (The invented-value filter is for SUCCESS CRITERIA; a
-    brief is evidence, and its 4-digit numbers are mostly years.)"""
+def enrich_note(text: Any, deep: bool = True) -> str:
+    """A brief as the block appended to a stream's step goal, bounded; '' if the
+    brief is empty. `deep` = the long-horizon CPU node's review; otherwise the
+    GPU's quick first look that lets the first stream start without waiting.
+    (The invented-value filter is for SUCCESS CRITERIA; a brief is evidence, and
+    its 4-digit numbers are mostly years.)"""
     lines = clean_lines(text) if text else []
     if not lines:
         return ""
     body = "\n".join("  - %s" % ln for ln in lines)[:MAX_BRIEF_CHARS]
-    return ("\n\nSTREAM BRIEF (a deeper review of this work-stream, prepared in parallel - "
-            "use it as evidence, the step goal above still decides the work):\n" + body)
+    what = ("a deeper review of this work-stream, prepared in parallel" if deep else
+            "a quick first look at this work-stream; a deeper review may follow")
+    return ("\n\nSTREAM BRIEF (%s - use it as evidence, the step goal above still decides "
+            "the work):\n" % what + body)
 
 
 def merge_streams(streams: Sequence[Dict[str, Any]],
