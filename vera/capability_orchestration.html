@@ -2648,7 +2648,7 @@ function _lhmRenderAbsorbed(host, pid, nav){
     const lhm = Object.assign({}, nav.lhm, { active: Object.assign({}, nav.lhm.active, { menu, tab: tab || (nav.lhm.active && nav.lhm.active.menu === menu ? nav.lhm.active.tab : '') }) });
     _panelNavCache[pid] = Object.assign({}, nav, { active: menu, lhm });   // optimistic; the panel's publish confirms
     _lhmNavSync();
-  }, { topOn: false, topTitle: 'Its own top-level list', onTop: () => _lhmNavSelect(pid, '☰'), onSplit: _localLhm[pid] ? null : (id => _lhmOpenBeside(pid.replace(/--\d+$/, ''), id)) });
+  }, { topOn: false, topTitle: 'Its own top-level list', onTop: () => _lhmNavSelect(pid, '☰'), onSplit: _localLhm[pid] ? null : (id => _lhmOpenBeside(pid.replace(/--\d+$/, ''), id)), editKey: pid.replace(/--\d+$/, '') });
   host.appendChild(abs);
   return true;
 }
@@ -8305,8 +8305,11 @@ function _tabClonesPrune(){
 { const __tabRender2 = _tabRender; _tabRender = function(){ const r = __tabRender2.apply(this, arguments); try{ _tabClonesPrune(); }catch(_){} return r; }; }
 // the chat's panel bridge: panel.open at 'harness' / 'beside' (a section with it)
 window.addEventListener('message', e => { const d = e.data; if(!d || typeof d !== 'object' || d.type !== 'vera:lhm:tab' || !d.id) return;
-  const id = String(d.id); const tab = document.querySelector('#tabBar .tab[data-tab="' + CSS.escape(id) + '"]') || document.querySelector('#tabBar .tab[data-tab="auto-' + CSS.escape(id) + '"]');
-  if(!tab) return; const pid = _tabToPanelId(tab); if(d.by) _tabOrigin[pid] = String(d.by);
+  const id = String(d.id); const low = id.toLowerCase();
+  const tab = document.querySelector('#tabBar .tab[data-tab="' + CSS.escape(id) + '"]') || document.querySelector('#tabBar .tab[data-tab="auto-' + CSS.escape(id) + '"]')
+    || [...document.querySelectorAll('#tabBar .tab')].find(t => [...t.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('').toLowerCase() === low);
+  const pid = tab ? _tabToPanelId(tab) : (document.getElementById('panel-' + id) ? id : (document.getElementById('panel-auto-' + id) ? 'auto-' + id : ''));
+  if(!pid) return; if(d.by) _tabOrigin[pid] = String(d.by);
   _lhmOpenBeside(pid, String(d.section || '')); });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -152,6 +152,20 @@
     'html.vpb-nav-hosted .lhm-rail,html.vpb-nav-hosted .lhm-det .ctx-tab-bar{display:none!important}',
     /* an absorbed menu in a host */
     '.lhm-absorbed{display:flex;flex-direction:row;min-height:0;flex:1}',
+    /* a docked menu's widgets (owner, 2026-09-27: "make sure that any lhm for any panel can be configured to include widgets
+       just like the chat ui"): \u270e in its head, the chat's edit bar, the records drawn live under its list */
+    '.lhm-absorbed .lhm-tabs .lhm-ttl{position:relative;padding-right:30px}',
+    '.lhm-a-edit{position:absolute;right:2px;top:50%;transform:translateY(-50%);width:24px;height:24px;border:0;border-radius:6px;background:transparent;color:var(--t3,var(--dim));font-size:12px;cursor:pointer}',
+    '.lhm-a-edit:hover,.lhm-a-edit.on{color:var(--ac,var(--acc));background:var(--fill,var(--bg2))}',
+    '.lhm-a-ws{display:flex;flex-direction:column;gap:6px;padding:8px 4px 4px;margin-top:6px;border-top:1px solid var(--bd,var(--border))}',
+    '.lhm-a-w{position:relative;background:var(--s2,var(--bg2));border-radius:var(--r-sm,6px);padding:7px 8px;display:flex;flex-direction:column;gap:4px;min-width:0}',
+    '.lhm-a-wh{display:flex;gap:6px;align-items:baseline;font-size:10.5px;color:var(--t2,var(--dim2));min-width:0}',
+    '.lhm-a-wh span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.lhm-a-wh b{margin-left:auto;font-family:var(--mono);font-weight:400;font-size:9.5px;color:var(--t3,var(--dim));white-space:nowrap}',
+    '.lhm-a-w vera-widget{display:block;width:100%}',
+    '.lhm-a-rm{position:absolute;top:4px;right:4px;width:20px;height:20px;border:0;border-radius:5px;background:var(--s3,var(--bg3));color:var(--t2,var(--dim2));cursor:pointer;font-size:11px}',
+    '.lhm-a-rm:hover{color:var(--err,#e55)}',
+    '.lhm-absorbed .lhm-ebar{margin:0 0 6px}',
     /* \u29c9 on a row: open it side by side (Ctrl/\u2318/middle-click does the same) */
     '.lhm-bs{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:5px;font-size:11px;color:var(--t2,var(--dim2));background:var(--s3,var(--bg3));opacity:0;transition:opacity .15s;cursor:pointer}',
     '.lhm-bs:hover{color:var(--t1,var(--text));background:var(--fill,var(--bg2))}',
@@ -744,6 +758,38 @@ function _ebar(title, onAdd, onDone){
   // host: an element to fill; spec: what the owner published (state.nav.lhm); pick(id): send it back
   function _splitKey(ev){ return !!(ev && (ev.ctrlKey || ev.metaKey || ev.button === 1)); }
   function _beside(row, fn, title){ var b = _el('span', 'lhm-bs', '\u29c9'); b.title = title || 'Open side by side (Ctrl/\u2318-click does the same)'; b.addEventListener('click', function(ev){ ev.stopPropagation(); fn(); }); row.appendChild(b); return b; }
+
+  // ── a docked menu's widgets: kept per panel and per menu (opts.editKey), added from the widget sheet the chat's menus use ──
+  var _absEditOn = {};
+  function _absAddedKey(key, menu){ return 'vera.lhm.absorbed.added.' + key + '.' + menu; }
+  function _absAddedOf(key, menu){ try{ var a = JSON.parse(localStorage.getItem(_absAddedKey(key, menu)) || '[]'); return Array.isArray(a) ? a : []; }catch(e){ return []; } }
+  function _absAddedSave(key, menu, list){ try{ localStorage.setItem(_absAddedKey(key, menu), JSON.stringify(list || [])); }catch(e){} }
+  function _absWidgets(host, tabs, spec, cur, opts, redraw){
+    var key = opts.editKey; if(!key || !cur) return;
+    var editing = !!_absEditOn[key];
+    var ttl = tabs.querySelector('.lhm-ttl');
+    if(ttl){ var ed = _el('button', 'lhm-a-edit' + (editing ? ' on' : ''), '\u270e'); ed.type = 'button'; ed.title = 'Edit this menu - add widgets to it, as the chat\'s menus take them';
+      ed.addEventListener('click', function(ev){ ev.stopPropagation(); _absEditOn[key] = !_absEditOn[key]; redraw(); }); ttl.appendChild(ed); }
+    var list = _absAddedOf(key, cur.id);
+    if(editing){
+      var bar = _ebar((cur.title || cur.label) + ' \u00b7 ' + (spec.title || 'this panel'), function(){
+        var S = _surface(); if(!S){ bar.appendChild(_el('span', 'lbl', ' \u00b7 the widget sheet is not loaded here')); return; }
+        try{ Promise.resolve(S.open({ mode:'add', into:'side', title:'Add to ' + (cur.title || cur.label) + ' \u00b7 ' + (spec.title || 'this panel'), templates:true, sizes:['xs','s','m'] })).then(function(rec){ if(!rec) return; var l2 = _absAddedOf(key, cur.id); l2.push(rec); _absAddedSave(key, cur.id, l2); redraw(); }).catch(function(){}); }catch(e){}
+      }, function(){ _absEditOn[key] = false; redraw(); });
+      tabs.insertBefore(bar, tabs.firstChild);
+    }
+    if(!list.length) return;
+    var ws = _el('div', 'lhm-a-ws'); ws.setAttribute('data-w', 'widgets \u00b7 host');
+    list.forEach(function(rec, i){
+      var box = _el('div', 'lhm-a-w'); box.setAttribute('data-w', (rec.title || rec.form || 'widget') + ' \u00b7 ' + (rec.form || 'widget'));
+      var h = _el('div', 'lhm-a-wh'); h.appendChild(_el('span', '', rec.title || rec.form || 'widget')); h.appendChild(_el('b', '', rec.source || rec.form || '')); box.appendChild(h);
+      if(window.customElements && customElements.get('vera-widget')){ var vw = document.createElement('vera-widget'); try{ vw.setAttribute('record', JSON.stringify(rec)); }catch(e){} vw.setAttribute('size', (rec.frame && rec.frame.size) || 's'); box.appendChild(vw); }
+      else { var body = _el('div'); var drawn = ''; try{ if(window.VeraWidget && rec.form) drawn = window.VeraWidget.draw(rec.form, _sample(rec.form), 's', { bare:true, title:rec.title }); }catch(e){} body.innerHTML = drawn || _escH(rec.form || 'widget'); box.appendChild(body); }
+      if(editing){ var rm = _el('button', 'lhm-a-rm', '\u2715'); rm.type = 'button'; rm.title = 'Take it out of this menu'; rm.addEventListener('click', function(ev){ ev.stopPropagation(); var l3 = _absAddedOf(key, cur.id); l3.splice(i, 1); _absAddedSave(key, cur.id, l3); redraw(); }); box.appendChild(rm); }
+      ws.appendChild(box);
+    });
+    tabs.appendChild(ws);
+  }
   function absorb(host, spec, pickFn, opts){
     if(!host || !spec) return null;
     opts = opts || {}; _css(host.ownerDocument);
@@ -775,6 +821,7 @@ function _ebar(title, onAdd, onDone){
         tabs.appendChild(e);
       });
     }
+    try{ _absWidgets(host, tabs, spec, cur, opts, function(){ absorb(host, spec, pickFn, opts); }); }catch(e){}
     wrap.appendChild(tabs);
     host.appendChild(wrap);
     return wrap;
