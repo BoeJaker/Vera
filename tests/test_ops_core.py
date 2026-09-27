@@ -211,3 +211,15 @@ def test_clients_are_who_is_connected_now():
     src["ops.connections"] = {"error": "psutil is not available"}
     s = oc.build(src, own_ips=["192.168.0.138"], now=NOW)
     assert not [n for n in s["nodes"] if n["id"].startswith("client:ip:")] and s["sources"]["ops.connections"] != "ok"
+
+
+def test_connections_parse_from_the_kernel_table():
+    rows = ("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+            "   0: 8A00A8C0:232F DD00A8C0:B84A 01 00000000:00000000 00:00000000 00000000  1000        0 1\n"
+            "   1: 8A00A8C0:232F DD00A8C0:B84B 01 00000000:00000000 00:00000000 00000000  1000        0 2\n"
+            "   2: 8A00A8C0:232F BE00A8C0:ACDA 0A 00000000:00000000 00:00000000 00000000  1000        0 3\n"
+            "   3: 8A00A8C0:0016 BE00A8C0:ACDA 01 00000000:00000000 00:00000000 00000000  1000        0 4\n")
+    assert oc.proc_tcp_peers(rows, 8999) == {"192.168.0.221": 2}
+    v6 = ("  sl  local_address                         remote_address                        st\n"
+          "   0: 0000000000000000FFFF00008A00A8C0:232F 0000000000000000FFFF0000BE00A8C0:ACDA 01 0\n")
+    assert oc.proc_tcp_peers(v6, 8999, v6=True) == {"192.168.0.190": 1}

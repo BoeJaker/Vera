@@ -74,15 +74,33 @@ def _own_ips() -> List[str]:
     return out
 
 
+def _proc_connections(port: int) -> Dict[str, Any]:
+    """/proc/net/tcp{,6}: the established sockets on Vera's port (Linux; no psutil needed)."""
+    peers: Dict[str, int] = {}
+    read_any = False
+    for fn, v6 in (("/proc/net/tcp", False), ("/proc/net/tcp6", True)):
+        try:
+            with open(fn, encoding="ascii") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        read_any = True
+        for ip, n in core.proc_tcp_peers(text, port, v6).items():
+            peers[ip] = peers.get(ip, 0) + n
+    if not read_any:
+        return {"error": "neither psutil nor /proc/net/tcp is available"}
+    return {"port": port, "peers": [{"ip": k, "n": v} for k, v in sorted(peers.items(), key=lambda kv: -kv[1])]}
+
+
 def _connections() -> Dict[str, Any]:
     """The peers holding TCP connections to Vera's own port right now - the process's own view, nothing is scanned."""
     import os as _os
-    try:
-        import psutil
-    except Exception as e:  # noqa: BLE001
-        return {"error": f"psutil is not available: {e}"}
     port = int(_os.getenv("ORCHESTRATOR_PORT", "8999") or 8999)
     peers: Dict[str, int] = {}
+    try:
+        import psutil
+    except Exception:  # noqa: BLE001 - no psutil: the kernel's own table says the same
+        return _proc_connections(port)
     try:
         for cn in psutil.net_connections(kind="tcp"):
             if cn.status != psutil.CONN_ESTABLISHED or not cn.laddr or not cn.raddr or cn.laddr.port != port:
