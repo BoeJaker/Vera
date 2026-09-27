@@ -666,6 +666,16 @@ header .hp-meter{display:inline-flex;align-items:center;gap:7px;height:28px;padd
 header .hp-meter i{display:block;width:56px;height:4px;border-radius:2px;background:var(--s3,var(--bg3,#22262e));overflow:hidden}
 header .hp-meter i b{display:block;height:100%;background:var(--ac,var(--acc,#5a9e8f))}
 /* ...and the harness's own readings step into a drawer while they do */
+/* THE MENU FOLDS TO A RAIL: the harness's own menu to its panels' icons (« / » in its header, remembered), and the chat's
+   menu slot to the chat's own rail when the chat folds it */
+#lhmNav.lhm-nav.railed:not(.chatmenu){width:54px!important;min-width:54px!important}
+#lhmNav.lhm-nav.absorbed.chatmenu.railed{width:47px!important;min-width:47px!important}
+#lhmNav.railed .lhm-topbar .lhm-tt{display:none}
+#lhmNav.railed .lhm-topbar{justify-content:center;padding-left:0;padding-right:0}
+#lhmNav.railed .lhm-nav-foot{flex-direction:column;align-items:center}
+#lhmNav.railed #lhmEventsFeed{display:none!important}
+.body-wrap.lhm .main.autohide-reserve-v.railed{padding-left:54px!important}
+.body-wrap.lhm .main.autohide-reserve-v.chatmenu.railed{padding-left:47px!important}
 #hdrDrawerBtn[hidden]{display:none}
 #hdrDrawerBtn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
 #hdrDrawer{position:absolute;right:14px;top:calc(100% + 6px);z-index:900;display:none;flex-direction:column;align-items:flex-start;gap:12px;padding:12px 14px;border-radius:var(--ui-radius,10px);background:var(--s1,var(--bg1,#151719));box-shadow:var(--elev,0 10px 30px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));max-width:min(620px,calc(100vw - 28px))}
@@ -2801,6 +2811,9 @@ function _lhmNavSync(){
   const chatOpen = !!(absorbed && !_lhmAbsorbTop && _chatFrameFor(absorbed.pid));
   document.getElementById('lhmNav')?.classList.toggle('chatmenu', chatOpen);
   document.querySelector('.main')?.classList.toggle('chatmenu', chatOpen);
+  // folded to a rail: the chat's menu by the chat's word, the harness's own list by its « / »
+  { const railed = chatOpen ? _lhmChatRailed : ((!absorbed || _lhmAbsorbTop) && _lhmRailed);
+    document.getElementById('lhmNav')?.classList.toggle('railed', railed); document.querySelector('.main')?.classList.toggle('railed', railed); }
   document.getElementById('lhmMenuHost')?.classList.toggle('on', chatOpen);
   if(absorbed && _lhmRenderAbsorbed(host, absorbed.pid, absorbed.nav)) return;
 
@@ -2870,6 +2883,9 @@ function _lhmNativeLegacy(host){
 
 // ── the main LHM, from the one menu component ─────────────────────────────────
 let _lhmSecOpen = {};                 // panel id → the section open in its accordion / strip
+// the menu folded to its icons: the harness's own list (remembered), and the chat's menu (the chat says when it folds)
+let _lhmRailed = (function(){ try{ return localStorage.getItem('vera:lhm:rail') === '1'; }catch(_){ return false; } })(), _lhmChatRailed = false;
+window.addEventListener('message', e => { const d = e.data; if(!d || d.type !== 'vera:lhm:rail') return; _lhmChatRailed = !!d.on; _lhmNavSync(); });
 // a panel's sections: what it registered (register_ui sections, from /ui/panels) and, as one more section, the nav
 // items it published through the bridge (registerNav) — the same tree in the side menu and the strips
 function _panelSectionsFor(pid){
@@ -2907,6 +2923,7 @@ function _lhmNativeRender(host){
     // now (and so does the registered row), so the count keeps the space.
     top: { title: 'Vera', sub: ((_uiPanelCache || []).length || rows.length) + ' panels', toggle: () => tabToggleLhm(), toggleTitle: 'Switch to horizontal tabs (the same menu, as tabs and strips)' },
     search: { label: 'Find a panel', hint: '⌘K', open: () => openTabPicker() }, edit: true, id: 'harness-main',
+    rail: { on: _lhmRailed, toggle: () => { _lhmRailed = !_lhmRailed; try{ localStorage.setItem('vera:lhm:rail', _lhmRailed ? '1' : '0'); }catch(_){} _lhmNavSync(); } },
     open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() },
     onPanel: (pid, ev) => { if(ev && (ev.ctrlKey || ev.metaKey)) splitTab(pid); else switchTab(pid); _tabFireLoader(pid); _lhmNavSync(); },
     onSection: (pid, sid, i) => { _lhmSecOpen[pid] = i; _lhmNavSync(); },
