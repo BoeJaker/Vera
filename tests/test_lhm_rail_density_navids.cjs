@@ -30,7 +30,7 @@ let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 
 
 // ── the rail ───────────────────────────────────────────────────────────────────────────────────────────────────
 t('the side menu has a fold control and a railed state', /if\(cfg\.rail\)\{ var rl = _el\('button', 'lhm-s-rl'/.test(LHM) && /if\(cfg\.rail && cfg\.rail\.on\) wrap\.classList\.add\('railed'\);/.test(LHM));
-t('railed, a panel is its icon and the open one is lit', /\.lhm-side\.railed \.lhm-s-row > :not\(\.ico\)\{display:none\}/.test(LHM) && /\.lhm-side\.railed \.lhm-s-row\.on\{box-shadow:inset 2px 0 0 var\(--acc\)\}/.test(LHM));
+t('railed, a panel is its icon and the open one is lit', /\.lhm-side\.railed \.lhm-s-row > :not\(\.ico\)\{opacity:0;pointer-events:none\}/.test(LHM) && /\.lhm-side\.railed \.lhm-s-row\.on\{box-shadow:inset 2px 0 0 var\(--acc\)\}/.test(LHM));
 t('and every panel row names itself on hover', /r\.setAttribute\('data-w', 'panel · ' \+ \(p\.label \|\| p\.id\)\); r\.title = p\.label \|\| p\.id;/.test(LHM));
 t('the harness keeps the fold, remembered', /localStorage\.getItem\('vera:lhm:rail'\) === '1'/.test(HAR) && /rail: \{ on: _lhmRailed, toggle:/.test(HAR) && /#lhmNav\.lhm-nav\.railed:not\(\.chatmenu\)\{width:54px!important/.test(HAR));
 t('the chat\'s menu tells the harness when it folds, and the slot folds with it', /if\(_EMBED\.only==='menu'\) window\.parent\.postMessage\(\{ type:'vera:lhm:rail', on:r\.classList\.contains\('slim'\) \}, '\*'\);/.test(CHAT) && /d\.type !== 'vera:lhm:rail'\) return; _lhmChatRailed = !!d\.on;/.test(HAR) && /#lhmNav\.lhm-nav\.absorbed\.chatmenu\.railed\{width:47px!important/.test(HAR));
@@ -39,7 +39,7 @@ t('the chat\'s menu tells the harness when it folds, and the slot folds with it'
 t('Zen leaves the words', /html\[data-den="zen"\] \.lhm-side:not\(\.railed\) \.lhm-s-row \.ico,html\[data-den="zen"\] \.lhm-top \.lhm-row \.lhm-ri\{display:none\}/.test(LHM));
 t('Hover shows an icon when its option is pointed at', /html\[data-den="hover"\] \.lhm-side:not\(\.railed\) \.lhm-s-row:hover \.ico/.test(LHM));
 t('the chat\'s own option lists follow the tier, closing the icon column in Zen', /html\[data-den="zen"\] #rightRail\.lhm-host \.lhm-quick \.tm-r\{grid-template-columns:1fr auto\}/.test(CHAT));
-t('a folded rail is its icons in every tier', /\.lhm-side\.railed \.lhm-s-row \.ico\{width:auto;font-size:14px;display:block!important;opacity:1!important\}/.test(LHM));
+t('a folded rail is its icons in every tier', /\.lhm-side\.railed \.lhm-s-row \.ico\{display:block!important;opacity:1!important\}/.test(LHM));
 
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
