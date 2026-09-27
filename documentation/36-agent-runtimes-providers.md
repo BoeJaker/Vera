@@ -242,6 +242,12 @@ LangGraph is the first migrated bridge. Its existing `langgraph.*` capability
 names and `langgraph.run.*` events are unchanged, while image health/build and
 validated run requests now pass through the shared adapter. Static inspection
 does not import LangGraph, build an image, contact a model, or launch a run.
+Workflow IR also has a separate offline LangGraph compiler. It converts only the
+losslessly supported task, flat-parallel, and state-truthy-condition subset into
+a content-addressed plan, and an injected conformance seam verifies that a future
+runner echoes the exact plan and workflow identities. This compiler is not wired
+to `langgraph.run`: it cannot launch a container, call a model, authorize an
+effect, or imply that richer Workflow IR semantics are supported.
 Active runs can be cancelled by validated run ID through the runner's owned
 process registry. Cancellation, timeout, malformed output, and normal completion
 converge on one terminal event and release the shared resource gate. Protocol

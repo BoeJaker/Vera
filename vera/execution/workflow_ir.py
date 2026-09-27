@@ -31,8 +31,9 @@ _ADAPTER_PROFILES = {
     "vera.native_dag": {"available": True, "executable": False,
                         "supports": ["tasks", "parallel", "conditions"],
                         "detail": "Loss-aware conversion only; native DAG remains authoritative."},
-    "langgraph": {"available": False, "executable": False, "supports": [],
-                  "detail": "Reserved profile; no LangGraph adapter is installed or invoked."},
+    "langgraph": {"available": True, "executable": False,
+                  "supports": ["tasks", "parallel", "conditions"],
+                  "detail": "Offline compiler and injected conformance boundary; no operational runner is registered or invoked."},
     "temporal": {"available": False, "executable": False, "supports": [],
                  "detail": "Reserved profile; no Temporal adapter is installed or invoked."},
 }
@@ -623,5 +624,11 @@ def analyze_adapter(workflow: Any, *, adapter: str = "vera.native_dag") -> dict[
         return {"ok": result["ok"], "adapter": adapter, "available": True,
                 "content_hash": result["content_hash"], "gaps": result["gaps"],
                 "executes": False}
+    if adapter == "langgraph":
+        from .langgraph_workflow_adapter import compile_langgraph_workflow
+        result = compile_langgraph_workflow(normalized)
+        return {"ok": result["ok"], "adapter": adapter, "available": True,
+                "content_hash": result.get("content_hash", normalized["content_hash"]),
+                "gaps": result["gaps"], "executes": False}
     return {"ok": True, "adapter": adapter, "available": True,
             "content_hash": normalized["content_hash"], "gaps": [], "executes": False}
