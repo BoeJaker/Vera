@@ -458,3 +458,68 @@ def style_ids() -> List[str]:
 
 def get_style(style_id: Any) -> Optional[Dict[str, Any]]:
     return STYLES.get(str(style_id or "").strip().lower())
+
+
+# ── The loop's planning-style selector ───────────────────────────────────────
+#
+# The agentic loop (dag.agent_loop_v6/v7) takes a `plan_style` and asks this
+# table what that style means for ITS planning phase. The table is the whole
+# contract: the loop reads these switches at its own call sites and does not
+# branch on style names anywhere else, so a style's behaviour can be read here
+# in one place and tested without booting the loop.
+#
+#   auto      the loop's behaviour before styles existed: tier + intent pick
+#             the path (one-shot plan, master-plan escalation for strategic
+#             goals, recon, the shape guards).
+#   flat      ONE plan from the loop's planner (plus its empty-plan retry) and
+#             nothing else - no master-plan escalation, no recon rounds.
+#   stepwise  NO upfront plan. The run starts from one bootstrap step and the
+#             adaptive controller plans each next step from the evidence so far.
+#             The shape guards are off: they would "repair" the one-step start.
+#   detailed  the multi-lens brief (plan_detailed's lenses, merged host-side)
+#             is handed to the loop's planner as context, which then writes the
+#             steps under its own sizing and cap-routing rules. The lenses alone
+#             over-decompose (a one-line sum became six steps, 2026-09-10).
+LOOP_STYLES: Dict[str, Dict[str, Any]] = {
+    "auto": {"label": "Auto (tier & intent decide)",
+             "run_planner": True, "master_plan": True, "recon": True,
+             "shape_guards": True, "lens_brief": False, "stepwise_controller": False},
+    "flat": {"label": "Flat (one plan, no escalation)",
+             "run_planner": True, "master_plan": False, "recon": False,
+             "shape_guards": True, "lens_brief": False, "stepwise_controller": False},
+    "stepwise": {"label": "Stepwise (plan each step from evidence)",
+                 "run_planner": False, "master_plan": False, "recon": False,
+                 "shape_guards": False, "lens_brief": False, "stepwise_controller": True},
+    "detailed": {"label": "Detailed (multi-lens brief, then plan)",
+                 "run_planner": True, "master_plan": True, "recon": True,
+                 "shape_guards": True, "lens_brief": True, "stepwise_controller": False},
+}
+DEFAULT_LOOP_STYLE = "auto"
+
+
+def loop_style_ids() -> List[str]:
+    return list(LOOP_STYLES)
+
+
+def resolve_loop_style(requested: Any) -> Tuple[str, Dict[str, Any], str]:
+    """(effective id, switches, reason). An unknown or empty request runs as
+    `auto` and SAYS so - a typo must not silently become a different style."""
+    req = str(requested or "").strip().lower()
+    if not req or req == DEFAULT_LOOP_STYLE:
+        return DEFAULT_LOOP_STYLE, dict(LOOP_STYLES[DEFAULT_LOOP_STYLE]), "default"
+    if req in LOOP_STYLES:
+        return req, dict(LOOP_STYLES[req]), "requested"
+    return (DEFAULT_LOOP_STYLE, dict(LOOP_STYLES[DEFAULT_LOOP_STYLE]),
+            "unknown style %r - ran as %s (known: %s)"
+            % (req[:40], DEFAULT_LOOP_STYLE, ", ".join(LOOP_STYLES)))
+
+
+#: The controller's extra instruction in a stepwise run. Without it the
+#: controller's only move on an empty queue is "continue" - and the run ends
+#: after the bootstrap step.
+STEPWISE_CONTROLLER_NOTE = (
+    "STEPWISE MODE: this run has NO upfront plan - you are its planner, one step at a "
+    "time. When PENDING STEPS is empty and the GOAL (see DONE WHEN) is not yet "
+    "demonstrably met, choose \"insert\" with exactly ONE next step: the single most "
+    "useful concrete action given what the ledger shows. Choose \"stop\" only when the "
+    "goal is met. Never plan several steps ahead.\n")
