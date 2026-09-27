@@ -197,6 +197,12 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .owf-n{position:absolute;height:2.5px;transform-origin:0 50%;background:var(--t1);border-radius:2px;z-index:8;box-shadow:0 0 6px 1px color-mix(in srgb,var(--ac3) 60%,transparent)}
 .owf-l{position:absolute;transform:translate(-50%,0) scale(var(--ui,1));transform-origin:50% 0;font-family:var(--f-mono);font-size:9px;z-index:8;text-shadow:0 1px 3px var(--bg);white-space:nowrap;pointer-events:none}
 .owf-hit{position:absolute;z-index:9;border-radius:6px;cursor:pointer}
+.pivot{position:absolute;width:0;height:0;pointer-events:none}
+.rtpill{position:absolute;left:10px;top:8px;z-index:44;display:flex;align-items:center;gap:7px;padding:4px 5px 4px 9px;border-radius:var(--r-sm);background:color-mix(in srgb,var(--s1) 92%,transparent);box-shadow:0 0 0 1px var(--bd);font-size:10.5px;color:var(--t2)}
+.rtpill[hidden]{display:none}
+.rtpill i{width:7px;height:7px;border-radius:50%;flex:none}.rtpill b{color:var(--t1);font-weight:600}.rtpill .c{font-family:var(--f-mono);font-size:9.5px;color:var(--t3)}
+.rtpill button{font:inherit;font-size:10px;color:var(--t1);background:var(--s3);border:0;border-radius:4px;padding:3px 8px;cursor:pointer}
+.rtpill button:hover,.rtpill button:focus-visible{background:var(--ac);color:var(--bg);outline:none}
 .owf-fr{position:absolute;transform-origin:0 0;z-index:8;background:var(--bg);color:var(--t2);font-family:var(--f-mono);font-size:8px;line-height:1.35;padding:3px 5px;box-sizing:border-box;overflow:hidden;cursor:pointer;box-shadow:inset 0 0 0 1px var(--bd);display:flex;flex-direction:column;justify-content:flex-end;white-space:pre}
 .owf-fr span{overflow:hidden;text-overflow:ellipsis}.owf-fr .p{color:var(--ac2)}.owf-fr .err,.owf-fr .warn{color:var(--ac3)}.owf-fr .ok{color:var(--t3)}.owf-fr .dim{color:var(--t3)}
 .link.hot{opacity:1;height:calc(3px * var(--ui,1));box-shadow:0 0 9px 0 var(--lc,transparent);z-index:2}
@@ -332,7 +338,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       <div class="card" id="lensCard" hidden><h3 id="lensH">Lens</h3><div id="lensBody"></div><span class="note" id="lensNote"></span></div>
       <div class="card"><h3>In flight now</h3><div class="kinds" id="kinds"></div></div>
       <div class="card"><h3>Pipes</h3><div class="kinds" id="pipeKey"></div>
-        <span class="note">Runs follow each plane's own lanes. Between planes a run leaves by its plane's bus point on the back edge, on a lane of its own, rises or falls on a riser outside every plate, and wears its origin plane's colour. Selecting a node lights the shortest route from it to every end it reaches, down to the metal and up to the work, and fades the rest.</span></div>
+        <span class="note">Runs follow each plane's own lanes. Between planes a run leaves by its plane's bus point on the back edge, on a lane of its own, rises or falls on a riser outside every plate, and wears its origin plane's colour. Selecting a node lights the shortest route from it to every end it reaches, down to the metal and up to the work, and fades the rest; Esc, a click on empty space or Clear on the plot puts it back.</span></div>
       <div class="card"><h3 id="wsecH" style="cursor:pointer" title="The iso widgets standing on the planes">Widgets<span class="lbl mono" id="wCount"></span><span class="tw" id="wsecArrow">▾</span></h3>
         <div class="wplanes" id="wplanes"></div>
         <span class="note" id="wNote">A node carries several widgets: a server for a machine, and its readings — a dial for its load, a thermometer, a tank for its disk — each joined to the node on the plane. Select a node and press ⊕ to add one; the size button steps ×¾ · ×1 · ×1.3; ✕ takes one off.</span></div>
@@ -358,6 +364,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
           <span class="sp"></span><button data-pz="fit" title="Back to fit">fit</button>
         </div>
         <div class="lsel" id="lsel" hidden></div>
+        <div class="rtpill" id="rtPill" hidden></div>
         <div class="pzv" id="pzv"></div>
       </div>
     </section>
@@ -406,7 +413,7 @@ const regOf = (n) => { const r = n.reg; if (!r || !r.planes) return null; const 
 const S = { view: '2d', layout3d: 'stack', focus: null, pipes: true, widgets: true, sel: null, exp: null, act: 'metrics', wact: 'metrics',
   on: { client: true, work: true, core: true, service: true, runtime: true, host: true, edge: true },
   vz: 1, vx: 0, vy: 0, tilt: null, azim: null, zgap: 1, spread: 1, wsz: 1, lbl: 'both', wl: {}, wpick: null, wadd: null, wsec: true, lens: 'all', term: {},
-  snap: null, err: '', cm: null, logs: {}, req: {}, dive: {}, drag: null, fresh: true, busy: false, fp: '', seenN: {}, seenW: {}, enterKey: '' };
+  snap: null, err: '', cm: null, logs: {}, req: {}, dive: {}, drag: null, fresh: true, busy: false, fp: '', seenN: {}, seenW: {}, enterKey: '', rt: null, moved: false };
 // the widget overrides: {node: {off, items:[{k, s}]}} (an older {k, s, off} is read as one item)
 try { const w = JSON.parse(localStorage.getItem('vera:ops:widgets') || 'null'); if (w && typeof w === 'object') Object.keys(w).forEach((id) => { const o = w[id] || {}; S.wl[id] = Array.isArray(o.items) ? { off: !!o.off, items: o.items } : { off: !!o.off, items: o.k ? [{ k: o.k, s: o.s || 1 }] : null }; }); } catch (_) {}
 try { const v = JSON.parse(localStorage.getItem('vera:ops:view') || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); if (['labels', 'both', 'widgets'].indexOf(v.lbl) >= 0) S.lbl = v.lbl; if (['all', 'net', 'sec'].indexOf(v.lens) >= 0) S.lens = v.lens; S.widgets = S.lbl !== 'labels'; } } catch (_) {}
@@ -525,24 +532,25 @@ function layout(W, H){
       const zh = Math.max(40, spanY + 26) * S.zgap / Math.max(0.2, Math.cos(TH));
       const iso = ISO.proj(TILT, AZIM, KI, true);
       const zOf = (pl) => FLAT ? 0 : (rows - 1 - rowOf[pl]) * zh, uOf = (pl) => FLAT ? uOff[pl] : 0, vOf2 = (pl) => FLAT ? vOff[pl] : 0;
-      const rawX = [], rawY = [], corners = [], rawNodes = [], LL = {}, usedL = {};
+      const rawX = [], rawY = [], corners = [], rawNodes = [], LL = {}, usedL = {}, pcs = [];
       PL.forEach((p) => { const z = zOf(p.id), uo = uOf(p.id), vo = vOf2(p.id), VH = VHof[p.id], vb = vBusOf(p.id) - .6 * SP;
         const c = [iso(-0.3 * SP + uo, -VH + vo, z), iso(UW + uo, -VH + vo, z), iso(UW + uo, VH + vo, z), iso(-0.3 * SP + uo, VH + vo, z)];
-        corners.push({ p, c }); c.concat([iso(uo, vb + vo, z), iso(UW + uo, vb + vo, z)]).forEach((q) => { rawX.push(q[0]); rawY.push(q[1]); }); });
+        corners.push({ p, c }); pcs.push([(UW - 0.3 * SP) / 2 + uo, vo, z]); c.concat([iso(uo, vb + vo, z), iso(UW + uo, vb + vo, z)]).forEach((q) => { rawX.push(q[0]); rawY.push(q[1]); }); });
       shown.forEach((n) => { const k = n.plane + ':' + n.domain; const idx = (usedL[k] = (usedL[k] || 0)); usedL[k]++; const g = grid[k];
         const c = idx % g.cols, r = Math.floor(idx / g.cols);
         const u = domU[n.domain] + (c - (g.cols - 1) / 2) * cellW(n.plane) + uOf(n.plane), vv = (r - (g.rows - 1) / 2) * rowV(n.plane) + vOf2(n.plane), z = zOf(n.plane);
         const q = iso(u, vv, z); LL[n.id] = { u, v: vv, z, pl: n.plane, vb: vBusOf(n.plane) + vOf2(n.plane), rv: rowV(n.plane) };
         rawNodes.push({ id: n.id, x: q[0], y: q[1], col: PCOL[n.plane] }); rawX.push(q[0] - NHW, q[0] + NHW); rawY.push(q[1] - 90, q[1] + 16); });
       const minX = Math.min.apply(null, rawX), maxX = Math.max.apply(null, rawX), minY = Math.min.apply(null, rawY), maxY = Math.max.apply(null, rawY);
-      return { iso, corners, rawNodes, LL, minX, maxX, minY, maxY };
+      const pn = pcs.length || 1, pc = pcs.reduce((a, q) => [a[0] + q[0], a[1] + q[1], a[2] + q[2]], [0, 0, 0]);
+      return { iso, corners, rawNodes, LL, minX, maxX, minY, maxY, pv: iso(pc[0] / pn, pc[1] / pn, pc[2] / pn) };
     };
     // fit the width always (a wide lattice would be cut at the plot's edge); fit the height too when the planes lie flat -
     // a stack asks the plot for its height instead (render grows the plot and the stage scrolls)
     let KI = KI0, R = lay(KI);
     for (let i = 0; i < 5; i++){ const s = Math.min(1, (W - 2 * FITM) / (R.maxX - R.minX), FLAT ? (H - AXIS - 2 * FITM) / (R.maxY - R.minY) : 1); if (s > 0.995) break; KI = Math.max(KI0 * (FLAT || !S.widgets ? 0.45 : 0.72), KI * s); R = lay(KI); }
     const ox = (W - (R.maxX - R.minX)) / 2 - R.minX, oy = Math.max(FITM - R.minY, (H - AXIS - (R.maxY - R.minY)) / 2 - R.minY);
-    G = { iso: R.iso, ox, oy, L: R.LL, FLAT, fitS: KI / KI0, TILT, AZIM, SP, height: R.maxY - R.minY + AXIS + 2 * FITM, width: R.maxX - R.minX + 2 * FITM };
+    G = { pivot: { x: R.pv[0] + ox, y: R.pv[1] + oy }, iso: R.iso, ox, oy, L: R.LL, FLAT, fitS: KI / KI0, TILT, AZIM, SP, height: R.maxY - R.minY + AXIS + 2 * FITM, width: R.maxX - R.minX + 2 * FITM };
     R.corners.forEach((f) => { floors.push({ id: f.p.id, col: PCOL[f.p.id], pts: f.c.map((q) => (q[0] + ox).toFixed(1) + ',' + (q[1] + oy).toFixed(1)).join(' ') });
       const a = f.c[3]; planeLabels.push({ id: f.p.id, x: clamp(a[0] + ox - 2, 8, W - 96), y: clamp(a[1] + oy - 15, 10, Math.max(H, G.height) - 14), col: PCOL[f.p.id], t: f.p.name + (S.focus === f.p.id ? ' · in focus' : '') }); });
     const vAx = VMAX + 1.0 * SP;
@@ -746,11 +754,14 @@ function render(opts){
   lay.domLabels.forEach((d) => parts.push('<div class="dlabel' + (replay ? ' ent' : '') + '" style="left:' + px(d.x) + ';top:' + px(d.y) + (replay ? ';--ed:.8s' : '') + '">' + esc(d.t) + '</div>'));
   const segsOf = (a, b) => { const pts = S.pipes && lay.route ? lay.route(a, b) : [{ x: pos[a].x, y: pos[a].y }, { x: pos[b].x, y: pos[b].y }]; const segs = [];
     for (let i = 1; i < pts.length; i++){ const dx = pts[i].x - pts[i - 1].x, dy = pts[i].y - pts[i - 1].y, len = Math.hypot(dx, dy); if (len < .6) continue; segs.push({ x: pts[i - 1].x, y: pts[i - 1].y, len, deg: Math.atan2(dy, dx) * 180 / Math.PI }); } return segs; };
-  let nLinks = 0; const RT = routesFrom(S.sel, snap.links, ID);
+  let nLinks = 0; const RT = routesFrom(S.rt, snap.links, ID);
+  // the lit route names itself on the plot with a way out (Esc and a click on empty space do the same)
+  { const pill = $('rtPill'), rn = S.rt && ID[S.rt]; pill.hidden = !rn;
+    if (rn) pill.innerHTML = '<i style="background:' + PCOL[rn.plane] + '"></i>Routes from <b>' + esc(rn.label.length > 28 ? rn.label.slice(0, 26) + '…' : rn.label) + '</b><span class="c">' + (RT && RT.any ? (RT.down.length + RT.up.length) + (RT.down.length + RT.up.length === 1 ? ' end' : ' ends') : 'nothing wired') + '</span><button data-clear-route="1" title="Put every pipe back (Esc, or a click on empty space)">✕ Clear</button>'; }
   snap.links.forEach((l) => { if (!pos[l.a] || !pos[l.b]) return; if (is3d && S.focus && (ID[l.a].plane !== S.focus || ID[l.b].plane !== S.focus)) return;
     // a selected node lights the shortest route to each of its ends and fades the rest; the network lens keeps requests and radio lit
     const hot = RT && RT.any && RT.edges[l.a + '>' + l.b];
-    const dim = (RT && RT.any ? (hot ? 'hot' : 'q2') : (S.sel === l.a || S.sel === l.b ? '' : 'q')) + (!hot && S.lens === 'net' && l.kind !== 'mesh' && l.kind !== 'req' ? ' q2' : ''); nLinks++;
+    const dim = (RT && RT.any ? (hot ? 'hot' : 'q2') : (S.rt && S.rt !== l.a && S.rt !== l.b ? 'q' : '')) + (!hot && S.lens === 'net' && l.kind !== 'mesh' && l.kind !== 'req' ? ' q2' : ''); nLinks++;
     // a pipe between planes wears its origin plane's colour; within a plane, its kind's
     const lc = ID[l.a].plane !== ID[l.b].plane ? PCOL[ID[l.a].plane] : LCOL[l.kind];
     const el = EL(l.a, l.b);
@@ -803,7 +814,7 @@ function render(opts){
     const spark = (S.snap.series[n.id] && (S.snap.series[n.id].tps || S.snap.series[n.id].cpu)) || null;
     const bars = spark ? spark.slice(-5) : null; const hi = bars ? Math.max.apply(null, bars.concat([1])) : 1;
     const lc = lensCol(n), lt = lensTag(n), en = E(n.id, is3d ? 0.18 : 0);
-    parts.push('<div class="nd ' + (bb ? 'bb ' : '') + (n.status === 'down' ? 'isdown ' : '') + (en[0] ? 'ent ' : '') + (is3d && S.focus && n.plane !== S.focus ? 'dim ' : '') + (S.sel === n.id ? 'sel ' : '') + (lensDim(n) ? 'ldim ' : '') + (RT && RT.nodes[n.id] && n.id !== S.sel ? 'onpath ' : '') + (busy ? 'busy ' : '') + (n.errors ? 'hasErr' : '') + '" data-node="' + esc(n.id) + '" title="' + esc(n.label + ' · ' + n.plane + ' · ' + n.detail + (n.inflight ? ' · ' + n.inflight + ' in flight' : '') + (n.errors ? ' · ' + n.errors + ' findings' : '') + (n.temp != null ? ' · ' + Math.round(n.temp) + '°' : '')) + '" style="left:' + px(at.x) + ';top:' + px(at.y) + ';--pc:' + (lc || PCOL[n.plane]) + ';--nsc:' + NSC.toFixed(2) + (bb ? ';--r:' + chipAt[n.id].r : '') + en[1] + '">'
+    parts.push('<div class="nd ' + (bb ? 'bb ' : '') + (n.status === 'down' ? 'isdown ' : '') + (en[0] ? 'ent ' : '') + (is3d && S.focus && n.plane !== S.focus ? 'dim ' : '') + (S.sel === n.id ? 'sel ' : '') + (lensDim(n) ? 'ldim ' : '') + (RT && RT.nodes[n.id] && n.id !== S.rt ? 'onpath ' : '') + (busy ? 'busy ' : '') + (n.errors ? 'hasErr' : '') + '" data-node="' + esc(n.id) + '" title="' + esc(n.label + ' · ' + n.plane + ' · ' + n.detail + (n.inflight ? ' · ' + n.inflight + ' in flight' : '') + (n.errors ? ' · ' + n.errors + ' findings' : '') + (n.temp != null ? ' · ' + Math.round(n.temp) + '°' : '')) + '" style="left:' + px(at.x) + ';top:' + px(at.y) + ';--pc:' + (lc || PCOL[n.plane]) + ';--nsc:' + NSC.toFixed(2) + (bb ? ';--r:' + chipAt[n.id].r : '') + en[1] + '">'
       + '<span class="st" style="background:' + SC[n.status] + '"></span>' + esc(n.label.length > 26 ? n.label.slice(0, 24) + '…' : n.label)
       + (n.status === 'down' ? '<span class="dn">DOWN</span>' : '')
       + (lt ? '<span class="lz" style="--lzc:' + (lt.c || 'var(--t3)') + '">' + esc(lt.t) + '</span>' : '')
@@ -821,6 +832,7 @@ function render(opts){
     if (!vis || vis.R - vis.L < 2 * hw + 20 || vis.B - vis.T < 2 * hh + 20) vis = { L: 0, R: W, T: 0, B: H };
     const wx = p.x > (vis.L + vis.R) / 2 ? p.x - (hw + 26) : p.x + (hw + 26);
     parts.push('<div class="ndw ' + (wide ? 'wide' : '') + '" style="left:' + px(clamp(wx, vis.L + hw + 8, vis.R - hw - 8)) + ';top:' + px(clamp(p.y, vis.T + hh + 8, vis.B - hh - 8)) + '" data-stop="1"><div class="h"><span class="st" style="background:' + SC[n.status] + '"></span>' + esc(n.label) + '<span class="x" data-close="1">✕</span></div><div class="b">' + actionsHtml(n, S.wact, 'w') + '</div></div>'); }
+  if (lay.G && lay.G.pivot) parts.push('<i class="pivot" style="left:' + px(lay.G.pivot.x) + ';top:' + px(lay.G.pivot.y) + '"></i>');
   v.innerHTML = parts.join('');
   applyZoom(); termScroll();
   shown.forEach((n) => { S.seenN[n.id] = 1; wspec(n).forEach((w, i) => { S.seenW[n.id + ':' + i + ':' + w.k] = 1; }); });
@@ -1054,7 +1066,7 @@ function renderInspector(){
     + (n.temp != null ? '<div class="wg"><span class="h">temperature<b>' + Math.round(n.temp) + '°</b></span><span class="tmpbar"><i style="width:' + Math.min(100, n.temp / 90 * 100) + '%;background:' + tempCol(n.temp) + '"></i></span><span class="lbl" style="font-size:9px">throttle at 83°</span></div>' : '')
     + '</div>'
     + '<div class="card"><h3>Deep dive<span class="lbl mono">' + esc(n.ref || (n.req && n.req.name) || '') + '</span></h3><div class="dive">' + diveHtml(n) + '</div></div>'
-    + '<div class="card"><h3>Routes<span class="lbl">to every end it reaches</span></h3>' + routesHtml(n, ID) + '</div>'
+    + '<div class="card"><h3>Routes<span class="lbl">to every end it reaches</span></h3>' + routesHtml(n, ID) + '<div class="rrow"><button class="abtn' + (S.rt === n.id ? '' : ' go') + '" data-route-toggle="' + esc(n.id) + '">' + (S.rt === n.id ? 'Clear the route' : 'Light the route on the map') + '</button></div></div>'
     + '<div class="card"><h3>Actions<span class="lbl">' + esc(n.label) + '</span></h3>' + actionsHtml(n, S.act, 'i') + '</div>'
     + '<div class="card"><h3>' + (errs.length ? 'Findings · ' + esc(n.label) : 'Findings') + '<span class="lbl mono">' + (S.snap.errors || []).length + '</span></h3>' + (list.length ? list.map((e) => '<span class="errrow" data-err-node="' + esc(e.node) + '" title="' + esc(e.section + (e.ref ? ' · ' + e.ref : '')) + '"><i style="background:' + (e.sev === 'error' ? 'var(--ac4)' : 'var(--ac3)') + '"></i><span class="n">' + esc(e.n) + '</span><span class="c">' + e.c + '</span></span>').join('') : '<span class="note">no findings</span>') + '<span class="note">Nodes carrying findings are ringed in red on the map with a count. Selecting one filters this list to it.</span></div>'
     + '<div class="card sp"><h3>Requests through this node</h3><div class="flist">' + (through.length ? through.map((r) => '<span class="frow"><i style="background:' + KCOL[r.kind] + '"></i><span class="n">' + esc(r.n) + '</span><span class="ms">' + esc(r.ms || r.status) + '</span></span>').join('') : '<span class="note">' + (n.kind === 'ollama' ? 'nothing in the request log for this instance' : 'the request log names model instances; this node carries none') + '</span>') + '</div></div>';
@@ -1083,7 +1095,7 @@ function selectRef(ref){ const n = (S.snap.nodes || []).find((x) => x.ref === re
 function openMenu(e, n){ e.preventDefault(); e.stopPropagation(); S.cm = { node: n ? n.id : null, x: Math.min(e.clientX, window.innerWidth - 230), y: Math.min(e.clientY, window.innerHeight - 280) }; drawMenu(); }
 function drawMenu(){ let m = document.querySelector('.cmw'); if (m) m.remove(); if (!S.cm) return; const n = S.cm.node ? byId()[S.cm.node] : null;
   const items = n ? [['Open as a widget', 'exp'], ['Metrics', 'metrics'], ['Send a request', 'req'], ['Capabilities', 'caps'], ['Logs', 'logs']].concat(actionsFor(n).indexOf('term') >= 0 ? [['Terminal', 'term']] : []).concat(n.ref ? [['Everything about this', 'drawer'], ['Open in the estate', 'entity']] : []).concat(S.view === '3d' ? [['Its iso widgets', 'wpick']] : []).concat(actionsFor(n).indexOf('restart') >= 0 ? [['Restart', 'restart', 'danger']] : [])
-    : [['Back to fit', 'fit'], [S.view === '2d' ? 'Switch to 3D' : 'Switch to 2D', 'view'], [S.pipes ? 'Direct edges' : 'Pipes', 'pipes'], ['Show every plane', 'all'], ['Read again', 'refresh']];
+    : [['Back to fit', 'fit'], [S.view === '2d' ? 'Switch to 3D' : 'Switch to 2D', 'view'], [S.pipes ? 'Direct edges' : 'Pipes', 'pipes'], ['Show every plane', 'all'], ['Read again', 'refresh']].concat(S.rt ? [['Clear the route', 'clearroute']] : []);
   m = document.createElement('div'); m.className = 'cmw'; m.innerHTML = '<span class="cmbg"></span><div class="cmenu" style="left:' + S.cm.x + 'px;top:' + S.cm.y + 'px"><span class="cm-h"><i style="background:' + (n ? PCOL[n.plane] : 'var(--t3)') + '"></i>' + esc(n ? n.label : 'this view') + '<b>' + esc(n ? n.kind : 'view') + '</b></span>' + items.map((i) => '<button class="cm-i ' + (i[2] || '') + '" data-cm="' + i[1] + '">' + esc(i[0]) + '</button>').join('') + '</div>';
   document.body.appendChild(m);
   m.querySelector('.cmbg').onclick = () => { S.cm = null; drawMenu(); }; m.querySelector('.cmbg').oncontextmenu = (e) => { e.preventDefault(); S.cm = null; drawMenu(); };
@@ -1091,7 +1103,7 @@ function drawMenu(){ let m = document.querySelector('.cmw'); if (m) m.remove(); 
     if (k === 'exp'){ S.exp = nid; S.sel = nid; S.wact = 'metrics'; } else if (k === 'entity'){ const nn = byId()[nid]; if (nn && window.veraUI) window.veraUI.openEntity(nn.ref); return; }
     else if (k === 'drawer'){ const nn = byId()[nid]; if (nn && window.veraEntityDrawer) window.veraEntityDrawer.open(nn.ref); return; }
     else if (k === 'wpick'){ S.sel = nid; S.wpick = nid; } else if (k === 'restart'){ S.sel = nid; S.act = 'restart'; } else if (['metrics', 'req', 'caps', 'logs', 'term'].indexOf(k) >= 0){ S.sel = nid; S.act = k; }
-    else if (k === 'fit'){ S.vz = 1; S.vx = 0; S.vy = 0; S.tilt = null; S.azim = null; } else if (k === 'view'){ S.view = S.view === '2d' ? '3d' : '2d'; } else if (k === 'pipes'){ S.pipes = !S.pipes; } else if (k === 'all'){ Object.keys(S.on).forEach((p) => { S.on[p] = true; }); S.focus = null; } else if (k === 'refresh'){ load(true); return; }
+    else if (k === 'fit'){ S.vz = 1; S.vx = 0; S.vy = 0; S.tilt = null; S.azim = null; } else if (k === 'view'){ S.view = S.view === '2d' ? '3d' : '2d'; } else if (k === 'pipes'){ S.pipes = !S.pipes; } else if (k === 'all'){ Object.keys(S.on).forEach((p) => { S.on[p] = true; }); S.focus = null; } else if (k === 'refresh'){ load(true); return; } else if (k === 'clearroute'){ S.rt = null; }
     render(); }; }); }
 // the widget list of a node: add a kind, take one off (the i-th, or the last), none, defaults
 function widgetsOf(nid){ const n = byId()[nid]; if (!n) return null; const o = S.wl[nid]; return { n, items: (o && Array.isArray(o.items)) ? o.items.slice() : (o && o.off ? [] : wdefaults(n)) }; }
@@ -1106,11 +1118,14 @@ function setWidget(nid, k, idx){ const w = widgetsOf(nid); if (!w) return;
 
 // ── wiring ──
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-plane],[data-node],[data-exp],[data-asg],[data-close],[data-act],[data-send],[data-logs],[data-restart],[data-open-entity],[data-open-place],[data-sel-runtime],[data-err-node],[data-layer],[data-floor],[data-pz],[data-wk],[data-wadd],[data-wsel],[data-wsz-node],[data-woff],[data-wrestore],[data-wsz],[data-drawer],[data-ref],[data-wnode],[data-lens],[data-term-run],[data-term-clear],[data-cap-use],#wsecH,[data-stop]');
-  if (!t) return;
+  const t = e.target.closest('[data-plane],[data-node],[data-exp],[data-asg],[data-close],[data-act],[data-send],[data-logs],[data-restart],[data-open-entity],[data-open-place],[data-sel-runtime],[data-err-node],[data-layer],[data-floor],[data-pz],[data-wk],[data-wadd],[data-wsel],[data-wsz-node],[data-woff],[data-wrestore],[data-wsz],[data-drawer],[data-ref],[data-wnode],[data-lens],[data-term-run],[data-term-clear],[data-cap-use],[data-clear-route],[data-route-toggle],#wsecH,[data-stop]');
+  // a click on empty plot (not the end of a drag) clears a lit route
+  if (!t){ if (e.target.closest && e.target.closest('#pzv') && !S.moved) clearRoute(); return; }
+  if (t.dataset.clearRoute !== undefined){ clearRoute(); return; }
+  if (t.dataset.routeToggle !== undefined){ S.rt = S.rt === t.dataset.routeToggle ? null : t.dataset.routeToggle; render(); return; }
   if (t.id === 'wsecH'){ S.wsec = !S.wsec; renderRail(); return; }
   // a widget opens its node's card (a terminal's on its shell); the card stands above the graph
-  if (t.dataset.wnode !== undefined){ const id = t.dataset.wnode; S.sel = id; S.exp = id; S.wact = t.dataset.wkind === 'term' ? 'term' : t.dataset.wkind === 'alarm' ? 'logs' : 'metrics'; if (S.wpick && S.wpick !== id) S.wpick = null; render(); return; }
+  if (t.dataset.wnode !== undefined){ const id = t.dataset.wnode; S.sel = id; S.rt = id; S.exp = id; S.wact = t.dataset.wkind === 'term' ? 'term' : t.dataset.wkind === 'alarm' ? 'logs' : 'metrics'; if (S.wpick && S.wpick !== id) S.wpick = null; render(); return; }
   if (t.dataset.lens !== undefined){ S.lens = t.dataset.lens; saveV(); render(); return; }
   if (t.dataset.termRun !== undefined){ const T = termOf(t.dataset.termRun); T.where = t.closest('.ndw') ? 'w' : 'i'; runTerm(t.dataset.termRun); return; }
   if (t.dataset.termClear !== undefined){ termOf(t.dataset.termClear).lines = []; render(); return; }
@@ -1135,13 +1150,13 @@ document.addEventListener('click', (e) => {
   if (t.dataset.openPlace !== undefined){ if (window.veraUI && window.veraUI.openPlace) window.veraUI.openPlace(t.dataset.openPlace); return; }
   if (t.dataset.ref !== undefined && t.dataset.ref){ e.preventDefault(); selectRef(t.dataset.ref); return; }
   if (t.dataset.selRuntime !== undefined){ selectRuntime(t.dataset.selRuntime); return; }
-  if (t.dataset.errNode !== undefined){ if (t.dataset.errNode && byId()[t.dataset.errNode]){ S.sel = t.dataset.errNode; render(); } return; }
+  if (t.dataset.errNode !== undefined){ if (t.dataset.errNode && byId()[t.dataset.errNode]){ S.sel = t.dataset.errNode; if (S.rt) S.rt = t.dataset.errNode; render(); } return; }
   if (t.dataset.layer !== undefined){ S.focus = S.focus === t.dataset.layer ? null : t.dataset.layer; render(); return; }
-  if (t.dataset.floor !== undefined){ S.focus = S.focus === t.dataset.floor ? null : t.dataset.floor; render(); return; }
+  if (t.dataset.floor !== undefined){ if (S.moved) return; if (clearRoute()) return; S.focus = S.focus === t.dataset.floor ? null : t.dataset.floor; render(); return; }   // a lit route clears first
   if (t.dataset.pz !== undefined){ const k = t.dataset.pz; if (k === 'in') S.vz = Math.min(4, S.vz * 1.25); else if (k === 'out') S.vz = Math.max(.4, S.vz / 1.25); else if (k === 'l') S.vx += 140; else if (k === 'r') S.vx -= 140; else if (k === 'u') S.vy += 110; else if (k === 'd') S.vy -= 110;
     else if (k === 'fit'){ S.vz = 1; S.vx = 0; S.vy = 0; S.tilt = null; S.azim = null; } else { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 12.6) : S.tilt, A = S.azim == null ? 45 : S.azim; if (k === 'tiltUp') S.tilt = Math.min(60, T + 5); if (k === 'tiltDn') S.tilt = Math.max(4, T - 5); if (k === 'rotL') S.azim = Math.min(64, A + 6.5); if (k === 'rotR') S.azim = Math.max(26, A - 6.5); }
-    if (['in', 'out', 'l', 'r', 'u', 'd'].indexOf(k) >= 0) applyZoom(); else render(); return; }
-  if (t.dataset.node !== undefined){ if (t.dataset.stop) return; S.sel = t.dataset.node; if (S.wpick && S.wpick !== t.dataset.node) S.wpick = null; render(); return; }
+    if (['in', 'out', 'l', 'r', 'u', 'd'].indexOf(k) >= 0) applyZoom(); else if (k === 'fit') render(); else keepPivot(() => render()); return; }
+  if (t.dataset.node !== undefined){ if (t.dataset.stop) return; S.sel = t.dataset.node; S.rt = t.dataset.node; if (S.wpick && S.wpick !== t.dataset.node) S.wpick = null; render(); return; }
 });
 document.addEventListener('input', (e) => { const t = e.target; if (t.dataset && t.dataset.req){ const R = S.req[t.dataset.node]; if (R) R[t.dataset.req] = t.value; }
   if (t.dataset && t.dataset.termIn){ const T = termOf(t.dataset.termIn); T.cmd = t.value; T.where = t.closest('.ndw') ? 'w' : 'i'; }
@@ -1161,13 +1176,23 @@ document.querySelectorAll('[data-lbl]').forEach((b) => { b.onclick = () => { S.l
 $('bRefresh').onclick = () => load(true);
 // drag pans; ctrl (or ⌘) + drag rotates the 3D view - the azimuth swings with x, the tilt with y
 let rafId = 0; const rafRender = () => { if (rafId) return; rafId = requestAnimationFrame(() => { rafId = 0; render({ plotOnly: true }); }); };
+// rotation swings the view about the planes' own centre: the pivot keeps its place on screen and the pan takes up the difference
+function keepPivot(fn){ const pz = $('pzv'); pz.classList.add('rotating');   // no pan transition while measuring: it would be read mid-flight
+  const m0 = document.querySelector('#pzv .pivot'), a = m0 && m0.getBoundingClientRect(); fn(); const m1 = document.querySelector('#pzv .pivot');
+  if (a && m1){ const b = m1.getBoundingClientRect(); S.vx -= b.left - a.left; S.vy -= b.top - a.top; applyZoom(); }
+  if (!S.drag || S.drag.mode !== 'rot'){ void pz.offsetWidth; pz.classList.remove('rotating'); } }
+const rafRot = () => { if (rafId) return; rafId = requestAnimationFrame(() => { rafId = 0; keepPivot(() => render({ plotOnly: true })); }); };
+function clearRoute(){ if (!S.rt) return false; S.rt = null; render(); return true; }
+// Esc clears a lit route, else closes the node's card
+document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || S.cm || (e.target.matches && e.target.matches('input,textarea'))) return; if (clearRoute()) return; if (S.exp){ S.exp = null; render(); } });
 const v = $('pzv');
 v.addEventListener('mousedown', (e) => { if (e.button || e.target.closest((e.ctrlKey || e.metaKey) ? '.ndw,.wpk,button,input,textarea' : '.nd,.ndw,.wpk,button,input,textarea')) return;   // ctrl + drag rotates from anywhere on the plot, a chip included
   const rot = (e.ctrlKey || e.metaKey) && S.view === '3d';
   const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 12.6) : S.tilt, A = S.azim == null ? 45 : S.azim;
   S.drag = { mode: rot ? 'rot' : 'pan', x0: e.clientX, y0: e.clientY, vx0: S.vx, vy0: S.vy, t0: T, a0: A }; v.classList.add(rot ? 'rotating' : 'dragging'); e.preventDefault(); });
-window.addEventListener('mousemove', (e) => { const d = S.drag; if (!d) return;
-  if (d.mode === 'rot'){ S.azim = clamp(d.a0 - (e.clientX - d.x0) * 0.22, 26, 64); S.tilt = clamp(d.t0 + (e.clientY - d.y0) * 0.18, 4, 60); rafRender(); return; }
+v.addEventListener('mousedown', () => { S.moved = false; }, true);
+window.addEventListener('mousemove', (e) => { const d = S.drag; if (!d) return; if (Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) > 4) S.moved = true;
+  if (d.mode === 'rot'){ S.azim = clamp(d.a0 - (e.clientX - d.x0) * 0.22, 26, 64); S.tilt = clamp(d.t0 + (e.clientY - d.y0) * 0.18, 4, 60); rafRot(); return; }
   S.vx = d.vx0 + (e.clientX - d.x0); S.vy = d.vy0 + (e.clientY - d.y0); v.style.transform = 'translate(' + S.vx + 'px,' + S.vy + 'px) scale(' + S.vz + ')'; });
 window.addEventListener('mouseup', () => { if (S.drag){ S.drag = null; v.classList.remove('dragging'); v.classList.remove('rotating'); } });
 // the wheel zooms about the pointer; the chrome holds its screen size through --ui
