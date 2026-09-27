@@ -540,10 +540,14 @@ BROAD_BRIEF_SYSTEM = (
     "You split an agentic GOAL into its WORK-STREAMS: the distinct, substantial bodies of "
     "work a thorough plan would cover. Each stream will be planned in detail separately, "
     "in parallel, so each must stand on its own. Rules:\n"
-    "  - between 2 and {n} streams; ONE stream only if the goal genuinely has one kind of "
-    "work (then say so - do not invent streams to fill the count)\n"
+    "  - use the FEWEST streams the goal genuinely has, at most {n}. A short document or a "
+    "small app is at most TWO streams (gather what it needs, then produce it); ONE stream "
+    "if there is nothing to gather. Never invent streams to fill a count.\n"
     "  - a stream is a kind of work (gather the facts, build the thing, write it up), NOT a "
-    "single command\n"
+    "single command, and never a separate stream for citations, formatting or review of "
+    "another stream's output - that belongs to the stream that produces it\n"
+    "  - never add a stream for a deliverable the goal did not ask for (a format "
+    "conversion, an HTML version, a dashboard, a test suite)\n"
     "  - `dependencies` lists ids of EARLIER streams whose deliverable this one consumes\n"
     "  - `caps`: up to 6 capability names from the list, exact names only\n"
     "  - `deliverable`: the concrete file or result that marks the stream done - never a "
@@ -614,9 +618,12 @@ def stream_directive(goal: str, streams: Sequence[Dict[str, Any]],
         lines.append("  %d. %s - %s -> %s%s" % (s["id"], s["title"], s["objective"],
                                                s.get("deliverable") or "?", dep))
     deps = [x for x in streams if x["id"] in (stream.get("dependencies") or [])]
-    dep_txt = ("DEPENDS ON (their deliverables will exist before this stream runs): "
-               + "; ".join("stream %d %s -> %s" % (d["id"], d["title"], d.get("deliverable") or "?")
-                           for d in deps) + "\n") if deps else ""
+    dep_txt = ("DEPENDS ON: " + "; ".join("stream %d %s -> %s" % (d["id"], d["title"],
+                                                                 d.get("deliverable") or "?")
+                                          for d in deps)
+               + "\nThose deliverables WILL ALREADY EXIST when this stream starts. READ and use "
+               "them; do NOT plan any step that gathers, researches, fetches or derives what "
+               "they already provide.\n") if deps else ""
     caps_txt = ("SUGGESTED CAPS for this stream: %s\n" % ", ".join(stream["caps"])
                 if stream.get("caps") else "")
     return ("[PIECEWISE]WORK-STREAMS OF THIS GOAL (planned separately, in parallel - "
@@ -667,6 +674,63 @@ def merge_streams(streams: Sequence[Dict[str, Any]],
         if out and out[-1].get("piece") == s["id"]:
             last_of[s["id"]] = out[-1]["id"]
     return out
+
+
+_DEDUPE_STOP = {"and", "the", "from", "with", "for", "into", "its", "their", "this", "that",
+                "all", "any", "using", "via", "about", "details", "information", "data"}
+
+
+def _step_words(st: Dict[str, Any]) -> set:
+    return {w for w in _words("%s %s" % (st.get("title") or "", st.get("goal") or ""))
+            if w not in _DEDUPE_STOP and "." not in w}
+
+
+def dedupe_across_streams(steps: Sequence[Dict[str, Any]],
+                          threshold: float = 0.5) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """(kept, dropped). Streams are planned in isolation, so two of them plan the
+    same work - observed 2026-09-27: a report goal's plan researched the topic in
+    three streams. A step is dropped when an EARLIER step from ANOTHER stream
+    shares most of its words (Jaccard >= threshold) AND at least one capability
+    (or neither names one) - word overlap alone would merge 'fetch the data' with
+    'write about the data'. Steps are renumbered; a `needs` that pointed at a
+    dropped step points at the step it duplicated. Within a stream nothing is
+    touched: the stream's own planner decided that order."""
+    kept: List[Dict[str, Any]] = []
+    dropped: List[Dict[str, Any]] = []
+    alias: Dict[Any, Any] = {}
+    for st in steps or []:
+        w = _step_words(st)
+        caps = set(st.get("caps") or [])
+        twin = None
+        for k in kept:
+            if k.get("piece") == st.get("piece"):
+                continue
+            kw = _step_words(k)
+            if not w or not kw:
+                continue
+            j = len(w & kw) / float(len(w | kw))
+            kcaps = set(k.get("caps") or [])
+            if j >= threshold and ((caps & kcaps) or not (caps or kcaps)):
+                twin = k
+                break
+        if twin is not None:
+            alias[st.get("id")] = twin.get("id")
+            dropped.append({"id": st.get("id"), "title": st.get("title"),
+                            "piece": st.get("piece"), "duplicate_of": twin.get("id")})
+        else:
+            kept.append(dict(st))
+    renum = {k.get("id"): i + 1 for i, k in enumerate(kept)}
+    for k in kept:
+        needs = []
+        for n in k.get("needs") or []:
+            target = alias.get(n, n)
+            if target in renum and renum[target] not in needs:
+                needs.append(renum[target])
+        k["id"] = renum[k.get("id")]
+        k["needs"] = sorted(n for n in needs if n < k["id"])
+    for d in dropped:
+        d["duplicate_of"] = renum.get(d["duplicate_of"])
+    return kept, dropped
 
 
 #: The controller's extra instruction in a stepwise run. Without it the

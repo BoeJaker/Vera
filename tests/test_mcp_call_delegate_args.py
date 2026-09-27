@@ -65,6 +65,22 @@ def test_no_schema_means_no_filtering_as_before(registry):
     assert M._mcp_call_accepted({"func": _plain}) == set()
 
 
+def test_the_callers_attribution_session_is_not_injected_into_a_kwargs_engine():
+    """The handler copies the top-level session_id into a cap that declares it.
+    v7 only ADMITS session_id through the delegate widening; injecting the
+    caller's attribution id there made every v7 run from one caller share one
+    loop session. The injection must key on the cap's OWN schema."""
+    import ast, pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1] / "vera" /
+           "capability_orchestration.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "_make_mcp_call_handler")
+    body = "\n".join(src.splitlines()[fn.lineno - 1:fn.end_lineno])
+    assert 'if "session_id" in _own:' in body
+    assert 'if "session_id" in accepted:' not in body
+
+
 def test_the_real_v7_accepts_plan_style():
     v7 = M.CAPABILITY_REGISTRY.get("dag.agent_loop_v7")
     if not v7:

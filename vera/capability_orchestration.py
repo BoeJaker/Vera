@@ -7566,7 +7566,14 @@ def _make_mcp_call_handler():
         if not session_id and isinstance(_raw_args, dict):
             session_id = str(_raw_args.get("session_id") or "").strip()
         if session_id:
-            if "session_id" in accepted:
+            # Injected only when the capability ITSELF declares session_id. The
+            # delegate widening (_mcp_call_accepted) admits session_id for a
+            # **kwargs engine so a caller can pass one EXPLICITLY in arguments;
+            # the top-level session_id is the caller's attribution id, and
+            # injecting it into dag.agent_loop_v7 made every run from one caller
+            # share ONE loop session (found 2026-09-27, before it reached main).
+            _own = ((cap.get("schema") or {}).get("properties") or {})
+            if "session_id" in _own:
                 args.setdefault("session_id", session_id)
             try:
                 _vera_syslog = sys.modules.get("syslog")

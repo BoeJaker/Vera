@@ -19204,9 +19204,16 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
     results = await asyncio.gather(*(_one(s, r) for s, r in zip(streams, roles)))
     merged = PSx.merge_streams(streams, [r[0] for r in results],
                                hard_cap=max(max_steps * 2, 16))
+    # Streams are planned in isolation and repeat each other's work (a report's
+    # research was planned in three streams, 2026-09-27): drop the repeats.
+    merged, _dupes = PSx.dedupe_across_streams(merged)
+    if _dupes:
+        await emit_event({"type": "agent_loop_v6.broad_deduped", "session_id": sid,
+                          "stream_id": stream_id, "dropped": _dupes[:12]})
     detail = {"streams": len(streams), "brief_s": brief_s,
               "total_s": round(time.monotonic() - t0, 1),
-              "per_stream": [r[1] for r in results]}
+              "per_stream": [r[1] for r in results],
+              "duplicates_dropped": len(_dupes)}
     if not merged:
         return {**empty, "broad": {**detail, "error": "no stream produced steps"}}
     return {"steps": merged,

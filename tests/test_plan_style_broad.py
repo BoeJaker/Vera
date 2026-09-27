@@ -103,6 +103,47 @@ def test_the_merge_respects_the_hard_cap():
     assert len(PS.merge_streams(STREAMS, subs, hard_cap=7)) == 7
 
 
+def test_a_step_another_stream_already_planned_is_dropped_and_its_dependents_repointed():
+    """The live case (2026-09-27): stream 2 re-planned stream 1's research."""
+    steps = [
+        {"id": 1, "piece": 1, "title": "Research Redis licensing shift and Valkey fork details",
+         "caps": ["web.research"], "needs": []},
+        {"id": 2, "piece": 2, "title": "Research Redis Licensing Change and Valkey Fork",
+         "caps": ["web.research"], "needs": [1]},
+        {"id": 3, "piece": 2, "title": "Produce citations list", "caps": ["prose.author"],
+         "needs": [2]},
+    ]
+    kept, dropped = PS.dedupe_across_streams(steps)
+    assert [k["title"] for k in kept] == [steps[0]["title"], "Produce citations list"]
+    assert dropped[0]["duplicate_of"] == 1
+    assert kept[1]["id"] == 2 and kept[1]["needs"] == [1]       # re-pointed at the kept twin
+
+
+def test_similar_words_with_different_capabilities_are_not_merged():
+    steps = [{"id": 1, "piece": 1, "title": "Fetch the sales data", "caps": ["http.get"]},
+             {"id": 2, "piece": 2, "title": "Write about the sales data", "caps": ["prose.author"]}]
+    kept, dropped = PS.dedupe_across_streams(steps)
+    assert len(kept) == 2 and dropped == []
+
+
+def test_repeats_inside_one_stream_are_left_to_that_streams_planner():
+    steps = [{"id": 1, "piece": 1, "title": "Run the tests", "caps": ["exec.bash.run"]},
+             {"id": 2, "piece": 1, "title": "Run the tests", "caps": ["exec.bash.run"]}]
+    kept, dropped = PS.dedupe_across_streams(steps)
+    assert len(kept) == 2 and dropped == []
+
+
+def test_the_brief_asks_for_the_fewest_streams_and_no_unasked_deliverables():
+    s = PS.BROAD_BRIEF_SYSTEM
+    assert "FEWEST streams" in s and "at most TWO streams" in s
+    assert "did not ask for" in s
+
+
+def test_a_dependent_stream_is_told_not_to_regather():
+    d = PS.stream_directive("goal", STREAMS, STREAMS[2])
+    assert "WILL ALREADY EXIST" in d and "do NOT plan any step that gathers" in d
+
+
 # ── the loop's broad planner, for real, with the model stubbed ─────────────
 
 needs_app = pytest.mark.skipif(M is None, reason="app module not importable here")
