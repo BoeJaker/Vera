@@ -8606,6 +8606,15 @@ async def evolve_unittest_history(limit: int = 200, branch: str = "",
                         "modules:[{module,tests,critical}], total_tests, total_modules, "
                         "critical_modules, critical_tests, critical_names}.")
 async def evolve_tests_matrix(trace_id=None):
+    # the collected suite changes at commit speed, and collecting it takes ~14 s: read it once per ten minutes
+    # (concurrent callers wait for the one collection in flight - a lens and the Tests view ask together)
+    return await _TESTS_MATRIX_CACHE.get("matrix", _evolve_tests_matrix_collect)
+
+
+_TESTS_MATRIX_CACHE = _TTLCache(600.0)
+
+
+async def _evolve_tests_matrix_collect():
     root = str(_repo_root())
     coll = await _sh([sys.executable, "-m", "pytest", "tests/", "--collect-only", "-q",
                       "--no-header", "-p", "no:cacheprovider"], cwd=root, timeout=120)

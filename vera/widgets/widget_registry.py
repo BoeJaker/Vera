@@ -185,11 +185,54 @@ _LHM_BUILTINS: List[Dict[str, Any]] = [
 ]
 
 
+def _looplab_templates() -> List[Dict[str, Any]]:
+    """The Loop Lab's widgets as templates any surface can place (the canvas's add bar, a dashboard's widget sheet):
+    read from the lens layout files (layouts/looplab*.json - the one place they are written), one template per
+    distinct reading. Best-effort: a missing or unreadable file leaves the registry as it was."""
+    import json as _json
+    from pathlib import Path as _Path
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    try:
+        files = sorted((_Path(__file__).parent / "layouts").glob("looplab*.json"))
+    except Exception:
+        return out
+    for f in files:
+        try:
+            lay = _json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        lens = str(lay.get("name") or lay.get("key") or "")
+        for t in lay.get("widgets") or []:
+            r = (t or {}).get("record") or {}
+            rd = r.get("read") or {}
+            dr = r.get("draw") or {}
+            sig = (r.get("form"), r.get("source"), _json.dumps(rd.get("args") or {}, sort_keys=True), dr.get("tag", ""))
+            if not r.get("form") or sig in seen:
+                continue
+            seen.add(sig)
+            rid = str(r.get("id") or "")
+            rid = rid[len(str(lay.get("key") or "")) + 1:] if rid.startswith(str(lay.get("key") or "") + "-") else rid
+            tid = "looplab:" + _slug(str(lay.get("key") or "").replace("looplab", "").strip("-") or "live") + "-" + _slug(rid)
+            draw = {"form": r.get("form"), "size": str((r.get("frame") or {}).get("size") or "m").upper()}
+            draw.update({k: v for k, v in dr.items() if k in ("tag", "attrs")})
+            out.append({"id": tid, "name": r.get("title") or tid, "form": r.get("form"),
+                        "reads": {"cap": r.get("source") or "", "args": rd.get("args") or {}, "every": rd.get("refresh") or "",
+                                  "note": "the Loop Lab's " + lens + " lens"},
+                        "read": {"map": rd.get("map") or {}}, "frame": lens, "draw": draw,
+                        "can": ["open a run, a lane, a test or a card in the drawer", "place it on the canvas"],
+                        "placed": ["dashboard", "canvas"]})
+    return out
+
+
+_LHM_BUILTINS.extend(_looplab_templates())
+
+
 def _builtin_lhm() -> List[Dict[str, Any]]:
     out = []
     for b in _LHM_BUILTINS:
         t = _normalise(dict(b))
-        t["source"] = {"origin": "built-in", "from": "the data fabric" if t["id"].startswith("fabric:") else "the chat LHM", "panel": ""}
+        t["source"] = {"origin": "built-in", "from": "the data fabric" if t["id"].startswith("fabric:") else ("the Loop Lab" if t["id"].startswith("looplab:") else "the chat LHM"), "panel": ""}
         t["version"] = 1
         out.append(t)
     return out

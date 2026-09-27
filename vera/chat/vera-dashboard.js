@@ -481,7 +481,7 @@
   }
   // the record as the element is handed it: with the form's sample when it cannot read, marked sample
   function withSample(rec) {
-    if (!rec || typeof rec !== 'object' || rec.data !== undefined || rec.form === 'panel' || rec.form === 'composite') return rec;
+    if (!rec || typeof rec !== 'object' || rec.data !== undefined || rec.form === 'panel' || rec.form === 'composite' || rec.form === 'element') return rec;   // an element draws itself
     var src = typeof rec.source === 'string' ? rec.source : '';
     var readable = src ? (window.VeraWidget && typeof window.VeraWidget.readable === 'function' ? window.VeraWidget.readable(src) : true) : false;
     if (readable) return rec;

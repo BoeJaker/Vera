@@ -1,0 +1,200 @@
+{
+ "v": 2,
+ "dashboard": "looplab-branches",
+ "layout": "default",
+ "key": "looplab-branches",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "name": "Branches",
+ "note": "Every branch through its pipeline, the commit graph, the errors the loops raised, and the gate lanes of the last week.",
+ "widgets": [
+  {
+   "record": {
+    "id": "looplab-branches-pipeline",
+    "form": "element",
+    "source": "",
+    "shape": "panel",
+    "title": "Branch pipeline",
+    "read": {
+     "refresh": "",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      5
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "tag": "vera-branch-pipeline",
+     "attrs": {}
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    12,
+    5
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-branches-graph",
+    "form": "element",
+    "source": "",
+    "shape": "panel",
+    "title": "Commit graph",
+    "read": {
+     "refresh": "",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      5
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "tag": "vera-git-graph",
+     "attrs": {}
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    5
+   ],
+   "span": [
+    6,
+    5
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-branches-errors",
+    "form": "element",
+    "source": "",
+    "shape": "panel",
+    "title": "Error radar",
+    "read": {
+     "refresh": "",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      5
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "tag": "vera-error-radar",
+     "attrs": {}
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    5
+   ],
+   "span": [
+    6,
+    5
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-branches-week",
+    "form": "status-matrix",
+    "source": "ci.matrix",
+    "shape": "matrix",
+    "title": "Gate lanes",
+    "read": {
+     "refresh": "60s",
+     "args": {
+      "order": "recent"
+     },
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    10
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  }
+ ]
+}

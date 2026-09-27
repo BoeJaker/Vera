@@ -205,3 +205,21 @@ def test_parse_merges_reads_loop_lab_and_git_merges():
 def test_test_grid_says_when_runs_recorded_counts_only():
     g = cv.test_grid([{"ts": "1", "branch": "b", "ok": False, "failed": 1, "total": 3}])
     assert g["tests"] == [] and g["summary"]["listed"] == 0 and g["summary"]["red_runs"] == 1
+
+
+def test_census_view_names_signal_and_noise_and_the_commits_between():
+    runs = [{"run_id": "r1", "ended_at": "2026-09-01T10:00:00Z", "goals": 12, "done": 9, "wall_total_s": 9000, "template": "default"},
+            {"run_id": "r2", "ended_at": "2026-09-02T10:00:00Z", "goals": 12, "done": 10, "wall_total_s": 8800, "template": "default"},
+            {"run_id": "r3", "ended_at": "2026-09-03T10:00:00Z", "goals": 12, "done": 12, "wall_total_s": 8000, "template": "default"},
+            {"run_id": "x1", "ended_at": "2026-09-03T11:00:00Z", "goals": 3, "done": 3, "wall_total_s": 100, "template": "exec-family"}]
+    landed = {"by_run": {"r3": {"commits": [{"sha": "abc", "subject": "loop: fix", "is_merge": False},
+                                            {"sha": "def", "subject": "Loop Lab: merge feat/x", "is_merge": True}]}}}
+    goals = {"census-default-trivial-chat": [{"driver": "r3", "ok": True, "status": "done"}, {"driver": "r2", "ok": False, "status": "wall-cap"}]}
+    v = cv.census_view(runs, landed, goals)
+    assert [r["id"] for r in v["runs"]] == ["r1", "r2", "r3"]                      # one template at a time
+    r2, r3 = v["runs"][1], v["runs"][2]
+    assert r2["verdict"] == "noise" and r2["delta_done"] == 1                       # +1 is inside the floor
+    assert r3["verdict"] == "signal" and r3["direction"] == "up" and r3["commit_count"] == 2 and r3["merges"] == 1
+    g = v["goals"][0]
+    assert g["name"] == "trivial-chat" and g["cells"] == ["", "cap", "pass"]
+    assert v["summary"]["signals_up"] == 1 and v["summary"]["commits"] == 2

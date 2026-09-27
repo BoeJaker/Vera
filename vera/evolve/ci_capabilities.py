@@ -561,3 +561,48 @@ async def ci_branch(branch: str = "", repo: str = "vera", limit: int = 2000, tra
             "summary": {"pipelines": len(mine), "merged": len(merged), "conversations": len(convs),
                         "board_items": len(full), "runs": len(rows),
                         "state": (lane or {}).get("state", "none")}}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ci.census — the census beside the commits that landed between its runs
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CENSUS = TTLCache(60.0, max_entries=8)
+
+
+@capability(
+    "ci.census", memory="off", silent=True,
+    http_method="GET", http_path="/ci/census", http_tags=["ci", "census"],
+    description=("CENSUS x COMMITS: every trusted census run of a template, oldest to newest - goals done, capped, "
+                 "wall time, quality - each beside the commits that LANDED on main before it (census.landed), with "
+                 "its change against the run before judged against the measured noise floor (one capped goal, 13% "
+                 "wall): `signal` or `noise`, so a better run is only called an improvement when it is one; plus "
+                 "the goal x run matrix (each goal's outcome in each run). Drawn as the census-commits widget. "
+                 "Inputs: template (str=default). Output: {kind:'ci', view:'census', runs:[{id, ended_at, done, "
+                 "goals, capped, wall_s, quality, delta_done, delta_wall, verdict, direction, commits[], "
+                 "commit_count}], goals:[{id, name, cells[]}], summary}."))
+async def ci_census(template: str = "default", trace_id=None):
+    template = (template or "default").strip()
+
+    async def build():
+        runs_r, landed_r, ov = await asyncio.gather(_read("census.runs"), _read("census.landed"),
+                                                    _read("evolve.tasks.overview"))
+        runs = list((runs_r or {}).get("runs") or []) if isinstance(runs_r, dict) else []
+        prefix = "census-%s-" % template
+        ids = [str(t.get("task_id")) for t in (((ov or {}).get("tasks") or []) if isinstance(ov, dict) else [])
+               if str(t.get("task_id") or "").startswith(prefix)]
+        # a template's own goals only: "census-default-style-broad-x" belongs to another template
+        names = {x[len(prefix):] for x in ids}
+        ids = [x for x in ids if not any(x[len(prefix):].startswith(n + "-") or x[len(prefix):].startswith("style-")
+                                         for n in ("style",))]
+        sem = asyncio.Semaphore(4)
+
+        async def hist(tid):
+            async with sem:
+                h = await _read("evolve.task.history", id=tid)
+            return tid, list((h or {}).get("results") or []) if isinstance(h, dict) else []
+        goal_results = dict(await asyncio.gather(*[hist(t) for t in ids[:40]]))
+        v = cv.census_view(runs, landed_r if isinstance(landed_r, dict) else {}, goal_results, template=template)
+        v["summary"]["goal_ids"] = len(names)
+        return v
+    return await _CENSUS.get(("census", template), build)
