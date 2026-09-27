@@ -1565,6 +1565,18 @@
         return;
       }
 
+      // ── v6/V7: an NLP node's zero-shot intent beside the one used ──
+      if(t === 'agent_loop_v6.intent_zeroshot'){
+        const ok = ev.agrees_used;
+        const col = ok ? 'var(--ok,#3cb371)' : 'var(--warn,#c7a15a)';
+        const sc = Object.entries(ev.scores||{}).sort((a,b)=>b[1]-a[1]).map(([k,v])=>_esc(k)+' '+Math.round(v*100)+'%').join(' · ');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">⌗ Intent · used ${_esc(ev.used||'?')} · zero-shot <span style="color:${col}">${_esc(ev.zeroshot||'?')}${ok?' ✓':''}</span></span>
+          <span class="alo-cycle-status" title="nlp.zeroshot on an NLP node - measured beside the intent the run used, never read back">measured</span>
+        </div><div class="alo-cycle-preview">${sc}${ev.llm?(' · LLM said '+_esc(ev.llm)):''}${ev.heuristic?(' · keywords said '+_esc(ev.heuristic)):''}</div>`, 'plan');
+        return;
+      }
+
       // ── v6/V7: did the final output carry what the goal named? (NER) ──
       if(t === 'agent_loop_v6.entity_coverage'){
         const n = ev.entities||0, got = (ev.covered||[]).length, miss = ev.missing||[];

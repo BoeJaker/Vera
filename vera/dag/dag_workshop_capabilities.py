@@ -14104,6 +14104,58 @@ async def _v6_goal_entities(goal: str) -> List[Dict[str, str]]:
     return _entity_cov.goal_entities(res)
 
 
+# Zero-shot intent (roadmap B1): what an NLP node would call the goal's intent,
+# recorded beside the intent the run used. Measured - nothing reads it back.
+try:
+    from Vera.vera.dag import intent_zeroshot_core as _intent_zs
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import intent_zeroshot_core as _intent_zs
+    except Exception:
+        _intent_zs = None
+
+
+async def _v6_zeroshot_intent(goal: str) -> Tuple[Optional[str], Dict[str, float]]:
+    """(intent, scores) from nlp.zeroshot, or (None, {}) when unavailable or
+    slow. Raw cap function: a measurement must not write memories."""
+    if _intent_zs is None or not (goal or "").strip():
+        return None, {}
+    cap = CAPABILITY_REGISTRY.get("nlp.zeroshot") or {}
+    fn = cap.get("raw") or cap.get("func")
+    if not fn:
+        return None, {}
+    try:
+        res = await asyncio.wait_for(fn(text=str(goal)[:2000], labels=_intent_zs.label_texts(),
+                                        multi_label=_intent_zs.MULTI_LABEL),
+                                     timeout=_ENTITY_NER_TIMEOUT_S)
+    except Exception as e:
+        log.debug("zero-shot intent: nlp.zeroshot unavailable: %s", e)
+        return None, {}
+    return _intent_zs.parse(res)
+
+
+async def _v6_intent_measure(task: Any, info: Dict[str, Any], used: str, *,
+                             sid: str, stream_id: str) -> None:
+    """Emit agent_loop_v6.intent_zeroshot beside the intent the run used. Best effort."""
+    if task is None or _intent_zs is None:
+        return
+    try:
+        zs, scores = await asyncio.wait_for(asyncio.shield(task), timeout=_ENTITY_NER_TIMEOUT_S)
+    except Exception:
+        if not task.done():
+            task.cancel()
+        return
+    if not zs:
+        return
+    rec = _intent_zs.compare(zs, scores, used=used, heuristic=str(info.get("heuristic") or ""),
+                             llm=str(info.get("llm") or ""))
+    try:
+        await emit_event({"type": "agent_loop_v6.intent_zeroshot", "session_id": sid,
+                          "stream_id": stream_id, **rec})
+    except Exception:
+        pass
+
+
 async def _v6_entity_coverage(task: Any, output: str, *, sid: str, stream_id: str) -> None:
     """Emit agent_loop_v6.entity_coverage for the run's final output. Best effort."""
     if task is None or _entity_cov is None:
@@ -23549,6 +23601,10 @@ async def cap_dag_agent_loop_v6(
     # against the final output at the end (entity_coverage).
     _goal_ents_task = (asyncio.ensure_future(_v6_goal_entities(goal))
                        if _entity_cov is not None else None)
+    # ...and its zero-shot intent, when this run decides one (v7 tiering):
+    # recorded beside the intent the run used, at the end (intent_zeroshot).
+    _intent_zs_task = (asyncio.ensure_future(_v6_zeroshot_intent(goal))
+                       if (_intent_zs is not None and enable_tiering) else None)
     # An explicitly chosen style is honoured over the single-cap fast path,
     # which would otherwise skip planning altogether.
     if _plan_style_eff != "auto":
@@ -23839,6 +23895,7 @@ async def cap_dag_agent_loop_v6(
     tier = "simple"
     tier_info: Dict[str, Any] = {}
     intent = "mixed"          # goal KIND (build/research/action/mixed) — see below
+    _intent_info: Dict[str, Any] = {}
     if enable_tiering:
         _tier_catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
         tier_info = await _v7_decide_tier(
@@ -25275,6 +25332,8 @@ async def cap_dag_agent_loop_v6(
     # Before .done, so the trace digest and the Loop Lab record include it.
     await _v6_entity_coverage(_goal_ents_task, deliverable or final, sid=sid,
                               stream_id=stream_id)
+    await _v6_intent_measure(_intent_zs_task, _intent_info, intent, sid=sid,
+                             stream_id=stream_id)
     await emit_event({"type": "agent_loop_v6.done", "stream_id": stream_id, "session_id": sid,
                       "summary": final, "cycles": gcycle, "steps_run": len(results),
                       "reason": "complete"})
@@ -26125,6 +26184,7 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v6.broad_brief_applied",
             "agent_loop_v6.broad_deduped",
             "agent_loop_v6.entity_coverage",
+            "agent_loop_v6.intent_zeroshot",
             # V7 tier/branching + strategic persistence
             "agent_loop_v6.tier",
             "agent_loop_v6.fast_path",
