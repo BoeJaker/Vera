@@ -75,6 +75,10 @@ import httpx
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.config import cfg
+try:
+    from Vera.vera.dag import cap_relevance_core as _cap_rel
+except ImportError:                                   # pragma: no cover
+    from vera.dag import cap_relevance_core as _cap_rel
 from Vera.vera.dag import query_embed_core as _query_embed
 from Vera.vera.execution.dag_workflow_execution import (
     prepare_dag_execution,
@@ -99,10 +103,17 @@ OLLAMA_EMBED_MODEL = cfg.OLLAMA_EMBED_MODEL
 # or DAG take Vera's configured embed budget: nothing waits on them.
 DAG_QUERY_EMBED_WAIT_S = float(os.environ.get("DAG_QUERY_EMBED_WAIT_S", "30") or 30)
 MAX_CAPS_IN_PROMPT = int(os.getenv("MAX_CAPS_IN_PROMPT", "25"))
-# Default OFF — set EMBED_CAPS_ON_START=1 to enable cap embedding on startup.
-# When enabled, only new/changed caps are embedded (hash-gated) so restarts
-# with a warm Redis cache are instant and produce zero Ollama calls.
-EMBED_CAPS_ON_START= os.getenv("EMBED_CAPS_ON_START", "0") == "1"
+# Embed new/changed caps at startup (hash-gated: a restart with a warm Redis
+# cache makes zero Ollama calls). Read from config, whose default is ON. This
+# module used to read the env itself with a default of OFF - and returned
+# before even LOADING the cached vectors - so prod ran capability search with
+# 0 of 2,554 caps embedded (measured 2026-09-27): purely lexical, and the
+# planner's catalogue filled with caps that merely shared a word with the goal
+# ("create" -> markets.custom.create; "race" -> netscan.target.traceroute).
+# Cached vectors are now ALWAYS loaded; this flag only decides whether the
+# missing ones are embedded. Dev sandboxes set it to 0 explicitly.
+EMBED_CAPS_ON_START = bool(getattr(cfg, "EMBED_CAPS_ON_START",
+                                   os.getenv("EMBED_CAPS_ON_START", "1") == "1"))
 
 def _redis(): return _orch.REDIS
 def _pg():    return _orch.PG_POOL
@@ -249,8 +260,10 @@ class CapabilityIndex:
         """Short MD5 of the embed text — used to detect cap description changes."""
         return _hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:16]
 
-    async def start_embedding(self):
-        """Background task: embed only new or changed caps.
+    async def start_embedding(self, embed_missing: Optional[bool] = None):
+        """Background task: load cached vectors, then embed only new or changed
+        caps. `embed_missing` None = EMBED_CAPS_ON_START; caps.embed_run passes
+        True (it used to be a no-op whenever the startup flag was off).
 
         Cache layout in Redis hash vera:cap_embeddings:
           key   = cap_name
@@ -263,9 +276,7 @@ class CapabilityIndex:
 
         This means a warm restart with no cap changes produces ZERO Ollama calls.
         """
-        if not EMBED_CAPS_ON_START:
-            log.debug("CapabilityIndex: EMBED_CAPS_ON_START=0, skipping startup embedding")
-            return
+        do_embed = EMBED_CAPS_ON_START if embed_missing is None else bool(embed_missing)
 
         # ── Load cache from Redis ────────────────────────────────────────
         r = _redis()
@@ -309,6 +320,11 @@ class CapabilityIndex:
             need_embed.append((name, entry, current_hash))
 
         total = len(self._index)
+        if not do_embed:
+            log.info("CapabilityIndex: %d/%d caps have cached vectors; %d left unembedded "
+                     "(EMBED_CAPS_ON_START off - caps.embed_run embeds them)",
+                     skipped_unchanged, total, len(need_embed))
+            return
         if not need_embed:
             log.info(
                 "CapabilityIndex: all %d caps up-to-date in Redis cache — 0 Ollama calls",
@@ -379,20 +395,14 @@ class CapabilityIndex:
         """
         Return (cap_name, score) list sorted by relevance to query.
 
-        Scoring:
-          +3  per query token that appears in cap name
-          +2  per query token that appears in a tag
-          +1  per query token that appears in description keywords
-          +1  if query contains the cap's category word
-          +0–3 cosine similarity × 3 (if embedding available)
+        Scoring: cap_relevance_core - whole-word matches of the query's
+        non-generic words in the name / tags / description keywords, plus the
+        query-to-capability embedding similarity as the main signal.
         """
         if not self._index:
             self.build()
 
-        # Tokenise query
-        q_tokens = {
-            w.lower() for w in re.findall(r'\b[a-zA-Z][a-zA-Z0-9]{2,}\b', query)
-        }
+        q_tokens = _cap_rel.query_tokens(query)
 
         # Embed query
         q_emb: List[float] = []
@@ -414,24 +424,10 @@ class CapabilityIndex:
             if tag_filter and not any(t in entry["tags"] for t in tag_filter):
                 continue
 
-            s = 0.0
-            name_parts = set(name.replace(".", " ").replace("_", " ").split())
-
-            # Token overlap
-            for tok in q_tokens:
-                if any(tok in p for p in name_parts):         s += 3.0
-                if any(tok in t for t in entry["tags"]):       s += 2.0
-                if any(tok in kw for kw in entry["keywords"]): s += 1.0
-
-            # Category boost
-            if entry["category"].replace("_", " ") in query.lower(): s += 1.5
-
-            # Vector similarity
-            if q_emb and entry["embedding"]:
-                sim = self._cosine(q_emb, entry["embedding"])
-                s += sim * 3.0
-
-            scores[name] = s
+            scores[name] = _cap_rel.score(
+                name, tags=entry["tags"], keywords=entry["keywords"],
+                category=entry["category"], query=query, q_tokens=q_tokens,
+                q_emb=q_emb, embedding=entry["embedding"])
 
         # Sort; take top_k but always include at least a minimal set
         ranked = sorted(scores.items(), key=lambda x: -x[1])
@@ -1246,7 +1242,7 @@ async def caps_embed_run(force: bool = False, trace_id=None):
     # Re-build index to pick up any new caps registered since startup
     import asyncio as _asyncio
     await _asyncio.to_thread(CAP_INDEX.build)
-    _asyncio.create_task(CAP_INDEX.start_embedding())
+    _asyncio.create_task(CAP_INDEX.start_embedding(embed_missing=True))
     return {
         "status":  "started",
         "force":   force,
