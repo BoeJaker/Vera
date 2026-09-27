@@ -670,8 +670,34 @@ def enrich_note(text: Any, deep: bool = True) -> str:
     brief is empty. `deep` = the long-horizon CPU node's review; otherwise the
     GPU's quick first look that lets the first stream start without waiting.
     (The invented-value filter is for SUCCESS CRITERIA; a brief is evidence, and
-    its 4-digit numbers are mostly years.)"""
-    lines = clean_lines(text) if text else []
+    its 4-digit numbers are mostly years.)
+
+    NOT clean_lines: that drops any line over MAX_BULLET_CHARS as prose, and the
+    brief models write each section as ONE long line ("NEEDS: a; b; c") - live
+    2026-09-27 both the GPU quick brief and cpu-247's first 35B brief came back
+    as 0 characters that way. A long line is split at its ';' boundaries into
+    bullets, and any piece still too long is trimmed, never discarded."""
+    lines: List[str] = []
+    seen = set()
+    for raw in _LINE_SPLIT.split(str(text or "")):
+        line = _BULLET_STRIP.sub("", raw).strip()
+        if not line:
+            continue
+        pieces = [line]
+        if len(line) > MAX_BULLET_CHARS:
+            head, sep, rest = line.partition(":")
+            label = head.strip() + ":" if sep and len(head) <= 24 else ""
+            body = rest if label else line
+            parts = [p.strip() for p in body.split(";") if p.strip()]
+            pieces = ([label] if label else []) + parts if len(parts) > 1 else [line]
+        for p in pieces:
+            p = p[:MAX_BULLET_CHARS]
+            if p.lower() in seen or p.lower() in ("none", "n/a", "nothing"):
+                continue
+            seen.add(p.lower())
+            lines.append(p)
+        if len(lines) >= 20:
+            break
     if not lines:
         return ""
     body = "\n".join("  - %s" % ln for ln in lines)[:MAX_BRIEF_CHARS]

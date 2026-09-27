@@ -91,6 +91,28 @@ def test_a_brief_becomes_a_bounded_evidence_block_and_keeps_its_years():
     assert PS.enrich_note("") == "" and PS.enrich_note(None) == ""
 
 
+def test_a_brief_written_as_one_long_line_per_section_is_kept_not_dropped():
+    """Live 2026-09-27: qwen3.5/qwen3.6 write "NEEDS: a; b; c" on ONE line; the old
+    formatter discarded every line over 240 chars and the brief came back empty
+    (the GPU quick brief and cpu-247's first 35B brief, 0 characters each)."""
+    raw = ("NEEDS: Official Redis blog posts announcing the license change to SSPL/BSL; "
+           "Valkey Foundation press releases and GitHub repository links; reputable tech news "
+           "coverage (e.g., TechCrunch, The Register) for context on community reaction.\n"
+           "PITFALLS: Citing outdated or unverified third-party blogs instead of primary sources; "
+           "missing the specific date of the license switch announcement; confusing the initial "
+           "fork with the official Valkey Foundation formation date.")
+    note = PS.enrich_note(raw)
+    assert note, "a one-long-line brief must not come back empty"
+    assert "  - NEEDS:" in note and "  - PITFALLS:" in note
+    assert "Valkey Foundation press releases and GitHub repository links" in note
+    assert "confusing the initial fork with the official Valkey Foundation formation date." in note
+    assert len(note) <= PS.MAX_BRIEF_CHARS + 200
+
+
+def test_a_single_overlong_line_with_no_separators_is_trimmed_not_dropped():
+    note = PS.enrich_note("x" * 900)
+    assert note and "x" * PS.MAX_BULLET_CHARS in note and "x" * (PS.MAX_BULLET_CHARS + 1) not in note
+
 def test_the_enrich_prompt_names_the_one_stream_to_brief():
     p = PS.enrich_prompt("goal", STREAMS, STREAMS[0])
     assert "BRIEF THIS STREAM: 1. Gather" in p and "3. Write -> report.md" in p
