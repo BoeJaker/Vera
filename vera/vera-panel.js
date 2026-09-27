@@ -119,13 +119,14 @@
     var host = document.querySelector('[data-vera-lhm]');
     if (!host || host._vpNavBridged) return;
     var nav = (host.id === 'nav') ? host : (host.querySelector('#nav') || host);
-    var SEL = '[data-section], [data-sec], [data-s], [data-view], [data-tab], [data-nav], [data-pane], [data-go], [data-k]';
+    var SEL = '[data-section], [data-sec], [data-s], [data-view], [data-tab], [data-nav], [data-pane], [data-go], [data-k], [data-t]';
     // Canonical markup first: .nav-btn is the menu's only target, so a heading
     // or a rule that happens to carry data-view (the Estate groups its items
     // that way) is never mistaken for one. The loose list stays for a panel
     // that opted in before this shape existed.
     var btns = nav.querySelectorAll('.nav-btn');
     if (!btns.length) btns = nav.querySelectorAll(SEL);
+    if (!nav.querySelector('.nav-btn')) btns = Array.prototype.filter.call(btns, function (b) { return !!(b.matches && b.matches('button, a, [role="button"], [onclick]')); });
     // A button the panel's own rules hide (a view filter — the Estate's
     // ?view=models shows only the model pages) is not part of the menu it is
     // publishing. Ask for the button's OWN computed display, never its
@@ -140,6 +141,9 @@
     });
     if (!btns.length) return;
     host._vpNavBridged = true;
+    // a sidebar that CARRIES content of its own (panes: the Calendar's layers, events, assistant) keeps that content
+    // when its menu is docked in the harness - only its header and tab strip fold (vera-panel.css, .vp-has-content)
+    if (host.querySelector('#lhm-body, .lhm-pane, [data-lhm-content]')) host.classList.add('vp-has-content');
 
     /* AN ID NAMES ONE ITEM. The first attribute in this order that a button carried used to be its id, and the Estate
        marks every one of its items data-view="estate" (the view that owns it) beside a data-pane that names it: all
@@ -147,7 +151,7 @@
        that meant none of them (owner, 2026-09-27: "i cant select sub menu options for things like the estate"). The
        id is now the first attribute, in the same order, that EVERY item carries with a DIFFERENT value; a panel whose
        ids were already unique keeps exactly the ids it had. */
-    var ID_ATTRS = ['data-section', 'data-sec', 'data-s', 'data-view', 'data-tab', 'data-nav', 'data-pane', 'data-go', 'data-k'];
+    var ID_ATTRS = ['data-section', 'data-sec', 'data-s', 'data-view', 'data-tab', 'data-nav', 'data-pane', 'data-go', 'data-k', 'data-t'];
     var idAttr = ID_ATTRS.filter(function (a) {
       var seen = {};
       for (var i = 0; i < btns.length; i++) { var v = btns[i].getAttribute(a); if (!v || seen[v]) return false; seen[v] = 1; }
@@ -157,7 +161,7 @@
       if (idAttr) return b.getAttribute(idAttr);
       return b.getAttribute('data-section') || b.getAttribute('data-sec') || b.getAttribute('data-s') ||
              b.getAttribute('data-view') || b.getAttribute('data-tab') || b.getAttribute('data-nav') ||
-             b.getAttribute('data-pane') || b.getAttribute('data-go') || b.getAttribute('data-k');
+             b.getAttribute('data-pane') || b.getAttribute('data-go') || b.getAttribute('data-k') || b.getAttribute('data-t');
     }
     // title attribute first — it's already clean text with no icon glyph, and
     // the canonical markup carries one on every item. Failing that, a panel
