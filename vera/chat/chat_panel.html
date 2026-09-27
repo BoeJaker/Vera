@@ -7295,6 +7295,8 @@ IMPORTANT:
     const q=(s)=>t.closest&&t.closest(s);
     let el;
     if((el=q('.crun,.cmenu'))) return null;
+    // a selection of text: copy it, print it on the thermal printer, ask about it
+    { const sel=String(window.getSelection()||'').trim(); if(sel.length>1&&!q('input,textarea,[contenteditable="true"]')) return ['text', sel.slice(0,40)+(sel.length>40?'…':''), t, {text:sel}]; }
     if((el=q('.cap-inline'))){ const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:'')||'').trim().split(/\s+/)[0]||'capability'; return ['tool', n, el, {cap:n, mid:(el.closest('.mwrap')||{dataset:{}}).dataset.mid}]; }
     if((el=q('.cg-node[data-kind]'))){ const k=el.dataset.kind||'record'; const MAP={file:'file',cap:'cap',dataset:'dataset',memory:'memory',entity:'record',page:'cite',qa:'record',ontology:'ontology',skill:'skill',agent:'session',host:'host',commit:'commit',step:'step',plan:'plan',canvas:'note',service:'service'}; const id=el.dataset.id||''; const nm=String(el.title||'').split(' · ')[0]||id; return [MAP[k]||'record', nm, el, {id, kind:k}]; }
     if((el=q('.vw-gd[data-id]'))){ const id=el.dataset.id||''; const nm=String(el.title||'').split(' · ')[0]||id; return ['record', nm, el, {id}]; }
@@ -7355,6 +7357,8 @@ IMPORTANT:
         case 'edit': if(mid) return _msgEdit(mid); break;
         case 'retry': case 'resend': if(mid) return _msgResubmit(mid); break;
         case 'copy': { const t=x.text||name||''; try{ navigator.clipboard.writeText(t); }catch(_){} return say('copied'); }
+        case 'print': { const t=String(x.text||(el&&el.innerText)||name||'').trim().slice(0,4000); if(!t) return say('nothing to print'); say('printing on the thermal printer…');
+          fetch('/print/text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})}).then(r=>r.json()).then(r=>say(r&&r.routed?'✓ printed':(r&&r.escpos_b64?'open Printer to finish':((r&&r.error)||'print failed')))).catch(()=>say('print failed')); return; }
         case 'notebook': if(mid) return _msgSaveToNotebook(mid); break;
         case 'ide': if(mid) return _msgSaveToIde(mid); break;
         case 'project': if(mid) return _msgSaveToProject(mid); break;
@@ -7384,6 +7388,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     }catch(e){ say(id+': '+String(e&&e.message||e)); return; }
     say('"'+id+'" is not wired in the chat yet — the menu reads the same everywhere; this surface does not act on it');
   }
+  window.__veraRcmOwn=true;   // this page draws its own menu: the shared runtime (/ui/rcm.js) stands aside
   document.addEventListener('contextmenu', ev=>{ try{ if(ev.shiftKey) return; const t=_cmTarget(ev.target); if(!t) return; _cmOpen(ev, t[0], t[1], t[2], t[3]); }catch(_){} }, true);
   document.addEventListener('keydown', ev=>{ if(ev.key==='Escape'){ _cmClose(); } });
   // a notebook cell the conversation made lands on the session canvas as the cell (keyed, so never twice)

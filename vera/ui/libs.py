@@ -45,6 +45,12 @@ async def _serve_menus_js():
     return _script("menus.js")
 
 
+# the runtime every page draws the menu with (window.VeraRCM): its targets, the menu, the runner, thermal print
+@APP.get("/ui/rcm.js", include_in_schema=False)
+async def _serve_rcm_js():
+    return _script("rcm.js")
+
+
 @APP.get("/ui/routes.js", include_in_schema=False)
 async def _serve_routes_js():
     return _script("routes.js")

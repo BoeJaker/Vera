@@ -797,6 +797,13 @@
 })();
 
 /* Vera: load the select-anywhere -> thermal print helper (isolated, best-effort) */
+/* Vera: the right-click menu on every panel - the registry and its runtime (isolated, best-effort; a page with its own
+   menu sets window.__veraRcmOwn and the runtime stands aside) */
+try{ (function(){ if(window.__veraRcmLoad) return; window.__veraRcmLoad = 1;
+  var h = document.head || document.documentElement;
+  if(!window.MENUS){ var m = document.createElement('script'); m.src = '/ui/menus.js'; m.async = false; h.appendChild(m); }
+  if(!window.VeraRCM){ var r = document.createElement('script'); r.src = '/ui/rcm.js'; r.async = false; h.appendChild(r); }
+})(); }catch(e){}
 try{ (function(){ if(window.__veraPrintSelLoad) return; window.__veraPrintSelLoad = 1;
   var s = document.createElement('script'); s.src = '/ui/vera-print-selection.js'; s.async = true;
   (document.head || document.documentElement).appendChild(s);
