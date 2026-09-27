@@ -2364,7 +2364,7 @@
             inner.addEventListener('vm:rendered', () => this._diagramGrew(key, inner)); this._mermaidInto(inner, key); }
           // `bare`: the widget draws its figure and nothing else. Its own frame inside a canvas item was a box in a
           // box — and it lives in a second shadow root, so no rule of ours could reach it (owner, 2026-09-24).
-          else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); inner.setAttribute('bare', ''); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = '';
+          else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); inner.setAttribute('bare', ''); inner.setAttribute('item-drawer', ''); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = '';
             // a chip-faced widget is as wide as its face: the card takes that width and the rest of the row is free
             inner.addEventListener('widget:rendered', () => this._widgetFit(key, inner)); }
           else if (kind === 'preview') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);

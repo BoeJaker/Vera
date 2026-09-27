@@ -372,7 +372,7 @@ function _ebar(title, onAdd, onDone){
     // a widget RECORD (from the surface): its live face — the one renderer, reading its own source
     if(!w && a.record && typeof a.record === 'object' && window.customElements && customElements.get('vera-widget')){
       w = _el('div', 'wid lhm-added lhm-live'); w.setAttribute('data-w', (a.label || a.record.title || a.record.form || 'widget') + ' · ' + (a.record.form || 'widget'));
-      var vw = document.createElement('vera-widget'); try{ vw.setAttribute('record', JSON.stringify(a.record)); }catch(e){} vw.setAttribute('size', (a.record.frame && a.record.frame.size) || a.record.size || 's'); w.appendChild(vw);
+      var vw = document.createElement('vera-widget'); try{ vw.setAttribute('record', JSON.stringify(a.record)); }catch(e){} vw.setAttribute('size', (a.record.frame && a.record.frame.size) || a.record.size || 's'); vw.setAttribute('item-drawer', ''); w.appendChild(vw);
       var cap2 = _el('div', 'lhm-added-cap'); cap2.appendChild(_el('b', '', a.label || a.record.title || a.record.form || 'widget')); cap2.appendChild(_el('span', 'mono', a.c || a.record.source || a.record.form || '')); w.appendChild(cap2); }
     if(!w){ w = _el('div', 'wid lhm-added'); w.setAttribute('data-w', (a.label || a.form || 'widget') + ' · ' + (a.tpl ? 'template' : (a.form || 'widget'))); if(a.tpl) w.setAttribute('data-tpl', a.tpl);
       var body = _el('div', 'lhm-added-body'); var drawn = ''; try{ if(window.VeraWidget && a.form) drawn = window.VeraWidget.draw(a.form, a.data != null ? a.data : _sample(a.form), 'm', { bare:true, title:a.label }); }catch(e){}
@@ -930,7 +930,7 @@ function _ebar(title, onAdd, onDone){
     if(added.length){ if(!ws.length){ var g4 = _el('div', 'lhm-s-grp', 'Widgets'); g4.setAttribute('data-w', 'widgets · host'); bd.appendChild(g4); }
       added.forEach(function(rec, i){ var box = _el('div', 'lhm-s-w lhm-s-added'); box.setAttribute('data-w', (rec.title || rec.form || 'widget') + ' · ' + (rec.form || 'widget')); box.setAttribute('data-added', String(i));
         var h = _el('div', 'lhm-s-wh'); h.appendChild(_el('span', '', rec.title || rec.form || 'widget')); h.appendChild(_el('b', 'mono', rec.source || 'sample')); box.appendChild(h);
-        var body = _el('div', 'lhm-s-wbody'); if(window.customElements && customElements.get('vera-widget')){ var vw = document.createElement('vera-widget'); try{ vw.setAttribute('record', JSON.stringify(rec)); }catch(e){} vw.setAttribute('size', (rec.frame && rec.frame.size) || 's'); body.appendChild(vw); }
+        var body = _el('div', 'lhm-s-wbody'); if(window.customElements && customElements.get('vera-widget')){ var vw = document.createElement('vera-widget'); try{ vw.setAttribute('record', JSON.stringify(rec)); }catch(e){} vw.setAttribute('size', (rec.frame && rec.frame.size) || 's'); vw.setAttribute('item-drawer', ''); body.appendChild(vw); }
         else { var drawn = ''; try{ if(window.VeraWidget && rec.form) drawn = window.VeraWidget.draw(rec.form, _sample(rec.form), 's', { bare:true, title:rec.title }); }catch(e){} body.innerHTML = drawn || _escH(rec.form || 'widget'); }
         box.appendChild(body); bd.appendChild(box); }); }
     wrap.appendChild(bd);
