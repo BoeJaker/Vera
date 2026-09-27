@@ -50,14 +50,14 @@ CAP_HINTS: Dict[str, Dict[str, Any]] = {
     "ci.matrix": {"form": "status-matrix"}, "ci.race": {"form": "race-green"}, "ci.tests": {"form": "test-grid"},
     "ci.board": {"form": "ci-board"}, "ci.track": {"form": "run-track"}, "ci.compare": {"form": "run-compare"},
     "ci.pulse": {"form": "ci-pulse"}, "ci.fleet": {"form": "ci-fleet"}, "ci.run": {"form": "ci-run"},
-    "ci.census": {"form": "census-commits"},
+    "ci.census": {"form": "census-commits"}, "loop.ci.perf": {"form": "loop-perf"}, "census.live": {"form": "census-live"},
     "loop.ci.matrix": {"form": "status-matrix"}, "loop.ci.race": {"form": "race-green"}, "loop.ci.board": {"form": "ci-board"},
     "evolve.pipeline.get": {"form": "run-track"}, "evolve.tasks.overview": {"form": "status-matrix"},
     "workshop.agent_loop.trace": {"form": "status-matrix"}, "board.items": {"form": "ci-board"},
 }
 #: the CI forms draw their answer whole (ci_view_core's payload): no rows companion beside them
 CI_FORMS = ("status-matrix", "race-green", "test-grid", "ci-board", "run-track", "run-compare", "ci-pulse", "ci-fleet", "ci-run",
-            "census-commits")
+            "census-commits", "loop-perf", "census-live", "census-timeline")
 _ROW_KEYS = ("data", "result", "items", "rows", "results", "entries", "events", "points", "series", "values")
 _TIME = ("t", "ts", "time", "when", "at", "timestamp", "created_at", "started_at", "hour", "date")
 _TEXT = ("text", "msg", "message", "line", "event", "summary", "title")

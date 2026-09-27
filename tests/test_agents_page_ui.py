@@ -213,7 +213,7 @@ def test_the_poller_is_armed_in_a_finally_and_only_while_live(src):
     poll = _fn(src, "agentsPoll")
     assert "finally" in poll and "_agArm()" in poll and "_agBusy" in poll
     arm = _fn(src, "_agArm")
-    assert "_curSec()==='agents'" in arm and "_agMeta.any_live" in arm and "setTimeout(agentsPoll,6000)" in arm
+    assert "_curSec()==='agents'" in arm and "_agMeta.any_live" in arm and "setTimeout(agentsPoll,document.hidden?60000:15000)" in arm
     assert "setTimeout(loadAgents" not in src
     assert "if(s==='agents')agentsPoll();" in src, "the context bar refreshes the page that is open"
     assert "board-fltrepo" not in _fn(src, "_ctxBroadcast"), "no second filter set to mirror the context into"

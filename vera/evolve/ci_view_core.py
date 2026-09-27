@@ -910,3 +910,66 @@ def census_view(runs: Iterable[Dict[str, Any]], landed: Optional[Dict[str, Any]]
                         "signals": len(sig), "signals_up": sum(1 for x in sig if x.get("direction") == "up"),
                         "commits": sum(x["commit_count"] for x in out),
                         "noise": {"done": NOISE_DONE, "wall": NOISE_WALL}}}
+
+
+# agentic loop performance: where each loop's time went
+
+def _p(xs: Sequence[float], q: float) -> Optional[float]:
+    xs = sorted(x for x in xs if x is not None)
+    if not xs:
+        return None
+    return round(xs[min(len(xs) - 1, int(round(q * (len(xs) - 1))))], 1)
+
+
+def loop_perf(items: Iterable[Any], *, title: str = "") -> Dict[str, Any]:
+    """Loop runs as performance rows, from (session row, trace) pairs.
+
+    A row: its goal and outcome, its wall time, planned vs executed steps, tool calls (failed, repeated), the tool
+    time split by tool, the model calls by loop stage (tier, planner, controller, verifier...), gate rounds and
+    recoveries - so a slow loop says whether its time went to tools, to the model or to retries. A step reported
+    twice by the trace (it re-emits a step it re-ran) is counted once, the last report winning."""
+    rows: List[Dict[str, Any]] = []
+    for it in items or []:
+        s, t = (it if isinstance(it, (list, tuple)) and len(it) == 2 else ({}, it))
+        s, t = s or {}, t or {}
+        run = t.get("run") or {}
+        steps: Dict[str, Dict[str, Any]] = {}
+        for st in _rows(t.get("steps")):
+            steps[_s(st.get("step_id"))] = st
+        calls = [c for st in steps.values() for c in _rows(st.get("calls"))]
+        by_tool: Dict[str, int] = {}
+        for c in calls:
+            k = _s(c.get("tool")) or "?"
+            by_tool[k] = by_tool.get(k, 0) + _i(c.get("ms"))
+        stages = [{"stage": _s(x.get("stage")), "calls": _i(x.get("calls")), "max_chars": _i(x.get("max_chars"))}
+                  for x in _rows(t.get("stages"))]
+        started = _s(run.get("started_at") or s.get("started_at"))
+        ended = _s(run.get("updated_at") or s.get("updated_at"))
+        status = _s(run.get("status") or s.get("status"))
+        c = t.get("counters") or {}
+        rows.append({"id": _s(t.get("session_id") or s.get("session_id")), "goal": _s(run.get("goal") or s.get("goal")),
+                     "status": status, "o": outcome({"status": status}),
+                     "started_at": started, "wall_s": seconds_between(started, ended),
+                     "planned": _i(c.get("planned_steps")) or len(_rows((t.get("plan") or {}).get("steps"))),
+                     "steps": len(steps), "inserted": _i(c.get("inserted_steps")),
+                     "calls": len(calls), "fails": sum(1 for x in calls if x.get("ok") is False),
+                     "repeats": sum(1 for x in calls if x.get("repeat")),
+                     "tool_ms": sum(by_tool.values()),
+                     "by_tool": sorted(({"tool": k, "ms": v} for k, v in by_tool.items()), key=lambda x: -x["ms"]),
+                     "llm_calls": sum(x["calls"] for x in stages), "stages": stages,
+                     "gate_rounds": len(_rows(t.get("gates"))), "recoveries": len(_rows(t.get("recoveries"))),
+                     "warnings": [_s(w) for w in (t.get("warnings") or [])][:20]})
+    rows.sort(key=lambda r: _neg(r["started_at"]))
+    walls = [r["wall_s"] for r in rows if r["wall_s"] is not None]
+    tools: Dict[str, int] = {}
+    for r in rows:
+        for x in r["by_tool"]:
+            tools[x["tool"]] = tools.get(x["tool"], 0) + x["ms"]
+    done = [r for r in rows if r["o"] in ("pass", "fail", "error")]
+    return {"kind": KIND, "view": "loop-perf", "title": title or "Agentic loop performance", "rows": rows,
+            "summary": {"runs": len(rows), "pass_rate": (round(sum(1 for r in done if r["o"] == "pass") / len(done), 3)
+                                                        if done else None),
+                        "wall_median": _median(walls), "wall_p90": _p(walls, 0.9),
+                        "calls_median": _median([r["calls"] for r in rows]),
+                        "llm_median": _median([r["llm_calls"] for r in rows]),
+                        "tools": sorted(({"tool": k, "ms": v} for k, v in tools.items()), key=lambda x: -x["ms"])[:8]}}

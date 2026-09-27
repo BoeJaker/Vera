@@ -466,6 +466,13 @@ html.vpb-nav-hosted body{padding-left:0}
 
 <!-- ── WORK: one table — every task, or every driver run — with what is live on top ── -->
 <div class="sec" id="sec-work">
+  <!-- Work, live: the page's own lens (vera/widgets/layouts/looplab-work.json) - the census as it runs and its routing,
+       the loops and where their time goes, the census runs among the commits, every task's recent runs. Widgets:
+       each can be configured, moved, and placed on the canvas; the tables below stay for the full record. -->
+  <div class="card" id="work-lens">
+    <div class="card-h"><span class="card-t">Work, live</span><span class="hint">the census in flight &middot; loop performance &middot; census runs among the commits &middot; tasks</span></div>
+    <vera-dashboard layout="looplab-work" storage="looplab-work-lens" no-popout></vera-dashboard>
+  </div>
   <!-- ── Templates: the question set, and starting a run of it ──────────────
        A census template is a named set of goals; seeding turns it into suite
        tasks tagged census-<name>, so its timeline is evolve.suites for THAT
@@ -902,7 +909,7 @@ function _mcDetail(r){
 function _mcArm(){
   clearTimeout(_mcT);_mcT=null;
   const cb=$('mission-follow');
-  if(cb&&cb.checked&&_curSec()==='mission'&&_mcMeta.any_live)_mcT=setTimeout(missionPoll,6000);
+  if(cb&&cb.checked&&_curSec()==='mission'&&_mcMeta.any_live)_mcT=setTimeout(missionPoll,document.hidden?60000:15000);   // 400 events a read (~0.5 MB): was every 6 s
 }
 async function missionPoll(){
   if(_mcBusy){_mcArm();return}
@@ -3837,7 +3844,7 @@ let _agT=null,_agBusy=false;
 function _agArm(){
   clearTimeout(_agT);_agT=null;
   const cb=$('agents-follow'),sw=_agMeta.swarm||{};
-  if(cb&&cb.checked&&_curSec()==='agents'&&(_agMeta.any_live||(sw.loops||0)+(sw.editors||0)>0))_agT=setTimeout(agentsPoll,6000);
+  if(cb&&cb.checked&&_curSec()==='agents'&&(_agMeta.any_live||(sw.loops||0)+(sw.editors||0)>0))_agT=setTimeout(agentsPoll,document.hidden?60000:15000);
 }
 async function agentsPoll(){
   if(_agBusy){_agArm();return}
@@ -4968,7 +4975,7 @@ async function loadShip(){
   renderShipHead(r);
   renderShipTable();
   clearTimeout(window._shipT);
-  if(r.any_live&&$('ship-follow')&&$('ship-follow').checked&&_curSec()==='ship')window._shipT=setTimeout(loadShip,6000);
+  if(r.any_live&&$('ship-follow')&&$('ship-follow').checked&&_curSec()==='ship')window._shipT=setTimeout(loadShip,document.hidden?60000:15000);
 }
 /* After an action (promote, rollback, verdict, a bus event): the table, and
    the full pipeline list if it is unfolded - only while Ship is on screen. */
@@ -5882,7 +5889,7 @@ loadAll();
 (function(){
   const LENSES=[
     {key:'looplab',name:'Live',ic:'\u25C9'},{key:'looplab-gates',name:'Gates & tests',ic:'\u25A6'},
-    {key:'looplab-census',name:'Census \u00d7 commits',ic:'\u2A2F'},{key:'looplab-loops',name:'Agentic loops',ic:'\u27F3'},
+    {key:'looplab-census',name:'Census \u00d7 commits',ic:'\u2A2F'},{key:'looplab-perf',name:'Performance',ic:'\u23F1'},{key:'looplab-loops',name:'Agentic loops',ic:'\u27F3'},
     {key:'looplab-agents',name:'Agents & board',ic:'\u2609'},{key:'looplab-branches',name:'Branches',ic:'\u2387'}];
   const K='vera:looplab:lens', KR='vera:looplab:lens-rotate', KE='vera:looplab:lens-every';
   const get=(k,d)=>{try{const v=localStorage.getItem(k);return v==null?d:v}catch(_){return d}};

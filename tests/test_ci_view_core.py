@@ -223,3 +223,17 @@ def test_census_view_names_signal_and_noise_and_the_commits_between():
     g = v["goals"][0]
     assert g["name"] == "trivial-chat" and g["cells"] == ["", "cap", "pass"]
     assert v["summary"]["signals_up"] == 1 and v["summary"]["commits"] == 2
+
+
+def test_loop_perf_splits_the_time_and_counts_a_repeated_step_once():
+    tr = {"session_id": "s1", "run": {"goal": "g", "status": "done", "started_at": "2026-09-27T10:00:00Z", "updated_at": "2026-09-27T10:05:00Z"},
+          "plan": {"steps": [{"id": 1}, {"id": 2}]},
+          "steps": [{"step_id": 1, "calls": [{"tool": "exec.bash.run", "ms": 100, "ok": False}]},
+                    {"step_id": 1, "calls": [{"tool": "exec.bash.run", "ms": 300, "ok": True}, {"tool": "http.get", "ms": 50, "ok": True, "repeat": True}]}],
+          "stages": [{"stage": "planner", "calls": 2}, {"stage": "controller", "calls": 3}], "gates": [{"round": 1}], "recoveries": []}
+    p = cv.loop_perf([({}, tr)])
+    r = p["rows"][0]
+    assert r["wall_s"] == 300.0 and r["steps"] == 1 and r["planned"] == 2
+    assert r["calls"] == 2 and r["fails"] == 0 and r["repeats"] == 1 and r["tool_ms"] == 350
+    assert r["by_tool"][0] == {"tool": "exec.bash.run", "ms": 300} and r["llm_calls"] == 5 and r["gate_rounds"] == 1
+    assert p["summary"]["runs"] == 1 and p["summary"]["pass_rate"] == 1.0 and p["summary"]["wall_median"] == 300.0

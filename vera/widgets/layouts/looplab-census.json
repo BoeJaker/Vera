@@ -66,6 +66,50 @@
   },
   {
    "record": {
+    "id": "looplab-census-timeline",
+    "form": "census-timeline",
+    "source": "ci.census",
+    "shape": "events",
+    "title": "Census timeline · runs among the commits",
+    "read": {
+     "refresh": "5m",
+     "args": {
+      "template": "default"
+     },
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      9
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    10
+   ],
+   "span": [
+    6,
+    9
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
     "id": "looplab-census-graph",
     "form": "element",
     "source": "",
@@ -79,8 +123,8 @@
     "frame": {
      "size": "xl",
      "span": [
-      7,
-      6
+      6,
+      9
      ],
      "max_body": null
     },
@@ -97,12 +141,12 @@
     "place": "dashboard"
    },
    "at": [
-    0,
+    6,
     10
    ],
    "span": [
-    7,
-    6
+    6,
+    9
    ],
    "hidden": false,
    "refresh": "",
@@ -124,10 +168,10 @@
      }
     },
     "frame": {
-     "size": "xl",
+     "size": "l",
      "span": [
-      5,
-      3
+      6,
+      2
      ],
      "max_body": null
     },
@@ -142,12 +186,12 @@
     "place": "dashboard"
    },
    "at": [
-    7,
-    10
+    0,
+    19
    ],
    "span": [
-    5,
-    3
+    6,
+    2
    ],
    "hidden": false,
    "refresh": "5m",
@@ -169,10 +213,10 @@
      }
     },
     "frame": {
-     "size": "xl",
+     "size": "l",
      "span": [
-      5,
-      3
+      6,
+      2
      ],
      "max_body": null
     },
@@ -187,12 +231,12 @@
     "place": "dashboard"
    },
    "at": [
-    7,
-    13
+    6,
+    19
    ],
    "span": [
-    5,
-    3
+    6,
+    2
    ],
    "hidden": false,
    "refresh": "5m",

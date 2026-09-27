@@ -246,6 +246,9 @@ FORMS: List[Dict[str, Any]] = [
     _F("ci-run", "values", glyph="ci-run", name="Run drill-down", boards=("widgets", "reply")),
     _F("census-commits", "matrix", glyph="census-commits", options=("template",), name="Census \u00d7 commits", boards=("widgets", "reply")),
     # a page's own custom element (draw.tag) placed as a widget: the Loop Lab's commit graph, authorship, test activity...
+    _F("loop-perf", "items", glyph="loop-perf", options=("limit",), name="Loop performance", boards=("widgets", "reply")),
+    _F("census-live", "stages", glyph="census-live", motion=True, name="Census, live", boards=("widgets", "motion", "reply")),
+    _F("census-timeline", "events", glyph="census-timeline", options=("template",), name="Census timeline", boards=("widgets", "reply")),
     _F("element", "panel", glyph="element", sizes=("s", "m", "l", "xl"), options=("tag", "attrs"), name="Page element", boards=("widgets",)),
 ]
 _FORM_BY_ID = {f["id"]: f for f in FORMS}

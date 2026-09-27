@@ -11,7 +11,7 @@ sys.path.insert(0, ROOT)
 from vera.widgets import widget_record as REC  # noqa: E402
 
 LAY = os.path.join(ROOT, "vera", "widgets", "layouts")
-KEYS = ["looplab", "looplab-gates", "looplab-census", "looplab-loops", "looplab-agents", "looplab-branches"]
+KEYS = ["looplab", "looplab-gates", "looplab-census", "looplab-perf", "looplab-loops", "looplab-agents", "looplab-branches", "looplab-work"]
 
 
 def _read(*p):
@@ -73,9 +73,9 @@ def test_every_source_reads_on_its_own_and_writes_nothing():
             src = t["record"]["source"]
             if not src:
                 continue
-            assert re.search(r"^(ci|loop\.ci|census|evolve)\.", src), src
+            assert re.search(r"^(ci|loop\.ci|census|evolve|ollama|perf)\.", src), src
             assert not re.search(r"(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push)\b", src), src
-    for name in ("ci\\.(matrix|race|tests|pulse|fleet|board|census", "loop\\.ci\\.(matrix|race|board)", "census\\.(runs|landed"):
+    for name in ("ci\\.(matrix|race|tests|pulse|fleet|board|census", "loop\\.ci\\.(matrix|race|board", "census\\.(runs|landed"):
         assert name in js, name
 
 
@@ -89,8 +89,9 @@ def test_the_element_form_mounts_the_loop_lab_elements_it_names():
 def test_the_page_rotates_through_the_lenses():
     html = _read("vera", "evolve", "evolve_panel.html")
     assert '<div class="card" id="lens-card">' in html and '<script src="/ui/vera-dashboard.js"></script>' in html
-    for k in KEYS:
+    for k in KEYS[:-1]:
         assert "key:'" + k + "'" in html, k
+    assert '<vera-dashboard layout="looplab-work"' in html, "the Work page leads with its own lens"
     for s in ("d.setAttribute('layout',key)", "id=\"lensRotate\"", "pointerenter", "e.key===']'"):
         assert s in html, s
 

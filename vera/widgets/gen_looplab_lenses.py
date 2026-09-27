@@ -63,11 +63,41 @@ LENSES = {
     "looplab-census": ("Census × commits", "The census run by run beside the commits that landed before each run - "
                        "a real gain or loss lit, the noise named - the goal matrix, and the commit graph it came from.", [
         tile("census", "Census × commits", "census-commits", "ci.census", (12, 10), (0, 0), args={"template": "default"}, refresh="5m"),
-        element("graph", "Commit graph", "vera-git-graph", (7, 6), (0, 10)),
-        tile("done", "Goals done per run", "trace", "census.runs", (5, 3), (7, 10), shape="series",
+        # the commit graph NEXT TO the census runs: one timeline (runs as bands where they ended, the commits that
+        # landed before each on their lanes) beside the repository's own graph
+        tile("timeline", "Census timeline · runs among the commits", "census-timeline", "ci.census", (6, 9), (0, 10),
+             shape="events", args={"template": "default"}, refresh="5m"),
+        element("graph", "Commit graph", "vera-git-graph", (6, 9), (6, 10)),
+        tile("done", "Goals done per run", "trace", "census.runs", (6, 2), (0, 19), shape="series",
              map={"series": "runs", "v": "done"}, refresh="5m"),
-        tile("quality", "Quality per run", "trace", "census.runs", (5, 3), (7, 13), shape="series",
+        tile("quality", "Quality per run", "trace", "census.runs", (6, 2), (6, 19), shape="series",
              map={"series": "runs", "v": "quality_mean"}, refresh="5m"),
+    ]),
+    "looplab-perf": ("Performance", "Where the time goes: the census in flight and its routing, each model's latency, "
+                     "every agentic loop's wall time split by tool and model calls, census and loop wall time run by run, "
+                     "and the request log.", [
+        tile("live", "Census, live", "census-live", "census.live", (6, 4), (0, 0), shape="stages", refresh="5s"),
+        tile("latency", "Models · latency and throughput", "table", "ollama.route_stats", (6, 4), (6, 0), shape="items",
+             map={"rows": "stats"}, draw={"columns": ["model", "job_type", "instance", "n", "ema_elapsed_s", "ema_tps"], "sort": "ema_elapsed_s"},
+             refresh="30s", note="every model x job type x node the router has timed: calls, EMA seconds, EMA tokens/s"),
+        tile("loops", "Agentic loop performance", "loop-perf", "loop.ci.perf", (12, 7), (0, 4), shape="items",
+             args={"limit": 24}, refresh="30s"),
+        # trends drawn from real readings only: an empty source (perf.stalls with no stalls) draws its SAMPLE face,
+        # which on a performance lens reads as an alarm that is not there
+        tile("census-wall", "Census wall time per run (s)", "trace", "census.runs", (6, 2), (0, 11), shape="series",
+             map={"series": "runs", "v": "wall_total_s"}, refresh="5m"),
+        tile("loop-wall", "Loop wall time per run (s)", "trace", "loop.ci.perf", (6, 2), (0, 13), shape="series",
+             args={"limit": 40}, map={"series": "rows", "v": "wall_s", "reverse": True}, refresh="60s"),
+        tile("requests", "Request log", "log", "ollama.request_log", (6, 4), (6, 11), shape="events",
+             map={"events": "entries", "t": "ts", "kind": "instance", "text": "model"}, refresh="10s"),
+    ]),
+    "looplab-work": ("Work", "The work in flight: the census as it runs, the loops and where their time goes, the census "
+                     "runs among the commits, and every task's recent runs.", [
+        tile("live", "Census, live", "census-live", "census.live", (6, 4), (0, 0), shape="stages", refresh="5s"),
+        tile("loops", "Loop performance", "loop-perf", "loop.ci.perf", (6, 4), (6, 0), shape="items", args={"limit": 12}, refresh="30s"),
+        tile("timeline", "Census timeline", "census-timeline", "ci.census", (6, 7), (0, 4), shape="events",
+             args={"template": "default"}, refresh="5m"),
+        tile("tasks", "Tasks · recent runs", "status-matrix", "evolve.tasks.overview", (6, 7), (6, 4), refresh="2m"),
     ]),
     "looplab-loops": ("Agentic loops", "Every loop run by goal, the newest loop's race through its gate and steps, "
                       "its plan as a board, and every task's recent runs.", [
@@ -92,7 +122,8 @@ LENSES = {
     ]),
 }
 
-ORDER = ["looplab", "looplab-gates", "looplab-census", "looplab-loops", "looplab-agents", "looplab-branches"]
+# a stock chart form (trace) at XL composes a table under itself and measures the body it grows - keep them at L
+ORDER = ["looplab", "looplab-gates", "looplab-census", "looplab-perf", "looplab-loops", "looplab-agents", "looplab-branches", "looplab-work"]
 
 
 def build():
