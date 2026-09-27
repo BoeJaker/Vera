@@ -165,7 +165,8 @@ def test_a_dependent_stream_is_told_not_to_regather():
 needs_app = pytest.mark.skipif(M is None, reason="app module not importable here")
 
 
-def _run_broad(monkeypatch, brief_json, enrich_delay=0.0, enrich_fail=False, grace=5.0):
+def _run_broad(monkeypatch, brief_json, enrich_delay=0.0, enrich_fail=False, grace=5.0,
+               drain=False):
     seen = {"plans": [], "enrich": [], "in_flight": 0, "max_in_flight": 0, "events": [],
             "enrich_started_before_plans_done": False}
     plans_done = {"n": 0}
@@ -216,6 +217,9 @@ def _run_broad(monkeypatch, brief_json, enrich_delay=0.0, enrich_fail=False, gra
         plan = await M._v6_plan_broad(
             "research small LLMs and write a report", CAT, [], {}, max_steps=8, sid="t", stream_id="")
         tasks = plan.pop("_enrich_tasks", {})
+        if drain and tasks.get("__runner__") is not None:
+            # the loop keeps running while late briefs arrive; let them finish
+            await asyncio.wait_for(tasks["__runner__"], timeout=10)
         done = {k: (t.done() and not t.cancelled() and not t.exception() and t.result())
                 for k, t in tasks.items() if k != "__runner__"}
         for t in tasks.values():
@@ -240,7 +244,7 @@ def test_every_stream_is_planned_on_the_gpu_route_concurrently(monkeypatch):
 
 @needs_app
 def test_the_cpu_briefs_run_beside_the_gpu_plan_on_the_enrich_route(monkeypatch):
-    plan, seen, done = _run_broad(monkeypatch, BRIEF)
+    plan, seen, done = _run_broad(monkeypatch, BRIEF, drain=True)
     assert len(seen["enrich"]) == 2
     assert all(e["profile"] == "planning_style" and e["prefer_gpu"] is False for e in seen["enrich"])
     assert seen["enrich_started_before_plans_done"]
@@ -253,7 +257,7 @@ def test_only_one_heavy_cpu_generation_runs_at_a_time(monkeypatch):
     """User 2026-09-27: one CPU node does heavy generation, one at a time, so the
     embedding/worker node is never taken - two briefs at once would push the
     second off the long-horizon node."""
-    _, seen, done = _run_broad(monkeypatch, BRIEF, enrich_delay=0.2)
+    _, seen, done = _run_broad(monkeypatch, BRIEF, enrich_delay=0.2, drain=True)
     assert len(seen["enrich"]) == 2 and seen["enrich_max"] == 1
     assert all(done.values())
 
@@ -268,6 +272,18 @@ def test_the_enrich_route_is_the_long_horizon_cpu_job_type():
     role = (O.ROLE_PROFILES_DECLARED.get("planning_style") or {}).get("roles", {}).get("enrich")
     if role:                                                          # planning module loaded
         assert role["job_type"] == "plan_enrich" and role["deny_gpu"]
+
+
+@needs_app
+def test_planning_waits_only_for_the_first_streams_brief(monkeypatch):
+    """Stream 2 runs after stream 1, so its brief can land during execution;
+    waiting for it held planning 75 s for nothing (live, 2026-09-27)."""
+    import time as _t
+    t0 = _t.monotonic()
+    plan, seen, done = _run_broad(monkeypatch, BRIEF, enrich_delay=1.0, grace=30.0)
+    took = _t.monotonic() - t0
+    assert took < 2.6, took                             # ~1 s for brief 1, not ~2 s for both
+    assert plan["broad"]["enriched_before_run"] == 1
 
 
 @needs_app

@@ -19252,9 +19252,14 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
     gpu_s = round(time.monotonic() - t0, 1)
     # Bounded grace for the CPU briefs, like the research analyst's bounded wait.
     _briefs = [f for k, f in enrich_tasks.items() if k != "__runner__"]
-    _pending = [f for f in _briefs if not f.done()]
-    if _pending:
-        await asyncio.wait(_pending, timeout=PSx.ENRICH_GRACE_S)
+    # Wait (bounded) only for the brief of the stream that runs FIRST: every
+    # later stream starts after it, and its brief is applied when it starts.
+    # Waiting for all of them held planning for the full grace - live
+    # 2026-09-27, 75 s of a 98.6 s planning phase for a brief whose stream
+    # was not due for minutes.
+    _first = enrich_tasks.get(streams[0]["id"])
+    if _first is not None and not _first.done():
+        await asyncio.wait([_first], timeout=PSx.ENRICH_GRACE_S)
     enriched_in_time = sum(1 for f in _briefs
                            if f.done() and not f.cancelled() and not f.exception() and f.result())
     merged = PSx.merge_streams(streams, [r[0] for r in results],
