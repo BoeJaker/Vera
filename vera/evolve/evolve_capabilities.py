@@ -5570,7 +5570,11 @@ async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
 # 260-300 s on a quiet box and longer while other gates ran, so green branches
 # failed with "ephemeral test container failed to run pytest" - what the runner
 # says when pytest is killed before it prints its exit code.
-_CRITICAL_TIER_TIMEOUT_S = 500
+# Raised to 500 then; by 2026-09-27 the tier (about 5,560 tests) took 542 s on a
+# quiet box (no census, no loop, no other gate), so every full-size branch failed
+# the same way again. 900 s leaves room for the tier to grow and for a gate that
+# runs beside another; evolve.unittest.run's own ceiling is 1800 s.
+_CRITICAL_TIER_TIMEOUT_S = 900
 
 @capability("evolve.pipeline.adopt", memory="on",
             http_method="POST", http_path="/evolve/pipeline/adopt", http_tags=["evolve"],
