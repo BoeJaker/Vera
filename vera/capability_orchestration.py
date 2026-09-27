@@ -7443,6 +7443,38 @@ async def mcp_call_endpoint(name: str, arguments: str = "", trace_id=None):
     return {"type": "tool_result", "tool_name": name, "trace_id": tid, "content": result}
 
 
+def _mcp_call_accepted(cap: Dict[str, Any]) -> set:
+    """The argument names /mcp/call lets through to `cap`.
+
+    A capability's own schema - EXCEPT for one whose function ends in **kwargs
+    and names the capability it forwards them to (`delegates_to`): its derived
+    schema is incomplete by construction. dag.agent_loop_v7 declares only `goal`
+    and forwards everything else to dag.agent_loop_v6 (71 parameters), so this
+    filter silently threw away every argument an explicit caller passed to v7 -
+    plan_style, model, enable_dream_persistence (found 2026-09-27: four runs
+    asked for four planning styles and all ran as auto). An explicit caller's
+    arguments are widened by the delegate's schema, exactly as engine_params
+    already does for loops.run; profile bodies are not this path.
+    Empty set = no schema = no filtering (unchanged)."""
+    own = set(((cap or {}).get("schema") or {}).get("properties", {}).keys())
+    fn = (cap or {}).get("func")
+    delegate = str(getattr(fn, "delegates_to", "") or "")
+    if not (own and delegate):
+        return own
+    try:
+        from Vera.vera.dag import engine_params as _ep
+    except Exception:                                        # pragma: no cover
+        try:
+            from vera.dag import engine_params as _ep
+        except Exception:
+            return own
+    dcap = CAPABILITY_REGISTRY.get(delegate) or {}
+    dprops = list(((dcap.get("schema") or {}).get("properties") or {}).keys())
+    # trace_id is supplied by the handler itself; a caller's copy would collide.
+    return set(_ep.caller_accepted(own, has_var_keyword=_ep.takes_var_keyword(fn),
+                                   delegate_props=dprops)) - {"trace_id"}
+
+
 def _make_mcp_call_handler():
     """
     Dedicated handler for POST /mcp/call.
@@ -7471,8 +7503,12 @@ def _make_mcp_call_handler():
             raise HTTPException(404, f"Unknown capability: {name}")
 
         # Filter args to accepted params — prevents unexpected kwarg errors
-        accepted = set(cap.get("schema", {}).get("properties", {}).keys())
+        accepted = _mcp_call_accepted(cap)
         if accepted:
+            _gone = sorted(k for k in args if k not in accepted)
+            if _gone:
+                log.warning("/mcp/call %s: dropped argument(s) the capability does not "
+                            "accept: %s", name, ", ".join(_gone[:12]))
             args = {k: v for k, v in args.items() if k in accepted}
 
         # Server-side type coercion using the cap schema.
