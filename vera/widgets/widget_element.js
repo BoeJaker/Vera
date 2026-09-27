@@ -223,6 +223,10 @@
     // columns a heat map or a table of a wide row should show
     if (Array.isArray(map.fields) && map.fields.length && Array.isArray(base)) { base = base.map((r) => { if (!r || typeof r !== 'object') return r; const o = { name: r.name ?? r.id ?? r.label ?? r.key };
       map.fields.forEach((f) => { const v = pick(r, f); o[String(f).split('.').pop()] = (typeof v === 'string' && v.trim() !== '' && isFinite(+v)) ? +v : v; }); return o; }); hit = true; }
+    // where: {field: value | [values]} keeps only the rows that match - for any list, not only a count (the estate's nodes
+    // on one plane: the work in flight, the runtimes)
+    if (map.where && typeof map.where === 'object' && !Array.isArray(map.where) && Array.isArray(base) && sh !== 'level' && sh !== 'rate') { const wh = map.where;
+      base = base.filter((r) => r && typeof r === 'object' && Object.keys(wh).every((k) => { const want = wh[k], v = pick(r, k); return Array.isArray(want) ? want.map(String).includes(String(v)) : String(v) === String(want); })); hit = true; }
     // span: 'day' | 'hour' | 'minute' - count by the time a row carries, cut to that span, oldest first (dreams per day)
     if (map.count && Array.isArray(base)) { const cutAt = { day: 10, hour: 13, minute: 16 }[String(map.span || '')] || 0;
       const agg = {}; base.forEach((r) => { if (!r || typeof r !== 'object') return; const k0 = pick(r, map.count); let k = (k0 == null || k0 === '') ? '(none)' : String(k0); if (cutAt) k = k.slice(0, cutAt); agg[k] = (agg[k] || 0) + (map.sum ? num(pick(r, map.sum)) : 1); });
