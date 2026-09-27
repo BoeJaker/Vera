@@ -197,6 +197,12 @@ def digest_events(events: Sequence[Dict[str, Any]],
             plan["style"] = e.get("effective")
             plan["style_requested"] = e.get("requested")
             plan["style_reason"] = _clip(e.get("reason"), 200)
+        elif t.endswith(".intent_zeroshot"):
+            # An NLP node's zero-shot intent beside the one the run used
+            # (intent_zeroshot_core) - measured, never read back.
+            plan["intent_zeroshot"] = {"zeroshot": e.get("zeroshot"), "margin": e.get("margin"),
+                                       "agrees_used": e.get("agrees_used"),
+                                       "agrees_llm": e.get("agrees_llm")}
         elif t.endswith(".entity_coverage"):
             # Did the final output carry what the goal named (NER, measured -
             # entity_coverage_core)? Reported, never a success criterion.
