@@ -529,8 +529,8 @@ function layout(W, H){
   const stagOf = (total, idx) => total > 8 ? ((idx % 3) - 1) : total > 5 ? ((idx % 2) ? 1 : -1) : 0;
   if (S.view === '2d' || !ISO){
     // a band is as tall as its ladder asks (a row every 30 px × spread), never less than a chip's worth; the stage scrolls
-    const G2 = 64;   // each column keeps its left 64 px for pipes
-    const bandNeed = (pl) => 60 + (ladder(pl) - 1) * 64 * SP, needSum = PL.reduce((t, p) => t + bandNeed(p.id), 0) || 1;
+    const G2 = 110;   // each column keeps its left 110 px for pipes: eight tracks 12 px apart
+    const bandNeed = (pl) => 60 + (ladder(pl) - 1) * 88 * SP, needSum = PL.reduce((t, p) => t + bandNeed(p.id), 0) || 1;
     const scale = Math.max(1, (H - AXIS) / needSum);
     const bandHOf = {}, bandY = {}; let yy = 0; PL.forEach((p) => { bandY[p.id] = yy; bandHOf[p.id] = bandNeed(p.id) * scale; yy += bandHOf[p.id]; });
     PL.forEach((p) => { const y = bandY[p.id]; bands.push({ y, h: bandHOf[p.id], col: PCOL[p.id] }); planeLabels.push({ x: 10, y: y + 8, col: PCOL[p.id], t: p.name + psum(p.id) }); });
@@ -547,7 +547,7 @@ function layout(W, H){
     // 2D channel routing: a pipe drops from its chip into the gap beside its row (the side of its target), runs along the gap to the
     // gutter at the left of the target's column, along the gutter to the gap beside the target's row, and into the chip. It never
     // crosses a chip. Tracks are dealt per channel by interval, as in 3D: overlapping runs never share one.
-    let TR2 = null; const T2 = 4.5, TG = 7;
+    let TR2 = null; const T2 = 7, TG = 12;   // row-gap tracks 7 px apart, gutter tracks 12
     const laneOf2 = {}, laneN2 = {}; const lane2 = (grp, key) => { const k = grp + '|' + key; if (laneOf2[k] == null){ const n = (laneN2[grp] = (laneN2[grp] || 0) + 1) - 1; laneOf2[k] = n; } return laneOf2[k]; };
     const sd = (A, B) => (B.y > A.y + 1 ? 1 : -1);
     const chA = (A, B) => A.y + sd(A, B) * A.rp / 2, chB = (A, B) => (Math.abs(B.y - A.y) <= 1 ? chA(A, B) : B.y - sd(A, B) * B.rp / 2);
@@ -560,7 +560,7 @@ function layout(W, H){
     route = (a, b) => { const A = pos[a], B = pos[b], key = a + '>' + b; if (!TR2) build2(); const T = TR2[key] || {}, tk = (x) => (T[x] || 0) % 8;
       const ya = chA(A, B) + (tk('ha') - 3.5) * T2, yb = chB(A, B) + (tk('hb') - 3.5) * T2, gx = gxOf(B) + tk('g') * TG;
       // each pipe has its own port along the chip, 8 px apart: a busy node's pipes fan out rather than share one line
-      const xa = A.x + (lane2('pa:' + a, key) % 9 - 4) * 8, xb = B.x + (lane2('pb:' + b, key) % 9 - 4) * 8;
+      const xa = A.x + (lane2('pa:' + a, key) % 9 - 4) * 11, xb = B.x + (lane2('pb:' + b, key) % 9 - 4) * 11;
       return [{ x: xa, y: A.y }, { x: xa, y: ya }, { x: gx, y: ya }, { x: gx, y: yb }, { x: xb, y: yb }, { x: xb, y: B.y }]; };
   } else {
     const TILT = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 12.6) : S.tilt, AZIM = clamp(S.azim == null ? 45 : S.azim, 26, 64);
@@ -815,6 +815,8 @@ function applyZoom(){ const v = $('pzv'); v.style.transform = 'translate(' + S.v
 function render(opts){
   opts = opts || {};
   const plot = $('plot'), v = $('pzv');
+  // where the stage looks, read FIRST: once the plot is reset below, the browser clamps the scroll and this would come back wrong
+  const stg = plot.closest('.stage'), stgF = stg ? [(stg.scrollLeft + stg.clientWidth / 2) / Math.max(1, stg.scrollWidth), (stg.scrollTop + stg.clientHeight / 2) / Math.max(1, stg.scrollHeight)] : [0.5, 0];
   if (!S.snap){ v.innerHTML = '<div class="empty">' + (S.err ? 'The estate could not be read: ' + esc(S.err) : 'reading the estate…') + '</div>'; return; }
   const snap = S.snap, ID = byId(), is3d = S.view === '3d';
   // the old picture goes first: every size read below would otherwise lay out thousands of stale elements (seconds in 3D)
@@ -855,8 +857,7 @@ function render(opts){
   const need = 30 + Object.keys(per).reduce((t, pl) => t + 60 + (clamp(per[pl], 1, is3d ? 9 : 12) - 1) * (is3d ? 26 : 40 * S.spread), 0);
   plot.style.setProperty('--plot-min', Math.max(560, is3d ? need * Math.max(1, S.zgap * 1.15) * (S.layout3d === 'flat' ? .8 : 1) : need) + 'px');
   plot.style.setProperty('--plot-minw', '0px');   // reset before measuring: a view that grew the plot sideways must not centre the next one
-  if (!is3d) plot.style.setProperty('--plot-minw', (116 + (snap.domains || []).length * 250) + 'px');   // 2D: columns wide enough for a gutter and their chips
-  const stg = plot.closest('.stage'), stgF = stg ? [(stg.scrollLeft + stg.clientWidth / 2) / Math.max(1, stg.scrollWidth), (stg.scrollTop + stg.clientHeight / 2) / Math.max(1, stg.scrollHeight)] : [0.5, 0];
+  if (!is3d) plot.style.setProperty('--plot-minw', (116 + (snap.domains || []).length * 330) + 'px');   // 2D: columns wide enough for a gutter and their chips
   let W = plot.clientWidth || 800, H = plot.clientHeight || 600;
   let lay = layout(W, H);
   // a stack taller than the plot (a wide gap, a large spread) asks for its height: nothing is cut, the stage scrolls
@@ -966,22 +967,17 @@ function render(opts){
       + '<span class="exp" data-exp="' + esc(n.id) + '" title="Open this node as a widget on the graph">⤢</span><span class="asg ' + (S.wpick === n.id ? 'on' : '') + '" data-asg="' + esc(n.id) + '" title="Add or change the iso widgets on this node">⊕</span></div>'); });
   if (S.wpick && ID[S.wpick] && pos[S.wpick]){ const at = pos[S.wpick], cur = wspec(ID[S.wpick]);
     parts.push('<div class="wpk" data-stop="1" style="left:' + px(at.x) + ';top:' + px(at.y + 12 * NSC + 6) + '"><span class="h">widgets on <b>' + esc(ID[S.wpick].label) + '</b> · ' + cur.map((w) => esc(WNAME[w.k])).join(' · ') + '</span><span class="lbl" style="font-size:9px">add one:</span><div class="ks">' + WKINDS.map((k) => '<button class="kb" data-wk="' + k[0] + '" title="' + esc(k[1] + ' · ' + k[2]) + '">' + esc(k[1]) + '</button>').join('') + '</div><div class="ks">' + (cur.length ? '<button class="kb" data-wk="pop" title="Take the last widget off">remove last</button>' : '') + '<button class="kb" data-wk="off" title="Take every widget off this node">none</button><button class="kb" data-wk="reset" title="Back to the widgets its kind gets">defaults</button></div></div>'); }
-  if (S.exp && ID[S.exp] && pos[S.exp]){ const n = ID[S.exp], p = pos[S.exp], wide = S.wact !== 'metrics', half = wide ? 165 : 118;
-    // the card opens beside its node, inside the part of the plot on screen (the plot may be wider or taller than the stage)
-    const ui = uiScale(S.vz), hw = half * ui, hh = (wide ? 210 : 150) * ui;
-    let vis = null; try { const sr = (plot.closest('.stage') || plot).getBoundingClientRect(), pr = v.getBoundingClientRect();
-      vis = { L: (Math.max(sr.left, 0) - pr.left) / S.vz, R: (Math.min(sr.right, window.innerWidth) - pr.left) / S.vz, T: (Math.max(sr.top, 0) - pr.top) / S.vz, B: (Math.min(sr.bottom, window.innerHeight) - pr.top) / S.vz }; } catch (_) {}
-    if (!vis || vis.R - vis.L < 2 * hw + 20 || vis.B - vis.T < 2 * hh + 20) vis = { L: 0, R: W, T: 0, B: H };
-    const wx = p.x > (vis.L + vis.R) / 2 ? p.x - (hw + 26) : p.x + (hw + 26);
-    parts.push('<div class="ndw ' + (wide ? 'wide' : '') + '" style="left:' + px(clamp(wx, vis.L + hw + 8, vis.R - hw - 8)) + ';top:' + px(clamp(p.y, vis.T + hh + 8, vis.B - hh - 8)) + '" data-stop="1"><div class="h"><span class="st" style="background:' + SC[n.status] + '"></span>' + esc(n.label) + '<span class="x" data-close="1">✕</span></div><div class="b">' + actionsHtml(n, S.wact, 'w') + '</div></div>'); }
+  { const ch = cardHtml(ID, pos, W, H); if (ch) parts.push(ch); }
+  S.lastLay = { pos, W, H };
   if (lay.G && lay.G.pivot) parts.push('<i class="pivot" style="left:' + px(lay.G.pivot.x) + ';top:' + px(lay.G.pivot.y) + '"></i>');
   v.innerHTML = parts.join('');
   applyZoom(); termScroll();
   shown.forEach((n) => { S.seenN[n.id] = 1; wspec(n).forEach((w, i) => { S.seenW[n.id + ':' + i + ':' + w.k] = 1; }); });
   // the stage keeps the same middle in view as the lattice grows or shrinks; a new 3D view opens on the middle of the planes
-  if (stg){ const cx = replay && is3d ? 0.5 : stgF[0], cy = stgF[1];
+  if (stg){ const cx = replay ? (is3d ? 0.5 : 0) : stgF[0], cy = stgF[1];
     if (stg.scrollWidth > stg.clientWidth + 4) stg.scrollLeft = Math.round(cx * stg.scrollWidth - stg.clientWidth / 2);
-    if (!replay && stg.scrollHeight > stg.clientHeight + 4) stg.scrollTop = Math.round(cy * stg.scrollHeight - stg.clientHeight / 2); }
+    if (!replay && stg.scrollHeight > stg.clientHeight + 4) stg.scrollTop = Math.round(cy * stg.scrollHeight - stg.clientHeight / 2); else if (replay) stg.scrollTop = 0;
+    if (replay && !is3d) stg.scrollLeft = 0; }
   if (lay.G) $('pzAngle').textContent = Math.round(lay.G.TILT) + '°/' + Math.round(lay.G.AZIM) + '°';
   $('lsel').innerHTML = snap.planes.map((p) => '<button data-layer="' + p.id + '" class="' + (S.focus === p.id ? 'on' : '') + '" style="--pc:' + PCOL[p.id] + '"><i></i><span>' + esc(p.name) + '</span></button>').join('');
   if (!opts.plotOnly) renderInspector();
@@ -1113,6 +1109,18 @@ function capArgs(n, name){ const C = CAPS[name] || {}, p = C.p || {}, a = {};
   Object.keys(p).forEach((k) => { if (val[k] != null && val[k] !== '') a[k] = val[k]; else if ((C.req || []).indexOf(k) >= 0) a[k] = p[k].type === 'integer' || p[k].type === 'number' ? 0 : p[k].type === 'boolean' ? false : ''; });
   return a; }
 
+// ── the node card beside its node (⤢ or a widget): drawn with the graph, or on its own when only the card changes ──
+function cardHtml(ID, pos, W, H){ const plot = $('plot'), v = $('pzv'); if (!(S.exp && ID[S.exp] && pos[S.exp])) return ''; const n = ID[S.exp], p = pos[S.exp], wide = S.wact !== 'metrics', half = wide ? 165 : 118;
+    // the card opens beside its node, inside the part of the plot on screen (the plot may be wider or taller than the stage)
+    const ui = uiScale(S.vz), hw = half * ui, hh = (wide ? 210 : 150) * ui;
+    let vis = null; try { const sr = (plot.closest('.stage') || plot).getBoundingClientRect(), pr = v.getBoundingClientRect();
+      vis = { L: (Math.max(sr.left, 0) - pr.left) / S.vz, R: (Math.min(sr.right, window.innerWidth) - pr.left) / S.vz, T: (Math.max(sr.top, 0) - pr.top) / S.vz, B: (Math.min(sr.bottom, window.innerHeight) - pr.top) / S.vz }; } catch (_) {}
+    if (!vis || vis.R - vis.L < 2 * hw + 20 || vis.B - vis.T < 2 * hh + 20) vis = { L: 0, R: W, T: 0, B: H };
+    const wx = p.x > (vis.L + vis.R) / 2 ? p.x - (hw + 26) : p.x + (hw + 26);
+    return ('<div class="ndw ' + (wide ? 'wide' : '') + '" style="left:' + px(clamp(wx, vis.L + hw + 8, vis.R - hw - 8)) + ';top:' + px(clamp(p.y, vis.T + hh + 8, vis.B - hh - 8)) + '" data-stop="1"><div class="h"><span class="st" style="background:' + SC[n.status] + '"></span>' + esc(n.label) + '<span class="x" data-close="1">✕</span></div><div class="b">' + actionsHtml(n, S.wact, 'w') + '</div></div>'); }
+function renderCard(){ const v = $('pzv'), L = S.lastLay; if (!S.snap || !L){ render(); return; }
+  const old = v.querySelector('.ndw'); if (old) old.remove(); const h = cardHtml(byId(), L.pos, L.W, L.H); if (h) v.insertAdjacentHTML('beforeend', h); termScroll(); }
+
 // ── the widget rail: what stands on each plane, sizable, removable, addable ──
 function renderRail(){
   const snap = S.snap, ID = byId();
@@ -1207,7 +1215,7 @@ async function dive(n){ const D = S.dive[n.id] || (S.dive[n.id] = { at: 0 }); if
   if (n.req && n.req.name) tasks.push(fetch(BASE + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: n.req.name, arguments: n.req.arguments || {}, caller_kind: 'user' }) }).then((r) => r.json()).then((j) => { const c = j && j.content !== undefined ? j.content : j; D.read = c; D.readName = n.req.name; }).catch((e) => { D.read = { error: String(e && e.message || e) }; }));
   try { await Promise.all(tasks); } catch (_) {}
   D.busy = false; D.at = Date.now(); const ae = document.activeElement, typing = ae && ae.matches && ae.matches('input,textarea');
-  if (S.exp === n.id && !typing) render(); else if (S.sel === n.id) renderInspector(); }
+  if (S.exp === n.id && !typing) renderCard(); if (S.sel === n.id) renderInspector(); }
 // ── what the estate knows about a node, for the card's Overview and the right panel ──
 function vitHtml(n){ const b = []; if (n.load != null) b.push(['cpu', n.load]); if (n.mem_pct != null) b.push(['mem', n.mem_pct]); if (n.disk_pct != null) b.push(['disk', n.disk_pct]);
   return b.length ? '<span class="vit" title="' + esc(b.map((x) => x[0] + ' ' + Math.round(x[1]) + '%').join(' · ')) + '">' + b.map((x) => '<i style="height:' + Math.max(2, Math.min(100, x[1]) / 100 * 12).toFixed(0) + 'px;background:' + tc(x[1] * .8) + '"></i>').join('') + '</span>' : ''; }
@@ -1332,13 +1340,13 @@ document.addEventListener('click', (e) => {
   if (t.dataset.clearActive !== undefined){ S.active = false; saveV(); applyRoute(); return; }
   if (t.id === 'wsecH'){ S.wsec = !S.wsec; renderRail(); return; }
   // a widget opens its node's card (a terminal's on its shell); the card stands above the graph
-  if (t.dataset.wnode !== undefined){ const id = t.dataset.wnode; S.sel = id; S.rt = id; S.exp = id; S.wact = t.dataset.wkind === 'term' ? 'term' : t.dataset.wkind === 'alarm' ? 'logs' : 'overview'; if (S.wpick && S.wpick !== id) S.wpick = null; render(); return; }
+  if (t.dataset.wnode !== undefined){ const id = t.dataset.wnode; S.sel = id; S.rt = id; S.exp = id; S.wact = t.dataset.wkind === 'term' ? 'term' : t.dataset.wkind === 'alarm' ? 'logs' : 'overview'; if (S.wpick && S.wpick !== id){ S.wpick = null; render(); return; } renderCard(); lightRefresh(); return; }
   if (t.dataset.lens !== undefined){ S.lens = t.dataset.lens; saveV(); render(); return; }
   if (t.dataset.termRun !== undefined){ const T = termOf(t.dataset.termRun); T.where = t.closest('.ndw') ? 'w' : 'i'; runTerm(t.dataset.termRun); return; }
   if (t.dataset.termClear !== undefined){ termOf(t.dataset.termClear).lines = []; render(); return; }
   if (t.dataset.capUse !== undefined){ const n = byId()[t.dataset.capNode]; if (n){ S.req[n.id] = { name: t.dataset.capUse, body: JSON.stringify(capArgs(n, t.dataset.capUse), null, 2), resp: '', err: false, busy: false }; if (t.dataset.where === 'w') S.wact = 'req'; else S.act = 'req'; render(); } return; }
   if (t.dataset.plane !== undefined){ if (t.dataset.plane === '*'){ Object.keys(S.on).forEach((p) => { S.on[p] = true; }); S.focus = null; } else if (S.view === '3d'){ S.focus = S.focus === t.dataset.plane ? null : t.dataset.plane; } else { S.on[t.dataset.plane] = !S.on[t.dataset.plane]; if (!Object.keys(S.on).some((k) => S.on[k])) S.on[t.dataset.plane] = true; } render(); return; }
-  if (t.dataset.exp !== undefined){ e.stopPropagation(); S.exp = S.exp === t.dataset.exp ? null : t.dataset.exp; S.sel = t.dataset.exp; render(); return; }
+  if (t.dataset.exp !== undefined){ e.stopPropagation(); S.exp = S.exp === t.dataset.exp ? null : t.dataset.exp; S.sel = t.dataset.exp; renderCard(); lightRefresh(); return; }
   if (t.dataset.asg !== undefined){ e.stopPropagation(); S.sel = t.dataset.asg; S.wpick = S.wpick === t.dataset.asg ? null : t.dataset.asg; S.wadd = null; render(); return; }
   if (t.dataset.wk !== undefined){ e.stopPropagation(); setWidget(t.dataset.wkNode || S.wpick, t.dataset.wk); return; }
   if (t.dataset.wadd !== undefined){ e.stopPropagation(); S.wadd = S.wadd === t.dataset.wadd ? null : t.dataset.wadd; S.wpick = null; renderRail(); return; }
@@ -1347,8 +1355,8 @@ document.addEventListener('click', (e) => {
   if (t.dataset.wrestore !== undefined){ e.stopPropagation(); (S.snap.nodes || []).forEach((n) => { if (n.plane === t.dataset.wrestore && S.wl[n.id] && (S.wl[n.id].off || !(S.wl[n.id].items || []).length)) delete S.wl[n.id]; }); saveW(); S.wadd = null; render(); return; }
   if (t.dataset.wsel !== undefined){ S.sel = t.dataset.wsel; render(); return; }
   if (t.dataset.wsz !== undefined){ S.wsz = parseFloat(t.dataset.wsz); saveV(); render(); return; }
-  if (t.dataset.close !== undefined){ S.exp = null; render(); return; }
-  if (t.dataset.act !== undefined){ if (t.dataset.where === 'w') S.wact = t.dataset.act; else S.act = t.dataset.act; render(); return; }
+  if (t.dataset.close !== undefined){ S.exp = null; renderCard(); return; }
+  if (t.dataset.act !== undefined){ if (t.dataset.where === 'w'){ S.wact = t.dataset.act; renderCard(); } else { S.act = t.dataset.act; renderInspector(); } return; }
   if (t.dataset.send !== undefined){ sendReq(t.dataset.send); return; }
   if (t.dataset.logs !== undefined){ const n = byId()[t.dataset.logs]; if (n) fetchLogs(n); return; }
   if (t.dataset.restart !== undefined){ restart(t.dataset.restart); return; }
