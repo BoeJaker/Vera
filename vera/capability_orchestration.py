@@ -6916,6 +6916,36 @@ def schedule(fn: Callable, interval: float, name: Optional[str] = None,
                             "last": None, "runs": 0, "skip_in_sandbox": skip_in_sandbox,
                             "singleton": singleton})
 
+def start_at_import(fn: Callable, name: str, queue: bool = False):
+    """Run a module's one-time startup NOW when the loop is already running.
+
+    Modules load inside lifespan, with the loop running, so most of them start
+    their startup coroutine straight from import as well as registering it with
+    schedule(). That import-time route never passed through the scheduler, so on
+    a node worker it started everything the worker is meant to skip - measured
+    on cpu-246 (2026-09-27): cluster poll/affinity loops and the Ollama-mimic
+    proxy, dag_store's cap-index embedding, syslog wrapper patching, mesh,
+    job_persist's recovery/listener, research, autoenroll, the OpenBao unseal.
+    Both routes now ask the same question under the same name.
+
+    `queue=True` keeps the older shape three modules had: create the task even
+    when the loop is not running yet, so it runs once the loop starts (their
+    startup has no scheduled twin, or relies on this for first-connect state)."""
+    if not _placement.scheduler_may_run(name, _placement.STARTUP_INTERVAL,
+                                        is_worker=_IS_WORKER):
+        if name not in _SANDBOX_SKIP_LOGGED:
+            _SANDBOX_SKIP_LOGGED.add(name)
+            log.info("worker: skipping startup '%s'", name)
+        return None
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running() or queue:
+            return loop.create_task(fn())
+    except RuntimeError:
+        pass            # no loop yet - the scheduler runs it
+    return None
+
+
 _LEADER_STATE: Dict[str, Any] = {"is_leader": False, "checked_at": None, "holder": None}
 _LEADER_KEY = "vera:scheduler:leader"
 

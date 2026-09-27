@@ -66,9 +66,14 @@ MUTATOR_SEGMENTS = frozenset({
 #: cap needs; anything that starts a poller, a promoter, a proxy or a sweep, or
 #: loads from a host-local store, is absent on purpose.
 WORKER_STARTUP_HOOKS = frozenset({
-    "worker_metrics",   # reports this worker's own CPU/RAM into its registration
-    "memory_startup",   # memory backends (its promoter is worker-gated in memory.py)
+    "worker_metrics",        # reports this worker's own CPU/RAM into its registration
+    "memory_startup",        # memory backends (its promoter is worker-gated in memory.py)
+    "memory_hooks_startup",  # in-process memory-mode wrappers, so a cap records
+                             # memory on a worker the way it does on the host
 })
+
+#: Both routes a startup takes - schedule(..., interval=STARTUP_INTERVAL) and
+#: capability_orchestration.start_at_import() - are judged by the same name.
 
 #: Interval the scheduler uses for one-time startup hooks.
 STARTUP_INTERVAL = 999999

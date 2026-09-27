@@ -1786,9 +1786,10 @@ schedule(_startup_load, interval=999999, name="skills_startup_load")
 # Trigger immediately at import time (Redis may not be ready yet at import,
 # so also scheduled above for the first run after lifespan brings Redis up)
 try:
-    loop = _asyncio.get_event_loop()
-    if loop.is_running():
-        loop.create_task(_startup_load())
+    # Through the orchestrator, so a node worker skips it unless it is
+    # on the worker allow-list (worker_placement_core).
+    import Vera.vera.capability_orchestration as _co_start
+    _co_start.start_at_import(_startup_load, "skills_startup_load")
 except Exception:
     pass
 
