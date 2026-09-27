@@ -146,6 +146,12 @@
     return '<details class="j-node"' + (d < 2 ? ' open' : '') + '><summary>' + (arr ? '[' + keys.length + ']' : '{' + keys.length + '}') + '</summary>' + rows + '</details>';
   }
 
+  /* a records item's browser state (page, filter, sort, view, facet, what is open, what was fetched): the element's,
+     per item key, never written to the canvas - paging is not an edit. A renderer called with no element (a
+     result drawn inside another) keeps it here instead. */
+  const _recFallback = {};
+  const recState = (el, key) => { const box = el ? (el._recUi = el._recUi || {}) : _recFallback; const k = String(key || '');
+    return box[k] || (box[k] = { page: 0, q: '', sort: 'rank', view: 'list', dom: '', open: {}, body: {} }); };
   const BLOCK = {
     markdown: c => `<div class="vc-md">${md(c.md || c.text || '')}</div>`,
 
@@ -333,6 +339,74 @@
 
     note: c => `<div class="vc-note">${esc(c.text || '')}
         ${c.author ? `<span class="vc-by">— ${esc(c.author)}</span>` : ''}</div>`,
+
+    /* MANY RECORDS, TO LOOK THROUGH. A web search, the news, a research run's sources, what the fabric holds -
+       each is a list you browse, not a page you read, and landing them as a dozen separate items buried the
+       canvas while cutting the list at ten. This is one item that holds the whole list and lets you move in it:
+       a filter box, the domains as facets, sort (as ranked · newest · title), three views (list · cards · table),
+       pages sized to the item, and a record that OPENS in place - a page's text through browser.content, a
+       fabric record's text through memory.read in pages - or lands as its own source item. The browser's state
+       (page, filter, sort, view, what is open) is the element's, per item: it does not write the canvas on every
+       click; what is fetched is kept for the session's look. */
+    records: (c, size, key, el) => {
+      const all = Array.isArray(c.items) ? c.items.filter((r) => r && typeof r === 'object') : [];
+      const st = recState(el, key);
+      const q = String(st.q || '').toLowerCase().trim();
+      let rows = all.filter((r) => (!st.dom || r.domain === st.dom) && (!q || (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.domain || '') + ' ' + JSON.stringify(r.meta || {})).toLowerCase().includes(q)));
+      if (st.sort === 'newest') rows = rows.slice().sort((a, b) => (Date.parse(b.when) || 0) - (Date.parse(a.when) || 0));
+      else if (st.sort === 'title') rows = rows.slice().sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+      const per = st.view === 'cards' ? ({ s: 4, m: 6, l: 9, xl: 18 }[size] || 6) : ({ s: 4, m: 6, l: 10, xl: 20 }[size] || 8);
+      const pages = Math.max(1, Math.ceil(rows.length / per)); const page = Math.min(Math.max(0, st.page | 0), pages - 1);
+      const shown = rows.slice(page * per, page * per + per);
+      const K = esc(key || '');
+      const icon = { web: '\u{1F310}', news: '\u{1F4F0}', memory: '◈', research: '\u{1F50E}' }[c.kind] || '☰';
+      const doms = {}; all.forEach((r) => { if (r.domain) doms[r.domain] = (doms[r.domain] || 0) + 1; });
+      const domList = Object.keys(doms).sort((a, b) => doms[b] - doms[a]).slice(0, size === 'xl' ? 12 : 6);
+      const hue = (s) => { let h = 0; for (const ch of String(s || '')) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
+      const badge = (r) => { const d = r.domain || (r.meta && (r.meta.dataset_id || r.meta.source)) || c.kind || '?'; return `<span class="vc-rbx-fav" style="--h:${hue(d)}">${esc(String(d).replace(/^www\./, '').charAt(0).toUpperCase())}</span>`; };
+      const ago = (t) => { const x = Date.parse(t); if (!isFinite(x)) return String(t || '').slice(0, 10); const s = (Date.now() - x) / 1000; return s < 3600 ? Math.max(1, Math.round(s / 60)) + 'm' : s < 172800 ? Math.round(s / 3600) + 'h' : Math.round(s / 86400) + 'd'; };
+      const actBtn = (act, id, label, t) => `<button class="vc-rbx-b" data-rec-act="${act}" data-rec-key="${K}" data-rec-arg="${esc(id)}" title="${esc(t || '')}">${label}</button>`;
+      const opened = (r) => {
+        const b = (st.body || {})[r.id] || {};
+        const acts = (r.url ? actBtn('read', r.id, b.text ? 'reread' : 'read the page', 'the page as text (browser.content)') + actBtn('land', r.id, 'to the canvas', 'land it as its own source item') + `<a class="vc-rbx-b" href="${esc(r.url)}" target="_blank" rel="noopener">open ↗</a>` : '')
+          + (r.ref && r.ref.record_id ? actBtn('rec', r.id, b.text ? 'read again' : 'read the record', 'the record in full, in pages (memory.read)') : '');
+        return `<div class="vc-rbx-open">${r.snippet ? `<div class="vc-rbx-full">${esc(r.snippet)}</div>` : ''}`
+          + (r.meta ? `<div class="vc-rbx-meta">${Object.keys(r.meta).map((k) => `<span><i>${esc(k)}</i>${esc(r.meta[k])}</span>`).join('')}</div>` : '')
+          + `<div class="vc-rbx-acts">${acts}</div>`
+          + (b.busy ? `<div class="vc-rbx-busy">… ${esc(b.busy)}</div>` : '')
+          + (b.err ? `<div class="vc-rbx-err">${esc(b.err)}</div>` : '')
+          + (b.text ? `<div class="vc-rbx-body">${md(String(b.text).slice(0, 60000))}</div>` + (b.next != null ? actBtn('more', r.id, 'more of it ↓', 'the next page of the record') : '') : '')
+          + `</div>`;
+      };
+      const title = (r) => r.url ? `<a class="vc-rbx-t" href="${esc(r.url)}" target="_blank" rel="noopener" data-rec-stop="1">${esc(r.title || r.url)}</a>` : `<span class="vc-rbx-t">${esc(r.title || r.id)}</span>`;
+      const score = (r) => r.score != null ? `<span class="vc-rbx-sc" title="relevance ${esc(r.score)}"><i style="width:${Math.round(Math.max(0, Math.min(1, +r.score)) * 100)}%"></i></span>` : '';
+      let body = '';
+      if (!all.length) body = `<div class="vc-rbx-empty">nothing in it</div>`;
+      else if (!rows.length) body = `<div class="vc-rbx-empty">nothing matches “${esc(st.q || st.dom)}”</div>`;
+      else if (st.view === 'table') {
+        body = `<div class="vc-tablewrap"><table class="vc-table vc-rbx-tbl"><thead><tr><th>title</th><th>source</th><th>when</th>${all.some((r) => r.score != null) ? '<th>score</th>' : ''}</tr></thead><tbody>`
+          + shown.map((r) => `<tr class="${(st.open || {})[r.id] ? 'on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}"><td>${title(r)}</td><td class="mono">${esc(r.domain || (r.meta && (r.meta.dataset_id || r.meta.engine)) || '')}</td><td class="mono">${esc(r.when ? ago(r.when) : '')}</td>${all.some((x) => x.score != null) ? `<td>${score(r)}</td>` : ''}</tr>` + ((st.open || {})[r.id] ? `<tr class="vc-rbx-tr-open"><td colspan="4">${opened(r)}</td></tr>` : '')).join('')
+          + `</tbody></table></div>`;
+      } else {
+        body = `<div class="vc-rbx-${st.view === 'cards' ? 'cards' : 'list'}">` + shown.map((r) => {
+          const on = !!(st.open || {})[r.id];
+          return `<div class="vc-rbx-row${on ? ' on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}">`
+            + `<div class="vc-rbx-hd">${badge(r)}<div class="vc-rbx-tt">${title(r)}<div class="vc-rbx-sub">${r.domain ? `<span>${esc(r.domain)}</span>` : ''}${r.when ? `<span>${esc(ago(r.when))}</span>` : ''}${r.meta && r.meta.engine ? `<span>${esc(r.meta.engine)}</span>` : ''}${r.meta && r.meta.dataset_id ? `<span>${esc(r.meta.dataset_id)}</span>` : ''}${score(r)}</div></div></div>`
+            + (!on && r.snippet ? `<div class="vc-rbx-s">${esc(String(r.snippet).slice(0, 400))}</div>` : '')
+            + (on ? opened(r) : '') + `</div>`;
+        }).join('') + `</div>`;
+      }
+      const seg = (name, opts) => `<span class="vc-rbx-seg">${opts.map((o) => `<button class="${(st[name] || opts[0][0]) === o[0] ? 'on' : ''}" data-rec-act="${name}" data-rec-key="${K}" data-rec-arg="${o[0]}" title="${esc(o[2] || '')}">${o[1]}</button>`).join('')}</span>`;
+      const from = rows.length ? page * per + 1 : 0, to = Math.min(rows.length, page * per + per);
+      const dots = pages > 1 ? Array.from({ length: Math.min(pages, 9) }, (_, i) => { const n = pages <= 9 ? i : Math.round(i * (pages - 1) / 8); return `<button class="vc-rbx-dot${n === page ? ' on' : ''}" data-rec-act="page" data-rec-key="${K}" data-rec-arg="${n}" title="page ${n + 1}"></button>`; }).join('') : '';
+      return `<div class="vc-rbx k-${esc(c.kind || 'rows')} s-${esc(size || 'm')}">`
+        + `<div class="vc-rbx-top"><span class="vc-rbx-ic">${icon}</span><div class="vc-rbx-h"><b>${esc(c.title || 'Records')}</b><small>${all.length} ${all.length === 1 ? 'record' : 'records'}${c.source ? ' · ' + esc(c.source) : ''}${c.why ? ' · ' + esc(c.why) : ''}</small></div></div>`
+        + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', [['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']])}</div>`
+        + (domList.length > 1 ? `<div class="vc-rbx-facets">${domList.map((d) => `<button class="${st.dom === d ? 'on' : ''}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}">${esc(d)}<i>${doms[d]}</i></button>`).join('')}</div>` : '')
+        + body
+        + `<div class="vc-rbx-foot"><span>${from}–${to} of ${rows.length}${rows.length !== all.length ? ' (of ' + all.length + ')' : ''}</span><span class="vc-rbx-pg">${pages > 1 ? `<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="prev" ${page ? '' : 'disabled'}>‹</button>${dots}<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="next" ${page < pages - 1 ? '' : 'disabled'}>›</button>` : ''}</span>${c.next && c.next.cap ? actBtn('loadmore', '', 'more from ' + esc(c.next.cap), 'fetch the next page from the source') : ''}</div>`
+        + `</div>`;
+    },
 
     table: c => {
       const cols = c.columns || [];
@@ -820,6 +894,53 @@
     border-radius:9px;background:var(--bg2,#272421);color:var(--dim2,#8a7e70);cursor:pointer}
   .vc-src-b:hover{color:var(--fg,#ddd);border-color:var(--acc,#5a9e8f)}
   .vc-src-b[disabled]{opacity:.5;cursor:default}
+  /* a records item: a browser, not a dump - the list the thing you move through, one record opening in place */
+  .vc-rbx{display:flex;flex-direction:column;gap:7px;min-width:0}
+  .vc-rbx-top{display:flex;align-items:center;gap:9px}
+  .vc-rbx-ic{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:13px;background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent);flex:none}
+  .vc-rbx.k-news .vc-rbx-ic{background:color-mix(in srgb,var(--warn,#c9a35a) 18%,transparent)}.vc-rbx.k-memory .vc-rbx-ic{background:color-mix(in srgb,#9e8fa0 22%,transparent)}
+  .vc-rbx-h{display:flex;flex-direction:column;min-width:0}.vc-rbx-h b{font-size:12.5px;font-weight:600;color:var(--fg,#ddd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .vc-rbx-h small{font-size:9.5px;color:var(--dim2,#8a7e70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .vc-rbx-tools{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .vc-rbx-q{flex:1;min-width:120px;height:24px;padding:0 9px;border-radius:12px;border:1px solid var(--border,#3a3530);background:var(--bg2,#272421);color:var(--fg,#ddd);font:inherit;font-size:11px}
+  .vc-rbx-q:focus{outline:none;border-color:var(--acc,#5a9e8f)}
+  .vc-rbx-seg{display:inline-flex;border:1px solid var(--border,#3a3530);border-radius:12px;overflow:hidden}
+  .vc-rbx-seg button{font:inherit;font-size:10px;height:22px;padding:0 8px;border:0;background:transparent;color:var(--dim2,#8a7e70);cursor:pointer}
+  .vc-rbx-seg button+button{border-left:1px solid var(--border,#3a3530)}.vc-rbx-seg button.on{background:var(--bg3,#302c29);color:var(--fg,#ddd)}
+  .vc-rbx-facets{display:flex;gap:4px;flex-wrap:wrap}
+  .vc-rbx-facets button{font:inherit;font-size:9.5px;height:20px;padding:0 8px;border-radius:10px;border:1px solid var(--border,#3a3530);background:transparent;color:var(--dim2,#8a7e70);cursor:pointer;display:inline-flex;gap:5px;align-items:center}
+  .vc-rbx-facets button i{font-style:normal;opacity:.6}.vc-rbx-facets button.on{border-color:var(--acc,#5a9e8f);color:var(--fg,#ddd);background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
+  .vc-rbx-list{display:flex;flex-direction:column;gap:2px}
+  .vc-rbx-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px}
+  .vc-rbx-row{padding:7px 8px;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;gap:4px;border:1px solid transparent;min-width:0}
+  .vc-rbx-row:hover{background:var(--bg2,#272421)}.vc-rbx-row.on{background:var(--bg2,#272421);border-color:var(--border,#3a3530)}
+  .vc-rbx-cards .vc-rbx-row{background:var(--bg2,#272421);border-color:var(--border,#3a3530)}.vc-rbx-cards .vc-rbx-row.on{grid-column:1/-1}
+  .vc-rbx-hd{display:flex;gap:8px;align-items:flex-start;min-width:0}
+  .vc-rbx-fav{width:20px;height:20px;border-radius:6px;flex:none;display:grid;place-items:center;font:700 10px var(--mono,monospace);color:hsl(var(--h) 55% 78%);background:hsl(var(--h) 35% 24%)}
+  .vc-rbx-tt{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
+  .vc-rbx-t{font-size:12px;font-weight:500;line-height:1.35;color:var(--fg,#ddd);text-decoration:none;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  a.vc-rbx-t:hover{text-decoration:underline;color:var(--acc,#5a9e8f)}
+  .vc-rbx-sub{display:flex;gap:8px;align-items:center;font:9px var(--mono,monospace);color:var(--dim2,#8a7e70);min-width:0}
+  .vc-rbx-sub span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%}
+  .vc-rbx-sc{display:inline-block;width:38px;height:4px;border-radius:2px;background:var(--bg3,#302c29);overflow:hidden}.vc-rbx-sc i{display:block;height:100%;background:var(--acc,#5a9e8f)}
+  .vc-rbx-s{font-size:10.5px;line-height:1.5;color:var(--dim2,#8a7e70);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;padding-left:28px}
+  .vc-rbx-cards .vc-rbx-s{padding-left:0;-webkit-line-clamp:4}
+  .vc-rbx-open{display:flex;flex-direction:column;gap:6px;padding:4px 0 2px 28px;cursor:default}
+  .vc-rbx-full{font-size:11px;line-height:1.55;color:var(--fg,#ddd);white-space:pre-wrap}
+  .vc-rbx-meta{display:flex;gap:10px;flex-wrap:wrap;font:9.5px var(--mono,monospace);color:var(--dim2,#8a7e70)}.vc-rbx-meta i{font-style:normal;opacity:.6;margin-right:4px}
+  .vc-rbx-acts{display:flex;gap:5px;flex-wrap:wrap}
+  .vc-rbx-b{font:inherit;font-size:9.5px;height:21px;padding:0 9px;border:1px solid var(--border,#3a3530);border-radius:10px;background:var(--bg1,#1f1d1a);color:var(--dim2,#8a7e70);cursor:pointer;display:inline-flex;align-items:center;text-decoration:none}
+  .vc-rbx-b:hover{color:var(--fg,#ddd);border-color:var(--acc,#5a9e8f)}
+  .vc-rbx-body{max-height:420px;overflow:auto;font-size:11.5px;line-height:1.6;padding:8px 10px;border-radius:8px;background:var(--bg1,#1f1d1a);border:1px solid var(--border,#3a3530)}
+  .vc-rbx-busy{font-size:10px;color:var(--acc,#5a9e8f)}.vc-rbx-err{font-size:10px;color:var(--err,#c96b6b)}
+  .vc-rbx-empty{padding:14px;text-align:center;font-size:11px;color:var(--dim2,#8a7e70);font-style:italic}
+  .vc-rbx-foot{display:flex;align-items:center;gap:10px;font:9.5px var(--mono,monospace);color:var(--dim2,#8a7e70)}
+  .vc-rbx-pg{display:inline-flex;align-items:center;gap:4px;margin-left:auto}
+  .vc-rbx-pg>button{font:inherit;font-size:12px;width:22px;height:20px;border-radius:6px;border:1px solid var(--border,#3a3530);background:transparent;color:var(--fg,#ddd);cursor:pointer}
+  .vc-rbx-pg>button[disabled]{opacity:.35;cursor:default}
+  .vc-rbx-dot{width:7px!important;height:7px!important;padding:0;border-radius:50%!important;border:0!important;background:var(--bg3,#302c29)!important;cursor:pointer}.vc-rbx-dot.on{background:var(--acc,#5a9e8f)!important}
+  .vc-rbx-tbl tr{cursor:pointer}.vc-rbx-tbl tr.on td{background:var(--bg2,#272421)}.vc-rbx-tbl td.mono{font-family:var(--mono,monospace);font-size:9.5px;color:var(--dim2,#8a7e70);white-space:nowrap}
+  .vc-rbx-tr-open td{padding:0 6px 8px}.vc-rbx-tr-open .vc-rbx-open{padding-left:0}
   .vc-src-body{font-size:11px;line-height:1.6;max-height:340px;overflow:auto;
     border-top:1px solid var(--border,#3a3530);padding-top:6px;margin-top:2px}
   .vc-src-shot{width:100%;border-radius:6px;border:1px solid var(--border,#3a3530);margin-top:2px}
@@ -2109,6 +2230,10 @@
         // a source's own two buttons: read the page, see the page
         const sa = t.closest('[data-src-act]');
         if (sa && body.contains(sa)) { ev.stopPropagation(); this._srcAct(sa.dataset.srcKey, sa.dataset.srcAct); return; }
+        // a records item: page, sort, view, facet, open a record, read it, land it
+        if (t.closest('[data-rec-stop]') || t.closest('.vc-rbx-q') || (t.closest('a') && t.closest('.vc-rbx'))) return;
+        const ra = t.closest('[data-rec-act]');
+        if (ra && body.contains(ra)) { ev.stopPropagation(); this._recAct(ra.dataset.recKey, ra.dataset.recAct, ra.dataset.recArg); return; }
         // the calendar's month buttons and its days
         const wa = t.closest('[data-wid-act]');
         if (wa && body.contains(wa)) { ev.stopPropagation(); this._widAct(wa.dataset.widKey, wa.dataset.widAct); return; }
@@ -2154,6 +2279,10 @@
         try { this.dispatchEvent(new CustomEvent('vera:canvas:resized', { bubbles: true, detail: { key, height: r.h, size } })); } catch (e) {}
         if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage')) this._placeNow(); });
       // a picker's search box: the rows that do not carry the words are hidden, a group with none left with them
+      body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.recQ == null) return;
+        const key = q.dataset.recQ, st = recState(this, key); st.q = String(q.value || ''); st.page = 0; clearTimeout(this._recQT);
+        this._recQT = setTimeout(() => { const pos = q.selectionStart; if (this._doc) this.render(this._doc);
+          const nq = body.querySelector('[data-rec-q="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]'); if (nq) { nq.focus(); try { nq.setSelectionRange(pos, pos); } catch (_) {} } }, 220); });
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.classList || !q.classList.contains('pk-q')) return; const s = String(q.value || '').toLowerCase().trim(); const list = q.closest('.pk') && q.closest('.pk').querySelector('.pk-list'); if (!list) return;
         let grp = null, any = false; [...list.children].forEach((n) => { if (n.classList.contains('grp')) { if (grp) grp.hidden = !any; grp = n; any = false; return; } const on = !s || (n.dataset.q || '').includes(s); n.hidden = !on; any = any || on; }); if (grp) grp.hidden = !any; });
       body.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && this._editKey) { this._editKey = null; this._editFocused = false; if (this._doc) this.render(this._doc); } });
@@ -2574,6 +2703,49 @@
        reads dozens of pages, and forty screenshots taken to be thumbnails nobody opens is forty browser sessions
        for nothing. Fetched once and written back into the item through canvas.update, so it is the canvas that
        remembers - the second look costs nothing, and it survives a reload the way the rest of the item does. */
+    /* A RECORDS item, browsed: page · sort · view · a domain facet · a record opened, read, landed, read on. The
+       browser's state is the element's (recState), so paging does not write the canvas; what a record's reading
+       fetched is kept beside it for the session's look. Landing a url writes a source item through canvas.add
+       (keyed source:<url>, so it is never there twice). */
+    async _recAct(key, act, arg) {
+      const b = this._blockOf(key); const c = (b && b.content) || null; if (!c) return;
+      const st = recState(this, key); const items = Array.isArray(c.items) ? c.items : [];
+      const it = items.find((r) => r && String(r.id) === String(arg));
+      const redraw = () => { if (this._doc) this.render(this._doc); };
+      st.body = st.body || {}; st.open = st.open || {};
+      if (act === 'page') { st.page = arg === 'prev' ? Math.max(0, (st.page | 0) - 1) : arg === 'next' ? (st.page | 0) + 1 : (+arg || 0); return redraw(); }
+      if (act === 'sort' || act === 'view') { st[act] = arg; st.page = 0; return redraw(); }
+      if (act === 'dom') { st.dom = st.dom === arg ? '' : arg; st.page = 0; return redraw(); }
+      if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key); } return redraw(); }
+      if (act === 'read' && it && it.url) {
+        st.open[it.id] = true; st.body[it.id] = { busy: 'reading the page' }; redraw();
+        const r = await this.callResult('browser.content', { url: String(it.url), max_chars: 40000 });
+        const text = String((r && (r.text || r.content || r.markdown)) || '');
+        st.body[it.id] = text ? { text } : { err: (r && r.error) || 'the page gave nothing back' }; return redraw();
+      }
+      if ((act === 'rec' || act === 'more') && it && it.ref && it.ref.record_id) {
+        const cur = st.body[it.id] || {}; const offset = act === 'more' ? (cur.next | 0) : 0;
+        st.open[it.id] = true; st.body[it.id] = Object.assign({}, act === 'more' ? cur : {}, { busy: 'reading the record' }); redraw();
+        const r = await this.callResult('memory.read', { record_id: String(it.ref.record_id), offset, max_chars: 6000 });
+        const text = String((r && r.text) || '');
+        if (!text) { st.body[it.id] = { err: (r && r.error) || 'the record gave nothing back' }; return redraw(); }
+        st.body[it.id] = { text: (act === 'more' ? (cur.text || '') + '\n\n' : '') + text, next: (r && r.next_offset != null && r.next_offset < (r.total_chars || 0)) ? r.next_offset : null };
+        return redraw();
+      }
+      if (act === 'land' && it && it.url) {
+        return this.call('canvas.add', { kind: 'source', key: 'source:' + it.url, size: 's',
+          content: { url: String(it.url), title: String(it.title || ''), domain: String(it.domain || ''), snippet: String(it.snippet || '').slice(0, 1200), query: String(c.query || '') } });
+      }
+      if (act === 'loadmore' && c.next && c.next.cap) {
+        this._readout(key, '… more from ' + c.next.cap);
+        const r = await this.callResult(c.next.cap, c.next.args || {});
+        const rows = (r && (r.results || r.headlines || r.sources || r.items || r.records || r.rows)) || [];
+        const have = new Set(items.map((x) => String(x.url || x.id)));
+        const add = (Array.isArray(rows) ? rows : []).filter((x) => x && typeof x === 'object').map((x, i) => ({ id: String(x.id || x.url || ('more' + items.length + i)), title: String(x.title || x.name || x.url || ''), url: x.url ? String(x.url) : undefined, snippet: String(x.snippet || x.summary || x.text || '').slice(0, 1200), when: x.published || x.date || x.ts || undefined })).filter((x) => !have.has(String(x.url || x.id)));
+        if (!add.length) return this._readout(key, 'nothing more');
+        return this.call('canvas.update', { key, content: Object.assign({}, c, { items: items.concat(add), total: items.length + add.length, next: (r && r.next) || null }) });
+      }
+    }
     async _srcAct(key, act) {
       const b = this._blockOf(key); const c = (b && b.content) || null; if (!c || !c.url) return;
       this._srcOpen = this._srcOpen || {};
