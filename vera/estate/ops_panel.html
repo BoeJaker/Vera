@@ -195,7 +195,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .owf-svg{position:absolute;left:0;top:0;overflow:visible;z-index:7;pointer-events:none}
 .owf-svg polygon.t{stroke:rgba(255,255,255,.1);stroke-width:1}
 .owf-n{position:absolute;height:2.5px;transform-origin:0 50%;background:var(--t1);border-radius:2px;z-index:8;box-shadow:0 0 6px 1px color-mix(in srgb,var(--ac3) 60%,transparent)}
-.owf-l{position:absolute;transform:translate(-50%,0) scale(var(--ui,1));transform-origin:50% 0;font-family:var(--f-mono);font-size:9px;z-index:8;text-shadow:0 1px 3px var(--bg);white-space:nowrap;pointer-events:none}
+.owf-l{position:absolute;transform:translate(-50%,0) scale(var(--ui,1));transform-origin:50% 0;font-family:var(--f-mono);font-size:9px;line-height:1.3;z-index:8;white-space:nowrap;pointer-events:none;padding:1px 5px;border-radius:3px;background:color-mix(in srgb,var(--bg) 82%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,currentColor 28%,transparent)}
 .owf-hit{position:absolute;z-index:9;border-radius:6px;cursor:pointer}
 .pivot{position:absolute;width:0;height:0;pointer-events:none}
 .owf-svg .pipe{fill:none;stroke:var(--lc,var(--bd2));stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
@@ -375,7 +375,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
           <span class="sp"></span>
           <button data-pz="l" title="Pan left">←</button><button data-pz="u" title="Pan up">↑</button><button data-pz="d" title="Pan down">↓</button><button data-pz="r" title="Pan right">→</button>
           <span class="tl" id="pzTilt" hidden><button data-pz="tiltUp" title="Tilt up">⌃</button><span class="z" id="pzAngle"></span><button data-pz="tiltDn" title="Tilt down">⌄</button><button data-pz="rotL" title="Swing left">↺</button><button data-pz="rotR" title="Swing right">↻</button></span>
-          <span class="sp"></span><button data-pz="fit" title="Back to fit">fit</button>
+          <span class="sp"></span><button data-pz="fit" title="Fit the whole lattice on screen">fit</button>
         </div>
         <div class="lsel" id="lsel" hidden></div>
         <div class="rtpill" id="rtPill" hidden></div>
@@ -415,10 +415,10 @@ const WKINDS = [['server', 'server', 'a machine: drives lit by its load, a lamp 
   ['db', 'database', 'a store, lit while it works'], ['queue', 'queue', 'work in flight through it'], ['nic', 'network', 'its pipes or connections as port lights']];
 const WNAME = {}; WKINDS.forEach((k) => { WNAME[k[0]] = k[1]; });
 // the widgets of a node stand in one line beside its pin; each takes this much of the lane (ground units), its size included
-const wstep = (w) => (w.k === 'term' ? 4.6 : 1.75) * S.wsz * (w.s || 1);
+const wstep = (w) => (w.k === 'term' ? 6.0 : 2.4) * S.wsz * (w.s || 1);
 // how much of the screen the chrome may take as the view zooms: chips, labels and cards hold between these
 const UI_MIN = 0.8, UI_MAX = 1.35;
-const uiScale = (vz) => clamp(vz, UI_MIN, UI_MAX) / vz;
+const uiScale = (vz) => (vz >= 0.4 ? clamp(vz, UI_MIN, UI_MAX) : UI_MIN * Math.max(0.45, vz / 0.4)) / vz;   // below 40% the chrome shrinks too, gently
 // the lenses: Network colours a machine by its subnet and captions its address; Security by how much of its registration is in place
 const SUBCOL = ['var(--dv1)', 'var(--dv3)', 'var(--dv6)', 'var(--dv4)', 'var(--dv2)', 'var(--dv7)', 'var(--dv5)'];
 const ipOf = (n) => (n.ips || []).find((i) => /^\d+\.\d+\.\d+\.\d+$/.test(i)) || '';
@@ -491,7 +491,8 @@ function wdefaults(n){ const L = []; const st = (k, s) => L.push({ k, s: s || 1 
 function wspec(n){ const o = S.wl[n.id]; if (o && o.off) return []; if (o && Array.isArray(o.items)) return o.items; return wdefaults(n); }
 function wcaption(n, k){ if (k === 'term'){ const T = S.term[n.id]; return T && T.lines.length ? 'shell · ' + T.lines.length + ' lines' : 'shell'; }
   if (k === 'mem') return 'mem ' + Math.round(n.mem_pct || 0) + '%';
-  if (k === 'bars'){ const s = (S.snap.series || {})[n.id] || {}; return s.tps ? 'tokens/s' : s.cpu ? 'cpu · 40 min' : s.ping ? 'ping' : 'history'; }
+  if (k === 'bars'){ const s = (S.snap.series || {})[n.id] || {}, last = (a) => (a && a.length ? a[a.length - 1] : null);
+    return s.tps ? (last(s.tps) != null ? last(s.tps).toFixed(1) : '—') + ' tok/s' : s.cpu ? 'cpu ' + Math.round(last(s.cpu) || 0) + '%' : s.ping ? 'ping ' + Math.round(last(s.ping) || 0) + ' ms' : 'history'; }
   if (k === 'hist') return 'p95 ' + (n.p95_ms != null ? Math.round(n.p95_ms) + 'ms' : '—');
   if (k === 'shield'){ const r = regOf(n); return r ? 'reg ' + r.yes + '/' + r.of : 'no registration'; }
   if (k === 'gpu') return n.inflight ? n.inflight + ' working' : 'idle';
@@ -685,7 +686,7 @@ function isoWidgets(lay, W, H){
   const bboxOf = (faces) => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; faces.forEach((q) => { const x = parseFloat(q.x), y = parseFloat(q.y), w = parseFloat(q.w), h = parseFloat(q.h); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h); }); return { x0, y0, x1, y1 }; };
   const stackKey = (b) => (b.u + b.v) * 100 + b.z;
   // a terminal: a screen standing on the plate (ISO.frame), its live lines laid onto the screen's face by a css matrix
-  const termFrame = (g, k, n) => { const P1 = ISO.proj(TILT, AZIM, 1, true), s = k / 16, FW = 150, FH = 86;
+  const termFrame = (g, k, n) => { const P1 = ISO.proj(TILT, AZIM, 1, true), s = k / 20, FW = 150, FH = 86;
     const f = ISO.frame(P1, { stand: true, W: FW, H: FH, s, col: 'var(--surf3)', col2: 'var(--bd2)', pad: 5, dep: 5, foot: 8 });
     const c = P1(FW * s / 2, 2.5 * s, 0), dx = g[0] - c[0], dy = g[1] - c[1];
     const faces = f.faces.map((q) => Object.assign({}, q, { x: (parseFloat(q.x) + dx).toFixed(1) + 'px', y: (parseFloat(q.y) + dy).toFixed(1) + 'px' }));
@@ -790,7 +791,7 @@ function isoWidgets(lay, W, H){
     // the widgets stand in one line beside the pin, along the plane's lanes, each as far from the last as their sizes ask
     let run = 0.42 * Math.min(1, SP);
     wspec(n).forEach((w, i) => { const st = wstep(w); run += st / 2;
-      const gu = N.u + run, gv = N.v + 0.08 * SP, g = Pg(gu, gv, N.z), k = 22 * ws * (w.s || 1); run += st / 2;
+      const gu = N.u + run, gv = N.v + 0.08 * SP, g = Pg(gu, gv, N.z), k = 28 * ws * (w.s || 1); run += st / 2;
       const b = w.k === 'term' ? termFrame(g, k, n) : (BUILD[w.k] || BUILD.chip)(g, k, n); const bb = bboxOf(b.faces); out.boxes.push(bb);
       if (b.frame) out.frames.push(Object.assign({ id: n.id }, b.frame));
       out.groups.push({ id: n.id, key: n.id + ':' + i + ':' + w.k, i, a: out.faces.length, b: out.faces.length + b.faces.length, k: N.z * 1000 + gu + gv });
@@ -799,7 +800,8 @@ function isoWidgets(lay, W, H){
         out.boxes.push({ x0: at[0] - 30, x1: at[0] + 30, y0: at[1] - 20, y1: at[1] });
         out.alarms.push({ id: n.id, x: at[0], y: at[1] - 2, sev: n.status === 'down' ? 'down' : n.errors ? 'err' : 'warn', t: n.status === 'down' ? 'DOWN' : n.errors ? n.errors + (n.errors === 1 ? ' finding' : ' findings') : 'warning' }); }
       // the first widget says its reading; the readings beside it speak when the node is selected (their titles always)
-      if (i === 0 || S.sel === n.id) out.labels.push({ id: n.id, x: g[0], y: bb.y1 + 3, n: (S.lbl === 'widgets' && i === 0 ? (n.label.length > 22 ? n.label.slice(0, 20) + '…' : n.label) + ' · ' : '') + wcaption(n, w.k), col: b.col });
+      // every widget says its value on a tag below it (the first, in widgets-only mode, also names its node)
+      out.labels.push({ id: n.id, x: g[0], y: bb.y1 + 4, n: (S.lbl === 'widgets' && i === 0 ? (n.label.length > 22 ? n.label.slice(0, 20) + '…' : n.label) + ' · ' : '') + wcaption(n, w.k), col: b.col });
       out.hits.push({ x: bb.x0 - 3, y: bb.y0 - 3, w: bb.x1 - bb.x0 + 6, h: bb.y1 - bb.y0 + 6, id: n.id, k: w.k, title: WNAME[w.k] + ' on ' + n.label + ' · ' + wcaption(n, w.k) });
       if (b.needle) out.needles.push(b.needle);
       // each widget is joined to the node's pin along the plane's lanes
@@ -927,7 +929,7 @@ function render(opts){
     // captions clear each other: front to back, a caption that meets one already placed steps down a line (twice), else it
     // stays in its widget's tooltip - dense rows no longer print over each other
     { const uiC = uiScale(S.vz), capPlaced = [];
-      wd.labels.slice().sort((a, b) => b.y - a.y).forEach((l) => { const w = (String(l.n).length * 5.6 + 6) * uiC, h = 12 * uiC; let y = l.y, ok = false;
+      wd.labels.slice().sort((a, b) => b.y - a.y).forEach((l) => { const w = (String(l.n).length * 5.6 + 16) * uiC, h = 15 * uiC; let y = l.y, ok = false;
         for (let t = 0; t < 3 && !ok; t++){ const bx = { x0: l.x - w / 2, x1: l.x + w / 2, y0: y, y1: y + h };
           if (!capPlaced.some((b) => bx.x0 < b.x1 && bx.x1 > b.x0 && bx.y0 < b.y1 && bx.y1 > b.y0)){ capPlaced.push(bx); ok = true; } else y += h; }
         const en = E(l.id, 0.45); if (ok) parts.push('<span class="owf-l' + en[0] + '" style="left:' + px(l.x) + ';top:' + px(y) + ';color:' + l.col + en[1] + '">' + esc(l.n) + '</span>'); }); }
@@ -1118,6 +1120,12 @@ function cardHtml(ID, pos, W, H){ const plot = $('plot'), v = $('pzv'); if (!(S.
     if (!vis || vis.R - vis.L < 2 * hw + 20 || vis.B - vis.T < 2 * hh + 20) vis = { L: 0, R: W, T: 0, B: H };
     const wx = p.x > (vis.L + vis.R) / 2 ? p.x - (hw + 26) : p.x + (hw + 26);
     return ('<div class="ndw ' + (wide ? 'wide' : '') + '" style="left:' + px(clamp(wx, vis.L + hw + 8, vis.R - hw - 8)) + ';top:' + px(clamp(p.y, vis.T + hh + 8, vis.B - hh - 8)) + '" data-stop="1"><div class="h"><span class="st" style="background:' + SC[n.status] + '"></span>' + esc(n.label) + '<span class="x" data-close="1">✕</span></div><div class="b">' + actionsHtml(n, S.wact, 'w') + '</div></div>'); }
+// fit: scale the view so the whole lattice is on screen (never above 100%), centred in the stage
+function fitView(){ const st = document.querySelector('.stage'), plot = $('plot'); if (!st || !plot) return;
+  const sw = st.clientWidth - 24, sh = st.clientHeight - 130, pw = plot.offsetWidth || 1, ph = plot.offsetHeight || 1;
+  S.vz = clamp(Math.min(1, sw / pw, sh / ph), 0.1, 1); S.vx = 0; S.vy = 0; applyZoom();
+  const pr = plot.getBoundingClientRect(), sr = st.getBoundingClientRect();
+  st.scrollTop += (pr.top + pr.height / 2) - (sr.top + sr.height / 2); st.scrollLeft += (pr.left + pr.width / 2) - (sr.left + sr.width / 2); }
 function renderCard(){ const v = $('pzv'), L = S.lastLay; if (!S.snap || !L){ render(); return; }
   const old = v.querySelector('.ndw'); if (old) old.remove(); const h = cardHtml(byId(), L.pos, L.W, L.H); if (h) v.insertAdjacentHTML('beforeend', h); termScroll(); }
 
@@ -1368,9 +1376,9 @@ document.addEventListener('click', (e) => {
   if (t.dataset.errNode !== undefined){ if (t.dataset.errNode && byId()[t.dataset.errNode]){ S.sel = t.dataset.errNode; if (S.rt) S.rt = t.dataset.errNode; lightRefresh(); } return; }
   if (t.dataset.layer !== undefined){ S.focus = S.focus === t.dataset.layer ? null : t.dataset.layer; render(); return; }
   if (t.dataset.floor !== undefined){ if (!S.moved) clearRoute(); return; }   // a single click on a floor only clears a lit route; a double click focuses the layer
-  if (t.dataset.pz !== undefined){ const k = t.dataset.pz; if (k === 'in') S.vz = Math.min(4, S.vz * 1.25); else if (k === 'out') S.vz = Math.max(.4, S.vz / 1.25); else if (k === 'l') S.vx += 140; else if (k === 'r') S.vx -= 140; else if (k === 'u') S.vy += 110; else if (k === 'd') S.vy -= 110;
+  if (t.dataset.pz !== undefined){ const k = t.dataset.pz; if (k === 'in') S.vz = Math.min(4, S.vz * 1.25); else if (k === 'out') S.vz = Math.max(.1, S.vz / 1.25); else if (k === 'l') S.vx += 140; else if (k === 'r') S.vx -= 140; else if (k === 'u') S.vy += 110; else if (k === 'd') S.vy -= 110;
     else if (k === 'fit'){ S.vz = 1; S.vx = 0; S.vy = 0; S.tilt = null; S.azim = null; } else { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 12.6) : S.tilt, A = S.azim == null ? 45 : S.azim; if (k === 'tiltUp') S.tilt = Math.min(60, T + 5); if (k === 'tiltDn') S.tilt = Math.max(4, T - 5); if (k === 'rotL') S.azim = Math.min(64, A + 6.5); if (k === 'rotR') S.azim = Math.max(26, A - 6.5); }
-    if (['in', 'out', 'l', 'r', 'u', 'd'].indexOf(k) >= 0) applyZoom(); else if (k === 'fit') render(); else keepPivot(() => render()); return; }
+    if (['in', 'out', 'l', 'r', 'u', 'd'].indexOf(k) >= 0) applyZoom(); else if (k === 'fit'){ render(); fitView(); } else keepPivot(() => render()); return; }
   if (t.dataset.node !== undefined){ if (t.dataset.stop) return; S.sel = t.dataset.node; S.rt = t.dataset.node; if (S.wpick && S.wpick !== t.dataset.node){ S.wpick = null; render(); return; } lightRefresh(); return; }
 });
 document.addEventListener('input', (e) => { const t = e.target; if (t.dataset && t.dataset.req){ const R = S.req[t.dataset.node]; if (R) R[t.dataset.req] = t.value; }
@@ -1416,7 +1424,7 @@ window.addEventListener('mouseup', () => { if (S.drag){ S.drag = null; v.classLi
 // the wheel zooms about the pointer; the chrome holds its screen size through --ui
 $('plot').addEventListener('wheel', (e) => { if (e.target.closest('.ndw')) return; e.preventDefault();
   const r = $('plot').getBoundingClientRect(), mx = e.clientX - r.left - r.width / 2, my = e.clientY - r.top - r.height / 2;
-  const z0 = S.vz, z1 = clamp(z0 * (e.deltaY > 0 ? .88 : 1.14), .4, 4);
+  const z0 = S.vz, z1 = clamp(z0 * (e.deltaY > 0 ? .88 : 1.14), .1, 4);
   S.vx = mx - (mx - S.vx) * (z1 / z0); S.vy = my - (my - S.vy) * (z1 / z0); S.vz = z1; applyZoom(); }, { passive: false });
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(render, 120); });
 window.addEventListener('message', (e) => { const d = e && e.data; if (!d || typeof d !== 'object') return;
