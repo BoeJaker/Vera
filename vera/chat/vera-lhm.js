@@ -767,17 +767,21 @@ function _ebar(title, onAdd, onDone){
   function _absAddedKey(key, menu){ return 'vera.lhm.absorbed.added.' + key + '.' + menu; }
   function _absAddedOf(key, menu){ try{ var a = JSON.parse(localStorage.getItem(_absAddedKey(key, menu)) || '[]'); return Array.isArray(a) ? a : []; }catch(e){ return []; } }
   function _absAddedSave(key, menu, list){ try{ localStorage.setItem(_absAddedKey(key, menu), JSON.stringify(list || [])); }catch(e){} }
+  function _absHasSaved(key, menu){ try{ return !!key && localStorage.getItem(_absAddedKey(key, menu)) !== null; }catch(e){ return false; } }
+  // the widgets the PANEL names for its menu (spec.widgets, 'template@size'): shown until the viewer keeps a list of their own
+  function _absDefaults(spec){ return (spec.widgets || []).map(function(s){ var p = String(s).split('@'); return { template_id: p[0], size: p[1] || 's' }; }); }
   function _absWidgets(host, tabs, spec, cur, opts, redraw){
-    var key = opts.editKey; if(!key || !cur) return;
-    var editing = !!_absEditOn[key];
+    var key = opts.editKey; if(!cur) return;
+    var editing = !!(key && _absEditOn[key]);
+    var mine = function(){ return _absHasSaved(key, cur.id) ? _absAddedOf(key, cur.id) : _absDefaults(spec); };
     var ttl = tabs.querySelector('.lhm-ttl');
-    if(ttl){ var ed = _el('button', 'lhm-a-edit' + (editing ? ' on' : ''), '\u270e'); ed.type = 'button'; ed.title = 'Edit this menu - add widgets to it, as the chat\'s menus take them';
+    if(ttl && key){ var ed = _el('button', 'lhm-a-edit' + (editing ? ' on' : ''), '\u270e'); ed.type = 'button'; ed.title = 'Edit this menu - add widgets to it, as the chat\'s menus take them';
       ed.addEventListener('click', function(ev){ ev.stopPropagation(); _absEditOn[key] = !_absEditOn[key]; redraw(); }); ttl.appendChild(ed); }
-    var list = _absAddedOf(key, cur.id);
+    var list = mine();
     if(editing){
       var bar = _ebar((cur.title || cur.label) + ' \u00b7 ' + (spec.title || 'this panel'), function(){
         var S = _surface(); if(!S){ bar.appendChild(_el('span', 'lbl', ' \u00b7 the widget sheet is not loaded here')); return; }
-        try{ Promise.resolve(S.open({ mode:'add', into:'side', title:'Add to ' + (cur.title || cur.label) + ' \u00b7 ' + (spec.title || 'this panel'), templates:true, sizes:['xs','s','m'] })).then(function(rec){ if(!rec) return; var l2 = _absAddedOf(key, cur.id); l2.push(rec); _absAddedSave(key, cur.id, l2); redraw(); }).catch(function(){}); }catch(e){}
+        try{ Promise.resolve(S.open({ mode:'add', into:'side', title:'Add to ' + (cur.title || cur.label) + ' \u00b7 ' + (spec.title || 'this panel'), templates:true, sizes:['xs','s','m'] })).then(function(rec){ if(!rec) return; var l2 = mine(); l2.push(rec); _absAddedSave(key, cur.id, l2); redraw(); }).catch(function(){}); }catch(e){}
       }, function(){ _absEditOn[key] = false; redraw(); });
       tabs.insertBefore(bar, tabs.firstChild);
     }
@@ -785,10 +789,15 @@ function _ebar(title, onAdd, onDone){
     var ws = _el('div', 'lhm-a-ws'); ws.setAttribute('data-w', 'widgets \u00b7 host');
     list.forEach(function(rec, i){
       var box = _el('div', 'lhm-a-w'); box.setAttribute('data-w', (rec.title || rec.form || 'widget') + ' \u00b7 ' + (rec.form || 'widget'));
-      var h = _el('div', 'lhm-a-wh'); h.appendChild(_el('span', '', rec.title || rec.form || 'widget')); h.appendChild(_el('b', '', rec.source || rec.form || '')); box.appendChild(h);
-      if(window.customElements && customElements.get('vera-widget')){ var vw = document.createElement('vera-widget'); try{ vw.setAttribute('record', JSON.stringify(rec)); }catch(e){} vw.setAttribute('size', (rec.frame && rec.frame.size) || 's'); box.appendChild(vw); }
+      // a template the panel named draws its own head; a record from the sheet gets one here
+      if(!rec.template_id){ var h = _el('div', 'lhm-a-wh'); h.appendChild(_el('span', '', rec.title || rec.form || 'widget')); h.appendChild(_el('b', '', rec.source || rec.form || '')); box.appendChild(h); }
+      if(window.customElements && customElements.get('vera-widget')){ var vw = document.createElement('vera-widget');
+        if(rec.template_id){ vw.setAttribute('template-id', rec.template_id); var sz = rec.size || 's'; vw.setAttribute('size', sz); if(/^(m|l|xl)$/.test(sz)) vw.style.cssText = 'display:block;height:' + (sz === 'm' ? 230 : 300) + 'px'; }
+        else { try{ vw.setAttribute('record', JSON.stringify(rec)); }catch(e){} vw.setAttribute('size', (rec.frame && rec.frame.size) || 's'); }
+        vw.setAttribute('item-drawer', '');   // a click on an item opens its data in the drawer, as on the dashboards
+        box.appendChild(vw); }
       else { var body = _el('div'); var drawn = ''; try{ if(window.VeraWidget && rec.form) drawn = window.VeraWidget.draw(rec.form, _sample(rec.form), 's', { bare:true, title:rec.title }); }catch(e){} body.innerHTML = drawn || _escH(rec.form || 'widget'); box.appendChild(body); }
-      if(editing){ var rm = _el('button', 'lhm-a-rm', '\u2715'); rm.type = 'button'; rm.title = 'Take it out of this menu'; rm.addEventListener('click', function(ev){ ev.stopPropagation(); var l3 = _absAddedOf(key, cur.id); l3.splice(i, 1); _absAddedSave(key, cur.id, l3); redraw(); }); box.appendChild(rm); }
+      if(editing){ var rm = _el('button', 'lhm-a-rm', '\u2715'); rm.type = 'button'; rm.title = 'Take it out of this menu'; rm.addEventListener('click', function(ev){ ev.stopPropagation(); var l3 = mine(); l3.splice(i, 1); _absAddedSave(key, cur.id, l3); redraw(); }); box.appendChild(rm); }
       ws.appendChild(box);
     });
     tabs.appendChild(ws);
