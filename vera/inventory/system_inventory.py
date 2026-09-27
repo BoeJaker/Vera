@@ -21,6 +21,7 @@ from Vera.vera.capability_orchestration import (
     SCHEDULED_TASKS,
     UI_PANELS,
     WORKER_REGISTRY,
+    activity_actor,
     capability,
 )
 from Vera.vera.config import cfg
@@ -290,6 +291,46 @@ def _caller_graph(capabilities: Sequence[Mapping[str, Any]], schedules: Any,
             for caller, target, basis in sorted(edges)]
 
 
+def _observed_caller_graph(
+    events: Sequence[Mapping[str, Any]] | None,
+    known_capabilities: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Aggregate bounded runtime caller evidence without retaining payloads."""
+    known = {str(item.get("name") or "") for item in known_capabilities}
+    counts: dict[tuple[str, str, str, str], int] = {}
+    for raw in events or []:
+        if not isinstance(raw, Mapping):
+            continue
+        event_type = str(raw.get("type") or "")
+        if event_type not in {"cap.ok", "cap.error"}:
+            continue
+        target = str(raw.get("name") or "")
+        if target not in known:
+            continue
+        actor = activity_actor(dict(raw))
+        if actor == "unknown":
+            continue
+        if actor == "you" or actor in {"agent:user", "agent:ui", "agent:browser"}:
+            caller, caller_class = "ui:browser", "ui"
+        elif actor.startswith("agent:"):
+            caller, caller_class = actor, "agent"
+        elif actor.startswith("system:"):
+            caller, caller_class = actor, "system"
+        else:
+            continue
+        outcome = "ok" if event_type == "cap.ok" else "error"
+        key = (caller, caller_class, target, outcome)
+        counts[key] = counts.get(key, 0) + 1
+    return [{
+        "caller": caller,
+        "caller_class": caller_class,
+        "capability": target,
+        "outcome": outcome,
+        "observations": count,
+        "basis": "bounded_runtime_telemetry",
+    } for (caller, caller_class, target, outcome), count in sorted(counts.items())]
+
+
 def _declared_database_schema(loaded_modules: Sequence[Mapping[str, Any]],
                               repo_root: Path) -> list[dict[str, str]]:
     """Scan loaded local source for declared tables without opening a database."""
@@ -322,6 +363,20 @@ async def _inventory_capability_records(name: str, key: str) -> list[dict[str, A
     return list(values) if isinstance(values, list) else []
 
 
+async def _inventory_capability_events(name: str, *, limit: int) -> list[dict[str, Any]]:
+    """Read a bounded event list from a raw observation capability."""
+    entry = CAPABILITY_REGISTRY.get(name) or {}
+    raw = entry.get("raw")
+    if not callable(raw):
+        return []
+    try:
+        result = await raw(limit=max(1, min(int(limit), 500)))
+    except Exception:
+        return []
+    return ([dict(item) for item in result if isinstance(item, Mapping)]
+            if isinstance(result, list) else [])
+
+
 def build_system_inventory(
     *,
     capabilities: Mapping[str, Mapping[str, Any]],
@@ -337,6 +392,8 @@ def build_system_inventory(
     stored_workflows: Mapping[str, Any] | None = None,
     database_schema: Sequence[Mapping[str, Any]] | None = None,
     connections: Sequence[Mapping[str, Any]] | None = None,
+    runtime_events: Sequence[Mapping[str, Any]] | None = None,
+    runtime_event_limit: int = 500,
 ) -> dict[str, Any]:
     """Build a canonical snapshot whose fingerprint ignores capture time/load order."""
     cap_items = _capabilities(capabilities)
@@ -357,6 +414,13 @@ def build_system_inventory(
         "artifacts": _artifact_provider_records(cap_items),
         "connections": _connection_records(connections),
         "caller_graph": _caller_graph(cap_items, schedules, workflow_items),
+        "observed_caller_graph": _observed_caller_graph(runtime_events, cap_items),
+        "observation_coverage": {
+            "runtime_callers": "partial",
+            "source": "bounded_recent_capability_events",
+            "event_limit": max(1, min(int(runtime_event_limit), 500)),
+            "privacy": "aggregate_without_content_or_identifiers",
+        },
         "duplication_signals": {
             term: [cap["name"] for cap in cap_items
                    if term in cap["name"].lower().replace("-", ".").split(".")]
@@ -366,7 +430,7 @@ def build_system_inventory(
             "included": ["capabilities", "loaded_modules", "panels", "http_routes",
                          "schedules", "workers", "mcp_servers", "configuration_keys",
                          "stored_workflows", "database_schema", "artifacts",
-                         "connections", "caller_graph"],
+                         "connections", "caller_graph", "observed_caller_graph"],
             "not_yet_included": [],
         },
     }
@@ -374,7 +438,9 @@ def build_system_inventory(
     # They belong in each captured snapshot but not in the architecture
     # fingerprint.  Schedule definitions are canonicalized above so their
     # run counters and timestamps cannot create false architectural drift.
-    structural = {key: value for key, value in body.items() if key != "workers"}
+    structural = {key: value for key, value in body.items()
+                  if key not in {"workers", "observed_caller_graph",
+                                 "observation_coverage"}}
     encoded = json.dumps(structural, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     body["fingerprint_sha256"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
     body["captured_at"] = captured_at or datetime.now(timezone.utc).isoformat()
@@ -383,7 +449,7 @@ def build_system_inventory(
             "capabilities", "modules", "panels", "http_routes", "schedules",
             "workers", "mcp_servers",
             "configuration_keys", "stored_workflows", "database_schema",
-            "artifacts", "connections", "caller_graph",
+            "artifacts", "connections", "caller_graph", "observed_caller_graph",
         )
     }
     body["counts"]["module_errors"] = sum(
@@ -411,6 +477,7 @@ def summarize_system_inventory(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             snapshot.get("duplication_signals", {}).items()
         },
         "coverage": snapshot.get("coverage", {}),
+        "observation_coverage": snapshot.get("observation_coverage", {}),
         "detail": False,
         "detail_hint": "Call system.inventory with detail=true for canonical records.",
     }
@@ -431,10 +498,11 @@ def summarize_system_inventory(snapshot: Mapping[str, Any]) -> dict[str, Any]:
 async def system_inventory(detail: bool = False, trace_id=None):
     raw_file = inspect.getsourcefile(build_system_inventory) or __file__
     repo_root = Path(raw_file).resolve().parents[2]
-    dag_store, fabric_dags, connections = await asyncio.gather(
+    dag_store, fabric_dags, connections, runtime_events = await asyncio.gather(
         _inventory_capability_records("dag.store_list", "dags"),
         _inventory_capability_records("fabric.dags.list", "dags"),
         _inventory_capability_records("conn.list", "connections"),
+        _inventory_capability_events("obs.events", limit=500),
     )
     snapshot = build_system_inventory(
         capabilities=CAPABILITY_REGISTRY,
@@ -450,5 +518,7 @@ async def system_inventory(detail: bool = False, trace_id=None):
         stored_workflows={"dag_store": dag_store, "fabric": fabric_dags},
         database_schema=_declared_database_schema(LOADED_MODULES, repo_root),
         connections=connections,
+        runtime_events=runtime_events,
+        runtime_event_limit=500,
     )
     return snapshot if detail else summarize_system_inventory(snapshot)
