@@ -4,7 +4,7 @@ const path = require('node:path'), fs = require('node:fs');
 const WE = fs.readFileSync(path.join(__dirname, '..', 'vera', 'widgets', 'widget_element.js'), 'utf8');
 const vm = require('node:vm');
 let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if (!cond) fails++; };
-t('each figure cell is a container; the figure sizes to it', /\.vb-bigs div\{display:flex;flex-direction:column;gap:1px;min-width:0;container-type:inline-size\}/.test(WE) && /font-size:clamp\(13px, min\(30cqh, 16cqi\), 30px\)/.test(WE));
+t('each figure cell is a container; the figure sizes to it', /\.vb-bigs div\{display:flex;flex-direction:column;gap:1px;min-width:0;container-type:inline-size\}/.test(WE) && /font-size:clamp\(13px, min\(30cqh, 20cqi\), 30px\)/.test(WE) && /\|kv\|numbers\|month\|/.test(WE));
 t('a count of a million or more, three or more a row, is said short', /const fig = \(v\) => \(perRow >= 3 && Math\.abs\(num\(v\)\) >= 1e6\) \? shortN\(v\) : fmt\(v\);/.test(WE));
 const defined = {}; const ctx = { window: {}, console, HTMLElement: class {}, CustomEvent: class {}, customElements: { get: (n) => defined[n], define: (n, c) => { defined[n] = c; } }, document: { querySelectorAll: () => [], createElement: () => ({ setAttribute() {}, appendChild() {}, style: {} }), head: { appendChild() {} }, getElementById: () => null, addEventListener() {} }, setTimeout, clearTimeout, requestAnimationFrame: (f) => setTimeout(f, 0), localStorage: { getItem: () => null, setItem() {} } };
 ctx.window.customElements = ctx.customElements; ctx.window.document = ctx.document; ctx.window.localStorage = ctx.localStorage;
