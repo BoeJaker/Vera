@@ -13307,7 +13307,8 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                                intent: str = "mixed",
                                plan_note: str = "",
                                sid: str = "", stream_id: str = "",
-                               route_profile: str = "", route_role: str = "") -> Dict[str, Any]:
+                               route_profile: str = "", route_role: str = "",
+                               token_cb: Any = None) -> Dict[str, Any]:
     """ONE LLM call: decompose the goal into an ordered step plan. Each step names
     only the few caps and skills it needs. Folds triage+step-select+plan into a
     single call so the loop starts working almost immediately.
@@ -13408,7 +13409,10 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                 prompt, system=sys, model=plan_model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
                 profile=_plan_profile, role=_plan_role,
-                request_stage="planner")
+                request_stage="planner",
+                # A caller that wants the plan to build live (the broad style's
+                # per-stream cards) passes token_cb; otherwise unchanged.
+                stream_cb=token_cb)
             valid_skill_ids = {s["id"] for s in skills}
             _pp = _v5_parse_plan(raw or "")
             if isinstance(_pp.get("obj"), dict):
@@ -13692,7 +13696,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
             profile=_plan_profile, role=_plan_role, timeout=_V5_PLANNER_TIMEOUT_S,
             request_stage="planner",
-            stream_cb=(_plan_stream_cb if stream_id else None))
+            stream_cb=(token_cb or (_plan_stream_cb if stream_id else None)))
         _pp = _v5_parse_plan(raw or "")
         parsed = _pp["obj"] if isinstance(_pp.get("obj"), dict) else {}
         raw_steps = _pp["steps"]
@@ -19156,6 +19160,27 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
     if PSx is None:
         return {**empty, "broad": {"error": "planner_styles unavailable"}}
     t0 = time.monotonic()
+
+    # LIVE: every broad generation streams into the loop UI as it is written -
+    # the split, each stream's plan, and both kinds of brief - so the run is
+    # visibly planning instead of silent for the whole phase. Throttled to <=4
+    # events/s per card and bounded to the tail of the text.
+    def _live(etype: str, **fixed: Any):
+        acc = {"buf": "", "last": 0.0}
+
+        async def _cb(tok):
+            acc["buf"] += tok
+            now = time.monotonic()
+            if now - acc["last"] < 0.25:
+                return
+            acc["last"] = now
+            try:
+                await emit_event({"type": etype, "session_id": sid, "stream_id": stream_id,
+                                  **fixed, "text": acc["buf"][-3000:]})
+            except Exception:
+                pass
+        return _cb
+
     cat_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:40])
     streams: List[Dict[str, Any]] = []
     try:
@@ -19164,7 +19189,8 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
             system=PSx.BROAD_BRIEF_SYSTEM.format(n=PSx.MAX_STREAMS),
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=True,
             options=_planner_sampling(), profile=LOOP_ROUTING_PROFILE, role="planner",
-            request_stage="plan_broad_brief")
+            request_stage="plan_broad_brief",
+            stream_cb=_live("agent_loop_v6.broad_split_token"))
         streams = PSx.parse_streams(_extract_json(_strip_think(raw or "")[0]) or {},
                                     catalog=catalog_names)
     except Exception as e:
@@ -19189,7 +19215,9 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
                 json_mode=False, model=(enrich_model or ""), instance_id="",
                 prefer_gpu=False, think=False,
                 profile="planning_style", role=PSx.ENRICH_ROLE, request_stage="plan_enrich",
-                timeout=900)
+                timeout=900,
+                stream_cb=_live("agent_loop_v6.broad_brief_token", stream=s["id"],
+                                kind="deep"))
             text = PSx.enrich_note(_strip_think(raw or "")[0])
         except asyncio.CancelledError:
             raise
@@ -19199,7 +19227,8 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
             await emit_event({"type": "agent_loop_v6.broad_stream_enriched", "session_id": sid,
                               "stream_id": stream_id, "stream": s["id"], "title": s["title"],
                               "role": PSx.ENRICH_ROLE, "elapsed_s": round(time.monotonic() - t1, 1),
-                              "chars": len(text), "error": err})
+                              "chars": len(text), "error": err, "text": text[:1600],
+                              "model": enrich_model or "(route default)"})
         except Exception:
             pass
         return text
@@ -19238,7 +19267,9 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
                 prefer_gpu=True, max_steps=per_stream,
                 master_plan=PSx.stream_directive(goal, streams, s), want_success=True,
                 phase_policy=phase_policy, intent=intent, sid=sid, stream_id="",
-                route_profile="planning_style", route_role=PSx.PLAN_ROLE)
+                route_profile="planning_style", route_role=PSx.PLAN_ROLE,
+                token_cb=_live("agent_loop_v6.broad_stream_token", stream=s["id"],
+                               title=s["title"]))
             steps = list(sub.get("steps") or [])
             err = ""
         except Exception as e:
@@ -19260,7 +19291,9 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
             raw = await _safe_ollama_generate_dw(
                 PSx.enrich_prompt(goal, streams, s), system=PSx.ENRICH_SYSTEM,
                 json_mode=False, model="", instance_id="", prefer_gpu=True, think=False,
-                profile="planning_style", role=PSx.PLAN_ROLE, request_stage="plan_quick_brief")
+                profile="planning_style", role=PSx.PLAN_ROLE, request_stage="plan_quick_brief",
+                stream_cb=_live("agent_loop_v6.broad_brief_token", stream=s["id"],
+                                kind="quick"))
             txt = PSx.enrich_note(_strip_think(raw or "")[0], deep=False)
         except Exception as e:
             log.debug("broad style: quick brief failed: %s", e)
@@ -19268,7 +19301,8 @@ async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[
         try:
             await emit_event({"type": "agent_loop_v6.broad_stream_quick_brief", "session_id": sid,
                               "stream_id": stream_id, "stream": s["id"], "role": PSx.PLAN_ROLE,
-                              "elapsed_s": round(time.monotonic() - t1, 1), "chars": len(txt)})
+                              "elapsed_s": round(time.monotonic() - t1, 1), "chars": len(txt),
+                              "text": txt[:1600]})
         except Exception:
             pass
         return txt
@@ -25990,6 +26024,20 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v6.gate",
             "agent_loop_v6.deliverable",
             "agent_loop_v6.done",
+            # Planning styles: which style ran, and the BROAD style's live
+            # planning (split, per-stream plans, quick/deep briefs, briefs
+            # applied, repeats dropped). Not in this set = never reaches the UI:
+            # plan_style was emitted from 2026-09-27 and silently dropped here.
+            "agent_loop_v6.plan_style",
+            "agent_loop_v6.broad_split_token",
+            "agent_loop_v6.broad_streams",
+            "agent_loop_v6.broad_stream_token",
+            "agent_loop_v6.broad_stream_planned",
+            "agent_loop_v6.broad_brief_token",
+            "agent_loop_v6.broad_stream_quick_brief",
+            "agent_loop_v6.broad_stream_enriched",
+            "agent_loop_v6.broad_brief_applied",
+            "agent_loop_v6.broad_deduped",
             # V7 tier/branching + strategic persistence
             "agent_loop_v6.tier",
             "agent_loop_v6.fast_path",
