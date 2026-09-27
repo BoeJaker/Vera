@@ -44,7 +44,7 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import APP, capability, emit_event, register_ui
 from Vera.vera.integrations.infrastructure_effects import observe_infrastructure_effect
 from Vera.vera.provisioning.components_core import (
-    rewrite_host, native_worker_cmd,
+    rewrite_host, native_worker_cmd, worker_backend_env, WORKER_BACKEND_KEYS,
     EDGE_DIR_CANDIDATES as _EDGE_DIR_CANDIDATES,
     WORKER_DIR_CANDIDATES as _WORKER_DIR_CANDIDATES,
     edge_dir_probe_cmd, parse_edge_dir, pidfile_lookup_cmd,
@@ -637,14 +637,12 @@ async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
         # every backend URL at a LAN-reachable address (this box's IP, or backend_host).
         bh = (backend_host or os.getenv("VERA_ADVERTISE_HOST", "") or _primary_lan_ip())
         redis_url = rewrite_host(redis_url, bh)
-        backend_kv = {}
-        for k in ("POSTGRES_URL", "NEO4J_URI", "NEO4J_USER", "NEO4J_PASS",
-                  "CHROMA_HOST", "CHROMA_PORT", "OLLAMA_BASE_URL", "OLLAMA_GPU_URL",
-                  "OLLAMA_CPU_A_URL", "OLLAMA_CPU_B_URL", "OLLAMA_EMBED_URL",
-                  "OLLAMA_MODEL", "VERA_COORD_REDIS_DB", "VERA_CPU_NODE_THREADS"):
-            v = os.getenv(k)
-            if v:
-                backend_kv[k] = rewrite_host(v, bh)
+        # Environment first, else the host's effective config (prod runs on
+        # config.py's localhost defaults and exports none of these).
+        _cfg = getattr(_orch, "cfg", None)
+        backend_kv = worker_backend_env(
+            dict(os.environ),
+            {k: getattr(_cfg, k, None) for k in WORKER_BACKEND_KEYS}, bh)
 
         # Where to install. Never assume $HOME: /root on these unprivileged LXC
         # nodes is nobody:root 0700 (see components_core.WORKER_DIR_CANDIDATES).

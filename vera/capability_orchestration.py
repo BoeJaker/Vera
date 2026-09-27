@@ -8987,11 +8987,7 @@ async def cap_ollama_instances(trace_id=None):
                  "enabled":i.get("enabled", True),
                  "status":i["status"],"latency_ms":i["latency_ms"],"models":i["models"],
                  "in_use":i["in_use"],"errors":i["errors"],"last_check":i["last_check"],
-                 "num_ctx":i.get("num_ctx", 4096),
-                 # what a request to this node actually carries (0 = none: GPU node)
-                 "num_thread":_node_threads_core.threads_for(
-                     has_gpu=bool(i.get("has_gpu")), node_num_thread=i.get("num_thread"),
-                     default=_CPU_NODE_THREADS)}
+                 "num_ctx":i.get("num_ctx", 4096)}
             for iid,i in OLLAMA_INSTANCES.items()}
 
 @capability("ollama.add_instance", memory="off",

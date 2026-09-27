@@ -2519,11 +2519,18 @@ async def ollama_list_models(instance_id: str = None, trace_id=None):
 @capability("ollama.instances",
     http_method="GET", http_path="/ollama/cluster", http_tags=["ollama"],
     memory="off",
-    description="Live status of all Ollama cluster nodes. Output: {instance_id: {url,status,models,in_use,latency_ms,has_gpu}}.")
+    description="Live status of all Ollama cluster nodes. Output: {instance_id: {url,status,models,in_use,latency_ms,has_gpu,num_thread}} - num_thread is what a request to the node carries (0 = none: a GPU node).")
 async def ollama_instances_status(trace_id=None):
+    # This registration is the one that serves ollama.instances (it loads after
+    # the orchestrator's own and replaces it).
+    import Vera.vera.capability_orchestration as _o
+    def _nt(i):
+        return _o._node_threads_core.threads_for(
+            has_gpu=bool(i.get("has_gpu")), node_num_thread=i.get("num_thread"),
+            default=_o._CPU_NODE_THREADS)
     return {iid:{"url":i["url"],"label":i["label"],"has_gpu":i["has_gpu"],"status":i["status"],
                  "latency_ms":i["latency_ms"],"models":i["models"],"in_use":i["in_use"],
-                 "errors":i["errors"],"last_check":i["last_check"]}
+                 "errors":i["errors"],"last_check":i["last_check"],"num_thread":_nt(i)}
             for iid,i in OLLAMA_INSTANCES.items()}
 
 @capability("ollama.generate_raw",

@@ -135,6 +135,24 @@ def test_bundle_unit_is_a_node_worker_below_the_nodes_services():
     assert "systemctl restart vera-worker" in cmd
 
 
+def test_worker_backends_come_from_the_hosts_effective_config():
+    from vera.provisioning.components_core import worker_backend_env
+    # prod exports none of these; it runs on config.py's localhost defaults
+    cfg = {"POSTGRES_URL": "postgresql://admin:admin@localhost:5433/postgres",
+           "NEO4J_URI": "bolt://localhost:7687", "NEO4J_USER": "neo4j",
+           "CHROMA_HOST": "localhost", "CHROMA_PORT": 8008}
+    out = worker_backend_env({}, cfg, "192.168.0.138")
+    assert out["POSTGRES_URL"] == "postgresql://admin:admin@192.168.0.138:5433/postgres"
+    assert out["NEO4J_URI"] == "bolt://192.168.0.138:7687"
+    assert out["CHROMA_HOST"] == "192.168.0.138" and out["CHROMA_PORT"] == "8008"
+    assert out["NEO4J_USER"] == "neo4j"
+    # the environment wins over config
+    out = worker_backend_env({"CHROMA_HOST": "10.1.1.1"}, cfg, "192.168.0.138")
+    assert out["CHROMA_HOST"] == "10.1.1.1"
+    # unset everywhere -> absent, not "None"
+    assert "OLLAMA_BASE_URL" not in worker_backend_env({}, {"OLLAMA_BASE_URL": None}, "h")
+
+
 def test_worker_dir_never_assumes_home():
     assert WORKER_DIR_CANDIDATES[0] == "/opt/vera/worker"
     assert WORKER_DIR_CANDIDATES[-1].startswith("$HOME")
