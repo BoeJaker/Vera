@@ -2,6 +2,15 @@
 
 ![Data Fabric captured from the running Vera UI](assets/overview/fabric-panel.png)
 
+Vera keeps an offline, source-bound inventory of the discovery and context
+paths that feed the Fabric. It distinguishes portable provider contracts from
+native adapters, labels JEPA Worldview paths explicitly, and records the missing
+portable dataset boundary for the separate non-JEPA Worldview/Godseye line.
+It also records which paths still require live source or accelerator evidence.
+The inventory is content-addressed and checked against a reviewed semantic
+baseline, so routing work starts from an explicit system map rather than an
+informal list or a live probe. It does not contact sources, models, or workers.
+
 The polyglot data fabric is Vera's unified data layer. It combines multiple database paradigms — vector (FAISS + Chroma), graph (Neo4j), relational (SQLite + PostgreSQL), and object storage (Garage / Ceph S3) — into a single ingestion pipeline and query DSL. Anything Vera produces or consumes that's worth keeping ends up in the fabric, where it can be recalled semantically, by relation, by exact filter, or by any combination of the three.
 
 The fabric is what makes Vera's components additive rather than siloed. A research result is fabric-recallable, so the IDE agent can find it. A crawled page is fabric-recallable, so dream cycles can use it. A chat message is fabric-recallable, so future sessions can build on it.
