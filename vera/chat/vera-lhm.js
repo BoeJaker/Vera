@@ -153,10 +153,10 @@
     /* an absorbed menu in a host */
     '.lhm-absorbed{display:flex;flex-direction:row;min-height:0;flex:1}',
     '.lhm-absorbed .lhm-tabs{flex:1;display:flex;flex-direction:column;gap:1px;padding:6px 4px;min-width:0;overflow-y:auto}',
-    '.lhm-absorbed .lhm-tab{padding:6px 8px;border-radius:var(--r-sm,5px);font-family:var(--mono);font-size:9.5px;letter-spacing:.3px;color:var(--dim2);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:2px solid transparent}',
-    '.lhm-absorbed .lhm-tab:hover{color:var(--text);background:var(--bg2)}',
-    '.lhm-absorbed .lhm-tab.on{color:var(--acc);border-left-color:var(--acc);background:var(--bg2)}',
-    '.lhm-absorbed .lhm-tabs .lhm-ttl{font-family:var(--sans);font-size:11px;font-weight:600;color:var(--text);padding:4px 8px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.lhm-absorbed .lhm-tab{padding:7px 9px;border-radius:var(--r-sm,6px);font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11.5px;line-height:1.3;color:var(--t2,var(--dim2,#8a92a0));cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;transition:background .15s,color .15s}',
+    '.lhm-absorbed .lhm-tab:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}',
+    '.lhm-absorbed .lhm-tab.on{color:var(--t1,var(--text,#d8dce4));font-weight:600;background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent));box-shadow:inset 2px 0 0 var(--ac,var(--acc,#5a9e8f))}',
+    '.lhm-absorbed .lhm-tabs .lhm-ttl{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:12px;font-weight:600;color:var(--text);padding:4px 8px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     /* the top-level SIDE menu — the harness\'s main LHM (the Harness board): search, Open now, the panels with their sections, widgets */
     '.lhm-side{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}',
     /* ONE header row. It used to be two — the ☰/title bar and, under it, a
@@ -759,7 +759,7 @@ function _ebar(title, onAdd, onDone){
     if(cur){
       tabs.appendChild(_el('div', 'lhm-ttl', cur.title || cur.label));
       (cur.tabs || []).forEach(function(t){
-        var e = _el('div', 'lhm-tab' + (t.id === act.tab ? ' on' : ''), t.label);
+        var e = _el('div', 'lhm-tab' + (t.id === act.tab ? ' on' : ''), t.label); e.title = t.label;
         e.addEventListener('click', function(){ pickFn(cur.id + '/' + t.id); });
         tabs.appendChild(e);
       });

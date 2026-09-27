@@ -44,5 +44,8 @@ t('the bridge publishes it with the items', /st\.nav = \{items: _navItems, activ
 t('and resolves picks before selecting', /id = _navResolve\(String\(id\)\);/.test(BR));
 t('the panel shell gives each item its group and glyph', /return \{ id: idOf\(b\), label: labelOf\(b\), group: groupOf\(b\), icon: iconOf\(b\) \};/.test(PJ) && /el\.classList\.contains\('nav-grp'\)/.test(PJ));
 
+const LHM = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'vera-lhm.js'), 'utf8');
+t('an absorbed menu\'s list reads at the menu\'s size', /'\.lhm-absorbed \.lhm-tab\{padding:7px 9px;[^']*font-size:11\.5px;/.test(LHM) && !/\.lhm-absorbed \.lhm-tab\{[^']*font-size:9\.5px/.test(LHM) && /e\.title = t\.label;/.test(LHM));
+t('the dashboard rail\'s \u2630 gives the every-tab list', /if\(menu === '\\u2630'\)\{ _lhmAbsorbTop = true; _lhmNavSync\(\); return; \}/.test(HAR));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

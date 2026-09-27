@@ -8203,7 +8203,8 @@ var _dashLhmT = 0;
 function _dashLhmSoon(ms){ clearTimeout(_dashLhmT); _dashLhmT = setTimeout(_dashLhmPublish, ms == null ? 250 : ms); }
 _localLhm.dashboard = function(id){
   const s = String(id || ''), i = s.indexOf('/'), menu = i < 0 ? s : s.slice(0, i), tab = i < 0 ? '' : s.slice(i + 1);
-  if(!menu || menu === '\u2630') return;
+  if(!menu) return;
+  if(menu === '\u2630'){ _lhmAbsorbTop = true; _lhmNavSync(); return; }   // the rail's \u2630: the every-tab list, as the bar's gives it
   _dashLhmAct = { menu, tab };
   const ctl = _dashCtl;
   try{
