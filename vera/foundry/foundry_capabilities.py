@@ -3009,7 +3009,7 @@ async def _foundry_panel():
 register_ui(
     "foundry",
     "Foundry",
-    "🏭",
+    "⎔",
     """<div style="height:100%;display:flex;flex-direction:column">
   <iframe src="/foundry/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"

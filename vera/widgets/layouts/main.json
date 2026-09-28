@@ -1,0 +1,5013 @@
+{
+ "v": 2,
+ "dashboard": "cluster-overview",
+ "layout": "default",
+ "key": "main",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "The Cluster Overview as planned (Notes/44): nine SECTION bands - Now, Inference, Estate, Memory, Agents, Loop Lab, Capabilities, Network, Studio - each tile a record over a real source, one form per kind of data (numbers for counts, thermo for temperatures, small multiples for a fleet of series, pulse for a rate, ranked for a distribution, pareto for a triage, treemap for a share, agenda for a calendar, graph for a graph, stack for programmes, the iso sandboxes), reports for the small composites; every band fills the twelve columns. read.map: container <- path; dict of things <- rows named by key; other keys <- a field of each row; pick {label: path}; keys [...]. The page tiles this layout replaced are named hidden at the end. The widget review (2026-09-27) added the Loop Lab and Capabilities bands and a third Now row (subsystems, event-loop stalls, warnings), and the map words that make them: count/sum (a list counted by a field), split (one series per field), reverse, entries (a dict of plain values as rows), fields, of/total/where (a count or a sum over a list as one figure).",
+ "widgets": [
+  {
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s"
+    },
+    "id": "sec-ops",
+    "form": "section",
+    "title": "Operations · what is running and where",
+    "source": "",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv3,#3585c9)"
+    }
+   }
+  },
+  {
+   "at": [
+    0,
+    1
+   ],
+   "span": [
+    3,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "value": "inflight_total",
+      "also": {
+       "cap calls": "inflight_kinds.cap call",
+       "git ops": "inflight_kinds.git op",
+       "background jobs": "inflight_kinds.background",
+       "fabric writes": "inflight_kinds.fabric write",
+       "open problems": "counts.errors",
+       "estate nodes": "counts.nodes"
+      }
+     }
+    },
+    "id": "ops-inflight",
+    "form": "counter",
+    "source": "ops.snapshot",
+    "title": "In flight now",
+    "open": "estate/ops",
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "what": "calls and ops in flight"
+    }
+   }
+  },
+  {
+   "at": [
+    3,
+    1
+   ],
+   "span": [
+    3,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "parts": "inflight_kinds"
+     }
+    },
+    "id": "ops-kinds",
+    "form": "donut",
+    "source": "ops.snapshot",
+    "title": "In flight · by kind",
+    "open": "estate/ops",
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   }
+  },
+  {
+   "at": [
+    6,
+    1
+   ],
+   "span": [
+    3,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "args": {
+      "limit": 200
+     },
+     "map": {
+      "values": "entries",
+      "count": "instance"
+     }
+    },
+    "id": "ops-by-worker",
+    "form": "ranked",
+    "source": "ollama.request_log",
+    "title": "Requests by worker · last 200",
+    "open": "models",
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   }
+  },
+  {
+   "at": [
+    9,
+    1
+   ],
+   "span": [
+    3,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "args": {
+      "limit": 200
+     },
+     "map": {
+      "values": "entries",
+      "count": "model"
+     }
+    },
+    "id": "ops-by-model",
+    "form": "ranked",
+    "source": "ollama.request_log",
+    "title": "Requests by model",
+    "open": "models",
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   }
+  },
+  {
+   "at": [
+    0,
+    3
+   ],
+   "span": [
+    6,
+    5
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "rows": "nodes",
+      "where": {
+       "plane": "work"
+      },
+      "name": "label",
+      "status": "status",
+      "value": "inflight"
+     }
+    },
+    "id": "ops-work",
+    "form": "rows",
+    "source": "ops.snapshot",
+    "title": "Work in flight",
+    "open": "estate/ops",
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      5
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   }
+  },
+  {
+   "at": [
+    6,
+    3
+   ],
+   "span": [
+    6,
+    5
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "args": {
+      "limit": 200
+     },
+     "map": {
+      "rows": "entries",
+      "name": "model",
+      "status": "status",
+      "value": "elapsed_s"
+     }
+    },
+    "id": "ops-routing",
+    "form": "rows",
+    "source": "ollama.request_log",
+    "title": "Routing · latest requests and the worker that served each",
+    "open": "models",
+    "draw": {
+     "body": "record",
+     "unit": "s",
+     "detail": "instance"
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      5
+     ]
+    }
+   }
+  },
+  {
+   "at": [
+    0,
+    8
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "rows": "inflight",
+      "name": "label",
+      "status": "kind"
+     }
+    },
+    "id": "ops-open",
+    "form": "rows",
+    "source": "ops.snapshot",
+    "title": "Calls and ops open",
+    "open": "estate/ops",
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   }
+  },
+  {
+   "at": [
+    4,
+    8
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "rows": "nodes",
+      "where": {
+       "plane": "runtime"
+      },
+      "name": "label",
+      "status": "status",
+      "value": "load"
+     }
+    },
+    "id": "ops-runtimes",
+    "form": "rows",
+    "source": "ops.snapshot",
+    "title": "Runtimes · load",
+    "open": "estate/ops",
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   }
+  },
+  {
+   "at": [
+    8,
+    8
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "rows": "$",
+      "fields": [
+       "cpu_pct",
+       "ram_pct",
+       "current_task",
+       "tasks_done",
+       "tasks_failed"
+      ],
+      "value": "cpu_pct"
+     }
+    },
+    "id": "ops-workers",
+    "form": "rows",
+    "source": "obs.workers",
+    "title": "Workers · what each is running",
+    "open": "estate/workers",
+    "draw": {
+     "body": "record",
+     "unit": "%",
+     "detail": "current_task"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    }
+   }
+  },
+  {
+   "at": [
+    0,
+    12
+   ],
+   "span": [
+    12,
+    3
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false,
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s"
+    },
+    "id": "ops-stream",
+    "form": "composite",
+    "source": "jobs.stats",
+    "title": "Job stream",
+    "open": "estate/workers",
+    "layout": "grid",
+    "draw": {
+     "body": "record",
+     "cols": 2
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "numbers",
+       "source": "$subject",
+       "title": "the stream",
+       "read": {
+        "map": {
+         "pick": {
+          "length": "stream.length",
+          "pending": "stream.pending_total",
+          "running": "running_tracked",
+          "consumers": "stream.consumer_count"
+         }
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "ranked",
+       "source": "$subject",
+       "title": "consumers · pending",
+       "read": {
+        "map": {
+         "values": "stream.consumers",
+         "name": "name",
+         "value": "pending"
+        }
+       }
+      }
+     }
+    ],
+    "frame": {
+     "size": "l",
+     "span": [
+      12,
+      3
+     ]
+    }
+   }
+  },
+  {
+   "record": {
+    "id": "sec-now",
+    "form": "section",
+    "source": "",
+    "title": "Now · the host, the control plane, what it says",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv6,#00aba4)"
+    }
+   },
+   "at": [
+    0,
+    15
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "host-cpu",
+    "form": "lines",
+    "source": "sysmon.history",
+    "title": "Host · CPU and memory",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "series": "samples",
+      "split": [
+       "cpu",
+       "mem"
+      ],
+      "t": "t"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "%"
+    },
+    "open": "estate/ops"
+   },
+   "at": [
+    0,
+    16
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "capacity",
+    "form": "gauge",
+    "source": "sysmon.status",
+    "title": "Capacity",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "pick": {
+       "cpu": "resources.cpu",
+       "memory": "resources.mem",
+       "proxmox mem": "proxmox.mem_pct"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "load",
+     "unit": "%"
+    },
+    "open": "estate/ops"
+   },
+   "at": [
+    6,
+    16
+   ],
+   "span": [
+    3,
+    3
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "temps",
+    "form": "thermo",
+    "source": "obs.node_temps",
+    "title": "Temperatures",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "values": "hosts",
+      "name": "label",
+      "value": "max_c"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "°",
+     "throttle": 70,
+     "limit": 5
+    },
+    "open": "estate/ops"
+   },
+   "at": [
+    9,
+    16
+   ],
+   "span": [
+    3,
+    3
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "control-plane",
+    "form": "numbers",
+    "source": "obs.health",
+    "title": "Control plane",
+    "read": {
+     "refresh": "5s",
+     "map": {
+      "pick": {
+       "workers": "workers",
+       "capabilities": "caps",
+       "mcp servers": "mcp_servers",
+       "mode": "mode"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/ops"
+   },
+   "at": [
+    0,
+    19
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "gpu-gate",
+    "form": "level",
+    "source": "obs.health",
+    "title": "GPU gate",
+    "read": {
+     "refresh": "5s",
+     "map": {
+      "value": "gpu_gate.held",
+      "max": "gpu_gate.capacity"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "held",
+     "cells": 4
+    },
+    "open": "models"
+   },
+   "at": [
+    4,
+    19
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "census",
+    "form": "level",
+    "source": "obs.health",
+    "title": "Census · goals",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "value": "census.done",
+      "max": "census.total"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "done",
+     "cells": 6
+    },
+    "open": "agents"
+   },
+   "at": [
+    6,
+    19
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "subsystems",
+    "form": "pills",
+    "source": "dash.health.summary",
+    "title": "Subsystems",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "$",
+      "entries": "status",
+      "keys": [
+       "proxmox",
+       "docker",
+       "ollama",
+       "mesh",
+       "loop_lab",
+       "sandboxes",
+       "mimic",
+       "fabric",
+       "redis"
+      ]
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/observe"
+   },
+   "at": [
+    8,
+    19
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "events",
+    "form": "log",
+    "source": "obs.events",
+    "title": "Live events",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "events": "$",
+      "t": "ts",
+      "kind": "type",
+      "text": "name"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "activity"
+   },
+   "at": [
+    0,
+    21
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "warnings",
+    "form": "log",
+    "source": "syslog.errors",
+    "title": "Warnings · latest",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "events": "warnings",
+      "t": "ts",
+      "kind": "cap_group",
+      "text": "message"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "elements/syslog"
+   },
+   "at": [
+    4,
+    21
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "loop-stalls",
+    "form": "column",
+    "source": "perf.stalls",
+    "title": "Event-loop stalls · ms each",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "events",
+      "value": "stalled_ms",
+      "reverse": true
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/perf"
+   },
+   "at": [
+    8,
+    21
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-inference",
+    "form": "section",
+    "source": "",
+    "title": "Inference · models · nodes · routing",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv1,#866ec5)"
+    }
+   },
+   "at": [
+    0,
+    24
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sysmon-ollama",
+    "form": "composite",
+    "source": "sysmon.status",
+    "title": "Ollama",
+    "read": {
+     "refresh": "10s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "ring",
+       "source": "$subject.ollama",
+       "title": "in use",
+       "read": {
+        "map": {
+         "value": "in_use",
+         "max": "total"
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.ollama.nodes",
+       "title": "nodes",
+       "read": {
+        "map": {
+         "name": "label",
+         "status": "status",
+         "latency_ms": "latency_ms"
+        }
+       },
+       "draw": {
+        "columns": [
+         "name",
+         "status",
+         "latency_ms"
+        ],
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "ollama.gate.status",
+       "title": "GPU gate · held by node",
+       "read": {
+        "map": {
+         "rows": "nodes",
+         "name": "node",
+         "value": "held",
+         "status": "gated"
+        }
+       },
+       "draw": {
+        "columns": [
+         "name",
+         "value"
+        ],
+        "limit": 3
+       }
+      }
+     }
+    ],
+    "open": "models"
+   },
+   "at": [
+    0,
+    25
+   ],
+   "span": [
+    4,
+    6
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "node-perf",
+    "form": "lines",
+    "source": "bench.node_perf.history",
+    "title": "Node latency · ping",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "series",
+      "v": "ping_ms"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "rows": 3,
+     "unit": "ms"
+    },
+    "open": "models"
+   },
+   "at": [
+    4,
+    25
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "node-tps",
+    "form": "lines",
+    "source": "bench.node_perf.history",
+    "title": "Node throughput · tokens/s",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "series",
+      "v": "tps"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "rows": 3,
+     "unit": "tok/s"
+    },
+    "open": "models"
+   },
+   "at": [
+    8,
+    25
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "requests-rate",
+    "form": "pulse",
+    "source": "ollama.request_log",
+    "title": "Requests · rate",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "events": "entries",
+      "t": "ts",
+      "kind": "instance",
+      "text": "model"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "models"
+   },
+   "at": [
+    4,
+    28
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "models",
+    "form": "composite",
+    "source": "catalog.installed",
+    "title": "Models",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "catalogue",
+       "read": {
+        "map": {
+         "keys": [
+          "total_models",
+          "total_size_gb"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.nodes",
+       "title": "per node",
+       "read": {
+        "map": {
+         "name": "label",
+         "status": "status",
+         "value": "vram_gb"
+        }
+       },
+       "draw": {
+        "unit": "GB",
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "bench.results",
+       "title": "bench",
+       "read": {
+        "map": {
+         "rows": "results",
+         "name": "model",
+         "value": "accuracy",
+         "status": "role"
+        }
+       },
+       "draw": {
+        "limit": 2
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "open": "models"
+   },
+   "at": [
+    8,
+    28
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "routing-rules",
+    "form": "table",
+    "source": "ollama.cap_routing.get",
+    "title": "Routing rules",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "rows": "declared"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "columns": [
+      "name",
+      "job_type",
+      "prefer_gpu",
+      "deny_gpu",
+      "model"
+     ]
+    },
+    "open": "models/routing"
+   },
+   "at": [
+    0,
+    31
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "routing-cfg",
+    "form": "composite",
+    "source": "ollama.routing.get",
+    "title": "Routing · embedding",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "routing",
+       "read": {
+        "map": {
+         "keys": [
+          "active_profile"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "ollama.embed_config",
+       "title": "embedding",
+       "read": {
+        "map": {
+         "keys": [
+          "embed_model",
+          "embed_url",
+          "prefer_gpu",
+          "pinned_instance"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "ollama.instances",
+       "title": "instances",
+       "read": {
+        "map": {
+         "rows": "$",
+         "name": "label",
+         "status": "status",
+         "value": "latency_ms"
+        }
+       },
+       "draw": {
+        "unit": "ms",
+        "limit": 3
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "open": "models/routing"
+   },
+   "at": [
+    6,
+    31
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-estate",
+    "form": "section",
+    "source": "",
+    "title": "Estate · hosts · guests · containers",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv2,#54a863)"
+    }
+   },
+   "at": [
+    0,
+    34
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sysmon-proxmox",
+    "form": "composite",
+    "source": "sysmon.status",
+    "title": "Proxmox",
+    "read": {
+     "refresh": "10s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "numbers",
+       "source": "$subject.proxmox",
+       "title": "guests",
+       "read": {
+        "map": {
+         "pick": {
+          "running": "running",
+          "guests": "guests"
+         }
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "meter",
+       "source": "$subject.proxmox",
+       "title": "memory",
+       "read": {
+        "map": {
+         "value": "mem_used_gb",
+         "max": "mem_total_gb"
+        }
+       },
+       "draw": {
+        "unit": "GB"
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject.proxmox.top_guests",
+       "title": "busiest guests",
+       "read": {
+        "map": {
+         "name": "name",
+         "status": "status",
+         "cpu": "cpu",
+         "mem": "mem"
+        }
+       },
+       "draw": {
+        "columns": [
+         "name",
+         "status",
+         "cpu",
+         "mem"
+        ],
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "memory %",
+       "read": {
+        "map": {
+         "series": "samples",
+         "v": "pmx_mem_pct"
+        }
+       },
+       "draw": {
+        "unit": "%"
+       }
+      }
+     }
+    ],
+    "open": "estate/proxmox"
+   },
+   "at": [
+    0,
+    35
+   ],
+   "span": [
+    4,
+    6
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sysmon-docker",
+    "form": "composite",
+    "source": "sysmon.status",
+    "title": "Docker",
+    "read": {
+     "refresh": "10s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "numbers",
+       "source": "$subject.docker",
+       "title": "containers",
+       "read": {
+        "map": {
+         "pick": {
+          "hosts": "total_hosts",
+          "reachable": "reachable",
+          "running": "running",
+          "containers": "containers"
+         }
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.docker.hosts",
+       "title": "hosts",
+       "read": {
+        "map": {
+         "name": "label",
+         "containers": "containers",
+         "running": "running"
+        }
+       },
+       "draw": {
+        "columns": [
+         "name",
+         "running",
+         "containers"
+        ],
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "running",
+       "read": {
+        "map": {
+         "series": "samples",
+         "v": "dkr_running"
+        }
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "pills",
+       "source": "docker.stack.status",
+       "title": "the stack",
+       "read": {
+        "map": {
+         "values": "services",
+         "name": "label",
+         "status": "status"
+        }
+       },
+       "draw": {
+        "limit": 8
+       }
+      }
+     }
+    ],
+    "open": "estate/docker"
+   },
+   "at": [
+    4,
+    35
+   ],
+   "span": [
+    4,
+    6
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "estate-health",
+    "form": "composite",
+    "source": "estate.health",
+    "title": "Estate health",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "string",
+       "source": "$subject",
+       "title": "level",
+       "read": {
+        "map": {
+         "text": "level"
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "$subject.counts",
+       "title": "findings",
+       "read": {}
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "sections",
+       "read": {
+        "map": {
+         "rows": "sections",
+         "value": "elapsed_ms"
+        }
+       },
+       "draw": {
+        "limit": 4,
+        "unit": "ms"
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "warnings",
+       "read": {
+        "map": {
+         "rows": "findings",
+         "name": "subject",
+         "status": "severity"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "e",
+      "record": {
+       "form": "rows",
+       "source": "perf.scan",
+       "title": "perf.scan",
+       "read": {
+        "map": {
+         "rows": "findings",
+         "name": "title",
+         "status": "severity"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "f",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "checked",
+       "read": {
+        "map": {
+         "keys": [
+          "checked_at"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "open": "estate"
+   },
+   "at": [
+    8,
+    35
+   ],
+   "span": [
+    4,
+    6
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "at": [
+    0,
+    41
+   ],
+   "span": [
+    6,
+    5
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "cpu-cores",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      5
+     ]
+    },
+    "form": "cellmap",
+    "source": "obs.node_temps",
+    "title": "CPU cores · load and temperature",
+    "read": {
+     "refresh": "30s"
+    },
+    "draw": {
+     "body": "record",
+     "lens": "load"
+    },
+    "open": "estate/observe"
+   }
+  },
+  {
+   "at": [
+    6,
+    41
+   ],
+   "span": [
+    6,
+    5
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "cpu-pinning",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      5
+     ]
+    },
+    "form": "cellmap",
+    "source": "pxstore.cpu.map",
+    "title": "CPU pinning · NUMA · corp",
+    "read": {
+     "refresh": "120s",
+     "args": {
+      "cluster_id": "2d83c1b5-b25a-4b47-98b8-50660e24b682",
+      "node": "corp"
+     }
+    },
+    "draw": {
+     "body": "record",
+     "lens": "pins"
+    },
+    "open": "estate/proxmox",
+    "note": "the Proxmox node corp: which cpus running guests are pinned to, per NUMA node; pxstore.cpu.map needs the node's SSH login (a sandbox without it shows the sample)"
+   }
+  },
+  {
+   "record": {
+    "id": "topology-map",
+    "form": "vgraph",
+    "source": "topology.snapshot",
+    "shape": "graph",
+    "title": "Stack topology",
+    "read": {
+     "refresh": "2m",
+     "map": {
+      "nodes": "nodes",
+      "links": "edges",
+      "type": "kind"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      8,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "mode": "estate-3d",
+     "chrome": "min",
+     "colour": "status"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "the stack as the Vera graph: Vera, its categories and every node, service and guest under them - the estate in 3D by default, the mode picker switches to the plain graph, exploded, the 2D plan or a flowchart; a node click opens it"
+   },
+   "at": [
+    0,
+    46
+   ],
+   "span": [
+    8,
+    6
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "backups",
+    "form": "composite",
+    "source": "backup.status",
+    "title": "Backups",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "rows",
+       "source": "$subject.guests",
+       "title": "guests",
+       "read": {
+        "map": {
+         "name": "name",
+         "status": "status",
+         "value": "backups"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.schedules",
+       "title": "schedules",
+       "read": {
+        "map": {
+         "name": "storage",
+         "value": "schedule",
+         "status": "enabled"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject.storages",
+       "title": "storage",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "used"
+        }
+       },
+       "draw": {
+        "limit": 3,
+        "bytes": true
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "kv",
+       "source": "$subject.host",
+       "title": "host job",
+       "read": {
+        "map": {
+         "keys": [
+          "result",
+          "running",
+          "next"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "e",
+      "record": {
+       "form": "kv",
+       "source": "$subject.snapshots.corp",
+       "title": "snapshots",
+       "read": {
+        "map": {
+         "keys": [
+          "backup",
+          "cpool",
+          "rpool",
+          "tank_sde",
+          "tank_sdh"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "open": "estate/storage"
+   },
+   "at": [
+    8,
+    46
+   ],
+   "span": [
+    4,
+    6
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "at": [
+    0,
+    52
+   ],
+   "record": {
+    "id": "ops-live",
+    "form": "vgraph",
+    "source": "ops.snapshot",
+    "title": "Live operations",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "nodes": "nodes",
+      "links": "links",
+      "type": "plane"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      8,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "mode": "estate-3d",
+     "chrome": "min",
+     "colour": "status"
+    },
+    "open": "estate/ops",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "note": "the Live operations page (the estate as planes of nodes on a lattice of domains, what is in flight) as a tile - a version of the stack topology"
+   },
+   "span": [
+    8,
+    6
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "node-agents",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "table",
+    "source": "nodes.agent.status",
+    "title": "Node agents",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "rows": "nodes",
+      "name": "node"
+     }
+    },
+    "open": "estate/workers",
+    "draw": {
+     "body": "record",
+     "columns": [
+      "node",
+      "cores",
+      "mem_available_mb",
+      "runners"
+     ]
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    }
+   },
+   "at": [
+    8,
+    52
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "file-fabric",
+    "form": "composite",
+    "source": "vfs.status",
+    "title": "File fabric",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject.services",
+       "title": "services",
+       "read": {}
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "$subject.estate",
+       "title": "estate",
+       "read": {
+        "map": {
+         "keys": [
+          "mounted"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject.shares",
+       "title": "shares",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "drive_letter"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "open": "estate/storage"
+   },
+   "at": [
+    8,
+    54
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "guests-city",
+    "form": "city",
+    "source": "sysmon.status",
+    "title": "Guests · cpu as height, memory as colour",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "nodes": "proxmox.top_guests",
+      "name": "name",
+      "load": "cpu_pct",
+      "temp": "mem_pct",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/proxmox"
+   },
+   "at": [
+    0,
+    58
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "guests-racks",
+    "form": "racks",
+    "source": "backup.status",
+    "title": "Guests · by state",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "rows": "guests",
+      "name": "name",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/proxmox"
+   },
+   "at": [
+    4,
+    58
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "stack-iso",
+    "form": "containers",
+    "source": "docker.ps",
+    "title": "Containers · running",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "rows": "containers",
+      "name": "Names",
+      "status": "State",
+      "host": "host_id"
+     },
+     "args": {
+      "slim": true
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/docker"
+   },
+   "at": [
+    8,
+    58
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-memory",
+    "form": "section",
+    "source": "",
+    "title": "Memory · stores · fabric · worldview",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv4,#bb881a)"
+    }
+   },
+   "at": [
+    0,
+    62
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "memory-stores",
+    "form": "ranked",
+    "source": "memory.stats",
+    "title": "Memory stores · what each holds",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "neo4j links": "backends.neo4j.relationships",
+       "postgres records": "backends.postgres.total",
+       "chroma vectors": "backends.chroma.count",
+       "neo4j nodes": "backends.neo4j.nodes"
+      }
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "fabric"
+   },
+   "at": [
+    0,
+    63
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric-health",
+    "form": "numbers",
+    "source": "fabric.health",
+    "title": "Fabric · records · sources",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "pick": {
+       "records": "records_count",
+       "datasets": "datasets_count",
+       "sources": "sources_count",
+       "db size": "db_size"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "bytes": [
+      "db size"
+     ]
+    },
+    "open": "fabric"
+   },
+   "at": [
+    6,
+    63
+   ],
+   "span": [
+    3,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "worldview",
+    "form": "numbers",
+    "source": "worldview.stats",
+    "title": "Worldview · concepts",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "pick": {
+       "concepts": "model.num_concepts",
+       "labelled": "model.labelled_concepts",
+       "assigned": "model.records_assigned",
+       "transitions": "model.transitions_observed"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "fabric"
+   },
+   "at": [
+    9,
+    63
+   ],
+   "span": [
+    3,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-agents",
+    "form": "section",
+    "source": "",
+    "title": "Agents · programmes · loops · background",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv5,#b95c88)"
+    }
+   },
+   "at": [
+    0,
+    65
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "programmes",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "composite",
+    "source": "loops.program.list",
+    "title": "Programmes",
+    "read": {
+     "refresh": "60s"
+    },
+    "open": "agents",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "donut",
+       "source": "$subject",
+       "title": "by status",
+       "read": {
+        "map": {
+         "parts": "programs",
+         "count": "status"
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "counter",
+       "source": "$subject",
+       "title": "programmes",
+       "read": {
+        "map": {
+         "of": "programs",
+         "total": true
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "column",
+       "source": "$subject",
+       "title": "started per day",
+       "read": {
+        "map": {
+         "values": "programs",
+         "count": "created",
+         "span": "day"
+        }
+       },
+       "draw": {
+        "limit": 21
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "programmes",
+       "read": {
+        "map": {
+         "rows": "programs",
+         "name": "name",
+         "status": "status",
+         "value": "horizon_days"
+        }
+       },
+       "draw": {
+        "limit": 6,
+        "unit": "d"
+       }
+      }
+     }
+    ],
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      5
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    66
+   ],
+   "span": [
+    6,
+    5
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "composite",
+    "source": "evolve.sandbox.list",
+    "title": "Loop Lab",
+    "read": {
+     "refresh": "30s"
+    },
+    "open": "evolve",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "ring",
+       "source": "$subject",
+       "title": "free slots",
+       "read": {
+        "map": {
+         "value": "capacity.available_slots",
+         "max": "capacity.port_capacity"
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "sandboxes",
+       "read": {
+        "map": {
+         "rows": "sandboxes",
+         "name": "name",
+         "status": "running",
+         "value": "branch"
+        }
+       },
+       "draw": {
+        "limit": 6
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "evolve.pipeline.list",
+       "title": "pipelines",
+       "read": {
+        "map": {
+         "rows": "pipelines",
+         "name": "branch",
+         "status": "decision"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "donut",
+       "source": "$subject",
+       "title": "sandboxes by role",
+       "read": {
+        "map": {
+         "parts": "sandboxes",
+         "count": "role"
+        }
+       }
+      }
+     },
+     {
+      "slot": "e",
+      "record": {
+       "form": "donut",
+       "source": "evolve.pipeline.list",
+       "title": "pipelines by decision",
+       "read": {
+        "map": {
+         "parts": "pipelines",
+         "count": "decision"
+        }
+       }
+      }
+     }
+    ],
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      5
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    6,
+    66
+   ],
+   "span": [
+    6,
+    5
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agents",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "composite",
+    "source": "agent.list",
+    "title": "Agents · projects",
+    "read": {
+     "refresh": "60s"
+    },
+    "open": "agents",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "counter",
+       "source": "$subject",
+       "title": "agents",
+       "read": {
+        "map": {
+         "of": "agents",
+         "total": true
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "counter",
+       "source": "project.list",
+       "title": "projects",
+       "read": {
+        "map": {
+         "of": "projects",
+         "total": true
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "donut",
+       "source": "project.list",
+       "title": "projects by status",
+       "read": {
+        "map": {
+         "parts": "projects",
+         "count": "status"
+        }
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "project.list",
+       "title": "projects",
+       "read": {
+        "map": {
+         "rows": "projects",
+         "name": "name",
+         "status": "status",
+         "value": "updated_at"
+        }
+       },
+       "draw": {
+        "limit": 5
+       }
+      }
+     },
+     {
+      "slot": "e",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "agents · context",
+       "read": {
+        "map": {
+         "rows": "agents",
+         "name": "label",
+         "value": "num_ctx"
+        }
+       },
+       "draw": {
+        "limit": 5
+       }
+      }
+     },
+     {
+      "slot": "f",
+      "record": {
+       "form": "rows",
+       "source": "workshop.list_loop_variants",
+       "title": "loop variants",
+       "read": {
+        "map": {
+         "rows": "variants",
+         "name": "label"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     }
+    ],
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    71
+   ],
+   "span": [
+    6,
+    6
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sandboxes",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "sandboxes",
+    "source": "evolve.sandbox.list",
+    "title": "Sandboxes",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "rows": "sandboxes",
+      "name": "name",
+      "status": "running"
+     }
+    },
+    "open": "estate/sandbox",
+    "draw": {
+     "body": "record",
+     "max": 48
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      6
+     ]
+    }
+   },
+   "at": [
+    6,
+    71
+   ],
+   "span": [
+    6,
+    6
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "background",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "composite",
+    "source": "background.status",
+    "title": "Background jobs",
+    "read": {
+     "refresh": "30s"
+    },
+    "open": "activity",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "meter",
+       "source": "$subject",
+       "title": "quiet · until jobs may run",
+       "read": {
+        "map": {
+         "value": "quiet_for_s",
+         "max": "min_quiet_s"
+        }
+       },
+       "draw": {
+        "unit": "s"
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "state",
+       "read": {
+        "map": {
+         "keys": [
+          "busy_reason",
+          "running"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "jobs · runs · defers",
+       "read": {
+        "map": {
+         "rows": "jobs",
+         "name": "name",
+         "value": "defers",
+         "status": "last_ok"
+        }
+       },
+       "draw": {
+        "limit": 4
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "title": "waiting",
+       "read": {
+        "map": {
+         "rows": "queue.waiting",
+         "name": "title",
+         "value": "waiting_for_s",
+         "status": "state"
+        }
+       },
+       "draw": {
+        "limit": 4,
+        "unit": "s"
+       }
+      }
+     }
+    ],
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      5
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    77
+   ],
+   "span": [
+    4,
+    5
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "minds",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "composite",
+    "source": "dream.scheduler.status",
+    "title": "Dream · narrator",
+    "read": {
+     "refresh": "60s"
+    },
+    "open": "dream",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "meter",
+       "source": "$subject",
+       "title": "idle · until it dreams",
+       "read": {
+        "map": {
+         "value": "idle_minutes",
+         "max": "min_idle_minutes"
+        }
+       },
+       "draw": {
+        "unit": "min"
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "dream",
+       "read": {
+        "map": {
+         "keys": [
+          "scheduler_running",
+          "enabled",
+          "in_cycle",
+          "background_loops"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "dream.director.status",
+       "title": "director",
+       "read": {
+        "map": {
+         "keys": [
+          "running",
+          "conversational",
+          "cpu_pressure"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "kv",
+       "source": "system.narrator.status",
+       "title": "narrator",
+       "read": {
+        "map": {
+         "keys": [
+          "enabled",
+          "loop_running",
+          "model"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      5
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    4,
+    77
+   ],
+   "span": [
+    4,
+    5
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-runs",
+    "form": "column",
+    "source": "evolve.runs",
+    "title": "Loop runs per day · last 50",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "values": "runs",
+      "count": "ts",
+      "span": "day"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      5
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "accent"
+    },
+    "open": "evolve"
+   },
+   "at": [
+    8,
+    77
+   ],
+   "span": [
+    4,
+    5
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "scheduler",
+    "form": "table",
+    "source": "obs.scheduler",
+    "shape": "items",
+    "title": "Scheduler",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "rows": "$"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      8,
+      4
+     ]
+    },
+    "draw": {
+     "columns": [
+      "name",
+      "interval",
+      "runs",
+      "last"
+     ],
+     "sort": "runs",
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    82
+   ],
+   "span": [
+    8,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-goals",
+    "form": "pills",
+    "source": "goals.list",
+    "title": "Goals",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "goals",
+      "name": "name",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "agents"
+   },
+   "at": [
+    8,
+    82
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-looplab",
+    "form": "section",
+    "source": "",
+    "title": "Loop Lab · pipelines · tests · errors",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv7,#bd6533)"
+    }
+   },
+   "at": [
+    0,
+    86
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "lab-runs",
+    "form": "lines",
+    "source": "evolve.activity",
+    "title": "Loop Lab · test runs per hour",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "series": "buckets",
+      "split": [
+       "pass",
+       "fail"
+      ],
+      "t": "hour"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "status"
+    },
+    "open": "evolve"
+   },
+   "at": [
+    0,
+    87
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "lab-decisions",
+    "form": "donut",
+    "source": "evolve.pipeline.list",
+    "title": "Pipelines · decisions",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "parts": "pipelines",
+      "count": "decision"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "status"
+    },
+    "open": "evolve"
+   },
+   "at": [
+    6,
+    87
+   ],
+   "span": [
+    3,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "lab-actions",
+    "form": "ranked",
+    "source": "evolve.audit.list",
+    "title": "Loop Lab · actions",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "audit",
+      "count": "action"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "evolve"
+   },
+   "at": [
+    9,
+    87
+   ],
+   "span": [
+    3,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "lab-suite",
+    "form": "composite",
+    "source": "evolve.unittest.history",
+    "title": "Unit suite",
+    "read": {
+     "refresh": "5m"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "numbers",
+       "source": "$subject",
+       "title": "now",
+       "read": {
+        "map": {
+         "pick": {
+          "passing": "trend.passed",
+          "failing": "trend.failed"
+         }
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "trace",
+       "source": "$subject",
+       "title": "passing · per run",
+       "read": {
+        "map": {
+         "series": "runs",
+         "v": "passed",
+         "t": "ts",
+         "reverse": true
+        }
+       }
+      }
+     }
+    ],
+    "open": "evolve"
+   },
+   "at": [
+    0,
+    90
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "lab-lanes",
+    "form": "rows",
+    "source": "evolve.unittest.history",
+    "title": "Unit lanes · by branch",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "rows": "lanes",
+      "name": "branch",
+      "status": "ok",
+      "value": "passed"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "columns": [
+      "name",
+      "status",
+      "value"
+     ]
+    },
+    "open": "evolve"
+   },
+   "at": [
+    4,
+    90
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "errors",
+    "form": "pareto",
+    "source": "evolve.errors.list",
+    "title": "Errors to triage",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "counts"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "evolve"
+   },
+   "at": [
+    8,
+    90
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-caps",
+    "form": "section",
+    "source": "",
+    "title": "Capabilities · calls · modules",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv3,#3585c9)"
+    }
+   },
+   "at": [
+    0,
+    93
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-latency",
+    "form": "lines",
+    "source": "dream.sensor.cap_calls",
+    "title": "Call time · last 50 calls",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "sample",
+      "v": "elapsed_ms",
+      "t": "ts",
+      "reverse": true
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "ms",
+     "by": "via",
+     "blank": "direct"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    0,
+    94
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-modules",
+    "form": "treemap",
+    "source": "obs.modules",
+    "title": "Capabilities · by module",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "parts": "modules",
+      "name": "name",
+      "value": "caps_added"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    6,
+    94
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-called",
+    "form": "ranked",
+    "source": "dream.sensor.cap_calls",
+    "title": "Most called · last 50 calls",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "sample",
+      "count": "name"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    0,
+    97
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-callers",
+    "form": "ranked",
+    "source": "activity.sessions",
+    "title": "Who calls · by actor",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "sessions",
+      "count": "actor",
+      "sum": "count"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "activity"
+   },
+   "at": [
+    4,
+    97
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-count",
+    "form": "counter",
+    "source": "obs.health",
+    "title": "Capabilities",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "value": "caps",
+      "also": {
+       "workers": "workers",
+       "mcp servers": "mcp_servers",
+       "mode": "mode"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      2,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "what": "capabilities loaded"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    8,
+    97
+   ],
+   "span": [
+    2,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-ontology",
+    "form": "ring",
+    "source": "cap_ontology.stats",
+    "title": "Ontology coverage",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "value": "covered_caps",
+      "max": "total_caps"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      2,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    10,
+    97
+   ],
+   "span": [
+    2,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-network",
+    "form": "section",
+    "source": "",
+    "title": "Network · access · devices",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv6,#00aba4)"
+    }
+   },
+   "at": [
+    0,
+    100
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "mesh-topology",
+    "form": "graph",
+    "source": "mesh.topology",
+    "title": "Mesh topology",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "nodes": "nodes",
+      "links": "edges"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "mesh"
+   },
+   "at": [
+    0,
+    101
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "machines",
+    "form": "table",
+    "source": "nodes.list",
+    "title": "Machines",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "rows": "nodes",
+      "name": "label"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      5,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "columns": [
+      "name",
+      "addr",
+      "docker_kind",
+      "ssh_host_id",
+      "user"
+     ]
+    },
+    "open": "estate/machines"
+   },
+   "at": [
+    4,
+    101
+   ],
+   "span": [
+    5,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "traffic",
+    "form": "numbers",
+    "source": "netmon.snapshot",
+    "title": "Traffic",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "guests": "totals.guests",
+       "running": "totals.running",
+       "net in": "totals.netin",
+       "net out": "totals.netout"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "bytes": [
+      "net in",
+      "net out"
+     ]
+    },
+    "open": "estate/network/traffic"
+   },
+   "at": [
+    9,
+    101
+   ],
+   "span": [
+    3,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "mesh",
+    "form": "composite",
+    "source": "mesh.nodes",
+    "title": "Mesh · secure mesh",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "mesh",
+       "read": {
+        "map": {
+         "keys": [
+          "count",
+          "heartbeat"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "$subject.transports",
+       "title": "transports",
+       "read": {}
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject.nodes",
+       "title": "nodes",
+       "read": {
+        "map": {
+         "name": "name",
+         "status": "status",
+         "value": "rssi"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "netsec.mesh.status",
+       "title": "secure members",
+       "read": {
+        "map": {
+         "rows": "members",
+         "name": "label",
+         "status": "up",
+         "value": "peer_count"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "open": "mesh"
+   },
+   "at": [
+    0,
+    105
+   ],
+   "span": [
+    4,
+    6
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "recon",
+    "form": "composite",
+    "source": "netscan.map.list",
+    "title": "Recon · identity · research",
+    "read": {
+     "refresh": "60s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "rows",
+       "source": "$subject.maps",
+       "title": "maps",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "node_count"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "$subject.maps",
+       "title": "edges",
+       "read": {
+        "map": {
+         "name": "name",
+         "value": "edge_count"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "identity.status",
+       "title": "identity",
+       "read": {
+        "map": {
+         "keys": [
+          "configured",
+          "reachable",
+          "version"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "kv",
+       "source": "research.health",
+       "title": "research",
+       "read": {
+        "map": {
+         "keys": [
+          "status",
+          "jobs_active",
+          "instances",
+          "sources"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "open": "estate/network"
+   },
+   "at": [
+    4,
+    105
+   ],
+   "span": [
+    4,
+    6
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "connections",
+    "form": "composite",
+    "source": "ide.vscode.instances",
+    "title": "Connections",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      6
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "rows",
+       "source": "$subject.instances",
+       "title": "VS Code",
+       "read": {
+        "map": {
+         "name": "label",
+         "status": "status"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "rows",
+       "source": "ide.claude_sessions.sources",
+       "title": "Claude Code",
+       "read": {
+        "map": {
+         "rows": "sources",
+         "name": "label",
+         "status": "alive"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "kv",
+       "source": "openclaw.status",
+       "title": "OpenClaw",
+       "read": {
+        "map": {
+         "keys": [
+          "connected",
+          "gateway_version"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "kv",
+       "source": "tg.bot.status",
+       "title": "telegram",
+       "read": {
+        "map": {
+         "keys": [
+          "running"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "e",
+      "record": {
+       "form": "kv",
+       "source": "ide.remote.summary",
+       "title": "remote ide",
+       "read": {
+        "map": {
+         "keys": [
+          "instances",
+          "runs"
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "open": "estate/connections"
+   },
+   "at": [
+    8,
+    105
+   ],
+   "span": [
+    4,
+    6
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sec-studio",
+    "form": "section",
+    "source": "",
+    "title": "Studio · home · automations",
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      1
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv5,#b95c88)"
+    }
+   },
+   "at": [
+    0,
+    111
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "home",
+    "form": "treemap",
+    "source": "ha.summary",
+    "title": "Home Assistant",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "parts": "domains"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "automations/home"
+   },
+   "at": [
+    0,
+    112
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "automations",
+    "form": "pills",
+    "source": "n8n.workflow.list",
+    "title": "Automations",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "workflows",
+      "name": "name",
+      "status": "active"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "automations/n8n"
+   },
+   "at": [
+    4,
+    112
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "calendar",
+    "form": "agenda",
+    "source": "cal.events.list",
+    "title": "Calendar",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "days": "events",
+      "when": "start",
+      "title": "title"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "elements/calendar"
+   },
+   "at": [
+    8,
+    112
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "diagnostics",
+    "form": "terminal",
+    "source": "obs.diagnostics",
+    "shape": "string",
+    "title": "Diagnostics",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      12,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    115
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fleet",
+    "form": "numbers",
+    "source": "sysmon.status",
+    "title": "Fleet",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "pick": {
+       "guests up": "proxmox.running",
+       "guests": "proxmox.guests",
+       "containers": "docker.running",
+       "ollama": "ollama.online"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/ops"
+   },
+   "span": [
+    2,
+    2
+   ],
+   "hidden": true,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "requests",
+    "form": "log",
+    "source": "ollama.request_log",
+    "title": "Requests · latest",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "events": "entries",
+      "t": "ts",
+      "kind": "instance",
+      "text": "model"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "models"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "routing",
+    "form": "ranked",
+    "source": "ollama.route_stats",
+    "title": "Routing · calls by model",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "stats",
+      "count": "model",
+      "sum": "n"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "models/routing"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "guests",
+    "form": "pills",
+    "source": "sysmon.status",
+    "title": "Guests · busiest",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "values": "proxmox.top_guests",
+      "name": "name",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/proxmox"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric",
+    "form": "numbers",
+    "source": "fabric.stats",
+    "title": "Fabric",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "pick": {
+       "records": "postgres.records",
+       "vectors": "chroma.count",
+       "datasets": "postgres.datasets"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "fabric"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "host-memory",
+    "form": "trace",
+    "source": "sysmon.history",
+    "title": "Host memory",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "series": "samples",
+      "v": "mem"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "%"
+    },
+    "open": "estate/ops"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-programmes",
+    "form": "ranked",
+    "source": "loops.program.list",
+    "title": "Programmes · loops each",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "programs",
+      "name": "name",
+      "value": "loops.length"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "agents"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "workerlist",
+    "form": "table",
+    "source": "obs.workers",
+    "shape": "items",
+    "title": "Workers",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "rows": "$"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      3
+     ]
+    },
+    "draw": {
+     "columns": [
+      "name",
+      "status",
+      "host",
+      "tasks_done",
+      "tasks_failed",
+      "cap_count"
+     ],
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "span": [
+    6,
+    3
+   ],
+   "hidden": true,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-stream",
+    "form": "numbers",
+    "source": "jobs.stats",
+    "title": "Job stream",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "in stream": "stream.length",
+       "unacked": "stream.pending_total",
+       "consumers": "stream.consumer_count",
+       "recovered": "stats.total_orphan_reclaimed"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "elements/jobs"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": "queues",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "host-resources",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "host-temps",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "status",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "mode",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "redis",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "workers",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "caps",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "pending",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "postgres",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "chroma",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "neo4j",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "ollama",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "mesh-info",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "looplab-info",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "sandboxes-info",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "queues-page",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": "health",
+   "span": null,
+   "hidden": true,
+   "refresh": "",
+   "floated": false
+  }
+ ]
+}

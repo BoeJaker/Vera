@@ -571,7 +571,9 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
                 tab_order: int = 100,
                 specialist_agent: str = "",
                 specialist_loop_profile: str = "",
-                specialist_context_cap: str = ""):
+                specialist_context_cap: str = "",
+                sections: List[dict] = None,
+                options: List[dict] = None):
     """Register a built-in UI panel.
 
     mode:
@@ -604,6 +606,11 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
     passed as agent.consult's `context` argument — no new execution engine,
     just real data prepended to the same consult/loop call. Blank = no
     context injection, specialist answers from persona alone as before.
+    sections / options (UI redesign, Notes/40 §2): what the panel's own menu
+    holds — sections [{id, label, tabs:[{id,label}]}] and options [{id, label,
+    kind, get, set}] — so the harness LHM, the chat rail and a panel's side menu
+    are built from ONE registration instead of three hand-drawn lists. Empty =
+    the panel has no declared menu (as every panel today).
     """
     UI_PANELS[panel_id] = {
         "id":        panel_id,
@@ -617,6 +624,8 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
         "specialist_agent":        specialist_agent,
         "specialist_loop_profile": specialist_loop_profile,
         "specialist_context_cap":  specialist_context_cap,
+        "sections":  [s for s in (sections or []) if isinstance(s, dict)],
+        "options":   [o for o in (options or []) if isinstance(o, dict)],
     }
 
 REDIS = PG_POOL = CHROMA = NEO = None
@@ -1555,6 +1564,65 @@ except _GateBrokerError as _broker_error:
     _GATE_BROKER_ERROR = str(_broker_error)
 # Dev-sandbox write guard (strict no-op in prod). See vera/sandbox_guard.py.
 from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked   # noqa: E402
+try:
+    from Vera.vera.sandbox_guard import upstream_read_url as _sg_upstream_url, read_through_allowed as _sg_read_through_allowed   # noqa: E402
+except Exception:  # pragma: no cover
+    try:
+        from .sandbox_guard import upstream_read_url as _sg_upstream_url, read_through_allowed as _sg_read_through_allowed
+    except Exception:
+        _sg_upstream_url = lambda env=None: ""          # noqa: E731
+        _sg_read_through_allowed = lambda name, method, env=None: False   # noqa: E731
+# Read-through is a property of a sandbox that SERVES pages, not of the module: it is armed by lifespan() once the
+# app starts (arm_read_through), and stays '' for every other way this module gets imported — pytest in the gate's
+# ephemeral container (started with VERA_IS_DEV_SANDBOX=1 like any sandbox), a script, a REPL. Armed at import, the
+# hook answered a test's monkeypatched readers and FakeRedis from prod's live estate: 25 red tests on the design edge
+# that were green on bleeding-edge, and five thousand gate tests reading prod. The prod process never arms (the guard
+# says '' outside a sandbox) and a served sandbox behaves exactly as before.
+_READ_THROUGH_URL = ""
+_READ_THROUGH_TIMEOUT_S = float(os.environ.get("VERA_UPSTREAM_READ_TIMEOUT_S") or 40)   # seconds prod gets to answer one reading
+
+
+def arm_read_through(env=None) -> str:
+    """Arm the sandbox read-through for this process — the app calls it when it starts serving. Returns the upstream
+    URL now in force ('' when this process must not read through: not a sandbox, or VERA_UPSTREAM_READ_URL=off)."""
+    global _READ_THROUGH_URL
+    _READ_THROUGH_URL = _sg_upstream_url(env) or ""
+    return _READ_THROUGH_URL
+
+
+def read_through_url() -> str:
+    """The upstream a read-through goes to right now; '' while the hook is disarmed."""
+    return _READ_THROUGH_URL
+
+
+async def _upstream_read(name: str, kw: dict):
+    """One read of prod's estate from a sandbox (sandbox_guard.read_through_allowed said yes): prod's /mcp/call,
+    the arguments as given, no trace of ours. None when prod could not answer — the local capability runs then."""
+    args = {k: v for k, v in (kw or {}).items() if k != "trace_id"}
+    try:
+        # a reading can be slow on the estate itself (topology.snapshot walks every node: ~11 s on prod, longer while a
+        # dashboard of seventeen tiles reads at once) - waiting beats answering from the sandbox's empty stores
+        async with httpx.AsyncClient(verify=False, timeout=_READ_THROUGH_TIMEOUT_S) as c:
+            r = await c.post(_READ_THROUGH_URL, json={"name": name, "arguments": args, "caller_kind": "sandbox-read"},
+                             headers={"X-Vera-Read-Through": "sandbox"})
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        # /mcp/call answers in the MCP envelope {type: tool_result, tool_name, trace_id, content: <the result>} — the
+        # capability's own result is `content` (a list of text parts on an older bridge); a tile wants that, not the envelope
+        if isinstance(j, dict) and j.get("type") == "tool_result" and "content" in j:
+            c = j["content"]
+            if isinstance(c, list) and c and all(isinstance(x, dict) and "text" in x for x in c):
+                txt = "".join(str(x.get("text", "")) for x in c)
+                try:
+                    return json.loads(txt)
+                except Exception:
+                    return {"text": txt}
+            return c
+        return j
+    except Exception as e:  # prod unreachable, a slow read, a bad body: the sandbox answers for itself
+        log.debug("read-through %s: %s", name, e)
+        return None
 
 
 def _split_redis_url(url: str):
@@ -6446,6 +6514,14 @@ def capability(
                         return _estate_guard.refusal(name)
                 except Exception as _eg:              # pragma: no cover
                     log.debug("estate guard skipped for %s: %s", name, _eg)
+            # READ-THROUGH: a dev sandbox has no estate of its own (its Redis and SQLite are its own, empty); a read-only
+            # estate capability is answered by prod, one way — see sandbox_guard.read_through_allowed. Prod itself
+            # never takes this branch, and neither does a process that merely imported this module (a test, a script):
+            # _READ_THROUGH_URL is '' until lifespan() arms it in a serving sandbox.
+            if _READ_THROUGH_URL and not kw.get("_local") and _sg_read_through_allowed(name, http_method):   # the policy says which routes read
+                _rt = await _upstream_read(name, kw)
+                if _rt is not None:
+                    return _rt
             tid     = kw.pop("trace_id",None) or new_id()
             if _alias_for:
                 _surface = ("http_caller" if CURRENT_HTTP_CAP.get("") == name
@@ -7827,6 +7903,12 @@ async def mcp_call_endpoint(name: str, arguments: str = "", trace_id=None):
         args = arguments or {}
     cap = CAPABILITY_REGISTRY.get(name)
     if not cap:
+        # a sandbox that does not load this module still answers a reading of the estate from prod (worldview.stats
+        # on a mirror without the worldview module)
+        if _READ_THROUGH_URL and _sg_read_through_allowed(name, "GET"):
+            _rt = await _upstream_read(name, args)
+            if _rt is not None:
+                return {"type": "tool_result", "tool_name": name, "trace_id": trace_id or new_id(), "content": _rt}
         raise HTTPException(404, f"Unknown capability: {name}")
     tid    = trace_id or new_id()
     result = await cap["func"](**args, trace_id=tid)
@@ -7890,6 +7972,10 @@ def _make_mcp_call_handler():
 
         cap = CAPABILITY_REGISTRY.get(name)
         if not cap:
+            if _READ_THROUGH_URL and _sg_read_through_allowed(name, "GET"):   # a module this sandbox does not load: prod's reading
+                _rt = await _upstream_read(name, args)
+                if _rt is not None:
+                    return {"type": "tool_result", "tool_name": name, "trace_id": new_id(), "content": _rt}
             raise HTTPException(404, f"Unknown capability: {name}")
 
         # Filter args to accepted params — prevents unexpected kwarg errors
@@ -10681,6 +10767,12 @@ async def _openbao_autounseal_boot():
 async def lifespan(app: FastAPI):
     global REDIS, PG_POOL, CHROMA, NEO
 
+    # A serving sandbox answers estate readings from prod (the read-through hook in @capability). Armed HERE, once
+    # the app is starting, so that a bare import of this module — the gate's pytest, a script — never reads through.
+    _rt_url = arm_read_through()
+    if _rt_url:
+        log.info("sandbox read-through armed: estate readings answered by %s", _rt_url)
+
     # Preload optional automatic telemetry during startup, never on the first
     # completed Run. Disabled mode imports nothing on the Run-recording path.
     if str(os.getenv("VERA_OTLP_AUTO_EXPORT") or "").strip().lower() in {
@@ -10911,6 +11003,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "estate/backup_capabilities.py"),
         os.path.join(_here, "estate/estate_entity_capabilities.py"),
         os.path.join(_here, "estate/registration_capabilities.py"),
+        os.path.join(_here, "estate/ops_capabilities.py"),
         os.path.join(_here, "security/secrets_capabilities.py"),
         os.path.join(_here, "security/redis_auth_capabilities.py"),
         os.path.join(_here, "security/certs_capabilities.py"),
@@ -10968,6 +11061,10 @@ async def lifespan(app: FastAPI):
         # operator sees why an nlp.* call went where it did.
         os.path.join(_here, "research/nlp_dispatch.py"),
         os.path.join(_here, "research/nlp_capabilities.py"),
+        # explode AFTER the nlp caps: its node-tier layers call them through the registry
+        os.path.join(_here, "research/explode_capabilities.py"),
+        # assess AFTER explode: the scorers read the contracts explode builds
+        os.path.join(_here, "research/assess_capabilities.py"),
         os.path.join(_here, "models/model_inventory_capabilities.py"),
         os.path.join(_here, "vector browser/vector_browser_capabilites.py"),
         os.path.join(_here, "workers/job_persistance.py"),
@@ -11002,6 +11099,23 @@ async def lifespan(app: FastAPI):
         # inventory and after skills/loop_profiles/agents, for the same reason -
         # it projects onto the live registries and must see all of them.
         os.path.join(_here, "registry/registry_capabilities.py"),
+        # The widget registry (UI redesign): every part of the UI as a record -
+        # templates, instances, the registry panel. Beside the agent registry
+        # because it projects the panel registry (UI_PANELS) as built-ins.
+        os.path.join(_here, "widgets/widget_registry.py"),
+        # The control plane (UI redesign): one vocabulary of directives, one
+        # dispatcher with policy / log / undo and the room manifest, and the
+        # scripted path (deterministic rules on events, no model call). After
+        # the widget registry and the chat's panel bridge, which it drives.
+        os.path.join(_here, "ui/directives.py"),
+        os.path.join(_here, "ui/scripts.py"),
+        # The shared UI libraries (UI redesign): the one ISO projection and the
+        # one context-menu registry, served at /ui/iso.js and /ui/menus.js.
+        os.path.join(_here, "ui/libs.py"),
+        # The widget catalogue (UI redesign): shapes, forms, sources; the
+        # validate / render_spec a renderer or editor asks before drawing.
+        # After the registry, whose templates it validates.
+        os.path.join(_here, "widgets/widget_catalog.py"),
         # Planning styles: additive alternatives to the loop's own planner
         # (plan.styles / plan.detailed). Loaded late so plan.detailed's default
         # capability catalogue is the complete registry, not a partial one.
@@ -11050,6 +11164,14 @@ async def lifespan(app: FastAPI):
         # Mission control's one table: a row per event from the audit log, the
         # errors queue and the gates, with the live strip - after task_history/.
         os.path.join(_here, "evolve/mission_capabilities.py"),
+        # ci.* / loop.ci.*: the Loop Lab pictures (matrix, race, tests, run,
+        # board, fleet) as capabilities the canvas draws - after evolve/,
+        # board/ and dag/ (reads their stores through sys.modules).
+        os.path.join(_here, "evolve/ci_capabilities.py"),
+        # canvas.enrich: what else is relevant to a turn, onto its canvas - after
+        # canvas/, widgets/, web/, fabric/, markets/ and dag/ (caps.search), which it
+        # calls through the registry.
+        os.path.join(_here, "canvas/enrich_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),
         # Operator: general observe→think→act web/computer operator (drives any
@@ -11552,7 +11674,7 @@ async def _memgraph_panel_route():
 
 try:
     register_ui(
-        "memory-graph", "Memory Graph", "",
+        "memory-graph", "Memory Graph", "✣",
         """<div style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/memgraph/panel"
           style="flex:1;border:none;width:100%;height:100%"

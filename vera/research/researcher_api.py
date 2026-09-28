@@ -11589,14 +11589,14 @@ if _VERA_MODE:
     _all_cap_names = [k for k in CAPABILITY_REGISTRY if k.startswith("research.")]
 
     register_ui(
-        "research-panel", "Research", "",
+        "research-panel", "Research", "⌾",
         f'<div style="height:100%;display:flex;flex-direction:column;">'
         f'<iframe src="/research/panel" style="{_IFRAME_STYLE}" '
         f'allow="clipboard-read; clipboard-write"></iframe></div>',
         "", ui_caps=_all_cap_names, mode="tab", tab_order=55,
     )
     register_ui(
-        "notebook-panel", "Notebook", "",
+        "notebook-panel", "Notebook", "⎘",
         f'<div style="height:100%;display:flex;flex-direction:column;">'
         f'<iframe src="/notebook/panel" style="{_IFRAME_STYLE}" '
         f'allow="clipboard-read; clipboard-write"></iframe></div>',
@@ -11604,7 +11604,7 @@ if _VERA_MODE:
         mode="tab", tab_order=56,
     )
     register_ui(
-        "nlp-panel", "NLP", "",
+        "nlp-panel", "NLP", "⊨",
         f'<div style="height:100%;display:flex;flex-direction:column;">'
         f'<iframe src="/nlp/panel" style="{_IFRAME_STYLE}" '
         f'allow="clipboard-read; clipboard-write"></iframe></div>',

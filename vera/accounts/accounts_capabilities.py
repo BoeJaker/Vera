@@ -722,7 +722,7 @@ async def _comms_panel_route():
 register_ui(
     "accounts-panel",
     "Accounts",
-    "👤",
+    "◍",
     """<div id="accounts-panel-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/accounts/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
@@ -744,7 +744,7 @@ register_ui(
 register_ui(
     "comms-panel",
     "Comms",
-    "🛰",
+    "⇄",
     """<div id="comms-panel-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/comms/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"

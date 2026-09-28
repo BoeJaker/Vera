@@ -1,0 +1,832 @@
+{
+ "schema": "vera.design-adoption-state/v1",
+ "canvas": "Vera UI redesign (chat & canvas · widgets · system)",
+ "slug": "vera-ui-redesign-chat-canvas-widgets-system",
+ "artifacts": [
+  "https://claude.ai/code/artifact/58f8910e-18b3-4dc6-91a2-4f8607863dd1",
+  "https://claude.ai/code/artifact/ac375d17-fb01-461f-9223-ce6c3f33439b",
+  "https://claude.ai/code/artifact/51b802c8-d6c0-419b-a73b-231bab804f4e"
+ ],
+ "edge": "bleeding-edge-design",
+ "created": "2026-09-10T23:02:57.695Z",
+ "updated": "2026-09-11T05:29:27.760Z",
+ "sources": {
+  "slices": "slices.json",
+  "map": "adopt-map.json"
+ },
+ "totals": {
+  "boards": 28,
+  "parts": 127,
+  "verdicts": {
+   "replaces": 120,
+   "extends": 6,
+   "new": 1,
+   "retire": 0
+  },
+  "keep": 3352
+ },
+ "slices": [
+  {
+   "id": "adoption-helpers",
+   "order": 1,
+   "title": "Design-adoption helpers in the vera-design-adopt skill (estate index · design index · map · slices · state · pair diff), registered in Vera's registry",
+   "boards": [],
+   "targets": [
+    ".claude/skills/vera-design-adopt/",
+    "docs/design-adoption/"
+   ],
+   "parts": 0,
+   "verdicts": {
+    "replaces": 0,
+    "extends": 0,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "the six helpers run against this canvas and the estate",
+    "outputs committed under docs/design-adoption/<canvas>/",
+    "registry entry skill:vera-design-adopt lists them"
+   ],
+   "verify": {
+    "design": "",
+    "live": "/registry/entry?id=skill:vera-design-adopt",
+    "pairDir": "Notes/adopt-shots/adoption-helpers"
+   },
+   "prerequisites": [],
+   "status": "landed",
+   "pipelines": [
+    "136d09f3"
+   ],
+   "commits": [
+    "ff2202d",
+    "ef31d93"
+   ],
+   "pairs": [],
+   "parked": [],
+   "notes": [
+    "estate · design-index · map · slices · state · pairdiff written and run against the 28-board canvas",
+    "merged to bleeding-edge-design 2026-09-11; standing container refreshed"
+   ],
+   "updated": "2026-09-10T23:12:24.284Z"
+  },
+  {
+   "id": "m1a-tokens-packs",
+   "order": 2,
+   "title": "M1a — style packs, density tiers, the data-viz ramp; the appearance runtime (theme_defs.py, vera-ui.js)",
+   "boards": [
+    "StylePacks.dc.html",
+    "Settings.dc.html"
+   ],
+   "targets": [
+    "vera/chat/chat_panel.html",
+    "vera/vera-ui.js",
+    "vera/execution/netmap_panel.html",
+    "vera/dag/dag_workshop_panel.html",
+    "vera/theme_defs.py"
+   ],
+   "parts": 24,
+   "verdicts": {
+    "replaces": 23,
+    "extends": 1,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "style packs + tiers + ramp in theme_defs.py",
+    "the appearance runtime (setAppearance) in vera-ui.js"
+   ],
+   "verify": {
+    "design": "StylePacks.dc.html",
+    "live": "/chat",
+    "pairDir": "Notes/adopt-shots/m1a-tokens-packs"
+   },
+   "prerequisites": [],
+   "status": "verified",
+   "pipelines": [
+    "e5066bc1",
+    "5a699f07"
+   ],
+   "commits": [
+    "5e543b1",
+    "5199321",
+    "44bd479",
+    "d7a9e67"
+   ],
+   "pairs": [
+    "Notes/adopt-shots/m1a/pair-standard.png",
+    "Notes/adopt-shots/m1a/pair-newspaper.png",
+    "Notes/adopt-shots/m1a/pair-terminal.png",
+    "Notes/adopt-shots/m1a/pair-pixel.png"
+   ],
+   "parked": [],
+   "notes": [
+    "merged to bleeding-edge-design 2026-09-10; pair not yet taken",
+    "the first pair showed a pack switch changing nothing on the chat (its --sans/--mono and radii were its own); M1a-surfaces made the chat read the tokens — live pack vs standard now moves 3-4% of the chat's pixels (fonts, casing, radii); design-vs-live 14.5-15% (different content)"
+   ],
+   "updated": "2026-09-10T23:52:47.251Z"
+  },
+  {
+   "id": "m1b-tiers-blocks",
+   "order": 3,
+   "title": "M1b — the three density tiers and Blocks in the chat (data-den · data-blocks), appearance controls in the top bar",
+   "boards": [
+    "Main.dc.html"
+   ],
+   "targets": [
+    "vera/chat/chat_panel.html",
+    "vera/chat/chat_panel.js",
+    "vera/elements/chat_data_element.js"
+   ],
+   "parts": 0,
+   "verdicts": {
+    "replaces": 0,
+    "extends": 0,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "chat_panel.html carries the tier and blocks CSS + the appearance controls",
+    "tests/test_chat_panel_appearance.py passes",
+    "design-vs-live pair kept under Notes/adopt-shots/m1b"
+   ],
+   "verify": {
+    "design": "Main.dc.html",
+    "live": "/chat?den=full",
+    "pairDir": "Notes/adopt-shots/m1b-tiers-blocks"
+   },
+   "prerequisites": [],
+   "status": "verified",
+   "pipelines": [
+    "fb6f5f42",
+    "a7e59465"
+   ],
+   "commits": [
+    "c669885",
+    "ac19f94",
+    "d9537b8",
+    "770dc23"
+   ],
+   "pairs": [
+    "Notes/adopt-shots/m1b/pair-full.png",
+    "Notes/adopt-shots/m1b/pair-hover.png",
+    "Notes/adopt-shots/m1b/pair-zen.png",
+    "Notes/adopt-shots/m1b/pair-blocks-off.png"
+   ],
+   "parked": [],
+   "notes": [
+    "chat_panel.html patch built in scratchpad w5-m1b; test + pair pending",
+    "the pair caught Blocks off not reaching the minimal view's question (fixed a7e59465); tiers verified live: full chrome at rest, hover chrome at the foot of the pointed turn, zen 820px column without chrome, blocks off flat on every surface; 15 tests. Not in this slice: the LHM quick menu, the chip rows and the composer modes the board also shows (lhm-library, chat-modes)"
+   ],
+   "updated": "2026-09-10T23:52:47.463Z"
+  },
+  {
+   "id": "lhm-library",
+   "order": 4,
+   "title": "The LHM library and the one panel set — quick menus as widgets (rail · header · list · CTA), the absorbed menu in the harness, Open now rows",
+   "boards": [
+    "ChatMenu.dc.html",
+    "Harness.dc.html"
+   ],
+   "targets": [
+    "vera/chat/chat_panel.html",
+    "vera/vera_graph.js",
+    "vera/chat/vera-panel-bridge.js",
+    "vera/capability_orchestration.html",
+    "vera/chat/vera-dashboard.js"
+   ],
+   "parts": 0,
+   "verdicts": {
+    "replaces": 0,
+    "extends": 0,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "one LHM implementation serves the chat and the harness (absorb + in-place ☰)",
+    "ui.panels.open lists every open panel from any origin; panel.dispatch/query/state work for all",
+    "pair for the chat menu and the harness LHM"
+   ],
+   "verify": {
+    "design": "ChatMenu.dc.html",
+    "live": "/chat",
+    "pairDir": "Notes/adopt-shots/lhm-library"
+   },
+   "prerequisites": [],
+   "status": "landed",
+   "pipelines": [
+    "d67847b1",
+    "9d666625",
+    "9039d13c"
+   ],
+   "commits": [
+    "f79f44e",
+    "a3e57cb",
+    "e6093b1",
+    "08eaaef",
+    "af5c791",
+    "abd5808"
+   ],
+   "pairs": [
+    "Notes/adopt-shots/lhm-library/pair-chatmenu.png",
+    "Notes/adopt-shots/lhm-library/live-harness-absorbed.png"
+   ],
+   "parked": [],
+   "notes": [
+    "three landings: vera-lhm.js + the chat as owner (8 rail menus grouping all 13 tabs, header/CTA/top list, edit-mode outlines); the harness absorbs the chat's menu in LHM mode with the in-place ☰ swap; the one panel set (ui.panels.open, report route, panel target on dispatch/query, Open now rows both ways, close round trip). Verified live: chat menu pair (22.17% vs the ChatMenu board — content differs), harness absorbed shot, ui.panels.open round trip on the edge. Pending: the Harness board's design render (the preview watchdog trips under the user's 100% CPU) — retry for the numeric pair"
+   ],
+   "updated": "2026-09-11T01:29:15.244Z"
+  },
+  {
+   "id": "widget-record-registry",
+   "order": 5,
+   "title": "The widget record and the registry — every LHM part a widget (WYSIWYG edit, records), widget.template.* caps, placement pickers",
+   "boards": [
+    "WidgetRegistry.dc.html",
+    "WidgetConfig.dc.html",
+    "WidgetAdoption.dc.html",
+    "Widgets.dc.html",
+    "Dashboard.dc.html"
+   ],
+   "targets": [
+    "vera/chat/vera-dashboard.js",
+    "vera/registry/registry_panel.html",
+    "vera/capability_orchestration.html",
+    "vera/ui builder/ui_builder_panel.html",
+    "vera/agent_loop_config_element.js",
+    "vera/workers/workers_ollama_panel.html",
+    "vera/sparkline_element.js",
+    "vera/dream/dream_panel.html",
+    "vera/widgets/widget_registry.py (new: widget.template.*)",
+    "vera/widgets/ (new: the 66 still forms as <vera-widget>)"
+   ],
+   "parts": 78,
+   "verdicts": {
+    "replaces": 76,
+    "extends": 2,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "widget.template.list/get/save/instantiate/delete land as capabilities",
+    "the registry board's list · record · Place into work against them",
+    "edit mode outlines and records on the chat LHM"
+   ],
+   "verify": {
+    "design": "WidgetRegistry.dc.html",
+    "live": "/ui/panel/widget_registry",
+    "pairDir": "Notes/adopt-shots/widget-record-registry"
+   },
+   "prerequisites": [],
+   "status": "verified",
+   "pipelines": [
+    "29c4e584",
+    "f13a8e5d"
+   ],
+   "commits": [
+    "24c97be",
+    "350350e",
+    "7781aff",
+    "af67d2b"
+   ],
+   "pairs": [
+    "Notes/adopt-shots/widget-record-registry/pair-registry.png",
+    "Notes/adopt-shots/widget-record-registry/live-dashboard-placed.png",
+    "Notes/adopt-shots/widget-record-registry/live-lhm-record-sheet.png"
+   ],
+   "parked": [],
+   "notes": [
+    "vera/widgets/widget_registry.py: widget.template.list/get/save/delete/instantiate + widget.instance.list/remove, built-ins = 77 panels + 11 LHM parts (88 live), Redis-backed; the Widgets registry panel (element) mirrors the board's filters/list/record/Place into; the harness dashboard realises a placed panel template as a VeraDash widget (verified live: inst placed -> dyn-memory-graph on main); the LHM edit mode ⚙ opens a part's record in place, ⧉ saves it, + dashboard/canvas/LHM place it. Regression caught live and fixed (f13a8e5d): the record sheet was inserted before it was created and the mount threw. Not in this slice: renderers for non-panel forms placed on a dashboard (noted in console), Save as menu, the 66 still forms"
+   ],
+   "updated": "2026-09-11T02:20:50.305Z"
+  },
+  {
+   "id": "control-plane",
+   "order": 6,
+   "title": "The control plane — the directive vocabulary, one dispatcher, DIRECT and SCRIPTED paths (ui.script.* on·if·do), the room manifest, policy and undo",
+   "boards": [
+    "Control.dc.html",
+    "Driven.dc.html"
+   ],
+   "targets": [
+    "vera/chat/chat_panel.html",
+    "vera/chat/vera-panel-bridge.js",
+    "vera/vllm/vllm_panel.html",
+    "vera/ui/directives.py (new: the 20-directive vocabulary + dispatcher)",
+    "vera/ui/scripts.py (new: ui.script.* on·if·do)",
+    "vera/ui/directives.py (new)"
+   ],
+   "parts": 5,
+   "verdicts": {
+    "replaces": 3,
+    "extends": 2,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "vera/ui/directives.py + vera/ui/scripts.py registered; the chat's panel bridge routes through the dispatcher",
+    "a traced minute reproduces the board's trace",
+    "what the model sees matches the manifest on the board"
+   ],
+   "verify": {
+    "design": "Control.dc.html",
+    "live": "/ui/control",
+    "pairDir": "Notes/adopt-shots/control-plane"
+   },
+   "prerequisites": [],
+   "status": "verified",
+   "pipelines": [
+    "b69f6f96",
+    "7418916f"
+   ],
+   "commits": [
+    "d0cb3c4",
+    "265279e",
+    "421880c",
+    "5021fcd"
+   ],
+   "pairs": [
+    "Notes/adopt-shots/control-plane/live-scripted-and-ask-chip.png"
+   ],
+   "parked": [],
+   "notes": [
+    "vera/ui/directives.py (21 directives, ui.directive with policy drive/ask/never, log, ask chip + ui.directive.answer, undo, ui.policy, ui.event, ui.room manifest) + vera/ui/scripts.py (on·if·do records, fenced expressions, ui.script.*, the 2 s runner tick over the event stream) + the chat side (__ui_directive__ apply, the ask chip/block, the room in every turn). Verified live on :8994: never→refused, ask→chip, widget.place→applied+undo, a reported loop wait fired the shipped loop-waits script into the chat (ask block + Loop menu) with no model call. Fix 7418916f: the runner tick was singleton and sandboxes hold no leadership. Not in this slice: the ⟦…⟧ inline shorthand ([[cap:ui.directive …]] works), the Driven board's ribbon/log UI, wiring the loop's own HITL pause to ui.event, canvas.* directives (canvas-graph slice); known: the chat's dispatch listener stays on the boot session after loadSession (pre-existing); the scripts' fired counter is per module copy"
+   ],
+   "updated": "2026-09-11T03:19:35.729Z"
+  },
+  {
+   "id": "chat-modes",
+   "order": 7,
+   "title": "Chat modes — voice · council · diffuse strips, paste exchange, tools sheet",
+   "boards": [
+    "Paste.dc.html",
+    "Formats.dc.html"
+   ],
+   "targets": [
+    "vera/chat/chat_panel.html",
+    "vera/vera_graph.js",
+    "vera/chat/vera-panel-bridge.js",
+    "vera/vera_markdown_element.js",
+    "vera/render/vera_mermaid.js"
+   ],
+   "parts": 2,
+   "verdicts": {
+    "replaces": 1,
+    "extends": 0,
+    "new": 1,
+    "retire": 0
+   },
+   "done": [
+    "the three mode strips and their states in chat_panel.html",
+    "paste exchange with attachment chips and the editor",
+    "pair for each mode"
+   ],
+   "verify": {
+    "design": "Canvas.dc.html",
+    "live": "/chat",
+    "pairDir": "Notes/adopt-shots/chat-modes"
+   },
+   "prerequisites": [],
+   "status": "verified",
+   "pipelines": [
+    "addffa56",
+    "f3101f36",
+    "e6515740",
+    "eeb4dfb6"
+   ],
+   "commits": [
+    "2b11ae4",
+    "ea93b00",
+    "4cedd5c",
+    "bf21250"
+   ],
+   "pairs": [
+    "Notes/adopt-shots/chat-modes/"
+   ],
+   "parked": [
+    "paste kinds: image / file / link / rich text as attachments; the size guard (inline the diff · files for the rest · everything inline); [attachment] reference lines the model sees"
+   ],
+   "notes": [
+    "The composer's modes (chips + voice/council/diffuse strips), attachments on the question, one markdown renderer (VeraMD + fence hook, callouts/footnotes/math), streaming mermaid (stream/ghost/settle), widgets in the reply (widget fence + by rule, Pin to canvas). tests/test_chat_modes.py 16. Skill: jscheck.mjs + the pre-landing rule.",
+    "live follow-up: slash menu's empty box (pre-existing), widget draws what it read (shape fallback, kv), Voice chip at once",
+    "Formats pair: diff fences coloured by line; _paRenderAttachments exported; tests deduplicated (19)",
+    "Paste pair: chips + editor + podcast bar follow the composer card; diff/log/csv pastes recognised and titled (21 tests). Pairs: voice 14.78%, council 17.2%, diffuse 15.69% (Canvas composer via the Paste board's embedded pane), Formats markdown column 22.61%, Paste composer 43.3% (the board's six attachment kinds + size guard + preview are carried). Edge 249a301."
+   ],
+   "updated": "2026-09-11T05:29:27.760Z"
+  },
+  {
+   "id": "canvas-graph",
+   "order": 8,
+   "title": "The tri-page canvas and the unified graph — one board embedded everywhere; galaxy · iso · flow · time; typed merged runs graph→chat",
+   "boards": [
+    "Canvas.dc.html",
+    "Ultrawide.dc.html",
+    "Graph.dc.html",
+    "GraphViews.dc.html"
+   ],
+   "targets": [
+    "vera/chat/chat_panel.html",
+    "vera/vera_graph.js",
+    "vera/chat/vera-panel-bridge.js",
+    "vera/fabric/memory_graph_panel.html",
+    "vera/vera_graph_panel_discover.js",
+    "vera/chat/chat_panel.py"
+   ],
+   "parts": 11,
+   "verdicts": {
+    "replaces": 10,
+    "extends": 1,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "the chat's canvas column and graph column follow the board's geometry",
+    "the four graph views with fixed lanes",
+    "typed merged runs from the graph to the chat"
+   ],
+   "verify": {
+    "design": "Canvas.dc.html",
+    "live": "/chat?pages=chat,graph",
+    "pairDir": "Notes/adopt-shots/canvas-graph"
+   },
+   "prerequisites": [],
+   "status": "planned",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [],
+   "updated": "2026-09-10T23:02:57.696Z"
+  },
+  {
+   "id": "m1",
+   "order": 9,
+   "title": "M1 foundations",
+   "boards": [
+    "Coverage.dc.html",
+    "Ops.dc.html",
+    "WidgetsMotion.dc.html",
+    "WidgetSpec.dc.html",
+    "Sizes.dc.html"
+   ],
+   "targets": [
+    "vera/execution/netmap_panel.html",
+    "vera/topology_map_element.js",
+    "vera/monitor/system_monitor_panel.html",
+    "vera/chat/vera-dashboard.js",
+    "vera/activity_timeline_element.js",
+    "vera/loop_graph_element.js",
+    "vera/dream/dream_pipelines_panel.html",
+    "vera/workers/system_log_element.js",
+    "vera/nodes/nodes_capabilities.py",
+    "vera/widgets/widget_record.py (new)",
+    "vera/widgets/widget_registry.py (new)"
+   ],
+   "parts": 7,
+   "verdicts": {
+    "replaces": 7,
+    "extends": 0,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [],
+   "verify": {
+    "design": "Ops.dc.html",
+    "live": "",
+    "pairDir": "Notes/adopt-shots/m1"
+   },
+   "prerequisites": [],
+   "status": "planned",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [],
+   "updated": "2026-09-10T23:02:57.696Z"
+  },
+  {
+   "id": "m2",
+   "order": 10,
+   "title": "M2 widgets still",
+   "boards": [
+    "Globes.dc.html",
+    "WidgetsIso.dc.html"
+   ],
+   "targets": [
+    "vera/vera_graph_panel_worldview.js",
+    "vera/worldview/worldview_panel.html",
+    "vera/chat/vera-dashboard.js",
+    "vera/topology_map_element.js",
+    "vera/chat/chat_panel.html",
+    "vera/static/iso.js (new: the shared ISO library)"
+   ],
+   "parts": 0,
+   "verdicts": {
+    "replaces": 0,
+    "extends": 0,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [],
+   "verify": {
+    "design": "Globes.dc.html",
+    "live": "",
+    "pairDir": "Notes/adopt-shots/m2"
+   },
+   "prerequisites": [
+    "m1"
+   ],
+   "status": "planned",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [],
+   "updated": "2026-09-10T23:02:57.696Z"
+  },
+  {
+   "id": "m8",
+   "order": 11,
+   "title": "M8 moving forms, exploded views, loops",
+   "boards": [
+    "QC.dc.html",
+    "JoinedUp.dc.html",
+    "Arrivals.dc.html"
+   ],
+   "targets": [],
+   "parts": 0,
+   "verdicts": {
+    "replaces": 0,
+    "extends": 0,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [],
+   "verify": {
+    "design": "QC.dc.html",
+    "live": "",
+    "pairDir": "Notes/adopt-shots/m8"
+   },
+   "prerequisites": [],
+   "status": "planned",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [],
+   "updated": "2026-09-10T23:02:57.696Z"
+  }
+ ],
+ "log": [
+  {
+   "at": "2026-09-10T23:02:57.696Z",
+   "event": "init",
+   "text": "11 slices from slices.json"
+  },
+  {
+   "at": "2026-09-10T23:02:57.865Z",
+   "event": "set",
+   "slice": "m1a-tokens-packs",
+   "from": "planned",
+   "to": "landed",
+   "pipeline": "e5066bc1",
+   "commit": [
+    "5e543b1",
+    "5199321"
+   ],
+   "pair": "",
+   "note": "merged to bleeding-edge-design 2026-09-10; pair not yet taken"
+  },
+  {
+   "at": "2026-09-10T23:02:58.067Z",
+   "event": "set",
+   "slice": "adoption-helpers",
+   "from": "planned",
+   "to": "in-progress",
+   "pipeline": "",
+   "commit": "",
+   "pair": "",
+   "note": "estate · design-index · map · slices · state · pairdiff written and run against the 28-board canvas"
+  },
+  {
+   "at": "2026-09-10T23:02:58.251Z",
+   "event": "set",
+   "slice": "m1b-tiers-blocks",
+   "from": "planned",
+   "to": "in-progress",
+   "pipeline": "",
+   "commit": "",
+   "pair": "",
+   "note": "chat_panel.html patch built in scratchpad w5-m1b; test + pair pending"
+  },
+  {
+   "at": "2026-09-10T23:12:24.285Z",
+   "event": "set",
+   "slice": "adoption-helpers",
+   "from": "in-progress",
+   "to": "landed",
+   "pipeline": "136d09f3",
+   "commit": [
+    "ff2202d",
+    "ef31d93"
+   ],
+   "pair": "",
+   "note": "merged to bleeding-edge-design 2026-09-11; standing container refreshed"
+  },
+  {
+   "at": "2026-09-10T23:12:24.910Z",
+   "event": "push",
+   "registry": "https://llm.int:8999",
+   "entry": "technique:design-adoption-vera-ui-redesign-chat-canvas-widgets-system",
+   "ok": false
+  },
+  {
+   "at": "2026-09-10T23:12:47.478Z",
+   "event": "push",
+   "registry": "https://llm.int:8999",
+   "entry": "technique:design-adoption-vera-ui-redesign-chat-canvas-widgets-system",
+   "ok": true
+  },
+  {
+   "at": "2026-09-10T23:52:47.251Z",
+   "event": "set",
+   "slice": "m1a-tokens-packs",
+   "from": "landed",
+   "to": "verified",
+   "pipeline": "5a699f07",
+   "commit": [
+    "44bd479",
+    "d7a9e67"
+   ],
+   "pair": [
+    "Notes/adopt-shots/m1a/pair-standard.png",
+    "Notes/adopt-shots/m1a/pair-newspaper.png",
+    "Notes/adopt-shots/m1a/pair-terminal.png",
+    "Notes/adopt-shots/m1a/pair-pixel.png"
+   ],
+   "note": "the first pair showed a pack switch changing nothing on the chat (its --sans/--mono and radii were its own); M1a-surfaces made the chat read the tokens — live pack vs standard now moves 3-4% of the chat's pixels (fonts, casing, radii); design-vs-live 14.5-15% (different content)"
+  },
+  {
+   "at": "2026-09-10T23:52:47.463Z",
+   "event": "set",
+   "slice": "m1b-tiers-blocks",
+   "from": "in-progress",
+   "to": "verified",
+   "pipeline": [
+    "fb6f5f42",
+    "a7e59465"
+   ],
+   "commit": [
+    "c669885",
+    "ac19f94",
+    "d9537b8",
+    "770dc23"
+   ],
+   "pair": [
+    "Notes/adopt-shots/m1b/pair-full.png",
+    "Notes/adopt-shots/m1b/pair-hover.png",
+    "Notes/adopt-shots/m1b/pair-zen.png",
+    "Notes/adopt-shots/m1b/pair-blocks-off.png"
+   ],
+   "note": "the pair caught Blocks off not reaching the minimal view's question (fixed a7e59465); tiers verified live: full chrome at rest, hover chrome at the foot of the pointed turn, zen 820px column without chrome, blocks off flat on every surface; 15 tests. Not in this slice: the LHM quick menu, the chip rows and the composer modes the board also shows (lhm-library, chat-modes)"
+  },
+  {
+   "at": "2026-09-10T23:54:12.946Z",
+   "event": "push",
+   "registry": "https://llm.int:8999",
+   "entry": "technique:design-adoption-vera-ui-redesign-chat-canvas-widgets-system",
+   "ok": true
+  },
+  {
+   "at": "2026-09-11T01:29:15.244Z",
+   "event": "set",
+   "slice": "lhm-library",
+   "from": "planned",
+   "to": "landed",
+   "pipeline": [
+    "d67847b1",
+    "9d666625",
+    "9039d13c"
+   ],
+   "commit": [
+    "f79f44e",
+    "a3e57cb",
+    "e6093b1",
+    "08eaaef",
+    "af5c791",
+    "abd5808"
+   ],
+   "pair": [
+    "Notes/adopt-shots/lhm-library/pair-chatmenu.png",
+    "Notes/adopt-shots/lhm-library/live-harness-absorbed.png"
+   ],
+   "note": "three landings: vera-lhm.js + the chat as owner (8 rail menus grouping all 13 tabs, header/CTA/top list, edit-mode outlines); the harness absorbs the chat's menu in LHM mode with the in-place ☰ swap; the one panel set (ui.panels.open, report route, panel target on dispatch/query, Open now rows both ways, close round trip). Verified live: chat menu pair (22.17% vs the ChatMenu board — content differs), harness absorbed shot, ui.panels.open round trip on the edge. Pending: the Harness board's design render (the preview watchdog trips under the user's 100% CPU) — retry for the numeric pair"
+  },
+  {
+   "at": "2026-09-11T01:29:17.136Z",
+   "event": "push",
+   "registry": "https://llm.int:8999",
+   "entry": "technique:design-adoption-vera-ui-redesign-chat-canvas-widgets-system",
+   "ok": true
+  },
+  {
+   "at": "2026-09-11T02:20:50.306Z",
+   "event": "set",
+   "slice": "widget-record-registry",
+   "from": "planned",
+   "to": "verified",
+   "pipeline": [
+    "29c4e584",
+    "f13a8e5d"
+   ],
+   "commit": [
+    "24c97be",
+    "350350e",
+    "7781aff",
+    "af67d2b"
+   ],
+   "pair": [
+    "Notes/adopt-shots/widget-record-registry/pair-registry.png",
+    "Notes/adopt-shots/widget-record-registry/live-dashboard-placed.png",
+    "Notes/adopt-shots/widget-record-registry/live-lhm-record-sheet.png"
+   ],
+   "note": "vera/widgets/widget_registry.py: widget.template.list/get/save/delete/instantiate + widget.instance.list/remove, built-ins = 77 panels + 11 LHM parts (88 live), Redis-backed; the Widgets registry panel (element) mirrors the board's filters/list/record/Place into; the harness dashboard realises a placed panel template as a VeraDash widget (verified live: inst placed -> dyn-memory-graph on main); the LHM edit mode ⚙ opens a part's record in place, ⧉ saves it, + dashboard/canvas/LHM place it. Regression caught live and fixed (f13a8e5d): the record sheet was inserted before it was created and the mount threw. Not in this slice: renderers for non-panel forms placed on a dashboard (noted in console), Save as menu, the 66 still forms"
+  },
+  {
+   "at": "2026-09-11T02:20:52.919Z",
+   "event": "push",
+   "registry": "https://llm.int:8999",
+   "entry": "technique:design-adoption-vera-ui-redesign-chat-canvas-widgets-system",
+   "ok": true
+  },
+  {
+   "at": "2026-09-11T03:19:35.730Z",
+   "event": "set",
+   "slice": "control-plane",
+   "from": "planned",
+   "to": "verified",
+   "pipeline": [
+    "b69f6f96",
+    "7418916f"
+   ],
+   "commit": [
+    "d0cb3c4",
+    "265279e",
+    "421880c",
+    "5021fcd"
+   ],
+   "pair": "Notes/adopt-shots/control-plane/live-scripted-and-ask-chip.png",
+   "note": "vera/ui/directives.py (21 directives, ui.directive with policy drive/ask/never, log, ask chip + ui.directive.answer, undo, ui.policy, ui.event, ui.room manifest) + vera/ui/scripts.py (on·if·do records, fenced expressions, ui.script.*, the 2 s runner tick over the event stream) + the chat side (__ui_directive__ apply, the ask chip/block, the room in every turn). Verified live on :8994: never→refused, ask→chip, widget.place→applied+undo, a reported loop wait fired the shipped loop-waits script into the chat (ask block + Loop menu) with no model call. Fix 7418916f: the runner tick was singleton and sandboxes hold no leadership. Not in this slice: the ⟦…⟧ inline shorthand ([[cap:ui.directive …]] works), the Driven board's ribbon/log UI, wiring the loop's own HITL pause to ui.event, canvas.* directives (canvas-graph slice); known: the chat's dispatch listener stays on the boot session after loadSession (pre-existing); the scripts' fired counter is per module copy"
+  },
+  {
+   "at": "2026-09-11T03:19:37.327Z",
+   "event": "push",
+   "registry": "https://llm.int:8999",
+   "entry": "technique:design-adoption-vera-ui-redesign-chat-canvas-widgets-system",
+   "ok": true
+  },
+  {
+   "at": "2026-09-11T05:29:26.265Z",
+   "event": "set",
+   "slice": "chat-modes",
+   "from": "planned",
+   "to": "landed",
+   "pipeline": "addffa56",
+   "commit": "2b11ae4",
+   "pair": "",
+   "note": "The composer's modes (chips + voice/council/diffuse strips), attachments on the question, one markdown renderer (VeraMD + fence hook, callouts/footnotes/math), streaming mermaid (stream/ghost/settle), widgets in the reply (widget fence + by rule, Pin to canvas). tests/test_chat_modes.py 16. Skill: jscheck.mjs + the pre-landing rule."
+  },
+  {
+   "at": "2026-09-11T05:29:26.758Z",
+   "event": "set",
+   "slice": "chat-modes",
+   "from": "landed",
+   "to": "landed",
+   "pipeline": "f3101f36",
+   "commit": "ea93b00",
+   "pair": "",
+   "note": "live follow-up: slash menu's empty box (pre-existing), widget draws what it read (shape fallback, kv), Voice chip at once"
+  },
+  {
+   "at": "2026-09-11T05:29:27.319Z",
+   "event": "set",
+   "slice": "chat-modes",
+   "from": "landed",
+   "to": "landed",
+   "pipeline": "e6515740",
+   "commit": "4cedd5c",
+   "pair": "",
+   "note": "Formats pair: diff fences coloured by line; _paRenderAttachments exported; tests deduplicated (19)"
+  },
+  {
+   "at": "2026-09-11T05:29:27.760Z",
+   "event": "set",
+   "slice": "chat-modes",
+   "from": "landed",
+   "to": "verified",
+   "pipeline": "eeb4dfb6",
+   "commit": "bf21250",
+   "pair": "Notes/adopt-shots/chat-modes/",
+   "note": "Paste pair: chips + editor + podcast bar follow the composer card; diff/log/csv pastes recognised and titled (21 tests). Pairs: voice 14.78%, council 17.2%, diffuse 15.69% (Canvas composer via the Paste board's embedded pane), Formats markdown column 22.61%, Paste composer 43.3% (the board's six attachment kinds + size guard + preview are carried). Edge 249a301."
+  }
+ ]
+}

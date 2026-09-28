@@ -25,7 +25,10 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px}
-body{display:flex;flex-direction:column;overflow:hidden}
+/* The menu is the leftmost thing on the page, the way it is everywhere else;
+   the strip of figures and the content share the column beside it. */
+body{display:flex;flex-direction:row;overflow:hidden}
+.colmain{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
 button{font-family:var(--sans);cursor:pointer}
 a{color:var(--acc);text-decoration:none}
 ::-webkit-scrollbar{width:9px;height:9px}
@@ -38,12 +41,9 @@ a{color:var(--acc);text-decoration:none}
 .chip b{color:var(--text);font-family:var(--mono)}
 .chip.deal b{color:var(--deal)} .chip.good b{color:var(--up)} .chip.bad b{color:var(--dn)}
 .layout{flex:1;display:flex;min-height:0}
-nav.side{width:158px;flex-shrink:0;border-right:1px solid var(--border);background:var(--bg1);padding:8px;display:flex;flex-direction:column;gap:2px;overflow:auto}
-nav.side button{background:none;border:none;color:var(--dim2);text-align:left;padding:8px 10px;border-radius:var(--radius);font-size:13px;display:flex;align-items:center;gap:8px}
-nav.side button:hover{background:var(--bg2);color:var(--text)}
-nav.side button.active{background:var(--bg2);color:var(--acc);font-weight:600}
-nav.side .ico{width:16px;text-align:center}
-nav.side .badge{margin-left:auto;background:var(--deal);color:#221c10;border-radius:10px;font-size:10px;padding:0 6px;font-weight:700;display:none}
+/* The menu is the shared left-hand menu — see /ui/vera-panel.css. What is
+   this store's own is the deals count on Market & Deals. */
+#sidebar[data-vera-lhm] .nav-btn .ct.badge{background:var(--deal);color:#221c10;font-weight:700;display:none}
 main.content{flex:1;overflow:auto;padding:16px 18px}
 h2{font-size:16px;font-weight:600;margin-bottom:2px}
 .sub{color:var(--dim2);font-size:11px;margin-bottom:14px}
@@ -104,14 +104,20 @@ tr:hover td{background:var(--bg1)}
 </style>
 </head>
 <body>
-<div class="hdr">
-  <span class="brand">◆ STORE</span>
-  <span class="muted" style="font-size:11px">UK · eBay + Vinted</span>
-  <div class="chips" id="hdrChips"></div>
-</div>
-<div class="layout">
-  <nav class="side" id="nav" data-vera-lhm></nav>
-  <main class="content" id="main"><div class="empty"><span class="spin"></span> loading…</div></main>
+<aside id="sidebar" data-vera-lhm>
+  <div id="side-head">
+    <span class="ico">◆</span>
+    <div><h1 class="brand">STORE</h1><div class="sub">UK &middot; eBay + Vinted</div></div>
+  </div>
+  <nav id="nav"></nav>
+</aside>
+<div class="colmain">
+  <div class="hdr">
+    <div class="chips" id="hdrChips"></div>
+  </div>
+  <div class="layout">
+    <main class="content" id="main"><div class="empty"><span class="spin"></span> loading…</div></main>
+  </div>
 </div>
 <div id="toast"></div>
 <div id="modalBg"><div id="modal"></div></div>
@@ -167,11 +173,11 @@ let CUR='dashboard';
 function openStation(){const u='/business/intake/panel'+(STORE?('?store='+encodeURIComponent(STORE)+'&store_name='+encodeURIComponent(STORE_NAME)):'');
   window.open(u,'vera_scan_station');}
 function buildNav(){const n=$('#nav');n.innerHTML='';for(const [id,ico,label] of SECTIONS){
-  const b=el('button',{onclick:()=>go(id)},el('span',{class:'ico'},ico),el('span',{},label));
-  if(id==='market')b.append(el('span',{class:'badge',id:'dealBadge'}));
+  const b=el('button',{type:'button',class:'nav-btn',title:label,onclick:()=>go(id)},el('span',{class:'gl'},ico),label);
+  if(id==='market')b.append(el('span',{class:'ct badge',id:'dealBadge'}));
   b.dataset.id=id;b.dataset.section=id;if(id===CUR)b.classList.add('active');n.append(b);}}
 function go(id){if(id==='station'){openStation();return;}
-  CUR=id;document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.id===id));
+  CUR=id;document.querySelectorAll('#nav .nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.id===id));
   if(EMBED)try{parent.postMessage({type:'store.nav.state',id},'*');}catch(_){}
   RENDER[id]&&RENDER[id]();}
 
@@ -755,10 +761,10 @@ RENDER.settings=async()=>{
 };
 
 // ── boot ─────────────────────────────────────────────────────────────────────
-if(STORE){const b=document.querySelector('.brand');if(b)b.textContent='◆ '+(STORE_NAME||'STORE');}
+if(STORE){const b=document.querySelector('.brand');if(b)b.textContent=STORE_NAME||'STORE';}
 if(EMBED){
   document.querySelector('.hdr').style.display='none';
-  document.querySelector('nav.side').style.display='none';
+  document.getElementById('sidebar').style.display='none';
   window.addEventListener('message',e=>{const d=e.data||{};
     if(d.type==='store.nav'&&RENDER[d.id])go(d.id);});
 }

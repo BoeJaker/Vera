@@ -217,3 +217,49 @@ def test_results_mode_projects_runs_and_goals():
     assert goals[0]["end"] == "2026-09-21T04:08:49+00:00"          # placed by elapsed time, in order
     assert goals[1]["grade"] == "bad" and goals[1]["start"] == goals[0]["end"]
     assert sc.result_grade(None) == "none" and sc.result_grade(0.7) == "mixed" and sc.result_grade(0.1) == "bad"
+
+
+# ── any Loop Lab work, tied to board items, drawn in layers (2026-09-28) ─────
+
+def test_loop_and_tests_kinds_normalise():
+    lp = sc.normalize({"kind": "loop", "target": {"goal": "tidy the census notes"}, "timezone": "UTC"})
+    assert lp["target"]["profile"] == "coding" and lp["title"].startswith("Loop · tidy")
+    with pytest.raises(ValueError):
+        sc.normalize({"kind": "loop", "target": {}, "timezone": "UTC"})
+    ts = sc.normalize({"kind": "tests", "target": {"markers": "critical"}, "timezone": "UTC"})
+    assert ts["target"]["branch"] == "bleeding-edge" and ts["target"]["paths"] == "tests"
+    assert ts["title"] == "Tests · bleeding-edge · critical"
+
+
+def test_a_background_run_holds_the_next_start():
+    rec = sc.normalize({"kind": "tests", "target": {}, "timezone": "UTC", "days": [0], "start": "08:00",
+                        "end": "18:00", "repeat": "every", "every_minutes": 30})
+    rec["last_started_at"] = sc.iso(MON - timedelta(hours=1))
+    assert sc.is_due(rec, MON, FREE) == (False, "previous run still going")
+    rec["last_finished_at"] = sc.iso(MON - timedelta(minutes=20))
+    assert sc.is_due(rec, MON, FREE)[0] is True
+    # a run record lost long ago does not hold the schedule forever
+    rec["last_finished_at"] = ""
+    rec["last_started_at"] = sc.iso(MON - timedelta(hours=sc.STILL_RUNNING_HOURS + 1))
+    assert sc.is_due(rec, MON, FREE)[0] is True
+
+
+def test_board_link_on_any_kind():
+    b = sc.normalize({"kind": "board", "target": {"id": "abc"}, "timezone": "UTC"})
+    assert b["board_id"] == "abc"
+    c = weekday(board_id="xyz")
+    assert c["board_id"] == "xyz"
+    assert [s["id"] for s in sc.for_board([b, c, weekday()], "xyz")] == [c["id"]]
+    assert [s["id"] for s in sc.for_board([b, c], "abc")] == [b["id"]]
+    ev = sc.project_events([c], MON - timedelta(days=1), MON + timedelta(days=1))
+    assert ev and all(e["board_id"] == "xyz" for e in ev)
+
+
+def test_layer_of_every_event():
+    assert sc.layer_of({"source": "results"}) == "results"
+    assert sc.layer_of({"source": "loop-lab", "kind": "census"}) == "windows"
+    assert sc.layer_of({"source": "loop-lab-run", "kind": "suite"}) == "runs"
+    assert sc.layer_of({"source": "loop-lab", "kind": "census", "board_id": "b1"}) == "board"
+    assert sc.layer_of({"source": "loop-lab-run", "kind": "board"}) == "board"
+    assert sc.layer_of({"source": "local"}) == "calendar" and sc.layer_of({"source": "google"}) == "calendar"
+    assert set(sc.LAYERS) == {"windows", "runs", "results", "board", "calendar"}

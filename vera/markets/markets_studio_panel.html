@@ -88,19 +88,9 @@ button:disabled{opacity:.4; cursor:default; pointer-events:none}
 
 /* ═══════════ app shell ═══════════ */
 #app{display:flex;height:100vh;width:100vw}
-#rail{
-  width:64px; flex:none; display:flex; flex-direction:column; align-items:center;
-  padding:10px 0; gap:4px; background:var(--bg1); border-right:1px solid var(--line);
-}
-.railBtn{
-  width:52px; padding:8px 0 6px; border:none; background:transparent; border-radius:9px;
-  display:flex; flex-direction:column; align-items:center; gap:2px; color:var(--muted);
-}
-.railBtn .ico{font-size:19px; line-height:1}
-.railBtn .lbl{font-size:9.5px; letter-spacing:.3px}
-.railBtn:hover{background:var(--bg2); color:var(--ink)}
-.railBtn.on{background:color-mix(in srgb, var(--acc) 14%, transparent); color:var(--acc)}
-#railFoot{margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:8px}
+/* The studio's menu is the shared left-hand menu — see /ui/vera-panel.css.
+   The live-stream dot in its foot is this page's own, so it stays here. */
+#sidebar[data-vera-lhm] #status-tile{display:flex;justify-content:center;padding:8px}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--dn);transition:background .3s}
 .dot.on{background:var(--up); box-shadow:0 0 8px var(--up)}
 
@@ -317,19 +307,25 @@ table.tbl tr:hover td{background:color-mix(in srgb, var(--acc) 5%, transparent)}
 
 <body>
 <div id="app">
-  <nav id="rail" data-vera-lhm>
-    <button class="railBtn on" data-view="charts"><span class="ico">◫</span><span class="lbl">Charts</span></button>
-    <button class="railBtn" data-view="strat"><span class="ico">⚗</span><span class="lbl">Strategy</span></button>
-    <button class="railBtn" data-view="run"><span class="ico">▶</span><span class="lbl">Backtest</span></button>
-    <button class="railBtn" data-view="pulse"><span class="ico">⌁</span><span class="lbl">Pulse</span></button>
-    <button class="railBtn" data-view="folio"><span class="ico">💼</span><span class="lbl">Portfolio</span></button>
-    <button class="railBtn" data-view="proj"><span class="ico">⧗</span><span class="lbl">Project</span></button>
-    <button class="railBtn" data-view="sim"><span class="ico">◎</span><span class="lbl">Sim</span></button>
-    <button class="railBtn" data-view="alerts" style="position:relative"><span class="ico">🔔</span><span class="lbl">Alerts</span><span id="railAlBadge" style="display:none;position:absolute;top:2px;right:4px;font:700 8px var(--mono);padding:0 4px;border-radius:7px;background:var(--dn);color:#fff"></span></button>
-    <div id="railFoot">
+  <aside id="sidebar" data-vera-lhm>
+    <div id="side-head">
+      <span class="ico">◫</span>
+      <div><h1>Markets</h1><div class="sub">quant studio</div></div>
+    </div>
+    <nav id="nav">
+      <button type="button" class="nav-btn active" data-view="charts" title="Charts"><span class="gl">◫</span>Charts</button>
+      <button type="button" class="nav-btn" data-view="strat" title="Strategy"><span class="gl">⚗</span>Strategy</button>
+      <button type="button" class="nav-btn" data-view="run" title="Backtest"><span class="gl">▶</span>Backtest</button>
+      <button type="button" class="nav-btn" data-view="pulse" title="Pulse"><span class="gl">⌁</span>Pulse</button>
+      <button type="button" class="nav-btn" data-view="folio" title="Portfolio"><span class="gl">💼</span>Portfolio</button>
+      <button type="button" class="nav-btn" data-view="proj" title="Project"><span class="gl">⧗</span>Project</button>
+      <button type="button" class="nav-btn" data-view="sim" title="Sim"><span class="gl">◎</span>Sim</button>
+      <button type="button" class="nav-btn" data-view="alerts" title="Alerts"><span class="gl">🔔</span>Alerts<span class="ct" id="railAlBadge" style="display:none;background:var(--dn);color:#fff"></span></button>
+    </nav>
+    <div id="status-tile">
       <span class="dot" id="wsDot" title="live event stream"></span>
     </div>
-  </nav>
+  </aside>
 
   <div id="main">
     <div id="topbar">
@@ -3586,7 +3582,7 @@ const VIEW_TITLES={charts:'Charts',strat:'Strategy Studio',run:'Backtest Run Cen
   pulse:'Market Pulse',sim:'Sim Accounts'};
 function switchView(name){
   S.view=name;
-  document.querySelectorAll('.railBtn').forEach(b=>b.classList.toggle('on',b.dataset.view===name));
+  document.querySelectorAll('#nav .nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.view===name));
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id===name+'View'));
   $('tbTitle').textContent=VIEW_TITLES[name]||name;
   if(name==='strat'){ loadStrats(); loadLibrary().then(()=>{ if(!B) renderLibraryHome(); }); loadModels(); }
@@ -3595,7 +3591,7 @@ function switchView(name){
   if(name==='sim') loadSim();
   if(name==='charts') setTimeout(()=>Object.values(TILES).forEach(t=>t.chart._resize()),60);
 }
-document.querySelectorAll('.railBtn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
+document.querySelectorAll('#nav .nav-btn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
 
 async function init(){
   readTheme();
@@ -6533,10 +6529,11 @@ VIEW_TITLES.folio='Accounts';
 
 /* rail: rename Portfolio → Accounts, hide the now-merged Sim button */
 (function(){
-  document.querySelectorAll('.railBtn').forEach(b=>{
+  document.querySelectorAll('#nav .nav-btn').forEach(b=>{
     if(b.dataset.view==='folio'){
-      const l=b.querySelector('.lbl'); if(l) l.textContent='Accounts';
-      const i=b.querySelector('.ico'); if(i) i.textContent='▦';
+      // the label is the button's own text node; the glyph is its .gl
+      b.lastChild.textContent='Accounts'; b.title='Accounts';
+      const i=b.querySelector('.gl'); if(i) i.textContent='▦';
     }
     if(b.dataset.view==='sim') b.style.display='none';
   });
@@ -7209,10 +7206,9 @@ async function renderCopAuto(){
   /* ---- bars/meters ---- */
   .pbar{background:color-mix(in srgb,var(--bg0) 70%,var(--bg3));height:7px}
 
-  /* ---- rail: active accent underline ---- */
-  .railBtn{transition:background .15s,color .15s}
-  .railBtn.on{position:relative}
-  .railBtn.on::after{content:'';position:absolute;left:10px;right:10px;bottom:1px;height:2px;
+  /* ---- menu: active accent bar ---- */
+  #nav .nav-btn.active{position:relative}
+  #nav .nav-btn.active::after{content:'';position:absolute;left:0;top:6px;bottom:6px;width:2px;
     border-radius:2px;background:var(--acc)}
 
   /* ---- view bars: frosted separation ---- */
@@ -7992,7 +7988,7 @@ async function renderAccountProjection(){
 
 /* hide the standalone Project rail item — projection now lives in Accounts */
 (function(){
-  document.querySelectorAll('.railBtn').forEach(b=>{ if(b.dataset.view==='proj') b.style.display='none'; });
+  document.querySelectorAll('#nav .nav-btn').forEach(b=>{ if(b.dataset.view==='proj') b.style.display='none'; });
 })();
 </script>
 <script>
@@ -8314,12 +8310,12 @@ function openDataPop(t,anchor){
   const st=document.createElement('style'); st.textContent=css; document.head.appendChild(st);
 
   /* rail button */
-  const rail=$('rail'), foot=$('railFoot');
-  if(rail&&!document.querySelector('.railBtn[data-view="news"]')){
-    const b=document.createElement('button'); b.className='railBtn'; b.dataset.view='news';
-    b.innerHTML='<span class="ico">▤</span><span class="lbl">News</span>';
+  const rail=$('nav');
+  if(rail&&!document.querySelector('#nav .nav-btn[data-view="news"]')){
+    const b=document.createElement('button'); b.type='button'; b.className='nav-btn'; b.dataset.view='news'; b.title='News';
+    b.innerHTML='<span class="gl">▤</span>News';
     b.onclick=()=>switchView('news');
-    rail.insertBefore(b,foot||null);
+    rail.appendChild(b);
   }
   /* view section */
   const views=$('views');
@@ -8400,12 +8396,12 @@ switchView=function(n){ _svNews(n); if(n==='news') renderNews(); };
    The loop only runs while the view is visible. Novel, but honest — no data,
    calm flow.                                                                  */
 (function(){
-  const rail=$('rail'), foot=$('railFoot');
-  if(rail&&!document.querySelector('.railBtn[data-view="flow"]')){
-    const b=document.createElement('button'); b.className='railBtn'; b.dataset.view='flow';
-    b.innerHTML='<span class="ico">✦</span><span class="lbl">Flow</span>';
+  const rail=$('nav');
+  if(rail&&!document.querySelector('#nav .nav-btn[data-view="flow"]')){
+    const b=document.createElement('button'); b.type='button'; b.className='nav-btn'; b.dataset.view='flow'; b.title='Flow';
+    b.innerHTML='<span class="gl">✦</span>Flow';
     b.onclick=()=>switchView('flow');
-    rail.insertBefore(b,foot||null);
+    rail.appendChild(b);
   }
   const views=$('views');
   if(views&&!$('flowView')){
@@ -8660,11 +8656,11 @@ handleEvent=function(ev){
   .dashViz{display:flex;gap:4px} .dashViz button{padding:3px 9px;font-size:11px}`;
   const st=document.createElement('style'); st.textContent=css; document.head.appendChild(st);
 
-  const rail=$('rail'), foot=$('railFoot');
-  if(rail&&!document.querySelector('.railBtn[data-view="dash"]')){
-    const b=document.createElement('button'); b.className='railBtn'; b.dataset.view='dash';
-    b.innerHTML='<span class="ico">◲</span><span class="lbl">Dash</span>';
-    b.onclick=()=>switchView('dash'); rail.insertBefore(b,foot||null);
+  const rail=$('nav');
+  if(rail&&!document.querySelector('#nav .nav-btn[data-view="dash"]')){
+    const b=document.createElement('button'); b.type='button'; b.className='nav-btn'; b.dataset.view='dash'; b.title='Dash';
+    b.innerHTML='<span class="gl">◲</span>Dash';
+    b.onclick=()=>switchView('dash'); rail.appendChild(b);
   }
   const views=$('views');
   if(views&&!$('dashView')){

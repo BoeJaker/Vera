@@ -1,0 +1,4407 @@
+{
+ "generated": "by vera-design-adopt/adopt-map.mjs",
+ "at": "2026-09-10T22:58:51.496Z",
+ "design": "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\--llm-int-boejaker-Vera\\7aa51155-57a2-4b12-aacb-015505340850\\scratchpad\\vera-ui-redesign\\_adopt\\design-index.json",
+ "estate": "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\--llm-int-boejaker-Vera\\7aa51155-57a2-4b12-aacb-015505340850\\scratchpad\\vera-ui-redesign\\_adopt\\estate.json",
+ "summary": {
+  "boards": 28,
+  "parts": 127,
+  "verdicts": {
+   "replaces": 120,
+   "extends": 6,
+   "new": 1,
+   "retire": 0
+  },
+  "keep": 3352,
+  "targets": {
+   "vera/chat/chat_panel.html": 10,
+   "vera/execution/netmap_panel.html": 1,
+   "vera/capability_orchestration.html": 2,
+   "vera/chat/vera-dashboard.js": 5,
+   "vera/ui builder/ui_builder_panel.html": 1,
+   "vera/vera_graph_panel_worldview.js": 1,
+   "vera/vera_markdown_element.js": 1,
+   "vera/fabric/memory_graph_panel.html": 1,
+   "vera/workers/workers_ollama_panel.html": 1
+  },
+  "hints": "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\--llm-int-boejaker-Vera\\7aa51155-57a2-4b12-aacb-015505340850\\scratchpad\\vera-ui-redesign\\_adopt\\adopt-hints.json"
+ },
+ "boards": [
+  {
+   "board": "Main.dc.html",
+   "title": "Chat — the tri-page in its chat-only state",
+   "sets": [
+    "chat"
+   ],
+   "kind": "shell",
+   "targets": [
+    {
+     "file": "vera/chat/chat_panel.html",
+     "kind": "chat",
+     "score": 24,
+     "evidence": [
+      "title names chat",
+      "chat-shaped board"
+     ]
+    },
+    {
+     "file": "vera/chat/chat_panel.js",
+     "kind": "runtime",
+     "score": 14,
+     "evidence": [
+      "title names chat"
+     ]
+    },
+    {
+     "file": "vera/elements/chat_data_element.js",
+     "kind": "runtime",
+     "score": 14,
+     "evidence": [
+      "title names chat"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [],
+   "keep": [],
+   "keepCount": 0,
+   "directives": [],
+   "caps": []
+  },
+  {
+   "board": "Canvas.dc.html",
+   "title": "Tri-page — chat · canvas · graph (the one chat UI)",
+   "sets": [
+    "chat",
+    "system"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/chat/chat_panel.html",
+     "kind": "chat",
+     "score": 221,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names chat",
+      "8 shared capabilities (browser.screenshot, code.author, fabric.query, llm.generate…)",
+      "19 heading/label tokens in its sections (context, graph, session, canvas, execution)",
+      "12 part tokens among its elements",
+      "chat-shaped board"
+     ]
+    },
+    {
+     "file": "vera/vera_graph.js",
+     "kind": "runtime",
+     "score": 163,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names graph",
+      "11 heading/label tokens in its sections (context, graph, session, canvas, chat)",
+      "11 part tokens among its elements"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-panel-bridge.js",
+     "kind": "runtime",
+     "score": 108,
+     "evidence": [
+      "pinned by adopt-hints",
+      "2 shared capabilities (fabric.query, panel.dispatch)",
+      "2 part tokens among its elements"
+     ]
+    }
+   ],
+   "also": [
+    "vera/chat/chat_panel.py"
+   ],
+   "parts": [
+    {
+     "key": "rail",
+     "label": "the rail",
+     "tag": "rail",
+     "form": "rail",
+     "from": "WREC",
+     "verdict": "replaces",
+     "confidence": 1,
+     "target": "vera/chat/chat_panel.html",
+     "element": ".rpane",
+     "evidence": [
+      "container .rpane shares rail"
+     ]
+    },
+    {
+     "key": "hdr",
+     "label": "menu header",
+     "tag": "header",
+     "form": "header",
+     "from": "WREC",
+     "verdict": "replaces",
+     "confidence": 0.62,
+     "target": "vera/chat/chat_panel.html",
+     "element": "#slashMenu",
+     "evidence": [
+      "container #slashMenu shares menu"
+     ]
+    },
+    {
+     "key": "ctx:gal",
+     "label": "Context galaxy",
+     "tag": "graph",
+     "form": "graph",
+     "from": "WREC",
+     "verdict": "replaces",
+     "confidence": 0.8,
+     "target": "vera/chat/chat_panel.html",
+     "element": "ctxViewMode",
+     "evidence": [
+      "handler ctxViewMode shares context"
+     ]
+    },
+    {
+     "key": "ctx:bar",
+     "label": "Budget bar",
+     "tag": "meter",
+     "form": "meter",
+     "from": "WREC",
+     "verdict": "replaces",
+     "confidence": 0.94,
+     "target": "vera/chat/chat_panel.html",
+     "element": "#ctxMeter",
+     "evidence": [
+      "container #ctxMeter shares meter"
+     ]
+    },
+    {
+     "key": "rows",
+     "label": "the list",
+     "tag": "list",
+     "form": "list",
+     "from": "WREC",
+     "verdict": "replaces",
+     "confidence": 1,
+     "target": "vera/chat/chat_panel.html",
+     "element": ".rpane (the rows of every rail pane)",
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    },
+    {
+     "key": "sbx:tree",
+     "label": "File tree",
+     "tag": "tree",
+     "form": "tree",
+     "from": "WREC",
+     "verdict": "replaces",
+     "confidence": 0.94,
+     "target": "vera/chat/chat_panel.html",
+     "element": "#artifactTree",
+     "evidence": [
+      "container #artifactTree shares tree"
+     ]
+    },
+    {
+     "key": "sbx:term",
+     "label": "Terminal",
+     "tag": "terminal",
+     "form": "terminal",
+     "from": "WREC",
+     "verdict": "replaces",
+     "confidence": 0.89,
+     "target": "vera/chat/chat_panel.html",
+     "element": "_sessionSbxTerminal",
+     "evidence": [
+      "handler _sessionSbxTerminal shares terminal"
+     ]
+    },
+    {
+     "key": "sbx:act",
+     "label": "Actions",
+     "tag": "controls",
+     "form": "controls",
+     "from": "WREC",
+     "verdict": "replaces",
+     "confidence": 0.62,
+     "target": "vera/chat/chat_panel.html",
+     "element": ".sd-controls",
+     "evidence": [
+      "container .sd-controls shares controls"
+     ]
+    },
+    {
+     "key": "loop",
+     "label": "Loop program",
+     "tag": "program",
+     "form": "program",
+     "from": "WREC",
+     "verdict": "replaces",
+     "confidence": 1,
+     "target": "vera/chat/chat_panel.html",
+     "element": "rpLoop",
+     "evidence": [
+      "section rpLoop shares program"
+     ]
+    },
+    {
+     "key": "cta",
+     "label": "the CTA",
+     "tag": "button",
+     "form": "button",
+     "from": "WREC",
+     "verdict": "replaces",
+     "confidence": 1,
+     "target": "vera/chat/chat_panel.html",
+     "element": ".rpane .btn (each pane's action button)",
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    }
+   ],
+   "keep": [
+    "section rpHist",
+    "section rpCfg",
+    "section rpCtx",
+    "section rpCaps",
+    "section rpPanels",
+    "section Execution modes",
+    "section Agent",
+    "section Model override",
+    "section Context Injection",
+    "section Agent loop variant",
+    "subtab ",
+    "subtab ${icon} ${esc(label)}",
+    "subtab &#9679;",
+    "container #topBar",
+    "container #connDot",
+    "container #agentMeta",
+    "container #capBadge",
+    "container #ctxMeterBar",
+    "container #ctxMeterFill",
+    "container #root",
+    "container #leftRail",
+    "container #rpHist",
+    "container #histList",
+    "container #rpCfg",
+    "container #cfgRestoreStatus",
+    "container #sbxSessionStatus",
+    "container #sbxSessionTools",
+    "container #dagOpts",
+    "container #thinkPhraseStatus",
+    "container #agentInfoBox",
+    "container #rpCtx",
+    "container #ctxSkillPicker",
+    "container #ctxSkillList",
+    "container #ctxOntPicker",
+    "container #ctxOntList",
+    "container #ctxInjBadges",
+    "container #rpCaps",
+    "container #rpCapMeta",
+    "container #rpCapOvrBar",
+    "container #rpCapList",
+    "container #rpCapRun",
+    "container #rpCapRunDesc",
+    "container #rpCapRunForm",
+    "container #rpCapRunStatus",
+    "container #rpPanels",
+    "container #rpPanelMeta",
+    "container #rpPanelActiveBar",
+    "container #rpPanelList",
+    "container #rpLoop",
+    "container #loopVariantDesc",
+    "container #loopV4Box",
+    "container #loopV5Box",
+    "container #centre",
+    "container #councilPanel",
+    "container #councilInstChips",
+    "container #sdPanel",
+    "container #sdLoRAs",
+    "container #chatColumn",
+    "container #chatStack",
+    "container #msgs"
+   ],
+   "keepCount": 343,
+   "directives": [
+    "chat.on",
+    "chat.tri",
+    "voice.listening",
+    "voice.transcribing",
+    "voice.speaking",
+    "evolve.sandbox_status",
+    "evolve.sandbox_metrics",
+    "evolve.git_graph",
+    "evolve.git_status",
+    "evolve.pipeline_list",
+    "evolve.pipeline_get",
+    "evolve.pipeline_diff",
+    "evolve.cap_test",
+    "evolve.sandbox_logs",
+    "chat.ask",
+    "style.zoom",
+    "evolve.unittest_run",
+    "evolve.pipeline_review",
+    "evolve.pipeline_promote",
+    "obs.provenance.last",
+    "evolve.pipeline",
+    "panel.unbound",
+    "lhm.rail",
+    "loop.status",
+    "lhm.header",
+    "context.budget",
+    "lhm.list",
+    "sandbox.session.fs",
+    "lhm.cta",
+    "style.css",
+    "context.map"
+   ],
+   "caps": [
+    "panel.dispatch",
+    "obs.provenance",
+    "sandbox.session.exec",
+    "report.html",
+    "fabric.query",
+    "sysmon.status",
+    "obs.health",
+    "obs.diagnostics",
+    "obs.node_temps",
+    "code.read",
+    "code.versions",
+    "code.diff",
+    "fabric.schema",
+    "fabric.validate",
+    "dag.plan",
+    "goals.detail",
+    "memory.select",
+    "fabric.upsert",
+    "content.edit",
+    "output.redeliver",
+    "code.author",
+    "evolve.assess",
+    "prose.author",
+    "obs.events",
+    "evolve.unittest.run",
+    "llm.generate",
+    "evolve.pipeline.promote",
+    "sandbox.session.status",
+    "browser.screenshot"
+   ]
+  },
+  {
+   "board": "Ultrawide.dc.html",
+   "title": "Tri-page · ultrawide — 3440×1440, all three columns",
+   "sets": [
+    "chat"
+   ],
+   "kind": "shell",
+   "targets": [
+    {
+     "file": "vera/chat/chat_panel.html",
+     "kind": "chat",
+     "score": 221,
+     "evidence": [
+      "embeds Canvas.dc.html — lands with it"
+     ]
+    },
+    {
+     "file": "vera/vera_graph.js",
+     "kind": "runtime",
+     "score": 163,
+     "evidence": [
+      "embeds Canvas.dc.html — lands with it"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-panel-bridge.js",
+     "kind": "runtime",
+     "score": 108,
+     "evidence": [
+      "embeds Canvas.dc.html — lands with it"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [],
+   "keep": [],
+   "keepCount": 0,
+   "directives": [],
+   "caps": []
+  },
+  {
+   "board": "ChatMenu.dc.html",
+   "title": "Chat side menu",
+   "sets": [
+    "chat"
+   ],
+   "kind": "shell",
+   "targets": [
+    {
+     "file": "vera/chat/chat_panel.html",
+     "kind": "chat",
+     "score": 221,
+     "evidence": [
+      "embeds Canvas.dc.html — lands with it"
+     ]
+    },
+    {
+     "file": "vera/vera_graph.js",
+     "kind": "runtime",
+     "score": 163,
+     "evidence": [
+      "embeds Canvas.dc.html — lands with it"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-panel-bridge.js",
+     "kind": "runtime",
+     "score": 108,
+     "evidence": [
+      "embeds Canvas.dc.html — lands with it"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [],
+   "keep": [],
+   "keepCount": 0,
+   "directives": [],
+   "caps": []
+  },
+  {
+   "board": "Graph.dc.html",
+   "title": "Graph — context, memory, loop, plan",
+   "sets": [
+    "chat"
+   ],
+   "kind": "shell",
+   "targets": [
+    {
+     "file": "vera/chat/chat_panel.html",
+     "kind": "chat",
+     "score": 221,
+     "evidence": [
+      "embeds Canvas.dc.html — lands with it"
+     ]
+    },
+    {
+     "file": "vera/vera_graph.js",
+     "kind": "runtime",
+     "score": 163,
+     "evidence": [
+      "embeds Canvas.dc.html — lands with it"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-panel-bridge.js",
+     "kind": "runtime",
+     "score": 108,
+     "evidence": [
+      "embeds Canvas.dc.html — lands with it"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [],
+   "keep": [],
+   "keepCount": 0,
+   "directives": [],
+   "caps": []
+  },
+  {
+   "board": "Ops.dc.html",
+   "title": "Live operations",
+   "sets": [
+    "system"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/execution/netmap_panel.html",
+     "kind": "panel",
+     "score": 114,
+     "evidence": [
+      "pinned by adopt-hints",
+      "2 shared capabilities (dag.plan, llm.generate)",
+      "2 heading/label tokens in its sections (canvas, composer)",
+      "2 part tokens among its elements"
+     ]
+    },
+    {
+     "file": "vera/topology_map_element.js",
+     "kind": "runtime",
+     "score": 108,
+     "evidence": [
+      "pinned by adopt-hints",
+      "2 heading/label tokens in its sections (ops, node)",
+      "1 part tokens among its elements"
+     ]
+    },
+    {
+     "file": "vera/monitor/system_monitor_panel.html",
+     "kind": "panel",
+     "score": 103,
+     "evidence": [
+      "pinned by adopt-hints",
+      "1 heading/label tokens in its sections (ops)"
+     ]
+    }
+   ],
+   "also": [
+    "vera/nodes/nodes_capabilities.py"
+   ],
+   "parts": [
+    {
+     "key": "Planes",
+     "label": "Planes",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.62,
+     "target": "vera/execution/netmap_panel.html",
+     "element": ".rail-section",
+     "evidence": [
+      "container .rail-section shares section"
+     ]
+    },
+    {
+     "key": "In flight now",
+     "label": "In flight now",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.62,
+     "target": "vera/execution/netmap_panel.html",
+     "element": ".rail-section",
+     "evidence": [
+      "container .rail-section shares section"
+     ]
+    },
+    {
+     "key": "Pipes",
+     "label": "Pipes",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.62,
+     "target": "vera/execution/netmap_panel.html",
+     "element": ".rail-section",
+     "evidence": [
+      "container .rail-section shares section"
+     ]
+    },
+    {
+     "key": "Requests in flight14",
+     "label": "Requests in flight14",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.51,
+     "target": "vera/execution/netmap_panel.html",
+     "element": ".rail-section",
+     "evidence": [
+      "container .rail-section shares section"
+     ]
+    },
+    {
+     "key": "Wiring",
+     "label": "Wiring",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.62,
+     "target": "vera/execution/netmap_panel.html",
+     "element": ".rail-section",
+     "evidence": [
+      "container .rail-section shares section"
+     ]
+    },
+    {
+     "key": "Errors",
+     "label": "Errors",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.62,
+     "target": "vera/execution/netmap_panel.html",
+     "element": ".rail-section",
+     "evidence": [
+      "container .rail-section shares section"
+     ]
+    },
+    {
+     "key": "Requests through this node",
+     "label": "Requests through this node",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.51,
+     "target": "vera/topology_map_element.js",
+     "element": ".node-g",
+     "evidence": [
+      "container .node-g shares node"
+     ]
+    }
+   ],
+   "keep": [
+    "section ",
+    "subtab ",
+    "container #shell",
+    "container #topbar",
+    "container #main",
+    "container #rail",
+    "container #sec-recon",
+    "container #recon-campaign-row",
+    "container #recon-progress",
+    "container #recon-progress-bar",
+    "container #sec-lan",
+    "container #lan-custom-ports-row",
+    "container #lan-fabric-ds-row",
+    "container #lan-progress",
+    "container #lan-progress-bar",
+    "container #sec-web",
+    "container #web-progress",
+    "container #sec-trace",
+    "container #sec-dork",
+    "container #dork-campaign-meta",
+    "container #sec-agent-osint",
+    "container #osint-progress",
+    "container #sec-boundary",
+    "container #sec-presence",
+    "container #mon-targets",
+    "container #mon-alerts",
+    "container #sec-docker",
+    "container #sec-pve",
+    "container #sec-k8s",
+    "container #sec-maps",
+    "container #maps-list",
+    "container #sec-filter",
+    "container #legend",
+    "container #canvas-wrap",
+    "container #cy",
+    "container #searchbox",
+    "container #stream-banner",
+    "container #gc",
+    "container #loading",
+    "container #insp",
+    "container #tab-actions",
+    "container #tab-runcap",
+    "container #tab-props",
+    "container #tab-neigh",
+    "container #insp-result-sec",
+    "container #insp-result",
+    "container #llm-strip",
+    "container #llm-loopcfg-pop",
+    "container #llm-extras-pop",
+    "container #llm-extras-list",
+    "container #llm-log",
+    "container #sbar",
+    "container #ctx",
+    "container #ft-shell",
+    "container #ft-head",
+    "container #ft-scroll",
+    "container #ft-pw-row",
+    "container #ft-resize",
+    "container #dork-overlay",
+    "container #dork-overlay-body"
+   ],
+   "keepCount": 166,
+   "directives": [
+    "evolve.git_status",
+    "sandbox.session.fs_read",
+    "sandbox.session.fs_write",
+    "ui.screen"
+   ],
+   "caps": [
+    "llm.generate",
+    "nlp.rerank",
+    "vision.describe",
+    "obs.health",
+    "memory.select",
+    "dag.plan",
+    "code.author",
+    "sandbox.session.exec",
+    "nodes.provision",
+    "mesh.ota",
+    "obs.provenance",
+    "fabric.upsert",
+    "code.read",
+    "sysmon.status",
+    "obs.events"
+   ]
+  },
+  {
+   "board": "Harness.dc.html",
+   "title": "Cluster overview",
+   "sets": [
+    "system"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/capability_orchestration.html",
+     "kind": "harness",
+     "score": 136,
+     "evidence": [
+      "pinned by adopt-hints",
+      "1 shared capabilities (llm.generate)",
+      "8 heading/label tokens in its sections (ops, close, widget, diagnostics, caps)",
+      "harness-shaped board"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-dashboard.js",
+     "kind": "runtime",
+     "score": 100,
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-panel-bridge.js",
+     "kind": "runtime",
+     "score": 100,
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [],
+   "keep": [
+    "section Register External MCP Server",
+    "section Registered Servers",
+    "section Proxied Caps",
+    "subtab ",
+    "subtab Dashboard",
+    "subtab Observe",
+    "subtab Capabilities",
+    "subtab MCP Servers",
+    "subtab Elements",
+    "subtab ☰",
+    "subtab ⇕",
+    "subtab ⧈",
+    "subtab +",
+    "subtab ⊞",
+    "subtab ↗",
+    "subtab ⧉",
+    "subtab ⇔",
+    "subtab ◎",
+    "subtab ✕",
+    "container #sbxInfoBody",
+    "container #dot",
+    "container #hdrPills",
+    "container #hdrMetrics",
+    "container #hdrMetricCfgWrap",
+    "container #hdrMetricCfg",
+    "container #evSidebar",
+    "container #evFilterBar",
+    "container #evFeed",
+    "container #main",
+    "container #tabHoverZone",
+    "container #tabBar",
+    "container #lhmNav",
+    "container #lhmNavTabs",
+    "container #lhmEventsFeed",
+    "container #lhmEvFeedMirror",
+    "container #panel-dashboard",
+    "container #dashHealthStrip",
+    "container #dashHiddenPicker",
+    "container #dashGrid",
+    "container #hProxmoxRunning",
+    "container #hProxmoxGuests",
+    "container #hProxmoxNodes",
+    "container #pmxRows",
+    "container #pmxCores",
+    "container #pmxGuests",
+    "container #hDockerRunning",
+    "container #hDockerConts",
+    "container #hDockerHosts",
+    "container #dkrRows",
+    "container #dkrTopContainers",
+    "container #hOllamaOnline",
+    "container #hOllamaGpu",
+    "container #hOllamaInuse",
+    "container #ollRows",
+    "container #topProcs",
+    "container #hostTempsList",
+    "container #hStatus",
+    "container #hStatusSub",
+    "container #hMode",
+    "container #hRedis"
+   ],
+   "keepCount": 310,
+   "directives": [
+    "tab.on",
+    "tab.more",
+    "tab.driven",
+    "lhm.wide",
+    "panel.open",
+    "dash.main",
+    "sandbox.list",
+    "obs.errors",
+    "memory.graph",
+    "evolve.git_status",
+    "sandbox.exec",
+    "evolve.unittest_run",
+    "evolve.cap_test",
+    "evolve.pipeline_begin",
+    "evolve.pipeline_review",
+    "evolve.pipeline_promote"
+   ],
+   "caps": [
+    "sysmon.status",
+    "mesh.nodes",
+    "code.author",
+    "obs.provenance",
+    "code.read",
+    "memory.select",
+    "nlp.rerank",
+    "llm.generate",
+    "web.research",
+    "dag.plan"
+   ]
+  },
+  {
+   "board": "Settings.dc.html",
+   "title": "Settings",
+   "sets": [
+    "system"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/chat/chat_panel.html",
+     "kind": "chat",
+     "score": 145,
+     "evidence": [
+      "pinned by adopt-hints",
+      "3 shared capabilities (browser.screenshot, code.author, web.research)",
+      "7 heading/label tokens in its sections (settings, variant, program, context, composer)",
+      "9 part tokens among its elements"
+     ]
+    },
+    {
+     "file": "vera/vera-ui.js",
+     "kind": "runtime",
+     "score": 100,
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    },
+    {
+     "file": "vera/dag/dag_workshop_panel.html",
+     "kind": "panel",
+     "score": 46,
+     "evidence": [
+      "8 heading/label tokens in its sections (program, triage, toolkit, long, running)",
+      "11 part tokens among its elements"
+     ]
+    }
+   ],
+   "also": [
+    "vera/theme_defs.py"
+   ],
+   "parts": [
+    {
+     "key": "Variant",
+     "label": "Variant",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.68,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    },
+    {
+     "key": "Limits",
+     "label": "Limits",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.68,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    },
+    {
+     "key": "Server-loop options",
+     "label": "Server-loop options",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.68,
+     "target": "vera/chat/chat_panel.html",
+     "element": "_loopCfgToggle",
+     "evidence": [
+      "handler _loopCfgToggle shares program/settings"
+     ]
+    },
+    {
+     "key": "Triage",
+     "label": "Triage",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.68,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    },
+    {
+     "key": "Base toolkit",
+     "label": "Base toolkit",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.57,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    },
+    {
+     "key": "Long-running jobs",
+     "label": "Long-running jobs",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.59,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": "running…",
+     "evidence": [
+      "subtab running… shares running"
+     ]
+    },
+    {
+     "key": "HITL",
+     "label": "HITL",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.68,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    },
+    {
+     "key": "Context fidelity · v7",
+     "label": "Context fidelity · v7",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.63,
+     "target": "vera/chat/chat_panel.html",
+     "element": "ctxViewMode",
+     "evidence": [
+      "handler ctxViewMode shares context"
+     ]
+    },
+    {
+     "key": "Piecewise planning",
+     "label": "Piecewise planning",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.57,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    },
+    {
+     "key": "Prompt template",
+     "label": "Prompt template",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.69,
+     "target": "vera/chat/chat_panel.html",
+     "element": "#inputBar",
+     "evidence": [
+      "container #inputBar shares composer"
+     ]
+    },
+    {
+     "key": "Model override",
+     "label": "Model override",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.98,
+     "target": "vera/chat/chat_panel.html",
+     "element": "Model override",
+     "evidence": [
+      "section Model override shares model/override"
+     ]
+    },
+    {
+     "key": "Markdown",
+     "label": "Markdown",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.68,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    },
+    {
+     "key": "Images",
+     "label": "Images",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.68,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    },
+    {
+     "key": "Artifacts",
+     "label": "Artifacts",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.68,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    },
+    {
+     "key": "Thinking phrases",
+     "label": "Thinking phrases",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.57,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    },
+    {
+     "key": "Throbber",
+     "label": "Throbber",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.68,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    },
+    {
+     "key": "Sources",
+     "label": "Sources",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.8,
+     "target": "vera/chat/chat_panel.html",
+     "element": "ctxViewMode",
+     "evidence": [
+      "handler ctxViewMode shares context"
+     ]
+    },
+    {
+     "key": "Parameters",
+     "label": "Parameters",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.68,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    },
+    {
+     "key": "Behaviour",
+     "label": "Behaviour",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.68,
+     "target": "vera/dag/dag_workshop_panel.html",
+     "element": ".section",
+     "evidence": [
+      "container .section shares section"
+     ]
+    }
+   ],
+   "keep": [
+    "section rpHist",
+    "section rpCfg",
+    "section rpCtx",
+    "section rpCaps",
+    "section rpPanels",
+    "section rpLoop",
+    "section Execution modes",
+    "section Agent",
+    "section Context Injection",
+    "section Agent loop variant",
+    "subtab ",
+    "subtab ${icon} ${esc(label)}",
+    "subtab &#9679;",
+    "container #topBar",
+    "container #connDot",
+    "container #agentMeta",
+    "container #capBadge",
+    "container #ctxMeter",
+    "container #ctxMeterBar",
+    "container #ctxMeterFill",
+    "container #root",
+    "container #leftRail",
+    "container #rpHist",
+    "container #histList",
+    "container #rpCfg",
+    "container #cfgRestoreStatus",
+    "container #sbxSessionStatus",
+    "container #sbxSessionTools",
+    "container #dagOpts",
+    "container #thinkPhraseStatus",
+    "container #agentInfoBox",
+    "container #rpCtx",
+    "container #ctxSkillPicker",
+    "container #ctxSkillList",
+    "container #ctxOntPicker",
+    "container #ctxOntList",
+    "container #ctxInjBadges",
+    "container #rpCaps",
+    "container #rpCapMeta",
+    "container #rpCapOvrBar",
+    "container #rpCapList",
+    "container #rpCapRun",
+    "container #rpCapRunDesc",
+    "container #rpCapRunForm",
+    "container #rpCapRunStatus",
+    "container #rpPanels",
+    "container #rpPanelMeta",
+    "container #rpPanelActiveBar",
+    "container #rpPanelList",
+    "container #rpLoop",
+    "container #loopVariantDesc",
+    "container #loopV4Box",
+    "container #loopV5Box",
+    "container #centre",
+    "container #councilPanel",
+    "container #councilInstChips",
+    "container #sdPanel",
+    "container #sdLoRAs",
+    "container #chatColumn",
+    "container #chatStack"
+   ],
+   "keepCount": 347,
+   "directives": [
+    "evolve.git_status",
+    "sandbox.exec"
+   ],
+   "caps": [
+    "obs.provenance",
+    "code.read",
+    "code.author",
+    "web.research",
+    "memory.select",
+    "nlp.rerank",
+    "browser.screenshot"
+   ]
+  },
+  {
+   "board": "Coverage.dc.html",
+   "title": "Feature audit",
+   "sets": [
+    "system"
+   ],
+   "kind": "reference",
+   "targets": [],
+   "also": [],
+   "parts": [],
+   "keep": [],
+   "keepCount": 0,
+   "directives": [],
+   "caps": [],
+   "note": "reference board — a spec, audit or storyboard; it lands nowhere by itself"
+  },
+  {
+   "board": "StylePacks.dc.html",
+   "title": "Style packs",
+   "sets": [
+    "system"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/chat/chat_panel.html",
+     "kind": "chat",
+     "score": 114,
+     "evidence": [
+      "pinned by adopt-hints",
+      "4 heading/label tokens in its sections (composer, paste, context, voice)",
+      "1 part tokens among its elements"
+     ]
+    },
+    {
+     "file": "vera/vera-ui.js",
+     "kind": "runtime",
+     "score": 100,
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    },
+    {
+     "file": "vera/execution/netmap_panel.html",
+     "kind": "panel",
+     "score": 16,
+     "evidence": [
+      "4 heading/label tokens in its sections (terminal, composer, context, web)",
+      "2 part tokens among its elements"
+     ]
+    }
+   ],
+   "also": [
+    "vera/theme_defs.py"
+   ],
+   "parts": [
+    {
+     "key": "Standard",
+     "label": "Standard",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.5,
+     "target": "vera/execution/netmap_panel.html",
+     "element": ".rail-section",
+     "evidence": [
+      "container .rail-section shares section"
+     ]
+    },
+    {
+     "key": "Newspaper",
+     "label": "Newspaper",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.5,
+     "target": "vera/execution/netmap_panel.html",
+     "element": ".rail-section",
+     "evidence": [
+      "container .rail-section shares section"
+     ]
+    },
+    {
+     "key": "Terminal",
+     "label": "Terminal",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.68,
+     "target": "vera/execution/netmap_panel.html",
+     "element": "#shell",
+     "evidence": [
+      "container #shell shares terminal"
+     ]
+    },
+    {
+     "key": "Pixel",
+     "label": "Pixel",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.5,
+     "target": "vera/execution/netmap_panel.html",
+     "element": ".rail-section",
+     "evidence": [
+      "container .rail-section shares section"
+     ]
+    },
+    {
+     "key": "What a pack declares",
+     "label": "What a pack declares",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "extends",
+     "confidence": 0.34,
+     "target": "vera/execution/netmap_panel.html",
+     "element": ".rail-section",
+     "evidence": [
+      "nearest container .rail-section shares section"
+     ]
+    }
+   ],
+   "keep": [
+    "section rpHist",
+    "section rpCfg",
+    "section rpCtx",
+    "section rpCaps",
+    "section rpPanels",
+    "section rpLoop",
+    "section Execution modes",
+    "section Agent",
+    "section Model override",
+    "section Context Injection",
+    "section Agent loop variant",
+    "subtab ",
+    "subtab ${icon} ${esc(label)}",
+    "subtab &#9679;",
+    "container #topBar",
+    "container #connDot",
+    "container #agentMeta",
+    "container #capBadge",
+    "container #ctxMeter",
+    "container #ctxMeterBar",
+    "container #ctxMeterFill",
+    "container #root",
+    "container #leftRail",
+    "container #rpHist",
+    "container #histList",
+    "container #rpCfg",
+    "container #cfgRestoreStatus",
+    "container #sbxSessionStatus",
+    "container #sbxSessionTools",
+    "container #dagOpts",
+    "container #thinkPhraseStatus",
+    "container #agentInfoBox",
+    "container #rpCtx",
+    "container #ctxSkillPicker",
+    "container #ctxSkillList",
+    "container #ctxOntPicker",
+    "container #ctxOntList",
+    "container #ctxInjBadges",
+    "container #rpCaps",
+    "container #rpCapMeta",
+    "container #rpCapOvrBar",
+    "container #rpCapList",
+    "container #rpCapRun",
+    "container #rpCapRunDesc",
+    "container #rpCapRunForm",
+    "container #rpCapRunStatus",
+    "container #rpPanels",
+    "container #rpPanelMeta",
+    "container #rpPanelActiveBar",
+    "container #rpPanelList",
+    "container #rpLoop",
+    "container #loopVariantDesc",
+    "container #loopV4Box",
+    "container #loopV5Box",
+    "container #centre",
+    "container #councilPanel",
+    "container #councilInstChips",
+    "container #sdPanel",
+    "container #sdLoRAs",
+    "container #chatColumn"
+   ],
+   "keepCount": 351,
+   "directives": [
+    "ui.js"
+   ],
+   "caps": []
+  },
+  {
+   "board": "Widgets.dc.html",
+   "title": "Widget gallery",
+   "sets": [
+    "widgets"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/capability_orchestration.html",
+     "kind": "harness",
+     "score": 117,
+     "evidence": [
+      "pinned by adopt-hints",
+      "1 shared capabilities (llm.generate)",
+      "5 heading/label tokens in its sections (widget, canvas, ask, ops, card)"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-dashboard.js",
+     "kind": "runtime",
+     "score": 100,
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    },
+    {
+     "file": "vera/sparkline_element.js",
+     "kind": "runtime",
+     "score": 100,
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    }
+   ],
+   "also": [
+    "vera/widgets/ (new: the 66 still forms as <vera-widget>)"
+   ],
+   "parts": [],
+   "keep": [
+    "section Register External MCP Server",
+    "section Registered Servers",
+    "section Proxied Caps",
+    "subtab ",
+    "subtab Dashboard",
+    "subtab Observe",
+    "subtab Capabilities",
+    "subtab MCP Servers",
+    "subtab Elements",
+    "subtab ☰",
+    "subtab ⇕",
+    "subtab ⧈",
+    "subtab +",
+    "subtab ⊞",
+    "subtab ↗",
+    "subtab ⧉",
+    "subtab ⇔",
+    "subtab ◎",
+    "subtab ✕",
+    "container #sbxInfoBody",
+    "container #dot",
+    "container #hdrPills",
+    "container #hdrMetrics",
+    "container #hdrMetricCfgWrap",
+    "container #hdrMetricCfg",
+    "container #evSidebar",
+    "container #evFilterBar",
+    "container #evFeed",
+    "container #main",
+    "container #tabHoverZone",
+    "container #tabBar",
+    "container #lhmNav",
+    "container #lhmNavTabs",
+    "container #lhmEventsFeed",
+    "container #lhmEvFeedMirror",
+    "container #panel-dashboard",
+    "container #dashHealthStrip",
+    "container #dashHiddenPicker",
+    "container #dashGrid",
+    "container #hProxmoxRunning",
+    "container #hProxmoxGuests",
+    "container #hProxmoxNodes",
+    "container #pmxRows",
+    "container #pmxCores",
+    "container #pmxGuests",
+    "container #hDockerRunning",
+    "container #hDockerConts",
+    "container #hDockerHosts",
+    "container #dkrRows",
+    "container #dkrTopContainers",
+    "container #hOllamaOnline",
+    "container #hOllamaGpu",
+    "container #hOllamaInuse",
+    "container #ollRows",
+    "container #topProcs",
+    "container #hostTempsList",
+    "container #hStatus",
+    "container #hStatusSub",
+    "container #hMode",
+    "container #hRedis"
+   ],
+   "keepCount": 310,
+   "directives": [
+    "sandbox.session"
+   ],
+   "caps": [
+    "code.author",
+    "obs.provenance",
+    "code.read",
+    "memory.select",
+    "llm.generate",
+    "nlp.rerank",
+    "web.research",
+    "markets.bars",
+    "report.html"
+   ]
+  },
+  {
+   "board": "WidgetsMotion.dc.html",
+   "title": "Widgets — motion, composites, config",
+   "sets": [
+    "widgets"
+   ],
+   "kind": "storyboard",
+   "targets": [
+    {
+     "file": "vera/chat/vera-dashboard.js",
+     "kind": "runtime",
+     "score": 133,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names dashboard",
+      "1 heading/label tokens in its sections (dashboard)"
+     ]
+    },
+    {
+     "file": "vera/activity_timeline_element.js",
+     "kind": "runtime",
+     "score": 103,
+     "evidence": [
+      "pinned by adopt-hints",
+      "1 heading/label tokens in its sections (card)"
+     ]
+    },
+    {
+     "file": "vera/loop_graph_element.js",
+     "kind": "runtime",
+     "score": 103,
+     "evidence": [
+      "pinned by adopt-hints",
+      "1 heading/label tokens in its sections (ops)"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [],
+   "keep": [
+    "section window.BASE",
+    "section window.VeraDash",
+    "container .vd-wl-box",
+    "container .vd-wl-head",
+    "container .vd-wl-search",
+    "container .w-iconbtn",
+    "container .vd-wl-list",
+    "container .wl-item",
+    "container .wl-item-icon",
+    "container .wl-item-label",
+    "container .wl-item-id",
+    "container .wl-item-mode",
+    "container .vd-chip",
+    "container .w-head",
+    "container .w-grip",
+    "container .w-dot",
+    "container .w-title",
+    "container .w-actions",
+    "container .w-body",
+    "container .w-resize",
+    "container .vera-spinner",
+    "handler _autoScrollOnDrag",
+    "handler _dragGuardOff",
+    "handler _dragGuardOn",
+    "handler _scrollParent",
+    "handler _scrollableAncestor",
+    "handler _soloBoot",
+    "handler _startSoloMirror",
+    "handler addPopButtons",
+    "handler addWidget",
+    "handler applyLayout",
+    "handler applySize",
+    "handler autoScrollTick",
+    "handler buildDoc",
+    "handler byId",
+    "handler closeModal",
+    "handler dock",
+    "handler ensureModal",
+    "handler fetchPanels",
+    "handler floatMove",
+    "handler floatStart",
+    "handler floatStop",
+    "handler floatW",
+    "handler hide",
+    "handler init",
+    "handler injectCSS",
+    "handler load",
+    "handler mv",
+    "handler onDragEnd",
+    "handler onDragLeave",
+    "handler onDragOver",
+    "handler onDragStart",
+    "handler onDrop",
+    "handler onResizeDown",
+    "handler openLoader",
+    "handler popToggle",
+    "handler popWindow",
+    "handler removeDynamic",
+    "handler renderHidden",
+    "handler renderLoader"
+   ],
+   "keepCount": 70,
+   "directives": [
+    "sandbox.session"
+   ],
+   "caps": [
+    "markets.bars",
+    "code.author",
+    "obs.provenance",
+    "code.read",
+    "memory.select",
+    "llm.generate",
+    "nlp.rerank",
+    "web.research",
+    "report.html"
+   ]
+  },
+  {
+   "board": "WidgetConfig.dc.html",
+   "title": "Widget config",
+   "sets": [
+    "widgets"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/ui builder/ui_builder_panel.html",
+     "kind": "panel",
+     "score": 103,
+     "evidence": [
+      "pinned by adopt-hints",
+      "1 heading/label tokens in its sections (rail)"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-dashboard.js",
+     "kind": "runtime",
+     "score": 100,
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    },
+    {
+     "file": "vera/agent_loop_config_element.js",
+     "kind": "runtime",
+     "score": 25,
+     "evidence": [
+      "title names settings",
+      "2 shared capabilities (code.author, llm.generate)",
+      "1 heading/label tokens in its sections (settings)"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [],
+   "keep": [
+    "section Theme Editor",
+    "section Loading Animation",
+    "section Panel Builder",
+    "section Agentic Panel Generator",
+    "section Panel Browser",
+    "container #sidebar",
+    "container #side-head",
+    "container #nav",
+    "container #status-tile",
+    "container #themePicker",
+    "container #s-themes",
+    "container #themeButtons",
+    "container #themeStatus",
+    "container #themeVarGrid",
+    "container #teStatus",
+    "container #ntStatus",
+    "container #themePreview",
+    "container #s-loader",
+    "container #ld_sprite_box",
+    "container #ldStatus",
+    "container #ld_preview",
+    "container #s-builder",
+    "container #pbStatus",
+    "container #s-generate",
+    "container #genStatus",
+    "container #genLogCard",
+    "container #genLog",
+    "container #genCapCard",
+    "container #genCapList",
+    "container #genResultCard",
+    "container #genRefineRow",
+    "container #genPreviewOverlay",
+    "container #s-panels",
+    "container #panelList",
+    "container #panelDetail",
+    "container #pdCHtml",
+    "container #pdCSrc",
+    "container #pdCCaps",
+    "container #pdCaps",
+    "container #toast",
+    "container .btn",
+    "container .sec",
+    "container .card",
+    "container .row",
+    "container .st",
+    "container .layout",
+    "container .sb",
+    "container .nb",
+    "container .main",
+    "handler applyTheme",
+    "handler autoContrast",
+    "handler createTheme",
+    "handler deleteTheme",
+    "handler fabricStorePanel",
+    "handler fabricStoreTheme",
+    "handler genCancel",
+    "handler genCopy",
+    "handler genDoRefine",
+    "handler genEditInBuilder",
+    "handler genRefine"
+   ],
+   "keepCount": 75,
+   "directives": [
+    "memory.related",
+    "session.glance",
+    "sandbox.session",
+    "loop.status_line"
+   ],
+   "caps": [
+    "code.author",
+    "obs.provenance",
+    "code.read",
+    "memory.select",
+    "llm.generate",
+    "nlp.rerank",
+    "web.research",
+    "markets.bars",
+    "report.html",
+    "ollama.embed_config",
+    "bench.compare",
+    "bench.passive"
+   ]
+  },
+  {
+   "board": "QC.dc.html",
+   "title": "Pre-implementation QC",
+   "sets": [
+    "chat"
+   ],
+   "kind": "reference",
+   "targets": [],
+   "also": [],
+   "parts": [],
+   "keep": [],
+   "keepCount": 0,
+   "directives": [
+    "widget.template",
+    "canvas.surface",
+    "canvas.ask",
+    "panel.open",
+    "canvas.add",
+    "canvas.pin",
+    "canvas.park",
+    "canvas.size",
+    "lhm.focus"
+   ],
+   "caps": [
+    "panel.dispatch",
+    "canvas.show"
+   ],
+   "note": "reference board — a spec, audit or storyboard; it lands nowhere by itself"
+  },
+  {
+   "board": "Globes.dc.html",
+   "title": "Globe widgets",
+   "sets": [
+    "widgets"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/vera_graph_panel_worldview.js",
+     "kind": "runtime",
+     "score": 100,
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    },
+    {
+     "file": "vera/worldview/worldview_panel.html",
+     "kind": "panel",
+     "score": 100,
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-dashboard.js",
+     "kind": "runtime",
+     "score": 33,
+     "evidence": [
+      "title names dashboard",
+      "1 heading/label tokens in its sections (dashboard)"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [],
+   "keep": [
+    "container .wv-scope-bar",
+    "container .wv-scope-icon",
+    "container .wv-scope-label",
+    "container .wv-scope-sw",
+    "container .wvs",
+    "container .wvs-hd",
+    "container .wvs-body",
+    "container .wv-newname",
+    "container .wv-graphinfo",
+    "container .wvb",
+    "container .wv-sublist",
+    "container .wr",
+    "container .wv-maplimit",
+    "container .wv-method",
+    "container .wv-concept-mode",
+    "container .wv-mapinfo",
+    "container .wv-qtxt",
+    "container .wv-qtopk",
+    "container .wv-qresults",
+    "container .wv-atopk",
+    "container .wv-aresults",
+    "container .wv-clist",
+    "container .wv-lasttrained",
+    "container .wv-gnn",
+    "container .wv-codebook",
+    "container .wv-dynamics",
+    "container .wv-limit",
+    "container .wv-cbrow",
+    "container .wv-embed",
+    "container .wv-usenodes",
+    "container .wv-autoupdate",
+    "container .wv-stages",
+    "container .wv-stage",
+    "container .wv-trainlog",
+    "container .wv-lossview",
+    "container .wv-lossout",
+    "container .wv-statsout",
+    "container .wv-status",
+    "container .wv-row",
+    "handler $",
+    "handler _activeGraphSummary",
+    "handler _cid",
+    "handler _highlightByConcept",
+    "handler _highlightIds",
+    "handler _onProgress",
+    "handler _reflectActiveView",
+    "handler _refreshGraphInfo",
+    "handler _refreshLastTrained",
+    "handler _relTime",
+    "handler _renderStage",
+    "handler _resetStages",
+    "handler _setTrainingLock",
+    "handler _sparkline",
+    "handler _startPoll",
+    "handler _startTrainSSE",
+    "handler _stopPoll",
+    "handler _stopTrainSSE",
+    "handler _updateScopeBanner",
+    "handler activateSubview",
+    "handler api"
+   ],
+   "keepCount": 74,
+   "directives": [],
+   "caps": []
+  },
+  {
+   "board": "Driven.dc.html",
+   "title": "Panels driven by the LLM",
+   "sets": [
+    "system"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/chat/chat_panel.html",
+     "kind": "chat",
+     "score": 119,
+     "evidence": [
+      "pinned by adopt-hints",
+      "2 shared capabilities (canvas.show, panel.dispatch)",
+      "1 heading/label tokens in its sections (message)",
+      "1 part tokens among its elements",
+      "chat-shaped board"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-panel-bridge.js",
+     "kind": "runtime",
+     "score": 102,
+     "evidence": [
+      "pinned by adopt-hints",
+      "1 shared capabilities (panel.dispatch)"
+     ]
+    },
+    {
+     "file": "vera/vllm/vllm_panel.html",
+     "kind": "panel",
+     "score": 40,
+     "evidence": [
+      "title names llm",
+      "2 heading/label tokens in its sections (llm, message)",
+      "2 part tokens among its elements"
+     ]
+    }
+   ],
+   "also": [
+    "vera/ui/directives.py (new)"
+   ],
+   "parts": [
+    {
+     "key": "The turn aide · 14:41 · four directives",
+     "label": "The turn aide · 14:41 · four directives",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.6,
+     "target": "vera/chat/chat_panel.html",
+     "element": ".mwrap",
+     "evidence": [
+      "container .mwrap shares message"
+     ]
+    }
+   ],
+   "keep": [
+    "section rpHist",
+    "section rpCfg",
+    "section rpCtx",
+    "section rpCaps",
+    "section rpPanels",
+    "section rpLoop",
+    "section Execution modes",
+    "section Agent",
+    "section Model override",
+    "section Context Injection",
+    "section Agent loop variant",
+    "subtab ",
+    "subtab ${icon} ${esc(label)}",
+    "subtab &#9679;",
+    "container #topBar",
+    "container #connDot",
+    "container #agentMeta",
+    "container #capBadge",
+    "container #ctxMeter",
+    "container #ctxMeterBar",
+    "container #ctxMeterFill",
+    "container #root",
+    "container #leftRail",
+    "container #rpHist",
+    "container #histList",
+    "container #rpCfg",
+    "container #cfgRestoreStatus",
+    "container #sbxSessionStatus",
+    "container #sbxSessionTools",
+    "container #dagOpts",
+    "container #thinkPhraseStatus",
+    "container #agentInfoBox",
+    "container #rpCtx",
+    "container #ctxSkillPicker",
+    "container #ctxSkillList",
+    "container #ctxOntPicker",
+    "container #ctxOntList",
+    "container #ctxInjBadges",
+    "container #rpCaps",
+    "container #rpCapMeta",
+    "container #rpCapOvrBar",
+    "container #rpCapList",
+    "container #rpCapRun",
+    "container #rpCapRunDesc",
+    "container #rpCapRunForm",
+    "container #rpCapRunStatus",
+    "container #rpPanels",
+    "container #rpPanelMeta",
+    "container #rpPanelActiveBar",
+    "container #rpPanelList",
+    "container #rpLoop",
+    "container #loopVariantDesc",
+    "container #loopV4Box",
+    "container #loopV5Box",
+    "container #centre",
+    "container #councilPanel",
+    "container #councilInstChips",
+    "container #sdPanel",
+    "container #sdLoRAs",
+    "container #chatColumn"
+   ],
+   "keepCount": 350,
+   "directives": [
+    "panel.open",
+    "canvas.add",
+    "canvas.pin",
+    "canvas.park",
+    "canvas.size",
+    "canvas.ask",
+    "lhm.focus"
+   ],
+   "caps": [
+    "panel.dispatch",
+    "canvas.show"
+   ]
+  },
+  {
+   "board": "Control.dc.html",
+   "title": "How the LLM drives the UI",
+   "sets": [
+    "system"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/chat/chat_panel.html",
+     "kind": "chat",
+     "score": 152,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names chat",
+      "3 shared capabilities (canvas.show, panel.dispatch, panel.query)",
+      "6 heading/label tokens in its sections (model, back, message, context, save)",
+      "2 part tokens among its elements",
+      "chat-shaped board"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-panel-bridge.js",
+     "kind": "runtime",
+     "score": 104,
+     "evidence": [
+      "pinned by adopt-hints",
+      "2 shared capabilities (panel.dispatch, panel.query)"
+     ]
+    },
+    {
+     "file": "vera/vllm/vllm_panel.html",
+     "kind": "panel",
+     "score": 38,
+     "evidence": [
+      "title names llm",
+      "2 heading/label tokens in its sections (llm, message)",
+      "1 part tokens among its elements"
+     ]
+    }
+   ],
+   "also": [
+    "vera/ui/directives.py (new: the 20-directive vocabulary + dispatcher)",
+    "vera/ui/scripts.py (new: ui.script.* on·if·do)"
+   ],
+   "parts": [
+    {
+     "key": "Direct — the model decides",
+     "label": "Direct — the model decides",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.54,
+     "target": "vera/chat/chat_panel.html",
+     "element": "Model override",
+     "evidence": [
+      "section Model override shares model"
+     ]
+    },
+    {
+     "key": "Scripted — a rule decides, no model call",
+     "label": "Scripted — a rule decides, no model call",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "extends",
+     "confidence": 0.47,
+     "target": "vera/chat/chat_panel.html",
+     "element": "Model override",
+     "evidence": [
+      "nearest section Model override shares model"
+     ]
+    },
+    {
+     "key": "Back to the model",
+     "label": "Back to the model",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.59,
+     "target": "vera/chat/chat_panel.html",
+     "element": "Model override",
+     "evidence": [
+      "section Model override shares model"
+     ]
+    },
+    {
+     "key": "Policy and undo the same rules for both paths",
+     "label": "Policy and undo the same rules for both paths",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "extends",
+     "confidence": 0.27,
+     "target": "vera/vllm/vllm_panel.html",
+     "element": ".launch-section",
+     "evidence": [
+      "nearest container .launch-section shares section"
+     ]
+    }
+   ],
+   "keep": [
+    "section rpHist",
+    "section rpCfg",
+    "section rpCtx",
+    "section rpCaps",
+    "section rpPanels",
+    "section rpLoop",
+    "section Execution modes",
+    "section Agent",
+    "section Context Injection",
+    "section Agent loop variant",
+    "subtab ",
+    "subtab ${icon} ${esc(label)}",
+    "subtab &#9679;",
+    "container #topBar",
+    "container #connDot",
+    "container #agentMeta",
+    "container #capBadge",
+    "container #ctxMeter",
+    "container #ctxMeterBar",
+    "container #ctxMeterFill",
+    "container #root",
+    "container #leftRail",
+    "container #rpHist",
+    "container #histList",
+    "container #rpCfg",
+    "container #cfgRestoreStatus",
+    "container #sbxSessionStatus",
+    "container #sbxSessionTools",
+    "container #dagOpts",
+    "container #thinkPhraseStatus",
+    "container #agentInfoBox",
+    "container #rpCtx",
+    "container #ctxSkillPicker",
+    "container #ctxSkillList",
+    "container #ctxOntPicker",
+    "container #ctxOntList",
+    "container #ctxInjBadges",
+    "container #rpCaps",
+    "container #rpCapMeta",
+    "container #rpCapOvrBar",
+    "container #rpCapList",
+    "container #rpCapRun",
+    "container #rpCapRunDesc",
+    "container #rpCapRunForm",
+    "container #rpCapRunStatus",
+    "container #rpPanels",
+    "container #rpPanelMeta",
+    "container #rpPanelActiveBar",
+    "container #rpPanelList",
+    "container #rpLoop",
+    "container #loopVariantDesc",
+    "container #loopV4Box",
+    "container #loopV5Box",
+    "container #centre",
+    "container #councilPanel",
+    "container #councilInstChips",
+    "container #sdPanel",
+    "container #sdLoRAs",
+    "container #chatColumn",
+    "container #chatStack"
+   ],
+   "keepCount": 350,
+   "directives": [
+    "ui.directive",
+    "canvas.add",
+    "loop.step.waiting",
+    "widget.value",
+    "canvas.item.added",
+    "panel.opened",
+    "ui.script.save",
+    "ui.script.run",
+    "ui.directive.applied",
+    "canvas.updated",
+    "panel.open",
+    "canvas.pin",
+    "canvas.ask",
+    "widget.place",
+    "room.panels.open",
+    "widget.pulse",
+    "lhm.focus",
+    "ui.script.list",
+    "ui.script.ran",
+    "panel.close",
+    "panel.closed",
+    "canvas.size",
+    "lhm.compose",
+    "lhm.menu.saved",
+    "widget.placed",
+    "widget.update",
+    "widget.updated",
+    "widget.template.save",
+    "widget.template.saved",
+    "chat.card",
+    "chat.mode",
+    "graph.focus",
+    "graph.focused",
+    "graph.view",
+    "ui.script.saved",
+    "chat.mode.diffuse",
+    "ui.directive.refused",
+    "room.session.idle"
+   ],
+   "caps": [
+    "canvas.show",
+    "panel.dispatch",
+    "panel.query"
+   ]
+  },
+  {
+   "board": "Sizes.dc.html",
+   "title": "Sizes · XS to XL",
+   "sets": [
+    "widgets"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/chat/vera-dashboard.js",
+     "kind": "runtime",
+     "score": 130,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names dashboard"
+     ]
+    },
+    {
+     "file": "vera/dream/dream_pipelines_panel.html",
+     "kind": "panel",
+     "score": 30,
+     "evidence": [
+      "title names composite"
+     ]
+    },
+    {
+     "file": "vera/workers/system_log_element.js",
+     "kind": "runtime",
+     "score": 30,
+     "evidence": [
+      "title names log"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [],
+   "keep": [
+    "section window.BASE",
+    "section window.VeraDash",
+    "container .vd-wl-box",
+    "container .vd-wl-head",
+    "container .vd-wl-search",
+    "container .w-iconbtn",
+    "container .vd-wl-list",
+    "container .wl-item",
+    "container .wl-item-icon",
+    "container .wl-item-label",
+    "container .wl-item-id",
+    "container .wl-item-mode",
+    "container .vd-chip",
+    "container .w-head",
+    "container .w-grip",
+    "container .w-dot",
+    "container .w-title",
+    "container .w-actions",
+    "container .w-body",
+    "container .w-resize",
+    "container .vera-spinner",
+    "handler _autoScrollOnDrag",
+    "handler _dragGuardOff",
+    "handler _dragGuardOn",
+    "handler _scrollParent",
+    "handler _scrollableAncestor",
+    "handler _soloBoot",
+    "handler _startSoloMirror",
+    "handler addPopButtons",
+    "handler addWidget",
+    "handler applyLayout",
+    "handler applySize",
+    "handler autoScrollTick",
+    "handler buildDoc",
+    "handler byId",
+    "handler closeModal",
+    "handler dock",
+    "handler ensureModal",
+    "handler fetchPanels",
+    "handler floatMove",
+    "handler floatStart",
+    "handler floatStop",
+    "handler floatW",
+    "handler hide",
+    "handler init",
+    "handler injectCSS",
+    "handler load",
+    "handler mv",
+    "handler onDragEnd",
+    "handler onDragLeave",
+    "handler onDragOver",
+    "handler onDragStart",
+    "handler onDrop",
+    "handler onResizeDown",
+    "handler openLoader",
+    "handler popToggle",
+    "handler popWindow",
+    "handler removeDynamic",
+    "handler renderHidden",
+    "handler renderLoader"
+   ],
+   "keepCount": 70,
+   "directives": [],
+   "caps": []
+  },
+  {
+   "board": "Formats.dc.html",
+   "title": "Formats, streaming, and widgets in the reply",
+   "sets": [
+    "widgets"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/vera_markdown_element.js",
+     "kind": "runtime",
+     "score": 136,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names markdown",
+      "2 heading/label tokens in its sections (markdown, copy)"
+     ]
+    },
+    {
+     "file": "vera/chat/chat_panel.html",
+     "kind": "chat",
+     "score": 124,
+     "evidence": [
+      "pinned by adopt-hints",
+      "1 shared capabilities (report.html)",
+      "4 heading/label tokens in its sections (message, model, canvas, form)",
+      "chat-shaped board"
+     ]
+    },
+    {
+     "file": "vera/render/vera_mermaid.js",
+     "kind": "runtime",
+     "score": 100,
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [
+    {
+     "key": "Why boot re-embedded every time",
+     "label": "Why boot re-embedded every time",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "new",
+     "confidence": 1,
+     "target": "vera/vera_markdown_element.js",
+     "element": "",
+     "evidence": [
+      "no estate element shares a token"
+     ]
+    }
+   ],
+   "keep": [
+    "section window.VeraMD",
+    "container <vera-markdown>",
+    "container .vmd-img",
+    "container .vmd-code",
+    "container .vmd-code-bar",
+    "container .vmd-copy",
+    "container .vmd-tablewrap",
+    "container .vmd-task",
+    "container .vmd-toggle",
+    "container .vmd-raw",
+    "container .vmd-body",
+    "handler _render",
+    "handler attributeChangedCallback",
+    "handler connectedCallback",
+    "handler constructor",
+    "handler inline",
+    "handler render",
+    "handler setText"
+   ],
+   "keepCount": 18,
+   "directives": [],
+   "caps": [
+    "report.html",
+    "obs.provenance"
+   ]
+  },
+  {
+   "board": "Dashboard.dc.html",
+   "title": "Dashboard · edit mode",
+   "sets": [
+    "widgets"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/chat/vera-dashboard.js",
+     "kind": "runtime",
+     "score": 153,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names dashboard",
+      "5 heading/label tokens in its sections (dashboard, resize, window, chips, vd)",
+      "4 part tokens among its elements"
+     ]
+    },
+    {
+     "file": "vera/capability_orchestration.html",
+     "kind": "harness",
+     "score": 144,
+     "evidence": [
+      "pinned by adopt-hints",
+      "8 heading/label tokens in its sections (ops, dashboard, add, widget, resize)",
+      "5 part tokens among its elements",
+      "harness-shaped board"
+     ]
+    },
+    {
+     "file": "vera/dream/dream_panel.html",
+     "kind": "panel",
+     "score": 30,
+     "evidence": [
+      "6 heading/label tokens in its sections (overview, dashboard, add, no, out)",
+      "6 part tokens among its elements"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [
+    {
+     "key": "Cluster overview",
+     "label": "Cluster overview",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "extends",
+     "confidence": 0.39,
+     "target": "vera/capability_orchestration.html",
+     "element": "#hProxmoxNodes",
+     "evidence": [
+      "nearest container #hProxmoxNodes shares ops"
+     ]
+    },
+    {
+     "key": "Layouts saved arrangements · per user, per dashboard",
+     "label": "Layouts saved arrangements · per user, per dashboard",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.56,
+     "target": "vera/chat/vera-dashboard.js",
+     "element": "widgets",
+     "evidence": [
+      "handler widgets shares dashboard"
+     ]
+    },
+    {
+     "key": "Add a widget any record from the gallery · drops at M",
+     "label": "Add a widget any record from the gallery · drops at M",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.66,
+     "target": "vera/chat/vera-dashboard.js",
+     "element": "addWidget",
+     "evidence": [
+      "handler addWidget shares add/widget"
+     ]
+    },
+    {
+     "key": "No feature lost what the old dashboard did, kept",
+     "label": "No feature lost what the old dashboard did, kept",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.54,
+     "target": "vera/chat/vera-dashboard.js",
+     "element": "widgets",
+     "evidence": [
+      "handler widgets shares dashboard"
+     ]
+    },
+    {
+     "key": "The layout record what is saved",
+     "label": "The layout record what is saved",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "extends",
+     "confidence": 0.42,
+     "target": "vera/chat/vera-dashboard.js",
+     "element": "applyLayout",
+     "evidence": [
+      "nearest handler applyLayout shares layout"
+     ]
+    }
+   ],
+   "keep": [
+    "section window.BASE",
+    "section window.VeraDash",
+    "container .vd-wl-box",
+    "container .vd-wl-head",
+    "container .vd-wl-search",
+    "container .w-iconbtn",
+    "container .vd-wl-list",
+    "container .wl-item",
+    "container .wl-item-icon",
+    "container .wl-item-label",
+    "container .wl-item-id",
+    "container .wl-item-mode",
+    "container .vd-chip",
+    "container .w-head",
+    "container .w-grip",
+    "container .w-dot",
+    "container .w-title",
+    "container .w-actions",
+    "container .w-body",
+    "container .w-resize",
+    "container .vera-spinner",
+    "handler _autoScrollOnDrag",
+    "handler _dragGuardOff",
+    "handler _dragGuardOn",
+    "handler _scrollParent",
+    "handler _scrollableAncestor",
+    "handler _soloBoot",
+    "handler _startSoloMirror",
+    "handler addPopButtons",
+    "handler applySize",
+    "handler autoScrollTick",
+    "handler buildDoc",
+    "handler byId",
+    "handler closeModal",
+    "handler dock",
+    "handler ensureModal",
+    "handler fetchPanels",
+    "handler floatMove",
+    "handler floatStart",
+    "handler floatStop",
+    "handler floatW",
+    "handler hide",
+    "handler init",
+    "handler injectCSS",
+    "handler load",
+    "handler mv",
+    "handler onDragEnd",
+    "handler onDragLeave",
+    "handler onDragOver",
+    "handler onDragStart",
+    "handler onDrop",
+    "handler onResizeDown",
+    "handler openLoader",
+    "handler popToggle",
+    "handler popWindow",
+    "handler removeDynamic",
+    "handler renderHidden",
+    "handler renderLoader",
+    "handler reset",
+    "handler restoreDynamic"
+   ],
+   "keepCount": 67,
+   "directives": [
+    "sandbox.list",
+    "dash.main"
+   ],
+   "caps": [
+    "code.author",
+    "memory.select"
+   ]
+  },
+  {
+   "board": "WidgetSpec.dc.html",
+   "title": "Widget system · the spec",
+   "sets": [
+    "widgets"
+   ],
+   "kind": "reference",
+   "targets": [],
+   "also": [
+    "vera/widgets/widget_record.py (new)",
+    "vera/widgets/widget_registry.py (new)"
+   ],
+   "parts": [],
+   "keep": [],
+   "keepCount": 0,
+   "directives": [
+    "panel.open",
+    "canvas.add",
+    "canvas.pin",
+    "canvas.park",
+    "canvas.size",
+    "canvas.ask",
+    "lhm.focus",
+    "sandbox.list"
+   ],
+   "caps": [
+    "obs.node_temps",
+    "panel.dispatch",
+    "canvas.show",
+    "topology.snapshot",
+    "sysmon.status",
+    "sysmon.history",
+    "docker.stats.top",
+    "obs.pending",
+    "memory.stats",
+    "obs.scheduler",
+    "mesh.nodes",
+    "evolve.sandbox.status",
+    "ide.vscode.instances",
+    "obs.diagnostics",
+    "dash.health.summary",
+    "dream.last",
+    "dream.history",
+    "ollama.request_log",
+    "background.status",
+    "ollama.embed_config",
+    "llm.generate",
+    "catalog.pull.status",
+    "catalog.nodes",
+    "bench.node_perf",
+    "bench.compare",
+    "bench.passive",
+    "jobs.stats",
+    "perf.scan"
+   ],
+   "note": "reference board — a spec, audit or storyboard; it lands nowhere by itself"
+  },
+  {
+   "board": "JoinedUp.dc.html",
+   "title": "One system · how the pieces join",
+   "sets": [
+    "chat"
+   ],
+   "kind": "reference",
+   "targets": [],
+   "also": [],
+   "parts": [],
+   "keep": [],
+   "keepCount": 0,
+   "directives": [
+    "context.surface",
+    "canvas.add",
+    "panel.open",
+    "canvas.updated",
+    "canvas.pin",
+    "canvas.park",
+    "canvas.size",
+    "canvas.ask",
+    "lhm.focus",
+    "canvas.surface"
+   ],
+   "caps": [
+    "canvas.show",
+    "panel.dispatch"
+   ],
+   "note": "reference board — a spec, audit or storyboard; it lands nowhere by itself"
+  },
+  {
+   "board": "GraphViews.dc.html",
+   "title": "The unified graph · views",
+   "sets": [
+    "chat"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/fabric/memory_graph_panel.html",
+     "kind": "panel",
+     "score": 143,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names context/graph",
+      "6 heading/label tokens in its sections (session, right, program, timeline, list)",
+      "1 part tokens among its elements"
+     ]
+    },
+    {
+     "file": "vera/vera_graph.js",
+     "kind": "runtime",
+     "score": 143,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names graph",
+      "11 heading/label tokens in its sections (graph, session, radius, left, lane)",
+      "1 part tokens among its elements"
+     ]
+    },
+    {
+     "file": "vera/vera_graph_panel_discover.js",
+     "kind": "runtime",
+     "score": 116,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names graph",
+      "2 heading/label tokens in its sections (program, list)",
+      "1 part tokens among its elements"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [
+    {
+     "key": "Inspector any node · the same panel in every view",
+     "label": "Inspector any node · the same panel in every view",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "extends",
+     "confidence": 0.42,
+     "target": "vera/fabric/memory_graph_panel.html",
+     "element": "#node-detail",
+     "evidence": [
+      "nearest container #node-detail shares node"
+     ]
+    }
+   ],
+   "keep": [
+    "container #app",
+    "container #topbar",
+    "container #cleanup-menu",
+    "container #stats-overlay",
+    "container #stats-modal",
+    "container #stats-modal-body",
+    "container #side-config",
+    "container #type-chips",
+    "container #edge-chips",
+    "container #source-chips",
+    "container #session-picker",
+    "container #unresolved-banner",
+    "container #force-controls",
+    "container #timeline-controls",
+    "container #hierarchy-controls",
+    "container #radial-controls",
+    "container #dbg",
+    "container #cvwrap",
+    "container #overlay-loading",
+    "container #drop-hint",
+    "container #right",
+    "container #side-hdr",
+    "container #side-details",
+    "container #info-scroll",
+    "container #placeholder",
+    "container #node-actions",
+    "container #cap-runner",
+    "container #cap-runner-hdr",
+    "container #cap-run-params",
+    "container #cap-run-result",
+    "container #live-log",
+    "container #full-content-box",
+    "container #node-edges-list",
+    "container .logo",
+    "container .sep",
+    "container .tb-btn",
+    "container #stat-bar",
+    "container #status-msg",
+    "container .side-tab",
+    "container #side-collapse",
+    "container .side-page",
+    "container .ph",
+    "container .pb",
+    "container .sl",
+    "container .chips",
+    "container .chip",
+    "container .ctrl",
+    "container .debug",
+    "container #cv",
+    "container .node-title",
+    "container .badge",
+    "container .kv",
+    "container .kv-k",
+    "container .kv-v",
+    "container .node-text",
+    "container .tags-wrap",
+    "container .tag",
+    "container #cap-run-select",
+    "container .param-row",
+    "container .run-btn"
+   ],
+   "keepCount": 109,
+   "directives": [],
+   "caps": [
+    "code.author",
+    "memory.select",
+    "obs.node_temps"
+   ]
+  },
+  {
+   "board": "Paste.dc.html",
+   "title": "Pasted into the chat",
+   "sets": [
+    "chat"
+   ],
+   "kind": "shell",
+   "targets": [
+    {
+     "file": "vera/chat/chat_panel.html",
+     "kind": "chat",
+     "score": 221,
+     "evidence": [
+      "embeds Canvas.dc.html — lands with it"
+     ]
+    },
+    {
+     "file": "vera/vera_graph.js",
+     "kind": "runtime",
+     "score": 163,
+     "evidence": [
+      "embeds Canvas.dc.html — lands with it"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-panel-bridge.js",
+     "kind": "runtime",
+     "score": 108,
+     "evidence": [
+      "embeds Canvas.dc.html — lands with it"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [
+    {
+     "key": "What the model sees the message the composer builds",
+     "label": "What the model sees the message the composer builds",
+     "tag": "section",
+     "form": "",
+     "from": "heading",
+     "verdict": "replaces",
+     "confidence": 0.56,
+     "target": "vera/chat/chat_panel.html",
+     "element": "#inputBar",
+     "evidence": [
+      "container #inputBar shares composer"
+     ]
+    }
+   ],
+   "keep": [],
+   "keepCount": 0,
+   "directives": [],
+   "caps": []
+  },
+  {
+   "board": "WidgetsIso.dc.html",
+   "title": "Widgets · isometric, third page",
+   "sets": [
+    "widgets"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/chat/vera-dashboard.js",
+     "kind": "runtime",
+     "score": 133,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names dashboard",
+      "1 heading/label tokens in its sections (dashboard)"
+     ]
+    },
+    {
+     "file": "vera/topology_map_element.js",
+     "kind": "runtime",
+     "score": 100,
+     "evidence": [
+      "pinned by adopt-hints"
+     ]
+    },
+    {
+     "file": "vera/chat/chat_panel.html",
+     "kind": "chat",
+     "score": 4,
+     "evidence": [
+      "2 shared capabilities (code.author, report.html)"
+     ]
+    }
+   ],
+   "also": [
+    "vera/static/iso.js (new: the shared ISO library)"
+   ],
+   "parts": [],
+   "keep": [
+    "section window.BASE",
+    "section window.VeraDash",
+    "container .vd-wl-box",
+    "container .vd-wl-head",
+    "container .vd-wl-search",
+    "container .w-iconbtn",
+    "container .vd-wl-list",
+    "container .wl-item",
+    "container .wl-item-icon",
+    "container .wl-item-label",
+    "container .wl-item-id",
+    "container .wl-item-mode",
+    "container .vd-chip",
+    "container .w-head",
+    "container .w-grip",
+    "container .w-dot",
+    "container .w-title",
+    "container .w-actions",
+    "container .w-body",
+    "container .w-resize",
+    "container .vera-spinner",
+    "handler _autoScrollOnDrag",
+    "handler _dragGuardOff",
+    "handler _dragGuardOn",
+    "handler _scrollParent",
+    "handler _scrollableAncestor",
+    "handler _soloBoot",
+    "handler _startSoloMirror",
+    "handler addPopButtons",
+    "handler addWidget",
+    "handler applyLayout",
+    "handler applySize",
+    "handler autoScrollTick",
+    "handler buildDoc",
+    "handler byId",
+    "handler closeModal",
+    "handler dock",
+    "handler ensureModal",
+    "handler fetchPanels",
+    "handler floatMove",
+    "handler floatStart",
+    "handler floatStop",
+    "handler floatW",
+    "handler hide",
+    "handler init",
+    "handler injectCSS",
+    "handler load",
+    "handler mv",
+    "handler onDragEnd",
+    "handler onDragLeave",
+    "handler onDragOver",
+    "handler onDragStart",
+    "handler onDrop",
+    "handler onResizeDown",
+    "handler openLoader",
+    "handler popToggle",
+    "handler popWindow",
+    "handler removeDynamic",
+    "handler renderHidden",
+    "handler renderLoader"
+   ],
+   "keepCount": 70,
+   "directives": [
+    "obs.provenance.last"
+   ],
+   "caps": [
+    "code.author",
+    "sandbox.session.exec",
+    "report.html",
+    "obs.provenance"
+   ]
+  },
+  {
+   "board": "Arrivals.dc.html",
+   "title": "Arrivals",
+   "sets": [
+    "chat"
+   ],
+   "kind": "reference",
+   "targets": [],
+   "also": [],
+   "parts": [],
+   "keep": [],
+   "keepCount": 0,
+   "directives": [
+    "panel.open"
+   ],
+   "caps": [
+    "obs.workers"
+   ],
+   "note": "reference board — a spec, audit or storyboard; it lands nowhere by itself"
+  },
+  {
+   "board": "WidgetAdoption.dc.html",
+   "title": "Widget adoption",
+   "sets": [
+    "widgets"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/workers/workers_ollama_panel.html",
+     "kind": "panel",
+     "score": 278,
+     "evidence": [
+      "pinned by adopt-hints",
+      "2 shared capabilities (background.status, catalog.pull.status)",
+      "2 heading/label tokens in its sections (widget, not)",
+      "31 part tokens among its elements",
+      "adoption row names it"
+     ]
+    },
+    {
+     "file": "vera/capability_orchestration.html",
+     "kind": "harness",
+     "score": 191,
+     "evidence": [
+      "pinned by adopt-hints",
+      "2 shared capabilities (dash.health.summary, topology.snapshot)",
+      "1 heading/label tokens in its sections (widget)",
+      "54 part tokens among its elements",
+      "adoption row names it"
+     ]
+    },
+    {
+     "file": "vera/chat/vera-dashboard.js",
+     "kind": "runtime",
+     "score": 154,
+     "evidence": [
+      "pinned by adopt-hints",
+      "21 part tokens among its elements",
+      "adoption row names it"
+     ]
+    }
+   ],
+   "also": [],
+   "parts": [
+    {
+     "key": "Stat / KPI tile",
+     "label": "Stat / KPI tile",
+     "tag": "counter",
+     "form": "counter",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8125,
+     "target": "vera/capability_orchestration.html · vera/workers/workers_ollama_panel.html",
+     "element": ".tile",
+     "evidence": [
+      "the adoption row names capability_orchestration.html · workers_ollama_panel.html",
+      "element tokens tile"
+     ]
+    },
+    {
+     "key": "Status dot + label row",
+     "label": "Status dot + label row",
+     "tag": "status strip",
+     "form": "status strip",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8125,
+     "target": "vera/workers/workers_ollama_panel.html · vera/dream/dream_panel.html",
+     "element": "#dot",
+     "evidence": [
+      "the adoption row names workers_ollama_panel.html · dream_panel.html",
+      "element tokens dot"
+     ]
+    },
+    {
+     "key": "Pill / chip / badge",
+     "label": "Pill / chip / badge",
+     "tag": "status strip xs",
+     "form": "status strip xs",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8125,
+     "target": "vera/evolve/evolve_panel.html · vera/markets/markets_studio_panel.html",
+     "element": ".pill",
+     "evidence": [
+      "the adoption row names evolve_panel.html · markets_studio_panel.html",
+      "element tokens chips"
+     ]
+    },
+    {
+     "key": "Progress bar / meter",
+     "label": "Progress bar / meter",
+     "tag": "meter",
+     "form": "meter",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 1,
+     "target": "vera/worldview/worldview_panel.html · vera/fabric/fabric_panel.html",
+     "element": ".ls-meter",
+     "evidence": [
+      "the adoption row names worldview_panel.html · fabric_panel.html",
+      "element tokens meter"
+     ]
+    },
+    {
+     "key": "Data table",
+     "label": "Data table",
+     "tag": "table",
+     "form": "table",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9199999999999999,
+     "target": "vera/workers/workers_ollama_panel.html · vera/evolve/evolve_panel.html",
+     "element": "#mt-list",
+     "evidence": [
+      "the adoption row names workers_ollama_panel.html · evolve_panel.html",
+      "element tokens list"
+     ]
+    },
+    {
+     "key": "Card list / card grid",
+     "label": "Card list / card grid",
+     "tag": "card stack",
+     "form": "card stack",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 1,
+     "target": "vera/evolve/evolve_panel.html · vera/dream/dream_panel.html",
+     "element": "#w-card-grid",
+     "evidence": [
+      "the adoption row names evolve_panel.html · dream_panel.html",
+      "element tokens card/dashboard"
+     ]
+    },
+    {
+     "key": "Key / value detail pane",
+     "label": "Key / value detail pane",
+     "tag": "kv",
+     "form": "kv",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8999999999999999,
+     "target": "vera/dag/dag_workshop_panel.html · vera/proxmox/pxstore_panel.html",
+     "element": ".pane",
+     "evidence": [
+      "the adoption row names dag_workshop_panel.html · pxstore_panel.html",
+      "element tokens menu"
+     ]
+    },
+    {
+     "key": "Log / event feed",
+     "label": "Log / event feed",
+     "tag": "log",
+     "form": "log",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 1,
+     "target": "vera/execution/exec_panel.html · vera/workers/workers_ollama_panel.html",
+     "element": ".event-feed",
+     "evidence": [
+      "the adoption row names exec_panel.html · workers_ollama_panel.html",
+      "element tokens event/feed"
+     ]
+    },
+    {
+     "key": "Settings / arg form",
+     "label": "Settings / arg form",
+     "tag": "form (new)",
+     "form": "form (new)",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8116666666666668,
+     "target": "vera/fabric/fabric_panel.html · vera/dream/dream_panel.html",
+     "element": "#sbx-cfg",
+     "evidence": [
+      "the adoption row names fabric_panel.html · dream_panel.html",
+      "element tokens settings"
+     ]
+    },
+    {
+     "key": "Search + filter box",
+     "label": "Search + filter box",
+     "tag": "form (filter)",
+     "form": "form (filter)",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8,
+     "target": "vera/dream/dream_panel.html · vera/vera_graph.js",
+     "element": ".vg-search-wrap",
+     "evidence": [
+      "the adoption row names dream_panel.html · vera_graph.js",
+      "element tokens search"
+     ]
+    },
+    {
+     "key": "Tab strip / segmented control",
+     "label": "Tab strip / segmented control",
+     "tag": "composite (tabs)",
+     "form": "composite (tabs)",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8783333333333334,
+     "target": "vera/workers/workers_ollama_panel.html · vera/ide/ide_panel.html",
+     "element": ".pane",
+     "evidence": [
+      "the adoption row names workers_ollama_panel.html · ide_panel.html",
+      "element tokens menu"
+     ]
+    },
+    {
+     "key": "Toolbar / action row",
+     "label": "Toolbar / action row",
+     "tag": "record actions[]",
+     "form": "record actions[]",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8125,
+     "target": "vera/workers/workers_ollama_panel.html · vera/capability_orchestration.html",
+     "element": ".w-actions",
+     "evidence": [
+      "the adoption row names workers_ollama_panel.html · capability_orchestration.html",
+      "element tokens actions"
+     ]
+    },
+    {
+     "key": "Empty / no-data state",
+     "label": "Empty / no-data state",
+     "tag": "frame state",
+     "form": "frame state",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8999999999999999,
+     "target": "vera/evolve/evolve_panel.html · vera/dream/dream_panel.html",
+     "element": "#j-empty",
+     "evidence": [
+      "the adoption row names evolve_panel.html · dream_panel.html",
+      "element tokens empty"
+     ]
+    },
+    {
+     "key": "Modal / drawer / inspector",
+     "label": "Modal / drawer / inspector",
+     "tag": "frame.deep_dive",
+     "form": "frame.deep_dive",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8783333333333334,
+     "target": "vera/workers/workers_ollama_panel.html · vera/ide/ide_panel.html",
+     "element": ".pane",
+     "evidence": [
+      "the adoption row names workers_ollama_panel.html · ide_panel.html",
+      "element tokens menu"
+     ]
+    },
+    {
+     "key": "Iframe pane",
+     "label": "Iframe pane",
+     "tag": "panel (new)",
+     "form": "panel (new)",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 1,
+     "target": "vera/workers/workers_ollama_panel.html · vera/chat/chat_panel.html",
+     "element": ".pane",
+     "evidence": [
+      "the adoption row names workers_ollama_panel.html · chat_panel.html",
+      "element tokens menu"
+     ]
+    },
+    {
+     "key": "Widget loader iframe (srcdoc)",
+     "label": "Widget loader iframe (srcdoc)",
+     "tag": "panel (new)",
+     "form": "panel (new)",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8125,
+     "target": "vera/chat/vera-dashboard.js",
+     "element": ".widget",
+     "evidence": [
+      "the adoption row names chat/vera-dashboard.js",
+      "element tokens widget"
+     ]
+    },
+    {
+     "key": "Sparkline element",
+     "label": "Sparkline element",
+     "tag": "trace",
+     "form": "trace",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.7,
+     "target": "sparkline_element.js <vera-sparkline>",
+     "element": "#dwhitl-${ev.trace_id}",
+     "evidence": [
+      "the adoption row names sparkline_element.js <vera-sparkline>",
+      "element tokens trace"
+     ]
+    },
+    {
+     "key": "Canvas line chart",
+     "label": "Canvas line chart",
+     "tag": "trace",
+     "form": "trace",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8125,
+     "target": "vera/monitor/system_monitor_panel.html",
+     "element": ".chart",
+     "evidence": [
+      "the adoption row names monitor/system_monitor_panel.html",
+      "element tokens chart"
+     ]
+    },
+    {
+     "key": "Price / OHLCV chart",
+     "label": "Price / OHLCV chart",
+     "tag": "candles",
+     "form": "candles",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8125,
+     "target": "vera/markets/markets_studio_panel.html · vera/markets/markets_panel.html",
+     "element": ".chartBox",
+     "evidence": [
+      "the adoption row names markets_studio_panel.html · markets_panel.html",
+      "element tokens chart"
+     ]
+    },
+    {
+     "key": "Donut / ring gauge",
+     "label": "Donut / ring gauge",
+     "tag": "dial",
+     "form": "dial",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.7,
+     "target": "svg stroke-dasharray · several panels",
+     "element": ".ls-meter",
+     "evidence": [
+      "the adoption row names svg stroke-dasharray · several panels",
+      "element tokens meter"
+     ]
+    },
+    {
+     "key": "Hand-rolled svg polyline chart",
+     "label": "Hand-rolled svg polyline chart",
+     "tag": "trace",
+     "form": "trace",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.7,
+     "target": "vera/research/research_panel.html · vera/dream/dream_panel.html",
+     "element": "#dwhitl-${ev.trace_id}",
+     "evidence": [
+      "the adoption row names research_panel.html · dream_panel.html",
+      "element tokens trace"
+     ]
+    },
+    {
+     "key": "Terminal (xterm)",
+     "label": "Terminal (xterm)",
+     "tag": "terminal",
+     "form": "terminal",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 1,
+     "target": "vera/remote/vera-terminal.js · vera/proxmox/proxmox_panel.html",
+     "element": "<vera-terminal>",
+     "evidence": [
+      "the adoption row names remote/vera-terminal.js · proxmox_panel.html",
+      "element tokens terminal"
+     ]
+    },
+    {
+     "key": "Code block with copy / save / run",
+     "label": "Code block with copy / save / run",
+     "tag": "code",
+     "form": "code",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8999999999999999,
+     "target": "chat/chat_panel.html code cards",
+     "element": "#k-j-run",
+     "evidence": [
+      "the adoption row names chat/chat_panel.html code cards",
+      "element tokens program"
+     ]
+    },
+    {
+     "key": "Diff viewer",
+     "label": "Diff viewer",
+     "tag": "diff",
+     "form": "diff",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9750000000000001,
+     "target": "vera/ide/ide_panel.html · vera/ide/ide_changes_panel.html",
+     "element": ".diff",
+     "evidence": [
+      "the adoption row names ide_panel.html · ide_changes_panel.html",
+      "element tokens diff"
+     ]
+    },
+    {
+     "key": "Markdown render",
+     "label": "Markdown render",
+     "tag": "prose",
+     "form": "prose",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8666666666666667,
+     "target": "vera/vera_markdown_element.js · chat renderMd",
+     "element": "<vera-markdown>",
+     "evidence": [
+      "the adoption row names vera_markdown_element.js · chat renderMd",
+      "element tokens markdown"
+     ]
+    },
+    {
+     "key": "Mermaid diagram",
+     "label": "Mermaid diagram",
+     "tag": "diagram",
+     "form": "diagram",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9750000000000001,
+     "target": "vera/chat/chat_panel.html · vera/research/notebook_panel.html · vera/canvas/canvas_panel.html",
+     "element": ".mermaid",
+     "evidence": [
+      "the adoption row names chat_panel.html · notebook_panel.html · canvas_panel.html",
+      "element tokens mermaid"
+     ]
+    },
+    {
+     "key": "Gallery / thumbnail grid",
+     "label": "Gallery / thumbnail grid",
+     "tag": "gallery",
+     "form": "gallery",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9866666666666666,
+     "target": "vera/images/image_studio_panel.html · vera/spritegen/spritegen_panel.html",
+     "element": "#w-grid",
+     "evidence": [
+      "the adoption row names image_studio_panel.html · spritegen_panel.html",
+      "element tokens dashboard"
+     ]
+    },
+    {
+     "key": "Relation graph (engine)",
+     "label": "Relation graph (engine)",
+     "tag": "graph",
+     "form": "graph",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8116666666666668,
+     "target": "vera/vera_graph.js - 21 graph surfaces · note 39",
+     "element": "#pane-network",
+     "evidence": [
+      "the adoption row names vera/vera_graph.js - 21 graph surfaces · note 39",
+      "element tokens graph"
+     ]
+    },
+    {
+     "key": "Topology map element",
+     "label": "Topology map element",
+     "tag": "topology",
+     "form": "topology",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9666666666666666,
+     "target": "topology_map_element.js <vera-topology-map>",
+     "element": "loadTopologyMap",
+     "evidence": [
+      "the adoption row names topology_map_element.js <vera-topology-map>",
+      "element tokens graph/map"
+     ]
+    },
+    {
+     "key": "Ollama routing map",
+     "label": "Ollama routing map",
+     "tag": "topology",
+     "form": "topology",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9324999999999999,
+     "target": "ollama_routing_map_element.js <vera-ollama-map>",
+     "element": "#j-ollama-wrap",
+     "evidence": [
+      "the adoption row names ollama_routing_map_element.js <vera-ollama-map>",
+      "element tokens ollama"
+     ]
+    },
+    {
+     "key": "Mesh radial map",
+     "label": "Mesh radial map",
+     "tag": "topology",
+     "form": "topology",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8583333333333334,
+     "target": "vera/mesh/mesh_panel.html",
+     "element": "loadTopologyMap",
+     "evidence": [
+      "the adoption row names mesh/mesh_panel.html",
+      "element tokens map/graph"
+     ]
+    },
+    {
+     "key": "Cytoscape net graph",
+     "label": "Cytoscape net graph",
+     "tag": "graph (editable)",
+     "form": "graph (editable)",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8125,
+     "target": "vera/execution/netmap_panel.html · vera/networking/netgraph_panel.html",
+     "element": "newGraph",
+     "evidence": [
+      "the adoption row names netmap_panel.html · netgraph_panel.html",
+      "element tokens graph"
+     ]
+    },
+    {
+     "key": "3D globe (THREE.js)",
+     "label": "3D globe (THREE.js)",
+     "tag": "globe",
+     "form": "globe",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.7,
+     "target": "fabric/memory_map.html · vera/worldview/worldview_panel.html",
+     "element": "",
+     "evidence": [
+      "the adoption row names fabric/memory_map.html · worldview/worldview.html"
+     ]
+    },
+    {
+     "key": "Loop activity graph",
+     "label": "Loop activity graph",
+     "tag": "flow",
+     "form": "flow",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9324999999999999,
+     "target": "loop_graph_element.js <vera-loop-graph>",
+     "element": "#k-j-run",
+     "evidence": [
+      "the adoption row names loop_graph_element.js <vera-loop-graph>",
+      "element tokens program"
+     ]
+    },
+    {
+     "key": "Loop stream cards",
+     "label": "Loop stream cards",
+     "tag": "card stack (live)",
+     "form": "card stack (live)",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8783333333333334,
+     "target": "agent_loop_ouput.js <vera-agent-loop-output>",
+     "element": "#k-j-run",
+     "evidence": [
+      "the adoption row names agent_loop_ouput.js <vera-agent-loop-output>",
+      "element tokens program"
+     ]
+    },
+    {
+     "key": "Commit DAG",
+     "label": "Commit DAG",
+     "tag": "flow",
+     "form": "flow",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.7,
+     "target": "git_graph_element.js <vera-git-graph>",
+     "element": "#dagStatus",
+     "evidence": [
+      "the adoption row names git_graph_element.js <vera-git-graph>",
+      "element tokens dag"
+     ]
+    },
+    {
+     "key": "Branch pipeline",
+     "label": "Branch pipeline",
+     "tag": "stages",
+     "form": "stages",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.7,
+     "target": "branch_pipeline_element.js <vera-branch-pipeline>",
+     "element": "",
+     "evidence": [
+      "the adoption row names branch_pipeline_element.js <vera-branch-pipeline>"
+     ]
+    },
+    {
+     "key": "Live event stream",
+     "label": "Live event stream",
+     "tag": "log (live)",
+     "form": "log (live)",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 1,
+     "target": "vera/live_event_stream_element.js",
+     "element": "<vera-live-event-stream>",
+     "evidence": [
+      "the adoption row names live_event_stream_element.js AND workers/live_event_stream_element.js",
+      "element tokens live/event/stream"
+     ]
+    },
+    {
+     "key": "Activity timeline",
+     "label": "Activity timeline",
+     "tag": "timeline",
+     "form": "timeline",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.7,
+     "target": "activity_timeline_element.js <vera-activity-timeline>",
+     "element": "",
+     "evidence": [
+      "the adoption row names activity_timeline_element.js <vera-activity-timeline>"
+     ]
+    },
+    {
+     "key": "Bench comparison",
+     "label": "Bench comparison",
+     "tag": "rows + scatter",
+     "form": "rows + scatter",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.7575000000000001,
+     "target": "bench_compare_element.js <vera-bench-compare>",
+     "element": "#mt-list",
+     "evidence": [
+      "the adoption row names bench_compare_element.js <vera-bench-compare>",
+      "element tokens list"
+     ]
+    },
+    {
+     "key": "Error radar",
+     "label": "Error radar",
+     "tag": "radar",
+     "form": "radar",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.7,
+     "target": "error_radar_element.js <vera-error-radar>",
+     "element": "",
+     "evidence": [
+      "the adoption row names error_radar_element.js <vera-error-radar>"
+     ]
+    },
+    {
+     "key": "Author map",
+     "label": "Author map",
+     "tag": "graph",
+     "form": "graph",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9666666666666666,
+     "target": "author_map_element.js <vera-author-map>",
+     "element": "loadTopologyMap",
+     "evidence": [
+      "the adoption row names author_map_element.js <vera-author-map>",
+      "element tokens map/graph"
+     ]
+    },
+    {
+     "key": "Sandbox controls",
+     "label": "Sandbox controls",
+     "tag": "composite",
+     "form": "composite",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8116666666666668,
+     "target": "sandbox_controls_element.js <vera-sandbox-controls>",
+     "element": "#sbx-cfg",
+     "evidence": [
+      "the adoption row names sandbox_controls_element.js <vera-sandbox-controls>",
+      "element tokens sandbox"
+     ]
+    },
+    {
+     "key": "Research card",
+     "label": "Research card",
+     "tag": "card",
+     "form": "card",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9750000000000001,
+     "target": "research_card_element.js <vera-research-card>",
+     "element": ".card",
+     "evidence": [
+      "the adoption row names research_card_element.js <vera-research-card>",
+      "element tokens card"
+     ]
+    },
+    {
+     "key": "Job / background queue list",
+     "label": "Job / background queue list",
+     "tag": "list + cancel",
+     "form": "list + cancel",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8999999999999999,
+     "target": "vera/workers/workers_ollama_panel.html",
+     "element": "#k-w-queue",
+     "evidence": [
+      "the adoption row names workers_ollama_panel.html",
+      "element tokens queue"
+     ]
+    },
+    {
+     "key": "Per-panel ask box",
+     "label": "Per-panel ask box",
+     "tag": "ask",
+     "form": "ask",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8616666666666666,
+     "target": "panel_copilot_element.js <vera-panel-copilot>",
+     "element": "#sl-ask-result",
+     "evidence": [
+      "the adoption row names panel_copilot_element.js <vera-panel-copilot>",
+      "element tokens ask"
+     ]
+    },
+    {
+     "key": "Calendar / agenda",
+     "label": "Calendar / agenda",
+     "tag": "agenda",
+     "form": "agenda",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8,
+     "target": "vera/calendar/calendar_panel.html · obs.scheduler list",
+     "element": "#agenda-list",
+     "evidence": [
+      "the adoption row names calendar/calendar_panel.html · obs.scheduler list",
+      "element tokens agenda"
+     ]
+    },
+    {
+     "key": "Drag / resize / reorder",
+     "label": "Drag / resize / reorder",
+     "tag": "envelope mechanics",
+     "form": "envelope mechanics",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.78,
+     "target": "chat/vera-dashboard.js only",
+     "element": ".w-resize",
+     "evidence": [
+      "the adoption row names chat/vera-dashboard.js only",
+      "element tokens resize"
+     ]
+    },
+    {
+     "key": "Auto-refresh loop",
+     "label": "Auto-refresh loop",
+     "tag": "read.refresh",
+     "form": "read.refresh",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9324999999999999,
+     "target": "setInterval in the panels",
+     "element": "#k-j-run",
+     "evidence": [
+      "the adoption row names setInterval in the panels",
+      "element tokens program"
+     ]
+    },
+    {
+     "key": "Chat quick menu · Context",
+     "label": "Chat quick menu · Context",
+     "tag": "graph + list",
+     "form": "graph + list",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9866666666666666,
+     "target": "chat_panel.html rpCtx · the galaxy · the budget list",
+     "element": "#pane-network",
+     "evidence": [
+      "the adoption row names chat_panel.html rpCtx · the galaxy · the budget list",
+      "element tokens menu/graph"
+     ]
+    },
+    {
+     "key": "Chat quick menu · Sessions",
+     "label": "Chat quick menu · Sessions",
+     "tag": "list + search",
+     "form": "list + search",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8783333333333334,
+     "target": "chat_panel.html rpHist",
+     "element": "#j-history-wrap",
+     "evidence": [
+      "the adoption row names chat_panel.html rpHist",
+      "element tokens session"
+     ]
+    },
+    {
+     "key": "Chat quick menu · Activity",
+     "label": "Chat quick menu · Activity",
+     "tag": "list + log",
+     "form": "list + log",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8783333333333334,
+     "target": "chat_panel.html rpLoops · goals · monitor",
+     "element": ".pane",
+     "evidence": [
+      "the adoption row names chat_panel.html rpLoops · goals · monitor",
+      "element tokens menu"
+     ]
+    },
+    {
+     "key": "Chat quick menu · Loop program",
+     "label": "Chat quick menu · Loop program",
+     "tag": "program",
+     "form": "program",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9324999999999999,
+     "target": "chat_panel.html loop pane",
+     "element": "#k-j-run",
+     "evidence": [
+      "the adoption row names chat_panel.html loop pane",
+      "element tokens program"
+     ]
+    },
+    {
+     "key": "Chat quick menu · Sandbox",
+     "label": "Chat quick menu · Sandbox",
+     "tag": "tree + terminal",
+     "form": "tree + terminal",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9866666666666666,
+     "target": "chat_panel.html session sandbox · terminal",
+     "element": "#pane-sandbox",
+     "evidence": [
+      "the adoption row names chat_panel.html session sandbox · terminal",
+      "element tokens menu/sandbox"
+     ]
+    },
+    {
+     "key": "Harness LHM nav tab + sub-items",
+     "label": "Harness LHM nav tab + sub-items",
+     "tag": "menu",
+     "form": "menu",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9750000000000001,
+     "target": "capability_orchestration.html lhm-nav · registerNav",
+     "element": "#lhmNavTabs",
+     "evidence": [
+      "the adoption row names capability_orchestration.html lhm-nav · registerNav",
+      "element tokens harness/lhm/rail"
+     ]
+    },
+    {
+     "key": "Harness events feed",
+     "label": "Harness events feed",
+     "tag": "log",
+     "form": "log",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8583333333333334,
+     "target": "capability_orchestration.html evSidebar · lhmEvFeedMirror",
+     "element": "#lhmEventsFeed",
+     "evidence": [
+      "the adoption row names capability_orchestration.html evSidebar · lhmEvFeedMirror",
+      "element tokens events/feed"
+     ]
+    },
+    {
+     "key": "A menu of your own",
+     "label": "A menu of your own",
+     "tag": "menu (composite)",
+     "form": "menu (composite)",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9324999999999999,
+     "target": "new — composed in LHM edit mode from any of the above",
+     "element": ".pane",
+     "evidence": [
+      "the adoption row names new — composed in LHM edit mode from any of the above",
+      "element tokens menu"
+     ]
+    },
+    {
+     "key": "Chat rail (the icon column)",
+     "label": "Chat rail (the icon column)",
+     "tag": "rail",
+     "form": "rail",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8125,
+     "target": "chat_panel.html ctx-tab-bar · design: the rail",
+     "element": ".sidebar",
+     "evidence": [
+      "the adoption row names chat_panel.html ctx-tab-bar · design: the rail",
+      "element tokens rail"
+     ]
+    },
+    {
+     "key": "Quick-menu CTA",
+     "label": "Quick-menu CTA",
+     "tag": "button",
+     "form": "button",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9866666666666666,
+     "target": "chat_panel.html rpane buttons",
+     "element": ".pane",
+     "evidence": [
+      "the adoption row names chat_panel.html rpane buttons",
+      "element tokens menu"
+     ]
+    },
+    {
+     "key": "Budget bar",
+     "label": "Budget bar",
+     "tag": "meter (stacked)",
+     "form": "meter (stacked)",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8,
+     "target": "chat_panel.html ctxMeter",
+     "element": ".ls-meter",
+     "evidence": [
+      "the adoption row names chat_panel.html ctxMeter",
+      "element tokens meter"
+     ]
+    },
+    {
+     "key": "Context galaxy (mini)",
+     "label": "Context galaxy (mini)",
+     "tag": "graph",
+     "form": "graph",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8666666666666667,
+     "target": "chat_panel.html memGraph · vera/vera_graph.js",
+     "element": ".mini-bar",
+     "evidence": [
+      "the adoption row names chat_panel.html memGraph · vera_graph.js",
+      "element tokens mini"
+     ]
+    },
+    {
+     "key": "Context graph (full) + loop lane + plan row",
+     "label": "Context graph (full) + loop lane + plan row",
+     "tag": "graph · program · plan",
+     "form": "graph · program · plan",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8999999999999999,
+     "target": "design: the tri-page graph column",
+     "element": "#k-j-run",
+     "evidence": [
+      "the adoption row names design: the tri-page graph column",
+      "element tokens program"
+     ]
+    },
+    {
+     "key": "Composer",
+     "label": "Composer",
+     "tag": "composer",
+     "form": "composer",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 1,
+     "target": "chat_panel.html inputBar",
+     "element": ".url-input",
+     "evidence": [
+      "the adoption row names chat_panel.html inputBar",
+      "element tokens composer"
+     ]
+    },
+    {
+     "key": "Council strip + council card",
+     "label": "Council strip + council card",
+     "tag": "controls + card stack",
+     "form": "controls + card stack",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.78,
+     "target": "chat_panel.html councilPanel · council-resp",
+     "element": ".card",
+     "evidence": [
+      "the adoption row names chat_panel.html councilPanel · council-resp",
+      "element tokens card"
+     ]
+    },
+    {
+     "key": "Diffuse strip + image artifact",
+     "label": "Diffuse strip + image artifact",
+     "tag": "controls + gallery",
+     "form": "controls + gallery",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.7,
+     "target": "chat_panel.html sdPanel · cap-imgs",
+     "element": ".tab-controls",
+     "evidence": [
+      "the adoption row names chat_panel.html sdPanel · cap-imgs",
+      "element tokens controls"
+     ]
+    },
+    {
+     "key": "Attachment chip · card · editor",
+     "label": "Attachment chip · card · editor",
+     "tag": "chip · card · editor",
+     "form": "chip · card · editor",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8125,
+     "target": "chat_panel.html docChips · docEditor · _onPaste",
+     "element": ".card",
+     "evidence": [
+      "the adoption row names chat_panel.html docChips · docEditor · _onPaste",
+      "element tokens card"
+     ]
+    },
+    {
+     "key": "Message chrome (Copy · Edit · Retry · Notebook · Speak)",
+     "label": "Message chrome (Copy · Edit · Retry · Notebook · Speak)",
+     "tag": "controls",
+     "form": "controls",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.7,
+     "target": "chat_panel.html msg-actions",
+     "element": "#pmxc-msg",
+     "evidence": [
+      "the adoption row names chat_panel.html msg-actions",
+      "element tokens message"
+     ]
+    },
+    {
+     "key": "Tool-call record",
+     "label": "Tool-call record",
+     "tag": "record card",
+     "form": "record card",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.8125,
+     "target": "chat_panel.html cap-inline · cap-peek · cap-result",
+     "element": ".card",
+     "evidence": [
+      "the adoption row names chat_panel.html cap-inline · cap-peek · cap-result",
+      "element tokens card"
+     ]
+    },
+    {
+     "key": "Artifact card",
+     "label": "Artifact card",
+     "tag": "card",
+     "form": "card",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9750000000000001,
+     "target": "chat_panel.html artifact cards · gallery",
+     "element": ".card",
+     "evidence": [
+      "the adoption row names chat_panel.html artifact cards · gallery",
+      "element tokens card"
+     ]
+    },
+    {
+     "key": "Harness LHM top bar (☰ · title)",
+     "label": "Harness LHM top bar (☰ · title)",
+     "tag": "header",
+     "form": "header",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9666666666666666,
+     "target": "capability_orchestration.html tabLhmBtn · lhm-nav-foot",
+     "element": "#lhmNavTabs",
+     "evidence": [
+      "the adoption row names capability_orchestration.html tabLhmBtn · lhm-nav-foot",
+      "element tokens harness/lhm"
+     ]
+    },
+    {
+     "key": "Harness tab strip · sub-tabs",
+     "label": "Harness tab strip · sub-tabs",
+     "tag": "tabs",
+     "form": "tabs",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9324999999999999,
+     "target": "capability_orchestration.html .tabs · injected sub-menu",
+     "element": ".pane",
+     "evidence": [
+      "the adoption row names capability_orchestration.html .tabs · injected sub-menu",
+      "element tokens menu"
+     ]
+    },
+    {
+     "key": "Top-level panel list (☰)",
+     "label": "Top-level panel list (☰)",
+     "tag": "list",
+     "form": "list",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.9199999999999999,
+     "target": "capability_orchestration.html lhmNavTabs",
+     "element": "#mt-list",
+     "evidence": [
+      "the adoption row names capability_orchestration.html lhmNavTabs",
+      "element tokens list"
+     ]
+    },
+    {
+     "key": "Open panels (one set, one bridge)",
+     "label": "Open panels (one set, one bridge)",
+     "tag": "list + dock",
+     "form": "list + dock",
+     "from": "ADOPT",
+     "verdict": "replaces",
+     "confidence": 0.78,
+     "target": "new — chat panelOpen + harness tabs merged",
+     "element": "dock",
+     "evidence": [
+      "the adoption row names new — chat panelOpen + harness tabs merged",
+      "element tokens dock"
+     ]
+    }
+   ],
+   "keep": [
+    "subtab —",
+    "subtab Not connected",
+    "container #shell",
+    "container #secNav",
+    "container #panes",
+    "container #pane-workers",
+    "container #w-hidden-picker",
+    "container #wk-sub-nodes",
+    "container #w-grid",
+    "container #k-w-total",
+    "container #k-w-total-sub",
+    "container #k-w-busy",
+    "container #k-w-busy-sub",
+    "container #k-w-caps",
+    "container #k-w-done",
+    "container #k-w-done-sub",
+    "container #k-w-queue-sub",
+    "container #k-w-oll",
+    "container #k-w-oll-sub",
+    "container #w-res-body",
+    "container #w-det-body",
+    "container #w-card-grid",
+    "container #wk-sub-jobs",
+    "container #wkj-pend",
+    "container #wkj-run",
+    "container #wkj-done",
+    "container #wkj-fail",
+    "container #wkj-cap-types",
+    "container #wkj-avg-dur",
+    "container #wkj-empty",
+    "container #pane-ollama",
+    "container #ol-hidden-picker",
+    "container #ol-sub-nodes",
+    "container #ol-grid",
+    "container #mt-list",
+    "container #ol-route-log",
+    "container #ol-route-stats",
+    "container #k-ol-on",
+    "container #k-ol-on-sub",
+    "container #k-ol-mod",
+    "container #k-ol-active",
+    "container #ol-nodes-body",
+    "container #ol-bgq-head",
+    "container #ol-bgq-body",
+    "container #emb-status",
+    "container #ol-test-result",
+    "container #ol-sub-jobs",
+    "container #j-hidden-picker",
+    "container #j-grid",
+    "container #k-j-pend",
+    "container #k-j-queued",
+    "container #k-j-run",
+    "container #k-j-done",
+    "container #k-j-done-sub",
+    "container #k-j-fail",
+    "container #k-j-stream",
+    "container #k-j-recov",
+    "container #olj-empty",
+    "container #jt-pending",
+    "container #jt-queued"
+   ],
+   "keepCount": 202,
+   "directives": [
+    "lhm.js",
+    "iso.js",
+    "graph.query",
+    "evolve.git_graph",
+    "chat.ask",
+    "loop.status",
+    "widget.template.list",
+    "context.budget",
+    "ui.panels.open"
+   ],
+   "caps": [
+    "dash.health.summary",
+    "catalog.pull.status",
+    "sysmon.history",
+    "code.read",
+    "code.diff",
+    "gallery.list",
+    "topology.snapshot",
+    "ollama.route_stats",
+    "mesh.nodes",
+    "bench.compare",
+    "evolve.errors.list",
+    "evolve.authors",
+    "web.research",
+    "background.status",
+    "obs.scheduler",
+    "memory.select",
+    "obs.events",
+    "sandbox.session.exec"
+   ]
+  },
+  {
+   "board": "WidgetRegistry.dc.html",
+   "title": "Widget registry",
+   "sets": [
+    "widgets"
+   ],
+   "kind": "board",
+   "targets": [
+    {
+     "file": "vera/chat/vera-dashboard.js",
+     "kind": "runtime",
+     "score": 133,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names dashboard",
+      "1 heading/label tokens in its sections (dashboard)"
+     ]
+    },
+    {
+     "file": "vera/registry/registry_panel.html",
+     "kind": "panel",
+     "score": 118,
+     "evidence": [
+      "pinned by adopt-hints",
+      "title names registry"
+     ]
+    },
+    {
+     "file": "vera/capability_orchestration.html",
+     "kind": "harness",
+     "score": 31,
+     "evidence": [
+      "7 heading/label tokens in its sections (widget, dashboard, canvas, menu, lhm)",
+      "harness-shaped board"
+     ]
+    }
+   ],
+   "also": [
+    "vera/widgets/widget_registry.py (new: widget.template.*)"
+   ],
+   "parts": [],
+   "keep": [
+    "section window.BASE",
+    "section window.VeraDash",
+    "container .vd-wl-box",
+    "container .vd-wl-head",
+    "container .vd-wl-search",
+    "container .w-iconbtn",
+    "container .vd-wl-list",
+    "container .wl-item",
+    "container .wl-item-icon",
+    "container .wl-item-label",
+    "container .wl-item-id",
+    "container .wl-item-mode",
+    "container .vd-chip",
+    "container .w-head",
+    "container .w-grip",
+    "container .w-dot",
+    "container .w-title",
+    "container .w-actions",
+    "container .w-body",
+    "container .w-resize",
+    "container .vera-spinner",
+    "handler _autoScrollOnDrag",
+    "handler _dragGuardOff",
+    "handler _dragGuardOn",
+    "handler _scrollParent",
+    "handler _scrollableAncestor",
+    "handler _soloBoot",
+    "handler _startSoloMirror",
+    "handler addPopButtons",
+    "handler addWidget",
+    "handler applyLayout",
+    "handler applySize",
+    "handler autoScrollTick",
+    "handler buildDoc",
+    "handler byId",
+    "handler closeModal",
+    "handler dock",
+    "handler ensureModal",
+    "handler fetchPanels",
+    "handler floatMove",
+    "handler floatStart",
+    "handler floatStop",
+    "handler floatW",
+    "handler hide",
+    "handler init",
+    "handler injectCSS",
+    "handler load",
+    "handler mv",
+    "handler onDragEnd",
+    "handler onDragLeave",
+    "handler onDragOver",
+    "handler onDragStart",
+    "handler onDrop",
+    "handler onResizeDown",
+    "handler openLoader",
+    "handler popToggle",
+    "handler popWindow",
+    "handler removeDynamic",
+    "handler renderHidden",
+    "handler renderLoader"
+   ],
+   "keepCount": 70,
+   "directives": [
+    "widget.template",
+    "widget.template.saved",
+    "loop.status",
+    "loop.hitl"
+   ],
+   "caps": [
+    "sysmon.status",
+    "obs.provenance",
+    "obs.events",
+    "memory.select",
+    "sandbox.session.exec"
+   ]
+  }
+ ]
+}

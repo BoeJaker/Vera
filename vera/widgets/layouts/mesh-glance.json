@@ -1,0 +1,158 @@
+{
+ "v": 2,
+ "dashboard": "mesh-glance",
+ "layout": "default",
+ "key": "mesh-glance",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "Mesh with no node chosen: the mesh at a glance (an empty pane is a glance, not a blank).",
+ "widgets": [
+  {
+   "record": {
+    "id": "mesh",
+    "form": "composite",
+    "source": "mesh.nodes",
+    "title": "Mesh · secure mesh",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      12,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "kv",
+       "source": "$subject",
+       "title": "mesh",
+       "read": {
+        "map": {
+         "keys": [
+          "count",
+          "heartbeat"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "kv",
+       "source": "$subject.transports",
+       "title": "transports",
+       "read": {}
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject.nodes",
+       "title": "nodes",
+       "read": {
+        "map": {
+         "name": "name",
+         "status": "status",
+         "value": "rssi"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     },
+     {
+      "slot": "d",
+      "record": {
+       "form": "rows",
+       "source": "netsec.mesh.status",
+       "title": "secure members",
+       "read": {
+        "map": {
+         "rows": "members",
+         "name": "label",
+         "status": "up",
+         "value": "peer_count"
+        }
+       },
+       "draw": {
+        "limit": 3
+       }
+      }
+     }
+    ],
+    "layout": "report",
+    "open": "mesh"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "mesh-topology",
+    "form": "graph",
+    "source": "mesh.topology",
+    "title": "Mesh topology",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "nodes": "nodes",
+      "links": "edges"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      12,
+      4
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "mesh"
+   },
+   "at": [
+    0,
+    4
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  }
+ ]
+}

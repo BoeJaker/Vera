@@ -372,7 +372,7 @@
 .alo-tag-chip{font-size:9px;padding:1px 6px;border-radius:8px;background:var(--bg3,#2a2622);color:var(--text2,#bfb6a8);font-family:var(--mono,monospace)}
 
 /* Cycles list */
-.alo-cycles{flex:1;background:var(--bg1,#1f1d1a);border:1px solid var(--border,#3a3530);border-radius:3px;overflow-y:auto;padding:8px 70px 8px 8px;display:flex;flex-direction:column;gap:6px;font-family:var(--mono,monospace);font-size:10.5px;min-height:60px;position:relative}
+.alo-cycles{flex:1;background:var(--bg1,#1f1d1a);border:1px solid var(--border,#3a3530);border-radius:3px;overflow-y:auto;padding:8px 70px 8px 8px;display:flex;flex-direction:column;gap:6px;font-family:var(--mono,monospace);font-size:10.5px;min-height:var(--alo-cycles-minh,60px);position:relative}
 .alo-cycle{padding:7px 10px;background:var(--bg2,#252220);border:1px solid var(--border,#3a3530);border-radius:3px;position:relative}
 .alo-cycle.error{border-color:var(--err,#c75a5a);background:rgba(199,90,90,.05)}
 .alo-cycle.done{border-color:var(--acc,#5a9e8f);background:rgba(90,158,143,.05)}
@@ -457,7 +457,7 @@
 .alo-cycles-title{font-size:10px;color:var(--acc2,#a8c87a);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
 .alo-cycles-count{font-size:9.5px;color:var(--dim,#a89f92)}
 .alo-cycles-card > .alo-cycles{flex:0 1 auto;background:transparent;border:none;border-radius:0}
-.alo-cycles-card.compact > .alo-cycles{max-height:var(--alo-cycles-maxh,440px);overflow-y:auto}
+.alo-cycles-card.compact > .alo-cycles{max-height:var(--alo-cycles-maxh,440px);min-height:var(--alo-cycles-minh,60px);overflow-y:auto}
 .alo-cycles-card:not(.compact) > .alo-cycles{max-height:none;overflow:visible}
 /* Run-complete pane: header is a sibling above the scrollable body */
 .alo-final-pane.compact [data-part="final-body"]{max-height:460px;overflow-y:auto}

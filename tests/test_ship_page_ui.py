@@ -138,7 +138,7 @@ def test_the_page_is_one_call_and_reuses_the_pages_renderers(src):
     for fn in ("renderSbxStatusLine(r.runner||{})", "renderSbxCapacity(r.capacity)", "renderEdges({edges:r.edges||[]",
                "_utLanes(r.tests||{}", "renderShipHead(r)", "renderShipTable()", "loadGit()"):
         assert fn in ls, fn
-    assert "if(r.any_live&&$('ship-follow')&&$('ship-follow').checked&&_curSec()==='ship')window._shipT=setTimeout(loadShip,6000)" in ls
+    assert "if(r.any_live&&$('ship-follow')&&$('ship-follow').checked&&_curSec()==='ship')window._shipT=setTimeout(loadShip,document.hidden?60000:15000)" in ls
     assert "/evolve/pipeline/list" not in ls and "/evolve/sandbox/list" not in ls and "/evolve/unittest/history" not in ls
 
 

@@ -166,7 +166,7 @@ _INJECT_HTML = (
 register_ui(
     panel_id="flow-builder",
     label="Flow Builder",
-    icon="🕸",
+    icon="⊸",
     mode="inject",
     tab_order=206,
     html=_INJECT_HTML,

@@ -272,7 +272,9 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
 
   <!-- ── Right: inspector ── -->
   <div class="insp" id="inspector">
-    <div class="card"><span class="muted">Select a node to inspect, configure modules and send work.</span></div>
+    <!-- no node chosen: the mesh at a glance (layouts/mesh-glance.json) - an empty pane is a glance, not a blank -->
+    <div class="card"><span class="muted">Select a node to inspect, configure modules and send work - or read the mesh at a glance.</span></div>
+    <vera-dashboard layout="mesh-glance" no-popout></vera-dashboard>
   </div>
 </div>
 
@@ -1982,5 +1984,6 @@ init();
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-dashboard.js"></script>
 </body>
 </html>

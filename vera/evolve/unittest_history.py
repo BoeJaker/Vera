@@ -35,19 +35,32 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
 
-#: How many runs to keep. A run is a few hundred bytes and the gate fires a
-#: handful of times a day, so this is months of history.
-HISTORY_CAP = 500
+#: How many runs to keep. A counts-only run is a few hundred bytes and one
+#: that failed carries up to FAILURES_KEPT test ids, so this is a year or more
+#: of gate history at the rate the estate gates — enough to look back on any
+#: branch's whole race, which 500 was not (it covered about ten days).
+HISTORY_CAP = 5000
+
+#: Failed tests kept per run. The parser stops at 50; a run that lost more is
+#: marked ``failures_truncated`` so a picture never reads "not listed" as "passed".
+FAILURES_KEPT = 50
 
 
 def record(parsed: Dict[str, Any], *, branch: str = "", markers: str = "",
            paths: str = "tests", ts: str = "", pipeline_id: str = "",
-           label: str = "") -> Dict[str, Any]:
+           label: str = "", controller: str = "", session_id: str = "",
+           repo: str = "") -> Dict[str, Any]:
     """One history row from a parsed pytest summary.
 
     `total` is stored rather than derived at read time: the counts are what the
     run actually reported, and recomputing them later from a changed formula
     would silently rewrite history.
+
+    `failures` keeps WHICH tests failed (node id, kind, a short description) —
+    the gate always parsed them and then dropped them, so the history could
+    say a run was red but never what was red, and "which test broke, and when
+    did it come good" had no answer. `controller`/`session_id` say who drove
+    the run, so the picture can split claude · codex · vera.
     """
     def _n(key: str) -> int:
         try:
@@ -56,6 +69,15 @@ def record(parsed: Dict[str, Any], *, branch: str = "", markers: str = "",
             return 0
     passed, failed = _n("passed"), _n("failed")
     errors, skipped = _n("errors"), _n("skipped")
+    failures = []
+    for f in (parsed.get("failure_details") or [])[:FAILURES_KEPT]:
+        if isinstance(f, dict):
+            failures.append({"node_id": str(f.get("node_id") or f.get("name") or ""),
+                             "kind": str(f.get("kind") or "failure"),
+                             "description": str(f.get("description") or "")[:300]})
+    # the parser stops at 50: when the run failed more tests than it listed,
+    # the list is not the whole story and a missing test proves nothing
+    truncated = (failed + errors) > len(failures)
     return {
         "ts": str(ts or ""),
         "branch": str(branch or label or ""),
@@ -67,6 +89,11 @@ def record(parsed: Dict[str, Any], *, branch: str = "", markers: str = "",
         "total": passed + failed + errors + skipped,
         "rc": parsed.get("rc"),
         "summary": str(parsed.get("summary") or ""),
+        "failures": failures,
+        "failures_truncated": truncated,
+        "controller": str(controller or ""),
+        "session_id": str(session_id or ""),
+        "repo": str(repo or ""),
     }
 
 
@@ -180,6 +207,9 @@ def lanes(rows: Optional[Iterable[Dict[str, Any]]], limit: int = 40) -> List[Dic
             "failed": r.get("failed", 0), "total": r.get("total", 0),
             "markers": r.get("markers", ""),
             "pipeline_id": r.get("pipeline_id", ""),
+            "controller": r.get("controller", ""),
+            "failing": [f.get("node_id", "") for f in (r.get("failures") or [])
+                        if isinstance(f, dict)],
             "delta": (int(r.get("total", 0)) - int(prev.get("total", 0))) if prev else 0,
             "summary": r.get("summary", ""),
         })

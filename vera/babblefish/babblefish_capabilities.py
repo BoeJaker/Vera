@@ -592,7 +592,7 @@ async def _babblefish_panel():
 register_ui(
     "babblefish",
     "Babblefish",
-    "🐟",
+    "⇌",
     """<div id="bf-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/babblefish/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#181614)"

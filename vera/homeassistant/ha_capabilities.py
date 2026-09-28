@@ -688,7 +688,7 @@ async def _ha_panel_route():
 
 
 register_ui(
-    "ha-panel", "Home", "\U0001F3E0",
+    "ha-panel", "Home", "⌂",
     """<div id="ha-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/ha/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
