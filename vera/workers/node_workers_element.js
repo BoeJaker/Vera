@@ -117,7 +117,8 @@
         + '<span class="muted">· auto-sync <b class="' + (d.sync_enabled ? 'ok' : 'warn') + '">' + (d.sync_enabled ? 'on' : 'off') + '</b> · ' + esc(planTxt) + '</span>'
         + '<span class="sp"></span>'
         + '<button data-a="sync-toggle">' + (d.sync_enabled ? 'Pause auto-sync' : 'Resume auto-sync') + '</button>'
-        + '<button class="pri" data-a="sync-now"' + (this._busy.sync ? ' disabled' : '') + '>' + (this._busy.sync ? 'Syncing…' : 'Sync now') + '</button></div>';
+        + '<button class="pri" data-a="sync-now"' + (this._busy.sync || d.sandbox ? ' disabled' : '') + '>' + (this._busy.sync ? 'Syncing…' : 'Sync now') + '</button></div>';
+      if (d.sandbox) h += '<div class="note warn">' + esc(d.sandbox_note) + '</div>';
       if (this._msg) h += '<div class="note ' + (this._msg.startsWith('failed') || this._msg.startsWith('could not') ? 'bad' : 'ok') + '">' + esc(this._msg) + '</div>';
 
       h += '<div class="legend">' + classes.map((c) => '<span class="chip' + (c.caps ? '' : ' none') + '" title="' + esc(c.desc) + '">'
@@ -140,7 +141,7 @@
                 + (this._busy['roles:' + n.host_id] ? ' disabled' : '') + '>' + esc(c.label) + '</label>';
             }).join('') + '</div>'
           + (n.failures ? '<div class="err">' + n.failures + ' failed attempt(s): ' + esc(n.last_error) + '</div>' : '')
-          + '<div class="row"><button data-a="prov" data-h="' + esc(n.host_id) + '"' + (this._busy['prov:' + n.host_id] ? ' disabled' : '') + '>'
+          + '<div class="row"><button data-a="prov" data-h="' + esc(n.host_id) + '"' + (this._busy['prov:' + n.host_id] || d.sandbox ? ' disabled' : '') + '>'
           + (this._busy['prov:' + n.host_id] ? 'Refreshing… (a few minutes)' : 'Refresh code') + '</button>'
           + '<button data-a="reset" data-h="' + esc(n.host_id) + '"' + (n.classes_default ? ' disabled' : '') + '>Reset roles</button></div></div>';
       }
@@ -152,7 +153,7 @@
         for (const c of cands) {
           h += '<div class="card"><div class="row"><span class="name">' + esc(c.label) + '</span><span class="muted mono">' + esc(c.host) + '</span>'
             + '<span class="badge ' + (c.has_gpu ? 'gpu">GPU' : 'cpu">CPU') + '</span></div>'
-            + (c.ssh ? '<div class="row"><button class="pri" data-a="prov" data-h="' + esc(c.host_id) + '"' + (this._busy['prov:' + c.host_id] ? ' disabled' : '') + '>'
+            + (c.ssh ? '<div class="row"><button class="pri" data-a="prov" data-h="' + esc(c.host_id) + '"' + (this._busy['prov:' + c.host_id] || d.sandbox ? ' disabled' : '') + '>'
                   + (this._busy['prov:' + c.host_id] ? 'Provisioning… (a few minutes)' : 'Provision worker') + '</button>'
                   + '<span class="muted note">starts with ' + (c.has_gpu ? 'no classes (GPU node)' : 'General + NLP') + '</span></div>'
                 : '<div class="note warn">No SSH credential stored for this address - add one under Connections first.</div>')
