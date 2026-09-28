@@ -439,10 +439,14 @@ def spill_ok(tps: float, min_tps: float, scenario_active: bool) -> bool:
 
 
 # ── residency input ──────────────────────────────────────────────────────────
-#: A node the router used this recently is left alone (a load or release would
-#: evict what a real caller just loaded). The GPU holds ONE model, so it waits
-#: longer: the warmer puts the baseline back only after the card has gone quiet.
-QUIET_S = {"gpu": 600, "cpu": 120, "cpu_sibling": 120}
+#: A node the router used this recently is left alone. Only the GPU needs it:
+#: it holds ONE model, so a load there evicts what a real caller just loaded,
+#: and the warmer puts the baseline back only after the card has gone quiet.
+#: A CPU node's planned set fits its model slots and memory, so a load evicts
+#: nothing - and with embeddings arriving every few seconds a CPU node was
+#: never quiet for 2 min, so nothing was ever loaded (prod, 2026-09-28). A CPU
+#: node waits only for a generation in flight.
+QUIET_S = {"gpu": 600, "cpu": 0, "cpu_sibling": 0}
 
 
 def parse_expiry(s: Any) -> float:
