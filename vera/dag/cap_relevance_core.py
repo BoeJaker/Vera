@@ -43,18 +43,48 @@ GENERIC: Set[str] = {
     "info", "information", "status", "item", "items", "thing", "things",
 }
 
+#: Two-letter English words that must never match a name part by accident
+#: ("up" is sandbox.up, "do"/"go"/"no" are nothing). Two-letter NAMESPACES
+#: (ha, tg, sd, ml, ui, fs, kb, vm, db, fw) do score - they used to be dropped
+#: with every word under three letters, so "ha.*" could not be found by name.
+STOP2: Set[str] = {
+    "up", "do", "go", "me", "my", "we", "so", "no", "if", "as", "us", "am", "he", "ok",
+    "oh", "hi", "re", "ex", "vs", "eg", "ie", "etc", "id", "pm",
+}
+#: What a goal calls a thing whose capabilities are named by a short code.
+#: Each was checked against the registry's descriptions (2026-09-28): ha.* =
+#: Home Assistant, tg.* = Telegram, sd.* = Stable Diffusion, fabric.kb.* =
+#: knowledgebases, proxmox.fw.* = the Proxmox firewall, *.vm.* = virtual
+#: machines, research.db.* = the research database.
+ALIASES: Dict[str, str] = {
+    "home assistant": "ha", "homeassistant": "ha",
+    "telegram": "tg",
+    "stable diffusion": "sd",
+    "knowledge base": "kb", "knowledgebase": "kb", "knowledgebases": "kb",
+    "firewall": "fw",
+    "virtual machine": "vm", "virtual machines": "vm",
+    "database": "db",
+}
+
 W_NAME = 2.0        # a whole-word match in the capability's name
 W_TAG = 1.0         # ... in one of its tags
 W_KEYWORD = 0.5     # ... in its description keywords
 W_CATEGORY = 1.0    # the query names the capability's category
 W_EMBED = 8.0       # cosine similarity of query and capability (0..1)
 
-_TOKEN = re.compile(r"\b[a-zA-Z][a-zA-Z0-9]{2,}\b")
+_TOKEN = re.compile(r"\b[a-zA-Z][a-zA-Z0-9]{1,}\b")
 
 
 def query_tokens(query: str) -> Set[str]:
-    """The query words that may score lexically."""
-    return {w.lower() for w in _TOKEN.findall(query or "")} - STOP - GENERIC
+    """The query words that may score lexically - two-letter ones included
+    (namespaces such as ha, tg, sd), plus the short code of any thing the
+    query names in full ("Home Assistant" -> ha)."""
+    q = " ".join(str(query or "").lower().split())
+    toks = {w.lower() for w in _TOKEN.findall(q)}
+    for phrase, code in ALIASES.items():
+        if re.search(r"\b%s\b" % re.escape(phrase), q):
+            toks.add(code)
+    return toks - STOP - STOP2 - GENERIC
 
 
 def name_parts(name: str) -> Set[str]:
