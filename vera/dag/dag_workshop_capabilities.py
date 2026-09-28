@@ -14101,6 +14101,15 @@ except Exception:                                     # pragma: no cover
         _plan_styles = None
         log.warning("planner_styles unavailable - plan_style is ignored, every run plans as auto")
 
+# Per-run role models + effort presets (user, 2026-09-28).
+try:
+    from Vera.vera.dag import role_override_core as _role_ovr_core
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import role_override_core as _role_ovr_core
+    except Exception:
+        _role_ovr_core = None
+
 # Entity coverage (roadmap B4): does the final output carry what the goal named?
 # Measured from the NLP nodes' NER, reported - never a success criterion.
 try:
@@ -23515,6 +23524,11 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
         "returned as plan_style), enrich_model (str — broad only: the CPU brief model, "
         "'' = the planning_style/enrich route's), critic_route (str 'cpu'|'gpu' — "
         "stepwise-reviewed only: where the per-step critic runs; default cpu), "
+        "executor_model / coder_model (str - this run's model for that role, e.g. an MoE), "
+        "executor_node / coder_node (auto|gpu|cpu-247|cpu-246 - auto = the GPU if the model "
+        "fits, else a CPU node; a CPU role is slow), effort (standard|bigger-coder|max - "
+        "bigger-coder = qwen3-coder:30b as the coder; max = that coder on cpu-246 plus "
+        "stepwise-family styles upgraded to stepwise-reviewed with the CPU critic), "
         "step_cycle_budget (int default 6), catalog_size (int default 40), enable_adaptive "
         "(bool default True — run the controller after each step), enable_step_verify (bool "
         "default True — one cheap judge call per step checks its success criterion was "
@@ -23637,6 +23651,16 @@ async def cap_dag_agent_loop_v6(
     # stepwise-reviewed: where the step critic runs - 'cpu' (the long-horizon
     # node, default) or 'gpu' (faster, queues between the run's GPU steps).
     critic_route:       str  = "cpu",
+    # Per-run role models + effort (dag/role_override_core.py): an MoE executor
+    # or a bigger coder on a chosen node ('auto' = the GPU if it fits, else a CPU
+    # node); effort 'bigger-coder' (qwen3-coder:30b) or 'max' (the bigger coder
+    # on cpu-246, stepwise-family styles upgraded to stepwise-reviewed with the
+    # critic on cpu-247). A CPU role is slow - chosen, never defaulted.
+    executor_model:     str  = "",
+    executor_node:      str  = "auto",
+    coder_model:        str  = "",
+    coder_node:         str  = "auto",
+    effort:             str  = "standard",
     auto_escalate:      bool = True,
     enable_fast_path:   bool = False,      # V7-defining; v7 turns on ('single' tier shortcut)
     clarify_level:      int  = 1,          # sliding-scale consultation (0-3); back-compat when clarify_mode is ''
@@ -23713,6 +23737,29 @@ async def cap_dag_agent_loop_v6(
     # An explicit strategy wins; otherwise fall back to the legacy enable_branching
     # flag so existing callers keep their behaviour. `enable_branching` is then kept
     # in sync so the branch code path only engages when 'branch' is selected.
+    # Per-run role models + effort preset, applied to THIS run's calls only
+    # (set every run, even empty, so a previous run in the same task never leaks).
+    _role_overrides: Dict[str, Dict[str, str]] = {}
+    _effort_adj: Dict[str, Any] = {"effort": "standard"}
+    if _role_ovr_core is not None:
+        _role_overrides, _effort_adj = _role_ovr_core.build(
+            executor_model=executor_model, executor_node=executor_node,
+            coder_model=coder_model, coder_node=coder_node, effort=effort,
+            plan_style=plan_style)
+        if _effort_adj.get("plan_style"):
+            plan_style = _effort_adj["plan_style"]
+        if _effort_adj.get("critic_route"):
+            critic_route = _effort_adj["critic_route"]
+    try:
+        _orch.RUN_ROLE_OVERRIDES.set(_role_overrides or None)
+    except Exception as _roe:                          # pragma: no cover
+        log.debug("role overrides not applied: %s", _roe)
+    if _role_overrides or _effort_adj.get("effort") != "standard":
+        await emit_event({"type": "agent_loop_v6.role_models", "session_id": sid,
+                          "effort": _effort_adj.get("effort"),
+                          "overrides": _role_overrides,
+                          "plan_style": _effort_adj.get("plan_style") or "",
+                          "summary": _role_ovr_core.describe(_role_overrides, _effort_adj)})
     # Planning style: resolved once, read at each planning call site below.
     _plan_style_req = str(plan_style or "auto").strip().lower() or "auto"
     if _plan_styles is not None:
@@ -25788,6 +25835,11 @@ async def workshop_agent_loop_stream(request: Request):
     v6_plan_style        = (body.get("plan_style", "auto") or "auto").strip().lower()
     v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
     v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
+    v6_executor_model    = (body.get("executor_model", "") or "").strip()
+    v6_executor_node     = (body.get("executor_node", "auto") or "auto").strip().lower()
+    v6_coder_model       = (body.get("coder_model", "") or "").strip()
+    v6_coder_node        = (body.get("coder_node", "auto") or "auto").strip().lower()
+    v6_effort            = (body.get("effort", "standard") or "standard").strip().lower()
     v6_auto_escalate     = bool(body.get("auto_escalate", True))
     v6_enable_fast_path  = bool(body.get("enable_fast_path", _v7_default))
     v6_clarify_level     = int(body.get("clarify_level", 1) or 0)
@@ -25938,6 +25990,8 @@ async def workshop_agent_loop_stream(request: Request):
             plan_style=v6_plan_style,
             enrich_model=v6_enrich_model,
             critic_route=v6_critic_route,
+            executor_model=v6_executor_model, executor_node=v6_executor_node,
+            coder_model=v6_coder_model, coder_node=v6_coder_node, effort=v6_effort,
             auto_escalate=v6_auto_escalate,
             enable_fast_path=v6_enable_fast_path,
             clarify_level=v6_clarify_level,
@@ -26326,6 +26380,7 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v6.entity_coverage",
             "agent_loop_v6.intent_zeroshot",
             "agent_loop_v6.step_critique",
+            "agent_loop_v6.role_models",
             # V7 tier/branching + strategic persistence
             "agent_loop_v6.tier",
             "agent_loop_v6.fast_path",

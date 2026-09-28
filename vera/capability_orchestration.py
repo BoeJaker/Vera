@@ -3147,6 +3147,50 @@ def _generation_phase_timing_ms(submitted: float,
     }
 
 
+# Per-run role overrides (user, 2026-09-28: the executor on an MoE such as
+# Qwen-AgentWorld; qwen3-coder:30b as the coder; a max-effort mode). The loop
+# sets {'loop/executor': {model, node}, ...} for ITS run only; every call it
+# makes under that profile/role - including caps it runs in-process, such as
+# code.author under loop/coder - takes the model, on the chosen node. See
+# dag/role_override_core.py.
+RUN_ROLE_OVERRIDES: "contextvars.ContextVar[Optional[Dict[str, dict]]]" = \
+    contextvars.ContextVar("vera_run_role_overrides", default=None)
+try:
+    from Vera.vera.dag import role_override_core as _role_ovr
+except Exception:                                     # pragma: no cover
+    from vera.dag import role_override_core as _role_ovr
+
+
+async def _gpu_usable_bytes(iid: str) -> int:
+    usable = _NODE_USABLE_VRAM.get(iid)
+    if usable:
+        return int(usable)
+    vram_gb = float((_node_hw(iid) or {}).get("vram_gb") or 0.0) or _DEFAULT_GPU_VRAM_GB
+    return int(vram_gb * (2 ** 30) * 0.86) if vram_gb > 0 else 0
+
+
+async def _run_role_override(profile: Optional[str], role: Optional[str]) -> Optional[dict]:
+    """{model, instance_id | None, prefer_gpu} for this run's override of
+    profile/role, or None. `auto` asks whether the model fits the GPU."""
+    if not (profile and role):
+        return None
+    ovr = (RUN_ROLE_OVERRIDES.get() or {}).get(_role_ovr.key(role, profile))
+    if not ovr or not ovr.get("model"):
+        return None
+    mdl = str(ovr["model"])
+    node = _role_ovr.normalise_node(ovr.get("node"))
+    if node == "auto":
+        gpu = next((i for i, n in OLLAMA_INSTANCES.items()
+                    if (n or {}).get("has_gpu") and (n or {}).get("enabled", True)), "")
+        size = await ollama_model_disk_size(gpu, mdl) if gpu else 0
+        node = _role_ovr.resolve_node("auto", model_bytes=size,
+                                      gpu_usable_bytes=(await _gpu_usable_bytes(gpu)) if gpu else 0)
+    if node == "gpu":
+        return {"model": mdl, "instance_id": None, "prefer_gpu": True, "node": node}
+    return {"model": mdl, "instance_id": node if node in OLLAMA_INSTANCES else None,
+            "prefer_gpu": False, "node": node}
+
+
 async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False,
                            model: Optional[str] = None, instance_id: Optional[str] = None,
                            prefer_gpu: bool = False, stream_cb: Optional[Callable] = None,
@@ -3164,6 +3208,19 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # caller_override lets an intermediary cap (e.g. llm.generate) pass
     # through the true upstream caller rather than appearing as the caller.
     caller   = caller_override if caller_override else _ollama_caller_info()
+    # This run's own choice for this role (executor / coder model on a node)
+    # beats the role's routing and the run-wide model: the user picked it for
+    # exactly this role. A caller-pinned instance still wins.
+    try:
+        _rovr = await _run_role_override(profile, role)
+    except Exception as _re:                           # an override must never fail a call
+        log.debug("run role override skipped: %s", _re)
+        _rovr = None
+    if _rovr:
+        model = _rovr["model"]
+        if not instance_id:
+            instance_id = _rovr["instance_id"]
+            prefer_gpu = bool(_rovr["prefer_gpu"])
     # Job-type routing: explicit job_type wins; otherwise a per-cap rule may
     # force one; otherwise infer from the caller. A role-profile role
     # (profile= + role=, e.g. ide/thinker) outranks per-cap rules and rides
