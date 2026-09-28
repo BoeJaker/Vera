@@ -434,6 +434,15 @@ def build_app():
     from pydantic import BaseModel
 
     app = FastAPI(title="Vera edge NLP")
+    # Every call reported to the Estate Activity pane (edge/activity_record.py):
+    # a pure-ASGI tee, bytes untouched. Absent module = old behaviour.
+    try:
+        import activity_record
+        activity_record.install(app, "nlp", ("/ner", "/classify", "/zeroshot", "/qa",
+                                             "/langid", "/embed", "/rerank"),
+                                port=int(os.getenv("VERA_NLP_PORT", "8771") or 8771))
+    except Exception as e:                    # never let reporting stop the server
+        log.warning("activity reporting off: %s", e)
 
     class NerReq(BaseModel):
         text: str = ""

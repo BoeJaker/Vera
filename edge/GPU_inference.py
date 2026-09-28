@@ -2051,6 +2051,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="GPU Inference Server", version="1.3.0", lifespan=lifespan)
 
+# Every media call reported to the Estate Activity pane (edge/activity_record.py):
+# a pure-ASGI tee, bytes untouched; audio/image payloads recorded as sizes.
+try:
+    import activity_record as _activity
+    _activity.install(app, "media", ("/stt", "/tts", "/imagine", "/img2img", "/expression",
+                                     "/rembg", "/upscale", "/controlnet", "/ipadapter",
+                                     "/thumbnail", "/chat/speak", "/duplex"),
+                      port=SERVER_PORT)
+except Exception as _e:                       # never let reporting stop the server
+    log.warning("activity reporting off: %s", _e)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

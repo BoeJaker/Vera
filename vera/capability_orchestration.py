@@ -3719,7 +3719,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 body["stream"] = True   # always stream so silence == stall
                 async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_gto) as c:
                     async with c.stream("POST",f"{inst['url']}/api/generate",json=body,
-                                        headers=vera_origin_header(job_type or "", req_id,
+                                        headers=vera_origin_header(eff_job_type or job_type or "", req_id,
                                                                    caller.get("cap_name") or "")) as resp:
                         if resp.status_code != 200:
                             err_body = ""
@@ -3979,7 +3979,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=httpx.Timeout(gen_timeout, connect=15.0)) as c:
                             async with c.stream("POST", f"{fb_inst['url']}/api/generate",
                                                 json={**fb_body, "stream": True},
-                                                headers=vera_origin_header(job_type or "", req_id,
+                                                headers=vera_origin_header(eff_job_type or job_type or "", req_id,
                                                                            "fallback")) as r:
                                 if r.status_code != 200:
                                     err_detail = (await r.aread()).decode("utf-8", errors="replace")[:300]
@@ -5680,8 +5680,10 @@ async def worker_loop(worker_id: str):
                             except Exception:
                                 pass
                     _hb = asyncio.create_task(_heartbeat())
+                    _act = {"t0": time.time(), "result": None, "error": ""}
                     try:
                         result = await inner
+                        _act["result"] = result
                         await REDIS.xadd(RESULT_STREAM, {
                             "id": task_id, "result": json.dumps(result), "trace_id": trace_id,
                         }, maxlen=5000)
@@ -5689,6 +5691,7 @@ async def worker_loop(worker_id: str):
                         await emit_event({"type": "worker.done", "worker": worker_id, "task": task_id})
                     except asyncio.CancelledError:
                         # Intentional cancel of the inner task — not the worker loop.
+                        _act["error"] = "cancelled"
                         await REDIS.xadd(RESULT_STREAM, {
                             "id": task_id, "error": "cancelled", "trace_id": trace_id,
                         })
@@ -5696,6 +5699,7 @@ async def worker_loop(worker_id: str):
                             "type": "worker.cancelled", "worker": worker_id, "task": task_id,
                         })
                     except Exception as e:
+                        _act["error"] = str(e)[:300]
                         await REDIS.xadd(RESULT_STREAM, {
                             "id": task_id, "error": str(e), "trace_id": trace_id,
                         })
@@ -5709,10 +5713,37 @@ async def worker_loop(worker_id: str):
                         RUNNING_TASKS.pop(task_id, None)
                         await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
                         await REDIS.xdel(_stream, msg_id)
+                        asyncio.ensure_future(_worker_activity(
+                            worker_id, cap_name, cap, payload, trace_id, bg_label, _act))
 
                 WORKER_REGISTRY[worker_id]["status"] = "idle"
                 WORKER_REGISTRY[worker_id]["current_task"] = ""
                 WORKER_REGISTRY[worker_id]["task_started"] = ""
+
+async def _worker_activity(worker_id: str, cap_name: str, cap: dict, payload: dict,
+                           trace_id: str, bg: str, act: dict) -> None:
+    """One record per worker task on the Estate Activity stream
+    (vera:node_activity, service "worker"), with the cap's own redaction
+    applied. Fire-and-forget: never delays the worker."""
+    try:
+        import socket as _socket
+        red = set((cap or {}).get("redact_args") or [])
+        args = {k: ("[redacted]" if k in red else v) for k, v in (payload or {}).items()}
+        res = "[redacted]" if (cap or {}).get("redact_result") else act.get("result")
+        end = time.time()
+        rec = {"id": uuid.uuid4().hex[:16], "node": _socket.gethostname(), "port": 0,
+               "service": "worker", "kind": "task", "path": cap_name, "model": "",
+               "caller": worker_id, "origin": f"{'prod' if not is_dev_sandbox() else 'sandbox'}"
+                                                f"|{bg or 'task'}|{trace_id}|{cap_name}",
+               "start": act["t0"], "end": end, "duration_s": round(end - act["t0"], 3),
+               "status": 500 if act.get("error") else 200, "error": act.get("error", ""),
+               "prompt": json.dumps(args, default=str)[:16384],
+               "response": json.dumps(res, default=str)[:16384]}
+        await REDIS.xadd("vera:node_activity", {"r": json.dumps(rec)}, maxlen=5000,
+                         approximate=True)
+    except Exception as e:
+        log.debug("worker activity record: %s", e)
+
 
 async def result_listener():
     """

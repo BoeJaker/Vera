@@ -66,11 +66,12 @@ async def _inflight() -> Dict[str, List[Dict[str, Any]]]:
         return out
     try:
         async for k in r.scan_iter(_core.INFLIGHT_PREFIX + "*"):
-            node = _s(k)[len(_core.INFLIGHT_PREFIX):]
+            # "<node>" from a tap, "<node>:<service>" from a node service
+            node = _s(k)[len(_core.INFLIGHT_PREFIX):].split(":", 1)[0]
             try:
-                out[node] = json.loads(_s(await r.get(k)) or "[]")
+                out.setdefault(node, []).extend(json.loads(_s(await r.get(k)) or "[]"))
             except ValueError:
-                out[node] = []
+                out.setdefault(node, [])
     except Exception as e:
         log.debug("node activity inflight: %s", e)
     return out
@@ -92,6 +93,30 @@ async def _agents() -> Dict[str, Any]:
             log.debug("agent status: %s", e)
     _AGENT_CACHE.update(at=time.time(), data=data)
     return data
+
+
+_NAMES_CACHE: Dict[str, Any] = {"at": 0.0, "map": {}}
+
+
+async def _agent_names() -> Dict[str, str]:
+    """Container hostname -> instance id, from the node agents (cached 60 s)."""
+    if time.time() - _NAMES_CACHE["at"] < 60:
+        return _NAMES_CACHE["map"]
+    fn = _rawcap("nodes.agent.status")
+    m: Dict[str, str] = {}
+    if fn:
+        try:
+            for n in ((await fn()) or {}).get("nodes") or []:
+                if n.get("node") and n.get("node_id"):
+                    host, iid = str(n["node"]), str(n["node_id"])
+                    # a GPU node and its CPU sibling share a hostname: the
+                    # node's own services belong to the node, not the sibling
+                    if host not in m or m[host].endswith("-cpu"):
+                        m[host] = iid
+        except Exception:
+            pass
+    _NAMES_CACHE.update(at=time.time(), map=m)
+    return m
 
 
 def _instances() -> Dict[str, Dict[str, Any]]:
@@ -123,6 +148,12 @@ async def cap_nodes_activity(node: str = "", service: str = "", caller: str = ""
     now = time.time()
     recs = await _records(3000)
     infl = await _inflight()
+    # Node services name themselves by container hostname ("Ollama-B"); the
+    # node agent knows both names, so every record lands under its instance id.
+    agents_raw = await _agent_names()
+    for r in recs:
+        r["node"] = agents_raw.get(r.get("node"), r.get("node"))
+    infl = {agents_raw.get(n, n): v for n, v in infl.items()}
     since = now - max(60, int(since_s or 3600))
     summary = _core.summarize(recs, infl, window_s=min(900, max(60, int(since_s or 3600))), now=now)
     agents = await _agents()
