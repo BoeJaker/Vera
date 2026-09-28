@@ -7,9 +7,21 @@
                         model, LoRA and voice counts, and each media node's
                         deployed gpu_inference version over SSH.
 
-Read-only. Deploying (re-provisioning nodes to the host's version) is
-`nodes.provision` / `provision.deploy`; this module only says who is behind.
-Everything is reached through other capabilities, so the module never imports
+    specialist.catalog  curated models per family (NLP task alternatives,
+                        Whisper sizes, Kokoro, SD-1.x checkpoints, GLiNER),
+                        each marked in use / in the store; hf=true adds a
+                        Hugging Face search, flagged unvetted.
+    specialist.install  put a catalog entry (or an HF pick) into the shared
+                        store: a job on the builder CT, the one box with the
+                        store mounted read-write.
+    specialist.jobs     the builder's jobs (queued / running / done / failed + log).
+    specialist.store    what the shared store holds, per family.
+    specialist.node_models  models sitting in a node's OWN caches, outside the
+                        store (read over SSH).
+
+Putting a model in the store does not make a node serve it: that is choosing
+the model per task / per server, a separate step. Re-provisioning nodes to the
+host's version is `provision.component.sync`. Everything is reached through other capabilities, so the module never imports
 a sibling capability module (see the Vera namespace trap: a second import runs
 the module body again).
 """
@@ -27,6 +39,7 @@ from fastapi.responses import HTMLResponse, Response
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import APP, capability, register_ui
+from Vera.vera.catalog import specialist_catalog as _cat
 from Vera.vera.catalog import specialist_core as _core
 from Vera.vera.provisioning.components_core import compare_versions
 from Vera.vera.research.nlp_dispatch_core import DEFAULT_MODELS, TASK_KIND
@@ -50,9 +63,58 @@ async def _call(name: str, **kw) -> Dict[str, Any]:
         return {"error": f"{name}: {type(e).__name__}: {e}"}
 
 
+def _in_sandbox() -> bool:
+    try:
+        return bool(_orch.is_dev_sandbox())
+    except Exception:
+        return False
+
+
+#: The builder's port (components_capabilities._COMPONENTS["model_builder"]).
+BUILDER_PORT = 8773
+BUILDER_TAG = "model-builder"
+
+
+async def _builder_url() -> str:
+    """The builder's base URL: VERA_MODEL_BUILDER_URL, else the stored SSH host
+    tagged `model-builder` (CT 131, vera-model-builder)."""
+    env = os.getenv("VERA_MODEL_BUILDER_URL", "").strip().rstrip("/")
+    if env:
+        return env
+    res = await _call("exec.ssh.hosts.list")
+    for h in res.get("hosts") or []:
+        if BUILDER_TAG in (h.get("tags") or []) and h.get("host"):
+            return f"http://{h['host']}:{BUILDER_PORT}"
+    return ""
+
+
+async def _builder(method: str, path: str, body: Dict[str, Any] = None,
+                   timeout: float = 15) -> Dict[str, Any]:
+    import httpx
+    url = await _builder_url()
+    if not url:
+        return {"ok": False, "error": "no model builder: store an SSH host tagged "
+                                      f"'{BUILDER_TAG}' or set VERA_MODEL_BUILDER_URL"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            r = await (c.post(url + path, json=body) if method == "POST" else c.get(url + path))
+        try:
+            d = r.json()
+        except Exception:
+            d = {"error": r.text[:300]}
+        if r.status_code != 200:
+            return {"ok": False, "error": d.get("detail") or d.get("error") or f"HTTP {r.status_code}",
+                    "builder": url}
+        return {"ok": True, "builder": url, **(d if isinstance(d, dict) else {"data": d})}
+    except Exception as e:
+        return {"ok": False, "builder": url,
+                "error": f"builder unreachable ({type(e).__name__}: {e}) - is model_builder "
+                         f"deployed on the builder CT?"}
+
+
 async def _host_versions() -> Dict[str, Dict[str, Any]]:
     out = {}
-    for comp in ("nlp_server", "gpu_inference"):
+    for comp in ("nlp_server", "gpu_inference", "model_builder"):
         res = await _call("provision.component.version", component=comp)
         out[comp] = res.get("host") or {}
     return out
@@ -142,11 +204,14 @@ async def cap_specialist_status(refresh: bool = False, deep: bool = False,
                               "changed": v.get("changed") or [],
                               "error": v.get("error", "")}
 
-    try:
-        sandbox = bool(_orch.is_dev_sandbox())
-    except Exception:
-        sandbox = False
-    return {"ok": True, "sandbox": sandbox,
+    sandbox = _in_sandbox()
+    bh = await _builder("GET", "/health", timeout=5)
+    builder = {"url": bh.get("builder", ""), "ok": bool(bh.get("ok")),
+               "error": bh.get("error", ""), "free_gb": bh.get("free_gb"),
+               "writable": bh.get("writable"), "running": bh.get("running") or [],
+               "queued": bh.get("queued") or [],
+               "version": (bh.get("component") or {}).get("version", "")}
+    return {"ok": True, "sandbox": sandbox, "builder": builder,
             "versions": {k: v.get("version", "") for k, v in versions.items()},
             "nlp": {"placement": {"where": nlp.get("where"), "node": nlp.get("node"),
                                   "reason": nlp.get("reason"),
@@ -156,6 +221,158 @@ async def cap_specialist_status(refresh: bool = False, deep: bool = False,
             "media": {"nodes": media_rows},
             "host_ner": _host_ner(),
             "summary": _core.summarize(nlp_rows, media_rows)}
+
+
+# ── the catalog and the store ─────────────────────────────────────────────────
+@capability(
+    "specialist.store",
+    http_method="GET", http_path="/specialist/store", http_tags=["models"],
+    memory="off", silent=True,
+    description="What the shared specialist-model store holds, per family (nlp, whisper, "
+                "sd, tts, gliner, spacy, hf): each model's directory and size, the NLP "
+                "export manifest, free space. Read from the builder CT. Output: {ok, store, "
+                "free_gb, families:{family:[{name, model, size_mb, onnx}]}, whisper_files, "
+                "nlp_manifest}.",
+)
+async def cap_specialist_store(trace_id=None) -> Dict[str, Any]:
+    return await _builder("GET", "/store", timeout=60)
+
+
+async def _hf_search(family: str, task: str, query: str, limit: int) -> Dict[str, Any]:
+    import httpx
+    try:
+        params = _cat.search_params(family, task=task, query=query, limit=limit)
+    except ValueError as e:
+        return {"error": str(e), "results": []}
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get("https://huggingface.co/api/models", params=params)
+            r.raise_for_status()
+            rows = r.json() or []
+    except Exception as e:
+        return {"error": f"Hugging Face search failed: {type(e).__name__}: {e}", "results": []}
+    curated_ids = {e["id"] for e in _cat.curated(family)}
+    out = []
+    for m in rows:
+        mid = m.get("modelId") or m.get("id") or ""
+        try:
+            e = _cat.hf_pick(family, mid, task=task)
+        except ValueError:
+            continue
+        e.update(downloads=m.get("downloads"), likes=m.get("likes"),
+                 curated=e["id"] in curated_ids)
+        out.append(e)
+    return {"results": out}
+
+
+@capability(
+    "specialist.catalog",
+    http_method="GET", http_path="/specialist/catalog", http_tags=["models"],
+    memory="off", silent=True,
+    description="The specialist-model catalog. Curated entries per family - NLP "
+                "alternatives per nlp_server task, Whisper sizes, Kokoro TTS, SD-1.x "
+                "checkpoints, GLiNER - each marked in_use (a node loads it today) and "
+                "built (already in the shared store). 'Curated' is a known-good candidate, "
+                "not a claim it was exported here; the store says what was built. With "
+                "hf=true (and task for nlp) adds a Hugging Face search, flagged unvetted. "
+                "Inputs: family (str - nlp|whisper|tts|sd|gliner, default all), task (str - "
+                "nlp task), query (str), hf (bool), limit (int=20). Output: {ok, families, "
+                "entries[], hf{results[]|error}, store_error}.",
+)
+async def cap_specialist_catalog(family: str = "", task: str = "", query: str = "",
+                                 hf: bool = False, limit: int = 20,
+                                 trace_id=None) -> Dict[str, Any]:
+    if family and family not in _cat.FAMILIES:
+        return {"ok": False, "error": f"family must be one of {list(_cat.FAMILIES)}"}
+    entries = [e for e in _cat.curated(family) if not task or e.get("task") == task]
+    store = await _builder("GET", "/store", timeout=60)
+    _cat.mark_built(entries, store if store.get("ok") else {})
+    out: Dict[str, Any] = {"ok": True, "families": _cat.FAMILIES,
+                           "nlp_tasks": sorted(_cat.NLP_TASK_PIPELINE) + ["rerank"],
+                           "entries": entries,
+                           "store_error": "" if store.get("ok") else store.get("error", "")}
+    if hf and family:
+        out["hf"] = await _hf_search(family, task, query, limit)
+    return out
+
+
+@capability(
+    "specialist.install",
+    http_method="POST", http_path="/specialist/install", http_tags=["models"],
+    memory="off",
+    description="Put a specialist model into the shared store - a job on the builder "
+                "CT (the one box with the store mounted read-write; nodes read it ro). "
+                "Either entry (a specialist.catalog id) or an unvetted Hugging Face pick: "
+                "family (nlp|sd|gliner) + model (owner/name) + task (for nlp). NLP models "
+                "are exported to ONNX with the exporter that built the store; others are "
+                "downloaded. Does NOT switch any node to the model. Refused from a dev "
+                "sandbox (the store is prod's). Output: {ok, job:{id, state, ...}, builder}.",
+)
+async def cap_specialist_install(entry: str = "", family: str = "", model: str = "",
+                                 task: str = "", trace_id=None) -> Dict[str, Any]:
+    if _in_sandbox():
+        return {"ok": False, "error": "this is a dev sandbox: the shared model store is "
+                                      "prod's - install from the host"}
+    try:
+        e = _cat.find(entry) if entry else _cat.hf_pick(family, model, task=task)
+        if e is None:
+            return {"ok": False, "error": f"no catalog entry {entry!r}"}
+        job = _cat.job_for(e)
+    except ValueError as ex:
+        return {"ok": False, "error": str(ex)}
+    res = await _builder("POST", "/jobs", job, timeout=30)
+    if res.get("ok"):
+        await _orch.emit_event({"type": "specialist.install", "entry": e["id"],
+                                "vetted": bool(e.get("vetted")),
+                                "job": (res.get("job") or {}).get("id")})
+    return res
+
+
+@capability(
+    "specialist.jobs",
+    http_method="GET", http_path="/specialist/jobs", http_tags=["models"],
+    memory="off", silent=True,
+    description="The builder's jobs, newest first (state queued|running|done|failed, "
+                "result, error, last log lines); with job_id, one job and its full log. "
+                "Jobs live in the builder's memory - a builder restart forgets finished "
+                "ones; the store is the lasting record. Inputs: job_id (str). Output: "
+                "{ok, jobs[]} | {ok, id, state, log[], ...}.",
+)
+async def cap_specialist_jobs(job_id: str = "", trace_id=None) -> Dict[str, Any]:
+    if job_id:
+        if not all(ch.isalnum() for ch in job_id):
+            return {"ok": False, "error": "bad job id"}
+        return await _builder("GET", f"/jobs/{job_id}")
+    return await _builder("GET", "/jobs")
+
+
+@capability(
+    "specialist.node_models",
+    http_method="GET", http_path="/specialist/node_models", http_tags=["models", "nodes"],
+    memory="off", silent=True,
+    description="Specialist models sitting in each node's OWN caches, outside the shared "
+                "store: Hugging Face hub caches (diffusion, IP-Adapter, ControlNet ...), "
+                "Whisper checkpoints, Kokoro, rembg, Coqui - with every copy's path and "
+                "the total size, so duplicates across user caches show. Read over SSH. "
+                "Inputs: host_ids (list - default: every Ollama node with a stored SSH "
+                "credential). Output: {ok, nodes:[{host_id, host, models[], total_mb, error}]}.",
+)
+async def cap_specialist_node_models(host_ids: List[str] = None, trace_id=None) -> Dict[str, Any]:
+    hosts = await _call("exec.ssh.hosts.list")
+    known = {h.get("id"): h.get("host", "") for h in hosts.get("hosts") or []}
+    if not host_ids:
+        addrs = {urlparse(str(i.get("url") or "")).hostname
+                 for i in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values()}
+        host_ids = [hid for hid, a in known.items() if a in addrs]
+    cmd = _core.node_cache_probe_cmd()
+    nodes = []
+    for hid in host_ids:
+        res = await _call("exec.ssh.run", command=cmd, host_id=hid, timeout=120)
+        rows = _core.parse_node_cache(res.get("stdout") or "")
+        nodes.append({"host_id": hid, "host": known.get(hid, ""), "models": rows,
+                      "total_mb": sum(r["size_mb"] for r in rows),
+                      "error": "" if res.get("ok") else str(res.get("stderr") or res.get("error") or "")[:300]})
+    return {"ok": True, "nodes": nodes}
 
 
 # ── the element ───────────────────────────────────────────────────────────────
@@ -193,7 +410,9 @@ register_ui(
   <iframe src="/specialist/panel" style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"></iframe>
 </div>""",
     "",
-    ui_caps=["specialist.status", "provision.component.sync"],
+    ui_caps=["specialist.status", "provision.component.sync", "specialist.catalog",
+             "specialist.install", "specialist.jobs", "specialist.store",
+             "specialist.node_models"],
     # an element of the Models view (and any dashboard), not a tab of its own
     mode="element",
     tab_order=75,
