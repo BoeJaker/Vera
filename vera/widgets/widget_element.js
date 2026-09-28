@@ -732,10 +732,27 @@
     return '<div class="vw-sg" data-sg="' + esc(JSON.stringify(c)) + '" data-sg-attrs="' + esc(attrs.join(' ')) +
       '" style="position:relative;height:' + Math.max(H, 180) + 'px"><span class="vw-sg-w">' + esc(words) + '</span></div>';
   };
+  /* THE XL COMPOSITE (owner, 2026-09-28: "the composite widgets often have lists in them but do not give them enough room or
+     allow the list to be scrolled. composites that contain elements that would typically be large like lists should be
+     considered xl composite and then the ordinary composite be reserved for smaller constituent widgets").
+     A composite (grid or rows) with a list among its children is an XL composite: the dashboard gives it at least
+     XL_COMPOSITE_ROWS rows (VeraDash, syncSize), and each list slot draws EVERY row (up to 200) and scrolls inside its slot
+     instead of cutting to "+ N more". A composite of figures - counters, rings, meters - stays an ordinary one. A report
+     or a rail is neither: its lists are summary blocks by design. */
+  const LISTY = /^(rows|list|table|log|feed|cards|files|checklist|timeline|lane|people|links|spark-table|temps|thermo|ranked|hosts|stack)$/;
+  const XL_COMPOSITE_ROWS = 6;
+  const compositeXL = (rec) => {
+    if (!rec || typeof rec !== 'object' || canon(rec.form || '') !== 'composite') return false;
+    const lay = rec.layout || 'grid'; if (lay === 'rail' || lay === 'report') return false;
+    return (Array.isArray(rec.children) ? rec.children : []).some((c) => { const r = c && typeof c.record === 'object' ? c.record : null; return !!r && LISTY.test(canon(r.form || '')); });
+  };
+  // how many items a list child will draw: the array itself, or the longest array inside the shape it maps to
+  const itemCount = (v) => Array.isArray(v) ? v.length : (v && typeof v === 'object' ? Math.max(0, ...Object.keys(v).map((k) => Array.isArray(v[k]) ? v[k].length : 0)) : 0);
   R.composite = (d, H, o) => {
     const rec = (o && o.record) || {}; const kids = Array.isArray(rec.children) ? rec.children : [];
     if (!kids.length) return EMPTY('a composite needs children');
     const layout = rec.layout || 'grid', kd = (o && o.kids) || {}, chip = layout === 'rail' || layout === 'report';
+    const xl = !chip && compositeXL(rec);
     // the frame's height (opts.height is the element's measured body) shared among the rows of slots: a 2 × 2 of four
     // children gets two rows, each slot a fixed height, its body scrolling — the composite fills its tile and never grows it
     const shown = kids.slice(0, 12), wide = !!(o && o.width && o.width >= 560);
@@ -744,7 +761,7 @@
     // a slot's share of the frame follows what its child needs: a figure (counter, ring, kv) takes less than a list or a
     // chart; each row of slots is as tall as its neediest child, the measured body split by those weights; the last row
     // fills its width (three children are two slots and a wide one, not a slot and a hole) - no half-empty row, no scrolling slot
-    const need = (c) => { const r0 = (c && c.record && typeof c.record === 'object') ? c.record : {}, f = canon(r0.form || ''); if (f === 'kv' && r0.read && r0.read.map && Array.isArray(r0.read.map.keys) && r0.read.map.keys.length >= 4) return 1.15; /* four key/values read as a list: a list's share */ return /^(counter|string|hero|level|ring|dial|gauge|meter|pills|numbers|kv|dots)$/.test(f) ? 0.62 : /^(rows|list|table|log|feed|cards|files|checklist|temps|thermo|bullet|ranked|hosts)$/.test(f) ? 1.15 : 1; };
+    const need = (c) => { const r0 = (c && c.record && typeof c.record === 'object') ? c.record : {}, f = canon(r0.form || ''); if (f === 'kv' && r0.read && r0.read.map && Array.isArray(r0.read.map.keys) && r0.read.map.keys.length >= 4) return 1.15; /* four key/values read as a list: a list's share */ return /^(counter|string|hero|level|ring|dial|gauge|meter|pills|numbers|kv|dots)$/.test(f) ? 0.62 : /^(rows|list|table|log|feed|cards|files|checklist|temps|thermo|bullet|ranked|hosts)$/.test(f) ? (xl ? 1.8 : 1.15) : 1; };   /* an XL composite's list takes the lion's share */
     // the least a slot can be and still show its child whole: a figure, three rows, a chart's floor - a row of slots
     // gets at least its tallest floor, the rest of the body is shared by weight (a list over a figure)
     const floorOf = (c) => { const f = canon((c && c.record && typeof c.record === 'object' && c.record.form) || ''); return /^(counter|hero|string|pills|numbers)$/.test(f) ? 62 : /^(kv)$/.test(f) ? 78 : /^(rows|list|table|log|feed|temps|thermo|files|checklist|ranked|bullet)$/.test(f) ? 88 : /^(ring|dial|gauge)$/.test(f) ? 96 : 72; };
@@ -787,7 +804,15 @@
         return '<div class="vw-slot vw-slot-block' + stale + '" data-slot="' + esc(slot) + '"><span class="vw-slot-h">' + esc(n.title || n.form) + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: bh, title: n.title }, kopts, { width: (o && o.width) ? Math.max(160, o.width - 20) : undefined })) + '</div></div>'; }
       if (chip) return '<div class="vw-slot vw-slot-row' + stale + '" data-slot="' + esc(slot) + '"><span class="k" title="' + esc(n.title || n.form) + '">' + esc(n.title || n.form) + '</span><span class="vw-slot-c">' + draw(n.form, data, 's', Object.assign({}, kopts, { title: '' })) + kerr + '</span></div>';
       const fig = /^(counter|hero|string|level|ring|meter|gauge|dial|tank|numbers)$/.test(canon(n.form)) ? '' : figure(n.form, mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data));
-      return '<div class="vw-slot' + stale + '" data-slot="' + esc(slot) + '"' + slotStyle + '><span class="vw-slot-h">' + esc(n.title || n.form) + (fig ? '<b>' + fig + '</b>' : '') + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: kidH, title: n.title }, kopts)) + '</div></div>'; }).join('') + '</div>';
+      /* an XL composite's list draws at the height its items need (every row, up to 200) and its slot scrolls - the
+         forms size their row count to the height they are given, so this is the one place the whole list is asked for */
+      let drawH = kidH, scroll = '';
+      if (xl && LISTY.test(canon(n.form))) {
+        let cnt = 0; try { cnt = itemCount(dataFor(mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data), canon(n.form))); } catch (e) { cnt = 0; }
+        const need = Math.min(200, cnt) * Math.round(34 * ((o && o.textK) || 1)) + 60;
+        if (need > kidH) { drawH = need; scroll = ' data-scroll="1"'; }
+      }
+      return '<div class="vw-slot' + stale + '" data-slot="' + esc(slot) + '"' + scroll + slotStyle + '><span class="vw-slot-h">' + esc(n.title || n.form) + (fig ? '<b>' + fig + '</b>' : '') + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: drawH, title: n.title }, kopts)) + '</div></div>'; }).join('') + '</div>';
   };
 
   /* ══ THE STILL FORMS — the Widgets board's seventy-five ways of reading data, each the board's own drawing ═════════
@@ -3273,6 +3298,7 @@ span.vw-sampled{opacity:.85}
 .vw-slot{min-width:0;min-height:0;box-sizing:border-box;overflow:hidden;background:var(--surf2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:7px 9px 8px;display:flex;flex-direction:column;gap:4px;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
 .vw-slot-h{display:flex;align-items:baseline;gap:6px;font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t3,var(--dim,#6b7280));flex-shrink:0;white-space:nowrap;overflow:hidden}.vw-slot-h b{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:11px;color:var(--t1,var(--text,#d8dce4));font-weight:400;text-transform:none;letter-spacing:0}
 .vw-slot-b{flex:1;min-height:0;display:flex;align-items:safe center;overflow:auto}.vw-slot-b > *{width:100%}
+.vw-slot[data-scroll] .vw-slot-b{align-items:flex-start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--bd2,rgba(255,255,255,.18)) transparent}
 .vw-slot-row{flex-direction:row;align-items:center;gap:8px;background:transparent;box-shadow:none;border-radius:0;padding:3px 0;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
 .vw-slot.vw-stale .vw-slot-b,.vw-slot-row.vw-stale .vw-chip{opacity:.55}.vw-kerr,.vw-kempty{font-style:normal;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:7.5px;letter-spacing:.06em;text-transform:uppercase;margin-left:6px;opacity:.85}.vw-kerr{color:var(--err,#c96b6b)}.vw-kempty{color:var(--t3,var(--dim,#6b7280))}
 .vw-kread{font-style:normal;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8px;letter-spacing:.04em;color:var(--t3,var(--dim,#6b7280));opacity:.8;margin-left:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:vw-kread 1.6s ease-in-out infinite}@keyframes vw-kread{50%{opacity:.35}}
@@ -4127,7 +4153,7 @@ span.vw-sampled{opacity:.85}
     }
   }
   if (window.customElements && !customElements.get('vera-widget')) customElements.define('vera-widget', VeraWidgetEl);
-  window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, version: 5 };
+  window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, compositeXL, xlCompositeRows: XL_COMPOSITE_ROWS, version: 5 };
   Object.assign(window.VeraWidget, { dive, openBlock, rowTip, rowRef, fontScale, fromCapResult, fromCapStream, capForms: () => CAP_FORMS.slice(), capHints: () => Object.assign({}, CAP_HINTS),
     drawer, relatedTo, resolveArgs, toVeraGraph, itemAt, ensureVeraGraph });   // round 3: the data drawer, the calendar's arguments, the Vera graph form   // the widget review, round 2: blocks, the deep dive, the text-size setting
 
