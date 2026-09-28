@@ -29,8 +29,16 @@ from Vera.vera.capability_orchestration import (
     capability, emit_event, emit_stream,
     enum_schema,                  # schema= helper: declare multiple-choice arg options
     media_base, media_slot,       # media-node router (STT / TTS / image-gen)
+    vera_origin_header,
     now_iso, ollama_generate, pick_instance, schedule,
 )
+
+
+def _media_origin(service: str, path: str) -> dict:
+    """X-Vera-Origin for a call to a media node, so the Estate activity pane
+    shows it as this Vera's (prod or the sandbox) instead of 'external'."""
+    return vera_origin_header(job_type=service or "media",
+                              cap="media" + str(path or "").replace("/", "."))
 
 from Vera.vera.config import cfg
 from Vera.vera.output_formats import apply_format, list_profiles
@@ -124,7 +132,7 @@ async def stt_transcribe(
     try:
         async with media_slot("stt") as _mn:
             async with httpx.AsyncClient(timeout=60) as c:
-                r = await c.post(f"{_mn['url']}/stt", files=files, data=data)
+                r = await c.post(f"{_mn['url']}/stt", headers=_media_origin(_mn.get('job_type') or '', '/stt'), files=files, data=data)
                 r.raise_for_status()
                 resp = r.json()
         return {
@@ -162,7 +170,7 @@ async def tts_synthesize(
     try:
         async with media_slot("tts") as _mn:
             async with httpx.AsyncClient(timeout=60) as c:
-                r = await c.post(f"{_mn['url']}/tts", json=body)
+                r = await c.post(f"{_mn['url']}/tts", headers=_media_origin(_mn.get('job_type') or '', '/tts'), json=body)
                 r.raise_for_status()
                 data = r.json()
         return {
@@ -280,7 +288,7 @@ async def image_generate(
         async with media_slot("imagegen") as _mn:
             _track_media_job(job_id, _mn["url"])
             async with httpx.AsyncClient(timeout=300) as c:
-                r = await c.post(f"{_mn['url']}/imagine", json=body)
+                r = await c.post(f"{_mn['url']}/imagine", headers=_media_origin(_mn.get('job_type') or '', '/imagine'), json=body)
                 r.raise_for_status()
                 data = r.json()
         img_b64 = data.get("image_b64", "")
@@ -703,7 +711,7 @@ async def sd_lora_install(url: str = "", filename: str = "", token: str = "",
         return {"error": "url or blob_key required"}
     try:
         async with httpx.AsyncClient(timeout=900) as c:
-            r = await c.post(f"{media_base('imagegen')}/sd/loras/download",
+            r = await c.post(f"{media_base('imagegen')}/sd/loras/download", headers=_media_origin('imagegen', '/sd/loras/download'),
                              json={"url": src_url, "filename": filename, "token": token})
             r.raise_for_status()
             res = r.json()
@@ -781,7 +789,7 @@ async def sd_lora_delete(name: str, trace_id=None):
         return {"error": "name required"}
     try:
         async with httpx.AsyncClient(timeout=30) as c:
-            r = await c.post(f"{media_base('imagegen')}/sd/loras/delete", json={"name": name})
+            r = await c.post(f"{media_base('imagegen')}/sd/loras/delete", headers=_media_origin('imagegen', '/sd/loras/delete'), json={"name": name})
             r.raise_for_status()
             return r.json()
     except Exception as e:
@@ -839,7 +847,7 @@ async def image_img2img(
         async with media_slot("imagegen") as _mn:
             _track_media_job(job_id, _mn["url"])
             async with httpx.AsyncClient(timeout=300) as c:
-                r = await c.post(f"{_mn['url']}/img2img", json=body)
+                r = await c.post(f"{_mn['url']}/img2img", headers=_media_origin(_mn.get('job_type') or '', '/img2img'), json=body)
                 r.raise_for_status()
                 data = r.json()
         img_b64 = data.get("image_b64", "")
@@ -898,7 +906,7 @@ async def image_expression(
             pass
     try:
         async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{media_base('imagegen')}/expression", json=body)
+            r = await c.post(f"{media_base('imagegen')}/expression", headers=_media_origin('imagegen', '/expression'), json=body)
             r.raise_for_status()
             data = r.json()
         return {
@@ -996,7 +1004,7 @@ async def image_rembg(image_b64: str, model: str = "u2net", alpha_matting: bool 
                       post_process: bool = False, trace_id=None):
     try:
         async with httpx.AsyncClient(timeout=180) as c:
-            r = await c.post(f"{media_base('imagegen')}/rembg",
+            r = await c.post(f"{media_base('imagegen')}/rembg", headers=_media_origin('imagegen', '/rembg'),
                              json={"image_b64": image_b64, "model": model,
                                    "alpha_matting": alpha_matting, "fg_threshold": fg_threshold,
                                    "bg_threshold": bg_threshold, "erode": erode,
@@ -1053,7 +1061,7 @@ async def image_pose(
         body["seed"] = seed
     try:
         async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{media_base('imagegen')}/controlnet/pose", json=body)
+            r = await c.post(f"{media_base('imagegen')}/controlnet/pose", headers=_media_origin('imagegen', '/controlnet/pose'), json=body)
             r.raise_for_status()
             data = r.json()
         img_b64 = data.get("image_b64", "")
@@ -1110,7 +1118,7 @@ async def image_ipadapter(
         body["seed"] = seed
     try:
         async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{media_base('imagegen')}/ipadapter", json=body)
+            r = await c.post(f"{media_base('imagegen')}/ipadapter", headers=_media_origin('imagegen', '/ipadapter'), json=body)
             r.raise_for_status()
             data = r.json()
         img_b64 = data.get("image_b64", "")
@@ -1138,7 +1146,7 @@ async def image_ipadapter(
 async def image_upscale(image_b64: str, scale: int = 4, model: str = "", trace_id=None):
     try:
         async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{media_base('imagegen')}/upscale",
+            r = await c.post(f"{media_base('imagegen')}/upscale", headers=_media_origin('imagegen', '/upscale'),
                              json={"image_b64": image_b64, "scale": scale, "model": model})
             r.raise_for_status()
             data = r.json()
@@ -1205,7 +1213,7 @@ async def image_thumbnail(
         body["seed"] = seed
     try:
         async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{media_base('imagegen')}/thumbnail", json=body)
+            r = await c.post(f"{media_base('imagegen')}/thumbnail", headers=_media_origin('imagegen', '/thumbnail'), json=body)
             r.raise_for_status()
             data = r.json()
         img_b64 = data.get("image_b64", "")
@@ -1282,7 +1290,7 @@ async def gpu_duplex_start(trace_id=None):
         # stateful on the server, so every follow-up call must hit the same one.
         base = media_base("tts")
         async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.post(f"{base}/duplex/start")
+            r = await c.post(f"{base}/duplex/start", headers=_media_origin('tts', '/duplex/start'))
             r.raise_for_status()
             data = r.json()
         sid = data.get("session_id", "")
@@ -1331,7 +1339,7 @@ async def gpu_duplex_query(
     if audio_b64: body["audio_b64"] = audio_b64
     try:
         async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(f"{_duplex_base(session_id)}/duplex/query", json=body)
+            r = await c.post(f"{_duplex_base(session_id)}/duplex/query", headers=_media_origin('tts', '/duplex/query'), json=body)
             r.raise_for_status()
             return r.json()
     except Exception as e:
@@ -1348,7 +1356,7 @@ async def gpu_duplex_query(
 async def gpu_duplex_interrupt(session_id: str, trace_id=None):
     try:
         async with httpx.AsyncClient(timeout=5) as c:
-            r = await c.post(f"{_duplex_base(session_id)}/duplex/interrupt/{session_id}")
+            r = await c.post(f"{_duplex_base(session_id)}/duplex/interrupt/{session_id}", headers=_media_origin('tts', '/duplex/interrupt/'))
             r.raise_for_status()
             return r.json()
     except Exception as e:

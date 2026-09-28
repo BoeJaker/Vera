@@ -128,6 +128,72 @@ async def _start_metrics():
     asyncio.create_task(_restore_worker_meta())   # hydrate persisted on/off flags
 
 schedule(_start_metrics, interval=999999, name="worker_metrics")
+
+
+# ── Ghost registrations ──────────────────────────────────────────────────────
+# may_write_metrics stops NEW ghosts; the ones written before that guard have
+# no expiry and outlive everything (2026-09-28: two "unknown" workers in
+# obs.workers). A ghost is a key with no identity AND no expiry - nothing live
+# maintains it - so removing it loses nothing (worker_registry_hygiene.is_ghost).
+async def _registry_ghosts() -> dict:
+    r = _orch.REDIS
+    if r is None or _wrh is None:
+        return {"live": [], "ghosts": [], "ghost_ids": []}
+    entries = []
+    async for k in r.scan_iter("vera:workers:*"):
+        key = k.decode() if isinstance(k, bytes) else k
+        if key.count(":") != 2:                   # vera:workers:<id> only
+            continue
+        try:
+            if (await r.type(key)) not in (b"hash", "hash"):
+                continue
+            rec = {(a.decode() if isinstance(a, bytes) else a): (b.decode() if isinstance(b, bytes) else b)
+                   for a, b in (await r.hgetall(key)).items()}
+            entries.append({"id": key.rsplit(":", 1)[-1], "record": rec, "ttl": await r.ttl(key)})
+        except Exception:
+            continue
+    return _wrh.classify(entries)
+
+
+async def prune_registry_ghosts(dry_run: bool = True) -> dict:
+    plan = await _registry_ghosts()
+    removed = []
+    if not dry_run and plan["ghost_ids"]:
+        r = _orch.REDIS
+        for wid in plan["ghost_ids"]:
+            key = f"vera:workers:{wid}"
+            # re-check at delete time: a worker may have registered under it since
+            if _wrh.is_ghost({(a.decode() if isinstance(a, bytes) else a): v
+                              for a, v in (await r.hgetall(key)).items()}, await r.ttl(key)):
+                await r.delete(key)
+                removed.append(wid)
+        if removed:
+            await emit_event({"type": "workers.registry.pruned", "removed": removed})
+    return {"ok": True, "dry_run": bool(dry_run), "summary": _wrh.describe(plan) if _wrh else "",
+            "ghosts": plan["ghosts"], "removed": removed}
+
+
+async def _ghost_sweep():
+    try:
+        res = await prune_registry_ghosts(dry_run=False)
+        if res["removed"]:
+            log.info("worker registry: removed %d ghost(s): %s", len(res["removed"]), res["removed"])
+    except Exception as e:
+        log.debug("worker registry ghost sweep: %s", e)
+
+
+schedule(_ghost_sweep, interval=600, name="worker_registry_ghost_sweep", singleton=True)
+
+
+@_orch.capability("obs.workers.prune", memory="off",
+                  http_method="POST", http_path="/workers/prune", http_tags=["obs", "workers"],
+                  description="Remove worker registrations nothing maintains: a vera:workers:<id> "
+                              "key with no identity (id/host/pid/started) AND no expiry - a metrics "
+                              "write recreated it after the worker had gone. They show in "
+                              "obs.workers as 'unknown' workers. Runs every 10 min on its own. "
+                              "Dry run by default. Input: dry_run (bool=true). Output: {ghosts, removed}.")
+async def cap_workers_prune(dry_run: bool = True, trace_id=None):
+    return await prune_registry_ghosts(dry_run=dry_run)
 try:
     # Through the orchestrator, so a node worker skips it unless it is
     # on the worker allow-list (worker_placement_core).

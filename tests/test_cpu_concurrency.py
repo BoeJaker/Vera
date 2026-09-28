@@ -59,6 +59,18 @@ def test_tune_plan():
     assert core.tune_plan(True, _probe(models=""))["action"] == "skip"
 
 
+def test_a_fresh_gpu_node_gets_its_sibling_on_the_installers_store():
+    """A node Vera just installed runs the STOCK unit: no OLLAMA_MODELS, user
+    `ollama`. Provisioning must still be able to give it the CPU sibling."""
+    def probe(user):
+        return core.parse_tune_probe(chr(10).join(
+            ["UNIT=ollama", "MODELS=", "DROPIN_B64=", "SIBLING=absent", "USER=" + user]))
+    p = core.tune_plan(True, probe("ollama"))
+    assert p["action"] == "add_sibling" and p["models"] == "/usr/share/ollama/.ollama/models"
+    assert core.tune_plan(True, probe(""))["models"] == "/root/.ollama/models"
+    assert "USER=" in core.tune_probe_cmd()
+
+
 def test_the_sibling_is_cpu_only_on_the_same_readonly_store():
     u = core.cpu_sibling_unit("/.ollama/models")
     for line in ('OLLAMA_MODELS=/.ollama/models', 'OLLAMA_HOST=0.0.0.0:11436',

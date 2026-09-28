@@ -69,3 +69,27 @@ def test_a_vera_names_itself_on_every_ollama_call(monkeypatch):
     assert CO.vera_origin_header()["X-Vera-Origin"].startswith("bench-rig|")
     # header-safe whatever the job type carries
     assert all(32 <= ord(c) < 127 for c in CO.vera_origin_header("café\n")["X-Vera-Origin"])
+
+
+def test_untagged_call_from_a_vera_host_is_vera_not_external():
+    """2026-09-28: Vera's own NLP and media calls sent no X-Vera-Origin and the
+    pane filed them as 'external'. They are tagged now; anything still untagged
+    that comes from an address a Vera runs on is 'vera' - prod and sandboxes
+    share that address, so it cannot say which - and only other addresses are
+    external."""
+    r = _rec(origin="", caller="192.168.0.138")
+    assert core.caller_class(r) == "external"                      # no hosts known
+    assert core.caller_class(r, {"192.168.0.138"}) == "vera"
+    assert core.caller_class(_rec(origin="", caller="192.168.0.50"), {"192.168.0.138"}) == "external"
+    assert core.caller_class(_rec(), {"192.168.0.138"}) == "prod"   # a tag always wins
+    assert core.row(r, vera_ips={"192.168.0.138"})["caller_class"] == "vera"
+    assert core.matches(r, caller="vera", vera_ips={"192.168.0.138"})
+    s = core.summarize([dict(r, end=100.0)], {}, now=100.0, vera_ips={"192.168.0.138"})
+    assert s["cpu-246"]["by_caller"] == {"vera": 1}
+
+
+def test_nlp_calls_carry_the_origin_tag():
+    import inspect
+    from vera.research import nlp_dispatch as nd
+    src = inspect.getsource(nd._post_json)
+    assert "headers=_origin(path)" in src

@@ -386,6 +386,7 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
       <div class="nav-grp" data-view="estate">Overview</div>
       <button type="button" class="nav-btn active" data-pane="overview" data-view="estate" title="Overview" onclick="P.show('overview',this)"><span class="gl">▦</span>Overview</button>
       <button type="button" class="nav-btn" data-pane="activity" data-view="estate" title="Everything the nodes are doing: running now, every call (prod, sandboxes, external) with prompt, response and stats" onclick="P.show('activity',this)"><span class="gl">↯</span>Activity</button>
+      <button type="button" class="nav-btn" data-pane="nodemodels" data-view="estate" title="Which models each node keeps loaded, the workloads that hotload models, NLP placement and switches, and the specialist catalog" onclick="P.show('nodemodels',this)"><span class="gl">◈</span>Models &amp; NLP</button>
       <button type="button" class="nav-btn" data-pane="estate" data-view="estate" title="Map" onclick="P.show('estate',this)"><span class="gl">⬡</span>Map</button>
       <button type="button" class="nav-btn" data-pane="observe" data-view="estate" title="Observe" onclick="P.show('observe',this)"><span class="gl">◎</span>Observe</button>
       <button type="button" class="nav-btn" data-pane="ops" data-view="estate" title="Live ops" onclick="P.show('ops',this)"><span class="gl">✦</span>Live ops</button>
@@ -408,6 +409,7 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
       <div class="nav-grp" data-view="estate">Integrations</div>
       <button type="button" class="nav-btn" data-pane="integrations" data-view="estate" title="Services" onclick="P.show('integrations',this)"><span class="gl">◈</span>Services</button>
       <button type="button" class="nav-btn" data-pane="platforms" data-view="estate" title="Platforms" onclick="P.show('platforms',this)"><span class="gl">▩</span>Platforms</button>
+      <button type="button" class="nav-btn" data-pane="nodemodels" data-view="models" title="Warm slots per node, workload hotloading, NLP and the specialist catalog" onclick="P.show('nodemodels',this)"><span class="gl">◈</span>Nodes &amp; NLP</button>
       <button type="button" class="nav-btn" data-pane="ollama" data-view="models" title="Ollama" onclick="P.show('ollama',this)"><span class="gl">◍</span>Ollama</button>
       <button type="button" class="nav-btn" data-pane="modelrouting" data-view="models" title="Model Routing" onclick="P.show('modelrouting',this)"><span class="gl">⇉</span>Model Routing</button>
       <div class="nav-div" data-view="models"></div>
@@ -1696,6 +1698,10 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
     </div>
 
     <!-- Sandbox pane — shared exec-sandbox policy editor (gates exec.*, IDE Run, docker.* CLI) -->
+    <!-- Models & NLP: the <vera-node-models> element (ollama.warm.*, nlp.*, specialist.*) -->
+    <div class="pane" id="pane-nodemodels" style="padding:0;overflow:hidden">
+      <iframe id="nodemodels-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    </div>
     <!-- Activity: the <vera-node-activity> element (nodes.activity) -->
     <div class="pane" id="pane-activity" style="padding:0;overflow:hidden">
       <iframe id="activity-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
@@ -6329,6 +6335,7 @@ function showPane(name, el){
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
   if(name==='sandbox'){ const el=$('wk-sandbox-ctl'); if(el&&el.refresh) el.refresh(); }
   if(name==='activity'){ _mountFrame('activity-frame', BASE+'/nodes/activity/panel'); }
+  if(name==='nodemodels'){ _mountFrame('nodemodels-frame', BASE+'/nodes/models/panel'); }
   if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
@@ -6365,7 +6372,9 @@ const _VIEW=(new URLSearchParams(location.search).get('view')==='models')?'model
 if(_VIEW==='models') document.documentElement.classList.add('view-models');
 function estateOpen(pane, sub, entity){
   if(!$('pane-'+pane)) return false;
-  showPane(pane, document.querySelector('#nav .nav-btn[data-pane="'+pane+'"]'));
+  // a pane listed in both views (nodemodels): highlight this view's entry
+  showPane(pane, document.querySelector('#nav .nav-btn[data-view="'+_VIEW+'"][data-pane="'+pane+'"]')
+                 || document.querySelector('#nav .nav-btn[data-pane="'+pane+'"]'));
   if(sub&&pane==='provision') provSub(sub);
   if(sub&&pane==='network') netSub(sub);
   if(sub&&pane==='observe') obsSub(sub);
