@@ -87,7 +87,7 @@
   // captions and the WidgetConfig board's own ids too
   const ALIAS = { sparkline: 'trace', line: 'trace', chart: 'trace', parts: 'donut', tree: 'files', stages: 'stepper', program: 'stepper', ask: 'string', form: 'kv', rate: 'counter',
                   iso: 'table', controls: 'pills', button: 'string', header: 'string', galaxy: 'context_graph', battery: 'level', tablei: 'table', checks: 'checklist',
-                  memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples' };
+                  memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples', multiline: 'lines', 'multi-line': 'lines' };
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
   const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'matrix', matrix: 'matrix', donut: 'parts',
                   stack: 'items', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages', globe: 'points',
@@ -107,7 +107,9 @@
                   // the capability-output forms (the widget review, round 2)
                   json: 'values', diff: 'string', code: 'string', progress: 'stages', status: 'values', media: 'string', error: 'string', markdown: 'string',
                   // the calendar forms and the Vera graph form (the widget review, round 3)
-                  month: 'calendar', schedule: 'calendar', calnav: 'calendar', vgraph: 'graph' };
+                  month: 'calendar', schedule: 'calendar', calnav: 'calendar', vgraph: 'graph',
+                  /* the multi-line chart (2026-09-28) */
+                  lines: 'series' };
   const canon = (form) => { const f = String(form || '').toLowerCase(); return DRAWN[f] ? f : (ALIAS[f] || f); };
   // the Loop Lab's pictures (see the CI section): each draws the ci payload whole, at every size
   const CI_FORMS = /^(status-matrix|race-green|test-grid|ci-board|run-track|run-compare|ci-pulse|ci-fleet|ci-run|census-commits|element|loop-perf|census-live|census-timeline)$/;
@@ -408,6 +410,8 @@
     sandboxes: () => [['loop-lab-dev', 'running', true], ['session-a41c', 'running', false], ['session-7f0e', 'idle', false]].map((s) => ({ name: s[0], status: s[1], pinned: s[2] })),
     frame: () => ({ kind: 'terminal', title: 'vera@ct126 — tail -f vera_start.log', lines: [['vera@ct126:~$ tail -f vera_start.log', 'p'], ['14:38:02  fabric: corpus 4 412 docs', ''], ['14:38:05  fabric: digest unchanged', ''], ['14:38:05  fabric: 0 re-embeds', 'ac'], ['14:38:09  loop v7 · step 4 · code.author', 'dim'], ['▌', 'cur']] }),
     topology: () => ({ nodes: [['fabric', 0, 1, 1.5], ['neo4j', 0, 3, .8], ['redis', 0, 5, 2.2], ['router', 1, 2, 1.5], ['gate', 1, 4, 1.5], ['chat', 2, 3, 1.5], ['canvas', 2, 1, 2.4]].map((n) => ({ id: n[0], floor: n[1], u: n[2], v: n[3] })), links: [['fabric', 'router'], ['neo4j', 'router'], ['redis', 'gate'], ['router', 'chat'], ['gate', 'chat'], ['chat', 'canvas']].map((e) => ({ from: e[0], to: e[1] })), floors: ['fabric', 'routing', 'chat'] }),
+    /* the multi-line sample: three nodes' latency over two hours, sampled every five minutes */
+    lines: () => Object.fromEntries([['gpu-250', 24, 9], ['cpu-247', 40, 12], ['cpu-246', 58, 10]].map((s, k) => [s[0], wave(24 + k * 4, s[1], s[2]).slice(k * 4).map((p, i) => ({ t: 1790578800 + i * 300, v: Math.max(0, p.v) }))])),
     racks: () => SAMPLE.items(),
     rows: () => SAMPLE.items(), cards: () => SAMPLE.items(),
     temps: () => ({ 'gpu V100': 71, 'cpu pkg': 54, nvme0: 42, nvme1: 39, chipset: 48, ambient: 33 }),
@@ -444,6 +448,7 @@
     form = canon(form); const d = dataFor(data, form);
     if (d == null) return '';
     if (CI_FORMS.test(form)) return ciFigure(form, d);
+    if (form === 'lines') { const ls = linesOf(d); return ls.length ? ls.slice(0, 2).map((s) => (s.n ? esc(s.n) + ' ' : '') + fmt(s.pts[s.pts.length - 1].v)).join(' · ') : ''; }   /* the first two series' latest */
     if (DRAWN[form] === 'level') { const l = level(d); if (!l) return ''; const u = l.unit || ((l.bounded && form !== 'counter' && form !== 'hero' && l.lo === 0 && l.hi === 100) ? '%' : ''); return fmt(l.v) + (u && u !== '%' ? ' ' : '') + esc(u); }
     if (form === 'trace' || form === 'scatter') { const s = series(d); return s.length ? fmt(s[s.length - 1]) : ''; }
     if (form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'stack' || form === 'matrix') { const kv = keyed(d); return kv.length ? kv.length + ' · ' + esc(kv[0][0]) + ' ' + fmt(kv[0][1]) : ''; }
@@ -459,6 +464,7 @@
   /* ── the renderers, at M (the gallery's unit); L and XL compose around them ─ */
   const R = {};
   R.trace = (d, H, o) => {
+    if (multi(d).length > 1 && R.lines) return R.lines(d, H, o);   /* several series: one colour and a key each */
     const pts = series(d).slice(-120);
     if (pts.length < 2) return EMPTY(pts.length + ' point' + (pts.length === 1 ? '' : 's') + ' · a trace needs two');
     const lo = Math.min(...pts), hi = Math.max(...pts), sp = (hi - lo) || 1, W = 300;
@@ -488,7 +494,11 @@
     if (o && o.draw && o.draw.sort !== false) kv = kv.slice().sort((a, b) => b[1] - a[1]);
     kv = kv.slice(0, (o && o.draw && o.draw.limit) || 12);
     const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, W = 300, bw = W / kv.length;
-    return '<svg class="vw-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="height:' + H + 'px">' + kv.map((x, i) => { const h = Math.max(1, (Math.abs(x[1]) / hi) * (H - 14)); return '<rect x="' + (i * bw + 2).toFixed(1) + '" y="' + (H - 12 - h).toFixed(1) + '" width="' + Math.max(1, bw - 4).toFixed(1) + '" height="' + h.toFixed(1) + '" rx="2" fill="var(--acc,#5a9e8f)"><title>' + esc(x[0]) + ' · ' + esc(fmt(x[1])) + '</title></rect><text x="' + (i * bw + bw / 2).toFixed(1) + '" y="' + (H - 2) + '" text-anchor="middle" class="vw-svgt" fill="var(--dim2,#8a92a0)">' + esc(String(x[0]).slice(0, 6)) + '</text>'; }).join('') + '</svg>';
+    /* the colour says something only when it can: a palette the record asks for, else the status when every bar is named by one */
+    const bFall = (c) => String(c).replace(/^var\(--b-(ac|ac2|ac3|ac4|t3|dv[1-7])\)$/, (m, n) => 'var(--b-' + n + ',' + ({ ac: '#6ea8d8', ac2: '#5ec9a0', ac3: '#e09a55', ac4: '#e06060', t3: '#6b7280', dv1: '#866ec5', dv2: '#54a863', dv3: '#3585c9', dv4: '#bb881a', dv5: '#b95c88', dv6: '#00aba4', dv7: '#bd6533' })[n] + ')');
+    const bPal = (o && o.draw && o.draw.palette) ? palOf(o) : null, bSt = kv.every((x) => stCol(x[0]) !== B.t3);
+    const bCol = (i, x) => bPal ? bFall(bPal(i, Math.abs(x[1]), hi, x[0])) : (bSt ? bFall(stCol(x[0])) : 'var(--acc,#5a9e8f)');
+    return '<svg class="vw-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="height:' + H + 'px">' + kv.map((x, i) => { const h = Math.max(1, (Math.abs(x[1]) / hi) * (H - 14)); return '<rect' + itemAttr({ name: x[0], value: x[1] }, 'bar') + ' x="' + (i * bw + 2).toFixed(1) + '" y="' + (H - 12 - h).toFixed(1) + '" width="' + Math.max(1, bw - 4).toFixed(1) + '" height="' + h.toFixed(1) + '" rx="2" fill="' + bCol(i, x) + '"><title>' + esc(x[0]) + ' · ' + esc(fmt(x[1])) + '</title></rect><text x="' + (i * bw + bw / 2).toFixed(1) + '" y="' + (H - 2) + '" text-anchor="middle" class="vw-svgt" fill="var(--dim2,#8a92a0)">' + esc(String(x[0]).slice(0, 6)) + '</text>'; }).join('') + '</svg>';
   };
   R.thermo = (d, H, o) => {
     const kv = keyed(d); if (!kv.length) return EMPTY('no numbers to draw');
@@ -520,8 +530,9 @@
     const kv = keyed(d).filter((x) => x[1] !== 0).slice(0, 8); if (!kv.length) return EMPTY('parts need { name: number }');
     const tot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1, D = Math.max(40, Math.min(140, (H || 96) - 6)), r = D / 2 - 6, c = 2 * Math.PI * r, s = D / 2; let acc = 0;
     // palette status colours a part by its name (running green, stopped red, pending amber) - a share of states reads at a glance
-    const cols0 = ['var(--acc,#5a9e8f)', 'var(--acc2,#8fb87a)', 'var(--acc3,#d4a96a)', '#a78bfa', '#e07a9a', '#5ab0d8', '#c9a35a', '#7ac9b0'];
-    const cols = (o && o.draw && o.draw.palette === 'status') ? kv.map((x, i) => { const sc = stCol(x[0]); return sc === B.t3 ? cols0[(i + 5) % cols0.length] : sc; }) : cols0;
+    const cols0 = [0, 1, 2, 3, 4, 5, 6].map((i) => DV(i)), dPal = o && o.draw && o.draw.palette;
+    /* palette status - or no palette and every part named by a status word (running · stopped) - colours a part by its name */
+    const cols = (dPal === 'status' || (!dPal && kv.every((x) => stCol(x[0]) !== B.t3))) ? kv.map((x, i) => { const sc = stCol(x[0]); return sc === B.t3 ? cols0[(i + 5) % cols0.length] : sc; }) : cols0;
     const sw = Math.max(6, Math.round(D / 11)), pc = (v) => Math.round(Math.abs(v) / tot * 100) + '%';
     const arcs = kv.map((x, i) => { const f = Math.abs(x[1]) / tot; const el = '<circle class="vw-arc" data-b="p' + i + '"' + itemAttr({ name: x[0], value: x[1], share: Math.round(f * 1000) / 10, of: tot }, 'slice') + ' data-tip="' + esc(x[0] + '\n' + fmt(x[1]) + ' · ' + pc(x[1]) + ' of ' + fmt(tot)) + '" cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="' + cols[i % cols.length] + '" stroke-width="' + sw + '" stroke-dasharray="' + Math.max(0, f * c - 2).toFixed(1) + ' ' + (c - f * c + 2).toFixed(1) + '" stroke-dashoffset="' + (-acc * c).toFixed(1) + '" transform="rotate(-90 ' + s + ' ' + s + ')"></circle>'; acc += f; return el; }).join('');
     const mid = '<text x="' + s + '" y="' + s + '" class="vw-dtot" text-anchor="middle" dominant-baseline="central">' + esc(fmt(tot)) + '</text>';
@@ -998,9 +1009,10 @@
   /* ── series: the stacked area, the histogram, the step chart, slope, horizon, bump, small multiples, the spark table ── */
   R.area = (d, H, o) => {
     const ms = multi(d); if (!ms.length || !ms.some((s) => s.v.length > 1)) return EMPTY('an area needs series');
-    const W = 300, N = Math.max(...ms.map((s) => s.v.length)); const base = new Array(N).fill(H); const tot = new Array(N).fill(0); ms.forEach((s) => s.v.forEach((v, i) => { tot[i] += v; })); const hi = Math.max(...tot) || 1; const pal = palOf(o);
-    const paths = ms.map((s, si) => { const top = base.map((b, i) => b - (s.v[i] || 0) / hi * (H - 6)); const dd = 'M0,' + base[0].toFixed(1) + ' ' + top.map((y, i) => 'L' + ((i / (N - 1)) * W).toFixed(1) + ',' + y.toFixed(1)).join(' ') + ' L' + W + ',' + base[N - 1].toFixed(1) + ' Z'; for (let i = 0; i < N; i++) base[i] = top[i]; return '<path d="' + dd + '" fill="' + (s.col || pal(si, 0, 0, s.n)) + '" fill-opacity=".55"/>'; });   // palette status colours a series by its name (pass green, fail red)
-    return wrap('area', '<div class="vb-chart" style="height:' + chH(H, 26) + 'px"><svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + paths.join('') + '</svg></div><div class="vb-lg row">' + ms.map((s, i) => '<span><i style="background:' + (s.col || pal(i, 0, 0, s.n)) + '"></i>' + esc(s.n) + '</span>').join('') + '</div>');
+    const W = 300, N = Math.max(...ms.map((s) => s.v.length)); const base = new Array(N).fill(H); const tot = new Array(N).fill(0); ms.forEach((s) => s.v.forEach((v, i) => { tot[i] += v; })); const hi = Math.max(...tot) || 1; const sp0 = serPal(o, ms.map((s) => s.n)), pal = (i, a, b, n) => sp0(i, n);
+    const aItem = (s) => { const v = s.v; return { name: s.n, last: v[v.length - 1], min: Math.min(...v), max: Math.max(...v), points: v.length }; };
+    const paths = ms.map((s, si) => { const top = base.map((b, i) => b - (s.v[i] || 0) / hi * (H - 6)); const dd = 'M0,' + base[0].toFixed(1) + ' ' + top.map((y, i) => 'L' + ((i / (N - 1)) * W).toFixed(1) + ',' + y.toFixed(1)).join(' ') + ' L' + W + ',' + base[N - 1].toFixed(1) + ' Z'; for (let i = 0; i < N; i++) base[i] = top[i]; return '<path data-b="ar' + si + '"' + itemAttr(aItem(s), 'series') + ' data-tip="' + esc(s.n + '\nlatest ' + fmt(s.v[s.v.length - 1])) + '" d="' + dd + '" fill="' + (s.col || pal(si, 0, 0, s.n)) + '" fill-opacity=".55"/>'; });   // palette status colours a series by its name (pass green, fail red)
+    return wrap('area', '<div class="vb-chart" style="height:' + chH(H, 26) + 'px"><svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + paths.join('') + '</svg></div><div class="vb-lg row">' + ms.map((s, i) => '<span data-b="ar' + i + '"' + itemAttr(aItem(s), 'series') + '><i style="background:' + (s.col || pal(i, 0, 0, s.n)) + '"></i>' + esc(s.n) + (s.v.length ? '<b>' + esc(fmt(s.v[s.v.length - 1])) + '</b>' : '') + '</span>').join('') + '</div>');
   };
   R.histogram = (d, H, o) => {
     let kv = keyed(d); let vals = kv.length ? kv.map((x) => x[1]) : series(d); if (!vals.length) { return EMPTY('a histogram needs counts'); }
@@ -1029,13 +1041,191 @@
   };
   R['small-multiples'] = (d, H, o) => {
     const ms = multi(d); if (!ms.length) return EMPTY('small multiples need series');
-    return wrap('small-multiples', ms.slice(0, (o && o.draw && o.draw.rows) || 6).map((s, i) => { const last = s.r && (s.r.last ?? s.r.value ?? s.r.v); const bad = s.r && (s.r.status === 'timeout' || s.r.state === 'down' || s.r.timeout); const col = bad ? B.ac3 : (s.col || B.ac); return '<span class="vb-sm"><span class="vb-lbl">' + esc(s.n) + '</span>' + spark(s.v, col) + '<span class="v" style="color:' + col + '">' + esc(bad ? String(s.r.status || 'timeout') : (last != null ? String(typeof last === 'number' ? fmt(last) : last) : fmt(s.v[s.v.length - 1]))) + '</span></span>'; }).join(''));
+    /* each series its own colour - its name's dot is the key - where one accent for all said nothing about which is which;
+       a series that timed out or is down takes its status colour; each row carries its series (latest · min · max) */
+    const sp = serPal(o, ms.map((s) => s.n)), unit = (o && o.draw && o.draw.unit) || '';
+    return wrap('small-multiples', ms.slice(0, (o && o.draw && o.draw.rows) || 6).map((s, i) => { const last = s.r && (s.r.last ?? s.r.value ?? s.r.v); const bad = s.r && (s.r.status === 'timeout' || s.r.state === 'down' || s.r.timeout); const col = bad ? stCol(s.r.status || s.r.state || 'timeout') : sp(i, s.n, s.col);
+      const vv = s.v.filter((x) => isFinite(x)), st = vv.length ? { last: vv[vv.length - 1], min: Math.min(...vv), max: Math.max(...vv) } : {};
+      const fig = bad ? String(s.r.status || 'timeout') : (last != null ? String(typeof last === 'number' ? fmt(last) : last) : fmt(s.v[s.v.length - 1]));
+      const it = Object.assign({ name: s.n }, st, unit ? { unit } : {}, { points: s.v.length }, s.r && s.r.status ? { status: s.r.status } : {});
+      return '<span class="vb-sm" data-b="sm' + i + '"' + itemAttr(it, 'series') + ' data-tip="' + esc(s.n + '\nlatest ' + fig + (unit ? ' ' + unit : '') + (vv.length ? '\nmin ' + fmt(st.min) + ' · max ' + fmt(st.max) : '')) + '"><span class="vb-lbl"><i class="vb-smk" style="background:' + col + '"></i>' + esc(s.n) + '</span>' + spark(s.v, col) + '<span class="v" style="color:' + col + '">' + esc(fig) + '</span></span>'; }).join(''));
   };
   R['spark-table'] = (d, H, o) => {
     const rw = rows(d); const ms = multi(d); if (!ms.length || !ms.some((s) => s.r)) return EMPTY('a spark table needs rows with a series');
     const extra = Object.keys(ms[0].r || {}).filter((k) => !Array.isArray(ms[0].r[k]) && typeof ms[0].r[k] !== 'object' && !['name', 'title', 'label', 'id', 'col', 'color', 'status', 'state'].includes(k)).slice(0, 3);
     return wrap('spark-table', '<div class="vb-sth"><span>' + esc((o && o.draw && o.draw.name) || 'row') + '</span><span>' + esc((o && o.draw && o.draw.figure) || 'trend') + '</span>' + extra.map((k) => '<span>' + esc(k) + '</span>').join('') + '</div>' + ms.slice(0, 8).map((s, i) => { const bad = s.r && /timeout|down/.test(String(s.r.status ?? s.r.state ?? '')); return '<div class="vb-str" style="grid-template-columns:50px 1fr' + ' 40px'.repeat(extra.length) + '"><span class="n">' + esc(s.n) + '</span>' + spark(s.v, bad ? B.ac3 : (s.col || B.ac)) + extra.map((k) => '<span class="v">' + esc(String(s.r[k] ?? '—')) + '</span>').join('') + '</div>'; }).join(''));
   };
+
+  /* ── MULTI-LINE (owner, 2026-09-28: "more multi-line charts that are color coded" · "better color coding and keys on all
+     widgets that would make sense on"). Several series on one set of axes, each its own colour, and a KEY that names every
+     series with its latest value. The colours: a record's draw.colors {name: colour} first, then its draw.palette, else -
+     when every series is named with a status word (pass · fail, ok · down) - the status colours, else the categorical set
+     (--b-dv1 … 7) in order. One y scale shared by every series with two or three gridlines and their values; a time axis
+     (first · middle · last) when the points carry times (epoch seconds or ms, ISO, the hour buckets 2026-09-25T08); x is
+     then the time, so series sampled at different moments still line up. Hover a column: every series' value at that x
+     (the part carries them as its item, so a click opens the drawer on that moment); hover a line or its key entry: that
+     series lit, the others dimmed; a click opens the drawer on the series (name, latest, min, max, mean, points).
+     It reads:
+       {name: [numbers | {t, v}]}              what read.map.split makes, a fleet keyed by node ({series: {…}} too)
+       [{t, a, b, c}, …]                        rows: draw.series ['a', 'b'] names the fields (else every numeric field
+                                                that is not a time or an id; a row with v / value is one series)
+       [{name, points | series | values: […]}] one entry per series
+       [{t, v, via}, …] with draw.by 'via'      rows grouped into one series per value of that field (draw.blank names
+                                                the rows where it is empty)
+       [n, n, n]                                one series
+     draw: series · by · blank · value (the field a grouped row's value is) · names {key: label} · colors · palette ·
+     min · max · unit · limit (series, default 8). frame.motion false (or draw.motion false) draws it still. */
+  const lnTime = (x) => {
+    if (x == null || x === '' || typeof x === 'boolean') return null;
+    if (typeof x === 'number') return x > 1e12 ? x : (x > 1e9 ? x * 1000 : null);
+    const s = String(x).trim(); if (/^\d+(\.\d+)?$/.test(s)) return lnTime(+s);
+    const h = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2})$/); const ms = Date.parse(h ? h[1] + 'T' + h[2] + ':00:00Z' : s);
+    return isFinite(ms) ? ms : null;
+  };
+  const LN_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const lnP2 = (n) => String(n).padStart(2, '0');
+  /* a time as the axis says it: the clock under a day and a half, the day (and hour) past it; the hover card's head is fuller */
+  const lnLabel = (ms, span, full) => { const t = new Date(ms); if (!isFinite(t.getTime())) return '';
+    const hm = lnP2(t.getHours()) + ':' + lnP2(t.getMinutes()), day = t.getDate() + ' ' + LN_MON[t.getMonth()];
+    if (full) return (span >= 20 * 3600e3 ? day + ' ' : '') + hm + (span < 600e3 ? ':' + lnP2(t.getSeconds()) : '');
+    return span >= 36 * 3600e3 ? day + (span < 6 * 86400e3 ? ' ' + lnP2(t.getHours()) + 'h' : '') : hm + (span < 600e3 ? ':' + lnP2(t.getSeconds()) : ''); };
+  const lnNice = (x) => { if (!(x > 0)) return 1; const p = Math.pow(10, Math.floor(Math.log10(x))), f = x / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; };
+  const lnTick = (v) => { const a = Math.abs(v); return a >= 1e6 ? (Math.round(v / 1e5) / 10) + 'M' : a >= 1e4 ? (Math.round(v / 100) / 10) + 'k' : fmt(v); };
+  /* the colour of each series: its own, the record's colors, its palette, the status words when every name is one, else dv1…7 */
+  const serPal = (o, names) => { const dr = (o && o.draw) || {}; const colors = (dr.colors && typeof dr.colors === 'object') ? dr.colors : {};
+    const allSt = names.length > 0 && names.every((n) => stCol(n) !== B.t3); const pal = dr.palette ? palOf(o) : null;
+    return (i, n, own) => own || colors[n] || (pal ? pal(i, 0, 0, n) : (allSt ? stCol(n) : DV(i))); };
+  /* the series a lines chart draws: [{n, pts: [{t (ms | null), v, i}], col, r, abs}] */
+  function linesOf(d, o) {
+    const dr = (o && o.draw) || {};
+    const val = (x) => (x == null || x === '' || (typeof x === 'string' && !isFinite(+x))) ? null : num(x);
+    const pt = (p, i, vk) => { if (p == null || typeof p !== 'object') return { t: null, v: val(p), i };
+      const t0 = p.t ?? p.ts ?? p.time ?? p.hour ?? p.when ?? p.at; return { t: lnTime(t0), v: val(vk ? pick(p, vk) : (p.v ?? p.value ?? p.y ?? p.close)), i }; };
+    let src = d, out = [];
+    if (src && typeof src === 'object' && !Array.isArray(src) && src.series && typeof src.series === 'object') src = src.series;
+    if (Array.isArray(src)) {
+      const rw = src.filter((r) => r && typeof r === 'object' && !Array.isArray(r));
+      const listOf = (r) => ['points', 'series', 'values', 'history', 'spark'].map((k) => r[k]).find((a) => Array.isArray(a));
+      if (src.length && Array.isArray(src[0])) out = src.map((s, i) => ({ n: 's' + (i + 1), pts: s.map((p, j) => pt(p, j)) }));
+      else if (rw.length && rw.some((r) => listOf(r))) out = rw.filter((r) => listOf(r)).map((r, i) => ({ n: nameOf(r) || 's' + (i + 1), pts: listOf(r).map((p, j) => pt(p, j)), col: r.col || r.color, r }));
+      else if (rw.length && dr.by) { const by = {}, order = [];
+        rw.forEach((r, j) => { const k0 = pick(r, dr.by); const k = (k0 == null || k0 === '') ? String(dr.blank || '(none)') : String(k0); if (!by[k]) { by[k] = []; order.push(k); } by[k].push(pt(r, j, dr.value)); });
+        out = order.map((k) => ({ n: k, pts: by[k], abs: rw.length })); }
+      else if (rw.length) { let fs = Array.isArray(dr.series) && dr.series.length ? dr.series.map(String) : null;
+        if (!fs && !rw.some((r) => r.v != null || r.value != null || r.y != null)) fs = Object.keys(rw[0]).filter((k) => typeof rw[0][k] === 'number' && !/^(t|ts|time|x|i|id|idx|index|hour|when|at|_score)$/.test(k)).slice(0, 6);
+        out = (fs && fs.length) ? fs.map((f) => ({ n: f, pts: rw.map((r, j) => pt(r, j, f)) })) : [{ n: String(dr.name || ''), pts: rw.map((r, j) => pt(r, j)) }]; }
+      else if (src.length && src.every((x) => typeof x === 'number' || (typeof x === 'string' && x.trim() !== '' && isFinite(+x)))) out = [{ n: String(dr.name || ''), pts: src.map((x, j) => ({ t: null, v: num(x), i: j })) }];
+    } else if (src && typeof src === 'object') {
+      out = Object.keys(src).filter((k) => Array.isArray(src[k]) && src[k].length && k !== 'nodes' && k !== 'links').map((k) => ({ n: k, pts: src[k].map((p, j) => pt(p, j)) }));
+    }
+    const names = (dr.names && typeof dr.names === 'object') ? dr.names : {};
+    return out.map((s) => Object.assign(s, { n: String(names[s.n] ?? s.n), pts: s.pts.filter((p) => p.v != null).slice(-240) })).filter((s) => s.pts.length).slice(0, Math.max(1, +dr.limit || 8));
+  }
+  const lnStats = (s) => { const v = s.pts.map((p) => p.v); return { last: v[v.length - 1], min: Math.min(...v), max: Math.max(...v), mean: Math.round(v.reduce((a, b) => a + b, 0) / v.length * 100) / 100 }; };
+  R.lines = (d, H, o) => {
+    const ms = linesOf(d, o); if (!ms.length || !ms.some((s) => s.pts.length > 1)) return EMPTY('a line chart needs a series of two points or more');
+    const dr = (o && o.draw) || {}, unit = String(dr.unit || ''), k = Math.max(1, (o && o.textK) || 1), Wd = (o && o.width) || 300;
+    const pal = serPal(o, ms.map((s) => s.n)); ms.forEach((s, i) => { s.c = pal(i, s.n, s.col); s.st = lnStats(s); });
+    const still = !!((o && o.record && o.record.frame && o.record.frame.motion === false) || dr.motion === false);
+    const big = (o && (o.size === 'l' || o.size === 'xl')) || Wd >= 600;
+    /* x: the time when every point has one, else the place in its series (a shorter series ends at the right edge) */
+    const timed = ms.every((s) => s.pts.every((p) => p.t != null)); const allT = timed ? ms.flatMap((s) => s.pts.map((p) => p.t)) : [];
+    const t0 = timed ? Math.min(...allT) : 0, t1 = timed ? Math.max(...allT) : 0, useT = timed && t1 > t0, span = t1 - t0;
+    const N = Math.max(...ms.map((s) => s.abs || s.pts.length));
+    const xOf = (s, p, j) => useT ? (p.t - t0) / span * 1000 : (N > 1 ? ((s.abs ? p.i : (N - s.pts.length + j)) / (N - 1)) * 1000 : 500);
+    /* y: one scale for all - from 0 when nothing is negative, to 100 for a percent that stays under it, gridlines at a nice step */
+    const vs = ms.flatMap((s) => s.pts.map((p) => p.v)); let lo = Math.min(...vs), hi = Math.max(...vs);
+    const fixLo = dr.min != null && dr.min !== '', fixHi = dr.max != null && dr.max !== '';
+    if (fixLo) lo = num(dr.min); else if (lo >= 0) lo = 0;
+    if (fixHi) hi = num(dr.max); else if (unit === '%' && hi <= 100 && lo >= 0) hi = 100;
+    if (!(hi > lo)) hi = lo + 1;
+    let step = lnNice((hi - lo) / 2); if (!fixLo) lo = Math.floor(lo / step) * step; if (!fixHi) hi = Math.ceil(hi / step - 1e-9) * step;
+    if ((hi - lo) / step > 4) { step *= 2; if (!fixHi) hi = Math.ceil(hi / step - 1e-9) * step; }
+    const yOf = (v) => 100 - (v - lo) / ((hi - lo) || 1) * 100;
+    const ticks = []; for (let v = lo, n = 0; v <= hi + step * 1e-6 && n < 6; v += step, n++) ticks.push(Math.round(v * 1e6) / 1e6);
+    const tl = (v, top) => lnTick(v) + (unit === '%' ? '%' : (top && unit ? ' ' + unit : ''));
+    /* the key: every series, its colour, its latest value (and its peak when there is room); what does not fit is counted */
+    const kw = (s) => (22 + (s.n.length + tl(s.st.last).length + (big ? 9 : 0)) * 6) * k;
+    let kx = 0, krow = 1, kn = 0; const krows = big ? 3 : 2;
+    for (const s of ms) { const w = kw(s); if (kx && kx + w > Wd) { krow++; kx = 0; } if (krow > krows) break; kx += w + 10 * k; kn++; }
+    if (kn < ms.length) kn = Math.max(1, kn - 1);
+    const sItem = (s) => Object.assign({ name: s.n }, s.st, unit ? { unit } : {}, { points: s.pts.length }, useT ? { from: lnLabel(s.pts[0].t, span, true), to: lnLabel(s.pts[s.pts.length - 1].t, span, true) } : {});
+    const sTip = (s) => s.n + '\nlatest ' + tl(s.st.last, true) + '\nmin ' + tl(s.st.min, true) + ' · max ' + tl(s.st.max, true);
+    const one = ms.length === 1 && !ms[0].n;
+    const key = one ? '' : '<div class="vb-lnk">' + ms.slice(0, kn).map((s, i) => '<span data-b="ln' + i + '"' + itemAttr(sItem(s), 'series') + ' data-tip="' + esc(sTip(s)) + '"><i style="background:' + s.c + '"></i><em>' + esc(s.n) + '</em><b>' + esc(tl(s.st.last, true)) + '</b>' + (big ? '<small>peak ' + esc(tl(s.st.max)) + '</small>' : '') + '</span>').join('')
+      + (kn < ms.length ? '<span class="more" data-tip="' + esc(ms.slice(kn).map((s) => s.n + ' · ' + tl(s.st.last, true)).join('\n')) + '">+ ' + (ms.length - kn) + '</span>' : '') + '</div>';
+    const keyRows = one ? 0 : Math.min(krow, krows), xH = useT ? 13 * k : 0;
+    const plotH = Math.max(30, Math.round((H || 96) - keyRows * 15 * k - xH - (keyRows ? 3 : 0) - (xH ? 3 : 0) - 6 * k));
+    /* the drawing: gridlines, the series (a lone series with its area), a wide invisible twin of each line to hover, the columns */
+    const grid = ticks.map((v) => '<line class="gl" x1="0" x2="1000" y1="' + yOf(v).toFixed(2) + '" y2="' + yOf(v).toFixed(2) + '" vector-effect="non-scaling-stroke"/>').join('');
+    const ptsOf = (s) => s.pts.map((p, j) => xOf(s, p, j).toFixed(1) + ',' + yOf(p.v).toFixed(2)).join(' ');
+    const area = ms.length === 1 && ms[0].pts.length > 1 ? (() => { const s = ms[0], a = s.pts.map((p, j) => [xOf(s, p, j), yOf(p.v)]); return '<path d="M' + a[0][0].toFixed(1) + ',100 L' + a.map((q) => q[0].toFixed(1) + ',' + q[1].toFixed(2)).join(' L') + ' L' + a[a.length - 1][0].toFixed(1) + ',100 Z" fill="' + s.c + '" fill-opacity=".12"/>'; })() : '';
+    /* the columns: up to 48 (or one per point), each carrying every series' value nearest its middle */
+    /* the columns sit on the moments the longest series was sampled at (else on the places), at most 48, each as wide as
+       half-way to its neighbours; every series gives the value it has nearest the column's middle, inside the column */
+    let cx; if (useT) { const ref = ms.reduce((a, s) => (s.pts.length > a.pts.length ? s : a)); cx = ref.pts.map((p) => (p.t - t0) / span * 1000); }
+    else cx = Array.from({ length: Math.max(1, N) }, (_, c) => N > 1 ? c / (N - 1) * 1000 : 500);
+    if (cx.length > 48) { const st = (cx.length - 1) / 47; cx = Array.from({ length: 48 }, (_, c) => cx[Math.round(c * st)]); }
+    const cols = []; for (let c = 0; c < cx.length; c++) {
+      const xm = cx[c], x0 = c ? (cx[c - 1] + xm) / 2 : 0, x1 = c < cx.length - 1 ? (xm + cx[c + 1]) / 2 : 1000, tol = Math.max(x1 - x0, 2);
+      const at = {}, lines = []; let near = null;
+      ms.forEach((s) => { let best = null, bd = Infinity; s.pts.forEach((p, j) => { const dx = Math.abs(xOf(s, p, j) - xm); if (dx < bd) { bd = dx; best = p; } });
+        if (best && bd <= tol) { at[s.n || 'value'] = best.v; lines.push((s.n || 'value') + ' · ' + tl(best.v, true)); if (near == null) near = best; } });
+      if (!lines.length) continue;
+      const pIdx = Math.round(xm / 1000 * Math.max(0, N - 1)) + 1;
+      const head = useT && near && near.t != null ? lnLabel(near.t, span, true) : 'point ' + pIdx;
+      const it = Object.assign(useT ? { time: head } : { point: pIdx }, at, unit ? { unit } : {});
+      cols.push('<g class="hx"' + itemAttr(it, 'point') + ' data-tip="' + esc(head + '\n' + lines.join('\n')) + '"><rect x="' + x0.toFixed(1) + '" y="0" width="' + Math.max(1, x1 - x0).toFixed(1) + '" height="100"/><line x1="' + xm.toFixed(1) + '" x2="' + xm.toFixed(1) + '" y1="0" y2="100" vector-effect="non-scaling-stroke"/></g>');
+    }
+    const paths = ms.map((s, i) => { const pp = ptsOf(s), it = itemAttr(sItem(s), 'series'), tp = ' data-tip="' + esc(sTip(s)) + '"';
+      return '<polyline class="ln" data-b="ln' + i + '"' + it + tp + ' points="' + pp + '" stroke="' + s.c + '" vector-effect="non-scaling-stroke"/><polyline class="lnh" data-b="ln' + i + '"' + it + tp + ' points="' + pp + '" vector-effect="non-scaling-stroke"/>'; }).join('');
+    const ends = ms.map((s) => { const p = s.pts[s.pts.length - 1], j = s.pts.length - 1; return '<i class="end" style="left:' + (xOf(s, p, j) / 10).toFixed(2) + '%;top:' + yOf(p.v).toFixed(2) + '%;background:' + s.c + '"></i>'; }).join('');
+    const yw = Math.round(Math.max(22, Math.max(...ticks.map((v, i) => tl(v, i === ticks.length - 1).length)) * 5.8 + 4) * k);
+    const yax = '<div class="vb-lny" style="width:' + yw + 'px">' + ticks.map((v, i) => '<span style="top:' + yOf(v).toFixed(2) + '%">' + esc(tl(v, i === ticks.length - 1)) + '</span>').join('') + '</div>';
+    const xl = useT ? (Wd < 260 ? [0, 1] : [0, .5, 1]).map((f) => '<span style="left:' + (f * 100) + '%;transform:translateX(' + (f === 0 ? '0' : f === 1 ? '-100%' : '-50%') + ')">' + esc(lnLabel(t0 + f * span, span)) + '</span>').join('') : '';
+    return wrap('lines', key + '<div class="vb-lnp" style="height:' + plotH + 'px">' + yax + '<div class="vb-lnc"><svg viewBox="0 0 1000 100" preserveAspectRatio="none">' + grid + area + cols.join('') + paths + '</svg>' + ends + '</div></div>'
+      + (useT ? '<div class="vb-lnx"><span class="pad" style="width:' + yw + 'px"></span><div>' + xl + '</div></div>' : ''), still ? 'still' : '');
+  };
+  /* the status key a list of statuses draws under it: each status present, its colour and how many (two or more kinds) */
+  const stKey = (sts) => { const c = {}, order = []; sts.forEach((s) => { const k = String(s == null ? '' : s); if (!k) return; if (!(k in c)) { c[k] = 0; order.push(k); } c[k]++; });
+    return order.length > 1 ? '<div class="vb-stkey">' + order.slice(0, 6).map((k) => '<span' + itemAttr({ status: k, count: c[k] }, 'status') + ' data-tip="' + esc(k + '\n' + c[k] + ' of ' + sts.length) + '"><i style="background:' + stCol(k) + '"></i>' + esc(k) + '<b>' + c[k] + '</b></span>').join('') + '</div>' : ''; };
+  const LINES_CSS = `
+/* the multi-line chart and the keys (2026-09-28) */
+.vb-lines{gap:3px}
+.vb-lnk{display:flex;flex-wrap:wrap;gap:2px 10px;font-size:10px;line-height:1.35;min-width:0;flex:none}
+.vb-lnk span{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%;white-space:nowrap;cursor:pointer;color:var(--b-t2)}
+.vb-lnk i{width:11px;height:3px;border-radius:2px;flex:none}
+.vb-lnk em{font-style:normal;overflow:hidden;text-overflow:ellipsis}
+.vb-lnk b{font-family:var(--b-mono);font-weight:600;color:var(--b-t1)}
+.vb-lnk small{font-family:var(--b-mono);font-size:9px;color:var(--b-t3)}
+.vb-lnk span.more{color:var(--b-t3)}
+.vb-lnp{display:flex;gap:5px;width:100%;min-height:30px;flex:none;margin-top:6px}
+.vb-lny{position:relative;flex:none;font-family:var(--b-mono);font-size:9px;color:var(--b-t3)}
+.vb-lny span{position:absolute;right:0;transform:translateY(-50%);white-space:nowrap;line-height:1}
+.vb-lnc{position:relative;flex:1;min-width:0;height:100%}
+.vb-lnc svg{display:block;width:100%;height:100%;overflow:visible}
+.vb-lnc .gl{stroke:var(--b-bd2);stroke-width:1;stroke-dasharray:2 3}
+.vb-lnc .ln{fill:none;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round}
+.vb-lnc .lnh{fill:none;stroke:transparent;stroke-width:10;pointer-events:stroke}
+.vb-lnc .hx rect{fill:transparent}.vb-lnc .hx line{stroke:var(--b-t2);stroke-width:1;opacity:0}
+.vb-lnc .hx.hot{filter:none}.vb-lnc .hx.hot line{opacity:.6}.vb-lnc .hx.hot rect{fill:color-mix(in srgb,var(--b-t1) 6%,transparent)}
+.vb-lnc .end{position:absolute;width:6px;height:6px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px var(--b-surf);pointer-events:none}
+.vb-lines:has([data-b].hot) .ln:not(.hot){opacity:.25}.vb-lines .ln.hot{stroke-width:2.8;filter:none}
+.vb-lines:has(.vb-lnk span.hot) .end{opacity:.35}
+.vb-lnx{display:flex;gap:5px;height:12px;flex:none;font-family:var(--b-mono);font-size:9px;color:var(--b-t3)}
+.vb-lnx .pad{flex:none}.vb-lnx div{position:relative;flex:1;min-width:0}.vb-lnx div span{position:absolute;top:0;white-space:nowrap}
+:host(:not([data-entered])) .vb-lines:not(.still) .ln{animation:vb-lnwipe .9s cubic-bezier(.2,.7,.2,1) both}
+@keyframes vb-lnwipe{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
+.vb-lines.still *{animation:none!important;transition:none!important}
+/* keys on the other forms: the series dot of a small multiple, the status key under a list, the heat map's scale */
+.vb-sm{grid-template-columns:62px 1fr 44px}.vb-sm .vb-lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vb-sm .vb-lbl .vb-smk{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;vertical-align:1px}
+.vb-stkey{display:flex;flex-wrap:wrap;gap:2px 10px;font-size:9.5px;color:var(--b-t2);flex:none}
+.vb-stkey span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.vb-stkey i{width:7px;height:7px;border-radius:50%}.vb-stkey b{font-family:var(--b-mono);font-weight:400;color:var(--b-t1)}
+.vb-heatkey{display:flex;align-items:center;gap:6px;font-family:var(--b-mono);font-size:9px;color:var(--b-t3);flex:none}
+.vb-heatkey .g{flex:0 1 90px;height:6px;border-radius:3px}.vb-heatkey span{display:inline-flex;align-items:center;gap:4px}.vb-heatkey span i{width:8px;height:8px;border-radius:2px}
+.vb-area .vb-lg b,.vb-stacked-bar .vb-lg b{margin-left:4px}
+`;
 
   /* ── values: columns, ranked, lollipop, waterfall, pareto, box, diverging, bullet, threshold, radar, numbers, pills ── */
   R.column = (d, H, o) => {
@@ -1053,9 +1243,13 @@
   const shortLabels = (names) => { if (names.length < 2) return names; let p = names[0]; names.forEach((n) => { while (p && n.indexOf(p) !== 0) p = p.slice(0, -1); });
     const cut = Math.max(p.lastIndexOf('/'), p.lastIndexOf(':'), p.lastIndexOf('.'), p.lastIndexOf('_'), p.lastIndexOf('-')) + 1; return cut >= 4 && names.every((n) => n.length > cut) ? names.map((n) => '…' + n.slice(cut)) : names; };
   R.ranked = (d, H, o) => {
-    const kv = keyed(d).slice().sort((a, b) => b[1] - a[1]).slice(0, (o && o.draw && o.draw.limit) || barRowsFit(H)); if (!kv.length) return EMPTY('ranked bars need values'); const hi = kv[0][1] || 1, pal = palOf(o); const rw = rows(d);
+    const rw = rows(d), stOf = (r) => r.status ?? r.state, sts = rw.map(stOf).filter((s) => s != null && s !== '' && stCol(s) !== B.t3), withKey = new Set(sts.map(String)).size > 1;
+    const kv = keyed(d).slice().sort((a, b) => b[1] - a[1]).slice(0, (o && o.draw && o.draw.limit) || Math.max(1, barRowsFit(H) - (withKey ? 1 : 0))); if (!kv.length) return EMPTY('ranked bars need values'); const hi = kv[0][1] || 1, pal = palOf(o);
+    /* a bar's colour: its own, the record's palette, its row's status, its name when every name is a status word, else dv in rank order */
+    const usePal = !!(o && o.draw && o.draw.palette), allSt = kv.every((x) => stCol(x[0]) !== B.t3);
+    const rCol = (r, x, i) => r.col || (usePal ? pal(i, x[1], hi, stOf(r) ?? x[0]) : (sts.length && stOf(r) != null && stCol(stOf(r)) !== B.t3 ? stCol(stOf(r)) : (allSt ? stCol(x[0]) : pal(i))));
     const lbl = shortLabels(kv.map((x) => x[0]));
-    return wrap('ranked', kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<span class="vb-rw"' + itemAttr(Object.keys(r).length ? r : { name: x[0], value: x[1] }, 'bar') + '><span class="n" title="' + esc(x[0]) + '">' + esc(lbl[i]) + '</span><span class="tr"><i style="width:' + pct(x[1], hi).toFixed(1) + '%;background:' + (r.col || pal(i)) + '"></i></span><span class="v">' + esc(String(r.text ?? r.size ?? fmt(x[1]))) + '</span></span>'; }).join(''));
+    return wrap('ranked', kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<span class="vb-rw"' + itemAttr(Object.keys(r).length ? r : { name: x[0], value: x[1] }, 'bar') + '><span class="n" title="' + esc(x[0]) + '">' + esc(lbl[i]) + '</span><span class="tr"><i style="width:' + pct(x[1], hi).toFixed(1) + '%;background:' + rCol(r, x, i) + '"></i></span><span class="v">' + esc(String(r.text ?? r.size ?? fmt(x[1]))) + '</span></span>'; }).join('') + (withKey ? stKey(sts) : ''));
   };
   R.lollipop = (d, H, o) => {
     const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('a lollipop needs values'); const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, pal = palOf(o);
@@ -1116,7 +1310,7 @@
   const pillMore = (k, st) => k > 0 ? '<span class="more" title="' + esc(st) + '">+ ' + k + '</span>' : '';
   R.pills = (d, H, o) => {
     const kv = keyed(d); const st = rows(d); const W = o && o.width;
-    if (st.length && st.some((r) => r.status != null || r.state != null)) { const n = pillsFit(st.map((r) => nameOf(r)), H, W, o && o.textK); return wrap('pills', '<div class="vb-pillw">' + st.slice(0, n).map((r) => { const s = String(r.status ?? r.state ?? ''); return '<span' + itemAttr(r, 'pill') + ' title="' + esc(nameOf(r) + ' · ' + s) + '"><i style="background:' + stCol(s) + '"></i>' + esc(nameOf(r)) + '</span>'; }).join('') + pillMore(st.length - n, st.slice(n).map((r) => nameOf(r)).join(', ')) + '</div>'); }
+    if (st.length && st.some((r) => r.status != null || r.state != null)) { const sts = st.map((r) => String(r.status ?? r.state ?? '')).filter(Boolean), withKey = new Set(sts).size > 1 && (H || 96) >= 56; const n = pillsFit(st.map((r) => nameOf(r)), withKey ? (H || 96) - 16 * ((o && o.textK) || 1) : H, W, o && o.textK); return wrap('pills', '<div class="vb-pillw">' + st.slice(0, n).map((r) => { const s = String(r.status ?? r.state ?? ''); return '<span' + itemAttr(r, 'pill') + ' title="' + esc(nameOf(r) + ' · ' + s) + '"><i style="background:' + stCol(s) + '"></i>' + esc(nameOf(r)) + '</span>'; }).join('') + pillMore(st.length - n, st.slice(n).map((r) => nameOf(r)).join(', ')) + '</div>' + (withKey ? stKey(sts) : '')); }
     if (kv.length) { const n = pillsFit(kv.map((x) => x[0] + ' ' + fmt(x[1])), H, W, o && o.textK); return wrap('pills', '<div class="vb-pillw">' + kv.slice(0, n).map((x, i) => '<span' + itemAttr({ name: x[0], value: x[1] }, 'pill') + '><i style="background:' + DV(i) + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '</b></span>').join('') + pillMore(kv.length - n, kv.slice(n).map((x) => x[0]).join(', ')) + '</div>'); }
     return EMPTY('pills need rows with a status or { name: number }');
   };
@@ -1132,15 +1326,18 @@
     return wrap('waffle', '<div class="vb-waffle" style="grid-template-columns:repeat(' + cols + ',1fr)">' + fills.map((c) => '<i style="background:' + c + '"></i>').join('') + '</div>' + cap(esc(String((d && d.note) || (fmt(kv[0][1]) + ' of ' + fmt(tot) + ' ' + kv[0][0])))));
   };
   R['stacked-bar'] = (d, H, o) => {
-    const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('a stacked bar needs parts'); const tot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1, pal = palOf(o); const rw = rows(d);
-    return wrap('stacked-bar', '<span class="vb-stackbar">' + kv.map((x, i) => '<i style="width:' + (Math.abs(x[1]) / tot * 100).toFixed(1) + '%;background:' + pal(i) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + '"></i>').join('') + '</span><div class="vb-lg">' + kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<span><i style="background:' + pal(i) + '"></i>' + esc(x[0]) + '<b>' + esc(String(r.text ?? fmt(x[1]))) + '</b></span>'; }).join('') + '</div>');
+    const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('a stacked bar needs parts'); const tot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1; const rw = rows(d);
+    const sp = serPal(o, kv.map((x) => x[0])), rOf = (x) => rw.find((q) => nameOf(q) === x[0]) || {}, pal = (i) => sp(i, kv[i][0], rOf(kv[i]).col), sh = (x) => Math.round(Math.abs(x[1]) / tot * 1000) / 10;
+    const it = (x) => itemAttr(Object.assign({}, rOf(x), { name: x[0], value: x[1], share: sh(x), of: tot }), 'part');
+    return wrap('stacked-bar', '<span class="vb-stackbar">' + kv.map((x, i) => '<i data-b="sb' + i + '"' + it(x) + ' style="width:' + (Math.abs(x[1]) / tot * 100).toFixed(1) + '%;background:' + pal(i) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + ' · ' + sh(x) + '%"></i>').join('') + '</span><div class="vb-lg">' + kv.map((x, i) => { const r = rOf(x); return '<span data-b="sb' + i + '"' + it(x) + '><i style="background:' + pal(i) + '"></i>' + esc(x[0]) + '<b>' + esc(String(r.text ?? fmt(x[1]))) + '</b></span>'; }).join('') + '</div>');
   };
   R.treemap = (d, H, o) => {
-    const kv = keyed(d).slice().sort((a, b) => b[1] - a[1]).slice(0, 10); if (!kv.length) return EMPTY('a treemap needs parts'); const pal = palOf(o);
+    const kv = keyed(d).slice().sort((a, b) => b[1] - a[1]).slice(0, 10); if (!kv.length) return EMPTY('a treemap needs parts'); const sp = serPal(o, kv.map((x) => x[0])), pal = (i) => sp(i, kv[i][0]);
+    const tmTot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1, tmSh = (x) => Math.round(Math.abs(x[1]) / tmTot * 1000) / 10;
     // the board's rule for its eight: two big, two middling, the rest small — widths within a row by share
     // the rows share the whole height between them (three rows 45 · 28 · 24; one or two stretched to fill it, not left short)
     const rowsOf = [kv.slice(0, 2), kv.slice(2, 4), kv.slice(4)].filter((r) => r.length), hs0 = [45, 28, 24].slice(0, rowsOf.length), hsum = hs0.reduce((a, b) => a + b, 0), hs = hs0.map((h) => Math.floor(h * 97 / hsum));
-    return wrap('treemap', '<div class="vb-tmap" style="height:' + chH(H, 4) + 'px">' + rowsOf.map((r, ri) => { const t = r.reduce((s, x) => s + x[1], 0) || 1; return r.map((x) => '<span style="width:calc(' + (x[1] / t * 100).toFixed(1) + '% - 2px);height:' + hs[ri] + '%;background:' + pal(kv.indexOf(x)) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + '">' + esc(x[0]) + '</span>').join(''); }).join('') + '</div>');
+    return wrap('treemap', '<div class="vb-tmap" style="height:' + chH(H, 4) + 'px">' + rowsOf.map((r, ri) => { const t = r.reduce((s, x) => s + x[1], 0) || 1; return r.map((x) => '<span' + itemAttr({ name: x[0], value: x[1], share: tmSh(x), of: tmTot }, 'part') + ' style="width:calc(' + (x[1] / t * 100).toFixed(1) + '% - 2px);height:' + hs[ri] + '%;background:' + pal(kv.indexOf(x)) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + ' · ' + tmSh(x) + '%">' + esc(x[0]) + '</span>').join(''); }).join('') + '</div>');
   };
 
   /* ── matrices and calendars: the heat map, the status matrix, the dot matrix, the calendar, node health tabs ── */
@@ -1155,11 +1352,12 @@
       // the cells share the body's height (square cells three to a row were 130 px tall and ran off the tile), the columns are
       // named over the grid, a cell wide enough says its value; palette load colours a cell by its own value (a percent
       // against 100); draw.total false drops the row sums (cpu + ram + disk adds up to nothing)
-      const nr = Math.min(8, m.rows.length), hd = m.cols.length ? 14 : 0, cellH = Math.max(8, Math.min(26, Math.floor(((H || 96) - hd) / nr) - 4));
+      const nr = Math.min(8, m.rows.length), hd = m.cols.length ? 14 : 0, kh = (!(o && o.draw && o.draw.key === false) && (H || 96) >= 64) ? 14 : 0, cellH = Math.max(8, Math.min(26, Math.floor(((H || 96) - hd - kh) / nr) - 4));
       const load = o && o.draw && o.draw.palette === 'load', lpal = palOf(o, 'load'), tot = !(o && o.draw && o.draw.total === false), wide = !o || !o.width || o.width / Math.max(1, m.cols.length || m.rows[0].v.length) >= 60;
       const cols = m.cols.length ? m.cols.length : m.rows[0].v.length, grid = 'grid-template-columns:repeat(' + cols + ',1fr)';
       const head = hd ? '<span class="vb-heatrow hd"><span></span><span class="vb-heat" style="' + grid + '">' + m.cols.map((c) => '<b title="' + esc(String(c)) + '">' + esc(String(c)) + '</b>').join('') + '</span>' + (tot ? '<span></span>' : '') + '</span>' : '';
-      return wrap('heat', head + m.rows.slice(0, nr).map((r, ri) => '<span class="vb-heatrow' + (tot ? '' : ' nt') + '"' + itemAttr(m.cols.length ? r.v.reduce((o3, x, ci) => { o3[m.cols[ci] || ('c' + ci)] = x; return o3; }, { name: r.n }) : { name: r.n, values: r.v }, 'row') + '><span class="vb-lbl" title="' + esc(r.n) + '">' + esc(r.n) + '</span><span class="vb-heat" style="' + grid + '">' + r.v.map((x, ci) => '<i style="height:' + cellH + 'px;aspect-ratio:auto;background:' + (load ? mix(lpal(ci, num(x), hi <= 100 ? 100 : hi), 80, 'transparent') : mix(pal(ri), Math.round(8 + num(x) / hi * 88), 'transparent')) + '" title="' + esc(r.n) + (m.cols[ci] ? ' · ' + esc(String(m.cols[ci])) : '') + ' · ' + fmt(x) + '">' + (wide && cellH >= 14 ? esc(fmt(x)) : '') + '</i>').join('') + '</span>' + (tot ? '<span class="v">' + esc(fmt(r.t != null ? r.t : r.v.reduce((s, x) => s + num(x), 0))) + '</span>' : '') + '</span>').join(''), 'vb-heatfit'); }
+      return wrap('heat', head + m.rows.slice(0, nr).map((r, ri) => '<span class="vb-heatrow' + (tot ? '' : ' nt') + '"' + itemAttr(m.cols.length ? r.v.reduce((o3, x, ci) => { o3[m.cols[ci] || ('c' + ci)] = x; return o3; }, { name: r.n }) : { name: r.n, values: r.v }, 'row') + '><span class="vb-lbl" title="' + esc(r.n) + '">' + esc(r.n) + '</span><span class="vb-heat" style="' + grid + '">' + r.v.map((x, ci) => '<i style="height:' + cellH + 'px;aspect-ratio:auto;background:' + (load ? mix(lpal(ci, num(x), hi <= 100 ? 100 : hi), 80, 'transparent') : mix(pal(ri), Math.round(8 + num(x) / hi * 88), 'transparent')) + '" title="' + esc(r.n) + (m.cols[ci] ? ' · ' + esc(String(m.cols[ci])) : '') + ' · ' + fmt(x) + '">' + (wide && cellH >= 14 ? esc(fmt(x)) : '') + '</i>').join('') + '</span>' + (tot ? '<span class="v">' + esc(fmt(r.t != null ? r.t : r.v.reduce((s, x) => s + num(x), 0))) + '</span>' : '') + '</span>').join('') + (kh ? (() => { if (load) { const bd = (o.draw && Array.isArray(o.draw.bands) && o.draw.bands.length) ? o.draw.bands.map(num) : [60, 85]; return '<div class="vb-heatkey"><span><i style="background:' + mix(B.ac2, 80) + '"></i>&lt; ' + fmt(bd[0]) + '</span><span><i style="background:' + mix(B.ac3, 80) + '"></i>' + fmt(bd[0]) + '–' + fmt(bd[1]) + '</span><span><i style="background:' + mix(B.ac4, 80) + '"></i>≥ ' + fmt(bd[1]) + '</span></div>'; }
+        return '<div class="vb-heatkey"><span>0</span><span class="g" style="background:linear-gradient(90deg,' + mix(B.t2, 10) + ',' + mix(B.t2, 96) + ')"></span><span>' + esc(fmt(hi)) + '</span></div>'; })() : ''), 'vb-heatfit'); }
     if (!kv.length) return EMPTY('a heat map needs rows of numbers');
     const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, cols = Math.min(12, Math.max(4, kv.length)); const pal = palOf(o, 'load');
     return wrap('heat', '<div class="vb-heatstrip" style="grid-template-columns:repeat(' + cols + ',1fr)">' + kv.slice(0, 48).map((x, i) => '<i style="background:' + pal(i, x[1], hi) + ';opacity:' + (0.25 + 0.75 * Math.abs(x[1]) / hi).toFixed(2) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + '"></i>').join('') + '</div>');
@@ -2506,7 +2704,7 @@
     + '[data-item]{cursor:pointer}';
 
   /* ── draw at a size: the composition around the form ─────────────────── */
-  const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞' };
+  const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞', lines: '≋' };
   // the glyph a size below M carries (the Sizes board): a ring for a level or a share, a spark for a series, a tube for
   // named values, a dot for events and graphs, the count glyph for the rest — drawn from the data, never a character
   function glyphOf(form, data) {
@@ -2550,7 +2748,7 @@
     // past its foot - and a form that already names every value it draws (ranked bars, pills, a number grid, a
     // legend) has none: the list only repeated it
     const dRows = Math.max(2, Math.min(8, Math.floor(((opts.height || HEIGHT[size]) - 4) / 16)));
-    const LABELLED = /^(ranked|bullet|lollipop|temps|pills|numbers|kv|funnel|stacked-bar|treemap|donut|waffle|gauge|threshold|diverging|radar|pareto|histogram|column|bars|heat|matrix|small-multiples|spark-table|horizon)$/;
+    const LABELLED = /^(ranked|bullet|lollipop|temps|pills|numbers|kv|funnel|stacked-bar|treemap|donut|waffle|gauge|threshold|diverging|radar|pareto|histogram|column|bars|heat|matrix|small-multiples|spark-table|horizon|lines)$/;
     const kv = LABELLED.test(f) ? [] : keyed(d).slice(0, dRows); const rw = LABELLED.test(f) ? [] : rows(d).slice(0, dRows);
     const detail = kv.length ? '<div class="vw-detail">' + kv.map((x) => '<div><span>' + esc(x[0]) + '</span><b>' + esc(fmt(x[1])) + '</b></div>').join('') + '</div>'
       : (rw.length ? '<div class="vw-detail">' + rw.slice(0, 8).map((r) => '<div><span>' + esc(String(r.name ?? r.title ?? r.text ?? r.path ?? r.id ?? '')) + '</span><b>' + esc(String(r.value ?? r.v ?? r.status ?? r.count ?? '')) + '</b></div>').join('') + '</div>'
@@ -3108,7 +3306,7 @@ span.vw-sampled{opacity:.85}
 .vb-cmpr{display:grid;grid-template-columns:1fr 70px 1fr;gap:8px;align-items:center;font-size:10px}.vb-cmpr .n{grid-column:2;text-align:center;color:var(--b-t2);order:2;white-space:nowrap;overflow:hidden}.vb-cmpr .side{display:flex;align-items:center;gap:6px;height:12px}.vb-cmpr .side.l{order:1;justify-content:flex-end}.vb-cmpr .side.r{order:3}.vb-cmpr .side i{display:block;height:8px;border-radius:4px}.vb-cmpr .side b{font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);width:34px;text-align:right}.vb-cmpr .side.r b{text-align:left}
 .vb-carp{flex:1;min-height:0;display:flex;align-items:center;gap:12px}.vb-carp .vb-dial{width:64px;height:64px}.vb-carp .vb-dial > span{font-size:13px}
 .vb-flist{flex:1;display:flex;flex-direction:column;gap:1px;font-size:9.5px;min-width:0}.vb-flist > span{display:grid;grid-template-columns:1fr 46px 50px 36px;gap:6px;align-items:center;height:19px}.vb-flist span i{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}.vb-flist .h{color:var(--b-t3);font-size:8px;text-transform:uppercase;letter-spacing:.08em}.vb-flist .m{font-family:var(--b-mono);color:var(--b-t2);text-align:right;white-space:nowrap;overflow:hidden}
-.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}` + CAPOUT_CSS + FORMS3_CSS + CI_CSS + CC_CSS + PF_CSS);
+.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}` + CAPOUT_CSS + FORMS3_CSS + CI_CSS + CC_CSS + PF_CSS + LINES_CSS);
   function ensureCss(root) {
     const host = root && root.head ? root.head : root;
     if (!host || !host.querySelector) return;
@@ -3302,7 +3500,7 @@ span.vw-sampled{opacity:.85}
      realted spread out widgets"). A widget offers the forms of its data's family - only those that would draw this answer -
      and turns into the one chosen, in place; the choice is kept per widget, "as made" goes back. */
   const NO_VIEW = /^(panel|composite|calnav|month|schedule|calendar|agenda|vgraph|terminal|media|diff|code|markdown|error|string|split-flap|frame|announcement|globe|candles|context_graph|structgraph)$/;
-  const VIEW_FAMILY = { series: ['trace', 'area', 'step', 'scope', 'bars', 'table', 'json'], values: ['bars', 'column', 'ranked', 'lollipop', 'donut', 'treemap', 'pills', 'kv', 'table', 'json'],
+  const VIEW_FAMILY = { series: ['trace', 'lines', 'area', 'step', 'scope', 'bars', 'table', 'json'], values: ['bars', 'column', 'ranked', 'lollipop', 'donut', 'treemap', 'pills', 'kv', 'table', 'json'],
     parts: ['donut', 'treemap', 'stacked-bar', 'waffle', 'bars', 'table', 'json'], items: ['table', 'rows', 'cards', 'list', 'stack', 'json'], events: ['log', 'lane', 'timeline', 'feed', 'table', 'json'],
     level: ['radial', 'gauge', 'meter', 'dial', 'counter', 'hero', 'json'], stages: ['stepper', 'pipeline', 'progress', 'funnel', 'gantt', 'table', 'json'], points: ['scatter', 'table', 'json'],
     matrix: ['heat', 'matrix', 'dots', 'table', 'json'], graph: ['graph', 'minigraph', 'pipes', 'json'], rate: ['turbine', 'ticker', 'json'] };
