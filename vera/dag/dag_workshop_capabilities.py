@@ -14201,9 +14201,16 @@ class _V6StepCritic:
 
     IDLE_EXIT_S = 1800.0
     GATE_NOTES = 4
+    #: Where the review runs (user, 2026-09-28: "allow routing to the GPU for
+    #: review"). cpu = the long-horizon node, off the GPU entirely (default);
+    #: gpu = the planning_style/stream route on the GPU's own model - faster,
+    #: but it queues between the run's own GPU steps. Never waited on either way.
+    ROUTES = ("cpu", "gpu")
 
-    def __init__(self, goal: str, *, sid: str, stream_id: str, model: str = ""):
+    def __init__(self, goal: str, *, sid: str, stream_id: str, model: str = "",
+                 route: str = "cpu"):
         self.goal, self.sid, self.stream_id, self.model = goal, sid, stream_id, model
+        self.route = route if route in self.ROUTES else "cpu"
         self.notes: List[Dict[str, Any]] = []
         self._delivered = 0
         self._q: "asyncio.Queue[Any]" = asyncio.Queue()
@@ -14231,18 +14238,22 @@ class _V6StepCritic:
             t1 = time.monotonic()
             note, err = "", ""
             try:
+                _gpu = self.route == "gpu"
                 raw = await _safe_ollama_generate_dw(
                     PSx.critic_prompt(self.goal, done_when, step, res, done),
-                    system=PSx.CRITIC_SYSTEM, json_mode=False, model=self.model or "",
-                    instance_id="", prefer_gpu=False, think=False, profile="planning_style",
-                    role=PSx.ENRICH_ROLE, request_stage="step_critic", timeout=900)
+                    system=PSx.CRITIC_SYSTEM, json_mode=False,
+                    # the CPU brief model choice does not apply to the GPU route
+                    model=("" if _gpu else (self.model or "")),
+                    instance_id="", prefer_gpu=_gpu, think=False, profile="planning_style",
+                    role=(PSx.PLAN_ROLE if _gpu else PSx.ENRICH_ROLE),
+                    request_stage="step_critic", timeout=900)
                 note = PSx.critic_note(_strip_think(raw or "")[0])
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 err = f"{type(e).__name__}: {e}"[:160]
             rec = {"step": step.get("id"), "title": step.get("title") or "", "note": note,
-                   "elapsed_s": round(time.monotonic() - t1, 1)}
+                   "elapsed_s": round(time.monotonic() - t1, 1), "route": self.route}
             self.notes.append(rec)
             try:
                 await emit_event({"type": "agent_loop_v6.step_critique", "session_id": self.sid,
@@ -23502,7 +23513,8 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
         "brief per stream that is added to the stream's steps as it lands. The style used is "
         "emitted as agent_loop_v6.plan_style and "
         "returned as plan_style), enrich_model (str — broad only: the CPU brief model, "
-        "'' = the planning_style/enrich route's), "
+        "'' = the planning_style/enrich route's), critic_route (str 'cpu'|'gpu' — "
+        "stepwise-reviewed only: where the per-step critic runs; default cpu), "
         "step_cycle_budget (int default 6), catalog_size (int default 40), enable_adaptive "
         "(bool default True — run the controller after each step), enable_step_verify (bool "
         "default True — one cheap judge call per step checks its success criterion was "
@@ -23622,6 +23634,9 @@ async def cap_dag_agent_loop_v6(
     # ('' = the planning_style/enrich route's model). The route keeps whichever
     # model it runs warm.
     enrich_model:       str  = "",
+    # stepwise-reviewed: where the step critic runs - 'cpu' (the long-horizon
+    # node, default) or 'gpu' (faster, queues between the run's GPU steps).
+    critic_route:       str  = "cpu",
     auto_escalate:      bool = True,
     enable_fast_path:   bool = False,      # V7-defining; v7 turns on ('single' tier shortcut)
     clarify_level:      int  = 1,          # sliding-scale consultation (0-3); back-compat when clarify_mode is ''
@@ -24264,7 +24279,8 @@ async def cap_dag_agent_loop_v6(
             _pstyle, streams=_bd.get("stream_map") or [], steps=_broad_opening_steps)
     # stepwise-reviewed: a CPU critic reviews each finished step (never waited on).
     _critic = (_V6StepCritic(goal, sid=sid, stream_id=stream_id,
-                             model=(enrich_model or "").strip())
+                             model=(enrich_model or "").strip(),
+                             route=(critic_route or "cpu").strip().lower())
                if (_plan_styles is not None and _pstyle.get("step_critic")) else None)
     # Fall-through "complex planning mode": both plan passes yielded no usable
     # steps — escalate to a long-form master plan and re-break it into steps (a
@@ -25771,6 +25787,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_plan_tier         = (body.get("plan_tier", "auto") or "auto").strip().lower()
     v6_plan_style        = (body.get("plan_style", "auto") or "auto").strip().lower()
     v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
+    v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
     v6_auto_escalate     = bool(body.get("auto_escalate", True))
     v6_enable_fast_path  = bool(body.get("enable_fast_path", _v7_default))
     v6_clarify_level     = int(body.get("clarify_level", 1) or 0)
@@ -25920,6 +25937,7 @@ async def workshop_agent_loop_stream(request: Request):
             plan_tier=v6_plan_tier,
             plan_style=v6_plan_style,
             enrich_model=v6_enrich_model,
+            critic_route=v6_critic_route,
             auto_escalate=v6_auto_escalate,
             enable_fast_path=v6_enable_fast_path,
             clarify_level=v6_clarify_level,

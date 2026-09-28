@@ -112,6 +112,29 @@ def test_a_finished_step_is_reviewed_on_the_cpu_route_and_delivered_once(monkeyp
 
 
 @needs_app
+def test_the_review_can_be_routed_to_the_gpu(monkeypatch):
+    """User 2026-09-28: allow routing the review to the GPU. It then uses the
+    GPU planning route and the GPU's own model (the CPU brief model does not
+    apply); an unknown route falls back to the CPU."""
+    seen = _wire(monkeypatch)
+
+    async def go(route):
+        c = M._V6StepCritic("g", sid="s", stream_id="", model="qwen3.6:35b-a3b", route=route)
+        c.submit(_step(1), {"id": 1, "summary": "r1"}, [], "")
+        await asyncio.sleep(0.05)
+        c.cancel()
+        return c
+
+    gpu = asyncio.run(go("gpu"))
+    assert gpu.route == "gpu" and gpu.notes[0]["route"] == "gpu"
+    call = seen["calls"][-1]
+    assert call["role"] == PS.PLAN_ROLE and call["gpu"] is True
+    assert asyncio.run(go("sideways")).route == "cpu"
+    assert seen["calls"][-1]["role"] == PS.ENRICH_ROLE and seen["calls"][-1]["gpu"] is False
+    assert inspect.signature(M.cap_dag_agent_loop_v6).parameters["critic_route"].default == "cpu"
+
+
+@needs_app
 def test_one_review_at_a_time_and_only_the_latest_when_steps_outpace_it(monkeypatch):
     seen = _wire(monkeypatch, delay=0.05)
 
