@@ -95,7 +95,9 @@ async def _make_worktree(job_id: str, ref: str) -> Dict[str, Any]:
         return {"ok": False, "error": "evolve_capabilities is not loaded"}
     root = ev._repo_root()
     path = root / ev._WORKTREE_DIR / D.worktree_name(job_id)
-    await ev._git("worktree", "prune", repo_root=root)
+    # NEVER `git worktree prune` here (incident 2026-09-28): the .git is SHARED
+    # by every sandbox, and a process that cannot see the other worktrees'
+    # paths (any container) prunes their registrations - it severed 252.
     res = await ev._git("worktree", "add", "--detach", str(path), ref, timeout=120, repo_root=root)
     if not res.get("ok"):
         return {"ok": False, "error": "git worktree add --detach %s failed: %s"
@@ -110,8 +112,8 @@ async def _drop_worktree(path: str) -> None:
         return
     try:
         root = ev._repo_root()
+        # Remove THIS worktree only - never prune (see _make_worktree).
         await ev._git("worktree", "remove", "--force", path, timeout=120, repo_root=root)
-        await ev._git("worktree", "prune", repo_root=root)
     except Exception as e:
         log.debug("delegate worktree cleanup %s: %s", path, e)
 
@@ -157,7 +159,12 @@ async def _run(job: Dict[str, Any], goal: str) -> None:
             "session_id": sid, "max_steps": job["max_steps"], "plan_style": job["plan_style"],
             "effort": job["effort"], "base_toolkit": " ".join(D.FS_CAPS),
             "prefer_terminal_tools": False, "enable_step_questions": False,
-            "enable_dream_persistence": False})
+            "enable_dream_persistence": False,
+            # HEADLESS: nobody answers inside a delegated job, and the brief IS
+            # the clarification. First live job (2026-09-28): v7 tiered the
+            # brief 'strategic' and stopped on a clarify_request. The strategic
+            # tier also opens a dream project / master plan - wrong for a report.
+            "clarify_mode": "off", "plan_tier": "complex", "auto_escalate": False})
         job["status"] = "running"
         await _save(job)
         await _board(job, "progress", "Delegated to Vera (%s): %s - loop session %s, worktree %s @ %s"
@@ -228,6 +235,11 @@ async def cap_evolve_delegate_start(title: str = "", brief: str = "", plan: Any 
                 % ", ".join(D.MODES)}
     if (repo or "vera") != "vera":
         return {"error": "only repo=vera is supported for now"}
+    if _orch.is_dev_sandbox():
+        # A sandbox shares prod's .git but not its view of the worktrees;
+        # git worktree bookkeeping from inside one damages every other.
+        return {"error": "evolve.delegate runs on prod only - a dev sandbox shares the "
+                         "repo's .git and must not add or remove worktrees in it"}
     if not _redis():
         return {"error": "no Redis - a delegated job needs somewhere to keep its state"}
     effort = (effort or "standard").strip().lower()

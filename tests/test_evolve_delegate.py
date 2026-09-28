@@ -154,6 +154,8 @@ def test_a_run_is_guarded_reports_and_cleans_up(monkeypatch):
     kw = seen["kwargs"]
     assert kw["effort"] == "max" and kw["prefer_terminal_tools"] is False
     assert kw["enable_step_questions"] is False and set(kw["base_toolkit"].split()) == set(D.FS_CAPS)
+    # headless: no clarify questions, never the strategic tier (first live job stalled on one)
+    assert kw["clarify_mode"] == "off" and kw["plan_tier"] == "complex" and kw["auto_escalate"] is False
     assert store["dgR"]["status"] == "done" and store["dgR"]["report"].startswith("## Summary")
     assert seen["dropped"] == ["/wt/delegate-dgR"]
     kinds = [b[2] for b in seen["board"]]
@@ -185,6 +187,50 @@ def test_start_refuses_what_it_cannot_do_safely():
     assert "brief is required" in no_brief["error"]
     assert "mode must be one of report" in edit["error"]
     assert "only repo=vera" in other["error"]
+
+
+@needs_app
+def test_start_refuses_in_a_dev_sandbox_before_touching_git(monkeypatch):
+    # Incident 2026-09-28: a delegate job inside a sandbox container pruned
+    # 252 worktree registrations from the shared .git.
+    touched = []
+
+    async def fake_make(job_id, ref):
+        touched.append(job_id)
+        return {"ok": True, "path": "/x", "head": "h"}
+    monkeypatch.setattr(DC, "_make_worktree", fake_make)
+    monkeypatch.setattr(DC._orch, "is_dev_sandbox", lambda: True)
+    out = asyncio.run(DC.cap_evolve_delegate_start(title="x", brief="b"))
+    assert "prod only" in out["error"]
+    assert touched == []
+
+
+@needs_app
+def test_the_worktree_code_never_prunes(monkeypatch):
+    calls = []
+
+    class FakeEv:
+        _WORKTREE_DIR = ".loop-lab-worktrees"
+
+        @staticmethod
+        def _repo_root():
+            return pathlib.Path("/repo")
+
+        @staticmethod
+        async def _git(*args, **kw):
+            calls.append(args)
+            return {"ok": True, "out": "abc123\n"}
+    monkeypatch.setattr(DC, "_ev", lambda: FakeEv)
+
+    async def go():
+        await DC._make_worktree("dg1", "bleeding-edge")
+        await DC._drop_worktree("/repo/.loop-lab-worktrees/delegate-dg1")
+    asyncio.run(go())
+    flat = [a for c in calls for a in c]
+    assert "prune" not in flat
+    assert ("worktree", "remove", "--force", "/repo/.loop-lab-worktrees/delegate-dg1") in calls
+    # And nothing else in the module can reach it either.
+    assert '"prune"' not in pathlib.Path(DC.__file__).read_text(encoding="utf-8")
 
 
 @needs_app
