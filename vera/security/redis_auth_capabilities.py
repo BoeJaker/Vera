@@ -249,4 +249,49 @@ async def cap_lock_default(allowed_addrs: Optional[List[str]] = None, force: boo
     return {"ok": True, "unexpected": plan["unexpected"], "forced": bool(force and not plan["ok"])}
 
 
+@capability(
+    "redis.auth.export_env",
+    http_method="POST", http_path="/redis/auth/export_env", http_tags=["security"],
+    memory="off",
+    description="Write one Redis user's password (from OpenBao) into a client's env "
+                "file as VAR=<password> - for stack services configured through a "
+                "compose .env (vikunja: VIKUNJA_REDIS_PASSWORD with user `default`; "
+                "searxng: a password var its SEARXNG_REDIS_URL references). The file "
+                "must be an existing .env under VERA_REDIS_EXPORT_ROOTS "
+                "(default /home/boejaker/LLM_Stack); it is left 0600. The password is "
+                "never returned. Recreate the service afterwards. Inputs: user (str!), "
+                "path (str!), var (str!). Output: {ok, path, var, action}.",
+)
+async def cap_export_env(user: str = "", path: str = "", var: str = "",
+                         trace_id=None) -> Dict:
+    if user not in core.USERS:
+        return {"ok": False, "error": "user must be one of %s" % list(core.USERS)}
+    if not core.env_var_ok(var):
+        return {"ok": False, "error": "var must be an UPPER_CASE env name"}
+    ok, real = core.export_path_allowed(path, core.export_roots())
+    if not ok:
+        return {"ok": False, "error": real}
+    if not os.path.isfile(real):
+        return {"ok": False, "error": "no such file: %s" % real}
+    pw = await credential(user)
+    if not pw:
+        return {"ok": False, "error": "OpenBao holds no credential for %s - run "
+                "redis.auth.ensure first" % user}
+    with open(real, "rb") as fh:
+        text = fh.read().decode("utf-8")
+    new, action = core.env_file_update(text, var, pw)
+    tmp = real + ".vera-tmp"
+    old = os.umask(0o077)
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(new.encode("utf-8"))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, real)
+    finally:
+        os.umask(old)
+    await emit_event({"type": "redis.auth.export_env", "user": user, "var": var,
+                      "path": real, "action": action})
+    return {"ok": True, "path": real, "var": var, "action": action}
+
+
 log.info("redis_auth_capabilities ready")
