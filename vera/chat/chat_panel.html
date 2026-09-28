@@ -15073,7 +15073,8 @@ Your task: decide what to do next to advance toward the goal.
     r.classList.toggle('slim');
     h.style.display=r.classList.contains('slim')?'none':'';
     if(!r.classList.contains('slim'))setTimeout(renderCtxGraph,50);
-    try{localStorage.setItem('vera_right_collapsed',r.classList.contains('slim')?'1':'0');}catch(_){}
+    // the standalone chat's preference; the menu instance's fold is the harness's to hold, not this key's
+    if(_EMBED.only!=='menu'){ try{localStorage.setItem('vera_right_collapsed',r.classList.contains('slim')?'1':'0');}catch(_){} }
     // the menu instance in the harness: the slot around it folds to the rail with it (and opens with it)
     try{ if(_EMBED.only==='menu') window.parent.postMessage({ type:'vera:lhm:rail', on:r.classList.contains('slim') }, '*'); }catch(_){}
     // Rail hidden — clear the top-bar Caps/Panels highlights.
@@ -20290,6 +20291,12 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       const rc=localStorage.getItem('vera_right_collapsed');
       if(rc!=null) railCollapsed=(rc==='1');
     }catch(_){}
+    /* NOT for the menu instance (?only=menu): that frame IS the menu. _embedMount has already opened it, and the
+       harness sizes its slot for an open menu (_lhmChatRailed starts false and changes only on toggleRight's
+       vera:lhm:rail). Folding it here - from the STANDALONE chat's preference, the default being folded - told the
+       harness nothing, so the slot stayed wide while the column went to opacity 0: the Context menu had loaded,
+       and could not be seen. */
+    if(_EMBED.only==='menu') railCollapsed=false;
     if(railCollapsed){
       document.getElementById('rightRail')?.classList.add('slim');
       const rh=document.getElementById('rResize'); if(rh) rh.style.display='none';
