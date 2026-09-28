@@ -270,6 +270,9 @@
     // miss real panels or misfire on unrelated "active" elements that have
     // nothing to do with top-level section nav.
     if(_navItems){ st.nav = {items: _navItems, active: _navActiveId}; var _lhm = _navLhm(); if(_lhm) st.nav.lhm = _lhm; }
+    // a page whose menu is VeraLHM's (the chat) publishes that menu itself; this snapshot is a second state from the same
+    // frame, and the host reads a state WITHOUT nav as "no menu" - so it carries the menu's own nav, or it drops it
+    else { try{ var _own = (window.VeraLHM && typeof window.VeraLHM.navState === 'function') ? window.VeraLHM.navState() : null; if(_own) st.nav = _own; }catch(e){} }
     try{
       var focused = document.activeElement;
       if(focused && focused !== document.body && focused.id) st.focused_id = focused.id;
