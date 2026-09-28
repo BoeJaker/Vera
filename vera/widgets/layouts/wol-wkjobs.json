@@ -1,0 +1,351 @@
+{
+ "v": 2,
+ "dashboard": "workers-jobs",
+ "layout": "default",
+ "key": "wol-wkjobs",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "Every widget of the workers-jobs grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here.",
+ "widgets": [
+  {
+   "record": {
+    "id": "wkj-pending",
+    "form": "counter",
+    "source": "cluster.jobs",
+    "shape": "level",
+    "title": "Pending",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "wkj-running",
+    "form": "counter",
+    "source": "cluster.jobs",
+    "shape": "level",
+    "title": "Running",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
+   },
+   "at": [
+    2,
+    0
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "wkj-done",
+    "form": "counter",
+    "source": "cluster.jobs",
+    "shape": "level",
+    "title": "Done",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
+   },
+   "at": [
+    4,
+    0
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "wkj-failed",
+    "form": "counter",
+    "source": "cluster.jobs",
+    "shape": "level",
+    "title": "Failed",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
+   },
+   "at": [
+    6,
+    0
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "wkj-cap-types",
+    "form": "counter",
+    "source": "cluster.jobs",
+    "shape": "level",
+    "title": "Cap Types",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
+   },
+   "at": [
+    8,
+    0
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "wkj-avg-dur",
+    "form": "counter",
+    "source": "cluster.jobs",
+    "shape": "level",
+    "title": "Avg Duration",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
+   },
+   "at": [
+    10,
+    0
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "wkj-table",
+    "form": "table",
+    "source": "cluster.jobs",
+    "shape": "items",
+    "title": "Jobs by Worker",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      5
+     ],
+     "max_body": 380
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
+   },
+   "at": [
+    0,
+    1
+   ],
+   "span": [
+    12,
+    5
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "wkj-cap-table",
+    "form": "table",
+    "source": "cluster.jobs",
+    "shape": "items",
+    "title": "Capability Breakdown",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      3
+     ],
+     "max_body": 200
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: the Workers > Jobs figures and tables are computed from the page's job tracker (a route that is not a capability)"
+   },
+   "at": [
+    0,
+    6
+   ],
+   "span": [
+    12,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  }
+ ]
+}

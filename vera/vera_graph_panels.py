@@ -185,6 +185,20 @@ VERA_GRAPH_PANEL_SCRIPTS = (
 # Discover+ panel
 # ─────────────────────────────────────────────────────────────────────────────
 
+# The unified graph's families (UI redesign, Notes/40 §7): the adapters that map
+# context · memory · dag · loop · plan · estate to ONE graph document, and the
+# mixer. Pure; the memory graph panel and the chat's graph column load it.
+@APP.get("/ui/graph/families.js", include_in_schema=False)
+async def _serve_graph_families_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent / "graph" / "families.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"), media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(content="console.warn('families.js not found');", media_type="application/javascript")
+
+
 @APP.get("/ui/vera-graph-panel-discover.js", include_in_schema=False)
 async def _serve_discover_panel_js():
     return Response(
@@ -258,6 +272,12 @@ async def serve_explode_panel_js(trace_id=None):
 # off through options vera_graph.js already exposes. A fork would drift, and the
 # inline view and the full view would stop agreeing about what a graph looks
 # like.
+
+# the display modes (the exploded scene, the estate 3D and 2D) - vera-graph.js loads this itself
+@APP.get("/ui/vera-graph-modes.js", include_in_schema=False)
+async def _serve_graph_modes_js():
+    return Response(content=_read("vera_graph_modes.js"), media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
 
 @APP.get("/ui/vera-graph-embed.js", include_in_schema=False)
 async def _serve_graph_embed_js():

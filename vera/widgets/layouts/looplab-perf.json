@@ -1,0 +1,275 @@
+{
+ "v": 2,
+ "dashboard": "looplab-perf",
+ "layout": "default",
+ "key": "looplab-perf",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "name": "Performance",
+ "note": "Where the time goes: the census in flight and its routing, each model's latency, every agentic loop's wall time split by tool and model calls, census and loop wall time run by run, and the request log.",
+ "widgets": [
+  {
+   "record": {
+    "id": "looplab-perf-live",
+    "form": "census-live",
+    "source": "census.live",
+    "shape": "stages",
+    "title": "Census, live",
+    "read": {
+     "refresh": "5s",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-perf-latency",
+    "form": "table",
+    "source": "ollama.route_stats",
+    "shape": "items",
+    "title": "Models · latency and throughput",
+    "read": {
+     "refresh": "30s",
+     "args": {},
+     "map": {
+      "rows": "stats"
+     }
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "columns": [
+      "model",
+      "job_type",
+      "instance",
+      "n",
+      "ema_elapsed_s",
+      "ema_tps"
+     ],
+     "sort": "ema_elapsed_s"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "every model x job type x node the router has timed: calls, EMA seconds, EMA tokens/s"
+   },
+   "at": [
+    6,
+    0
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-perf-loops",
+    "form": "loop-perf",
+    "source": "loop.ci.perf",
+    "shape": "items",
+    "title": "Agentic loop performance",
+    "read": {
+     "refresh": "30s",
+     "args": {
+      "limit": 24
+     },
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      7
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    4
+   ],
+   "span": [
+    12,
+    7
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-perf-loop-trend",
+    "form": "trend-layers",
+    "source": "loop.ci.perf",
+    "shape": "series",
+    "title": "Loops over time",
+    "read": {
+     "refresh": "60s",
+     "args": {
+      "limit": 40
+     },
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "rows": "rows",
+     "t": "started_at",
+     "facets": [
+      "status"
+     ],
+     "mode": "lanes",
+     "series": [
+      {
+       "field": "wall_s",
+       "label": "wall s"
+      },
+      {
+       "field": "calls",
+       "label": "tool calls"
+      },
+      {
+       "field": "llm_calls",
+       "label": "model calls"
+      }
+     ]
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    11
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-perf-requests",
+    "form": "log",
+    "source": "ollama.request_log",
+    "shape": "events",
+    "title": "Request log",
+    "read": {
+     "refresh": "10s",
+     "args": {},
+     "map": {
+      "events": "entries",
+      "t": "ts",
+      "kind": "instance",
+      "text": "model"
+     }
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    11
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  }
+ ]
+}

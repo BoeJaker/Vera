@@ -371,7 +371,7 @@ async def _agentbridge_panel_route():
 register_ui(
     "agentbridge-catalog-panel",
     "Agent Bridges",
-    "🧩",
+    "⋈",
     """<div id="agentbridge-catalog-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/agentbridge/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"

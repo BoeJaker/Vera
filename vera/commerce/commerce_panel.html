@@ -9,6 +9,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Vera — Business</title>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 <style>
 :root{
   --bg0:#141312;--bg1:#1b1917;--bg2:#242120;--bg3:#2e2a28;
@@ -24,7 +25,9 @@
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px}
-body{display:flex;flex-direction:column;overflow:hidden}
+/* The menu is the leftmost thing on the page, the way it is everywhere else. */
+body{display:flex;flex-direction:row;overflow:hidden}
+.colmain{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
 button{font-family:var(--sans);cursor:pointer}
 a{color:var(--acc)}
 ::-webkit-scrollbar{width:8px;height:8px}
@@ -40,10 +43,7 @@ a{color:var(--acc)}
 
 /* Layout */
 .layout{flex:1;display:flex;min-height:0}
-nav.side{width:150px;flex-shrink:0;border-right:1px solid var(--border);background:var(--bg1);padding:8px;display:flex;flex-direction:column;gap:2px}
-nav.side button{background:none;border:none;color:var(--dim2);text-align:left;padding:8px 10px;border-radius:var(--radius);font-size:13px}
-nav.side button:hover{background:var(--bg2);color:var(--text)}
-nav.side button.active{background:var(--bg2);color:var(--acc);font-weight:600}
+/* The menu is the shared left-hand menu — see /ui/vera-panel.css. */
 main.content{flex:1;overflow:auto;padding:16px 18px}
 
 /* Toolbar / typography */
@@ -115,14 +115,21 @@ tr:hover td{background:var(--bg1)}
 </style>
 </head>
 <body>
-  <div class="hdr">
-    <span class="brand">Business</span>
-    <div class="chips" id="hdrChips"></div>
-    <button class="btn sm" onclick="render()">↻ Refresh</button>
-  </div>
-  <div class="layout">
-    <nav class="side" id="nav"></nav>
-    <main class="content" id="content"><div class="vera-loading">Loading…</div></main>
+  <aside id="sidebar" data-vera-lhm>
+    <div id="side-head">
+      <span class="ico">¤</span>
+      <div><h1>Business</h1><div class="sub">commerce</div></div>
+    </div>
+    <nav id="nav"></nav>
+  </aside>
+  <div class="colmain">
+    <div class="hdr">
+      <div class="chips" id="hdrChips"></div>
+      <button class="btn sm" onclick="render()">↻ Refresh</button>
+    </div>
+    <div class="layout">
+      <main class="content" id="content"><div class="vera-loading">Loading…</div></main>
+    </div>
   </div>
 
   <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
@@ -188,8 +195,14 @@ const LABELS = {dashboard:'Dashboard',inventory:'Inventory',pricing:'Pricing',or
 let current = location.hash.slice(1) || 'dashboard';
 if(!SECTIONS.includes(current)) current='dashboard';
 
+const ICONS = {dashboard:'▦',inventory:'▤',pricing:'£',orders:'▥',customers:'◎',service:'✦',platforms:'▩'};
 function buildNav(){ const n=$('#nav'); n.innerHTML='';
-  for(const s of SECTIONS){ n.append(el('button',{class:s===current?'active':'',onclick:()=>{current=s;location.hash=s;render();}},LABELS[s])); } }
+  for(const s of SECTIONS){
+    const b=el('button',{type:'button',class:'nav-btn'+(s===current?' active':''),title:LABELS[s],
+      onclick:()=>{current=s;location.hash=s;render();}});
+    b.dataset.section=s;
+    b.append(el('span',{class:'gl'},ICONS[s]||'▪'), LABELS[s]);
+    n.append(b); } }
 
 function loading(){ $('#content').innerHTML='<div class="vera-loading">Loading…</div>'; }
 function setContent(...nodes){ const c=$('#content'); c.innerHTML=''; c.append(...nodes); }
@@ -524,5 +537,7 @@ window.addEventListener('hashchange',()=>{ const h=location.hash.slice(1); if(SE
 render();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

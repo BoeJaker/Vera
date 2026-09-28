@@ -54,3 +54,5 @@ onnxruntime>=1.18        # CPU inference engine for ml.onnx.run / per-model caps
 # aiomysql>=0.2           # MySQL data fabric connector
 # beautifulsoup4>=4.12    # web scraping capabilities
 esprima  # JS syntax validation for code.author's HTML <script> checks (optional; graceful if absent)
+tree-sitter>=0.23            # code.explode: parses BROKEN and partial code (an LLM snippet, a scraped fence); ast / patterns stand in without it
+tree-sitter-language-pack>=0.7  #   the grammars (python, javascript, typescript, …) prebuilt — no compiler, no runtime

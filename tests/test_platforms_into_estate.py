@@ -132,7 +132,7 @@ def test_platforms_opens_inside_estate_integrations():
                                                    "section": "Integrations"}
     assert 'id="pane-platforms"' in html and 'data-pane="platforms" data-view="estate"' in html
     assert "_mountFrame('platforms-frame', BASE+'/platform/panel')" in html
-    start = html.index('<div id="secNav">')
+    start = html.index('<aside id="sidebar" data-vera-lhm>')
     nav_block = html[start:html.index('data-pane="ollama"', start)]
     assert nav_block.index('>Integrations</div>') < nav_block.index('data-pane="integrations"') < nav_block.index('data-pane="platforms"')
 

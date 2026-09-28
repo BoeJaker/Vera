@@ -34,12 +34,49 @@
  * Events
  *   vera-graph-node   {detail:{node}}  a node was clicked — the host (canvas)
  *                     uses this to scroll source to node.props.start_line
+ *
+ * THE STRUCTURED RENDERER — renderer="struct"
+ * -------------------------------------------
+ * The physics graph is the right glance at a stored graph. It is the WRONG
+ * picture of one record, one passage or one file: that wants the structured
+ * diagram (<vera-structgraph>, /ui/structgraph.js — bands, columns, cards and
+ * routed runs; EXPLODE.md §5). With renderer="struct" the embed hosts that
+ * element, bare, fed by the Explode contract from one of:
+ *
+ *   <vera-graph-embed renderer="struct" record="rec-4f2a" ranges="[[0,1180]]" mode="position">
+ *   <vera-graph-embed renderer="struct" text="…a pasted passage…">
+ *   <vera-graph-embed renderer="struct" src="/some/contract.json">
+ *   <vera-graph-embed renderer="struct" path="vera/research/explode_capabilities.py" depth="1">   a repo file (+ its imports)
+ *   <vera-graph-embed renderer="struct" path="vera/research/assess_core.py" flow="readability">   ONE function, in source order
+ *   <vera-graph-embed renderer="struct" records="rec-1,rec-2,rec-3">                              several records, as lanes
+ *   <vera-graph-embed renderer="struct" code="def f(): …" lang="python">                           a snippet (an LLM's, a page's)
+ *   el.setDoc(contract)                      a contract the host already has
+ *
+ *   layers      comma-separated layer ids to run (default: the layers on by default)
+ *
+ * A card click is relayed as vera-graph-node {node:{id, span, card}} so a host
+ * that already listens for the physics graph's clicks hears the same event.
  */
 (function () {
   'use strict';
 
   var GRAPH_JS = '/ui/vera-graph.js';
+  var STRUCT_JS = '/ui/structgraph.js';
   var _loading = null;
+  var _loadingStruct = null;
+
+  function ensureStructLib() {
+    if (window.customElements && window.customElements.get('vera-structgraph')) return Promise.resolve();
+    if (_loadingStruct) return _loadingStruct;
+    _loadingStruct = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = STRUCT_JS;
+      s.onload = function () { resolve(); };
+      s.onerror = function () { reject(new Error('could not load ' + STRUCT_JS)); };
+      document.head.appendChild(s);
+    });
+    return _loadingStruct;
+  }
 
   function ensureGraphLib() {
     if (window.veraUI && window.veraUI.Graph) return Promise.resolve();
@@ -80,9 +117,96 @@
         'margin-top:3px;display:flex;justify-content:space-between;align-items:center;gap:8px';
       this.appendChild(this._note);
 
-      this._render(height).catch(function (e) {
+      var run = (this.getAttribute('renderer') || '') === 'struct' ? this._renderStruct(height) : this._render(height);
+      run.catch(function (e) {
         this._fail(String(e && e.message || e));
       }.bind(this));
+    }
+
+    // ── the structured renderer ───────────────────────────────────────────
+    setDoc(doc) {
+      this._doc = doc;
+      if (this._struct) { this._struct.setDoc(doc); this._captionStruct(doc); }
+      return this;
+    }
+
+    async _renderStruct(height) {
+      await ensureStructLib();
+      var self = this;
+      this._host.innerHTML = '';
+      this._struct = document.createElement('vera-structgraph');
+      this._struct.setAttribute('bare', '');
+      var mode = this.getAttribute('mode'); if (mode) this._struct.setAttribute('mode', mode);
+      this._struct.style.cssText = 'display:flex;width:100%;height:' + height + 'px';
+      this._host.appendChild(this._struct);
+      this._struct.addEventListener('vera-explode-select', function (ev) {
+        var d = ev.detail || {};
+        self.dispatchEvent(new CustomEvent('vera-graph-node', {
+          detail: { node: { id: d.id, span: d.span, card: d.card } }, bubbles: true, composed: true,
+        }));
+      });
+      if (this._doc) { this._struct.setDoc(this._doc); this._captionStruct(this._doc); return; }
+      var doc = await this._fetchContract();
+      if (!doc) return;
+      this._doc = doc;
+      this._struct.setDoc(doc);
+      this._captionStruct(doc);
+    }
+
+    async _fetchContract() {
+      var base = window._veraBase || '';
+      var src = this.getAttribute('src');
+      var res, doc;
+      try {
+        if (src) {
+          res = await fetch(src);
+        } else {
+          var body = {};
+          var rec = this.getAttribute('record'), text = this.getAttribute('text');
+          var code = this.getAttribute('code'), cpath = this.getAttribute('path');
+          var endpoint = '/nlp/explode/prose';
+          if (code != null || cpath) {   // code: a snippet (code="…" lang="…"), or a repo file / directory (path="…")
+            endpoint = '/code/explode';
+            if (code) { body.text = code; body.lang = this.getAttribute('lang') || ''; if (cpath) body.path = cpath; }
+            else body.path = cpath;
+            var depth = this.getAttribute('depth'); if (depth != null) body.depth = parseInt(depth, 10) || 0;
+            // flow="<function>": not what calls what across the file, but what ONE function DOES, in source order
+            var flow = this.getAttribute('flow'); if (flow) body.flow = flow;
+          } else if (rec) body.record_id = rec;
+          else if (this.getAttribute('records')) {      // several records, as lanes — an entity's evidence
+            body.record_ids = this.getAttribute('records').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+          } else if (text) body.text = text;
+          else { this._fail('nothing to explode — give record, text, code, path or src'); return null; }
+          var ranges = this.getAttribute('ranges'); if (ranges) { try { body.ranges = JSON.parse(ranges); } catch (e) {} }
+          if (this.hasAttribute('assess')) body.assess = this.getAttribute('assess') || true;   // the verdict rail too
+          var mode = this.getAttribute('mode'); if (mode && endpoint !== '/code/explode') body.mode = mode;
+          var layers = this.getAttribute('layers'); if (layers && endpoint !== '/code/explode') body.layers = layers.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+          res = await fetch(base + endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        }
+        doc = await res.json();
+      } catch (e) {
+        this._fail('explode failed — ' + (e && e.message || e));
+        return null;
+      }
+      if (!doc || doc.error) { this._fail(doc && doc.error ? doc.error : 'empty contract'); return null; }
+      return doc;
+    }
+
+    _captionStruct(doc) {
+      this._note.innerHTML = '';
+      var left = document.createElement('span');
+      var on = (doc.layers || []).filter(function (l) { return l.on && !l.error; }).map(function (l) { return l.label || l.id; });
+      left.textContent = 'explode — ' + ((doc.cards || []).length) + ' cards, ' + ((doc.edges || []).length) + ' runs' + (on.length ? ' · ' + on.join(' · ') : '');
+      this._note.appendChild(left);
+      if ((this.getAttribute('expand') || '') !== 'off') {
+        var a = document.createElement('a');
+        a.href = this.getAttribute('full-url') || '/fabric/panel#graph';
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = 'open in the inspector ↗';
+        a.style.cssText = 'color:var(--acc,#5a9e8f);text-decoration:none;white-space:nowrap';
+        this._note.appendChild(a);
+      }
     }
 
     _fail(msg) {

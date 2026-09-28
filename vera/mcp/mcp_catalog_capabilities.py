@@ -866,7 +866,7 @@ async def _mcp_catalog_panel_route():
 register_ui(
     "mcp-catalog-panel",
     "MCP Servers",
-    "🔌",
+    "⧈",
     """<div id="mcp-catalog-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/mcp/catalog/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"

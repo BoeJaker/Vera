@@ -620,8 +620,8 @@ async def registry_upsert(entry: Optional[dict] = None, force: bool = False,
            else RC.normalise(dict(entry, id=eid), now=now_iso()))
     ENTRIES[rec["id"]] = rec
     await _save(rec)
-    emit_event({"type": "registry.upsert", "id": rec["id"], "kind": rec["kind"],
-                "name": rec["name"], "created": existing is None})
+    await emit_event({"type": "registry.upsert", "id": rec["id"], "kind": rec["kind"],
+                      "name": rec["name"], "created": existing is None})
     return {"ok": True, "entry": rec, "problems": probs, "created": existing is None}
 
 
@@ -635,7 +635,7 @@ async def registry_delete(id: str = "", trace_id=None):
         return {"ok": False, "error": "no entry %r" % eid}
     ENTRIES.pop(eid, None)
     await _drop(eid)
-    emit_event({"type": "registry.delete", "id": eid})
+    await emit_event({"type": "registry.delete", "id": eid})
     return {"ok": True, "id": eid}
 
 
@@ -840,7 +840,7 @@ async def _registry_panel():
 
 # mode="element": registered and listed so it is discoverable, but NOT a
 # top-level tab - it is rendered inside the Agents/Skills/Ontologies panel.
-register_ui("agent-registry", "Registry", "🧰", _PANEL_HTML, js=_PANEL_JS,
+register_ui("agent-registry", "Registry", "▥", _PANEL_HTML, js=_PANEL_JS,
             ui_caps=["registry.list", "registry.get", "registry.interop",
                      "registry.upsert", "registry.delete", "registry.sync_skill",
                      "registry.import_skill"],

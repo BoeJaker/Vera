@@ -24,16 +24,12 @@ html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
 #root{ display:flex;height:100vh;min-height:0; }
 
 /* ══ LEFT-HAND MENU (LHM) ═══════════════════════════════ */
-#sidebar{ width:322px;flex-shrink:0;background:var(--bg1);
-  border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0; }
-#side-head{ padding:13px 14px 11px;border-bottom:1px solid var(--border);
-  display:flex;align-items:center;gap:8px;flex-shrink:0; }
-#side-head .ico{ width:24px;height:24px;background:var(--bg2);
-  border:1px solid var(--border2);border-radius:6px;display:flex;
-  align-items:center;justify-content:center;color:var(--acc);font-size:14px; }
-#side-head h1{ margin:0;font-size:12px;font-weight:600;letter-spacing:.04em; }
-#side-head .sub{ font-size:9px;color:var(--dim);letter-spacing:.12em;
-  text-transform:uppercase;margin-top:1px; }
+/* The menu's shell and its header are the shared ones — see /ui/vera-panel.css,
+   which this block was a verbatim copy of. What is the calendar's own is the
+   body below the header (tabs over layers, events and the agent, not a list of
+   sections) and the width that body needs, which is the shared file's knob. */
+:root{ --lhm-width:322px; }
+#sidebar[data-vera-lhm]{ min-height:0; }
 
 /* LHM section tabs */
 #lhm-tabs{ display:flex;gap:3px;padding:8px 8px 0;flex-shrink:0; }
@@ -121,12 +117,14 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
 /* ── Calendar month grid ─────────────────────────────── */
 #cal-toolbar{ display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-shrink:0; }
 #cal-title{ font-size:15px;font-weight:600;min-width:150px; }
-.cal-grid{ display:grid;grid-template-columns:repeat(7,1fr);gap:1px;
+/* minmax(0,1fr): a column never grows to its longest chip - with the shell's pill .chip (inline, unclipped) the month
+   ran off the right edge after Thursday (owner, 2026-09-27) */
+.cal-grid{ display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px;
   background:var(--border);border:1px solid var(--border);border-radius:8px;
   overflow:hidden; }
 .cal-dow{ background:var(--bg1);padding:7px 8px;font-size:9px;letter-spacing:.1em;
   text-transform:uppercase;color:var(--dim);text-align:center; }
-.cal-cell{ background:var(--bg);min-height:96px;padding:6px;cursor:pointer;
+.cal-cell{ background:var(--bg);min-height:96px;padding:6px;cursor:pointer;min-width:0;
   position:relative;transition:background .1s; }
 .cal-cell:hover{ background:var(--bg1); }
 .cal-cell.other{ background:#0a0c0f;color:var(--dim); }
@@ -139,12 +137,14 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
   background:var(--bg2);border-left:3px solid var(--acc);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;cursor:pointer; }
 .chip .ct{ color:var(--fg); }
+/* the shell (vera-panel.css) draws .chip as an inline pill that never clips: in a day it is a line, cut to the cell */
+.cal-grid .cal-cell .chip{ display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
 .more{ font-size:9px;color:var(--dim);margin-top:3px; }
 .cal-cell.sel{ box-shadow:inset 0 0 0 1px var(--acc); }
 
 /* ── Week view ───────────────────────────────────────── */
 #view-week{ flex:1;display:flex;flex-direction:column;min-height:0; }
-#week-head{ display:grid;grid-template-columns:56px repeat(7,1fr);flex-shrink:0;
+#week-head{ display:grid;grid-template-columns:56px repeat(7,minmax(0,1fr));flex-shrink:0;
   border:1px solid var(--border);border-bottom:none;border-radius:8px 8px 0 0;
   background:var(--bg1);overflow:hidden; }
 .wk-h{ padding:6px 8px;border-left:1px solid var(--border);text-align:center;
@@ -157,7 +157,7 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
   border-radius:3px;background:var(--bg2);border-left:2px solid var(--acc);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left; }
 #week-body{ flex:1;overflow-y:auto;display:grid;
-  grid-template-columns:56px repeat(7,1fr);border:1px solid var(--border);
+  grid-template-columns:56px repeat(7,minmax(0,1fr));border:1px solid var(--border);
   border-radius:0 0 8px 8px;background:var(--bg);min-height:0; }
 #wk-hours{ position:relative;height:1440px; }
 #wk-hours .hl{ position:absolute;right:6px;transform:translateY(-50%);
@@ -396,7 +396,7 @@ body.rail-hidden #rail{ display:none; }
 <body>
 <div id="root">
   <!-- ══ LEFT-HAND MENU ══ -->
-  <aside id="sidebar" data-vera-lhm>
+  <aside id="sidebar" data-vera-lhm data-lhm-widgets="cal:controls cal:month@m cal:schedule@m cal:todos@m">
     <div id="side-head">
       <div class="ico">🗓</div>
       <div><h1>Calendar</h1><div class="sub">Schedule Manager</div></div>
@@ -712,7 +712,10 @@ function mainSection(sec){
 }
 
 /* ══ Layers ═════════════════════════════════════════════ */
-const LOCAL_COLOR="#4a9eff", DREAM_COLOR="#a78bfa";
+const LOCAL_COLOR="#4a9eff", DREAM_COLOR="#a78bfa", LOOPLAB_COLOR="#c9a35a";
+// the overlays the server computes on the fly: projected dream fires, and Loop Lab's schedules (their windows and the
+// runs the scheduler started) - each its own layer, asked for only while it is shown
+function overlayQs(){ return (!hiddenLayers.has("dream")?"&include_dreams=1":"")+(!hiddenLayers.has("looplab")?"&include_loop_lab=1":""); }
 let calSources=null;   // cached /cal/sources so layers reflect every connected calendar
 async function ensureCalSources(){
   if(calSources!==null) return calSources;
@@ -723,6 +726,7 @@ async function ensureCalSources(){
 let hiddenLayers = new Set(JSON.parse(localStorage.getItem("cal.hiddenLayers")||"[]"));
 function saveHidden(){ localStorage.setItem("cal.hiddenLayers",JSON.stringify([...hiddenLayers])); }
 function eventLayer(e){
+  if(e.source==="loop-lab"||e.source==="loop-lab-run") return "looplab";
   if(e.source==="dream"||e.read_only) return "dream";
   if(!e.source||e.source==="local") return "local";
   if(e.calendar) return e.source+"::"+e.calendar;
@@ -751,6 +755,7 @@ function collectLayers(){
   });
   if(!map.has("local")) map.set("local",{key:"local",label:"Local",color:LOCAL_COLOR,n:0});
   map.set("dream",{key:"dream",label:"💭 Dreams",color:DREAM_COLOR,n:0,dream:true});
+  map.set("looplab",{key:"looplab",label:"🧪 Loop Lab schedule",color:LOOPLAB_COLOR,n:0,dream:true});
   monthEvents.forEach(e=>{
     const k=eventLayer(e);
     if(!map.has(k)) map.set(k,{key:k,label:layerLabel(e),color:e.color||LOCAL_COLOR,n:0});
@@ -825,7 +830,7 @@ async function renderMonth(){
   const gridEnd=new Date(gridStart); gridEnd.setDate(gridStart.getDate()+42);
   await ensureCalSources();
   const wantDreams=!hiddenLayers.has("dream");
-  const res=await call("/cal/events?start="+isoLocal(gridStart)+"&end="+isoLocal(gridEnd)+(wantDreams?"&include_dreams=1":""));
+  const res=await call("/cal/events?start="+isoLocal(gridStart)+"&end="+isoLocal(gridEnd)+overlayQs());
   monthEvents=(res.events)||[];
   renderLayerList();
   const byDay={};
@@ -879,7 +884,7 @@ async function renderWeek(){
   view=new Date(mon.getFullYear(),mon.getMonth(),1);
   await ensureCalSources();
   const wantDreams=!hiddenLayers.has("dream");
-  const res=await call("/cal/events?start="+isoLocal(mon)+"&end="+isoLocal(end)+(wantDreams?"&include_dreams=1":""));
+  const res=await call("/cal/events?start="+isoLocal(mon)+"&end="+isoLocal(end)+overlayQs());
   weekEvents=(res.events||[]).filter(layerVisible);
   renderLayerList();
 
@@ -958,7 +963,7 @@ function moveDay(n){
 async function fetchDayEvents(dayISO){
   const wantDreams=!hiddenLayers.has("dream");
   const next=new Date(dayISO+"T00:00"); next.setDate(next.getDate()+1);
-  const res=await call("/cal/events?start="+dayISO+"&end="+isoLocal(next)+(wantDreams?"&include_dreams=1":""));
+  const res=await call("/cal/events?start="+dayISO+"&end="+isoLocal(next)+overlayQs());
   return (res.events||[]).filter(e=>(e.start||"").slice(0,10)===dayISO&&layerVisible(e));
 }
 
@@ -1059,6 +1064,14 @@ function openEventAt(day,hour){
 function openEvent(id,startISO){
   if(id){
     const ev=findEvent(id);
+    if(ev&&(ev.source==="loop-lab"||ev.source==="loop-lab-run")){
+      // a Loop Lab window or run: its schedule opens in Loop Lab's Schedule page (the hint is read there on load and
+      // by the storage event if Loop Lab is already open)
+      toast("🧪 "+(ev.title||"Loop Lab")+(ev.result?" · "+ev.result:"")+" — opening Loop Lab › Schedule");
+      try{ localStorage.setItem("loop-lab.goto",JSON.stringify({sec:"schedule",schedule_id:ev.schedule_id||"",date:String(ev.start||"").slice(0,10),at:Date.now()})); }catch(_){}
+      if(window.veraUI&&window.veraUI.openPlace) window.veraUI.openPlace("evolve");
+      return;
+    }
     if(ev&&(ev.read_only||ev.source==="dream")){
       toast("💭 "+(ev.label||ev.title||"dream")+(ev.recurrence?" · "+ev.recurrence:"")+(ev.project?" · project: "+ev.project:""));
       return;
@@ -1108,7 +1121,7 @@ async function deleteEvent(){
 async function renderAgenda(){
   const t=isoLocal(new Date());
   const n=new Date(); n.setDate(n.getDate()+1);
-  let res; try{ res=await call("/cal/events?start="+t+"&end="+isoLocal(n)+(!hiddenLayers.has("dream")?"&include_dreams=1":"")); }
+  let res; try{ res=await call("/cal/events?start="+t+"&end="+isoLocal(n)+overlayQs()); }
   catch(e){ res={}; }
   agendaEvents=(res.events||[]).filter(e=>(e.start||"").slice(0,10)===t&&layerVisible(e));
   $("agenda-date").textContent=new Date().toLocaleDateString(undefined,{weekday:"short",day:"numeric",month:"short"});

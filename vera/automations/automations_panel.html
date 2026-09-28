@@ -21,23 +21,11 @@ html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);
   overflow:hidden;font:12px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif}
 #root{display:flex;height:100vh;min-height:0}
 
-#lhm{width:184px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);
-  display:flex;flex-direction:column}
-#lhm-head{padding:14px 14px 10px;border-bottom:1px solid var(--border);
-  display:flex;align-items:center;gap:8px}
-#lhm-head .ico{width:24px;height:24px;background:var(--bg2);border:1px solid var(--border2);
-  border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:14px}
-#lhm-head h1{margin:0;font-size:12px;font-weight:600;letter-spacing:.04em}
-#lhm-head .sub{font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;margin-top:1px}
-#lhm-nav{flex:1;padding:8px 6px;overflow-y:auto}
-.subtab{display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border-radius:6px;
-  cursor:pointer;color:var(--fg2);font-size:12px;font-weight:500;border:1px solid transparent;
-  transition:.12s;margin-bottom:2px}
-.subtab:hover{background:var(--bg2);color:var(--fg)}
-.subtab.active{background:var(--bg2);border-color:var(--border2);color:var(--fg)}
-.subtab .gl{width:18px;text-align:center;font-size:15px;opacity:.9}
-.subtab .badge{margin-left:auto;font-size:10px;font-family:var(--mono);color:var(--dim)}
-.subtab .badge.warn{color:var(--warn)}
+/* The left-hand menu is the shared one — see /ui/vera-panel.css. This page
+   used to restate its every rule here, which is how it drifted. The one
+   thing that is this page's own is what an overdue Actions count looks
+   like; the count itself is the shared .ct. */
+#sidebar[data-vera-lhm] .nav-btn .ct.warn{color:var(--warn)}
 
 #frames{flex:1;position:relative;min-height:0}
 /* Direct children only. A pane may contain an iframe of its own (the n8n
@@ -91,21 +79,20 @@ tr:last-child td{border-bottom:none}
 </head>
 <body>
 <div id="root">
-  <aside id="lhm" data-vera-lhm>
-    <div id="lhm-head">
-      <div class="ico">⚙</div>
+  <aside id="sidebar" data-vera-lhm>
+    <div id="side-head">
+      <span class="ico">⚙</span>
       <div><h1>Automations</h1><div class="sub">Flows &amp; Runners</div></div>
     </div>
-    <nav id="lhm-nav">
-      <div class="subtab" data-k="overview"><span class="gl">▦</span> Overview</div>
-      <div class="subtab" data-k="flows"><span class="gl">◈</span> DAG flows</div>
-      <div class="subtab" data-k="n8n"><span class="gl">⬡</span> n8n</div>
-      <div class="subtab" data-k="editor"><span class="gl">✎</span> n8n editor</div>
-      <div class="subtab" data-k="openclaw"><span class="gl">◎</span> OpenClaw</div>
-      <div class="subtab" data-k="operator"><span class="gl">▷</span> Operator</div>
-      <div class="subtab" data-k="home"><span class="gl">⌂</span> Home</div>
-      <div class="subtab" data-k="actions"><span class="gl">☑</span> Actions
-        <span class="badge" id="actBadge"></span></div>
+    <nav id="nav">
+      <button type="button" class="nav-btn" data-k="overview" title="Overview"><span class="gl">▦</span>Overview</button>
+      <button type="button" class="nav-btn" data-k="flows"    title="DAG flows"><span class="gl">◈</span>DAG flows</button>
+      <button type="button" class="nav-btn" data-k="n8n"      title="n8n"><span class="gl">⬡</span>n8n</button>
+      <button type="button" class="nav-btn" data-k="editor"   title="n8n editor"><span class="gl">✎</span>n8n editor</button>
+      <button type="button" class="nav-btn" data-k="openclaw" title="OpenClaw"><span class="gl">◎</span>OpenClaw</button>
+      <button type="button" class="nav-btn" data-k="operator" title="Operator"><span class="gl">▷</span>Operator</button>
+      <button type="button" class="nav-btn" data-k="home"     title="Home"><span class="gl">⌂</span>Home</button>
+      <button type="button" class="nav-btn" data-k="actions"  title="Actions"><span class="gl">☑</span>Actions<span class="ct" id="actBadge"></span></button>
     </nav>
   </aside>
 
@@ -159,7 +146,7 @@ tr:last-child td{border-bottom:none}
 <script>
 const LS='vera.automations.tab';
 const $=s=>document.querySelector(s);
-const tabs=[...document.querySelectorAll('.subtab')];
+const tabs=[...document.querySelectorAll('#nav .nav-btn')];
 // Direct children only, to match the CSS. Without the `>` this also collects
 // the editor pane's OWN nested iframe, which has no data-k and would be
 // toggled as if it were a pane in its own right.
@@ -235,7 +222,7 @@ async function loadOverview(){
     : '<div class="empty">No subsystems reported.</div>';
   const b=$('#actBadge');
   if(b){ b.textContent=c&&c.open_actions?c.open_actions:'';
-         b.className='badge'+(c&&c.open_actions?' warn':''); }
+         b.className='ct'+(c&&c.open_actions?' warn':''); }
 }
 
 async function loadActions(){
@@ -258,7 +245,7 @@ async function loadActions(){
   try{const s=localStorage.getItem(LS); if(s&&tabs.some(t=>t.dataset.k===s))start=s;}catch(e){}
   show(start);
   loadOverview();
-  setInterval(()=>{ if(document.querySelector('.subtab.active')?.dataset.k==='overview')
+  setInterval(()=>{ if(document.querySelector('#nav .nav-btn.active')?.dataset.k==='overview')
     loadOverview(); },60000);
 })();
 </script>

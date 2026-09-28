@@ -40,7 +40,7 @@ async def _interaction_panel():
 register_ui(
     "interaction-map",
     "Estate Map",
-    "🛰️",
+    "⌖",
     """<div style="height:100%;display:flex;flex-direction:column">
   <iframe src="/interaction/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"

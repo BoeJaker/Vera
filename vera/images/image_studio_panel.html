@@ -85,6 +85,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
   </div>
   <nav id="nav">
     <button class="nav-btn active" data-go="generate" onclick="go('generate')"><span class="gl">✦</span>Generate</button>
+    <button class="nav-btn" data-go="overview" onclick="go('overview')" title="The studio as widgets: images, sprites, characters"><span class="gl">◫</span>Overview</button>
     <button class="nav-btn" data-go="gallery" onclick="go('gallery')"><span class="gl">▣</span>Gallery</button>
     <button class="nav-btn" data-go="loras" onclick="go('loras')"><span class="gl">★</span>LoRAs</button>
     <button class="nav-btn" data-go="thumbnails" onclick="go('thumbnails')"><span class="gl">▤</span>Thumbnails</button>
@@ -213,6 +214,12 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
     </div>
   </div>
 
+  <!-- OVERVIEW: the studio as widgets (vera/widgets/layouts/studio.json) - its images, sprites and characters; every
+       picture, sprite and character opens in the drawer. /ui/vera-dashboard.js is loaded when the pane first opens. -->
+  <div class="pane" id="pane-overview">
+    <div class="scroll" style="display:block"><vera-dashboard layout="studio" title="The studio at a glance" no-popout></vera-dashboard></div>
+  </div>
+
   <!-- GALLERY -->
   <div class="pane" id="pane-gallery">
     <div class="scroll"><div class="col main">
@@ -259,7 +266,10 @@ function go(id){
   }
   if(id==='gallery') loadGallery();
   if(id==='loras'){ loadLoras(); }
+  if(id==='overview') studioDash();
 }
+// the Overview draws <vera-dashboard layout="studio">: its script is fetched the first time the pane opens
+function studioDash(){ if(document.querySelector('script[data-studio-dash]')) return; const s=document.createElement('script'); s.src=BASE+'/ui/vera-dashboard.js'; s.setAttribute('data-studio-dash','1'); document.head.appendChild(s); }
 // Companion no longer has a top-level tab: the shell opens it here instead,
 // and repeats the request until this panel acknowledges it.
 window.addEventListener('message',e=>{

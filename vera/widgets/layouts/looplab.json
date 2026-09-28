@@ -1,0 +1,328 @@
+{
+ "v": 2,
+ "dashboard": "looplab",
+ "layout": "default",
+ "key": "looplab",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "name": "Live",
+ "note": "What is happening now: the pulse of the gates, who is working where, the loops and the race, the pipelines, the open board, the test activity of the last day.",
+ "widgets": [
+  {
+   "record": {
+    "id": "looplab-pulse",
+    "form": "ci-pulse",
+    "source": "ci.pulse",
+    "shape": "values",
+    "title": "Pulse",
+    "read": {
+     "refresh": "30s",
+     "args": {
+      "buckets": "day"
+     },
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-fleet",
+    "form": "ci-fleet",
+    "source": "ci.fleet",
+    "shape": "items",
+    "title": "Fleet",
+    "read": {
+     "refresh": "20s",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    0
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "20s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-loops",
+    "form": "status-matrix",
+    "source": "loop.ci.matrix",
+    "shape": "matrix",
+    "title": "Agentic loops",
+    "read": {
+     "refresh": "20s",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    3
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "20s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-race",
+    "form": "race-green",
+    "source": "ci.race",
+    "shape": "matrix",
+    "title": "Race to green",
+    "read": {
+     "refresh": "30s",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    3
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-pipes",
+    "form": "status-matrix",
+    "source": "evolve.pipeline.list",
+    "shape": "matrix",
+    "title": "Pipelines",
+    "read": {
+     "refresh": "20s",
+     "args": {
+      "limit": 80
+     },
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    7
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "20s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-board",
+    "form": "ci-board",
+    "source": "ci.board",
+    "shape": "items",
+    "title": "Open work",
+    "read": {
+     "refresh": "60s",
+     "args": {
+      "include_done": false
+     },
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    7
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-activity",
+    "form": "element",
+    "source": "",
+    "shape": "panel",
+    "title": "Test activity · 24h",
+    "read": {
+     "refresh": "",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "tag": "vera-test-activity-timeline",
+     "attrs": {
+      "hours": 24
+     }
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    11
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  }
+ ]
+}

@@ -23,56 +23,36 @@
 html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px;-webkit-font-smoothing:antialiased}
 html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 #shell{display:flex;height:100vh;overflow:hidden}
-#secNav{
-  width:40px;flex-shrink:0;display:flex;flex-direction:column;
-  align-items:center;padding:8px 0;gap:1px;
-  border-right:1px solid var(--border);background:var(--bg1);
-}
-.snav{
-  writing-mode:vertical-rl;transform:rotate(180deg);
-  font-size:9px;font-weight:700;letter-spacing:1.5px;
-  text-transform:uppercase;font-family:var(--mono);
-  padding:12px 7px;border-radius:3px;cursor:pointer;
-  color:var(--dim2);border:1px solid transparent;
-  transition:all .15s;user-select:none;width:32px;text-align:center;
-}
-.snav:hover{color:var(--text)}
-.snav.on{border-color:var(--border);background:var(--bg2)}
-.snav[data-pane="agents"].on{color:var(--acc3)}
-.snav[data-pane="skills"].on{color:var(--acc)}
-.snav[data-pane="ontologies"].on{color:var(--acc2)}
-.snav[data-pane="registry"].on{color:var(--acc4)}
-.snav[data-pane="bridges"].on{color:var(--acc)}
-.navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
-#panes{flex:1;overflow:hidden;position:relative}
+/* The left-hand menu is the shared one: markup per the canonical shape,
+   chrome from /ui/vera-panel.css, behaviour (collapse, nav bridging) from
+   /ui/vera-panel.js. Nothing about it is styled here — that is the point. */
+#panes{flex:1;overflow:hidden;position:relative;min-width:0}
 .pane{position:absolute;inset:0;display:none}
 .pane.on{display:block}
 .pane iframe{width:100%;height:100%;border:none;display:block;background:var(--bg0)}
-/* Hidden once the host shell confirms it's rendering these same sections
-   as injected sub-menu items itself (VeraPanelBridge's registerNav() +
-   vpb-nav-hosted — see vera-panel-bridge.js). #panes already carries
-   flex:1 in the #shell flex row above. Confirmation-driven, not assumed. */
-html.vpb-nav-hosted #secNav{display:none}
 </style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 <div id="shell">
-  <div id="secNav">
-    <div class="snav on" data-pane="agents"     onclick="show('agents',this)">Agents</div>
-    <div class="navdiv"></div>
-    <div class="snav"    data-pane="skills"     onclick="show('skills',this)">Skills</div>
-    <div class="navdiv"></div>
-    <div class="snav"    data-pane="ontologies" onclick="show('ontologies',this)">Ontologies</div>
-    <div class="navdiv"></div>
-    <!-- The agent registry: what an EXTERNAL agent drives Vera with. It sits
-         here rather than in a tab of its own because it is a skills surface -
-         it projects into and out of the two stores either side of it. -->
-    <div class="snav"    data-pane="registry"   onclick="show('registry',this)">Registry</div>
-    <div class="navdiv"></div>
-    <!-- Agent bridges: the external agent runtimes Vera can drive. Formerly a
-         top-level tab; the shell now opens it here. -->
-    <div class="snav"    data-pane="bridges"    onclick="show('bridges',this)">Bridges</div>
-  </div>
+  <aside id="sidebar" data-vera-lhm>
+    <div id="side-head">
+      <span class="ico">◆</span>
+      <div><h1>Agents</h1><div class="sub">skills &middot; ontologies</div></div>
+    </div>
+    <nav id="nav">
+      <button type="button" class="nav-btn active" data-pane="agents"     title="Agents"     onclick="show('agents',this)"><span class="gl">◆</span>Agents</button>
+      <button type="button" class="nav-btn"        data-pane="skills"     title="Skills"     onclick="show('skills',this)"><span class="gl">✦</span>Skills</button>
+      <button type="button" class="nav-btn"        data-pane="ontologies" title="Ontologies" onclick="show('ontologies',this)"><span class="gl">⬡</span>Ontologies</button>
+      <!-- The agent registry: what an EXTERNAL agent drives Vera with. It sits
+           here rather than in a tab of its own because it is a skills surface -
+           it projects into and out of the two stores either side of it. -->
+      <button type="button" class="nav-btn"        data-pane="registry"   title="Registry"   onclick="show('registry',this)"><span class="gl">▤</span>Registry</button>
+      <!-- Agent bridges: the external agent runtimes Vera can drive. Formerly a
+           top-level tab; the shell now opens it here. -->
+      <button type="button" class="nav-btn"        data-pane="bridges"    title="Agent Bridges" onclick="show('bridges',this)"><span class="gl">⇄</span>Bridges</button>
+    </nav>
+  </aside>
   <div id="panes">
     <div class="pane on" id="pane-agents">
       <iframe id="frame-agents"     src="about:blank" allow="clipboard-read; clipboard-write; microphone"></iframe>
@@ -122,24 +102,17 @@ function loadFrame(name) {
 }
 
 function show(name, el) {
-  document.querySelectorAll('.snav').forEach(n => n.classList.remove('on'));
-  if (el) el.classList.add('on');
+  document.querySelectorAll('#nav .nav-btn').forEach(n => n.classList.remove('active'));
+  if (el) el.classList.add('active');
   document.querySelectorAll('.pane').forEach(p => p.classList.remove('on'));
   const pane = document.getElementById('pane-' + name);
   if (pane) pane.classList.add('on');
   loadFrame(name);
-  // Keep the outer shell's injected top-level sub-menu in sync when this
-  // panel changes section on its own — see registerNav() below.
-  if (window.VeraPanelBridge) VeraPanelBridge.setNavActive(name);
 }
-// 3rd pilot panel for nav unification — its buttons already carry
-// data-pane, matched directly by VeraPanelBridge's generic nav_select
-// fallback, so no selectFn is needed.
-if (window.VeraPanelBridge) VeraPanelBridge.registerNav([
-  {id:'agents', label:'Agents'}, {id:'skills', label:'Skills'},
-  {id:'ontologies', label:'Ontologies'}, {id:'registry', label:'Registry'},
-  {id:'bridges', label:'Agent Bridges'},
-]);
+// The outer shell's copy of this menu — the items and which one is current —
+// is published by the shared /ui/vera-panel.js off the canonical markup
+// above (its title= is the label it sends), so there is no registerNav or
+// setNavActive of our own to keep in step with it.
 
 function broadcast(msg) {
   Object.keys(LOADED).forEach(name => {
@@ -165,7 +138,7 @@ window.addEventListener('message', e => {
   // A tab folded in here (Agent Bridges) is opened on its pane by the shell,
   // which repeats the request until this panel acknowledges it.
   if (e.data?.type === 'vera:estate:open' && Object.prototype.hasOwnProperty.call(PATHS, e.data.pane)) {
-    show(e.data.pane, document.querySelector('.snav[data-pane="' + e.data.pane + '"]'));
+    show(e.data.pane, document.querySelector('#nav .nav-btn[data-pane="' + e.data.pane + '"]'));
     try { if (e.source) e.source.postMessage({ type:'vera:estate:opened', rid:e.data.rid, ok:true }, '*'); } catch(_){}
   }
 });
@@ -173,5 +146,6 @@ window.addEventListener('message', e => {
 window.addEventListener('DOMContentLoaded', () => { loadFrame('agents'); });
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
 </body>
 </html>

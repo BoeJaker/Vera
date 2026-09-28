@@ -1623,7 +1623,7 @@ async def cap_operator_runs(limit: int = 30, trace_id=None) -> Dict[str, Any]:
 
 
 register_ui(
-    "operator-studio", "Operator", "🕹",
+    "operator-studio", "Operator", "⦿",
     """<div id="operator-mount" style="height:100%;display:flex;flex-direction:column;">
         <iframe src="/operator/panel"
                 style="flex:1;border:none;width:100%;height:100%"></iframe>

@@ -259,6 +259,54 @@ async def _serve_vera_ui_js():
                     media_type="application/javascript")
 
 
+# Serve vera-lhm.js — the one left-hand menu (UI redesign): a rail of quick menus
+# beside a detail column, the ☰ top-level list, every part a widget; the same
+# code draws a page's own menu and, in the harness, another page's absorbed one.
+@APP.get("/ui/vera-lhm.js", include_in_schema=False)
+async def _serve_vera_lhm_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent / "vera-lhm.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript")
+    return Response(content="console.warn('vera-lhm.js not found');",
+                    media_type="application/javascript")
+
+
+# Serve exploded_element.js — the chat's Explode (UI redesign, Notes/40 §6 P6):
+# <vera-exploded>, one scene per session — a station per turn (read · exchange ·
+# produced · landed) — in three projections, cards · front · iso.
+@APP.get("/ui/exploded_element.js", include_in_schema=False)
+async def _serve_exploded_element_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent / "exploded_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(content="console.warn('exploded_element.js not found');",
+                    media_type="application/javascript")
+
+
+# Serve context_graph_element.js — the chat's context graph (UI redesign: the
+# Graph board's column). <vera-context-graph> draws the records assembled for
+# the turn in focus — galaxy · iso · flow · time — with the loop lane and the
+# plan row; the chat feeds it and draws the runs to the message.
+@APP.get("/ui/context_graph_element.js", include_in_schema=False)
+async def _serve_context_graph_element_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent / "context_graph_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(content="console.warn('context_graph_element.js not found');",
+                    media_type="application/javascript")
+
+
 # Serve vera-dashboard.js — the shared VeraDash widget-grid framework (drag/
 # resize/hide in edit mode + widget loader + pop-out) used by every dashboard.
 @APP.get("/ui/vera-dashboard.js", include_in_schema=False)
@@ -732,20 +780,279 @@ async def _panel_dispatch_await_reply(sid: str, request_id: str, timeout: float)
         except Exception: pass
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# THE ONE PANEL SET (UI redesign, Notes/40 §9)
+# ─────────────────────────────────────────────────────────────────────────────
+# Every panel open anywhere — beside the chat, or as a tab of the harness —
+# whoever opened it, in one list. The UIs that hold panels report what they
+# hold (POST /ui/panels/open/report, refreshed while they live; the key
+# expires when they go), ui.panels.open returns the union, and panel.dispatch /
+# panel.query take a 'panel' target so any of them can be driven through the
+# one bridge: the chat answers for the panel beside it and hands the rest to
+# the harness that holds the tab. Keyed under vera:ui:panels:open:* — NOT
+# vera:ui:panel:* which the startup loader globs for dynamic panel records.
+
+from fastapi import Request as _BridgeRequest   # also imported further down, beside the ack route
+
+_PANELS_OPEN_KEY = "vera:ui:panels:open:{sid}:{host}"
+_PANELS_OPEN_TTL = 90        # seconds; the holders re-report every 30 s
+
+
+# ── attachments (UI redesign, Notes/40 §5.2; the Paste board) ───────────────────────────
+# POST /chat/attachment (multipart: file, session_id) puts a pasted or dropped file into
+# the session's artifact store — text through write_artifact_file (sandbox-aware, so a
+# run can open it at ./attachments/<id>_<name>), binaries on the host artifact dir — and
+# answers the attachment record the composer's chip and the [attachment …] reference line
+# the model sees are built from: {id, kind, name, mime, bytes, rel, preview, text_extracted,
+# pages}. The preview is the existing /exec/artifacts/download route.
+import os as _att_os
+from urllib.parse import quote as _att_quote
+from fastapi import File as _AttFile, Form as _AttForm, UploadFile as _AttUpload
+
+_ATT_TEXT_EXT = {".txt", ".md", ".markdown", ".rst", ".py", ".js", ".mjs", ".cjs", ".ts", ".json", ".csv", ".tsv",
+                 ".log", ".diff", ".patch", ".html", ".htm", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".sh",
+                 ".ps1", ".sql", ".xml", ".css"}
+_ATT_KIND_BY_EXT = {".diff": "diff", ".patch": "diff", ".csv": "csv", ".tsv": "csv", ".log": "log", ".md": "markdown",
+                    ".markdown": "markdown", ".html": "html", ".htm": "html", ".json": "json", ".pdf": "pdf",
+                    ".docx": "docx"}
+
+
+def _att_kind(name: str, mime: str) -> str:
+    ext = _att_os.path.splitext(name or "")[1].lower()
+    if (mime or "").startswith("image/"):
+        return "image"
+    if ext in _ATT_KIND_BY_EXT:
+        return _ATT_KIND_BY_EXT[ext]
+    if ext in _ATT_TEXT_EXT or (mime or "").startswith("text/"):
+        return "code" if ext in (".py", ".js", ".mjs", ".cjs", ".ts", ".sh", ".ps1", ".sql", ".css") else "text"
+    return "file"
+
+
+def _att_extract(kind: str, data: bytes) -> tuple:
+    """(text, pages) for what can be read as text: text kinds decode; a pdf through pypdf
+    when it is installed; anything else is opaque (the model opens it as a file)."""
+    if kind in ("text", "code", "diff", "csv", "log", "markdown", "html", "json"):
+        return data.decode("utf-8", "replace"), 0
+    if kind == "pdf":
+        try:
+            import io
+            from pypdf import PdfReader
+            r = PdfReader(io.BytesIO(data))
+            out = []
+            for p in r.pages[:80]:
+                try:
+                    out.append(p.extract_text() or "")
+                except Exception:
+                    out.append("")
+            return "\n\n".join(out).strip(), len(r.pages)
+        except Exception:
+            return "", 0
+    return "", 0
+
+
+@APP.post("/chat/attachment", include_in_schema=False)
+async def _chat_attachment_upload(file: _AttUpload = _AttFile(...), session_id: str = _AttForm("")):
+    from Vera.vera.execution.exec_capabilities import artifact_dir, write_artifact_file, _safe_seg
+    data = await file.read()
+    if len(data) > 64 * 1024 * 1024:
+        return {"ok": False, "error": "attachment over 64 MB"}
+    name = _safe_seg(_att_os.path.basename(file.filename or "attachment"))
+    att_id = uuid.uuid4().hex[:10]
+    rel = "attachments/" + att_id + "_" + name
+    kind = _att_kind(name, file.content_type or "")
+    text, pages = _att_extract(kind, data)
+    stored = ""
+    try:
+        if text and kind != "pdf":
+            stored = await write_artifact_file(relpath=rel, content=text, session_id=session_id)
+        else:
+            base = artifact_dir(session_id=session_id, create=True)
+            full = _att_os.path.join(base, "attachments")
+            _att_os.makedirs(full, exist_ok=True)
+            with open(_att_os.path.join(full, att_id + "_" + name), "wb") as fh:
+                fh.write(data)
+            stored = _att_os.path.join(full, att_id + "_" + name)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": "store failed: %s" % e}
+    preview = "/exec/artifacts/download?session_id=" + _att_quote(session_id or "") + "&rel=" + _att_quote(rel)
+    return {"ok": True, "id": att_id, "kind": kind, "name": name, "mime": file.content_type or "", "bytes": len(data),
+            "rel": rel, "path": stored, "preview": preview, "text_extracted": text[:200000], "pages": pages}
+
+
+@APP.post("/ui/panels/open/report", include_in_schema=False)
+async def _panels_open_report(request: _BridgeRequest):
+    """A UI that holds panels reports them. Body: {session_id, host ('chat' |
+    'harness'), panels:[{id, label, origin ('you' | 'aide'), placement}]}."""
+    from fastapi.responses import JSONResponse
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+    sid = str((body or {}).get("session_id", "")).strip()
+    host = str((body or {}).get("host", "")).strip() or "chat"
+    panels = (body or {}).get("panels")
+    if not sid:
+        return JSONResponse({"ok": False, "error": "session_id required"}, status_code=400)
+    if not isinstance(panels, list):
+        return JSONResponse({"ok": False, "error": "panels must be a list"}, status_code=400)
+    r = _redis()
+    if not r:
+        return JSONResponse({"ok": False, "error": "redis unavailable"}, status_code=503)
+    rows = []
+    for x in panels[:40]:
+        if not isinstance(x, dict) or not x.get("id"):
+            continue
+        rows.append({
+            "id": str(x.get("id"))[:80], "label": str(x.get("label") or x.get("id"))[:120],
+            "origin": str(x.get("origin") or "you")[:16], "placement": str(x.get("placement") or "")[:40],
+            "host": host, "since": str(x.get("since") or ""),
+        })
+    key = _PANELS_OPEN_KEY.format(sid=sid, host=host)
+    try:
+        if rows:
+            await r.set(key, json.dumps({"session_id": sid, "host": host, "panels": rows, "ts": now_iso()}),
+                        ex=_PANELS_OPEN_TTL)
+        else:
+            await r.delete(key)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"store failed: {e}"}, status_code=500)
+    return JSONResponse({"ok": True, "count": len(rows)})
+
+
+@capability(
+    "ui.panels.open",
+    http_method="GET", http_path="/ui/panels/open", http_tags=["ui", "panel"],
+    memory="off", silent=True,
+    description=(
+        "The one panel set: every UI panel open right now for a chat session, "
+        "wherever it is held — beside the chat ('chat' host) or as a tab of the "
+        "harness ('harness' host) — with who opened it (origin 'you' or 'aide') "
+        "and its placement. Inputs: session_id (str! — the chat session; usually "
+        "the trace_id of the calling turn). Output: {ok, session_id, panels:[{id, "
+        "label, origin, placement, host}], count, hosts}. Drive any of them with "
+        "panel.dispatch(session_id, action, payload, panel=<id>) or read it with "
+        "panel.query(session_id, panel=<id>)."
+    ),
+)
+async def cap_ui_panels_open(session_id: str = "", trace_id=None):
+    sid = (session_id or trace_id or "").strip()
+    if not sid:
+        return {"ok": False, "error": "session_id is required"}
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    panels, hosts = [], []
+    for host in ("chat", "harness"):
+        try:
+            raw = await r.get(_PANELS_OPEN_KEY.format(sid=sid, host=host))
+        except Exception:
+            raw = None
+        if not raw:
+            continue
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode("utf-8", "replace")
+        try:
+            rec = json.loads(raw)
+        except Exception:
+            continue
+        rows = rec.get("panels") if isinstance(rec, dict) else None
+        if isinstance(rows, list) and rows:
+            hosts.append(host)
+            panels.extend([x for x in rows if isinstance(x, dict)])
+    return {"ok": True, "session_id": sid, "panels": panels, "count": len(panels), "hosts": hosts}
+
+
+# ── saved menus (the ChatMenu board's "Save as menu…"): a menu record of the user's own, shown in the rail beneath
+# the built-ins - {id, name, icon, items:[{id, label, tpl}], from}. Keyed per owner (a session id, or 'me').
+_LHM_MENU_KEY = "vera:ui:lhm:menu:{owner}:{id}"
+
+
+def _lhm_menu_owner(owner: str, sid: str) -> str:
+    return (str(owner or "").strip() or str(sid or "").strip() or "me")[:80]
+
+
+@capability(
+    "lhm.menu.save", memory="off",
+    http_method="POST", http_path="/ui/lhm/menu/save", http_tags=["ui", "lhm"],
+    description="Save a composed menu (Save as menu…). Inputs: menu (object! - {id, name, icon, items:[{id,label,tpl}], "
+                "from}), owner (str - defaults to the session), session_id (str). Output: {ok, menu}.")
+async def cap_lhm_menu_save(menu: Optional[dict] = None, owner: str = "", session_id: str = "", trace_id=None):
+    m = menu if isinstance(menu, dict) else {}
+    name = str(m.get("name") or "").strip()[:80]
+    mid = str(m.get("id") or ("menu:" + name.lower().replace(" ", "-"))).strip()[:80]
+    if not name or not mid:
+        return {"ok": False, "error": "a menu needs a name"}
+    items = [{"id": str(i.get("id") or "")[:64], "label": str(i.get("label") or i.get("id") or "")[:80], "tpl": str(i.get("tpl") or "")[:80]}
+             for i in (m.get("items") or []) if isinstance(i, dict) and i.get("id")][:24]
+    rec = {"id": mid, "name": name, "icon": str(m.get("icon") or "\u2726")[:4], "items": items, "from": str(m.get("from") or "")[:64],
+           "owner": _lhm_menu_owner(owner, session_id or trace_id), "saved_at": now_iso()}
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    await r.set(_LHM_MENU_KEY.format(owner=rec["owner"], id=mid), json.dumps(rec))
+    await emit_event({"type": "lhm.menu.save", "id": mid, "owner": rec["owner"], "items": len(items)})
+    return {"ok": True, "menu": rec}
+
+
+@capability(
+    "lhm.menu.list", memory="off", silent=True,
+    http_method="GET", http_path="/ui/lhm/menus", http_tags=["ui", "lhm"],
+    description="The saved menus of an owner (the session by default). Inputs: owner (str), session_id (str). "
+                "Output: {ok, menus:[{id, name, icon, items, from, saved_at}], count}.")
+async def cap_lhm_menu_list(owner: str = "", session_id: str = "", trace_id=None):
+    r = _redis()
+    if not r:
+        return {"ok": True, "menus": [], "count": 0}
+    own = _lhm_menu_owner(owner, session_id or trace_id)
+    out = []
+    try:
+        async for key in r.scan_iter(match=_LHM_MENU_KEY.format(owner=own, id="*"), count=200):
+            raw = await r.get(key)
+            if isinstance(raw, (bytes, bytearray)):
+                raw = raw.decode("utf-8", "replace")
+            try:
+                out.append(json.loads(raw))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    out.sort(key=lambda m: m.get("saved_at") or "")
+    return {"ok": True, "menus": out, "count": len(out)}
+
+
+@capability(
+    "lhm.menu.delete", memory="off",
+    http_method="POST", http_path="/ui/lhm/menu/delete", http_tags=["ui", "lhm"],
+    description="Delete a saved menu. Inputs: id (str!), owner (str), session_id (str). Output: {ok, id}.")
+async def cap_lhm_menu_delete(id: str = "", owner: str = "", session_id: str = "", trace_id=None):
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    own = _lhm_menu_owner(owner, session_id or trace_id)
+    n = await r.delete(_LHM_MENU_KEY.format(owner=own, id=str(id or "").strip()))
+    if not n:
+        return {"ok": False, "error": "no saved menu %r" % id}
+    await emit_event({"type": "lhm.menu.delete", "id": id, "owner": own})
+    return {"ok": True, "id": id}
+
+
 @capability(
     "panel.dispatch",
     http_method="POST", http_path="/panel/dispatch", http_tags=["ui", "panel"],
     memory="off",
     description=(
-        "Send an action to the UI panel currently mounted in the user's chat "
-        "session. The panel's vera-panel-bridge.js shim runs the matching "
-        "action handler and returns the result. Inputs: session_id (str! — "
-        "the chat session ID; usually the trace_id of the calling turn), "
-        "action (str! — handler name registered via "
+        "Send an action to a UI panel open in the user's session — the panel "
+        "beside the chat by default, or any panel in the one panel set "
+        "(ui.panels.open) when 'panel' names it: a harness tab is reached "
+        "through the harness that holds it. The panel's vera-panel-bridge.js "
+        "shim runs the matching action handler and returns the result. Inputs: "
+        "session_id (str! — the chat session ID; usually the trace_id of the "
+        "calling turn), action (str! — handler name registered via "
         "VeraPanelBridge.registerActionHandler), payload (object — handler "
-        "args, default {}), timeout_secs (number — max wait for ack, "
-        "default 8). Returns the panel handler's result, or "
-        "{ok:false, error:'…'} on timeout / no panel mounted."
+        "args, default {}), panel (str — a panel id from ui.panels.open; "
+        "default: the panel beside the chat), timeout_secs (number — max wait "
+        "for ack, default 8). Returns the panel handler's result, or "
+        "{ok:false, error:'…'} on timeout / no such panel open."
     ),
 )
 async def cap_panel_dispatch(
@@ -753,6 +1060,7 @@ async def cap_panel_dispatch(
     action: str = "",
     payload: dict = None,
     timeout_secs: float = 8.0,
+    panel: str = "",
     trace_id=None,
 ):
     sid = (session_id or trace_id or "").strip()
@@ -775,6 +1083,7 @@ async def cap_panel_dispatch(
         "session_id": sid,
         "action":     act,
         "payload":    payload or {},
+        "panel":      str(panel or "").strip(),   # '' = the panel beside the chat
         "ts":         now_iso(),
     }
     # Publish first so the SSE has something to forward when the chat
@@ -806,13 +1115,15 @@ async def cap_panel_dispatch(
         "session. Equivalent to panel.dispatch with action='__query__' but "
         "lighter — returns the panel's last state snapshot directly. "
         "Inputs: session_id (str! — chat session ID; usually trace_id), "
-        "timeout_secs (number — default 4). Returns the panel state object "
-        "or {ok:false, error:'…'} on timeout."
+        "panel (str — a panel id from ui.panels.open; default: the panel "
+        "beside the chat), timeout_secs (number — default 4). Returns the "
+        "panel state object or {ok:false, error:'…'} on timeout."
     ),
 )
 async def cap_panel_query(
     session_id: str = "",
     timeout_secs: float = 4.0,
+    panel: str = "",
     trace_id=None,
 ):
     return await cap_panel_dispatch(
@@ -820,6 +1131,7 @@ async def cap_panel_query(
         action="__query__",
         payload={},
         timeout_secs=float(timeout_secs),
+        panel=panel,
         trace_id=trace_id,
     )
 

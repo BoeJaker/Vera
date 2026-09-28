@@ -1063,7 +1063,7 @@ async def gallery_view():
 
 
 register_ui(
-    panel_id="gallery", label="Artifacts", icon="🖼", mode="tab", tab_order=212,
+    panel_id="gallery", label="Artifacts", icon="▨", mode="tab", tab_order=212,
     html=('<iframe src="/gallery/view" title="Artifacts Gallery" '
           'style="width:100%;height:100%;border:0;display:block;background:transparent">'
           '</iframe>'),

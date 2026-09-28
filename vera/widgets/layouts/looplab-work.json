@@ -1,0 +1,196 @@
+{
+ "v": 2,
+ "dashboard": "looplab-work",
+ "layout": "default",
+ "key": "looplab-work",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "name": "Work",
+ "note": "The work in flight: the census as it runs, the loops and where their time goes, the census runs among the commits, and every task's recent runs.",
+ "widgets": [
+  {
+   "record": {
+    "id": "looplab-work-live",
+    "form": "census-live",
+    "source": "census.live",
+    "shape": "stages",
+    "title": "Census, live",
+    "read": {
+     "refresh": "5s",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-work-loops",
+    "form": "loop-perf",
+    "source": "loop.ci.perf",
+    "shape": "items",
+    "title": "Loop performance",
+    "read": {
+     "refresh": "30s",
+     "args": {
+      "limit": 12
+     },
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    0
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-work-timeline",
+    "form": "census-timeline",
+    "source": "ci.census",
+    "shape": "events",
+    "title": "Census timeline",
+    "read": {
+     "refresh": "5m",
+     "args": {
+      "template": "default"
+     },
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      7
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    4
+   ],
+   "span": [
+    6,
+    7
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-work-tasks",
+    "form": "status-matrix",
+    "source": "evolve.tasks.overview",
+    "shape": "matrix",
+    "title": "Tasks · recent runs",
+    "read": {
+     "refresh": "2m",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      7
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    4
+   ],
+   "span": [
+    6,
+    7
+   ],
+   "hidden": false,
+   "refresh": "2m",
+   "floated": false
+  }
+ ]
+}

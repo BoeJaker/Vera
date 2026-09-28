@@ -81,10 +81,10 @@
 </head>
 <body>
 <div class="wrap">
-  <div class="tabs">
-    <div class="tab on" data-v="scan" onclick="P.tab('scan')">⚑ Scan <span class="b" id="tb-scan">–</span></div>
-    <div class="tab" data-v="stalls" onclick="P.tab('stalls')">⏱ Loop Stalls <span class="b" id="tb-stalls">0</span></div>
-    <div class="tab" data-v="logs" onclick="P.tab('logs')">▤ Logs</div>
+  <div class="tabs" data-vera-lhm>
+    <div class="tab on" data-v="scan" data-label="Scan" data-icon="⚑" onclick="P.tab('scan')">⚑ Scan <span class="b" id="tb-scan">–</span></div>
+    <div class="tab" data-v="stalls" data-label="Loop stalls" data-icon="⏱" onclick="P.tab('stalls')">⏱ Loop Stalls <span class="b" id="tb-stalls">0</span></div>
+    <div class="tab" data-v="logs" data-label="Logs" data-icon="▤" onclick="P.tab('logs')">▤ Logs</div>
   </div>
   <div class="body">
     <!-- SCAN -->
@@ -254,5 +254,6 @@ window.P={tab,scan,fix,autoScan,stalls,tglStack,logs,logFiles,logsDeb,autoLog,co
 scan();
 stalls();
 </script>
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

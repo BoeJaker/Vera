@@ -1,0 +1,192 @@
+{
+ "v": 2,
+ "dashboard": "looplab-loops",
+ "layout": "default",
+ "key": "looplab-loops",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "name": "Agentic loops",
+ "note": "Every loop run by goal, the newest loop's race through its gate and steps, its plan as a board, and every task's recent runs.",
+ "widgets": [
+  {
+   "record": {
+    "id": "looplab-loops-loops",
+    "form": "status-matrix",
+    "source": "loop.ci.matrix",
+    "shape": "matrix",
+    "title": "Loops by goal",
+    "read": {
+     "refresh": "20s",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      5
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    12,
+    5
+   ],
+   "hidden": false,
+   "refresh": "20s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-loops-race",
+    "form": "race-green",
+    "source": "loop.ci.race",
+    "shape": "matrix",
+    "title": "Newest loop · race",
+    "read": {
+     "refresh": "20s",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    5
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "20s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-loops-plan",
+    "form": "ci-board",
+    "source": "loop.ci.board",
+    "shape": "items",
+    "title": "Newest loop · plan",
+    "read": {
+     "refresh": "20s",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    5
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "20s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-loops-tasks",
+    "form": "status-matrix",
+    "source": "evolve.tasks.overview",
+    "shape": "matrix",
+    "title": "Tasks · recent runs",
+    "read": {
+     "refresh": "2m",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      5
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    9
+   ],
+   "span": [
+    12,
+    5
+   ],
+   "hidden": false,
+   "refresh": "2m",
+   "floated": false
+  }
+ ]
+}

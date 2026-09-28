@@ -507,10 +507,10 @@ select option { background: var(--bg2); }
 <div id="topbar">
   <div class="tb-title">◇ CAP ONTOLOGY</div>
 
-  <div class="view-tabs">
-    <button class="view-tab on" id="vt-matrix" onclick="setView('matrix')">⊞ Matrix</button>
-    <button class="view-tab"    id="vt-graph"  onclick="setView('graph')">◉ Graph</button>
-    <button class="view-tab"    id="vt-list"   onclick="setView('list')">≡ List</button>
+  <div class="view-tabs" data-vera-lhm>
+    <button class="view-tab on" id="vt-matrix" title="Matrix" data-icon="⊞" onclick="setView('matrix')">⊞ Matrix</button>
+    <button class="view-tab"    id="vt-graph" title="Graph" data-icon="◉" onclick="setView('graph')">◉ Graph</button>
+    <button class="view-tab"    id="vt-list" title="List" data-icon="≡" onclick="setView('list')">≡ List</button>
   </div>
 
   <div class="tb-pill">CAPS <span class="v" id="tp-caps">—</span></div>
@@ -1175,7 +1175,16 @@ function _wireMatrixEvents() {
 
 function _renderMatrixNow() {
   _wireMatrixEvents();
-  const caps = getVisibleCaps();
+  /* the matrix is caps x caps cells in one string: with every cap shown (thousands) it ran past the longest string a page
+     can hold and threw, leaving the view blank (found live 2026-09-27). It shows the most related caps - in their groups'
+     order - and says how many more there are; a search or a group reaches the rest, and Graph and List show them all. */
+  const MATRIX_MAX = 240;
+  const allCaps = getVisibleCaps(); let caps = allCaps, _capped = 0;
+  if (allCaps.length > MATRIX_MAX) {
+    const deg = {}; for (const k in _cells) { const r = _cells[k]; if (!_showAuto && r.auto) continue; if (!_showManual && !r.auto) continue; deg[r.from] = (deg[r.from] || 0) + 1; deg[r.to] = (deg[r.to] || 0) + 1; }
+    const keep = new Set(allCaps.slice().sort((a, b) => (deg[b] || 0) - (deg[a] || 0) || a.localeCompare(b)).slice(0, MATRIX_MAX));
+    caps = allCaps.filter(c => keep.has(c)); _capped = allCaps.length - caps.length;
+  }
   const cells = getVisibleCells(caps);
   const cellMap = {};
   cells.forEach(r => { cellMap[key(r.from, r.to)] = r; });
@@ -1190,7 +1199,7 @@ function _renderMatrixNow() {
     return;
   }
   empty.style.display = 'none';
-  info.textContent = `${caps.length} caps · ${cells.length} relations${_filterSearch ? ` · search "${_filterSearch}"` : ''}`;
+  info.textContent = `${caps.length} caps · ${cells.length} relations${_filterSearch ? ` · search "${_filterSearch}"` : ''}` + (_capped ? ` · the ${caps.length} most related of ${allCaps.length} — search or pick a group for the rest` : '');
 
   const search = _filterSearch;
 
