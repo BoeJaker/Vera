@@ -62,6 +62,33 @@ t('reduced motion is respected', /prefers-reduced-motion: reduce\)'\)\.matches\)
 }
 
 // ── the text sizes, stepped up ───────────────────────────────────────────────────────────────────────────────────
-t('every step raised, and a Largest past the old top', /'default':\{ floor:11, factor:1\.08 \}, large:\{ floor:12, factor:1\.2 \}, larger:\{ floor:13, factor:1\.32 \}, largest:\{ floor:14, factor:1\.45 \}/.test(UI) && /\['largest','Largest','The largest'\]/.test(UI));
+t('every step raised, and a Largest past the old top', /'default':\{ floor:11, factor:1\.08, scale:1 \}, large:\{ floor:12, factor:1\.2, scale:1\.08 \}, larger:\{ floor:13, factor:1\.32, scale:1\.16 \}, largest:\{ floor:14, factor:1\.45, scale:1\.25 \}/.test(UI) && /\['largest','Largest','The largest'\]/.test(UI));
+
+// ── 2026-09-28 (owner): "allot of the ui text size isnt scaling up per the user selection in the settings - a good example
+//    is the chat ui chat area or the loop lab": body-sized text and the style pack's size variables follow the setting ──
+{
+  const a = UI.indexOf('  var TEXT_KEY = '), b = UI.indexOf('  function _fsAdjust(');
+  const ctx = { WeakMap, Math, parseFloat, localStorage: { getItem() { return null; } } };
+  vm.createContext(ctx); vm.runInContext(UI.slice(a, b) + '\nthis.sz=_textSize; this.set=function(n){ _textStep=TEXT_STEPS[n]; };', ctx);
+  ctx.set('default'); const d13 = ctx.sz(13), d9 = ctx.sz(9);
+  ctx.set('larger'); const l13 = ctx.sz(13), l12 = ctx.sz(12), l9 = ctx.sz(9);
+  ctx.set('compact'); const c9 = ctx.sz(9), c13 = ctx.sz(13);
+  t('Default leaves body text as designed', d13 === 13 && d9 === 11, d13 + ' ' + d9);
+  t('Larger grows body text', l13 === 15.1, String(l13));
+  t('small text never outgrows body text at the same step', l12 <= l13 && l9 === 13, l12 + ' ' + l13);
+  t('Compact is the design', c9 === 9 && c13 === 13);
+  // the pack's type variables, run against a stand-in body whose pack says --body:14px, --label-size:9.5px
+  const props = {}; const body = { style: { removeProperty(k) { delete props[k]; }, setProperty(k, v) { props[k] = v; } } };
+  const vx = { WeakMap, Math, parseFloat, localStorage: { getItem() { return null; } }, document: { body }, getComputedStyle: () => ({ getPropertyValue: (k) => props[k] || ({ '--body': '14px', '--label-size': '9.5px' })[k] || '' }) };
+  vm.createContext(vx); vm.runInContext(UI.slice(a, b) + '\nthis.vars=_textVars; this.set=function(n){ _textStep=TEXT_STEPS[n]; };', vx);
+  vx.set('largest'); vx.vars();
+  t('the transcript size (--body) follows the setting', props['--body'] === '17.5px', props['--body']);
+  t('the label size (--label-size) follows it too', props['--label-size'] === '14px', props['--label-size']);
+  vx.set('compact'); vx.vars();
+  t('and Compact hands them back to the pack', !('--body' in props) && !('--label-size' in props), JSON.stringify(props));
+  t('re-read on every repaint, a new stylesheet and a new pack', /function _textAll\(\)\{\n    _textVars\(\);/.test(UI) && /if\(sheets\)\{ _textVars\(\); _textRoot\(document\); \}/.test(UI) && /attributeFilter:\['data-style'\]/.test(UI));
+  const W = fs.readFileSync(path.join(__dirname, '..', 'vera', 'widgets', 'widget_element.js'), 'utf8');
+  t('the widgets follow the same steps, Largest included', /html\{--vw-fmin:11px;--vw-fx:1\}/.test(W) && /html\[data-text="larger"\]\{--vw-fmin:13px;--vw-fx:1\.16\}/.test(W) && /html\[data-text="largest"\]\{--vw-fmin:14px;--vw-fx:1\.25\}/.test(W) && /html\[data-text="largest"\] \.dash-grid vera-widget\{--vw-fmin:15\.5px\}/.test(W));
+}
 
 if (fails) { console.log(fails + ' FAILED'); process.exit(1); } else console.log('all ok');

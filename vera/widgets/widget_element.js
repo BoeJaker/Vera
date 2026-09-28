@@ -53,7 +53,7 @@
      larger and floors the small px font sizes it can reach; what it cannot reach - a size inside a clamp(), a style this
      file builds, an SVG attribute - went on drawing at 6.5-9.5 px. Every font size under 13 px in this file's CSS is
      written through fontScale(): calc(max(floor, size) * factor), the floor and the factor two variables the setting
-     sets on the document (--vw-fmin 0 / 10 / 11 / 12 px, --vw-fx 1 / 1 / 1.1 / 1.22), so every face - in a shadow
+     sets on the document (--vw-fmin 0 / 11 / 12 / 13 / 14 px, --vw-fx 1 / 1 / 1.08 / 1.16 / 1.25), so every face - in a shadow
      root or on the page - follows the setting and nothing is drawn below 10 px by default. */
   function fontScale(css) {
     const f = (n) => 'calc(max(var(--vw-fmin, 10px), ' + n + 'px) * var(--vw-fx, 1))';
@@ -63,12 +63,13 @@
       .replace(/(font:\s*(?:[a-z0-9-]+\s+)*?)([0-9.]+)px/g, (m, pre, n) => (+n >= 13 ? m : pre + f(n)))
       .replace(/font-size:\s*clamp\(([0-9.]+)px,/g, (m, n) => 'font-size:clamp(' + f(n) + ',');
   }
-  const TEXT_SCALE_CSS = 'html{--vw-fmin:10px;--vw-fx:1}html[data-text="compact"]{--vw-fmin:0px;--vw-fx:1}html[data-text="large"]{--vw-fmin:11px;--vw-fx:1.1}html[data-text="larger"]{--vw-fmin:12px;--vw-fx:1.22}'
+  /* the floor and factor follow vera-ui.js TEXT_STEPS (floor, and the scale body text takes at that step), stepped up with it (owner, 2026-09-28) */
+  const TEXT_SCALE_CSS = 'html{--vw-fmin:11px;--vw-fx:1}html[data-text="compact"]{--vw-fmin:0px;--vw-fx:1}html[data-text="large"]{--vw-fmin:12px;--vw-fx:1.08}html[data-text="larger"]{--vw-fmin:13px;--vw-fx:1.16}html[data-text="largest"]{--vw-fmin:14px;--vw-fx:1.25}'
     /* a dashboard is read from across the room (owner, 2026-09-27: "the font on lots of widgets is still too small like the
        warnings and live events widgets it should be larger on the dashboards"): a higher floor there, at each setting */
     + '.vw-vgraph-host.min .vg-bottom-area{display:none!important}'
     + '.vw-vgraph-host .vw-vgkey{position:absolute;right:18px;bottom:16px;z-index:6;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px 10px;max-width:62%;font:10.5px var(--f-ui,var(--sans,system-ui,sans-serif));color:var(--t2,var(--dim2,#8a92a0));pointer-events:none}.vw-vgraph-host .vw-vgkey span{display:inline-flex;align-items:center;gap:5px;padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--bg1,#15171c) 80%,transparent)}.vw-vgraph-host .vw-vgkey i{width:8px;height:8px;border-radius:2px}'
-    + '.dash-grid vera-widget{--vw-fmin:11.5px}html[data-text="compact"] .dash-grid vera-widget{--vw-fmin:9px}html[data-text="large"] .dash-grid vera-widget{--vw-fmin:12.5px}html[data-text="larger"] .dash-grid vera-widget{--vw-fmin:13.5px}';
+    + '.dash-grid vera-widget{--vw-fmin:12.5px}html[data-text="compact"] .dash-grid vera-widget{--vw-fmin:9px}html[data-text="large"] .dash-grid vera-widget{--vw-fmin:13.5px}html[data-text="larger"] .dash-grid vera-widget{--vw-fmin:14.5px}html[data-text="largest"] .dash-grid vera-widget{--vw-fmin:15.5px}';
   try { if (typeof document !== 'undefined' && document.head && !document.getElementById('vw-text-scale')) { const st = document.createElement('style'); st.id = 'vw-text-scale'; st.textContent = TEXT_SCALE_CSS; document.head.appendChild(st); } } catch (_) {}
   const textKOf = (el) => { try { const cs = getComputedStyle(el); const fmin = parseFloat(cs.getPropertyValue('--vw-fmin')), fx = parseFloat(cs.getPropertyValue('--vw-fx')) || 1; return Math.max(1, Math.max(isFinite(fmin) ? fmin : 10, 9.5) * fx / 9.5); } catch (_) { return 1; } };
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

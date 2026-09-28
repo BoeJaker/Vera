@@ -278,13 +278,32 @@
   var TEXT_KEY = 'vera:ui:text', CONTRAST_KEY = 'vera:ui:contrast';
   // stepped up (owner, 2026-09-28: "the configurable text sizes need to be larger - step them up a notch or two"): each
   // step is what the one above it was, and more, and Largest goes past the old top
-  var TEXT_STEPS = { compact:{ floor:0, factor:1 }, 'default':{ floor:11, factor:1.08 }, large:{ floor:12, factor:1.2 }, larger:{ floor:13, factor:1.32 }, largest:{ floor:14, factor:1.45 } };
+  // SCALE is the step for text at 13 px and over (owner, 2026-09-28: "allot of the ui text size isnt scaling up per the
+  // user selection ... the chat ui chat area or the loop lab"): the floor only ever reached the small text, so the chat's
+  // transcript and every body-sized line stayed as they were at any setting. Above Default everything now grows; the
+  // small text is floored and scaled but never past body text at the same step, so the hierarchy holds.
+  var TEXT_STEPS = { compact:{ floor:0, factor:1, scale:1 }, 'default':{ floor:11, factor:1.08, scale:1 }, large:{ floor:12, factor:1.2, scale:1.08 }, larger:{ floor:13, factor:1.32, scale:1.16 }, largest:{ floor:14, factor:1.45, scale:1.25 } };
   var TEXT_NAMES = [['compact','Compact','As designed - the smallest text is not raised'], ['default','Default','Small text raised to a readable floor'], ['large','Large','Larger small text'], ['larger','Larger','Larger still'], ['largest','Largest','The largest']];
   var CONTRASTS = [['theme','Theme','The theme\'s own faint text'], ['clear','Clear','Faint text made clearer'], ['high','High','The most contrast']];
   function _readText(){ try{ var v = localStorage.getItem(TEXT_KEY); return TEXT_STEPS[v] ? v : 'default'; }catch(e){ return 'default'; } }
   function _readContrast(){ try{ var v = localStorage.getItem(CONTRAST_KEY); return (v === 'theme' || v === 'high') ? v : 'clear'; }catch(e){ return 'clear'; } }
   var _textStep = TEXT_STEPS['default'], _textName = 'default';
   var _fsOrig = new WeakMap();
+  function _textSize(px){
+    var s = _textStep, big = s.scale || 1;
+    var n = px >= 13 ? px * big : Math.min(13 * big, Math.max(s.floor, px * s.factor));
+    return Math.round(n * 10) / 10;
+  }
+  // the style pack's own type sizes (theme_defs STYLE_PACKS: --body for the transcript, --label-size for labels) are
+  // variables, which no stylesheet rewrite can see: they are scaled where they are read, on <body>, from the pack's value
+  var TEXT_VARS = ['--body', '--label-size'];
+  function _textVars(){
+    var b = document.body; if(!b) return;
+    TEXT_VARS.forEach(function(v){
+      try{ b.style.removeProperty(v);   // read the pack's value, not ours
+        var m = /^([\d.]+)px$/.exec(getComputedStyle(b).getPropertyValue(v).trim()); if(!m) return;
+        var n = _textSize(parseFloat(m[1])); if(n !== parseFloat(m[1])) b.style.setProperty(v, n + 'px'); }catch(e){} });
+  }
   function _fsAdjust(decl){
     if(!decl) return;
     var o = _fsOrig.get(decl);
@@ -297,8 +316,7 @@
       _fsOrig.set(decl, o); }
     if(o == null) return;
     var px = typeof o === 'object' ? o.px : o;
-    var n = px >= 13 ? px : Math.max(_textStep.floor, px * _textStep.factor);
-    n = Math.round(n * 10) / 10;
+    var n = _textSize(px);
     if(typeof o === 'object'){ var nv = o.font.replace(/(^|\s)([\d.]+)px/, '$1' + n + 'px');
       try{ if(decl.getPropertyValue('font') !== nv) decl.setProperty('font', nv, decl.getPropertyPriority('font')); }catch(e){} return; }
     if(parseFloat(decl.fontSize) !== n){ try{ decl.setProperty('font-size', n + 'px', decl.getPropertyPriority('font-size')); }catch(e){} }
@@ -313,6 +331,7 @@
   var _shadowRoots = [];
   try{ var _as = Element.prototype.attachShadow; if(_as && !_as.__veraText){ Element.prototype.attachShadow = function(){ var r = _as.apply(this, arguments); try{ _shadowRoots.push(r); if(_textMO) _textObserveRoot(r); setTimeout(function(){ _textRoot(r); }, 0); setTimeout(function(){ _textRoot(r); }, 600); }catch(e){} return r; }; Element.prototype.attachShadow.__veraText = true; } }catch(e){}
   function _textAll(){
+    _textVars();
     _textRoot(document);
     try{ Array.prototype.forEach.call(document.querySelectorAll('*'), function(el){ if(el.shadowRoot && _shadowRoots.indexOf(el.shadowRoot) < 0){ _shadowRoots.push(el.shadowRoot); if(_textMO) _textObserveRoot(el.shadowRoot); } }); }catch(e){}
     _shadowRoots.forEach(_textRoot);
@@ -323,14 +342,16 @@
     Array.prototype.push.apply(_textQ, nodes); if(_textT) return;
     _textT = setTimeout(function(){ _textT = 0; var q = _textQ; _textQ = []; var sheets = false;
       q.forEach(function(n){ if(!n || n.nodeType !== 1) return;
-        if(n.tagName === 'STYLE' || n.tagName === 'LINK'){ var rt = n.getRootNode ? n.getRootNode() : document; if(rt && rt !== document){ _textRoot(rt); return; } sheets = true; if(n.tagName === 'LINK') n.addEventListener('load', function(){ _textRoot(document); }, { once:true }); return; }
+        if(n.tagName === 'STYLE' || n.tagName === 'LINK'){ var rt = n.getRootNode ? n.getRootNode() : document; if(rt && rt !== document){ _textRoot(rt); return; } sheets = true; if(n.tagName === 'LINK') n.addEventListener('load', function(){ _textVars(); _textRoot(document); }, { once:true }); return; }
         if(n.style && n.getAttribute && /font/.test(n.getAttribute('style') || '')) _fsAdjust(n.style);
         try{ Array.prototype.forEach.call(n.querySelectorAll('[style*="font"]'), function(el){ _fsAdjust(el.style); }); }catch(e){}
         try{ if(n.shadowRoot){ if(_shadowRoots.indexOf(n.shadowRoot) < 0) _shadowRoots.push(n.shadowRoot); _textObserveRoot(n.shadowRoot); _textRoot(n.shadowRoot); } }catch(e){} });
-      if(sheets) _textRoot(document); }, 120);
+      if(sheets){ _textVars(); _textRoot(document); } }, 120);
   }
   var _textMO = null;
-  function _textWatch(){ if(_textMO || !window.MutationObserver) return; try{ _textMO = new MutationObserver(function(ms){ var add = []; ms.forEach(function(m){ if(m.addedNodes) Array.prototype.push.apply(add, m.addedNodes); }); if(add.length) _textQueue(add); }); _textMO.observe(document.documentElement, { childList:true, subtree:true }); _shadowRoots.forEach(_textObserveRoot); }catch(e){} }
+  function _textWatch(){ if(_textMO || !window.MutationObserver) return; try{ _textMO = new MutationObserver(function(ms){ var add = []; ms.forEach(function(m){ if(m.addedNodes) Array.prototype.push.apply(add, m.addedNodes); }); if(add.length) _textQueue(add); }); _textMO.observe(document.documentElement, { childList:true, subtree:true }); _shadowRoots.forEach(_textObserveRoot);
+      // a new style pack brings its own --body / --label-size: scale those afresh
+      new MutationObserver(function(){ _textVars(); }).observe(document.documentElement, { attributes:true, attributeFilter:['data-style'] }); }catch(e){} }
   // a shadow root's own redraws (an element that rebuilds its <style> and markup every render - the commit graph, the
   // task matrix, the loop output) arrive inside it, where the document's observer cannot see them: each root is
   // watched too, once
