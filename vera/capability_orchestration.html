@@ -901,8 +901,12 @@ header .hdr-right{margin-left:0;gap:6px}
 /* a SECTION tile: the band's name, flat on the page, the label at the foot of its row so it reads as the heading of the
    tiles below (the Dashboard board's side sections; the Sizes board's report lines) */
 .widget.w-section{background:transparent!important;border:none!important;box-shadow:none!important;border-radius:0;justify-content:flex-end;overflow:visible}
-.widget.w-section .w-head{padding:0 2px 4px;min-height:0;height:auto;border-bottom:1px solid var(--bd2,var(--border2,rgba(255,255,255,.18)));box-shadow:none}
-.widget.w-section .w-title{font-size:calc(var(--label-size,9px) + 2px);letter-spacing:calc(var(--label-track,.09em) + .04em);color:var(--t2,var(--dim2,#8a92a0));max-width:none;flex:1 1 auto}
+/* a section reads as a heading (owner 2026-09-28: "clearer sections"): a colour of its own (draw.accent), the name bold, the rest a subtitle */
+.widget.w-section .w-head{padding:6px 8px 5px;min-height:0;height:auto;border-bottom:2px solid color-mix(in srgb,var(--sec-acc,var(--acc,#5a9e8f)) 60%,transparent);box-shadow:none;border-radius:6px 6px 0 0;background:linear-gradient(90deg,color-mix(in srgb,var(--sec-acc,var(--acc,#5a9e8f)) 14%,transparent),transparent 70%)}
+.widget.w-section .w-title{font-size:calc(var(--label-size,9px) + 5px);letter-spacing:calc(var(--label-track,.09em) + .02em);color:var(--t1,var(--text,#d8dce4));font-weight:650;max-width:none;flex:1 1 auto;display:flex;align-items:baseline;gap:8px;min-width:0}
+.widget.w-section .w-title::before{content:'';align-self:center;flex:0 0 auto;width:4px;height:1.05em;border-radius:2px;background:var(--sec-acc,var(--acc,#5a9e8f))}
+.widget.w-section .w-title b{font-weight:inherit;flex:0 0 auto}
+.widget.w-section .w-title small{font-size:calc(var(--label-size,9px) + 2px);font-weight:400;letter-spacing:.02em;text-transform:none;color:var(--t2,var(--dim2,#8a92a0));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .widget.w-section .w-title::after{content:attr(data-count);margin-left:10px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--t3,var(--dim,#6b7280))}
 .widget.w-section .vd-rec,.widget.w-section .w-resize,.widget.w-section .w-dot{display:none!important}
 .widget.w-section:hover{box-shadow:none!important}
