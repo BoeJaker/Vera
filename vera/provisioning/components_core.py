@@ -8,8 +8,10 @@ These encode the hard-won fixes for provisioning a NATIVE Vera worker on a fresh
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import shlex
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional, Tuple
 
 # Hosts that mean "this same box" — a REMOTE worker cannot reach the orchestrator's own
 # localhost, so any backend URL/host pointing here must be re-pointed at a LAN address.
@@ -225,3 +227,73 @@ def pidfile_lookup_cmd(component: str, candidates=None) -> str:
     return (f'PIDF=""; for d in {dirs}; do '
             f'[ -f "$d/{component}.pid" ] && PIDF="$d/{component}.pid" && break; done; '
             f'PID=$(cat "$PIDF" 2>/dev/null); ')
+
+
+# ── component versions ────────────────────────────────────────────────────────
+# A deployed component had no version: nothing could say whether two nodes run
+# the same NLP server, or whether a node is behind the host. The version is the
+# content of the files a deploy ships, so it needs no release numbering and a
+# node cannot claim a version it does not have. Deploy writes it beside the
+# files as `<component>.version.json`; the component (or an SSH read) reports it.
+
+VERSION_SCHEMA = "vera.component-version/v1"
+
+
+def version_file(component: str) -> str:
+    return f"{component}.version.json"
+
+
+def file_sha256(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def component_version(component: str, files: Iterable[Tuple[str, bytes]]) -> Dict[str, object]:
+    """The version record for a component built from `files` ((dest name,
+    content) pairs, as deployed). Order-independent: the version hashes each
+    file's name and digest in name order."""
+    digests = {str(dest): file_sha256(content) for dest, content in files}
+    h = hashlib.sha256()
+    for dest in sorted(digests):
+        h.update(dest.encode("utf-8") + b"\0" + digests[dest].encode("ascii") + b"\n")
+    return {"schema": VERSION_SCHEMA, "component": component,
+            "version": "code-" + h.hexdigest()[:12], "files": digests}
+
+
+def version_json(record: Dict[str, object]) -> bytes:
+    return json.dumps(record, sort_keys=True, indent=1).encode("utf-8")
+
+
+def version_lookup_cmd(component: str, candidates=None) -> str:
+    """Shell that prints the deployed version record from whichever edge dir
+    the component went to, or nothing when it was deployed before versions."""
+    dirs = " ".join(tuple(candidates or EDGE_DIR_CANDIDATES))
+    name = version_file(component)
+    return (f'for d in {dirs}; do [ -f "$d/{name}" ] && cat "$d/{name}" && break; '
+            f'done; true')
+
+
+def parse_version(stdout: str) -> Dict[str, object]:
+    """The version record an SSH read returned, or {} for none / garbage."""
+    try:
+        rec = json.loads((stdout or "").strip() or "{}")
+    except ValueError:
+        return {}
+    return rec if isinstance(rec, dict) and rec.get("schema") == VERSION_SCHEMA else {}
+
+
+def compare_versions(host: Dict[str, object], node: Dict[str, object]) -> Dict[str, object]:
+    """How a node's deployed component stands against what the host would ship.
+
+    state: `current` (same version), `behind` (a different version),
+    `unversioned` (deployed before versions existed, so unknown), `absent`.
+    `changed` names the files that differ, so "behind" says what by."""
+    if node is None:
+        return {"state": "absent", "changed": []}
+    if not node.get("version"):
+        return {"state": "unversioned", "changed": []}
+    if node.get("version") == host.get("version"):
+        return {"state": "current", "changed": []}
+    hf = host.get("files") or {}
+    nf = node.get("files") or {}
+    changed = sorted(k for k in set(hf) | set(nf) if hf.get(k) != nf.get(k))
+    return {"state": "behind", "changed": changed}

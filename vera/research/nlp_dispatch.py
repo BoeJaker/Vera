@@ -183,6 +183,8 @@ async def discover(force: bool = False) -> List[Dict[str, Any]]:
         # compatibility summaries used by older routing/UI readers.
         facts.update({"node_id": str(nid), "nlp_url": url,
                       "threads": health.get("threads"),
+                      # the deployed nlp_server version (provision.component.version)
+                      "component": health.get("component") or {},
                       **inventory})
         found.append(facts)
 

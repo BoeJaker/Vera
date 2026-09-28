@@ -49,6 +49,8 @@ from Vera.vera.provisioning.components_core import (
     EDGE_DIR_CANDIDATES as _EDGE_DIR_CANDIDATES,
     WORKER_DIR_CANDIDATES as _WORKER_DIR_CANDIDATES,
     edge_dir_probe_cmd, parse_edge_dir, pidfile_lookup_cmd,
+    component_version, version_file, version_json, version_lookup_cmd,
+    parse_version, compare_versions,
 )
 from Vera.vera.workers import worker_placement_core as _placement
 from Vera.vera.security import redis_auth_core as _redis_auth_core
@@ -270,6 +272,34 @@ def _read_local(rel: str) -> Optional[bytes]:
         return None
 
 
+def _deps_spec(comp: Dict[str, Any]) -> bytes:
+    """What a deploy installs, as bytes, so a pin change moves the version too."""
+    req = _read_local(comp["requirements"]) if comp.get("requirements") else None
+    return json.dumps({"requirements": (req or b"").decode("utf-8", "replace"),
+                       "pip_steps": comp.get("pip_steps") or [],
+                       "pip": comp.get("pip") or []}, sort_keys=True).encode("utf-8")
+
+
+def _shipped_files(comp: Dict[str, Any]) -> Optional[List[tuple]]:
+    """(dest, content) for every file a deploy pushes, plus the deps spec;
+    None when a bundled file is missing from the repo."""
+    files = []
+    for rel, dest in comp["files"]:
+        content = _read_local(rel)
+        if content is None:
+            return None
+        files.append((dest, content))
+    files.append(("<deps>", _deps_spec(comp)))
+    return files
+
+
+def host_component_version(key: str) -> Dict[str, Any]:
+    """The version a deploy of `key` from this host would install now."""
+    comp = _COMPONENTS.get(key)
+    files = _shipped_files(comp) if comp else None
+    return component_version(key, files) if files is not None else {}
+
+
 def _push_cmd(content: bytes, dest: str) -> str:
     """A shell snippet that recreates `content` at remote `dest` (base64 is shell-safe)."""
     b64 = base64.b64encode(content).decode()
@@ -310,12 +340,14 @@ async def cap_components(trace_id=None) -> Dict:
     redact_result=True,
     description="Push a bundled component's file(s) to a stored host (into "
                 "~/.vera/edge) and optionally install deps + launch it. Inputs: "
-                "host_id (str!), component (gpu_inference|onnx_runtime|"
+                "host_id (str!), component (gpu_inference|onnx_runtime|nlp_server|"
                 "mesh_gateway), port (int — override), install_deps (bool=false), "
                 "launch (bool=true), systemd (bool=false — install as a service, "
                 "needs sudo), sudo (bool=true), vera_url (str — required for "
                 "mesh_gateway), timeout (int=900). Output: {ok, pushed, installed, "
-                "launched, mode, port, url, log, effect_shadow}. Optional "
+                "launched, mode, port, url, log, version, effect_shadow}. Writes "
+                "<component>.version.json beside the files (see "
+                "provision.component.version). Optional "
                 "idempotency, approval, and retry inputs are observe-only and "
                 "never sent to SSH.",
 )
@@ -387,6 +419,10 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
             return {"ok": False, "error": f"bundled file missing in repo: {rel}"}
         parts.append(_push_cmd(content, f"{edge_dir}/{dest}"))
         out["pushed"].append(dest)
+    # The version is written only once the deploy has succeeded (below), so a
+    # half-finished deploy never claims the new version.
+    version = host_component_version(component)
+    parts.append(f"rm -f {edge_dir}/{version_file(component)}")
     res = await _ssh(host_id, " && ".join(parts), timeout=120)
     if not res.get("ok"):
         out["ok"] = False
@@ -419,6 +455,15 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
             out["ok"] = False
             out["error"] = "dependency install failed (see install_log)"
             return out
+
+    # 2b) record the version - files and deps are in place; before launch, so a
+    # component that reads its own version at startup sees this one.
+    if version:
+        rec_v = dict(version, deps_installed=bool(install_deps))
+        vres = await _ssh(host_id, _push_cmd(version_json(rec_v),
+                                             f"{edge_dir}/{version_file(component)}"),
+                          timeout=30)
+        out["version"] = version.get("version") if vres.get("ok") else ""
 
     # 3) launch (optional) ─────────────────────────────────────────────────────
     if launch:
@@ -513,6 +558,36 @@ async def cap_component_status(host_id: str = "", component: str = "",
         timeout=20)
     out = (res.get("stdout", "") or "").strip()
     return {"ok": True, "running": out.startswith("running"), "detail": out or "unknown"}
+
+
+@capability(
+    "provision.component.version",
+    http_method="POST", http_path="/provision/component/version", http_tags=["provision"],
+    memory="off", silent=True,
+    description="The version of a bundled component: what a deploy from this host "
+                "would install now (a content hash of its files and deps), and, with "
+                "host_id, what that node has deployed, read over SSH. Inputs: "
+                "component (str!), host_id (str). Output: {ok, component, host:{version, "
+                "files}, node:{version, files, deps_installed}|null, state: current|"
+                "behind|unversioned|absent, changed:[file]}.",
+)
+async def cap_component_version(component: str = "", host_id: str = "",
+                                trace_id=None) -> Dict:
+    if component not in _COMPONENTS:
+        return {"ok": False, "error": f"unknown component {component!r}",
+                "components": list(_COMPONENTS)}
+    host = host_component_version(component)
+    out: Dict[str, Any] = {"ok": True, "component": component, "host": host}
+    if not host_id:
+        return out
+    res = await _ssh(host_id, version_lookup_cmd(component), timeout=20)
+    if not res.get("ok"):
+        return {**out, "ok": False, "error": res.get("stderr") or res.get("error")
+                or "ssh failed"}
+    node = parse_version(res.get("stdout") or "")
+    out["node"] = node or None
+    out.update(compare_versions(host, node or {}))
+    return out
 
 
 @capability(

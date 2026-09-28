@@ -123,6 +123,44 @@ _PIPELINE_TASK = {
     "question-answering":       "question-answering",
 }
 
+_COMPONENT = None
+
+
+def component_record() -> Dict[str, Any]:
+    """This server's deployed version, from the `nlp_server.version.json` the
+    deploy wrote beside it, with each recorded file re-hashed so a hand edit on
+    the node shows as `intact: false` rather than passing for the version.
+    Read once: a redeploy restarts the service."""
+    global _COMPONENT
+    if _COMPONENT is None:
+        import hashlib
+        here = os.path.dirname(os.path.abspath(__file__))
+        try:
+            with open(os.path.join(here, "nlp_server.version.json"), encoding="utf-8") as fh:
+                rec = json.load(fh)
+        except (OSError, ValueError):
+            rec = {}
+        if not isinstance(rec, dict) or not rec.get("version"):
+            _COMPONENT = {"version": "", "intact": None,
+                          "note": "deployed before component versions"}
+        else:
+            changed = []
+            for name, digest in (rec.get("files") or {}).items():
+                if name.startswith("<"):        # the deps spec, not a file
+                    continue
+                try:
+                    with open(os.path.join(here, name), "rb") as fh:
+                        ok = hashlib.sha256(fh.read()).hexdigest() == digest
+                except OSError:
+                    ok = False
+                if not ok:
+                    changed.append(name)
+            _COMPONENT = {"version": rec["version"], "intact": not changed,
+                          "changed": changed, "files": rec.get("files") or {},
+                          "deps_installed": rec.get("deps_installed")}
+    return _COMPONENT
+
+
 _PIPES: Dict[str, Any] = {}
 _RAW: Dict[str, Any] = {}          # task -> (model, tokenizer) for embeddings
 _ENCODER = None
@@ -442,7 +480,7 @@ def build_app():
         # one and routes away from it for minutes.
         return {"ok": True, "service": "vera-nlp", "threads": NLP_THREADS,
                 "providers": _providers(), "model_root": MODEL_ROOT,
-                "core": HAS_CORE,
+                "core": HAS_CORE, "component": component_record(),
                 "chunk": {"chars": CHUNK_CHARS, "overlap": CHUNK_OVERLAP},
                 "tasks": {t: task_inventory(t) for t in DEFAULT_MODELS}}
 
@@ -450,6 +488,7 @@ def build_app():
     async def models():
         return {"model_root": MODEL_ROOT,
                 "schema": "vera.nlp-node-models/v2",
+                "component": component_record(),
                 "models": {t: task_inventory(t) for t in DEFAULT_MODELS},
                 "providers": _providers()}
 

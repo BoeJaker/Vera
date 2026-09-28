@@ -537,6 +537,13 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         "backends": ["ssh"], "gpu": "optional",
         "desc": "Edge ONNX model server (CUDA→DML→CPU).",
     },
+    "nlp_server": {
+        "group": "workers", "label": "NLP (NER · classify · embed)",
+        "backends": ["ssh"], "heavy": True,
+        "desc": "Text NLP on the node (edge/nlp_server.py): NER, sentiment, "
+                "zero-shot, QA, langid, embeddings, rerank - ONNX from the shared "
+                "read-only model store. Installed as a systemd service.",
+    },
     # Data stores / resources
     "redis": {"group": "stores", "label": "Redis", "backends": ["docker"],
               "desc": "Event streams, task queues, caching."},
@@ -753,6 +760,8 @@ async def cap_nodes_provision_plan(node_id: str = "",
             ("gpu_inference", "ssh"): "provision.deploy component=gpu_inference "
                                       "(install deps + launch)",
             ("onnx_runtime", "ssh"): "provision.deploy component=onnx_runtime",
+            ("nlp_server", "ssh"): "provision.deploy component=nlp_server "
+                                   "(install deps + systemd service)",
             ("mesh_gateway", "ssh"): "provision.deploy component=mesh_gateway",
             ("docker", "ssh"): "provision.install target=docker + register "
                                "docker host",
@@ -1007,14 +1016,16 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
         return {"ok": bool(res.get("ok")), "worker": res}
 
     # ── bundled edge components over ssh ────────────────────────────────────
-    if key in ("gpu_inference", "onnx_runtime", "mesh_gateway"):
+    if key in ("gpu_inference", "onnx_runtime", "nlp_server", "mesh_gateway"):
         dep = _rawcap("provision.deploy")
         if not dep:
             return {"error": "provision.deploy unavailable"}
+        # nlp_server runs as vera-nlp_server.service on every node; redeploying
+        # it any other way would leave that unit and a second copy both running.
         kwargs: Dict[str, Any] = {
             "host_id": hid, "component": key,
             "install_deps": bool(opt.get("install_deps", True)),
-            "launch": True, "systemd": bool(opt.get("systemd", False))}
+            "launch": True, "systemd": bool(opt.get("systemd", key == "nlp_server"))}
         if (opt.get("ports") or {}).get(key):
             kwargs["port"] = int(opt["ports"][key])
         if key == "mesh_gateway":
