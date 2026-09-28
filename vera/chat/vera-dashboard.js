@@ -196,6 +196,13 @@
       '.dash-grid .w-head .vd-rec{max-width:0;opacity:0;margin-left:0;transition:max-width .2s,opacity .2s}',
       '.dash-grid .widget:hover .vd-rec,.dash-grid.editing .vd-rec,.dash-grid .vd-rec:is(.sample,.reading,.failed,.bad,.checking){max-width:38%;opacity:.9;margin-left:6px}',
       '.dash-grid .w-head .w-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      // a tile's widget fills its body on every page's grid (the rule lived only in the harness page: on Workers the element
+      // tile drew at its natural 203 px in a 361 px body and scrolled its cards; small figures' captions were cut)
+      '.dash-grid .w-body > vera-widget{flex:1 1 auto;min-height:0;display:block;overflow:hidden}',
+      // a tile's buttons take no room until it is hovered, focused or arranged - the harness's rule, on every grid (a two-column
+      // figure's title read "WORK..." beside its invisible buttons)
+      '.dash-grid .widget > .w-head .w-actions{display:none}',
+      '.dash-grid .widget:hover > .w-head .w-actions,.dash-grid .widget:focus-within > .w-head .w-actions,.dash-grid.editing .widget > .w-head .w-actions,.dash-grid .widget.floating > .w-head .w-actions{display:inline-flex}',
       '.dash-grid.editing .vd-rec{opacity:1;color:var(--acc)}',
       '.vd-rec.sample{font-style:italic}',
       '.vd-rec.sample,.vd-rec.reading{opacity:.9;color:var(--acc3,#d4a96a)}.vd-rec.failed{opacity:.9;color:var(--err,#c96b6b)}',
