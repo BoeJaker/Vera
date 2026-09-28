@@ -12,8 +12,11 @@ median position 14 and past 16 in 53/249 build runs.
 
 So this ORDERS, it does not trim: the caps the goal names in full keep the
 front, then the intent's core, then everything else in the order it had.
-A core cap missing from the catalogue is added only when it is registered and
-not blocked. Nothing is removed. `mixed` (or an unknown intent) has no core.
+Nothing is removed, and by default nothing is added: a core cap the catalogue
+lacks stays out (the first live run added operator.run - the browser - to a
+note-writing goal; the loop seeds it only for goals that ask to verify a UI).
+`add_missing=True` adds such a cap when it is registered and not blocked.
+`mixed` (or an unknown intent) has no core.
 
 Pure: the caller hands in the registry names and the blocked set.
 """
@@ -62,12 +65,14 @@ def named_caps(goal: str, catalog: Iterable[str]) -> List[str]:
 def apply(catalog: Sequence[str], intent: str, goal: str = "", *,
           known: Optional[Iterable[str]] = None,
           blocked: Optional[Iterable[str]] = None,
-          front: int = FRONT) -> Tuple[List[str], Dict[str, Any]]:
+          front: int = FRONT,
+          add_missing: bool = False) -> Tuple[List[str], Dict[str, Any]]:
     """The catalogue with the intent's core at the front.
 
     Order: caps the goal names in full, then the core (most-used first), then
-    the rest as they were. A core cap not in the catalogue is added when it is
-    in `known` (the registry; None = trust the core) and not in `blocked`.
+    the rest as they were. With add_missing, a core cap not in the catalogue is
+    added when it is in `known` (the registry; None = trust the core) and not in
+    `blocked`; otherwise it is left out.
     Returns (order, info): info carries what moved, what was added and the
     positions before/after, for the loop's event.
     """
@@ -82,7 +87,7 @@ def apply(catalog: Sequence[str], intent: str, goal: str = "", *,
     known_set: Optional[Set[str]] = set(known) if known is not None else None
     blocked_set = set(blocked or ())
     have = set(cat)
-    added = [c for c in core if c not in have and c not in blocked_set
+    added = [c for c in core if add_missing and c not in have and c not in blocked_set
              and (known_set is None or c in known_set)]
     usable = [c for c in core if c in have or c in added]
     head = [c for c in named_caps(goal, cat) if c not in usable]

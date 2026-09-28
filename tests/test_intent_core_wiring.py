@@ -11,10 +11,15 @@ sys.path.insert(0, str(ROOT))
 
 SRC = (ROOT / "vera" / "dag" / "dag_workshop_capabilities.py").read_text(encoding="utf-8")
 
+# vera.* first: on the host, Vera.vera.* resolves to the primary checkout (main),
+# not this worktree, and would test the wrong code.
 try:
-    from Vera.vera.dag import dag_workshop_capabilities as M
+    from vera.dag import dag_workshop_capabilities as M
 except Exception:                                    # pragma: no cover
-    M = None
+    try:
+        from Vera.vera.dag import dag_workshop_capabilities as M
+    except Exception:
+        M = None
 
 needs_app = pytest.mark.skipif(M is None, reason="app module not importable here")
 
