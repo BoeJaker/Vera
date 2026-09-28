@@ -683,6 +683,12 @@ OLLAMA_JOB_TYPES: List[str] = [
     # Media services served by the GPU inference server(s) (edge/GPU_inference.py):
     # routed across MEDIA_INSTANCES by resolve_media(), not pick_instance().
     "stt", "tts", "imagegen",
+    # The chat's one-line "working on it" acknowledgement, generated BESIDE the
+    # reply - it must never queue behind the reply it announces.
+    "quick_opener",
+    # Background work the idle queue and the nightly automations run
+    # (job_type idle_<what>); one rule covers them all (see _resolve_rule).
+    "idle_*",
 ]
 
 def _rule(job_type: str, *, prefer_gpu: bool = False, deny_gpu: bool = False,
@@ -805,6 +811,18 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     "stt":      _rule("stt",      prefer_gpu=True),
     "tts":      _rule("tts",      prefer_gpu=True),
     "imagegen": _rule("imagegen", prefer_gpu=True),
+    # Light work on the GPU node's CPU sibling (user, 2026-09-28: "the naming and
+    # other lighter llm functions ... routed to the new cpu node"), which keeps
+    # the default model warm for it. The caller asked for "not the GPU"
+    # (prefer_gpu=False) - but the `default` rule's prefer_gpu overrode that, so
+    # every opener queued on the GPU behind the reply it was announcing.
+    "quick_opener": _rule("quick_opener", deny_gpu=True, prefer=EMBED_PRIMARY_NODE),
+    # Background automations ask for "not the GPU first" (prefer_gpu=False)
+    # but fell through to `default`, whose prefer_gpu overrode that: route
+    # stats 2026-09-28 show 98 idle_intel calls on gpu-250. A SOFT preference:
+    # the sibling takes them while it is free, and an idle GPU still takes the
+    # overflow - the night window is when the card is free anyway.
+    "idle_*": _rule("idle_*", prefer=EMBED_PRIMARY_NODE),
 }
 
 # In-memory routing state (hydrated from Redis on startup, see
@@ -831,7 +849,9 @@ def _match_glob(iid: str, pattern: str) -> bool:
 
 
 def _resolve_rule(job_type: Optional[str]) -> dict:
-    """The effective rule for a job type: active-profile override, else default."""
+    """The effective rule for a job type: active-profile override, else default.
+    An exact key wins; then a glob key ('idle_*') - profile before default,
+    the longest pattern first."""
     jt = (job_type or "default").strip() or "default"
     prof = ROUTING.get("profiles", {}).get(ROUTING.get("active_profile", "default"), {})
     rules = (prof.get("rules") or {})
@@ -839,6 +859,10 @@ def _resolve_rule(job_type: Optional[str]) -> dict:
         return rules[jt]
     if jt in DEFAULT_ROUTING_RULES:
         return DEFAULT_ROUTING_RULES[jt]
+    for table in (rules, DEFAULT_ROUTING_RULES):
+        for pat in sorted((k for k in table if k.endswith("*") and k != "*"), key=len, reverse=True):
+            if table[pat] and _match_glob(jt, pat):
+                return table[pat]
     return DEFAULT_ROUTING_RULES["default"]
 
 
@@ -2250,6 +2274,17 @@ def _embed_node_id() -> str:
 #: same paths and cannot leak differently from them.
 OLLAMA_INFLIGHT: Dict[str, dict] = {}
 
+# Warm model slots (vera/workers/warm_models_capabilities.py). The module
+# writes WARM_STATE each tick; the request path and the picker only READ it:
+#   planned        {node: {model: num_ctx}} - pairs kept resident
+#   embed_urls     {node url: embed model}  - embedders kept beside the slots
+#   spill_job_types, spill_min_tps, spill_max_ctx - see cluster.py
+# ROUTE_DEMAND is the demand a workload scenario turns on from: one
+# (epoch seconds, job_type) per generation this process routed.
+import collections as _collections  # noqa: E402
+WARM_STATE: Dict[str, Any] = {}
+ROUTE_DEMAND: "_collections.deque" = _collections.deque(maxlen=4000)
+
 
 def _inflight_hold(inst: dict, slot_id: str, meta: Optional[dict] = None) -> None:
     try:
@@ -2319,7 +2354,7 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
                   model: Optional[str] = None, job_type: Optional[str] = None,
                   rule_override: Optional[dict] = None,
                   explain: Optional[dict] = None,
-                  ctx_need: int = 0) -> Optional[str]:
+                  ctx_need: int = 0, **_kw) -> Optional[str]:
     _inflight_sweep()   # reclaim slots whose request never returned
     # `explain`, when passed, is filled with the decision trail so callers can
     # log/emit WHY a node was chosen (rule applied, filters, tie-break).
@@ -2671,6 +2706,38 @@ def est_ctx_tokens(prompt: str = "", system: str = "", num_predict: int = 0) -> 
     return int(chars / max(_CHARS_PER_TOKEN, 1.0)) + max(int(num_predict or 0), _CTX_RESERVE_OUT)
 
 
+#: chars/token for a ROUTING decision when nothing has been measured. The
+#: window arithmetic above must over-count (2.3); a decision to send a prompt
+#: to a 4 tok/s CPU node must not - at 2.3 a 64k-char prompt (~16k real
+#: tokens, measured 3.6-4.4 on the 9b) reads as 28k and "does not fit" a GPU
+#: window it fits with room to spare.
+_ROUTE_DECISION_CPT = 3.0
+
+
+def prompt_need_tokens(prompt: str, system: str, model: str, job_type: str) -> int:
+    """The PROMPT's tokens plus the minimum output reserve - does it fit a GPU
+    window at all? Uses the measured chars/token of this model on a GPU node
+    (this job type first), unbiased; the caller's num_predict is not part of
+    it (on the GPU the window is capped and the output shrinks to fit - only a
+    prompt that cannot fit is a reason to leave the card)."""
+    chars = len(prompt or "") + len(system or "")
+    cpt = 0.0
+    for iid, inst in OLLAMA_INSTANCES.items():
+        if not inst.get("has_gpu"):
+            continue
+        s = _ROUTE_STATS.get(_route_stats_key(model or "", iid, job_type or ""))
+        if s and int(s.get("n_tok_measured") or 0) >= 3:
+            cpt = float(s.get("ema_chars_per_token") or 0)
+        if not cpt:
+            for st in _ROUTE_STATS.values():
+                if (st.get("model") == model and st.get("instance") == iid
+                        and int(st.get("n_tok_measured") or 0) >= 3):
+                    cpt = max(cpt, float(st.get("ema_chars_per_token") or 0))
+        if cpt:
+            break
+    return int(chars / max(cpt or _ROUTE_DECISION_CPT, 1.0)) + _CTX_RESERVE_OUT
+
+
 # Auto-fit the context window to the prompt when no num_ctx is pinned. Ollama's
 # DEFAULT num_ctx is ~2048 no matter the model's real max, so a big prompt with
 # no num_ctx is silently truncated to its last ~2048 tokens — the model never
@@ -2707,6 +2774,10 @@ try:
     from Vera.vera import node_threads_core as _node_threads_core
 except Exception:  # pragma: no cover - worktree / test layout
     from . import node_threads_core as _node_threads_core
+try:
+    from Vera.vera.workers import warm_models_core as _warm_core
+except Exception:  # pragma: no cover - worktree / test layout
+    from vera.workers import warm_models_core as _warm_core
 _CPU_NODE_THREADS = int(os.environ.get("VERA_CPU_NODE_THREADS",
                                        str(_node_threads_core.DEFAULT_CPU_THREADS)) or 0)
 
@@ -3400,10 +3471,15 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # How much context this request actually needs — lets the router send an
     # oversized one to a CPU node instead of spilling the GPU (see pick_instance).
     _ctx_need = est_ctx_tokens(prompt, system, (options or {}).get("num_predict") or 0)
+    try:
+        _prompt_need = prompt_need_tokens(prompt, system, eff_model or OLLAMA_MODEL, eff_job_type)
+    except Exception:
+        _prompt_need = 0
     chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id,
                            model=eff_model, job_type=eff_job_type,
                            rule_override=(eff_rule if (cap_rule or bg_demoted) else None),
-                           explain=route_explain, ctx_need=_ctx_need) or "cpu-246"
+                           explain=route_explain, ctx_need=_ctx_need,
+                           prompt_need=_prompt_need) or "cpu-246"
     if bg_demoted:
         route_explain.setdefault("reason", []).append(
             f"background '{bg_label}' demoted off GPU (human active)")
@@ -3428,6 +3504,10 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # race so the next picker sees this node's raised load and spreads out. The
     # single `finally` at the end releases it exactly once.
     _req_slot_id = str(uuid.uuid4())[:12]
+    try:
+        ROUTE_DEMAND.append((time.time(), str(eff_job_type or "default")))
+    except Exception:
+        pass
     inst["in_use"] = inst.get("in_use", 0) + 1
     _inflight_hold(inst, _req_slot_id)
     mdl    = eff_model or OLLAMA_MODEL
@@ -3524,6 +3604,15 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                             stable=_CTX_STABLE_GPU)
         _merged_opts["num_ctx"] = max(_CTX_FLOOR, _want)
         _merged_opts.pop("num_ctx_max", None)
+        # Warm slot: a model this node keeps loaded answers on the runner the
+        # warmer spawned - the planned window when the request fits in it (a
+        # different num_ctx is a new runner, i.e. a reload), never above the
+        # node-safe cap. See warm_models_core.request_overrides.
+        _warm = _warm_core.request_overrides(
+            (WARM_STATE or {}).get("planned") or {}, chosen, mdl,
+            int(_merged_opts["num_ctx"]), int(_cap or 0))
+        if _warm.get("num_ctx"):
+            _merged_opts["num_ctx"] = int(_warm["num_ctx"])
         # num_predict = the output room actually available in the window (bounded
         # by the sensible max), so a long generation can use it ALL but nothing
         # decodes PAST the window. Only when the caller pinned no positive value.
@@ -3562,6 +3651,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
             _keep = _ctx_keep_tokens(int(_merged_opts["num_ctx"]))
             if _keep:
                 _merged_opts["num_keep"] = _keep
+    # ...and it stays resident: keep_alive=-1 (a NUMBER; "-1" is a 400) unless
+    # the caller asked for its own. Unplanned pairs keep the default.
+    if keep_alive is None and _warm_core.request_overrides(
+            (WARM_STATE or {}).get("planned") or {}, chosen, mdl, 0):
+        body["keep_alive"] = _warm_core.KEEP_FOREVER
     if _merged_opts:
         # A CPU node's runner must not spin more threads than the node has.
         _nt = _node_threads_core.threads_for(
@@ -4142,6 +4236,9 @@ def _embed_body(mdl: str, text: str, node: Optional[dict]) -> dict:
     the embed runner does not spin the host's 24 threads on 12 CPUs (4-6 s per
     137M embedding before; see node_threads_core)."""
     body = {"model": mdl, "input": text[:4096]}
+    _we = ((WARM_STATE or {}).get("embed_urls") or {}).get(str((node or {}).get("url") or ""))
+    if _we and _warm_core.same_model(_we, mdl):
+        body["keep_alive"] = _warm_core.KEEP_FOREVER
     nt = _node_threads_core.threads_for(
         has_gpu=bool((node or {}).get("has_gpu")),
         node_num_thread=(node or {}).get("num_thread"), default=_CPU_NODE_THREADS)
@@ -10918,6 +11015,8 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "workers/nodes_capabilities.py"),
         # nodes.activity - the Estate's single pane over the node-side taps
         os.path.join(_here, "workers/node_activity_capabilities.py"),
+        # ollama.warm.* - warm model slots per node, workload scenarios
+        os.path.join(_here, "workers/warm_models_capabilities.py"),
         os.path.join(_here, "remote/remote_capabilities.py"),
         os.path.join(_here, "remote/workspace_capabilities.py"),
         os.path.join(_here, "remote/operator_capabilities.py"),

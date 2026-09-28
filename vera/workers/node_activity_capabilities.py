@@ -38,6 +38,23 @@ def _rawcap(name: str):
     return (c.get("raw") or c.get("func")) if c else None
 
 
+def _vera_ips() -> set:
+    """Addresses a Vera runs from (prod and its sandboxes share the host's):
+    an untagged call from one of these is ours, not an external client's."""
+    import os
+    import sys
+    ips = {"127.0.0.1"}
+    comp = sys.modules.get("components_capabilities")
+    try:
+        if comp is not None and hasattr(comp, "_primary_lan_ip"):
+            ips.add(comp._primary_lan_ip())
+    except Exception:
+        pass
+    for v in (os.getenv("VERA_ADVERTISE_HOST", ""), os.getenv("VERA_HOST_IPS", "")):
+        ips.update(x.strip() for x in v.split(",") if x.strip())
+    return {i for i in ips if i}
+
+
 def _s(v) -> str:
     return v.decode("utf-8", "replace") if isinstance(v, (bytes, bytearray)) else str(v or "")
 
@@ -155,7 +172,9 @@ async def cap_nodes_activity(node: str = "", service: str = "", caller: str = ""
         r["node"] = agents_raw.get(r.get("node"), r.get("node"))
     infl = {agents_raw.get(n, n): v for n, v in infl.items()}
     since = now - max(60, int(since_s or 3600))
-    summary = _core.summarize(recs, infl, window_s=min(900, max(60, int(since_s or 3600))), now=now)
+    vips = _vera_ips()
+    summary = _core.summarize(recs, infl, window_s=min(900, max(60, int(since_s or 3600))), now=now,
+                              vera_ips=vips)
     agents = await _agents()
     insts = _instances()
     for n in set(summary) | set(insts):
@@ -165,9 +184,9 @@ async def cap_nodes_activity(node: str = "", service: str = "", caller: str = ""
         s["agent"] = agents.get(n) or agents.get(n.rsplit("-cpu", 1)[0]) or {}
         s["instance"] = insts.get(n) or {}
         s["tapped"] = n in infl
-    rows = [_core.row(r) for r in recs
+    rows = [_core.row(r, vera_ips=vips) for r in recs
             if _core.matches(r, node=node, service=service, caller=caller, kind=kind,
-                             text=text, since=since)][:max(1, min(1000, int(limit or 200)))]
+                             text=text, since=since, vera_ips=vips)][:max(1, min(1000, int(limit or 200)))]
     gate = {}
     g = _rawcap("ollama.gate.status")
     if g:

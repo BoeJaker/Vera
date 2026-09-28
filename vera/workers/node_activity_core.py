@@ -17,15 +17,24 @@ STREAM = "vera:node_activity"
 INFLIGHT_PREFIX = "vera:node_activity:inflight:"
 
 
-def caller_class(rec: Dict[str, Any]) -> str:
-    """prod | sandbox | external, from the X-Vera-Origin a Vera sends."""
+def caller_class(rec: Dict[str, Any], vera_ips: Iterable[str] = ()) -> str:
+    """prod | sandbox | vera | external, from the X-Vera-Origin a Vera sends.
+
+    `vera` is a call with no origin that came from an address a Vera runs on
+    (`vera_ips`): one of ours that did not say which Vera it was - prod and
+    the sandboxes share the host's address, so the address alone cannot tell
+    them apart. Only a call from anywhere else is `external`."""
     origin = str(rec.get("origin") or "")
     who = origin.split("|", 1)[0]
     if who == "prod":
         return "prod"
     if who.startswith("sandbox:"):
         return "sandbox"
-    return "external" if not who else "other"
+    if who:
+        return "other"
+    if str(rec.get("caller") or "") in set(vera_ips or ()):
+        return "vera"
+    return "external"
 
 
 def origin_parts(rec: Dict[str, Any]) -> Dict[str, str]:
@@ -34,12 +43,13 @@ def origin_parts(rec: Dict[str, Any]) -> Dict[str, str]:
 
 
 def matches(rec: Dict[str, Any], node: str = "", service: str = "", caller: str = "",
-            kind: str = "", text: str = "", since: float = 0.0) -> bool:
+            kind: str = "", text: str = "", since: float = 0.0,
+            vera_ips: Iterable[str] = ()) -> bool:
     if node and rec.get("node") != node:
         return False
     if service and rec.get("service") != service:
         return False
-    if caller and caller_class(rec) != caller:
+    if caller and caller_class(rec, vera_ips) != caller:
         return False
     if kind and rec.get("kind") != kind:
         return False
@@ -54,13 +64,13 @@ def matches(rec: Dict[str, Any], node: str = "", service: str = "", caller: str 
     return True
 
 
-def row(rec: Dict[str, Any], preview: int = 240) -> Dict[str, Any]:
+def row(rec: Dict[str, Any], preview: int = 240, vera_ips: Iterable[str] = ()) -> Dict[str, Any]:
     """A table row: everything but the full texts, which a click fetches."""
     o = origin_parts(rec)
     return {"id": rec.get("id"), "node": rec.get("node"), "port": rec.get("port"),
             "service": rec.get("service", "ollama"), "kind": rec.get("kind"),
             "model": rec.get("model"), "caller": rec.get("caller"),
-            "caller_class": caller_class(rec), "who": o["who"], "job_type": o["job_type"],
+            "caller_class": caller_class(rec, vera_ips), "who": o["who"], "job_type": o["job_type"],
             "cap": o["cap"], "start": rec.get("start"), "end": rec.get("end"),
             "duration_s": rec.get("duration_s"), "status": rec.get("status"),
             "eval_count": rec.get("eval_count"), "prompt_eval_count": rec.get("prompt_eval_count"),
@@ -72,7 +82,8 @@ def row(rec: Dict[str, Any], preview: int = 240) -> Dict[str, Any]:
 
 
 def summarize(records: Iterable[Dict[str, Any]], inflight: Dict[str, List[Dict[str, Any]]],
-              window_s: float = 900.0, now: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
+              window_s: float = 900.0, now: Optional[float] = None,
+              vera_ips: Iterable[str] = ()) -> Dict[str, Dict[str, Any]]:
     """Per node over the last `window_s`: calls by kind and by caller class,
     tokens out, mean tok/s of generations, busy seconds, errors, and what is
     running now."""
@@ -91,7 +102,7 @@ def summarize(records: Iterable[Dict[str, Any]], inflight: Dict[str, List[Dict[s
         s["calls"] += 1
         k = r.get("kind") or "?"
         s["by_kind"][k] = s["by_kind"].get(k, 0) + 1
-        c = caller_class(r)
+        c = caller_class(r, vera_ips)
         s["by_caller"][c] = s["by_caller"].get(c, 0) + 1
         s["tokens_out"] += int(r.get("eval_count") or 0)
         s["busy_s"] += float(r.get("duration_s") or 0)
@@ -104,7 +115,7 @@ def summarize(records: Iterable[Dict[str, Any]], inflight: Dict[str, List[Dict[s
     for n, items in (inflight or {}).items():
         s = node(n)
         s["running"] = [dict(i, running_s=round(now - float(i.get("start") or now), 1),
-                             caller_class=caller_class(i)) for i in items]
+                             caller_class=caller_class(i, vera_ips)) for i in items]
     for s in out.values():
         t = s.pop("tps")
         s["mean_tps"] = round(sum(t) / len(t), 2) if t else None

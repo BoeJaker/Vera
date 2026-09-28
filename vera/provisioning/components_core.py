@@ -333,6 +333,9 @@ def media_env_profile(has_gpu: bool, port: int = 8765,
         "ENABLE_SD=1",
         f"SD_DEVICE={dev}",
         "TTS_ENGINE=kokoro",
+        "# Vera calls the media server over HTTP only; its Redis job queues (and the",
+        "# 'Redis unavailable localhost:6379' warning at every start) are unused.",
+        "ENABLE_REDIS=0",
     ]
     return "\n".join(lines) + "\n"
 

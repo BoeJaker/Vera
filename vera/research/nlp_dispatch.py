@@ -129,12 +129,22 @@ async def _get_json(url: str, path: str, timeout: float = 5.0) -> Optional[Dict]
         return None
 
 
+def _origin(path: str) -> Dict[str, str]:
+    """X-Vera-Origin for an NLP call (the node's activity recorder files it
+    under this Vera instead of 'external'). Empty outside the app."""
+    try:
+        from Vera.vera.capability_orchestration import vera_origin_header
+    except Exception:                                    # pragma: no cover - tests
+        return {}
+    return vera_origin_header(job_type="nlp", cap="nlp" + str(path or "").replace("/", "."))
+
+
 async def _post_json(url: str, path: str, body: Dict,
                      timeout: float) -> Dict[str, Any]:
     try:
         import httpx
         async with httpx.AsyncClient(timeout=timeout) as c:
-            r = await c.post(f"{url}{path}", json=body)
+            r = await c.post(f"{url}{path}", json=body, headers=_origin(path))
             try:
                 payload = r.json()
             except Exception:

@@ -212,6 +212,7 @@ def tune_probe_cmd() -> str:
     return ('U=ollama; systemctl is-active --quiet ollama-vera && U=ollama-vera; echo "UNIT=$U"; '
             'echo "MODELS=$(systemctl show $U -p Environment --value | tr " " "\\n" '
             '| sed -n "s/^OLLAMA_MODELS=//p")"; '
+            'echo "USER=$(systemctl show $U -p User --value)"; '
             f'D=/etc/systemd/system/$U.service.d/{CONCURRENCY_DROPIN_NAME}; '
             '[ -f $D ] && echo "DROPIN_B64=$(base64 -w0 $D)" || echo "DROPIN_B64="; '
             f'systemctl is-active --quiet {CPU_SIBLING_UNIT} && echo SIBLING=active || echo SIBLING=absent')
@@ -222,13 +223,21 @@ def parse_tune_probe(stdout: str) -> Dict[str, str]:
     out: Dict[str, str] = {}
     for line in (stdout or "").splitlines():
         k, sep, v = line.partition("=")
-        if sep and k in ("UNIT", "MODELS", "DROPIN_B64", "SIBLING"):
+        if sep and k in ("UNIT", "MODELS", "DROPIN_B64", "SIBLING", "USER"):
             out[k] = v.strip()
     try:
         out["dropin"] = _b64.b64decode(out.get("DROPIN_B64") or "").decode("utf-8", "replace")
     except Exception:
         out["dropin"] = ""
     return out
+
+
+def default_models_dir(user: str) -> str:
+    """Where a unit with no OLLAMA_MODELS keeps its models: Ollama's installer
+    runs the stock unit as `ollama` (home /usr/share/ollama); root's is /root."""
+    u = str(user or "").strip()
+    return "/usr/share/ollama/.ollama/models" if u == "ollama" else (
+        "/root/.ollama/models" if u in ("", "root") else f"/home/{u}/.ollama/models")
 
 
 def tune_plan(has_gpu: bool, probe: Dict[str, str]) -> Dict[str, Any]:
@@ -240,10 +249,14 @@ def tune_plan(has_gpu: bool, probe: Dict[str, str]) -> Dict[str, Any]:
     if has_gpu:
         if probe.get("SIBLING") == "active":
             return {"action": "none", "why": "CPU sibling already running", "unit": unit}
-        if not probe.get("MODELS"):
+        models = probe.get("MODELS") or ""
+        if not models and "USER" in probe:
+            # a fresh install: the stock unit keeps the installer's default
+            models = default_models_dir(probe.get("USER") or "")
+        if not models:
             return {"action": "skip", "why": f"could not read OLLAMA_MODELS from {unit}",
                     "unit": unit}
-        return {"action": "add_sibling", "unit": unit, "models": probe["MODELS"],
+        return {"action": "add_sibling", "unit": unit, "models": models,
                 "why": f"add the CPU-only sibling on :{CPU_SIBLING_PORT}"}
     want = concurrency_dropin()
     if (probe.get("dropin") or "") == want:

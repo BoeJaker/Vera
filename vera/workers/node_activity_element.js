@@ -33,7 +33,7 @@
   .name{font-weight:600;font-size:12px}
   .badge{font:600 9px/1 var(--mono,ui-monospace,monospace);padding:3px 5px;border-radius:3px;border:1px solid currentColor;white-space:nowrap}
   .gpu{color:var(--warn,#f5b341)} .cpu{color:var(--acc,#4a9eff)} .ok{color:var(--acc2,var(--ok,#28c28a))} .bad{color:var(--err,#ef5b5b)} .warn{color:var(--warn,#f5b341)}
-  .c-prod{color:var(--acc2,#28c28a)} .c-sandbox{color:#b48cff} .c-external{color:var(--warn,#f5b341)} .c-other{color:var(--dim,#5f6975)}
+  .c-prod{color:var(--acc2,#28c28a)} .c-sandbox{color:#b48cff} .c-vera{color:var(--acc,#4a9eff)} .c-external{color:var(--warn,#f5b341)} .c-other{color:var(--dim,#5f6975)}
   .run{border-left:2px solid var(--warn,#f5b341);padding:2px 0 2px 6px;font-size:10.5px}
   .bar{height:4px;background:var(--bg2,#1a1f26);border-radius:2px;overflow:hidden} .bar i{display:block;height:100%;background:var(--acc,#4a9eff)}
   table{border-collapse:collapse;width:100%;font-size:10.5px}
@@ -132,7 +132,7 @@
         + '<span class="muted">' + (d.taps ? d.taps.length + ' tapped · ' : '') + (d.records_seen || 0) + ' calls recorded</span><span class="sp"></span>'
         + '<select data-f="node"><option value="">all nodes</option>' + nodes.map((n) => '<option' + (f.node === n ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select>'
         + '<select data-f="service">' + [['', 'all services'], ['ollama', 'LLM (ollama)'], ['nlp', 'NLP'], ['media', 'media (STT/TTS/image)'], ['worker', 'worker tasks']].map(([v, l]) => '<option value="' + v + '"' + (f.service === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
-        + '<select data-f="caller">' + [['', 'all callers'], ['prod', 'prod'], ['sandbox', 'sandboxes'], ['external', 'external']].map(([v, l]) => '<option value="' + v + '"' + (f.caller === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
+        + '<select data-f="caller">' + [['', 'all callers'], ['prod', 'prod'], ['sandbox', 'sandboxes'], ['vera', 'vera (untagged)'], ['external', 'external']].map(([v, l]) => '<option value="' + v + '"' + (f.caller === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
         + '<select data-f="kind">' + [['', 'all kinds'], ['generate', 'generate'], ['chat', 'chat'], ['embed', 'embed']].map(([v, l]) => '<option value="' + v + '"' + (f.kind === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
         + '<select data-f="since_s">' + [['900', '15 min'], ['3600', '1 h'], ['21600', '6 h'], ['86400', '24 h']].map(([v, l]) => '<option value="' + v + '"' + (f.since_s === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
         + '<input data-f="text" placeholder="search prompt / response / model" value="' + esc(f.text) + '" style="width:210px">'

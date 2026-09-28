@@ -417,6 +417,7 @@ html.view-models #secNav [data-view="models"]{display:block}
     <div class="nsec" data-view="estate">Overview</div>
     <div class="snav on" data-pane="overview" data-view="estate" onclick="P.show('overview',this)">Overview</div>
     <div class="snav" data-pane="activity" data-view="estate" onclick="P.show('activity',this)" title="Everything the nodes are doing: running now, every call (prod, sandboxes, external) with prompt, response and stats">Activity</div>
+    <div class="snav" data-pane="nodemodels" data-view="estate" onclick="P.show('nodemodels',this)" title="Which models each node keeps loaded, the workloads that hotload models, NLP placement and switches, and the specialist catalog">Models &amp; NLP</div>
     <div class="snav" data-pane="estate" data-view="estate" onclick="P.show('estate',this)">Map</div>
     <div class="snav" data-pane="observe" data-view="estate" onclick="P.show('observe',this)">Observe</div>
     <div class="navdiv" data-view="estate"></div>
@@ -443,6 +444,7 @@ html.view-models #secNav [data-view="models"]{display:block}
     <div class="nsec" data-view="estate">Integrations</div>
     <div class="snav" data-pane="integrations" data-view="estate" onclick="P.show('integrations',this)">Services</div>
     <div class="snav" data-pane="platforms" data-view="estate" onclick="P.show('platforms',this)">Platforms</div>
+    <div class="snav" data-pane="nodemodels" data-view="models" onclick="P.show('nodemodels',this)" title="Warm slots per node, workload hotloading, NLP and the specialist catalog">Nodes &amp; NLP</div>
     <div class="snav" data-pane="ollama" data-view="models" onclick="P.show('ollama',this)">Ollama</div>
     <div class="snav" data-pane="modelrouting" data-view="models" onclick="P.show('modelrouting',this)">Model Routing</div>
     <div class="navdiv" data-view="models"></div>
@@ -1711,6 +1713,10 @@ html.view-models #secNav [data-view="models"]{display:block}
     </div>
 
     <!-- Sandbox pane — shared exec-sandbox policy editor (gates exec.*, IDE Run, docker.* CLI) -->
+    <!-- Models & NLP: the <vera-node-models> element (ollama.warm.*, nlp.*, specialist.*) -->
+    <div class="pane" id="pane-nodemodels" style="padding:0;overflow:hidden">
+      <iframe id="nodemodels-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    </div>
     <!-- Activity: the <vera-node-activity> element (nodes.activity) -->
     <div class="pane" id="pane-activity" style="padding:0;overflow:hidden">
       <iframe id="activity-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
@@ -6337,6 +6343,7 @@ function showPane(name, el){
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
   if(name==='sandbox'){ const el=$('wk-sandbox-ctl'); if(el&&el.refresh) el.refresh(); }
   if(name==='activity'){ _mountFrame('activity-frame', BASE+'/nodes/activity/panel'); }
+  if(name==='nodemodels'){ _mountFrame('nodemodels-frame', BASE+'/nodes/models/panel'); }
   if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
@@ -6379,7 +6386,8 @@ if(_VIEW==='models') document.documentElement.classList.add('view-models');
 if(window.VeraPanelBridge) VeraPanelBridge.registerNav(
   [...document.querySelectorAll('#secNav .snav[data-view="'+_VIEW+'"]')]
     .map(el=>({id:el.dataset.pane, label:el.textContent.trim()})),
-  id=>showPane(id, document.querySelector('#secNav .snav[data-pane="'+id+'"]')));
+  id=>showPane(id, document.querySelector('#secNav .snav[data-view="'+_VIEW+'"][data-pane="'+id+'"]')
+                   || document.querySelector('#secNav .snav[data-pane="'+id+'"]')));
 function estateOpen(pane, sub, entity){
   if(!$('pane-'+pane)) return false;
   showPane(pane, document.querySelector('.snav[data-pane="'+pane+'"]'));

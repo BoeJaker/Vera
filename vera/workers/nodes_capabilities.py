@@ -847,6 +847,36 @@ async def _register_ollama(node: Dict, port: int, has_gpu: bool,
             "num_thread": nt, "result": res}
 
 
+async def _ollama_layout(reg: Dict, opt: Dict) -> Dict:
+    """The rest of an Ollama node, once it is registered: the concurrency
+    layout (a CPU node's 2 slots; a GPU node's CPU-only sibling on :11436,
+    registered as '<id>-cpu' - the dual CPU+GPU node) and the activity tap in
+    front of each. The same caps an operator runs by hand (nodes.ollama.tune,
+    nodes.ollama.tap), so a node Vera provisions comes up the way the fleet
+    runs. options.ollama_layout=false skips it; a step that cannot run (no
+    stored SSH login for the address) says so and the install still counts."""
+    if not (reg or {}).get("instance_id") or opt.get("ollama_layout", True) is False:
+        return {"skipped": "ollama_layout=false" if reg.get("instance_id") else "not registered"}
+    iid = reg["instance_id"]
+    out: Dict[str, Any] = {}
+    try:
+        out["tune"] = await cap_nodes_ollama_tune(dry_run=False, instance_ids=[iid])
+    except Exception as e:
+        out["tune"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    ids = [iid]
+    for row in (out["tune"] or {}).get("nodes") or []:
+        sib = ((row.get("result") or {}).get("registered") or "")
+        if sib:
+            ids.append(sib)
+    if opt.get("tap", True) is not False:
+        try:
+            out["tap"] = await cap_nodes_ollama_tap(dry_run=False, instance_ids=ids)
+        except Exception as e:
+            out["tap"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    out["instances"] = ids
+    return out
+
+
 async def _register_vllm(node: Dict, port: int, api_key: str = "") -> Dict:
     add = _rawcap("vllm.instances.add")
     if not add:
@@ -983,6 +1013,7 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
             if active:
                 out["register"] = await _register_ollama(node, port, bool(gpus),
                                                          num_thread=opt.get("num_thread"))
+                out["layout"] = await _ollama_layout(out["register"], opt)
             return out
         inst = _rawcap("provision.install")
         if not inst:
@@ -995,6 +1026,7 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
         if ires.get("ok"):
             out["register"] = await _register_ollama(node, port, bool(gpus),
                                                      num_thread=opt.get("num_thread"))
+            out["layout"] = await _ollama_layout(out["register"], opt)
         return out
 
     # ── docker runtime ───────────────────────────────────────────────────────
@@ -1045,12 +1077,14 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
                 "LXC guests, SSH as the fallback — and register every new "
                 "endpoint (ollama/vllm instances, docker hosts, workers) into "
                 "Vera's cluster. An Ollama node is registered with its runner "
-                "thread count (CPU nodes; default 6) and also becomes a native "
-                "Vera node worker unless options.worker=false. Inputs: node_id "
+                "thread count (CPU nodes; default 6), gets the fleet's layout - a CPU "
+                "node 2 slots, a GPU node its CPU-only sibling Ollama on :11436 (the dual "
+                "CPU+GPU node) - and the activity tap, unless options.ollama_layout=false, "
+                "and also becomes a native Vera node worker unless options.worker=false. Inputs: node_id "
                 "(str!), components (list!), backend (str='auto'), options (dict "
                 "— gpus, model (HF id, required for vllm), hf_home, ports{}, "
                 "quantization, pve_node, install_deps, vera_url, start, "
-                "num_thread, worker, worker_source, worker_threads). Emits nodes.provision.progress "
+                "num_thread, worker, worker_source, worker_threads, ollama_layout, tap). Emits nodes.provision.progress "
                 "events per step. Output: {ok, node_id, results:[{component,"
                 "backend,ok,…}]}.",
 )

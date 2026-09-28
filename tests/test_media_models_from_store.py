@@ -90,6 +90,13 @@ def test_every_node_serves_every_model_on_its_own_device():
         assert env["SERVER_PORT"] == "8765"
 
 
+def test_media_profile_turns_off_the_unused_redis_queues():
+    for gpu in (True, False):
+        env = dict(ln.split("=", 1) for ln in media_env_profile(gpu).splitlines()
+                   if ln and not ln.startswith("#"))
+        assert env["ENABLE_REDIS"] == "0"
+
+
 # ── the store mount ───────────────────────────────────────────────────────────
 def test_store_mount_plan():
     cfg = ("cores: 12\nmp0: /tank_sdh/vera-store/models/ollama,mp=/root/.ollama/models,ro=1\n"

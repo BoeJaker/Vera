@@ -5448,7 +5448,11 @@ async function releaseStatus(){
       +' <button class="btn sm" onclick="releaseCancel()">cancel</button>'
       +(p.status==='waiting'?' <button class="btn sm" onclick="releaseForce()" title="go now: the restart pauses and re-runs the census goal">force now</button>':''))
     :('census: '+esc(c.state||'none')+(c.goal?' \u00b7 '+esc(c.goal):'')+(r.history&&r.history[0]?' \u00b7 last release '+esc(r.history[0].status)+' '+esc(String(r.history[0].finished_at||r.history[0].updated_at||'').slice(0,16)):''));
+  const ns=r.node_sync;
+  if(ns) el.innerHTML+=' \u00b7 nodes: <span title="'+esc(ns.last_why||'')+'">'+esc(ns.status)+'</span>'
+    +(ns.status==='failed'?' <button class="btn sm" onclick="releaseNodeSync()">sync nodes</button>':'');
 }
+async function releaseNodeSync(){const r=await post('/evolve/release/node_sync',{run:true});toast(r&&r.ok?('node sync queued ('+(r.why||'')+')'):(r&&r.error)||'failed');releaseStatus()}
 async function releaseCancel(){const r=await post('/evolve/release/cancel',{reason:'cancelled from Loop Lab'});toast(r&&r.ok?'release cancelled'+(r.census_resumed?' \u00b7 census resumed':''):(r&&r.error)||'failed');releaseStatus()}
 async function releaseForce(){if(!confirm('Release NOW? The restart pauses the census goal in flight and re-runs it later.'))return;await post('/evolve/release/cancel',{reason:'forcing'});const r=await post('/evolve/release/prod',{confirm:true,force:true,reason:'forced from Loop Lab'});toast(r&&r.ok?('releasing: '+(r.status||'')):(r&&(r.error||r.refused))||'failed');releaseStatus()}
 async function edgeRelease(name,branch){
@@ -5456,7 +5460,8 @@ async function edgeRelease(name,branch){
   if(!ok)return;
   const mode=(prompt('If a census is in flight, how should the release wait?\n  finish = wait until the census has ended (default)\n  goal   = yield: let the goal in flight finish, park, release, resume after\n  force  = release now (the census goal is paused and re-run)','finish')||'finish').trim().toLowerCase();
   if(['finish','goal','force'].indexOf(mode)<0){toast('unknown mode '+mode);return}
-  const r=await post('/evolve/release/prod',{edge:name,confirm:true,census:mode,force:mode==='force',reason:'Loop Lab release button'});
+  const sync=confirm('Also bring the NODES onto this release once it is done?\n\nOK = sync nlp_server / gpu_inference / model_builder, the node workers and the warm model slots (after the restart, never while a census goal is in flight).\nCancel = release prod only.');
+  const r=await post('/evolve/release/prod',{edge:name,confirm:true,census:mode,force:mode==='force',sync_nodes:sync,reason:'Loop Lab release button'});
   if(r&&r.held)toast('release pending ('+mode+'): '+(r.why||''));
   else toast(r&&r.ok?('releasing: '+(r.status||'')+' main @ '+String((r.merge||{}).commit||'').slice(0,8)):(r&&(r.error||r.refused))||'refused');
   loadEdges();releaseStatus();
