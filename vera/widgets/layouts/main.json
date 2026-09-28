@@ -583,14 +583,18 @@
   {
    "record": {
     "id": "host-cpu",
-    "form": "trace",
+    "form": "lines",
     "source": "sysmon.history",
     "title": "Host CPU",
     "read": {
      "refresh": "10s",
      "map": {
       "series": "samples",
-      "v": "cpu"
+      "split": [
+       "cpu",
+       "mem"
+      ],
+      "t": "t"
      }
     },
     "frame": {
@@ -1150,7 +1154,7 @@
   {
    "record": {
     "id": "node-perf",
-    "form": "small-multiples",
+    "form": "lines",
     "source": "bench.node_perf.history",
     "title": "Node latency · ping",
     "read": {
@@ -1228,7 +1232,7 @@
   {
    "record": {
     "id": "node-tps",
-    "form": "small-multiples",
+    "form": "lines",
     "source": "bench.node_perf.history",
     "title": "Node throughput · tokens/s",
     "read": {
@@ -2790,7 +2794,7 @@
     4,
     2
    ],
-   "hidden": false,
+   "hidden": true,
    "refresh": "10s",
    "floated": false
   },
@@ -3706,7 +3710,7 @@
   {
    "record": {
     "id": "lab-runs",
-    "form": "area",
+    "form": "lines",
     "source": "evolve.activity",
     "title": "Loop Lab · test runs per hour",
     "read": {
@@ -4076,7 +4080,7 @@
   {
    "record": {
     "id": "cap-latency",
-    "form": "trace",
+    "form": "lines",
     "source": "dream.sensor.cap_calls",
     "title": "Call time · last 50 calls",
     "read": {
@@ -4097,7 +4101,9 @@
     },
     "draw": {
      "body": "record",
-     "unit": "ms"
+     "unit": "ms",
+     "by": "via",
+     "blank": "direct"
     },
     "open": "capabilities"
    },

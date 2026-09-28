@@ -98,6 +98,7 @@ FORMS: List[Dict[str, Any]] = [
     _F("horizon", "series", glyph="horizon", options=("bands",), name="Horizon", boards=("widgets",)),
     _F("bump", "series", glyph="bump", options=("ranks",), name="Bump", boards=("widgets",)),
     _F("small-multiples", "series", ("flat", "iso"), glyph="multiples", options=("cols", "rows"), name="Small multiples", boards=("widgets",)),
+    _F("lines", "series", glyph="lines", options=("series", "by", "palette", "colors", "min", "max", "unit"), name="Multi-line", boards=("widgets", "spec")),
     _F("candles", "ohlcv", ("flat", "iso"), glyph="ohlc", options=("volume", "bars"), name="Candlestick", boards=("widgets", "motion", "iso")),
     _F("scope", "series", glyph="scope", motion=True, options=("sweep", "ghost", "graticule"), name="Scope", boards=("motion",)),
     _F("chart", "series", glyph="chart", name="Chart", boards=("reply",)),
