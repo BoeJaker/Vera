@@ -83,20 +83,34 @@ def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str
     HOME). ``nice``/``cpu_weight`` (when non-zero) lower the worker's claim on
     the CPU below the services it shares the node with.
 
+    ``redis_url`` and ``backend_kv`` carry credentials (a Redis ACL password,
+    Postgres/Neo4j logins), so they go to ``<root>/worker.env`` written 0600 and
+    loaded with ``EnvironmentFile=`` - never into the unit, which systemd keeps
+    world-readable. Everything else stays in the unit.
+
     ``backend_kv`` must already be host-rewritten (see :func:`rewrite_host`). Pure →
     unit-testable."""
     src = f"{root}/src"
     app = f"{root}/app"
     venv = f"{root}/venv" if bundle else f"{src}/venv"
-    envs = [("PYTHONPATH", app), ("REDIS_URL", redis_url),
+    env_file = f"{root}/worker.env"
+    secret = [("REDIS_URL", redis_url)]
+    secret += [(k, str(v)) for k, v in (backend_kv or {}).items() if v]
+    envs = [("PYTHONPATH", app),
             ("ORCHESTRATOR_HOST", "0.0.0.0"), ("ORCHESTRATOR_PORT", str(int(port or 8990))),
             ("EMBED_CAPS_ON_START", "0"), ("SYSLOG_MONITOR", "0")]
-    envs += [(k, v) for k, v in (backend_kv or {}).items() if v]
     envs += [(k, str(v)) for k, v in (extra_env or {}).items() if str(v)]
+
+    def _q(v: str) -> str:
+        # one quoting both systemd's EnvironmentFile and `sh .` read the same way
+        return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    env_b64 = base64.b64encode(
+        "".join(f"{k}={_q(v)}\n" for k, v in secret).encode()).decode()
 
     unit = ("[Unit]\nDescription=Vera native worker\n"
             "After=network-online.target\nWants=network-online.target\n"
             "[Service]\nType=simple\nWorkingDirectory=/tmp\n"
+            + f"EnvironmentFile={env_file}\n"
             + "".join(f'Environment="{k}={v}"\n' for k, v in envs)
             + (f"Nice={int(nice)}\n" if nice else "")
             + (f"CPUWeight={int(cpu_weight)}\n" if cpu_weight else "")
@@ -119,9 +133,15 @@ def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str
         )
     setup = (
         f"set -e; mkdir -p {root}; "
+        # credentials: created 0600 (umask in a subshell), then pinned to 0600
+        f"( umask 077; printf %s {shlex.quote(env_b64)} | base64 -d > {env_file} ); "
+        f"chmod 600 {env_file}; "
         + fetch +
         # expose the repo's vera/ package as Vera/vera for a clean `-m` import
         f"mkdir -p {app}/Vera; ln -sfn {src}/vera {app}/Vera/vera; : > {app}/Vera/__init__.py; "
+        # modules find edge/ beside the package (node_agent_capabilities puts
+        # <package>/../edge on sys.path, without resolving the symlink)
+        f"[ -d {src}/edge ] && ln -sfn {src}/edge {app}/Vera/edge || true; "
         f"[ -f {src}/vera/__init__.py ] || : > {src}/vera/__init__.py; "
         f"[ -x {venv}/bin/python ] || python3 -m venv {venv} --system-site-packages; "
         f'"{venv}/bin/pip" install -q -U pip wheel; '
@@ -137,7 +157,8 @@ def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str
     )
     launch_nohup = (
         # neutral cwd so vera/operator never shadows stdlib operator
-        f"cd /tmp; {envstr} nohup {venv}/bin/python -u -m Vera.vera.capability_orchestration "
+        f"cd /tmp; set -a; . {env_file}; set +a; "
+        f"{envstr} nohup {venv}/bin/python -u -m Vera.vera.capability_orchestration "
         f"> {root}/worker.log 2>&1 & echo $! > {root}/worker.pid; sleep 3; "
         f'kill -0 "$(cat {root}/worker.pid)" 2>/dev/null && echo VERA_LAUNCHED'
     )

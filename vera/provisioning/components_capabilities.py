@@ -50,6 +50,7 @@ from Vera.vera.provisioning.components_core import (
     edge_dir_probe_cmd, parse_edge_dir, pidfile_lookup_cmd,
 )
 from Vera.vera.workers import worker_placement_core as _placement
+from Vera.vera.security import redis_auth_core as _redis_auth_core
 
 log = logging.getLogger("vera.provision.components")
 _HERE = Path(__file__).parent
@@ -542,7 +543,7 @@ async def cap_component_stop(host_id: str = "", component: str = "",
 #  VERA WORKER  — docker container (reuse docker.worker.spawn) OR native process
 # ═════════════════════════════════════════════════════════════════════════════
 async def _host_bundle() -> Dict[str, Any]:
-    """This host's checked-out commit as base64 tar.gz (vera/ + requirements.txt).
+    """This host's checked-out commit as base64 tar.gz (vera/, edge/, requirements.txt).
 
     Shipping the host's own commit — rather than cloning from a remote — means a
     node worker runs exactly the code the host runs, and the node needs no git
@@ -559,7 +560,8 @@ async def _host_bundle() -> Dict[str, Any]:
         return {"ok": False, "error": "cannot read this host's commit: "
                 + (head.get("stderr") or head.get("error") or "")[:300]}
     arc = await _spawn.run_argv(
-        ["sh", "-c", f"{git} archive --format=tar.gz HEAD vera requirements.txt | base64 -w0"],
+        # edge/ too: node_agent_capabilities imports node_runner_core from it
+        ["sh", "-c", f"{git} archive --format=tar.gz HEAD vera edge requirements.txt | base64 -w0"],
         timeout=180, max_output=256_000_000)
     if not arc.get("ok") or not (arc.get("stdout") or "").strip():
         return {"ok": False, "error": "git archive failed: "
@@ -637,6 +639,13 @@ async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
         # every backend URL at a LAN-reachable address (this box's IP, or backend_host).
         bh = (backend_host or os.getenv("VERA_ADVERTISE_HOST", "") or _primary_lan_ip())
         redis_url = rewrite_host(redis_url, bh)
+        # Never hand on the HOST's Redis credential: a node worker gets its own
+        # ACL user (vera-node), read from OpenBao, when one exists. It lands in
+        # the node's 0600 worker.env, not the unit (native_worker_cmd).
+        import sys as _sys
+        _ra = _sys.modules.get("redis_auth_capabilities")
+        redis_url = (await _ra.node_redis_url(redis_url)) if _ra is not None \
+            else _redis_auth_core.without_credentials(redis_url)
         # Environment first, else the host's effective config (prod runs on
         # config.py's localhost defaults and exports none of these).
         _cfg = getattr(_orch, "cfg", None)
@@ -657,14 +666,17 @@ async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
                      f"{', '.join(_WORKER_DIR_CANDIDATES)})")}
 
         bundle: Dict[str, Any] = {}
+        # The install command carries the credentials file (base64 is not
+        # encryption), so it never goes through exec.ssh.run - a capability
+        # whose arguments are recorded - but the internal runner.
+        runner = _ssh_stored_with_input()
+        if runner is None:
+            return {"ok": False, "mode": "native",
+                    "error": "exec module has no ssh_run_stored (stdin transport)"}
         if src_kind == "host":
             bundle = await _host_bundle()
             if not bundle.get("ok"):
                 return {"ok": False, "mode": "native", "error": bundle.get("error")}
-            runner = _ssh_stored_with_input()
-            if runner is None:
-                return {"ok": False, "mode": "native",
-                        "error": "exec module has no ssh_run_stored (stdin transport)"}
 
         extra_env = {
             # the node-worker role: node-safe caps only, no ambient scheduler
@@ -688,11 +700,8 @@ async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
                                 bundle=(src_kind == "host"), extra_env=extra_env,
                                 nice=_placement.WORKER_NICE,
                                 cpu_weight=_placement.WORKER_CPU_WEIGHT)
-        if src_kind == "host":
-            res = await runner(host_id, cmd, timeout=int(timeout or 1200),
-                               input=bundle["b64"])
-        else:
-            res = await _ssh(host_id, cmd, timeout=int(timeout or 1200))
+        res = await runner(host_id, cmd, timeout=int(timeout or 1200),
+                           input=bundle["b64"] if src_kind == "host" else None)
         ok = bool(res.get("ok")) and "VERA_LAUNCHED" in (res.get("stdout", "") or "")
         await emit_event({"type": "provision.worker", "mode": "native", "host": rec.get("host", ""),
                           "ok": ok, "source": src_kind, "commit": bundle.get("commit", "")})

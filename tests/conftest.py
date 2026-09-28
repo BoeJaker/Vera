@@ -19,6 +19,7 @@ _CRITICAL_MODULES = {
     "test_node_runner_reap",  # stop a runner nothing is waiting for; spare a busy one (2026-09-16)
     "test_node_threads_core",  # CPU-node runners ran 24 threads on 12 CPUs: 0.24 tok/s on a 0.5b, 4-6 s per embed (2026-09-23)
     "test_worker_placement_core",  # a worker off the host ran every cap and every ambient job; 2026-08-31 reaped the pool (2026-09-27)
+    "test_redis_auth_core",  # Redis had no password; the host must boot from its sealed copy, never log or pass on a credential (2026-09-28)
     "test_ctx_ceiling_and_utility_model",  # llm.generate's default window was a floor; a naming rule with no model took the 9b onto a CPU node (2026-09-23)
     "test_step_summary_core",  # 65 of 130 step summaries were raw tool JSON; the verifier and the next step read them (2026-09-24)
     "test_done_tool_alias",  # a tool named `done` was refused five times and the step flailed on (2026-09-24)
