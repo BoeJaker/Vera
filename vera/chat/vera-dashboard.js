@@ -618,8 +618,12 @@
     function recordOf(wid) { return state.edits[wid] || state.records[wid] || (state.dynamic[wid] && state.dynamic[wid].record) || null; }
     function withId(r, wid) { var o = {}; Object.keys(r || {}).forEach(function (k) { o[k] = r[k]; }); o.id = wid; return o; }
     // the span picks the size a record tile draws at; the tile says its size either way
+    /* the span picks the size, read against the grid's OWN width: a grid narrower than a page (a dashboard in a side pane -
+       Cap Hub's glance, 330 px) scales the span first, so a full-width tile there draws at M, not XL with its side lists
+       (2026-09-28); a page-wide grid (1200 px and up) keeps its spans as they are */
+    function effSpan(sp) { var gw = grid.clientWidth || 0, k = gw ? Math.min(1, gw / 1200) : 1; return [Math.max(1, Math.round((+sp[0] || 1) * k)), sp[1]]; }
     function syncSize(w) {
-      var sp = spanOf(w), size = sizeForSpan(sp[0], sp[1]);
+      var sp = effSpan(spanOf(w)), size = sizeForSpan(sp[0], sp[1]);
       w.dataset.size = size;
       var el = w.querySelector(':scope > .w-body > vera-widget');
       if (el && el.getAttribute('size') !== size) el.setAttribute('size', size);
@@ -1370,7 +1374,7 @@
         body.appendChild(holder);
       }
       if (!el) { el = document.createElement('vera-widget'); el.className = 'vd-draw'; el.setAttribute('bare', ''); el.setAttribute('dive-on-click', ''); el.setAttribute('item-drawer', ''); body.appendChild(el); }   // a click on the face: the data drawer (item-drawer), ⤢ the deep dive   // the tile's own head carries the title (the board's tile is one head)
-      var sp = spanOf(w); el.setAttribute('size', sizeForSpan(sp[0], sp[1]));
+      var sp = effSpan(spanOf(w)); el.setAttribute('size', sizeForSpan(sp[0], sp[1]));
       el.setAttribute('record', JSON.stringify(shown));
       w.dataset.converted = '1';
     }
@@ -1551,7 +1555,7 @@
       el.setAttribute('bare', '');   // the tile's own head carries the title and the record chip (the board's tile is one head)
       el.setAttribute('dive-on-click', '');
       el.setAttribute('item-drawer', '');   // a click on a part - a block, a row, a bar, a slice, a day - or on the face opens the data drawer on it; ⤢ the deep dive
-      var sp0 = spanOf(widget);
+      var sp0 = effSpan(spanOf(widget));   /* read against the grid's own width */
       el.setAttribute('size', sizeForSpan(sp0[0], sp0[1]));   // the span picks the size (the Sizes board), not the pixels
       var shown = withSample(record); if (shown.sample) widget.dataset.sample = '1';   // no readable source: the form's sample, said so
       el.setAttribute('record', JSON.stringify(shown));
@@ -1831,6 +1835,8 @@
     };
     grid._veraDash = ctl;
     grid.dataset.vd = '1'; gridVars(); window.addEventListener('resize', gridVars);
+    /* the grid's own width decides the tiles' sizes: follow it (a pane opening, the window, the LHM pushing it) */
+    try { if (window.ResizeObserver) { var _lastW = 0; new ResizeObserver(function () { var gw = grid.clientWidth || 0; if (Math.abs(gw - _lastW) < 24) return; _lastW = gw; try { widgets().forEach(syncSize); } catch (e) {} }).observe(grid); } } catch (e) {}
     ctl.ready = loadFile();
     injectToolbar();
     return ctl;
