@@ -100,3 +100,27 @@ def test_the_loop_lab_widgets_are_templates_any_surface_can_place():
     reg = _read("vera", "widgets", "widget_registry.py")
     assert "_LHM_BUILTINS.extend(_looplab_templates())" in reg
     assert '"placed": ["dashboard", "canvas"]' in reg
+
+
+def test_every_loop_lab_table_is_sortable_keeps_its_expansions_and_draws_only_spread_bars():
+    js = _read("vera", "looplab_tables.js")
+    html = _read("vera", "evolve", "evolve_panel.html")
+    assert '<script src="/ui/elements/looplab_tables.js"></script>' in html
+    assert '"/ui/elements/looplab_tables.js"' in _read("vera", "evolve", "evolve_capabilities.py")
+    # a row's expansion (tr.*-detail) moves with it; the sort survives the next poll's redraw
+    assert "const isDetail = (tr) => /(^|\s)[a-z-]*-detail(\s|$)/.test(tr.className || '');" in js
+    assert "sessionStorage.setItem(sid" in js and "sessionStorage.getItem(sid" in js
+    # a stripe is not a picture: four distinct values at least, none holding half the rows; a blank is not a word
+    assert "Object.keys(cnt).length < 4 || Math.max(...Object.values(cnt)) >= nums.length / 2" in js
+    assert "filled = tds.filter((td) => val(td).k !== 2).length" in js
+    # the widget system's own tables are left alone
+    assert "tbl.closest('vera-widget,vera-dashboard,.co-sheet,.vtb-skip')" in js
+
+
+def test_the_heavy_reads_have_a_slim_shape():
+    ev = _read("vera", "evolve", "evolve_capabilities.py")
+    assert 'source: str = "", fields: str = "", trace_id=None):' in ev
+    assert 'if "commits" in keep:' in ev
+    for f in ("task_matrix_element.js", "test_activity_timeline_element.js"):
+        assert "&fields=run_id,task,ts,pass_rate" in _read("vera", f), f
+    assert "api('/evolve/work/drivers?include_excluded=true&slim=1')" in _read("vera", "evolve", "evolve_panel.html")

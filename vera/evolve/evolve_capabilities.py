@@ -2794,7 +2794,8 @@ async def _evolve_authors_uncached(hours: int, branch: str):
                         "(suite | run | manual | improve | census | goal | "
                         "captest | ide).")
 async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
-                      source: str = "", trace_id=None):
+                      source: str = "", fields: str = "", trace_id=None):
+    # fields (a comma list) cuts each run to those keys and skips the git join unless `commits` is one of them
     r = _redis()
     out: List[Dict[str, Any]] = []
     if r:
@@ -2816,6 +2817,14 @@ async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
                     break
         except Exception:
             pass
+    keep = [f.strip() for f in str(fields or "").split(",") if f.strip()]
+    if keep:
+        # the matrix and the activity timeline draw a dozen fields of 300-500 runs every tick: the rest (routing,
+        # code, commits, ...) was ~70% of the bytes, and the git join per run window the bulk of the time
+        if "commits" in keep:
+            await _runs_window_commits_batch(out)
+        out = [{k: rec.get(k) for k in keep if k in rec} for rec in out]
+        return {"runs": out, "count": len(out), "fields": keep}
     await _runs_window_commits_batch(out)
     return {"runs": out, "count": len(out)}
 
@@ -11441,6 +11450,8 @@ APP.get("/ui/elements/git_graph.js", include_in_schema=False)(
     _serve_element_js_from("git_graph_element.js", "vera-git-graph element JS not found"))
 APP.get("/ui/elements/ci_ops.js", include_in_schema=False)(
     _serve_element_js_from("ci_ops_element.js", "vera-ci-ops element JS not found"))
+APP.get("/ui/elements/looplab_tables.js", include_in_schema=False)(
+    _serve_element_js_from("looplab_tables.js", "the Loop Lab table upgrade JS not found"))
 
 
 register_ui(

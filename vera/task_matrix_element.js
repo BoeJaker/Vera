@@ -151,7 +151,7 @@ td.rowhead{text-align:left;font-family:var(--mono,monospace);font-size:9.5px;
     async refresh() {
       const [tasksD, runsD, statusD] = await Promise.all([
         this._fetchJson('/evolve/tasks' + (this._tag ? '?tag=' + encodeURIComponent(this._tag) : '')),
-        this._fetchJson('/evolve/runs?limit=' + this._limit),
+        this._fetchJson('/evolve/runs?limit=' + this._limit + '&fields=run_id,task,ts,pass_rate,combined,avg_combined,triggered_by,label,status,error,source,session,variant_id,model'),   // the fields it draws: the rest was ~70% of each read
         this._fetchJson('/evolve/run/status'),
       ]);
       const tasks = (tasksD && tasksD.tasks) || [];

@@ -305,7 +305,7 @@ html.vpb-nav-hosted body{padding-left:0}
            360px viewport right when the loop ended (= review start) and, with the
            sticky bottom-scroll, shoved the whole timeline out of view — "the
            timeline disappeared". The final answer lives in ③ Result instead. -->
-      <vera-agent-loop-output id="evolve-alo" compact="true" show-toolkit="true" show-triage="true" show-final="false" style="height:360px;overflow:auto"></vera-agent-loop-output>
+      <vera-agent-loop-output id="evolve-alo" compact="true" show-toolkit="true" show-triage="true" show-final="false" class="alo-fill"></vera-agent-loop-output>
     </div>
     <div class="watch-col" data-phase="evaluate">
       <div class="wc-head">② Adversarial review — failures found</div>
@@ -343,7 +343,7 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="watch-grid">
       <div class="watch-col" data-phase="test">
         <div class="wc-head">① Test — agent loop</div>
-        <vera-agent-loop-output id="evolve-alo-watch" compact="true" show-toolkit="true" show-triage="true" style="height:340px;overflow:auto"></vera-agent-loop-output>
+        <vera-agent-loop-output id="evolve-alo-watch" compact="true" show-toolkit="true" show-triage="true" class="alo-fill"></vera-agent-loop-output>
       </div>
       <div class="watch-col" data-phase="evaluate">
         <div class="wc-head">② Evaluate — critique</div>
@@ -748,11 +748,23 @@ window._veraSubscribe=fn=>{_busSubs.add(fn);return ()=>_busSubs.delete(fn)};
 <script src="/ui/widgets/widget_element.js"></script>
 <script src="/ui/elements/ci_ops.js"></script>
 <script src="/ui/vera-dashboard.js"></script>
+<script src="/ui/elements/looplab_tables.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 let _providers=[],_profiles=[],_cfg={};
 async function api(p,o){try{const r=await fetch(p,Object.assign({headers:{'Content-Type':'application/json'}},o||{}));return await r.json()}catch(e){toast('err: '+e.message);return null}}
+/* A loop's events, wherever the loop ran. In a dev sandbox (any port but prod's) the census and the other loops run on
+   PROD - the sandbox's own store has never heard of them, so its live output sat at "waiting for events" forever. A
+   session this instance knows reads locally; one it does not is read from prod (same host, :8999; CORS allows it). */
+const _PROD=(location.port&&location.port!=='8999')?(location.protocol+'//'+location.hostname+':8999'):'';
+async function apiLoop(p){
+  const a=await api(p);
+  const known=a&&((a.count||0)>0||((a.run||{}).status));
+  if(known||!_PROD) return a;
+  try{const r=await fetch(_PROD+p,{credentials:'omit'});if(r.ok)return await r.json()}catch(_){}
+  return a;
+}
 async function post(p,b){return api(p,{method:'POST',body:JSON.stringify(b||{})})}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
@@ -1324,7 +1336,7 @@ function _renderStepsFallback(steps){
 }
 async function implPoll(){
   if(!_implSid)return;
-  const st=await api('/workshop/agent_loop/session_state?session_id='+encodeURIComponent(_implSid)+'&since='+_implSince);
+  const st=await apiLoop('/workshop/agent_loop/session_state?session_id='+encodeURIComponent(_implSid)+'&since='+_implSince);
   if(!st)return;
   const evs=st.events||[];
   if(evs.length){
@@ -1430,7 +1442,7 @@ function stopImplPoll(){if(_implTimer){clearInterval(_implTimer);_implTimer=null
 async function checkImplEmpty(runId){
   const note=$('test-impl-note');if(!note)return;
   try{
-    const r=await api('/workshop/agent_loop/session_state?session_id='+encodeURIComponent('evolve:'+runId));
+    const r=await apiLoop('/workshop/agent_loop/session_state?session_id='+encodeURIComponent('evolve:'+runId));
     const cnt=(r&&r.count)||0;
     if(cnt>0)return;
     const gr=await api('/evolve/run/get?run_id='+encodeURIComponent(runId));
@@ -2561,7 +2573,7 @@ async function loadCensusRuns(){
   const el=$('census-runs');if(!el)return;
   // One call for every driver kind (evolve.work.drivers); the census rows
   // carry their full summary, which the census renderer reads as before.
-  const [d,op]=await Promise.all([api('/evolve/work/drivers?include_excluded=true'),api('/census/operator/runs')]);
+  const [d,op]=await Promise.all([api('/evolve/work/drivers?include_excluded=true&slim=1'),api('/census/operator/runs')]);
   _workRows=(d&&d.drivers)||[];
   _workMeta=d||{};
   _cenRunsAll=_workRows.filter(x=>x.kind==='census'&&x.census).map(x=>x.census);
@@ -2886,7 +2898,7 @@ async function cenAloPoll(id){
   // loop's events every 3 s for nobody (2026-09-10). Off screen: keep the
   // follow armed, skip the read.
   if(typeof el.checkVisibility==='function'&&!el.checkVisibility()){s.timer=setTimeout(()=>cenAloPoll(id),3000);return}
-  const st=await api('/workshop/agent_loop/session_state?session_id='
+  const st=await apiLoop('/workshop/agent_loop/session_state?session_id='
                      +encodeURIComponent(s.sid)+'&since='+s.since);
   if(_cenAloS[id]!==s)return;                       // restarted for another session meanwhile
   const evs=(st&&st.events)||[];
@@ -2911,7 +2923,7 @@ function cenAloBlock(sid,id){
     +'<span class="hint mono" style="margin-left:8px">'+esc(sid.slice(0,8))+'</span>'
     +'<span class="hint" id="'+id+'-stat" style="margin-left:8px">connecting…</span></div>'
     +'<vera-agent-loop-output id="'+id+'" compact="true" show-toolkit="true" show-triage="true"'
-    +' style="height:340px;overflow:auto;display:block"></vera-agent-loop-output>';
+    +' class="alo-fill"></vera-agent-loop-output>';
 }
 function cenAloStart(sid,id){id=id||'cen-alo';cenAloStop(id);if(!sid)return;_cenAloS[id]={sid:sid,since:0,timer:null};cenAloPoll(id)}
 /* Open the running census goal's loop output straight from the live card. */
@@ -5873,6 +5885,12 @@ refreshActiveRun();
 loadAll();
 </script>
 <style>
+/* the agentic loop's live output fills the height there is (it was a fixed 340-360 px box under a tall page); drag
+   the corner to set it; a modal's copy fits the modal */
+vera-agent-loop-output.alo-fill{display:block;height:max(360px,calc(100vh - 230px));overflow:auto;resize:vertical;
+  /* the element's own timeline list: as tall as the box, not a 60-440 px card inside it */
+  --alo-cycles-minh:max(300px,calc(100vh - 330px));--alo-cycles-maxh:max(300px,calc(100vh - 330px))}
+.modal vera-agent-loop-output.alo-fill{height:max(360px,calc(100vh - 200px));--alo-cycles-minh:max(300px,calc(100vh - 300px));--alo-cycles-maxh:max(300px,calc(100vh - 300px))}
 #lens-card .card-h{flex-wrap:wrap}
 .lens-strip{display:flex;gap:4px;flex-wrap:wrap;margin-left:10px}
 .lens-strip button{font:inherit;font-size:11px;padding:5px 11px;border-radius:999px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;display:inline-flex;align-items:center;gap:6px;position:relative;overflow:hidden}

@@ -240,7 +240,7 @@ svg.chart{width:100%;height:120px;display:block;cursor:crosshair}
 
     async refresh() {
       const [runsD, stallsD, eventsD] = await Promise.all([
-        this._fetchJson('/evolve/runs?limit=500'),
+        this._fetchJson('/evolve/runs?limit=500&fields=run_id,task,ts,pass_rate,combined,avg_combined,triggered_by,label,status,error,source,session,variant_id,model'),   // the fields it draws
         this._fetchJson('/perf/stalls?limit=100'),
         this._fetchJson('/events?limit=300'),
       ]);

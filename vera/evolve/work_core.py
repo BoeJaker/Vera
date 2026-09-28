@@ -262,3 +262,23 @@ def task_row(task: Dict[str, Any], overview: Optional[Dict[str, Any]]) -> Dict[s
         "ok_rate": st.get("ok_rate"), "wall_median_s": st.get("wall_median_s"),
         "trend_ok_rate": st.get("trend_ok_rate"), "streak": st.get("streak"),
     }
+
+
+def slim_driver(r: Dict[str, Any]) -> Dict[str, Any]:
+    """A driver row without the weight the Work table never draws: the census rollup's copy of the provenance (the
+    row carries it once) and each helper cut to its name and purpose."""
+    def prov(p):
+        if not isinstance(p, dict):
+            return p
+        q = dict(p)
+        q["helpers"] = [{"name": (h or {}).get("name", ""), "purpose": str((h or {}).get("purpose", ""))[:160]}
+                        for h in (p.get("helpers") or []) if isinstance(h, dict)]
+        return q
+    r = dict(r)
+    if isinstance(r.get("provenance"), dict):
+        r["provenance"] = prov(r["provenance"])
+    if isinstance(r.get("census"), dict):
+        c = dict(r["census"])
+        c.pop("provenance", None)
+        r["census"] = c
+    return r
