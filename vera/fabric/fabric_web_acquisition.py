@@ -860,13 +860,10 @@ _REL_CUES = [(re.compile(r"\b(?:" + pat + r")\b", re.I), rel, rev)
 # Control: FABRIC_NER_BACKEND=auto|gliner|spacy|heuristic
 # ═══════════════════════════════════════════════════════════════════════════
 
-_SPACY_TYPE = {
-    "PERSON": "person", "ORG": "organisation", "GPE": "location",
-    "LOC": "location", "FAC": "location", "PRODUCT": "product",
-    "EVENT": "event", "WORK_OF_ART": "work", "LAW": "concept",
-    "LANGUAGE": "concept", "NORP": "concept", "DATE": "date",
-    "TIME": "date", "MONEY": "money",
-}
+# OntoNotes-v5 / spaCy label -> fabric type. One table for spaCy on the host
+# and for the nodes' OntoNotes NER (ner_node_core).
+from Vera.vera.fabric import ner_node_core as _ner_node
+_SPACY_TYPE = _ner_node.ONTONOTES_TYPE
 # A SMALL set of aliases that fold obvious synonyms onto a shared type; every
 # OTHER label GLiNER (or the LLM) emits is kept VERBATIM (slugified) so the type
 # vocabulary is open/flexible rather than prescriptive.
@@ -942,10 +939,10 @@ def _ner_backend() -> Dict:
     # degrades to the NEXT available backend instead of dropping straight to
     # heuristic (or producing nothing). 'heuristic' pref disables the ML stack.
     order: List[str] = []
-    if pref in ("gliner", "spacy"):
+    if pref in ("gliner", "spacy", "node"):
         order.append(pref)
     if pref != "heuristic":
-        for b in ("gliner", "spacy"):
+        for b in ("gliner", "spacy", "node"):
             if b not in order:
                 order.append(b)
 
@@ -970,6 +967,14 @@ def _ner_backend() -> Dict:
                 return _NER_STATE
             except Exception as e:
                 log.debug("spaCy unavailable, trying next backend: %s", e)
+        elif backend == "node":
+            # the nodes' OntoNotes NER (nlp.ner, from the shared model store):
+            # usable whenever the capability is registered; a call no node can
+            # serve falls back to the heuristic for that text only
+            if _nlp_ner_fn() is not None:
+                _NER_STATE.update(kind="node", obj=None)
+                log.info("entity NER backend: the nodes' OntoNotes NER (nlp.ner)")
+                return _NER_STATE
 
     _NER_STATE.update(kind="heuristic")
     log.info("entity NER backend: heuristic (install spaCy or GLiNER for better NER)")
@@ -1096,13 +1101,68 @@ import functools as _functools
 _NER_EXECUTOR = _futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="vera-ner")
 
 
+#: The event loop ner_offload was called from - the NER thread hands node
+#: calls back to it (nlp.ner is async and routes through the node registry).
+_MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+
 async def ner_offload(fn, *args):
     """Run a blocking NER extraction fn off the event loop on the shared NER
     thread. Returns fn(*args); None-safe."""
+    global _MAIN_LOOP
     if fn is None:
         return None
     loop = asyncio.get_event_loop()
+    _MAIN_LOOP = loop
     return await loop.run_in_executor(_NER_EXECUTOR, _functools.partial(fn, *args))
+
+
+def _nlp_ner_fn():
+    """nlp.ner's undecorated function (no per-page memory record), or None."""
+    try:
+        from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
+        c = CAPABILITY_REGISTRY.get("nlp.ner")
+        return (c.get("raw") or c.get("func")) if c else None
+    except Exception:
+        return None
+
+
+def _node_entities(text: str) -> Optional[List[Dict]]:
+    """Entities from the nodes' NER, or None when that cannot be had here -
+    on the event loop's own thread (blocking it would deadlock), with no loop
+    to hand to, or when no node serves - so the caller falls back."""
+    fn = _nlp_ner_fn()
+    if fn is None or _MAIN_LOOP is None or not _MAIN_LOOP.is_running():
+        return None
+    try:
+        asyncio.get_running_loop()
+        return None                       # on a loop thread: never block it
+    except RuntimeError:
+        pass
+    try:
+        fut = asyncio.run_coroutine_threadsafe(
+            fn(text=text[:_ner_node.MAX_CHARS], task="ner"), _MAIN_LOOP)
+        res = fut.result(timeout=120) or {}
+    except Exception as e:
+        log.debug("node NER: %s", e)
+        return None
+    if not isinstance(res, dict) or res.get("error") or "entities" not in res:
+        log.debug("node NER unavailable: %s", (res or {}).get("error") if isinstance(res, dict) else res)
+        return None
+    out: List[Dict] = []
+    seen = set()
+    for name, ety, pos, conf in _ner_node.node_entities(text, res["entities"], _slug_type):
+        norm = _normalise_entity(name.strip(".,;:"))
+        if not norm or len(norm) < 2 or len(norm) > 120 or norm in seen:
+            continue
+        if " " not in norm and norm in _ENTITY_STOPWORDS:
+            continue
+        seen.add(norm)
+        out.append({"name": name.strip(".,;:"), "type": ety, "normalised": norm,
+                    "position": pos,
+                    "context": text[max(0, pos - 30):pos + len(name) + 30][:200],
+                    "confidence": round(conf, 2), "description": ""})
+    return out
 
 
 def _extract_entities_from_text(text: str, content_type: str = "text") -> List[Dict]:
@@ -1113,11 +1173,13 @@ def _extract_entities_from_text(text: str, content_type: str = "text") -> List[D
     if not text or not text.strip():
         return []
     st = _ner_backend()
-    if st["kind"] in ("spacy", "gliner"):
-        ents = _model_entities(text, content_type)
-        ents += _supplement_entities(text, content_type,
-                                     exclude={e["normalised"] for e in ents})
-        return _resolve_overlaps(ents)
+    if st["kind"] in ("spacy", "gliner", "node"):
+        ents = (_node_entities(text) if st["kind"] == "node"
+                else _model_entities(text, content_type))
+        if ents is not None:
+            ents += _supplement_entities(text, content_type,
+                                         exclude={e["normalised"] for e in ents})
+            return _resolve_overlaps(ents)
     return _heuristic_entities(text, content_type)
 
 
@@ -3255,7 +3317,7 @@ async def cap_entity_graph_extract(
 
 def _ner_available() -> Dict:
     """Cheap importability probe (does NOT load models)."""
-    avail = {"spacy": False, "gliner": False}
+    avail = {"spacy": False, "gliner": False, "node": _nlp_ner_fn() is not None}
     try:
         import spacy  # type: ignore  # noqa
         avail["spacy"] = True
@@ -3296,8 +3358,8 @@ async def cap_entity_graph_ner(
         os.environ["FABRIC_GLINER_MODEL"] = gliner_model.strip(); changed = True
     if backend.strip():
         b = backend.strip().lower()
-        if b not in ("auto", "gliner", "spacy", "heuristic"):
-            return {"error": "backend must be auto|gliner|spacy|heuristic"}
+        if b not in ("auto", "gliner", "spacy", "node", "heuristic"):
+            return {"error": "backend must be auto|gliner|spacy|node|heuristic"}
         os.environ["FABRIC_NER_BACKEND"] = b
         changed = True
     if changed:
@@ -3311,7 +3373,9 @@ async def cap_entity_graph_ner(
                  "discuss the Seacourt Tower of Oxford, a project built with Python "
                  "and funded by SoftBank in 2023.")
     try:
-        ents = _extract_entities_from_text(test_text, "text")
+        # through the NER thread, like every real extraction (the node
+        # backend cannot block the loop this coroutine runs on)
+        ents = await ner_offload(_extract_entities_from_text, test_text, "text") or []
     except Exception as e:
         ents = []
         log.debug("ner self-test: %s", e)
