@@ -42,6 +42,9 @@ Object.keys(GRIDS).forEach((k) => {
     if (!r || typeof r !== 'object') { bad.push('no record'); return; }
     if (!FORMS.has(r.form)) bad.push(r.id + ' form ' + r.form);
     if (!(Array.isArray(w.span) && r.frame && JSON.stringify(r.frame.span) === JSON.stringify(w.span))) bad.push(r.id + ' span');
+    // an element tile draws a custom element that reads its own data (like the Loop
+    // Lab's vera-author-map): no source to read, but it must name its tag
+    if (r.form === 'element') { if (!(r.draw && /^vera-[a-z0-9-]+$/.test(r.draw.tag || ''))) bad.push(r.id + ' element tile without a vera-* tag'); return; }
     if (r.draw.body === 'page') { kept++; if (!/^stays the page's: /.test(r.note || '')) bad.push(r.id + ' kept without saying why'); return; }
     converted++;
     if (!W.readable(r.source)) bad.push(r.id + ' source ' + r.source + ' is not read on its own');

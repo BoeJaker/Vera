@@ -429,6 +429,51 @@
    "hidden": false,
    "refresh": "5s",
    "floated": false
+  },
+  {
+   "record": {
+    "id": "w-node-workers",
+    "form": "element",
+    "source": "",
+    "shape": "panel",
+    "title": "Node workers",
+    "read": {
+     "refresh": "",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      6
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "tag": "vera-node-workers",
+     "attrs": {}
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "the node workers: task classes per node, one-click provisioning, commit sync (nodes.workers.*)"
+   },
+   "at": [
+    0,
+    8
+   ],
+   "span": [
+    12,
+    6
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
   }
  ]
 }
