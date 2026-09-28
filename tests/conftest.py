@@ -260,6 +260,7 @@ _CRITICAL_MODULES = {
     "test_cap_relevance_core",  # the planner catalogue: embeddings loaded, whole-word matching, short earned tail, no secret/provision caps, whole-sentence lines (2026-09-27)
     "test_stepwise_reviewed",  # stepwise + a CPU critic on every step: one at a time, latest only, never waited on (2026-09-28)
     "test_role_overrides",  # per-run executor/coder models on a chosen node + bigger-coder / max-effort presets; MoEs never half-loaded onto the GPU (2026-09-28)
+    "test_evolve_delegate",  # delegate a code-reporting task to a Vera loop: read-only guard, jailed tools, own worktree, cleanup (2026-09-28)
     "test_loop_record_core",  # only census/task loops reached Loop Lab's run store; chat/dream/program/API loops left no record (2026-09-27)
     "test_routing_parity_core",  # a sandbox ran the code-default models, not prod's routing - its measurements measured other models (2026-09-27)
     "test_step_deps_core",  # a step that needed a failed step read the failed attempt, never the recovery that finished it (2026-09-27)

@@ -33,7 +33,8 @@ SELF_RECORDING_PREFIXES = ("evolve:",)
 #: Session-id prefix -> the origin shown in Loop Lab. Anything else is a loop
 #: started by a person (the chat) or a caller of the API; the id cannot tell
 #: those apart, so they share one word.
-ORIGIN_PREFIXES = (("dream:", "dream"), ("v8:", "program"), ("census", "census"))
+ORIGIN_PREFIXES = (("dream:", "dream"), ("v8:", "program"), ("census", "census"),
+                   ("delegate:", "delegate"))
 ORIGIN_DEFAULT = "interactive"
 FINAL_MAX = 12000
 
