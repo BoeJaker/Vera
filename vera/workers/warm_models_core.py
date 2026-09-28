@@ -469,13 +469,63 @@ def parse_expiry(s: Any) -> float:
 
 
 def ps_rows(ps: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """/api/ps -> [{name, expires_at_s, context_length, size}]."""
+    """/api/ps -> [{name, expires_at_s, context_length, size, digest}]."""
     out = []
     for m in (ps or {}).get("models") or []:
         out.append({"name": m.get("name") or m.get("model") or "",
                     "expires_at_s": parse_expiry(m.get("expires_at")),
                     "context_length": int(m.get("context_length") or 0),
-                    "size": int(m.get("size") or 0)})
+                    "size": int(m.get("size") or 0),
+                    "digest": str(m.get("digest") or "")})
+    return out
+
+
+# ── one model, several tags ──────────────────────────────────────────────────
+# `jaahas/qwen3.5-uncensored:latest` and `:9b` are the SAME weights (one digest,
+# measured on gpu-250 2026-09-28) and Vera uses both names. Compared by name, a
+# resident `:9b` read as "the planned model is not loaded" and the warmer would
+# load the same weights again under the other tag.
+def digest_of(model: str, digests: Dict[str, str]) -> str:
+    for name, d in (digests or {}).items():
+        if same_model(name, model):
+            return str(d or "")
+    return ""
+
+
+def tags_of(model: str, digests: Dict[str, str]) -> List[str]:
+    """Every tag on the node carrying the same weights as `model` (itself first)."""
+    d = digest_of(model, digests)
+    out = [model]
+    if d:
+        out += [n for n, x in sorted((digests or {}).items()) if x == d and not same_model(n, model)]
+    return out
+
+
+def canonical_rows(rows: List[Dict[str, Any]], planned: Iterable[str],
+                   digests: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Resident rows with a planned model's weights renamed to the planned
+    name, so residency and actions compare the same thing."""
+    by_digest = {digest_of(m, digests): m for m in planned if digest_of(m, digests)}
+    out = []
+    for r in rows or []:
+        d = str(r.get("digest") or "") or digest_of(r.get("name", ""), digests)
+        if d in by_digest and not same_model(r.get("name"), by_digest[d]):
+            r = dict(r, name=by_digest[d], tag=r.get("name"))
+        out.append(r)
+    return out
+
+
+def planned_pairs_with_tags(p: Dict[str, Dict[str, Any]],
+                            digests_by_node: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, int]]:
+    """planned_pairs, with every other tag of a planned model's weights too -
+    a call naming `:9b` keeps the runner a plan for `:latest` spawned."""
+    out: Dict[str, Dict[str, int]] = {}
+    for iid, row in planned_pairs(p).items():
+        dg = (digests_by_node or {}).get(iid) or {}
+        out[iid] = {}
+        for m, ctx in row.items():
+            for t in tags_of(m, dg):
+                out[iid].setdefault(t, ctx)
     return out
 
 
