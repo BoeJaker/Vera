@@ -57,13 +57,16 @@ def gate_enabled(env: Optional[Dict[str, str]] = None) -> bool:
 def capacity_for(has_gpu: bool, env: Optional[Dict[str, str]] = None) -> int:
     """Max concurrent generations allowed across ALL processes for a node.
     GPU nodes default to 1 (a single 24GB card can't run two large models at
-    once without thrashing). Non-GPU nodes default to 0 = ungated (CPU boxes
-    are the pressure-relief valve; serialising them would only create queues
-    where there is spare capacity). Override via VERA_GPU_GATE_N / VERA_NODE_GATE_N."""
+    once without thrashing). Non-GPU nodes default to 2 (user, 2026-09-28: "let
+    2 llm/ollama jobs go through to the cpu nodes at once"): their Ollama runs
+    two slots (ollama_node_core.CPU_NUM_PARALLEL), measured +20-35% total
+    throughput, and a third generation queues here rather than splitting the
+    cores three ways. Embeddings never take the gate, so a node generating
+    still embeds. 0 = ungated. Override via VERA_GPU_GATE_N / VERA_NODE_GATE_N."""
     env = os.environ if env is None else env
     if has_gpu:
         return max(0, int(env.get("VERA_GPU_GATE_N", "1") or 1))
-    return max(0, int(env.get("VERA_NODE_GATE_N", "0") or 0))
+    return max(0, int(env.get("VERA_NODE_GATE_N", "2") or 0))
 
 
 def ttl_ms(env: Optional[Dict[str, str]] = None) -> int:
