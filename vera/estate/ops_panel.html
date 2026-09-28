@@ -242,6 +242,13 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .r .k{width:52px;flex-shrink:0;font-family:var(--f-mono);font-size:9px;color:var(--t3)}
 .r .bar{flex:1;height:5px;border-radius:3px;background:var(--s3);overflow:hidden}.r .bar i{display:block;height:100%;border-radius:3px}
 .r .v{font-family:var(--f-mono);font-size:9.5px;color:var(--t1)}
+.mx{display:flex;flex-direction:column;gap:6px}
+.mxk{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+.mxk span{display:flex;flex-direction:column;gap:1px;padding:4px 7px;border-radius:4px;background:var(--s2);min-width:0}
+.mxk i{font-style:normal;font-family:var(--f-mono);font-size:8.5px;color:var(--t3)}.mxk b{font-size:12px;color:var(--t1);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mxb{display:flex;flex-direction:column;gap:5px}.mxb .r .k{width:64px}
+.mxs{display:flex;flex-wrap:wrap;gap:3px 12px;font-family:var(--f-mono);font-size:9px;color:var(--t3)}.mxs b{color:var(--t1);font-weight:600}
+.mxw{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px}.mxw span{display:flex;gap:6px;font-size:9.5px;color:var(--t1);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mxw i{font-style:normal;color:var(--t3);font-family:var(--f-mono);font-size:8.5px;flex:none;width:64px}
 .sp2{height:36px}.sp2 svg{width:100%;height:36px;display:block}
 .hb{display:flex;align-items:flex-end;gap:2px;height:30px}.hb i{flex:1;border-radius:2px 2px 0 0;display:block;min-height:1px}
 .acts{display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 6px}
@@ -572,17 +579,17 @@ function layout(W, H){
     // the room a node takes: its widget line (u) - each cell as wide as ITS nodes' lines; rows as deep as the widgets are big
     const wline = {}, maxL = {}, maxS = {}; shown.forEach((n) => { const ws = S.widgets ? wspec(n) : []; wline[n.id] = ws.reduce((t, w) => t + wstep(w), 0);
       const ck = n.plane + ':' + n.domain; maxL[ck] = Math.max(maxL[ck] || 0, wline[n.id]); maxS[n.plane] = Math.max(maxS[n.plane] || 0, ws.reduce((m, w) => Math.max(m, w.s || 1), 0)); });
-    const cellW = (pl, d) => 3.0 * SP + (maxL[pl + ':' + d] || 0);   // the pin's gutter (1.4 wide) holds eight pipe lanes                              // u between two nodes of a cell
+    const cellW = (pl, d) => 3.4 * SP + (maxL[pl + ':' + d] || 0);   /* gutter + pin 2.4, the widget line, 1.0 to spare */   // the pin's gutter (1.4 wide) holds eight pipe lanes                              // u between two nodes of a cell
     const rowV = (pl) => 1.2 * SP + 1.2 * S.wsz * (maxS[pl] || 0) + 1.6 * SP;   // the widgets' depth for their size + the row gap's pipe tracks   // + the row gap, eight pipe tracks   // v between two rows of a cell
     // a crowded cell is a grid, not one ladder: six rows at most, then another column
     const ROWCAP = 6, grid = {};
     Object.keys(slot).forEach((k) => { const t = slot[k], cols = Math.max(1, Math.ceil(t / ROWCAP)); grid[k] = { cols, rows: Math.ceil(t / cols) }; });
     // each plane sizes its OWN domain columns (as wide as its cell there, a sliver where it has none) and is centred in the stack:
     // aligning every plane's columns to the busiest plane left the sparse planes mostly empty floor
-    const domUp = {}, UWp = {}; PL.forEach((p) => { let u = 0; domUp[p.id] = DOM.map((d, i) => { const g = grid[p.id + ':' + i]; const w = g ? g.cols * cellW(p.id, i) + 0.5 * SP : 0.6 * SP; const c = u + w / 2; u += w; return c; }); UWp[p.id] = u; });
+    const domUp = {}, domLp = {}, UWp = {}; PL.forEach((p) => { let u = 0; domLp[p.id] = []; domUp[p.id] = DOM.map((d, i) => { const g = grid[p.id + ':' + i]; const w = g ? g.cols * cellW(p.id, i) + 0.5 * SP : 0.6 * SP; domLp[p.id][i] = u + 0.25 * SP; const c = u + w / 2; u += w; return c; }); UWp[p.id] = u; });
     const UW = Math.max.apply(null, [1].concat(PL.map((p) => UWp[p.id])));
     const rowsOf = (pl) => Math.max.apply(null, [1].concat(Object.keys(grid).filter((k) => k.split(':')[0] === pl).map((k) => grid[k].rows)));
-    const VHof = {}; PL.forEach((p) => { VHof[p.id] = ((rowsOf(p.id) - 1) / 2) * rowV(p.id) + 0.9 * SP; });
+    const VHof = {}; PL.forEach((p) => { VHof[p.id] = ((rowsOf(p.id) - 1) / 2) * rowV(p.id) + 1.2 * SP + 0.8 * S.wsz * (maxS[p.id] || 0); });   /* front margin for the widgets' depth */
     const VMAX = Math.max.apply(null, PL.map((p) => VHof[p.id]));
     const KI0 = (FLAT ? 0.74 : 1) * 60 / Math.cos(45 * Math.PI / 180), NHW = 52, FITM = 14;
     const uOff = {}, vOff = {}; { const rowsD = [];
@@ -600,14 +607,12 @@ function layout(W, H){
       const rawX = [], rawY = [], corners = [], rawNodes = [], LL = {}, usedL = {}, pcs = [];
       PL.forEach((p) => { const z = zOf(p.id), uo = uOf(p.id), vo = vOf2(p.id), VH = VHof[p.id], vb = vBusOf(p.id) - 3.2 * SP;
         // the plate holds its routes: the gutters left of the first column, the bus lanes along the back
-        const uL = -2.8 * SP, vBk = vBusOf(p.id) - 3.3 * SP;
-        const UP = UWp[p.id], c = [iso(uL + uo, vBk + vo, z), iso(UP + uo, vBk + vo, z), iso(UP + uo, VH + vo, z), iso(uL + uo, VH + vo, z)];
-        corners.push({ p, c }); pcs.push([(UP + uL) / 2 + uo, (vBk + VH) / 2 + vo, z]); c.forEach((q) => { rawX.push(q[0]); rawY.push(q[1]); });
-        // stacked: a rail along the back spans the whole stack's width, so a riser or a bus run beside a narrower plate stays on a floor
-        if (!FLAT){ const vr = vBusOf(p.id) + 0.3 * SP, rc = [iso(uL, vBk, z), iso(UW, vBk, z), iso(UW, vr, z), iso(uL, vr, z)]; corners.push({ p, c: rc, rail: true }); rc.forEach((q) => { rawX.push(q[0]); rawY.push(q[1]); }); } });
+        const uL = -0.8 * SP, vBk = vBusOf(p.id) - 3.3 * SP;
+        const UP = UWp[p.id] + 0.8 * SP, c = [iso(uL + uo, vBk + vo, z), iso(UP + uo, vBk + vo, z), iso(UP + uo, VH + vo, z), iso(uL + uo, VH + vo, z)];
+        corners.push({ p, c }); pcs.push([(UP + uL) / 2 + uo, (vBk + VH) / 2 + vo, z]); c.forEach((q) => { rawX.push(q[0]); rawY.push(q[1]); }); });
       shown.forEach((n) => { const k = n.plane + ':' + n.domain; const idx = (usedL[k] = (usedL[k] || 0)); usedL[k]++; const g = grid[k];
         const c = idx % g.cols, r = Math.floor(idx / g.cols);
-        const u = domUp[n.plane][n.domain] + (c - (g.cols - 1) / 2) * cellW(n.plane, n.domain) + uOf(n.plane), vv = (r - (g.rows - 1) / 2) * rowV(n.plane) + vOf2(n.plane), z = zOf(n.plane);
+        const u = domLp[n.plane][n.domain] + c * cellW(n.plane, n.domain) + 2.4 * SP + uOf(n.plane),   /* the pin just right of its gutter; its widgets fill the cell */ vv = (r - (g.rows - 1) / 2) * rowV(n.plane) + vOf2(n.plane), z = zOf(n.plane);
         const q = iso(u, vv, z); LL[n.id] = { u, v: vv, z, pl: n.plane, vb: vBusOf(n.plane) + vOf2(n.plane), rv: rowV(n.plane) };
         rawNodes.push({ id: n.id, x: q[0], y: q[1], col: PCOL[n.plane] }); rawX.push(q[0] - NHW, q[0] + NHW); rawY.push(q[1] - 90, q[1] + 16); });
       const minX = Math.min.apply(null, rawX), maxX = Math.max.apply(null, rawX), minY = Math.min.apply(null, rawY), maxY = Math.max.apply(null, rawY);
@@ -668,7 +673,7 @@ function layout(W, H){
         return at(port([[A.u, A.v, A.z, 0], [A.u, A.v, A.z, zA], [gA, A.v, A.z, zA], [gA, hv, A.z, zA], [gB, hv, A.z, zA], [gB, hv, B.z, zB], [gB, B.v, B.z, zB], [B.u, B.v, B.z, zB], [B.u, B.v, B.z, 0]])); }
       const va = A.vb - tr('bA') * LB, vbB = FLAT ? B.vb : B.vb - tr('bB') * LB;
       const bp = (u, v, zb, lift) => { const o = P(u, v, zb + lift); o.w = [u, v, zb + lift, zb]; return o; };
-      if (riserOf[key] == null){ const col = A.pl + ':' + Math.round(A.u * 10); const n = (riserN[col] = (riserN[col] || 0) + 1) - 1; riserOf[key] = gA + (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.45 * SP;
+      if (riserOf[key] == null){ const col = A.pl + ':' + Math.round(A.u * 10); const n = (riserN[col] = (riserN[col] || 0) + 1) - 1; riserOf[key] = gA + (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.45 * SP; if (!FLAT){ const lo = (pl) => (UW - UWp[pl]) / 2 - 0.4 * SP, hi = (pl) => (UW - UWp[pl]) / 2 + UWp[pl] + 0.4 * SP; riserOf[key] = clamp(riserOf[key], Math.max(lo(A.pl), lo(B.pl)), Math.min(hi(A.pl), hi(B.pl))); }
         busPts.push(bp(riserOf[key], va, A.z, zA), bp(riserOf[key], FLAT ? vbB : vbB, B.z, zB)); }
       const uR = riserOf[key];
       if (FLAT) return at(port([[A.u, A.v, A.z, 0], [A.u, A.v, A.z, zA], [gA, A.v, A.z, zA], [gA, va, A.z, zA], [gB, va, A.z, zA], [gB, va, B.z, zB], [gB, vbB, B.z, zB], [gB, B.v, B.z, zB], [B.u, B.v, B.z, zB], [B.u, B.v, B.z, 0]]));
@@ -1113,7 +1118,7 @@ function capArgs(n, name){ const C = CAPS[name] || {}, p = C.p || {}, a = {};
   return a; }
 
 // ── the node card beside its node (⤢ or a widget): drawn with the graph, or on its own when only the card changes ──
-function cardHtml(ID, pos, W, H){ const plot = $('plot'), v = $('pzv'); if (!(S.exp && ID[S.exp] && pos[S.exp])) return ''; const n = ID[S.exp], p = pos[S.exp], wide = S.wact !== 'metrics', half = wide ? 165 : 118;
+function cardHtml(ID, pos, W, H){ const plot = $('plot'), v = $('pzv'); if (!(S.exp && ID[S.exp] && pos[S.exp])) return ''; const n = ID[S.exp], p = pos[S.exp], wide = true, half = 165;
     // the card opens beside its node, inside the part of the plot on screen (the plot may be wider or taller than the stage)
     const ui = clamp(S.vz, 1, UI_MAX) / S.vz, hw = half * ui, hh = (wide ? 210 : 150) * ui;
     let vis = null; try { const sr = (plot.closest('.stage') || plot).getBoundingClientRect(), pr = v.getBoundingClientRect();
@@ -1168,17 +1173,36 @@ function histBars(ms, col){ if (!ms || !ms.length) return '<div class="note">no 
 function actionsFor(n){ const K = { ollama: ['req', 'caps', 'logs', 'term'], store: ['req', 'logs', 'term'], guest: ['term', 'files', 'logs', 'req', 'restart'], host: ['term', 'files', 'logs', 'req'], 'docker-host': ['term', 'logs', 'req'], docker: ['logs', 'req', 'term', 'restart'], sandbox: ['term', 'logs', 'req', 'restart'], core: ['req', 'logs'], work: ['logs', 'req'], mesh: ['req', 'logs'] }; const L = (K[n.kind] || ['logs', 'req']).slice(); if (L.indexOf('caps') < 0) L.push('caps'); return L; }
 const ALABEL = { overview: 'Overview', metrics: 'Metrics', term: 'Terminal', files: 'Files', req: 'Send request', logs: 'Logs', caps: 'Capabilities', restart: 'Restart' };
 const ANOTE = { overview: 'What the estate knows about this node: who it is, its registration, its record, its findings and every pipe to it.', metrics: "The node's own readings, drawn in place.", term: 'Commands run on the machine through the estate\'s own capability: SSH with the stored login, else the Proxmox guest agent or pct exec, docker exec for a container. The first command asks once. Pin a terminal widget with ⊕ to keep its last lines on the plane.', files: 'The filesystem is browsed in the estate (Remote IDE for an enrolled host).', req: 'A capability request, sent through Vera\'s own bus; the default is a reading about this node. Nothing runs on the GPU unless you name a model capability.', logs: 'The last events that name this node, from the event ring.', caps: 'The estate capabilities that act on this node, its identifiers filled in. Pick one to load it into Send request: a reading runs at once, anything that changes the estate asks first.', restart: 'Restart asks once, then acts through the estate\'s own flow (a guest reboots through Proxmox; a sandbox through Loop Lab, dry run first; a docker host opens its containers in the estate).' };
+// the Metrics tab: the key figures, every reading as a bar, the history with its range, latency percentiles, the requests
+// through the node and each widget's value
+function metricsHtml(n){ const col = PCOL[n.plane], ser = (S.snap.series || {})[n.id] || {};
+  const bar = (k, v, c, tail) => '<span class="r"><span class="k">' + esc(k) + '</span><span class="bar"><i style="width:' + Math.max(0, Math.min(100, v)).toFixed(0) + '%;background:' + c + '"></i></span><span class="v">' + esc(tail) + '</span></span>';
+  const bars = [];
+  if (n.load != null) bars.push(bar('load', n.load, tc(n.load * .9), Math.round(n.load) + '%'));
+  if (n.mem_pct != null) bars.push(bar('memory', n.mem_pct, n.mem_pct >= 90 ? 'var(--ac4)' : 'var(--dv6)', Math.round(n.mem_pct) + '%'));
+  if (n.disk_pct != null) bars.push(bar('disk', n.disk_pct, n.disk_pct >= 90 ? 'var(--ac4)' : 'var(--dv4)', Math.round(n.disk_pct) + '%'));
+  if (n.temp != null) bars.push(bar('temp', n.temp / 90 * 100, tempCol(n.temp), Math.round(n.temp) + '° of 83°'));
+  const rg = regOf(n); if (rg) bars.push(bar('registered', rg.of ? rg.yes / rg.of * 100 : 0, regCol(rg), rg.yes + ' of ' + rg.of));
+  const kv = [['status', n.status], ['in flight', n.inflight || 0], ['findings', n.errors || 0], ['pipes', degOf(n.id)]];
+  if (n.conns != null) kv.push(['connections', n.conns]); if ((n.caps || []).length) kv.push([n.kind === 'ollama' ? 'models' : 'capabilities', n.caps.length]);
+  if (n.p95_ms != null) kv.push(['p95', Math.round(n.p95_ms) + ' ms']);
+  const key = ser.tps ? 'tps' : ser.cpu ? 'cpu' : ser.ping ? 'ping' : null, vals = key ? ser[key] : null, unit = key === 'tps' ? ' tok/s' : key === 'cpu' ? '%' : key === 'ping' ? ' ms' : '';
+  let hist = '<span class="note">no history for this node yet</span>';
+  if (vals && vals.length > 1){ const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals), avg = vals.reduce((a, b) => a + b, 0) / vals.length, last = vals[vals.length - 1], f = (x) => (key === 'tps' ? x.toFixed(1) : Math.round(x)) + unit;
+    hist = '<div class="sp2">' + sparkSvg(vals, 290, 44, col) + '</div><div class="mxs"><span>now <b>' + f(last) + '</b></span><span>avg <b>' + f(avg) + '</b></span><span>min <b>' + f(lo) + '</b></span><span>max <b>' + f(hi) + '</b></span><span>' + vals.length + ' readings</span></div>'; }
+  let lat = '';
+  if (n.latency && n.latency.length){ const s = n.latency.slice().sort((a, b) => a - b), q = (pp) => s[Math.min(s.length - 1, Math.floor(s.length * pp))];
+    lat = '<div class="sub2">request latency · ' + s.length + ' requests</div>' + histBars(n.latency, col) + '<div class="mxs"><span>p50 <b>' + Math.round(q(.5)) + ' ms</b></span><span>p95 <b>' + Math.round(q(.95)) + ' ms</b></span><span>max <b>' + Math.round(s[s.length - 1]) + ' ms</b></span></div>'; }
+  const th = n.through || [], thr = th.length ? '<div class="sub2">requests through · ' + th.length + '</div>' + th.slice(0, 5).map((x) => '<span class="frow"><i style="background:' + KCOL[x.kind] + '"></i><span class="n">' + esc(x.n) + '</span><span class="ms">' + esc(x.ms || x.status) + '</span></span>').join('') : '';
+  const ws = wspec(n), wv = ws.length ? '<div class="sub2">its widgets</div><div class="mxw">' + ws.map((w) => '<span><i>' + esc(WNAME[w.k] || w.k) + '</i>' + esc(wcaption(n, w.k)) + '</span>').join('') + '</div>' : '';
+  return '<div class="mx"><div class="mxk">' + kv.map((x) => '<span><i>' + esc(x[0]) + '</i><b style="' + (x[0] === 'status' ? 'color:' + SC[n.status] : x[0] === 'findings' && n.errors ? 'color:var(--ac4)' : '') + '">' + esc(String(x[1])) + '</b></span>').join('') + '</div>'
+    + (bars.length ? '<div class="mxb">' + bars.join('') + '</div>' : '') + '<div class="sub2">' + (key === 'tps' ? 'throughput' : key === 'cpu' ? 'cpu · last 40 min' : key === 'ping' ? 'ping' : 'history') + '</div>' + hist + lat + thr + wv + '</div>'; }
 function actionsHtml(n, act, where){
   const list = (where === 'w' ? ['overview', 'metrics'] : ['metrics']).concat(actionsFor(n)); const cur = list.indexOf(act) >= 0 ? act : list[0];
   const btns = '<div class="acts">' + list.map((a) => '<button class="abtn ' + (a === cur ? 'on ' : '') + (a === 'restart' ? 'danger' : '') + '" data-act="' + a + '" data-where="' + where + '">' + ALABEL[a] + '</button>').join('') + '</div>';
   const col = PCOL[n.plane]; let body = '';
   if (cur === 'overview'){ body = overviewHtml(n); }
-  else if (cur === 'metrics'){ const ser = (S.snap.series[n.id] || {}); const vals = ser.tps || ser.cpu || null;
-    body = '<div style="display:flex;flex-direction:column;gap:7px"><span class="r"><span class="k">load</span><span class="bar"><i style="width:' + (n.load != null ? Math.min(100, n.load) : 0) + '%;background:' + col + '"></i></span><span class="v">' + (n.load != null ? Math.round(n.load) + '%' : '—') + '</span></span>'
-      + (n.mem_pct != null ? '<span class="r"><span class="k">memory</span><span class="bar"><i style="width:' + Math.min(100, n.mem_pct) + '%;background:var(--dv6)"></i></span><span class="v">' + Math.round(n.mem_pct) + '%</span></span>' : '')
-      + (n.disk_pct != null ? '<span class="r"><span class="k">disk</span><span class="bar"><i style="width:' + Math.min(100, n.disk_pct) + '%;background:var(--dv4)"></i></span><span class="v">' + Math.round(n.disk_pct) + '%</span></span>' : '')
-      + '<div class="sp2">' + sparkSvg(vals, 190, 36, col) + '</div>' + (n.latency ? histBars(n.latency, col) : '')
-      + '<span class="r"><span class="k">in flight</span><span class="v">' + (n.inflight || 0) + '</span><span class="k" style="margin-left:auto">p95</span><span class="v">' + (n.p95_ms != null ? Math.round(n.p95_ms) + 'ms' : '—') + '</span></span></div>'; }
+  else if (cur === 'metrics'){ body = metricsHtml(n); }
   else if (cur === 'term'){ body = termHtml(n); }
   else if (cur === 'files'){ body = '<div class="term"><span class="tl in">' + esc(n.label) + ' · ' + esc(n.plane) + ' · ' + esc(n.detail) + '</span>' + (n.ref ? '<span class="tl">' + (cur === 'term' ? 'a shell on this machine opens in the estate' : 'its files open in the estate') + '</span>' : '<span class="tl warn">' + (n.kind === 'ollama' || n.kind === 'store' ? 'this service has no machine of its own here: open the runtime it runs on' : 'no machine is enrolled for this node') + '</span>') + '</div>'
       + '<div class="rrow">' + (n.ref ? '<button class="abtn go" data-open-entity="' + esc(n.ref) + '">Open in the estate</button>' : '') + (n.kind === 'ollama' || n.kind === 'store' ? '<button class="abtn" data-sel-runtime="' + esc(n.id) + '">Select its runtime</button>' : '') + '</div>'; }
