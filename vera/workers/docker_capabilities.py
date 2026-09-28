@@ -289,7 +289,14 @@ def _socket_from_url(url: str) -> str:
 )
 async def cap_docker_hosts_list(trace_id=None) -> Dict:
     hosts = _ensure_local_host(_load_hosts())
-    return {"hosts": list(hosts.values()), "count": len(hosts)}
+    rows = []
+    for rec in hosts.values():
+        row = dict(rec)
+        missing = await _ssh_host_missing(rec)
+        if missing:
+            row["broken"] = missing          # a panel can show it as broken instead of polling it
+        rows.append(row)
+    return {"hosts": rows, "count": len(rows)}
 
 
 @capability(
@@ -402,6 +409,42 @@ def _tcp_client(base: str) -> httpx.AsyncClient:
     return c
 
 
+async def _ssh_host_missing(rec: dict) -> str:
+    """Why an ssh-kind Docker host cannot be reached through its SSH record, or ''."""
+    if (rec or {}).get("kind") != "ssh":
+        return ""
+    sid = str(rec.get("ssh_host_id") or "").strip()
+    if not sid:
+        return "docker host %s has no ssh_host_id - set one or delete the host" % rec.get("id", "")
+    sb = _exec_mod()
+    resolve = getattr(sb, "_resolve_host_record", None) if sb else None
+    if resolve is None:
+        return ""                     # cannot tell - let the SSH call answer
+    try:
+        found = await resolve(sid)
+    except Exception:
+        return ""
+    if found:
+        return ""
+    return ("docker host %s points at SSH host %s, which no longer exists - "
+            "re-point it (docker.hosts.save) or delete it (docker.hosts.delete)"
+            % (rec.get("id", ""), sid))
+
+
+def _engine_error(status: int, body: bytes) -> str:
+    """'HTTP <status>: <the engine's message>' - never the bare status, which hid a
+    dead host reference behind 'HTTP 502' for months."""
+    msg = ""
+    try:
+        j = json.loads((body or b"").decode("utf-8", "replace") or "{}")
+        if isinstance(j, dict):
+            msg = str(j.get("message") or j.get("error") or "")
+    except Exception:
+        msg = (body or b"").decode("utf-8", "replace")
+    msg = " ".join(msg.split())[:300]
+    return "HTTP %s: %s" % (status, msg) if msg else "HTTP %s" % status
+
+
 async def _engine_request(rec: dict, method: str, api_path: str,
                           *, timeout: float = 15.0) -> Tuple[int, bytes, str]:
     """Hit the Docker Engine API for a host. Returns (status, body, content_type)."""
@@ -430,6 +473,13 @@ async def _engine_request(rec: dict, method: str, api_path: str,
         sb = _exec_mod()
         if not sb or not hasattr(sb, "cap_ssh_run"):
             return 502, b'{"message":"ssh exec unavailable"}', "application/json"
+        # A host whose SSH record is gone cannot answer. Say so, without an SSH call:
+        # 192.168.0.250-(vera-worker) pointed at a deleted SSH id from 2026-07 until
+        # 2026-09-28, and every poll (UI tiles, the stats tick) ran exec.ssh.run just
+        # to fail as a bare "HTTP 502".
+        missing = await _ssh_host_missing(rec)
+        if missing:
+            return 424, json.dumps({"message": missing}).encode(), "application/json"
         res = await sb.cap_ssh_run(command=cmd, host_id=rec.get("ssh_host_id", ""),
                                    timeout=int(timeout) + 4)
         if not res.get("ok"):
@@ -485,7 +535,7 @@ async def cap_docker_ping(host_id: str = "", trace_id=None) -> Dict:
     try:
         status, body, _ = await _engine_request(rec, "GET", "/version", timeout=8)
         if status != 200:
-            return {"ok": False, "error": f"HTTP {status}", "host_id": rec["id"]}
+            return {"ok": False, "error": _engine_error(status, body), "host_id": rec["id"]}
         j = json.loads(body or b"{}")
         return {"ok": True, "version": j.get("Version", ""),
                 "api_version": j.get("ApiVersion", ""), "host_id": rec["id"]}
@@ -517,7 +567,7 @@ async def cap_docker_ps(host_id: str = "", all: bool = True, trace_id=None) -> D
         return {"error": f"unknown host: {host_id}", "containers": []}
     status, body, _ = await _engine_request(rec, "GET", f"/containers/json?all={'true' if all else 'false'}")
     if status != 200:
-        return {"error": f"HTTP {status}", "containers": []}
+        return {"error": _engine_error(status, body), "containers": []}
     rows = await _parse_engine_json(body, [])
     if not isinstance(rows, list):
         rows = []
@@ -599,7 +649,7 @@ async def _docker_stats_tick_host(host_id: str, rec: dict) -> None:
     try:
         status, body, _ = await _engine_request(rec, "GET", "/containers/json?all=false")
         if status != 200:
-            _DOCKER_STATS_CACHE[host_id] = {"containers": [], "updated_at": now_iso(), "error": f"HTTP {status}"}
+            _DOCKER_STATS_CACHE[host_id] = {"containers": [], "updated_at": now_iso(), "error": _engine_error(status, body)}
             return
         rows = await _parse_engine_json(body, [])
         if not isinstance(rows, list):
@@ -728,7 +778,7 @@ async def cap_docker_images(host_id: str = "", trace_id=None) -> Dict:
         return {"error": f"unknown host: {host_id}", "images": []}
     status, body, _ = await _engine_request(rec, "GET", "/images/json")
     if status != 200:
-        return {"error": f"HTTP {status}", "images": []}
+        return {"error": _engine_error(status, body), "images": []}
     rows = await _parse_engine_json(body, [])
     if not isinstance(rows, list):
         rows = []
