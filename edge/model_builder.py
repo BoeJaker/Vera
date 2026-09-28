@@ -56,7 +56,7 @@ if _HERE not in sys.path:
 STORE = os.getenv("VERA_STORE_DIR", "/opt/vera-store/models")
 #: Families the builder may write. Anything else is refused: the store also
 #: holds ollama's blobs, which this process must never touch.
-FAMILIES = ("nlp", "whisper", "sd", "tts", "gliner", "spacy", "hf")
+FAMILIES = ("nlp", "whisper", "sd", "tts", "gliner", "spacy", "hf", "rembg")
 MAX_LOG = 400
 
 _JOBS: Dict[str, Dict[str, Any]] = {}

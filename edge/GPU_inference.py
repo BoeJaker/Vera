@@ -127,6 +127,33 @@ IPADAPTER_REPO      = os.getenv("IPADAPTER_REPO",    "h94/IP-Adapter")
 REMBG_MODEL         = os.getenv("REMBG_MODEL",       "u2net")
 ESRGAN_MODEL        = os.getenv("ESRGAN_MODEL",      "RealESRGAN_x4plus")
 
+# ── The shared model store ────────────────────────────────────────────────────
+# Every node mounts the specialist-model store READ-ONLY at VERA_MODEL_STORE
+# (/opt/vera-store/models). A model the store holds is loaded from there, so
+# every node serves the same bytes; one it lacks falls back to the old hub id /
+# cache. Resolution is per call (media_store_core), so a model the builder adds
+# later is used without a restart of this code path's config.
+try:
+    import media_store_core as _mstore
+except Exception:                      # deployed without the core: old behaviour
+    _mstore = None
+
+
+def _src(model_id: str, family: str = "sd") -> str:
+    return _mstore.hf_source(model_id, family) if _mstore else model_id
+
+
+def _whisper_root():
+    return _mstore.whisper_root(WHISPER_MODEL) if _mstore else None
+
+
+def _store_report() -> dict:
+    if not _mstore:
+        return {"store": None, "note": "media_store_core not deployed"}
+    return _mstore.resolve_all({"sd": SD_MODEL_ID, "controlnet": CONTROLNET_MODEL_ID,
+                                "ipadapter": IPADAPTER_REPO, "whisper": WHISPER_MODEL,
+                                "coqui": TTS_MODEL_NAME, "rembg": REMBG_MODEL})
+
 _controlnet_pipe   = None   # lazily built (shares _sd_pipe weights + a ControlNet)
 _openpose_detector = None   # controlnet_aux OpenposeDetector (False once if absent)
 _ipadapter_pipe    = None   # components-shared pipe; adapter is load/unloaded per call
@@ -459,11 +486,11 @@ def load_models():
         log.info(f"Loading Whisper ({WHISPER_MODEL})…")
         import whisper
         try:
-            _whisper_model = whisper.load_model(WHISPER_MODEL, device=device)
+            _whisper_model = whisper.load_model(WHISPER_MODEL, device=device, download_root=_whisper_root())
         except Exception as e:
             if device == "cuda":
                 log.warning(f"Whisper GPU load failed ({e}); falling back to CPU.")
-                _whisper_model = whisper.load_model(WHISPER_MODEL, device="cpu")
+                _whisper_model = whisper.load_model(WHISPER_MODEL, device="cpu", download_root=_whisper_root())
             else:
                 raise
         log.info("Whisper ready.")
@@ -528,11 +555,11 @@ def _load_sd(device: str):
         if dev == "cuda":
             kwargs["variant"] = "fp16"
         try:
-            pipe = SDPipeline.from_pretrained(SD_MODEL_ID, **kwargs).to(dev)
+            pipe = SDPipeline.from_pretrained(_src(SD_MODEL_ID), **kwargs).to(dev)
         except Exception as e:
             if kwargs.pop("variant", None) is not None:
                 log.warning(f"SD fp16-variant load failed ({e}); retrying without variant.")
-                pipe = SDPipeline.from_pretrained(SD_MODEL_ID, **kwargs).to(dev)
+                pipe = SDPipeline.from_pretrained(_src(SD_MODEL_ID), **kwargs).to(dev)
             else:
                 raise
         return pipe, dtype
@@ -690,7 +717,9 @@ def _load_kokoro():
         from kokoro_onnx import Kokoro
         import urllib.request, os
 
-        model_dir   = os.getenv("KOKORO_MODEL_DIR", os.path.dirname(os.path.abspath(__file__)))
+        model_dir   = (os.getenv("KOKORO_MODEL_DIR")
+                       or (_mstore.kokoro_dir() if _mstore else None)
+                       or os.path.dirname(os.path.abspath(__file__)))
         model_path  = os.path.join(model_dir, "kokoro-v1.0.onnx")
         voices_path = os.path.join(model_dir, "voices-v1.0.bin")
 
@@ -725,6 +754,9 @@ def _load_coqui(device: str):
     global _tts_synthesizer, TTS_SAMPLE_RATE
     log.info(f"Loading Coqui TTS ({TTS_MODEL_NAME}) on {device}...")
     from TTS.api import TTS as CoquiTTS
+    home = _mstore.coqui_home(TTS_MODEL_NAME) if _mstore else None
+    if home and not os.getenv("TTS_HOME"):
+        os.environ["TTS_HOME"] = home          # Coqui's own layout, read from the store
     try:
         _tts_synthesizer = CoquiTTS(
             model_name=TTS_MODEL_NAME,
@@ -1287,7 +1319,7 @@ def _get_cpu_pipe():
         from diffusers import StableDiffusionPipeline as P
     log.info("Building CPU fallback SD pipeline (fp32)…")
     _sd_cpu_pipe = P.from_pretrained(
-        SD_MODEL_ID, torch_dtype=torch.float32,
+        _src(SD_MODEL_ID), torch_dtype=torch.float32,
         safety_checker=None, use_safetensors=True,
     ).to("cpu")
     return _sd_cpu_pipe
@@ -1585,7 +1617,20 @@ def _get_rembg_session(model: str):
     model = model or REMBG_MODEL
     if model not in _rembg_sessions:
         from rembg import new_session
-        _rembg_sessions[model] = new_session(model)
+        # rembg reads U2NET_HOME when the session is made: the store for a model
+        # it holds, else the node's own cache (never a download into the ro store)
+        home = _mstore.rembg_home(model) if _mstore else None
+        prev = os.environ.get("U2NET_HOME")
+        if home:
+            os.environ["U2NET_HOME"] = home
+        try:
+            _rembg_sessions[model] = new_session(model)
+        finally:
+            if home:
+                if prev is None:
+                    os.environ.pop("U2NET_HOME", None)
+                else:
+                    os.environ["U2NET_HOME"] = prev
     return _rembg_sessions[model]
 
 
@@ -1664,7 +1709,7 @@ def _get_controlnet_pipe():
     is_xl = "xl" in SD_MODEL_ID.lower()
     cn_id = CONTROLNET_XL_MODEL_ID if is_xl else CONTROLNET_MODEL_ID
     dtype = torch.float16 if _sd_device == "cuda" else torch.float32
-    controlnet = ControlNetModel.from_pretrained(cn_id, torch_dtype=dtype)
+    controlnet = ControlNetModel.from_pretrained(_src(cn_id), torch_dtype=dtype)
     if is_xl:
         from diffusers import StableDiffusionXLControlNetPipeline as CNP
     else:
@@ -1712,10 +1757,10 @@ def _op_controlnet(payload: dict) -> dict:
         try:
             pipe.unet.set_default_attn_processor()
             if is_xl:
-                pipe.load_ip_adapter(IPADAPTER_REPO, subfolder="sdxl_models",
+                pipe.load_ip_adapter(_src(IPADAPTER_REPO), subfolder="sdxl_models",
                                      weight_name="ip-adapter_sdxl.bin")
             else:
-                pipe.load_ip_adapter(IPADAPTER_REPO, subfolder="models",
+                pipe.load_ip_adapter(_src(IPADAPTER_REPO), subfolder="models",
                                      weight_name="ip-adapter_sd15.bin")
             pipe.set_ip_adapter_scale(float(payload.get("ip_scale", 0.55)))
             extra["ip_adapter_image"] = _decode_image_b64(ref_b64, bg=ref_bg).convert("RGB")
@@ -1787,10 +1832,10 @@ def _op_ipadapter(payload: dict) -> dict:
     except Exception as e:
         log.debug(f"[SD] reset attn processor before IP-Adapter: {e}")
     if is_xl:
-        pipe.load_ip_adapter(IPADAPTER_REPO, subfolder="sdxl_models",
+        pipe.load_ip_adapter(_src(IPADAPTER_REPO), subfolder="sdxl_models",
                              weight_name="ip-adapter_sdxl.bin")
     else:
-        pipe.load_ip_adapter(IPADAPTER_REPO, subfolder="models",
+        pipe.load_ip_adapter(_src(IPADAPTER_REPO), subfolder="models",
                              weight_name="ip-adapter_sd15.bin")
     try:
         pipe.set_ip_adapter_scale(float(payload.get("scale", 0.6)))
@@ -2105,6 +2150,9 @@ async def health():
         "sample_rate":      TTS_SAMPLE_RATE,
         "cuda":             torch.cuda.is_available(),
         "gpu":              torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        # which models this node loads from the shared store (a path) and which
+        # from its own cache / the hub (null)
+        "model_store":      _store_report(),
     }
 
 
@@ -2628,6 +2676,7 @@ async def sd_capabilities():
         "model":        SD_MODEL_ID,
         "device":       _sd_device,
         "loras":        len(_scan_lora_dir()),
+        "model_source": _src(SD_MODEL_ID),
     }
 
 
