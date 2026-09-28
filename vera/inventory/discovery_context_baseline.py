@@ -93,6 +93,10 @@ CURRENT_COMPONENTS = (
         "class DiscoveryRequest", "discovery_contract", "provider_injected",
         "none", "vera.discovery-result.v1", ("context.portable", "fabric.dataset")),
     DiscoveryContextComponent(
+        "discovery.routing", "route", "vera/discovery_routing.py",
+        "def plan_discovery_execution", "discovery_contract", "provider_injected",
+        "none", "vera.discovery-execution-plan.v1", ("discovery.portable",)),
+    DiscoveryContextComponent(
         "context.portable", "context", "vera/context_provider.py",
         "class ContextProvider(Protocol)", "context_provider", "provider_injected",
         "cpu", "vera.context-item.v1"),
@@ -186,7 +190,6 @@ CURRENT_COMPONENTS = (
 CURRENT_GAPS = (
     "discovery_does_not_share_context_registry_selection",
     "agent_rag_uses_a_native_result_shape",
-    "worker_selection_is_not_a_discovery_execution_plan",
     "cross_system_enrichment_has_no_shared_lineage_or_cycle_contract",
     "no_common_speed_and_relevance_benchmark_contract",
     "non_jepa_worldview_and_godseye_data_have_no_portable_dataset_boundary",
