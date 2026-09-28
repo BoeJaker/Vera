@@ -251,6 +251,37 @@
       });
     }
     ready(25);   // ~5s — covers vera-panel-bridge.js loading after this script
+
+    /* A PAGE'S OWN SUB-SECTIONS under the lit item (owner, 2026-09-28: "the estate ui's observe menu is missing the perf
+       section"). A section that switches views in the page (Observe: Events / Perf) marks each tab data-vera-sub="<id>";
+       the shown strip's tabs are mirrored here, the current one lit, and a pick clicks the tab. A strip in a bar the harness
+       absorbed still counts as shown - that bar is folded away only because the harness holds it. */
+    if (!document.getElementById('vp-sub-css')) { var sc = document.createElement('style'); sc.id = 'vp-sub-css';
+      sc.textContent = '#sidebar[data-vera-lhm] .vp-sub,[data-vera-lhm] .vp-sub{display:flex;align-items:center;gap:7px;width:calc(100% - 22px);margin:1px 0 1px 22px;padding:5px 10px;border:none;border-radius:6px;background:transparent;color:var(--dim2,var(--t2,#8a92a0));font:inherit;font-size:11.5px;text-align:left;cursor:pointer}'
+        + '#sidebar[data-vera-lhm] .vp-sub::before,[data-vera-lhm] .vp-sub::before{content:"\\203a";opacity:.5}'
+        + '#sidebar[data-vera-lhm] .vp-sub:hover,[data-vera-lhm] .vp-sub:hover{background:var(--bg2,#1a1f26);color:var(--fg,var(--text,#d8dde3))}'
+        + '#sidebar[data-vera-lhm] .vp-sub.active,[data-vera-lhm] .vp-sub.active{color:var(--fg,var(--text,#d8dde3));background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}'
+        + 'body.lhm-collapsed #sidebar[data-vera-lhm] .vp-sub{display:none}';
+      (document.head || document.documentElement).appendChild(sc); }
+    function subShown(el) { for (var n = el; n && n !== document.body; n = n.parentElement) { if (n.hidden) return false; var cs = getComputedStyle(n);
+      if (cs.visibility === 'hidden') return false; if (cs.display === 'none' && !n.hasAttribute('data-vpb-hdr-bar')) return false; } return !!el; }
+    function subLabel(el) { var own = ''; Array.prototype.forEach.call(el.childNodes, function (c) { if (c.nodeType === 3) own += c.textContent; });
+      return String(el.getAttribute('data-label') || own.trim() || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40); }
+    var subSig = '';
+    function syncSubs() {
+      var act = null; for (var i = 0; i < btns.length; i++) if (btns[i].classList.contains('active') || btns[i].classList.contains('on')) { act = btns[i]; break; }
+      var tabs = Array.prototype.filter.call(document.querySelectorAll('[data-vera-sub]'), subShown).slice(0, 24);
+      var sig = (act ? idOf(act) : '') + '|' + tabs.map(function (t) { return t.getAttribute('data-vera-sub') + (/\b(active|on|selected)\b/.test(String(t.className || '')) ? '*' : ''); }).join(',');
+      if (sig === subSig) return; subSig = sig;
+      Array.prototype.forEach.call(nav.querySelectorAll('.vp-sub'), function (x) { x.remove(); });
+      if (!act || !tabs.length) return;
+      var after = act;
+      tabs.forEach(function (t) { var b = document.createElement('button'); b.type = 'button'; b.className = 'vp-sub' + (/\b(active|on|selected)\b/.test(String(t.className || '')) ? ' active' : '');
+        b.textContent = subLabel(t); b.title = b.textContent; b.setAttribute('data-vp-sub', t.getAttribute('data-vera-sub'));
+        b.addEventListener('click', function () { t.click(); subSig = ''; setTimeout(syncSubs, 60); });
+        after.parentNode.insertBefore(b, after.nextSibling); after = b; });
+    }
+    syncSubs(); setInterval(syncSubs, 700);
   }
 
   function init() { initCollapse(); initSections(); initNavBridge(); }
