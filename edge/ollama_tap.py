@@ -62,6 +62,21 @@ CAPTURE = {
 MAX_CAPTURE_BODY = 8 * 1024 * 1024
 #: Text kept per field in the shared stream (the node file keeps it all).
 TEXT_CAP = 16 * 1024
+
+
+def _source_version() -> str:
+    """This file's own hash, as the host computes it for the copy it would
+    install (ollama_tap_core.source_version) - so a release can tell a node
+    running an old tap from a current one. '' when unreadable."""
+    import hashlib
+    try:
+        with open(os.path.abspath(__file__), "rb") as fh:
+            return "tap-" + hashlib.sha256(fh.read()).hexdigest()[:12]
+    except OSError:
+        return ""
+
+
+SOURCE_VERSION = _source_version()
 #: Largest text kept in the node file per field.
 FILE_TEXT_CAP = 1024 * 1024
 STREAM = "vera:node_activity"
@@ -238,7 +253,8 @@ class Tap:
     def _own(self, path: str):
         from aiohttp import web
         if path == "/vera-tap/health":
-            return web.json_response({"ok": True, "node": self.node, "port": self.port,
+            return web.json_response({"ok": True, "source": SOURCE_VERSION,
+                                      "node": self.node, "port": self.port,
                                       "upstream": self.upstream, "redis": self.redis is not None,
                                       "inflight": len(self.inflight), **self.counts})
         if path == "/vera-tap/inflight":

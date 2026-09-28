@@ -125,3 +125,22 @@ def test_cutover_rolls_back_and_never_carries_the_credential():
         assert "redis://" not in cmd and "PASSWORD" not in cmd.upper()
     assert "cat > /etc/vera-tap/redis.env" in core.secret_cmd()   # from stdin
     assert "EnvironmentFile=-/etc/vera-tap/redis.env" in core.tap_unit()
+
+
+
+# ── version: a release refreshes a tap running old source (2026-09-28) ───────
+def test_the_tap_reports_the_version_the_host_computes():
+    src = open(tap.__file__, "rb").read()
+    assert tap.SOURCE_VERSION == core.source_version(src) != ""
+
+
+def test_tap_state_and_refresh():
+    v = core.source_version(b"x")
+    assert core.tap_state({"active": False, "health": {}}, v) == "untapped"
+    assert core.tap_state({"active": True, "health": {"ok": True, "source": v}}, v) == "tapped"
+    assert core.tap_state({"active": True, "health": {"ok": True, "source": "tap-old"}}, v) == "stale"
+    # a tap from before taps reported a version is stale too
+    assert core.tap_state({"active": True, "health": {"ok": True}}, v) == "stale"
+    cmd = core.refresh_cmd(11436)
+    assert "systemctl restart vera-ollama-tap@11436" in cmd and core.DONE in cmd
+    assert "OLLAMA_HOST" not in cmd and "30-vera-tap.conf" not in cmd   # Ollama untouched
