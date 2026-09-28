@@ -1623,6 +1623,31 @@ def _tt_token_text(chunk) -> str:
         return ""
 
 
+def _stream_frame_token(chunk: bytes) -> tuple:
+    """(kind, text) of one SSE frame from the chat stream: kind is the frame's
+    'type' ('token', 'audio', 'thinking', ...) and text its token text ('' for
+    anything but a token). Whitespace-agnostic - frames are json.dumps'd with
+    the default separators. Audio frames (large base64) are recognised from
+    their head without decoding them."""
+    head = chunk[:160]
+    if b'"audio"' in head and b'"type"' in head:
+        return "audio", ""
+    if b'"token"' not in head:
+        return "", ""
+    text = []
+    for line in chunk.decode("utf-8", "ignore").splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        try:
+            obj = json.loads(line[5:].strip())
+        except Exception:
+            continue
+        if isinstance(obj, dict) and obj.get("type") == "token":
+            text.append(str(obj.get("text") or ""))
+    return ("token", "".join(text)) if text else ("", "")
+
+
 def _tt_token_frame(text: str) -> bytes:
     return ("data: " + json.dumps({"type": "token", "text": text}) + "\n\n").encode()
 
@@ -2042,31 +2067,19 @@ async def agent_chat_stream_endpoint(request: Request):
                 # fields don't exist in the actual stream, so the response
                 # text was always empty. Fixed to match the real schema.
                 if chunk and isinstance(chunk, (bytes, bytearray)):
-                    head = bytes(chunk[:80])
-                    if b'"type":"token"' in head:
-                        _resp_chars += max(0, len(chunk) - 32)
+                    # PARSE the frame. The sniff used to look for the compact
+                    # '"type":"token"' - but token frames are json.dumps'd with
+                    # the default separators ('"type": "token"', see
+                    # _tt_token_frame), so it never matched: every reply was
+                    # captured as empty (the activity record said chars=0, the
+                    # printer's chat feed and chat insights never fired - found
+                    # live 2026-09-28).
+                    _kind, _text = _stream_frame_token(bytes(chunk))
+                    if _kind == "token":
+                        _resp_chars += len(_text)
                         if sum(len(s) for s in _resp_head) < _CAPTURE_MAX:
-                            try:
-                                s = chunk.decode("utf-8", "ignore")
-                                if '"text":"' in s:
-                                    body_text = s.split('"text":"', 1)[1]
-                                    # consume up to next un-escaped quote
-                                    out_chars = []
-                                    i = 0
-                                    while i < len(body_text):
-                                        c = body_text[i]
-                                        if c == '\\' and i + 1 < len(body_text):
-                                            out_chars.append(body_text[i+1])
-                                            i += 2
-                                            continue
-                                        if c == '"':
-                                            break
-                                        out_chars.append(c)
-                                        i += 1
-                                    _resp_head.append("".join(out_chars))
-                            except Exception:
-                                pass
-                    elif b'"type":"audio"' in head:
+                            _resp_head.append(_text)
+                    elif _kind == "audio":
                         _audio_chunks += 1
                 yield chunk
         except (RuntimeError, ConnectionResetError, BrokenPipeError) as e:

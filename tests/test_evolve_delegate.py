@@ -190,6 +190,50 @@ def test_start_refuses_what_it_cannot_do_safely():
 
 
 @needs_app
+def test_start_refuses_in_a_dev_sandbox_before_touching_git(monkeypatch):
+    # Incident 2026-09-28: a delegate job inside a sandbox container pruned
+    # 252 worktree registrations from the shared .git.
+    touched = []
+
+    async def fake_make(job_id, ref):
+        touched.append(job_id)
+        return {"ok": True, "path": "/x", "head": "h"}
+    monkeypatch.setattr(DC, "_make_worktree", fake_make)
+    monkeypatch.setattr(DC._orch, "is_dev_sandbox", lambda: True)
+    out = asyncio.run(DC.cap_evolve_delegate_start(title="x", brief="b"))
+    assert "prod only" in out["error"]
+    assert touched == []
+
+
+@needs_app
+def test_the_worktree_code_never_prunes(monkeypatch):
+    calls = []
+
+    class FakeEv:
+        _WORKTREE_DIR = ".loop-lab-worktrees"
+
+        @staticmethod
+        def _repo_root():
+            return pathlib.Path("/repo")
+
+        @staticmethod
+        async def _git(*args, **kw):
+            calls.append(args)
+            return {"ok": True, "out": "abc123\n"}
+    monkeypatch.setattr(DC, "_ev", lambda: FakeEv)
+
+    async def go():
+        await DC._make_worktree("dg1", "bleeding-edge")
+        await DC._drop_worktree("/repo/.loop-lab-worktrees/delegate-dg1")
+    asyncio.run(go())
+    flat = [a for c in calls for a in c]
+    assert "prune" not in flat
+    assert ("worktree", "remove", "--force", "/repo/.loop-lab-worktrees/delegate-dg1") in calls
+    # And nothing else in the module can reach it either.
+    assert '"prune"' not in pathlib.Path(DC.__file__).read_text(encoding="utf-8")
+
+
+@needs_app
 def test_a_delegated_session_is_recorded_with_its_origin():
     from Vera.vera.evolve import loop_record_core as R
     assert R.origin_of("delegate:dg1") == "delegate"
