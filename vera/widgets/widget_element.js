@@ -64,6 +64,7 @@
     /* a dashboard is read from across the room (owner, 2026-09-27: "the font on lots of widgets is still too small like the
        warnings and live events widgets it should be larger on the dashboards"): a higher floor there, at each setting */
     + '.vw-vgraph-host.min .vg-bottom-area{display:none!important}'
+    + '.vw-vgraph-host .vw-vgkey{position:absolute;left:8px;bottom:6px;z-index:4;display:flex;flex-wrap:wrap;gap:4px 10px;max-width:calc(100% - 16px);font:10.5px var(--f-ui,var(--sans,system-ui,sans-serif));color:var(--t2,var(--dim2,#8a92a0));pointer-events:none}.vw-vgraph-host .vw-vgkey span{display:inline-flex;align-items:center;gap:5px;padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--bg1,#15171c) 80%,transparent)}.vw-vgraph-host .vw-vgkey i{width:8px;height:8px;border-radius:2px}'
     + '.dash-grid vera-widget{--vw-fmin:11.5px}html[data-text="compact"] .dash-grid vera-widget{--vw-fmin:9px}html[data-text="large"] .dash-grid vera-widget{--vw-fmin:12.5px}html[data-text="larger"] .dash-grid vera-widget{--vw-fmin:13.5px}';
   try { if (typeof document !== 'undefined' && document.head && !document.getElementById('vw-text-scale')) { const st = document.createElement('style'); st.id = 'vw-text-scale'; st.textContent = TEXT_SCALE_CSS; document.head.appendChild(st); } } catch (_) {}
   const textKOf = (el) => { try { const cs = getComputedStyle(el); const fmin = parseFloat(cs.getPropertyValue('--vw-fmin')), fx = parseFloat(cs.getPropertyValue('--vw-fx')) || 1; return Math.max(1, Math.max(isFinite(fmin) ? fmin : 10, 9.5) * fx / 9.5); } catch (_) { return 1; } };
@@ -2019,6 +2020,18 @@
   let _vgLoad = null;
   const ensureVeraGraph = (base) => { if (window.veraUI && window.veraUI.Graph && window.veraUI.Graph.create) return Promise.resolve(window.veraUI.Graph);
     if (_vgLoad) return _vgLoad; _vgLoad = new Promise((ok) => { const s = document.createElement('script'); s.src = (base || '') + '/ui/vera-graph.js'; s.onload = () => ok(window.veraUI && window.veraUI.Graph); s.onerror = () => { _vgLoad = null; ok(null); }; document.head.appendChild(s); }); return _vgLoad; };
+
+  /* colour for a Vera graph in a tile (draw.colour: 'status'): each type (the estate's planes: clients, work, core, services,
+     runtimes, hosts, devices) its own colour, a node whose status is a problem in red or amber - the key says which is which */
+  const VG_PAL = ['#5b9bd5', '#6dbf7b', '#c678dd', '#e0a23c', '#56b6c2', '#d19a66', '#98c379', '#e5c07b', '#61afef', '#be5046'];
+  const VG_BAD = '#e5534b', VG_WARN = '#e0a23c';
+  const vgStatus = (p) => { const s = String((p && (p.status ?? p.state ?? p.health)) ?? '').toLowerCase(); return /^(down|fail|failed|error|err|dead|offline|stopped|unreachable|timeout)$/.test(s) ? 'bad' : /^(warn|warning|degraded|stale|busy|paused|pending|queued)$/.test(s) ? 'warn' : ''; };
+  function vgColour(G) { const types = []; G.nodes.forEach((n) => { if (!types.includes(n.type)) types.push(n.type); });
+    const tcol = {}; types.forEach((t, i) => { tcol[t] = VG_PAL[i % VG_PAL.length]; });
+    let bad = 0, warn = 0; G.nodes.forEach((n) => { const st = vgStatus(n.props); n.color = st === 'bad' ? VG_BAD : st === 'warn' ? VG_WARN : tcol[n.type]; if (st === 'bad') bad++; if (st === 'warn') warn++; });
+    return { tcol, bad, warn }; }
+  function vgKey(host, k) { let el = host.querySelector(':scope > .vw-vgkey'); if (!el) { el = document.createElement('div'); el.className = 'vw-vgkey'; host.appendChild(el); }
+    el.innerHTML = Object.keys(k.tcol).map((t) => '<span><i style="background:' + k.tcol[t] + '"></i>' + esc(t) + '</span>').join('') + (k.warn ? '<span><i style="background:' + VG_WARN + '"></i>warning ' + k.warn + '</span>' : '') + (k.bad ? '<span><i style="background:' + VG_BAD + '"></i>problem ' + k.bad + '</span>' : ''); }
   function mountVeraGraph(el, rec, data, size) {
     const draw0 = (rec && rec.draw) || {}, mode = String(draw0.mode || 'graph'), layer = draw0.layer ? String(draw0.layer) : '';
     const minC = draw0.chrome === 'min'; let host = el._vgHost; if (!host) { host = document.createElement('div'); host.setAttribute('slot', 'vgraph'); host.className = 'vw-vgraph-host' + (minC ? ' min' : ''); host.style.cssText = 'width:100%;height:100%;min-height:80px;position:relative;display:flex;flex-direction:column'; el.appendChild(host); el._vgHost = host; }
@@ -2027,10 +2040,14 @@
       if (!g || el._vgBig !== big) { if (g && g.destroy) { try { g.destroy(); } catch (_) {} } host.innerHTML = ''; g = el._vg = Gr.create(host, { height: 'fill', showSearch: big, showLegend: size === 'xl' && !minC, showLeftPanel: size === 'xl' && !minC, sidebar: false, actionsEnabled: false, subscribeLiveEvents: false, apiBase: el.base || '',
           // a node is an item like any other: on a host with the drawer, a click opens the drawer on the node's own data
           onNodeClick: (node) => { if (!el.hasAttribute('item-drawer')) return; const it = (node && node.props && typeof node.props === 'object') ? node.props : node; const rec2 = recOf(el), detail = { record: rec2, item: it, path: 'node ' + (node && node.id), ref: rowRef(it), data: el._data, host: el };
-            let go = true; try { go = el.dispatchEvent(new CustomEvent('widget:item', { bubbles: true, composed: true, cancelable: true, detail })); } catch (_) {} if (go) drawer(detail); return false; } }); el._vgBig = big; el._vgSig = ''; }
+            let go = true; try { go = el.dispatchEvent(new CustomEvent('widget:item', { bubbles: true, composed: true, cancelable: true, detail })); } catch (_) {} if (go) drawer(detail); return false; } }); el._vgBig = big; el._vgSig = ''; el._vgMode = ''; el._vgMode0 = undefined; }
       if (layer && !rec.source) { const sig = 'layer:' + layer + ':' + JSON.stringify(resolveArgs(rec.read && rec.read.args, el._ui)); if (sig !== el._vgSig) { el._vgSig = sig; try { g.fetchSnapshot(layer, resolveArgs(rec.read && rec.read.args, el._ui)); } catch (_) {} } }
-      else { const G = toVeraGraph(data); const sig = G.nodes.length + ':' + G.edges.length + ':' + G.nodes.slice(0, 50).map((n) => n.id).join(','); if (sig !== el._vgSig) { el._vgSig = sig; try { g.load(G); } catch (_) {} } }
-      try { if (g.setMode && (g.getMode ? g.getMode() : '') !== mode) g.setMode(mode); } catch (_) {}
+      else { const G = toVeraGraph(data); const ck = draw0.colour === 'status' ? vgColour(G) : null; if (ck) vgKey(host, ck); const sig = G.nodes.length + ':' + G.edges.length + ':' + G.nodes.slice(0, 50).map((n) => n.id + (n.color || '')).join(','); if (sig !== el._vgSig) { el._vgSig = sig; try { g.load(G); } catch (_) {} } }
+      /* the mode is the record's the first time (or the one the viewer chose before, kept per widget); after that it is left
+         alone - re-applying it on every refresh flicked Live operations back to Estate 3D from Exploded (2026-09-28) */
+      { const mk = 'vera.vgraph.mode.' + key(rec), cur = g.getMode ? g.getMode() : '';
+        if (el._vgMode && cur && cur !== el._vgMode) { el._vgMode = cur; try { localStorage.setItem(mk, cur); } catch (_) {} }
+        else if (!el._vgMode || el._vgMode0 !== mode) { let want = mode; try { want = (el._vgMode0 === undefined && localStorage.getItem(mk)) || mode; } catch (_) {} el._vgMode = want; el._vgMode0 = mode; try { if (g.setMode && cur !== want) g.setMode(want); } catch (_) {} } }
       try { g.resize && g.resize(); } catch (_) {}
       return g; }); }
   function unmountVeraGraph(el) { if (el._vg && el._vg.destroy) { try { el._vg.destroy(); } catch (_) {} } el._vg = null; if (el._vgHost) { el._vgHost.remove(); el._vgHost = null; } el._vgSig = ''; }
@@ -3114,7 +3131,7 @@ span.vw-sampled{opacity:.85}
 .vw-root[data-motion="0"] *,.vw-root[data-motion="0"] *::before{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 :host([data-state="failed"]) .vw-sampled{opacity:.3;filter:grayscale(1)}
-.vw-root{display:flex;flex-direction:column;gap:5px;height:100%;min-width:0}
+.vw-root{display:flex;flex-direction:column;gap:5px;height:100%;min-width:0}:host([bare]) .vw-root{overflow-y:auto;overflow-x:hidden;scrollbar-width:thin}
 .vw-hd{display:flex;align-items:center;gap:6px;font-family:var(--mono,ui-monospace,monospace);font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim,#6b7280);font-weight:600}
 .vw-hd i{width:6px;height:6px;border-radius:50%;background:var(--acc,#5a9e8f);flex-shrink:0}.vw-hd b{margin-left:auto;font-size:11px;color:var(--text,#d8dce4);font-weight:400;text-transform:none;letter-spacing:0}
 .vw-body{flex:1;min-height:0;display:flex;align-items:safe center;justify-content:center;overflow:auto;font-size:10.5px;container-type:size}
