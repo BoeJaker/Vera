@@ -473,6 +473,11 @@ async def _recover_stream(r, stream: str, recovery_consumer: str) -> int:
                 log.error("recovery: xclaim failed for %s: %s", msg_id, e)
 
     except Exception as e:
+        # A class stream no worker has read yet has no group: nothing can be
+        # pending on it. Not an error - recovery runs before the worker loop
+        # creates the groups.
+        if "NOGROUP" in str(e):
+            return reclaimed
         log.error("recovery scan of %s failed: %s", stream, e)
     return reclaimed
 

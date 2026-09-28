@@ -146,6 +146,10 @@ CLASSES: Dict[str, Dict[str, object]] = {
 DEFAULT_CLASSES_CPU = ("general", "nlp")
 DEFAULT_CLASSES_GPU = ()
 
+#: The explicit "takes nothing" value for VERA_WORKER_CLASSES (an empty
+#: environment value does not survive into a systemd unit).
+NO_CLASSES = "none"
+
 #: One stream per class; a node worker reads only the classes it has.
 CLASS_STREAM = "vera:tasks:cls:{cls}"
 
