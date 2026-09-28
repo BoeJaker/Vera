@@ -97,6 +97,11 @@ CURRENT_COMPONENTS = (
         "def plan_discovery_execution", "discovery_contract", "provider_injected",
         "none", "vera.discovery-execution-plan.v1", ("discovery.portable",)),
     DiscoveryContextComponent(
+        "discovery.orchestration", "route", "vera/discovery_orchestration.py",
+        "async def run_discovery_route", "discovery_contract", "async_local",
+        "cpu", "vera.discovery-route-report.v1",
+        ("discovery.portable", "discovery.routing")),
+    DiscoveryContextComponent(
         "context.portable", "context", "vera/context_provider.py",
         "class ContextProvider(Protocol)", "context_provider", "provider_injected",
         "cpu", "vera.context-item.v1"),
