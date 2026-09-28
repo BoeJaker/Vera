@@ -80,7 +80,15 @@
     "read": {
      "refresh": "15s",
      "map": {
-      "value": "inflight_total"
+      "value": "inflight_total",
+      "also": {
+       "cap calls": "inflight_kinds.cap call",
+       "git ops": "inflight_kinds.git op",
+       "background jobs": "inflight_kinds.background",
+       "fabric writes": "inflight_kinds.fabric write",
+       "open problems": "counts.errors",
+       "estate nodes": "counts.nodes"
+      }
      }
     },
     "id": "ops-inflight",
@@ -96,7 +104,8 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "what": "calls and ops in flight"
     }
    }
   },
@@ -3771,7 +3780,12 @@
     "read": {
      "refresh": "60s",
      "map": {
-      "value": "caps"
+      "value": "caps",
+      "also": {
+       "workers": "workers",
+       "mcp servers": "mcp_servers",
+       "mode": "mode"
+      }
      }
     },
     "frame": {
@@ -3782,7 +3796,8 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "what": "capabilities loaded"
     },
     "open": "capabilities"
    },

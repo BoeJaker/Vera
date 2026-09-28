@@ -43,8 +43,10 @@ t('a log draws as many lines as its body holds (90 px: six), never sixteen squas
 t('and the NEWEST of them whichever end the source keeps them at', /line 0\b/.test(text(lg)) && !/line 39/.test(text(lg)));
 const pl = draw('pills', Array.from({ length: 30 }, (_, i) => ({ name: 'workflow-number-' + i, status: 'ok' })), {}, { height: 50, width: 300 });
 t('pills fit the body and the rest become one "+ N" pill (a third row was cut in half)', /class="more"/.test(pl) && (pl.match(/<span title=/g) || []).length < 12, (pl.match(/<span title=/g) || []).length);
-const rk = draw('ranked', { stats: [{ model: 'jaahas/qwen3.5-uncensored:9b', n: 5 }, { model: 'jaahas/qwen3.5-uncensored:27b', n: 9 }, { model: 'jaahas/qwen3.5-uncensored', n: 2 }] }, { values: 'stats', count: 'model', sum: 'n' });
-t('ranked labels that share a beginning drop it, so the part that tells them apart shows (the full name stays the title)', /…qwen3\.5-uncensored:27b|…uncensored:27b|…27b/.test(rk) && /title="jaahas\/qwen3\.5-uncensored:27b"/.test(rk), text(rk).slice(0, 120));
+const rk = draw('ranked', { stats: [{ model: 'jaahas/qwen3.5-uncensored:9b', n: 5 }, { model: 'jaahas/qwen3.5-uncensored:27b', n: 9 }, { model: 'jaahas/qwen3.5-uncensored', n: 2 }] }, { values: 'stats', count: 'model', sum: 'n' }, { width: 260 });
+const rkWide = draw('ranked', { stats: [{ model: 'jaahas/qwen3.5-uncensored:9b', n: 5 }, { model: 'jaahas/qwen3.5-uncensored:27b', n: 9 }] }, { values: 'stats', count: 'model', sum: 'n' }, { width: 600 });
+t('ranked names are whole where they fit (2026-09-28: "cpu-247" read "...47" for no reason)', />jaahas\/qwen3\.5-uncensored:27b</.test(rkWide), text(rkWide).slice(0, 120));
+t('in a narrow tile, ranked labels that share a beginning drop it, so the part that tells them apart shows (the full name stays the title)', /…qwen3\.5-uncensored:27b|…uncensored:27b|…27b/.test(rk) && /title="jaahas\/qwen3\.5-uncensored:27b"/.test(rk), text(rk).slice(0, 120));
 const many = draw('ranked', Object.fromEntries(Array.from({ length: 12 }, (_, i) => ['k' + i, 20 - i])), {}, { height: 60 });
 t('ranked draws the rows its body holds (60 px: three)', (many.match(/class="vb-rw"/g) || []).length === 3, (many.match(/class="vb-rw"/g) || []).length);
 const ag = draw('agenda', Array.from({ length: 8 }, (_, i) => ({ when: '2026-09-27T0' + i + ':00', title: 'b' + i })), {}, { height: 70 });

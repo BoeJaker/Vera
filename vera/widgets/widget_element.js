@@ -205,6 +205,7 @@
           const sel = w ? all.filter((r) => Object.keys(w).every((k) => { const got = String(pick(r, k)); return (Array.isArray(w[k]) ? w[k] : [w[k]]).some((x) => like(x, got)); })) : all;
           o.value = map.total === true ? sel.length : sel.reduce((s, r) => s + num(pick(r, map.total)), 0); if (map.max === true) o.max = all.length; hit = true; } }
       ['value', 'rate', 'min', 'max', 'unit', 'delta', 'trend'].forEach((k) => { if (map[k] == null || map[k] === true || (k === 'value' && map.of != null && map.total != null)) return; const v = pick(x, map[k]); if (v !== undefined) { o[k === 'rate' ? 'value' : k] = v; hit = true; } });
+      if (map.also && typeof map.also === 'object' && !Array.isArray(map.also)) { o.also = Object.keys(map.also).map((k) => ({ label: k, value: pick(x, map.also[k]) })).filter((f) => f.value != null && f.value !== '' && typeof f.value !== 'object').slice(0, 6); hit = true; }   /* more figures to rotate under the main one */
       return hit ? o : x; }
     let base = x, hit = picked;
     if (sh === 'graph') { const o = Object.assign({}, (x && typeof x === 'object' && !Array.isArray(x)) ? x : {}); ['nodes', 'links'].forEach((k) => { if (map[k] == null) return; const v = pick(x, map[k]); if (v !== undefined) { o[k === 'links' ? 'links' : 'nodes'] = v; hit = true; } }); if (!hit) return x; base = o; }
@@ -980,7 +981,7 @@
     const dl = l.delta != null ? '<span class="vb-lbl ' + (num(l.delta) >= 0 ? 'up' : 'dn') + '">' + (num(l.delta) >= 0 ? '▲' : '▼') + ' ' + esc(fmt(Math.abs(num(l.delta)))) + '</span>' : '';
     const chart = tr.length > 1 ? '<div class="vb-chart" style="height:' + chH(H, 62) + 'px"><svg viewBox="0 0 150 80" preserveAspectRatio="none"><path d="M0,80 L' + poly(tr, 150, 80, 5).join(' L') + ' L150,80 Z" fill="' + B.ac + '" fill-opacity=".16"/><polyline points="' + poly(tr, 150, 80, 5).join(' ') + '" fill="none" stroke="' + B.ac + '" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg></div>' : '';
     const sorted = tr.slice().sort((a, b) => a - b); const note = tr.length > 1 ? 'peak ' + fmt(sorted[sorted.length - 1]) + ' · median ' + fmt(sorted[Math.floor(sorted.length / 2)]) : '';
-    return wrap('hero', '<div class="vb-hero"><b>' + esc(fmt(l.v)) + '</b><span class="u">' + esc(unit) + '</span>' + dl + '</div>' + chart + cap(note));
+    return wrap('hero', '<div class="vb-hero"><b>' + esc(fmt(l.v)) + '</b><span class="u">' + esc(unit) + '</span>' + dl + '</div>' + (whatOf(o) && !(o && o.bare && o.width && o.width < 120) ? '<div class="vb-what">' + esc(whatOf(o)) + '</div>' : '') + rotHtml(d) + chart + cap(note));
   };
   R.gauge = (d, H, o) => {
     const l = level(d); const isLevel = !!(d && typeof d === 'object' && !Array.isArray(d) && typeof d.value === 'number');   // { value, min, max, unit } is one gauge, not value · min · max
@@ -1001,11 +1002,18 @@
     return wrap('meter', '<div class="vb-hero"><b style="color:' + col + '">' + esc(fmt(l.v)) + '</b><span class="u">' + esc(unit) + '</span>' + dl + '</div><span class="vb-bar2"><i style="width:' + (f * 100).toFixed(1) + '%;background:' + col + '"></i><i style="width:' + (100 - f * 100).toFixed(1) + '%;background:' + mix(B.ac4, 70, B.s3) + '"></i></span>' + cap(esc(String((d && d.note) || (unit === '%' ? '' : fmt(l.v) + ' of ' + fmt(l.hi) + ' ' + unit))))
       + (tr.length > 1 ? '<div class="vb-cols" style="height:' + Math.max(24, H - 84) + 'px"><div class="vb-colbars">' + tr.slice(-16).map((v) => '<i style="height:' + pct(v, Math.max(...tr)).toFixed(0) + '%;background:' + B.ac4 + ';opacity:.7"></i>').join('') + '</div></div>' : ''));
   };
+  /* what a figure counts: the record's draw.what, else the word its value is read from ('inflight_total' - in flight total) */
+  const whatOf = (o) => { const dw = o && o.draw && o.draw.what; if (dw) return String(dw); const mv = o && o.record && o.record.read && o.record.read.map && o.record.read.map.value; return typeof mv === 'string' && mv !== '$' ? mv.split('.').pop().replace(/[_-]+/g, ' ').trim() : ''; };
+  /* more figures from the same answer (read.map.also), one at a time beneath the main one - a ticker the motion setting stops */
+  const rotHtml = (d) => { const al = Array.isArray(d && d.also) ? d.also : []; if (!al.length) return '';
+    return '<div class="vb-rot" style="--n:' + al.length + '"><div class="vb-rot-in">' + al.map((f) => '<span' + itemAttr({ name: f.label, value: f.value }, 'figure') + '><b>' + esc(typeof f.value === 'number' ? rkShort(f.value) : String(f.value)) + '</b> ' + esc(f.label) + '</span>').join('') + '</div></div>'; };
   R.counter = (d, H, o) => {
     const l = level(d); if (!l) return EMPTY('a counter needs a value');
+    const what = whatOf(o);
     const s = Math.round(l.v).toLocaleString(); const digits = (o && o.draw && o.draw.digits) ? Math.max(0, num(o.draw.digits) - s.replace(/,/g, '').length) : 0; const tr = trendOf(d, o);
     const dl = l.delta != null ? '<b class="' + (num(l.delta) >= 0 ? 'up' : 'dn') + '">' + (num(l.delta) >= 0 ? '+' : '') + esc(fmt(l.delta)) + (l.unit ? '' : '%') + '</b> on the period before' : '';
     return wrap('counter', '<div class="vb-seg7">' + '0'.repeat(digits).split('').filter(Boolean).map(() => '<span class="p" data-g="8">0</span>').join('') + s.split('').map((ch) => '<span class="' + (ch === ',' || ch === '.' ? 'p' : '') + '" data-g="' + (ch === ',' ? ',' : '8') + '">' + ch + '</span>').join('') + (l.unit ? '<span class="p u">' + esc(l.unit) + '</span>' : '') + '</div>'
+      + (what ? '<div class="vb-what">' + esc(what) + '</div>' : '') + rotHtml(d)
       + (tr.length > 1 ? '<div class="vb-tick">' + tr.slice(-24).map((v, i, a) => '<i style="height:' + pct(v, Math.max(...a)).toFixed(0) + '%;background:' + (i === a.length - 1 ? B.ac : mix(B.ac, 55)) + '"></i>').join('') + '</div>' : '') + cap([d && d.note, dl].filter(Boolean).join(' · ')));
   };
   R.level = (d, H, o) => {
@@ -1258,8 +1266,9 @@
     /* a bar's colour: its own, the record's palette, its row's status, its name when every name is a status word, else dv in rank order */
     const usePal = !!(o && o.draw && o.draw.palette), allSt = kv.every((x) => stCol(x[0]) !== B.t3);
     const rCol = (r, x, i) => r.col || (usePal ? pal(i, x[1], hi, stOf(r) ?? x[0]) : (sts.length && stOf(r) != null && stCol(stOf(r)) !== B.t3 ? stCol(stOf(r)) : (allSt ? stCol(x[0]) : pal(i))));
-    const lbl = shortLabels(kv.map((x) => x[0]));
-    return wrap('ranked', kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<span class="vb-rw"' + itemAttr(Object.keys(r).length ? r : { name: x[0], value: x[1] }, 'bar') + '><span class="n" title="' + esc(x[0]) + '">' + esc(lbl[i]) + '</span><span class="tr"><i style="width:' + pct(x[1], hi).toFixed(1) + '%;background:' + rCol(r, x, i) + '"></i></span><span class="v">' + esc(String(r.text ?? r.size ?? rkShort(x[1]))) + '</span></span>'; }).join('') + (withKey ? stKey(sts) : ''));
+    const names0 = kv.map((x) => String(x[0])), longest = Math.max(1, ...names0.map((s) => s.length)), nameW = Math.round(Math.max(64, Math.min(longest * 7 + 10, ((o && o.width) || 300) * 0.45)));
+    const lbl = longest * 7 + 10 > nameW ? shortLabels(names0) : names0;   /* 'cpu-247' read '...47' in a tile with room to spare */
+    return wrap('ranked', kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<span class="vb-rw"' + itemAttr(Object.keys(r).length ? r : { name: x[0], value: x[1] }, 'bar') + '><span class="n" title="' + esc(x[0]) + '" style="width:' + nameW + 'px">' + esc(lbl[i]) + '</span><span class="tr"><i style="width:' + pct(x[1], hi).toFixed(1) + '%;background:' + rCol(r, x, i) + '"></i></span><span class="v">' + esc(String(r.text ?? r.size ?? rkShort(x[1]))) + '</span></span>'; }).join('') + (withKey ? stKey(sts) : ''));
   };
   R.lollipop = (d, H, o) => {
     const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('a lollipop needs values'); const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, pal = palOf(o);
@@ -3218,6 +3227,19 @@ span.vw-sampled{opacity:.85}
 :host-context([data-style="pixel"]) .vw-track i,:host-context([data-style="pixel"]) .vw-therm span i,:host-context([data-style="pixel"]) .vb-rw .tr i,:host-context([data-style="pixel"]) .vw-stackbar i,:host-context([data-style="pixel"]) .vb-batt .cells i.on{background-image:repeating-linear-gradient(90deg,rgba(0,0,0,.3) 0 1px,transparent 1px 4px)}
 :host-context([data-style="pixel"]) polyline,:host-context([data-style="pixel"]) polygon{stroke-width:3;stroke-linejoin:miter;stroke-linecap:butt;shape-rendering:crispEdges}
 :host-context([data-style="pixel"]) circle,:host-context([data-style="pixel"]) rect{shape-rendering:crispEdges}
+.vb-what{text-align:center;font-size:var(--vw-fmin,10.5px);color:var(--b-t2);text-transform:var(--label-case,uppercase);letter-spacing:var(--label-track,.08em);font-weight:var(--label-weight,600);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vb-rot{height:1.55em;overflow:hidden;text-align:center;margin-top:5px;font-size:var(--vw-fmin,10.5px);color:var(--b-t2)}.vb-rot-in{animation:vbrot calc(var(--n) * 3.6s) steps(var(--n)) infinite}.vb-rot-in span{display:block;height:1.55em;line-height:1.55em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-rot-in b{color:var(--b-t1);font-family:var(--b-mono)}.vb-rot:hover .vb-rot-in{animation-play-state:paused}
+@keyframes vbrot{to{transform:translateY(calc(var(--n) * -1.55em))}}
+/* the packs dress the figures: the newspaper sets them in a serif with a rule under the caption, pixel in its pixel face on a stepped plate, terminal as a green readout with a cursor */
+:host-context([data-style="newspaper"]) .vb-seg7 span,:host-context([data-style="newspaper"]) .vb-hero b,:host-context([data-style="newspaper"]) .vb-bigs b,:host-context([data-style="newspaper"]) .vw-hero b{font-family:var(--f-disp,Georgia,'Times New Roman',serif);font-weight:700;letter-spacing:-.01em}
+:host-context([data-style="newspaper"]) .vb-what{font-variant:small-caps;text-transform:none;letter-spacing:.06em;border-top:1px solid var(--t3,#6b7280);padding-top:3px;margin:4px auto 0;max-width:80%}
+:host-context([data-style="newspaper"]) .vb-rot{font-style:italic}
+:host-context([data-style="pixel"]) .vb-seg7 span{font-family:var(--f-disp,var(--f-mono,ui-monospace,monospace));letter-spacing:0}
+:host-context([data-style="pixel"]) .vb-seg7{padding:6px 10px;box-shadow:0 0 0 2px var(--bd2,rgba(255,255,255,.18)),4px 4px 0 0 var(--bd,rgba(0,0,0,.25));width:max-content;margin:0 auto}
+:host-context([data-style="pixel"]) .vb-what,:host-context([data-style="pixel"]) .vb-rot{font-family:var(--f-disp,var(--f-mono,monospace));font-size:max(8px, calc(var(--vw-fmin,10.5px) * .72));letter-spacing:0}
+:host-context([data-style="terminal"]) .vb-seg7 span,:host-context([data-style="terminal"]) .vb-hero b,:host-context([data-style="terminal"]) .vb-bigs b{font-family:var(--f-mono,ui-monospace,monospace);color:var(--ac2,var(--b-ac2));text-shadow:0 0 6px color-mix(in srgb,var(--ac2,#5ec9a0) 45%,transparent)}
+:host-context([data-style="terminal"]) .vb-seg7::after{content:'_';font-family:var(--f-mono,monospace);color:var(--ac2,var(--b-ac2));animation:vbblink 1.1s steps(2) infinite;align-self:flex-end}@keyframes vbblink{50%{opacity:0}}
+:host-context([data-style="terminal"]) .vb-what::before{content:'> '}
 :host-context([data-style="newspaper"]) .vw-slot{background:transparent;box-shadow:0 0 0 1px var(--bd,rgba(255,255,255,.09))}
 :host-context([data-style="newspaper"]) .vw-slot-h{border-bottom:1px solid var(--t3,#6b7280);padding-bottom:3px}
 :host-context([data-style="terminal"]) .vw-slot{background:transparent;box-shadow:0 0 0 1px var(--bd,rgba(255,255,255,.09))}
