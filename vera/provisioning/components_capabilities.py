@@ -1357,6 +1357,60 @@ async def _roles_get(host_id: str, has_gpu: bool):
     return list(_placement.default_classes(has_gpu)), True
 
 
+async def _dispatch_cfg() -> Dict[str, Any]:
+    r = _orch.REDIS
+    try:
+        raw = await r.get(_placement.DISPATCH_KEY) if r is not None else None
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+def _dispatch_view(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    st = _placement.stage_of(cfg.get("stage") or 0)
+    return {"stage": st["id"], "name": st["name"], "exclude": list(cfg.get("exclude") or []),
+            "stages": [{"id": s["id"], "name": s["name"], "label": s["label"], "desc": s["desc"]}
+                       for s in _placement.STAGES],
+            "offloaded": dict(getattr(_orch, "_OFFLOAD_SENT", {}) or {}),
+            "in_flight": dict(getattr(_orch, "_OFFLOAD_INFLIGHT", {}) or {})}
+
+
+@capability(
+    "nodes.workers.dispatch",
+    http_method="POST", http_path="/nodes/workers/dispatch", http_tags=["nodes", "provision"],
+    memory="off",
+    description="Which node-safe work is SENT to node workers - the rollout stage, each a type "
+                "of worker deployment: 0 idle (idle-queue jobs only), 1 NLP workers (nlp.*), "
+                "2 + compute workers (text, math, http, memory, the vetted pure caps), 3 + LLM "
+                "workers (llm.*), 4 + media workers (STT/TTS), 5 full (every node-safe class). "
+                "A call is offloaded only when a node worker of its class is idle; otherwise it "
+                "runs on the host as before. Inputs: stage (int - omit to read), exclude (list "
+                "of caps or namespaces never offloaded). Output: {stage, name, stages[], "
+                "exclude, offloaded{class: n}, in_flight{class: n}}.",
+)
+async def cap_nodes_workers_dispatch(stage: Optional[int] = None,
+                                     exclude: Optional[List[str]] = None,
+                                     trace_id=None) -> Dict:
+    r = _orch.REDIS
+    cfg = await _dispatch_cfg()
+    if stage is not None or exclude is not None:
+        if r is None:
+            return {"ok": False, "error": "redis not connected"}
+        if stage is not None:
+            if not 0 <= int(stage) < len(_placement.STAGES):
+                return {"ok": False, "error": f"stage must be 0-{len(_placement.STAGES) - 1}"}
+            cfg["stage"] = int(stage)
+        if exclude is not None:
+            cfg["exclude"] = [str(x).strip() for x in exclude if str(x).strip()]
+        await r.set(_placement.DISPATCH_KEY, json.dumps(cfg))
+        try:
+            _orch._OFFLOAD_CACHE["cfg_at"] = 0.0      # this process sees it at once
+        except Exception:
+            pass
+        await emit_event({"type": "nodes.workers.dispatch", "stage": cfg.get("stage", 0)})
+    return {"ok": True, **_dispatch_view(cfg)}
+
+
 @capability(
     "nodes.workers.list",
     http_method="GET", http_path="/nodes/workers", http_tags=["nodes", "provision"],
@@ -1424,7 +1478,8 @@ async def cap_nodes_workers_list(trace_id=None) -> Dict:
                            "ssh": bool(h)})
     plan = _node_sync.plan(_RUNNING_COMMIT, list(reg.values()), live,
                            census_busy=await _census_busy())
-    return {"ok": True, "host_commit": _RUNNING_COMMIT, "sync_enabled": await _sync_enabled(),
+    _dispatch = _dispatch_view(await _dispatch_cfg())
+    return {"dispatch": _dispatch, "ok": True, "host_commit": _RUNNING_COMMIT, "sync_enabled": await _sync_enabled(),
             "classes": classes, "nodes": nodes, "candidates": candidates, "plan": plan,
             "sandbox": _in_sandbox(), "sandbox_note": _SANDBOX_REFUSAL if _in_sandbox() else ""}
 
