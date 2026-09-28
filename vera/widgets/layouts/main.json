@@ -1072,7 +1072,8 @@
          "name",
          "status",
          "latency_ms"
-        ]
+        ],
+        "limit": 3
        }
       }
      },
@@ -1094,7 +1095,8 @@
         "columns": [
          "name",
          "value"
-        ]
+        ],
+        "limit": 3
        }
       }
      }
@@ -1505,17 +1507,15 @@
      {
       "slot": "a",
       "record": {
-       "form": "kv",
+       "form": "numbers",
        "source": "$subject.proxmox",
        "title": "guests",
        "read": {
         "map": {
-         "keys": [
-          "configured",
-          "nodes",
-          "guests",
-          "running"
-         ]
+         "pick": {
+          "running": "running",
+          "guests": "guests"
+         }
         }
        }
       }
@@ -1557,7 +1557,8 @@
          "status",
          "cpu",
          "mem"
-        ]
+        ],
+        "limit": 3
        }
       }
      },
@@ -1616,17 +1617,17 @@
      {
       "slot": "a",
       "record": {
-       "form": "kv",
+       "form": "numbers",
        "source": "$subject.docker",
        "title": "containers",
        "read": {
         "map": {
-         "keys": [
-          "total_hosts",
-          "reachable",
-          "running",
-          "containers"
-         ]
+         "pick": {
+          "hosts": "total_hosts",
+          "reachable": "reachable",
+          "running": "running",
+          "containers": "containers"
+         }
         }
        }
       }
@@ -1649,7 +1650,8 @@
          "name",
          "running",
          "containers"
-        ]
+        ],
+        "limit": 3
        }
       }
      },
@@ -1679,6 +1681,9 @@
          "name": "label",
          "status": "status"
         }
+       },
+       "draw": {
+        "limit": 8
        }
       }
      }
