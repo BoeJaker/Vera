@@ -15926,7 +15926,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # with no model call. Never fatal - a loop must not stop because the UI could not
         # be told; the HITL wait below is the answer path either way.
         try:
-            from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY as _cr_ui
+            # the module's own orchestrator handle, not a function-local `import ... as _alias`:
+            # every such alias must be bound on the module (test_core_aliases_are_bound)
+            _cr_ui = _orch.CAPABILITY_REGISTRY
             _ui_ev = (_cr_ui.get("ui.event") or {}).get("func")
             if _ui_ev:
                 await _ui_ev(type="loop.step.waiting", session_id=sid,
