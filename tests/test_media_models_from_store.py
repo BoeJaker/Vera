@@ -200,6 +200,20 @@ async def test_a_file_too_big_for_a_command_line_goes_over_stdin(monkeypatch):
     assert max(len(c) for c in cmds) < 100 * 1024  # ...and no command carries it
 
 
+def test_requirements_never_downgrade_what_the_store_models_need():
+    # numpy<2 made pip downgrade numpy and kokoro-onnx with it on cpu-247;
+    # kokoro-onnx 0.3.3 cannot read voices-v1.0.bin, so TTS fell back to Coqui
+    reqs = {}
+    for ln in open(os.path.join(_ROOT, "edge", "requirements.txt"), encoding="utf-8"):
+        ln = ln.split("#", 1)[0].strip()
+        if ln:
+            name = ln.split(">", 1)[0].split("<", 1)[0].split("=", 1)[0].strip().lower()
+            reqs[name] = ln
+    assert "<" not in reqs["numpy"], reqs["numpy"]
+    floor = reqs["kokoro-onnx"].split(">=", 1)[1].split(",", 1)[0]
+    assert tuple(int(x) for x in floor.split(".")) >= (0, 3, 4), reqs["kokoro-onnx"]
+
+
 def test_the_media_server_version_covers_its_unit_and_core():
     comp = components._COMPONENTS["gpu_inference"]
     files = components._shipped_files(comp)
