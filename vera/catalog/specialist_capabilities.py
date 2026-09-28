@@ -375,6 +375,70 @@ async def cap_specialist_node_models(host_ids: List[str] = None, trace_id=None) 
     return {"ok": True, "nodes": nodes}
 
 
+def _node_addrs() -> List[str]:
+    return sorted({urlparse(str(i.get("url") or "")).hostname or ""
+                   for i in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values()} - {""})
+
+
+@capability(
+    "specialist.store.mount",
+    http_method="POST", http_path="/specialist/store/mount", http_tags=["models", "nodes"],
+    memory="off",
+    description="Give every Ollama node the shared specialist-model store, READ-ONLY, at "
+                f"{_core.STORE_NODE_PATH} (the Proxmox host's {_core.STORE_HOST_PATH}), so "
+                "every node sees the same models. Finds each node's container on the "
+                "Proxmox host by its IP, adds the bind mount on the first free mpN (never "
+                "touching existing mounts), then checks inside the container whether it "
+                "is live or needs a restart of the CT. A node already mounted is left "
+                "alone; one mounted WRITABLE is reported, not changed. Inputs: dry_run "
+                "(bool=true). Output: {ok, nodes:[{host, vmid, state, key, live, error}]}.",
+)
+async def cap_specialist_store_mount(dry_run: bool = True, trace_id=None) -> Dict[str, Any]:
+    if not dry_run and _in_sandbox():
+        return {"ok": False, "error": "this is a dev sandbox: node mounts are prod's"}
+    clusters = (await _call("proxmox.cluster.list")).get("clusters") or []
+    if not clusters:
+        return {"ok": False, "error": "no Proxmox cluster registered"}
+    out = []
+    for addr in _node_addrs():
+        row: Dict[str, Any] = {"host": addr}
+        for cl in clusters:
+            for node in (cl.get("node_hosts") or {}):
+                find = await _call("proxmox.node.exec", cluster_id=cl["id"], node=node,
+                                   command=f"grep -l 'ip={addr}/' /etc/pve/lxc/*.conf 2>/dev/null | head -1")
+                conf = (find.get("stdout") or "").strip()
+                if not conf:
+                    continue
+                vmid = os.path.basename(conf).split(".", 1)[0]
+                cfg = await _call("proxmox.node.exec", cluster_id=cl["id"], node=node,
+                                  command=f"pct config {vmid}")
+                plan = _core.store_mount_plan(cfg.get("stdout") or "")
+                row.update(vmid=vmid, cluster_id=cl["id"], node=node, **plan)
+                if plan["state"] == "missing" and not dry_run:
+                    res = await _call("proxmox.node.exec", cluster_id=cl["id"], node=node,
+                                      command=f"pct set {vmid} {plan['cmd']}")
+                    # exit code, not stderr: this host's pvesm prints warnings
+                    # (an absent 'mypool') on every command
+                    if res.get("error") or res.get("exit_code") not in (0, None):
+                        row["error"] = str(res.get("error") or res.get("stderr"))[-300:]
+                    else:
+                        row["state"] = "added"
+                if plan["state"] != "missing" or not dry_run:
+                    chk = await _call("proxmox.node.exec", cluster_id=cl["id"], node=node,
+                                      command=f"pct exec {vmid} -- test -d {_core.STORE_NODE_PATH}/nlp "
+                                              f"&& echo LIVE || echo NOT_LIVE")
+                    row["live"] = "LIVE" in (chk.get("stdout") or "")
+                    if not row["live"] and row.get("state") in ("added", "mounted"):
+                        row["note"] = "configured - takes effect when the CT restarts"
+                break
+            if "vmid" in row:
+                break
+        if "vmid" not in row:
+            row["error"] = "no container with this IP on any registered Proxmox node"
+        out.append(row)
+    return {"ok": all(not r.get("error") for r in out), "dry_run": bool(dry_run), "nodes": out}
+
+
 # ── the element ───────────────────────────────────────────────────────────────
 _EL = Path(__file__).resolve().parent / "specialist_models_element.js"
 
@@ -412,7 +476,7 @@ register_ui(
     "",
     ui_caps=["specialist.status", "provision.component.sync", "specialist.catalog",
              "specialist.install", "specialist.jobs", "specialist.store",
-             "specialist.node_models"],
+             "specialist.node_models", "specialist.store.mount"],
     # an element of the Models view (and any dashboard), not a tab of its own
     mode="element",
     tab_order=75,

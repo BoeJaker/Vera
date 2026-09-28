@@ -2052,7 +2052,9 @@ async def _ping_media_instance(iid: str, inst: dict) -> None:
             status="online", errors=0, last_check=now_iso(),
             services=[svc for key, svc in _MEDIA_SERVICE_KEYS.items() if d.get(key)],
             detail={k: d.get(k) for k in ("tts_engine", "gpu", "cuda", "device",
-                                          "sample_rate") if k in d},
+                                          "sample_rate", "sd_device",
+                                          # which models load from the shared store
+                                          "model_store") if k in d},
         )
     except Exception as e:
         inst.update(status="offline", last_check=now_iso(),

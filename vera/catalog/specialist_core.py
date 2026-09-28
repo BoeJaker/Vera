@@ -15,7 +15,8 @@ FAMILIES = ("nlp", "media", "host_ner")
 
 #: The media node detail the heartbeat keeps (capability_orchestration's
 #: _ping_media_instance); `services` carries which of stt/tts/imagegen it serves.
-MEDIA_DETAIL_KEYS = ("tts_engine", "gpu", "cuda", "device", "sample_rate")
+MEDIA_DETAIL_KEYS = ("tts_engine", "gpu", "cuda", "device", "sample_rate", "sd_device",
+                     "model_store")
 
 
 def nlp_node_row(node: Dict[str, Any], host_version: Dict[str, Any],
@@ -54,6 +55,37 @@ def registry_rows(default_models: Dict[str, str], task_kind: Dict[str, str]) -> 
     """The NLP model registry every node serves from (nlp_dispatch_core)."""
     return [{"task": t, "model": m, "kind": task_kind.get(t, "")}
             for t, m in default_models.items()]
+
+
+# ── the store mount on each node ──────────────────────────────────────────────
+#: The store on the Proxmox host, and where every node sees it (read-only).
+STORE_HOST_PATH = "/tank_sdh/vera-store/models"
+STORE_NODE_PATH = "/opt/vera-store/models"
+
+
+def store_mount_plan(pct_config: str, source: str = STORE_HOST_PATH,
+                     target: str = STORE_NODE_PATH) -> Dict[str, Any]:
+    """From `pct config <vmid>` text: is the store already mounted at `target`,
+    and if not, the pct set that adds it read-only on the first free mpN.
+
+    A mount of the same source at the target that is WRITABLE is reported, not
+    rewritten: only the builder may write the store, and a node found with a
+    writable mount is a finding for the operator, not something to paper over."""
+    used = set()
+    for line in (pct_config or "").splitlines():
+        key, _, val = line.partition(":")
+        key, val = key.strip(), val.strip()
+        if not (key.startswith("mp") and key[2:].isdigit()):
+            continue
+        used.add(int(key[2:]))
+        opts = dict(p.split("=", 1) for p in val.split(",")[1:] if "=" in p)
+        if opts.get("mp") == target:
+            ro = opts.get("ro") in ("1", "true")
+            return {"state": "mounted" if ro else "writable", "key": key,
+                    "source": val.split(",", 1)[0], "ro": ro, "cmd": ""}
+    idx = next(i for i in range(256) if i not in used)
+    return {"state": "missing", "key": f"mp{idx}", "ro": True,
+            "cmd": f"-mp{idx} {source},mp={target},ro=1"}
 
 
 # ── models on a node's OWN disk (not in the shared store) ────────────────────

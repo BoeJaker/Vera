@@ -190,6 +190,9 @@
           + '<div class="muted">' + ['tts_engine', 'device', 'gpu', 'sd_model', 'loras', 'voices'].filter((k) => s[k] != null && s[k] !== '')
               .map((k) => esc(k.replace('_', ' ')) + ' <span class="mono">' + esc(typeof s[k] === 'object' ? JSON.stringify(s[k]) : s[k]) + '</span>').join(' · ') + '</div>'
           + (s.image_tiers ? '<div class="muted">image tiers: ' + esc(s.image_tiers.join(', ')) + '</div>' : '')
+          + (s.model_store ? '<div class="muted">from the shared store: ' + (Object.keys(s.model_store).filter((k) => k !== 'store' && s.model_store[k]).map(esc).join(', ') || '<span class="warn">nothing</span>')
+              + (s.model_store.store ? '' : ' <span class="bad">(store not mounted)</span>') + '</div>'
+            : '<div class="muted">model sources: not reported (server predates the store)</div>')
           + (c ? '<div class="row muted">deployed ' + state(c.state) + (c.version ? ' <span class="mono">' + esc(c.version) + '</span>' : '')
               + (c.note ? ' · ' + esc(c.note) : '') + (c.error ? ' <span class="bad">' + esc(c.error) + '</span>' : '') + '</div>' : '')
           + '</div>';
