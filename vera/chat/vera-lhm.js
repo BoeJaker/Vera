@@ -767,6 +767,13 @@ function _ebar(title, onAdd, onDone){
   // ── the host side: draw another page's menu from its spec ──────────────
   // host: an element to fill; spec: what the owner published (state.nav.lhm); pick(id): send it back
   function _splitKey(ev){ return !!(ev && (ev.ctrlKey || ev.metaKey || ev.button === 1)); }
+  /* the way down to a nested entry: its own id after the entries that hold it (the nearest one above it at each
+     shallower depth) - 'item>s:sub>c:section'; a top-level entry is just its id */
+  function _wayTo(tabs, i){
+    var t = tabs[i]; if(!t) return ''; var d = +t.depth || 0, way = [String(t.id)];
+    for(var j = i - 1; j >= 0 && d > 0; j--){ var dj = +tabs[j].depth || 0; if(dj < d){ way.unshift(String(tabs[j].id)); d = dj; } }
+    return way.join('>');
+  }
   function _beside(row, fn, title){ var b = _el('span', 'lhm-bs', '\u29c9'); b.title = title || 'Open side by side (Ctrl/\u2318-click does the same)'; b.addEventListener('click', function(ev){ ev.stopPropagation(); fn(); }); row.appendChild(b); return b; }
 
   // ── a docked menu's widgets: kept per panel and per menu (opts.editKey), added from the widget sheet the chat's menus use ──
@@ -823,7 +830,7 @@ function _ebar(title, onAdd, onDone){
     else rail.appendChild(_el('div', 'lhm-rsp'));
     var act = spec.active || {};
     (spec.menus || []).forEach(function(m){
-      var ico = _el('div', 'lhm-ico' + (m.id === act.menu ? ' on' : ''), m.icon || '•'); ico.title = m.label;
+      var ico = _el('div', 'lhm-ico' + (m.id === act.menu ? ' on' : ''), m.icon || '•'); ico.title = m.label + (opts.onSplit ? ' \u00b7 Ctrl/\u2318- or middle-click: open it side by side' : '');
       if(m.badge) ico.appendChild(_el('span', 'lhm-badge', String(m.badge)));
       ico.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(m.id); else pickFn(m.id); });
       ico.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(m.id); } });
@@ -835,11 +842,12 @@ function _ebar(title, onAdd, onDone){
     var cur = (spec.menus || []).filter(function(m){ return m.id === act.menu; })[0];
     if(cur){
       tabs.appendChild(_el('div', 'lhm-ttl', cur.title || cur.label));
-      (cur.tabs || []).forEach(function(t){
+      (cur.tabs || []).forEach(function(t, ti){
         var e = _el('div', 'lhm-tab' + (t.id === act.tab ? ' on' : '') + (t.depth ? ' sub' : '') + (t.depth > 1 ? ' sub2' : ''), t.label); e.title = t.label;
-        e.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(cur.id + '/' + t.id); else pickFn(cur.id + '/' + t.id); });
-        e.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(cur.id + '/' + t.id); } });
-        if(opts.onSplit) _beside(e, function(){ opts.onSplit(cur.id + '/' + t.id); });
+        var way = _wayTo(cur.tabs, ti);
+        e.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(cur.id + '/' + way); else pickFn(cur.id + '/' + t.id); });
+        e.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(cur.id + '/' + way); } });
+        if(opts.onSplit) _beside(e, function(){ opts.onSplit(cur.id + '/' + way); });
         tabs.appendChild(e);
       });
     }
@@ -961,7 +969,11 @@ function _ebar(title, onAdd, onDone){
     if(cfg.title) row.appendChild(_el('span', 'lhm-st-p', cfg.title));
     secs.forEach(function(s, i){ var b = _el('button', 'lhm-st' + (s.on ? ' on' : ''), s.label || s.id); b.type = 'button'; b.addEventListener('click', function(){ if(cfg.onSection) cfg.onSection(s.id, i); }); row.appendChild(b); });
     var tabs = cfg.tabs || [];
-    if(tabs.length){ row.appendChild(_el('span', 'lhm-st-sep')); tabs.forEach(function(t){ var b = _el('button', 'lhm-st-o' + (t.on ? ' on' : ''), t.label || t.id); b.type = 'button'; b.addEventListener('click', function(){ if(cfg.onTab) cfg.onTab(t); }); row.appendChild(b); }); }
+    if(tabs.length){ row.appendChild(_el('span', 'lhm-st-sep')); tabs.forEach(function(t){ var b = _el('button', 'lhm-st-o' + (t.on ? ' on' : ''), t.label || t.id); b.type = 'button';
+      if(cfg.onBeside) b.title = (t.label || t.id) + ' \u00b7 Ctrl/\u2318- or middle-click: open it side by side';
+      b.addEventListener('click', function(ev){ if(_splitKey(ev) && cfg.onBeside) cfg.onBeside(t); else if(cfg.onTab) cfg.onTab(t); });
+      b.addEventListener('auxclick', function(ev){ if(ev.button === 1 && cfg.onBeside){ ev.preventDefault(); cfg.onBeside(t); } });
+      row.appendChild(b); }); }
     host.appendChild(row);
     return row;
   }

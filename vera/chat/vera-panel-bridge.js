@@ -141,7 +141,8 @@
   function _hdrRelay(){
     if(typeof _hdrBar !== 'undefined' && _hdrBar) return;   // this page has its own bar
     var k = null; for(var i = _kids.length - 1; i >= 0; i--){ if(_kidShown(_kids[i]) && _kids[i].hdr){ k = _kids[i]; break; } }
-    _hdrKid = k; if(!k) return;
+    var had = _hdrKid; _hdrKid = k;
+    if(!k){ if(had){ try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: document.title || '', groups: [] }, '*'); }catch(e){} } return; }
     try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: k.hdr.title || document.title || '', groups: k.hdr.groups || [] }, '*'); }catch(e){}
   }
   // ── ANY PAGE'S MENU DOCKS (owner, 2026-09-27: "the research ui lhm needs integrating into the unified lhm and im sure
@@ -478,11 +479,39 @@
   // the registerNav(items) call itself — and the canonical vera-panel.js
   // #sidebar[data-vera-lhm] shell doesn't even need that: it calls
   // registerNav()/setNavActive() generically for every panel using it.
+  var _navPend = 0;
+  function _navPick(p){
+    var id = (p || {}).id;
+    if(id == null) return {ok: false, error: 'nav_select requires {id}'};
+    id = _navResolve(String(id));
+    _navPend++;   // a newer pick cancels a chain still waiting
+    var steps = id.split('>');
+    if(steps.length > 1 && steps.slice(1).every(function(x){ return /^[cs]:/.test(x); })){
+      var r0 = _navSelect({id: steps[0]});
+      if(r0 && r0.ok) steps.shift();
+      else if(!/^[cs]:/.test(steps[0])) return r0;   // an item that is not there: nothing below it can be either
+      _navChain(steps, _navPend, 0); return {ok: true, pending: steps.length};
+    }
+    var r = _navSelect({id: id});
+    if(r && r.ok === false && /^[cs]:/.test(id)){ _navChain([id], _navPend, 1); r.pending = 1; }
+    return r;
+  }
+  function _navChain(steps, tok, n){
+    if(!steps.length || tok !== _navPend) return;
+    setTimeout(function(){
+      if(tok !== _navPend) return;
+      var r = _navSelect({id: steps[0]});
+      if(r && r.ok){ _navChain(steps.slice(1), tok, 0); return; }
+      if(n < 60) _navChain(steps, tok, n + 1);
+    }, n ? 400 : 300);
+  }
+  /* one step: an item, a page sub-section (s:) or a shown child's section (c:) */
   function _navSelect(p){
     var id = (p || {}).id;
     if(id == null) return {ok: false, error: 'nav_select requires {id}'};
     id = _navResolve(String(id));
     if(id.indexOf('c:') === 0){ var kid = _activeKid(); if(!kid) return {ok: false, error: 'no nested panel is shown'};
+      if(kid.nav && kid.nav.items && !kid.nav.items.some(function(it){ return it.id === id.slice(2); })) return {ok: false, error: 'the shown nested panel has no ' + id.slice(2)};
       try{ kid.win.postMessage({type: 'vera:panel:action', action: 'nav_select', action_id: 'nest-' + Date.now(), payload: {id: id.slice(2)}}, '*'); }catch(e){}
       kid.nav.active = id.slice(2); publishStateDebounced(); return {ok: true}; }
     if(id.indexOf('s:') === 0){ var ps = _pageSubs(), hit = ps && ps.items.filter(function(it){ return it.id === id.slice(2); })[0];
@@ -516,7 +545,7 @@
 
   var _builtins = {
     click: _click, set_field: _setField, set_fields: _setFields, submit: _submit,
-    nav_select: _navSelect,
+    nav_select: _navPick,
   };
 
   // ── Live cap-activity feed ────────────────────────────────────────────
@@ -762,7 +791,44 @@
   /* the names a page's top bar goes by - a sweep of 58 panels found Stack Monitor's .pane-tb, Research's #toolbar, Perf's
      and the Gallery's .bar, a header inside the page's wrapper - still only at the top, across the page, holding controls */
   var _HDR_SEL = '#topbar, #topBar, .topbar, .top-bar, .panel-topbar, body > header, .hdr, .header, .tb, .pane-tb, #tb, #toolbar, .toolbar, .bar, header, .page-head, .panel-head';
-  var _hdrBar = null, _hdrSig = '', _hdrT = null, _hdrHid = 0;
+  var _hdrBar = null, _hdrSig = '', _hdrT = null, _hdrHid = 0, _hdrMO = null;
+  /* NOTHING IN THE BAR IS LOST (owner, 2026-09-28: "the issue that happened with the perf ui... have any other parts of
+     uis been swallowed/hidden by mistake?"). The bar folds away while the harness holds it, so whatever it holds that is
+     not offered is gone: the Estate's Observe tabs (<span class="j-tab" onclick>) and the Notebook's logo link were. What
+     is offered is every CLICKABLE thing in the bar - a control, a link, a tab (role=tab, data-vera-sub), anything with an
+     onclick or a tabindex, and anything the page draws with a pointer cursor (a click bound in script) - never a part of
+     one (a wrapper that holds a control gives way to the control; what sits inside a control is the control). */
+  var _HDR_CTL = 'button, select, input, textarea, a[href], [onclick], [role=tab], [role=button], [role=link], [role=menuitem], [role=switch], [role=checkbox], [role=radio], [role=option], [data-vera-sub], summary, [tabindex]:not([tabindex="-1"])';
+  function _hdrNative(el){ return /^(BUTTON|SELECT|INPUT|TEXTAREA)$/.test(el.tagName); }
+  function _hdrCtls(bar){
+    var out = [];
+    Array.prototype.forEach.call(bar.querySelectorAll('*'), function(el){
+      var tag = el.tagName; if(tag === 'OPTION' || tag === 'OPTGROUP' || tag === 'SCRIPT' || tag === 'STYLE') return;
+      if(tag === 'INPUT' && String(el.type || '').toLowerCase() === 'hidden') return;
+      var hit = false; try{ hit = el.matches(_HDR_CTL); }catch(e){}
+      if(!hit){ try{ hit = getComputedStyle(el).cursor === 'pointer' && (!el.parentElement || getComputedStyle(el.parentElement).cursor !== 'pointer'); }catch(e){} }
+      if(!hit) return;
+      for(var n = el.parentElement; n && n !== bar; n = n.parentElement){ if(_hdrNative(n) || (n.tagName === 'A' && n.hasAttribute('href'))) return; }
+      out.push(el);
+    });
+    out = out.filter(function(el){ if(_hdrNative(el)) return true; for(var i = 0; i < out.length; i++){ if(out[i] !== el && el.contains(out[i])) return false; } return true; });
+    return out.filter(function(el){ return _hdrShownIn(el, bar); });
+  }
+  function _hdrOn(el){ return /\b(on|active|selected|current)\b/.test(String(el.className && el.className.baseVal != null ? el.className.baseVal : el.className || '')) || el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-selected') === 'true' || (el.getAttribute('aria-current') || 'false') !== 'false'; }
+  function _hdrLabel(el, t){ return (_hdrText(el) || t || el.getAttribute('data-label') || '\u00b7').slice(0, 24); }
+  /* the bar SHOWN: a page of several panes keeps one bar per pane, and the absorbed one must be the shown pane's. Its own
+     display does not count (it is folded away while the harness holds it); its pane's does. */
+  function _hdrBarShown(b){
+    if(!b || !document.contains(b) || b.hidden) return false;
+    for(var n = b.parentElement; n && n !== document.documentElement; n = n.parentElement){ if(n.hidden) return false; var cs = getComputedStyle(n); if(cs.display === 'none' || cs.visibility === 'hidden') return false; }
+    return true;
+  }
+  function _hdrDrop(){ if(_hdrBar){ try{ _hdrBar.removeAttribute('data-vpb-hdr-bar'); }catch(e){} } if(_hdrMO){ try{ _hdrMO.disconnect(); }catch(e){} _hdrMO = null; } _hdrBar = null; _hdrSig = ''; }
+  function _hdrCheck(){
+    if(_hdrBar && _hdrBarShown(_hdrBar)){ _hdrOffer(); return; }
+    var had = !!_hdrBar; _hdrDrop(); _hdrFind();
+    if(!_hdrBar && had){ try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: document.title || '', groups: [] }, '*'); }catch(e){} _hdrKid = null; if(typeof _hdrRelay === 'function') _hdrRelay(); }
+  }
   function _hdrEmbedded(){ try{ return !!(window.parent && window.parent !== window); }catch(e){ return false; } }
   function _hdrFindBar(){
     var named = document.querySelector('[data-vera-topbar]');
@@ -788,20 +854,29 @@
   function _hdrItems(bar){
     var groups = [], gi = 0;
     var ttl = bar.querySelector('.ttl, .title, #sec-title, .panel-title, h1, h2, h3');
-    if(ttl && _hdrText(ttl)) groups.push({ grp: 'title', prio: 1, items: [{ hid: 'title', kind: 'text', label: _hdrText(ttl).slice(0, 60), title: _hdrText(ttl).slice(0, 160) }] });
+    var all = _hdrCtls(bar);
+    /* a title that is itself clickable is offered as what it is (a link, a tab) - not twice */
+    if(ttl && _hdrText(ttl) && !all.some(function(el){ return el === ttl || el.contains(ttl); })) groups.push({ grp: 'title', prio: 1, items: [{ hid: 'title', kind: 'text', label: _hdrText(ttl).slice(0, 60), title: _hdrText(ttl).slice(0, 160) }] });
     Array.prototype.forEach.call(bar.children, function(ch){
-      var ctl = (ch.matches && ch.matches('button, select, input')) ? [ch] : Array.prototype.slice.call(ch.querySelectorAll('button, select, input'));
-      ctl = ctl.filter(function(el){ return el.type !== 'hidden' && _hdrShownIn(el, bar); });
+      var ctl = all.filter(function(el){ return el === ch || ch.contains(el); });
       if(!ctl.length) return;
       gi++;
       var g = { grp: 'g' + gi, prio: 2 + Math.min(gi, 7), title: String(ch.title || '').slice(0, 80), items: [] };
-      ctl.slice(0, 16).forEach(function(el){
+      ctl.slice(0, 40).forEach(function(el){
         var id = el.getAttribute('data-vpb-hid'); if(!id){ id = 'p' + (++_hdrHid); el.setAttribute('data-vpb-hid', id); }
         var tag = el.tagName, ty = String(el.type || '').toLowerCase(), t = String(el.title || el.getAttribute('aria-label') || '').slice(0, 160);
         if(tag === 'SELECT') g.items.push({ hid: id, kind: 'select', value: el.value, title: t, options: Array.prototype.slice.call(el.options, 0, 80).map(function(o){ return [o.value, _hdrText(o).slice(0, 40)]; }) });
         else if(tag === 'INPUT' && (ty === 'checkbox' || ty === 'radio')){ var lb = el.closest('label'); g.items.push({ hid: id, kind: 'btn', label: (_hdrText(lb) || el.name || t || 'toggle').slice(0, 24), title: t, on: !!el.checked }); }
-        else if(tag === 'INPUT' && /^(|text|search|number|url|email)$/.test(ty)) g.items.push({ hid: id, kind: 'input', type: ty === 'number' ? 'number' : 'search', value: String(el.value || '').slice(0, 200), placeholder: String(el.placeholder || t || '').slice(0, 60), title: t });
-        else if(tag === 'BUTTON') g.items.push({ hid: id, kind: 'btn', label: (_hdrText(el) || t || '\u00b7').slice(0, 24), title: t, on: /\b(on|active|selected)\b/.test(String(el.className || '')) || el.getAttribute('aria-pressed') === 'true' });
+        else if(tag === 'INPUT' && /^(|text|search|number|url|email|tel|password)$/.test(ty)) g.items.push({ hid: id, kind: 'input', type: ty === 'number' ? 'number' : 'search', value: String(el.value || '').slice(0, 200), placeholder: String(el.placeholder || t || '').slice(0, 60), title: t });
+        else if(tag === 'TEXTAREA') g.items.push({ hid: id, kind: 'input', type: 'search', value: String(el.value || '').slice(0, 200), placeholder: String(el.placeholder || t || '').slice(0, 60), title: t });
+        /* a date, a time, a colour, a slider: the same kind of input in the harness's bar */
+        else if(tag === 'INPUT' && /^(date|time|datetime-local|month|week|color|range)$/.test(ty)) g.items.push({ hid: id, kind: 'input', type: ty, value: String(el.value || '').slice(0, 200), min: el.min || '', max: el.max || '', step: el.step || '', placeholder: '', title: t || ty });
+        else if(tag === 'INPUT') g.items.push({ hid: id, kind: 'btn', label: (String(el.value || '') || t || ty || '\u00b7').slice(0, 24), title: t });   /* submit, reset, button, file */
+        else if(tag === 'BUTTON') g.items.push({ hid: id, kind: 'btn', label: _hdrLabel(el, t), title: t, on: _hdrOn(el) });
+        /* everything else that is clicked: a tab (lit when it is the current one), a link, an element with a click of its own */
+        else { var tab = el.matches('[role=tab], [data-vera-sub]') || /(^|[\s_-])(tab|j-tab|seg|chip)([\s_-]|$)/i.test(String(el.className && el.className.baseVal != null ? el.className.baseVal : el.className || ''));
+          var lnk = tag === 'A' && el.hasAttribute('href');
+          g.items.push({ hid: id, kind: 'btn', label: _hdrLabel(el, t), title: t || (lnk ? String(el.getAttribute('href') || '').slice(0, 160) : ''), on: _hdrOn(el), tab: !!tab, link: !!lnk }); }
       });
       if(g.items.length) groups.push(g);
     });
@@ -818,7 +893,7 @@
     if(_hdrBar && document.contains(_hdrBar)) return;
     var b = _hdrFindBar(); if(!b) return;
     _hdrBar = b; b.setAttribute('data-vpb-hdr-bar', '');
-    try{ new MutationObserver(_hdrSoon).observe(b, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'title', 'disabled'] }); }catch(e){}
+    try{ _hdrMO = new MutationObserver(_hdrSoon); _hdrMO.observe(b, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'title', 'disabled', 'aria-selected', 'aria-pressed', 'aria-current', 'href'] }); }catch(e){}
     b.addEventListener('change', _hdrSoon, true); b.addEventListener('input', _hdrSoon, true);
     _hdrOffer(true);
   }
@@ -845,7 +920,8 @@
     });
     // a panel in a tab not yet shown has no size to measure: look again until its bar is found, then keep it current
     _hdrFind();
-    setInterval(function(){ if(!_hdrBar || !document.contains(_hdrBar)){ _hdrBar = null; _hdrFind(); } else _hdrOffer(); }, 2500);
+    setInterval(_hdrCheck, 2500);
+    var _hdrCT = null; document.addEventListener('click', function(){ clearTimeout(_hdrCT); _hdrCT = setTimeout(_hdrCheck, 220); }, true);
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _hdrStart); else setTimeout(_hdrStart, 0);
 
