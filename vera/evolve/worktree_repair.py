@@ -62,6 +62,42 @@ def _copy_overlay(source: Path, target: Path) -> None:
             shutil.copy2(item, destination)
 
 
+_GONE = re.compile(r"^Error(?: response from daemon)?: No such (?:object|container): (\S+)\s*$")
+MOUNTS_FORMAT = "{{.Id}}{{range .Mounts}}\t{{.Source}}{{end}}"
+
+
+def mounts_from_inspect(ids: list[str], out: str, err: str,
+                        code: int) -> tuple[dict[str, set[str]] | None, str]:
+    """Parse ONE `docker inspect -f MOUNTS_FORMAT <ids...>` over every container.
+
+    Returns ({full_id: {mount sources}}, "") or (None, why). A container that
+    vanished between `docker ps` and the inspect cannot mount anything, so its
+    "No such object" is not a failure; any OTHER error still refuses (unknown
+    ownership is never permission). Every listed id must be accounted for.
+    """
+    mounts: dict[str, set[str]] = {}
+    for line in (out or "").splitlines():
+        parts = line.strip().split("\t")
+        if parts and parts[0]:
+            mounts[parts[0]] = {p.strip().replace("\\", "/").rstrip("/")
+                                for p in parts[1:] if p.strip()}
+    gone: set[str] = set()
+    for line in (err or "").splitlines():
+        if not line.strip():
+            continue
+        m = _GONE.match(line.strip())
+        if not m:
+            return None, line.strip()[:300]
+        gone.add(m.group(1))
+    if code != 0 and not gone:
+        return None, (err or "docker inspect exited %s" % code).strip()[:300]
+    for cid in ids:
+        if not any(full.startswith(cid) or cid.startswith(full) for full in mounts) \
+                and not any(g.startswith(cid) or cid.startswith(g) for g in gone):
+            return None, "container %s not accounted for by docker inspect" % cid[:12]
+    return mounts, ""
+
+
 def _registered(root: Path) -> dict[str, str]:
     result: dict[str, str] = {}
     current = ""

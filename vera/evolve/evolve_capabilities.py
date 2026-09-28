@@ -106,9 +106,11 @@ except ImportError:
 
 try:
     from Vera.vera.evolve.worktree_repair import (
+        MOUNTS_FORMAT, mounts_from_inspect,
         plan_severed_worktree_repair, repair_severed_worktree)
 except ImportError:
     from .worktree_repair import (
+        MOUNTS_FORMAT, mounts_from_inspect,
         plan_severed_worktree_repair, repair_severed_worktree)
 
 
@@ -10160,16 +10162,21 @@ async def evolve_sandbox_worktree_repair(branch: str, dry_run: bool = True,
         return {"error": "docker state unavailable", "branch": branch,
                 "mutated": False, "refused": "docker_unknown"}
     target = str(Path(plan["worktree"]).resolve()).replace("\\", "/").rstrip("/")
-    ids = [item for item in (listed.get("out") or "").splitlines() if item.strip()]
-    for container_id in ids:
-        mounts = await _sh(["docker", "inspect", "-f",
-                            "{{range .Mounts}}{{println .Source}}{{end}}",
-                            container_id], timeout=15)
-        if not mounts.get("ok"):
-            return {"error": "container mount state unavailable", "branch": branch,
-                    "mutated": False, "refused": "docker_unknown"}
-        sources = {line.strip().replace("\\", "/").rstrip("/")
-                   for line in (mounts.get("out") or "").splitlines()}
+    ids = [item.strip() for item in (listed.get("out") or "").splitlines() if item.strip()]
+    # ONE inspect over every container (562 on prod, 2026-09-28): the per-id
+    # loop took minutes, and a single container gone between `ps` and its
+    # inspect refused every repair. A vanished container mounts nothing; any
+    # other docker error still refuses, and says what it was.
+    mounts, why = ({}, "")
+    if ids:
+        inspected = await _sh(["docker", "inspect", "-f", MOUNTS_FORMAT, *ids], timeout=120)
+        mounts, why = mounts_from_inspect(ids, inspected.get("out") or "",
+                                          inspected.get("err") or "",
+                                          int(inspected.get("code") or 0))
+    if mounts is None:
+        return {"error": "container mount state unavailable: %s" % why, "branch": branch,
+                "mutated": False, "refused": "docker_unknown"}
+    for container_id, sources in mounts.items():
         if target in sources:
             return {"error": "worktree is still mounted by a container",
                     "branch": branch, "container_id": container_id[:12],
