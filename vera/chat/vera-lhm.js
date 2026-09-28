@@ -921,12 +921,14 @@ function _ebar(title, onAdd, onDone){
     var wrap = _el('div', 'lhm-side');
     host._lhmEditKey = cfg.id || ''; host._lhmSideCfg = cfg; if(_sideEditOn[host._lhmEditKey]) host._lhmEditing = true;
     // ONE header row (the Harness board): ☰ swaps this list for the open UI's
-    // own menu (or the tabs), then the title, the count, search and ✎. There
+    // own menu, then the title, the count, search and ✎. There
     // used to be a second row under it holding the last two — two headers on a
     // menu that has one — so they moved up here and it went.
+    // The ☰ is drawn only when there is something to swap to (cfg.top.toggle): a ☰ that did something else - the
+    // harness's switch to horizontal tabs, which its foot already carries - was a second burger meaning a second thing.
     var top = _el('div', 'lhm-s-top'); top.setAttribute('data-w', 'header · header');
     if(cfg.top){
-      var tb = _el('button', 'lhm-s-tb' + (cfg.top.on ? ' on' : ''), '☰'); tb.type = 'button'; tb.title = cfg.top.toggleTitle || 'Swap this menu'; tb.addEventListener('click', function(ev){ ev.stopPropagation(); if(cfg.top.toggle) cfg.top.toggle(ev); }); top.appendChild(tb);
+      if(cfg.top.toggle){ var tb = _el('button', 'lhm-s-tb' + (cfg.top.on ? ' on' : ''), '☰'); tb.type = 'button'; tb.title = cfg.top.toggleTitle || 'Swap this menu'; tb.addEventListener('click', function(ev){ ev.stopPropagation(); cfg.top.toggle(ev); }); top.appendChild(tb); }
       top.appendChild(_el('span', 'nm', cfg.top.title || 'Vera')); if(cfg.top.sub) top.appendChild(_el('span', 'mono', cfg.top.sub));
     }
     if(cfg.search){

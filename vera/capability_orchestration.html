@@ -3122,13 +3122,16 @@ function _lhmNativeRender(host){
     _lhmMetersWidget(),
     _lhmLoopsWidget(),
     feed ? { title: 'Live events', count: mirror ? mirror.children.length : 0, el: feed, cls: 'events' + (_lhmEventsOpen ? ' open' : ''), open: () => _lhmToggleEvents() } : null ];
-  // into a child of the list host: when the chat's menu is absorbed and ☰ swapped to this list, the ☰ bar the
-  // absorb path drew stays above it (side() clears what it is given)
+  // into a child of the list host (side() clears what it is given). Swapped to this list, the absorb path draws NO bar
+  // of its own (_lhmRenderAbsorbed returns first): this header's ☰ is the way back, and a bar above it would be a second ☰
   const box = document.createElement('div'); box.className = 'lhm-side-host'; box.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'; host.appendChild(box);
   VeraLHM.side(box, {
     // '⌘K' used to ride along here; the search button on the same row says it
     // now (and so does the registered row), so the count keeps the space.
-    top: _lhmTopBack() || { title: 'Vera', sub: ((_uiPanelCache || []).length || rows.length) + ' panels', toggle: () => tabToggleLhm(), toggleTitle: 'Switch to horizontal tabs (the same menu, as tabs and strips)' },
+    // ONE ☰ at the top of this menu, and it only ever swaps between the open panel's menu and this list (owner,
+    // 2026-09-28: "make sure there is only one"). Switching to horizontal tabs is the foot's ☰ (.lhm-nav-foot), so
+    // with nothing to swap back to the header draws no ☰ at all.
+    top: _lhmTopBack() || { title: 'Vera', sub: ((_uiPanelCache || []).length || rows.length) + ' panels' },
     search: { label: 'Find a panel', hint: '⌘K', open: () => openTabPicker() }, edit: true, id: 'harness-main',
     rail: { on: _lhmRailed, toggle: () => { _lhmRailed = !_lhmRailed; try{ localStorage.setItem('vera:lhm:rail', _lhmRailed ? '1' : '0'); }catch(_){} _lhmRailApply(); } },
     open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() },
