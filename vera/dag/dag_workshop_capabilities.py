@@ -14188,6 +14188,94 @@ async def _v6_intent_measure(task: Any, info: Dict[str, Any], used: str, *,
         pass
 
 
+class _V6StepCritic:
+    """stepwise-reviewed (planner_styles.LOOP_STYLES): a critic on the long-
+    horizon CPU node reviews each finished step against the goal while the GPU
+    carries on. Placed by the compute-roles rule - one heavy CPU generation at a
+    time (a single runner; when steps outpace it, only the LATEST finished step
+    is reviewed, an older critique being stale), and nothing ever waits for it:
+    critiques reach the controller when they have landed (new_block), and the
+    most recent ones reach the completion gate (recent_block). The route is
+    broad's `enrich` role - the 35B on cpu-247 in the shared long-horizon window.
+    """
+
+    IDLE_EXIT_S = 1800.0
+    GATE_NOTES = 4
+    #: Where the review runs (user, 2026-09-28: "allow routing to the GPU for
+    #: review"). cpu = the long-horizon node, off the GPU entirely (default);
+    #: gpu = the planning_style/stream route on the GPU's own model - faster,
+    #: but it queues between the run's own GPU steps. Never waited on either way.
+    ROUTES = ("cpu", "gpu")
+
+    def __init__(self, goal: str, *, sid: str, stream_id: str, model: str = "",
+                 route: str = "cpu"):
+        self.goal, self.sid, self.stream_id, self.model = goal, sid, stream_id, model
+        self.route = route if route in self.ROUTES else "cpu"
+        self.notes: List[Dict[str, Any]] = []
+        self._delivered = 0
+        self._q: "asyncio.Queue[Any]" = asyncio.Queue()
+        self._runner: Optional["asyncio.Task[Any]"] = None
+
+    def submit(self, step: Dict[str, Any], res: Dict[str, Any], done: Sequence[Dict[str, Any]],
+               done_when: str = "") -> None:
+        brief = [{"id": r.get("id"), "title": r.get("title"), "ok": r.get("ok")} for r in done]
+        self._q.put_nowait((dict(step), {k: res.get(k) for k in ("id", "summary", "final", "output",
+                                                                   "ok", "met")},
+                            brief, done_when))
+        if self._runner is None or self._runner.done():
+            self._runner = asyncio.ensure_future(self._run())
+
+    async def _run(self) -> None:
+        PSx = _plan_styles
+        while True:
+            try:
+                item = await asyncio.wait_for(self._q.get(), timeout=self.IDLE_EXIT_S)
+            except asyncio.TimeoutError:
+                return
+            while not self._q.empty():                 # review only the latest
+                item = self._q.get_nowait()
+            step, res, done, done_when = item
+            t1 = time.monotonic()
+            note, err = "", ""
+            try:
+                _gpu = self.route == "gpu"
+                raw = await _safe_ollama_generate_dw(
+                    PSx.critic_prompt(self.goal, done_when, step, res, done),
+                    system=PSx.CRITIC_SYSTEM, json_mode=False,
+                    # the CPU brief model choice does not apply to the GPU route
+                    model=("" if _gpu else (self.model or "")),
+                    instance_id="", prefer_gpu=_gpu, think=False, profile="planning_style",
+                    role=(PSx.PLAN_ROLE if _gpu else PSx.ENRICH_ROLE),
+                    request_stage="step_critic", timeout=900)
+                note = PSx.critic_note(_strip_think(raw or "")[0])
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                err = f"{type(e).__name__}: {e}"[:160]
+            rec = {"step": step.get("id"), "title": step.get("title") or "", "note": note,
+                   "elapsed_s": round(time.monotonic() - t1, 1), "route": self.route}
+            self.notes.append(rec)
+            try:
+                await emit_event({"type": "agent_loop_v6.step_critique", "session_id": self.sid,
+                                  "stream_id": self.stream_id, **rec, "ok": not note,
+                                  "error": err})
+            except Exception:
+                pass
+
+    def new_block(self) -> str:
+        """Critiques that landed since the controller last saw them."""
+        fresh = self.notes[self._delivered:]
+        self._delivered = len(self.notes)
+        return _plan_styles.critic_block(fresh) if fresh else ""
+
+    def recent_block(self) -> str:
+        return _plan_styles.critic_block(self.notes[-self.GATE_NOTES:]) if self.notes else ""
+
+    def cancel(self) -> None:
+        if self._runner is not None and not self._runner.done():
+            self._runner.cancel()
+
+
 async def _v6_entity_coverage(task: Any, output: str, *, sid: str, stream_id: str) -> None:
     """Emit agent_loop_v6.entity_coverage for the run's final output. Best effort."""
     if task is None or _entity_cov is None:
@@ -23425,7 +23513,8 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
         "brief per stream that is added to the stream's steps as it lands. The style used is "
         "emitted as agent_loop_v6.plan_style and "
         "returned as plan_style), enrich_model (str — broad only: the CPU brief model, "
-        "'' = the planning_style/enrich route's), "
+        "'' = the planning_style/enrich route's), critic_route (str 'cpu'|'gpu' — "
+        "stepwise-reviewed only: where the per-step critic runs; default cpu), "
         "step_cycle_budget (int default 6), catalog_size (int default 40), enable_adaptive "
         "(bool default True — run the controller after each step), enable_step_verify (bool "
         "default True — one cheap judge call per step checks its success criterion was "
@@ -23536,7 +23625,7 @@ async def cap_dag_agent_loop_v6(
     enable_master_planner: bool = True,
     enable_tiering:     bool = False,      # V7-defining (see note above); v7 turns on
     plan_tier:          str  = "auto",
-    # HOW the plan is produced: auto|flat|stepwise|detailed|broad|broad-stepwise (see
+    # HOW the plan is produced: auto|flat|stepwise|detailed|broad|broad-stepwise|stepwise-reviewed (see
     # vera/planning/planner_styles.LOOP_STYLES, which is the whole contract).
     # 'auto' is the behaviour from before styles existed. The style the run
     # actually used is emitted as agent_loop_v6.plan_style and returned.
@@ -23545,6 +23634,9 @@ async def cap_dag_agent_loop_v6(
     # ('' = the planning_style/enrich route's model). The route keeps whichever
     # model it runs warm.
     enrich_model:       str  = "",
+    # stepwise-reviewed: where the step critic runs - 'cpu' (the long-horizon
+    # node, default) or 'gpu' (faster, queues between the run's GPU steps).
+    critic_route:       str  = "cpu",
     auto_escalate:      bool = True,
     enable_fast_path:   bool = False,      # V7-defining; v7 turns on ('single' tier shortcut)
     clarify_level:      int  = 1,          # sliding-scale consultation (0-3); back-compat when clarify_mode is ''
@@ -24185,6 +24277,11 @@ async def cap_dag_agent_loop_v6(
         _bd = (_style_detail.get("broad") if isinstance(_style_detail, dict) else None) or {}
         _ctrl_style_note = _plan_styles.controller_note(
             _pstyle, streams=_bd.get("stream_map") or [], steps=_broad_opening_steps)
+    # stepwise-reviewed: a CPU critic reviews each finished step (never waited on).
+    _critic = (_V6StepCritic(goal, sid=sid, stream_id=stream_id,
+                             model=(enrich_model or "").strip(),
+                             route=(critic_route or "cpu").strip().lower())
+               if (_plan_styles is not None and _pstyle.get("step_critic")) else None)
     # Fall-through "complex planning mode": both plan passes yielded no usable
     # steps — escalate to a long-form master plan and re-break it into steps (a
     # weak planner decomposes a concrete document far more reliably than an
@@ -25103,6 +25200,8 @@ async def cap_dag_agent_loop_v6(
         flat_history.extend(res.get("history") or [])
         max_id = max(max_id, step["id"])
         await _journal_step(step, res)
+        if _critic is not None:
+            _critic.submit(step, res, results, done_when)
 
         await emit_event({"type": "agent_loop_v6.ledger", "session_id": sid,
                           "stream_id": stream_id, "executed": executed,
@@ -25139,7 +25238,7 @@ async def cap_dag_agent_loop_v6(
                 base_id=max_id, steps_left=steps_left, model=model,
                 instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
                 file_register=lambda _d: _v6_file_register_block(artifacts, _d),
-                style_note=_ctrl_style_note)
+                style_note=_ctrl_style_note + (_critic.new_block() if _critic is not None else ""))
             await emit_event({"type": "agent_loop_v6.assess", "session_id": sid,
                               "stream_id": stream_id, "after_step": step["id"],
                               "assessment": ctrl.get("assessment", ""),
@@ -25194,6 +25293,10 @@ async def cap_dag_agent_loop_v6(
         _gate_rounds += 1
         _gate_goal = (goal + "\n\n" + _user_updates_block(user_updates)
                       if user_updates else goal)
+        # stepwise-reviewed: the critic's latest notes are evidence for the gate
+        # (what it found missing is exactly what the gate must not wave through).
+        if _critic is not None:
+            _gate_goal = _gate_goal + _critic.recent_block()
         if stream_id:
             await emit_event({"type": "agent_loop_v6.stage_start", "stream_id": stream_id,
                               "session_id": sid, "stage": "gate", "key": "final",
@@ -25379,6 +25482,9 @@ async def cap_dag_agent_loop_v6(
     for _t in (_enrich_tasks or {}).values():
         if not _t.done():
             _t.cancel()
+    # stepwise-reviewed: a critique still running when the run is over informs nothing.
+    if _critic is not None:
+        _critic.cancel()
     return {
         "goal": goal, "steps": results,
         "blackboard": {str(k): v for k, v in blackboard.items()},
@@ -25418,7 +25524,7 @@ async def cap_dag_agent_loop_v6(
         "self-correcting steps). Extra inputs over v6: enable_tiering/plan_tier/auto_escalate, "
         "enable_step_finalize, enable_branching/branch_fanout/max_branches/branch_parallel, "
         "enable_dream_persistence, enable_journal (structured run journal → data fabric for "
-        "complex/long-term goals). plan_style (auto|flat|stepwise|detailed|broad|broad-stepwise, default auto) "
+        "complex/long-term goals). plan_style (auto|flat|stepwise|detailed|broad|broad-stepwise|stepwise-reviewed, default auto) "
         "chooses HOW the plan is produced — see dag.agent_loop_v6. Output: same shape as v6."),
 )
 async def cap_dag_agent_loop_v7(goal: str, **kwargs):
@@ -25681,6 +25787,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_plan_tier         = (body.get("plan_tier", "auto") or "auto").strip().lower()
     v6_plan_style        = (body.get("plan_style", "auto") or "auto").strip().lower()
     v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
+    v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
     v6_auto_escalate     = bool(body.get("auto_escalate", True))
     v6_enable_fast_path  = bool(body.get("enable_fast_path", _v7_default))
     v6_clarify_level     = int(body.get("clarify_level", 1) or 0)
@@ -25830,6 +25937,7 @@ async def workshop_agent_loop_stream(request: Request):
             plan_tier=v6_plan_tier,
             plan_style=v6_plan_style,
             enrich_model=v6_enrich_model,
+            critic_route=v6_critic_route,
             auto_escalate=v6_auto_escalate,
             enable_fast_path=v6_enable_fast_path,
             clarify_level=v6_clarify_level,
@@ -26217,6 +26325,7 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v6.broad_deduped",
             "agent_loop_v6.entity_coverage",
             "agent_loop_v6.intent_zeroshot",
+            "agent_loop_v6.step_critique",
             # V7 tier/branching + strategic persistence
             "agent_loop_v6.tier",
             "agent_loop_v6.fast_path",
