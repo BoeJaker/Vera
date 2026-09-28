@@ -83,6 +83,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # job type is active. Measured 2026-09-28: the 9b does 3.86 tok/s on
     # gpu-250-cpu against 15-30 on the GPU, so the bar is real.
     "spill_min_tps": 3.0,
+    # ...and never a prompt bigger than this: a CPU prompt-eval of a big
+    # context is slower than waiting for the GPU
+    "spill_max_ctx": 8192,
     "scenarios": [
         {
             "name": "coding",

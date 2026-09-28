@@ -39,6 +39,7 @@
   .gpu{color:var(--warn,#f5b341)} .cpu{color:var(--acc,#4a9eff)} .ok{color:var(--acc2,var(--ok,#28c28a))} .bad{color:var(--err,#ef5b5b)} .warn{color:var(--warn,#f5b341)}
   .slot{display:flex;gap:6px;align-items:baseline;border-left:2px solid var(--border2,#2e3742);padding:1px 0 1px 6px}
   .slot.warm{border-left-color:var(--acc2,#28c28a)} .slot.cold{border-left-color:var(--warn,#f5b341)}
+  .slot .mono{flex:1;min-width:0;overflow-wrap:anywhere} .slot>span:not(.mono){white-space:nowrap}
   .sec{font:600 9.5px/1 var(--mono,ui-monospace,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--dim,#5f6975);margin:2px 0}
   .panel{background:var(--bg1,#14181d);border:1px solid var(--border,#232a33);border-radius:7px;padding:9px 11px;display:flex;flex-direction:column;gap:6px}
   table{border-collapse:collapse;width:100%;font-size:10.5px}
@@ -123,7 +124,7 @@
         const slots = (n.planned || []).map((p) => {
           const r = isRes(p.model);
           const state = r ? (r.pinned ? '<span class="ok" title="kept loaded until the plan drops it">pinned</span>' : '<span class="warn">lapses in ' + dur(r.expires_in_s) + '</span>') : '<span class="warn">not loaded</span>';
-          return '<div class="slot ' + (r ? 'warm' : 'cold') + '"><span class="mono">' + esc(p.model) + '</span><span class="muted">' + (p.num_ctx ? esc(p.num_ctx) + ' ctx' : '') + '</span><span class="sp"></span>' + state + '</div>';
+          return '<div class="slot ' + (r ? 'warm' : 'cold') + '"><span class="mono">' + esc(p.model) + '</span><span class="muted">' + (p.num_ctx ? esc(p.num_ctx) + ' ctx' : '') + '</span>' + state + '</div>';
         }).join('') || '<div class="muted">no planned models</div>';
         const embed = n.embed ? '<div class="slot ' + (isRes(n.embed) ? 'warm' : 'cold') + '"><span class="mono">' + esc(n.embed) + '</span><span class="muted">embedder</span></div>' : '';
         const extra = res.filter((r) => !(n.planned || []).some((p) => String(p.model).replace(/:latest$/, '') === String(r.model).replace(/:latest$/, '')) && String(r.model).replace(/:latest$/, '') !== String(n.embed || '').replace(/:latest$/, ''));
