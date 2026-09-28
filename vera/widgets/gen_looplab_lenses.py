@@ -68,10 +68,12 @@ LENSES = {
         tile("timeline", "Census timeline · runs among the commits", "census-timeline", "ci.census", (6, 9), (0, 10),
              shape="events", args={"template": "default"}, refresh="5m"),
         element("graph", "Commit graph", "vera-git-graph", (6, 9), (6, 10)),
-        tile("done", "Goals done per run", "trace", "census.runs", (6, 2), (0, 19), shape="series",
-             map={"series": "runs", "v": "done"}, refresh="5m"),
-        tile("quality", "Quality per run", "trace", "census.runs", (6, 2), (6, 19), shape="series",
-             map={"series": "runs", "v": "quality_mean"}, refresh="5m"),
+        # the census's trends LAYERED and filtered by the viewer: goals done, quality, checks and wall time on one time
+        # axis (newest right), a template at a time, a range, layered or in lanes
+        tile("trends", "Census trends", "trend-layers", "census.runs", (12, 6), (0, 19), shape="series", refresh="5m",
+             draw={"rows": "runs", "t": "ended_at", "facets": ["template"], "range": "all",
+                   "series": [{"field": "done", "label": "goals done"}, {"field": "quality_mean", "label": "quality"},
+                              {"field": "checks_passed", "label": "checks passed"}, {"field": "wall_total_s", "label": "wall s"}]}),
     ]),
     "looplab-perf": ("Performance", "Where the time goes: the census in flight and its routing, each model's latency, "
                      "every agentic loop's wall time split by tool and model calls, census and loop wall time run by run, "
@@ -84,10 +86,11 @@ LENSES = {
              args={"limit": 24}, refresh="30s"),
         # trends drawn from real readings only: an empty source (perf.stalls with no stalls) draws its SAMPLE face,
         # which on a performance lens reads as an alarm that is not there
-        tile("census-wall", "Census wall time per run (s)", "trace", "census.runs", (6, 2), (0, 11), shape="series",
-             map={"series": "runs", "v": "wall_total_s"}, refresh="5m"),
-        tile("loop-wall", "Loop wall time per run (s)", "trace", "loop.ci.perf", (6, 2), (0, 13), shape="series",
-             args={"limit": 40}, map={"series": "rows", "v": "wall_s", "reverse": True}, refresh="60s"),
+        tile("loop-trend", "Loops over time", "trend-layers", "loop.ci.perf", (6, 4), (0, 11), shape="series",
+             args={"limit": 40}, refresh="60s",
+             draw={"rows": "rows", "t": "started_at", "facets": ["status"], "mode": "lanes",
+                   "series": [{"field": "wall_s", "label": "wall s"}, {"field": "calls", "label": "tool calls"},
+                              {"field": "llm_calls", "label": "model calls"}]}),
         tile("requests", "Request log", "log", "ollama.request_log", (6, 4), (6, 11), shape="events",
              map={"events": "entries", "t": "ts", "kind": "instance", "text": "model"}, refresh="10s"),
     ]),

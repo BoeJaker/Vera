@@ -154,29 +154,50 @@
   },
   {
    "record": {
-    "id": "looplab-census-done",
-    "form": "trace",
+    "id": "looplab-census-trends",
+    "form": "trend-layers",
     "source": "census.runs",
     "shape": "series",
-    "title": "Goals done per run",
+    "title": "Census trends",
     "read": {
      "refresh": "5m",
      "args": {},
-     "map": {
-      "series": "runs",
-      "v": "done"
-     }
+     "map": {}
     },
     "frame": {
-     "size": "l",
+     "size": "xl",
      "span": [
-      6,
-      2
+      12,
+      6
      ],
      "max_body": null
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "rows": "runs",
+     "t": "ended_at",
+     "facets": [
+      "template"
+     ],
+     "range": "all",
+     "series": [
+      {
+       "field": "done",
+       "label": "goals done"
+      },
+      {
+       "field": "quality_mean",
+       "label": "quality"
+      },
+      {
+       "field": "checks_passed",
+       "label": "checks passed"
+      },
+      {
+       "field": "wall_total_s",
+       "label": "wall s"
+      }
+     ]
     },
     "actions": [
      "dive",
@@ -190,53 +211,8 @@
     19
    ],
    "span": [
-    6,
-    2
-   ],
-   "hidden": false,
-   "refresh": "5m",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "looplab-census-quality",
-    "form": "trace",
-    "source": "census.runs",
-    "shape": "series",
-    "title": "Quality per run",
-    "read": {
-     "refresh": "5m",
-     "args": {},
-     "map": {
-      "series": "runs",
-      "v": "quality_mean"
-     }
-    },
-    "frame": {
-     "size": "l",
-     "span": [
-      6,
-      2
-     ],
-     "max_body": null
-    },
-    "draw": {
-     "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
-   },
-   "at": [
-    6,
-    19
-   ],
-   "span": [
-    6,
-    2
+    12,
+    6
    ],
    "hidden": false,
    "refresh": "5m",

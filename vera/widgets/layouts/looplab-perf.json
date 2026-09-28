@@ -162,29 +162,48 @@
   },
   {
    "record": {
-    "id": "looplab-perf-census-wall",
-    "form": "trace",
-    "source": "census.runs",
+    "id": "looplab-perf-loop-trend",
+    "form": "trend-layers",
+    "source": "loop.ci.perf",
     "shape": "series",
-    "title": "Census wall time per run (s)",
+    "title": "Loops over time",
     "read": {
-     "refresh": "5m",
-     "args": {},
-     "map": {
-      "series": "runs",
-      "v": "wall_total_s"
-     }
+     "refresh": "60s",
+     "args": {
+      "limit": 40
+     },
+     "map": {}
     },
     "frame": {
-     "size": "l",
+     "size": "xl",
      "span": [
       6,
-      2
+      4
      ],
      "max_body": null
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "rows": "rows",
+     "t": "started_at",
+     "facets": [
+      "status"
+     ],
+     "mode": "lanes",
+     "series": [
+      {
+       "field": "wall_s",
+       "label": "wall s"
+      },
+      {
+       "field": "calls",
+       "label": "tool calls"
+      },
+      {
+       "field": "llm_calls",
+       "label": "model calls"
+      }
+     ]
     },
     "actions": [
      "dive",
@@ -199,55 +218,7 @@
    ],
    "span": [
     6,
-    2
-   ],
-   "hidden": false,
-   "refresh": "5m",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "looplab-perf-loop-wall",
-    "form": "trace",
-    "source": "loop.ci.perf",
-    "shape": "series",
-    "title": "Loop wall time per run (s)",
-    "read": {
-     "refresh": "60s",
-     "args": {
-      "limit": 40
-     },
-     "map": {
-      "series": "rows",
-      "v": "wall_s",
-      "reverse": true
-     }
-    },
-    "frame": {
-     "size": "l",
-     "span": [
-      6,
-      2
-     ],
-     "max_body": null
-    },
-    "draw": {
-     "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
-   },
-   "at": [
-    0,
-    13
-   ],
-   "span": [
-    6,
-    2
+    4
    ],
    "hidden": false,
    "refresh": "60s",
