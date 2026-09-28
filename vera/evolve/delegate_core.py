@@ -154,3 +154,49 @@ def report_from(result: Any) -> str:
 
 def terminal(status: str) -> bool:
     return status in ("done", "error", "cancelled")
+
+
+# ── the job in Loop Lab (ROADMAP J1, user 2026-09-28) ─────────────────────────
+# The loop a job drives is recorded like any loop (origin `delegate`); these are
+# the JOB's own facts, written into the loop's run hash so whichever record
+# build lands last carries them.
+RUN_FIELD = "delegate"
+_PATH_LINE = re.compile(r"(?<![\w/.-])((?:[\w.-]+/)*[\w.-]+\.[A-Za-z0-9]{1,6}):(\d+)")
+_HEADING = re.compile(r"^\s{0,3}#{1,6}\s*(.+?)\s*#*\s*$")
+_BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
+
+
+def report_metrics(report: str) -> Dict[str, int]:
+    """What a report holds, counted without judging it: bullet findings under
+    its Findings heading and the distinct path:line references it cites."""
+    text = str(report or "")
+    findings = 0
+    in_findings = False
+    for line in text.splitlines():
+        h = _HEADING.match(line)
+        if h:
+            in_findings = h.group(1).strip().lower().startswith("finding")
+            continue
+        if in_findings and _BULLET.match(line):
+            findings += 1
+    refs = {"%s:%s" % (m.group(1), m.group(2)) for m in _PATH_LINE.finditer(text)}
+    return {"report_chars": len(text), "findings": findings, "path_line_refs": len(refs)}
+
+
+def record_fields(job: Dict[str, Any]) -> Dict[str, Any]:
+    """The job's facts for its Loop Lab record."""
+    j = job or {}
+    out = {
+        "job_id": str(j.get("id") or ""),
+        "title": str(j.get("title") or "")[:200],
+        "mode": str(j.get("mode") or ""),
+        "effort": str(j.get("effort") or ""),
+        "ref": str(j.get("ref") or ""),
+        "head": str(j.get("head") or ""),
+        "plan_style": str(j.get("plan_style") or ""),
+        "status": str(j.get("status") or ""),
+        "brief_chars": int(j.get("goal_chars") or 0),
+        "board_item": str(j.get("board_item") or ""),
+    }
+    out.update(report_metrics(j.get("report") or ""))
+    return out
