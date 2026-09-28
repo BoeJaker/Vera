@@ -22,7 +22,7 @@ _ROLES = {"discover", "retrieve", "context", "data", "enrich", "route"}
 _BOUNDARIES = {
     "capability", "context_provider", "dataset_provider", "query_provider",
     "artifact_provider", "memory_provider", "evidence_provider",
-    "model_package", "native_adapter", "internal",
+    "model_package", "native_adapter", "discovery_contract", "internal",
 }
 _EXECUTION = {"inline", "async_local", "remote_http", "provider_injected"}
 _RESOURCES = {"cpu", "cpu_or_gpu_gated", "storage", "network", "none"}
@@ -88,6 +88,10 @@ class DiscoveryContextComponent:
 
 
 CURRENT_COMPONENTS = (
+    DiscoveryContextComponent(
+        "discovery.portable", "discover", "vera/discovery_contract.py",
+        "class DiscoveryRequest", "discovery_contract", "provider_injected",
+        "none", "vera.discovery-result.v1", ("context.portable", "fabric.dataset")),
     DiscoveryContextComponent(
         "context.portable", "context", "vera/context_provider.py",
         "class ContextProvider(Protocol)", "context_provider", "provider_injected",
@@ -180,8 +184,6 @@ CURRENT_COMPONENTS = (
 
 
 CURRENT_GAPS = (
-    "no_portable_discovery_request_or_source_candidate_contract",
-    "no_portable_collection_option_or_collection_receipt_contract",
     "discovery_does_not_share_context_registry_selection",
     "agent_rag_uses_a_native_result_shape",
     "worker_selection_is_not_a_discovery_execution_plan",

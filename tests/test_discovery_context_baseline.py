@@ -20,7 +20,7 @@ def test_current_inventory_is_source_bound_without_live_work():
     value = build_discovery_context_baseline(ROOT)
     assert value["schema"] == "vera.discovery-context-baseline/v1"
     assert value["counts"] == {
-        "components": 20, "live_evidence_required": 6, "gaps": 9,
+        "components": 21, "live_evidence_required": 6, "gaps": 7,
     }
     assert len(value["source_evidence"]) == value["counts"]["components"]
     assert all(not enabled for enabled in value["constraints"].values())
@@ -64,5 +64,7 @@ def test_source_drift_fails_closed(tmp_path):
     source = tmp_path / "vera" / "context_provider.py"
     source.parent.mkdir(parents=True)
     source.write_text("class SomethingElse:\n    pass\n", encoding="utf-8")
+    component = next(value for value in CURRENT_COMPONENTS
+                     if value.component_id == "context.portable")
     with pytest.raises(ValueError, match="source assertion missing"):
-        build_discovery_context_baseline(tmp_path, (CURRENT_COMPONENTS[0],))
+        build_discovery_context_baseline(tmp_path, (component,))
