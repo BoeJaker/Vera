@@ -903,11 +903,11 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
         <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap">
           <span style="font-size:9px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#e6b800">Model Catalog</span>
           <div style="display:flex;gap:2px">
-            <span class="j-tab active" id="cats-browse" onclick="P.catSub('browse')" style="padding:3px 9px;font-size:9px">Browse</span>
-            <span class="j-tab" id="cats-installed" onclick="P.catSub('installed')" style="padding:3px 9px;font-size:9px">Installed <span class="j-cnt" id="cat-inst-cnt">0</span></span>
-            <span class="j-tab" id="cats-dl" onclick="P.catSub('dl')" style="padding:3px 9px;font-size:9px">Downloads <span class="j-cnt" id="cat-dl-cnt" style="display:none">0</span></span>
-            <span class="j-tab" id="cats-nodes" onclick="P.catSub('nodes')" style="padding:3px 9px;font-size:9px">Nodes &amp; Hardware</span>
-            <span class="j-tab" id="cats-opt" onclick="P.catSub('opt')" style="padding:3px 9px;font-size:9px">Auto-optimise</span>
+            <span class="j-tab active" id="cats-browse" onclick="P.catSub('browse')" data-vera-sub="browse" style="padding:3px 9px;font-size:9px">Browse</span>
+            <span class="j-tab" id="cats-installed" onclick="P.catSub('installed')" data-vera-sub="installed" style="padding:3px 9px;font-size:9px">Installed <span class="j-cnt" id="cat-inst-cnt">0</span></span>
+            <span class="j-tab" id="cats-dl" onclick="P.catSub('dl')" data-vera-sub="dl" style="padding:3px 9px;font-size:9px">Downloads <span class="j-cnt" id="cat-dl-cnt" style="display:none">0</span></span>
+            <span class="j-tab" id="cats-nodes" onclick="P.catSub('nodes')" data-vera-sub="nodes" style="padding:3px 9px;font-size:9px">Nodes &amp; Hardware</span>
+            <span class="j-tab" id="cats-opt" onclick="P.catSub('opt')" data-vera-sub="opt" style="padding:3px 9px;font-size:9px">Auto-optimise</span>
           </div>
           <span style="flex:1"></span>
           <label style="font-size:9px;color:var(--dim2);display:flex;align-items:center;gap:4px">Install to
@@ -1206,8 +1206,8 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
         <span class="pane-tb-title" style="color:var(--acc4)">OBSERVE</span>
         <span class="tb-sep"></span>
         <div style="display:flex;gap:2px">
-          <span class="j-tab active" id="obss-events" onclick="P.obsSub('events')" style="padding:3px 9px;font-size:9px">Events</span>
-          <span class="j-tab" id="obss-perf" onclick="P.obsSub('perf')" style="padding:3px 9px;font-size:9px;color:#e6bd66">⚡ Perf</span>
+          <span class="j-tab active" id="obss-events" onclick="P.obsSub('events')" data-vera-sub="events" style="padding:3px 9px;font-size:9px">Events</span>
+          <span class="j-tab" id="obss-perf" onclick="P.obsSub('perf')" data-vera-sub="perf" style="padding:3px 9px;font-size:9px;color:#e6bd66">⚡ Perf</span>
         </div>
         <span class="tb-sep" data-obs-events></span>
         <button class="btn sm" onclick="P.obsClear()" data-obs-events>Clear</button>
@@ -1416,8 +1416,8 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
           <button class="btn sm" id="pmx-auto-btn" onclick="P.pmxAutoToggle()">Auto 10s</button>
           <span class="status-hint" id="pmx-status">—</span>
           <div style="display:flex;gap:2px;margin-left:8px">
-            <span class="j-tab active" id="pmxs-dash" onclick="P.pmxSub('dash')" style="padding:3px 9px;font-size:9px">Dashboard</span>
-            <span class="j-tab" id="pmxs-cpu" onclick="P.pmxSub('cpu')" style="padding:3px 9px;font-size:9px">CPU / NUMA</span>
+            <span class="j-tab active" id="pmxs-dash" onclick="P.pmxSub('dash')" data-vera-sub="dash" style="padding:3px 9px;font-size:9px">Dashboard</span>
+            <span class="j-tab" id="pmxs-cpu" onclick="P.pmxSub('cpu')" data-vera-sub="cpu" style="padding:3px 9px;font-size:9px">CPU / NUMA</span>
           </div>
           <span style="flex:1"></span>
           <!-- Security / Identity / Enroll moved to the Provision pane;
@@ -1805,9 +1805,9 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
           <span class="pane-tb-title" style="color:#4cc9b0">NETWORK</span>
           <span class="tb-sep"></span>
           <div style="display:flex;gap:2px">
-            <span class="j-tab active" id="nets-graph" onclick="P.netSub('graph')" style="padding:3px 9px;font-size:9px">Graph &amp; Firewall</span>
-            <span class="j-tab" id="nets-ops" onclick="P.netSub('ops')" style="padding:3px 9px;font-size:9px">Traffic (NWM-01)</span>
-            <span class="j-tab" id="nets-netctl" onclick="P.netSub('netctl')" style="padding:3px 9px;font-size:9px" title="netctl's own pages, behind its own sign-in">netctl</span>
+            <span class="j-tab active" id="nets-graph" onclick="P.netSub('graph')" data-vera-sub="graph" style="padding:3px 9px;font-size:9px">Graph &amp; Firewall</span>
+            <span class="j-tab" id="nets-ops" onclick="P.netSub('ops')" data-vera-sub="ops" style="padding:3px 9px;font-size:9px">Traffic (NWM-01)</span>
+            <span class="j-tab" id="nets-netctl" onclick="P.netSub('netctl')" data-vera-sub="netctl" style="padding:3px 9px;font-size:9px" title="netctl's own pages, behind its own sign-in">netctl</span>
           </div>
         </div>
         <iframe id="net-sub-graph" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
@@ -1937,13 +1937,13 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
           <div style="display:flex;gap:2px">
             <!-- Software tab removed: runtime/component installs live in the
                  Nodes pane; docker host mgmt in Docker; CT creation in Proxmox. -->
-            <span class="j-tab active" id="prvs-security" onclick="P.provSub('security')" style="padding:3px 9px;font-size:9px">Security</span>
-            <span class="j-tab" id="prvs-secrets" onclick="P.provSub('secrets')" style="padding:3px 9px;font-size:9px">Secrets</span>
-            <span class="j-tab" id="prvs-certs" onclick="P.provSub('certs')" style="padding:3px 9px;font-size:9px">Certificates</span>
-            <span class="j-tab" id="prvs-registration" onclick="P.provSub('registration')" style="padding:3px 9px;font-size:9px">Registration</span>
-            <span class="j-tab" id="prvs-identity" onclick="P.provSub('identity')" style="padding:3px 9px;font-size:9px">Identity</span>
-            <span class="j-tab" id="prvs-enroll" onclick="P.provSub('enroll')" style="padding:3px 9px;font-size:9px">Enroll</span>
-            <span class="j-tab" id="prvs-mesh" onclick="P.provSub('mesh')" style="padding:3px 9px;font-size:9px">Mesh</span>
+            <span class="j-tab active" id="prvs-security" onclick="P.provSub('security')" data-vera-sub="security" style="padding:3px 9px;font-size:9px">Security</span>
+            <span class="j-tab" id="prvs-secrets" onclick="P.provSub('secrets')" data-vera-sub="secrets" style="padding:3px 9px;font-size:9px">Secrets</span>
+            <span class="j-tab" id="prvs-certs" onclick="P.provSub('certs')" data-vera-sub="certs" style="padding:3px 9px;font-size:9px">Certificates</span>
+            <span class="j-tab" id="prvs-registration" onclick="P.provSub('registration')" data-vera-sub="registration" style="padding:3px 9px;font-size:9px">Registration</span>
+            <span class="j-tab" id="prvs-identity" onclick="P.provSub('identity')" data-vera-sub="identity" style="padding:3px 9px;font-size:9px">Identity</span>
+            <span class="j-tab" id="prvs-enroll" onclick="P.provSub('enroll')" data-vera-sub="enroll" style="padding:3px 9px;font-size:9px">Enroll</span>
+            <span class="j-tab" id="prvs-mesh" onclick="P.provSub('mesh')" data-vera-sub="mesh" style="padding:3px 9px;font-size:9px">Mesh</span>
           </div>
           <span class="status-hint" style="margin-left:8px">Net policy (graph &amp; firewall) lives in Network → Graph; deploy its OPA engine from Security</span>
         </div>

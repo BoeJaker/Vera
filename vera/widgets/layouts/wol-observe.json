@@ -21,6 +21,346 @@
  "widgets": [
   {
    "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "value": "inflight_total"
+     }
+    },
+    "id": "obs-inflight",
+    "form": "counter",
+    "source": "ops.snapshot",
+    "title": "Vera jobs · in flight",
+    "open": "estate/ops",
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    3,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "obs-gpu-gate",
+    "form": "level",
+    "source": "obs.health",
+    "title": "GPU gate",
+    "read": {
+     "refresh": "5s",
+     "map": {
+      "value": "gpu_gate.held",
+      "max": "gpu_gate.capacity"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "held",
+     "cells": 4
+    },
+    "open": "models"
+   },
+   "at": [
+    3,
+    0
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "args": {
+      "limit": 200
+     },
+     "map": {
+      "values": "entries",
+      "count": "instance"
+     }
+    },
+    "id": "obs-llm-by-worker",
+    "form": "ranked",
+    "source": "ollama.request_log",
+    "title": "LLM jobs · by worker · last 200",
+    "open": "models",
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    5,
+    0
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "obs-llm-rate",
+    "form": "pulse",
+    "source": "ollama.request_log",
+    "title": "LLM jobs · rate",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "events": "entries",
+      "t": "ts",
+      "kind": "instance",
+      "text": "model"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "models"
+   },
+   "at": [
+    9,
+    0
+   ],
+   "span": [
+    3,
+    2
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "rows": "nodes",
+      "where": {
+       "plane": "work"
+      },
+      "name": "label",
+      "status": "status",
+      "value": "inflight"
+     }
+    },
+    "id": "obs-vera-work",
+    "form": "rows",
+    "source": "ops.snapshot",
+    "title": "Vera jobs · the work in flight",
+    "open": "estate/ops",
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      5
+     ]
+    },
+    "draw": {
+     "body": "record"
+    }
+   },
+   "at": [
+    0,
+    2
+   ],
+   "span": [
+    6,
+    5
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s",
+     "args": {
+      "limit": 200
+     },
+     "map": {
+      "rows": "entries",
+      "name": "model",
+      "status": "status",
+      "value": "elapsed_s"
+     }
+    },
+    "id": "obs-llm-routing",
+    "form": "rows",
+    "source": "ollama.request_log",
+    "title": "LLM jobs · each request and the worker that served it",
+    "open": "models",
+    "draw": {
+     "body": "record",
+     "unit": "s",
+     "detail": "instance"
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      5
+     ]
+    }
+   },
+   "at": [
+    6,
+    2
+   ],
+   "span": [
+    6,
+    5
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "read": {
+     "refresh": "15s"
+    },
+    "id": "obs-job-stream",
+    "form": "composite",
+    "source": "jobs.stats",
+    "title": "Job stream · the queue and its consumers",
+    "open": "estate/workers",
+    "layout": "grid",
+    "draw": {
+     "body": "record",
+     "cols": 2
+    },
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "numbers",
+       "source": "$subject",
+       "title": "the stream",
+       "read": {
+        "map": {
+         "pick": {
+          "length": "stream.length",
+          "pending": "stream.pending_total",
+          "running": "running_tracked",
+          "consumers": "stream.consumer_count"
+         }
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "ranked",
+       "source": "$subject",
+       "title": "consumers · pending",
+       "read": {
+        "map": {
+         "values": "stream.consumers",
+         "name": "name",
+         "value": "pending"
+        }
+       }
+      }
+     }
+    ],
+    "frame": {
+     "size": "l",
+     "span": [
+      12,
+      4
+     ]
+    }
+   },
+   "at": [
+    0,
+    7
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
     "id": "obs-stream",
     "form": "log",
     "source": "stream:events",
@@ -50,7 +390,7 @@
    },
    "at": [
     0,
-    0
+    11
    ],
    "span": [
     6,
@@ -124,7 +464,7 @@
    },
    "at": [
     6,
-    0
+    11
    ],
    "span": [
     6,

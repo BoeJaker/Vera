@@ -108,6 +108,19 @@
   }
   function _kidShown(k){ try{ return !!(k.frame && k.frame.isConnected && (k.frame.offsetWidth || k.frame.offsetHeight)); }catch(e){ return false; } }
   function _activeKid(){ for(var i = _kids.length - 1; i >= 0; i--){ var k = _kids[i]; if(_kidShown(k) && k.nav && k.nav.items && k.nav.items.length) return k; } return null; }
+  // ── A PAGE'S OWN SUB-SECTIONS (owner, 2026-09-28: "the estate ui's observe menu is missing the perf section"). A section
+  // that switches between views in the page itself (Observe: Events / Perf) marks each tab data-vera-sub="<id>"; while its
+  // strip is shown the docked menu lists them under the open item ('s:<id>'), the current one lit, and a pick clicks the tab.
+  // A strip in a bar the harness absorbed still counts as shown (the bar is folded away because the harness holds it). ──
+  function _subShown(el){ for(var n = el; n && n !== document.body; n = n.parentElement){ if(n.hidden) return false; var cs = getComputedStyle(n);
+      if(cs.visibility === 'hidden') return false; if(cs.display === 'none' && !n.hasAttribute('data-vpb-hdr-bar')) return false; } return !!el; }
+  function _subLabel(el){ var own = ''; Array.prototype.forEach.call(el.childNodes, function(c){ if(c.nodeType === 3) own += c.textContent; });
+    return String(el.getAttribute('data-label') || own.trim() || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40); }
+  function _pageSubs(){ try{
+    var els = Array.prototype.slice.call(document.querySelectorAll('[data-vera-sub]')).filter(_subShown).slice(0, 24); if(!els.length) return null;
+    var on = els.filter(function(el){ return /\b(active|on|selected)\b/.test(String(el.className || '')) || el.getAttribute('aria-selected') === 'true'; })[0];
+    return { items: els.map(function(el){ return { id: String(el.getAttribute('data-vera-sub')), label: _subLabel(el), el: el }; }), active: on ? String(on.getAttribute('data-vera-sub')) : '' };
+  }catch(e){ return null; } }
   function _kidsHosted(on){ _hostedUp = !!on; _kids.forEach(function(k){ try{ k.win.postMessage({ type: on ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){} }); }
   window.addEventListener('message', function(ev){
     if(!_nestOn()) return;
@@ -123,7 +136,7 @@
     } else { k.hdr = d; _hdrRelay(); }
   });
   // what is shown changes as this page switches its own item: look again, cheaply
-  setInterval(function(){ if(!_nestOn()) return; var k = _activeKid(); var sig = k ? k.frame.getAttribute('src') + '|' + k.nav.active : ''; if(sig !== _kidSig){ _kidSig = sig; publishStateDebounced(); _hdrRelay(); } }, 1000);
+  setInterval(function(){ if(!_nestOn()) return; var k = _activeKid(); var ps = (typeof _pageSubs === 'function') ? _pageSubs() : null; var sig = (k ? k.frame.getAttribute('src') + '|' + k.nav.active : '') + '|' + (ps ? ps.items.map(function(it){ return it.id; }).join(',') + '>' + ps.active : ''); if(sig !== _kidSig){ _kidSig = sig; publishStateDebounced(); _hdrRelay(); } }, 1000);
   var _kidSig = '';
   function _hdrRelay(){
     if(typeof _hdrBar !== 'undefined' && _hdrBar) return;   // this page has its own bar
@@ -170,12 +183,14 @@
         return { id: id, icon: _navIcon(it), label: it.label, title: title || 'Sections', tabs: all }; });
     }
     if(!act.menu && menus.length) act.menu = menus[0].id;
-    var kid = (typeof _activeKid === 'function') ? _activeKid() : null;
-    if(kid && act.menu){
-      var sub = kid.nav.items.map(function(it){ return { id: 'c:' + it.id, label: String(it.label || it.id), depth: 1 }; });
+    var kid = (typeof _activeKid === 'function') ? _activeKid() : null, ps = (act.menu && typeof _pageSubs === 'function') ? _pageSubs() : null;
+    if((kid || ps) && act.menu){
+      // the page's own sub-sections, and a framed child's sections under the one that shows it (or under the item, as before)
+      var kidSub = kid ? kid.nav.items.map(function(it){ return { id: 'c:' + it.id, label: String(it.label || it.id), depth: ps ? 2 : 1 }; }) : [], sub = kidSub;
+      if(ps){ sub = []; ps.items.forEach(function(it){ sub.push({ id: 's:' + it.id, label: it.label, depth: 1 }); if(it.id === ps.active) sub = sub.concat(kidSub); }); if(!ps.active) sub = sub.concat(kidSub); }
       menus.forEach(function(m){ if(m.id !== act.menu) return; var at = -1; m.tabs.forEach(function(tb, i){ if(tb.id === _navActiveId) at = i; });
         m.tabs = m.tabs.slice(0, at + 1).concat(sub, m.tabs.slice(at + 1)); });
-      if(kid.nav.active) act.tab = 'c:' + kid.nav.active;
+      if(kid && kid.nav.active) act.tab = 'c:' + kid.nav.active; else if(ps && ps.active) act.tab = 's:' + ps.active;
     }
     var wd = _navWidgets(); if(kid && kid.nav.widgets) kid.nav.widgets.forEach(function(w){ if(wd.indexOf(w) < 0) wd.push(w); });
     return { title: title, active: act, menus: menus, open: [], widgets: wd };
@@ -470,6 +485,8 @@
     if(id.indexOf('c:') === 0){ var kid = _activeKid(); if(!kid) return {ok: false, error: 'no nested panel is shown'};
       try{ kid.win.postMessage({type: 'vera:panel:action', action: 'nav_select', action_id: 'nest-' + Date.now(), payload: {id: id.slice(2)}}, '*'); }catch(e){}
       kid.nav.active = id.slice(2); publishStateDebounced(); return {ok: true}; }
+    if(id.indexOf('s:') === 0){ var ps = _pageSubs(), hit = ps && ps.items.filter(function(it){ return it.id === id.slice(2); })[0];
+      if(!hit) return {ok: false, error: 'no sub-section ' + id.slice(2) + ' is shown'}; hit.el.click(); publishStateDebounced(); return {ok: true}; }
     if(_navSelectFn){
       try{ _navSelectFn(id); }catch(e){ return {ok: false, error: String(e)}; }
       _navActiveId = id; publishStateDebounced();
