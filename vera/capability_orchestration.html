@@ -370,8 +370,14 @@ select option{background:var(--bg2)}
 /* Trailing bottom room so the bottom-row widgets always have empty scroll
    space to be resized/expanded into (see .dash-grid flex + editing rules). */
 #panel-dashboard{padding:14px 16px 120px}
-#panel-dashboard .dash-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
-#panel-dashboard .dash-toolbar .dash-title{font-size:11px;font-weight:600;color:var(--text);letter-spacing:.4px;display:flex;align-items:center;gap:8px;margin-right:auto}
+#panel-dashboard .dash-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap}
+#panel-dashboard .dash-toolbar .dash-title{font-size:16px;font-weight:650;color:var(--t1,var(--text));letter-spacing:-.01em;display:flex;align-items:center;gap:9px;margin-right:auto;order:-3}
+/* the top of the dashboard (2026-09-28): the subtitle beside the title, the live chip, the health readings as status pills; the arranging buttons a group of their own */
+#panel-dashboard .dash-toolbar .dlbl{order:-2;text-transform:none;letter-spacing:0;font-weight:400;font-size:11px;color:var(--t3,var(--dim,#6b7280))}
+#panel-dashboard .dash-toolbar .live{order:-1;padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--ac2,var(--acc2,#8fb87a)) 12%,transparent)}
+#panel-dashboard .dash-toolbar #dashHealthStrip > span{border-radius:999px!important;font-size:9.5px}
+#panel-dashboard .dash-toolbar #dashEditBtn{margin-left:10px;position:relative}#panel-dashboard .dash-toolbar #dashEditBtn::before{content:'';position:absolute;left:-10px;top:3px;bottom:3px;width:1px;background:var(--bd2,var(--border2,rgba(255,255,255,.16)))}
+#panel-dashboard .dash-toolbar .dash-meta{font-size:10px}
 #panel-dashboard .dash-toolbar .dash-title::before{content:'';width:3px;height:14px;background:linear-gradient(180deg,var(--acc),var(--acc2));border-radius:2px}
 #panel-dashboard .dash-meta{font-size:9.5px;color:var(--dim2);font-family:var(--mono)}
 
@@ -900,9 +906,9 @@ header .hdr-right{margin-left:0;gap:6px}
    a tile's head and heavier titles; terminal's outlines where the other packs fill */
 /* a SECTION tile: the band's name, flat on the page, the label at the foot of its row so it reads as the heading of the
    tiles below (the Dashboard board's side sections; the Sizes board's report lines) */
-.widget.w-section{background:transparent!important;border:none!important;box-shadow:none!important;border-radius:0;justify-content:flex-end;overflow:visible}
+.widget.w-section{background:transparent!important;border:none!important;box-shadow:none!important;border-radius:0;justify-content:stretch;overflow:visible}
 /* a section reads as a heading (owner 2026-09-28: "clearer sections"): a colour of its own (draw.accent), the name bold, the rest a subtitle */
-.widget.w-section .w-head{padding:6px 8px 5px;min-height:0;height:auto;border-bottom:2px solid color-mix(in srgb,var(--sec-acc,var(--acc,#5a9e8f)) 60%,transparent);box-shadow:none;border-radius:6px 6px 0 0;background:linear-gradient(90deg,color-mix(in srgb,var(--sec-acc,var(--acc,#5a9e8f)) 14%,transparent),transparent 70%)}
+.widget.w-section .w-head{padding:6px 12px 5px;min-height:0;height:100%;align-items:center;border-bottom:2px solid color-mix(in srgb,var(--sec-acc,var(--acc,#5a9e8f)) 60%,transparent);box-shadow:none;border-radius:6px 6px 0 0;background:linear-gradient(90deg,color-mix(in srgb,var(--sec-acc,var(--acc,#5a9e8f)) 14%,transparent),transparent 70%)}
 .widget.w-section .w-title{font-size:calc(var(--label-size,9px) + 5px);letter-spacing:calc(var(--label-track,.09em) + .02em);color:var(--t1,var(--text,#d8dce4));font-weight:650;max-width:none;flex:1 1 auto;display:flex;align-items:baseline;gap:8px;min-width:0}
 .widget.w-section .w-title::before{content:'';align-self:center;flex:0 0 auto;width:4px;height:1.05em;border-radius:2px;background:var(--sec-acc,var(--acc,#5a9e8f))}
 .widget.w-section .w-title b{font-weight:inherit;flex:0 0 auto}
@@ -2140,7 +2146,7 @@ async function _hdrSwatches(){ const host=document.getElementById('hdrSwatches')
   host.querySelectorAll('.swp').forEach(s=>s.addEventListener('click',async()=>{ try{ await _setTheme(s.dataset.theme); }catch(_){} _hdrSwatchesSync(); })); }
 function _hdrCurTheme(){ let cur=''; try{ cur=_currentTheme||''; }catch(_){} return cur||document.documentElement.getAttribute('data-theme')||''; }
 function _hdrSwatchesSync(){ const host=document.getElementById('hdrSwatches'); if(!host) return; const cur=_hdrCurTheme(); const have=Array.from(host.querySelectorAll('.swp')); if(cur&&!have.some(x=>x.dataset.theme===cur)){ _hdrSwatches(); return; } have.forEach(x=>x.classList.toggle('on', x.dataset.theme===cur)); }
-function _dashRecLabel(){ const g=document.getElementById('dashGrid'), l=document.getElementById('dashRecLbl'); if(!g||!l) return; const n=g.querySelectorAll('.widget:not(.hidden)').length; let rows=0; try{ rows=getComputedStyle(g).gridTemplateRows.split(' ').length; }catch(_){} l.textContent=n+' widgets · every one a record · grid 12 × '+(rows||'—')+' · vera.dash.main'; const lv=document.getElementById('dashLive'); const ab=document.getElementById('dashAutoBtn'); if(lv&&ab) lv.style.display=/auto/i.test(ab.textContent)&&ab.classList.contains('teal')?'':'none'; }
+function _dashRecLabel(){ const g=document.getElementById('dashGrid'), l=document.getElementById('dashRecLbl'); if(!g||!l) return; const n=g.querySelectorAll('.widget:not(.hidden)').length; let rows=0; try{ rows=getComputedStyle(g).gridTemplateRows.split(' ').length; }catch(_){} const secs=g.querySelectorAll('.widget.w-section:not(.hidden)').length; l.textContent=(n-secs)+' widgets · '+secs+' sections'; l.title='every widget a record · grid 12 × '+(rows||'—')+' · vera.dash.main'; const lv=document.getElementById('dashLive'); const ab=document.getElementById('dashAutoBtn'); if(lv&&ab) lv.style.display=/auto/i.test(ab.textContent)&&ab.classList.contains('teal')?'':'none'; }
 function _tabCounts(){
   const bar=document.getElementById('tabBar'); if(!bar) return;
   const set=(match, n)=>{ const tab=Array.from(bar.querySelectorAll('.tab[data-tab]')).find(t=>match.test(String(t.dataset.tab||'')+' '+String(t.textContent||''))); if(!tab) return; let ct=tab.querySelector(':scope > .ct'); if(!n){ if(ct) ct.remove(); return; } if(!ct){ ct=document.createElement('span'); ct.className='ct'; const close=tab.querySelector('.tab-close'); tab.insertBefore(ct, close||null); } ct.textContent=String(n); };

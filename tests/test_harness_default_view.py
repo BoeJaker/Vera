@@ -40,7 +40,7 @@ def test_the_header_and_tab_bar_carry_the_boards_pieces_and_every_old_control():
 
 def test_the_dashboard_toolbar_is_the_boards():
     assert '<div class="dash-title">Cluster overview</div>' in HTML and 'id="dashLive"' in HTML and 'id="dashRecLbl"' in HTML
-    assert "' widgets · every one a record · grid 12 × '" in HTML
+    assert "l.textContent=(n-secs)+' widgets · '+secs+' sections'; l.title='every widget a record · grid 12 × '" in HTML   # the subtitle in words (2026-09-28); the record note moved to its title
     assert "function _tabsMoreChip(){" in HTML and "m.className='tab more';" in HTML
     assert "const _HDR_STYLES = [['standard','Standard'],['newspaper','News'],['terminal','Term'],['pixel','Pixel']];" in HTML
     assert "veraUI.setAppearance({style:b.dataset.style})" in HTML and "await _setTheme(s.dataset.theme);" in HTML, "a swatch is the theme menu's own pick"
