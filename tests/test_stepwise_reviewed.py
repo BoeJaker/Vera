@@ -178,5 +178,43 @@ def test_the_loop_wires_the_critic_without_waiting_for_it():
     assert "style_note=_ctrl_style_note + (_critic.new_block() if _critic is not None else \"\")" in src
     assert "_gate_goal = _gate_goal + _critic.recent_block()" in src
     assert "_critic.cancel()" in src
-    assert "await _critic" not in src and "_critic._runner" not in src     # never awaited
+    # the ONLY wait: the final gate, bounded, for the last step's critique
+    assert src.count("await _critic.") == 1 and "_cw = await _critic.wait_for_last()" in src
+    assert src.index("_cw = await _critic.wait_for_last()") < src.index("_gate_goal = _gate_goal + _critic.recent_block()")
+    assert "_critic._runner" not in src
     assert "agent_loop_v6.step_critique" in inspect.getsource(M)            # forwarded to the UI
+
+
+@needs_app
+def test_the_final_gate_waits_for_the_last_steps_critique(monkeypatch):
+    """User 2026-09-28: the first live run's critique landed ~30 s after the
+    gate passed a misread goal. The gate now waits (bounded) for it."""
+    _wire(monkeypatch, delay=0.1)
+
+    async def go():
+        c = M._V6StepCritic("g", sid="s", stream_id="")
+        nothing = await c.wait_for_last(timeout=1)             # nothing submitted: no wait
+        c.submit(_step(1), {"id": 1, "summary": "r1"}, [], "")
+        got = await c.wait_for_last(timeout=5)
+        c.cancel()
+        return nothing, got, c
+
+    nothing, got, c = asyncio.run(go())
+    assert nothing["landed"] and nothing["waited_s"] < 0.05
+    assert got["landed"] and got["step"] == 1 and 0.05 <= got["waited_s"] < 2
+    assert "delete button" in c.recent_block()
+
+
+@needs_app
+def test_the_gate_wait_is_bounded(monkeypatch):
+    _wire(monkeypatch, delay=5.0)
+
+    async def go():
+        c = M._V6StepCritic("g", sid="s", stream_id="")
+        c.submit(_step(1), {"id": 1, "summary": "r1"}, [], "")
+        got = await c.wait_for_last(timeout=0.2)
+        c.cancel()
+        return got
+
+    got = asyncio.run(go())
+    assert got["landed"] is False and got["waited_s"] < 1.0

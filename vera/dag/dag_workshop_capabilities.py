@@ -14210,6 +14210,12 @@ class _V6StepCritic:
 
     IDLE_EXIT_S = 1800.0
     GATE_NOTES = 4
+    #: The ONE place the run waits for the critic (user, 2026-09-28): the final
+    #: completion gate, for the critique of the last finished step. First live
+    #: run: the critic correctly flagged a misread goal (a 60s-then-90s timer
+    #: built instead of a 60s timer changed to 90s) ~30 s AFTER the gate had
+    #: passed the run - the catch was lost. Steps and planning stay non-blocking.
+    GATE_WAIT_S = 180.0
     #: Where the review runs (user, 2026-09-28: "allow routing to the GPU for
     #: review"). cpu = the long-horizon node, off the GPU entirely (default);
     #: gpu = the planning_style/stream route on the GPU's own model - faster,
@@ -14224,9 +14230,34 @@ class _V6StepCritic:
         self._delivered = 0
         self._q: "asyncio.Queue[Any]" = asyncio.Queue()
         self._runner: Optional["asyncio.Task[Any]"] = None
+        self._last_submitted: Any = None
+        self._landed = asyncio.Event()
+
+    async def wait_for_last(self, timeout: Optional[float] = None) -> Dict[str, Any]:
+        """Wait (bounded) until the critique of the LAST submitted step has
+        landed. {waited_s, landed}. Returns at once when there is nothing
+        outstanding or the runner is gone."""
+        t0 = time.monotonic()
+        limit = self.GATE_WAIT_S if timeout is None else float(timeout)
+        while (self._last_submitted is not None
+               and not any(n.get("step") == self._last_submitted for n in self.notes)
+               and self._runner is not None and not self._runner.done()):
+            left = limit - (time.monotonic() - t0)
+            if left <= 0:
+                break
+            self._landed.clear()
+            try:
+                await asyncio.wait_for(self._landed.wait(), timeout=left)
+            except asyncio.TimeoutError:
+                break
+        landed = (self._last_submitted is None
+                  or any(n.get("step") == self._last_submitted for n in self.notes))
+        return {"waited_s": round(time.monotonic() - t0, 1), "landed": landed,
+                "step": self._last_submitted}
 
     def submit(self, step: Dict[str, Any], res: Dict[str, Any], done: Sequence[Dict[str, Any]],
                done_when: str = "") -> None:
+        self._last_submitted = step.get("id")
         brief = [{"id": r.get("id"), "title": r.get("title"), "ok": r.get("ok")} for r in done]
         self._q.put_nowait((dict(step), {k: res.get(k) for k in ("id", "summary", "final", "output",
                                                                    "ok", "met")},
@@ -14264,6 +14295,7 @@ class _V6StepCritic:
             rec = {"step": step.get("id"), "title": step.get("title") or "", "note": note,
                    "elapsed_s": round(time.monotonic() - t1, 1), "route": self.route}
             self.notes.append(rec)
+            self._landed.set()
             try:
                 await emit_event({"type": "agent_loop_v6.step_critique", "session_id": self.sid,
                                   "stream_id": self.stream_id, **rec, "ok": not note,
@@ -25343,6 +25375,11 @@ async def cap_dag_agent_loop_v6(
         # stepwise-reviewed: the critic's latest notes are evidence for the gate
         # (what it found missing is exactly what the gate must not wave through).
         if _critic is not None:
+            # The one bounded wait: the critique of the last finished step.
+            _cw = await _critic.wait_for_last()
+            if _cw.get("step") is not None:
+                await emit_event({"type": "agent_loop_v6.critic_gate_wait", "session_id": sid,
+                                  "stream_id": stream_id, **_cw})
             _gate_goal = _gate_goal + _critic.recent_block()
         if stream_id:
             await emit_event({"type": "agent_loop_v6.stage_start", "stream_id": stream_id,
@@ -26380,6 +26417,7 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v6.entity_coverage",
             "agent_loop_v6.intent_zeroshot",
             "agent_loop_v6.step_critique",
+            "agent_loop_v6.critic_gate_wait",
             "agent_loop_v6.role_models",
             # V7 tier/branching + strategic persistence
             "agent_loop_v6.tier",
