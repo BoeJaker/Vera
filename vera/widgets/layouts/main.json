@@ -2166,7 +2166,8 @@
     "draw": {
      "body": "record",
      "mode": "estate-3d",
-     "chrome": "min"
+     "chrome": "min",
+     "colour": "status"
     },
     "open": "estate/ops",
     "place": "dashboard",

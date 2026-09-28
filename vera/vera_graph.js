@@ -215,6 +215,9 @@
 
   function nodeColor(node){
     if (!node) return '#6a8fa0';
+    /* a node that carries its own colour keeps it (the widget colours the estate's planes and marks a problem) - every graph
+       whose nodes carry none draws as it always has */
+    if (typeof node.color === 'string' && node.color) return node.color;
     if (node.type === 'Entity' && node.props && COL[node.props.type]) {
       return COL[node.props.type];
     }
