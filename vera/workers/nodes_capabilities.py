@@ -2538,5 +2538,125 @@ async def cap_nodes_ollama_tune(dry_run: bool = True, force: bool = False,
             "dry_run": bool(dry_run), "nodes": out}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# THE ACTIVITY TAP (edge/ollama_tap.py) IN FRONT OF EACH NODE'S OLLAMA
+# ─────────────────────────────────────────────────────────────────────────────
+try:
+    from Vera.vera.provisioning import ollama_tap_core as _tap_core
+except Exception:                                    # worktree / app-free import
+    from vera.provisioning import ollama_tap_core as _tap_core
+
+
+async def _tap_redis_env() -> str:
+    """The tap's Redis URL: the host's, re-pointed at a LAN address, with the
+    node user's credential (never the host's)."""
+    import os as _os
+    from Vera.vera.provisioning.components_core import rewrite_host
+    comp = sys.modules.get("components_capabilities")
+    lan = (_os.getenv("VERA_ADVERTISE_HOST", "")
+           or (comp._primary_lan_ip() if comp is not None and hasattr(comp, "_primary_lan_ip") else ""))
+    # prod's REDIS_URL names localhost; a node must be given a LAN address
+    url = rewrite_host(getattr(_orch, "REDIS_URL", "") or "", lan)
+    ra = sys.modules.get("redis_auth_capabilities")
+    if ra is not None:
+        url = await ra.node_redis_url(url)
+    return f"VERA_TAP_REDIS_URL={url}\n"
+
+
+@capability(
+    "nodes.ollama.tap",
+    http_method="POST", http_path="/nodes/ollama/tap", http_tags=["nodes", "ollama"],
+    memory="off", redact_result=True,
+    description="Put the activity tap (edge/ollama_tap.py) in front of every Ollama server "
+                "on the nodes, so the Estate activity pane sees every request - Vera's, "
+                "sandboxes', external callers' - with prompt, response and stats (user, "
+                "2026-09-28). The tap takes the PUBLIC port; that Ollama moves to "
+                "127.0.0.1:port+10 (a drop-in on its unit, which restarts it). Callers keep "
+                "the same address. A cutover that fails rolls itself back. Requests pass "
+                "through byte for byte. Dry run by default; refused from a dev sandbox. "
+                "Inputs: dry_run (bool=true), instance_ids (list - default all), force "
+                "(bool - cut over even with a generation in flight). Output: {ok, nodes:[{"
+                "instance, host, port, state, result}]}.",
+)
+async def cap_nodes_ollama_tap(dry_run: bool = True, instance_ids: Optional[List[str]] = None,
+                               force: bool = False, trace_id=None) -> Dict:
+    import base64 as _b64
+    from pathlib import Path as _Path
+    if not dry_run and _orch.is_dev_sandbox():
+        return {"ok": False, "error": "this is a dev sandbox: the Ollama nodes are prod's"}
+    run = _rawcap("exec.ssh.run")
+    lst = _rawcap("exec.ssh.hosts.list")
+    if not run or not lst:
+        return {"ok": False, "error": "exec.ssh unavailable"}
+    # The install carries the tap source and the Redis credential on STDIN,
+    # through exec's internal runner - never as the arguments of exec.ssh.run,
+    # which are recorded (the same rule as the native worker install).
+    stdin_run = getattr(sys.modules.get(getattr(run, "__module__", "") or ""),
+                        "ssh_run_stored", None)
+    if stdin_run is None:
+        return {"ok": False, "error": "exec module has no ssh_run_stored (stdin transport)"}
+    by_addr = {h.get("host"): h.get("id") for h in ((await lst()) or {}).get("hosts", [])
+               if h.get("host") and h.get("id")}
+    src = (_Path(__file__).resolve().parents[2] / "edge" / "ollama_tap.py").read_bytes()
+    src_b64 = _b64.b64encode(src).decode()
+    insts = dict(getattr(_orch, "OLLAMA_INSTANCES", {}) or {})
+    installed_on: set = set()
+    out = []
+    for iid in [i for i in (instance_ids or list(insts)) if i in insts]:
+        inst = insts[iid]
+        u = urlparse(str(inst.get("url") or ""))
+        addr, port = u.hostname or "", u.port or 11435
+        row: Dict[str, Any] = {"instance": iid, "host": addr, "port": port}
+        hid = by_addr.get(addr)
+        if not hid:
+            row.update(state="skip", why="no stored SSH credential for this address")
+            out.append(row)
+            continue
+        st = _tap_core.parse_status((await run(command=_tap_core.status_cmd(port),
+                                                 host_id=hid, timeout=30) or {}).get("stdout") or "")
+        if st["active"] and st["health"].get("ok"):
+            row.update(state="tapped", health=st["health"])
+            out.append(row)
+            continue
+        # The unit that owns this port: the CPU sibling, else the node's own
+        # Ollama (ollama-vera on the fleet, stock `ollama` on a fresh install) -
+        # resolved on the node, where the script runs.
+        if port == _ollama_core.CPU_SIBLING_PORT:
+            unit_expr, row["unit"] = "ollama-vera-cpu", "ollama-vera-cpu"
+        else:
+            unit_expr = "$(systemctl is-active --quiet ollama-vera && echo ollama-vera || echo ollama)"
+            row["unit"] = "ollama-vera (or ollama)"
+        row["state"] = "untapped"
+        if dry_run:
+            out.append(row)
+            continue
+        if int(inst.get("in_use") or 0) > 0 and not force:
+            row["result"] = {"ok": False, "skipped": "a generation is in flight on this node"}
+            out.append(row)
+            continue
+        if addr not in installed_on:
+            sres = await stdin_run(hid, _tap_core.secret_cmd(), timeout=30,
+                                   input=await _tap_redis_env())
+            ires = await stdin_run(hid, _tap_core.install_cmd(), timeout=300, input=src_b64)
+            if ("VERA_TAP_SECRET" not in (sres.get("stdout") or "")
+                    or "VERA_TAP_INSTALLED" not in (ires.get("stdout") or "")):
+                row["result"] = {"ok": False, "error": "install failed: " + str(
+                    ires.get("stderr") or sres.get("stderr") or ires.get("error") or "")[-300:]}
+                out.append(row)
+                continue
+            installed_on.add(addr)
+        script = _tap_core.cutover_script("__UNIT__", iid, port)
+        script = f"UNIT={unit_expr}; " + script.replace("__UNIT__", "$UNIT")
+        res = await run(command=script, host_id=hid, timeout=180) or {}
+        so = res.get("stdout") or ""
+        ok = _tap_core.DONE in so and _tap_core.ROLLED_BACK not in so
+        row["result"] = {"ok": ok, "rolled_back": _tap_core.ROLLED_BACK in so,
+                         "error": "" if ok else so[-400:]}
+        await emit_event({"type": "nodes.ollama.tap", "instance": iid, "ok": ok})
+        out.append(row)
+    return {"ok": all((r.get("result") or {}).get("ok", True) for r in out),
+            "dry_run": bool(dry_run), "nodes": out}
+
+
 log.info("nodes: unified node estate capabilities loaded "
          "(%d components)", len(_COMPONENTS))

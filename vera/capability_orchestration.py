@@ -3718,7 +3718,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                     pass
                 body["stream"] = True   # always stream so silence == stall
                 async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_gto) as c:
-                    async with c.stream("POST",f"{inst['url']}/api/generate",json=body) as resp:
+                    async with c.stream("POST",f"{inst['url']}/api/generate",json=body,
+                                        headers=vera_origin_header(job_type or "", req_id,
+                                                                   caller.get("cap_name") or "")) as resp:
                         if resp.status_code != 200:
                             err_body = ""
                             async for chunk in resp.aiter_bytes():
@@ -3976,7 +3978,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                     async with _ollama_slot(fb_id, timeout=timeout) as _gate_act:
                         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=httpx.Timeout(gen_timeout, connect=15.0)) as c:
                             async with c.stream("POST", f"{fb_inst['url']}/api/generate",
-                                                json={**fb_body, "stream": True}) as r:
+                                                json={**fb_body, "stream": True},
+                                                headers=vera_origin_header(job_type or "", req_id,
+                                                                           "fallback")) as r:
                                 if r.status_code != 200:
                                     err_detail = (await r.aread()).decode("utf-8", errors="replace")[:300]
                                     log.warning("ollama_fallback [%s] %s returned %d: %s", req_id, fb_id, r.status_code, err_detail)
@@ -4265,12 +4269,13 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
             pass
         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_emb_timeout) as c:
             # Try new endpoint first (Ollama ≥0.4)
+            _oh = vera_origin_header("embedding", req_id, caller.get("cap_name") or "")
             r = await c.post(f"{url}/api/embed",
-                             json=_embed_body(mdl, text, inst))
+                             json=_embed_body(mdl, text, inst), headers=_oh)
             if r.status_code != 200:
                 # Fall back to legacy endpoint
                 r = await c.post(f"{url}/api/embeddings",
-                                 json={"model": mdl, "prompt": text[:4096]})
+                                 json={"model": mdl, "prompt": text[:4096]}, headers=_oh)
             if r.status_code != 200:
                 elapsed = round(time.time() - t_start, 2)
                 err_str = f"HTTP {r.status_code} from {chosen}"
@@ -4377,11 +4382,12 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
             try:
                 log.info("ollama_embed_fallback [%s] trying %s", req_id, fb_id)
                 async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_emb_timeout) as c:
+                    _oh = vera_origin_header("embedding", req_id, "fallback")
                     r = await c.post(f"{fb_inst['url']}/api/embed",
-                                     json=_embed_body(mdl, text, fb_inst))
+                                     json=_embed_body(mdl, text, fb_inst), headers=_oh)
                     if r.status_code != 200:
                         r = await c.post(f"{fb_inst['url']}/api/embeddings",
-                                         json={"model": mdl, "prompt": text[:4096]})
+                                         json={"model": mdl, "prompt": text[:4096]}, headers=_oh)
                     if r.status_code != 200:
                         continue
                     data = r.json()
@@ -8008,6 +8014,20 @@ def is_dev_sandbox() -> bool:
     return str(os.environ.get("VERA_IS_DEV_SANDBOX", "")).strip().lower() in ("1", "true", "yes", "on")
 
 
+def vera_origin_header(job_type: str = "", req_id: str = "", cap: str = "") -> Dict[str, str]:
+    """`X-Vera-Origin` for a request this Vera sends a node's Ollama: which Vera
+    (prod, or `sandbox:<container>`), the job type, the request id, the cap.
+    The node-side activity tap records it, so the Estate activity pane can tell
+    prod's calls from each sandbox's and from external callers'. Ollama ignores
+    unknown headers; nothing in the request changes."""
+    import re as _re
+    import socket as _socket
+    who = (os.environ.get("VERA_ORIGIN_NAME", "").strip()
+           or (f"sandbox:{_socket.gethostname()}" if is_dev_sandbox() else "prod"))
+    val = "|".join(str(x or "") for x in (who, job_type, req_id, cap))
+    return {"X-Vera-Origin": _re.sub(r"[^\x20-\x7e]", "?", val)[:240]}
+
+
 def _relaunch_argv() -> List[str]:
     """The argv to re-exec this process with — how it was actually started."""
     return [sys.executable, "-m", "Vera.vera.capability_orchestration"]
@@ -10865,6 +10885,8 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "security/certs_capabilities.py"),
         os.path.join(_here, "execution/ssh_cleanup_capabilities.py"),
         os.path.join(_here, "workers/nodes_capabilities.py"),
+        # nodes.activity - the Estate's single pane over the node-side taps
+        os.path.join(_here, "workers/node_activity_capabilities.py"),
         os.path.join(_here, "remote/remote_capabilities.py"),
         os.path.join(_here, "remote/workspace_capabilities.py"),
         os.path.join(_here, "remote/operator_capabilities.py"),

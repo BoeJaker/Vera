@@ -416,6 +416,7 @@ html.view-models #secNav [data-view="models"]{display:block}
          model panes. -->
     <div class="nsec" data-view="estate">Overview</div>
     <div class="snav on" data-pane="overview" data-view="estate" onclick="P.show('overview',this)">Overview</div>
+    <div class="snav" data-pane="activity" data-view="estate" onclick="P.show('activity',this)" title="Everything the nodes are doing: running now, every call (prod, sandboxes, external) with prompt, response and stats">Activity</div>
     <div class="snav" data-pane="estate" data-view="estate" onclick="P.show('estate',this)">Map</div>
     <div class="snav" data-pane="observe" data-view="estate" onclick="P.show('observe',this)">Observe</div>
     <div class="navdiv" data-view="estate"></div>
@@ -1710,6 +1711,10 @@ html.view-models #secNav [data-view="models"]{display:block}
     </div>
 
     <!-- Sandbox pane — shared exec-sandbox policy editor (gates exec.*, IDE Run, docker.* CLI) -->
+    <!-- Activity: the <vera-node-activity> element (nodes.activity) -->
+    <div class="pane" id="pane-activity" style="padding:0;overflow:hidden">
+      <iframe id="activity-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    </div>
     <div class="pane" id="pane-sandbox" style="padding:0;overflow:hidden">
       <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
         <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px">
@@ -6331,6 +6336,7 @@ function showPane(name, el){
   if(name==='docker'){ if(!Object.keys(_dkrHosts||{}).length) _dkrInitHosts(); dkrWorkerList(); sbxRefresh(); stkRefresh(); if(_dkrHostId) dkrRefresh(); }
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
   if(name==='sandbox'){ const el=$('wk-sandbox-ctl'); if(el&&el.refresh) el.refresh(); }
+  if(name==='activity'){ _mountFrame('activity-frame', BASE+'/nodes/activity/panel'); }
   if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
