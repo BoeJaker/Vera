@@ -19,11 +19,14 @@ import asyncio
 import importlib.util
 import logging
 import os
+from pathlib import Path
 from typing import Any, Dict, List
 from urllib.parse import urlparse
 
+from fastapi.responses import HTMLResponse, Response
+
 import Vera.vera.capability_orchestration as _orch
-from Vera.vera.capability_orchestration import capability
+from Vera.vera.capability_orchestration import APP, capability, register_ui
 from Vera.vera.catalog import specialist_core as _core
 from Vera.vera.provisioning.components_core import compare_versions
 from Vera.vera.research.nlp_dispatch_core import DEFAULT_MODELS, TASK_KIND
@@ -139,7 +142,12 @@ async def cap_specialist_status(refresh: bool = False, deep: bool = False,
                               "changed": v.get("changed") or [],
                               "error": v.get("error", "")}
 
-    return {"ok": True, "versions": {k: v.get("version", "") for k, v in versions.items()},
+    try:
+        sandbox = bool(_orch.is_dev_sandbox())
+    except Exception:
+        sandbox = False
+    return {"ok": True, "sandbox": sandbox,
+            "versions": {k: v.get("version", "") for k, v in versions.items()},
             "nlp": {"placement": {"where": nlp.get("where"), "node": nlp.get("node"),
                                   "reason": nlp.get("reason"),
                                   "nlp_local": nlp.get("nlp_local")},
@@ -148,3 +156,45 @@ async def cap_specialist_status(refresh: bool = False, deep: bool = False,
             "media": {"nodes": media_rows},
             "host_ner": _host_ner(),
             "summary": _core.summarize(nlp_rows, media_rows)}
+
+
+# ── the element ───────────────────────────────────────────────────────────────
+_EL = Path(__file__).resolve().parent / "specialist_models_element.js"
+
+
+@APP.get("/ui/elements/specialist_models.js", include_in_schema=False)
+async def _specialist_element_js():
+    try:
+        body = _EL.read_text(encoding="utf-8")
+    except OSError:
+        body = "console.error('specialist_models_element.js not found')"
+    return Response(body, media_type="application/javascript")
+
+
+@APP.get("/specialist/panel", include_in_schema=False)
+async def _specialist_panel():
+    """The element as a page of its own (the registered panel embeds this)."""
+    return HTMLResponse("""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<script>(function(){try{var d=document.documentElement,S=window.localStorage;
+var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<title>Vera - Specialist models</title>
+<style>:root{--bg:#0d0f12;--bg1:#14181d;--bg2:#1a1f26;--border:#232a33;--border2:#2e3742;--fg:#d8dde3;
+--dim:#5f6975;--acc:#4a9eff;--acc2:#28c28a;--warn:#f5b341;--err:#ef5b5b}
+html,body{margin:0;background:var(--bg0,var(--bg));color:var(--fg);height:100%}</style></head>
+<body><vera-specialist-models></vera-specialist-models>
+<script src="/ui/vera-ui.js"></script><script src="/ui/elements/specialist_models.js"></script></body></html>""")
+
+
+register_ui(
+    "specialist-models", "Specialist models", "◇",
+    """<div style="height:100%;display:flex;flex-direction:column;">
+  <iframe src="/specialist/panel" style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"></iframe>
+</div>""",
+    "",
+    ui_caps=["specialist.status", "provision.component.sync"],
+    # an element of the Models view (and any dashboard), not a tab of its own
+    mode="element",
+    tab_order=75,
+)

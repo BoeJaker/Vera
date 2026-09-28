@@ -50,7 +50,7 @@ from Vera.vera.provisioning.components_core import (
     WORKER_DIR_CANDIDATES as _WORKER_DIR_CANDIDATES,
     edge_dir_probe_cmd, parse_edge_dir, pidfile_lookup_cmd,
     component_version, version_file, version_json, version_lookup_cmd,
-    parse_version, compare_versions,
+    parse_version, compare_versions, component_sync_plan,
 )
 from Vera.vera.workers import worker_placement_core as _placement
 from Vera.vera.security import redis_auth_core as _redis_auth_core
@@ -207,6 +207,9 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
             "HOME": "/",
         },
         "heavy": True,
+        # provision.component.sync may redeploy it: every node runs it the same
+        # way (this deploy path, as vera-nlp_server.service).
+        "sync": True, "systemd": True,
         "desc": "Text-level NLP so the 2-core Vera host never runs it: NER "
                 "(OntoNotes-v5, has DATE, plus multilingual), sentiment, "
                 "zero-shot classification, extractive QA, language id, "
@@ -524,7 +527,10 @@ async def _launch_systemd(host_id: str, rec: Dict, key: str, comp: Dict,
     svc = f"vera-{key}.service"
     cmd = (
         f'printf "{unit}" | {s}tee /etc/systemd/system/{svc} >/dev/null && '
-        f"{s}systemctl daemon-reload && {s}systemctl enable --now {svc} && "
+        # enable + RESTART, not `enable --now`: --now starts a stopped unit but
+        # leaves a running one on the old code, so a redeploy changed nothing.
+        f"{s}systemctl daemon-reload && {s}systemctl enable {svc} && "
+        f"{s}systemctl restart {svc} && "
         f'echo "VERA_LAUNCHED service={svc}"'
     )
     res = await _ssh(host_id, cmd, timeout=60)
@@ -972,6 +978,114 @@ async def cap_nodes_workers_sync(dry_run: bool = False, limit: int = 1,
 
 _SANDBOX_REFUSAL = ("this is a dev sandbox: provisioning from here would join PROD's nodes to "
                     "the sandbox's private Redis - use the host's Workers page")
+
+_COMPONENT_SYNC_LOCK = "vera:component_sync:lock:{component}"
+
+
+async def _ollama_node_hosts() -> List[Dict[str, str]]:
+    """The Ollama nodes that have a stored SSH credential: [{host_id, host}]."""
+    from urllib.parse import urlparse
+    try:
+        hosts = ((await _cap("exec.ssh.hosts.list")()) or {}).get("hosts", [])
+    except Exception:
+        hosts = []
+    by_addr = {h.get("host"): h.get("id") for h in hosts if h.get("host") and h.get("id")}
+    out, seen = [], set()
+    for inst in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values():
+        addr = urlparse(str(inst.get("url") or "")).hostname or ""
+        if addr in by_addr and addr not in seen:
+            seen.add(addr)
+            out.append({"host_id": by_addr[addr], "host": addr})
+    return out
+
+
+@capability(
+    "provision.component.sync",
+    http_method="POST", http_path="/provision/component/sync", http_tags=["provision", "nodes"],
+    memory="off",
+    description="Bring every node that runs a component onto the version this host would "
+                "deploy (see provision.component.version) - 'update all nodes to the same "
+                "version'. Only components every node runs the same way are syncable "
+                "(nlp_server). Per node: already current -> left alone; never deployed -> "
+                "left alone (a sync updates, it does not spread); otherwise redeployed, "
+                "reinstalling dependencies only when they changed. One node at a time, "
+                "never while a census goal is in flight, never from a dev sandbox. Inputs: "
+                "component (str='nlp_server'), host_ids (list - default: every Ollama node "
+                "with a stored SSH credential), dry_run (bool=true), force (bool - redeploy "
+                "even a current node, e.g. one edited by hand). Output: {ok, component, "
+                "host_version, plan[], results{}}.",
+)
+async def cap_component_sync(component: str = "nlp_server",
+                             host_ids: Optional[List[str]] = None,
+                             dry_run: bool = True, force: bool = False,
+                             trace_id=None) -> Dict:
+    comp = _COMPONENTS.get(component)
+    if not comp or not comp.get("sync"):
+        return {"ok": False, "error": f"{component!r} is not syncable",
+                "syncable": [k for k, c in _COMPONENTS.items() if c.get("sync")]}
+    nodes = ([{"host_id": h, "host": ((await _host_rec(h)) or {}).get("host", "")}
+              for h in host_ids] if host_ids else await _ollama_node_hosts())
+    rows = []
+    for n in nodes:
+        v = await cap_component_version(component=component, host_id=n["host_id"])
+        if not v.get("ok"):
+            rows.append({**n, "state": "unreachable", "error": v.get("error", "")})
+            continue
+        st = await cap_component_status(host_id=n["host_id"], component=component,
+                                        systemd=bool(comp.get("systemd")))
+        rows.append({**n, "state": v.get("state"), "changed": v.get("changed") or [],
+                     "running": bool(st.get("running"))})
+    reachable = [r for r in rows if r["state"] != "unreachable"]
+    plan = component_sync_plan(reachable)
+    if force:
+        for p in plan:
+            if p["action"] == "skip" and p["state"] == "current":
+                p.update(action="deploy", install_deps=False, why="forced")
+    plan += [{**{k: r[k] for k in ("host_id", "host", "state")}, "action": "skip",
+              "why": "unreachable: " + str(r.get("error") or "")[:200]}
+             for r in rows if r["state"] == "unreachable"]
+    out: Dict[str, Any] = {"ok": True, "component": component,
+                           "host_version": host_component_version(component).get("version", ""),
+                           "plan": plan, "results": {}}
+    todo = [p for p in plan if p["action"] == "deploy"]
+    if dry_run or not todo:
+        return out
+    if _in_sandbox():
+        return {**out, "ok": False, "error": _SANDBOX_REFUSAL}
+    if await _census_busy():
+        return {**out, "ok": False,
+                "error": "a census goal is in flight - redeploying would drop its NLP calls; "
+                         "try again when it yields"}
+    r = _orch.REDIS
+    lock = _COMPONENT_SYNC_LOCK.format(component=component)
+    token = _orch.new_id()
+    if r is not None and not await r.set(lock, token, nx=True, ex=_SYNC_LOCK_TTL):
+        return {**out, "ok": False, "error": f"a {component} sync is already running"}
+    try:
+        for p in todo:
+            await emit_event({"type": "provision.component.sync", "component": component,
+                              "host_id": p["host_id"], "stage": "start"})
+            try:
+                res = await cap_deploy(host_id=p["host_id"], component=component,
+                                       install_deps=bool(p.get("install_deps")),
+                                       launch=True, systemd=bool(comp.get("systemd")))
+            except Exception as e:
+                res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            out["results"][p["host_id"]] = {"ok": bool(res.get("ok")),
+                                            "version": res.get("version", ""),
+                                            "error": str(res.get("error") or "")[:300]}
+            await emit_event({"type": "provision.component.sync", "component": component,
+                              "host_id": p["host_id"], "stage": "done",
+                              "ok": bool(res.get("ok"))})
+    finally:
+        try:
+            held = await r.get(lock) if r is not None else None
+            if (held.decode() if isinstance(held, bytes) else held) == token:
+                await r.delete(lock)
+        except Exception:
+            pass
+    out["ok"] = all(v["ok"] for v in out["results"].values())
+    return out
 
 
 def _in_sandbox() -> bool:

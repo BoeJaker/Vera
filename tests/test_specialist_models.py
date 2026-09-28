@@ -89,6 +89,36 @@ def test_a_server_deployed_before_versions_says_so(tmp_path):
     assert rec["version"] == "" and rec["intact"] is None
 
 
+# ── bringing nodes to the host's version ──────────────────────────────────────
+def test_sync_updates_nodes_it_does_not_spread_the_component():
+    plan = {p["host_id"]: p for p in cc.component_sync_plan([
+        {"host_id": "a", "state": "current", "running": True},
+        {"host_id": "b", "state": "behind", "changed": ["nlp_server.py"], "running": True},
+        {"host_id": "c", "state": "behind", "changed": [cc.DEPS_ENTRY], "running": True},
+        {"host_id": "d", "state": "unversioned", "running": True},
+        {"host_id": "e", "state": "unversioned", "running": False},
+        {"host_id": "f", "state": "absent", "running": False},
+    ])}
+    assert plan["a"]["action"] == "skip"
+    # a code-only change needs no ~2 GB pip install
+    assert plan["b"]["action"] == "deploy" and plan["b"]["install_deps"] is False
+    assert plan["c"]["install_deps"] is True
+    # nothing says what an unversioned node has installed
+    assert plan["d"]["action"] == "deploy" and plan["d"]["install_deps"] is True
+    # never deployed there: a sync must not put it on a new node
+    assert plan["e"]["action"] == "skip" and plan["f"]["action"] == "skip"
+
+
+def test_a_systemd_redeploy_restarts_the_running_unit():
+    # `enable --now` leaves a running unit on the old code: the redeploy
+    # "succeeds" and changes nothing
+    src = open(os.path.join(_ROOT, "vera", "provisioning", "components_capabilities.py"),
+               encoding="utf-8").read()
+    body = src[src.index("async def _launch_systemd"):]
+    body = body[:body.index("\nasync def ", 1) if "\nasync def " in body[1:] else len(body)]
+    assert "systemctl restart {svc}" in body and "enable --now {svc}" not in body
+
+
 # ── the per-node view ─────────────────────────────────────────────────────────
 def _node(component, tasks=None):
     return {"node_id": "gpu-250", "nlp_url": "http://192.168.0.250:8771", "threads": 4,
