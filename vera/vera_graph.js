@@ -4780,6 +4780,7 @@
         vx: 0, vy: 0,
         r: nodeSpec.r || (nodeSpec.type === 'Entity' ? 8 : nodeSpec.type === 'Dataset' ? 14 : 10),
       };
+      if (typeof nodeSpec.color === 'string' && nodeSpec.color) n.color = nodeSpec.color;   // a colour the caller gives (the widget's status colouring) - read by nodeColor
       n._spawnedAtEdge = _usedEdgeSpawn && !nodeSpec._fromId;
       n._layer = _nodeLayer(nodeSpec);
       _ensureLayer(n._layer);
