@@ -46,14 +46,15 @@
     "title": "Operations · what is running and where",
     "source": "",
     "frame": {
-     "size": "l",
+     "size": "xl",
      "span": [
       12,
       1
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "accent": "var(--b-dv3,#3585c9)"
     }
    }
   },
@@ -556,7 +557,7 @@
     "id": "sec-now",
     "form": "section",
     "source": "",
-    "title": "Now · the figures",
+    "title": "Now · the host, the control plane, what it says",
     "frame": {
      "size": "xl",
      "span": [
@@ -565,7 +566,8 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "accent": "var(--b-dv6,#00aba4)"
     }
    },
    "at": [
@@ -585,7 +587,7 @@
     "id": "host-cpu",
     "form": "lines",
     "source": "sysmon.history",
-    "title": "Host CPU",
+    "title": "Host · CPU and memory",
     "read": {
      "refresh": "10s",
      "map": {
@@ -598,10 +600,10 @@
      }
     },
     "frame": {
-     "size": "m",
+     "size": "l",
      "span": [
-      4,
-      2
+      6,
+      3
      ]
     },
     "draw": {
@@ -615,8 +617,8 @@
     16
    ],
    "span": [
-    4,
-    2
+    6,
+    3
    ],
    "hidden": false,
    "refresh": "10s",
@@ -641,8 +643,8 @@
     "frame": {
      "size": "m",
      "span": [
-      4,
-      2
+      3,
+      3
      ]
     },
     "draw": {
@@ -653,12 +655,12 @@
     "open": "estate/ops"
    },
    "at": [
-    4,
+    6,
     16
    ],
    "span": [
-    4,
-    2
+    3,
+    3
    ],
    "hidden": false,
    "refresh": "10s",
@@ -666,25 +668,66 @@
   },
   {
    "record": {
-    "id": "fleet",
-    "form": "numbers",
-    "source": "sysmon.status",
-    "title": "Fleet",
+    "id": "temps",
+    "form": "thermo",
+    "source": "obs.node_temps",
+    "title": "Temperatures",
     "read": {
      "refresh": "10s",
      "map": {
+      "values": "hosts",
+      "name": "label",
+      "value": "max_c"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "°",
+     "throttle": 70,
+     "limit": 5
+    },
+    "open": "estate/ops"
+   },
+   "at": [
+    9,
+    16
+   ],
+   "span": [
+    3,
+    3
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "control-plane",
+    "form": "numbers",
+    "source": "obs.health",
+    "title": "Control plane",
+    "read": {
+     "refresh": "5s",
+     "map": {
       "pick": {
-       "guests up": "proxmox.running",
-       "guests": "proxmox.guests",
-       "containers": "docker.running",
-       "ollama": "ollama.online"
+       "workers": "workers",
+       "capabilities": "caps",
+       "mcp servers": "mcp_servers",
+       "mode": "mode"
       }
      }
     },
     "frame": {
      "size": "m",
      "span": [
-      2,
+      4,
       2
      ]
     },
@@ -694,15 +737,15 @@
     "open": "estate/ops"
    },
    "at": [
-    8,
-    16
+    0,
+    19
    ],
    "span": [
-    2,
+    4,
     2
    ],
    "hidden": false,
-   "refresh": "10s",
+   "refresh": "5s",
    "floated": false
   },
   {
@@ -733,49 +776,8 @@
     "open": "models"
    },
    "at": [
-    10,
-    16
-   ],
-   "span": [
-    2,
-    2
-   ],
-   "hidden": false,
-   "refresh": "5s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "control-plane",
-    "form": "numbers",
-    "source": "obs.health",
-    "title": "Control plane",
-    "read": {
-     "refresh": "5s",
-     "map": {
-      "pick": {
-       "workers": "workers",
-       "capabilities": "caps",
-       "mcp servers": "mcp_servers",
-       "mode": "mode"
-      }
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      2,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "open": "estate/ops"
-   },
-   "at": [
-    0,
-    18
+    4,
+    19
    ],
    "span": [
     2,
@@ -813,91 +815,11 @@
     "open": "agents"
    },
    "at": [
-    2,
-    18
+    6,
+    19
    ],
    "span": [
     2,
-    2
-   ],
-   "hidden": false,
-   "refresh": "10s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "temps",
-    "form": "thermo",
-    "source": "obs.node_temps",
-    "title": "Temperatures",
-    "read": {
-     "refresh": "10s",
-     "map": {
-      "values": "hosts",
-      "name": "label",
-      "value": "max_c"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record",
-     "unit": "°",
-     "throttle": 70,
-     "limit": 5
-    },
-    "open": "estate/ops"
-   },
-   "at": [
-    4,
-    18
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "10s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "events",
-    "form": "log",
-    "source": "obs.events",
-    "title": "Live events",
-    "read": {
-     "refresh": "10s",
-     "map": {
-      "events": "$",
-      "t": "ts",
-      "kind": "type",
-      "text": "name"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "open": "activity"
-   },
-   "at": [
-    8,
-    18
-   ],
-   "span": [
-    4,
     2
    ],
    "hidden": false,
@@ -941,8 +863,8 @@
     "open": "estate/observe"
    },
    "at": [
-    0,
-    20
+    8,
+    19
    ],
    "span": [
     4,
@@ -954,40 +876,41 @@
   },
   {
    "record": {
-    "id": "loop-stalls",
-    "form": "column",
-    "source": "perf.stalls",
-    "title": "Event-loop stalls · ms each",
+    "id": "events",
+    "form": "log",
+    "source": "obs.events",
+    "title": "Live events",
     "read": {
-     "refresh": "30s",
+     "refresh": "10s",
      "map": {
-      "values": "events",
-      "value": "stalled_ms",
-      "reverse": true
+      "events": "$",
+      "t": "ts",
+      "kind": "type",
+      "text": "name"
      }
     },
     "frame": {
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
      "body": "record"
     },
-    "open": "estate/perf"
+    "open": "activity"
    },
    "at": [
-    4,
-    20
+    0,
+    21
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
-   "refresh": "30s",
+   "refresh": "10s",
    "floated": false
   },
   {
@@ -1009,7 +932,7 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -1018,12 +941,50 @@
     "open": "elements/syslog"
    },
    "at": [
-    8,
-    20
+    4,
+    21
    ],
    "span": [
     4,
-    2
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "loop-stalls",
+    "form": "column",
+    "source": "perf.stalls",
+    "title": "Event-loop stalls · ms each",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "events",
+      "value": "stalled_ms",
+      "reverse": true
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/perf"
+   },
+   "at": [
+    8,
+    21
+   ],
+   "span": [
+    4,
+    3
    ],
    "hidden": false,
    "refresh": "30s",
@@ -1034,7 +995,7 @@
     "id": "sec-inference",
     "form": "section",
     "source": "",
-    "title": "Inference · models · routing",
+    "title": "Inference · models · nodes · routing",
     "frame": {
      "size": "xl",
      "span": [
@@ -1043,12 +1004,13 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "accent": "var(--b-dv1,#866ec5)"
     }
    },
    "at": [
     0,
-    22
+    24
    ],
    "span": [
     12,
@@ -1071,7 +1033,7 @@
      "size": "m",
      "span": [
       4,
-      4
+      6
      ]
     },
     "draw": {
@@ -1141,11 +1103,11 @@
    },
    "at": [
     0,
-    23
+    25
    ],
    "span": [
     4,
-    4
+    6
    ],
    "hidden": false,
    "refresh": "10s",
@@ -1168,7 +1130,7 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -1180,11 +1142,50 @@
    },
    "at": [
     4,
-    23
+    25
    ],
    "span": [
     4,
-    2
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "node-tps",
+    "form": "lines",
+    "source": "bench.node_perf.history",
+    "title": "Node throughput · tokens/s",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "series",
+      "v": "tps"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "rows": 3,
+     "unit": "tok/s"
+    },
+    "open": "models"
+   },
+   "at": [
+    8,
+    25
+   ],
+   "span": [
+    4,
+    3
    ],
    "hidden": false,
    "refresh": "30s",
@@ -1209,7 +1210,7 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -1218,131 +1219,15 @@
     "open": "models"
    },
    "at": [
-    8,
-    23
+    4,
+    28
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "10s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "node-tps",
-    "form": "lines",
-    "source": "bench.node_perf.history",
-    "title": "Node throughput · tokens/s",
-    "read": {
-     "refresh": "30s",
-     "map": {
-      "series": "series",
-      "v": "tps"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record",
-     "rows": 3,
-     "unit": "tok/s"
-    },
-    "open": "models"
-   },
-   "at": [
-    4,
-    25
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "30s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "requests",
-    "form": "log",
-    "source": "ollama.request_log",
-    "title": "Requests · latest",
-    "read": {
-     "refresh": "10s",
-     "map": {
-      "events": "entries",
-      "t": "ts",
-      "kind": "instance",
-      "text": "model"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "open": "models"
-   },
-   "at": [
-    8,
-    25
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "10s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "routing",
-    "form": "ranked",
-    "source": "ollama.route_stats",
-    "title": "Routing · calls by model",
-    "read": {
-     "refresh": "30s",
-     "map": {
-      "values": "stats",
-      "count": "model",
-      "sum": "n"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "open": "models/routing"
-   },
-   "at": [
-    0,
-    27
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "30s",
    "floated": false
   },
   {
@@ -1358,7 +1243,7 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -1424,53 +1309,15 @@
     "open": "models"
    },
    "at": [
-    4,
-    27
+    8,
+    28
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "60s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "guests",
-    "form": "pills",
-    "source": "sysmon.status",
-    "title": "Guests · busiest",
-    "read": {
-     "refresh": "10s",
-     "map": {
-      "values": "proxmox.top_guests",
-      "name": "name",
-      "status": "status"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "open": "estate/proxmox"
-   },
-   "at": [
-    8,
-    27
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "10s",
    "floated": false
   },
   {
@@ -1506,7 +1353,7 @@
    },
    "at": [
     0,
-    29
+    31
    ],
    "span": [
     6,
@@ -1595,7 +1442,7 @@
    },
    "at": [
     6,
-    29
+    31
    ],
    "span": [
     6,
@@ -1619,12 +1466,13 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "accent": "var(--b-dv2,#54a863)"
     }
    },
    "at": [
     0,
-    31
+    33
    ],
    "span": [
     12,
@@ -1735,7 +1583,7 @@
    },
    "at": [
     0,
-    32
+    34
    ],
    "span": [
     4,
@@ -1839,7 +1687,7 @@
    },
    "at": [
     4,
-    32
+    34
    ],
    "span": [
     4,
@@ -1966,7 +1814,7 @@
    },
    "at": [
     8,
-    32
+    34
    ],
    "span": [
     4,
@@ -2006,7 +1854,7 @@
    },
    "at": [
     0,
-    38
+    40
    ],
    "span": [
     8,
@@ -2132,7 +1980,7 @@
    },
    "at": [
     8,
-    38
+    40
    ],
    "span": [
     4,
@@ -2145,7 +1993,7 @@
   {
    "at": [
     0,
-    43
+    45
    ],
    "record": {
     "id": "ops-live",
@@ -2229,7 +2077,7 @@
    },
    "at": [
     8,
-    43
+    45
    ],
    "span": [
     4,
@@ -2274,7 +2122,7 @@
    },
    "at": [
     8,
-    45
+    47
    ],
    "span": [
     4,
@@ -2351,7 +2199,7 @@
    },
    "at": [
     8,
-    47
+    49
    ],
    "span": [
     4,
@@ -2391,7 +2239,7 @@
    },
    "at": [
     0,
-    49
+    51
    ],
    "span": [
     4,
@@ -2429,7 +2277,7 @@
    },
    "at": [
     4,
-    49
+    51
    ],
    "span": [
     4,
@@ -2471,7 +2319,7 @@
    },
    "at": [
     8,
-    49
+    51
    ],
    "span": [
     4,
@@ -2486,7 +2334,7 @@
     "id": "sec-memory",
     "form": "section",
     "source": "",
-    "title": "Memory · fabric · stores",
+    "title": "Memory · stores · fabric · worldview",
     "frame": {
      "size": "xl",
      "span": [
@@ -2495,12 +2343,13 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "accent": "var(--b-dv4,#bb881a)"
     }
    },
    "at": [
     0,
-    53
+    55
    ],
    "span": [
     12,
@@ -2513,82 +2362,38 @@
   {
    "record": {
     "id": "memory-stores",
-    "form": "composite",
+    "form": "ranked",
     "source": "memory.stats",
-    "title": "Memory stores",
+    "title": "Memory stores · what each holds",
     "read": {
-     "refresh": "30s"
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "neo4j links": "backends.neo4j.relationships",
+       "postgres records": "backends.postgres.total",
+       "chroma vectors": "backends.chroma.count",
+       "neo4j nodes": "backends.neo4j.nodes"
+      }
+     }
     },
     "frame": {
-     "size": "m",
+     "size": "l",
      "span": [
-      4,
+      6,
       2
      ]
     },
     "draw": {
      "body": "record"
     },
-    "children": [
-     {
-      "slot": "a",
-      "record": {
-       "form": "counter",
-       "source": "$subject.backends.postgres",
-       "title": "postgres",
-       "read": {
-        "map": {
-         "value": "total"
-        }
-       },
-       "draw": {
-        "unit": "records"
-       }
-      }
-     },
-     {
-      "slot": "b",
-      "record": {
-       "form": "counter",
-       "source": "$subject.backends.chroma",
-       "title": "chroma",
-       "read": {
-        "map": {
-         "value": "count"
-        }
-       },
-       "draw": {
-        "unit": "vectors"
-       }
-      }
-     },
-     {
-      "slot": "c",
-      "record": {
-       "form": "kv",
-       "source": "$subject.backends.neo4j",
-       "title": "neo4j",
-       "read": {
-        "map": {
-         "keys": [
-          "nodes",
-          "relationships",
-          "sessions"
-         ]
-        }
-       }
-      }
-     }
-    ],
-    "layout": "report",
     "open": "fabric"
    },
    "at": [
     0,
-    54
+    56
    ],
    "span": [
-    4,
+    6,
     2
    ],
    "hidden": false,
@@ -2597,82 +2402,42 @@
   },
   {
    "record": {
-    "id": "fabric",
+    "id": "fabric-health",
     "form": "numbers",
-    "source": "fabric.stats",
-    "title": "Fabric",
+    "source": "fabric.health",
+    "title": "Fabric · records · sources",
     "read": {
      "refresh": "60s",
      "map": {
       "pick": {
-       "records": "postgres.records",
-       "vectors": "chroma.count",
-       "datasets": "postgres.datasets"
+       "records": "records_count",
+       "datasets": "datasets_count",
+       "sources": "sources_count",
+       "db size": "db_size"
       }
      }
     },
     "frame": {
      "size": "m",
      "span": [
-      4,
+      3,
       2
      ]
     },
     "draw": {
-     "body": "record"
-    },
-    "open": "fabric"
-   },
-   "at": [
-    4,
-    54
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "60s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "fabric-health",
-    "form": "kv",
-    "source": "fabric.health",
-    "title": "Fabric health",
-    "read": {
-     "refresh": "60s",
-     "map": {
-      "keys": [
-       "records_count",
-       "datasets_count",
-       "sources_count",
-       "write_queue_size",
-       "journal_mode",
-       "db_size",
-       "writer_task_alive"
-      ]
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
+     "body": "record",
+     "bytes": [
+      "db size"
      ]
     },
-    "draw": {
-     "body": "record"
-    },
     "open": "fabric"
    },
    "at": [
-    8,
-    54
+    6,
+    56
    ],
    "span": [
-    4,
+    3,
     2
    ],
    "hidden": false,
@@ -2682,28 +2447,24 @@
   {
    "record": {
     "id": "worldview",
-    "form": "kv",
+    "form": "numbers",
     "source": "worldview.stats",
-    "title": "Worldview",
+    "title": "Worldview · concepts",
     "read": {
      "refresh": "60s",
      "map": {
-      "values": "model",
-      "keys": [
-       "num_concepts",
-       "records_assigned",
-       "labelled_concepts",
-       "transitions_observed",
-       "device",
-       "embed_dim",
-       "latent_dim"
-      ]
+      "pick": {
+       "concepts": "model.num_concepts",
+       "labelled": "model.labelled_concepts",
+       "assigned": "model.records_assigned",
+       "transitions": "model.transitions_observed"
+      }
      }
     },
     "frame": {
      "size": "m",
      "span": [
-      4,
+      3,
       2
      ]
     },
@@ -2713,89 +2474,15 @@
     "open": "fabric"
    },
    "at": [
-    0,
+    9,
     56
    ],
    "span": [
-    4,
+    3,
     2
    ],
    "hidden": false,
    "refresh": "60s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "errors",
-    "form": "pareto",
-    "source": "evolve.errors.list",
-    "title": "Errors to triage",
-    "read": {
-     "refresh": "60s",
-     "map": {
-      "values": "counts"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "open": "evolve"
-   },
-   "at": [
-    4,
-    56
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "60s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "host-memory",
-    "form": "trace",
-    "source": "sysmon.history",
-    "title": "Host memory",
-    "read": {
-     "refresh": "10s",
-     "map": {
-      "series": "samples",
-      "v": "mem"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record",
-     "unit": "%"
-    },
-    "open": "estate/ops"
-   },
-   "at": [
-    8,
-    56
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": true,
-   "refresh": "10s",
    "floated": false
   },
   {
@@ -2803,7 +2490,7 @@
     "id": "sec-agents",
     "form": "section",
     "source": "",
-    "title": "Agents · loops · Loop Lab",
+    "title": "Agents · programmes · loops · background",
     "frame": {
      "size": "xl",
      "span": [
@@ -2812,7 +2499,8 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "accent": "var(--b-dv5,#b95c88)"
     }
    },
    "at": [
@@ -3504,44 +3192,6 @@
   },
   {
    "record": {
-    "id": "agent-programmes",
-    "form": "ranked",
-    "source": "loops.program.list",
-    "title": "Programmes · loops each",
-    "read": {
-     "refresh": "60s",
-     "map": {
-      "values": "programs",
-      "name": "name",
-      "value": "loops.length"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "open": "agents"
-   },
-   "at": [
-    8,
-    70
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "60s",
-   "floated": false
-  },
-  {
-   "record": {
     "id": "agent-runs",
     "form": "column",
     "source": "evolve.runs",
@@ -3558,7 +3208,7 @@
      "size": "m",
      "span": [
       4,
-      3
+      5
      ]
     },
     "draw": {
@@ -3569,11 +3219,11 @@
    },
    "at": [
     8,
-    72
+    70
    ],
    "span": [
     4,
-    3
+    5
    ],
    "hidden": false,
    "refresh": "5m",
@@ -3595,7 +3245,7 @@
     "frame": {
      "size": "l",
      "span": [
-      6,
+      12,
       3
      ]
     },
@@ -3621,7 +3271,7 @@
     75
    ],
    "span": [
-    6,
+    12,
     3
    ],
    "hidden": false,
@@ -3630,60 +3280,10 @@
   },
   {
    "record": {
-    "id": "workerlist",
-    "form": "table",
-    "source": "obs.workers",
-    "shape": "items",
-    "title": "Workers",
-    "read": {
-     "refresh": "10s",
-     "map": {
-      "rows": "$"
-     }
-    },
-    "frame": {
-     "size": "l",
-     "span": [
-      6,
-      3
-     ]
-    },
-    "draw": {
-     "columns": [
-      "name",
-      "status",
-      "host",
-      "tasks_done",
-      "tasks_failed",
-      "cap_count"
-     ],
-     "body": "record"
-    },
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "place": "dashboard"
-   },
-   "at": [
-    6,
-    75
-   ],
-   "span": [
-    6,
-    3
-   ],
-   "hidden": false,
-   "refresh": "10s",
-   "floated": false
-  },
-  {
-   "record": {
     "id": "sec-looplab",
     "form": "section",
     "source": "",
-    "title": "Loop Lab · pipelines · tests",
+    "title": "Loop Lab · pipelines · tests · errors",
     "frame": {
      "size": "xl",
      "span": [
@@ -3692,7 +3292,8 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "accent": "var(--b-dv7,#bd6533)"
     }
    },
    "at": [
@@ -3725,10 +3326,10 @@
      }
     },
     "frame": {
-     "size": "xl",
+     "size": "l",
      "span": [
-      9,
-      2
+      6,
+      3
      ]
     },
     "draw": {
@@ -3742,8 +3343,8 @@
     79
    ],
    "span": [
-    9,
-    2
+    6,
+    3
    ],
    "hidden": false,
    "refresh": "5m",
@@ -3766,7 +3367,7 @@
      "size": "m",
      "span": [
       3,
-      2
+      3
      ]
     },
     "draw": {
@@ -3776,12 +3377,49 @@
     "open": "evolve"
    },
    "at": [
+    6,
+    79
+   ],
+   "span": [
+    3,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "lab-actions",
+    "form": "ranked",
+    "source": "evolve.audit.list",
+    "title": "Loop Lab · actions",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "audit",
+      "count": "action"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      3,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "evolve"
+   },
+   "at": [
     9,
     79
    ],
    "span": [
     3,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "60s",
@@ -3800,7 +3438,7 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -3844,11 +3482,11 @@
    },
    "at": [
     0,
-    81
+    82
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "5m",
@@ -3873,7 +3511,7 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -3888,11 +3526,11 @@
    },
    "at": [
     4,
-    81
+    82
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "5m",
@@ -3900,22 +3538,21 @@
   },
   {
    "record": {
-    "id": "lab-actions",
-    "form": "ranked",
-    "source": "evolve.audit.list",
-    "title": "Loop Lab · actions",
+    "id": "errors",
+    "form": "pareto",
+    "source": "evolve.errors.list",
+    "title": "Errors to triage",
     "read": {
      "refresh": "60s",
      "map": {
-      "values": "audit",
-      "count": "action"
+      "values": "counts"
      }
     },
     "frame": {
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -3925,11 +3562,11 @@
    },
    "at": [
     8,
-    81
+    82
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "60s",
@@ -3949,12 +3586,13 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "accent": "var(--b-dv3,#3585c9)"
     }
    },
    "at": [
     0,
-    83
+    85
    ],
    "span": [
     12,
@@ -3962,6 +3600,48 @@
    ],
    "hidden": false,
    "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-latency",
+    "form": "lines",
+    "source": "dream.sensor.cap_calls",
+    "title": "Call time · last 50 calls",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "sample",
+      "v": "elapsed_ms",
+      "t": "ts",
+      "reverse": true
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "ms",
+     "by": "via",
+     "blank": "direct"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    0,
+    86
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
    "floated": false
   },
   {
@@ -3979,10 +3659,10 @@
      }
     },
     "frame": {
-     "size": "m",
+     "size": "l",
      "span": [
-      4,
-      2
+      6,
+      3
      ]
     },
     "draw": {
@@ -3991,12 +3671,12 @@
     "open": "capabilities"
    },
    "at": [
-    0,
-    84
+    6,
+    86
    ],
    "span": [
-    4,
-    2
+    6,
+    3
    ],
    "hidden": false,
    "refresh": "5m",
@@ -4028,8 +3708,8 @@
     "open": "capabilities"
    },
    "at": [
-    4,
-    84
+    0,
+    89
    ],
    "span": [
     4,
@@ -4066,8 +3746,8 @@
     "open": "activity"
    },
    "at": [
-    8,
-    84
+    4,
+    89
    ],
    "span": [
     4,
@@ -4075,48 +3755,6 @@
    ],
    "hidden": false,
    "refresh": "60s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "cap-latency",
-    "form": "lines",
-    "source": "dream.sensor.cap_calls",
-    "title": "Call time · last 50 calls",
-    "read": {
-     "refresh": "30s",
-     "map": {
-      "series": "sample",
-      "v": "elapsed_ms",
-      "t": "ts",
-      "reverse": true
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record",
-     "unit": "ms",
-     "by": "via",
-     "blank": "direct"
-    },
-    "open": "capabilities"
-   },
-   "at": [
-    0,
-    86
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "30s",
    "floated": false
   },
   {
@@ -4144,8 +3782,8 @@
     "open": "capabilities"
    },
    "at": [
-    4,
-    86
+    8,
+    89
    ],
    "span": [
     2,
@@ -4181,8 +3819,8 @@
     "open": "capabilities"
    },
    "at": [
-    6,
-    86
+    10,
+    89
    ],
    "span": [
     2,
@@ -4190,47 +3828,6 @@
    ],
    "hidden": false,
    "refresh": "5m",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "cap-stream",
-    "form": "numbers",
-    "source": "jobs.stats",
-    "title": "Job stream",
-    "read": {
-     "refresh": "30s",
-     "map": {
-      "pick": {
-       "in stream": "stream.length",
-       "unacked": "stream.pending_total",
-       "consumers": "stream.consumer_count",
-       "recovered": "stats.total_orphan_reclaimed"
-      }
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "open": "elements/jobs"
-   },
-   "at": [
-    8,
-    86
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "30s",
    "floated": false
   },
   {
@@ -4247,12 +3844,13 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "accent": "var(--b-dv6,#00aba4)"
     }
    },
    "at": [
     0,
-    88
+    91
    ],
    "span": [
     12,
@@ -4289,7 +3887,7 @@
    },
    "at": [
     0,
-    89
+    92
    ],
    "span": [
     4,
@@ -4313,7 +3911,7 @@
      }
     },
     "frame": {
-     "size": "xl",
+     "size": "l",
      "span": [
       8,
       4
@@ -4333,7 +3931,7 @@
    },
    "at": [
     4,
-    89
+    92
    ],
    "span": [
     8,
@@ -4431,7 +4029,7 @@
    },
    "at": [
     0,
-    93
+    96
    ],
    "span": [
     4,
@@ -4536,7 +4134,7 @@
    },
    "at": [
     4,
-    93
+    96
    ],
    "span": [
     4,
@@ -4654,7 +4252,7 @@
    },
    "at": [
     8,
-    93
+    96
    ],
    "span": [
     4,
@@ -4678,12 +4276,13 @@
      ]
     },
     "draw": {
-     "body": "record"
+     "body": "record",
+     "accent": "var(--b-dv5,#b95c88)"
     }
    },
    "at": [
     0,
-    96
+    99
    ],
    "span": [
     12,
@@ -4709,7 +4308,7 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -4719,11 +4318,11 @@
    },
    "at": [
     0,
-    97
+    100
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "60s",
@@ -4747,7 +4346,7 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -4757,11 +4356,11 @@
    },
    "at": [
     4,
-    97
+    100
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "60s",
@@ -4785,7 +4384,7 @@
      "size": "m",
      "span": [
       4,
-      2
+      3
      ]
     },
     "draw": {
@@ -4795,11 +4394,11 @@
    },
    "at": [
     8,
-    97
+    100
    ],
    "span": [
     4,
-    2
+    3
    ],
    "hidden": false,
    "refresh": "60s",
@@ -4816,7 +4415,7 @@
      "refresh": "30s"
     },
     "frame": {
-     "size": "xl",
+     "size": "l",
      "span": [
       12,
       3
@@ -4834,7 +4433,7 @@
    },
    "at": [
     0,
-    99
+    103
    ],
    "span": [
     12,
@@ -4845,8 +4444,334 @@
    "floated": false
   },
   {
+   "record": {
+    "id": "fleet",
+    "form": "numbers",
+    "source": "sysmon.status",
+    "title": "Fleet",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "pick": {
+       "guests up": "proxmox.running",
+       "guests": "proxmox.guests",
+       "containers": "docker.running",
+       "ollama": "ollama.online"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      2,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/ops"
+   },
+   "span": [
+    2,
+    2
+   ],
+   "hidden": true,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "requests",
+    "form": "log",
+    "source": "ollama.request_log",
+    "title": "Requests · latest",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "events": "entries",
+      "t": "ts",
+      "kind": "instance",
+      "text": "model"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "models"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "routing",
+    "form": "ranked",
+    "source": "ollama.route_stats",
+    "title": "Routing · calls by model",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "stats",
+      "count": "model",
+      "sum": "n"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "models/routing"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "guests",
+    "form": "pills",
+    "source": "sysmon.status",
+    "title": "Guests · busiest",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "values": "proxmox.top_guests",
+      "name": "name",
+      "status": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/proxmox"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric",
+    "form": "numbers",
+    "source": "fabric.stats",
+    "title": "Fabric",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "pick": {
+       "records": "postgres.records",
+       "vectors": "chroma.count",
+       "datasets": "postgres.datasets"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "fabric"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "host-memory",
+    "form": "trace",
+    "source": "sysmon.history",
+    "title": "Host memory",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "series": "samples",
+      "v": "mem"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "%"
+    },
+    "open": "estate/ops"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "agent-programmes",
+    "form": "ranked",
+    "source": "loops.program.list",
+    "title": "Programmes · loops each",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "programs",
+      "name": "name",
+      "value": "loops.length"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "agents"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "workerlist",
+    "form": "table",
+    "source": "obs.workers",
+    "shape": "items",
+    "title": "Workers",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "rows": "$"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      3
+     ]
+    },
+    "draw": {
+     "columns": [
+      "name",
+      "status",
+      "host",
+      "tasks_done",
+      "tasks_failed",
+      "cap_count"
+     ],
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "span": [
+    6,
+    3
+   ],
+   "hidden": true,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-stream",
+    "form": "numbers",
+    "source": "jobs.stats",
+    "title": "Job stream",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "in stream": "stream.length",
+       "unacked": "stream.pending_total",
+       "consumers": "stream.consumer_count",
+       "recovered": "stats.total_orphan_reclaimed"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "elements/jobs"
+   },
+   "span": [
+    4,
+    2
+   ],
+   "hidden": true,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
    "record": "queues",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4854,7 +4779,6 @@
   },
   {
    "record": "host-resources",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4862,7 +4786,6 @@
   },
   {
    "record": "host-temps",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4870,7 +4793,6 @@
   },
   {
    "record": "status",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4878,7 +4800,6 @@
   },
   {
    "record": "mode",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4886,7 +4807,6 @@
   },
   {
    "record": "redis",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4894,7 +4814,6 @@
   },
   {
    "record": "workers",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4902,7 +4821,6 @@
   },
   {
    "record": "caps",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4910,7 +4828,6 @@
   },
   {
    "record": "pending",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4918,7 +4835,6 @@
   },
   {
    "record": "postgres",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4926,7 +4842,6 @@
   },
   {
    "record": "chroma",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4934,7 +4849,6 @@
   },
   {
    "record": "neo4j",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4942,7 +4856,6 @@
   },
   {
    "record": "ollama",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4950,7 +4863,6 @@
   },
   {
    "record": "mesh-info",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4958,7 +4870,6 @@
   },
   {
    "record": "looplab-info",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4966,7 +4877,6 @@
   },
   {
    "record": "sandboxes-info",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4974,7 +4884,6 @@
   },
   {
    "record": "queues-page",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
@@ -4982,7 +4891,6 @@
   },
   {
    "record": "health",
-   "at": null,
    "span": null,
    "hidden": true,
    "refresh": "",
