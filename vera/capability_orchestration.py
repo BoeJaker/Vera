@@ -10855,6 +10855,9 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "vllm/vllm_capabilities.py"),
         os.path.join(_here, "catalog/catalog_capabilities.py"),
         os.path.join(_here, "catalog/benchmark_capabilities.py"),
+        # specialist.status - non-LLM models per node; reaches nlp.nodes and
+        # provision.component.version through the registry at call time
+        os.path.join(_here, "catalog/specialist_capabilities.py"),
         os.path.join(_here, "machine learning/ml_workshop.py"),
         os.path.join(_here, "machine learning/ml_training.py"),
         os.path.join(_here, "machine learning/ml_onnx.py"),

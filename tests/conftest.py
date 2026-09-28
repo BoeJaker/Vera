@@ -20,6 +20,7 @@ _CRITICAL_MODULES = {
     "test_node_threads_core",  # CPU-node runners ran 24 threads on 12 CPUs: 0.24 tok/s on a 0.5b, 4-6 s per embed (2026-09-23)
     "test_worker_placement_core",  # a worker off the host ran every cap and every ambient job; 2026-08-31 reaped the pool (2026-09-27)
     "test_node_sync_core",  # node workers stayed on the old commit after every promotion; sync must follow what the host RUNS (2026-09-28)
+    "test_specialist_models",  # no deployed component had a version: nothing could say a node was behind (2026-09-28)
     "test_redis_auth_core",  # Redis had no password; the host must boot from its sealed copy, never log or pass on a credential (2026-09-28)
     "test_ctx_ceiling_and_utility_model",  # llm.generate's default window was a floor; a naming rule with no model took the 9b onto a CPU node (2026-09-23)
     "test_step_summary_core",  # 65 of 130 step summaries were raw tool JSON; the verifier and the next step read them (2026-09-24)
