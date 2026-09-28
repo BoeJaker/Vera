@@ -21,6 +21,16 @@ timeouts and failures. Successful outputs reuse cited `ContextItem`,
 collection receipt retained in their lineage. These are descriptive contracts:
 they neither crawl nor claim a CPU/GPU worker is available.
 
+The operational discovery route is provider-injected and explicitly two-stage.
+It scouts independent source providers concurrently, isolates timeouts and
+failures, ranks the strongest source and collection method combinations, and
+selects at most one method per source. Selected work is admitted through exact,
+current worker offers and—when needed—an exact GPU-gate receipt. Collection has
+separate concurrency and deadline bounds, cleans up timed-out tasks, and keeps
+healthy cited outputs when another source fails. Actual bytes, costs and context
+counts are checked against the reservations before a result is admitted;
+rejected alternatives and stable failure classes remain available as evidence.
+
 The polyglot data fabric is Vera's unified data layer. It combines multiple database paradigms — vector (FAISS + Chroma), graph (Neo4j), relational (SQLite + PostgreSQL), and object storage (Garage / Ceph S3) — into a single ingestion pipeline and query DSL. Anything Vera produces or consumes that's worth keeping ends up in the fabric, where it can be recalled semantically, by relation, by exact filter, or by any combination of the three.
 
 The fabric is what makes Vera's components additive rather than siloed. A research result is fabric-recallable, so the IDE agent can find it. A crawled page is fabric-recallable, so dream cycles can use it. A chat message is fabric-recallable, so future sessions can build on it.

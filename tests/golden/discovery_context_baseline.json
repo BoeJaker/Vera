@@ -1,5 +1,5 @@
 {
-  "baseline_id": "dcb_006f673989f1b12178f0368a34d1f12137d004d2e4b58ebfd631c920cb7a96d5",
+  "baseline_id": "dcb_3ab736199a7ce5fcf329d0dadd9419cfded88a216abc3836a6e1e79e340b7e31",
   "schema": "vera.discovery-context-baseline/v1",
   "components": [
     {
@@ -49,6 +49,20 @@
       "data_contract": "vera.context-component-manifest.v1",
       "enriches": [
         "context.portable"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "discovery.orchestration",
+      "role": "route",
+      "source": "vera/discovery_orchestration.py",
+      "boundary": "discovery_contract",
+      "execution": "async_local",
+      "resource": "cpu",
+      "data_contract": "vera.discovery-route-report.v1",
+      "enriches": [
+        "discovery.portable",
+        "discovery.routing"
       ],
       "live_required": false
     },
