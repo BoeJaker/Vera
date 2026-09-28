@@ -88,3 +88,38 @@ def test_failed_overlay_restores_original_source_and_retains_failed_copy(
     assert probe.returncode != 0
     failed = list((worktree.parent / ".quarantine").glob("*-failed-recreate-*"))
     assert len(failed) == 1 and (failed[0] / "partial.txt").read_text() == "partial"
+
+
+# The mount check (2026-09-28): one batched inspect over every container.
+FULL_A = "a" * 64
+FULL_B = "b" * 64
+
+
+def test_mount_check_reads_one_batched_inspect():
+    out = "%s\t/repo/.loop-lab-worktrees/feat-x\t/data\n%s\n" % (FULL_A, FULL_B)
+    mounts, why = repair_module.mounts_from_inspect(
+        [FULL_A[:12], FULL_B[:12]], out, "", 0)
+    assert why == ""
+    assert "/repo/.loop-lab-worktrees/feat-x" in mounts[FULL_A]
+    assert mounts[FULL_B] == set()
+
+
+def test_a_container_gone_since_ps_mounts_nothing():
+    out = "%s\t/data\n" % FULL_A
+    err = "Error: No such object: %s\n" % FULL_B[:12]
+    mounts, why = repair_module.mounts_from_inspect(
+        [FULL_A[:12], FULL_B[:12]], out, err, 1)
+    assert why == "" and set(mounts) == {FULL_A}
+
+
+def test_any_other_docker_error_still_refuses_and_says_why():
+    mounts, why = repair_module.mounts_from_inspect(
+        [FULL_A[:12]], "", "Cannot connect to the Docker daemon", 1)
+    assert mounts is None and "Cannot connect" in why
+    # A listed container the inspect never mentions is unknown ownership too.
+    mounts, why = repair_module.mounts_from_inspect(
+        [FULL_A[:12], FULL_B[:12]], "%s\n" % FULL_A, "", 0)
+    assert mounts is None and FULL_B[:12] in why
+    # A failing exit with no stderr at all is not a pass.
+    mounts, why = repair_module.mounts_from_inspect([FULL_A[:12]], "%s\n" % FULL_A, "", 1)
+    assert mounts is None
