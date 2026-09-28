@@ -4,7 +4,7 @@ const path = require('node:path'), fs = require('node:fs'), vm = require('node:v
 const R = (p) => fs.readFileSync(path.join(__dirname, '..', ...p.split('/')), 'utf8');
 const WE = R('vera/widgets/widget_element.js'), M = JSON.parse(R('vera/widgets/layouts/main.json'));
 let fails = 0; const t = (name, cond, x) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (x || ''))); if (!cond) fails++; };
-t('the overview opens on operations: in flight, routing, workers, the job stream', ['sec-ops', 'ops-inflight', 'ops-routing', 'ops-workers', 'ops-stream'].every((id, i) => M.widgets[i].record.id === id));
+t('the overview opens on operations: in flight, routing, workers, the job stream', ['sec-ops', 'ops-inflight', 'ops-kinds', 'ops-by-worker', 'ops-by-model', 'ops-work', 'ops-routing', 'ops-open', 'ops-runtimes', 'ops-workers', 'ops-stream'].every((id, i) => M.widgets[i].record.id === id));
 const defined = {}; const ctx = { window: {}, console, HTMLElement: class {}, CustomEvent: class {}, customElements: { get: (n) => defined[n], define: (n, c) => { defined[n] = c; } }, document: { querySelectorAll: () => [], createElement: () => ({ setAttribute() {}, appendChild() {}, style: {} }), head: { appendChild() {} }, getElementById: () => null, addEventListener() {} }, setTimeout, clearTimeout, requestAnimationFrame: (f) => setTimeout(f, 0), localStorage: { getItem: () => null, setItem() {} } };
 ctx.window.customElements = ctx.customElements; ctx.window.document = ctx.document; ctx.window.localStorage = ctx.localStorage;
 vm.runInNewContext(R('vera/ui/iso.js'), ctx); vm.runInNewContext(WE, ctx); const W = ctx.window.VeraWidget;
