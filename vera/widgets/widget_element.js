@@ -516,7 +516,7 @@
      is narrow - so a donut tile can be three columns wide instead of four (the owner: "donut/ring charts take up too
      much horizontal space"). Each part is a block: hovered it lights with its share, clicked it opens where it lives. */
   R.donut = (d, H, o) => {
-    const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('parts need { name: number }');
+    const kv = keyed(d).filter((x) => x[1] !== 0).slice(0, 8); if (!kv.length) return EMPTY('parts need { name: number }');
     const tot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1, D = Math.max(40, Math.min(140, (H || 96) - 6)), r = D / 2 - 6, c = 2 * Math.PI * r, s = D / 2; let acc = 0;
     // palette status colours a part by its name (running green, stopped red, pending amber) - a share of states reads at a glance
     const cols0 = ['var(--acc,#5a9e8f)', 'var(--acc2,#8fb87a)', 'var(--acc3,#d4a96a)', '#a78bfa', '#e07a9a', '#5ab0d8', '#c9a35a', '#7ac9b0'];
@@ -878,7 +878,10 @@
     if (stC && rw0.length >= 3) { const cnt = {}; rw0.forEach((r) => { const k = word(r); cnt[k] = (cnt[k] || 0) + 1; }); const ks = Object.keys(cnt).sort((a, b) => stRank(a) - stRank(b) || cnt[b] - cnt[a]);
       sum = '<div class="vb-r2s"><div class="bar">' + ks.map((k) => '<i style="flex:' + cnt[k] + ';background:' + stCol(k) + '" title="' + esc(k + ' \u00b7 ' + cnt[k]) + '"></i>').join('') + '</div><div class="lg">'
         + ks.slice(0, 6).map((k) => '<button' + set('f', fsel === k ? '' : k) + ' class="' + (fsel === k ? 'on' : '') + '" title="show only ' + esc(k) + '"><i style="background:' + stCol(k) + '"></i>' + esc(k || '(none)') + '<b>' + cnt[k] + '</b></button>').join('') + (fsel ? '<button' + set('f', '') + '>all</button>' : '') + '</div></div>'; }
-    const hasDet = !!(detC || extra.length), rowH = (hasDet ? 31 : 23) * tk, sumH = sum ? 40 * tk : 0;
+    let hasDet = !!(detC || extra.length), rowH = (hasDet ? 31 : 23) * tk, sumH = sum ? 40 * tk : 0;
+    /* the summary earns its room: a list of one status says nothing with it, and in a slot too small for four rows under it
+       the rows are what matter (a composite's list showed one row and '+ 7 more') */
+    if (sum && ((new Set(rw0.map(word))).size < 2 || (o && o.height && (o.height - sumH) / rowH < 4))) { sum = ''; sumH = 0; }
     const lim = dr.limit ? Math.max(1, Math.min(+dr.limit, o && o.height ? Math.max(1, Math.floor((o.height - sumH - 16 * tk) / rowH)) : +dr.limit)) : (o && o.height ? Math.max(2, Math.floor((o.height - sumH - 16 * tk) / rowH)) : (TABLE_ROWS[size] || 4));
     const shown = list.slice(0, lim), more = list.length - shown.length;
     const hi = valC ? Math.max(0, ...list.map((r) => typeof r[valC] === 'number' ? Math.abs(r[valC]) : 0)) || 1 : 1;
