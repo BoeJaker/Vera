@@ -91,6 +91,9 @@ def test_defaults_keep_the_gpu_nodes_cores_for_the_gpu():
     assert wp.default_classes(True) == ()
     assert wp.clean_classes(["media", "bogus", "general", "general"]) == ("general", "media")
     assert wp.clean_classes("nlp, general") == ("general", "nlp")
+    # the explicit "takes nothing" survives a systemd unit ("" would be dropped
+    # and the worker would fall back to the CPU default)
+    assert wp.NO_CLASSES and wp.clean_classes(wp.NO_CLASSES) == ()
 
 
 def test_a_worker_runs_only_its_classes_and_hands_the_rest_on():

@@ -743,7 +743,11 @@ async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
         # until the Workers UI sets some (a GPU node's worker takes none).
         _has_gpu = _node_has_gpu(rec.get("host", ""))
         extra_env["VERA_WORKER_HOST_ID"] = host_id
-        extra_env["VERA_WORKER_CLASSES"] = ",".join(_placement.default_classes(_has_gpu))
+        # "none", never "": the unit drops empty values, and a worker with no
+        # VERA_WORKER_CLASSES at all falls back to the CPU-node default - which
+        # is how the GPU node's worker came up taking General + NLP.
+        extra_env["VERA_WORKER_CLASSES"] = (",".join(_placement.default_classes(_has_gpu))
+                                            or _placement.NO_CLASSES)
         # native_worker_cmd handles the repo's vera/ package layout, a neutral cwd (so
         # vera/operator can't shadow stdlib operator), and a durable systemd unit.
         cmd = native_worker_cmd(root=root, repo=repo, redis_url=redis_url,
