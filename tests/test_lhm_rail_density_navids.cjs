@@ -39,7 +39,7 @@ t('the chat\'s menu tells the harness when it folds, and the slot folds with it'
 t('Zen leaves the words', /html\[data-den="zen"\] \.lhm-side:not\(\.railed\) \.lhm-s-row \.ico,html\[data-den="zen"\] \.lhm-top \.lhm-row \.lhm-ri\{display:none\}/.test(LHM));
 t('Hover shows an icon when its option is pointed at', /html\[data-den="hover"\] \.lhm-side:not\(\.railed\) \.lhm-s-row:hover \.ico/.test(LHM));
 t('the chat\'s own option lists follow the tier, closing the icon column in Zen', /html\[data-den="zen"\] #rightRail\.lhm-host \.lhm-quick \.tm-r\{grid-template-columns:1fr auto\}/.test(CHAT));
-t('a folded rail is its icons in every tier', /\.lhm-side\.railed \.lhm-s-row \.ico\{display:block!important;opacity:1!important\}/.test(LHM));
+t('a folded rail is its icons in every tier', /\.lhm-side\.railed \.lhm-s-row \.ico\{display:inline-flex!important;opacity:1!important\}/.test(LHM));
 
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

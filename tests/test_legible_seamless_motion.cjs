@@ -16,17 +16,19 @@ let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 
   vm.createContext(ctx); vm.runInContext(UI.slice(a, b) + '\nthis.adj=_fsAdjust; this.set=function(n){ _textStep=TEXT_STEPS[n]; _textName=n; };', ctx);
   const d1 = decl('8px'), d2 = decl('9.5px'), d3 = decl('14px'), d4 = decl('1em');
   ctx.set('default'); [d1, d2, d3, d4].forEach(ctx.adj);
-  t('Default raises small text to the floor', d1.fontSize === '10px' && d2.fontSize === '10px', d1.fontSize + ' ' + d2.fontSize);
+  t('Default raises small text to the floor', d1.fontSize === '11px' && d2.fontSize === '11px', d1.fontSize + ' ' + d2.fontSize);
   t('and leaves body text and relative sizes alone', d3.fontSize === '14px' && d4.fontSize === '1em');
   ctx.set('larger'); [d1, d2, d3].forEach(ctx.adj);
-  t('Larger raises it further', d1.fontSize === '12px' && d2.fontSize === '12px', d1.fontSize);
+  t('Larger raises it further', d1.fontSize === '13px' && d2.fontSize === '13px', d1.fontSize);
+  ctx.set('largest'); [d1, d2, d3].forEach(ctx.adj);
+  t('Largest goes past the old top (stepped up, 2026-09-28)', d1.fontSize === '14px' && d2.fontSize === '14px' && d3.fontSize === '14px', d1.fontSize + ' ' + d2.fontSize);
   ctx.set('compact'); [d1, d2].forEach(ctx.adj);
   t('Compact puts back exactly what was there', d1.fontSize === '8px' && d2.fontSize === '9.5px', d1.fontSize + ' ' + d2.fontSize);
   // the font SHORTHAND with a variable in it has no readable font-size (pending substitution): its size is read off its text
   const sh = (f0) => ({ fontSize: '', font: f0, pri: '', getPropertyPriority() { return this.pri; }, getPropertyValue(k) { return k === 'font' ? this.font : ''; }, setProperty(k, v) { if (k === 'font') this.font = v; else this.fontSize = v; } });
   const s1 = sh('600 9.5px/1.2 var(--b-mono)'), s2 = sh('14px var(--sans)'), s3 = sh('inherit');
   ctx.set('larger'); [s1, s2, s3].forEach(ctx.adj);
-  t('the font shorthand follows the Text setting too', s1.font === '600 12px/1.2 var(--b-mono)' && s2.font === '14px var(--sans)' && s3.font === 'inherit', s1.font + ' | ' + s2.font);
+  t('the font shorthand follows the Text setting too', s1.font === '600 13px/1.2 var(--b-mono)' && s2.font === '14px var(--sans)' && s3.font === 'inherit', s1.font + ' | ' + s2.font);
   ctx.set('compact'); ctx.adj(s1);
   t('and Compact puts its own text back', s1.font === '600 9.5px/1.2 var(--b-mono)', s1.font);
 }

@@ -37,10 +37,11 @@
     /* the rail */
     '.lhm-rail{width:46px;flex:0 0 46px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;background:var(--bg1);border-right:1px solid var(--border);box-sizing:border-box;overflow:hidden}',
     'html[data-blocks="off"] .lhm-rail{background:transparent;border-right-color:transparent}',
-    '.lhm-rail .lhm-ico{position:relative;width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:var(--r-sm,7px);color:var(--dim2);font-size:15px;line-height:1;cursor:pointer;user-select:none;border:1px solid transparent;flex-shrink:0}',
+    '.lhm-rail .lhm-ico{position:relative;width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:var(--r-sm,7px);color:var(--dim2);font-size:18px;line-height:1;cursor:pointer;user-select:none;border:1px solid transparent;flex-shrink:0}',
     '.lhm-rail .lhm-ico:hover{color:var(--text);background:var(--bg2)}',
     '.lhm-rail .lhm-ico.on{color:var(--acc);background:var(--bg2);border-color:var(--border)}',
-    '.lhm-rail .lhm-ico.top{font-size:16px;margin-bottom:4px}',
+    '.lhm-rail .lhm-ico.top{font-size:18px;margin-bottom:4px}',
+    '.lhm-rail .lhm-ico svg{width:19px;height:19px}',
     '.lhm-rail .lhm-ico.top.on{color:var(--text)}',
     '.lhm-rail .lhm-ico .lhm-badge{position:absolute;top:-3px;right:-3px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:var(--acc);color:var(--on-acc,#fff);font-family:var(--mono);font-size:8px;font-weight:700;line-height:14px;text-align:center;box-sizing:border-box}',
     '.lhm-rail .lhm-sp{flex:1}',
@@ -69,7 +70,8 @@
     '.lhm-top .lhm-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--r-sm,6px);cursor:pointer;color:var(--text);font-size:11px;border:1px solid transparent}',
     '.lhm-top .lhm-row:hover{background:var(--bg2);border-color:var(--border)}',
     '.lhm-top .lhm-row.on{color:var(--acc)}',
-    '.lhm-top .lhm-row .lhm-ri{width:18px;text-align:center;color:var(--dim2);font-size:13px;flex-shrink:0}',
+    /* a glyph sits in a fixed box, centred both ways, so it stands level with its label whatever font draws it */
+    '.lhm-top .lhm-row .lhm-ri{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;line-height:1;color:var(--dim2);font-size:16px;flex-shrink:0;overflow:hidden}',
     '.lhm-top .lhm-row .lhm-rn{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.lhm-top .lhm-row .lhm-rm{font-family:var(--mono);font-size:8.5px;color:var(--dim2);white-space:nowrap}',
     '.lhm-top .lhm-row .lhm-rx{flex:0 0 auto;background:transparent;border:none;color:var(--dim2);font-size:11px;cursor:pointer;padding:0 2px}',
@@ -209,7 +211,13 @@
     '.lhm-side.railed .lhm-s-grp,.lhm-side.railed .lhm-s-empty,.lhm-side.railed .lhm-s-sec,.lhm-side.railed .lhm-s-w,.lhm-side.railed .lhm-s-reg,.lhm-side.railed .lhm-s-now,.lhm-side.railed .lhm-ebar,.lhm-side.railed .lhm-s-note{display:none!important}',
     '.lhm-side.railed .lhm-s-row{flex-shrink:0}',
     '.lhm-side.railed .lhm-s-row > :not(.ico){opacity:0;pointer-events:none}',
-    '.lhm-side.railed .lhm-s-row .ico{display:block!important;opacity:1!important}',
+    '.lhm-side.railed .lhm-s-row .ico{display:inline-flex!important;opacity:1!important}',
+    /* THE FOLD MOVES, IT DOES NOT JUMP (owner, 2026-09-28: "going from glyph rail to lhm, the glyphs need to line up with
+       their menu options"): each row glides from its place in the rail to its place in the list with the width\'s easing
+       (_railFlip), and what the rail hides - headings, sections, widgets - fades in once the rows are moving */
+    '@keyframes lhmUnfold{from{opacity:0}to{opacity:1}}',
+    '.lhm-side.lhm-unfold .lhm-s-grp,.lhm-side.lhm-unfold .lhm-s-empty,.lhm-side.lhm-unfold .lhm-s-sec,.lhm-side.lhm-unfold .lhm-s-w,.lhm-side.lhm-unfold .lhm-s-reg,.lhm-side.lhm-unfold .lhm-s-now,.lhm-side.lhm-unfold .lhm-s-note,.lhm-side.lhm-unfold .lhm-s-top > :not(.lhm-s-tb):not(.lhm-s-rl){animation:lhmUnfold .3s ease .1s both}',
+    '@media (prefers-reduced-motion:reduce){.lhm-side.lhm-unfold *{animation:none!important}.lhm-side .lhm-s-row > :not(.ico){transition:none}}',
     '.lhm-side.railed .lhm-s-row.on{box-shadow:inset 2px 0 0 var(--acc)}',
     '/* ICONS BY TIER (owner: "respect the full - hover - zen styles only displaying the icons inline to the menu options in full mode"): Full draws a menu option\'s icon beside it; Hover shows it when the option is pointed at; Zen leaves the words. A folded rail is its icons, whatever the tier. */',
     'html[data-den="zen"] .lhm-side:not(.railed) .lhm-s-row .ico,html[data-den="zen"] .lhm-top .lhm-row .lhm-ri{display:none}',
@@ -230,7 +238,9 @@
     '.lhm-side .lhm-s-row:hover{color:var(--text);background:var(--bg2)}',
     '.lhm-side .lhm-s-row.on{color:var(--text);background:var(--bg2);font-weight:600;border-left-color:var(--acc)}',
     '.lhm-side .lhm-s-row.open:not(.on){color:var(--acc2,var(--acc))}',
-    '.lhm-side .lhm-s-row .ico{width:16px;text-align:center;color:var(--dim2);font-size:12px;flex-shrink:0}',
+    '.lhm-side .lhm-s-row .ico{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;line-height:1;color:var(--dim2);font-size:16px;font-weight:400;flex-shrink:0;overflow:hidden}',
+    /* folded, the glyph box sits on the rail\'s centre line (54 px rail: 8 px body + 2 px edge + 6 px + 22 px box) */
+    '.lhm-side.railed .lhm-s-row{padding:0 6px}',
     '.lhm-side .lhm-s-pan.on .lhm-s-row .ico{color:var(--acc)}',
     '.lhm-side .lhm-s-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;display:flex;flex-direction:column;line-height:1.15}',
     '.lhm-side .lhm-s-row .nm em{font-style:normal;font-family:var(--mono);font-size:9.5px;color:var(--dim2);font-weight:400}',
@@ -276,6 +286,42 @@
   }
   function _el(tag, cls, text){ var e = document.createElement(tag); if(cls) e.className = cls; if(text != null) e.textContent = text; return e; }
   function _esc(s){ return String(s == null ? '' : s); }
+  // a menu option's glyph: a symbol as given; a WORD given as an icon (a panel registered with icon "pokedex") is its
+  // first letter, so the rail shows one character in its box rather than a clipped word
+  function _glyph(s, dflt){
+    var t = String(s == null ? '' : s).trim(); if(!t) return dflt || '';
+    var n = 0; try{ if(window.Intl && Intl.Segmenter){ var it = new Intl.Segmenter().segment(t)[Symbol.iterator](); while(!it.next().done) n++; } else n = Array.from(t).length; }catch(e){ n = t.length; }
+    return (n > 2 && /^[A-Za-z]/.test(t)) ? t.charAt(0).toUpperCase() : t;
+  }
+  // the fold, animated (FLIP): the rows and the header's two toggles are measured in the state the menu left and the one
+  // it entered, then each glides from the first to the second on the width's own easing - so a glyph in the rail travels
+  // to its option in the list instead of jumping there
+  function _railFlip(wrap, wasRailed){
+    var nowRailed = wrap.classList.contains('railed');
+    if(wasRailed === nowRailed || !wrap.isConnected || !wrap.animate) return;
+    try{ if(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return; }catch(e){}
+    var els = Array.prototype.slice.call(wrap.querySelectorAll('.lhm-s-row:not(.lhm-s-now):not(.lhm-s-reg),.lhm-s-tb,.lhm-s-rl'));
+    function at(){ return els.map(function(e){ var r = e.getBoundingClientRect(); return r.height ? r : null; }); }
+    var last = at();
+    wrap.classList.toggle('railed', wasRailed); var first = at(); wrap.classList.toggle('railed', nowRailed);
+    if(wrap._lhmFlipMO) wrap._lhmFlipMO.takeRecords();   // our own two toggles are not a fold
+    els.forEach(function(e, i){ var a = first[i], b = last[i]; if(!a || !b) return;
+      var dx = a.left - b.left, dy = a.top - b.top; if(Math.abs(dx) < .5 && Math.abs(dy) < .5) return;
+      try{ e.animate([{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }], { duration: 340, easing: 'cubic-bezier(.2,.8,.2,1)' }); }catch(err){} });
+    if(!nowRailed){ wrap.classList.remove('lhm-unfold'); void wrap.offsetWidth; wrap.classList.add('lhm-unfold');
+      clearTimeout(wrap._lhmUnfoldT); wrap._lhmUnfoldT = setTimeout(function(){ wrap.classList.remove('lhm-unfold'); }, 460); }
+  }
+  // watch a side menu for the fold, whoever makes it (« in its header, auto-hide leaving it as its rail); a class set in
+  // the same breath as the render (the host syncing the new list to its state) is part of drawing it, not a fold
+  function _watchFold(wrap){
+    if(!window.MutationObserver) return;
+    var born = Date.now();
+    var mo = new MutationObserver(function(ms){
+      var was = null; ms.forEach(function(m){ if(was === null) was = /(^|\s)railed(\s|$)/.test(m.oldValue || ''); });
+      if(was === null || Date.now() - born < 250) return;
+      _railFlip(wrap, was); });
+    wrap._lhmFlipMO = mo; mo.observe(wrap, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+  }
 
   // ── the owner side ─────────────────────────────────────────────────────
   var _cfg = null, _host = null, _rail = null, _det = null, _hd = null, _top = null, _cta = null;
@@ -301,7 +347,7 @@
     top.addEventListener('click', function(){ toggleTop(); });
     _rail.appendChild(top);
     (_cfg.menus || []).forEach(function(m){
-      var ico = _el('div', 'lhm-ico' + (m.id === _active && !_topMode ? ' on' : ''), m.iconHtml ? null : (m.icon || '•'));
+      var ico = _el('div', 'lhm-ico' + (m.id === _active && !_topMode ? ' on' : ''), m.iconHtml ? null : _glyph(m.icon, '•'));
       if(m.iconHtml) ico.innerHTML = m.iconHtml;   // the board's SVG glyph for this menu
       ico.title = m.label + (m.tabs && m.tabs.length > 1 ? ' — ' + m.tabs.map(function(t){ return t.label; }).join(' · ') : '');
       ico.setAttribute('data-menu', m.id);
@@ -493,7 +539,7 @@ function _ebar(title, onAdd, onDone){
     if(!open.length) _top.appendChild(_el('div', 'lhm-empty', 'Nothing open beside the chat. A menu, the aide or you can open a panel here.'));
     open.forEach(function(o){
       var r = _el('div', 'lhm-row');
-      r.appendChild(_el('span', 'lhm-ri', o.icon || '▭'));
+      r.appendChild(_el('span', 'lhm-ri', _glyph(o.icon, '▭')));
       r.appendChild(_el('span', 'lhm-rn', o.label || o.id));
       r.appendChild(_el('span', 'lhm-rm', [o.origin || '', o.placement || ''].filter(Boolean).join(' · ')));
       if(o.close){ var x = _el('button', 'lhm-rx', '✕'); x.title = 'Close'; x.addEventListener('click', function(ev){ ev.stopPropagation(); try{ o.close(); }catch(e){} render(); }); r.appendChild(x); }
@@ -507,13 +553,13 @@ function _ebar(title, onAdd, onDone){
       q.addEventListener('input', function(){ _topQ = q.value; _renderTop(); var i2 = _top.querySelector('.lhm-tsearch input'); if(i2){ i2.focus(); i2.selectionStart = i2.selectionEnd = i2.value.length; } });
       var qq = (_topQ || '').toLowerCase(); var shown = panels.filter(function(p){ return !qq || String(p.label || p.id).toLowerCase().indexOf(qq) >= 0 || String(p.id).toLowerCase().indexOf(qq) >= 0; });
       _top.appendChild(_el('div', 'lhm-sec', 'Panels · ' + panels.length + (qq ? ' · ' + shown.length + ' match' : '') + ' · ⌘K'));
-      shown.slice(0, 120).forEach(function(p){ var r = _el('div', 'lhm-row'); r.appendChild(_el('span', 'lhm-ri', p.icon || '▭')); r.appendChild(_el('span', 'lhm-rn', p.label || p.id)); r.appendChild(_el('span', 'lhm-rm', p.id)); r.addEventListener('click', function(){ try{ if(p.open) p.open(); }catch(e){} }); _top.appendChild(r); });
+      shown.slice(0, 120).forEach(function(p){ var r = _el('div', 'lhm-row'); r.appendChild(_el('span', 'lhm-ri', _glyph(p.icon, '▭'))); r.appendChild(_el('span', 'lhm-rn', p.label || p.id)); r.appendChild(_el('span', 'lhm-rm', p.id)); r.addEventListener('click', function(){ try{ if(p.open) p.open(); }catch(e){} }); _top.appendChild(r); });
       if(!shown.length) _top.appendChild(_el('div', 'lhm-empty', 'No panel matches.'));
     }
     _top.appendChild(_el('div', 'lhm-sec', 'Menus · ' + (_cfg.menus || []).length));
     (_cfg.menus || []).forEach(function(m){
       var r = _el('div', 'lhm-row' + (m.id === _active ? ' on' : ''));
-      r.appendChild(_el('span', 'lhm-ri', m.icon || '•'));
+      r.appendChild(_el('span', 'lhm-ri', _glyph(m.icon, '•')));
       r.appendChild(_el('span', 'lhm-rn', m.label));
       r.appendChild(_el('span', 'lhm-rm', (m.tabs || []).map(function(t){ return t.label; }).join(' · ')));
       r.addEventListener('click', function(){ pick(m.id); });
@@ -837,7 +883,7 @@ function _ebar(title, onAdd, onDone){
     else rail.appendChild(_el('div', 'lhm-rsp'));
     var act = spec.active || {};
     (spec.menus || []).forEach(function(m){
-      var ico = _el('div', 'lhm-ico' + (m.id === act.menu ? ' on' : ''), m.icon || '•'); ico.title = m.label + (opts.onSplit ? ' \u00b7 Ctrl/\u2318- or middle-click: open it side by side' : '');
+      var ico = _el('div', 'lhm-ico' + (m.id === act.menu ? ' on' : ''), _glyph(m.icon, '•')); ico.title = m.label + (opts.onSplit ? ' \u00b7 Ctrl/\u2318- or middle-click: open it side by side' : '');
       if(m.badge) ico.appendChild(_el('span', 'lhm-badge', String(m.badge)));
       ico.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(m.id); else pickFn(m.id); });
       ico.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(m.id); } });
@@ -895,6 +941,7 @@ function _ebar(title, onAdd, onDone){
     // « folds the menu to its icons, » opens it again (the host keeps the state: cfg.rail {on, toggle})
     if(cfg.rail){ var rl = _el('button', 'lhm-s-rl', cfg.rail.on ? '\u00bb' : '\u00ab'); rl.type = 'button'; rl.setAttribute('data-w', 'fold · control'); rl.title = cfg.rail.on ? 'Open the menu' : 'Fold the menu to its icons'; rl.addEventListener('click', function(ev){ ev.stopPropagation(); if(cfg.rail.toggle) cfg.rail.toggle(); }); top.appendChild(rl); }
     if(cfg.rail && cfg.rail.on) wrap.classList.add('railed');
+    _watchFold(wrap);
     if(cfg.edit !== false){ var ed = _el('button', 'lhm-s-edit' + (host._lhmEditing ? ' on' : ''), '✎'); ed.type = 'button'; ed.title = 'Edit this menu — every part is a widget: ⚙ its record, ⧉ save it as a template'; ed.addEventListener('click', function(){ sideEdit(host); }); top.appendChild(ed); }
     if(top.childNodes.length) wrap.appendChild(top);
     if(cfg.edit !== false) wrap.appendChild(_ebar((cfg.top && cfg.top.title) || 'this menu', function(){ sideAdd(host, cfg); }, function(){ sideEdit(host, false); }));
@@ -905,7 +952,7 @@ function _ebar(title, onAdd, onDone){
     if(!open.length) bd.appendChild(_el('div', 'lhm-s-empty', 'Nothing open. Pick a panel below, or the aide can open one here.'));
     open.forEach(function(o){
       var r = _el('div', 'lhm-s-row lhm-s-now open' + (o.active ? ' on' : '')); r.title = 'opened by ' + (o.origin || 'you') + (o.placement ? ' · ' + o.placement : '');
-      r.appendChild(_el('span', 'ico', o.icon || '▭'));
+      r.appendChild(_el('span', 'ico', _glyph(o.icon, '▭')));
       var nm = _el('span', 'nm'); nm.appendChild(_el('span', '', o.label || o.id)); nm.appendChild(_el('em', '', [o.origin || 'you', o.placement || ''].filter(Boolean).join(' · '))); r.appendChild(nm);
       if(o.close){ var x = _el('span', 'x', '✕'); x.title = 'Close'; x.addEventListener('click', function(ev){ ev.stopPropagation(); try{ o.close(); }catch(e){} }); r.appendChild(x); }
       r.addEventListener('click', function(){ if(o.focus) o.focus(); });
@@ -916,7 +963,7 @@ function _ebar(title, onAdd, onDone){
     (cfg.panels || []).forEach(function(p){
       var pan = _el('div', 'lhm-s-pan' + (p.active ? ' on' : ''));
       var r = _el('div', 'lhm-s-row' + (p.active ? ' on' : p.open ? ' open' : '')); r.setAttribute('data-w', 'panel · ' + (p.label || p.id)); r.title = p.label || p.id;
-      r.appendChild(_el('span', 'ico', p.icon || '▭')); var nm = _el('span', 'nm'); nm.appendChild(_el('span', '', p.label || p.id)); r.appendChild(nm);
+      r.appendChild(_el('span', 'ico', _glyph(p.icon, '▭'))); var nm = _el('span', 'nm'); nm.appendChild(_el('span', '', p.label || p.id)); r.appendChild(nm);
       if(p.ct) r.appendChild(_el('span', 'ct', String(p.ct)));
       r.addEventListener('click', function(ev){ if(cfg.onPanel) cfg.onPanel(p.id, ev); });
       if(cfg.onBeside) _beside(r, function(){ cfg.onBeside(p.id); }, 'Open this panel side by side - a second one when it is open already');

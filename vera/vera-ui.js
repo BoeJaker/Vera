@@ -276,8 +276,10 @@
   // exactly what was there. CONTRAST re-derives the faint text tokens from the theme's own text colour, on <body>, so it
   // follows any theme, light or dark. Same storage and broadcast as the rest of the appearance.
   var TEXT_KEY = 'vera:ui:text', CONTRAST_KEY = 'vera:ui:contrast';
-  var TEXT_STEPS = { compact:{ floor:0, factor:1 }, 'default':{ floor:10, factor:1 }, large:{ floor:11, factor:1.1 }, larger:{ floor:12, factor:1.22 } };
-  var TEXT_NAMES = [['compact','Compact','As designed - the smallest text is not raised'], ['default','Default','Small text raised to a readable floor'], ['large','Large','Larger small text'], ['larger','Larger','The largest']];
+  // stepped up (owner, 2026-09-28: "the configurable text sizes need to be larger - step them up a notch or two"): each
+  // step is what the one above it was, and more, and Largest goes past the old top
+  var TEXT_STEPS = { compact:{ floor:0, factor:1 }, 'default':{ floor:11, factor:1.08 }, large:{ floor:12, factor:1.2 }, larger:{ floor:13, factor:1.32 }, largest:{ floor:14, factor:1.45 } };
+  var TEXT_NAMES = [['compact','Compact','As designed - the smallest text is not raised'], ['default','Default','Small text raised to a readable floor'], ['large','Large','Larger small text'], ['larger','Larger','Larger still'], ['largest','Largest','The largest']];
   var CONTRASTS = [['theme','Theme','The theme\'s own faint text'], ['clear','Clear','Faint text made clearer'], ['high','High','The most contrast']];
   function _readText(){ try{ var v = localStorage.getItem(TEXT_KEY); return TEXT_STEPS[v] ? v : 'default'; }catch(e){ return 'default'; } }
   function _readContrast(){ try{ var v = localStorage.getItem(CONTRAST_KEY); return (v === 'theme' || v === 'high') ? v : 'clear'; }catch(e){ return 'clear'; } }
