@@ -5994,8 +5994,10 @@ PROCESS_TAG = f"{os.uname().nodename}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
 async def reply_listener():
     """Results addressed to THIS process (dispatch_task's reply_to). A plain
     XREAD - no consumer group - so no other process can take them."""
-    if not REDIS:
-        return
+    # Started before _connect_backends has a connection: WAIT for it. The old
+    # `if not REDIS: return` meant the listener never ran on prod at all.
+    while REDIS is None:
+        await asyncio.sleep(2)
     stream = _placement.reply_stream(PROCESS_TAG)
     last = "0"
     log.info("Reply listener started (%s)", stream)
@@ -6036,7 +6038,13 @@ async def result_listener():
     and resolves it. The others ACK without doing anything (no future found).
     This is correct — ACKing without a matching future is a no-op.
     """
-    if not REDIS: return
+    # Started before _connect_backends has a connection (lifespan creates it
+    # and this task together): wait for it. `if not REDIS: return` here meant
+    # no result listener ever ran on prod - no dispatched result was ever
+    # read, the "stuck-pending jobs" that switched distributed mode off
+    # (prod log 2026-09-28: no "Result listener started" line at any boot).
+    while REDIS is None:
+        await asyncio.sleep(2)
     # Per-host consumer name prevents two hosts sharing one consumer slot
     consumer_name = f"host-{os.uname().nodename}"
     try:
