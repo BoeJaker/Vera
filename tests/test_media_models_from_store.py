@@ -128,8 +128,15 @@ async def test_media_server_deploys_into_its_real_layout(monkeypatch):
         return {"ok": True, "stdout": "VERA_DEPS_DONE\nVERA_OPTIONAL_FAILED=realesrgan>=0.3.0\n"
                                       "VERA_LAUNCHED service=gpu-inference", "stderr": ""}
 
+    streamed = []
+
+    async def runner(_hid, cmd, timeout=0, input=None):
+        streamed.append(cmd)
+        return {"ok": True, "stdout": "VERA_PUSHED", "stderr": ""}
+
     monkeypatch.setattr(components, "_host_rec", host)
     monkeypatch.setattr(components, "_ssh", ssh)
+    monkeypatch.setattr(components, "_ssh_stored_with_input", lambda: runner)
     monkeypatch.setattr(components, "_node_has_gpu", lambda _a: False)
     monkeypatch.setattr(components, "observe_infrastructure_effect", lambda **k: {"mode": k["mode"]})
     monkeypatch.setattr(components, "emit_event", lambda *_a: _async(None))
@@ -139,7 +146,9 @@ async def test_media_server_deploys_into_its_real_layout(monkeypatch):
     assert res["ok"], res
     allc = "\n".join(calls)
     d = "/home/Servers/StableDiffustionWhisper"
-    assert f"> {d}/GPU_inference.py" in allc and f"> {d}/media_store_core.py" in allc
+    # the 144 KB server goes over stdin, the small core inline
+    assert any(f"> {d}/GPU_inference.py.part" in c for c in streamed)
+    assert f"> {d}/media_store_core.py" in allc
     assert f"chmod 755 {d}/start.sh" in allc
     assert "~/.vera/edge" not in allc and "$HOME/.vera/edge" not in allc
     # the node's existing venv is kept; a CPU node gets the CPU torch build
@@ -153,6 +162,42 @@ async def test_media_server_deploys_into_its_real_layout(monkeypatch):
     assert "systemctl restart gpu-inference" in allc and "enable --now" not in allc
     assert res["health"]["model_store"] == {"sd": "/x"}
     assert res["version"].startswith("code-")
+
+
+@pytest.mark.asyncio
+async def test_a_file_too_big_for_a_command_line_goes_over_stdin(monkeypatch):
+    # GPU_inference.py is 144 KB; inline as base64 it broke the 128 KB limit on
+    # one argument: "/bin/bash: Argument list too long" (cpu-247, 2026-09-28)
+    cmds, streamed = [], []
+
+    async def host(_hid):
+        return {"id": "h", "host": "192.0.2.10", "user": "root"}
+
+    async def ssh(_hid, cmd, timeout=0, **_kw):
+        cmds.append(cmd)
+        return {"ok": True, "stdout": "VERA_PRECHECK_OK VERA_DEPS_DONE", "stderr": ""}
+
+    async def runner(_hid, cmd, timeout=0, input=None):
+        streamed.append((cmd, len(input or "")))
+        return {"ok": True, "stdout": "VERA_PUSHED", "stderr": ""}
+
+    big = b"x" * (144 * 1024)
+    monkeypatch.setattr(components, "_host_rec", host)
+    monkeypatch.setattr(components, "_ssh", ssh)
+    monkeypatch.setattr(components, "_ssh_stored_with_input", lambda: runner)
+    monkeypatch.setattr(components, "_read_local",
+                        lambda rel: big if rel.endswith("GPU_inference.py") else b"small")
+    monkeypatch.setattr(components, "_node_has_gpu", lambda _a: True)
+    monkeypatch.setattr(components, "observe_infrastructure_effect", lambda **k: {"mode": k["mode"]})
+    monkeypatch.setattr(components, "emit_event", lambda *_a: _async(None))
+
+    res = await components.cap_deploy.__wrapped__(host_id="h", component="gpu_inference",
+                                                  install_deps=False, launch=False)
+    assert res["ok"], res
+    assert len(streamed) == 1 and streamed[0][0].endswith("VERA_PUSHED")
+    assert "GPU_inference.py" in streamed[0][0]
+    assert streamed[0][1] > 128 * 1024           # the payload went on stdin...
+    assert max(len(c) for c in cmds) < 100 * 1024  # ...and no command carries it
 
 
 def test_the_media_server_version_covers_its_unit_and_core():

@@ -393,6 +393,11 @@ def _push_cmd(content: bytes, dest: str) -> str:
     return f"printf %s {shlex.quote(b64)} | base64 -d > {dest}"
 
 
+#: Largest file pushed inline in a command (its base64 is 4/3 bigger, and one
+#: argument may not exceed 128 KB); anything bigger goes over stdin.
+_INLINE_PUSH_MAX = 64 * 1024
+
+
 def _push_cmd_as(content: bytes, dest: str, sudo_prefix: str = "") -> str:
     """_push_cmd into a root-owned path (via `sudo tee` when not root)."""
     if not sudo_prefix:
@@ -514,16 +519,38 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
         out["precheck"] = True
 
     parts = [f"mkdir -p {edge_dir}"]
+    large: List[tuple] = []
     for rel, dest, *mode in comp["files"]:
         content = _read_local(rel)
         if content is None:
             return {"ok": False, "error": f"bundled file missing in repo: {rel}"}
         if "/" in dest:                      # a file shipped as part of a package
             parts.append(f"mkdir -p {edge_dir}/{shlex.quote(dest.rsplit('/', 1)[0])}")
-        parts.append(_push_cmd(content, f"{edge_dir}/{dest}"))
+        if len(content) > _INLINE_PUSH_MAX:
+            # Linux caps ONE argument at 128 KB and the whole command reaches the
+            # remote shell as one argument: GPU_inference.py (144 KB, ~195 KB as
+            # base64) failed with "Argument list too long". Stream it on stdin.
+            large.append((content, f"{edge_dir}/{dest}"))
+        else:
+            parts.append(_push_cmd(content, f"{edge_dir}/{dest}"))
         if mode:                             # e.g. start.sh, which the unit executes
             parts.append(f"chmod {shlex.quote(mode[0])} {edge_dir}/{dest}")
         out["pushed"].append(dest)
+    if large:
+        runner = _ssh_stored_with_input()
+        if runner is None:
+            return {**out, "ok": False,
+                    "error": "a bundled file is too large for a command line and the exec "
+                             "module has no ssh_run_stored (stdin transport)"}
+        for content, dest in large:
+            d = dest.rsplit("/", 1)[0]
+            res = await runner(host_id, f"mkdir -p {d} && base64 -d > {dest}.part && "
+                                        f"mv {dest}.part {dest} && echo VERA_PUSHED",
+                               timeout=120, input=base64.b64encode(content).decode())
+            if "VERA_PUSHED" not in (res.get("stdout") or ""):
+                return {**out, "ok": False,
+                        "error": f"push of {dest} failed: "
+                                 f"{res.get('stderr') or res.get('error') or 'no confirmation'}"}
     # The version is written only once the deploy has succeeded (below), so a
     # half-finished deploy never claims the new version.
     version = host_component_version(component)
