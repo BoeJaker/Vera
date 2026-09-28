@@ -154,6 +154,8 @@ def test_a_run_is_guarded_reports_and_cleans_up(monkeypatch):
     kw = seen["kwargs"]
     assert kw["effort"] == "max" and kw["prefer_terminal_tools"] is False
     assert kw["enable_step_questions"] is False and set(kw["base_toolkit"].split()) == set(D.FS_CAPS)
+    # headless: no clarify questions, never the strategic tier (first live job stalled on one)
+    assert kw["clarify_mode"] == "off" and kw["plan_tier"] == "complex" and kw["auto_escalate"] is False
     assert store["dgR"]["status"] == "done" and store["dgR"]["report"].startswith("## Summary")
     assert seen["dropped"] == ["/wt/delegate-dgR"]
     kinds = [b[2] for b in seen["board"]]
