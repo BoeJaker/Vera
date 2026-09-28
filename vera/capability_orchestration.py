@@ -5383,7 +5383,8 @@ async def dispatch_task(cap_name: str, payload: dict, trace_id: str,
     Redis, so the label travels in the record. The idle queue's `cap` jobs use
     this so their Ollama calls are demoted and logged as background work."""
     task_id=new_id()
-    rec={"id":task_id,"capability":cap_name,"payload":json.dumps(payload),"trace_id":trace_id,"ts":now_iso()}
+    rec={"id":task_id,"capability":cap_name,"payload":json.dumps(payload),"trace_id":trace_id,"ts":now_iso(),
+         "reply_to":_placement.reply_stream(PROCESS_TAG)}
     if bg: rec["bg"]=str(bg)
     # A host-bound cap goes where only the host reads, so a node worker never
     # sees it (worker_placement_core). Everything else is on the shared stream.
@@ -5392,6 +5393,62 @@ async def dispatch_task(cap_name: str, payload: dict, trace_id: str,
         cap=CAPABILITY_REGISTRY.get(cap_name)
         if cap: asyncio.create_task(_run_local(cap,task_id,payload,trace_id,bg=bg))
     return task_id
+
+# ── Staged offload to node workers (worker_placement_core.STAGES) ─────────────
+_OFFLOAD_INFLIGHT: Dict[str, int] = {}
+_OFFLOAD_SENT: Dict[str, int] = {}          # class -> calls this process offloaded
+_OFFLOAD_CACHE: Dict[str, Any] = {"cfg_at": 0.0, "cfg": {}, "w_at": 0.0, "workers": []}
+
+
+async def _offload_config() -> Dict[str, Any]:
+    now = time.monotonic()
+    if now - _OFFLOAD_CACHE["cfg_at"] > 10 and REDIS is not None:
+        try:
+            raw = await REDIS.get(_placement.DISPATCH_KEY)
+            _OFFLOAD_CACHE["cfg"] = json.loads(raw) if raw else {}
+        except Exception:
+            pass
+        _OFFLOAD_CACHE["cfg_at"] = now
+    return _OFFLOAD_CACHE["cfg"] or {}
+
+
+async def _offload_workers() -> List[Dict[str, Any]]:
+    now = time.monotonic()
+    if now - _OFFLOAD_CACHE["w_at"] > 3 and REDIS is not None:
+        out = []
+        try:
+            async for k in REDIS.scan_iter("vera:workers:*"):
+                try:
+                    vals = await REDIS.hmget(k, "role", "status", "classes")
+                except Exception:
+                    continue
+                role, status, classes = [(v.decode() if isinstance(v, bytes) else (v or "")) for v in vals]
+                if role == "node-worker":
+                    out.append({"role": role, "status": status, "classes": classes})
+        except Exception:
+            pass
+        _OFFLOAD_CACHE.update(w_at=now, workers=out)
+    return _OFFLOAD_CACHE["workers"]
+
+
+async def _node_offload(name: str, kw: dict) -> str:
+    """The class to offload this call to, or '' to run it here."""
+    if REDIS is None or _IS_WORKER:
+        return ""
+    cfg = await _offload_config()
+    if not int(cfg.get("stage") or 0):
+        return ""
+    try:
+        json.dumps(kw)
+        args_ok = True
+    except (TypeError, ValueError):
+        args_ok = False
+    free = _placement.free_workers(await _offload_workers(), _OFFLOAD_INFLIGHT)
+    ok, _why = _placement.offload_decision(
+        name, stage=cfg.get("stage"), free=free, is_worker=_IS_WORKER,
+        is_sandbox=is_dev_sandbox(), args_ok=args_ok, exclude=cfg.get("exclude") or ())
+    return _placement.class_of(name) if ok else ""
+
 
 async def _run_local(cap,task_id,payload,trace_id,bg=""):
     if bg: BACKGROUND_LLM.set(str(bg))     # this task's own context only
@@ -5726,6 +5783,9 @@ async def worker_loop(worker_id: str):
                 payload  = json.loads(data[b"payload"])
                 trace_id = data[b"trace_id"].decode()
                 bg_label = (data.get(b"bg") or b"").decode() if isinstance(data.get(b"bg"), bytes) else str(data.get(b"bg") or "")
+                # the asking process's own result stream (older dispatchers
+                # send none: their result goes to the shared stream as before)
+                reply_to = (data.get(b"reply_to") or b"").decode() if isinstance(data.get(b"reply_to"), bytes) else str(data.get(b"reply_to") or "")
                 cap      = CAPABILITY_REGISTRY.get(cap_name)
 
                 # Queued-cancel guard: if this task was stopped before a worker
@@ -5733,7 +5793,7 @@ async def worker_loop(worker_id: str):
                 if await _is_task_cancelled(task_id):
                     await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
                     await REDIS.xdel(_stream, msg_id)
-                    await REDIS.xadd(RESULT_STREAM, {
+                    await _post_result(reply_to, {
                         "id": task_id, "error": "cancelled", "trace_id": trace_id,
                     })
                     await emit_event({"type": "worker.cancelled",
@@ -5759,6 +5819,7 @@ async def worker_loop(worker_id: str):
                         "id": task_id, "capability": cap_name,
                         "payload": json.dumps(payload), "trace_id": trace_id,
                         "ts": now_iso(), **({"bg": bg_label} if bg_label else {}),
+                        **({"reply_to": reply_to} if reply_to else {}),
                     }, maxlen=5000, approximate=True)
                     await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
                     await REDIS.xdel(_stream, msg_id)
@@ -5810,10 +5871,11 @@ async def worker_loop(worker_id: str):
                             "id": task_id, "capability": cap_name,
                             "payload": json.dumps(payload), "trace_id": trace_id, "ts": now_iso(),
                             **({"bg": bg_label} if bg_label else {}),
+                        **({"reply_to": reply_to} if reply_to else {}),
                         }, maxlen=5000, approximate=True)
                     else:
                         log.warning("Worker %s: no handler for %s on any worker", worker_id, cap_name)
-                        await REDIS.xadd(RESULT_STREAM, {
+                        await _post_result(reply_to, {
                             "id": task_id, "error": f"no_worker_for:{cap_name}", "trace_id": trace_id,
                         })
                         await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
@@ -5849,7 +5911,7 @@ async def worker_loop(worker_id: str):
                     try:
                         result = await inner
                         _act["result"] = result
-                        await REDIS.xadd(RESULT_STREAM, {
+                        await _post_result(reply_to, {
                             "id": task_id, "result": json.dumps(result), "trace_id": trace_id,
                         }, maxlen=5000)
                         WORKER_REGISTRY[worker_id]["tasks_done"] += 1
@@ -5857,7 +5919,7 @@ async def worker_loop(worker_id: str):
                     except asyncio.CancelledError:
                         # Intentional cancel of the inner task — not the worker loop.
                         _act["error"] = "cancelled"
-                        await REDIS.xadd(RESULT_STREAM, {
+                        await _post_result(reply_to, {
                             "id": task_id, "error": "cancelled", "trace_id": trace_id,
                         })
                         await emit_event({
@@ -5865,7 +5927,7 @@ async def worker_loop(worker_id: str):
                         })
                     except Exception as e:
                         _act["error"] = str(e)[:300]
-                        await REDIS.xadd(RESULT_STREAM, {
+                        await _post_result(reply_to, {
                             "id": task_id, "error": str(e), "trace_id": trace_id,
                         })
                         WORKER_REGISTRY[worker_id]["tasks_failed"] += 1
@@ -5884,6 +5946,20 @@ async def worker_loop(worker_id: str):
                 WORKER_REGISTRY[worker_id]["status"] = "idle"
                 WORKER_REGISTRY[worker_id]["current_task"] = ""
                 WORKER_REGISTRY[worker_id]["task_started"] = ""
+
+async def _post_result(reply_to: str, fields: dict, **_kw) -> None:
+    """A task's result, to the process that asked (its reply stream), else the
+    shared result stream. The reply stream expires on its own once the asking
+    process is gone."""
+    if reply_to:
+        await REDIS.xadd(reply_to, fields, maxlen=1000, approximate=True)
+        try:
+            await REDIS.expire(reply_to, _placement.REPLY_TTL_S)
+        except Exception:
+            pass
+        return
+    await REDIS.xadd(RESULT_STREAM, fields, maxlen=5000)
+
 
 async def _worker_activity(worker_id: str, cap_name: str, cap: dict, payload: dict,
                            trace_id: str, bg: str, act: dict) -> None:
@@ -5908,6 +5984,42 @@ async def _worker_activity(worker_id: str, cap_name: str, cap: dict, payload: di
                          approximate=True)
     except Exception as e:
         log.debug("worker activity record: %s", e)
+
+
+#: This process, for its reply stream (a hostname is not enough: prod and
+#: stray orchestrators share one host).
+PROCESS_TAG = f"{os.uname().nodename}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
+
+
+async def reply_listener():
+    """Results addressed to THIS process (dispatch_task's reply_to). A plain
+    XREAD - no consumer group - so no other process can take them."""
+    if not REDIS:
+        return
+    stream = _placement.reply_stream(PROCESS_TAG)
+    last = "0"
+    log.info("Reply listener started (%s)", stream)
+    while True:
+        try:
+            resp = await REDIS.xread({stream: last}, count=20, block=5000)
+        except Exception as e:
+            log.debug("reply_listener: %s", e)
+            await asyncio.sleep(2)
+            continue
+        for _, messages in resp or []:
+            for msg_id, data in messages:
+                last = msg_id
+                task_id = data[b"id"].decode()
+                fut = PENDING_RESULTS.pop(task_id, None)
+                if fut and not fut.done():
+                    if b"result" in data:
+                        fut.set_result(json.loads(data[b"result"]))
+                    else:
+                        fut.set_result({"error": data.get(b"error", b"unknown").decode()})
+                try:
+                    await REDIS.xdel(stream, msg_id)
+                except Exception:
+                    pass
 
 
 async def result_listener():
@@ -6683,8 +6795,17 @@ def capability(
                             })
                             raise PolicyEnforcementDenied(
                                 name, _policy_shadow["verdict"])
-                    if mode=="distributed" and REDIS:
-                        task_id=await dispatch_task(name,kw,tid)
+                    _off_cls = "" if mode == "distributed" else await _node_offload(name, kw)
+                    if REDIS and (mode == "distributed" or _off_cls):
+                        if _off_cls:
+                            _OFFLOAD_INFLIGHT[_off_cls] = _OFFLOAD_INFLIGHT.get(_off_cls, 0) + 1
+                            _OFFLOAD_SENT[_off_cls] = _OFFLOAD_SENT.get(_off_cls, 0) + 1
+                        try:
+                            task_id=await dispatch_task(name,kw,tid,bg=BACKGROUND_LLM.get("") or "")
+                        except Exception:
+                            if _off_cls:
+                                _OFFLOAD_INFLIGHT[_off_cls] = max(0, _OFFLOAD_INFLIGHT.get(_off_cls, 1) - 1)
+                            raise
                         # Per-cap timeout: LLM caps need 240-300s, research
                         # needs 60s, DAG composer caps need 600s. The previous
                         # 30s blanket default caused every llm.generate inside
@@ -6692,7 +6813,11 @@ def capability(
                         # Honour an explicit `_timeout` field in payload kw if
                         # the caller has special needs.
                         _t = float(kw.pop("_timeout", 0)) or _cap_timeout(name)
-                        result =await wait_for_result(task_id, timeout=_t)
+                        try:
+                            result =await wait_for_result(task_id, timeout=_t)
+                        finally:
+                            if _off_cls:
+                                _OFFLOAD_INFLIGHT[_off_cls] = max(0, _OFFLOAD_INFLIGHT.get(_off_cls, 1) - 1)
                     else:
                         # Filter kwargs to only those the function accepts,
                         # preventing TypeError on unexpected keyword arguments
@@ -11377,6 +11502,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_connect_backends())       # DB connections with retry — non-blocking
     asyncio.create_task(worker_loop(worker_id))
     asyncio.create_task(result_listener())
+    asyncio.create_task(reply_listener())
     asyncio.create_task(cancel_listener())
     asyncio.create_task(scheduler_loop())
     asyncio.create_task(instance_health_loop(interval=20))
