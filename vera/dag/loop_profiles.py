@@ -528,7 +528,7 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
         "agent": "researcher-scout",
         "family": ["research", "web"],
         "description": "Runs Vera's research pipeline toward a question and writes up what came back with its sources. The one profile whose work is genuinely long-running, which is why its census carries a 3600s cap.",
-        "caps": ["research.run", "research.job.status", "research.job.result", "research.history", "web.search", "web.fetch", "nlp.rerank", "nlp.ner", "prose.author"],
+        "caps": ["research.run", "research.job.status", "research.job.result", "research.history", "web.research", "web.search", "web.fetch", "nlp.rerank", "nlp.ner", "prose.author"],
         "skills": "",
         "panels": True,
         "defaults": {"enable_tiering": True},

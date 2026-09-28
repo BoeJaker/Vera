@@ -2816,12 +2816,17 @@ async def _startup():
     log.info("project_capabilities: ready")
 
 
-# Use the standard module-startup pattern from the rest of the codebase
+# Use the standard module-startup pattern from the rest of the codebase - through
+# the orchestrator, so a node worker (which must not arm the project trigger)
+# skips it.
 try:
+    import Vera.vera.capability_orchestration as _co_start
     loop = asyncio.get_event_loop()
     if loop.is_running():
-        asyncio.create_task(_startup())
-    else:
+        _co_start.start_at_import(_startup, "project_startup")
+    elif _co_start._placement.scheduler_may_run(
+            "project_startup", _co_start._placement.STARTUP_INTERVAL,
+            is_worker=_co_start._IS_WORKER):
         loop.run_until_complete(_startup())
 except Exception as e:
     log.debug("project startup: %s", e)

@@ -621,6 +621,16 @@ async def cap_web_fetch(
     title        = fp.get("title", "")
     status       = fp.get("status", 0)
     block_reason = fp.get("block_reason", "")
+    # A 404 / 410 came back `ok` with the not-found page's text, so an agent
+    # loop that invented a URL "fetched" it successfully and cited it (census
+    # run58 research-report: a typo'd redis.io/news URL fetched twice). Not
+    # found is not content: say so, the way a transport failure is said.
+    if status in (404, 410):
+        await emit_event({"type": "web.fetch.error", "url": url, "error": f"HTTP {status}"})
+        return {"ok": False, "error": f"HTTP {status}: no page at this URL - check the address "
+                                      "(web.search finds the right one) rather than retrying it",
+                "url": url, "domain": domain, "status_code": status, "title": title,
+                "text": "", "chars": 0}
     via_reader   = bool(fp.get("via_reader"))
     via_api      = fp.get("via_api", "")
     reader_error = fp.get("reader_error", "")

@@ -25,16 +25,12 @@ OPERATOR_MODEL_CAPS = frozenset({
 })
 
 
-def _variants(name: str) -> set:
-    n = str(name or "").strip()
-    if not n:
-        return set()
-    out = {n}
-    if n.endswith(":latest"):
-        out.add(n[: -len(":latest")])
-    elif ":" not in n.rsplit("/", 1)[-1]:
-        out.add(n + ":latest")
-    return out
+# The same rule the routers use for "does this node have this model" - one
+# definition, so a name that routes cannot be a name the operator rejects.
+try:
+    from Vera.vera.model_tag_core import variants as _variants
+except Exception:  # pragma: no cover - worktree / test layout
+    from ..model_tag_core import variants as _variants
 
 
 def model_is_served(model: str, served: Iterable[str]) -> bool:
@@ -49,27 +45,61 @@ def model_is_served(model: str, served: Iterable[str]) -> bool:
     return False
 
 
+def split_provider(provider: Any) -> Tuple[str, str]:
+    """`"ollama:fast-preview"` -> ("ollama", "fast-preview"); `"local"` ->
+    ("local", ""). The same split the operator's thinker applies, so a model
+    smuggled in through `provider` is seen here before it reaches Ollama."""
+    p = str(provider or "").strip()
+    if ":" in p:
+        name, model = p.split(":", 1)
+        return name.strip(), model.strip()
+    return p, ""
+
+
+def names_a_model(args: Optional[Dict[str, Any]]) -> bool:
+    """True when the step named a model at all - in `model`, or inside
+    `provider` as "<name>:<model>". The loop's call site used to ask only
+    `args.get("model")` before running the heal, so a model carried by
+    `provider` alone was never looked at: operator census run3 (2026-09-24),
+    `operator-form-validation` - `fast-8b` reached Ollama, 404'd three thinks
+    in five seconds, and the run died `think_error` with nothing observed.
+    heal_model_arg already read both shapes; the gate in front of it did not."""
+    if not isinstance(args, dict):
+        return False
+    if str(args.get("model") or "").strip():
+        return True
+    return bool(split_provider(args.get("provider"))[1])
+
+
 def heal_model_arg(tool: str, args: Optional[Dict[str, Any]],
                    served: Iterable[str]) -> List[Tuple[str, Any, str]]:
     """Return [(field, new_value, note)] edits for `args` of `tool`.
 
-    Only for the operator capabilities, only when the step SET a model, and
-    only when the catalogue is non-empty and does not contain it. The edit
-    clears the field so the routed default applies; the note says what was
-    dropped, for the run's event stream.
+    Only for the operator capabilities, only when the step SET a model - in
+    `model`, or inside `provider` as "<name>:<model>" (census run59, 2026-09-22:
+    `provider: "...:fast-preview"` walked straight past a check that read only
+    `model`, and its three instant 404s took the GPU node offline) - and only
+    when the catalogue is non-empty and does not contain it. The edit clears
+    the model so the routed default applies; the note says what was dropped,
+    for the run's event stream.
     """
     if tool not in OPERATOR_MODEL_CAPS or not isinstance(args, dict):
-        return []
-    model = str(args.get("model") or "").strip()
-    if not model:
         return []
     catalogue = [str(s) for s in (served or []) if str(s or "").strip()]
     if not catalogue:
         return []
-    if model_is_served(model, catalogue):
-        return []
-    return [("model", "", f"model {model!r} is not served by any Ollama node -> dropped "
-                          f"(the routed default applies; a made-up name 404s every think)")]
+    edits: List[Tuple[str, Any, str]] = []
+    model = str(args.get("model") or "").strip()
+    if model and not model_is_served(model, catalogue):
+        edits.append(("model", "", f"model {model!r} is not served by any Ollama node -> dropped "
+                                   f"(the routed default applies; a made-up name 404s every think)"))
+    pname, pmodel = split_provider(args.get("provider"))
+    if pmodel and not model_is_served(pmodel, catalogue):
+        edits.append(("provider", pname,
+                      f"provider {str(args.get('provider')).strip()!r} names model {pmodel!r}, "
+                      f"which no Ollama node serves -> provider {pname!r} (the routed default "
+                      f"applies; a made-up name 404s every think)"))
+    return edits
 
 
 def is_model_not_found_error(err: Any) -> bool:

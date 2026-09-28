@@ -660,7 +660,10 @@ async def _default_hf_home(node: Dict) -> str:
                 "(list! of keys from nodes.components), backend (str='auto' — "
                 "force docker|proxmox|ssh for all), options (dict — gpus:'all', "
                 "model:'HF id' for vllm, hf_home, port overrides {component: "
-                "port}, quantization, install_deps:bool). Output: {ok, node, "
+                "port}, quantization, install_deps:bool, num_thread:int — a CPU "
+                "Ollama node's runner threads, default 6, worker:bool=true — an "
+                "Ollama node also gets a native vera-worker, worker_source "
+                "'host'|'git', worker_threads:int). Output: {ok, node, "
                 "steps:[{component,backend,action,warning}], warnings}.",
 )
 async def cap_nodes_provision_plan(node_id: str = "",
@@ -676,6 +679,15 @@ async def cap_nodes_provision_plan(node_id: str = "",
     if not node:
         return {"error": f"node not found: {node_id}"}
     opt = options or {}
+    # An Ollama node is also a Vera worker: it takes the node-safe tasks off
+    # the shared stream (worker_placement_core). Native over SSH - these nodes
+    # are unprivileged LXC containers, where Docker is not an option.
+    # options.worker=false opts out.
+    worker_added = False
+    if ("ollama" in components and "vera-worker" not in components
+            and opt.get("worker", True) is not False):
+        components = components + ["vera-worker"]
+        worker_added = True
     ports = opt.get("ports") or {}
     warnings: List[str] = []
     steps: List[Dict] = []
@@ -688,6 +700,12 @@ async def cap_nodes_provision_plan(node_id: str = "",
     for key in ordered:
         comp = _COMPONENTS[key]
         b, warn = _resolve_backend(comp, node, backend, will_have_docker)
+        if key == "vera-worker" and worker_added:
+            if node.get("ssh_host_id"):
+                b, warn = "ssh", ""
+            else:
+                b, warn = "", ("the node worker installs natively over SSH — "
+                               "store an SSH credential for this node")
         if not b:
             steps.append({"component": key, "backend": "", "action": "SKIP",
                           "warning": warn})
@@ -745,7 +763,9 @@ async def cap_nodes_provision_plan(node_id: str = "",
             action = f"docker.stack.deploy service={key}"
         steps.append({"component": key, "backend": b,
                       "action": action or f"{key} via {b}",
-                      "port": ports.get(key), "warning": ""})
+                      "port": ports.get(key), "warning": "",
+                      **({"auto_added": True} if key == "vera-worker" and worker_added
+                         else {})})
 
     if any(s["component"] == "vllm" and s["action"] != "SKIP" for s in steps):
         hf = opt.get("hf_home") or await _default_hf_home(node)
@@ -796,7 +816,8 @@ async def _ensure_docker_host(node: Dict) -> Dict:
     return {"ok": True, "docker_host_id": dhid, "installed": True}
 
 
-async def _register_ollama(node: Dict, port: int, has_gpu: bool) -> Dict:
+async def _register_ollama(node: Dict, port: int, has_gpu: bool,
+                           num_thread: Any = None) -> Dict:
     add = _rawcap("ollama.add_instance")
     if not add:
         return {"error": "ollama.add_instance unavailable"}
@@ -807,11 +828,14 @@ async def _register_ollama(node: Dict, port: int, has_gpu: bool) -> Dict:
     plan = _ollama_core.registration_plan(
         getattr(_orch, "OLLAMA_INSTANCES", {}) or {}, addr, port, has_gpu,
         preferred_id=f"node-{re.sub(r'[^a-zA-Z0-9]+', '-', addr)}-{port}")
+    # The runner thread count is recorded on the node itself: Ollama has no
+    # server-side setting, so every request carries it from the registry.
+    nt = _ollama_core.registration_threads(has_gpu, num_thread)
     res = await add(id=plan["instance_id"], url=plan["url"], has_gpu=has_gpu,
-                    label=f"{node.get('label', addr)} (ollama)")
+                    label=f"{node.get('label', addr)} (ollama)", num_thread=nt)
     return {"ok": True, "instance_id": plan["instance_id"], "url": plan["url"],
             "reused": plan["action"] == "reuse", "reason": plan["reason"],
-            "result": res}
+            "num_thread": nt, "result": res}
 
 
 async def _register_vllm(node: Dict, port: int, api_key: str = "") -> Dict:
@@ -846,7 +870,8 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
         out = {"ok": bool(res.get("ok")), "deploy": res}
         if key == "ollama" and res.get("ok"):
             out["register"] = await _register_ollama(
-                node, int(ports.get("ollama") or 11434), bool(gpus))
+                node, int(ports.get("ollama") or 11434), bool(gpus),
+                num_thread=opt.get("num_thread"))
         return out
 
     # ── vLLM ─────────────────────────────────────────────────────────────────
@@ -947,7 +972,8 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
             active = _ollama_core.install_succeeded(r.get("stdout", ""))
             out = {"ok": active, "log": (r.get("stdout", "") or "")[-800:]}
             if active:
-                out["register"] = await _register_ollama(node, port, bool(gpus))
+                out["register"] = await _register_ollama(node, port, bool(gpus),
+                                                         num_thread=opt.get("num_thread"))
             return out
         inst = _rawcap("provision.install")
         if not inst:
@@ -958,7 +984,8 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
                           timeout=900)
         out = {"ok": bool(ires.get("ok")), "install": ires}
         if ires.get("ok"):
-            out["register"] = await _register_ollama(node, port, bool(gpus))
+            out["register"] = await _register_ollama(node, port, bool(gpus),
+                                                     num_thread=opt.get("num_thread"))
         return out
 
     # ── docker runtime ───────────────────────────────────────────────────────
@@ -974,7 +1001,9 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
         mode = "docker" if b == "docker" else "native"
         res = await wk(host_id=hid, mode=mode, gpus=gpus,
                        image=str(opt.get("image", "")),
-                       repo_url=str(opt.get("repo_url", "")))
+                       repo_url=str(opt.get("repo_url", "")),
+                       source=str(opt.get("worker_source", "")),
+                       threads=int(opt.get("worker_threads") or 0))
         return {"ok": bool(res.get("ok")), "worker": res}
 
     # ── bundled edge components over ssh ────────────────────────────────────
@@ -1004,10 +1033,13 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
                 "nodes.provision.plan) — Docker first, Proxmox for enrolled "
                 "LXC guests, SSH as the fallback — and register every new "
                 "endpoint (ollama/vllm instances, docker hosts, workers) into "
-                "Vera's cluster. Inputs: node_id (str!), components (list!), "
-                "backend (str='auto'), options (dict — gpus, model (HF id, "
-                "required for vllm), hf_home, ports{}, quantization, pve_node, "
-                "install_deps, vera_url, start). Emits nodes.provision.progress "
+                "Vera's cluster. An Ollama node is registered with its runner "
+                "thread count (CPU nodes; default 6) and also becomes a native "
+                "Vera node worker unless options.worker=false. Inputs: node_id "
+                "(str!), components (list!), backend (str='auto'), options (dict "
+                "— gpus, model (HF id, required for vllm), hf_home, ports{}, "
+                "quantization, pve_node, install_deps, vera_url, start, "
+                "num_thread, worker, worker_source, worker_threads). Emits nodes.provision.progress "
                 "events per step. Output: {ok, node_id, results:[{component,"
                 "backend,ok,…}]}.",
 )
@@ -2327,7 +2359,8 @@ async def cap_provision_apply(target: str = "",
                                             node,
                                             int((opt.get("ports") or {}).get("ollama")
                                                 or 11434),
-                                            bool(opt.get("gpus"))))})
+                                            bool(opt.get("gpus")),
+                                            num_thread=opt.get("num_thread")))})
                     except Exception:
                         pass
 

@@ -234,6 +234,7 @@ def test_tombstones_hidden_by_default_and_text_can_be_redacted():
                                        include_text=False), access())
     assert page.hits[0].projection["memory_id"] == active.memory_id
     assert page.hits[0].projection["text"] == ""
+    assert page.hits[0].projection["citations"][0]["revision_id"] == REVISION_2
 
 
 def test_returned_nested_values_cannot_mutate_provider_state():

@@ -201,6 +201,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="ship" onclick="nav('ship')" title="Every branch &mdash; its pipeline, review, sandbox and tests &mdash; in one table, the commit graph, race lanes, authorship and gate strip below it"><span class="ic">&#8599;</span>Ship</button>
   <button class="btn" data-sec="agents" onclick="nav('agents')" title="Every agent session &mdash; Claude Code, Codex, a Vera loop, an edit-queue agent &mdash; with its board items, pipelines and sandboxes; the board by lane, notes and seats fold up under it"><span class="ic">&#9737;</span>Agents</button>
   <button class="btn" data-sec="mission" onclick="nav('mission')" title="Every event &mdash; actions, errors, gates &mdash; in one table, with what is live and what needs a person above it; the run-once and improve-live theatres fold up under it"><span class="ic">&#9673;</span>Mission control</button>
+  <button class="btn" data-sec="schedule" onclick="nav('schedule')" title="A calendar of Loop Lab work &mdash; censuses, suites, tasks, pipeline steps, board items &mdash; started by the scheduler only when the box is free"><span class="ic">🗓</span>Schedule</button>
   <button class="btn" data-sec="settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
 </div>
 
@@ -700,6 +701,40 @@ html.vpb-nav-hosted body{padding-left:0}
 </div>
 
 <!-- ── SETTINGS ── -->
+<!-- == SCHEDULE: a calendar of Loop Lab work - censuses, suites, tasks, pipeline steps,
+     board items, capabilities - each on a weekly window (or once), started by the
+     scheduler tick only when the box is free (no census beside a census, no census
+     beside a loop). The calendar is <vera-calendar> (reusable; /ui/elements/calendar.js);
+     the windows are read-only projections, the runs the scheduler started sit beside
+     them. Click an empty slot to make a schedule there; click a window to edit it. -->
+<div class="sec" id="sec-schedule" style="display:none">
+  <div class="card">
+    <div class="card-h">
+      <span class="card-t">SCHEDULE</span>
+      <span class="hint" id="sch-state">—</span>
+      <select id="sch-mode" onchange="schMode()" title="what the calendar shows: the schedules' windows, the results of every census run and suite over time, or both">
+        <option value="windows">windows</option><option value="results">results</option><option value="both">both</option>
+      </select>
+      <label class="row" style="gap:4px" id="sch-gran-wrap" title="results mode: one chip per run, or one per goal placed by its elapsed time"><input type="checkbox" id="sch-gran" style="width:auto" onchange="schMode()"> per goal</label>
+      <label class="row" style="gap:5px"><input type="checkbox" id="sch-enabled" style="width:auto" onchange="schCfgSave()"> scheduler on</label>
+      <button class="btn sm" onclick="schTick()" title="Run the scheduler pass now: close a finished census, apply window-end controls, start what is due">tick now</button>
+      <button class="btn sm primary" onclick="schOpen(null)">+ schedule</button>
+      <button class="btn sm" onclick="schSeed()" title="Censuses of the default template back to back, weekdays 05:00-17:00">+ weekday census</button>
+    </div>
+    <div class="row" style="align-items:flex-start;gap:12px">
+      <div style="flex:3;min-width:420px">
+        <vera-calendar id="sch-cal" src="/evolve/schedule/events" view="week" hour-start="4" hour-end="21" poll="60000"></vera-calendar>
+      </div>
+      <div style="flex:1;min-width:280px">
+        <div class="card-h"><span class="card-t" style="font-size:10.5px">Schedules</span></div>
+        <div id="sch-list" class="hint">loading…</div>
+        <div class="card-h" style="margin-top:10px"><span class="card-t" style="font-size:10.5px">Started by the scheduler</span></div>
+        <div id="sch-runs" class="hint">—</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="sec" id="sec-settings" style="display:none">
   <div class="card">
     <div class="card-h"><span class="card-t">Loop Lab configuration</span></div>
@@ -749,6 +784,7 @@ window._veraSubscribe=fn=>{_busSubs.add(fn);return ()=>_busSubs.delete(fn)};
 <script src="/ui/elements/ci_ops.js"></script>
 <script src="/ui/vera-dashboard.js"></script>
 <script src="/ui/elements/looplab_tables.js"></script>
+<script src="/ui/elements/calendar.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script>
 const $=id=>document.getElementById(id);
@@ -991,6 +1027,7 @@ function nav(sec){
     // absorbed before it: an old deep-link or injected nav item still lands
     // on the table that holds their data.
     pipelines:()=>nav('ship'),review:()=>nav('ship'),sources:()=>nav('ship'),sandbox:()=>nav('ship'),unittests:()=>nav('ship'),logs:()=>nav('ship'),
+    schedule:loadSchedule,
     settings:fillSettings}[sec];
   if(f)f();
   // The address bar says which page is open (a deep link says more).
@@ -1013,8 +1050,159 @@ function nav(sec){
 // generic nav_select fallback matches directly.
 if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'work', label:'Work'}, {id:'ship', label:'Ship'}, {id:'agents', label:'Agents'},
-  {id:'mission', label:'Mission control'}, {id:'settings', label:'Settings'},
+  {id:'mission', label:'Mission control'}, {id:'schedule', label:'Schedule'}, {id:'settings', label:'Settings'},
 ]);
+
+/* ═══ SCHEDULE — a calendar of Loop Lab work (evolve.schedule.*) ═══ */
+const SCH_KIND_LABEL={census:'Census',suite:'Suite',task:'Task',pipeline:'Pipeline',board:'Board item',cap:'Capability'};
+const SCH_DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+let _schCache={schedules:[],next:{},state:{},config:{}};
+async function loadSchedule(){
+  const d=await api('/evolve/schedule/list'); if(!d)return;
+  _schCache=d;
+  $('sch-enabled').checked=!!(d.config||{}).enabled;
+  const st=d.state||{};
+  $('sch-state').textContent=(st.census_running?'census in flight ('+(st.template||'')+' '+(st.census_run||'')+')':'box free')
+    +(st.loops_running?' · '+st.loops_running+' loop(s)':'')+(st.harness_blocked?' · '+st.harness_blocked:'')+' · tz '+((d.config||{}).timezone||'');
+  schList(); schRuns();
+  const cal=$('sch-cal'); if(cal&&typeof cal.refresh==='function')cal.refresh();
+}
+function schWhen(s){
+  if(s.once_at)return 'once '+String(s.once_at).replace('T',' ').slice(0,16);
+  const days=(s.days||[]).map(i=>SCH_DAYS[i]).join(' ');
+  const rep=s.repeat==='continuous'?'back to back':s.repeat==='every'?'every '+s.every_minutes+' min':'once per window';
+  return days+' '+s.start+'–'+s.end+' · '+rep;
+}
+function schList(){
+  const L=_schCache.schedules||[];
+  if(!L.length){$('sch-list').innerHTML='<span class="hint">no schedules yet — click an empty calendar slot, or + schedule</span>';return}
+  $('sch-list').innerHTML=L.map(s=>{
+    const nx=(_schCache.next||{})[s.id];
+    return '<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--border);padding:4px 0;gap:6px">'
+      +'<div style="flex:1;min-width:0"><div style="font-weight:600;'+(s.enabled?'':'opacity:.5;text-decoration:line-through')+'">'+esc(s.title)+'</div>'
+      +'<div class="hint">'+esc(SCH_KIND_LABEL[s.kind]||s.kind)+' · '+esc(schWhen(s))+(nx?' · next '+esc(String(nx.start).replace('T',' ').slice(5,16)):'')
+      +(s.last_started_at?' · last '+esc(String(s.last_started_at).replace('T',' ').slice(5,16))+' '+esc(s.last_result||''):'')+'</div></div>'
+      +'<div class="row" style="gap:3px;flex-wrap:nowrap">'
+      +'<button class="btn sm" onclick="schToggle(\''+s.id+'\','+(s.enabled?'false':'true')+')" title="'+(s.enabled?'switch off':'switch on')+'">'+(s.enabled?'on':'off')+'</button>'
+      +'<button class="btn sm" onclick="schRunNow(\''+s.id+'\')" title="start now, outside the window (still waits for a free box)">▶</button>'
+      +'<button class="btn sm" onclick="schOpen(\''+s.id+'\')" title="edit">✎</button>'
+      +'<button class="btn sm" onclick="schDelete(\''+s.id+'\')" title="delete">✕</button></div></div>';
+  }).join('');
+}
+async function schRuns(){
+  const d=await api('/evolve/schedule/history?limit=12'); const R=(d&&d.runs)||[];
+  $('sch-runs').innerHTML=R.length?R.map(r=>'<div class="hint" style="padding:2px 0">'+esc(String(r.started_at).replace('T',' ').slice(5,16))+' · '+esc(r.title||r.kind)+' · <b>'+esc(r.result||'')+'</b>'+(r.detail?' · '+esc(String(r.detail).slice(0,60)):'')+'</div>').join(''):'nothing yet';
+}
+function schKindFields(kind,t){
+  t=t||{};
+  const f=(id,label,val,ph)=>'<div><label class="fld">'+label+'</label><input id="'+id+'" value="'+esc(val||'')+'" placeholder="'+esc(ph||'')+'" style="width:100%"></div>';
+  if(kind==='census')return f('sch-t-template','Template',t.template||'default','default')
+    /* The loop's planning styles (planner_styles.LOOP_STYLES; the server
+       rejects any other). A forced style is its own archive series. */
+    +'<div><label class="fld">Planning style</label><select id="sch-t-style" style="width:100%" title="Forced on every goal; the run is archived in its own series (e.g. default-style-broad-runN) and compared only with runs of the same style">'
+    +[['','each goal’s own (auto) — the baseline series'],['auto','auto'],['flat','flat'],['stepwise','stepwise'],['detailed','detailed'],['broad','broad'],['broad-stepwise','broad-stepwise'],['stepwise-reviewed','stepwise-reviewed']]
+      .map(([v,l])=>'<option value="'+v+'"'+((t.plan_style||'')===v?' selected':'')+'>'+l+'</option>').join('')
+    +'</select></div>'
+    +'<div><label class="fld">At window end</label><select id="sch-t-awe" style="width:100%"><option value="finish">let the census in flight finish</option><option value="yield">yield (park after the goal in flight)</option><option value="drop">drop the set</option></select></div>';
+  if(kind==='suite')return f('sch-t-tag','Suite tag',t.tag,'e.g. nightly or census-default')+f('sch-t-profile','Profile (optional)',t.profile,'')
+    +'<div><label class="row" style="gap:6px;margin-top:16px"><input type="checkbox" id="sch-t-assess" style="width:auto" '+(t.assess?'checked':'')+'> assess</label></div>';
+  if(kind==='task')return f('sch-t-id','Task id',t.id,'evolve task id')
+    +'<div><label class="row" style="gap:6px;margin-top:16px"><input type="checkbox" id="sch-t-assess" style="width:auto" '+(t.assess?'checked':'')+'> assess</label></div>';
+  if(kind==='pipeline')return '<div><label class="fld">Action</label><select id="sch-t-action" style="width:100%" onchange="schPipeFields()"><option value="test">test (run the gate)</option><option value="promote">promote → bleeding-edge</option><option value="adopt">adopt a branch → bleeding-edge</option></select></div>'
+    +f('sch-t-id','Pipeline id',t.id,'')+f('sch-t-branch','Branch (adopt)',t.branch,'feat/…');
+  if(kind==='board')return f('sch-t-id','Board item id',t.id,'')+f('sch-t-executor','Executor',t.executor||'deterministic','deterministic')+f('sch-t-agent','Agent',t.agent||'orchestrator','orchestrator');
+  return f('sch-t-name','Capability',t.name,'e.g. evolve.errors.sync')+'<div><label class="fld">Arguments (JSON)</label><textarea id="sch-t-args" rows="3" style="width:100%">'+esc(JSON.stringify(t.arguments||{}))+'</textarea></div>';
+}
+function schPipeFields(){}
+function schOpen(id,prefill){
+  const s=id?(_schCache.schedules||[]).find(x=>x.id===id):null;
+  const r=s||Object.assign({kind:'census',target:{template:'default'},days:[0,1,2,3,4],start:'05:00',end:'17:00',
+    timezone:(_schCache.config||{}).timezone||'Europe/London',repeat:'continuous',every_minutes:60,at_window_end:'finish',exclusive:true,enabled:true,title:''},prefill||{});
+  const kindOpts=Object.keys(SCH_KIND_LABEL).map(k=>'<option value="'+k+'" '+(k===r.kind?'selected':'')+'>'+SCH_KIND_LABEL[k]+'</option>').join('');
+  const days=SCH_DAYS.map((d,i)=>'<label class="row" style="gap:3px"><input type="checkbox" class="sch-day" value="'+i+'" style="width:auto" '+((r.days||[]).indexOf(i)>=0?'checked':'')+'>'+d+'</label>').join('');
+  openModal('<div class="card-h"><span class="card-t">'+(s?'EDIT SCHEDULE':'NEW SCHEDULE')+'</span><button class="btn sm" onclick="closeModal()">✕</button></div>'
+    +'<div class="grid">'
+    +'<div><label class="fld">Title</label><input id="sch-title" value="'+esc(r.title||'')+'" placeholder="(from the kind and target)" style="width:100%"></div>'
+    +'<div><label class="fld">Kind</label><select id="sch-kind" style="width:100%" onchange="schKindChange()">'+kindOpts+'</select></div>'
+    +'</div><div class="grid" id="sch-target">'+schKindFields(r.kind,r.target)+'</div>'
+    +'<div class="card-h" style="margin-top:8px"><span class="card-t" style="font-size:10.5px">When</span></div>'
+    +'<div class="row" style="gap:10px">'+days+'</div>'
+    +'<div class="grid" style="margin-top:6px">'
+    +'<div><label class="fld">From</label><input id="sch-start" value="'+esc(r.start||'05:00')+'" placeholder="05:00" style="width:100%"></div>'
+    +'<div><label class="fld">To</label><input id="sch-end" value="'+esc(r.end||'17:00')+'" placeholder="17:00" style="width:100%"></div>'
+    +'<div><label class="fld">Timezone</label><input id="sch-tz" value="'+esc(r.timezone||'Europe/London')+'" style="width:100%"></div>'
+    +'<div><label class="fld">Repeat inside the window</label><select id="sch-repeat" style="width:100%"><option value="continuous">back to back (start the next when the last finished)</option><option value="once_per_window">once, when the window opens</option><option value="every">every N minutes</option></select></div>'
+    +'<div><label class="fld">Every (minutes)</label><input id="sch-every" type="number" min="1" value="'+esc(r.every_minutes||60)+'" style="width:100%"></div>'
+    +'<div><label class="fld">Or once at (ISO, leave blank for weekly)</label><input id="sch-once" value="'+esc(r.once_at||'')+'" placeholder="2026-09-22T09:00" style="width:100%"></div>'
+    +'</div><div class="row" style="margin-top:8px;gap:14px">'
+    +'<label class="row" style="gap:5px"><input type="checkbox" id="sch-excl" style="width:auto" '+(r.exclusive!==false?'checked':'')+'> never beside a census</label>'
+    +'<label class="row" style="gap:5px"><input type="checkbox" id="sch-on" style="width:auto" '+(r.enabled!==false?'checked':'')+'> enabled</label>'
+    +'<span style="flex:1"></span><button class="btn primary" onclick="schSave(\''+(s?s.id:'')+'\')">Save</button></div>'
+    +'<div class="hint" style="margin-top:6px">A census needs the box to itself: it starts only when no census and no agent loop is running. Pipelines may reach bleeding-edge, never main.</div>');
+  $('sch-repeat').value=r.repeat||'continuous';
+  if(r.kind==='census'&&$('sch-t-awe'))$('sch-t-awe').value=r.at_window_end||'finish';
+  if(r.kind==='pipeline'&&$('sch-t-action'))$('sch-t-action').value=(r.target||{}).action||'test';
+}
+function schKindChange(){const k=$('sch-kind').value;$('sch-target').innerHTML=schKindFields(k,{});if(k==='census')$('sch-repeat').value='continuous';else if($('sch-repeat').value==='continuous')$('sch-repeat').value='once_per_window'}
+function schReadTarget(kind){
+  const v=id=>{const e=$(id);return e?e.value.trim():''};
+  if(kind==='census')return {template:v('sch-t-template')||'default',plan_style:v('sch-t-style')};
+  if(kind==='suite')return {tag:v('sch-t-tag'),profile:v('sch-t-profile'),assess:!!($('sch-t-assess')||{}).checked};
+  if(kind==='task')return {id:v('sch-t-id'),assess:!!($('sch-t-assess')||{}).checked};
+  if(kind==='pipeline')return {action:v('sch-t-action')||'test',id:v('sch-t-id'),branch:v('sch-t-branch')};
+  if(kind==='board')return {id:v('sch-t-id'),executor:v('sch-t-executor')||'deterministic',agent:v('sch-t-agent')||'orchestrator'};
+  let args={};try{args=JSON.parse(v('sch-t-args')||'{}')}catch(_){toast('arguments must be JSON');throw new Error('bad json')}
+  return {name:v('sch-t-name'),arguments:args};
+}
+async function schSave(id){
+  const kind=$('sch-kind').value; let target; try{target=schReadTarget(kind)}catch(_){return}
+  const rec={id:id||undefined,title:$('sch-title').value.trim(),kind,target,
+    days:[...document.querySelectorAll('.sch-day:checked')].map(e=>+e.value),
+    start:$('sch-start').value.trim(),end:$('sch-end').value.trim(),timezone:$('sch-tz').value.trim(),
+    repeat:$('sch-repeat').value,every_minutes:+$('sch-every').value||60,once_at:$('sch-once').value.trim(),
+    exclusive:$('sch-excl').checked,enabled:$('sch-on').checked};
+  if(kind==='census'&&$('sch-t-awe'))rec.at_window_end=$('sch-t-awe').value;
+  const d=await api('/evolve/schedule/upsert',{method:'POST',body:JSON.stringify({schedule:rec})});
+  if(!d||!d.ok){toast('not saved: '+((d&&d.error)||'?'));return}
+  closeModal();toast('saved · next '+(d.next?String(d.next.start).replace('T',' ').slice(0,16):'—'));loadSchedule();
+}
+async function schDelete(id){if(!confirm('Delete this schedule? A census it started keeps running.'))return;const d=await api('/evolve/schedule/delete',{method:'POST',body:JSON.stringify({id})});if(d&&d.ok)toast('deleted');loadSchedule()}
+async function schToggle(id,on){const d=await api('/evolve/schedule/enable',{method:'POST',body:JSON.stringify({id,enabled:on})});if(!d||!d.ok)toast('failed');loadSchedule()}
+async function schRunNow(id){toast('starting…');const d=await api('/evolve/schedule/run_now',{method:'POST',body:JSON.stringify({id})});
+  const s=(d&&d.started&&d.started[0]);const k=(d&&d.skipped&&d.skipped[0]);
+  toast(s?(s.result+(s.detail?': '+s.detail:'')):k?('not started: '+k.reason):'no change');loadSchedule()}
+async function schTick(){const d=await api('/evolve/schedule/tick',{method:'POST',body:'{}'});toast(d?('started '+((d.started||[]).length)+' · controls '+((d.controls||[]).length)):'tick failed');loadSchedule()}
+async function schSeed(){const d=await api('/evolve/schedule/seed_weekday_census',{method:'POST',body:'{}'});toast(d&&d.ok?(d.existing?'already there':'weekday census schedule added'):'failed');loadSchedule()}
+async function schCfgSave(){const d=await api('/evolve/schedule/config/set',{method:'POST',body:JSON.stringify({enabled:$('sch-enabled').checked})});toast(d&&d.ok?('scheduler '+(d.config.enabled?'on':'off')):'failed');loadSchedule()}
+// Results mode: every archived census run / suite as a span coloured by its
+// pass rate, so the series reads on the calendar; per goal places each task
+// by its elapsed time. Remembered per browser.
+function schMode(){
+  const cal=$('sch-cal'); if(!cal)return;
+  const mode=$('sch-mode').value, gran=$('sch-gran').checked?'goals':'runs';
+  try{localStorage.setItem('loop-lab.sch.mode',mode);localStorage.setItem('loop-lab.sch.gran',gran)}catch(_){}
+  cal.setAttribute('src','/evolve/schedule/events?mode='+mode+'&granularity='+gran);
+}
+function schResultModal(ev){
+  const rows=(ev.rows||[]).map(r=>'<tr><td>'+esc(r.label||'')+'</td><td>'+esc(r.status||'')+(r.hit_cap?' (cap)':'')+'</td><td>'+esc(r.checks||'')+'</td><td style="text-align:right">'+(r.elapsed_s!=null?Math.round(r.elapsed_s)+' s':'')+'</td></tr>').join('');
+  openModal('<div class="card-h"><span class="card-t">'+esc(ev.title||'')+'</span><button class="btn sm" onclick="closeModal()">✕</button></div>'
+    +'<div class="hint" style="margin-bottom:6px">'+esc(ev.kind||'')+' · '+esc(ev.tag||'')+' · '+esc(String(ev.start||'').replace('T',' ').slice(0,16))+' → '+esc(String(ev.end||'').replace('T',' ').slice(11,16))
+    +(ev.pass_rate!=null?' · pass rate '+Math.round(ev.pass_rate*100)+'%':'')+'</div>'
+    +(rows?'<table><thead><tr><th>goal</th><th>status</th><th>checks</th><th style="text-align:right">wall</th></tr></thead><tbody>'+rows+'</tbody></table>':'<div class="hint">'+esc(ev.status||'')+(ev.checks?' · '+esc(ev.checks):'')+'</div>')
+    +(ev.suite_id?'<div class="row" style="margin-top:8px"><button class="btn sm" onclick="closeModal();nav(\'work\')">open in Work</button></div>':''));
+}
+// The calendar: an empty slot makes a schedule there (a weekly window on that
+// weekday from that hour); a window chip opens its schedule; a results chip
+// opens the run.
+document.addEventListener('DOMContentLoaded',()=>{
+  const cal=$('sch-cal'); if(!cal)return;
+  try{const m=localStorage.getItem('loop-lab.sch.mode');if(m&&$('sch-mode'))$('sch-mode').value=m;if($('sch-gran'))$('sch-gran').checked=localStorage.getItem('loop-lab.sch.gran')==='goals';if(m)schMode()}catch(_){}
+  cal.addEventListener('slot-select',e=>{
+    const d=e.detail; const dt=new Date(d.date+'T00:00:00'); const wd=(dt.getDay()+6)%7; const hh=String(d.hour).padStart(2,'0');
+    schOpen(null,{days:[wd],start:hh+':00',end:(String(Math.min(23,d.hour+3)).padStart(2,'0'))+':00'});
+  });
+  cal.addEventListener('event-open',e=>{const ev=e.detail.event||{};if(ev.source==='results')schResultModal(ev);else if(ev.schedule_id)schOpen(ev.schedule_id);else if(ev.detail)toast(ev.title+' · '+ev.detail)});
+});
 
 /* ═══ TEST GENERATION — LLM-propose pytest for a branch (route-forward M3.4) ═══ */
 async function genTests(){
@@ -2561,7 +2749,17 @@ var _cenBase={};             // run_id -> compare-base run_id
 var _cenLanded=null;         // /census/landed by_run, fetched once per load
 var _cenBoard=null;          // /census/board by_run, fetched once per load
 var _cenRecCache={};         // run_id -> records (invalidated for 'current' when a goal lands)
+var _cenStyle='';            // planning style filter ('' = every style)
 function setCensusTemplate(v){ _cenTemplate=String(v||''); renderCensusTable(); }
+function setCensusStyle(v){ _cenStyle=String(v||''); renderCensusTable(); _cenRenderChartsForStyle(); }
+/* The charts follow the style filter too: a trend line through runs of
+   different styles would chart the style changes, not the code's. */
+function _cenRenderChartsForStyle(){
+  renderCensusCharts(_cenRunsAll.filter(s=>!s.excluded&&(!_cenStyle||_cenStyleOf(s)===_cenStyle)));
+}
+/* The planning style a census run measured (census_core.run_plan_style). Runs
+   written before styles existed planned the only way there was - auto. */
+function _cenStyleOf(s){ return (s&&s.plan_style)||'auto'; }
 function toggleCensusPartial(on){ _cenShowPartial=!!on; renderCensusTable(); }
 function setCensusText(v){ _cenText=String(v||'').trim().toLowerCase(); renderCensusTable(); }
 function setCensusStatus(v){ _cenStatusF=String(v||''); renderCensusTable(); }
@@ -2592,7 +2790,7 @@ async function loadCensusRuns(){
     ?(esc(t.from)+' → '+esc(t.to)+': '+t.done_from+' → '+t.done_to+'/'+t.of_goals+' done <b>('+(t.delta>=0?'+':'')+t.delta+')</b>'
       +' <span class="hint">'+(tr?'counters reconcile':'counters suspect')+'</span>')
     :(((r&&r.count)||_cenRunsAll.length)+' run(s) · '+((r&&r.complete_count)||0)+' usable — need 2 usable runs for a trend');
-  renderCensusCharts(_cenRunsAll.filter(s=>!s.excluded));
+  _cenRenderChartsForStyle();
   // Context per run (what landed before it, what the board says it found or
   // fixed) — fetched once and shown inside the expanded row.
   Promise.all([api('/census/landed').catch(()=>null),api('/census/board').catch(()=>null)]).then(([L,B])=>{
@@ -2602,10 +2800,13 @@ async function loadCensusRuns(){
 }
 var _cenRunsMeta={};
 
-/* The previous USABLE run of the same template - the honest default base for
-   a comparison. Runs of a different template are never compared. */
+/* The previous USABLE run of the same template AND the same planning style -
+   the honest default base for a comparison. Runs of a different template are
+   never compared, and a broad run against an auto run measures the style, not
+   the code. */
 function _cenDefaultBase(run){
-  const same=_cenRunsAll.filter(s=>s.run_id!==run.run_id&&!s.excluded&&(s.template||'')===(run.template||''));
+  const same=_cenRunsAll.filter(s=>s.run_id!==run.run_id&&!s.excluded&&(s.template||'')===(run.template||'')
+    &&_cenStyleOf(s)===_cenStyleOf(run));
   if(!same.length)return '';
   same.sort((a,b)=>(b.ended_at||0)-(a.ended_at||0));
   const older=same.filter(s=>(s.ended_at||0)<=(run.ended_at||Infinity));
@@ -2621,7 +2822,8 @@ function _cenRow(s){
   const name=live?('<span style="color:'+(isLive?'#3cb371':'#8a8a8a')+'">●</span> current'+(hz.template?(' <span class="hint">→ '+esc(hz.template)+' run</span>'):'')):eid('census',s.run_id);
   return '<tr class="clk cen-run" data-run="'+esc(s.run_id)+'" onclick="toggleCensusRun(\''+esc(s.run_id)+'\')">'
     +'<td class="mono">'+(open?'▾':'▸')+' '+name+excl+(s.reruns?(' <span class="tag" title="goals re-run after a pause or interruption">↻'+s.reruns+'</span>'):'')+'</td>'
-    +'<td class="mono hint">'+esc(s.template||(live&&hz.template)||'unlabelled')+'</td>'
+    +'<td class="mono hint">'+esc(s.template||(live&&hz.template)||'unlabelled')
+      +' <span class="tag" title="planning style this run measured - only runs of the same template AND style are comparable">'+esc(_cenStyleOf(s))+'</span></td>'
     +'<td>'+_cenCode(live&&!(s.code&&(s.code.codes||[]).length)&&hz.code?{codes:[(hz.code.sha_short||'')+'@'+(hz.code.branch||'')],segments:[{code:(hz.code.sha_short||'')+'@'+(hz.code.branch||''),first_goal:'(live)',goals:0}],changed:false,unknown_goals:0,recorded_goals:0}:s.code)+'</td>'
     +'<td class="mono hint">'+_cenWhen(s.ended_at)+'</td>'
     +'<td>'+s.goals+(live&&hz.goals_total?('<span class="hint">/'+hz.goals_total+'</span>'):'')+'</td>'
@@ -2666,6 +2868,7 @@ function renderCensusTable(){
   const onCommit=(codes)=>!filterCommit||(codes||[]).some(c=>{const sha=String(c||'').split('@')[0];return sha&&(sha.startsWith(filterCommit)||filterCommit.startsWith(sha))});
   const match=s=>{
     if(_cenTemplate&&(_cenTemplate===' unlabelled'?!!s.template:(s.template||'')!==_cenTemplate))return false;
+    if(_cenStyle&&_cenStyleOf(s)!==_cenStyle)return false;
     if(!_cenShowPartial&&s.excluded&&s.run_id!=='current')return false;
     if(_cenStatusF==='usable'&&s.excluded)return false;
     if(_cenStatusF==='excluded'&&!s.excluded)return false;
@@ -2673,11 +2876,11 @@ function renderCensusTable(){
     // problems: a goal hit its cap or errored, or the run is not usable history
     if(_cenStatusF==='problems'&&!((s.wall_capped||0)>0||(s.other||0)>0||s.excluded))return false;
     if(filterCommit&&!onCommit((s.code||{}).codes))return false;
-    if(q){const hay=[s.run_id,s.template,(s.provenance||{}).operator,(s.provenance||{}).tool,((s.routing||{}).coders||[]).join(' '),Object.keys((s.routing||{}).nodes||{}).join(' ')].join(' ').toLowerCase(); if(hay.indexOf(q)<0)return false}
+    if(q){const hay=[s.run_id,s.template,_cenStyleOf(s),(s.provenance||{}).operator,(s.provenance||{}).tool,((s.routing||{}).coders||[]).join(' '),Object.keys((s.routing||{}).nodes||{}).join(' ')].join(' ').toLowerCase(); if(hay.indexOf(q)<0)return false}
     return true;
   };
   const shown=runs.filter(match).sort((a,b)=>(a.run_id==='current')?-1:((b.run_id==='current')?1:((b.ended_at||0)-(a.ended_at||0))));
-  const ops=(_cenStatusF===''||_cenStatusF==='operator')&&!_cenTemplate&&(!q||'operator'.indexOf(q)>=0)?_cenOpRuns.slice().reverse():[];
+  const ops=(_cenStatusF===''||_cenStatusF==='operator')&&!_cenTemplate&&!_cenStyle&&(!q||'operator'.indexOf(q)>=0)?_cenOpRuns.slice().reverse():[];
   const hidden=_cenShowPartial?0:runs.filter(s=>s.excluded&&s.run_id!=='current').length;
   // The other driver kinds, through the same filters (kind, text, status).
   // A census run known only from the scoreboard the harness posted (no
@@ -2685,7 +2888,11 @@ function renderCensusTable(){
   const others=(_cenStatusF==='live'||_cenStatusF==='operator')?[]:_workRows.filter(x=>!(x.kind==='census'&&x.census)).filter(x=>{
     if(_workKind&&x.kind!==_workKind)return false;
     if(_cenTemplate&&(x.kind!=='census'||(x.template||'')!==_cenTemplate))return false;
+    // A scoreboard-only census row carries no rows to read a style from; a
+    // recorded loop carries its own (none = the auto path).
+    if(_cenStyle&&!(_wkIsLoop(x)&&(x.plan_style||'auto')===_cenStyle))return false;
     if(_workSrc&&x.kind==='run'&&x.source!==_workSrc)return false;
+    if(_workOrigin&&!(_wkIsLoop(x)&&x.origin===_workOrigin))return false;
     if(_cenStatusF==='usable'&&x.excluded)return false;
     if(_cenStatusF==='excluded'&&!x.excluded)return false;
     if(_cenStatusF==='problems'&&!((x.failed||0)>0||(x.capped||0)>0||x.excluded||x.status==='error'))return false;
@@ -2701,7 +2908,10 @@ function renderCensusTable(){
   const kindBar='<label style="display:flex;gap:4px;align-items:center">kind <select onchange="setWorkKind(this.value)" style="width:auto"><option value="">all</option>'
     +['census','suite','improve','run'].map(k=>'<option value="'+k+'"'+(_workKind===k?' selected':'')+'>'+k+(kinds[k]?(' ('+kinds[k]+')'):'')+'</option>').join('')+'</select></label>'
     +(_workKind==='run'?('<label style="display:flex;gap:4px;align-items:center">source <select onchange="setWorkSrc(this.value)" style="width:auto"><option value="">every source</option>'
-      +['run','manual','goal','captest','ide'].map(v=>'<option value="'+v+'"'+(_workSrc===v?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'):'');
+      +['run','manual','goal','captest','ide','loop'].map(v=>'<option value="'+v+'"'+(_workSrc===v?' selected':'')+'>'+(v==='loop'?'loop (every recorded agent loop)':v)+'</option>').join('')+'</select></label>'):'')
+    +(_workKind==='run'&&_workSrc==='loop'?('<label style="display:flex;gap:4px;align-items:center" title="who started the loop">origin <select onchange="setWorkOrigin(this.value)" style="width:auto"><option value="">every origin</option>'
+      +[...new Set(_workRows.filter(_wkIsLoop).map(x=>x.origin||''))].filter(Boolean).sort().map(v=>'<option value="'+esc(v)+'"'+(_workOrigin===v?' selected':'')+'>'+esc(v)+' ('+_workRows.filter(x=>_wkIsLoop(x)&&x.origin===v).length+')</option>').join('')
+      +'</select></label>'):'');
   const bar='<div class="hint" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 6px">'
     +'<input id="cen-text" placeholder="filter: run, template, operator, model, node, task" value="'+esc(_cenText)+'" oninput="setCensusText(this.value)" style="width:230px">'
     +kindBar
@@ -2709,6 +2919,10 @@ function renderCensusTable(){
     +'<option value="">all ('+runs.length+')</option>'
     +tmpls.map(t=>'<option value="'+esc(t)+'"'+(_cenTemplate===t?' selected':'')+'>'+esc(t)+' ('+runs.filter(x=>(x.template||'')===t).length+')</option>').join('')
     +(runs.some(x=>!x.template)?('<option value=" unlabelled"'+(_cenTemplate===' unlabelled'?' selected':'')+'>unlabelled ('+runs.filter(x=>!x.template).length+')</option>'):'')
+    +'</select></label>'
+    +'<label style="display:flex;gap:4px;align-items:center" title="planning style the run measured - compare runs of one style with each other">planning <select onchange="setCensusStyle(this.value)" style="width:auto">'
+    +'<option value="">every style</option>'
+    +[...new Set(runs.map(_cenStyleOf))].sort().map(v=>'<option value="'+esc(v)+'"'+(_cenStyle===v?' selected':'')+'>'+esc(v)+' ('+runs.filter(x=>_cenStyleOf(x)===v).length+')</option>').join('')
     +'</select></label>'
     +'<label style="display:flex;gap:4px;align-items:center">show <select onchange="setCensusStatus(this.value)" style="width:auto">'
     +['','usable','excluded','problems','live','operator'].map(v=>'<option value="'+v+'"'+(_cenStatusF===v?' selected':'')+'>'+(v||'everything')+'</option>').join('')
@@ -2787,7 +3001,9 @@ async function loadCensusGoals(run){
       +'<td>'+_cenCode(g.code_summary)+'</td>'
       +'<td class="mono"'+(hit?' style="color:#c9a35a" title="hit the '+Math.round(cap(g)/60)+'m cap"':'')+'>'+_cenSec(g.wall_s)+'<span class="hint">/'+_cenSec(cap(g))+'</span></td>'
       +'<td class="mono">'+(q.total?((q.passed||0)+'/'+q.total):'—')+((q.files_missing||[]).length?(' <span style="color:#c96b6b" title="declared files never produced: '+esc(q.files_missing.join(', '))+'">✗'+q.files_missing.length+'</span>'):'')+'</td>'
-      +'<td class="mono">'+(g.planned==null?'—':(g.planned+'/'+g.executed+(g.inserted?('+'+g.inserted):'')))+(g.unaccounted?' <span style="color:#c96b6b" title="a step no producer claims">⚠</span>':'')+'</td>'
+      +'<td class="mono">'+(g.planned==null?'—':(g.planned+'/'+g.executed+(g.inserted?('+'+g.inserted):'')))
+        +((g.plan_style&&g.plan_style_requested&&g.plan_style!==g.plan_style_requested)?(' <span class="tag" title="asked for '+esc(g.plan_style_requested)+' planning, ran '+esc(g.plan_style)+(g.plan_style_reason?(': '+esc(g.plan_style_reason)):'')+'">↩'+esc(g.plan_style)+'</span>'):'')
+        +(g.unaccounted?' <span style="color:#c96b6b" title="a step no producer claims">⚠</span>':'')+'</td>'
       +'<td class="mono">'+(g.tool_calls==null?'—':g.tool_calls)+'</td>'
       +'<td class="mono">'+(cyc||'—')+'</td>'
       +'<td>'+((g.warnings||[]).length||0)+'</td>'
@@ -2798,7 +3014,7 @@ async function loadCensusGoals(run){
   el.innerHTML='<div class="row" style="gap:8px;align-items:center;margin:6px 0 4px">'
     +'<span class="hint">'+recs.length+' goal(s) · click one for its record</span><span style="flex:1"></span>'
     +'<label class="hint" style="display:flex;gap:4px;align-items:center" onclick="event.stopPropagation()">Δ vs <select onchange="event.stopPropagation();_cenBase[\''+esc(run)+'\']=this.value;loadCensusCompare(\''+esc(run)+'\')" style="width:auto">'
-    +'<option value="">—</option>'+bases.map(b=>'<option value="'+esc(b.run_id)+'"'+(_cenBase[run]===b.run_id?' selected':'')+'>'+esc(b.run_id)+((b.template||'')!==(s.template||'')?' (other template)':'')+(b.excluded?' · not usable':'')+'</option>').join('')
+    +'<option value="">—</option>'+bases.map(b=>'<option value="'+esc(b.run_id)+'"'+(_cenBase[run]===b.run_id?' selected':'')+'>'+esc(b.run_id)+((b.template||'')!==(s.template||'')?' (other template)':'')+(_cenStyleOf(b)!==_cenStyleOf(s)?(' ('+esc(_cenStyleOf(b))+' planning)'):'')+(b.excluded?' · not usable':'')+'</option>').join('')
     +'</select></label></div>'
     +'<table><tr><th>goal</th><th>status</th><th title="the code this goal ran on; ≠ marks where it changed">code</th><th>wall / cap</th><th title="declared checks passed / total; ✗ files never produced">quality</th><th title="planned / executed (+inserted)">steps</th><th>tools</th><th>cycles</th><th>warns</th><th title="the model in force for every role of this goal, the nodes its calls hit, re-routes and CPU spills - hover for calls by role">models · nodes</th><th title="this goal in the base run, and the wall-time change - click a base cell to open that run\'s record">Δ vs base</th></tr>'
     +rows+'</table>';
@@ -3041,7 +3257,12 @@ function setWorkMode(m){
   if(_workMode==='tasks')loadWorkTasks(); else renderCensusTable();
 }
 function setWorkKind(v){ _workKind=String(v||''); renderCensusTable(); }
-function setWorkSrc(v){ _workSrc=String(v||''); renderCensusTable(); }
+function setWorkSrc(v){ _workSrc=String(v||''); if(_workSrc!=='loop')_workOrigin=''; renderCensusTable(); }
+/* Recorded agent loops (source=loop): who started them - the chat and API
+   (interactive), the dream system, a v8 program. */
+let _workOrigin='';
+function setWorkOrigin(v){ _workOrigin=String(v||''); renderCensusTable(); }
+function _wkIsLoop(x){ return x&&x.kind==='run'&&x.source==='loop'; }
 /* Something finished somewhere (an event, a poll that saw a change): refresh
    whichever view is on screen. Cheap to call; it only fetches when Work is
    the section on screen. */
@@ -3079,7 +3300,7 @@ function _wkRow(d){
   const open=!!_cenOpen[d.id];
   const name='<span class="mono">'+(open?'▾':'▸')+' '+_wkKindTag(d.kind)+' '+eid(d.kind==='improve'?'session':(d.kind==='census'?'census':d.kind),d.id)+'</span>'+(d.status==='running'?' <span style="color:#3cb371">●</span>':'')+(d.excluded?' <span class="tag">'+esc(d.excluded)+'</span>':'');
   const st=(d.status==='error'||d.status==='failed')?'<span style="color:#c96b6b">'+esc(d.status)+'</span>':(d.status==='running'?'<span style="color:#3cb371">running</span>':esc(d.status||''));
-  const model=d.kind==='improve'?('critic '+esc(d.critic||'?')+' · editor '+esc(d.editor||'?')+(d.best_variant?(' · best '+esc(d.best_variant)):'')):(d.variant?('variant '+esc(d.variant)):(d.critic?('critic '+esc(d.critic)):(d.where?esc(d.where):'')));
+  const model=_wkIsLoop(d)?[d.origin,d.engine,(d.plan_style||'auto')+' planning',d.where].filter(Boolean).map(esc).join(' · '):d.kind==='improve'?('critic '+esc(d.critic||'?')+' · editor '+esc(d.editor||'?')+(d.best_variant?(' · best '+esc(d.best_variant)):'')):(d.variant?('variant '+esc(d.variant)):(d.critic?('critic '+esc(d.critic)):(d.where?esc(d.where):'')));
   const wall=d.wall_total_s!=null?_cenSec(d.wall_total_s):'—';
   return '<tr class="clk cen-run" data-run="'+esc(d.id)+'" onclick="toggleWorkDriver(\''+esc(d.kind)+'\',\''+esc(d.id)+'\')">'
     +'<td>'+name+'</td>'
@@ -5244,6 +5465,7 @@ async function loadEdges(){
   const r=await api('/evolve/bleeding_edge/list');
   if(!r||!r.edges){const el=$('edges-list');if(el)el.innerHTML='<div class="hint">'+esc((r&&r.error)||'unavailable')+'</div>';return}
   renderEdges(r);
+  releaseStatus();
 }
 /* The edges list - from its own call, or from the Ship table's read. */
 function renderEdges(r){
@@ -5265,17 +5487,32 @@ function _edgeRowHtml(e,main){
       +'<span style="flex:1"></span>'
       +'<button class="btn sm" onclick="edgeEnsure(\''+esc(e.name)+'\')" title="bring up / refresh the standing container for this edge (needs a free pool slot)">container</button>'
       +'<button class="btn sm" onclick="edgeMirror(\''+esc(e.name)+'\')" title="point the primary sandbox at this edge (sandbox.up target)">sandbox &rarr; edge</button>'
-      +'<button class="btn sm ok-btn" onclick="edgeRelease(\''+esc(e.name)+'\',\''+esc(e.branch)+'\')" title="fast-forward main to this edge (the release) \u2014 asks for confirmation">promote to main</button>'
+      +'<button class="btn sm ok-btn" onclick="edgeRelease(\''+esc(e.name)+'\',\''+esc(e.branch)+'\')" title="release: fast-forward main to this edge and restart prod \u2014 waits for a census in flight (or yields it, or force) \u2014 asks for confirmation">release to prod</button>'
       +'</div>';
 }
+document.addEventListener('DOMContentLoaded',()=>{const host=document.getElementById('edges-list');if(host&&!$('release-status')){const d=document.createElement('div');d.id='release-status';d.className='hint';d.style.padding='4px 0';host.parentNode.insertBefore(d,host.nextSibling)}releaseStatus()});
 async function edgeEnsure(name){toast('ensuring '+name+' container\u2026');const r=await post('/evolve/bleeding_edge/container/ensure',{edge:name});toast(r&&r.ok?('up: '+(r.name||'')+' :'+(r.port||'')):(r&&r.error)||'failed');loadEdges();loadSandboxPool()}
 async function edgeMirror(name){const r=await post('/evolve/sandbox/up',{target:name});toast(r&&(r.ok||r.healthy)?('primary sandbox on '+name):(r&&r.error)||'failed');loadSandboxPool()}
+async function releaseStatus(){
+  const el=$('release-status'); if(!el)return;
+  const r=await api('/evolve/release/status'); if(!r){el.textContent='';return}
+  const p=r.pending; const c=r.census||{};
+  el.innerHTML=p?('<b>release pending</b> '+esc(p.edge||'')+' \u00b7 '+esc(p.status)+' ('+esc(p.mode)+') \u00b7 '+esc(r.summary||'')
+      +' <button class="btn sm" onclick="releaseCancel()">cancel</button>'
+      +(p.status==='waiting'?' <button class="btn sm" onclick="releaseForce()" title="go now: the restart pauses and re-runs the census goal">force now</button>':''))
+    :('census: '+esc(c.state||'none')+(c.goal?' \u00b7 '+esc(c.goal):'')+(r.history&&r.history[0]?' \u00b7 last release '+esc(r.history[0].status)+' '+esc(String(r.history[0].finished_at||r.history[0].updated_at||'').slice(0,16)):''));
+}
+async function releaseCancel(){const r=await post('/evolve/release/cancel',{reason:'cancelled from Loop Lab'});toast(r&&r.ok?'release cancelled'+(r.census_resumed?' \u00b7 census resumed':''):(r&&r.error)||'failed');releaseStatus()}
+async function releaseForce(){if(!confirm('Release NOW? The restart pauses the census goal in flight and re-runs it later.'))return;await post('/evolve/release/cancel',{reason:'forcing'});const r=await post('/evolve/release/prod',{confirm:true,force:true,reason:'forced from Loop Lab'});toast(r&&r.ok?('releasing: '+(r.status||'')):(r&&(r.error||r.refused))||'failed');releaseStatus()}
 async function edgeRelease(name,branch){
-  const ok=confirm('RELEASE: fast-forward main to '+branch+' ('+name+')?\n\nThis is the deliberate step that moves the branch prod serves. Only proceed on the user\'s explicit, unambiguous go-ahead. It refuses unless main is an ancestor of the edge (no merge commit, no guessing).');
+  const ok=confirm('RELEASE: fast-forward main to '+branch+' ('+name+') and restart prod?\n\nThis is the deliberate step that moves the branch prod serves. Only proceed on the user\'s explicit, unambiguous go-ahead. It refuses unless main is an ancestor of the edge (no merge commit, no guessing).');
   if(!ok)return;
-  const r=await post('/evolve/bleeding_edge/promote_to_main',{edge:name,confirm:true});
-  toast(r&&r.ok?('main @ '+String(r.commit||'').slice(0,8)+(r.restart_required?' \u2014 restart required':'')):(r&&r.error)||'refused');
-  loadEdges();
+  const mode=(prompt('If a census is in flight, how should the release wait?\n  finish = wait until the census has ended (default)\n  goal   = yield: let the goal in flight finish, park, release, resume after\n  force  = release now (the census goal is paused and re-run)','finish')||'finish').trim().toLowerCase();
+  if(['finish','goal','force'].indexOf(mode)<0){toast('unknown mode '+mode);return}
+  const r=await post('/evolve/release/prod',{edge:name,confirm:true,census:mode,force:mode==='force',reason:'Loop Lab release button'});
+  if(r&&r.held)toast('release pending ('+mode+'): '+(r.why||''));
+  else toast(r&&r.ok?('releasing: '+(r.status||'')+' main @ '+String((r.merge||{}).commit||'').slice(0,8)):(r&&(r.error||r.refused))||'refused');
+  loadEdges();releaseStatus();
 }
 
 /* ═══ SANDBOX ═══ */

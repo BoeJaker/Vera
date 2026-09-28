@@ -25,15 +25,16 @@ class FakeResult:
 
 
 class FakeConnection:
-    def __init__(self, rows, record):
+    def __init__(self, rows, record, columns=("id", "kind")):
         self.rows = rows
         self.record = record
+        self.columns = columns
         self.closed = False
 
     def execute(self, statement, parameters):
         self.record["statement"] = statement
         self.record["parameters"] = parameters
-        return FakeResult(self.rows)
+        return FakeResult(self.rows, self.columns)
 
     def close(self):
         self.closed = True
@@ -91,6 +92,40 @@ def test_query_is_structured_parameterized_bounded_and_closes(tmp_path):
         "enable_global_s3_configuration": False,
         "lock_configuration": True,
     }
+
+
+def test_explicit_snapshot_and_stable_record_index_column(tmp_path):
+    artifacts = LocalArtifactProvider(tmp_path / "artifacts")
+    stat = artifacts.put(b"PAR1-stable-index", media_type=PARQUET, created_at=NOW)
+    record = {}
+
+    def connect(**kwargs):
+        return FakeConnection(
+            ((41, "odd", 7),), record, ("id", "kind", "snapshot_index"))
+
+    exact_snapshot = "snap_" + "1" * 64
+    provider = DuckDBArtifactQueryProvider(
+        artifacts, artifact_id=stat.artifact_id, dataset_id="demo.records",
+        snapshot_id=exact_snapshot, record_index_column="snapshot_index",
+        connect=connect)
+    page = provider.query(QueryRequest(
+        dataset_id="demo.records", snapshot_id=exact_snapshot,
+        filters={"kind": "odd"}, limit=1))
+    assert page.snapshot_id == exact_snapshot
+    assert page.matches == ({"record_index": 7, "score": 0.0},)
+
+
+@pytest.mark.parametrize("value", [True, -1, "7"])
+def test_stable_record_index_must_be_non_negative_integer(tmp_path, value):
+    artifacts = LocalArtifactProvider(tmp_path / "artifacts")
+    stat = artifacts.put(b"PAR1-bad-index", media_type=PARQUET, created_at=NOW)
+    provider = DuckDBArtifactQueryProvider(
+        artifacts, artifact_id=stat.artifact_id, dataset_id="demo.records",
+        record_index_column="snapshot_index",
+        connect=lambda **kwargs: FakeConnection(
+            ((1, "odd", value),), {}, ("id", "kind", "snapshot_index")))
+    with pytest.raises(RuntimeError, match="stable record index"):
+        provider.query(request(provider))
 
 
 def test_cursor_is_bound_to_query_semantics(tmp_path):

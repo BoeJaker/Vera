@@ -17,6 +17,17 @@ _CRITICAL_MODULES = {
     "test_operator_session_sweep",  # a cancelled run must not leak its browser context (2026-09-16)
     "test_gpu_residency",  # media models must not sit on the LLM's GPU while idle (2026-09-16)
     "test_node_runner_reap",  # stop a runner nothing is waiting for; spare a busy one (2026-09-16)
+    "test_node_threads_core",  # CPU-node runners ran 24 threads on 12 CPUs: 0.24 tok/s on a 0.5b, 4-6 s per embed (2026-09-23)
+    "test_worker_placement_core",  # a worker off the host ran every cap and every ambient job; 2026-08-31 reaped the pool (2026-09-27)
+    "test_node_sync_core",  # node workers stayed on the old commit after every promotion; sync must follow what the host RUNS (2026-09-28)
+    "test_redis_auth_core",  # Redis had no password; the host must boot from its sealed copy, never log or pass on a credential (2026-09-28)
+    "test_ctx_ceiling_and_utility_model",  # llm.generate's default window was a floor; a naming rule with no model took the 9b onto a CPU node (2026-09-23)
+    "test_step_summary_core",  # 65 of 130 step summaries were raw tool JSON; the verifier and the next step read them (2026-09-24)
+    "test_done_tool_alias",  # a tool named `done` was refused five times and the step flailed on (2026-09-24)
+    "test_authored_file_shown",  # 42 read-backs of a parser-verified authored file, one executor turn each (2026-09-24)
+    "test_steer_core",  # the controller steer was copied into authoring tasks; scripts were written to satisfy it (2026-09-24)
+    "test_ctx_output_room",  # a five-word chat title got a 24,576-token window on a CPU node (2026-09-23)
+    "test_verify_evidence_core",  # a step "run the tests" was verified met on a cat of the test file after pytest reported failures (2026-09-24)
     "test_ctx_policy",  # output must fit the window it is generated into (2026-09-16)
     "test_sandbox_reap_plan",  # an archived row IS the restore handle - never reap it (2026-09-16)
     "test_stall_trace_core",  # name the frame someone can act on, not a stdlib line (2026-09-16)
@@ -31,6 +42,7 @@ _CRITICAL_MODULES = {
     "test_fenced_json",  # a fenced reply must survive losing its fence (2026-08-31)
     "test_v6_extract_paths",    # a capability name is not a file (2026-09-08)
     "test_author_browser_observable",  # a page a browser verifies must be readable by one (2026-09-08)
+    "test_node_choice_and_model_tags",  # one CPU node took 90% of every census's embeds; a 0.5b tag counted as a 7b (2026-09-22)
     "test_route_preference",   # soft node preference must stay SOFT (2026-09-08)
     "test_graph_panel_assets",  # a renamed panel JS serves a comment, silently (2026-09-20)
     "test_nlp_placement",      # the host must never silently run NLP (2026-09-20)
@@ -42,7 +54,17 @@ _CRITICAL_MODULES = {
     "test_artifact_location",  # a file the run already made has a place (2026-09-01)
     "test_instance_identity",  # an estate write must name its writer (2026-09-01)
     "test_estate_role",  # only the estate owner may sweep it (2026-09-01)
-    "test_operator_budget",  # an operator run needs a clock (2026-09-01)
+    "test_operator_budget",
+    "test_recovery_identity_core",  # error recovery moved a sandbox browser run onto prod's own UI with destructive actions allowed (2026-09-24)
+    "test_edit_reanchor",  # 11 stale anchors were refused with the right line named; the retry re-typed it wrong (2026-09-24)
+    "test_plan_hygiene_core",  # 17 of 40 plans re-checked settled work, 9 criteria added features the goal never named (2026-09-24)
+    "test_deliverable_core",  # the delivered answer dropped the file's citations every run and echoed its own template (2026-09-25)
+    "test_browser_done_core",  # the executor re-ran the browser after it reported the step done, in every census browser goal (2026-09-25)
+    "test_core_aliases_are_bound",  # a merge bound _verify_evidence only in an except branch; every verify died with NameError (2026-09-25)
+    "test_author_done_core",  # ten executor turns re-checked a parser-verified authored file in run74 (2026-09-25)
+    "test_research_done_core",  # 44 research calls across three sets came after the sources were in hand (2026-09-25)
+    "test_fix_loop_core",  # 43 cycles chased one failing test to the wall cap in run77 (2026-09-25)
+    "test_operator_step_budget",  # one step called operator.run again after its 480s cap fired: 29 thinks, 1109s, on a correct artifact (2026-09-22)  # an operator run needs a clock (2026-09-01)
     "test_two_tier_chat",  # answer first, continue with context (2026-09-01)
     "test_two_tier_decider",  # who decides the second pass is needed (2026-09-01)
     "test_two_tier_switch",  # a feature with no switch is unusable (2026-09-01)
@@ -188,11 +210,14 @@ _CRITICAL_MODULES = {
     "test_plan_shape",          # a complex goal planned as ONE step leaves the gate to rebuild it (2026-08-30)
     "test_operator_repeat_guard",  # O19 - hammering one element on one page must stop; different elements must not
     "test_pythonpath_under_timeout",  # L5's PYTHONPATH fix was dead under the timeout wrapper (2026-08-30)
-    "test_exec_result_note",    # rc=0 + empty stdout must read as a result, not as no-information (2026-08-30)
+    "test_exec_result_note",
+    "test_exec_result_note_test_runs",
+    "test_exec_result_note_script_run",  # python test_x.py runs the module, not the tests; eleven identical tracebacks in run67 (2026-09-23)  # pytest exits non-zero when tests fail; the loop read that as a broken command and inflated the goal (2026-09-22)    # rc=0 + empty stdout must read as a result, not as no-information (2026-08-30)
     "test_role_profile_merge",   # a USER routing override must not silently discard declared sampling/num_ctx (2026-08-24)
     "test_executor_compose_callsite",  # Phase 4 - every prompt block reaches the executor, unswapped (a drop/swap is silent)
     "test_godseye_core",       # vendored-app static serving: a path-guard hole serves arbitrary host files; git argv must reject option/ext:: injection
     "test_operator_arg_key_noise",
+    "test_edit_gutter_core",  # the editor copied the view back as a markdown table; neither gutter stripper saw the leading pipe (2026-09-22)
     "test_edit_blocks_and_target",
     "test_operator_says_done",
     "test_probe_backoff",
@@ -217,7 +242,31 @@ _CRITICAL_MODULES = {
     "test_embed_policy_core",  # machine state was 59% of all embedding time while real text queued behind it (2026-09-20)
     "test_queue_status_core",  # a wait line must never claim a node is free - in_use only sees Vera (2026-09-20)
     "test_workdir_listing_core",  # the file-type gate saw only the top level: a package's .py files one dir down failed every step to the wall cap (2026-09-20)
+    "test_ollama_node_fault_core",  # three 404s for a made-up model took the GPU node offline and spilled the executor to CPU for 45 min (2026-09-22)
     "test_operator_model_arg_core",  # an executor asked the operator for model "fast": Ollama 404'd every think and the goal was clicked away (2026-09-21)
+    "test_schedule_core",  # a scheduled census must never start beside a census or a loop, nor outside its window (2026-09-21)
+    "test_schedule_page_ui",  # the Schedule page's calendar, editor and tick controls must stay wired (2026-09-21)
+    "test_release_core",  # a prod release must never restart prod under a census goal unless forced (2026-09-21)
+    "test_loop_web_research_first",
+    "test_mcp_call_delegate_args",  # /mcp/call dropped every argument an explicit caller passed to v7 (plan_style, model, ...) (2026-09-27)
+    "test_plan_style_loop",
+    "test_plan_style_broad",
+    "test_broad_ui_stream",  # a loop event not in ALWAYS_FORWARD never reaches the UI - plan_style was dropped there (2026-09-27)  # broad plans every work-stream concurrently and a successful broad plan is never overwritten (2026-09-27)  # the loop takes a planning style, logs the one it used, and every other style's planning/controller path is unchanged (2026-09-27)
+    "test_chat_insights",  # optional long-horizon second look at a chat reply: CPU route, one at a time, a card not a message (2026-09-27)
+    "test_census_plan_style_filter",  # census runs compared per planning style, and startable with one from Loop Lab (2026-09-27)
+    "test_work_loop_rows",  # recorded loops reach Loop Lab's driver list with origin/engine/style (2026-09-27)
+    "test_intent_zeroshot",  # an NLP node's zero-shot intent is recorded beside the one the loop used (measured, never read back) (2026-09-27)
+    "test_entity_coverage",  # the loop measures how much of the goal's named entities its final output carries (NER on the NLP nodes) (2026-09-27)
+    "test_cap_relevance_core",  # the planner catalogue: embeddings loaded, whole-word matching, short earned tail, no secret/provision caps, whole-sentence lines (2026-09-27)
+    "test_stepwise_reviewed",  # stepwise + a CPU critic on every step: one at a time, latest only, never waited on (2026-09-28)
+    "test_role_overrides",  # per-run executor/coder models on a chosen node + bigger-coder / max-effort presets; MoEs never half-loaded onto the GPU (2026-09-28)
+    "test_chat_stream_capture",  # the chat reply capture parsed frames with the wrong spacing: chars=0, no printer feed, no insights (2026-09-28)
+    "test_evolve_delegate",  # delegate a code-reporting task to a Vera loop: read-only guard, jailed tools, own worktree, cleanup (2026-09-28)
+    "test_loop_record_core",  # only census/task loops reached Loop Lab's run store; chat/dream/program/API loops left no record (2026-09-27)
+    "test_routing_parity_core",  # a sandbox ran the code-default models, not prod's routing - its measurements measured other models (2026-09-27)
+    "test_step_deps_core",  # a step that needed a failed step read the failed attempt, never the recovery that finished it (2026-09-27)
+    "test_step_call_ledger_core",  # a 10-18 cycle step re-ran calls that had already failed once they left its last-4 window (2026-09-27)
+    "test_stable_ctx",  # one context window per GPU node+model: the runner reloaded on nearly every call (2026-09-22)  # the loop chained web.search -> web.fetch to the wall cap while web.research sat unnamed (2026-09-21)
 }
 
 

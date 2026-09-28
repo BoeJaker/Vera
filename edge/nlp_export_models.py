@@ -34,6 +34,7 @@ import os
 import sys
 import time
 import traceback
+from importlib import metadata
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (_HERE, os.path.join(_HERE, "..", "vera", "research")):
@@ -46,6 +47,11 @@ except ImportError:  # running from the repo rather than a deploy dir
     from vera.research.nlp_dispatch_core import (  # type: ignore
         DEFAULT_MODELS, TASK_KIND, model_slug,
     )
+
+try:
+    from vera.models.nlp_inventory import package_nlp_directory
+except ImportError:
+    package_nlp_directory = None
 
 #: optimum class per task kind. Kept here rather than in the core because the
 #: core must stay importable without optimum installed.
@@ -170,9 +176,29 @@ def cmd_build(args):
             continue
         results.append(build_one(task, model_id, out_root))
 
+    packages = {}
+    package_errors = {}
+    for result in results:
+        if result.get("status") != "ok" or not result.get("dir"):
+            continue
+        if package_nlp_directory is None:
+            package_errors[result["task"]] = "ModelPackage support unavailable"
+            continue
+        try:
+            packages[result["task"]] = package_nlp_directory(
+                task=result["task"], model=result["model"],
+                kind=result.get("kind") or "unknown",
+                directory=os.path.join(out_root, result["dir"]),
+                framework_version=metadata.version("onnxruntime")).to_dict()
+        except Exception as exc:
+            package_errors[result["task"]] = f"{type(exc).__name__}: {exc}"
+
     manifest = {
+        "schema": "vera.nlp-export-manifest/v2",
         "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "models": results,
+        "model_packages": packages,
+        "package_errors": package_errors,
     }
     with open(os.path.join(out_root, "manifest.json"), "w") as fh:
         json.dump(manifest, fh, indent=2)

@@ -952,6 +952,7 @@ async def query_redis(query: str) -> list[Citation]:
         r = aioredis.Redis(
             host=src.config.get("host",_BACKEND_HOST),
             port=int(src.config.get("port",6379)),
+            username=src.config.get("username") or None,   # a Redis ACL user
             password=src.config.get("password") or None,
             db=int(src.config.get("db",0)),
             decode_responses=True,
@@ -7809,7 +7810,8 @@ async def test_source(req: SourceTestRequest):
         try:
             import redis.asyncio as aioredis  # type:ignore
             r=aioredis.Redis(host=cfg.get("host","localhost"),port=int(cfg.get("port",6379)),
-                password=cfg.get("password") or None,db=int(cfg.get("db",0)),decode_responses=True)
+                username=cfg.get("username") or None,password=cfg.get("password") or None,
+                db=int(cfg.get("db",0)),decode_responses=True)
             await r.ping()
             prefix=cfg.get("prefix","vera:")
             count=await r.dbsize()
@@ -10323,10 +10325,11 @@ if _VERA_MODE:
 
     # Schedule startup — runs as soon as the event loop ticks after module load
     try:
-        asyncio.get_event_loop().create_task(_research_startup())
-    except RuntimeError:
-        # No running loop yet — will be called when orchestrator starts
-        # via the module's presence in the lifespan load sequence
+        # Through the orchestrator, so a node worker skips it unless it is
+        # on the worker allow-list (worker_placement_core).
+        import Vera.vera.capability_orchestration as _co_start
+        _co_start.start_at_import(_research_startup, "research_startup", queue=True)
+    except Exception:
         pass
 
     # ── Pipeline ──────────────────────────────────────────────────────────────

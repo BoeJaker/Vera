@@ -1495,6 +1495,140 @@
         return;
       }
 
+      // ── BROAD planning style, LIVE: the split, each work-stream's plan, and
+      //    the quick (GPU) / deep (CPU) briefs, each streaming into its own card
+      //    that is rewritten in place until its final event lands ──
+      if(t === 'agent_loop_v6.broad_split_token' || t === 'agent_loop_v6.broad_streams'){
+        let card = this._sr.querySelector('.alo-cycle[data-bsplit="1"]');
+        let inner;
+        if(t === 'agent_loop_v6.broad_split_token'){
+          inner = `<div class="alo-cycle-h"><span class="alo-cycle-tool">⫘ Broad · splitting the goal into work-streams…</span>
+            <span class="alo-cycle-status"><span class="alo-spinner"></span> GPU</span></div>
+            <div class="alo-cycle-preview" style="white-space:pre-wrap;max-height:160px;overflow:auto">${_esc(ev.text||'')}</div>`;
+        } else {
+          const rows = (ev.streams||[]).map(s => `<div style="margin:2px 0"><b>${_esc(String(s.id))}. ${_esc(s.title||'')}</b>
+            → ${_esc(s.deliverable||'')}${(s.dependencies||[]).length?` <span style="color:var(--dim,#a89f92)">(after ${(s.dependencies||[]).map(d=>'#'+_esc(String(d))).join(', ')})</span>`:''}</div>`).join('');
+          inner = `<div class="alo-cycle-h"><span class="alo-cycle-tool">⫘ Broad · ${_esc(String((ev.streams||[]).length))} work-streams</span>
+            <span class="alo-cycle-status">split in ${_esc(String(ev.brief_s??'?'))}s</span></div>
+            <div class="alo-cycle-preview">${rows}</div>`;
+        }
+        if(card){ card.innerHTML = inner; } else { card = this._cycleEl(inner, 'plan'); if(card) card.setAttribute('data-bsplit','1'); }
+        if(card && t === 'agent_loop_v6.broad_streams') card.removeAttribute('data-bsplit');
+        return;
+      }
+      if(t === 'agent_loop_v6.broad_stream_token' || t === 'agent_loop_v6.broad_stream_planned'){
+        const sid = String(ev.stream ?? '?');
+        let card = this._sr.querySelector(`.alo-cycle[data-bstream="${sid}"]`);
+        let inner;
+        if(t === 'agent_loop_v6.broad_stream_token'){
+          inner = `<div class="alo-cycle-h"><span class="alo-cycle-tool">▤ Stream ${_esc(sid)} · ${_esc(ev.title||'')} — planning…</span>
+            <span class="alo-cycle-status"><span class="alo-spinner"></span> ${_esc(String((ev.text||'').length))} chars</span></div>
+            <div class="alo-cycle-preview" style="white-space:pre-wrap;max-height:160px;overflow:auto">${_esc(ev.text||'')}</div>`;
+        } else {
+          const steps = (ev.titles||[]).map((x,i)=>`<div>${i+1}. ${_esc(x)}</div>`).join('') || '<div style="color:var(--warn,#c7a15a)">no steps</div>';
+          inner = `<div class="alo-cycle-h"><span class="alo-cycle-tool">▤ Stream ${_esc(sid)} · ${_esc(ev.title||'')}</span>
+            <span class="alo-cycle-status">${_esc(String(ev.steps??0))} step(s) · ${_esc(ev.role||'')} · ${_esc(String(ev.elapsed_s??'?'))}s${ev.error?` · <span style="color:var(--warn,#c7a15a)">${_esc(ev.error)}</span>`:''}</span></div>
+            <div class="alo-cycle-preview">${steps}</div>`;
+        }
+        if(card){ card.innerHTML = inner; } else { card = this._cycleEl(inner, 'plan'); if(card) card.setAttribute('data-bstream', sid); }
+        if(card && t === 'agent_loop_v6.broad_stream_planned') card.setAttribute('data-bstream', sid + '-done');
+        return;
+      }
+      if(t === 'agent_loop_v6.broad_brief_token' || t === 'agent_loop_v6.broad_stream_quick_brief'
+         || t === 'agent_loop_v6.broad_stream_enriched'){
+        const sid = String(ev.stream ?? '?');
+        const kind = (t === 'agent_loop_v6.broad_stream_enriched') ? 'deep'
+                   : (t === 'agent_loop_v6.broad_stream_quick_brief') ? 'quick' : (ev.kind || 'deep');
+        const key = sid + '-' + kind;
+        let card = this._sr.querySelector(`.alo-cycle[data-bbrief="${key}"]`);
+        const label = kind === 'quick' ? '⚡ Quick brief (GPU)' : '🧭 Deep brief (long-horizon CPU)';
+        const live = (t === 'agent_loop_v6.broad_brief_token');
+        const status = live ? `<span class="alo-spinner"></span> writing…`
+          : `${_esc(String(ev.chars??0))} chars · ${_esc(String(ev.elapsed_s??'?'))}s${ev.model?` · ${_esc(ev.model)}`:''}${ev.error?` · <span style="color:var(--warn,#c7a15a)">${_esc(ev.error)}</span>`:''}`;
+        const body = ev.text ? `<div class="alo-cycle-preview" style="white-space:pre-wrap;max-height:200px;overflow:auto">${_esc(ev.text)}</div>`
+          : (live ? '' : `<div class="alo-cycle-thought" style="font-style:italic">empty brief</div>`);
+        const inner = `<div class="alo-cycle-h"><span class="alo-cycle-tool">${label} · stream ${_esc(sid)}</span>
+          <span class="alo-cycle-status">${status}</span></div>${body}`;
+        if(card){ card.innerHTML = inner; } else { card = this._cycleEl(inner, 'plan'); if(card) card.setAttribute('data-bbrief', key); }
+        if(card && !live) card.setAttribute('data-bbrief', key + '-done');
+        return;
+      }
+      if(t === 'agent_loop_v6.broad_brief_applied'){
+        this._cycleEl(`<div class="alo-cycle-h"><span class="alo-cycle-tool">↳ ${ev.kind==='quick'?'Quick':'Deep'} brief → step ${_esc(String(ev.step_id??'?'))}</span>
+          <span class="alo-cycle-status">stream ${_esc(String(ev.stream??'?'))}</span></div>`, 'plan');
+        return;
+      }
+      if(t === 'agent_loop_v6.broad_deduped'){
+        const rows = (ev.dropped||[]).map(d=>`<div>✂ ${_esc(d.title||'')} <span style="color:var(--dim,#a89f92)">(stream ${_esc(String(d.piece??'?'))}, repeats step ${_esc(String(d.duplicate_of??'?'))})</span></div>`).join('');
+        this._cycleEl(`<div class="alo-cycle-h"><span class="alo-cycle-tool">✂ Broad · ${_esc(String((ev.dropped||[]).length))} repeated step(s) dropped</span></div>
+          <div class="alo-cycle-preview">${rows}</div>`, 'plan');
+        return;
+      }
+
+      // ── per-run role models + effort preset ──
+      if(t === 'agent_loop_v6.role_models'){
+        const rows = Object.entries(ev.overrides||{}).map(([k,v])=>`<div>${_esc(k.split('/').pop())}: <b>${_esc(v.model||'')}</b> <span style="color:var(--dim,#a89f92)">@ ${_esc(v.node||'auto')}</span></div>`).join('');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">⚙ Effort · ${_esc(ev.effort||'standard')}${ev.plan_style?(' · style → '+_esc(ev.plan_style)):''}</span>
+          <span class="alo-cycle-status" title="this run's own model choices - a CPU role is slower than the GPU">role models</span>
+        </div>${rows?`<div class="alo-cycle-preview">${rows}</div>`:''}`, 'plan');
+        return;
+      }
+
+      // ── stepwise-reviewed: the CPU critic's review of a finished step ──
+      if(t === 'agent_loop_v6.step_critique'){
+        const ok = !ev.note;
+        const col = ok ? 'var(--ok,#3cb371)' : 'var(--warn,#c7a15a)';
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">✓ Reviewer · step ${_esc(String(ev.step??'?'))} <span style="color:${col}">${ok?(ev.error?'no review':'OK'):'notes'}</span></span>
+          <span class="alo-cycle-status" title="a critic on the long-horizon CPU node reviewed this step in parallel - the controller reads it when it has landed">${_esc(String(ev.elapsed_s??'?'))}s · cpu</span>
+        </div>${ev.note?`<div class="alo-cycle-preview" style="white-space:pre-wrap">${_esc(ev.note)}</div>`:''}${ev.error?`<div class="alo-cycle-preview">${_esc(ev.error)}</div>`:''}`, 'plan');
+        return;
+      }
+
+      // ── v6/V7: an NLP node's zero-shot intent beside the one used ──
+      if(t === 'agent_loop_v6.intent_zeroshot'){
+        const ok = ev.agrees_used;
+        const col = ok ? 'var(--ok,#3cb371)' : 'var(--warn,#c7a15a)';
+        const sc = Object.entries(ev.scores||{}).sort((a,b)=>b[1]-a[1]).map(([k,v])=>_esc(k)+' '+Math.round(v*100)+'%').join(' · ');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">⌗ Intent · used ${_esc(ev.used||'?')} · zero-shot <span style="color:${col}">${_esc(ev.zeroshot||'?')}${ok?' ✓':''}</span></span>
+          <span class="alo-cycle-status" title="nlp.zeroshot on an NLP node - measured beside the intent the run used, never read back">measured</span>
+        </div><div class="alo-cycle-preview">${sc}${ev.llm?(' · LLM said '+_esc(ev.llm)):''}${ev.heuristic?(' · keywords said '+_esc(ev.heuristic)):''}</div>`, 'plan');
+        return;
+      }
+
+      // ── v6/V7: did the final output carry what the goal named? (NER) ──
+      if(t === 'agent_loop_v6.entity_coverage'){
+        const n = ev.entities||0, got = (ev.covered||[]).length, miss = ev.missing||[];
+        const col = miss.length ? 'var(--warn,#c7a15a)' : 'var(--ok,#3cb371)';
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">⌗ Goal entities covered · <span style="color:${col}">${_esc(String(got))}/${_esc(String(n))}</span></span>
+          <span class="alo-cycle-status" title="named in the goal (NER on an NLP node) and checked against the final output - a measure, not a pass/fail">measured</span>
+        </div>${miss.length?`<div class="alo-cycle-preview">not in the final output: ${miss.map(m=>_esc(m)).join(', ')}</div>`:''}`, 'plan');
+        return;
+      }
+
+      // ── v6/V7: which planning STYLE produced the plan (asked vs used) ──
+      if(t === 'agent_loop_v6.plan_style'){
+        const PS = {auto:{ic:'◎',lbl:'auto'}, flat:{ic:'▭',lbl:'flat'},
+                    stepwise:{ic:'⇢',lbl:'stepwise'}, detailed:{ic:'❖',lbl:'detailed'},
+                    broad:{ic:'⫘',lbl:'broad'}, 'broad-stepwise':{ic:'⫘⇢',lbl:'broad-stepwise'}, 'stepwise-reviewed':{ic:'⇢✓',lbl:'stepwise-reviewed'}};
+        const ps = PS[ev.effective] || {ic:'•', lbl:ev.effective||'?'};
+        const fell = (ev.requested && ev.requested !== ev.effective)
+          ? ` <span style="color:var(--warn,#c7a15a)" title="${_esc(ev.reason||'')}">asked ${_esc(ev.requested)}</span>` : '';
+        const bits = [];
+        if(ev.planned_steps != null) bits.push(_esc(String(ev.planned_steps))+' step(s) planned');
+        if(ev.master_ran) bits.push('master plan');
+        if(Array.isArray(ev.lenses_answered)) bits.push('lenses '+ev.lenses_answered.length+'/'+(ev.lenses_answered.length+(ev.lenses_missing||[]).length));
+        if(ev.broad && ev.broad.streams) bits.push(_esc(String(ev.broad.streams))+' streams · '+_esc(String(ev.broad.total_s||'?'))+'s');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">${ps.ic} Planning style · ${_esc(ps.lbl)}${fell}</span>
+          <span class="alo-cycle-status">${bits.join(' · ')}</span>
+        </div>${(ev.reason && ev.reason!=='requested' && ev.reason!=='default')?`<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.reason)}</div>`:''}`, 'plan');
+        return;
+      }
+
       // ── V7 fast path: a 'single' goal resolved by ONE cap, no orchestration ──
       if(t === 'agent_loop_v6.fast_path'){
         this._cycleEl(`<div class="alo-cycle-h">

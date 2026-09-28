@@ -324,6 +324,64 @@ async def cap_user_register(login: str = "", first: str = "", last: str = "",
 
 
 @capability(
+    "identity.user.mfa",
+    http_method="POST", http_path="/identity/user/mfa", http_tags=["identity"],
+    memory="on",
+    description="Give an IPA user a second factor: a TOTP token whose secret goes "
+                "STRAIGHT to keydrop (never returned here), and the account's "
+                "auth type set to otp so every IPA-joined host asks password + code "
+                "through sssd. Inputs: login (str!), title (str - keydrop title), "
+                "no_expiry (bool=false - clear the forced password change an "
+                "admin-set password carries; for accounts whose password was "
+                "sealed to keydrop and cannot be changed interactively), seal "
+                "(bool=true - false returns the otpauth URI instead of sealing it: "
+                "ONLY for scratch accounts in a rehearsal, never a person's). Output: "
+                "{ok, login, token, keydrop_entry|uri, auth_type} or {error}.",
+)
+async def cap_user_mfa(login: str = "", title: str = "", no_expiry: bool = False,
+                       seal: bool = True, trace_id=None) -> Dict:
+    if not login:
+        return {"error": "login required"}
+    st = await _state_opened()
+    res, err = await _ipa_call(st, "otptoken_add", args=[],
+                               options={"type": "totp", "ipatokenowner": login,
+                                        "description": f"{login} TOTP (Vera, {now_iso()[:10]})"})
+    if res is None:
+        return {"error": err}
+    result = res.get("result", res) if isinstance(res, dict) else {}
+    uri = result.get("uri", "")
+    tid = result.get("ipatokenuniqueid", [""])
+    tid = tid[0] if isinstance(tid, list) else tid
+    if not uri:
+        return {"error": "IPA issued a token but returned no otpauth URI"}
+    drop: Dict[str, Any] = {"entry": None}
+    if seal:
+        # the secret is only ever inside keydrop; strip it from what we keep
+        from Vera.vera.security import secret_service_core as _ssc
+        from Vera.vera.security.secrets_capabilities import _keydrop_put_sync, _thread
+        drop = await _thread(_keydrop_put_sync, "IPA TOTP token",
+                             _ssc.keydrop_payload(title or f"FreeIPA TOTP {login}", login, uri,
+                                                  "otpauth", f"Scan/import this otpauth URI into an authenticator app. "
+                                                  f"Token {tid} for {login} on {st.get('ipa_url', '')}. Every IPA-joined "
+                                                  f"host asks password then this code (sssd).", tags=["vera", "totp"]))
+    if drop.get("error"):
+        # do not leave a token nobody can use
+        await _ipa_call(st, "otptoken_del", args=[tid], options={})
+        return {"error": "keydrop refused the token secret: " + str(drop["error"])}
+    opts: Dict[str, Any] = {"ipauserauthtype": ["otp"]}
+    if no_expiry:
+        opts["setattr"] = ["krbpasswordexpiration=20380101000000Z"]
+    res, err = await _ipa_call(st, "user_mod", args=[login], options=opts)
+    if res is None:
+        return {"error": f"token sealed (keydrop entry {drop.get('entry')}) but auth type not set: {err}"}
+    await emit_event({"type": "identity.user.mfa", "login": login, "token": tid, "sealed": bool(seal)})
+    out = {"ok": True, "login": login, "token": tid, "keydrop_entry": drop.get("entry"), "auth_type": "otp"}
+    if not seal:
+        out["uri"] = uri
+    return out
+
+
+@capability(
     "identity.user.list",
     http_method="GET", http_path="/identity/user/list", http_tags=["identity"],
     memory="off", silent=True,
@@ -448,6 +506,57 @@ async def cap_dns_record(name: str = "", ip: str = "", zone: str = "",
     if res is None:
         return {"error": err}
     return {"ok": True}
+
+
+@capability(
+    "identity.dns.records",
+    http_method="POST", http_path="/identity/dns/records", http_tags=["identity"],
+    memory="off", silent=True,
+    description="The records in a FreeIPA DNS zone (A/AAAA/CNAME/TXT...), optionally one "
+                "name. Inputs: zone (str - defaults to configured dns_zone), name (str - "
+                "host label to filter). Output: {zone, records:[{name, a:[..], aaaa:[..], "
+                "cname:[..], txt:[..]}], count} or {error}.",
+)
+async def cap_dns_records(zone: str = "", name: str = "", trace_id=None) -> Dict:
+    st = await _state_opened()
+    zone = zone or st.get("dns_zone", "")
+    if not zone:
+        return {"error": "no zone (set dns_zone in config or pass zone)"}
+    args = [zone] + ([name] if name else [])
+    res, err = await _ipa_call(st, "dnsrecord_find", args=args, options={"sizelimit": 2000})
+    if res is None:
+        return {"error": err}
+    # _ipa_call already hands back IPA's `result` object: {"result": [rows], "count": n}
+    rows = res.get("result", []) if isinstance(res, dict) else (res or [])
+    out = []
+    for r in rows or []:
+        label = r.get("idnsname", [""])[0] if isinstance(r.get("idnsname"), list) else r.get("idnsname", "")
+        out.append({"name": str(label), "a": r.get("arecord", []), "aaaa": r.get("aaaarecord", []),
+                    "cname": r.get("cnamerecord", []), "txt": r.get("txtrecord", [])})
+    return {"zone": zone, "records": out, "count": len(out)}
+
+
+@capability(
+    "identity.dns.delete",
+    http_method="POST", http_path="/identity/dns/delete", http_tags=["identity"],
+    memory="on",
+    description="Remove ONE A record value from a name in FreeIPA DNS (other values on "
+                "the same name stay). Inputs: name (str! host label), ip (str! the A "
+                "value to remove), zone (str - defaults to configured dns_zone). "
+                "Output: {ok, name, removed} or {error}.",
+)
+async def cap_dns_delete(name: str = "", ip: str = "", zone: str = "", trace_id=None) -> Dict:
+    if not name or not ip:
+        return {"error": "name and ip required"}
+    st = await _state_opened()
+    zone = zone or st.get("dns_zone", "")
+    if not zone:
+        return {"error": "no zone (set dns_zone in config or pass zone)"}
+    res, err = await _ipa_call(st, "dnsrecord_del", args=[zone, name], options={"arecord": [ip]})
+    if res is None:
+        return {"error": err}
+    await emit_event({"type": "identity.dns.deleted", "name": name, "ip": ip, "zone": zone})
+    return {"ok": True, "name": name, "removed": ip}
 
 
 @capability(

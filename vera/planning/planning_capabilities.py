@@ -44,6 +44,32 @@ try:
             # between two of the loop planner's own calls; the prompts are tiny.
             "lens": {"job_type": "planning_lens", "prefer_gpu": True,
                      "options": {"temperature": 0.3}},
+            # The BROAD style, placed by the compute-roles rule
+            # (.git/vera-work/shared-planning/compute-roles/PLAN.md):
+            # `stream` - each work-stream's step plan: the plan the run waits on,
+            #   so the GPU (seconds; a CPU node took 199-251 s, 2026-09-27). No
+            #   num_ctx, for the lens's reason above.
+            # `enrich` - a deeper per-stream brief planned IN PARALLEL on a CPU
+            #   node, like the research analyst beside the writer; merged into
+            #   the stream's steps when it lands. Held off the GPU; its job type
+            #   plan_enrich prefers the long-horizon CPU node (cpu-247) and keeps
+            #   off the embedding/worker node (cpu-246), and broad issues these
+            #   one at a time. Model qwen3.6:35b-a3b (user's pick, 2026-09-27):
+            #   measured on idle cpu-247 it decodes 9.8 tok/s and reads 37.5
+            #   tok/s - faster than qwen2.5:7b (7.2 / 24.7) as a MoE with ~3B
+            #   active - and its briefs were the more accurate; but it loads in
+            #   62 s cold (~22 GB), so the route keeps its model WARM (keep_alive
+            #   2h - whichever model is selected here, or per run in the loop's
+            #   Brief model setting). Probe: shared-planning/compute-roles/
+            #   cpu247-model-probe-2026-09-27.md.
+            "stream": {"job_type": "planning_lens", "prefer_gpu": True,
+                       "options": {"temperature": 0.3}},
+            #   The window and keep-alive are the long-horizon model's SHARED
+            #   ones, so a brief reuses the runner the dream director and chat
+            #   insights keep warm instead of reloading it at another window.
+            "enrich": {"job_type": "plan_enrich", "deny_gpu": True,
+                       "model": _orch.LONG_HORIZON_CPU_MODEL,
+                       "options": {"temperature": 0.3, **_orch.LONG_HORIZON_CPU_OPTIONS}},
         })
 except Exception as e:                       # pragma: no cover - never block load
     log.debug("register planning_style profile: %s", e)

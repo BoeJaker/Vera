@@ -381,6 +381,8 @@ async def cap_secstore_unseal(trace_id=None) -> Dict:
     "secstore.kv.put",
     http_method="POST", http_path="/provisioning/secstore/kv/put",
     http_tags=["provisioning"], memory="off",
+    # the secret is the argument: keep it out of cap.call events and previews
+    redact_args=["data"],
     description="Write a secret to OpenBao KV v2. Inputs: path (str!), data "
                 "(object! — key/value pairs). Output: {ok, version}.",
 )
@@ -401,6 +403,9 @@ async def cap_kv_put(path: str = "", data: Optional[Dict] = None,
     "secstore.kv.get",
     http_method="POST", http_path="/provisioning/secstore/kv/get",
     http_tags=["provisioning"], memory="off",
+    # Every result is otherwise cached in Redis for 5 minutes
+    # (vera:cap:result:<name>) - a secret read here sat there in plaintext.
+    redact_result=True,
     description="Read a secret from OpenBao KV v2. Input: path (str!). "
                 "Output: {ok, data} or {ok:false} if missing.",
 )
@@ -694,9 +699,10 @@ async def _startup_unseal():
 
 
 try:
-    _loop = asyncio.get_event_loop()
-    if _loop.is_running():
-        _loop.create_task(_startup_unseal())
+    # Through the orchestrator, so a node worker skips it unless it is
+    # on the worker allow-list (worker_placement_core).
+    import Vera.vera.capability_orchestration as _co_start
+    _co_start.start_at_import(_startup_unseal, "provisioning_unseal")
 except Exception:
     pass
 

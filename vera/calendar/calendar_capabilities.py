@@ -378,14 +378,21 @@ async def _hash_delete(key: str, rid: str) -> bool:
                 "Input: start (ISO date or today|tomorrow|week|month|all), "
                 "end (ISO date or all), source (filter by source id, optional), "
                 "include_dreams (bool — overlay projected scheduled dream fires as "
-                "read-only events). "
+                "read-only events), include_loop_lab (bool — overlay the Loop Lab "
+                "schedules' windows and the runs they started, read-only). "
                 "Output: {events:[{id,title,start,end,all_day,location,source,color}]}.",
 )
 async def cap_events_list(start: str = "week", end: str = "",
                           source: str = "", include_dreams: bool = False,
-                          trace_id=None):
+                          include_loop_lab: bool = False, trace_id=None):
     s, e = _resolve_range(start, end)
     events = await _events_in_range(s, e, source)
+
+    # Virtual overlay: the Loop Lab schedules (evolve.schedule.events) - the
+    # windows censuses/suites/pipelines may run in, and the runs the
+    # scheduler started. Read-only, never stored.
+    if include_loop_lab and source in ("", "loop-lab", "loop-lab-run"):
+        events = events + await _loop_lab_overlay_events(s, e, source)
 
     # Virtual overlay: projected scheduled dream fires, computed on the fly by
     # the dream module and merged read-only. Never stored, so they always track
@@ -396,6 +403,32 @@ async def cap_events_list(start: str = "week", end: str = "",
 
     events.sort(key=lambda ev: ev.get("start", ""))
     return {"events": events, "count": len(events)}
+
+
+async def _loop_lab_overlay_events(s_epoch: float, e_epoch: float,
+                                   source: str = "") -> List[Dict[str, Any]]:
+    """Loop Lab schedule windows + scheduler-started runs, shaped like events."""
+    reg = getattr(_orch, "CAPABILITY_REGISTRY", {}) or {}
+    cap = reg.get("evolve.schedule.events")
+    if not cap:
+        return []
+    try:
+        res = await cap["func"](
+            start=_dt.datetime.fromtimestamp(s_epoch, _dt.timezone.utc).isoformat(),
+            end=_dt.datetime.fromtimestamp(e_epoch, _dt.timezone.utc).isoformat())
+    except Exception as ex:
+        log.debug("loop-lab overlay fetch failed: %s", ex)
+        return []
+    out: List[Dict[str, Any]] = []
+    for ev in (res.get("events", []) if isinstance(res, dict) else []):
+        if source and ev.get("source") != source:
+            continue
+        out.append({"id": ev.get("id"), "title": ev.get("title", ""), "start": ev.get("start"),
+                    "end": ev.get("end"), "all_day": False, "location": "",
+                    "source": ev.get("source", "loop-lab"), "color": ev.get("color", "#c9a35a"),
+                    "read_only": True, "kind": ev.get("kind"), "schedule_id": ev.get("schedule_id"),
+                    "label": ev.get("label", ""), "result": ev.get("result", "")})
+    return out
 
 
 async def _dream_overlay_events(s_epoch: float, e_epoch: float) -> List[Dict[str, Any]]:
@@ -1711,6 +1744,20 @@ async def cap_panel_html(trace_id=None):
                 "<h2>calendar_panel.html not found</h2>"
                 f"<p>Expected at: {_PANEL_HTML_PATH}</p></body></html>")
     return HTMLResponse(html)
+
+
+@APP.get("/ui/elements/calendar.js", include_in_schema=False)
+async def _cal_element_js():
+    """<vera-calendar> - the reusable month/week/day grid (vera/calendar_element.js).
+    Fed by an `events` property or a `src` URL; emits slot-select / event-open.
+    Loop Lab's Schedule page is its first host; this panel can adopt it too."""
+    from fastapi.responses import Response as _Resp
+    p = _HERE.parent / "calendar_element.js"
+    if p.exists():
+        return _Resp(content=p.read_text(encoding="utf-8"), media_type="application/javascript",
+                     headers={"Cache-Control": "no-cache"})
+    return _Resp(content="console.warn('vera-calendar element JS not found');",
+                 media_type="application/javascript")
 
 
 @APP.get("/cal/panel", include_in_schema=False)

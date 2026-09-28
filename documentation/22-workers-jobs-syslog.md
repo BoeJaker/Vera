@@ -1,5 +1,15 @@
 # 22 · Workers, Jobs & Syslog
 
+Portable discovery work can be planned against short-lived worker offers that
+name exact methods, provider revisions, resources and remaining concurrency.
+The planner consumes caller-supplied evidence and never polls or dispatches by
+itself. CPU/network/storage work is assigned only from a current matching
+offer. GPU work additionally requires a current gate admission for the exact
+request, collection option and worker: a cached health response can never imply
+permission, and a gate held by census or another workload remains an explicit
+denial. Plans retain the worker evidence and GPU admission identities so later
+execution and benchmarking can prove what resource decision was made.
+
 The `workers/` package holds Vera's distributed-execution and operational-observability internals. The LLM routing half of `cluster.py` is covered in [LLM Cluster](./04-ollama-cluster.md) and the Docker backend in [Docker](./13-docker.md); this page covers the rest: the **worker registry**, **durable job persistence**, the **syslog** subsystem, and the reusable observability elements.
 
 ---

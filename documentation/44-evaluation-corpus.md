@@ -1,14 +1,17 @@
 # Frozen evaluation corpus
 
-W0-02 gives Vera a versioned, reviewable source of evaluation intent rather
-than scattering implied acceptance criteria across benchmark code and reports.
-The canonical fixture is `evaluations/frozen-corpus-v1.json`.
+Vera has a versioned, reviewable source of evaluation intent rather than
+scattering implied acceptance criteria across benchmark code and reports. The
+canonical fixture is `evaluations/frozen-corpus-v1.json`.
 
 Cases have stable IDs, a domain, a lane, a fixture reference, and exact expected
 fields. `deterministic` cases must require no model or network call.
 `queued_live` cases are inert until explicitly scheduled and must declare call,
 time, and shared-GPU-gate budgets. The corpus policy forbids secrets and defaults
-all live work to queued.
+all live work to queued. A deterministic fixture must resolve to a repository
+test file, optionally naming one exact pytest node; unresolved `planned:`
+references fail validation. Queued live cases may retain a `planned:` reference
+while their external prerequisite or controlled test window is unavailable.
 
 `eval.corpus.inspect` validates the corpus and returns its structural
 fingerprint plus domain/lane coverage. `detail=true` returns bounded case
@@ -18,7 +21,9 @@ The initial corpus covers Run recovery/control, Workflow IR round-trip and
 fail-closed behavior, resolver effect safety, memory deletion/citations, Fabric
 projection failure, structured generation, representative Operator readiness,
 bounded research cancellation, and mixed interactive/background load. Fixture
-references beginning with `planned:` are honest gaps, not passing tests.
+references identify the executable deterministic evidence or the explicitly
+queued live work needed to produce it; a declaration alone is not a passing
+result.
 
 Deterministic scoring compares declared dotted output paths using strict value
 equality. Missing paths fail closed. Model-judge rubrics and real workload
@@ -27,10 +32,10 @@ budget rather than silently changing the benchmark.
 
 ## Resolver shadow lane
 
-`evaluations/resolver-shadow-v1.json` is a separate synthetic-only corpus for
-W1-04. Its frozen registries, requests, redacted observations, expected
-selection, and explicit unsafe implementation sets exercise effect rejection,
-output compatibility, policy unknowns, observed health, and evidence ranking.
+`evaluations/resolver-shadow-v1.json` is a separate synthetic-only corpus. Its
+frozen registries, requests, redacted observations, expected selection, and
+explicit unsafe implementation sets exercise effect rejection, output
+compatibility, policy unknowns, observed health, and evidence ranking.
 
 `evaluate_resolver_corpus` projects each synthetic registry through Capability
 Contract v2 and calls only the pure shadow resolver. It reports exact selection

@@ -17,6 +17,15 @@ similarity from a named model checkpoint. It cannot contribute cached text
 directly: unmatched neighbours are ignored, citations and source revisions are
 unchanged, and the normalized score and ranking weight are retained as evidence.
 
+Reciprocal enrichment now has a shared, payload-free evidence ledger. NLP,
+Worldview and other systems can attach bounded scores or scalar annotations to
+an exact context revision without copying its text. Derived evidence must retain
+every upstream authority and citation, cannot predate or outlive its parents,
+and cannot return to a producer already present in its ancestry. Producer-owned
+tombstones record invalidation without deleting history. Projection separates
+current, stale and tombstoned evidence while leaving the authoritative
+`ContextItem` unchanged.
+
 `ContextRegistry` makes those components discoverable without exposing their
 payloads. Its stable manifest contains only canonical component IDs and roles;
 duplicate registration, ambiguous selection, and unknown IDs fail before any

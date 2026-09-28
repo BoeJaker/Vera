@@ -75,11 +75,49 @@ from Vera.vera.capability_orchestration import (
 
 from Vera.vera.dag import chain_deps as _chain_deps
 try:
+    from Vera.vera.dag import recovery_identity_core as _recovery_identity
+except ImportError:                                        # pragma: no cover
+    from vera.dag import recovery_identity_core as _recovery_identity
+try:
+    from Vera.vera.dag import steer_core as _steer_core
+except ImportError:                                        # pragma: no cover
+    from vera.dag import steer_core as _steer_core
+# A merge (2026-09-24, items 18 and 20 cut from the same base) folded this
+# import into the steer_core except-branch, so prod never bound the alias and
+# every step verify died with NameError (op-run4, 25 Sep: four wall caps).
+# tests/test_core_aliases_are_bound.py now holds every such alias to a try body.
+try:
+    from Vera.vera.dag import verify_evidence_core as _verify_evidence
+except ImportError:                                        # pragma: no cover
+    from vera.dag import verify_evidence_core as _verify_evidence
+try:
+    from Vera.vera.dag import step_summary_core as _step_summary_core
+except ImportError:                                        # pragma: no cover
+    from vera.dag import step_summary_core as _step_summary_core
+
+
+def _v5_sentence(tool: str, preview: str, reason: str = "") -> str:
+    """A step summary in words. Every path that ends a step FOR the executor
+    used to summarise with the last tool preview verbatim - 300 characters of
+    a result's JSON - which is what the verifier and the next step then read
+    (65 of 130 summaries in run70-73, 24 Sep 2026). See step_summary_core."""
+    if not preview:
+        return ""
+    return _step_summary_core.sentence(tool, preview, reason)
+try:
+    from Vera.vera.dag.loop_output_bound_core import (
+        bound_options as _bound_loop_options, DEFAULT_LOOP_NUM_PREDICT as _DEFAULT_LOOP_NUM_PREDICT)
+except ImportError:                                        # pragma: no cover
+    from vera.dag.loop_output_bound_core import (
+        bound_options as _bound_loop_options, DEFAULT_LOOP_NUM_PREDICT as _DEFAULT_LOOP_NUM_PREDICT)
+try:
     from Vera.vera.dag.operator_model_arg_core import (
-        heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS)
+        heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS,
+        names_a_model as _names_a_model)
 except ImportError:                                        # pragma: no cover
     from vera.dag.operator_model_arg_core import (
-        heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS)
+        heal_model_arg as _heal_model_arg, OPERATOR_MODEL_CAPS as _OPERATOR_MODEL_CAPS,
+        names_a_model as _names_a_model)
 try:
     from Vera.vera.dag import loop_prompt_rules as _loop_rules
 except ImportError:                                        # pragma: no cover
@@ -98,6 +136,21 @@ except ImportError:                                        # pragma: no cover
         from vera.dag import repeat_failure as _repeat_failure
     except ImportError:
         _repeat_failure = None
+try:
+    from Vera.vera.operator import operator_step_budget as _step_budget
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera.operator import operator_step_budget as _step_budget
+    except ImportError:
+        _step_budget = None
+# A browser result that says done closes the step's browser work (item 24a).
+try:
+    from Vera.vera.operator import browser_done_core as _browser_done
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera.operator import browser_done_core as _browser_done
+    except ImportError:
+        _browser_done = None
 # Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
 # have a module until it lands there, so a NEW sibling must fall back to the
 # plain package or this whole module fails to import.
@@ -2502,6 +2555,13 @@ def _now_context_line() -> str:
 # Loop LLM determinism — see _safe_ollama_generate_dw. Off via
 # VERA_LOOP_DETERMINISTIC=0; VERA_LOOP_TEMP / VERA_LOOP_SEED tune it.
 _LOOP_DETERMINISTIC = os.getenv("VERA_LOOP_DETERMINISTIC", "1").strip() not in ("0", "false", "no")
+# Output bound for every loop generation that does not pin its own - see
+# loop_output_bound_core (run72: one controller call = 16,384 tokens, 1,055 s).
+# VERA_LOOP_NUM_PREDICT=0 turns it off.
+try:
+    _LOOP_NUM_PREDICT = int(os.getenv("VERA_LOOP_NUM_PREDICT", str(_DEFAULT_LOOP_NUM_PREDICT)) or 0)
+except Exception:
+    _LOOP_NUM_PREDICT = _DEFAULT_LOOP_NUM_PREDICT
 try:
     _LOOP_TEMP = float(os.getenv("VERA_LOOP_TEMP", "0") or 0)
 except Exception:
@@ -2610,6 +2670,11 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
         if not (profile or role):
             _opts.setdefault("temperature", _LOOP_TEMP)
             _opts.setdefault("top_p", 1.0)
+    # Bounded output. A loop call answers with a decision, a plan or a tool
+    # call, not a report; with no bound the window was the only limit and one
+    # controller call generated to it (run72, 2026-09-24: 16,384 tokens in
+    # 1,055 s). A caller's own num_predict (code.edit's, a role's) still wins.
+    _opts = _bound_loop_options(_opts, _LOOP_NUM_PREDICT)
     _gen_kwargs = dict(system=system, json_mode=use_json,
                        model=model or None, instance_id=instance_id or None,
                        prefer_gpu=bool(prefer_gpu), think=think)
@@ -4338,6 +4403,29 @@ def _guard_filter_catalog(session_id: str, names: List[str]) -> List[str]:
         return names
 
 
+try:
+    from Vera.vera.dag import cap_relevance_core as _cap_relevance
+except ImportError:                                   # pragma: no cover
+    from vera.dag import cap_relevance_core as _cap_relevance
+
+#: Name parts that mark a capability a planner should never be OFFERED by
+#: discovery: secrets, credentials and host provisioning. Measured 2026-09-27:
+#: the lexical search put ide.vscode.password.reveal / .set and
+#: pxstore.store.writer.provision into the catalogue for "write an explainer of
+#: a race condition". They stay callable (and an explicit base toolkit can still
+#: name one); they are just not discovered into a loop's catalogue.
+_PLANNER_SENSITIVE_PARTS = frozenset({
+    "password", "passwords", "secret", "secrets", "credential", "credentials",
+    "vault", "token", "tokens", "provision", "reveal",
+})
+
+
+def _planner_catalog_sensitive(name: str) -> bool:
+    n = str(name or "").lower()
+    parts = set(n.replace("_", ".").split("."))
+    return bool(parts & _PLANNER_SENSITIVE_PARTS) or n.endswith(".config.set")
+
+
 async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
                               categories: Optional[List[str]] = None,
                               keywords: List[str], top_k: int = 16,
@@ -4380,9 +4468,10 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
     toolkit: List[str] = []
     seen: set = set()
 
-    def add(name: str):
+    def add(name: str, explicit: bool = False):
         if name and name in CAPABILITY_REGISTRY and name not in seen \
-                and name not in blacklist:
+                and name not in blacklist \
+                and (explicit or not _planner_catalog_sensitive(name)):
             toolkit.append(name)
             seen.add(name)
 
@@ -4408,7 +4497,7 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
     #    are never truncated and are the floor when triage can't narrow things.
     base_list = [c.strip() for c in (base_caps or []) if c and c.strip()]
     for c in base_list:
-        add(c)
+        add(c, explicit=True)
     n_base = len(toolkit)  # everything up to here is protected from the size cap
 
     # 1. Discovery caps — always present (bypass pool)
@@ -4476,16 +4565,23 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
         kw_query = " ".join(query_parts).strip()
         if cap_index is not None and kw_query:
             hits = await cap_index.relevance_search(kw_query, top_k=top_k * 2)
-            for entry in hits or []:
-                name = entry[0] if isinstance(entry, tuple) else (
-                    entry.get("name") if isinstance(entry, dict) else None
-                )
-                if not name or name in seen:
-                    continue
+            ranked = [n for n in (
+                (e[0] if isinstance(e, tuple) else (e.get("name") if isinstance(e, dict) else None))
+                for e in (hits or [])) if n]
+            # A SHORT tail that must be earned (cap_relevance_core.select_tail):
+            # the best few by relevance, then only caps whose domain the goal
+            # names. Replayed on the census goals: a markets backtest goal gets
+            # markets.backtest.*, a browser goal browser.*, a generic goal 3
+            # extras instead of 15-20 unrelated ones.
+            _idx = getattr(cap_index, "_index", {}) or {}
+            for name in _cap_relevance.select_tail(
+                    ranked, kw_query, exclude=seen,
+                    tags_of=lambda n: (_idx.get(n) or {}).get("tags") or (),
+                    max_tail=min(_cap_relevance.MAX_TAIL, semantic_budget)):
+                before = len(seen)
                 add(name)
-                semantic_added += 1
-                if semantic_added >= semantic_budget:
-                    break
+                if len(seen) > before:
+                    semantic_added += 1
     except Exception:
         pass
 
@@ -4719,6 +4815,12 @@ def _is_arg_error(error_text: str) -> bool:
     if not error_text:
         return False
     e = str(error_text).lower()
+    # A call that RAN and stopped on its own limit (the browser's time budget,
+    # no-progress, an exec wall cap) is not an argument error - its text says
+    # "expected"/"got" and used to read as one (run77 long-horizon: three
+    # 511 s browser runs inside one tool call). See recovery_identity_core.
+    if _recovery_identity.is_run_stop(e):
+        return False
     # Hard rejects — narrowly worded to avoid false positives (e.g. "timeout"
     # matching a parameter named timeout, "401" appearing inside a payload).
     NON_RECOVERABLE = (
@@ -4759,6 +4861,17 @@ def _is_arg_error(error_text: str) -> bool:
         "invalid cidr", "invalid url", "invalid path",
     )
     return any(p in e for p in RECOVERABLE)
+
+
+def _served_model_names() -> List[str]:
+    """Every model tag some Ollama node reports serving - the catalogue the
+    made-up-model heal reads. Empty when the node table is empty, and the
+    heal does nothing on an empty catalogue by design."""
+    try:
+        return sorted({str(m) for _i in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values()
+                       for m in ((_i or {}).get("models") or [])})
+    except Exception:
+        return []
 
 
 def _build_recovery_prompt(*, cap_name: str, failed_args: Dict[str, Any],
@@ -4964,6 +5077,45 @@ async def _attempt_arg_recovery(*, cap_name: str, failed_args: Dict[str, Any],
                 coerced[_rec_url_arg] = _v5_sandbox_preview_url(session_id, _rum.group(1))
             if not str(coerced.get("goal") or "").strip() and goal:
                 coerced["goal"] = goal
+
+        # The made-up-model heal the executor's own call runs (run57/run59)
+        # never ran HERE either - this path rebuilds the call from its own
+        # LLM answer. Operator census run3 (2026-09-24, operator-form-
+        # validation): the recovery answer carried `provider: "local",
+        # model: "fast-8b"`; Ollama 404'd all three thinks in five seconds
+        # and the attempt died `think_error` having observed nothing.
+        # Recovery may reshape WHAT the call asks for, never WHERE it runs or
+        # WHAT IT MAY DO: the original's kind/target/provider/allowlist/
+        # destructive flag and the url's host are restored, and permissions the
+        # original never had are dropped (run70-73: `kind: live` onto prod's own
+        # UI, `allow_destructive: true`, `allowlist: ["*"]`, provider
+        # `playwright`). See recovery_identity_core.
+        if isinstance(coerced, dict) and isinstance(failed_args, dict):
+            coerced, _id_notes = _recovery_identity.keep_identity(failed_args, coerced)
+            for _n in _id_notes:
+                if emit_fn:
+                    try:
+                        await emit_fn({
+                            "type": "agent_loop.error_recovery_arg_correction",
+                            "tool": cap_name, "attempt": attempt_i, "note": _n,
+                            "cycle": cycle, "session_id": session_id,
+                            "stream_id": stream_id,
+                        })
+                    except Exception:
+                        pass
+        if cap_name in _OPERATOR_MODEL_CAPS and isinstance(coerced, dict) and _names_a_model(coerced):
+            for _fld, _val, _note in _heal_model_arg(cap_name, coerced, _served_model_names()):
+                coerced[_fld] = _val
+                if emit_fn:
+                    try:
+                        await emit_fn({
+                            "type": "agent_loop.error_recovery_arg_correction",
+                            "tool": cap_name, "attempt": attempt_i, "note": _note,
+                            "cycle": cycle, "session_id": session_id,
+                            "stream_id": stream_id,
+                        })
+                    except Exception:
+                        pass
 
         if emit_fn:
             try:
@@ -8253,6 +8405,13 @@ _V5_WEB_GOAL_HINTS = (
     "lookup", "look up", "find out", "search", "investigate", "profile", "background",
     "reconnais", "recon", "intel", "online", "social", "news", "latest", "current",
     "company", "person", "people", "competitor",
+    # A report or summary WITH SOURCES is research even when the verb is
+    # "produce"/"write": census goal `research-report` ("Produce a short report on
+    # the Redis licensing change and the Valkey fork, with citations") never
+    # matched this list, so web.research was never offered and the run chained
+    # web.search -> web.fetch across 26 calls to the wall cap (runs 54-58, 2026-09-21).
+    "report on", "report about", "citation", "citing", "cite ", "sources", "state of",
+    "overview of", "summary of", "summarise", "summarize", "history of", "explain the",
 )
 # Infra/scan/host caps are IRRELEVANT to most goals — never auto-grant them as
 # recovery unless the step is itself in that domain (prevents the loop wandering
@@ -8278,7 +8437,11 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
     so the orchestrator isn't stuck with whatever semantic search surfaced."""
     seeds = list(_V5_CORE_SEED_CAPS)
     if _v5_goal_is_webby(goal):
-        seeds += list(_V5_WEB_RESEARCH_SEED_CAPS)
+        # The web caps go FIRST for a goal that needs the outside world: the
+        # catalog is read top-down and its first line was exec.bash.run /
+        # http.get, so a research plan reached for raw fetches before it ever
+        # saw web.research (2026-09-21, census research-report).
+        seeds = list(_V5_WEB_RESEARCH_SEED_CAPS) + [c for c in seeds if c not in _V5_WEB_RESEARCH_SEED_CAPS]
     # A goal whose OWN text asks for UI/HTML verification ("...then verify it
     # actually works by clicking the button...") never matches the research-y
     # web hints above, so operator.run/browser.navigate were never guaranteed
@@ -8415,7 +8578,12 @@ def _v5_deflood_catalog(catalog: List[str], goal: str, *, per_ns_cap: int = 6) -
 # and never a different intent (e.g. fs.read → fs.write would widen a read-only
 # step into a mutating one — that stays the planner's explicit choice).
 _V5_CAP_COHORTS = (
-    ("web.search", "web.fetch", "http.get"),   # live-web access: query → page → raw URL
+    # live-web access, in the order to reach for them: web.research (search AND
+    # read the top pages in one call) first; web.search to find one URL;
+    # web.fetch to read a URL already known; http.get for an API / raw body.
+    # web.research was missing from this cohort until 2026-09-21, so any goal
+    # that surfaced web.search got the slow chain and never the one-call tool.
+    ("web.research", "web.search", "web.fetch", "http.get"),
     ("exec.bash.run", "exec.python.run"),      # run a command vs a script — same act, diff syntax
 )
 
@@ -8622,7 +8790,11 @@ def _v5_apply_code_routing(tool: str, args: Any) -> bool:
 # step's recovery toolkit. Anti-verbs win (e.g. "fabric.objects.bucket_create").
 _V5_READONLY_TOKENS = ("search", "list", "get", "read", "describe", "query",
                        "inspect", "status", "fetch", "find", "lookup", "discover",
-                       "expand", "landscape", "seek", "map", "recall", "browse")
+                       "expand", "landscape", "seek", "map", "recall", "browse",
+                       # web.research / web.crawl READ the web; without these two
+                       # tokens they were filtered out of explore/verify phases
+                       # and read-only recovery while web.search stayed (2026-09-21).
+                       "research", "crawl")
 _V5_MUTATING_TOKENS = ("write", "create", "delete", "update", "set", "remove",
                        "run", "exec", "send", "build", "train", "deploy", "apply",
                        "install", "start", "stop", "kill", "save", "put", "post",
@@ -8852,6 +9024,10 @@ def _v5_split_compound_single_step(steps: List[Dict[str, Any]], goal: str) -> Li
 # the lean default so routine results don't bloat the working context.
 _V5_LONGFORM_PREFIXES = ("research.", "fabric.synthesize.", "fabric.discover.")
 _V5_LONGFORM_EXACT = {"web.fetch", "web.search_and_crawl", "llm.summarize",
+                      # web.research returns up to `results` pages of text
+                      # inline; at the 2000-char default preview the executor
+                      # saw a stub and re-fetched every page one by one.
+                      "web.research", "web.crawl",
                       # canonical retrieval caps self-size via max_chars — give
                       # them the longform budget so the loop never re-truncates
                       "memory.seek", "memory.read", "memory.browse"}
@@ -8883,6 +9059,12 @@ _V5_PREVIEW_FILEREAD = int(os.getenv("V5_PREVIEW_FILEREAD", "8000") or 8000)
 _V5_CTX_PER_STEP = 3000             # prior-step summary carried into a dependent step
 _V5_CTX_TOTAL = 12000              # cap on the whole prior-context slice
 _V5_DONE_SUMMARY = 6000            # a step's own `done` summary (flows to later steps)
+#: Tool NAMES the executor uses when it means "this step is answered". The
+#: contract is a top-level `done` field, but a model that has finished reaches
+#: for a tool called `done` (5 times in run70-73, 24 Sep 2026), was told there
+#: is no such capability, and spent the next cycles re-issuing refused calls.
+#: The intent is unambiguous; it is taken as the step's done summary.
+_V5_DONE_TOOL_ALIASES = frozenset({"done", "finish", "finished", "stop", "complete", "completed", "end", "final"})
 
 # Args that don't change WHAT a call does — only how long it may run or where it
 # runs. A specialist that re-issues the SAME command with only a different
@@ -9872,7 +10054,7 @@ def _v5_navigate_goal_fallback(step: Dict[str, Any]) -> str:
     cut = _V5_RECOVERY_NARRATIVE_RE.search(goal)
     if cut:
         goal = goal[:cut.start()].strip()
-    return goal[:300]
+    return _steer_core.strip_steer(goal)[:300]
 
 
 _V5_AUTHOR_TOOLS = ("code.author", "prose.author", "code.edit")
@@ -9897,7 +10079,9 @@ def _v5_heal_author_args(tool: str, args: Any,
         return out
     has_content = bool(str(args.get("content") or args.get("text") or "").strip())
     if not str(args.get("task") or "").strip() and not has_content:
-        sg = str(step.get("goal") or step.get("title") or "").strip()
+        # Without the controller steer: it is context for the executor, not
+        # part of the file's task (six steered tasks in run70-73, 24 Sep 2026).
+        sg = _steer_core.strip_steer(str(step.get("goal") or step.get("title") or "")).strip()
         if sg:
             out.append(("task", sg[:600], f"task (missing) → step goal: {sg[:80]}"))
     if tool in ("code.author", "prose.author") and not str(args.get("path") or "").strip():
@@ -11705,7 +11889,17 @@ async def _v5_load_current(path: str, session_id: str = "", repo: str = "") -> s
     return ""
 
 
-_V5_GUTTER_RE = re.compile(r"^\s*\d+\s*\|\s?", re.M)
+try:
+    from Vera.vera.dag import edit_gutter_core as _gutter_core
+except Exception:                                     # pragma: no cover
+    from . import edit_gutter_core as _gutter_core
+
+#: The shape lives in edit_gutter_core now, shared with the block parser:
+#: the two carried separate copies of one pattern and the same blind spot,
+#: and run62 showed the editor copying its OWN markdown-table rendering of
+#: the numbered view (`| 18 | text`), which neither copy recognised.
+#: Multiline flavour here for the `search` test below.
+_V5_GUTTER_RE = re.compile(_gutter_core.GUTTER_RE.pattern, re.M)
 
 
 def _v5_strip_gutter(text: str) -> str:
@@ -11716,7 +11910,7 @@ def _v5_strip_gutter(text: str) -> str:
     first real call: find='    1 | for i in range(1, 4):', which of course
     appears nowhere in the file. Prompting alone does not reliably prevent it;
     stripping does."""
-    return _V5_GUTTER_RE.sub("", text or "")
+    return _gutter_core.strip_text(text)
 
 
 # Edit-anchor hints (what to say when a find/replace anchor is not in the file).
@@ -11821,6 +12015,7 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
     working file, which is far worse than a rejected edit the model can retry."""
     out = content or ""
     applied, errors, already = [], [], []
+    reanchored: List[Dict[str, Any]] = []
     for i, e in enumerate(edits or []):
         if not isinstance(e, dict):
             continue
@@ -11864,6 +12059,17 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
             if _span:
                 find = _span
                 n = out.count(find)
+        if n == 0 and _edit_anchor_hint is not None and hasattr(_edit_anchor_hint, "nearest_unique_span"):
+            # A stale anchor: the model quoted a line from an earlier version it
+            # edited itself. When ONE region is a close match and nothing else
+            # comes near, that is the line it meant - anchor there and say so,
+            # rather than refuse with a hint the retry re-types wrong (11 such
+            # refusals in run70-73, 2026-09-24). Still exactly once below.
+            _span = _edit_anchor_hint.nearest_unique_span(out, find)
+            if _span and out.count(_span) == 1:
+                reanchored.append({"edit": i + 1, "from": find[:80], "to": _span[:80]})
+                find = _span
+                n = 1
         if n == 0:
             # Naming what IS there turns a dead end into a next move - the same
             # reasoning already applied to the n>1 branch below. Echoing the
@@ -11889,7 +12095,9 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
                           "matches exactly once")
             continue
         out = out.replace(find, repl, 1)
-        applied.append({"find_preview": find[:80], "removed": len(find), "added": len(repl)})
+        applied.append({"find_preview": find[:80], "removed": len(find), "added": len(repl),
+                        **({"reanchored_from": reanchored[-1]["from"]}
+                           if reanchored and reanchored[-1]["edit"] == i + 1 else {})})
     # An edit that was already in place counts toward success: the file says
     # what the caller asked for, which is the only thing `ok` is about. A batch
     # of nothing BUT already-applied edits is still ok - re-running it would
@@ -12663,12 +12871,13 @@ def _v5_minimal_plan_primary() -> bool:
 
 
 def _v5_brief_cap_line(name: str) -> str:
-    """One-line 'name — description' for the orchestrator catalog (no schema)."""
+    """One-line 'name — description' for the orchestrator catalog (no schema):
+    whole sentences, plus the description's when-to-use guidance
+    (cap_relevance_core.brief_line - it used to be a 120-char mid-sentence cut)."""
     cap = CAPABILITY_REGISTRY.get(name)
     if not cap:
         return name
-    desc = (cap.get("description") or "").strip().replace("\n", " ")[:120]
-    return f"{name} — {desc}" if desc else name
+    return _cap_relevance.brief_line(name, cap.get("description") or "")
 
 
 def _v5_cap_skill_map(skills: List[Dict[str, Any]]) -> Dict[str, List[str]]:
@@ -13094,6 +13303,29 @@ async def _v5_planner_agent_cfg() -> Dict[str, Any]:
     return {"model": "", "options": {}, "persona": ""}
 
 
+def _v5_plan_context_block(master_plan: str, recon_findings: str) -> str:
+    """The planner's CONTEXT — a master plan (strategic, or ONE `[PIECEWISE]` piece
+    with the whole plan and the earlier pieces' sub-plans) and any recon findings —
+    rendered once for BOTH prompt bodies.
+
+    The minimal body is the primary on every real run (VERA_LOOP_MINIMAL_PLAN) and
+    built its prompt from GOAL + catalog alone, so neither input ever reached it:
+    each piece of a strategic plan re-planned the WHOLE goal, and recon findings
+    were inert. Fourth planner input to reach one body and not the other (see
+    loop_prompt_rules). Empty inputs render '' so a plain plan's prompt is
+    byte-for-byte unchanged."""
+    master_plan = master_plan or ""
+    piecewise = master_plan.startswith("[PIECEWISE]")
+    if piecewise:
+        master_plan = master_plan[len("[PIECEWISE]"):]
+    return (((f"{master_plan}\n\n" if piecewise else
+              f"STRATEGIC MASTER PLAN (a specialist planner wrote this — BREAK IT INTO concrete, "
+              f"ordered, executable steps; keep its intent and sequencing):\n{master_plan}\n\n")
+             if master_plan else "")
+            + (f"RECON FINDINGS (already gathered — use these to inform the plan):\n{recon_findings}\n\n"
+               if recon_findings else ""))
+
+
 async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List[Dict[str, Any]],
                                cap_skill_map: Optional[Dict[str, List[str]]] = None,
                                *, model: str = "", instance_id: str = "",
@@ -13105,7 +13337,10 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                                phase_policy: str = "sparingly",
                                allowed_phases: Optional[List[str]] = None,
                                intent: str = "mixed",
-                               sid: str = "", stream_id: str = "") -> Dict[str, Any]:
+                               plan_note: str = "",
+                               sid: str = "", stream_id: str = "",
+                               route_profile: str = "", route_role: str = "",
+                               token_cb: Any = None) -> Dict[str, Any]:
     """ONE LLM call: decompose the goal into an ordered step plan. Each step names
     only the few caps and skills it needs. Folds triage+step-select+plan into a
     single call so the loop starts working almost immediately.
@@ -13137,6 +13372,16 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
     # deterministic floor), so a re-plan differs from a plan that drifted.
     plan_opts = _planner_sampling(_pa.get("options"))
     plan_persona = _pa.get("persona") or ""
+    # A ROUTE OVERRIDE (the broad style's per-stream calls) sends this call to
+    # another routing role - and then the planner agent's pinned model and
+    # options (its num_ctx) must not follow it: a CPU stream would otherwise load
+    # the planner's GPU-sized model and window on a CPU node. The role's own rule
+    # supplies model and sampling. No override = exactly the call as before.
+    _plan_profile = route_profile or LOOP_ROUTING_PROFILE
+    _plan_role = route_role or "planner"
+    if route_role:
+        plan_model = model or ""
+        plan_opts = _planner_sampling(None)
     cap_line_parts = []
     for n in catalog_names:
         line = "  " + _v5_brief_cap_line(n)
@@ -13152,6 +13397,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
     # Stripped-down schema used as a RETRY when the full prompt yields no parseable
     # steps — small models handle this minimal instruction far more reliably.
     _intent_directive = _v7_intent_plan_directive(intent, max_steps=max_steps)
+    _plan_context = _v5_plan_context_block(master_plan, recon_findings)
     if minimal:
         sys = (
             (_intent_directive + "\n" if _intent_directive else "")
@@ -13172,8 +13418,10 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             + (',"done_when":"<one-line criterion for the WHOLE goal>"' if want_success else '')
             + '}'
         )
-        prompt = (f"GOAL: {goal}\n\nAVAILABLE CAPABILITIES (name — description):\n{cap_lines}\n\n"
-                  "Produce the steps JSON object.")
+        prompt = (f"GOAL: {goal}\n\n" + _plan_context
+                  + f"AVAILABLE CAPABILITIES (name — description):\n{cap_lines}\n\n"
+                  "Produce the steps JSON object."
+                  + (f"\n\n{plan_note}" if plan_note else ""))
         if plan_persona:
             sys = plan_persona + "\n\n" + sys
         steps = []
@@ -13184,7 +13432,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                 await _emit_stage_context(
                     "planner", variant="minimal", system=sys, prompt=prompt,
                     rule_ids=_RULES.rule_ids_for("planner:minimal"),
-                    model=plan_model, role="planner",
+                    model=plan_model, role=_plan_role,
                     session_id=sid, stream_id=stream_id, cycle=None,
                     runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
             except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
@@ -13192,8 +13440,11 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             raw = await _safe_ollama_generate_dw(
                 prompt, system=sys, model=plan_model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
-                profile=LOOP_ROUTING_PROFILE, role="planner",
-                request_stage="planner")
+                profile=_plan_profile, role=_plan_role,
+                request_stage="planner",
+                # A caller that wants the plan to build live (the broad style's
+                # per-stream cards) passes token_cb; otherwise unchanged.
+                stream_cb=token_cb)
             valid_skill_ids = {s["id"] for s in skills}
             _pp = _v5_parse_plan(raw or "")
             if isinstance(_pp.get("obj"), dict):
@@ -13303,13 +13554,15 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         "exec.python.run (+ maybe web.*/http.get), NOT llm.generate as the data source.\n"
         "INTERNAL DATA vs the LIVE WEB: memory.seek / fabric.query / fabric.entity_graph.query "
         "search only data ALREADY STORED in Vera's fabric — they do NOT browse the internet. For ANY "
-        "external lookup (a person, company, domain, website, news, current/online info) use the WEB "
-        "caps: web.search (search engine results), web.fetch / http.get (fetch a page as text), "
-        "browser.navigate (JS-heavy or cert-broken sites), "
+        "external lookup (a person, company, domain, website, news, current/online info) LEAD with "
+        "web.research: ONE call that searches AND reads the top pages, returning their text inline "
+        "(sources[].text) — one web.research step per question is the whole gathering phase. Use "
+        "web.search only to find ONE specific URL, web.fetch only to read a URL you already have, "
+        "http.get only for an API or a raw body, web.crawl to follow links on a known site, "
         + (_research_hint(suffix=" (broader managed research), ") or "")
-        + "fabric.discover.crawl (crawl & ingest a site). A web/OSINT goal should LEAD "
-        "with web.search and only use memory.seek to check what Vera already knows — never rely "
-        "on stored data alone for web presence.\n"
+        + "fabric.discover.crawl (crawl & ingest a site). Never plan web.search → web.fetch chains "
+        "for a question web.research answers in one step. Use memory.seek only to check what Vera "
+        "already knows — never rely on stored data alone for web presence.\n"
         "SCRIPTS (only when genuinely needed): a bash/python script is for steps whose work IS "
         "computation — parsing files, multi-command shell work, data wrangling, glue logic. If a "
         "step needs one, make it AUTHOR the script with code.author (the coding specialist "
@@ -13419,21 +13672,10 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         + ('"done_when":"<one-line whole-goal criterion>",' if want_success else '')
         + '"reason":"<one sentence>"}'
     )
-    # Piecewise mode: the caller is expanding ONE piece of the master plan at a
-    # time — the directive text already carries the full plan, the composed
-    # sub-plans from earlier pieces, and the "plan ONLY this piece" instruction.
-    _piecewise = bool(master_plan) and master_plan.startswith("[PIECEWISE]")
-    if _piecewise:
-        master_plan = master_plan[len("[PIECEWISE]"):]
-    prompt = (f"GOAL: {goal}\n\n"
-              + ((f"{master_plan}\n\n" if _piecewise else
-                  f"STRATEGIC MASTER PLAN (a specialist planner wrote this — BREAK IT INTO concrete, "
-                  f"ordered, executable steps; keep its intent and sequencing):\n{master_plan}\n\n")
-                 if master_plan else "")
-              + (f"RECON FINDINGS (already gathered — use these to inform the plan):\n{recon_findings}\n\n"
-                 if recon_findings else "")
+    prompt = (f"GOAL: {goal}\n\n" + _plan_context
               + f"AVAILABLE CAPABILITIES (name — description [suggested skills]):\n{cap_lines}\n\n"
-              f"AVAILABLE SKILLS (id — description):\n{skill_lines}\n\nProduce the plan.")
+              f"AVAILABLE SKILLS (id — description):\n{skill_lines}\n\nProduce the plan."
+              + (f"\n\n{plan_note}" if plan_note else ""))
     if plan_persona:
         sys = plan_persona + "\n\n" + sys
     steps: List[Dict[str, Any]] = []
@@ -13476,7 +13718,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             await _emit_stage_context(
                 "planner", variant="full", system=sys, prompt=prompt,
                 rule_ids=_RULES.rule_ids_for("planner:full"),
-                model=plan_model, role="planner",
+                model=plan_model, role=_plan_role,
                 session_id=sid, stream_id=stream_id, cycle=None,
                 runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
         except Exception as _ae:      # pragma: no cover â€” instrumentation must never break a run
@@ -13484,9 +13726,9 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=plan_model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
-            profile=LOOP_ROUTING_PROFILE, role="planner", timeout=_V5_PLANNER_TIMEOUT_S,
+            profile=_plan_profile, role=_plan_role, timeout=_V5_PLANNER_TIMEOUT_S,
             request_stage="planner",
-            stream_cb=(_plan_stream_cb if stream_id else None))
+            stream_cb=(token_cb or (_plan_stream_cb if stream_id else None)))
         _pp = _v5_parse_plan(raw or "")
         parsed = _pp["obj"] if isinstance(_pp.get("obj"), dict) else {}
         raw_steps = _pp["steps"]
@@ -13734,6 +13976,379 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _plan_shape = None
         log.warning("plan_shape_core unavailable — under-decomposition guard off")
+
+# Plan hygiene (a plan holds only what the goal asked for; item 22, 2026-09-24).
+try:
+    from Vera.vera.dag import plan_hygiene_core as _plan_hygiene
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import plan_hygiene_core as _plan_hygiene
+    except Exception:
+        _plan_hygiene = None
+        log.warning("plan_hygiene_core unavailable — plan hygiene off")
+
+
+# The delivered answer is composed from the deliverable (item 23, 2026-09-25).
+try:
+    from Vera.vera.dag import deliverable_core as _deliverable
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import deliverable_core as _deliverable
+    except Exception:
+        _deliverable = None
+        log.warning("deliverable_core unavailable - the delivery stage composes from summaries only")
+
+
+async def _v6_read_artifact_text(session_id: str, rel: str, *, max_chars: int = 6000) -> str:
+    """The text of one file this run wrote, from the session's sandbox or its host
+    artifact dir (the same two places `artifact_download` looks). '' when it
+    cannot be read - the delivery stage then composes from the evidence alone."""
+    if not session_id or not rel:
+        return ""
+    try:
+        import importlib as _il
+        _ex = _il.import_module("Vera.vera.execution.exec_capabilities")
+        base = await _ex.artifact_dir_async(session_id=session_id, create=False)
+        rel = str(rel)
+        if base and rel.startswith(str(base).rstrip("/") + "/"):
+            rel = rel[len(str(base).rstrip("/")) + 1:]
+        elif rel.startswith("/workspace/"):
+            rel = rel[len("/workspace/"):]
+        safe = [x for x in re.split(r"[\\/]+", rel) if x and x not in (".", "..")]
+        if not safe:
+            return ""
+        sb = _sandbox_mod()
+        if base and str(base).startswith("/workspace") and sb is not None and hasattr(sb, "route_fs_read"):
+            try:
+                res = await sb.route_fs_read(session_id, str(base).rstrip("/") + "/" + "/".join(safe),
+                                             max_bytes=max(4096, max_chars * 4))
+            except Exception:
+                res = None
+            if res and not res.get("error"):
+                return str(res.get("content") or "")[:max_chars]
+        if not base or not os.path.isdir(str(base)):
+            base = _ex.artifact_dir(session_id=session_id, create=False)
+        if base and os.path.isdir(str(base)):
+            root = os.path.normpath(str(base))
+            target = os.path.normpath(os.path.join(root, *safe))
+            if target.startswith(root) and os.path.isfile(target):
+                with open(target, encoding="utf-8", errors="replace") as fh:
+                    return fh.read(max_chars)
+    except Exception as e:
+        log.debug("v6 artifact text read failed for %s: %s", rel, e)
+    return ""
+
+# An authoring-only step is answered by its author call (item 17c, 2026-09-25).
+try:
+    from Vera.vera.dag import author_done_core as _author_done
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import author_done_core as _author_done
+    except Exception:
+        _author_done = None
+        log.warning("author_done_core unavailable - authoring steps run to the executor's own done")
+
+# A research-only step with its sources in hand is answered (item 17e, 2026-09-25).
+try:
+    from Vera.vera.dag import research_done_core as _research_done
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import research_done_core as _research_done
+    except Exception:
+        _research_done = None
+        log.warning("research_done_core unavailable - research steps run to the executor's own done")
+
+# A failure that two fix steps did not change ends the run (item 28, 2026-09-25).
+try:
+    from Vera.vera.dag import fix_loop_core as _fix_loop
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import fix_loop_core as _fix_loop
+    except Exception:
+        _fix_loop = None
+        log.warning("fix_loop_core unavailable - a persistent test failure runs to the wall cap")
+
+# The executor shows its last four results in full; this lists the calls older
+# than those, one line each, so a long step still sees what it already tried.
+try:
+    from Vera.vera.dag import step_call_ledger_core as _call_ledger
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import step_call_ledger_core as _call_ledger
+    except Exception:
+        _call_ledger = None
+        log.warning("step_call_ledger_core unavailable - a long step sees only its last four calls")
+
+# A step that needs step N also reads the recovery step that finished N's work.
+try:
+    from Vera.vera.dag import step_deps_core as _step_deps
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import step_deps_core as _step_deps
+    except Exception:
+        _step_deps = None
+        log.warning("step_deps_core unavailable - a dependent step reads only the failed attempt")
+
+# Planning styles: the table that says what plan_style=<id> means for the loop's
+# planning phase (vera/planning/planner_styles.LOOP_STYLES). Unavailable -> every
+# run plans as 'auto', which is the behaviour from before styles existed.
+try:
+    from Vera.vera.planning import planner_styles as _plan_styles
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.planning import planner_styles as _plan_styles
+    except Exception:
+        _plan_styles = None
+        log.warning("planner_styles unavailable - plan_style is ignored, every run plans as auto")
+
+# Per-run role models + effort presets (user, 2026-09-28).
+try:
+    from Vera.vera.dag import role_override_core as _role_ovr_core
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import role_override_core as _role_ovr_core
+    except Exception:
+        _role_ovr_core = None
+
+# Entity coverage (roadmap B4): does the final output carry what the goal named?
+# Measured from the NLP nodes' NER, reported - never a success criterion.
+try:
+    from Vera.vera.dag import entity_coverage_core as _entity_cov
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import entity_coverage_core as _entity_cov
+    except Exception:
+        _entity_cov = None
+
+#: The NER call runs on an NLP node beside the run, started with it; this only
+#: bounds the wait for it at the end, when it has long finished in practice.
+_ENTITY_NER_TIMEOUT_S = 20.0
+
+
+async def _v6_goal_entities(goal: str) -> List[Dict[str, str]]:
+    """The goal's checkable entities (entity_coverage_core.goal_entities) from
+    nlp.ner, or [] when NER is unavailable or slow. Calls the cap's raw
+    function: a measurement must not write memories. Never raises."""
+    if _entity_cov is None or not (goal or "").strip():
+        return []
+    cap = CAPABILITY_REGISTRY.get("nlp.ner") or {}
+    fn = cap.get("raw") or cap.get("func")
+    if not fn:
+        return []
+    try:
+        res = await asyncio.wait_for(fn(text=str(goal)[:4000]), timeout=_ENTITY_NER_TIMEOUT_S)
+    except Exception as e:
+        log.debug("goal entities: nlp.ner unavailable: %s", e)
+        return []
+    if not isinstance(res, dict) or res.get("error"):
+        return []
+    return _entity_cov.goal_entities(res)
+
+
+# Zero-shot intent (roadmap B1): what an NLP node would call the goal's intent,
+# recorded beside the intent the run used. Measured - nothing reads it back.
+try:
+    from Vera.vera.dag import intent_zeroshot_core as _intent_zs
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import intent_zeroshot_core as _intent_zs
+    except Exception:
+        _intent_zs = None
+
+
+async def _v6_zeroshot_intent(goal: str) -> Tuple[Optional[str], Dict[str, float]]:
+    """(intent, scores) from nlp.zeroshot, or (None, {}) when unavailable or
+    slow. Raw cap function: a measurement must not write memories."""
+    if _intent_zs is None or not (goal or "").strip():
+        return None, {}
+    cap = CAPABILITY_REGISTRY.get("nlp.zeroshot") or {}
+    fn = cap.get("raw") or cap.get("func")
+    if not fn:
+        return None, {}
+    try:
+        res = await asyncio.wait_for(fn(text=str(goal)[:2000], labels=_intent_zs.label_texts(),
+                                        multi_label=_intent_zs.MULTI_LABEL),
+                                     timeout=_ENTITY_NER_TIMEOUT_S)
+    except Exception as e:
+        log.debug("zero-shot intent: nlp.zeroshot unavailable: %s", e)
+        return None, {}
+    return _intent_zs.parse(res)
+
+
+async def _v6_intent_measure(task: Any, info: Dict[str, Any], used: str, *,
+                             sid: str, stream_id: str) -> None:
+    """Emit agent_loop_v6.intent_zeroshot beside the intent the run used. Best effort."""
+    if task is None or _intent_zs is None:
+        return
+    try:
+        zs, scores = await asyncio.wait_for(asyncio.shield(task), timeout=_ENTITY_NER_TIMEOUT_S)
+    except Exception:
+        if not task.done():
+            task.cancel()
+        return
+    if not zs:
+        return
+    rec = _intent_zs.compare(zs, scores, used=used, heuristic=str(info.get("heuristic") or ""),
+                             llm=str(info.get("llm") or ""))
+    try:
+        await emit_event({"type": "agent_loop_v6.intent_zeroshot", "session_id": sid,
+                          "stream_id": stream_id, **rec})
+    except Exception:
+        pass
+
+
+class _V6StepCritic:
+    """stepwise-reviewed (planner_styles.LOOP_STYLES): a critic on the long-
+    horizon CPU node reviews each finished step against the goal while the GPU
+    carries on. Placed by the compute-roles rule - one heavy CPU generation at a
+    time (a single runner; when steps outpace it, only the LATEST finished step
+    is reviewed, an older critique being stale), and nothing ever waits for it:
+    critiques reach the controller when they have landed (new_block), and the
+    most recent ones reach the completion gate (recent_block). The route is
+    broad's `enrich` role - the 35B on cpu-247 in the shared long-horizon window.
+    """
+
+    IDLE_EXIT_S = 1800.0
+    GATE_NOTES = 4
+    #: The ONE place the run waits for the critic (user, 2026-09-28): the final
+    #: completion gate, for the critique of the last finished step. First live
+    #: run: the critic correctly flagged a misread goal (a 60s-then-90s timer
+    #: built instead of a 60s timer changed to 90s) ~30 s AFTER the gate had
+    #: passed the run - the catch was lost. Steps and planning stay non-blocking.
+    GATE_WAIT_S = 180.0
+    #: Where the review runs (user, 2026-09-28: "allow routing to the GPU for
+    #: review"). cpu = the long-horizon node, off the GPU entirely (default);
+    #: gpu = the planning_style/stream route on the GPU's own model - faster,
+    #: but it queues between the run's own GPU steps. Never waited on either way.
+    ROUTES = ("cpu", "gpu")
+
+    def __init__(self, goal: str, *, sid: str, stream_id: str, model: str = "",
+                 route: str = "cpu"):
+        self.goal, self.sid, self.stream_id, self.model = goal, sid, stream_id, model
+        self.route = route if route in self.ROUTES else "cpu"
+        self.notes: List[Dict[str, Any]] = []
+        self._delivered = 0
+        self._q: "asyncio.Queue[Any]" = asyncio.Queue()
+        self._runner: Optional["asyncio.Task[Any]"] = None
+        self._last_submitted: Any = None
+        self._landed = asyncio.Event()
+
+    async def wait_for_last(self, timeout: Optional[float] = None) -> Dict[str, Any]:
+        """Wait (bounded) until the critique of the LAST submitted step has
+        landed. {waited_s, landed}. Returns at once when there is nothing
+        outstanding or the runner is gone."""
+        t0 = time.monotonic()
+        limit = self.GATE_WAIT_S if timeout is None else float(timeout)
+        while (self._last_submitted is not None
+               and not any(n.get("step") == self._last_submitted for n in self.notes)
+               and self._runner is not None and not self._runner.done()):
+            left = limit - (time.monotonic() - t0)
+            if left <= 0:
+                break
+            self._landed.clear()
+            try:
+                await asyncio.wait_for(self._landed.wait(), timeout=left)
+            except asyncio.TimeoutError:
+                break
+        landed = (self._last_submitted is None
+                  or any(n.get("step") == self._last_submitted for n in self.notes))
+        return {"waited_s": round(time.monotonic() - t0, 1), "landed": landed,
+                "step": self._last_submitted}
+
+    def submit(self, step: Dict[str, Any], res: Dict[str, Any], done: Sequence[Dict[str, Any]],
+               done_when: str = "") -> None:
+        self._last_submitted = step.get("id")
+        brief = [{"id": r.get("id"), "title": r.get("title"), "ok": r.get("ok")} for r in done]
+        self._q.put_nowait((dict(step), {k: res.get(k) for k in ("id", "summary", "final", "output",
+                                                                   "ok", "met")},
+                            brief, done_when))
+        if self._runner is None or self._runner.done():
+            self._runner = asyncio.ensure_future(self._run())
+
+    async def _run(self) -> None:
+        PSx = _plan_styles
+        while True:
+            try:
+                item = await asyncio.wait_for(self._q.get(), timeout=self.IDLE_EXIT_S)
+            except asyncio.TimeoutError:
+                return
+            while not self._q.empty():                 # review only the latest
+                item = self._q.get_nowait()
+            step, res, done, done_when = item
+            t1 = time.monotonic()
+            note, err = "", ""
+            try:
+                _gpu = self.route == "gpu"
+                raw = await _safe_ollama_generate_dw(
+                    PSx.critic_prompt(self.goal, done_when, step, res, done),
+                    system=PSx.CRITIC_SYSTEM, json_mode=False,
+                    # the CPU brief model choice does not apply to the GPU route
+                    model=("" if _gpu else (self.model or "")),
+                    instance_id="", prefer_gpu=_gpu, think=False, profile="planning_style",
+                    role=(PSx.PLAN_ROLE if _gpu else PSx.ENRICH_ROLE),
+                    request_stage="step_critic", timeout=900)
+                note = PSx.critic_note(_strip_think(raw or "")[0])
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                err = f"{type(e).__name__}: {e}"[:160]
+            rec = {"step": step.get("id"), "title": step.get("title") or "", "note": note,
+                   "elapsed_s": round(time.monotonic() - t1, 1), "route": self.route}
+            self.notes.append(rec)
+            self._landed.set()
+            try:
+                await emit_event({"type": "agent_loop_v6.step_critique", "session_id": self.sid,
+                                  "stream_id": self.stream_id, **rec, "ok": not note,
+                                  "error": err})
+            except Exception:
+                pass
+
+    def new_block(self) -> str:
+        """Critiques that landed since the controller last saw them."""
+        fresh = self.notes[self._delivered:]
+        self._delivered = len(self.notes)
+        return _plan_styles.critic_block(fresh) if fresh else ""
+
+    def recent_block(self) -> str:
+        return _plan_styles.critic_block(self.notes[-self.GATE_NOTES:]) if self.notes else ""
+
+    def cancel(self) -> None:
+        if self._runner is not None and not self._runner.done():
+            self._runner.cancel()
+
+
+async def _v6_entity_coverage(task: Any, output: str, *, sid: str, stream_id: str) -> None:
+    """Emit agent_loop_v6.entity_coverage for the run's final output. Best effort."""
+    if task is None or _entity_cov is None:
+        return
+    try:
+        ents = await asyncio.wait_for(asyncio.shield(task), timeout=_ENTITY_NER_TIMEOUT_S)
+    except Exception:
+        if not task.done():
+            task.cancel()
+        return
+    if not ents:
+        return
+    cov = _entity_cov.coverage(ents, output or "")
+    try:
+        await emit_event({"type": "agent_loop_v6.entity_coverage", "session_id": sid,
+                          "stream_id": stream_id, **cov,
+                          "labels": {e["text"]: e["label"] for e in ents}})
+    except Exception:
+        pass
+
+
+def _v6_goal_implies_document(text: str) -> bool:
+    """Does the goal name a DOCUMENT deliverable? "Report the disk usage" and
+    "then report their mean" are the verb - an instruction to tell the user -
+    and the completion gate appending "Write and save the report" to them
+    (run71/72 operate-exec, 2026-09-24) was the gate misreading it."""
+    if _plan_hygiene is not None:
+        try:
+            return bool(_plan_hygiene.implies_document(text))
+        except Exception:
+            pass
+    return bool(_V5_PROSE_STEP_NOUN_RE.search(text or ""))
 
 
 async def _emit_stage_context(stage: str, *, system: str = "", prompt: str = "",
@@ -14402,8 +15017,10 @@ def _v5_compose_executor_system(
                "GENERATE or transform text from what YOU put in the prompt. They CANNOT look things "
                "up, browse the web, run commands, read/write files, or query data — asked to "
                "'research' or 'find' something they will just INVENT a plausible-sounding answer. "
-               "To RESEARCH or get current/novel/factual information use web.search (then web.fetch / "
-               "http.get to read a result)"
+               "To RESEARCH or get current/novel/factual information use web.research (one call: "
+               "searches and reads the top pages — its sources[].text IS the material; do not "
+               "re-fetch those pages); web.search only to find one specific URL, web.fetch only "
+               "for a URL you already have, http.get only for an API or raw body"
                + (_research_hint(suffix="") and f" or {_research_hint()}" or "")
                + "; to RUN something use exec.*; to "
                "read stored data use fabric.query. If the right tool isn't in your toolkit, REQUEST "
@@ -14649,7 +15266,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
 
     # Curated context slice — outputs of the steps this one depends on.
     needs = step.get("needs") or []
-    rel = [blackboard[n] for n in needs if n in blackboard]
+    # A needed step that failed its bar may have been finished by a recovery
+    # step with a new id; follow that link so this step reads the work that was
+    # actually done, not only the failed attempt (step_deps_core).
+    rel = (_step_deps.dependency_results(blackboard, needs) if _step_deps is not None
+           else [blackboard[n] for n in needs if n in blackboard])
     if not rel:
         rel = list(blackboard.values())  # no explicit deps → all prior results
     # Recon (step 0) is everyone's dependency: `needs` only ever names PLAN step
@@ -15165,6 +15786,27 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     # Catches the reworded repeat the signature above cannot see; see repeat_failure.
     failed_outcomes: Dict[tuple, int] = {}
     failed_outcome_text: Dict[tuple, str] = {}
+    # step_id -> seconds this step has spent driving a browser. ONE allowance
+    # per STEP: the per-CALL cap cannot see a step that simply calls
+    # operator.run again (run61 build-browser-verified: 29 thinks, 1,109s, on a
+    # goal whose artifact was already correct). See operator_step_budget.
+    browser_seconds: Dict[str, float] = {}
+    browser_last_stop: Dict[str, str] = {}
+    # step_id -> the summary of a browser result that reported the goal DONE,
+    # and how many re-issues were served from it. See browser_done_core.
+    browser_done: Dict[str, str] = {}
+    browser_done_served: Dict[str, int] = {}
+    # basename -> the preview of a SUCCESSFUL author call for it this step, and
+    # whether any call has failed since (then a rewrite may be warranted).
+    # See author_done_core.reauthor_note (item 17d).
+    authored_here: Dict[str, str] = {}
+    failed_since_author = False
+    reauthor_hits = 0
+    # Successful web.research results this step, the latest one's preview, and
+    # how many further research calls were served from it (item 17e).
+    research_ok = 0
+    research_latest = ""
+    research_served = 0
     # Chain hops call `call_tool` directly (see _run_chain below) and never
     # consult `success_sigs` above — this is that same short-circuit, scoped
     # separately since a chain hop's cached value needs the raw `result`
@@ -15284,7 +15926,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # with no model call. Never fatal - a loop must not stop because the UI could not
         # be told; the HITL wait below is the answer path either way.
         try:
-            from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY as _cr_ui
+            # the module's own orchestrator handle, not a function-local `import ... as _alias`:
+            # every such alias must be bound on the module (test_core_aliases_are_bound)
+            _cr_ui = _orch.CAPABILITY_REGISTRY
             _ui_ev = (_cr_ui.get("ui.event") or {}).get("func")
             if _ui_ev:
                 await _ui_ev(type="loop.step.waiting", session_id=sid,
@@ -15789,6 +16433,17 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
 
         obs = "\n\n".join(_obs_line(i, h) for i, h in enumerate(history[-4:])) \
             or "(no tool calls yet — make your first call or emit done)"
+        # The calls older than the four above - '' until there are any, so a
+        # short step's prompt is unchanged. Census 70-78: 10-18 cycle steps
+        # re-ran calls that had already failed once they scrolled out of view.
+        _earlier = ""
+        if _call_ledger is not None:
+            try:
+                _earlier = _call_ledger.earlier_calls_block(history, summarise=_call_summary)
+            except Exception as _le:                   # pragma: no cover
+                log.debug("earlier-calls block skipped: %s", _le)
+        if _earlier:
+            obs = _earlier + "\n\n" + obs
         _rep_tool = next((t for t, n in tool_calls.items() if n >= 2), "")
         _rep_hint = (f"\n\nNOTE: you have already called {_rep_tool} {tool_calls.get(_rep_tool,0)}× — "
                      "do NOT call it again with reworded args. Either try a DIFFERENT capability "
@@ -15878,6 +16533,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 session_id=session_id, stream_id=stream_id, cycle=turns, step_id=step_id,
                 runtime={"caps": caps, "caps_count": len(caps or []),
                          "context_chars": len(ctx_slice or ""),
+                         "earlier_calls": (max(0, len(history) - 4) if _earlier else 0),
                          "skills": [s.get("id", "") for s in (loaded_skills or [])]})
         except Exception as _ae:                       # pragma: no cover
             log.debug("executor stage-context emit skipped: %s", _ae)
@@ -16006,6 +16662,22 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         if not isinstance(tu, dict):
             tu = {}
         tool = (tu.get("name") or action.get("tool") or action.get("capability") or "").strip()
+        # `done` as a TOOL NAME: the step is answered. Taken as the done summary
+        # (the call's summary/result field, else the thought, else the last
+        # useful output) instead of being refused as an unknown capability.
+        if tool.lower() in _V5_DONE_TOOL_ALIASES:
+            _dargs = tu.get("input") or action.get("args") or action.get("arguments") or {}
+            _dsum = ""
+            if isinstance(_dargs, dict):
+                _dsum = str(_dargs.get("summary") or _dargs.get("result") or _dargs.get("answer")
+                            or _dargs.get("message") or _dargs.get("text") or "").strip()
+            _dsum = _dsum or thought or (list(outputs.values())[-1] if outputs else "")
+            result_summary = str(_dsum)[:_V5_DONE_SUMMARY]
+            ok = bool(had_useful or outputs)
+            await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                              "cycle": (gc + 1), "step_id": step_id, "session_id": sid,
+                              "thought": f"(`{tool}` was given as a tool name - taken as the step's done summary)"})
+            break
         # Normalise underscore/hyphen tool names (web_search → web.search) so a
         # perfectly-available cap isn't rejected as 'not in scope'.
         if tool:
@@ -16067,7 +16739,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 _no_grant_denied = [d for d in denied if d in _V5_NO_SILENT_GRANT_CAPS]
                 _gen_caution = ((" NOTE: generative caps (llm.*/ollama.*/agent.chat*) only write or "
                                  "transform text you supply — they CANNOT look up, browse, fetch, run, "
-                                 "or read. For research/lookup use web.search/web.fetch"
+                                 "or read. For research/lookup use web.research (web.search/web.fetch "
+                                 "only for a specific known URL)"
                                  + (_research_hint(suffix="") and f"/{_research_hint()}" or "")
                                  + "; for actions use exec.*/http.get.")
                                 if any(_v5_is_generative(c) for c in granted) else "")
@@ -16277,7 +16950,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                         "against reality, it only generates text from what you already put in the "
                         "prompt. Asked for a real API's base URL/endpoint/schema, it will confidently "
                         "INVENT one that may not exist. If you need that information, look it up for "
-                        "real: web.search for it, or web.fetch/http.get a URL you already know (e.g. "
+                        "real: web.research for it, or web.fetch/http.get a URL you already know (e.g. "
                         "the docs page). Allowed now: " + _avail + ".")
             elif tool == "chain" or tool.endswith(".chain"):
                 # A specific, common confusion, not a generic "unknown cap":
@@ -16500,13 +17173,12 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # and goal of that very call were repaired above; the model was not.
         # Drop a model no Ollama node serves so the routed default applies.
         # A served model is never touched, and with no catalogue nothing is.
-        if tool in _OPERATOR_MODEL_CAPS and isinstance(args, dict) and args.get("model"):
-            try:
-                _served = sorted({str(m) for _i in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values()
-                                  for m in ((_i or {}).get("models") or [])})
-            except Exception:
-                _served = []
-            for _fld, _val, _note in _heal_model_arg(tool, args, _served):
+        # `names_a_model` reads `model` AND a "<name>:<model>" provider - the
+        # heal always did, but this gate read only `model`, so a name carried
+        # by provider alone walked past it (operator census run3, 2026-09-24:
+        # `fast-8b`, three 404 thinks, run dead in 8 s).
+        if tool in _OPERATOR_MODEL_CAPS and _names_a_model(args):
+            for _fld, _val, _note in _heal_model_arg(tool, args, _served_model_names()):
                 args[_fld] = _val
                 await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
                                   "cycle": cur_cycle, "step_id": step_id, "tool": tool,
@@ -16529,6 +17201,18 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                               "session_id": sid, "note": _note})
+        # The executor copies its steered step goal into an authoring `task` or a
+        # browser `goal`; the steer is the controller talking to the executor,
+        # not a requirement of the file or the page. Strip it before the cap
+        # sees it (run70-73: verify_statistical_output.py and friends).
+        if isinstance(args, dict) and (tool in _V5_AUTHOR_TOOLS or tool in _OPERATOR_MODEL_CAPS):
+            for _sf in ("task", "goal"):
+                if _steer_core.has_steer(args.get(_sf)):
+                    args[_sf] = _steer_core.strip_steer(args[_sf])
+                    await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                      "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                      "session_id": sid,
+                                      "note": f"{_sf}: controller steer removed (it is context, not the task)"})
         # ── RUN-BEFORE-AUTHOR guard ─────────────────────────────────────────
         # The self-heal above only rescues a path whose basename WAS saved this
         # run. The other half of the failure is running a script that does not
@@ -16579,7 +17263,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                       "error": f"{_p} does not exist — author it first",
                                       "session_id": sid})
                     if missing_path_calls >= _MAX_MISSING_PATH:
-                        result_summary = ((list(outputs.values())[-1] if outputs else "")
+                        result_summary = (_v5_sentence(list(outputs)[-1] if outputs else tool,
+                                               list(outputs.values())[-1] if outputs else "",
+                                               "The loop ended this step (a stall guard fired).")
                                           or ("STEP STALLED: tried to run a file that does not "
                                               f"exist {missing_path_calls}× without ever authoring "
                                               "it."))[:_V5_DONE_SUMMARY]
@@ -16685,7 +17371,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             # on the first of those (instead of burning a 2nd identical cycle)
             # saves a wasted turn every time this happens.
             if empty_exec_calls >= _MAX_EMPTY_EXEC or (had_useful and empty_exec_calls >= 1):
-                result_summary = ((list(outputs.values())[-1] if outputs else "")
+                result_summary = (_v5_sentence(list(outputs)[-1] if outputs else tool,
+                                               list(outputs.values())[-1] if outputs else "",
+                                               "The loop ended this step (a stall guard fired).")
                                   or ("STEP STALLED: called an exec cap with nothing to run "
                                       f"{empty_exec_calls}× and never supplied code or a path."))[:_V5_DONE_SUMMARY]
                 ok = ok or had_useful
@@ -16705,6 +17393,75 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         #    cached result, tell it firmly to move on, and don't count it as a
         #    fresh attempt. After a second redundant repeat, end the step as
         #    DONE (the needed result is already in hand). ──────────────────────
+        # -- a research-only step with its sources in hand is answered (item 17e) --
+        # run74-76: 14 / 3 / 27 web.* calls per set AFTER web.research had
+        # returned its sources, each an executor turn. See research_done_core.
+        if _research_done is not None:
+            _note17e = _research_done.saturated_note(
+                step.get("caps") or caps, tool, research_ok, research_latest)
+            if _note17e:
+                research_served += 1
+                _perturb_next = True
+                tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)
+                outputs[tool] = research_latest
+                had_useful = True
+                ok = True
+                await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
+                                  "thought": "(the step's sources are already in hand - served the latest research result)",
+                                  "repeat": True, "session_id": sid})
+                await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": True,
+                                  "elapsed_ms": 0, "preview": research_latest[:2000], "error": "",
+                                  "note": "sources in hand - served the latest web.research result",
+                                  "session_id": sid})
+                if _research_done.should_end(research_served):
+                    result_summary = _v5_sentence(
+                        "web.research", research_latest,
+                        f"The loop ended this step: its sources were in hand after {research_ok} web.research results and `{tool}` kept being re-issued.")[:_V5_DONE_SUMMARY]
+                    await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                      "cycle": (gc + 1), "step_id": step_id,
+                                      "thought": (f"(auto-completed: the sources were in hand after {research_ok} "
+                                                  "web.research results - ending the step on them.)"),
+                                      "session_id": sid})
+                    break
+                pending_note = _note17e
+                continue
+
+        # -- a file this step already wrote is not written again (item 17d) --
+        if (_author_done is not None and tool in _author_done.AUTHOR_TOOLS and isinstance(args, dict)):
+            _apath = str(args.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1]
+            _note17d = _author_done.reauthor_note(
+                tool, _apath, authored_here.get(_apath, ""), failed_since=failed_since_author)
+            if _note17d:
+                reauthor_hits += 1
+                _perturb_next = True
+                tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)
+                outputs[tool] = authored_here[_apath]
+                had_useful = True
+                ok = True
+                await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
+                                  "thought": f"(re-author of {_apath}, already written this step - served the earlier result)",
+                                  "repeat": True, "session_id": sid})
+                await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": True,
+                                  "elapsed_ms": 0, "preview": authored_here[_apath][:2000], "error": "",
+                                  "note": "re-author of a file this step already wrote - served the earlier result",
+                                  "session_id": sid})
+                if reauthor_hits >= 2:
+                    result_summary = _v5_sentence(
+                        tool, authored_here[_apath],
+                        f"The loop ended this step: `{tool}` was re-issued for {_apath}, which it had already written.")[:_V5_DONE_SUMMARY]
+                    await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                      "cycle": (gc + 1), "step_id": step_id,
+                                      "thought": (f"(auto-completed: {_apath} was already written this step and "
+                                                  f"`{tool}` kept re-issuing it - ending the step on the file.)"),
+                                      "session_id": sid})
+                    break
+                pending_note = _note17d
+                continue
+
         _call_sig = _v5_call_sig(tool, args)
         _cached_preview = success_sigs.get(_call_sig)
         if _cached_preview is not None:
@@ -16727,7 +17484,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                               "error": "", "note": "duplicate call — served the earlier result",
                               "session_id": sid})
             if dup_call_hits >= _MAX_DUP_HITS:
-                result_summary = _cached_preview[:_V5_DONE_SUMMARY]
+                result_summary = _v5_sentence(
+                    tool, _cached_preview,
+                    f"The loop ended this step: `{tool}` was re-issued unchanged and its result was already in hand.")[:_V5_DONE_SUMMARY]
                 await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
                                   "cycle": (gc + 1), "step_id": step_id,
                                   "thought": (f"(auto-completed: `{tool}` already produced this "
@@ -16816,6 +17575,79 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # "repeating_action" - three identical answers for 1807s, on a goal
         # whose artifact was already correct after two cycles. This keys on the
         # target and the failure kind instead. See repeat_failure.
+        # -- the browser already answered this step (item 24a) ---------------
+        # After an operator result with done: true the executor re-issued the
+        # browser in every census browser goal (run71-73): four refused turns in
+        # a row, and twice a REAL second run (234 s, 552 s) for the same answer.
+        # The done result is the answer: serve it back once with a note, and
+        # end the step on it if the browser is re-issued again. Checked before
+        # the time budget so the note says "done", not "out of time".
+        if (_browser_done is not None and _step_budget is not None
+                and _step_budget.is_browser_call(tool) and str(step_id) in browser_done):
+            _dsum = browser_done[str(step_id)]
+            browser_done_served[str(step_id)] = browser_done_served.get(str(step_id), 0) + 1
+            _perturb_next = True
+            tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)
+            outputs[tool] = _dsum
+            had_useful = True
+            ok = True
+            history.append({"tool": tool, "ok": True, "preview": _dsum[:2000], "args": args,
+                            "ms": 0, "note": "the browser already answered this step"})
+            await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                              "args": args, "repeat": True, "session_id": sid,
+                              "thought": "(the browser already answered this step - served its done result)"})
+            await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                              "ok": True, "elapsed_ms": 0, "preview": _dsum[:2000], "error": "",
+                              "note": "browser already done - served the done result",
+                              "session_id": sid})
+            if _browser_done.should_end(browser_done_served[str(step_id)]):
+                result_summary = _v5_sentence(
+                    tool, _dsum,
+                    f"The loop ended this step: the browser had already reported the goal done and `{tool}` was re-issued.")[:_V5_DONE_SUMMARY]
+                await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                  "cycle": (gc + 1), "step_id": step_id,
+                                  "thought": (f"(auto-completed: `{tool}` had already reported this step "
+                                              "done - ending the step on that result instead of "
+                                              "driving the browser again.)"),
+                                  "session_id": sid})
+                break
+            pending_note = _browser_done.describe(tool, _dsum)
+            continue
+
+        # -- one browser allowance per STEP ---------------------------------
+        # The per-CALL cap (operator_budget, 480s) cannot see a step that simply
+        # calls operator.run again after it fires. run61's build-browser-verified
+        # spent 1,109s over 29 thinks that way, on a goal whose artifact was
+        # already correct and scored 1.0.
+        if _step_budget is not None and _step_budget.exhausted(
+                browser_seconds, step_id, tool):
+            _spent_s = _step_budget.spent(browser_seconds, step_id)
+            _msg = _step_budget.describe(
+                tool, _spent_s, last_stop=browser_last_stop.get(str(step_id), ""))
+            tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)
+            outputs[tool] = _msg
+            history.append({"tool": tool, "ok": False, "preview": _msg[:2000],
+                            "args": args, "ms": 0})
+            # The run's warnings are DERIVED from the tool_done events below -
+            # the same route the repeat guard's refusal takes to reach a census
+            # row - so the error text there is what surfaces. (An earlier draft
+            # appended to a local `warnings` list that does not exist in this
+            # scope; tests/test_missing_module_import caught it before it could
+            # raise NameError on the first refusal.)
+            await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                              "args": args, "session_id": sid,
+                              "thought": "(the step's browser budget is spent)"})
+            await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                              "ok": False, "elapsed_ms": 0, "preview": _msg[:2000],
+                              "error": "the step's browser budget (%ds) is spent - %s already had %ds"
+                                       % (int(_step_budget.STEP_MAX_SECONDS), tool, int(_spent_s)),
+                              "session_id": sid})
+            continue
+
         if _repeat_failure is not None:
             _blk = _repeat_failure.blocked_kind(failed_outcomes, tool, args)
             if _blk:
@@ -16865,7 +17697,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                               "error": "repeat of an identical failed call — not re-run",
                               "session_id": sid})
             if repeat_fail_calls >= _MAX_REPEAT_FAIL:
-                result_summary = ((list(outputs.values())[-1] if outputs else "")
+                result_summary = (_v5_sentence(list(outputs)[-1] if outputs else tool,
+                                               list(outputs.values())[-1] if outputs else "",
+                                               "The loop ended this step (a stall guard fired).")
                                   or (f"STEP STALLED: re-issued the same failing `{tool}` call "
                                       f"{repeat_fail_calls}× without changing anything.\n"
                                       f"Last error:\n{_failed_before[:600]}"))[:_V5_DONE_SUMMARY]
@@ -17278,6 +18112,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         if (not invoke.get("ok") and _v5_rec_max > 0
                 and _is_arg_error(invoke.get("error", ""))
                 and not _v5_is_generative(tool)
+                and not _recovery_identity.is_long_run_tool(tool)
                 and tool not in ("code.author", "prose.author", "code.edit")):
             _rec = await _attempt_arg_recovery(
                 cap_name=tool,
@@ -17321,6 +18156,23 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             except Exception as e:
                 log.debug("v5 long-running await failed for %s: %s", tool, e)
         elapsed = round((time.monotonic() - t0) * 1000)
+
+        # Charge the STEP for browser time, whatever the call returned - a run
+        # that stopped on its own time_budget cost the same seconds as one that
+        # finished. Remember WHY it stopped, so the refusal can quote it.
+        if _step_budget is not None and _step_budget.is_browser_call(tool):
+            _step_budget.record(browser_seconds, step_id, tool, elapsed / 1000.0)
+            try:
+                _stop = str(((invoke or {}).get("result") or {}).get("stop_reason")
+                            or (invoke or {}).get("error") or "")
+            except Exception:
+                _stop = ""
+            if _stop:
+                browser_last_stop[str(step_id)] = _stop[:200]
+            if _browser_done is not None:
+                _dsum = _browser_done.done_summary((invoke or {}).get("result"))
+                if _dsum:
+                    browser_done[str(step_id)] = _dsum
 
         # Store a freshly-successful fetch into the URL cache (see the
         # URL-FETCH DEDUP gate above) so a LATER retry/phase within this same
@@ -17804,6 +18656,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 # code.author had already parser-verified (2026-08-24 runs, every
                 # language). code.author's result carries no content, so read it back
                 # from the file it just wrote — once, locally, off the event loop.
+                _cbody = ""
                 _cfs = str(_cres.get("fs_path") or "")
                 if _cfs:
                     def _slurp(p: str) -> str:
@@ -17831,6 +18684,25 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 _crec["fs_path"] = str(_cres.get("fs_path") or _crec.get("fs_path", ""))
                 _crec.pop("ran_ok", None)
                 _crec.pop("ran_at_hash", None)
+                # Show the executor what it just wrote. code.author's result is
+                # metadata (path, bytes, syntax_ok) and was shown JSON-encoded
+                # and cut at the preview budget, so the next cycle could not see
+                # the file it had just authored and read it back to find out -
+                # 42 read-backs of a parser-verified authored file in run70-73
+                # (24 Sep 2026), each a full executor turn. The generative path
+                # already shows a written document in full for the same reason;
+                # this does the same for authored code, from the registry copy.
+                if _cbody and invoke_ok:
+                    _shown = (_cbody if len(_cbody) <= _V5_GEN_INSTEP_MAX
+                              else _v5_head_tail(_cbody, _V5_GEN_INSTEP_MAX))
+                    _chk = (f"verified by {_cres.get('checked_with') or 'a parser'}"
+                            if _cres.get("syntax_ok") else "NOT parser-verified")
+                    preview = (f"{tool} wrote {_cpath} ({len(_cbody):,} chars, {_chk}). Its content "
+                               "is shown here IN FULL - do NOT read it back with sandbox.session.fs.read, "
+                               "cat or ls; act on it:\n\n" + _shown)
+                    _budget = max(_budget, len(preview))
+                    outputs[tool] = preview
+                    success_sigs[_call_sig] = preview
 
         # A file that has just been READ enters the registry with its shape and
         # parse status established — so the NEXT step is told what is in it
@@ -17852,6 +18724,16 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                             "with grep -n / sed -n '<a>,<b>p' / head / tail on the path.")
 
         entry_ok = invoke_ok and not unhelpful
+        if _author_done is not None and tool in _author_done.AUTHOR_TOOLS and isinstance(args, dict):
+            _apath2 = str(args.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1]
+            if entry_ok and _apath2:
+                authored_here[_apath2] = preview[:_budget]
+                failed_since_author = False
+        elif not entry_ok and authored_here:
+            failed_since_author = True
+        if entry_ok and tool == "web.research":
+            research_ok += 1
+            research_latest = preview[:_budget]
         history.append({"tool": tool, "ok": entry_ok, "preview": preview[:_budget],
                         "args": args, "ms": elapsed})
         await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
@@ -17899,6 +18781,35 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                     pending_note = ("The last call did not yield a usable result — try a different "
                                     "query/URL, or request another capability via need_caps.")
 
+        # -- an authoring-only step is answered by its author call (item 17c) --
+        # run74: ten re-checks after a parser-verified author (read-backs,
+        # "serve it", "run it"), each an executor turn. When the step's planned
+        # work is the authoring of the one file it names, the author's ok
+        # result is the step's answer; the verifier takes that verdict anyway.
+        if _author_done is not None and invoke_ok and tool in _author_done.AUTHOR_TOOLS:
+            try:
+                _ans, _why = _author_done.step_is_answered(
+                    step.get("caps") or caps, f"{step.get('title') or ''}\n{step.get('goal') or ''}", tool,
+                    (invoke or {}).get("result"),
+                    has_seam=lambda g: len(_V5_COMPOUND_SEAM_RE.split(g, maxsplit=1)) > 1)
+            except Exception as _e:
+                _ans, _why = False, ""
+                log.debug("author_done check failed: %s", _e)
+            if _ans:
+                result_summary = _v5_sentence(
+                    tool, outputs.get(tool) or preview,
+                    f"The loop ended this step: {_why}.")[:_V5_DONE_SUMMARY]
+                ok = True
+                had_useful = True
+                await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                  "cycle": (gc + 1), "step_id": step_id,
+                                  "thought": f"(auto-completed: {_why}.)",
+                                  "session_id": sid})
+                await emit_event({"type": "agent_loop_v5.author_answered_step", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "why": _why, "session_id": sid})
+                break
+
         # Stuck-loop guard: the specialist keeps hammering one cap. Stop the step
         # and keep the best result it produced. The message distinguishes the two
         # real cases so the UI card isn't misleading: (a) the calls SUCCEEDED and
@@ -17913,7 +18824,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         _tool_call_n = tool_calls.get(tool, 0)
         if _tool_call_n >= _MAX_SAME_TOOL:
             _got = outputs.get(tool)
-            result_summary = (_got or preview)[:_V5_DONE_SUMMARY]
+            result_summary = _v5_sentence(
+                tool, _got or preview,
+                f"The loop ended this step after {_tool_call_n} calls to `{tool}`.")[:_V5_DONE_SUMMARY]
             ok = ok or had_useful
             if _got:
                 _wrap = (f"(auto-completed: `{tool}` already returned a usable result — ending the "
@@ -17930,9 +18843,13 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     if not result_summary:
         if outputs:
             # Prefer the last genuinely useful tool output over a trailing error.
-            result_summary = list(outputs.values())[-1][:_V5_DONE_SUMMARY]
+            result_summary = _v5_sentence(
+                list(outputs)[-1], list(outputs.values())[-1],
+                "The step ended without a `done` summary; its last useful result:")[:_V5_DONE_SUMMARY]
         elif history:
-            result_summary = history[-1]["preview"][:_V5_DONE_SUMMARY]
+            result_summary = _v5_sentence(
+                str(history[-1].get("tool") or ""), history[-1]["preview"],
+                "The step ended without a `done` summary; its last call:")[:_V5_DONE_SUMMARY]
         elif all_thoughts:
             if not caps:
                 # A reasoning-only step (no caps assigned) never calls a tool —
@@ -18493,6 +19410,231 @@ async def _v5_plan_master_piecewise(goal: str, catalog_names: List[str],
             "complexity": "extreme", "recon": [], "done_when": done_when,
             "pieces": pieces, "exec_pieces": exec_pieces,
             "deferred_pieces": deferred_pieces}
+
+
+async def _v6_plan_broad(goal: str, catalog_names: List[str], skills: List[Dict[str, Any]],
+                         cap_skill_map: Optional[Dict[str, List[str]]], *,
+                         model: str = "", instance_id: str = "", prefer_gpu: bool = True,
+                         max_steps: int = 8, phase_policy: str = "sparingly",
+                         intent: str = "mixed", sid: str = "",
+                         stream_id: str = "", enrich_model: str = "",
+                         stream_steps: int = 0) -> Dict[str, Any]:
+    """The BROAD planning style (planner_styles.LOOP_STYLES['broad']), and
+    broad-stepwise when `stream_steps` is 1: each stream is then planned as its
+    opening step only, and the controller grows it from the evidence.
+
+    Research-shaped, placed by the compute-roles rule (GPU = the core plan the
+    run waits on; CPU nodes = parallel planning work merged in, like the
+    research analyst beside the writer):
+    1. ONE call on the loop's planner role splits the goal into work-streams.
+    2. GPU: every stream's step plan (_v5_orchestrate_plan with a [PIECEWISE]
+       directive, planning_style/stream route) - seconds each.
+    3. GPU, alongside the plans: a QUICK first brief for the first stream, so
+       step 1 never starts bare.
+    4. CPU, concurrently from the moment the streams exist and one at a time:
+       a deeper brief per stream (planning_style/enrich route; `enrich_model`
+       overrides the route's model for this run). NOTHING waits for them - the
+       loop applies each to its stream's steps that have not started when it
+       lands (user, 2026-09-27: a non-blocking supplicant).
+    5. The sub-plans are merged host-side (merge_streams, dedupe_across_streams).
+    Returns the loop's plan shape plus `broad` detail, `_enrich_tasks`
+    ({stream id: future, "__runner__": task}) and `_gpu_briefs` ({stream id:
+    note}); steps == [] means the caller falls back to its own planner (and the
+    tasks are cancelled)."""
+    PSx = _plan_styles
+    empty = {"steps": [], "reason": "", "complexity": "", "recon": [], "done_when": ""}
+    if PSx is None:
+        return {**empty, "broad": {"error": "planner_styles unavailable"}}
+    t0 = time.monotonic()
+
+    # LIVE: every broad generation streams into the loop UI as it is written -
+    # the split, each stream's plan, and both kinds of brief - so the run is
+    # visibly planning instead of silent for the whole phase. Throttled to <=4
+    # events/s per card and bounded to the tail of the text.
+    def _live(etype: str, **fixed: Any):
+        acc = {"buf": "", "last": 0.0}
+
+        async def _cb(tok):
+            acc["buf"] += tok
+            now = time.monotonic()
+            if now - acc["last"] < 0.25:
+                return
+            acc["last"] = now
+            try:
+                await emit_event({"type": etype, "session_id": sid, "stream_id": stream_id,
+                                  **fixed, "text": acc["buf"][-3000:]})
+            except Exception:
+                pass
+        return _cb
+
+    cat_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:40])
+    streams: List[Dict[str, Any]] = []
+    try:
+        raw = await _safe_ollama_generate_dw(
+            PSx.broad_brief_prompt(goal, cat_lines),
+            system=PSx.BROAD_BRIEF_SYSTEM.format(n=PSx.MAX_STREAMS),
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=True,
+            options=_planner_sampling(), profile=LOOP_ROUTING_PROFILE, role="planner",
+            request_stage="plan_broad_brief",
+            stream_cb=_live("agent_loop_v6.broad_split_token"))
+        streams = PSx.parse_streams(_extract_json(_strip_think(raw or "")[0]) or {},
+                                    catalog=catalog_names)
+    except Exception as e:
+        log.warning("broad style: stream brief failed: %s", e)
+    brief_s = round(time.monotonic() - t0, 1)
+    if not streams:
+        return {**empty, "broad": {"streams": 0, "brief_s": brief_s,
+                                   "error": "the goal did not split into work-streams"}}
+    await emit_event({"type": "agent_loop_v6.broad_streams", "session_id": sid,
+                      "stream_id": stream_id, "brief_s": brief_s,
+                      "streams": [{k: s[k] for k in ("id", "title", "deliverable",
+                                                    "dependencies", "caps")} for s in streams]})
+    per_stream = (max(1, int(stream_steps)) if stream_steps
+                  else max(2, min(max_steps, (max_steps * 2) // len(streams) + 1)))
+    first_step_only = per_stream == 1
+
+    # CPU: the deeper per-stream briefs start NOW, beside the GPU planning.
+    async def _enrich(s: Dict[str, Any]) -> str:
+        t1 = time.monotonic()
+        text, err = "", ""
+        try:
+            raw = await _safe_ollama_generate_dw(
+                PSx.enrich_prompt(goal, streams, s), system=PSx.ENRICH_SYSTEM,
+                json_mode=False, model=(enrich_model or ""), instance_id="",
+                prefer_gpu=False, think=False,
+                profile="planning_style", role=PSx.ENRICH_ROLE, request_stage="plan_enrich",
+                timeout=900,
+                stream_cb=_live("agent_loop_v6.broad_brief_token", stream=s["id"],
+                                kind="deep"))
+            text = PSx.enrich_note(_strip_think(raw or "")[0])
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"[:160]
+        try:
+            await emit_event({"type": "agent_loop_v6.broad_stream_enriched", "session_id": sid,
+                              "stream_id": stream_id, "stream": s["id"], "title": s["title"],
+                              "role": PSx.ENRICH_ROLE, "elapsed_s": round(time.monotonic() - t1, 1),
+                              "chars": len(text), "error": err, "text": text[:1600],
+                              "model": enrich_model or "(route default)"})
+        except Exception:
+            pass
+        return text
+
+    # ONE heavy CPU generation at a time (user, 2026-09-27): the briefs run
+    # sequentially, in stream order, on the long-horizon node - two at once
+    # would spill the second onto the embedding node. Streams execute in that
+    # order too, so a later stream's brief has longer to arrive. Each stream gets
+    # a future the loop can poll; the runner task is kept under "__runner__".
+    _loop = asyncio.get_running_loop()
+    enrich_tasks: Dict[Any, Any] = {s["id"]: _loop.create_future() for s in streams}
+
+    async def _enrich_runner() -> None:
+        for s in streams:
+            fut = enrich_tasks[s["id"]]
+            if fut.done():
+                continue
+            try:
+                txt = await _enrich(s)
+            except asyncio.CancelledError:
+                for f in enrich_tasks.values():
+                    if isinstance(f, asyncio.Future) and not f.done():
+                        f.cancel()
+                raise
+            if not fut.done():
+                fut.set_result(txt)
+
+    enrich_tasks["__runner__"] = asyncio.create_task(_enrich_runner())
+
+    # GPU: every stream's step plan - the core plan the run is waiting on.
+    async def _one(s: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        t1 = time.monotonic()
+        try:
+            sub = await _v5_orchestrate_plan(
+                goal, list(catalog_names), skills, cap_skill_map, model="", instance_id="",
+                prefer_gpu=True, max_steps=per_stream,
+                master_plan=PSx.stream_directive(goal, streams, s,
+                                                 first_step_only=first_step_only),
+                want_success=True,
+                phase_policy=phase_policy, intent=intent, sid=sid, stream_id="",
+                route_profile="planning_style", route_role=PSx.PLAN_ROLE,
+                token_cb=_live("agent_loop_v6.broad_stream_token", stream=s["id"],
+                               title=s["title"]))
+            steps = list(sub.get("steps") or [])
+            err = ""
+        except Exception as e:
+            steps, err = [], f"{type(e).__name__}: {e}"[:160]
+        rec = {"stream": s["id"], "title": s["title"], "role": PSx.PLAN_ROLE,
+               "elapsed_s": round(time.monotonic() - t1, 1), "steps": len(steps)}
+        if err:
+            rec["error"] = err
+        await emit_event({"type": "agent_loop_v6.broad_stream_planned", "session_id": sid,
+                          "stream_id": stream_id, **rec,
+                          "titles": [str(x.get("title") or "")[:80] for x in steps][:8]})
+        return steps, rec
+
+    # GPU: a quick first brief for the first stream, so step 1 starts with one
+    # without waiting for the CPU node (a cold 35B load alone is 62 s).
+    async def _quick_brief(s: Dict[str, Any]) -> str:
+        t1 = time.monotonic()
+        try:
+            raw = await _safe_ollama_generate_dw(
+                PSx.enrich_prompt(goal, streams, s), system=PSx.ENRICH_SYSTEM,
+                json_mode=False, model="", instance_id="", prefer_gpu=True, think=False,
+                profile="planning_style", role=PSx.PLAN_ROLE, request_stage="plan_quick_brief",
+                stream_cb=_live("agent_loop_v6.broad_brief_token", stream=s["id"],
+                                kind="quick"))
+            txt = PSx.enrich_note(_strip_think(raw or "")[0], deep=False)
+        except Exception as e:
+            log.debug("broad style: quick brief failed: %s", e)
+            txt = ""
+        try:
+            await emit_event({"type": "agent_loop_v6.broad_stream_quick_brief", "session_id": sid,
+                              "stream_id": stream_id, "stream": s["id"], "role": PSx.PLAN_ROLE,
+                              "elapsed_s": round(time.monotonic() - t1, 1), "chars": len(txt),
+                              "text": txt[:1600]})
+        except Exception:
+            pass
+        return txt
+
+    _plans, _quick = await asyncio.gather(asyncio.gather(*(_one(s) for s in streams)),
+                                          _quick_brief(streams[0]))
+    results = list(_plans)
+    gpu_briefs = {streams[0]["id"]: _quick} if _quick else {}
+    gpu_s = round(time.monotonic() - t0, 1)
+    # No wait for the CPU briefs - they are a non-blocking supplicant.
+    _briefs = [f for k, f in enrich_tasks.items() if k != "__runner__"]
+    enriched_in_time = sum(1 for f in _briefs
+                           if f.done() and not f.cancelled() and not f.exception() and f.result())
+    merged = PSx.merge_streams(streams, [r[0] for r in results],
+                               hard_cap=max(max_steps * 2, 16))
+    # Streams are planned in isolation and repeat each other's work (a report's
+    # research was planned in three streams, 2026-09-27): drop the repeats.
+    merged, _dupes = PSx.dedupe_across_streams(merged)
+    if _dupes:
+        await emit_event({"type": "agent_loop_v6.broad_deduped", "session_id": sid,
+                          "stream_id": stream_id, "dropped": _dupes[:12]})
+    detail = {"streams": len(streams), "brief_s": brief_s, "gpu_plan_s": gpu_s,
+              "total_s": round(time.monotonic() - t0, 1),
+              "per_stream": [r[1] for r in results],
+              "duplicates_dropped": len(_dupes),
+              "enriched_before_run": enriched_in_time,
+              "quick_brief": bool(gpu_briefs),
+              "enrich_model": enrich_model or "(route default)",
+              "per_stream_steps": per_stream,
+              # The stream map the broad-stepwise controller steers by.
+              "stream_map": [{k: s.get(k) for k in ("id", "title", "deliverable")}
+                             for s in streams]}
+    if not merged:
+        for t in enrich_tasks.values():
+            t.cancel()
+        return {**empty, "broad": {**detail, "error": "no stream produced steps"}}
+    return {"steps": merged,
+            "reason": "broad style: %d work-streams planned on the GPU -> %d steps; quick GPU "
+                      "brief for stream 1: %s; CPU briefs arrive during the run"
+                      % (len(streams), len(merged), "yes" if gpu_briefs else "no"),
+            "complexity": "", "recon": [], "done_when": "", "broad": detail,
+            "_enrich_tasks": enrich_tasks, "_gpu_briefs": gpu_briefs}
 
 
 def _v5_piece_fallback_step(piece: Dict[str, Any], goal: str,
@@ -19301,7 +20443,7 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
                       *, catalog_names: List[str], valid_skill_ids: set,
                       base_id: int, steps_left: int, model: str, instance_id: str,
                       prefer_gpu: bool, session_id: str = "",
-                      file_register: Any = "") -> Dict[str, Any]:
+                      file_register: Any = "", style_note: str = "") -> Dict[str, Any]:
     """ONE cheap controller call after a step: read the ledger, weigh what the
     step actually FOUND against the goal, and decide the next move. Returns
     {assessment, findings, goal_alignment, direction, goal_met, action, steps}.
@@ -19428,7 +20570,10 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         "of what was found (the key values/ids/counts, not a raw dump) so the next step reads "
         "exactly the signal it needs.\n"
         f"You have room for about {max(0, steps_left)} more step(s).\n"
-        "AVAILABLE CAPABILITIES (name — description):\n" + cap_lines + "\n"
+        # A planning style's instruction (stepwise: plan ONE next step). Empty for
+        # every other style, so their controller prompt is unchanged.
+        + (style_note or "")
+        + "AVAILABLE CAPABILITIES (name — description):\n" + cap_lines + "\n"
         'Respond ONLY with JSON:\n'
         '{"findings":"<key facts the last step produced>",'
         '"goal_alignment":"advances|neutral|off_track|blocker",'
@@ -19530,7 +20675,7 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
                          base_id: int, steps_left: int, model: str,
                          instance_id: str, prefer_gpu: bool,
                          session_id: str = "", raw_goal: str = "",
-                         file_register: Any = "") -> Dict[str, Any]:
+                         file_register: Any = "", bounded_failure: str = "") -> Dict[str, Any]:
     """Final completion gate: verify the whole GOAL is met (against `done_when`)
     before synthesising the answer. If it is not — and there is step budget left —
     return follow-up steps to close the gap. Returns {complete, missing,
@@ -19552,6 +20697,12 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
     but this one had no filesystem input at all. The actual working-directory
     listing now goes in as ground truth, so "produce X" cannot pass when nothing
     was produced."""
+    # The run already stopped on a failure it could not fix (item 28): the gate
+    # does not ask a judge or append follow-ups - the verdict is incomplete,
+    # with the failure named, and the deliverable reports it.
+    if bounded_failure:
+        return {"complete": False, "missing": [str(bounded_failure)[:400]], "follow_up": [],
+                "bounded": True}
     ledger = _v6_build_ledger(goal, done_when, results, [], per_step=_V6_GATE_PER_STEP,
                               include_outputs=True, total=_V6_GATE_LEDGER_TOTAL)
     _wf = None
@@ -19786,7 +20937,7 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
     # run incomplete means this one has nothing to add.
     _prose_check_goal = raw_goal or goal
     if (complete and session_id
-            and _V5_PROSE_STEP_NOUN_RE.search(f"{_prose_check_goal}\n{done_when}")):
+            and _v6_goal_implies_document(f"{_prose_check_goal}\n{done_when}")):
         _has_doc = bool(_wf) and any(
             str(f).lower().endswith((".md", ".markdown", ".txt", ".html", ".htm", ".pdf", ".rst"))
             for f in _wf)
@@ -20062,6 +21213,15 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
             f"{str(h.get('preview') or '')[:500]}" if _sf else
             f"- {h.get('tool')} ok: {str(h.get('preview') or '')[:500]}")
     hist = "\n".join(_lines)
+    # A criterion about tests PASSING is settled by the last test-shaped run in
+    # this step, not by a judge reading a `cat` of the test file: run72
+    # build-multifile (24 Sep 2026) was verified met that way after pytest had
+    # reported three failures, and the goal scored 1.0 with tests that never
+    # passed. No run, or a failing run, is NOT met; a clean run still goes to
+    # the judge for the rest of the criterion. See verify_evidence_core.
+    _settled = _verify_evidence.settle_test_criterion(crit, _calls)
+    if _settled is not None:
+        return _settled
     # THE END STATE IS WHAT COUNTS. A step re-attempts its work, so an early
     # success can be superseded by a later attempt that overwrote the file and
     # broke it. Observed live: an act phase printed "SUCCESS: Processed 151
@@ -20082,6 +21242,17 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     # missing deliverable) rather than pass on a claim.
     _authored = _v6_authored_path(_last)
     if _authored:
+        # The verdict is for the file the criterion NAMES (item 18c): run76
+        # build-simple-code authored index.html for a step asking for clock.html
+        # and this fast path ruled it met; the controller then replanned a
+        # rename that took six cycles. A different file is a deterministic miss.
+        try:
+            _wrong = _verify_evidence.wrong_file_authored(
+                _v6_extract_paths(crit), _authored)
+        except Exception:
+            _wrong = None
+        if _wrong:
+            return {"met": False, "reason": _wrong}
         _ex = await _v6_check_paths_exist(session_id, [_authored]) if session_id else {_authored: True}
         if _ex.get(_authored, True):
             return {"met": True,
@@ -20258,7 +21429,8 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
            "the step away from its original literal wording, has changed what 'met' means for "
            "THIS run — do not fail the step for not doing the thing the user said to skip, and do "
            "not weigh an EARLIER failed attempt at that thing against it either.\n"
-           'Respond ONLY with JSON: {"met":true,"reason":"<one sentence of evidence>"}')
+           + _verify_evidence.EVIDENCE_RULE + "\n"
+           'Respond ONLY with JSON: {"met":true,"reason":"<one sentence quoting the evidence>"}')
     _clar = res.get("user_clarifications") or []
     clar_block = ""
     if _clar:
@@ -20275,7 +21447,8 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
               + (last_block or "")
               + (exist_block or "")
               + (f"OUTPUTS:\n{outs}\n" if outs else "")
-              + f"RESULT SUMMARY (last cycle only):\n{(res.get('summary') or '')[:2000]}\n\n"
+              + f"RESULT SUMMARY (last cycle only - the executor's OWN ACCOUNT, not evidence; the tool "
+                f"results above win where they disagree):\n{(res.get('summary') or '')[:2000]}\n\n"
                 "Was the criterion met?")
     try:
         try:
@@ -20503,6 +21676,8 @@ def _v6_make_recovery_step(failed_step: Dict[str, Any], failed_res: Dict[str, An
         "needs": [], "complex": False, "phases": [],
         "success": crit,
         "_recovery": True,
+        "_recovers": (_step_deps.recovers_id(failed_step) if _step_deps is not None
+                      else failed_step.get("id")),
         "_prereq_done": True,   # context is already embedded; skip prestep-info
         "_recovery_history": lineage,
     }
@@ -20621,6 +21796,7 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
         "success": crit or str(obj.get("success") or "")[:240],
         "_recovery": True,
         "_adjusted": True,
+        "_recovers": fallback.get("_recovers"),
         "_prereq_done": True,
         "_recovery_history": lineage,
     }
@@ -21156,6 +22332,11 @@ _V7_BUILD_VERBS = (
 # External-information signals — the model does NOT have this in its weights.
 _V7_RESEARCH_WORDS = (
     "research", "look up", "lookup", "find out", "investigate", "search for",
+    # a report or summary WITH SOURCES is research however it is verbed (the
+    # census goal "Produce a short report ... with citations" was 'build' in
+    # six censuses running, and got no research directive at all)
+    "report on", "report about", "with citations", "citing", "cite ", "sources",
+    "state of", "overview of", "history of",
     "latest", "current", "today", "news", "recent", "up to date", "up-to-date",
     "compare", "gather", "collect data", "dataset of", "real data", "statistics",
     "prices", "who is", "what is the latest", "trends", "reviews", "osint",
@@ -21349,8 +22530,10 @@ def _v7_intent_plan_directive(intent: str, *, max_steps: int = 8) -> str:
     if it == "research":
         return (
             "GOAL INTENT = RESEARCH. The goal needs EXTERNAL/CURRENT information you do not have.\n"
-            "  • Plan information-gathering FIRST (web.search → web.fetch/http.get), each step "
-            "ending in concrete notes. Never use llm.generate to 'look up' or invent facts.\n"
+            "  • Plan information-gathering FIRST with web.research — ONE step per question, each "
+            "returning the sources' text inline (sources[].text) as the notes. web.fetch only for a "
+            "URL you already know; web.search only to find one specific URL. Never plan a "
+            "web.search → web.fetch chain, and never use llm.generate to 'look up' or invent facts.\n"
             "  • THEN PLAN THE WRITE-UP AS ITS OWN FINAL STEP, and give that step `prose.author`. "
             "Research that was only FETCHED has not been DELIVERED — the deliverable is a FILE "
             "SOMEONE READS. That step passes the files the earlier steps produced as context_files, "
@@ -21367,8 +22550,12 @@ def _v7_intent_plan_directive(intent: str, *, max_steps: int = 8) -> str:
     if it == "action":
         return (
             "GOAL INTENT = ACTION. The goal is to run/operate/inspect a system. Plan concrete exec.* / "
-            "http.* / infra steps that actually perform and then VERIFY the operation (a read-only check "
-            "of the resulting state). Do not pad with research or authoring the task did not ask for.\n")
+            "http.* / infra steps that actually perform the operation; each step's `success` IS the "
+            "read-only check of the resulting state - do NOT add a separate verify step. A goal that "
+            "is one command's output (report disk usage, list the largest files, show a status) is "
+            "ONE step whose success is that output; do NOT add a step to parse, format or 'report' "
+            "it - the output is the report. Do not pad with research or authoring the task did not "
+            "ask for.\n")
     return ""   # mixed → no narrowing; the planner's general guidance applies
 
 
@@ -22245,11 +23432,12 @@ async def _v7_send_progress(goal: str, tier: str, report: str, *, channel: str,
 
 _V6_DELIVER_EVIDENCE_MAX = 14000   # chars of run evidence fed to the delivery agent
 _V6_DELIVER_OUT_MAX      = 16000   # cap on the produced deliverable
+_V6_DELIVER_DOC_MAX      = 6000    # chars of each deliverable FILE shown to the delivery agent
 
 
 async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
                       final: str, *, model: str, instance_id: str,
-                      prefer_gpu: bool) -> str:
+                      prefer_gpu: bool, session_id: str = "", emit_fn=None) -> str:
     """DELIVERY stage — a dedicated final agent that turns the whole run (goal,
     per-step evidence, artifacts) into the definitive user-facing deliverable in
     MARKDOWN. Where the cap calls themselves were the point (code edits, deploys)
@@ -22274,33 +23462,80 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
                 artifacts.append(f"{str(k)[5:]} — {str(v)[:150]}")
     block = "\n\n".join(lines)[:_V6_DELIVER_EVIDENCE_MAX] or "(no steps executed)"
     art_block = "\n".join(f"- {a}" for a in dict.fromkeys(artifacts)) or "(none recorded)"
+    # The deliverable FILE is the answer's source (item 23). research-web's
+    # summary cited its sources in the file in every census run and the
+    # delivered answer never carried one URL (q=0.667 x3): this stage only ever
+    # saw the step summaries. Read the document(s) the run wrote and compose
+    # from them; deliverable_core then removes an echoed template, a pasted
+    # source file, and restores the file's URLs if the answer dropped them.
+    _doc_rels = (_deliverable.document_files([k for r in results for k in (r.get("outputs") or {})])
+                 if _deliverable is not None else [])
+    _docs = []
+    for _rel in _doc_rels[:2]:
+        _txt = await _v6_read_artifact_text(session_id, _rel, max_chars=_V6_DELIVER_DOC_MAX)
+        if _txt.strip():
+            _docs.append((_rel, _txt))
+    _file_urls = (_deliverable.urls_in("\n".join(t for _, t in _docs))
+                  if (_docs and _deliverable is not None) else [])
+    # No citation in the file either? The research tools' results ARE the
+    # sources (run74 research-report: 26 URLs gathered, none in the report,
+    # none in the answer). Offer them to the delivery agent and, if it still
+    # cites none, `finish` appends them.
+    if (not _file_urls and _deliverable is not None and _deliverable.goal_wants_sources(goal)):
+        _file_urls = _deliverable.evidence_urls(results)
+    doc_block = "\n\n".join(f"FILE {p_}:\n{t_}" for p_, t_ in _docs)
+    src_block = "\n".join(f"- {u}" for u in _file_urls[:10])
     sys = (
-        "You are the DELIVERY agent — the last stage of an agentic run. You take the GOAL "
+        "You are the DELIVERY agent - the last stage of an agentic run. You take the GOAL "
         "and the full run evidence and produce the definitive FINAL DELIVERABLE the user "
         "will read, in clean MARKDOWN.\n"
-        "Structure (omit a section when it has no content):\n"
-        "  ## Result — lead with the direct answer/outcome of the goal: the substance, "
-        "not the process. If the goal was not fully achieved, say so plainly here.\n"
-        "  ## What was done — a faithful, concrete account of the actions taken, step by "
-        "step in plain language: what ran, what it found or changed, and any failures and "
-        "how they were worked around. Do NOT gloss over failed steps.\n"
-        "  ## Artifacts — files/outputs produced, with their paths.\n"
-        "  ## Usage — ONLY if the run produced code, configuration, or something deployed: "
-        "a brief practical guide for a developer on how to run/use what was built.\n"
-        "Use only facts from the evidence — NEVER invent results, file paths, or details "
-        "the run did not produce."
+        "Use exactly these section headings, each alone on its line with nothing after it "
+        "(leave a section out when it has no content):\n"
+        "## Result\n## What was done\n## Artifacts\n## Usage\n"
+        "What each holds:\n"
+        "  Result: the direct answer or outcome of the goal - the substance, not the process. "
+        "If the goal was not fully achieved, say so plainly.\n"
+        "  What was done: a faithful, concrete account of the actions taken, step by step in "
+        "plain language: what ran, what it found or changed, and any failures and how they "
+        "were worked around. Do NOT gloss over failed steps.\n"
+        "  Artifacts: files/outputs produced, with their paths.\n"
+        "  Usage: ONLY if the run produced code, configuration, or something deployed - a "
+        "brief practical guide for a developer on how to run/use what was built.\n"
+        "When a DELIVERABLE FILE is shown, the Result is composed FROM it: keep its substance "
+        "and its sections, and carry over EVERY source URL it cites - a summary whose file "
+        "cites sources must cite them in the answer.\n"
+        "NEVER paste a code file's source (HTML/JS/CSS/Python/...) into the deliverable: name "
+        "the file under Artifacts and say what it does. A snippet of a few lines is fine; a "
+        "whole file is not.\n"
+        "Use only facts from the evidence - NEVER invent results, file paths, or details "
+        "the run did not produce. These instructions are not part of the output."
     )
     prompt = (f"GOAL: {goal}\n"
               + (f"DONE WHEN: {done_when}\n" if done_when else "")
               + f"\nRUN EVIDENCE:\n{block}\n\nARTIFACTS RECORDED:\n{art_block}\n"
-              + (f"\nDRAFT ANSWER (from the synthesiser — improve on it, don't just copy "
+              + (f"\nDELIVERABLE FILE(S) - compose the Result from these:\n{doc_block}\n"
+                 if doc_block else "")
+              + (f"\nSOURCES THIS RUN GATHERED - cite the ones the Result relies on, by URL:\n{src_block}\n"
+                 if src_block else "")
+              + (f"\nDRAFT ANSWER (from the synthesiser - improve on it, don't just copy "
                  f"it):\n{final[:3000]}\n" if final else "")
               + "\nWrite the final markdown deliverable.")
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=False)
-        return _strip_think(raw or "")[0].strip()[:_V6_DELIVER_OUT_MAX]
+        md = _strip_think(raw or "")[0].strip()[:_V6_DELIVER_OUT_MAX]
+        if md and _deliverable is not None:
+            md, _notes = _deliverable.finish(
+                md, goal=goal, files=[a_.split(" ", 1)[0] for a_ in artifacts],
+                file_urls=_file_urls)
+            if _notes and emit_fn is not None:
+                try:
+                    await emit_fn({"type": "agent_loop_v6.deliverable_shaped",
+                                   "notes": _notes[:8], "docs": [p_ for p_, _ in _docs]})
+                except Exception:
+                    pass
+        return md
     except Exception as e:
         log.debug("v6 delivery stage failed: %s", e)
         return ""
@@ -22326,6 +23561,21 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
         "Inherits v5's recon, sub-plans, per-step phases, code autosave, long-running awaiting, "
         "and self-correcting steps (need_caps / auto-recovery). "
         "Inputs: goal (str!), allowed_caps (csv), base_toolkit (csv), max_steps (int default 8), "
+        "plan_style (str default 'auto' — HOW the plan is produced: 'auto' tier/intent decide; "
+        "'flat' one plan, no master-plan escalation or recon; 'stepwise' no upfront plan, the "
+        "controller plans one step at a time from evidence; 'detailed' a multi-lens brief is "
+        "handed to the planner first; 'broad' the goal is split into work-streams, each planned "
+        "on the GPU, merged into one plan, while the long-horizon CPU node writes a deeper "
+        "brief per stream that is added to the stream's steps as it lands. The style used is "
+        "emitted as agent_loop_v6.plan_style and "
+        "returned as plan_style), enrich_model (str — broad only: the CPU brief model, "
+        "'' = the planning_style/enrich route's), critic_route (str 'cpu'|'gpu' — "
+        "stepwise-reviewed only: where the per-step critic runs; default cpu), "
+        "executor_model / coder_model (str - this run's model for that role, e.g. an MoE), "
+        "executor_node / coder_node (auto|gpu|cpu-247|cpu-246 - auto = the GPU if the model "
+        "fits, else a CPU node; a CPU role is slow), effort (standard|bigger-coder|max - "
+        "bigger-coder = qwen3-coder:30b as the coder; max = that coder on cpu-246 plus "
+        "stepwise-family styles upgraded to stepwise-reviewed with the CPU critic), "
         "step_cycle_budget (int default 6), catalog_size (int default 40), enable_adaptive "
         "(bool default True — run the controller after each step), enable_step_verify (bool "
         "default True — one cheap judge call per step checks its success criterion was "
@@ -22436,6 +23686,28 @@ async def cap_dag_agent_loop_v6(
     enable_master_planner: bool = True,
     enable_tiering:     bool = False,      # V7-defining (see note above); v7 turns on
     plan_tier:          str  = "auto",
+    # HOW the plan is produced: auto|flat|stepwise|detailed|broad|broad-stepwise|stepwise-reviewed (see
+    # vera/planning/planner_styles.LOOP_STYLES, which is the whole contract).
+    # 'auto' is the behaviour from before styles existed. The style the run
+    # actually used is emitted as agent_loop_v6.plan_style and returned.
+    plan_style:         str  = "auto",
+    # BROAD only: the model the long-horizon CPU node writes stream briefs with
+    # ('' = the planning_style/enrich route's model). The route keeps whichever
+    # model it runs warm.
+    enrich_model:       str  = "",
+    # stepwise-reviewed: where the step critic runs - 'cpu' (the long-horizon
+    # node, default) or 'gpu' (faster, queues between the run's GPU steps).
+    critic_route:       str  = "cpu",
+    # Per-run role models + effort (dag/role_override_core.py): an MoE executor
+    # or a bigger coder on a chosen node ('auto' = the GPU if it fits, else a CPU
+    # node); effort 'bigger-coder' (qwen3-coder:30b) or 'max' (the bigger coder
+    # on cpu-246, stepwise-family styles upgraded to stepwise-reviewed with the
+    # critic on cpu-247). A CPU role is slow - chosen, never defaulted.
+    executor_model:     str  = "",
+    executor_node:      str  = "auto",
+    coder_model:        str  = "",
+    coder_node:         str  = "auto",
+    effort:             str  = "standard",
     auto_escalate:      bool = True,
     enable_fast_path:   bool = False,      # V7-defining; v7 turns on ('single' tier shortcut)
     clarify_level:      int  = 1,          # sliding-scale consultation (0-3); back-compat when clarify_mode is ''
@@ -22512,6 +23784,49 @@ async def cap_dag_agent_loop_v6(
     # An explicit strategy wins; otherwise fall back to the legacy enable_branching
     # flag so existing callers keep their behaviour. `enable_branching` is then kept
     # in sync so the branch code path only engages when 'branch' is selected.
+    # Per-run role models + effort preset, applied to THIS run's calls only
+    # (set every run, even empty, so a previous run in the same task never leaks).
+    _role_overrides: Dict[str, Dict[str, str]] = {}
+    _effort_adj: Dict[str, Any] = {"effort": "standard"}
+    if _role_ovr_core is not None:
+        _role_overrides, _effort_adj = _role_ovr_core.build(
+            executor_model=executor_model, executor_node=executor_node,
+            coder_model=coder_model, coder_node=coder_node, effort=effort,
+            plan_style=plan_style)
+        if _effort_adj.get("plan_style"):
+            plan_style = _effort_adj["plan_style"]
+        if _effort_adj.get("critic_route"):
+            critic_route = _effort_adj["critic_route"]
+    try:
+        _orch.RUN_ROLE_OVERRIDES.set(_role_overrides or None)
+    except Exception as _roe:                          # pragma: no cover
+        log.debug("role overrides not applied: %s", _roe)
+    if _role_overrides or _effort_adj.get("effort") != "standard":
+        await emit_event({"type": "agent_loop_v6.role_models", "session_id": sid,
+                          "effort": _effort_adj.get("effort"),
+                          "overrides": _role_overrides,
+                          "plan_style": _effort_adj.get("plan_style") or "",
+                          "summary": _role_ovr_core.describe(_role_overrides, _effort_adj)})
+    # Planning style: resolved once, read at each planning call site below.
+    _plan_style_req = str(plan_style or "auto").strip().lower() or "auto"
+    if _plan_styles is not None:
+        _plan_style_eff, _pstyle, _plan_style_why = _plan_styles.resolve_loop_style(_plan_style_req)
+    else:
+        _plan_style_eff, _plan_style_why = "auto", "planner_styles unavailable"
+        _pstyle = {"run_planner": True, "master_plan": True, "recon": True,
+                   "shape_guards": True, "lens_brief": False, "stepwise_controller": False}
+    # The goal's named entities, from an NLP node, beside the run: checked
+    # against the final output at the end (entity_coverage).
+    _goal_ents_task = (asyncio.ensure_future(_v6_goal_entities(goal))
+                       if _entity_cov is not None else None)
+    # ...and its zero-shot intent, when this run decides one (v7 tiering):
+    # recorded beside the intent the run used, at the end (intent_zeroshot).
+    _intent_zs_task = (asyncio.ensure_future(_v6_zeroshot_intent(goal))
+                       if (_intent_zs is not None and enable_tiering) else None)
+    # An explicitly chosen style is honoured over the single-cap fast path,
+    # which would otherwise skip planning altogether.
+    if _plan_style_eff != "auto":
+        enable_fast_path = False
     failure_strategy = (failure_strategy or "").strip().lower()
     if failure_strategy not in ("extra_step", "branch", "default"):
         failure_strategy = "branch" if enable_branching else "default"
@@ -22798,6 +24113,7 @@ async def cap_dag_agent_loop_v6(
     tier = "simple"
     tier_info: Dict[str, Any] = {}
     intent = "mixed"          # goal KIND (build/research/action/mixed) — see below
+    _intent_info: Dict[str, Any] = {}
     if enable_tiering:
         _tier_catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
         tier_info = await _v7_decide_tier(
@@ -22963,25 +24279,110 @@ async def cap_dag_agent_loop_v6(
     # ── Orchestrate (want_success=True so steps carry success criteria) ───────
     _plan_hb_stop = asyncio.Event()
     _plan_hb_task = asyncio.create_task(_v5_planning_heartbeat(sid, stream_id, _plan_hb_stop))
-    plan = await _v5_orchestrate_plan(
-        plan_goal, catalog_names, skills, cap_skill_map,
-        model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
-        max_steps=max_steps, want_success=True, phase_policy=phase_policy,
-        allowed_phases=allowed_phases, intent=intent, sid=sid, stream_id=stream_id)
-    if not plan.get("steps"):
-        retry = await _v5_orchestrate_plan(
+    # Planning style switches (planner_styles.LOOP_STYLES). 'auto' = all on and
+    # no lens brief, which is exactly the path this block took before styles.
+    _style_note = ""
+    _style_detail: Dict[str, Any] = {}
+    if _pstyle.get("lens_brief") and _plan_styles is not None:
+        # DETAILED: several short independent looks at the goal (steps,
+        # artifacts, risks, criteria, caps), merged host-side, handed to the
+        # planner as context. Lenses go through the loop's own generate
+        # (cancel-aware) on the planning_style/lens route.
+        async def _lens_gen(prompt, system=""):
+            return await _safe_ollama_generate_dw(
+                prompt, system=system, json_mode=False, model="",
+                instance_id="", prefer_gpu=True, think=False,
+                profile="planning_style", role="lens", request_stage="plan_lens")
+        try:
+            _dplan = await _plan_styles.plan_detailed(
+                plan_goal, _lens_gen, catalog=list(catalog_names),
+                max_steps=max_steps, timeout_s=600.0)
+            _brief = _dplan.get("brief") or {}
+            _style_note = _plan_styles.render_brief(_brief)
+            _style_detail = {"lenses_answered": list(_brief.get("answered") or []),
+                             "lenses_missing": list(_brief.get("missing") or []),
+                             "rejected_criteria": len(_brief.get("rejected_criteria") or [])}
+        except Exception as _le:
+            log.warning("detailed style: lens brief failed: %s", _le)
+            _style_detail = {"error": f"{type(_le).__name__}: {_le}"[:200]}
+        if not _style_note:
+            # No lens answered: the planner runs without a brief, i.e. as auto.
+            _plan_style_why = "detailed: no lens answered - planned without a brief"
+            _plan_style_eff = "auto"
+        if _style_note:
+            _style_note = (_style_note + "\n\nUse the brief above as evidence about the goal; "
+                           "the steps, their sizing and their capabilities are still yours to "
+                           "decide under the rules.")
+    _broad_fell_back = False
+    # BROAD's CPU stream briefs ({stream id: task}), applied to each stream's
+    # steps as they come up (see the step loop) and cancelled at the run's end.
+    _enrich_tasks: Dict[Any, Any] = {}
+    _gpu_briefs: Dict[Any, str] = {}      # BROAD: the GPU's quick first brief per stream
+    _broad_opening_steps: List[Dict[str, Any]] = []
+    if _pstyle.get("broad"):
+        # BROAD: the GPU plans every work-stream, the CPU nodes brief them in parallel.
+        plan = await _v6_plan_broad(
             plan_goal, catalog_names, skills, cap_skill_map,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
-            max_steps=max_steps, minimal=True, want_success=True,
-            phase_policy=phase_policy, intent=intent)
-        if retry.get("steps"):
-            plan = retry
+            max_steps=max_steps, phase_policy=phase_policy, intent=intent,
+            sid=sid, stream_id=stream_id, enrich_model=(enrich_model or "").strip(),
+            stream_steps=int(_pstyle.get("stream_steps") or 0))
+        _style_detail = {"broad": plan.pop("broad", {})}
+        _broad_opening_steps = [dict(s) for s in (plan.get("steps") or [])]
+        _enrich_tasks = plan.pop("_enrich_tasks", {}) or {}
+        _gpu_briefs = plan.pop("_gpu_briefs", {}) or {}
+        if not plan.get("steps"):
+            for _t in _enrich_tasks.values():
+                _t.cancel()
+            _enrich_tasks = {}
+            _broad_fell_back = True
+            # The fallback plan is a full up-front plan: guard it and steer it as
+            # broad's own fallback does (a no-op for broad; broad-stepwise turned
+            # these off only for its one-step stream openings).
+            _pstyle = {**_pstyle, "shape_guards": True, "stepwise_controller": False}
+            _plan_style_why = ("broad: %s - planned as auto"
+                               % (_style_detail["broad"].get("error") or "no steps"))
+            _plan_style_eff = "auto"
+    if (_pstyle.get("run_planner", True) and not _pstyle.get("broad")) or _broad_fell_back:
+        plan = await _v5_orchestrate_plan(
+            plan_goal, catalog_names, skills, cap_skill_map,
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            max_steps=max_steps, want_success=True, phase_policy=phase_policy,
+            allowed_phases=allowed_phases, intent=intent, plan_note=_style_note,
+            sid=sid, stream_id=stream_id)
+        if not plan.get("steps"):
+            retry = await _v5_orchestrate_plan(
+                plan_goal, catalog_names, skills, cap_skill_map,
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                max_steps=max_steps, minimal=True, want_success=True,
+                phase_policy=phase_policy, intent=intent, plan_note=_style_note)
+            if retry.get("steps"):
+                plan = retry
+    elif not _pstyle.get("broad"):
+        # STEPWISE: no upfront plan. The empty plan falls into the stepwise
+        # bootstrap below, and the controller plans each next step. (A broad
+        # plan that produced steps is kept as it is.)
+        plan = {"steps": [], "reason": "", "complexity": "", "recon": [], "done_when": ""}
+    # The controller's style instruction (planner_styles.controller_note): the
+    # stepwise note, broad-stepwise's stream map, or none. A broad run that fell
+    # back planned as auto and is steered as auto.
+    _ctrl_style_note = ""
+    if _plan_styles is not None and not _broad_fell_back:
+        _bd = (_style_detail.get("broad") if isinstance(_style_detail, dict) else None) or {}
+        _ctrl_style_note = _plan_styles.controller_note(
+            _pstyle, streams=_bd.get("stream_map") or [], steps=_broad_opening_steps)
+    # stepwise-reviewed: a CPU critic reviews each finished step (never waited on).
+    _critic = (_V6StepCritic(goal, sid=sid, stream_id=stream_id,
+                             model=(enrich_model or "").strip(),
+                             route=(critic_route or "cpu").strip().lower())
+               if (_plan_styles is not None and _pstyle.get("step_critic")) else None)
     # Fall-through "complex planning mode": both plan passes yielded no usable
     # steps — escalate to a long-form master plan and re-break it into steps (a
     # weak planner decomposes a concrete document far more reliably than an
     # abstract goal). Distinct from the complexity=="extreme" opt-in below.
     _master_ran = False
-    if not plan.get("steps") and enable_master_planner:
+    _master_ok = enable_master_planner and bool(_pstyle.get("master_plan", True))
+    if not plan.get("steps") and _master_ok:
         try:
             catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
             mp = await _v5_master_plan(goal, catalog_brief, model=model,
@@ -23016,7 +24417,7 @@ async def cap_dag_agent_loop_v6(
     # the latter, which almost never triggered — the whole reason complex planning
     # wasn't firing.) It drafts a domain-expert long-form plan and re-breaks it.
     # Skipped if the no-steps fall-through above already ran it.
-    if (enable_master_planner and not _master_ran and plan.get("steps")
+    if (_master_ok and not _master_ran and plan.get("steps")
             and (tier_wants_master or complexity == "extreme")):
         try:
             catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
@@ -23094,7 +24495,7 @@ async def cap_dag_agent_loop_v6(
     # planning and can be seeded into the blackboard as a step-0 result below.
     recon_artifacts: List[Dict[str, Any]] = []
     recon_digest = ""
-    if enable_recon and recon and recon_max_rounds > 0:
+    if enable_recon and _pstyle.get("recon", True) and recon and recon_max_rounds > 0:
         catalog_set_for_recon = set(catalog_names)
         accumulated: List[str] = []
         rnd = 0
@@ -23143,14 +24544,24 @@ async def cap_dag_agent_loop_v6(
         # evidence — exactly the incremental recovery the loop is built for.
         steps = [_v5_stepwise_bootstrap_step(goal, catalog_names)]
         plan["steps"] = steps
+        _chosen_stepwise = bool(_pstyle.get("stepwise_controller"))
         plan["reason"] = plan.get("reason") or (
+            "STEPWISE style chosen — no upfront plan; running from a bootstrap step and "
+            "the controller plans each next step from evidence" if _chosen_stepwise else
             "planning could not decompose the goal — running STEPWISE from a "
             "bootstrap step; the controller will plan each next step from evidence")
         await emit_event({"type": "agent_loop_v5.planning", "session_id": sid,
                           "stream_id": stream_id, "elapsed_s": 0,
-                          "note": "plan escalations exhausted — entering STEPWISE mode"})
+                          "note": ("stepwise style — planning one step at a time"
+                                   if _chosen_stepwise else
+                                   "plan escalations exhausted — entering STEPWISE mode")})
 
-    steps = _v5_split_compound_single_step(steps, goal)
+    # Shape guards (compound-step split, under-decomposition, drift, hygiene) all
+    # REPLAN toward a fuller upfront plan - which a stepwise run declines on
+    # purpose. Every other style keeps them.
+    _shape_guards = bool(_pstyle.get("shape_guards", True))
+    if _shape_guards:
+        steps = _v5_split_compound_single_step(steps, goal)
     # DRIFT GUARD — does this plan actually address the goal that was asked?
     # A prompt can always be talked past, so the check is deterministic: if the
     # plan's titles share essentially no vocabulary with the PRISTINE goal, the
@@ -23165,7 +24576,7 @@ async def cap_dag_agent_loop_v6(
     # rebuilds the plan a step at a time and the run hits its wall cap — 1500s
     # against 420s for the same goal planned properly. Same prompt, different
     # answer, so this is a shape check on the RESULT, not more prompt.
-    _under, _why = ((False, "") if _plan_shape is None else
+    _under, _why = ((False, "") if (_plan_shape is None or not _shape_guards) else
                     _plan_shape.is_underdecomposed(
                         tier_rank=_v7_tier_rank(tier),
                         complex_rank=_v7_tier_rank("complex"), steps=steps))
@@ -23198,7 +24609,7 @@ async def cap_dag_agent_loop_v6(
         except Exception as _e:
             log.debug("v6 under-decomposition re-plan failed: %s", _e)
 
-    if _plan_drifted(_orig_goal, steps):
+    if _shape_guards and _plan_drifted(_orig_goal, steps):
         await emit_event({"type": "agent_loop_v6.plan_drift", "session_id": sid,
                           "stream_id": stream_id,
                           "goal": _orig_goal[:200],
@@ -23237,6 +24648,47 @@ async def cap_dag_agent_loop_v6(
                 steps = _fsteps
         except Exception as _e:
             log.debug("v6 drift re-plan failed: %s", _e)
+    # PLAN HYGIENE — a plan holds only what the goal asked for (item 22). In
+    # run70-73 17 of 40 plans carried a "Verify ..." step re-checking settled
+    # work, 9 criteria added features the goal never named (pause/reset/reload
+    # for a countdown), and one-command goals were planned as run + parse +
+    # "report" (1,800 s, q=0). Added requirements go back to the planner ONCE
+    # with a note; the re-check steps and the parse/format steps are then
+    # removed deterministically. See plan_hygiene_core.
+    if _plan_hygiene is not None and steps and _shape_guards:
+        try:
+            _added = _plan_hygiene.added_requirements(_orig_goal, steps)
+            if _added:
+                _re2 = await _v5_orchestrate_plan(
+                    _orig_goal, catalog_names, skills, cap_skill_map,
+                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                    max_steps=max_steps, minimal=True, want_success=True,
+                    phase_policy=phase_policy, allowed_phases=allowed_phases,
+                    intent=intent, plan_note=_plan_hygiene.hygiene_note(_added),
+                    sid=sid, stream_id=stream_id)
+                _r2 = (_re2 or {}).get("steps") or []
+                _added2 = _plan_hygiene.added_requirements(_orig_goal, _r2) if _r2 else list(_added)
+                _took2 = bool(_r2) and len(_added2) < len(_added) and not _plan_drifted(_orig_goal, _r2)
+                await emit_event({"type": "agent_loop_v6.plan_hygiene_replan",
+                                  "session_id": sid, "stream_id": stream_id,
+                                  "added": _added[:12], "accepted": _took2,
+                                  "remaining": (_added2 if _took2 else _added)[:12],
+                                  "titles": [str(x.get("title") or "")[:80] for x in _r2][:8]})
+                if _took2:
+                    steps = _r2
+            steps, _dropped = _plan_hygiene.drop_verify_steps(_orig_goal, steps)
+            _merged = ""
+            if _plan_hygiene.is_single_command_goal(
+                    _orig_goal, steps,
+                    has_seam=lambda g: len(_V5_COMPOUND_SEAM_RE.split(g, maxsplit=1)) > 1):
+                steps, _merged = _plan_hygiene.merge_exec_plan(_orig_goal, steps)
+            if _dropped or _merged:
+                await emit_event({"type": "agent_loop_v6.plan_hygiene",
+                                  "session_id": sid, "stream_id": stream_id,
+                                  "dropped": _dropped[:8], "merged": _merged,
+                                  "titles": [str(x.get("title") or "")[:80] for x in steps][:8]})
+        except Exception as _e:
+            log.debug("v6 plan hygiene failed: %s", _e)
     # Enforce the phase policy on the plan: none when phases are off, else keep only
     # the phases the user allowed (phase_set) in canonical order.
     for s in steps:
@@ -23256,6 +24708,16 @@ async def cap_dag_agent_loop_v6(
                       "reason": plan.get("reason", ""),
                       "complexity": plan.get("complexity", ""),
                       "done_when": done_when})
+    # Which planning style this run asked for and which it actually used (they
+    # differ when a style falls back, e.g. detailed with no lens answering). The
+    # trace digest and census rows read this event.
+    _plan_style_rec = {"requested": _plan_style_req, "effective": _plan_style_eff,
+                       "reason": _plan_style_why, "master_ran": bool(_master_ran),
+                       "planned_steps": len(steps), **_style_detail}
+    await emit_event({"type": "agent_loop_v6.plan_style", "session_id": sid,
+                      "stream_id": stream_id, **_plan_style_rec})
+    fix_loop_bound = ""      # the failure signature that ended the run early (item 28)
+    verify_reasons_by_step: Dict[str, List[str]] = {}   # every attempt's verdict, per step (28b)
 
     # ── Execute over a shared ledger with an adaptive controller ──────────────
     blackboard: Dict[int, Dict[str, Any]] = {}
@@ -23456,6 +24918,11 @@ async def cap_dag_agent_loop_v6(
                                   instance_id=instance_id, prefer_gpu=prefer_gpu)
         res["met"] = v["met"]
         res["met_reason"] = v["reason"]
+        # Every attempt's reason, per step: the fix-loop bound reads the failure
+        # a step named in ANY attempt, not only the last (item 28b).
+        _vr = verify_reasons_by_step.setdefault(str(step.get("id")), [])
+        _vr.append(str(v.get("reason") or ""))
+        res["verify_reasons"] = list(_vr)
         # `ok` on a VERIFY event must be the VERDICT, not the step's own flag.
         # Emitting res["ok"] made the trace read "verify ok=True" beside a reason
         # saying the deliverable was never created — so a run that was correctly
@@ -23759,10 +25226,34 @@ async def cap_dag_agent_loop_v6(
         # Fork snapshot = the ancestor chain WITHOUT this step's attempt. A branch
         # spawned on failure inherits this and never sees the failed try (or siblings).
         pre_bb = dict(blackboard)
+        # BROAD: this stream's CPU brief, if it has arrived, goes in with the step.
+        # Checked per step, so a brief that landed after planning still reaches
+        # the stream's remaining steps.
+        # Each step gets the BEST brief available as it starts: the CPU node's
+        # deeper review if it has landed, else the GPU's quick first look.
+        if (_enrich_tasks or _gpu_briefs) and not step.get("_stream_brief"):
+            _pc = step.get("piece")
+            _et = _enrich_tasks.get(_pc)
+            _brief, _kind = "", ""
+            if _et is not None and _et.done() and not _et.cancelled() \
+                    and not _et.exception() and _et.result():
+                _brief, _kind = _et.result(), "deep"
+            elif _gpu_briefs.get(_pc):
+                _brief, _kind = _gpu_briefs[_pc], "quick"
+            if _brief:
+                step["goal"] = str(step.get("goal") or "") + _brief
+                step["_stream_brief"] = _kind
+                await emit_event({"type": "agent_loop_v6.broad_brief_applied", "session_id": sid,
+                                  "stream_id": stream_id, "step_id": step.get("id"),
+                                  "stream": _pc, "kind": _kind})
         res = await _run_one(step, gcycle)
         # Carry the step's success criterion onto the result so the ledger/controller
         # can judge it against the bar the planner set.
         res["success"] = step.get("success", "")
+        # A recovery step's result names the step it finished, so a later step
+        # that needs that step reads this result too (step_deps_core).
+        if step.get("_recovers") is not None:
+            res["_recovers"] = step["_recovers"]
         await _finalize_one(step, res)
         await _verify_one(step, res)
         gcycle = res.get("cycle_end", gcycle)
@@ -23803,6 +25294,8 @@ async def cap_dag_agent_loop_v6(
         flat_history.extend(res.get("history") or [])
         max_id = max(max_id, step["id"])
         await _journal_step(step, res)
+        if _critic is not None:
+            _critic.submit(step, res, results, done_when)
 
         await emit_event({"type": "agent_loop_v6.ledger", "session_id": sid,
                           "stream_id": stream_id, "executed": executed,
@@ -23810,6 +25303,18 @@ async def cap_dag_agent_loop_v6(
                                     "met": r.get("met")}
                                    for r in results],
                           "pending": [{"id": s["id"], "title": s["title"]} for s in queue]})
+
+        # -- a failure two fix steps did not change ends the run (item 28) --
+        # run77 build-multifile: 43 cycles over three steps chasing one failing
+        # test; every verify honest, no ceiling. See fix_loop_core.
+        if _fix_loop is not None:
+            _streak, _sig = _fix_loop.same_failure_streak(results)
+            if _fix_loop.should_stop(_streak):
+                fix_loop_bound = _fix_loop.report(_sig, _streak)
+                await emit_event({"type": "agent_loop_v6.fix_loop_bound", "session_id": sid,
+                                  "stream_id": stream_id, "after_step": step["id"],
+                                  "signature": _sig, "streak": _streak, "note": fix_loop_bound})
+                break
 
         # ── Adaptive controller: assess after EVERY step and steer. ──────────
         if enable_adaptive and executed < hard_cap:
@@ -23826,7 +25331,8 @@ async def cap_dag_agent_loop_v6(
                 catalog_names=catalog_names, valid_skill_ids=valid_skill_ids,
                 base_id=max_id, steps_left=steps_left, model=model,
                 instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
-                file_register=lambda _d: _v6_file_register_block(artifacts, _d))
+                file_register=lambda _d: _v6_file_register_block(artifacts, _d),
+                style_note=_ctrl_style_note + (_critic.new_block() if _critic is not None else ""))
             await emit_event({"type": "agent_loop_v6.assess", "session_id": sid,
                               "stream_id": stream_id, "after_step": step["id"],
                               "assessment": ctrl.get("assessment", ""),
@@ -23881,6 +25387,15 @@ async def cap_dag_agent_loop_v6(
         _gate_rounds += 1
         _gate_goal = (goal + "\n\n" + _user_updates_block(user_updates)
                       if user_updates else goal)
+        # stepwise-reviewed: the critic's latest notes are evidence for the gate
+        # (what it found missing is exactly what the gate must not wave through).
+        if _critic is not None:
+            # The one bounded wait: the critique of the last finished step.
+            _cw = await _critic.wait_for_last()
+            if _cw.get("step") is not None:
+                await emit_event({"type": "agent_loop_v6.critic_gate_wait", "session_id": sid,
+                                  "stream_id": stream_id, **_cw})
+            _gate_goal = _gate_goal + _critic.recent_block()
         if stream_id:
             await emit_event({"type": "agent_loop_v6.stage_start", "stream_id": stream_id,
                               "session_id": sid, "stage": "gate", "key": "final",
@@ -23890,7 +25405,7 @@ async def cap_dag_agent_loop_v6(
             valid_skill_ids=valid_skill_ids, base_id=max_id,
             steps_left=hard_cap - executed, model=model,
             instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
-            raw_goal=_orig_goal,
+            raw_goal=_orig_goal, bounded_failure=fix_loop_bound,
             file_register=lambda _d: _v6_file_register_block(artifacts, _d))
         await emit_event({"type": "agent_loop_v6.gate", "session_id": sid,
                           "stream_id": stream_id, "complete": bool(gate.get("complete")),
@@ -24009,7 +25524,12 @@ async def cap_dag_agent_loop_v6(
                               "label": "📦 Writing the final deliverable…"})
         deliverable = await _v6_deliver(
             goal, done_when, results, final,
-            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            session_id=sid,
+            emit_fn=lambda ev: emit_event({
+                "type": str(ev.get("type") or "agent_loop_v6.deliverable_shaped"),
+                "session_id": sid, "stream_id": stream_id,
+                "notes": ev.get("notes"), "docs": ev.get("docs")}))
         if deliverable:
             await emit_event({"type": "agent_loop_v6.deliverable", "session_id": sid,
                               "stream_id": stream_id, "markdown": deliverable,
@@ -24043,6 +25563,11 @@ async def cap_dag_agent_loop_v6(
         except Exception as _e:
             log.debug("v6 progress report failed: %s", _e)
 
+    # Before .done, so the trace digest and the Loop Lab record include it.
+    await _v6_entity_coverage(_goal_ents_task, deliverable or final, sid=sid,
+                              stream_id=stream_id)
+    await _v6_intent_measure(_intent_zs_task, _intent_info, intent, sid=sid,
+                             stream_id=stream_id)
     await emit_event({"type": "agent_loop_v6.done", "stream_id": stream_id, "session_id": sid,
                       "summary": final, "cycles": gcycle, "steps_run": len(results),
                       "reason": "complete"})
@@ -24052,6 +25577,13 @@ async def cap_dag_agent_loop_v6(
         except Exception:
             pass
 
+    # BROAD: a CPU brief still running when the run is over enriches nothing.
+    for _t in (_enrich_tasks or {}).values():
+        if not _t.done():
+            _t.cancel()
+    # stepwise-reviewed: a critique still running when the run is over informs nothing.
+    if _critic is not None:
+        _critic.cancel()
     return {
         "goal": goal, "steps": results,
         "blackboard": {str(k): v for k, v in blackboard.items()},
@@ -24060,6 +25592,7 @@ async def cap_dag_agent_loop_v6(
         "final": final, "summary": final, "handover_output": handover_output,
         "deliverable": deliverable,
         "done_when": done_when, "tier": tier, "phase_policy": phase_policy,
+        "plan_style": _plan_style_rec,
         "journal": journal,
         "stream_id": stream_id, "session_id": sid, "done": True,
     }
@@ -24090,7 +25623,8 @@ async def cap_dag_agent_loop_v6(
         "self-correcting steps). Extra inputs over v6: enable_tiering/plan_tier/auto_escalate, "
         "enable_step_finalize, enable_branching/branch_fanout/max_branches/branch_parallel, "
         "enable_dream_persistence, enable_journal (structured run journal → data fabric for "
-        "complex/long-term goals). Output: same shape as v6."),
+        "complex/long-term goals). plan_style (auto|flat|stepwise|detailed|broad|broad-stepwise|stepwise-reviewed, default auto) "
+        "chooses HOW the plan is produced — see dag.agent_loop_v6. Output: same shape as v6."),
 )
 async def cap_dag_agent_loop_v7(goal: str, **kwargs):
     """V7 delegates to the shared v6 runner with the V7-defining features ON. Keeping
@@ -24350,6 +25884,14 @@ async def workshop_agent_loop_stream(request: Request):
                                      "extra_step" if _v7_default else "") or "").strip().lower()
     v6_enable_tiering    = bool(body.get("enable_tiering", _v7_default))
     v6_plan_tier         = (body.get("plan_tier", "auto") or "auto").strip().lower()
+    v6_plan_style        = (body.get("plan_style", "auto") or "auto").strip().lower()
+    v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
+    v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
+    v6_executor_model    = (body.get("executor_model", "") or "").strip()
+    v6_executor_node     = (body.get("executor_node", "auto") or "auto").strip().lower()
+    v6_coder_model       = (body.get("coder_model", "") or "").strip()
+    v6_coder_node        = (body.get("coder_node", "auto") or "auto").strip().lower()
+    v6_effort            = (body.get("effort", "standard") or "standard").strip().lower()
     v6_auto_escalate     = bool(body.get("auto_escalate", True))
     v6_enable_fast_path  = bool(body.get("enable_fast_path", _v7_default))
     v6_clarify_level     = int(body.get("clarify_level", 1) or 0)
@@ -24497,6 +26039,11 @@ async def workshop_agent_loop_stream(request: Request):
             failure_strategy=v6_failure_strategy,
             enable_tiering=v6_enable_tiering,
             plan_tier=v6_plan_tier,
+            plan_style=v6_plan_style,
+            enrich_model=v6_enrich_model,
+            critic_route=v6_critic_route,
+            executor_model=v6_executor_model, executor_node=v6_executor_node,
+            coder_model=v6_coder_model, coder_node=v6_coder_node, effort=v6_effort,
             auto_escalate=v6_auto_escalate,
             enable_fast_path=v6_enable_fast_path,
             clarify_level=v6_clarify_level,
@@ -24868,6 +26415,25 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v6.gate",
             "agent_loop_v6.deliverable",
             "agent_loop_v6.done",
+            # Planning styles: which style ran, and the BROAD style's live
+            # planning (split, per-stream plans, quick/deep briefs, briefs
+            # applied, repeats dropped). Not in this set = never reaches the UI:
+            # plan_style was emitted from 2026-09-27 and silently dropped here.
+            "agent_loop_v6.plan_style",
+            "agent_loop_v6.broad_split_token",
+            "agent_loop_v6.broad_streams",
+            "agent_loop_v6.broad_stream_token",
+            "agent_loop_v6.broad_stream_planned",
+            "agent_loop_v6.broad_brief_token",
+            "agent_loop_v6.broad_stream_quick_brief",
+            "agent_loop_v6.broad_stream_enriched",
+            "agent_loop_v6.broad_brief_applied",
+            "agent_loop_v6.broad_deduped",
+            "agent_loop_v6.entity_coverage",
+            "agent_loop_v6.intent_zeroshot",
+            "agent_loop_v6.step_critique",
+            "agent_loop_v6.critic_gate_wait",
+            "agent_loop_v6.role_models",
             # V7 tier/branching + strategic persistence
             "agent_loop_v6.tier",
             "agent_loop_v6.fast_path",
