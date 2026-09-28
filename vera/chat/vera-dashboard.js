@@ -427,6 +427,8 @@
   /* ── the layout record's pure parts (shared by every instance; VeraDash.* exports them) ─────────────────── */
   // The grid the Dashboard board draws — the units VeraDash has always used, so a layout migrates one to one.
   var GRID = { cols: 12, row: 58, gap: 10, widths: [2, 3, 4, 6, 8, 12] };
+  // the tallest a tile may be, in rows (16 × 58 px + gaps ≈ 1080 px - a graph, a log, a list with room)
+  var MAX_ROWS = 16;
   // The span → size rule (the Sizes board; widget_record.size_for_span is the same rule): 2–3 wide S, 4 M, 6 L,
   // 8–12 XL; extra rows on a 6-wide add the detail, then the table. A 2–3 wide tile one row tall is a row (S); two
   // rows or more is a cell (M) — the figure and its sub line, as the Dashboard board's stat tiles draw.
@@ -622,11 +624,20 @@
     }
     function setSpan(w, span) {
       if (!span || !+span[0]) return;
-      // a width the grid's CSS knows (a 5 persisted by another build would fall to one column) and a row 1–6
-      var cw = snapWidth(+span[0]), ch = Math.max(1, Math.min(6, Math.round(+span[1] || 1)));
+      // a width the grid's CSS knows (a 5 persisted by another build would fall to one column) and a row 1–MAX_ROWS
+      var cw = snapWidth(+span[0]), ch = Math.max(1, Math.min(MAX_ROWS, Math.round(+span[1] || 1)));
       [2, 3, 4, 6, 8, 12].forEach(function (n) { w.classList.remove('w-w' + n); });
-      [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); });
-      w.classList.add('w-w' + cw); w.classList.add('w-h' + ch);
+      w.classList.add('w-w' + cw); setRows(w, ch);
+    }
+    /* A TILE MAY BE AS TALL AS ITS CONTENT NEEDS (owner, 2026-09-28: "the stack topology widget is not tall enough ... it
+       seemed to have a max i could drag it to that wasnt far from where it started"). Heights stopped at six rows - the
+       clamp here, the drag's snap and the six w-hN rules every host page's CSS carries - so a graph or a log could never be
+       made taller than ~400 px. The row span is written inline too: a page whose stylesheet only knows w-h1..w-h6 still
+       lays out a w-h9, and the class stays the persisted record of it (spanOf reads it back). */
+    function setRows(w, n) {
+      n = Math.max(1, Math.min(MAX_ROWS, Math.round(+n || 1)));
+      String(w.className).split(/\s+/).forEach(function (c) { if (/^w-h\d+$/.test(c)) w.classList.remove(c); });
+      w.classList.add('w-h' + n); w.style.gridRow = 'span ' + n;
     }
     function snapWidth(n) { var near = GRID.widths[0], best = Infinity; GRID.widths.forEach(function (a) { var dd = Math.abs(a - n); if (dd < best) { best = dd; near = a; } }); return near; }
     // the tile's record: the user's edit first, then the file's, then the one a user tile carries
@@ -638,6 +649,13 @@
        (2026-09-28); a page-wide grid (1200 px and up) keeps its spans as they are */
     function effSpan(sp) { var gw = grid.clientWidth || 0, k = gw ? Math.min(1, gw / 1200) : 1; return [Math.max(1, Math.round((+sp[0] || 1) * k)), sp[1]]; }
     function syncSize(w) {
+      // an XL composite (a composite with a list among its parts - VeraWidget.compositeXL) is never shorter than its floor:
+      // its lists need the room, and scroll inside it beyond that
+      try { var xr = recordOf(w.dataset.wid), VW = window.VeraWidget;
+        if (xr && VW && typeof VW.compositeXL === 'function' && VW.compositeXL(xr)) { var s0 = spanOf(w), floor = +VW.xlCompositeRows || 6; if (s0[1] < floor) setSpan(w, [s0[0], floor]); }
+        /* a page whose grid is laid before /ui/widgets/widget_element.js has run (the Estate's panes) has no classifier to ask
+           yet: look again once <vera-widget> is defined, or the XL floor never applies there */
+        else if (xr && !VW && !w._vdXlWait && window.customElements && customElements.whenDefined) { w._vdXlWait = true; customElements.whenDefined('vera-widget').then(function () { syncSize(w); }); } } catch (e) {}
       var sp = effSpan(spanOf(w)), size = sizeForSpan(sp[0], sp[1]);
       w.dataset.size = size;
       var el = w.querySelector(':scope > .w-body > vera-widget');
@@ -965,7 +983,7 @@
         ghost.style.width = pxW + 'px';
         ghost.style.height = pxH + 'px';
         targetW = snap(Math.round((pxW + gapX) / colPitch), 2, 12, allowed);
-        targetH = snap(Math.round((pxH + gapY) / rowPitch), 1, 6, null);
+        targetH = snap(Math.round((pxH + gapY) / rowPitch), 1, MAX_ROWS, null);
         label.textContent = targetW + ' × ' + targetH;
       }
       // Resizing taller/shorter than the visible viewport needs the page to
@@ -1018,8 +1036,7 @@
         _dragGuardOff(); endGesture();
         ghost.remove();
         allowed.forEach(function (n) { w.classList.remove('w-w' + n); });
-        [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); });
-        w.classList.add('w-w' + targetW); w.classList.add('w-h' + targetH);
+        w.classList.add('w-w' + targetW); setRows(w, targetH);
         // Resize only ever sets the w-wN/w-hN span classes — nothing else.
         // An earlier version of this also stamped an inline max-height here,
         // computed from THIS drag's measured row pitch — but that pitch is
@@ -1077,7 +1094,7 @@
       ws.forEach(function (w) {
         var sz = state.sizes[w.dataset.wid];
         if (sz && sz.w) { [2, 3, 4, 6, 8, 12].forEach(function (n) { w.classList.remove('w-w' + n); }); w.classList.add('w-w' + sz.w); }
-        if (sz && sz.h) { [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); }); w.classList.add('w-h' + sz.h); }
+        if (sz && sz.h) setRows(w, sz.h);
       });
       stampAt();
       ws.forEach(syncSize);
@@ -1904,7 +1921,7 @@
     'vera-dashboard .w-resize{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;display:none}vera-dashboard .dash-grid.editing .w-resize{display:flex}',
     'vera-dashboard .w-resize::before{content:"";width:8px;height:8px;border-right:2px solid var(--border2,rgba(255,255,255,.2));border-bottom:2px solid var(--border2,rgba(255,255,255,.2));display:inline-block}',
     'vera-dashboard .w-w2{grid-column:span 2}vera-dashboard .w-w3{grid-column:span 3}vera-dashboard .w-w4{grid-column:span 4}vera-dashboard .w-w6{grid-column:span 6}vera-dashboard .w-w8{grid-column:span 8}vera-dashboard .w-w12{grid-column:span 12}',
-    'vera-dashboard .w-h1{grid-row:span 1}vera-dashboard .w-h2{grid-row:span 2}vera-dashboard .w-h3{grid-row:span 3}vera-dashboard .w-h4{grid-row:span 4}vera-dashboard .w-h5{grid-row:span 5}vera-dashboard .w-h6{grid-row:span 6}',
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].map(function (n) { return 'vera-dashboard .w-h' + n + '{grid-row:span ' + n + '}'; }).join(''),
     '@media(max-width:1100px){vera-dashboard .dash-grid{grid-template-columns:repeat(6,minmax(0,1fr))}vera-dashboard .w-w8,vera-dashboard .w-w12{grid-column:span 6}}',
     '@media(max-width:680px){vera-dashboard .dash-grid{grid-template-columns:repeat(2,minmax(0,1fr))}vera-dashboard .widget{grid-column:span 2!important}}',
     /* blocks off (the one design's mode): the tiles lose their ground, a hairline keeps their shape */

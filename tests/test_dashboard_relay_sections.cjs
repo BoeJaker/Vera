@@ -11,7 +11,9 @@ const secs = shown.filter((w) => w.record.form === 'section');
 t('every section has a colour of its own and a subtitle after its name', secs.length >= 9 && secs.every((w) => /^var\(--b-dv[1-7],#[0-9a-f]{6}\)$/.test(w.record.draw.accent) && / · /.test(w.record.title)), secs.map((w) => w.record.id).join(' '));
 t('the repeats are folded away (each said what another tile says)', ['requests', 'workerlist', 'agent-programmes', 'cap-stream', 'fleet', 'guests', 'routing', 'fabric'].every((k) => id(k).hidden));
 const sorted = shown.every((w, i) => !i || shown[i - 1].at[1] < w.at[1] || (shown[i - 1].at[1] === w.at[1] && shown[i - 1].at[0] < w.at[0]));
-t('the file is in row-major order (VeraDash lays tiles in file order) and no tile is taller than six rows', sorted && shown.every((w) => w.span[1] <= 6));
+// the tallest a tile may be is VeraDash's MAX_ROWS (six until 2026-09-28: "the stack topology widget is not tall enough")
+const MAXR = +((require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'vera', 'chat', 'vera-dashboard.js'), 'utf8').match(/var MAX_ROWS = (\d+);/) || [])[1] || 6);
+t('the file is in row-major order (VeraDash lays tiles in file order) and no tile is taller than VeraDash allows', sorted && MAXR >= 6 && shown.every((w) => w.span[1] <= MAXR), 'MAX_ROWS ' + MAXR);
 t('memory stores draws what each holds (a bar a store), not three big figures', id('memory-stores').record.form === 'ranked' && Object.keys(id('memory-stores').record.read.map.pick).length === 4 && !id('memory-stores').record.children);
 const WE = R('vera/widgets/widget_element.js');
 t('a ranked figure is said short from ten thousand (356.1k, 4.33M) so it fits its column', WE.includes("a >= 1e6 ? f(n / 1e6, 'M', 100) : a >= 1e4 ? f(n / 1e3, 'k', 10) : fmt(v); };") && WE.includes('r.size ?? rkShort(x[1])'));
