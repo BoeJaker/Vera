@@ -258,6 +258,8 @@ def test_busy_nodes_leave_a_working_or_recently_used_node_alone():
     assert "gpu-250" in b                      # the card waits 10 minutes of quiet
     assert "cpu-247" not in b                  # a CPU node 2
     assert "gpu-250-cpu" not in b
+    # embeddings hit the CPU nodes every few seconds: recent use is not busy
+    assert "cpu-247" not in W.busy_nodes(INSTANCES, {"cpu-247": NOW - 1}, NOW)
 
 
 
