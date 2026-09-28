@@ -71,6 +71,42 @@ def test_default_is_locked_only_when_nobody_unexpected_is_on_it():
     assert not plan["ok"] and plan["unexpected"][0]["addr"] == "172.18.0.1:5001"
 
 
+def test_export_writes_only_env_files_inside_the_allowed_roots(tmp_path):
+    root = tmp_path / "LLM_Stack"
+    (root / "src").mkdir(parents=True)
+    env = root / "src" / ".env"
+    env.write_text("A=1\n")
+    roots = [os.path.realpath(root)]
+    assert core.export_path_allowed(str(env), roots)[0]
+    # not an env file
+    other = root / "src" / "docker-compose.yml"
+    other.write_text("x")
+    assert not core.export_path_allowed(str(other), roots)[0]
+    # .. and symlinks cannot walk out
+    outside = tmp_path / "secret.env"
+    outside.write_text("")
+    assert not core.export_path_allowed(str(root / "src" / ".." / ".." / "secret.env"), roots)[0]
+    link = root / "src" / "evil.env"
+    link.symlink_to(outside)
+    assert not core.export_path_allowed(str(link), roots)[0]
+
+
+def test_env_update_keeps_line_endings_and_other_lines():
+    crlf = "A=1\r\nVIKUNJA_REDIS_PASSWORD=old\r\nB=2\r\n"
+    new, act = core.env_file_update(crlf, "VIKUNJA_REDIS_PASSWORD", "NEW")
+    assert act == "updated" and new == "A=1\r\nVIKUNJA_REDIS_PASSWORD=NEW\r\nB=2\r\n"
+    new, act = core.env_file_update("A=1", "SEARXNG_REDIS_PASSWORD", "P")
+    assert act == "appended" and new == "A=1\nSEARXNG_REDIS_PASSWORD=P\n"
+    new, act = core.env_file_update("A=1\r\n", "X_Y", "v")
+    assert new == "A=1\r\nX_Y=v\r\n"
+    for bad in ("lower", "A-B", "", "1A", "A=B"):
+        try:
+            core.env_file_update("", bad, "v")
+            assert False, bad
+        except ValueError:
+            pass
+
+
 def test_host_boots_from_its_local_sealed_copy(tmp_path):
     """The real boot path: a Fernet-sealed file opened by config at import."""
     from cryptography.fernet import Fernet

@@ -146,6 +146,50 @@ def setuser_args(user: str, *, add: Iterable[str] = (), remove: Iterable[str] = 
     return args
 
 
+#: Where redis.auth.export_env may write a client's password (colon-separated
+#: VERA_REDIS_EXPORT_ROOTS overrides). The stack whose clients need it.
+EXPORT_ROOTS_DEFAULT = "/home/boejaker/LLM_Stack"
+
+
+def export_roots(env: Optional[Dict[str, str]] = None) -> List[str]:
+    e = os.environ if env is None else env
+    raw = e.get("VERA_REDIS_EXPORT_ROOTS") or EXPORT_ROOTS_DEFAULT
+    return [os.path.realpath(r) for r in raw.split(":") if r.strip()]
+
+
+def export_path_allowed(path: str, roots: Iterable[str]) -> Tuple[bool, str]:
+    """Only an existing `.env` file under an allowed root - resolved, so a
+    symlink or `..` cannot walk out of it."""
+    real = os.path.realpath(path or "")
+    name = os.path.basename(real)
+    if not (name == ".env" or name.endswith(".env")):
+        return False, "not an env file (must be named .env or *.env): %s" % real
+    for root in roots:
+        if real == root or real.startswith(root.rstrip("/") + "/"):
+            return True, real
+    return False, "outside the allowed roots %s: %s" % (list(roots), real)
+
+
+def env_var_ok(var: str) -> bool:
+    return bool(var) and var.replace("_", "").isalnum() and var[0].isalpha() and var.upper() == var
+
+
+def env_file_update(text: str, var: str, value: str) -> Tuple[str, str]:
+    """(new_text, 'updated' | 'appended'): set VAR=value, keeping the file's
+    own line endings (the LLM_Stack files are CRLF) and every other line."""
+    if not env_var_ok(var):
+        raise ValueError("bad variable name %r" % var)
+    nl = "\r\n" if "\r\n" in text else "\n"
+    lines = text.split(nl)
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith(var + "=") or stripped.startswith("export " + var + "="):
+            lines[i] = "%s=%s" % (var, value)
+            return nl.join(lines), "updated"
+    body = text if (not text or text.endswith(nl)) else text + nl
+    return body + "%s=%s%s" % (var, value, nl), "appended"
+
+
 def default_lock_plan(clients: Iterable[Dict[str, str]],
                       allowed_default_addrs: Iterable[str] = ()) -> Dict[str, object]:
     """May the `default` user lose `nopass`? Only when every client still on it
