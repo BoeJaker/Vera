@@ -90,7 +90,7 @@
   // captions and the WidgetConfig board's own ids too
   const ALIAS = { sparkline: 'trace', line: 'trace', chart: 'trace', parts: 'donut', tree: 'files', stages: 'stepper', program: 'stepper', ask: 'string', form: 'kv', rate: 'counter',
                   iso: 'table', controls: 'pills', button: 'string', header: 'string', galaxy: 'context_graph', battery: 'level', tablei: 'table', checks: 'checklist',
-                  memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples', multiline: 'lines', 'multi-line': 'lines' };
+                  memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples', multiline: 'lines', 'multi-line': 'lines', cores: 'cellmap', 'core-matrix': 'cellmap', 'status-matrix': 'cellmap', cpumap: 'cellmap' };
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
   const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'matrix', matrix: 'matrix', donut: 'parts',
                   stack: 'items', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages', globe: 'points',
@@ -112,7 +112,9 @@
                   // the calendar forms and the Vera graph form (the widget review, round 3)
                   month: 'calendar', schedule: 'calendar', calnav: 'calendar', vgraph: 'graph',
                   /* the multi-line chart (2026-09-28) */
-                  lines: 'series' };
+                  lines: 'series',
+                  /* the status matrix: a square per core, thread or cpu, lenses to colour it by (2026-09-28) */
+                  cellmap: 'items' };
   const canon = (form) => { const f = String(form || '').toLowerCase(); return DRAWN[f] ? f : (ALIAS[f] || f); };
   // the Loop Lab's pictures (see the CI section): each draws the ci payload whole, at every size
   const CI_FORMS = /^(status-matrix|race-green|test-grid|ci-board|run-track|run-compare|ci-pulse|ci-fleet|ci-run|census-commits|element|loop-perf|census-live|census-timeline|trend-layers)$/;
@@ -148,7 +150,7 @@
     depth = depth || 0; if (x == null || depth > 2) return x;
     form = canon(form);
     if (CI_FORMS.test(form)) return x;   // a CI picture reads its payload whole
-    if (/^(json|diff|code|progress|status|media|error|markdown|month|schedule|calnav|vgraph)$/.test(form)) return x;   // a result form reads the answer whole
+    if (/^(json|diff|code|progress|status|media|error|markdown|month|schedule|calnav|vgraph|cellmap)$/.test(form)) return x;   // a result form reads the answer whole
     if (Array.isArray(x)) return x;
     if (typeof x === 'object') {
       if (/^(radial|counter|bar|hero|meter|level|ring|gauge|dial|tank)$/.test(form) && typeof x.value === 'number') return x;   // a level with its trend beside it is the level, not its trend
@@ -420,6 +422,8 @@
     frame: () => ({ kind: 'terminal', title: 'vera@ct126 — tail -f vera_start.log', lines: [['vera@ct126:~$ tail -f vera_start.log', 'p'], ['14:38:02  fabric: corpus 4 412 docs', ''], ['14:38:05  fabric: digest unchanged', ''], ['14:38:05  fabric: 0 re-embeds', 'ac'], ['14:38:09  loop v7 · step 4 · code.author', 'dim'], ['▌', 'cur']] }),
     topology: () => ({ nodes: [['fabric', 0, 1, 1.5], ['neo4j', 0, 3, .8], ['redis', 0, 5, 2.2], ['router', 1, 2, 1.5], ['gate', 1, 4, 1.5], ['chat', 2, 3, 1.5], ['canvas', 2, 1, 2.4]].map((n) => ({ id: n[0], floor: n[1], u: n[2], v: n[3] })), links: [['fabric', 'router'], ['neo4j', 'router'], ['redis', 'gate'], ['router', 'chat'], ['gate', 'chat'], ['chat', 'canvas']].map((e) => ({ from: e[0], to: e[1] })), floors: ['fabric', 'routing', 'chat'] }),
     /* the multi-line sample: three nodes' latency over two hours, sampled every five minutes */
+    cellmap: () => ({ hosts: [{ label: 'corp', percpu: Object.fromEntries(Array.from({ length: 24 }, (_, i) => ['cpu' + i, [8, 14, 22, 5, 64, 12, 9, 88, 30, 17, 4, 11][i % 12] + (i >> 2)])), temps: Object.fromEntries(Array.from({ length: 12 }, (_, i) => ['Core ' + i, 62 + (i * 7) % 26])) },
+      { label: 'cpu-246', percpu: Object.fromEntries(Array.from({ length: 12 }, (_, i) => ['cpu' + i, (i * 13) % 70])), temps: Object.fromEntries(Array.from({ length: 6 }, (_, i) => ['Core ' + i, 55 + i * 4])) }] }),
     lines: () => Object.fromEntries([['gpu-250', 24, 9], ['cpu-247', 40, 12], ['cpu-246', 58, 10]].map((s, k) => [s[0], wave(24 + k * 4, s[1], s[2]).slice(k * 4).map((p, i) => ({ t: 1790578800 + i * 300, v: Math.max(0, p.v) }))])),
     racks: () => SAMPLE.items(),
     rows: () => SAMPLE.items(), cards: () => SAMPLE.items(),
@@ -1209,6 +1213,11 @@
   const LINES_CSS = `
 /* the multi-line chart and the keys (2026-09-28) */
 .vb-lines{gap:3px}
+.vb-cellmap{gap:5px}.vb-cmbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 5px;font-size:var(--vw-fmin,10px)}.vb-cml{padding:1px 8px;border-radius:999px;cursor:pointer;color:var(--b-t2);box-shadow:inset 0 0 0 1px var(--b-bd2)}.vb-cml:hover{color:var(--b-t1)}.vb-cml.on{color:var(--b-t1);background:color-mix(in srgb,var(--b-ac) 22%,transparent);box-shadow:inset 0 0 0 1px var(--b-ac)}
+.vb-cmk{margin-left:auto;display:inline-flex;align-items:center;gap:4px;color:var(--b-t3)}.vb-cmk i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.vb-cmbody{display:flex;flex-direction:column;gap:4px;min-height:0;overflow:auto}.vb-cmg{display:grid;gap:10px;align-items:center;padding:2px 0;border-bottom:1px solid color-mix(in srgb,var(--b-bd) 60%,transparent)}.vb-cmg:last-child{border-bottom:none}.vb-cmgh{display:flex;flex-direction:column;min-width:0;font-size:var(--vw-fmin,10px);line-height:1.25}.vb-cmgh b{color:var(--b-t1);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-cmgh span{color:var(--b-t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.92em}
+.vb-cmgrid{display:grid;gap:3px}.vb-cmgrid i{display:block;border-radius:2px;cursor:pointer;transition:transform .12s,filter .12s}.vb-cmgrid i:hover{transform:scale(1.25);filter:brightness(1.2);position:relative;z-index:2}
+:host-context([data-style="pixel"]) .vb-cmgrid i{border-radius:0}:host-context([data-style="newspaper"]) .vb-cmgrid i{border-radius:0;box-shadow:inset 0 0 0 1px var(--b-bd2)}
 .vb-lnk{display:flex;flex-wrap:wrap;gap:2px 10px;font-size:10px;line-height:1.35;min-width:0;flex:none}
 .vb-lnk span{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%;white-space:nowrap;cursor:pointer;color:var(--b-t2)}
 .vb-lnk i{width:11px;height:3px;border-radius:2px;flex:none}
@@ -1385,6 +1394,56 @@
     const m = cellsOf(d); if (!m.rows.length) return EMPTY('a matrix needs rows of values'); const cols = m.cols.length ? m.cols : m.rows[0].v.map((_, i) => String(i + 1));
     const col = (v) => typeof v === 'number' ? (v >= 1 ? B.ac2 : v <= 0 ? B.ac4 : v >= .5 ? B.ac3 : B.s3) : (v === true ? B.ac2 : v === false ? B.ac4 : stCol(v));
     return wrap('matrix', '<div class="vb-mxh" style="grid-template-columns:54px repeat(' + cols.length + ',1fr)"><span></span>' + cols.map((c) => '<span>' + esc(String(c)) + '</span>').join('') + '</div>' + m.rows.slice(0, 8).map((r) => '<div class="vb-mxr" style="grid-template-columns:54px repeat(' + cols.length + ',1fr)"><span class="n">' + esc(r.n) + '</span>' + r.v.map((v, i) => '<i style="background:' + col(v) + '" title="' + esc(r.n) + ' · ' + esc(String(cols[i])) + ' · ' + esc(String(v)) + '"></i>').join('') + '</div>').join('') + cap('green ok · amber degraded · red down · grey not deployed'));
+  };
+  /* the status matrix (owner, 2026-09-28: "the cpu core stats indicator matrix ... with a variety of data lenses"): a small square
+     per thing - a core, a thread, a cpu - in groups (a host, a NUMA node), coloured by the lens the viewer picks in the tile. Two
+     shapes: hosts [{label, <dict>: {key: value}}] (obs.node_temps: percpu loads, "Core N" temperatures) and a cpu map
+     {topology: {cpus, numa_nodes}, guests: [{name, status, cpus, flags}]} (pxstore.cpu.map: pinning, NUMA nodes, guests that
+     span them). A lens a shape cannot fill is not offered; draw.lenses narrows the list; draw.lens is the first shown. */
+  const CM_LENS = {
+    load: { label: 'load', dict: 'percpu', match: /^cpu(\d+)$/i, unit: '%', warn: 60, bad: 85 },
+    temp: { label: 'core °C', dict: 'temps', match: /^core\s*(\d+)$/i, unit: '°C', warn: 70, bad: 85 },
+    pins: { label: 'pinned', cpumap: true },
+    numa: { label: 'NUMA node', cpumap: true },
+    span: { label: 'spans NUMA', cpumap: true },
+  };
+  const cmBand = (v, L) => v == null || !isFinite(v) ? B.s3 : v >= L.bad ? B.ac4 : v >= L.warn ? B.ac3 : mix(B.ac2, Math.round(30 + 60 * Math.max(0, Math.min(1, v / L.warn))));
+  function cellmapOf(d, want, allow) {
+    const isMap = !!(d && typeof d === 'object' && !Array.isArray(d) && d.topology && Array.isArray(d.topology.cpus));
+    const hostsArr = isMap ? [] : (Array.isArray(d) ? d : (d && Array.isArray(d.hosts) ? d.hosts : (d && Array.isArray(d.rows) ? d.rows : [])));
+    const ok = Object.keys(CM_LENS).filter((id) => (!allow || allow.includes(id)) && (CM_LENS[id].cpumap ? isMap : hostsArr.some((h) => h && h[CM_LENS[id].dict] && Object.keys(h[CM_LENS[id].dict]).some((k) => CM_LENS[id].match.test(k)))));
+    const lens = ok.includes(want) ? want : ok[0]; if (!lens) return { lenses: ok, lens: '', groups: [] }; const L = CM_LENS[lens]; const groups = [];
+    if (!isMap) {
+      hostsArr.forEach((h) => { const dict = (h && h[L.dict]) || {}; const ks = Object.keys(dict).filter((k) => L.match.test(k)).sort((a, b) => +a.match(L.match)[1] - +b.match(L.match)[1]); if (!ks.length) return;
+        const vals = ks.map((k) => num(dict[k])), peak = Math.max(...vals), mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+        groups.push({ name: String(h.label || h.name || h.host_id || 'host'), note: ks.length + ' · peak ' + fmt(Math.round(peak)) + L.unit + ' · mean ' + fmt(Math.round(mean)) + L.unit,
+          cells: ks.map((k, i) => ({ id: k, v: vals[i], col: cmBand(vals[i], L), item: { name: k, value: Math.round(vals[i] * 10) / 10, unit: L.unit, host: String(h.label || h.host_id || '') } })) }); });
+    } else {
+      const numa = {}; Object.keys(d.topology.numa_nodes || {}).forEach((n) => (d.topology.numa_nodes[n] || []).forEach((c) => { numa[c] = +n; }));
+      const on = {}, spans = {}; (d.guests || []).forEach((g) => { if (!g || !Array.isArray(g.cpus)) return; const run = String(g.status || '') === 'running';
+        g.cpus.forEach((c) => { if (run) (on[c] = on[c] || []).push(g.name || ('guest-' + g.vmid)); if ((g.flags || []).includes('spans-numa')) (spans[c] = spans[c] || []).push(g.name || ('guest-' + g.vmid)); }); });
+      const byNode = {}; d.topology.cpus.forEach((c) => { const n = numa[c] != null ? numa[c] : -1; (byNode[n] = byNode[n] || []).push(c); });
+      Object.keys(byNode).sort((a, b) => +a - +b).forEach((n) => { const cs = byNode[n].sort((a, b) => a - b), used = cs.filter((c) => (on[c] || []).length).length;
+        groups.push({ name: +n < 0 ? 'no NUMA node' : 'NUMA ' + n, note: cs.length + ' cpus · ' + used + ' pinned by running guests',
+          cells: cs.map((c) => { const gs = on[c] || [], sp = spans[c] || [];
+            const col = lens === 'numa' ? DV(+n < 0 ? 6 : +n) : lens === 'span' ? (sp.length ? B.ac3 : B.s3) : (gs.length > 1 ? B.ac4 : gs.length ? B.ac2 : B.s3);
+            return { id: 'cpu' + c, v: gs.length, col, item: { name: 'cpu ' + c, numa: +n, guests: gs.join(', ') || 'none', ...(sp.length ? { 'spans NUMA': sp.join(', ') } : {}) } }; }) }); });
+    }
+    return { lenses: ok, lens, groups, unpinned: isMap ? (d.guests || []).filter((g) => (g.flags || []).includes('unpinned') && String(g.status) === 'running').length : 0 };
+  }
+  R.cellmap = (d, H, o) => {
+    const dr = (o && o.draw) || {}, allow = Array.isArray(dr.lenses) ? dr.lenses.map(String) : null;
+    const m = cellmapOf(d, String((o && o.ui && o.ui.lens) || dr.lens || ''), allow); if (!m.groups.length) return EMPTY('a status matrix needs hosts with per-core readings, or a cpu map');
+    const L = CM_LENS[m.lens], W = Math.max(120, (o && o.width) || 300), Hc = Math.max(40, (H || 160) - 22 - m.groups.length * 15);
+    /* a group is a row: its name and note on the left, its squares on the right; the square size is the largest that fits every row */
+    const labW = Math.round(Math.min(170, Math.max(96, W * 0.26))), gw = W - labW - 10, Hr = Math.max(40, (H || 160) - 24);
+    let s = 22; for (; s > 10; s--) { const cols = Math.max(1, Math.floor((gw + 3) / (s + 3))); if (m.groups.reduce((t, g) => t + Math.max(26, Math.ceil(g.cells.length / cols) * (s + 3)) + 4, 0) <= Hr) break; }   /* never below 10 px: more groups than the tile holds scroll */
+    const bar = '<div class="vb-cmbar">' + m.lenses.map((id) => '<span class="vb-cml' + (id === m.lens ? ' on' : '') + '" data-vb-set="lens:' + id + '" title="colour by ' + esc(CM_LENS[id].label) + '">' + esc(CM_LENS[id].label) + '</span>').join('')
+      + '<span class="vb-cmk">' + (L.cpumap ? (m.lens === 'numa' ? '' : m.lens === 'span' ? '<i style="background:' + B.ac3 + '"></i>spans' : '<i style="background:' + B.s3 + '"></i>free <i style="background:' + B.ac2 + '"></i>pinned <i style="background:' + B.ac4 + '"></i>shared')
+        : '<i style="background:' + mix(B.ac2, 60) + '"></i>&lt;' + L.warn + L.unit + ' <i style="background:' + B.ac3 + '"></i>' + L.warn + '+ <i style="background:' + B.ac4 + '"></i>' + L.bad + '+') + '</span></div>';
+    const body = m.groups.map((g) => '<div class="vb-cmg" style="grid-template-columns:' + labW + 'px 1fr"><div class="vb-cmgh"><b title="' + esc(g.name) + '">' + esc(g.name) + '</b><span>' + esc(g.note) + '</span></div><div class="vb-cmgrid" style="grid-template-columns:repeat(auto-fill,' + s + 'px)">'
+      + g.cells.map((c) => '<i' + itemAttr(c.item, 'cell') + ' style="width:' + s + 'px;height:' + s + 'px;background:' + c.col + '"></i>').join('') + '</div></div>').join('');
+    return wrap('cellmap', bar + '<div class="vb-cmbody">' + body + '</div>' + (m.unpinned ? cap(m.unpinned + ' running guest' + (m.unpinned === 1 ? '' : 's') + ' unpinned - floating over every cpu') : ''));
   };
   R.dots = (d, H, o) => {
     const l = level(d); let fills; const cells = 160;
@@ -2790,7 +2849,7 @@
     + '[data-item]{cursor:pointer}';
 
   /* ── draw at a size: the composition around the form ─────────────────── */
-  const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞', lines: '≋' };
+  const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞', lines: '≋', cellmap: '▦' };
   // the glyph a size below M carries (the Sizes board): a ring for a level or a share, a spark for a series, a tube for
   // named values, a dot for events and graphs, the count glyph for the rest — drawn from the data, never a character
   function glyphOf(form, data) {
@@ -2828,7 +2887,7 @@
     if (size === 's' && !CI_FORMS.test(f) && (DRAWN[f] === 'items' || f === 'kv' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f, d, opts); if (cs) return cs; }
     if (size === 's' && f !== 'calnav') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
-    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || CI_FORMS.test(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv|numbers|month|schedule|calnav|vgraph)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
+    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || CI_FORMS.test(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv|numbers|month|schedule|calnav|vgraph|cellmap)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
     // L: the form plus its detail list beside it; XL: the form, its table, its log
     // the detail list beside the form holds the rows its body has room for (~16 px a row) - eight in a two-row tile ran
     // past its foot - and a form that already names every value it draws (ranked bars, pills, a number grid, a
@@ -3109,7 +3168,7 @@
       skin: String(o.skin || 'inherit').toLowerCase(), subject: String(o.subject || ''), projection: String(o.projection || drawIn.proj || drawIn.projection || '').toLowerCase(), actions: Array.isArray(o.actions) ? o.actions : ['dive', 'pin', 'ask'],
       children: Array.isArray(o.children) ? o.children : undefined, layout: o.layout, data: o.data };
   }
-  const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top|instances|sources|request_log|keys|results|installed|config|models|list_models|route_stats|embed_config)|_stats$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.|^redis\.|^proxmox\.|^mesh\.|^estate\.|^backup\.|^bench\.|^catalog\.|^background\.|^topology\.|^jobs\.|^memory\.stats|^ollama\.(gate\.status|instances|list_models|route_stats|request_log|routing\.get|embed_config|model_tags\.get)|^evolve\.(sandbox\.list|pipeline\.list|activity|tasks\.overview|unittest\.history|tests\.matrix|mission\.events|agents\.rows|authors|ship\.branches|git\.graph)$|^ci\.(matrix|race|tests|pulse|fleet|board|census|compare|track)$|^loop\.ci\.(matrix|race|board|perf)$|^census\.(runs|landed|live|board)$|^activity\.(sessions|pipelines)$|^syslog\.errors$|^dream\.(sensor\.cap_calls|last|hitl\.pending)$|^memory\.graph_full$|^cal\.(events|todos|notes)\.list$)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert|pull|install|activate|acquire|release|enqueue|cancel|spawn|prune|reap)\b/.test(cap);   // the dashboard's own readings read on their own (route_stats / results / config tails were left waiting for a click)
+  const readable = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|snapshot|top|instances|sources|request_log|keys|results|installed|config|models|list_models|route_stats|embed_config)|_stats$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.|^redis\.|^proxmox\.|^mesh\.|^estate\.|^backup\.|^bench\.|^catalog\.|^background\.|^topology\.|^jobs\.|^memory\.stats|^pxstore\.cpu\.(topology|map)$|^ollama\.(gate\.status|instances|list_models|route_stats|request_log|routing\.get|embed_config|model_tags\.get)|^evolve\.(sandbox\.list|pipeline\.list|activity|tasks\.overview|unittest\.history|tests\.matrix|mission\.events|agents\.rows|authors|ship\.branches|git\.graph)$|^ci\.(matrix|race|tests|pulse|fleet|board|census|compare|track)$|^loop\.ci\.(matrix|race|board|perf)$|^census\.(runs|landed|live|board)$|^activity\.(sessions|pipelines)$|^syslog\.errors$|^dream\.(sensor\.cap_calls|last|hitl\.pending)$|^memory\.graph_full$|^cal\.(events|todos|notes)\.list$)/.test(cap) && !/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert|pull|install|activate|acquire|release|enqueue|cancel|spawn|prune|reap)\b/.test(cap);   // the dashboard's own readings read on their own (route_stats / results / config tails were left waiting for a click)
   const key = (rec) => { const n = normalise(rec); return n.form + ' ' + (n.source || (n.panel ? 'panel:' + n.panel : '')) + ' ' + JSON.stringify(n.read.args || {}); };
   // the form that can draw THIS data: the chosen one, else what its shape picks, else the key · value list
   function formFor(rec, data) {
