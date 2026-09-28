@@ -234,6 +234,51 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         "desc": "LAN→Vera forwarder so firewalled ESP32 mesh nodes can reach Vera "
                 "through this box. Stdlib only — no deps to install.",
     },
+    "model_builder": {
+        # 8773 - clear of the node agent (8770), nlp_server (8771), onnx_runtime (8772).
+        # Deployed to ONE box, the builder CT (vera-model-builder, CT 131), whose
+        # mount of the shared store is read-write; every serving node's is ro.
+        "label": "Specialist model builder", "port": 8773, "python": True,
+        "files": [("edge/model_builder.py", "model_builder.py"),
+                  # the exporter that built the NLP store, and its registry
+                  ("edge/nlp_export_models.py", "nlp_export_models.py"),
+                  ("vera/research/nlp_dispatch_core.py", "nlp_dispatch_core.py"),
+                  # content-verified packages for the NLP manifest, as a
+                  # standalone package (vera/models/__init__ imports far more)
+                  ("edge/vmodels_init.py", "vmodels/__init__.py"),
+                  ("vera/models/nlp_inventory.py", "vmodels/nlp_inventory.py"),
+                  ("vera/models/model_package.py", "vmodels/model_package.py")],
+        # a minimal ubuntu CT has no ensurepip
+        "apt": ["python3-venv"],
+        # Same CPU-torch-first ordering and transformers pin as nlp_server: the
+        # exports must load in the server that reads them.
+        "pip_steps": [
+            ["torch", "--index-url", "https://download.pytorch.org/whl/cpu"],
+            ["optimum[onnxruntime]", "transformers>=4.57,<5", "onnxruntime",
+             "sentencepiece", "protobuf", "numpy", "fastembed", "huggingface_hub",
+             "openai-whisper", "fastapi", "uvicorn"],
+        ],
+        "run": "{py} model_builder.py serve --host 0.0.0.0 --port {port}",
+        "precheck": {
+            "cmd": ('[ -d /opt/vera-store/models/nlp ] && [ -w /opt/vera-store/models/nlp ] '
+                    '&& echo VERA_PRECHECK_OK'),
+            "why": ("the shared store is not mounted READ-WRITE at /opt/vera-store/models. "
+                    "On the Proxmox host: pct set <ctid> -mp0 /tank_sdh/vera-store/models,"
+                    "mp=/opt/vera-store/models, and (unprivileged CT) chown the family "
+                    "dirs to 100000:100000."),
+        },
+        "env": {"VERA_STORE_DIR": "/opt/vera-store/models",
+                # the download cache stays on the CT's own disk, not in the store
+                "HF_HOME": "/var/lib/vera-builder/hf", "HOME": "/",
+                "OMP_NUM_THREADS": "4"},
+        "heavy": True, "sync": True, "systemd": True,
+        # the hosts it runs on: stored SSH hosts with this tag, not the ollama nodes
+        "hosts_tag": "model-builder",
+        "desc": "Fills the shared specialist-model store on demand: ONNX exports for "
+                "nlp_server, Hugging Face snapshots (GLiNER, diffusion), Whisper "
+                "checkpoints, curated TTS files. One job at a time. Runs only on the "
+                "builder CT, the one box with the store mounted read-write.",
+    },
 }
 
 
@@ -280,7 +325,8 @@ def _deps_spec(comp: Dict[str, Any]) -> bytes:
     req = _read_local(comp["requirements"]) if comp.get("requirements") else None
     return json.dumps({"requirements": (req or b"").decode("utf-8", "replace"),
                        "pip_steps": comp.get("pip_steps") or [],
-                       "pip": comp.get("pip") or []}, sort_keys=True).encode("utf-8")
+                       "pip": comp.get("pip") or [],
+                       "apt": comp.get("apt") or []}, sort_keys=True).encode("utf-8")
 
 
 def _shipped_files(comp: Dict[str, Any]) -> Optional[List[tuple]]:
@@ -420,6 +466,8 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
         content = _read_local(rel)
         if content is None:
             return {"ok": False, "error": f"bundled file missing in repo: {rel}"}
+        if "/" in dest:                      # a file shipped as part of a package
+            parts.append(f"mkdir -p {edge_dir}/{shlex.quote(dest.rsplit('/', 1)[0])}")
         parts.append(_push_cmd(content, f"{edge_dir}/{dest}"))
         out["pushed"].append(dest)
     # The version is written only once the deploy has succeeded (below), so a
@@ -434,8 +482,17 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
 
     # 2) install deps (optional) ───────────────────────────────────────────────
     if install_deps and comp["python"]:
-        steps = [f'python3 -m venv "{venv}" --system-site-packages',
-                 f'"{venv}/bin/pip" install -U pip wheel']
+        steps = []
+        if comp.get("apt"):
+            # system packages the venv itself needs (a minimal CT has no ensurepip)
+            s = _sudo_for(rec, sudo)
+            steps.append(f"{s}env DEBIAN_FRONTEND=noninteractive apt-get install -y -q "
+                         + " ".join(shlex.quote(p) for p in comp["apt"])
+                         + f" || {{ {s}apt-get update -q && {s}env DEBIAN_FRONTEND=noninteractive "
+                         + "apt-get install -y -q " + " ".join(shlex.quote(p) for p in comp["apt"])
+                         + "; }")
+        steps += [f'python3 -m venv "{venv}" --system-site-packages',
+                  f'"{venv}/bin/pip" install -U pip wheel']
         if comp.get("requirements"):
             req = _read_local(comp["requirements"])
             if req is not None:
@@ -982,6 +1039,22 @@ _SANDBOX_REFUSAL = ("this is a dev sandbox: provisioning from here would join PR
 _COMPONENT_SYNC_LOCK = "vera:component_sync:lock:{component}"
 
 
+async def _tagged_hosts(tag: str) -> List[Dict[str, str]]:
+    """Stored SSH hosts carrying `tag`: [{host_id, host}]."""
+    try:
+        hosts = ((await _cap("exec.ssh.hosts.list")()) or {}).get("hosts", [])
+    except Exception:
+        hosts = []
+    return [{"host_id": h["id"], "host": h.get("host", "")} for h in hosts
+            if h.get("id") and tag in (h.get("tags") or [])]
+
+
+async def component_hosts(component: str) -> List[Dict[str, str]]:
+    """Where a component runs: its tagged hosts, else the Ollama nodes."""
+    tag = (_COMPONENTS.get(component) or {}).get("hosts_tag")
+    return await _tagged_hosts(tag) if tag else await _ollama_node_hosts()
+
+
 async def _ollama_node_hosts() -> List[Dict[str, str]]:
     """The Ollama nodes that have a stored SSH credential: [{host_id, host}]."""
     from urllib.parse import urlparse
@@ -1006,12 +1079,12 @@ async def _ollama_node_hosts() -> List[Dict[str, str]]:
     description="Bring every node that runs a component onto the version this host would "
                 "deploy (see provision.component.version) - 'update all nodes to the same "
                 "version'. Only components every node runs the same way are syncable "
-                "(nlp_server). Per node: already current -> left alone; never deployed -> "
+                "(nlp_server, model_builder). Per node: already current -> left alone; never deployed -> "
                 "left alone (a sync updates, it does not spread); otherwise redeployed, "
                 "reinstalling dependencies only when they changed. One node at a time, "
                 "never while a census goal is in flight, never from a dev sandbox. Inputs: "
-                "component (str='nlp_server'), host_ids (list - default: every Ollama node "
-                "with a stored SSH credential), dry_run (bool=true), force (bool - redeploy "
+                "component (str='nlp_server'), host_ids (list - default: the hosts tagged "
+                "for the component, else every Ollama node with a stored SSH credential), dry_run (bool=true), force (bool - redeploy "
                 "even a current node, e.g. one edited by hand). Output: {ok, component, "
                 "host_version, plan[], results{}}.",
 )
@@ -1024,7 +1097,7 @@ async def cap_component_sync(component: str = "nlp_server",
         return {"ok": False, "error": f"{component!r} is not syncable",
                 "syncable": [k for k, c in _COMPONENTS.items() if c.get("sync")]}
     nodes = ([{"host_id": h, "host": ((await _host_rec(h)) or {}).get("host", "")}
-              for h in host_ids] if host_ids else await _ollama_node_hosts())
+              for h in host_ids] if host_ids else await component_hosts(component))
     rows = []
     for n in nodes:
         v = await cap_component_version(component=component, host_id=n["host_id"])

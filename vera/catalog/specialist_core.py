@@ -56,6 +56,74 @@ def registry_rows(default_models: Dict[str, str], task_kind: Dict[str, str]) -> 
             for t, m in default_models.items()]
 
 
+# ── models on a node's OWN disk (not in the shared store) ────────────────────
+# Found on gpu-250 (2026-09-28): SD 1.5 (three copies across users' HF caches),
+# IP-Adapter, ControlNet-openpose, Whisper base (four copies), Kokoro, Coqui
+# tacotron2 and rembg's u2net/isnet - all in per-user caches, none in the store.
+_HF_HUBS = ("/.cache/huggingface/hub", "/root/.cache/huggingface/hub",
+            "/home/*/.cache/huggingface/hub")
+_WHISPER_DIRS = ("/.cache/whisper", "/root/.cache/whisper", "/home/*/.cache/whisper",
+                 "/home/*/*/cache/whisper")
+_KOKORO_GLOBS = ("/home/*/*/kokoro-v1.0.onnx", "/opt/*/kokoro-v1.0.onnx",
+                 "/opt/*/*/kokoro-v1.0.onnx")
+_U2NET_DIRS = ("/.u2net", "/root/.u2net")
+_COQUI_DIRS = ("/opt/model-cache/tts/tts", "/home/*/*/cache/tts")
+
+
+def node_cache_probe_cmd() -> str:
+    """Shell that prints `kind<TAB>MB<TAB>path` for every model in the known
+    per-node caches. Read-only; globs that match nothing print nothing."""
+    parts = []
+    for hub in _HF_HUBS:
+        parts.append(f'for d in {hub}/models--*; do [ -d "$d" ] && '
+                     f'printf "hf\\t%s\\t%s\\n" "$(du -sm "$d" | cut -f1)" "$d"; done')
+    for w in _WHISPER_DIRS:
+        parts.append(f'for f in {w}/*.pt; do [ -f "$f" ] && '
+                     f'printf "whisper\\t%s\\t%s\\n" "$(du -sm "$f" | cut -f1)" "$f"; done')
+    for g in _KOKORO_GLOBS:
+        parts.append(f'for f in {g}; do [ -f "$f" ] && '
+                     f'printf "kokoro\\t%s\\t%s\\n" "$(du -sm "$f" | cut -f1)" "$f"; done')
+    for u in _U2NET_DIRS:
+        parts.append(f'for f in {u}/*.onnx; do [ -f "$f" ] && '
+                     f'printf "rembg\\t%s\\t%s\\n" "$(du -sm "$f" | cut -f1)" "$f"; done')
+    for c in _COQUI_DIRS:
+        parts.append(f'for d in {c}/tts_models--*; do [ -d "$d" ] && '
+                     f'printf "coqui\\t%s\\t%s\\n" "$(du -sm "$d" | cut -f1)" "$d"; done')
+    return "; ".join(parts) + "; true"
+
+
+def _model_name(kind: str, path: str) -> str:
+    base = path.rstrip("/").rsplit("/", 1)[-1]
+    if kind == "hf" and base.startswith("models--"):
+        return base[len("models--"):].replace("--", "/")
+    if kind == "whisper" and base.endswith(".pt"):
+        return base[:-3]
+    if kind == "coqui" and base.startswith("tts_models--"):
+        return base[len("tts_models--"):].replace("--", "/")
+    return base
+
+
+def parse_node_cache(stdout: str) -> List[Dict[str, Any]]:
+    """Rows grouped by model: the copies a node holds of each, and their size.
+    Several copies of one model (one per user cache) are common and worth
+    seeing - each is disk the shared store would make unnecessary."""
+    by: Dict[tuple, Dict[str, Any]] = {}
+    for line in (stdout or "").splitlines():
+        bits = line.split("\t")
+        if len(bits) != 3:
+            continue
+        kind, mb, path = bits
+        try:
+            size = int(mb)
+        except ValueError:
+            continue
+        key = (kind, _model_name(kind, path))
+        row = by.setdefault(key, {"kind": kind, "model": key[1], "size_mb": 0, "paths": []})
+        row["paths"].append(path)
+        row["size_mb"] += size
+    return sorted(by.values(), key=lambda r: (r["kind"], r["model"]))
+
+
 def summarize(nlp_rows: Iterable[Dict], media_rows: Iterable[Dict]) -> Dict[str, int]:
     nlp_rows, media_rows = list(nlp_rows), list(media_rows)
     states: Dict[str, int] = {}
