@@ -124,6 +124,64 @@ def node_cache_probe_cmd() -> str:
     return "; ".join(parts) + "; true"
 
 
+def node_cache_prune_script(dry_run: bool = True, store: str = STORE_NODE_PATH,
+                            root: str = "") -> str:
+    """Shell that removes a node's OWN copy of a model only when the shared
+    store (mounted read-only at `store`) holds the same thing:
+
+      single files (whisper .pt, kokoro, rembg .onnx) - byte-identical (cmp)
+      directories (HF snapshots, Coqui models)       - every file present in
+                                                        the store copy, same size
+
+    Prints `PRUNE|WOULD|KEEP <TAB> kind <TAB> MB|reason <TAB> path`. Refuses
+    to do anything when the store is not mounted (then the node's copy is the
+    only copy). Never writes under the store."""
+    dry = "1" if dry_run else "0"
+    r = root.rstrip("/")                 # a test runs it over a fake filesystem
+    hubs = " ".join(r + h for h in _HF_HUBS)
+    whisper = " ".join(f"{r}{d}/*.pt" for d in _WHISPER_DIRS)
+    kokoro = " ".join(r + g for g in _KOKORO_GLOBS) + " " + " ".join(
+        r + g.replace("kokoro-v1.0.onnx", "voices-v1.0.bin") for g in _KOKORO_GLOBS)
+    u2net = " ".join(f"{r}{d}/*.onnx" for d in _U2NET_DIRS)
+    coqui = " ".join(f"{r}{d}/tts_models--* {r}{d}/vocoder_models--*" for d in _COQUI_DIRS)
+    return f"""S={store}; DRY={dry}
+[ -d "$S/nlp" ] || {{ printf "ABORT\\tstore\\tnot mounted\\t%s\\n" "$S"; exit 0; }}
+mb() {{ du -sm "$1" 2>/dev/null | cut -f1; }}
+act() {{ k=$1; p=$2; m=$(mb "$p"); if [ "$DRY" = 1 ]; then printf "WOULD\\t%s\\t%s\\t%s\\n" "$k" "$m" "$p"; else rm -rf -- "$p" && printf "PRUNE\\t%s\\t%s\\t%s\\n" "$k" "$m" "$p"; fi; }}
+keep() {{ printf "KEEP\\t%s\\t%s\\t%s\\n" "$1" "$2" "$3"; }}
+same_tree() {{ src=$1; dst=$2; [ -d "$dst" ] || return 1
+  n=0; for f in $(cd "$src" && find -L . -type f); do n=$((n+1))
+    [ -f "$dst/$f" ] || return 1
+    [ "$(stat -Lc %s "$src/$f")" = "$(stat -c %s "$dst/$f")" ] || return 1
+  done; [ $n -gt 0 ]; }}
+for m in $(for h in {hubs}; do ls -d $h/models--* 2>/dev/null; done); do
+  slug=$(basename $m | sed 's/^models--//; s/--/__/g'); ok=1; snaps=0
+  for s in $m/snapshots/*; do [ -d "$s" ] || continue; snaps=$((snaps+1)); same_tree "$s" "$S/sd/$slug" || same_tree "$s" "$S/hf/$slug" || ok=0; done
+  if [ $snaps -gt 0 ] && [ $ok = 1 ]; then act hf "$m"; else keep hf "not in the store (or differs)" "$m"; fi
+done
+for f in {whisper} {kokoro} {u2net}; do [ -f "$f" ] || continue
+  b=$(basename "$f"); case "$f" in *.pt) t="$S/whisper/$b"; k=whisper;; *kokoro*|*voices-v1.0.bin) t="$S/tts/kokoro-v1.0/$b"; k=kokoro;; *) t="$S/rembg/$b"; k=rembg;; esac
+  if [ -f "$t" ] && cmp -s "$f" "$t"; then act $k "$f"; else keep $k "not in the store (or differs)" "$f"; fi
+done
+for d in {coqui}; do [ -d "$d" ] || continue
+  if same_tree "$d" "$S/tts/coqui/tts/$(basename $d)"; then act coqui "$d"; else keep coqui "not in the store (or differs)" "$d"; fi
+done
+true"""
+
+
+def parse_prune(stdout: str) -> Dict[str, Any]:
+    rows = []
+    for line in (stdout or "").splitlines():
+        bits = line.split("\t")
+        if len(bits) == 4 and bits[0] in ("PRUNE", "WOULD", "KEEP", "ABORT"):
+            rows.append({"action": bits[0].lower(), "kind": bits[1], "detail": bits[2],
+                         "path": bits[3]})
+    freed = sum(int(r["detail"]) for r in rows
+                if r["action"] in ("prune", "would") and r["detail"].isdigit())
+    return {"rows": rows, "mb": freed,
+            "aborted": any(r["action"] == "abort" for r in rows)}
+
+
 def _model_name(kind: str, path: str) -> str:
     base = path.rstrip("/").rsplit("/", 1)[-1]
     if kind == "hf" and base.startswith("models--"):

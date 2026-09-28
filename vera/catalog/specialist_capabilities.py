@@ -375,6 +375,37 @@ async def cap_specialist_node_models(host_ids: List[str] = None, trace_id=None) 
     return {"ok": True, "nodes": nodes}
 
 
+@capability(
+    "specialist.node_models.prune",
+    http_method="POST", http_path="/specialist/node_models/prune", http_tags=["models", "nodes"],
+    memory="off",
+    description="Remove a node's OWN copies of models the shared store now serves (HF caches, "
+                "Whisper .pt, Kokoro, rembg, Coqui). A copy goes only when the store - mounted "
+                "read-only on the node - holds the same thing: single files byte-identical, "
+                "directories with every file present at the same size. Nothing is removed on a "
+                "node whose store is not mounted. Inputs: host_ids (list - default every "
+                "Ollama node), dry_run (bool=true). Output: {ok, nodes:[{host, mb, rows:[{action "
+                "prune|would|keep, kind, detail, path}], aborted, error}]}.",
+)
+async def cap_specialist_node_models_prune(host_ids: List[str] = None, dry_run: bool = True,
+                                           trace_id=None) -> Dict[str, Any]:
+    if not dry_run and _in_sandbox():
+        return {"ok": False, "error": "this is a dev sandbox: the nodes are prod's"}
+    hosts = await _call("exec.ssh.hosts.list")
+    known = {h.get("id"): h.get("host", "") for h in hosts.get("hosts") or []}
+    if not host_ids:
+        addrs = set(_node_addrs())
+        host_ids = [hid for hid, a in known.items() if a in addrs]
+    script = _core.node_cache_prune_script(dry_run=bool(dry_run))
+    nodes = []
+    for hid in host_ids:
+        res = await _call("exec.ssh.run", command=script, host_id=hid, timeout=900)
+        rep = _core.parse_prune(res.get("stdout") or "")
+        nodes.append({"host_id": hid, "host": known.get(hid, ""), **rep,
+                      "error": "" if res.get("ok") else str(res.get("stderr") or res.get("error") or "")[:300]})
+    return {"ok": all(not n["error"] for n in nodes), "dry_run": bool(dry_run), "nodes": nodes}
+
+
 def _node_addrs() -> List[str]:
     return sorted({urlparse(str(i.get("url") or "")).hostname or ""
                    for i in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values()} - {""})
@@ -476,7 +507,8 @@ register_ui(
     "",
     ui_caps=["specialist.status", "provision.component.sync", "specialist.catalog",
              "specialist.install", "specialist.jobs", "specialist.store",
-             "specialist.node_models", "specialist.store.mount"],
+             "specialist.node_models", "specialist.store.mount",
+             "specialist.node_models.prune"],
     # an element of the Models view (and any dashboard), not a tab of its own
     mode="element",
     tab_order=75,
