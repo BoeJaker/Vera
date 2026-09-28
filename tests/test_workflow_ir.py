@@ -315,22 +315,28 @@ def test_migration_refuses_unknown_source_and_target_versions():
     assert source["supported_versions"] == target["supported_versions"] == ["1.0"]
 
 
-def test_adapter_profiles_do_not_claim_uninstalled_external_runtimes():
+def test_adapter_profiles_distinguish_offline_compilers_from_uninstalled_runtimes():
     profiles = adapter_profiles()
     assert profiles["executes"] is False
     assert profiles["profiles"]["portable.core"]["available"] is True
     assert profiles["profiles"]["portable.core"]["executable"] is False
-    assert profiles["profiles"]["langgraph"]["available"] is False
-    assert profiles["profiles"]["temporal"]["supports"] == []
+    assert profiles["profiles"]["langgraph"]["available"] is True
+    assert profiles["profiles"]["langgraph"]["executable"] is False
+    assert profiles["profiles"]["langgraph"]["supports"] == [
+        "tasks", "parallel", "conditions"]
+    assert profiles["profiles"]["temporal"]["available"] is True
+    assert profiles["profiles"]["temporal"]["executable"] is False
+    assert profiles["profiles"]["temporal"]["supports"] == [
+        "tasks", "parallel", "conditions"]
 
 
-def test_external_adapter_analysis_fails_closed_without_importing_runtime():
+def test_langgraph_adapter_analysis_uses_offline_compiler_without_runtime_import():
     workflow = {"ir_version": "1.0", "steps": [{
         "id": "s0", "type": "task", "task": "alpha"}]}
     result = analyze_adapter(workflow, adapter="langgraph")
-    assert result["ok"] is False
-    assert result["available"] is False
-    assert result["gaps"][0]["code"] == "adapter_unavailable"
+    assert result["ok"] is True
+    assert result["available"] is True
+    assert result["gaps"] == []
     assert result["executes"] is False
 
 

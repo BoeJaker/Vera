@@ -41,6 +41,33 @@ from typing import Any, Dict, Optional, Tuple
 TARGET_ARGS = ("url", "start_url", "path", "file", "filename", "filepath",
                "host", "command", "cmd", "session_id", "branch", "id")
 
+#: Arguments that hold a SHELL COMMAND rather than a plain target. They belong
+#: in TARGET_ARGS - a command does say what is acted on - but for a shell the
+#: command is ALSO the wording, and the executor rewords it exactly the way it
+#: rewords `goal`:
+#:
+#:     python analyze_nums.py
+#:     cd /workspace && python analyze_nums.py
+#:     python3 ./analyze_nums.py
+#:
+#: Census run62, analyse-data: four attempts, one byte-identical traceback, four
+#: different tally keys, nothing blocked - the very failure this module exists
+#: to stop, on the most-repeated tool in every census (run62: exec.bash.run 9
+#: repeats, 7 failures). So a command is reduced to its invariant before it is
+#: keyed. See command_signature.
+COMMAND_ARGS = ("command", "cmd")
+
+#: Wrapper words that carry no identity - the executor swaps them between
+#: attempts without changing what runs.
+_CMD_PREFIX_NOISE = ("sudo", "time", "nohup", "exec", "command", "env")
+
+#: Interpreter spellings that name the same interpreter.
+_INTERPRETERS = {"python3": "python", "python2": "python", "py": "python",
+                 "pytest3": "pytest"}
+
+#: `cd somewhere && the-real-command` - only the tail decides the answer.
+_CD_PREFIX = re.compile(r"^cd\s+[^&;|]+(?:&&|;)\s*(.+)$", re.I)
+
 #: How many identical-kind failures against one target before the next is
 #: refused. Two, so the third attempt is the one blocked: one failure can be
 #: bad luck, two is the answer.
@@ -48,7 +75,76 @@ DEFAULT_LIMIT = 2
 
 #: Leading reason codes the operator and the loop use, e.g.
 #: "repeating_action: click was attempted 5 times...".
-_REASON_CODE = re.compile(r"^\s*([a-z][a-z0-9_]{2,40})\s*[:\-]")
+#:
+#: Case-insensitive since 2026-09-22: the loop records the failure as
+#: `"ERROR: " + str(error)` before handing it here, and an upper-case first
+#: character made this pattern miss EVERY time. The kind then silently
+#: degraded to a 120-char prefix, so two operator failures differing anywhere
+#: in those characters (a url, an element ref, a title) read as different
+#: kinds and never grouped - which is the whole job of this module.
+_REASON_CODE = re.compile(r"^\s*([a-z][a-z0-9_]{2,40})\s*[:\-]", re.I)
+
+#: The envelope the loop wraps an error in. Stripped before the reason code is
+#: read, so "ERROR: repeating_action: ..." still keys on `repeating_action`.
+_ENVELOPE = re.compile(r"^\s*(?:error|err|failed|failure|exception)\s*[:\-]\s*", re.I)
+
+#: A python traceback's first 120 characters are boilerplate plus a file and a
+#: line number - identical for two COMPLETELY different exceptions raised in the
+#: same script. The prefix fallback below therefore grouped them as one kind, so
+#: a run that fixed one bug and hit another was refused the next attempt as a
+#: "repeat". run62's analyse-data raised an OverflowError and then a statistics
+#: error from the same file; both keyed the same. A traceback's identity is its
+#: LAST line - the exception type and message.
+_TB_HEAD = "traceback (most recent call last)"
+
+
+def _traceback_kind(raw: Any) -> str:
+    """The exception line of a traceback, or "" when this is not one.
+
+    Frames and source lines are indented and the exception line is not, so
+    scanning from the end finds it without parsing. A traceback truncated
+    mid-frame has no such line and the caller falls back to the prefix.
+    """
+    text = str(raw or "")
+    if _TB_HEAD not in text.lower():
+        return ""
+    for line in reversed(text.splitlines()):
+        if not line.strip() or line[:1].isspace():
+            continue
+        if _TB_HEAD in line.lower():
+            continue
+        return re.sub(r"\d+", "#", line.strip())[:120].lower()
+    return ""
+
+
+def command_signature(cmd) -> str:
+    """A shell command reduced to what actually determines its answer.
+
+    Drops a `cd <dir> &&` prefix, wrapper words (sudo/time/nohup/env), a
+    leading `./` on any token, and normalises interpreter spellings
+    (python3 -> python), so the rewordings above collapse to one key.
+    Everything else - the program, its flags, its operands - is kept, because
+    a genuinely different command is genuinely new information.
+    """
+    text = " ".join(str(cmd or "").split())
+    if not text:
+        return ""
+    while True:
+        m = _CD_PREFIX.match(text)
+        if not m:
+            break
+        text = m.group(1).strip()
+    parts = text.split()
+    while parts and parts[0].lower() in _CMD_PREFIX_NOISE:
+        parts.pop(0)
+    if not parts:
+        return ""
+    base = parts[0].rsplit("/", 1)[-1]
+    # Only a KNOWN interpreter spelling is rewritten. Anything else keeps its own
+    # text: `PYTHONPATH=. python x.py` leads with an env assignment, and
+    # case-folding that would rewrite the command rather than normalise it.
+    parts[0] = _INTERPRETERS.get(base.lower(), base)
+    return " ".join(t[2:] if t.startswith("./") else t for t in parts)
 
 
 def target_key(tool: str, args: Optional[Dict[str, Any]]) -> str:
@@ -61,8 +157,13 @@ def target_key(tool: str, args: Optional[Dict[str, Any]]) -> str:
     a = args if isinstance(args, dict) else {}
     for k in TARGET_ARGS:
         v = a.get(k)
-        if v not in (None, "", [], {}):
-            parts.append("%s=%s" % (k, str(v)[:200]))
+        if v in (None, "", [], {}):
+            continue
+        if k in COMMAND_ARGS:
+            v = command_signature(v)
+            if not v:
+                continue
+        parts.append("%s=%s" % (k, str(v)[:200]))
     return "|".join(parts)
 
 
@@ -77,9 +178,15 @@ def failure_kind(error: Any) -> str:
     text = " ".join(str(error or "").split())
     if not text:
         return ""
+    text = _ENVELOPE.sub("", text, count=1)
+    if not text:
+        return ""
     m = _REASON_CODE.match(text)
     if m:
         return m.group(1).lower()
+    tb = _traceback_kind(error)
+    if tb:
+        return tb
     # Digits differ between otherwise identical failures (counts, sizes, ports),
     # so they are not part of the kind.
     return re.sub(r"\d+", "#", text[:120]).strip().lower()

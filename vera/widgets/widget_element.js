@@ -63,8 +63,14 @@
       .replace(/(font:\s*(?:[a-z0-9-]+\s+)*?)([0-9.]+)px/g, (m, pre, n) => (+n >= 13 ? m : pre + f(n)))
       .replace(/font-size:\s*clamp\(([0-9.]+)px,/g, (m, n) => 'font-size:clamp(' + f(n) + ',');
   }
-  const TEXT_SCALE_CSS = 'html{--vw-fmin:10px;--vw-fx:1}html[data-text="compact"]{--vw-fmin:0px;--vw-fx:1}html[data-text="large"]{--vw-fmin:11px;--vw-fx:1.1}html[data-text="larger"]{--vw-fmin:12px;--vw-fx:1.22}';
+  const TEXT_SCALE_CSS = 'html{--vw-fmin:10px;--vw-fx:1}html[data-text="compact"]{--vw-fmin:0px;--vw-fx:1}html[data-text="large"]{--vw-fmin:11px;--vw-fx:1.1}html[data-text="larger"]{--vw-fmin:12px;--vw-fx:1.22}'
+    /* a dashboard is read from across the room (owner, 2026-09-27: "the font on lots of widgets is still too small like the
+       warnings and live events widgets it should be larger on the dashboards"): a higher floor there, at each setting */
+    + '.vw-vgraph-host.min .vg-bottom-area{display:none!important}'
+    + '.vw-vgraph-host .vw-vgkey{position:absolute;right:18px;bottom:16px;z-index:6;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px 10px;max-width:62%;font:10.5px var(--f-ui,var(--sans,system-ui,sans-serif));color:var(--t2,var(--dim2,#8a92a0));pointer-events:none}.vw-vgraph-host .vw-vgkey span{display:inline-flex;align-items:center;gap:5px;padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--bg1,#15171c) 80%,transparent)}.vw-vgraph-host .vw-vgkey i{width:8px;height:8px;border-radius:2px}'
+    + '.dash-grid vera-widget{--vw-fmin:11.5px}html[data-text="compact"] .dash-grid vera-widget{--vw-fmin:9px}html[data-text="large"] .dash-grid vera-widget{--vw-fmin:12.5px}html[data-text="larger"] .dash-grid vera-widget{--vw-fmin:13.5px}';
   try { if (typeof document !== 'undefined' && document.head && !document.getElementById('vw-text-scale')) { const st = document.createElement('style'); st.id = 'vw-text-scale'; st.textContent = TEXT_SCALE_CSS; document.head.appendChild(st); } } catch (_) {}
+  const textKOf = (el) => { try { const cs = getComputedStyle(el); const fmin = parseFloat(cs.getPropertyValue('--vw-fmin')), fx = parseFloat(cs.getPropertyValue('--vw-fx')) || 1; return Math.max(1, Math.max(isFinite(fmin) ? fmin : 10, 9.5) * fx / 9.5); } catch (_) { return 1; } };
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return isFinite(n) ? n : 0; };
   const fmt = (v) => { const n = num(v); return Math.abs(n) >= 100 ? Math.round(n).toLocaleString() : (Math.round(n * 10) / 10).toString(); };
@@ -84,7 +90,7 @@
   // captions and the WidgetConfig board's own ids too
   const ALIAS = { sparkline: 'trace', line: 'trace', chart: 'trace', parts: 'donut', tree: 'files', stages: 'stepper', program: 'stepper', ask: 'string', form: 'kv', rate: 'counter',
                   iso: 'table', controls: 'pills', button: 'string', header: 'string', galaxy: 'context_graph', battery: 'level', tablei: 'table', checks: 'checklist',
-                  memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples' };
+                  memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples', multiline: 'lines', 'multi-line': 'lines' };
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
   const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'matrix', matrix: 'matrix', donut: 'parts',
                   stack: 'items', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages', globe: 'points',
@@ -104,7 +110,9 @@
                   // the capability-output forms (the widget review, round 2)
                   json: 'values', diff: 'string', code: 'string', progress: 'stages', status: 'values', media: 'string', error: 'string', markdown: 'string',
                   // the calendar forms and the Vera graph form (the widget review, round 3)
-                  month: 'calendar', schedule: 'calendar', calnav: 'calendar', vgraph: 'graph' };
+                  month: 'calendar', schedule: 'calendar', calnav: 'calendar', vgraph: 'graph',
+                  /* the multi-line chart (2026-09-28) */
+                  lines: 'series' };
   const canon = (form) => { const f = String(form || '').toLowerCase(); return DRAWN[f] ? f : (ALIAS[f] || f); };
   // the Loop Lab's pictures (see the CI section): each draws the ci payload whole, at every size
   const CI_FORMS = /^(status-matrix|race-green|test-grid|ci-board|run-track|run-compare|ci-pulse|ci-fleet|ci-run|census-commits|element|loop-perf|census-live|census-timeline|trend-layers)$/;
@@ -226,6 +234,10 @@
     // columns a heat map or a table of a wide row should show
     if (Array.isArray(map.fields) && map.fields.length && Array.isArray(base)) { base = base.map((r) => { if (!r || typeof r !== 'object') return r; const o = { name: r.name ?? r.id ?? r.label ?? r.key };
       map.fields.forEach((f) => { const v = pick(r, f); o[String(f).split('.').pop()] = (typeof v === 'string' && v.trim() !== '' && isFinite(+v)) ? +v : v; }); return o; }); hit = true; }
+    // where: {field: value | [values]} keeps only the rows that match - for any list, not only a count (the estate's nodes
+    // on one plane: the work in flight, the runtimes)
+    if (map.where && typeof map.where === 'object' && !Array.isArray(map.where) && Array.isArray(base) && sh !== 'level' && sh !== 'rate') { const wh = map.where;
+      base = base.filter((r) => r && typeof r === 'object' && Object.keys(wh).every((k) => { const want = wh[k], v = pick(r, k); return Array.isArray(want) ? want.map(String).includes(String(v)) : String(v) === String(want); })); hit = true; }
     // span: 'day' | 'hour' | 'minute' - count by the time a row carries, cut to that span, oldest first (dreams per day)
     if (map.count && Array.isArray(base)) { const cutAt = { day: 10, hour: 13, minute: 16 }[String(map.span || '')] || 0;
       const agg = {}; base.forEach((r) => { if (!r || typeof r !== 'object') return; const k0 = pick(r, map.count); let k = (k0 == null || k0 === '') ? '(none)' : String(k0); if (cutAt) k = k.slice(0, cutAt); agg[k] = (agg[k] || 0) + (map.sum ? num(pick(r, map.sum)) : 1); });
@@ -406,6 +418,8 @@
     sandboxes: () => [['loop-lab-dev', 'running', true], ['session-a41c', 'running', false], ['session-7f0e', 'idle', false]].map((s) => ({ name: s[0], status: s[1], pinned: s[2] })),
     frame: () => ({ kind: 'terminal', title: 'vera@ct126 — tail -f vera_start.log', lines: [['vera@ct126:~$ tail -f vera_start.log', 'p'], ['14:38:02  fabric: corpus 4 412 docs', ''], ['14:38:05  fabric: digest unchanged', ''], ['14:38:05  fabric: 0 re-embeds', 'ac'], ['14:38:09  loop v7 · step 4 · code.author', 'dim'], ['▌', 'cur']] }),
     topology: () => ({ nodes: [['fabric', 0, 1, 1.5], ['neo4j', 0, 3, .8], ['redis', 0, 5, 2.2], ['router', 1, 2, 1.5], ['gate', 1, 4, 1.5], ['chat', 2, 3, 1.5], ['canvas', 2, 1, 2.4]].map((n) => ({ id: n[0], floor: n[1], u: n[2], v: n[3] })), links: [['fabric', 'router'], ['neo4j', 'router'], ['redis', 'gate'], ['router', 'chat'], ['gate', 'chat'], ['chat', 'canvas']].map((e) => ({ from: e[0], to: e[1] })), floors: ['fabric', 'routing', 'chat'] }),
+    /* the multi-line sample: three nodes' latency over two hours, sampled every five minutes */
+    lines: () => Object.fromEntries([['gpu-250', 24, 9], ['cpu-247', 40, 12], ['cpu-246', 58, 10]].map((s, k) => [s[0], wave(24 + k * 4, s[1], s[2]).slice(k * 4).map((p, i) => ({ t: 1790578800 + i * 300, v: Math.max(0, p.v) }))])),
     racks: () => SAMPLE.items(),
     rows: () => SAMPLE.items(), cards: () => SAMPLE.items(),
     temps: () => ({ 'gpu V100': 71, 'cpu pkg': 54, nvme0: 42, nvme1: 39, chipset: 48, ambient: 33 }),
@@ -442,6 +456,7 @@
     form = canon(form); const d = dataFor(data, form);
     if (d == null) return '';
     if (CI_FORMS.test(form)) return ciFigure(form, d);
+    if (form === 'lines') { const ls = linesOf(d); return ls.length ? ls.slice(0, 2).map((s) => (s.n ? esc(s.n) + ' ' : '') + fmt(s.pts[s.pts.length - 1].v)).join(' · ') : ''; }   /* the first two series' latest */
     if (DRAWN[form] === 'level') { const l = level(d); if (!l) return ''; const u = l.unit || ((l.bounded && form !== 'counter' && form !== 'hero' && l.lo === 0 && l.hi === 100) ? '%' : ''); return fmt(l.v) + (u && u !== '%' ? ' ' : '') + esc(u); }
     if (form === 'trace' || form === 'scatter') { const s = series(d); return s.length ? fmt(s[s.length - 1]) : ''; }
     if (form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'stack' || form === 'matrix') { const kv = keyed(d); return kv.length ? kv.length + ' · ' + esc(kv[0][0]) + ' ' + fmt(kv[0][1]) : ''; }
@@ -457,6 +472,7 @@
   /* ── the renderers, at M (the gallery's unit); L and XL compose around them ─ */
   const R = {};
   R.trace = (d, H, o) => {
+    if (multi(d).length > 1 && R.lines) return R.lines(d, H, o);   /* several series: one colour and a key each */
     const pts = series(d).slice(-120);
     if (pts.length < 2) return EMPTY(pts.length + ' point' + (pts.length === 1 ? '' : 's') + ' · a trace needs two');
     const lo = Math.min(...pts), hi = Math.max(...pts), sp = (hi - lo) || 1, W = 300;
@@ -486,7 +502,11 @@
     if (o && o.draw && o.draw.sort !== false) kv = kv.slice().sort((a, b) => b[1] - a[1]);
     kv = kv.slice(0, (o && o.draw && o.draw.limit) || 12);
     const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, W = 300, bw = W / kv.length;
-    return '<svg class="vw-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="height:' + H + 'px">' + kv.map((x, i) => { const h = Math.max(1, (Math.abs(x[1]) / hi) * (H - 14)); return '<rect x="' + (i * bw + 2).toFixed(1) + '" y="' + (H - 12 - h).toFixed(1) + '" width="' + Math.max(1, bw - 4).toFixed(1) + '" height="' + h.toFixed(1) + '" rx="2" fill="var(--acc,#5a9e8f)"><title>' + esc(x[0]) + ' · ' + esc(fmt(x[1])) + '</title></rect><text x="' + (i * bw + bw / 2).toFixed(1) + '" y="' + (H - 2) + '" text-anchor="middle" class="vw-svgt" fill="var(--dim2,#8a92a0)">' + esc(String(x[0]).slice(0, 6)) + '</text>'; }).join('') + '</svg>';
+    /* the colour says something only when it can: a palette the record asks for, else the status when every bar is named by one */
+    const bFall = (c) => String(c).replace(/^var\(--b-(ac|ac2|ac3|ac4|t3|dv[1-7])\)$/, (m, n) => 'var(--b-' + n + ',' + ({ ac: '#6ea8d8', ac2: '#5ec9a0', ac3: '#e09a55', ac4: '#e06060', t3: '#6b7280', dv1: '#866ec5', dv2: '#54a863', dv3: '#3585c9', dv4: '#bb881a', dv5: '#b95c88', dv6: '#00aba4', dv7: '#bd6533' })[n] + ')');
+    const bPal = (o && o.draw && o.draw.palette) ? palOf(o) : null, bSt = kv.every((x) => stCol(x[0]) !== B.t3);
+    const bCol = (i, x) => bPal ? bFall(bPal(i, Math.abs(x[1]), hi, x[0])) : (bSt ? bFall(stCol(x[0])) : 'var(--acc,#5a9e8f)');
+    return '<svg class="vw-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="height:' + H + 'px">' + kv.map((x, i) => { const h = Math.max(1, (Math.abs(x[1]) / hi) * (H - 14)); return '<rect' + itemAttr({ name: x[0], value: x[1] }, 'bar') + ' x="' + (i * bw + 2).toFixed(1) + '" y="' + (H - 12 - h).toFixed(1) + '" width="' + Math.max(1, bw - 4).toFixed(1) + '" height="' + h.toFixed(1) + '" rx="2" fill="' + bCol(i, x) + '"><title>' + esc(x[0]) + ' · ' + esc(fmt(x[1])) + '</title></rect><text x="' + (i * bw + bw / 2).toFixed(1) + '" y="' + (H - 2) + '" text-anchor="middle" class="vw-svgt" fill="var(--dim2,#8a92a0)">' + esc(String(x[0]).slice(0, 6)) + '</text>'; }).join('') + '</svg>';
   };
   R.thermo = (d, H, o) => {
     const kv = keyed(d); if (!kv.length) return EMPTY('no numbers to draw');
@@ -515,11 +535,12 @@
      is narrow - so a donut tile can be three columns wide instead of four (the owner: "donut/ring charts take up too
      much horizontal space"). Each part is a block: hovered it lights with its share, clicked it opens where it lives. */
   R.donut = (d, H, o) => {
-    const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('parts need { name: number }');
+    const kv = keyed(d).filter((x) => x[1] !== 0).slice(0, 8); if (!kv.length) return EMPTY('parts need { name: number }');
     const tot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1, D = Math.max(40, Math.min(140, (H || 96) - 6)), r = D / 2 - 6, c = 2 * Math.PI * r, s = D / 2; let acc = 0;
     // palette status colours a part by its name (running green, stopped red, pending amber) - a share of states reads at a glance
-    const cols0 = ['var(--acc,#5a9e8f)', 'var(--acc2,#8fb87a)', 'var(--acc3,#d4a96a)', '#a78bfa', '#e07a9a', '#5ab0d8', '#c9a35a', '#7ac9b0'];
-    const cols = (o && o.draw && o.draw.palette === 'status') ? kv.map((x, i) => { const sc = stCol(x[0]); return sc === B.t3 ? cols0[(i + 5) % cols0.length] : sc; }) : cols0;
+    const cols0 = [0, 1, 2, 3, 4, 5, 6].map((i) => DV(i)), dPal = o && o.draw && o.draw.palette;
+    /* palette status - or no palette and every part named by a status word (running · stopped) - colours a part by its name */
+    const cols = (dPal === 'status' || (!dPal && kv.every((x) => stCol(x[0]) !== B.t3))) ? kv.map((x, i) => { const sc = stCol(x[0]); return sc === B.t3 ? cols0[(i + 5) % cols0.length] : sc; }) : cols0;
     const sw = Math.max(6, Math.round(D / 11)), pc = (v) => Math.round(Math.abs(v) / tot * 100) + '%';
     const arcs = kv.map((x, i) => { const f = Math.abs(x[1]) / tot; const el = '<circle class="vw-arc" data-b="p' + i + '"' + itemAttr({ name: x[0], value: x[1], share: Math.round(f * 1000) / 10, of: tot }, 'slice') + ' data-tip="' + esc(x[0] + '\n' + fmt(x[1]) + ' · ' + pc(x[1]) + ' of ' + fmt(tot)) + '" cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="' + cols[i % cols.length] + '" stroke-width="' + sw + '" stroke-dasharray="' + Math.max(0, f * c - 2).toFixed(1) + ' ' + (c - f * c + 2).toFixed(1) + '" stroke-dashoffset="' + (-acc * c).toFixed(1) + '" transform="rotate(-90 ' + s + ' ' + s + ')"></circle>'; acc += f; return el; }).join('');
     const mid = '<text x="' + s + '" y="' + s + '" class="vw-dtot" text-anchor="middle" dominant-baseline="central">' + esc(fmt(tot)) + '</text>';
@@ -716,20 +737,25 @@
     // a slot's share of the frame follows what its child needs: a figure (counter, ring, kv) takes less than a list or a
     // chart; each row of slots is as tall as its neediest child, the measured body split by those weights; the last row
     // fills its width (three children are two slots and a wide one, not a slot and a hole) - no half-empty row, no scrolling slot
-    const need = (c) => { const f = canon((c && c.record && typeof c.record === 'object' && c.record.form) || ''); return /^(counter|string|hero|level|ring|dial|gauge|meter|pills|numbers|kv|dots)$/.test(f) ? 0.62 : /^(rows|list|table|log|feed|cards|files|checklist|temps|thermo|bullet|ranked|hosts)$/.test(f) ? 1.15 : 1; };
+    const need = (c) => { const r0 = (c && c.record && typeof c.record === 'object') ? c.record : {}, f = canon(r0.form || ''); if (f === 'kv' && r0.read && r0.read.map && Array.isArray(r0.read.map.keys) && r0.read.map.keys.length >= 4) return 1.15; /* four key/values read as a list: a list's share */ return /^(counter|string|hero|level|ring|dial|gauge|meter|pills|numbers|kv|dots)$/.test(f) ? 0.62 : /^(rows|list|table|log|feed|cards|files|checklist|temps|thermo|bullet|ranked|hosts)$/.test(f) ? 1.15 : 1; };
     // the least a slot can be and still show its child whole: a figure, three rows, a chart's floor - a row of slots
     // gets at least its tallest floor, the rest of the body is shared by weight (a list over a figure)
     const floorOf = (c) => { const f = canon((c && c.record && typeof c.record === 'object' && c.record.form) || ''); return /^(counter|hero|string|pills|numbers)$/.test(f) ? 62 : /^(kv)$/.test(f) ? 78 : /^(rows|list|table|log|feed|temps|thermo|files|checklist|ranked|bullet)$/.test(f) ? 88 : /^(ring|dial|gauge)$/.test(f) ? 96 : 72; };
-    const wts = [], fls = []; for (let i = 0; i < shown.length; i += ncol) { const rw = shown.slice(i, i + ncol); wts.push(Math.max(...rw.map(need))); fls.push(Math.max(...rw.map(floorOf))); } const wsum = wts.reduce((a, b) => a + b, 0) || 1;
-    const bodyH = (o && o.height && !chip) ? o.height : 0, free = Math.max(0, bodyH - (nrows - 1) * 8 - fls.reduce((a, b) => a + b, 0));
+    /* a list (rows, a table, a log, chips ...) takes a whole row of the composite - in a quarter of the card it showed two
+       words of each line (owner, 2026-09-27); the figures and charts pack their rows above, in their order */
+    const isList = (c) => { if (ncol < 2) return false; const r = (c && c.record && typeof c.record === 'object') ? c.record : {}, f = canon(r.form || ''); return /^(rows|list|table|log|feed|cards|files|checklist|timeline|lane|people|links|spark-table|temps|thermo|ranked|hosts|pills|stack)$/.test(f) || (f === 'kv' && !!(r.read && r.read.map && Array.isArray(r.read.map.keys) && r.read.map.keys.length >= 4)); };
+    const packed = [], lists = []; shown.forEach((c, i) => (isList(c) ? lists : packed).push({ c, i }));
+    const rowsP = []; for (let q = 0; q < packed.length; q += ncol) rowsP.push(packed.slice(q, q + ncol)); lists.forEach((x) => rowsP.push([x]));
+    const plan = []; rowsP.forEach((rw, ri) => { const base = Math.floor(ncol / rw.length), extra = ncol - base * rw.length; rw.forEach((x, j) => plan.push({ c: x.c, i: x.i, ri, sp: base + (j < extra ? 1 : 0) })); });
+    const wts = rowsP.map((rw) => Math.max(...rw.map((x) => need(x.c)))), fls = rowsP.map((rw) => Math.max(...rw.map((x) => floorOf(x.c)))); const wsum = wts.reduce((a, b) => a + b, 0) || 1;
+    const bodyH = (o && o.height && !chip) ? o.height : 0, free = Math.max(0, bodyH - (rowsP.length - 1) * 8 - fls.reduce((a, b) => a + b, 0));
     const slotHOf = (ri) => bodyH ? Math.max(44, (fls[ri] || 44) + Math.floor(free * (wts[ri] || 1) / wsum)) : 0;
-    const rest = shown.length % ncol, firstOfLast = shown.length - rest, spanOf = (i) => { if (!rest || i < firstOfLast || shown.length < 2) return 1; const j = i - firstOfLast, base = Math.floor(ncol / rest), extra = ncol - base * rest; return base + (j < extra ? 1 : 0); };
-    return '<div class="vw-comp vw-comp-' + esc(layout) + '"' + (!chip && ncol !== 2 ? ' style="grid-template-columns:repeat(' + ncol + ',1fr)"' : (chip && o && o.height ? ' style="height:' + o.height + 'px"' : '')) + '>' + shown.map((c, i) => {
-      const slotH = slotHOf(Math.floor(i / ncol)), kidH = slotH ? Math.max(24, slotH - 36) : Math.max(44, Math.round(H * 0.8)), sp = spanOf(i);
+    return '<div class="vw-comp vw-comp-' + esc(layout) + '"' + (!chip && ncol !== 2 ? ' style="grid-template-columns:repeat(' + ncol + ',1fr)"' : (chip && o && o.height ? ' style="height:' + o.height + 'px"' : '')) + '>' + plan.map(({ c, i, ri, sp }) => {
+      const slotH = slotHOf(ri), kidH = slotH ? Math.max(24, slotH - 36) : Math.max(44, Math.round(H * 0.8));
       const slotStyle = (slotH || sp > 1) ? ' style="' + (slotH ? 'height:' + slotH + 'px;' : '') + (sp > 1 ? 'grid-column:span ' + sp + ';' : '') + '"' : '';
       const r0 = c && typeof c.record === 'object' ? c.record : null; const slot = String((c && c.slot) || String.fromCharCode(97 + i));
       if (!r0) return '<div class="vw-slot" data-slot="' + esc(slot) + '"><small class="wempty">' + esc(String(c && c.record || '')) + '</small></div>';
-      const n = normalise(r0); const k = kd[slot]; const wasRead = !!(k && typeof k === 'object' && k.__read); const data = r0.data !== undefined ? r0.data : (wasRead ? k.data : k); const kopts = { record: n, draw: n.draw, bare: true, sample: wasRead ? false : undefined };
+      const n = normalise(r0); const k = kd[slot]; const wasRead = !!(k && typeof k === 'object' && k.__read); const data = r0.data !== undefined ? r0.data : (wasRead ? k.data : k); const kopts = { record: n, draw: n.draw, bare: true, sample: wasRead ? false : undefined, textK: o && o.textK, width: (o && o.width && !chip) ? Math.max(120, Math.floor((o.width - (ncol - 1) * 8) * sp / ncol) - 16) : undefined };
       // a child whose reading is still on its way says so - its slot never shows the form's sample values as though they
       // were the estate's (the review found "serving · ct126 · qwen3:30b" standing in for the narrator, the identity
       // server, OpenClaw and telegram while their reads were queued)
@@ -739,6 +765,13 @@
       const kHave = wasRead && k.data !== undefined && !isEmpty(dataFor(mapped(n, n.form, k.data), canon(n.form)));   // what the child's form would draw of the answer
       const kerr = wasRead && k.err ? '<i class="vw-kerr" title="' + esc(k.err) + '">' + (kHave ? 'last reading' : 'read failed') + '</i>' : (wasRead && !kHave ? '<i class="vw-kempty">read · empty</i>' : '');
       const stale = wasRead && k.err && kHave ? ' vw-stale' : '';
+      /* a report's list or key/values is a BLOCK with its rows (owner, 2026-09-27: "most of the chips in the table cards like
+         estate health, backups and node properties could be more informative" - a list drawn as a chip said "4 rows"); only
+         a single figure stays a chip in its row */
+      if (chip && /^(rows|list|table|log|feed|cards|files|checklist|timeline|lane|kv|pills|ranked|hosts|temps|thermo|people|links)$/.test(canon(n.form))) {
+        const tk = (o && o.textK) || 1, lim = +(n.draw && n.draw.limit) || 4, keysN = (n.read && n.read.map && Array.isArray(n.read.map.keys)) ? n.read.map.keys.length : 4;
+        const bh = Math.round((canon(n.form) === 'kv' ? keysN * 19 : canon(n.form) === 'pills' ? 52 : lim * 31 + 56) * tk);
+        return '<div class="vw-slot vw-slot-block' + stale + '" data-slot="' + esc(slot) + '"><span class="vw-slot-h">' + esc(n.title || n.form) + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: bh, title: n.title }, kopts, { width: (o && o.width) ? Math.max(160, o.width - 20) : undefined })) + '</div></div>'; }
       if (chip) return '<div class="vw-slot vw-slot-row' + stale + '" data-slot="' + esc(slot) + '"><span class="k" title="' + esc(n.title || n.form) + '">' + esc(n.title || n.form) + '</span><span class="vw-slot-c">' + draw(n.form, data, 's', Object.assign({}, kopts, { title: '' })) + kerr + '</span></div>';
       const fig = /^(counter|hero|string|level|ring|meter|gauge|dial|tank|numbers)$/.test(canon(n.form)) ? '' : figure(n.form, mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data));
       return '<div class="vw-slot' + stale + '" data-slot="' + esc(slot) + '"' + slotStyle + '><span class="vw-slot-h">' + esc(n.title || n.form) + (fig ? '<b>' + fig + '</b>' : '') + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: kidH, title: n.title }, kopts)) + '</div></div>'; }).join('') + '</div>';
@@ -817,7 +850,7 @@
     return cols.slice(0, max || 6);
   };
   const tableSort = (rw, cols, o) => { const sortBy = String(ui(o, 'sort', (o && o.draw && o.draw.sort) || '')), dir = +ui(o, 'dir', -1) || -1; if (sortBy && cols.includes(sortBy)) rw = rw.slice().sort((a, b) => { const x = a[sortBy], y = b[sortBy]; return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''))) * dir; }); return { rw, sortBy, dir }; };
-  const tableCell = (r, c, lit) => { const v = r[c]; const n = typeof v === 'number'; const hot = lit != null && n && v >= num(lit); const st = !n && /^(status|state|health)$/i.test(c); return '<span class="c' + (n ? ' num' : '') + (hot ? ' dn' : '') + '" title="' + esc(String(v ?? '')) + '">' + (st ? '<i class="st" style="background:' + stCol(v) + '"></i>' : '') + esc(v == null ? '' : (n ? fmt(v) : String(v))) + '</span>'; };
+  const tableCell = (r, c, lit) => { const v = r[c]; const n = typeof v === 'number'; const hot = lit != null && n && v >= num(lit); const st = !n && /^(status|state|health)$/i.test(c), yn = typeof v === 'boolean'; return '<span class="c' + (n ? ' num' : '') + (hot ? ' dn' : '') + '" title="' + esc(c + ' \u00b7 ' + String(v ?? '')) + '">' + (st ? '<i class="st" style="background:' + stCol(v) + '"></i>' : '') + (yn ? (st ? '' : (v ? '\u2713' : '\u2013')) : esc(v == null ? '' : (n ? fmt(v) : (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(v) ? ago(v) : String(v))))) + '</span>'; };   /* a yes/no is a mark (a dot for a status, else a tick or a dash) - it read 'true' / 'false' */
   const gridCols = (cols) => cols.map((c, i) => i ? 'minmax(40px,auto)' : '1fr').join(' ');
   R.table = (d, H, o) => {
     let all = rows(d); if (!all.length) return EMPTY('no rows');
@@ -831,11 +864,58 @@
     const foot = size === 'l' || size === 'xl' || pages > 1 ? '<div class="vb-dgf"><span>' + (sortBy ? 'sorted by ' + esc(sortBy) + (dir < 0 ? ' · high first' : ' · low first') : rw.length + ' rows') + '</span><span style="margin-left:auto">' + (rw.length ? (pg * lim + 1) + '–' + Math.min(rw.length, pg * lim + lim) + ' of ' + rw.length : '0 of 0') + '</span><button' + set('page', Math.max(0, pg - 1)) + '>‹</button><button' + set('page', Math.min(pages - 1, pg + 1)) + '>›</button></div>' : '';
     return wrap('table', search + head + (body || '<span class="vb-lbl">' + (q ? 'nothing matches "' + esc(q) + '"' : 'no rows') + '</span>') + foot, 'vb-tf');
   };
+  /* THE LIST CARD (owner, 2026-09-28: "i still think the chip tables need to be vastly improved"). A row said a name, a word
+     and a dot. Now each says what it is and how it stands at a glance: its status as a dot and - room allowing - a
+     coloured word (a yes/no in the source's own words: running / stopped, enabled / disabled); its name, with the detail
+     under it (the error, the branch, the subject, a time as "3 h ago"); its figure on the right with its unit, over a bar
+     that is its share of the largest. Problems come first. Above the rows, when they carry a status, a bar of the statuses
+     with their counts - a click shows that status alone. "+ n more" opens the rest in the drawer. */
+  const ST_KEYS = /^(status|state|health|severity|level|result|decision|running|enabled|ok|active|online|last_ok)$/i;
+  const DET_KEYS = ['error', 'last_error', 'last_defer', 'detail', 'details', 'subject', 'reason', 'note', 'message', 'msg', 'branch', 'kind', 'type', 'role', 'model', 'host', 'node', 'path', 'description', 'summary', 'title', 'label'];
+  const isoTime = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(v);
+  const ago = (v) => { const t = Date.parse(v); if (!isFinite(t)) return String(v); const s = Math.round((Date.now() - t) / 1000), a = Math.abs(s); const f = a < 60 ? a + ' s' : a < 3600 ? Math.round(a / 60) + ' min' : a < 86400 ? Math.round(a / 3600) + ' h' : Math.round(a / 86400) + ' d'; return s < 0 ? 'in ' + f : f + ' ago'; };
+  const YES_NO = { running: ['running', 'stopped'], enabled: ['enabled', 'disabled'], active: ['active', 'inactive'], online: ['online', 'offline'], ok: ['ok', 'failing'], last_ok: ['ok', 'failed'], pinned: ['pinned', 'not pinned'], paused: ['paused', 'running'], reachable: ['reachable', 'unreachable'] };
+  const yesNoWord = (s, col) => { const k = String(s == null ? '' : s).toLowerCase(); if (k !== 'true' && k !== 'false') return String(s == null ? '' : s); const w = YES_NO[String(col || '').toLowerCase()]; return w ? w[k === 'true' ? 0 : 1] : (k === 'true' ? 'yes' : 'no'); };
+  const stRank = (w) => { const c = stCol(w); return c === B.ac4 ? 0 : c === B.ac3 ? 1 : c === B.t3 ? 2 : 3; };
+  const srcCol = (o, c) => { const m = o && o.record && o.record.read && o.record.read.map; return (m && typeof m[c] === 'string') ? m[c].split('.').pop() : c; };
   R.rows = (d, H, o) => {
     const all = rows(d); const str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const rw0 = all.length ? all : str.map((s) => ({ name: s })); if (!rw0.length) return EMPTY('no rows');
-    const size = (o && o.size) || 'm'; const cols = tableCols(rw0, o, 4); let lim = (o && o.draw && o.draw.limit) || fitRows(o, size, 17, 18); if (!(o && o.draw && o.draw.limit) && rw0.length > lim) lim = fitRows(o, size, 17, 34);   // room for the '+ n more' line
-    const { rw } = tableSort(rw0, cols, o); const lit = o && o.draw && o.draw.lit != null ? o.draw.lit : null;
-    return wrap('rows', rw.slice(0, lim).map((r) => '<div class="vb-dgr"' + itemAttr(r, 'row') + ' style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('') + (rw.length > lim ? '<span class="vb-lbl">+ ' + (rw.length - lim) + ' more</span>' : ''), 'vb-tf');
+    const size = (o && o.size) || 'm', tk = (o && o.textK) || 1, Wd = (o && o.width) || 0, dr = (o && o.draw) || {};
+    const cols = tableCols(rw0, o, 6), r0 = rw0[0] || {};
+    const nameC = cols.find((c) => /^(name|title|label|id|host|hostname|node|branch|subject|key|path)$/i.test(c)) || cols[0] || 'name';
+    const stC = cols.find((c) => c !== nameC && ST_KEYS.test(c)) || Object.keys(r0).find((c) => c !== nameC && ST_KEYS.test(c) && r0[c] != null && typeof r0[c] !== 'object') || '';
+    /* the figure: the row's 'value' when it has one (the shape's own field, which the column list leaves out), else a number or a time among its fields */
+    const keys0 = Array.from(new Set(['value'].concat(cols, Object.keys(r0).filter((k) => r0[k] == null || typeof r0[k] !== 'object'))));
+    const valC = keys0.find((c) => c !== nameC && c !== stC && rw0.some((r) => r[c] != null && r[c] !== '' && (typeof r[c] === 'number' || isoTime(r[c]) || c === 'value'))) || '';
+    const detC = dr.detail || DET_KEYS.find((k) => k !== nameC && k !== stC && k !== valC && rw0.some((r) => typeof r[k] === 'string' && r[k].trim() && r[k] !== r[nameC])) || '';
+    const extra = cols.filter((c) => ![nameC, stC, valC, detC].includes(c)).slice(0, 2);
+    const stSrc = srcCol(o, stC), word = (r) => stC ? yesNoWord(r[stC], stSrc) : '';
+    const fsel = String(ui(o, 'f', ''));
+    let list = fsel ? rw0.filter((r) => word(r) === fsel) : rw0.slice();
+    if (dr.sort || ui(o, 'sort', '')) list = tableSort(list, cols, o).rw;
+    else if (stC) list = list.map((r, i) => [r, i]).sort((a, b) => stRank(word(a[0])) - stRank(word(b[0])) || a[1] - b[1]).map((x) => x[0]);
+    let sum = '';
+    if (stC && rw0.length >= 3) { const cnt = {}; rw0.forEach((r) => { const k = word(r); cnt[k] = (cnt[k] || 0) + 1; }); const ks = Object.keys(cnt).sort((a, b) => stRank(a) - stRank(b) || cnt[b] - cnt[a]);
+      sum = '<div class="vb-r2s"><div class="bar">' + ks.map((k) => '<i style="flex:' + cnt[k] + ';background:' + stCol(k) + '" title="' + esc(k + ' \u00b7 ' + cnt[k]) + '"></i>').join('') + '</div><div class="lg">'
+        + ks.slice(0, 6).map((k) => '<button' + set('f', fsel === k ? '' : k) + ' class="' + (fsel === k ? 'on' : '') + '" title="show only ' + esc(k) + '"><i style="background:' + stCol(k) + '"></i>' + esc(k || '(none)') + '<b>' + cnt[k] + '</b></button>').join('') + (fsel ? '<button' + set('f', '') + '>all</button>' : '') + '</div></div>'; }
+    let hasDet = !!(detC || extra.length), rowH = (hasDet ? 31 : 23) * tk, sumH = sum ? 40 * tk : 0;
+    /* the summary earns its room: a list of one status says nothing with it, and in a slot too small for four rows under it
+       the rows are what matter (a composite's list showed one row and '+ 7 more') */
+    if (sum && ((new Set(rw0.map(word))).size < 2 || (o && o.height && (o.height - sumH) / rowH < 4))) { sum = ''; sumH = 0; }
+    const lim = dr.limit ? Math.max(1, Math.min(+dr.limit, o && o.height ? Math.max(1, Math.floor((o.height - sumH - 16 * tk) / rowH)) : +dr.limit)) : (o && o.height ? Math.max(2, Math.floor((o.height - sumH - 16 * tk) / rowH)) : (TABLE_ROWS[size] || 4));
+    const shown = list.slice(0, lim), more = list.length - shown.length;
+    const hi = valC ? Math.max(0, ...list.map((r) => typeof r[valC] === 'number' ? Math.abs(r[valC]) : 0)) || 1 : 1;
+    const unit = dr.unit ? ' ' + dr.unit : '', bytes = !!dr.bytes, pillOK = !Wd || Wd >= 300;
+    const txtOf = (c, v) => v == null || v === '' ? '' : typeof v === 'number' ? (bytes && c === valC ? fmtBytesS(v) : fmt(v) + (c === valC ? unit : '')) : typeof v === 'boolean' ? yesNoWord(v, srcCol(o, c)) : isoTime(v) ? ago(v) : String(v);
+    const body = shown.map((r) => { const w = word(r), v = valC ? r[valC] : undefined;
+      const bar = (valC && typeof v === 'number') ? '<i class="bar" style="width:' + Math.max(2, Math.min(100, Math.abs(v) / hi * 100)).toFixed(0) + '%"></i>' : '';
+      const dv = detC ? r[detC] : '', ex = extra.map((c) => { const t = txtOf(c, r[c]); return t && typeof r[c] !== 'object' ? '<em>' + esc(c.replace(/_/g, ' ')) + ' ' + esc(t.slice(0, 40)) + '</em>' : ''; }).join('');
+      return '<div class="vb-dgr" data-r2' + itemAttr(r, 'row') + '>' + (stC ? '<i class="st" style="background:' + stCol(w) + '"></i>' : '<i class="st none"></i>')
+        + '<span class="nm"><b title="' + esc(String(r[nameC] ?? '')) + '">' + esc(String(r[nameC] ?? '')) + '</b>' + (dv || ex ? '<small>' + (dv ? esc(isoTime(dv) ? ago(dv) : String(dv).slice(0, 160)) : '') + ex + '</small>' : '') + '</span>'
+        + (stC && pillOK && w ? '<span class="pill" style="--c:' + stCol(w) + '">' + esc(w) + '</span>' : '')
+        + (valC ? '<span class="vv">' + bar + '<span>' + esc(txtOf(valC, v)) + '</span></span>' : '') + '</div>'; }).join('');
+    const rest = list.slice(lim, lim + 200), moreEl = more > 0 ? '<span class="vb-lbl vb-r2m"' + itemAttr(rest, 'the rest') + ' title="open the rest in the drawer">+ ' + more + ' more</span>' : '';
+    return wrap('rows', sum + body + moreEl, 'vb-tf vb-r2w');
   };
   R.cards = (d, H, o) => {
     const rw = rows(d); if (!rw.length) return EMPTY('cards need rows'); const size = (o && o.size) || 'm'; const ncol = { s: 1, m: 2, l: 3, xl: 4 }[size] || 2; const lim = (o && o.draw && o.draw.limit) || ncol * (o && o.height ? Math.max(1, Math.floor(o.height / 66)) : (size === 'xl' ? 3 : 2)); const cols = tableCols(rw, o, 5); const nameC = cols.find((c) => /^(name|title|label|id|host|hostname|node)$/i.test(c)) || cols[0]; const rest = cols.filter((c) => c !== nameC && !/^(status|state|health)$/i.test(c)).slice(0, 2); const stC = cols.find((c) => /^(status|state|health)$/i.test(c));
@@ -931,15 +1011,17 @@
   R.level = (d, H, o) => {
     const l = level(d); if (!l) return EMPTY('a level needs { value, max }');
     const cells = (o && o.draw && o.draw.cells) || 10, held = Math.round((l.v - l.lo) / ((l.hi - l.lo) || 1) * cells), warn = num(d && d.expiring) || 0;
-    return wrap('level', '<div class="vb-batt"><div class="cells">' + Array.from({ length: cells }, (_, i) => '<i class="' + (i < held ? (i >= held - warn ? 'on warn' : 'on') : '') + '" data-tip="' + esc((i < held ? 'in use' : 'free') + '\n' + fmt(l.v) + ' of ' + fmt(l.hi) + ' ' + (l.unit || (d && d.what) || 'held') + ' · ' + fmt(l.hi - l.v) + ' free') + '"></i>').join('') + '</div><b></b></div><div class="vb-hero"><b>' + esc(fmt(l.v)) + '</b><span class="u">/ ' + esc(fmt(l.hi)) + ' ' + esc(l.unit || (d && d.what) || 'held') + '</span></div>' + ((H || 96) >= 100 || (d && d.note) ? cap(esc(String((d && d.note) || (fmt(l.hi - l.v) + ' free')))) : ''));   // "n free" only where there is room: the figure already says n of max
+    const bh = Math.max(14, Math.min(38, Math.round((H || 96) - 50)));   /* the battery follows the body: a two-row tile cut its figure */
+    return wrap('level', '<div class="vb-batt" style="height:' + bh + 'px"><div class="cells">' + Array.from({ length: cells }, (_, i) => '<i class="' + (i < held ? (i >= held - warn ? 'on warn' : 'on') : '') + '" data-tip="' + esc((i < held ? 'in use' : 'free') + '\n' + fmt(l.v) + ' of ' + fmt(l.hi) + ' ' + (l.unit || (d && d.what) || 'held') + ' · ' + fmt(l.hi - l.v) + ' free') + '"></i>').join('') + '</div><b></b></div><div class="vb-hero"><b>' + esc(fmt(l.v)) + '</b><span class="u">/ ' + esc(fmt(l.hi)) + ' ' + esc(l.unit || (d && d.what) || 'held') + '</span></div>' + ((H || 96) >= 100 || (d && d.note) ? cap(esc(String((d && d.note) || (fmt(l.hi - l.v) + ' free')))) : ''));   // "n free" only where there is room: the figure already says n of max
   };
 
   /* ── series: the stacked area, the histogram, the step chart, slope, horizon, bump, small multiples, the spark table ── */
   R.area = (d, H, o) => {
     const ms = multi(d); if (!ms.length || !ms.some((s) => s.v.length > 1)) return EMPTY('an area needs series');
-    const W = 300, N = Math.max(...ms.map((s) => s.v.length)); const base = new Array(N).fill(H); const tot = new Array(N).fill(0); ms.forEach((s) => s.v.forEach((v, i) => { tot[i] += v; })); const hi = Math.max(...tot) || 1; const pal = palOf(o);
-    const paths = ms.map((s, si) => { const top = base.map((b, i) => b - (s.v[i] || 0) / hi * (H - 6)); const dd = 'M0,' + base[0].toFixed(1) + ' ' + top.map((y, i) => 'L' + ((i / (N - 1)) * W).toFixed(1) + ',' + y.toFixed(1)).join(' ') + ' L' + W + ',' + base[N - 1].toFixed(1) + ' Z'; for (let i = 0; i < N; i++) base[i] = top[i]; return '<path d="' + dd + '" fill="' + (s.col || pal(si, 0, 0, s.n)) + '" fill-opacity=".55"/>'; });   // palette status colours a series by its name (pass green, fail red)
-    return wrap('area', '<div class="vb-chart" style="height:' + chH(H, 26) + 'px"><svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + paths.join('') + '</svg></div><div class="vb-lg row">' + ms.map((s, i) => '<span><i style="background:' + (s.col || pal(i, 0, 0, s.n)) + '"></i>' + esc(s.n) + '</span>').join('') + '</div>');
+    const W = 300, N = Math.max(...ms.map((s) => s.v.length)); const base = new Array(N).fill(H); const tot = new Array(N).fill(0); ms.forEach((s) => s.v.forEach((v, i) => { tot[i] += v; })); const hi = Math.max(...tot) || 1; const sp0 = serPal(o, ms.map((s) => s.n)), pal = (i, a, b, n) => sp0(i, n);
+    const aItem = (s) => { const v = s.v; return { name: s.n, last: v[v.length - 1], min: Math.min(...v), max: Math.max(...v), points: v.length }; };
+    const paths = ms.map((s, si) => { const top = base.map((b, i) => b - (s.v[i] || 0) / hi * (H - 6)); const dd = 'M0,' + base[0].toFixed(1) + ' ' + top.map((y, i) => 'L' + ((i / (N - 1)) * W).toFixed(1) + ',' + y.toFixed(1)).join(' ') + ' L' + W + ',' + base[N - 1].toFixed(1) + ' Z'; for (let i = 0; i < N; i++) base[i] = top[i]; return '<path data-b="ar' + si + '"' + itemAttr(aItem(s), 'series') + ' data-tip="' + esc(s.n + '\nlatest ' + fmt(s.v[s.v.length - 1])) + '" d="' + dd + '" fill="' + (s.col || pal(si, 0, 0, s.n)) + '" fill-opacity=".55"/>'; });   // palette status colours a series by its name (pass green, fail red)
+    return wrap('area', '<div class="vb-chart" style="height:' + chH(H, 26) + 'px"><svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + paths.join('') + '</svg></div><div class="vb-lg row">' + ms.map((s, i) => '<span data-b="ar' + i + '"' + itemAttr(aItem(s), 'series') + '><i style="background:' + (s.col || pal(i, 0, 0, s.n)) + '"></i>' + esc(s.n) + (s.v.length ? '<b>' + esc(fmt(s.v[s.v.length - 1])) + '</b>' : '') + '</span>').join('') + '</div>');
   };
   R.histogram = (d, H, o) => {
     let kv = keyed(d); let vals = kv.length ? kv.map((x) => x[1]) : series(d); if (!vals.length) { return EMPTY('a histogram needs counts'); }
@@ -968,13 +1050,191 @@
   };
   R['small-multiples'] = (d, H, o) => {
     const ms = multi(d); if (!ms.length) return EMPTY('small multiples need series');
-    return wrap('small-multiples', ms.slice(0, (o && o.draw && o.draw.rows) || 6).map((s, i) => { const last = s.r && (s.r.last ?? s.r.value ?? s.r.v); const bad = s.r && (s.r.status === 'timeout' || s.r.state === 'down' || s.r.timeout); const col = bad ? B.ac3 : (s.col || B.ac); return '<span class="vb-sm"><span class="vb-lbl">' + esc(s.n) + '</span>' + spark(s.v, col) + '<span class="v" style="color:' + col + '">' + esc(bad ? String(s.r.status || 'timeout') : (last != null ? String(typeof last === 'number' ? fmt(last) : last) : fmt(s.v[s.v.length - 1]))) + '</span></span>'; }).join(''));
+    /* each series its own colour - its name's dot is the key - where one accent for all said nothing about which is which;
+       a series that timed out or is down takes its status colour; each row carries its series (latest · min · max) */
+    const sp = serPal(o, ms.map((s) => s.n)), unit = (o && o.draw && o.draw.unit) || '';
+    return wrap('small-multiples', ms.slice(0, (o && o.draw && o.draw.rows) || 6).map((s, i) => { const last = s.r && (s.r.last ?? s.r.value ?? s.r.v); const bad = s.r && (s.r.status === 'timeout' || s.r.state === 'down' || s.r.timeout); const col = bad ? stCol(s.r.status || s.r.state || 'timeout') : sp(i, s.n, s.col);
+      const vv = s.v.filter((x) => isFinite(x)), st = vv.length ? { last: vv[vv.length - 1], min: Math.min(...vv), max: Math.max(...vv) } : {};
+      const fig = bad ? String(s.r.status || 'timeout') : (last != null ? String(typeof last === 'number' ? fmt(last) : last) : fmt(s.v[s.v.length - 1]));
+      const it = Object.assign({ name: s.n }, st, unit ? { unit } : {}, { points: s.v.length }, s.r && s.r.status ? { status: s.r.status } : {});
+      return '<span class="vb-sm" data-b="sm' + i + '"' + itemAttr(it, 'series') + ' data-tip="' + esc(s.n + '\nlatest ' + fig + (unit ? ' ' + unit : '') + (vv.length ? '\nmin ' + fmt(st.min) + ' · max ' + fmt(st.max) : '')) + '"><span class="vb-lbl"><i class="vb-smk" style="background:' + col + '"></i>' + esc(s.n) + '</span>' + spark(s.v, col) + '<span class="v" style="color:' + col + '">' + esc(fig) + '</span></span>'; }).join(''));
   };
   R['spark-table'] = (d, H, o) => {
     const rw = rows(d); const ms = multi(d); if (!ms.length || !ms.some((s) => s.r)) return EMPTY('a spark table needs rows with a series');
     const extra = Object.keys(ms[0].r || {}).filter((k) => !Array.isArray(ms[0].r[k]) && typeof ms[0].r[k] !== 'object' && !['name', 'title', 'label', 'id', 'col', 'color', 'status', 'state'].includes(k)).slice(0, 3);
     return wrap('spark-table', '<div class="vb-sth"><span>' + esc((o && o.draw && o.draw.name) || 'row') + '</span><span>' + esc((o && o.draw && o.draw.figure) || 'trend') + '</span>' + extra.map((k) => '<span>' + esc(k) + '</span>').join('') + '</div>' + ms.slice(0, 8).map((s, i) => { const bad = s.r && /timeout|down/.test(String(s.r.status ?? s.r.state ?? '')); return '<div class="vb-str" style="grid-template-columns:50px 1fr' + ' 40px'.repeat(extra.length) + '"><span class="n">' + esc(s.n) + '</span>' + spark(s.v, bad ? B.ac3 : (s.col || B.ac)) + extra.map((k) => '<span class="v">' + esc(String(s.r[k] ?? '—')) + '</span>').join('') + '</div>'; }).join(''));
   };
+
+  /* ── MULTI-LINE (owner, 2026-09-28: "more multi-line charts that are color coded" · "better color coding and keys on all
+     widgets that would make sense on"). Several series on one set of axes, each its own colour, and a KEY that names every
+     series with its latest value. The colours: a record's draw.colors {name: colour} first, then its draw.palette, else -
+     when every series is named with a status word (pass · fail, ok · down) - the status colours, else the categorical set
+     (--b-dv1 … 7) in order. One y scale shared by every series with two or three gridlines and their values; a time axis
+     (first · middle · last) when the points carry times (epoch seconds or ms, ISO, the hour buckets 2026-09-25T08); x is
+     then the time, so series sampled at different moments still line up. Hover a column: every series' value at that x
+     (the part carries them as its item, so a click opens the drawer on that moment); hover a line or its key entry: that
+     series lit, the others dimmed; a click opens the drawer on the series (name, latest, min, max, mean, points).
+     It reads:
+       {name: [numbers | {t, v}]}              what read.map.split makes, a fleet keyed by node ({series: {…}} too)
+       [{t, a, b, c}, …]                        rows: draw.series ['a', 'b'] names the fields (else every numeric field
+                                                that is not a time or an id; a row with v / value is one series)
+       [{name, points | series | values: […]}] one entry per series
+       [{t, v, via}, …] with draw.by 'via'      rows grouped into one series per value of that field (draw.blank names
+                                                the rows where it is empty)
+       [n, n, n]                                one series
+     draw: series · by · blank · value (the field a grouped row's value is) · names {key: label} · colors · palette ·
+     min · max · unit · limit (series, default 8). frame.motion false (or draw.motion false) draws it still. */
+  const lnTime = (x) => {
+    if (x == null || x === '' || typeof x === 'boolean') return null;
+    if (typeof x === 'number') return x > 1e12 ? x : (x > 1e9 ? x * 1000 : null);
+    const s = String(x).trim(); if (/^\d+(\.\d+)?$/.test(s)) return lnTime(+s);
+    const h = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2})$/); const ms = Date.parse(h ? h[1] + 'T' + h[2] + ':00:00Z' : s);
+    return isFinite(ms) ? ms : null;
+  };
+  const LN_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const lnP2 = (n) => String(n).padStart(2, '0');
+  /* a time as the axis says it: the clock under a day and a half, the day (and hour) past it; the hover card's head is fuller */
+  const lnLabel = (ms, span, full) => { const t = new Date(ms); if (!isFinite(t.getTime())) return '';
+    const hm = lnP2(t.getHours()) + ':' + lnP2(t.getMinutes()), day = t.getDate() + ' ' + LN_MON[t.getMonth()];
+    if (full) return (span >= 20 * 3600e3 ? day + ' ' : '') + hm + (span < 600e3 ? ':' + lnP2(t.getSeconds()) : '');
+    return span >= 36 * 3600e3 ? day + (span < 6 * 86400e3 ? ' ' + lnP2(t.getHours()) + 'h' : '') : hm + (span < 600e3 ? ':' + lnP2(t.getSeconds()) : ''); };
+  const lnNice = (x) => { if (!(x > 0)) return 1; const p = Math.pow(10, Math.floor(Math.log10(x))), f = x / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; };
+  const lnTick = (v) => { const a = Math.abs(v); return a >= 1e6 ? (Math.round(v / 1e5) / 10) + 'M' : a >= 1e4 ? (Math.round(v / 100) / 10) + 'k' : fmt(v); };
+  /* the colour of each series: its own, the record's colors, its palette, the status words when every name is one, else dv1…7 */
+  const serPal = (o, names) => { const dr = (o && o.draw) || {}; const colors = (dr.colors && typeof dr.colors === 'object') ? dr.colors : {};
+    const allSt = names.length > 0 && names.every((n) => stCol(n) !== B.t3); const pal = dr.palette ? palOf(o) : null;
+    return (i, n, own) => own || colors[n] || (pal ? pal(i, 0, 0, n) : (allSt ? stCol(n) : DV(i))); };
+  /* the series a lines chart draws: [{n, pts: [{t (ms | null), v, i}], col, r, abs}] */
+  function linesOf(d, o) {
+    const dr = (o && o.draw) || {};
+    const val = (x) => (x == null || x === '' || (typeof x === 'string' && !isFinite(+x))) ? null : num(x);
+    const pt = (p, i, vk) => { if (p == null || typeof p !== 'object') return { t: null, v: val(p), i };
+      const t0 = p.t ?? p.ts ?? p.time ?? p.hour ?? p.when ?? p.at; return { t: lnTime(t0), v: val(vk ? pick(p, vk) : (p.v ?? p.value ?? p.y ?? p.close)), i }; };
+    let src = d, out = [];
+    if (src && typeof src === 'object' && !Array.isArray(src) && src.series && typeof src.series === 'object') src = src.series;
+    if (Array.isArray(src)) {
+      const rw = src.filter((r) => r && typeof r === 'object' && !Array.isArray(r));
+      const listOf = (r) => ['points', 'series', 'values', 'history', 'spark'].map((k) => r[k]).find((a) => Array.isArray(a));
+      if (src.length && Array.isArray(src[0])) out = src.map((s, i) => ({ n: 's' + (i + 1), pts: s.map((p, j) => pt(p, j)) }));
+      else if (rw.length && rw.some((r) => listOf(r))) out = rw.filter((r) => listOf(r)).map((r, i) => ({ n: nameOf(r) || 's' + (i + 1), pts: listOf(r).map((p, j) => pt(p, j)), col: r.col || r.color, r }));
+      else if (rw.length && dr.by) { const by = {}, order = [];
+        rw.forEach((r, j) => { const k0 = pick(r, dr.by); const k = (k0 == null || k0 === '') ? String(dr.blank || '(none)') : String(k0); if (!by[k]) { by[k] = []; order.push(k); } by[k].push(pt(r, j, dr.value)); });
+        out = order.map((k) => ({ n: k, pts: by[k], abs: rw.length })); }
+      else if (rw.length) { let fs = Array.isArray(dr.series) && dr.series.length ? dr.series.map(String) : null;
+        if (!fs && !rw.some((r) => r.v != null || r.value != null || r.y != null)) fs = Object.keys(rw[0]).filter((k) => typeof rw[0][k] === 'number' && !/^(t|ts|time|x|i|id|idx|index|hour|when|at|_score)$/.test(k)).slice(0, 6);
+        out = (fs && fs.length) ? fs.map((f) => ({ n: f, pts: rw.map((r, j) => pt(r, j, f)) })) : [{ n: String(dr.name || ''), pts: rw.map((r, j) => pt(r, j)) }]; }
+      else if (src.length && src.every((x) => typeof x === 'number' || (typeof x === 'string' && x.trim() !== '' && isFinite(+x)))) out = [{ n: String(dr.name || ''), pts: src.map((x, j) => ({ t: null, v: num(x), i: j })) }];
+    } else if (src && typeof src === 'object') {
+      out = Object.keys(src).filter((k) => Array.isArray(src[k]) && src[k].length && k !== 'nodes' && k !== 'links').map((k) => ({ n: k, pts: src[k].map((p, j) => pt(p, j)) }));
+    }
+    const names = (dr.names && typeof dr.names === 'object') ? dr.names : {};
+    return out.map((s) => Object.assign(s, { n: String(names[s.n] ?? s.n), pts: s.pts.filter((p) => p.v != null).slice(-240) })).filter((s) => s.pts.length).slice(0, Math.max(1, +dr.limit || 8));
+  }
+  const lnStats = (s) => { const v = s.pts.map((p) => p.v); return { last: v[v.length - 1], min: Math.min(...v), max: Math.max(...v), mean: Math.round(v.reduce((a, b) => a + b, 0) / v.length * 100) / 100 }; };
+  R.lines = (d, H, o) => {
+    const ms = linesOf(d, o); if (!ms.length || !ms.some((s) => s.pts.length > 1)) return EMPTY('a line chart needs a series of two points or more');
+    const dr = (o && o.draw) || {}, unit = String(dr.unit || ''), k = Math.max(1, (o && o.textK) || 1), Wd = (o && o.width) || 300;
+    const pal = serPal(o, ms.map((s) => s.n)); ms.forEach((s, i) => { s.c = pal(i, s.n, s.col); s.st = lnStats(s); });
+    const still = !!((o && o.record && o.record.frame && o.record.frame.motion === false) || dr.motion === false);
+    const big = (o && (o.size === 'l' || o.size === 'xl')) || Wd >= 600;
+    /* x: the time when every point has one, else the place in its series (a shorter series ends at the right edge) */
+    const timed = ms.every((s) => s.pts.every((p) => p.t != null)); const allT = timed ? ms.flatMap((s) => s.pts.map((p) => p.t)) : [];
+    const t0 = timed ? Math.min(...allT) : 0, t1 = timed ? Math.max(...allT) : 0, useT = timed && t1 > t0, span = t1 - t0;
+    const N = Math.max(...ms.map((s) => s.abs || s.pts.length));
+    const xOf = (s, p, j) => useT ? (p.t - t0) / span * 1000 : (N > 1 ? ((s.abs ? p.i : (N - s.pts.length + j)) / (N - 1)) * 1000 : 500);
+    /* y: one scale for all - from 0 when nothing is negative, to 100 for a percent that stays under it, gridlines at a nice step */
+    const vs = ms.flatMap((s) => s.pts.map((p) => p.v)); let lo = Math.min(...vs), hi = Math.max(...vs);
+    const fixLo = dr.min != null && dr.min !== '', fixHi = dr.max != null && dr.max !== '';
+    if (fixLo) lo = num(dr.min); else if (lo >= 0) lo = 0;
+    if (fixHi) hi = num(dr.max); else if (unit === '%' && hi <= 100 && lo >= 0) hi = 100;
+    if (!(hi > lo)) hi = lo + 1;
+    let step = lnNice((hi - lo) / 2); if (!fixLo) lo = Math.floor(lo / step) * step; if (!fixHi) hi = Math.ceil(hi / step - 1e-9) * step;
+    if ((hi - lo) / step > 4) { step *= 2; if (!fixHi) hi = Math.ceil(hi / step - 1e-9) * step; }
+    const yOf = (v) => 100 - (v - lo) / ((hi - lo) || 1) * 100;
+    const ticks = []; for (let v = lo, n = 0; v <= hi + step * 1e-6 && n < 6; v += step, n++) ticks.push(Math.round(v * 1e6) / 1e6);
+    const tl = (v, top) => lnTick(v) + (unit === '%' ? '%' : (top && unit ? ' ' + unit : ''));
+    /* the key: every series, its colour, its latest value (and its peak when there is room); what does not fit is counted */
+    const kw = (s) => (22 + (s.n.length + tl(s.st.last).length + (big ? 9 : 0)) * 6) * k;
+    let kx = 0, krow = 1, kn = 0; const krows = big ? 3 : 2;
+    for (const s of ms) { const w = kw(s); if (kx && kx + w > Wd) { krow++; kx = 0; } if (krow > krows) break; kx += w + 10 * k; kn++; }
+    if (kn < ms.length) kn = Math.max(1, kn - 1);
+    const sItem = (s) => Object.assign({ name: s.n }, s.st, unit ? { unit } : {}, { points: s.pts.length }, useT ? { from: lnLabel(s.pts[0].t, span, true), to: lnLabel(s.pts[s.pts.length - 1].t, span, true) } : {});
+    const sTip = (s) => s.n + '\nlatest ' + tl(s.st.last, true) + '\nmin ' + tl(s.st.min, true) + ' · max ' + tl(s.st.max, true);
+    const one = ms.length === 1 && !ms[0].n;
+    const key = one ? '' : '<div class="vb-lnk">' + ms.slice(0, kn).map((s, i) => '<span data-b="ln' + i + '"' + itemAttr(sItem(s), 'series') + ' data-tip="' + esc(sTip(s)) + '"><i style="background:' + s.c + '"></i><em>' + esc(s.n) + '</em><b>' + esc(tl(s.st.last, true)) + '</b>' + (big ? '<small>peak ' + esc(tl(s.st.max)) + '</small>' : '') + '</span>').join('')
+      + (kn < ms.length ? '<span class="more" data-tip="' + esc(ms.slice(kn).map((s) => s.n + ' · ' + tl(s.st.last, true)).join('\n')) + '">+ ' + (ms.length - kn) + '</span>' : '') + '</div>';
+    const keyRows = one ? 0 : Math.min(krow, krows), xH = useT ? 13 * k : 0;
+    const plotH = Math.max(30, Math.round((H || 96) - keyRows * 15 * k - xH - (keyRows ? 3 : 0) - (xH ? 3 : 0) - 6 * k));
+    /* the drawing: gridlines, the series (a lone series with its area), a wide invisible twin of each line to hover, the columns */
+    const grid = ticks.map((v) => '<line class="gl" x1="0" x2="1000" y1="' + yOf(v).toFixed(2) + '" y2="' + yOf(v).toFixed(2) + '" vector-effect="non-scaling-stroke"/>').join('');
+    const ptsOf = (s) => s.pts.map((p, j) => xOf(s, p, j).toFixed(1) + ',' + yOf(p.v).toFixed(2)).join(' ');
+    const area = ms.length === 1 && ms[0].pts.length > 1 ? (() => { const s = ms[0], a = s.pts.map((p, j) => [xOf(s, p, j), yOf(p.v)]); return '<path d="M' + a[0][0].toFixed(1) + ',100 L' + a.map((q) => q[0].toFixed(1) + ',' + q[1].toFixed(2)).join(' L') + ' L' + a[a.length - 1][0].toFixed(1) + ',100 Z" fill="' + s.c + '" fill-opacity=".12"/>'; })() : '';
+    /* the columns: up to 48 (or one per point), each carrying every series' value nearest its middle */
+    /* the columns sit on the moments the longest series was sampled at (else on the places), at most 48, each as wide as
+       half-way to its neighbours; every series gives the value it has nearest the column's middle, inside the column */
+    let cx; if (useT) { const ref = ms.reduce((a, s) => (s.pts.length > a.pts.length ? s : a)); cx = ref.pts.map((p) => (p.t - t0) / span * 1000); }
+    else cx = Array.from({ length: Math.max(1, N) }, (_, c) => N > 1 ? c / (N - 1) * 1000 : 500);
+    if (cx.length > 48) { const st = (cx.length - 1) / 47; cx = Array.from({ length: 48 }, (_, c) => cx[Math.round(c * st)]); }
+    const cols = []; for (let c = 0; c < cx.length; c++) {
+      const xm = cx[c], x0 = c ? (cx[c - 1] + xm) / 2 : 0, x1 = c < cx.length - 1 ? (xm + cx[c + 1]) / 2 : 1000, tol = Math.max(x1 - x0, 2);
+      const at = {}, lines = []; let near = null;
+      ms.forEach((s) => { let best = null, bd = Infinity; s.pts.forEach((p, j) => { const dx = Math.abs(xOf(s, p, j) - xm); if (dx < bd) { bd = dx; best = p; } });
+        if (best && bd <= tol) { at[s.n || 'value'] = best.v; lines.push((s.n || 'value') + ' · ' + tl(best.v, true)); if (near == null) near = best; } });
+      if (!lines.length) continue;
+      const pIdx = Math.round(xm / 1000 * Math.max(0, N - 1)) + 1;
+      const head = useT && near && near.t != null ? lnLabel(near.t, span, true) : 'point ' + pIdx;
+      const it = Object.assign(useT ? { time: head } : { point: pIdx }, at, unit ? { unit } : {});
+      cols.push('<g class="hx"' + itemAttr(it, 'point') + ' data-tip="' + esc(head + '\n' + lines.join('\n')) + '"><rect x="' + x0.toFixed(1) + '" y="0" width="' + Math.max(1, x1 - x0).toFixed(1) + '" height="100"/><line x1="' + xm.toFixed(1) + '" x2="' + xm.toFixed(1) + '" y1="0" y2="100" vector-effect="non-scaling-stroke"/></g>');
+    }
+    const paths = ms.map((s, i) => { const pp = ptsOf(s), it = itemAttr(sItem(s), 'series'), tp = ' data-tip="' + esc(sTip(s)) + '"';
+      return '<polyline class="ln" data-b="ln' + i + '"' + it + tp + ' points="' + pp + '" stroke="' + s.c + '" vector-effect="non-scaling-stroke"/><polyline class="lnh" data-b="ln' + i + '"' + it + tp + ' points="' + pp + '" vector-effect="non-scaling-stroke"/>'; }).join('');
+    const ends = ms.map((s) => { const p = s.pts[s.pts.length - 1], j = s.pts.length - 1; return '<i class="end" style="left:' + (xOf(s, p, j) / 10).toFixed(2) + '%;top:' + yOf(p.v).toFixed(2) + '%;background:' + s.c + '"></i>'; }).join('');
+    const yw = Math.round(Math.max(22, Math.max(...ticks.map((v, i) => tl(v, i === ticks.length - 1).length)) * 5.8 + 4) * k);
+    const yax = '<div class="vb-lny" style="width:' + yw + 'px">' + ticks.map((v, i) => '<span style="top:' + yOf(v).toFixed(2) + '%">' + esc(tl(v, i === ticks.length - 1)) + '</span>').join('') + '</div>';
+    const xl = useT ? (Wd < 260 ? [0, 1] : [0, .5, 1]).map((f) => '<span style="left:' + (f * 100) + '%;transform:translateX(' + (f === 0 ? '0' : f === 1 ? '-100%' : '-50%') + ')">' + esc(lnLabel(t0 + f * span, span)) + '</span>').join('') : '';
+    return wrap('lines', key + '<div class="vb-lnp" style="height:' + plotH + 'px">' + yax + '<div class="vb-lnc"><svg viewBox="0 0 1000 100" preserveAspectRatio="none">' + grid + area + cols.join('') + paths + '</svg>' + ends + '</div></div>'
+      + (useT ? '<div class="vb-lnx"><span class="pad" style="width:' + yw + 'px"></span><div>' + xl + '</div></div>' : ''), still ? 'still' : '');
+  };
+  /* the status key a list of statuses draws under it: each status present, its colour and how many (two or more kinds) */
+  const stKey = (sts) => { const c = {}, order = []; sts.forEach((s) => { const k = String(s == null ? '' : s); if (!k) return; if (!(k in c)) { c[k] = 0; order.push(k); } c[k]++; });
+    return order.length > 1 ? '<div class="vb-stkey">' + order.slice(0, 6).map((k) => '<span' + itemAttr({ status: k, count: c[k] }, 'status') + ' data-tip="' + esc(k + '\n' + c[k] + ' of ' + sts.length) + '"><i style="background:' + stCol(k) + '"></i>' + esc(k) + '<b>' + c[k] + '</b></span>').join('') + '</div>' : ''; };
+  const LINES_CSS = `
+/* the multi-line chart and the keys (2026-09-28) */
+.vb-lines{gap:3px}
+.vb-lnk{display:flex;flex-wrap:wrap;gap:2px 10px;font-size:10px;line-height:1.35;min-width:0;flex:none}
+.vb-lnk span{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%;white-space:nowrap;cursor:pointer;color:var(--b-t2)}
+.vb-lnk i{width:11px;height:3px;border-radius:2px;flex:none}
+.vb-lnk em{font-style:normal;overflow:hidden;text-overflow:ellipsis}
+.vb-lnk b{font-family:var(--b-mono);font-weight:600;color:var(--b-t1)}
+.vb-lnk small{font-family:var(--b-mono);font-size:9px;color:var(--b-t3)}
+.vb-lnk span.more{color:var(--b-t3)}
+.vb-lnp{display:flex;gap:5px;width:100%;min-height:30px;flex:none;margin-top:6px}
+.vb-lny{position:relative;flex:none;font-family:var(--b-mono);font-size:9px;color:var(--b-t3)}
+.vb-lny span{position:absolute;right:0;transform:translateY(-50%);white-space:nowrap;line-height:1}
+.vb-lnc{position:relative;flex:1;min-width:0;height:100%}
+.vb-lnc svg{display:block;width:100%;height:100%;overflow:visible}
+.vb-lnc .gl{stroke:var(--b-bd2);stroke-width:1;stroke-dasharray:2 3}
+.vb-lnc .ln{fill:none;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round}
+.vb-lnc .lnh{fill:none;stroke:transparent;stroke-width:10;pointer-events:stroke}
+.vb-lnc .hx rect{fill:transparent}.vb-lnc .hx line{stroke:var(--b-t2);stroke-width:1;opacity:0}
+.vb-lnc .hx.hot{filter:none}.vb-lnc .hx.hot line{opacity:.6}.vb-lnc .hx.hot rect{fill:color-mix(in srgb,var(--b-t1) 6%,transparent)}
+.vb-lnc .end{position:absolute;width:6px;height:6px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px var(--b-surf);pointer-events:none}
+.vb-lines:has([data-b].hot) .ln:not(.hot){opacity:.25}.vb-lines .ln.hot{stroke-width:2.8;filter:none}
+.vb-lines:has(.vb-lnk span.hot) .end{opacity:.35}
+.vb-lnx{display:flex;gap:5px;height:12px;flex:none;font-family:var(--b-mono);font-size:9px;color:var(--b-t3)}
+.vb-lnx .pad{flex:none}.vb-lnx div{position:relative;flex:1;min-width:0}.vb-lnx div span{position:absolute;top:0;white-space:nowrap}
+:host(:not([data-entered])) .vb-lines:not(.still) .ln{animation:vb-lnwipe .9s cubic-bezier(.2,.7,.2,1) both}
+@keyframes vb-lnwipe{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
+.vb-lines.still *{animation:none!important;transition:none!important}
+/* keys on the other forms: the series dot of a small multiple, the status key under a list, the heat map's scale */
+.vb-sm{grid-template-columns:62px 1fr 44px}.vb-sm .vb-lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vb-sm .vb-lbl .vb-smk{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;vertical-align:1px}
+.vb-stkey{display:flex;flex-wrap:wrap;gap:2px 10px;font-size:9.5px;color:var(--b-t2);flex:none}
+.vb-stkey span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.vb-stkey i{width:7px;height:7px;border-radius:50%}.vb-stkey b{font-family:var(--b-mono);font-weight:400;color:var(--b-t1)}
+.vb-heatkey{display:flex;align-items:center;gap:6px;font-family:var(--b-mono);font-size:9px;color:var(--b-t3);flex:none}
+.vb-heatkey .g{flex:0 1 90px;height:6px;border-radius:3px}.vb-heatkey span{display:inline-flex;align-items:center;gap:4px}.vb-heatkey span i{width:8px;height:8px;border-radius:2px}
+.vb-area .vb-lg b,.vb-stacked-bar .vb-lg b{margin-left:4px}
+`;
 
   /* ── values: columns, ranked, lollipop, waterfall, pareto, box, diverging, bullet, threshold, radar, numbers, pills ── */
   R.column = (d, H, o) => {
@@ -991,10 +1251,15 @@
   // part up to its last separator, so the part that tells them apart is what the narrow label column shows
   const shortLabels = (names) => { if (names.length < 2) return names; let p = names[0]; names.forEach((n) => { while (p && n.indexOf(p) !== 0) p = p.slice(0, -1); });
     const cut = Math.max(p.lastIndexOf('/'), p.lastIndexOf(':'), p.lastIndexOf('.'), p.lastIndexOf('_'), p.lastIndexOf('-')) + 1; return cut >= 4 && names.every((n) => n.length > cut) ? names.map((n) => '…' + n.slice(cut)) : names; };
+  const rkShort = (v) => { const n = num(v), a = Math.abs(n), f = (x, u, p) => (Math.round(x * p) / p).toString() + u; return a >= 1e9 ? f(n / 1e9, 'B', 100) : a >= 1e6 ? f(n / 1e6, 'M', 100) : a >= 1e4 ? f(n / 1e3, 'k', 10) : fmt(v); };
   R.ranked = (d, H, o) => {
-    const kv = keyed(d).slice().sort((a, b) => b[1] - a[1]).slice(0, (o && o.draw && o.draw.limit) || barRowsFit(H)); if (!kv.length) return EMPTY('ranked bars need values'); const hi = kv[0][1] || 1, pal = palOf(o); const rw = rows(d);
+    const rw = rows(d), stOf = (r) => r.status ?? r.state, sts = rw.map(stOf).filter((s) => s != null && s !== '' && stCol(s) !== B.t3), withKey = new Set(sts.map(String)).size > 1;
+    const kv = keyed(d).slice().sort((a, b) => b[1] - a[1]).slice(0, (o && o.draw && o.draw.limit) || Math.max(1, barRowsFit(H) - (withKey ? 1 : 0))); if (!kv.length) return EMPTY('ranked bars need values'); const hi = kv[0][1] || 1, pal = palOf(o);
+    /* a bar's colour: its own, the record's palette, its row's status, its name when every name is a status word, else dv in rank order */
+    const usePal = !!(o && o.draw && o.draw.palette), allSt = kv.every((x) => stCol(x[0]) !== B.t3);
+    const rCol = (r, x, i) => r.col || (usePal ? pal(i, x[1], hi, stOf(r) ?? x[0]) : (sts.length && stOf(r) != null && stCol(stOf(r)) !== B.t3 ? stCol(stOf(r)) : (allSt ? stCol(x[0]) : pal(i))));
     const lbl = shortLabels(kv.map((x) => x[0]));
-    return wrap('ranked', kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<span class="vb-rw"' + itemAttr(Object.keys(r).length ? r : { name: x[0], value: x[1] }, 'bar') + '><span class="n" title="' + esc(x[0]) + '">' + esc(lbl[i]) + '</span><span class="tr"><i style="width:' + pct(x[1], hi).toFixed(1) + '%;background:' + (r.col || pal(i)) + '"></i></span><span class="v">' + esc(String(r.text ?? r.size ?? fmt(x[1]))) + '</span></span>'; }).join(''));
+    return wrap('ranked', kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<span class="vb-rw"' + itemAttr(Object.keys(r).length ? r : { name: x[0], value: x[1] }, 'bar') + '><span class="n" title="' + esc(x[0]) + '">' + esc(lbl[i]) + '</span><span class="tr"><i style="width:' + pct(x[1], hi).toFixed(1) + '%;background:' + rCol(r, x, i) + '"></i></span><span class="v">' + esc(String(r.text ?? r.size ?? rkShort(x[1]))) + '</span></span>'; }).join('') + (withKey ? stKey(sts) : ''));
   };
   R.lollipop = (d, H, o) => {
     const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('a lollipop needs values'); const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, pal = palOf(o);
@@ -1041,18 +1306,22 @@
     // the figures in one row when the body is wide enough for them (four in a 4-wide tile), else two a row, smaller - two
     // rows of 30 px figures and their labels were taller than a two-row tile's body
     const perRow = (o && o.width && o.width / kv.length >= 95) ? kv.length : Math.min(2, kv.length), nRows = Math.ceil(kv.length / perRow);
-    return wrap('numbers', '<div class="vb-bigs' + (nRows > 1 ? ' tworow' : '') + '" style="grid-template-columns:repeat(' + perRow + ',1fr)">' + kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<div' + itemAttr(Object.keys(r).length ? r : (bytes.has(x[0]) ? { name: x[0], value: fmtBytes(x[1]), unit: 'bytes' } : { name: x[0], value: x[1] }), 'figure') + '><b style="color:' + (r.col || (i === 0 ? B.ac : i === 1 ? B.ac2 : i === 2 ? B.ac3 : B.t1)) + '">' + esc(String(r.text ?? (bytes.has(x[0]) ? fmtBytes(x[1]) : fmt(x[1])))) + '</b><span>' + esc(x[0]) + '</span></div>'; }).join('') + '</div>');
+    /* a figure fits its cell: its size follows the cell (container units), and a count of a million or more in a row of three
+       or more is said short (1.06M) - the whole number stays in the item, the hover card and the drawer (2026-09-27) */
+    const shortN = (v) => { const n = num(v), a = Math.abs(n), f = (x, u) => (Math.round(x * 100) / 100).toString() + u; return a >= 1e9 ? f(n / 1e9, 'B') : a >= 1e6 ? f(n / 1e6, 'M') : fmt(n); };
+    const fig = (v) => (perRow >= 3 && Math.abs(num(v)) >= 1e6) ? shortN(v) : fmt(v);
+    return wrap('numbers', '<div class="vb-bigs' + (nRows > 1 ? ' tworow' : '') + '" style="grid-template-columns:repeat(' + perRow + ',1fr)">' + kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<div' + itemAttr(Object.keys(r).length ? r : (bytes.has(x[0]) ? { name: x[0], value: fmtBytes(x[1]), unit: 'bytes' } : { name: x[0], value: x[1] }), 'figure') + '><b style="color:' + (r.col || (i === 0 ? B.ac : i === 1 ? B.ac2 : i === 2 ? B.ac3 : B.t1)) + '">' + esc(String(r.text ?? (bytes.has(x[0]) ? fmtBytes(x[1]) : fig(x[1])))) + '</b><span>' + esc(x[0]) + '</span></div>'; }).join('') + '</div>');
   };
   // how many pills of these labels the body holds (a pill is 22 px tall with a 5 px gap; ~5.6 px a character at 9.5 px,
   // plus its padding, dot and figure): the rest become one "+ N" pill, never a third row cut in half
-  const pillsFit = (labels, H, W) => { const rowsN = Math.max(1, Math.floor(((H || 96) + 5) / 27)), w = Math.max(120, W || 300); let row = 0, x = 0, n = 0;
-    for (let i = 0; i < labels.length; i++) { const pw = Math.min(w, 32 + labels[i].length * 5.6); if (x && x + pw > w) { row++; x = 0; } if (row >= rowsN) break; x += pw + 5; n++; }
+  const pillsFit = (labels, H, W, k) => { k = k || 1; const rowsN = Math.max(1, Math.floor(((H || 96) + 5) / (27 * k))), w = Math.max(120, W || 300); let row = 0, x = 0, n = 0;
+    for (let i = 0; i < labels.length; i++) { const pw = Math.min(w, 32 * k + labels[i].length * 5.6 * k); if (x && x + pw > w) { row++; x = 0; } if (row >= rowsN) break; x += pw + 5 * k; n++; }
     return n >= labels.length ? n : Math.max(1, n - 1); };
   const pillMore = (k, st) => k > 0 ? '<span class="more" title="' + esc(st) + '">+ ' + k + '</span>' : '';
   R.pills = (d, H, o) => {
     const kv = keyed(d); const st = rows(d); const W = o && o.width;
-    if (st.length && st.some((r) => r.status != null || r.state != null)) { const n = pillsFit(st.map((r) => nameOf(r)), H, W); return wrap('pills', '<div class="vb-pillw">' + st.slice(0, n).map((r) => { const s = String(r.status ?? r.state ?? ''); return '<span' + itemAttr(r, 'pill') + ' title="' + esc(nameOf(r) + ' · ' + s) + '"><i style="background:' + stCol(s) + '"></i>' + esc(nameOf(r)) + '</span>'; }).join('') + pillMore(st.length - n, st.slice(n).map((r) => nameOf(r)).join(', ')) + '</div>'); }
-    if (kv.length) { const n = pillsFit(kv.map((x) => x[0] + ' ' + fmt(x[1])), H, W); return wrap('pills', '<div class="vb-pillw">' + kv.slice(0, n).map((x, i) => '<span' + itemAttr({ name: x[0], value: x[1] }, 'pill') + '><i style="background:' + DV(i) + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '</b></span>').join('') + pillMore(kv.length - n, kv.slice(n).map((x) => x[0]).join(', ')) + '</div>'); }
+    if (st.length && st.some((r) => r.status != null || r.state != null)) { const sts = st.map((r) => String(r.status ?? r.state ?? '')).filter(Boolean), withKey = new Set(sts).size > 1 && (H || 96) >= 56; const n = pillsFit(st.map((r) => nameOf(r)), withKey ? (H || 96) - 16 * ((o && o.textK) || 1) : H, W, o && o.textK); return wrap('pills', '<div class="vb-pillw">' + st.slice(0, n).map((r) => { const s = String(r.status ?? r.state ?? ''); return '<span' + itemAttr(r, 'pill') + ' title="' + esc(nameOf(r) + ' · ' + s) + '"><i style="background:' + stCol(s) + '"></i>' + esc(nameOf(r)) + '</span>'; }).join('') + pillMore(st.length - n, st.slice(n).map((r) => nameOf(r)).join(', ')) + '</div>' + (withKey ? stKey(sts) : '')); }
+    if (kv.length) { const n = pillsFit(kv.map((x) => x[0] + ' ' + fmt(x[1])), H, W, o && o.textK); return wrap('pills', '<div class="vb-pillw">' + kv.slice(0, n).map((x, i) => '<span' + itemAttr({ name: x[0], value: x[1] }, 'pill') + '><i style="background:' + DV(i) + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '</b></span>').join('') + pillMore(kv.length - n, kv.slice(n).map((x) => x[0]).join(', ')) + '</div>'); }
     return EMPTY('pills need rows with a status or { name: number }');
   };
 
@@ -1067,15 +1336,18 @@
     return wrap('waffle', '<div class="vb-waffle" style="grid-template-columns:repeat(' + cols + ',1fr)">' + fills.map((c) => '<i style="background:' + c + '"></i>').join('') + '</div>' + cap(esc(String((d && d.note) || (fmt(kv[0][1]) + ' of ' + fmt(tot) + ' ' + kv[0][0])))));
   };
   R['stacked-bar'] = (d, H, o) => {
-    const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('a stacked bar needs parts'); const tot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1, pal = palOf(o); const rw = rows(d);
-    return wrap('stacked-bar', '<span class="vb-stackbar">' + kv.map((x, i) => '<i style="width:' + (Math.abs(x[1]) / tot * 100).toFixed(1) + '%;background:' + pal(i) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + '"></i>').join('') + '</span><div class="vb-lg">' + kv.map((x, i) => { const r = rw.find((q) => nameOf(q) === x[0]) || {}; return '<span><i style="background:' + pal(i) + '"></i>' + esc(x[0]) + '<b>' + esc(String(r.text ?? fmt(x[1]))) + '</b></span>'; }).join('') + '</div>');
+    const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('a stacked bar needs parts'); const tot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1; const rw = rows(d);
+    const sp = serPal(o, kv.map((x) => x[0])), rOf = (x) => rw.find((q) => nameOf(q) === x[0]) || {}, pal = (i) => sp(i, kv[i][0], rOf(kv[i]).col), sh = (x) => Math.round(Math.abs(x[1]) / tot * 1000) / 10;
+    const it = (x) => itemAttr(Object.assign({}, rOf(x), { name: x[0], value: x[1], share: sh(x), of: tot }), 'part');
+    return wrap('stacked-bar', '<span class="vb-stackbar">' + kv.map((x, i) => '<i data-b="sb' + i + '"' + it(x) + ' style="width:' + (Math.abs(x[1]) / tot * 100).toFixed(1) + '%;background:' + pal(i) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + ' · ' + sh(x) + '%"></i>').join('') + '</span><div class="vb-lg">' + kv.map((x, i) => { const r = rOf(x); return '<span data-b="sb' + i + '"' + it(x) + '><i style="background:' + pal(i) + '"></i>' + esc(x[0]) + '<b>' + esc(String(r.text ?? fmt(x[1]))) + '</b></span>'; }).join('') + '</div>');
   };
   R.treemap = (d, H, o) => {
-    const kv = keyed(d).slice().sort((a, b) => b[1] - a[1]).slice(0, 10); if (!kv.length) return EMPTY('a treemap needs parts'); const pal = palOf(o);
+    const kv = keyed(d).slice().sort((a, b) => b[1] - a[1]).slice(0, 10); if (!kv.length) return EMPTY('a treemap needs parts'); const sp = serPal(o, kv.map((x) => x[0])), pal = (i) => sp(i, kv[i][0]);
+    const tmTot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1, tmSh = (x) => Math.round(Math.abs(x[1]) / tmTot * 1000) / 10;
     // the board's rule for its eight: two big, two middling, the rest small — widths within a row by share
     // the rows share the whole height between them (three rows 45 · 28 · 24; one or two stretched to fill it, not left short)
     const rowsOf = [kv.slice(0, 2), kv.slice(2, 4), kv.slice(4)].filter((r) => r.length), hs0 = [45, 28, 24].slice(0, rowsOf.length), hsum = hs0.reduce((a, b) => a + b, 0), hs = hs0.map((h) => Math.floor(h * 97 / hsum));
-    return wrap('treemap', '<div class="vb-tmap" style="height:' + chH(H, 4) + 'px">' + rowsOf.map((r, ri) => { const t = r.reduce((s, x) => s + x[1], 0) || 1; return r.map((x) => '<span style="width:calc(' + (x[1] / t * 100).toFixed(1) + '% - 2px);height:' + hs[ri] + '%;background:' + pal(kv.indexOf(x)) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + '">' + esc(x[0]) + '</span>').join(''); }).join('') + '</div>');
+    return wrap('treemap', '<div class="vb-tmap" style="height:' + chH(H, 4) + 'px">' + rowsOf.map((r, ri) => { const t = r.reduce((s, x) => s + x[1], 0) || 1; return r.map((x) => '<span' + itemAttr({ name: x[0], value: x[1], share: tmSh(x), of: tmTot }, 'part') + ' style="width:calc(' + (x[1] / t * 100).toFixed(1) + '% - 2px);height:' + hs[ri] + '%;background:' + pal(kv.indexOf(x)) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + ' · ' + tmSh(x) + '%">' + esc(x[0]) + '</span>').join(''); }).join('') + '</div>');
   };
 
   /* ── matrices and calendars: the heat map, the status matrix, the dot matrix, the calendar, node health tabs ── */
@@ -1090,11 +1362,12 @@
       // the cells share the body's height (square cells three to a row were 130 px tall and ran off the tile), the columns are
       // named over the grid, a cell wide enough says its value; palette load colours a cell by its own value (a percent
       // against 100); draw.total false drops the row sums (cpu + ram + disk adds up to nothing)
-      const nr = Math.min(8, m.rows.length), hd = m.cols.length ? 14 : 0, cellH = Math.max(8, Math.min(26, Math.floor(((H || 96) - hd) / nr) - 4));
+      const nr = Math.min(8, m.rows.length), hd = m.cols.length ? 14 : 0, kh = (!(o && o.draw && o.draw.key === false) && (H || 96) >= 64) ? 14 : 0, cellH = Math.max(8, Math.min(26, Math.floor(((H || 96) - hd - kh) / nr) - 4));
       const load = o && o.draw && o.draw.palette === 'load', lpal = palOf(o, 'load'), tot = !(o && o.draw && o.draw.total === false), wide = !o || !o.width || o.width / Math.max(1, m.cols.length || m.rows[0].v.length) >= 60;
       const cols = m.cols.length ? m.cols.length : m.rows[0].v.length, grid = 'grid-template-columns:repeat(' + cols + ',1fr)';
       const head = hd ? '<span class="vb-heatrow hd"><span></span><span class="vb-heat" style="' + grid + '">' + m.cols.map((c) => '<b title="' + esc(String(c)) + '">' + esc(String(c)) + '</b>').join('') + '</span>' + (tot ? '<span></span>' : '') + '</span>' : '';
-      return wrap('heat', head + m.rows.slice(0, nr).map((r, ri) => '<span class="vb-heatrow' + (tot ? '' : ' nt') + '"' + itemAttr(m.cols.length ? r.v.reduce((o3, x, ci) => { o3[m.cols[ci] || ('c' + ci)] = x; return o3; }, { name: r.n }) : { name: r.n, values: r.v }, 'row') + '><span class="vb-lbl" title="' + esc(r.n) + '">' + esc(r.n) + '</span><span class="vb-heat" style="' + grid + '">' + r.v.map((x, ci) => '<i style="height:' + cellH + 'px;aspect-ratio:auto;background:' + (load ? mix(lpal(ci, num(x), hi <= 100 ? 100 : hi), 80, 'transparent') : mix(pal(ri), Math.round(8 + num(x) / hi * 88), 'transparent')) + '" title="' + esc(r.n) + (m.cols[ci] ? ' · ' + esc(String(m.cols[ci])) : '') + ' · ' + fmt(x) + '">' + (wide && cellH >= 14 ? esc(fmt(x)) : '') + '</i>').join('') + '</span>' + (tot ? '<span class="v">' + esc(fmt(r.t != null ? r.t : r.v.reduce((s, x) => s + num(x), 0))) + '</span>' : '') + '</span>').join(''), 'vb-heatfit'); }
+      return wrap('heat', head + m.rows.slice(0, nr).map((r, ri) => '<span class="vb-heatrow' + (tot ? '' : ' nt') + '"' + itemAttr(m.cols.length ? r.v.reduce((o3, x, ci) => { o3[m.cols[ci] || ('c' + ci)] = x; return o3; }, { name: r.n }) : { name: r.n, values: r.v }, 'row') + '><span class="vb-lbl" title="' + esc(r.n) + '">' + esc(r.n) + '</span><span class="vb-heat" style="' + grid + '">' + r.v.map((x, ci) => '<i style="height:' + cellH + 'px;aspect-ratio:auto;background:' + (load ? mix(lpal(ci, num(x), hi <= 100 ? 100 : hi), 80, 'transparent') : mix(pal(ri), Math.round(8 + num(x) / hi * 88), 'transparent')) + '" title="' + esc(r.n) + (m.cols[ci] ? ' · ' + esc(String(m.cols[ci])) : '') + ' · ' + fmt(x) + '">' + (wide && cellH >= 14 ? esc(fmt(x)) : '') + '</i>').join('') + '</span>' + (tot ? '<span class="v">' + esc(fmt(r.t != null ? r.t : r.v.reduce((s, x) => s + num(x), 0))) + '</span>' : '') + '</span>').join('') + (kh ? (() => { if (load) { const bd = (o.draw && Array.isArray(o.draw.bands) && o.draw.bands.length) ? o.draw.bands.map(num) : [60, 85]; return '<div class="vb-heatkey"><span><i style="background:' + mix(B.ac2, 80) + '"></i>&lt; ' + fmt(bd[0]) + '</span><span><i style="background:' + mix(B.ac3, 80) + '"></i>' + fmt(bd[0]) + '–' + fmt(bd[1]) + '</span><span><i style="background:' + mix(B.ac4, 80) + '"></i>≥ ' + fmt(bd[1]) + '</span></div>'; }
+        return '<div class="vb-heatkey"><span>0</span><span class="g" style="background:linear-gradient(90deg,' + mix(B.t2, 10) + ',' + mix(B.t2, 96) + ')"></span><span>' + esc(fmt(hi)) + '</span></div>'; })() : ''), 'vb-heatfit'); }
     if (!kv.length) return EMPTY('a heat map needs rows of numbers');
     const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, cols = Math.min(12, Math.max(4, kv.length)); const pal = palOf(o, 'load');
     return wrap('heat', '<div class="vb-heatstrip" style="grid-template-columns:repeat(' + cols + ',1fr)">' + kv.slice(0, 48).map((x, i) => '<i style="background:' + pal(i, x[1], hi) + ';opacity:' + (0.25 + 0.75 * Math.abs(x[1]) / hi).toFixed(2) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + '"></i>').join('') + '</div>');
@@ -1160,7 +1433,7 @@
     const kc = (k) => /err|fail|crit/i.test(k) ? B.ac4 : /warn/i.test(k) ? B.ac3 : /loop|step|run/i.test(k) ? B.t1 : B.t2;
     // as many lines as the body holds (a line is ~15 px: 9 px type at 1.55 + the gap) - sixteen lines in a two-row tile were
     // squashed onto each other - and the NEWEST of them, whichever end of the list the source keeps its newest at
-    const n = (o && o.draw && (o.draw.limit || o.draw.tail)) || Math.max(3, Math.floor(H / 15));
+    const n = (o && o.draw && (o.draw.limit || o.draw.tail)) || Math.max(3, Math.floor(H / (15 * ((o && o.textK) || 1))));
     const tOf = (r) => { const v = r.t ?? r.ts ?? r.time ?? r.when; const x = typeof v === 'number' ? v : Date.parse(String(v || '')); return isFinite(x) ? x : NaN; };
     const newestFirst = rw.length > 1 && tOf(rw[0]) > tOf(rw[rw.length - 1]);
     return wrap('log', '<div class="vb-log">' + (newestFirst ? rw.slice(0, n) : rw.slice(-n)).map((r) => { const k = String(r.kind ?? r.level ?? r.type ?? ''); return '<span' + itemAttr(r, 'line') + ' style="color:' + (r.col || kc(k)) + '"><span class="t">' + esc(hhmm(r.t ?? r.ts ?? r.time ?? r.when)) + '</span> ' + (k ? '<span class="k">' + esc(k) + '</span> ' : '') + esc(txt(r)) + '</span>'; }).join('') + '</div>');
@@ -1539,8 +1812,17 @@
     return isoForm('models', [plate(rw.length * .92 + .2, 2)].concat(rw.map((m, i) => { const p = num(m.params ?? m.b ?? m.size ?? 1); const s = .5 + Math.log10(p + 1) * .5; return Bx(i * .92, .5, 0, s * .9, s * .9, s, m.resident || m.loaded ? B.ac : B.bd2, '', nameOf(m), m); })), o, H); };
   R.activity = (d, H, o) => { const ev = evsOf(d).slice(-18); if (!ev.length) return EMPTY('activity needs events'); const dur = (r) => num(r.duration ?? r.ms ?? r.seconds ?? 0); const hi = Math.max(...ev.map(dur)) || 1;
     return isoForm('activity', [Bx(0, .5, 0, ev.length * .38 + .2, .3, .08, B.bd2)].concat(ev.map((r, i) => Bx(i * .38, .45, .08, .28, .4, .2 + (dur(r) ? dur(r) / hi * .7 : rng(i * 3) * .7), /err|fail/i.test(String(r.kind ?? r.level ?? '')) ? B.ac4 : DV(String(r.kind ?? '').length + i), '', txt(r), r))), o, H); };
-  R.sandboxes = (d, H, o) => { const rw = rows(d).slice(0, 6); if (!rw.length) return EMPTY('sandboxes need rows'); const P = [[.6, .6], [2.4, .9], [3.7, 1.9], [.8, 2.0], [2.6, 2.3], [1.6, 1.4]];
-    return isoForm('sandboxes', [Bx(0, 0, 0, 5.2, .18, .5, B.bd2), Bx(0, 3, 0, 5.2, .18, .5, B.bd2), Bx(0, 0, 0, .18, 3.2, .5, B.bd2), Bx(5, 0, 0, .18, 3.2, .5, B.bd2), Bx(.18, .18, -.1, 4.8, 2.8, .1, B.s3)].concat(rw.flatMap((s, i) => { const idle = /idle|paused|stopped/.test(String(s.status ?? s.state ?? '')); const sz = idle ? 1 : 1.2; return [Bx(P[i][0], P[i][1], 0, sz, sz, idle ? .5 : .8, idle ? B.t3 : DV(i + 2), '', nameOf(s), s)].concat(s.pinned ? [Bx(P[i][0] + .5, P[i][1] + .5, .8, .08, .08, 1.1, B.t2), Bx(P[i][0] + .55, P[i][1] + .5, 1.6, .5, .05, .3, B.ac2)] : []); })), o, H, { tilt: 30 }); };
+  /* every sandbox, up to draw.max (48) - it drew the first six at six fixed places (owner, 2026-09-27: "could actually display
+     all the sandboxes - iso elements should be able to scale up to a max number of participant objects"): a grid that fills
+     the plate, each block as big as the count allows, coloured by its role, low and grey when it is not running */
+  const isoGrid = (n, W0, D0) => { const cols = Math.max(1, Math.ceil(Math.sqrt(n * W0 / D0))), rowsN = Math.max(1, Math.ceil(n / cols)); return { cols, cell: Math.min(W0 / cols, D0 / rowsN) }; };
+  R.sandboxes = (d, H, o) => { const all = rows(d); if (!all.length) return EMPTY('sandboxes need rows');
+    const rw = all.slice(0, Math.max(1, +(o && o.draw && o.draw.max) || 48)), g = isoGrid(rw.length, 4.8, 2.8), roles = [];
+    const roleCol = (r) => { const k = String(r || ''); let i = roles.indexOf(k); if (i < 0) { roles.push(k); i = roles.length - 1; } return DV(i + 2); };
+    const blocks = rw.flatMap((s, i) => { const st = String(s.status ?? s.state ?? s.running ?? ''); const idle = s.running === false || /^(idle|paused|stopped|false|no|off)$/i.test(st);
+      const sz = g.cell * (idle ? .62 : .78), x = .18 + (i % g.cols) * g.cell + (g.cell - sz) / 2, y = .18 + Math.floor(i / g.cols) * g.cell + (g.cell - sz) / 2, h = Math.max(.2, Math.min(1, g.cell * .9)) * (idle ? .55 : 1);
+      return [Bx(x, y, 0, sz, sz, h, idle ? B.t3 : roleCol(s.role), '', nameOf(s), s)].concat(s.pinned ? [Bx(x + sz * .42, y + sz * .42, h, .06, .06, .5 * h + .3, B.t2)] : []); });
+    return isoForm('sandboxes', [Bx(0, 0, 0, 5.2, .18, .5, B.bd2), Bx(0, 3, 0, 5.2, .18, .5, B.bd2), Bx(0, 0, 0, .18, 3.2, .5, B.bd2), Bx(5, 0, 0, .18, 3.2, .5, B.bd2), Bx(.18, .18, -.1, 4.8, 2.8, .1, B.s3)].concat(blocks), o, H, { tilt: 30 }); };
 
   /* ── the ISO FRAME: real markup on the plane — a screen standing on the plate or a sheet lying on it ── */
   const XIF_KIND = { terminal: 'term', term: 'term', page: 'page', notebook: 'nb', panel: 'panel', web: 'web', browser: 'web', chart: 'chart', image: 'img', img: 'img', chat: 'chat', dashboard: 'dash', dash: 'dash', form: 'form', list: 'list' };
@@ -1942,22 +2224,42 @@
   R.vgraph = (d, H, o) => { const G = toVeraGraph(d); const layer = o && o.draw && o.draw.layer; if (!G.nodes.length && !layer) return EMPTY('a graph needs nodes (and edges), or draw.layer');
     const mode = String((o && o.draw && o.draw.mode) || 'graph'), h = Math.max(90, (H || 200) - 14);
     let fb = ''; try { fb = G.nodes.length ? R.graph({ nodes: G.nodes.map((n) => ({ id: n.id, label: n.label, family: n.type })), links: G.edges.map((e) => ({ source: e.from, target: e.to, from: e.from, to: e.to })) }, h, o) : ''; } catch (_) { fb = ''; }
-    return wrap('vgraph', '<div class="vb-vgraph" style="height:' + h + 'px"><slot name="vgraph">' + fb + '</slot></div><span class="vb-lbl">' + (G.nodes.length ? G.nodes.length + ' nodes · ' + G.edges.length + ' edges' : 'the ' + esc(layer) + ' graph') + ' · ' + esc(mode) + '</span>'); };
+    return wrap('vgraph', '<div class="vb-vgraph" style="height:' + h + 'px"><slot name="vgraph">' + fb + '</slot></div><span class="vb-lbl">' + (G.nodes.length ? G.nodes.length + ' nodes · ' + G.edges.length + ' edges' : 'the ' + esc(layer) + ' graph') + '</span>'); };
   let _vgLoad = null;
   const ensureVeraGraph = (base) => { if (window.veraUI && window.veraUI.Graph && window.veraUI.Graph.create) return Promise.resolve(window.veraUI.Graph);
     if (_vgLoad) return _vgLoad; _vgLoad = new Promise((ok) => { const s = document.createElement('script'); s.src = (base || '') + '/ui/vera-graph.js'; s.onload = () => ok(window.veraUI && window.veraUI.Graph); s.onerror = () => { _vgLoad = null; ok(null); }; document.head.appendChild(s); }); return _vgLoad; };
+
+  /* colour for a Vera graph in a tile (draw.colour: 'status'): each type (the estate's planes: clients, work, core, services,
+     runtimes, hosts, devices) its own colour, a node whose status is a problem in red or amber - the key says which is which */
+  const VG_PAL = ['#5b9bd5', '#6dbf7b', '#c678dd', '#e0a23c', '#56b6c2', '#d19a66', '#98c379', '#e5c07b', '#61afef', '#be5046'];
+  const VG_BAD = '#e5534b', VG_WARN = '#e0a23c';
+  const vgStatus = (p) => { const s = String((p && (p.status ?? p.state ?? p.health)) ?? '').toLowerCase(); return /^(down|fail|failed|error|err|dead|offline|stopped|unreachable|timeout)$/.test(s) ? 'bad' : /^(warn|warning|degraded|stale|busy|paused|pending|queued)$/.test(s) ? 'warn' : ''; };
+  function vgColour(G) { const types = []; G.nodes.forEach((n) => { if (!types.includes(n.type)) types.push(n.type); });
+    const tcol = {}; types.forEach((t, i) => { tcol[t] = VG_PAL[i % VG_PAL.length]; });
+    let bad = 0, warn = 0; G.nodes.forEach((n) => { const st = vgStatus(n.props); n.color = st === 'bad' ? VG_BAD : st === 'warn' ? VG_WARN : tcol[n.type]; if (st === 'bad') bad++; if (st === 'warn') warn++; });
+    return { tcol, bad, warn }; }
+  function vgKey(host, k) { let el = host.querySelector(':scope > .vw-vgkey'); if (!el) { el = document.createElement('div'); el.className = 'vw-vgkey'; host.appendChild(el); }
+    el.innerHTML = Object.keys(k.tcol).map((t) => '<span><i style="background:' + k.tcol[t] + '"></i>' + esc(t) + '</span>').join('') + (k.warn ? '<span><i style="background:' + VG_WARN + '"></i>warning ' + k.warn + '</span>' : '') + (k.bad ? '<span><i style="background:' + VG_BAD + '"></i>problem ' + k.bad + '</span>' : ''); }
   function mountVeraGraph(el, rec, data, size) {
     const draw0 = (rec && rec.draw) || {}, mode = String(draw0.mode || 'graph'), layer = draw0.layer ? String(draw0.layer) : '';
-    let host = el._vgHost; if (!host) { host = document.createElement('div'); host.setAttribute('slot', 'vgraph'); host.className = 'vw-vgraph-host'; host.style.cssText = 'width:100%;height:100%;min-height:80px;position:relative;display:flex;flex-direction:column'; el.appendChild(host); el._vgHost = host; }
+    const minC = draw0.chrome === 'min'; let host = el._vgHost; if (!host) { host = document.createElement('div'); host.setAttribute('slot', 'vgraph'); host.className = 'vw-vgraph-host' + (minC ? ' min' : ''); host.style.cssText = 'width:100%;height:100%;min-height:80px;position:relative;display:flex;flex-direction:column'; el.appendChild(host); el._vgHost = host; }
     return ensureVeraGraph(el.base).then((Gr) => { if (!Gr || el._rec !== rec) return;
       let g = el._vg; const big = size === 'l' || size === 'xl';
-      if (!g || el._vgBig !== big) { if (g && g.destroy) { try { g.destroy(); } catch (_) {} } host.innerHTML = ''; g = el._vg = Gr.create(host, { height: 'fill', showSearch: big, showLegend: size === 'xl', showLeftPanel: size === 'xl', sidebar: false, actionsEnabled: false, subscribeLiveEvents: false, apiBase: el.base || '',
+      if (!g || el._vgBig !== big) { if (g && g.destroy) { try { g.destroy(); } catch (_) {} } host.innerHTML = ''; g = el._vg = Gr.create(host, { height: 'fill', showSearch: big, showLegend: size === 'xl' && !minC, showLeftPanel: size === 'xl' && !minC, sidebar: false, actionsEnabled: false, subscribeLiveEvents: false, apiBase: el.base || '',
           // a node is an item like any other: on a host with the drawer, a click opens the drawer on the node's own data
           onNodeClick: (node) => { if (!el.hasAttribute('item-drawer')) return; const it = (node && node.props && typeof node.props === 'object') ? node.props : node; const rec2 = recOf(el), detail = { record: rec2, item: it, path: 'node ' + (node && node.id), ref: rowRef(it), data: el._data, host: el };
-            let go = true; try { go = el.dispatchEvent(new CustomEvent('widget:item', { bubbles: true, composed: true, cancelable: true, detail })); } catch (_) {} if (go) drawer(detail); return false; } }); el._vgBig = big; el._vgSig = ''; }
+            let go = true; try { go = el.dispatchEvent(new CustomEvent('widget:item', { bubbles: true, composed: true, cancelable: true, detail })); } catch (_) {} if (go) drawer(detail); return false; } }); el._vgBig = big; el._vgSig = ''; el._vgMode = ''; el._vgMode0 = undefined; el._vgSet = false; }
       if (layer && !rec.source) { const sig = 'layer:' + layer + ':' + JSON.stringify(resolveArgs(rec.read && rec.read.args, el._ui)); if (sig !== el._vgSig) { el._vgSig = sig; try { g.fetchSnapshot(layer, resolveArgs(rec.read && rec.read.args, el._ui)); } catch (_) {} } }
-      else { const G = toVeraGraph(data); const sig = G.nodes.length + ':' + G.edges.length + ':' + G.nodes.slice(0, 50).map((n) => n.id).join(','); if (sig !== el._vgSig) { el._vgSig = sig; try { g.load(G); } catch (_) {} } }
-      try { if (g.setMode && (g.getMode ? g.getMode() : '') !== mode) g.setMode(mode); } catch (_) {}
+      else { const G = toVeraGraph(data); const ck = draw0.colour === 'status' ? vgColour(G) : null; if (ck) vgKey(host, ck); const sig = G.nodes.length + ':' + G.edges.length + ':' + G.nodes.slice(0, 50).map((n) => n.id + (n.color || '')).join(','); if (sig !== el._vgSig) { el._vgSig = sig; try { g.load(G); } catch (_) {} } }
+      /* the mode is the record's the first time (or the one the viewer chose before, kept per widget); after that it is left
+         alone - re-applying it on every refresh flicked Live operations back to Estate 3D from Exploded (2026-09-28). A change
+         counts as the viewer's only once the mode was really applied: the modes load after the graph (vera-graph-modes.js), so
+         the first setMode can find none and leave 'graph' - that is retried, never stored as a pick */
+      { const mk = 'vera.vgraph.pick.' + key(rec), cur = g.getMode ? g.getMode() : '';
+        const apply = () => { try { if (g.setMode && (g.getMode ? g.getMode() : '') !== el._vgMode) g.setMode(el._vgMode); } catch (_) {} el._vgSet = !g.getMode || g.getMode() === el._vgMode; return el._vgSet; };
+        if (el._vgSet && cur && cur !== el._vgMode) { el._vgMode = cur; try { localStorage.setItem(mk, cur); } catch (_) {} }
+        else if (!el._vgSet || el._vgMode0 !== mode) { let want = (el._vgMode0 === mode && el._vgMode) || mode; if (el._vgMode0 === undefined) { try { want = localStorage.getItem(mk) || mode; } catch (_) {} }
+          el._vgMode = want; el._vgMode0 = mode; if (cur !== want) { try { if (g.setMode) g.setMode(want); } catch (_) {} } if (!apply()) { let n = 0; const again = () => { if (el._vg !== g || apply() || ++n > 20) return; setTimeout(again, 400); }; setTimeout(again, 400); } } }
       try { g.resize && g.resize(); } catch (_) {}
       return g; }); }
   function unmountVeraGraph(el) { if (el._vg && el._vg.destroy) { try { el._vg.destroy(); } catch (_) {} } el._vg = null; if (el._vgHost) { el._vgHost.remove(); el._vgHost = null; } el._vgSig = ''; }
@@ -2251,9 +2553,9 @@
      command centre) mounted into the widget's slot - so each is a tile a dashboard, the canvas or a lens can place,
      drawn by the element that already draws it on the page. draw.tag names it (draw.attrs its attributes); the
      script is fetched once from /ui/elements/. At XS/S it says what it is. */
-  const EL_SRC = { 'vera-git-graph': 'git_graph', 'vera-author-map': 'author_map', 'vera-test-activity-timeline': 'test_activity_timeline', 'vera-error-radar': 'error_radar',
+  const EL_SRC = { 'vera-git-graph': 'git_graph', 'vera-author-map': 'author_map', 'vera-node-workers': 'node_workers', 'vera-test-activity-timeline': 'test_activity_timeline', 'vera-error-radar': 'error_radar',
     'vera-branch-pipeline': 'branch_pipeline', 'vera-task-matrix': 'task_matrix', 'vera-bench-compare': 'bench_compare', 'vera-ollama-map': 'ollama_map', 'vera-ci-ops': 'ci_ops', 'vera-agent-loop-output': 'agent_loop_output' };
-  const EL_NAME = { 'vera-git-graph': 'commit graph', 'vera-author-map': 'authorship', 'vera-test-activity-timeline': 'test activity', 'vera-error-radar': 'error radar', 'vera-branch-pipeline': 'branch pipeline', 'vera-task-matrix': 'task matrix', 'vera-bench-compare': 'bench compare', 'vera-ollama-map': 'routing map', 'vera-ci-ops': 'CI command centre' };
+  const EL_NAME = { 'vera-git-graph': 'commit graph', 'vera-author-map': 'authorship', 'vera-node-workers': 'node workers', 'vera-test-activity-timeline': 'test activity', 'vera-error-radar': 'error radar', 'vera-branch-pipeline': 'branch pipeline', 'vera-task-matrix': 'task matrix', 'vera-bench-compare': 'bench compare', 'vera-ollama-map': 'routing map', 'vera-ci-ops': 'CI command centre' };
   const elOf = (d, o) => { const dr = (o && o.draw) || (o && o.record && o.record.draw) || {}; const tag = String(dr.tag || (d && d.tag) || '').toLowerCase(); return { tag, attrs: dr.attrs || (d && d.attrs) || {} }; };
   R.element = (d, H, o) => { const e = elOf(d, o); if (!/^vera-[a-z0-9-]+$/.test(e.tag)) return wrap('element', '<div class="vb-el-pick"><b>A page element</b><span>draw.tag names it:</span>' + Object.keys(EL_NAME).map((t) => '<code>' + esc(t) + '</code><i>' + esc(EL_NAME[t]) + '</i>').join('') + '</div>');
     return wrap('element', '<div class="vb-el" style="height:' + Math.max(90, (H || 200) - 4) + 'px"><slot name="el"><span class="vb-lbl">' + esc(EL_NAME[e.tag] || e.tag) + '</span></slot></div>'); };
@@ -2479,7 +2781,7 @@
     + '[data-item]{cursor:pointer}';
 
   /* ── draw at a size: the composition around the form ─────────────────── */
-  const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞' };
+  const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞', lines: '≋' };
   // the glyph a size below M carries (the Sizes board): a ring for a level or a share, a spark for a series, a tube for
   // named values, a dot for events and graphs, the count glyph for the rest — drawn from the data, never a character
   function glyphOf(form, data) {
@@ -2517,13 +2819,13 @@
     if (size === 's' && !CI_FORMS.test(f) && (DRAWN[f] === 'items' || f === 'kv' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f, d, opts); if (cs) return cs; }
     if (size === 's' && f !== 'calnav') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
-    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || CI_FORMS.test(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv|month|schedule|calnav|vgraph)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
+    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || CI_FORMS.test(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv|numbers|month|schedule|calnav|vgraph)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
     // L: the form plus its detail list beside it; XL: the form, its table, its log
     // the detail list beside the form holds the rows its body has room for (~16 px a row) - eight in a two-row tile ran
     // past its foot - and a form that already names every value it draws (ranked bars, pills, a number grid, a
     // legend) has none: the list only repeated it
     const dRows = Math.max(2, Math.min(8, Math.floor(((opts.height || HEIGHT[size]) - 4) / 16)));
-    const LABELLED = /^(ranked|bullet|lollipop|temps|pills|numbers|kv|funnel|stacked-bar|treemap|donut|waffle|gauge|threshold|diverging|radar|pareto|histogram|column|bars|heat|matrix|small-multiples|spark-table|horizon)$/;
+    const LABELLED = /^(ranked|bullet|lollipop|temps|pills|numbers|kv|funnel|stacked-bar|treemap|donut|waffle|gauge|threshold|diverging|radar|pareto|histogram|column|bars|heat|matrix|small-multiples|spark-table|horizon|lines)$/;
     const kv = LABELLED.test(f) ? [] : keyed(d).slice(0, dRows); const rw = LABELLED.test(f) ? [] : rows(d).slice(0, dRows);
     const detail = kv.length ? '<div class="vw-detail">' + kv.map((x) => '<div><span>' + esc(x[0]) + '</span><b>' + esc(fmt(x[1])) + '</b></div>').join('') + '</div>'
       : (rw.length ? '<div class="vw-detail">' + rw.slice(0, 8).map((r) => '<div><span>' + esc(String(r.name ?? r.title ?? r.text ?? r.path ?? r.id ?? '')) + '</span><b>' + esc(String(r.value ?? r.v ?? r.status ?? r.count ?? '')) + '</b></div>').join('') + '</div>'
@@ -2540,6 +2842,242 @@
   const DERIVED = new Set(['structgraph']);
   function forms() { return Object.keys(DRAWN).map((id) => ({ id, shape: DRAWN[id], sizes: SIZES.slice(), drawn: true, derived: DERIVED.has(id), iso: !!R[id + '@iso'] || ISO_ONLY.has(id) })).concat(Object.keys(ALIAS).filter((id) => !DRAWN[id]).map((id) => ({ id, shape: DRAWN[ALIAS[id]] || '', sizes: SIZES.slice(), drawn: true, as: ALIAS[id] }))); }
   const ISO_ONLY = new Set(['dial', 'tank', 'stacks', 'conveyor', 'city', 'shelf', 'stack', 'sweep', 'meter-panel', 'pipes', 'library', 'pages', 'approvals', 'wiki', 'notices', 'devices', 'notebook', 'hosts', 'containers', 'models', 'datasets', 'sandboxes', 'activity', 'frame', 'racks']);
+
+  /* ══ THE IMAGE STUDIO'S FORMS (owner, 2026-09-27: "can we have a widget for displaying sprites and characters and images
+     from the image studio") ═══════════════════════════════════════════════════════════════════════════════════════════
+       images     a justified grid of real thumbnails: each tile as wide as its image's aspect (width · height from the row,
+                  else square), lazy-loaded, its prompt or title on hover; a row that is not an image (an html report) is a
+                  tile of its kind. Every tile carries its row, so a click opens the drawer - with the image large.
+       sprite     one sprite sheet animated: its frames stepped at the sheet's own fps (CSS steps, no script), pixel-crisp on
+                  a checkerboard; it plays by itself and holds still under the pointer (draw.play 'hover' plays it only
+                  there); the strip under it is its animations - a click shows that one. It reads a spritegen record
+                  (sheets + urls), a character's sheet, a list of either (draw.id picks one, else the first with a sheet)
+                  or a bare sheet {url, columns, rows, count, fps, frame_width, frame_height}; frames with no sheet flip.
+       sprites    the sprite library: a card per sprite character, its idle (else first) animation playing under the
+                  pointer, its name, what it has (animations · size); the ones with nothing drawn yet are counted
+       character  a character card: the portrait, the name and what it is, its traits as chips, its numbers (stats) as
+                  bars, its expressions and its sprites as strips; a list draws the one draw.id names (else the first) - or
+                  with draw.roster every one as a small card
+     Motion is off when the record says frame.motion false (and under prefers-reduced-motion): a sprite shows its first
+     frame. Addresses the studio answers with ('/images/file/…', '/spritegen/asset?…') are read against the host's base. */
+  const stAbs = (u, o) => { const s = String(u == null ? '' : u).trim(); if (!s) return ''; if (/^(data:|https?:|blob:)/i.test(s)) return s; const b = String((o && o.base) || '').replace(/\/$/, ''); return s.charAt(0) === '/' ? b + s : s; };
+  const cssUrl = (u) => String(u).replace(/["\\\n\r]/g, (c) => encodeURIComponent(c));
+  const IMG_RE = /\.(png|jpe?g|gif|webp|avif|svg|bmp)(\?|#|$)|^data:image\/|\/images\/file\/|\/(spritegen|character)\/asset\?/i;
+  const stStill = (o) => !!((o && o.record && o.record.frame && o.record.frame.motion === false) || (o && o.draw && o.draw.motion === false));
+  // the picture a row is: a thumbnail first, else an address that is an image, else a studio record's own portrait
+  function imgOf(r) {
+    if (!r) return ''; if (typeof r === 'string') return IMG_RE.test(r) ? r : '';
+    if (typeof r !== 'object' || Array.isArray(r)) return '';
+    const b = r.image_b64 || r.b64; if (typeof b === 'string' && b.length > 32) { const m = mediaOf({ image_b64: b }); if (m) return m.url; }
+    for (const k of ['thumb', 'thumbnail', 'thumb_url', 'preview', 'portrait', 'image_url', 'image', 'src', 'url']) { const v = r[k];
+      if (typeof v !== 'string' || !v) continue;
+      if (IMG_RE.test(v) || (/^(thumb|thumbnail|thumb_url|preview|portrait)$/.test(k) && /^(\/|https?:)/.test(v)) || ((k === 'url' || k === 'src') && /image/i.test(String(r.kind ?? r.mime ?? r.content_type ?? '')))) return v; }
+    const u = r.urls; if (u && typeof u === 'object' && typeof u.reference === 'string' && u.reference) return u.reference;
+    const f = r.frame_urls; if (f && typeof f === 'object') { const v = f.neutral || f[Object.keys(f)[0]]; if (typeof v === 'string' && v) return v; }
+    return '';
+  }
+  // every animation a record carries, one shape: {name, url | frames, cols, rows, n, fps, fw, fh, loop}
+  function spriteAnims(r) {
+    const out = []; if (!r || typeof r !== 'object' || Array.isArray(r)) return out;
+    const push = (name, g, url, frames) => { if (out.some((x) => x.name === String(name))) return; g = g || {};
+      const fl = Array.isArray(frames) ? frames.filter((x) => typeof x === 'string' && x) : null;
+      const n = Math.max(1, Math.round(num(g.count ?? g.frame_count ?? (typeof g.frames === 'number' ? g.frames : 0)) || (fl ? fl.length : 1)));
+      const cols = Math.max(1, Math.round(num(g.columns ?? g.cols) || (fl ? 1 : n))), rws = Math.max(1, Math.round(num(g.rows) || Math.ceil(n / cols)));
+      out.push({ name: String(name), url: url || '', frames: url ? null : fl, n: fl && !url ? fl.length : n, cols, rows: rws, fps: Math.max(1, Math.min(60, num(g.fps) || 8)), fw: num(g.frame_width ?? g.fw), fh: num(g.frame_height ?? g.fh), loop: g.loop !== false }); };
+    // a spritegen record: its sheets (geometry) and their addresses, its animations' frames where no sheet was built
+    const sh = (r.sheets && typeof r.sheets === 'object' && !Array.isArray(r.sheets)) ? r.sheets : {}, us = (r.urls && r.urls.sheets) || {}, uf = (r.urls && r.urls.frames) || {};
+    const an = (r.animations && typeof r.animations === 'object' && !Array.isArray(r.animations)) ? r.animations : {};
+    [...new Set(Object.keys(an).concat(Object.keys(sh), Object.keys(uf)))].forEach((k) => { const g = Object.assign({}, an[k] || {}, sh[k] || {});
+      const u = (us[k] && (us[k].png || us[k].url)) || (sh[k] && typeof sh[k].url === 'string' ? sh[k].url : ''); const fr = Array.isArray(uf[k]) && uf[k].length ? uf[k] : null;
+      if (u || fr) push(k, g, u, fr); });
+    // a companion character's sheet (character.list: sheet.animations, each with its address)
+    const cs = (r.sheet && typeof r.sheet === 'object') ? r.sheet : null;
+    if (cs) { const A = (cs.animations && typeof cs.animations === 'object') ? cs.animations : null;
+      if (A) Object.keys(A).forEach((k) => { if (A[k] && typeof A[k].url === 'string' && A[k].url) push(k, A[k], A[k].url, null); });
+      else if (typeof cs.url === 'string' && cs.url) push(cs.anim || 'sheet', cs, cs.url, null); }
+    // a bare sheet, or a bare list of frames
+    if (!out.length) { const u = typeof r.sheet === 'string' ? r.sheet : (((typeof r.url === 'string' && r.url) || (typeof r.src === 'string' && r.src)) && (r.columns || r.count || r.frame_width) ? (r.url || r.src) : '');
+      if (u) push(r.anim || r.animation || 'sheet', r, u, null);
+      else if (Array.isArray(r.frames) && r.frames.length && typeof r.frames[0] === 'string' && IMG_RE.test(r.frames[0])) push(r.anim || r.animation || 'frames', r, '', r.frames); }
+    return out;
+  }
+  // the keyframes that step a sheet: one per frame, held (step-end) until the next - named by the grid, so one set serves every sheet of that grid
+  const kfName = (a) => 'vwsp-' + a.cols + 'x' + a.rows + 'n' + a.n;
+  function kfCss(a) {
+    const pos = (k) => { const c = k % a.cols, rr = Math.floor(k / a.cols); return (a.cols > 1 ? c / (a.cols - 1) * 100 : 0).toFixed(3) + '% ' + (a.rows > 1 ? rr / (a.rows - 1) * 100 : 0).toFixed(3) + '%'; };
+    let s = '@keyframes ' + kfName(a) + '{'; for (let k = 0; k < a.n; k++) s += (k / a.n * 100).toFixed(3) + '%{background-position:' + pos(k) + '}';
+    return s + '100%{background-position:' + pos(a.n - 1) + '}}';
+  }
+  // one animation at a height (no wider than maxW): the sheet as a background stepped through its frames, or its frames
+  // stacked and flipped; its keyframes ride with the markup, so any host that draws it animates it
+  function spriteBox(a, h, o, play, cls, maxW) {
+    let ar = (a.fw > 0 && a.fh > 0) ? a.fw / a.fh : 1; h = Math.max(8, Math.round(h)); let w = Math.round(h * ar);
+    if (maxW && w > maxW) { w = Math.round(maxW); h = Math.max(8, Math.round(w / ar)); }
+    const mv = !stStill(o) && a.n > 1, dur = a.n / a.fps, box = '<span class="vw-spr' + (cls ? ' ' + cls : '') + '" data-play="' + (play === 'hover' ? 'hover' : 'auto') + '" style="width:' + w + 'px;height:' + h + 'px">';
+    if (a.url) return box + (mv ? '<style>' + kfCss(a) + '</style>' : '') + '<i style="background-image:url(&quot;' + esc(cssUrl(stAbs(a.url, o))) + '&quot;);background-size:' + (a.cols * 100) + '% ' + (a.rows * 100) + '%' + (mv ? ';animation:' + kfName(a) + ' ' + dur.toFixed(3) + 's step-end infinite' : '') + '"></i></span>';
+    const fr = (a.frames || []).slice(0, 64), n = fr.length;
+    return box + (mv ? '<style>@keyframes vwfl-' + n + '{0%{opacity:1}' + (100 / n).toFixed(3) + '%{opacity:0}100%{opacity:0}}</style>' : '')
+      + fr.map((f, i) => '<img src="' + esc(stAbs(f, o)) + '" alt="" loading="lazy" decoding="async"' + (i ? ' class="nx"' : '') + (mv ? ' style="animation:vwfl-' + n + ' ' + dur.toFixed(3) + 's step-end infinite;animation-delay:' + (-(n - i) / n * dur).toFixed(3) + 's"' : '') + '>').join('') + '</span>';
+  }
+  // the record a single-thing form draws out of what it was handed: the record itself, or from a list (an envelope's one
+  // list of records) the one draw.id names, else the first that has something to draw
+  function pickRec(d, o, has) {
+    let L = Array.isArray(d) ? d : null;
+    if (!L && d && typeof d === 'object') { const ks = Object.keys(d).filter((k) => Array.isArray(d[k]) && d[k].some((x) => x && typeof x === 'object' && !Array.isArray(x))); if (ks.length === 1) L = d[ks[0]]; else return d; }
+    if (!L) return null; const rw = L.filter((x) => x && typeof x === 'object' && !Array.isArray(x)); const id = String((o && o.draw && (o.draw.id ?? o.draw.pick)) ?? '');
+    return (id && rw.find((x) => [x.char_id, x.agent_id, x.id, x.name, x.display_name, x.label].some((v) => v != null && String(v) === id))) || rw.find(has || (() => true)) || rw[0] || null;
+  }
+  // an envelope that answered with nothing ({characters: [], count: 0}): every list in it empty and nothing else but figures -
+  // the form says no data, as the element does for a list form (the fallback to a key . value list drew 'count 0')
+  const emptyEnv = (d) => (Array.isArray(d) && !d.some((x) => x && typeof x === 'object')) || (!!d && typeof d === 'object' && !Array.isArray(d) && Object.keys(d).some((k) => Array.isArray(d[k])) && Object.keys(d).every((k) => (Array.isArray(d[k]) ? !d[k].length : (d[k] == null || typeof d[k] !== 'object'))));
+  const noneRead = (o) => NODATA((o && o.record && o.record.source) || '', (o && o.size) || 'm');
+  const recName = (r) => String(r.display_name || r.name || r.label || r.title || r.char_id || r.agent_id || r.id || '');
+  // what a click on a sprite hands the drawer: the sprite in plain fields (the drawer draws the sheet from them, animated)
+  const spriteItem = (r, a) => { const A = spriteAnims(r); return { name: recName(r), id: String(r.char_id || r.agent_id || r.id || ''), animation: a.name, frames: a.n, fps: a.fps,
+    frame: a.fw && a.fh ? a.fw + '×' + a.fh : '', sheet: a.url || '', sheet_grid: a.url ? a.cols + '×' + a.rows : '', animations: A.map((x) => x.name).join(', '), brief: String(r.brief || r.description || ''),
+    style: r.style || '', sprite_size: r.sprite_size, preview: imgOf(r) || '', updated_at: r.updated_at || r.created_at || '' }; };
+  const charItem = (r) => { const A = spriteAnims(r); return { name: recName(r), id: String(r.agent_id || r.char_id || r.id || ''), description: String(r.description || r.brief || ''), style: r.style || '', render_mode: r.render_mode || '',
+    voice: r.voice || '', states: Array.isArray(r.states) ? r.states.join(', ') : '', animations: A.map((x) => x.name).join(', '), preview: imgOf(r) || '', prompt: String(r.base_prompt || '').slice(0, 400), updated_at: r.updated_at || r.created_at || '' }; };
+  R.images = (d, H, o) => {
+    const all = rows(d), str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const items = all.length ? all : str.map((s) => ({ url: s, name: s.split(/[/?]/).filter(Boolean).pop() || s }));
+    if (!items.length) return EMPTY('images need rows with an image address');
+    const size = (o && o.size) || 'm', th = Math.max(28, num(o && o.draw && o.draw.thumb) || ({ m: 64, l: 84, xl: 112 }[size] || 64)), gap = 4;
+    const body = Math.max(th, (H || HEIGHT[size] || 96) - 4), W = Math.max(th, (o && o.width) || ({ m: 300, l: 460, xl: 720 }[size] || 300));
+    const arOf = (r) => { const w = num(r.width ?? r.w), h = num(r.height ?? r.h); return w > 0 && h > 0 ? Math.max(0.4, Math.min(2.5, w / h)) : 1; };
+    // as many as the rows the body holds take (a row's count is its images' widths at the tile height); XL scrolls to 60;
+    // draw.limit says otherwise
+    let lim = Math.round(num(o && o.draw && o.draw.limit));
+    if (!lim) { const nRows = Math.max(1, Math.floor((body + gap) / (th + gap))); let acc = 0, row = 0, i = 0;
+      for (; i < items.length; i++) { const tw = th * arOf(items[i]) + gap; if (acc > 0 && acc + tw > W + gap) { row++; acc = 0; } if (row >= nRows) break; acc += tw; }
+      lim = size === 'xl' ? Math.max(i, Math.min(items.length, 60)) : i; }
+    const shown = items.slice(0, Math.max(1, lim)), more = items.length - shown.length;
+    const tile = (r, i) => { const src = imgOf(r), ar = arOf(r), ttl = String(r.prompt ?? r.title ?? r.caption ?? r.name ?? r.label ?? '').trim();
+      const meta = [(r.width && r.height) ? r.width + '×' + r.height : '', r.source ?? r.kind ?? '', r.model ?? '', dayOf(r.created_at ?? r.created ?? r.when ?? '')].filter((x) => x && String(x).trim()).join(' · ');
+      return '<figure class="vw-im' + (src ? '' : ' doc') + '"' + itemAttr(r, 'image') + ' data-tip="' + esc((ttl || 'image').slice(0, 160) + (meta ? '\n' + meta : '')) + '" style="flex:' + ar.toFixed(3) + ' 1 ' + Math.round(th * ar) + 'px;height:' + th + 'px">'
+        + (src ? '<img src="' + esc(stAbs(src, o)) + '" alt="' + esc(ttl.slice(0, 80)) + '" loading="lazy" decoding="async">' : '<b>' + esc(String(r.kind ?? r.ext ?? r.type ?? 'file').replace(/_/g, ' ')) + '</b>')
+        + (ttl ? '<figcaption>' + esc(ttl.slice(0, 70)) + '</figcaption>' : '') + (more > 0 && i === shown.length - 1 ? '<em>+ ' + more + '</em>' : '') + '</figure>'; };
+    return wrap('images', '<div class="vw-ims" style="gap:' + gap + 'px">' + shown.map(tile).join('') + '<i class="vw-imfill"></i></div>', '', size === 'xl' ? 'overflow:auto' : '');
+  };
+  R.sprite = (d, H, o) => {
+    if (typeof d !== 'string' && emptyEnv(d)) return noneRead(o);
+    const r = typeof d === 'string' ? { sheet: d } : pickRec(d, o, (x) => spriteAnims(x).length > 0);
+    const A = spriteAnims(r); if (!A.length) return EMPTY('a sprite needs a sheet (url · columns · count · fps) or its frames');
+    const want = String(ui(o, 'anim', '') || (o && o.draw && o.draw.anim) || ''), a = A.find((x) => x.name === want) || A.find((x) => /^idle/i.test(x.name)) || A[0];
+    const size = (o && o.size) || 'm', max = size === 'xl' ? 24 : 12, strip = A.length > 1 && !(o && o.draw && o.draw.strip === false), sh = strip ? (size === 'xl' ? 44 : 30) : 0;
+    const W = (o && o.width) || ({ m: 300, l: 460, xl: 720 }[size] || 300), h = Math.max(24, Math.min(num(o && o.draw && o.draw.max) || 512, (H || HEIGHT[size] || 96) - sh - 24));
+    const name = recName(r), play = (o && o.draw && o.draw.play) === 'hover' ? 'hover' : 'auto', meta = a.n + ' frames · ' + a.fps + ' fps' + (a.fw ? ' · ' + a.fw + '×' + a.fh : '');
+    const stage = '<div class="vw-sprst vw-chk"' + itemAttr(spriteItem(r, a), 'sprite') + ' data-tip="' + esc((name ? name + ' · ' : '') + a.name + '\n' + meta) + '">' + spriteBox(a, h, o, play, '', W - 8) + '</div>';
+    const head = '<div class="vw-sprcap"><b>' + esc(name || 'sprite') + '</b><span>' + esc(a.name) + '</span><small>' + esc(meta) + '</small></div>';
+    const strp = strip ? '<div class="vw-sprstrip">' + A.slice(0, max).map((x) => '<button class="vw-sprt' + (x === a ? ' on' : '') + '"' + set('anim', x.name) + ' title="' + esc(x.name + ' · ' + x.n + ' frames · ' + x.fps + ' fps') + '">' + spriteBox(x, sh - 12, o, 'hover', '', 2 * (sh - 12)) + '<small>' + esc(x.name.slice(0, 16)) + '</small></button>').join('') + (A.length > max ? '<span class="vb-lbl">+ ' + (A.length - max) + '</span>' : '') + '</div>' : '';
+    return wrap('sprite', stage + head + strp);
+  };
+  R.sprites = (d, H, o) => {
+    const all = rows(d); if (!all.length) return EMPTY('a sprite library needs sprite records');
+    const size = (o && o.size) || 'm', drawn = all.filter((r) => spriteAnims(r).length || imgOf(r)), rest = all.length - drawn.length; if (!drawn.length) return EMPTY(all.length + ' sprites · none has a sheet or frames yet');
+    const ch = { m: 70, l: 84, xl: 104 }[size] || 70, cw = Math.round(ch * 0.95), gap = 6, W = (o && o.width) || ({ m: 300, l: 460, xl: 720 }[size] || 300);
+    const cols = Math.max(1, Math.floor((W + gap) / (cw + gap))), fitR = Math.max(1, Math.floor(((H || HEIGHT[size] || 96) + gap - 14) / (ch + gap)));
+    const lim = Math.round(num(o && o.draw && o.draw.limit)) || (size === 'xl' ? Math.min(drawn.length, 60) : cols * fitR);
+    const card = (r) => { const A = spriteAnims(r), a = A.find((x) => /^idle/i.test(x.name)) || A[0], nm = recName(r) || 'unnamed', sub = [A.length ? A.length + (A.length === 1 ? ' anim' : ' anims') : 'still', r.sprite_size ? r.sprite_size + 'px' : ''].filter(Boolean).join(' · ');
+      const img = a ? spriteBox(a, ch - 28, o, 'hover', '', cw - 8) : '<img class="vw-sprimg" src="' + esc(stAbs(imgOf(r), o)) + '" alt="" loading="lazy" decoding="async" style="height:' + (ch - 28) + 'px">';
+      return '<div class="vw-sprc"' + itemAttr(a ? spriteItem(r, a) : charItem(r), 'sprite') + ' data-tip="' + esc(nm + '\n' + sub + (r.brief ? '\n' + String(r.brief).slice(0, 90) : '')) + '"><span class="vw-chk">' + img + '</span><b>' + esc(nm) + '</b><small>' + esc(sub) + '</small></div>'; };
+    const left = drawn.length - Math.min(lim, drawn.length);
+    return wrap('sprites', '<div class="vw-sprg" style="grid-template-columns:repeat(auto-fill,minmax(' + cw + 'px,1fr));gap:' + gap + 'px">' + drawn.slice(0, lim).map(card).join('') + '</div>'
+      + ((left > 0 || rest > 0) ? cap([left > 0 ? '+ ' + left + ' more' : '', rest > 0 ? rest + ' with nothing drawn yet' : ''].filter(Boolean).join(' · ')) : ''), '', size === 'xl' ? 'overflow:auto' : '');
+  };
+  R.character = (d, H, o) => {
+    const size = (o && o.size) || 'm', Hh = H || HEIGHT[size] || 96;
+    if (emptyEnv(d)) return noneRead(o);
+    if (o && o.draw && o.draw.roster) {
+      const L = Array.isArray(d) ? d : ((d && typeof d === 'object') ? (Object.keys(d).map((k) => d[k]).find((v) => Array.isArray(v) && v.some((x) => x && typeof x === 'object' && !Array.isArray(x))) || [d]) : []);
+      const all = rows(L); if (!all.length) return EMPTY('a roster needs character records');
+      const ph = { m: 48, l: 64, xl: 84 }[size] || 48;
+      return wrap('character', '<div class="vw-chrr" style="grid-template-columns:repeat(auto-fill,minmax(' + Math.round(ph * 2.6) + 'px,1fr))">' + all.slice(0, Math.round(num(o.draw.limit)) || 60).map((r) => { const u = imgOf(r), A = spriteAnims(r);
+        const face = u ? '<img src="' + esc(stAbs(u, o)) + '" alt="" loading="lazy" decoding="async">' : (A.length ? spriteBox(A[0], ph - 4, o, 'hover', '', ph - 4) : '<b>' + esc(recName(r).slice(0, 1).toUpperCase() || '?') + '</b>');
+        const chips = [r.style, r.render_mode, r.voice].filter(Boolean).slice(0, 3);
+        return '<div class="vw-chrm"' + itemAttr(charItem(r), 'character') + ' data-tip="' + esc(recName(r) + (r.description || r.brief ? '\n' + String(r.description || r.brief).slice(0, 100) : '')) + '"><span class="vw-chrp vw-chk" style="width:' + ph + 'px;height:' + ph + 'px">' + face + '</span><span class="t"><b>' + esc(recName(r) || 'unnamed') + '</b><small>' + esc(String(r.description || r.brief || '').slice(0, 60)) + '</small><span class="vw-chips2">' + chips.map((c) => '<i>' + esc(String(c)) + '</i>').join('') + '</span></span></div>'; }).join('') + '</div>', '', 'overflow:auto');
+    }
+    const r = pickRec(d, o, (x) => !!(imgOf(x) || spriteAnims(x).length)); if (!r || typeof r !== 'object') return EMPTY('a character needs a record');
+    const A = spriteAnims(r), u = imgOf(r), nm = recName(r) || 'character', about = String(r.description || r.brief || '').trim(), prompt = String(r.base_prompt || '').trim();
+    const strips = Hh >= 190 ? 2 : (Hh >= 128 ? 1 : 0), sh = size === 'xl' ? 46 : 36, ph = Math.max(48, Math.min(200, Hh - strips * (sh + 6) - 4));
+    const face = u ? '<img src="' + esc(stAbs(u, o)) + '" alt="' + esc(nm) + '" decoding="async">' : (A.length ? spriteBox(A.find((x) => /^idle/i.test(x.name)) || A[0], ph - 6, o, 'auto', '', ph - 6) : '<b>' + esc(nm.slice(0, 1).toUpperCase()) + '</b>');
+    const traits = [['style', r.style], ['mode', r.render_mode], ['voice', r.voice], ['size', r.sprite_size ? r.sprite_size + 'px' : ''], ['colours', r.colors], ['palette', r.palette], ['tier', r.sd_tier_used],
+      ['expressions', Array.isArray(r.states) && r.states.length ? r.states.length : ''], ['animations', A.length || '']].filter((x) => x[1] !== '' && x[1] != null && x[1] !== false);
+    const extra = Array.isArray(r.traits) ? r.traits.map((x) => ['', x]) : (r.traits && typeof r.traits === 'object' ? Object.keys(r.traits).map((k) => [k, r.traits[k]]) : []);
+    const chips = traits.concat(extra, (Array.isArray(r.tags) ? r.tags : []).map((x) => ['', x])).slice(0, size === 'xl' ? 14 : 8);
+    const st = (r.stats && typeof r.stats === 'object') ? r.stats : ((r.attributes && typeof r.attributes === 'object') ? r.attributes : null), sk = st ? Object.keys(st).filter((k) => typeof st[k] === 'number') : [];
+    const smax = num(o && o.draw && o.draw.max) || Math.max(10, ...sk.map((k) => st[k]));
+    const bars = sk.length ? '<div class="vw-chrs">' + sk.slice(0, size === 'm' ? 3 : 6).map((k) => '<span' + itemAttr({ name: k, value: st[k], of: smax, character: nm }, 'stat') + '><em>' + esc(k) + '</em><i><u style="width:' + pct(st[k], smax).toFixed(1) + '%"></u></i><b>' + esc(fmt(st[k])) + '</b></span>').join('') + '</div>' : '';
+    const fu = (r.frame_urls && typeof r.frame_urls === 'object') ? Object.keys(r.frame_urls).filter((k) => typeof r.frame_urls[k] === 'string' && r.frame_urls[k]) : [];
+    const exprs = fu.length > 1 ? '<div class="vw-chrx">' + fu.slice(0, 12).map((k) => '<span class="vw-chk"' + itemAttr({ name: nm + ' · ' + k, state: k, character: nm, preview: r.frame_urls[k], prompt: (r.expression_prompts && r.expression_prompts[k]) || '' }, 'expression') + ' data-tip="' + esc(k) + '"><img src="' + esc(stAbs(r.frame_urls[k], o)) + '" alt="' + esc(k) + '" loading="lazy" decoding="async" style="height:' + (sh - 4) + 'px;width:' + (sh - 4) + 'px"></span>').join('') + '</div>' : '';
+    const sprs = A.length ? '<div class="vw-chrx">' + A.slice(0, 12).map((a) => '<span class="vw-chk"' + itemAttr(spriteItem(r, a), 'sprite') + ' data-tip="' + esc(a.name + '\n' + a.n + ' frames · ' + a.fps + ' fps') + '">' + spriteBox(a, sh - 4, o, 'hover', '', 2 * sh) + '</span>').join('') + (A.length > 12 ? '<span class="vb-lbl">+ ' + (A.length - 12) + '</span>' : '') + '</div>' : '';
+    const stripsH = [exprs, sprs].filter(Boolean).slice(0, strips).join('');
+    return wrap('character', '<div class="vw-chr"><div class="vw-chrp vw-chk"' + itemAttr(charItem(r), 'character') + ' data-tip="' + esc(nm + (about ? '\n' + about.slice(0, 100) : '')) + '" style="width:' + ph + 'px;height:' + ph + 'px">' + face + '</div>'
+      + '<div class="vw-chrt"><b>' + esc(nm) + '</b>' + (about || prompt ? '<p>' + esc((about || prompt).slice(0, 220)) + '</p>' : '')
+      + (chips.length ? '<span class="vw-chips2">' + chips.map((c) => '<i' + (c[0] ? ' title="' + esc(c[0]) + '"' : '') + '>' + (c[0] ? '<small>' + esc(c[0]) + '</small> ' : '') + esc(String(c[1]).slice(0, 24)) + '</i>').join('') + '</span>' : '') + bars + '</div></div>' + stripsH);
+  };
+  /* the drawer's picture: an item that is an image shows it large; one that is a sprite (sheet · sheet_grid · frames ·
+     fps, as spriteItem writes it) plays it */
+  function drMedia(obj, host) {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return '';
+    const o = { base: (host && host.base) || '' };
+    if (typeof obj.sheet === 'string' && obj.sheet && /^\d+×\d+$/.test(String(obj.sheet_grid || ''))) { const g = String(obj.sheet_grid).split('×'), fr = String(obj.frame || '').split('×');
+      const a = { name: String(obj.animation || ''), url: obj.sheet, frames: null, cols: +g[0] || 1, rows: +g[1] || 1, n: Math.max(1, num(obj.frames)), fps: Math.max(1, num(obj.fps) || 8), fw: +fr[0] || 0, fh: +fr[1] || 0, loop: true };
+      return '<div class="vw-dr-media vw-chk">' + spriteBox(a, 180, o, 'auto', '', 300) + '</div>'; }
+    const u = imgOf(obj); if (!u) return ''; const abs = stAbs(u, o);
+    return '<div class="vw-dr-media vw-chk"><img src="' + esc(abs) + '" alt="" decoding="async"></div>' + (/^data:/.test(abs) ? '' : '<a class="vw-dr-open" href="' + esc(abs) + '" target="_blank" rel="noopener">open the full image ↗</a>');
+  }
+  const STUDIO_CSS = '.vb-images,.vb-sprite,.vb-sprites,.vb-character{align-self:stretch}'
+    + '.vw-chk{background:repeating-conic-gradient(var(--b-s3,var(--bg3,#262b33)) 0 25%,var(--b-s2,var(--bg2,#1d2129)) 0 50%) 0 0/10px 10px}'
+    + '.vw-spr{position:relative;display:inline-block;flex:none;vertical-align:middle}.vw-spr > i{position:absolute;inset:0;background-repeat:no-repeat;background-position:0 0;image-rendering:pixelated}'
+    + '.vw-spr > img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;image-rendering:pixelated}.vw-spr > img.nx{opacity:0}'
+    + '.vw-spr[data-play="hover"] > *{animation-play-state:paused!important}.vw-spr[data-play="hover"]:hover > *,.vw-sprc:hover .vw-spr > *,.vw-sprt:hover .vw-spr > *,.vw-chrx > span:hover .vw-spr > *{animation-play-state:running!important}.vw-spr[data-play="auto"]:hover > *{animation-play-state:paused!important}'
+    + '@media (prefers-reduced-motion: reduce){.vw-spr > *{animation:none!important}}'
+    + '.vw-ims{display:flex;flex-wrap:wrap;align-content:flex-start;width:100%}.vw-imfill{flex:1000 1 0;height:0}'
+    + '.vw-im{margin:0;position:relative;overflow:hidden;border-radius:5px;background:var(--b-s2);cursor:pointer;min-width:0;box-shadow:inset 0 0 0 1px var(--b-bd)}.vw-im img{display:block;width:100%;height:100%;object-fit:cover;transition:transform .25s ease}'
+    + '.vw-im:hover img{transform:scale(1.04)}.vw-im.hot{box-shadow:0 0 0 2px var(--b-ac)}.vw-im figcaption{position:absolute;left:0;right:0;bottom:0;padding:10px 6px 3px;font-size:10px;line-height:1.25;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.72));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transition:opacity .15s}'
+    + '.vw-im:hover figcaption{opacity:1}.vw-im.doc{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;text-align:center}.vw-im.doc b{font-family:var(--b-mono);font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--b-ac)}.vw-im.doc figcaption{position:static;opacity:1;background:none;color:var(--b-t2);padding:0;white-space:normal;max-height:3.8em}'
+    + '.vw-im em{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-style:normal;font-family:var(--b-mono);font-size:13px;color:#fff;background:rgba(0,0,0,.55)}'
+    + '.vb-sprite{align-items:stretch;gap:5px}.vw-sprst{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;border-radius:6px;box-shadow:inset 0 0 0 1px var(--b-bd);cursor:pointer}'
+    + '.vw-sprcap{display:flex;align-items:baseline;gap:6px;min-width:0;flex:none}.vw-sprcap b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-sprcap span{font-size:10.5px;color:var(--b-ac)}.vw-sprcap small{margin-left:auto;font-family:var(--b-mono);font-size:10px;color:var(--b-t3);white-space:nowrap}'
+    + '.vw-sprstrip{display:flex;gap:4px;overflow-x:auto;flex:none;scrollbar-width:thin}.vw-sprt{display:inline-flex!important;align-items:center;gap:4px;padding:2px 6px!important;border-radius:6px;background:var(--b-s2)!important;box-shadow:inset 0 0 0 1px var(--b-bd);flex:none}'
+    + '.vw-sprt small{font-size:10px;color:var(--b-t2)}.vw-sprt.on{box-shadow:inset 0 0 0 1px var(--b-ac)}.vw-sprt.on small{color:var(--b-ac)}'
+    + '.vw-sprg{display:grid;width:100%;align-content:start}.vw-sprc{display:flex;flex-direction:column;align-items:center;gap:1px;min-width:0;padding:4px;border-radius:7px;background:var(--b-s2);box-shadow:inset 0 0 0 1px var(--b-bd);cursor:pointer}'
+    + '.vw-sprc > span{display:flex;align-items:center;justify-content:center;width:100%;flex:1;min-height:0;border-radius:5px;overflow:hidden}.vw-sprc b{font-size:11px;font-weight:600;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-sprc small{font-size:10px;color:var(--b-t3);white-space:nowrap}.vw-sprc.hot{box-shadow:inset 0 0 0 1px var(--b-ac)}'
+    + '.vw-sprimg{max-width:100%;object-fit:contain;image-rendering:pixelated}'
+    + '.vw-chr{display:flex;gap:10px;min-height:0;flex:1}.vw-chrp{flex:none;display:flex;align-items:center;justify-content:center;border-radius:8px;overflow:hidden;box-shadow:inset 0 0 0 1px var(--b-bd);cursor:pointer}.vw-chrp img{width:100%;height:100%;object-fit:contain}.vw-chrp > b{font-size:22px;color:var(--b-t2)}'
+    + '.vw-chrt{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;overflow:hidden}.vw-chrt > b{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-chrt p{margin:0;font-size:11px;line-height:1.35;color:var(--b-t2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}'
+    + '.vw-chips2{display:flex;flex-wrap:wrap;gap:3px}.vw-chips2 i{font-style:normal;font-size:10px;padding:1px 7px;border-radius:99px;background:var(--b-s3);color:var(--b-t1);white-space:nowrap}.vw-chips2 i small{color:var(--b-t3);font-size:10px}'
+    + '.vw-chrs{display:flex;flex-direction:column;gap:2px}.vw-chrs > span{display:grid;grid-template-columns:minmax(0,70px) 1fr auto;gap:6px;align-items:center;font-size:10px}.vw-chrs em{font-style:normal;color:var(--b-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-chrs i{height:6px;border-radius:3px;background:var(--b-s3);overflow:hidden}.vw-chrs u{display:block;height:100%;background:var(--b-ac)}.vw-chrs b{font-family:var(--b-mono);font-weight:400}'
+    + '.vw-chrx{display:flex;gap:4px;overflow-x:auto;flex:none;scrollbar-width:thin}.vw-chrx > span{flex:none;display:flex;align-items:center;justify-content:center;padding:2px;border-radius:5px;box-shadow:inset 0 0 0 1px var(--b-bd);cursor:pointer}.vw-chrx img{object-fit:contain;display:block}.vw-chrx > span.hot{box-shadow:inset 0 0 0 1px var(--b-ac)}'
+    + '.vw-chrr{display:grid;gap:6px;width:100%;align-content:start}.vw-chrm{display:flex;gap:7px;align-items:center;min-width:0;padding:4px;border-radius:8px;background:var(--b-s2);box-shadow:inset 0 0 0 1px var(--b-bd);cursor:pointer}.vw-chrm.hot{box-shadow:inset 0 0 0 1px var(--b-ac)}'
+    + '.vw-chrm .t{display:flex;flex-direction:column;gap:2px;min-width:0}.vw-chrm .t b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-chrm .t small{font-size:10px;color:var(--b-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.vw-dr-media{display:flex;align-items:center;justify-content:center;min-height:120px;max-height:360px;border-radius:8px;overflow:hidden;margin:4px 0 6px;box-shadow:inset 0 0 0 1px var(--border,rgba(255,255,255,.1))}.vw-dr-media img{display:block;max-width:100%;max-height:360px;object-fit:contain}'
+    + '.vw-dr-open{display:inline-block;margin:0 0 8px;font-size:11px;color:var(--acc,#6ea8d8);text-decoration:none}'
+    + '.vw-im.hot,.vw-sprst.hot,.vw-chrp.hot,.vw-chrx > span.hot{filter:none}'
+    /* blocks off: the cards lose their ground - on the page, and in the element's shadow on a rule of its own (a selector
+       list holding :host-context is dropped whole where :host-context means nothing, on the page) */
+    + 'html[data-blocks="off"] .vw-sprc,html[data-blocks="off"] .vw-chrm,html[data-blocks="off"] .vw-sprt{background:transparent!important}'
+    + ':host-context(html[data-blocks="off"]) .vw-sprc,:host-context(html[data-blocks="off"]) .vw-chrm,:host-context(html[data-blocks="off"]) .vw-sprt{background:transparent!important}';
+  // the registrations: the forms drawn, their shapes, their sample faces, their glyphs; each takes its body whole at L and XL
+  Object.assign(DRAWN, { images: 'items', sprites: 'items', sprite: 'string', character: 'string' });
+  ['images', 'sprites', 'sprite', 'character'].forEach((f) => TABLE_FORMS.add(f));
+  Object.assign(GLYPH, { images: '▣', sprites: '◳', sprite: '◳', character: '☺' });
+  /* the sample faces: drawn here, so the gallery and the pickers show the forms with nothing read - a pixel figure's
+     sheet (four frames of idle, six of walk) and a few pictures of different shapes */
+  const SPR_SAMPLE = (() => { const fig = (k, n, walk) => { const bob = walk ? 0 : (k % 2), sw = walk ? Math.round(Math.sin(k / n * Math.PI * 2) * 2) : 0, x = k * 16;
+      const px = (c, xx, yy, w, h) => "<rect x='" + (x + xx) + "' y='" + (yy + bob) + "' width='" + w + "' height='" + h + "' fill='" + c + "'/>";
+      return px('#f2c89b', 5, 1, 6, 5) + px('#2b2f3a', 6, 3, 1, 1) + px('#2b2f3a', 9, 3, 1, 1) + px('#5aa0e8', 4, 6, 8, 5) + px('#f2c89b', 3 - Math.max(0, sw), 7, 1, 3) + px('#f2c89b', 12 + Math.min(0, sw), 7, 1, 3) + px('#3a4b6b', 5 + sw, 11, 2, 4) + px('#3a4b6b', 9 - sw, 11, 2, 4); };
+    const sheet = (n, walk) => 'data:image/svg+xml,' + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='" + (16 * n) + "' height='16' shape-rendering='crispEdges'>" + Array.from({ length: n }, (_, k) => fig(k, n, walk)).join('') + '</svg>');
+    return { idle: { url: sheet(4, false), columns: 4, rows: 1, count: 4, fps: 4, frame_width: 16, frame_height: 16, loop: true }, walk: { url: sheet(6, true), columns: 6, rows: 1, count: 6, fps: 8, frame_width: 16, frame_height: 16, loop: true } }; })();
+  const PIC = (w, h, a, b, t) => 'data:image/svg+xml,' + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='" + w + "' height='" + h + "'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='" + a + "'/><stop offset='1' stop-color='" + b + "'/></linearGradient></defs><rect width='100%' height='100%' fill='url(#g)'/>" + (t === 'sun' ? "<circle cx='" + w * .7 + "' cy='" + h * .35 + "' r='" + Math.min(w, h) * .14 + "' fill='#ffe3a3'/><path d='M0 " + h + " L" + w * .35 + ' ' + h * .55 + ' L' + w * .6 + ' ' + h * .8 + ' L' + w * .8 + ' ' + h * .6 + ' L' + w + ' ' + h + " Z' fill='#1d2433' opacity='.8'/>" : "<circle cx='" + w / 2 + "' cy='" + h / 2 + "' r='" + Math.min(w, h) * .28 + "' fill='#ffffff' opacity='.25'/>") + '</svg>');
+  Object.assign(FORM_SAMPLE, {
+    images: () => [[512, 512, '#6ea8d8', '#a78bfa', 'sun', 'a lighthouse at dusk, cinematic'], [768, 512, '#e09a55', '#5a2b6b', 'sun', 'desert canyon, golden hour'], [512, 768, '#5ec9a0', '#1f3b4d', '', 'portrait of a fox in a scarf'], [512, 512, '#e07a9a', '#2b2f3a', '', 'cyber sloth, anime'], [640, 480, '#3585c9', '#0b1119', 'sun', 'harbour at night'], [512, 512, '#bb881a', '#54a863', '', 'a duck, watercolour'], [768, 432, '#866ec5', '#00aba4', 'sun', 'aurora over a lake']].map((r, i) => ({ url: PIC(r[0] / 8, r[1] / 8, r[2], r[3], r[4]), prompt: r[5], width: r[0], height: r[1], source: i === 3 ? 'img2img' : 'txt2img', created_at: '2026-09-2' + (7 - (i % 5)) + 'T1' + i + ':00:00Z' })),
+    sprite: () => ({ name: 'Pip', char_id: 'sample', style: 'pixel', sprite_size: 16, sheet: { animations: SPR_SAMPLE } }),
+    sprites: () => ['Pip', 'Moss', 'Rook', 'Wren', 'Ash', 'Bolt'].map((n, i) => ({ name: n, char_id: 's' + i, style: 'pixel', sprite_size: 16, sheet: { animations: i % 2 ? { walk: SPR_SAMPLE.walk, idle: SPR_SAMPLE.idle } : { idle: SPR_SAMPLE.idle, walk: SPR_SAMPLE.walk } } })),
+    character: () => ({ display_name: 'Vera', agent_id: 'sample', description: 'the house assistant: calm, exact, a little dry', style: 'pixel', render_mode: 'spritesheet', voice: 'af_heart', states: ['neutral', 'talking', 'thinking', 'happy'],
+      frame_urls: { neutral: PIC(64, 64, '#6ea8d8', '#2b2f3a', ''), talking: PIC(64, 64, '#5ec9a0', '#2b2f3a', ''), thinking: PIC(64, 64, '#a78bfa', '#2b2f3a', ''), happy: PIC(64, 64, '#e09a55', '#2b2f3a', '') },
+      stats: { warmth: 7, focus: 9, humour: 5 }, sheet: { animations: SPR_SAMPLE } }),
+  });
 
   /* ── the record, in one shape (widget_record.py's rules, as far as a renderer needs them) ── */
   function normalise(src) {
@@ -2597,7 +3135,7 @@
   }
 
   /* ── the styles (host-injected once; the element carries them in its shadow) ── */
-  const CSS = fontScale(`
+  const CSS = fontScale(STUDIO_CSS + `
 .wempty{color:var(--dim2,#8a92a0);font-size:9.5px;font-family:var(--mono,ui-monospace,monospace)}
 .vw-nodata{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;width:100%;height:100%;min-height:34px;text-align:center}
 .vw-nodata > b{font-family:var(--mono,ui-monospace,monospace);font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a92a0)}
@@ -2655,7 +3193,7 @@ span.vw-sampled{opacity:.85}
 .vw-sg>.vw-sg-w{position:absolute;left:7px;top:6px;color:var(--dim2,#8a92a0);font-size:9.5px;font-family:var(--mono,ui-monospace,monospace)}
 .vw-l{display:grid;grid-template-columns:1fr 160px;gap:10px;width:100%;align-items:start}.vw-xl{display:grid;grid-template-columns:1fr 180px;gap:10px;width:100%;align-items:start}.vw-xl .vw-xltable{grid-column:1/-1}
 .vw-main{min-width:0}.vw-detail{display:flex;flex-direction:column;gap:3px;font-size:9.5px;border-left:1px solid var(--border,rgba(255,255,255,.09));padding-left:10px}.vw-detail div{display:flex;justify-content:space-between;gap:8px;color:var(--text,#d8dce4)}.vw-detail span{color:var(--dim2,#8a92a0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-detail b{font-family:var(--mono,ui-monospace,monospace);font-weight:400}
-.vw-comp{display:grid;gap:8px;width:100%;grid-template-columns:1fr 1fr}.vw-comp-rows,.vw-comp-report{grid-template-columns:1fr}.vw-comp-rail{grid-template-columns:1fr}.vw-comp-2x2{grid-template-columns:1fr 1fr}
+.vw-comp{display:grid;gap:8px;width:100%;grid-template-columns:1fr 1fr}.vw-comp-rows,.vw-comp-report{grid-template-columns:1fr}.vw-comp-report{overflow-y:auto;align-content:start}.vw-comp-report .vw-slot-block{flex-shrink:0}.vw-comp-report .vw-slot-block .vw-slot-b{overflow:visible}.vw-comp-rail{grid-template-columns:1fr}.vw-comp-2x2{grid-template-columns:1fr 1fr}
 .vw-slot{min-width:0;min-height:0;box-sizing:border-box;overflow:hidden;background:var(--surf2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:7px 9px 8px;display:flex;flex-direction:column;gap:4px;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
 .vw-slot-h{display:flex;align-items:baseline;gap:6px;font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t3,var(--dim,#6b7280));flex-shrink:0;white-space:nowrap;overflow:hidden}.vw-slot-h b{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:11px;color:var(--t1,var(--text,#d8dce4));font-weight:400;text-transform:none;letter-spacing:0}
 .vw-slot-b{flex:1;min-height:0;display:flex;align-items:safe center;overflow:auto}.vw-slot-b > *{width:100%}
@@ -2674,7 +3212,7 @@ span.vw-sampled{opacity:.85}
    outlines and hatching, not floods; every pack's radius comes through --r-sm -- */
 .vw-slot-h,.vw-hd,.vw-log .lane,.vw-tablewrap th{text-transform:var(--label-case,uppercase);letter-spacing:var(--label-track,.08em);font-weight:var(--label-weight,600);font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
 :host-context([data-style="pixel"]) .vw-slot{box-shadow:0 0 0 2px var(--bd2,rgba(255,255,255,.14))}
-:host-context([data-style="pixel"]) .vw-hero b,:host-context([data-style="pixel"]) .vb-hero b,:host-context([data-style="pixel"]) .vb-bigs b{font-family:var(--f-disp,var(--f-mono,ui-monospace,monospace));letter-spacing:0;font-size:clamp(11px, min(42cqh, 8cqw), 20px)}
+:host-context([data-style="pixel"]) .vw-hero b,:host-context([data-style="pixel"]) .vb-hero b,:host-context([data-style="pixel"]) .vb-bigs b{font-family:var(--f-disp,var(--f-mono,ui-monospace,monospace));letter-spacing:0;font-size:clamp(11px, min(42cqh, 14cqi), 20px)}
 :host-context([data-style="pixel"]) .vw-slot-h b{font-family:var(--f-mono,ui-monospace,monospace);font-size:12px}
 :host-context([data-style="pixel"]) .vw-track,:host-context([data-style="pixel"]) .vw-track i,:host-context([data-style="pixel"]) .vw-therm span,:host-context([data-style="pixel"]) .vw-therm span i,:host-context([data-style="pixel"]) .vb-rw .tr,:host-context([data-style="pixel"]) .vb-rw .tr i,:host-context([data-style="pixel"]) .vw-stackbar,:host-context([data-style="pixel"]) .vw-stackbar i,:host-context([data-style="pixel"]) .vw-pill,:host-context([data-style="pixel"]) .vw-legend i,:host-context([data-style="pixel"]) .vb-batt .cells i,:host-context([data-style="pixel"]) .vw-heat div{border-radius:0}
 :host-context([data-style="pixel"]) .vw-track i,:host-context([data-style="pixel"]) .vw-therm span i,:host-context([data-style="pixel"]) .vb-rw .tr i,:host-context([data-style="pixel"]) .vw-stackbar i,:host-context([data-style="pixel"]) .vb-batt .cells i.on{background-image:repeating-linear-gradient(90deg,rgba(0,0,0,.3) 0 1px,transparent 1px 4px)}
@@ -2764,13 +3302,13 @@ span.vw-sampled{opacity:.85}
 .vb-hero{display:flex;align-items:baseline;gap:7px}.vb-hero b{font-family:var(--b-mono);font-size:clamp(16px, min(60cqh, 12cqw), 30px);font-weight:700;letter-spacing:-.035em;line-height:1}.vb-hero .u{font-family:var(--b-mono);font-size:13px;color:var(--b-t2)}
 .vb-lg{display:flex;flex-direction:column;gap:4px;min-width:0}.vb-lg span{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--b-t2);white-space:nowrap;overflow:hidden}.vb-lg i{width:8px;height:8px;border-radius:2px;flex-shrink:0}.vb-lg b{margin-left:auto;font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);font-weight:400}.vb-lg.row{flex-direction:row;flex-wrap:wrap;gap:4px 12px}
 .vb-lgr{display:flex;align-items:center;gap:12px;font-size:9.5px;color:var(--b-t2)}.vb-lgr span{display:inline-flex;align-items:center;gap:6px}.vb-lgr i{width:8px;height:8px;border-radius:2px}
-.vb-rw{display:flex;align-items:center;gap:8px;font-size:10px}.vb-rw .n{width:64px;flex-shrink:0;color:var(--b-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-rw .tr{flex:1;height:7px;border-radius:4px;background:var(--b-s3);overflow:hidden;position:relative}.vb-rw .tr i{display:block;height:100%;border-radius:4px}.vb-rw .tr em{position:absolute;top:-2px;width:2px;height:11px;background:var(--b-t1);transform:translateX(-50%)}.vb-rw .v{width:38px;text-align:right;font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);flex-shrink:0}
+.vb-rw{display:flex;align-items:center;gap:8px;font-size:10px}.vb-rw .n{width:clamp(64px,24%,170px);flex-shrink:0;color:var(--b-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-rw .tr{flex:1;height:7px;border-radius:4px;background:var(--b-s3);overflow:hidden;position:relative}.vb-rw .tr i{display:block;height:100%;border-radius:4px}.vb-rw .tr em{position:absolute;top:-2px;width:2px;height:11px;background:var(--b-t1);transform:translateX(-50%)}.vb-rw .v{min-width:38px;white-space:nowrap;text-align:right;font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);flex-shrink:0}
 /* the standard set */
 .vb-fc{flex:1;min-height:0;border-radius:var(--b-r);background:var(--b-surf2);padding:9px 11px;display:flex;flex-direction:column;gap:4px;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14));animation:vb-fcin .35s ease}@keyframes vb-fcin{from{opacity:0;transform:translateX(10px)}}
 .vb-fc .k{font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--b-t3);display:flex;gap:6px;align-items:center}.vb-fc .k i{width:6px;height:6px;border-radius:50%}.vb-fc .h{font-size:12px;font-weight:600;color:var(--b-t1);line-height:1.35}.vb-fc .b{font-size:10px;color:var(--b-t2);line-height:1.45;overflow:hidden}.vb-fc .m{font-family:var(--b-mono);font-size:8.5px;color:var(--b-t3);display:flex;gap:8px}
 .vb-fn,.vb-carn{display:flex;align-items:center;gap:5px}.vb-fn button,.vb-carn button{width:22px;height:18px;border-radius:var(--b-r);background:var(--b-surf2);color:var(--b-t2);font-size:11px}.vb-fn i,.vb-carn i{width:6px;height:6px;border-radius:50%;background:var(--b-s3);cursor:pointer}.vb-fn i.on,.vb-carn i.on{background:var(--b-ac)}.vb-fn span{margin-left:auto;font-family:var(--b-mono);font-size:8.5px;color:var(--b-t3)}.vb-carn .vb-lbl{margin-left:8px}
 .vb-fr{display:grid;grid-template-columns:18px 1fr 44px 52px;gap:7px;align-items:center;height:22px;font-size:10px;border-bottom:1px solid var(--b-bd)}.vb-fr.h{color:var(--b-t3);font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;height:18px}.vb-fr .ic{width:14px;height:16px;border-radius:2px;font-family:var(--b-mono);font-size:6.5px;font-weight:700;color:#0e0f12;display:flex;align-items:flex-end;justify-content:center;padding-bottom:1px}.vb-fr .n{color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-fr .n small{color:var(--b-t3);margin-left:5px;font-size:9px}.vb-fr .m{font-family:var(--b-mono);font-size:9px;color:var(--b-t3);text-align:right}
-.vb-dgr{display:grid;gap:6px;align-items:center;height:21px;font-size:9.5px;border-bottom:1px solid var(--b-bd)}.vb-dgr.h{height:20px}.vb-dgr.h button{font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--b-t3);text-align:left;display:flex;gap:3px;align-items:center;white-space:nowrap}.vb-dgr.h button.on{color:var(--b-t1)}.vb-dgr:nth-child(odd):not(.h){background:color-mix(in srgb,var(--b-surf2) 60%,transparent)}.vb-dgr .c{color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:4px}.vb-dgr .c.num{font-family:var(--b-mono);color:var(--b-t2);text-align:right;padding-left:0}.vb-dgr .c.dn{color:var(--b-ac4)}
+.vb-dgr{display:grid;gap:6px;align-items:center;height:21px;font-size:9.5px;border-bottom:1px solid var(--b-bd)}.vb-dgr.h{height:20px}.vb-dgr.h button{font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--b-t3);text-align:left;display:flex;gap:3px;align-items:center;white-space:nowrap}.vb-dgr.h button.on{color:var(--b-t1)}.vb-dgr:nth-child(odd):not(.h){background:color-mix(in srgb,var(--b-surf2) 60%,transparent)}.vb-dgr .c{color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:4px}.vb-dgr .c.num{font-family:var(--b-mono);color:var(--b-t2);text-align:right;padding-left:0}.vb-dgr .c.dn{color:var(--b-ac4)}.vb-r2w{display:flex;flex-direction:column;gap:1px}.vb-dgr[data-r2]{display:flex;align-items:center;gap:8px;height:auto;min-height:23px;padding:3px 5px;border-bottom:1px solid var(--b-bd);border-radius:4px;font-size:11px;cursor:pointer}.vb-dgr[data-r2]:hover{background:var(--b-surf2)}.vb-dgr[data-r2] > .st{flex:none;width:8px;height:8px;border-radius:50%}.vb-dgr[data-r2] > .st.none{background:var(--b-bd2)}.vb-dgr[data-r2] .nm{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}.vb-dgr[data-r2] .nm b{font-weight:500;color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-dgr[data-r2] .nm small{font-size:9.5px;color:var(--b-t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-dgr[data-r2] .nm small em{font-style:normal;margin-left:8px;color:var(--b-t2)}.vb-dgr[data-r2] .nm small em:first-child{margin-left:0}.vb-dgr[data-r2] .pill{flex:none;font-size:9.5px;line-height:1.5;padding:0 7px;border-radius:999px;color:var(--c);background:color-mix(in srgb,var(--c) 14%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 35%,transparent);white-space:nowrap}.vb-dgr[data-r2] .vv{flex:none;position:relative;min-width:52px;max-width:42%;text-align:right;font-family:var(--b-mono);font-size:10.5px;color:var(--b-t1);padding:1px 0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-dgr[data-r2] .vv .bar{position:absolute;right:0;bottom:0;height:2px;border-radius:2px;background:var(--b-ac);opacity:.75}.vb-r2s{display:flex;flex-direction:column;gap:5px;margin:0 0 6px}.vb-r2s .bar{display:flex;height:6px;border-radius:3px;overflow:hidden;gap:1px}.vb-r2s .bar i{display:block;min-width:3px}.vb-r2s .lg{display:flex;flex-wrap:wrap;gap:4px}.vb-r2s .lg button{display:inline-flex;align-items:center;gap:5px;font-size:10px;padding:1px 7px;border-radius:999px;color:var(--b-t2);background:var(--b-surf2);box-shadow:inset 0 0 0 1px var(--b-bd)}.vb-r2s .lg button.on{color:var(--b-t1);box-shadow:inset 0 0 0 1px var(--b-ac)}.vb-r2s .lg i{width:7px;height:7px;border-radius:50%}.vb-r2s .lg b{font-family:var(--b-mono);font-weight:500;color:var(--b-t1)}.vb-r2m{cursor:pointer;margin-top:4px;padding-left:5px}.vb-r2m:hover{color:var(--b-ac)}
 .vb-dgf{display:flex;align-items:center;gap:6px;font-size:8.5px;color:var(--b-t3);padding-top:4px;margin-top:auto}
 .vb-dgr .c .st{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:middle}
 .vb-tsearch{display:flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:var(--b-r);background:var(--b-s2);color:var(--b-t3);font-size:10px;box-shadow:inset 0 0 0 1px var(--b-bd)}.vb-tsearch input{flex:1;border:none;background:transparent;color:var(--b-t1);font:inherit;font-size:10px;min-width:0;outline:none}
@@ -2813,7 +3351,7 @@ span.vw-sampled{opacity:.85}
 .vb-dv{display:flex;align-items:center;gap:7px;font-size:9.5px}.vb-dv .n{width:64px;flex-shrink:0;color:var(--b-t2);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-dv .ax{flex:1;position:relative;height:12px}.vb-dv .ax b{position:absolute;left:50%;top:0;width:1px;height:12px;background:var(--b-bd2)}.vb-dv .ax i{position:absolute;top:2px;height:8px;border-radius:2px}
 .vb-sc{display:flex;align-items:center;gap:8px;font-size:10px}.vb-sc .n{width:56px;color:var(--b-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}.vb-sc .g{flex:1;height:6px;border-radius:3px;position:relative;background:linear-gradient(90deg,var(--b-s3) 55%,color-mix(in srgb,var(--b-ac3) 45%,var(--b-s3)) 78%,color-mix(in srgb,var(--b-ac4) 55%,var(--b-s3)) 100%)}.vb-sc .g b{position:absolute;top:-3px;width:3px;height:12px;border-radius:2px;background:var(--b-t1);transform:translateX(-50%)}.vb-sc .g em{position:absolute;top:-4px;width:2px;height:14px;background:var(--b-ac4);opacity:.75;transform:translateX(-50%)}.vb-sc .v{width:34px;text-align:right;font-family:var(--b-mono);font-size:9.5px}
 .vb-sld{display:flex;align-items:center;gap:8px;font-size:9.5px;color:var(--b-t2)}.vb-sld input{flex:1;accent-color:var(--b-ac);height:14px;min-width:0}.vb-sld b{font-family:var(--b-mono);color:var(--b-t1);width:34px;text-align:right}
-.vb-bigs{display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;min-height:0;align-content:space-evenly;height:100%}.vb-bigs div{display:flex;flex-direction:column;gap:1px;min-width:0}.vb-bigs b{font-family:var(--b-mono);font-size:clamp(15px, min(30cqh, 9cqw), 30px);font-weight:700;letter-spacing:-.03em;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-bigs span{font-size:9px;color:var(--b-t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-bigs.tworow{gap:4px 8px}.vb-bigs.tworow b{font-size:clamp(13px, min(22cqh, 9cqw), 24px)}
+.vb-bigs{display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;min-height:0;align-content:space-evenly;height:100%}.vb-bigs div{display:flex;flex-direction:column;gap:1px;min-width:0;container-type:inline-size}.vb-bigs b{font-family:var(--b-mono);font-size:clamp(13px, min(30cqh, 20cqi), 30px);font-weight:700;letter-spacing:-.03em;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-bigs span{font-size:9px;color:var(--b-t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-bigs.tworow{gap:4px 8px}.vb-bigs.tworow b{font-size:clamp(13px, min(22cqh, 9cqw), 24px)}
 .vb-pillw{display:flex;flex-wrap:wrap;gap:5px}.vb-pillw span{height:22px;padding:0 9px;display:inline-flex;align-items:center;gap:6px;border-radius:var(--b-pill);background:var(--b-surf2);font-size:9.5px;color:var(--b-t2)}.vb-pillw i{width:6px;height:6px;border-radius:50%}.vb-pillw b{font-family:var(--b-mono);font-weight:400;color:var(--b-t1)}.vb-pillw span.more{color:var(--b-t3);background:transparent;box-shadow:inset 0 0 0 1px var(--b-bd)}.vb-pillw span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* parts */
 .vb-funnel{display:flex;flex-direction:column;gap:4px;flex:1;min-height:0;justify-content:center}.vb-funnel span{height:24px;border-radius:3px;display:flex;align-items:center;padding:0 9px;font-size:9.5px;color:var(--b-on);align-self:center;justify-content:space-between;gap:8px}.vb-funnel b{font-family:var(--b-mono);font-weight:400}
@@ -2845,7 +3383,7 @@ span.vw-sampled{opacity:.85}
 .vb-cmpr{display:grid;grid-template-columns:1fr 70px 1fr;gap:8px;align-items:center;font-size:10px}.vb-cmpr .n{grid-column:2;text-align:center;color:var(--b-t2);order:2;white-space:nowrap;overflow:hidden}.vb-cmpr .side{display:flex;align-items:center;gap:6px;height:12px}.vb-cmpr .side.l{order:1;justify-content:flex-end}.vb-cmpr .side.r{order:3}.vb-cmpr .side i{display:block;height:8px;border-radius:4px}.vb-cmpr .side b{font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);width:34px;text-align:right}.vb-cmpr .side.r b{text-align:left}
 .vb-carp{flex:1;min-height:0;display:flex;align-items:center;gap:12px}.vb-carp .vb-dial{width:64px;height:64px}.vb-carp .vb-dial > span{font-size:13px}
 .vb-flist{flex:1;display:flex;flex-direction:column;gap:1px;font-size:9.5px;min-width:0}.vb-flist > span{display:grid;grid-template-columns:1fr 46px 50px 36px;gap:6px;align-items:center;height:19px}.vb-flist span i{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}.vb-flist .h{color:var(--b-t3);font-size:8px;text-transform:uppercase;letter-spacing:.08em}.vb-flist .m{font-family:var(--b-mono);color:var(--b-t2);text-align:right;white-space:nowrap;overflow:hidden}
-.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}` + CAPOUT_CSS + FORMS3_CSS + CI_CSS + CC_CSS + PF_CSS + TL_CSS);
+.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}` + CAPOUT_CSS + FORMS3_CSS + CI_CSS + CC_CSS + PF_CSS + TL_CSS + LINES_CSS);
   function ensureCss(root) {
     const host = root && root.head ? root.head : root;
     if (!host || !host.querySelector) return;
@@ -2872,7 +3410,7 @@ span.vw-sampled{opacity:.85}
 .vw-root[data-motion="0"] *,.vw-root[data-motion="0"] *::before{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 :host([data-state="failed"]) .vw-sampled{opacity:.3;filter:grayscale(1)}
-.vw-root{display:flex;flex-direction:column;gap:5px;height:100%;min-width:0}
+.vw-root{display:flex;flex-direction:column;gap:5px;height:100%;min-width:0}:host([bare]) .vw-root{overflow-y:auto;overflow-x:hidden;scrollbar-width:thin}
 .vw-hd{display:flex;align-items:center;gap:6px;font-family:var(--mono,ui-monospace,monospace);font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim,#6b7280);font-weight:600}
 .vw-hd i{width:6px;height:6px;border-radius:50%;background:var(--acc,#5a9e8f);flex-shrink:0}.vw-hd b{margin-left:auto;font-size:11px;color:var(--text,#d8dce4);font-weight:400;text-transform:none;letter-spacing:0}
 .vw-body{flex:1;min-height:0;display:flex;align-items:safe center;justify-content:center;overflow:auto;font-size:10.5px;container-type:size}
@@ -3039,7 +3577,7 @@ span.vw-sampled{opacity:.85}
      realted spread out widgets"). A widget offers the forms of its data's family - only those that would draw this answer -
      and turns into the one chosen, in place; the choice is kept per widget, "as made" goes back. */
   const NO_VIEW = /^(panel|composite|calnav|month|schedule|calendar|agenda|vgraph|terminal|media|diff|code|markdown|error|string|split-flap|frame|announcement|globe|candles|context_graph|structgraph)$/;
-  const VIEW_FAMILY = { series: ['trace', 'area', 'step', 'scope', 'bars', 'table', 'json'], values: ['bars', 'column', 'ranked', 'lollipop', 'donut', 'treemap', 'pills', 'kv', 'table', 'json'],
+  const VIEW_FAMILY = { series: ['trace', 'lines', 'area', 'step', 'scope', 'bars', 'table', 'json'], values: ['bars', 'column', 'ranked', 'lollipop', 'donut', 'treemap', 'pills', 'kv', 'table', 'json'],
     parts: ['donut', 'treemap', 'stacked-bar', 'waffle', 'bars', 'table', 'json'], items: ['table', 'rows', 'cards', 'list', 'stack', 'json'], events: ['log', 'lane', 'timeline', 'feed', 'table', 'json'],
     level: ['radial', 'gauge', 'meter', 'dial', 'counter', 'hero', 'json'], stages: ['stepper', 'pipeline', 'progress', 'funnel', 'gantt', 'table', 'json'], points: ['scatter', 'table', 'json'],
     matrix: ['heat', 'matrix', 'dots', 'table', 'json'], graph: ['graph', 'minigraph', 'pipes', 'json'], rate: ['turbine', 'ticker', 'json'] };
@@ -3287,6 +3825,7 @@ span.vw-sampled{opacity:.85}
     el.innerHTML = '<header>' + (D.stack.length > 1 ? '<button class="bk" data-dr="back" title="back">‹</button>' : '') + '<div class="tt"><b title="' + esc(name) + '">' + esc(name) + '</b><small>' + esc([rec.title, cur.path, rec.form, src].filter(Boolean).join(' · ')) + '</small></div><button class="x" data-dr="close" title="close (Esc)">✕</button></header>'
       + '<div class="vw-dr-acts">' + (ref ? '<button class="pri" data-dr="entity">Open ' + esc(ref) + ' ↗</button>' : '') + (place ? '<button data-dr="place">Open ' + esc(place) + '</button>' : '') + '<button data-dr="dive">Deep dive ⤢</button><button data-dr="view" class="' + (D.view === 'json' ? 'on' : '') + '" title="Show the item as fields or as JSON">{ } JSON</button><button data-dr="copy">Copy JSON</button></div>'
       + '<div class="vw-dr-bd">'
+      + drMedia(obj, host)
       + (D.view === 'json' ? '<h4>The item · JSON</h4>' + drJson(it) : '')
       + (D.view !== 'json' && plain.length ? '<h4>Fields · ' + (plain.length + nested.length) + '</h4><div class="vw-dr-kv">' + plain.map((k) => '<span class="k">' + esc(k.replace(/_/g, ' ')) + '</span><span class="v">' + fieldVal(k, obj[k]) + '</span>').join('') + '</div>' : '')
       + (D.view !== 'json' && nested.length ? '<h4>' + (plain.length ? 'Nested' : 'Everything') + '</h4>' + drJson(Array.isArray(obj) ? obj : nested.reduce((o2, k) => { o2[k] = obj[k]; return o2; }, {})) : '')
@@ -3427,7 +3966,7 @@ span.vw-sampled{opacity:.85}
       const rec = this._rec || normalise({}); const size = this.size; const form0 = this._drawn || rec.form;
       if (this._viewAs === undefined) { try { this._viewAs = localStorage.getItem('vera.widget.as.' + key(rec)) || ''; } catch (_) { this._viewAs = ''; } }
       const form = (this._viewAs && viewsFor(rec, form0, this._data).includes(this._viewAs)) ? this._viewAs : form0;
-      const opts = { record: rec, draw: rec.draw, title: rec.title, panel: rec.panel, base: this.base, kids: this._kids || {}, ui: this._ui, height: this._bodyH || undefined, width: this._bodyW || undefined, projection: rec.projection };   // L and XL compose around the form
+      const opts = { record: rec, draw: rec.draw, title: rec.title, panel: rec.panel, base: this.base, kids: this._kids || {}, ui: this._ui, height: this._bodyH || undefined, width: this._bodyW || undefined, projection: rec.projection, textK: textKOf(this) };   // L and XL compose around the form
       // nothing read yet — no source, a source that waits for a click, a read in flight, a read that failed — draws the
       // form's SAMPLE face, marked, and says why in the caption; the widget always has a face (never "no data yet")
       const wasRead = !!this._read, dataM = mapped(rec, form, this._data), have = this._data !== undefined && !isEmpty(dataFor(dataM, form));   // what the form would draw of the answer
@@ -3481,7 +4020,7 @@ span.vw-sampled{opacity:.85}
       // the entry motion plays once, on the first real reading (a refresh redraws without it)
       if (state === 'live' && !this.hasAttribute('data-entered') && !this._entering) { this._entering = true; setTimeout(() => { this.setAttribute('data-entered', ''); this._entering = false; }, 900); }
       // a bare element (a dashboard tile's body) measures too: its host sizes it, and the forms fit what they are given
-      if (size !== 'xs' && size !== 's' && this._measured !== size) { const b = this._sh.querySelector('.vw-body') || (this.hasAttribute('bare') ? this : null); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0; if (hb > 0 || wb > 0) this._measured = size; if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
+      if (size !== 'xs' && size !== 's' && this._measured !== size) { const b = this._sh.querySelector('.vw-body') || (this.hasAttribute('bare') ? (this._sh.querySelector('.vw-root') || this) : null); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0;   /* bare: the root is the box the content has */ if (hb > 0 || wb > 0) this._measured = size; if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
       this.dispatchEvent(new CustomEvent('widget:rendered', { bubbles: true, composed: true, detail: { form, size, sample: sampled, empty: readEmpty, stale } }));   // the state rides on the host: data-state
     }
     /* ── THE FACE'S OWN WIDTH, when it has one ────────────────────────────────────────────────────────────────
@@ -3502,6 +4041,9 @@ span.vw-sampled{opacity:.85}
   window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, version: 5 };
   Object.assign(window.VeraWidget, { dive, openBlock, rowTip, rowRef, fontScale, fromCapResult, fromCapStream, capForms: () => CAP_FORMS.slice(), capHints: () => Object.assign({}, CAP_HINTS),
     drawer, relatedTo, resolveArgs, toVeraGraph, itemAt, ensureVeraGraph });   // round 3: the data drawer, the calendar's arguments, the Vera graph form   // the widget review, round 2: blocks, the deep dive, the text-size setting
+
+  // the image studio's readers: the picture a row is, the animations a record carries, the drawer's picture
+  Object.assign(window.VeraWidget, { studio: { imgOf, spriteAnims, drMedia } });
 
   /* ── THE WIDGET SURFACE — window.VeraWidgetConfig (the WidgetConfig board; the pickers of the Canvas, Harness and
      Dashboard boards) ─────────────────────────────────────────────────────────────────────────────────────────────

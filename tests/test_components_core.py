@@ -34,10 +34,43 @@ def test_native_worker_cmd_fixes_layout_cwd_and_durability():
     assert "python -u -m Vera.vera.capability_orchestration" in cmd
     # DURABLE: systemd unit installed, with a nohup fallback for non-systemd hosts
     assert "/etc/systemd/system/vera-worker.service" in cmd
-    assert "systemctl enable --now vera-worker" in cmd
+    assert "systemctl enable vera-worker" in cmd
+    # restart, not `enable --now`: a re-provision must leave the OLD commit
+    assert "systemctl restart vera-worker" in cmd
     assert "nohup" in cmd
     # backend env carried through — incl. Chroma, which the old code dropped entirely
-    assert "REDIS_URL" in cmd and "CHROMA_HOST" in cmd and "POSTGRES_URL" in cmd
+    env = _env_file(cmd)
+    assert "REDIS_URL=" in env and "CHROMA_HOST=" in env and "POSTGRES_URL=" in env
+
+
+def _env_file(cmd):
+    import base64, re
+    m = re.search(r"printf %s '?([A-Za-z0-9+/=]+)'? \| base64 -d > (\S+)/worker\.env", cmd)
+    assert m, "credentials file is not written"
+    return base64.b64decode(m.group(1)).decode()
+
+
+def _unit(cmd):
+    import base64, re
+    m = re.search(r"printf %s '?([A-Za-z0-9+/=]+)'? \| base64 -d > /etc/systemd/system/vera-worker.service", cmd)
+    return base64.b64decode(m.group(1)).decode()
+
+
+def test_credentials_stay_out_of_the_world_readable_unit():
+    cmd = native_worker_cmd(root="/opt/vera/worker", repo="", bundle=True,
+                            redis_url="redis://vera-node:s3cret@10.0.0.1:6379",
+                            backend_kv={"POSTGRES_URL": "postgresql://admin:admin@10.0.0.1:5433/p",
+                                        "NEO4J_PASS": "neo"}, port=8990)
+    unit = _unit(cmd)
+    assert "s3cret" not in unit and "admin:admin" not in unit and "NEO4J_PASS" not in unit
+    assert "EnvironmentFile=/opt/vera/worker/worker.env" in unit
+    env = _env_file(cmd)
+    assert 'REDIS_URL="redis://vera-node:s3cret@10.0.0.1:6379"' in env
+    assert 'NEO4J_PASS="neo"' in env
+    # written under umask 077, then pinned
+    assert "umask 077" in cmd and "chmod 600 /opt/vera/worker/worker.env" in cmd
+    # and never on the command line of the nohup fallback either
+    assert "s3cret" not in cmd.split("nohup")[0].split("base64 -d > /opt/vera/worker/worker.env")[-1]
 
 
 def test_native_worker_cmd_nohup_only_when_systemd_disabled():

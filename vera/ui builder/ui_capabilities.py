@@ -1142,6 +1142,9 @@ schedule(_ui_startup_retry, interval=999999, name="ui_startup_retry")
 # themes and dynamic panels are available before the harness's first connect().
 import asyncio as _ui_asyncio
 try:
-    _ui_asyncio.get_event_loop().create_task(_startup())
-except RuntimeError:
-    pass  # no running loop at import time — scheduler will handle it
+    # Through the orchestrator, so a node worker skips it unless it is
+    # on the worker allow-list (worker_placement_core).
+    import Vera.vera.capability_orchestration as _co_start
+    _co_start.start_at_import(_startup, "ui_startup", queue=True)
+except Exception:
+    pass

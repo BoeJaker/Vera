@@ -1,0 +1,540 @@
+{
+ "v": 2,
+ "dashboard": "fabric-glance",
+ "layout": "default",
+ "key": "fabric-glance",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "The Fabric panel with no dataset chosen: the fabric at a glance, from its light reads (2026-09-27 - \"an empty pane is a glance\"). The full board is the Overview (layouts/fabric.json).",
+ "widgets": [
+  {
+   "record": {
+    "id": "fabric-size",
+    "template": "fabric:size",
+    "form": "numbers",
+    "source": "fabric.health",
+    "title": "Fabric · size",
+    "read": {
+     "refresh": "5m",
+     "args": {},
+     "map": {
+      "pick": {
+       "records": "records_count",
+       "datasets": "datasets_count",
+       "sources": "sources_count",
+       "on disk": "db_size"
+      }
+     }
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      8,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "bytes": [
+      "on disk"
+     ]
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    1
+   ],
+   "span": [
+    8,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric-stores",
+    "template": "fabric:stores",
+    "form": "pills",
+    "source": "fabric.stats",
+    "title": "Fabric stores",
+    "read": {
+     "refresh": "2m",
+     "args": {},
+     "map": {
+      "pick": {
+       "postgres": "postgres.available",
+       "chroma": "chroma.available",
+       "neo4j": "neo4j.available",
+       "sqlite": "sqlite.available",
+       "object store": "object_store.available",
+       "faiss": "faiss.available"
+      },
+      "entries": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    8,
+    1
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "2m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric-vectors",
+    "template": "fabric:vectors",
+    "form": "numbers",
+    "source": "fabric.stats",
+    "title": "Vectors · records",
+    "read": {
+     "refresh": "5m",
+     "args": {},
+     "map": {
+      "pick": {
+       "vectors": "chroma.count",
+       "records": "postgres.records"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    4
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric-ingest",
+    "template": "fabric:ingest",
+    "form": "status",
+    "source": "fabric.health",
+    "title": "Ingest · writer and bus",
+    "read": {
+     "refresh": "1m",
+     "args": {},
+     "map": {
+      "pick": {
+       "writer": "writer_task_alive",
+       "index migrated": "index_migration_done"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    4
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "1m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric-objects",
+    "template": "fabric:objects",
+    "form": "status",
+    "source": "fabric.objects.status",
+    "title": "Blob store",
+    "read": {
+     "refresh": "2m",
+     "args": {},
+     "map": {
+      "pick": {
+       "enabled": "enabled",
+       "available": "available"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    8,
+    4
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "2m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric-feed-tags",
+    "template": "fabric:feed-tags",
+    "form": "ranked",
+    "source": "fabric.tags.list_grouped",
+    "title": "Feeds · by tag",
+    "read": {
+     "refresh": "5m",
+     "args": {},
+     "map": {
+      "values": "tags",
+      "name": "tag",
+      "value": "sources"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    13
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric-bus",
+    "template": "fabric:bus",
+    "form": "status",
+    "source": "fabric.bus.status",
+    "title": "Fabric bus",
+    "read": {
+     "refresh": "1m",
+     "args": {},
+     "map": {
+      "pick": {
+       "bus enabled": "enabled",
+       "bus task": "task_alive"
+      }
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    8,
+    13
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "1m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric-crawl-state",
+    "template": "fabric:crawl-state",
+    "form": "donut",
+    "source": "fabric.discover.history",
+    "title": "Crawl states",
+    "read": {
+     "refresh": "2m",
+     "args": {},
+     "map": {
+      "parts": "crawls",
+      "count": "status"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "palette": "status"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    8,
+    17
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "2m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric-kbs",
+    "template": "fabric:kbs",
+    "form": "rows",
+    "source": "fabric.kb.list",
+    "title": "Knowledge",
+    "read": {
+     "refresh": "5m",
+     "args": {},
+     "map": {
+      "rows": "knowledgebases"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "columns": [
+      "subject",
+      "fact_count",
+      "status"
+     ],
+     "limit": 8
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    21
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric-graphs",
+    "template": "fabric:graphs",
+    "form": "pills",
+    "source": "fabric.graphs.list",
+    "title": "Fabric graphs",
+    "read": {
+     "refresh": "5m",
+     "args": {},
+     "map": {
+      "values": "graphs",
+      "status": "available"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      6,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    8,
+    25
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "fabric-skills",
+    "template": "fabric:skills",
+    "form": "rows",
+    "source": "fabric.skills.list",
+    "title": "Fabric skills",
+    "read": {
+     "refresh": "5m",
+     "args": {},
+     "map": {
+      "rows": "skills"
+     }
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      6,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "columns": [
+      "name",
+      "updated_at"
+     ],
+     "limit": 6
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    8,
+    28
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  }
+ ]
+}

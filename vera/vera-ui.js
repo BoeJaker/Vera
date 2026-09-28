@@ -464,6 +464,16 @@
   // every var applyVars wrote inline on <html>: an inline value outranks the [data-theme] stylesheet, so a switch that
   // reads the new theme from the stylesheet must lift these first (see setThemeLocal)
   var _inlineThemeKeys = {};
+  // relative luminance of a #rgb / #rrggbb / rgb() colour (0 black … 1 white); null when it is not one
+  function _schemeLum(c){
+    var m, r, g, b2; c = String(c || '').trim();
+    if((m = c.match(/^#([0-9a-f]{3})$/i))){ r = parseInt(m[1][0] + m[1][0], 16); g = parseInt(m[1][1] + m[1][1], 16); b2 = parseInt(m[1][2] + m[1][2], 16); }
+    else if((m = c.match(/^#([0-9a-f]{6})/i))){ r = parseInt(m[1].slice(0, 2), 16); g = parseInt(m[1].slice(2, 4), 16); b2 = parseInt(m[1].slice(4, 6), 16); }
+    else if((m = c.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i))){ r = +m[1]; g = +m[2]; b2 = +m[3]; }
+    else return null;
+    var f = function(v){ v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b2);
+  }
   function applyVars(vars){
     if(!vars || typeof vars !== 'object') return null;
     var root = document.documentElement;
@@ -474,6 +484,12 @@
     // is active: the pack's [data-style] block owns --ui-radius then.
     var packed = !!root.getAttribute('data-style');
     for(k in vars){ if(packed && k === '--ui-radius') continue; set(k, vars[k]); }
+    /* the page's colour-scheme follows the theme's background, as the harness's does: a frame whose scheme differs from its
+       parent's gets the browser's opaque canvas behind it - the chat (color-scheme:dark at its root) drew near-black under a light
+       theme picked from the harness's swatches, and its native controls stayed dark (2026-09-28). Recorded with the vars, so the
+       cache replays it on the next load. */
+    var schemeBg = vars['--bg'] || vars['--bg0'];
+    if(schemeBg){ var sl = _schemeLum(schemeBg); if(sl !== null) set('color-scheme', sl > 0.5 ? 'light' : 'dark'); }
 
     // Map research → orchestrator namespace
     var rmap = {

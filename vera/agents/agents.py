@@ -1547,6 +1547,70 @@ except Exception:                                     # pragma: no cover
         _two_tier = _tt_stream = None
         log.warning("two_tier unavailable - chat replies stay single-pass")
 
+try:
+    from Vera.vera.agents import chat_insights_core as _insights
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.agents import chat_insights_core as _insights
+    except Exception:
+        _insights = None
+
+# Chat insights (the chat's Insights toggle): after a reply has streamed, the
+# long-horizon model takes a second look and the chat shows what it adds in a
+# card under the reply. One pass at a time - it runs on the one long-horizon
+# CPU node, whose generation slot the dream director and broad's briefs share
+# (compute-roles: one heavy CPU generation at a time) - and a newer turn in the
+# same conversation supersedes one still waiting for the slot.
+_INSIGHT_SLOT = asyncio.Semaphore(1)
+_INSIGHT_LATEST: Dict[str, str] = {}
+_INSIGHT_TIMEOUT_S = 600.0
+
+
+async def _chat_insights(session_id: str, turn_id: str, message: str, reply: str,
+                         history: List[Dict[str, Any]]) -> None:
+    _INSIGHT_LATEST[session_id] = turn_id
+    t0 = time.monotonic()
+    meta: Dict[str, Any] = {}
+    try:
+        async with _INSIGHT_SLOT:
+            if _INSIGHT_LATEST.get(session_id) != turn_id:
+                return
+            raw = await ollama_generate(
+                _insights.build_prompt(message, reply, history),
+                system=_insights.SYSTEM, json_mode=True, prefer_gpu=False, think=False,
+                job_type=_insights.JOB_TYPE, request_stage="chat_insights",
+                timeout=_INSIGHT_TIMEOUT_S, meta_out=meta)
+    except Exception as e:
+        log.info("chat insights skipped (session %s): %s", (session_id or "")[:12], e)
+        return
+    finally:
+        if _INSIGHT_LATEST.get(session_id) == turn_id:
+            _INSIGHT_LATEST.pop(session_id, None)
+    parsed = _insights.parse(raw)
+    elapsed = round(time.monotonic() - t0, 1)
+    counts = {k: len(v) for k, v in parsed.items()}
+    try:
+        await emit_event({"type": "chat.insight", "session_id": session_id, "turn": turn_id,
+                          "model": meta.get("model") or "", "node": meta.get("instance") or "",
+                          "elapsed_s": elapsed, **counts})
+    except Exception:
+        pass
+    if _insights.is_empty(parsed):
+        return
+    _pd = CAPABILITY_REGISTRY.get("panel.dispatch")
+    _fn = (_pd.get("raw") or _pd.get("func")) if _pd else None
+    if not _fn:
+        return
+    try:
+        await _fn(session_id=session_id, action="__chat_insight__",
+                  payload={**parsed, "turn": turn_id,
+                           "question": " ".join((message or "").split())[:120],
+                           "model": meta.get("model") or "", "node": meta.get("instance") or "",
+                           "elapsed_s": elapsed},
+                  timeout_secs=8.0)
+    except Exception as e:
+        log.debug("chat insights delivery: %s", e)
+
 
 def _tt_token_text(chunk) -> str:
     """The text of an SSE token frame, or "" for any other frame."""
@@ -1557,6 +1621,31 @@ def _tt_token_text(chunk) -> str:
         return json.loads(raw.split("data: ", 1)[1].strip()).get("text", "") or ""
     except Exception:
         return ""
+
+
+def _stream_frame_token(chunk: bytes) -> tuple:
+    """(kind, text) of one SSE frame from the chat stream: kind is the frame's
+    'type' ('token', 'audio', 'thinking', ...) and text its token text ('' for
+    anything but a token). Whitespace-agnostic - frames are json.dumps'd with
+    the default separators. Audio frames (large base64) are recognised from
+    their head without decoding them."""
+    head = chunk[:160]
+    if b'"audio"' in head and b'"type"' in head:
+        return "audio", ""
+    if b'"token"' not in head:
+        return "", ""
+    text = []
+    for line in chunk.decode("utf-8", "ignore").splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        try:
+            obj = json.loads(line[5:].strip())
+        except Exception:
+            continue
+        if isinstance(obj, dict) and obj.get("type") == "token":
+            text.append(str(obj.get("text") or ""))
+    return ("token", "".join(text)) if text else ("", "")
 
 
 def _tt_token_frame(text: str) -> bytes:
@@ -1731,6 +1820,12 @@ async def agent_chat_stream_endpoint(request: Request):
         if _two_tier is not None else "tier1")
     _tt_plan = ({"split": False} if _two_tier is None
                 else _two_tier.plan(_tt_level, _sys_prefix, history, _tt_decider))
+
+    # Insights: checked in the chat forces on for this turn; absent leaves it to
+    # the agent record (off unless an agent sets `insights`).
+    _ins_pref = body.get("insights", None)
+    _ins_enabled = _insights is not None and (
+        bool(getattr(agent, "insights", False)) if _ins_pref is None else bool(_ins_pref))
 
     _qo_pref = body.get("quick_opener", None)
     _qo_enabled = getattr(agent, "quick_opener", False) if _qo_pref is None else bool(_qo_pref)
@@ -1972,31 +2067,19 @@ async def agent_chat_stream_endpoint(request: Request):
                 # fields don't exist in the actual stream, so the response
                 # text was always empty. Fixed to match the real schema.
                 if chunk and isinstance(chunk, (bytes, bytearray)):
-                    head = bytes(chunk[:80])
-                    if b'"type":"token"' in head:
-                        _resp_chars += max(0, len(chunk) - 32)
+                    # PARSE the frame. The sniff used to look for the compact
+                    # '"type":"token"' - but token frames are json.dumps'd with
+                    # the default separators ('"type": "token"', see
+                    # _tt_token_frame), so it never matched: every reply was
+                    # captured as empty (the activity record said chars=0, the
+                    # printer's chat feed and chat insights never fired - found
+                    # live 2026-09-28).
+                    _kind, _text = _stream_frame_token(bytes(chunk))
+                    if _kind == "token":
+                        _resp_chars += len(_text)
                         if sum(len(s) for s in _resp_head) < _CAPTURE_MAX:
-                            try:
-                                s = chunk.decode("utf-8", "ignore")
-                                if '"text":"' in s:
-                                    body_text = s.split('"text":"', 1)[1]
-                                    # consume up to next un-escaped quote
-                                    out_chars = []
-                                    i = 0
-                                    while i < len(body_text):
-                                        c = body_text[i]
-                                        if c == '\\' and i + 1 < len(body_text):
-                                            out_chars.append(body_text[i+1])
-                                            i += 2
-                                            continue
-                                        if c == '"':
-                                            break
-                                        out_chars.append(c)
-                                        i += 1
-                                    _resp_head.append("".join(out_chars))
-                            except Exception:
-                                pass
-                    elif b'"type":"audio"' in head:
+                            _resp_head.append(_text)
+                    elif _kind == "audio":
                         _audio_chunks += 1
                 yield chunk
         except (RuntimeError, ConnectionResetError, BrokenPipeError) as e:
@@ -2082,6 +2165,18 @@ async def agent_chat_stream_endpoint(request: Request):
                         level="info"))
             except Exception as _e:
                 log.debug("chat reply -> printer push failed: %s", _e)
+
+            # Insights: the long-horizon model's second look, fire-and-forget -
+            # the reply is already on screen and nothing waits on this.
+            if _ins_enabled and session_id:
+                try:
+                    _ins_reply = "".join(_resp_head).strip()
+                    if _insights.wanted(True, _ins_reply, use_tts):
+                        asyncio.create_task(_chat_insights(
+                            session_id, uuid.uuid4().hex[:10], message, _ins_reply,
+                            history if isinstance(history, list) else []))
+                except Exception as _e:
+                    log.debug("chat insights schedule failed: %s", _e)
 
     _ep_total = _time.monotonic() - _ep_t0
     if _ep_total > 1.5:
@@ -5939,9 +6034,10 @@ async def _startup():
 
 schedule(_startup, interval=999999, name="agents_startup")
 try:
-    _loop = asyncio.get_event_loop()
-    if _loop.is_running():
-        _loop.create_task(_startup())
+    # Through the orchestrator, so a node worker skips it unless it is
+    # on the worker allow-list (worker_placement_core).
+    import Vera.vera.capability_orchestration as _co_start
+    _co_start.start_at_import(_startup, "agents_startup")
 except Exception:
     pass
 

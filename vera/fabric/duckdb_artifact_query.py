@@ -86,6 +86,8 @@ class DuckDBArtifactQueryProvider:
         *,
         artifact_id: str,
         dataset_id: str,
+        snapshot_id: str = "",
+        record_index_column: str = "",
         connect: Callable[..., Any] | None = None,
     ) -> None:
         stat = artifacts.stat(artifact_id)
@@ -101,10 +103,14 @@ class DuckDBArtifactQueryProvider:
         if not self._path.is_relative_to(artifacts.objects.resolve()):
             raise OSError("artifact path escapes provider root")
         self._connect = connect or _default_connect
+        self._record_index_column = (
+            _column(record_index_column) if record_index_column else "")
+        if snapshot_id:
+            snapshot_id = _identifier(snapshot_id, "snapshot_id")
         self.binding = DuckDBArtifactBinding(
             dataset_id=dataset_id,
             artifact_id=artifact_id,
-            snapshot_id="snap_" + artifact_id[4:],
+            snapshot_id=snapshot_id or "snap_" + artifact_id[4:],
             checksum=stat.checksum,
             media_type=stat.media_type,
         )
@@ -178,7 +184,17 @@ class DuckDBArtifactQueryProvider:
             signal.checkpoint()
             if len(row) != len(description):
                 raise RuntimeError("DuckDB result schema does not match its rows")
-            item = {"record_index": offset + index, "score": 0.0}
+            record_index = offset + index
+            if self._record_index_column:
+                try:
+                    value = row[description.index(self._record_index_column)]
+                except ValueError as exc:
+                    raise RuntimeError(
+                        "DuckDB result lacks its stable record index column") from exc
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise RuntimeError("DuckDB stable record index is invalid")
+                record_index = value
+            item = {"record_index": record_index, "score": 0.0}
             if request.include_data:
                 item["data"] = _json_copy(dict(zip(description, row)), "DuckDB row")
             matches.append(item)

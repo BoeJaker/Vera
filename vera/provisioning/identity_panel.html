@@ -43,6 +43,8 @@ input:focus,select:focus{border-color:var(--acc)}
 .toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}
 </style>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-estate.js"></script>
+<script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-entity-drawer.js"></script>
 </head>
 <body>
@@ -177,6 +179,15 @@ input:focus,select:focus{border-color:var(--acc)}
         <div id="hList" style="display:flex;flex-direction:column;gap:6px"></div>
       </div>
 
+      <!-- Names: the DNS zone -->
+      <div class="card">
+        <h3>②b Names (DNS zone <span id="zName" class="hint"></span>)</h3>
+        <div class="hint">Every record in the estate's zone. A name may carry several addresses - remove one value, not the name. The portal's names (vera, joeflix) point at the door, not at the app.</div>
+        <div class="row"><input id="nName" placeholder="name e.g. vera" data-select="static" data-select-single data-select-new><input id="nIp" placeholder="address" data-select="machines" data-select-single data-select-new title="the one estate list, or type an address"></div>
+        <div class="row" style="flex:0 0 auto"><button class="btn" style="flex:0 0 auto" onclick="addName()">Add A record</button><button class="btn" style="flex:0 0 auto" onclick="loadNames()">↻</button></div>
+        <div id="nList" style="display:flex;flex-direction:column;gap:4px;max-height:260px;overflow:auto"></div>
+      </div>
+
       <!-- Register user -->
       <div class="card">
         <h3>③ Register a user</h3>
@@ -307,7 +318,7 @@ async function refresh(){
   let s={}; try{ s=await api('/identity/status'); }catch(e){ return; }
   const b=$('#ipaBadge');
   if(!s.configured){ b.textContent='not configured'; b.className='badge'; }
-  else if(s.reachable){ b.textContent='connected'+(s.version?' · '+s.version:''); b.className='badge ok'; loadHosts(); loadUsers(); }
+  else if(s.reachable){ b.textContent='connected'+(s.version?' · '+s.version:''); b.className='badge ok'; loadHosts(); loadUsers(); loadNames(); }
   else { b.textContent='unreachable'; b.className='badge err'; }
 }
 async function regHost(){
@@ -324,7 +335,33 @@ async function regUser(){
     if(r.error)return toast(r.error,true); toast('user '+login+' created'); ['uLogin','uFirst','uLast','uMail','uPass'].forEach(i=>$('#'+i).value=''); loadUsers();
   }catch(e){ toast(e.message,true); }
 }
-async function loadUsers(){ try{ const r=await api('/identity/user/list'); $('#uList').innerHTML=(r.users||[]).map(u=>`<div class="list-row"><span class="k">${esc(u.login)}</span><span class="hint">${esc(u.name||'')}</span></div>`).join(''); }catch(e){} }
+async function loadUsers(){ try{ const r=await api('/identity/user/list'); $('#uList').innerHTML=(r.users||[]).map(u=>`<div class="list-row"><span class="k">${esc(u.login)}</span><span class="hint">${esc(u.name||'')}</span><button class="btn sm" style="flex:0 0 auto" title="A TOTP token whose secret goes straight to keydrop; the account then needs password + code on every IPA-joined host" onclick="userMfa(${JSON.stringify(u.login)})">second factor → keydrop</button></div>`).join(''); }catch(e){} }
+async function userMfa(login){
+  const r=await veraEstate.confirmRun('/identity/user/mfa',{login,no_expiry:true},
+    'Give '+login+' a second factor?\n\nA TOTP token is added to the IPA account and its secret is sealed straight into keydrop (never shown here). From then on every IPA-joined host asks '+login+' for password + code; the forced first-login password change is cleared.');
+  if(r&&r.ok) toast('Token sealed - keydrop entry '+r.keydrop_entry);
+}
+// ── Names: the zone's records ──────────────────────────────────────────────
+let _zoneRows=[];
+async function loadNames(){
+  let r={}; try{ r=await api('/identity/dns/records'); }catch(e){ return; }
+  if(r.error){ $('#nList').innerHTML='<div class="hint">'+esc(r.error)+'</div>'; return; }
+  $('#zName').textContent=r.zone||'';
+  _zoneRows=(r.records||[]).filter(x=>x.name&&x.name!=='@'&&(x.a||[]).length);
+  const nameSel=$('#nName'); if(nameSel&&nameSel._veraSelect) nameSel.setAttribute('data-select-options',JSON.stringify(_zoneRows.map(x=>x.name)));
+  $('#nList').innerHTML=_zoneRows.map(x=>`<div class="list-row"><span class="k">${esc(x.name)}</span><span class="hint" style="display:flex;gap:6px;flex-wrap:wrap">${x.a.map(ip=>`<span>${veraEstate.chip(veraEstate.refFor({addr:ip}),ip)} <a href="#" title="remove this value" style="color:var(--err);text-decoration:none" onclick="delName(${JSON.stringify(x.name)},${JSON.stringify(ip)});return false">×</a></span>`).join('')}</span></div>`).join('')||'<div class="hint">no A records</div>';
+}
+async function addName(){
+  const name=$('#nName').value.trim(), ip=$('#nIp').value.trim().replace(/^(guest|host):/,'');
+  if(!name||!ip) return toast('name and address',true);
+  const m=veraEstate.find({vmid:ip})||veraEstate.find({ssh_host_id:ip}); const addr=m?m.addr:ip;
+  const r=await veraEstate.confirmRun('/identity/dns/record',{name,ip:addr},'Add '+name+' → '+addr+' to the zone?');
+  if(r&&r.ok){ toast('added'); $('#nName').value=''; $('#nIp').value=''; loadNames(); }
+}
+async function delName(name,ip){
+  const r=await veraEstate.confirmRun('/identity/dns/delete',{name,ip},'Remove '+ip+' from '+name+'?\n\nOther addresses on the name stay; a name with no address left disappears from resolution.');
+  if(r&&r.ok){ toast('removed'); loadNames(); }
+}
 async function regApp(){
   const name=$('#aName').value.trim(); if(!name)return toast('name required',true);
   toast('registering '+name+'…');

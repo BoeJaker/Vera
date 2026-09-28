@@ -21,6 +21,9 @@ The snapshot currently includes:
   without endpoints, credential IDs, metadata, or secrets;
 - evidence-based caller edges for Python registration, HTTP routes, MCP
   exposure, schedules, and stored workflow nodes;
+- bounded observed caller edges from recent capability telemetry, reduced to
+  canonical UI, agent, or system actor class, registered capability, terminal
+  outcome, and aggregate count;
 - name-family signals for `loop`, `pipeline`, `workflow`, `run`, `job`, `task`,
   `scheduler`, `generate`, `query`, and `store` duplication investigations.
 
@@ -31,6 +34,10 @@ the canonical records used for migration evidence. Every response carries
 SHA-256 fingerprint. The fingerprint excludes capture time, volatile worker
 state, schedule run counters, and registry load order. Two scans of an unchanged
 process should therefore match even while its heartbeat and schedules advance.
+Observed caller edges are operational evidence and are also excluded from the
+structural fingerprint, so ordinary UI and agent activity cannot manufacture
+architecture drift. They never retain session or trace IDs, timestamps,
+previews, arguments, results, or error text.
 The full worker records remain in the snapshot for operational evidence; they
 simply do not create false architectural drift.
 
@@ -75,9 +82,10 @@ unbounded data extraction: workflow definitions and artifact contents are
 deliberately excluded, database evidence is declared schema rather than live row
 inspection, and connections are aggressively redacted. The caller graph records
 interfaces and stored-workflow nodes supported by concrete metadata; it does not
-pretend to be a complete dynamic Python trace. UI and agent-specific caller
-identity should be enriched later from Run/Activity telemetry once those shared
-contracts are stable.
+pretend to be a complete dynamic Python trace. UI, agent, and background-system
+caller identity is now enriched from a bounded window of the shared capability
+event telemetry. Coverage remains explicitly `partial`: an absent edge means it
+was not observed in the retained window, not that no caller exists.
 
 Configuration coverage reports only whether each centrally declared key was
 explicitly supplied by the environment; defaults and all values remain private.

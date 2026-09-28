@@ -110,7 +110,7 @@
     function draw(){
       need('/ui/exploded_element.js', function(){ return !!(window.customElements && customElements.get('vera-exploded')); }).then(function(ok){
         if (!ok) { host.textContent = 'the exploded scene (/ui/exploded_element.js) did not load'; return; }
-        if (!el) { el = document.createElement('vera-exploded'); el.style.cssText = 'position:absolute;inset:0;display:block'; host.appendChild(el); }
+        if (!el) { el = document.createElement('vera-exploded'); el.style.cssText = 'position:absolute;inset:0'; host.appendChild(el); }   // its own display (a flex column): display:block left the scene no height
         try { el.setScene(scene()); if (el.fit) el.fit(); } catch(e){}
       });
     }

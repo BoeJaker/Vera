@@ -49,6 +49,8 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse, JSONResponse
 
 import Vera.vera.capability_orchestration as _orch
+from Vera.vera import model_tag_core as _model_tags
+from Vera.vera.workers import node_choice as _node_choice
 from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, OLLAMA_INSTANCES,
     capability, emit_event, now_iso, schedule,
@@ -403,10 +405,19 @@ def _pick_instance_load_aware(
     _prefer = _routepref.preferred_of(rule)
 
     def _score(iid: str, inst: dict) -> float:
+        """Real load plus any deliberate soft preference.
+
+        `priority` is NOT in here any more. It used to contribute 0.01 per
+        step, which sounds like a tie-break and is not: two idle CPU nodes
+        with priorities 1 and 2 then differ by 0.01 on EVERY request, never
+        tie, and the least-recently-used term below never runs. That is the
+        whole of the 90/10 embedding split (run59 151/63, run60 318/22,
+        run61 235/21). Priority now breaks a tie that survives fairness -
+        see `_best` and node_choice.
+        """
         s  = inst.get("in_use", 0)
         s += colocated.get(iid, 0) * 0.5
         s += _proxy_queue_depth(iid) * 0.2   # this node's own proxy backlog
-        s += inst.get("priority", 0) * 0.01
         # A SOFT preference: enough to win a tie, not enough to win when the
         # preferred node is the busier one. See route_preference for why a hard
         # exclusion (avoid_embed) could not express "favours, but will yield".
@@ -414,20 +425,27 @@ def _pick_instance_load_aware(
         return s
 
     def _has_model(inst: dict) -> bool:
-        # Flexible name match (mirrors the base pick_instance): exact, tag
-        # prefix, or same base name.
-        if not model:
-            return True
-        base = model.split(":")[0]
-        for m in (inst.get("models") or []):
-            if m == model or m.startswith(model + ":") or m.split(":")[0] == base:
-                return True
-        return False
+        # Exact tag match, with `x` and `x:latest` treated as one model - the
+        # only equivalence Ollama itself applies. The old rule matched the BASE
+        # name, so a request for `qwen2.5:7b` was satisfied by a node holding
+        # only `qwen2.5:0.5b`. See vera/model_tag_core.py.
+        return _model_tags.is_served(model, inst.get("models") or [])
 
     def _best(cands, why):
-        chosen = min(cands, key=lambda k: _score(k, cands[k]))
-        _note(f"{why}: picked '{chosen}' (in_use={cands[chosen].get('in_use',0)}) "
-              f"from {sorted(cands)}")
+        # Lowest score wins; EQUAL scores go to whichever node waited longest.
+        # Without that last term a stream of one-at-a-time requests ties on
+        # every key - in_use is 0 on all of them between calls - and `min`
+        # returns the same node forever: 90% of every census's embeddings went
+        # to cpu-246 while cpu-247 idled. The base pick_instance has had this
+        # tie-break since August; this function REPLACES it and never did.
+        _scores = {k: _score(k, v) for k, v in cands.items()}
+        _prio = {k: v.get("priority", 0) or 0 for k, v in cands.items()}
+        _lp = getattr(_orch, "_LAST_PICKED", None)
+        _lp = _lp if isinstance(_lp, dict) else {}
+        chosen = _node_choice.choose(_scores, _lp, _prio)
+        _node_choice.record(_lp, chosen, time.time())
+        _note(f"{why}: picked '{chosen}' (in_use={cands[chosen].get('in_use',0)}, "
+              f"score={_scores[chosen]:.2f}, prio={_prio[chosen]}) from {sorted(cands)}")
         return _out(chosen)
 
     if prefer_gpu:
@@ -647,6 +665,23 @@ async def _forward(target_id: str, path: str, body: dict, stream: bool):
     # single JSON object. Ollama defaults a missing "stream" to True, so we
     # set it explicitly to avoid getting NDJSON back and failing r.json().
     body = {**body, "stream": stream}
+    # A proxied client sends whatever it sends; the NODE decides the thread
+    # count and the window it can hold. Forwarding bodies untouched put a
+    # 24-thread nomic runner on a 12-CPU node for every embed a non-Vera
+    # client made (n8n / Open WebUI overnight, 2026-09-24: 1-2 min each).
+    # Same refit the generate failover applies; a GPU node gets no thread
+    # count, a caller's smaller one is kept.
+    try:
+        _refit = _orch._node_threads_core.refit_for_node(
+            body.get("options") if isinstance(body.get("options"), dict) else None,
+            has_gpu=bool(inst.get("has_gpu")), node_num_thread=inst.get("num_thread"),
+            default=_orch._CPU_NODE_THREADS, node_ctx_max=inst.get("num_ctx_max"))
+        if _refit:
+            body["options"] = _refit
+        else:
+            body.pop("options", None)
+    except Exception as _re:                       # pragma: no cover - never block a proxy call
+        log.debug("proxy refit skipped: %s", _re)
     inst["in_use"] = inst.get("in_use", 0) + 1
     _proxy_active += 1
     _t0 = time.time()
@@ -1291,8 +1326,9 @@ async def _startup():
 
 schedule(_startup, interval=999999, name="cluster_startup")
 try:
-    _loop = asyncio.get_event_loop()
-    if _loop.is_running():
-        _loop.create_task(_startup())
+    # Through the orchestrator, so a node worker skips it unless it is
+    # on the worker allow-list (worker_placement_core).
+    import Vera.vera.capability_orchestration as _co_start
+    _co_start.start_at_import(_startup, "cluster_startup")
 except Exception:
     pass

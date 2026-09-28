@@ -191,6 +191,18 @@
       // is being edited, when it is the thing you are arranging.
       '.vd-rec{font-family:var(--mono);font-size:8px;color:var(--dim2);opacity:.55;white-space:nowrap;overflow:hidden;',
       'text-overflow:ellipsis;max-width:38%;flex-shrink:1;margin-left:6px;letter-spacing:0;text-transform:none;font-weight:400}',
+      // the title has the head: the chip shows on hover, while arranging, or when it carries news (a narrow tile's title was
+      // squeezed to nothing by it - the Workers figures, 2026-09-28)
+      '.dash-grid .w-head .vd-rec{max-width:0;opacity:0;margin-left:0;transition:max-width .2s,opacity .2s}',
+      '.dash-grid .widget:hover .vd-rec,.dash-grid.editing .vd-rec,.dash-grid .vd-rec:is(.sample,.reading,.failed,.bad,.checking){max-width:38%;opacity:.9;margin-left:6px}',
+      '.dash-grid .w-head .w-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      // a tile's widget fills its body on every page's grid (the rule lived only in the harness page: on Workers the element
+      // tile drew at its natural 203 px in a 361 px body and scrolled its cards; small figures' captions were cut)
+      '.dash-grid .w-body > vera-widget{flex:1 1 auto;min-height:0;display:block;overflow:hidden}',
+      // a tile's buttons take no room until it is hovered, focused or arranged - the harness's rule, on every grid (a two-column
+      // figure's title read "WORK..." beside its invisible buttons)
+      '.dash-grid .widget > .w-head .w-actions{display:none}',
+      '.dash-grid .widget:hover > .w-head .w-actions,.dash-grid .widget:focus-within > .w-head .w-actions,.dash-grid.editing .widget > .w-head .w-actions,.dash-grid .widget.floating > .w-head .w-actions{display:inline-flex}',
       '.dash-grid.editing .vd-rec{opacity:1;color:var(--acc)}',
       '.vd-rec.sample{font-style:italic}',
       '.vd-rec.sample,.vd-rec.reading{opacity:.9;color:var(--acc3,#d4a96a)}.vd-rec.failed{opacity:.9;color:var(--err,#c96b6b)}',
@@ -618,8 +630,12 @@
     function recordOf(wid) { return state.edits[wid] || state.records[wid] || (state.dynamic[wid] && state.dynamic[wid].record) || null; }
     function withId(r, wid) { var o = {}; Object.keys(r || {}).forEach(function (k) { o[k] = r[k]; }); o.id = wid; return o; }
     // the span picks the size a record tile draws at; the tile says its size either way
+    /* the span picks the size, read against the grid's OWN width: a grid narrower than a page (a dashboard in a side pane -
+       Cap Hub's glance, 330 px) scales the span first, so a full-width tile there draws at M, not XL with its side lists
+       (2026-09-28); a page-wide grid (1200 px and up) keeps its spans as they are */
+    function effSpan(sp) { var gw = grid.clientWidth || 0, k = gw ? Math.min(1, gw / 1200) : 1; return [Math.max(1, Math.round((+sp[0] || 1) * k)), sp[1]]; }
     function syncSize(w) {
-      var sp = spanOf(w), size = sizeForSpan(sp[0], sp[1]);
+      var sp = effSpan(spanOf(w)), size = sizeForSpan(sp[0], sp[1]);
       w.dataset.size = size;
       var el = w.querySelector(':scope > .w-body > vera-widget');
       if (el && el.getAttribute('size') !== size) el.setAttribute('size', size);
@@ -1370,7 +1386,7 @@
         body.appendChild(holder);
       }
       if (!el) { el = document.createElement('vera-widget'); el.className = 'vd-draw'; el.setAttribute('bare', ''); el.setAttribute('dive-on-click', ''); el.setAttribute('item-drawer', ''); body.appendChild(el); }   // a click on the face: the data drawer (item-drawer), ⤢ the deep dive   // the tile's own head carries the title (the board's tile is one head)
-      var sp = spanOf(w); el.setAttribute('size', sizeForSpan(sp[0], sp[1]));
+      var sp = effSpan(spanOf(w)); el.setAttribute('size', sizeForSpan(sp[0], sp[1]));
       el.setAttribute('record', JSON.stringify(shown));
       w.dataset.converted = '1';
     }
@@ -1545,13 +1561,17 @@
         '<span class="w-resize" data-resize></span>';
       if (record.form === 'section') {   // a section is its head alone: the label, and the count of tiles it names once the grid is laid
         widget.querySelector('.w-body').remove(); widget.querySelector('.w-dot').remove();
+        // the name bold, the rest (after the first " · ") a subtitle, and the section's own colour (draw.accent)
+        var secT = widget.querySelector('.w-title'), secS = String(record.title || ''), secCut = secS.indexOf(' · ');
+        if (secT && secCut > 0) secT.innerHTML = '<b>' + esc(secS.slice(0, secCut)) + '</b><small>' + esc(secS.slice(secCut)) + '</small>';
+        if (record.draw && record.draw.accent) widget.style.setProperty('--sec-acc', String(record.draw.accent));
         grid.appendChild(widget); state.records[wid] = record; state.meta[wid] = state.meta[wid] || { at: null, refresh: '', floated: false }; wireWidget(widget); return widget;
       }
       var el = document.createElement('vera-widget');
       el.setAttribute('bare', '');   // the tile's own head carries the title and the record chip (the board's tile is one head)
       el.setAttribute('dive-on-click', '');
       el.setAttribute('item-drawer', '');   // a click on a part - a block, a row, a bar, a slice, a day - or on the face opens the data drawer on it; ⤢ the deep dive
-      var sp0 = spanOf(widget);
+      var sp0 = effSpan(spanOf(widget));   /* read against the grid's own width */
       el.setAttribute('size', sizeForSpan(sp0[0], sp0[1]));   // the span picks the size (the Sizes board), not the pixels
       var shown = withSample(record); if (shown.sample) widget.dataset.sample = '1';   // no readable source: the form's sample, said so
       el.setAttribute('record', JSON.stringify(shown));
@@ -1831,6 +1851,8 @@
     };
     grid._veraDash = ctl;
     grid.dataset.vd = '1'; gridVars(); window.addEventListener('resize', gridVars);
+    /* the grid's own width decides the tiles' sizes: follow it (a pane opening, the window, the LHM pushing it) */
+    try { if (window.ResizeObserver) { var _lastW = 0; new ResizeObserver(function () { var gw = grid.clientWidth || 0; if (Math.abs(gw - _lastW) < 24) return; _lastW = gw; try { widgets().forEach(syncSize); } catch (e) {} }).observe(grid); } } catch (e) {}
     ctl.ready = loadFile();
     injectToolbar();
     return ctl;
@@ -1858,6 +1880,14 @@
     'vera-dashboard .widget{background:var(--bg2,#1a1d23);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:var(--radius-lg,10px);box-shadow:var(--shadow,0 6px 20px -12px rgba(0,0,0,.55));display:flex;flex-direction:column;min-width:0;overflow:hidden;position:relative;transition:border-color .15s}',
     'vera-dashboard .widget:hover{border-color:var(--border2,rgba(255,255,255,.16))}vera-dashboard .widget.hidden{display:none}',
     'vera-dashboard .widget.drag-over{border-color:var(--acc,#6ea8d8);box-shadow:0 0 0 1px var(--acc,#6ea8d8)}',
+    /* a section tile is the band's heading, not an empty card (the harness's own rules, scoped to the element) */
+    'vera-dashboard .widget.w-section{background:transparent!important;border:none!important;box-shadow:none!important;border-radius:0;justify-content:flex-end;overflow:visible}',
+    'vera-dashboard .widget.w-section .w-head{padding:6px 8px 5px;border-bottom:2px solid color-mix(in srgb,var(--sec-acc,var(--acc,#5a9e8f)) 60%,transparent);border-radius:6px 6px 0 0;background:linear-gradient(90deg,color-mix(in srgb,var(--sec-acc,var(--acc,#5a9e8f)) 14%,transparent),transparent 70%)}',
+    'vera-dashboard .widget.w-section .w-title{font-size:14px;letter-spacing:.1em;color:var(--t1,var(--text,#d8dce4));font-weight:650;display:flex;align-items:baseline;gap:8px}',
+    "vera-dashboard .widget.w-section .w-title::before{content:'';align-self:center;flex:0 0 auto;width:4px;height:1.05em;border-radius:2px;background:var(--sec-acc,var(--acc,#5a9e8f))}",
+    'vera-dashboard .widget.w-section .w-title b{font-weight:inherit;flex:0 0 auto}vera-dashboard .widget.w-section .w-title small{font-size:11px;font-weight:400;letter-spacing:.02em;text-transform:none;color:var(--t2,var(--dim2,#8a92a0));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}',
+    'vera-dashboard .widget.w-section .w-title::after{content:attr(data-count);margin-left:10px;font-size:10px;letter-spacing:0;text-transform:none;color:var(--t3,var(--dim,#6b7280))}',
+    'vera-dashboard .widget.w-section .vd-rec,vera-dashboard .widget.w-section .w-resize,vera-dashboard .widget.w-section .w-body{display:none!important}',
     'vera-dashboard .w-head{display:flex;align-items:center;gap:6px;padding:7px 11px 6px;border-bottom:1px solid var(--border,rgba(255,255,255,.07));flex-shrink:0}',
     'vera-dashboard .w-title{font-size:10.5px;color:var(--dim2,var(--t2,#8a92a0));text-transform:uppercase;letter-spacing:.09em;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     /* a tile's title has its head: the record chip (form · source) shows on hover, while configuring, or when it carries

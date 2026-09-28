@@ -33,6 +33,15 @@ from .capability_enforcement import PolicyEnforcementDenied, enforcement_project
 # Pure context-budget decisions — window vs prompt vs output vs retained prefix.
 # Imports nothing from Vera, so it is safe this early and cannot cycle. Pinned by
 # tests/test_ctx_policy.py, which is the point: these were inline and untestable.
+try:
+    from Vera.vera import ollama_node_fault_core as _node_fault_core
+except Exception:  # pragma: no cover - worktree / test layout
+    from . import ollama_node_fault_core as _node_fault_core
+try:
+    from Vera.vera import model_tag_core as _model_tag_core
+except Exception:  # pragma: no cover - worktree / test layout
+    from . import model_tag_core as _model_tag_core
+from .capabilities import ctx_policy_core as _ctx_policy_core
 from .capabilities.ctx_policy_core import (
     did_shift as _ctx_did_shift,
     keep_tokens as _ctx_keep_tokens,
@@ -495,11 +504,31 @@ _EMBED_CACHE_TTL = float(os.environ.get("OLLAMA_EMBED_CACHE_TTL", "120") or 120)
 # would on a shared GPU. Fully overridable via env.
 OLLAMA_KEEP_ALIVE  = os.environ.get("OLLAMA_KEEP_ALIVE", "10m")
 
-TASK_STREAM   = "vera:tasks"
+try:
+    from Vera.vera.workers import worker_placement_core as _placement
+except Exception:                                     # pragma: no cover
+    from vera.workers import worker_placement_core as _placement
+try:
+    # REDIS_URL can carry an ACL password (config.py) - log it redacted only
+    from Vera.vera.security import redis_auth_core as _redis_auth
+except Exception:                                     # pragma: no cover
+    from vera.security import redis_auth_core as _redis_auth
+
+TASK_STREAM   = _placement.TASK_STREAM
+# Tasks for host-bound caps (see worker_placement_core.HOST_BOUND). Only a
+# process that is NOT a worker reads it, so a node worker can never pick one up.
+HOST_TASK_STREAM = _placement.HOST_TASK_STREAM
 RESULT_STREAM = "vera:results"
 EVENT_STREAM  = "vera:events"
 GROUP_WORKERS = "workers"
 GROUP_RESULTS = "orchestrator"
+
+# A node worker (VERA_IS_WORKER=1): a task runner joined to the shared stream,
+# not a second copy of the host. It takes only node-safe caps, never claims the
+# scheduler lease, and runs only the state-loading startup hooks. Computed ONCE
+# at import - it cannot change without a restart.
+_IS_WORKER = str(os.environ.get("VERA_IS_WORKER", "")).strip().lower() in (
+    "1", "true", "yes", "on")
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
 CAPABILITY_REGISTRY: Dict[str, dict]           = {}
@@ -654,6 +683,12 @@ OLLAMA_JOB_TYPES: List[str] = [
     # The dream DIRECTOR (ambient thought orchestrator) runs continuously on
     # CPU nodes — it must never contend with user-facing GPU work.
     "dream_director",
+    # The broad planning style's per-work-stream briefs: long CPU generations
+    # that run BESIDE the GPU plan (compute-roles), one at a time.
+    "plan_enrich",
+    # Chat insights: the long-horizon model's second look at a finished chat
+    # reply (optional, the chat's Insights toggle). Nothing waits on it.
+    "chat_enrich",
     # Media services served by the GPU inference server(s) (edge/GPU_inference.py):
     # routed across MEDIA_INSTANCES by resolve_media(), not pick_instance().
     "stt", "tts", "imagegen",
@@ -662,7 +697,8 @@ OLLAMA_JOB_TYPES: List[str] = [
 def _rule(job_type: str, *, prefer_gpu: bool = False, deny_gpu: bool = False,
           pin: str = "", allow: Optional[List[str]] = None,
           deny: Optional[List[str]] = None, model: str = "",
-          avoid_embed: bool = False, prefer: str = "") -> dict:
+          avoid_embed: bool = False, prefer: str = "",
+          options: Optional[dict] = None) -> dict:
     # `model` (optional) pins a specific model for this job type — lets light
     # work (naming, summarisation) run a smaller/faster model than chat/code.
     # `avoid_embed` steers this job type OFF whichever node currently serves
@@ -673,10 +709,33 @@ def _rule(job_type: str, *, prefer_gpu: bool = False, deny_gpu: bool = False,
     # has the arithmetic). Use it where `avoid_embed` is too blunt - a hard
     # exclusion collapsed naming/summarize/dream_director onto ONE cpu node,
     # because the excluded node is always whichever one serves embeddings.
-    return {"job_type": job_type, "prefer_gpu": prefer_gpu, "deny_gpu": deny_gpu,
-            "pin": pin, "allow": list(allow or []), "deny": list(deny or []),
-            "model": model or "", "avoid_embed": bool(avoid_embed),
-            "prefer": str(prefer or "")}
+    r = {"job_type": job_type, "prefer_gpu": prefer_gpu, "deny_gpu": deny_gpu,
+         "pin": pin, "allow": list(allow or []), "deny": list(deny or []),
+         "model": model or "", "avoid_embed": bool(avoid_embed),
+         "prefer": str(prefer or "")}
+    if options:
+        r["options"] = dict(options)
+    return r
+
+
+# The LONG-HORIZON CPU model (compute-roles: cpu-247 = long, high-quality
+# generation nothing is waiting on). Every job type that runs it - the dream
+# director and narrator, broad's per-stream briefs, chat insights - asks for the
+# SAME window and keeps it resident: on a CPU node the window otherwise follows
+# each prompt (4k/8k/16k steps, see _stable_ctx), and a different window is a
+# new runner - a 62 s cold load of ~23 GB (measured 2026-09-27) between two
+# callers of the same model. num_ctx is a floor (the fit may still raise it for
+# a prompt that needs more); keep_alive is lifted into the request.
+LONG_HORIZON_CPU_MODEL = "qwen3.6:35b-a3b"
+LONG_HORIZON_CPU_OPTIONS = {"num_ctx": 16384, "keep_alive": "2h"}
+# ...and they QUEUE on the long-horizon node rather than spill. Generation on a
+# node is already one at a time in-process (OLLAMA_CONCURRENCY=1), but `prefer`
+# is soft: while cpu-247 was busy, the next caller routed to cpu-246 - the
+# embedding/worker node - and loaded ~23 GB there beside the embedder (user,
+# 2026-09-27: one CPU node does heavy generation; the other keeps embeddings
+# and system work moving). A rule pin holds while the node is online and falls
+# back to normal routing only when it is not (pick_instance).
+LONG_HORIZON_CPU_NODE = "cpu-247"
 
 # Built-in default routing — always shown in the UI as the baseline. Embeddings
 # are CPU-only (light, should never tie up a GPU); generative work prefers GPU.
@@ -692,7 +751,10 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # Keep them off the embedding node (avoid_embed) so they land on an idle CPU
     # node instead of queueing behind embedding traffic — a summarize stuck
     # behind embeds on the same node stalled every message in a long chat.
-    "naming":    _rule("naming",    deny_gpu=True, prefer="cpu-247"),
+    # A chat title is 3-8 tokens. With no model here a sandbox took the instance
+    # default - the 9b - onto a CPU node, where one such call held the node for
+    # 9 hours (2026-09-23, judgement 18). Every node carries the 0.5b.
+    "naming":    _rule("naming",    deny_gpu=True, prefer="cpu-247", model="qwen2.5:0.5b"),
     # summarize is GPU-ONLY. It runs INLINE - the caller is blocked awaiting it -
     # so a CPU summarise does not overlap anything: the GPU sits idle while the
     # slower box works, and the caller just waits longer. Verified safe: the gate
@@ -721,7 +783,24 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # generations off the embedding node: a multi-minute director thought
     # holding that node's single generation slot starved every embed call
     # (and vice versa — director thoughts queued behind embedding bursts).
-    "dream_director":   _rule("dream_director",   deny_gpu=True, prefer="cpu-247"),
+    # The director's thoughts and every narrator tier that does not name its
+    # own model run the long-horizon model (user, 2026-09-27), in the shared
+    # window so they reuse the runner broad's briefs keep warm.
+    "dream_director":   _rule("dream_director",   deny_gpu=True, prefer="cpu-247",
+                              pin=LONG_HORIZON_CPU_NODE, model=LONG_HORIZON_CPU_MODEL,
+                              options=LONG_HORIZON_CPU_OPTIONS),
+    # Planning enrichment (broad style): a long generation on the long-horizon
+    # node, cpu-247, never on the GPU and kept off cpu-246 - the embedding /
+    # worker node - so a brief never holds the node embeddings and system work
+    # need. The broad style issues these ONE AT A TIME, so the soft `prefer` is
+    # never pushed onto cpu-246 by its own second call.
+    "plan_enrich":      _rule("plan_enrich",      deny_gpu=True, prefer="cpu-247",
+                              pin=LONG_HORIZON_CPU_NODE, options=LONG_HORIZON_CPU_OPTIONS),
+    # Chat insights (user, 2026-09-27): the long-horizon model on the long-
+    # horizon node, in the shared window - the reply already came from the GPU.
+    "chat_enrich":      _rule("chat_enrich",      deny_gpu=True, prefer="cpu-247",
+                              pin=LONG_HORIZON_CPU_NODE, model=LONG_HORIZON_CPU_MODEL,
+                              options=LONG_HORIZON_CPU_OPTIONS),
     # Media services — GPU-first across the media nodes that actually have the
     # service installed (resolve_media checks each node's /health service list).
     "stt":      _rule("stt",      prefer_gpu=True),
@@ -1200,7 +1279,9 @@ async def _save_nodes() -> None:
                           "label": i.get("label", iid),
                           "url": i.get("url", ""),
                           "has_gpu": i.get("has_gpu", False),
-                          "num_ctx": i.get("num_ctx", 4096)}
+                          "num_ctx": i.get("num_ctx", 4096),
+                          # 0 = not set (the env default applies)
+                          "num_thread": int(i.get("num_thread") or 0)}
                     for iid, i in OLLAMA_INSTANCES.items()}
         await REDIS.set(KEY_OLLAMA_NODES, json.dumps(snapshot))
     except Exception as e:
@@ -1218,8 +1299,12 @@ async def _load_ollama_persistence() -> None:
     if not REDIS:
         log.info("ollama persistence: Redis unavailable, using in-memory defaults")
         return
+    # Which user routing layers this process's Redis actually holds - a sandbox
+    # seeds the ABSENT ones from prod at the end (see _seed_routing_parity).
+    _present = {"routing": False, "cap_routing": False, "role_profiles": False}
     try:
         raw = await REDIS.get(KEY_OLLAMA_ROUTING)
+        _present["routing"] = raw is not None
         if raw:
             doc = json.loads(raw)
             if isinstance(doc, dict) and doc.get("profiles"):
@@ -1239,11 +1324,14 @@ async def _load_ollama_persistence() -> None:
                         "label": cfg.get("label", OLLAMA_INSTANCES[iid].get("label", iid)),
                         "num_ctx": cfg.get("num_ctx", OLLAMA_INSTANCES[iid].get("num_ctx", 4096)),
                     })
+                    if int(cfg.get("num_thread") or 0) > 0:
+                        OLLAMA_INSTANCES[iid]["num_thread"] = int(cfg["num_thread"])
                 elif cfg.get("url"):
                     # Restore a previously-added node that isn't in the defaults.
                     add_ollama_instance(iid, cfg["url"],
                                         has_gpu=cfg.get("has_gpu", False),
-                                        label=cfg.get("label", iid))
+                                        label=cfg.get("label", iid),
+                                        num_thread=int(cfg.get("num_thread") or 0))
                     OLLAMA_INSTANCES[iid]["enabled"] = cfg.get("enabled", True)
                     OLLAMA_INSTANCES[iid]["priority"] = cfg.get("priority", OLLAMA_INSTANCES[iid]["priority"])
     except Exception as e:
@@ -1260,6 +1348,7 @@ async def _load_ollama_persistence() -> None:
         log.warning("load embed config: %s", e)
     try:
         raw = await REDIS.get(KEY_OLLAMA_CAP_ROUTING)
+        _present["cap_routing"] = raw is not None
         if raw:
             doc = json.loads(raw)
             if isinstance(doc, dict):
@@ -1275,6 +1364,7 @@ async def _load_ollama_persistence() -> None:
         log.warning("load cap routing: %s", e)
     try:
         raw = await REDIS.get(KEY_OLLAMA_ROLE_PROFILES)
+        _present["role_profiles"] = raw is not None
         if raw:
             doc = json.loads(raw)
             if isinstance(doc, dict):
@@ -1334,9 +1424,88 @@ async def _load_ollama_persistence() -> None:
                 })
     except Exception as e:
         log.debug("load interactive priority: %s", e)
+    try:
+        await _seed_routing_parity(_present)
+    except Exception as e:                                   # pragma: no cover
+        log.warning("routing parity: seeding skipped: %s", e)
     log.info("ollama persistence: hydrated (profile=%s, %d nodes, %d cap rules, %d stat keys)",
              ROUTING.get("active_profile"), len(OLLAMA_INSTANCES),
              len(CAP_ROUTING_USER), len(_ROUTE_STATS))
+
+
+try:
+    from Vera.vera.workers import routing_parity_core as _routing_parity
+except Exception:                                            # pragma: no cover
+    try:
+        from vera.workers import routing_parity_core as _routing_parity
+    except Exception:
+        _routing_parity = None
+
+
+async def _seed_routing_parity(present: Dict[str, bool]) -> List[str]:
+    """In a dev sandbox, seed each user routing layer its own Redis has never held
+    from prod's (routing_parity_core), then save it - so the sandbox routes to the
+    same models as prod and never re-seeds over its own later edits. Read-only GETs
+    against prod, short timeout; any failure leaves the code defaults, exactly as
+    before. Runs from _load_ollama_persistence (lifespan), never at import.
+    Returns the layers it seeded."""
+    if _routing_parity is None or not _routing_parity.enabled(os.environ):
+        return []
+    missing = _routing_parity.missing_layers(present)
+    if not missing:
+        return []
+    base = _routing_parity.prod_base_url(os.environ)
+    if not base:
+        log.info("routing parity: no prod URL (VERA_PROD_URL / VERA_GATE_BROKER_URL) - "
+                 "keeping code defaults for %s", ", ".join(missing))
+        return []
+    docs: Dict[str, Any] = {}
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=8) as _cl:
+            for layer in missing:
+                resp = await _cl.get(base + _routing_parity.PATHS[layer])
+                resp.raise_for_status()
+                docs[layer] = resp.json()
+    except Exception as e:
+        log.warning("routing parity: prod at %s not readable (%s) - keeping code defaults",
+                    base, type(e).__name__)
+        return []
+    layers = _routing_parity.user_layers(docs.get("routing"), docs.get("cap_routing"),
+                                         docs.get("role_profiles"))
+    seeded: List[str] = []
+    if "routing" in docs and layers["routing"]["profiles"]:
+        ROUTING["profiles"] = layers["routing"]["profiles"]
+        ROUTING["active_profile"] = layers["routing"]["active_profile"]
+        await _save_routing()
+        seeded.append("routing")
+    if "cap_routing" in docs:
+        CAP_ROUTING_USER.clear()
+        for pat, r in layers["cap_routing"].items():
+            CAP_ROUTING_USER[pat] = _cap_rule(pat, **{
+                k: r.get(k) for k in ("job_type", "label", "prefer_gpu", "deny_gpu", "pin",
+                                      "allow", "deny", "model", "escalate_chars", "escalate")
+                if r.get(k) is not None})
+        await _save_cap_routing()
+        seeded.append("cap_routing")
+    if "role_profiles" in docs:
+        ROLE_PROFILES_USER.clear()
+        for name, prof in layers["role_profiles"].items():
+            ROLE_PROFILES_USER[name] = {
+                "label": prof.get("label", name),
+                "owner": prof.get("owner", "user"),
+                "roles": {r: _role_rule(name, r, v)
+                          for r, v in (prof.get("roles") or {}).items() if isinstance(v, dict)},
+            }
+        await _save_role_profiles()
+        seeded.append("role_profiles")
+    if seeded:
+        log.info("routing parity: seeded %s from prod (%s)", ", ".join(seeded), base)
+        try:
+            await emit_event({"type": "ollama.routing.parity_seeded",
+                              "layers": seeded, "source": base})
+        except Exception:
+            pass
+    return seeded
 
 # Per-instance concurrency semaphores for Ollama — limits simultaneous
 # in-flight requests per node to 1 (Ollama queues internally but multiple
@@ -1511,7 +1680,7 @@ async def _ensure_coord_redis():
                                     socket_connect_timeout=4, socket_timeout=4)
             await _cr.ping()
             COORD_REDIS = _cr
-            log.info("✓ Ollama gate coord Redis (explicit): %s", _resolved)
+            log.info("✓ Ollama gate coord Redis (explicit): %s", _redis_auth.redact_url(_resolved))
             await _maybe_sweep_gate_leases()
             return COORD_REDIS
         if data_db == COORD_REDIS_DB and REDIS is not None:
@@ -1525,7 +1694,7 @@ async def _ensure_coord_redis():
         await _cr.ping()
         COORD_REDIS = _cr
         log.info("✓ Ollama gate coord Redis connected: %s (data DB %d)",
-                 coord_url, data_db)
+                 _redis_auth.redact_url(coord_url), data_db)
         await _maybe_sweep_gate_leases()
     except Exception as e:
         log.warning("coord Redis connect failed — Ollama gate stays a no-op: %s", e)
@@ -1843,10 +2012,15 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None,
         sem.release()
 
 
-def add_ollama_instance(iid: str, url: str, has_gpu: bool = False, label: str = ""):
+def add_ollama_instance(iid: str, url: str, has_gpu: bool = False, label: str = "",
+                        num_thread: int = 0):
     OLLAMA_INSTANCES[iid] = {"url":url,"label":label or iid,"has_gpu":has_gpu,"enabled":True,
                               "priority":len(OLLAMA_INSTANCES),"status":"unknown",
                               "latency_ms":None,"models":[],"in_use":0,"last_check":None,"errors":0}
+    # The node's own runner thread count (node_threads_core). Absent = the
+    # process-wide VERA_CPU_NODE_THREADS default.
+    if int(num_thread or 0) > 0:
+        OLLAMA_INSTANCES[iid]["num_thread"] = int(num_thread)
 
 async def _ping_instance(iid: str, inst: dict):
     t0 = time.monotonic()
@@ -2274,13 +2448,10 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
 
     def _has_model(inst, mdl):
         """Check if an instance has a model — flexible name matching."""
-        if not mdl: return True
-        models = inst.get("models", [])
-        mdl_base = mdl.split(":")[0]
-        for m in models:
-            if m == mdl or m.startswith(mdl + ":") or m.split(":")[0] == mdl_base:
-                return True
-        return False
+        # Exact tag, with `x` and `x:latest` treated as one model - the only
+        # equivalence Ollama applies. Matching the BASE name said a node
+        # holding only `qwen2.5:0.5b` could serve `qwen2.5:7b`.
+        return _model_tag_core.is_served(mdl, inst.get("models", []))
 
     def _pick_best(candidates):
         # Least busy first, then configured priority, then OBSERVED throughput
@@ -2574,6 +2745,43 @@ _OUTPUT_MAX_TOKENS = int(os.environ.get("VERA_OUTPUT_MAX_TOKENS", "16384") or 0)
 # 0 = fall back to _OUTPUT_MAX_TOKENS.
 _OUTPUT_MAX_TOKENS_GPU = int(os.environ.get("VERA_OUTPUT_MAX_TOKENS_GPU", "0") or 0)
 _OUTPUT_MAX_TOKENS_CPU = int(os.environ.get("VERA_OUTPUT_MAX_TOKENS_CPU", "3072") or 0)
+
+# Threads a CPU node's runner should use. Ollama sizes runner threads from the
+# HOST's physical cores and ignores the container's cgroup: inside a 12-CPU LXC
+# every runner ran 24 threads (`n_threads = 24 / 12`), and llama.cpp's
+# busy-waiting pool collapsed to 0.24 tok/s on a 0.5b - 45 s a call. Sending
+# num_thread 6 made the same call 2 s (60 tok/s). See node_threads_core.
+try:
+    from Vera.vera import node_threads_core as _node_threads_core
+except Exception:  # pragma: no cover - worktree / test layout
+    from . import node_threads_core as _node_threads_core
+_CPU_NODE_THREADS = int(os.environ.get("VERA_CPU_NODE_THREADS",
+                                       str(_node_threads_core.DEFAULT_CPU_THREADS)) or 0)
+
+
+# One window per (GPU node, model). Rounding to steps was meant to stop
+# num_ctx jittering per call, but executor prompts range 8-30k chars, so a
+# goal's calls still landed on 24576 one call and 28672 the next - and on a
+# 12 GB card every change is a full runner reload (census run58
+# author-then-edit: 24 llama-server starts for 54 calls; the verification
+# probe on 2026-09-22 with every role pinned to 16384: 34 starts for 82,
+# because the pin is only a FLOOR under the fit). On a GPU node the window
+# is therefore the node-safe cap for that model, every call: the KV cache is
+# reserved once and the runner lives for the whole goal. CPU nodes keep the
+# fit (their memory is the constraint, and they never held a warm runner
+# across the loop's roles anyway).
+_CTX_STABLE_GPU = os.environ.get("VERA_CTX_STABLE_GPU", "1").strip().lower() in (
+    "1", "true", "yes", "on")
+
+
+def _stable_ctx(want: int, cap: int, *, has_gpu: bool, stable: bool = True) -> int:
+    """The window to ask for: `want` (fit/pin, already capped) on a CPU node or
+    with stability off; the node-safe `cap` itself on a GPU node, so every
+    call to this model on this node has the SAME window and the runner is
+    never re-created. A zero cap (probe failed) leaves `want` alone."""
+    if stable and has_gpu and cap and cap >= want:
+        return int(cap)
+    return int(want)
 
 
 def _round_ctx(n: int) -> int:
@@ -3007,6 +3215,50 @@ def _generation_phase_timing_ms(submitted: float,
     }
 
 
+# Per-run role overrides (user, 2026-09-28: the executor on an MoE such as
+# Qwen-AgentWorld; qwen3-coder:30b as the coder; a max-effort mode). The loop
+# sets {'loop/executor': {model, node}, ...} for ITS run only; every call it
+# makes under that profile/role - including caps it runs in-process, such as
+# code.author under loop/coder - takes the model, on the chosen node. See
+# dag/role_override_core.py.
+RUN_ROLE_OVERRIDES: "contextvars.ContextVar[Optional[Dict[str, dict]]]" = \
+    contextvars.ContextVar("vera_run_role_overrides", default=None)
+try:
+    from Vera.vera.dag import role_override_core as _role_ovr
+except Exception:                                     # pragma: no cover
+    from vera.dag import role_override_core as _role_ovr
+
+
+async def _gpu_usable_bytes(iid: str) -> int:
+    usable = _NODE_USABLE_VRAM.get(iid)
+    if usable:
+        return int(usable)
+    vram_gb = float((_node_hw(iid) or {}).get("vram_gb") or 0.0) or _DEFAULT_GPU_VRAM_GB
+    return int(vram_gb * (2 ** 30) * 0.86) if vram_gb > 0 else 0
+
+
+async def _run_role_override(profile: Optional[str], role: Optional[str]) -> Optional[dict]:
+    """{model, instance_id | None, prefer_gpu} for this run's override of
+    profile/role, or None. `auto` asks whether the model fits the GPU."""
+    if not (profile and role):
+        return None
+    ovr = (RUN_ROLE_OVERRIDES.get() or {}).get(_role_ovr.key(role, profile))
+    if not ovr or not ovr.get("model"):
+        return None
+    mdl = str(ovr["model"])
+    node = _role_ovr.normalise_node(ovr.get("node"))
+    if node == "auto":
+        gpu = next((i for i, n in OLLAMA_INSTANCES.items()
+                    if (n or {}).get("has_gpu") and (n or {}).get("enabled", True)), "")
+        size = await ollama_model_disk_size(gpu, mdl) if gpu else 0
+        node = _role_ovr.resolve_node("auto", model_bytes=size,
+                                      gpu_usable_bytes=(await _gpu_usable_bytes(gpu)) if gpu else 0)
+    if node == "gpu":
+        return {"model": mdl, "instance_id": None, "prefer_gpu": True, "node": node}
+    return {"model": mdl, "instance_id": node if node in OLLAMA_INSTANCES else None,
+            "prefer_gpu": False, "node": node}
+
+
 async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False,
                            model: Optional[str] = None, instance_id: Optional[str] = None,
                            prefer_gpu: bool = False, stream_cb: Optional[Callable] = None,
@@ -3024,6 +3276,19 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # caller_override lets an intermediary cap (e.g. llm.generate) pass
     # through the true upstream caller rather than appearing as the caller.
     caller   = caller_override if caller_override else _ollama_caller_info()
+    # This run's own choice for this role (executor / coder model on a node)
+    # beats the role's routing and the run-wide model: the user picked it for
+    # exactly this role. A caller-pinned instance still wins.
+    try:
+        _rovr = await _run_role_override(profile, role)
+    except Exception as _re:                           # an override must never fail a call
+        log.debug("run role override skipped: %s", _re)
+        _rovr = None
+    if _rovr:
+        model = _rovr["model"]
+        if not instance_id:
+            instance_id = _rovr["instance_id"]
+            prefer_gpu = bool(_rovr["prefer_gpu"])
     # Job-type routing: explicit job_type wins; otherwise a per-cap rule may
     # force one; otherwise infer from the caller. A role-profile role
     # (profile= + role=, e.g. ide/thinker) outranks per-cap rules and rides
@@ -3055,6 +3320,18 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # A routing rule may pin a lighter model for this job type (e.g. naming /
     # summarize). The caller's explicit model always wins over the rule's.
     eff_model = model or (eff_rule or {}).get("model") or None
+    # A utility job whose rule names no model must not take the instance
+    # default - the 9b - onto a CPU node: a sandbox's saved profile did exactly
+    # that for a chat title (2026-09-23). See ctx_policy_core.utility_model.
+    if eff_model is None:
+        try:
+            _um = _ctx_policy_core.utility_model(
+                eff_job_type, "",
+                [m for _i in OLLAMA_INSTANCES.values() for m in ((_i or {}).get("models") or [])])
+        except Exception:
+            _um = ""
+        if _um:
+            eff_model = _um
     # ── vLLM delegation: a rule/profile pin of "vllm:<id>" (or "vllm:*" for
     # any node) sends this request to the vLLM backend instead of Ollama — the
     # router treats vLLM servers as routable targets. A caller-explicit
@@ -3231,6 +3508,14 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # num_ctx); the caller's explicit options always win key-by-key.
     _rule_opts = (eff_rule or {}).get("options") or {}
     _merged_opts = {**_rule_opts, **(dict(options) if options else {})}
+    # A ROUTE may keep its model resident: `keep_alive` in a routing rule's
+    # options (e.g. planning_style/enrich keeps cpu-247's selected brief model
+    # warm - a 35B MoE takes 62 s to load cold, 2026-09-27). It is a request
+    # field, not a sampling option, so it is lifted out of the options; a
+    # caller's explicit keep_alive still wins.
+    _route_ka = _merged_opts.pop("keep_alive", None)
+    if keep_alive is None and _route_ka not in (None, ""):
+        body["keep_alive"] = _route_ka
     # AUTO-FIT num_ctx to the prompt when nobody pinned one. Without this a big
     # prompt is silently truncated to ollama's ~2048 default (qwen3.5:9b actually
     # declares 262144), so the model loses its system prompt / instructions — the
@@ -3257,7 +3542,14 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         # _route_chars_per_token).
         _cpt = _route_chars_per_token(mdl, chosen, eff_job_type)
         _prompt_tok = int((len(prompt) + len(system)) / max(_cpt, 1.0))
-        _out_room = _OUTPUT_MAX_TOKENS if _OUTPUT_MAX_TOKENS > 0 else _CTX_RESERVE_OUT
+        # The room is what THIS call can actually produce - the node's ceiling
+        # and the caller's pinned num_predict, not the flat global maximum,
+        # which sized every window for a 16k-token report and gave a five-word
+        # chat title a 24,576-token window on a CPU box. See output_room.
+        _out_room = _ctx_policy_core.output_room(
+            global_max=_OUTPUT_MAX_TOKENS, node_ceiling=_output_ceiling_for(chosen),
+            want_predict=int(_merged_opts.get("num_predict") or 0),
+            reserve=_CTX_RESERVE_OUT)
         _fit = _round_ctx(_prompt_tok + _out_room)
         if _cap:
             _fit = min(_fit, _cap)
@@ -3270,7 +3562,16 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         _want = max(_fit, _pinned)
         if _cap:
             _want = min(_want, _cap)
+        # A caller's `num_ctx_max` is an "at most", not a pin: it bounds the
+        # window from above and never raises it. llm.generate's generous
+        # default rides in here now instead of as a num_ctx floor - which gave a
+        # five-word chat title a 16k window on a CPU box (2026-09-23).
+        _want = _ctx_policy_core.apply_ceiling(_want, int(_merged_opts.get("num_ctx_max") or 0))
+        _want = _stable_ctx(_want, int(_cap or 0),
+                            has_gpu=bool((OLLAMA_INSTANCES.get(chosen) or {}).get("has_gpu")),
+                            stable=_CTX_STABLE_GPU)
         _merged_opts["num_ctx"] = max(_CTX_FLOOR, _want)
+        _merged_opts.pop("num_ctx_max", None)
         # num_predict = the output room actually available in the window (bounded
         # by the sensible max), so a long generation can use it ALL but nothing
         # decodes PAST the window. Only when the caller pinned no positive value.
@@ -3310,6 +3611,13 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
             if _keep:
                 _merged_opts["num_keep"] = _keep
     if _merged_opts:
+        # A CPU node's runner must not spin more threads than the node has.
+        _nt = _node_threads_core.threads_for(
+            has_gpu=bool((OLLAMA_INSTANCES.get(chosen) or {}).get("has_gpu")),
+            node_num_thread=(OLLAMA_INSTANCES.get(chosen) or {}).get("num_thread"),
+            default=_CPU_NODE_THREADS, pinned=_merged_opts.get("num_thread"))
+        if _nt:
+            _merged_opts["num_thread"] = _nt
         body["options"] = _merged_opts
     # Surface the ACTUAL sampling + window the model is called with, so the loop
     # UI can show it per-card (model/node already ride routing_info; add the knobs
@@ -3626,9 +3934,14 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         # would otherwise cascade the whole node out of rotation and starve
         # every subsequent request. Only mark offline after repeated failures;
         # the health loop re-probes every 20s and clears errors on success.
-        inst["errors"] += 1
-        if inst["errors"] >= 3:
-            inst["status"] = "offline"
+        # And only for the NODE's faults: a 404 for a model the caller made up
+        # is answered by a healthy node in a millisecond - three of those in
+        # two seconds took gpu-250 offline and spilled the next 35 k-char
+        # executor call onto a CPU node for 45 min (census run59, 2026-09-22).
+        if _node_fault_core.is_node_fault(err_str):
+            inst["errors"] += 1
+            if inst["errors"] >= 3:
+                inst["status"] = "offline"
         req_entry.update({"status": "error", "elapsed_s": elapsed,
                           "error": err_str, **_failure_timing})
         _ollama_log_append(req_entry)
@@ -3676,7 +3989,25 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 log.debug("ollama_fallback [%s] skipping %s — model '%s' not available", req_id, fb_id, mdl)
                 continue
             try:
-                log.info("ollama_fallback [%s] trying %s", req_id, fb_id)
+                # The body was built for the node that failed. Refit it for
+                # THIS one: thread count from this node (a GPU gets none), the
+                # window clamped to what this node can hold. Sending the GPU's
+                # body to a CPU node started the 9b at 24 threads on 12 CPUs
+                # for four minutes, twice, on 2026-09-24 (run73).
+                try:
+                    _fb_cap = await asyncio.wait_for(
+                        effective_num_ctx(mdl, fb_id, prefer_gpu), timeout=4.0)
+                except Exception:
+                    _fb_cap = 0
+                _fb_opts = _node_threads_core.refit_for_node(
+                    body.get("options"), has_gpu=bool(fb_inst.get("has_gpu")),
+                    node_num_thread=fb_inst.get("num_thread"), default=_CPU_NODE_THREADS,
+                    node_ctx_max=_fb_cap)
+                fb_body = {k: v for k, v in body.items() if k != "options"}
+                if _fb_opts:
+                    fb_body["options"] = _fb_opts
+                log.info("ollama_fallback [%s] trying %s (num_thread=%s num_ctx=%s)", req_id, fb_id,
+                         _fb_opts.get("num_thread"), _fb_opts.get("num_ctx"))
                 # Route the fallback through the SAME per-instance semaphore +
                 # in_use accounting as a primary request, so it honours the
                 # "one in-flight request per node" contract instead of piling an
@@ -3693,7 +4024,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                     async with _ollama_slot(fb_id, timeout=timeout) as _gate_act:
                         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=httpx.Timeout(gen_timeout, connect=15.0)) as c:
                             async with c.stream("POST", f"{fb_inst['url']}/api/generate",
-                                                json={**body, "stream": True}) as r:
+                                                json={**fb_body, "stream": True}) as r:
                                 if r.status_code != 200:
                                     err_detail = (await r.aread()).decode("utf-8", errors="replace")[:300]
                                     log.warning("ollama_fallback [%s] %s returned %d: %s", req_id, fb_id, r.status_code, err_detail)
@@ -3741,6 +4072,15 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                     fb_inst["in_use"] = max(0, fb_inst.get("in_use", 1) - 1)
                     _inflight_release(fb_inst, _fb_slot_id)
             except Exception: pass
+        # Nothing served the request. Leave the reason where the caller can
+        # read it: llm.generate turns this "" into an empty_generation error,
+        # and without the reason a 404 for a made-up model looked identical
+        # to a stalled stream - the operator's thinker could not tell it had
+        # named a model nobody serves, so its retry-without-the-model never
+        # ran (operator census run3, 2026-09-24: `fast-8b`, three thinks,
+        # run dead in 8 s).
+        if meta_out is not None:
+            meta_out["error"] = err_str
         return ""
     except asyncio.CancelledError:
         # Caller cancelled us (loop/dream preemption, client abort, a wrapping
@@ -3839,6 +4179,19 @@ async def ollama_embed(text: str, model: Optional[str] = None,
         # which skips the normal return path above).
         if not fut.done():
             fut.set_result(None)
+
+
+def _embed_body(mdl: str, text: str, node: Optional[dict]) -> dict:
+    """The /api/embed request for a node - with num_thread for a CPU node, so
+    the embed runner does not spin the host's 24 threads on 12 CPUs (4-6 s per
+    137M embedding before; see node_threads_core)."""
+    body = {"model": mdl, "input": text[:4096]}
+    nt = _node_threads_core.threads_for(
+        has_gpu=bool((node or {}).get("has_gpu")),
+        node_num_thread=(node or {}).get("num_thread"), default=_CPU_NODE_THREADS)
+    if nt:
+        body["options"] = {"num_thread": nt}
+    return body
 
 
 async def _ollama_embed_impl(text: str, model: Optional[str] = None,
@@ -3961,7 +4314,7 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_emb_timeout) as c:
             # Try new endpoint first (Ollama ≥0.4)
             r = await c.post(f"{url}/api/embed",
-                             json={"model": mdl, "input": text[:4096]})
+                             json=_embed_body(mdl, text, inst))
             if r.status_code != 200:
                 # Fall back to legacy endpoint
                 r = await c.post(f"{url}/api/embeddings",
@@ -4048,7 +4401,8 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
         err_str = _err_text(e)
         log.error("ollama_embed [%s] FAILED after %.2fs inst=%s err=%s",
                   req_id, elapsed, chosen, err_str)
-        inst["errors"] = inst.get("errors", 0) + 1
+        if _node_fault_core.is_node_fault(err_str):
+            inst["errors"] = inst.get("errors", 0) + 1
         req_entry.update({"status": "error", "elapsed_s": elapsed,
                           "error": err_str})
         _ollama_log_append(req_entry)
@@ -4072,7 +4426,7 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
                 log.info("ollama_embed_fallback [%s] trying %s", req_id, fb_id)
                 async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_emb_timeout) as c:
                     r = await c.post(f"{fb_inst['url']}/api/embed",
-                                     json={"model": mdl, "input": text[:4096]})
+                                     json=_embed_body(mdl, text, fb_inst))
                     if r.status_code != 200:
                         r = await c.post(f"{fb_inst['url']}/api/embeddings",
                                          json={"model": mdl, "prompt": text[:4096]})
@@ -4701,9 +5055,47 @@ async def _persist_loop_event(event: dict, ev_json: str):
         pipe.zadd(_LOOP_HIST_INDEX, {sid: time.time()})
         await pipe.execute()
         await _loop_history_trim()
+        if etype.endswith(".done") or etype.endswith(".error"):
+            _schedule_loop_record(sid)
     except Exception as e:
         if "MISCONF" not in str(e):
             log.debug("resume persist: %s", e)
+
+
+# Every finished loop becomes a Loop Lab run record (evolve.loop.record), not
+# only the ones a census or a Loop Lab task started. Session -> "record again
+# when done": a v7 run emits v6's .done and then its own, and the later one
+# must win without two writers racing on the same run list.
+_LOOP_RECORD_PENDING: Dict[str, bool] = {}
+_LOOP_RECORD_SETTLE_S = 5.0
+
+
+def _schedule_loop_record(sid: str) -> None:
+    if sid in _LOOP_RECORD_PENDING:
+        _LOOP_RECORD_PENDING[sid] = True
+        return
+    _LOOP_RECORD_PENDING[sid] = False
+    asyncio.ensure_future(_record_loop_run(sid))
+
+
+async def _record_loop_run(sid: str) -> None:
+    try:
+        while True:
+            await asyncio.sleep(_LOOP_RECORD_SETTLE_S)
+            _LOOP_RECORD_PENDING[sid] = False
+            cap = CAPABILITY_REGISTRY.get("evolve.loop.record")
+            fn = (cap.get("raw") or cap.get("func")) if cap else None
+            if not fn:
+                return
+            res = await fn(session_id=sid, where=_ORIGIN_NODE.get("node", ""))
+            if isinstance(res, dict) and res.get("error"):
+                log.debug("loop record %s: %s", sid, res["error"])
+            if not _LOOP_RECORD_PENDING.get(sid):
+                return
+    except Exception as e:
+        log.debug("loop record %s: %s", sid, e)
+    finally:
+        _LOOP_RECORD_PENDING.pop(sid, None)
 
 
 try:
@@ -4870,7 +5262,9 @@ async def dispatch_task(cap_name: str, payload: dict, trace_id: str,
     task_id=new_id()
     rec={"id":task_id,"capability":cap_name,"payload":json.dumps(payload),"trace_id":trace_id,"ts":now_iso()}
     if bg: rec["bg"]=str(bg)
-    if REDIS: await REDIS.xadd(TASK_STREAM,rec,maxlen=5000,approximate=True)
+    # A host-bound cap goes where only the host reads, so a node worker never
+    # sees it (worker_placement_core). Everything else is on the shared stream.
+    if REDIS: await REDIS.xadd(_placement.stream_for(cap_name),rec,maxlen=5000,approximate=True)
     else:
         cap=CAPABILITY_REGISTRY.get(cap_name)
         if cap: asyncio.create_task(_run_local(cap,task_id,payload,trace_id,bg=bg))
@@ -5036,6 +5430,39 @@ async def wait_for_result(task_id: str, timeout: float = 60.0) -> Any:
         PENDING_RESULTS.pop(task_id,None)
         return {"error":"timeout","task_id":task_id,"timeout_s":timeout}
 
+async def _ensure_task_groups(streams) -> None:
+    """The workers' consumer group on each stream. "$" skips anything queued
+    before the group existed; only the shared legacy stream keeps that. Every
+    other stream (host, per-class) is written only by Vera, so "0" replays
+    nothing but real work - and does not drop a task dispatched during the
+    first boot that creates the stream."""
+    for _s in streams:
+        try:
+            await REDIS.xgroup_create(_s, GROUP_WORKERS,
+                                      id="$" if _s == TASK_STREAM else "0",
+                                      mkstream=True)
+        except Exception:
+            pass   # group already exists
+
+
+async def _worker_classes():
+    """This node worker's task classes: the roles registry (set from the
+    Workers UI, keyed by the host id provisioning gave it), else what
+    provisioning wrote into its unit, else the CPU-node default."""
+    hid = os.environ.get("VERA_WORKER_HOST_ID", "")
+    if hid and REDIS is not None:
+        try:
+            raw = await REDIS.hget(_placement.ROLES_KEY, hid)
+            if raw:
+                return _placement.clean_classes(json.loads(raw))
+        except Exception:
+            pass
+    env = os.environ.get("VERA_WORKER_CLASSES")
+    if env is not None:
+        return _placement.clean_classes(env)
+    return _placement.DEFAULT_CLASSES_CPU
+
+
 async def worker_loop(worker_id: str):
     """
     Worker loop with Redis retry.  If Redis is unavailable at startup the loop
@@ -5047,7 +5474,7 @@ async def worker_loop(worker_id: str):
     # ── Wait for Redis (retry indefinitely) ──────────────────────────────────
     while not REDIS:
         log.warning("Worker %s: Redis not connected — retrying in 5s "
-                    "(check REDIS_URL=%s, Redis bind-address, and requirepass)", worker_id, REDIS_URL)
+                    "(check REDIS_URL=%s, Redis bind-address, and requirepass)", worker_id, _redis_auth.redact_url(REDIS_URL))
         await asyncio.sleep(5)
         if not REDIS and HAS_REDIS:
             try:
@@ -5061,11 +5488,23 @@ async def worker_loop(worker_id: str):
                 log.warning("Worker %s: Redis reconnect failed: %s", worker_id, e)
 
     # ── Register in shared Redis hash (visible to ALL hosts) ─────────────────
+    # A node worker advertises only the caps it will actually run: the
+    # "another worker has it" hand-off below reads this list, and a host-bound
+    # cap advertised by a node would send tasks looking for it here.
+    _classes = (await _worker_classes()) if _IS_WORKER else None
+    _streams = _placement.streams_to_read(is_worker=_IS_WORKER, classes=_classes)
+    _advertised = [c for c in CAPABILITY_REGISTRY
+                   if _placement.may_run_here(c, is_worker=_IS_WORKER, classes=_classes)[0]]
     reg = {
         "id":           worker_id,
         "status":       "starting",
-        "capabilities": json.dumps(list(CAPABILITY_REGISTRY.keys())),
-        "cap_count":    len(CAPABILITY_REGISTRY),
+        "role":         "node-worker" if _IS_WORKER else "host",
+        # the commit provision.worker shipped - what the node sync compares
+        "commit":       os.environ.get("VERA_WORKER_COMMIT", ""),
+        "classes":      json.dumps(list(_classes or ())),
+        "streams":      json.dumps(list(_streams)),
+        "capabilities": json.dumps(_advertised),
+        "cap_count":    len(_advertised),
         "tasks_done":   0,
         "tasks_failed": 0,
         "started":      now_iso(),
@@ -5085,15 +5524,38 @@ async def worker_loop(worker_id: str):
     except Exception as e:
         log.warning("Worker registry push failed: %s", e)
 
-    try:
-        await REDIS.xgroup_create(TASK_STREAM, GROUP_WORKERS, id="$", mkstream=True)
-    except Exception:
-        pass   # group already exists
+    await _ensure_task_groups(_streams)
+
+    async def _apply_classes(new_classes):
+        """Roles changed in the UI: read the new classes' streams from now on,
+        advertise only their caps. Live - no restart, no re-provision."""
+        streams = _placement.streams_to_read(is_worker=True, classes=new_classes)
+        await _ensure_task_groups(streams)
+        adv = [c for c in CAPABILITY_REGISTRY
+               if _placement.may_run_here(c, is_worker=True, classes=new_classes)[0]]
+        try:
+            await REDIS.hset(f"vera:workers:{worker_id}", mapping={
+                "classes": json.dumps(list(new_classes)), "streams": json.dumps(list(streams)),
+                "capabilities": json.dumps(adv), "cap_count": str(len(adv))})
+        except Exception:
+            pass
+        log.info("Worker %s: classes now %s (%d caps)", worker_id,
+                 ",".join(new_classes) or "none", len(adv))
+        return streams, adv
+    _classes_checked = time.monotonic()
 
     WORKER_REGISTRY[worker_id]["status"] = "idle"
-    log.info("Worker %s ready (%d caps)", worker_id, len(CAPABILITY_REGISTRY))
+    log.info("Worker %s ready (%d of %d caps, role=%s, streams=%s)", worker_id,
+             len(_advertised), len(CAPABILITY_REGISTRY),
+             "node-worker" if _IS_WORKER else "host", ",".join(_streams))
 
     while True:
+        if _IS_WORKER and time.monotonic() - _classes_checked > 30:
+            _classes_checked = time.monotonic()
+            _new = await _worker_classes()
+            if _new != _classes:
+                _classes = _new
+                _streams, _advertised = await _apply_classes(_classes)
         # Refresh TTL and write all live fields — not just status
         try:
             w = WORKER_REGISTRY[worker_id]
@@ -5111,7 +5573,7 @@ async def worker_loop(worker_id: str):
 
         try:
             resp = await REDIS.xreadgroup(
-                GROUP_WORKERS, worker_id, {TASK_STREAM: ">"}, count=1, block=5000
+                GROUP_WORKERS, worker_id, {_s: ">" for _s in _streams}, count=1, block=5000
             )
         except Exception as e:
             err_str = str(e)
@@ -5131,7 +5593,10 @@ async def worker_loop(worker_id: str):
         if not resp:
             continue
 
-        for _, messages in resp:
+        for _stream_raw, messages in resp:
+            # Ack on the stream the message came FROM - a host reads two.
+            _stream = (_stream_raw.decode() if isinstance(_stream_raw, (bytes, bytearray))
+                       else str(_stream_raw))
             for msg_id, data in messages:
                 task_id  = data[b"id"].decode()
                 cap_name = data[b"capability"].decode()
@@ -5143,13 +5608,39 @@ async def worker_loop(worker_id: str):
                 # Queued-cancel guard: if this task was stopped before a worker
                 # picked it up, ack + discard it instead of running.
                 if await _is_task_cancelled(task_id):
-                    await REDIS.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
-                    await REDIS.xdel(TASK_STREAM, msg_id)
+                    await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                    await REDIS.xdel(_stream, msg_id)
                     await REDIS.xadd(RESULT_STREAM, {
                         "id": task_id, "error": "cancelled", "trace_id": trace_id,
                     })
                     await emit_event({"type": "worker.cancelled",
                                       "worker": worker_id, "task": task_id})
+                    continue
+
+                # A task this worker may not run (host-bound, or a class this
+                # node was not given - e.g. queued on the legacy stream by a
+                # process running older code) goes where it belongs: the host
+                # stream, or its class stream, which the host always reads -
+                # so it cannot bounce between node workers. If that is the very
+                # stream it came from, the roles changed under us: re-read them
+                # first, which stops this worker reading that stream.
+                _may, _why = _placement.may_run_here(cap_name, is_worker=_IS_WORKER,
+                                                     classes=_classes)
+                if not _may:
+                    _target = _placement.handoff_stream(cap_name)
+                    if _target == _stream and _IS_WORKER:
+                        _classes = await _worker_classes()
+                        _streams, _advertised = await _apply_classes(_classes)
+                        _classes_checked = time.monotonic()
+                    await REDIS.xadd(_target, {
+                        "id": task_id, "capability": cap_name,
+                        "payload": json.dumps(payload), "trace_id": trace_id,
+                        "ts": now_iso(), **({"bg": bg_label} if bg_label else {}),
+                    }, maxlen=5000, approximate=True)
+                    await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                    await REDIS.xdel(_stream, msg_id)
+                    log.info("Worker %s: %s not run here (%s) - handed to %s",
+                             worker_id, cap_name, _why, _target)
                     continue
 
                 WORKER_REGISTRY[worker_id]["status"] = f"running:{cap_name}"
@@ -5189,10 +5680,10 @@ async def worker_loop(worker_id: str):
                     if other_has_cap:
                         log.debug("Worker %s: skipping %s — another worker has it", worker_id, cap_name)
                         await asyncio.sleep(0.1)
-                        await REDIS.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
-                        await REDIS.xdel(TASK_STREAM, msg_id)
+                        await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                        await REDIS.xdel(_stream, msg_id)
                         # Re-add so another consumer picks it up
-                        await REDIS.xadd(TASK_STREAM, {
+                        await REDIS.xadd(_stream, {
                             "id": task_id, "capability": cap_name,
                             "payload": json.dumps(payload), "trace_id": trace_id, "ts": now_iso(),
                             **({"bg": bg_label} if bg_label else {}),
@@ -5202,8 +5693,8 @@ async def worker_loop(worker_id: str):
                         await REDIS.xadd(RESULT_STREAM, {
                             "id": task_id, "error": f"no_worker_for:{cap_name}", "trace_id": trace_id,
                         })
-                        await REDIS.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
-                        await REDIS.xdel(TASK_STREAM, msg_id)
+                        await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                        await REDIS.xdel(_stream, msg_id)
                 else:
                     # Run the cap as a separate task so cluster.job.stop can
                     # cancel it cooperatively (cancel() interrupts at next await).
@@ -5218,6 +5709,19 @@ async def worker_loop(worker_id: str):
                         return await cap["raw"](**payload, trace_id=trace_id)
                     inner = asyncio.ensure_future(_run_cap())
                     RUNNING_TASKS[task_id] = inner
+
+                    # The registration's TTL is refreshed once per loop turn,
+                    # and a turn blocks here for the whole task - so a task
+                    # longer than 120 s made a busy worker look dead, and orphan
+                    # recovery (which skips live consumers) could run it twice.
+                    async def _heartbeat(_wid=worker_id):
+                        while True:
+                            await asyncio.sleep(30)
+                            try:
+                                await REDIS.expire(f"vera:workers:{_wid}", 120)
+                            except Exception:
+                                pass
+                    _hb = asyncio.create_task(_heartbeat())
                     try:
                         result = await inner
                         await REDIS.xadd(RESULT_STREAM, {
@@ -5243,9 +5747,10 @@ async def worker_loop(worker_id: str):
                             "task": task_id, "error": str(e),
                         })
                     finally:
+                        _hb.cancel()
                         RUNNING_TASKS.pop(task_id, None)
-                        await REDIS.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
-                        await REDIS.xdel(TASK_STREAM, msg_id)
+                        await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                        await REDIS.xdel(_stream, msg_id)
 
                 WORKER_REGISTRY[worker_id]["status"] = "idle"
                 WORKER_REGISTRY[worker_id]["current_task"] = ""
@@ -6553,8 +7058,7 @@ except Exception:                                     # pragma: no cover
 
 # Computed ONCE at import: neither can change without a restart, and re-stat'ing
 # the estate directory on every scheduler tick would be pointless I/O.
-_IS_WORKER = str(os.environ.get("VERA_IS_WORKER", "")).strip().lower() in (
-    "1", "true", "yes", "on")
+# (_IS_WORKER is defined beside the task streams - the worker loop reads it too.)
 _ESTATE_PRESENT = (_estate_role.estate_is_present(
                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                    if _estate_role is not None else True)
@@ -6609,6 +7113,36 @@ def schedule(fn: Callable, interval: float, name: Optional[str] = None,
     SCHEDULED_TASKS.append({"fn": fn, "int": interval, "name": name or fn.__name__,
                             "last": None, "runs": 0, "skip_in_sandbox": skip_in_sandbox,
                             "singleton": singleton})
+
+def start_at_import(fn: Callable, name: str, queue: bool = False):
+    """Run a module's one-time startup NOW when the loop is already running.
+
+    Modules load inside lifespan, with the loop running, so most of them start
+    their startup coroutine straight from import as well as registering it with
+    schedule(). That import-time route never passed through the scheduler, so on
+    a node worker it started everything the worker is meant to skip - measured
+    on cpu-246 (2026-09-27): cluster poll/affinity loops and the Ollama-mimic
+    proxy, dag_store's cap-index embedding, syslog wrapper patching, mesh,
+    job_persist's recovery/listener, research, autoenroll, the OpenBao unseal.
+    Both routes now ask the same question under the same name.
+
+    `queue=True` keeps the older shape three modules had: create the task even
+    when the loop is not running yet, so it runs once the loop starts (their
+    startup has no scheduled twin, or relies on this for first-connect state)."""
+    if not _placement.scheduler_may_run(name, _placement.STARTUP_INTERVAL,
+                                        is_worker=_IS_WORKER):
+        if name not in _SANDBOX_SKIP_LOGGED:
+            _SANDBOX_SKIP_LOGGED.add(name)
+            log.info("worker: skipping startup '%s'", name)
+        return None
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running() or queue:
+            return loop.create_task(fn())
+    except RuntimeError:
+        pass            # no loop yet - the scheduler runs it
+    return None
+
 
 _LEADER_STATE: Dict[str, Any] = {"is_leader": False, "checked_at": None, "holder": None}
 _LEADER_KEY = "vera:scheduler:leader"
@@ -6673,9 +7207,20 @@ async def scheduler_loop():
     from Vera.vera import scheduler_leadership as _lead
     while True:
         now=datetime.utcnow()
-        if not _sandbox:
+        # A worker never takes the lease: it would then run the singleton sweeps
+        # against an estate it does not host.
+        if not _sandbox and not _IS_WORKER:
             await _refresh_scheduler_leadership()
         for task in SCHEDULED_TASKS:
+            # A worker runs no periodic job and only the startup hooks that load
+            # state its caps need - not the pollers (telegram, email), promoters,
+            # proxies or sweeps a second copy of the host would duplicate.
+            if not _placement.scheduler_may_run(task["name"], task["int"],
+                                                is_worker=_IS_WORKER):
+                if task["name"] not in _SANDBOX_SKIP_LOGGED:
+                    _SANDBOX_SKIP_LOGGED.add(task["name"])
+                    log.info("worker: skipping scheduled job '%s'", task["name"])
+                continue
             if not _lead.may_run(task, is_leader=bool(_LEADER_STATE["is_leader"])):
                 continue
             # Only the estate's OWNER may sweep it. The primary test is
@@ -7313,6 +7858,38 @@ async def mcp_call_endpoint(name: str, arguments: str = "", trace_id=None):
     return {"type": "tool_result", "tool_name": name, "trace_id": tid, "content": result}
 
 
+def _mcp_call_accepted(cap: Dict[str, Any]) -> set:
+    """The argument names /mcp/call lets through to `cap`.
+
+    A capability's own schema - EXCEPT for one whose function ends in **kwargs
+    and names the capability it forwards them to (`delegates_to`): its derived
+    schema is incomplete by construction. dag.agent_loop_v7 declares only `goal`
+    and forwards everything else to dag.agent_loop_v6 (71 parameters), so this
+    filter silently threw away every argument an explicit caller passed to v7 -
+    plan_style, model, enable_dream_persistence (found 2026-09-27: four runs
+    asked for four planning styles and all ran as auto). An explicit caller's
+    arguments are widened by the delegate's schema, exactly as engine_params
+    already does for loops.run; profile bodies are not this path.
+    Empty set = no schema = no filtering (unchanged)."""
+    own = set(((cap or {}).get("schema") or {}).get("properties", {}).keys())
+    fn = (cap or {}).get("func")
+    delegate = str(getattr(fn, "delegates_to", "") or "")
+    if not (own and delegate):
+        return own
+    try:
+        from Vera.vera.dag import engine_params as _ep
+    except Exception:                                        # pragma: no cover
+        try:
+            from vera.dag import engine_params as _ep
+        except Exception:
+            return own
+    dcap = CAPABILITY_REGISTRY.get(delegate) or {}
+    dprops = list(((dcap.get("schema") or {}).get("properties") or {}).keys())
+    # trace_id is supplied by the handler itself; a caller's copy would collide.
+    return set(_ep.caller_accepted(own, has_var_keyword=_ep.takes_var_keyword(fn),
+                                   delegate_props=dprops)) - {"trace_id"}
+
+
 def _make_mcp_call_handler():
     """
     Dedicated handler for POST /mcp/call.
@@ -7345,8 +7922,12 @@ def _make_mcp_call_handler():
             raise HTTPException(404, f"Unknown capability: {name}")
 
         # Filter args to accepted params — prevents unexpected kwarg errors
-        accepted = set(cap.get("schema", {}).get("properties", {}).keys())
+        accepted = _mcp_call_accepted(cap)
         if accepted:
+            _gone = sorted(k for k in args if k not in accepted)
+            if _gone:
+                log.warning("/mcp/call %s: dropped argument(s) the capability does not "
+                            "accept: %s", name, ", ".join(_gone[:12]))
             args = {k: v for k, v in args.items() if k in accepted}
 
         # Server-side type coercion using the cap schema.
@@ -7404,7 +7985,14 @@ def _make_mcp_call_handler():
         if not session_id and isinstance(_raw_args, dict):
             session_id = str(_raw_args.get("session_id") or "").strip()
         if session_id:
-            if "session_id" in accepted:
+            # Injected only when the capability ITSELF declares session_id. The
+            # delegate widening (_mcp_call_accepted) admits session_id for a
+            # **kwargs engine so a caller can pass one EXPLICITLY in arguments;
+            # the top-level session_id is the caller's attribution id, and
+            # injecting it into dag.agent_loop_v7 made every run from one caller
+            # share ONE loop session (found 2026-09-27, before it reached main).
+            _own = ((cap.get("schema") or {}).get("properties") or {})
+            if "session_id" in _own:
                 args.setdefault("session_id", session_id)
             try:
                 _vera_syslog = sys.modules.get("syslog")
@@ -8642,9 +9230,12 @@ async def cap_ollama_instances(trace_id=None):
 
 @capability("ollama.add_instance", memory="off",
             http_method="POST", http_path="/ollama/instances/add", http_tags=["ollama"],
-            description="Dynamically add an Ollama instance to the cluster.")
-async def cap_add_instance(id: str, url: str, has_gpu: bool = False, label: str = "", trace_id=None):
-    add_ollama_instance(id,url,has_gpu=has_gpu,label=label)
+            description="Dynamically add an Ollama instance to the cluster. Fields: id (str!), "
+                        "url (str!), has_gpu (bool), label (str), num_thread (int — the "
+                        "node's runner threads; omit for a GPU node, which gets none).")
+async def cap_add_instance(id: str, url: str, has_gpu: bool = False, label: str = "",
+                           num_thread: int = 0, trace_id=None):
+    add_ollama_instance(id,url,has_gpu=has_gpu,label=label,num_thread=num_thread)
     await _ping_instance(id,OLLAMA_INSTANCES[id])
     await _save_nodes()       # persist so the added node survives a reboot
     return OLLAMA_INSTANCES[id]
@@ -8654,10 +9245,14 @@ async def cap_add_instance(id: str, url: str, has_gpu: bool = False, label: str 
 @capability("ollama.node.config", memory="off",
             http_method="POST", http_path="/ollama/node/config", http_tags=["ollama"],
             description="Configure an Ollama node: enable/disable it (disabled nodes are "
-                        "skipped by all routing), set priority or label. Persists across "
-                        "reboot. Fields: id (str!), enabled (bool), priority (int), label (str).")
+                        "skipped by all routing), set priority, label or its runner thread "
+                        "count. Persists across reboot. Fields: id (str!), enabled (bool), "
+                        "priority (int), label (str), num_thread (int — sent as "
+                        "options.num_thread on every request to a CPU node; 0 clears it "
+                        "back to VERA_CPU_NODE_THREADS; ignored for GPU nodes).")
 async def cap_ollama_node_config(id: str, enabled: Optional[bool] = None,
                                   priority: Optional[int] = None, label: str = "",
+                                  num_thread: Optional[int] = None,
                                   trace_id=None):
     inst = OLLAMA_INSTANCES.get(id)
     if not inst:
@@ -8668,11 +9263,18 @@ async def cap_ollama_node_config(id: str, enabled: Optional[bool] = None,
         inst["priority"] = int(priority)
     if label:
         inst["label"] = label
+    if num_thread is not None:
+        if int(num_thread) > 0:
+            inst["num_thread"] = int(num_thread)
+        else:
+            inst.pop("num_thread", None)
     await _save_nodes()
     await emit_event({"type": "ollama.node.config", "id": id,
-                      "enabled": inst.get("enabled", True), "priority": inst.get("priority")})
+                      "enabled": inst.get("enabled", True), "priority": inst.get("priority"),
+                      "num_thread": inst.get("num_thread")})
     return {"ok": True, "id": id, "enabled": inst.get("enabled", True),
-            "priority": inst.get("priority"), "label": inst.get("label")}
+            "priority": inst.get("priority"), "label": inst.get("label"),
+            "num_thread": inst.get("num_thread")}
 
 
 @capability("ollama.interactive.get", memory="off", silent=True,
@@ -10145,7 +10747,7 @@ async def lifespan(app: FastAPI):
                 info = await _r.info("server")
                 REDIS = _r
                 log.info("✓ Redis connected (attempt %d): %s v%s",
-                         _attempt, REDIS_URL, info.get("redis_version", "?"))
+                         _attempt, _redis_auth.redact_url(REDIS_URL), info.get("redis_version", "?"))
                 await emit_event({"type": "backend.connected", "backend": "redis"})
                 await _ensure_coord_redis()
                 return
@@ -10155,7 +10757,7 @@ async def lifespan(app: FastAPI):
                         "✗ Redis not ready yet (will retry every 5s): %s\n"
                         "  URL  : %s\n"
                         "  Hint : check bind address in redis.conf, requirepass, firewall",
-                        e, REDIS_URL,
+                        e, _redis_auth.redact_url(REDIS_URL),
                     )
                 await asyncio.sleep(5)
 
@@ -10332,6 +10934,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "estate/registration_capabilities.py"),
         os.path.join(_here, "estate/ops_capabilities.py"),
         os.path.join(_here, "security/secrets_capabilities.py"),
+        os.path.join(_here, "security/redis_auth_capabilities.py"),
         os.path.join(_here, "security/certs_capabilities.py"),
         os.path.join(_here, "execution/ssh_cleanup_capabilities.py"),
         os.path.join(_here, "workers/nodes_capabilities.py"),
@@ -10386,6 +10989,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "research/explode_capabilities.py"),
         # assess AFTER explode: the scorers read the contracts explode builds
         os.path.join(_here, "research/assess_capabilities.py"),
+        os.path.join(_here, "models/model_inventory_capabilities.py"),
         os.path.join(_here, "vector browser/vector_browser_capabilites.py"),
         os.path.join(_here, "workers/job_persistance.py"),
         os.path.join(_here, "accounts/accounts_capabilities.py"),
@@ -10465,9 +11069,16 @@ async def lifespan(app: FastAPI):
         # action list. After the surfaces it aggregates.
         os.path.join(_here, "automations/automations_capabilities.py"),
         os.path.join(_here, "evolve/evolve_capabilities.py"),
+        # Schedules: when censuses, suites, tasks, pipeline steps, board items
+        # may run; needs evolve/, board/ and census/ caps to exist first.
+        os.path.join(_here, "evolve/schedule_capabilities.py"),
+        # The prod release, gated on the census (merge + restart only when no
+        # census goal is in flight, or forced).
+        os.path.join(_here, "evolve/release_capabilities.py"),
         # One task through time: reads the census archive AND the suite's run
         # records, so it must come after both census/ and evolve/ above.
         os.path.join(_here, "evolve/task_history_capabilities.py"),
+        os.path.join(_here, "evolve/delegate_capabilities.py"),
         # The Ship page's one table: a row per branch from the pipeline list,
         # the sandbox registry, the test history and the edges - after evolve/.
         os.path.join(_here, "evolve/ship_capabilities.py"),

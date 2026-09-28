@@ -901,8 +901,12 @@ header .hdr-right{margin-left:0;gap:6px}
 /* a SECTION tile: the band's name, flat on the page, the label at the foot of its row so it reads as the heading of the
    tiles below (the Dashboard board's side sections; the Sizes board's report lines) */
 .widget.w-section{background:transparent!important;border:none!important;box-shadow:none!important;border-radius:0;justify-content:flex-end;overflow:visible}
-.widget.w-section .w-head{padding:0 2px 4px;min-height:0;height:auto;border-bottom:1px solid var(--bd2,var(--border2,rgba(255,255,255,.18)));box-shadow:none}
-.widget.w-section .w-title{font-size:calc(var(--label-size,9px) + 2px);letter-spacing:calc(var(--label-track,.09em) + .04em);color:var(--t2,var(--dim2,#8a92a0));max-width:none;flex:1 1 auto}
+/* a section reads as a heading (owner 2026-09-28: "clearer sections"): a colour of its own (draw.accent), the name bold, the rest a subtitle */
+.widget.w-section .w-head{padding:6px 8px 5px;min-height:0;height:auto;border-bottom:2px solid color-mix(in srgb,var(--sec-acc,var(--acc,#5a9e8f)) 60%,transparent);box-shadow:none;border-radius:6px 6px 0 0;background:linear-gradient(90deg,color-mix(in srgb,var(--sec-acc,var(--acc,#5a9e8f)) 14%,transparent),transparent 70%)}
+.widget.w-section .w-title{font-size:calc(var(--label-size,9px) + 5px);letter-spacing:calc(var(--label-track,.09em) + .02em);color:var(--t1,var(--text,#d8dce4));font-weight:650;max-width:none;flex:1 1 auto;display:flex;align-items:baseline;gap:8px;min-width:0}
+.widget.w-section .w-title::before{content:'';align-self:center;flex:0 0 auto;width:4px;height:1.05em;border-radius:2px;background:var(--sec-acc,var(--acc,#5a9e8f))}
+.widget.w-section .w-title b{font-weight:inherit;flex:0 0 auto}
+.widget.w-section .w-title small{font-size:calc(var(--label-size,9px) + 2px);font-weight:400;letter-spacing:.02em;text-transform:none;color:var(--t2,var(--dim2,#8a92a0));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .widget.w-section .w-title::after{content:attr(data-count);margin-left:10px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--t3,var(--dim,#6b7280))}
 .widget.w-section .vd-rec,.widget.w-section .w-resize,.widget.w-section .w-dot{display:none!important}
 .widget.w-section:hover{box-shadow:none!important}
@@ -1232,7 +1236,7 @@ header .hdr-right{margin-left:0;gap:6px}
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-proxmox')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:290px;overflow-y:auto">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;min-height:0;overflow-y:auto">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxRunning">—</div><div class="sm-kpi-sub">running</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxGuests">—</div><div class="sm-kpi-sub">guests</div></div>
@@ -1268,7 +1272,7 @@ header .hdr-right{margin-left:0;gap:6px}
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-docker')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:290px;overflow-y:auto">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;min-height:0;overflow-y:auto">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerRunning">—</div><div class="sm-kpi-sub">running</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerConts">—</div><div class="sm-kpi-sub">containers</div></div>
@@ -1292,7 +1296,7 @@ header .hdr-right{margin-left:0;gap:6px}
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-ollama')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:290px;overflow-y:auto">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;min-height:0;overflow-y:auto">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaOnline">—</div><div class="sm-kpi-sub">online</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaGpu">—</div><div class="sm-kpi-sub">gpu</div></div>
@@ -8420,6 +8424,25 @@ window.addEventListener('message', e => { const d = e.data; if(!d || typeof d !=
 // the browser's six connections per host they queued the dashboard's own reads for over a minute, which is why every tile
 // sat on its sample). A frame put into a panel that is not showing is parked (its src kept in data-lazy-src) and loads the
 // first time its tab is shown, through the same lazy path the tab panels already use. ═══
+/* ═══ EVERY PANEL SPEAKS TO THE HARNESS (owner, 2026-09-27: "the top bars of lots of the uis are not being absorbed into the
+   harness top bar - they should - like the chat"). A sweep of 58 panels found 25 that never load the panel bridge - n8n,
+   Integrations, Godseye, the Galaxy, Workspaces, Activity, the MCP and Platform catalogues ... - so their bars, menus and
+   right-click could never reach the harness. When a panel's frame loads on this origin without it, the harness brings
+   the bridge; the panel then offers its bar and docks its menu like any other (its init follows the load). ═══ */
+function _bridgeInto(f){
+  try{
+    if(!f || f.tagName !== 'IFRAME' || !f.closest('.panels .panel')) return;
+    const w = f.contentWindow, d = f.contentDocument; if(!w || !d || !d.documentElement) return;
+    if(String(w.location.href).indexOf(location.origin + '/') !== 0) return;
+    if(w.VeraPanelBridge || d.querySelector('script[src*="vera-panel-bridge.js"]')) return;
+    const s = d.createElement('script'); s.src = '/ui/vera-panel-bridge.js'; s.setAttribute('data-vpb-injected', '');
+    s.onload = () => { const p = f.closest('.panel'); const pid = p ? _panelIdFromEl(p) : ''; if(pid){ try{ w.postMessage({ type: 'vera:panel:init', panel_id: pid, session_id: '' }, '*'); }catch(_){} } };
+    (d.head || d.documentElement).appendChild(s);
+  }catch(_){}
+}
+document.addEventListener('load', e => { const t = e.target; if(t && t.tagName === 'IFRAME') _bridgeInto(t); }, true);
+setTimeout(() => { document.querySelectorAll('.panels .panel iframe').forEach(f => { try{ if(f.contentDocument && f.contentDocument.readyState === 'complete') _bridgeInto(f); }catch(_){} }); }, 1500);
+
 function _framePark(f){
   try{
     if(!f || f.tagName !== 'IFRAME' || f.closest('.media-content')) return;   // the Elements tab parks its own (see _mediaLoad)

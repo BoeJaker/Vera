@@ -41,6 +41,41 @@ def test_validation_rejects_duplicate_ids_and_unbudgeted_live_case():
     assert {"case.id_duplicate", "case.live_budget_required"} <= codes
 
 
+def test_validation_rejects_unresolved_or_non_test_deterministic_fixtures():
+    corpus = load_corpus(CORPUS)
+    unresolved = copy.deepcopy(corpus)
+    unresolved["cases"][0]["fixture_ref"] = "planned:run-recovery"
+    invalid = copy.deepcopy(corpus)
+    invalid["cases"][0]["fixture_ref"] = "bench/run-recovery.json"
+    traversal = copy.deepcopy(corpus)
+    traversal["cases"][0]["fixture_ref"] = "tests/../vera/secrets.py"
+
+    unresolved_codes = {
+        issue["code"] for issue in validate_corpus(unresolved)["issues"]}
+    invalid_codes = {
+        issue["code"] for issue in validate_corpus(invalid)["issues"]}
+    traversal_codes = {
+        issue["code"] for issue in validate_corpus(traversal)["issues"]}
+
+    assert "case.deterministic_fixture_unresolved" in unresolved_codes
+    assert "case.deterministic_fixture_invalid" in invalid_codes
+    assert "case.deterministic_fixture_invalid" in traversal_codes
+
+
+def test_deterministic_fixture_references_resolve_to_tracked_test_nodes():
+    root = CORPUS.parents[1]
+    for case in load_corpus(CORPUS)["cases"]:
+        if case["lane"] != "deterministic":
+            continue
+        path_text, separator, node = case["fixture_ref"].partition("::")
+        path = root / path_text
+        assert path.is_file(), f"missing fixture file for {case['id']}: {path_text}"
+        if separator:
+            source = path.read_text(encoding="utf-8")
+            assert f"def {node}(" in source, (
+                f"missing fixture node for {case['id']}: {case['fixture_ref']}")
+
+
 def test_score_case_is_deterministic_and_fails_missing_paths_closed():
     case = {"id": "resolver", "expected": {
         "authorized": False, "rank.selected": "safe.cap", "executed": False}}

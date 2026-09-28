@@ -2,6 +2,25 @@
 
 ![Data Fabric captured from the running Vera UI](assets/overview/fabric-panel.png)
 
+Vera keeps an offline, source-bound inventory of the discovery and context
+paths that feed the Fabric. It distinguishes portable provider contracts from
+native adapters, labels JEPA Worldview paths explicitly, and records the missing
+portable dataset boundary for the separate non-JEPA Worldview/Godseye line.
+It also records which paths still require live source or accelerator evidence.
+The inventory is content-addressed and checked against a reviewed semantic
+baseline, so routing work starts from an explicit system map rather than an
+informal list or a live probe. It does not contact sources, models, or workers.
+
+Discovery work crosses subsystem boundaries through immutable envelopes. A
+request fixes its source types, time, result limits, latency, byte and cost budgets.
+Candidates identify a versioned source and offer explicit collection methods,
+resource needs, expected latency and output kinds. Receipts preserve the exact
+request, candidate, option and provider revision—even for cancellation,
+timeouts and failures. Successful outputs reuse cited `ContextItem`,
+`DatasetSnapshot`, and content-addressed artifact identities, with the
+collection receipt retained in their lineage. These are descriptive contracts:
+they neither crawl nor claim a CPU/GPU worker is available.
+
 The polyglot data fabric is Vera's unified data layer. It combines multiple database paradigms — vector (FAISS + Chroma), graph (Neo4j), relational (SQLite + PostgreSQL), and object storage (Garage / Ceph S3) — into a single ingestion pipeline and query DSL. Anything Vera produces or consumes that's worth keeping ends up in the fabric, where it can be recalled semantically, by relation, by exact filter, or by any combination of the three.
 
 The fabric is what makes Vera's components additive rather than siloed. A research result is fabric-recallable, so the IDE agent can find it. A crawled page is fabric-recallable, so dream cycles can use it. A chat message is fabric-recallable, so future sessions can build on it.
@@ -214,6 +233,127 @@ index/update/rebuild/deletion time, and storage. An unmeasured lifecycle value
 remains `null` rather than being confused with zero. The comparator does not
 construct a composite score, choose a winner, invoke a backend, or authorize a
 deployment.
+
+`vera.fabric.retrieval_lifecycle` preserves lifecycle evidence that the query
+executor cannot express in numeric fields alone. For each exact-snapshot
+adapter it records completed, unavailable, failed, cancelled, timed-out,
+unsupported, and not-requested phases separately. Recovery and teardown are
+explicit opt-in phases, run sequentially with the same bounded deadline.
+Recovery is successful only after a fresh lifecycle observation; teardown is
+successful only when its receipt names the exact snapshot, reports the
+projection inactive, and supplies a non-negative deletion measurement. Backend
+exception text is never retained. The report chooses no winner or fallback and
+grants no activation authority. Deterministic validation uses injected adapters;
+live outage/recovery/deletion trials remain separate evidence.
+
+`vera.fabric.retrieval_execution` is the bounded invocation layer that feeds
+that offline comparator. A `RetrievalQueryBinding` holds query text only for
+the duration of execution and verifies it against the case digest; neither the
+binding representation, evidence, nor report serialises the text. The executor
+runs at most 16 explicitly configured adapters over at most 200 identical cases,
+with a bounded per-operation deadline, cooperative cancellation, redacted error
+codes, and deliberately sequential provider pressure. Timeouts, cancellation,
+missing integrations, and malformed provider citations remain visible outcomes
+rather than silently disappearing or falling back to another backend.
+
+`QueryProviderRetrievalAdapter` connects providers that already honour
+`DatasetSnapshot` and `QueryRequest`. Because provider query pages identify
+matches by snapshot-local record index, the adapter also requires a complete
+immutable index-to-`(record_id, revision_id)` map for that exact snapshot. It
+rejects snapshot mismatches, incomplete citation maps, and invalid indexes.
+`UnavailableRetrievalAdapter` records an intentionally configured but absent
+integration without claiming that it was queried.
+
+The current general-purpose `fabric.query` capability searches live indexes;
+it does not yet accept an immutable snapshot ID or return revision-qualified
+citations. It is therefore not represented as snapshot-pinned Fabric evidence.
+`NativeFabricSnapshotProjection` provides the separate admissible vector path:
+it reconstructs and verifies the complete `DatasetSnapshot`, requires exactly
+one vector per record, and reuses Fabric's canonical `EmbeddingSpace` and
+`ProjectionSpec` identities to pin the model package, dimension, preprocessing,
+metric, backend and schema. The projection is isolated in memory, integrity is
+checked before and after every query, and its receipt reports index time,
+storage and idempotent teardown without record or query content. Its adapter
+returns only exact `(record_id, revision_id)` citations and grants no activation
+authority. It never reads, writes or relabels the mutable shared indexes.
+
+The native graph path follows the same boundary. `SnapshotGraphEdge` accepts
+only bounded, unique edges whose endpoints exist in the exact snapshot.
+`NativeFabricSnapshotGraphProjection` reuses the canonical graph
+`ProjectionSpec`, content-identifies all nodes, revisions, edges and traversal
+limits, and uses deterministic lexical seeds plus a bounded one-to-eight-hop
+traversal. Directed edges are never traversed backwards. Integrity is checked
+around every query, results contain only revision citations, and teardown clears
+the isolated node/edge material. Shared Neo4j remains untouched.
+
+Qdrant and GraphRAG now have an injected-driver evidence boundary in
+`vera.fabric.external_retrieval`. `ExternalSnapshotBinding` recreates the
+complete immutable snapshot and content-identifies the provider revision,
+projection revision, retrieval mode, and full revision-qualified citation
+manifest. Query and lifecycle receipts must reproduce every one of those
+identities; drift, citations outside the snapshot, duplicates, excessive
+results, malformed lifecycle measures, and another snapshot all fail closed.
+Qdrant modes are explicit (`dense`, `sparse`, `hybrid`, `multivector`) and
+GraphRAG modes are explicit (`local`, `global`, `drift`). The core runtime does
+not import or install either library. An integration host must inject the
+driver, and a missing driver produces provider-specific unavailable evidence
+without falling back to Fabric or another index. This is a conformance seam,
+not runtime evidence by itself; deployments and measurements are recorded
+separately.
+
+The optional Qdrant runtime driver in `vera.fabric.qdrant_retrieval` uses the
+REST API directly through a bounded standard-library transport, so Qdrant does
+not become a core Python dependency. It provisions one deterministic isolated
+collection per external snapshot binding, uploads deterministic point IDs with
+exact snapshot/record/revision payloads, verifies the resulting point count,
+and supports explicit dense, sparse, RRF-hybrid and max-sim multivector query
+shapes. Every query filters the exact snapshot and requests only citation
+payloads. Lifecycle, recovery and deletion operate on that same collection;
+teardown reports it inactive and grants no activation authority. Credentials,
+shared collections and implicit fallback are outside this driver.
+
+The optional GraphRAG runtime driver in `vera.fabric.graphrag_retrieval`
+separates Vera's evidence contract from GraphRAG's model and index
+configuration. An integration host supplies a configured runtime implementing
+index, query, inspection and deletion; Vera does not import GraphRAG, resolve
+its credentials, or start model work implicitly. The driver sends the complete
+revision-bound document manifest into one deterministic workspace and accepts
+an active index only when the runtime returns the same snapshot, projection,
+provider revision, mode, record count and complete citation manifest. Local,
+global and DRIFT queries request citation fields only; answer and context bodies
+do not cross the comparison boundary. Recovery requires a fresh complete
+lifecycle observation, while teardown must prove that the same workspace is
+inactive. Runtime failures are redacted and never trigger another provider.
+
+`vera.fabric.retrieval_trial` joins query-quality evidence and the explicit
+lifecycle coordinator into one common-corpus receipt. The same immutable
+snapshot, digest-bound cases and adapter instances are used for both phases,
+and provider profile or snapshot drift is rejected. Synthesis reports query
+completion, failure, cancellation and unavailability separately from baseline,
+recovery and deletion status. A provider is evidence-complete only when every
+requested dimension is complete; missing integrations remain visible and are
+never converted into zero scores. The receipt contains no query text, chooses
+no winner or fallback, and grants no activation authority. External/model-backed
+trials remain a separate, explicitly scheduled operation.
+
+The analytical participant reuses the existing read-only QueryProvider rather
+than introducing SQL or a second query authority. DuckDB artifact providers may
+now bind an explicit DatasetSnapshot ID and read a designated stable record-index
+column, so filtered result rows resolve to their original snapshot revisions
+rather than to filtered-page offsets. `AnalyticalSnapshotRetrievalAdapter`
+selects a bounded, predeclared structured filter plan by the digest-bound case
+ID; query text is never translated into SQL and row data is never returned to
+the comparator. The provider, dataset and snapshot must match exactly, and
+missing plans, index drift, invalid/duplicate indexes and backend errors fail
+closed. Live DuckDB/Parquet execution remains separate evidence.
+
+JEPA Worldview has a dedicated binding and query path:
+`worldview.retrieval.bind` pins the complete index to a `DatasetSnapshot` and
+checkpoint `ModelPackage`, while `JepaWorldviewRetrievalAdapter` rejects any
+live receipt that drifts from those identities. An unbound legacy JEPA
+checkpoint remains explicitly unavailable to the comparison. This is a
+deliberate evidence boundary, not an indication that an unavailable provider
+scored zero.
 
 Supported evidence profiles distinguish Fabric graph/vector retrieval, Qdrant,
 GraphRAG, analytical retrieval, and **JEPA Worldview evidence**. “Worldview” is

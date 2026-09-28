@@ -148,6 +148,8 @@ def summarise_run(run_id: str, records: Sequence[Dict[str, Any]]) -> Dict[str, A
         # FILTER by it - runs of different templates are not comparable points
         # and must never share a chart.
         "template": run_template(recs),
+        # Which PLANNING STYLE it measured - the other half of "comparable".
+        "plan_style": run_plan_style(recs),
         # Which CODE it ran on, and where that changed if it did. A run that
         # crossed a prod restart is two instruments in one file; the goal at
         # which the sha moved is the boundary between them.
@@ -394,10 +396,15 @@ def compare_runs(base: Sequence[Dict[str, Any]],
             "base_executed": br.get("executed"), "head_executed": hr.get("executed"),
             "head_unaccounted": hr.get("unaccounted"),
             "head_gate_inserted": hr.get("gate_inserted"),
+            "base_plan_style": row_plan_style(br), "head_plan_style": row_plan_style(hr),
         }
         if hr.get("unaccounted"):
             rec["note"] = ("this run has steps no producer claims — its counters "
                            "cannot settle whether the goal really improved")
+        elif rec["base_plan_style"] != rec["head_plan_style"]:
+            rec["note"] = ("planned with different styles (%s → %s) — this measures "
+                           "the style as much as the code"
+                           % (rec["base_plan_style"], rec["head_plan_style"]))
         out.append(rec)
     order = {"regressed": 0, "missing": 1, "held": 2, "improved": 3}
     out.sort(key=lambda r: (order.get(r["outcome_change"], 4), str(r["id"])))
@@ -717,6 +724,34 @@ def run_template(records: Sequence[Dict[str, Any]]) -> str:
     """
     seen = sorted({str((r or {}).get("template") or "").strip()
                    for r in (records or []) if isinstance(r, dict)} - {""})
+    if not seen:
+        return ""
+    if len(seen) > 1:
+        return "mixed:" + "+".join(seen)
+    return seen[0]
+
+
+#: What a row planned with when it names no style. Not a guess: the loop had
+#: exactly one planning path until the plan_style option existed (2026-09-27),
+#: and that path is what `auto` still is; the harness itself writes "auto" for a
+#: goal it did not force a style on.
+PLAN_STYLE_DEFAULT = "auto"
+
+
+def row_plan_style(record: Dict[str, Any]) -> str:
+    """The style a goal was ASKED to plan with - the instrument's setting. The
+    style it ended up using (`plan_style`) can differ on a fallback and is the
+    loop's behaviour, not the census's."""
+    return (str((record or {}).get("plan_style_requested") or "").strip().lower()
+            or PLAN_STYLE_DEFAULT)
+
+
+def run_plan_style(records: Sequence[Dict[str, Any]]) -> str:
+    """Which planning style a run measured, read off its rows - the second axis
+    (after `template`) that decides whether two runs are comparable: a broad
+    run against an auto baseline measures the style, not the code. Rows that
+    disagree return "mixed:a+b", as run_template does."""
+    seen = sorted({row_plan_style(r) for r in (records or []) if isinstance(r, dict)})
     if not seen:
         return ""
     if len(seen) > 1:
