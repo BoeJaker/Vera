@@ -733,10 +733,16 @@ LONG_HORIZON_CPU_NODE = "cpu-247"
 # `naming` (chat titles + simple/utility LLM ops) is CPU-only by default so it
 # never ties up a GPU — pin it to a specific CPU node and/or a lighter model in
 # the Workers & Ollama tab's routing editor.
+#: The GPU node's CPU-only Ollama (ollama_node_core.cpu_sibling_id("gpu-250")).
+EMBED_PRIMARY_NODE = "gpu-250-cpu"
+
 DEFAULT_ROUTING_RULES: Dict[str, dict] = {
-    # cpu-246 FAVOURS embedding, cpu-247 favours the light generation jobs -
-    # but neither is excluded, so a busy node hands work to the other.
-    "embedding": _rule("embedding", deny_gpu=True, prefer="cpu-246"),
+    # The GPU node's CPU-only sibling is the PRIMARY embedder (user, 2026-09-28:
+    # "make the gpu node the primary embedding node - then the other 2 cpu nodes
+    # can be used primarily for large models ... but can also act as
+    # embedders"). `prefer` is soft: while gpu-250-cpu is the busier node the
+    # CPU nodes take the overflow.
+    "embedding": _rule("embedding", deny_gpu=True, prefer=EMBED_PRIMARY_NODE),
     # naming + summarize are light utility LLM ops that run INLINE in latency-
     # sensitive paths (chat title generation; history compaction before a reply).
     # Keep them off the embedding node (avoid_embed) so they land on an idle CPU
@@ -745,7 +751,9 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # A chat title is 3-8 tokens. With no model here a sandbox took the instance
     # default - the 9b - onto a CPU node, where one such call held the node for
     # 9 hours (2026-09-23, judgement 18). Every node carries the 0.5b.
-    "naming":    _rule("naming",    deny_gpu=True, prefer="cpu-247", model="qwen2.5:0.5b"),
+    # Also on the GPU node's CPU sibling, so the CPU nodes stay for the large
+    # (MoE) models; either CPU node still takes it when the sibling is busier.
+    "naming":    _rule("naming",    deny_gpu=True, prefer=EMBED_PRIMARY_NODE, model="qwen2.5:0.5b"),
     # summarize is GPU-ONLY. It runs INLINE - the caller is blocked awaiting it -
     # so a CPU summarise does not overlap anything: the GPU sits idle while the
     # slower box works, and the caller just waits longer. Verified safe: the gate
@@ -1498,18 +1506,28 @@ async def _seed_routing_parity(present: Dict[str, bool]) -> List[str]:
             pass
     return seeded
 
-# Per-instance concurrency semaphores for Ollama — limits simultaneous
-# in-flight requests per node to 1 (Ollama queues internally but multiple
-# concurrent httpx connections cause request pile-ups and timeouts).
-# Callers that want parallelism across *different* nodes are unaffected.
-# Use acquire/release via `async with _ollama_sem(iid):` pattern.
+# Per-instance concurrency semaphores for Ollama - this process's own limit on
+# simultaneous generations per node, in front of the cross-process gate. It
+# follows the node: a GPU node takes one generation at a time, a CPU node as
+# many as its Ollama has slots (the gate's capacity_for - 2 by default, user
+# 2026-09-28). A limit of 1 everywhere serialised prod's own CPU jobs even where
+# the node could run two. OLLAMA_CONCURRENCY, when set, still overrides all.
+# Embeddings do not take this semaphore. Use `async with _ollama_slot(iid):`.
 _OLLAMA_SEMAPHORES: Dict[str, asyncio.Semaphore] = {}
-_OLLAMA_SEM_LIMIT = int(os.environ.get("OLLAMA_CONCURRENCY", "1"))
+_OLLAMA_SEM_OVERRIDE = os.environ.get("OLLAMA_CONCURRENCY", "").strip()
+
+
+def _ollama_sem_limit(iid: str) -> int:
+    if _OLLAMA_SEM_OVERRIDE:
+        return max(1, int(_OLLAMA_SEM_OVERRIDE))
+    has_gpu = bool((OLLAMA_INSTANCES.get(iid) or {}).get("has_gpu"))
+    return 1 if has_gpu else max(1, _gate.capacity_for(False))
+
 
 def _ollama_sem(iid: str) -> asyncio.Semaphore:
     """Return (creating if needed) the per-instance Semaphore."""
     if iid not in _OLLAMA_SEMAPHORES:
-        _OLLAMA_SEMAPHORES[iid] = asyncio.Semaphore(_OLLAMA_SEM_LIMIT)
+        _OLLAMA_SEMAPHORES[iid] = asyncio.Semaphore(_ollama_sem_limit(iid))
     return _OLLAMA_SEMAPHORES[iid]
 
 

@@ -31,7 +31,8 @@ def test_gate_enabled_env_parsing():
 
 def test_capacity_gpu_vs_cpu_defaults():
     assert capacity_for(True, {}) == 1        # GPU gated to 1 by default
-    assert capacity_for(False, {}) == 0       # CPU ungated by default
+    assert capacity_for(False, {}) == 2       # CPU: two at once (its Ollama has 2 slots)
+    assert capacity_for(False, {"VERA_NODE_GATE_N": "0"}) == 0   # ungated on request
     assert capacity_for(True, {"VERA_GPU_GATE_N": "2"}) == 2
     assert capacity_for(False, {"VERA_NODE_GATE_N": "4"}) == 4
     # never negative

@@ -2440,5 +2440,103 @@ async def cap_provision_apply(target: str = "",
     return {"ok": overall, "target": target, "results": results}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# OLLAMA CONCURRENCY + THE GPU NODE'S CPU SIBLING
+# ─────────────────────────────────────────────────────────────────────────────
+@capability(
+    "nodes.ollama.tune",
+    http_method="POST", http_path="/nodes/ollama/tune", http_tags=["nodes", "ollama"],
+    memory="off",
+    description="Bring every Ollama node to the concurrency layout (user, 2026-09-28): a CPU "
+                "node's Ollama gets 2 slots and room for the embedder beside a large model "
+                "(OLLAMA_NUM_PARALLEL=2, MAX_LOADED_MODELS=3, a systemd drop-in on its unit - "
+                "applying it RESTARTS that unit, so loaded models reload); a GPU node keeps one "
+                "GPU slot and gains a CPU-only sibling Ollama on :11436 (GPU hidden, same "
+                "read-only model store), registered as '<id>-cpu' with num_thread 6 - the "
+                "primary embedding node. A node already in shape is left alone; a node with "
+                "a generation in flight from this process is skipped unless force. Dry run by "
+                "default; refused from a dev sandbox. Inputs: dry_run (bool=true), force "
+                "(bool), instance_ids (list - default every registered GPU-capable or CPU "
+                "Ollama node, siblings excluded). Output: {ok, nodes:[{instance, host, plan, "
+                "result}]}.",
+)
+async def cap_nodes_ollama_tune(dry_run: bool = True, force: bool = False,
+                                instance_ids: Optional[List[str]] = None,
+                                trace_id=None) -> Dict:
+    if not dry_run and _orch.is_dev_sandbox():
+        return {"ok": False, "error": "this is a dev sandbox: the Ollama nodes are prod's"}
+    run = _rawcap("exec.ssh.run")
+    lst = _rawcap("exec.ssh.hosts.list")
+    if not run or not lst:
+        return {"ok": False, "error": "exec.ssh unavailable"}
+    by_addr = {h.get("host"): h.get("id") for h in ((await lst()) or {}).get("hosts", [])
+               if h.get("host") and h.get("id")}
+    insts = dict(getattr(_orch, "OLLAMA_INSTANCES", {}) or {})
+    sibling_ids = {_ollama_core.cpu_sibling_id(i) for i in insts}
+    targets = [i for i in (instance_ids or list(insts)) if i in insts and i not in sibling_ids]
+    out = []
+    for iid in targets:
+        inst = insts[iid]
+        addr = urlparse(str(inst.get("url") or "")).hostname or ""
+        row: Dict[str, Any] = {"instance": iid, "host": addr, "has_gpu": bool(inst.get("has_gpu"))}
+        hid = by_addr.get(addr)
+        if not hid:
+            row["plan"] = {"action": "skip", "why": "no stored SSH credential for this address"}
+            out.append(row)
+            continue
+        probe = await run(command=_ollama_core.tune_probe_cmd(), host_id=hid, timeout=30) or {}
+        plan = _ollama_core.tune_plan(bool(inst.get("has_gpu")),
+                                      _ollama_core.parse_tune_probe(probe.get("stdout") or ""))
+        row["plan"] = plan
+        if plan["action"] in ("none", "skip") or dry_run:
+            out.append(row)
+            continue
+        if int(inst.get("in_use") or 0) > 0 and not force:
+            row["result"] = {"ok": False, "skipped": "a generation is in flight on this node"}
+            out.append(row)
+            continue
+        if plan["action"] == "set_concurrency":
+            unit = plan["unit"]
+            d = f"/etc/systemd/system/{unit}.service.d"
+            body = _ollama_core.concurrency_dropin()
+            port = urlparse(str(inst.get("url"))).port or 11435
+            cmd = (f"mkdir -p {d} && printf '%s' {shlex.quote(body)} > "
+                   f"{d}/{_ollama_core.CONCURRENCY_DROPIN_NAME} && systemctl daemon-reload && "
+                   f"systemctl restart {unit} && for i in $(seq 1 30); do "
+                   f"curl -fsS -m 3 http://127.0.0.1:{port}/api/tags >/dev/null && "
+                   f"echo VERA_TUNED && break; sleep 2; done")
+            res = await run(command=cmd, host_id=hid, timeout=120) or {}
+            row["result"] = {"ok": "VERA_TUNED" in (res.get("stdout") or ""),
+                             "error": "" if "VERA_TUNED" in (res.get("stdout") or "")
+                             else str(res.get("stderr") or res.get("error") or "no answer")[:300]}
+        elif plan["action"] == "add_sibling":
+            unit_txt = _ollama_core.cpu_sibling_unit(plan["models"])
+            p = _ollama_core.CPU_SIBLING_PORT
+            cmd = (f"printf '%s' {shlex.quote(unit_txt)} > /etc/systemd/system/"
+                   f"{_ollama_core.CPU_SIBLING_UNIT} && systemctl daemon-reload && "
+                   f"systemctl enable --now {_ollama_core.CPU_SIBLING_UNIT} && "
+                   f"for i in $(seq 1 30); do curl -fsS -m 3 http://127.0.0.1:{p}/api/tags "
+                   f">/dev/null && echo VERA_TUNED && break; sleep 2; done")
+            res = await run(command=cmd, host_id=hid, timeout=120) or {}
+            ok = "VERA_TUNED" in (res.get("stdout") or "")
+            row["result"] = {"ok": ok, "error": "" if ok else
+                             str(res.get("stderr") or res.get("error") or "no answer")[:300]}
+            if ok:
+                sid = _ollama_core.cpu_sibling_id(iid)
+                reg = _ollama_core.registration_plan(_orch.OLLAMA_INSTANCES, addr, p,
+                                                     has_gpu=False, preferred_id=sid)
+                if reg["action"] == "create":
+                    add = _rawcap("ollama.add_instance")
+                    await add(id=sid, url=reg["url"], has_gpu=False,
+                              label=f"{inst.get('label') or iid} (CPU)",
+                              num_thread=_ollama_core.registration_threads(False))
+                row["result"]["registered"] = reg["instance_id"]
+        await emit_event({"type": "nodes.ollama.tune", "instance": iid,
+                          "action": plan["action"], "ok": bool((row.get("result") or {}).get("ok"))})
+        out.append(row)
+    return {"ok": all((r.get("result") or {}).get("ok", True) for r in out),
+            "dry_run": bool(dry_run), "nodes": out}
+
+
 log.info("nodes: unified node estate capabilities loaded "
          "(%d components)", len(_COMPONENTS))

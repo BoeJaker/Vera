@@ -92,7 +92,9 @@ def test_this_module_actually_imported_the_app():
 def test_cancellation_inside_the_gate_hands_the_permit_back():
     iid = "unit-test-permit-node"
     sem = CO._ollama_sem(iid)
-    assert sem._value == 1, "fixture node started out already held"
+    # an unregistered id is a CPU node: as many permits as the node's limit
+    limit = CO._ollama_sem_limit(iid)
+    assert sem._value == limit, "fixture node started out already held"
 
     saved = (CO._GATE_ON, CO.COORD_REDIS, CO._gate.capacity_for, CO._gate.acquire,
              CO._GATE_BROKER_CONFIGURED, CO._GATE_BROKER)
@@ -118,7 +120,7 @@ def test_cancellation_inside_the_gate_hands_the_permit_back():
         task = asyncio.create_task(body())
         await asyncio.wait_for(entered.wait(), timeout=10)
         # Proves the permit really was taken, so the assert below is meaningful.
-        assert sem._value == 0, "permit was not held inside the gate block"
+        assert sem._value == limit - 1, "permit was not held inside the gate block"
         task.cancel()
         try:
             await task
@@ -132,6 +134,6 @@ def test_cancellation_inside_the_gate_hands_the_permit_back():
         CO._gate.capacity_for, CO._gate.acquire = saved[2], saved[3]
         CO._GATE_BROKER_CONFIGURED, CO._GATE_BROKER = saved[4], saved[5]
 
-    assert sem._value == 1, (
+    assert sem._value == limit, (
         "a cancelled generation leaked the node's only permit - every later "
         "request on that node would block forever on acquire")

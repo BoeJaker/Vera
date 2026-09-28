@@ -22,6 +22,7 @@ _CRITICAL_MODULES = {
     "test_node_sync_core",  # node workers stayed on the old commit after every promotion; sync must follow what the host RUNS (2026-09-28)
     "test_fabric_ner_on_nodes",  # the host had no NER model, so the entity graph ran on heuristics while every node served OntoNotes NER (2026-09-28)
     "test_media_models_from_store",  # nodes served different media models from their own caches; the component deployed to a layout no node ran (2026-09-28)
+    "test_cpu_concurrency",  # a CPU node's Ollama served one request at a time and prod's own limit was 1 per node (2026-09-28)
     "test_node_models_prune",  # a node's own model copy may go only when the store holds the same bytes (2026-09-28)
     "test_specialist_catalog",  # "in use" must be what the nodes serve; a partial export must not drop the manifest (2026-09-28)
     "test_specialist_models",  # no deployed component had a version: nothing could say a node was behind (2026-09-28)
