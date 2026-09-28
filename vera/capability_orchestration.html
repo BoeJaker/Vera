@@ -2774,7 +2774,8 @@ window.addEventListener('message', e => {
   const d = e.data; if(!d || typeof d !== 'object' || d.type !== 'vera:hdr:offer' || !e.source) return;
   const pid = _panelIdOfSource(e.source); if(!pid) return;
   const prev = _hdrOffers[pid] || {};
-  _hdrOffers[pid] = { src: e.source, title: String(d.title || ''), groups: Array.isArray(d.groups) ? d.groups.slice(0, 40) : [], absorbed: prev.absorbed };
+  if(!Array.isArray(d.groups) || !d.groups.length){ if(_hdrOffers[pid]){ delete _hdrOffers[pid]; _hdrSync(); } return; }
+  _hdrOffers[pid] = { src: e.source, title: String(d.title || ''), groups: d.groups.slice(0, 40), absorbed: prev.absorbed };
   _hdrSync();
 });
 function _hdrAct(pid, hid, value){ const o = _hdrOffers[pid]; if(!o) return; try{ o.src.postMessage({ type: 'vera:hdr:act', hid, value }, '*'); }catch(_){} }
@@ -2805,16 +2806,45 @@ function _hdrDrawerPlace(on){
 }
 // what does not fit goes, lowest priority first (the panel's own ⋯ still has everything)
 function _hdrFit(host){
-  const grps = [...host.querySelectorAll('.hp-grp')]; grps.forEach(g => { g.style.display = ''; });
+  _hdrOverClose(host, true);
+  host.querySelector(':scope > .hp-ovw')?.remove();
+  const grps = [...host.querySelectorAll(':scope > .hp-grp')]; grps.forEach(g => { g.style.display = ''; });
   const over = () => host.scrollWidth > host.clientWidth + 1;
-  let guard = 40;
-  while(over() && guard--){
-    const vis = grps.filter(g => g.style.display !== 'none' && +g.dataset.prio > 1); if(!vis.length) break;
-    let worst = vis[0]; vis.forEach(g => { if(+g.dataset.prio >= +worst.dataset.prio) worst = g; });
-    worst.style.display = 'none';
-  }
+  const fold = () => { let guard = 40;
+    while(over() && guard--){
+      const vis = grps.filter(g => g.style.display !== 'none' && +g.dataset.prio > 1); if(!vis.length) break;
+      let worst = vis[0]; vis.forEach(g => { if(+g.dataset.prio >= +worst.dataset.prio) worst = g; });
+      worst.style.display = 'none';
+    } };
+  fold();
   // and back in, most important first, whatever fits in the room that is left
   grps.filter(g => g.style.display === 'none').sort((a, b) => (+a.dataset.prio) - (+b.dataset.prio)).forEach(g => { g.style.display = ''; if(over()) g.style.display = 'none'; });
+  /* (owner, 2026-09-28: nothing a panel's bar holds may be swallowed) the chat's own ⋯ holds what did not fit; any other
+     panel's hidden groups go into a ⋯ drawn here, so every control stays one press away */
+  if(!grps.some(g => g.style.display === 'none') || host.querySelector(':scope > .hp-grp[data-grp="more"]')) return;
+  const w = document.createElement('span'); w.className = 'hp-grp hp-ovw'; w.dataset.prio = '1'; w.dataset.grp = '__over';
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'hp-btn hp-more'; b.textContent = '\u22ef'; b.title = "The rest of this panel's bar";
+  b.addEventListener('click', ev => { ev.stopPropagation(); if(host.querySelector('.hp-over')) _hdrOverClose(host); else _hdrOverOpen(host, b); });
+  w.appendChild(b); host.appendChild(w);
+  fold();   // the ⋯ takes room of its own
+  if(_hdrOverWasOpen) _hdrOverOpen(host, b);
+}
+let _hdrOverWasOpen = false;
+function _hdrOverOpen(host, btn){
+  const hid = [...host.querySelectorAll(':scope > .hp-grp')].filter(g => g.style.display === 'none' && !g.classList.contains('hp-ovw'));
+  if(!hid.length) return;
+  const pop = document.createElement('div'); pop.className = 'hp-over'; pop.setAttribute('data-w', "the rest of the open panel's bar \u00b7 header");
+  const r = btn.getBoundingClientRect();
+  pop.style.cssText = 'position:fixed;z-index:1000;top:' + Math.round(r.bottom + 4) + 'px;right:' + Math.max(8, Math.round(window.innerWidth - r.right)) + 'px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:8px;max-width:min(520px,90vw);max-height:70vh;overflow:auto;background:var(--s1,var(--bg1,#14161a));border:1px solid var(--bd,var(--border,#2a2d33));border-radius:var(--r-sm,6px);box-shadow:0 8px 24px rgba(0,0,0,.35)';
+  hid.forEach(g => { g._hpHome = g.nextSibling; g.style.display = ''; g.style.flexWrap = 'wrap'; pop.appendChild(g); });
+  host.appendChild(pop); _hdrOverWasOpen = true; btn.classList.add('on');
+  if(!_hdrOverOpen._wired){ _hdrOverOpen._wired = true; document.addEventListener('click', ev => { const h = document.getElementById('hdrPanel'); const p = h && h.querySelector('.hp-over'); if(p && !p.contains(ev.target)) _hdrOverClose(h); }); }
+}
+function _hdrOverClose(host, keep){
+  const pop = host && host.querySelector('.hp-over'); if(!pop) return;
+  const ovw = host.querySelector(':scope > .hp-ovw');
+  [...pop.querySelectorAll(':scope > .hp-grp')].forEach(g => { g.style.display = 'none'; g.style.flexWrap = ''; host.insertBefore(g, (g._hpHome && g._hpHome.parentNode === host) ? g._hpHome : ovw); });
+  pop.remove(); if(!keep) _hdrOverWasOpen = false; ovw?.querySelector('.hp-more')?.classList.remove('on');
 }
 // the header's width is an input: a window, a drawer, the fonts arriving
 { let q = 0; const ro = window.ResizeObserver ? new ResizeObserver(() => { if(q) return; q = requestAnimationFrame(() => { q = 0; const h = document.getElementById('hdrPanel'); if(h && !h.hidden) _hdrFit(h); }); }) : null;
@@ -2835,7 +2865,7 @@ function _hdrSync(){
   const host = _hdrPanelHost(hdr);
   const _foc = (document.activeElement && host.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') ? { hid: document.activeElement.dataset.hid, v: document.activeElement.value } : null;
   host.innerHTML = '';
-  if(!off){ host.hidden = true; return; }
+  if(!off){ host.hidden = true; _hdrOverWasOpen = false; return; }
   host.hidden = false;
   let moreGrp = null;
   off.groups.forEach(g => {
@@ -2848,7 +2878,8 @@ function _hdrSync(){
         (it.options || []).forEach(o => { const op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; el.appendChild(op); });
         el.value = it.value || ''; el.addEventListener('change', () => _hdrAct(pid, it.hid, el.value));
       } else if(it.kind === 'input'){
-        el = document.createElement('input'); el.className = 'hp-in'; el.type = it.type === 'number' ? 'number' : 'search';
+        el = document.createElement('input'); el.className = 'hp-in'; el.type = /^(number|date|time|datetime-local|month|week|color|range)$/.test(it.type || '') ? it.type : 'search';
+        if(it.min) el.min = it.min; if(it.max) el.max = it.max; if(it.step) el.step = it.step; if(/^(color|range)$/.test(el.type)){ el.style.width = el.type === 'color' ? '34px' : '110px'; el.style.padding = '0 4px'; }
         el.value = (_foc && _foc.hid === it.hid) ? _foc.v : (it.value || ''); el.placeholder = it.placeholder || '';
         let t = 0; el.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => _hdrAct(pid, it.hid, el.value), 250); });
         el.addEventListener('keydown', ev => { if(ev.key === 'Enter'){ clearTimeout(t); _hdrAct(pid, it.hid, { value: el.value, enter: true }); } });
@@ -2858,7 +2889,8 @@ function _hdrSync(){
         el.addEventListener('click', () => _hdrAct(pid, it.hid));
       } else {
         el = document.createElement('button'); el.type = 'button';
-        el.className = 'hp-btn' + (it.kind === 'text' ? ' hp-sess' : '') + (it.kind === 'more' ? ' hp-more' : '') + (it.on ? ' on' : '');
+        el.className = 'hp-btn' + (it.kind === 'text' ? ' hp-sess' : '') + (it.kind === 'more' ? ' hp-more' : '') + (it.on ? ' on' : '') + (it.tab ? ' hp-tab' : '') + (it.link ? ' hp-link' : '');
+        if(it.tab){ el.setAttribute('role', 'tab'); el.setAttribute('aria-selected', it.on ? 'true' : 'false'); }
         el.textContent = it.label || '\u00b7'; el.addEventListener('click', () => _hdrAct(pid, it.hid));
       }
       if(it.title) el.title = it.title;
@@ -3102,7 +3134,7 @@ function _lhmNativeRender(host){
     open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() },
     onPanel: (pid, ev) => { if(ev && (ev.ctrlKey || ev.metaKey)) splitTab(pid); else switchTab(pid); _tabFireLoader(pid); _lhmNavSync(); },
     onSection: (pid, sid, i) => { _lhmSecOpen[pid] = i; _lhmNavSync(); },
-    onBeside: (pid, sec, tab) => { _lhmOpenBeside(pid, tab ? (sec.nav ? tab.id : (sec.id + '/' + tab.id)) : ''); },
+    onBeside: (pid, sec, tab) => { _lhmOpenBeside(pid.replace(/--\d+$/, ''), tab ? (sec.nav ? tab.id : (sec.id + '/' + tab.id)) : ''); },
     onTab: (pid, sec, tab) => { _lhmNavSelect(pid, sec.nav ? tab.id : (sec.id + '/' + tab.id)); if(sec.nav){ const nav = _panelNavCache[pid]; if(nav) _panelNavCache[pid] = Object.assign({}, nav, { active: tab.id }); } _lhmNavSync(); },
     widgets, note: 'One menu, everywhere: this side menu, the strips under the tabs and the chat\'s rail are one component. Open a UI and its menu is this menu; ☰ at the top swaps it for this list, in place.' });
 }
@@ -3137,7 +3169,8 @@ function _tabStripsRender(){
   const row = _lhmTabRows().find(r => r.pid === pid);
   VeraLHM.strips(host, { title: row ? row.label : pid, sections: secs.map((s, i) => ({ id: s.id, label: s.label || 'Sections', on: i === openIdx })), tabs: sec.tabs || [],
     onSection: (sid, i) => { _lhmSecOpen[pid] = i; _tabStripsRender(); },
-    onTab: (tab) => { _lhmNavSelect(pid, sec.nav ? tab.id : (sec.id + '/' + tab.id)); if(sec.nav){ const nav = _panelNavCache[pid]; if(nav) _panelNavCache[pid] = Object.assign({}, nav, { active: tab.id }); } _tabStripsRender(); } });
+    onTab: (tab) => { _lhmNavSelect(pid, sec.nav ? tab.id : (sec.id + '/' + tab.id)); if(sec.nav){ const nav = _panelNavCache[pid]; if(nav) _panelNavCache[pid] = Object.assign({}, nav, { active: tab.id }); } _tabStripsRender(); },
+    onBeside: _localLhm[pid] ? null : (tab) => { _lhmOpenBeside(pid.replace(/--\d+$/, ''), sec.nav ? tab.id : (sec.id + '/' + tab.id)); } });
 }
 
 // Horizontal-mode equivalent of the injected sub-menu above: the top tab bar
@@ -3177,11 +3210,19 @@ function _showTabDropdown(tabEl, pid, nav){
     const row = document.createElement('div');
     row.className = 'tdd-item' + (it.id===nav.active ? ' on' : '');
     row.textContent = it.label || it.id;
-    row.addEventListener('click', ()=>{
+    const beside = _localLhm[pid] ? null : () => { _hideTabDropdown(); _lhmOpenBeside(pid.replace(/--\d+$/, ''), it.id); };
+    row.addEventListener('click', ev=>{
+      if(beside && (ev.ctrlKey || ev.metaKey)){ beside(); return; }
       _lhmNavSelect(pid, it.id);
       _panelNavCache[pid] = Object.assign({}, nav, {active: it.id});
       _hideTabDropdown();
     });
+    if(beside){
+      row.addEventListener('auxclick', ev => { if(ev.button === 1){ ev.preventDefault(); beside(); } });
+      const bs = document.createElement('span'); bs.className = 'tdd-bs'; bs.textContent = '\u29c9'; bs.title = 'Open side by side (Ctrl/\u2318- or middle-click does the same)';
+      bs.style.cssText = 'float:right;margin-left:12px;opacity:.55;cursor:pointer';
+      bs.addEventListener('click', ev => { ev.stopPropagation(); beside(); }); row.appendChild(bs);
+    }
     dd.appendChild(row);
   });
   const r = tabEl.getBoundingClientRect();
@@ -8408,7 +8449,14 @@ function _tabClone(pid){
 // a section is chosen once the panel has loaded and published its menu (the bridge's nav_select)
 function _navSelectWhenReady(pid, navId){
   let n = 0;
-  (function go(){ const f = _panelFrame(pid); if(f && f.contentWindow && _panelNavCache[pid]){ _lhmNavSelect(pid, navId); return; } if(++n < 60) setTimeout(go, 400); })();
+  (function go(){ const f = _panelFrame(pid); if(f && f.contentWindow && _panelNavCache[pid]){ _lhmNavSelect(pid, navId); _navSelectConfirm(pid, navId, 0); return; } if(++n < 60) setTimeout(go, 400); })();
+}
+function _navSelectConfirm(pid, navId, k){
+  const s = String(navId || ''); if(s.indexOf('/') > 0 && s.charAt(0) !== '\u00a7') return;   // a registry section/tab: not a menu item
+  const want = s.replace(/^\u00a7[^/]*\//, '').split('>')[0]; if(!want || /^[cs]:/.test(want)) return;
+  setTimeout(() => { const nav = _panelNavCache[pid]; if(!nav || !_openTabs.has(pid)) return;
+    if(nav.active && nav.active !== want && Array.isArray(nav.items) && nav.items.some(it => it.id === want)) _lhmNavSelect(pid, navId);
+    if(k < 2) _navSelectConfirm(pid, navId, k + 1); }, k ? 1500 : 1200);
 }
 // an instance is gone when it is closed: its tab and its frame
 function _tabClonesPrune(){

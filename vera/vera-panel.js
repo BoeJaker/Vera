@@ -252,6 +252,31 @@
     }
     ready(25);   // ~5s — covers vera-panel-bridge.js loading after this script
 
+    /* SIDE BY SIDE FROM THE PANEL'S OWN MENU TOO (owner, 2026-09-28: "in the LHM all the sub menus are supposed to let
+       you open pages as extra panels side-by-side"). While this menu is shown in the frame (not docked: the harness in
+       tabs mode, or keeping inner menus), Ctrl/\u2318- or middle-click on an item - or on a page sub-section under it -
+       asks the harness to open this panel again beside, at that item (vera:lhm:tab, as the chat's bridge does). */
+    function splitKey(ev) { return !!(ev && (ev.ctrlKey || ev.metaKey || ev.button === 1)); }
+    function besideOf(el) {
+      if (!el || !el.closest) return '';
+      var sb = el.closest('.vp-sub');
+      if (sb && nav.contains(sb)) { var a = null; for (var i = 0; i < btns.length; i++) if (btns[i].classList.contains('active') || btns[i].classList.contains('on')) { a = btns[i]; break; } return (a ? idOf(a) + '>' : '') + 's:' + sb.getAttribute('data-vp-sub'); }
+      for (var j = 0; j < btns.length; j++) if (btns[j] === el || btns[j].contains(el)) return idOf(btns[j]);
+      return '';
+    }
+    function besideAsk(ev) {
+      if (!splitKey(ev)) return;
+      var inHarness = false; try { inHarness = window.parent && window.parent !== window && window.parent === window.top; } catch (e) {}
+      var pid = ''; try { pid = window.VeraPanelBridge && window.VeraPanelBridge.panelId ? String(window.VeraPanelBridge.panelId() || '') : ''; } catch (e) {}
+      if (!inHarness || !pid) return;
+      var sec = besideOf(ev.target); if (!sec) return;
+      ev.preventDefault(); ev.stopPropagation();
+      if (ev.type === 'auxclick' || ev.type === 'click') { try { window.parent.postMessage({ type: 'vera:lhm:tab', id: pid.replace(/--\d+$/, ''), section: sec, by: 'you' }, '*'); } catch (e) {} }
+    }
+    nav.addEventListener('click', besideAsk, true);
+    nav.addEventListener('auxclick', besideAsk, true);
+    nav.addEventListener('mousedown', function (ev) { if (ev.button === 1 && besideOf(ev.target)) ev.preventDefault(); }, true);   /* no autoscroll on a middle-press */
+
     /* A PAGE'S OWN SUB-SECTIONS under the lit item (owner, 2026-09-28: "the estate ui's observe menu is missing the perf
        section"). A section that switches views in the page (Observe: Events / Perf) marks each tab data-vera-sub="<id>";
        the shown strip's tabs are mirrored here, the current one lit, and a pick clicks the tab. A strip in a bar the harness
