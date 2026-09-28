@@ -34,6 +34,8 @@
     }
     function onSel(){
       try{
+        // the right-click menu carries Print now (owner, 2026-09-27: "the existing thermal print option integrated into the new RCM")
+        if(window.VeraRCM || window.__veraRcmOwn){ hide(); return; }
         var sel = window.getSelection(); var t = sel ? String(sel) : '';
         if(!t || t.trim().length < 2 || t.length > 6000){ hide(); return; }
         lastText = t;

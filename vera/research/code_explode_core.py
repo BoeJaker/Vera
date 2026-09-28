@@ -1,0 +1,1523 @@
+# -*- coding: utf-8 -*-
+"""
+Code and pages as a STRUCTURED graph — the extractor behind `code.explode` (EXPLODE.md §7.2, track C).
+
+Pure: no Vera imports, no I/O — sources come in as {path, text, lang?}, the Explode contract goes out:
+files and classes as GROUPS (plates), modules / classes / functions / methods / elements / selectors as
+CARDS each with the char SPAN it came from, and EDGES that always carry a RESOLUTION:
+
+    exact       the target is a symbol in the parsed set, reached by name in the same file, by an import,
+                or by `self.` inside its own class
+    heuristic   matched by bare name across files (one candidate), or an attribute call matched by method name
+    external    not in the parsed set — a grey stub card stands for it, so the edge is drawn, not invented
+
+Three engines, and every card says which drew it (`by`):
+
+    ast          Python, complete code — the stdlib parser (the estate's own language, exact spans)
+    tree-sitter  Python and JavaScript when `tree_sitter_language_pack` is importable — it parses BROKEN and
+                 PARTIAL code (an LLM snippet, a scraped fence), which `ast` cannot
+    patterns     JavaScript / TypeScript, CSS and HTML through tolerant structural patterns — braces matched,
+                 declarations found; good enough to draw a file, marked so nobody trusts it more than that
+
+A source that failed to parse completely is a `partial` source: its cards still stand (whatever was
+recovered), its assessment says so, and its unresolved calls go to external stubs rather than nowhere.
+"""
+from __future__ import annotations
+
+import ast
+import builtins
+import hashlib
+import os
+import re
+from typing import Dict, List, Optional, Tuple
+
+_BUILTINS = set(dir(builtins)) | {"self", "cls", "super"}
+try:
+    import sys as _sys
+    _STDLIB = set(getattr(_sys, "stdlib_module_names", ())) | {"__future__"}
+except Exception:  # pragma: no cover
+    _STDLIB = {"__future__"}
+_JS_KEYWORDS = {"if", "for", "while", "switch", "catch", "function", "return", "typeof", "new", "await", "async",
+                "else", "do", "try", "throw", "yield", "delete", "void", "in", "of", "class", "super", "this",
+                "import", "export", "const", "let", "var", "require", "console", "Math", "JSON", "Object", "Array",
+                "String", "Number", "Promise", "Date", "Error", "Map", "Set", "parseInt", "parseFloat", "setTimeout",
+                "clearTimeout", "setInterval", "fetch", "document", "window", "Boolean", "Symbol", "RegExp", "isNaN"}
+
+try:  # the tolerant engine, when the package is there
+    import tree_sitter_language_pack as _tslp  # type: ignore
+    HAS_TREE_SITTER = True
+except Exception:  # pragma: no cover - optional dependency
+    _tslp = None
+    HAS_TREE_SITTER = False
+
+
+# ── languages and spans ───────────────────────────────────────────────────────────────────────────
+_EXT = {".py": "python", ".pyi": "python", ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+        ".jsx": "javascript", ".ts": "typescript", ".tsx": "typescript", ".css": "css", ".html": "html", ".htm": "html",
+        ".go": "go", ".rs": "rust", ".java": "java"}
+
+
+_BRACE_EXT = {".go": "go", ".rs": "rust", ".java": "java"}
+
+
+def detect_lang(path: str = "", text: str = "", lang: str = "") -> str:
+    if lang:
+        l = lang.lower()
+        return {"py": "python", "js": "javascript", "ts": "typescript", "jsx": "javascript", "tsx": "typescript",
+                "golang": "go", "rs": "rust"}.get(l, l)
+    ext = os.path.splitext(path or "")[1].lower()
+    if ext in _EXT:
+        return _EXT[ext]
+    head = (text or "")[:400]
+    # the specific tests first: Go's `import (` reads as Python's `import`, and Rust's `pub struct S { .. }`
+    # reads as a CSS rule, so a general sniff run first would answer confidently and wrongly
+    if re.search(r"^\s*package\s+\w+\s*$|^\s*func\s+(\([^)]*\)\s*)?\w+\s*\(", head, re.M):
+        return "go"
+    if re.search(r"^\s*(pub\s+)?(fn|impl|mod)\s+\w|^\s*use\s+[\w:]+;", head, re.M):
+        return "rust"
+    if re.search(r"^\s*package\s+[\w.]+\s*;|^\s*(public|final|abstract)\s+(final\s+|abstract\s+)?class\s+\w", head, re.M):
+        return "java"
+    if re.search(r"^\s*(def |class |import |from \S+ import )", head, re.M):
+        return "python"
+    if re.search(r"<!doctype html|<html|<div|<body", head, re.I):
+        return "html"
+    if re.search(r"^\s*[.#a-z][\w\-.#: ,>\[\]=\"']*\{", head, re.M | re.I) and "function" not in head:
+        return "css"
+    if re.search(r"\b(function|const|let|var|=>|import .* from)\b", head):
+        return "javascript"
+    return ""
+
+
+class _Lines:
+    """Line/column → char offset for a text, once."""
+
+    def __init__(self, text: str):
+        self.starts = [0]
+        for m in re.finditer(r"\n", text):
+            self.starts.append(m.end())
+        self.n = len(text)
+
+    def off(self, line: int, col: int) -> int:        # 1-based line, 0-based column
+        i = max(0, min(len(self.starts) - 1, line - 1))
+        return min(self.n, self.starts[i] + max(0, col))
+
+    def line_of(self, off: int) -> int:
+        lo, hi = 0, len(self.starts) - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if self.starts[mid] <= off:
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo + 1
+
+
+def _sid(path: str, qual: str) -> str:
+    return "%s::%s" % (path, qual)
+
+
+def module_names(path: str) -> List[str]:
+    """The names a file can be imported by: 'vera/research/x.py' → vera.research.x, research.x, x, Vera.vera.research.x."""
+    p = path.replace("\\", "/")
+    p = re.sub(r"\.(py|pyi|js|mjs|cjs|ts|jsx|tsx|css|html|htm)$", "", p)
+    if p.endswith("/__init__"):
+        p = p[:-len("/__init__")]
+    parts = [q for q in p.split("/") if q and q != "."]
+    out = []
+    for i in range(len(parts)):
+        out.append(".".join(parts[i:]))
+    if parts and parts[0] == "vera":
+        out.append("Vera." + ".".join(parts))
+    return out
+
+
+# ── Python through ast ────────────────────────────────────────────────────────────────────────────
+def _decorators(node, text: str, L: _Lines) -> List[str]:
+    out = []
+    for d in getattr(node, "decorator_list", []) or []:
+        try:
+            s, e = L.off(d.lineno, d.col_offset), L.off(d.end_lineno, d.end_col_offset)
+            out.append("@" + text[s:e].split("\n")[0][:60])
+        except Exception:
+            pass
+    return out
+
+
+def _call_target(func) -> Optional[Tuple[str, str]]:
+    """('name', '') for f(), ('attr', 'obj') for obj.attr(), ('attr', 'a.b') for a.b.attr()."""
+    if isinstance(func, ast.Name):
+        return (func.id, "")
+    if isinstance(func, ast.Attribute):
+        chain = []
+        v = func
+        while isinstance(v, ast.Attribute):
+            chain.append(v.attr)
+            v = v.value
+        base = v.id if isinstance(v, ast.Name) else ("()" if isinstance(v, ast.Call) else "")
+        chain.reverse()
+        return (chain[-1], ".".join(([base] if base else []) + chain[:-1]))
+    return None
+
+
+def parse_python_ast(path: str, text: str) -> Dict:
+    L = _Lines(text)
+    out = {"engine": "ast", "path": path, "symbols": [], "imports": [], "errors": [], "aliases": {}}
+    mod_id = _sid(path, "<module>")
+    out["symbols"].append({"id": mod_id, "kind": "module", "name": os.path.basename(path), "qual": "<module>", "path": path,
+                           "start": 0, "end": len(text), "line0": 1, "line1": L.line_of(max(0, len(text) - 1)), "parent": None,
+                           "fields": [], "calls": [], "bases": [], "decorators": [], "async": False})
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as e:
+        out["errors"].append("%s (line %s)" % (e.msg, e.lineno))
+        return out            # the file still stands as a module card, marked partial; ast recovers nothing else
+    aliases: Dict[str, str] = out["aliases"]   # local name → qualified ('mod.name' or 'mod')
+
+    def add_import(node):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                aliases[(a.asname or a.name).split(".")[0]] = a.name
+                out["imports"].append({"module": a.name, "name": "", "alias": a.asname or a.name, "line": node.lineno})
+        elif isinstance(node, ast.ImportFrom):
+            mod = ("." * (node.level or 0)) + (node.module or "")
+            for a in node.names:
+                aliases[a.asname or a.name] = mod + "." + a.name
+                out["imports"].append({"module": mod, "name": a.name, "alias": a.asname or a.name, "line": node.lineno})
+
+    def span(node):
+        # a decorated def or class begins at its first decorator — that is where the reader's eye starts it
+        decos = getattr(node, "decorator_list", None) or []
+        first = decos[0] if decos else node
+        return L.off(first.lineno, first.col_offset - (1 if decos else 0)), L.off(node.end_lineno, node.end_col_offset)
+
+    def calls_in(node, own_class: Optional[str]):
+        found = []
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Call):
+                t = _call_target(sub.func)
+                if t:
+                    found.append({"name": t[0], "via": t[1], "line": getattr(sub, "lineno", 0)})
+        return found
+
+    def visit(node, parent_id: Optional[str], qual: str, own_class: Optional[str]):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.Import, ast.ImportFrom)):
+                add_import(child)
+            elif isinstance(child, ast.ClassDef):
+                s, e = span(child); q = (qual + "." if qual else "") + child.name; cid = _sid(path, q)
+                bases = []
+                for b in child.bases:
+                    try:
+                        bs, be = span(b); bases.append(text[bs:be])
+                    except Exception:
+                        pass
+                methods = [n for n in child.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+                out["symbols"].append({"id": cid, "kind": "class", "name": child.name, "qual": q, "path": path, "start": s, "end": e,
+                                       "line0": child.lineno, "line1": child.end_lineno, "parent": parent_id, "fields": [], "calls": [],
+                                       "bases": bases, "decorators": _decorators(child, text, L), "async": False, "methods": len(methods)})
+                visit(child, cid, q, child.name)
+            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                s, e = span(child); q = (qual + "." if qual else "") + child.name; fid = _sid(path, q)
+                args = [a.arg for a in child.args.args + child.args.kwonlyargs if a.arg not in ("self", "cls")]
+                out["symbols"].append({"id": fid, "kind": "method" if own_class else "function", "name": child.name, "qual": q, "path": path,
+                                       "start": s, "end": e, "line0": child.lineno, "line1": child.end_lineno, "parent": parent_id,
+                                       "fields": [], "calls": calls_in(child, own_class), "bases": [], "decorators": _decorators(child, text, L),
+                                       "async": isinstance(child, ast.AsyncFunctionDef), "args": args, "own_class": own_class})
+                # nested defs are symbols too (closures, inner helpers)
+                visit(child, fid, q, own_class)
+            elif isinstance(child, (ast.If, ast.Try, ast.With, ast.For, ast.While)):
+                visit(child, parent_id, qual, own_class)   # a def or an import under `if TYPE_CHECKING:` / `try:` — at any level
+            elif isinstance(child, (ast.ExceptHandler,)):
+                visit(child, parent_id, qual, own_class)
+
+    visit(tree, mod_id, "", None)
+    out["aliases"] = aliases
+    return out
+
+
+# ── Python and JavaScript through tree-sitter (tolerant) ─────────────────────────────────────────
+def parse_tree_sitter(path: str, text: str, lang: str) -> Dict:
+    """The same symbol shape as the ast engine, from a tree-sitter parse that survives broken code: every
+    ERROR node is counted, everything around it is still a symbol."""
+    out = {"engine": "tree-sitter", "path": path, "symbols": [], "imports": [], "errors": [], "aliases": {}}
+    if not HAS_TREE_SITTER:
+        out["errors"].append("tree_sitter_language_pack not installed")
+        return out
+    ts_lang = {"python": "python", "javascript": "javascript", "typescript": "typescript"}.get(lang)
+    if not ts_lang:
+        out["errors"].append("no tree-sitter grammar for " + lang)
+        return out
+    parser = _tslp.get_parser(ts_lang)
+    data = text.encode("utf-8")
+    tree = parser.parse(data)
+    L = _Lines(text)
+    # byte offsets → char offsets (the text may hold non-ASCII; the contract's spans are char offsets)
+    if len(data) == len(text):
+        b2c = None
+    else:
+        b2c = [0] * (len(data) + 1); cur = 0
+        for i, ch in enumerate(text):
+            n = len(ch.encode("utf-8"))
+            for k in range(n):
+                b2c[cur + k] = i
+            cur += n
+        b2c[cur] = len(text)
+    conv = (lambda b: b) if b2c is None else (lambda b: b2c[min(b, len(b2c) - 1)])
+    txt = lambda n: data[n.start_byte:n.end_byte].decode("utf-8", "replace")
+    mod_id = _sid(path, "<module>")
+    out["symbols"].append({"id": mod_id, "kind": "module", "name": os.path.basename(path), "qual": "<module>", "path": path, "start": 0,
+                           "end": len(text), "line0": 1, "line1": L.line_of(max(0, len(text) - 1)), "parent": None, "fields": [], "calls": [],
+                           "bases": [], "decorators": [], "async": False})
+    errors = 0
+
+    def child(n, kind):
+        for c in n.children:
+            if c.type == kind:
+                return c
+        return None
+
+    def field(n, name):
+        try:
+            return n.child_by_field_name(name)
+        except Exception:
+            return None
+
+    def calls_in(n):
+        found = []
+        stack = [n]
+        while stack:
+            k = stack.pop()
+            if k.type in ("call", "call_expression"):
+                f = field(k, "function")
+                if f is not None:
+                    s = txt(f)
+                    if "." in s:
+                        parts = s.split("."); found.append({"name": parts[-1], "via": ".".join(parts[:-1]), "line": k.start_point[0] + 1})
+                    else:
+                        found.append({"name": s, "via": "", "line": k.start_point[0] + 1})
+            stack.extend(k.children)
+        return found
+
+    def visit(n, parent_id, qual, own_class):
+        nonlocal errors
+        for c in n.children:
+            t = c.type
+            if t == "ERROR" or c.is_missing:
+                errors += 1
+                visit(c, parent_id, qual, own_class)
+                continue
+            if t in ("import_statement", "import_from_statement"):
+                s = txt(c)
+                m = re.match(r"from\s+(\S+)\s+import\s+(.+)", s) if t == "import_from_statement" else None
+                if m:
+                    for part in m.group(2).strip("() ").split(","):
+                        nm, _, al = [x.strip() for x in part.partition(" as ")]
+                        if nm:
+                            out["imports"].append({"module": m.group(1), "name": nm, "alias": al or nm, "line": c.start_point[0] + 1}); out["aliases"][al or nm] = m.group(1) + "." + nm
+                else:
+                    m2 = re.match(r"import\s+(.+)", s)
+                    if m2 and lang == "python":
+                        for part in m2.group(1).split(","):
+                            nm, _, al = [x.strip() for x in part.partition(" as ")]
+                            if nm:
+                                out["imports"].append({"module": nm, "name": "", "alias": al or nm, "line": c.start_point[0] + 1}); out["aliases"][(al or nm).split(".")[0]] = nm
+                    elif m2:   # a JS import: the same names the pattern engine reads, so `helper()` resolves through it
+                        mj = _JS_IMPORT.match(s)
+                        if mj:
+                            mod = mj.group(5) or mj.group(8)
+                            names = [x.strip().split(" as ")[-1].strip() for x in ((mj.group(2) or "") + "," + (mj.group(4) or "") + "," + (mj.group(6) or "")).split(",") if x.strip()]
+                            for nm in [mj.group(1), mj.group(3), mj.group(7)] + names:
+                                if nm:
+                                    out["aliases"][nm] = mod
+                            out["imports"].append({"module": mod, "name": ",".join(names), "alias": mj.group(1) or mj.group(3) or mj.group(7) or "", "line": c.start_point[0] + 1})
+            elif t in ("class_definition", "class_declaration"):
+                nm = field(c, "name"); name = txt(nm) if nm is not None else "?"
+                q = (qual + "." if qual else "") + name; cid = _sid(path, q)
+                bases = []
+                sup = field(c, "superclasses") or child(c, "class_heritage")
+                if sup is not None:
+                    bases = [b.strip() for b in re.sub(r"^\(|\)$|^extends\s+", "", txt(sup).strip()).split(",") if b.strip()]
+                body = field(c, "body")
+                out["symbols"].append({"id": cid, "kind": "class", "name": name, "qual": q, "path": path, "start": conv(c.start_byte), "end": conv(c.end_byte),
+                                       "line0": c.start_point[0] + 1, "line1": c.end_point[0] + 1, "parent": parent_id, "fields": [], "calls": [], "bases": bases,
+                                       "decorators": [], "async": False, "methods": sum(1 for k in (body.children if body is not None else []) if k.type in ("function_definition", "method_definition"))})
+                if body is not None:
+                    visit(body, cid, q, name)
+            elif t in ("function_definition", "method_definition", "function_declaration", "generator_function_declaration"):
+                nm = field(c, "name"); name = txt(nm) if nm is not None else "?"
+                q = (qual + "." if qual else "") + name; fid = _sid(path, q)
+                params = field(c, "parameters")
+                args = [p.strip() for p in txt(params).strip("()").split(",")] if params is not None else []
+                args = [a for a in args if a and a not in ("self", "cls")]
+                out["symbols"].append({"id": fid, "kind": "method" if own_class else "function", "name": name, "qual": q, "path": path,
+                                       "start": conv(c.start_byte), "end": conv(c.end_byte), "line0": c.start_point[0] + 1, "line1": c.end_point[0] + 1,
+                                       "parent": parent_id, "fields": [], "calls": calls_in(c), "bases": [], "decorators": [],
+                                       "async": txt(c).lstrip().startswith("async"), "args": args, "own_class": own_class})
+                body = field(c, "body")
+                if body is not None:
+                    visit(body, fid, q, own_class)
+            elif t in ("lexical_declaration", "variable_declaration") and lang != "python":
+                for d in c.children:
+                    if d.type == "variable_declarator":
+                        nm, val = field(d, "name"), field(d, "value")
+                        if nm is not None and val is not None and val.type == "call_expression" and txt(val).startswith("require("):
+                            mr = re.search(r"require\(\s*['\"]([^'\"]+)['\"]", txt(val))
+                            if mr:
+                                out["aliases"][txt(nm)] = mr.group(1)
+                                out["imports"].append({"module": mr.group(1), "name": "", "alias": txt(nm), "line": c.start_point[0] + 1})
+                            continue
+                        if nm is not None and val is not None and val.type in ("arrow_function", "function", "function_expression"):
+                            name = txt(nm); q = (qual + "." if qual else "") + name; fid = _sid(path, q)
+                            out["symbols"].append({"id": fid, "kind": "method" if own_class else "function", "name": name, "qual": q, "path": path,
+                                                   "start": conv(c.start_byte), "end": conv(c.end_byte), "line0": c.start_point[0] + 1, "line1": c.end_point[0] + 1,
+                                                   "parent": parent_id, "fields": [], "calls": calls_in(val), "bases": [], "decorators": [],
+                                                   "async": txt(val).lstrip().startswith("async"), "args": [], "own_class": own_class})
+            elif t in ("decorated_definition", "export_statement", "block", "if_statement", "try_statement", "statement_block", "program", "module", "expression_statement", "with_statement"):
+                visit(c, parent_id, qual, own_class)
+
+    visit(tree.root_node, mod_id, "", None)
+    # every ERROR / missing node in the whole tree counts, wherever it sits (a bad parameter list is inside the
+    # def, which the walk above does not enter)
+    total_err, stack = 0, [tree.root_node]
+    while stack:
+        n = stack.pop()
+        if n.type == "ERROR" or n.is_missing:
+            total_err += 1
+        stack.extend(n.children)
+    if total_err or getattr(tree.root_node, "has_error", False):
+        out["errors"].append("%d syntax error node%s — partial parse" % (max(1, total_err), "" if max(1, total_err) == 1 else "s"))
+    return out
+
+
+# ── JavaScript / TypeScript through patterns (tolerant) ──────────────────────────────────────────
+_JS_IMPORT = re.compile(r"^\s*import\s+(?:(?:\*\s+as\s+(\w+))|(?:\{([^}]*)\})|(\w+))?\s*(?:,\s*\{([^}]*)\})?\s*(?:from\s+)?['\"]([^'\"]+)['\"]|^\s*(?:const|let|var)\s+(?:\{([^}]*)\}|(\w+))\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)", re.M)
+_JS_FUNC = re.compile(r"^[ \t]*(?:export\s+(?:default\s+)?)?(async\s+)?function\s*\*?\s*(\w+)\s*\(", re.M)
+_JS_ARROW = re.compile(r"^[ \t]*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(async\s*)?(?:\([^)]*\)|\w+)\s*=>", re.M)
+_JS_CLASS = re.compile(r"^[ \t]*(?:export\s+(?:default\s+)?)?class\s+(\w+)(?:\s+extends\s+([\w.]+))?\s*\{", re.M)
+_JS_METHOD = re.compile(r"^[ \t]*(?:static\s+)?(async\s+)?(?:get\s+|set\s+)?(\w+)\s*\([^)]*\)\s*\{", re.M)
+_JS_CALL = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(|\.([A-Za-z_$][\w$]*)\s*\(")
+
+
+def _match_brace(text: str, open_at: int) -> int:
+    """The index just past the brace that closes the one at open_at; the end of the text when unbalanced."""
+    depth, i, n = 0, open_at, len(text)
+    in_str = None
+    while i < n:
+        ch = text[i]
+        if in_str:
+            if ch == "\\":
+                i += 2; continue
+            if ch == in_str:
+                in_str = None
+        elif ch in "\"'`":
+            in_str = ch
+        elif ch == "/" and i + 1 < n and text[i + 1] == "/":
+            j = text.find("\n", i); i = n if j < 0 else j; continue
+        elif ch == "/" and i + 1 < n and text[i + 1] == "*":
+            j = text.find("*/", i + 2); i = n if j < 0 else j + 2; continue
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def _js_calls(body: str, line0: int) -> List[Dict]:
+    found = []
+    for m in _JS_CALL.finditer(body):
+        name = m.group(1) or m.group(2)
+        if not name or name in _JS_KEYWORDS:
+            continue
+        via = ""
+        if m.group(2):
+            back = body[max(0, m.start() - 40):m.start()]
+            mm = re.search(r"([\w$.]+)$", back)
+            via = mm.group(1) if mm else "?"
+        found.append({"name": name, "via": via, "line": line0 + body.count("\n", 0, m.start())})
+    return found
+
+
+def parse_js_patterns(path: str, text: str) -> Dict:
+    L = _Lines(text)
+    out = {"engine": "patterns", "path": path, "symbols": [], "imports": [], "errors": [], "aliases": {}}
+    mod_id = _sid(path, "<module>")
+    out["symbols"].append({"id": mod_id, "kind": "module", "name": os.path.basename(path), "qual": "<module>", "path": path, "start": 0, "end": len(text),
+                           "line0": 1, "line1": L.line_of(max(0, len(text) - 1)), "parent": None, "fields": [], "calls": [], "bases": [], "decorators": [], "async": False})
+    for m in _JS_IMPORT.finditer(text):
+        mod = m.group(5) or m.group(8)
+        names = [x.strip().split(" as ")[-1].strip() for x in ((m.group(2) or "") + "," + (m.group(4) or "") + "," + (m.group(6) or "")).split(",") if x.strip()]
+        for nm in [m.group(1), m.group(3), m.group(7)] + names:
+            if nm:
+                out["aliases"][nm] = mod
+        out["imports"].append({"module": mod, "name": ",".join(names), "alias": m.group(1) or m.group(3) or m.group(7) or "", "line": L.line_of(m.start())})
+    taken: List[Tuple[int, int]] = []
+    for m in _JS_CLASS.finditer(text):
+        s = m.start(); e = _match_brace(text, m.end() - 1); name = m.group(1); cid = _sid(path, name)
+        body = text[m.end():e - 1]
+        methods = []
+        for mm in _JS_METHOD.finditer(body):
+            if mm.group(2) in _JS_KEYWORDS:
+                continue
+            ms = m.end() + mm.start(); me = _match_brace(text, m.end() + mm.end() - 1)
+            # a method sits at depth 1 of the class body: the braces before it in the body balance to zero
+            pre = body[:mm.start()]
+            if pre.count("{") - pre.count("}") != 0:
+                continue
+            methods.append((mm.group(2), ms, me, bool(mm.group(1))))
+        out["symbols"].append({"id": cid, "kind": "class", "name": name, "qual": name, "path": path, "start": s, "end": e, "line0": L.line_of(s), "line1": L.line_of(max(s, e - 1)),
+                               "parent": mod_id, "fields": [], "calls": [], "bases": [m.group(2)] if m.group(2) else [], "decorators": [], "async": False, "methods": len(methods)})
+        for (mname, ms, me, is_async) in methods:
+            q = name + "." + mname
+            out["symbols"].append({"id": _sid(path, q), "kind": "method", "name": mname, "qual": q, "path": path, "start": ms, "end": me, "line0": L.line_of(ms), "line1": L.line_of(max(ms, me - 1)),
+                                   "parent": cid, "fields": [], "calls": _js_calls(text[ms:me], L.line_of(ms)), "bases": [], "decorators": [], "async": is_async, "args": [], "own_class": name})
+        taken.append((s, e))
+    inside = lambda i: any(a <= i < b for a, b in taken)
+    for rx, is_arrow in ((_JS_FUNC, False), (_JS_ARROW, True)):
+        for m in rx.finditer(text):
+            if inside(m.start()):
+                continue
+            name = m.group(2) if not is_arrow else m.group(1)
+            if name in _JS_KEYWORDS:
+                continue
+            ob = text.find("{", m.end() - 1)
+            e = _match_brace(text, ob) if ob >= 0 else min(len(text), text.find("\n", m.end()) + 1 if text.find("\n", m.end()) >= 0 else len(text))
+            s = m.start(); fid = _sid(path, name)
+            if any(x["id"] == fid for x in out["symbols"]):
+                continue
+            out["symbols"].append({"id": fid, "kind": "function", "name": name, "qual": name, "path": path, "start": s, "end": e, "line0": L.line_of(s), "line1": L.line_of(max(s, e - 1)),
+                                   "parent": mod_id, "fields": [], "calls": _js_calls(text[s:e], L.line_of(s)), "bases": [], "decorators": [],
+                                   "async": bool(m.group(1) if not is_arrow else m.group(2)), "args": [], "own_class": None})
+    if text.count("{") != text.count("}"):
+        out["errors"].append("unbalanced braces — partial")
+    return out
+
+
+# ── Go, Rust and Java through patterns ────────────────────────────────────────────────────────────────────
+# The estate's own code is Python and JS, but the point of explode is any code a reader has in front of them --
+# an LLM's reply, a cloned repo, a page's source. These three carry most of what gets cloned, and they share a
+# shape: a package line, imports, and named things whose bodies are braces. tree-sitter would read them properly
+# and is not installed here (checked 2026-09-22), so this is the same TOLERANT reading the JS path uses, and it
+# signs its cards `patterns` exactly as that one does -- a reader can see what read their code.
+
+_GO_IMPORT = re.compile(r'^[ \t]*import\s+(?:\(\s*([\s\S]*?)\s*\)|(?:(\w+)\s+)?"([^"]+)")', re.M)
+_GO_FUNC = re.compile(r'^[ \t]*func\s+(?:\(\s*\w+\s+\*?(\w+)\s*\)\s*)?(\w+)\s*\(', re.M)
+_GO_TYPE = re.compile(r'^[ \t]*type\s+(\w+)\s+(struct|interface)\s*\{', re.M)
+_RS_USE = re.compile(r'^[ \t]*(?:pub\s+)?use\s+([\w:{}, *]+);', re.M)
+_RS_FN = re.compile(r'^[ \t]*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)', re.M)
+_RS_TYPE = re.compile(r'^[ \t]*(?:pub(?:\([^)]*\))?\s+)?(struct|enum|trait|impl)\s+(?:<[^>]*>\s*)?(\w+)', re.M)
+_JV_IMPORT = re.compile(r'^[ \t]*import\s+(?:static\s+)?([\w.]+)\s*;', re.M)
+_JV_TYPE = re.compile(r'^[ \t]*(?:public|protected|private|final|abstract|static|sealed|\s)*\s*(class|interface|enum|record)\s+(\w+)([^{;]*)\{', re.M)
+_JV_METHOD = re.compile(r'^[ \t]+(?:@\w+\s+)*(?:public|protected|private|final|static|synchronized|abstract|native|default|\s)*'
+                        r'[\w<>\[\],.?\s]+?\s(\w+)\s*\(([^)]*)\)\s*(?:throws [\w.,\s]+)?\{', re.M)
+_BRACE_KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "else", "match", "loop", "unsafe", "new"}
+
+
+def parse_brace_patterns(path: str, text: str, lang: str) -> Dict:
+    """Go / Rust / Java: the module, what it imports, and the named things whose bodies are braces."""
+    L = _Lines(text)
+    out = {"engine": "patterns", "path": path, "symbols": [], "imports": [], "errors": [], "aliases": {}}
+    mod_id = _sid(path, "<module>")
+    out["symbols"].append({"id": mod_id, "kind": "module", "name": os.path.basename(path), "qual": "<module>", "path": path,
+                           "start": 0, "end": len(text), "line0": 1, "line1": L.line_of(max(0, len(text) - 1)),
+                           "parent": None, "fields": [], "calls": [], "bases": [], "decorators": [], "async": False})
+
+    def imp(module: str, line: int, alias: str = ""):
+        module = module.strip().strip('"').strip()
+        if not module:
+            return
+        out["imports"].append({"module": module, "name": "", "alias": alias or module.split("/")[-1].split(".")[-1], "line": line})
+        out["aliases"][alias or module.split("/")[-1].split(".")[-1]] = module
+
+    def sym(kind: str, name: str, start: int, end: int, parent: str, own: Optional[str] = None, bases=None):
+        q = (own + "." + name) if own else name
+        if any(x["qual"] == q for x in out["symbols"]):
+            return None
+        # A symbol's calls are what its BODY does. Reading from its start instead makes every symbol call itself
+        # (its own name is in its signature) and Go's methods call `func` -- so the scan begins at the brace that
+        # opens the body, which is what "before the body" means in all three languages. A type's calls belong to
+        # its methods, not to it.
+        line0 = L.line_of(start)
+        ob = text.find("{", start)
+        bs = ob if 0 <= ob < end else start
+        calls = [] if kind in ("class", "impl") else [
+            c for c in _js_calls(text[bs:end], L.line_of(bs)) if c["name"] not in _BRACE_KEYWORDS]
+        out["symbols"].append({"id": _sid(path, q), "kind": kind, "name": name, "qual": q, "path": path,
+                               "start": start, "end": end, "line0": line0, "line1": L.line_of(max(start, end - 1)),
+                               "parent": parent, "fields": [], "calls": calls,
+                               "bases": bases or [], "decorators": [], "async": False, "args": [], "own_class": own})
+        return _sid(path, q)
+
+    def body_end(at: int) -> int:
+        ob = text.find("{", at)
+        return _match_brace(text, ob) if ob >= 0 else min(len(text), text.find("\n", at) + 1 or len(text))
+
+    if lang == "go":
+        for m in _GO_IMPORT.finditer(text):
+            if m.group(1):
+                for line in m.group(1).split("\n"):
+                    line = line.strip()
+                    if not line or line.startswith("//"):
+                        continue
+                    parts = line.split()
+                    imp(parts[-1], L.line_of(m.start()), parts[0] if len(parts) > 1 else "")
+            else:
+                imp(m.group(3) or "", L.line_of(m.start()), m.group(2) or "")
+        for m in _GO_TYPE.finditer(text):
+            sym("class", m.group(1), m.start(), _match_brace(text, text.find("{", m.start())), mod_id)
+        for m in _GO_FUNC.finditer(text):
+            recv = m.group(1)
+            sym("method" if recv else "function", m.group(2), m.start(), body_end(m.end()), mod_id, recv)
+    elif lang == "rust":
+        for m in _RS_USE.finditer(text):
+            imp(m.group(1).split("{")[0].strip().rstrip(":"), L.line_of(m.start()))
+        for m in _RS_TYPE.finditer(text):
+            kind = "class" if m.group(1) in ("struct", "enum", "trait") else "impl"
+            end = body_end(m.end())
+            if kind == "impl":
+                # `impl Load for Store` implements Load ON Store: the methods are Store's
+                head = text[m.start(): text.find("{", m.start()) if text.find("{", m.start()) > 0 else m.end()]
+                forx = re.search(r"\bfor\s+(\w+)", head)
+                own = forx.group(1) if forx else m.group(2)
+                for mm in _RS_FN.finditer(text[m.start():end]):
+                    a = m.start() + mm.start()
+                    sym("method", mm.group(1), a, body_end(m.start() + mm.end()), mod_id, own)
+                continue
+            sym(kind, m.group(2), m.start(), end, mod_id)
+        for m in _RS_FN.finditer(text):
+            if any(x["kind"] == "method" and x["start"] <= m.start() < x["end"] for x in out["symbols"]):
+                continue
+            sym("function", m.group(1), m.start(), body_end(m.end()), mod_id)
+    else:                                                  # java
+        for m in _JV_IMPORT.finditer(text):
+            imp(m.group(1), L.line_of(m.start()))
+        for m in _JV_TYPE.finditer(text):
+            end = _match_brace(text, m.end() - 1)
+            bases = [b.strip() for b in re.split(r"\bextends\b|\bimplements\b", m.group(3) or "")[1:] if b.strip()]
+            cid = sym("class", m.group(2), m.start(), end, mod_id, None, bases)
+            own = m.group(2)
+            for mm in _JV_METHOD.finditer(text[m.end():end]):
+                if mm.group(1) in _BRACE_KEYWORDS:
+                    continue
+                a = m.end() + mm.start()
+                sym("method", mm.group(1), a, _match_brace(text, m.end() + mm.end() - 1), cid or mod_id, own)
+    if text.count("{") != text.count("}"):
+        out["errors"].append("unbalanced braces \u2014 partial")
+    return out
+
+
+# ── CSS and HTML through patterns ─────────────────────────────────────────────────────────────────
+_CSS_RULE = re.compile(r"([^{}]+?)\s*\{([^{}]*)\}", re.S)
+_HTML_TAG = re.compile(r"<(?!/|!|\?)([a-zA-Z][\w-]*)([^<>]*?)(/?)>", re.S)
+_HTML_ATTR = re.compile(r"([\w:-]+)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s\"'=<>`]+))")
+
+
+def parse_css(path: str, text: str) -> Dict:
+    L = _Lines(text)
+    out = {"engine": "patterns", "path": path, "symbols": [], "imports": [], "errors": [], "aliases": {}}
+    # the stylesheet itself is a card: what a page's <link> is an import of
+    out["symbols"].append({"id": _sid(path, "<module>"), "kind": "module", "name": os.path.basename(path), "qual": "<module>", "path": path, "start": 0, "end": len(text),
+                           "line0": 1, "line1": L.line_of(max(0, len(text) - 1)), "parent": None, "fields": [], "calls": [], "bases": [], "decorators": [], "async": False})
+    body = re.sub(r"/\*.*?\*/", lambda m: " " * len(m.group(0)), text, flags=re.S)
+    # @media / @supports blocks: their inner rules are rules too — drop the wrapper, keep the offsets
+    for m in re.finditer(r"@(media|supports|layer|container)[^{]*\{", body):
+        e = _match_brace(body, m.end() - 1)
+        body = body[:m.start()] + " " * (m.end() - m.start()) + body[m.end():e - 1] + " " + body[e:]
+    for m in _CSS_RULE.finditer(body):
+        sel = " ".join(m.group(1).split())
+        if not sel or sel.startswith("@"):
+            continue
+        decls = [d.strip() for d in m.group(2).split(";") if d.strip()]
+        s, e = m.start(1) + (len(m.group(1)) - len(m.group(1).lstrip())), m.end()   # the span starts at the selector, not where the last rule ended
+        out["symbols"].append({"id": _sid(path, sel + "@" + str(s)), "kind": "selector", "name": sel[:80], "qual": sel, "path": path, "start": s, "end": e, "line0": L.line_of(s), "line1": L.line_of(max(s, e - 1)),
+                               "parent": None, "fields": [{"k": d.split(":")[0].strip(), "v": ":".join(d.split(":")[1:]).strip()[:40]} for d in decls[:3]], "calls": [], "bases": [],
+                               "decorators": [], "async": False, "decls": len(decls)})
+    if body.count("{") != body.count("}"):
+        out["errors"].append("unbalanced braces — partial")
+    return out
+
+
+def parse_html(path: str, text: str) -> Dict:
+    L = _Lines(text)
+    out = {"engine": "patterns", "path": path, "symbols": [], "imports": [], "errors": [], "aliases": {}}
+    # the page itself is a card: what its scripts and stylesheets are imports of
+    out["symbols"].append({"id": _sid(path, "<module>"), "kind": "module", "name": os.path.basename(path), "qual": "<module>", "path": path, "start": 0, "end": len(text),
+                           "line0": 1, "line1": L.line_of(max(0, len(text) - 1)), "parent": None, "fields": [], "calls": [], "bases": [], "decorators": [], "async": False})
+    stack: List[Tuple[str, str]] = []   # (tag, symbol id) for nesting
+    for m in _HTML_TAG.finditer(text):
+        tag = m.group(1).lower(); attrs = {}
+        for a in _HTML_ATTR.finditer(m.group(2) or ""):
+            attrs[a.group(1).lower()] = a.group(2) if a.group(2) is not None else (a.group(3) if a.group(3) is not None else a.group(4) or "")
+        s = m.start(); e = m.end()
+        if tag == "script" and attrs.get("src"):
+            out["imports"].append({"module": attrs["src"], "name": "", "alias": "", "line": L.line_of(s), "kind": "script"})
+        if tag == "link" and "stylesheet" in (attrs.get("rel") or "").lower() and attrs.get("href"):
+            out["imports"].append({"module": attrs["href"], "name": "", "alias": "", "line": L.line_of(s), "kind": "style"})
+        ident = attrs.get("id"); classes = [c for c in (attrs.get("class") or "").split() if c]
+        if not ident and not classes and tag not in ("html", "body", "head", "main", "nav", "header", "footer", "section", "article", "form", "table", "script", "link", "template"):
+            continue
+        label = "<%s%s%s>" % (tag, "#" + ident if ident else "", "".join("." + c for c in classes[:3]))
+        sid = _sid(path, label + "@" + str(s))
+        # the element's text head: what follows the tag until the next tag
+        head = re.sub(r"\s+", " ", text[e:e + 160].split("<")[0]).strip()
+        parent = None
+        for ptag, pid in reversed(stack):
+            parent = pid; break
+        out["symbols"].append({"id": sid, "kind": "element", "name": label, "qual": label, "path": path, "start": s, "end": e, "line0": L.line_of(s), "line1": L.line_of(s),
+                               "parent": parent, "fields": [{"k": "text", "v": head[:48]}] if head else [], "calls": [], "bases": [], "decorators": [], "async": False,
+                               "tag": tag, "ident": ident or "", "classes": classes, "attrs": {k: v for k, v in attrs.items() if k in ("href", "src", "type", "name", "role", "data-r", "data-a")}})
+        if tag in ("div", "section", "main", "nav", "header", "footer", "article", "form", "table", "ul", "ol", "aside") and not m.group(3):
+            stack.append((tag, sid))
+        # a closing tag for the top of the stack pops it (a crude but tolerant nesting)
+    return out
+
+
+# ── lint: findings per line, from what this host can actually run ────────────────────────────────
+# There is no ruff, no flake8 and no node in the image (checked 2026-09-22), so "linted" here means a set of
+# checks worth having that need nothing but `ast` — each one a rule a reviewer would raise — plus a documented
+# hook (`external`) for ruff / eslint output when a caller has it. Every finding names the tool that produced
+# it, so nobody mistakes these for a full linter's verdict.
+_PY_BUILTIN_SHADOW = {"id", "type", "list", "dict", "set", "str", "int", "input", "next", "filter", "map",
+                      "object", "range", "hash", "format", "bytes", "open", "vars", "all", "any", "sum", "min", "max"}
+
+
+def _no_strings(line: str) -> str:
+    """The line with every string literal blanked, so a rule reads CODE and not text. A regex cannot do this
+    reliably (it trips over its own escapes — this file's TODO rule matched its own pattern), and a one-line
+    scanner can."""
+    out, q, i, n = [], "", 0, len(line)
+    while i < n:
+        ch = line[i]
+        if q:
+            out.append(" ")
+            if ch == "\\" and i + 1 < n:
+                out.append(" "); i += 2; continue
+            if ch == q:
+                q = ""
+            i += 1
+            continue
+        if ch in "\"'":
+            q = ch; out.append(" "); i += 1; continue
+        out.append(ch); i += 1
+    return "".join(out)
+
+
+def _py_lint(path: str, text: str, max_line: int = 0) -> List[Dict]:
+    """Findings as {line, col, code, note, sev} — honest, cheap, and each one actionable."""
+    out: List[Dict] = []
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as e:
+        return [{"line": e.lineno or 1, "col": e.offset or 0, "code": "E999", "note": "syntax: %s" % e.msg, "sev": "error"}]
+    L = _Lines(text)
+    lines = text.split("\n")
+
+    # imported, never mentioned again
+    imported: Dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                imported[(a.asname or a.name).split(".")[0]] = node.lineno
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "__future__":
+                continue                      # `from __future__ import annotations` is used by the COMPILER, not the code
+            for a in node.names:
+                if a.name != "*":
+                    imported[a.asname or a.name] = node.lineno
+    used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    used |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Attribute):
+            v = n.value
+            while isinstance(v, ast.Attribute):
+                v = v.value
+            if isinstance(v, ast.Name):
+                used.add(v.id)
+    body_txt = text
+    for name, ln in imported.items():
+        if name not in used and ("# noqa" not in lines[ln - 1] if ln - 1 < len(lines) else True):
+            out.append({"line": ln, "col": 0, "code": "F401", "note": "'%s' imported and never used" % name, "sev": "warn"})
+
+    for node in ast.walk(tree):
+        # a bare except swallows KeyboardInterrupt and SystemExit with everything else
+        if isinstance(node, ast.ExceptHandler) and node.type is None:
+            out.append({"line": node.lineno, "col": node.col_offset, "code": "E722", "note": "bare 'except:' — catch the exception you mean", "sev": "warn"})
+        # a mutable default is shared between every call
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for d in list(node.args.defaults) + [x for x in node.args.kw_defaults if x is not None]:
+                if isinstance(d, (ast.List, ast.Dict, ast.Set)):
+                    out.append({"line": d.lineno, "col": d.col_offset, "code": "B006", "note": "a mutable default is shared between calls", "sev": "warn"})
+            if node.name in _PY_BUILTIN_SHADOW:
+                out.append({"line": node.lineno, "col": node.col_offset, "code": "A001", "note": "'%s' shadows a builtin" % node.name, "sev": "info"})
+        # `is` against a literal is an identity test on something with no stable identity
+        if isinstance(node, ast.Compare):
+            for op, cmp_ in zip(node.ops, node.comparators):
+                if isinstance(op, (ast.Is, ast.IsNot)) and isinstance(cmp_, ast.Constant) and not isinstance(cmp_.value, (bool, type(None))):
+                    out.append({"line": node.lineno, "col": node.col_offset, "code": "F632", "note": "'is' with a literal — use '=='", "sev": "warn"})
+        # anything after a return in the same block never runs
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.If, ast.For, ast.While, ast.With)):
+            body = getattr(node, "body", [])
+            for i, st in enumerate(body[:-1]):
+                if isinstance(st, (ast.Return, ast.Raise, ast.Continue, ast.Break)):
+                    out.append({"line": body[i + 1].lineno, "col": 0, "code": "W0101", "note": "unreachable — the line above leaves this block", "sev": "warn"})
+                    break
+        # an assert in shipped code disappears under -O
+        if isinstance(node, ast.Assert) and getattr(node, "col_offset", 0) == 0:
+            out.append({"line": node.lineno, "col": 0, "code": "S101", "note": "a module-level assert is skipped under -O", "sev": "info"})
+
+    for i, ln in enumerate(lines, 1):
+        if max_line and len(ln) > max_line and "# noqa" not in ln:
+            out.append({"line": i, "col": max_line, "code": "E501", "note": "line is %d characters" % len(ln), "sev": "info"})
+        # in a COMMENT only, with strings blanked first: a marker inside a string is usually the code that
+        # LOOKS for markers (this very file tripped that), and a "#" inside a string is not a comment
+        m = re.search(r"(?:#|//)[^\n]*?\b(TODO|FIXME|XXX|HACK)\b", _no_strings(ln))
+        if m:
+            out.append({"line": i, "col": m.start(), "code": "T000", "note": m.group(1) + " left in the source", "sev": "info"})
+    return out
+
+
+_JS_LINT = [
+    (re.compile(r"(?<![=!<>])==(?!=)"), "JS001", "'==' — prefer '===' (type coercion)", "info"),
+    (re.compile(r"\bvar\s+[A-Za-z_$]"), "JS002", "'var' — prefer const / let", "info"),
+    (re.compile(r"\bconsole\.(log|debug)\s*\("), "JS003", "console left in the source", "info"),
+    (re.compile(r"\bdebugger\b"), "JS004", "debugger statement", "warn"),
+    (re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}"), "JS005", "an empty catch swallows the error", "warn"),
+]
+
+
+def _js_lint(path: str, text: str, max_line: int = 0) -> List[Dict]:
+    out: List[Dict] = []
+    for i, ln in enumerate(text.split("\n"), 1):
+        code_part = re.sub(r"//.*$", "", _no_strings(ln))
+        for rx, code, note, sev in _JS_LINT:
+            m = rx.search(code_part)
+            if m:
+                out.append({"line": i, "col": m.start(), "code": code, "note": note, "sev": sev})
+    if text.count("{") != text.count("}"):
+        out.append({"line": 1, "col": 0, "code": "JS000", "note": "unbalanced braces — the parse is partial", "sev": "error"})
+    return out
+
+
+_BRACE_LINT = [
+    (re.compile(r"\bTODO\b|\bFIXME\b|\bXXX\b|\bHACK\b"), "T000", "left in the source", "info"),
+    (re.compile(r"\bpanic\(|\bunwrap\(\)|\bexpect\("), "B100", "panics rather than returning the error", "warn"),
+    (re.compile(r"\bprintln!\(|\bfmt\.Print|\bSystem\.out\.print"), "B101", "printing left in the source", "info"),
+    (re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}"), "B102", "an empty catch swallows the error", "warn"),
+]
+
+
+def _brace_lint(path: str, text: str, max_line: int = 0) -> List[Dict]:
+    """Go / Rust / Java: only what is true of all three and visible without a type checker -- the rest is a job
+    for that language's own linter, which this says rather than guesses at."""
+    out: List[Dict] = []
+    for i, ln in enumerate(text.split("\n"), 1):
+        code_part = re.sub(r"//.*$", "", _no_strings(ln))
+        for rx, code, note, sev in _BRACE_LINT:
+            m = rx.search(code_part if code != "T000" else _no_strings(ln))
+            if m:
+                out.append({"line": i, "col": m.start(), "code": code,
+                            "note": (m.group(0) + " " + note) if code == "T000" else note, "sev": sev})
+        if max_line and len(ln) > max_line:
+            out.append({"line": i, "col": max_line, "code": "E501", "note": "line is %d characters" % len(ln), "sev": "info"})
+    return out
+
+
+def lint_sources(sources: List[Dict], external: Optional[Dict[str, List[Dict]]] = None, max_line: int = 0) -> Dict[str, List[Dict]]:
+    """{path: [finding]} for every source. `max_line` turns the
+    line-length rule on (0 = off: this estate writes long lines on purpose, and 40 E501s would bury what matters).
+    `external` merges a real linter's output for a path (ruff --output-format
+    json, eslint -f json, mapped to {line, col, code, note, sev}) — it is preferred and marked, and these checks
+    still run so the diagram says something on a host that has no linter."""
+    out: Dict[str, List[Dict]] = {}
+    for src in sources:
+        path = str(src.get("path") or "")
+        text = src.get("text") or ""
+        lang = detect_lang(path, text, src.get("lang") or "")
+        try:
+            if lang == "python":
+                found = _py_lint(path, text, max_line)
+            elif lang in ("javascript", "typescript"):
+                found = _js_lint(path, text, max_line)
+            elif lang in _BRACE_EXT.values():
+                found = _brace_lint(path, text, max_line)
+            else:
+                found = []
+        except Exception as e:            # a lint failure is never the diagram's failure
+            found = [{"line": 1, "col": 0, "code": "L000", "note": "lint failed: %s" % e, "sev": "info"}]
+        for f in found:
+            f.setdefault("by", "explode lint")
+        ext = (external or {}).get(path) or []
+        for f in ext:
+            f.setdefault("by", "external linter")
+        out[path] = sorted(ext + found, key=lambda f: (f.get("line", 0), f.get("col", 0)))
+    return out
+
+
+def attach_lint(doc: Dict, findings: Dict[str, List[Dict]]) -> Dict:
+    """Hang findings on the cards that hold them: each card gets `marks` {line: [{note, sev}]} for the renderer,
+    a badge, and the contract gets one assessment per card plus a source-level score."""
+    cards = [c for c in doc.get("cards", []) if c.get("span", {}).get("path")]
+    per: Dict[str, List[Dict]] = {}
+    for path, found in (findings or {}).items():
+        for f in found:
+            ln = int(f.get("line") or 0)
+            holder = None
+            for c in cards:
+                sp = c["span"]
+                if sp.get("path") != path or sp.get("line") is None:
+                    continue
+                if sp["line"] <= ln <= (sp.get("line_end") or sp["line"]):
+                    if holder is None or (sp.get("line_end", 0) - sp["line"]) < (holder["span"].get("line_end", 0) - holder["span"]["line"]):
+                        holder = c
+            if holder is None:
+                holder = next((c for c in cards if c["kind"] == "module" and c["span"].get("path") == path), None)
+            if holder is None:
+                continue
+            per.setdefault(holder["id"], []).append(f)
+    n_all = sum(len(v) for v in findings.values()) if findings else 0
+    for cid, fs in per.items():
+        card = next(c for c in doc["cards"] if c["id"] == cid)
+        marks: Dict[str, List[Dict]] = {}
+        for f in fs:
+            marks.setdefault(str(f.get("line")), []).append({"note": "%s %s" % (f.get("code", ""), f.get("note", "")), "sev": f.get("sev", "warn")})
+        card["marks"] = marks
+        worst = "error" if any(f.get("sev") == "error" for f in fs) else ("warn" if any(f.get("sev") == "warn" for f in fs) else "info")
+        card.setdefault("badges", []).append("lint %d" % len(fs) if worst != "error" else "lint ✗%d" % len(fs))
+        doc.setdefault("assessments", []).append({
+            "key": "lint", "label": "lint", "score": round(max(0.0, 1 - len(fs) / 8.0), 3), "confidence": 0.8,
+            "by": ", ".join(sorted({f.get("by", "explode lint") for f in fs})), "on": cid, "badge": "lint %d" % len(fs),
+            "evidence": [{"span": {"path": card["span"]["path"], "start": 0, "end": 0, "line": f.get("line"), "line_end": f.get("line")},
+                          "note": "%s %s" % (f.get("code", ""), f.get("note", ""))} for f in fs[:8]]})
+    n_fn = max(1, sum(1 for c in doc.get("cards", []) if c["kind"] in ("function", "method")))
+    doc.setdefault("assessments", []).append({
+        "key": "lint", "label": "clean", "score": round(max(0.0, 1 - n_all / (n_fn * 1.5)), 3), "confidence": 0.8,
+        "by": "explode lint" + (" + external" if any(f.get("by") == "external linter" for v in (findings or {}).values() for f in v) else ""),
+        "on": "source", "evidence": [], "detail": {"findings": n_all, "functions": n_fn}})
+    doc.setdefault("layers", []).append({"id": "code.lint", "label": "lint", "kind": "assessment", "by": "explode lint",
+                                         "on": True, "count": n_all, "where": "host"})
+    return doc
+
+
+# -- FLOW: the inside of ONE function ---------------------------------------------------------------------------
+# "id like to see better layouts of code and be able to see how it functions via the graph" (owner, 2026-09-22).
+# The dependency layout answers "what calls what" across a file; it cannot answer "what does THIS do". Flow reads
+# one function in SOURCE ORDER: every call it makes, in the order it makes them, each sitting in the branch that
+# encloses it (if / else / for / while / try / except / finally / with), with returns and raises marked. The
+# branches are the GROUPS the renderer draws as plates, the source order is the column, so a reader follows it
+# left to right and sees at a glance which calls only happen in the error path.
+#
+# Python only, and it says so: this needs a real parse of statements, which `ast` gives and the tolerant patterns
+# for JS/CSS/HTML do not. tree-sitter would extend it and is not installed on this host (checked 2026-09-22).
+
+_FLOW_STMT = ("If", "For", "AsyncFor", "While", "Try", "TryStar", "With", "AsyncWith")
+
+
+def _flow_label(node, L: "_Lines", text: str) -> str:
+    """A branch reads as its own first line: `if n > 0:`, `for row in rows:`, `except ValueError:`."""
+    import ast
+    try:
+        head = text[L.off(node.lineno, 0):L.off(node.lineno + 1, 0)] if node.lineno else ""
+    except Exception:
+        head = ""
+    head = head.strip().rstrip(":").strip()
+    if len(head) > 64:
+        head = head[:61] + "..."
+    if not head:
+        head = type(node).__name__.lower()
+    return head
+
+
+def flow_python(path: str, text: str, focus: str) -> Dict:
+    """The Explode contract for one function: {ok, cards, edges, groups, layers, source} or {error}.
+
+    `focus` names the function: its qualified name (`Agent.run`), its bare name (`run`), or its card id."""
+    import ast
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as e:
+        return {"error": "the file does not parse: %s (line %s)" % (e.msg, e.lineno)}
+    L = _Lines(text)
+    want = (focus or "").strip()
+
+    # the function meant: by qualified name, by bare name, or by the id the cards carry
+    found = []
+    def walk_defs(node, qual):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                q = (qual + "." if qual else "") + child.name
+                found.append((q, child))
+                walk_defs(child, q)
+            elif isinstance(child, ast.ClassDef):
+                walk_defs(child, (qual + "." if qual else "") + child.name)
+            elif isinstance(child, tuple(getattr(ast, n) for n in _FLOW_STMT if hasattr(ast, n)) + (ast.ExceptHandler,)):
+                walk_defs(child, qual)
+    walk_defs(tree, "")
+    fn = None
+    for q, node in found:
+        if want in (q, q.split(".")[-1], _sid(path, q)):
+            fn = (q, node)
+            break
+    if not fn:
+        return {"error": "no function '%s' in %s - it has: %s"
+                         % (want or "(none given)", path, ", ".join(q for q, _ in found[:24]) or "none")}
+    qual, node = fn
+
+    cards: List[Dict] = []
+    edges: List[Dict] = []
+    groups: List[Dict] = [{"id": "fn", "label": qual, "kind": "function", "parent": None}]
+    step = [0]
+
+    fid = _sid(path, qual)
+    head = text[L.off(node.lineno, 0):L.off(node.end_lineno + 1, 0)] if node.end_lineno else ""
+    hl = head.split("\n")
+    ind = min((len(x) - len(x.lstrip()) for x in hl if x.strip()), default=0)
+    cards.append({"id": fid, "group": "fn", "layer": "code.flow", "kind": "function", "title": qual.split(".")[-1],
+                  "subtitle": "%s - %d lines" % ("async def" if isinstance(node, ast.AsyncFunctionDef) else "def",
+                                                 (node.end_lineno or node.lineno) - node.lineno + 1),
+                  "code": "\n".join(x[ind:] if x.strip() else "" for x in hl[:1]),
+                  "code_line": node.lineno, "code_more": 0, "lang": "python",
+                  "span": {"path": path, "start": L.off(node.lineno, 0), "end": L.off((node.end_lineno or node.lineno) + 1, 0),
+                           "line": node.lineno, "line_end": node.end_lineno},
+                  "fields": [{"k": "args", "v": ", ".join(a.arg for a in node.args.args + node.args.kwonlyargs
+                                                          if a.arg not in ("self", "cls"))[:60]}],
+                  "badges": [], "by": "ast", "step": 0})
+    prev = [fid]
+
+    def add(kind: str, title: str, sub: str, gid: str, ln: int, end_ln: int, fields=None, badges=None) -> str:
+        step[0] += 1
+        cid = "%s#%d" % (fid, step[0])
+        st, en = L.off(ln, 0), L.off((end_ln or ln) + 1, 0)
+        seg = text[st:en].split("\n")
+        ind2 = min((len(x) - len(x.lstrip()) for x in seg if x.strip()), default=0)
+        cards.append({"id": cid, "group": gid, "layer": "code.flow", "kind": kind, "title": title, "subtitle": sub,
+                      "code": "\n".join(x[ind2:] if x.strip() else "" for x in seg[:3]), "code_line": ln,
+                      "code_more": max(0, len([x for x in seg if x.strip()]) - 3), "lang": "python",
+                      "span": {"path": path, "start": st, "end": en, "line": ln, "line_end": end_ln or ln},
+                      "fields": fields or [], "badges": badges or [], "by": "ast", "step": step[0]})
+        # the run from what came before: this is what "in source order" MEANS, so it is drawn, not implied
+        for src in prev:
+            edges.append({"from": src, "to": cid, "kind": "CALLS" if kind == "call" else "RELATES",
+                          "label": "line %d" % ln, "layer": "code.flow", "resolution": "exact"})
+        return cid
+
+    def calls_of(stmt) -> List:
+        """Every call the statement itself makes (not its body), in source order."""
+        out = []
+        skip = tuple(getattr(ast, n) for n in _FLOW_STMT if hasattr(ast, n))
+        def w(nd, top=False):
+            for sub in ast.iter_child_nodes(nd):
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    continue                                  # a nested def is its own flow
+                if not top and isinstance(sub, skip):
+                    continue
+                if isinstance(sub, ast.Call):
+                    t = _call_target(sub.func)
+                    if t:
+                        out.append((getattr(sub, "lineno", 0), getattr(sub, "col_offset", 0), t[0], t[1], sub))
+                w(sub)
+        # the head of a compound statement (its test / iterator / context) counts as its own
+        for fld in ("test", "iter", "items", "value", "exc", "func", "args", "returns"):
+            v = getattr(stmt, fld, None)
+            for nd in (v if isinstance(v, list) else [v]):
+                if isinstance(nd, ast.AST):
+                    if isinstance(nd, ast.Call):
+                        t = _call_target(nd.func)
+                        if t:
+                            out.append((getattr(nd, "lineno", 0), getattr(nd, "col_offset", 0), t[0], t[1], nd))
+                    w(nd)
+        if not isinstance(stmt, skip):
+            w(stmt, top=True)
+        out.sort(key=lambda x: (x[0], getattr(x[4], "end_lineno", x[0]) or x[0],
+                                getattr(x[4], "end_col_offset", 0) or 0, x[1]))
+        seen, uniq = set(), []
+        for ln, col, name, via, nd in out:
+            if (ln, col, name) in seen:
+                continue
+            seen.add((ln, col, name)); uniq.append((ln, col, name, via, nd))
+        return uniq
+
+    def run(stmts, gid: str):
+        """A branch's body, with the band kept visible even when nothing in it is a call."""
+        n0 = len(cards)
+        body(stmts, gid)
+        if len(cards) == n0 and gid != "fn":
+            first = next((x for x in stmts if x is not None), None)
+            ln = getattr(first, "lineno", 0) or 0
+            what = _flow_label(first, L, text) if first is not None else "pass"
+            cid = add("step", what[:40], "line %d - no call" % ln, gid, ln,
+                      getattr(first, "end_lineno", ln) or ln)
+            prev[:] = [cid]
+
+    def body(stmts, gid: str):
+        import ast as _a
+        for stmt in stmts:
+            if isinstance(stmt, (_a.FunctionDef, _a.AsyncFunctionDef, _a.ClassDef)):
+                continue
+            for ln, _col, name, via, nd in calls_of(stmt):
+                cid = add("call", name, "call - line %d" % ln, gid, ln, getattr(nd, "end_lineno", ln),
+                          [{"k": "via", "v": via}])
+                prev[:] = [cid]
+            if isinstance(stmt, (_a.Return, _a.Raise)):
+                kind = "return" if isinstance(stmt, _a.Return) else "raise"
+                cid = add(kind, kind, "line %d" % stmt.lineno, gid, stmt.lineno,
+                          getattr(stmt, "end_lineno", stmt.lineno), None, [kind])
+                prev[:] = [cid]
+                continue
+            if isinstance(stmt, tuple(getattr(_a, n) for n in _FLOW_STMT if hasattr(_a, n))):
+                ends = []
+                lab = _flow_label(stmt, L, text)
+                sub = "%s#b%d" % (gid, len(groups))
+                groups.append({"id": sub, "label": lab, "kind": "branch", "parent": gid})
+                before = list(prev)
+                run(getattr(stmt, "body", []) or [], sub)
+                ends.extend(prev)
+                for hnd in getattr(stmt, "handlers", []) or []:
+                    hid = "%s#b%d" % (gid, len(groups))
+                    groups.append({"id": hid, "label": _flow_label(hnd, L, text), "kind": "branch", "parent": gid})
+                    prev[:] = before
+                    run(hnd.body or [], hid)
+                    ends.extend(prev)
+                if getattr(stmt, "orelse", None):
+                    eid = "%s#b%d" % (gid, len(groups))
+                    groups.append({"id": eid, "label": "else", "kind": "branch", "parent": gid})
+                    prev[:] = before
+                    run(stmt.orelse, eid)
+                    ends.extend(prev)
+                if getattr(stmt, "finalbody", None):
+                    fbid = "%s#b%d" % (gid, len(groups))
+                    groups.append({"id": fbid, "label": "finally", "kind": "branch", "parent": gid})
+                    prev[:] = ends or before
+                    run(stmt.finalbody, fbid)
+                    ends = list(prev)
+                # after a branch, whatever comes next follows EVERY path that can reach it
+                prev[:] = list(dict.fromkeys(ends or before))
+
+    run(node.body, "fn")
+
+    n_calls = len([c for c in cards if c["kind"] == "call"])
+    return {"ok": True, "kind": "code", "focus": qual,
+            "source": {"paths": [path], "partial": False, "errors": [], "engines": ["ast"],
+                       "tree_sitter": False, "label": "%s - %s" % (path, qual), "text": text},
+            "layout": {"direction": "LR", "mode": "flow"},
+            "layers": [{"id": "code.flow", "label": "flow", "kind": "symbol", "by": "ast", "on": True,
+                        "count": len(cards), "where": "in-process",
+                        "note": "the calls of %s in source order, in the branch that encloses each" % qual}],
+            "groups": groups, "cards": cards, "edges": edges, "assessments": [],
+            "counts": {"cards": len(cards), "edges": len(edges), "calls": n_calls,
+                       "branches": len([g for g in groups if g["kind"] == "branch"])}}
+
+
+def flow_of(path: str, text: str, focus: str, lang: str = "") -> Dict:
+    lang = lang or detect_lang(path, text)
+    if lang != "python":
+        return {"error": "flow reads statements, which needs a real parse: python only today (this is %s). "
+                         "tree-sitter would extend it and is not installed on this host." % (lang or "unknown")}
+    return flow_python(path, text, focus)
+
+
+def import_targets(parsed_imports: List[Dict], from_path: str) -> List[str]:
+    """The repo-relative paths a file's imports could name ('vera.research.x' → 'vera/research/x.py' or
+    'vera/research/x/__init__.py'; './y.js' → 'dir/y.js'), for a caller that widens the parsed set by one hop."""
+    out = []
+    here = os.path.dirname(from_path.replace("\\", "/"))
+    for imp in parsed_imports:
+        m = str(imp.get("module") or "")
+        if not m:
+            continue
+        if m.startswith("./") or m.startswith("../") or m.startswith("/"):
+            rel = os.path.normpath(os.path.join(here, m)).replace("\\", "/") if not m.startswith("/") else m.lstrip("/")
+            out.append(rel)
+            continue
+        if m.startswith("."):
+            up = len(m) - len(m.lstrip("."))
+            base = here.split("/") if here else []
+            pkg = base[:len(base) - (up - 1)] if up > 1 else base
+            m = ".".join([x for x in pkg if x] + ([m.lstrip(".")] if m.lstrip(".") else []))
+        if m.startswith("Vera."):
+            m = m[len("Vera."):]
+        rel = m.replace(".", "/")
+        out.append(rel + ".py"); out.append(rel + "/__init__.py")
+        if imp.get("name"):   # `from pkg import mod`: the name may be a module of the package
+            out.append(rel + "/" + str(imp["name"]) + ".py")
+    return out
+
+
+# ── the resolver: symbols and imports → cards, groups and edges ───────────────────────────────────
+_KIND_LABEL = {"module": "module", "class": "class", "function": "def", "method": "def", "selector": "rule", "element": "element"}
+
+
+def _selector_matches(sel: str, el: Dict) -> Optional[str]:
+    """Does the LAST compound of a selector hit this element? 'exact' on #id, 'heuristic' on class or tag."""
+    last = re.split(r"[\s>+~]+", sel.strip())[-1]
+    last = re.sub(r"::?[\w-]+(\([^)]*\))?", "", last)   # pseudo-classes / elements
+    last = re.sub(r"\[[^\]]*\]", "", last)
+    if not last or last in ("*", ""):
+        return None
+    ids = re.findall(r"#([\w-]+)", last); classes = re.findall(r"\.([\w-]+)", last)
+    tag = re.match(r"^([a-zA-Z][\w-]*)", last)
+    if ids:
+        return "exact" if el.get("ident") in ids and all(c in el.get("classes", []) for c in classes) else None
+    if classes:
+        return "heuristic" if all(c in el.get("classes", []) for c in classes) and (not tag or tag.group(1).lower() == el.get("tag")) else None
+    if tag and tag.group(1).lower() == el.get("tag") and el.get("tag") in ("body", "html", "main", "nav", "header", "footer", "section", "article", "form", "table"):
+        return "heuristic"
+    return None
+
+
+def _parse_one(path: str, text: str, lang: str, prefer_tree_sitter: bool = False) -> Dict:
+    """One source, by its language -- the engine each one gets, and the fallback each engine has."""
+    if lang == "python":
+        p = parse_python_ast(path, text) if not (prefer_tree_sitter and HAS_TREE_SITTER) else parse_tree_sitter(path, text, "python")
+        if p["errors"] and p["engine"] == "ast" and HAS_TREE_SITTER:
+            p = parse_tree_sitter(path, text, "python")      # broken code: the tolerant engine reads what it can
+        return p
+    if lang in ("javascript", "typescript"):
+        p = parse_tree_sitter(path, text, lang) if HAS_TREE_SITTER else parse_js_patterns(path, text)
+        if p["errors"] and p["engine"] == "tree-sitter" and not p["symbols"][1:]:
+            p = parse_js_patterns(path, text)
+        return p
+    if lang in _BRACE_EXT.values():
+        p = parse_tree_sitter(path, text, lang) if HAS_TREE_SITTER else parse_brace_patterns(path, text, lang)
+        if p["errors"] and p["engine"] == "tree-sitter" and not p["symbols"][1:]:
+            p = parse_brace_patterns(path, text, lang)
+        return p
+    if lang == "css":
+        return parse_css(path, text)
+    if lang == "html":
+        return parse_html(path, text)
+    return {"engine": "none", "path": path, "symbols": [], "imports": [], "errors": ["unknown language"], "aliases": {}}
+
+
+def explode_sources(sources: List[Dict], *, max_external: int = 40, prefer_tree_sitter: bool = False, label: str = "",
+                    card_lines: int = 40) -> Dict:
+    """sources: [{path, text, lang?}] → the Explode contract (kind 'code', or 'page' when HTML leads).
+
+    `card_lines`: how much of a symbol's own source travels on its card, so the reader can READ the code in the
+    diagram rather than only its name (owner, 2026-09-22). A card carries `code` (the first `card_lines` lines of
+    its span), `code_line` (where that starts) and `code_more` (how many lines were left behind); 0 turns it off
+    for a caller that only wants the shape."""
+    parsed: List[Dict] = []
+    receipts: Dict[str, Dict] = {}
+    for src in sources:
+        path = str(src.get("path") or "snippet")
+        text = src.get("text") or ""
+        lang = detect_lang(path, text, src.get("lang") or "")
+        said = str(src.get("lang") or "")
+        p = _parse_one(path, text, lang, prefer_tree_sitter)
+        # A FENCE CAN LIE. "```sh" over Python, "```js" over Go: the declared language reads nothing at all and the
+        # diagram is a single module card, which is what "it doesn't draw anything" looks like from the outside
+        # (owner, 2026-09-22). When a DECLARED language finds no symbols, the text is asked what it is, and the
+        # receipt says the fence was read as something else -- a guess that is stated is not a guess that hides.
+        if said and len(p.get("symbols") or []) <= 1:
+            sniff = detect_lang(path, text, "")
+            if sniff and sniff != lang:
+                alt = _parse_one(path, text, sniff, prefer_tree_sitter)
+                if len(alt.get("symbols") or []) > 1:
+                    alt["errors"] = list(alt.get("errors") or []) + [
+                        "read as %s; the source said %s" % (sniff, said)]
+                    p, lang = alt, sniff
+        p["lang"] = lang; p["text"] = text
+        parsed.append(p)
+        r = receipts.setdefault(p["engine"], {"id": "code." + p["engine"].replace("-", ""), "label": "symbols · " + p["engine"], "by": p["engine"], "kind": "symbol", "on": True, "count": 0, "files": 0, "where": "host"})
+        r["files"] += 1
+    # HOW MUCH CODE TRAVELS ON A CARD depends on how many cards there are: 40 lines each is right for a snippet
+    # and absurd for three modules (measured: an 13 000px stack no zoom can read). The budget shrinks as the set
+    # grows, and `code_more` still says what was kept back, so nothing is hidden silently.
+    if card_lines:
+        n_sym = sum(1 for p in parsed for x in p["symbols"] if x["kind"] in ("function", "method", "class", "selector", "element"))
+        card_lines = card_lines if n_sym <= 12 else (16 if n_sym <= 30 else (10 if n_sym <= 80 else 6))
+    kind = "page" if parsed and all(p["lang"] in ("html", "css", "javascript", "typescript") for p in parsed) and any(p["lang"] == "html" for p in parsed) else "code"
+    # ── groups: a plate per file, a plate per class inside it
+    groups: List[Dict] = []
+    cards: List[Dict] = []
+    edges: List[Dict] = []
+    card_by_id: Dict[str, Dict] = {}
+    sym_by_id: Dict[str, Dict] = {}
+    by_name: Dict[str, List[Dict]] = {}
+    mod_index: Dict[str, str] = {}      # importable name → module symbol id
+    for p in parsed:
+        path = p["path"]
+        groups.append({"id": path, "label": path, "kind": "file", "parent": None, "span": {"path": path, "start": 0, "end": len(p["text"])}})
+        for s in p["symbols"]:
+            sym_by_id[s["id"]] = s
+            by_name.setdefault(s["name"], []).append(s)
+            if s["kind"] == "module":
+                for nm in module_names(path):
+                    mod_index.setdefault(nm, s["id"])
+                mod_index.setdefault(path.replace("\\", "/"), s["id"])            # a path import names the file itself
+                mod_index.setdefault(os.path.basename(path), s["id"])             # 'panel.css' and 'panel.js' stay apart
+            if s["kind"] == "class":
+                q = s.get("parent")
+                parent_group = q if q and sym_by_id.get(q, {}).get("kind") == "class" else path   # a nested class: a plate in its class's plate
+                groups.append({"id": s["id"], "label": "class " + s["name"], "kind": "class", "parent": parent_group,
+                               "span": {"path": path, "start": s["start"], "end": s["end"]}})
+    # ── cards
+    def group_of(s: Dict) -> str:
+        q = s.get("parent")
+        while q:
+            ps = sym_by_id.get(q)
+            if not ps:
+                break
+            if ps["kind"] == "class":
+                return ps["id"]
+            q = ps.get("parent")
+        return s["path"]
+    ext_group_added = False
+    for p in parsed:
+        for s in p["symbols"]:
+            lines = max(1, int(s.get("line1", s.get("line0", 1))) - int(s.get("line0", 1)) + 1)
+            k = s["kind"]
+            if k == "module" and p["lang"] == "css":
+                sub = "stylesheet · %d rule%s" % (len(p["symbols"]) - 1, "" if len(p["symbols"]) == 2 else "s")
+            elif k == "module" and p["lang"] == "html":
+                sub = "page · %d element%s · %d script%s / style%s" % (len(p["symbols"]) - 1, "" if len(p["symbols"]) == 2 else "s", len(p["imports"]), "" if len(p["imports"]) == 1 else "s", "s")
+            elif k == "module":
+                sub = "module · %d lines · %d import%s" % (lines, len(p["imports"]), "" if len(p["imports"]) == 1 else "s")
+            elif k == "class":
+                sub = "class · %d method%s · %d lines" % (s.get("methods", 0), "" if s.get("methods", 0) == 1 else "s", lines)
+            elif k in ("function", "method"):
+                sub = "%s · %d lines" % ("async" if s.get("async") else "def", lines)
+            elif k == "selector":
+                sub = "rule · %d declaration%s" % (s.get("decls", 0), "" if s.get("decls", 0) == 1 else "s")
+            elif k == "element":
+                sub = "element · line %d" % s.get("line0", 0)
+            else:
+                sub = k
+            fields = list(s.get("fields") or [])
+            if s.get("decorators"):
+                fields.append({"k": "decorators", "v": " ".join(s["decorators"])[:60]})
+            if s.get("bases"):
+                fields.append({"k": "bases", "v": ", ".join(s["bases"])[:60]})
+            if s.get("args") and k in ("function", "method"):
+                fields.append({"k": "args", "v": ", ".join(s["args"])[:60]})
+            body = ""
+            n_more = 0
+            if card_lines and k in ("function", "method", "class", "selector", "element"):
+                seg = p["text"][s["start"]:s["end"]]
+                bl = seg.split("\n")
+                # a class shows its head, not its whole body — its methods are cards of their own
+                keep = max(4, card_lines // 3) if k == "class" else card_lines
+                if len(bl) > keep:
+                    n_more = len(bl) - keep
+                    bl = bl[:keep]
+                # the common indent goes: a method reads as itself, not as something three levels in
+                ind = min((len(x) - len(x.lstrip()) for x in bl if x.strip()), default=0)
+                body = "\n".join(x[ind:] if x.strip() else "" for x in bl)
+            card = {"id": s["id"], "group": group_of(s) if k != "element" else p["path"], "layer": "code." + p["engine"].replace("-", ""), "kind": k, "title": s["name"], "subtitle": sub,
+                    "code": body, "code_line": s.get("line0") if body else None, "code_more": n_more, "lang": p["lang"],
+                    "span": {"path": p["path"], "start": s["start"], "end": s["end"], "line": s.get("line0"), "line_end": s.get("line1")},
+                    "fields": fields, "badges": [], "by": p["engine"]}
+            cards.append(card); card_by_id[card["id"]] = card
+            receipts[p["engine"]]["count"] += 1
+    # ── edges
+    externals: Dict[str, str] = {}
+    def external(name: str, why: str) -> Optional[str]:
+        nonlocal ext_group_added
+        if name in externals:
+            return externals[name]
+        if len(externals) >= max_external:
+            return None
+        if not ext_group_added:
+            groups.append({"id": "ext", "label": "external", "kind": "external", "parent": None}); ext_group_added = True
+        cid = "ext::" + name
+        externals[name] = cid
+        cards.append({"id": cid, "group": "ext", "layer": "code.external", "kind": "external", "title": name, "subtitle": why, "span": {"path": "", "start": 0, "end": 0},
+                      "fields": [], "badges": ["external"], "by": "resolver"})
+        card_by_id[cid] = cards[-1]
+        return cid
+
+    def stub_for(qualified: str, name: str) -> Optional[str]:
+        """The stub an unresolved import stands behind: for a third-party package, the package ('httpx'); for a
+        module of our own that was not parsed, the imported name with its module — 'nlp_ner · vera.research…'."""
+        top = qualified.lstrip(".").split(".")[0]
+        if top in ("vera", "Vera") or qualified.startswith("."):
+            mod = qualified if not qualified.endswith("." + name) else qualified[: -len(name) - 1]
+            return external(name, (mod or "this repo") + " · not in the parsed set")
+        return external(top, "package · not in the parsed set")
+
+    def resolve_module(mod: str, from_path: str) -> Optional[str]:
+        if re.search(r"\.(js|mjs|cjs|ts|tsx|jsx|css|html|htm|py)$", mod):    # a path import: the file, by its full name first
+            here = os.path.dirname(from_path.replace("\\", "/"))
+            rel = os.path.normpath(os.path.join(here, mod)).replace("\\", "/") if mod.startswith(".") else mod.lstrip("/")
+            for cand in (rel, mod.lstrip("./"), os.path.basename(mod)):
+                if cand in mod_index:
+                    return mod_index[cand]
+            return None
+        m = mod.lstrip(".")
+        if mod.startswith("."):   # a relative import: from the importing file's package
+            base = os.path.dirname(from_path).replace("\\", "/").split("/")
+            up = len(mod) - len(m)
+            pkg = base[:max(0, len(base) - (up - 1))] if up > 1 else base
+            m = ".".join([x for x in pkg if x] + ([m] if m else []))
+        for cand in (m, m.split(".")[-1]):
+            if cand in mod_index:
+                return mod_index[cand]
+        # a JS path import: './x.js', '/ui/routes.js'
+        base = os.path.splitext(os.path.basename(m))[0]
+        for nm, sid in mod_index.items():
+            if nm.split(".")[-1] == base:
+                return sid
+        return None
+
+    seen_edges = set()
+    def add_edge(a: str, b: str, kind: str, res: str, layer: str, label: str = "", by: str = "resolver"):
+        key = (a, b, kind)
+        if a == b or key in seen_edges or a not in card_by_id or b not in card_by_id:
+            return
+        seen_edges.add(key)
+        edges.append({"from": a, "to": b, "layer": layer, "kind": kind, "resolution": res, "label": label, "by": by})
+
+    for p in parsed:
+        mod_sym = next((s for s in p["symbols"] if s["kind"] == "module"), None)
+        # imports: module → module (exact), a standard-library name → a field on the module card (not a stub),
+        # anything else → an external stub
+        stdlib_seen: List[str] = []
+        for imp in p["imports"]:
+            target = None
+            if imp.get("name"):                                       # `from pkg import module`
+                target = resolve_module(imp["module"].rstrip(".") + "." + str(imp["name"]) if imp["module"] else str(imp["name"]), p["path"])
+            target = target or resolve_module(imp["module"], p["path"])
+            if target and mod_sym:
+                add_edge(mod_sym["id"], target, "IMPORTS", "exact", "code.imports", imp.get("name") or "", p["engine"])
+            elif mod_sym:
+                m_ = imp["module"]
+                if "/" in m_ or m_.endswith((".js", ".mjs", ".css", ".ts")):   # a path import: the file it names
+                    top = os.path.basename(m_)
+                elif m_.startswith("."):                                           # a relative import: the module's own name
+                    top = m_.lstrip(".").split(".")[-1] or (imp.get("name") or m_)
+                else:
+                    top = m_.split(".")[0]
+                if p["lang"] == "python" and top in _STDLIB:
+                    if top not in stdlib_seen:
+                        stdlib_seen.append(top)
+                    continue
+                if top and top not in ("Vera", "vera"):
+                    ext = external(top, "package · not in the parsed set")
+                    if ext:
+                        add_edge(mod_sym["id"], ext, "IMPORTS", "external", "code.imports", imp.get("name") or "", p["engine"])
+        if stdlib_seen and mod_sym and mod_sym["id"] in card_by_id:
+            card_by_id[mod_sym["id"]]["fields"].append({"k": "stdlib", "v": ", ".join(stdlib_seen)[:60]})
+        for s in p["symbols"]:
+            # inheritance
+            for b in s.get("bases") or []:
+                bname = b.split(".")[-1].split("(")[0].strip()
+                if not bname:
+                    continue
+                cands = [x for x in by_name.get(bname, []) if x["kind"] == "class"]
+                same = [x for x in cands if x["path"] == p["path"]]
+                if same:
+                    add_edge(s["id"], same[0]["id"], "INHERITS", "exact", "code.symbols", "", p["engine"])
+                elif len(cands) == 1:
+                    add_edge(s["id"], cands[0]["id"], "INHERITS", "heuristic", "code.symbols", "by name", p["engine"])
+                elif cands:
+                    add_edge(s["id"], cands[0]["id"], "INHERITS", "heuristic", "code.symbols", "one of %d by name" % len(cands), p["engine"])
+                else:
+                    ext = external(bname, "class · not in the parsed set")
+                    if ext:
+                        add_edge(s["id"], ext, "INHERITS", "external", "code.symbols", "", p["engine"])
+            # containment: a class holds its methods (a layer of its own, off by default — the plate already says it)
+            if s["kind"] == "method" and s.get("parent") in sym_by_id and sym_by_id[s["parent"]]["kind"] == "class":
+                add_edge(s["parent"], s["id"], "CONTAINS", "exact", "code.contains", "", p["engine"])
+            # calls
+            n_ext = 0
+            for c in s.get("calls") or []:
+                name, via = c["name"], c.get("via") or ""
+                if not via and name in _BUILTINS:
+                    continue
+                target = None; res = "exact"; lbl = ""
+                if via in ("self", "cls", "this") and s.get("own_class"):
+                    own = [x for x in by_name.get(name, []) if x["kind"] == "method" and x.get("own_class") == s.get("own_class") and x["path"] == p["path"]]
+                    if own:
+                        target = own[0]["id"]
+                elif via:
+                    root = via.split(".")[0]
+                    al = p.get("aliases", {}).get(root)       # `mod.fn()` / `alias.fn()`: the module the alias names
+                    if al:
+                        msid = resolve_module(al, p["path"])
+                        if msid:
+                            mpath = sym_by_id[msid]["path"]
+                            hit = [x for x in by_name.get(name, []) if x["path"] == mpath and x["kind"] in ("function", "class", "method")]
+                            if hit:
+                                target = hit[0]["id"]
+                        elif al.split(".")[0] not in _STDLIB:  # a package (or an unparsed object of our own) called through: the stub is what was called THROUGH
+                            ext = stub_for(al, root)
+                            if ext:
+                                target = ext; res = "external"
+                    if not target:
+                        cands = [x for x in by_name.get(name, []) if x["kind"] in ("method", "function")]
+                        if len(cands) == 1:
+                            target = cands[0]["id"]; res = "heuristic"; lbl = "by method name"
+                        elif cands:
+                            target = cands[0]["id"]; res = "heuristic"; lbl = "one of %d by name" % len(cands)
+                else:
+                    local = [x for x in by_name.get(name, []) if x["path"] == p["path"] and x["kind"] in ("function", "class")]
+                    if local:
+                        target = local[0]["id"]
+                    else:
+                        al = p.get("aliases", {}).get(name)
+                        if al:
+                            msid = resolve_module(".".join(al.split(".")[:-1]) or al, p["path"])
+                            if msid:
+                                mpath = sym_by_id[msid]["path"]
+                                hit = [x for x in by_name.get(name, []) if x["path"] == mpath]
+                                if hit:
+                                    target = hit[0]["id"]
+                            if not target:
+                                ext = stub_for(al, name)
+                                if ext:
+                                    target = ext; res = "external"
+                        if not target:
+                            cands = [x for x in by_name.get(name, []) if x["kind"] in ("function", "class")]
+                            if len(cands) == 1:
+                                target = cands[0]["id"]; res = "heuristic"; lbl = "by name"
+                            elif cands:
+                                target = cands[0]["id"]; res = "heuristic"; lbl = "one of %d by name" % len(cands)
+                if not target:
+                    continue                       # a method on a value (`name.strip()`) is not an external symbol
+                if res == "external":
+                    n_ext += 1
+                add_edge(s["id"], target, "CALLS", res, "code.calls", lbl, p["engine"])
+            if n_ext and s["id"] in card_by_id:
+                card_by_id[s["id"]]["badges"].append("external:%d" % n_ext)
+    # a page: selectors hit elements, scripts and styles are imports
+    els = [s for p in parsed if p["lang"] == "html" for s in p["symbols"] if s["kind"] == "element"]
+    if els:
+        for p in parsed:
+            if p["lang"] != "css":
+                continue
+            for s in p["symbols"]:
+                for el in els:
+                    res = _selector_matches(s["qual"], el)
+                    if res:
+                        add_edge(s["id"], el["id"], "MATCHES", res, "page.css", "", "patterns")
+    # ── layers, assessments, counts
+    layers = [dict(r) for r in receipts.values()]
+    layers += [{"id": "code.calls", "label": "calls", "kind": "relation", "by": "resolver", "on": True, "count": sum(1 for e in edges if e["kind"] == "CALLS"), "where": "host"},
+               {"id": "code.imports", "label": "imports", "kind": "relation", "by": "resolver", "on": True, "count": sum(1 for e in edges if e["kind"] == "IMPORTS"), "where": "host"},
+               {"id": "code.contains", "label": "contains", "kind": "relation", "by": "resolver", "on": False, "count": sum(1 for e in edges if e["kind"] == "CONTAINS"), "where": "host"}]
+    if any(e["kind"] == "MATCHES" for e in edges):
+        layers.append({"id": "page.css", "label": "selectors → elements", "kind": "relation", "by": "patterns", "on": True, "count": sum(1 for e in edges if e["kind"] == "MATCHES"), "where": "host"})
+    if externals:
+        layers.append({"id": "code.external", "label": "external stubs", "kind": "symbol", "by": "resolver", "on": True, "count": len(externals), "where": "host"})
+    errors = [(p["path"], err) for p in parsed for err in p["errors"]]
+    partial = bool(errors)
+    n_files = max(1, len(parsed))
+    assessments = [{"key": "syntax", "label": "parses", "score": round(1 - len({e[0] for e in errors}) / n_files, 3), "confidence": 1.0, "by": ", ".join(sorted(receipts)) or "none", "on": "source",
+                    "evidence": [{"span": {"path": pth, "start": 0, "end": 0}, "note": err} for pth, err in errors[:12]]}]
+    n_calls = sum(1 for e in edges if e["kind"] == "CALLS"); n_ext = sum(1 for e in edges if e["resolution"] == "external")
+    if n_calls + n_ext:
+        assessments.append({"key": "resolved", "label": "calls resolved", "score": round(sum(1 for e in edges if e["kind"] == "CALLS" and e["resolution"] == "exact") / max(1, n_calls), 3),
+                            "confidence": 0.9, "by": "resolver", "on": "source"})
+    if partial:
+        for c in cards:
+            if c["kind"] != "external" and any(pth == c["span"]["path"] for pth, _ in errors):
+                c["badges"].append("partial")
+    text_all = "".join(p["text"] for p in parsed)
+    return {"ok": True, "kind": kind,
+            "source": {"path": parsed[0]["path"] if len(parsed) == 1 else "", "paths": [p["path"] for p in parsed], "label": label or (parsed[0]["path"] if len(parsed) == 1 else "%d files" % len(parsed)),
+                       "partial": partial, "errors": [{"path": a, "error": b} for a, b in errors], "text_hash": hashlib.sha1(text_all.encode("utf-8", "replace")).hexdigest()[:16],
+                       "chars": len(text_all), "engines": sorted(receipts), "tree_sitter": HAS_TREE_SITTER},
+            "layout": {"direction": "LR", "mode": "dependency"}, "layers": layers, "groups": groups, "cards": cards, "edges": edges, "assessments": assessments,
+            "counts": {"groups": len(groups), "cards": len(cards), "edges": len(edges), "files": len(parsed), "external": len(externals)}}

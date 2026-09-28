@@ -103,6 +103,30 @@ def build_one(task, model_id, out_root):
         return {"task": task, "model": model_id, "dir": "_fastembed",
                 "status": "ok", "kind": kind}
 
+    if kind == "spacy":
+        # a pip package the component installs into the node's venv — nothing to put in the store
+        _log(f"PKG   {task:11s} {model_id}  (installed by the component's pip steps, not stored)")
+        return {"task": task, "model": model_id, "dir": "", "status": "package", "kind": kind}
+
+    if kind == "gliner":
+        # a torch checkpoint, saved as-is: the gliner package loads it from a directory offline
+        if os.path.isfile(os.path.join(target, "gliner_config.json")):
+            _log(f"HAVE  {task:11s} {model_id}")
+            return {"task": task, "model": model_id, "dir": os.path.basename(target), "status": "ok", "kind": kind}
+        _log(f"SAVE  {task:11s} {model_id}  -> {os.path.basename(target)}")
+        t0 = time.monotonic()
+        try:
+            from gliner import GLiNER
+            model = GLiNER.from_pretrained(model_id)
+            os.makedirs(target, exist_ok=True)
+            model.save_pretrained(target)
+        except Exception as e:
+            _log(f"FAIL  {task:11s} {model_id}: {type(e).__name__}: {e}")
+            traceback.print_exc()
+            return {"task": task, "model": model_id, "dir": "", "status": "failed", "error": f"{type(e).__name__}: {e}"}
+        _log(f"OK    {task:11s} {model_id}  saved in {round(time.monotonic() - t0, 1)}s")
+        return {"task": task, "model": model_id, "dir": os.path.basename(target), "status": "ok", "kind": kind}
+
     if _already_built(target):
         _log(f"HAVE  {task:11s} {model_id}")
         return {"task": task, "model": model_id,
@@ -200,9 +224,16 @@ def cmd_verify(args):
     rc = 0
     for task, model_id in DEFAULT_MODELS.items():
         kind = TASK_KIND.get(task, "")
-        if kind == "fastembed":
+        if kind in ("fastembed", "spacy"):
             continue
         target = os.path.join(out_root, model_slug(model_id))
+        if kind == "gliner":
+            if os.path.isfile(os.path.join(target, "gliner_config.json")):
+                _log(f"LOADS   {task:11s} {model_id}  (checkpoint present)")
+            else:
+                _log(f"MISSING {task:11s} {model_id}")
+                rc = 1
+            continue
         if not _already_built(target):
             _log(f"MISSING {task:11s} {model_id}")
             rc = 1

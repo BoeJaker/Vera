@@ -156,7 +156,7 @@ svg.chart{width:100%;height:120px;display:block;cursor:crosshair}
       this._wire();
       this._connectWs();
       if (this._onScreen()) this.refresh();
-      this._pollTimer = setInterval(() => { if (this._onScreen()) this.refresh(); }, parseInt(this.getAttribute('poll-ms') || '20000', 10));
+      this._pollTimer = setInterval(() => { if (this._onScreen() && !document.hidden) this.refresh(); }, parseInt(this.getAttribute('poll-ms') || '60000', 10));   // 500 runs a read: was every 20 s
       if (this._autoplay === 'scroll' && !reducedMotion()) {
         this._io = new IntersectionObserver(entries => {
           entries.forEach(e => {
@@ -240,7 +240,7 @@ svg.chart{width:100%;height:120px;display:block;cursor:crosshair}
 
     async refresh() {
       const [runsD, stallsD, eventsD] = await Promise.all([
-        this._fetchJson('/evolve/runs?limit=500'),
+        this._fetchJson('/evolve/runs?limit=500&fields=run_id,task,ts,pass_rate,combined,avg_combined,triggered_by,label,status,error,source,session,variant_id,model'),   // the fields it draws
         this._fetchJson('/perf/stalls?limit=100'),
         this._fetchJson('/events?limit=300'),
       ]);

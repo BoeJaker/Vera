@@ -11,21 +11,36 @@
      • stateDiagram[-v2]  ([*] start/end, transitions with labels)
      • pie                (title + slices)
 
-   Theme-aware (reads the host page's CSS vars: --bg0/--bg2/--border/--acc/
-   --acc2/--text/--dim2 with safe fallbacks), pans and zooms with the pointer,
-   exports SVG/PNG, and shows a friendly error banner (with the source) when
-   the input can't be parsed rather than throwing.
+   Theme-aware: drawn in the live theme's tokens (the design tokens --s1/--s2/--t1/--t2/--t3/--ac/--ac2/--bd/--bd2,
+   the older --bg0/--bg2/--border/--acc/--text/--dim2 as fallbacks — read at render time), re-drawn when the theme
+   changes (data-theme · data-style on <html>, the vera:theme message veraUI posts), and `el.themeVariables = {…}`
+   (or the attribute, JSON) overrides any token for one element. Sized to its width: the viewport takes the height
+   the diagram has when it fills the width (up to max-height, 720), so a diagram keeps its aspect instead of shrinking
+   into a strip; a [fill] host fits the box it is given. Pans and zooms with the pointer, exports SVG/PNG, and shows a
+   friendly error banner (with the source) when the input can't be parsed rather than throwing.
 
    API
    ───
      el.render(code)      — parse + draw (also: set attribute `code`, or put
                             the source as the element's text content)
+     el.stream(code)      — the same, while the code is still ARRIVING: every
+                            complete line (closed by its newline) is placed; the
+                            unfinished tail line is shown as a ghost (dashed node,
+                            dashed edge), never guessed; a badge counts nodes ·
+                            edges · pending; a parse that fails on a half-written
+                            structure keeps the last good drawing instead of an
+                            error banner. render() on the closing fence settles
+                            the layout once.
      el.getSvg()          — serialised <svg> string ('' if nothing rendered)
      el.fit()             — re-fit the diagram to the viewport
+     el.naturalHeight(w)  — the height the drawing takes at width w (its aspect kept; 0 before a render)
+     el.themeVariables    — {bg, card, line, soft, text, dim, acc, acc2, acc3, warn, err} overrides (property or attribute)
+     VeraMermaid.theme()  — the token set a render reads, as the page has it now
      attribute `title`    — toolbar label
+     attribute `max-height` — the viewport's ceiling when not [fill] (720)
      attribute `bare`     — no toolbar / border (embed mode)
 
-   Events:  vm:rendered {detail:{type,nodes,edges}}   vm:error {detail:{message}}
+   Events:  vm:rendered {detail:{type,nodes,edges,width,height,natural}}   vm:error {detail:{message}}
    ═══════════════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
@@ -133,19 +148,23 @@
       }
       if (/^end\s*$/i.test(line)) { cur = subStack.pop() || null; continue; }
 
-      // edge chains — split by edge tokens
+      // edge chains — split by edge tokens. Text inside a node's brackets or quotes ("digest == stored?",
+      // "a -- b") is masked first so its own ==/-- never reads as an edge.
+      const masks = [];
+      const masked = line.replace(/"[^"]*"|\[[^\]]*\]|\([^)]*\)|\{[^}]*\}/g, s => { masks.push(s); return '\u0001' + (masks.length - 1) + '\u0001'; });
+      const unmask = s => s.replace(/\u0001(\d+)\u0001/g, (_, i) => masks[+i]);
       EDGE_RE.lastIndex = 0;
       const parts = []; const ops = [];
       let last = 0; let m;
-      while ((m = EDGE_RE.exec(line)) !== null) {
+      while ((m = EDGE_RE.exec(masked)) !== null) {
         // ignore matches inside label text: crude guard — require non-empty left side
-        const left = line.slice(last, m.index);
+        const left = masked.slice(last, m.index);
         if (!left.trim() && parts.length === 0) { continue; }
-        parts.push(left);
-        ops.push({ back: m[1] === '<', body: m[2], arrow: m[3] === '>', label: m[4] || '' });
+        parts.push(unmask(left));
+        ops.push({ back: m[1] === '<', body: m[2], arrow: m[3] === '>', label: unmask(m[4] || '') });
         last = EDGE_RE.lastIndex;
       }
-      parts.push(line.slice(last));
+      parts.push(unmask(masked.slice(last)));
 
       if (ops.length === 0) { endpoint(line); continue; }
 
@@ -291,28 +310,44 @@
   }
 
   /* ═══ SVG BUILDING ════════════════════════════════════════════════════ */
-  const THEME = () => {
+  /* the theme a render reads: the design tokens the estate's themes set (--s1 ground · --s2 card · --t1 text ·
+     --t2/--t3 dim · --ac/--ac2/--ac3 accents · --bd/--bd2 lines), the older vars where a page has only those, and safe
+     fallbacks last — read at RENDER time, so a theme change re-draws in the new tokens; `overrides` (an element's
+     themeVariables) win over all of it */
+  const THEME = (overrides) => {
     const cs = getComputedStyle(document.documentElement);
-    const v = (name, fb) => (cs.getPropertyValue(name) || '').trim() || fb;
-    return {
-      bg:    v('--bg0', '#101012'),
-      card:  v('--bg2', '#1a1c20'),
-      line:  v('--border2', 'rgba(255,255,255,.22)'),
-      soft:  v('--border', 'rgba(255,255,255,.09)'),
-      text:  v('--text', v('--t1', '#d8dce4')),
-      dim:   v('--dim2', v('--t2', '#8a92a0')),
-      acc:   v('--acc', '#5a9e8f'),
-      acc2:  v('--acc2', '#8fb87a'),
-      acc3:  v('--ac3', '#d4a96a'),
-      warn:  v('--warn', '#c9a35a'),
-      err:   v('--err', '#c96b6b'),
+    const v = (names, fb) => { for (const n of names) { const x = (cs.getPropertyValue(n) || '').trim(); if (x) return x; } return fb; };
+    const t = {
+      bg:    v(['--s1', '--bg1', '--bg0'], '#101012'),
+      card:  v(['--s2', '--bg2'], '#1a1c20'),
+      /* the drawing's own lines are not a panel's border. Reading them from --bd (a 9% white) and --bd2 (22%) left a
+         diagram sitting lighter than the words around it (Notes/42 defect 76), so the edges take the dim TEXT token and
+         the node outlines the strong border. An element's themeVariables still win over both. */
+      line:  v(['--t2', '--dim2', '--bd2', '--border2'], '#8a92a0'),
+      soft:  v(['--bd2', '--border2', '--bd', '--border'], 'rgba(255,255,255,.22)'),
+      text:  v(['--t1', '--text', '--fg'], '#d8dce4'),
+      dim:   v(['--t2', '--dim2', '--fg2'], '#8a92a0'),
+      acc:   v(['--ac', '--acc'], '#5a9e8f'),
+      acc2:  v(['--ac2', '--acc2'], '#8fb87a'),
+      acc3:  v(['--ac3', '--acc3'], '#d4a96a'),
+      warn:  v(['--warn', '--ac3'], '#c9a35a'),
+      err:   v(['--err'], '#c96b6b'),
     };
+    if (overrides && typeof overrides === 'object') for (const k of Object.keys(t)) if (overrides[k]) t[k] = String(overrides[k]);
+    return t;
   };
+  /* every connected element re-draws when the theme changes: the attributes veraUI sets on <html> (data-theme ·
+     data-style · data-den · data-blocks) and the vera:theme message it posts between frames — one observer, all elements */
+  const LIVE = new Set(); let _themeT = 0;
+  const rethemeAll = () => { clearTimeout(_themeT); _themeT = setTimeout(() => { LIVE.forEach((el) => { try { el.retheme(); } catch (_) {} }); }, 60); };
+  try { new MutationObserver(rethemeAll).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-style', 'data-den', 'data-blocks', 'class'] }); } catch (_) {}
+  try { window.addEventListener('message', (e) => { const d = e && e.data; if (d && typeof d === 'object' && d.type === 'vera:theme') rethemeAll(); }); } catch (_) {}
   const PALETTE = t => [t.acc, t.acc2, t.acc3, '#a78bfa', '#e07a9a', '#5ab0d8', '#c9a35a', '#7ac9b0'];
 
   function nodeSvg(n, t) {
     const x = n.x - n.w / 2, y = n.y - n.h / 2;
-    const common = `fill="${t.card}" stroke="${t.line}" stroke-width="1.2"`;
+    const common = n.ghost ? `fill="none" stroke="${t.dim}" stroke-width="1.2" stroke-dasharray="3 3"`
+                           : `fill="${t.card}" stroke="${t.line}" stroke-width="1.2"`;
     let shape = '';
     switch (n.shape) {
       case 'round':
@@ -353,7 +388,7 @@
     }
     const ty = n.y - ((n.lines.length - 1) * LINE_H) / 2;
     const txt = n.lines.map((l, i) =>
-      `<text x="${n.x}" y="${ty + i * LINE_H}" text-anchor="middle" dominant-baseline="central" font-size="11" fill="${t.text}">${esc(l)}</text>`).join('');
+      `<text x="${n.x}" y="${ty + i * LINE_H}" text-anchor="middle" dominant-baseline="central" font-size="11" fill="${n.ghost ? t.dim : t.text}">${esc(l)}</text>`).join('');
     return shape + txt;
   }
 
@@ -391,9 +426,9 @@
       const horiz = g.dir === 'LR' || g.dir === 'RL';
       const c1 = horiz ? `${mx},${p1.y}` : `${p1.x},${my}`;
       const c2 = horiz ? `${mx},${p2.y}` : `${p2.x},${my}`;
-      const dash = e.dotted ? ' stroke-dasharray="4 4"' : '';
+      const dash = (e.dotted || e.ghost) ? ' stroke-dasharray="4 4"' : '';
       const width = e.thick ? 2.4 : 1.4;
-      parts.push(`<path d="M${p1.x},${p1.y} C${c1} ${c2} ${p2.x},${p2.y}" fill="none" stroke="${t.line}" stroke-width="${width}"${dash} marker-end="url(#vmArrow)"/>`);
+      parts.push(`<path d="M${p1.x},${p1.y} C${c1} ${c2} ${p2.x},${p2.y}" fill="none" stroke="${e.ghost ? t.dim : t.line}" stroke-width="${width}"${dash} marker-end="url(#vmArrow)"/>`);
       if (e.label) {
         const lw = e.label.length * TXT_W + 10;
         parts.push(`<rect x="${mx - lw / 2}" y="${my - 9}" width="${lw}" height="18" rx="4" fill="${t.bg}" fill-opacity=".92"/>` +
@@ -553,6 +588,7 @@
   /* ═══ THE ELEMENT ═════════════════════════════════════════════════════ */
   const CSS = `
     :host{display:block;min-height:60px;font-family:system-ui,Segoe UI,Roboto,sans-serif}
+    :host([bare]){min-height:0}
     :host([fill]){height:100%}
     .wrap{border:1px solid var(--border,rgba(255,255,255,.09));border-radius:8px;
       background:var(--bg1,rgba(0,0,0,.14));overflow:hidden;display:flex;flex-direction:column;height:100%}
@@ -568,10 +604,22 @@
       color:var(--dim2,#8a92a0);border-radius:4px;font-size:9px;padding:1px 7px;cursor:pointer;
       font-family:inherit;line-height:1.5}
     .bar button:hover{color:var(--acc,#5a9e8f);border-color:var(--acc,#5a9e8f)}
-    .vp{position:relative;overflow:hidden;flex:1;min-height:80px;cursor:grab;touch-action:none}
+    /* the viewport's height is its own (flex-basis auto — a basis of 0 made the height property inert, so the drawing sat
+       in a 150px strip whatever it asked for); a [fill] host hands it the box instead */
+    .vp{position:relative;overflow:hidden;flex:1 1 auto;min-height:80px;cursor:grab;touch-action:none;background:var(--s1,var(--bg0,transparent))}
+    :host([fill]) .vp{flex:1 1 0%;height:auto;min-height:0}
+    :host([bare]) .vp{min-height:40px;background:transparent}
     .vp.panning{cursor:grabbing}
     .vp svg{display:block}
     .err{padding:10px 12px;font-size:11px;color:var(--err,#c96b6b);font-family:ui-monospace,monospace;white-space:pre-wrap}
+    .badge{position:absolute;right:8px;top:6px;font-family:ui-monospace,monospace;font-size:8.5px;color:var(--dim2,#8a92a0);
+      background:var(--bg2,#1a1c20);border:1px solid var(--border,rgba(255,255,255,.09));border-radius:99px;padding:2px 7px;
+      display:flex;gap:5px;align-items:center;pointer-events:none;z-index:2}
+    .badge i{width:5px;height:5px;border-radius:50%;background:var(--warn,#c9a35a);animation:vmbp 1.2s ease-in-out infinite}
+    .badge.done i{background:var(--acc2,#8fb87a);animation:none}
+    @keyframes vmbp{0%,100%{opacity:1}50%{opacity:.3}}
+    .ghost{display:flex;align-items:center;gap:12px;padding:22px 16px;font-size:10px;color:var(--dim2,#8a92a0);font-family:ui-monospace,monospace}
+    .ghost i{width:110px;height:32px;border:1px dashed var(--dim2,#8a92a0);border-radius:6px;display:inline-block;flex-shrink:0;opacity:.7}
     .err pre{margin:6px 0 0;padding:8px;background:rgba(0,0,0,.25);border-radius:5px;
       font-size:10px;color:var(--dim2,#8a92a0);max-height:180px;overflow:auto}
     .src{display:none;margin:0;padding:8px 10px;background:rgba(0,0,0,.22);font-size:10.5px;
@@ -630,37 +678,120 @@
       if (attr) this.render(attr);
       else if (txt) { this.textContent = ''; this.render(txt); }
       this._sh.querySelector('.ttl').textContent = this.getAttribute('title') || 'diagram';
+      LIVE.add(this);
     }
-    static get observedAttributes() { return ['code', 'title']; }
+    static get observedAttributes() { return ['code', 'title', 'theme-variables', 'max-height']; }
     attributeChangedCallback(name, _o, v) {
       if (name === 'code' && v != null && v !== this._code) this.render(v);
       if (name === 'title') this._sh.querySelector('.ttl').textContent = v || 'diagram';
+      if (name === 'theme-variables') { try { this._themeVars = v ? JSON.parse(v) : null; } catch (_) { this._themeVars = null; } this.retheme(); }
+      if (name === 'max-height' && this._svgEl) this._size();
+    }
+    disconnectedCallback() { LIVE.delete(this); }
+    /* an element's own token overrides (themeVariables — the name mermaid.js gives the same idea) */
+    get themeVariables() { return this._themeVars || null; }
+    set themeVariables(v) { this._themeVars = v && typeof v === 'object' ? Object.assign({}, v) : null; this.retheme(); }
+    _theme() { return THEME(this._themeVars); }
+    static theme() { return THEME(); }
+    /* the same drawing in the theme as it is now; the view (a pan, a zoom) is kept */
+    retheme() { if (!this._code || !this._svgEl) return; const keep = Object.assign({}, this._view); this._held = this._held || false; try { this.render(this._code); } catch (_) { return; } if (this._held) { this._view = keep; this._apply(); } }
+    /* the height the drawing takes at a width — its aspect kept, at most 1.6× its own size, never under 80 */
+    naturalHeight(width) { const b = this._bounds; if (!b || !b.w || !this._svgEl) return 0; const w = Math.max(1, Number(width) || this._vp.clientWidth || 400); const k = Math.min(w / b.w, 1.25); return Math.max(80, Math.round(b.h * k)); }
+
+    /* what kind of diagram the source is, and the graph for the flow-like kinds */
+    static _kind(code) {
+      const head = (String(code || '').split('\n').find(l => l.trim()) || '').trim().toLowerCase();
+      if (/^sequencediagram/.test(head)) return 'sequence';
+      if (/^pie\b/.test(head)) return 'pie';
+      if (/^statediagram/.test(head)) return 'state';
+      return 'flowchart';
+    }
+    static _graph(code, kind) {
+      if (kind === 'state') return parseState(code);
+      const head = (String(code || '').split('\n').find(l => l.trim()) || '').trim().toLowerCase();
+      return parseFlow(/^(graph|flowchart)\b/.test(head) ? code : 'graph TD\n' + code);
+    }
+    _build(code, t) {
+      const type = VeraMermaid._kind(code);
+      if (type === 'sequence') return { type, result: seqSvg(parseSeq(code), t) };
+      if (type === 'pie') return { type, result: pieSvg(parsePie(code), t) };
+      return { type, result: flowSvg(VeraMermaid._graph(code, type), t) };
+    }
+    _badge(text, live) {
+      if (!this._badgeEl) { this._badgeEl = document.createElement('span'); this._badgeEl.className = 'badge'; }
+      const b = this._badgeEl;
+      if (text == null) { b.remove(); return; }
+      b.className = 'badge' + (live ? '' : ' done'); b.innerHTML = '<i></i>' + esc(text);
+      if (b.parentNode !== this._vp) this._vp.appendChild(b);
     }
 
     /* main entry */
     render(code) {
       this._code = String(code || '').trim();
       this._sh.querySelector('.src').textContent = this._code;
-      const t = THEME();
+      const t = this._theme(); this._held = false;
       let result, type;
       try {
-        const head = (this._code.split('\n').find(l => l.trim()) || '').trim().toLowerCase();
-        if (/^sequencediagram/.test(head)) { type = 'sequence'; result = seqSvg(parseSeq(this._code), t); }
-        else if (/^pie\b/.test(head)) { type = 'pie'; result = pieSvg(parsePie(this._code), t); }
-        else if (/^statediagram/.test(head)) { type = 'state'; result = flowSvg(parseState(this._code), t); }
-        else if (/^(graph|flowchart)\b/.test(head)) { type = 'flowchart'; result = flowSvg(parseFlow(this._code), t); }
-        else { type = 'flowchart'; result = flowSvg(parseFlow('graph TD\n' + this._code), t); }
+        ({ type, result } = this._build(this._code, t));
       } catch (err) {
         this._svgEl = null;
         this._vp.innerHTML = `<div class="err">⚠ mermaid parse failed: ${esc(err && err.message || err)}<pre>${esc(this._code.slice(0, 1200))}</pre></div>`;
         this.dispatchEvent(new CustomEvent('vm:error', { detail: { message: String(err && err.message || err) } }));
         return;
       }
+      this._paint(result, type);
+      // the closing fence settles the layout once: the badge says so, then goes
+      if (this._live) { this._live = false; this._badge(`${result.count.nodes || 0} nodes · ${result.count.edges || 0} edges · settled`, false); clearTimeout(this._badgeT); this._badgeT = setTimeout(() => this._badge(null), 2500); }
+    }
+
+    /* the same, while the source is still arriving (see the header) */
+    stream(code) {
+      code = String(code || '').replace(/\r\n?/g, '\n');
+      this._live = true;
+      const lines = code.split('\n');
+      const partial = /\n$/.test(code) ? '' : (lines.pop() || '');
+      if (/\n$/.test(code)) lines.pop();
+      const full = lines.join('\n');
+      this._code = (full + (partial ? '\n' + partial : '')).trim();
+      this._sh.querySelector('.src').textContent = this._code;
+      const t = this._theme();
+      const kind = VeraMermaid._kind(this._code);
+      const pending = partial.trim() ? 1 : 0;
+      let result, type;
+      try {
+        if (kind === 'sequence' || kind === 'pie') { ({ type, result } = this._build(full, t)); }
+        else {
+          let gA = null, gB = null;
+          try { gA = VeraMermaid._graph(full, kind); } catch (_) { gA = null; }
+          if (pending) { try { gB = VeraMermaid._graph(full + '\n' + partial, kind); } catch (_) { gB = null; } }
+          if (gB && gA) {
+            for (const [id, n] of gB.nodes) if (!gA.nodes.has(id)) n.ghost = true;
+            for (let i = gA.edges.length; i < gB.edges.length; i++) gB.edges[i].ghost = true;
+          } else if (gB && !gA) {
+            for (const n of gB.nodes.values()) n.ghost = true;
+            for (const e of gB.edges) e.ghost = true;
+          }
+          const g = gB || gA;
+          if (!g) throw new Error('waiting for a complete line');
+          type = kind; result = flowSvg(g, t);
+        }
+      } catch (err) {
+        // nothing whole yet — a ghost frame, never an error banner; a previous drawing stays
+        if (!this._svgEl) this._vp.innerHTML = '<div class="ghost"><i></i>lines parse as they close · a line is complete at its newline</div>';
+        this._badge('0 nodes · waiting for a complete line', true);
+        return;
+      }
+      this._paint(result, type);
+      this._badge(`${result.count.nodes || 0} nodes · ${result.count.edges || 0} edges${pending ? ' · ' + pending + ' pending' : ''}`, true);
+      this.dispatchEvent(new CustomEvent('vm:stream', { detail: { type, pending, ...result.count } }));
+    }
+
+    _paint(result, type) {
       const svgNs = 'http://www.w3.org/2000/svg';
       this._vp.innerHTML = '';
       const svg = document.createElementNS(svgNs, 'svg');
       svg.setAttribute('xmlns', svgNs);
-      const t2 = THEME();
+      const t2 = this._theme();
       svg.innerHTML = `<defs>
           <marker id="vmArrow" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="${t2.line}"/></marker>
           <marker id="vmArrowA" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="${t2.acc}"/></marker>
@@ -671,12 +802,20 @@
       const g = svg.querySelector('g.root');
       let bb;
       try { bb = g.getBBox(); } catch (_) { bb = { x: 0, y: 0, width: 400, height: 200 }; }
+      this._blind = !(bb.width > 0 && bb.height > 0);   // measured while folded or unshown (a zero box): drawn again when it has one
       this._bounds = { x: bb.x - 16, y: bb.y - 16, w: bb.width + 32, h: bb.height + 32 };
-      const maxH = parseInt(this.getAttribute('max-height') || '460', 10);
-      const natural = Math.min(maxH, Math.max(120, this._bounds.h));
-      if (!this.style.height && !this.hasAttribute('fill')) this._vp.style.height = natural + 'px';
+      const natural = this._size();
       this.fit();
-      this.dispatchEvent(new CustomEvent('vm:rendered', { detail: { type, ...result.count } }));
+      if (this._badgeEl && this._badgeEl.isConnected === false && this._live) this._vp.appendChild(this._badgeEl);
+      this.dispatchEvent(new CustomEvent('vm:rendered', { detail: { type, ...result.count, width: this._vp.clientWidth || 0, height: this._vp.clientHeight || 0, natural } }));
+    }
+    /* the viewport's height: the drawing's own at this width (its aspect kept), up to max-height — a [fill] host
+       or one given a height keeps the box it has */
+    _size() {
+      const maxH = parseInt(this.getAttribute('max-height') || '720', 10) || 720;
+      const natural = this.naturalHeight(this._vp.clientWidth || 400);
+      if (!this.style.height && !this.hasAttribute('fill')) this._vp.style.height = Math.min(maxH, natural) + 'px';
+      return natural;
     }
 
     fit() {
@@ -684,6 +823,7 @@
       const vw = this._vp.clientWidth || 400, vh = this._vp.clientHeight || 240;
       const b = this._bounds;
       const k = Math.min(vw / b.w, vh / b.h, 1.6);
+      this._held = false;   // the fitted view: a resize fits again; a pan or a zoom holds it
       this._view.k = k > 0 && isFinite(k) ? k : 1;
       this._view.x = (vw - b.w * this._view.k) / 2 - b.x * this._view.k;
       this._view.y = (vh - b.h * this._view.k) / 2 - b.y * this._view.k;
@@ -701,7 +841,7 @@
       let drag = null;
       this._vp.addEventListener('pointerdown', e => {
         if (e.button !== 0) return;
-        drag = { x: e.clientX, y: e.clientY, vx: this._view.x, vy: this._view.y };
+        drag = { x: e.clientX, y: e.clientY, vx: this._view.x, vy: this._view.y }; this._held = true;
         this._vp.classList.add('panning');
         try { this._vp.setPointerCapture(e.pointerId); } catch (_) { }
       });
@@ -716,17 +856,23 @@
       this._vp.addEventListener('pointercancel', up);
       this._vp.addEventListener('wheel', e => {
         if (!this._svgEl) return;
+        // the wheel belongs to the PAGE unless you mean the diagram: a plain wheel scrolls the transcript past it, and
+        // ctrl (or Command, or a trackpad pinch, which arrives as a ctrl-wheel) zooms. A drawing in a transcript must
+        // not trap the scroll (Notes/42 defect 75).
+        if (!(e.ctrlKey || e.metaKey)) return;
         e.preventDefault();
         const r = this._vp.getBoundingClientRect();
         const mx = e.clientX - r.left, my = e.clientY - r.top;
         const f = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-        const k2 = Math.max(.15, Math.min(6, this._view.k * f));
+        const k2 = Math.max(.15, Math.min(6, this._view.k * f)); this._held = true;
         this._view.x = mx - (mx - this._view.x) * (k2 / this._view.k);
         this._view.y = my - (my - this._view.y) * (k2 / this._view.k);
         this._view.k = k2;
         this._apply();
       }, { passive: false });
-      if (window.ResizeObserver) new ResizeObserver(() => this._apply()).observe(this._vp);
+      // the width changes (a column resized, a slot placed): the viewport takes the drawing's height at the new width and
+      // fits again — unless a pan or a zoom is held, which only follows the box
+      if (window.ResizeObserver) { let lastW = 0; new ResizeObserver(() => { if (!this._svgEl) return; const w = this._vp.clientWidth; if (w && this._blind && this._code) { this.render(this._code); lastW = w; return; } if (w && w !== lastW) { lastW = w; this._size(); } if (this._held) this._apply(); else this.fit(); }).observe(this._vp); }
     }
 
     getSvg() {
@@ -736,7 +882,7 @@
       cl.setAttribute('viewBox', `${b.x} ${b.y} ${b.w} ${b.h}`);
       cl.setAttribute('width', Math.round(b.w)); cl.setAttribute('height', Math.round(b.h));
       const g = cl.querySelector('g.root'); if (g) g.removeAttribute('transform');
-      const t = THEME();
+      const t = this._theme();
       const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       bgRect.setAttribute('x', b.x); bgRect.setAttribute('y', b.y);
       bgRect.setAttribute('width', b.w); bgRect.setAttribute('height', b.h);
@@ -765,5 +911,7 @@
       img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(src)));
     }
   }
+  VeraMermaid.retheme = rethemeAll;
+  window.VeraMermaid = VeraMermaid;
   customElements.define('vera-mermaid', VeraMermaid);
 })();

@@ -5505,7 +5505,7 @@ _ASO_MOUNT_JS = r"""
 register_ui(
     "agents-skills-ontologies",
     "Agents",
-    "",
+    "⊚",
     """
     <div id="panel-aso" style="height:100%;overflow:hidden;background:#181614">
         <iframe src="/ui/panels/agents-skills-ontologies"
@@ -6139,7 +6139,7 @@ _CHAT_PANEL_INJECT_JS = r"""
 register_ui(
     "chat2",                         # panel id
     "Chat",                          # tab label
-    "",                     # icon (speech bubble, works as HTML entity)
+    "❏",                     # icon (speech bubble, works as HTML entity)
     # The panel HTML is just a mount point — the iframe is injected by the JS
     '<div id="panel-chat2" style="height:100%;overflow:hidden;background:var(--bg0)"></div>',
     _CHAT_PANEL_INJECT_JS,

@@ -95,6 +95,31 @@
 
   function listPanels(){ return _PANEL_REGISTRY.slice(); }
 
+  // ─── Display modes ───────────────────────────────────────────────────────
+  // Owner, 2026-09-27: "id like for the exploded view in the chat ui's graphing and the estate 3d and 2d mode to be
+  // modules or display modes of vera graph and defined as part of it." A MODE draws this graph's own nodes and edges
+  // another way, over the stage, and hands back to the physics view ('graph') with one pick. Modules register here the
+  // way sidebar panels do (vera_graph_modes.js ships the first: the exploded scene, the estate in 3D and in 2D); every
+  // graph on the page gets a Mode select as soon as one is registered.
+  //   { id:'estate-3d', label:'Estate · 3D', order:20,
+  //     mount: function(hostEl, graph, api){ ... return { update(), destroy() }; } }
+  // api = { nodes(), edges(), open(node) (the detail drawer), color(node) (the graph's colour for it) }
+  var _MODE_REGISTRY  = [];
+
+  function registerMode(def){
+    if (!def || !def.id || typeof def.mount !== 'function') {
+      if (typeof console !== 'undefined') console.warn('veraUI.Graph.registerMode: invalid mode def', def);
+      return;
+    }
+    var idx = -1;
+    for (var i = 0; i < _MODE_REGISTRY.length; i++) { if (_MODE_REGISTRY[i].id === def.id) { idx = i; break; } }
+    if (idx >= 0) _MODE_REGISTRY[idx] = def; else _MODE_REGISTRY.push(def);
+    _MODE_REGISTRY.sort(function(a, b){ return (a.order || 100) - (b.order || 100); });
+    _LIVE_GRAPHS.forEach(function(g){ try { if (g._attachMode) g._attachMode(def); } catch(e){} });
+  }
+
+  function listModes(){ return _MODE_REGISTRY.slice(); }
+
   // ─── Color palette (single source of truth) ─────────────────────────────
   var COL = {
     Dataset:     '#5a9e8f',
@@ -190,6 +215,9 @@
 
   function nodeColor(node){
     if (!node) return '#6a8fa0';
+    /* a node that carries its own colour keeps it (the widget colours the estate's planes and marks a problem) - every graph
+       whose nodes carry none draws as it always has */
+    if (typeof node.color === 'string' && node.color) return node.color;
     if (node.type === 'Entity' && node.props && COL[node.props.type]) {
       return COL[node.props.type];
     }
@@ -605,6 +633,8 @@
       '.vg-sp{font-family:var(--mono,monospace);font-size:8.5px;padding:3px 6px;border:1px solid var(--border,#3a3530);border-radius:3px;margin-bottom:2px;background:var(--bg2,#272421);cursor:pointer;transition:all .12s}',
       '.vg-sp:hover{border-color:var(--acc,#5a9e8f)} .vg-sp.on{border-color:var(--acc2,#8fb87a);background:rgba(143,184,122,.1)}',
       '.vg-canvas-area{flex:1;min-width:0;display:flex;flex-direction:column;position:relative;background:var(--bg0,#181614)}',
+      /* blocks off (the one design's mode): no ground of the graph's own - the page and its glow show through, as the chat's parts do */
+      'html[data-blocks="off"] .vg-canvas-area,html[data-blocks="off"] .vg-canvas,html[data-blocks="off"] .vg-mode-host{background:transparent!important;border-color:transparent!important}',
       // ── Detail drawer tabs ──────────────────────────────────────────────
       '.vg-dtabs{display:flex;gap:2px;padding:4px 8px 0;border-bottom:1px solid var(--border,#3a3530);background:var(--bg1,#1f1d1a)}',
       '.vg-dtab{font-family:var(--mono,monospace);font-size:9px;padding:3px 10px;border-radius:3px 3px 0 0;border:1px solid transparent;border-bottom:none;color:var(--dim,#6a6058);cursor:pointer;user-select:none;transition:all .12s}',
@@ -4750,6 +4780,7 @@
         vx: 0, vy: 0,
         r: nodeSpec.r || (nodeSpec.type === 'Entity' ? 8 : nodeSpec.type === 'Dataset' ? 14 : 10),
       };
+      if (typeof nodeSpec.color === 'string' && nodeSpec.color) n.color = nodeSpec.color;   // a colour the caller gives (the widget's status colouring) - read by nodeColor
       n._spawnedAtEdge = _usedEdgeSpawn && !nodeSpec._fromId;
       n._layer = _nodeLayer(nodeSpec);
       _ensureLayer(n._layer);
@@ -6034,6 +6065,49 @@
     instance.closePanel = function(){ if (_activePanelId) _activatePanel(_activePanelId); };
     instance.hasPanel   = function(id){ return !!_mountedPanels[id]; };
 
+
+    // ── display modes: this graph's nodes and edges drawn another way, over the stage ('graph' is the physics view) ──
+    var _modeSel = null, _modeHost = null, _modeCur = 'graph', _modeHandle = null, _modeSig = '', _modeTimer = 0;
+    function _modeSelEnsure(){
+      if (_modeSel) return _modeSel;
+      var hdr = container.querySelector('.vg-header'), wrap = container.querySelector('.vg-canvas-wrap');
+      _modeSel = document.createElement('select'); _modeSel.className = 'vg-mode';
+      _modeSel.title = 'Display mode - the same nodes and edges drawn another way';
+      _modeSel.style.cssText = 'font-size:10px;padding:2px 6px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:3px;max-width:150px;flex:0 0 auto';
+      _modeSel.innerHTML = '<option value="graph">Graph</option>';
+      _modeSel.onchange = function(){ instance.setMode(_modeSel.value); };
+      if (hdr) hdr.insertBefore(_modeSel, hdr.querySelector('.vg-meta') || null);
+      else if (wrap) { _modeSel.style.position = 'absolute'; _modeSel.style.top = '6px'; _modeSel.style.right = '6px'; _modeSel.style.zIndex = '6'; wrap.appendChild(_modeSel); }
+      return _modeSel;
+    }
+    function _attachMode(def){
+      var s = _modeSelEnsure(); if (s.querySelector('option[value="' + def.id + '"]')) return;
+      var o = document.createElement('option'); o.value = def.id; o.textContent = def.label || def.id; s.appendChild(o);
+    }
+    function _modeApi(){
+      return { nodes: function(){ return state.nodes.slice(); }, edges: function(){ return state.edges.slice(); },
+               open: function(n){ try { showDetail(n); } catch(e){} }, color: function(n){ try { return nodeColor(n); } catch(e){ return '#6a8fa0'; } } };
+    }
+    instance.setMode = function(id){
+      id = id || 'graph'; if (id === _modeCur) return;
+      if (_modeHandle && _modeHandle.destroy) { try { _modeHandle.destroy(); } catch(e){} }
+      _modeHandle = null; clearInterval(_modeTimer);
+      var wrap = container.querySelector('.vg-canvas-wrap'), cv = container.querySelector('.vg-canvas');
+      if (id === 'graph') { if (_modeHost) _modeHost.style.display = 'none'; if (cv) cv.style.visibility = ''; _modeCur = 'graph'; if (_modeSel) _modeSel.value = 'graph'; return; }
+      var def = null; for (var i = 0; i < _MODE_REGISTRY.length; i++) if (_MODE_REGISTRY[i].id === id) def = _MODE_REGISTRY[i];
+      if (!def || !wrap) return;
+      if (!_modeHost) { _modeHost = document.createElement('div'); _modeHost.className = 'vg-mode-host'; _modeHost.style.cssText = 'position:absolute;inset:0;z-index:5;overflow:hidden;background:var(--bg0,#181614);border-radius:var(--radius,4px)'; wrap.appendChild(_modeHost); }
+      _modeHost.innerHTML = ''; _modeHost.style.display = 'block'; if (cv) cv.style.visibility = 'hidden';
+      _modeCur = id; if (_modeSel) _modeSel.value = id;
+      try { _modeHandle = def.mount(_modeHost, instance, _modeApi()) || null; } catch(e){ if (typeof console !== 'undefined') console.warn('vera-graph mode', id, e); }
+      // the graph keeps loading underneath: the mode is told when its nodes or edges change
+      _modeSig = state.nodes.length + ':' + state.edges.length;
+      _modeTimer = setInterval(function(){ var sg = state.nodes.length + ':' + state.edges.length; if (sg !== _modeSig) { _modeSig = sg; try { if (_modeHandle && _modeHandle.update) _modeHandle.update(); } catch(e){} } }, 1200);
+    };
+    instance.getMode = function(){ return _modeCur; };
+    instance._attachMode = _attachMode;
+    _MODE_REGISTRY.forEach(_attachMode);
+    { var _odModes = instance.destroy; instance.destroy = function(){ clearInterval(_modeTimer); if (_modeHandle && _modeHandle.destroy) { try { _modeHandle.destroy(); } catch(e){} } if (_odModes) _odModes(); }; }
     // Attach all currently-registered panels to this fresh graph.
     _PANEL_REGISTRY.forEach(function(def){ _attachSidebarPanel(def); });
     _LIVE_GRAPHS.push(instance);
@@ -6078,6 +6152,16 @@
       // Modular sidebar plugin API — companion files call registerPanel().
       registerPanel: registerPanel,
       listPanels:    listPanels,
+      // Display modes - modules call registerMode() (vera_graph_modes.js: the exploded scene, the estate 3D and 2D).
+      registerMode:  registerMode,
+      listModes:     listModes,
     };
+    // the display modes are part of the graph: their module loads wherever the graph does
+    try {
+      if (!window.__veraGraphModesLoad) { window.__veraGraphModesLoad = 1;
+        var _cs = document.currentScript && document.currentScript.src ? String(document.currentScript.src) : '';
+        var _base = _cs && /vera-graph\.js/.test(_cs) ? _cs.replace(/vera-graph\.js.*$/, '') : '/ui/';
+        var _ms = document.createElement('script'); _ms.src = _base + 'vera-graph-modes.js'; (document.head || document.documentElement).appendChild(_ms); }
+    } catch(e){}
   }
 })();

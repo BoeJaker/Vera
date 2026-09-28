@@ -104,6 +104,9 @@
     for (var i = _frames.length - 1; i >= 0; i--) {
       var f = _frames[i];
       if (!f.canvas.isConnected) { _frames.splice(i, 1); continue; }  // auto-clean
+      // laid out nowhere (the loading overlay of a tab that is not showing): not drawn - a dozen of them at 60 fps took
+      // ~13 s of main thread in a 40 s profile of the harness (2026-09-27)
+      if (!f.canvas.offsetWidth && !f.canvas.offsetHeight) continue;
       try { f.fn(now); } catch (e) { _frames.splice(i, 1); }
     }
     if (_frames.length) schedule();

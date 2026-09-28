@@ -1781,7 +1781,7 @@ async def ide_remote_panel_html(trace_id=None):
 register_ui(
     "ide-remote-panel",
     "Remote IDE",
-    "🛰",
+    "⊡",
     """<div id="ide-remote-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/ide/remote/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"

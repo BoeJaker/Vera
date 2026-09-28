@@ -2338,7 +2338,7 @@ _IFRAME_STYLE = (
 register_ui(
     "memory-galaxy-panel",
     "Galaxy",
-    "",
+    "✺",
     f"""<div style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/galaxy/panel" style="{_IFRAME_STYLE}"
           allow="clipboard-read; clipboard-write"></iframe>

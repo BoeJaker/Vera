@@ -344,7 +344,9 @@ def tasks_overview(results: Sequence[Dict[str, Any]], *, task_ids: Optional[Iter
                     "series": [{"ts": r.get("ts"), "ok": r.get("ok"), "wall_s": r.get("wall_s"),
                                 "status": r.get("status"), "driver": (r.get("driver") or {}).get("id"),
                                 "code": (r.get("code") or {}).get("sha_short") if r.get("code") else None}
-                               for r in reversed(rows[-24:])]})
+                               # the NEWEST 24, oldest first: rows are newest-first, so rows[-24:]
+                               # was the OLDEST 24 and the sparkline froze at a task's first runs
+                               for r in reversed(rows[:24])]})
     return out
 
 

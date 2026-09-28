@@ -543,7 +543,7 @@ async def _perf_panel():
 register_ui(
     "perf-monitor",
     "Perf",
-    "⚡",
+    "⌁",
     """<div id="perf-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/perf/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#181614)"

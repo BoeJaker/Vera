@@ -1282,7 +1282,7 @@ if _CAP_AVAILABLE:
         pass
 
     register_ui(
-        "thermal-printer", "Thermal Printer", "\U0001f5a8\ufe0f",
+        "thermal-printer", "Thermal Printer", "⎙",
         """<div style="height:100%;display:flex;flex-direction:column">
   <iframe src="/print/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"

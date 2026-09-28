@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-design-own>
 <head>
   <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash.
   Cached vars are only replayed when they were resolved FOR the cached theme id
@@ -39,6 +39,10 @@
 <meta name="apple-mobile-web-app-title" content="Vera">
 <script src="/ui/pwa/pwa.js" defer></script>
 <script src="/ui/vera-ui.js?v=scale2"></script>
+<script src="/ui/vera-lhm.js"></script>
+<script src="/ui/menus.js"></script>
+<script src="/ui/rcm.js"></script>
+<script src="/ui/widgets/widget_element.js"></script>
 <!-- Fonts loaded non-render-blocking: the shell paints immediately with the
      system fallbacks in the CSS var stacks, then swaps in the web fonts if/when
      they arrive. On a LAN box with slow/no route to Google, this avoids the
@@ -47,6 +51,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" media="print" onload="this.media='all'"
       href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap">
+<!-- the style packs' faces (the StylePacks board): Instrument Sans · Source Serif 4 · Libre Baskerville · JetBrains Mono · Pixelify Sans · Press Start 2P · VT323 -->
+<link rel="stylesheet" media="print" onload="this.media='all'" id="veraPackFonts"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Libre+Baskerville:wght@400;700&family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500;700&family=Pixelify+Sans:wght@400;500;600;700&family=Press+Start+2P&family=VT323&display=swap">
 <style>
 /* ── Warm dark (default) ── */
 :root{
@@ -230,7 +237,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 /* In LHM mode the horizontal tab bar is hidden; navigation lives in .lhm-nav */
 .body-wrap.lhm .tabs{display:none !important}
 /* LHM nav panel — hidden by default, shown when lhm class present */
-.lhm-nav{display:none;flex-direction:column;width:160px;min-width:120px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);transition:width .15s}
+.lhm-nav{display:none;flex-direction:column;width:186px;min-width:150px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);transition:width .15s}
 .body-wrap.lhm .lhm-nav{display:flex}
 .body-wrap.lhm .lhm-nav.events-open{width:260px}
 /* Auto-hide extended to vertical/LHM mode — same overlay + reserved-gutter
@@ -241,9 +248,21 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
    so never actually did anything here. */
 .body-wrap.lhm .lhm-nav.autohide{position:absolute;top:0;left:0;bottom:0;transform:translateX(-100%);opacity:0;pointer-events:none;transition:transform .12s ease,opacity .1s ease;z-index:20}
 .body-wrap.lhm .lhm-nav.autohide.show{transform:translateX(0);opacity:1;pointer-events:auto}
-.body-wrap.lhm .main.autohide-reserve-v{padding-left:160px}
+.body-wrap.lhm .main.autohide-reserve-v{padding-left:186px}
+/* the strips under the tab bar (tabs mode only): the active panel's sections and the open section's tabs */
+#tabSubtabs:empty,.body-wrap.lhm #tabSubtabs{display:none}
+.lhm-nav .lhm-s-w.events #lhmEventsFeed{flex:1;min-height:0}
+.lhm-nav.events-open .lhm-s-w.events .lhm-s-wbody{max-height:50vh}
 .body-wrap.lhm .tab-hover-zone{top:0;left:0;bottom:0;right:auto;width:28px;height:auto}
 .lhm-nav-foot{padding:4px 6px;border-top:1px solid var(--border);flex-shrink:0;display:flex;gap:2px;align-items:center;justify-content:flex-end}
+/* a tab the aide opened (the Harness board): who, on the tab; the Driven ribbon over it (the Driven board) */
+#tabBar .tab.driven .who{font-family:var(--mono);font-size:8px;color:var(--acc);margin-left:6px;border:1px solid color-mix(in srgb,var(--acc) 40%,transparent);border-radius:99px;padding:0 5px}
+#tabRibbon{display:none;align-items:center;gap:6px;margin:2px 8px;padding:1px 8px;border-radius:10px;border:1px solid var(--acc3,#d4a96a);background:color-mix(in srgb,var(--acc3,#d4a96a) 12%,transparent);font-size:9.5px;width:fit-content}
+#tabRibbon.on{display:inline-flex}
+#tabRibbon i{width:6px;height:6px;border-radius:50%;background:var(--acc3,#d4a96a);display:inline-block}
+#tabRibbon b{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--acc3,#d4a96a)}
+#tabRibbon .who,#tabRibbon .pol{font-family:var(--mono);font-size:8.5px;color:var(--dim2)}
+#tabRibbon button{font:inherit;font-size:8.5px;padding:0 6px;border:1px solid var(--border);border-radius:5px;background:var(--bg2);color:var(--fg);cursor:pointer}
 .lhm-nav .tab{display:flex;align-items:center;border-bottom:none;border-right:2px solid transparent;padding:8px 10px 8px 10px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--dim2);white-space:normal;word-break:break-word;user-select:none;cursor:pointer;position:relative;transition:all .14s;text-align:left;line-height:1.3}
 .lhm-nav .tab:hover{color:var(--text);background:rgba(255,255,255,.025)}
 .lhm-nav .tab.active{color:var(--acc);border-right-color:var(--acc);background:rgba(90,158,143,.06)}
@@ -258,11 +277,39 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .lhm-nav .subitem{display:block;padding:5px 10px 5px 20px;font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.3px;color:var(--dim2);white-space:normal;word-break:break-word;user-select:none;cursor:pointer;border-right:2px solid transparent;transition:all .12s}
 .lhm-nav .subitem:hover{color:var(--text);background:rgba(255,255,255,.02)}
 .lhm-nav .subitem.on{color:var(--acc2);border-right-color:var(--acc2)}
+/* ── The absorbed menu (UI redesign lhm-library) — when the open panel publishes a full LHM spec (the chat: eight
+   quick menus), this outer LHM draws that panel's rail and its current menu's tabs IN PLACE of the tab list, one
+   LHM instead of two; the ☰ bar above it swaps back to this page's own tab list, in the same place. ── */
+.body-wrap.lhm .lhm-nav.absorbed{width:212px}
+.body-wrap.lhm .main.autohide-reserve-v.absorbed{padding-left:212px}
+.lhm-nav .lhm-topbar{display:flex;align-items:center;gap:6px;padding:5px 6px;border-bottom:1px solid var(--border);flex-shrink:0}
+.lhm-nav .lhm-topbar .lhm-tb{width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:4px;border:1px solid transparent;color:var(--dim2);font-size:14px;cursor:pointer;user-select:none;flex-shrink:0}
+.lhm-nav .lhm-topbar .lhm-tb:hover{color:var(--text);background:var(--bg2)}
+.lhm-nav .lhm-topbar .lhm-tb.on{color:var(--acc);border-color:var(--acc)}
+.lhm-nav .lhm-topbar .lhm-tt{flex:1;min-width:0;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lhm-nav .lhm-abs{flex:1;display:flex;min-height:0;overflow:hidden}
+/* the chat open: its MENU instance is the LHM (one persistent frame, the board's 318 px) */
+#lhmNav.lhm-nav.absorbed.chatmenu{width:318px!important}
+#lhmNav.lhm-nav.absorbed.chatmenu.grown{width:706px!important}   /* the Context menu grown into the full graph, in place */
+#lhmNav.lhm-nav.absorbed.chatmenu.page{width:min(1100px,calc(100vw - 80px))!important}   /* the menu showing a page (Settings): the page's width, not the menu's */
+.body-wrap.lhm .main.autohide-reserve-v.absorbed.chatmenu{padding-left:318px}
+.lhm-nav #lhmMenuHost{display:none;flex:1;min-height:0}
+.lhm-nav #lhmMenuHost.on{display:flex}
+.lhm-nav #lhmMenuHost > iframe{flex:1;width:100%;height:100%;border:0;background:transparent}
+#lhmNav.chatmenu #lhmNavTabs{flex:0 0 auto!important;min-height:0}
+#lhmNav.chatmenu #lhmMenuHost.on{flex:1 1 auto}
 
 /* ── Panels area: multi-tab split ── */
 .panels{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:row}
 .panel{flex:1;overflow-y:auto;padding:0;display:none;min-width:0;position:relative}
 .panel.active{display:flex;flex-direction:column}
+/* a pane beside another names itself and closes (owner, 2026-09-27: a second panel opened with ⧉ from a menu "there
+   appears to be no way to close" it - in LHM mode the tab bar with its × is hidden). Its name docks its menu. */
+.pane-x{position:absolute;top:6px;right:8px;z-index:30;display:flex;align-items:center;gap:2px;padding:2px 2px 2px 9px;border-radius:999px;background:color-mix(in srgb,var(--bg2,#1f232b) 88%,transparent);border:1px solid var(--border,rgba(255,255,255,.1));font-size:11px;line-height:1;color:var(--dim2,#8a92a0);opacity:.75;transition:opacity .15s,border-color .15s;backdrop-filter:blur(6px)}
+.pane-x:hover{opacity:1}.pane-x.first{border-color:var(--acc,#6ea8d8);color:var(--text,#d8dce4)}
+.pane-x .pn{cursor:pointer;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 0}
+.pane-x .px{all:unset;cursor:pointer;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;font-size:14px;color:var(--dim,#6b7280)}
+.pane-x .px:hover{background:var(--bg3,#2a2f37);color:var(--err,#ef5b5b)}
 /* Multi-panel split divider — always col-resize since panels are always row-flex */
 .panel-divider{width:5px;background:var(--border);cursor:col-resize;flex-shrink:0;transition:background .15s;position:relative;z-index:10}
 .panel-divider:hover,.panel-divider.dragging{background:var(--acc)}
@@ -323,8 +370,14 @@ select option{background:var(--bg2)}
 /* Trailing bottom room so the bottom-row widgets always have empty scroll
    space to be resized/expanded into (see .dash-grid flex + editing rules). */
 #panel-dashboard{padding:14px 16px 120px}
-#panel-dashboard .dash-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
-#panel-dashboard .dash-toolbar .dash-title{font-size:11px;font-weight:600;color:var(--text);letter-spacing:.4px;display:flex;align-items:center;gap:8px;margin-right:auto}
+#panel-dashboard .dash-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap}
+#panel-dashboard .dash-toolbar .dash-title{font-size:16px;font-weight:650;color:var(--t1,var(--text));letter-spacing:-.01em;display:flex;align-items:center;gap:9px;margin-right:auto;order:-3}
+/* the top of the dashboard (2026-09-28): the subtitle beside the title, the live chip, the health readings as status pills; the arranging buttons a group of their own */
+#panel-dashboard .dash-toolbar .dlbl{order:-2;text-transform:none;letter-spacing:0;font-weight:400;font-size:11px;color:var(--t3,var(--dim,#6b7280))}
+#panel-dashboard .dash-toolbar .live{order:-1;padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--ac2,var(--acc2,#8fb87a)) 12%,transparent)}
+#panel-dashboard .dash-toolbar #dashHealthStrip > span{border-radius:999px!important;font-size:9.5px}
+#panel-dashboard .dash-toolbar #dashEditBtn{margin-left:10px;position:relative}#panel-dashboard .dash-toolbar #dashEditBtn::before{content:'';position:absolute;left:-10px;top:3px;bottom:3px;width:1px;background:var(--bd2,var(--border2,rgba(255,255,255,.16)))}
+#panel-dashboard .dash-toolbar .dash-meta{font-size:10px}
 #panel-dashboard .dash-toolbar .dash-title::before{content:'';width:3px;height:14px;background:linear-gradient(180deg,var(--acc),var(--acc2));border-radius:2px}
 #panel-dashboard .dash-meta{font-size:9.5px;color:var(--dim2);font-family:var(--mono)}
 
@@ -554,68 +607,463 @@ select option{background:var(--bg2)}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;opacity:.7}
 ::-webkit-scrollbar-thumb:hover{background:var(--dim)}
 </style>
+<style id="designHarness">
+/* ── the harness as the Harness board draws it (the design landing; every rule on the page's own markup) ── */
+body{background:var(--bg,var(--bg0,#0e0f12))}
+/* the header */
+header{height:48px;padding:0 16px;gap:10px;background:var(--s1,var(--bg1,#151719));border-bottom:none}
+header::after{display:none}
+header .logo{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:11px;font-weight:700;letter-spacing:3.2px;color:var(--ac,var(--acc,#5a9e8f));gap:0}
+header .logo-hex{display:none}
+header .dot{width:6px;height:6px;background:var(--ac2,var(--acc2,#8fb87a))}
+header .dot.live{box-shadow:none}
+header .conn-label{display:none}
+header .ls-sep{display:none}
+header #hdrPills{max-width:260px}
+header #hdrPills .hdr-pill{background:transparent;border:none;font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+header #hdrMetrics{gap:3px;margin-left:6px;font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
+header #hdrMetrics .ls-group{display:flex;align-items:center;gap:6px;height:28px;padding:0 9px;border-radius:var(--r-sm,6px);cursor:default}
+header #hdrMetrics .ls-group:hover{background:var(--s2,var(--bg2,#1a1c20))}
+header #hdrMetrics .ls-icon{display:none}
+header #hdrMetrics .ls-label{font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7280));font-weight:600}
+header #hdrMetrics .ls-meter{width:34px;height:4px;border-radius:2px;background:var(--s3,var(--bg3,#22262e));overflow:hidden;order:3}
+header #hdrMetrics .ls-meter-fill{height:100%;background:var(--ac,var(--acc,#5a9e8f))}
+header #hdrMetrics .ls-val{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:12px;font-weight:600;color:var(--t1,var(--text,#d8dce4));letter-spacing:-.01em}
+header #hdrMetricCfgWrap{position:relative}
+header #hdrMetricBtn{width:26px;height:26px;padding:0;border:none;background:transparent;color:var(--t3,var(--dim,#6b7280));border-radius:var(--r-sm,6px);font-size:12px}
+header #hdrMetricBtn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+header .hsp{flex:1}
+header #vao-pill,header .vao{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 11px;border-radius:var(--r-sm,6px);border:none;background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:11px;cursor:pointer;max-width:340px;min-width:0}
+header .vao:hover,header .vao.on{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+header .vao .d{width:6px;height:6px;border-radius:50%;background:var(--ac,var(--acc,#5a9e8f));flex-shrink:0;box-shadow:0 0 0 3px color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 22%,transparent)}
+header .vao .lt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+header .vao .ct{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));background:var(--s3,var(--bg3,#22262e));border-radius:var(--r-pill,99px);padding:1px 6px;flex-shrink:0}
+header .vao .cv{color:var(--t3,var(--dim,#6b7280));font-size:9px;flex-shrink:0}
+header .hbtn{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border-radius:var(--r-sm,6px);border:none;background:transparent;color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:11px;cursor:pointer;white-space:nowrap}
+header .hbtn:hover{color:var(--t1,var(--text,#d8dce4))}
+header .hbtn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+header .hbtn .mono{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;opacity:.65}
+header .seg{display:flex;background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:2px;gap:2px}
+header .seg button{height:26px;padding:0 11px;font:inherit;font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0));border:none;background:transparent;border-radius:calc(var(--r-sm,6px) - 2px);cursor:pointer}
+header .seg button.on{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri-fg,var(--on-acc,#fff));font-weight:600;box-shadow:inset 0 0 0 1px var(--pri-bd,transparent)}
+header .swp{width:24px;height:24px;border-radius:var(--r-sm,6px);cursor:pointer;position:relative;overflow:hidden;box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));flex-shrink:0}
+header .swp.on{box-shadow:0 0 0 2px var(--ac,var(--acc,#5a9e8f))}
+/* ── THE CHAT'S GLOW, UNDER ITS MENU (owner, 2026-09-27). The chat and its menu are two frames here, so neither can
+   show a glow behind the other: the harness draws the one wash behind both while the chat is the open tab, the frames
+   are transparent over it, and the menu's slot is a translucent surface - so the glow shows through the menu at rest
+   and as it grows. ── */
+#veraWashH{position:fixed;left:0;right:0;top:0;height:360px;pointer-events:none;z-index:0;opacity:0;transition:opacity .45s ease;
+  background:radial-gradient(120% 100% at 10% 0%,color-mix(in srgb,var(--acc,#5a9e8f) 12%,transparent),transparent 62%),
+             radial-gradient(90% 80% at 92% 0%,color-mix(in srgb,var(--acc2,var(--acc,#5a9e8f)) 9%,transparent),transparent 60%)}
+body.chat-open #veraWashH{opacity:1}
+body > header{z-index:3}
+body.chat-open .body-wrap{position:relative;z-index:1;background:transparent}
+body.chat-open .main{background:transparent}
+body.chat-open #lhmNav.chatmenu{background:color-mix(in srgb,var(--s1,var(--bg1,#151719)) 52%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15);border-right-color:transparent}
+/* the menu's slot opens, grows (the graph) and shrinks on one easing, and the tab beside it follows */
+.lhm-nav{transition:width .36s cubic-bezier(.2,.8,.2,1),background .3s ease}
+.main{transition:padding .36s cubic-bezier(.2,.8,.2,1)}
+@media (prefers-reduced-motion:reduce){ .lhm-nav,.main{transition:none} }
+/* ── ONE TOP BAR: the open panel's controls, drawn here (the panel offers them; a press goes back to the panel) ── */
+header #hdrPanel{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;overflow:hidden;margin-left:6px}
+header #hdrPanel[hidden]{display:none}
+header.absorbing .hsp{flex:0 0 6px}
+header .hp-grp{display:inline-flex;align-items:center;gap:2px;flex-shrink:0}
+header .hp-grp.seg{background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:2px}
+header .hp-btn{height:26px;padding:0 9px;border:0;background:transparent;color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:10.5px;border-radius:calc(var(--r-sm,6px) - 2px);cursor:pointer;white-space:nowrap}
+header .hp-grp:not(.seg) .hp-btn{height:28px;background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px)}
+header .hp-btn:hover{color:var(--t1,var(--text,#d8dce4))}
+header .hp-btn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+header .hp-grp .hp-btn.hp-sess{max-width:220px;overflow:hidden;text-overflow:ellipsis;font-weight:600;font-size:11.5px;color:var(--t1,var(--text,#d8dce4));background:transparent}
+header .hp-grp .hp-btn.hp-more{font-size:15px;line-height:1;padding:0 9px;background:transparent}
+header .hp-in{height:28px;width:170px;border:0;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t1,var(--text,#d8dce4));font:inherit;font-size:11px;padding:0 9px}
+header .hp-in:focus{outline:none;box-shadow:inset 0 0 0 1px var(--ac,var(--acc,#5a9e8f))}
+header .hp-sel{height:28px;max-width:170px;border:0;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t1,var(--text,#d8dce4));font:inherit;font-size:11px;padding:0 8px;cursor:pointer}
+header .hp-meter{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 10px;border:0;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;cursor:pointer;white-space:nowrap}
+header .hp-meter i{display:block;width:56px;height:4px;border-radius:2px;background:var(--s3,var(--bg3,#22262e));overflow:hidden}
+header .hp-meter i b{display:block;height:100%;background:var(--ac,var(--acc,#5a9e8f))}
+/* ...and the harness's own readings step into a drawer while they do */
+/* THE MENU FOLDS TO A RAIL: the harness's own menu to its panels' icons (« / » in its header, remembered), and the chat's
+   menu slot to the chat's own rail when the chat folds it */
+#lhmNav.lhm-nav.railed:not(.chatmenu){width:54px!important;min-width:54px!important}
+#lhmNav.lhm-nav.absorbed.chatmenu.railed{width:47px!important;min-width:47px!important}
+#lhmNav.railed .lhm-topbar .lhm-tt{display:none}
+#lhmNav.railed .lhm-topbar{justify-content:center;padding-left:0;padding-right:0}
+#lhmNav.railed .lhm-nav-foot{flex-direction:column;align-items:center}
+#lhmNav.railed #lhmEventsFeed{display:none!important}
+.body-wrap.lhm .main.autohide-reserve-v.railed{padding-left:54px!important}
+.body-wrap.lhm .main.autohide-reserve-v.chatmenu.railed{padding-left:47px!important}
+/* THE CHAT'S PANEL IS SEE-THROUGH over the harness's glow: the wrapper the chat's frame sits in painted an opaque ground
+   over it (owner: "the chat ui has an extra flat background above the glow background") */
+body.chat-open .panels .panel.active,body.chat-open .panels .panel.active > div{background:transparent!important}
+/* BLOCKS OFF: the menu has no ground of its own - except a menu revealed from auto-hide, which floats over the page */
+html[data-blocks="off"] #lhmNav.lhm-nav:not(.show),html[data-blocks="off"] body.chat-open #lhmNav.chatmenu:not(.show){background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;border-right-color:transparent}
+/* AUTO-HIDE LEAVES THE RAIL (owner: "its not leaving a rail when the lhm hides/collapses"): hidden, the menu is its icons;
+   pointed at, it opens to its full width over the page, as before */
+.body-wrap.lhm #lhmNav.lhm-nav.autohide:not(.show){transform:none;opacity:1;pointer-events:auto;width:54px!important;min-width:54px!important;overflow:hidden}
+.body-wrap.lhm #lhmNav.lhm-nav.autohide.chatmenu:not(.show),.body-wrap.lhm #lhmNav.lhm-nav.absorbed.chatmenu.autohide:not(.show){width:47px!important;min-width:47px!important}
+.body-wrap.lhm .main.ah-rail:not(.autohide-reserve-v){padding-left:54px}
+.body-wrap.lhm .main.ah-rail.chatmenu:not(.autohide-reserve-v){padding-left:47px}
+/* THE MENU FOLDS SMOOTHLY: auto-hide's reveal eases its width like the fold does (and pushes the page - below) */
+.body-wrap.lhm #lhmNav.lhm-nav.autohide{transition:width .34s cubic-bezier(.2,.8,.2,1),box-shadow .3s ease,background .3s ease}
+/* BLOCKS OFF, AT ANY WIDTH (owner, 2026-09-27: "if the chat menu expands it still has an opaque background - only the rail
+   is transparent. i want the entire lhm - when opened any amount, to be transparent with blocks off"): folded, open, or
+   revealed from auto-hide over the page - no ground, no glass, no shadow */
+html[data-blocks="off"] #lhmNav.lhm-nav,html[data-blocks="off"] body.chat-open #lhmNav.chatmenu,html[data-blocks="off"] .body-wrap.lhm #lhmNav.lhm-nav.autohide.show{background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;border-right-color:transparent!important}
+/* THE MENU PUSHES, IT NEVER COVERS (owner, 2026-09-27: "the chat lhm needs to push and squeeze the other elements on the x
+   axis so its not open over the top of them - same for the menu in the harness and all of the other panels too"). Auto-hide
+   keeps the menu IN the row, as its rail; revealed, its width eases open and the page beside it narrows in the same
+   motion - the chat's menu, a panel's absorbed menu and the harness's own list alike, since they are all this one slot.
+   Every other change of its width (the fold, the chat's graph and Settings growing it) eases the same way. */
+.body-wrap.lhm #lhmNav.lhm-nav{transition:width .34s cubic-bezier(.2,.8,.2,1),min-width .34s cubic-bezier(.2,.8,.2,1),background .3s ease}
+.body-wrap.lhm #lhmNav.lhm-nav.autohide{position:relative;top:auto;left:auto;bottom:auto;transform:none;opacity:1;pointer-events:auto;flex-shrink:0;z-index:2}
+.body-wrap.lhm .main.ah-rail,.body-wrap.lhm .main.ah-rail.chatmenu,.body-wrap.lhm .main.autohide-reserve-v,.body-wrap.lhm .main.autohide-reserve-v.absorbed,.body-wrap.lhm .main.autohide-reserve-v.absorbed.chatmenu,.body-wrap.lhm .main.autohide-reserve-v.railed,.body-wrap.lhm .main.autohide-reserve-v.chatmenu.railed{padding-left:0!important}
+/* THE DASHBOARD ON THE CHAT'S GROUND (owner: "can the harness dashboard have the same background and menu setup as the chat
+   ui"): the one wash behind it, the page's ground see-through over it, the menu a translucent surface - the chat's rules */
+body.dash-open #veraWashH{opacity:1}
+body.dash-open .body-wrap{position:relative;z-index:1;background:transparent}
+body.dash-open .main,body.dash-open .panels,body.dash-open .panels .panel.active{background:transparent!important}
+body.dash-open #lhmNav.lhm-nav{background:color-mix(in srgb,var(--s1,var(--bg1,#151719)) 52%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15);border-right-color:transparent}
+body.dash-open #dashHealthStrip{background:color-mix(in srgb,var(--bg0,#0e0f12) 55%,transparent)!important;border-color:transparent!important}
+/* THE ☰ IS REACHABLE (owner, 2026-09-27: "the lhm top left burger option in the harness lhm it is very hard to click"):
+   auto-hide's edge strip lay over the menu's left 28px - the ☰ under it - at a higher layer than the menu. In LHM mode the
+   menu keeps its rail and reveals itself on hover, so the strip is not used there at all. */
+.body-wrap.lhm .tab-hover-zone,.body-wrap.lhm .tab-hover-zone.active{display:none!important}
+/* FOLDED IS ICONS ONLY (owner: "the icons at the bottom need to hide when the menu is collapsed and some text on the top bar
+   is partially visible when the lhm is collapsed"): folded by « or held as auto-hide's rail, the menu is its icons - the
+   foot's controls, its header's words and a docked panel's list go until it opens */
+#lhmNav.folded .lhm-nav-foot,#lhmNav.folded #lhmEventsFeed{display:none!important}
+#lhmNav.folded .lhm-topbar .lhm-tt{display:none}
+#lhmNav.folded .lhm-topbar{justify-content:center;padding-left:0;padding-right:0}
+#lhmNav.folded .lhm-absorbed .lhm-tabs{display:none}
+.lhm-nav .lhm-topbar .lhm-tb{width:28px;height:28px}
+#hdrDrawerBtn[hidden]{display:none}
+#hdrDrawerBtn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+#hdrDrawer{position:absolute;right:14px;top:calc(100% + 6px);z-index:900;display:none;flex-direction:column;align-items:flex-start;gap:12px;padding:12px 14px;border-radius:var(--ui-radius,10px);background:var(--s1,var(--bg1,#151719));box-shadow:var(--elev,0 10px 30px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));max-width:min(620px,calc(100vw - 28px))}
+#hdrDrawer.on{display:flex}
+#hdrDrawer::before{content:'The harness \u00b7 stats, activity, style and theme';font-size:var(--label-size,9px);text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280))}
+#hdrDrawer #hdrPills,#hdrDrawer #hdrMetrics{flex-wrap:wrap;max-width:none;overflow:visible}
+#hdrDrawer #hdrSwatches{display:flex!important;gap:6px;flex-wrap:wrap}
+/* ── ONE DASHBOARD HEADER (owner: "on the dashboard ... 2 top header bars - this needs to be combined into one"): the
+   toolbar is one row - the health readings sit in it as chips, and what does not fit goes behind ⋯ ── */
+#panel-dashboard .dash-toolbar{flex-wrap:nowrap;min-width:0;position:relative}
+#panel-dashboard .dash-toolbar .dash-title{flex-shrink:0;margin-right:0}
+#panel-dashboard .dash-toolbar .dsp{flex:1 1 0;min-width:4px}
+#panel-dashboard .dash-toolbar .dlbl,#panel-dashboard .dash-toolbar .dash-meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto}
+#panel-dashboard .dash-toolbar > .btn,#panel-dashboard .dash-toolbar .live{flex-shrink:0;white-space:nowrap}
+#panel-dashboard .dash-toolbar #dashHealthStrip{display:flex!important;flex-wrap:nowrap!important;gap:6px!important;padding:0!important;margin:0!important;background:transparent!important;border:0!important;min-width:0;overflow:hidden;flex:0 1 auto}
+#panel-dashboard .dash-toolbar #dashHealthStrip:empty{display:none!important}
+#panel-dashboard .dash-toolbar #dashHealthStrip > span{padding:3px 8px!important;min-width:0!important;box-shadow:none!important;background:var(--s2,var(--bg2,#1a1c20))!important;white-space:nowrap;flex-shrink:0}
+#panel-dashboard .dash-toolbar .dash-more-wrap{position:relative;flex-shrink:0}
+#panel-dashboard .dash-toolbar .dash-more-pop{position:absolute;right:0;top:calc(100% + 6px);z-index:60;display:none;flex-direction:column;align-items:stretch;gap:4px;padding:8px;border-radius:var(--ui-radius,10px);background:var(--s1,var(--bg1,#151719));box-shadow:var(--elev,0 10px 30px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+#panel-dashboard .dash-toolbar .dash-more-pop.on{display:flex}
+#panel-dashboard .dash-toolbar .dash-more-pop > *{justify-content:flex-start}
+header .swp i{position:absolute;left:0;right:0;bottom:0;height:6px}
+header .ico{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:var(--r-sm,6px);border:none;background:transparent;color:var(--t2,var(--dim2,#8a92a0));font:inherit;cursor:pointer}
+header .ico:hover,header .ico.on{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+header .hdr-right{margin-left:0;gap:6px}
+/* ⋯: the old header controls (URL · Connect · ↻ · the metric picker) in a sheet */
+#hdrSheet{display:none;position:absolute;right:16px;top:52px;z-index:120;width:360px;padding:10px 12px;border-radius:var(--ui-radius,10px);background:var(--s1,var(--bg1,#151719));box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));flex-direction:column;gap:8px}
+#hdrSheet.on{display:flex}
+#hdrSheet .hs-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+#hdrSheet .hs-k{font-size:var(--label-size,9px);text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280));width:100%}
+#hdrSheet .url-input{flex:1;min-width:0;background:var(--bg,var(--bg0,#0e0f12));border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,6px);color:var(--t1,var(--text,#d8dce4));font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px;padding:5px 8px}
+#hdrSheet #themeBtn{display:none}
+#hdrSheet .conn-label{display:block;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));max-width:none}
+/* the tab bar */
+.tabs{height:40px;align-items:flex-end;gap:4px;padding:0 16px;background:transparent;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
+.tab{height:32px;padding:0 13px;display:inline-flex;align-items:center;gap:7px;border-radius:var(--r-sm,6px) var(--r-sm,6px) 0 0;font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11.5px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--t2,var(--dim2,#8a92a0));border-bottom:none;position:relative;white-space:nowrap}
+.tab:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+.tab.active{color:var(--t1,var(--text,#d8dce4));background:var(--bg,var(--bg0,#0e0f12));font-weight:600;border-bottom:none}
+.tab.active::after{content:'';position:absolute;left:11px;right:11px;bottom:0;height:2px;background:var(--ac,var(--acc,#5a9e8f));border-radius:2px 2px 0 0}
+.tab.open{color:var(--t1,var(--text,#d8dce4));border-bottom:none}
+.tab.open::after{content:'';position:absolute;top:auto;right:auto;left:11px;right:11px;bottom:0;width:auto;height:2px;border-radius:2px 2px 0 0;background:var(--ac2,var(--acc2,#8fb87a));opacity:.9}
+.tab .ct{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));background:var(--s3,var(--bg3,#22262e));border-radius:var(--r-pill,99px);padding:1px 6px}
+.tab .who{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8px;color:var(--ac,var(--acc,#5a9e8f));margin-left:2px;border:1px solid color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 40%,transparent);border-radius:99px;padding:0 5px}
+.tab.more{order:9;color:var(--t3,var(--dim,#6b7280));font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10px}
+.tab .tab-close{color:var(--t3,var(--dim,#6b7280))}
+.tab-controls{order:10;margin-left:auto;margin-right:0;padding:0 0 4px;border-right:none;gap:1px}
+.tab-ctrl-btn{width:26px;height:26px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280));font-size:12px}
+.tab-ctrl-btn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+.tab-ctrl-btn.active{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+/* the side menu (the board's .lhm): the ONE header row, the groups, the rows, the widgets, the note, the foot */
+.lhm-nav{width:186px;background:var(--s1,var(--bg1,#151719));border-right:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
+#lhmNav .lhm-side .lhm-s-top{height:40px;padding:0 6px 0 8px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
+#lhmNav .lhm-side .lhm-s-srch,#lhmNav .lhm-side .lhm-s-edit{width:26px;height:26px;border:none;background:transparent;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280))}
+#lhmNav .lhm-side .lhm-s-srch:hover,#lhmNav .lhm-side .lhm-s-edit:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+#lhmNav .lhm-side .lhm-s-bd{padding:2px 10px 8px}
+#lhmNav .lhm-side .lhm-s-grp{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:var(--label-size,9px);letter-spacing:.1em;color:var(--t3,var(--dim,#6b7280));padding:12px 6px 4px}
+#lhmNav .lhm-side .lhm-s-row{height:32px;padding:0 10px;gap:9px;border-left:none;border-radius:var(--r-sm,6px);font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px;color:var(--t2,var(--dim2,#8a92a0))}
+#lhmNav .lhm-side .lhm-s-row:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+#lhmNav .lhm-side .lhm-s-row.on{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent));font-weight:600;box-shadow:inset 2px 0 0 var(--ac,var(--acc,#5a9e8f))}
+#lhmNav .lhm-side .lhm-s-row .ico{width:14px;font-size:11px;color:var(--t3,var(--dim,#6b7280))}
+#lhmNav .lhm-side .lhm-s-pan.on .lhm-s-row .ico{color:var(--ac,var(--acc,#5a9e8f))}
+#lhmNav .lhm-side .lhm-s-row .ct{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));background:var(--s3,var(--bg3,#22262e));border-radius:var(--r-pill,99px)}
+#lhmNav .lhm-side .lhm-s-row .nm em{font-size:8px;color:var(--t3,var(--dim,#6b7280))}
+#lhmNav .lhm-side .lhm-s-sec{margin-left:20px;border-left:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
+#lhmNav .lhm-side .lhm-s-sech{height:26px;font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0))}
+#lhmNav .lhm-side .lhm-s-opt{height:22px;font-size:10px;color:var(--t2,var(--dim2,#8a92a0))}
+#lhmNav .lhm-side .lhm-s-reg .nm{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px;color:var(--t2,var(--dim2,#8a92a0))}
+#lhmNav .lhm-side .lhm-s-w{background:var(--surf2,var(--bg2,#1a1c20));border:none;border-radius:var(--r-sm,6px);padding:8px 9px;gap:4px;margin:3px 0}
+#lhmNav .lhm-side .lhm-s-wh{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:9px;letter-spacing:.08em;color:var(--t3,var(--dim,#6b7280))}
+#lhmNav .lhm-side .lhm-s-wh b{font-size:10px;color:var(--t1,var(--text,#d8dce4))}
+#lhmNav .lhm-side .lhm-s-wbar{background:var(--s3,var(--bg3,#22262e))}
+#lhmNav .lhm-side .lhm-s-wrow{font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0))}
+#lhmNav .lhm-side .lhm-s-w.events .event-feed{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px}
+#lhmNav .lhm-side .lhm-s-note{font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));border-top:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
+#lhmNav .lhm-nav-foot{padding:8px 10px;border-top:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));gap:2px}
+#lhmNav .lhm-nav-foot .tab-ctrl-btn{width:26px;height:26px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280))}
+/* every dashboard row opens its own detail modal (the board's .modal > .mbox) */
+#rowModal{position:fixed;inset:0;z-index:9600;display:none;align-items:center;justify-content:center;background:color-mix(in srgb,var(--bg,var(--bg0,#0e0f12)) 62%,transparent);backdrop-filter:blur(2px)}
+#rowModal.on{display:flex}
+#rowModal .mbox{width:min(860px,92vw);max-height:78vh;background:var(--s1,var(--bg1,#151719));border-radius:var(--ui-radius,10px);box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));display:flex;flex-direction:column;overflow:hidden}
+#rowModal .mhd{display:flex;align-items:center;gap:10px;padding:14px 18px;flex-shrink:0;flex-wrap:wrap}
+#rowModal .mhd h2{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--t1,var(--text,#d8dce4));min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%}
+#rowModal .mhd .lbl{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#rowModal .mhd .sp{flex:1}
+#rowModal .mhd .mbtn{height:28px;padding:0 11px;border:none;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:10.5px;cursor:pointer;white-space:nowrap}
+#rowModal .mhd .mbtn:hover{color:var(--t1,var(--text,#d8dce4))}
+#rowModal .mhd .x{width:26px;height:26px;border:none;border-radius:var(--r-sm,6px);background:transparent;color:var(--t3,var(--dim,#6b7280));display:flex;align-items:center;justify-content:center;font:inherit;font-size:12px;cursor:pointer}
+#rowModal .mhd .x:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+#rowModal .mbd{padding:0 18px 18px;display:flex;flex-direction:column;gap:10px;overflow:auto;min-height:0}
+#rowModal .mstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+#rowModal .mstat{background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:10px 12px;display:flex;flex-direction:column;gap:3px;min-width:0}
+#rowModal .mstat b{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:18px;font-weight:700;letter-spacing:-.02em;line-height:1;color:var(--t1,var(--text,#d8dce4));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rowModal .mstat span{font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));text-transform:uppercase;letter-spacing:.08em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rowModal .mrows{display:flex;flex-direction:column;gap:1px}
+#rowModal .mrow{display:grid;grid-template-columns:16px 160px 1fr;align-items:center;gap:10px;padding:6px 8px;border-radius:var(--r-sm,6px);font-size:11px;color:var(--t1,var(--text,#d8dce4))}
+#rowModal .mrow:hover{background:var(--s2,var(--bg2,#1a1c20))}
+#rowModal .mrow .dot{width:9px;height:9px;border-radius:50%;justify-self:center;background:var(--t3,var(--dim,#6b7280))}
+#rowModal .mrow .n{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t3,var(--dim,#6b7280));text-transform:uppercase;letter-spacing:.06em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rowModal .mrow .out{color:var(--t2,var(--dim2,#8a92a0));white-space:pre-wrap;word-break:break-word;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px}
+#rowModal .mnote{font-size:9.5px;color:var(--t3,var(--dim,#6b7280))}
+#dashGrid .w-body tr,#dashGrid .w-body [class$="-row"],#dashGrid .w-body [class*="-row "],#dashGrid .w-body .inst-card{cursor:pointer}
+/* the tab bar fits: what does not fit folds into the "+N ⌘K" chip (the board: overflow behind a chip); what is still wider — the open tabs alone — scrolls sideways, one line always, never wrapping (the board''s .tabs) */
+.tabs{overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs .tab.folded{display:none}
+.tabs .tab-controls{margin-left:auto;flex:0 0 auto;order:10}
+/* the strips under the tabs: the active panel's own menu */
+#tabSubtabs:not(:empty){display:flex;align-items:center;gap:3px;min-height:30px;padding:0 14px;flex-shrink:0;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));background:transparent;overflow-x:auto;scrollbar-width:none}
+#tabSubtabs .lhm-strips{display:contents}
+#tabSubtabs .lhm-st-p,#tabSubtabs .st-p{font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;font-weight:600;color:var(--t3,var(--dim,#6b7280));margin-right:8px;flex-shrink:0}
+#tabSubtabs button,#tabSubtabs .lhm-st{height:22px;padding:0 9px;border:none;border-radius:var(--r-sm,6px);font:inherit;font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0));background:transparent;white-space:nowrap;cursor:pointer}
+#tabSubtabs button:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+#tabSubtabs button.on,#tabSubtabs .lhm-st.on{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent));font-weight:600;box-shadow:inset 0 -2px 0 var(--ac,var(--acc,#5a9e8f))}
+#tabSubtabs .lhm-st-o,#tabSubtabs .st-o{height:20px;padding:0 8px;border-radius:var(--r-pill,99px);font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));background:var(--surf2,var(--bg2,#1a1c20))}
+/* live events: a column you bring back with ◫ */
+.sidebar{background:var(--s1,var(--bg1,#151719));border-right:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));width:250px}
+.sb-head{font-size:var(--label-size,9px);letter-spacing:.1em;color:var(--t3,var(--dim,#6b7280));border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));padding:8px 10px}
+#evExpandBtn{display:none!important}
+/* the dashboard */
+.dash-toolbar{display:flex;align-items:center;gap:8px;padding:12px 16px 8px;flex-wrap:wrap}
+.dash-title{font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--t1,var(--text,#d8dce4));margin:0;border:none;padding:0}
+.dash-meta{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t3,var(--dim,#6b7280))}
+.dash-toolbar .live{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0))}
+.dash-toolbar .live i{width:6px;height:6px;border-radius:50%;background:var(--ac2,var(--acc2,#8fb87a));box-shadow:0 0 0 3px color-mix(in srgb,var(--ac2,var(--acc2,#8fb87a)) 22%,transparent)}
+.dash-toolbar .dsp{flex:1}
+.dash-toolbar .dlbl{font-size:var(--label-size,9px);text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280));white-space:nowrap}
+.dash-toolbar .btn,.dash-toolbar .mbtn{height:28px;padding:0 11px;border:none;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:10.5px;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14));display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.dash-toolbar .btn:hover,.dash-toolbar .mbtn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s3,var(--bg3,#22262e))}
+.dash-toolbar .btn.teal{color:var(--ac2,var(--acc2,#8fb87a));background:color-mix(in srgb,var(--ac2,var(--acc2,#8fb87a)) 12%,transparent)}
+.dash-toolbar .btn.pri,.dash-toolbar .mbtn.pri{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri-fg,var(--on-acc,#fff));font-weight:600}
+#clusterRefreshBadge{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+#dashHealthStrip{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;padding:0 16px;margin:0 0 12px;background:transparent;border:none}
+#dashHealthStrip > span:first-child{display:none}
+#dashHealthStrip > span{background:var(--s1,var(--bg1,#151719))!important;border:none!important;border-radius:var(--ui-radius,10px)!important;box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5));padding:8px 12px!important;font-size:8.5px!important;text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280))!important;min-width:110px}
+.panel#panel-dashboard{padding:0 0 16px}
+.dash-grid{padding:0 16px;gap:10px}   /* the Dashboard board's gutter */
+.widget{background:var(--s1,var(--bg1,#151719));border:none;border-radius:var(--ui-radius,10px);box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5))}
+.widget:hover{border-color:transparent;box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+.w-head{height:34px;padding:0 12px;gap:8px;border-bottom:none;background:transparent}
+.w-title{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:var(--label-size,9px);font-weight:var(--label-weight,600);letter-spacing:var(--label-track,.09em);text-transform:var(--label-case,uppercase);color:var(--t2,var(--dim2,#8a92a0));flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.w-head{padding:8px var(--pad,11px) 0;height:auto;min-height:26px}
+.w-head .w-dot{width:6px;height:6px}
+/* the counters as the board's hero numbers */
+.w-body .kpi{gap:4px;justify-content:flex-start;padding-top:2px}
+.w-body .kpi-val{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:34px!important;font-weight:700;letter-spacing:-.035em!important;line-height:1;color:var(--t1,var(--text,#d8dce4))}
+.w-body .kpi-val.tv-ok{color:var(--ac2,var(--acc2,#8fb87a))}.w-body .kpi-val.tv-err{color:var(--ac4,var(--err,#c96b6b))}.w-body .kpi-val.tv-warn{color:var(--ac3,var(--acc3,#c9955a))}.w-body .kpi-val.tv-neu{color:var(--t1,var(--text,#d8dce4))}
+.w-body .kpi-sub{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0));letter-spacing:0}
+.w-body .kpi-trend{font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0))}
+.w-head .vd-rec{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));opacity:1;background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-pill,99px);padding:1px 7px;max-width:180px}
+.w-head .w-sub,.w-head .w-meta{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+/* the board's tile head: title · the record pill at the right; the actions (⚙ ⤢ ×) only on hover, focus, edit mode or a
+   floated tile — a 2×2 tile's title kept the room (it read "ST…" with the three buttons always in the head) */
+.w-head .vd-rec{margin-left:auto;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.w-head .w-title{flex:1 0 auto;max-width:72%}
+.w-head .w-actions{display:none;margin-left:6px;opacity:1}
+.widget:hover .w-head .w-actions,.widget:focus-within .w-head .w-actions,.dash-grid.editing .w-head .w-actions,.widget.floating .w-head .w-actions{display:inline-flex}
+.w-iconbtn{width:22px;height:22px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280))}
+.w-iconbtn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+.w-body{padding:4px var(--pad,11px) 10px;overflow:hidden}
+.w-body.flush{padding:0}
+/* the element fills the tile's body and no more: a flex child that may shrink, so the element measures the FRAME (not its
+   content) and every form fits what it is given - a tile never scrolls */
+.w-body > vera-widget{flex:1 1 auto;min-height:0;display:block;overflow:hidden}
+.w-grip{color:var(--t3,var(--dim,#6b7280))}
+/* the style packs on the tiles (the StylePacks board — radius, pill and card already come through the pack's variables):
+   pixel's marker before a title, its display face on the hero figures and its bevelled chips; newspaper's double rule under
+   a tile's head and heavier titles; terminal's outlines where the other packs fill */
+/* a SECTION tile: the band's name, flat on the page, the label at the foot of its row so it reads as the heading of the
+   tiles below (the Dashboard board's side sections; the Sizes board's report lines) */
+.widget.w-section{background:transparent!important;border:none!important;box-shadow:none!important;border-radius:0;justify-content:stretch;overflow:visible}
+/* a section reads as a heading (owner 2026-09-28: "clearer sections"): a colour of its own (draw.accent), the name bold, the rest a subtitle */
+.widget.w-section .w-head{padding:6px 12px 5px;min-height:0;height:100%;align-items:center;border-bottom:2px solid color-mix(in srgb,var(--sec-acc,var(--acc,#5a9e8f)) 60%,transparent);box-shadow:none;border-radius:6px 6px 0 0;background:linear-gradient(90deg,color-mix(in srgb,var(--sec-acc,var(--acc,#5a9e8f)) 14%,transparent),transparent 70%)}
+.widget.w-section .w-title{font-size:calc(var(--label-size,9px) + 5px);letter-spacing:calc(var(--label-track,.09em) + .02em);color:var(--t1,var(--text,#d8dce4));font-weight:650;max-width:none;flex:1 1 auto;display:flex;align-items:baseline;gap:8px;min-width:0}
+.widget.w-section .w-title::before{content:'';align-self:center;flex:0 0 auto;width:4px;height:1.05em;border-radius:2px;background:var(--sec-acc,var(--acc,#5a9e8f))}
+.widget.w-section .w-title b{font-weight:inherit;flex:0 0 auto}
+.widget.w-section .w-title small{font-size:calc(var(--label-size,9px) + 2px);font-weight:400;letter-spacing:.02em;text-transform:none;color:var(--t2,var(--dim2,#8a92a0));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.widget.w-section .w-title::after{content:attr(data-count);margin-left:10px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--t3,var(--dim,#6b7280))}
+.widget.w-section .vd-rec,.widget.w-section .w-resize,.widget.w-section .w-dot{display:none!important}
+.widget.w-section:hover{box-shadow:none!important}
+.dash-grid.editing .widget.w-section{box-shadow:0 0 0 1px color-mix(in srgb,var(--acc,#5a9e8f) 30%,transparent)!important}
+[data-style="newspaper"] .widget.w-section .w-head{border-bottom:2px solid var(--t2,var(--dim2,#8a92a0))}
+[data-style="pixel"] .w-head .w-title::before{content:'\25AA';margin-right:6px;color:var(--ac,var(--acc,#5a9e8f))}
+[data-style="pixel"] .w-head .w-dot,[data-style="pixel"] .dash-toolbar .live i{border-radius:0}
+[data-style="pixel"] .w-body .kpi-val{font-family:var(--f-disp,var(--f-mono));font-size:22px!important;letter-spacing:0!important}
+[data-style="pixel"] .w-head .vd-rec,[data-style="pixel"] .dash-toolbar .btn,[data-style="pixel"] .dash-toolbar .mbtn,[data-style="pixel"] #dashHealthStrip > span{box-shadow:inset 0 2px 0 0 rgba(255,255,255,.06),inset 0 -2px 0 0 rgba(0,0,0,.22),0 0 0 2px var(--bd2,var(--border2,rgba(255,255,255,.18)))!important}
+[data-style="pixel"] .dash-toolbar .btn.teal,[data-style="pixel"] .dash-toolbar .btn.pri,[data-style="pixel"] .dash-toolbar .mbtn.pri{box-shadow:inset 0 2px 0 0 rgba(255,255,255,.14),inset 0 -2px 0 0 rgba(0,0,0,.28),0 0 0 2px var(--ac,var(--acc,#5a9e8f))!important}
+[data-style="newspaper"] .w-head{border-bottom:1px solid var(--t3,var(--dim,#6b7280));box-shadow:0 2px 0 -1px var(--bd,var(--border,rgba(255,255,255,.09)));padding-bottom:6px}
+[data-style="newspaper"] .w-title{font-weight:700}
+[data-style="terminal"] .dash-toolbar .btn.teal,[data-style="terminal"] .dash-toolbar .btn.pri,[data-style="terminal"] .dash-toolbar .mbtn.pri{background:transparent;color:var(--ac,var(--acc,#5a9e8f));box-shadow:inset 0 0 0 1px var(--ac,var(--acc,#5a9e8f))}
+[data-style="terminal"] .w-head .vd-rec,[data-style="terminal"] #dashHealthStrip > span{background:transparent!important;box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+</style>
 </head>
 <body>
 
-<!-- Sandbox-session indicator (C6): a dev container serves the SAME UI as prod,
-     so make it unmistakable. Detected client-side by port — prod is :8999, any
-     other explicit port is a dev sandbox (an empty/default port, i.e. prod behind
-     a proxy, is NOT flagged). Branch comes from /obs/provenance. No backend flag. -->
+<!-- Sandbox menu (C6): a dev container serves the SAME UI as prod, so make it
+     unmistakable - and make it the place to see what this branch IS. Detected
+     client-side by port: prod is :8999, any other explicit port is a dev sandbox
+     (an empty/default port, i.e. prod behind a proxy, is NOT flagged).
+     The badge is pinned top-left; its menu reads ci.branch from PROD (a sandbox has
+     its own private Redis, so its own pipeline list is empty - prod holds the
+     pipelines, the gate history, the board and the ingested conversations) and
+     falls back to this origin. Tabs: overview (the gate lane's race, the head),
+     merged (every branch merged in, with its pipeline, agent, gate, conversation),
+     conversations (every session that drove the branch or a merged one - click to
+     read it whole), board (linked items with body and thread), pipelines (each
+     one's track). Nothing is cut short: long lists scroll. -->
 <script>(function(){
   try{
     var port=location.port;
-    if(!port || port==='8999') return;              // prod — no banner
-    var BR='';
-    function E(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+    if(!port || port==='8999') return;              // prod - no banner
+    var BR='', DATA=null, TAB='overview', OPEN={}, Q='';
+    var PROD=location.protocol+'//'+location.hostname+':8999';
+    function E(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    function ago(t){var x=Date.parse(t);if(!isFinite(x))return '';var s=(Date.now()-x)/1000;return s<90?Math.round(s)+'s ago':s<5400?Math.round(s/60)+'m ago':s<172800?Math.round(s/3600)+'h ago':Math.round(s/86400)+'d ago';}
+    var AG={claude:'#d97757',codex:'#6ea8d8',vera:'#8fb87a',user:'#b39ddb'};
+    function ag(a){return a?'<span class="sbx-ag" style="--ag:'+(AG[a]||'#9e8fa0')+'">'+E(a)+'</span>':'';}
+    function gate(g){return g?'<i class="sbx-g g-'+E(g)+'" title="gate '+E(g)+'"></i>':'';}
+    function getJSON(u){return fetch(u,{credentials:'omit'}).then(function(r){if(!r.ok)throw new Error(r.status);return r.json();});}
+    // prod first (it holds the history); this origin when prod is unreachable
+    function ask(path){return getJSON(PROD+path).then(function(d){d.__from='prod';return d;}).catch(function(){return getJSON(path).then(function(d){d.__from='sandbox';return d;});});}
+    var CSS='#sbxBadge{display:inline-flex;align-items:center;gap:7px;background:#d9a441;color:#1a1512;font:700 11px/1 system-ui,sans-serif;padding:6px 10px;border-radius:7px;margin-right:8px;letter-spacing:.03em;flex-shrink:0;white-space:nowrap;cursor:pointer;box-shadow:0 0 0 2px rgba(217,164,65,.25)}'
+      +'#sbxBadge .st{width:8px;height:8px;border-radius:50%;background:#1a1512;opacity:.35}#sbxBadge .st.green{background:#2f8f4e;opacity:1}#sbxBadge .st.red{background:#b3261e;opacity:1}#sbxBadge .st.racing{background:#1f6fb2;opacity:1;animation:sbxP 1.2s infinite}#sbxBadge small{font-weight:600;opacity:.75}'
+      +'@keyframes sbxP{50%{opacity:.35}}'
+      +'#sbxInfo{position:fixed;top:46px;left:8px;z-index:100000;width:min(820px,96vw);max-height:84vh;display:flex;flex-direction:column;background:#1b1917;border:1.5px solid #d9a441;border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.6);color:#ddd5c8;font:12.5px/1.5 system-ui,sans-serif;overflow:hidden}'
+      +'#sbxInfo .hd{display:flex;align-items:center;gap:10px;padding:10px 14px;background:linear-gradient(90deg,rgba(217,164,65,.16),transparent 70%);border-bottom:1px solid #3a3530}#sbxInfo .hd b{color:#d9a441;font-size:13px}#sbxInfo .hd .mono{font-family:ui-monospace,monospace;font-size:11px;opacity:.75}#sbxInfo .hd .sp{flex:1}'
+      +'#sbxInfo button{background:#302c29;color:#ddd5c8;border:1px solid #4a4540;border-radius:6px;cursor:pointer;padding:3px 9px;font:inherit;font-size:11.5px}#sbxInfo button:hover{border-color:#d9a441}'
+      +'#sbxInfo .tabs{display:flex;gap:2px;padding:6px 10px 0;border-bottom:1px solid #3a3530;flex-wrap:wrap}#sbxInfo .tabs a{padding:6px 11px;border-radius:7px 7px 0 0;cursor:pointer;color:#a89c8e;font-size:12px;text-decoration:none}#sbxInfo .tabs a.on{background:#272421;color:#ddd5c8;box-shadow:inset 0 2px 0 #d9a441}#sbxInfo .tabs a em{font-style:normal;font-size:10.5px;opacity:.7;margin-left:4px}'
+      +'#sbxInfo .flt{margin-left:auto;margin-bottom:4px;background:#272421;border:1px solid #4a4540;border-radius:6px;color:#ddd5c8;padding:3px 8px;font:inherit;font-size:11.5px;width:180px}'
+      +'#sbxInfo .bd{overflow:auto;padding:10px 14px;flex:1;min-height:120px}#sbxInfo .sec{color:#d9a441;font-weight:600;margin:12px 0 5px;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em}#sbxInfo .sec:first-child{margin-top:0}'
+      +'#sbxInfo .row{display:grid;grid-template-columns:minmax(0,1.4fr) auto auto minmax(0,1fr);gap:10px;align-items:center;padding:5px 8px;border-radius:7px;cursor:pointer}#sbxInfo .row:hover{background:#272421}#sbxInfo .row .n{font-family:ui-monospace,monospace;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#sbxInfo .row .d{font-size:11px;opacity:.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#sbxInfo .row .m{display:flex;gap:6px;align-items:center;white-space:nowrap}'
+      +'#sbxInfo .sbx-ag{font:700 9px/1 system-ui;text-transform:uppercase;letter-spacing:.06em;padding:3px 6px;border-radius:4px;color:var(--ag);background:color-mix(in srgb,var(--ag) 18%,transparent)}#sbxInfo .sbx-g{display:inline-block;width:8px;height:8px;border-radius:50%;background:#6a6058}#sbxInfo .sbx-g.g-pass{background:#6db87a}#sbxInfo .sbx-g.g-fail{background:#c96b6b}'
+      +'#sbxInfo .chip{font-size:10px;padding:1px 7px;border-radius:999px;background:#302c29;color:#b8ad9f;white-space:nowrap}#sbxInfo .chip.lane-done{color:#6db87a}#sbxInfo .chip.lane-in_progress{color:#6ea8d8}#sbxInfo .chip.lane-blocked{color:#c96b6b}'
+      +'#sbxInfo .more{padding:6px 10px 10px 18px;border-left:2px solid #4a4540;margin:2px 0 8px 10px}#sbxInfo .turn{margin:6px 0;padding:6px 9px;border-radius:7px;background:#23201d;white-space:pre-wrap;word-break:break-word;font-size:12px}#sbxInfo .turn.user{background:#2b2620;border-left:2px solid #d9a441}#sbxInfo .turn .who{font-size:10px;text-transform:uppercase;letter-spacing:.06em;opacity:.6;display:block}'
+      +'#sbxInfo pre{white-space:pre-wrap;word-break:break-word;font:11.5px/1.45 ui-monospace,monospace;margin:4px 0;color:#cfc6b8}#sbxInfo .kpis{display:flex;gap:18px;flex-wrap:wrap}#sbxInfo .kpis span{display:flex;flex-direction:column}#sbxInfo .kpis b{font:600 18px ui-monospace,monospace}#sbxInfo .kpis small{font-size:10px;opacity:.6;text-transform:uppercase;letter-spacing:.06em}'
+      +'#sbxInfo vera-widget{display:block;height:auto;min-height:60px}#sbxInfo .empty{opacity:.6;padding:6px 0}#sbxInfo .src{font-size:10px;opacity:.55}';
+    function style(){ if(document.getElementById('sbxCss')) return; var st=document.createElement('style'); st.id='sbxCss'; st.textContent=CSS; document.head.appendChild(st); }
     function paint(branch){
-      BR=branch||BR;
+      BR=branch||BR; style();
       var h=document.querySelector('header'); if(!h) return;
       h.style.borderBottom='3px solid #d9a441';
       h.style.background='linear-gradient(90deg, rgba(217,164,65,.20), transparent 55%)';
       var s=document.getElementById('sbxBadge');
       if(!s){ s=document.createElement('div'); s.id='sbxBadge';
-        s.title='Loop Lab DEV SANDBOX (not prod) — click for branch stats, pipelines & Claude sessions';
-        s.style.cssText='background:#d9a441;color:#1a1512;font:700 11px/1 system-ui,sans-serif;'
-          +'padding:6px 9px;border-radius:6px;margin-right:8px;letter-spacing:.03em;flex-shrink:0;white-space:nowrap;cursor:pointer';
+        s.title='Loop Lab DEV SANDBOX (not prod) - click for the branch: its race to green, merged branches, conversations, board items and pipelines';
         s.onclick=toggleInfo;
         h.insertBefore(s, h.firstChild);
       }
-      s.textContent='⚠ SANDBOX'+(BR?' · '+BR:'')+' · :'+port+' ▾';
+      var sm=DATA&&DATA.summary||{};
+      s.innerHTML='<i class="st '+E(sm.state||'')+'"></i>⚠ SANDBOX'+(BR?' · '+E(BR):'')+' · :'+E(port)
+        +(DATA?' <small>'+(sm.merged||0)+' merged · '+(sm.conversations||0)+' chats</small>':'')+' ▾';
       document.title='⚠ '+(BR||'SANDBOX')+' — Vera';
+    }
+    function widget(el, form, data, size){
+      var ok=function(){ var w=document.createElement('vera-widget'); w.setAttribute('item-drawer',''); el.innerHTML=''; el.appendChild(w);
+        try{ w.record={form:form,title:'',data:data,frame:{size:size||'l'}}; }catch(e){ el.textContent='(widget failed: '+e.message+')'; } };
+      if(window.customElements && customElements.get('vera-widget')) return ok();
+      var sc=document.getElementById('sbxWidgetJs');
+      if(!sc){ sc=document.createElement('script'); sc.id='sbxWidgetJs'; sc.src='/ui/widgets/widget_element.js'; document.head.appendChild(sc); }
+      sc.addEventListener('load', ok, {once:true});
+    }
+    function match(o){ if(!Q) return true; return JSON.stringify(o).toLowerCase().indexOf(Q)>=0; }
+    function render(){
+      var bd=document.getElementById('sbxInfoBody'); if(!bd) return;
+      var d=DATA; if(!d){ bd.innerHTML='<div class="empty">loading…</div>'; return; }
+      if(d.error){ bd.innerHTML='<div class="empty">'+E(d.error)+'</div>'; return; }
+      var sm=d.summary||{}, tabs=document.getElementById('sbxTabs');
+      var T=[['overview','Overview',''],['merged','Merged',sm.merged],['conversations','Conversations',sm.conversations],['board','Board',sm.board_items],['pipelines','Pipelines',sm.pipelines]];
+      tabs.innerHTML=T.map(function(t){return '<a data-t="'+t[0]+'" class="'+(TAB===t[0]?'on':'')+'">'+t[1]+(t[2]!==''&&t[2]!=null?'<em>'+t[2]+'</em>':'')+'</a>';}).join('')+'<input class="flt" placeholder="filter…" value="'+E(Q)+'">';
+      tabs.querySelectorAll('a').forEach(function(a){a.onclick=function(){TAB=a.getAttribute('data-t');render();};});
+      var fi=tabs.querySelector('.flt'); fi.oninput=function(){Q=fi.value.trim().toLowerCase(); var p=fi.selectionStart; render(); var f2=document.querySelector('#sbxTabs .flt'); if(f2){f2.focus();try{f2.setSelectionRange(p,p);}catch(_){}}};
+      var b='';
+      if(TAB==='overview'){
+        var hd=d.head||{}, pv=d.__prov||{};
+        b+='<div class="kpis"><span><b>'+(sm.runs||0)+'</b><small>gate runs</small></span><span><b>'+(sm.pipelines||0)+'</b><small>pipelines</small></span><span><b>'+(sm.merged||0)+'</b><small>merged in</small></span><span><b>'+(sm.conversations||0)+'</b><small>conversations</small></span><span><b>'+(sm.board_items||0)+'</b><small>board items</small></span></div>';
+        b+='<div class="sec">head</div><div class="mono" style="font-family:ui-monospace,monospace">'+E(hd.sha)+' · '+E(hd.subject)+' <span class="d" style="opacity:.6">· '+E(hd.author)+' · '+E(ago(hd.ts))+'</span></div>';
+        if(pv.git_sha_short) b+='<div style="font-family:ui-monospace,monospace;opacity:.75">this sandbox serves '+E(pv.git_sha_short)+(pv.dirty?' · <span style="color:#d9a441">dirty</span>':' · clean')+'</div>';
+        b+='<div class="sec">gate race to green</div><div id="sbxRace">'+(d.lane?'':'<div class="empty">no gate run on this branch yet</div>')+'</div>';
+        if((d.merged||[]).length){ b+='<div class="sec">merged in, newest first</div><div id="sbxMergedMx"></div>'; }
+      } else if(TAB==='merged'){
+        var ms=(d.merged||[]).filter(match);
+        b+= ms.length? ms.map(function(m,i){ var k='m'+i; return '<div class="row" data-open="'+k+'"><span class="n" title="'+E(m.branch)+'">'+E(m.branch)+'</span><span class="m">'+ag(m.controller)+gate(m.gate)+(m.merges>1?'<span class="chip">×'+m.merges+'</span>':'')+'</span><span class="m"><span class="chip">'+E(m.decision||'merged')+'</span>'+(m.session_id?'<span class="chip" data-conv="'+E(m.session_id)+'">💬</span>':'')+'</span><span class="d">'+E(ago(m.ts))+' · '+E(m.pipeline_id||m.sha)+'</span></div>'
+            +(OPEN[k]?'<div class="more"><pre>'+E(m.subject)+'</pre><div class="d">'+E(m.sha)+' · '+E(m.ts)+' · '+E(m.author)+(m.pipeline_id?' · pipeline '+E(m.pipeline_id):'')+(m.session_id?' · session '+E(m.session_id):'')+'</div>'+(m.pipeline_id?'<div id="sbxTrk_'+k+'" data-pipe="'+E(m.pipeline_id)+'"></div>':'')+'</div>':''); }).join('')
+          : '<div class="empty">nothing merged into this branch'+(Q?' matches':'')+'</div>';
+        if(d.more) b+='<div class="empty">history goes further back - ask ci.branch with a bigger limit</div>';
+      } else if(TAB==='conversations'){
+        var cs=(d.conversations||[]).filter(match);
+        b+= cs.length? cs.map(function(c){ var k='c'+c.session_id; return '<div class="row" data-open="'+E(k)+'"><span class="n" title="'+E(c.session_id)+'">'+E(c.title||c.preview||c.session_id)+'</span><span class="m">'+ag(c.controller||c.agent)+(c.turns!=null?'<span class="chip">'+E(c.turns)+' turns</span>':'')+(c.ingested===false?'<span class="chip" title="this session is not ingested on prod yet">not ingested</span>':'')+'</span><span class="m">'+(c.branches||[]).slice(0,2).map(function(x){return '<span class="chip">'+E(x)+'</span>';}).join('')+((c.branches||[]).length>2?'<span class="chip">+'+((c.branches||[]).length-2)+'</span>':'')+'</span><span class="d">'+E(ago(c.session_last_ts||c.last_ts))+'</span></div>'
+            +(OPEN[k]?'<div class="more"><div class="d">session '+E(c.session_id)+' · pipelines '+E((c.pipelines||[]).join(', '))+' · branches '+E((c.branches||[]).join(', '))+'</div><div id="sbxConv_'+E(c.session_id)+'" class="empty">loading the conversation…</div></div>':''); }).join('')
+          : '<div class="empty">no conversation is linked to this branch'+(Q?' that matches':'')+' - pipelines record the session that began them</div>';
+      } else if(TAB==='board'){
+        var its=(d.board_items||[]).filter(match);
+        b+= its.length? its.map(function(it){ var k='b'+it.id; return '<div class="row" data-open="'+E(k)+'"><span class="n" title="'+E(it.title)+'">'+E(it.title)+'</span><span class="m"><span class="chip lane-'+E(it.lane)+'">'+E(String(it.lane||'').replace(/_/g,' '))+'</span>'+ag(it.agent)+'</span><span class="m">'+(it.comments&&it.comments.length?'<span class="chip">💬 '+it.comments.length+'</span>':'')+'</span><span class="d">'+E(it.id)+' · '+E(it.branch||'')+' · '+E(ago(it.updated_at))+'</span></div>'
+            +(OPEN[k]?'<div class="more">'+(it.body?'<pre>'+E(it.body)+'</pre>':'<div class="empty">no body</div>')+((it.comments||[]).length?'<div class="sec">thread</div>'+(it.comments||[]).map(function(cm){return '<div class="turn"><span class="who">'+E(cm.kind||'')+' · '+E(cm.from||'')+(cm.to?' → '+E(cm.to):'')+' · '+E(ago(cm.ts||cm.created_at))+'</span>'+E(cm.body||'')+'</div>';}).join(''):'')+'</div>':''); }).join('')
+          : '<div class="empty">no board item names this branch, a merged branch or their pipelines</div>';
+      } else if(TAB==='pipelines'){
+        var ps=(d.pipelines||[]).filter(match);
+        b+= ps.length? ps.map(function(p){ var k='p'+p.id; return '<div class="row" data-open="'+E(k)+'"><span class="n">'+E(p.id)+'</span><span class="m">'+ag(p.controller)+gate(p.gate_passed===true?'pass':p.gate_passed===false?'fail':'')+'</span><span class="m"><span class="chip">'+E(p.decision||p.status||'')+'</span></span><span class="d">'+E(ago(p.created_at))+(p.session_id?' · '+E(String(p.session_id).slice(0,8)):'')+'</span></div>'
+            +(OPEN[k]?'<div class="more"><div id="sbxTrk_'+E(k)+'" data-pipe="'+E(p.id)+'"></div></div>':''); }).join('')
+          : '<div class="empty">no pipeline on this branch yet</div>';
+      }
+      b+='<div class="src">read from '+E(d.__from||'?')+' · ci.branch</div>';
+      bd.innerHTML=b;
+      bd.querySelectorAll('[data-open]').forEach(function(r){r.onclick=function(ev){ var cv=ev.target.closest('[data-conv]'); if(cv){ TAB='conversations'; OPEN={}; OPEN['c'+cv.getAttribute('data-conv')]=1; render(); return; } var k=r.getAttribute('data-open'); OPEN[k]=!OPEN[k]; render(); };});
+      var rc=document.getElementById('sbxRace'); if(rc&&d.lane) widget(rc,'race-green',{kind:'ci',view:'race',title:BR,lanes:[d.lane],summary:{lanes:1,runs:(d.lane.cells||[]).length}},'l');
+      var mm=document.getElementById('sbxMergedMx'); if(mm){ var cards=(d.merged||[]).map(function(m){return {id:m.pipeline_id||m.sha,title:m.branch,agent:m.controller,gate:m.gate,branch:m.branch,pipeline:m.pipeline_id,lane:m.decision||'merged'};}); widget(mm,'ci-board',{kind:'ci',view:'board',columns:[{name:'merged',items:cards}]},'xl'); }
+      bd.querySelectorAll('[data-pipe]').forEach(function(el){ ask('/ci/track?id='+encodeURIComponent(el.getAttribute('data-pipe'))).then(function(t){ if(t&&!t.error) widget(el,'run-track',t,'xl'); else el.innerHTML='<div class="empty">'+E((t&&t.error)||'no track')+'</div>'; }).catch(function(){ el.innerHTML='<div class="empty">track unavailable</div>'; }); });
+      bd.querySelectorAll('[id^="sbxConv_"]').forEach(function(el){ var sid=el.id.slice(8); ask('/ide/claude_sessions/history?claude_session_id='+encodeURIComponent(sid)).then(function(h){ var ts=(h&&h.turns)||[]; el.className=''; el.innerHTML= ts.length? '<div class="d">'+ts.length+' turns, in full</div>'+ts.map(function(t){return '<div class="turn '+E(t.role)+'"><span class="who">'+E(t.role)+' · '+E(ago(t.ts))+'</span>'+E(t.text)+'</div>';}).join('') : '<div class="empty">'+E((h&&h.error)||'no turns ingested for this session')+'</div>'; }).catch(function(){ el.textContent='conversation unavailable'; }); });
+    }
+    function load(){
+      return Promise.all([
+        ask('/ci/branch?branch='+encodeURIComponent(BR)),
+        getJSON('/obs/provenance').catch(function(){return {};})
+      ]).then(function(r){ DATA=r[0]||{}; DATA.__prov=r[1]||{}; paint(); render(); })
+        .catch(function(e){ DATA={error:'could not read ci.branch from prod or this sandbox ('+(e&&e.message||e)+')'}; render(); });
     }
     function toggleInfo(){
       var ov=document.getElementById('sbxInfo'); if(ov){ ov.remove(); return; }
       ov=document.createElement('div'); ov.id='sbxInfo';
-      ov.style.cssText='position:fixed;top:44px;left:50%;transform:translateX(-50%);z-index:100000;'
-        +'width:min(680px,94vw);max-height:78vh;overflow:auto;background:#1f1d1a;border:2px solid #d9a441;'
-        +'border-radius:10px;box-shadow:0 10px 44px rgba(0,0,0,.6);padding:14px;color:#ddd5c8;'
-        +'font:12.5px/1.5 system-ui,sans-serif';
-      ov.innerHTML='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
-        +'<b style="color:#d9a441">⚠ SANDBOX · '+E(BR)+'</b> <span style="opacity:.6">:'+E(port)+'</span>'
-        +'<span style="flex:1"></span><button onclick="this.closest(\'#sbxInfo\').remove()" '
-        +'style="background:#302c29;color:#ddd5c8;border:1px solid #4a4540;border-radius:5px;cursor:pointer;padding:3px 8px">✕</button></div>'
-        +'<div id="sbxInfoBody" style="white-space:pre-wrap">loading…</div>';
+      ov.innerHTML='<div class="hd"><b>⚠ SANDBOX</b><span class="mono">'+E(BR)+' · :'+E(port)+'</span><span class="sp"></span><button data-act="reload" title="read again">↻</button><button data-act="close">✕</button></div><div class="tabs" id="sbxTabs"></div><div class="bd" id="sbxInfoBody"></div>';
       document.body.appendChild(ov);
-      var hd=function(t){return '<div style="color:#d9a441;font-weight:600;margin:10px 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:.04em">'+t+'</div>';};
-      Promise.all([
-        fetch('/obs/provenance').then(function(r){return r.json();}).catch(function(){return {};}),
-        fetch('/evolve/pipeline/list?limit=60').then(function(r){return r.json();}).catch(function(){return {};}),
-        fetch('/ide/claude_sessions/list_sessions?max_sessions=8').then(function(r){return r.json();}).catch(function(){return {};})
-      ]).then(function(res){
-        var prov=res[0]||{}, pipes=(res[1]&&res[1].pipelines)||[], sess=(res[2]&&res[2].sessions)||[];
-        var mine=pipes.filter(function(p){return p.branch===BR;});
-        var b=hd('provenance')+'<div style="font-family:monospace">'+E(prov.git_sha_short||'?')+' · branch '+E(prov.branch||'?')
-          +(prov.dirty?' · <span style="color:#d9a441">dirty</span>':' · clean')+'</div>';
-        b+=hd('Loop Lab pipelines on this branch ('+mine.length+')');
-        b+= mine.length? mine.slice(0,10).map(function(p){return '<div style="font-family:monospace">'+E(p.id)+' · '+E(p.decision||p.status||'')+' · '+E(p.controller||'')+'</div>';}).join('') : '<div style="opacity:.6">none yet</div>';
-        b+=hd('recent Claude Code sessions ('+sess.length+')');
-        b+= sess.length? sess.slice(0,8).map(function(s){return '<div style="font-family:monospace">'+E((s.claude_session_id||'').slice(0,14))+'… · '+E(String(s.turn_count||s.turns||s.count||''))+' turns</div>';}).join('') : '<div style="opacity:.6">none ingested</div>';
-        var bd=document.getElementById('sbxInfoBody'); if(bd) bd.innerHTML=b;
-      });
+      ov.querySelector('[data-act=close]').onclick=function(){ov.remove();};
+      ov.querySelector('[data-act=reload]').onclick=function(){DATA=null;render();load();};
+      document.addEventListener('keydown',function esc(e){ if(e.key==='Escape'){ var o=document.getElementById('sbxInfo'); if(o) o.remove(); document.removeEventListener('keydown',esc); } });
+      render(); if(!DATA||DATA.error) load(); else render();
     }
     function go(){ paint('');
-      fetch('/obs/provenance').then(function(r){return r.json();})
-        .then(function(p){ if(p&&p.branch) paint(p.branch); }).catch(function(){});
+      getJSON('/obs/provenance').then(function(p){ if(p&&p.branch){ paint(p.branch); load(); } }).catch(function(){});
     }
     if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',go,{once:true});
     else go();
@@ -623,7 +1071,7 @@ select option{background:var(--bg2)}
 })();</script>
 
 <header>
-  <div class="logo"><div class="logo-hex"></div>VERA</div>
+  <div class="logo" title="Vera"><div class="logo-hex"></div>VERA</div>
   <div class="dot" id="dot"></div>
   <span class="conn-label" id="connLabel">disconnected</span>
   <div id="hdrPills"></div>
@@ -634,6 +1082,14 @@ select option{background:var(--bg2)}
     <button class="btn sm" id="hdrMetricBtn" onclick="hdrMetricsToggleCfg(event)" title="Choose which metrics show in the header">▦</button>
     <div id="hdrMetricCfg"></div>
   </div>
+  <span class="hsp"></span>
+  <!-- the board's header: the activity ticker (every loop · dream · goal · cap · run — the lane opens on press), Search ⌘K, the style segment, theme swatches, Aa, ⋯ -->
+  <button class="hbtn on" type="button" onclick="openTabPicker()" title="Find a panel, a setting, a capability"><svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4.2"/><path d="m9.3 9.3 3 3"/></svg>Search<span class="mono">⌘K</span></button>
+  <div class="seg" id="hdrStyleSeg" title="The style pack — the same four the chat wears"></div>
+  <span id="hdrSwatches" style="display:contents"></span>
+  <button class="ico" type="button" onclick="openThemeMenu(event)" title="Theme, style pack and UI size"><span style="font-size:12px;font-weight:600">Aa</span></button>
+  <button class="ico" type="button" id="hdrMore" onclick="_hdrSheet()" title="Connection and the metric picker"><svg width="16" height="16" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.4"/><circle cx="9" cy="9" r="1.4"/><circle cx="14" cy="9" r="1.4"/></svg></button>
+  <div id="hdrSheet"></div>
   <div class="hdr-right">
       <button class="btn sm" id="themeBtn" onclick="openThemeMenu(event)" oncontextmenu="event.preventDefault();toggleTheme()" title="Choose theme (right-click to cycle)" style="padding:3px 8px;font-size:13px">☀</button>
     <input class="url-input" id="backendUrl" value="" placeholder="http://host:8999">
@@ -685,6 +1141,7 @@ select option{background:var(--bg2)}
       <!-- Ollama tab removed — now in Workers & Ollama panel -->
       <div class="tab-controls">
         <button class="tab-ctrl-btn" onclick="tabToggleLhm()" title="Toggle left-hand menu" id="tabLhmBtn">☰</button>
+        <button class="tab-ctrl-btn" onclick="toggleEvSidebar()" title="Show or hide live events" id="tabEvBtn">◫</button>
         <button class="tab-ctrl-btn" onclick="tabToggleAutohide()" title="Auto-hide tabs" id="tabAutohideBtn">⇕</button>
         <button class="tab-ctrl-btn keep-inner-nav-btn" onclick="tabToggleKeepInnerNav()" title="Keep a panel's own inner menu visible while this main menu is auto-hiding">⧈</button>
         <button class="tab-ctrl-btn" onclick="tabAddPane()" title="Open additional panel alongside">+</button>
@@ -696,6 +1153,9 @@ select option{background:var(--bg2)}
                 title="Open any panel standalone in a new browser tab">⧉</button>
       </div>
     </div>
+    <div id="tabSubtabs"></div>
+    <!-- the Driven ribbon: shown over a tab the aide opened — who, the policy in force, undo the directive, the log -->
+    <span id="tabRibbon" data-w="driven ribbon · controls"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button type="button" onclick="_drivenUndo()" title="Undo the directive that opened this tab">Undo</button><button type="button" onclick="_drivenLog()" title="The Driven panel — every directive, allowed or refused">Log</button></span>
 
     <!-- LHM nav: shown when LHM mode is active -->
     <nav class="lhm-nav" id="lhmNav">
@@ -727,15 +1187,18 @@ select option{background:var(--bg2)}
 
         <!-- Toolbar -->
         <div class="dash-toolbar">
-          <div class="dash-title">Cluster Overview</div>
+          <div class="dash-title">Cluster overview</div>
+          <span class="live" id="dashLive" style="display:none"><i></i>live · 5s</span>
+          <span class="dsp"></span>
+          <span class="dlbl" id="dashRecLbl"></span>
           <span class="dash-meta" id="dashLastUpdate">never updated</span>
           <button class="btn sm"      onclick="loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadDockerStats();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadConnections();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch()" title="Refresh all widgets">↻ Refresh</button>
-          <button class="btn sm teal" onclick="clusterAutoRefresh()" id="dashAutoBtn">Auto 5s</button>
+          <button class="btn sm teal" onclick="clusterAutoRefresh()" id="dashAutoBtn" title="Auto-refresh: press to run the dashboard's reads every 5s">Auto off</button>
           <span id="clusterRefreshBadge" style="font-size:9.5px;color:var(--dim2);align-self:center"></span>
           <button class="btn sm"      onclick="loadDiagnostics()">Diagnostics</button>
           <button class="btn sm"      onclick="dashToggleEdit()" id="dashEditBtn" title="Configure dashboard layout">⚙ Configure</button>
           <button class="btn sm"      onclick="dashResetLayout()" title="Reset to defaults">Reset</button>
-          <button class="btn sm"      onclick="dashOpenWidgetLoader()" title="Add a registered panel or element as a widget">+ Add Widget</button>
+          <button class="btn sm"      onclick="dashOpenWidgetLoader()" title="Add a widget — any form of the catalogue, a panel, a template, with a live preview">+ Add Widget</button>
         </div>
 
         <!-- Subsystem health strip — always-on, distinct from the opt-in header meter bar -->
@@ -779,7 +1242,7 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-proxmox')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:290px;overflow-y:auto">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;min-height:0;overflow-y:auto">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxRunning">—</div><div class="sm-kpi-sub">running</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxGuests">—</div><div class="sm-kpi-sub">guests</div></div>
@@ -815,7 +1278,7 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-docker')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:290px;overflow-y:auto">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;min-height:0;overflow-y:auto">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerRunning">—</div><div class="sm-kpi-sub">running</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerConts">—</div><div class="sm-kpi-sub">containers</div></div>
@@ -839,7 +1302,7 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-ollama')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:290px;overflow-y:auto">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;min-height:0;overflow-y:auto">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaOnline">—</div><div class="sm-kpi-sub">online</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaGpu">—</div><div class="sm-kpi-sub">gpu</div></div>
@@ -904,7 +1367,7 @@ select option{background:var(--bg2)}
           </div>
 
           <!-- ── KPI: Status ── -->
-          <div class="widget w-w2 w-h1" data-wid="status">
+          <div class="widget w-w2 w-h2" data-wid="status">
             <div class="w-head">
               <span class="w-grip" title="Drag to reorder">⠿</span>
               <span class="w-dot" id="wStatusDot"></span>
@@ -916,7 +1379,7 @@ select option{background:var(--bg2)}
           </div>
 
           <!-- ── KPI: Mode ── -->
-          <div class="widget w-w2 w-h1" data-wid="mode">
+          <div class="widget w-w2 w-h2" data-wid="mode">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wModeDot"></span>
@@ -928,7 +1391,7 @@ select option{background:var(--bg2)}
           </div>
 
           <!-- ── KPI: Redis ── -->
-          <div class="widget w-w2 w-h1" data-wid="redis">
+          <div class="widget w-w2 w-h2" data-wid="redis">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wRedisDot"></span>
@@ -940,7 +1403,7 @@ select option{background:var(--bg2)}
           </div>
 
           <!-- ── KPI: Workers ── -->
-          <div class="widget w-w2 w-h1" data-wid="workers">
+          <div class="widget w-w2 w-h2" data-wid="workers">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wWorkersDot"></span>
@@ -952,7 +1415,7 @@ select option{background:var(--bg2)}
           </div>
 
           <!-- ── KPI: Caps ── -->
-          <div class="widget w-w2 w-h1" data-wid="caps">
+          <div class="widget w-w2 w-h2" data-wid="caps">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wCapsDot"></span>
@@ -964,7 +1427,7 @@ select option{background:var(--bg2)}
           </div>
 
           <!-- ── KPI: Pending ── -->
-          <div class="widget w-w2 w-h1" data-wid="pending">
+          <div class="widget w-w2 w-h2" data-wid="pending">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wPendingDot"></span>
@@ -1043,7 +1506,7 @@ select option{background:var(--bg2)}
           </div>
 
           <!-- ── Scheduler ── -->
-          <div class="widget w-w6 w-h3" data-wid="scheduler">
+          <div class="widget w-w6 w-h4" data-wid="scheduler">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot ok"></span>
@@ -1094,7 +1557,7 @@ select option{background:var(--bg2)}
           </div>
 
           <!-- ── Mesh info ── -->
-          <div class="widget w-w4 w-h3" data-wid="mesh-info">
+          <div class="widget w-w4 w-h4" data-wid="mesh-info">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wMeshDot"></span>
@@ -1112,7 +1575,7 @@ select option{background:var(--bg2)}
           </div>
 
           <!-- ── Loop Lab info ── -->
-          <div class="widget w-w4 w-h3" data-wid="looplab-info">
+          <div class="widget w-w4 w-h4" data-wid="looplab-info">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wLoopLabDot"></span>
@@ -1147,7 +1610,7 @@ select option{background:var(--bg2)}
           </div>
 
           <!-- ── Connections: VS Code / Claude Code / OpenClaw ── -->
-          <div class="widget w-w4 w-h3" data-wid="connections">
+          <div class="widget w-w4 w-h4" data-wid="connections">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wConnDot"></span>
@@ -1632,6 +2095,108 @@ let _autohideTimer = null;
 // _reapplyNavHosting().
 let _keepInnerNavOnAutohide = false;
 let _evSidebarCollapsed = false;
+/* ── every dashboard row opens its own detail modal (the Harness board) ─────────────────────────────────────── */
+const _ROW_SEL = 'tr, [class$="-row"], [class*="-row "], .inst-card, [data-row], .lhm-s-wrow';
+function _rowOf(t){ const w = t.closest && t.closest('#dashGrid .widget .w-body'); if(!w) return null; let el = t.closest(_ROW_SEL); if(el && w.contains(el) && el !== w) return el; return null; }
+function _rowFields(row){
+  const F = []; const txt = (e) => String(e.textContent || '').replace(/\s+/g, ' ').trim();
+  if(row.tagName === 'TR'){ const tbl = row.closest('table'); const heads = tbl ? Array.from(tbl.querySelectorAll('thead th, tr:first-child th')).map(txt) : []; Array.from(row.children).forEach((c, i) => { const v = txt(c); if(v) F.push({ k: heads[i] || ('col ' + (i + 1)), v }); }); }
+  else { const kids = Array.from(row.children).filter(c => txt(c)); if(kids.length >= 2) kids.forEach((c, i) => { const k = (c.getAttribute && (c.getAttribute('title') || c.getAttribute('data-k'))) || (c.className && String(c.className).split(' ')[0]) || ('field ' + (i + 1)); F.push({ k: String(k).slice(0, 24), v: txt(c) }); }); else F.push({ k: 'row', v: txt(row) }); }
+  Array.from(row.attributes || []).forEach(a => { if(/^data-/.test(a.name) && a.value && a.value.length < 200) F.push({ k: a.name.slice(5), v: a.value }); });
+  if(row.title) F.push({ k: 'title', v: row.title });
+  return F.slice(0, 40);
+}
+function _rowDetail(row){
+  const widget = row.closest('.widget'); const wt = widget ? String((widget.querySelector('.w-title') || {}).textContent || '').trim() : ''; const rec = widget ? String((widget.querySelector('.vd-rec') || {}).textContent || '').trim() : ''; const wid = widget ? (widget.dataset.wid || '') : '';
+  const F = _rowFields(row); const title = (F[0] && F[0].v) || wt || 'row'; const stats = F.slice(0, 5); const rows = F;
+  let m = document.getElementById('rowModal'); if(!m){ m = document.createElement('div'); m.id = 'rowModal'; document.body.appendChild(m); m.addEventListener('click', (ev) => { if(ev.target === m) _rowDetailClose(); }); }
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  m.innerHTML = '<div class="mbox" role="dialog" aria-label="' + esc(title) + '"><div class="mhd"><h2>' + esc(title) + '</h2><span class="lbl">' + esc([wt, rec].filter(Boolean).join(' · ')) + '</span><span class="sp"></span>'
+    + '<button class="mbtn" type="button" data-a="copy" title="Copy the row">Copy</button>' + (wid ? '<button class="mbtn" type="button" data-a="open" title="This widget in its own window">Open ↗</button>' : '') + '<button class="x" type="button" data-a="close" title="Close">✕</button></div>'
+    + '<div class="mbd">' + (stats.length ? '<div class="mstats">' + stats.map(s => '<div class="mstat"><b title="' + esc(s.v) + '">' + esc(String(s.v).slice(0, 28)) + '</b><span>' + esc(s.k) + '</span></div>').join('') + '</div>' : '')
+    + '<div class="mrows">' + rows.map(r => '<div class="mrow"><span class="dot"></span><span class="n">' + esc(r.k) + '</span><span class="out">' + esc(r.v) + '</span></div>').join('') + '</div>'
+    + '<div class="mnote">Every row on the dashboard opens like this — the same record the widget drew, laid out; Esc closes.</div></div></div>';
+  m.querySelector('[data-a="close"]').addEventListener('click', _rowDetailClose);
+  m.querySelector('[data-a="copy"]').addEventListener('click', () => { try{ navigator.clipboard.writeText(rows.map(r => r.k + ': ' + r.v).join('\n')); }catch(_){} });
+  const ob = m.querySelector('[data-a="open"]'); if(ob) ob.addEventListener('click', () => { try{ dashWidgetWindow(wid); }catch(_){} _rowDetailClose(); });
+  m.classList.add('on'); return m;
+}
+function _rowDetailClose(){ const m = document.getElementById('rowModal'); if(m) m.classList.remove('on'); }
+document.addEventListener('keydown', (ev) => { if(ev.key === 'Escape') _rowDetailClose(); });
+document.addEventListener('click', (ev) => {
+  if(ev.defaultPrevented) return; const t = ev.target; if(!t || !t.closest) return;
+  if(t.closest('button, a, input, select, textarea, [contenteditable], .w-head, .w-actions, .w-resize, [onclick]')) return;   // a row with its own handler keeps it
+  const row = _rowOf(t); if(!row) return; if(row.matches('[onclick]') || row.closest('[onclick]')) return;
+  _rowDetail(row);
+});
+/* ── the harness chrome as the Harness board draws it ────────────────────────────────────────────────────────
+   Live events fold away by default (◫ brings the column back, remembered). The ⋯ sheet holds the connection
+   controls and the metric picker. The style segment and the theme swatches drive veraUI. The ticker in the
+   header is the newest activity headline and the count of what the feed has seen (its lane is the next step). */
+const _HDR_STYLES = [['standard','Standard'],['newspaper','News'],['terminal','Term'],['pixel','Pixel']];
+function _hdrSheet(on){ const s=document.getElementById('hdrSheet'), b=document.getElementById('hdrMore'); if(!s) return; const v=on==null?!s.classList.contains('on'):!!on; s.classList.toggle('on', v); if(b) b.classList.toggle('on', v); }
+// the activity ticker in the header is the activity overlay's pill (vera/activity_overlay.js): the /activity/timeline
+// feed, the lane in the column flow under the header, the run flow beneath it
+function _hdrStyleSync(){ const seg=document.getElementById('hdrStyleSeg'); if(!seg) return; let cur='standard'; try{ cur=document.documentElement.getAttribute('data-style')||localStorage.getItem('vera:ui:style')||'standard'; }catch(_){} seg.innerHTML=_HDR_STYLES.map(s=>'<button type="button" class="'+(s[0]===cur?'on':'')+'" data-style="'+s[0]+'">'+s[1]+'</button>').join(''); seg.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ try{ if(window.veraUI&&veraUI.setAppearance) veraUI.setAppearance({style:b.dataset.style}); else document.documentElement.setAttribute('data-style', b.dataset.style); }catch(_){} setTimeout(_hdrStyleSync,50); })); }
+// the swatches ARE the theme menu: the same catalogue, the same pick (_setTheme — the server's choice, the vars,
+// the broadcast to every panel, the button, the saved theme); the current one is lit whichever way it was set
+async function _hdrSwatches(){ const host=document.getElementById('hdrSwatches'); if(!host) return; let themes={}; try{ themes=await _fetchAllThemes(); }catch(_){} const ids=Object.keys(themes||{}); if(!ids.length) return;
+  const cur=_hdrCurTheme(); const pick=ids.indexOf(cur)>=5?ids.slice(0,4).concat([cur]):ids.slice(0,5);
+  host.innerHTML=pick.map(id=>{ const t=themes[id]||{}; const v=t.vars||{}; const bg=v['--bg']||v['--bg0']||(t.type==='light'?'#f4f4f2':'#111318'), ac=v['--ac']||v['--acc']||t.accent||'#5a9e8f'; return '<span class="swp'+(id===cur?' on':'')+'" data-theme="'+id+'" title="'+(t.label||t.name||id)+' — the same pick as the theme menu" style="background:'+bg+'"><i style="background:'+ac+'"></i></span>'; }).join('');
+  host.querySelectorAll('.swp').forEach(s=>s.addEventListener('click',async()=>{ try{ await _setTheme(s.dataset.theme); }catch(_){} _hdrSwatchesSync(); })); }
+function _hdrCurTheme(){ let cur=''; try{ cur=_currentTheme||''; }catch(_){} return cur||document.documentElement.getAttribute('data-theme')||''; }
+function _hdrSwatchesSync(){ const host=document.getElementById('hdrSwatches'); if(!host) return; const cur=_hdrCurTheme(); const have=Array.from(host.querySelectorAll('.swp')); if(cur&&!have.some(x=>x.dataset.theme===cur)){ _hdrSwatches(); return; } have.forEach(x=>x.classList.toggle('on', x.dataset.theme===cur)); }
+function _dashRecLabel(){ const g=document.getElementById('dashGrid'), l=document.getElementById('dashRecLbl'); if(!g||!l) return; const n=g.querySelectorAll('.widget:not(.hidden)').length; let rows=0; try{ rows=getComputedStyle(g).gridTemplateRows.split(' ').length; }catch(_){} const secs=g.querySelectorAll('.widget.w-section:not(.hidden)').length; l.textContent=(n-secs)+' widgets · '+secs+' sections'; l.title='every widget a record · grid 12 × '+(rows||'—')+' · vera.dash.main'; const lv=document.getElementById('dashLive'); const ab=document.getElementById('dashAutoBtn'); if(lv&&ab) lv.style.display=/auto/i.test(ab.textContent)&&ab.classList.contains('teal')?'':'none'; }
+function _tabCounts(){
+  const bar=document.getElementById('tabBar'); if(!bar) return;
+  const set=(match, n)=>{ const tab=Array.from(bar.querySelectorAll('.tab[data-tab]')).find(t=>match.test(String(t.dataset.tab||'')+' '+String(t.textContent||''))); if(!tab) return; let ct=tab.querySelector(':scope > .ct'); if(!n){ if(ct) ct.remove(); return; } if(!ct){ ct=document.createElement('span'); ct.className='ct'; const close=tab.querySelector('.tab-close'); tab.insertBefore(ct, close||null); } ct.textContent=String(n); };
+  const act=parseInt(((document.querySelector('#vao-pill .vao-count')||{}).textContent||'').trim(),10); set(/activity/i, isFinite(act)?act:0);
+  const ol=String((document.getElementById('lsOllamaVal')||{}).textContent||''); const busy=(ol.match(/(\d+)\/\d+\s*busy/)||[])[1]; set(/workers|ollama/i, busy?parseInt(busy,10):0);
+}
+/* the tab bar fits its width (the Harness board): open tabs first, then the rest in order, until the width beside the
+   chip and the controls runs out; the remainder folds into the chip — its count — and the picker lists them */
+let _tabsFitRaf = 0;
+function _tabsFit(){
+  const bar=document.getElementById('tabBar'); if(!bar||!bar.offsetWidth) return;
+  const tabs=[...bar.querySelectorAll('.tab[data-tab]')]; if(!tabs.length) return;
+  tabs.forEach(t=>t.classList.remove('folded'));
+  const chip=bar.querySelector('.tab.more'), ctl=bar.querySelector('.tab-controls');
+  const cs=getComputedStyle(bar); const gap=parseFloat(cs.columnGap||cs.gap)||0;
+  let avail=bar.clientWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0)-(chip?chip.offsetWidth+gap:0)-(ctl?ctl.offsetWidth+gap:0)-8;
+  const open=t=>{ try{ const pid=_tabToPanelId(t); return !!(pid&&_openTabs.has(pid)); }catch(_){ return t.classList.contains('active')||t.classList.contains('open'); } };
+  const w=new Map(tabs.map(t=>[t, t.offsetWidth+gap]));
+  const keep=new Set();
+  tabs.filter(open).forEach(t=>{ keep.add(t); avail-=w.get(t); });      // open tabs are never folded
+  tabs.filter(t=>!keep.has(t)).forEach(t=>{ if(avail-w.get(t)>=0){ keep.add(t); avail-=w.get(t); } });
+  let folded=0; tabs.forEach(t=>{ if(!keep.has(t)){ t.classList.add('folded'); folded++; } });
+  if(chip){ chip.dataset.folded=String(folded); chip.textContent=(folded?'+'+folded+' ':'+ ')+'⌘K'; chip.title=folded?folded+' more panel'+(folded>1?'s':'')+' — every registered panel, ⌘K':'Every registered panel — add one as a tab'; }
+  return folded;
+}
+function _tabsFitSoon(){ if(_tabsFitRaf) return; _tabsFitRaf=requestAnimationFrame(()=>{ _tabsFitRaf=0; try{ _tabsFit(); }catch(_){} }); }
+window.addEventListener('resize', _tabsFitSoon);
+function _tabsMoreChip(){ const bar=document.getElementById('tabBar'); if(!bar||bar.querySelector('.tab.more')) return; const m=document.createElement('div'); m.className='tab more'; m.title='Every registered panel — add one as a tab'; m.textContent='+ ⌘K'; m.addEventListener('click',()=>openTabPicker()); const ctl=bar.querySelector('.tab-controls'); bar.insertBefore(m, ctl||null);
+  try{ fetch(base()+'/ui/panels').then(r=>r.json()).then(list=>{ const all=Array.isArray(list)?list.length:(list&&list.panels?list.panels.length:0); const open=bar.querySelectorAll('.tab[data-tab]').length; if(all>open&&!m.dataset.folded) m.textContent='+'+(all-open)+' ⌘K'; }).catch(()=>{}); }catch(_){}
+  _tabsFitSoon(); try{ new MutationObserver(_tabsFitSoon).observe(bar,{childList:true}); }catch(_){} }
+function _harnessChromeMount(){
+  if(document.body.dataset.designChrome) return; document.body.dataset.designChrome='1';
+  // the ⋯ sheet: the URL, Connect, ↻ and the metric picker move as the same elements
+  const sheet=document.getElementById('hdrSheet'), right=document.querySelector('header .hdr-right'), cfg=document.getElementById('hdrMetricCfgWrap'), conn=document.getElementById('connLabel');
+  if(sheet&&right){ const r1=document.createElement('div'); r1.className='hs-row'; r1.innerHTML='<span class="hs-k">Connection</span>'; if(conn) r1.appendChild(conn); while(right.firstChild){ r1.appendChild(right.firstChild); } sheet.appendChild(r1); right.style.display='none';
+    if(cfg){ const r2=document.createElement('div'); r2.className='hs-row'; r2.innerHTML='<span class="hs-k">Header metrics</span>'; r2.appendChild(cfg); sheet.appendChild(r2); } }
+  document.addEventListener('click', ev=>{ const s=document.getElementById('hdrSheet'); if(s&&s.classList.contains('on')&&!s.contains(ev.target)&&!(ev.target.closest&&ev.target.closest('#hdrMore'))) _hdrSheet(false); });
+  // live events fold away unless you left them open
+  let evOpen=false; try{ evOpen=localStorage.getItem('vera:harness:events')==='on'; }catch(_){}
+  if(!evOpen&&!_evSidebarCollapsed) toggleEvSidebar();
+  const evBtn=document.getElementById('tabEvBtn'); const syncEv=()=>{ if(evBtn) evBtn.classList.toggle('active', !_evSidebarCollapsed); try{ localStorage.setItem('vera:harness:events', _evSidebarCollapsed?'off':'on'); }catch(_){} };
+  syncEv(); const sb=document.getElementById('evSidebar'); if(sb&&window.MutationObserver) new MutationObserver(syncEv).observe(sb,{attributes:true,attributeFilter:['style']});
+  // the ticker follows the feed
+  _hdrStyleSync(); _hdrSwatches(); _tabsMoreChip(); _dashRecLabel(); try{ _hostFramesWatch(); }catch(_){}
+  // counts on tabs with live work (the board): Activity carries the feed's count, Workers & Ollama the busy instances
+  _tabCounts(); setInterval(_tabCounts, 5000);
+  const grid=document.getElementById('dashGrid'); if(grid&&window.MutationObserver){ let t2=0; new MutationObserver(()=>{ clearTimeout(t2); t2=setTimeout(_dashRecLabel,200); }).observe(grid,{childList:true,attributes:true,attributeFilter:['class']}); }
+  const ab=document.getElementById('dashAutoBtn'); if(ab&&window.MutationObserver) new MutationObserver(_dashRecLabel).observe(ab,{attributes:true,childList:true,characterData:true,subtree:true});
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>{ try{ _harnessChromeMount(); }catch(e){ console.warn('harness chrome', e); } }); else { try{ _harnessChromeMount(); }catch(e){ console.warn('harness chrome', e); } }
 
 // ── Helpers: resolve tab element ↔ panel ID ──
 function _tabToPanelId(tabEl){
@@ -1685,6 +2250,71 @@ function _estateOpen(pid, pane, sub, entity){
     if (++tries < 25) setTimeout(send, 400);
   })();
 }
+// ── places: where a reading lives, opened by name ─────────────────────────────
+// ui.places is ONE table (vera/ui/places_core.py): a place is a tab, a pane
+// and sub-tab of the Estate or Models panel, a view of a hosting panel, or an
+// element of the Elements switcher. The dashboard's ↗ and any panel's
+// veraUI.openPlace(name) come here, so a moved pane is fixed in the table.
+let _PLACES = null;
+async function _placesLoad(){
+  if (_PLACES) return _PLACES;
+  try { const r = await fetch(base() + '/ui/places', { cache: 'no-store' }); const j = await r.json(); const c = j && j.content !== undefined ? j.content : j; _PLACES = (c && c.places) ? c : { places: {}, rules: [] }; }
+  catch (_) { _PLACES = { places: {}, rules: [] }; }
+  try { window.dispatchEvent(new CustomEvent('vera:places')); } catch (_) {}
+  return _PLACES;
+}
+_placesLoad().then(() => { try { const q = new URLSearchParams(location.search).get('place'); if (q) setTimeout(() => openPlace(q), 900); } catch (_) {} });
+function placeFor(source, explicit){
+  const T = _PLACES || { places: {}, rules: [] };
+  if (explicit && T.places[explicit]) return explicit;
+  const s = String(source || '');
+  for (const r of (T.rules || [])) if (s.startsWith(r[0])) return r[1];
+  return '';
+}
+function _mediaShow(mid){
+  const tab = document.querySelector('.media-tab[data-mid="' + mid + '"]');
+  if (tab) { tab.click(); return true; }
+  return false;
+}
+// the Elements tab is out of the bar by default; a place that lives there puts it back for the session
+function _mediaTabEnsure(){
+  const bar = document.getElementById('tabBar'); if (!bar || bar.querySelector('.tab[data-tab="media"]')) return;
+  const t = document.createElement('div'); t.className = 'tab'; t.dataset.tab = 'media'; t.textContent = 'Elements';
+  const more = bar.querySelector('.tab.more'), ctl = bar.querySelector('.tab-controls');
+  bar.insertBefore(t, more || ctl || null);
+}
+function openPlace(p, entity){
+  const T = _PLACES || { places: {} };
+  if (typeof p === 'string') p = T.places[p] || (document.getElementById('panel-auto-' + p) ? { panel: p } : null);
+  if (!p || typeof p !== 'object') return false;
+  const tabName = p.tab ? p.tab : (p.panel ? 'auto-' + p.panel : '');
+  if (!tabName) return false;
+  if (p.tab === 'media') _mediaTabEnsure();
+  if (p.tab && !document.querySelector('#tabBar .tab[data-tab="' + tabName + '"]')) return false;
+  if (!p.tab && !document.getElementById('panel-' + tabName)) return false;
+  switchTab(tabName);
+  if (p.media) _mediaShow(p.media);
+  if (p.pane) _estateOpen(tabName, p.pane, p.sub || '', entity || '');
+  else if (entity) _entityOpenIn(tabName, entity);
+  if (p.nav) _lhmNavSelect(tabName, p.nav);
+  return true;
+}
+function _entityOpenIn(pid, ref){
+  let tries = 0;
+  const done = ev => { if (ev.data && ev.data.type === 'vera:entity:opened' && ev.data.ref === ref) { tries = 99; window.removeEventListener('message', done); } };
+  window.addEventListener('message', done);
+  (function send(){
+    const f = _panelFrame(pid);
+    if (f && f.contentWindow) f.contentWindow.postMessage({type:'vera:entity:open', ref}, '*');
+    if (++tries < 25) setTimeout(send, 400); else window.removeEventListener('message', done);
+  })();
+}
+window.addEventListener('message', e => {
+  const d = e && e.data; if (!d || typeof d !== 'object') return;
+  if (d.type === 'vera:place:open' && d.place) { _placesLoad().then(() => openPlace(d.place, d.entity || '')); }
+  // an entity opened from a panel that is not inside the Estate tab reaches the shell: the Estate tab answers it
+  else if (d.type === 'vera:entity:open' && d.ref) { _placesLoad().then(() => openPlace({ panel: (_PLACES && _PLACES.estate_panel) || 'workers-ollama' }, String(d.ref))); }
+});
 function switchTab(name){
   const r = _tabRedirects[name];
   if (r) {
@@ -1698,6 +2328,11 @@ function switchTab(name){
 }
 
 // Open a tab alongside existing ones (Ctrl+click / middle-click)
+function _paneLabel(pid){
+  const t = document.querySelector('#tabBar .tab[data-tab="' + CSS.escape(pid) + '"]') || document.querySelector('#tabBar .tab[data-tab="' + CSS.escape(String(pid).replace(/^auto-/, '')) + '"]');
+  const s = t ? [...t.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('') : '';
+  return s || String(pid).replace(/^auto-/, '');
+}
 function splitTab(name){
   if(_openTabs.has(name)){
     // Already open — close it if there are others
@@ -1762,9 +2397,53 @@ function _tabPaneOpen(id){
   _tabFireLoader(id);
 }
 
+// who opened each tab (the one panel set carries it): a tab the aide opened is marked and wears the Driven ribbon
+const _tabOrigin = {};
+let _panelsSetTimer = null;
+function _tabDrivenMark(){
+  document.querySelectorAll('#tabBar .tab').forEach(t => { const pid = _tabToPanelId(t); const by = _tabOrigin[pid] || 'you'; const driven = by !== 'you' && by !== 'user';
+    t.classList.toggle('driven', driven); let who = t.querySelector('.who');
+    if(driven){ if(!who){ who = document.createElement('span'); who.className = 'who'; t.appendChild(who); } who.textContent = by; } else if(who) who.remove(); });
+  // the ribbon names the open tab the aide opened (the active one first)
+  const isDriven = t => { const b = _tabOrigin[t] || 'you'; return b !== 'you' && b !== 'user'; };
+  const first = [..._openTabs].find(isDriven) || ''; const rb = document.getElementById('tabRibbon'); if(!rb) return;
+  const by = _tabOrigin[first] || 'you'; const driven = !!first && isDriven(first);
+  rb.classList.toggle('on', driven); rb.dataset.panel = driven ? first.replace(/^auto-/, '') : '';
+  if(driven){ rb.querySelector('.who').textContent = by; const pol = rb.querySelector('.pol'); pol.textContent = '';
+    api('/mcp/call', 'POST', { name: 'ui.policy.get', arguments: { session_id: _veraSessionId } }).then(r => { const c = r && r.content !== undefined ? r.content : r; const p = (c && (c.policy || c.rules)) || {}; pol.textContent = 'policy ' + (p['panel:' + rb.dataset.panel] || p.panels || 'drive'); }).catch(() => {}); }
+}
+// the one panel set, read back: a panel the aide opened as a harness tab (ui.panels.open says who and where) is
+// opened here as a tab alongside the others and marked; the harness's own report keeps who opened what
+let _panelsSetBusy = false;
+async function _panelsSetSync(){ if(_panelsSetBusy || document.hidden) return; _panelsSetBusy = true; try{ await _panelsSetSync0(); } finally { _panelsSetBusy = false; } }
+async function _panelsSetSync0(){
+  let r = null; try{ r = await api('/mcp/call', 'POST', { name: 'ui.panels.open', arguments: { session_id: _veraSessionId } }); }catch(_){ return; }
+  const c = r && r.content !== undefined ? r.content : r; const panels = (c && c.panels) || [];
+  let changed = false;
+  panels.forEach(p => { if(!p || !p.id) return; const by = p.origin || 'you'; if(by === 'you' || by === 'user') return; if(!/harness/.test(String(p.placement || p.host || ''))) return;
+    const tab = document.querySelector('#tabBar .tab[data-tab="' + p.id + '"]') || document.querySelector('#tabBar .tab[data-tab="auto-' + p.id + '"]'); if(!tab) return;
+    const pid = _tabToPanelId(tab); if(_tabOrigin[pid] !== by){ _tabOrigin[pid] = by; changed = true; }
+    if(!_openTabs.has(pid)){ _openTabs.add(pid); changed = true; try{ _tabFireLoader(pid); }catch(_){} } });
+  if(changed) _tabRender();
+}
+function _panelsSetStart(){ if(_panelsSetTimer) return; _panelsSetTimer = setInterval(_panelsSetSync, 5000); setTimeout(_panelsSetSync, 2500); }
+async function _drivenUndo(){
+  const rb = document.getElementById('tabRibbon'); const pid = rb && rb.dataset.panel; if(!pid) return;
+  try{
+    const log = await api('/mcp/call', 'POST', { name: 'ui.directive.log', arguments: { session_id: _veraSessionId, limit: 60 } });
+    const c = log && log.content !== undefined ? log.content : log;
+    const row = ((c && c.rows) || []).slice().reverse().find(x => x.name === 'panel.open' && x.outcome === 'applied' && ((x.args || {}).id === pid));
+    if(row){ await api('/mcp/call', 'POST', { name: 'ui.directive.undo', arguments: { session_id: _veraSessionId, row_id: row.id } }); }
+    const tabPid = [..._openTabs].find(t => t.replace(/^auto-/, '') === pid); if(tabPid){ delete _tabOrigin[tabPid]; if(_openTabs.size > 1) _openTabs.delete(tabPid); }
+    _tabRender();
+  }catch(_){}
+}
+function _drivenLog(){ const t = document.querySelector('#tabBar .tab[data-tab="driven"], #tabBar .tab[data-tab="auto-driven"]'); if(t){ splitTab(_tabToPanelId(t)); _tabFireLoader(_tabToPanelId(t)); } else { try{ window.open(base() + '/ui/driven', '_blank'); }catch(_){} } }
 function _tabRender(){
   const panelsEl = document.querySelector('.panels');
   const multi = _openTabs.size > 1;
+  try{ _tabDrivenMark(); _panelsSetStart(); }catch(_){}
+  try{ _panelsOpenStart(); setTimeout(_panelsOpenReport, 400); }catch(_){}   // the one panel set follows the tabs
 
   // 1) Update tab button states + add/remove close buttons
   document.querySelectorAll('#tabBar .tab').forEach(t=>{
@@ -1819,6 +2498,16 @@ function _tabRender(){
     }
   });
 
+  // 3b) each open pane names itself and closes while more than one is open: the tab bar is hidden in LHM mode, and a
+  //     pane opened beside (⧉ on a menu item, "Estate · 2") had no other close. Its name docks its menu (first pane).
+  try{ panelsEl.querySelectorAll('.panel').forEach(p => { const pid = _panelIdFromEl(p); let chip = p.querySelector(':scope > .pane-x');
+    if(!(visibleCount > 1 && _openTabs.has(pid))){ if(chip) chip.remove(); return; }
+    if(!chip){ chip = document.createElement('div'); chip.className = 'pane-x'; chip.innerHTML = '<span class="pn" title="Dock this pane\'s menu in the LHM"></span><button type="button" class="px" title="Close this pane">\u00d7</button>';
+      chip.querySelector('.px').addEventListener('click', ev => { ev.stopPropagation(); splitTab(pid); _lhmNavSync(); });
+      chip.querySelector('.pn').addEventListener('click', ev => { ev.stopPropagation(); const rest = [..._openTabs].filter(x => x !== pid); _openTabs.clear(); _openTabs.add(pid); rest.forEach(x => _openTabs.add(x)); _tabRender(); });
+      p.appendChild(chip); }
+    chip.querySelector('.pn').textContent = _paneLabel(pid); chip.classList.toggle('first', [..._openTabs][0] === pid); }); }catch(_){}
+
   // Let a bound mesh display follow the tab you're on (Markets open -> Markets
   // pad on the desk). Inert until you bind a node in the Mesh panel, and the
   // server no-ops when the right pad is already showing.
@@ -1837,6 +2526,8 @@ function _tabRender(){
 
   // 5) Keep LHM nav in sync
   _lhmNavSync();
+  // 6) the tab bar fits its width (the Harness board): the open tabs show, what does not fit folds into the chip
+  try{ _tabsFitSoon(); }catch(_){}
 }
 
 // ── Panel divider drag resize — panels are always row-flex, so always col-resize ──
@@ -1930,6 +2621,7 @@ function _tabApplyLhm(){
   }
   _tabRender();
   _tabApplyAutohide();   // switching horizontal/LHM re-targets autohide at whichever nav is now visible
+  _reapplyNavHosting();  // a full LHM spec is hosted only in the vertical menu — tell the panel which it is now
 }
 
 // ── Top-level nav unification ──────────────────────────────────────────────
@@ -1950,9 +2642,28 @@ const _panelNavSources = {};   // panelId -> e.source, so _reapplyNavHosting() c
 // always reliably reachable, so the panel's own (now redundant) rail is
 // still hidden regardless of the toggle.
 function _navHostingAllowed(){ return !(_autohide && _keepInnerNavOnAutohide); }
+// The panel id of the iframe a message came from — for a frame that was never sent vera:panel:init (an iframe a
+// panel's own mount script created, like the chat's, is not parked with data-lazy-src, so the load poll never
+// addresses it). Named by the .panel element that holds the frame.
+function _panelIdOfSource(src){
+  if(!src) return '';
+  for(const f of document.querySelectorAll('.panels .panel iframe')){
+    try{ if(f.contentWindow === src){ const p = f.closest('.panel'); return p ? _panelIdFromEl(p) : ''; } }catch(_){}
+  }
+  return '';
+}
+// Whether this outer menu is really hosting a given panel's nav right now: a plain section list is hosted whenever
+// hosting is allowed; a FULL LHM spec (state.nav.lhm) only while this menu is in its vertical (LHM) mode — in the
+// horizontal tab bar the sections are only a hover dropdown, so the panel keeps its own rail there.
+function _navHostedFor(nav){ return _navHostingAllowed() && (!(nav && nav.lhm) || _lhmMode); }
 window.addEventListener('message', e => {
   const d = e.data;
-  if(!d || typeof d!=='object' || d.type!=='vera:panel:state' || !d.panel_id) return;
+  if(!d || typeof d!=='object' || d.type!=='vera:panel:state') return;
+  if(!d.panel_id){
+    const pid = _panelIdOfSource(e.source); if(!pid) return;
+    d.panel_id = pid;
+    try{ e.source.postMessage({type:'vera:panel:init', panel_id: pid, session_id:''}, '*'); }catch(_){}
+  }
   const nav = (d.state && d.state.nav) || null;
   if(nav && Array.isArray(nav.items) && nav.items.length && e.source){
     _panelNavSources[d.panel_id] = e.source;
@@ -1966,7 +2677,7 @@ window.addEventListener('message', e => {
     // active, so a panel that already hid its rail before the user toggled
     // this on gets it back immediately rather than waiting on its own next
     // unrelated state change.
-    try{ e.source.postMessage({type: _navHostingAllowed() ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted'}, '*'); }catch(err){}
+    try{ e.source.postMessage({type: _navHostedFor(nav) ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted'}, '*'); }catch(err){}
   }
   const prevSig = JSON.stringify(_panelNavCache[d.panel_id] || null);
   if(JSON.stringify(nav) === prevSig) return;   // no real change → no re-render
@@ -1977,8 +2688,10 @@ window.addEventListener('message', e => {
 // autohide or the keep-inner-nav toggle changes, so already-mounted panels
 // react immediately instead of waiting for their own next state publish.
 function _reapplyNavHosting(){
-  const msg = { type: _navHostingAllowed() ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' };
-  Object.values(_panelNavSources).forEach(src => { try{ src.postMessage(msg, '*'); }catch(e){} });
+  Object.keys(_panelNavSources).forEach(pid => {
+    const msg = { type: _navHostedFor(_panelNavCache[pid]) ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' };
+    try{ _panelNavSources[pid].postMessage(msg, '*'); }catch(e){}
+  });
 }
 // Reach the iframe for a given top-level panel id, so an injected sub-item
 // click can postMessage nav_select straight into it.
@@ -1986,19 +2699,334 @@ function _panelFrame(pid){
   const el = document.getElementById('panel-' + pid);
   return el ? el.querySelector('iframe') : null;
 }
+var _localLhm = {};   // a tab whose menu the harness draws itself (the dashboard) → its pick handler
 function _lhmNavSelect(pid, itemId){
+  if(_localLhm[pid]){ _localLhm[pid](itemId); return; }
   const f = _panelFrame(pid);
   const aid = (crypto.randomUUID ? crypto.randomUUID() : 'nav-' + Date.now() + '-' + Math.random().toString(36).slice(2));
   if(f && f.contentWindow) f.contentWindow.postMessage(
     {type:'vera:panel:action', action:'nav_select', action_id:aid, payload:{id:itemId}}, '*');
 }
 
+// The absorbed menu: while the ACTIVE tab's panel publishes a full LHM spec (state.nav.lhm — the chat's eight
+// quick menus), this outer menu shows that panel's rail + its current menu's tabs instead of the tab list, and a
+// ☰ bar that swaps the tab list back IN PLACE (never a second menu beside it). Picks go to the panel as nav_select.
+let _lhmAbsorbTop = false, _lhmAbsorbPid = '';
+function _lhmAbsorbedFor(){
+  const first = [..._openTabs][0] || '';
+  const nav = first ? _panelNavCache[first] : null;
+  return (nav && nav.lhm && window.VeraLHM) ? { pid: first, nav } : null;
+}
+// the chat's own frame for a tab, when that tab is the chat (the frame that owns an LHM and a chat session)
+function _chatFrameFor(pid){ try{ return _chatFrames().find(f => { const p = f.closest('.panel'); return p && _panelIdFromEl(p) === pid; }) || null; }catch(_){ return null; } }
+// the chat panel's frame loads CHAT-ONLY inside the harness (its menu is the LHM beside it; the harness's ☰ above the rail is its ☰)
+// a chat frame a panel's own mount script creates (not the lazy loader) is loaded chat-only too, as it appears
+function _hostFramesWatch(){
+  const fix = (f) => { try{ const s = f.getAttribute('src'); if(s){ const t = _hostFrameSrc(s); if(t !== s) f.setAttribute('src', t); } const l = f.getAttribute('data-lazy-src'); if(l){ const t = _hostFrameSrc(l); if(t !== l) f.setAttribute('data-lazy-src', t); } }catch(_){} };
+  const root = document.querySelector('.panels') || document.body;
+  try{ root.querySelectorAll('iframe').forEach(fix); }catch(_){}
+  try{ new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if(!n || n.nodeType !== 1) return; if(n.tagName === 'IFRAME') fix(n); else if(n.querySelectorAll) n.querySelectorAll('iframe').forEach(fix); }))).observe(root, { childList:true, subtree:true }); }catch(_){}
+}
+function _hostFrameSrc(src){ try{ const s = String(src || ''); if(/\/chat_panel(\?|#|$)/.test(s) && !/[?&]only=/.test(s)) return s + (s.indexOf('?') >= 0 ? '&' : '?') + 'only=chat&harness=yes'; }catch(_){} return src; }
+// the chat's MENU instance as the LHM: one persistent frame (never rebuilt with the list), shown while the chat is the open UI
+// the menu instance grows its graph in place: the slot widens with it
+window.addEventListener('message', ev=>{ const d=ev&&ev.data; if(!d||d.type!=='vera:lhm:grow') return; const nav=document.getElementById('lhmNav'); if(nav){ nav.classList.toggle('grown', !!d.on); nav.classList.toggle('page', !!(d.on && d.page)); } });
+function _lhmMenuFrame(nav, src){
+  let hostEl = document.getElementById('lhmMenuHost');
+  if(!hostEl){ hostEl = document.createElement('div'); hostEl.id = 'lhmMenuHost'; hostEl.setAttribute('data-w', 'the chat\'s menu · lhm'); const tabs = document.getElementById('lhmNavTabs'); if(tabs && tabs.parentNode) tabs.parentNode.insertBefore(hostEl, tabs.nextSibling); else nav.appendChild(hostEl); }
+  const want = String(src || '').split('?')[0] + '?only=menu&harness=yes';
+  let fr = hostEl.querySelector('iframe');
+  if(!fr || fr.getAttribute('src') !== want){ if(fr) fr.remove(); fr = document.createElement('iframe'); fr.className = 'lhm-abs-frame'; fr.setAttribute('title', 'the chat\'s menu'); fr.setAttribute('src', want); hostEl.appendChild(fr); }
+  hostEl.classList.add('on'); return hostEl;
+}
+function _lhmRenderAbsorbed(host, pid, nav){
+  if(_lhmAbsorbTop) return false;   // the every-tab list draws its ONE header, whose ☰ comes back here
+  const bar = document.createElement('div'); bar.className = 'lhm-topbar';
+  const tb = document.createElement('div'); tb.className = 'lhm-tb' + (_lhmAbsorbTop ? ' on' : ''); tb.textContent = '☰';
+  tb.title = _lhmAbsorbTop ? "Back to the open panel's menu" : "This page's own menu — every tab";
+  tb.addEventListener('click', ()=>{ _lhmAbsorbTop = !_lhmAbsorbTop; _lhmNavSync(); });
+  const tt = document.createElement('div'); tt.className = 'lhm-tt';
+  tt.textContent = _lhmAbsorbTop ? 'Vera · every tab' : ((nav.lhm.title || 'panel') + ' · menu');
+  bar.appendChild(tb); bar.appendChild(tt); host.appendChild(bar);
+  // the chat: its menu IS this menu — the chat board embedded menu-only; nothing here is a copy
+  const chatFrame = _chatFrameFor(pid);
+  if(chatFrame){ const navEl = document.getElementById('lhmNav'); if(navEl) navEl.classList.add('chatmenu'); tt.textContent = 'Chat · menu'; _lhmMenuFrame(navEl, chatFrame.getAttribute('data-lazy-src') || chatFrame.getAttribute('src') || '/chat_panel'); return true; }
+  const abs = document.createElement('div'); abs.className = 'lhm-abs';
+  VeraLHM.absorb(abs, nav.lhm, id => {
+    _lhmNavSelect(pid, id);
+    const menu = String(id).split('/')[0], tab = String(id).split('/')[1] || '';
+    const lhm = Object.assign({}, nav.lhm, { active: Object.assign({}, nav.lhm.active, { menu, tab: tab || (nav.lhm.active && nav.lhm.active.menu === menu ? nav.lhm.active.tab : '') }) });
+    _panelNavCache[pid] = Object.assign({}, nav, { active: menu, lhm });   // optimistic; the panel's publish confirms
+    _lhmNavSync();
+  }, { topOn: false, topTitle: 'Its own top-level list', onTop: () => _lhmNavSelect(pid, '☰'), onSplit: _localLhm[pid] ? null : (id => _lhmOpenBeside(pid.replace(/--\d+$/, ''), id)), editKey: pid.replace(/--\d+$/, '') });
+  host.appendChild(abs);
+  return true;
+}
+
+// ═══ ONE TOP BAR (owner, 2026-09-27: "id like for the harness to be able to absorb controls for the current open panel
+// into the top bar - much like the lhm can absorb menus ... the harness top bar can adapt and possibly hide its stats in
+// a drawer"). The open panel OFFERS its bar (vera:hdr:offer — groups of controls, described, with a priority); this
+// header draws them as proxies, tells the panel it holds them (vera:hdr:absorbed, so the panel folds its own bar away)
+// and sends every press back (vera:hdr:act) to the panel's own element. The harness's stats, activity, style and theme
+// step into a drawer while it does. What does not fit is left in the panel's own ⋯, lowest priority first. ═══
+const _hdrOffers = {};   // panel id → { src, title, groups, absorbed }
+window.addEventListener('message', e => {
+  const d = e.data; if(!d || typeof d !== 'object' || d.type !== 'vera:hdr:offer' || !e.source) return;
+  const pid = _panelIdOfSource(e.source); if(!pid) return;
+  const prev = _hdrOffers[pid] || {};
+  if(!Array.isArray(d.groups) || !d.groups.length){ if(_hdrOffers[pid]){ delete _hdrOffers[pid]; _hdrSync(); } return; }
+  _hdrOffers[pid] = { src: e.source, title: String(d.title || ''), groups: d.groups.slice(0, 40), absorbed: prev.absorbed };
+  _hdrSync();
+});
+function _hdrAct(pid, hid, value){ const o = _hdrOffers[pid]; if(!o) return; try{ o.src.postMessage({ type: 'vera:hdr:act', hid, value }, '*'); }catch(_){} }
+function _hdrPanelHost(hdr){
+  let h = document.getElementById('hdrPanel');
+  if(!h){ h = document.createElement('div'); h.id = 'hdrPanel'; h.hidden = true; h.setAttribute('data-w', "the open panel's controls · header"); hdr.insertBefore(h, hdr.querySelector('.hsp') || null); }
+  return h;
+}
+const _HDR_DRAWER_IDS = ['hdrPills', 'hdrMetrics', 'hdrMetricCfgWrap', 'vao-pill', 'hdrStyleSeg', 'hdrSwatches'];
+function _hdrDrawerPlace(on){
+  const hdr = document.querySelector('body > header'); if(!hdr) return;
+  let btn = document.getElementById('hdrDrawerBtn'), dr = document.getElementById('hdrDrawer');
+  if(!btn){
+    dr = document.createElement('div'); dr.id = 'hdrDrawer'; dr.setAttribute('data-w', 'header drawer'); hdr.appendChild(dr);
+    btn = document.createElement('button'); btn.id = 'hdrDrawerBtn'; btn.type = 'button'; btn.className = 'ico'; btn.hidden = true;
+    btn.title = "The harness's stats, activity, style and theme - tucked away while the open panel's controls are in this bar";
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 13.5V9M7 13.5V5M11 13.5V8M15 13.5V3.5"/></svg>';
+    btn.addEventListener('click', ev => { ev.stopPropagation(); const v = !dr.classList.contains('on'); dr.classList.toggle('on', v); btn.classList.toggle('on', v); });
+    hdr.insertBefore(btn, document.getElementById('hdrMore') || null);
+    document.addEventListener('click', ev => { if(dr.classList.contains('on') && !dr.contains(ev.target) && !btn.contains(ev.target)){ dr.classList.remove('on'); btn.classList.remove('on'); } });
+  }
+  btn.hidden = !on; if(!on){ dr.classList.remove('on'); btn.classList.remove('on'); }
+  _HDR_DRAWER_IDS.forEach(id => { const el = document.getElementById(id); if(!el || !el.parentNode) return;
+    if(!el._hdrMark && el.parentNode !== dr){ const mkr = document.createComment('hdr:' + id); el.parentNode.insertBefore(mkr, el); el._hdrMark = mkr; }
+    if(on){ if(el.parentNode !== dr) dr.appendChild(el); }
+    else if(el.parentNode === dr && el._hdrMark && el._hdrMark.parentNode){ el._hdrMark.parentNode.insertBefore(el, el._hdrMark.nextSibling); }
+  });
+}
+// what does not fit goes, lowest priority first (the panel's own ⋯ still has everything)
+function _hdrFit(host){
+  _hdrOverClose(host, true);
+  host.querySelector(':scope > .hp-ovw')?.remove();
+  const grps = [...host.querySelectorAll(':scope > .hp-grp')]; grps.forEach(g => { g.style.display = ''; });
+  const over = () => host.scrollWidth > host.clientWidth + 1;
+  const fold = () => { let guard = 40;
+    while(over() && guard--){
+      const vis = grps.filter(g => g.style.display !== 'none' && +g.dataset.prio > 1); if(!vis.length) break;
+      let worst = vis[0]; vis.forEach(g => { if(+g.dataset.prio >= +worst.dataset.prio) worst = g; });
+      worst.style.display = 'none';
+    } };
+  fold();
+  // and back in, most important first, whatever fits in the room that is left
+  grps.filter(g => g.style.display === 'none').sort((a, b) => (+a.dataset.prio) - (+b.dataset.prio)).forEach(g => { g.style.display = ''; if(over()) g.style.display = 'none'; });
+  /* (owner, 2026-09-28: nothing a panel's bar holds may be swallowed) the chat's own ⋯ holds what did not fit; any other
+     panel's hidden groups go into a ⋯ drawn here, so every control stays one press away */
+  if(!grps.some(g => g.style.display === 'none') || host.querySelector(':scope > .hp-grp[data-grp="more"]')) return;
+  const w = document.createElement('span'); w.className = 'hp-grp hp-ovw'; w.dataset.prio = '1'; w.dataset.grp = '__over';
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'hp-btn hp-more'; b.textContent = '\u22ef'; b.title = "The rest of this panel's bar";
+  b.addEventListener('click', ev => { ev.stopPropagation(); if(host.querySelector('.hp-over')) _hdrOverClose(host); else _hdrOverOpen(host, b); });
+  w.appendChild(b); host.appendChild(w);
+  fold();   // the ⋯ takes room of its own
+  if(_hdrOverWasOpen) _hdrOverOpen(host, b);
+}
+let _hdrOverWasOpen = false;
+function _hdrOverOpen(host, btn){
+  const hid = [...host.querySelectorAll(':scope > .hp-grp')].filter(g => g.style.display === 'none' && !g.classList.contains('hp-ovw'));
+  if(!hid.length) return;
+  const pop = document.createElement('div'); pop.className = 'hp-over'; pop.setAttribute('data-w', "the rest of the open panel's bar \u00b7 header");
+  const r = btn.getBoundingClientRect();
+  pop.style.cssText = 'position:fixed;z-index:1000;top:' + Math.round(r.bottom + 4) + 'px;right:' + Math.max(8, Math.round(window.innerWidth - r.right)) + 'px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:8px;max-width:min(520px,90vw);max-height:70vh;overflow:auto;background:var(--s1,var(--bg1,#14161a));border:1px solid var(--bd,var(--border,#2a2d33));border-radius:var(--r-sm,6px);box-shadow:0 8px 24px rgba(0,0,0,.35)';
+  hid.forEach(g => { g._hpHome = g.nextSibling; g.style.display = ''; g.style.flexWrap = 'wrap'; pop.appendChild(g); });
+  host.appendChild(pop); _hdrOverWasOpen = true; btn.classList.add('on');
+  if(!_hdrOverOpen._wired){ _hdrOverOpen._wired = true; document.addEventListener('click', ev => { const h = document.getElementById('hdrPanel'); const p = h && h.querySelector('.hp-over'); if(p && !p.contains(ev.target)) _hdrOverClose(h); }); }
+}
+function _hdrOverClose(host, keep){
+  const pop = host && host.querySelector('.hp-over'); if(!pop) return;
+  const ovw = host.querySelector(':scope > .hp-ovw');
+  [...pop.querySelectorAll(':scope > .hp-grp')].forEach(g => { g.style.display = 'none'; g.style.flexWrap = ''; host.insertBefore(g, (g._hpHome && g._hpHome.parentNode === host) ? g._hpHome : ovw); });
+  pop.remove(); if(!keep) _hdrOverWasOpen = false; ovw?.querySelector('.hp-more')?.classList.remove('on');
+}
+// the header's width is an input: a window, a drawer, the fonts arriving
+{ let q = 0; const ro = window.ResizeObserver ? new ResizeObserver(() => { if(q) return; q = requestAnimationFrame(() => { q = 0; const h = document.getElementById('hdrPanel'); if(h && !h.hidden) _hdrFit(h); }); }) : null;
+  const hook = () => { const hdr = document.querySelector('body > header'); if(hdr && ro) ro.observe(hdr); };
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hook, { once: true }); else hook(); }
+function _hdrSync(){
+  const hdr = document.querySelector('body > header'); if(!hdr) return;
+  Object.keys(_hdrOffers).forEach(k => { if(!_panelIdOfSource(_hdrOffers[k].src)) delete _hdrOffers[k]; });   // its frame is gone
+  const pid = [..._openTabs][0] || '';
+  const off = pid ? _hdrOffers[pid] : null;
+  Object.keys(_hdrOffers).forEach(k => { const o = _hdrOffers[k], on = (k === pid);
+    if(o.absorbed !== on){ o.absorbed = on; try{ o.src.postMessage({ type: 'vera:hdr:absorbed', on }, '*'); }catch(_){} } });
+  let chat = false; try{ chat = !!(pid && (_chatFrameFor(pid) || document.querySelector('#panel-' + CSS.escape(pid) + ' iframe[src*="chat_panel"]'))); }catch(_){}
+  document.body.classList.toggle('chat-open', chat);
+  document.body.classList.toggle('dash-open', pid === 'dashboard');
+  hdr.classList.toggle('absorbing', !!off);
+  _hdrDrawerPlace(!!off);
+  const host = _hdrPanelHost(hdr);
+  const _foc = (document.activeElement && host.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') ? { hid: document.activeElement.dataset.hid, v: document.activeElement.value } : null;
+  host.innerHTML = '';
+  if(!off){ host.hidden = true; _hdrOverWasOpen = false; return; }
+  host.hidden = false;
+  let moreGrp = null;
+  off.groups.forEach(g => {
+    const G = document.createElement('span'); G.className = 'hp-grp' + ((g.items || []).length > 1 ? ' seg' : ''); G.dataset.prio = String(g.prio == null ? 8 : g.prio); G.dataset.grp = String(g.grp || '');
+    if(g.title) G.title = g.title;
+    (g.items || []).forEach(it => {
+      let el;
+      if(it.kind === 'select'){
+        el = document.createElement('select'); el.className = 'hp-sel';
+        (it.options || []).forEach(o => { const op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; el.appendChild(op); });
+        el.value = it.value || ''; el.addEventListener('change', () => _hdrAct(pid, it.hid, el.value));
+      } else if(it.kind === 'input'){
+        el = document.createElement('input'); el.className = 'hp-in'; el.type = /^(number|date|time|datetime-local|month|week|color|range)$/.test(it.type || '') ? it.type : 'search';
+        if(it.min) el.min = it.min; if(it.max) el.max = it.max; if(it.step) el.step = it.step; if(/^(color|range)$/.test(el.type)){ el.style.width = el.type === 'color' ? '34px' : '110px'; el.style.padding = '0 4px'; }
+        el.value = (_foc && _foc.hid === it.hid) ? _foc.v : (it.value || ''); el.placeholder = it.placeholder || '';
+        let t = 0; el.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => _hdrAct(pid, it.hid, el.value), 250); });
+        el.addEventListener('keydown', ev => { if(ev.key === 'Enter'){ clearTimeout(t); _hdrAct(pid, it.hid, { value: el.value, enter: true }); } });
+      } else if(it.kind === 'meter'){
+        el = document.createElement('button'); el.type = 'button'; el.className = 'hp-meter';
+        el.innerHTML = '<i><b style="width:' + Math.max(0, Math.min(100, +it.pct || 0)) + '%"></b></i><span></span>'; el.querySelector('span').textContent = it.label || '';
+        el.addEventListener('click', () => _hdrAct(pid, it.hid));
+      } else {
+        el = document.createElement('button'); el.type = 'button';
+        el.className = 'hp-btn' + (it.kind === 'text' ? ' hp-sess' : '') + (it.kind === 'more' ? ' hp-more' : '') + (it.on ? ' on' : '') + (it.tab ? ' hp-tab' : '') + (it.link ? ' hp-link' : '');
+        if(it.tab){ el.setAttribute('role', 'tab'); el.setAttribute('aria-selected', it.on ? 'true' : 'false'); }
+        el.textContent = it.label || '\u00b7'; el.addEventListener('click', () => _hdrAct(pid, it.hid));
+      }
+      if(it.title) el.title = it.title;
+      el.dataset.hid = String(it.hid || '');
+      G.appendChild(el);
+    });
+    if(g.grp === 'more') moreGrp = G; else host.appendChild(G);
+  });
+  if(moreGrp) host.appendChild(moreGrp);   // the panel's own ⋯ ends its controls: everything that did not fit is in there
+  if(_foc){ const n = host.querySelector('input[data-hid="' + CSS.escape(_foc.hid || '') + '"]'); if(n){ n.focus(); try{ n.setSelectionRange(n.value.length, n.value.length); }catch(_){} } }
+  requestAnimationFrame(() => _hdrFit(host));
+}
+// every change of tab goes through _tabRender: the bar follows the tab that is open
+{ const __tabRender = _tabRender; _tabRender = function(){ const r = __tabRender.apply(this, arguments); try{ _hdrSync(); }catch(_){} return r; }; }
+window.addEventListener('resize', () => { const h = document.getElementById('hdrPanel'); if(h && !h.hidden) _hdrFit(h); _dashToolbarFit(); });
+// what the activity overlay adds to the header later still goes into the drawer while a panel holds the bar
+setInterval(() => { const hdr = document.querySelector('body > header'); if(hdr && hdr.classList.contains('absorbing')) _hdrDrawerPlace(true); }, 3000);
+// the wash behind both of the chat's frames
+function _washMount(){ if(document.getElementById('veraWashH') || !document.body) return; const w = document.createElement('div'); w.id = 'veraWashH'; w.setAttribute('aria-hidden', 'true'); document.body.insertBefore(w, document.body.firstChild); }
+// ── the dashboard's header is one row: the health readings join it, and what does not fit goes behind ⋯ ──
+function _dashToolbarFit(){
+  const tb = document.querySelector('#panel-dashboard .dash-toolbar'); if(!tb || !tb.offsetWidth) return;
+  const hs = document.getElementById('dashHealthStrip'); const live = document.getElementById('dashLive');
+  if(hs && hs.parentNode !== tb) tb.insertBefore(hs, (live && live.parentNode === tb) ? live.nextSibling : tb.querySelector('.dsp'));
+  let more = tb.querySelector('.dash-more-wrap');
+  if(!more){
+    more = document.createElement('span'); more.className = 'dash-more-wrap';
+    more.innerHTML = '<button class="btn sm dash-more" type="button" title="More dashboard actions">\u22ef</button><div class="dash-more-pop"></div>';
+    tb.appendChild(more);
+    const b = more.querySelector('.dash-more'), pop0 = more.querySelector('.dash-more-pop');
+    b.addEventListener('click', ev => { ev.stopPropagation(); pop0.classList.toggle('on'); });
+    document.addEventListener('click', ev => { if(!more.contains(ev.target)) pop0.classList.remove('on'); });
+  }
+  const pop = more.querySelector('.dash-more-pop');
+  [...pop.children].forEach(el => { if(el._dashMark && el._dashMark.parentNode) el._dashMark.parentNode.insertBefore(el, el._dashMark.nextSibling); });   // everything home first
+  more.style.display = 'none';
+  if(tb.scrollWidth <= tb.clientWidth + 1) return;
+  more.style.display = '';
+  // folded from the end of the row, the add button last of all: it is the one the toolbar is for
+  const btns = [...tb.querySelectorAll(':scope > button.btn, :scope > .dash-layouts, :scope > .mbtn')].filter(b => b.offsetParent !== null || b.getClientRects().length);
+  const order = btns.filter(b => !/add widget/i.test(b.textContent || '')).reverse().concat(btns.filter(b => /add widget/i.test(b.textContent || '')));
+  for(const b of order){
+    if(tb.scrollWidth <= tb.clientWidth + 1) break;
+    if(!b._dashMark){ const mkr = document.createComment('dash-tb'); b.parentNode.insertBefore(mkr, b); b._dashMark = mkr; }
+    pop.appendChild(b);
+  }
+}
+{ const go = () => { _washMount(); try{ _hdrSync(); }catch(_){} _dashToolbarFit(); setTimeout(_dashToolbarFit, 1500); setTimeout(_dashToolbarFit, 5000);
+    try{ const tb = document.querySelector('#panel-dashboard .dash-toolbar'); if(tb && window.ResizeObserver){ let q = 0; new ResizeObserver(() => { if(q) return; q = requestAnimationFrame(() => { q = 0; _dashToolbarFit(); }); }).observe(tb); } }catch(_){} };
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); else go(); }
+
+// ── THE ONE PANEL SET (UI redesign, Notes/40 §9) ─────────────────────────────
+// The harness reports the tabs it holds around the chat (ui.panels.open lists them with the panel beside the chat),
+// tells the chat so its LHM's "Open now" rows show them, routes a panel.dispatch that names one of its tabs to that
+// tab's iframe and acks like the chat does, and closes / focuses a tab the chat's rows ask for.
+let _panelsOpenTimer = null;
+// the frames that own an LHM and a chat session (the chat): CH is a top-level const there, not a window property
+function _chatFrames(){ return [...document.querySelectorAll('.panels .panel iframe')].filter(f => { try{ const w = f.contentWindow; return !!(w && w.VeraLHM && w._veraSessionId); }catch(_){ return false; } }); }
+function _panelsOpenList(){
+  return [..._openTabs].map(pid => {
+    const t = document.querySelector('#tabBar .tab[data-tab="' + pid + '"]');
+    const label = t ? (Array.from(t.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('') || pid) : pid;
+    return { id: pid.replace(/^auto-/, ''), label, origin: _tabOrigin[pid] || 'you', placement: 'harness tab' };
+  });
+}
+function _panelsOpenReport(){
+  const list = _panelsOpenList().filter(p => p.id !== 'chat2');   // the chat itself is the host, not a panel in its own set
+  const chats = _chatFrames();
+  const sids = chats.map(f => { try{ return f.contentWindow._veraSessionId || ''; }catch(_){ return ''; } }).filter(Boolean);
+  (sids.length ? sids : [_veraSessionId]).forEach(sid => {
+    api('/ui/panels/open/report', 'POST', { session_id: sid, host: 'harness', panels: list });
+  });
+  chats.forEach(f => { try{ f.contentWindow.postMessage({ type: 'vera:lhm:open', panels: list }, '*'); }catch(_){} });
+}
+function _panelsOpenStart(){
+  if(_panelsOpenTimer) return;
+  _panelsOpenTimer = setInterval(_panelsOpenReport, 30000);
+  setTimeout(_panelsOpenReport, 1500);
+}
+const _panelsDispatchWaits = {};   // action_id → resolve(result message)
+window.addEventListener('message', e => {
+  const d = e.data; if(!d || typeof d !== 'object') return;
+  if(d.type === 'vera:panel:action_result' && d.action_id && _panelsDispatchWaits[d.action_id]){
+    _panelsDispatchWaits[d.action_id](d); delete _panelsDispatchWaits[d.action_id]; return;
+  }
+  if(d.type === 'vera:lhm:close' && d.id){
+    const pid = _openTabs.has(d.id) ? d.id : 'auto-' + d.id;
+    if(_openTabs.has(pid) && _openTabs.size > 1) splitTab(pid);          // out of the split first (splitTab keeps a lone tab)
+    if(_customTabsGet().includes(d.id)) customTabRemove(d.id);            // and gone from the bar when it was a picked tab
+    _panelsOpenReport(); return;
+  }
+  if(d.type === 'vera:lhm:focus' && d.id){ const pid = _openTabs.has(d.id) ? d.id : 'auto-' + d.id; if(_openTabs.has(pid)) switchTab(pid); return; }
+  if(d.type !== 'vera:panel:dispatch' || !d.req || !d.req.request_id) return;
+  const req = d.req, sid = req.session_id || '';
+  const ack = (ok, result, error) => api('/ui/panels/dispatch/ack', 'POST', { request_id: req.request_id, session_id: sid, ok: !!ok, result: result === undefined ? null : result, error: error || null, action: req.action || '' });
+  const pid = _openTabs.has(req.panel) ? req.panel : ('auto-' + req.panel);
+  const f = _panelFrame(pid);
+  if(!f || !f.contentWindow || !_openTabs.has(pid)){ ack(false, null, 'panel ' + req.panel + ' is not open in the harness'); return; }
+  const aid = 'disp-' + req.request_id;
+  const timer = setTimeout(() => { if(_panelsDispatchWaits[aid]){ delete _panelsDispatchWaits[aid]; ack(false, null, 'timeout: the panel did not answer'); } }, 8000);
+  _panelsDispatchWaits[aid] = (res) => { clearTimeout(timer); ack(res.ok, res.result, res.error); };
+  try{ f.contentWindow.postMessage({ type: 'vera:panel:action', action: req.action, action_id: aid, payload: req.payload || {} }, '*'); }
+  catch(err){ clearTimeout(timer); delete _panelsDispatchWaits[aid]; ack(false, null, 'post failed: ' + err); }
+});
+
 // Sync the LHM nav tab list from the top tabBar
 function _lhmNavSync(){
   const host = document.getElementById('lhmNavTabs'); if(!host) return;
+  if(document.body) document.body.classList.toggle('dash-open', ([..._openTabs][0] || '') === 'dashboard');
+  // the live-events feed lives in a widget inside this list now: lift it out before the list is rebuilt
+  try{ const fe = document.getElementById('lhmEventsFeed'); if(fe && host.contains(fe)) host.parentNode.insertBefore(fe, host.nextSibling); }catch(_){}
   host.innerHTML = '';
-  if(_lhmEventsOpen) return;
+  const absorbed = _lhmAbsorbedFor();
+  if(absorbed && absorbed.pid !== _lhmAbsorbPid){ _lhmAbsorbPid = absorbed.pid; _lhmAbsorbTop = false; }
+  if(!absorbed) _lhmAbsorbPid = '';
+  document.getElementById('lhmNav')?.classList.toggle('absorbed', !!absorbed && !_lhmAbsorbTop);
+  document.querySelector('.main')?.classList.toggle('absorbed', !!absorbed && !_lhmAbsorbTop);
+  // the chat's menu frame shows only while the chat is the open UI and the top-level list is not swapped in
+  const chatOpen = !!(absorbed && !_lhmAbsorbTop && _chatFrameFor(absorbed.pid));
+  document.getElementById('lhmNav')?.classList.toggle('chatmenu', chatOpen);
+  document.querySelector('.main')?.classList.toggle('chatmenu', chatOpen);
+  // folded to a rail: the chat's menu by the chat's word, the harness's own list by its « / »
+  { const railed = chatOpen ? _lhmChatRailed : ((!absorbed || _lhmAbsorbTop) && _lhmRailed);
+    document.getElementById('lhmNav')?.classList.toggle('railed', railed); document.querySelector('.main')?.classList.toggle('railed', railed); }
+  document.getElementById('lhmMenuHost')?.classList.toggle('on', chatOpen);
+  if(absorbed && _lhmRenderAbsorbed(host, absorbed.pid, absorbed.nav)) return;
 
+  _tabStripsRender();
+  // the main LHM (UI redesign, Notes/40 §9; the Harness board): built from the one menu component — search, the one
+  // panel set as Open now, the panels with their sections (the registry's + a panel's registered nav) as one tree,
+  // the registered count, live events and running loops as widgets. The hand-drawn list stays as the fallback.
+  if(window.VeraLHM && typeof VeraLHM.side === 'function'){ _lhmNativeRender(host); _tabAttachHoverMenus(); return; }
+  _lhmNativeLegacy(host);
+  _tabAttachHoverMenus();
+}
+function _lhmNativeLegacy(host){
   document.querySelectorAll('#tabBar .tab').forEach(t=>{
     const pid = _tabToPanelId(t);
     if(!pid) return;
@@ -2054,6 +3082,97 @@ function _lhmNavSync(){
   _tabAttachHoverMenus();
 }
 
+// ── the main LHM, from the one menu component ─────────────────────────────────
+let _lhmSecOpen = {};                 // panel id → the section open in its accordion / strip
+// the menu folded to its icons: the harness's own list (remembered), and the chat's menu (the chat says when it folds)
+let _lhmRailed = (function(){ try{ return localStorage.getItem('vera:lhm:rail') === '1'; }catch(_){ return false; } })(), _lhmChatRailed = false;
+window.addEventListener('message', e => { const d = e.data; if(!d || d.type !== 'vera:lhm:rail') return; _lhmChatRailed = !!d.on; _lhmRailApply(); });
+// a panel's sections: what it registered (register_ui sections, from /ui/panels) and, as one more section, the nav
+// items it published through the bridge (registerNav) — the same tree in the side menu and the strips
+function _panelSectionsFor(pid){
+  const rid = String(pid || '').replace(/^auto-/, '');
+  const reg = (_uiPanelCache || []).find(p => p.id === rid) || null;
+  const secs = (reg && Array.isArray(reg.sections) ? reg.sections : []).map(s => ({ id: String(s.id || s.label || ''), label: s.label || s.id || '', tabs: (Array.isArray(s.tabs) ? s.tabs : []).map(t => ({ id: String(t.id || t.label || ''), label: t.label || t.id || '' })) }));
+  const nav = _panelNavCache[pid];
+  if(nav && Array.isArray(nav.items) && nav.items.length && !nav.lhm) secs.push({ id: '__nav', label: secs.length ? 'Sections' : (nav.title || 'Sections'), nav: true, tabs: nav.items.map(it => ({ id: it.id, label: it.label || it.id, on: it.id === nav.active })) });
+  return secs;
+}
+function _lhmTabRows(){
+  return [...document.querySelectorAll('#tabBar .tab')].map(t => { const pid = _tabToPanelId(t); if(!pid) return null;
+    const label = Array.from(t.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('') || pid;
+    const reg = (_uiPanelCache || []).find(p => p.id === pid.replace(/^auto-/, '').replace(/--\d+$/, '')) || null;
+    const isOpen = _openTabs.has(pid), active = isOpen && ([..._openTabs][0] === pid || _openTabs.size === 1);
+    return { pid, label, icon: (reg && reg.icon) || '', open: isOpen, active }; }).filter(Boolean);
+}
+// swapped in by ☰ over an open panel's menu: this list's header ☰ is the way back to that menu (the one header)
+function _lhmTopBack(){
+  if(!_lhmAbsorbTop) return null; const a = _lhmAbsorbedFor(); if(!a) return null;
+  const name = _chatFrameFor(a.pid) ? 'the chat' : ((a.nav && a.nav.lhm && a.nav.lhm.title) || 'the open panel');
+  return { on: true, title: 'Vera', sub: 'every tab', toggle: () => { _lhmAbsorbTop = false; _lhmNavSync(); }, toggleTitle: 'Back to ' + name + '\'s menu' };
+}
+function _lhmNativeRender(host){
+  const rows = _lhmTabRows();
+  const open = rows.filter(r => r.open).map(r => ({ id: r.pid, label: r.label, icon: r.icon || '▭', origin: _tabOrigin[r.pid] || 'you', placement: _openTabs.size > 1 ? 'split' : 'tab', active: r.active,
+    close: _openTabs.size > 1 ? () => { splitTab(r.pid); } : null, focus: () => { switchTab(r.pid); _tabFireLoader(r.pid); } }));
+  const panels = rows.map(r => { const secs = r.active ? _panelSectionsFor(r.pid) : []; const openIdx = Math.min(_lhmSecOpen[r.pid] || 0, Math.max(0, secs.length - 1));
+    return { id: r.pid, label: r.label, icon: r.icon || '▭', ct: '', active: r.active, open: r.open,
+      sections: secs.map((s, i) => ({ id: s.id, label: s.label, nav: !!s.nav, on: i === openIdx, tabs: i === openIdx ? s.tabs : [] })) }; });
+  const feed = document.getElementById('lhmEventsFeed'), mirror = document.getElementById('lhmEvFeedMirror');
+  const widgets = [
+    _lhmMetersWidget(),
+    _lhmLoopsWidget(),
+    feed ? { title: 'Live events', count: mirror ? mirror.children.length : 0, el: feed, cls: 'events' + (_lhmEventsOpen ? ' open' : ''), open: () => _lhmToggleEvents() } : null ];
+  // into a child of the list host: when the chat's menu is absorbed and ☰ swapped to this list, the ☰ bar the
+  // absorb path drew stays above it (side() clears what it is given)
+  const box = document.createElement('div'); box.className = 'lhm-side-host'; box.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'; host.appendChild(box);
+  VeraLHM.side(box, {
+    // '⌘K' used to ride along here; the search button on the same row says it
+    // now (and so does the registered row), so the count keeps the space.
+    top: _lhmTopBack() || { title: 'Vera', sub: ((_uiPanelCache || []).length || rows.length) + ' panels', toggle: () => tabToggleLhm(), toggleTitle: 'Switch to horizontal tabs (the same menu, as tabs and strips)' },
+    search: { label: 'Find a panel', hint: '⌘K', open: () => openTabPicker() }, edit: true, id: 'harness-main',
+    rail: { on: _lhmRailed, toggle: () => { _lhmRailed = !_lhmRailed; try{ localStorage.setItem('vera:lhm:rail', _lhmRailed ? '1' : '0'); }catch(_){} _lhmRailApply(); } },
+    open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() },
+    onPanel: (pid, ev) => { if(ev && (ev.ctrlKey || ev.metaKey)) splitTab(pid); else switchTab(pid); _tabFireLoader(pid); _lhmNavSync(); },
+    onSection: (pid, sid, i) => { _lhmSecOpen[pid] = i; _lhmNavSync(); },
+    onBeside: (pid, sec, tab) => { _lhmOpenBeside(pid.replace(/--\d+$/, ''), tab ? (sec.nav ? tab.id : (sec.id + '/' + tab.id)) : ''); },
+    onTab: (pid, sec, tab) => { _lhmNavSelect(pid, sec.nav ? tab.id : (sec.id + '/' + tab.id)); if(sec.nav){ const nav = _panelNavCache[pid]; if(nav) _panelNavCache[pid] = Object.assign({}, nav, { active: tab.id }); } _lhmNavSync(); },
+    widgets, note: 'One menu, everywhere: this side menu, the strips under the tabs and the chat\'s rail are one component. Open a UI and its menu is this menu; ☰ at the top swaps it for this list, in place.' });
+}
+// the meters, as a widget in the menu (the Harness board's GPU · queue): the header's own readings — the Ollama load
+// meter and the stack monitor's last sample (queue, CPU)
+function _lhmMetersWidget(){
+  let s = {}; try{ s = _hmLast || {}; }catch(_){}   // the sample lives in a later script block; before it runs there is none
+  const bars = [];
+  const of = document.getElementById('lsOllamaFill'); const ov = document.getElementById('lsOllamaVal');
+  const op = of && of.style.width ? parseFloat(of.style.width) : null;
+  bars.push({ label: 'GPU · Ollama', pct: op == null ? 0 : op, value: ov && ov.textContent && ov.textContent !== '—' ? ov.textContent : (op == null ? '—' : Math.round(op) + '%'), col: 'var(--acc)' });
+  bars.push({ label: 'Queue', pct: Math.min((s.queue || 0) * 10, 100), value: s.queue == null ? '—' : String(s.queue), col: 'var(--acc3)' });
+  if(s.cpu != null) bars.push({ label: 'CPU', pct: s.cpu, value: s.cpu.toFixed(0) + '%', col: 'var(--acc2)' });
+  return { title: 'Meters', bars };
+}
+// running loops, as a widget in the menu (the chat's data source: the persisted loop-run registry)
+let _lhmLoops = { rows: [], t: 0 };
+function _lhmLoopsWidget(){
+  if(Date.now() - _lhmLoops.t > 30000){ _lhmLoops.t = Date.now();
+    Promise.resolve().then(() => api('/workshop/agent_loop/sessions?limit=5&status=running')).then(r => { const rows = (r && r.sessions) || []; const changed = JSON.stringify(rows.map(s => s.session_id)) !== JSON.stringify(_lhmLoops.rows.map(s => s.session_id)); _lhmLoops.rows = rows; if(changed && _lhmMode) _lhmNavSync(); }).catch(() => {}); }
+  const el = document.createElement('div');
+  if(!_lhmLoops.rows.length){ const e = document.createElement('span'); e.className = 'lhm-s-wrow'; e.style.color = 'var(--dim)'; e.textContent = 'none running'; el.appendChild(e); }
+  _lhmLoops.rows.forEach(s => { const r = document.createElement('span'); r.className = 'lhm-s-wrow'; r.title = s.goal || ''; r.innerHTML = '<i style="background:var(--acc)"></i>' + esc(String(s.goal || s.session_id || 'loop').slice(0, 28)) + '<em>' + esc(String(s.version || s.engine || '')) + '</em>'; el.appendChild(r); });
+  return { title: 'Running loops', count: _lhmLoops.rows.length, el };
+}
+// tabs mode: the same sections as strips under the tab bar (the active panel's sections, the open section's tabs)
+function _tabStripsRender(){
+  const host = document.getElementById('tabSubtabs'); if(!host) return;
+  const pid = [..._openTabs][0] || ''; const secs = (pid && window.VeraLHM && typeof VeraLHM.strips === 'function') ? _panelSectionsFor(pid) : [];
+  if(!secs.length || _lhmMode){ host.innerHTML = ''; return; }
+  const openIdx = Math.min(_lhmSecOpen[pid] || 0, secs.length - 1), sec = secs[openIdx];
+  const row = _lhmTabRows().find(r => r.pid === pid);
+  VeraLHM.strips(host, { title: row ? row.label : pid, sections: secs.map((s, i) => ({ id: s.id, label: s.label || 'Sections', on: i === openIdx })), tabs: sec.tabs || [],
+    onSection: (sid, i) => { _lhmSecOpen[pid] = i; _tabStripsRender(); },
+    onTab: (tab) => { _lhmNavSelect(pid, sec.nav ? tab.id : (sec.id + '/' + tab.id)); if(sec.nav){ const nav = _panelNavCache[pid]; if(nav) _panelNavCache[pid] = Object.assign({}, nav, { active: tab.id }); } _tabStripsRender(); },
+    onBeside: _localLhm[pid] ? null : (tab) => { _lhmOpenBeside(pid.replace(/--\d+$/, ''), sec.nav ? tab.id : (sec.id + '/' + tab.id)); } });
+}
+
 // Horizontal-mode equivalent of the injected sub-menu above: the top tab bar
 // has no room to show sections inline under the active tab the way the LHM
 // sidebar does, so hovering a top-level tab flies them out as a dropdown
@@ -2091,11 +3210,19 @@ function _showTabDropdown(tabEl, pid, nav){
     const row = document.createElement('div');
     row.className = 'tdd-item' + (it.id===nav.active ? ' on' : '');
     row.textContent = it.label || it.id;
-    row.addEventListener('click', ()=>{
+    const beside = _localLhm[pid] ? null : () => { _hideTabDropdown(); _lhmOpenBeside(pid.replace(/--\d+$/, ''), it.id); };
+    row.addEventListener('click', ev=>{
+      if(beside && (ev.ctrlKey || ev.metaKey)){ beside(); return; }
       _lhmNavSelect(pid, it.id);
       _panelNavCache[pid] = Object.assign({}, nav, {active: it.id});
       _hideTabDropdown();
     });
+    if(beside){
+      row.addEventListener('auxclick', ev => { if(ev.button === 1){ ev.preventDefault(); beside(); } });
+      const bs = document.createElement('span'); bs.className = 'tdd-bs'; bs.textContent = '\u29c9'; bs.title = 'Open side by side (Ctrl/\u2318- or middle-click does the same)';
+      bs.style.cssText = 'float:right;margin-left:12px;opacity:.55;cursor:pointer';
+      bs.addEventListener('click', ev => { ev.stopPropagation(); beside(); }); row.appendChild(bs);
+    }
     dd.appendChild(row);
   });
   const r = tabEl.getBoundingClientRect();
@@ -2114,28 +3241,18 @@ function _hideTabDropdown(){
 let _lhmEventsOpen = false;
 
 function _lhmToggleEvents(){
+  // live events is a widget in the menu now: the toggle opens or folds that widget, the list stays
   _lhmEventsOpen = !_lhmEventsOpen;
-  const nav     = document.getElementById('lhmNav');
-  const tabList = document.getElementById('lhmNavTabs');
-  const feed    = document.getElementById('lhmEventsFeed');
-  const evBtn   = document.getElementById('lhmEventsBtn');
+  const nav = document.getElementById('lhmNav'), feed = document.getElementById('lhmEventsFeed'), evBtn = document.getElementById('lhmEventsBtn');
+  nav?.classList.toggle('events-open', _lhmEventsOpen);
+  if(feed) feed.style.display = _lhmEventsOpen ? 'flex' : 'none';
+  if(evBtn) evBtn.classList.toggle('active', _lhmEventsOpen);
   if(_lhmEventsOpen){
-    nav?.classList.add('events-open');
-    if(tabList) tabList.style.display = 'none';
-    if(feed)    feed.style.display    = 'flex';
-    if(evBtn)   evBtn.classList.add('active');
     // Backfill from main feed on first open
-    const lhmFeed  = document.getElementById('lhmEvFeedMirror');
-    const mainFeed = document.getElementById('evFeed');
-    if(lhmFeed && mainFeed && !lhmFeed.children.length){
-      Array.from(mainFeed.children).forEach(c => lhmFeed.appendChild(c.cloneNode(true)));
-    }
-  } else {
-    nav?.classList.remove('events-open');
-    if(tabList) tabList.style.display = '';
-    if(feed)    feed.style.display    = 'none';
-    if(evBtn)   evBtn.classList.remove('active');
+    const lhmFeed = document.getElementById('lhmEvFeedMirror'), mainFeed = document.getElementById('evFeed');
+    if(lhmFeed && mainFeed && !lhmFeed.children.length) Array.from(mainFeed.children).forEach(c => lhmFeed.appendChild(c.cloneNode(true)));
   }
+  _lhmNavSync();   // the widget's header and its count follow
 }
 
 // ── Auto-hide ──
@@ -2188,6 +3305,7 @@ function _tabApplyAutohide(){
   // defeating the point of auto-hide in both orientations.
   document.getElementById('main')?.classList.remove('autohide-reserve-h','autohide-reserve-v');
 
+  document.getElementById('main')?.classList.toggle('ah-rail', !!(_autohide && _lhmMode));   // the rail stays: the page keeps its width
   if(_autohide){
     const el = _autohideEl(); if(!el) return;
     el.classList.add('autohide');
@@ -2225,6 +3343,16 @@ function _tabScheduleHide(){
   }, 100);
 }
 
+// the side list draws as the rail whenever the menu is folded - by « or by auto-hide while it is not pointed at
+function _lhmRailSync(){ const nav = document.getElementById('lhmNav'); if(!nav) return; const hidden = nav.classList.contains('autohide') && !nav.classList.contains('show');
+  const side = nav.querySelector('.lhm-side'); if(side) side.classList.toggle('railed', !!_lhmRailed || hidden);
+  nav.classList.toggle('folded', hidden || nav.classList.contains('railed')); }
+{ const nav = document.getElementById('lhmNav'), tabs = document.getElementById('lhmNavTabs');
+  if(window.MutationObserver){ if(nav) new MutationObserver(_lhmRailSync).observe(nav, { attributes:true, attributeFilter:['class'] }); if(tabs) new MutationObserver(_lhmRailSync).observe(tabs, { childList:true }); } }
+// the fold, applied to the menu that is there: nothing is redrawn, so the width eases and the labels fade
+function _lhmRailApply(){ const nav = document.getElementById('lhmNav'); if(!nav) return; const chatOpen = nav.classList.contains('chatmenu');
+  const railed = chatOpen ? _lhmChatRailed : _lhmRailed; nav.classList.toggle('railed', railed); document.querySelector('.main')?.classList.toggle('railed', railed); _lhmRailSync();
+  const rl = nav.querySelector('.lhm-s-rl'); if(rl){ rl.textContent = _lhmRailed ? '\u00bb' : '\u00ab'; rl.title = _lhmRailed ? 'Open the menu' : 'Fold the menu to its icons'; } }
 // Init on load
 _tabLoadPrefs();
 
@@ -2424,7 +3552,7 @@ function handleLiveEvent(ev){
   if(t==='ollama.health'&&ev.instances){
     for(const[iid,info] of Object.entries(ev.instances)){if(instances[iid])Object.assign(instances[iid],info);}
     renderHdrPills();
-    if(document.getElementById('panel-ollama').classList.contains('active')) renderInstCards();
+    const po=document.getElementById('panel-ollama'); if(po&&po.classList.contains('active')) renderInstCards();   // the Ollama tab lives in the Workers & Ollama panel now
   }
 }
 
@@ -2931,11 +4059,14 @@ async function refreshAll(){
   ]);
   _dashHealthStripInit();
   dashTouch();
-  // Live by default: without this, nothing (topology status, mesh/temps/
-  // sysmon tiles, etc.) ever updates again after this initial load unless the
-  // user notices and clicks "Auto 5s" themselves — a dashboard billed as
-  // live/dynamic shouldn't require an opt-in click just to stay current.
-  if(!_clusterAutoInterval) clusterAutoRefresh();
+  /* The auto-refresh is the USER'S choice, and it is remembered (Notes/42 defect 92).
+     It used to start itself here. The reasoning was sound for a board on real data - one billed as live that
+     quietly stops being live is worse than one that asks - but it is wrong for a board being LOOKED AT: every
+     five seconds the reads run again, and a widget showing a SAMPLE reading is overwritten by the empty answer
+     its source actually gives, so the tiles you are judging go blank while you judge them.
+     Off unless it was turned on, and once turned on it stays on across reloads - which is the behaviour that
+     comment wanted, for anyone actually watching something. */
+  try{ if(localStorage.getItem('vera:dash:auto')==='on' && !_clusterAutoInterval) clusterAutoRefresh(); }catch(_){}
   // Pre-initialise the session node exactly once per session_id
   _initSessionOnce(_veraSessionId, 'assistant');
 }
@@ -4109,7 +5240,7 @@ function _ensurePanelLoaded(panelEl) {
     // render an error page (which still fires 'load'), so the timeout below is
     // the real backstop for "took too long / no response".
     f.addEventListener('error', fail, { once: true });
-    f.setAttribute('src', src);
+    f.setAttribute('src', _hostFrameSrc(src));
   });
   // The iframe 'load' event waits for EVERY subresource of the inner page, so a
   // panel that is rendered and interactive but keeps one request hanging (or a
@@ -4159,7 +5290,7 @@ function _showPanelLoadError(panelEl, ov) {
   if (btn) btn.onclick = () => {
     // Re-park: move current src back to data-lazy-src so _ensurePanelLoaded reloads.
     panelEl.querySelectorAll('iframe[data-lazy="1"]').forEach(f => {
-      const src = f.getAttribute('src') || f.getAttribute('data-lazy-src');
+      const src = f.getAttribute('data-lazy-src') || f.getAttribute('src');
       if (src) { f.setAttribute('data-lazy-src', src); f.removeAttribute('src'); }
     });
     ov.remove();
@@ -4197,7 +5328,7 @@ function _parkPanel(panelEl) {
     } catch (_) {}
   }
   frames.forEach(f => {
-    const src = f.getAttribute('src') || f.getAttribute('data-lazy-src');
+    const src = f.getAttribute('data-lazy-src') || f.getAttribute('src');
     if (src) f.setAttribute('data-lazy-src', src);
     f.removeAttribute('src');   // stops the panel's JS + timers
   });
@@ -4329,6 +5460,7 @@ async function loadAllPanels() {
           document.querySelectorAll('.media-content').forEach(c => c.classList.remove('active'));
           tab.classList.add('active');
           document.getElementById(`mc_${p.id}`)?.classList.add('active');
+          _mediaLoad(document.getElementById(`mc_${p.id}`));
         };
         tabsEl.appendChild(tab);
 
@@ -4336,6 +5468,8 @@ async function loadAllPanels() {
         cont.className = 'media-content media-panel' + (idx === 0 ? ' active' : '');
         cont.id        = `mc_${p.id}`;
         cont.innerHTML = p.html || '';
+        _deferPanelIframes(cont);   // parked while detached: nothing loads until its sub-tab is shown (_mediaLoad)
+        cont.querySelectorAll('iframe[data-lazy-src]').forEach(f => { f.setAttribute('data-media-src', f.getAttribute('data-lazy-src')); f.removeAttribute('data-lazy-src'); });
         contEl.appendChild(cont);
         _injectPanelJs(p);
       });
@@ -5619,8 +6753,11 @@ function clusterAutoRefresh(){
   if(_clusterAutoInterval){
     clearInterval(_clusterAutoInterval);
     _clusterAutoInterval=null;
-    document.getElementById('clusterRefreshBadge').textContent='';
-    const b=document.getElementById('dashAutoBtn'); if(b){b.classList.remove('primary');b.textContent='Auto 5s';}
+    document.getElementById('clusterRefreshBadge').textContent='auto-refresh off';
+    try{ localStorage.setItem('vera:dash:auto','off'); }catch(_){}
+    // it said "Auto 5s" whether it was running or stopped - the same three words, a dot and a colour apart - and the
+    // badge went blank, so there was no telling the states apart at a glance (Notes/42 defect 71b)
+    const b=document.getElementById('dashAutoBtn'); if(b){b.classList.remove('primary');b.textContent='Auto off';b.title='Auto-refresh is OFF: the dashboard updates when you press Refresh. Press to resume every 5s.';}
   } else {
     _clusterAutoInterval=setInterval(()=>{
       loadCluster();loadSysmonSplit();loadSparklines();loadMimicSummary();
@@ -5628,7 +6765,8 @@ function clusterAutoRefresh(){
       dashTouch();
     },5000);
     document.getElementById('clusterRefreshBadge').textContent='● auto-refreshing every 5s';
-    const b=document.getElementById('dashAutoBtn'); if(b){b.classList.add('primary');b.textContent='● Auto 5s';}
+    try{ localStorage.setItem('vera:dash:auto','on'); }catch(_){}
+    const b=document.getElementById('dashAutoBtn'); if(b){b.classList.add('primary');b.textContent='● Auto 5s';b.title='Auto-refresh is ON: every 5 seconds. Press to stop.';}
   }
 }
 
@@ -6508,6 +7646,10 @@ function _applyThemeVars(vars, themeId){
   const root = document.documentElement;
   const applied = {};
   const put = (k,v)=>{ root.style.setProperty(k,v); applied[k]=v; };
+  // the theme's OWN tokens first (--bg · --s1 · --t1 · --ac · --dv1 …): everything drawn on them — the design landing's
+  // shell, the chat, the panels — follows the pick; only mapping them onto the old names left the new tokens holding
+  // the previous theme (the boot cache replays them inline, so a light --bg outlived a dark pick)
+  for(const [k, v] of Object.entries(vars)){ if(/^--/.test(k) && v != null && v !== '') put(k, String(v)); }
   for(const [src, targets] of Object.entries(_THEME_VAR_MAP)){
     if(vars[src]) targets.forEach(t => put(t, vars[src]));
   }
@@ -6553,6 +7695,7 @@ async function _applyThemeById(themeId, vars){
 }
 
 function _updateThemeBtn(themeId){
+  try{ _hdrSwatchesSync(); }catch(e){}
   const btn = document.getElementById('themeBtn');
   if(!btn) return;
   const icons = {ash:'☀',dusk:'🌒',void:'⬛',chalk:'🪨',ice:'❄',
@@ -6604,7 +7747,7 @@ function _scaleControlEl(){
   wrap.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 6px 8px;margin-bottom:5px;'+
     'border-bottom:1px solid var(--border2)';
   const lbl = document.createElement('span');
-  lbl.textContent = 'UI size'; lbl.style.cssText = 'flex:1;color:var(--dim2)';
+  lbl.textContent = 'Zoom'; lbl.style.cssText = 'flex:1;color:var(--dim2)';
   const mk = (t,ti)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.title=ti;
     b.style.cssText='width:22px;height:22px;padding:0;line-height:1;border-radius:5px;cursor:pointer;'+
       'border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px'; return b; };
@@ -6619,9 +7762,31 @@ function _scaleControlEl(){
   return wrap;
 }
 
+// the appearance rows of the Aa menu: the style pack and the density tier (vera-ui owns the setting and the broadcast)
+function _appearanceRowsEl(){
+  const vu = window.veraUI || {};
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:5px;padding:5px 6px 8px;margin-bottom:5px;border-bottom:1px solid var(--border2)';
+  const row = (label, opts, get, set) => {
+    const r = document.createElement('div'); r.style.cssText = 'display:flex;align-items:center;gap:3px';
+    const lab = document.createElement('span'); lab.textContent = label; lab.style.cssText = 'font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim2);min-width:52px'; r.appendChild(lab);
+    const paint = () => { r.querySelectorAll('button').forEach(b => { const on = b.dataset.v === get(); b.style.background = on ? 'var(--acc)' : 'var(--bg3)'; b.style.color = on ? 'var(--on-acc,#fff)' : 'var(--dim2)'; }); };
+    opts.forEach(o => { const b = document.createElement('button'); b.type = 'button'; b.dataset.v = o[0]; b.textContent = o[1]; b.title = o[2] || '';
+      b.style.cssText = 'font:inherit;font-size:10px;padding:3px 8px;border:1px solid var(--border2);border-radius:4px;cursor:pointer';
+      b.onclick = (e) => { e.stopPropagation(); set(o[0]); paint(); }; r.appendChild(b); });
+    paint(); return r;
+  };
+  const root = document.documentElement;
+  wrap.appendChild(row('Style', [['standard', 'Standard'], ['newspaper', 'News'], ['terminal', 'Term'], ['pixel', 'Pixel']], () => root.getAttribute('data-style') || 'standard', (v) => { if (vu.setStyle) vu.setStyle(v); else root.setAttribute('data-style', v); }));
+  wrap.appendChild(row('Detail', [['full', 'Full', 'Every control shown'], ['hover', 'Hover', 'Controls appear on hover'], ['zen', 'Zen', 'The page alone']], () => root.getAttribute('data-den') || 'full', (v) => { if (vu.setDensity) vu.setDensity(v); else root.setAttribute('data-den', v); }));
+  wrap.appendChild(row('Blocks', [['on', 'On'], ['off', 'Off']], () => root.getAttribute('data-blocks') || 'on', (v) => { if (vu.setBlocks) vu.setBlocks(v === 'on'); else root.setAttribute('data-blocks', v); }));
+  return wrap;
+}
 function _buildThemeMenuRows(menu, themes){
   menu.innerHTML = '';
+  menu.appendChild(_appearanceRowsEl());
   menu.appendChild(_scaleControlEl());
+  try{ if(window.veraUI && typeof veraUI.makeTextControl === 'function'){ const tc = veraUI.makeTextControl(); tc.style.borderBottom = '1px solid var(--border2)'; tc.style.marginBottom = '5px'; menu.appendChild(tc); } }catch(_){}
   Object.keys(themes).forEach(tid=>{
     const t = themes[tid], active = tid === _currentTheme;
     const row = document.createElement('div');
@@ -6640,7 +7805,8 @@ function openThemeMenu(ev){
   ev && ev.stopPropagation();
   const existing = document.getElementById('themeMenu');
   if(existing){ existing.remove(); return; }
-  const btn = document.getElementById('themeBtn');
+  // anchored to the control that was pressed: the header's Aa; the old #themeBtn (hidden in the sheet) is the fallback
+  const btn = (ev && ev.currentTarget && ev.currentTarget.getBoundingClientRect && ev.currentTarget.offsetParent) ? ev.currentTarget : document.getElementById('themeBtn');
   if(!btn) return;
   const menu = document.createElement('div');
   menu.id = 'themeMenu';
@@ -7131,19 +8297,252 @@ function _dashOnResizeMouseDown(e){
 let _dashCtl=null;
 function dashToggleEdit(){ _dashCtl && _dashCtl.toggleEdit(); }
 function dashResetLayout(){ _dashCtl && _dashCtl.reset(); }
-function dashOpenWidgetLoader(){ _dashCtl && _dashCtl.openLoader(); }
+function dashOpenWidgetLoader(){ return _dashCtl && _dashCtl.openLoader(); }
 function dashHideWidget(wid){ _dashCtl && _dashCtl.hide(wid); }
 function dashShowWidget(wid){ _dashCtl && _dashCtl.show(wid); }
+// ── The widget registry's placements (UI redesign) — a widget placed on this dashboard through
+// widget.template.instantiate(where='dashboard', host='main') is realised here: a panel-backed template becomes a
+// VeraDash dynamic widget (the same thing the "+ Add Widget" picker makes); other forms wait for their renderer
+// (noted in the console, never an error). Looked up on boot and every 30 s, so the aide's placement shows up
+// without a reload; a removed instance takes its widget away again.
+let _dashPlacedTimer=null;
+const _dashPlaced={};   // instance id → widget id
+async function _dashPlacedSync(){
+  if(!_dashCtl) return;
+  const r=await api('/ui/widgets/instances?where=dashboard&host=main');
+  if(!r||!r.ok) return;
+  const seen=new Set();
+  for(const inst of (r.instances||[])){
+    seen.add(inst.id);
+    if(_dashPlaced[inst.id]) continue;
+    if(inst.panel){
+      const wid='dyn-'+String(inst.panel).replace(/[^a-zA-Z0-9_-]/g,'');
+      _dashPlaced[inst.id]=wid;
+      try{ await _dashCtl.addWidget(inst.panel); }catch(_){}
+      const w=document.querySelector('#dashGrid > [data-wid="'+wid+'"]'); if(w) w.dataset.instance=inst.id;
+    } else {
+      // a registry placement without a panel is a record: the dashboard draws it as a record tile (vera-dashboard.js placeRecord)
+      const rw=_dashCtl.placeRecord?_dashCtl.placeRecord(inst):null; _dashPlaced[inst.id]=rw?rw.dataset.wid:''; if(rw) rw.dataset.instance=inst.id;
+      if(!rw) console.info('widget registry: '+inst.name+' ('+inst.form+') is placed on this dashboard but has no renderer yet');
+    }
+  }
+  for(const iid of Object.keys(_dashPlaced)){
+    if(seen.has(iid)) continue;
+    const wid=_dashPlaced[iid]; delete _dashPlaced[iid];
+    const w=wid?document.querySelector('#dashGrid > [data-wid="'+wid+'"][data-instance="'+iid+'"]'):null;
+    if(w){ try{ w.querySelector('[data-vd-remove]')?.click(); }catch(_){} }
+  }
+}
+function _dashPlacedStart(){ if(_dashPlacedTimer) return; setTimeout(_dashPlacedSync,1200); _dashPlacedTimer=setInterval(_dashPlacedSync,30000); }
 (function _dashBootVeraDash(){
   function go(){
     const g=document.getElementById('dashGrid'); if(!g) return;
     if(!window.VeraDash){ return setTimeout(go,60); }   // wait for /ui/vera-dashboard.js
     _dashCtl=VeraDash.init(g,{key:'main',loader:true,popout:true,
-      editBtn:'dashEditBtn',hiddenPicker:'dashHiddenPicker',hiddenChips:'dashHiddenChips'});
+      editBtn:'dashEditBtn',hiddenPicker:'dashHiddenPicker',hiddenChips:'dashHiddenChips',
+      // the layouts this dashboard ships (vera/widgets/layouts/<key>.json): Layouts \u25be lists them as presets
+      presets:[{key:'main',name:'Overview',note:'the cluster overview \u00b7 every widget a record'},{key:'main-estate',name:'Estate',note:'hosts \u00b7 guests \u00b7 containers \u00b7 backups \u00b7 storage \u00b7 mesh'},{key:'main-inference',name:'Inference \u00b7 models \u00b7 routing',note:'the gate \u00b7 instances \u00b7 routing stats \u00b7 the request log \u00b7 the catalogue \u00b7 the bench'},{key:'main-compute',name:'Distributed compute',note:'workers \u00b7 jobs \u00b7 the background queue \u00b7 sandboxes \u00b7 the scheduler'},{key:'fabric',name:'Data fabric',note:'stores \u00b7 feeds \u00b7 crawls \u00b7 graph'},{key:'sysmon',name:'Stack monitor',note:'proxmox \u00b7 docker \u00b7 ollama \u00b7 history \u00b7 temperatures'}]});
+    _dashPlacedStart();
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',go,{once:true});
   else go();
 })();
+
+/* ═══ THE DASHBOARD'S MENU (owner, 2026-09-27: "can the harness dashboard have the same background and menu setup as the chat
+   ui"). While the dashboard is the open tab the LHM is ITS menu, as the chat's menu is the chat's: a rail of its menus -
+   its layouts, its sections, its widgets, arranging it, keeping it live - with the open one's list beside it, and ☰ to
+   swap the every-tab list back. It is published into the same cache a panel's menu arrives in and drawn by the same
+   absorb; every pick goes to VeraDash's own controller or the toolbar's own handler, so nothing here is a copy. ═══ */
+var _dashLhmAct = { menu: 'layouts', tab: '' };
+function _dashLhmSpec(){
+  const ctl = _dashCtl; if(!ctl) return null;
+  let st = {}; try{ st = ctl.state() || {}; }catch(_){}
+  const presets = Array.isArray(ctl.presets) ? ctl.presets : [];
+  let saved = {}; try{ saved = ctl.layouts() || {}; }catch(_){}
+  const cur = String(st.name || 'default');
+  const curTab = cur === 'default' ? ('p:' + (presets[0] ? presets[0].key : 'main')) : (cur.indexOf('preset:') === 0 ? 'p:' + cur.slice(7) : 'l:' + cur);
+  const grid = document.getElementById('dashGrid');
+  const secs = grid ? [...grid.querySelectorAll(':scope > .widget.w-section:not(.hidden)')].map(w => ({ id: 's:' + w.dataset.wid, label: String((w.querySelector('.w-title') || w).textContent || '').trim().replace(/\s+/g, ' ').slice(0, 48) || 'section' })) : [];
+  const editing = !!(grid && grid.classList.contains('editing'));
+  const hidden = Array.isArray(st.hidden) ? st.hidden.length : 0;
+  const auto = /\bon\b/i.test(String((document.getElementById('dashAutoBtn') || {}).textContent || ''));
+  const menus = [
+    { id: 'layouts', icon: '\u25a6', label: 'Layouts', title: 'Layouts \u00b7 the dashboards', tabs: presets.map(p => ({ id: 'p:' + p.key, label: p.name || p.key })).concat(Object.keys(saved).map(n => ({ id: 'l:' + n, label: n + ' \u00b7 saved' }))) },
+    { id: 'sections', icon: '\u2261', label: 'Sections', title: 'Sections \u00b7 on this layout', tabs: secs.length ? secs : [{ id: 'top', label: 'The top' }] },
+    { id: 'widgets', icon: '\u229e', label: 'Widgets', title: 'Widgets', badge: hidden, tabs: [{ id: 'add', label: 'Add a widget' }, { id: 'hidden', label: 'Hidden widgets \u00b7 ' + hidden }] },
+    { id: 'arrange', icon: '\u2699', label: 'Arrange', title: 'Arrange', tabs: [{ id: 'edit', label: editing ? 'Done arranging' : 'Arrange \u00b7 resize \u00b7 hide' }, { id: 'manage', label: 'Save or manage layouts' }, { id: 'reset', label: 'Reset to the default' }] },
+    { id: 'live', icon: '\u25c9', label: 'Live', title: 'Live', tabs: [{ id: 'refresh', label: 'Refresh now' }, { id: 'auto', label: 'Auto-refresh \u00b7 ' + (auto ? 'on' : 'off') }, { id: 'diag', label: 'Diagnostics' }] },
+  ];
+  const act = { menu: _dashLhmAct.menu, tab: _dashLhmAct.tab };
+  if(act.menu === 'layouts') act.tab = curTab;
+  if(act.menu === 'arrange') act.tab = editing ? 'edit' : '';
+  return { title: 'Dashboard', active: act, menus, open: [] };
+}
+function _dashLhmPublish(){
+  const spec = _dashLhmSpec(); if(!spec) return;
+  const nav = { items: spec.menus.map(m => ({ id: m.id, label: m.label })), active: spec.active.menu, lhm: spec };
+  if(JSON.stringify(nav) === JSON.stringify(_panelNavCache.dashboard || null)) return;
+  _panelNavCache.dashboard = nav; _lhmNavSync();
+}
+var _dashLhmT = 0;
+function _dashLhmSoon(ms){ clearTimeout(_dashLhmT); _dashLhmT = setTimeout(_dashLhmPublish, ms == null ? 250 : ms); }
+_localLhm.dashboard = function(id){
+  const s = String(id || ''), i = s.indexOf('/'), menu = i < 0 ? s : s.slice(0, i), tab = i < 0 ? '' : s.slice(i + 1);
+  if(!menu) return;
+  if(menu === '\u2630'){ _lhmAbsorbTop = true; _lhmNavSync(); return; }   // the rail's \u2630: the every-tab list, as the bar's gives it
+  _dashLhmAct = { menu, tab };
+  const ctl = _dashCtl;
+  try{
+    if(menu === 'layouts' && tab && ctl){ if(tab.indexOf('p:') === 0) Promise.resolve(ctl.loadPreset(tab.slice(2))).then(() => _dashLhmSoon(60)); else if(tab.indexOf('l:') === 0) ctl.loadLayout(tab.slice(2)); }
+    else if(menu === 'sections' && tab){ const w = tab === 'top' ? document.getElementById('panel-dashboard') : document.querySelector('#dashGrid > [data-wid="' + CSS.escape(tab.slice(2)) + '"]'); if(w) w.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    else if(menu === 'widgets' && tab === 'add') dashOpenWidgetLoader();
+    else if(menu === 'widgets' && tab === 'hidden'){ const g = document.getElementById('dashGrid'); if(g && !g.classList.contains('editing')) dashToggleEdit(); const hp = document.getElementById('dashHiddenPicker'); if(hp) hp.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    else if(menu === 'arrange' && tab === 'edit') dashToggleEdit();
+    else if(menu === 'arrange' && tab === 'manage' && ctl && ctl.openLayouts) ctl.openLayouts();
+    else if(menu === 'arrange' && tab === 'reset') dashResetLayout();
+    else if(menu === 'live' && tab === 'refresh') document.querySelector('#panel-dashboard .dash-toolbar .btn.sm')?.click();
+    else if(menu === 'live' && tab === 'auto') clusterAutoRefresh();
+    else if(menu === 'live' && tab === 'diag') loadDiagnostics();
+  }catch(e){ console.warn('dashboard menu', e); }
+  _dashLhmSoon();
+};
+(function _dashLhmMount(){
+  if(!_dashCtl) return setTimeout(_dashLhmMount, 250);
+  _dashLhmPublish();
+  const g = document.getElementById('dashGrid');
+  if(g && window.MutationObserver) new MutationObserver(() => _dashLhmSoon(400)).observe(g, { childList: true, attributes: true, attributeFilter: ['class'] });
+  if(g) g.addEventListener('vera:dash:preset', () => _dashLhmSoon(60));
+  const ab = document.getElementById('dashAutoBtn'); if(ab && window.MutationObserver) new MutationObserver(() => _dashLhmSoon(60)).observe(ab, { childList: true, characterData: true, subtree: true });
+})();
+
+// ═══ SIDE BY SIDE, FROM ANY MENU (owner, 2026-09-27: "can any option in any of the lhms be opened in the side-by-side mode
+// like the top level panels can so you could have 2 estate panels side-by side or opened by the chat panel bridge"). An
+// option opens its panel beside what is open, at that option; when the panel is open already, a SECOND instance of it
+// opens beside the first (Estate \u00b7 2): its own tab and frame, the same page, its own section. An instance is gone when
+// it is closed. The chat's bridge asks for the same with vera:lhm:tab (panel.open at 'harness' / 'beside'). ═══
+function _lhmOpenBeside(pid, navId){
+  if(!pid || _localLhm[pid]) return null;          // the dashboard is drawn by the harness itself: one of it
+  let target = pid;
+  if(_openTabs.has(pid)){ target = _tabClone(pid); if(!target) return null; }
+  _openTabs.add(target); _tabRender(); try{ _tabFireLoader(target); }catch(_){}
+  if(navId) _navSelectWhenReady(target, navId);
+  _lhmNavSync(); return target;
+}
+function _tabClone(pid){
+  const src = document.getElementById('panel-' + pid); if(!src) return null;
+  const f = src.querySelector('iframe');
+  let url = f ? (f.getAttribute('data-lazy-src') || f.getAttribute('src') || '') : '';
+  if(!url && /^auto-/.test(pid)) url = '/ui/panels/' + pid.slice(5);
+  if(!url) return null;
+  let n = 2; while(document.getElementById('panel-' + pid + '--' + n)) n++;
+  const cid = pid + '--' + n;
+  const tab = document.querySelector('#tabBar .tab[data-tab="' + CSS.escape(pid) + '"]');
+  const label = tab ? (Array.from(tab.childNodes).filter(x => x.nodeType === 3).map(x => x.textContent.trim()).join('') || pid) : pid;
+  if(tab){ const t2 = document.createElement('div'); t2.className = 'tab'; t2.dataset.tab = cid; t2.dataset.cloneOf = pid; t2.textContent = label + ' \u00b7 ' + n; tab.parentNode.insertBefore(t2, tab.nextSibling); }
+  const p = document.createElement('div'); p.className = 'panel'; p.id = 'panel-' + cid; p.dataset.cloneOf = pid;
+  const box = document.createElement('div'); box.style.cssText = 'height:100%;display:flex;flex-direction:column';
+  const fr = document.createElement('iframe'); fr.style.cssText = 'flex:1;border:none;width:100%;height:100%'; fr.setAttribute('allow', 'clipboard-read; clipboard-write');
+  fr.addEventListener('load', () => { try{ fr.contentWindow.postMessage({ type: 'vera:panel:init', panel_id: cid, session_id: '' }, '*'); }catch(_){} });
+  fr.src = url; box.appendChild(fr); p.appendChild(box); src.parentNode.appendChild(p);
+  return cid;
+}
+// a section is chosen once the panel has loaded and published its menu (the bridge's nav_select)
+function _navSelectWhenReady(pid, navId){
+  let n = 0;
+  (function go(){ const f = _panelFrame(pid); if(f && f.contentWindow && _panelNavCache[pid]){ _lhmNavSelect(pid, navId); _navSelectConfirm(pid, navId, 0); return; } if(++n < 60) setTimeout(go, 400); })();
+}
+function _navSelectConfirm(pid, navId, k){
+  const s = String(navId || ''); if(s.indexOf('/') > 0 && s.charAt(0) !== '\u00a7') return;   // a registry section/tab: not a menu item
+  const want = s.replace(/^\u00a7[^/]*\//, '').split('>')[0]; if(!want || /^[cs]:/.test(want)) return;
+  setTimeout(() => { const nav = _panelNavCache[pid]; if(!nav || !_openTabs.has(pid)) return;
+    if(nav.active && nav.active !== want && Array.isArray(nav.items) && nav.items.some(it => it.id === want)) _lhmNavSelect(pid, navId);
+    if(k < 2) _navSelectConfirm(pid, navId, k + 1); }, k ? 1500 : 1200);
+}
+// an instance is gone when it is closed: its tab and its frame
+function _tabClonesPrune(){
+  document.querySelectorAll('.panels > .panel[data-clone-of]').forEach(p => { const id = _panelIdFromEl(p); if(_openTabs.has(id)) return;
+    p.remove(); document.querySelector('#tabBar .tab[data-tab="' + CSS.escape(id) + '"]')?.remove(); delete _panelNavCache[id]; delete _hdrOffers[id]; });
+}
+{ const __tabRender2 = _tabRender; _tabRender = function(){ const r = __tabRender2.apply(this, arguments); try{ _tabClonesPrune(); }catch(_){} return r; }; }
+// the chat's panel bridge: panel.open at 'harness' / 'beside' (a section with it)
+window.addEventListener('message', e => { const d = e.data; if(!d || typeof d !== 'object' || d.type !== 'vera:lhm:tab' || !d.id) return;
+  const id = String(d.id); const low = id.toLowerCase();
+  const tab = document.querySelector('#tabBar .tab[data-tab="' + CSS.escape(id) + '"]') || document.querySelector('#tabBar .tab[data-tab="auto-' + CSS.escape(id) + '"]')
+    || [...document.querySelectorAll('#tabBar .tab')].find(t => [...t.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('').toLowerCase() === low);
+  const pid = tab ? _tabToPanelId(tab) : (document.getElementById('panel-' + id) ? id : (document.getElementById('panel-auto-' + id) ? 'auto-' + id : ''));
+  if(!pid) return; if(d.by) _tabOrigin[pid] = String(d.by);
+  _lhmOpenBeside(pid, String(d.section || '')); });
+
+// ═══ FRAMES LOAD WHEN THEY ARE SHOWN (the widget review, 2026-09-27: a fresh harness loaded 20 panel frames nobody was
+// looking at - 15 in the Elements tab, the Estate/Models/Agents mount scripts, a second chat - and each then polled; with
+// the browser's six connections per host they queued the dashboard's own reads for over a minute, which is why every tile
+// sat on its sample). A frame put into a panel that is not showing is parked (its src kept in data-lazy-src) and loads the
+// first time its tab is shown, through the same lazy path the tab panels already use. ═══
+/* ═══ EVERY PANEL SPEAKS TO THE HARNESS (owner, 2026-09-27: "the top bars of lots of the uis are not being absorbed into the
+   harness top bar - they should - like the chat"). A sweep of 58 panels found 25 that never load the panel bridge - n8n,
+   Integrations, Godseye, the Galaxy, Workspaces, Activity, the MCP and Platform catalogues ... - so their bars, menus and
+   right-click could never reach the harness. When a panel's frame loads on this origin without it, the harness brings
+   the bridge; the panel then offers its bar and docks its menu like any other (its init follows the load). ═══ */
+function _bridgeInto(f){
+  try{
+    if(!f || f.tagName !== 'IFRAME' || !f.closest('.panels .panel')) return;
+    const w = f.contentWindow, d = f.contentDocument; if(!w || !d || !d.documentElement) return;
+    if(String(w.location.href).indexOf(location.origin + '/') !== 0) return;
+    if(w.VeraPanelBridge || d.querySelector('script[src*="vera-panel-bridge.js"]')) return;
+    const s = d.createElement('script'); s.src = '/ui/vera-panel-bridge.js'; s.setAttribute('data-vpb-injected', '');
+    s.onload = () => { const p = f.closest('.panel'); const pid = p ? _panelIdFromEl(p) : ''; if(pid){ try{ w.postMessage({ type: 'vera:panel:init', panel_id: pid, session_id: '' }, '*'); }catch(_){} } };
+    (d.head || d.documentElement).appendChild(s);
+  }catch(_){}
+}
+document.addEventListener('load', e => { const t = e.target; if(t && t.tagName === 'IFRAME') _bridgeInto(t); }, true);
+setTimeout(() => { document.querySelectorAll('.panels .panel iframe').forEach(f => { try{ if(f.contentDocument && f.contentDocument.readyState === 'complete') _bridgeInto(f); }catch(_){} }); }, 1500);
+
+function _framePark(f){
+  try{
+    if(!f || f.tagName !== 'IFRAME' || f.closest('.media-content')) return;   // the Elements tab parks its own (see _mediaLoad)
+    const p = f.closest('.panels > .panel'); if(!p) return;
+    if(p.classList.contains('active') || _openTabs.has(_panelIdFromEl(p))) return;
+    const src = f.getAttribute('src'); if(!src || src === 'about:blank') return;
+    f.setAttribute('data-lazy-src', src); f.setAttribute('data-lazy', '1'); f.setAttribute('src', 'about:blank');
+  }catch(_){}
+}
+{ const root = document.querySelector('.panels');
+  if(root){ root.querySelectorAll('iframe').forEach(_framePark);
+    try{ new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if(!n || n.nodeType !== 1) return; if(n.tagName === 'IFRAME') _framePark(n); else if(n.querySelectorAll) n.querySelectorAll('iframe').forEach(_framePark); }))).observe(root, { childList: true, subtree: true }); }catch(_){} } }
+// the Elements tab: each of its pages loads when its own sub-tab is shown, not all of them when the tab is
+function _mediaLoad(cont){
+  if(!cont) return;
+  cont.querySelectorAll('iframe[data-media-src]').forEach(f => { f.setAttribute('data-lazy-src', f.getAttribute('data-media-src')); f.removeAttribute('data-media-src'); });
+  _ensurePanelLoaded(cont);
+}
+{ const __tabRender3 = _tabRender; _tabRender = function(){ const r = __tabRender3.apply(this, arguments); try{ if(_openTabs.has('media')) _mediaLoad(document.querySelector('#mediaContents .media-content.active')); }catch(_){} return r; }; }
+
+// ═══ THE RIGHT-CLICK MENU, HERE TOO (owner, 2026-09-27): the design's menu (/ui/rcm.js over the one registry) on the
+// harness - a tab, a row of the menu, a dashboard tile - besides everything the runtime already knows on any page ═══
+function _rcmAttach(){
+  if(!window.VeraRCM){ return setTimeout(_rcmAttach, 300); }
+  VeraRCM.attach({
+    target: t => {
+      const q = s => t.closest && t.closest(s); let el;
+      if((el = q('#tabBar .tab[data-tab]'))) return ['panel', [...el.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('') || el.dataset.tab, el, { pid: el.dataset.tab }];
+      if((el = q('#lhmNav .lhm-s-row'))){ const nm = String(((el.querySelector('.nm > span') || el.querySelector('.nm') || el).textContent) || '').trim(); const row = _lhmTabRows().find(r => r.label === nm); return ['panel', nm, el, { pid: row ? row.pid : '' }]; }
+      if((el = q('#dashGrid > .widget'))) return ['widget', String(((el.querySelector('.w-title') || {}).textContent) || el.dataset.wid).trim(), el, { wid: el.dataset.wid, text: String(el.innerText || '').slice(0, 3000) }];
+      return null;
+    },
+    act: (id, kind, name, el, x) => {
+      if(kind === 'panel' && x.pid){
+        if(id === 'open'){ switchTab(x.pid); _tabFireLoader(x.pid); return true; }
+        if(id === 'standalone'){ switchTab(x.pid); _tabFireLoader(x.pid); try{ openActiveStandalone(); }catch(_){} return true; }
+        if(id === 'refresh'){ const f = _panelFrame(x.pid); if(f){ try{ f.contentWindow.location.reload(); }catch(_){ f.setAttribute('src', f.getAttribute('src')); } } return true; }
+      }
+      if(kind === 'widget' && x.wid){
+        if(id === 'open'){ const b = el.querySelector('.w-body vera-widget, .w-body'); if(b) b.click(); return true; }
+        if(id === 'remove' && _dashCtl && _dashCtl.hide){ _dashCtl.hide(x.wid); return true; }
+      }
+      return false;
+    } });
+}
+_rcmAttach();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CROSS-FRAME WIDGET POP-OUT — embedded dashboards (Dream, Workers & Ollama, …)

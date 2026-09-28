@@ -83,12 +83,13 @@ try:
     # Shipped alongside this file by the `nlp_server` component so the node and
     # the Vera host share ONE registry and ONE chunking implementation.
     from nlp_dispatch_core import (
-        DEFAULT_MODELS, TASK_KIND, chunk_text, merge_chunk_entities, model_slug,
+        DEFAULT_MODELS, TASK_KIND, GLINER_LABELS_DEFAULT, chunk_text,
+        merge_chunk_entities, model_slug,
     )
     HAS_CORE = True
 except Exception:  # pragma: no cover - deployment without the core file
     HAS_CORE = False
-    DEFAULT_MODELS, TASK_KIND = {}, {}
+    DEFAULT_MODELS, TASK_KIND, GLINER_LABELS_DEFAULT = {}, {}, []
 
     def model_slug(m):
         return str(m).replace("/", "__")
@@ -213,14 +214,23 @@ def model_present(task: str) -> bool:
     fastembed is the exception: it keeps its own cache layout under `_fastembed`
     rather than a slug directory with a .onnx beside the config, so asking the
     slug path would always answer "no" and the inventory would under-report a
-    model that is in fact present and loadable.
+    model that is in fact present and loadable. gliner is a torch checkpoint
+    (gliner_config.json beside the weights, no .onnx); spacy is a pip package,
+    present when it imports.
     """
-    if TASK_KIND.get(task) == "fastembed":
+    kind = TASK_KIND.get(task)
+    if kind == "fastembed":
         d = fastembed_dir()
         try:
             return os.path.isdir(d) and bool(os.listdir(d))
         except OSError:
             return False
+    if kind == "gliner":
+        p = model_path_for(task)
+        return bool(p) and os.path.isfile(os.path.join(p, "gliner_config.json"))
+    if kind == "spacy":
+        import importlib.util
+        return importlib.util.find_spec(model_id_for(task).replace("-", "_")) is not None
     p = model_path_for(task)
     try:
         return bool(p) and os.path.isdir(p) and any(
@@ -291,6 +301,41 @@ def get_raw(task: str):
     return _RAW[task]
 
 
+def get_gliner():
+    """The GLiNER model from the store — a torch checkpoint saved by the exporter, never the hub."""
+    if "gliner" not in _RAW:
+        with _LOCK:
+            if "gliner" not in _RAW:
+                if not model_present("gliner"):
+                    raise RuntimeError(
+                        f"gliner is not in the store: expected {model_path_for('gliner')}. "
+                        f"Build it with nlp_export_models.py build --only gliner and re-mount the store.")
+                from gliner import GLiNER
+                try:
+                    import torch
+                    torch.set_num_threads(NLP_THREADS)
+                except Exception:
+                    pass
+                log.info("nlp_server: loading gliner from %s", model_path_for("gliner"))
+                _RAW["gliner"] = GLiNER.from_pretrained(model_path_for("gliner"), local_files_only=True)
+    return _RAW["gliner"]
+
+
+def get_spacy():
+    """The spaCy pipeline named by the registry — a pip package the component installed."""
+    if "spacy" not in _RAW:
+        with _LOCK:
+            if "spacy" not in _RAW:
+                if not model_present("spacy"):
+                    raise RuntimeError(
+                        f"spaCy pipeline '{model_id_for('spacy')}' is not installed on this node "
+                        f"(the component's pip steps put it in the venv).")
+                import spacy
+                log.info("nlp_server: loading spacy %s", model_id_for("spacy"))
+                _RAW["spacy"] = spacy.load(model_id_for("spacy"), disable=["lemmatizer"])
+    return _RAW["spacy"]
+
+
 def fastembed_dir() -> str:
     """Where fastembed's own ONNX cache lives — inside the shared store.
 
@@ -325,30 +370,47 @@ def _providers() -> List[str]:
 
 # ── Operations ───────────────────────────────────────────────────────────────
 
-def run_ner(text, task="ner", max_chars=0, overlap=-1):
-    """Entities over the WHOLE text, not its first paragraph."""
-    max_chars = int(max_chars or CHUNK_CHARS)
+def run_ner(text, task="ner", max_chars=0, overlap=-1, labels=None, threshold=0.4):
+    """Entities over the WHOLE text, not its first paragraph. Three engines behind one shape:
+    the ORT token classifiers (`ner`, `ner_multi`), GLiNER (`gliner` — zero-shot over `labels`,
+    the fabric's set when none are given, at `threshold`) and spaCy (`spacy`)."""
+    kind = TASK_KIND.get(task, "")
+    max_chars = int(max_chars or (1400 if kind == "gliner" else CHUNK_CHARS))
     overlap = CHUNK_OVERLAP if overlap is None or overlap < 0 else int(overlap)
     # A caller-supplied max_chars smaller than the overlap would make chunk_text
     # raise, turning a tuning choice into a 500. Clamp instead.
     if overlap >= max_chars:
         overlap = max(0, max_chars // 10)
-    pipe = get_pipe(task)
+    if kind == "gliner":
+        model = get_gliner()
+        labels = [str(l) for l in (labels or [])] or list(GLINER_LABELS_DEFAULT)
+        def _run(chunk):
+            return [{"entity": e.get("label"), "word": e.get("text"), "score": float(e.get("score", 0.0)),
+                     "start": int(e["start"]), "end": int(e["end"])}
+                    for e in model.predict_entities(chunk, labels, threshold=float(threshold or 0.4))]
+    elif kind == "spacy":
+        nlp = get_spacy()
+        _drop = {"CARDINAL", "ORDINAL", "PERCENT", "QUANTITY"}
+        def _run(chunk):
+            return [{"entity": e.label_, "word": e.text, "score": 0.85, "start": int(e.start_char), "end": int(e.end_char)}
+                    for e in nlp(chunk).ents if e.label_ not in _drop]
+    else:
+        pipe = get_pipe(task)
+        def _run(chunk):
+            return [{
+                "entity": e.get("entity_group") or e.get("entity"),
+                "word": e.get("word"),
+                "score": float(e.get("score", 0.0)),
+                "start": int(e["start"]) if e.get("start") is not None else None,
+                "end": int(e["end"]) if e.get("end") is not None else None,
+            } for e in pipe(chunk)]
     chunks = chunk_text(text, max_chars=max_chars, overlap=overlap)
-    pieces = []
-    for offset, chunk in chunks:
-        ents = [{
-            "entity": e.get("entity_group") or e.get("entity"),
-            "word": e.get("word"),
-            "score": float(e.get("score", 0.0)),
-            "start": int(e["start"]) if e.get("start") is not None else None,
-            "end": int(e["end"]) if e.get("end") is not None else None,
-        } for e in pipe(chunk)]
-        pieces.append((offset, ents))
+    pieces = [(offset, _run(chunk)) for offset, chunk in chunks]
     entities = merge_chunk_entities(pieces)
     return {"ok": True, "task": task, "model": model_id_for(task),
             "entities": entities, "count": len(entities),
-            "chunks": len(chunks), "chars": len(text or "")}
+            "chunks": len(chunks), "chars": len(text or ""),
+            **({"labels": labels, "threshold": float(threshold or 0.4)} if kind == "gliner" else {})}
 
 
 def run_classify(text, task="classify"):
@@ -449,6 +511,8 @@ def build_app():
         task: str = "ner"
         max_chars: int = 0
         overlap: int = -1
+        labels: List[str] = []        # gliner: what to look for (the fabric's set when empty)
+        threshold: float = 0.4        # gliner: the score below which a span is not an entity
 
     class ClassifyReq(BaseModel):
         text: str = ""
@@ -506,7 +570,7 @@ def build_app():
         if not req.text:
             return {"error": "text is required"}
         t0 = time.monotonic()
-        out = _guard(run_ner, req.text, req.task, req.max_chars, req.overlap)
+        out = _guard(run_ner, req.text, req.task, req.max_chars, req.overlap, req.labels, req.threshold)
         if isinstance(out, dict):
             out["elapsed_ms"] = round((time.monotonic() - t0) * 1000)
         return out

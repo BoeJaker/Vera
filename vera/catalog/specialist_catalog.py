@@ -80,6 +80,10 @@ CURATED: List[Dict[str, Any]] = [
      "note": "768-d, slower, higher quality"},
     {"family": "nlp", "task": "rerank", "model": "Xenova/ms-marco-MiniLM-L-6-v2",
      "in_use": True, "note": "cross-encoder via fastembed"},
+    {"family": "nlp", "task": "gliner", "model": "urchade/gliner_medium-v2.1",
+     "in_use": True, "note": "zero-shot NER on the nodes - a torch checkpoint, not an ONNX export"},
+    {"family": "nlp", "task": "spacy", "model": "en_core_web_sm",
+     "in_use": True, "note": "spaCy English pipeline - a pinned wheel the component installs"},
     # ── Whisper (openai-whisper checkpoint names) ───────────────────────────
     {"family": "whisper", "model": "tiny", "note": "fastest, lowest accuracy"},
     {"family": "whisper", "model": "base", "in_use": True, "note": "gpu_inference default"},

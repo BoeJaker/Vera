@@ -1369,7 +1369,7 @@ async def gpu_duplex_interrupt(session_id: str, trace_id=None):
 register_ui(
     "whisper-stt",
     "Speech → Text",
-    "mic",
+    "⊲",
     """
 <div style="display:flex;flex-direction:column;gap:12px">
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -1498,7 +1498,7 @@ register_ui(
 register_ui(
     "stable-diffusion",
     "Image Gen",
-    "art",
+    "◩",
     """
 <div style="display:flex;flex-direction:column;gap:12px">
   <div class="g2">
@@ -1590,7 +1590,7 @@ register_ui(
 register_ui(
     "kokoro-tts",
     "Text to Speech",
-    "",
+    "⊳",
     """
 <div style="display:flex;flex-direction:column;gap:12px">
   <textarea id="ttsText" style="min-height:100px;font-size:12px" placeholder="Enter text to synthesize…"></textarea>
