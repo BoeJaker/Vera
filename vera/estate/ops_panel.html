@@ -109,8 +109,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .stage-hd h2{font-size:13px;font-weight:600}
 .axes{flex-shrink:0;display:flex;gap:16px;padding:6px var(--pad) 8px;flex-wrap:wrap}
 .axes span{font-size:10px;color:var(--t3)}.axes b{color:var(--t2);font-weight:500}
-.plot{flex:1 0 auto;min-height:var(--plot-min,720px);min-width:var(--plot-minw,0px);position:relative;overflow:hidden;margin:0 var(--pad) var(--pad);border-radius:var(--r-sm);background:var(--bg)}
-.pzv{position:absolute;inset:0;transform-origin:50% 50%;cursor:grab;transition:transform .38s cubic-bezier(.22,.68,.18,1);--ui:1}
+.plot{flex:1 1 auto;min-height:420px;position:relative;overflow:hidden;margin:0 var(--pad) var(--pad);border-radius:var(--r-sm);background:var(--bg)}
+.pzv{position:absolute;left:0;top:0;transform-origin:0 0;cursor:grab;transition:transform .38s cubic-bezier(.22,.68,.18,1);--ui:1}
 .pzv.dragging{transition:none!important;cursor:grabbing}.pzv.rotating{transition:none!important;cursor:move}
 .pzc{position:absolute;right:10px;top:8px;z-index:44;display:flex;align-items:center;gap:3px;padding:4px 6px;border-radius:var(--r-sm);background:color-mix(in srgb,var(--s1) 90%,transparent);box-shadow:0 0 0 1px var(--bd);opacity:.45;transition:opacity .16s ease}
 .pzc:hover{opacity:1}
@@ -135,13 +135,13 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 @keyframes opsFloor{from{opacity:0;transform:translateY(34px)}}
 @keyframes opsPin{from{opacity:0;scale:2.6}}
 @keyframes opsBand{from{opacity:0;transform:translateX(-18px)}}
-.nd.ent{animation:opsIn .55s cubic-bezier(.2,.9,.25,1.25) both;animation-delay:var(--ed,0s)}
-.pin.ent{animation:opsPin .5s ease-out both;animation-delay:var(--ed,0s)}
+.nd.ent{animation:opsIn .55s cubic-bezier(.2,.9,.25,1.25) backwards;animation-delay:var(--ed,0s)}
+.pin.ent{animation:opsPin .5s ease-out backwards;animation-delay:var(--ed,0s)}
 .stem.ent{animation:opsStem .45s ease-out both;animation-delay:calc(var(--ed,0s) + .08s)}
-.owf-svg g.ent{animation:opsDrop .6s cubic-bezier(.2,.9,.3,1.2) both;animation-delay:var(--ed,0s)}
-.floors-svg polygon.ent{animation:opsFloor .7s cubic-bezier(.2,.8,.2,1) both;animation-delay:var(--ed,0s);transform-box:fill-box}
-.band.ent{animation:opsBand .55s cubic-bezier(.2,.8,.2,1) both;animation-delay:var(--ed,0s)}
-.flow.ent,.owf-l.ent,.owf-fr.ent,.owf-alarm.ent,.wedge.ent,.link.ent,.bus.ent,.plabel.ent,.dlabel.ent{animation:opsFade .6s ease-out both;animation-delay:var(--ed,0s)}
+.owf-svg g.ent{animation:opsDrop .6s cubic-bezier(.2,.9,.3,1.2) backwards;animation-delay:var(--ed,0s)}
+.floors-svg polygon.ent{animation:opsFloor .7s cubic-bezier(.2,.8,.2,1) backwards;animation-delay:var(--ed,0s);transform-box:fill-box}
+.band.ent{animation:opsBand .55s cubic-bezier(.2,.8,.2,1) backwards;animation-delay:var(--ed,0s)}
+.flow.ent,.owf-l.ent,.owf-fr.ent,.owf-alarm.ent,.wedge.ent,.link.ent,.bus.ent,.plabel.ent,.dlabel.ent{animation:opsFade .6s ease-out backwards;animation-delay:var(--ed,0s)}
 /* trouble: a badge over the node's first widget (DOWN pulses), a ring round a down chip */
 @keyframes alarmPulse{0%{opacity:.95;transform:scale(1)}100%{opacity:0;transform:scale(1.7)}}
 .owf-alarm{position:absolute;z-index:10;transform:translate(-50%,-100%) scale(var(--ui,1));transform-origin:50% 100%;font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.06em;color:#fff;background:var(--ac4);padding:1px 5px;border-radius:3px;cursor:pointer;white-space:nowrap;box-shadow:0 0 12px -2px var(--ac4)}
@@ -203,7 +203,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .owf-svg .pipe.hot{opacity:1;stroke-width:3.4}
 .owf-svg polygon.busd{fill:var(--bg);stroke:var(--t3);stroke-width:1.5}
 .owf-svg g.wq{opacity:.3}
-.owf-svg .pipe.ent,.owf-svg polygon.busd.ent{animation:opsFade .6s ease-out both;animation-delay:var(--ed,0s)}
+.owf-svg .pipe.ent,.owf-svg polygon.busd.ent{animation:opsFade .6s ease-out backwards;animation-delay:var(--ed,0s)}
 .nd .vit{display:inline-flex;align-items:flex-end;gap:1px;height:12px;flex:none}.nd .vit i{width:3px;border-radius:1px;display:block}
 .nd .regd{display:inline-flex;gap:2px;flex:none}.nd .regd i{width:5px;height:5px;border-radius:50%;display:block}
 .regd i.y{background:var(--ac2)}.regd i.n{background:var(--ac4)}.regd i.na{background:var(--s3)}
@@ -525,7 +525,7 @@ function layout(W, H){
   const busPts = [];
   const DOM = snap.domains;
   const LX = 104, RX = 12, colW = (W - LX - RX) / DOM.length, colX = (d) => LX + (d + 0.5) * colW;
-  const ladder = (pl) => clamp(Math.ceil((cellMax[pl] || 1)), 5, S.view === '2d' ? 12 : 9);
+  const ladder = (pl) => clamp(Math.ceil((cellMax[pl] || 1)), S.view === '2d' ? 2 : 5, S.view === '2d' ? 12 : 9);   // 2D: a band as tall as its fullest cell
   const slotOf = (total, idx, R) => total <= 5 ? slotsFor(total)[idx] * (R - 1) / (ROWS - 1) : (R - 1) * idx / Math.max(total - 1, 1);
   const stagOf = (total, idx) => total > 8 ? ((idx % 3) - 1) : total > 5 ? ((idx % 2) ? 1 : -1) : 0;
   if (S.view === '2d' || !ISO){
@@ -813,12 +813,14 @@ function isoWidgets(lay, W, H){
 // a face (x, y, w, h and a clip-path polygon in local px) as an svg polygon in plot px
 const polyOf = (q) => { const x0 = parseFloat(q.x), y0 = parseFloat(q.y); const pts = String(q.cp).slice(8, -1).split(',').map((pt) => { const ab = pt.trim().split(/\s+/); return (x0 + parseFloat(ab[0])).toFixed(1) + ',' + (y0 + parseFloat(ab[1])).toFixed(1); }).join(' ');
   return '<polygon points="' + pts + '"' + (q.k === 't' ? ' class="t"' : '') + ' style="fill:' + q.col + '"/>'; };
-function applyZoom(){ const v = $('pzv'); v.style.transform = 'translate(' + S.vx + 'px,' + S.vy + 'px) scale(' + S.vz + ')'; v.style.setProperty('--ui', uiScale(S.vz).toFixed(3)); $('pzLbl').textContent = Math.round(S.vz * 100) + '%'; }
+// the view never leaves the picture: at least 80 px of it stays in the window whatever the pan and zoom
+function clampView(){ const plot = $('plot'); if (!plot || !S.cw) return; const PW = plot.clientWidth || 800, PH = plot.clientHeight || 600, cw = S.cw * S.vz, ch = S.ch * S.vz, m = 80;
+  S.vx = clamp(S.vx, Math.min(m - cw, 0), Math.max(PW - m, 0)); S.vy = clamp(S.vy, Math.min(m - ch, 0), Math.max(PH - m, 0)); }
+function zoomAt(f, cx, cy){ const z0 = S.vz, z1 = clamp(z0 * f, .05, 4); S.vx = cx - (cx - S.vx) * (z1 / z0); S.vy = cy - (cy - S.vy) * (z1 / z0); S.vz = z1; }
+function applyZoom(){ clampView(); const v = $('pzv'); v.style.transform = 'translate(' + S.vx + 'px,' + S.vy + 'px) scale(' + S.vz + ')'; v.style.setProperty('--ui', uiScale(S.vz).toFixed(3)); $('pzLbl').textContent = Math.round(S.vz * 100) + '%'; }
 function render(opts){
   opts = opts || {};
   const plot = $('plot'), v = $('pzv');
-  // where the stage looks, read FIRST: once the plot is reset below, the browser clamps the scroll and this would come back wrong
-  const stg = plot.closest('.stage'), stgF = stg ? [(stg.scrollLeft + stg.clientWidth / 2) / Math.max(1, stg.scrollWidth), (stg.scrollTop + stg.clientHeight / 2) / Math.max(1, stg.scrollHeight)] : [0.5, 0];
   if (!S.snap){ v.innerHTML = '<div class="empty">' + (S.err ? 'The estate could not be read: ' + esc(S.err) : 'reading the estate…') + '</div>'; return; }
   const snap = S.snap, ID = byId(), is3d = S.view === '3d';
   // the old picture goes first: every size read below would otherwise lay out thousands of stale elements (seconds in 3D)
@@ -854,19 +856,14 @@ function render(opts){
   $('sources').innerHTML = ord.map((k) => '<span class="srcrow ' + (snap.sources[k] === 'ok' ? '' : 'bad') + '" title="' + esc(snap.sources[k] + (tm[k] != null ? ' · ' + tm[k] + ' ms' : '')) + '"><i></i><span class="n">' + esc(k) + '</span>' + (tm[k] != null ? '<span class="n" style="flex:none;color:' + (tm[k] > 3000 ? 'var(--ac3)' : 'var(--t3)') + '">' + (tm[k] >= 1000 ? (tm[k] / 1000).toFixed(1) + ' s' : tm[k] + ' ms') + '</span>' : '') + '</span>').join('')
     + (snap.age_s != null ? '<span class="srcrow"><span class="n">read ' + (snap.age_s < 1 ? 'just now' : Math.round(snap.age_s) + ' s ago') + (snap.refreshing ? ' · reading again' : '') + '</span></span>' : '');
   if (!opts.plotOnly){ renderRail(); renderLens(); }
-  // the room the lattice asks for: a row slot per node up to nine a band (a 2D band 30 px × spread a row); the stage scrolls
-  const cm = {}; snap.nodes.forEach((n) => { if (!S.on[n.plane]) return; const k = n.plane + ':' + n.domain; cm[k] = (cm[k] || 0) + 1; }); const per = {}; Object.keys(cm).forEach((k) => { const pl = k.split(':')[0]; per[pl] = Math.max(per[pl] || 0, cm[k]); });
-  const need = 30 + Object.keys(per).reduce((t, pl) => t + 60 + (clamp(per[pl], 1, is3d ? 9 : 12) - 1) * (is3d ? 26 : 40 * S.spread), 0);
-  plot.style.setProperty('--plot-min', Math.max(560, is3d ? need * Math.max(1, S.zgap * 1.15) * (S.layout3d === 'flat' ? .8 : 1) : need) + 'px');
-  plot.style.setProperty('--plot-minw', '0px');   // reset before measuring: a view that grew the plot sideways must not centre the next one
-  if (!is3d) plot.style.setProperty('--plot-minw', (116 + (snap.domains || []).length * 330) + 'px');   // 2D: columns wide enough for a gutter and their chips
-  let W = plot.clientWidth || 800, H = plot.clientHeight || 600;
+  // the map model: the plot is the stage's window and never grows; the picture is drawn at its natural size on the canvas
+  // (#pzv, W x H) and the view pans and zooms over it. One way to move, nothing to scroll, nothing to lose.
+  const PW = plot.clientWidth || 800, PH = plot.clientHeight || 600;
+  let W = is3d ? PW : Math.max(PW, 116 + (snap.domains || []).length * 330), H = PH;
   let lay = layout(W, H);
-  // a stack taller than the plot (a wide gap, a large spread) asks for its height: nothing is cut, the stage scrolls
-  for (let i = 0; i < 3 && is3d && lay.G && (lay.G.height > H + 4 || lay.G.width > W + 4); i++){
-    if (lay.G.height > H + 4) plot.style.setProperty('--plot-min', Math.ceil(lay.G.height) + 'px');
-    if (lay.G.width > W + 4) plot.style.setProperty('--plot-minw', Math.ceil(lay.G.width) + 'px');
-    W = Math.max(plot.clientWidth || 0, lay.G.width > W + 4 ? Math.ceil(lay.G.width) : W); H = Math.max(plot.clientHeight || 0, lay.G.height > H + 4 ? Math.ceil(lay.G.height) : H); lay = layout(W, H); }
+  for (let i = 0; i < 3 && is3d && lay.G && (lay.G.height > H + 4 || lay.G.width > W + 4); i++){ W = Math.max(W, Math.ceil(lay.G.width)); H = Math.max(H, Math.ceil(lay.G.height)); lay = layout(W, H); }
+  if (!is3d && lay.bands.length){ const lb = lay.bands[lay.bands.length - 1]; H = Math.max(H, Math.ceil(lb.y + lb.h + lay.AXIS + 12)); }
+  v.style.width = W + 'px'; v.style.height = H + 'px'; S.cw = W; S.ch = H;
   const pos = lay.pos, shown = lay.shown;
   const parts = [];
   // entering: a new view (2D, 3D stacked or flat, one layer) builds plane by plane; afterwards a node or widget that was not
@@ -877,7 +874,7 @@ function render(opts){
   const entD = {}, perPl = {}; shown.slice().sort((a, b) => pos[a.id].x - pos[b.id].x).forEach((n) => { if (S.seenN[n.id]) return;
     const k = perPl[n.plane] = (perPl[n.plane] || 0) + 1; entD[n.id] = replay ? Math.min(1.4, pIdx[n.plane] * 0.1 + 0.15 + k * 0.014) : 0; });
   const E = (id, extra) => entD[id] == null ? ['', ''] : [' ent', ';--ed:' + (entD[id] + (extra || 0)).toFixed(2) + 's'];
-  const EL = (a, b) => (entD[a] == null && entD[b] == null) ? ['', ''] : [' ent', ';--ed:' + (Math.max(entD[a] || 0, entD[b] || 0) + 0.3).toFixed(2) + 's'];
+  const EL = () => ['', ''];   // pipes appear with the view (animating hundreds of them cost the build its frames)
   const EP = (id) => replay ? [' ent', ';--ed:' + ((pIdx[id] || 0) * 0.1).toFixed(2) + 's'] : ['', ''];
   lay.bands.forEach((b, i) => parts.push('<div class="band' + (replay ? ' ent' : '') + '" style="top:' + px(b.y) + ';height:' + px(b.h) + ';--pc:' + b.col + (replay ? ';--ed:' + (i * 0.1).toFixed(2) + 's' : '') + '"></div>'));
   // the floors as polygons of one svg that overflows the plot's box: a floor is never clipped by its own frame
@@ -915,7 +912,7 @@ function render(opts){
   if (is3d && lay.G){
     const wd = isoWidgets(lay, W, H); const wboxes = wd.boxes.slice();
     NSC = lay.G.FLAT ? Math.max(.68, Math.min(1, lay.G.fitS * 1.3)) : 1;
-    wd.edges.forEach((e) => { const en = E(e.id, 0.35); parts.push('<span class="wedge' + en[0] + '" style="left:' + px(e.x) + ';top:' + px(e.y) + ';width:' + px(e.len) + ';transform:rotate(' + e.deg.toFixed(2) + 'deg);--pc:' + e.col + en[1] + '"></span>'); });
+    wd.edges.forEach((e) => { const en = ['', '']; parts.push('<span class="wedge' + en[0] + '" style="left:' + px(e.x) + ';top:' + px(e.y) + ';width:' + px(e.len) + ';transform:rotate(' + e.deg.toFixed(2) + 'deg);--pc:' + e.col + en[1] + '"></span>'); });
     // every face as a polygon of one svg: the compositor paints one layer, not thousands of clipped boxes
     // one group per widget: it drops onto the plate when its node enters (one after the other), or on its own when it is added
     const items = wd.groups.map((gq) => { const nw = entD[gq.id] != null ? entD[gq.id] + 0.12 + gq.i * 0.07 : (!S.seenW[gq.key] && !replay ? 0 : null);
@@ -932,7 +929,7 @@ function render(opts){
       wd.labels.slice().sort((a, b) => b.y - a.y).forEach((l) => { const w = (String(l.n).length * 5.6 + 16) * uiC, h = 15 * uiC; let y = l.y, ok = false;
         for (let t = 0; t < 3 && !ok; t++){ const bx = { x0: l.x - w / 2, x1: l.x + w / 2, y0: y, y1: y + h };
           if (!capPlaced.some((b) => bx.x0 < b.x1 && bx.x1 > b.x0 && bx.y0 < b.y1 && bx.y1 > b.y0)){ capPlaced.push(bx); ok = true; } else y += h; }
-        const en = E(l.id, 0.45); if (ok) parts.push('<span class="owf-l' + en[0] + '" style="left:' + px(l.x) + ';top:' + px(y) + ';color:' + l.col + en[1] + '">' + esc(l.n) + '</span>'); }); }
+        const en = ['', '']; if (ok) parts.push('<span class="owf-l' + en[0] + '" style="left:' + px(l.x) + ';top:' + px(y) + ';color:' + l.col + en[1] + '">' + esc(l.n) + '</span>'); }); }
     // trouble: a badge over the node's first widget - DOWN pulses; a click opens the node's card on its events
     wd.alarms.forEach((a) => { const en = E(a.id, 0.5); parts.push('<span class="owf-alarm ' + a.sev + en[0] + '" data-wnode="' + esc(a.id) + '" data-wkind="alarm" title="' + esc(((ID[a.id] || {}).label || a.id) + ' · ' + a.t + ' — click for its card') + '" style="left:' + px(a.x) + ';top:' + px(a.y) + en[1] + '">' + esc(a.t) + '</span>'); });
     // a terminal's screen carries its last lines; a click on any widget opens its node's card (a terminal's on its shell)
@@ -975,11 +972,10 @@ function render(opts){
   v.innerHTML = parts.join('');
   applyZoom(); termScroll();
   shown.forEach((n) => { S.seenN[n.id] = 1; wspec(n).forEach((w, i) => { S.seenW[n.id + ':' + i + ':' + w.k] = 1; }); });
-  // the stage keeps the same middle in view as the lattice grows or shrinks; a new 3D view opens on the middle of the planes
-  if (stg){ const cx = replay ? (is3d ? 0.5 : 0) : stgF[0], cy = stgF[1];
-    if (stg.scrollWidth > stg.clientWidth + 4) stg.scrollLeft = Math.round(cx * stg.scrollWidth - stg.clientWidth / 2);
-    if (!replay && stg.scrollHeight > stg.clientHeight + 4) stg.scrollTop = Math.round(cy * stg.scrollHeight - stg.clientHeight / 2); else if (replay) stg.scrollTop = 0;
-    if (replay && !is3d) stg.scrollLeft = 0; }
+  // once the build is over the entry classes go: finished animations on thousands of elements cost the canvas its frame rate
+  if (Object.keys(entD).length){ clearTimeout(S.entT); S.entT = setTimeout(() => { document.querySelectorAll('#pzv .ent').forEach((e) => e.classList.remove('ent')); }, 2400); }
+  // a new view opens fitted (3D: the whole lattice; 2D: its width, from the top); a redraw keeps the view, never off screen
+  if (replay) fitView(); else applyZoom();
   if (lay.G) $('pzAngle').textContent = Math.round(lay.G.TILT) + '°/' + Math.round(lay.G.AZIM) + '°';
   $('lsel').innerHTML = snap.planes.map((p) => '<button data-layer="' + p.id + '" class="' + (S.focus === p.id ? 'on' : '') + '" style="--pc:' + PCOL[p.id] + '"><i></i><span>' + esc(p.name) + '</span></button>').join('');
   if (!opts.plotOnly) renderInspector();
@@ -1121,11 +1117,10 @@ function cardHtml(ID, pos, W, H){ const plot = $('plot'), v = $('pzv'); if (!(S.
     const wx = p.x > (vis.L + vis.R) / 2 ? p.x - (hw + 26) : p.x + (hw + 26);
     return ('<div class="ndw ' + (wide ? 'wide' : '') + '" style="left:' + px(clamp(wx, vis.L + hw + 8, vis.R - hw - 8)) + ';top:' + px(clamp(p.y, vis.T + hh + 8, vis.B - hh - 8)) + '" data-stop="1"><div class="h"><span class="st" style="background:' + SC[n.status] + '"></span>' + esc(n.label) + '<span class="x" data-close="1">✕</span></div><div class="b">' + actionsHtml(n, S.wact, 'w') + '</div></div>'); }
 // fit: scale the view so the whole lattice is on screen (never above 100%), centred in the stage
-function fitView(){ const st = document.querySelector('.stage'), plot = $('plot'); if (!st || !plot) return;
-  const sw = st.clientWidth - 24, sh = st.clientHeight - 130, pw = plot.offsetWidth || 1, ph = plot.offsetHeight || 1;
-  S.vz = clamp(Math.min(1, sw / pw, sh / ph), 0.1, 1); S.vx = 0; S.vy = 0; applyZoom();
-  const pr = plot.getBoundingClientRect(), sr = st.getBoundingClientRect();
-  st.scrollTop += (pr.top + pr.height / 2) - (sr.top + sr.height / 2); st.scrollLeft += (pr.left + pr.width / 2) - (sr.left + sr.width / 2); }
+function fitView(all){ const plot = $('plot'); if (!plot) return; const PW = plot.clientWidth || 800, PH = plot.clientHeight || 600, cw = S.cw || PW, ch = S.ch || PH;
+  if (S.view === '3d' || all){ S.vz = clamp(Math.min(1, (PW - 16) / cw, (PH - 16) / ch), 0.05, 1); S.vx = (PW - cw * S.vz) / 2; S.vy = Math.max(0, (PH - ch * S.vz) / 2); }
+  else { S.vz = clamp(Math.min(1, (PW - 8) / cw), 0.7, 1); S.vx = Math.max(0, (PW - cw * S.vz) / 2); S.vy = 0; }
+  applyZoom(); }
 function renderCard(){ const v = $('pzv'), L = S.lastLay; if (!S.snap || !L){ render(); return; }
   const old = v.querySelector('.ndw'); if (old) old.remove(); const h = cardHtml(byId(), L.pos, L.W, L.H); if (h) v.insertAdjacentHTML('beforeend', h); termScroll(); }
 
@@ -1324,7 +1319,7 @@ function drawMenu(){ let m = document.querySelector('.cmw'); if (m) m.remove(); 
     if (k === 'exp'){ S.exp = nid; S.sel = nid; S.wact = 'overview'; } else if (k === 'entity'){ const nn = byId()[nid]; if (nn && window.veraUI) window.veraUI.openEntity(nn.ref); return; }
     else if (k === 'drawer'){ const nn = byId()[nid]; if (nn && window.veraEntityDrawer) window.veraEntityDrawer.open(nn.ref); return; }
     else if (k === 'wpick'){ S.sel = nid; S.wpick = nid; } else if (k === 'restart'){ S.sel = nid; S.act = 'restart'; } else if (['metrics', 'req', 'caps', 'logs', 'term'].indexOf(k) >= 0){ S.sel = nid; S.act = k; }
-    else if (k === 'fit'){ S.vz = 1; S.vx = 0; S.vy = 0; S.tilt = null; S.azim = null; } else if (k === 'view'){ S.view = S.view === '2d' ? '3d' : '2d'; } else if (k === 'pipes'){ S.pipes = !S.pipes; } else if (k === 'all'){ Object.keys(S.on).forEach((p) => { S.on[p] = true; }); S.focus = null; } else if (k === 'refresh'){ load(true); return; } else if (k === 'clearroute'){ S.rt = null; }
+    else if (k === 'fit'){ S.tilt = null; S.azim = null; render(); fitView(true); return; } else if (k === 'view'){ S.view = S.view === '2d' ? '3d' : '2d'; } else if (k === 'pipes'){ S.pipes = !S.pipes; } else if (k === 'all'){ Object.keys(S.on).forEach((p) => { S.on[p] = true; }); S.focus = null; } else if (k === 'refresh'){ load(true); return; } else if (k === 'clearroute'){ S.rt = null; }
     render(); }; }); }
 // the widget list of a node: add a kind, take one off (the i-th, or the last), none, defaults
 function widgetsOf(nid){ const n = byId()[nid]; if (!n) return null; const o = S.wl[nid]; return { n, items: (o && Array.isArray(o.items)) ? o.items.slice() : (o && o.off ? [] : wdefaults(n)) }; }
@@ -1362,7 +1357,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.woff !== undefined){ e.stopPropagation(); setWidget(t.dataset.woff, 'drop', parseInt(t.dataset.wi || '0')); return; }
   if (t.dataset.wrestore !== undefined){ e.stopPropagation(); (S.snap.nodes || []).forEach((n) => { if (n.plane === t.dataset.wrestore && S.wl[n.id] && (S.wl[n.id].off || !(S.wl[n.id].items || []).length)) delete S.wl[n.id]; }); saveW(); S.wadd = null; render(); return; }
   if (t.dataset.wsel !== undefined){ S.sel = t.dataset.wsel; render(); return; }
-  if (t.dataset.wsz !== undefined){ S.wsz = parseFloat(t.dataset.wsz); saveV(); render(); return; }
+  if (t.dataset.wsz !== undefined){ S.wsz = parseFloat(t.dataset.wsz); saveV(); render(); fitView(); return; }
   if (t.dataset.close !== undefined){ S.exp = null; renderCard(); return; }
   if (t.dataset.act !== undefined){ if (t.dataset.where === 'w'){ S.wact = t.dataset.act; renderCard(); } else { S.act = t.dataset.act; renderInspector(); } return; }
   if (t.dataset.send !== undefined){ sendReq(t.dataset.send); return; }
@@ -1376,9 +1371,9 @@ document.addEventListener('click', (e) => {
   if (t.dataset.errNode !== undefined){ if (t.dataset.errNode && byId()[t.dataset.errNode]){ S.sel = t.dataset.errNode; if (S.rt) S.rt = t.dataset.errNode; lightRefresh(); } return; }
   if (t.dataset.layer !== undefined){ S.focus = S.focus === t.dataset.layer ? null : t.dataset.layer; render(); return; }
   if (t.dataset.floor !== undefined){ if (!S.moved) clearRoute(); return; }   // a single click on a floor only clears a lit route; a double click focuses the layer
-  if (t.dataset.pz !== undefined){ const k = t.dataset.pz; if (k === 'in') S.vz = Math.min(4, S.vz * 1.25); else if (k === 'out') S.vz = Math.max(.1, S.vz / 1.25); else if (k === 'l') S.vx += 140; else if (k === 'r') S.vx -= 140; else if (k === 'u') S.vy += 110; else if (k === 'd') S.vy -= 110;
-    else if (k === 'fit'){ S.vz = 1; S.vx = 0; S.vy = 0; S.tilt = null; S.azim = null; } else { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 12.6) : S.tilt, A = S.azim == null ? 45 : S.azim; if (k === 'tiltUp') S.tilt = Math.min(60, T + 5); if (k === 'tiltDn') S.tilt = Math.max(4, T - 5); if (k === 'rotL') S.azim = Math.min(64, A + 6.5); if (k === 'rotR') S.azim = Math.max(26, A - 6.5); }
-    if (['in', 'out', 'l', 'r', 'u', 'd'].indexOf(k) >= 0) applyZoom(); else if (k === 'fit'){ render(); fitView(); } else keepPivot(() => render()); return; }
+  if (t.dataset.pz !== undefined){ const k = t.dataset.pz; if (k === 'in' || k === 'out'){ const pl = $('plot'); zoomAt(k === 'in' ? 1.25 : 0.8, (pl.clientWidth || 800) / 2, (pl.clientHeight || 600) / 2); } else if (k === 'l') S.vx += 140; else if (k === 'r') S.vx -= 140; else if (k === 'u') S.vy += 110; else if (k === 'd') S.vy -= 110;
+    else if (k === 'fit'){ S.tilt = null; S.azim = null; } else { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 12.6) : S.tilt, A = S.azim == null ? 45 : S.azim; if (k === 'tiltUp') S.tilt = Math.min(60, T + 5); if (k === 'tiltDn') S.tilt = Math.max(4, T - 5); if (k === 'rotL') S.azim = Math.min(64, A + 6.5); if (k === 'rotR') S.azim = Math.max(26, A - 6.5); }
+    if (['in', 'out', 'l', 'r', 'u', 'd'].indexOf(k) >= 0) applyZoom(); else if (k === 'fit'){ render(); fitView(true); } else keepPivot(() => render()); return; }
   if (t.dataset.node !== undefined){ if (t.dataset.stop) return; S.sel = t.dataset.node; S.rt = t.dataset.node; if (S.wpick && S.wpick !== t.dataset.node){ S.wpick = null; render(); return; } lightRefresh(); return; }
 });
 document.addEventListener('input', (e) => { const t = e.target; if (t.dataset && t.dataset.req){ const R = S.req[t.dataset.node]; if (R) R[t.dataset.req] = t.value; }
@@ -1420,11 +1415,11 @@ v.addEventListener('mousedown', () => { S.moved = false; }, true);
 window.addEventListener('mousemove', (e) => { const d = S.drag; if (!d) return; if (Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) > 4) S.moved = true;
   if (d.mode === 'rot'){ S.azim = clamp(d.a0 - (e.clientX - d.x0) * 0.22, 26, 64); S.tilt = clamp(d.t0 + (e.clientY - d.y0) * 0.18, 4, 60); rafRot(); return; }
   S.vx = d.vx0 + (e.clientX - d.x0); S.vy = d.vy0 + (e.clientY - d.y0); v.style.transform = 'translate(' + S.vx + 'px,' + S.vy + 'px) scale(' + S.vz + ')'; });
-window.addEventListener('mouseup', () => { if (S.drag){ S.drag = null; v.classList.remove('dragging'); v.classList.remove('rotating'); } });
+window.addEventListener('mouseup', () => { if (S.drag){ S.drag = null; v.classList.remove('dragging'); v.classList.remove('rotating'); applyZoom(); } });
 // the wheel zooms about the pointer; the chrome holds its screen size through --ui
 $('plot').addEventListener('wheel', (e) => { if (e.target.closest('.ndw')) return; e.preventDefault();
-  const r = $('plot').getBoundingClientRect(), mx = e.clientX - r.left - r.width / 2, my = e.clientY - r.top - r.height / 2;
-  const z0 = S.vz, z1 = clamp(z0 * (e.deltaY > 0 ? .88 : 1.14), .1, 4);
+  const r = $('plot').getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const z0 = S.vz, z1 = clamp(z0 * (e.deltaY > 0 ? .88 : 1.14), .05, 4);
   S.vx = mx - (mx - S.vx) * (z1 / z0); S.vy = my - (my - S.vy) * (z1 / z0); S.vz = z1; applyZoom(); }, { passive: false });
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(render, 120); });
 window.addEventListener('message', (e) => { const d = e && e.data; if (!d || typeof d !== 'object') return;
