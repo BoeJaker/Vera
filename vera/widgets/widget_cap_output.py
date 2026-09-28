@@ -57,7 +57,7 @@ CAP_HINTS: Dict[str, Dict[str, Any]] = {
 }
 #: the CI forms draw their answer whole (ci_view_core's payload): no rows companion beside them
 CI_FORMS = ("status-matrix", "race-green", "test-grid", "ci-board", "run-track", "run-compare", "ci-pulse", "ci-fleet", "ci-run",
-            "census-commits", "loop-perf", "census-live", "census-timeline")
+            "census-commits", "loop-perf", "census-live", "census-timeline", "trend-layers")
 _ROW_KEYS = ("data", "result", "items", "rows", "results", "entries", "events", "points", "series", "values")
 _TIME = ("t", "ts", "time", "when", "at", "timestamp", "created_at", "started_at", "hour", "date")
 _TEXT = ("text", "msg", "message", "line", "event", "summary", "title")

@@ -107,7 +107,7 @@
                   month: 'calendar', schedule: 'calendar', calnav: 'calendar', vgraph: 'graph' };
   const canon = (form) => { const f = String(form || '').toLowerCase(); return DRAWN[f] ? f : (ALIAS[f] || f); };
   // the Loop Lab's pictures (see the CI section): each draws the ci payload whole, at every size
-  const CI_FORMS = /^(status-matrix|race-green|test-grid|ci-board|run-track|run-compare|ci-pulse|ci-fleet|ci-run|census-commits|element|loop-perf|census-live|census-timeline)$/;
+  const CI_FORMS = /^(status-matrix|race-green|test-grid|ci-board|run-track|run-compare|ci-pulse|ci-fleet|ci-run|census-commits|element|loop-perf|census-live|census-timeline|trend-layers)$/;
 
   /* ── the data a form draws ────────────────────────────────────────────── */
   // a capability result's SHAPE → its default form, deterministically (the Formats board's table)
@@ -214,6 +214,11 @@
          split: ['<path>', ...]   the rows as one series per named field (pass and fail per hour, stacked) - t: '<path>'
                                   names the time field */
     if (map.reverse && Array.isArray(base)) { base = base.slice().reverse(); hit = true; }
+    if (sh === 'series' && Array.isArray(base) && base.length > 1 && base[0] && typeof base[0] === 'object') {
+      const tks = [map.t, 't', 'ts', 'time', 'ended_at', 'started_at', 'created_at', 'updated_at', 'timestamp', 'date', 'hour'].filter(Boolean);
+      const tk = tks.find((k) => base.every((r) => r && pick(r, k) != null && pick(r, k) !== ''));
+      const tv = (r) => { const v = pick(r, tk); const n = typeof v === 'number' ? (v < 1e12 ? v * 1000 : v) : Date.parse(v); return n; };
+      if (tk && base.every((r) => isFinite(tv(r))) && base.some((r, i) => i && tv(r) < tv(base[i - 1]))) { base = base.slice().sort((a, b) => tv(a) - tv(b)); hit = true; } }   // only when out of order: an ordered list is left as it is
     if (map.entries && base && typeof base === 'object' && !Array.isArray(base) && Object.keys(base).length) {
       const ef = typeof map.entries === 'string' ? map.entries : 'value';
       base = Object.keys(base).filter((k) => base[k] == null || typeof base[k] !== 'object').map((k) => ({ name: k, [ef]: base[k] })); hit = true; }
@@ -2396,6 +2401,73 @@
     + '.ct-run{display:grid;grid-template-columns:minmax(120px,22%) minmax(80px,20%) minmax(0,1fr);gap:10px;align-items:center;padding:5px 8px;margin:3px 0;border-radius:6px;background:var(--b-surf2);border-left:3px solid var(--b-t3);cursor:pointer}.ct-run.up{border-left-color:var(--b-ac2);background:' + mix(B.ac2, 12) + '}.ct-run.dn{border-left-color:var(--b-ac4);background:' + mix(B.ac4, 12) + '}'
     + '.ct-rl{display:flex;flex-direction:column;min-width:0}.ct-rl b{font:600 10.5px var(--b-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ct-rl small{font-size:8.5px;color:var(--b-t3)}.ct-db{position:relative;height:14px;background:var(--b-surf);border-radius:3px;overflow:hidden}.ct-db i{position:absolute;left:0;top:0;bottom:0;background:var(--b-ac2)}.ct-db em{position:absolute;left:5px;font:9px/14px var(--b-mono);font-style:normal;color:var(--b-t1)}.ct-v{font-size:9.5px;color:var(--b-t2)}';
 
+
+  /* TREND LAYERS: several fields of one list over TIME, layered - the census's goals done, quality and wall time on
+     one axis; a loop's wall and calls - filtered by the viewer. The rows come from the answer (its one list, or
+     draw.rows names it); time is draw.t or the row's own time field, and the axis runs oldest left to newest right,
+     spaced by real time so a gap is a gap. Each series is drawn in its own range (a line of 0-12 goals beside one of
+     5000-9000 s would otherwise be flat) with its own last value named; `lanes` stacks them instead of layering.
+     draw.series [{field, label}] (else the row's numeric fields, up to four), draw.facets [field] - a chip per value to
+     keep only those rows (the template of a census run). The viewer's choices are the element's ui state: s_<field>
+     (a series on/off), f_<facet> (a facet's value), range (all · 20 · 50 · 7d · 30d), mode (layer · lanes), q (text). */
+  const TIME_KEYS = ['t', 'ts', 'time', 'ended_at', 'started_at', 'created_at', 'updated_at', 'at', 'timestamp', 'when', 'date', 'hour'];
+  const tOf = (v) => { if (v == null || v === '') return NaN; if (typeof v === 'number') return v < 1e12 ? v * 1000 : v; const n = Date.parse(v); return isFinite(n) ? n : (isFinite(+v) ? (+v < 1e12 ? +v * 1000 : +v) : NaN); };
+  R['trend-layers'] = (d, H, o) => {
+    const dr = (o && o.draw) || {}, sz = (o && o.size) || 'm';
+    let rowsA = Array.isArray(d) ? d : (d && typeof d === 'object' ? (dr.rows ? pick(d, dr.rows) : rowsOfAny(d)) : null);
+    rowsA = (Array.isArray(rowsA) ? rowsA : []).filter((r) => r && typeof r === 'object');
+    if (!rowsA.length) return EMPTY('a trend needs rows with a time and numbers');
+    const tk = dr.t || TIME_KEYS.find((k) => rowsA.some((r) => isFinite(tOf(r[k]))));
+    if (!tk) return EMPTY('a trend needs a time field (draw.t)');
+    let series = Array.isArray(dr.series) && dr.series.length ? dr.series.map((s) => (typeof s === 'string' ? { field: s } : s)) : Object.keys(rowsA[0]).filter((k) => k !== tk && typeof rowsA[0][k] === 'number' && !/^(id|pid|port|index)$/.test(k)).slice(0, 4).map((k) => ({ field: k }));
+    series = series.map((s, i) => Object.assign({ label: String(s.field).replace(/_/g, ' '), col: DV(i) }, s));
+    const facets = Array.isArray(dr.facets) ? dr.facets : [];
+    // the viewer's filters
+    const q = String(ui(o, 'q', '') || '').toLowerCase(), range = String(ui(o, 'range', dr.range || 'all')), mode = String(ui(o, 'mode', dr.mode || 'layer'));
+    let rows = rowsA.map((r) => ({ r, t: tOf(r[tk]) })).filter((x) => isFinite(x.t));
+    facets.forEach((f) => { const want = ui(o, 'f_' + f, ''); if (want !== '' && want != null) rows = rows.filter((x) => String(x.r[f] ?? '') === String(want)); });
+    if (q) rows = rows.filter((x) => Object.keys(x.r).some((k) => typeof x.r[k] === 'string' && x.r[k].toLowerCase().includes(q)));
+    rows.sort((a, b) => a.t - b.t);                                             // oldest left, newest right
+    if (/^\d+$/.test(range)) rows = rows.slice(-(+range)); else if (/^\d+d$/.test(range)) { const cut = Date.now() - parseInt(range, 10) * 864e5; rows = rows.filter((x) => x.t >= cut); }
+    const on = series.filter((s) => +ui(o, 's_' + s.field, 1) !== 0);
+    const controls = sz === 'm' ? '' : '<div class="tl-ctl">'
+      + series.map((s) => '<button class="tl-s' + (on.includes(s) ? ' on' : '') + '" style="--c:' + s.col + '"' + set('s_' + s.field, on.includes(s) ? 0 : 1) + '><i></i>' + esc(s.label) + '</button>').join('')
+      + facets.map((f) => { const vals = [...new Set(rowsA.map((r) => String(r[f] ?? '')).filter(Boolean))].slice(0, 10); const cur = String(ui(o, 'f_' + f, '')); return '<span class="tl-fc"><em>' + esc(f.replace(/_/g, ' ')) + '</em><button class="' + (cur === '' ? 'on' : '') + '"' + set('f_' + f, '') + '>all</button>' + vals.map((v) => '<button class="' + (cur === v ? 'on' : '') + '"' + set('f_' + f, v) + '>' + esc(v) + '</button>').join('') + '</span>'; }).join('')
+      + '<span class="tl-fc"><em>range</em>' + ['all', '20', '50', '7d', '30d'].map((r) => '<button class="' + (range === r ? 'on' : '') + '"' + set('range', r) + '>' + r + '</button>').join('') + '</span>'
+      + '<span class="tl-fc"><button class="' + (mode === 'layer' ? 'on' : '') + '"' + set('mode', 'layer') + ' title="the series over one another, each in its own range">layered</button><button class="' + (mode === 'lanes' ? 'on' : '') + '"' + set('mode', 'lanes') + ' title="a lane each">lanes</button></span>'
+      + (sz === 'xl' ? '<input class="tl-q" data-vb-input="q" placeholder="filter rows…" value="' + esc(q) + '">' : '') + '</div>';
+    if (rows.length < 2 || !on.length) return wrap('trend-layers', controls + '<div class="tl-empty">' + (on.length ? 'fewer than two points after the filters' : 'every series is switched off') + '</div>', 'ci');
+    const t0 = rows[0].t, t1 = rows[rows.length - 1].t, span = (t1 - t0) || 1, W = 1000, LH = mode === 'lanes' ? 100 / on.length : 100;
+    const X = (t) => ((t - t0) / span * W).toFixed(1);
+    const pts = [];
+    const paths = on.map((s, si) => {
+      const vs = rows.map((x) => num(pick(x.r, s.field))).map((v, i) => ({ v, x: X(rows[i].t), r: rows[i].r })).filter((p) => isFinite(p.v));
+      if (!vs.length) return '';
+      const lo = Math.min(...vs.map((p) => p.v)), hi = Math.max(...vs.map((p) => p.v)), rg = (hi - lo) || 1;
+      const y0 = mode === 'lanes' ? si * LH : 0, y = (v) => (y0 + LH - 4 - (v - lo) / rg * (LH - 8)).toFixed(2);
+      const line = '<polyline points="' + vs.map((p) => p.x + ',' + y(p.v)).join(' ') + '" fill="none" stroke="' + s.col + '" stroke-width="1.8" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>';
+      // the points are HTML over the plot (the svg is stretched to the tile, so a circle in it is an oval)
+      pts.push(...(sz === 'm' ? [] : vs.map((p) => '<i class="tl-pt" style="left:' + (p.x / W * 100).toFixed(2) + '%;top:' + y(p.v) + '%;--c:' + s.col + '" title="' + esc(s.label + ' ' + fmt(p.v) + ' · ' + new Date(tOf(p.r[tk])).toLocaleString() + (p.r.run_id || p.r.id ? ' · ' + (p.r.run_id || p.r.id) : '')) + '"' + itemAttr(p.r, 'point') + '></i>')));
+      return line;
+    }).join('');
+    const last = rows[rows.length - 1].r;
+    const legend = '<div class="tl-leg">' + on.map((s) => { const vs = rows.map((x) => num(pick(x.r, s.field))).filter(isFinite); return '<span style="--c:' + s.col + '"><i></i>' + esc(s.label) + ' <b>' + fmt(num(pick(last, s.field))) + '</b><small>' + fmt(Math.min(...vs)) + '–' + fmt(Math.max(...vs)) + '</small></span>'; }).join('') + '</div>';
+    const ax = '<div class="tl-ax"><span>' + esc(new Date(t0).toLocaleDateString()) + '</span><span>' + rows.length + ' points · newest on the right</span><span>' + esc(new Date(t1).toLocaleDateString()) + '</span></div>';
+    return wrap('trend-layers', controls + legend + '<div class="tl-wrap" style="min-height:' + (sz === 'm' ? 80 : sz === 'l' ? 170 : 260) + 'px"><svg class="tl-plot" viewBox="0 0 ' + W + ' 100" preserveAspectRatio="none">' + (mode === 'lanes' ? on.slice(1).map((_, i) => '<line x1="0" x2="' + W + '" y1="' + ((i + 1) * LH).toFixed(2) + '" y2="' + ((i + 1) * LH).toFixed(2) + '" stroke="var(--b-bd)" stroke-width="1" vector-effect="non-scaling-stroke"/>').join('') : '') + paths + '</svg>' + pts.join('') + '</div>' + ax, 'ci');
+  };
+  Object.assign(DRAWN, { 'trend-layers': 'series' });
+  Object.assign(CI_GLYPH, { 'trend-layers': '≈' });
+  Object.assign(FORM_SAMPLE, { 'trend-layers': () => ({ runs: Array.from({ length: 24 }, (_, i) => ({ run_id: 'run' + (54 + i), ended_at: Date.UTC(2026, 8, 3 + i) / 1000, template: i % 5 ? 'default' : 'exec-family', done: [9, 10, 9, 11, 10, 12, 11, 10, 12, 12, 11, 10][i % 12], quality_mean: 0.8 + (i % 7) / 50, wall_total_s: 8200 + ((i * 37) % 13) * 140 })) }) });
+  const TL_CSS = '.vb-trend-layers{display:flex;flex-direction:column;gap:6px;height:100%;min-height:0}'
+    + '.tl-ctl{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;flex:none}'
+    + '.tl-s{font:inherit;font-size:10px;padding:2px 9px;border-radius:999px;border:1px solid var(--b-bd);background:transparent;color:var(--b-t3);cursor:pointer;display:inline-flex;align-items:center;gap:5px}.tl-s i{width:10px;height:3px;border-radius:2px;background:var(--c);opacity:.4}.tl-s.on{color:var(--b-t1);border-color:var(--c)}.tl-s.on i{opacity:1}'
+    + '.tl-fc{display:inline-flex;gap:2px;align-items:center}.tl-fc em{font-style:normal;font-size:9px;color:var(--b-t3);text-transform:uppercase;letter-spacing:.06em;margin-right:3px}.tl-fc button{font:inherit;font-size:10px;padding:1px 7px;border-radius:5px;border:1px solid transparent;background:transparent;color:var(--b-t2);cursor:pointer}.tl-fc button.on{border-color:var(--b-ac);color:var(--b-t1);background:color-mix(in srgb,var(--b-ac) 14%,transparent)}'
+    + '.tl-q{font:inherit;font-size:10.5px;height:22px;padding:0 8px;border-radius:11px;border:1px solid var(--b-bd);background:var(--b-surf2);color:var(--b-t1);min-width:140px}'
+    + '.tl-leg{display:flex;flex-wrap:wrap;gap:4px 14px;flex:none}.tl-leg span{display:inline-flex;align-items:baseline;gap:5px;font-size:10.5px;color:var(--b-t2)}.tl-leg i{width:12px;height:3px;border-radius:2px;background:var(--c);align-self:center}.tl-leg b{font-family:var(--b-mono);color:var(--b-t1)}.tl-leg small{font-size:9px;color:var(--b-t3)}'
+    + '.tl-wrap{position:relative;flex:1 1 0;min-height:60px}.tl-plot{position:absolute;inset:0;width:100%;height:100%;display:block;background:linear-gradient(var(--b-bd) 1px,transparent 1px) 0 0/100% 25%}'
+    + '.tl-pt{position:absolute;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:var(--c);box-shadow:0 0 0 2px var(--b-surf);cursor:pointer;opacity:.85}.tl-pt:hover{transform:scale(1.6);opacity:1;z-index:2}'
+    + '.tl-ax{display:flex;justify-content:space-between;font:9px var(--b-mono);color:var(--b-t3);flex:none}.tl-empty{padding:18px;text-align:center;font-size:11px;color:var(--b-t3)}';
+
   const FORMS3_CSS = '.vb-calh{display:flex;align-items:center;gap:6px;flex:none}.vb-calh b{font-size:12px;font-weight:600;flex:1;text-align:center}.vb-calh button{width:22px;height:20px;border-radius:5px;color:var(--b-t2);box-shadow:inset 0 0 0 1px var(--b-bd)}.vb-calh button:hover{color:var(--b-t1);box-shadow:inset 0 0 0 1px var(--b-ac)}.vb-calh button.today{width:auto;padding:0 8px;font-size:10px}.vb-calh.big b{font-size:14px}'
     + '.vb-mgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;flex:1;min-height:0;align-content:start}.vb-mgrid .wd{font-size:9px;color:var(--b-t3);text-align:center;text-transform:uppercase;letter-spacing:.05em}'
     + '.vb-mday{position:relative;border-radius:4px;background:color-mix(in srgb,var(--b-t1) 5%,transparent);padding:2px 3px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column;gap:1px;min-width:0}.vb-mday .n{font-size:10px;color:var(--b-t2);font-family:var(--b-mono)}.vb-mday.out{opacity:.45}.vb-mday.today{box-shadow:inset 0 0 0 1.5px var(--b-ac)}.vb-mday.today .n{color:var(--b-ac);font-weight:700}.vb-mday.sel{background:color-mix(in srgb,var(--b-ac) 22%,transparent)}.vb-mday:hover{background:color-mix(in srgb,var(--b-t1) 10%,transparent)}'
@@ -2773,7 +2845,7 @@ span.vw-sampled{opacity:.85}
 .vb-cmpr{display:grid;grid-template-columns:1fr 70px 1fr;gap:8px;align-items:center;font-size:10px}.vb-cmpr .n{grid-column:2;text-align:center;color:var(--b-t2);order:2;white-space:nowrap;overflow:hidden}.vb-cmpr .side{display:flex;align-items:center;gap:6px;height:12px}.vb-cmpr .side.l{order:1;justify-content:flex-end}.vb-cmpr .side.r{order:3}.vb-cmpr .side i{display:block;height:8px;border-radius:4px}.vb-cmpr .side b{font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);width:34px;text-align:right}.vb-cmpr .side.r b{text-align:left}
 .vb-carp{flex:1;min-height:0;display:flex;align-items:center;gap:12px}.vb-carp .vb-dial{width:64px;height:64px}.vb-carp .vb-dial > span{font-size:13px}
 .vb-flist{flex:1;display:flex;flex-direction:column;gap:1px;font-size:9.5px;min-width:0}.vb-flist > span{display:grid;grid-template-columns:1fr 46px 50px 36px;gap:6px;align-items:center;height:19px}.vb-flist span i{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}.vb-flist .h{color:var(--b-t3);font-size:8px;text-transform:uppercase;letter-spacing:.08em}.vb-flist .m{font-family:var(--b-mono);color:var(--b-t2);text-align:right;white-space:nowrap;overflow:hidden}
-.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}` + CAPOUT_CSS + FORMS3_CSS + CI_CSS + CC_CSS + PF_CSS);
+.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}` + CAPOUT_CSS + FORMS3_CSS + CI_CSS + CC_CSS + PF_CSS + TL_CSS);
   function ensureCss(root) {
     const host = root && root.head ? root.head : root;
     if (!host || !host.querySelector) return;

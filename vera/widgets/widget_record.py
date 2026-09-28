@@ -249,6 +249,7 @@ FORMS: List[Dict[str, Any]] = [
     _F("loop-perf", "items", glyph="loop-perf", options=("limit",), name="Loop performance", boards=("widgets", "reply")),
     _F("census-live", "stages", glyph="census-live", motion=True, name="Census, live", boards=("widgets", "motion", "reply")),
     _F("census-timeline", "events", glyph="census-timeline", options=("template",), name="Census timeline", boards=("widgets", "reply")),
+    _F("trend-layers", "series", glyph="trend-layers", options=("series", "facets", "t", "range", "mode"), name="Trend layers", boards=("widgets", "reply")),
     _F("element", "panel", glyph="element", sizes=("s", "m", "l", "xl"), options=("tag", "attrs"), name="Page element", boards=("widgets",)),
 ]
 _FORM_BY_ID = {f["id"]: f for f in FORMS}
