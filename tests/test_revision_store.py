@@ -39,6 +39,7 @@ def test_projection_failure_reconcile_rebuild_and_stale_cas(tmp_path):
     failed = store.transition(value.revision_id, "vector", from_state="pending",
                               to_state="failed", occurred_at=T1, error_code="backend_down")
     assert failed["state"] == "failed" and failed["error_code"] == "backend_down"
+    assert store.head(value.record_id)["revision_id"] == value.revision_id
     assert store.reconcile()[0]["revision_id"] == value.revision_id
     rebuilding = store.transition(value.revision_id, "vector", from_state="failed",
                                   to_state="rebuilding", occurred_at=T1)

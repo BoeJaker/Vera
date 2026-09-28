@@ -143,6 +143,62 @@ def nearest_lines(content: str, find: str, *, limit: int = MAX_LINES,
     return scored[:limit]
 
 
+#: A near miss this close, with nothing else nearly as close, is the line the
+#: editor meant. Census run70-73 (2026-09-24): 11 anchors were refused with
+#: "closest text actually in the file - line N" because the model quoted a
+#: line from an EARLIER version it had itself edited; the hint named the line
+#: and the retry re-typed it wrong again.
+#: 0.80, not higher: an attribute appended inside a tag (`required>` -> `required
+#: onblur=...>`) scores 0.82 against its own old line, and that is the census case.
+REANCHOR_RATIO = 0.80
+REANCHOR_GAP = 0.08
+
+
+def nearest_unique_span(content: str, find: str, *, min_ratio: float = REANCHOR_RATIO,
+                        gap: float = REANCHOR_GAP):
+    """The file's OWN text for a stale anchor that names exactly one region.
+
+    Containment first: the commonest stale anchor is a line the model's own
+    earlier edit EXTENDED (an attribute appended, a call added), so the old
+    text is still a whitespace-normalised substring of exactly one region.
+    Otherwise similarity: >= `min_ratio`, with the next-best region at least
+    `gap` behind (or none). None in every other case - two candidates that
+    close means the model could have meant either, and guessing corrupts.
+    """
+    lines = (content or "").splitlines(keepends=True)
+    height = len(find.splitlines()) or 1
+    want = _norm(find)
+    if not want or not lines or height > len(lines):
+        return None
+    # The closer moves when something is appended inside a tag or call:
+    # `required>` became `required onblur=...>`, `f(a)` became `f(a, b)`.
+    # A short anchor then fails both containment and similarity, so also
+    # try it without its trailing closer.
+    wants = [want]
+    stripped = want.rstrip(">;),]}").rstrip()
+    if stripped and stripped != want and len(stripped) >= 8:
+        wants.append(stripped)
+    contained = [i for i in range(len(lines) - height + 1)
+                 if any(w in _norm("".join(lines[i:i + height])) for w in wants)]
+    if len(contained) > 1:
+        return None
+    if len(contained) == 1:
+        start = contained[0]
+    else:
+        near = nearest_lines(content, find, limit=2, floor=min_ratio)
+        if not near:
+            return None
+        if len(near) > 1 and (near[0]["ratio"] - near[1]["ratio"]) < gap:
+            return None
+        start = near[0]["line"] - 1
+    if start < 0 or start + height > len(lines):
+        return None
+    span = "".join(lines[start:start + height])
+    if span.endswith("\n") and not find.endswith("\n"):
+        span = span[:-1]
+    return span or None
+
+
 def describe_missing_anchor(content: str, find: str, *, edit_no: int = 1) -> str:
     """The whole error line for a zero-match anchor, hint included."""
     head = (f"edit {edit_no}: `find` text not present in the file "

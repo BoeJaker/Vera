@@ -379,37 +379,24 @@ async def _event_listener():
 #  RECOVERY: reclaim orphaned tasks from dead consumers on startup
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _recover_orphans():
-    """Scan XPENDING for stale entries and either re-queue or mark failed."""
-    r = _orch.REDIS
-    if not r:
-        return 0
-
-    global _boot_id
-    _boot_id = f"boot-{int(time.time())}-{os.getpid()}"
-    try:
-        await r.set(K_BOOT, _boot_id, ex=86400 * 30)
-    except Exception:
-        pass
-
-    log.info("recovery scan starting (boot=%s, idle_threshold=%dms)", _boot_id, RECOVERY_IDLE_MS)
+async def _recover_stream(r, stream: str, recovery_consumer: str) -> int:
+    """Reclaim orphaned entries of ONE task stream. Every stream a worker
+    reads is scanned: the legacy shared one, the host-only one and each
+    task-class one - a node that died mid-task left its entry pending on
+    a class stream, which a scan of the legacy stream alone never saw."""
     reclaimed = 0
-
     try:
-        pinfo = await r.xpending(TASK_STREAM, GROUP_WORKERS)
+        pinfo = await r.xpending(stream, GROUP_WORKERS)
         pending_count = pinfo.get("pending", 0) if pinfo else 0
         if pending_count == 0:
-            log.info("recovery: no pending entries — clean start")
             return 0
 
-        log.info("recovery: %d pending entries in stream", pending_count)
+        log.info("recovery: %d pending entries in %s", pending_count, stream)
 
         details = await r.xpending_range(
-            TASK_STREAM, GROUP_WORKERS,
+            stream, GROUP_WORKERS,
             min="-", max="+", count=500,
         )
-
-        recovery_consumer = f"recovery-{_boot_id}"
 
         for entry in (details or []):
             msg_id = entry.get("message_id", b"")
@@ -425,12 +412,23 @@ async def _recover_orphans():
             if idle_ms < RECOVERY_IDLE_MS:
                 continue
 
+            # Idle is time since DELIVERY, not since the consumer was last seen:
+            # a worker on another node running a long task holds its entry
+            # pending the whole time. Its registration (vera:workers:<id>, the
+            # consumer name, refreshed every loop with a 120 s TTL) says it is
+            # alive - reclaiming would run the task twice.
+            try:
+                if consumer and await r.exists(f"vera:workers:{consumer}"):
+                    continue
+            except Exception:
+                pass
+
             log.warning("recovery: orphan %s idle=%dms consumer=%s deliveries=%d",
                         msg_id, idle_ms, consumer, delivery_count)
 
             try:
                 claimed = await r.xclaim(
-                    TASK_STREAM, GROUP_WORKERS, recovery_consumer,
+                    stream, GROUP_WORKERS, recovery_consumer,
                     min_idle_time=RECOVERY_IDLE_MS,
                     message_ids=[msg_id],
                 )
@@ -456,7 +454,7 @@ async def _recover_orphans():
                     )
 
                     if cap_name in CAPABILITY_REGISTRY:
-                        await r.xadd(TASK_STREAM, {
+                        await r.xadd(_orch._placement.stream_for(cap_name), {
                             "id": task_id, "capability": cap_name,
                             "payload": payload, "trace_id": trace_id,
                             "ts": now_iso(), "recovered": "true",
@@ -468,14 +466,41 @@ async def _recover_orphans():
                         await _persist(task_id, cap_name, "failed",
                                        error=f"Capability '{cap_name}' not registered after reboot")
 
-                    await r.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
+                    await r.xack(stream, GROUP_WORKERS, msg_id)
                     reclaimed += 1
 
             except Exception as e:
                 log.error("recovery: xclaim failed for %s: %s", msg_id, e)
 
     except Exception as e:
-        log.error("recovery scan failed: %s", e)
+        # A class stream no worker has read yet has no group: nothing can be
+        # pending on it. Not an error - recovery runs before the worker loop
+        # creates the groups.
+        if "NOGROUP" in str(e):
+            return reclaimed
+        log.error("recovery scan of %s failed: %s", stream, e)
+    return reclaimed
+
+
+async def _recover_orphans():
+    """Scan XPENDING for stale entries and either re-queue or mark failed."""
+    r = _orch.REDIS
+    if not r:
+        return 0
+
+    global _boot_id
+    _boot_id = f"boot-{int(time.time())}-{os.getpid()}"
+    try:
+        await r.set(K_BOOT, _boot_id, ex=86400 * 30)
+    except Exception:
+        pass
+
+    log.info("recovery scan starting (boot=%s, idle_threshold=%dms)", _boot_id, RECOVERY_IDLE_MS)
+    reclaimed = 0
+
+    recovery_consumer = f"recovery-{_boot_id}"
+    for stream in _orch._placement.streams_to_read(is_worker=False):
+        reclaimed += await _recover_stream(r, stream, recovery_consumer)
 
     log.info("recovery complete — %d tasks reclaimed", reclaimed)
     await emit_event({"type": "job_persist.recovery_done",
@@ -1127,9 +1152,10 @@ schedule(_sweep_stuck_running, interval=600, name="job_persist_sweep_stuck")
 schedule(_prune_stale_consumers, interval=900, name="job_persist_prune_consumers")
 
 try:
-    _loop = asyncio.get_event_loop()
-    if _loop.is_running():
-        _loop.create_task(_startup())
+    # Through the orchestrator, so a node worker skips it unless it is
+    # on the worker allow-list (worker_placement_core).
+    import Vera.vera.capability_orchestration as _co_start
+    _co_start.start_at_import(_startup, "job_persist_startup")
 except Exception:
     pass
 

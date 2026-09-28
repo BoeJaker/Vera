@@ -2220,9 +2220,10 @@ if _CAP_AVAILABLE:
     schedule(_liveness_tick, HEARTBEAT_S, "mesh_liveness")
     schedule(_startup, interval=999999, name="mesh_startup")
     try:
-        _loop = asyncio.get_event_loop()
-        if _loop.is_running():
-            _loop.create_task(_startup())
+        # Through the orchestrator, so a node worker skips it unless it is
+        # on the worker allow-list (worker_placement_core).
+        import Vera.vera.capability_orchestration as _co_start
+        _co_start.start_at_import(_startup, "mesh_startup")
     except Exception:
         pass
 

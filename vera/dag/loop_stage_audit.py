@@ -89,7 +89,8 @@ def stage_record(stage: str, *,
 
 
 _RUNTIME_SCALARS = ("goal_chars", "ledger_steps", "pending_steps", "executed_steps",
-                    "caps_count", "context_chars", "files_count")
+                    "caps_count", "context_chars", "files_count",
+                    "earlier_calls")   # executor: older calls listed above its last four
 _RUNTIME_LISTS = ("caps", "file_register", "prior_context_from", "skills")
 
 

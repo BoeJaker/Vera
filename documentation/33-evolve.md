@@ -632,6 +632,59 @@ automated regression harness for the loops and, via cap tasks, other systems.
 
 ---
 
+## 8b. Schedules — a calendar of censuses, suites, pipelines and board items
+
+The **Schedule** page is a calendar (`<vera-calendar>`, the reusable
+month/week/day element at `/ui/elements/calendar.js`) of when Loop Lab
+work may run. A schedule is one of six kinds — a **census** template (the
+off-repo harness, one template per run), a **suite** tag, a **task**, a
+**pipeline** step (`test`, `adopt` or `promote`, always to `bleeding-edge`,
+never `main`), a **board item** (`board.dispatch`) or any **capability**
+(fenced: nothing under `sys.`, `background.`, promotions to main) — on a
+weekly window (days, start–end, timezone; default Mon–Fri 05:00–17:00
+Europe/London) or once at a time. Inside a window it repeats **back to
+back** (a census: the next starts when the last has finished, after a short
+cooldown), **once per window**, or **every N minutes**.
+
+The scheduler is a 60 s job (`evolve.schedule.tick`, one orchestrator, never
+a dev sandbox). It starts work only when the box allows it: a census needs
+no census in flight, no agent loop running and no partial run files in the
+harness directory; every other kind waits for a census by default
+(`exclusive`). A census schedule can say what happens when its window closes
+with its census still running: let it **finish** (default), **yield** (park
+after the goal in flight) or **drop**. Everything the scheduler starts is a
+run record (`evolve.schedule.history`) and appears on the calendar beside
+the windows; the main Calendar panel can overlay both with
+`cal.events.list(include_loop_lab=true)`. The page's **results** mode lays
+every archived census run and suite on the same calendar as a span
+coloured by its pass rate (per run, or per goal placed by elapsed time),
+so the series reads over time; a chip opens the run's goals.
+(`evolve.schedule.events mode=results|both granularity=runs|goals`.)
+
+Capabilities: `evolve.schedule.list / get / upsert / delete / enable /
+run_now / tick / events / history / config.get / config.set`, and
+`evolve.schedule.seed_weekday_census` for the standard weekday census
+schedule. Records and every decision live in `vera/evolve/schedule_core.py`
+(pure, `tests/test_schedule_core.py` in the critical tier).
+
+### The release, gated on the census
+
+`evolve.release.prod(confirm, edge, census, force, restart, reason)` is the
+one call that puts an edge on prod: fast-forward `main` to it
+(`evolve.bleeding_edge.promote_to_main`) and restart (`sys.dev.restart`).
+A restart kills every loop in flight and the restart's own census gate
+PAUSES the census goal (cancelled, re-run later). So the release checks the
+census first and, when a goal is in flight, **waits**: `census=finish`
+(default) until no census is in flight at all; `census=goal` writes a
+yield — the goal in flight finishes, the harness parks, the release goes,
+and the census is resumed once the new process is up; `force=true` goes
+now. A wait returns `held: true` at once and is carried by a 30 s job
+(`evolve.release.tick`); `evolve.release.status` shows it,
+`evolve.release.cancel` drops it (and resumes a census it yielded). The
+Ship page's "release to prod" button asks which mode and shows the pending
+release under the edges. `promote_to_main` itself is unchanged (merge only)
+but now says when a census is in flight.
+
 ## 9. Markets self-improving loop
 
 `vera/markets/markets_evolve_capabilities.py` applies the same idea to the

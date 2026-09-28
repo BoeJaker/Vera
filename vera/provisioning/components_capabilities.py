@@ -30,6 +30,7 @@ Capabilities (group `provision.*`)
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -41,13 +42,17 @@ from typing import Any, Dict, List, Optional
 from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
-from Vera.vera.capability_orchestration import APP, capability, emit_event, register_ui
+from Vera.vera.capability_orchestration import APP, capability, emit_event, register_ui, schedule
 from Vera.vera.integrations.infrastructure_effects import observe_infrastructure_effect
 from Vera.vera.provisioning.components_core import (
-    rewrite_host, native_worker_cmd,
+    rewrite_host, native_worker_cmd, worker_backend_env, WORKER_BACKEND_KEYS,
     EDGE_DIR_CANDIDATES as _EDGE_DIR_CANDIDATES,
+    WORKER_DIR_CANDIDATES as _WORKER_DIR_CANDIDATES,
     edge_dir_probe_cmd, parse_edge_dir, pidfile_lookup_cmd,
 )
+from Vera.vera.workers import worker_placement_core as _placement
+from Vera.vera.security import redis_auth_core as _redis_auth_core
+from Vera.vera.provisioning import node_sync_core as _node_sync
 
 log = logging.getLogger("vera.provision.components")
 _HERE = Path(__file__).parent
@@ -548,6 +553,87 @@ async def cap_component_stop(host_id: str = "", component: str = "",
 # ═════════════════════════════════════════════════════════════════════════════
 #  VERA WORKER  — docker container (reuse docker.worker.spawn) OR native process
 # ═════════════════════════════════════════════════════════════════════════════
+#: The commit this process is RUNNING, read once at import. HEAD moves when main
+#: is promoted, before the restart that activates it - a node synced to HEAD in
+#: that window would run code the host does not.
+_RUNNING_COMMIT = _node_sync.read_git_head(str(_REPO))
+
+
+async def _host_bundle() -> Dict[str, Any]:
+    """The commit this host RUNS, as base64 tar.gz (vera/, edge/, requirements.txt).
+
+    Shipping the host's own commit — rather than cloning from a remote — means a
+    node worker runs exactly the code the host runs, and the node needs no git
+    credentials (the nodes have none). Spawned through spawn_core: an asyncio
+    subprocess under uvloop forks the whole server."""
+    try:
+        from Vera.vera.execution import spawn_core as _spawn
+    except Exception:                                  # pragma: no cover
+        from vera.execution import spawn_core as _spawn
+    repo = shlex.quote(str(_REPO))
+    git = f"git -c safe.directory='*' -C {repo}"
+    commit = _RUNNING_COMMIT
+    if not commit:
+        head = await _spawn.run_argv(["sh", "-c", f"{git} rev-parse HEAD"], timeout=30)
+        if not head.get("ok"):
+            return {"ok": False, "error": "cannot read this host's commit: "
+                    + (head.get("stderr") or head.get("error") or "")[:300]}
+        commit = (head.get("stdout") or "").strip()
+    arc = await _spawn.run_argv(
+        # edge/ too: node_agent_capabilities imports node_runner_core from it
+        ["sh", "-c", f"{git} archive --format=tar.gz {shlex.quote(commit)} "
+                     f"vera edge requirements.txt | base64 -w0"],
+        timeout=180, max_output=256_000_000)
+    if not arc.get("ok") or not (arc.get("stdout") or "").strip():
+        return {"ok": False, "error": "git archive failed: "
+                + (arc.get("stderr") or arc.get("error") or "")[:300]}
+    return {"ok": True, "commit": commit, "b64": arc["stdout"].strip()}
+
+
+async def _registry_get(host_id: str) -> Dict[str, Any]:
+    r = _orch.REDIS
+    if r is None:
+        return {}
+    try:
+        raw = await r.hget(_node_sync.REGISTRY_KEY, host_id)
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+async def _registry_put(host_id: str, entry: Dict[str, Any]) -> None:
+    r = _orch.REDIS
+    if r is None:
+        return
+    try:
+        await r.hset(_node_sync.REGISTRY_KEY, host_id, json.dumps({**entry, "host_id": host_id}))
+    except Exception as e:
+        log.warning("node worker registry write %s: %s", host_id, e)
+
+
+async def _record_native_result(host_id: str, rec: Dict, ok: bool, commit: str,
+                                error: str) -> None:
+    """Every native provision is recorded, so the sync job knows the node exists,
+    what it shipped, and how often it has failed."""
+    nodename = ""
+    if ok:
+        hn = await _ssh(host_id, "hostname", timeout=20)
+        nodename = (hn.get("stdout") or "").strip().splitlines()[0] if hn.get("ok") and (hn.get("stdout") or "").strip() else ""
+    entry = _node_sync.record_after(await _registry_get(host_id), ok=ok, commit=commit,
+                                    error=error, nodename=nodename)
+    entry["host"] = rec.get("host", "")
+    await _registry_put(host_id, entry)
+
+
+def _ssh_stored_with_input():
+    """exec's stdin-capable runner, from the module that actually registered
+    exec.ssh.run (importing it by path again could load a second copy)."""
+    import sys as _sys
+    fn = _cap("exec.ssh.run")
+    mod = _sys.modules.get(getattr(fn, "__module__", "") or "")
+    return getattr(mod, "ssh_run_stored", None)
+
+
 @capability(
     "provision.worker",
     http_method="POST", http_path="/provision/worker", http_tags=["provision"],
@@ -555,17 +641,24 @@ async def cap_component_stop(host_id: str = "", component: str = "",
     description="Provision a Vera worker that joins the cluster (consumes the task "
                 "stream via the shared REDIS_URL). Inputs: host_id (str!), mode "
                 "('docker'|'native'), name (str), image (str — docker), gpus (str "
-                "— 'all'), repo_url (str — native: git URL, else env VERA_REPO_URL), "
-                "port (int=8990 — native orchestrator port), redis_url (str — "
-                "default this orchestrator's), timeout (int=1200). "
+                "— 'all'), source (str — native: 'host' ships THIS host's checked-out "
+                "commit over SSH (default), 'git' clones repo_url / VERA_REPO_URL), "
+                "repo_url (str), port (int=8990 — native orchestrator port), "
+                "redis_url (str — default this orchestrator's), threads (int=2 — "
+                "native: the worker's BLAS/OpenMP pool size), timeout (int=1200). "
                 "docker → registers the host as an SSH Docker host then "
-                "docker.worker.spawn. native → git-clone Vera + venv + run "
-                "'python -m Vera.vera.capability_orchestration'. Output: {ok, mode, ...}.",
+                "docker.worker.spawn. native → installs under the first writable of "
+                "/opt/vera/worker, /var/lib/vera/worker, $HOME/.vera/worker, as a "
+                "systemd unit in the NODE-WORKER role (VERA_IS_WORKER=1: node-safe "
+                "caps only, no ambient scheduler), at lower CPU priority than the "
+                "node's own services. Re-running refreshes the code and restarts it. "
+                "Output: {ok, mode, ...}.",
 )
 async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
                      image: str = "", gpus: str = "", repo_url: str = "",
                      port: int = 8990, redis_url: str = "", timeout: int = 1200,
-                     backend_host: str = "", trace_id=None) -> Dict:
+                     backend_host: str = "", source: str = "", threads: int = 0,
+                     trace_id=None) -> Dict:
     rec = await _host_rec(host_id)
     if not rec:
         return {"ok": False, "error": f"host_id not found: {host_id}"}
@@ -588,35 +681,460 @@ async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
         return {"ok": bool(sp.get("ok")), "mode": "docker", "docker_host": dhost, "spawn": sp}
 
     if mode == "native":
+        src_kind = (source or ("git" if repo_url else "host")).strip().lower()
         repo = repo_url or os.getenv("VERA_REPO_URL", "")
-        if not repo:
+        if src_kind not in ("host", "git"):
             return {"ok": False, "mode": "native",
-                    "error": "native mode needs a git repo_url (or set VERA_REPO_URL on the Vera host). "
-                             "Provide the URL of your Vera repository."}
+                    "error": f"unknown source: {source} (use 'host' or 'git')"}
+        if src_kind == "git" and not repo:
+            return {"ok": False, "mode": "native",
+                    "error": "source=git needs a repo_url (or VERA_REPO_URL on the Vera host); "
+                             "source=host ships this host's own commit instead."}
         # A remote worker can't reach the orchestrator's own localhost stores — re-point
         # every backend URL at a LAN-reachable address (this box's IP, or backend_host).
         bh = (backend_host or os.getenv("VERA_ADVERTISE_HOST", "") or _primary_lan_ip())
         redis_url = rewrite_host(redis_url, bh)
-        backend_kv = {}
-        for k in ("POSTGRES_URL", "NEO4J_URI", "NEO4J_USER", "NEO4J_PASS",
-                  "CHROMA_HOST", "CHROMA_PORT", "OLLAMA_BASE_URL", "OLLAMA_GPU_URL",
-                  "OLLAMA_CPU_A_URL", "OLLAMA_CPU_B_URL", "OLLAMA_EMBED_URL",
-                  "OLLAMA_MODEL", "VERA_COORD_REDIS_DB"):
-            v = os.getenv(k)
-            if v:
-                backend_kv[k] = rewrite_host(v, bh)
+        # Never hand on the HOST's Redis credential: a node worker gets its own
+        # ACL user (vera-node), read from OpenBao, when one exists. It lands in
+        # the node's 0600 worker.env, not the unit (native_worker_cmd).
+        import sys as _sys
+        _ra = _sys.modules.get("redis_auth_capabilities")
+        redis_url = (await _ra.node_redis_url(redis_url)) if _ra is not None \
+            else _redis_auth_core.without_credentials(redis_url)
+        # Environment first, else the host's effective config (prod runs on
+        # config.py's localhost defaults and exports none of these).
+        _cfg = getattr(_orch, "cfg", None)
+        backend_kv = worker_backend_env(
+            dict(os.environ),
+            {k: getattr(_cfg, k, None) for k in WORKER_BACKEND_KEYS}, bh)
+
+        # Where to install. Never assume $HOME: /root on these unprivileged LXC
+        # nodes is nobody:root 0700 (see components_core.WORKER_DIR_CANDIDATES).
+        probe = await _ssh(host_id, edge_dir_probe_cmd(_WORKER_DIR_CANDIDATES), timeout=40)
+        root = parse_edge_dir(probe.get("stdout") or "")
+        if not root:
+            return {"ok": False, "mode": "native",
+                    "error": ("could not probe the target over SSH: "
+                              f"{probe.get('error') or probe.get('stderr') or 'no response'}")
+                    if not probe.get("ok") else
+                    ("no writable install directory on the target (tried "
+                     f"{', '.join(_WORKER_DIR_CANDIDATES)})")}
+
+        bundle: Dict[str, Any] = {}
+        # The install command carries the credentials file (base64 is not
+        # encryption), so it never goes through exec.ssh.run - a capability
+        # whose arguments are recorded - but the internal runner.
+        runner = _ssh_stored_with_input()
+        if runner is None:
+            return {"ok": False, "mode": "native",
+                    "error": "exec module has no ssh_run_stored (stdin transport)"}
+        if src_kind == "host":
+            bundle = await _host_bundle()
+            if not bundle.get("ok"):
+                return {"ok": False, "mode": "native", "error": bundle.get("error")}
+
+        extra_env = {
+            # the node-worker role: node-safe caps only, no ambient scheduler
+            "VERA_IS_WORKER": "1",
+            # A worker talks to the cluster through Redis only. Its HTTP app
+            # would otherwise serve every capability on the LAN from each node;
+            # loopback keeps it for local diagnosis. (Later Environment= lines
+            # win in systemd, so this overrides native_worker_cmd's 0.0.0.0.)
+            "ORCHESTRATOR_HOST": "127.0.0.1",
+            # /root is unreachable on these nodes; anything defaulting a cache
+            # under $HOME would die with a permission error
+            "HOME": "/",
+            **_placement.worker_thread_env(int(threads or _placement.DEFAULT_WORKER_THREADS)),
+        }
+        if bundle.get("commit"):
+            extra_env["VERA_WORKER_COMMIT"] = bundle["commit"]
+        # Its identity for the roles registry, and the classes it starts with
+        # until the Workers UI sets some (a GPU node's worker takes none).
+        _has_gpu = _node_has_gpu(rec.get("host", ""))
+        extra_env["VERA_WORKER_HOST_ID"] = host_id
+        # "none", never "": the unit drops empty values, and a worker with no
+        # VERA_WORKER_CLASSES at all falls back to the CPU-node default - which
+        # is how the GPU node's worker came up taking General + NLP.
+        extra_env["VERA_WORKER_CLASSES"] = (",".join(_placement.default_classes(_has_gpu))
+                                            or _placement.NO_CLASSES)
         # native_worker_cmd handles the repo's vera/ package layout, a neutral cwd (so
         # vera/operator can't shadow stdlib operator), and a durable systemd unit.
-        cmd = native_worker_cmd(root="$HOME/.vera/worker", repo=repo, redis_url=redis_url,
-                                backend_kv=backend_kv, port=int(port))
-        res = await _ssh(host_id, cmd, timeout=int(timeout or 1200))
+        cmd = native_worker_cmd(root=root, repo=repo, redis_url=redis_url,
+                                backend_kv=backend_kv, port=int(port),
+                                bundle=(src_kind == "host"), extra_env=extra_env,
+                                nice=_placement.WORKER_NICE,
+                                cpu_weight=_placement.WORKER_CPU_WEIGHT)
+        res = await runner(host_id, cmd, timeout=int(timeout or 1200),
+                           input=bundle["b64"] if src_kind == "host" else None)
         ok = bool(res.get("ok")) and "VERA_LAUNCHED" in (res.get("stdout", "") or "")
-        await emit_event({"type": "provision.worker", "mode": "native", "host": rec.get("host", ""), "ok": ok})
-        return {"ok": ok, "mode": "native", "port": int(port), "backend_host": bh,
+        await emit_event({"type": "provision.worker", "mode": "native", "host": rec.get("host", ""),
+                          "ok": ok, "source": src_kind, "commit": bundle.get("commit", "")})
+        if src_kind == "host":
+            await _record_native_result(
+                host_id, rec, ok, bundle.get("commit", ""),
+                "" if ok else (res.get("stderr") or res.get("error") or "launch failed"))
+        return {"ok": ok, "mode": "native", "source": src_kind, "root": root,
+                "recorded": src_kind == "host",
+                "commit": bundle.get("commit", ""), "port": int(port), "backend_host": bh,
                 "log": ((res.get("stdout", "") or "") + "\n" + (res.get("stderr", "") or ""))[-3000:],
                 "error": "" if ok else (res.get("stderr") or res.get("error") or "native worker launch failed")}
 
     return {"ok": False, "error": f"unknown mode: {mode} (use 'docker' or 'native')"}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  NODE WORKER SYNC — every node worker follows the commit the host runs
+# ═════════════════════════════════════════════════════════════════════════════
+#: Held in Redis, not in-process: it must hold across every process that could
+#: run the tick, and across module copies (a module body can run more than once).
+_SYNC_LOCK_KEY = "vera:node_workers:lock"
+_SYNC_LOCK_TTL = 1800          # a provision's own ceiling is 1200 s
+
+
+async def _sync_enabled() -> bool:
+    if os.getenv("VERA_NODE_SYNC", "").strip().lower() in ("0", "off", "false", "no"):
+        return False
+    r = _orch.REDIS
+    try:
+        raw = await r.get(_node_sync.CONFIG_KEY) if r is not None else None
+        return bool(json.loads(raw).get("enabled", True)) if raw else True
+    except Exception:
+        return True
+
+
+async def _live_node_workers() -> List[Dict[str, Any]]:
+    r = _orch.REDIS
+    out: List[Dict[str, Any]] = []
+    if r is None:
+        return out
+    async for k in r.scan_iter("vera:workers:*"):
+        try:
+            h = {(a.decode() if isinstance(a, bytes) else a): (b.decode() if isinstance(b, bytes) else b)
+                 for a, b in (await r.hgetall(k)).items()}
+        except Exception:
+            continue
+        if h.get("role") == "node-worker":
+            out.append({"host": h.get("host", ""), "status": h.get("status", ""),
+                        "commit": h.get("commit", ""), "role": "node-worker",
+                        "id": h.get("id", "")})
+    return out
+
+
+async def _census_busy() -> bool:
+    try:
+        return bool((await _orch._health_census()).get("busy"))
+    except Exception:
+        return True          # cannot tell -> assume busy; the next tick asks again
+
+
+@capability(
+    "nodes.workers.sync",
+    http_method="POST", http_path="/nodes/workers/sync", http_tags=["nodes", "provision"],
+    memory="off",
+    description="Bring node workers onto the commit this host is RUNNING (not git HEAD: "
+                "a promotion moves HEAD before the restart that activates it). Refreshes "
+                "at most `limit` stale or missing node per call through provision.worker, "
+                "never while a census goal is in flight or on a node whose worker is "
+                "mid-task, with backoff after failures. Runs on its own every 10 min on "
+                "the host (off with VERA_NODE_SYNC=off or enabled=false). Inputs: "
+                "dry_run (bool=false), limit (int=1), host_ids (list — adopt these "
+                "already-provisioned nodes into the registry first), enabled (bool — "
+                "persist the on/off switch). Output: {ok, host_commit, plan, results}.",
+)
+async def cap_nodes_workers_sync(dry_run: bool = False, limit: int = 1,
+                                 host_ids: Optional[List[str]] = None,
+                                 enabled: Optional[bool] = None, trace_id=None) -> Dict:
+    r = _orch.REDIS
+    if r is None:
+        return {"ok": False, "error": "redis not connected"}
+    if enabled is not None:
+        await r.set(_node_sync.CONFIG_KEY, json.dumps({"enabled": bool(enabled)}))
+    for hid in host_ids or []:
+        if not await _registry_get(hid):
+            rec = await _host_rec(hid)
+            if not rec:
+                return {"ok": False, "error": f"host_id not found: {hid}"}
+            await _registry_put(hid, {"host": rec.get("host", ""), "commit": "",
+                                      "failures": 0, "last_attempt": 0, "adopted": True})
+    raw = await r.hgetall(_node_sync.REGISTRY_KEY)
+    entries = []
+    for v in (raw or {}).values():
+        try:
+            entries.append(json.loads(v))
+        except Exception:
+            continue
+    p = _node_sync.plan(_RUNNING_COMMIT, entries, await _live_node_workers(),
+                        census_busy=await _census_busy(), limit=limit)
+    out: Dict[str, Any] = {"ok": True, "host_commit": _RUNNING_COMMIT,
+                           "enabled": await _sync_enabled(), "plan": p, "results": {}}
+    if dry_run or not p["run"]:
+        return out
+    if _in_sandbox():
+        out.update(ok=False, error=_SANDBOX_REFUSAL)
+        return out
+    token = _orch.new_id()
+    if not await r.set(_SYNC_LOCK_KEY, token, nx=True, ex=_SYNC_LOCK_TTL):
+        out["results"] = {"_": "a sync is already running"}
+        return out
+    try:
+        for hid in p["run"]:
+            await emit_event({"type": "nodes.workers.sync", "host_id": hid, "stage": "start",
+                              "commit": _RUNNING_COMMIT})
+            try:
+                res = await cap_worker(host_id=hid, mode="native", source="host")
+            except Exception as e:
+                res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            if not res.get("recorded"):
+                rec = await _host_rec(hid) or {}
+                entry = _node_sync.record_after(await _registry_get(hid), ok=False,
+                                                error=str(res.get("error") or "provision failed"))
+                entry["host"] = rec.get("host", "")
+                await _registry_put(hid, entry)
+            out["results"][hid] = {"ok": bool(res.get("ok")), "commit": res.get("commit", ""),
+                                   "error": str(res.get("error") or "")[:300]}
+            await emit_event({"type": "nodes.workers.sync", "host_id": hid, "stage": "done",
+                              "ok": bool(res.get("ok")), "error": str(res.get("error") or "")[:200]})
+    finally:
+        try:
+            held = await r.get(_SYNC_LOCK_KEY)
+            if (held.decode() if isinstance(held, bytes) else held) == token:
+                await r.delete(_SYNC_LOCK_KEY)
+        except Exception:
+            pass
+    return out
+
+
+_SANDBOX_REFUSAL = ("this is a dev sandbox: provisioning from here would join PROD's nodes to "
+                    "the sandbox's private Redis - use the host's Workers page")
+
+
+def _in_sandbox() -> bool:
+    try:
+        return bool(_orch.is_dev_sandbox())
+    except Exception:
+        return False
+
+
+def _node_has_gpu(addr: str) -> bool:
+    """Whether the node at `addr` is a GPU node, from the Ollama registry (the
+    one place that already says so)."""
+    from urllib.parse import urlparse
+    for inst in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values():
+        try:
+            if urlparse(str(inst.get("url") or "")).hostname == addr:
+                return bool(inst.get("has_gpu"))
+        except Exception:
+            continue
+    return False
+
+
+async def _roles_get(host_id: str, has_gpu: bool):
+    """(classes, is_default)."""
+    r = _orch.REDIS
+    try:
+        raw = await r.hget(_placement.ROLES_KEY, host_id) if r is not None else None
+        if raw:
+            return list(_placement.clean_classes(json.loads(raw))), False
+    except Exception:
+        pass
+    return list(_placement.default_classes(has_gpu)), True
+
+
+@capability(
+    "nodes.workers.list",
+    http_method="GET", http_path="/nodes/workers", http_tags=["nodes", "provision"],
+    memory="off", silent=True,
+    description="Everything the Workers UI shows about node workers: the task classes "
+                "(label, what they cover, how many capabilities are vetted into each), "
+                "each registered node (address, GPU or CPU, its classes and whether they "
+                "are the default, its live worker - status, commit, caps - whether it is "
+                "on the commit this host runs, failures), Ollama nodes with an SSH "
+                "credential but no worker yet (candidates to provision), and the sync "
+                "plan. Output: {host_commit, sync_enabled, classes[], nodes[], "
+                "candidates[], plan}.",
+)
+async def cap_nodes_workers_list(trace_id=None) -> Dict:
+    r = _orch.REDIS
+    if r is None:
+        return {"ok": False, "error": "redis not connected"}
+    reg = {}
+    for v in (await r.hgetall(_node_sync.REGISTRY_KEY) or {}).values():
+        try:
+            e = json.loads(v)
+            reg[e.get("host_id")] = e
+        except Exception:
+            continue
+    live = await _live_node_workers()
+    by_node = {w.get("host"): w for w in live}
+    counts: Dict[str, int] = {}
+    for c in _orch.CAPABILITY_REGISTRY:
+        k = _placement.class_of(c)
+        if k:
+            counts[k] = counts.get(k, 0) + 1
+    classes = [{"key": k, "label": v["label"], "desc": v["desc"], "caps": counts.get(k, 0)}
+               for k, v in _placement.CLASSES.items()]
+    nodes = []
+    for hid, e in sorted(reg.items(), key=lambda kv: str(kv[1].get("host") or "")):
+        gpu = _node_has_gpu(e.get("host", ""))
+        cls, is_default = await _roles_get(hid, gpu)
+        w = by_node.get(e.get("nodename") or "") or {}
+        nodes.append({
+            "host_id": hid, "host": e.get("host", ""), "nodename": e.get("nodename", ""),
+            "has_gpu": gpu, "classes": cls, "classes_default": is_default,
+            "worker": {"online": bool(w), "status": w.get("status", ""),
+                       "commit": w.get("commit", "") or e.get("commit", ""),
+                       "id": w.get("id", "")},
+            "in_sync": bool(w) and (w.get("commit") or "") == _RUNNING_COMMIT,
+            "failures": int(e.get("failures") or 0), "last_error": e.get("last_error", ""),
+            "provisioned_at": e.get("provisioned_at"),
+        })
+    # Ollama nodes with an SSH credential and no worker yet
+    known = {e.get("host") for e in reg.values()}
+    candidates = []
+    try:
+        hosts = ((await _cap("exec.ssh.hosts.list")()) or {}).get("hosts", [])
+    except Exception:
+        hosts = []
+    from urllib.parse import urlparse
+    for iid, inst in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).items():
+        addr = urlparse(str(inst.get("url") or "")).hostname or ""
+        if not addr or addr in known:
+            continue
+        h = next((h for h in hosts if h.get("host") == addr), None)
+        candidates.append({"instance": iid, "host": addr, "label": inst.get("label", iid),
+                           "has_gpu": bool(inst.get("has_gpu")),
+                           "host_id": (h or {}).get("id", ""),
+                           "ssh": bool(h)})
+    plan = _node_sync.plan(_RUNNING_COMMIT, list(reg.values()), live,
+                           census_busy=await _census_busy())
+    return {"ok": True, "host_commit": _RUNNING_COMMIT, "sync_enabled": await _sync_enabled(),
+            "classes": classes, "nodes": nodes, "candidates": candidates, "plan": plan,
+            "sandbox": _in_sandbox(), "sandbox_note": _SANDBOX_REFUSAL if _in_sandbox() else ""}
+
+
+@capability(
+    "nodes.workers.roles.set",
+    http_method="POST", http_path="/nodes/workers/roles", http_tags=["nodes", "provision"],
+    memory="off",
+    description="Set the task classes a node's worker takes (general, nlp, cpu_compute, "
+                "media). Applies live: the worker re-reads its roles within 30 s and "
+                "from then reads only those classes' task streams - no restart. "
+                "reset=true returns the node to its default (CPU node: general + nlp; "
+                "GPU node: none). Inputs: host_id (str!), classes (list), reset (bool). "
+                "Output: {ok, host_id, classes}.",
+)
+async def cap_nodes_workers_roles_set(host_id: str = "", classes: Optional[List[str]] = None,
+                                      reset: bool = False, trace_id=None) -> Dict:
+    r = _orch.REDIS
+    if r is None or not host_id:
+        return {"ok": False, "error": "host_id required" if host_id else "redis not connected"}
+    unknown = [c for c in (classes or []) if c not in _placement.CLASSES]
+    if unknown:
+        return {"ok": False, "error": "unknown classes %s (known: %s)"
+                % (unknown, list(_placement.CLASSES))}
+    if reset:
+        await r.hdel(_placement.ROLES_KEY, host_id)
+        rec = await _host_rec(host_id) or {}
+        cls, _ = await _roles_get(host_id, _node_has_gpu(rec.get("host", "")))
+    else:
+        cls = list(_placement.clean_classes(classes or []))
+        await r.hset(_placement.ROLES_KEY, host_id, json.dumps(cls))
+    await emit_event({"type": "nodes.workers.roles", "host_id": host_id, "classes": cls,
+                      "reset": bool(reset)})
+    return {"ok": True, "host_id": host_id, "classes": cls}
+
+
+@capability(
+    "nodes.workers.provision",
+    http_method="POST", http_path="/nodes/workers/provision", http_tags=["nodes", "provision"],
+    memory="off",
+    description="One click: install (or refresh to this host's running commit) the Vera "
+                "worker on a node - native, over its stored SSH credential - and record it "
+                "for the sync. The same path the automatic sync uses. Input: host_id (str!). "
+                "Output: {ok, commit, error}.",
+)
+async def cap_nodes_workers_provision(host_id: str = "", trace_id=None) -> Dict:
+    if not host_id:
+        return {"ok": False, "error": "host_id required"}
+    if _in_sandbox():
+        return {"ok": False, "error": _SANDBOX_REFUSAL}
+    res = await cap_worker(host_id=host_id, mode="native", source="host")
+    if not res.get("recorded"):
+        rec = await _host_rec(host_id) or {}
+        entry = _node_sync.record_after(await _registry_get(host_id), ok=False,
+                                        error=str(res.get("error") or "provision failed"))
+        entry["host"] = rec.get("host", "")
+        await _registry_put(host_id, entry)
+    return {"ok": bool(res.get("ok")), "commit": res.get("commit", ""),
+            "error": str(res.get("error") or "")[:500]}
+
+
+_NODE_WORKERS_EL = Path(__file__).resolve().parents[1] / "workers" / "node_workers_element.js"
+
+
+@APP.get("/ui/elements/node_workers.js", include_in_schema=False)
+async def _node_workers_element_js():
+    from fastapi.responses import Response
+    try:
+        body = _NODE_WORKERS_EL.read_text(encoding="utf-8")
+    except OSError:
+        body = "console.error('node_workers_element.js not found')"
+    return Response(body, media_type="application/javascript")
+
+
+@APP.get("/nodes/workers/panel", include_in_schema=False)
+async def _node_workers_panel():
+    """The element as a page of its own (the registered panel embeds this)."""
+    return HTMLResponse("""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<script>(function(){try{var d=document.documentElement,S=window.localStorage;
+var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<title>Vera - Node workers</title>
+<style>:root{--bg:#0d0f12;--bg1:#14181d;--bg2:#1a1f26;--border:#232a33;--border2:#2e3742;--fg:#d8dde3;
+--dim:#5f6975;--acc:#4a9eff;--acc2:#28c28a;--warn:#f5b341;--err:#ef5b5b}
+html,body{margin:0;background:var(--bg0,var(--bg));color:var(--fg);height:100%}</style></head>
+<body><vera-node-workers></vera-node-workers>
+<script src="/ui/vera-ui.js"></script><script src="/ui/elements/node_workers.js"></script></body></html>""")
+
+
+register_ui(
+    "node-workers", "Node workers", "⚙",
+    """<div style="height:100%;display:flex;flex-direction:column;">
+  <iframe src="/nodes/workers/panel" style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"></iframe>
+</div>""",
+    "",
+    ui_caps=["nodes.workers.list", "nodes.workers.roles.set", "nodes.workers.provision",
+             "nodes.workers.sync"],
+    # an element of the Workers pane (and any dashboard), not a tab of its own
+    mode="element",
+    tab_order=74,
+)
+
+
+async def _node_sync_tick():
+    """The scheduled half. Host-only (a node worker runs no periodic job), never
+    in a sandbox (it would provision PROD's nodes), leader-only (singleton)."""
+    if not await _sync_enabled():
+        return
+    try:
+        res = await cap_nodes_workers_sync()
+        if res.get("results"):
+            log.info("node worker sync: %s", res["results"])
+    except Exception as e:
+        log.warning("node worker sync tick: %s", e)
+
+
+async def _node_sync_first():
+    # one pass shortly after a boot - a restart is how new code arrives
+    await asyncio.sleep(_node_sync.FIRST_TICK_DELAY_S)
+    await _node_sync_tick()
+
+
+schedule(_node_sync_tick, interval=_node_sync.TICK_S, name="node_worker_sync",
+         skip_in_sandbox=True, singleton=True)
+schedule(_node_sync_first, interval=_placement.STARTUP_INTERVAL, name="node_worker_sync_boot",
+         skip_in_sandbox=True, singleton=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

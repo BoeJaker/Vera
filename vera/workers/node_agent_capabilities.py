@@ -265,7 +265,17 @@ async def _probe_dispatch(nid: str, inst: Dict) -> DispatchProbe:
         # normal and unbounded. Not a wedge, and not something to probe for.
         return p
 
-    model, path, payload = probe_call(models)
+    # The same thread count every other client of this node sends - a probe
+    # that differs restarts the runner (see probe_call).
+    try:
+        from Vera.vera import node_threads_core as _nt_core
+        from Vera.vera.capability_orchestration import _CPU_NODE_THREADS as _nt_default
+    except Exception:  # pragma: no cover - agent-side layout
+        _nt_core, _nt_default = None, 0
+    _nt = (_nt_core.threads_for(has_gpu=bool(inst.get("has_gpu")),
+                                node_num_thread=inst.get("num_thread"), default=_nt_default)
+           if _nt_core is not None else 0)
+    model, path, payload = probe_call(models, num_thread=_nt)
     if not model:
         p.skipped = "resident model has no usable name"
         return p
@@ -550,7 +560,11 @@ async def _reap_tick() -> None:
 
 
 try:
-    schedule(_reap_tick, 300, name="nodes_runner_reap")
+    # One orchestrator probes the nodes. Every dev sandbox ran this tick too,
+    # so gpu-250 saw three probe bursts per 5 min (prod + two sandboxes) -
+    # each one a runner eviction on the 12 GB card until the probe reused the
+    # resident window (2026-09-22).
+    schedule(_reap_tick, 300, name="nodes_runner_reap", skip_in_sandbox=True, singleton=True)
 except Exception as _e:  # pragma: no cover
     log.debug("could not register node reaper: %s", _e)
 

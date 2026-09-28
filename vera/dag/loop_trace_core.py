@@ -191,6 +191,24 @@ def digest_events(events: Sequence[Dict[str, Any]],
             plan["tier"] = e.get("tier")
         elif t.endswith(".intent"):
             plan["intent"] = e.get("intent")
+        elif t.endswith(".plan_style"):
+            # The planning style the run asked for and the one it used - they
+            # differ on a fallback (detailed with no lens answering runs as auto).
+            plan["style"] = e.get("effective")
+            plan["style_requested"] = e.get("requested")
+            plan["style_reason"] = _clip(e.get("reason"), 200)
+        elif t.endswith(".intent_zeroshot"):
+            # An NLP node's zero-shot intent beside the one the run used
+            # (intent_zeroshot_core) - measured, never read back.
+            plan["intent_zeroshot"] = {"zeroshot": e.get("zeroshot"), "margin": e.get("margin"),
+                                       "agrees_used": e.get("agrees_used"),
+                                       "agrees_llm": e.get("agrees_llm")}
+        elif t.endswith(".entity_coverage"):
+            # Did the final output carry what the goal named (NER, measured -
+            # entity_coverage_core)? Reported, never a success criterion.
+            plan["entity_coverage"] = {"entities": e.get("entities"),
+                                       "ratio": e.get("ratio"),
+                                       "missing": list(e.get("missing") or [])[:12]}
         elif t.endswith(".fast_path"):
             # The single-cap shortcut. Recorded so a reader can tell "no plan was
             # made" apart from "planning produced nothing".

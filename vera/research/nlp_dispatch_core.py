@@ -111,6 +111,20 @@ TASK_KIND: Dict[str, str] = {
 }
 
 
+def normalize_node_inventory(health: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize the edge server's task-shaped health contract for routing."""
+    tasks = health.get("tasks") or {}
+    if not isinstance(tasks, dict):
+        tasks = {}
+    tasks = {str(task): dict(row) for task, row in tasks.items()
+             if isinstance(row, dict)}
+    return {
+        "tasks": tasks,
+        "models": {task: row.get("model") for task, row in tasks.items()},
+        "loaded": {task: bool(row.get("loaded")) for task, row in tasks.items()},
+    }
+
+
 def model_slug(model_id: str) -> str:
     """Directory name for a model inside the shared store.
 

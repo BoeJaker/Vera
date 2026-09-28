@@ -24,6 +24,8 @@ boto3>=1.34,<2.0         # S3 client for the data-fabric object store (Garage); 
 
 # ── Utilities ────────────────────────────────────────────
 pydantic>=2.0,<3.0
+pillow>=10               # image handling (spritegen importer, image caps); prod had it
+                         #  installed by hand, so a fresh install could not load spritegen
 python-multipart>=0.0.9
 cryptography>=42          # Fernet auth-encryption for stored cloud calendar credentials
 

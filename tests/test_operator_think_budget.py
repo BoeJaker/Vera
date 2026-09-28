@@ -91,7 +91,10 @@ def test_the_other_arguments_are_unchanged():
     diagnosable; neither may be lost to the edit."""
     seen, _ = _decide()
     kw = seen["kwargs"]
-    assert kw["job_type"] == "code"
+    # "loop_executor" since 2026-09-22: the think shares the loop executor's
+    # runner (model + num_ctx) instead of reloading the model on the 12 GB card
+    # as job "code" did (plan item 1, loop-census-improvement).
+    assert kw["job_type"] == "loop_executor"
     assert kw["caller"] == "operator.think"
     assert kw["system"] and kw["prompt"]
 

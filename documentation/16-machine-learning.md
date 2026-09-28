@@ -98,9 +98,27 @@ registration, alias mutation, deployment, or activation. DSPy and other
 optimizer execution remains an optional provider concern and is not enabled by
 these records.
 
-The current ML Workshop remains unchanged. DeepEval/Promptfoo adapters,
-Accelerate, PEFT, MLflow, DSPy, live judges, and training execution are
-subsequent gated slices.
+### Portable training boundary
+
+`MLWorkshopTrainingRuntime` provides an offline-testable boundary around the
+existing Workshop job API. A caller must explicitly bind a base
+`ModelPackage` to a Workshop module and the objectives it is allowed to train.
+Submissions carry the exact dataset revision, portable request/run identities,
+and scalar hyperparameters; the native runner must echo those identities on
+submit, observation, and cancellation. A response that drifts to a newer
+dataset, another request, or another native job is rejected.
+
+Portable training lifecycle is also projected into the common `Run` journal.
+A native completion is successful only when it includes a schema-valid,
+content-addressed `ModelPackage` whose `training_run_id` names that exact run.
+A checkpoint or Workshop job marked complete without that package is recorded
+as a failed portable run, rather than overstating interoperability. The adapter
+does not import an ML framework, load data, invoke training on import, redirect
+the existing `ml.train` capabilities, or select a runtime. A live runner bridge
+and parity testing remain separately gated operational work.
+
+DeepEval/Promptfoo adapters, Accelerate, PEFT, MLflow, DSPy, live judges, and
+native training cutover remain subsequent gated work.
 
 ### Portable batch inference
 
@@ -125,6 +143,21 @@ with available ModelPackages and separate load counters. The inference registry
 can replay candidate decisions at an explicit time and rejects stale,
 foreign-provider, or undeclared-package evidence. It still does not probe a
 runtime or select, retry, balance, or fail over providers.
+
+### Portable model inventory
+
+`model.inventory` (`GET /models/inventory`) is the read-only join across the
+portable model boundary. It projects registered `ModelPackage` records, aliases,
+admission and activation receipts, inference deployments and observations, and
+provider descriptors without executing any of them. Source-owned inventories,
+including NLP/NER deployments, may contribute only schema-valid packages;
+legacy name-only deployments remain visible as unresolved candidates with their
+blockers and placement evidence.
+
+The NLP panel's **Models** view consumes this projection. Empty or unavailable
+stores remain explicit source states, and dangling aliases, deployments or
+providers appear as conflicts. This makes migration progress observable without
+turning the inventory into a router, model loader, or activation authority.
 
 Adapter parity can be checked offline from already-collected inference
 transcripts. Conformance expectations compare content hashes, terminal state,

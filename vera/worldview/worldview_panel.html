@@ -902,7 +902,12 @@ function wvTab(name){
 // ═══════════════════════════════════════════════════════════════
 
 async function wvLoadStats(){
-  var res = await api('/worldview/stats');
+  var responses = await Promise.all([
+    api('/worldview/stats'),
+    api('/worldview/retrieval/status', 'GET', null, 15000),
+  ]);
+  var res = responses[0];
+  var retrieval = responses[1] || {};
   var el = document.getElementById('wvStats');
   if (!el) return;
   if (res && res.model) {
@@ -925,6 +930,9 @@ async function wvLoadStats(){
       ['Codebook entropy', (cb.entropy||0).toFixed(3) + ' / ' + (cb.max_entropy||0).toFixed(2)],
       ['FAISS',          (res.has_faiss ? '<span style="color:var(--ok)">available</span>' : '<span style="color:var(--err)">missing</span>') + ' · idx=' + (ix.vectors||0) + ' · dim=' + (ix.dim||'?')],
       ['Records indexed',  ix.vectors || 0],
+      ['Retrieval evidence', retrieval.eligible
+        ? '<span style="color:var(--ok)" title="Checkpoint, index membership, dataset snapshot, and record revisions are pinned">Pinned</span>'
+        : '<span style="color:var(--warn)" title="Retrieval remains available through the legacy path, but is not eligible for evidence-backed comparisons">Unbound</span>'],
       ['Labelled concepts',m.labelled_concepts || 0],
       ['Transitions seen', m.transitions_observed || 0],
     ];

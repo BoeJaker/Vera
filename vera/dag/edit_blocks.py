@@ -78,8 +78,28 @@ def looks_like_blocks(text: str) -> bool:
     return NOTE in s
 
 
-#: A line-number gutter as _v5_numbered emits it: "  98 | code".
-_GUTTER_RE = re.compile(r"^\s*\d+\s*\|\s?")
+#: A line-number gutter. One definition, shared with the loop's late fallback -
+#: they carried separate copies of the same pattern and the same blind spot
+#: until run62 (see edit_gutter_core).
+try:
+    from Vera.vera.dag import edit_gutter_core as _gutter
+except Exception:                                     # pragma: no cover
+    try:
+        from . import edit_gutter_core as _gutter
+    except Exception:
+        # Loaded BY PATH, with no package around it - which is how the tests
+        # load this module on purpose (dag_workshop imports it under a bare
+        # name, so a test that reaches it through the package exercises a
+        # different copy). Load the sibling the same way.
+        import importlib.util as _ilu
+        import os as _os
+        _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                           "edit_gutter_core.py")
+        _spec = _ilu.spec_from_file_location("edit_gutter_core", _p)
+        _gutter = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_gutter)
+
+_GUTTER_RE = _gutter.GUTTER_RE
 
 
 def _strip_gutter(lines: List[str]) -> List[str]:
@@ -94,10 +114,7 @@ def _strip_gutter(lines: List[str]) -> List[str]:
     because a single "12 | x" among ordinary lines is far more likely to be
     real content - a markdown table row, a shell pipe - than a gutter.
     """
-    real = [l for l in lines if l.strip()]
-    if not real or not all(_GUTTER_RE.match(l) for l in real):
-        return lines
-    return [_GUTTER_RE.sub("", l) if l.strip() else l for l in lines]
+    return _gutter.strip_uniform(lines)
 
 
 #: Text from the INSTRUCTIONS that a model sometimes copies instead of filling

@@ -1996,7 +1996,11 @@ async def llm_generate(
         #
         # Leaving it unset lets that block do its job. output_budget below still
         # tightens further when the request STATES a length.
-        _gen_opts = {"num_ctx": _ctx}
+        # A CEILING, not a pin. Passed as num_ctx this became a floor the
+        # auto-fit could raise but never lower, so a five-word chat title got a
+        # 16k window on a CPU box (2026-09-23). The fit sizes the window to the
+        # prompt and the output the call can produce; this only bounds it.
+        _gen_opts = {"num_ctx_max": _ctx}
     except Exception:
         _ctx = _want_ctx
         _gen_opts = {}
@@ -2031,7 +2035,13 @@ async def llm_generate(
         options=_gen_opts, meta_out=_meta,
     )
     if not isinstance(text, str) or not text.strip():
-        return {"error": "Generation returned no usable text; inspect the provider request log.",
+        # Say WHY when the transport knows: "no usable text" alone hid a 404
+        # for a model nobody serves behind the same words as a stalled stream,
+        # and the operator's thinker keys its retry on the 404's text.
+        _why = str(_meta.get("error") or "").strip()
+        return {"error": ("Generation returned no usable text"
+                          + (f" - {_why[:240]}" if _why else "")
+                          + "; inspect the provider request log."),
                 "error_code": "empty_generation", "text": "", "backend": "ollama",
                 "model": _meta.get("model") or model or OLLAMA_MODEL,
                 "tokens": len(tokens_collected),
@@ -2509,11 +2519,18 @@ async def ollama_list_models(instance_id: str = None, trace_id=None):
 @capability("ollama.instances",
     http_method="GET", http_path="/ollama/cluster", http_tags=["ollama"],
     memory="off",
-    description="Live status of all Ollama cluster nodes. Output: {instance_id: {url,status,models,in_use,latency_ms,has_gpu}}.")
+    description="Live status of all Ollama cluster nodes. Output: {instance_id: {url,status,models,in_use,latency_ms,has_gpu,num_thread}} - num_thread is what a request to the node carries (0 = none: a GPU node).")
 async def ollama_instances_status(trace_id=None):
+    # This registration is the one that serves ollama.instances (it loads after
+    # the orchestrator's own and replaces it).
+    import Vera.vera.capability_orchestration as _o
+    def _nt(i):
+        return _o._node_threads_core.threads_for(
+            has_gpu=bool(i.get("has_gpu")), node_num_thread=i.get("num_thread"),
+            default=_o._CPU_NODE_THREADS)
     return {iid:{"url":i["url"],"label":i["label"],"has_gpu":i["has_gpu"],"status":i["status"],
                  "latency_ms":i["latency_ms"],"models":i["models"],"in_use":i["in_use"],
-                 "errors":i["errors"],"last_check":i["last_check"]}
+                 "errors":i["errors"],"last_check":i["last_check"],"num_thread":_nt(i)}
             for iid,i in OLLAMA_INSTANCES.items()}
 
 @capability("ollama.generate_raw",

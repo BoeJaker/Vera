@@ -2165,6 +2165,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="row" style="margin-top:4px"><label style="min-width:56px">GPU</label><input type="checkbox" id="cfgGpu"></div>
     <div class="row"><label style="min-width:56px">Think</label><input type="checkbox" id="cfgThink"></div>
     <div class="row"><label style="min-width:56px">Quick opener</label><input type="checkbox" id="cfgQuickOpener"></div>
+    <div class="row"><label style="min-width:56px">Insights</label><input type="checkbox" id="cfgInsights"></div>
     <label class="row numrow" title="First pass answers immediately from a small prompt; a second pass continues the same reply once the context has loaded"><select id="cfgTwoTier" style="flex:1;min-width:0"><option value="">Agent default</option><option value="off">off</option><option value="fetched">fetched</option><option value="message">message</option></select><span class="nlbl" style="flex:0 0 auto">Two-tier</span></label>
     <label class="row numrow" title="Who decides the second pass is needed"><select id="cfgTwoTierDecider" style="flex:1;min-width:0"><option value="">Agent default</option><option value="tier2">tier2 &mdash; decides with context</option><option value="tier1">tier1 &mdash; first pass reports</option></select><span class="nlbl" style="flex:0 0 auto">Decider</span></label>
     <div class="row"><label style="min-width:56px">Web live</label><input type="checkbox" id="cfgWebInteractive" checked title="When Web search is on, the server searches live: it shows a 'searching the web…' status and the sources found, then answers using them — instead of silently pre-fetching results into context"></div>
@@ -4439,6 +4440,7 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     ctxRollout:'Also pull context for the predicted next concepts (Worldview)',
     ctxNotes:'Inject the agent-maintained session memory note each turn',
     cfgQuickOpener:'Long prompts: instantly show a one-line acknowledgement from a second endpoint while the full answer generates',
+    cfgInsights:'After each reply, the long-horizon model (qwen3.6:35b-a3b on a CPU node) takes a second look and adds insights, things worth checking and follow-up questions in a card under the reply. Arrives a minute or two later; never delays the reply and is not sent back to the chat model',
     cfgTwoTier:'Answer FIRST from a small prompt, then continue the same reply once the slow context has loaded. \'fetched\' drops retrieved material (session memory, ontology, past Q&A) from the first pass but keeps the conversation; \'message\' drops the conversation too. Blank = whatever the agent is set to.',
     cfgTwoTierDecider:'tier2 always runs the second pass but lets it decide, with the context in front of it, whether anything needs adding. tier1 skips the second pass when the first says it is done - cheaper, but it is judging material it cannot see.',
     cfgWebInteractive:'When Web search is on, the server searches live — showing a “searching the web…” status and the sources found, then answering from them — instead of silently pre-fetching results',
@@ -11532,6 +11534,8 @@ Your task: decide what to do next to advance toward the goal.
           system_prefix:((_EMBED_CHAT.system?_EMBED_CHAT.system+'\n\n':'')+(ctxBlock||''))||undefined,  // the placement's prompt, then the context - before the agent's own
           // Quick opener: checked forces on; unchecked leaves it to the agent record
           quick_opener:document.getElementById('cfgQuickOpener')?.checked||undefined,
+          // Insights: checked forces on; unchecked leaves it to the agent record
+          insights:document.getElementById('cfgInsights')?.checked||undefined,
           // Two-tier reply: blank leaves it to the agent record, so a chat-side
           // choice is an override for THIS turn rather than a permanent setting.
           two_tier:document.getElementById('cfgTwoTier')?.value||undefined,
@@ -17763,6 +17767,53 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
           session_id: req.session_id || SID,
           ok, error: err,
           action: '__chat_deliver__',
+        }),
+      }).catch(()=>{});
+      return;
+    }
+    // Pseudo-action: __chat_insight__ — the long-horizon model's second look at a
+    // finished reply (the Insights toggle). A card under that reply, NOT a
+    // message: it is never pushed to HISTORY, so the chat model is never sent it.
+    if(action==='__chat_insight__'){
+      let ok = true, err = null;
+      try{
+        const p = payload||{};
+        const kinds = [['insights','Insights'],['caveats','Worth checking'],['follow_ups','You might ask']];
+        const card = document.createElement('details');
+        card.className = 'insight-card';
+        card.open = true;
+        card.style.cssText = 'margin:4px 0 6px 62px;padding:5px 9px;border-left:2px solid var(--acc);background:var(--bg1);font-size:10.5px;line-height:1.5;color:var(--dim2);overflow-wrap:anywhere';
+        const meta = [p.model, p.node, (p.elapsed_s!=null ? p.elapsed_s+'s' : '')].filter(Boolean).join(' · ');
+        let h = `<summary style="cursor:pointer;font-size:10px;opacity:.85">&#128161; Insights${meta ? ' <span style="opacity:.7">('+esc(meta)+')</span>' : ''}</summary>`;
+        for(const [k,lbl] of kinds){
+          const items = Array.isArray(p[k]) ? p[k] : [];
+          if(!items.length) continue;
+          h += `<div style="margin-top:4px;font-weight:600;opacity:.8">${lbl}</div><ul style="margin:2px 0 0 14px;padding:0">`;
+          for(const it of items){
+            h += k==='follow_ups'
+              ? `<li><a href="#" class="insight-ask" data-q="${esc(it)}" title="Put this in the message box" style="color:inherit;text-decoration:underline dotted">${esc(it)}</a></li>`
+              : `<li>${esc(it)}</li>`;
+          }
+          h += '</ul>';
+        }
+        card.innerHTML = h;
+        card.querySelectorAll('.insight-ask').forEach(a=>a.addEventListener('click', ev=>{
+          ev.preventDefault();
+          const ta = document.getElementById('chatInput');
+          if(ta){ ta.value = a.dataset.q||''; ta.focus(); try{ CH.onInput(); }catch(_){} }
+        }));
+        const replies = BOX().querySelectorAll('.mwrap.a');
+        (replies.length ? replies[replies.length-1] : BOX()).appendChild(card);
+        scroll();
+      }catch(e){ ok=false; err='render failed: '+((e&&e.message)||e); }
+      fetch(BASE+'/ui/panels/dispatch/ack',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          request_id: req.request_id,
+          session_id: req.session_id || SID,
+          ok, error: err,
+          action: '__chat_insight__',
         }),
       }).catch(()=>{});
       return;

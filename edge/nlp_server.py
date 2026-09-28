@@ -128,6 +128,33 @@ _PIPES: Dict[str, Any] = {}
 _RAW: Dict[str, Any] = {}          # task -> (model, tokenizer) for embeddings
 _ENCODER = None
 _LOCK = threading.Lock()
+_MANIFEST = None
+
+
+def _manifest():
+    """Read the export manifest once; never hash model files on health paths."""
+    global _MANIFEST
+    if _MANIFEST is None:
+        try:
+            with open(os.path.join(MODEL_ROOT, "manifest.json"), encoding="utf-8") as fh:
+                value = json.load(fh)
+            _MANIFEST = value if isinstance(value, dict) else {}
+        except (OSError, ValueError):
+            _MANIFEST = {}
+    return _MANIFEST
+
+
+def task_inventory(task: str) -> Dict[str, Any]:
+    row = {"model": model_id_for(task), "kind": TASK_KIND.get(task),
+           "present": model_present(task),
+           "loaded": (task in _PIPES or task in _RAW or
+                      (task == "rerank" and _ENCODER is not None))}
+    package = (_manifest().get("model_packages") or {}).get(task)
+    if isinstance(package, dict):
+        row["model_package"] = package
+    else:
+        row["inventory_status"] = "missing_content_verified_manifest"
+    return row
 
 
 def model_id_for(task: str) -> str:
@@ -481,20 +508,13 @@ def build_app():
                 "providers": _providers(), "model_root": MODEL_ROOT,
                 "core": HAS_CORE,
                 "chunk": {"chars": CHUNK_CHARS, "overlap": CHUNK_OVERLAP},
-                "tasks": {t: {"model": model_id_for(t),
-                              "present": model_present(t),
-                              "loaded": (t in _PIPES or t in _RAW or
-                                         (t == "rerank" and _ENCODER is not None))}
-                          for t in DEFAULT_MODELS}}
+                "tasks": {t: task_inventory(t) for t in DEFAULT_MODELS}}
 
     @app.get("/models")
     async def models():
         return {"model_root": MODEL_ROOT,
-                "models": {t: {"model": model_id_for(t),
-                               "kind": TASK_KIND.get(t),
-                               "path": model_path_for(t),
-                               "present": model_present(t)}
-                           for t in DEFAULT_MODELS},
+                "schema": "vera.nlp-node-models/v2",
+                "models": {t: task_inventory(t) for t in DEFAULT_MODELS},
                 "providers": _providers()}
 
     @app.post("/ner")
