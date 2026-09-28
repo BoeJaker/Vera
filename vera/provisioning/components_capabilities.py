@@ -30,6 +30,7 @@ Capabilities (group `provision.*`)
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -41,7 +42,7 @@ from typing import Any, Dict, List, Optional
 from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
-from Vera.vera.capability_orchestration import APP, capability, emit_event, register_ui
+from Vera.vera.capability_orchestration import APP, capability, emit_event, register_ui, schedule
 from Vera.vera.integrations.infrastructure_effects import observe_infrastructure_effect
 from Vera.vera.provisioning.components_core import (
     rewrite_host, native_worker_cmd, worker_backend_env, WORKER_BACKEND_KEYS,
@@ -51,6 +52,7 @@ from Vera.vera.provisioning.components_core import (
 )
 from Vera.vera.workers import worker_placement_core as _placement
 from Vera.vera.security import redis_auth_core as _redis_auth_core
+from Vera.vera.provisioning import node_sync_core as _node_sync
 
 log = logging.getLogger("vera.provision.components")
 _HERE = Path(__file__).parent
@@ -542,8 +544,14 @@ async def cap_component_stop(host_id: str = "", component: str = "",
 # ═════════════════════════════════════════════════════════════════════════════
 #  VERA WORKER  — docker container (reuse docker.worker.spawn) OR native process
 # ═════════════════════════════════════════════════════════════════════════════
+#: The commit this process is RUNNING, read once at import. HEAD moves when main
+#: is promoted, before the restart that activates it - a node synced to HEAD in
+#: that window would run code the host does not.
+_RUNNING_COMMIT = _node_sync.read_git_head(str(_REPO))
+
+
 async def _host_bundle() -> Dict[str, Any]:
-    """This host's checked-out commit as base64 tar.gz (vera/, edge/, requirements.txt).
+    """The commit this host RUNS, as base64 tar.gz (vera/, edge/, requirements.txt).
 
     Shipping the host's own commit — rather than cloning from a remote — means a
     node worker runs exactly the code the host runs, and the node needs no git
@@ -555,19 +563,57 @@ async def _host_bundle() -> Dict[str, Any]:
         from vera.execution import spawn_core as _spawn
     repo = shlex.quote(str(_REPO))
     git = f"git -c safe.directory='*' -C {repo}"
-    head = await _spawn.run_argv(["sh", "-c", f"{git} rev-parse HEAD"], timeout=30)
-    if not head.get("ok"):
-        return {"ok": False, "error": "cannot read this host's commit: "
-                + (head.get("stderr") or head.get("error") or "")[:300]}
+    commit = _RUNNING_COMMIT
+    if not commit:
+        head = await _spawn.run_argv(["sh", "-c", f"{git} rev-parse HEAD"], timeout=30)
+        if not head.get("ok"):
+            return {"ok": False, "error": "cannot read this host's commit: "
+                    + (head.get("stderr") or head.get("error") or "")[:300]}
+        commit = (head.get("stdout") or "").strip()
     arc = await _spawn.run_argv(
         # edge/ too: node_agent_capabilities imports node_runner_core from it
-        ["sh", "-c", f"{git} archive --format=tar.gz HEAD vera edge requirements.txt | base64 -w0"],
+        ["sh", "-c", f"{git} archive --format=tar.gz {shlex.quote(commit)} "
+                     f"vera edge requirements.txt | base64 -w0"],
         timeout=180, max_output=256_000_000)
     if not arc.get("ok") or not (arc.get("stdout") or "").strip():
         return {"ok": False, "error": "git archive failed: "
                 + (arc.get("stderr") or arc.get("error") or "")[:300]}
-    return {"ok": True, "commit": (head.get("stdout") or "").strip(),
-            "b64": arc["stdout"].strip()}
+    return {"ok": True, "commit": commit, "b64": arc["stdout"].strip()}
+
+
+async def _registry_get(host_id: str) -> Dict[str, Any]:
+    r = _orch.REDIS
+    if r is None:
+        return {}
+    try:
+        raw = await r.hget(_node_sync.REGISTRY_KEY, host_id)
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+async def _registry_put(host_id: str, entry: Dict[str, Any]) -> None:
+    r = _orch.REDIS
+    if r is None:
+        return
+    try:
+        await r.hset(_node_sync.REGISTRY_KEY, host_id, json.dumps({**entry, "host_id": host_id}))
+    except Exception as e:
+        log.warning("node worker registry write %s: %s", host_id, e)
+
+
+async def _record_native_result(host_id: str, rec: Dict, ok: bool, commit: str,
+                                error: str) -> None:
+    """Every native provision is recorded, so the sync job knows the node exists,
+    what it shipped, and how often it has failed."""
+    nodename = ""
+    if ok:
+        hn = await _ssh(host_id, "hostname", timeout=20)
+        nodename = (hn.get("stdout") or "").strip().splitlines()[0] if hn.get("ok") and (hn.get("stdout") or "").strip() else ""
+    entry = _node_sync.record_after(await _registry_get(host_id), ok=ok, commit=commit,
+                                    error=error, nodename=nodename)
+    entry["host"] = rec.get("host", "")
+    await _registry_put(host_id, entry)
 
 
 def _ssh_stored_with_input():
@@ -705,12 +751,161 @@ async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
         ok = bool(res.get("ok")) and "VERA_LAUNCHED" in (res.get("stdout", "") or "")
         await emit_event({"type": "provision.worker", "mode": "native", "host": rec.get("host", ""),
                           "ok": ok, "source": src_kind, "commit": bundle.get("commit", "")})
+        if src_kind == "host":
+            await _record_native_result(
+                host_id, rec, ok, bundle.get("commit", ""),
+                "" if ok else (res.get("stderr") or res.get("error") or "launch failed"))
         return {"ok": ok, "mode": "native", "source": src_kind, "root": root,
+                "recorded": src_kind == "host",
                 "commit": bundle.get("commit", ""), "port": int(port), "backend_host": bh,
                 "log": ((res.get("stdout", "") or "") + "\n" + (res.get("stderr", "") or ""))[-3000:],
                 "error": "" if ok else (res.get("stderr") or res.get("error") or "native worker launch failed")}
 
     return {"ok": False, "error": f"unknown mode: {mode} (use 'docker' or 'native')"}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  NODE WORKER SYNC — every node worker follows the commit the host runs
+# ═════════════════════════════════════════════════════════════════════════════
+#: Held in Redis, not in-process: it must hold across every process that could
+#: run the tick, and across module copies (a module body can run more than once).
+_SYNC_LOCK_KEY = "vera:node_workers:lock"
+_SYNC_LOCK_TTL = 1800          # a provision's own ceiling is 1200 s
+
+
+async def _sync_enabled() -> bool:
+    if os.getenv("VERA_NODE_SYNC", "").strip().lower() in ("0", "off", "false", "no"):
+        return False
+    r = _orch.REDIS
+    try:
+        raw = await r.get(_node_sync.CONFIG_KEY) if r is not None else None
+        return bool(json.loads(raw).get("enabled", True)) if raw else True
+    except Exception:
+        return True
+
+
+async def _live_node_workers() -> List[Dict[str, Any]]:
+    r = _orch.REDIS
+    out: List[Dict[str, Any]] = []
+    if r is None:
+        return out
+    async for k in r.scan_iter("vera:workers:*"):
+        try:
+            h = {(a.decode() if isinstance(a, bytes) else a): (b.decode() if isinstance(b, bytes) else b)
+                 for a, b in (await r.hgetall(k)).items()}
+        except Exception:
+            continue
+        if h.get("role") == "node-worker":
+            out.append({"host": h.get("host", ""), "status": h.get("status", ""),
+                        "commit": h.get("commit", ""), "role": "node-worker",
+                        "id": h.get("id", "")})
+    return out
+
+
+async def _census_busy() -> bool:
+    try:
+        return bool((await _orch._health_census()).get("busy"))
+    except Exception:
+        return True          # cannot tell -> assume busy; the next tick asks again
+
+
+@capability(
+    "nodes.workers.sync",
+    http_method="POST", http_path="/nodes/workers/sync", http_tags=["nodes", "provision"],
+    memory="off",
+    description="Bring node workers onto the commit this host is RUNNING (not git HEAD: "
+                "a promotion moves HEAD before the restart that activates it). Refreshes "
+                "at most `limit` stale or missing node per call through provision.worker, "
+                "never while a census goal is in flight or on a node whose worker is "
+                "mid-task, with backoff after failures. Runs on its own every 10 min on "
+                "the host (off with VERA_NODE_SYNC=off or enabled=false). Inputs: "
+                "dry_run (bool=false), limit (int=1), host_ids (list — adopt these "
+                "already-provisioned nodes into the registry first), enabled (bool — "
+                "persist the on/off switch). Output: {ok, host_commit, plan, results}.",
+)
+async def cap_nodes_workers_sync(dry_run: bool = False, limit: int = 1,
+                                 host_ids: Optional[List[str]] = None,
+                                 enabled: Optional[bool] = None, trace_id=None) -> Dict:
+    r = _orch.REDIS
+    if r is None:
+        return {"ok": False, "error": "redis not connected"}
+    if enabled is not None:
+        await r.set(_node_sync.CONFIG_KEY, json.dumps({"enabled": bool(enabled)}))
+    for hid in host_ids or []:
+        if not await _registry_get(hid):
+            rec = await _host_rec(hid)
+            if not rec:
+                return {"ok": False, "error": f"host_id not found: {hid}"}
+            await _registry_put(hid, {"host": rec.get("host", ""), "commit": "",
+                                      "failures": 0, "last_attempt": 0, "adopted": True})
+    raw = await r.hgetall(_node_sync.REGISTRY_KEY)
+    entries = []
+    for v in (raw or {}).values():
+        try:
+            entries.append(json.loads(v))
+        except Exception:
+            continue
+    p = _node_sync.plan(_RUNNING_COMMIT, entries, await _live_node_workers(),
+                        census_busy=await _census_busy(), limit=limit)
+    out: Dict[str, Any] = {"ok": True, "host_commit": _RUNNING_COMMIT,
+                           "enabled": await _sync_enabled(), "plan": p, "results": {}}
+    if dry_run or not p["run"]:
+        return out
+    token = _orch.new_id()
+    if not await r.set(_SYNC_LOCK_KEY, token, nx=True, ex=_SYNC_LOCK_TTL):
+        out["results"] = {"_": "a sync is already running"}
+        return out
+    try:
+        for hid in p["run"]:
+            await emit_event({"type": "nodes.workers.sync", "host_id": hid, "stage": "start",
+                              "commit": _RUNNING_COMMIT})
+            try:
+                res = await cap_worker(host_id=hid, mode="native", source="host")
+            except Exception as e:
+                res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            if not res.get("recorded"):
+                rec = await _host_rec(hid) or {}
+                entry = _node_sync.record_after(await _registry_get(hid), ok=False,
+                                                error=str(res.get("error") or "provision failed"))
+                entry["host"] = rec.get("host", "")
+                await _registry_put(hid, entry)
+            out["results"][hid] = {"ok": bool(res.get("ok")), "commit": res.get("commit", ""),
+                                   "error": str(res.get("error") or "")[:300]}
+            await emit_event({"type": "nodes.workers.sync", "host_id": hid, "stage": "done",
+                              "ok": bool(res.get("ok")), "error": str(res.get("error") or "")[:200]})
+    finally:
+        try:
+            held = await r.get(_SYNC_LOCK_KEY)
+            if (held.decode() if isinstance(held, bytes) else held) == token:
+                await r.delete(_SYNC_LOCK_KEY)
+        except Exception:
+            pass
+    return out
+
+
+async def _node_sync_tick():
+    """The scheduled half. Host-only (a node worker runs no periodic job), never
+    in a sandbox (it would provision PROD's nodes), leader-only (singleton)."""
+    if not await _sync_enabled():
+        return
+    try:
+        res = await cap_nodes_workers_sync()
+        if res.get("results"):
+            log.info("node worker sync: %s", res["results"])
+    except Exception as e:
+        log.warning("node worker sync tick: %s", e)
+
+
+async def _node_sync_first():
+    # one pass shortly after a boot - a restart is how new code arrives
+    await asyncio.sleep(_node_sync.FIRST_TICK_DELAY_S)
+    await _node_sync_tick()
+
+
+schedule(_node_sync_tick, interval=_node_sync.TICK_S, name="node_worker_sync",
+         skip_in_sandbox=True, singleton=True)
+schedule(_node_sync_first, interval=_placement.STARTUP_INTERVAL, name="node_worker_sync_boot",
+         skip_in_sandbox=True, singleton=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

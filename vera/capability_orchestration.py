@@ -5397,6 +5397,8 @@ async def worker_loop(worker_id: str):
         "id":           worker_id,
         "status":       "starting",
         "role":         "node-worker" if _IS_WORKER else "host",
+        # the commit provision.worker shipped - what the node sync compares
+        "commit":       os.environ.get("VERA_WORKER_COMMIT", ""),
         "streams":      json.dumps(list(_streams)),
         "capabilities": json.dumps(_advertised),
         "cap_count":    len(_advertised),
