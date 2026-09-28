@@ -1,11 +1,11 @@
 """Entity NER for the fabric, served by the nodes.
 
-The host's entity graph (fabric_web_acquisition) ran GLiNER or spaCy IN-PROCESS
-and fell back to capitalisation heuristics when neither was installed - which
-on the host they were not (2026-09-28: spacy_installed=False,
-gliner_installed=False), so every page's entities came from the heuristic.
-Meanwhile every node serves OntoNotes-v5 NER (nlp.ner) from the shared model
-store. OntoNotes labels ARE spaCy's labels (PERSON, ORG, GPE, FAC, DATE ...),
+The host's entity graph (fabric_web_acquisition) runs GLiNER or spaCy
+IN-PROCESS and fell back to capitalisation heuristics when neither loads. Prod
+has both installed (GLiNER is what it runs); a Vera without them - a sandbox,
+a fresh host - used the heuristic, while every node serves OntoNotes-v5 NER
+(nlp.ner) from the shared model store. So the nodes are the fallback BEFORE
+the heuristic. OntoNotes labels ARE spaCy's labels (PERSON, ORG, GPE, FAC, DATE ...),
 so the node's output maps onto the fabric's types with the same table spaCy
 used.
 

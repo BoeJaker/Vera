@@ -1,8 +1,8 @@
 """The fabric's entity NER uses the nodes' OntoNotes NER.
 
-2026-09-28: neither spaCy nor GLiNER was installed on the host, so the entity
-graph ran on capitalisation heuristics while every node served a real NER model
-from the shared store."""
+A Vera without spaCy or GLiNER (a sandbox, a fresh host - prod has both) ran
+its entity graph on capitalisation heuristics while every node served a real NER
+model from the shared store."""
 import asyncio
 
 import pytest
