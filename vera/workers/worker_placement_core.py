@@ -116,6 +116,72 @@ def placement(cap_name: str, *, node_ok: Iterable[str] = (),
     return "host", "not vetted as node-safe"
 
 
+# ── task classes: what a node worker is FOR ───────────────────────────────────
+#: The classes a node can be given (user, 2026-09-28: "task classes per node").
+#: Each vetted namespace belongs to exactly one class. A class with no
+#: namespaces is real but empty: nothing has been vetted into it yet, and the
+#: UI says so rather than implying the node will get such work.
+CLASSES: Dict[str, Dict[str, object]] = {
+    "general": {"label": "General",
+                "desc": "LLM calls, text, math, HTTP and memory - shared stores and the "
+                        "cross-process GPU gate only",
+                "namespaces": ("llm", "text", "math", "http", "memory", "echo")},
+    "nlp":     {"label": "NLP",
+                "desc": "NER, classification, zero-shot, QA, embeddings and rerank "
+                        "through the node NLP servers",
+                "namespaces": ("nlp",)},
+    "cpu_compute": {"label": "CPU compute",
+                    "desc": "parsing, transforms, test runs - nothing vetted into this "
+                            "class yet",
+                    "namespaces": ()},
+    "media":   {"label": "Media (GPU)",
+                "desc": "diffusion, STT, TTS - served by the node's gpu_inference "
+                        "server directly; no worker tasks in this class yet",
+                "namespaces": ()},
+}
+
+#: Defaults when a node has no roles set. A CPU node takes the vetted work; the
+#: GPU node's worker takes none - its cores stay with the V100 runner and the
+#: gpu_inference server, which do its media work without the task stream.
+DEFAULT_CLASSES_CPU = ("general", "nlp")
+DEFAULT_CLASSES_GPU = ()
+
+#: One stream per class; a node worker reads only the classes it has.
+CLASS_STREAM = "vera:tasks:cls:{cls}"
+
+#: Redis hash host_id -> JSON list of classes, set from the Workers UI. A node
+#: worker re-reads its entry every 30 s, so a change applies without a restart.
+ROLES_KEY = "vera:node_workers:roles"
+
+
+def class_stream(cls: str) -> str:
+    return CLASS_STREAM.format(cls=cls)
+
+
+def class_of(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
+    """The class a node-safe cap belongs to; '' for a host-bound one. A cap an
+    operator admitted with VERA_WORKER_NODE_OK that no class names is
+    `general`."""
+    where, _ = placement_from_env(cap_name, env)
+    if where != "any":
+        return ""
+    ns = namespace(cap_name)
+    for cls, spec in CLASSES.items():
+        if ns in spec["namespaces"]:
+            return cls
+    return "general"
+
+
+def default_classes(has_gpu: bool) -> Tuple[str, ...]:
+    return DEFAULT_CLASSES_GPU if has_gpu else DEFAULT_CLASSES_CPU
+
+
+def clean_classes(classes: Optional[Iterable[str]]) -> Tuple[str, ...]:
+    """Known classes only, in catalogue order, no duplicates."""
+    want = set(_names(classes)) if classes is not None else set()
+    return tuple(c for c in CLASSES if c in want)
+
+
 def placement_from_env(cap_name: str, env: Optional[Dict[str, str]] = None) -> Tuple[str, str]:
     e = os.environ if env is None else env
     return placement(cap_name, node_ok=_names(e.get("VERA_WORKER_NODE_OK", "")),
@@ -123,25 +189,44 @@ def placement_from_env(cap_name: str, env: Optional[Dict[str, str]] = None) -> T
 
 
 def stream_for(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
-    """The stream a task for this cap is queued on."""
-    where, _ = placement_from_env(cap_name, env)
-    return HOST_TASK_STREAM if where == "host" else TASK_STREAM
+    """The stream a task for this cap is queued on: the host stream for a
+    host-bound cap, else its class's stream."""
+    cls = class_of(cap_name, env)
+    return class_stream(cls) if cls else HOST_TASK_STREAM
 
 
-def streams_to_read(*, is_worker: bool) -> Tuple[str, ...]:
-    """A node worker reads only the shared stream; the host reads both."""
-    return (TASK_STREAM,) if is_worker else (TASK_STREAM, HOST_TASK_STREAM)
+def streams_to_read(*, is_worker: bool, classes: Optional[Iterable[str]] = None) -> Tuple[str, ...]:
+    """The host reads everything. A node worker reads the shared legacy stream
+    (tasks queued by a process running older code) and its own classes' streams
+    - never the host stream, never a class it was not given."""
+    if not is_worker:
+        return (TASK_STREAM, HOST_TASK_STREAM) + tuple(class_stream(c) for c in CLASSES)
+    return (TASK_STREAM,) + tuple(class_stream(c) for c in clean_classes(classes))
 
 
 def may_run_here(cap_name: str, *, is_worker: bool,
-                 env: Optional[Dict[str, str]] = None) -> Tuple[bool, str]:
-    """Whether THIS process may execute the cap. Belt and braces for a task an
-    older dispatcher put on the shared stream: a worker hands it to the host
-    stream instead of running it."""
+                 env: Optional[Dict[str, str]] = None,
+                 classes: Optional[Iterable[str]] = None) -> Tuple[bool, str]:
+    """Whether THIS process may execute the cap. A worker runs only node-safe
+    caps in the classes it was given (`classes` None = no class restriction);
+    anything else it meets is handed to where it belongs (handoff_stream)."""
     if not is_worker:
         return True, ""
     where, why = placement_from_env(cap_name, env)
-    return (where != "host"), why
+    if where == "host":
+        return False, why
+    if classes is not None:
+        cls = class_of(cap_name, env)
+        if cls not in clean_classes(classes):
+            return False, "class %r is not enabled on this node" % cls
+    return True, ""
+
+
+def handoff_stream(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
+    """Where a worker puts a task it may not run: the host stream for a
+    host-bound cap, else the class stream (which the host always reads, so the
+    task cannot bounce between nodes)."""
+    return stream_for(cap_name, env)
 
 
 def scheduler_may_run(job_name: str, interval: float, *, is_worker: bool) -> bool:

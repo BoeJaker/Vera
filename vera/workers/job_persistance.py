@@ -379,37 +379,24 @@ async def _event_listener():
 #  RECOVERY: reclaim orphaned tasks from dead consumers on startup
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _recover_orphans():
-    """Scan XPENDING for stale entries and either re-queue or mark failed."""
-    r = _orch.REDIS
-    if not r:
-        return 0
-
-    global _boot_id
-    _boot_id = f"boot-{int(time.time())}-{os.getpid()}"
-    try:
-        await r.set(K_BOOT, _boot_id, ex=86400 * 30)
-    except Exception:
-        pass
-
-    log.info("recovery scan starting (boot=%s, idle_threshold=%dms)", _boot_id, RECOVERY_IDLE_MS)
+async def _recover_stream(r, stream: str, recovery_consumer: str) -> int:
+    """Reclaim orphaned entries of ONE task stream. Every stream a worker
+    reads is scanned: the legacy shared one, the host-only one and each
+    task-class one - a node that died mid-task left its entry pending on
+    a class stream, which a scan of the legacy stream alone never saw."""
     reclaimed = 0
-
     try:
-        pinfo = await r.xpending(TASK_STREAM, GROUP_WORKERS)
+        pinfo = await r.xpending(stream, GROUP_WORKERS)
         pending_count = pinfo.get("pending", 0) if pinfo else 0
         if pending_count == 0:
-            log.info("recovery: no pending entries — clean start")
             return 0
 
-        log.info("recovery: %d pending entries in stream", pending_count)
+        log.info("recovery: %d pending entries in %s", pending_count, stream)
 
         details = await r.xpending_range(
-            TASK_STREAM, GROUP_WORKERS,
+            stream, GROUP_WORKERS,
             min="-", max="+", count=500,
         )
-
-        recovery_consumer = f"recovery-{_boot_id}"
 
         for entry in (details or []):
             msg_id = entry.get("message_id", b"")
@@ -441,7 +428,7 @@ async def _recover_orphans():
 
             try:
                 claimed = await r.xclaim(
-                    TASK_STREAM, GROUP_WORKERS, recovery_consumer,
+                    stream, GROUP_WORKERS, recovery_consumer,
                     min_idle_time=RECOVERY_IDLE_MS,
                     message_ids=[msg_id],
                 )
@@ -467,7 +454,7 @@ async def _recover_orphans():
                     )
 
                     if cap_name in CAPABILITY_REGISTRY:
-                        await r.xadd(TASK_STREAM, {
+                        await r.xadd(_orch._placement.stream_for(cap_name), {
                             "id": task_id, "capability": cap_name,
                             "payload": payload, "trace_id": trace_id,
                             "ts": now_iso(), "recovered": "true",
@@ -479,14 +466,36 @@ async def _recover_orphans():
                         await _persist(task_id, cap_name, "failed",
                                        error=f"Capability '{cap_name}' not registered after reboot")
 
-                    await r.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
+                    await r.xack(stream, GROUP_WORKERS, msg_id)
                     reclaimed += 1
 
             except Exception as e:
                 log.error("recovery: xclaim failed for %s: %s", msg_id, e)
 
     except Exception as e:
-        log.error("recovery scan failed: %s", e)
+        log.error("recovery scan of %s failed: %s", stream, e)
+    return reclaimed
+
+
+async def _recover_orphans():
+    """Scan XPENDING for stale entries and either re-queue or mark failed."""
+    r = _orch.REDIS
+    if not r:
+        return 0
+
+    global _boot_id
+    _boot_id = f"boot-{int(time.time())}-{os.getpid()}"
+    try:
+        await r.set(K_BOOT, _boot_id, ex=86400 * 30)
+    except Exception:
+        pass
+
+    log.info("recovery scan starting (boot=%s, idle_threshold=%dms)", _boot_id, RECOVERY_IDLE_MS)
+    reclaimed = 0
+
+    recovery_consumer = f"recovery-{_boot_id}"
+    for stream in _orch._placement.streams_to_read(is_worker=False):
+        reclaimed += await _recover_stream(r, stream, recovery_consumer)
 
     log.info("recovery complete — %d tasks reclaimed", reclaimed)
     await emit_event({"type": "job_persist.recovery_done",

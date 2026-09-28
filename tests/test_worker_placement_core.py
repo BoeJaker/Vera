@@ -54,10 +54,55 @@ def test_operator_overrides():
 
 
 def test_streams():
-    assert wp.stream_for("llm.generate", env={}) == wp.TASK_STREAM
+    # node-safe work goes to its class's stream; host-bound work to the host's
+    assert wp.stream_for("llm.generate", env={}) == wp.class_stream("general")
+    assert wp.stream_for("nlp.ner", env={}) == wp.class_stream("nlp")
     assert wp.stream_for("evolve.pipeline.adopt", env={}) == wp.HOST_TASK_STREAM
-    assert wp.streams_to_read(is_worker=True) == (wp.TASK_STREAM,)
-    assert set(wp.streams_to_read(is_worker=False)) == {wp.TASK_STREAM, wp.HOST_TASK_STREAM}
+    # a node reads the legacy stream plus exactly its classes
+    assert wp.streams_to_read(is_worker=True, classes=["nlp"]) == (wp.TASK_STREAM, wp.class_stream("nlp"))
+    assert wp.streams_to_read(is_worker=True, classes=[]) == (wp.TASK_STREAM,)
+    # the host reads everything, so no task can be stranded
+    host = set(wp.streams_to_read(is_worker=False))
+    assert {wp.TASK_STREAM, wp.HOST_TASK_STREAM} <= host
+    assert all(wp.class_stream(c) in host for c in wp.CLASSES)
+
+
+def test_every_vetted_namespace_is_in_exactly_one_class():
+    seen = {}
+    for cls, spec in wp.CLASSES.items():
+        for ns in spec["namespaces"]:
+            assert ns not in seen, (ns, seen.get(ns), cls)
+            seen[ns] = cls
+    assert set(seen) == set(wp.NODE_SAFE)
+
+
+def test_class_of():
+    assert wp.class_of("llm.generate", env={}) == "general"
+    assert wp.class_of("memory.store", env={}) == "general"
+    assert wp.class_of("nlp.ner", env={}) == "nlp"
+    assert wp.class_of("evolve.targets", env={}) == ""          # host-bound
+    assert wp.class_of("nlp.config.set", env={}) == ""          # mutator
+    # an operator-admitted namespace no class names counts as general
+    assert wp.class_of("web.search", env={"VERA_WORKER_NODE_OK": "web"}) == "general"
+
+
+def test_defaults_keep_the_gpu_nodes_cores_for_the_gpu():
+    assert wp.default_classes(False) == ("general", "nlp")
+    assert wp.default_classes(True) == ()
+    assert wp.clean_classes(["media", "bogus", "general", "general"]) == ("general", "media")
+    assert wp.clean_classes("nlp, general") == ("general", "nlp")
+
+
+def test_a_worker_runs_only_its_classes_and_hands_the_rest_on():
+    ok, _ = wp.may_run_here("nlp.ner", is_worker=True, env={}, classes=["nlp"])
+    assert ok
+    ok, why = wp.may_run_here("llm.generate", is_worker=True, env={}, classes=["nlp"])
+    assert not ok and "general" in why
+    # handed to its class stream (the host reads it) - never back to a node-only place
+    assert wp.handoff_stream("llm.generate", env={}) == wp.class_stream("general")
+    assert wp.handoff_stream("evolve.targets", env={}) == wp.HOST_TASK_STREAM
+    # no class restriction = placement only (the old behaviour)
+    assert wp.may_run_here("llm.generate", is_worker=True, env={}, classes=None)[0]
 
 
 def test_the_host_runs_everything_a_worker_hands_host_bound_work_on():
