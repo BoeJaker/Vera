@@ -14155,6 +14155,16 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _intent_zs = None
 
+# Intent core (roadmap G): once the goal's intent is known, the caps that
+# intent uses move to the front of the catalogue. Ordering only, opt-in.
+try:
+    from Vera.vera.dag import intent_core_core as _intent_core
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import intent_core_core as _intent_core
+    except Exception:
+        _intent_core = None
+
 
 async def _v6_zeroshot_intent(goal: str) -> Tuple[Optional[str], Dict[str, float]]:
     """(intent, scores) from nlp.zeroshot, or (None, {}) when unavailable or
@@ -23556,6 +23566,7 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
         "returned as plan_style), enrich_model (str — broad only: the CPU brief model, "
         "'' = the planning_style/enrich route's), critic_route (str 'cpu'|'gpu' — "
         "stepwise-reviewed only: where the per-step critic runs; default cpu), "
+        "intent_core (str 'off'|'order' - 'order' moves the caps the goal's intent uses to the front of the catalogue once the intent is known; emitted as agent_loop_v6.intent_core; default off), "
         "executor_model / coder_model (str - this run's model for that role, e.g. an MoE), "
         "executor_node / coder_node (auto|gpu|cpu-247|cpu-246 - auto = the GPU if the model "
         "fits, else a CPU node; a CPU role is slow), effort (standard|bigger-coder|max - "
@@ -23683,6 +23694,10 @@ async def cap_dag_agent_loop_v6(
     # stepwise-reviewed: where the step critic runs - 'cpu' (the long-horizon
     # node, default) or 'gpu' (faster, queues between the run's GPU steps).
     critic_route:       str  = "cpu",
+    # Intent core (dag/intent_core_core.py): 'order' moves the caps the goal's
+    # intent uses to the front once the intent is known - the fast path reads
+    # the first 16, the master planner and tier brief 24. 'off' = as built.
+    intent_core:        str  = "off",
     # Per-run role models + effort (dag/role_override_core.py): an MoE executor
     # or a bigger coder on a chosen node ('auto' = the GPU if it fits, else a CPU
     # node); effort 'bigger-coder' (qwen3-coder:30b) or 'max' (the bigger coder
@@ -24127,6 +24142,24 @@ async def cap_dag_agent_loop_v6(
                           "heuristic": _intent_info.get("heuristic", ""),
                           "llm": _intent_info.get("llm", ""),
                           "reason": _intent_info.get("reason", "")})
+    # ── INTENT CORE (opt-in): the intent is known now, so the caps it uses move
+    #    to the front. Stages that read a prefix see them: fast path 16, master
+    #    planner 24, broad 40. Nothing is removed; the cap-guard still applies. ──
+    _ic_mode = _intent_core.resolve_mode(intent_core) if _intent_core is not None else "off"
+    if _ic_mode != "off":
+        try:
+            _ic_order, _ic_info = _intent_core.apply(
+                catalog_names, intent, goal, known=CAPABILITY_REGISTRY.keys(),
+                blocked=_catalog_block)
+            _ic_order = _guard_filter_catalog(sid, _ic_order) or list(catalog_names)
+            _ic_info["added"] = [c for c in _ic_info.get("added") or [] if c in _ic_order]
+            _ic_info["front"] = _ic_order[:_intent_core.FRONT]
+            catalog_names = _ic_order
+            await emit_event({"type": "agent_loop_v6.intent_core", "session_id": sid,
+                              "stream_id": stream_id, "mode": _ic_mode, **_ic_info})
+        except Exception as _ice:
+            log.warning("intent core: %s", _ice)
+
     # The strategic MASTER PLANNER (long-form specialist plan) fires ONLY for a
     # 'strategic' (open-ended / multi-day) goal now. 'complex' is the middle layer:
     # a thorough MULTI-STEP normal plan from the orchestrator, NO master planner —
@@ -25872,6 +25905,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_plan_style        = (body.get("plan_style", "auto") or "auto").strip().lower()
     v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
     v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
+    v6_intent_core       = (body.get("intent_core", "off") or "off").strip().lower()
     v6_executor_model    = (body.get("executor_model", "") or "").strip()
     v6_executor_node     = (body.get("executor_node", "auto") or "auto").strip().lower()
     v6_coder_model       = (body.get("coder_model", "") or "").strip()
@@ -26027,6 +26061,7 @@ async def workshop_agent_loop_stream(request: Request):
             plan_style=v6_plan_style,
             enrich_model=v6_enrich_model,
             critic_route=v6_critic_route,
+            intent_core=v6_intent_core,
             executor_model=v6_executor_model, executor_node=v6_executor_node,
             coder_model=v6_coder_model, coder_node=v6_coder_node, effort=v6_effort,
             auto_escalate=v6_auto_escalate,
