@@ -71,7 +71,7 @@ T('the behaviour the browser smoke drives is in the text', () => {
     'function onGridDragOver(e)', 'function onGridDrop(e)', "grid.classList.add('vd-drop-here')", 'function gridVars()',
     'if (ed) t.edited = true;', 'if (r && t.edited) state.edits[wid] = r;', 'var eff = state.edits[wid] || r;', 'if (eff) drawTile(w, eff);',
     'function openSheet(wid, rec)', "var shown = withSample(record); if (shown.sample) widget.dataset.sample = '1';",
-    "openPanels: openPanels, placeRecord: placeRecord, configure: configure, applyRecord: applyRecord,",
+    "openPanels: openPanels,", "placeRecord: placeRecord, configure: configure, applyRecord: applyRecord,",
     'function snapWidth(n)', '"moving · drop on the grid"', 'function ensureContextGraph()', 'function ladderSizes()', "s.src = '/ui/context_graph_element.js'"
   ]) assert(src.includes(s), s);
   assert(src.includes("if (window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') {\n        var p, st = stager();\n        try { p = window.VeraWidgetConfig.open({ mode: 'add'"), 'the surface is the loader when it is loaded (staged around widget.validate)');
