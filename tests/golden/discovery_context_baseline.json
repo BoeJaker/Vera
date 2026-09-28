@@ -1,5 +1,5 @@
 {
-  "baseline_id": "dcb_cc31af20a77735a5957d8e12b20c53a792a776512af107a255deead10e755056",
+  "baseline_id": "dcb_35487ce058d3ff0505aeb0362556956b940d64c3321346e2ce17c652ed8bfa21",
   "schema": "vera.discovery-context-baseline/v1",
   "components": [
     {
@@ -36,6 +36,20 @@
       "data_contract": "vera.context-component-manifest.v1",
       "enriches": [
         "context.portable"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "discovery.portable",
+      "role": "discover",
+      "source": "vera/discovery_contract.py",
+      "boundary": "discovery_contract",
+      "execution": "provider_injected",
+      "resource": "none",
+      "data_contract": "vera.discovery-result.v1",
+      "enriches": [
+        "context.portable",
+        "fabric.dataset"
       ],
       "live_required": false
     },
@@ -253,8 +267,6 @@
     }
   ],
   "gaps": [
-    "no_portable_discovery_request_or_source_candidate_contract",
-    "no_portable_collection_option_or_collection_receipt_contract",
     "discovery_does_not_share_context_registry_selection",
     "agent_rag_uses_a_native_result_shape",
     "worker_selection_is_not_a_discovery_execution_plan",
