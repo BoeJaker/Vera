@@ -62,41 +62,32 @@ def _copy_overlay(source: Path, target: Path) -> None:
             shutil.copy2(item, destination)
 
 
-_GONE = re.compile(r"^Error(?: response from daemon)?: No such (?:object|container): (\S+)\s*$")
-MOUNTS_FORMAT = "{{.Id}}{{range .Mounts}}\t{{.Source}}{{end}}"
+def mounts_from_container_list(rows: Any) -> tuple[dict[str, set[str]] | None, str]:
+    """{container id: {mount sources}} from ONE Engine `/containers/json?all=true`.
 
-
-def mounts_from_inspect(ids: list[str], out: str, err: str,
-                        code: int) -> tuple[dict[str, set[str]] | None, str]:
-    """Parse ONE `docker inspect -f MOUNTS_FORMAT <ids...>` over every container.
-
-    Returns ({full_id: {mount sources}}, "") or (None, why). A container that
-    vanished between `docker ps` and the inspect cannot mount anything, so its
-    "No such object" is not a failure; any OTHER error still refuses (unknown
-    ownership is never permission). Every listed id must be accounted for.
+    The list carries every container's mounts, so nothing is inspected one by
+    one (562 containers on prod, 2026-09-28: per-id inspects - and then one
+    batched inspect - timed out and refused every repair). Returns (None, why)
+    on anything unreadable: unknown ownership is never permission to repair.
     """
+    if not isinstance(rows, list):
+        return None, "container list is not a list"
     mounts: dict[str, set[str]] = {}
-    for line in (out or "").splitlines():
-        parts = line.strip().split("\t")
-        if parts and parts[0]:
-            mounts[parts[0]] = {p.strip().replace("\\", "/").rstrip("/")
-                                for p in parts[1:] if p.strip()}
-    gone: set[str] = set()
-    for line in (err or "").splitlines():
-        if not line.strip():
-            continue
-        m = _GONE.match(line.strip())
-        if not m:
-            return None, line.strip()[:300]
-        gone.add(m.group(1))
-    if code != 0 and not gone:
-        return None, (err or "docker inspect exited %s" % code).strip()[:300]
-    for cid in ids:
-        if not any(full.startswith(cid) or cid.startswith(full) for full in mounts) \
-                and not any(g.startswith(cid) or cid.startswith(g) for g in gone):
-            return None, "container %s not accounted for by docker inspect" % cid[:12]
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("Id"):
+            return None, "container row without an Id"
+        raw = row.get("Mounts")
+        if raw is None:
+            raw = []
+        if not isinstance(raw, list):
+            return None, "container %s: unreadable Mounts" % str(row["Id"])[:12]
+        sources: set[str] = set()
+        for m in raw:
+            src = (m or {}).get("Source") if isinstance(m, dict) else None
+            if src:
+                sources.add(str(src).replace("\\", "/").rstrip("/"))
+        mounts[str(row["Id"])] = sources
     return mounts, ""
-
 
 def _registered(root: Path) -> dict[str, str]:
     result: dict[str, str] = {}

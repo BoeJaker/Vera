@@ -106,11 +106,11 @@ except ImportError:
 
 try:
     from Vera.vera.evolve.worktree_repair import (
-        MOUNTS_FORMAT, mounts_from_inspect,
+        mounts_from_container_list,
         plan_severed_worktree_repair, repair_severed_worktree)
 except ImportError:
     from .worktree_repair import (
-        MOUNTS_FORMAT, mounts_from_inspect,
+        mounts_from_container_list,
         plan_severed_worktree_repair, repair_severed_worktree)
 
 
@@ -10157,22 +10157,21 @@ async def evolve_sandbox_worktree_repair(branch: str, dry_run: bool = True,
         return {"error": str(exc), "branch": branch, "mutated": False}
     # Docker must positively prove no container has this source mounted. An
     # unavailable daemon is unknown ownership, never permission to repair.
-    listed = await _sh(["docker", "ps", "-aq"], timeout=15)
-    if not listed.get("ok"):
-        return {"error": "docker state unavailable", "branch": branch,
-                "mutated": False, "refused": "docker_unknown"}
+    # ONE Engine list call carries every container's mounts (0.6 s for 561 on
+    # prod, 2026-09-28); inspecting them - one by one or batched - timed out
+    # and refused every repair.
     target = str(Path(plan["worktree"]).resolve()).replace("\\", "/").rstrip("/")
-    ids = [item.strip() for item in (listed.get("out") or "").splitlines() if item.strip()]
-    # ONE inspect over every container (562 on prod, 2026-09-28): the per-id
-    # loop took minutes, and a single container gone between `ps` and its
-    # inspect refused every repair. A vanished container mounts nothing; any
-    # other docker error still refuses, and says what it was.
-    mounts, why = ({}, "")
-    if ids:
-        inspected = await _sh(["docker", "inspect", "-f", MOUNTS_FORMAT, *ids], timeout=120)
-        mounts, why = mounts_from_inspect(ids, inspected.get("out") or "",
-                                          inspected.get("err") or "",
-                                          int(inspected.get("code") or 0))
+    ps = (CAPABILITY_REGISTRY.get("docker.ps") or {})
+    ps_fn = ps.get("raw") or ps.get("func")
+    if not ps_fn:
+        return {"error": "docker state unavailable: docker.ps is not loaded", "branch": branch,
+                "mutated": False, "refused": "docker_unknown"}
+    listed = await ps_fn(all=True)
+    if not isinstance(listed, dict) or listed.get("error"):
+        return {"error": "docker state unavailable: %s" % (
+                    (listed or {}).get("error") if isinstance(listed, dict) else "no answer"),
+                "branch": branch, "mutated": False, "refused": "docker_unknown"}
+    mounts, why = mounts_from_container_list(listed.get("containers"))
     if mounts is None:
         return {"error": "container mount state unavailable: %s" % why, "branch": branch,
                 "mutated": False, "refused": "docker_unknown"}
