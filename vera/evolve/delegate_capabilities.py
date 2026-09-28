@@ -157,7 +157,12 @@ async def _run(job: Dict[str, Any], goal: str) -> None:
             "session_id": sid, "max_steps": job["max_steps"], "plan_style": job["plan_style"],
             "effort": job["effort"], "base_toolkit": " ".join(D.FS_CAPS),
             "prefer_terminal_tools": False, "enable_step_questions": False,
-            "enable_dream_persistence": False})
+            "enable_dream_persistence": False,
+            # HEADLESS: nobody answers inside a delegated job, and the brief IS
+            # the clarification. First live job (2026-09-28): v7 tiered the
+            # brief 'strategic' and stopped on a clarify_request. The strategic
+            # tier also opens a dream project / master plan - wrong for a report.
+            "clarify_mode": "off", "plan_tier": "complex", "auto_escalate": False})
         job["status"] = "running"
         await _save(job)
         await _board(job, "progress", "Delegated to Vera (%s): %s - loop session %s, worktree %s @ %s"
