@@ -856,6 +856,9 @@ async def cap_nodes_workers_sync(dry_run: bool = False, limit: int = 1,
                            "enabled": await _sync_enabled(), "plan": p, "results": {}}
     if dry_run or not p["run"]:
         return out
+    if _in_sandbox():
+        out.update(ok=False, error=_SANDBOX_REFUSAL)
+        return out
     token = _orch.new_id()
     if not await r.set(_SYNC_LOCK_KEY, token, nx=True, ex=_SYNC_LOCK_TTL):
         out["results"] = {"_": "a sync is already running"}
@@ -886,6 +889,17 @@ async def cap_nodes_workers_sync(dry_run: bool = False, limit: int = 1,
         except Exception:
             pass
     return out
+
+
+_SANDBOX_REFUSAL = ("this is a dev sandbox: provisioning from here would join PROD's nodes to "
+                    "the sandbox's private Redis - use the host's Workers page")
+
+
+def _in_sandbox() -> bool:
+    try:
+        return bool(_orch.is_dev_sandbox())
+    except Exception:
+        return False
 
 
 def _node_has_gpu(addr: str) -> bool:
@@ -981,7 +995,8 @@ async def cap_nodes_workers_list(trace_id=None) -> Dict:
     plan = _node_sync.plan(_RUNNING_COMMIT, list(reg.values()), live,
                            census_busy=await _census_busy())
     return {"ok": True, "host_commit": _RUNNING_COMMIT, "sync_enabled": await _sync_enabled(),
-            "classes": classes, "nodes": nodes, "candidates": candidates, "plan": plan}
+            "classes": classes, "nodes": nodes, "candidates": candidates, "plan": plan,
+            "sandbox": _in_sandbox(), "sandbox_note": _SANDBOX_REFUSAL if _in_sandbox() else ""}
 
 
 @capability(
@@ -1028,6 +1043,8 @@ async def cap_nodes_workers_roles_set(host_id: str = "", classes: Optional[List[
 async def cap_nodes_workers_provision(host_id: str = "", trace_id=None) -> Dict:
     if not host_id:
         return {"ok": False, "error": "host_id required"}
+    if _in_sandbox():
+        return {"ok": False, "error": _SANDBOX_REFUSAL}
     res = await cap_worker(host_id=host_id, mode="native", source="host")
     if not res.get("recorded"):
         rec = await _host_rec(host_id) or {}
