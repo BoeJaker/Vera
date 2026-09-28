@@ -64,7 +64,7 @@
     /* a dashboard is read from across the room (owner, 2026-09-27: "the font on lots of widgets is still too small like the
        warnings and live events widgets it should be larger on the dashboards"): a higher floor there, at each setting */
     + '.vw-vgraph-host.min .vg-bottom-area{display:none!important}'
-    + '.vw-vgraph-host .vw-vgkey{position:absolute;left:8px;bottom:6px;z-index:4;display:flex;flex-wrap:wrap;gap:4px 10px;max-width:calc(100% - 16px);font:10.5px var(--f-ui,var(--sans,system-ui,sans-serif));color:var(--t2,var(--dim2,#8a92a0));pointer-events:none}.vw-vgraph-host .vw-vgkey span{display:inline-flex;align-items:center;gap:5px;padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--bg1,#15171c) 80%,transparent)}.vw-vgraph-host .vw-vgkey i{width:8px;height:8px;border-radius:2px}'
+    + '.vw-vgraph-host .vw-vgkey{position:absolute;right:18px;bottom:16px;z-index:6;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px 10px;max-width:62%;font:10.5px var(--f-ui,var(--sans,system-ui,sans-serif));color:var(--t2,var(--dim2,#8a92a0));pointer-events:none}.vw-vgraph-host .vw-vgkey span{display:inline-flex;align-items:center;gap:5px;padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--bg1,#15171c) 80%,transparent)}.vw-vgraph-host .vw-vgkey i{width:8px;height:8px;border-radius:2px}'
     + '.dash-grid vera-widget{--vw-fmin:11.5px}html[data-text="compact"] .dash-grid vera-widget{--vw-fmin:9px}html[data-text="large"] .dash-grid vera-widget{--vw-fmin:12.5px}html[data-text="larger"] .dash-grid vera-widget{--vw-fmin:13.5px}';
   try { if (typeof document !== 'undefined' && document.head && !document.getElementById('vw-text-scale')) { const st = document.createElement('style'); st.id = 'vw-text-scale'; st.textContent = TEXT_SCALE_CSS; document.head.appendChild(st); } } catch (_) {}
   const textKOf = (el) => { try { const cs = getComputedStyle(el); const fmin = parseFloat(cs.getPropertyValue('--vw-fmin')), fx = parseFloat(cs.getPropertyValue('--vw-fx')) || 1; return Math.max(1, Math.max(isFinite(fmin) ? fmin : 10, 9.5) * fx / 9.5); } catch (_) { return 1; } };
@@ -2016,7 +2016,7 @@
   R.vgraph = (d, H, o) => { const G = toVeraGraph(d); const layer = o && o.draw && o.draw.layer; if (!G.nodes.length && !layer) return EMPTY('a graph needs nodes (and edges), or draw.layer');
     const mode = String((o && o.draw && o.draw.mode) || 'graph'), h = Math.max(90, (H || 200) - 14);
     let fb = ''; try { fb = G.nodes.length ? R.graph({ nodes: G.nodes.map((n) => ({ id: n.id, label: n.label, family: n.type })), links: G.edges.map((e) => ({ source: e.from, target: e.to, from: e.from, to: e.to })) }, h, o) : ''; } catch (_) { fb = ''; }
-    return wrap('vgraph', '<div class="vb-vgraph" style="height:' + h + 'px"><slot name="vgraph">' + fb + '</slot></div><span class="vb-lbl">' + (G.nodes.length ? G.nodes.length + ' nodes · ' + G.edges.length + ' edges' : 'the ' + esc(layer) + ' graph') + ' · ' + esc(mode) + '</span>'); };
+    return wrap('vgraph', '<div class="vb-vgraph" style="height:' + h + 'px"><slot name="vgraph">' + fb + '</slot></div><span class="vb-lbl">' + (G.nodes.length ? G.nodes.length + ' nodes · ' + G.edges.length + ' edges' : 'the ' + esc(layer) + ' graph') + '</span>'); };
   let _vgLoad = null;
   const ensureVeraGraph = (base) => { if (window.veraUI && window.veraUI.Graph && window.veraUI.Graph.create) return Promise.resolve(window.veraUI.Graph);
     if (_vgLoad) return _vgLoad; _vgLoad = new Promise((ok) => { const s = document.createElement('script'); s.src = (base || '') + '/ui/vera-graph.js'; s.onload = () => ok(window.veraUI && window.veraUI.Graph); s.onerror = () => { _vgLoad = null; ok(null); }; document.head.appendChild(s); }); return _vgLoad; };
@@ -2040,14 +2040,18 @@
       if (!g || el._vgBig !== big) { if (g && g.destroy) { try { g.destroy(); } catch (_) {} } host.innerHTML = ''; g = el._vg = Gr.create(host, { height: 'fill', showSearch: big, showLegend: size === 'xl' && !minC, showLeftPanel: size === 'xl' && !minC, sidebar: false, actionsEnabled: false, subscribeLiveEvents: false, apiBase: el.base || '',
           // a node is an item like any other: on a host with the drawer, a click opens the drawer on the node's own data
           onNodeClick: (node) => { if (!el.hasAttribute('item-drawer')) return; const it = (node && node.props && typeof node.props === 'object') ? node.props : node; const rec2 = recOf(el), detail = { record: rec2, item: it, path: 'node ' + (node && node.id), ref: rowRef(it), data: el._data, host: el };
-            let go = true; try { go = el.dispatchEvent(new CustomEvent('widget:item', { bubbles: true, composed: true, cancelable: true, detail })); } catch (_) {} if (go) drawer(detail); return false; } }); el._vgBig = big; el._vgSig = ''; el._vgMode = ''; el._vgMode0 = undefined; }
+            let go = true; try { go = el.dispatchEvent(new CustomEvent('widget:item', { bubbles: true, composed: true, cancelable: true, detail })); } catch (_) {} if (go) drawer(detail); return false; } }); el._vgBig = big; el._vgSig = ''; el._vgMode = ''; el._vgMode0 = undefined; el._vgSet = false; }
       if (layer && !rec.source) { const sig = 'layer:' + layer + ':' + JSON.stringify(resolveArgs(rec.read && rec.read.args, el._ui)); if (sig !== el._vgSig) { el._vgSig = sig; try { g.fetchSnapshot(layer, resolveArgs(rec.read && rec.read.args, el._ui)); } catch (_) {} } }
       else { const G = toVeraGraph(data); const ck = draw0.colour === 'status' ? vgColour(G) : null; if (ck) vgKey(host, ck); const sig = G.nodes.length + ':' + G.edges.length + ':' + G.nodes.slice(0, 50).map((n) => n.id + (n.color || '')).join(','); if (sig !== el._vgSig) { el._vgSig = sig; try { g.load(G); } catch (_) {} } }
       /* the mode is the record's the first time (or the one the viewer chose before, kept per widget); after that it is left
-         alone - re-applying it on every refresh flicked Live operations back to Estate 3D from Exploded (2026-09-28) */
-      { const mk = 'vera.vgraph.mode.' + key(rec), cur = g.getMode ? g.getMode() : '';
-        if (el._vgMode && cur && cur !== el._vgMode) { el._vgMode = cur; try { localStorage.setItem(mk, cur); } catch (_) {} }
-        else if (!el._vgMode || el._vgMode0 !== mode) { let want = mode; try { want = (el._vgMode0 === undefined && localStorage.getItem(mk)) || mode; } catch (_) {} el._vgMode = want; el._vgMode0 = mode; try { if (g.setMode && cur !== want) g.setMode(want); } catch (_) {} } }
+         alone - re-applying it on every refresh flicked Live operations back to Estate 3D from Exploded (2026-09-28). A change
+         counts as the viewer's only once the mode was really applied: the modes load after the graph (vera-graph-modes.js), so
+         the first setMode can find none and leave 'graph' - that is retried, never stored as a pick */
+      { const mk = 'vera.vgraph.pick.' + key(rec), cur = g.getMode ? g.getMode() : '';
+        const apply = () => { try { if (g.setMode && (g.getMode ? g.getMode() : '') !== el._vgMode) g.setMode(el._vgMode); } catch (_) {} el._vgSet = !g.getMode || g.getMode() === el._vgMode; return el._vgSet; };
+        if (el._vgSet && cur && cur !== el._vgMode) { el._vgMode = cur; try { localStorage.setItem(mk, cur); } catch (_) {} }
+        else if (!el._vgSet || el._vgMode0 !== mode) { let want = (el._vgMode0 === mode && el._vgMode) || mode; if (el._vgMode0 === undefined) { try { want = localStorage.getItem(mk) || mode; } catch (_) {} }
+          el._vgMode = want; el._vgMode0 = mode; if (cur !== want) { try { if (g.setMode) g.setMode(want); } catch (_) {} } if (!apply()) { let n = 0; const again = () => { if (el._vg !== g || apply() || ++n > 20) return; setTimeout(again, 400); }; setTimeout(again, 400); } } }
       try { g.resize && g.resize(); } catch (_) {}
       return g; }); }
   function unmountVeraGraph(el) { if (el._vg && el._vg.destroy) { try { el._vg.destroy(); } catch (_) {} } el._vg = null; if (el._vgHost) { el._vgHost.remove(); el._vgHost = null; } el._vgSig = ''; }
