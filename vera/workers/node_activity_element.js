@@ -58,7 +58,7 @@
     constructor() {
       super();
       this._root = this.attachShadow({ mode: 'open' });
-      this._d = null; this._f = { node: '', caller: '', kind: '', text: '', since_s: '3600' };
+      this._d = null; this._f = { node: '', service: '', caller: '', kind: '', text: '', since_s: '3600' };
       this._paused = false; this._msg = ''; this._rec = null; this._timer = null;
     }
     connectedCallback() {
@@ -131,6 +131,7 @@
       let h = '<style>' + CSS + '</style><div class="wrap"><div class="hdr"><span class="t">Node activity</span>'
         + '<span class="muted">' + (d.taps ? d.taps.length + ' tapped · ' : '') + (d.records_seen || 0) + ' calls recorded</span><span class="sp"></span>'
         + '<select data-f="node"><option value="">all nodes</option>' + nodes.map((n) => '<option' + (f.node === n ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select>'
+        + '<select data-f="service">' + [['', 'all services'], ['ollama', 'LLM (ollama)'], ['nlp', 'NLP'], ['media', 'media (STT/TTS/image)'], ['worker', 'worker tasks']].map(([v, l]) => '<option value="' + v + '"' + (f.service === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
         + '<select data-f="caller">' + [['', 'all callers'], ['prod', 'prod'], ['sandbox', 'sandboxes'], ['external', 'external']].map(([v, l]) => '<option value="' + v + '"' + (f.caller === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
         + '<select data-f="kind">' + [['', 'all kinds'], ['generate', 'generate'], ['chat', 'chat'], ['embed', 'embed']].map(([v, l]) => '<option value="' + v + '"' + (f.kind === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
         + '<select data-f="since_s">' + [['900', '15 min'], ['3600', '1 h'], ['21600', '6 h'], ['86400', '24 h']].map(([v, l]) => '<option value="' + v + '"' + (f.since_s === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
@@ -139,12 +140,12 @@
       if (this._msg) h += '<div class="bad">' + esc(this._msg) + '</div>';
       h += '<div class="grid">' + nodes.filter((n) => !f.node || n === f.node).map((n) => this._nodeCard(n, d.nodes[n], d.gate)).join('') + '</div>';
       const rows = d.rows || [];
-      h += '<div class="sec">Calls (' + rows.length + ')</div><div class="tbl"><table><tr><th>time</th><th>node</th><th>caller</th><th>kind</th><th>model</th><th>dur</th><th>tok</th><th>tok/s</th><th>status</th><th>prompt</th></tr>'
+      h += '<div class="sec">Calls (' + rows.length + ')</div><div class="tbl"><table><tr><th>time</th><th>node</th><th>caller</th><th>service</th><th>kind</th><th>model</th><th>dur</th><th>tok</th><th>tok/s</th><th>status</th><th>prompt</th></tr>'
         + rows.map((r, i) => '<tr class="r" data-i="' + i + '"><td class="mono">' + esc(hms(r.start)) + '<div class="muted">' + ago(r.end) + ' ago</div></td><td>' + esc(r.node) + '</td>'
-          + '<td>' + cls(r.caller_class) + '<div class="muted">' + esc(r.who || r.caller) + (r.job_type ? ' · ' + esc(r.job_type) : '') + '</div></td><td>' + esc(r.kind) + '</td><td class="mono">' + esc(r.model) + '</td>'
+          + '<td>' + cls(r.caller_class) + '<div class="muted">' + esc(r.who || r.caller) + (r.job_type ? ' · ' + esc(r.job_type) : '') + '</div></td><td>' + esc(r.service || 'ollama') + '</td><td>' + esc(r.kind) + (r.service === 'worker' ? '<div class="muted mono">' + esc(r.cap) + '</div>' : '') + '</td><td class="mono">' + esc(r.model) + '</td>'
           + '<td>' + esc(r.duration_s != null ? r.duration_s.toFixed ? r.duration_s.toFixed(1) + 's' : r.duration_s : '-') + '</td><td>' + esc(r.eval_count ?? (r.vectors != null ? r.vectors + ' vec' : '')) + '</td>'
           + '<td>' + esc(r.tps ?? '') + '</td><td class="' + (r.error || (r.status || 200) >= 400 ? 'bad' : 'ok') + '">' + esc(r.error ? 'err' : r.status) + '</td><td class="pv muted">' + esc(r.prompt_preview) + '</td></tr>').join('')
-        + (rows.length ? '' : '<tr><td colspan="10" class="muted">No calls recorded' + (d.taps && d.taps.length ? ' for these filters.' : ' - no node has its tap yet (nodes.ollama.tap).') + '</td></tr>') + '</table></div>';
+        + (rows.length ? '' : '<tr><td colspan="11" class="muted">No calls recorded' + (d.taps && d.taps.length ? ' for these filters.' : ' - no node has its tap yet (nodes.ollama.tap).') + '</td></tr>') + '</table></div>';
       h += this._renderModal() + '</div>';
       this._root.innerHTML = h;
       this._root.querySelectorAll('[data-f]').forEach((el) => {

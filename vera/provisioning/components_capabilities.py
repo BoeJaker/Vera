@@ -131,6 +131,8 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         "files": [("edge/GPU_inference.py", "GPU_inference.py"),
                   ("edge/gpu_residency_core.py", "gpu_residency_core.py"),
                   ("edge/media_store_core.py", "media_store_core.py"),
+                  # reports every call to the Estate Activity pane
+                  ("edge/activity_record.py", "activity_record.py"),
                   ("edge/gpu_inference_start.sh", "start.sh", "755")],
         "unit_file": ("edge/gpu-inference.service", "gpu-inference.service"),
         "service": "gpu-inference",
@@ -178,6 +180,8 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         # 8771 — clear of the node agent (8770) and onnx_runtime (8772).
         "label": "NLP Server", "port": 8771, "python": True,
         "files": [("edge/nlp_server.py", "nlp_server.py"),
+                  # reports every call to the Estate Activity pane
+                  ("edge/activity_record.py", "activity_record.py"),
                   # Shipped so the node and the Vera host share ONE registry and
                   # ONE implementation of chunking and offset merging.
                   ("vera/research/nlp_dispatch_core.py", "nlp_dispatch_core.py"),
@@ -207,7 +211,7 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
             ["torch", "--index-url", "https://download.pytorch.org/whl/cpu"],
             ["optimum[onnxruntime]", "transformers>=4.57,<5", "onnxruntime",
              "sentencepiece", "protobuf", "numpy", "fastembed",
-             "fastapi", "uvicorn"],
+             "fastapi", "uvicorn", "redis"],
         ],
         "run": "{py} nlp_server.py serve --host 0.0.0.0 --port {port}",
         # The model store is a Proxmox bind-mount, which SSH cannot create.
