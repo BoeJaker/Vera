@@ -105,6 +105,10 @@ CURRENT_COMPONENTS = (
         "class ContextRegistry", "internal", "async_local", "cpu",
         "vera.context-component-manifest.v1", ("context.portable",)),
     DiscoveryContextComponent(
+        "context.enrichment-ledger", "enrich", "vera/context_enrichment.py",
+        "class ContextEnrichmentLedger", "context_provider", "inline", "none",
+        "vera.context-enrichment-ledger.v1", ("context.portable",)),
+    DiscoveryContextComponent(
         "fabric.discovery", "discover", "vera/fabric/discovery.py",
         '"fabric.discover.query"', "capability", "async_local", "network",
         "vera.fabric-discovery-native.v1", ("fabric.dataset", "fabric.memory"),
@@ -190,7 +194,6 @@ CURRENT_COMPONENTS = (
 CURRENT_GAPS = (
     "discovery_does_not_share_context_registry_selection",
     "agent_rag_uses_a_native_result_shape",
-    "cross_system_enrichment_has_no_shared_lineage_or_cycle_contract",
     "no_common_speed_and_relevance_benchmark_contract",
     "non_jepa_worldview_and_godseye_data_have_no_portable_dataset_boundary",
     "live_source_and_accelerator_evidence_is_not_part_of_this_offline_baseline",
